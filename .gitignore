@@ -66,10 +66,10 @@ logs/
 .nfs*
 
 # Binary artifacts (should be in target/)
-patronus-cli
-patronus-web
-patronus-cni
-patronus-bench
+/patronus-cli
+/patronus-web
+/patronus-cni
+/patronus-bench
 
 # Temporary files
 *.tmp
