@@ -1,0 +1,17 @@
+[package]
+name = "patronus-monitoring"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+patronus-core = { path = "../patronus-core" }
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+prometheus = "0.13"

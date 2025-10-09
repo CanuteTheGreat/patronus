@@ -1,0 +1,30 @@
+# Cargo configuration for Patronus
+# Architecture-specific optimizations
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native", "-C", "opt-level=3"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native", "-C", "opt-level=3"]
+
+[target.riscv64gc-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=generic-rv64", "-C", "opt-level=3"]
+
+# LTO for release builds
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+strip = true
+
+# Optimized dev builds for faster iteration
+[profile.dev]
+opt-level = 1
+
+# Build scripts and proc-macros
+[profile.release.build-override]
+opt-level = 0
+
+# Dependencies don't need to be recompiled as often
+[profile.dev.package."*"]
+opt-level = 2

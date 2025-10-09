@@ -1,0 +1,49 @@
+[package]
+name = "patronus-secrets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Cryptography
+aes-gcm = "0.10"
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+rand = "0.8"
+zeroize = { version = "1.7", features = ["derive"] }
+
+# Key derivation
+hkdf = "0.12"
+sha2 = "0.10"
+
+# Base64 encoding
+base64 = "0.21"
+
+# System keyring (optional)
+keyring = { version = "2.3", optional = true }
+
+# Environment variables
+dotenvy = "0.15"
+
+# Logging
+tracing = { workspace = true }
+
+[features]
+default = ["memory-store"]
+memory-store = []
+file-store = []
+system-keyring = ["keyring"]
+vault = []

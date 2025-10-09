@@ -1,0 +1,37 @@
+#!/sbin/openrc-run
+# Copyright 2025 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v3
+
+description="Patronus Firewall Service"
+
+command="/usr/bin/patronus"
+command_args="firewall apply"
+command_user="${PATRONUS_USER:-patronus}:${PATRONUS_GROUP:-patronus}"
+
+depend() {
+	need localmount net
+	before net-online
+	provide firewall
+}
+
+start() {
+	ebegin "Initializing Patronus firewall"
+	/usr/bin/patronus firewall init
+	eend $?
+
+	ebegin "Applying Patronus firewall rules"
+	/usr/bin/patronus firewall apply
+	eend $?
+}
+
+stop() {
+	ebegin "Flushing Patronus firewall rules"
+	/usr/bin/patronus firewall flush
+	eend $?
+}
+
+reload() {
+	ebegin "Reloading Patronus firewall rules"
+	/usr/bin/patronus firewall apply
+	eend $?
+}

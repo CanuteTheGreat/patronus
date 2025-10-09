@@ -1,0 +1,24 @@
+[package]
+name = "patronus-firewall"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["nftables"]
+nftables = ["dep:nftnl", "dep:mnl"]
+iptables = []
+
+[dependencies]
+patronus-core = { path = "../patronus-core" }
+tokio.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+nix.workspace = true
+
+# For nftables interaction (optional)
+nftnl = { version = "0.6", optional = true }
+mnl = { version = "0.2", optional = true }

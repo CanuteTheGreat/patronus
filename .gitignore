@@ -1,0 +1,78 @@
+# Rust/Cargo
+target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Build artifacts
+*.o
+*.so
+*.dylib
+*.dll
+*.a
+
+# Temporary files
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.iml
+.metals/
+.bloop/
+.bsp/
+
+# Testing
+test-results/
+coverage/
+
+# Documentation
+book/
+docs/_build/
+
+# Gentoo (should not be in main repo - use separate overlay repo)
+gentoo-overlay/distfiles/
+gentoo-overlay/packages/
+Manifest
+
+# Secrets and keys
+*.key
+*.pem
+*.crt
+*.enc
+secrets/
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup files
+*.bak
+*.backup
+
+# OS generated
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Binary artifacts (should be in target/)
+patronus-cli
+patronus-web
+patronus-cni
+patronus-bench
+
+# Temporary files
+*.tmp
+tmp/

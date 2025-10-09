@@ -1,0 +1,124 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/patronus-core",
+    "crates/patronus-web",
+    "crates/patronus-firewall",
+    "crates/patronus-network",
+    "crates/patronus-config",
+    "crates/patronus-cli",
+    "crates/patronus-ebpf",
+    "crates/patronus-monitoring",
+    "crates/patronus-captiveportal",
+    "crates/patronus-proxy",
+    "crates/patronus-vpn",
+    "crates/patronus-diagnostics",
+    "crates/patronus-gitops",
+    "crates/patronus-ai",
+    "crates/patronus-cni",
+    "crates/patronus-secrets",
+    "crates/patronus-bench",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+authors = ["Patronus Contributors"]
+repository = "https://github.com/yourusername/patronus"
+
+# Feature flags control
+[workspace.metadata.features]
+default = ["web", "cli", "nftables"]
+
+# Core features
+web = []
+cli = []
+api = []
+
+# Firewall backends
+nftables = []
+iptables = []
+
+# Network services
+dhcp-server = []
+dns-server = []
+dns-unbound = []
+
+# VPN support
+vpn-wireguard = []
+vpn-openvpn = []
+vpn-ipsec = []
+
+# Monitoring
+monitoring = []
+monitoring-prometheus = []
+monitoring-ntopng = []
+
+# Advanced features
+captive-portal = []
+ids-suricata = []
+vlan = []
+qos = []
+backup = []
+
+# Revolutionary features
+gitops = []
+ai = []
+kubernetes = []
+
+# Architecture optimizations
+arch-amd64 = []
+arch-arm64 = []
+arch-riscv = []
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+async-trait = "0.1"
+
+# Web framework
+axum = "0.7"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace", "compression-gzip"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Network/Firewall
+nix = { version = "0.29", features = ["net", "socket"] }
+netlink-packet-core = "0.7"
+netlink-packet-route = "0.19"
+
+# Database (for config storage)
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+chrono = "0.4"
+
+# Template engine (for web UI)
+askama = "0.12"
+askama_axum = "0.4"
+
+# VPN support
+wireguard-control = "1.7"
+
+# DHCP server
+dhcproto = "0.12"
+
+# DNS
+trust-dns-server = "0.23"
+
+# Metrics
+prometheus = "0.13"

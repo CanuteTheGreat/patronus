@@ -1,0 +1,18 @@
+namespace: patronus
+name: firewall
+version: 0.1.0
+readme: README.md
+authors:
+  - Patronus Team
+description: Ansible collection for managing Patronus Firewall
+license:
+  - MIT
+tags:
+  - firewall
+  - networking
+  - security
+  - patronus
+repository: https://github.com/patronus/ansible-collection-patronus
+documentation: https://docs.patronus.firewall/ansible
+homepage: https://patronus.firewall
+issues: https://github.com/patronus/ansible-collection-patronus/issues

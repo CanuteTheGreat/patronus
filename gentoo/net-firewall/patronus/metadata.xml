@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+	<maintainer type="person">
+		<email>maintainer@example.com</email>
+		<name>Patronus Maintainers</name>
+	</maintainer>
+	<longdescription>
+		Patronus is a modern firewall and network security platform built with Rust on Gentoo Linux.
+		It provides an open-source alternative to pfSense and OPNsense with maximum customization
+		through USE flags and Gentoo's compilation options.
+	</longdescription>
+	<use>
+		<flag name="web">Enable web-based management interface</flag>
+		<flag name="cli">Enable command-line interface</flag>
+		<flag name="api">Enable REST API for automation</flag>
+		<flag name="nftables">Use nftables for packet filtering (recommended)</flag>
+		<flag name="iptables">Use legacy iptables for packet filtering</flag>
+		<flag name="dhcp">Enable DHCP server functionality</flag>
+		<flag name="dns">Enable DNS server functionality</flag>
+		<flag name="unbound">Use Unbound as DNS resolver</flag>
+		<flag name="vpn">Enable VPN support</flag>
+		<flag name="wireguard">Enable WireGuard VPN support</flag>
+		<flag name="openvpn">Enable OpenVPN support</flag>
+		<flag name="ipsec">Enable IPsec/strongSwan support</flag>
+		<flag name="monitoring">Enable system and traffic monitoring</flag>
+		<flag name="prometheus">Enable Prometheus metrics export</flag>
+		<flag name="ntopng">Enable ntopng traffic monitoring</flag>
+		<flag name="captive-portal">Enable captive portal functionality</flag>
+		<flag name="intrusion-detection">Enable IDS/IPS functionality</flag>
+		<flag name="suricata">Use Suricata for intrusion detection</flag>
+		<flag name="vlan">Enable VLAN support</flag>
+		<flag name="qos">Enable Quality of Service (traffic shaping)</flag>
+		<flag name="backup">Enable configuration backup/restore</flag>
+	</use>
+	<upstream>
+		<remote-id type="github">yourusername/patronus</remote-id>
+	</upstream>
+</pkgmetadata>

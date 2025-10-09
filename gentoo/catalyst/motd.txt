@@ -1,0 +1,21 @@
+
+  ____       _
+ |  _ \ __ _| |_ _ __ ___  _ __  _   _ ___
+ | |_) / _` | __| '__/ _ \| '_ \| | | / __|
+ |  __/ (_| | |_| | | (_) | | | | |_| \__ \
+ |_|   \__,_|\__|_|  \___/|_| |_|\__,_|___/
+
+         Gentoo-Based Firewall System
+
+Version: 0.1.0-dev
+Architecture: amd64
+
+Quick Commands:
+  patronus firewall init     - Initialize firewall
+  patronus network list      - List network interfaces
+  patronus web              - Start web interface
+  patronus-install          - Install to disk
+
+Documentation: https://docs.patronus.dev
+GitHub: https://github.com/yourusername/patronus
+

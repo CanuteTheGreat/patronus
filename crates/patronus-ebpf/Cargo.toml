@@ -1,0 +1,17 @@
+[package]
+name = "patronus-ebpf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+patronus-core = { path = "../patronus-core" }
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+nix.workspace = true
+libbpf-sys = "1.2"
+libbpf-rs = "0.22"

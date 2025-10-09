@@ -1,0 +1,545 @@
+//! NetFlow and sFlow Traffic Analysis Export
+//!
+//! Provides traffic flow export for network monitoring and analysis.
+//! Supports NetFlow v5, v9, IPFIX (v10), and sFlow.
+
+use patronus_core::{Result, Error};
+use serde::{Deserialize, Serialize};
+use std::net::{IpAddr, SocketAddr};
+use tokio::process::Command;
+use std::path::PathBuf;
+
+/// Flow export protocol
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FlowProtocol {
+    NetFlowV5,   // Cisco NetFlow version 5 (legacy, but widely supported)
+    NetFlowV9,   // Cisco NetFlow version 9 (template-based)
+    IPFIX,       // IPFIX (NetFlow v10, IETF standard)
+    SFlow,       // sFlow (sampled flow)
+}
+
+/// Flow export configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlowExportConfig {
+    pub enabled: bool,
+    pub protocol: FlowProtocol,
+
+    // Collector settings
+    pub collectors: Vec<FlowCollector>,
+
+    // Sampling
+    pub sampling_rate: u32,  // 1 in N packets (0 = all packets)
+    pub sampling_mode: SamplingMode,
+
+    // Interface selection
+    pub interfaces: Vec<String>,  // Empty = all interfaces
+    pub direction: FlowDirection,
+
+    // Timeouts
+    pub active_timeout: u32,  // Seconds (flow active timeout)
+    pub inactive_timeout: u32,  // Seconds (flow inactive timeout)
+
+    // Advanced
+    pub engine_id: u8,
+    pub engine_type: u8,
+    pub source_id: u32,  // For NetFlow v9/IPFIX
+
+    // Performance
+    pub max_flows: u32,  // Maximum flows in cache
+    pub export_interval: u32,  // Seconds between exports
+}
+
+/// Flow collector (receiver)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlowCollector {
+    pub name: String,
+    pub address: IpAddr,
+    pub port: u16,
+    pub protocol: CollectorProtocol,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CollectorProtocol {
+    UDP,
+    TCP,
+    SCTP,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SamplingMode {
+    Random,       // Random packet sampling
+    Deterministic,  // Every Nth packet
+    FlowState,    // Sample based on flow state
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FlowDirection {
+    Ingress,   // Incoming traffic
+    Egress,    // Outgoing traffic
+    Both,      // Both directions
+}
+
+/// Flow statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlowStats {
+    pub total_flows: u64,
+    pub active_flows: u64,
+    pub flows_exported: u64,
+    pub packets_sampled: u64,
+    pub packets_total: u64,
+    pub bytes_exported: u64,
+    pub export_errors: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+}
+
+/// Flow record (NetFlow v5 format)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlowRecord {
+    pub src_addr: IpAddr,
+    pub dst_addr: IpAddr,
+    pub next_hop: IpAddr,
+    pub input_interface: u16,
+    pub output_interface: u16,
+    pub packets: u32,
+    pub bytes: u32,
+    pub first_switched: u32,  // SysUptime at start of flow
+    pub last_switched: u32,   // SysUptime at last packet
+    pub src_port: u16,
+    pub dst_port: u16,
+    pub tcp_flags: u8,
+    pub protocol: u8,  // IP protocol number
+    pub tos: u8,  // Type of Service
+    pub src_as: u16,  // Source AS number
+    pub dst_as: u16,  // Destination AS number
+    pub src_mask: u8,  // Source address prefix mask
+    pub dst_mask: u8,  // Destination address prefix mask
+}
+
+pub struct NetFlowManager {
+    config: FlowExportConfig,
+}
+
+impl NetFlowManager {
+    pub fn new(config: FlowExportConfig) -> Self {
+        Self { config }
+    }
+
+    /// Configure flow export
+    pub async fn configure(&self) -> Result<()> {
+        match self.config.protocol {
+            FlowProtocol::NetFlowV5 | FlowProtocol::NetFlowV9 | FlowProtocol::IPFIX => {
+                self.configure_netflow().await
+            }
+            FlowProtocol::SFlow => {
+                self.configure_sflow().await
+            }
+        }
+    }
+
+    /// Configure NetFlow using nfacctd (pmacct suite)
+    async fn configure_netflow(&self) -> Result<()> {
+        tracing::info!("Configuring NetFlow export ({:?})", self.config.protocol);
+
+        // Generate nfacctd configuration
+        let config = self.generate_nfacctd_config();
+        tokio::fs::write("/etc/pmacct/nfacctd.conf", config).await?;
+
+        // Create systemd service
+        let service = r#"[Unit]
+Description=NetFlow Accounting Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/nfacctd -f /etc/pmacct/nfacctd.conf
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+"#;
+
+        tokio::fs::create_dir_all("/etc/systemd/system").await?;
+        tokio::fs::write("/etc/systemd/system/nfacctd.service", service).await?;
+
+        Ok(())
+    }
+
+    fn generate_nfacctd_config(&self) -> String {
+        let mut config = String::from("# NetFlow Configuration\n# Generated by Patronus\n\n");
+
+        // Daemon settings
+        config.push_str("daemonize: false\n");
+        config.push_str("pidfile: /var/run/nfacctd.pid\n");
+        config.push_str("syslog: daemon\n\n");
+
+        // NetFlow version
+        match self.config.protocol {
+            FlowProtocol::NetFlowV5 => config.push_str("nfacctd_port: 2055\n"),
+            FlowProtocol::NetFlowV9 => {
+                config.push_str("nfacctd_port: 2055\n");
+                config.push_str("nfacctd_templates_port: 2056\n");
+            }
+            FlowProtocol::IPFIX => {
+                config.push_str("nfacctd_port: 4739\n");
+                config.push_str("nfacctd_templates_port: 4740\n");
+            }
+            _ => {}
+        }
+
+        // Collectors
+        for (idx, collector) in self.config.collectors.iter().enumerate() {
+            if collector.enabled {
+                config.push_str(&format!("\n# Collector {}\n", idx + 1));
+                config.push_str(&format!("nfacctd_{}_{}: {}:{}\n",
+                    if collector.protocol == CollectorProtocol::UDP { "udp" } else { "tcp" },
+                    idx,
+                    collector.address,
+                    collector.port
+                ));
+            }
+        }
+
+        // Interfaces
+        if !self.config.interfaces.is_empty() {
+            config.push_str("\n# Interfaces\n");
+            config.push_str(&format!("interface: {}\n", self.config.interfaces.join(",")));
+        }
+
+        // Sampling
+        if self.config.sampling_rate > 0 {
+            config.push_str(&format!("\nsampling_rate: {}\n", self.config.sampling_rate));
+            match self.config.sampling_mode {
+                SamplingMode::Random => config.push_str("sampling_type: random\n"),
+                SamplingMode::Deterministic => config.push_str("sampling_type: deterministic\n"),
+                SamplingMode::FlowState => config.push_str("sampling_type: flow_state\n"),
+            }
+        }
+
+        // Timeouts
+        config.push_str(&format!("\nnfacctd_time_new: {}\n", self.config.active_timeout));
+        config.push_str(&format!("nfacctd_time: {}\n", self.config.inactive_timeout));
+
+        // Aggregation and plugins
+        config.push_str("\n# Aggregation\n");
+        config.push_str("aggregate: src_host, dst_host, src_port, dst_port, proto, tos\n");
+
+        // Memory
+        config.push_str(&format!("\nnfacctd_maxflows: {}\n", self.config.max_flows));
+
+        config
+    }
+
+    /// Configure sFlow using sfacctd (pmacct suite)
+    async fn configure_sflow(&self) -> Result<()> {
+        tracing::info!("Configuring sFlow export");
+
+        let config = self.generate_sfacctd_config();
+        tokio::fs::write("/etc/pmacct/sfacctd.conf", config).await?;
+
+        // Create systemd service
+        let service = r#"[Unit]
+Description=sFlow Accounting Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/sfacctd -f /etc/pmacct/sfacctd.conf
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+"#;
+
+        tokio::fs::create_dir_all("/etc/systemd/system").await?;
+        tokio::fs::write("/etc/systemd/system/sfacctd.service", service).await?;
+
+        // Configure sFlow agent on interfaces using hsflowd
+        self.configure_hsflowd().await?;
+
+        Ok(())
+    }
+
+    fn generate_sfacctd_config(&self) -> String {
+        let mut config = String::from("# sFlow Configuration\n# Generated by Patronus\n\n");
+
+        config.push_str("daemonize: false\n");
+        config.push_str("pidfile: /var/run/sfacctd.pid\n");
+        config.push_str("syslog: daemon\n\n");
+
+        // sFlow listening port
+        config.push_str("sfacctd_port: 6343\n");
+        config.push_str("sfacctd_counter_port: 6344\n\n");
+
+        // Collectors (for forwarding)
+        for (idx, collector) in self.config.collectors.iter().enumerate() {
+            if collector.enabled {
+                config.push_str(&format!("# Collector {}\n", idx + 1));
+                config.push_str(&format!("sfacctd_{}_{}: {}:{}\n",
+                    if collector.protocol == CollectorProtocol::UDP { "udp" } else { "tcp" },
+                    idx,
+                    collector.address,
+                    collector.port
+                ));
+            }
+        }
+
+        // Sampling
+        if self.config.sampling_rate > 0 {
+            config.push_str(&format!("\nsampling_rate: {}\n", self.config.sampling_rate));
+        }
+
+        // Aggregation
+        config.push_str("\naggregate: src_host, dst_host, src_port, dst_port, proto\n");
+
+        config
+    }
+
+    async fn configure_hsflowd(&self) -> Result<()> {
+        // hsflowd is the sFlow agent that runs on each host
+        let mut config = String::from("# sFlow Agent Configuration\n# Generated by Patronus\n\n");
+
+        config.push_str("sflow {\n");
+
+        // Sampling rates
+        config.push_str(&format!("  sampling = {}\n",
+            if self.config.sampling_rate > 0 { self.config.sampling_rate } else { 400 }));
+        config.push_str("  polling = 20\n\n");
+
+        // Collectors
+        for collector in &self.config.collectors {
+            if collector.enabled {
+                config.push_str(&format!("  collector {{ ip = {} udpport = {} }}\n",
+                    collector.address, collector.port));
+            }
+        }
+
+        // Interfaces
+        if !self.config.interfaces.is_empty() {
+            for iface in &self.config.interfaces {
+                config.push_str(&format!("  pcap {{ dev = {} }}\n", iface));
+            }
+        }
+
+        config.push_str("}\n");
+
+        tokio::fs::write("/etc/hsflowd.conf", config).await?;
+
+        Ok(())
+    }
+
+    /// Start flow export
+    pub async fn start(&self) -> Result<()> {
+        match self.config.protocol {
+            FlowProtocol::NetFlowV5 | FlowProtocol::NetFlowV9 | FlowProtocol::IPFIX => {
+                let status = Command::new("systemctl")
+                    .args(&["start", "nfacctd"])
+                    .status()
+                    .await?;
+
+                if !status.success() {
+                    return Err(Error::Network("Failed to start nfacctd".to_string()));
+                }
+            }
+            FlowProtocol::SFlow => {
+                // Start both sfacctd and hsflowd
+                Command::new("systemctl")
+                    .args(&["start", "sfacctd"])
+                    .status()
+                    .await?;
+
+                let status = Command::new("systemctl")
+                    .args(&["start", "hsflowd"])
+                    .status()
+                    .await?;
+
+                if !status.success() {
+                    return Err(Error::Network("Failed to start sFlow services".to_string()));
+                }
+            }
+        }
+
+        tracing::info!("Flow export started successfully");
+        Ok(())
+    }
+
+    /// Stop flow export
+    pub async fn stop(&self) -> Result<()> {
+        match self.config.protocol {
+            FlowProtocol::NetFlowV5 | FlowProtocol::NetFlowV9 | FlowProtocol::IPFIX => {
+                Command::new("systemctl")
+                    .args(&["stop", "nfacctd"])
+                    .status()
+                    .await?;
+            }
+            FlowProtocol::SFlow => {
+                Command::new("systemctl")
+                    .args(&["stop", "sfacctd"])
+                    .status()
+                    .await?;
+
+                Command::new("systemctl")
+                    .args(&["stop", "hsflowd"])
+                    .status()
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get flow export statistics
+    pub async fn get_stats(&self) -> Result<FlowStats> {
+        // Query pmacct for statistics
+        let output = Command::new("pmacct")
+            .args(&["-s"])
+            .output()
+            .await?;
+
+        let output_str = String::from_utf8_lossy(&output.stdout);
+
+        // Parse statistics (simplified)
+        Ok(FlowStats {
+            total_flows: self.parse_stat(&output_str, "total_flows"),
+            active_flows: self.parse_stat(&output_str, "active_flows"),
+            flows_exported: self.parse_stat(&output_str, "flows_exported"),
+            packets_sampled: self.parse_stat(&output_str, "packets_sampled"),
+            packets_total: self.parse_stat(&output_str, "packets_total"),
+            bytes_exported: self.parse_stat(&output_str, "bytes_exported"),
+            export_errors: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+        })
+    }
+
+    fn parse_stat(&self, output: &str, key: &str) -> u64 {
+        for line in output.lines() {
+            if line.contains(key) {
+                if let Some(value) = line.split_whitespace().last() {
+                    return value.parse().unwrap_or(0);
+                }
+            }
+        }
+        0
+    }
+
+    /// Configure using nftables for native NetFlow export
+    pub async fn configure_nftables_netflow(&self) -> Result<()> {
+        // Modern Linux kernels support flow export via nftables + nfnetlink
+        let mut rules = String::from("# nftables flow export\n");
+
+        rules.push_str("table inet flow_export {\n");
+        rules.push_str("  flowtable f {\n");
+        rules.push_str("    hook ingress priority 0\n");
+
+        // Add devices
+        if !self.config.interfaces.is_empty() {
+            rules.push_str(&format!("    devices = {{ {} }}\n",
+                self.config.interfaces.join(", ")));
+        }
+
+        rules.push_str("  }\n\n");
+
+        // Flow offload chain
+        rules.push_str("  chain forward {\n");
+        rules.push_str("    type filter hook forward priority 0\n");
+        rules.push_str("    ip protocol { tcp, udp } flow add @f\n");
+        rules.push_str("  }\n");
+        rules.push_str("}\n");
+
+        tokio::fs::write("/etc/nftables.d/flow-export.nft", rules).await?;
+
+        // Load rules
+        Command::new("nft")
+            .args(&["-f", "/etc/nftables.d/flow-export.nft"])
+            .status()
+            .await?;
+
+        Ok(())
+    }
+
+    /// Test collector connectivity
+    pub async fn test_collector(&self, collector: &FlowCollector) -> Result<bool> {
+        let addr = SocketAddr::new(collector.address, collector.port);
+
+        match collector.protocol {
+            CollectorProtocol::UDP => {
+                // Send test UDP packet
+                use tokio::net::UdpSocket;
+                let socket = UdpSocket::bind("0.0.0.0:0").await?;
+                let test_data = b"Patronus NetFlow Test";
+                socket.send_to(test_data, addr).await?;
+                Ok(true)
+            }
+            CollectorProtocol::TCP => {
+                // Try TCP connection
+                use tokio::net::TcpStream;
+                use tokio::time::{timeout, Duration};
+
+                match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
+                    Ok(Ok(_)) => Ok(true),
+                    _ => Ok(false),
+                }
+            }
+            CollectorProtocol::SCTP => {
+                // SCTP support would require external library
+                Ok(false)
+            }
+        }
+    }
+}
+
+impl Default for FlowExportConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            protocol: FlowProtocol::NetFlowV9,
+            collectors: vec![],
+            sampling_rate: 100,  // Sample 1 in 100 packets
+            sampling_mode: SamplingMode::Random,
+            interfaces: vec![],
+            direction: FlowDirection::Both,
+            active_timeout: 300,  // 5 minutes
+            inactive_timeout: 15,  // 15 seconds
+            engine_id: 0,
+            engine_type: 0,
+            source_id: 0,
+            max_flows: 1000000,  // 1M flows
+            export_interval: 60,  // Export every 60 seconds
+        }
+    }
+}
+
+impl Default for FlowCollector {
+    fn default() -> Self {
+        Self {
+            name: "default".to_string(),
+            address: "127.0.0.1".parse().unwrap(),
+            port: 2055,
+            protocol: CollectorProtocol::UDP,
+            enabled: true,
+        }
+    }
+}
+
+/// Flow aggregation for top talkers, top protocols, etc.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlowAggregation {
+    pub top_talkers_src: Vec<(IpAddr, u64)>,  // (IP, bytes)
+    pub top_talkers_dst: Vec<(IpAddr, u64)>,
+    pub top_protocols: Vec<(u8, u64)>,  // (protocol, bytes)
+    pub top_ports: Vec<(u16, u64)>,  // (port, bytes)
+    pub traffic_matrix: Vec<TrafficMatrixEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrafficMatrixEntry {
+    pub src_addr: IpAddr,
+    pub dst_addr: IpAddr,
+    pub bytes: u64,
+    pub packets: u64,
+    pub flows: u64,
+}

@@ -1,0 +1,176 @@
+---
+- name: Configure Patronus Firewall - Complete Example
+  hosts: firewall
+  become: yes
+  collections:
+    - patronus.firewall
+
+  vars:
+    # Network definitions
+    office_network: 203.0.113.0/24
+    dmz_network: 192.168.100.0/24
+    lan_network: 192.168.1.0/24
+    dmz_web_server: 192.168.100.10
+    dmz_mail_server: 192.168.100.20
+
+  tasks:
+    # ========================================
+    # WAN Interface Rules
+    # ========================================
+
+    - name: Allow SSH from office network
+      firewall_rule:
+        name: allow-ssh-office
+        description: SSH access for administrators from office
+        action: allow
+        interface: wan0
+        direction: inbound
+        protocol: tcp
+        source_address: "{{ office_network }}"
+        dest_ports: [22]
+        log: true
+        enabled: true
+
+    - name: Allow HTTPS management from office
+      firewall_rule:
+        name: allow-mgmt-https
+        description: Web UI access from office
+        action: allow
+        interface: wan0
+        direction: inbound
+        protocol: tcp
+        source_address: "{{ office_network }}"
+        dest_ports: [443]
+        log: true
+        enabled: true
+
+    - name: Allow HTTP/HTTPS to DMZ web server
+      firewall_rule:
+        name: allow-web-dmz
+        description: Public web traffic to DMZ
+        action: allow
+        interface: wan0
+        direction: inbound
+        protocol: tcp
+        dest_address: "{{ dmz_web_server }}"
+        dest_ports: [80, 443]
+        log: false
+        enabled: true
+
+    - name: Allow SMTP/IMAP to mail server
+      firewall_rule:
+        name: allow-mail-dmz
+        description: Mail traffic to DMZ mail server
+        action: allow
+        interface: wan0
+        direction: inbound
+        protocol: tcp
+        dest_address: "{{ dmz_mail_server }}"
+        dest_ports: [25, 465, 587, 993]
+        log: false
+        enabled: true
+
+    - name: Block known malicious networks
+      firewall_rule:
+        name: block-malicious
+        description: Block traffic from known malicious IPs
+        action: deny
+        interface: wan0
+        direction: inbound
+        source_address: 198.51.100.0/24
+        log: true
+        enabled: true
+
+    - name: Default deny WAN inbound
+      firewall_rule:
+        name: deny-wan-default
+        description: Default deny all inbound WAN traffic
+        action: deny
+        interface: wan0
+        direction: inbound
+        log: true
+        enabled: true
+
+    # ========================================
+    # LAN Interface Rules
+    # ========================================
+
+    - name: Allow DNS from LAN
+      firewall_rule:
+        name: allow-dns-lan
+        description: DNS queries from LAN clients
+        action: allow
+        interface: lan0
+        direction: inbound
+        protocol: udp
+        source_address: "{{ lan_network }}"
+        dest_ports: [53]
+        log: false
+        enabled: true
+
+    - name: Allow DHCP from LAN
+      firewall_rule:
+        name: allow-dhcp-lan
+        description: DHCP requests from LAN
+        action: allow
+        interface: lan0
+        direction: inbound
+        protocol: udp
+        source_address: "{{ lan_network }}"
+        dest_ports: [67, 68]
+        log: false
+        enabled: true
+
+    - name: Allow LAN to internet
+      firewall_rule:
+        name: allow-lan-outbound
+        description: Allow LAN clients to access internet
+        action: allow
+        interface: lan0
+        direction: outbound
+        source_address: "{{ lan_network }}"
+        log: false
+        enabled: true
+
+    - name: Allow management from LAN
+      firewall_rule:
+        name: allow-mgmt-lan
+        description: Firewall management from LAN
+        action: allow
+        interface: lan0
+        direction: inbound
+        protocol: tcp
+        source_address: "{{ lan_network }}"
+        dest_ports: [22, 443]
+        log: false
+        enabled: true
+
+    # ========================================
+    # NAT Rules
+    # ========================================
+
+    - name: NAT for web server
+      nat_rule:
+        name: web-server-nat
+        description: Port forward HTTP/HTTPS to DMZ web server
+        nat_type: port_forward
+        interface: wan0
+
+    - name: NAT for mail server
+      nat_rule:
+        name: mail-server-nat
+        description: Port forward mail ports to DMZ mail server
+        nat_type: port_forward
+        interface: wan0
+
+    - name: Outbound NAT for LAN
+      nat_rule:
+        name: lan-outbound-nat
+        description: Source NAT for LAN internet access
+        nat_type: source
+        interface: wan0
+
+  handlers:
+    - name: Apply firewall configuration
+      command: patronus apply /etc/patronus/config/*.yaml
+      listen: "reload firewall"

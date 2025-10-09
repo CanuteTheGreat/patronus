@@ -1,0 +1,15 @@
+# Configuration file for Patronus
+
+# User and group to run Patronus as
+PATRONUS_USER="patronus"
+PATRONUS_GROUP="patronus"
+
+# Web interface listen address
+# Format: IP:PORT
+PATRONUS_WEB_ADDR="0.0.0.0:8080"
+
+# Additional command-line arguments for web interface
+#PATRONUS_WEB_EXTRA_ARGS=""
+
+# Configuration file location
+#PATRONUS_CONFIG="/etc/patronus/patronus.toml"

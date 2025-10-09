@@ -1,0 +1,22 @@
+[Unit]
+Description=Patronus Web Interface
+After=network.target patronus-firewall.service
+Wants=patronus-firewall.service
+
+[Service]
+Type=simple
+User=patronus
+Group=patronus
+ExecStart=/usr/bin/patronus web --addr 0.0.0.0:8080
+Restart=on-failure
+RestartSec=10s
+
+# Security hardening
+PrivateTmp=yes
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/patronus /var/log/patronus
+
+[Install]
+WantedBy=multi-user.target

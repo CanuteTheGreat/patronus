@@ -1,0 +1,59 @@
+# Patronus Firewall Configuration
+# This file uses TOML format
+
+[system]
+hostname = "patronus"
+domain = "local"
+timezone = "UTC"
+
+[network]
+# Primary interfaces
+wan_interface = "eth0"
+lan_interface = "eth1"
+
+[firewall]
+# Default policies
+default_input = "drop"
+default_forward = "drop"
+default_output = "accept"
+
+# Enable IPv6
+ipv6 = true
+
+[web]
+# Web interface settings
+listen_addr = "0.0.0.0"
+listen_port = 8080
+# Use HTTPS in production
+use_tls = false
+# tls_cert = "/etc/patronus/ssl/cert.pem"
+# tls_key = "/etc/patronus/ssl/key.pem"
+
+[dns]
+# Enable DNS forwarder
+enabled = false
+forwarders = ["8.8.8.8", "8.8.4.4", "1.1.1.1"]
+
+[dhcp]
+# DHCP server configuration
+enabled = false
+# range_start = "192.168.1.100"
+# range_end = "192.168.1.200"
+# gateway = "192.168.1.1"
+# lease_time = 86400
+
+[vpn.wireguard]
+enabled = false
+# listen_port = 51820
+
+[vpn.openvpn]
+enabled = false
+# port = 1194
+
+[monitoring]
+enabled = false
+# prometheus_port = 9090
+
+[logging]
+level = "info"
+# Levels: trace, debug, info, warn, error

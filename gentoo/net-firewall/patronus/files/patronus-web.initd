@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+# Copyright 2025 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v3
+
+description="Patronus Web Interface"
+
+command="/usr/bin/patronus"
+command_args="web --addr ${PATRONUS_WEB_ADDR:-0.0.0.0:8080}"
+command_background=true
+command_user="${PATRONUS_USER:-patronus}:${PATRONUS_GROUP:-patronus}"
+pidfile="/run/${RC_SVCNAME}.pid"
+
+output_log="/var/log/patronus/web.log"
+error_log="/var/log/patronus/web-error.log"
+
+depend() {
+	need net
+	use dns
+	after firewall
+}
+
+start_pre() {
+	checkpath --directory --owner ${command_user} --mode 0755 \
+		/var/log/patronus \
+		/var/lib/patronus
+}
