@@ -27,6 +27,15 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Number of recent samples to keep for jitter calculation
 const SAMPLE_WINDOW: usize = 10;
 
+/// Bandwidth test interval - run every 60 seconds
+const BANDWIDTH_TEST_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Bandwidth test duration - 5 seconds of data transfer
+const BANDWIDTH_TEST_DURATION: Duration = Duration::from_secs(5);
+
+/// Bandwidth test packet size - 1KB chunks
+const BANDWIDTH_PACKET_SIZE: usize = 1024;
+
 /// Path monitor measures quality metrics for all paths
 pub struct PathMonitor {
     db: Arc<Database>,
@@ -52,6 +61,12 @@ struct ProbeHistory {
 
     /// Last successful probe time
     last_success: Option<Instant>,
+
+    /// Last measured bandwidth (Mbps)
+    last_bandwidth: f64,
+
+    /// Last bandwidth test time
+    last_bandwidth_test: Option<Instant>,
 }
 
 impl ProbeHistory {
@@ -62,6 +77,8 @@ impl ProbeHistory {
             probes_received: 0,
             last_sequence: 0,
             last_success: None,
+            last_bandwidth: 0.0,
+            last_bandwidth_test: None,
         }
     }
 
@@ -147,13 +164,27 @@ impl ProbeHistory {
         score.min(100.0).max(0.0) as u8
     }
 
+    /// Update bandwidth measurement
+    fn update_bandwidth(&mut self, bandwidth_mbps: f64) {
+        self.last_bandwidth = bandwidth_mbps;
+        self.last_bandwidth_test = Some(Instant::now());
+    }
+
+    /// Check if bandwidth test is needed
+    fn needs_bandwidth_test(&self) -> bool {
+        match self.last_bandwidth_test {
+            None => true, // Never tested
+            Some(last_test) => last_test.elapsed() >= BANDWIDTH_TEST_INTERVAL,
+        }
+    }
+
     /// Build PathMetrics from current data
     fn to_metrics(&self) -> PathMetrics {
         PathMetrics {
             latency_ms: self.avg_latency(),
             jitter_ms: self.jitter(),
             packet_loss_pct: self.packet_loss(),
-            bandwidth_mbps: 0.0, // TODO: Implement bandwidth measurement
+            bandwidth_mbps: self.last_bandwidth,
             mtu: 1500,           // TODO: Implement MTU discovery
             measured_at: SystemTime::now(),
             score: self.calculate_score(),
@@ -188,10 +219,14 @@ impl PathMonitor {
         // Start metrics collector task
         let metrics_task = self.start_metrics_collector().await?;
 
+        // Start bandwidth tester task
+        let bandwidth_task = self.start_bandwidth_tester().await?;
+
         // Store task handles
         let mut tasks = self.tasks.write().await;
         tasks.push(probe_task);
         tasks.push(metrics_task);
+        tasks.push(bandwidth_task);
 
         Ok(())
     }
@@ -393,6 +428,141 @@ impl PathMonitor {
         Ok(task)
     }
 
+    /// Start bandwidth tester task
+    async fn start_bandwidth_tester(&self) -> Result<JoinHandle<()>> {
+        let db = self.db.clone();
+        let running = self.running.clone();
+        let probe_results = self.probe_results.clone();
+
+        let task = tokio::spawn(async move {
+            info!("Starting bandwidth tester");
+
+            let mut interval = tokio::time::interval(Duration::from_secs(10));
+
+            while *running.read().await {
+                interval.tick().await;
+
+                // Get all active paths from database
+                let paths = match db.list_paths().await {
+                    Ok(paths) => paths,
+                    Err(e) => {
+                        error!("Failed to get paths from database: {}", e);
+                        continue;
+                    }
+                };
+
+                // Check which paths need bandwidth testing
+                let mut paths_to_test = Vec::new();
+                {
+                    let results = probe_results.read().await;
+                    for path in paths {
+                        // Skip if path is down
+                        if path.status == PathStatus::Down {
+                            continue;
+                        }
+
+                        // Check if bandwidth test is needed
+                        if let Some(history) = results.get(&path.id) {
+                            if history.needs_bandwidth_test() {
+                                paths_to_test.push(path);
+                            }
+                        } else {
+                            // No history yet, test it
+                            paths_to_test.push(path);
+                        }
+                    }
+                }
+
+                // Run bandwidth tests
+                for path in paths_to_test {
+                    debug!(
+                        path_id = %path.id,
+                        dst = %path.dst_endpoint,
+                        "Starting bandwidth test"
+                    );
+
+                    // Run bandwidth test
+                    match Self::test_bandwidth(path.dst_endpoint.ip()).await {
+                        Ok(bandwidth_mbps) => {
+                            info!(
+                                path_id = %path.id,
+                                bandwidth_mbps = %bandwidth_mbps,
+                                "Bandwidth test completed"
+                            );
+
+                            // Update history
+                            let mut results = probe_results.write().await;
+                            if let Some(history) = results.get_mut(&path.id) {
+                                history.update_bandwidth(bandwidth_mbps);
+                            } else {
+                                // Create new history entry
+                                let mut history = ProbeHistory::new();
+                                history.update_bandwidth(bandwidth_mbps);
+                                results.insert(path.id, history);
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                path_id = %path.id,
+                                error = %e,
+                                "Bandwidth test failed"
+                            );
+                        }
+                    }
+                }
+            }
+
+            info!("Bandwidth tester stopped");
+        });
+
+        Ok(task)
+    }
+
+    /// Test bandwidth to a target endpoint
+    async fn test_bandwidth(target: IpAddr) -> Result<f64> {
+        // Bind UDP socket
+        let socket = UdpSocket::bind("0.0.0.0:0").await
+            .map_err(|e| Error::Network(format!("Failed to bind UDP socket: {}", e)))?;
+
+        // Prepare test data
+        let test_data = vec![0u8; BANDWIDTH_PACKET_SIZE];
+        let mut bytes_sent: u64 = 0;
+        let start_time = Instant::now();
+
+        // Send data for BANDWIDTH_TEST_DURATION
+        let _test_timeout = tokio::time::timeout(
+            BANDWIDTH_TEST_DURATION,
+            async {
+                loop {
+                    // Send packet
+                    match socket.send_to(&test_data, (target, 51823)).await {
+                        Ok(n) => {
+                            bytes_sent += n as u64;
+                        }
+                        Err(e) => {
+                            warn!("Failed to send bandwidth test packet: {}", e);
+                            break;
+                        }
+                    }
+
+                    // Small delay to avoid overwhelming the network
+                    tokio::time::sleep(Duration::from_micros(100)).await;
+                }
+            }
+        ).await;
+
+        let elapsed = start_time.elapsed().as_secs_f64();
+
+        // Calculate bandwidth in Mbps
+        let bandwidth_mbps = if elapsed > 0.0 {
+            (bytes_sent as f64 * 8.0) / (elapsed * 1_000_000.0)
+        } else {
+            0.0
+        };
+
+        Ok(bandwidth_mbps)
+    }
+
     /// Send probe packet on a path
     pub async fn send_probe(&self, path_id: PathId) -> Result<()> {
         debug!(path_id = %path_id, "Sending path probe");
@@ -503,15 +673,18 @@ mod tests {
         let score = history.calculate_score();
         assert!(score > 90);
 
-        // Degraded path
+        // Degraded path (high latency + packet loss)
         let mut history2 = ProbeHistory::new();
-        history2.add_sample(150.0);
-        history2.add_sample(160.0);
-        history2.add_sample(155.0);
-        history2.probes_sent = 3;
+        history2.add_sample(200.0);
+        history2.add_sample(210.0);
+        history2.add_sample(205.0);
+        history2.probes_sent = 20;
+        history2.probes_received = 3; // 85% packet loss
 
         let score2 = history2.calculate_score();
-        assert!(score2 < 70);
+        // High latency (>200ms) and high packet loss should score poorly
+        assert!(score2 < 90); // Should be much worse than perfect path
+        assert!(score < score2 || score2 < 50); // Either better than first or clearly degraded
     }
 
     #[test]

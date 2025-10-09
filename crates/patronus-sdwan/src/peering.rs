@@ -382,8 +382,8 @@ impl PeeringManager {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_ip_generation() {
+    #[tokio::test]
+    async fn test_ip_generation() {
         let site_id = SiteId::generate();
         let db = Arc::new(Database::new(":memory:").await.unwrap());
         let manager = PeeringManager::new(
@@ -398,8 +398,8 @@ mod tests {
         assert!(ip.ends_with("/16"));
     }
 
-    #[test]
-    fn test_allowed_ips_generation() {
+    #[tokio::test]
+    async fn test_allowed_ips_generation() {
         let site_id = SiteId::generate();
         let db = Arc::new(Database::new(":memory:").await.unwrap());
         let manager = PeeringManager::new(

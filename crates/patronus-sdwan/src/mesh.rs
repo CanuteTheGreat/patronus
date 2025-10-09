@@ -492,7 +492,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_announcement_verification() {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let mut secret_bytes = [0u8; 32];
+        use rand::RngCore;
+        OsRng.fill_bytes(&mut secret_bytes);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
         let site_id = SiteId::generate();
 
         let announcement = SiteAnnouncement {
