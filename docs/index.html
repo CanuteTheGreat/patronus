@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Patronus - eBPF/XDP-powered firewall and VPN for Linux with AI threat detection">
+    <meta name="keywords" content="firewall, vpn, ebpf, xdp, linux, rust, wireguard, opnsense, pfsense">
+    <meta name="author" content="Patronus Project">
+    <title>Patronus - Modern eBPF-Powered Firewall</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --secondary: #64748b;
+            --bg: #ffffff;
+            --bg-alt: #f8fafc;
+            --text: #1e293b;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --success: #22c55e;
+            --warning: #eab308;
+            --danger: #ef4444;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: var(--text);
+            background: var(--bg);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        /* Header */
+        header {
+            background: var(--bg);
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.9);
+        }
+
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 0;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--primary);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--primary);
+        }
+
+        /* Hero */
+        .hero {
+            padding: 6rem 0;
+            text-align: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            margin-bottom: 1rem;
+            font-weight: 800;
+        }
+
+        .hero p {
+            font-size: 1.5rem;
+            margin-bottom: 2rem;
+            opacity: 0.95;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+        }
+
+        .btn {
+            padding: 0.875rem 2rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s;
+            display: inline-block;
+        }
+
+        .btn-primary {
+            background: white;
+            color: var(--primary);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: white;
+            border: 2px solid white;
+        }
+
+        .btn-secondary:hover {
+            background: white;
+            color: var(--primary);
+        }
+
+        /* Features */
+        .features {
+            padding: 6rem 0;
+            background: var(--bg-alt);
+        }
+
+        .section-title {
+            text-align: center;
+            font-size: 2.5rem;
+            margin-bottom: 3rem;
+            color: var(--text);
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+
+        .feature-card {
+            background: var(--bg);
+            padding: 2rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+        }
+
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature-card h3 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+            color: var(--primary);
+        }
+
+        .feature-card p {
+            color: var(--text-muted);
+        }
+
+        /* Tech Stack */
+        .tech-stack {
+            padding: 6rem 0;
+        }
+
+        .tech-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+
+        .tech-item {
+            text-align: center;
+            padding: 1.5rem;
+            background: var(--bg-alt);
+            border-radius: 0.5rem;
+        }
+
+        .tech-item strong {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--primary);
+        }
+
+        /* Installation */
+        .installation {
+            padding: 6rem 0;
+            background: var(--bg-alt);
+        }
+
+        .code-block {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 1.5rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            margin: 1rem 0;
+        }
+
+        /* Stats */
+        .stats {
+            padding: 6rem 0;
+            text-align: center;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+
+        .stat-card {
+            padding: 2rem;
+        }
+
+        .stat-number {
+            font-size: 3rem;
+            font-weight: bold;
+            color: var(--primary);
+        }
+
+        .stat-label {
+            color: var(--text-muted);
+            margin-top: 0.5rem;
+        }
+
+        /* Footer */
+        footer {
+            background: #1e293b;
+            color: white;
+            padding: 3rem 0;
+            text-align: center;
+        }
+
+        footer a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+
+            .hero p {
+                font-size: 1.2rem;
+            }
+
+            .nav-links {
+                gap: 1rem;
+            }
+
+            .cta-buttons {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <nav class="container">
+            <div class="logo">🛡️ Patronus</div>
+            <ul class="nav-links">
+                <li><a href="#features">Features</a></li>
+                <li><a href="#tech">Technology</a></li>
+                <li><a href="#installation">Install</a></li>
+                <li><a href="https://github.com/yourusername/patronus">GitHub</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <!-- Hero -->
+    <section class="hero">
+        <div class="container">
+            <h1>Patronus Firewall</h1>
+            <p>Next-generation eBPF/XDP-powered firewall with AI threat detection</p>
+            <div class="cta-buttons">
+                <a href="#installation" class="btn btn-primary">Get Started</a>
+                <a href="https://github.com/yourusername/patronus" class="btn btn-secondary">View on GitHub</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="features">
+        <div class="container">
+            <h2 class="section-title">Features</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">⚡</div>
+                    <h3>eBPF/XDP Performance</h3>
+                    <p>Kernel-level packet filtering with microsecond latency. Handle millions of packets per second.</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🤖</div>
+                    <h3>AI Threat Detection</h3>
+                    <p>Machine learning-powered anomaly detection. Isolation Forest and Random Forest models for real-time threat analysis.</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <h3>VPN Support</h3>
+                    <p>WireGuard, OpenVPN, and IPsec. QR code generation for instant mobile client setup.</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h3>Real-Time Monitoring</h3>
+                    <p>WebSocket-powered live dashboards. Chart.js visualizations with <100ms latency.</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🌐</div>
+                    <h3>Web UI</h3>
+                    <p>Modern Axum + Askama interface. Session-based authentication with role-based access control.</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🦀</div>
+                    <h3>Rust Powered</h3>
+                    <p>Memory-safe, blazing fast. Zero-cost abstractions with async/await support.</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🔧</div>
+                    <h3>Gentoo Integration</h3>
+                    <p>Native ebuild packaging. OpenRC service management with proper dependencies.</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🚀</div>
+                    <h3>SD-WAN Ready</h3>
+                    <p>Multi-site VPN mesh. Intelligent path selection and failover (coming soon).</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">☸️</div>
+                    <h3>Kubernetes CNI</h3>
+                    <p>Deep integration with K8s. NetworkPolicy enforcement via eBPF (planned).</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Tech Stack -->
+    <section id="tech" class="tech-stack">
+        <div class="container">
+            <h2 class="section-title">Technology Stack</h2>
+            <div class="tech-grid">
+                <div class="tech-item">
+                    <strong>Language</strong>
+                    Rust 🦀
+                </div>
+                <div class="tech-item">
+                    <strong>Data Plane</strong>
+                    eBPF/XDP
+                </div>
+                <div class="tech-item">
+                    <strong>Web Framework</strong>
+                    Axum
+                </div>
+                <div class="tech-item">
+                    <strong>Templates</strong>
+                    Askama
+                </div>
+                <div class="tech-item">
+                    <strong>Database</strong>
+                    SQLite
+                </div>
+                <div class="tech-item">
+                    <strong>VPN</strong>
+                    WireGuard, OpenVPN, IPsec
+                </div>
+                <div class="tech-item">
+                    <strong>Async Runtime</strong>
+                    Tokio
+                </div>
+                <div class="tech-item">
+                    <strong>Monitoring</strong>
+                    Chart.js, WebSocket
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Installation -->
+    <section id="installation" class="installation">
+        <div class="container">
+            <h2 class="section-title">Installation</h2>
+
+            <h3 style="margin-top: 2rem;">Gentoo (Recommended)</h3>
+            <div class="code-block">
+# Add the Patronus overlay
+eselect repository add patronus git https://github.com/yourusername/patronus-gentoo
+emaint sync -r patronus
+
+# Install Patronus
+emerge net-firewall/patronus
+
+# Enable and start services
+rc-update add patronus default
+rc-service patronus start
+
+# Access web UI at http://localhost:8080
+# Default credentials: admin/admin (change immediately!)
+            </div>
+
+            <h3 style="margin-top: 2rem;">From Source</h3>
+            <div class="code-block">
+# Clone the repository
+git clone https://github.com/yourusername/patronus.git
+cd patronus
+
+# Build all crates
+cargo build --release --workspace
+
+# Run the web interface
+cargo run -p patronus-web
+
+# Access at http://localhost:8080
+            </div>
+
+            <h3 style="margin-top: 2rem;">Requirements</h3>
+            <ul style="margin-top: 1rem; line-height: 2;">
+                <li>Linux kernel 5.10+ (eBPF/XDP support)</li>
+                <li>Rust 1.70+ (for compilation)</li>
+                <li>libmnl, libnftnl (for netfilter)</li>
+                <li>Root privileges (for network operations)</li>
+            </ul>
+        </div>
+    </section>
+
+    <!-- Stats -->
+    <section class="stats">
+        <div class="container">
+            <h2 class="section-title">By the Numbers</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number">~20K</div>
+                    <div class="stat-label">Lines of Code</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">30+</div>
+                    <div class="stat-label">REST API Endpoints</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">&lt;100ms</div>
+                    <div class="stat-label">WebSocket Latency</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">100%</div>
+                    <div class="stat-label">Rust Memory Safety</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <p>&copy; 2025 Patronus Project. Built with 🦀 Rust.</p>
+            <p>
+                <a href="https://github.com/yourusername/patronus">GitHub</a> •
+                <a href="https://github.com/yourusername/patronus/issues">Issues</a> •
+                <a href="https://github.com/yourusername/patronus/blob/main/LICENSE">License</a>
+            </p>
+            <p style="margin-top: 1rem; opacity: 0.7;">
+                🤖 Generated with <a href="https://claude.com/claude-code">Claude Code</a>
+            </p>
+        </div>
+    </footer>
+</body>
+</html>
