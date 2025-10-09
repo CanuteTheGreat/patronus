@@ -1,0 +1,809 @@
+{% extends "base.html" %}
+
+{% block title %}AI & Monitoring - Patronus Firewall{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">AI Threat Detection & Monitoring</h1>
+    <p class="page-subtitle">Machine learning-powered security and real-time system monitoring</p>
+    <div class="page-actions">
+        <button class="btn btn-secondary btn-sm" onclick="exportMetrics()">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+            </svg>
+            Export Metrics
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="trainAIModel()">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>
+            </svg>
+            Retrain AI Model
+        </button>
+    </div>
+</div>
+
+<!-- AI & Monitoring Stats -->
+<div class="stat-grid">
+    <div class="stat-card success">
+        <h3>Threat Detection</h3>
+        <div class="value">{{ threats_detected_today }}</div>
+        <div class="label">{{ threats_blocked_today }} blocked today</div>
+    </div>
+
+    <div class="stat-card info">
+        <h3>AI Model Accuracy</h3>
+        <div class="value">{{ ai_model_accuracy }}%</div>
+        <div class="label">{{ ai_model_confidence }}% confidence</div>
+    </div>
+
+    <div class="stat-card warning">
+        <h3>System Health</h3>
+        <div class="value">{{ system_health_score }}/100</div>
+        <div class="label">{{ active_alerts }} active alerts</div>
+    </div>
+
+    <div class="stat-card danger">
+        <h3>Packet Analysis</h3>
+        <div class="value">{{ packets_analyzed_rate }}/s</div>
+        <div class="label">{{ packets_total }} total</div>
+    </div>
+</div>
+
+<!-- AI & Monitoring Tabs -->
+<div class="card">
+    <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab(event, 'threats-tab')">
+            AI Threat Detection
+        </button>
+        <button class="tab-btn" onclick="switchTab(event, 'alerts-tab')">
+            Alerts & Events
+        </button>
+        <button class="tab-btn" onclick="switchTab(event, 'metrics-tab')">
+            System Metrics
+        </button>
+        <button class="tab-btn" onclick="switchTab(event, 'logs-tab')">
+            Live Logs
+        </button>
+    </div>
+
+    <!-- AI Threat Detection Tab -->
+    <div id="threats-tab" class="tab-content active">
+        <div class="card-header">
+            <h2 class="card-title">AI-Detected Threats</h2>
+            <div class="flex gap-2">
+                <input type="search" placeholder="Search threats..." class="search-input"
+                       oninput="filterTable(this.value, 'threats-table')">
+                <select class="search-input" style="width: auto;" onchange="filterBySeverity(this.value)">
+                    <option value="">All Severities</option>
+                    <option value="critical">Critical</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table id="threats-table">
+                <thead>
+                    <tr>
+                        <th width="30"></th>
+                        <th>Timestamp</th>
+                        <th>Threat Type</th>
+                        <th>Source IP</th>
+                        <th>Destination</th>
+                        <th>Severity</th>
+                        <th>Confidence</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for threat in ai_threats %}
+                    <tr class="data-row" data-severity="{{ threat.severity }}">
+                        <td>
+                            <button class="btn-icon" onclick="toggleRowDetails(this)">▶</button>
+                        </td>
+                        <td class="text-sm">{{ threat.timestamp }}</td>
+                        <td><strong>{{ threat.threat_type }}</strong></td>
+                        <td class="text-sm monospace">{{ threat.source_ip }}</td>
+                        <td class="text-sm">{{ threat.destination }}</td>
+                        <td>
+                            {% if threat.severity == "critical" %}
+                            <span class="badge danger">Critical</span>
+                            {% elsif threat.severity == "high" %}
+                            <span class="badge warning">High</span>
+                            {% elsif threat.severity == "medium" %}
+                            <span class="badge info">Medium</span>
+                            {% else %}
+                            <span class="badge">Low</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-sm">{{ threat.confidence }}%</td>
+                        <td>
+                            {% if threat.blocked %}
+                            <span class="badge success">Blocked</span>
+                            {% else %}
+                            <span class="badge warning">Detected</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <button class="btn-icon" title="More actions">•••</button>
+                        </td>
+                    </tr>
+                    <tr class="row-details hidden">
+                        <td colspan="9" style="background: var(--bg); padding: 1.5rem;">
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
+                                <div>
+                                    <div class="text-sm text-muted">Detection Method</div>
+                                    <div class="font-bold">{{ threat.detection_method }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">ML Model</div>
+                                    <div class="font-bold">{{ threat.ml_model }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">Anomaly Score</div>
+                                    <div class="font-bold">{{ threat.anomaly_score }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">Port</div>
+                                    <div class="font-bold">{{ threat.port }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">Protocol</div>
+                                    <div class="font-bold">{{ threat.protocol }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">Packet Count</div>
+                                    <div class="font-bold">{{ threat.packet_count }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">Bytes Transferred</div>
+                                    <div class="font-bold">{{ threat.bytes }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">GeoIP</div>
+                                    <div class="font-bold">{{ threat.geoip.as_ref().unwrap_or(&"Unknown".to_string()) }}</div>
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 1rem;">
+                                <div class="text-sm text-muted">Threat Intelligence</div>
+                                <div class="font-bold mt-1">{{ threat.threat_intel.as_ref().unwrap_or(&"No additional intelligence available".to_string()) }}</div>
+                            </div>
+
+                            <div style="margin-top: 1rem;">
+                                <div class="text-sm text-muted">Recommended Action</div>
+                                <div class="font-bold mt-1">{{ threat.recommended_action }}</div>
+                            </div>
+
+                            <div class="flex gap-2 mt-4">
+                                {% if !threat.blocked %}
+                                <button class="btn btn-danger btn-sm" onclick="blockThreat('{{ threat.id }}')">
+                                    Block Now
+                                </button>
+                                {% endif %}
+                                <button class="btn btn-primary btn-sm" onclick="createRuleFromThreat('{{ threat.id }}')">
+                                    Create Firewall Rule
+                                </button>
+                                <button class="btn btn-secondary btn-sm" onclick="whitelistThreat('{{ threat.id }}')">
+                                    Whitelist (False Positive)
+                                </button>
+                                <button class="btn btn-secondary btn-sm" onclick="viewPacketCapture('{{ threat.id }}')">
+                                    View PCAP
+                                </button>
+                                <button class="btn btn-secondary btn-sm" onclick="investigateThreat('{{ threat.id }}')">
+                                    Deep Investigation
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card-advanced hidden">
+            <h3 class="mb-2 font-bold">AI Model Configuration</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
+                <div>
+                    <label class="block text-sm font-bold mb-1">Detection Algorithm</label>
+                    <select class="w-full">
+                        <option selected>Isolation Forest (Unsupervised)</option>
+                        <option>Random Forest (Supervised)</option>
+                        <option>Neural Network (Deep Learning)</option>
+                        <option>Ensemble (All Models)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Sensitivity Threshold</label>
+                    <input type="range" min="0" max="100" value="75" class="w-full" oninput="this.nextElementSibling.textContent=this.value">
+                    <span>75</span>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Minimum Confidence</label>
+                    <input type="number" min="0" max="100" value="80" class="w-full" placeholder="%">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Training Interval</label>
+                    <select class="w-full">
+                        <option>Hourly</option>
+                        <option selected>Daily</option>
+                        <option>Weekly</option>
+                        <option>Manual Only</option>
+                    </select>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Auto-block Critical Threats
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Enable Feature Extraction
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Use Threat Intelligence Feeds
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox"> Quarantine Unknown Traffic
+                    </label>
+                </div>
+            </div>
+            <div class="mt-4">
+                <h4 class="font-bold mb-2">Threat Intelligence Sources</h4>
+                <div style="display: grid; gap: 0.5rem;">
+                    <label><input type="checkbox" checked> AlienVault OTX</label>
+                    <label><input type="checkbox" checked> Abuse.ch</label>
+                    <label><input type="checkbox" checked> Emerging Threats</label>
+                    <label><input type="checkbox"> Custom Feeds ({{ custom_feed_count }})</label>
+                </div>
+                <button class="btn btn-secondary btn-sm mt-2" onclick="manageThreatFeeds()">Manage Feeds</button>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button class="btn btn-primary btn-sm">Save Configuration</button>
+                <button class="btn btn-secondary btn-sm" onclick="trainAIModel()">Retrain Model Now</button>
+                <button class="btn btn-secondary btn-sm">Reset to Defaults</button>
+            </div>
+        </div>
+        <button class="btn btn-link mt-4" onclick="toggleAdvanced(this)">AI Configuration ▼</button>
+    </div>
+
+    <!-- Alerts & Events Tab -->
+    <div id="alerts-tab" class="tab-content">
+        <div class="card-header">
+            <h2 class="card-title">System Alerts & Events</h2>
+            <div class="flex gap-2">
+                <input type="search" placeholder="Search alerts..." class="search-input"
+                       oninput="filterTable(this.value, 'alerts-table')">
+                <button class="btn btn-sm btn-secondary" onclick="acknowledgeAllAlerts()">
+                    Mark All Read
+                </button>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table id="alerts-table">
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Alert Type</th>
+                        <th>Severity</th>
+                        <th>Component</th>
+                        <th>Message</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for alert in system_alerts %}
+                    <tr class="data-row">
+                        <td class="text-sm">{{ alert.timestamp }}</td>
+                        <td><strong>{{ alert.alert_type }}</strong></td>
+                        <td>
+                            {% if alert.severity == "critical" %}
+                            <span class="badge danger">Critical</span>
+                            {% elsif alert.severity == "warning" %}
+                            <span class="badge warning">Warning</span>
+                            {% else %}
+                            <span class="badge info">Info</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-sm">{{ alert.component }}</td>
+                        <td class="text-sm">{{ alert.message }}</td>
+                        <td>
+                            {% if alert.acknowledged %}
+                            <span class="badge">Read</span>
+                            {% else %}
+                            <span class="badge warning">Unread</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if !alert.acknowledged %}
+                            <button class="btn btn-sm btn-secondary" onclick="acknowledgeAlert('{{ alert.id }}')">
+                                Acknowledge
+                            </button>
+                            {% endif %}
+                            <button class="btn-icon" onclick="deleteAlert('{{ alert.id }}')">🗑</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card-advanced hidden">
+            <h3 class="mb-2 font-bold">Alert Configuration</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
+                <div>
+                    <label class="block text-sm font-bold mb-1">Alert Retention</label>
+                    <select class="w-full">
+                        <option>7 days</option>
+                        <option selected>30 days</option>
+                        <option>90 days</option>
+                        <option>1 year</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Email Notifications</label>
+                    <input type="email" class="w-full" placeholder="admin@example.com">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Webhook URL</label>
+                    <input type="url" class="w-full" placeholder="https://hooks.slack.com/...">
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Email on Critical Alerts
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox"> Email on Warning Alerts
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Send to Syslog Server
+                    </label>
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button class="btn btn-primary btn-sm">Save Configuration</button>
+                <button class="btn btn-secondary btn-sm">Test Notification</button>
+            </div>
+        </div>
+        <button class="btn btn-link mt-4" onclick="toggleAdvanced(this)">Alert Settings ▼</button>
+    </div>
+
+    <!-- System Metrics Tab -->
+    <div id="metrics-tab" class="tab-content">
+        <div class="card-header">
+            <h2 class="card-title">Real-Time System Metrics</h2>
+            <div class="flex gap-2">
+                <select class="search-input" style="width: auto;" onchange="changeMetricTimerange(this.value)">
+                    <option value="1h">Last Hour</option>
+                    <option value="24h" selected>Last 24 Hours</option>
+                    <option value="7d">Last 7 Days</option>
+                    <option value="30d">Last 30 Days</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Metrics Grid -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem;">
+            <!-- CPU Usage Chart -->
+            <div class="card">
+                <h3 class="font-bold mb-2">CPU Usage</h3>
+                <div style="height: 200px; background: var(--bg); border-radius: 0.5rem; display: flex; align-items: center; justify-content: center;">
+                    <span class="text-muted">Chart Placeholder ({{ cpu_usage }}%)</span>
+                </div>
+                <div class="mt-2 text-sm text-muted">
+                    Current: {{ cpu_usage }}% | Avg: {{ cpu_avg }}% | Peak: {{ cpu_peak }}%
+                </div>
+            </div>
+
+            <!-- Memory Usage Chart -->
+            <div class="card">
+                <h3 class="font-bold mb-2">Memory Usage</h3>
+                <div style="height: 200px; background: var(--bg); border-radius: 0.5rem; display: flex; align-items: center; justify-content: center;">
+                    <span class="text-muted">Chart Placeholder ({{ memory_usage }}%)</span>
+                </div>
+                <div class="mt-2 text-sm text-muted">
+                    Used: {{ memory_used }} / {{ memory_total }} | Swap: {{ swap_used }}
+                </div>
+            </div>
+
+            <!-- Network Bandwidth Chart -->
+            <div class="card">
+                <h3 class="font-bold mb-2">Network Bandwidth</h3>
+                <div style="height: 200px; background: var(--bg); border-radius: 0.5rem; display: flex; align-items: center; justify-content: center;">
+                    <span class="text-muted">Chart Placeholder</span>
+                </div>
+                <div class="mt-2 text-sm text-muted">
+                    ↓ {{ bandwidth_in }} | ↑ {{ bandwidth_out }}
+                </div>
+            </div>
+
+            <!-- Disk I/O Chart -->
+            <div class="card">
+                <h3 class="font-bold mb-2">Disk I/O</h3>
+                <div style="height: 200px; background: var(--bg); border-radius: 0.5rem; display: flex; align-items: center; justify-content: center;">
+                    <span class="text-muted">Chart Placeholder</span>
+                </div>
+                <div class="mt-2 text-sm text-muted">
+                    Read: {{ disk_read_rate }} | Write: {{ disk_write_rate }}
+                </div>
+            </div>
+
+            <!-- Firewall Throughput Chart -->
+            <div class="card">
+                <h3 class="font-bold mb-2">Firewall Throughput</h3>
+                <div style="height: 200px; background: var(--bg); border-radius: 0.5rem; display: flex; align-items: center; justify-content: center;">
+                    <span class="text-muted">Chart Placeholder</span>
+                </div>
+                <div class="mt-2 text-sm text-muted">
+                    {{ firewall_pps }} packets/sec | {{ firewall_bps }} bits/sec
+                </div>
+            </div>
+
+            <!-- Connection States Chart -->
+            <div class="card">
+                <h3 class="font-bold mb-2">Connection States</h3>
+                <div style="height: 200px; background: var(--bg); border-radius: 0.5rem; display: flex; align-items: center; justify-content: center;">
+                    <span class="text-muted">Chart Placeholder</span>
+                </div>
+                <div class="mt-2 text-sm text-muted">
+                    Established: {{ conn_established }} | SYN: {{ conn_syn }} | TIME_WAIT: {{ conn_time_wait }}
+                </div>
+            </div>
+        </div>
+
+        <div class="card-advanced hidden">
+            <h3 class="mb-2 font-bold">Metrics Export & Storage</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
+                <div>
+                    <label class="block text-sm font-bold mb-1">Retention Period</label>
+                    <select class="w-full">
+                        <option>7 days</option>
+                        <option>30 days</option>
+                        <option selected>90 days</option>
+                        <option>1 year</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Sample Interval</label>
+                    <select class="w-full">
+                        <option>1 second</option>
+                        <option>5 seconds</option>
+                        <option selected>10 seconds</option>
+                        <option>1 minute</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Prometheus Endpoint</label>
+                    <input type="text" class="w-full" value="/metrics" readonly>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Enable Prometheus Export
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox"> Export to InfluxDB
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox"> Export to Grafana Cloud
+                    </label>
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button class="btn btn-primary btn-sm">Save Configuration</button>
+                <button class="btn btn-secondary btn-sm" onclick="exportMetrics()">Export Current Metrics</button>
+            </div>
+        </div>
+        <button class="btn btn-link mt-4" onclick="toggleAdvanced(this)">Metrics Settings ▼</button>
+    </div>
+
+    <!-- Live Logs Tab -->
+    <div id="logs-tab" class="tab-content">
+        <div class="card-header">
+            <h2 class="card-title">Live System Logs</h2>
+            <div class="flex gap-2">
+                <select class="search-input" style="width: auto;" onchange="changeLogSource(this.value)">
+                    <option value="all">All Logs</option>
+                    <option value="firewall">Firewall</option>
+                    <option value="vpn">VPN</option>
+                    <option value="dns">DNS</option>
+                    <option value="dhcp">DHCP</option>
+                    <option value="system">System</option>
+                </select>
+                <button class="btn btn-sm btn-secondary" onclick="pauseLiveLogs()">
+                    ⏸ Pause
+                </button>
+                <button class="btn btn-sm btn-secondary" onclick="clearLogs()">
+                    Clear Display
+                </button>
+            </div>
+        </div>
+
+        <div style="background: #1a1a1a; color: #00ff00; font-family: monospace; font-size: 0.875rem; padding: 1rem; border-radius: 0.5rem; height: 500px; overflow-y: auto;" id="live-logs">
+            {% for log in recent_logs %}
+            <div style="margin-bottom: 0.25rem;">
+                <span style="color: #888;">[{{ log.timestamp }}]</span>
+                <span style="color: {% if log.level == 'ERROR' %}#ff0000{% elsif log.level == 'WARN' %}#ffaa00{% else %}#00ff00{% endif %};">[{{ log.level }}]</span>
+                <span style="color: #00aaff;">[{{ log.component }}]</span>
+                {{ log.message }}
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="card-advanced hidden">
+            <h3 class="mb-2 font-bold">Log Configuration</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
+                <div>
+                    <label class="block text-sm font-bold mb-1">Log Level</label>
+                    <select class="w-full">
+                        <option>DEBUG</option>
+                        <option selected>INFO</option>
+                        <option>WARN</option>
+                        <option>ERROR</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Log Retention</label>
+                    <select class="w-full">
+                        <option>7 days</option>
+                        <option selected>30 days</option>
+                        <option>90 days</option>
+                        <option>1 year</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Syslog Server</label>
+                    <input type="text" class="w-full" placeholder="syslog.example.com:514">
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Log Firewall Drops
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Log VPN Connections
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox"> Log All DNS Queries
+                    </label>
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button class="btn btn-primary btn-sm">Save Configuration</button>
+                <button class="btn btn-secondary btn-sm">Download Logs</button>
+                <button class="btn btn-secondary btn-sm">Rotate Logs Now</button>
+            </div>
+        </div>
+        <button class="btn btn-link mt-4" onclick="toggleAdvanced(this)">Log Settings ▼</button>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Tab switching
+function switchTab(event, tabId) {
+    document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.remove('active');
+    });
+
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+
+    document.getElementById(tabId).classList.add('active');
+    event.target.classList.add('active');
+}
+
+// Toggle row details
+function toggleRowDetails(btn) {
+    const row = btn.closest('tr');
+    const detailsRow = row.nextElementSibling;
+    if (detailsRow && detailsRow.classList.contains('row-details')) {
+        detailsRow.classList.toggle('show');
+        btn.textContent = detailsRow.classList.contains('show') ? '▼' : '▶';
+    }
+}
+
+// Filter table
+function filterTable(query, tableId) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+
+    const rows = table.querySelectorAll('tbody tr.data-row');
+    query = query.toLowerCase();
+
+    rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        const detailsRow = row.nextElementSibling;
+
+        if (text.includes(query)) {
+            row.style.display = '';
+            if (detailsRow && detailsRow.classList.contains('row-details')) {
+                detailsRow.style.display = '';
+            }
+        } else {
+            row.style.display = 'none';
+            if (detailsRow && detailsRow.classList.contains('row-details')) {
+                detailsRow.style.display = 'none';
+            }
+        }
+    });
+}
+
+// Filter by severity
+function filterBySeverity(severity) {
+    const table = document.getElementById('threats-table');
+    const rows = table.querySelectorAll('tbody tr.data-row');
+
+    rows.forEach(row => {
+        const rowSeverity = row.getAttribute('data-severity');
+        const detailsRow = row.nextElementSibling;
+
+        if (severity === '' || rowSeverity === severity) {
+            row.style.display = '';
+            if (detailsRow && detailsRow.classList.contains('row-details')) {
+                detailsRow.style.display = '';
+            }
+        } else {
+            row.style.display = 'none';
+            if (detailsRow && detailsRow.classList.contains('row-details')) {
+                detailsRow.style.display = 'none';
+            }
+        }
+    });
+}
+
+// Threat actions
+function blockThreat(id) {
+    if (confirm('Block this threat source immediately?')) {
+        alert(`Blocking threat ${id}...`);
+        // TODO: API call
+    }
+}
+
+function createRuleFromThreat(id) {
+    alert(`Creating firewall rule from threat ${id}...`);
+    // TODO: Redirect to firewall page with pre-filled form
+}
+
+function whitelistThreat(id) {
+    if (confirm('Mark this as a false positive? The AI model will be retrained.')) {
+        alert(`Whitelisting threat ${id}...`);
+        // TODO: API call
+    }
+}
+
+function viewPacketCapture(id) {
+    alert(`Viewing packet capture for threat ${id}...`);
+    // TODO: Show PCAP analysis modal
+}
+
+function investigateThreat(id) {
+    alert(`Starting deep investigation for threat ${id}...`);
+    // TODO: Show investigation dashboard
+}
+
+// AI model actions
+function trainAIModel() {
+    if (confirm('Retrain AI model? This may take several minutes.')) {
+        alert('Training AI model with latest data...');
+        // TODO: API call with progress indicator
+    }
+}
+
+function manageThreatFeeds() {
+    alert('Manage threat intelligence feeds...');
+    // TODO: Show feeds management modal
+}
+
+// Alert actions
+function acknowledgeAlert(id) {
+    alert(`Acknowledging alert ${id}...`);
+    // TODO: API call
+}
+
+function acknowledgeAllAlerts() {
+    if (confirm('Mark all alerts as read?')) {
+        alert('Acknowledging all alerts...');
+        // TODO: API call
+    }
+}
+
+function deleteAlert(id) {
+    if (confirm('Delete this alert?')) {
+        alert(`Deleting alert ${id}...`);
+        // TODO: API call
+    }
+}
+
+// Metrics actions
+function changeMetricTimerange(range) {
+    alert(`Changing timerange to: ${range}`);
+    // TODO: Reload metrics with new timerange
+}
+
+function exportMetrics() {
+    alert('Exporting metrics...');
+    // TODO: Download metrics file
+}
+
+// Log actions
+let logsPaused = false;
+function pauseLiveLogs() {
+    logsPaused = !logsPaused;
+    event.target.textContent = logsPaused ? '▶ Resume' : '⏸ Pause';
+    // TODO: Stop/start WebSocket updates
+}
+
+function clearLogs() {
+    document.getElementById('live-logs').innerHTML = '';
+}
+
+function changeLogSource(source) {
+    alert(`Filtering logs by: ${source}`);
+    // TODO: Update log stream filter
+}
+
+// Simulate live logs (in production, use WebSocket)
+setInterval(() => {
+    if (!logsPaused && document.getElementById('logs-tab').classList.contains('active')) {
+        const logsDiv = document.getElementById('live-logs');
+        const now = new Date().toISOString();
+        const levels = ['INFO', 'WARN', 'ERROR'];
+        const components = ['FIREWALL', 'VPN', 'DNS', 'DHCP', 'SYSTEM'];
+        const messages = [
+            'Connection established from 192.168.1.100',
+            'DNS query for example.com resolved',
+            'DHCP lease assigned to 00:11:22:33:44:55',
+            'Firewall rule applied: ACCEPT',
+            'VPN peer handshake successful'
+        ];
+
+        const level = levels[Math.floor(Math.random() * levels.length)];
+        const component = components[Math.floor(Math.random() * components.length)];
+        const message = messages[Math.floor(Math.random() * messages.length)];
+
+        const color = level === 'ERROR' ? '#ff0000' : level === 'WARN' ? '#ffaa00' : '#00ff00';
+
+        const logEntry = `
+            <div style="margin-bottom: 0.25rem;">
+                <span style="color: #888;">[${now}]</span>
+                <span style="color: ${color};">[${level}]</span>
+                <span style="color: #00aaff;">[${component}]</span>
+                ${message}
+            </div>
+        `;
+
+        logsDiv.innerHTML += logEntry;
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+
+        // Keep only last 100 entries
+        const entries = logsDiv.querySelectorAll('div');
+        if (entries.length > 100) {
+            entries[0].remove();
+        }
+    }
+}, 2000);
+</script>
+{% endblock %}
