@@ -27,6 +27,7 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 ed25519-dalek = "2.1"
 x25519-dalek = "2.0"
 rand = "0.8"
+base64 = "0.22"
 
 # Data structures
 dashmap = "6.1"

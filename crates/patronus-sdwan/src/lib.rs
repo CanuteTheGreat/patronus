@@ -32,6 +32,7 @@ pub mod types;
 pub mod policy;
 pub mod database;
 pub mod error;
+pub mod peering;
 
 pub use error::{Error, Result};
 pub use types::{SiteId, PathId, FlowKey};
