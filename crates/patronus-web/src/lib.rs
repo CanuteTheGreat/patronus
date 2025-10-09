@@ -10,18 +10,25 @@ pub mod qrcode;
 pub mod routes;
 pub mod state;
 pub mod templates;
+pub mod websocket;
 
 pub use state::AppState;
 pub use auth::{SessionStore, AuthUser, AdminUser};
+pub use websocket::WsBroadcaster;
 
 /// Create the web application router
-pub fn create_app(state: AppState, session_store: SessionStore) -> axum::Router {
-    routes::build_router(state, session_store)
+pub fn create_app(
+    state: AppState,
+    session_store: SessionStore,
+    ws_broadcaster: std::sync::Arc<WsBroadcaster>,
+) -> axum::Router {
+    routes::build_router(state, session_store, ws_broadcaster)
 }
 
 /// Start the web server
 pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     let session_store = SessionStore::new();
+    let ws_broadcaster = std::sync::Arc::new(WsBroadcaster::new());
 
     // Start session cleanup task
     let cleanup_store = session_store.clone();
@@ -34,7 +41,11 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
         }
     });
 
-    let app = create_app(state, session_store);
+    // Start WebSocket broadcaster tasks
+    websocket::start_metrics_broadcaster(ws_broadcaster.clone(), state.clone());
+    websocket::start_log_broadcaster(ws_broadcaster.clone());
+
+    let app = create_app(state, session_store, ws_broadcaster);
 
     tracing::info!("Starting web server on {}", addr);
 

@@ -16,10 +16,18 @@ use tower_http::services::ServeDir;
 use crate::state::AppState;
 
 /// Build the complete application router
-pub fn build_router(state: AppState, session_store: crate::auth::SessionStore) -> Router {
+pub fn build_router(
+    state: AppState,
+    session_store: crate::auth::SessionStore,
+    ws_broadcaster: std::sync::Arc<crate::websocket::WsBroadcaster>,
+) -> Router {
     Router::new()
         // Public routes
         .route("/login", get(pages::login_page))
+
+        // WebSocket routes
+        .route("/ws/metrics", get(crate::websocket::ws_metrics_handler))
+        .route("/ws/logs", get(crate::websocket::ws_logs_handler))
 
         // Protected page routes (HTML) - require authentication
         .route("/", get(pages::dashboard))
@@ -35,8 +43,9 @@ pub fn build_router(state: AppState, session_store: crate::auth::SessionStore) -
         // Static files
         .nest_service("/static", ServeDir::new("static"))
 
-        // Attach application state and session store
+        // Attach application state, session store, and WebSocket broadcaster
         .with_state(state)
+        .with_state(ws_broadcaster)
         .layer(axum::middleware::from_fn_with_state(
             session_store.clone(),
             crate::auth::session_middleware,
