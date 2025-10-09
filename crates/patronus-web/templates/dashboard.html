@@ -1,0 +1,289 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Patronus Firewall{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-subtitle">System overview and real-time metrics</p>
+    <div class="page-actions">
+        <button class="btn btn-secondary btn-sm">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+            </svg>
+            Export Metrics
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="location.reload()">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+            Refresh
+        </button>
+    </div>
+</div>
+
+<!-- System Status Stats -->
+<div class="stat-grid">
+    <div class="stat-card success">
+        <h3>Firewall Status</h3>
+        <div class="value">{{ firewall_status }}</div>
+        <div class="label">{{ filter_rules_count }} rules active</div>
+    </div>
+
+    <div class="stat-card info">
+        <h3>Interfaces</h3>
+        <div class="value">{{ interfaces_count }}</div>
+        <div class="label">{{ interfaces_up }} up, {{ interfaces_down }} down</div>
+    </div>
+
+    <div class="stat-card warning">
+        <h3>System Load</h3>
+        <div class="value">{{ load_avg }}</div>
+        <div class="label">CPU Load Average</div>
+    </div>
+
+    <div class="stat-card danger">
+        <h3>Network Traffic</h3>
+        <div class="value">Live</div>
+        <div class="label">Real-time monitoring</div>
+    </div>
+</div>
+
+<!-- Network Interfaces -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Network Interfaces</h2>
+        <a href="/network" class="btn btn-sm btn-primary">Manage</a>
+    </div>
+
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Interface</th>
+                    <th>Status</th>
+                    <th>IP Addresses</th>
+                    <th>MAC Address</th>
+                    <th>MTU</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for iface in interfaces %}
+                <tr>
+                    <td><strong>{{ iface.name }}</strong></td>
+                    <td>
+                        {% if iface.enabled %}
+                        <span class="badge success">UP</span>
+                        {% else %}
+                        <span class="badge danger">DOWN</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if iface.ip_addresses.len() > 0 %}
+                            {% for ip in iface.ip_addresses %}
+                                {{ ip }}{% if !loop.last %}, {% endif %}
+                            {% endfor %}
+                        {% else %}
+                            <span class="text-muted">No IP assigned</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-sm">{{ iface.mac_address.as_ref().unwrap_or(&"N/A".to_string()) }}</td>
+                    <td class="text-sm">{{ iface.mtu }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card-advanced hidden">
+        <h3 class="mb-2 font-bold">Interface Details</h3>
+        <div style="display: grid; gap: 0.5rem;">
+            <label>
+                <input type="checkbox" checked> Show traffic statistics
+            </label>
+            <label>
+                <input type="checkbox"> Show packet error rates
+            </label>
+            <label>
+                <input type="checkbox"> Show only active interfaces
+            </label>
+        </div>
+    </div>
+    <button class="btn btn-link mt-4" onclick="toggleAdvanced(this)">Advanced Options ▼</button>
+</div>
+
+<!-- Firewall Rules -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Recent Firewall Rules</h2>
+        <a href="/firewall" class="btn btn-sm btn-primary">View All</a>
+    </div>
+
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Chain</th>
+                    <th>Action</th>
+                    <th>Protocol</th>
+                    <th>Port</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rule in filter_rules %}
+                <tr>
+                    <td><strong>{{ rule.name }}</strong></td>
+                    <td class="text-sm">{{ rule.chain }}</td>
+                    <td>
+                        {% if rule.action == "Accept" %}
+                        <span class="badge success">{{ rule.action }}</span>
+                        {% elsif rule.action == "Drop" %}
+                        <span class="badge danger">{{ rule.action }}</span>
+                        {% else %}
+                        <span class="badge warning">{{ rule.action }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-sm">{{ rule.protocol.as_ref().map(|p| p.to_string()).unwrap_or("ANY".to_string()) }}</td>
+                    <td class="text-sm">{{ rule.dport.as_ref().map(|p| p.to_string()).unwrap_or("-".to_string()) }}</td>
+                    <td>
+                        {% if rule.enabled %}
+                        <span class="badge success">Enabled</span>
+                        {% else %}
+                        <span class="badge danger">Disabled</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <button class="btn-icon" title="More actions">•••</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card-advanced hidden">
+        <h3 class="mb-2 font-bold">Rule Statistics</h3>
+        <div class="stat-grid" style="margin-top: 1rem;">
+            <div>
+                <div class="text-sm text-muted">Total Rules</div>
+                <div class="font-bold">{{ filter_rules_count }}</div>
+            </div>
+            <div>
+                <div class="text-sm text-muted">Active Rules</div>
+                <div class="font-bold">{{ filter_rules.iter().filter(|r| r.enabled).count() }}</div>
+            </div>
+            <div>
+                <div class="text-sm text-muted">Allow Rules</div>
+                <div class="font-bold">{{ filter_rules.iter().filter(|r| r.action == "Accept").count() }}</div>
+            </div>
+            <div>
+                <div class="text-sm text-muted">Drop Rules</div>
+                <div class="font-bold">{{ filter_rules.iter().filter(|r| r.action == "Drop").count() }}</div>
+            </div>
+        </div>
+    </div>
+    <button class="btn btn-link mt-4" onclick="toggleAdvanced(this)">Rule Statistics ▼</button>
+</div>
+
+<!-- Quick Actions & System Info Row -->
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem;">
+    <!-- Quick Actions -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Quick Actions</h2>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <button class="btn btn-secondary" onclick="window.location.href='/firewall'">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                </svg>
+                Add Firewall Rule
+            </button>
+
+            <button class="btn btn-secondary" onclick="window.location.href='/vpn'">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"></path>
+                </svg>
+                Add VPN Peer
+            </button>
+
+            <button class="btn btn-secondary" onclick="alert('Backup feature coming soon')">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path>
+                </svg>
+                Create Backup
+            </button>
+
+            <button class="btn btn-danger" onclick="if(confirm('Restart firewall? This may disrupt connections.')) alert('Restart initiated')">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+                Restart Firewall
+            </button>
+        </div>
+    </div>
+
+    <!-- System Information -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">System Information</h2>
+        </div>
+
+        <table>
+            <tr>
+                <td><strong>Hostname</strong></td>
+                <td>{{ hostname }}</td>
+            </tr>
+            <tr>
+                <td><strong>Kernel</strong></td>
+                <td>{{ kernel_version }}</td>
+            </tr>
+            <tr>
+                <td><strong>Uptime</strong></td>
+                <td>{{ uptime }}</td>
+            </tr>
+            <tr>
+                <td><strong>Architecture</strong></td>
+                <td>{{ arch }}</td>
+            </tr>
+        </table>
+
+        <div class="card-advanced hidden">
+            <h3 class="mb-2 font-bold">Advanced System Info</h3>
+            <table class="mt-2">
+                <tr>
+                    <td><strong>Memory Usage</strong></td>
+                    <td>2.1 GB / 16 GB</td>
+                </tr>
+                <tr>
+                    <td><strong>Disk Usage</strong></td>
+                    <td>45 GB / 500 GB</td>
+                </tr>
+                <tr>
+                    <td><strong>Swap Usage</strong></td>
+                    <td>0 GB / 8 GB</td>
+                </tr>
+                <tr>
+                    <td><strong>Temperature</strong></td>
+                    <td>42°C</td>
+                </tr>
+            </table>
+        </div>
+        <button class="btn btn-link mt-4" onclick="toggleAdvanced(this)">System Details ▼</button>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    // Auto-refresh every 30 seconds
+    setTimeout(() => {
+        location.reload();
+    }, 30000);
+</script>
+{% endblock %}
