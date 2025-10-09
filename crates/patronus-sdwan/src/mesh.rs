@@ -1,6 +1,6 @@
 //! Mesh management - automatic site discovery and peering
 
-use crate::{database::Database, types::*, Error, Result};
+use crate::{database::Database, peering::PeeringManager, types::*, Error, Result};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use std::collections::HashMap;
@@ -28,6 +28,7 @@ pub struct MeshManager {
     announcement_tx: mpsc::Sender<SiteAnnouncement>,
     announcement_rx: Arc<RwLock<mpsc::Receiver<SiteAnnouncement>>>,
     tasks: Arc<RwLock<Vec<JoinHandle<()>>>>,
+    peering_manager: Arc<PeeringManager>,
 }
 
 /// Internal site information
@@ -46,6 +47,14 @@ impl MeshManager {
 
         let (announcement_tx, announcement_rx) = mpsc::channel(100);
 
+        // Create peering manager
+        let peering_manager = Arc::new(PeeringManager::new(
+            db.clone(),
+            site_id,
+            "wg-sdwan".to_string(),
+            51820,
+        ));
+
         Self {
             site_id,
             site_name,
@@ -57,6 +66,7 @@ impl MeshManager {
             announcement_tx,
             announcement_rx: Arc::new(RwLock::new(announcement_rx)),
             tasks: Arc::new(RwLock::new(Vec::new())),
+            peering_manager,
         }
     }
 
@@ -74,6 +84,13 @@ impl MeshManager {
         );
 
         *running = true;
+
+        // Initialize WireGuard interface
+        info!("Initializing WireGuard interface for SD-WAN");
+        if let Err(e) = self.peering_manager.initialize_interface().await {
+            warn!("Failed to initialize WireGuard interface: {}", e);
+            // Continue anyway - may work without root or with existing interface
+        }
 
         // Start announcement broadcaster
         let broadcaster_task = self.start_broadcaster().await?;
@@ -280,6 +297,7 @@ impl MeshManager {
         let announcement_rx = self.announcement_rx.clone();
         let db = self.db.clone();
         let known_sites = self.known_sites.clone();
+        let peering_manager = self.peering_manager.clone();
 
         let task = tokio::spawn(async move {
             info!("Starting auto-peering worker");
@@ -323,17 +341,27 @@ impl MeshManager {
 
                         // Update known sites
                         let mut sites = known_sites.write().await;
+                        let is_new_site = !sites.contains_key(&site.id);
                         sites.insert(
                             site.id,
                             SiteInfo {
-                                site,
+                                site: site.clone(),
                                 last_announcement: SystemTime::now(),
                             },
                         );
+                        drop(sites); // Release lock before async operation
 
                         debug!("Site {} registered in mesh", announcement.site_id);
 
-                        // TODO: Establish VPN tunnel if not already peered
+                        // Establish VPN tunnel if this is a new site
+                        if is_new_site {
+                            info!("Establishing WireGuard tunnel to site {}", site.id);
+                            if let Err(e) = peering_manager.add_peer(&site).await {
+                                error!("Failed to establish VPN tunnel: {}", e);
+                            } else {
+                                info!("Successfully peered with site {}", site.id);
+                            }
+                        }
                     }
                     None => break,
                 }
