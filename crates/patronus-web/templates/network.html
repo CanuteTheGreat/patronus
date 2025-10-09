@@ -1,0 +1,818 @@
+{% extends "base.html" %}
+
+{% block title %}Network - Patronus Firewall{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Network Services</h1>
+    <p class="page-subtitle">Manage interfaces, DHCP, DNS, and routing</p>
+    <div class="page-actions">
+        <button class="btn btn-secondary btn-sm" onclick="restartNetworking()">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+            Restart Networking
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="showAddInterfaceModal()">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+            </svg>
+            Add Interface
+        </button>
+    </div>
+</div>
+
+<!-- Network Status Stats -->
+<div class="stat-grid">
+    <div class="stat-card success">
+        <h3>Interfaces</h3>
+        <div class="value">{{ interfaces_total }}</div>
+        <div class="label">{{ interfaces_up }} up, {{ interfaces_down }} down</div>
+    </div>
+
+    <div class="stat-card info">
+        <h3>DHCP Leases</h3>
+        <div class="value">{{ dhcp_leases_active }}</div>
+        <div class="label">{{ dhcp_leases_total }} total leases</div>
+    </div>
+
+    <div class="stat-card warning">
+        <h3>DNS Queries</h3>
+        <div class="value">{{ dns_queries_rate }}/s</div>
+        <div class="label">{{ dns_cache_size }} cached</div>
+    </div>
+
+    <div class="stat-card danger">
+        <h3>Routes</h3>
+        <div class="value">{{ routes_total }}</div>
+        <div class="label">{{ routes_static }} static, {{ routes_dynamic }} dynamic</div>
+    </div>
+</div>
+
+<!-- Network Service Tabs -->
+<div class="card">
+    <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab(event, 'interfaces-tab')">
+            Interfaces
+        </button>
+        <button class="tab-btn" onclick="switchTab(event, 'dhcp-tab')">
+            DHCP Server
+        </button>
+        <button class="tab-btn" onclick="switchTab(event, 'dns-tab')">
+            DNS Resolver
+        </button>
+        <button class="tab-btn" onclick="switchTab(event, 'routing-tab')">
+            Routing
+        </button>
+    </div>
+
+    <!-- Interfaces Tab -->
+    <div id="interfaces-tab" class="tab-content active">
+        <div class="card-header">
+            <h2 class="card-title">Network Interfaces</h2>
+            <div class="flex gap-2">
+                <input type="search" placeholder="Search interfaces..." class="search-input"
+                       oninput="filterTable(this.value, 'interfaces-table')">
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table id="interfaces-table">
+                <thead>
+                    <tr>
+                        <th width="30"></th>
+                        <th>Interface</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>IPv4 Address</th>
+                        <th>IPv6 Address</th>
+                        <th>MAC Address</th>
+                        <th>Speed</th>
+                        <th>MTU</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for iface in interfaces %}
+                    <tr class="data-row">
+                        <td>
+                            <button class="btn-icon" onclick="toggleRowDetails(this)">▶</button>
+                        </td>
+                        <td><strong>{{ iface.name }}</strong></td>
+                        <td>
+                            <span class="badge info">{{ iface.interface_type }}</span>
+                        </td>
+                        <td>
+                            {% if iface.enabled %}
+                            <span class="badge success">UP</span>
+                            {% else %}
+                            <span class="badge danger">DOWN</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-sm">
+                            {% if iface.ipv4_addresses.len() > 0 %}
+                                {{ iface.ipv4_addresses[0] }}
+                            {% else %}
+                                <span class="text-muted">Not configured</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-sm">
+                            {% if iface.ipv6_addresses.len() > 0 %}
+                                {{ iface.ipv6_addresses[0][0..20] }}...
+                            {% else %}
+                                <span class="text-muted">Not configured</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-sm monospace">{{ iface.mac_address.as_ref().unwrap_or(&"N/A".to_string()) }}</td>
+                        <td class="text-sm">{{ iface.speed.as_ref().unwrap_or(&"Unknown".to_string()) }}</td>
+                        <td class="text-sm">{{ iface.mtu }}</td>
+                        <td>
+                            <button class="btn-icon" title="More actions">•••</button>
+                        </td>
+                    </tr>
+                    <tr class="row-details hidden">
+                        <td colspan="10" style="background: var(--bg); padding: 1.5rem;">
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
+                                <div>
+                                    <div class="text-sm text-muted">All IPv4 Addresses</div>
+                                    <div class="font-bold">
+                                        {% for ip in iface.ipv4_addresses %}
+                                            {{ ip }}{% if !loop.last %}, {% endif %}
+                                        {% else %}
+                                            <span class="text-muted">None</span>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">All IPv6 Addresses</div>
+                                    <div class="font-bold text-sm">
+                                        {% for ip in iface.ipv6_addresses %}
+                                            {{ ip }}{% if !loop.last %}, {% endif %}
+                                        {% else %}
+                                            <span class="text-muted">None</span>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">Gateway</div>
+                                    <div class="font-bold">{{ iface.gateway.as_ref().unwrap_or(&"N/A".to_string()) }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">DNS Servers</div>
+                                    <div class="font-bold">{{ iface.dns_servers.join(", ") }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">RX Packets</div>
+                                    <div class="font-bold">{{ iface.rx_packets }} ({{ iface.rx_bytes }})</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">TX Packets</div>
+                                    <div class="font-bold">{{ iface.tx_packets }} ({{ iface.tx_bytes }})</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">RX Errors</div>
+                                    <div class="font-bold">{{ iface.rx_errors }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">TX Errors</div>
+                                    <div class="font-bold">{{ iface.tx_errors }}</div>
+                                </div>
+                            </div>
+
+                            <div class="flex gap-2 mt-4">
+                                <button class="btn btn-primary btn-sm" onclick="editInterface('{{ iface.name }}')">
+                                    Configure
+                                </button>
+                                {% if iface.enabled %}
+                                <button class="btn btn-warning btn-sm" onclick="toggleInterface('{{ iface.name }}', false)">
+                                    Bring Down
+                                </button>
+                                {% else %}
+                                <button class="btn btn-success btn-sm" onclick="toggleInterface('{{ iface.name }}', true)">
+                                    Bring Up
+                                </button>
+                                {% endif %}
+                                <button class="btn btn-secondary btn-sm" onclick="showInterfaceStats('{{ iface.name }}')">
+                                    View Statistics
+                                </button>
+                                {% if iface.can_delete %}
+                                <button class="btn btn-danger btn-sm" onclick="deleteInterface('{{ iface.name }}')">
+                                    Delete
+                                </button>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card-advanced hidden">
+            <h3 class="mb-2 font-bold">Interface Configuration Options</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Enable IPv6
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox"> Disable offloading (TSO/GSO/LRO)
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Auto-negotiate speed/duplex
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox"> Enable promiscuous mode
+                    </label>
+                </div>
+            </div>
+            <div class="mt-4">
+                <h4 class="font-bold mb-2">VLAN Configuration</h4>
+                <button class="btn btn-secondary btn-sm">Add VLAN</button>
+                <button class="btn btn-secondary btn-sm">Add Bridge</button>
+                <button class="btn btn-secondary btn-sm">Add Bond</button>
+            </div>
+        </div>
+        <button class="btn btn-link mt-4" onclick="toggleAdvanced(this)">Advanced Options ▼</button>
+    </div>
+
+    <!-- DHCP Server Tab -->
+    <div id="dhcp-tab" class="tab-content">
+        <div class="card-header">
+            <h2 class="card-title">DHCP Server</h2>
+            <div class="flex gap-2">
+                <input type="search" placeholder="Search leases..." class="search-input"
+                       oninput="filterTable(this.value, 'dhcp-table')">
+                <button class="btn btn-sm btn-primary" onclick="showAddDHCPPoolModal()">
+                    Add Pool
+                </button>
+            </div>
+        </div>
+
+        <!-- DHCP Pools -->
+        <div style="margin-bottom: 2rem;">
+            <h3 class="font-bold mb-2">DHCP Pools</h3>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Interface</th>
+                            <th>Pool Range</th>
+                            <th>Subnet</th>
+                            <th>Gateway</th>
+                            <th>DNS Servers</th>
+                            <th>Lease Time</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for pool in dhcp_pools %}
+                        <tr>
+                            <td><strong>{{ pool.interface }}</strong></td>
+                            <td class="text-sm">{{ pool.range_start }} - {{ pool.range_end }}</td>
+                            <td class="text-sm">{{ pool.subnet }}</td>
+                            <td class="text-sm">{{ pool.gateway }}</td>
+                            <td class="text-sm">{{ pool.dns_servers.join(", ") }}</td>
+                            <td class="text-sm">{{ pool.lease_time }}</td>
+                            <td>
+                                {% if pool.enabled %}
+                                <span class="badge success">Active</span>
+                                {% else %}
+                                <span class="badge danger">Disabled</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button class="btn-icon" onclick="editDHCPPool('{{ pool.interface }}')">✎</button>
+                                <button class="btn-icon" onclick="deleteDHCPPool('{{ pool.interface }}')">🗑</button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Active Leases -->
+        <h3 class="font-bold mb-2">Active Leases</h3>
+        <div class="table-container">
+            <table id="dhcp-table">
+                <thead>
+                    <tr>
+                        <th>IP Address</th>
+                        <th>MAC Address</th>
+                        <th>Hostname</th>
+                        <th>Lease Start</th>
+                        <th>Lease End</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for lease in dhcp_leases %}
+                    <tr class="data-row">
+                        <td><strong>{{ lease.ip_address }}</strong></td>
+                        <td class="text-sm monospace">{{ lease.mac_address }}</td>
+                        <td class="text-sm">{{ lease.hostname.as_ref().unwrap_or(&"Unknown".to_string()) }}</td>
+                        <td class="text-sm">{{ lease.lease_start }}</td>
+                        <td class="text-sm">{{ lease.lease_end }}</td>
+                        <td>
+                            {% if lease.is_active %}
+                            <span class="badge success">Active</span>
+                            {% else %}
+                            <span class="badge warning">Expired</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-secondary" onclick="makeStatic('{{ lease.ip_address }}', '{{ lease.mac_address }}')">
+                                Make Static
+                            </button>
+                            <button class="btn btn-sm btn-danger" onclick="revokeLease('{{ lease.ip_address }}')">
+                                Revoke
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card-advanced hidden">
+            <h3 class="mb-2 font-bold">DHCP Server Advanced Settings</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
+                <div>
+                    <label class="block text-sm font-bold mb-1">Default Lease Time</label>
+                    <input type="number" value="3600" class="w-full" placeholder="seconds">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Max Lease Time</label>
+                    <input type="number" value="7200" class="w-full" placeholder="seconds">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">DHCP Options</label>
+                    <textarea rows="3" class="w-full" placeholder="option domain-name example.org;"></textarea>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Enable DHCP Relay
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox"> Enable Dynamic DNS Updates
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Authoritative DHCP Server
+                    </label>
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button class="btn btn-primary btn-sm">Save Settings</button>
+                <button class="btn btn-secondary btn-sm">Restart DHCP Service</button>
+            </div>
+        </div>
+        <button class="btn btn-link mt-4" onclick="toggleAdvanced(this)">Advanced Settings ▼</button>
+    </div>
+
+    <!-- DNS Resolver Tab -->
+    <div id="dns-tab" class="tab-content">
+        <div class="card-header">
+            <h2 class="card-title">DNS Resolver</h2>
+            <div class="flex gap-2">
+                <button class="btn btn-sm btn-secondary" onclick="flushDNSCache()">
+                    Flush Cache
+                </button>
+                <button class="btn btn-sm btn-primary" onclick="showAddDNSRecordModal()">
+                    Add Record
+                </button>
+            </div>
+        </div>
+
+        <!-- DNS Statistics -->
+        <div class="stat-grid" style="margin-bottom: 2rem;">
+            <div class="stat-card success">
+                <h3>Queries/sec</h3>
+                <div class="value">{{ dns_queries_rate }}</div>
+                <div class="label">Real-time rate</div>
+            </div>
+            <div class="stat-card info">
+                <h3>Cache Hit Rate</h3>
+                <div class="value">{{ dns_cache_hit_rate }}%</div>
+                <div class="label">{{ dns_cache_size }} entries</div>
+            </div>
+            <div class="stat-card warning">
+                <h3>Upstream Queries</h3>
+                <div class="value">{{ dns_upstream_queries }}</div>
+                <div class="label">Last 24 hours</div>
+            </div>
+            <div class="stat-card danger">
+                <h3>Blocked Queries</h3>
+                <div class="value">{{ dns_blocked_queries }}</div>
+                <div class="label">{{ dns_blocked_domains }} domains</div>
+            </div>
+        </div>
+
+        <!-- DNS Records -->
+        <h3 class="font-bold mb-2">Local DNS Records</h3>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Hostname</th>
+                        <th>Type</th>
+                        <th>Value</th>
+                        <th>TTL</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for record in dns_records %}
+                    <tr>
+                        <td><strong>{{ record.hostname }}</strong></td>
+                        <td><span class="badge info">{{ record.record_type }}</span></td>
+                        <td class="text-sm">{{ record.value }}</td>
+                        <td class="text-sm">{{ record.ttl }}s</td>
+                        <td>
+                            <button class="btn-icon" onclick="editDNSRecord('{{ record.hostname }}')">✎</button>
+                            <button class="btn-icon" onclick="deleteDNSRecord('{{ record.hostname }}')">🗑</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card-advanced hidden">
+            <h3 class="mb-2 font-bold">DNS Resolver Advanced Settings</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
+                <div>
+                    <label class="block text-sm font-bold mb-1">Upstream DNS Servers</label>
+                    <textarea rows="3" class="w-full" placeholder="1.1.1.1&#10;8.8.8.8">{{ dns_upstream_servers.join("\n") }}</textarea>
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Listen Interfaces</label>
+                    <input type="text" class="w-full" value="lan, vpn">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Cache Size</label>
+                    <input type="number" class="w-full" value="10000" placeholder="entries">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Query Timeout</label>
+                    <input type="number" class="w-full" value="5000" placeholder="milliseconds">
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Enable DNSSEC Validation
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Enable DNS over TLS (DoT)
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox"> Enable DNS over HTTPS (DoH)
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox"> Enable Ad Blocking (Pi-hole mode)
+                    </label>
+                </div>
+            </div>
+            <div class="mt-4">
+                <h4 class="font-bold mb-2">Blocklists</h4>
+                <textarea rows="4" class="w-full" placeholder="https://example.com/blocklist.txt"></textarea>
+                <button class="btn btn-secondary btn-sm mt-2">Update Blocklists</button>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button class="btn btn-primary btn-sm">Save Settings</button>
+                <button class="btn btn-secondary btn-sm">Restart DNS Service</button>
+            </div>
+        </div>
+        <button class="btn btn-link mt-4" onclick="toggleAdvanced(this)">Advanced Settings ▼</button>
+    </div>
+
+    <!-- Routing Tab -->
+    <div id="routing-tab" class="tab-content">
+        <div class="card-header">
+            <h2 class="card-title">Routing Table</h2>
+            <div class="flex gap-2">
+                <input type="search" placeholder="Search routes..." class="search-input"
+                       oninput="filterTable(this.value, 'routing-table')">
+                <button class="btn btn-sm btn-primary" onclick="showAddRouteModal()">
+                    Add Route
+                </button>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table id="routing-table">
+                <thead>
+                    <tr>
+                        <th width="30"></th>
+                        <th>Destination</th>
+                        <th>Gateway</th>
+                        <th>Interface</th>
+                        <th>Metric</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for route in routes %}
+                    <tr class="data-row">
+                        <td>
+                            <button class="btn-icon" onclick="toggleRowDetails(this)">▶</button>
+                        </td>
+                        <td><strong>{{ route.destination }}</strong></td>
+                        <td class="text-sm">{{ route.gateway }}</td>
+                        <td class="text-sm">{{ route.interface }}</td>
+                        <td class="text-sm">{{ route.metric }}</td>
+                        <td>
+                            {% if route.is_static %}
+                            <span class="badge info">Static</span>
+                            {% else %}
+                            <span class="badge warning">Dynamic</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if route.is_active %}
+                            <span class="badge success">Active</span>
+                            {% else %}
+                            <span class="badge danger">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <button class="btn-icon" title="More actions">•••</button>
+                        </td>
+                    </tr>
+                    <tr class="row-details hidden">
+                        <td colspan="8" style="background: var(--bg); padding: 1.5rem;">
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
+                                <div>
+                                    <div class="text-sm text-muted">Protocol</div>
+                                    <div class="font-bold">{{ route.protocol }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">Scope</div>
+                                    <div class="font-bold">{{ route.scope }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">Source</div>
+                                    <div class="font-bold">{{ route.source.as_ref().unwrap_or(&"N/A".to_string()) }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm text-muted">Age</div>
+                                    <div class="font-bold">{{ route.age }}</div>
+                                </div>
+                            </div>
+
+                            <div class="flex gap-2 mt-4">
+                                {% if route.is_static %}
+                                <button class="btn btn-primary btn-sm" onclick="editRoute('{{ route.destination }}')">
+                                    Edit Route
+                                </button>
+                                <button class="btn btn-danger btn-sm" onclick="deleteRoute('{{ route.destination }}')">
+                                    Delete
+                                </button>
+                                {% endif %}
+                                <button class="btn btn-secondary btn-sm" onclick="pingRoute('{{ route.gateway }}')">
+                                    Test Connectivity
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card-advanced hidden">
+            <h3 class="mb-2 font-bold">Routing Advanced Settings</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Enable IPv4 Forwarding
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox" checked> Enable IPv6 Forwarding
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox"> Enable Multipath Routing
+                    </label>
+                </div>
+                <div>
+                    <label>
+                        <input type="checkbox"> Enable Policy Routing
+                    </label>
+                </div>
+            </div>
+            <div class="mt-4">
+                <h4 class="font-bold mb-2">Dynamic Routing Protocols</h4>
+                <div style="display: grid; gap: 1rem;">
+                    <label>
+                        <input type="checkbox"> Enable OSPF
+                    </label>
+                    <label>
+                        <input type="checkbox"> Enable BGP
+                    </label>
+                    <label>
+                        <input type="checkbox"> Enable RIP
+                    </label>
+                </div>
+                <button class="btn btn-secondary btn-sm mt-2">Configure Routing Protocols</button>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button class="btn btn-primary btn-sm">Save Settings</button>
+                <button class="btn btn-secondary btn-sm">Flush Routing Cache</button>
+            </div>
+        </div>
+        <button class="btn btn-link mt-4" onclick="toggleAdvanced(this)">Advanced Settings ▼</button>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Tab switching
+function switchTab(event, tabId) {
+    document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.remove('active');
+    });
+
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+
+    document.getElementById(tabId).classList.add('active');
+    event.target.classList.add('active');
+}
+
+// Toggle row details
+function toggleRowDetails(btn) {
+    const row = btn.closest('tr');
+    const detailsRow = row.nextElementSibling;
+    if (detailsRow && detailsRow.classList.contains('row-details')) {
+        detailsRow.classList.toggle('show');
+        btn.textContent = detailsRow.classList.contains('show') ? '▼' : '▶';
+    }
+}
+
+// Filter table
+function filterTable(query, tableId) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+
+    const rows = table.querySelectorAll('tbody tr.data-row');
+    query = query.toLowerCase();
+
+    rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        const detailsRow = row.nextElementSibling;
+
+        if (text.includes(query)) {
+            row.style.display = '';
+            if (detailsRow && detailsRow.classList.contains('row-details')) {
+                detailsRow.style.display = '';
+            }
+        } else {
+            row.style.display = 'none';
+            if (detailsRow && detailsRow.classList.contains('row-details')) {
+                detailsRow.style.display = 'none';
+            }
+        }
+    });
+}
+
+// Interface management
+function editInterface(name) {
+    alert(`Configure interface: ${name}`);
+    // TODO: Show edit modal
+}
+
+function toggleInterface(name, up) {
+    const action = up ? 'up' : 'down';
+    if (confirm(`Bring interface "${name}" ${action}?`)) {
+        alert(`Interface ${name} is now ${action}`);
+        // TODO: API call
+    }
+}
+
+function deleteInterface(name) {
+    if (confirm(`Delete interface "${name}"? This cannot be undone.`)) {
+        alert(`Deleting interface ${name}...`);
+        // TODO: API call
+    }
+}
+
+function showInterfaceStats(name) {
+    alert(`Statistics for ${name}`);
+    // TODO: Show stats modal with charts
+}
+
+// DHCP management
+function editDHCPPool(iface) {
+    alert(`Edit DHCP pool for ${iface}`);
+    // TODO: Show edit modal
+}
+
+function deleteDHCPPool(iface) {
+    if (confirm(`Delete DHCP pool for ${iface}?`)) {
+        alert(`Deleting pool...`);
+        // TODO: API call
+    }
+}
+
+function makeStatic(ip, mac) {
+    alert(`Creating static mapping: ${ip} → ${mac}`);
+    // TODO: Show modal to configure static lease
+}
+
+function revokeLease(ip) {
+    if (confirm(`Revoke DHCP lease for ${ip}?`)) {
+        alert(`Revoking lease...`);
+        // TODO: API call
+    }
+}
+
+// DNS management
+function flushDNSCache() {
+    if (confirm('Flush DNS cache? This will temporarily increase DNS query latency.')) {
+        alert('DNS cache flushed');
+        // TODO: API call
+    }
+}
+
+function editDNSRecord(hostname) {
+    alert(`Edit DNS record: ${hostname}`);
+    // TODO: Show edit modal
+}
+
+function deleteDNSRecord(hostname) {
+    if (confirm(`Delete DNS record for ${hostname}?`)) {
+        alert(`Deleting record...`);
+        // TODO: API call
+    }
+}
+
+// Routing management
+function editRoute(dest) {
+    alert(`Edit route: ${dest}`);
+    // TODO: Show edit modal
+}
+
+function deleteRoute(dest) {
+    if (confirm(`Delete route to ${dest}?`)) {
+        alert(`Deleting route...`);
+        // TODO: API call
+    }
+}
+
+function pingRoute(gateway) {
+    alert(`Testing connectivity to ${gateway}...`);
+    // TODO: Show ping results modal
+}
+
+// Network actions
+function restartNetworking() {
+    if (confirm('Restart networking? This will briefly interrupt all connections.')) {
+        alert('Restarting networking...');
+        // TODO: API call
+    }
+}
+
+// Modals (placeholders)
+function showAddInterfaceModal() {
+    alert('Add Interface modal - TODO');
+}
+
+function showAddDHCPPoolModal() {
+    alert('Add DHCP Pool modal - TODO');
+}
+
+function showAddDNSRecordModal() {
+    alert('Add DNS Record modal - TODO');
+}
+
+function showAddRouteModal() {
+    alert('Add Route modal - TODO');
+}
+</script>
+{% endblock %}
