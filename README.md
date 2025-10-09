@@ -101,7 +101,7 @@ spec:
 #### 3. **Kubernetes Native CNI Plugin**
 ```bash
 # Deploy as CNI plugin
-kubectl apply -f https://patronus.firewall/cni/install.yaml
+kubectl apply -f https://github.com/CanuteTheGreat/patronus/cni/install.yaml
 
 # Enforce NetworkPolicies with eBPF
 apiVersion: networking.k8s.io/v1
@@ -185,12 +185,12 @@ Patronus is built specifically for **Gentoo Linux**, embracing source-based comp
 
 ```bash
 # Using eselect repository
-eselect repository add patronus git https://github.com/yourusername/patronus-overlay
+eselect repository add patronus git https://github.com/CanuteTheGreat/patronus-overlay
 emaint sync -r patronus
 
 # Or manually
 mkdir -p /var/db/repos/patronus
-git clone https://github.com/yourusername/patronus-overlay /var/db/repos/patronus
+git clone https://github.com/CanuteTheGreat/patronus-overlay /var/db/repos/patronus
 ```
 
 #### Install with USE Flags
@@ -368,12 +368,6 @@ See [EBPF-OPTIMIZATION.md](EBPF-OPTIMIZATION.md) for tuning guide.
 - [Security Hardening Guide](SECURITY-HARDENING.md) - Implementation details
 - [Secrets Management](crates/patronus-secrets/) - Encryption architecture
 
-### Reporting Vulnerabilities
-
-**Email:** security@patronus.firewall (PGP key available)
-
-**Do NOT open public GitHub issues for security vulnerabilities.**
-
 ---
 
 ## 📚 Documentation
@@ -434,7 +428,7 @@ See [EBPF-OPTIMIZATION.md](EBPF-OPTIMIZATION.md) for tuning guide.
 emerge -av dev-lang/rust dev-db/sqlite dev-util/pkgconf
 
 # Clone
-git clone https://github.com/yourusername/patronus.git
+git clone https://github.com/CanuteTheGreat/patronus.git
 cd patronus
 
 # Build with all features
@@ -513,9 +507,9 @@ Patronus is free and open-source software. See [LICENSE](LICENSE) for details.
 
 ## 📞 Support
 
-- **Documentation:** https://docs.patronus.firewall
-- **GitHub Issues:** https://github.com/yourusername/patronus/issues
-- **Email:** support@patronus.firewall
+- 📖 [Documentation](docs/)
+- 🐛 [Issue Tracker](https://github.com/CanuteTheGreat/patronus/issues)
+- 💬 [Discussions](https://github.com/CanuteTheGreat/patronus/discussions)
 
 ---
 
