@@ -118,6 +118,17 @@ impl PathScoringWeights {
             cost_weight: 0.5,
         }
     }
+
+    /// Balanced preset (general traffic)
+    pub fn balanced() -> Self {
+        Self {
+            latency_weight: 0.3,
+            jitter_weight: 0.2,
+            loss_weight: 0.3,
+            bandwidth_weight: 0.2,
+            cost_weight: 0.0,
+        }
+    }
 }
 
 /// Application classification
