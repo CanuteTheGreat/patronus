@@ -139,6 +139,40 @@ impl VpnManager {
         // TODO: Implement
         Ok(0)
     }
+
+    pub async fn get_wireguard_qrcode_svg(&self, peer_id: u32) -> anyhow::Result<String> {
+        // TODO: Fetch actual peer configuration from database
+        // For now, return a mock QR code
+        let config = crate::qrcode::WireGuardPeerConfig {
+            peer_name: format!("peer-{}", peer_id),
+            interface_address: "10.0.0.2/24".to_string(),
+            private_key: "cBVRKzyV6FkeN9tYPqJCILdNXJKF8xhHxEYczGzfE3M=".to_string(),
+            server_public_key: "RZv3iVQPxjKqBVLPEMJJX/xJ7FDGZdKzxcY5WV9vwVU=".to_string(),
+            server_endpoint: "vpn.example.com:51820".to_string(),
+            allowed_ips: "0.0.0.0/0".to_string(),
+            dns_servers: Some("1.1.1.1, 8.8.8.8".to_string()),
+            persistent_keepalive: Some(25),
+        };
+
+        config.to_qr_svg()
+    }
+
+    pub async fn get_wireguard_qrcode_png(&self, peer_id: u32) -> anyhow::Result<Vec<u8>> {
+        // TODO: Fetch actual peer configuration from database
+        // For now, return a mock QR code
+        let config = crate::qrcode::WireGuardPeerConfig {
+            peer_name: format!("peer-{}", peer_id),
+            interface_address: "10.0.0.2/24".to_string(),
+            private_key: "cBVRKzyV6FkeN9tYPqJCILdNXJKF8xhHxEYczGzfE3M=".to_string(),
+            server_public_key: "RZv3iVQPxjKqBVLPEMJJX/xJ7FDGZdKzxcY5WV9vwVU=".to_string(),
+            server_endpoint: "vpn.example.com:51820".to_string(),
+            allowed_ips: "0.0.0.0/0".to_string(),
+            dns_servers: Some("1.1.1.1, 8.8.8.8".to_string()),
+            persistent_keepalive: Some(25),
+        };
+
+        config.to_qr_png()
+    }
 }
 
 /// Network management operations

@@ -99,6 +99,38 @@ pub async fn get_wg_config(State(state): State<AppState>, Path(id): Path<u32>) -
     }
 }
 
+/// GET /api/vpn/wireguard/qrcode/:id - Get QR code as SVG
+pub async fn get_wg_qrcode_svg(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
+    match state.vpn.get_wireguard_qrcode_svg(id).await {
+        Ok(svg) => (
+            [(axum::http::header::CONTENT_TYPE, "image/svg+xml")],
+            svg
+        ).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to generate QR code for peer {}: {}", id, e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                "error": format!("Failed to generate QR code: {}", e)
+            }))).into_response()
+        }
+    }
+}
+
+/// GET /api/vpn/wireguard/qrcode/:id/png - Get QR code as PNG
+pub async fn get_wg_qrcode_png(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
+    match state.vpn.get_wireguard_qrcode_png(id).await {
+        Ok(png_bytes) => (
+            [(axum::http::header::CONTENT_TYPE, "image/png")],
+            png_bytes
+        ).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to generate QR code PNG for peer {}: {}", id, e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                "error": format!("Failed to generate QR code: {}", e)
+            }))).into_response()
+        }
+    }
+}
+
 /// GET /api/vpn/openvpn/tunnels
 pub async fn list_ovpn_tunnels(State(state): State<AppState>) -> Response {
     match state.vpn.list_openvpn_tunnels().await {

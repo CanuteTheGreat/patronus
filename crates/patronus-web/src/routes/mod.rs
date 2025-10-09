@@ -65,6 +65,8 @@ fn api_routes() -> Router<AppState> {
         .route("/vpn/wireguard/peers", get(api::vpn::list_wg_peers).post(api::vpn::add_wg_peer))
         .route("/vpn/wireguard/peers/:id", delete(api::vpn::delete_wg_peer))
         .route("/vpn/wireguard/config/:id", get(api::vpn::get_wg_config))
+        .route("/vpn/wireguard/qrcode/:id", get(api::vpn::get_wg_qrcode_svg))
+        .route("/vpn/wireguard/qrcode/:id/png", get(api::vpn::get_wg_qrcode_png))
         .route("/vpn/openvpn/tunnels", get(api::vpn::list_ovpn_tunnels))
         .route("/vpn/ipsec/tunnels", get(api::vpn::list_ipsec_tunnels))
 

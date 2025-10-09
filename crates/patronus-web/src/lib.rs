@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 
 pub mod auth;
 pub mod handlers;
+pub mod qrcode;
 pub mod routes;
 pub mod state;
 pub mod templates;

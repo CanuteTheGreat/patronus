@@ -37,3 +37,5 @@ askama_axum.workspace = true
 hyper = "1.4"
 uuid = { version = "1.11", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+qrcode = "0.14"
+image = "0.25"
