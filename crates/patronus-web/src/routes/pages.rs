@@ -7,8 +7,10 @@ use axum::{
     response::{Html, IntoResponse, Response},
     http::StatusCode,
 };
+use askama::Template;
 use crate::{
     state::AppState,
+    auth::AuthUser,
     templates::{
         DashboardTemplate,
         FirewallTemplate,
@@ -18,6 +20,23 @@ use crate::{
         SystemTemplate,
     },
 };
+
+/// Login page template
+#[derive(Template)]
+#[template(path = "login.html")]
+pub struct LoginTemplate;
+
+/// Login page (public)
+pub async fn login_page() -> Response {
+    let template = LoginTemplate;
+    match template.render() {
+        Ok(html) => Html(html).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to render login template: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
+        }
+    }
+}
 
 /// Dashboard page
 pub async fn dashboard(State(state): State<AppState>) -> Response {

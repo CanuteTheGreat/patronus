@@ -1,0 +1,64 @@
+[package]
+name = "patronus-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "patronus-cli"
+path = "src/main.rs"
+
+[features]
+default = ["web", "cli", "nftables"]
+
+# Core features
+web = ["patronus-web", "dep:axum"]
+cli = ["dep:clap"]
+api = []
+
+# Firewall backends
+nftables = ["patronus-firewall/nftables"]
+iptables = ["patronus-firewall/iptables"]
+
+# Network services
+dhcp-server = ["patronus-network/dhcp"]
+dns-server = ["patronus-network/dns"]
+
+# VPN
+vpn-wireguard = ["patronus-network/wireguard"]
+vpn-openvpn = ["patronus-network/openvpn"]
+vpn-ipsec = ["patronus-network/ipsec"]
+
+# Monitoring
+monitoring = []
+monitoring-prometheus = ["dep:prometheus"]
+
+# Advanced
+captive-portal = []
+ids-suricata = []
+vlan = ["patronus-network/vlan"]
+qos = ["patronus-network/qos"]
+backup = []
+
+# Revolutionary features
+gitops = ["patronus-gitops"]
+ai = ["patronus-ai"]
+kubernetes = ["patronus-cni"]
+
+[dependencies]
+patronus-core = { path = "../patronus-core" }
+patronus-firewall = { path = "../patronus-firewall" }
+patronus-network = { path = "../patronus-network" }
+patronus-config = { path = "../patronus-config" }
+patronus-web = { path = "../patronus-web", optional = true }
+patronus-gitops = { path = "../patronus-gitops", optional = true }
+patronus-ai = { path = "../patronus-ai", optional = true }
+patronus-cni = { path = "../patronus-cni", optional = true }
+
+tokio.workspace = true
+clap = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
+prometheus = { workspace = true, optional = true }
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

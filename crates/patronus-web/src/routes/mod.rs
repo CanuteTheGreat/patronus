@@ -16,9 +16,12 @@ use tower_http::services::ServeDir;
 use crate::state::AppState;
 
 /// Build the complete application router
-pub fn build_router(state: AppState) -> Router {
+pub fn build_router(state: AppState, session_store: crate::auth::SessionStore) -> Router {
     Router::new()
-        // Page routes (HTML)
+        // Public routes
+        .route("/login", get(pages::login_page))
+
+        // Protected page routes (HTML) - require authentication
         .route("/", get(pages::dashboard))
         .route("/firewall", get(pages::firewall))
         .route("/vpn", get(pages::vpn))
@@ -32,13 +35,22 @@ pub fn build_router(state: AppState) -> Router {
         // Static files
         .nest_service("/static", ServeDir::new("static"))
 
-        // Attach application state
+        // Attach application state and session store
         .with_state(state)
+        .layer(axum::middleware::from_fn_with_state(
+            session_store.clone(),
+            crate::auth::session_middleware,
+        ))
 }
 
 /// Build API routes
 fn api_routes() -> Router<AppState> {
     Router::new()
+        // Authentication endpoints (public)
+        .route("/auth/login", post(crate::auth::login))
+        .route("/auth/logout", post(crate::auth::logout))
+        .route("/auth/me", get(crate::auth::current_user))
+
         // Status endpoint
         .route("/status", get(api::status::system_status))
 

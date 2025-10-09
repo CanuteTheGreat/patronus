@@ -1,0 +1,30 @@
+[package]
+name = "patronus-cni"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "patronus-cni"
+path = "src/main.rs"
+
+[lib]
+name = "patronus_cni"
+path = "src/lib.rs"
+
+[dependencies]
+patronus-core = { path = "../patronus-core" }
+patronus-ebpf = { path = "../patronus-ebpf" }
+patronus-firewall = { path = "../patronus-firewall" }
+tokio.workspace = true
+async-trait.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+nix.workspace = true
+kube = { version = "0.87", features = ["runtime", "derive"] }
+k8s-openapi = { version = "0.20", features = ["v1_28"] }
+ipnetwork = "0.20"
