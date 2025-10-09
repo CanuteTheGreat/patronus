@@ -34,10 +34,8 @@ coverage/
 book/
 docs/_build/
 
-# Gentoo (should not be in main repo - use separate overlay repo)
-gentoo-overlay/distfiles/
-gentoo-overlay/packages/
-Manifest
+# Gentoo (separate repository - not included in main repo)
+gentoo-overlay/
 
 # Secrets and keys
 *.key
