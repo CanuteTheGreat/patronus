@@ -292,6 +292,7 @@ mod tests {
         assert!(validate_api_key("").is_err());
         assert!(validate_api_key("short").is_err());
         assert!(validate_api_key("test_key_123456789012345678901234").is_err());
-        assert!(validate_api_key("sk_live_1234567890abcdef1234567890abcdef").is_ok());
+        // Use an obviously fake API key that doesn't match real patterns
+        assert!(validate_api_key("fake_api_key_XXXXXXXXXXXXXXXXXXXXXXXXXXXX").is_ok());
     }
 }
