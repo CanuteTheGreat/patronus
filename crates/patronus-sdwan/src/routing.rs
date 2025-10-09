@@ -50,7 +50,7 @@ impl RoutingEngine {
     }
 
     /// Select best path for a flow
-    pub async fn select_path(&self, flow: &FlowKey) -> Result<PathId> {
+    pub async fn select_path(&self, _flow: &FlowKey) -> Result<PathId> {
         // TODO: Implement path selection algorithm
         // TODO: Apply routing policies
         // TODO: Consider path quality metrics

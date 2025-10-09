@@ -38,7 +38,6 @@ pub use error::{Error, Result};
 pub use types::{SiteId, PathId, FlowKey};
 
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// SD-WAN manager coordinating all components
 pub struct SdwanManager {

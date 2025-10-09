@@ -1,6 +1,6 @@
 //! Database operations for SD-WAN
 
-use crate::{types::*, Error, Result};
+use crate::{types::*, Result};
 use sqlx::{sqlite::SqlitePool, Row};
 use tracing::{debug, info};
 
@@ -303,6 +303,138 @@ impl Database {
         .await?;
 
         Ok(())
+    }
+
+    /// Store path metrics (alias for record_metrics)
+    pub async fn store_path_metrics(&self, path_id: PathId, metrics: &PathMetrics) -> Result<()> {
+        self.record_metrics(path_id, metrics).await
+    }
+
+    /// Get path by ID
+    pub async fn get_path(&self, path_id: PathId) -> Result<Path> {
+        let row = sqlx::query(
+            r#"
+            SELECT path_id, src_site_id, dst_site_id, src_endpoint, dst_endpoint, wg_interface, status
+            FROM sdwan_paths
+            WHERE path_id = ?
+            "#,
+        )
+        .bind(path_id.as_u64() as i64)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let src_site: String = row.try_get("src_site_id")?;
+        let dst_site: String = row.try_get("dst_site_id")?;
+        let src_endpoint: String = row.try_get("src_endpoint")?;
+        let dst_endpoint: String = row.try_get("dst_endpoint")?;
+        let wg_interface: Option<String> = row.try_get("wg_interface")?;
+        let status: String = row.try_get("status")?;
+
+        let status = match status.as_str() {
+            "up" => PathStatus::Up,
+            "down" => PathStatus::Down,
+            "degraded" => PathStatus::Degraded,
+            _ => PathStatus::Down,
+        };
+
+        Ok(Path {
+            id: path_id,
+            src_site: src_site.parse().unwrap(),
+            dst_site: dst_site.parse().unwrap(),
+            src_endpoint: src_endpoint.parse().unwrap(),
+            dst_endpoint: dst_endpoint.parse().unwrap(),
+            wg_interface,
+            metrics: PathMetrics::default(),
+            status,
+        })
+    }
+
+    /// List all paths
+    pub async fn list_paths(&self) -> Result<Vec<Path>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT path_id, src_site_id, dst_site_id, src_endpoint, dst_endpoint, wg_interface, status
+            FROM sdwan_paths
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut paths = Vec::new();
+        for row in rows {
+            let path_id: i64 = row.try_get("path_id")?;
+            let src_site: String = row.try_get("src_site_id")?;
+            let dst_site: String = row.try_get("dst_site_id")?;
+            let src_endpoint: String = row.try_get("src_endpoint")?;
+            let dst_endpoint: String = row.try_get("dst_endpoint")?;
+            let wg_interface: Option<String> = row.try_get("wg_interface")?;
+            let status: String = row.try_get("status")?;
+
+            let status = match status.as_str() {
+                "up" => PathStatus::Up,
+                "down" => PathStatus::Down,
+                "degraded" => PathStatus::Degraded,
+                _ => PathStatus::Down,
+            };
+
+            paths.push(Path {
+                id: PathId::new(path_id as u64),
+                src_site: src_site.parse().unwrap(),
+                dst_site: dst_site.parse().unwrap(),
+                src_endpoint: src_endpoint.parse().unwrap(),
+                dst_endpoint: dst_endpoint.parse().unwrap(),
+                wg_interface,
+                metrics: PathMetrics::default(),
+                status,
+            });
+        }
+
+        Ok(paths)
+    }
+
+    /// Update path status
+    pub async fn update_path_status(&self, path_id: PathId, status: PathStatus) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE sdwan_paths
+            SET status = ?
+            WHERE path_id = ?
+            "#,
+        )
+        .bind(status.to_string())
+        .bind(path_id.as_u64() as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get latest metrics for a path
+    pub async fn get_latest_metrics(&self, path_id: PathId) -> Result<PathMetrics> {
+        let row = sqlx::query(
+            r#"
+            SELECT latency_ms, jitter_ms, packet_loss_pct, bandwidth_mbps, mtu, score, timestamp
+            FROM sdwan_path_metrics
+            WHERE path_id = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(path_id.as_u64() as i64)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let timestamp: i64 = row.try_get("timestamp")?;
+
+        Ok(PathMetrics {
+            latency_ms: row.try_get("latency_ms")?,
+            jitter_ms: row.try_get("jitter_ms")?,
+            packet_loss_pct: row.try_get("packet_loss_pct")?,
+            bandwidth_mbps: row.try_get("bandwidth_mbps")?,
+            mtu: row.try_get::<i32, _>("mtu")? as u16,
+            measured_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64),
+            score: row.try_get::<i32, _>("score")? as u8,
+        })
     }
 }
 

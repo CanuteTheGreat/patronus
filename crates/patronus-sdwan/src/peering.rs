@@ -3,18 +3,17 @@
 //! Automatically establishes WireGuard VPN tunnels between discovered sites.
 
 use crate::{database::Database, types::*, Error, Result};
-use std::net::IpAddr;
 use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
-use x25519_dalek::{PublicKey, StaticSecret};
+use tracing::{debug, info, warn};
+use x25519_dalek::PublicKey;
 
 /// WireGuard peering manager
 pub struct PeeringManager {
     db: Arc<Database>,
     own_site_id: SiteId,
-    own_private_key: StaticSecret,
+    own_private_key: [u8; 32],
     own_public_key: PublicKey,
     peers: Arc<RwLock<Vec<PeerConfig>>>,
     interface_name: String,
@@ -36,7 +35,7 @@ pub struct PeerConfig {
 #[derive(Debug)]
 pub struct InterfaceConfig {
     pub name: String,
-    pub private_key: StaticSecret,
+    pub private_key: [u8; 32],
     pub listen_port: u16,
     pub address: String,
 }
@@ -50,8 +49,10 @@ impl PeeringManager {
         listen_port: u16,
     ) -> Self {
         // Generate WireGuard keypair
-        let private_key = StaticSecret::random_from_rng(rand::rngs::OsRng);
-        let public_key = PublicKey::from(&private_key);
+        use rand::RngCore;
+        let mut private_key = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut private_key);
+        let public_key = PublicKey::from(private_key);
 
         Self {
             db,
@@ -154,10 +155,10 @@ impl PeeringManager {
         debug!("Configuring WireGuard interface");
 
         // Convert private key to base64
-        let private_key_b64 = base64::encode(self.own_private_key.to_bytes());
+        let private_key_b64 = base64::encode(&self.own_private_key);
 
         // wg set wg-sdwan private-key <(echo {private_key})
-        let output = Command::new("wg")
+        let mut output = Command::new("wg")
             .args([
                 "set",
                 &self.interface_name,
@@ -174,7 +175,7 @@ impl PeeringManager {
 
         // Write private key to stdin
         use std::io::Write;
-        if let Some(mut stdin) = output.stdin {
+        if let Some(ref mut stdin) = output.stdin {
             stdin
                 .write_all(private_key_b64.as_bytes())
                 .map_err(|e| Error::Network(format!("Failed to write private key: {}", e)))?;
@@ -251,7 +252,7 @@ impl PeeringManager {
         let peer_config = PeerConfig {
             site_id: site.id,
             public_key,
-            endpoint,
+            endpoint: endpoint.clone(),
             allowed_ips: allowed_ips.clone(),
             persistent_keepalive: Some(25),
         };

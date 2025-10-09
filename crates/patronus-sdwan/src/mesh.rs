@@ -42,7 +42,10 @@ impl MeshManager {
     /// Create a new mesh manager
     pub fn new(site_id: SiteId, site_name: String, db: Arc<Database>) -> Self {
         // Generate signing keypair for site authentication
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let mut secret_bytes = [0u8; 32];
+        use rand::RngCore;
+        OsRng.fill_bytes(&mut secret_bytes);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
         let verifying_key = signing_key.verifying_key();
 
         let (announcement_tx, announcement_rx) = mpsc::channel(100);
@@ -440,7 +443,7 @@ impl MeshManager {
             &announcement.capabilities,
             &announcement.timestamp,
         ))
-        .map_err(|e| Error::Serialization(serde_json::Error::custom(e.to_string())))?;
+        .map_err(|e| Error::Network(format!("Serialization failed: {}", e)))?;
 
         // Extract signature
         let signature_bytes: [u8; 64] = announcement.signature[..64]
