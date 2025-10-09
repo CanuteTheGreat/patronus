@@ -396,37 +396,20 @@
         </div>
 
         <!-- Metrics Grid -->
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem;">
-            <!-- CPU Usage Chart -->
+        <div style="display: grid; grid-template-columns: 1fr; gap: 1.5rem;">
+            <!-- System Metrics Chart (CPU, Memory, Disk) -->
             <div class="card">
-                <h3 class="font-bold mb-2">CPU Usage</h3>
-                <div style="height: 200px; background: var(--bg); border-radius: 0.5rem; display: flex; align-items: center; justify-content: center;">
-                    <span class="text-muted">Chart Placeholder ({{ cpu_usage }}%)</span>
-                </div>
-                <div class="mt-2 text-sm text-muted">
-                    Current: {{ cpu_usage }}% | Avg: {{ cpu_avg }}% | Peak: {{ cpu_peak }}%
+                <h3 class="font-bold mb-2">System Resources</h3>
+                <div style="height: 300px;">
+                    <canvas id="system-metrics-chart"></canvas>
                 </div>
             </div>
 
-            <!-- Memory Usage Chart -->
+            <!-- Network Throughput Chart -->
             <div class="card">
-                <h3 class="font-bold mb-2">Memory Usage</h3>
-                <div style="height: 200px; background: var(--bg); border-radius: 0.5rem; display: flex; align-items: center; justify-content: center;">
-                    <span class="text-muted">Chart Placeholder ({{ memory_usage }}%)</span>
-                </div>
-                <div class="mt-2 text-sm text-muted">
-                    Used: {{ memory_used }} / {{ memory_total }} | Swap: {{ swap_used }}
-                </div>
-            </div>
-
-            <!-- Network Bandwidth Chart -->
-            <div class="card">
-                <h3 class="font-bold mb-2">Network Bandwidth</h3>
-                <div style="height: 200px; background: var(--bg); border-radius: 0.5rem; display: flex; align-items: center; justify-content: center;">
-                    <span class="text-muted">Chart Placeholder</span>
-                </div>
-                <div class="mt-2 text-sm text-muted">
-                    ↓ {{ bandwidth_in }} | ↑ {{ bandwidth_out }}
+                <h3 class="font-bold mb-2">Network Throughput</h3>
+                <div style="height: 300px;">
+                    <canvas id="network-throughput-chart"></canvas>
                 </div>
             </div>
 
@@ -600,6 +583,13 @@
 {% endblock %}
 
 {% block extra_scripts %}
+<!-- Chart.js Library -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+<!-- Patronus Charts Integration -->
+<script src="/static/js/charts.js"></script>
+
 <script>
 // Tab switching
 function switchTab(event, tabId) {
