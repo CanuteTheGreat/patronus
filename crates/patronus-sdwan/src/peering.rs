@@ -3,6 +3,7 @@
 //! Automatically establishes WireGuard VPN tunnels between discovered sites.
 
 use crate::{database::Database, types::*, Error, Result};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -155,7 +156,7 @@ impl PeeringManager {
         debug!("Configuring WireGuard interface");
 
         // Convert private key to base64
-        let private_key_b64 = base64::encode(&self.own_private_key);
+        let private_key_b64 = STANDARD.encode(&self.own_private_key);
 
         // wg set wg-sdwan private-key <(echo {private_key})
         let mut output = Command::new("wg")
@@ -306,7 +307,7 @@ impl PeeringManager {
             "Configuring WireGuard peer"
         );
 
-        let public_key_b64 = base64::encode(peer.public_key.as_bytes());
+        let public_key_b64 = STANDARD.encode(peer.public_key.as_bytes());
 
         // Build wg command
         let mut args = vec![
@@ -352,7 +353,7 @@ impl PeeringManager {
         let peer = peers.remove(peer_idx);
 
         // Remove from WireGuard
-        let public_key_b64 = base64::encode(peer.public_key.as_bytes());
+        let public_key_b64 = STANDARD.encode(peer.public_key.as_bytes());
 
         let output = Command::new("wg")
             .args(["set", &self.interface_name, "peer", &public_key_b64, "remove"])
