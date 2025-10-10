@@ -6,7 +6,7 @@
 //! - Load balancing
 //! - Failover requirements
 
-use crate::{database::Database, policy::*, types::*, Result};
+use crate::{database::Database, netpolicy::PolicyEnforcer, policy::*, types::*, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -18,6 +18,7 @@ pub struct RoutingEngine {
     running: Arc<RwLock<bool>>,
     policies: Arc<RwLock<Vec<RoutingPolicy>>>,
     active_flows: Arc<RwLock<HashMap<FlowKey, PathId>>>,
+    netpolicy_enforcer: Option<Arc<PolicyEnforcer>>,
 }
 
 impl RoutingEngine {
@@ -28,6 +29,18 @@ impl RoutingEngine {
             running: Arc::new(RwLock::new(false)),
             policies: Arc::new(RwLock::new(Vec::new())),
             active_flows: Arc::new(RwLock::new(HashMap::new())),
+            netpolicy_enforcer: None,
+        }
+    }
+
+    /// Create a routing engine with NetworkPolicy enforcement
+    pub fn with_netpolicy_enforcement(db: Arc<Database>, enforcer: Arc<PolicyEnforcer>) -> Self {
+        Self {
+            db,
+            running: Arc::new(RwLock::new(false)),
+            policies: Arc::new(RwLock::new(Vec::new())),
+            active_flows: Arc::new(RwLock::new(HashMap::new())),
+            netpolicy_enforcer: Some(enforcer),
         }
     }
 
@@ -145,6 +158,21 @@ impl RoutingEngine {
             proto = flow.protocol,
             "Selecting path for flow"
         );
+
+        // Check NetworkPolicy enforcement first
+        if let Some(ref enforcer) = self.netpolicy_enforcer {
+            use crate::netpolicy::PolicyVerdict;
+            let verdict = enforcer.evaluate_flow(flow).await;
+            if verdict == PolicyVerdict::Deny {
+                warn!(
+                    flow = ?flow,
+                    "Flow denied by NetworkPolicy"
+                );
+                return Err(crate::Error::InvalidConfig(
+                    "Flow denied by NetworkPolicy".to_string(),
+                ));
+            }
+        }
 
         // Check if flow already has an assigned path
         let flows = self.active_flows.read().await;
