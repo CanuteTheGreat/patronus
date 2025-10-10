@@ -19,6 +19,7 @@ members = [
     "crates/patronus-secrets",
     "crates/patronus-bench",
     "crates/patronus-sdwan",
+    "crates/patronus-dashboard",
 ]
 
 [workspace.package]

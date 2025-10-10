@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Patronus SD-WAN Dashboard</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛡️ Patronus SD-WAN Dashboard</h1>
+            <div class="status-indicator">
+                <span id="connectionStatus" class="status-dot offline"></span>
+                <span id="connectionText">Disconnected</span>
+            </div>
+        </header>
+
+        <nav>
+            <button class="nav-button active" data-view="overview">Overview</button>
+            <button class="nav-button" data-view="sites">Sites</button>
+            <button class="nav-button" data-view="paths">Paths</button>
+            <button class="nav-button" data-view="metrics">Metrics</button>
+        </nav>
+
+        <!-- Overview View -->
+        <div id="overview-view" class="view active">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Total Sites</h3>
+                    <p id="totalSites" class="stat-value">0</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Active Paths</h3>
+                    <p id="activePaths" class="stat-value">0</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Avg Latency</h3>
+                    <p id="avgLatency" class="stat-value">0 ms</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Path Health</h3>
+                    <p id="pathHealth" class="stat-value">N/A</p>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <h2>Path Quality Over Time</h2>
+                <canvas id="latencyChart"></canvas>
+            </div>
+
+            <div class="events-container">
+                <h2>Recent Events</h2>
+                <div id="eventsLog" class="events-log">
+                    <p class="no-data">No events yet</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sites View -->
+        <div id="sites-view" class="view">
+            <h2>Sites</h2>
+            <div id="sitesList" class="table-container">
+                <p class="no-data">Loading sites...</p>
+            </div>
+        </div>
+
+        <!-- Paths View -->
+        <div id="paths-view" class="view">
+            <h2>Paths</h2>
+            <div id="pathsList" class="table-container">
+                <p class="no-data">Loading paths...</p>
+            </div>
+        </div>
+
+        <!-- Metrics View -->
+        <div id="metrics-view" class="view">
+            <h2>Metrics</h2>
+            <div class="metrics-grid">
+                <div class="chart-container">
+                    <h3>Latency</h3>
+                    <canvas id="metricsLatencyChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3>Packet Loss</h3>
+                    <canvas id="metricsLossChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>
