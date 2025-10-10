@@ -1,6 +1,6 @@
-# Patronus Firewall
+# Patronus SD-WAN & Firewall
 
-**Next-Generation Open-Source Firewall & Network Security Platform**
+**Next-Generation Open-Source SD-WAN, Firewall & Network Security Platform**
 
 [![Security: A+](https://img.shields.io/badge/Security-A+-brightgreen.svg)](SECURITY-AUDIT.md)
 [![Performance: 40-100 Gbps](https://img.shields.io/badge/Performance-40--100%20Gbps-blue.svg)](EBPF-OPTIMIZATION.md)
@@ -12,19 +12,34 @@
 
 ## 🚀 What is Patronus?
 
-Patronus is a **high-performance, enterprise-grade firewall** that combines **100% feature parity** with pfSense/OPNsense with revolutionary capabilities:
+Patronus is a **high-performance, enterprise-grade SD-WAN and firewall platform** that combines **100% feature parity** with pfSense/OPNsense plus revolutionary SD-WAN capabilities:
 
+- **SD-WAN multi-site networking** with automatic path selection and failover
+- **WireGuard mesh networking** with full-mesh and hub-spoke topologies
+- **Kubernetes NetworkPolicy enforcement** with eBPF/XDP datapath
 - **10-100x faster** than iptables-based firewalls using eBPF/XDP
 - **Enterprise-grade security** (A+ rating) with encrypted secrets and comprehensive validation
 - **Cloud-native** with Kubernetes CNI plugin and GitOps workflows
 - **AI-powered** threat detection with machine learning
 - **Infrastructure as Code** with Terraform and Ansible support
+- **Real-time web dashboard** for monitoring and policy management
 
 Built in **memory-safe Rust** with **zero unsafe code**.
 
 ---
 
 ## ✨ Key Features
+
+### 🌐 SD-WAN Multi-Site Networking
+
+- ✅ **WireGuard Mesh** - Automatic full-mesh or hub-spoke topology with X25519 key exchange
+- ✅ **Intelligent Path Selection** - Quality-based routing with latency, jitter, packet loss monitoring
+- ✅ **Multi-Path Failover** - Automatic failover to backup paths with configurable thresholds
+- ✅ **Flow Classification** - Application-aware traffic steering with priority levels
+- ✅ **Kubernetes NetworkPolicy** - eBPF/XDP enforcement with label selectors and rules
+- ✅ **Enterprise Dashboard** - Real-time monitoring, policy management, WebSocket streaming
+- ✅ **SQLite Database** - Site, path, and flow state persistence
+- ✅ **REST API** - Full CRUD operations for sites, paths, policies, and metrics
 
 ### 🔥 Core Firewall (100% Feature Parity with pfSense/OPNsense)
 
@@ -59,6 +74,36 @@ Built in **memory-safe Rust** with **zero unsafe code**.
 - ✅ **Alerts** - Email, Telegram, Slack, webhooks, Syslog
 - ✅ **Packet Capture** - tcpdump integration, filters, download
 - ✅ **Network Tools** - ping, traceroute, DNS lookup, port scan, packet generator
+
+### 🎯 SD-WAN Enterprise Dashboard
+
+```
+🛡️ Patronus SD-WAN Dashboard - https://your-gateway:8443
+
+Features:
+  ✅ Real-time path quality monitoring with Chart.js
+  ✅ NetworkPolicy CRUD with YAML/Form editor
+  ✅ Site and path management with status indicators
+  ✅ WebSocket streaming for live metrics updates
+  ✅ Policy visualization with JSON display
+  ✅ Dark theme with gradient accents
+```
+
+**Dashboard Views:**
+- **Overview** - Summary stats, path quality charts, event log
+- **Sites** - All SD-WAN sites with endpoints and last-seen status
+- **Paths** - WireGuard tunnels with latency, loss, and quality scores
+- **Policies** - NetworkPolicy management with YAML editor
+- **Metrics** - Historical latency and packet loss charts
+
+**Policy Editor:**
+- Dual-mode: YAML editor or structured forms
+- Syntax validation and error highlighting
+- Example templates for common policies
+- Pod selector with label matching (In, NotIn, Exists, DoesNotExist)
+- Ingress/Egress rules with peer selectors (PodSelector, NamespaceSelector, IpBlock)
+- Protocol/port specifications (TCP, UDP, SCTP)
+- Priority and enable/disable controls
 
 ### 🚀 Revolutionary Features (Beyond pfSense/OPNsense)
 
@@ -159,7 +204,7 @@ kind: NetworkPolicy
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**21 Specialized Crates (~45,000 LOC):**
+**23 Specialized Crates (~50,000 LOC):**
 - `patronus-core` - Core types, validation, services
 - `patronus-web` - Web interface and API
 - `patronus-firewall` - nftables/eBPF integration
@@ -171,6 +216,8 @@ kind: NetworkPolicy
 - `patronus-cni` - Kubernetes CNI plugin
 - `patronus-secrets` - Encrypted secrets management
 - `patronus-bench` - Performance benchmarking
+- **`patronus-sdwan`** - SD-WAN mesh, path selection, NetworkPolicy enforcement
+- **`patronus-dashboard`** - Enterprise web dashboard with real-time monitoring
 - Plus 10 more specialized crates...
 
 ---
@@ -305,6 +352,49 @@ patronus-cli gitops configure \
 patronus-cli gitops sync
 ```
 
+#### 5. SD-WAN Multi-Site Setup
+```bash
+# Initialize SD-WAN mesh on gateway
+patronus-sdwan init \
+  --site-name headquarters \
+  --endpoints 203.0.113.10:51820,203.0.113.11:51821
+
+# Add remote site (auto-generates WireGuard keys)
+patronus-sdwan add-site \
+  --name branch-office \
+  --endpoints 198.51.100.20:51820 \
+  --topology full-mesh
+
+# Monitor path quality
+patronus-sdwan status --verbose
+
+# Create NetworkPolicy
+cat <<EOF | patronus-sdwan policy apply -f -
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-database-access
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              role: api-server
+      ports:
+        - protocol: TCP
+          port: 5432
+EOF
+
+# Access dashboard
+# Open browser to https://your-gateway:8443
+```
+
 ---
 
 ## ⚡ Performance
@@ -410,6 +500,9 @@ See [EBPF-OPTIMIZATION.md](EBPF-OPTIMIZATION.md) for tuning guide.
 | **Multi-WAN** | ✅ | ✅ | ✅ **100%** |
 | | | | |
 | **REVOLUTIONARY FEATURES** | | | |
+| **SD-WAN Mesh** | ❌ | ❌ | ✅ **WireGuard Auto-Mesh** |
+| **NetworkPolicy Enforcement** | ❌ | ❌ | ✅ **K8s-Compatible** |
+| **Enterprise Dashboard** | ❌ | ❌ | ✅ **Real-time WebSocket** |
 | **GitOps/IaC** | ❌ | ❌ | ✅ **Terraform + Ansible** |
 | **AI Threat Detection** | ❌ | ❌ | ✅ **ML-Powered** |
 | **Kubernetes CNI** | ❌ | ❌ | ✅ **Full Plugin** |
@@ -465,6 +558,10 @@ patronus/
 
 ### ✅ v0.1.0 (COMPLETE - October 2025)
 - ✅ 100% feature parity with pfSense/OPNsense
+- ✅ **SD-WAN multi-site networking with WireGuard mesh**
+- ✅ **Kubernetes NetworkPolicy enforcement with eBPF**
+- ✅ **Enterprise web dashboard with real-time monitoring**
+- ✅ **NetworkPolicy CRUD API with YAML editor**
 - ✅ GitOps & Infrastructure as Code
 - ✅ AI-powered threat intelligence
 - ✅ Kubernetes CNI plugin
