@@ -1,6 +1,6 @@
 //! Application state
 
-use patronus_sdwan::database::Database;
+use patronus_sdwan::{database::Database, netpolicy::PolicyEnforcer};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -8,6 +8,9 @@ use tokio::sync::RwLock;
 pub struct AppState {
     /// SD-WAN database
     pub db: Arc<Database>,
+
+    /// NetworkPolicy enforcer
+    pub policy_enforcer: Arc<PolicyEnforcer>,
 
     /// WebSocket broadcast channels
     pub metrics_tx: tokio::sync::broadcast::Sender<MetricsUpdate>,
@@ -22,12 +25,17 @@ impl AppState {
     pub async fn new(db_path: &str) -> anyhow::Result<Self> {
         let db = Arc::new(Database::new(db_path).await?);
 
+        // Create policy enforcer
+        let policy_enforcer = Arc::new(PolicyEnforcer::new(db.clone()));
+        policy_enforcer.start().await?;
+
         // Create broadcast channels for WebSocket
         let (metrics_tx, _) = tokio::sync::broadcast::channel(100);
         let (events_tx, _) = tokio::sync::broadcast::channel(100);
 
         Ok(Self {
             db,
+            policy_enforcer,
             metrics_tx,
             events_tx,
             ws_connections: Arc::new(RwLock::new(0)),

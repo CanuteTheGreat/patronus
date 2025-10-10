@@ -73,6 +73,8 @@ async fn main() -> anyhow::Result<()> {
 
 /// API v1 routes
 fn api_routes() -> Router<Arc<AppState>> {
+    use axum::routing::{delete, put};
+
     Router::new()
         // Sites
         .route("/sites", get(api::sites::list_sites))
@@ -87,6 +89,8 @@ fn api_routes() -> Router<Arc<AppState>> {
         .route("/policies", get(api::policies::list_policies))
         .route("/policies", post(api::policies::create_policy))
         .route("/policies/:id", get(api::policies::get_policy))
+        .route("/policies/:id", put(api::policies::update_policy))
+        .route("/policies/:id", delete(api::policies::delete_policy))
         // Metrics
         .route("/metrics/summary", get(api::metrics::get_summary))
         .route("/metrics/timeseries", get(api::metrics::get_timeseries))
