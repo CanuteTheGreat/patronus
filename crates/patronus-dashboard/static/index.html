@@ -21,6 +21,7 @@
             <button class="nav-button active" data-view="overview">Overview</button>
             <button class="nav-button" data-view="sites">Sites</button>
             <button class="nav-button" data-view="paths">Paths</button>
+            <button class="nav-button" data-view="policies">Policies</button>
             <button class="nav-button" data-view="metrics">Metrics</button>
         </nav>
 
@@ -74,6 +75,17 @@
             </div>
         </div>
 
+        <!-- Policies View -->
+        <div id="policies-view" class="view">
+            <div class="view-header">
+                <h2>Network Policies</h2>
+                <button id="createPolicyBtn" class="btn-primary">Create Policy</button>
+            </div>
+            <div id="policiesList" class="table-container">
+                <p class="no-data">Loading policies...</p>
+            </div>
+        </div>
+
         <!-- Metrics View -->
         <div id="metrics-view" class="view">
             <h2>Metrics</h2>
@@ -86,6 +98,88 @@
                     <h3>Packet Loss</h3>
                     <canvas id="metricsLossChart"></canvas>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Policy Editor Modal -->
+    <div id="policyModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">Create Network Policy</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="editor-tabs">
+                    <button class="tab-button active" data-tab="yaml">YAML</button>
+                    <button class="tab-button" data-tab="form">Form</button>
+                </div>
+
+                <!-- YAML Editor -->
+                <div id="yaml-editor" class="tab-content active">
+                    <textarea id="policyYaml" class="yaml-editor" rows="20"></textarea>
+                    <div class="editor-actions">
+                        <button id="validateYamlBtn" class="btn-secondary">Validate</button>
+                        <div id="validationMessage" class="validation-message"></div>
+                    </div>
+                </div>
+
+                <!-- Form Editor -->
+                <div id="form-editor" class="tab-content">
+                    <div class="form-group">
+                        <label for="policyName">Policy Name</label>
+                        <input type="text" id="policyName" placeholder="my-network-policy">
+                    </div>
+                    <div class="form-group">
+                        <label for="policyNamespace">Namespace</label>
+                        <input type="text" id="policyNamespace" placeholder="default">
+                    </div>
+                    <div class="form-group">
+                        <label>Policy Types</label>
+                        <div class="checkbox-group">
+                            <label><input type="checkbox" id="ingressType" checked> Ingress</label>
+                            <label><input type="checkbox" id="egressType"> Egress</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="podLabels">Pod Selector (JSON)</label>
+                        <textarea id="podLabels" rows="3" placeholder='{"app": "web"}'></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="ingressRules">Ingress Rules (JSON)</label>
+                        <textarea id="ingressRules" rows="5" placeholder='[{"from": [], "ports": []}]'></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="egressRules">Egress Rules (JSON)</label>
+                        <textarea id="egressRules" rows="5" placeholder='[{"to": [], "ports": []}]'></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="policyPriority">Priority</label>
+                        <input type="number" id="policyPriority" value="100" min="0" max="1000">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="cancelPolicyBtn" class="btn-secondary">Cancel</button>
+                <button id="savePolicyBtn" class="btn-primary">Save Policy</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Policy Detail Modal -->
+    <div id="policyDetailModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="detailModalTitle">Policy Details</h2>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="policyDetailContent"></div>
+            </div>
+            <div class="modal-footer">
+                <button id="editPolicyBtn" class="btn-primary">Edit</button>
+                <button id="deletePolicyBtn" class="btn-danger">Delete</button>
+                <button class="btn-secondary modal-close">Close</button>
             </div>
         </div>
     </div>
