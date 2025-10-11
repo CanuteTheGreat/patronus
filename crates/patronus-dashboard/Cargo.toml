@@ -11,10 +11,16 @@ license = "MIT"
 patronus-sdwan = { path = "../patronus-sdwan" }
 
 # Web framework
-axum = { version = "0.7", features = ["ws", "macros"] }
+axum = { version = "0.8", features = ["ws", "macros"] }
 tokio = { version = "1.40", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
+tower-http = { version = "0.6", features = ["fs", "trace", "cors", "set-header"] }
+
+# GraphQL API
+async-graphql = { version = "7.0", features = ["chrono"] }
+async-graphql-axum = "7.0"
+async-stream = "0.3"
+tokio-stream = "0.1"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -26,9 +32,11 @@ sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
-# Logging
+# Logging & Observability
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+metrics = "0.23"
+metrics-exporter-prometheus = "0.15"
 
 # Error handling
 anyhow = "1.0"
@@ -39,3 +47,22 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 
 # Async
 futures = "0.3"
+
+# Authentication & Security
+jsonwebtoken = "9.3"
+argon2 = { version = "0.5", features = ["std"] }
+rand = "0.8"
+base32 = "0.5"
+hmac = "0.12"
+sha1 = "0.10"
+sha2 = "0.10"
+hex = "0.4"
+urlencoding = "2.1"
+
+# High Availability
+raft = "0.7"
+sled = "0.34"  # Embedded distributed database
+parking_lot = "0.12"  # Better locks for HA
+
+[dev-dependencies]
+tempfile = "3.8"

@@ -3,6 +3,7 @@
 use crate::{types::*, Result};
 use sqlx::{sqlite::SqlitePool, Row};
 use tracing::{debug, info};
+use serde_json;
 
 /// Database for SD-WAN state
 pub struct Database {
@@ -132,6 +133,60 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // System metrics table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sdwan_system_metrics (
+                metric_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp INTEGER NOT NULL,
+                throughput_mbps REAL NOT NULL,
+                packets_per_second INTEGER NOT NULL,
+                active_flows INTEGER NOT NULL,
+                avg_latency_ms REAL NOT NULL,
+                avg_packet_loss REAL NOT NULL,
+                cpu_usage REAL NOT NULL,
+                memory_usage REAL NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_system_metrics_time
+            ON sdwan_system_metrics(timestamp)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Policy traffic statistics table (Sprint 30)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sdwan_policy_stats (
+                stat_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                policy_id INTEGER NOT NULL,
+                timestamp INTEGER NOT NULL,
+                packets_matched INTEGER NOT NULL,
+                bytes_matched INTEGER NOT NULL,
+                active_flows INTEGER NOT NULL,
+                FOREIGN KEY (policy_id) REFERENCES sdwan_policies(policy_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_policy_stats_time
+            ON sdwan_policy_stats(policy_id, timestamp)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         info!("Database migrations completed");
         Ok(())
     }
@@ -253,6 +308,20 @@ impl Database {
         }
 
         Ok(sites)
+    }
+
+    /// Count total number of sites
+    pub async fn count_sites(&self) -> Result<i64> {
+        let row = sqlx::query(
+            r#"
+            SELECT COUNT(*) as count
+            FROM sdwan_sites
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row.try_get("count")?)
     }
 
     /// Insert a path
@@ -435,6 +504,426 @@ impl Database {
             measured_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64),
             score: row.try_get::<i32, _>("score")? as u8,
         })
+    }
+
+    /// Insert or update a routing policy
+    pub async fn upsert_policy(&self, policy: &crate::policy::RoutingPolicy) -> Result<()> {
+        let match_rules = serde_json::to_string(&policy.match_rules)?;
+        let path_preference = serde_json::to_string(&policy.path_preference)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO sdwan_policies (policy_id, name, priority, match_rules, path_preference, enabled)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(policy_id) DO UPDATE SET
+                name = excluded.name,
+                priority = excluded.priority,
+                match_rules = excluded.match_rules,
+                path_preference = excluded.path_preference,
+                enabled = excluded.enabled
+            "#,
+        )
+        .bind(policy.id as i64)
+        .bind(&policy.name)
+        .bind(policy.priority as i32)
+        .bind(match_rules)
+        .bind(path_preference)
+        .bind(policy.enabled as i32)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get a routing policy by ID
+    pub async fn get_policy(&self, policy_id: u64) -> Result<Option<crate::policy::RoutingPolicy>> {
+        let row = sqlx::query(
+            r#"
+            SELECT policy_id, name, priority, match_rules, path_preference, enabled
+            FROM sdwan_policies
+            WHERE policy_id = ?
+            "#,
+        )
+        .bind(policy_id as i64)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let policy_id: i64 = row.try_get("policy_id")?;
+            let name: String = row.try_get("name")?;
+            let priority: i32 = row.try_get("priority")?;
+            let match_rules_json: String = row.try_get("match_rules")?;
+            let path_preference_json: String = row.try_get("path_preference")?;
+            let enabled: i32 = row.try_get("enabled")?;
+
+            let match_rules: crate::policy::MatchRules = serde_json::from_str(&match_rules_json)?;
+            let path_preference: crate::policy::PathPreference = serde_json::from_str(&path_preference_json)?;
+
+            Ok(Some(crate::policy::RoutingPolicy {
+                id: policy_id as u64,
+                name,
+                priority: priority as u32,
+                match_rules,
+                path_preference,
+                enabled: enabled != 0,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// List all routing policies
+    pub async fn list_policies(&self) -> Result<Vec<crate::policy::RoutingPolicy>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT policy_id, name, priority, match_rules, path_preference, enabled
+            FROM sdwan_policies
+            ORDER BY priority DESC, name
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut policies = Vec::new();
+        for row in rows {
+            let policy_id: i64 = row.try_get("policy_id")?;
+            let name: String = row.try_get("name")?;
+            let priority: i32 = row.try_get("priority")?;
+            let match_rules_json: String = row.try_get("match_rules")?;
+            let path_preference_json: String = row.try_get("path_preference")?;
+            let enabled: i32 = row.try_get("enabled")?;
+
+            let match_rules: crate::policy::MatchRules = serde_json::from_str(&match_rules_json)?;
+            let path_preference: crate::policy::PathPreference = serde_json::from_str(&path_preference_json)?;
+
+            policies.push(crate::policy::RoutingPolicy {
+                id: policy_id as u64,
+                name,
+                priority: priority as u32,
+                match_rules,
+                path_preference,
+                enabled: enabled != 0,
+            });
+        }
+
+        Ok(policies)
+    }
+
+    /// Delete a routing policy
+    pub async fn delete_policy(&self, policy_id: u64) -> Result<()> {
+        sqlx::query(
+            r#"
+            DELETE FROM sdwan_policies
+            WHERE policy_id = ?
+            "#,
+        )
+        .bind(policy_id as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Store system-wide metrics snapshot
+    pub async fn store_system_metrics(&self, metrics: &crate::metrics::SystemMetrics) -> Result<()> {
+        let timestamp = metrics.timestamp
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        sqlx::query(
+            r#"
+            INSERT INTO sdwan_system_metrics (
+                timestamp, throughput_mbps, packets_per_second, active_flows,
+                avg_latency_ms, avg_packet_loss, cpu_usage, memory_usage
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(timestamp)
+        .bind(metrics.throughput_mbps)
+        .bind(metrics.packets_per_second as i64)
+        .bind(metrics.active_flows as i64)
+        .bind(metrics.avg_latency_ms)
+        .bind(metrics.avg_packet_loss)
+        .bind(metrics.cpu_usage)
+        .bind(metrics.memory_usage)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get latest system metrics
+    pub async fn get_latest_system_metrics(&self) -> Result<crate::metrics::SystemMetrics> {
+        let row = sqlx::query(
+            r#"
+            SELECT timestamp, throughput_mbps, packets_per_second, active_flows,
+                   avg_latency_ms, avg_packet_loss, cpu_usage, memory_usage
+            FROM sdwan_system_metrics
+            ORDER BY timestamp DESC
+            LIMIT 1
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        let timestamp: i64 = row.try_get("timestamp")?;
+
+        Ok(crate::metrics::SystemMetrics {
+            timestamp: std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64),
+            throughput_mbps: row.try_get("throughput_mbps")?,
+            packets_per_second: row.try_get::<i64, _>("packets_per_second")? as u64,
+            active_flows: row.try_get::<i64, _>("active_flows")? as u64,
+            avg_latency_ms: row.try_get("avg_latency_ms")?,
+            avg_packet_loss: row.try_get("avg_packet_loss")?,
+            cpu_usage: row.try_get("cpu_usage")?,
+            memory_usage: row.try_get("memory_usage")?,
+            path_metrics: std::collections::HashMap::new(), // Path metrics loaded separately
+        })
+    }
+
+    /// Get system metrics history over time range
+    pub async fn get_system_metrics_history(
+        &self,
+        from: std::time::SystemTime,
+        to: std::time::SystemTime,
+    ) -> Result<Vec<crate::metrics::SystemMetrics>> {
+        let from_ts = from.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let to_ts = to.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT timestamp, throughput_mbps, packets_per_second, active_flows,
+                   avg_latency_ms, avg_packet_loss, cpu_usage, memory_usage
+            FROM sdwan_system_metrics
+            WHERE timestamp >= ? AND timestamp <= ?
+            ORDER BY timestamp ASC
+            "#,
+        )
+        .bind(from_ts)
+        .bind(to_ts)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut metrics_list = Vec::new();
+        for row in rows {
+            let timestamp: i64 = row.try_get("timestamp")?;
+
+            metrics_list.push(crate::metrics::SystemMetrics {
+                timestamp: std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64),
+                throughput_mbps: row.try_get("throughput_mbps")?,
+                packets_per_second: row.try_get::<i64, _>("packets_per_second")? as u64,
+                active_flows: row.try_get::<i64, _>("active_flows")? as u64,
+                avg_latency_ms: row.try_get("avg_latency_ms")?,
+                avg_packet_loss: row.try_get("avg_packet_loss")?,
+                cpu_usage: row.try_get("cpu_usage")?,
+                memory_usage: row.try_get("memory_usage")?,
+                path_metrics: std::collections::HashMap::new(),
+            });
+        }
+
+        Ok(metrics_list)
+    }
+
+    /// Clean up old metrics data (retention policy)
+    pub async fn cleanup_old_metrics(&self, older_than: std::time::SystemTime) -> Result<u64> {
+        let timestamp = older_than.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+
+        // Clean up path metrics
+        let path_result = sqlx::query(
+            r#"
+            DELETE FROM sdwan_path_metrics
+            WHERE timestamp < ?
+            "#,
+        )
+        .bind(timestamp)
+        .execute(&self.pool)
+        .await?;
+
+        // Clean up system metrics
+        let system_result = sqlx::query(
+            r#"
+            DELETE FROM sdwan_system_metrics
+            WHERE timestamp < ?
+            "#,
+        )
+        .bind(timestamp)
+        .execute(&self.pool)
+        .await?;
+
+        // Clean up policy stats (Sprint 30)
+        let policy_result = sqlx::query(
+            r#"
+            DELETE FROM sdwan_policy_stats
+            WHERE timestamp < ?
+            "#,
+        )
+        .bind(timestamp)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(path_result.rows_affected() + system_result.rows_affected() + policy_result.rows_affected())
+    }
+
+    /// Store policy traffic statistics (Sprint 30)
+    pub async fn store_policy_stats(&self, stats: &crate::traffic_stats::PolicyStats) -> Result<()> {
+        let timestamp = stats.last_updated
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        sqlx::query(
+            r#"
+            INSERT INTO sdwan_policy_stats (
+                policy_id, timestamp, packets_matched, bytes_matched, active_flows
+            )
+            VALUES (?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(stats.policy_id as i64)
+        .bind(timestamp)
+        .bind(stats.packets_matched as i64)
+        .bind(stats.bytes_matched as i64)
+        .bind(stats.active_flows as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get latest policy statistics (Sprint 30)
+    pub async fn get_latest_policy_stats(&self, policy_id: u64) -> Result<Option<crate::traffic_stats::PolicyStats>> {
+        let row = sqlx::query(
+            r#"
+            SELECT policy_id, timestamp, packets_matched, bytes_matched, active_flows
+            FROM sdwan_policy_stats
+            WHERE policy_id = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(policy_id as i64)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            let timestamp: i64 = row.try_get("timestamp")?;
+
+            Ok(Some(crate::traffic_stats::PolicyStats {
+                policy_id,
+                packets_matched: row.try_get::<i64, _>("packets_matched")? as u64,
+                bytes_matched: row.try_get::<i64, _>("bytes_matched")? as u64,
+                active_flows: row.try_get::<i64, _>("active_flows")? as u64,
+                last_updated: std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64),
+                first_seen: std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get policy statistics history over time range (Sprint 30)
+    pub async fn get_policy_stats_history(
+        &self,
+        policy_id: u64,
+        from: std::time::SystemTime,
+        to: std::time::SystemTime,
+    ) -> Result<Vec<crate::traffic_stats::PolicyStats>> {
+        let from_ts = from.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let to_ts = to.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT policy_id, timestamp, packets_matched, bytes_matched, active_flows
+            FROM sdwan_policy_stats
+            WHERE policy_id = ? AND timestamp >= ? AND timestamp <= ?
+            ORDER BY timestamp ASC
+            "#,
+        )
+        .bind(policy_id as i64)
+        .bind(from_ts)
+        .bind(to_ts)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut stats_list = Vec::new();
+        for row in rows {
+            let timestamp: i64 = row.try_get("timestamp")?;
+
+            stats_list.push(crate::traffic_stats::PolicyStats {
+                policy_id,
+                packets_matched: row.try_get::<i64, _>("packets_matched")? as u64,
+                bytes_matched: row.try_get::<i64, _>("bytes_matched")? as u64,
+                active_flows: row.try_get::<i64, _>("active_flows")? as u64,
+                last_updated: std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64),
+                first_seen: std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64),
+            });
+        }
+
+        Ok(stats_list)
+    }
+
+    /// Delete a site and cascade to related records (Sprint 30)
+    pub async fn delete_site(&self, site_id: &SiteId) -> Result<u64> {
+        // Start a transaction
+        let mut tx = self.pool.begin().await?;
+
+        // Delete paths where this site is source or destination
+        let paths_result = sqlx::query(
+            r#"
+            DELETE FROM sdwan_paths
+            WHERE src_site_id = ? OR dst_site_id = ?
+            "#,
+        )
+        .bind(site_id.to_string())
+        .bind(site_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+
+        // Delete endpoints
+        let endpoints_result = sqlx::query(
+            r#"
+            DELETE FROM sdwan_endpoints
+            WHERE site_id = ?
+            "#,
+        )
+        .bind(site_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+
+        // Delete the site
+        let site_result = sqlx::query(
+            r#"
+            DELETE FROM sdwan_sites
+            WHERE site_id = ?
+            "#,
+        )
+        .bind(site_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+
+        // Commit transaction
+        tx.commit().await?;
+
+        Ok(paths_result.rows_affected() + endpoints_result.rows_affected() + site_result.rows_affected())
+    }
+
+    /// Count paths associated with a site (Sprint 30)
+    pub async fn count_site_paths(&self, site_id: &SiteId) -> Result<i64> {
+        let row = sqlx::query(
+            r#"
+            SELECT COUNT(*) as count
+            FROM sdwan_paths
+            WHERE src_site_id = ? OR dst_site_id = ?
+            "#,
+        )
+        .bind(site_id.to_string())
+        .bind(site_id.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(row.try_get("count")?)
     }
 }
 

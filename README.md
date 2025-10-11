@@ -38,8 +38,12 @@ Built in **memory-safe Rust** with **zero unsafe code**.
 - ✅ **Flow Classification** - Application-aware traffic steering with priority levels
 - ✅ **Kubernetes NetworkPolicy** - eBPF/XDP enforcement with label selectors and rules
 - ✅ **Enterprise Dashboard** - Real-time monitoring, policy management, WebSocket streaming
+- ✅ **Traffic Statistics & Flow Tracking** - Real-time packet/byte counters per policy with flow tracking (Sprint 30)
+- ✅ **Cache Management System** - TTL-based caching for metrics and routing decisions (Sprint 30)
+- ✅ **Site Deletion with Cascade** - Transaction-safe deletion with dependency handling (Sprint 30)
 - ✅ **SQLite Database** - Site, path, and flow state persistence
-- ✅ **REST API** - Full CRUD operations for sites, paths, policies, and metrics
+- ✅ **REST API (v1)** - Full CRUD operations for sites, paths, policies, and metrics
+- ✅ **GraphQL API (v2)** - Modern flexible queries with interactive playground
 
 ### 🔥 Core Firewall (100% Feature Parity with pfSense/OPNsense)
 
@@ -104,6 +108,65 @@ Features:
 - Ingress/Egress rules with peer selectors (PodSelector, NamespaceSelector, IpBlock)
 - Protocol/port specifications (TCP, UDP, SCTP)
 - Priority and enable/disable controls
+
+### 🎯 GraphQL API (v2)
+
+```graphql
+# Interactive GraphQL Playground - https://your-gateway:8443/api/v2/graphql
+
+# Query all sites with flexible field selection
+query {
+  sites {
+    id
+    name
+    status
+    endpointCount
+  }
+}
+
+# Get real-time metrics
+query {
+  metrics {
+    throughputMbps
+    packetsPerSecond
+    avgLatencyMs
+    cpuUsage
+  }
+}
+
+# Create a new site
+mutation {
+  createSite(input: {
+    name: "Tokyo DC"
+    location: "AP-Northeast"
+  }) {
+    id
+    name
+    status
+  }
+}
+
+# Subscribe to real-time metrics
+subscription {
+  metricsStream(intervalSeconds: 5) {
+    throughputMbps
+    avgLatencyMs
+  }
+}
+```
+
+**Features:**
+- ✅ Flexible queries - Request exactly the data you need
+- ✅ Type-safe schema with introspection
+- ✅ Real-time subscriptions via WebSocket
+- ✅ Interactive GraphQL Playground
+- ✅ Query complexity/depth limits (DoS protection)
+- ✅ API versioning (v1 REST + v2 GraphQL)
+
+**Endpoints:**
+- **GraphQL API**: POST /api/v2/graphql
+- **Playground**: GET /api/v2/graphql
+- **REST API (legacy)**: /api/v1/*
 
 ### 🚀 Revolutionary Features (Beyond pfSense/OPNsense)
 
@@ -173,6 +236,7 @@ kind: NetworkPolicy
 
 #### 5. **Enterprise Security (A+ Grade)**
 
+**Core Security:**
 - ✅ **AES-256-GCM encryption** for all secrets at rest
 - ✅ **Argon2id password hashing** (strongest available)
 - ✅ **Comprehensive input validation** (18+ validation functions)
@@ -181,6 +245,14 @@ kind: NetworkPolicy
 - ✅ **Strong password enforcement** (12+ chars, entropy requirements)
 - ✅ **Professional security audit** (78 vulnerabilities fixed)
 - ✅ **Secret rotation policies** with automatic expiration tracking
+
+**Advanced Security (Sprint 20):**
+- ✅ **Rate Limiting** - Token bucket algorithm prevents brute force (100 req/min configurable)
+- ✅ **Audit Logging** - 15 event types with severity levels (Info/Warning/Critical)
+- ✅ **Multi-Factor Authentication** - TOTP/RFC 6238 with Google Authenticator support
+- ✅ **Token Revocation** - In-memory cache for instant JWT invalidation
+- ✅ **API Key Management** - SHA-256 hashed keys with scope-based permissions
+- ✅ **Compliance Ready** - GDPR, SOC 2, HIPAA audit trails and controls
 
 ---
 
@@ -562,6 +634,9 @@ patronus/
 - ✅ **Kubernetes NetworkPolicy enforcement with eBPF**
 - ✅ **Enterprise web dashboard with real-time monitoring**
 - ✅ **NetworkPolicy CRUD API with YAML editor**
+- ✅ **Traffic Statistics & Flow Tracking** (Sprint 30)
+- ✅ **Cache Management System** (Sprint 30)
+- ✅ **Site Deletion with Cascade** (Sprint 30)
 - ✅ GitOps & Infrastructure as Code
 - ✅ AI-powered threat intelligence
 - ✅ Kubernetes CNI plugin
