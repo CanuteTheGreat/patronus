@@ -224,6 +224,51 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // Failover policies table (Sprint 31)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sdwan_failover_policies (
+                policy_id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                primary_path_id TEXT NOT NULL,
+                backup_path_ids TEXT NOT NULL,
+                failover_threshold REAL NOT NULL DEFAULT 50.0,
+                failback_threshold REAL NOT NULL DEFAULT 80.0,
+                failback_delay_secs INTEGER NOT NULL DEFAULT 60,
+                enabled INTEGER NOT NULL DEFAULT 1
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Failover events table (Sprint 31)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sdwan_failover_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                policy_id INTEGER NOT NULL,
+                event_type TEXT CHECK(event_type IN ('triggered', 'completed', 'failed', 'policy_enabled', 'policy_disabled')) NOT NULL,
+                from_path_id TEXT,
+                to_path_id TEXT,
+                reason TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                FOREIGN KEY (policy_id) REFERENCES sdwan_failover_policies(policy_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_failover_events_policy_time
+            ON sdwan_failover_events(policy_id, timestamp)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         info!("Database migrations completed");
         Ok(())
     }

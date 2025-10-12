@@ -37,6 +37,7 @@ pub mod netpolicy;
 pub mod metrics;
 pub mod traffic_stats;
 pub mod health;
+pub mod failover;
 
 pub use error::{Error, Result};
 pub use types::{SiteId, PathId, FlowKey};
