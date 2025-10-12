@@ -63,10 +63,10 @@ impl HealthMonitor {
             count: self.config.probes_per_check,
             timeout: Duration::from_millis(self.config.probe_timeout_ms),
             interval: Duration::from_millis(200), // 200ms between probes
-            probe_type: ProbeType::Icmp,
+            probe_type: ProbeType::Icmp, // Will auto-fallback to UDP if unavailable
         };
 
-        let prober = Prober::new(probe_config);
+        let prober = Prober::new(probe_config).await;
 
         // Execute probes
         let probe_result = prober.probe().await?;

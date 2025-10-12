@@ -30,12 +30,16 @@
 //! ```
 
 mod checker;
+mod icmp_probe;
 mod probe;
 mod scoring;
+mod udp_probe;
 
 pub use checker::HealthMonitor;
+pub use icmp_probe::{IcmpError, IcmpProbeResult, IcmpProber};
 pub use probe::{ProbeConfig, ProbeResult, Prober};
 pub use scoring::{HealthScore, HealthScorer};
+pub use udp_probe::{UdpError, UdpProbeResult, UdpProber};
 
 use crate::types::PathId;
 use serde::{Deserialize, Serialize};

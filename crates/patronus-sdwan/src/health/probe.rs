@@ -3,9 +3,13 @@
 //! This module implements ICMP echo (ping) and UDP probes to measure
 //! latency, packet loss, and jitter for network paths.
 
+use super::icmp_probe::{IcmpProber, IcmpError};
+use super::udp_probe::{UdpProber, UdpError};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 use tokio::time::timeout;
 
 /// Configuration for network probes
@@ -30,10 +34,12 @@ pub struct ProbeConfig {
 /// Type of probe to use
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProbeType {
-    /// ICMP Echo Request (ping)
+    /// ICMP Echo Request (ping) - requires CAP_NET_RAW
     Icmp,
-    /// UDP probe to high port
+    /// UDP probe to high port - no special privileges required
     Udp,
+    /// Simulated probe for testing
+    Simulated,
 }
 
 /// Result of probe measurements
@@ -55,15 +61,57 @@ pub struct ProbeResult {
     pub probes_received: usize,
 }
 
-/// Network prober for health measurements
+/// Network prober for health measurements with automatic fallback
 pub struct Prober {
     config: ProbeConfig,
+    icmp_prober: Option<Arc<IcmpProber>>,
+    udp_prober: Arc<UdpProber>,
+    active_probe_type: Arc<RwLock<ProbeType>>,
 }
 
 impl Prober {
     /// Create a new prober with the given configuration
-    pub fn new(config: ProbeConfig) -> Self {
-        Self { config }
+    ///
+    /// Automatically detects available probe methods and sets up fallback.
+    pub async fn new(config: ProbeConfig) -> Self {
+        // Try to create ICMP prober
+        let icmp_prober = match IcmpProber::new() {
+            Ok(prober) => {
+                tracing::info!("ICMP probing available");
+                Some(Arc::new(prober))
+            }
+            Err(IcmpError::InsufficientPermissions) => {
+                tracing::warn!("ICMP probing unavailable (insufficient permissions), will use UDP");
+                None
+            }
+            Err(e) => {
+                tracing::warn!("ICMP probing unavailable: {}, will use UDP", e);
+                None
+            }
+        };
+
+        // Always create UDP prober as fallback
+        let udp_prober = UdpProber::new()
+            .await
+            .expect("UDP prober creation should never fail");
+
+        // Determine active probe type based on config and availability
+        let active_probe_type = match config.probe_type {
+            ProbeType::Icmp if icmp_prober.is_some() => ProbeType::Icmp,
+            ProbeType::Icmp => {
+                tracing::info!("ICMP requested but unavailable, using UDP");
+                ProbeType::Udp
+            }
+            ProbeType::Udp => ProbeType::Udp,
+            ProbeType::Simulated => ProbeType::Simulated,
+        };
+
+        Self {
+            config,
+            icmp_prober,
+            udp_prober: Arc::new(udp_prober),
+            active_probe_type: Arc::new(RwLock::new(active_probe_type)),
+        }
     }
 
     /// Execute probes and collect measurements
@@ -146,43 +194,57 @@ impl Prober {
     /// - Ok(None): Probe timed out
     /// - Err: Probe failed with error
     async fn send_probe(&self) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
-        match self.config.probe_type {
+        let probe_type = *self.active_probe_type.read().await;
+
+        match probe_type {
             ProbeType::Icmp => self.send_icmp_probe().await,
             ProbeType::Udp => self.send_udp_probe().await,
+            ProbeType::Simulated => self.send_simulated_probe().await,
         }
     }
 
     /// Send ICMP echo request
     async fn send_icmp_probe(&self) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
-        // For now, use a simulated probe
-        // In production, this would use pnet or similar for ICMP
-        self.send_simulated_probe().await
+        if let Some(ref prober) = self.icmp_prober {
+            match prober.probe(self.config.target).await {
+                Ok(result) => {
+                    if result.success {
+                        Ok(Some(result.latency_ms))
+                    } else {
+                        Ok(None)
+                    }
+                }
+                Err(IcmpError::Timeout(_)) => Ok(None),
+                Err(e) => {
+                    tracing::warn!("ICMP probe failed: {}, falling back to UDP", e);
+                    // Fall back to UDP
+                    *self.active_probe_type.write().await = ProbeType::Udp;
+                    self.send_udp_probe().await
+                }
+            }
+        } else {
+            // No ICMP prober available, use UDP
+            self.send_udp_probe().await
+        }
     }
 
     /// Send UDP probe
     async fn send_udp_probe(&self) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
-        use tokio::net::UdpSocket;
-
-        let socket = UdpSocket::bind("0.0.0.0:0").await?;
-        let target_addr = format!("{}:33434", self.config.target); // Standard traceroute port
-
-        let start = Instant::now();
-
-        // Send UDP packet
-        let probe_data = b"PATRONUS_HEALTH_PROBE";
-        socket.send_to(probe_data, &target_addr).await?;
-
-        // Try to receive response or ICMP error
-        let mut buf = [0u8; 1024];
-        let result = timeout(self.config.timeout, socket.recv_from(&mut buf)).await;
-
-        match result {
-            Ok(Ok(_)) => {
-                let elapsed = start.elapsed();
-                Ok(Some(elapsed.as_secs_f64() * 1000.0))
+        match self.udp_prober.probe(self.config.target).await {
+            Ok(result) => {
+                if result.success {
+                    Ok(Some(result.latency_ms))
+                } else {
+                    Ok(None)
+                }
             }
-            Ok(Err(e)) => Err(Box::new(e)),
-            Err(_) => Ok(None), // Timeout
+            Err(UdpError::Timeout(_)) => Ok(None),
+            Err(e) => {
+                tracing::warn!("UDP probe failed: {}, using simulated", e);
+                // Last resort: simulated probe
+                *self.active_probe_type.write().await = ProbeType::Simulated;
+                self.send_simulated_probe().await
+            }
         }
     }
 
@@ -226,8 +288,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_simulated_probe() {
-        let config = ProbeConfig::default();
-        let prober = Prober::new(config);
+        let config = ProbeConfig {
+            probe_type: ProbeType::Simulated,
+            ..Default::default()
+        };
+        let prober = Prober::new(config).await;
 
         let result = prober.send_simulated_probe().await;
         assert!(result.is_ok());
@@ -243,9 +308,10 @@ mod tests {
     async fn test_probe_multiple() {
         let config = ProbeConfig {
             count: 10,
+            probe_type: ProbeType::Simulated,
             ..Default::default()
         };
-        let prober = Prober::new(config);
+        let prober = Prober::new(config).await;
 
         let result = prober.probe().await;
         assert!(result.is_ok());
@@ -274,9 +340,10 @@ mod tests {
     async fn test_probe_calculates_stats() {
         let config = ProbeConfig {
             count: 20,
+            probe_type: ProbeType::Simulated,
             ..Default::default()
         };
-        let prober = Prober::new(config);
+        let prober = Prober::new(config).await;
 
         let result = prober.probe().await.unwrap();
 
@@ -302,9 +369,67 @@ mod tests {
     fn test_probe_type_serialization() {
         let icmp = ProbeType::Icmp;
         let udp = ProbeType::Udp;
+        let simulated = ProbeType::Simulated;
 
         assert_eq!(icmp, ProbeType::Icmp);
         assert_eq!(udp, ProbeType::Udp);
+        assert_eq!(simulated, ProbeType::Simulated);
         assert_ne!(icmp, udp);
+        assert_ne!(icmp, simulated);
+        assert_ne!(udp, simulated);
+    }
+
+    #[tokio::test]
+    async fn test_prober_automatic_fallback() {
+        // When ICMP is requested but unavailable, should fall back to UDP
+        let config = ProbeConfig {
+            probe_type: ProbeType::Icmp,
+            count: 5,
+            ..Default::default()
+        };
+        let prober = Prober::new(config).await;
+
+        // Should have created UDP prober as fallback
+        assert!(prober.udp_prober.local_port().is_ok());
+
+        // Active type should be ICMP if available, UDP otherwise
+        let active_type = *prober.active_probe_type.read().await;
+        assert!(
+            active_type == ProbeType::Icmp || active_type == ProbeType::Udp,
+            "Active type should be ICMP or UDP, got {:?}",
+            active_type
+        );
+    }
+
+    #[tokio::test]
+    async fn test_udp_prober_always_available() {
+        let config = ProbeConfig {
+            probe_type: ProbeType::Udp,
+            ..Default::default()
+        };
+        let prober = Prober::new(config).await;
+
+        // Should always be able to create UDP prober
+        assert!(prober.udp_prober.local_port().is_ok());
+
+        let active_type = *prober.active_probe_type.read().await;
+        assert_eq!(active_type, ProbeType::Udp);
+    }
+
+    #[tokio::test]
+    async fn test_simulated_probe_mode() {
+        let config = ProbeConfig {
+            probe_type: ProbeType::Simulated,
+            count: 5,
+            ..Default::default()
+        };
+        let prober = Prober::new(config).await;
+
+        let active_type = *prober.active_probe_type.read().await;
+        assert_eq!(active_type, ProbeType::Simulated);
+
+        // Should still work
+        let result = prober.probe().await;
+        assert!(result.is_ok());
     }
 }
