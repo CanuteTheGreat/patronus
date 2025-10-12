@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  patronus-sdwan:
+    build: .
+    container_name: patronus-sdwan
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun
+    network_mode: host
+    volumes:
+      - ./config:/etc/patronus
+      - patronus-data:/var/lib/patronus
+      - patronus-logs:/var/log/patronus
+    environment:
+      - RUST_LOG=info
+      - TOKIO_WORKER_THREADS=4
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  patronus-dashboard:
+    build: .
+    container_name: patronus-dashboard
+    command: ["patronus-dashboard", "--config", "/etc/patronus/config.yaml"]
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config:/etc/patronus:ro
+      - patronus-logs:/var/log/patronus
+    environment:
+      - RUST_LOG=info
+    depends_on:
+      - patronus-sdwan
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: patronus-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=90d'
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: patronus-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+
+volumes:
+  patronus-data:
+  patronus-logs:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  default:
+    name: patronus-network

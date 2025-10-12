@@ -1,0 +1,185 @@
+version: '3.8'
+
+# High Availability Setup for Patronus Dashboard
+# This compose file sets up:
+# - 3 Dashboard instances with leader election
+# - HAProxy load balancer
+# - Shared distributed state (Sled)
+# - Database replication (SQLite with Litestream)
+
+services:
+  # Dashboard Instance 1
+  dashboard1:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: patronus-dashboard-1
+    hostname: dashboard1
+    environment:
+      - PATRONUS_NODE_ID=dashboard1
+      - PATRONUS_NODE_ADDR=0.0.0.0:8443
+      - PATRONUS_PEERS=dashboard2:8443,dashboard3:8443
+      - PATRONUS_DATA_DIR=/data/raft
+      - PATRONUS_DB_PATH=/data/dashboard.db
+      - PATRONUS_ELECTION_TIMEOUT=5
+      - PATRONUS_HEARTBEAT_INTERVAL=1
+      - RUST_LOG=patronus_dashboard=info,tower_http=debug
+    volumes:
+      - dashboard1-data:/data
+      - ./static:/app/static:ro
+    networks:
+      - patronus-ha
+    ports:
+      - "8443:8443"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8443/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # Dashboard Instance 2
+  dashboard2:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: patronus-dashboard-2
+    hostname: dashboard2
+    environment:
+      - PATRONUS_NODE_ID=dashboard2
+      - PATRONUS_NODE_ADDR=0.0.0.0:8443
+      - PATRONUS_PEERS=dashboard1:8443,dashboard3:8443
+      - PATRONUS_DATA_DIR=/data/raft
+      - PATRONUS_DB_PATH=/data/dashboard.db
+      - PATRONUS_ELECTION_TIMEOUT=5
+      - PATRONUS_HEARTBEAT_INTERVAL=1
+      - RUST_LOG=patronus_dashboard=info,tower_http=debug
+    volumes:
+      - dashboard2-data:/data
+      - ./static:/app/static:ro
+    networks:
+      - patronus-ha
+    ports:
+      - "8444:8443"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8443/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # Dashboard Instance 3
+  dashboard3:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: patronus-dashboard-3
+    hostname: dashboard3
+    environment:
+      - PATRONUS_NODE_ID=dashboard3
+      - PATRONUS_NODE_ADDR=0.0.0.0:8443
+      - PATRONUS_PEERS=dashboard1:8443,dashboard2:8443
+      - PATRONUS_DATA_DIR=/data/raft
+      - PATRONUS_DB_PATH=/data/dashboard.db
+      - PATRONUS_ELECTION_TIMEOUT=5
+      - PATRONUS_HEARTBEAT_INTERVAL=1
+      - RUST_LOG=patronus_dashboard=info,tower_http=debug
+    volumes:
+      - dashboard3-data:/data
+      - ./static:/app/static:ro
+    networks:
+      - patronus-ha
+    ports:
+      - "8445:8443"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8443/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # HAProxy Load Balancer
+  haproxy:
+    image: haproxy:2.8-alpine
+    container_name: patronus-haproxy
+    hostname: haproxy
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./certs:/etc/ssl/certs:ro
+    networks:
+      - patronus-ha
+    ports:
+      - "80:80"       # HTTP (redirects to HTTPS)
+      - "443:443"     # HTTPS
+      - "8404:8404"   # HAProxy stats
+      - "9101:9101"   # HAProxy Prometheus metrics
+    depends_on:
+      - dashboard1
+      - dashboard2
+      - dashboard3
+    healthcheck:
+      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # PostgreSQL for centralized state (alternative to Sled)
+  # Uncomment if you prefer PostgreSQL over Sled
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: patronus-postgres
+  #   environment:
+  #     - POSTGRES_DB=patronus
+  #     - POSTGRES_USER=patronus
+  #     - POSTGRES_PASSWORD=patronus_secure_password
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   networks:
+  #     - patronus-ha
+  #   ports:
+  #     - "5432:5432"
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U patronus"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   restart: unless-stopped
+
+  # Litestream for SQLite replication (optional but recommended)
+  litestream:
+    image: litestream/litestream:latest
+    container_name: patronus-litestream
+    command: replicate
+    volumes:
+      - dashboard1-data:/data
+      - ./litestream/litestream.yml:/etc/litestream.yml:ro
+      - litestream-replica:/replica
+    networks:
+      - patronus-ha
+    environment:
+      - LITESTREAM_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - LITESTREAM_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+    restart: unless-stopped
+
+networks:
+  patronus-ha:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  dashboard1-data:
+    driver: local
+  dashboard2-data:
+    driver: local
+  dashboard3-data:
+    driver: local
+  postgres-data:
+    driver: local
+  litestream-replica:
+    driver: local

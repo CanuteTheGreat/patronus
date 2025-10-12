@@ -1,0 +1,96 @@
+# Alertmanager configuration for Patronus SD-WAN
+
+global:
+  resolve_timeout: 5m
+  slack_api_url: 'YOUR_SLACK_WEBHOOK_URL_HERE'
+
+# Alert routing tree
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+  receiver: 'default'
+
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      continue: true
+
+    # Warning alerts - batched notifications
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 1m
+      group_interval: 5m
+
+    # Info alerts - daily digest
+    - match:
+        severity: info
+      receiver: 'info-alerts'
+      group_wait: 5m
+      repeat_interval: 24h
+
+# Alert receivers
+receivers:
+  # Default receiver (fallback)
+  - name: 'default'
+    slack_configs:
+      - channel: '#patronus-alerts'
+        title: 'Patronus SD-WAN Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}\n{{ .Annotations.description }}\n{{ end }}'
+
+  # Critical alerts
+  - name: 'critical-alerts'
+    slack_configs:
+      - channel: '#patronus-critical'
+        title: ':rotating_light: CRITICAL: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}\n{{ .Annotations.description }}\n{{ end }}'
+        send_resolved: true
+    # Email notification (example)
+    # email_configs:
+    #   - to: 'ops-team@example.com'
+    #     from: 'alertmanager@patronus.local'
+    #     smarthost: 'smtp.example.com:587'
+    #     auth_username: 'alertmanager@patronus.local'
+    #     auth_password: 'password'
+    #     headers:
+    #       Subject: 'CRITICAL: Patronus SD-WAN Alert'
+
+  # Warning alerts
+  - name: 'warning-alerts'
+    slack_configs:
+      - channel: '#patronus-warnings'
+        title: ':warning: Warning: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}\n{{ .Annotations.description }}\n{{ end }}'
+
+  # Info alerts
+  - name: 'info-alerts'
+    slack_configs:
+      - channel: '#patronus-info'
+        title: ':information_source: Info: {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}\n{{ .Annotations.description }}\n{{ end }}'
+
+# Inhibition rules - prevent alert spam
+inhibit_rules:
+  # Inhibit warning/info if critical is firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'cluster', 'service']
+
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'info'
+    equal: ['alertname', 'cluster', 'service']
+
+  # Inhibit info if warning is firing
+  - source_match:
+      severity: 'warning'
+    target_match:
+      severity: 'info'
+    equal: ['alertname', 'cluster', 'service']

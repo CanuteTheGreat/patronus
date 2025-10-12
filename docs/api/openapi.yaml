@@ -1,0 +1,1014 @@
+openapi: 3.0.3
+info:
+  title: Patronus SD-WAN API
+  description: |
+    RESTful API for managing and monitoring Patronus SD-WAN infrastructure.
+    
+    ## Authentication
+    
+    All endpoints (except `/auth/login`) require Bearer token authentication:
+    
+    ```
+    Authorization: Bearer <access_token>
+    ```
+    
+    ## Rate Limiting
+    
+    - 100 requests per minute per IP
+    - 1000 requests per hour per user
+    
+    ## Error Responses
+    
+    All errors follow this format:
+    
+    ```json
+    {
+      "error": {
+        "code": "ERROR_CODE",
+        "message": "Human-readable error message",
+        "details": {}
+      }
+    }
+    ```
+  version: 1.0.0
+  contact:
+    name: Patronus Development Team
+    url: https://github.com/patronus/patronus
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.patronus.example.com/v1
+    description: Production API
+  - url: https://staging-api.patronus.example.com/v1
+    description: Staging API
+  - url: http://localhost:8081/v1
+    description: Local development
+
+tags:
+  - name: Authentication
+    description: User authentication and token management
+  - name: Sites
+    description: Site management and configuration
+  - name: Paths
+    description: Network path management
+  - name: Health
+    description: Path health monitoring
+  - name: Policies
+    description: Routing policy management
+  - name: Failover
+    description: Failover configuration and status
+  - name: Traffic
+    description: Traffic statistics
+  - name: Metrics
+    description: System metrics and monitoring
+  - name: Users
+    description: User management
+  - name: System
+    description: System information and health
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Check if the API is healthy and responding
+      operationId: getHealth
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded, unhealthy]
+                  version:
+                    type: string
+                  uptime_seconds:
+                    type: integer
+
+  /version:
+    get:
+      summary: Get version information
+      operationId: getVersion
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Version information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                  build_date:
+                    type: string
+                  git_commit:
+                    type: string
+
+  /auth/login:
+    post:
+      summary: Authenticate user
+      description: Login with username and password to receive access and refresh tokens
+      operationId: login
+      tags: [Authentication]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  example: admin
+                password:
+                  type: string
+                  format: password
+                  example: SecurePassword123!
+      responses:
+        '200':
+          description: Successful authentication
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/refresh:
+    post:
+      summary: Refresh access token
+      description: Use refresh token to obtain a new access token
+      operationId: refreshToken
+      tags: [Authentication]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: New access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid or expired refresh token
+
+  /auth/logout:
+    post:
+      summary: Logout
+      description: Invalidate current session tokens
+      operationId: logout
+      tags: [Authentication]
+      responses:
+        '204':
+          description: Successfully logged out
+
+  /sites:
+    get:
+      summary: List all sites
+      description: Retrieve a list of all configured sites
+      operationId: listSites
+      tags: [Sites]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, inactive, all]
+            default: all
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: List of sites
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sites:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Site'
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+
+    post:
+      summary: Create a new site
+      description: Register a new site in the SD-WAN mesh
+      operationId: createSite
+      tags: [Sites]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSiteRequest'
+      responses:
+        '201':
+          description: Site created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Site'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sites/{siteId}:
+    parameters:
+      - name: siteId
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Unique site identifier
+
+    get:
+      summary: Get site details
+      operationId: getSite
+      tags: [Sites]
+      responses:
+        '200':
+          description: Site details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Site'
+        '404':
+          description: Site not found
+
+    put:
+      summary: Update site
+      operationId: updateSite
+      tags: [Sites]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSiteRequest'
+      responses:
+        '200':
+          description: Site updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Site'
+
+    delete:
+      summary: Delete site
+      operationId: deleteSite
+      tags: [Sites]
+      responses:
+        '204':
+          description: Site deleted
+        '404':
+          description: Site not found
+
+  /paths:
+    get:
+      summary: List network paths
+      operationId: listPaths
+      tags: [Paths]
+      parameters:
+        - name: site_id
+          in: query
+          schema:
+            type: string
+          description: Filter by source or destination site
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [up, degraded, down]
+          description: Filter by path status
+      responses:
+        '200':
+          description: List of paths
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  paths:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Path'
+
+  /paths/{pathId}:
+    parameters:
+      - name: pathId
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Get path details
+      operationId: getPath
+      tags: [Paths]
+      responses:
+        '200':
+          description: Path details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Path'
+
+  /paths/{pathId}/health:
+    parameters:
+      - name: pathId
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Get path health history
+      operationId: getPathHealth
+      tags: [Health]
+      parameters:
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Start time for history (ISO 8601)
+        - name: until
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: End time for history (ISO 8601)
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Path health history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path_id:
+                    type: string
+                  health_records:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PathHealth'
+
+  /policies:
+    get:
+      summary: List routing policies
+      operationId: listPolicies
+      tags: [Policies]
+      responses:
+        '200':
+          description: List of policies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  policies:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Policy'
+
+    post:
+      summary: Create routing policy
+      operationId: createPolicy
+      tags: [Policies]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePolicyRequest'
+      responses:
+        '201':
+          description: Policy created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+
+  /policies/{policyId}:
+    parameters:
+      - name: policyId
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Get policy details
+      operationId: getPolicy
+      tags: [Policies]
+      responses:
+        '200':
+          description: Policy details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+
+    put:
+      summary: Update policy
+      operationId: updatePolicy
+      tags: [Policies]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePolicyRequest'
+      responses:
+        '200':
+          description: Policy updated
+
+    delete:
+      summary: Delete policy
+      operationId: deletePolicy
+      tags: [Policies]
+      responses:
+        '204':
+          description: Policy deleted
+
+  /failover/policies:
+    get:
+      summary: List failover policies
+      operationId: listFailoverPolicies
+      tags: [Failover]
+      responses:
+        '200':
+          description: List of failover policies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  policies:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FailoverPolicy'
+
+  /failover/events:
+    get:
+      summary: List recent failover events
+      operationId: listFailoverEvents
+      tags: [Failover]
+      parameters:
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Failover events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FailoverEvent'
+
+  /traffic/stats:
+    get:
+      summary: Get traffic statistics
+      operationId: getTrafficStats
+      tags: [Traffic]
+      parameters:
+        - name: policy_id
+          in: query
+          schema:
+            type: string
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: aggregation
+          in: query
+          schema:
+            type: string
+            enum: [1m, 5m, 15m, 1h, 1d]
+            default: 5m
+      responses:
+        '200':
+          description: Traffic statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stats:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrafficStats'
+
+  /metrics/export:
+    get:
+      summary: Export metrics
+      description: Export metrics in Prometheus or JSON format
+      operationId: exportMetrics
+      tags: [Metrics]
+      parameters:
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [prometheus, json]
+            default: prometheus
+      responses:
+        '200':
+          description: Metrics export
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: |
+                  # HELP patronus_sites_total Total number of sites
+                  # TYPE patronus_sites_total gauge
+                  patronus_sites_total 10
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: number
+
+  /users:
+    get:
+      summary: List users
+      operationId: listUsers
+      tags: [Users]
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+
+    post:
+      summary: Create user
+      operationId: createUser
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created
+
+  /users/{userId}:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Get user details
+      operationId: getUser
+      tags: [Users]
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+    delete:
+      summary: Delete user
+      operationId: deleteUser
+      tags: [Users]
+      responses:
+        '204':
+          description: User deleted
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: INVALID_CREDENTIALS
+            message:
+              type: string
+              example: Invalid username or password
+            details:
+              type: object
+
+    AuthResponse:
+      type: object
+      required: [access_token, refresh_token, expires_in, token_type]
+      properties:
+        access_token:
+          type: string
+          description: JWT access token
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        refresh_token:
+          type: string
+          description: Refresh token for obtaining new access tokens
+        expires_in:
+          type: integer
+          description: Access token expiry in seconds
+          example: 900
+        token_type:
+          type: string
+          enum: [Bearer]
+          example: Bearer
+
+    Site:
+      type: object
+      required: [id, name, public_key, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        name:
+          type: string
+          example: branch-office-seattle
+        location:
+          type: string
+          example: Seattle, WA
+        public_key:
+          type: string
+          description: WireGuard public key
+          example: Xnbn1B5BoYXOqLBz0cH8RqJLDK0lLOcS6+3eD2M0Ync=
+        endpoints:
+          type: array
+          items:
+            type: string
+          example: ["203.0.113.50:51820"]
+        status:
+          type: string
+          enum: [active, inactive]
+          example: active
+        last_seen:
+          type: string
+          format: date-time
+          example: 2025-10-11T20:30:00Z
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateSiteRequest:
+      type: object
+      required: [name, public_key, endpoints]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        location:
+          type: string
+        public_key:
+          type: string
+          pattern: ^[A-Za-z0-9+/]{43}=$
+        endpoints:
+          type: array
+          items:
+            type: string
+          minItems: 1
+
+    UpdateSiteRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        location:
+          type: string
+        endpoints:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum: [active, inactive]
+
+    Path:
+      type: object
+      required: [id, source_site_id, dest_site_id, status]
+      properties:
+        id:
+          type: string
+        source_site_id:
+          type: string
+        dest_site_id:
+          type: string
+        latency_ms:
+          type: number
+          format: double
+          example: 45.2
+        packet_loss_pct:
+          type: number
+          format: double
+          example: 0.5
+        jitter_ms:
+          type: number
+          format: double
+          example: 2.1
+        status:
+          type: string
+          enum: [up, degraded, down]
+          example: up
+        last_checked:
+          type: string
+          format: date-time
+
+    PathHealth:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        latency_ms:
+          type: number
+          format: double
+        packet_loss_pct:
+          type: number
+          format: double
+        jitter_ms:
+          type: number
+          format: double
+        health_score:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          example: 95.5
+        status:
+          type: string
+          enum: [up, degraded, down]
+
+    Policy:
+      type: object
+      required: [id, name, priority, action]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          example: video-priority-path
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          example: 100
+        match_criteria:
+          type: object
+          properties:
+            src_network:
+              type: string
+              example: 10.0.1.0/24
+            dst_network:
+              type: string
+              example: 10.0.2.0/24
+            protocol:
+              type: string
+              enum: [tcp, udp, icmp, any]
+            src_port_range:
+              type: string
+              example: 1024-65535
+            dst_port_range:
+              type: string
+              example: 443-443
+            dscp:
+              type: integer
+              minimum: 0
+              maximum: 63
+        action:
+          type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [route, drop, rate_limit]
+            primary_path_id:
+              type: string
+            backup_path_id:
+              type: string
+            failover_threshold:
+              type: number
+              minimum: 0
+              maximum: 100
+        enabled:
+          type: boolean
+          default: true
+        created_at:
+          type: string
+          format: date-time
+
+    CreatePolicyRequest:
+      type: object
+      required: [name, priority, match_criteria, action]
+      properties:
+        name:
+          type: string
+        priority:
+          type: integer
+        match_criteria:
+          type: object
+        action:
+          type: object
+
+    UpdatePolicyRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        priority:
+          type: integer
+        match_criteria:
+          type: object
+        action:
+          type: object
+        enabled:
+          type: boolean
+
+    FailoverPolicy:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        primary_path_id:
+          type: string
+        backup_path_id:
+          type: string
+        threshold:
+          type: number
+        enabled:
+          type: boolean
+
+    FailoverEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        policy_id:
+          type: string
+        from_path_id:
+          type: string
+        to_path_id:
+          type: string
+        reason:
+          type: string
+        duration_ms:
+          type: number
+
+    TrafficStats:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        policy_id:
+          type: string
+        bytes_sent:
+          type: integer
+          format: int64
+        bytes_received:
+          type: integer
+          format: int64
+        packets_sent:
+          type: integer
+          format: int64
+        packets_received:
+          type: integer
+          format: int64
+        flows_active:
+          type: integer
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+        active:
+          type: boolean
+        last_login:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    CreateUserRequest:
+      type: object
+      required: [username, password, email, role]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+        password:
+          type: string
+          minLength: 12
+          format: password
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+        active:
+          type: boolean
+          default: true

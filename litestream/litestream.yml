@@ -1,0 +1,81 @@
+# Litestream Configuration for SQLite Database Replication
+# Provides continuous backup and replication of SQLite databases
+
+# Access log for debugging
+access-log: /dev/stdout
+
+dbs:
+  # Dashboard database replication
+  - path: /data/dashboard.db
+    # Replicas define where to replicate to
+    replicas:
+      # File-based replica (local backup)
+      - type: file
+        path: /replica/dashboard
+        retention: 24h
+        retention-check-interval: 1h
+        sync-interval: 1s
+        snapshot-interval: 1h
+
+      # S3-compatible replica (for production)
+      # Uncomment and configure for cloud backup
+      # - type: s3
+      #   bucket: patronus-backups
+      #   path: dashboard
+      #   region: us-east-1
+      #   endpoint: https://s3.amazonaws.com
+      #   retention: 720h  # 30 days
+      #   retention-check-interval: 24h
+      #   sync-interval: 10s
+      #   snapshot-interval: 24h
+
+      # MinIO replica (S3-compatible, self-hosted)
+      # - type: s3
+      #   bucket: patronus-backups
+      #   path: dashboard
+      #   endpoint: http://minio:9000
+      #   force-path-style: true
+      #   retention: 168h  # 7 days
+      #   sync-interval: 10s
+
+      # Azure Blob Storage replica
+      # - type: abs
+      #   bucket: patronus-backups
+      #   path: dashboard
+      #   account-name: ${AZURE_STORAGE_ACCOUNT}
+      #   account-key: ${AZURE_STORAGE_KEY}
+      #   retention: 720h
+
+      # Google Cloud Storage replica
+      # - type: gcs
+      #   bucket: patronus-backups
+      #   path: dashboard
+      #   retention: 720h
+
+  # User database replication (if separate)
+  - path: /data/users.db
+    replicas:
+      - type: file
+        path: /replica/users
+        retention: 24h
+        sync-interval: 1s
+        snapshot-interval: 1h
+
+# Exec configuration for running commands before/after operations
+# exec:
+#   # Command to run before replication starts
+#   - cmd: /scripts/pre-replicate.sh
+#     # Trigger: once, signal
+#     trigger: once
+#
+#   # Command to run after snapshot
+#   - cmd: /scripts/post-snapshot.sh
+#     trigger: snapshot
+
+# Monitoring via HTTP
+# addr: :9090
+
+# Prometheus metrics endpoint
+# metrics:
+#   type: prometheus
+#   addr: :9091

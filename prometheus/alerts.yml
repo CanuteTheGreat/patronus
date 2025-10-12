@@ -1,0 +1,150 @@
+groups:
+  - name: patronus_sdwan_alerts
+    interval: 30s
+    rules:
+      # Service Health Alerts
+      - alert: DashboardDown
+        expr: up{job="patronus-dashboard"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: dashboard
+        annotations:
+          summary: "Patronus Dashboard is down"
+          description: "The Patronus Dashboard has been down for more than 1 minute."
+
+      - alert: HighErrorRate
+        expr: rate(http_requests_errors_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "High HTTP error rate detected"
+          description: "HTTP error rate is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      # Authentication Alerts
+      - alert: HighLoginFailureRate
+        expr: rate(auth_login_failures_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: auth
+        annotations:
+          summary: "High login failure rate detected"
+          description: "Login failure rate is {{ $value }} failures/sec over the last 5 minutes. Possible brute force attack."
+
+      - alert: NoActiveUsers
+        expr: active_users_total == 0
+        for: 30m
+        labels:
+          severity: info
+          component: auth
+        annotations:
+          summary: "No active users"
+          description: "No users have been active for the last 30 minutes."
+
+      # SD-WAN Network Alerts
+      - alert: PathDown
+        expr: sdwan_paths_active < sdwan_paths_total * 0.8
+        for: 2m
+        labels:
+          severity: critical
+          component: sdwan
+        annotations:
+          summary: "SD-WAN path degradation"
+          description: "Only {{ $value }} of {{ $labels.paths_total }} paths are active."
+
+      - alert: HighPathLatency
+        expr: histogram_quantile(0.95, rate(sdwan_path_latency_ms_bucket[5m])) > 100
+        for: 5m
+        labels:
+          severity: warning
+          component: sdwan
+        annotations:
+          summary: "High path latency detected"
+          description: "Path {{ $labels.path_id }} has p95 latency of {{ $value }}ms."
+
+      - alert: HighPacketLoss
+        expr: sdwan_path_packet_loss_pct > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: sdwan
+        annotations:
+          summary: "High packet loss detected"
+          description: "Path {{ $labels.path_id }} has {{ $value }}% packet loss."
+
+      # Database Alerts
+      - alert: HighDatabaseQueryTime
+        expr: histogram_quantile(0.95, rate(db_query_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Slow database queries"
+          description: "Database query p95 latency is {{ $value }}s for {{ $labels.type }}."
+
+      - alert: DatabaseErrors
+        expr: rate(db_errors_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Database errors detected"
+          description: "Database error rate is {{ $value }} errors/sec."
+
+      # Performance Alerts
+      - alert: HighMemoryUsage
+        expr: system_memory_usage_bytes > 1073741824
+        for: 5m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanize }}B (>1GB)."
+
+      - alert: SlowHTTPResponses
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "Slow HTTP responses"
+          description: "HTTP p95 response time is {{ $value }}s for {{ $labels.path }}."
+
+      # WebSocket Alerts
+      - alert: HighWebSocketConnections
+        expr: websocket_connections_active > 100
+        for: 5m
+        labels:
+          severity: info
+          component: websocket
+        annotations:
+          summary: "High WebSocket connection count"
+          description: "There are {{ $value }} active WebSocket connections."
+
+      # Capacity Planning Alerts
+      - alert: HighSiteCount
+        expr: sdwan_sites_total > 50
+        for: 1h
+        labels:
+          severity: info
+          component: capacity
+        annotations:
+          summary: "High site count"
+          description: "Managing {{ $value }} sites. Consider scaling resources."
+
+      - alert: HighPolicyCount
+        expr: sdwan_policies_total > 100
+        for: 1h
+        labels:
+          severity: info
+          component: capacity
+        annotations:
+          summary: "High policy count"
+          description: "{{ $value }} policies configured. Review for optimization opportunities."

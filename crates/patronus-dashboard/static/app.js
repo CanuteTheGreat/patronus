@@ -11,6 +11,14 @@ class Dashboard {
         this.init();
     }
 
+    getAuthHeaders() {
+        const token = localStorage.getItem('access_token');
+        return {
+            'Content-Type': 'application/json',
+            'Authorization': token ? `Bearer ${token}` : ''
+        };
+    }
+
     async init() {
         console.log('Initializing dashboard...');
 
@@ -101,7 +109,9 @@ class Dashboard {
 
     async loadSummary() {
         try {
-            const response = await fetch(`${this.apiBase}/metrics/summary`);
+            const response = await fetch(`${this.apiBase}/metrics/summary`, {
+                headers: this.getAuthHeaders()
+            });
             const data = await response.json();
 
             document.getElementById('totalSites').textContent = data.total_sites;
@@ -119,7 +129,9 @@ class Dashboard {
 
     async loadSites() {
         try {
-            const response = await fetch(`${this.apiBase}/sites`);
+            const response = await fetch(`${this.apiBase}/sites`, {
+                headers: this.getAuthHeaders()
+            });
             const sites = await response.json();
 
             const container = document.getElementById('sitesList');
@@ -162,7 +174,9 @@ class Dashboard {
 
     async loadPaths() {
         try {
-            const response = await fetch(`${this.apiBase}/paths`);
+            const response = await fetch(`${this.apiBase}/paths`, {
+                headers: this.getAuthHeaders()
+            });
             const paths = await response.json();
 
             const container = document.getElementById('pathsList');
@@ -356,7 +370,9 @@ class Dashboard {
 
     async loadPolicies() {
         try {
-            const response = await fetch(`${this.apiBase}/policies`);
+            const response = await fetch(`${this.apiBase}/policies`, {
+                headers: this.getAuthHeaders()
+            });
             const policies = await response.json();
 
             const container = document.getElementById('policiesList');
@@ -593,7 +609,7 @@ spec:
 
             const response = await fetch(url, {
                 method,
-                headers: { 'Content-Type': 'application/json' },
+                headers: this.getAuthHeaders(),
                 body: JSON.stringify(request)
             });
 
@@ -689,7 +705,9 @@ spec:
 
     async showPolicyDetail(policyId) {
         try {
-            const response = await fetch(`${this.apiBase}/policies/${policyId}`);
+            const response = await fetch(`${this.apiBase}/policies/${policyId}`, {
+                headers: this.getAuthHeaders()
+            });
             const policy = await response.json();
 
             this.currentPolicy = policy;
@@ -753,7 +771,8 @@ spec:
     async deletePolicy(policyId) {
         try {
             const response = await fetch(`${this.apiBase}/policies/${policyId}`, {
-                method: 'DELETE'
+                method: 'DELETE',
+                headers: this.getAuthHeaders()
             });
 
             if (!response.ok) {

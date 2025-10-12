@@ -19,6 +19,9 @@ pub enum ApiError {
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
 
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
+
     #[error("Internal server error: {0}")]
     Internal(String),
 }
@@ -29,6 +32,7 @@ impl IntoResponse for ApiError {
             ApiError::Database(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             ApiError::InvalidRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
             ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
 

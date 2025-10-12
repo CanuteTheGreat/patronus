@@ -1,0 +1,43 @@
+# Prometheus configuration for Patronus SD-WAN monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'patronus-sdwan'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - 'alertmanager:9093'
+
+# Load alert rules
+rule_files:
+  - 'alerts.yml'
+
+# Scrape configurations
+scrape_configs:
+  # Patronus Dashboard
+  - job_name: 'patronus-dashboard'
+    static_configs:
+      - targets: ['patronus-dashboard:8443']
+        labels:
+          service: 'dashboard'
+          tier: 'frontend'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node Exporter (system metrics)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          tier: 'infrastructure'

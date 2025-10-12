@@ -11,9 +11,16 @@
     <div class="container">
         <header>
             <h1>🛡️ Patronus SD-WAN Dashboard</h1>
-            <div class="status-indicator">
-                <span id="connectionStatus" class="status-dot offline"></span>
-                <span id="connectionText">Disconnected</span>
+            <div class="header-actions">
+                <div class="user-info">
+                    <span id="userEmail"></span>
+                    <span id="userRole" class="user-role"></span>
+                </div>
+                <div class="status-indicator">
+                    <span id="connectionStatus" class="status-dot offline"></span>
+                    <span id="connectionText">Disconnected</span>
+                </div>
+                <button id="logoutBtn" class="btn-logout">Logout</button>
             </div>
         </header>
 
@@ -184,6 +191,30 @@
         </div>
     </div>
 
+    <script src="/auth.js"></script>
+    <script>
+        // Authentication check on page load
+        (function() {
+            const token = localStorage.getItem('access_token');
+            if (!token) {
+                window.location.href = '/login.html';
+                return;
+            }
+
+            // Load user info
+            const user = JSON.parse(localStorage.getItem('user') || '{}');
+            if (user.email) {
+                document.getElementById('userEmail').textContent = user.email;
+                document.getElementById('userRole').textContent = user.role.toUpperCase();
+            }
+
+            // Logout handler
+            document.getElementById('logoutBtn').addEventListener('click', () => {
+                localStorage.clear();
+                window.location.href = '/login.html';
+            });
+        })();
+    </script>
     <script src="/app.js"></script>
 </body>
 </html>
