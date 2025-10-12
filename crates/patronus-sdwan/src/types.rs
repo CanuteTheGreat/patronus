@@ -54,6 +54,11 @@ impl PathId {
     pub fn as_u64(&self) -> u64 {
         self.0
     }
+
+    /// Parse from string
+    pub fn from_string(s: &str) -> Result<Self, std::num::ParseIntError> {
+        Ok(Self(s.parse()?))
+    }
 }
 
 impl std::fmt::Display for PathId {

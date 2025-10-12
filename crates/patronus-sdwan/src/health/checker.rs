@@ -325,9 +325,6 @@ mod tests {
     async fn create_test_monitor() -> HealthMonitor {
         let db = Arc::new(Database::new_in_memory().await.unwrap());
 
-        // Run migrations
-        db.migrate().await.unwrap();
-
         let config = HealthConfig {
             check_interval_secs: 1,
             probes_per_check: 3,

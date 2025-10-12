@@ -83,6 +83,10 @@ impl FailoverEngine {
 
     /// Remove a failover policy
     pub async fn remove_policy(&self, policy_id: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Log event first (before deleting policy)
+        let event = FailoverEvent::policy_disabled(policy_id);
+        self.log_event(&event).await?;
+
         {
             let mut policies = self.policies.write().await;
             policies.remove(&policy_id);
@@ -93,12 +97,8 @@ impl FailoverEngine {
             states.remove(&policy_id);
         }
 
-        // Delete from database
+        // Delete from database (this will cascade delete events due to foreign key)
         self.delete_policy(policy_id).await?;
-
-        // Log event
-        let event = FailoverEvent::policy_disabled(policy_id);
-        self.log_event(&event).await?;
 
         tracing::info!(policy_id = policy_id, "Failover policy removed");
 
@@ -366,6 +366,18 @@ impl FailoverEngine {
 
     /// Delete policy from database
     async fn delete_policy(&self, policy_id: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Delete events first to avoid foreign key constraint
+        sqlx::query(
+            r#"
+            DELETE FROM sdwan_failover_events
+            WHERE policy_id = ?
+            "#,
+        )
+        .bind(policy_id as i64)
+        .execute(self.db.pool())
+        .await?;
+
+        // Now delete the policy
         sqlx::query(
             r#"
             DELETE FROM sdwan_failover_policies

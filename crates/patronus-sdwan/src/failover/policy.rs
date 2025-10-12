@@ -184,7 +184,7 @@ mod tests {
         assert!(policy.should_failback(80.0));
 
         // Above threshold - should failback
-        assert!(!policy.should_failback(90.0));
+        assert!(policy.should_failback(90.0));
     }
 
     #[test]
