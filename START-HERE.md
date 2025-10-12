@@ -49,6 +49,10 @@ This document is your **starting point** for navigating the project.
 - `docs/SPRINT_30_QUICK_REFERENCE.md` - Developer quick reference
 - `SPRINT-30-VERIFICATION.md` - Verification checklist
 
+### Environment & Setup
+- `ENVIRONMENT-SETUP.md` - System dependencies & environment guide
+- `install-deps.sh` - Automated dependency installer script
+
 ### Planning & Process
 - `NEXT-STEPS-SPRINT-31.md` - Sprint 31 planning
 - `RELEASES.md` - Release notes
@@ -97,6 +101,13 @@ This document is your **starting point** for navigating the project.
 1. Check: docs/SPRINT_30_QUICK_REFERENCE.md (troubleshooting section)
 2. Review: SESSION-SUMMARY-2025-10-10.md (similar issues solved)
 3. Check: Integration test files for correct usage patterns
+```
+
+### "I'm having build or dependency issues"
+```
+1. Read: ENVIRONMENT-SETUP.md (complete setup guide)
+2. Run: ./install-deps.sh (automated dependency installer)
+3. Check: System requirements and troubleshooting section
 ```
 
 ---
