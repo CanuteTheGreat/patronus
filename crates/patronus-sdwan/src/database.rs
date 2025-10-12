@@ -31,6 +31,16 @@ impl Database {
         Ok(db)
     }
 
+    /// Create a new in-memory database (for testing)
+    pub async fn new_in_memory() -> Result<Self> {
+        Self::new(":memory:").await
+    }
+
+    /// Get a reference to the connection pool
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     /// Run database migrations
     async fn migrate(&self) -> Result<()> {
         debug!("Running database migrations");
@@ -182,6 +192,33 @@ impl Database {
             r#"
             CREATE INDEX IF NOT EXISTS idx_policy_stats_time
             ON sdwan_policy_stats(policy_id, timestamp)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Path health monitoring table (Sprint 31)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sdwan_path_health (
+                health_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path_id TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                latency_ms REAL NOT NULL,
+                packet_loss_pct REAL NOT NULL,
+                jitter_ms REAL NOT NULL,
+                health_score REAL NOT NULL,
+                status TEXT CHECK(status IN ('up', 'degraded', 'down')) NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_path_health_path_time
+            ON sdwan_path_health(path_id, timestamp)
             "#,
         )
         .execute(&self.pool)

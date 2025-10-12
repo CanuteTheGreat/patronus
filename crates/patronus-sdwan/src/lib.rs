@@ -36,6 +36,7 @@ pub mod peering;
 pub mod netpolicy;
 pub mod metrics;
 pub mod traffic_stats;
+pub mod health;
 
 pub use error::{Error, Result};
 pub use types::{SiteId, PathId, FlowKey};
