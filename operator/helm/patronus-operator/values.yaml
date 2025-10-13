@@ -61,6 +61,25 @@ metrics:
     enabled: false
     interval: 30s
 
+# Health check configuration
+health:
+  enabled: true
+  port: 8081
+  livenessProbe:
+    path: /healthz
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    successThreshold: 1
+    failureThreshold: 3
+  readinessProbe:
+    path: /readyz
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    successThreshold: 1
+    failureThreshold: 3
+
 # Leader election configuration
 leaderElection:
   enabled: true

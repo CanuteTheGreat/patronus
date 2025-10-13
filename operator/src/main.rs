@@ -5,6 +5,7 @@
 
 mod controllers;
 pub mod crd;
+mod health;
 mod metrics;
 
 use anyhow::Result;
@@ -13,6 +14,7 @@ use prometheus::{Encoder, TextEncoder};
 use std::env;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
+use tokio::signal;
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -41,12 +43,34 @@ async fn main() -> Result<()> {
         .parse()
         .unwrap_or(8080);
 
+    let health_port: u16 = env::var("HEALTH_PORT")
+        .unwrap_or_else(|_| "8081".to_string())
+        .parse()
+        .unwrap_or(8081);
+
     info!("Patronus API URL: {}", patronus_api_url);
     info!("Metrics port: {}", metrics_port);
+    info!("Health check port: {}", health_port);
+
+    // Create health status
+    let health_status = health::HealthStatus::new();
+    info!("Health status initialized");
+
+    // Start health check server
+    let health_status_clone = health_status.clone();
+    let health_handle = tokio::spawn(async move {
+        let server = health::HealthServer::new(health_port, health_status_clone);
+        if let Err(e) = server.run().await {
+            warn!("Health check server error: {}", e);
+        }
+    });
 
     // Create Kubernetes client
     let client = Client::try_default().await?;
     info!("Connected to Kubernetes cluster");
+
+    // Mark operator as ready
+    health_status.set_ready(true);
 
     // Start metrics server
     let metrics_handle = tokio::spawn(async move {
@@ -55,7 +79,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Run controllers concurrently
+    // Run controllers concurrently and handle shutdown gracefully
     tokio::select! {
         _ = controllers::site::run(client.clone(), patronus_api_url.clone()) => {
             info!("Site controller stopped");
@@ -66,8 +90,17 @@ async fn main() -> Result<()> {
         _ = metrics_handle => {
             info!("Metrics server stopped");
         }
+        _ = health_handle => {
+            info!("Health check server stopped");
+        }
+        _ = shutdown_signal() => {
+            info!("Shutdown signal received, initiating graceful shutdown");
+            health_status.set_ready(false);
+            info!("Marked operator as not ready");
+        }
     }
 
+    info!("Patronus SD-WAN Operator stopped");
     Ok(())
 }
 
@@ -104,5 +137,34 @@ async fn run_metrics_server(port: u16) -> Result<()> {
                 let _ = socket.try_write(response.as_bytes());
             }
         });
+    }
+}
+
+/// Wait for shutdown signal (SIGTERM, SIGINT, or Ctrl+C)
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            info!("Received Ctrl+C signal");
+        },
+        _ = terminate => {
+            info!("Received SIGTERM signal");
+        },
     }
 }
