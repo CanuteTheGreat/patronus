@@ -50,6 +50,9 @@ pub struct Context {
 /// Reconcile a Site resource
 #[tracing::instrument(skip(site, ctx), fields(site_name = %site.name_any()))]
 pub async fn reconcile(site: Arc<Site>, ctx: Arc<Context>) -> Result<Action, SiteError> {
+    use std::time::Instant;
+    let start = Instant::now();
+
     let site_name = site.name_any();
     let namespace = site.namespace().unwrap_or_else(|| "default".to_string());
 
@@ -61,12 +64,24 @@ pub async fn reconcile(site: Arc<Site>, ctx: Arc<Context>) -> Result<Action, Sit
     // Check if site is being deleted
     if site.metadata.deletion_timestamp.is_some() {
         info!("Site is being deleted, running cleanup");
-        return handle_deletion(&site, &ctx, &sites).await;
+        let result = handle_deletion(&site, &ctx, &sites).await;
+        let duration = start.elapsed().as_secs_f64();
+
+        let metrics = crate::metrics::Metrics::global();
+        if result.is_ok() {
+            metrics.record_reconcile_success("site", duration);
+        } else {
+            metrics.record_reconcile_error("site", "deletion_failed", duration);
+        }
+
+        return result;
     }
 
     // Validate spec
     if let Err(e) = validate_site_spec(&site.spec) {
         warn!("Invalid site specification: {}", e);
+        let duration = start.elapsed().as_secs_f64();
+
         update_site_status(
             &sites,
             &site_name,
@@ -74,11 +89,15 @@ pub async fn reconcile(site: Arc<Site>, ctx: Arc<Context>) -> Result<Action, Sit
             &format!("Invalid specification: {}", e),
         )
         .await?;
+
+        let metrics = crate::metrics::Metrics::global();
+        metrics.record_reconcile_error("site", "validation_failed", duration);
+
         return Ok(Action::requeue(Duration::from_secs(300)));
     }
 
     // Create or update site in Patronus
-    match create_or_update_patronus_site(&site, &ctx).await {
+    let result = match create_or_update_patronus_site(&site, &ctx).await {
         Ok(_) => {
             info!("Successfully created/updated site in Patronus");
             update_site_status(&sites, &site_name, SitePhase::Active, "Site is active").await?;
@@ -95,7 +114,18 @@ pub async fn reconcile(site: Arc<Site>, ctx: Arc<Context>) -> Result<Action, Sit
             .await?;
             Ok(Action::requeue(Duration::from_secs(60)))
         }
+    };
+
+    let duration = start.elapsed().as_secs_f64();
+    let metrics = crate::metrics::Metrics::global();
+
+    if result.is_ok() {
+        metrics.record_reconcile_success("site", duration);
+    } else {
+        metrics.record_reconcile_error("site", "reconcile_failed", duration);
     }
+
+    result
 }
 
 /// Handle site deletion
@@ -153,7 +183,7 @@ fn validate_site_spec(spec: &crate::crd::site::SiteSpec) -> Result<(), String> {
 /// Create or update site in Patronus
 async fn create_or_update_patronus_site(
     site: &Site,
-    _ctx: &Context,
+    ctx: &Context,
 ) -> Result<(), SiteError> {
     let site_name = site.name_any();
 
@@ -161,40 +191,70 @@ async fn create_or_update_patronus_site(
     let request_body = json!({
         "name": site_name,
         "location": site.spec.location,
-        "public_key": site.spec.wireguard.public_key,
-        "listen_port": site.spec.wireguard.listen_port,
-        "endpoints": site.spec.wireguard.endpoints,
+        "wireguard": {
+            "public_key": site.spec.wireguard.public_key,
+            "listen_port": site.spec.wireguard.listen_port,
+            "endpoints": site.spec.wireguard.endpoints,
+        },
+        "resources": site.spec.resources.as_ref().map(|r| json!({
+            "cpu": r.cpu,
+            "memory": r.memory,
+            "storage": r.storage,
+        })),
+        "mesh": site.spec.mesh.as_ref().map(|m| json!({
+            "enabled": m.enabled,
+            "peer_with": m.peer_with,
+        })),
     });
 
-    // Call Patronus API (this is a stub - in production would actually call API)
-    debug!("Would create/update site in Patronus: {}", request_body);
+    debug!("Creating/updating site in Patronus: {}", request_body);
 
-    // Simulate API call
-    // In production:
-    // let response = ctx.http_client
-    //     .post(&format!("{}/v1/sites", ctx.patronus_api_url))
-    //     .json(&request_body)
-    //     .send()
-    //     .await
-    //     .map_err(|e| SiteError::PatronusApiError(e.to_string()))?;
+    // Call Patronus API
+    let response = ctx.http_client
+        .put(&format!("{}/api/v1/sites/{}", ctx.patronus_api_url, site_name))
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|e| SiteError::PatronusApiError(format!("HTTP request failed: {}", e)))?;
 
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_else(|_| "unknown error".to_string());
+        return Err(SiteError::PatronusApiError(format!(
+            "API returned {}: {}",
+            status, body
+        )));
+    }
+
+    info!("Successfully created/updated site {} in Patronus", site_name);
     Ok(())
 }
 
 /// Delete site from Patronus
 async fn delete_patronus_site(
     site_name: &str,
-    _ctx: &Context,
+    ctx: &Context,
 ) -> Result<(), SiteError> {
-    debug!("Would delete site from Patronus: {}", site_name);
+    debug!("Deleting site {} from Patronus", site_name);
 
-    // In production:
-    // let response = ctx.http_client
-    //     .delete(&format!("{}/v1/sites/{}", ctx.patronus_api_url, site_name))
-    //     .send()
-    //     .await
-    //     .map_err(|e| SiteError::PatronusApiError(e.to_string()))?;
+    // Call Patronus API to delete site
+    let response = ctx.http_client
+        .delete(&format!("{}/api/v1/sites/{}", ctx.patronus_api_url, site_name))
+        .send()
+        .await
+        .map_err(|e| SiteError::PatronusApiError(format!("HTTP request failed: {}", e)))?;
 
+    if !response.status().is_success() && response.status().as_u16() != 404 {
+        // 404 is ok - site already deleted
+        let status = response.status();
+        let body = response.text().await.unwrap_or_else(|_| "unknown error".to_string());
+        return Err(SiteError::PatronusApiError(format!(
+            "API returned {}: {}",
+            status, body
+        )));
+    }
+
+    info!("Successfully deleted site {} from Patronus", site_name);
     Ok(())
 }
 

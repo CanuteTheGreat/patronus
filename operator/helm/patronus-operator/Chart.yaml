@@ -1,0 +1,16 @@
+apiVersion: v2
+name: patronus-operator
+description: Kubernetes operator for Patronus SD-WAN
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - patronus
+  - sdwan
+  - networking
+  - wireguard
+maintainers:
+  - name: Patronus Team
+    email: team@patronus.dev
+sources:
+  - https://github.com/patronus/patronus
