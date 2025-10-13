@@ -1,0 +1,63 @@
+# Production deployment example
+---
+apiVersion: sdwan.patronus.dev/v1alpha1
+kind: Site
+metadata:
+  name: hq
+  namespace: patronus-system
+spec:
+  location: "Headquarters - New York"
+  wireguard:
+    publicKey: "HQ_PUBLIC_KEY_HERE"
+    listenPort: 51820
+    endpoints:
+      - "203.0.113.1:51820"
+  resources:
+    cpu: "4"
+    memory: "8Gi"
+    storage: "50Gi"
+  mesh:
+    enabled: true
+
+---
+apiVersion: sdwan.patronus.dev/v1alpha1
+kind: Site
+metadata:
+  name: branch-west
+  namespace: patronus-system
+spec:
+  location: "West Coast Branch - San Francisco"
+  wireguard:
+    publicKey: "WEST_PUBLIC_KEY_HERE"
+    listenPort: 51820
+    endpoints:
+      - "203.0.113.100:51820"
+  resources:
+    cpu: "2"
+    memory: "4Gi"
+    storage: "20Gi"
+  mesh:
+    enabled: true
+    peerWith:
+      - hq
+
+---
+apiVersion: sdwan.patronus.dev/v1alpha1
+kind: Policy
+metadata:
+  name: video-conferencing
+  namespace: patronus-system
+spec:
+  priority: 100
+  match:
+    protocol: udp
+    dstPortRange: "3478-3497"
+    dscp: 46
+  action:
+    type: route
+    qos:
+      class: realtime
+      bandwidth: "10Mbps"
+  failover:
+    threshold: 70
+    cooldown: 30s

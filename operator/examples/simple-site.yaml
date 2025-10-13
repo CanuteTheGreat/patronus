@@ -1,0 +1,22 @@
+# Simple site example
+apiVersion: sdwan.patronus.dev/v1alpha1
+kind: Site
+metadata:
+  name: my-first-site
+  namespace: patronus-system
+spec:
+  location: "My Office"
+
+  wireguard:
+    publicKey: "Xnbn1B5BoYXOqLBz0cH8RqJLDK0lLOcS6+3eD2M0Ync="
+    listenPort: 51820
+    endpoints:
+      - "203.0.113.100:51820"
+
+  resources:
+    cpu: "2"
+    memory: "4Gi"
+    storage: "10Gi"
+
+  mesh:
+    enabled: true

@@ -1,0 +1,136 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: sites.sdwan.patronus.dev
+spec:
+  group: sdwan.patronus.dev
+  names:
+    kind: Site
+    listKind: SiteList
+    plural: sites
+    singular: site
+    shortNames:
+      - site
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - wireguard
+              properties:
+                location:
+                  type: string
+                  description: Physical location of the site
+                wireguard:
+                  type: object
+                  required:
+                    - publicKey
+                    - listenPort
+                    - endpoints
+                  properties:
+                    publicKey:
+                      type: string
+                      description: WireGuard public key
+                    listenPort:
+                      type: integer
+                      minimum: 1
+                      maximum: 65535
+                      description: WireGuard listen port
+                    endpoints:
+                      type: array
+                      items:
+                        type: string
+                      description: List of endpoints (IP:port)
+                resources:
+                  type: object
+                  properties:
+                    cpu:
+                      type: string
+                      pattern: '^[0-9]+m?$'
+                      description: CPU request
+                    memory:
+                      type: string
+                      pattern: '^[0-9]+(Mi|Gi)$'
+                      description: Memory request
+                    storage:
+                      type: string
+                      pattern: '^[0-9]+(Mi|Gi)$'
+                      description: Storage request
+                mesh:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                      description: Enable mesh networking
+                    peerWith:
+                      type: array
+                      items:
+                        type: string
+                      description: List of site names to peer with
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum:
+                    - Pending
+                    - Active
+                    - Failed
+                    - Terminating
+                  description: Current phase of the site
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                peers:
+                  type: integer
+                  description: Number of active peers
+                activePaths:
+                  type: integer
+                  description: Number of active paths
+                healthScore:
+                  type: number
+                  minimum: 0
+                  maximum: 100
+                  description: Overall health score
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Peers
+          type: integer
+          jsonPath: .status.peers
+        - name: Paths
+          type: integer
+          jsonPath: .status.activePaths
+        - name: Health
+          type: number
+          jsonPath: .status.healthScore
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

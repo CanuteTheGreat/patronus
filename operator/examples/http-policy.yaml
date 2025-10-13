@@ -1,0 +1,18 @@
+# HTTP/HTTPS traffic policy
+apiVersion: sdwan.patronus.dev/v1alpha1
+kind: Policy
+metadata:
+  name: http-traffic
+  namespace: patronus-system
+spec:
+  priority: 50
+
+  match:
+    protocol: tcp
+    dstPortRange: "80,443"
+
+  action:
+    type: route
+    qos:
+      class: business-critical
+      bandwidth: "100Mbps"
