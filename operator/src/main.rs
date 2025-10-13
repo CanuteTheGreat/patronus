@@ -4,7 +4,7 @@
 //! enabling declarative configuration and GitOps workflows.
 
 mod controllers;
-mod crd;
+pub mod crd;
 mod metrics;
 
 use anyhow::Result;
