@@ -79,7 +79,7 @@ async fn run_metrics_server(port: u16) -> Result<()> {
     info!("Metrics server listening on http://{}/metrics", addr);
 
     loop {
-        let (mut socket, _) = listener.accept().await?;
+        let (socket, _) = listener.accept().await?;
 
         tokio::spawn(async move {
             let mut buf = vec![0; 1024];
