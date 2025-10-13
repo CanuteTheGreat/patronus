@@ -19,7 +19,7 @@ members = [
     "crates/patronus-secrets",
     "crates/patronus-bench",
     "crates/patronus-sdwan",
-    "crates/patronus-dashboard", "crates/patronus-bgp",
+    "crates/patronus-dashboard", "crates/patronus-bgp", "operator",
 ]
 
 [workspace.package]

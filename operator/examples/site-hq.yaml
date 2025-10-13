@@ -1,0 +1,21 @@
+apiVersion: sdwan.patronus.dev/v1alpha1
+kind: Site
+metadata:
+  name: hq
+  namespace: patronus-system
+spec:
+  location: "Headquarters - San Francisco"
+  wireguard:
+    publicKey: "YjE2OTNkMWQxYzYwZGU3ZWZhMDU4MWU3YzU4MTU4MD0="
+    listenPort: 51820
+    endpoints:
+      - "198.51.100.10:51820"
+  resources:
+    cpu: "2"
+    memory: "4Gi"
+    storage: "10Gi"
+  mesh:
+    enabled: true
+    peerWith:
+      - branch-nyc
+      - branch-lon

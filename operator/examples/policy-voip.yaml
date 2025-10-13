@@ -1,0 +1,22 @@
+apiVersion: sdwan.patronus.dev/v1alpha1
+kind: Policy
+metadata:
+  name: voip-priority
+  namespace: patronus-system
+spec:
+  priority: 100
+  match:
+    protocol: udp
+    sourceSubnets:
+      - "10.0.0.0/8"
+    destinationPorts:
+      - 5060
+      - 5061
+      - 10000-20000
+  action:
+    qos: realtime
+    preferredPath: low-latency
+  failover:
+    enabled: true
+    maxLatency: 50
+    minBandwidth: 1000000

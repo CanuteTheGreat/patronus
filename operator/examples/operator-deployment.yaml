@@ -1,0 +1,91 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: patronus-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: patronus-operator
+  namespace: patronus-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: patronus-operator
+rules:
+  # Sites
+  - apiGroups: ["sdwan.patronus.dev"]
+    resources: ["sites"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["sdwan.patronus.dev"]
+    resources: ["sites/status"]
+    verbs: ["get", "update", "patch"]
+  # Policies
+  - apiGroups: ["sdwan.patronus.dev"]
+    resources: ["policies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["sdwan.patronus.dev"]
+    resources: ["policies/status"]
+    verbs: ["get", "update", "patch"]
+  # Events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: patronus-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: patronus-operator
+subjects:
+  - kind: ServiceAccount
+    name: patronus-operator
+    namespace: patronus-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: patronus-operator
+  namespace: patronus-system
+  labels:
+    app: patronus-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: patronus-operator
+  template:
+    metadata:
+      labels:
+        app: patronus-operator
+    spec:
+      serviceAccountName: patronus-operator
+      containers:
+        - name: operator
+          image: patronus/operator:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PATRONUS_API_URL
+              value: "http://patronus-api:8081"
+            - name: RUST_LOG
+              value: "info"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL

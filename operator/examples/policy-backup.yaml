@@ -1,0 +1,19 @@
+apiVersion: sdwan.patronus.dev/v1alpha1
+kind: Policy
+metadata:
+  name: backup-traffic
+  namespace: patronus-system
+spec:
+  priority: 50
+  match:
+    protocol: tcp
+    destinationPorts:
+      - 3260  # iSCSI
+      - 2049  # NFS
+  action:
+    qos: best-effort
+    preferredPath: high-bandwidth
+  failover:
+    enabled: true
+    maxLatency: 200
+    minBandwidth: 10000000
