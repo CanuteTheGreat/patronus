@@ -18,7 +18,7 @@ tower-http = { version = "0.6", features = ["fs", "trace", "cors", "set-header"]
 
 # GraphQL API
 async-graphql = { version = "7.0", features = ["chrono"] }
-async-graphql-axum = "7.0"
+async-graphql-axum = "7.0"  # Uses axum 0.8
 async-stream = "0.3"
 tokio-stream = "0.1"
 
@@ -39,10 +39,12 @@ metrics = "0.23"
 metrics-exporter-prometheus = "0.15"
 
 # OpenTelemetry for distributed tracing
-opentelemetry = { version = "0.27", features = ["trace"] }
-opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"] }
-tracing-opentelemetry = "0.28"
+# TODO: Re-enable after resolving axum version conflicts
+# opentelemetry = { version = "0.27", features = ["trace"] }
+# opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+# opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"] }
+# opentelemetry-stdout = { version = "0.27", features = ["trace"] }
+# tracing-opentelemetry = "0.28"
 
 # Error handling
 anyhow = "1.0"

@@ -1,0 +1,79 @@
+{
+  "Patronus Site": {
+    "prefix": "patronus-site",
+    "body": [
+      "apiVersion: v1",
+      "kind: Site",
+      "metadata:",
+      "  name: ${1:site-name}",
+      "spec:",
+      "  location: ${2:location}",
+      "  tunnels: []",
+      "  policies: []"
+    ],
+    "description": "Create a new Patronus site"
+  },
+  "Patronus Tunnel": {
+    "prefix": "patronus-tunnel",
+    "body": [
+      "apiVersion: v1",
+      "kind: Tunnel",
+      "metadata:",
+      "  name: ${1:tunnel-name}",
+      "spec:",
+      "  source: ${2:source-site}",
+      "  destination: ${3:destination-site}",
+      "  protocol: ${4|wireguard,ipsec,gre|}",
+      "  encryption: true"
+    ],
+    "description": "Create a new Patronus tunnel"
+  },
+  "Patronus Policy": {
+    "prefix": "patronus-policy",
+    "body": [
+      "apiVersion: v1",
+      "kind: Policy",
+      "metadata:",
+      "  name: ${1:policy-name}",
+      "spec:",
+      "  rules:",
+      "    - action: ${2|allow,deny,route|}",
+      "      source: ${3:source}",
+      "      destination: ${4:destination}",
+      "      priority: ${5:100}"
+    ],
+    "description": "Create a new Patronus policy"
+  },
+  "Patronus QoS Policy": {
+    "prefix": "patronus-qos",
+    "body": [
+      "apiVersion: v1",
+      "kind: QoSPolicy",
+      "metadata:",
+      "  name: ${1:qos-name}",
+      "spec:",
+      "  class: ${2|realtime,business,best-effort|}",
+      "  bandwidth:",
+      "    min: ${3:10}Mbps",
+      "    max: ${4:100}Mbps",
+      "  priority: ${5:1}"
+    ],
+    "description": "Create a new QoS policy"
+  },
+  "Patronus Failover": {
+    "prefix": "patronus-failover",
+    "body": [
+      "apiVersion: v1",
+      "kind: FailoverPolicy",
+      "metadata:",
+      "  name: ${1:failover-name}",
+      "spec:",
+      "  primary: ${2:primary-link}",
+      "  backup: ${3:backup-link}",
+      "  healthCheck:",
+      "    interval: ${4:30}s",
+      "    threshold: ${5:3}"
+    ],
+    "description": "Create a new failover policy"
+  }
+}

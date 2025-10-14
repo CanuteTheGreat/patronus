@@ -9,6 +9,7 @@ pub mod fsm;
 pub mod manager;
 pub mod messages;
 pub mod neighbor;
+pub mod rib;
 pub mod route;
 pub mod session;
 
@@ -18,6 +19,7 @@ pub use fsm::{BgpEvent, BgpFsm, FsmConfig};
 pub use manager::BgpManager;
 pub use messages::{BgpMessage, KeepaliveMessage, NotificationMessage, OpenMessage, UpdateMessage};
 pub use neighbor::BgpNeighbor;
+pub use rib::Rib;
 pub use route::{BgpRoute, RouteAction};
 pub use session::BgpSession;
 

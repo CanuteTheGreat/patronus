@@ -1,0 +1,19 @@
+[package]
+name = "patronus-wan-opt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+sha2 = "0.10"
+flate2 = "1.0"
+lz4 = "1.25"
+zstd = "0.13"

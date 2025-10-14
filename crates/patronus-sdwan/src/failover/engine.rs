@@ -5,11 +5,11 @@
 
 use super::{FailoverEvent, FailoverEventType, FailoverPolicy, FailoverState};
 use crate::database::Database;
-use crate::health::HealthMonitor;
+use crate::health::{BfdHealthMonitor, HealthMonitor, PathHealth};
 use crate::types::PathId;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
 
 /// Failover engine that monitors health and executes failovers
@@ -20,6 +20,9 @@ pub struct FailoverEngine {
     /// Health monitor for path health
     health_monitor: Arc<HealthMonitor>,
 
+    /// Optional BFD health monitor for sub-second detection
+    bfd_monitor: Option<Arc<BfdHealthMonitor>>,
+
     /// Active policies
     policies: Arc<RwLock<HashMap<u64, FailoverPolicy>>>,
 
@@ -28,6 +31,9 @@ pub struct FailoverEngine {
 
     /// Evaluation interval in seconds
     eval_interval_secs: u64,
+
+    /// Channel for receiving BFD state changes
+    bfd_state_rx: Arc<RwLock<Option<mpsc::Receiver<(PathId, PathHealth)>>>>,
 }
 
 impl FailoverEngine {
@@ -39,10 +45,26 @@ impl FailoverEngine {
         Self {
             db,
             health_monitor,
+            bfd_monitor: None,
             policies: Arc::new(RwLock::new(HashMap::new())),
             states: Arc::new(RwLock::new(HashMap::new())),
             eval_interval_secs: 5, // Evaluate every 5 seconds
+            bfd_state_rx: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Enable BFD integration for sub-second failover detection
+    ///
+    /// # Arguments
+    ///
+    /// * `bfd_monitor` - BFD health monitor to integrate
+    ///
+    /// # Returns
+    ///
+    /// Self for builder pattern
+    pub fn with_bfd(mut self, bfd_monitor: Arc<BfdHealthMonitor>) -> Self {
+        self.bfd_monitor = Some(bfd_monitor);
+        self
     }
 
     /// Add a failover policy
@@ -156,6 +178,31 @@ impl FailoverEngine {
         Ok(())
     }
 
+    /// Get path health with BFD fallback
+    ///
+    /// Tries BFD monitor first (if enabled) for sub-second detection,
+    /// falls back to regular health monitor.
+    async fn get_path_health_score(&self, path_id: &PathId) -> f64 {
+        // Try BFD monitor first (sub-second detection)
+        if let Some(ref bfd_monitor) = self.bfd_monitor {
+            if let Some(health) = bfd_monitor.get_path_health(path_id).await {
+                tracing::debug!(
+                    "Using BFD health for path {}: score={}",
+                    path_id,
+                    health.health_score
+                );
+                return health.health_score;
+            }
+        }
+
+        // Fall back to regular health monitor
+        self.health_monitor
+            .get_path_health(path_id)
+            .await
+            .map(|h| h.health_score)
+            .unwrap_or(0.0)
+    }
+
     /// Evaluate a single policy
     async fn evaluate_policy(&self, policy: &FailoverPolicy) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Get current state
@@ -175,9 +222,8 @@ impl FailoverEngine {
             }
         };
 
-        // Get path health
-        let primary_health = self.health_monitor.get_path_health(&policy.primary_path_id).await;
-        let primary_score = primary_health.as_ref().map(|h| h.health_score).unwrap_or(0.0);
+        // Get path health (with BFD fallback)
+        let primary_score = self.get_path_health_score(&policy.primary_path_id).await;
 
         // Check if we're currently using primary
         if state.using_primary {
@@ -224,11 +270,12 @@ impl FailoverEngine {
         state: &mut FailoverState,
         primary_score: f64,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Get health for all backup paths
+        // Get health for all backup paths (using BFD if available)
         let mut backup_health = Vec::new();
         for backup_id in &policy.backup_path_ids {
-            if let Some(health) = self.health_monitor.get_path_health(backup_id).await {
-                backup_health.push((*backup_id, health.health_score));
+            let score = self.get_path_health_score(backup_id).await;
+            if score > 0.0 {
+                backup_health.push((*backup_id, score));
             }
         }
 

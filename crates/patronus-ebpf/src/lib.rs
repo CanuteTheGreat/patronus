@@ -31,8 +31,10 @@ pub mod xdp;
 pub mod maps;
 pub mod programs;
 pub mod stats;
+pub mod sdwan;
 
 pub use xdp::{XdpFirewall, XdpMode, XdpAction};
 pub use maps::{BpfMap, MapType};
 pub use programs::FirewallProgram;
 pub use stats::XdpStats;
+pub use sdwan::{SdwanFastPath, TunnelEndpoint, LinkMetrics};

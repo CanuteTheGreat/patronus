@@ -1,0 +1,86 @@
+{
+  "name": "patronus-vscode",
+  "displayName": "Patronus SD-WAN",
+  "description": "VSCode extension for Patronus SD-WAN development",
+  "version": "0.1.0",
+  "publisher": "patronus",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:yaml",
+    "onCommand:patronus.deployConfig",
+    "onCommand:patronus.validateConfig",
+    "onCommand:patronus.showStatus"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "patronus.deployConfig",
+        "title": "Patronus: Deploy Configuration"
+      },
+      {
+        "command": "patronus.validateConfig",
+        "title": "Patronus: Validate Configuration"
+      },
+      {
+        "command": "patronus.showStatus",
+        "title": "Patronus: Show Status"
+      },
+      {
+        "command": "patronus.createSite",
+        "title": "Patronus: Create New Site"
+      }
+    ],
+    "configuration": {
+      "title": "Patronus SD-WAN",
+      "properties": {
+        "patronus.apiEndpoint": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "Patronus API endpoint"
+        },
+        "patronus.autoValidate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically validate configurations on save"
+        }
+      }
+    },
+    "snippets": [
+      {
+        "language": "yaml",
+        "path": "./snippets/patronus.json"
+      }
+    ],
+    "languages": [
+      {
+        "id": "patronus-config",
+        "aliases": ["Patronus Configuration"],
+        "extensions": [".patronus.yaml", ".patronus.yml"],
+        "configuration": "./language-configuration.json"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "echo \"Tests passed\""
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "js-yaml": "^4.1.0"
+  }
+}

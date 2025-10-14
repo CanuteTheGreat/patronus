@@ -19,7 +19,9 @@ members = [
     "crates/patronus-secrets",
     "crates/patronus-bench",
     "crates/patronus-sdwan",
-    "crates/patronus-dashboard", "crates/patronus-bgp", "operator",
+    "crates/patronus-dashboard",
+    "crates/patronus-bgp",
+    "operator", "crates/patronus-wan-opt", "crates/patronus-app-steering", "crates/patronus-ml", "crates/patronus-multicloud", "crates/patronus-servicemesh", "crates/patronus-security", "crates/patronus-observability", "crates/patronus-gateway", "crates/patronus-multitenancy", "crates/patronus-mlops", "crates/patronus-advanced-ml", "crates/patronus-network-opt", "crates/patronus-capacity-plan", "crates/patronus-traffic-eng", "crates/patronus-self-healing", "crates/patronus-control-plane", "crates/patronus-edge-computing", "crates/patronus-saas", "crates/patronus-mpls", "crates/patronus-network-slicing", "crates/patronus-geodns", "crates/patronus-network-functions", "crates/patronus-rl-optimizer", "crates/patronus-plugin", "crates/patronus-ansible", "crates/patronus-tutorials",
 ]
 
 [workspace.package]

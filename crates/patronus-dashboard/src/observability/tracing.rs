@@ -9,6 +9,7 @@ use opentelemetry_sdk::{
     trace::{self, TracerProvider},
     Resource,
 };
+use opentelemetry_otlp::WithExportConfig;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Initialize OpenTelemetry tracing
@@ -49,7 +50,7 @@ pub fn init_tracing(
             .with_resource(resource)
             .build();
 
-        tracer_provider.tracer(service_name)
+        tracer_provider.tracer(service_name.to_string())
     } else {
         // No OTLP endpoint - use stdout exporter for development
         tracing::info!("Initializing OpenTelemetry with stdout export (dev mode)");
@@ -61,7 +62,7 @@ pub fn init_tracing(
             .with_resource(resource)
             .build();
 
-        tracer_provider.tracer(service_name)
+        tracer_provider.tracer(service_name.to_string())
     };
 
     // Create telemetry layer

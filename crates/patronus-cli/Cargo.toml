@@ -55,10 +55,24 @@ patronus-gitops = { path = "../patronus-gitops", optional = true }
 patronus-ai = { path = "../patronus-ai", optional = true }
 patronus-cni = { path = "../patronus-cni", optional = true }
 
+# SD-WAN modules
+patronus-sdwan = { path = "../patronus-sdwan" }
+patronus-bgp = { path = "../patronus-bgp" }
+patronus-mpls = { path = "../patronus-mpls" }
+patronus-geodns = { path = "../patronus-geodns" }
+patronus-saas = { path = "../patronus-saas" }
+patronus-dashboard = { path = "../patronus-dashboard" }
+
 tokio.workspace = true
-clap = { workspace = true, optional = true }
+clap = { workspace = true, optional = true, features = ["derive"] }
 axum = { workspace = true, optional = true }
 prometheus = { workspace = true, optional = true }
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+colored = "2.1"
+comfy-table = "7.1"

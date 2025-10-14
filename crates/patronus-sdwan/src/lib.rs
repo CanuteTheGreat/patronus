@@ -40,6 +40,10 @@ pub mod health;
 pub mod failover;
 pub mod export;
 pub mod compression;
+pub mod dataplane;
+pub mod dpi;
+pub mod sla;
+pub mod qos;
 
 pub use error::{Error, Result};
 pub use types::{SiteId, PathId, FlowKey};

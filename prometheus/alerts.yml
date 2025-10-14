@@ -148,3 +148,189 @@ groups:
         annotations:
           summary: "High policy count"
           description: "{{ $value }} policies configured. Review for optimization opportunities."
+
+      # BFD (Bidirectional Forwarding Detection) Alerts
+      - alert: BfdSessionDown
+        expr: patronus_bfd_session_status{state="down"} == 1
+        for: 1m
+        labels:
+          severity: critical
+          component: bfd
+        annotations:
+          summary: "BFD session down"
+          description: "BFD session {{ $labels.session_id }} is down on path {{ $labels.path_id }}."
+
+      - alert: BfdSlowDetection
+        expr: patronus_bfd_detection_time_ms > 1000
+        for: 2m
+        labels:
+          severity: warning
+          component: bfd
+        annotations:
+          summary: "BFD slow failure detection"
+          description: "BFD detection time is {{ $value }}ms (expected <900ms) on path {{ $labels.path_id }}."
+
+      - alert: BfdHighPacketLoss
+        expr: rate(patronus_bfd_packets_lost_total[5m]) / rate(patronus_bfd_packets_sent_total[5m]) * 100 > 10
+        for: 3m
+        labels:
+          severity: warning
+          component: bfd
+        annotations:
+          summary: "High BFD packet loss"
+          description: "BFD packet loss is {{ $value | humanizePercentage }} on path {{ $labels.path_id }}."
+
+      # Compression Alerts
+      - alert: CompressionDisabled
+        expr: patronus_compression_enabled == 0
+        for: 5m
+        labels:
+          severity: info
+          component: compression
+        annotations:
+          summary: "Compression disabled"
+          description: "Data compression is disabled on path {{ $labels.path_id }}. Consider enabling for bandwidth savings."
+
+      - alert: LowCompressionRatio
+        expr: (1 - (rate(patronus_compression_output_bytes_total[10m]) / rate(patronus_compression_input_bytes_total[10m]))) * 100 < 5
+        for: 30m
+        labels:
+          severity: info
+          component: compression
+        annotations:
+          summary: "Low compression ratio"
+          description: "Compression ratio is only {{ $value | humanizePercentage }} on path {{ $labels.path_id }}. Data may not be compressible."
+
+      - alert: CompressionErrors
+        expr: rate(patronus_compression_errors_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          component: compression
+        annotations:
+          summary: "Compression errors detected"
+          description: "Compression error rate is {{ $value }} errors/sec on path {{ $labels.path_id }}."
+
+      # Failover Alerts
+      - alert: FrequentFailovers
+        expr: increase(patronus_failover_count_total[30m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: failover
+        annotations:
+          summary: "Frequent failover events"
+          description: "Path {{ $labels.path_id }} has failed over {{ $value }} times in the last 30 minutes. Check network stability."
+
+      - alert: FailoverCooldown
+        expr: patronus_failover_cooldown_active == 1
+        for: 10m
+        labels:
+          severity: info
+          component: failover
+        annotations:
+          summary: "Failover in cooldown"
+          description: "Failover for path {{ $labels.path_id }} is in cooldown period to prevent flapping."
+
+      # DPI (Deep Packet Inspection) Alerts
+      - alert: DpiClassificationFailure
+        expr: rate(patronus_dpi_classification_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: dpi
+        annotations:
+          summary: "DPI classification failures"
+          description: "DPI is experiencing {{ $value }} classification errors/sec."
+
+      - alert: DpiLowAccuracy
+        expr: (sum(patronus_dpi_classified_flows_total) / sum(patronus_dpi_total_flows_total)) * 100 < 70
+        for: 15m
+        labels:
+          severity: warning
+          component: dpi
+        annotations:
+          summary: "Low DPI classification accuracy"
+          description: "DPI classification accuracy is only {{ $value | humanizePercentage }}. Many flows are unclassified."
+
+      - alert: DpiHighUnknownTraffic
+        expr: rate(patronus_dpi_bytes_total{app_type="Unknown"}[10m]) / rate(patronus_dpi_bytes_total[10m]) * 100 > 30
+        for: 15m
+        labels:
+          severity: info
+          component: dpi
+        annotations:
+          summary: "High unknown traffic percentage"
+          description: "{{ $value | humanizePercentage }} of traffic is unclassified by DPI. Consider updating classifiers."
+
+      # QoS (Quality of Service) Alerts
+      - alert: QosBufferOverflow
+        expr: increase(patronus_qos_buffer_overflows_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+          component: qos
+        annotations:
+          summary: "QoS buffer overflow"
+          description: "QoS class {{ $labels.class }} has {{ $value }} buffer overflows in the last 5 minutes."
+
+      - alert: QosHighDropRate
+        expr: rate(patronus_traffic_shaping_drops_total[5m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+          component: qos
+        annotations:
+          summary: "High QoS drop rate"
+          description: "QoS class {{ $labels.class }} is dropping {{ $value }} packets/sec due to rate limiting."
+
+      - alert: QosRealtimeLatencyViolation
+        expr: histogram_quantile(0.95, rate(patronus_qos_latency_seconds_bucket{class="realtime"}[5m])) * 1000 > 50
+        for: 3m
+        labels:
+          severity: critical
+          component: qos
+        annotations:
+          summary: "RealTime QoS latency violation"
+          description: "RealTime traffic p95 latency is {{ $value }}ms (target <50ms)."
+
+      # SLA (Service Level Agreement) Alerts
+      - alert: SlaLatencyViolation
+        expr: patronus_path_latency_sla_met == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: sla
+        annotations:
+          summary: "SLA latency violation"
+          description: "Path {{ $labels.path_id }} is violating latency SLA ({{ $labels.target_latency_ms }}ms)."
+
+      - alert: SlaPacketLossViolation
+        expr: patronus_path_packet_loss_sla_met == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: sla
+        annotations:
+          summary: "SLA packet loss violation"
+          description: "Path {{ $labels.path_id }} is violating packet loss SLA ({{ $labels.target_loss_pct }}%)."
+
+      - alert: SlaJitterViolation
+        expr: patronus_path_jitter_sla_met == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: sla
+        annotations:
+          summary: "SLA jitter violation"
+          description: "Path {{ $labels.path_id }} is violating jitter SLA ({{ $labels.target_jitter_ms }}ms)."
+
+      - alert: SlaComplianceLow
+        expr: (count(patronus_path_latency_sla_met == 1) / count(patronus_path_latency_sla_met)) * 100 < 95
+        for: 15m
+        labels:
+          severity: critical
+          component: sla
+        annotations:
+          summary: "Low SLA compliance"
+          description: "Overall SLA compliance is {{ $value | humanizePercentage }} (target >95%)."

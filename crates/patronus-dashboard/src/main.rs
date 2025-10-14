@@ -39,6 +39,7 @@ use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing
+    // TODO: Re-enable OpenTelemetry after resolving axum version conflicts
     tracing_subscriber::registry()
         .with(fmt::layer())
         .with(
