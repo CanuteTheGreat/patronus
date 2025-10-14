@@ -29,12 +29,14 @@
 //! # }
 //! ```
 
+mod bfd;
 mod checker;
 mod icmp_probe;
 mod probe;
 mod scoring;
 mod udp_probe;
 
+pub use bfd::{BfdConfig, BfdDiagnostic, BfdPacket, BfdSession, BfdState};
 pub use checker::HealthMonitor;
 pub use icmp_probe::{IcmpError, IcmpProbeResult, IcmpProber};
 pub use probe::{ProbeConfig, ProbeResult, Prober};
