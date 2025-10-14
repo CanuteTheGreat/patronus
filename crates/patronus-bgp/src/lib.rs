@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod error;
+pub mod fsm;
 pub mod manager;
 pub mod neighbor;
 pub mod route;
@@ -12,6 +13,7 @@ pub mod session;
 
 pub use config::{BgpConfig, NeighborConfig, RouteMapConfig};
 pub use error::{BgpError, Result};
+pub use fsm::{BgpEvent, BgpFsm, FsmConfig};
 pub use manager::BgpManager;
 pub use neighbor::BgpNeighbor;
 pub use route::{BgpRoute, RouteAction};
