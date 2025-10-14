@@ -3,8 +3,10 @@
 //! Centralized management and monitoring interface for multi-site SD-WAN deployments.
 
 use axum::{
+    extract::ws::{WebSocket, WebSocketUpgrade},
     routing::{get, post},
     Router,
+    body::Body,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -17,6 +19,7 @@ use tower_http::{
 use axum::http::{header, HeaderValue};
 use tracing::{info, Level};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use futures::{StreamExt, SinkExt};
 
 mod api;
 mod auth;
@@ -80,11 +83,14 @@ async fn main() -> anyhow::Result<()> {
         .nest("/api/v1", api_routes())
         // API v2 routes (GraphQL)
         .route("/api/v2/graphql", post(graphql_handler).get(graphql_playground))
+        .route("/api/v2/graphql/ws", get(graphql_ws_handler))
         // WebSocket routes
         .route("/ws/metrics", get(ws::metrics_handler))
         .route("/ws/events", get(ws::events_handler))
         // Static file serving
-        .nest_service("/", ServeDir::new("static"))
+        .nest_service("/assets", ServeDir::new("static/assets"))
+        // SPA fallback - must be last to catch all unmatched routes
+        .fallback(spa_fallback)
         // Add middleware layers (order matters - last added = first executed)
         .layer(
             TraceLayer::new_for_http()
@@ -215,4 +221,73 @@ async fn graphql_playground() -> impl axum::response::IntoResponse {
     axum::response::Html(playground_source(
         GraphQLPlaygroundConfig::new("/api/v2/graphql")
     ))
+}
+
+/// GraphQL WebSocket handler for subscriptions
+async fn graphql_ws_handler(
+    ws: WebSocketUpgrade,
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+    schema: axum::Extension<graphql::AppSchema>,
+) -> impl axum::response::IntoResponse {
+    ws.on_upgrade(move |socket| graphql_ws_connection(socket, state, schema.0))
+}
+
+/// Handle GraphQL WebSocket connection
+async fn graphql_ws_connection(
+    socket: WebSocket,
+    _state: Arc<AppState>,
+    schema: graphql::AppSchema,
+) {
+    use async_graphql::http::{WebSocketProtocols, WsMessage, ALL_WEBSOCKET_PROTOCOLS};
+    use axum::extract::ws::Message;
+
+    let (mut sender, mut receiver) = socket.split();
+
+    // Create a simple message handler
+    // This is a simplified implementation for now
+    // Full GraphQL-WS protocol can be added later if needed
+    while let Some(Ok(msg)) = receiver.next().await {
+        match msg {
+            Message::Text(text) => {
+                // Parse as GraphQL request and execute
+                if let Ok(request) = serde_json::from_str::<serde_json::Value>(&text) {
+                    // Check if it's a subscription request
+                    if let Some(query) = request.get("query").and_then(|q| q.as_str()) {
+                        // Execute the query
+                        let gql_request = async_graphql::Request::new(query);
+                        let response = schema.execute(gql_request).await;
+
+                        // Send response
+                        if let Ok(json) = serde_json::to_string(&response) {
+                            let _ = sender.send(Message::Text(json.into())).await;
+                        }
+                    }
+                }
+            }
+            Message::Close(_) => {
+                break;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// SPA fallback handler - serves index.html for all non-API routes
+async fn spa_fallback() -> impl axum::response::IntoResponse {
+    use axum::http::{StatusCode, Uri};
+    use axum::response::Response;
+    use std::fs;
+
+    // Try to read index.html
+    match fs::read_to_string("static/index.html") {
+        Ok(contents) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/html")
+            .body(Body::from(contents))
+            .unwrap(),
+        Err(_) => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("404 - Frontend not built. Run: ./build-frontend.sh"))
+            .unwrap(),
+    }
 }
