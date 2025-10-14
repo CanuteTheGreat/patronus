@@ -5,6 +5,7 @@ import {
   BuildingOfficeIcon,
   DocumentTextIcon,
   ChartBarIcon,
+  MapIcon,
   UsersIcon,
   Cog6ToothIcon,
   ArrowRightOnRectangleIcon,
@@ -23,6 +24,7 @@ export default function Layout({ children }: LayoutProps) {
     { name: 'Sites', href: '/sites', icon: BuildingOfficeIcon },
     { name: 'Policies', href: '/policies', icon: DocumentTextIcon },
     { name: 'Metrics', href: '/metrics', icon: ChartBarIcon },
+    { name: 'Topology', href: '/topology', icon: MapIcon },
     { name: 'Users', href: '/users', icon: UsersIcon },
     { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },
   ]

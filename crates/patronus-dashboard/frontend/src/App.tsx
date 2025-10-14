@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard'
 import Sites from './pages/Sites'
 import Policies from './pages/Policies'
 import Metrics from './pages/Metrics'
+import Topology from './pages/Topology'
 import Users from './pages/Users'
 import Settings from './pages/Settings'
 
@@ -36,6 +37,7 @@ function App() {
         <Route path="/sites" element={<Sites />} />
         <Route path="/policies" element={<Policies />} />
         <Route path="/metrics" element={<Metrics />} />
+        <Route path="/topology" element={<Topology />} />
         <Route path="/users" element={<Users />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
