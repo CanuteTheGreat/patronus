@@ -38,6 +38,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 metrics = "0.23"
 metrics-exporter-prometheus = "0.15"
 
+# OpenTelemetry for distributed tracing
+opentelemetry = { version = "0.27", features = ["trace"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"] }
+tracing-opentelemetry = "0.28"
+
 # Error handling
 anyhow = "1.0"
 thiserror = "1.0"
