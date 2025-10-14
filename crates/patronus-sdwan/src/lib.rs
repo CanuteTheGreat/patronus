@@ -39,6 +39,7 @@ pub mod traffic_stats;
 pub mod health;
 pub mod failover;
 pub mod export;
+pub mod compression;
 
 pub use error::{Error, Result};
 pub use types::{SiteId, PathId, FlowKey};
