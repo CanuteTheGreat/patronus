@@ -24,10 +24,16 @@ export const REFRESH_TOKEN = gql`
   }
 `
 
+export const CHANGE_PASSWORD = gql`
+  mutation ChangePassword($currentPassword: String!, $newPassword: String!) {
+    changePassword(currentPassword: $currentPassword, newPassword: $newPassword)
+  }
+`
+
 // Site queries
 export const GET_SITES = gql`
-  query GetSites {
-    sites {
+  query GetSites($filter: SiteFilter, $pagination: PaginationInput) {
+    sites(filter: $filter, pagination: $pagination) {
       id
       name
       location
@@ -50,6 +56,12 @@ export const GET_SITE = gql`
       createdAt
       updatedAt
     }
+  }
+`
+
+export const GET_SITE_COUNT = gql`
+  query GetSiteCount($filter: SiteFilter) {
+    siteCount(filter: $filter)
   }
 `
 
@@ -83,8 +95,25 @@ export const DELETE_SITE = gql`
 
 // Policy queries
 export const GET_POLICIES = gql`
-  query GetPolicies {
-    policies {
+  query GetPolicies($filter: PolicyFilter, $pagination: PaginationInput) {
+    policies(filter: $filter, pagination: $pagination) {
+      id
+      name
+      description
+      priority
+      matchRules
+      action
+      enabled
+      packetsMatched
+      bytesMatched
+      createdAt
+    }
+  }
+`
+
+export const GET_POLICY = gql`
+  query GetPolicy($id: String!) {
+    policy(id: $id) {
       id
       name
       description
@@ -128,10 +157,19 @@ export const DELETE_POLICY = gql`
   }
 `
 
+export const TOGGLE_POLICY = gql`
+  mutation TogglePolicy($id: String!, $enabled: Boolean!) {
+    togglePolicy(id: $id, enabled: $enabled) {
+      id
+      enabled
+    }
+  }
+`
+
 // Path queries
 export const GET_PATHS = gql`
-  query GetPaths {
-    paths {
+  query GetPaths($sourceSiteId: String, $destinationSiteId: String, $pagination: PaginationInput) {
+    paths(sourceSiteId: $sourceSiteId, destinationSiteId: $destinationSiteId, pagination: $pagination) {
       id
       sourceSiteId
       destinationSiteId
@@ -142,6 +180,40 @@ export const GET_PATHS = gql`
       status
       lastUpdated
     }
+  }
+`
+
+export const GET_PATH = gql`
+  query GetPath($id: String!) {
+    path(id: $id) {
+      id
+      sourceSiteId
+      destinationSiteId
+      latencyMs
+      packetLoss
+      bandwidthMbps
+      qualityScore
+      status
+      lastUpdated
+    }
+  }
+`
+
+export const CHECK_PATH_HEALTH = gql`
+  mutation CheckPathHealth($pathId: String!) {
+    checkPathHealth(pathId: $pathId) {
+      id
+      status
+      latencyMs
+      packetLoss
+      qualityScore
+    }
+  }
+`
+
+export const FAILOVER_PATH = gql`
+  mutation FailoverPath($pathId: String!) {
+    failoverPath(pathId: $pathId)
   }
 `
 
@@ -178,8 +250,21 @@ export const GET_METRICS_HISTORY = gql`
 
 // User queries
 export const GET_USERS = gql`
-  query GetUsers {
-    users {
+  query GetUsers($pagination: PaginationInput) {
+    users(pagination: $pagination) {
+      id
+      email
+      role
+      active
+      createdAt
+      lastLogin
+    }
+  }
+`
+
+export const GET_USER = gql`
+  query GetUser($id: String!) {
+    user(id: $id) {
       id
       email
       role
@@ -207,6 +292,24 @@ export const UPDATE_USER = gql`
       id
       email
       role
+      active
+    }
+  }
+`
+
+export const UPDATE_USER_ROLE = gql`
+  mutation UpdateUserRole($userId: String!, $role: UserRole!) {
+    updateUserRole(userId: $userId, role: $role) {
+      id
+      role
+    }
+  }
+`
+
+export const DEACTIVATE_USER = gql`
+  mutation DeactivateUser($userId: String!) {
+    deactivateUser(userId: $userId) {
+      id
       active
     }
   }
@@ -247,10 +350,64 @@ export const GET_AUDIT_LOGS = gql`
   }
 `
 
+export const GET_MUTATION_LOGS = gql`
+  query GetMutationLogs($limit: Int) {
+    mutationLogs(limit: $limit) {
+      id
+      userId
+      eventType
+      description
+      ipAddress
+      timestamp
+      metadata
+    }
+  }
+`
+
+// System queries
+export const GET_HEALTH = gql`
+  query GetHealth {
+    health {
+      status
+      version
+      uptime
+    }
+  }
+`
+
+export const GET_VERSION = gql`
+  query GetVersion {
+    version {
+      version
+      buildDate
+      gitCommit
+    }
+  }
+`
+
+export const CLEAR_CACHE = gql`
+  mutation ClearCache {
+    clearCache
+  }
+`
+
+export const SYSTEM_HEALTH_CHECK = gql`
+  mutation SystemHealthCheck {
+    systemHealthCheck {
+      status
+      checks {
+        name
+        status
+        message
+      }
+    }
+  }
+`
+
 // Subscriptions
 export const METRICS_SUBSCRIPTION = gql`
-  subscription OnMetricsUpdate {
-    metricsUpdated {
+  subscription OnMetricsUpdate($intervalSeconds: Int) {
+    metricsStream(intervalSeconds: $intervalSeconds) {
       timestamp
       throughputMbps
       packetsPerSecond
@@ -265,10 +422,126 @@ export const METRICS_SUBSCRIPTION = gql`
 
 export const SITE_STATUS_SUBSCRIPTION = gql`
   subscription OnSiteStatusChange {
-    siteStatusChanged {
+    siteUpdates {
       id
       name
       status
+    }
+  }
+`
+
+export const PATH_UPDATES_SUBSCRIPTION = gql`
+  subscription OnPathUpdates($siteId: String) {
+    pathUpdates(siteId: $siteId) {
+      id
+      sourceSiteId
+      destinationSiteId
+      latencyMs
+      packetLoss
+      qualityScore
+      status
+    }
+  }
+`
+
+export const POLICY_EVENTS_SUBSCRIPTION = gql`
+  subscription OnPolicyEvents($policyId: String) {
+    policyEvents(policyId: $policyId) {
+      policyId
+      matchCount
+      timestamp
+    }
+  }
+`
+
+export const AUDIT_EVENTS_SUBSCRIPTION = gql`
+  subscription OnAuditEvents {
+    auditEvents {
+      id
+      userId
+      eventType
+      description
+      timestamp
+    }
+  }
+`
+
+export const SYSTEM_ALERTS_SUBSCRIPTION = gql`
+  subscription OnSystemAlerts($severity: AlertSeverity) {
+    systemAlerts(severity: $severity) {
+      id
+      severity
+      title
+      message
+      timestamp
+    }
+  }
+`
+
+// API Keys queries
+export const GET_API_KEYS = gql`
+  query GetApiKeys {
+    apiKeys {
+      id
+      name
+      prefix
+      createdAt
+      lastUsed
+      expiresAt
+      revoked
+    }
+  }
+`
+
+export const CREATE_API_KEY = gql`
+  mutation CreateApiKey($input: CreateApiKeyInput!) {
+    createApiKey(input: $input) {
+      id
+      name
+      prefix
+      key
+      createdAt
+      expiresAt
+    }
+  }
+`
+
+export const REVOKE_API_KEY = gql`
+  mutation RevokeApiKey($id: String!) {
+    revokeApiKey(id: $id) {
+      id
+      revoked
+    }
+  }
+`
+
+// System Info query
+export const GET_SYSTEM_INFO = gql`
+  query GetSystemInfo {
+    systemInfo {
+      version
+      buildDate
+      rustVersion
+      uptime
+      cpuUsage
+      memoryUsage
+      memoryTotal
+      diskUsage
+      diskTotal
+      activeSessions
+      totalSites
+      totalPolicies
+    }
+  }
+`
+
+// User Profile Update
+export const UPDATE_USER_PROFILE = gql`
+  mutation UpdateUserProfile($input: UpdateProfileInput!) {
+    updateProfile(input: $input) {
+      id
+      email
+      displayName
     }
   }
 `

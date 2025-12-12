@@ -7,12 +7,14 @@ export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
   const { login } = useAuth()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
+    setError(null)
 
     const result = await login(email, password)
 
@@ -20,7 +22,9 @@ export default function Login() {
       toast.success('Login successful')
       navigate('/')
     } else {
-      toast.error(result.error || 'Login failed')
+      const errorMessage = result.error || 'Login failed. Please check your credentials.'
+      setError(errorMessage)
+      toast.error(errorMessage)
     }
 
     setLoading(false)
@@ -37,7 +41,22 @@ export default function Login() {
             Sign in to your account
           </h2>
         </div>
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+
+        {error && (
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg"
+          >
+            <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+          </div>
+        )}
+
+        <form
+          className="mt-8 space-y-6"
+          onSubmit={handleSubmit}
+          aria-label="Login form"
+        >
           <div className="space-y-4">
             <div>
               <label htmlFor="email" className="label">
@@ -53,6 +72,8 @@ export default function Login() {
                 placeholder="admin@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                aria-describedby={error ? 'login-error' : undefined}
+                disabled={loading}
               />
             </div>
             <div>
@@ -69,6 +90,7 @@ export default function Login() {
                 placeholder="Enter your password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
               />
             </div>
           </div>
@@ -77,12 +99,25 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full btn btn-primary"
+              className="w-full btn btn-primary focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-gray-800"
+              aria-busy={loading}
             >
-              {loading ? 'Signing in...' : 'Sign in'}
+              {loading ? (
+                <>
+                  <span className="sr-only">Signing in...</span>
+                  <span aria-hidden="true">Signing in...</span>
+                </>
+              ) : (
+                'Sign in'
+              )}
             </button>
           </div>
         </form>
+
+        <p className="text-center text-sm text-gray-500 dark:text-gray-400">
+          <span className="sr-only">Demo credentials: </span>
+          Use <code className="font-mono text-xs bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded">admin@patronus.local</code> / <code className="font-mono text-xs bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded">admin123</code> for demo
+        </p>
       </div>
     </div>
   )
