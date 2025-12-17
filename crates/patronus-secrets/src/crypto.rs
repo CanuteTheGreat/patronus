@@ -9,8 +9,8 @@ use argon2::{
     password_hash::{PasswordHasher, SaltString},
     Argon2, PasswordHash, PasswordVerifier,
 };
+use base64::Engine;
 use rand::RngCore;
-use zeroize::Zeroize;
 
 const NONCE_SIZE: usize = 12; // 96 bits for GCM
 
@@ -112,7 +112,7 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool> {
 pub fn generate_token(length: usize) -> String {
     let mut bytes = vec![0u8; length];
     OsRng.fill_bytes(&mut bytes);
-    base64::encode_config(bytes, base64::URL_SAFE_NO_PAD)
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
 /// Generate a cryptographically secure random password

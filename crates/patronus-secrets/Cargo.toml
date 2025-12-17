@@ -41,6 +41,9 @@ dotenvy = "0.15"
 # Logging
 tracing = { workspace = true }
 
+# Additional dependencies
+chrono = { workspace = true }
+
 [features]
 default = ["memory-store"]
 memory-store = []

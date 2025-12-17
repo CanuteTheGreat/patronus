@@ -8,6 +8,7 @@ license.workspace = true
 default = ["nftables"]
 nftables = ["dep:nftnl", "dep:mnl"]
 iptables = []
+geoip = []
 
 [dependencies]
 patronus-core = { path = "../patronus-core" }

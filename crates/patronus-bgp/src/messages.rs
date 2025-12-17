@@ -5,7 +5,6 @@
 
 use crate::error::{BgpError, Result};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use std::net::{IpAddr, Ipv4Addr};
 
 /// BGP Message Types (RFC 4271 Section 4.1)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -525,7 +524,7 @@ impl BgpMessage {
             BgpMessage::Open(msg) => msg.encode(),
             BgpMessage::Update(msg) => msg.encode(),
             BgpMessage::Notification(msg) => msg.encode(),
-            BgpMessage::Keepalive(msg) => KeepaliveMessage::encode(),
+            BgpMessage::Keepalive(_msg) => KeepaliveMessage::encode(),
         }
     }
 

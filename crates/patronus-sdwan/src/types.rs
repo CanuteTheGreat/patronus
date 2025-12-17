@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, SocketAddr};
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 use uuid::Uuid;
 
 /// Unique identifier for a site

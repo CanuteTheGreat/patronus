@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+certificates = []
+
 [dependencies]
 tokio.workspace = true
 async-trait.workspace = true
@@ -12,3 +16,6 @@ serde_json.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+chrono = { workspace = true, features = ["serde"] }
+hostname = "0.3"
+sha2 = "0.10"

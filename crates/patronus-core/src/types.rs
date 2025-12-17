@@ -1,7 +1,7 @@
 //! Core type definitions
 
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::IpAddr;
 
 /// Represents a network interface
 #[derive(Debug, Clone, Serialize, Deserialize)]

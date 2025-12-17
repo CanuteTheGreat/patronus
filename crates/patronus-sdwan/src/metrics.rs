@@ -83,7 +83,7 @@ pub struct MetricsCollector {
 
 /// Traffic statistics tracked by eBPF
 #[derive(Debug, Clone, Default)]
-struct TrafficStats {
+pub struct TrafficStats {
     /// Total bytes transmitted
     bytes_tx: u64,
 

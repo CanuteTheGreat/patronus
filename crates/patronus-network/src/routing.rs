@@ -42,7 +42,7 @@ impl RouteManager {
             .await
             .map_err(|e| Error::Network(format!("Failed to get routes: {}", e)))?
         {
-            use rtnetlink::packet::route::RouteAttribute;
+            use netlink_packet_route::route::RouteAttribute;
 
             let mut destination = None;
             let mut gateway = None;

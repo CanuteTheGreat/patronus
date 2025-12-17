@@ -1,7 +1,7 @@
 //! nftables interaction layer
 
 use patronus_core::{
-    types::{ChainType, FirewallAction, FirewallRule, NatRule, NatType, PortSpec, Protocol},
+    types::{FirewallRule, NatRule, NatType, Protocol},
     Error, Result,
 };
 use std::process::Command;

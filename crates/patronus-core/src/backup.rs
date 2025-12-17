@@ -394,7 +394,7 @@ impl BackupManager {
 
         let status = tokio::process::Command::new("zstd")
             .args(&[
-                "-" format!("{}", self.config.compression.level),
+                &format!("-{}", self.config.compression.level),
                 path.to_str().unwrap(),
                 "-o", output.to_str().unwrap(),
             ])
@@ -495,7 +495,7 @@ impl BackupManager {
 
     async fn delete_backup(&self, backup_id: &str) -> Result<(), BackupError> {
         // Delete all files associated with this backup
-        let pattern = format!("{}.*", backup_id);
+        let _pattern = format!("{}.*", backup_id);
 
         let mut entries = fs::read_dir(&self.backup_dir).await?;
 
@@ -509,18 +509,18 @@ impl BackupManager {
         Ok(())
     }
 
-    async fn upload_to_storage(&self, backup_path: &Path, metadata_path: &Path) -> Result<(), BackupError> {
+    async fn upload_to_storage(&self, _backup_path: &Path, _metadata_path: &Path) -> Result<(), BackupError> {
         match &self.config.storage {
             StorageBackend::Local { .. } => {
                 // Already local
                 Ok(())
             }
-            StorageBackend::S3 { bucket, region, access_key, secret_key, endpoint } => {
+            StorageBackend::S3 { bucket: _, region: _, access_key: _, secret_key: _, endpoint: _ } => {
                 // Upload to S3 using AWS SDK
                 // Implementation would use aws-sdk-s3
                 Ok(())
             }
-            StorageBackend::SFTP { host, port, username, key_file, remote_path } => {
+            StorageBackend::SFTP { host: _, port: _, username: _, key_file: _, remote_path: _ } => {
                 // Upload via SFTP
                 Ok(())
             }

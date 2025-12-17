@@ -22,7 +22,7 @@ impl MtlsManager {
         Self { config }
     }
 
-    pub async fn verify_peer(&self, cert_chain: &[u8]) -> Result<bool> {
+    pub async fn verify_peer(&self, _cert_chain: &[u8]) -> Result<bool> {
         // In production: verify certificate chain against CA
         tracing::debug!("Verifying peer certificate");
         Ok(true)

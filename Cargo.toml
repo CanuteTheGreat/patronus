@@ -126,3 +126,8 @@ trust-dns-server = "0.23"
 
 # Metrics
 prometheus = "0.13"
+
+# Additional common dependencies
+uuid = { version = "1.0", features = ["v4", "serde"] }
+sysinfo = "0.31"
+reqwest = { version = "0.11", features = ["json"] }

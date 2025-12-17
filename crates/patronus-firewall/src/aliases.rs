@@ -7,7 +7,6 @@
 use patronus_core::{Result, Error};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-use std::collections::HashSet;
 
 /// Alias type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

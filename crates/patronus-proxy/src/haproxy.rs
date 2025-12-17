@@ -5,7 +5,7 @@
 
 use patronus_core::{Result, Error};
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::path::PathBuf;
 use tokio::process::Command;
 
@@ -625,7 +625,7 @@ WantedBy=multi-user.target
         let state = if enabled { "maint" } else { "ready" };
 
         // Use HAProxy runtime API
-        let cmd = format!("set server {}/{} state {}", backend, server, state);
+        let _cmd = format!("set server {}/{} state {}", backend, server, state);
 
         // Send to stats socket
         // echo "set server backend/server1 state maint" | socat stdio /var/run/haproxy.sock

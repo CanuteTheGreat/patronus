@@ -6,7 +6,6 @@
 use async_graphql::{Context, Subscription, Result};
 use futures::Stream;
 use std::time::Duration;
-use tokio_stream::StreamExt;
 use chrono::{DateTime, Utc};
 use crate::graphql::{
     types::*,

@@ -9,6 +9,7 @@ use crate::{
     vouchers::VoucherManager,
     bandwidth::BandwidthLimiter,
 };
+use tokio::io::AsyncWriteExt;
 use axum::{
     Router,
     extract::{State, Query, Form},
@@ -149,8 +150,8 @@ impl CaptivePortal {
         // Start session cleanup background task
         self.start_session_cleanup().await;
 
-        axum::Server::bind(&addr)
-            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
             .await?;
 
         Ok(())

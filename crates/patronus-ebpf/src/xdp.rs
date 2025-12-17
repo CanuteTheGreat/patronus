@@ -200,7 +200,7 @@ impl XdpFirewall {
     }
 
     /// Get statistics
-    pub async fn get_stats(&self) -> Result<XdpStats, XdpError> {
+    pub async fn get_stats(&self) -> Result<crate::stats::XdpStats, XdpError> {
         let mut total_packets = 0u64;
         let mut total_bytes = 0u64;
         let mut dropped_packets = 0u64;
@@ -221,7 +221,7 @@ impl XdpFirewall {
             }
         }
 
-        Ok(XdpStats {
+        Ok(crate::stats::XdpStats {
             packets_processed: total_packets,
             bytes_processed: total_bytes,
             packets_dropped: dropped_packets,

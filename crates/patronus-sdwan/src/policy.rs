@@ -1,6 +1,6 @@
 //! Routing policy engine
 
-use crate::{types::*, Error, Result};
+use crate::types::*;
 use serde::{Deserialize, Serialize};
 
 /// Routing policy

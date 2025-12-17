@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 
 /// BFD health monitor that tracks path health using BFD sessions
 pub struct BfdHealthMonitor {
@@ -64,7 +64,7 @@ impl BfdHealthMonitor {
         let session = Arc::new(BfdSession::new(config));
 
         // Create state change channel
-        let (state_tx, state_rx) = mpsc::channel(100);
+        let (state_tx, _state_rx) = mpsc::channel(100);
 
         // Store session
         {

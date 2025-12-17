@@ -46,7 +46,7 @@ impl PolicyEngine {
         self.policies.insert(policy.id.clone(), policy);
     }
 
-    pub fn evaluate(&self, input: &Value) -> PolicyDecision {
+    pub fn evaluate(&self, _input: &Value) -> PolicyDecision {
         let mut allowed = false;
         let mut matched_policies = Vec::new();
         let mut reason = "No matching policies".to_string();

@@ -42,15 +42,14 @@
 
 use crate::{
     database::Database,
-    types::{FlowKey, PathId, SiteId},
-    Error, Result,
+    types::FlowKey, Result,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// NetworkPolicy enforcer
 pub struct PolicyEnforcer {
@@ -498,7 +497,7 @@ impl PolicyEnforcer {
     }
 
     /// Check if a peer selector matches an IP
-    fn peer_matches(&self, peer: &PeerSelector, ip: IpAddr, labels: Option<&LabelSet>) -> bool {
+    fn peer_matches(&self, peer: &PeerSelector, _ip: IpAddr, labels: Option<&LabelSet>) -> bool {
         match peer {
             PeerSelector::PodSelector {
                 namespace: _,
@@ -515,7 +514,7 @@ impl PolicyEnforcer {
                 // Would require namespace labels mapping
                 true
             }
-            PeerSelector::IpBlock { cidr, except } => {
+            PeerSelector::IpBlock { cidr: _, except: _ } => {
                 // TODO: Implement CIDR matching
                 // Parse cidr and check if ip is in range
                 true

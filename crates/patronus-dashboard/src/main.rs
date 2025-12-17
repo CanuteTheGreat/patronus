@@ -239,7 +239,7 @@ async fn graphql_ws_connection(
     _state: Arc<AppState>,
     schema: graphql::AppSchema,
 ) {
-    use async_graphql::http::{WebSocketProtocols, WsMessage, ALL_WEBSOCKET_PROTOCOLS};
+    
     use axum::extract::ws::Message;
 
     let (mut sender, mut receiver) = socket.split();
@@ -275,7 +275,7 @@ async fn graphql_ws_connection(
 
 /// SPA fallback handler - serves index.html for all non-API routes
 async fn spa_fallback() -> impl axum::response::IntoResponse {
-    use axum::http::{StatusCode, Uri};
+    use axum::http::StatusCode;
     use axum::response::Response;
     use std::fs;
 

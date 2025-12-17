@@ -39,8 +39,8 @@ impl PrometheusExporter {
 
         tracing::info!("Prometheus exporter listening on {}", self.addr);
 
-        axum::Server::bind(&self.addr)
-            .serve(app.into_make_service())
+        let listener = tokio::net::TcpListener::bind(&self.addr).await?;
+        axum::serve(listener, app.into_make_service())
             .await?;
 
         Ok(())

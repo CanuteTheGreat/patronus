@@ -3,7 +3,7 @@
 //! This module implements the core failover logic that monitors path health
 //! and automatically switches between primary and backup paths.
 
-use super::{FailoverEvent, FailoverEventType, FailoverPolicy, FailoverState};
+use super::{FailoverEvent, FailoverPolicy, FailoverState};
 use crate::database::Database;
 use crate::health::{BfdHealthMonitor, HealthMonitor, PathHealth};
 use crate::types::PathId;
@@ -206,7 +206,7 @@ impl FailoverEngine {
     /// Evaluate a single policy
     async fn evaluate_policy(&self, policy: &FailoverPolicy) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Get current state
-        let mut state = {
+        let state = {
             let states = self.states.read().await;
             states.get(&policy.policy_id).cloned()
         };
@@ -377,7 +377,7 @@ impl FailoverEngine {
 
     /// Persist policy to database
     async fn persist_policy(&self, policy: &FailoverPolicy) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        use sqlx::Row;
+        
 
         let backup_ids_json = serde_json::to_string(&policy.backup_path_ids)?;
 

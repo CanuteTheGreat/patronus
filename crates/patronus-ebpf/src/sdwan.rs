@@ -3,7 +3,8 @@
 ///! This module provides high-performance packet forwarding for SD-WAN tunnels
 ///! using XDP to bypass the kernel network stack.
 
-use crate::xdp::{XdpFirewall, XdpConfig, XdpMode, XdpStats};
+use crate::xdp::{XdpFirewall, XdpConfig, XdpMode};
+use crate::stats::XdpStats;
 use std::net::Ipv4Addr;
 use std::collections::HashMap;
 use anyhow::{Context, Result};

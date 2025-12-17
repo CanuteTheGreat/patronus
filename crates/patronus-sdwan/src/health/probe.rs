@@ -8,9 +8,8 @@ use super::udp_probe::{UdpProber, UdpError};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::RwLock;
-use tokio::time::timeout;
 
 /// Configuration for network probes
 #[derive(Debug, Clone, Serialize, Deserialize)]

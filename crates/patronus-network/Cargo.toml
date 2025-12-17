@@ -13,6 +13,7 @@ openvpn = []
 ipsec = []
 vlan = []
 qos = []
+multiwan = []
 
 [dependencies]
 patronus-core = { path = "../patronus-core" }

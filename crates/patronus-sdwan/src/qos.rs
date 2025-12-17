@@ -6,7 +6,7 @@ use crate::dpi::ApplicationType;
 use crate::types::FlowKey;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tracing::{debug, trace, warn};
 
 /// QoS class priority levels

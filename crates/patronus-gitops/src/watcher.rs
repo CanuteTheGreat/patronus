@@ -422,8 +422,8 @@ impl GitOpsWatcher {
             let mut engine = self.apply_engine.write().await;
             match engine.apply(configs).await {
                 Ok(result) => {
-                    info!("Successfully applied configurations: {} creates, {} updates, {} deletes",
-                        result.creates, result.updates, result.deletes);
+                    info!("Successfully applied configurations: {} changes applied, {} errors",
+                        result.changes_applied, result.errors.len());
                     event.applied = true;
                 }
                 Err(e) => {

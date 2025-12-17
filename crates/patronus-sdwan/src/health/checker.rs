@@ -162,7 +162,7 @@ impl HealthMonitor {
         let mut history = Vec::new();
 
         for record in records {
-            let path_id_str: String = record.try_get("path_id")?;
+            let _path_id_str: String = record.try_get("path_id")?;
             let timestamp: i64 = record.try_get("timestamp")?;
             let latency_ms: f64 = record.try_get("latency_ms")?;
             let packet_loss_pct: f64 = record.try_get("packet_loss_pct")?;

@@ -4,7 +4,7 @@
 //! Uses Reed-Solomon coding for error correction
 
 use serde::{Deserialize, Serialize};
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 /// FEC statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -126,7 +126,7 @@ impl FecDecoder {
             anyhow::bail!("Invalid shard count");
         }
 
-        let mut available: Vec<usize> = shards.iter()
+        let available: Vec<usize> = shards.iter()
             .enumerate()
             .filter_map(|(i, s)| if s.is_some() { Some(i) } else { None })
             .collect();

@@ -9,7 +9,7 @@ use prometheus::{
 };
 use std::sync::Arc;
 use tokio::time::{interval, Duration};
-use sysinfo::{System, SystemExt, NetworkExt, ProcessorExt, DiskExt, ComponentExt};
+use sysinfo::System;
 
 /// Central metrics collector for all Patronus subsystems
 pub struct MetricsCollector {
@@ -275,7 +275,7 @@ impl MetricsCollector {
 
         let vpn_tunnel_status = GaugeVec::new(
             Opts::new("patronus_vpn_tunnel_up", "VPN tunnel status (1=up, 0=down)"),
-            &["type", "name", "remote"}
+            &["type", "name", "remote"]
         )?;
         registry.register(Box::new(vpn_tunnel_status.clone()))?;
 
@@ -550,9 +550,9 @@ impl MetricsCollector {
         sys.refresh_all();
 
         // CPU usage
-        let cpu_usage: f64 = sys.processors().iter()
+        let cpu_usage: f64 = sys.cpus().iter()
             .map(|p| p.cpu_usage() as f64)
-            .sum::<f64>() / sys.processors().len() as f64;
+            .sum::<f64>() / sys.cpus().len() as f64;
         self.cpu_usage.set(cpu_usage);
 
         // Memory
@@ -635,7 +635,7 @@ impl MetricsCollector {
             .inc();
         self.firewall_bytes_total
             .with_label_values(&[chain, action])
-            .inc_by(bytes);
+            .inc_by(bytes as f64);
     }
 
     pub fn set_firewall_connections(&self, count: i64) {

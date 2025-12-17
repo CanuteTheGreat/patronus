@@ -32,7 +32,7 @@ impl InterfaceManager {
             .await
             .map_err(|e| Error::Network(format!("Failed to get interfaces: {}", e)))?
         {
-            use rtnetlink::packet::link::LinkAttribute;
+            use netlink_packet_route::link::LinkAttribute;
 
             let name = msg
                 .attributes
@@ -90,7 +90,7 @@ impl InterfaceManager {
             .await
             .map_err(|e| Error::Network(format!("Failed to get IPv4 addresses: {}", e)))?
         {
-            use rtnetlink::packet::address::AddressAttribute;
+            use netlink_packet_route::address::AddressAttribute;
 
             if let Some(AddressAttribute::Address(addr)) = msg.attributes.iter().find(|attr| {
                 matches!(attr, AddressAttribute::Address(_))
@@ -245,7 +245,7 @@ impl InterfaceManager {
             .await
             .map_err(|e| Error::Network(format!("Failed to get addresses: {}", e)))?
         {
-            use rtnetlink::packet::address::AddressAttribute;
+            use netlink_packet_route::address::AddressAttribute;
 
             if let Some(AddressAttribute::Address(addr)) = msg.attributes.iter().find(|attr| {
                 matches!(attr, AddressAttribute::Address(_))

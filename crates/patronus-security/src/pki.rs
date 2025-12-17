@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 use rcgen::{Certificate as RcgenCertificate, CertificateParams, DnType};
-use std::time::Duration;
 
 pub struct CertificateAuthority {
     ca_cert: RcgenCertificate,

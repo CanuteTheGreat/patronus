@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use flate2::read::{GzDecoder, GzEncoder};
 use flate2::Compression as GzCompression;
-use std::io::{Read, Write};
+use std::io::Read;
 
 /// Compression algorithm
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

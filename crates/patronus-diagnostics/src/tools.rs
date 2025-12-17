@@ -115,7 +115,7 @@ pub struct RouteEntry {
 }
 
 /// Socket entry (active network connection)
-#[derive::<Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocketEntry {
     pub protocol: String,  // TCP, UDP, etc.
     pub local_address: String,

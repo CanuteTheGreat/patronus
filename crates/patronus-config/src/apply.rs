@@ -555,8 +555,8 @@ impl ApplyEngine {
         tracing::info!("Rolling back to snapshot: {} ({})",
             snapshot.id, snapshot.description);
 
-        // Apply the snapshot configs
-        let result = self.apply(snapshot.configs.clone()).await?;
+        // Apply the snapshot configs (recursive call needs boxing)
+        let result = Box::pin(self.apply(snapshot.configs.clone())).await?;
 
         if !result.success {
             return Err(Error::Config(format!(

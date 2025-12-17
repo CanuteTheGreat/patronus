@@ -44,6 +44,9 @@ instant = "0.1"
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+# Additional dependencies
+chrono = { workspace = true }
+
 # CSV export
 csv = "1.3"
 

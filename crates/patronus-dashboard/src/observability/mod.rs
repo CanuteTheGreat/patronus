@@ -5,5 +5,4 @@ pub mod metrics;
 // TODO: Re-enable after resolving axum version conflicts
 // pub mod tracing;
 
-pub use health::{HealthCheck, HealthStatus, ComponentHealth};
 pub use metrics::DashboardMetrics;

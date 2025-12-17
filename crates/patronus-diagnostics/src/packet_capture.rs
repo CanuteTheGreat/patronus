@@ -131,11 +131,11 @@ impl PacketCaptureManager {
             // Send SIGTERM to tcpdump
             #[cfg(unix)]
             {
-                use nix::sys::signal::{kill, Signal};
+                use nix::sys::signal;
                 use nix::unistd::Pid;
 
                 if let Some(pid) = process.id() {
-                    let _ = kill(Pid::from_raw(pid as i32), Signal::SIGTERM);
+                    let _ = signal::kill(Pid::from_raw(pid as i32), signal::Signal::SIGTERM);
                 }
             }
 
