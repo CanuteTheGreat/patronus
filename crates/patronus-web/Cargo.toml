@@ -20,6 +20,7 @@ patronus-core = { path = "../patronus-core" }
 patronus-firewall = { path = "../patronus-firewall" }
 patronus-network = { path = "../patronus-network" }
 patronus-config = { path = "../patronus-config" }
+patronus-secrets = { path = "../patronus-secrets" }
 
 tokio.workspace = true
 axum.workspace = true
@@ -41,3 +42,4 @@ qrcode = "0.14"
 image = "0.25"
 futures = "0.3"
 rand = "0.8"
+sysinfo = "0.31"

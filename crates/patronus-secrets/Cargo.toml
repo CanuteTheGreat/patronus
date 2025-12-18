@@ -44,6 +44,9 @@ tracing = { workspace = true }
 # Additional dependencies
 chrono = { workspace = true }
 
+[dev-dependencies]
+tempfile = "3.10"
+
 [features]
 default = ["memory-store"]
 memory-store = []

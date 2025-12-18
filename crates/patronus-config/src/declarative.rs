@@ -519,23 +519,23 @@ mod tests {
     #[test]
     fn test_parse_firewall_rule_yaml() {
         let yaml = r#"
-apiVersion: patronus.firewall/v1
-kind: FirewallRule
-metadata:
-  name: allow-web-traffic
-  description: "Allow HTTP/HTTPS from internet"
-spec:
-  action: allow
-  interface: wan0
-  direction: inbound
-  source:
-    address: "0.0.0.0/0"
-  destination:
-    address: "10.0.1.10"
-    ports: [80, 443]
-  protocol: tcp
-  log: true
-  enabled: true
+- apiVersion: patronus.firewall/v1
+  kind: FirewallRule
+  metadata:
+    name: allow-web-traffic
+    description: "Allow HTTP/HTTPS from internet"
+  spec:
+    action: allow
+    interface: wan0
+    direction: inbound
+    source:
+      address: "0.0.0.0/0"
+    destination:
+      address: "10.0.1.10"
+      ports: [80, 443]
+    protocol: tcp
+    log: true
+    enabled: true
 "#;
 
         let configs = ConfigParser::parse_yaml(yaml).unwrap();
@@ -546,17 +546,17 @@ spec:
     #[test]
     fn test_validate_invalid_cidr() {
         let yaml = r#"
-apiVersion: patronus.firewall/v1
-kind: FirewallRule
-metadata:
-  name: bad-rule
-spec:
-  action: allow
-  source:
-    address: "192.168.1.0/999"
-  destination:
-    address: "10.0.0.1"
-  enabled: true
+- apiVersion: patronus.firewall/v1
+  kind: FirewallRule
+  metadata:
+    name: bad-rule
+  spec:
+    action: allow
+    source:
+      address: "192.168.1.0/999"
+    destination:
+      address: "10.0.0.1"
+    enabled: true
 "#;
 
         let result = ConfigParser::parse_yaml(yaml);

@@ -4,7 +4,7 @@
 //! WireGuard mobile apps can scan QR codes to instantly import configuration.
 
 use anyhow::Result;
-use qrcode::{QrCode, Version, EcLevel};
+use qrcode::{QrCode, EcLevel};
 use qrcode::render::svg;
 
 /// Generate WireGuard configuration string
@@ -46,7 +46,8 @@ pub fn generate_wireguard_config(
 
 /// Generate QR code as SVG for WireGuard configuration
 pub fn generate_qr_code_svg(config: &str) -> Result<String> {
-    let code = QrCode::with_version(config, Version::Normal(10), EcLevel::M)?;
+    // Use auto-version selection to handle configs of various sizes
+    let code = QrCode::with_error_correction_level(config, EcLevel::M)?;
 
     let svg = code
         .render()

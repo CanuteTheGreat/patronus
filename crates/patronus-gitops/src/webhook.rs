@@ -251,6 +251,8 @@ impl WebhookHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use patronus_config::ApplyEngine;
+    use std::path::PathBuf;
 
     #[test]
     fn test_parse_github_webhook() {
@@ -278,11 +280,12 @@ mod tests {
             }]
         }"#;
 
+        let state_dir = PathBuf::from("/tmp/patronus-test");
         let handler = WebhookHandler::new(
             WebhookConfig::default(),
             Arc::new(RwLock::new(GitOpsWatcher::new(
                 Default::default(),
-                Arc::new(RwLock::new(ApplyEngine::new(false))),
+                Arc::new(RwLock::new(ApplyEngine::new(state_dir))),
             ))),
         );
 

@@ -42,6 +42,7 @@
 
 use crate::{
     database::Database,
+    policy::CidrNetwork,
     types::FlowKey, Result,
 };
 use serde::{Deserialize, Serialize};
@@ -497,7 +498,7 @@ impl PolicyEnforcer {
     }
 
     /// Check if a peer selector matches an IP
-    fn peer_matches(&self, peer: &PeerSelector, _ip: IpAddr, labels: Option<&LabelSet>) -> bool {
+    fn peer_matches(&self, peer: &PeerSelector, ip: IpAddr, labels: Option<&LabelSet>) -> bool {
         match peer {
             PeerSelector::PodSelector {
                 namespace: _,
@@ -509,15 +510,37 @@ impl PolicyEnforcer {
                     false
                 }
             }
-            PeerSelector::NamespaceSelector { selector: _ } => {
-                // TODO: Implement namespace matching
-                // Would require namespace labels mapping
-                true
+            PeerSelector::NamespaceSelector { selector } => {
+                // Namespace selector matches if any pod in the namespace matches
+                // For now, check if the pod has matching namespace labels
+                if let Some(labels) = labels {
+                    selector.matches(labels)
+                } else {
+                    // If no labels, default to no match
+                    false
+                }
             }
-            PeerSelector::IpBlock { cidr: _, except: _ } => {
-                // TODO: Implement CIDR matching
-                // Parse cidr and check if ip is in range
-                true
+            PeerSelector::IpBlock { cidr, except } => {
+                // Parse and check if IP is in CIDR range
+                if let Some(network) = CidrNetwork::parse(cidr) {
+                    if !network.contains(&ip) {
+                        return false;
+                    }
+
+                    // Check exceptions
+                    for except_cidr in except {
+                        if let Some(except_network) = CidrNetwork::parse(except_cidr) {
+                            if except_network.contains(&ip) {
+                                return false; // IP is in exception range
+                            }
+                        }
+                    }
+
+                    true
+                } else {
+                    // Invalid CIDR format, no match
+                    false
+                }
             }
         }
     }

@@ -9,7 +9,7 @@ use prometheus::{
 };
 use std::sync::Arc;
 use tokio::time::{interval, Duration};
-use sysinfo::System;
+use sysinfo::{System, Disks, Networks, Components};
 
 /// Central metrics collector for all Patronus subsystems
 pub struct MetricsCollector {
@@ -550,36 +550,83 @@ impl MetricsCollector {
         sys.refresh_all();
 
         // CPU usage
-        let cpu_usage: f64 = sys.cpus().iter()
-            .map(|p| p.cpu_usage() as f64)
-            .sum::<f64>() / sys.cpus().len() as f64;
-        self.cpu_usage.set(cpu_usage);
+        let cpus = sys.cpus();
+        if !cpus.is_empty() {
+            let cpu_usage: f64 = cpus.iter()
+                .map(|p| p.cpu_usage() as f64)
+                .sum::<f64>() / cpus.len() as f64;
+            self.cpu_usage.set(cpu_usage);
+        }
 
         // Memory
         self.memory_usage.set(sys.used_memory() as f64);
         self.memory_total.set(sys.total_memory() as f64);
 
-        // TODO: Fix disk monitoring - sysinfo API changed
-        // Disks API has changed in newer sysinfo versions
+        // Disk usage - using separate Disks struct
+        let disks = Disks::new_with_refreshed_list();
+        for disk in disks.list() {
+            let mount_point = disk.mount_point().to_string_lossy().to_string();
+            let device = disk.name().to_string_lossy().to_string();
+
+            self.disk_usage
+                .with_label_values(&[&device, &mount_point])
+                .set((disk.total_space() - disk.available_space()) as f64);
+            self.disk_total
+                .with_label_values(&[&device, &mount_point])
+                .set(disk.total_space() as f64);
+        }
 
         // Load average
-        let load_avg = sysinfo::System::load_average();
+        let load_avg = System::load_average();
         self.system_load.with_label_values(&["1m"]).set(load_avg.one);
         self.system_load.with_label_values(&["5m"]).set(load_avg.five);
         self.system_load.with_label_values(&["15m"]).set(load_avg.fifteen);
 
         // Uptime
-        self.system_uptime.set(sysinfo::System::uptime() as f64);
+        self.system_uptime.set(System::uptime() as f64);
 
-        // TODO: Fix component monitoring - components API changed
+        // CPU temperature - using separate Components struct
+        let components = Components::new_with_refreshed_list();
+        for component in components.list() {
+            let label = component.label();
+            if label.to_lowercase().contains("cpu") || label.to_lowercase().contains("core") {
+                let temp = component.temperature();
+                self.cpu_temperature
+                    .with_label_values(&[label])
+                    .set(temp as f64);
+            }
+        }
     }
 
     /// Collect network interface metrics
     async fn collect_network_metrics(&self) {
-        // TODO: Fix network monitoring - networks API changed in sysinfo
-        tracing::warn!("Network metrics collection not implemented - API changed");
+        // Use separate Networks struct from sysinfo 0.31+
+        let mut networks = Networks::new_with_refreshed_list();
+        networks.refresh();
 
-        // Network monitoring will be reimplemented with correct API
+        for (interface_name, network) in networks.list() {
+            let name = interface_name.as_str();
+
+            // Received stats
+            self.interface_rx_bytes
+                .with_label_values(&[name])
+                .set(network.total_received() as f64);
+            self.interface_tx_bytes
+                .with_label_values(&[name])
+                .set(network.total_transmitted() as f64);
+            self.interface_rx_packets
+                .with_label_values(&[name])
+                .set(network.total_packets_received() as f64);
+            self.interface_tx_packets
+                .with_label_values(&[name])
+                .set(network.total_packets_transmitted() as f64);
+            self.interface_rx_errors
+                .with_label_values(&[name])
+                .set(network.total_errors_on_received() as f64);
+            self.interface_tx_errors
+                .with_label_values(&[name])
+                .set(network.total_errors_on_transmitted() as f64);
+        }
     }
 
     // Public API for subsystems to report metrics

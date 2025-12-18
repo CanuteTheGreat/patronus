@@ -318,9 +318,9 @@ impl ThreatFeedAggregator {
     pub async fn check_ip(&self, ip: &str) -> Option<ThreatIntelEntry> {
         let threats = self.db.get_threats(ip).await;
 
-        // Return highest confidence threat
+        // Return highest confidence threat (use total_cmp to handle NaN safely)
         threats.into_iter()
-            .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap())
+            .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
     }
 }
 
@@ -430,6 +430,6 @@ mod tests {
 
         // Bad reputation
         let score = scorer.score_ip("1.2.3.4").await;
-        assert_eq!(score, 0.2);  // 1.0 - 0.8
+        assert!((score - 0.2).abs() < 0.01);  // 1.0 - 0.8, use approximate comparison
     }
 }

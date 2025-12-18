@@ -83,6 +83,7 @@ struct EncryptedSecrets {
 pub struct FileStore {
     file_path: PathBuf,
     master_key: Vec<u8>,
+    salt: Vec<u8>,
     cache: Arc<RwLock<HashMap<String, SecretString>>>,
 }
 
@@ -90,10 +91,17 @@ impl FileStore {
     /// Create a new file store with a master password
     pub async fn new(file_path: PathBuf, master_password: &str) -> Result<Self> {
         // Load or create the encrypted file
-        let (salt, cache) = if file_path.exists() {
+        // Check if file exists AND has content (not empty)
+        let file_has_content = file_path.exists() && {
+            std::fs::metadata(&file_path)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false)
+        };
+
+        let (salt, cache) = if file_has_content {
             Self::load_from_file(&file_path, master_password).await?
         } else {
-            // New file, generate salt
+            // New file or empty file, generate salt
             let salt = crypto::generate_salt();
             (salt, HashMap::new())
         };
@@ -103,6 +111,7 @@ impl FileStore {
         Ok(Self {
             file_path,
             master_key,
+            salt,
             cache: Arc::new(RwLock::new(cache)),
         })
     }
@@ -145,11 +154,8 @@ impl FileStore {
             encrypted_secrets.insert(key.clone(), encrypted);
         }
 
-        // Get salt from master_key derivation (we need to store it)
-        let salt = crypto::generate_salt(); // This should be stored consistently
-
         let encrypted_file = EncryptedSecrets {
-            salt,
+            salt: self.salt.clone(),
             secrets: encrypted_secrets,
         };
 
@@ -201,8 +207,9 @@ impl SecretStore for FileStore {
 
 impl Drop for FileStore {
     fn drop(&mut self) {
-        // Zeroize the master key
+        // Zeroize sensitive data
         self.master_key.zeroize();
+        self.salt.zeroize();
     }
 }
 

@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::time::{interval, Duration};
+use sysinfo::{System, Disks};
 
 /// Alert severity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,24 +165,115 @@ impl AlertManager {
     }
 
     async fn check_condition(&self, condition: &AlertCondition) -> bool {
+        let mut sys = System::new_all();
+        sys.refresh_all();
+
         match condition {
             AlertCondition::CpuUsageAbove { percent } => {
-                // Query system CPU usage
-                // This would integrate with MetricsCollector
-                false  // Placeholder
+                // Calculate average CPU usage across all cores
+                let cpus = sys.cpus();
+                if cpus.is_empty() {
+                    return false;
+                }
+                let cpu_usage = cpus.iter()
+                    .map(|p| p.cpu_usage() as f64)
+                    .sum::<f64>() / cpus.len() as f64;
+                cpu_usage > *percent
             }
             AlertCondition::MemoryUsageAbove { percent } => {
-                false  // Placeholder
+                let total = sys.total_memory();
+                if total == 0 {
+                    return false;
+                }
+                let used = sys.used_memory();
+                let mem_percent = (used as f64 / total as f64) * 100.0;
+                mem_percent > *percent
             }
-            AlertCondition::CertificateExpiring { domain, days } => {
-                // Check certificate expiry
-                false  // Placeholder
+            AlertCondition::DiskUsageAbove { mount, percent } => {
+                let disks = Disks::new_with_refreshed_list();
+                for disk in disks.list() {
+                    let mount_point = disk.mount_point().to_string_lossy().to_string();
+                    if &mount_point == mount || mount == "*" {
+                        let total = disk.total_space();
+                        if total == 0 {
+                            continue;
+                        }
+                        let used = total - disk.available_space();
+                        let disk_percent = (used as f64 / total as f64) * 100.0;
+                        if disk_percent > *percent {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            AlertCondition::InterfaceDown { interface } => {
+                // Check if interface exists using netlink or /sys/class/net
+                let path = format!("/sys/class/net/{}/operstate", interface);
+                match std::fs::read_to_string(&path) {
+                    Ok(state) => state.trim() != "up",
+                    Err(_) => true, // If can't read, assume down
+                }
+            }
+            AlertCondition::PacketLossAbove { interface: _, percent: _ } => {
+                // Would need to run ping tests - complex to implement inline
+                false
+            }
+            AlertCondition::VpnTunnelDown { name } => {
+                // Check for wireguard/openvpn interface
+                let path = format!("/sys/class/net/{}/operstate", name);
+                match std::fs::read_to_string(&path) {
+                    Ok(state) => state.trim() != "up",
+                    Err(_) => true,
+                }
+            }
+            AlertCondition::CertificateExpiring { domain: _, days: _ } => {
+                // Would need TLS certificate checking - complex to implement
+                // Could integrate with acme-lib or openssl
+                false
+            }
+            AlertCondition::HaFailover => {
+                // Would need integration with HA state machine
+                false
             }
             AlertCondition::ServiceDown { service } => {
-                // Check service health
-                false  // Placeholder
+                // Check systemd service status
+                let output = std::process::Command::new("systemctl")
+                    .args(["is-active", service])
+                    .output();
+                match output {
+                    Ok(out) => {
+                        let status = String::from_utf8_lossy(&out.stdout);
+                        status.trim() != "active"
+                    }
+                    Err(_) => false, // Can't determine status
+                }
             }
-            _ => false,
+            AlertCondition::IdsAlertsSpike { threshold: _, window_secs: _ } => {
+                // Would need integration with IDS alert database
+                false
+            }
+            AlertCondition::ConnectionsAbove { threshold } => {
+                // Count connection tracking entries
+                let output = std::process::Command::new("cat")
+                    .arg("/proc/sys/net/netfilter/nf_conntrack_count")
+                    .output();
+                match output {
+                    Ok(out) => {
+                        let count_str = String::from_utf8_lossy(&out.stdout);
+                        if let Ok(count) = count_str.trim().parse::<u64>() {
+                            count > *threshold
+                        } else {
+                            false
+                        }
+                    }
+                    Err(_) => false,
+                }
+            }
+            AlertCondition::PrometheusQuery { query: _, threshold: _ } => {
+                // Would need Prometheus client to query
+                false
+            }
         }
     }
 
@@ -251,12 +343,129 @@ impl AlertManager {
     }
 
     async fn send_resolution(&self, channel: &NotificationChannel, alert: &FiredAlert) {
-        // Similar to send_notification but with "resolved" message
+        match channel {
+            NotificationChannel::Email { to, smtp_server, from } => {
+                // Send resolution email
+                tracing::debug!("Sending resolution email to {:?} via {}", to, smtp_server);
+                let _ = (from, alert); // Use variables to avoid warning
+            }
+            NotificationChannel::Slack { webhook_url, channel: slack_channel } => {
+                let payload = serde_json::json!({
+                    "channel": slack_channel,
+                    "username": "Patronus Alerts",
+                    "icon_emoji": ":white_check_mark:",
+                    "attachments": [{
+                        "color": "good",
+                        "title": format!("✅ RESOLVED: {}", alert.rule_name),
+                        "text": format!("Alert '{}' has been resolved", alert.description),
+                        "fields": [
+                            {
+                                "title": "Resolution Time",
+                                "value": chrono::Utc::now().to_rfc3339(),
+                                "short": true
+                            }
+                        ]
+                    }]
+                });
+
+                if let Err(e) = reqwest::Client::new()
+                    .post(webhook_url)
+                    .json(&payload)
+                    .send()
+                    .await
+                {
+                    tracing::error!("Failed to send Slack resolution: {}", e);
+                }
+            }
+            NotificationChannel::Discord { webhook_url } => {
+                let payload = serde_json::json!({
+                    "embeds": [{
+                        "title": format!("✅ RESOLVED: {}", alert.rule_name),
+                        "description": format!("Alert '{}' has been resolved", alert.description),
+                        "color": 0x00FF00,
+                        "timestamp": chrono::Utc::now().to_rfc3339()
+                    }]
+                });
+
+                if let Err(e) = reqwest::Client::new()
+                    .post(webhook_url)
+                    .json(&payload)
+                    .send()
+                    .await
+                {
+                    tracing::error!("Failed to send Discord resolution: {}", e);
+                }
+            }
+            NotificationChannel::PagerDuty { integration_key } => {
+                let payload = serde_json::json!({
+                    "routing_key": integration_key,
+                    "event_action": "resolve",
+                    "dedup_key": alert.rule_name,
+                });
+
+                if let Err(e) = reqwest::Client::new()
+                    .post("https://events.pagerduty.com/v2/enqueue")
+                    .json(&payload)
+                    .send()
+                    .await
+                {
+                    tracing::error!("Failed to send PagerDuty resolution: {}", e);
+                }
+            }
+            NotificationChannel::Telegram { bot_token, chat_id } => {
+                let message = format!(
+                    "✅ *Alert Resolved*\n\n*{}*\n\nResolved at: {}",
+                    alert.rule_name,
+                    chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+                );
+
+                let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
+                let payload = serde_json::json!({
+                    "chat_id": chat_id,
+                    "text": message,
+                    "parse_mode": "Markdown"
+                });
+
+                if let Err(e) = reqwest::Client::new()
+                    .post(&url)
+                    .json(&payload)
+                    .send()
+                    .await
+                {
+                    tracing::error!("Failed to send Telegram resolution: {}", e);
+                }
+            }
+            NotificationChannel::Webhook { url, method, headers } => {
+                let client = reqwest::Client::new();
+                let mut request = match method.to_uppercase().as_str() {
+                    "POST" => client.post(url),
+                    "PUT" => client.put(url),
+                    _ => client.post(url),
+                };
+
+                for (key, value) in headers {
+                    request = request.header(key, value);
+                }
+
+                let payload = serde_json::json!({
+                    "type": "resolution",
+                    "alert": alert,
+                    "resolved_at": chrono::Utc::now().to_rfc3339(),
+                });
+
+                if let Err(e) = request.json(&payload).send().await {
+                    tracing::error!("Failed to send webhook resolution: {}", e);
+                }
+            }
+            NotificationChannel::Syslog { server, facility } => {
+                tracing::debug!("Sending syslog resolution to {} ({})", server, facility);
+            }
+        }
     }
 
-    async fn send_email(&self, to: &[String], smtp_server: &str, from: &str, alert: &FiredAlert) {
+    async fn send_email(&self, to: &[String], _smtp_server: &str, _from: &str, _alert: &FiredAlert) {
         tracing::debug!("Sending email alert to {:?}", to);
-        // Implementation using lettre crate
+        // Full implementation would use lettre crate for SMTP
     }
 
     async fn send_slack(&self, webhook_url: &str, channel: &str, alert: &FiredAlert) {
@@ -412,8 +621,8 @@ impl AlertManager {
         }
     }
 
-    async fn send_syslog(&self, server: &str, facility: &str, alert: &FiredAlert) {
-        // Implementation using syslog crate
+    async fn send_syslog(&self, server: &str, _facility: &str, _alert: &FiredAlert) {
+        // Full implementation would use syslog crate
         tracing::debug!("Sending syslog to {}", server);
     }
 

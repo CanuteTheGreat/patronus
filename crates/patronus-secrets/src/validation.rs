@@ -270,8 +270,8 @@ mod tests {
         // Missing special char
         assert!(validate_password("NoSpecial123", &policy).is_err());
 
-        // Valid password
-        assert!(validate_password("ValidPassword123!", &policy).is_ok());
+        // Valid password (doesn't contain "password", "changeme", or "default")
+        assert!(validate_password("SecurePhrase123!", &policy).is_ok());
 
         // Weak/common password
         assert!(validate_password("Password1!", &policy).is_err());

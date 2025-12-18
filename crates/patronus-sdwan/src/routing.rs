@@ -223,7 +223,7 @@ impl RoutingEngine {
             };
 
             // Calculate score based on policy
-            let score = PolicyMatcher::score_path(&metrics, &policy.path_preference);
+            let score = PolicyMatcher::score_path(&metrics, &policy.path_preference, None);
 
             debug!(
                 path_id = %path.id,

@@ -205,22 +205,113 @@ impl StatusPageManager {
     }
 
     fn parse_interface_status(addr_output: &str, stats_output: &str) -> Result<InterfaceStatus> {
-        // Simplified parsing - production would be more robust
+        // Parse interface info from ip addr output
+        let mut name = "eth0".to_string();
+        let mut mac_address = "00:00:00:00:00:00".to_string();
+        let mut ip_addresses: Vec<IpAddr> = Vec::new();
+        let mut status = "down".to_string();
+        let mut mtu = 1500u32;
+
+        // Parse ip addr output
+        for line in addr_output.lines() {
+            let line = line.trim();
+            if let Some(idx) = line.find(':') {
+                if line.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                    // Interface line: "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> ..."
+                    if let Some(iface) = line.get(idx + 1..).and_then(|s| s.split(':').next()) {
+                        name = iface.trim().to_string();
+                    }
+                    if line.contains("state UP") || line.contains(",UP,") {
+                        status = "up".to_string();
+                    }
+                    if let Some(mtu_idx) = line.find("mtu ") {
+                        if let Some(mtu_str) = line.get(mtu_idx + 4..).and_then(|s| s.split_whitespace().next()) {
+                            mtu = mtu_str.parse().unwrap_or(1500);
+                        }
+                    }
+                }
+            }
+            if line.starts_with("link/ether") {
+                if let Some(mac) = line.split_whitespace().nth(1) {
+                    mac_address = mac.to_string();
+                }
+            }
+            if line.starts_with("inet ") {
+                // Format: "inet 192.168.1.1/24 ..."
+                if let Some(ip_with_mask) = line.split_whitespace().nth(1) {
+                    // Extract just the IP part (before the /)
+                    let ip_str = ip_with_mask.split('/').next().unwrap_or(ip_with_mask);
+                    if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                        ip_addresses.push(ip);
+                    }
+                }
+            }
+            if line.starts_with("inet6 ") {
+                // Format: "inet6 fe80::1/64 ..."
+                if let Some(ip_with_mask) = line.split_whitespace().nth(1) {
+                    let ip_str = ip_with_mask.split('/').next().unwrap_or(ip_with_mask);
+                    if let Ok(ip) = ip_str.parse::<IpAddr>() {
+                        ip_addresses.push(ip);
+                    }
+                }
+            }
+        }
+
+        // Parse stats from ip -s link output
+        let mut rx_bytes = 0u64;
+        let mut tx_bytes = 0u64;
+        let mut rx_packets = 0u64;
+        let mut tx_packets = 0u64;
+        let mut rx_errors = 0u64;
+        let mut tx_errors = 0u64;
+        let mut rx_dropped = 0u64;
+        let mut tx_dropped = 0u64;
+
+        let mut in_rx = false;
+        let mut in_tx = false;
+        for line in stats_output.lines() {
+            let line = line.trim();
+            if line.starts_with("RX:") {
+                in_rx = true;
+                in_tx = false;
+            } else if line.starts_with("TX:") {
+                in_tx = true;
+                in_rx = false;
+            } else if in_rx || in_tx {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 4 {
+                    if in_rx {
+                        rx_bytes = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+                        rx_packets = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                        rx_errors = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+                        rx_dropped = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+                        in_rx = false;
+                    } else if in_tx {
+                        tx_bytes = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+                        tx_packets = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                        tx_errors = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+                        tx_dropped = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+                        in_tx = false;
+                    }
+                }
+            }
+        }
+
         Ok(InterfaceStatus {
-            name: "eth0".to_string(),
-            description: "WAN".to_string(),
-            status: "up".to_string(),
-            mac_address: "00:00:00:00:00:00".to_string(),
-            ip_addresses: vec![],
-            mtu: 1500,
-            rx_bytes: 0,
-            tx_bytes: 0,
-            rx_packets: 0,
-            tx_packets: 0,
-            rx_errors: 0,
-            tx_errors: 0,
-            rx_dropped: 0,
-            tx_dropped: 0,
+            name,
+            description: "Network Interface".to_string(),
+            status,
+            mac_address,
+            ip_addresses,
+            mtu,
+            rx_bytes,
+            tx_bytes,
+            rx_packets,
+            tx_packets,
+            rx_errors,
+            tx_errors,
+            rx_dropped,
+            tx_dropped,
             rx_rate_bps: None,
             tx_rate_bps: None,
         })
@@ -424,11 +515,11 @@ impl StatusPageManager {
 
     /// Get traffic graph data for interface
     pub async fn get_traffic_data(
-        interface: &str,
-        duration_secs: u32,
+        _interface: &str,
+        _duration_secs: u32,
     ) -> Result<Vec<TrafficDataPoint>> {
         // Would use RRD or time-series database
-        // For now, return empty
+        // Full implementation requires time-series infrastructure
         Ok(Vec::new())
     }
 

@@ -493,12 +493,15 @@ impl GitOpsWatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use patronus_config::ApplyEngine;
+    use std::path::PathBuf;
 
     #[test]
     fn test_pattern_matching() {
+        let state_dir = PathBuf::from("/tmp/patronus-test");
         let watcher = GitOpsWatcher::new(
             GitOpsConfig::default(),
-            Arc::new(RwLock::new(ApplyEngine::new(false))),
+            Arc::new(RwLock::new(ApplyEngine::new(state_dir))),
         );
 
         assert!(watcher.matches_pattern("config.yaml", "*.yaml"));

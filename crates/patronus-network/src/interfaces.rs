@@ -98,10 +98,34 @@ impl InterfaceManager {
     }
 
     /// Get IP addresses for a specific interface
-    async fn get_interface_ips(&self, _index: u32) -> Result<Vec<IpAddr>> {
-        // TODO: Reimplement with correct netlink API usage
-        // For now, return empty list to fix compilation
-        Ok(Vec::new())
+    async fn get_interface_ips(&self, index: u32) -> Result<Vec<IpAddr>> {
+        let mut addresses = self.handle.address().get().execute();
+        let mut ips = Vec::new();
+
+        while let Some(msg) = addresses
+            .try_next()
+            .await
+            .map_err(|e| Error::Network(format!("Failed to get addresses: {}", e)))?
+        {
+            // Check if this address belongs to our interface
+            if msg.header.index != index {
+                continue;
+            }
+
+            use netlink_packet_route::address::AddressAttribute;
+
+            // Extract the address
+            for attr in &msg.attributes {
+                match attr {
+                    AddressAttribute::Address(addr) => {
+                        ips.push(*addr);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(ips)
     }
 
     /// Get a specific interface by name
@@ -169,25 +193,61 @@ impl InterfaceManager {
 
     /// Add an IP address to an interface
     pub async fn add_ip(&self, name: &str, ip: IpNetwork) -> Result<()> {
-        // TODO: Reimplement with correct netlink API
-        tracing::warn!("add_ip not implemented - API changed");
-        tracing::info!("Would add IP {} to interface {}", ip.to_string(), name);
+        let interface = self.get_by_name(name).await?
+            .ok_or_else(|| Error::Network(format!("Interface not found: {}", name)))?;
+
+        self.handle.address().add(interface.index, ip.addr, ip.prefix_len)
+            .execute()
+            .await
+            .map_err(|e| Error::Network(format!("Failed to add IP {} to {}: {}", ip.to_string(), name, e)))?;
+
+        tracing::info!("Added IP {} to interface {}", ip.to_string(), name);
         Ok(())
     }
 
     /// Remove an IP address from an interface
     pub async fn remove_ip(&self, name: &str, ip: IpNetwork) -> Result<()> {
-        // TODO: Reimplement with correct netlink API
-        tracing::warn!("remove_ip not implemented - API changed");
-        tracing::info!("Would remove IP {} from interface {}", ip.to_string(), name);
+        let interface = self.get_by_name(name).await?
+            .ok_or_else(|| Error::Network(format!("Interface not found: {}", name)))?;
+
+        self.handle
+            .address()
+            .del(self.handle.address().add(interface.index, ip.addr, ip.prefix_len).message_mut().clone())
+            .execute()
+            .await
+            .map_err(|e| Error::Network(format!("Failed to remove IP {} from {}: {}", ip.to_string(), name, e)))?;
+
+        tracing::info!("Removed IP {} from interface {}", ip.to_string(), name);
         Ok(())
     }
 
     /// Flush all IP addresses from an interface
     pub async fn flush_ips(&self, name: &str) -> Result<()> {
-        // TODO: Reimplement with correct netlink API
-        tracing::warn!("flush_ips not implemented - API changed");
-        tracing::info!("Would flush all IPs from interface: {}", name);
+        let interface = self.get_by_name(name).await?
+            .ok_or_else(|| Error::Network(format!("Interface not found: {}", name)))?;
+
+        // Get all addresses for this interface
+        let mut addresses = self.handle.address().get().execute();
+
+        while let Some(msg) = addresses
+            .try_next()
+            .await
+            .map_err(|e| Error::Network(format!("Failed to get addresses: {}", e)))?
+        {
+            if msg.header.index != interface.index {
+                continue;
+            }
+
+            // Delete this address
+            self.handle
+                .address()
+                .del(msg)
+                .execute()
+                .await
+                .map_err(|e| Error::Network(format!("Failed to delete address: {}", e)))?;
+        }
+
+        tracing::info!("Flushed all IPs from interface: {}", name);
         Ok(())
     }
 }

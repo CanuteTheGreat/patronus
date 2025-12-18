@@ -390,6 +390,7 @@ mod tests {
     use super::*;
     use std::net::Ipv4Addr;
     use std::thread;
+    use std::time::Duration;
 
     fn create_test_packet(qos_class: QosClass, size: usize) -> QueuedPacket {
         use std::net::IpAddr;

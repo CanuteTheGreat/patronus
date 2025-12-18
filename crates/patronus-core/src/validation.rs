@@ -130,10 +130,16 @@ pub fn validate_hostname(hostname: &str) -> Result<()> {
         }
 
         // Labels should start and end with alphanumeric
-        if !label.chars().next().unwrap().is_alphanumeric()
-            || !label.chars().last().unwrap().is_alphanumeric()
-        {
-            bail!("Hostname labels must start and end with alphanumeric characters");
+        let first_char = label.chars().next();
+        let last_char = label.chars().last();
+
+        match (first_char, last_char) {
+            (Some(first), Some(last)) => {
+                if !first.is_alphanumeric() || !last.is_alphanumeric() {
+                    bail!("Hostname labels must start and end with alphanumeric characters");
+                }
+            }
+            _ => bail!("Invalid hostname label"),
         }
 
         // Labels should only contain alphanumeric and hyphens
@@ -312,9 +318,10 @@ pub fn validate_identifier(id: &str, max_length: usize) -> Result<()> {
         bail!("Identifier too long (max {} characters)", max_length);
     }
 
-    // Must start with letter
-    if !id.chars().next().unwrap().is_alphabetic() {
-        bail!("Identifier must start with a letter");
+    // Must start with letter (safe to use match since we already checked non-empty)
+    match id.chars().next() {
+        Some(first) if first.is_alphabetic() => {}
+        _ => bail!("Identifier must start with a letter"),
     }
 
     // Only alphanumeric, underscore, hyphen

@@ -4,9 +4,29 @@ use crate::database::Database;
 use crate::health::{HealthMonitor, PathHealth};
 use crate::failover::{FailoverEngine, FailoverPolicy, FailoverEvent};
 use crate::types::PathId;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer, Deserializer};
 use std::sync::Arc;
 use std::time::SystemTime;
+
+/// Serialize f64, converting NaN to 0.0
+fn serialize_f64_nan_as_zero<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if value.is_nan() {
+        serializer.serialize_f64(0.0)
+    } else {
+        serializer.serialize_f64(*value)
+    }
+}
+
+/// Deserialize f64, defaulting to 0.0 for null
+fn deserialize_f64_or_zero<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<f64>::deserialize(deserializer).map(|opt| opt.unwrap_or(0.0))
+}
 
 /// JSON exporter for REST APIs
 pub struct JsonExporter {
@@ -26,9 +46,13 @@ pub struct HealthSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathHealthJson {
     pub path_id: String,
+    #[serde(default, serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub latency_ms: f64,
+    #[serde(default, serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub packet_loss_pct: f64,
+    #[serde(default, serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub jitter_ms: f64,
+    #[serde(default, serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub health_score: f64,
     pub status: String,
     pub last_checked: u64,

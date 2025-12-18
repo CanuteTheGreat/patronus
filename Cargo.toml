@@ -109,7 +109,7 @@ netlink-packet-route = "0.19"
 
 # Database (for config storage)
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 
 # Template engine (for web UI)
 askama = "0.12"

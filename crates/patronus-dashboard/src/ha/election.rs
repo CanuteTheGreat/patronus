@@ -1,6 +1,7 @@
 //! Leader election using simplified Raft-like algorithm
 
 use super::cluster::{ClusterNode, ClusterState, NodeRole};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -11,6 +12,7 @@ use tracing::{info, warn};
 pub struct LeaderElection {
     cluster_state: Arc<ClusterState>,
     node_id: String,
+    node_addr: SocketAddr,
     election_timeout: Duration,
     heartbeat_interval: Duration,
     current_term: Arc<RwLock<u64>>,
@@ -21,17 +23,31 @@ impl LeaderElection {
     pub fn new(
         cluster_state: Arc<ClusterState>,
         node_id: String,
+        node_addr: SocketAddr,
         election_timeout_secs: u64,
         heartbeat_interval_secs: u64,
     ) -> Self {
         Self {
             cluster_state,
             node_id,
+            node_addr,
             election_timeout: Duration::from_secs(election_timeout_secs),
             heartbeat_interval: Duration::from_secs(heartbeat_interval_secs),
             current_term: Arc::new(RwLock::new(0)),
             voted_for: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Create with default address (for backward compatibility)
+    pub fn new_with_defaults(
+        cluster_state: Arc<ClusterState>,
+        node_id: String,
+        election_timeout_secs: u64,
+        heartbeat_interval_secs: u64,
+    ) -> Self {
+        let default_addr: SocketAddr = "127.0.0.1:8443".parse()
+            .expect("Default address is valid");
+        Self::new(cluster_state, node_id, default_addr, election_timeout_secs, heartbeat_interval_secs)
     }
 
     /// Start the leader election process
@@ -91,7 +107,7 @@ impl LeaderElection {
     async fn update_role(&self, role: NodeRole) {
         let node = ClusterNode {
             id: self.node_id.clone(),
-            addr: "127.0.0.1:8443".parse().unwrap(), // TODO: get from config
+            addr: self.node_addr,
             role,
             last_heartbeat: chrono::Utc::now(),
             healthy: true,
@@ -200,7 +216,7 @@ mod tests {
     #[tokio::test]
     async fn test_election_creation() {
         let state = Arc::new(ClusterState::new("test-node".to_string()));
-        let election = LeaderElection::new(state, "test-node".to_string(), 5, 1);
+        let election = LeaderElection::new_with_defaults(state, "test-node".to_string(), 5, 1);
 
         assert_eq!(election.get_role(), NodeRole::Follower);
     }
@@ -208,7 +224,7 @@ mod tests {
     #[tokio::test]
     async fn test_become_follower() {
         let state = Arc::new(ClusterState::new("test-node".to_string()));
-        let election = LeaderElection::new(state.clone(), "test-node".to_string(), 5, 1);
+        let election = LeaderElection::new_with_defaults(state.clone(), "test-node".to_string(), 5, 1);
 
         election.become_follower().await;
 

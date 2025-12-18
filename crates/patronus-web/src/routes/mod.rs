@@ -18,9 +18,10 @@ use crate::state::AppState;
 /// Build the complete application router
 pub fn build_router(
     state: AppState,
-    session_store: crate::auth::SessionStore,
-    ws_broadcaster: std::sync::Arc<crate::websocket::WsBroadcaster>,
+    _ws_broadcaster: std::sync::Arc<crate::websocket::WsBroadcaster>,
 ) -> Router {
+    let app_state = state.clone();
+
     Router::new()
         // Public routes
         .route("/login", get(pages::login_page))
@@ -48,11 +49,12 @@ pub fn build_router(
         // Static files
         .nest_service("/static", ServeDir::new("static"))
 
-        // Attach application state, session store, and WebSocket broadcaster
+        // Attach application state
         .with_state(state)
-        .with_state(ws_broadcaster)
+
+        // Session middleware
         .layer(axum::middleware::from_fn_with_state(
-            session_store.clone(),
+            app_state,
             crate::auth::session_middleware,
         ))
 }

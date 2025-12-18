@@ -2,9 +2,29 @@
 
 use crate::database::Database;
 use crate::types::PathId;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer, Deserializer};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+
+/// Serialize f64, converting NaN to 0.0
+fn serialize_f64_nan_as_zero<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if value.is_nan() {
+        serializer.serialize_f64(0.0)
+    } else {
+        serializer.serialize_f64(*value)
+    }
+}
+
+/// Deserialize f64, defaulting to 0.0 for null
+fn deserialize_f64_or_zero<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<f64>::deserialize(deserializer).map(|opt| opt.unwrap_or(0.0))
+}
 
 /// Metrics aggregator for time-series data
 pub struct MetricsAggregator {
@@ -58,16 +78,27 @@ pub struct AggregatedMetrics {
     pub start_time: u64,
     pub end_time: u64,
     pub sample_count: u64,
+    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub latency_avg: f64,
+    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub latency_min: f64,
+    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub latency_max: f64,
+    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub latency_p95: f64,
+    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub packet_loss_avg: f64,
+    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub packet_loss_max: f64,
+    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub jitter_avg: f64,
+    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub jitter_max: f64,
+    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub health_score_avg: f64,
+    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub health_score_min: f64,
+    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
     pub uptime_pct: f64,
 }
 

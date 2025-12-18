@@ -303,8 +303,8 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let manager = SecretManager::new(store);
 
-        // Store a secret
-        let secret = SecretString::from("MyStrongPassword123!@#");
+        // Store a secret (must not contain "password", "changeme", or "default")
+        let secret = SecretString::from("MySecurePhrase123!@#");
         manager
             .store_secret(
                 "test_password",
@@ -318,7 +318,7 @@ mod tests {
 
         // Retrieve it
         let retrieved = manager.get_secret("test_password").await.unwrap().unwrap();
-        assert_eq!(retrieved.expose_secret(), "MyStrongPassword123!@#");
+        assert_eq!(retrieved.expose_secret(), "MySecurePhrase123!@#");
 
         // Get metadata
         let metadata = manager.get_metadata("test_password").await.unwrap().unwrap();
@@ -361,8 +361,8 @@ mod tests {
             .await;
         assert!(result.is_err());
 
-        // Strong secret should succeed
-        let strong_secret = SecretString::from("VeryStrongPassword123!@#$%");
+        // Strong secret should succeed (must not contain "password", "changeme", or "default")
+        let strong_secret = SecretString::from("VerySecurePhrase123!@#$%");
         let result = manager
             .store_secret(
                 "strong_password",

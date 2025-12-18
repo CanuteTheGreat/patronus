@@ -215,7 +215,20 @@ mod tests {
         let dest_ip: Ipv4Addr = "192.168.1.0".parse().unwrap();
         let tunnel_id = 1;
 
-        // Add route (will succeed even without XDP)
+        // First add a tunnel (required before adding routes)
+        {
+            let mut tunnels = fastpath.tunnels.write().await;
+            tunnels.insert(tunnel_id, TunnelEndpoint {
+                tunnel_id,
+                remote_addr: "10.0.0.1".parse().unwrap(),
+                local_addr: "192.168.1.1".parse().unwrap(),
+                priority: 100,
+                interface: "wg0".to_string(),
+                metrics: LinkMetrics::default(),
+            });
+        }
+
+        // Add route (will succeed now that tunnel exists)
         fastpath.add_route(dest_ip, tunnel_id).await.ok();
 
         let routes = fastpath.get_routes().await;

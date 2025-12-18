@@ -375,8 +375,11 @@ impl BackupManager {
         let list_file = self.backup_dir.join("files.txt");
         fs::write(&list_file, file_list).await?;
 
+        let output_str = output.to_str().ok_or(BackupError::InvalidPath)?;
+        let list_file_str = list_file.to_str().ok_or(BackupError::InvalidPath)?;
+
         let status = tokio::process::Command::new("tar")
-            .args(&["-czf", output.to_str().unwrap(), "-T", list_file.to_str().unwrap()])
+            .args(&["-czf", output_str, "-T", list_file_str])
             .status()
             .await?;
 
@@ -392,11 +395,14 @@ impl BackupManager {
     async fn compress_archive(&self, path: &Path) -> Result<PathBuf, BackupError> {
         let output = path.with_extension("tar.zst");
 
+        let path_str = path.to_str().ok_or(BackupError::InvalidPath)?;
+        let output_str = output.to_str().ok_or(BackupError::InvalidPath)?;
+
         let status = tokio::process::Command::new("zstd")
             .args(&[
                 &format!("-{}", self.config.compression.level),
-                path.to_str().unwrap(),
-                "-o", output.to_str().unwrap(),
+                path_str,
+                "-o", output_str,
             ])
             .status()
             .await?;
@@ -409,11 +415,17 @@ impl BackupManager {
     }
 
     async fn encrypt_archive(&self, path: &Path) -> Result<PathBuf, BackupError> {
-        let output = path.with_extension(format!("{}.enc", path.extension().unwrap().to_str().unwrap()));
+        let ext = path.extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("tar");
+        let output = path.with_extension(format!("{}.enc", ext));
+
+        let output_str = output.to_str().ok_or(BackupError::InvalidPath)?;
+        let path_str = path.to_str().ok_or(BackupError::InvalidPath)?;
 
         // Use age encryption for simplicity and security
         let status = tokio::process::Command::new("age")
-            .args(&["-e", "-o", output.to_str().unwrap(), path.to_str().unwrap()])
+            .args(&["-e", "-o", output_str, path_str])
             .status()
             .await?;
 
@@ -427,8 +439,11 @@ impl BackupManager {
     async fn decrypt_archive(&self, path: &Path) -> Result<PathBuf, BackupError> {
         let output = path.with_extension("");
 
+        let output_str = output.to_str().ok_or(BackupError::InvalidPath)?;
+        let path_str = path.to_str().ok_or(BackupError::InvalidPath)?;
+
         let status = tokio::process::Command::new("age")
-            .args(&["-d", "-o", output.to_str().unwrap(), path.to_str().unwrap()])
+            .args(&["-d", "-o", output_str, path_str])
             .status()
             .await?;
 
@@ -442,8 +457,11 @@ impl BackupManager {
     async fn decompress_archive(&self, path: &Path) -> Result<PathBuf, BackupError> {
         let output = path.with_extension("");
 
+        let path_str = path.to_str().ok_or(BackupError::InvalidPath)?;
+        let output_str = output.to_str().ok_or(BackupError::InvalidPath)?;
+
         let status = tokio::process::Command::new("zstd")
-            .args(&["-d", path.to_str().unwrap(), "-o", output.to_str().unwrap()])
+            .args(&["-d", path_str, "-o", output_str])
             .status()
             .await?;
 
@@ -455,8 +473,11 @@ impl BackupManager {
     }
 
     async fn extract_tar_archive(&self, path: &Path, target: &Path) -> Result<(), BackupError> {
+        let path_str = path.to_str().ok_or(BackupError::InvalidPath)?;
+        let target_str = target.to_str().ok_or(BackupError::InvalidPath)?;
+
         let status = tokio::process::Command::new("tar")
-            .args(&["-xzf", path.to_str().unwrap(), "-C", target.to_str().unwrap()])
+            .args(&["-xzf", path_str, "-C", target_str])
             .status()
             .await?;
 
@@ -570,6 +591,8 @@ pub enum BackupError {
     ChecksumMismatch,
     #[error("Backup not found")]
     NotFound,
+    #[error("Invalid path: path contains non-UTF8 characters")]
+    InvalidPath,
 }
 
 impl Default for BackupConfig {
