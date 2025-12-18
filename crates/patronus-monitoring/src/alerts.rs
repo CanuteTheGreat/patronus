@@ -141,13 +141,22 @@ impl AlertManager {
     }
 
     async fn evaluate_rules(&mut self) {
+        // Collect enabled rules and their evaluation results
+        let mut rule_evaluations = Vec::new();
+
         for rule in &self.rules {
             if !rule.enabled {
                 continue;
             }
 
-            if self.check_condition(&rule.condition).await {
-                self.fire_alert(rule).await;
+            let condition_met = self.check_condition(&rule.condition).await;
+            rule_evaluations.push((rule.clone(), condition_met));
+        }
+
+        // Process evaluations
+        for (rule, condition_met) in rule_evaluations {
+            if condition_met {
+                self.fire_alert(&rule).await;
             } else {
                 self.resolve_alert(&rule.name).await;
             }

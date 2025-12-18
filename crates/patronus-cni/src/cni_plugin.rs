@@ -112,8 +112,8 @@ pub struct CniError {
 
 /// Patronus CNI plugin
 pub struct PatronusCniPlugin {
-    config: CniConfig,
-    runtime: CniRuntimeConfig,
+    pub config: CniConfig,
+    pub runtime: CniRuntimeConfig,
 }
 
 impl PatronusCniPlugin {

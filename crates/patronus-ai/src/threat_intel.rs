@@ -7,7 +7,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Threat intelligence source
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,12 +20,12 @@ pub enum ThreatSource {
 }
 
 /// Threat category
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ThreatCategory {
     Malware,
     Botnet,
     Scanner,
-    Brute Force,
+    BruteForce,
     DDoS,
     Spam,
     Phishing,

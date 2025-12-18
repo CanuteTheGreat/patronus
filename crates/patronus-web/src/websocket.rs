@@ -103,6 +103,14 @@ pub async fn ws_metrics_handler(
     ws.on_upgrade(move |socket| handle_metrics_socket(socket, state, broadcaster))
 }
 
+/// WebSocket handler for log stream
+pub async fn ws_logs_handler(
+    ws: WebSocketUpgrade,
+    State(broadcaster): State<Arc<WsBroadcaster>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_logs_socket(socket, broadcaster))
+}
+
 /// Handle WebSocket connection for metrics
 async fn handle_metrics_socket(
     socket: WebSocket,
@@ -158,14 +166,6 @@ async fn handle_metrics_socket(
     };
 
     tracing::debug!("WebSocket connection closed");
-}
-
-/// WebSocket handler for log stream
-pub async fn ws_logs_handler(
-    ws: WebSocketUpgrade,
-    State(broadcaster): State<Arc<WsBroadcaster>>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_logs_socket(socket, broadcaster))
 }
 
 /// Handle WebSocket connection for logs

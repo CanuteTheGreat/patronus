@@ -82,7 +82,7 @@ tokio = { version = "1.40", features = ["full"] }
 async-trait = "0.1"
 
 # Web framework
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "trace", "compression-gzip"] }
 
@@ -116,7 +116,7 @@ askama = "0.12"
 askama_axum = "0.4"
 
 # VPN support
-wireguard-control = "1.7"
+# wireguard-control = "1.7"  # Removed - not used, WireGuard managed via wg CLI
 
 # DHCP server
 dhcproto = "0.12"

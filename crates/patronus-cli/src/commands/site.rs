@@ -2,10 +2,9 @@
 
 use crate::SiteCommands;
 use colored::Colorize;
-use comfy_table::{Table, presets::UTF8_FULL, Attribute};
+use comfy_table::{Table, presets::UTF8_FULL};
 use std::path::PathBuf;
 use std::fs;
-use patronus_sdwan::Site;
 use uuid::Uuid;
 
 pub async fn handle_site_command(action: SiteCommands, config_path: PathBuf) -> anyhow::Result<()> {
@@ -64,7 +63,8 @@ async fn list_sites(config_path: PathBuf) -> anyhow::Result<()> {
     let config_content = fs::read_to_string(&config_path)?;
     let config: serde_json::Value = serde_yaml::from_str(&config_content)?;
 
-    let sites = config["sites"].as_array().unwrap_or(&vec![]);
+    let empty_vec = vec![];
+    let sites = config["sites"].as_array().unwrap_or(&empty_vec);
 
     if sites.is_empty() {
         println!("{}", "No sites configured".yellow());
@@ -113,7 +113,8 @@ async fn show_site(site: String, config_path: PathBuf) -> anyhow::Result<()> {
     let config_content = fs::read_to_string(&config_path)?;
     let config: serde_json::Value = serde_yaml::from_str(&config_content)?;
 
-    let sites = config["sites"].as_array().unwrap_or(&vec![]);
+    let empty_vec = vec![];
+    let sites = config["sites"].as_array().unwrap_or(&empty_vec);
 
     // Find site by name or ID
     let found_site = sites.iter().find(|s| {

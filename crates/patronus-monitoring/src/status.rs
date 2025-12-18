@@ -12,7 +12,7 @@
 //!
 //! All pages support real-time updates via WebSocket.
 
-use patronus_core::{Result, Error};
+use patronus_core::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};

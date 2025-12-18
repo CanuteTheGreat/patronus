@@ -9,7 +9,7 @@
 
 use patronus_core::{Result, Error};
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use tokio::process::Command;
 

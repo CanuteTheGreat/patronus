@@ -8,6 +8,7 @@ pub mod auth;
 pub mod handlers;
 pub mod qrcode;
 pub mod routes;
+pub mod simple_handlers;
 pub mod state;
 pub mod templates;
 pub mod websocket;

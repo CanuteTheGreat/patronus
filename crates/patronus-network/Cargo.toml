@@ -8,12 +8,15 @@ license.workspace = true
 default = []
 dhcp = ["dep:dhcproto"]
 dns = ["dep:trust-dns-server"]
-wireguard = ["dep:wireguard-control"]
+wireguard = []
 openvpn = []
 ipsec = []
 vlan = []
 qos = []
 multiwan = []
+ha = []
+intrusion-detection = []
+dynamic-routing = []
 
 [dependencies]
 patronus-core = { path = "../patronus-core" }
@@ -33,4 +36,4 @@ futures = "0.3"
 # Optional features
 dhcproto = { workspace = true, optional = true }
 trust-dns-server = { workspace = true, optional = true }
-wireguard-control = { workspace = true, optional = true }
+# wireguard-control = { workspace = true, optional = true }  # Removed - not used

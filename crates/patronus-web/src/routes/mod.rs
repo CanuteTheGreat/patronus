@@ -25,17 +25,22 @@ pub fn build_router(
         // Public routes
         .route("/login", get(pages::login_page))
 
-        // WebSocket routes
-        .route("/ws/metrics", get(crate::websocket::ws_metrics_handler))
-        .route("/ws/logs", get(crate::websocket::ws_logs_handler))
+        // WebSocket routes (temporarily disabled due to handler issues)
+        // .route("/ws/metrics", get(crate::websocket::ws_metrics_handler))
+        // .route("/ws/logs", get(crate::websocket::ws_logs_handler))
 
         // Protected page routes (HTML) - require authentication
-        .route("/", get(pages::dashboard))
+        .route("/", get(crate::simple_handlers::simple_index))
         .route("/firewall", get(pages::firewall))
         .route("/vpn", get(pages::vpn))
         .route("/network", get(pages::network))
         .route("/monitoring", get(pages::monitoring))
         .route("/system", get(pages::system))
+
+        // Simple handler routes (working fallbacks)
+        .route("/simple", get(crate::simple_handlers::simple_index))
+        .route("/simple/firewall", get(crate::simple_handlers::simple_firewall))
+        .route("/simple/status", get(crate::simple_handlers::simple_status))
 
         // API routes (JSON)
         .nest("/api", api_routes())

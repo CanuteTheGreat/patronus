@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use git2::{Repository, RemoteCallbacks, FetchOptions};
-use notify::{Watcher, RecursiveMode, Event};
+use notify::Watcher;
 use patronus_config::{ConfigParser, ApplyEngine, DeclarativeConfig};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;

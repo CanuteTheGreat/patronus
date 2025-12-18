@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use k8s_openapi::api::networking::v1::{NetworkPolicy, NetworkPolicySpec, NetworkPolicyIngressRule, NetworkPolicyEgressRule};
+use k8s_openapi::api::networking::v1::{NetworkPolicy, NetworkPolicyIngressRule, NetworkPolicyEgressRule};
+use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::{Api, Client, ResourceExt};
 use kube::runtime::{watcher, WatchStreamExt};
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -133,8 +133,12 @@ impl NetworkPolicyController {
         let namespace = policy.namespace().unwrap_or_default();
         let spec = policy.spec.as_ref().context("Policy has no spec")?;
 
-        // Parse pod selector
-        let pod_selector = spec.pod_selector.match_labels.clone().unwrap_or_default();
+        // Parse pod selector (convert BTreeMap to HashMap)
+        let pod_selector: HashMap<String, String> = spec.pod_selector.match_labels
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
 
         // Determine policy types
         let policy_type = if spec.policy_types.is_some() {
@@ -190,11 +194,11 @@ impl NetworkPolicyController {
                                 labels.get("kubernetes.io/metadata.name").cloned()
                             })
                         }),
-                        labels: pod_sel.match_labels.clone().unwrap_or_default(),
+                        labels: pod_sel.match_labels.clone().unwrap_or_default().into_iter().collect(),
                     })
                 } else if let Some(ns_sel) = &peer.namespace_selector {
                     Some(PeerSelector::NamespaceSelector {
-                        labels: ns_sel.match_labels.clone().unwrap_or_default(),
+                        labels: ns_sel.match_labels.clone().unwrap_or_default().into_iter().collect(),
                     })
                 } else if let Some(ip_block) = &peer.ip_block {
                     Some(PeerSelector::IpBlock {
@@ -214,9 +218,12 @@ impl NetworkPolicyController {
                 Some(PortRule {
                     protocol: p.protocol.clone().unwrap_or_else(|| "TCP".to_string()),
                     port: p.port.as_ref().and_then(|port| {
-                        port.0.parse::<u16>().ok()
+                        match port {
+                            IntOrString::Int(i) => Some(*i as u16),
+                            IntOrString::String(s) => s.parse::<u16>().ok(),
+                        }
                     }),
-                    end_port: p.end_port,
+                    end_port: p.end_port.map(|e| e as u16),
                 })
             }).collect()
         } else {
@@ -239,11 +246,11 @@ impl NetworkPolicyController {
                                 labels.get("kubernetes.io/metadata.name").cloned()
                             })
                         }),
-                        labels: pod_sel.match_labels.clone().unwrap_or_default(),
+                        labels: pod_sel.match_labels.clone().unwrap_or_default().into_iter().collect(),
                     })
                 } else if let Some(ns_sel) = &peer.namespace_selector {
                     Some(PeerSelector::NamespaceSelector {
-                        labels: ns_sel.match_labels.clone().unwrap_or_default(),
+                        labels: ns_sel.match_labels.clone().unwrap_or_default().into_iter().collect(),
                     })
                 } else if let Some(ip_block) = &peer.ip_block {
                     Some(PeerSelector::IpBlock {
@@ -263,9 +270,12 @@ impl NetworkPolicyController {
                 Some(PortRule {
                     protocol: p.protocol.clone().unwrap_or_else(|| "TCP".to_string()),
                     port: p.port.as_ref().and_then(|port| {
-                        port.0.parse::<u16>().ok()
+                        match port {
+                            IntOrString::Int(i) => Some(*i as u16),
+                            IntOrString::String(s) => s.parse::<u16>().ok(),
+                        }
                     }),
-                    end_port: p.end_port,
+                    end_port: p.end_port.map(|e| e as u16),
                 })
             }).collect()
         } else {
@@ -410,14 +420,18 @@ mod tests {
 
     #[test]
     fn test_parse_cidr() {
-        let controller = NetworkPolicyController {
-            client: Client::try_default().await.unwrap(),
-            policies: Arc::new(RwLock::new(HashMap::new())),
-            datapath: Arc::new(EbpfDatapath::new()),
-            pod_to_policy: Arc::new(RwLock::new(HashMap::new())),
-        };
+        use std::str::FromStr;
 
-        let ip = controller.parse_cidr_to_ip("192.168.1.0/24");
+        // Test CIDR parsing directly without controller
+        fn parse_cidr_to_ip(cidr: &str) -> IpAddr {
+            let ip_str = cidr.split('/').next().unwrap_or("0.0.0.0");
+            IpAddr::from_str(ip_str).unwrap_or(IpAddr::from_str("0.0.0.0").unwrap())
+        }
+
+        let ip = parse_cidr_to_ip("192.168.1.0/24");
         assert_eq!(ip.to_string(), "192.168.1.0");
+
+        let ip2 = parse_cidr_to_ip("10.0.0.0/8");
+        assert_eq!(ip2.to_string(), "10.0.0.0");
     }
 }

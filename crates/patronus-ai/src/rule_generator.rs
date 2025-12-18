@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use patronus_core::types::{FirewallRule, RuleAction};
+use patronus_core::types::{FirewallRule, FirewallAction, ChainType};
 use patronus_firewall::rules::RuleManager;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -150,68 +150,76 @@ impl RuleGenerator {
             ThreatType::PortScan | ThreatType::SynFlood | ThreatType::DDoS => {
                 // Block all traffic from source IP
                 Ok(FirewallRule {
+                    id: None,
                     name,
-                    action: RuleAction::Drop,
+                    enabled: true,
+                    chain: ChainType::Input,
+                    action: FirewallAction::Drop,
                     protocol: None,
-                    source_ip: Some(detection.source_ip.clone()),
-                    source_port: None,
-                    dest_ip: None,
-                    dest_port: None,
+                    source: Some(detection.source_ip.clone()),
+                    destination: None,
+                    sport: None,
+                    dport: None,
                     interface_in: None,
                     interface_out: None,
                     comment: Some(description),
-                    enabled: true,
                 })
             }
 
             ThreatType::DataExfiltration => {
                 // Rate-limit outbound connections
                 Ok(FirewallRule {
+                    id: None,
                     name,
-                    action: RuleAction::Drop,
+                    enabled: true,
+                    chain: ChainType::Output,
+                    action: FirewallAction::Drop,
                     protocol: None,
-                    source_ip: None,
-                    source_port: None,
-                    dest_ip: Some(detection.source_ip.clone()),
-                    dest_port: None,
+                    source: None,
+                    destination: Some(detection.source_ip.clone()),
+                    sport: None,
+                    dport: None,
                     interface_in: None,
                     interface_out: None,
                     comment: Some(description),
-                    enabled: true,
                 })
             }
 
             ThreatType::C2Communication => {
                 // Block specific destination if known
                 Ok(FirewallRule {
+                    id: None,
                     name,
-                    action: RuleAction::Drop,
+                    enabled: true,
+                    chain: ChainType::Output,
+                    action: FirewallAction::Drop,
                     protocol: None,
-                    source_ip: Some(detection.source_ip.clone()),
-                    source_port: None,
-                    dest_ip: None,
-                    dest_port: None,
+                    source: Some(detection.source_ip.clone()),
+                    destination: None,
+                    sport: None,
+                    dport: None,
                     interface_in: None,
                     interface_out: None,
                     comment: Some(description),
-                    enabled: true,
                 })
             }
 
             _ => {
                 // Generic block rule
                 Ok(FirewallRule {
+                    id: None,
                     name,
-                    action: RuleAction::Drop,
+                    enabled: true,
+                    chain: ChainType::Input,
+                    action: FirewallAction::Drop,
                     protocol: None,
-                    source_ip: Some(detection.source_ip.clone()),
-                    source_port: None,
-                    dest_ip: None,
-                    dest_port: None,
+                    source: Some(detection.source_ip.clone()),
+                    destination: None,
+                    sport: None,
+                    dport: None,
                     interface_in: None,
                     interface_out: None,
                     comment: Some(description),
-                    enabled: true,
                 })
             }
         }
@@ -219,6 +227,7 @@ impl RuleGenerator {
 
     async fn apply_rule(&self, auto_rule: &AutoRule) -> Result<()> {
         self.rule_manager.add_filter_rule(auto_rule.rule.clone()).await
+            .map_err(|e| anyhow::anyhow!("Failed to add rule: {}", e))
     }
 
     /// Approve a pending rule
@@ -278,10 +287,12 @@ impl RuleGenerator {
 
         // Remove expired rules from firewall
         for rule in expired_rules {
-            if let Err(e) = self.rule_manager.delete_filter_rule(&rule.rule.name).await {
-                warn!("Failed to delete expired rule {}: {}", rule.rule.name, e);
-            } else {
-                info!("Removed expired rule: {}", rule.rule.name);
+            if let Some(rule_id) = rule.rule.id {
+                if let Err(e) = self.rule_manager.remove_filter_rule(rule_id).await {
+                    warn!("Failed to delete expired rule {}: {}", rule.rule.name, e);
+                } else {
+                    info!("Removed expired rule: {}", rule.rule.name);
+                }
             }
         }
 
@@ -325,16 +336,19 @@ impl RuleGenerator {
             }
 
             let rule = FirewallRule {
+                id: None,
                 name: format!("THREAT-INTEL-{}-{}",
                     ip.replace('.', "-"),
                     Utc::now().timestamp()
                 ),
-                action: RuleAction::Drop,
+                enabled: true,
+                chain: ChainType::Input,
+                action: FirewallAction::Drop,
                 protocol: None,
-                source_ip: Some(ip.clone()),
-                source_port: None,
-                dest_ip: None,
-                dest_port: None,
+                source: Some(ip.clone()),
+                destination: None,
+                sport: None,
+                dport: None,
                 interface_in: None,
                 interface_out: None,
                 comment: Some(format!(
@@ -342,7 +356,6 @@ impl RuleGenerator {
                     best_threat.categories.first().unwrap_or(&ThreatCategory::Unknown),
                     best_threat.confidence * 100.0
                 )),
-                enabled: true,
             };
 
             let auto_rule = AutoRule {
@@ -369,20 +382,6 @@ impl RuleGenerator {
 
         info!("Generated {} rules from threat intelligence", new_rules.len());
         Ok(new_rules)
-    }
-}
-
-impl ThreatType {
-    fn to_string(&self) -> &str {
-        match self {
-            ThreatType::Normal => "normal",
-            ThreatType::PortScan => "port-scan",
-            ThreatType::SynFlood => "syn-flood",
-            ThreatType::DDoS => "ddos",
-            ThreatType::DataExfiltration => "data-exfil",
-            ThreatType::C2Communication => "c2-comm",
-            ThreatType::Unknown => "unknown",
-        }
     }
 }
 

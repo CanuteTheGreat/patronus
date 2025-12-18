@@ -1,49 +1,28 @@
 version: '3.8'
 
 services:
-  patronus-sdwan:
+  patronus-web:
     build: .
-    container_name: patronus-sdwan
+    container_name: patronus-web
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
       - NET_RAW
-    devices:
-      - /dev/net/tun
-    network_mode: host
+    ports:
+      - "8443:8443"
     volumes:
       - ./config:/etc/patronus
       - patronus-data:/var/lib/patronus
       - patronus-logs:/var/log/patronus
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=info,patronus_web=debug
       - TOKIO_WORKER_THREADS=4
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8443/"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 10s
-
-  patronus-dashboard:
-    build: .
-    container_name: patronus-dashboard
-    command: ["patronus-dashboard", "--config", "/etc/patronus/config.yaml"]
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./config:/etc/patronus:ro
-      - patronus-logs:/var/log/patronus
-    environment:
-      - RUST_LOG=info
-    depends_on:
-      - patronus-sdwan
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
 
   prometheus:
     image: prom/prometheus:latest

@@ -5,9 +5,8 @@ use colored::Colorize;
 use comfy_table::{Table, presets::UTF8_FULL};
 use std::path::PathBuf;
 use std::fs;
-use uuid::Uuid;
 
-pub async fn handle_tunnel_command(action: TunnelCommands, config_path: PathBuf) -> antml::{Result<()> {
+pub async fn handle_tunnel_command(action: TunnelCommands, config_path: PathBuf) -> anyhow::Result<()> {
     match action {
         TunnelCommands::Create { name, source, destination, protocol } => {
             println!("{} Creating tunnel '{}'...", "→".bright_blue(), name);
@@ -16,7 +15,7 @@ pub async fn handle_tunnel_command(action: TunnelCommands, config_path: PathBuf)
             let mut config: serde_json::Value = serde_yaml::from_str(&config_content)?;
 
             let tunnel = serde_json::json!({
-                "id": Uuid::new_v4().to_string(),
+                "id": uuid::Uuid::new_v4().to_string(),
                 "name": name,
                 "source": source,
                 "destination": destination,
@@ -38,7 +37,8 @@ pub async fn handle_tunnel_command(action: TunnelCommands, config_path: PathBuf)
         TunnelCommands::List => {
             let config_content = fs::read_to_string(&config_path)?;
             let config: serde_json::Value = serde_yaml::from_str(&config_content)?;
-            let tunnels = config["tunnels"].as_array().unwrap_or(&vec![]);
+            let empty_vec = vec![];
+            let tunnels = config["tunnels"].as_array().unwrap_or(&empty_vec);
 
             if tunnels.is_empty() {
                 println!("{}", "No tunnels configured".yellow());

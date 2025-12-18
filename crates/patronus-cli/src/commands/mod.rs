@@ -10,9 +10,3 @@ pub mod daemon;
 pub mod deploy;
 pub mod validate;
 pub mod metrics;
-
-// Re-export command enums
-pub use crate::{
-    SiteCommands, TunnelCommands, PolicyCommands,
-    BgpCommands, MetricsCommands,
-};

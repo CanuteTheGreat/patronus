@@ -14,12 +14,12 @@
 //!
 //! All tools support real-time output and result export.
 
-use patronus_core::{Result, Error};
+use patronus_core::Result;
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::SystemTime;
 use tokio::process::Command;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::AsyncBufReadExt;
 
 /// Ping result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -521,7 +521,7 @@ impl DiagnosticTools {
             let mut gateway = None;
             let mut interface = String::new();
             let mut metric = None;
-            let mut flags = String::new();
+            let flags = String::new();
 
             let mut i = 1;
             while i < parts.len() {

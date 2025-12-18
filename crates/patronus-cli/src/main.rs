@@ -2,12 +2,10 @@
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use comfy_table::{Table, presets::UTF8_FULL};
 use std::path::PathBuf;
-use uuid::Uuid;
 
 mod commands;
-use commands::*;
+use commands::{init, site, tunnel, policy, bgp, status, daemon, deploy, validate, metrics};
 
 #[derive(Parser)]
 #[command(name = "patronus")]

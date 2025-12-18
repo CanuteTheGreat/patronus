@@ -68,7 +68,7 @@ impl RuleManager {
     }
 
     /// Add a new firewall filter rule
-    pub async fn add_filter_rule(&mut self, mut rule: FirewallRule) -> Result<()> {
+    pub async fn add_filter_rule(&self, mut rule: FirewallRule) -> Result<()> {
         // Assign ID
         let mut next_id = self.next_filter_id.write().await;
         rule.id = Some(*next_id);

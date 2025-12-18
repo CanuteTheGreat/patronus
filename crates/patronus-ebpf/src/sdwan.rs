@@ -167,7 +167,7 @@ impl SdwanFastPath {
     /// Get statistics
     pub async fn get_stats(&self) -> Result<XdpStats> {
         let xdp = self.xdp.read().await;
-        xdp.get_stats().await
+        xdp.get_stats().await.map_err(|e| anyhow::Error::from(e))
     }
 
     /// Get all tunnels

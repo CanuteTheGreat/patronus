@@ -328,10 +328,10 @@ pub async fn current_user(auth_user: AuthUser) -> impl IntoResponse {
 }
 
 /// Middleware to inject session store into request extensions
-pub async fn session_middleware<B>(
+pub async fn session_middleware(
     State(store): State<SessionStore>,
-    mut req: axum::http::Request<B>,
-    next: axum::middleware::Next<B>,
+    mut req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
 ) -> Response {
     req.extensions_mut().insert(store);
     next.run(req).await

@@ -1,7 +1,7 @@
 # Multi-stage Dockerfile for Patronus SD-WAN
 
-# Builder stage
-FROM rust:1.75-slim as builder
+# Builder stage - use latest stable Rust for edition2024 support
+FROM rust:latest AS builder
 
 WORKDIR /build
 
@@ -10,15 +10,22 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libsqlite3-dev \
     libssl-dev \
+    libmnl-dev \
+    libnftnl-dev \
+    libelf-dev \
+    zlib1g-dev \
     build-essential \
+    cmake \
+    clang \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy workspace files
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates/
+COPY operator ./operator/
 
-# Build release binaries
-RUN cargo build --release --workspace
+# Build release binaries (only essential packages for web interface)
+RUN cargo build --release -p patronus-web
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -38,26 +45,24 @@ RUN apt-get update && apt-get install -y \
 RUN useradd -r -u 1000 -m -s /bin/bash patronus
 
 # Copy binaries from builder
-COPY --from=builder /build/target/release/patronus-sdwan /usr/bin/
-COPY --from=builder /build/target/release/patronus-dashboard /usr/bin/
+COPY --from=builder /build/target/release/patronus-web /usr/bin/
 
 # Create directories
 RUN mkdir -p /etc/patronus /var/lib/patronus /var/log/patronus && \
     chown -R patronus:patronus /etc/patronus /var/lib/patronus /var/log/patronus
 
-# Copy default configuration (if exists)
-COPY --chown=patronus:patronus config.example.yaml /etc/patronus/config.yaml || true
+# Note: Configuration should be mounted at runtime via docker-compose or kubectl
 
 # Switch to patronus user
 USER patronus
 WORKDIR /home/patronus
 
 # Expose ports
-EXPOSE 8080 8081 51820/udp
+EXPOSE 8443 51820/udp
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8081/health || exit 1
+    CMD curl -f http://localhost:8443/ || exit 1
 
-# Default command
-CMD ["patronus-sdwan", "--config", "/etc/patronus/config.yaml"]
+# Default command - run the web interface
+CMD ["patronus-web"]

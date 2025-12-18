@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 use anyhow::Result;
-use crate::detector::{Issue, IssueDetector};
+use crate::detector::IssueDetector;
 use crate::remediation::{RemediationEngine, RemediationExecutor, RemediationAttempt};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
