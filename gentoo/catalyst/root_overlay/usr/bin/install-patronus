@@ -1,0 +1,3 @@
+#!/bin/bash
+# Convenience wrapper for Patronus installer
+exec /usr/bin/patronus-install --tui "$@"

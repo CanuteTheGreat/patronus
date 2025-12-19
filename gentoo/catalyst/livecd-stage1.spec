@@ -2,18 +2,18 @@
 
 subarch: amd64
 target: livecd-stage1
-version_stamp: patronus-@TIMESTAMP@
+version_stamp: patronus-latest
 rel_type: default
-profile: default/linux/amd64/23.0/systemd
-source_subpath: default/stage3-amd64-systemd-latest
+profile: default/linux/amd64/23.0
+source_subpath: default/stage3-amd64-openrc-latest
 
-# Portage snapshot
-snapshot: latest
-portage_confdir: /home/canutethegreat/patronus/gentoo/catalyst/portage
+# Portage snapshot (HEAD of gentoo.git)
+snapshot_treeish: HEAD
+portage_confdir: /home/canutethegreat/files/repos/mine/patronus/gentoo/catalyst/portage
 
 # LiveCD stage1 packages
 livecd/use:
-    systemd
+    -systemd
     nftables
     livecd
     fbcon
@@ -45,7 +45,7 @@ livecd/packages:
 
     # Firewall
     net-firewall/nftables
-    net-firewall/patronus
+    # Note: patronus and patronus-installer are added via root_overlay
 
     # Filesystem tools
     sys-fs/btrfs-progs

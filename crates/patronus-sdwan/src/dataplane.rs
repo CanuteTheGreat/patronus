@@ -12,6 +12,11 @@ use tokio::net::UdpSocket;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+#[cfg(feature = "dataplane")]
+use std::io::{Read as IoRead, Write as IoWrite};
+#[cfg(feature = "dataplane")]
+use tun::Device;
+
 /// Data plane configuration
 #[derive(Debug, Clone)]
 pub struct DataPlaneConfig {
@@ -26,6 +31,18 @@ pub struct DataPlaneConfig {
 
     /// Enable packet statistics
     pub enable_stats: bool,
+
+    /// Enable TUN device for local packet injection
+    pub enable_tun: bool,
+
+    /// TUN device name (default: patronus0)
+    pub tun_name: String,
+
+    /// TUN device IP address
+    pub tun_address: Option<IpAddr>,
+
+    /// TUN device netmask
+    pub tun_netmask: Option<IpAddr>,
 }
 
 impl Default for DataPlaneConfig {
@@ -35,6 +52,10 @@ impl Default for DataPlaneConfig {
             compression: CompressionConfig::default(),
             max_packet_size: 1500,
             enable_stats: true,
+            enable_tun: false,
+            tun_name: "patronus0".to_string(),
+            tun_address: None,
+            tun_netmask: None,
         }
     }
 }
@@ -74,6 +95,68 @@ pub struct DataPlaneStats {
     pub bytes_received: u64,
 }
 
+/// TUN device wrapper for thread-safe access
+#[cfg(feature = "dataplane")]
+pub struct TunDevice {
+    device: std::sync::Mutex<tun::platform::Device>,
+}
+
+#[cfg(feature = "dataplane")]
+impl TunDevice {
+    /// Create a new TUN device
+    pub fn new(name: &str, address: Option<IpAddr>, netmask: Option<IpAddr>) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut config = tun::Configuration::default();
+        config.name(name);
+        config.up();
+
+        #[cfg(target_os = "linux")]
+        config.platform_config(|config| {
+            config.ensure_root_privileges(true);
+        });
+
+        if let Some(addr) = address {
+            match addr {
+                IpAddr::V4(v4) => config.address(v4),
+                IpAddr::V6(_) => return Err("IPv6 TUN addresses not yet supported".into()),
+            };
+        }
+
+        if let Some(mask) = netmask {
+            match mask {
+                IpAddr::V4(v4) => config.netmask(v4),
+                IpAddr::V6(_) => return Err("IPv6 netmasks not yet supported".into()),
+            };
+        }
+
+        let device = tun::create(&config)?;
+        Ok(Self {
+            device: std::sync::Mutex::new(device),
+        })
+    }
+
+    /// Write a packet to the TUN device
+    pub fn write_packet(&self, data: &[u8]) -> std::io::Result<usize> {
+        let mut device = self.device.lock().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::Other, "TUN device lock poisoned")
+        })?;
+        device.write(data)
+    }
+
+    /// Read a packet from the TUN device
+    pub fn read_packet(&self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut device = self.device.lock().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::Other, "TUN device lock poisoned")
+        })?;
+        device.read(buf)
+    }
+
+    /// Get the TUN device name
+    pub fn name(&self) -> String {
+        let device = self.device.lock().unwrap();
+        device.name().to_string()
+    }
+}
+
 /// SD-WAN data plane
 pub struct DataPlane {
     /// Configuration
@@ -93,6 +176,16 @@ pub struct DataPlane {
 
     /// Statistics
     stats: Arc<RwLock<DataPlaneStats>>,
+
+    /// Receive errors counter
+    rx_errors: Arc<RwLock<u64>>,
+
+    /// Packets forwarded locally counter
+    local_forwarded: Arc<RwLock<u64>>,
+
+    /// TUN device for local packet injection (optional)
+    #[cfg(feature = "dataplane")]
+    tun_device: Option<Arc<TunDevice>>,
 }
 
 impl DataPlane {
@@ -103,6 +196,23 @@ impl DataPlane {
 
         info!("Data plane bound to {}", config.bind_addr);
 
+        // Initialize TUN device if enabled
+        #[cfg(feature = "dataplane")]
+        let tun_device = if config.enable_tun {
+            match TunDevice::new(&config.tun_name, config.tun_address, config.tun_netmask) {
+                Ok(tun) => {
+                    info!("TUN device {} created successfully", tun.name());
+                    Some(Arc::new(tun))
+                }
+                Err(e) => {
+                    warn!("Failed to create TUN device: {}. Continuing without TUN.", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             config,
             socket,
@@ -110,6 +220,10 @@ impl DataPlane {
             tunnels: Arc::new(RwLock::new(HashMap::new())),
             routes: Arc::new(RwLock::new(HashMap::new())),
             stats: Arc::new(RwLock::new(DataPlaneStats::default())),
+            rx_errors: Arc::new(RwLock::new(0)),
+            local_forwarded: Arc::new(RwLock::new(0)),
+            #[cfg(feature = "dataplane")]
+            tun_device,
         })
     }
 
@@ -295,8 +409,27 @@ impl DataPlane {
             stats.bytes_received += payload.len() as u64;
         }
 
-        // TODO: Forward to local network interface or process locally
-        debug!("Processed packet: {} bytes from {}", payload.len(), from_addr);
+        // Forward to local network interface via TUN device
+        #[cfg(feature = "dataplane")]
+        if let Some(ref tun) = self.tun_device {
+            match tun.write_packet(&payload) {
+                Ok(written) => {
+                    debug!("Injected {} bytes to TUN device from {}", written, from_addr);
+                    let mut local_fwd = self.local_forwarded.write().await;
+                    *local_fwd += 1;
+                }
+                Err(e) => {
+                    warn!("Failed to inject packet to TUN: {}", e);
+                    let mut rx_errs = self.rx_errors.write().await;
+                    *rx_errs += 1;
+                }
+            }
+        } else {
+            debug!("Processed packet: {} bytes from {} (no TUN device)", payload.len(), from_addr);
+        }
+
+        #[cfg(not(feature = "dataplane"))]
+        debug!("Processed packet: {} bytes from {} (TUN disabled)", payload.len(), from_addr);
 
         Ok(())
     }
@@ -332,6 +465,96 @@ impl DataPlane {
     pub async fn get_routes(&self) -> HashMap<IpAddr, PathId> {
         let routes = self.routes.read().await;
         routes.clone()
+    }
+
+    /// Get receive error count
+    pub async fn get_rx_errors(&self) -> u64 {
+        *self.rx_errors.read().await
+    }
+
+    /// Get locally forwarded packet count
+    pub async fn get_local_forwarded(&self) -> u64 {
+        *self.local_forwarded.read().await
+    }
+
+    /// Check if TUN device is available
+    #[cfg(feature = "dataplane")]
+    pub fn has_tun_device(&self) -> bool {
+        self.tun_device.is_some()
+    }
+
+    /// Get TUN device name if available
+    #[cfg(feature = "dataplane")]
+    pub fn tun_device_name(&self) -> Option<String> {
+        self.tun_device.as_ref().map(|t| t.name())
+    }
+
+    /// Start reading from TUN device and forwarding to SD-WAN tunnels
+    ///
+    /// This spawns a background task that reads packets from the TUN device
+    /// and forwards them through the appropriate SD-WAN tunnel based on routing.
+    #[cfg(feature = "dataplane")]
+    pub fn start_tun_rx(self: Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
+        let tun = self.tun_device.clone()?;
+
+        Some(tokio::spawn(async move {
+            let mut buf = vec![0u8; 65536]; // 64KB buffer
+
+            loop {
+                // Read from TUN device (blocking operation wrapped in spawn_blocking)
+                let tun_clone = tun.clone();
+                let mut read_buf = buf.clone();
+
+                let result = tokio::task::spawn_blocking(move || {
+                    tun_clone.read_packet(&mut read_buf).map(|n| (read_buf, n))
+                })
+                .await;
+
+                match result {
+                    Ok(Ok((data, len))) if len > 0 => {
+                        // Extract destination IP from IP header
+                        if len >= 20 {
+                            let dest_ip = match data[0] >> 4 {
+                                4 => {
+                                    // IPv4
+                                    let addr = [data[16], data[17], data[18], data[19]];
+                                    Some(IpAddr::V4(std::net::Ipv4Addr::from(addr)))
+                                }
+                                6 if len >= 40 => {
+                                    // IPv6
+                                    let mut addr = [0u8; 16];
+                                    addr.copy_from_slice(&data[24..40]);
+                                    Some(IpAddr::V6(std::net::Ipv6Addr::from(addr)))
+                                }
+                                _ => None,
+                            };
+
+                            if let Some(dest) = dest_ip {
+                                if let Err(e) = self.forward_packet(&data[..len], dest).await {
+                                    debug!("Failed to forward TUN packet to {}: {}", dest, e);
+                                }
+                            } else {
+                                debug!("Could not extract destination IP from TUN packet");
+                            }
+                        }
+                    }
+                    Ok(Ok((_, 0))) => {
+                        // No data read, TUN might be closed
+                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                    }
+                    Ok(Err(e)) => {
+                        if e.kind() != std::io::ErrorKind::WouldBlock {
+                            error!("TUN read error: {}", e);
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        }
+                    }
+                    Err(e) => {
+                        error!("TUN read task failed: {}", e);
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        }))
     }
 }
 

@@ -261,13 +261,35 @@ pub struct Flow {
     /// Bytes received
     pub bytes_rx: u64,
 
-    /// Flow statistics
-    pub stats: FlowStats,
+    /// Flow performance statistics
+    pub stats: FlowPerformanceStats,
 }
 
-/// Flow statistics
+/// Flow statistics (for per-flow tracking)
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct FlowStats {
+    /// Total number of flows
+    pub total_flows: u64,
+
+    /// Active flow count
+    pub active_flows: u64,
+
+    /// Total bytes transmitted
+    pub total_bytes_tx: u64,
+
+    /// Total bytes received
+    pub total_bytes_rx: u64,
+
+    /// Total packets transmitted
+    pub total_packets_tx: u64,
+
+    /// Total packets received
+    pub total_packets_rx: u64,
+}
+
+/// Per-flow detailed statistics (legacy)
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct FlowPerformanceStats {
     /// Packets transmitted
     pub packets_tx: u64,
 
@@ -279,6 +301,79 @@ pub struct FlowStats {
 
     /// Average RTT
     pub avg_rtt_ms: f64,
+}
+
+/// Database record for a tracked flow
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlowRecord {
+    /// Database row ID
+    pub flow_id: i64,
+
+    /// Source IP address
+    pub src_ip: String,
+
+    /// Destination IP address
+    pub dst_ip: String,
+
+    /// Source port
+    pub src_port: u16,
+
+    /// Destination port
+    pub dst_port: u16,
+
+    /// IP protocol (TCP=6, UDP=17, etc.)
+    pub protocol: u8,
+
+    /// Path ID this flow is using
+    pub path_id: u64,
+
+    /// Policy ID that matched this flow (if any)
+    pub policy_id: Option<u64>,
+
+    /// When flow started
+    pub started_at: SystemTime,
+
+    /// When flow was last seen
+    pub last_seen_at: SystemTime,
+
+    /// Bytes transmitted
+    pub bytes_tx: u64,
+
+    /// Bytes received
+    pub bytes_rx: u64,
+
+    /// Packets transmitted
+    pub packets_tx: u64,
+
+    /// Packets received
+    pub packets_rx: u64,
+
+    /// Flow status (active, idle, closed)
+    pub status: String,
+}
+
+impl FlowRecord {
+    /// Create a new flow record from a FlowKey
+    pub fn from_flow_key(flow_key: &FlowKey, path_id: u64, policy_id: Option<u64>) -> Self {
+        let now = SystemTime::now();
+        Self {
+            flow_id: 0, // Will be set by database
+            src_ip: flow_key.src_ip.to_string(),
+            dst_ip: flow_key.dst_ip.to_string(),
+            src_port: flow_key.src_port,
+            dst_port: flow_key.dst_port,
+            protocol: flow_key.protocol,
+            path_id,
+            policy_id,
+            started_at: now,
+            last_seen_at: now,
+            bytes_tx: 0,
+            bytes_rx: 0,
+            packets_tx: 0,
+            packets_rx: 0,
+            status: "active".to_string(),
+        }
+    }
 }
 
 /// Site announcement (for mesh discovery)

@@ -67,7 +67,25 @@ struct ProbeHistory {
 
     /// Last bandwidth test time
     last_bandwidth_test: Option<Instant>,
+
+    /// Discovered path MTU (bytes)
+    discovered_mtu: u16,
+
+    /// Last MTU discovery time
+    last_mtu_discovery: Option<Instant>,
 }
+
+/// MTU discovery interval - run every 5 minutes
+const MTU_DISCOVERY_INTERVAL: Duration = Duration::from_secs(300);
+
+/// Default MTU to start with
+const DEFAULT_MTU: u16 = 1500;
+
+/// Minimum MTU to probe
+const MIN_MTU: u16 = 576;
+
+/// MTU probe step size (binary search)
+const MTU_STEP: u16 = 32;
 
 impl ProbeHistory {
     fn new() -> Self {
@@ -79,7 +97,23 @@ impl ProbeHistory {
             last_success: None,
             last_bandwidth: 0.0,
             last_bandwidth_test: None,
+            discovered_mtu: DEFAULT_MTU,
+            last_mtu_discovery: None,
         }
+    }
+
+    /// Check if MTU discovery should be run
+    fn needs_mtu_discovery(&self) -> bool {
+        match self.last_mtu_discovery {
+            None => true, // Never tested
+            Some(last_test) => last_test.elapsed() >= MTU_DISCOVERY_INTERVAL,
+        }
+    }
+
+    /// Update discovered MTU
+    fn update_mtu(&mut self, mtu: u16) {
+        self.discovered_mtu = mtu;
+        self.last_mtu_discovery = Some(Instant::now());
     }
 
     /// Add RTT sample
@@ -185,7 +219,7 @@ impl ProbeHistory {
             jitter_ms: self.jitter(),
             packet_loss_pct: self.packet_loss(),
             bandwidth_mbps: self.last_bandwidth,
-            mtu: 1500,           // TODO: Implement MTU discovery
+            mtu: self.discovered_mtu,
             measured_at: SystemTime::now(),
             score: self.calculate_score(),
         }
@@ -222,11 +256,15 @@ impl PathMonitor {
         // Start bandwidth tester task
         let bandwidth_task = self.start_bandwidth_tester().await?;
 
+        // Start MTU discovery task
+        let mtu_task = self.start_mtu_discovery().await?;
+
         // Store task handles
         let mut tasks = self.tasks.write().await;
         tasks.push(probe_task);
         tasks.push(metrics_task);
         tasks.push(bandwidth_task);
+        tasks.push(mtu_task);
 
         Ok(())
     }
@@ -516,6 +554,177 @@ impl PathMonitor {
         });
 
         Ok(task)
+    }
+
+    /// Start MTU discovery task
+    async fn start_mtu_discovery(&self) -> Result<JoinHandle<()>> {
+        let db = self.db.clone();
+        let running = self.running.clone();
+        let probe_results = self.probe_results.clone();
+
+        let task = tokio::spawn(async move {
+            info!("Starting MTU discovery");
+
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+
+            while *running.read().await {
+                interval.tick().await;
+
+                // Get all active paths from database
+                let paths = match db.list_paths().await {
+                    Ok(paths) => paths,
+                    Err(e) => {
+                        error!("Failed to get paths from database: {}", e);
+                        continue;
+                    }
+                };
+
+                // Check which paths need MTU discovery
+                let mut paths_to_test = Vec::new();
+                {
+                    let results = probe_results.read().await;
+                    for path in paths {
+                        // Skip if path is down
+                        if path.status == PathStatus::Down {
+                            continue;
+                        }
+
+                        // Check if MTU discovery is needed
+                        if let Some(history) = results.get(&path.id) {
+                            if history.needs_mtu_discovery() {
+                                paths_to_test.push(path);
+                            }
+                        } else {
+                            // No history yet, test it
+                            paths_to_test.push(path);
+                        }
+                    }
+                }
+
+                // Run MTU discovery
+                for path in paths_to_test {
+                    debug!(
+                        path_id = %path.id,
+                        dst = %path.dst_endpoint,
+                        "Starting MTU discovery"
+                    );
+
+                    // Discover path MTU using binary search
+                    match Self::discover_mtu(path.dst_endpoint.ip()).await {
+                        Ok(mtu) => {
+                            info!(
+                                path_id = %path.id,
+                                mtu = %mtu,
+                                "MTU discovery completed"
+                            );
+
+                            // Update history
+                            let mut results = probe_results.write().await;
+                            if let Some(history) = results.get_mut(&path.id) {
+                                history.update_mtu(mtu);
+                            } else {
+                                // Create new history entry
+                                let mut history = ProbeHistory::new();
+                                history.update_mtu(mtu);
+                                results.insert(path.id, history);
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                path_id = %path.id,
+                                error = %e,
+                                "MTU discovery failed, using default"
+                            );
+                        }
+                    }
+                }
+            }
+
+            info!("MTU discovery stopped");
+        });
+
+        Ok(task)
+    }
+
+    /// Discover path MTU using binary search
+    async fn discover_mtu(target: IpAddr) -> Result<u16> {
+        // Bind UDP socket
+        let socket = UdpSocket::bind("0.0.0.0:0").await
+            .map_err(|e| Error::Network(format!("Failed to bind UDP socket: {}", e)))?;
+
+        // Binary search for MTU
+        let mut low = MIN_MTU;
+        let mut high = DEFAULT_MTU;
+        let mut discovered_mtu = MIN_MTU;
+
+        while low <= high {
+            let mid = (low + high) / 2;
+
+            // Try to send a packet of this size
+            match Self::probe_mtu(&socket, target, mid).await {
+                Ok(true) => {
+                    // Packet made it through, try larger
+                    discovered_mtu = mid;
+                    low = mid + MTU_STEP;
+                }
+                Ok(false) | Err(_) => {
+                    // Packet too large, try smaller
+                    high = mid - MTU_STEP;
+                }
+            }
+        }
+
+        Ok(discovered_mtu)
+    }
+
+    /// Probe if a specific MTU size works
+    async fn probe_mtu(socket: &UdpSocket, target: IpAddr, mtu: u16) -> Result<bool> {
+        // Calculate payload size (MTU - IP header - UDP header)
+        // IPv4 header = 20 bytes, UDP header = 8 bytes
+        let header_overhead = if target.is_ipv4() { 28 } else { 48 };
+        let payload_size = if mtu as usize > header_overhead {
+            mtu as usize - header_overhead
+        } else {
+            return Ok(false);
+        };
+
+        // Create test payload
+        let test_data = vec![0xAA; payload_size];
+
+        // Send with short timeout
+        let result = tokio::time::timeout(
+            Duration::from_millis(500),
+            async {
+                socket.send_to(&test_data, (target, 51824)).await?;
+
+                // Wait for any response (we don't care about the actual response)
+                let mut buf = [0u8; 64];
+                let _ = tokio::time::timeout(
+                    Duration::from_millis(200),
+                    socket.recv_from(&mut buf)
+                ).await;
+
+                Ok::<(), std::io::Error>(())
+            }
+        ).await;
+
+        match result {
+            Ok(Ok(())) => Ok(true),
+            Ok(Err(e)) => {
+                // Check if error indicates packet too large
+                // On Linux, this would be EMSGSIZE
+                if e.raw_os_error() == Some(90) {
+                    Ok(false)
+                } else {
+                    // Other error, assume MTU is ok but path issue
+                    Err(Error::Network(e.to_string()))
+                }
+            }
+            Err(_) => {
+                // Timeout - assume packet made it but no response
+                Ok(true)
+            }
+        }
     }
 
     /// Test bandwidth to a target endpoint

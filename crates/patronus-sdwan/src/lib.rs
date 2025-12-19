@@ -46,7 +46,7 @@ pub mod sla;
 pub mod qos;
 
 pub use error::{Error, Result};
-pub use types::{SiteId, PathId, FlowKey};
+pub use types::{SiteId, PathId, FlowKey, FlowRecord, FlowStats};
 
 use std::sync::Arc;
 

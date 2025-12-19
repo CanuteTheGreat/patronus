@@ -269,6 +269,50 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // Active flows table (for traffic tracking and visibility)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sdwan_flows (
+                flow_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                src_ip TEXT NOT NULL,
+                dst_ip TEXT NOT NULL,
+                src_port INTEGER NOT NULL,
+                dst_port INTEGER NOT NULL,
+                protocol INTEGER NOT NULL,
+                path_id INTEGER NOT NULL,
+                policy_id INTEGER,
+                started_at INTEGER NOT NULL,
+                last_seen_at INTEGER NOT NULL,
+                bytes_tx INTEGER DEFAULT 0,
+                bytes_rx INTEGER DEFAULT 0,
+                packets_tx INTEGER DEFAULT 0,
+                packets_rx INTEGER DEFAULT 0,
+                status TEXT CHECK(status IN ('active', 'idle', 'closed')) DEFAULT 'active',
+                UNIQUE(src_ip, dst_ip, src_port, dst_port, protocol)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_flows_status_time
+            ON sdwan_flows(status, last_seen_at)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_flows_path
+            ON sdwan_flows(path_id)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         info!("Database migrations completed");
         Ok(())
     }
@@ -336,11 +380,16 @@ impl Database {
                 _ => SiteStatus::Inactive,
             };
 
+            let parsed_site_id: SiteId = site_id.parse().unwrap();
+
+            // Load endpoints for this site
+            let endpoints = self.get_endpoints(&parsed_site_id).await.unwrap_or_default();
+
             Ok(Some(Site {
-                id: site_id.parse().unwrap(),
+                id: parsed_site_id,
                 name: site_name,
                 public_key,
-                endpoints: Vec::new(), // TODO: Load endpoints
+                endpoints,
                 created_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(created_at as u64),
                 last_seen: std::time::UNIX_EPOCH + std::time::Duration::from_secs(last_seen as u64),
                 status,
@@ -378,11 +427,16 @@ impl Database {
                 _ => SiteStatus::Inactive,
             };
 
+            let parsed_site_id: SiteId = site_id.parse().unwrap();
+
+            // Load endpoints for this site
+            let endpoints = self.get_endpoints(&parsed_site_id).await.unwrap_or_default();
+
             sites.push(Site {
-                id: site_id.parse().unwrap(),
+                id: parsed_site_id,
                 name: site_name,
                 public_key,
-                endpoints: Vec::new(),
+                endpoints,
                 created_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(created_at as u64),
                 last_seen: std::time::UNIX_EPOCH + std::time::Duration::from_secs(last_seen as u64),
                 status,
@@ -404,6 +458,95 @@ impl Database {
         .await?;
 
         Ok(row.try_get("count")?)
+    }
+
+    /// Store endpoint for a site
+    pub async fn store_endpoint(&self, site_id: &SiteId, endpoint: &Endpoint) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO sdwan_endpoints (site_id, address, interface_type, cost_per_gb, reachable)
+            VALUES (?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(site_id.to_string())
+        .bind(endpoint.address.to_string())
+        .bind(&endpoint.interface_type)
+        .bind(endpoint.cost_per_gb)
+        .bind(endpoint.reachable as i32)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Store multiple endpoints for a site (replaces existing)
+    pub async fn store_endpoints(&self, site_id: &SiteId, endpoints: &[Endpoint]) -> Result<()> {
+        // Delete existing endpoints
+        sqlx::query(
+            r#"
+            DELETE FROM sdwan_endpoints WHERE site_id = ?
+            "#,
+        )
+        .bind(site_id.to_string())
+        .execute(&self.pool)
+        .await?;
+
+        // Insert new endpoints
+        for endpoint in endpoints {
+            self.store_endpoint(site_id, endpoint).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Get endpoints for a site
+    pub async fn get_endpoints(&self, site_id: &SiteId) -> Result<Vec<Endpoint>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT address, interface_type, cost_per_gb, reachable
+            FROM sdwan_endpoints
+            WHERE site_id = ?
+            "#,
+        )
+        .bind(site_id.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut endpoints = Vec::new();
+        for row in rows {
+            let address: String = row.try_get("address")?;
+            let interface_type: String = row.try_get("interface_type")?;
+            let cost_per_gb: f64 = row.try_get("cost_per_gb")?;
+            let reachable: i32 = row.try_get("reachable")?;
+
+            // Parse the socket address
+            if let Ok(socket_addr) = address.parse() {
+                endpoints.push(Endpoint {
+                    address: socket_addr,
+                    interface_type,
+                    cost_per_gb,
+                    reachable: reachable != 0,
+                });
+            } else {
+                debug!(address = %address, "Skipping invalid endpoint address");
+            }
+        }
+
+        Ok(endpoints)
+    }
+
+    /// Delete endpoints for a site
+    pub async fn delete_endpoints(&self, site_id: &SiteId) -> Result<()> {
+        sqlx::query(
+            r#"
+            DELETE FROM sdwan_endpoints WHERE site_id = ?
+            "#,
+        )
+        .bind(site_id.to_string())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 
     /// Insert a path
@@ -1006,6 +1149,229 @@ impl Database {
         .await?;
 
         Ok(row.try_get("count")?)
+    }
+
+    // ========== Flow Tracking Methods ==========
+
+    /// Insert or update a flow
+    pub async fn upsert_flow(&self, flow: &FlowRecord) -> Result<i64> {
+        let started_at = flow.started_at
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let last_seen_at = flow.last_seen_at
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO sdwan_flows (
+                src_ip, dst_ip, src_port, dst_port, protocol,
+                path_id, policy_id, started_at, last_seen_at,
+                bytes_tx, bytes_rx, packets_tx, packets_rx, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(src_ip, dst_ip, src_port, dst_port, protocol) DO UPDATE SET
+                last_seen_at = excluded.last_seen_at,
+                bytes_tx = sdwan_flows.bytes_tx + excluded.bytes_tx,
+                bytes_rx = sdwan_flows.bytes_rx + excluded.bytes_rx,
+                packets_tx = sdwan_flows.packets_tx + excluded.packets_tx,
+                packets_rx = sdwan_flows.packets_rx + excluded.packets_rx,
+                status = excluded.status,
+                path_id = excluded.path_id
+            "#,
+        )
+        .bind(&flow.src_ip)
+        .bind(&flow.dst_ip)
+        .bind(flow.src_port as i32)
+        .bind(flow.dst_port as i32)
+        .bind(flow.protocol as i32)
+        .bind(flow.path_id as i64)
+        .bind(flow.policy_id.map(|p| p as i64))
+        .bind(started_at)
+        .bind(last_seen_at)
+        .bind(flow.bytes_tx as i64)
+        .bind(flow.bytes_rx as i64)
+        .bind(flow.packets_tx as i64)
+        .bind(flow.packets_rx as i64)
+        .bind(&flow.status)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Get flow by key (5-tuple)
+    pub async fn get_flow(&self, flow_key: &FlowKey) -> Result<Option<FlowRecord>> {
+        let row = sqlx::query(
+            r#"
+            SELECT flow_id, src_ip, dst_ip, src_port, dst_port, protocol,
+                   path_id, policy_id, started_at, last_seen_at,
+                   bytes_tx, bytes_rx, packets_tx, packets_rx, status
+            FROM sdwan_flows
+            WHERE src_ip = ? AND dst_ip = ? AND src_port = ? AND dst_port = ? AND protocol = ?
+            "#,
+        )
+        .bind(flow_key.src_ip.to_string())
+        .bind(flow_key.dst_ip.to_string())
+        .bind(flow_key.src_port as i32)
+        .bind(flow_key.dst_port as i32)
+        .bind(flow_key.protocol as i32)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(row) = row {
+            Ok(Some(self.row_to_flow_record(&row)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// List all active flows
+    pub async fn list_active_flows(&self) -> Result<Vec<FlowRecord>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT flow_id, src_ip, dst_ip, src_port, dst_port, protocol,
+                   path_id, policy_id, started_at, last_seen_at,
+                   bytes_tx, bytes_rx, packets_tx, packets_rx, status
+            FROM sdwan_flows
+            WHERE status = 'active'
+            ORDER BY last_seen_at DESC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut flows = Vec::new();
+        for row in rows {
+            flows.push(self.row_to_flow_record(&row)?);
+        }
+        Ok(flows)
+    }
+
+    /// List flows by path
+    pub async fn list_flows_by_path(&self, path_id: u64) -> Result<Vec<FlowRecord>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT flow_id, src_ip, dst_ip, src_port, dst_port, protocol,
+                   path_id, policy_id, started_at, last_seen_at,
+                   bytes_tx, bytes_rx, packets_tx, packets_rx, status
+            FROM sdwan_flows
+            WHERE path_id = ?
+            ORDER BY last_seen_at DESC
+            "#,
+        )
+        .bind(path_id as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut flows = Vec::new();
+        for row in rows {
+            flows.push(self.row_to_flow_record(&row)?);
+        }
+        Ok(flows)
+    }
+
+    /// Update flow status
+    pub async fn update_flow_status(&self, flow_id: i64, status: &str) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE sdwan_flows
+            SET status = ?
+            WHERE flow_id = ?
+            "#,
+        )
+        .bind(status)
+        .bind(flow_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Cleanup stale flows older than specified duration
+    pub async fn cleanup_stale_flows(&self, older_than_secs: i64) -> Result<u64> {
+        let cutoff = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64 - older_than_secs;
+
+        // Mark as closed first
+        sqlx::query(
+            r#"
+            UPDATE sdwan_flows
+            SET status = 'closed'
+            WHERE status = 'active' AND last_seen_at < ?
+            "#,
+        )
+        .bind(cutoff)
+        .execute(&self.pool)
+        .await?;
+
+        // Delete very old closed flows
+        let very_old_cutoff = cutoff - (7 * 24 * 3600); // 7 days older than idle threshold
+        let result = sqlx::query(
+            r#"
+            DELETE FROM sdwan_flows
+            WHERE status = 'closed' AND last_seen_at < ?
+            "#,
+        )
+        .bind(very_old_cutoff)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Get flow statistics summary
+    pub async fn get_flow_stats(&self) -> Result<FlowStats> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                COUNT(*) as total_flows,
+                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_flows,
+                SUM(bytes_tx) as total_bytes_tx,
+                SUM(bytes_rx) as total_bytes_rx,
+                SUM(packets_tx) as total_packets_tx,
+                SUM(packets_rx) as total_packets_rx
+            FROM sdwan_flows
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(FlowStats {
+            total_flows: row.try_get::<i64, _>("total_flows")? as u64,
+            active_flows: row.try_get::<i64, _>("active_flows")? as u64,
+            total_bytes_tx: row.try_get::<i64, _>("total_bytes_tx").unwrap_or(0) as u64,
+            total_bytes_rx: row.try_get::<i64, _>("total_bytes_rx").unwrap_or(0) as u64,
+            total_packets_tx: row.try_get::<i64, _>("total_packets_tx").unwrap_or(0) as u64,
+            total_packets_rx: row.try_get::<i64, _>("total_packets_rx").unwrap_or(0) as u64,
+        })
+    }
+
+    /// Helper function to convert a database row to FlowRecord
+    fn row_to_flow_record(&self, row: &sqlx::sqlite::SqliteRow) -> Result<FlowRecord> {
+        let started_at: i64 = row.try_get("started_at")?;
+        let last_seen_at: i64 = row.try_get("last_seen_at")?;
+
+        Ok(FlowRecord {
+            flow_id: row.try_get::<i64, _>("flow_id")?,
+            src_ip: row.try_get("src_ip")?,
+            dst_ip: row.try_get("dst_ip")?,
+            src_port: row.try_get::<i32, _>("src_port")? as u16,
+            dst_port: row.try_get::<i32, _>("dst_port")? as u16,
+            protocol: row.try_get::<i32, _>("protocol")? as u8,
+            path_id: row.try_get::<i64, _>("path_id")? as u64,
+            policy_id: row.try_get::<Option<i64>, _>("policy_id")?.map(|p| p as u64),
+            started_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(started_at as u64),
+            last_seen_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(last_seen_at as u64),
+            bytes_tx: row.try_get::<i64, _>("bytes_tx")? as u64,
+            bytes_rx: row.try_get::<i64, _>("bytes_rx")? as u64,
+            packets_tx: row.try_get::<i64, _>("packets_tx")? as u64,
+            packets_rx: row.try_get::<i64, _>("packets_rx")? as u64,
+            status: row.try_get("status")?,
+        })
     }
 }
 

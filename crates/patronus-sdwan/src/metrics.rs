@@ -4,6 +4,7 @@
 //! aggregating path metrics, system resources, and traffic statistics.
 
 use crate::{database::Database, types::*, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -24,7 +25,7 @@ const METRICS_RETENTION_DAYS: u64 = 30;
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(86400);
 
 /// System-wide metrics snapshot
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemMetrics {
     /// Timestamp of metrics collection
     pub timestamp: SystemTime,

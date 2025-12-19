@@ -12,13 +12,11 @@ echo "patronus:patronus" | chpasswd
 # Allow wheel group sudo without password
 echo "%wheel ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
-# Configure auto-login for patronus user
-mkdir -p /etc/systemd/system/getty@tty1.service.d/
-cat > /etc/systemd/system/getty@tty1.service.d/override.conf <<EOF
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty --autologin patronus --noclear %I \$TERM
-EOF
+# Configure auto-login for patronus user (OpenRC)
+# Modify /etc/inittab for autologin on tty1
+if [ -f /etc/inittab ]; then
+    sed -i 's|^c1:.*|c1:12345:respawn:/sbin/agetty --autologin patronus 38400 tty1 linux|' /etc/inittab
+fi
 
 # Create welcome script
 cat > /home/patronus/.bash_profile <<'EOF'
@@ -34,9 +32,8 @@ cat <<"WELCOME"
 Welcome to Patronus Firewall Live CD
 
 Quick Start:
-  - Configure network: sudo patronus network list
-  - Start firewall: sudo patronus firewall init
-  - Web interface: sudo patronus web (then visit http://this-ip:8080)
+  - View network interfaces: ip addr
+  - Configure DHCP: dhcpcd ethX
   - Install to disk: sudo patronus-install
 
 Default credentials:
@@ -44,33 +41,25 @@ Default credentials:
   Password: patronus
 
 WELCOME
-
-# Start web interface automatically
-echo "Starting Patronus web interface..."
-sudo systemctl start patronus-web
-echo "Web interface available at http://$(hostname -I | awk '{print $1}'):8080"
 EOF
 
 chown patronus:patronus /home/patronus/.bash_profile
 chmod +x /home/patronus/.bash_profile
 
-# Create installation script
-cat > /usr/local/bin/patronus-install <<'EOF'
+# Install the actual installer binary (installed by ebuild)
+# The patronus-install binary is provided by net-firewall/patronus-installer
+
+# Create convenience wrapper for TUI mode
+cat > /usr/local/bin/install-patronus <<'EOF'
 #!/bin/bash
-# Patronus installation script
-
-echo "Patronus Firewall Installation"
-echo "=============================="
-echo ""
-echo "This will install Patronus to your hard drive."
-echo "WARNING: This will erase the selected disk!"
-echo ""
-
-# TODO: Implement installation wizard
-echo "Installation wizard not yet implemented."
-echo "For manual installation, see: https://docs.patronus.dev/install"
+# Launch Patronus installer in TUI mode
+exec /usr/bin/patronus-install --tui "$@"
 EOF
+chmod +x /usr/local/bin/install-patronus
 
-chmod +x /usr/local/bin/patronus-install
+# Create symlink if patronus-install not in expected location
+if [ -f /usr/bin/patronus-install ]; then
+    ln -sf /usr/bin/patronus-install /usr/local/bin/patronus-install
+fi
 
 echo "Patronus LiveCD: Configuration complete"

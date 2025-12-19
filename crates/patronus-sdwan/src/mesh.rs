@@ -15,6 +15,120 @@ use tracing::{debug, error, info, warn};
 const MULTICAST_ADDR: &str = "239.255.42.1:51821";
 const ANNOUNCEMENT_INTERVAL: Duration = Duration::from_secs(30);
 const SITE_TIMEOUT: Duration = Duration::from_secs(120);
+const WIREGUARD_PORT: u16 = 51820;
+
+/// Discover network endpoints from system interfaces
+async fn discover_endpoints() -> Vec<Endpoint> {
+    let mut endpoints = Vec::new();
+
+    // Try to get interfaces from patronus-network
+    match patronus_network::list_interfaces().await {
+        Ok(interfaces) => {
+            for iface in interfaces {
+                // Skip loopback and disabled interfaces
+                if iface.name.starts_with("lo") || !iface.enabled {
+                    continue;
+                }
+
+                // Skip virtual interfaces (docker, veth, etc.)
+                if iface.name.starts_with("docker")
+                    || iface.name.starts_with("veth")
+                    || iface.name.starts_with("br-")
+                {
+                    continue;
+                }
+
+                for ip in &iface.ip_addresses {
+                    // Skip loopback and link-local addresses
+                    if ip.is_loopback() {
+                        continue;
+                    }
+
+                    // Skip link-local IPv4 (169.254.x.x) and IPv6 (fe80::)
+                    match ip {
+                        std::net::IpAddr::V4(v4) => {
+                            if v4.is_link_local() {
+                                continue;
+                            }
+                        }
+                        std::net::IpAddr::V6(v6) => {
+                            // Skip link-local IPv6 (fe80::/10)
+                            let octets = v6.octets();
+                            if octets[0] == 0xfe && (octets[1] & 0xc0) == 0x80 {
+                                continue;
+                            }
+                        }
+                    }
+
+                    let addr = SocketAddr::new(*ip, WIREGUARD_PORT);
+                    let (interface_type, cost_per_gb) = classify_interface(&iface.name);
+
+                    endpoints.push(Endpoint {
+                        address: addr,
+                        interface_type,
+                        cost_per_gb,
+                        reachable: true,
+                    });
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to discover interfaces: {}", e);
+        }
+    }
+
+    // If no endpoints were discovered, add a default fallback
+    if endpoints.is_empty() {
+        endpoints.push(Endpoint {
+            address: "0.0.0.0:51820".parse().unwrap(),
+            interface_type: "unknown".to_string(),
+            cost_per_gb: 0.0,
+            reachable: true,
+        });
+    }
+
+    endpoints
+}
+
+/// Classify interface type and estimate cost per GB
+fn classify_interface(name: &str) -> (String, f64) {
+    // Ethernet interfaces
+    if name.starts_with("eth") || name.starts_with("en") || name.starts_with("eno") {
+        return ("ethernet".to_string(), 0.0); // Free
+    }
+
+    // WiFi interfaces
+    if name.starts_with("wlan") || name.starts_with("wl") || name.starts_with("wifi") {
+        return ("wifi".to_string(), 0.0); // Usually free
+    }
+
+    // Cellular/LTE interfaces
+    if name.starts_with("wwan")
+        || name.starts_with("lte")
+        || name.starts_with("usb")
+        || name.starts_with("ppp")
+    {
+        return ("cellular".to_string(), 0.05); // Metered - ~$5/100GB
+    }
+
+    // Starlink/Satellite
+    if name.starts_with("starlink") || name.starts_with("sat") {
+        return ("satellite".to_string(), 0.01); // Lower cost than cellular
+    }
+
+    // WireGuard/VPN tunnels
+    if name.starts_with("wg") || name.starts_with("tun") || name.starts_with("tap") {
+        return ("tunnel".to_string(), 0.0);
+    }
+
+    // Bridge interfaces
+    if name.starts_with("br") || name.starts_with("virbr") {
+        return ("bridge".to_string(), 0.0);
+    }
+
+    // Unknown - assume wired
+    ("unknown".to_string(), 0.0)
+}
 
 /// Mesh manager handles site discovery and automatic VPN peering
 pub struct MeshManager {
@@ -166,20 +280,15 @@ impl MeshManager {
             while *running.read().await {
                 interval.tick().await;
 
+                // Discover endpoints from system interfaces
+                let discovered_endpoints = discover_endpoints().await;
+
                 // Create announcement
                 let announcement = SiteAnnouncement {
                     site_id,
                     site_name: site_name.clone(),
                     public_key: signing_key.verifying_key().to_bytes().to_vec(),
-                    endpoints: vec![
-                        // TODO: Discover actual endpoints
-                        Endpoint {
-                            address: "0.0.0.0:51820".parse().unwrap(),
-                            interface_type: "auto".to_string(),
-                            cost_per_gb: 0.0,
-                            reachable: true,
-                        }
-                    ],
+                    endpoints: discovered_endpoints,
                     capabilities: SiteCapabilities::default(),
                     timestamp: SystemTime::now(),
                     signature: Vec::new(), // Will be filled below

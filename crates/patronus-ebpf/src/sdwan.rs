@@ -97,15 +97,19 @@ impl SdwanFastPath {
     pub async fn add_route(&self, dest_ip: Ipv4Addr, tunnel_id: u32) -> Result<()> {
         // Verify tunnel exists
         let tunnels = self.tunnels.read().await;
-        let tunnel = tunnels.get(&tunnel_id)
+        let _tunnel = tunnels.get(&tunnel_id)
             .context("Tunnel not found")?;
 
         // Add to routing table
         let mut routing_table = self.routing_table.write().await;
         routing_table.insert(dest_ip, tunnel_id);
 
-        // TODO: Update XDP map with forwarding rule
-        // This would require extending XdpFirewall to support custom routing
+        // Update XDP map with forwarding rule for fast path
+        let mut xdp = self.xdp.write().await;
+        let dest_ip_u32: u32 = dest_ip.into();
+        if let Err(e) = xdp.update_routing_map(dest_ip_u32, tunnel_id) {
+            tracing::warn!("Failed to update XDP routing map: {} (fast path disabled for this route)", e);
+        }
 
         tracing::info!("Added route {} -> tunnel {}", dest_ip, tunnel_id);
         Ok(())
@@ -126,7 +130,13 @@ impl SdwanFastPath {
         if let Some(tunnel) = tunnels.get_mut(&tunnel_id) {
             tunnel.metrics = metrics.clone();
 
-            // TODO: Update XDP map with new metrics for dynamic path selection
+            // Update XDP map with new metrics for dynamic path selection
+            let mut xdp = self.xdp.write().await;
+            let packet_loss_pct = (metrics.packet_loss * 100.0) as u32;
+            if let Err(e) = xdp.update_metrics_map(tunnel_id, metrics.latency_ms, packet_loss_pct) {
+                tracing::debug!("Failed to update XDP metrics map: {} (fast path may use stale metrics)", e);
+            }
+
             tracing::debug!("Updated metrics for tunnel {}: latency={}ms, loss={:.2}%",
                 tunnel_id, metrics.latency_ms, metrics.packet_loss);
         }

@@ -938,8 +938,35 @@ impl MutationRoot {
             None,
         ).await;
 
-        // TODO: Trigger immediate probe via path monitor
-        // For now, we just return the current metrics
+        // Trigger immediate health check via health monitor
+        // Get target IP from path endpoints (use destination site's first endpoint)
+        let dst_site = state.db.get_site(&path.dst_site).await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to get destination site: {}", e)))?
+            .ok_or_else(|| async_graphql::Error::new("Destination site not found"))?;
+
+        // Try to get target IP from endpoints, default to cached metrics if no endpoints
+        let health_result = if let Some(endpoint) = dst_site.endpoints.first() {
+            // Execute real health check
+            state.health_monitor.check_path_health(&pid, endpoint.address.ip()).await.ok()
+        } else {
+            // No endpoints available, get cached health
+            state.health_monitor.get_path_health(&pid).await
+        };
+
+        // If health status changed, trigger routing reevaluation
+        if let Some(ref health) = health_result {
+            use patronus_sdwan::health::PathStatus as HealthPathStatus;
+            let new_status = match health.status {
+                HealthPathStatus::Up => patronus_sdwan::types::PathStatus::Up,
+                HealthPathStatus::Degraded => patronus_sdwan::types::PathStatus::Degraded,
+                HealthPathStatus::Down => patronus_sdwan::types::PathStatus::Down,
+            };
+
+            if path.status != new_status {
+                let _ = state.db.update_path_status(pid, new_status).await;
+                let _ = state.routing_engine.reevaluate_all_flows().await;
+            }
+        }
 
         let result = GqlPath {
             id: path.id.as_u64().to_string(),
@@ -1024,7 +1051,9 @@ impl MutationRoot {
             }),
         });
 
-        // TODO: Trigger routing engine to reroute traffic
+        // Trigger routing engine to reevaluate all flows and reroute traffic
+        state.routing_engine.reevaluate_all_flows().await
+            .map_err(|e| async_graphql::Error::new(format!("Failed to reevaluate flows: {}", e)))?;
 
         Ok(true)
     }

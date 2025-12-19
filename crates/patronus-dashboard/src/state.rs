@@ -1,6 +1,14 @@
 //! Application state
 
-use patronus_sdwan::{database::Database, netpolicy::PolicyEnforcer, metrics::MetricsCollector, traffic_stats::TrafficStatsCollector};
+use patronus_sdwan::{
+    database::Database,
+    failover::FailoverEngine,
+    health::{HealthConfig, HealthMonitor},
+    metrics::MetricsCollector,
+    netpolicy::PolicyEnforcer,
+    routing::RoutingEngine,
+    traffic_stats::TrafficStatsCollector,
+};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,6 +63,15 @@ pub struct AppState {
 
     /// Active WebSocket connections counter
     pub ws_connections: Arc<RwLock<u64>>,
+
+    /// SD-WAN routing engine for intelligent path selection
+    pub routing_engine: Arc<RoutingEngine>,
+
+    /// Health monitor for path health checking
+    pub health_monitor: Arc<HealthMonitor>,
+
+    /// Failover engine for automatic path failover
+    pub failover_engine: Arc<FailoverEngine>,
 }
 
 impl AppState {
@@ -94,6 +111,25 @@ impl AppState {
         let (metrics_tx, _) = tokio::sync::broadcast::channel(100);
         let (events_tx, _) = tokio::sync::broadcast::channel(100);
 
+        // Create SD-WAN routing engine with NetworkPolicy integration
+        let routing_engine = Arc::new(
+            RoutingEngine::with_netpolicy_enforcement(db.clone(), policy_enforcer.clone())
+        );
+        routing_engine.start().await?;
+
+        // Create health monitor
+        let health_config = HealthConfig::default();
+        let health_monitor = Arc::new(
+            HealthMonitor::new(db.clone(), health_config)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to create health monitor: {}", e))?
+        );
+
+        // Create failover engine with health monitoring integration
+        let failover_engine = Arc::new(
+            FailoverEngine::new(db.clone(), health_monitor.clone())
+        );
+
         Ok(Self {
             db,
             policy_enforcer,
@@ -107,6 +143,9 @@ impl AppState {
             metrics_tx,
             events_tx,
             ws_connections: Arc::new(RwLock::new(0)),
+            routing_engine,
+            health_monitor,
+            failover_engine,
         })
     }
 }

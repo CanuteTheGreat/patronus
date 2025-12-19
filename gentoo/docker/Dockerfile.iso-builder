@@ -1,0 +1,28 @@
+# Dockerfile for building Patronus LiveCD ISO
+# Uses Gentoo stage3 as base and builds a minimal bootable ISO
+
+FROM gentoo/stage3:amd64-systemd
+
+# Install build dependencies
+RUN emerge-webrsync && \
+    emerge --oneshot --quiet \
+        dev-util/catalyst \
+        app-cdr/cdrtools \
+        sys-fs/squashfs-tools \
+        sys-boot/syslinux \
+        sys-boot/grub:2 \
+        dev-vcs/git \
+        virtual/rust \
+        sys-fs/dosfstools \
+        sys-fs/mtools
+
+# Create build directories
+RUN mkdir -p /var/tmp/catalyst/builds /var/tmp/catalyst/snapshots /build/iso
+
+# Copy portage config
+COPY catalyst/portage /etc/portage/
+
+WORKDIR /build
+
+# Entry point for building
+ENTRYPOINT ["/build/scripts/build-iso-docker.sh"]

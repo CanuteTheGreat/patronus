@@ -293,6 +293,113 @@ pub enum PortSpec {
     Name(String),
 }
 
+impl PortSpec {
+    /// Resolve port specification to a port number
+    ///
+    /// Named ports are resolved using IANA service name mappings.
+    /// Returns None if the name cannot be resolved.
+    pub fn resolve(&self) -> Option<u16> {
+        match self {
+            PortSpec::Number(n) => Some(*n),
+            PortSpec::Name(name) => resolve_named_port(name),
+        }
+    }
+}
+
+/// Resolve a named port to its numeric value
+///
+/// Supports common IANA service names as well as Kubernetes container port names.
+/// See: https://www.iana.org/assignments/service-names-port-numbers
+pub fn resolve_named_port(name: &str) -> Option<u16> {
+    match name.to_lowercase().as_str() {
+        // Web protocols
+        "http" => Some(80),
+        "https" => Some(443),
+        "http-alt" | "http-proxy" => Some(8080),
+
+        // Email protocols
+        "smtp" => Some(25),
+        "smtps" => Some(465),
+        "submission" => Some(587),
+        "imap" => Some(143),
+        "imaps" => Some(993),
+        "pop3" => Some(110),
+        "pop3s" => Some(995),
+
+        // Remote access
+        "ssh" => Some(22),
+        "telnet" => Some(23),
+        "rdp" => Some(3389),
+        "vnc" => Some(5900),
+
+        // File transfer
+        "ftp" => Some(21),
+        "ftp-data" => Some(20),
+        "sftp" => Some(22), // Uses SSH
+        "tftp" => Some(69),
+
+        // DNS and directory
+        "dns" | "domain" => Some(53),
+        "ldap" => Some(389),
+        "ldaps" => Some(636),
+
+        // Database
+        "mysql" => Some(3306),
+        "postgresql" | "postgres" => Some(5432),
+        "mongodb" | "mongo" => Some(27017),
+        "redis" => Some(6379),
+        "memcached" | "memcache" => Some(11211),
+        "elasticsearch" => Some(9200),
+        "cassandra" => Some(9042),
+
+        // Message queues
+        "amqp" | "rabbitmq" => Some(5672),
+        "amqps" => Some(5671),
+        "kafka" => Some(9092),
+        "nats" => Some(4222),
+
+        // Container orchestration
+        "kube-api" | "kubernetes" => Some(6443),
+        "kubelet" => Some(10250),
+        "etcd" => Some(2379),
+        "etcd-peer" => Some(2380),
+        "docker" => Some(2375),
+        "docker-tls" => Some(2376),
+
+        // Monitoring
+        "prometheus" => Some(9090),
+        "grafana" => Some(3000),
+        "node-exporter" => Some(9100),
+        "jaeger" | "jaeger-collector" => Some(14268),
+        "zipkin" => Some(9411),
+
+        // Networking
+        "ntp" => Some(123),
+        "snmp" => Some(161),
+        "snmp-trap" => Some(162),
+        "syslog" => Some(514),
+        "rsyslog" => Some(514),
+        "bgp" => Some(179),
+        "dhcp" | "dhcps" => Some(67),
+        "dhcpc" => Some(68),
+
+        // Misc
+        "grpc" => Some(50051),
+        "envoy-admin" => Some(9901),
+        "consul" => Some(8500),
+        "vault" => Some(8200),
+        "minio" => Some(9000),
+
+        // WireGuard/VPN (Patronus SD-WAN)
+        "wireguard" | "wg" => Some(51820),
+        "patronus-control" => Some(51821),
+        "patronus-data" => Some(51822),
+
+        // Unknown
+        _ => None,
+    }
+}
+
 /// Policy evaluation verdict
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PolicyVerdict {
@@ -556,26 +663,26 @@ impl PolicyEnforcer {
 
         // Check port
         if let Some(rule_port) = &port_rule.port {
-            match rule_port {
-                PortSpec::Number(num) => {
-                    if *num != port {
+            // Resolve the port (handles both numeric and named ports)
+            if let Some(resolved_port) = rule_port.resolve() {
+                // Single port match or start of port range
+                if port_rule.end_port.is_none() && resolved_port != port {
+                    return false;
+                }
+
+                // Port range check
+                if let Some(end_port) = port_rule.end_port {
+                    if port < resolved_port || port > end_port {
                         return false;
                     }
                 }
-                PortSpec::Name(_name) => {
-                    // TODO: Implement named port resolution
-                    // Would require service port mapping
-                    return true;
-                }
-            }
-        }
-
-        // Check port range
-        if let Some(end_port) = port_rule.end_port {
-            if let Some(PortSpec::Number(start_port)) = &port_rule.port {
-                if port < *start_port || port > end_port {
-                    return false;
-                }
+            } else {
+                // Named port could not be resolved - log warning and deny
+                debug!(
+                    "Could not resolve named port '{:?}' - denying match",
+                    rule_port
+                );
+                return false;
             }
         }
 

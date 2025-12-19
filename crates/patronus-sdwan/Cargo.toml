@@ -7,6 +7,9 @@ description = "SD-WAN mesh networking for Patronus firewall"
 license = "MIT"
 
 [dependencies]
+# Internal dependencies
+patronus-network = { path = "../patronus-network" }
+
 # Async runtime
 tokio = { version = "1.40", features = ["full"] }
 tokio-util = "0.7"
@@ -50,6 +53,9 @@ thiserror = "1.0"
 # Compression
 lz4 = "1.24"
 
+# TUN device for dataplane
+tun = { version = "0.7", optional = true }
+
 [dev-dependencies]
 tokio-test = "0.4"
 
@@ -67,6 +73,7 @@ optional = true
 [features]
 default = []
 cli = ["clap", "nix"]
+dataplane = ["tun"]
 
 [[example]]
 name = "sdwan_cli"

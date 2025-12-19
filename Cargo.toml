@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/patronus-core",
+    "crates/patronus-installer",
     "crates/patronus-web",
     "crates/patronus-firewall",
     "crates/patronus-network",

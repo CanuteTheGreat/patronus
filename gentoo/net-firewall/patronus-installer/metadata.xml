@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+	<maintainer type="project">
+		<email>patronus@example.com</email>
+		<name>Patronus Team</name>
+	</maintainer>
+	<longdescription lang="en">
+		Patronus Installer is a full-featured TUI/CLI installer for
+		the Patronus firewall and SD-WAN system. It provides:
+
+		- Interactive terminal-based installation wizard
+		- Automatic disk detection and partitioning
+		- UEFI and BIOS boot support
+		- Multiple filesystem support (ext4, btrfs, xfs)
+		- Network configuration
+		- Service configuration
+		- Unattended installation via config file
+	</longdescription>
+	<upstream>
+		<remote-id type="github">yourusername/patronus</remote-id>
+		<bugs-to>https://github.com/yourusername/patronus/issues</bugs-to>
+		<doc>https://docs.patronus.dev</doc>
+	</upstream>
+</pkgmetadata>
