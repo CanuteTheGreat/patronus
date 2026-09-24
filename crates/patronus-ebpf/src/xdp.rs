@@ -515,7 +515,7 @@ char _license[] SEC("license") = "GPL";
         let fd = unsafe {
             bpf::bpf_map_create(
                 bpf::BPF_MAP_TYPE_HASH,
-                name.as_ptr() as *const i8,
+                name.as_ptr(),
                 std::mem::size_of::<u32>() as u32,
                 std::mem::size_of::<u64>() as u32,
                 max_entries,
@@ -547,7 +547,7 @@ char _license[] SEC("license") = "GPL";
         let fd = unsafe {
             bpf::bpf_map_create(
                 bpf::BPF_MAP_TYPE_ARRAY,
-                name.as_ptr() as *const i8,
+                name.as_ptr(),
                 std::mem::size_of::<u32>() as u32,
                 std::mem::size_of::<u64>() as u32,
                 max_entries,
