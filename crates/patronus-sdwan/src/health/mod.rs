@@ -13,15 +13,19 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use patronus_sdwan::health::HealthMonitor;
+//! use std::net::IpAddr;
+//! use std::sync::Arc;
+//! use patronus_sdwan::database::Database;
+//! use patronus_sdwan::health::{HealthMonitor, HealthConfig};
 //! use patronus_sdwan::types::PathId;
 //!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let monitor = HealthMonitor::new(db).await?;
+//! # async fn example(db: Arc<Database>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//! let monitor = HealthMonitor::new(db, HealthConfig::default()).await?;
 //!
 //! // Check path health
-//! let path_id = PathId::new();
-//! let health = monitor.check_path_health(&path_id).await?;
+//! let path_id = PathId::new(1);
+//! let target: IpAddr = "10.0.0.1".parse().unwrap();
+//! let health = monitor.check_path_health(&path_id, target).await?;
 //!
 //! println!("Path health score: {}", health.health_score);
 //! println!("Status: {:?}", health.status);
