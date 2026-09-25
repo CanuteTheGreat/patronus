@@ -370,9 +370,14 @@ Patronus supports all Gentoo architectures:
 
 - **amd64 (x86_64)** - Full support with AES-NI acceleration
 - **arm64 (aarch64)** - Optimized for ARM servers and SBCs (Raspberry Pi 4+)
-- **riscv64** - Full RISC-V support
+- **riscv64** - Cross-compiled and CI-tested, but not yet validated on real hardware
 
 Use the `arch-native` USE flag for CPU-specific optimizations.
+
+> **Hardware note:** riscv64 builds pass CI via cross-compilation (`cross`), but
+> we have no physical RISC-V hardware to run/test on yet. If you have riscv64
+> hardware (e.g. VisionFive 2, Milk-V, StarFive) and can test/report back, please
+> open an issue — real-world validation on this architecture is genuinely needed.
 
 ### Quick Configuration Examples
 
