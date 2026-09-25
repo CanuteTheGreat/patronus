@@ -7,4 +7,4 @@ inherit acct-group
 
 DESCRIPTION="System group for net-firewall/patronus"
 
-GROUP_ID="-1"
+ACCT_GROUP_ID=-1
