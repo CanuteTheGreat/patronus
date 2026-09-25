@@ -1,0 +1,14 @@
+target/
+**/target/
+.git/
+.gitignore
+*.md
+!README.md
+docs/
+tests/
+**/tests/
+examples/
+*.log
+logs/
+.env
+.env.*
