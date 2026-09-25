@@ -1,0 +1,114 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Format Check
+    runs-on: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy (non-eBPF crates)
+    runs-on: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-clippy-
+      - name: Run clippy
+        run: cargo clippy --workspace --exclude patronus-ebpf --all-targets -- -D warnings
+
+  test:
+    name: Test (non-eBPF crates)
+    runs-on: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+      - name: Run tests
+        run: cargo test --workspace --exclude patronus-ebpf
+
+  check-ebpf:
+    name: Check eBPF crate (compile only, no run)
+    runs-on: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install libbpf headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libbpf-dev linux-headers-generic
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-ebpf-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-ebpf-
+      - name: cargo check patronus-ebpf
+        run: cargo check -p patronus-ebpf --all-targets
+
+  check-full-workspace:
+    name: Check full 48-crate workspace (best-effort)
+    runs-on: x86_64
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install libbpf headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libbpf-dev linux-headers-generic
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-full-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-full-
+      - name: cargo check --workspace --all-targets --keep-going
+        run: cargo check --workspace --all-targets --keep-going
