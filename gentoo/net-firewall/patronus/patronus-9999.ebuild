@@ -28,12 +28,12 @@ IUSE="
 	+dhcp +dns +unbound bind dnsmasq
 	+vpn wireguard openvpn ipsec
 	+multiwan
-	+ha ucarp keepalived vrrpd
+	ha ucarp keepalived vrrpd
 	+monitoring prometheus ntopng netflow collectd
 	+captive-portal
-	+intrusion-detection suricata snort
+	intrusion-detection suricata snort
 	vlan qos +tc
-	+certificates acme certbot
+	certificates acme certbot
 	ldap radius totp
 	geoip geoip2
 	+aliases
