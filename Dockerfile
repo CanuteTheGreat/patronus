@@ -22,7 +22,7 @@ RUN mkdir -p /etc/portage/repos.conf && \
     printf '[patronus]\nlocation = /var/db/repos/patronus-overlay\npriority = 50\n' \
     > /etc/portage/repos.conf/patronus-overlay.conf
 
-RUN echo "net-firewall/patronus ${PATRONUS_USE}" > /etc/portage/package.use/patronus-docker-build
+RUN echo "net-firewall/patronus ${PATRONUS_USE} -openrc" > /etc/portage/package.use/patronus-docker-build
 RUN echo "net-firewall/patronus ~amd64" > /etc/portage/package.accept_keywords/patronus
 
 # The live ebuild (patronus-9999) fetches via git-r3 from this project's own
