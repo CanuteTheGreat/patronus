@@ -1,0 +1,124 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-release:
+    name: Build Release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+            cross: false
+          - target: x86_64-unknown-linux-musl
+            archive: tar.gz
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            archive: tar.gz
+            cross: true
+          - target: aarch64-unknown-linux-musl
+            archive: tar.gz
+            cross: true
+          - target: riscv64gc-unknown-linux-gnu
+            archive: tar.gz
+            cross: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl') && !matrix.cross
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-${{ matrix.target }}-
+
+      # Building only the two user-facing binaries this release ships:
+      # patronus-web (the server) and patronus-cli. Other crates
+      # (patronus-ebpf especially) need kernel/eBPF headers not available
+      # in this generic cross-compile environment - see rust-ci.yml's
+      # --exclude patronus-ebpf for the same constraint on the test side.
+      - name: Build web server
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} -p patronus-web
+          else
+            cargo build --release --target ${{ matrix.target }} -p patronus-web
+          fi
+
+      - name: Build CLI
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} -p patronus-cli
+          else
+            cargo build --release --target ${{ matrix.target }} -p patronus-cli
+          fi
+
+      - name: Create archive
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/patronus-web dist/
+          cp target/${{ matrix.target }}/release/patronus-cli dist/
+          cp README.md LICENSE dist/ 2>/dev/null || true
+          cp -r docs dist/ 2>/dev/null || true
+          cd dist
+          tar -czvf ../patronus-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }} *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: patronus-${{ matrix.target }}
+          path: patronus-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
+
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build-release]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          echo "## Changes" > CHANGELOG.md
+          git log --pretty=format:"- %s" $(git describe --tags --abbrev=0 HEAD^)..HEAD >> CHANGELOG.md 2>/dev/null || echo "- Initial release" >> CHANGELOG.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: CHANGELOG.md
+          files: |
+            artifacts/**/*.tar.gz
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
