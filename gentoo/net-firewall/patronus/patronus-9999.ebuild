@@ -137,7 +137,7 @@ src_configure() {
 		$(usex ipsec "ipsec" "")
 		$(usex multiwan "multiwan" "")
 		$(usex ha "ha" "")
-		$(usex carp "carp" "")
+		$(usex ucarp "carp" "")
 		$(usex monitoring "monitoring" "")
 		$(usex prometheus "prometheus" "")
 		$(usex ntopng "ntopng" "")
