@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libmnl-dev libnftnl-dev
+          sudo apt-get install -y libmnl-dev libnftnl-dev libssl-dev pkg-config
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -58,7 +58,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libmnl-dev libnftnl-dev
+          sudo apt-get install -y libmnl-dev libnftnl-dev libssl-dev pkg-config
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -82,7 +82,7 @@ jobs:
       - name: Install libbpf headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev
+          sudo apt-get install -y libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev libssl-dev pkg-config
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -107,7 +107,7 @@ jobs:
       - name: Install libbpf headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev
+          sudo apt-get install -y libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev libssl-dev pkg-config
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -120,3 +120,16 @@ jobs:
             ${{ runner.os }}-cargo-full-
       - name: cargo check --workspace --all-targets --keep-going
         run: cargo check --workspace --all-targets --keep-going
+
+  gentoo-docker-build:
+    name: Gentoo Docker Build
+    runs-on: x86_64
+    needs: fmt
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Gentoo/Portage image
+        run: docker build -t patronus/web:${{ github.sha }} .
+
+      - name: Smoke-test the built image
+        run: docker run --rm patronus/web:${{ github.sha }} --version || docker run --rm patronus/web:${{ github.sha }} --help
