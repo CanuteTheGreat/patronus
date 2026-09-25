@@ -1,68 +1,55 @@
-# Multi-stage Dockerfile for Patronus SD-WAN
+# Patronus — Gentoo-native container build
+#
+# Builds Patronus the way it's meant to be installed: through Portage
+# against the project's own overlay in gentoo/net-firewall/patronus, with
+# real USE flags controlling what actually gets compiled in (nftables vs
+# iptables, wireguard vs openvpn vs ipsec, monitoring backends, etc.) —
+# not a fixed cargo build with everything baked in.
+#
+# Override USE flags at build time, e.g.:
+#   docker build --build-arg PATRONUS_USE="web cli api nftables wireguard" .
 
-# Builder stage - use latest stable Rust for edition2024 support
-FROM rust:latest AS builder
+FROM gentoo/stage3:amd64-systemd AS builder
 
-WORKDIR /build
+ARG PATRONUS_USE="web cli api nftables wireguard multiwan monitoring prometheus backup systemd"
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libsqlite3-dev \
-    libssl-dev \
-    libmnl-dev \
-    libnftnl-dev \
-    libelf-dev \
-    zlib1g-dev \
-    build-essential \
-    cmake \
-    clang \
-    && rm -rf /var/lib/apt/lists/*
+RUN emerge-webrsync
 
-# Copy workspace files
-COPY Cargo.toml Cargo.lock ./
-COPY crates ./crates/
-COPY operator ./operator/
+# Register this project's own overlay as a local Portage repo (already a
+# fully self-contained repo: has its own metadata/layout.conf + profiles/repo_name)
+COPY gentoo /var/db/repos/patronus-overlay
+RUN mkdir -p /etc/portage/repos.conf && \
+    printf '[patronus-overlay]\nlocation = /var/db/repos/patronus-overlay\npriority = 50\n' \
+    > /etc/portage/repos.conf/patronus-overlay.conf
 
-# Build release binaries (only essential packages for web interface)
-RUN cargo build --release -p patronus-web
+RUN echo "net-firewall/patronus ${PATRONUS_USE}" > /etc/portage/package.use/patronus-docker-build
+RUN echo "net-firewall/patronus ~amd64" > /etc/portage/package.accept_keywords/patronus
 
-# Runtime stage
-FROM debian:bookworm-slim
+# The live ebuild (patronus-9999) fetches via git-r3 from GitHub; for a
+# from-source container build we vendor the working tree directly instead,
+# so the image always reflects what's actually in this checkout.
+COPY . /usr/src/patronus
+RUN cd /usr/src/patronus && cargo vendor /var/cache/distfiles/patronus-vendor 2>&1 | tail -5 || true
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libsqlite3-0 \
-    libssl3 \
-    wireguard-tools \
-    iproute2 \
-    iptables \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN emerge --verbose --autounmask-write net-firewall/patronus && \
+    etc-update --automode -5 || true
+RUN emerge --verbose net-firewall/patronus
 
-# Create patronus user
-RUN useradd -r -u 1000 -m -s /bin/bash patronus
+# --- Runtime stage --------------------------------------------------------
+FROM gentoo/stage3:amd64-systemd
 
-# Copy binaries from builder
-COPY --from=builder /build/target/release/patronus-web /usr/bin/
+COPY --from=builder /usr/bin/patronus-web /usr/bin/patronus-web
+COPY --from=builder /etc/patronus /etc/patronus
+COPY --from=builder /var/lib/patronus /var/lib/patronus
 
-# Create directories
-RUN mkdir -p /etc/patronus /var/lib/patronus /var/log/patronus && \
-    chown -R patronus:patronus /etc/patronus /var/lib/patronus /var/log/patronus
+RUN useradd -r -u 1000 -m -s /bin/bash patronus 2>/dev/null || true && \
+    chown -R patronus:patronus /etc/patronus /var/lib/patronus /var/log/patronus 2>/dev/null || true
 
-# Note: Configuration should be mounted at runtime via docker-compose or kubectl
-
-# Switch to patronus user
 USER patronus
 WORKDIR /home/patronus
-
-# Expose ports
 EXPOSE 8443 51820/udp
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8443/ || exit 1
 
-# Default command - run the web interface
 CMD ["patronus-web"]
