@@ -19,7 +19,7 @@ RUN emerge-webrsync
 # fully self-contained repo: has its own metadata/layout.conf + profiles/repo_name)
 COPY gentoo /var/db/repos/patronus-overlay
 RUN mkdir -p /etc/portage/repos.conf && \
-    printf '[patronus-overlay]\nlocation = /var/db/repos/patronus-overlay\npriority = 50\n' \
+    printf '[patronus]\nlocation = /var/db/repos/patronus-overlay\npriority = 50\n' \
     > /etc/portage/repos.conf/patronus-overlay.conf
 
 RUN echo "net-firewall/patronus ${PATRONUS_USE}" > /etc/portage/package.use/patronus-docker-build
