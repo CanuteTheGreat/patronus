@@ -10,9 +10,9 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MplsServiceClass {
-    RealTime,      // Voice, video conferencing
-    Business,      // Business-critical apps
-    BestEffort,    // Internet traffic
+    RealTime,   // Voice, video conferencing
+    Business,   // Business-critical apps
+    BestEffort, // Internet traffic
 }
 
 impl MplsServiceClass {
@@ -27,16 +27,16 @@ impl MplsServiceClass {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MplsLabel {
-    pub label: u32,  // 20-bit label
-    pub exp: u8,     // 3-bit experimental (QoS)
-    pub ttl: u8,     // Time to live
+    pub label: u32, // 20-bit label
+    pub exp: u8,    // 3-bit experimental (QoS)
+    pub ttl: u8,    // Time to live
 }
 
 impl MplsLabel {
     pub fn new(label: u32, exp: u8, ttl: u8) -> Self {
         Self {
-            label: label & 0xFFFFF,  // Mask to 20 bits
-            exp: exp & 0x7,           // Mask to 3 bits
+            label: label & 0xFFFFF, // Mask to 20 bits
+            exp: exp & 0x7,         // Mask to 3 bits
             ttl,
         }
     }
@@ -180,7 +180,10 @@ impl MplsManager {
         lsps.values().filter(|l| l.active).cloned().collect()
     }
 
-    pub async fn get_lsps_by_service_class(&self, class: &MplsServiceClass) -> Vec<LabelSwitchedPath> {
+    pub async fn get_lsps_by_service_class(
+        &self,
+        class: &MplsServiceClass,
+    ) -> Vec<LabelSwitchedPath> {
         let lsps = self.lsps.read().await;
         lsps.values()
             .filter(|l| &l.service_class == class)
@@ -222,12 +225,17 @@ impl MplsManager {
 
     pub async fn list_connected_providers(&self) -> Vec<ProviderConnection> {
         let connections = self.connections.read().await;
-        connections.values().filter(|c| c.connected).cloned().collect()
+        connections
+            .values()
+            .filter(|c| c.connected)
+            .cloned()
+            .collect()
     }
 
     pub async fn get_total_provider_bandwidth(&self) -> f64 {
         let connections = self.connections.read().await;
-        connections.values()
+        connections
+            .values()
             .filter(|c| c.connected)
             .map(|c| c.bandwidth_mbps)
             .sum()
@@ -262,8 +270,8 @@ mod tests {
     #[test]
     fn test_mpls_label_masking() {
         let label = MplsLabel::new(0xFFFFFFFF, 0xFF, 64);
-        assert_eq!(label.label, 0xFFFFF);  // 20 bits
-        assert_eq!(label.exp, 0x7);         // 3 bits
+        assert_eq!(label.label, 0xFFFFF); // 20 bits
+        assert_eq!(label.exp, 0x7); // 3 bits
     }
 
     #[test]
@@ -321,13 +329,15 @@ mod tests {
     async fn test_mpls_manager_create_lsp() {
         let manager = MplsManager::new();
 
-        let lsp_id = manager.create_lsp(
-            "test-lsp".to_string(),
-            "r1".to_string(),
-            "r2".to_string(),
-            1000.0,
-            MplsServiceClass::Business,
-        ).await;
+        let lsp_id = manager
+            .create_lsp(
+                "test-lsp".to_string(),
+                "r1".to_string(),
+                "r2".to_string(),
+                1000.0,
+                MplsServiceClass::Business,
+            )
+            .await;
 
         let lsp = manager.get_lsp(&lsp_id).await;
         assert!(lsp.is_some());
@@ -337,13 +347,15 @@ mod tests {
     #[tokio::test]
     async fn test_activate_lsp() {
         let manager = MplsManager::new();
-        let lsp_id = manager.create_lsp(
-            "test".to_string(),
-            "r1".to_string(),
-            "r2".to_string(),
-            1000.0,
-            MplsServiceClass::RealTime,
-        ).await;
+        let lsp_id = manager
+            .create_lsp(
+                "test".to_string(),
+                "r1".to_string(),
+                "r2".to_string(),
+                1000.0,
+                MplsServiceClass::RealTime,
+            )
+            .await;
 
         assert!(manager.activate_lsp(&lsp_id).await);
 
@@ -354,13 +366,15 @@ mod tests {
     #[tokio::test]
     async fn test_add_label_to_lsp() {
         let manager = MplsManager::new();
-        let lsp_id = manager.create_lsp(
-            "test".to_string(),
-            "r1".to_string(),
-            "r2".to_string(),
-            1000.0,
-            MplsServiceClass::Business,
-        ).await;
+        let lsp_id = manager
+            .create_lsp(
+                "test".to_string(),
+                "r1".to_string(),
+                "r2".to_string(),
+                1000.0,
+                MplsServiceClass::Business,
+            )
+            .await;
 
         let label = MplsLabel::new(12345, 3, 64);
         assert!(manager.add_label_to_lsp(&lsp_id, label).await);
@@ -374,21 +388,25 @@ mod tests {
     async fn test_list_active_lsps() {
         let manager = MplsManager::new();
 
-        let lsp1 = manager.create_lsp(
-            "lsp1".to_string(),
-            "r1".to_string(),
-            "r2".to_string(),
-            1000.0,
-            MplsServiceClass::RealTime,
-        ).await;
+        let lsp1 = manager
+            .create_lsp(
+                "lsp1".to_string(),
+                "r1".to_string(),
+                "r2".to_string(),
+                1000.0,
+                MplsServiceClass::RealTime,
+            )
+            .await;
 
-        let lsp2 = manager.create_lsp(
-            "lsp2".to_string(),
-            "r2".to_string(),
-            "r3".to_string(),
-            2000.0,
-            MplsServiceClass::Business,
-        ).await;
+        let lsp2 = manager
+            .create_lsp(
+                "lsp2".to_string(),
+                "r2".to_string(),
+                "r3".to_string(),
+                2000.0,
+                MplsServiceClass::Business,
+            )
+            .await;
 
         manager.activate_lsp(&lsp1).await;
 
@@ -401,31 +419,39 @@ mod tests {
     async fn test_get_lsps_by_service_class() {
         let manager = MplsManager::new();
 
-        manager.create_lsp(
-            "rt1".to_string(),
-            "r1".to_string(),
-            "r2".to_string(),
-            1000.0,
-            MplsServiceClass::RealTime,
-        ).await;
+        manager
+            .create_lsp(
+                "rt1".to_string(),
+                "r1".to_string(),
+                "r2".to_string(),
+                1000.0,
+                MplsServiceClass::RealTime,
+            )
+            .await;
 
-        manager.create_lsp(
-            "biz1".to_string(),
-            "r2".to_string(),
-            "r3".to_string(),
-            2000.0,
-            MplsServiceClass::Business,
-        ).await;
+        manager
+            .create_lsp(
+                "biz1".to_string(),
+                "r2".to_string(),
+                "r3".to_string(),
+                2000.0,
+                MplsServiceClass::Business,
+            )
+            .await;
 
-        manager.create_lsp(
-            "rt2".to_string(),
-            "r3".to_string(),
-            "r4".to_string(),
-            1500.0,
-            MplsServiceClass::RealTime,
-        ).await;
+        manager
+            .create_lsp(
+                "rt2".to_string(),
+                "r3".to_string(),
+                "r4".to_string(),
+                1500.0,
+                MplsServiceClass::RealTime,
+            )
+            .await;
 
-        let realtime = manager.get_lsps_by_service_class(&MplsServiceClass::RealTime).await;
+        let realtime = manager
+            .get_lsps_by_service_class(&MplsServiceClass::RealTime)
+            .await;
         assert_eq!(realtime.len(), 2);
     }
 

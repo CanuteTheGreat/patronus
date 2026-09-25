@@ -5,13 +5,10 @@
 //
 // Sprint 25: All mutations include audit logging for compliance tracking
 
+use crate::graphql::{get_state, types::*};
+use crate::security::audit::AuditEvent;
 use async_graphql::{Context, Object, Result};
 use chrono::Utc;
-use crate::graphql::{
-    types::*,
-    get_state,
-};
-use crate::security::audit::AuditEvent;
 
 /// Helper function to get user info from auth context for audit logging
 fn get_audit_user_info(ctx: &Context<'_>) -> (Option<String>, Option<String>) {
@@ -31,11 +28,7 @@ impl MutationRoot {
     // ========== Site Mutations ==========
 
     /// Create a new site
-    async fn create_site(
-        &self,
-        ctx: &Context<'_>,
-        input: CreateSiteInput,
-    ) -> Result<GqlSite> {
+    async fn create_site(&self, ctx: &Context<'_>, input: CreateSiteInput) -> Result<GqlSite> {
         // Require operator or admin role
         let _auth = crate::graphql::require_min_role(ctx, crate::auth::users::UserRole::Operator)?;
 
@@ -61,22 +54,28 @@ impl MutationRoot {
         };
 
         // Insert into database
-        state.db.upsert_site(&site).await
+        state
+            .db
+            .upsert_site(&site)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create site: {}", e)))?;
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
         let user_email_for_event = user_email.clone(); // Clone for event broadcasting (Sprint 28)
-        let _ = state.audit_logger.log(
-            AuditEvent::SiteCreate {
-                site_id: site_id.to_string(),
-                site_name: input.name.clone(),
-            },
-            user_id,
-            user_email,
-            None, // IP address
-            None, // User agent
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(
+                AuditEvent::SiteCreate {
+                    site_id: site_id.to_string(),
+                    site_name: input.name.clone(),
+                },
+                user_id,
+                user_email,
+                None, // IP address
+                None, // User agent
+            )
+            .await;
 
         let result = GqlSite {
             id: site_id.to_string(),
@@ -104,11 +103,7 @@ impl MutationRoot {
     }
 
     /// Update an existing site
-    async fn update_site(
-        &self,
-        ctx: &Context<'_>,
-        input: UpdateSiteInput,
-    ) -> Result<GqlSite> {
+    async fn update_site(&self, ctx: &Context<'_>, input: UpdateSiteInput) -> Result<GqlSite> {
         // Require operator or admin role
         let _auth = crate::graphql::require_min_role(ctx, crate::auth::users::UserRole::Operator)?;
 
@@ -116,11 +111,16 @@ impl MutationRoot {
 
         // Parse site ID
         use patronus_sdwan::types::SiteId;
-        let site_id: SiteId = input.id.parse()
+        let site_id: SiteId = input
+            .id
+            .parse()
             .map_err(|_| async_graphql::Error::new("Invalid site ID"))?;
 
         // Get existing site from database
-        let mut site = state.db.get_site(&site_id).await
+        let mut site = state
+            .db
+            .get_site(&site_id)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))?
             .ok_or_else(|| async_graphql::Error::new("Site not found"))?;
 
@@ -154,22 +154,28 @@ impl MutationRoot {
         site.last_seen = std::time::SystemTime::now();
 
         // Update in database
-        state.db.upsert_site(&site).await
+        state
+            .db
+            .upsert_site(&site)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to update site: {}", e)))?;
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
         let user_email_for_event = user_email.clone(); // Clone for event broadcasting (Sprint 28)
-        let _ = state.audit_logger.log(
-            AuditEvent::SiteUpdate {
-                site_id: site.id.to_string(),
-                fields_changed: fields_changed.clone(),
-            },
-            user_id,
-            user_email,
-            None,
-            None,
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(
+                AuditEvent::SiteUpdate {
+                    site_id: site.id.to_string(),
+                    fields_changed: fields_changed.clone(),
+                },
+                user_id,
+                user_email,
+                None,
+                None,
+            )
+            .await;
 
         let result = GqlSite {
             id: site.id.to_string(),
@@ -182,9 +188,13 @@ impl MutationRoot {
                 patronus_sdwan::types::SiteStatus::Inactive => SiteStatus::Offline,
             },
             created_at: chrono::DateTime::from_timestamp(
-                site.created_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
-                0
-            ).unwrap_or_else(|| Utc::now()),
+                site.created_at
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64,
+                0,
+            )
+            .unwrap_or_else(|| Utc::now()),
             updated_at: Utc::now(),
         };
 
@@ -204,11 +214,7 @@ impl MutationRoot {
     }
 
     /// Delete a site
-    async fn delete_site(
-        &self,
-        ctx: &Context<'_>,
-        id: String,
-    ) -> Result<bool> {
+    async fn delete_site(&self, ctx: &Context<'_>, id: String) -> Result<bool> {
         // Require admin role for deletion
         let _auth = crate::graphql::require_role(ctx, crate::auth::users::UserRole::Admin)?;
 
@@ -216,16 +222,23 @@ impl MutationRoot {
 
         // Parse site ID
         use patronus_sdwan::types::SiteId;
-        let site_id: SiteId = id.parse()
+        let site_id: SiteId = id
+            .parse()
             .map_err(|_| async_graphql::Error::new("Invalid site ID"))?;
 
         // Check if site exists
-        let site = state.db.get_site(&site_id).await
+        let site = state
+            .db
+            .get_site(&site_id)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))?
             .ok_or_else(|| async_graphql::Error::new("Site not found"))?;
 
         // Check for active paths (Sprint 30)
-        let path_count = state.db.count_site_paths(&site_id).await
+        let path_count = state
+            .db
+            .count_site_paths(&site_id)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))?;
 
         // Audit log (Sprint 25)
@@ -233,19 +246,25 @@ impl MutationRoot {
         let user_email_for_event = user_email.clone(); // Clone for event broadcasting (Sprint 28)
 
         // Delete site and cascade to paths and endpoints (Sprint 30)
-        let rows_affected = state.db.delete_site(&site_id).await
+        let rows_affected = state
+            .db
+            .delete_site(&site_id)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to delete site: {}", e)))?;
 
-        let _ = state.audit_logger.log(
-            AuditEvent::SiteDelete {
-                site_id: site_id.to_string(),
-                blocked: false,
-            },
-            user_id,
-            user_email,
-            None,
-            None,
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(
+                AuditEvent::SiteDelete {
+                    site_id: site_id.to_string(),
+                    blocked: false,
+                },
+                user_id,
+                user_email,
+                None,
+                None,
+            )
+            .await;
 
         // Broadcast event to WebSocket clients (Sprint 28)
         let _ = state.events_tx.send(crate::state::Event {
@@ -282,7 +301,9 @@ impl MutationRoot {
         }
 
         if input.priority < 0 || input.priority > 1000 {
-            return Err(async_graphql::Error::new("Priority must be between 0 and 1000"));
+            return Err(async_graphql::Error::new(
+                "Priority must be between 0 and 1000",
+            ));
         }
 
         // Parse match_rules JSON
@@ -311,23 +332,29 @@ impl MutationRoot {
         };
 
         // Insert into database
-        state.db.upsert_policy(&policy).await
+        state
+            .db
+            .upsert_policy(&policy)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create policy: {}", e)))?;
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
         let user_email_for_event = user_email.clone(); // Clone for event broadcasting (Sprint 28)
-        let _ = state.audit_logger.log(
-            AuditEvent::PolicyCreate {
-                policy_id,
-                policy_name: input.name.clone(),
-                priority: input.priority as u32,
-            },
-            user_id,
-            user_email,
-            None,
-            None,
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(
+                AuditEvent::PolicyCreate {
+                    policy_id,
+                    policy_name: input.name.clone(),
+                    priority: input.priority as u32,
+                },
+                user_id,
+                user_email,
+                None,
+                None,
+            )
+            .await;
 
         // New policies start with zero stats (Sprint 30)
         let result = GqlPolicy {
@@ -371,11 +398,16 @@ impl MutationRoot {
         let state = get_state(ctx)?;
 
         // Parse policy ID
-        let policy_id = input.id.parse::<u64>()
+        let policy_id = input
+            .id
+            .parse::<u64>()
             .map_err(|_| async_graphql::Error::new("Invalid policy ID"))?;
 
         // Get existing policy from database
-        let mut policy = state.db.get_policy(policy_id).await
+        let mut policy = state
+            .db
+            .get_policy(policy_id)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))?
             .ok_or_else(|| async_graphql::Error::new("Policy not found"))?;
 
@@ -393,16 +425,18 @@ impl MutationRoot {
 
         if let Some(priority) = input.priority {
             if priority < 0 || priority > 1000 {
-                return Err(async_graphql::Error::new("Priority must be between 0 and 1000"));
+                return Err(async_graphql::Error::new(
+                    "Priority must be between 0 and 1000",
+                ));
             }
             policy.priority = priority as u32;
             fields_changed.push("priority".to_string());
         }
 
         if let Some(match_rules_json) = input.match_rules {
-            
-            policy.match_rules = serde_json::from_str(&match_rules_json)
-                .map_err(|e| async_graphql::Error::new(format!("Invalid match_rules JSON: {}", e)))?;
+            policy.match_rules = serde_json::from_str(&match_rules_json).map_err(|e| {
+                async_graphql::Error::new(format!("Invalid match_rules JSON: {}", e))
+            })?;
             fields_changed.push("match_rules".to_string());
         }
 
@@ -412,25 +446,35 @@ impl MutationRoot {
         }
 
         // Update in database
-        state.db.upsert_policy(&policy).await
+        state
+            .db
+            .upsert_policy(&policy)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to update policy: {}", e)))?;
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
         let user_email_for_event = user_email.clone(); // Clone for event broadcasting (Sprint 28)
-        let _ = state.audit_logger.log(
-            AuditEvent::PolicyUpdate {
-                policy_id,
-                fields_changed: fields_changed.clone(),
-            },
-            user_id,
-            user_email,
-            None,
-            None,
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(
+                AuditEvent::PolicyUpdate {
+                    policy_id,
+                    fields_changed: fields_changed.clone(),
+                },
+                user_id,
+                user_email,
+                None,
+                None,
+            )
+            .await;
 
         // Get traffic stats (Sprint 30)
-        let stats = state.traffic_stats.get_policy_stats(policy_id).await.unwrap_or_default();
+        let stats = state
+            .traffic_stats
+            .get_policy_stats(policy_id)
+            .await
+            .unwrap_or_default();
 
         let result = GqlPolicy {
             id: policy.id.to_string(),
@@ -461,42 +505,48 @@ impl MutationRoot {
     }
 
     /// Delete a policy
-    async fn delete_policy(
-        &self,
-        ctx: &Context<'_>,
-        id: String,
-    ) -> Result<bool> {
+    async fn delete_policy(&self, ctx: &Context<'_>, id: String) -> Result<bool> {
         // Require operator or admin role
         let _auth = crate::graphql::require_min_role(ctx, crate::auth::users::UserRole::Operator)?;
 
         let state = get_state(ctx)?;
 
         // Parse policy ID
-        let policy_id = id.parse::<u64>()
+        let policy_id = id
+            .parse::<u64>()
             .map_err(|_| async_graphql::Error::new("Invalid policy ID"))?;
 
         // Check if policy exists
-        let policy = state.db.get_policy(policy_id).await
+        let policy = state
+            .db
+            .get_policy(policy_id)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))?
             .ok_or_else(|| async_graphql::Error::new("Policy not found"))?;
 
         // Delete from database
-        state.db.delete_policy(policy_id).await
+        state
+            .db
+            .delete_policy(policy_id)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to delete policy: {}", e)))?;
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
         let user_email_for_event = user_email.clone(); // Clone for event broadcasting (Sprint 28)
-        let _ = state.audit_logger.log(
-            AuditEvent::PolicyDelete {
-                policy_id,
-                policy_name: policy.name.clone(),
-            },
-            user_id,
-            user_email,
-            None,
-            None,
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(
+                AuditEvent::PolicyDelete {
+                    policy_id,
+                    policy_name: policy.name.clone(),
+                },
+                user_id,
+                user_email,
+                None,
+                None,
+            )
+            .await;
 
         // Broadcast event to WebSocket clients (Sprint 28)
         let _ = state.events_tx.send(crate::state::Event {
@@ -525,11 +575,15 @@ impl MutationRoot {
         let state = get_state(ctx)?;
 
         // Parse policy ID
-        let policy_id = id.parse::<u64>()
+        let policy_id = id
+            .parse::<u64>()
             .map_err(|_| async_graphql::Error::new("Invalid policy ID"))?;
 
         // Get existing policy
-        let mut policy = state.db.get_policy(policy_id).await
+        let mut policy = state
+            .db
+            .get_policy(policy_id)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))?
             .ok_or_else(|| async_graphql::Error::new("Policy not found"))?;
 
@@ -537,25 +591,32 @@ impl MutationRoot {
         policy.enabled = enabled;
 
         // Update in database
-        state.db.upsert_policy(&policy).await
+        state
+            .db
+            .upsert_policy(&policy)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to toggle policy: {}", e)))?;
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
         let user_email_for_event = user_email.clone(); // Clone for event broadcasting (Sprint 28)
-        let _ = state.audit_logger.log(
-            AuditEvent::PolicyToggle {
-                policy_id,
-                enabled,
-            },
-            user_id,
-            user_email,
-            None,
-            None,
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(
+                AuditEvent::PolicyToggle { policy_id, enabled },
+                user_id,
+                user_email,
+                None,
+                None,
+            )
+            .await;
 
         // Get traffic stats (Sprint 30)
-        let stats = state.traffic_stats.get_policy_stats(policy_id).await.unwrap_or_default();
+        let stats = state
+            .traffic_stats
+            .get_policy_stats(policy_id)
+            .await
+            .unwrap_or_default();
 
         let result = GqlPolicy {
             id: policy.id.to_string(),
@@ -588,11 +649,7 @@ impl MutationRoot {
     // ========== User Mutations ==========
 
     /// Create a new user (admin only)
-    async fn create_user(
-        &self,
-        ctx: &Context<'_>,
-        input: CreateUserInput,
-    ) -> Result<GqlUser> {
+    async fn create_user(&self, ctx: &Context<'_>, input: CreateUserInput) -> Result<GqlUser> {
         // Require admin role
         let _auth = crate::graphql::require_role(ctx, crate::auth::users::UserRole::Admin)?;
 
@@ -606,7 +663,10 @@ impl MutationRoot {
         // Validate password strength
         use crate::auth::password::validate_password_strength;
         if let Err(e) = validate_password_strength(&input.password) {
-            return Err(async_graphql::Error::new(format!("Password validation failed: {}", e)));
+            return Err(async_graphql::Error::new(format!(
+                "Password validation failed: {}",
+                e
+            )));
         }
 
         // Hash password
@@ -622,18 +682,26 @@ impl MutationRoot {
         };
 
         // Create user using repository method
-        state.user_repository.create_user(
-            &input.email,
-            "User", // Default name, can be updated later
-            &password_hash,
-            user_role,
-        ).await
+        state
+            .user_repository
+            .create_user(
+                &input.email,
+                "User", // Default name, can be updated later
+                &password_hash,
+                user_role,
+            )
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to create user: {}", e)))?;
 
         // Fetch the created user to get the full object
-        let user = state.user_repository.get_user_by_email(&input.email).await
+        let user = state
+            .user_repository
+            .get_user_by_email(&input.email)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to fetch created user: {}", e)))?
-            .ok_or_else(|| async_graphql::Error::new("User was created but could not be retrieved"))?;
+            .ok_or_else(|| {
+                async_graphql::Error::new("User was created but could not be retrieved")
+            })?;
 
         // Audit log (Sprint 25)
         let (admin_id, admin_email) = get_audit_user_info(ctx);
@@ -643,17 +711,20 @@ impl MutationRoot {
             crate::auth::users::UserRole::Operator => "operator".to_string(),
             crate::auth::users::UserRole::Viewer => "viewer".to_string(),
         };
-        let _ = state.audit_logger.log(
-            AuditEvent::UserCreate {
-                user_id: user.id.clone(),
-                email: user.email.clone(),
-                role: role_str.clone(),
-            },
-            admin_id,
-            admin_email,
-            None,
-            None,
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(
+                AuditEvent::UserCreate {
+                    user_id: user.id.clone(),
+                    email: user.email.clone(),
+                    role: role_str.clone(),
+                },
+                admin_id,
+                admin_email,
+                None,
+                None,
+            )
+            .await;
 
         let result = GqlUser {
             id: user.id.clone(),
@@ -696,7 +767,10 @@ impl MutationRoot {
         let state = get_state(ctx)?;
 
         // Get current user for audit log
-        let old_user = state.user_repository.get_user(&user_id).await
+        let old_user = state
+            .user_repository
+            .get_user(&user_id)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to get user: {}", e)))?
             .ok_or_else(|| async_graphql::Error::new("User not found"))?;
 
@@ -722,29 +796,38 @@ impl MutationRoot {
             is_active: None,
         };
 
-        let user = state.user_repository.update_user(&user_id, update_req).await
+        let user = state
+            .user_repository
+            .update_user(&user_id, update_req)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to update user role: {}", e)))?;
 
         // Audit log (Sprint 25)
         let (admin_id, admin_email) = get_audit_user_info(ctx);
         let admin_email_for_event = admin_email.clone(); // Clone for event broadcasting (Sprint 28)
-        let _ = state.audit_logger.log(
-            AuditEvent::UserRoleUpdate {
-                user_id: user_id.clone(),
-                old_role: old_role_str.clone(),
-                new_role: role_str.to_string(),
-            },
-            admin_id,
-            admin_email,
-            None,
-            None,
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(
+                AuditEvent::UserRoleUpdate {
+                    user_id: user_id.clone(),
+                    old_role: old_role_str.clone(),
+                    new_role: role_str.to_string(),
+                },
+                admin_id,
+                admin_email,
+                None,
+                None,
+            )
+            .await;
 
         // Revoke all user's active tokens (Sprint 29)
-        let _ = state.token_revocation.revoke_all_user_tokens(
-            &user_id,
-            format!("Role changed from {} to {}", old_role_str, role_str),
-        ).await;
+        let _ = state
+            .token_revocation
+            .revoke_all_user_tokens(
+                &user_id,
+                format!("Role changed from {} to {}", old_role_str, role_str),
+            )
+            .await;
 
         let result = GqlUser {
             id: user.id.clone(),
@@ -776,18 +859,17 @@ impl MutationRoot {
     }
 
     /// Deactivate a user (admin only)
-    async fn deactivate_user(
-        &self,
-        ctx: &Context<'_>,
-        user_id: String,
-    ) -> Result<bool> {
+    async fn deactivate_user(&self, ctx: &Context<'_>, user_id: String) -> Result<bool> {
         // Require admin role
         let _auth = crate::graphql::require_role(ctx, crate::auth::users::UserRole::Admin)?;
 
         let state = get_state(ctx)?;
 
         // Get user info for audit log
-        let user = state.user_repository.get_user(&user_id).await
+        let user = state
+            .user_repository
+            .get_user(&user_id)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to get user: {}", e)))?
             .ok_or_else(|| async_graphql::Error::new("User not found"))?;
 
@@ -800,22 +882,28 @@ impl MutationRoot {
             is_active: Some(false),
         };
 
-        state.user_repository.update_user(&user_id, update_req).await
+        state
+            .user_repository
+            .update_user(&user_id, update_req)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to deactivate user: {}", e)))?;
 
         // Audit log (Sprint 25)
         let (admin_id, admin_email) = get_audit_user_info(ctx);
         let admin_email_for_event = admin_email.clone(); // Clone for event broadcasting (Sprint 28)
-        let _ = state.audit_logger.log(
-            AuditEvent::UserDeactivate {
-                user_id: user_id.clone(),
-                email: user.email.clone(),
-            },
-            admin_id,
-            admin_email,
-            None,
-            None,
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(
+                AuditEvent::UserDeactivate {
+                    user_id: user_id.clone(),
+                    email: user.email.clone(),
+                },
+                admin_id,
+                admin_email,
+                None,
+                None,
+            )
+            .await;
 
         // Broadcast event to WebSocket clients (Sprint 28)
         let _ = state.events_tx.send(crate::state::Event {
@@ -829,10 +917,10 @@ impl MutationRoot {
         });
 
         // Revoke all user's active tokens (Sprint 29)
-        let _ = state.token_revocation.revoke_all_user_tokens(
-            &user_id,
-            "User deactivated".to_string(),
-        ).await;
+        let _ = state
+            .token_revocation
+            .revoke_all_user_tokens(&user_id, "User deactivated".to_string())
+            .await;
 
         Ok(true)
     }
@@ -852,7 +940,10 @@ impl MutationRoot {
         // Validate password strength
         use crate::auth::password::validate_password_strength;
         if let Err(e) = validate_password_strength(&new_password) {
-            return Err(async_graphql::Error::new(format!("Password validation failed: {}", e)));
+            return Err(async_graphql::Error::new(format!(
+                "Password validation failed: {}",
+                e
+            )));
         }
 
         // Hash new password
@@ -861,22 +952,28 @@ impl MutationRoot {
             .map_err(|e| async_graphql::Error::new(format!("Failed to hash password: {}", e)))?;
 
         // Update password in database
-        state.user_repository.update_password(&user_id, &password_hash).await
+        state
+            .user_repository
+            .update_password(&user_id, &password_hash)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to update password: {}", e)))?;
 
         // Audit log (Sprint 25)
         let (admin_id, admin_email) = get_audit_user_info(ctx);
         let admin_email_for_event = admin_email.clone(); // Clone for event broadcasting (Sprint 28)
-        let _ = state.audit_logger.log(
-            AuditEvent::PasswordReset {
-                user_id: user_id.clone(),
-                by_admin: true,
-            },
-            admin_id,
-            admin_email,
-            None,
-            None,
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(
+                AuditEvent::PasswordReset {
+                    user_id: user_id.clone(),
+                    by_admin: true,
+                },
+                admin_id,
+                admin_email,
+                None,
+                None,
+            )
+            .await;
 
         // Broadcast event to WebSocket clients (Sprint 28)
         let _ = state.events_tx.send(crate::state::Event {
@@ -890,10 +987,10 @@ impl MutationRoot {
         });
 
         // Revoke all user's active tokens (Sprint 29)
-        let _ = state.token_revocation.revoke_all_user_tokens(
-            &user_id,
-            "Password reset by admin".to_string(),
-        ).await;
+        let _ = state
+            .token_revocation
+            .revoke_all_user_tokens(&user_id, "Password reset by admin".to_string())
+            .await;
 
         Ok(true)
     }
@@ -901,11 +998,7 @@ impl MutationRoot {
     // ========== Path Management ==========
 
     /// Manually trigger path health check
-    async fn check_path_health(
-        &self,
-        ctx: &Context<'_>,
-        path_id: String,
-    ) -> Result<GqlPath> {
+    async fn check_path_health(&self, ctx: &Context<'_>, path_id: String) -> Result<GqlPath> {
         // Require operator or admin role
         let _auth = crate::graphql::require_min_role(ctx, crate::auth::users::UserRole::Operator)?;
 
@@ -913,41 +1006,60 @@ impl MutationRoot {
 
         // Parse path ID
         use patronus_sdwan::types::PathId;
-        let pid = path_id.parse::<u64>()
+        let pid = path_id
+            .parse::<u64>()
             .map_err(|_| async_graphql::Error::new("Invalid path ID"))?;
         let pid = PathId::new(pid);
 
         // Get path from database
-        let path = state.db.get_path(pid).await
+        let path = state
+            .db
+            .get_path(pid)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))?;
 
         // Get latest metrics
-        let metrics = state.db.get_latest_metrics(pid).await
+        let metrics = state
+            .db
+            .get_latest_metrics(pid)
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to get metrics: {}", e)))?;
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
         let user_email_for_event = user_email.clone(); // Clone for event broadcasting (Sprint 28)
-        let _ = state.audit_logger.log(
-            AuditEvent::PathHealthCheck {
-                path_id: pid.as_u64(),
-            },
-            user_id,
-            user_email,
-            None,
-            None,
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(
+                AuditEvent::PathHealthCheck {
+                    path_id: pid.as_u64(),
+                },
+                user_id,
+                user_email,
+                None,
+                None,
+            )
+            .await;
 
         // Trigger immediate health check via health monitor
         // Get target IP from path endpoints (use destination site's first endpoint)
-        let dst_site = state.db.get_site(&path.dst_site).await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to get destination site: {}", e)))?
+        let dst_site = state
+            .db
+            .get_site(&path.dst_site)
+            .await
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to get destination site: {}", e))
+            })?
             .ok_or_else(|| async_graphql::Error::new("Destination site not found"))?;
 
         // Try to get target IP from endpoints, default to cached metrics if no endpoints
         let health_result = if let Some(endpoint) = dst_site.endpoints.first() {
             // Execute real health check
-            state.health_monitor.check_path_health(&pid, endpoint.address.ip()).await.ok()
+            state
+                .health_monitor
+                .check_path_health(&pid, endpoint.address.ip())
+                .await
+                .ok()
         } else {
             // No endpoints available, get cached health
             state.health_monitor.get_path_health(&pid).await
@@ -982,9 +1094,14 @@ impl MutationRoot {
                 patronus_sdwan::types::PathStatus::Down => PathStatus::Failed,
             },
             last_updated: chrono::DateTime::from_timestamp(
-                metrics.measured_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
-                0
-            ).unwrap_or_else(|| Utc::now()),
+                metrics
+                    .measured_at
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64,
+                0,
+            )
+            .unwrap_or_else(|| Utc::now()),
         };
 
         // Broadcast event to WebSocket clients (Sprint 28)
@@ -1006,11 +1123,7 @@ impl MutationRoot {
     }
 
     /// Force path failover
-    async fn failover_path(
-        &self,
-        ctx: &Context<'_>,
-        path_id: String,
-    ) -> Result<bool> {
+    async fn failover_path(&self, ctx: &Context<'_>, path_id: String) -> Result<bool> {
         // Require operator or admin role
         let _auth = crate::graphql::require_min_role(ctx, crate::auth::users::UserRole::Operator)?;
 
@@ -1018,27 +1131,36 @@ impl MutationRoot {
 
         // Parse path ID
         use patronus_sdwan::types::{PathId, PathStatus as SdwanPathStatus};
-        let pid = path_id.parse::<u64>()
+        let pid = path_id
+            .parse::<u64>()
             .map_err(|_| async_graphql::Error::new("Invalid path ID"))?;
         let pid = PathId::new(pid);
 
         // Mark path as down
-        state.db.update_path_status(pid, SdwanPathStatus::Down).await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to update path status: {}", e)))?;
+        state
+            .db
+            .update_path_status(pid, SdwanPathStatus::Down)
+            .await
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to update path status: {}", e))
+            })?;
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
         let user_email_for_event = user_email.clone(); // Clone for event broadcasting (Sprint 28)
-        let _ = state.audit_logger.log(
-            AuditEvent::PathFailover {
-                path_id: pid.as_u64(),
-                reason: "Manual failover triggered".to_string(),
-            },
-            user_id,
-            user_email,
-            None,
-            None,
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(
+                AuditEvent::PathFailover {
+                    path_id: pid.as_u64(),
+                    reason: "Manual failover triggered".to_string(),
+                },
+                user_id,
+                user_email,
+                None,
+                None,
+            )
+            .await;
 
         // Broadcast event to WebSocket clients (Sprint 28)
         let _ = state.events_tx.send(crate::state::Event {
@@ -1052,7 +1174,10 @@ impl MutationRoot {
         });
 
         // Trigger routing engine to reevaluate all flows and reroute traffic
-        state.routing_engine.reevaluate_all_flows().await
+        state
+            .routing_engine
+            .reevaluate_all_flows()
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to reevaluate flows: {}", e)))?;
 
         Ok(true)
@@ -1061,10 +1186,7 @@ impl MutationRoot {
     // ========== System Operations ==========
 
     /// Clear system cache
-    async fn clear_cache(
-        &self,
-        ctx: &Context<'_>,
-    ) -> Result<bool> {
+    async fn clear_cache(&self, ctx: &Context<'_>) -> Result<bool> {
         // Require admin role
         let _auth = crate::graphql::require_role(ctx, crate::auth::users::UserRole::Admin)?;
 
@@ -1073,13 +1195,10 @@ impl MutationRoot {
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
         let user_email_for_event = user_email.clone(); // Clone for event broadcasting (Sprint 28)
-        let _ = state.audit_logger.log(
-            AuditEvent::CacheClear,
-            user_id,
-            user_email,
-            None,
-            None,
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(AuditEvent::CacheClear, user_id, user_email, None, None)
+            .await;
 
         // Clear caches (Sprint 30)
         let metrics_cleared = state.metrics_cache.clear().await;
@@ -1102,17 +1221,17 @@ impl MutationRoot {
     }
 
     /// Trigger full system health check
-    async fn system_health_check(
-        &self,
-        ctx: &Context<'_>,
-    ) -> Result<String> {
+    async fn system_health_check(&self, ctx: &Context<'_>) -> Result<String> {
         // Require operator or admin role
         let _auth = crate::graphql::require_min_role(ctx, crate::auth::users::UserRole::Operator)?;
 
         let state = get_state(ctx)?;
 
         // Check database connectivity
-        let site_count = state.db.count_sites().await
+        let site_count = state
+            .db
+            .count_sites()
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Database check failed: {}", e)))?;
 
         // Check metrics collector
@@ -1121,13 +1240,16 @@ impl MutationRoot {
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
         let user_email_for_event = user_email.clone(); // Clone for event broadcasting (Sprint 28)
-        let _ = state.audit_logger.log(
-            AuditEvent::SystemHealthCheck,
-            user_id,
-            user_email,
-            None,
-            None,
-        ).await;
+        let _ = state
+            .audit_logger
+            .log(
+                AuditEvent::SystemHealthCheck,
+                user_id,
+                user_email,
+                None,
+                None,
+            )
+            .await;
 
         // Compile health status
         let status = format!(

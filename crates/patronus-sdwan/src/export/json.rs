@@ -1,10 +1,10 @@
 //! JSON export for REST API consumption
 
 use crate::database::Database;
+use crate::failover::{FailoverEngine, FailoverEvent, FailoverPolicy};
 use crate::health::{HealthMonitor, PathHealth};
-use crate::failover::{FailoverEngine, FailoverPolicy, FailoverEvent};
 use crate::types::PathId;
-use serde::{Deserialize, Serialize, Serializer, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -46,13 +46,29 @@ pub struct HealthSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathHealthJson {
     pub path_id: String,
-    #[serde(default, serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        default,
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub latency_ms: f64,
-    #[serde(default, serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        default,
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub packet_loss_pct: f64,
-    #[serde(default, serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        default,
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub jitter_ms: f64,
-    #[serde(default, serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        default,
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub health_score: f64,
     pub status: String,
     pub last_checked: u64,
@@ -67,7 +83,8 @@ impl From<PathHealth> for PathHealthJson {
             jitter_ms: health.jitter_ms,
             health_score: health.health_score,
             status: health.status.as_str().to_string(),
-            last_checked: health.last_checked
+            last_checked: health
+                .last_checked
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
@@ -104,7 +121,11 @@ impl From<FailoverPolicy> for FailoverPolicyJson {
             policy_id: policy.policy_id,
             name: policy.name,
             primary_path_id: policy.primary_path_id.to_string(),
-            backup_path_ids: policy.backup_path_ids.iter().map(|id| id.to_string()).collect(),
+            backup_path_ids: policy
+                .backup_path_ids
+                .iter()
+                .map(|id| id.to_string())
+                .collect(),
             failover_threshold: policy.failover_threshold,
             failback_threshold: policy.failback_threshold,
             failback_delay_secs: policy.failback_delay_secs,
@@ -148,7 +169,8 @@ impl From<FailoverEvent> for FailoverEventJson {
             reason: event.reason,
             primary_health_score: event.primary_health_score,
             backup_health_score: event.backup_health_score,
-            timestamp: event.timestamp
+            timestamp: event
+                .timestamp
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
@@ -194,7 +216,10 @@ impl JsonExporter {
         since: SystemTime,
         until: Option<SystemTime>,
     ) -> Result<Vec<PathHealthJson>, Box<dyn std::error::Error + Send + Sync>> {
-        let history = self.health_monitor.get_health_history(path_id, since, until).await?;
+        let history = self
+            .health_monitor
+            .get_health_history(path_id, since, until)
+            .await?;
         Ok(history.into_iter().map(|h| h.into()).collect())
     }
 
@@ -256,7 +281,7 @@ impl JsonExporter {
                 WHERE policy_id = ?
                 ORDER BY timestamp DESC
                 LIMIT ?
-                "#
+                "#,
             )
             .bind(pid as i64)
             .bind(limit as i64)
@@ -267,7 +292,7 @@ impl JsonExporter {
                 FROM sdwan_failover_events
                 ORDER BY timestamp DESC
                 LIMIT ?
-                "#
+                "#,
             )
             .bind(limit as i64)
         };
@@ -295,7 +320,8 @@ impl JsonExporter {
                     reason,
                     primary_health_score: None,
                     backup_health_score: None,
-                    timestamp: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64),
+                    timestamp: SystemTime::UNIX_EPOCH
+                        + std::time::Duration::from_secs(timestamp as u64),
                 });
             }
         }
@@ -310,13 +336,18 @@ mod tests {
     use crate::health::HealthConfig;
     use std::net::IpAddr;
 
-    async fn create_test_exporter() -> (Arc<JsonExporter>, Arc<HealthMonitor>, Arc<FailoverEngine>) {
+    async fn create_test_exporter() -> (Arc<JsonExporter>, Arc<HealthMonitor>, Arc<FailoverEngine>)
+    {
         let db = Arc::new(Database::new_in_memory().await.unwrap());
         let health_config = HealthConfig::default();
         let health_monitor = Arc::new(HealthMonitor::new(db.clone(), health_config).await.unwrap());
         let failover_engine = Arc::new(FailoverEngine::new(db.clone(), health_monitor.clone()));
 
-        let exporter = Arc::new(JsonExporter::new(db, health_monitor.clone(), failover_engine.clone()));
+        let exporter = Arc::new(JsonExporter::new(
+            db,
+            health_monitor.clone(),
+            failover_engine.clone(),
+        ));
 
         (exporter, health_monitor, failover_engine)
     }
@@ -340,14 +371,26 @@ mod tests {
         let path2 = PathId::new(2);
         let target: IpAddr = "192.168.1.1".parse().unwrap();
 
-        health_monitor.check_path_health(&path1, target).await.unwrap();
-        health_monitor.check_path_health(&path2, target).await.unwrap();
+        health_monitor
+            .check_path_health(&path1, target)
+            .await
+            .unwrap();
+        health_monitor
+            .check_path_health(&path2, target)
+            .await
+            .unwrap();
 
         let snapshot = exporter.get_health_snapshot().await;
 
         assert_eq!(snapshot.paths.len(), 2);
-        assert!(snapshot.paths.iter().any(|p| p.path_id == path1.to_string()));
-        assert!(snapshot.paths.iter().any(|p| p.path_id == path2.to_string()));
+        assert!(snapshot
+            .paths
+            .iter()
+            .any(|p| p.path_id == path1.to_string()));
+        assert!(snapshot
+            .paths
+            .iter()
+            .any(|p| p.path_id == path2.to_string()));
 
         // Verify JSON structure
         for path in &snapshot.paths {
@@ -365,7 +408,10 @@ mod tests {
 
         let path1 = PathId::new(1);
         let target: IpAddr = "192.168.1.1".parse().unwrap();
-        health_monitor.check_path_health(&path1, target).await.unwrap();
+        health_monitor
+            .check_path_health(&path1, target)
+            .await
+            .unwrap();
 
         let snapshot = exporter.get_health_snapshot().await;
 
@@ -471,7 +517,10 @@ mod tests {
         assert_eq!(history.events.len(), history.count);
 
         // Should have policy_enabled event
-        assert!(history.events.iter().any(|e| e.event_type == "policy_enabled"));
+        assert!(history
+            .events
+            .iter()
+            .any(|e| e.event_type == "policy_enabled"));
     }
 
     #[tokio::test]
@@ -479,8 +528,10 @@ mod tests {
         let (exporter, _, failover_engine) = create_test_exporter().await;
 
         // Add two policies
-        let policy1 = FailoverPolicy::new(1, "p1".to_string(), PathId::new(10), vec![PathId::new(20)]);
-        let policy2 = FailoverPolicy::new(2, "p2".to_string(), PathId::new(30), vec![PathId::new(40)]);
+        let policy1 =
+            FailoverPolicy::new(1, "p1".to_string(), PathId::new(10), vec![PathId::new(20)]);
+        let policy2 =
+            FailoverPolicy::new(2, "p2".to_string(), PathId::new(30), vec![PathId::new(40)]);
 
         failover_engine.add_policy(policy1).await.unwrap();
         failover_engine.add_policy(policy2).await.unwrap();

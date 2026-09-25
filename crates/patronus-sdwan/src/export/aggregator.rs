@@ -2,7 +2,7 @@
 
 use crate::database::Database;
 use crate::types::PathId;
-use serde::{Deserialize, Serialize, Serializer, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -78,27 +78,60 @@ pub struct AggregatedMetrics {
     pub start_time: u64,
     pub end_time: u64,
     pub sample_count: u64,
-    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub latency_avg: f64,
-    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub latency_min: f64,
-    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub latency_max: f64,
-    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub latency_p95: f64,
-    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub packet_loss_avg: f64,
-    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub packet_loss_max: f64,
-    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub jitter_avg: f64,
-    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub jitter_max: f64,
-    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub health_score_avg: f64,
-    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub health_score_min: f64,
-    #[serde(serialize_with = "serialize_f64_nan_as_zero", deserialize_with = "deserialize_f64_or_zero")]
+    #[serde(
+        serialize_with = "serialize_f64_nan_as_zero",
+        deserialize_with = "deserialize_f64_or_zero"
+    )]
     pub uptime_pct: f64,
 }
 
@@ -117,7 +150,8 @@ impl MetricsAggregator {
         let end_time = SystemTime::now();
         let start_time = end_time - period.duration();
 
-        self.aggregate_path_metrics_range(path_id, start_time, end_time, period).await
+        self.aggregate_path_metrics_range(path_id, start_time, end_time, period)
+            .await
     }
 
     /// Aggregate metrics for a path over a specific time range
@@ -169,7 +203,9 @@ impl MetricsAggregator {
         let health_score_min: f64 = row.try_get("health_score_min").unwrap_or(0.0);
 
         // Calculate P95 latency (95th percentile)
-        let latency_p95 = self.calculate_percentile(path_id, start_secs, end_secs, 95).await?;
+        let latency_p95 = self
+            .calculate_percentile(path_id, start_secs, end_secs, 95)
+            .await?;
 
         // Calculate uptime percentage (health_score >= 80 = up)
         let uptime_pct = self.calculate_uptime(path_id, start_secs, end_secs).await?;
@@ -311,7 +347,9 @@ impl MetricsAggregator {
         for row in rows {
             let path_id_str: String = row.try_get("path_id")?;
             if let Ok(path_id) = PathId::from_string(&path_id_str) {
-                let metrics = self.aggregate_path_metrics_range(&path_id, start_time, end_time, period).await?;
+                let metrics = self
+                    .aggregate_path_metrics_range(&path_id, start_time, end_time, period)
+                    .await?;
                 results.push(metrics);
             }
         }
@@ -323,7 +361,7 @@ impl MetricsAggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::health::{HealthMonitor, HealthConfig};
+    use crate::health::{HealthConfig, HealthMonitor};
 
     async fn create_test_aggregator() -> (Arc<MetricsAggregator>, Arc<HealthMonitor>) {
         let db = Arc::new(Database::new_in_memory().await.unwrap());
@@ -342,11 +380,26 @@ mod tests {
 
     #[tokio::test]
     async fn test_aggregation_period_duration() {
-        assert_eq!(AggregationPeriod::Hour.duration(), Duration::from_secs(3600));
-        assert_eq!(AggregationPeriod::Day.duration(), Duration::from_secs(86400));
-        assert_eq!(AggregationPeriod::Week.duration(), Duration::from_secs(604800));
-        assert_eq!(AggregationPeriod::Month.duration(), Duration::from_secs(2592000));
-        assert_eq!(AggregationPeriod::Custom(100).duration(), Duration::from_secs(100));
+        assert_eq!(
+            AggregationPeriod::Hour.duration(),
+            Duration::from_secs(3600)
+        );
+        assert_eq!(
+            AggregationPeriod::Day.duration(),
+            Duration::from_secs(86400)
+        );
+        assert_eq!(
+            AggregationPeriod::Week.duration(),
+            Duration::from_secs(604800)
+        );
+        assert_eq!(
+            AggregationPeriod::Month.duration(),
+            Duration::from_secs(2592000)
+        );
+        assert_eq!(
+            AggregationPeriod::Custom(100).duration(),
+            Duration::from_secs(100)
+        );
     }
 
     #[tokio::test]
@@ -354,7 +407,10 @@ mod tests {
         let (aggregator, _) = create_test_aggregator().await;
 
         let path_id = PathId::new(1);
-        let metrics = aggregator.aggregate_path_metrics(&path_id, AggregationPeriod::Hour).await.unwrap();
+        let metrics = aggregator
+            .aggregate_path_metrics(&path_id, AggregationPeriod::Hour)
+            .await
+            .unwrap();
 
         assert_eq!(metrics.sample_count, 0);
         assert_eq!(metrics.latency_avg, 0.0);
@@ -370,14 +426,20 @@ mod tests {
         // Generate some health data
         // Note: db_persist_interval is 1, so each check should persist
         for _ in 0..5 {
-            health_monitor.check_path_health(&path_id, target).await.unwrap();
+            health_monitor
+                .check_path_health(&path_id, target)
+                .await
+                .unwrap();
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         }
 
         // Wait a bit for async persistence
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        let metrics = aggregator.aggregate_path_metrics(&path_id, AggregationPeriod::Hour).await.unwrap();
+        let metrics = aggregator
+            .aggregate_path_metrics(&path_id, AggregationPeriod::Hour)
+            .await
+            .unwrap();
 
         // Should have persisted records (at least some of them)
         assert!(metrics.sample_count > 0, "Expected some samples but got 0");
@@ -394,16 +456,29 @@ mod tests {
         let target = "192.168.1.1".parse().unwrap();
 
         // Generate data for multiple paths
-        health_monitor.check_path_health(&path1, target).await.unwrap();
-        health_monitor.check_path_health(&path2, target).await.unwrap();
+        health_monitor
+            .check_path_health(&path1, target)
+            .await
+            .unwrap();
+        health_monitor
+            .check_path_health(&path2, target)
+            .await
+            .unwrap();
 
         // Wait for persistence
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        let all_metrics = aggregator.aggregate_all_paths(AggregationPeriod::Hour).await.unwrap();
+        let all_metrics = aggregator
+            .aggregate_all_paths(AggregationPeriod::Hour)
+            .await
+            .unwrap();
 
         // Should have at least the paths we checked
-        assert!(all_metrics.len() >= 2, "Expected at least 2 paths but got {}", all_metrics.len());
+        assert!(
+            all_metrics.len() >= 2,
+            "Expected at least 2 paths but got {}",
+            all_metrics.len()
+        );
         assert!(all_metrics.iter().any(|m| m.path_id == path1.to_string()));
         assert!(all_metrics.iter().any(|m| m.path_id == path2.to_string()));
     }
@@ -415,9 +490,15 @@ mod tests {
         let path_id = PathId::new(1);
         let target = "192.168.1.1".parse().unwrap();
 
-        health_monitor.check_path_health(&path_id, target).await.unwrap();
+        health_monitor
+            .check_path_health(&path_id, target)
+            .await
+            .unwrap();
 
-        let metrics = aggregator.aggregate_path_metrics(&path_id, AggregationPeriod::Day).await.unwrap();
+        let metrics = aggregator
+            .aggregate_path_metrics(&path_id, AggregationPeriod::Day)
+            .await
+            .unwrap();
 
         // Should serialize to JSON
         let json = serde_json::to_string(&metrics).unwrap();

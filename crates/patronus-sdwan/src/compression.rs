@@ -49,7 +49,7 @@ pub struct CompressionConfig {
 impl Default for CompressionConfig {
     fn default() -> Self {
         Self {
-            level: 1, // Fast mode
+            level: 1,               // Fast mode
             min_compress_size: 128, // Skip very small packets
             enabled: true,
         }
@@ -137,8 +137,12 @@ impl CompressionEngine {
         }
 
         // Compress with LZ4
-        let compressed = lz4::block::compress(data, Some(lz4::block::CompressionMode::FAST(self.config.level as i32)), false)
-            .map_err(|e| CompressionError::CompressionFailed(e.to_string()))?;
+        let compressed = lz4::block::compress(
+            data,
+            Some(lz4::block::CompressionMode::FAST(self.config.level as i32)),
+            false,
+        )
+        .map_err(|e| CompressionError::CompressionFailed(e.to_string()))?;
 
         // Only use compressed data if it's actually smaller
         let result = if compressed.len() < data.len() {
@@ -172,7 +176,11 @@ impl CompressionEngine {
     }
 
     /// Decompress data
-    pub fn decompress(&mut self, data: &[u8], max_size: Option<i32>) -> Result<Vec<u8>, CompressionError> {
+    pub fn decompress(
+        &mut self,
+        data: &[u8],
+        max_size: Option<i32>,
+    ) -> Result<Vec<u8>, CompressionError> {
         // Skip if disabled or empty
         if !self.config.enabled || data.is_empty() {
             return Ok(data.to_vec());
@@ -318,7 +326,11 @@ impl CompressedPacket {
         Ok(Self {
             compressed,
             data,
-            original_size: if compressed { Some(original_size) } else { None },
+            original_size: if compressed {
+                Some(original_size)
+            } else {
+                None
+            },
         })
     }
 

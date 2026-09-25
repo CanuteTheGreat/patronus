@@ -2,10 +2,10 @@
 //!
 //! Extensibility framework for adding custom functionality
 
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginMetadata {
@@ -60,16 +60,12 @@ impl PluginRegistry {
     }
 
     pub fn list(&self) -> Vec<PluginMetadata> {
-        self.plugins.values()
-            .map(|p| p.metadata())
-            .collect()
+        self.plugins.values().map(|p| p.metadata()).collect()
     }
 
     pub async fn initialize_all(&mut self, configs: HashMap<String, PluginConfig>) -> Result<()> {
         for (name, plugin) in self.plugins.iter_mut() {
-            let config = configs.get(name)
-                .cloned()
-                .unwrap_or_default();
+            let config = configs.get(name).cloned().unwrap_or_default();
             plugin.initialize(config).await?;
         }
         Ok(())

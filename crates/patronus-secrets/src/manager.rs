@@ -1,10 +1,10 @@
 //! High-level secret management interface
 
-use crate::{SecretString, SecretStore, validation};
+use crate::{validation, SecretStore, SecretString};
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
 use tracing::{info, warn};
 
 /// Type of secret being stored
@@ -93,7 +93,9 @@ impl SecretManager {
         self.validate_secret(&value, secret_type)?;
 
         // Store the secret
-        self.store.store(key, value).await
+        self.store
+            .store(key, value)
+            .await
             .context("Failed to store secret")?;
 
         // Store metadata
@@ -137,8 +139,7 @@ impl SecretManager {
     /// Update a secret (rotates it)
     pub async fn rotate_secret(&self, key: &str, new_value: SecretString) -> Result<()> {
         // Get existing metadata
-        let mut metadata = self.get_metadata(key).await?
-            .context("Secret not found")?;
+        let mut metadata = self.get_metadata(key).await?.context("Secret not found")?;
 
         // Validate new secret
         self.validate_secret(&new_value, metadata.secret_type)?;
@@ -199,8 +200,10 @@ impl SecretManager {
 
         for metadata in all_secrets {
             if metadata.needs_rotation() {
-                warn!("Secret needs rotation: {} (last rotated: {:?})",
-                      metadata.key, metadata.last_rotated);
+                warn!(
+                    "Secret needs rotation: {} (last rotated: {:?})",
+                    metadata.key, metadata.last_rotated
+                );
                 needs_rotation.push(metadata);
             }
         }
@@ -238,7 +241,9 @@ impl SecretManager {
                     anyhow::bail!("SNMP community string cannot be 'public' or 'private'");
                 }
             }
-            SecretType::CloudCredential | SecretType::DdnsCredential | SecretType::GitCredential => {
+            SecretType::CloudCredential
+            | SecretType::DdnsCredential
+            | SecretType::GitCredential => {
                 // Cloud credentials should not be empty or default
                 validation::validate_secret(value, 16)?;
             }
@@ -321,7 +326,11 @@ mod tests {
         assert_eq!(retrieved.expose_secret(), "MySecurePhrase123!@#");
 
         // Get metadata
-        let metadata = manager.get_metadata("test_password").await.unwrap().unwrap();
+        let metadata = manager
+            .get_metadata("test_password")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(metadata.secret_type, SecretType::VpnPassword);
         assert_eq!(metadata.rotation_days, Some(90));
 

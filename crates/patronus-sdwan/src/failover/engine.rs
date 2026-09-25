@@ -38,10 +38,7 @@ pub struct FailoverEngine {
 
 impl FailoverEngine {
     /// Create a new failover engine
-    pub fn new(
-        db: Arc<Database>,
-        health_monitor: Arc<HealthMonitor>,
-    ) -> Self {
+    pub fn new(db: Arc<Database>, health_monitor: Arc<HealthMonitor>) -> Self {
         Self {
             db,
             health_monitor,
@@ -68,7 +65,10 @@ impl FailoverEngine {
     }
 
     /// Add a failover policy
-    pub async fn add_policy(&self, policy: FailoverPolicy) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn add_policy(
+        &self,
+        policy: FailoverPolicy,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Validate policy
         policy.validate()?;
 
@@ -104,7 +104,10 @@ impl FailoverEngine {
     }
 
     /// Remove a failover policy
-    pub async fn remove_policy(&self, policy_id: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn remove_policy(
+        &self,
+        policy_id: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Log event first (before deleting policy)
         let event = FailoverEvent::policy_disabled(policy_id);
         self.log_event(&event).await?;
@@ -204,7 +207,10 @@ impl FailoverEngine {
     }
 
     /// Evaluate a single policy
-    async fn evaluate_policy(&self, policy: &FailoverPolicy) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn evaluate_policy(
+        &self,
+        policy: &FailoverPolicy,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Get current state
         let state = {
             let states = self.states.read().await;
@@ -229,7 +235,8 @@ impl FailoverEngine {
         if state.using_primary {
             // On primary - check if we should failover
             if policy.should_failover(primary_score) {
-                self.execute_failover(policy, &mut state, primary_score).await?;
+                self.execute_failover(policy, &mut state, primary_score)
+                    .await?;
             } else {
                 // Primary is healthy, update state
                 state.mark_primary_healthy();
@@ -241,7 +248,8 @@ impl FailoverEngine {
 
                 // Check if enough time has passed
                 if state.can_failback(policy.failback_delay_secs) {
-                    self.execute_failback(policy, &mut state, primary_score).await?;
+                    self.execute_failback(policy, &mut state, primary_score)
+                        .await?;
                 } else {
                     tracing::debug!(
                         policy_id = policy.policy_id,
@@ -376,9 +384,10 @@ impl FailoverEngine {
     }
 
     /// Persist policy to database
-    async fn persist_policy(&self, policy: &FailoverPolicy) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        
-
+    async fn persist_policy(
+        &self,
+        policy: &FailoverPolicy,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let backup_ids_json = serde_json::to_string(&policy.backup_path_ids)?;
 
         sqlx::query(
@@ -412,7 +421,10 @@ impl FailoverEngine {
     }
 
     /// Delete policy from database
-    async fn delete_policy(&self, policy_id: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn delete_policy(
+        &self,
+        policy_id: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Delete events first to avoid foreign key constraint
         sqlx::query(
             r#"
@@ -439,7 +451,10 @@ impl FailoverEngine {
     }
 
     /// Log a failover event
-    async fn log_event(&self, event: &FailoverEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn log_event(
+        &self,
+        event: &FailoverEvent,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let timestamp = event
             .timestamp
             .duration_since(std::time::UNIX_EPOCH)?

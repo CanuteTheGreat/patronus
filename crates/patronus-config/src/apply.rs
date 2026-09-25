@@ -11,13 +11,13 @@
 //! - State history for manual rollback
 //! - Dependency resolution and ordering
 
-use patronus_core::{Result, Error};
+use chrono::{DateTime, Utc};
+use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use chrono::{DateTime, Utc};
 
-use crate::declarative::{DeclarativeConfig, ResourceKind, ConfigParser};
+use crate::declarative::{ConfigParser, DeclarativeConfig, ResourceKind};
 
 /// Change operation type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -36,7 +36,7 @@ pub struct ConfigChange {
     pub resource_name: String,
     pub old_config: Option<DeclarativeConfig>,
     pub new_config: Option<DeclarativeConfig>,
-    pub dependencies: Vec<String>,  // Resources this depends on
+    pub dependencies: Vec<String>, // Resources this depends on
 }
 
 /// Result of a diff operation
@@ -81,7 +81,7 @@ pub struct ConfigSnapshot {
 /// Configuration state manager
 pub struct StateManager {
     state_dir: PathBuf,
-    current_state: HashMap<String, DeclarativeConfig>,  // name -> config
+    current_state: HashMap<String, DeclarativeConfig>, // name -> config
     snapshots: Vec<ConfigSnapshot>,
 }
 
@@ -116,10 +116,14 @@ impl StateManager {
             let configs = ConfigParser::parse_yaml(&content)?;
 
             for config in configs {
-                self.current_state.insert(config.metadata.name.clone(), config);
+                self.current_state
+                    .insert(config.metadata.name.clone(), config);
             }
 
-            tracing::info!("Loaded {} resources from current state", self.current_state.len());
+            tracing::info!(
+                "Loaded {} resources from current state",
+                self.current_state.len()
+            );
         }
 
         Ok(())
@@ -182,14 +186,16 @@ impl StateManager {
 
     /// List resources of specific kind
     pub fn list_by_kind(&self, kind: &ResourceKind) -> Vec<&DeclarativeConfig> {
-        self.current_state.values()
+        self.current_state
+            .values()
             .filter(|c| &c.kind == kind)
             .collect()
     }
 
     /// Update a resource
     fn update(&mut self, config: DeclarativeConfig) {
-        self.current_state.insert(config.metadata.name.clone(), config);
+        self.current_state
+            .insert(config.metadata.name.clone(), config);
     }
 
     /// Delete a resource
@@ -269,7 +275,8 @@ impl ApplyEngine {
         let mut changes = Vec::new();
 
         // Build map of desired configs
-        let desired_map: HashMap<String, &DeclarativeConfig> = desired_configs.iter()
+        let desired_map: HashMap<String, &DeclarativeConfig> = desired_configs
+            .iter()
             .map(|c| (c.metadata.name.clone(), c))
             .collect();
 
@@ -328,10 +335,22 @@ impl ApplyEngine {
         changes = self.sort_by_dependencies(changes)?;
 
         // Count operations
-        let creates = changes.iter().filter(|c| c.operation == ChangeOp::Create).count();
-        let updates = changes.iter().filter(|c| c.operation == ChangeOp::Update).count();
-        let deletes = changes.iter().filter(|c| c.operation == ChangeOp::Delete).count();
-        let no_changes = changes.iter().filter(|c| c.operation == ChangeOp::NoChange).count();
+        let creates = changes
+            .iter()
+            .filter(|c| c.operation == ChangeOp::Create)
+            .count();
+        let updates = changes
+            .iter()
+            .filter(|c| c.operation == ChangeOp::Update)
+            .count();
+        let deletes = changes
+            .iter()
+            .filter(|c| c.operation == ChangeOp::Delete)
+            .count();
+        let no_changes = changes
+            .iter()
+            .filter(|c| c.operation == ChangeOp::NoChange)
+            .count();
 
         Ok(DiffResult {
             changes,
@@ -360,17 +379,15 @@ impl ApplyEngine {
     fn sort_by_dependencies(&self, mut changes: Vec<ConfigChange>) -> Result<Vec<ConfigChange>> {
         // Topological sort based on dependencies
         // For now, simple ordering: Create before Update before Delete
-        changes.sort_by(|a, b| {
-            match (&a.operation, &b.operation) {
-                (ChangeOp::Create, ChangeOp::Create) => std::cmp::Ordering::Equal,
-                (ChangeOp::Create, _) => std::cmp::Ordering::Less,
-                (_, ChangeOp::Create) => std::cmp::Ordering::Greater,
-                (ChangeOp::Update, ChangeOp::Update) => std::cmp::Ordering::Equal,
-                (ChangeOp::Update, ChangeOp::Delete) => std::cmp::Ordering::Less,
-                (ChangeOp::Delete, ChangeOp::Update) => std::cmp::Ordering::Greater,
-                (ChangeOp::Delete, ChangeOp::Delete) => std::cmp::Ordering::Equal,
-                _ => std::cmp::Ordering::Equal,
-            }
+        changes.sort_by(|a, b| match (&a.operation, &b.operation) {
+            (ChangeOp::Create, ChangeOp::Create) => std::cmp::Ordering::Equal,
+            (ChangeOp::Create, _) => std::cmp::Ordering::Less,
+            (_, ChangeOp::Create) => std::cmp::Ordering::Greater,
+            (ChangeOp::Update, ChangeOp::Update) => std::cmp::Ordering::Equal,
+            (ChangeOp::Update, ChangeOp::Delete) => std::cmp::Ordering::Less,
+            (ChangeOp::Delete, ChangeOp::Update) => std::cmp::Ordering::Greater,
+            (ChangeOp::Delete, ChangeOp::Delete) => std::cmp::Ordering::Equal,
+            _ => std::cmp::Ordering::Equal,
         });
 
         Ok(changes)
@@ -404,9 +421,16 @@ impl ApplyEngine {
         }
 
         // Create snapshot before applying
-        let snapshot = self.state_manager.create_snapshot("Pre-apply snapshot".to_string()).await?;
+        let snapshot = self
+            .state_manager
+            .create_snapshot("Pre-apply snapshot".to_string())
+            .await?;
 
-        tracing::info!("Applying {} changes (snapshot: {})", diff.total_changes(), snapshot.id);
+        tracing::info!(
+            "Applying {} changes (snapshot: {})",
+            diff.total_changes(),
+            snapshot.id
+        );
 
         let mut changes_applied = 0;
         let mut changes_failed = 0;
@@ -425,8 +449,10 @@ impl ApplyEngine {
                 }
                 Err(e) => {
                     changes_failed += 1;
-                    let error_msg = format!("Failed to apply {:?} {}: {}",
-                        change.operation, change.resource_name, e);
+                    let error_msg = format!(
+                        "Failed to apply {:?} {}: {}",
+                        change.operation, change.resource_name, e
+                    );
                     tracing::error!("{}", error_msg);
                     errors.push(error_msg);
 
@@ -471,7 +497,9 @@ impl ApplyEngine {
     async fn apply_change(&mut self, change: &ConfigChange) -> Result<()> {
         match change.operation {
             ChangeOp::Create => {
-                let config = change.new_config.as_ref()
+                let config = change
+                    .new_config
+                    .as_ref()
                     .ok_or_else(|| Error::Config("No new config for create".to_string()))?;
 
                 // Apply the resource creation based on kind
@@ -483,7 +511,9 @@ impl ApplyEngine {
                 Ok(())
             }
             ChangeOp::Update => {
-                let config = change.new_config.as_ref()
+                let config = change
+                    .new_config
+                    .as_ref()
                     .ok_or_else(|| Error::Config("No new config for update".to_string()))?;
 
                 // Apply the resource update
@@ -496,7 +526,8 @@ impl ApplyEngine {
             }
             ChangeOp::Delete => {
                 // Apply the resource deletion
-                self.delete_resource(&change.resource_name, &change.resource_kind).await?;
+                self.delete_resource(&change.resource_name, &change.resource_kind)
+                    .await?;
 
                 // Update state
                 self.state_manager.delete(&change.resource_name);
@@ -527,9 +558,7 @@ impl ApplyEngine {
                 // Would call VPN management
                 Ok(())
             }
-            _ => {
-                Ok(())
-            }
+            _ => Ok(()),
         }
     }
 
@@ -549,18 +578,24 @@ impl ApplyEngine {
 
     /// Rollback to a specific snapshot
     pub async fn rollback_to_snapshot(&mut self, snapshot_id: &str) -> Result<()> {
-        let snapshot = self.state_manager.get_snapshot(snapshot_id)
+        let snapshot = self
+            .state_manager
+            .get_snapshot(snapshot_id)
             .ok_or_else(|| Error::Config(format!("Snapshot not found: {}", snapshot_id)))?;
 
-        tracing::info!("Rolling back to snapshot: {} ({})",
-            snapshot.id, snapshot.description);
+        tracing::info!(
+            "Rolling back to snapshot: {} ({})",
+            snapshot.id,
+            snapshot.description
+        );
 
         // Apply the snapshot configs (recursive call needs boxing)
         let result = Box::pin(self.apply(snapshot.configs.clone())).await?;
 
         if !result.success {
             return Err(Error::Config(format!(
-                "Rollback failed: {} errors", result.errors.len()
+                "Rollback failed: {} errors",
+                result.errors.len()
             )));
         }
 
@@ -577,8 +612,10 @@ impl ApplyEngine {
 pub fn format_diff(diff: &DiffResult) -> String {
     let mut output = String::new();
 
-    output.push_str(&format!("Changes: {} create, {} update, {} delete\n\n",
-        diff.creates, diff.updates, diff.deletes));
+    output.push_str(&format!(
+        "Changes: {} create, {} update, {} delete\n\n",
+        diff.creates, diff.updates, diff.deletes
+    ));
 
     for change in &diff.changes {
         let symbol = match change.operation {
@@ -588,8 +625,10 @@ pub fn format_diff(diff: &DiffResult) -> String {
             ChangeOp::NoChange => " ",
         };
 
-        output.push_str(&format!("{} {:?}: {}\n",
-            symbol, change.resource_kind, change.resource_name));
+        output.push_str(&format!(
+            "{} {:?}: {}\n",
+            symbol, change.resource_kind, change.resource_name
+        ));
     }
 
     output
@@ -646,16 +685,14 @@ mod tests {
     #[test]
     fn test_format_diff() {
         let diff = DiffResult {
-            changes: vec![
-                ConfigChange {
-                    operation: ChangeOp::Create,
-                    resource_kind: ResourceKind::FirewallRule,
-                    resource_name: "allow-web".to_string(),
-                    old_config: None,
-                    new_config: None,
-                    dependencies: Vec::new(),
-                },
-            ],
+            changes: vec![ConfigChange {
+                operation: ChangeOp::Create,
+                resource_kind: ResourceKind::FirewallRule,
+                resource_name: "allow-web".to_string(),
+                old_config: None,
+                new_config: None,
+                dependencies: Vec::new(),
+            }],
             creates: 1,
             updates: 0,
             deletes: 0,

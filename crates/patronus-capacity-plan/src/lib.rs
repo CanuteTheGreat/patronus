@@ -6,6 +6,6 @@ pub mod forecast;
 pub mod metrics;
 pub mod planner;
 
-pub use forecast::{TimeSeriesForecaster, ForecastModel, ForecastResult};
+pub use forecast::{ForecastModel, ForecastResult, TimeSeriesForecaster};
 pub use metrics::{CapacityMetrics, ResourceType, UtilizationHistory};
 pub use planner::{CapacityPlanner, CapacityRecommendation, GrowthScenario};

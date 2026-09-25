@@ -199,10 +199,7 @@ impl AnsibleManager {
         }
 
         // Add ungrouped hosts
-        let grouped_hosts: std::collections::HashSet<_> = groups
-            .values()
-            .flatten()
-            .collect();
+        let grouped_hosts: std::collections::HashSet<_> = groups.values().flatten().collect();
 
         let ungrouped: Vec<_> = hosts
             .values()
@@ -362,7 +359,11 @@ mod tests {
         let id = host.id;
 
         manager.add_host(host).await;
-        assert!(manager.update_host_var(&id, "env".to_string(), "staging".to_string()).await);
+        assert!(
+            manager
+                .update_host_var(&id, "env".to_string(), "staging".to_string())
+                .await
+        );
 
         let updated = manager.get_host(&id).await.unwrap();
         assert_eq!(updated.vars.get("env"), Some(&"staging".to_string()));

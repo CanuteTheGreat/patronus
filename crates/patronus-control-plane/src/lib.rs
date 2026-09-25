@@ -2,8 +2,8 @@
 //!
 //! Multi-region control plane with consensus and replication
 
-pub mod region;
 pub mod consensus;
+pub mod region;
 
-pub use region::{Region, RegionManager, RegionStatus, RegionCapacity};
-pub use consensus::{ConsensusNode, ConsensusCluster, LogEntry, NodeRole};
+pub use consensus::{ConsensusCluster, ConsensusNode, LogEntry, NodeRole};
+pub use region::{Region, RegionCapacity, RegionManager, RegionStatus};

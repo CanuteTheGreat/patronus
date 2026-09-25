@@ -117,12 +117,7 @@ async fn install_grub_bios(target: &Path, disk: &Path) -> Result<()> {
 
     run_in_chroot(
         target,
-        &[
-            "grub-install",
-            "--target=i386-pc",
-            "--recheck",
-            &disk_str,
-        ],
+        &["grub-install", "--target=i386-pc", "--recheck", &disk_str],
     )
     .await?;
 

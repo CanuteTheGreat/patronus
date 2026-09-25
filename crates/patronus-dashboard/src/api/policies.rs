@@ -1,6 +1,9 @@
 //! Policies API endpoints
 
-use axum::{extract::{Path, State}, Json};
+use axum::{
+    extract::{Path, State},
+    Json,
+};
 use patronus_sdwan::netpolicy::{
     EgressRule, IngressRule, LabelOperator, LabelSelector, NetworkPolicy, NetworkPolicyPort,
     PeerSelector, PolicyId, PolicyType, PortSpec, Protocol,
@@ -25,10 +28,10 @@ pub async fn get_policy(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<PolicyResponse>> {
-    let policy_id = PolicyId::new(
-        id.parse()
-            .map_err(|_| crate::error::ApiError::InvalidRequest("Invalid policy ID".to_string()))?,
-    );
+    let policy_id =
+        PolicyId::new(id.parse().map_err(|_| {
+            crate::error::ApiError::InvalidRequest("Invalid policy ID".to_string())
+        })?);
 
     let policy = state
         .policy_enforcer
@@ -59,10 +62,10 @@ pub async fn update_policy(
     Path(id): Path<String>,
     Json(req): Json<UpdatePolicyRequest>,
 ) -> Result<Json<PolicyResponse>> {
-    let policy_id = PolicyId::new(
-        id.parse()
-            .map_err(|_| crate::error::ApiError::InvalidRequest("Invalid policy ID".to_string()))?,
-    );
+    let policy_id =
+        PolicyId::new(id.parse().map_err(|_| {
+            crate::error::ApiError::InvalidRequest("Invalid policy ID".to_string())
+        })?);
 
     // Remove old policy
     state.policy_enforcer.remove_policy(policy_id).await?;
@@ -86,10 +89,10 @@ pub async fn delete_policy(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
-    let policy_id = PolicyId::new(
-        id.parse()
-            .map_err(|_| crate::error::ApiError::InvalidRequest("Invalid policy ID".to_string()))?,
-    );
+    let policy_id =
+        PolicyId::new(id.parse().map_err(|_| {
+            crate::error::ApiError::InvalidRequest("Invalid policy ID".to_string())
+        })?);
 
     state.policy_enforcer.remove_policy(policy_id).await?;
 
@@ -122,11 +125,7 @@ impl From<NetworkPolicy> for PolicyResponse {
                 .into_iter()
                 .map(|t| format!("{:?}", t))
                 .collect(),
-            ingress_rules: policy
-                .ingress_rules
-                .into_iter()
-                .map(|r| r.into())
-                .collect(),
+            ingress_rules: policy.ingress_rules.into_iter().map(|r| r.into()).collect(),
             egress_rules: policy.egress_rules.into_iter().map(|r| r.into()).collect(),
             enabled: policy.enabled,
             priority: policy.priority,

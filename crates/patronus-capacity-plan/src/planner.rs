@@ -1,15 +1,15 @@
 //! Capacity Planning and Recommendations
 
-use crate::forecast::{TimeSeriesForecaster, ForecastModel, ForecastResult};
+use crate::forecast::{ForecastModel, ForecastResult, TimeSeriesForecaster};
 use crate::metrics::{CapacityMetrics, ResourceType, UtilizationHistory};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GrowthScenario {
-    Conservative,  // 10% growth
-    Moderate,      // 25% growth
-    Aggressive,    // 50% growth
+    Conservative, // 10% growth
+    Moderate,     // 25% growth
+    Aggressive,   // 50% growth
 }
 
 impl GrowthScenario {
@@ -36,10 +36,10 @@ pub struct CapacityRecommendation {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum UrgencyLevel {
-    Critical,  // < 7 days
-    High,      // 7-30 days
-    Medium,    // 30-90 days
-    Low,       // > 90 days
+    Critical, // < 7 days
+    High,     // 7-30 days
+    Medium,   // 30-90 days
+    Low,      // > 90 days
 }
 
 pub struct CapacityPlanner {
@@ -74,11 +74,16 @@ impl CapacityPlanner {
             .add_measurement(metrics);
     }
 
-    pub fn get_recommendations(&self, scenario: GrowthScenario, days_ahead: usize) -> Vec<CapacityRecommendation> {
+    pub fn get_recommendations(
+        &self,
+        scenario: GrowthScenario,
+        days_ahead: usize,
+    ) -> Vec<CapacityRecommendation> {
         let mut recommendations = Vec::new();
 
         for (resource_type, history) in &self.history {
-            if let Some(rec) = self.analyze_resource(resource_type, history, &scenario, days_ahead) {
+            if let Some(rec) = self.analyze_resource(resource_type, history, &scenario, days_ahead)
+            {
                 recommendations.push(rec);
             }
         }
@@ -141,12 +146,11 @@ impl CapacityPlanner {
         };
 
         // Calculate recommended capacity
-        let peak_forecast = forecast.predictions.iter()
-            .copied()
-            .fold(0.0, f64::max);
+        let peak_forecast = forecast.predictions.iter().copied().fold(0.0, f64::max);
 
         let recommended_capacity = peak_forecast * scenario.growth_factor();
-        let increase_percent = ((recommended_capacity - current_capacity) / current_capacity) * 100.0;
+        let increase_percent =
+            ((recommended_capacity - current_capacity) / current_capacity) * 100.0;
 
         // Generate reasoning
         let reasoning = self.generate_reasoning(
@@ -168,7 +172,11 @@ impl CapacityPlanner {
         })
     }
 
-    fn calculate_time_to_exhaustion(&self, forecast: &ForecastResult, capacity: f64) -> Option<f64> {
+    fn calculate_time_to_exhaustion(
+        &self,
+        forecast: &ForecastResult,
+        capacity: f64,
+    ) -> Option<f64> {
         // Find when forecast exceeds capacity
         for (i, &prediction) in forecast.predictions.iter().enumerate() {
             if prediction >= capacity {
@@ -197,17 +205,27 @@ impl CapacityPlanner {
         let mut reasons = Vec::new();
 
         if current_util >= self.critical_threshold {
-            reasons.push(format!("Current utilization ({:.1}%) exceeds critical threshold ({:.1}%)",
-                current_util, self.critical_threshold));
+            reasons.push(format!(
+                "Current utilization ({:.1}%) exceeds critical threshold ({:.1}%)",
+                current_util, self.critical_threshold
+            ));
         } else if current_util >= self.warning_threshold {
-            reasons.push(format!("Current utilization ({:.1}%) exceeds warning threshold ({:.1}%)",
-                current_util, self.warning_threshold));
+            reasons.push(format!(
+                "Current utilization ({:.1}%) exceeds warning threshold ({:.1}%)",
+                current_util, self.warning_threshold
+            ));
         }
 
         if growth_rate > 20.0 {
-            reasons.push(format!("High growth rate ({:.1}%) indicates rapid capacity consumption", growth_rate));
+            reasons.push(format!(
+                "High growth rate ({:.1}%) indicates rapid capacity consumption",
+                growth_rate
+            ));
         } else if growth_rate > 10.0 {
-            reasons.push(format!("Moderate growth rate ({:.1}%) requires planning", growth_rate));
+            reasons.push(format!(
+                "Moderate growth rate ({:.1}%) requires planning",
+                growth_rate
+            ));
         }
 
         if let Some(days) = time_to_exhaustion {
@@ -218,12 +236,18 @@ impl CapacityPlanner {
             }
         }
 
-        reasons.push(format!("Recommendation includes {:?} growth scenario buffer", scenario));
+        reasons.push(format!(
+            "Recommendation includes {:?} growth scenario buffer",
+            scenario
+        ));
 
         reasons.join(". ")
     }
 
-    pub fn get_resource_history(&self, resource_type: &ResourceType) -> Option<&UtilizationHistory> {
+    pub fn get_resource_history(
+        &self,
+        resource_type: &ResourceType,
+    ) -> Option<&UtilizationHistory> {
         self.history.get(resource_type)
     }
 }
@@ -248,8 +272,8 @@ mod tests {
 
     #[test]
     fn test_planner_with_thresholds() {
-        let planner = CapacityPlanner::new(ForecastModel::LinearRegression)
-            .with_thresholds(80.0, 90.0);
+        let planner =
+            CapacityPlanner::new(ForecastModel::LinearRegression).with_thresholds(80.0, 90.0);
 
         assert_eq!(planner.warning_threshold, 80.0);
         assert_eq!(planner.critical_threshold, 90.0);
@@ -262,7 +286,9 @@ mod tests {
         let metrics = CapacityMetrics::new(ResourceType::Bandwidth, 500.0, 1000.0);
         planner.add_measurement(metrics);
 
-        assert!(planner.get_resource_history(&ResourceType::Bandwidth).is_some());
+        assert!(planner
+            .get_resource_history(&ResourceType::Bandwidth)
+            .is_some());
     }
 
     #[test]
@@ -286,11 +312,7 @@ mod tests {
 
         // Add upward trending data
         for i in 1..=5 {
-            let metrics = CapacityMetrics::new(
-                ResourceType::Bandwidth,
-                i as f64 * 150.0,
-                1000.0
-            );
+            let metrics = CapacityMetrics::new(ResourceType::Bandwidth, i as f64 * 150.0, 1000.0);
             planner.add_measurement(metrics);
         }
 
@@ -304,16 +326,13 @@ mod tests {
 
     #[test]
     fn test_critical_urgency() {
-        let mut planner = CapacityPlanner::new(ForecastModel::LinearRegression)
-            .with_thresholds(75.0, 85.0);
+        let mut planner =
+            CapacityPlanner::new(ForecastModel::LinearRegression).with_thresholds(75.0, 85.0);
 
         // Add data at critical utilization
         for i in 1..=5 {
-            let metrics = CapacityMetrics::new(
-                ResourceType::Bandwidth,
-                850.0 + i as f64 * 10.0,
-                1000.0
-            );
+            let metrics =
+                CapacityMetrics::new(ResourceType::Bandwidth, 850.0 + i as f64 * 10.0, 1000.0);
             planner.add_measurement(metrics);
         }
 
@@ -327,21 +346,13 @@ mod tests {
 
         // Add bandwidth measurements
         for i in 1..=5 {
-            let metrics = CapacityMetrics::new(
-                ResourceType::Bandwidth,
-                i as f64 * 150.0,
-                1000.0
-            );
+            let metrics = CapacityMetrics::new(ResourceType::Bandwidth, i as f64 * 150.0, 1000.0);
             planner.add_measurement(metrics);
         }
 
         // Add CPU measurements
         for i in 1..=5 {
-            let metrics = CapacityMetrics::new(
-                ResourceType::CpuUsage,
-                i as f64 * 15.0,
-                100.0
-            );
+            let metrics = CapacityMetrics::new(ResourceType::CpuUsage, i as f64 * 15.0, 100.0);
             planner.add_measurement(metrics);
         }
 
@@ -351,26 +362,18 @@ mod tests {
 
     #[test]
     fn test_recommendation_sorting_by_urgency() {
-        let mut planner = CapacityPlanner::new(ForecastModel::LinearRegression)
-            .with_thresholds(75.0, 85.0);
+        let mut planner =
+            CapacityPlanner::new(ForecastModel::LinearRegression).with_thresholds(75.0, 85.0);
 
         // Add critical bandwidth data
         for _ in 1..=5 {
-            let metrics = CapacityMetrics::new(
-                ResourceType::Bandwidth,
-                900.0,
-                1000.0
-            );
+            let metrics = CapacityMetrics::new(ResourceType::Bandwidth, 900.0, 1000.0);
             planner.add_measurement(metrics);
         }
 
         // Add low CPU data
         for _ in 1..=5 {
-            let metrics = CapacityMetrics::new(
-                ResourceType::CpuUsage,
-                30.0,
-                100.0
-            );
+            let metrics = CapacityMetrics::new(ResourceType::CpuUsage, 30.0, 100.0);
             planner.add_measurement(metrics);
         }
 
@@ -386,11 +389,7 @@ mod tests {
         let mut planner = CapacityPlanner::new(ForecastModel::LinearRegression);
 
         for i in 1..=5 {
-            let metrics = CapacityMetrics::new(
-                ResourceType::Bandwidth,
-                i as f64 * 100.0,
-                1000.0
-            );
+            let metrics = CapacityMetrics::new(ResourceType::Bandwidth, i as f64 * 100.0, 1000.0);
             planner.add_measurement(metrics);
         }
 

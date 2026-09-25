@@ -4,24 +4,24 @@
 //! and client management.
 
 use crate::{
-    auth::{AuthProvider, AuthMethod},
+    auth::{AuthMethod, AuthProvider},
+    bandwidth::BandwidthLimiter,
     sessions::SessionManager,
     vouchers::VoucherManager,
-    bandwidth::BandwidthLimiter,
 };
-use tokio::io::AsyncWriteExt;
 use axum::{
-    Router,
-    extract::{State, Query, Form},
-    response::{Html, Redirect, IntoResponse, Response},
-    routing::{get, post},
+    extract::{Form, Query, State},
     http::StatusCode,
+    response::{Html, IntoResponse, Redirect, Response},
+    routing::{get, post},
+    Router,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::net::SocketAddr;
-use tokio::sync::RwLock;
 use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::RwLock;
 
 /// Captive portal configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,7 +29,7 @@ pub struct PortalConfig {
     pub enabled: bool,
     pub interface: String,
     pub listen_addr: SocketAddr,
-    pub portal_url: String,  // https://portal.example.com
+    pub portal_url: String, // https://portal.example.com
 
     // Branding
     pub portal_title: String,
@@ -54,7 +54,7 @@ pub struct PortalConfig {
     pub total_quota_mb: Option<u64>,
 
     // Access control
-    pub allowed_domains: Vec<String>,  // Whitelist before auth
+    pub allowed_domains: Vec<String>, // Whitelist before auth
     pub blocked_domains: Vec<String>,
 
     // Voucher settings
@@ -122,23 +122,18 @@ impl CaptivePortal {
             .route("/logout", post(handle_logout))
             .route("/status", get(status_page))
             .route("/terms", get(terms_page))
-
             // Voucher management
             .route("/voucher/redeem", post(redeem_voucher))
             .route("/voucher/check", get(check_voucher))
-
             // Social login callbacks
             .route("/auth/facebook/callback", get(facebook_callback))
             .route("/auth/google/callback", get(google_callback))
-
             // Admin API
             .route("/api/sessions", get(list_sessions))
             .route("/api/sessions/:id/terminate", post(terminate_session))
             .route("/api/vouchers/generate", post(generate_vouchers))
-
             // Assets
             .route("/static/*path", get(serve_static))
-
             .with_state(self.state.clone());
 
         let addr = self.state.config.listen_addr;
@@ -151,8 +146,11 @@ impl CaptivePortal {
         self.start_session_cleanup().await;
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-            .await?;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await?;
 
         Ok(())
     }
@@ -160,7 +158,8 @@ impl CaptivePortal {
     /// Configure firewall rules for captive portal
     async fn setup_firewall_rules(&self) -> Result<(), Box<dyn std::error::Error>> {
         // Create nftables rules to redirect HTTP/HTTPS to portal
-        let nft_rules = format!(r#"
+        let nft_rules = format!(
+            r#"
 table inet captive_portal {{
 
     # Authenticated clients (bypass portal)
@@ -238,9 +237,7 @@ table inet captive_portal {{
         let timeout = self.state.config.session_timeout_minutes;
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(
-                tokio::time::Duration::from_secs(60)
-            );
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
 
             loop {
                 interval.tick().await;
@@ -258,10 +255,13 @@ async fn portal_index(
     State(state): State<Arc<PortalState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Html<String> {
-    let redirect_url = params.get("redirect").cloned()
+    let redirect_url = params
+        .get("redirect")
+        .cloned()
         .unwrap_or_else(|| "http://www.google.com".to_string());
 
-    let html = format!(r#"
+    let html = format!(
+        r#"
 <!DOCTYPE html>
 <html>
 <head>
@@ -383,7 +383,11 @@ async fn portal_index(
         state.config.custom_css.as_deref().unwrap_or(""),
         state.config.company_name,
         redirect_url,
-        if state.config.auth_methods.contains(&AuthMethod::UsernamePassword) {
+        if state
+            .config
+            .auth_methods
+            .contains(&AuthMethod::UsernamePassword)
+        {
             r#"
             <input type="text" name="username" placeholder="Username" class="btn btn-secondary" required>
             <input type="password" name="password" placeholder="Password" class="btn btn-secondary" required>
@@ -431,7 +435,7 @@ async fn handle_login(
     } else if let (Some(username), Some(password)) = (&login.username, &login.password) {
         // Username/password authentication
         // Check against configured auth providers
-        true  // Placeholder
+        true // Placeholder
     } else {
         false
     };
@@ -439,29 +443,39 @@ async fn handle_login(
     if authenticated {
         // Create session
         let mut sessions = state.sessions.write().await;
-        let session = sessions.create_session(
-            login.mac_address.clone(),
-            login.ip_address.parse().unwrap(),
-        ).await;
+        let session = sessions
+            .create_session(login.mac_address.clone(), login.ip_address.parse().unwrap())
+            .await;
 
         // Add MAC to nftables authenticated set
         let _ = tokio::process::Command::new("nft")
-            .args(&["add", "element", "inet", "captive_portal", "authenticated_clients",
-                    &format!("{{ {} timeout 1h }}", login.mac_address)])
+            .args(&[
+                "add",
+                "element",
+                "inet",
+                "captive_portal",
+                "authenticated_clients",
+                &format!("{{ {} timeout 1h }}", login.mac_address),
+            ])
             .output()
             .await;
 
         // Apply bandwidth limits if configured
         if let Some(download_limit) = state.config.download_limit_kbps {
-            state.bandwidth.set_limit(
-                &login.mac_address,
-                download_limit,
-                state.config.upload_limit_kbps.unwrap_or(download_limit),
-            ).await;
+            state
+                .bandwidth
+                .set_limit(
+                    &login.mac_address,
+                    download_limit,
+                    state.config.upload_limit_kbps.unwrap_or(download_limit),
+                )
+                .await;
         }
 
         // Redirect to original URL
-        let redirect_url = login.redirect_url.unwrap_or_else(|| "http://www.google.com".to_string());
+        let redirect_url = login
+            .redirect_url
+            .unwrap_or_else(|| "http://www.google.com".to_string());
         Redirect::to(&redirect_url).into_response()
     } else {
         (StatusCode::UNAUTHORIZED, "Authentication failed").into_response()
@@ -479,8 +493,14 @@ async fn handle_logout(
 
         // Remove from nftables
         let _ = tokio::process::Command::new("nft")
-            .args(&["delete", "element", "inet", "captive_portal", "authenticated_clients",
-                    &format!("{{ {} }}", mac)])
+            .args(&[
+                "delete",
+                "element",
+                "inet",
+                "captive_portal",
+                "authenticated_clients",
+                &format!("{{ {} }}", mac),
+            ])
             .output()
             .await;
 
@@ -496,7 +516,8 @@ async fn status_page() -> Html<&'static str> {
 }
 
 async fn terms_page(State(state): State<Arc<PortalState>>) -> Html<String> {
-    let html = format!(r#"
+    let html = format!(
+        r#"
 <!DOCTYPE html>
 <html>
 <head>
@@ -507,7 +528,9 @@ async fn terms_page(State(state): State<Arc<PortalState>>) -> Html<String> {
     <p>Terms and conditions for {} guest WiFi access...</p>
 </body>
 </html>
-"#, state.config.company_name);
+"#,
+        state.config.company_name
+    );
 
     Html(html)
 }
@@ -559,11 +582,11 @@ impl Default for PortalConfig {
             auth_methods: vec![AuthMethod::Voucher],
             require_terms: true,
             terms_url: None,
-            session_timeout_minutes: 240,  // 4 hours
+            session_timeout_minutes: 240, // 4 hours
             max_sessions_per_mac: 1,
             idle_timeout_minutes: 30,
-            download_limit_kbps: Some(10000),  // 10 Mbps
-            upload_limit_kbps: Some(5000),     // 5 Mbps
+            download_limit_kbps: Some(10000), // 10 Mbps
+            upload_limit_kbps: Some(5000),    // 5 Mbps
             total_quota_mb: None,
             allowed_domains: vec![],
             blocked_domains: vec![],

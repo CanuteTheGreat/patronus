@@ -5,7 +5,7 @@
 use anyhow::Result;
 use patronus_web::AppState;
 use std::net::SocketAddr;
-use tracing::{info, error};
+use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -19,11 +19,15 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    info!("Starting Patronus Web Interface v{}", env!("CARGO_PKG_VERSION"));
+    info!(
+        "Starting Patronus Web Interface v{}",
+        env!("CARGO_PKG_VERSION")
+    );
 
     // Create minimal application state with stub services
     let rule_manager = patronus_firewall::rules::RuleManager::new();
-    let config_store = patronus_config::store::ConfigStore::new(std::path::PathBuf::from("/tmp/patronus-config"));
+    let config_store =
+        patronus_config::store::ConfigStore::new(std::path::PathBuf::from("/tmp/patronus-config"));
     let state = AppState::new(rule_manager, config_store);
 
     // Bind to address

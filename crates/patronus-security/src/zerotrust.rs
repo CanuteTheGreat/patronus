@@ -46,7 +46,13 @@ impl ZeroTrustEngine {
         self.policies.push(policy);
     }
 
-    pub fn evaluate(&self, source: &str, destination: &str, action: &str, context: &HashMap<String, String>) -> bool {
+    pub fn evaluate(
+        &self,
+        source: &str,
+        destination: &str,
+        action: &str,
+        context: &HashMap<String, String>,
+    ) -> bool {
         // Find matching policies
         for policy in &self.policies {
             if policy.source_identity != source {
@@ -91,7 +97,9 @@ impl ZeroTrustEngine {
         match &condition.operator {
             Operator::Equals => actual_value == Some(&condition.value),
             Operator::NotEquals => actual_value != Some(&condition.value),
-            Operator::Contains => actual_value.map(|v| v.contains(&condition.value)).unwrap_or(false),
+            Operator::Contains => actual_value
+                .map(|v| v.contains(&condition.value))
+                .unwrap_or(false),
             _ => false,
         }
     }

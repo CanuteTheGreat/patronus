@@ -9,11 +9,11 @@
 //! - Point-in-time recovery
 //! - Configuration diff and rollback
 
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 use tokio::fs;
-use sha2::{Sha256, Digest};
 
 /// Backup configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,13 +79,15 @@ pub enum CompressionAlgorithm {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StorageBackend {
-    Local { path: PathBuf },
+    Local {
+        path: PathBuf,
+    },
     S3 {
         bucket: String,
         region: String,
         access_key: String,
         secret_key: String,
-        endpoint: Option<String>,  // For S3-compatible services
+        endpoint: Option<String>, // For S3-compatible services
     },
     Azure {
         account: String,
@@ -151,7 +153,10 @@ impl BackupManager {
     }
 
     /// Create a full backup
-    pub async fn create_backup(&self, backup_type: BackupType) -> Result<BackupMetadata, BackupError> {
+    pub async fn create_backup(
+        &self,
+        backup_type: BackupType,
+    ) -> Result<BackupMetadata, BackupError> {
         let backup_id = Self::generate_backup_id();
         let timestamp = Utc::now();
 
@@ -227,7 +232,11 @@ impl BackupManager {
     }
 
     /// Restore from backup
-    pub async fn restore_backup(&self, backup_id: &str, target_dir: Option<PathBuf>) -> Result<(), BackupError> {
+    pub async fn restore_backup(
+        &self,
+        backup_id: &str,
+        target_dir: Option<PathBuf>,
+    ) -> Result<(), BackupError> {
         tracing::info!("Restoring backup: {}", backup_id);
 
         // Download from storage if needed
@@ -252,7 +261,8 @@ impl BackupManager {
 
         // Decompress if compressed
         if current_path.extension().and_then(|s| s.to_str()) == Some("zst")
-            || current_path.extension().and_then(|s| s.to_str()) == Some("gz") {
+            || current_path.extension().and_then(|s| s.to_str()) == Some("gz")
+        {
             let decompressed_path = self.decompress_archive(&current_path).await?;
             fs::remove_file(&current_path).await?;
             current_path = decompressed_path;
@@ -260,7 +270,8 @@ impl BackupManager {
 
         // Extract tar archive
         let restore_dir = target_dir.unwrap_or_else(|| PathBuf::from("/"));
-        self.extract_tar_archive(&current_path, &restore_dir).await?;
+        self.extract_tar_archive(&current_path, &restore_dir)
+            .await?;
 
         tracing::info!("Backup restored successfully to {}", restore_dir.display());
 
@@ -324,15 +335,25 @@ impl BackupManager {
     }
 
     /// Compare two backups and show differences
-    pub async fn diff_backups(&self, backup_id_a: &str, backup_id_b: &str) -> Result<BackupDiff, BackupError> {
+    pub async fn diff_backups(
+        &self,
+        backup_id_a: &str,
+        backup_id_b: &str,
+    ) -> Result<BackupDiff, BackupError> {
         let metadata_a = self.load_metadata(backup_id_a).await?;
         let metadata_b = self.load_metadata(backup_id_b).await?;
 
         let files_a: std::collections::HashSet<_> = metadata_a.files_included.iter().collect();
         let files_b: std::collections::HashSet<_> = metadata_b.files_included.iter().collect();
 
-        let added: Vec<String> = files_b.difference(&files_a).map(|s| s.to_string()).collect();
-        let removed: Vec<String> = files_a.difference(&files_b).map(|s| s.to_string()).collect();
+        let added: Vec<String> = files_b
+            .difference(&files_a)
+            .map(|s| s.to_string())
+            .collect();
+        let removed: Vec<String> = files_a
+            .difference(&files_b)
+            .map(|s| s.to_string())
+            .collect();
 
         Ok(BackupDiff {
             backup_a: backup_id_a.to_string(),
@@ -365,9 +386,14 @@ impl BackupManager {
         Ok(files)
     }
 
-    async fn create_tar_archive(&self, files: &[PathBuf], output: &Path) -> Result<(), BackupError> {
+    async fn create_tar_archive(
+        &self,
+        files: &[PathBuf],
+        output: &Path,
+    ) -> Result<(), BackupError> {
         // Use tar command for production reliability
-        let file_list = files.iter()
+        let file_list = files
+            .iter()
             .map(|p| p.display().to_string())
             .collect::<Vec<_>>()
             .join("\n");
@@ -402,7 +428,8 @@ impl BackupManager {
             .args(&[
                 &format!("-{}", self.config.compression.level),
                 path_str,
-                "-o", output_str,
+                "-o",
+                output_str,
             ])
             .status()
             .await?;
@@ -415,9 +442,7 @@ impl BackupManager {
     }
 
     async fn encrypt_archive(&self, path: &Path) -> Result<PathBuf, BackupError> {
-        let ext = path.extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("tar");
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("tar");
         let output = path.with_extension(format!("{}.enc", ext));
 
         let output_str = output.to_str().ok_or(BackupError::InvalidPath)?;
@@ -530,18 +555,34 @@ impl BackupManager {
         Ok(())
     }
 
-    async fn upload_to_storage(&self, _backup_path: &Path, _metadata_path: &Path) -> Result<(), BackupError> {
+    async fn upload_to_storage(
+        &self,
+        _backup_path: &Path,
+        _metadata_path: &Path,
+    ) -> Result<(), BackupError> {
         match &self.config.storage {
             StorageBackend::Local { .. } => {
                 // Already local
                 Ok(())
             }
-            StorageBackend::S3 { bucket: _, region: _, access_key: _, secret_key: _, endpoint: _ } => {
+            StorageBackend::S3 {
+                bucket: _,
+                region: _,
+                access_key: _,
+                secret_key: _,
+                endpoint: _,
+            } => {
                 // Upload to S3 using AWS SDK
                 // Implementation would use aws-sdk-s3
                 Ok(())
             }
-            StorageBackend::SFTP { host: _, port: _, username: _, key_file: _, remote_path: _ } => {
+            StorageBackend::SFTP {
+                host: _,
+                port: _,
+                username: _,
+                key_file: _,
+                remote_path: _,
+            } => {
                 // Upload via SFTP
                 Ok(())
             }

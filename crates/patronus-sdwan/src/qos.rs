@@ -121,7 +121,10 @@ impl PriorityQueue {
 
     fn enqueue(&mut self, packet: QueuedPacket) -> bool {
         if self.queue.len() >= self.config.max_size {
-            warn!("Queue full for class {}, dropping packet", packet.qos_class.as_str());
+            warn!(
+                "Queue full for class {}, dropping packet",
+                packet.qos_class.as_str()
+            );
             self.packets_dropped += 1;
             self.buffer_overflows += 1;
             return false;
@@ -328,13 +331,17 @@ impl QosScheduler {
                         stats.packets_dequeued += 1;
                         stats.bytes_transmitted += packet.data.len() as u64;
 
-                        let class_stats = stats.by_class.entry(class).or_insert_with(ClassStats::default);
+                        let class_stats = stats
+                            .by_class
+                            .entry(class)
+                            .or_insert_with(ClassStats::default);
                         class_stats.packets += 1;
                         class_stats.bytes += packet.data.len() as u64;
 
                         // Update rolling average queue time
                         let alpha = 0.1; // Exponential moving average factor
-                        class_stats.avg_queue_time_ms = class_stats.avg_queue_time_ms * (1.0 - alpha)
+                        class_stats.avg_queue_time_ms = class_stats.avg_queue_time_ms
+                            * (1.0 - alpha)
                             + queue_time.as_secs_f64() * 1000.0 * alpha;
 
                         trace!(
@@ -410,11 +417,26 @@ mod tests {
 
     #[test]
     fn test_qos_class_from_app_type() {
-        assert_eq!(QosClass::from_app_type(ApplicationType::VoIP), QosClass::RealTime);
-        assert_eq!(QosClass::from_app_type(ApplicationType::Gaming), QosClass::RealTime);
-        assert_eq!(QosClass::from_app_type(ApplicationType::Video), QosClass::Streaming);
-        assert_eq!(QosClass::from_app_type(ApplicationType::Web), QosClass::Standard);
-        assert_eq!(QosClass::from_app_type(ApplicationType::FileTransfer), QosClass::Bulk);
+        assert_eq!(
+            QosClass::from_app_type(ApplicationType::VoIP),
+            QosClass::RealTime
+        );
+        assert_eq!(
+            QosClass::from_app_type(ApplicationType::Gaming),
+            QosClass::RealTime
+        );
+        assert_eq!(
+            QosClass::from_app_type(ApplicationType::Video),
+            QosClass::Streaming
+        );
+        assert_eq!(
+            QosClass::from_app_type(ApplicationType::Web),
+            QosClass::Standard
+        );
+        assert_eq!(
+            QosClass::from_app_type(ApplicationType::FileTransfer),
+            QosClass::Bulk
+        );
     }
 
     #[test]

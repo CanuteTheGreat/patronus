@@ -1,9 +1,9 @@
 //! Anomaly and Issue Detection
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum IssueType {
@@ -89,20 +89,22 @@ impl IssueDetector {
         self.thresholds.insert(metric.into(), value);
     }
 
-    pub fn detect_tunnel_issues(&self, tunnel_id: &str, metrics: &HashMap<String, f64>) -> Vec<Issue> {
+    pub fn detect_tunnel_issues(
+        &self,
+        tunnel_id: &str,
+        metrics: &HashMap<String, f64>,
+    ) -> Vec<Issue> {
         let mut issues = Vec::new();
 
         // Check if tunnel is down
         if let Some(&state) = metrics.get("state") {
             if state == 0.0 {
-                issues.push(
-                    Issue::new(
-                        IssueType::TunnelDown,
-                        IssueSeverity::Critical,
-                        format!("Tunnel {} is down", tunnel_id),
-                        tunnel_id,
-                    )
-                );
+                issues.push(Issue::new(
+                    IssueType::TunnelDown,
+                    IssueSeverity::Critical,
+                    format!("Tunnel {} is down", tunnel_id),
+                    tunnel_id,
+                ));
             }
         }
 
@@ -113,11 +115,18 @@ impl IssueDetector {
                 issues.push(
                     Issue::new(
                         IssueType::HighLatency,
-                        if latency > threshold * 2.0 { IssueSeverity::High } else { IssueSeverity::Medium },
-                        format!("High latency detected: {:.2}ms (threshold: {:.2}ms)", latency, threshold),
+                        if latency > threshold * 2.0 {
+                            IssueSeverity::High
+                        } else {
+                            IssueSeverity::Medium
+                        },
+                        format!(
+                            "High latency detected: {:.2}ms (threshold: {:.2}ms)",
+                            latency, threshold
+                        ),
                         tunnel_id,
                     )
-                    .with_metric("latency_ms", latency)
+                    .with_metric("latency_ms", latency),
                 );
             }
         }
@@ -129,11 +138,18 @@ impl IssueDetector {
                 issues.push(
                     Issue::new(
                         IssueType::PacketLoss,
-                        if packet_loss > threshold * 2.0 { IssueSeverity::High } else { IssueSeverity::Medium },
-                        format!("Packet loss detected: {:.2}% (threshold: {:.2}%)", packet_loss, threshold),
+                        if packet_loss > threshold * 2.0 {
+                            IssueSeverity::High
+                        } else {
+                            IssueSeverity::Medium
+                        },
+                        format!(
+                            "Packet loss detected: {:.2}% (threshold: {:.2}%)",
+                            packet_loss, threshold
+                        ),
                         tunnel_id,
                     )
-                    .with_metric("packet_loss_percent", packet_loss)
+                    .with_metric("packet_loss_percent", packet_loss),
                 );
             }
         }
@@ -143,31 +159,42 @@ impl IssueDetector {
 
     pub fn detect_bgp_issues(&self, peer_id: &str, peer_state: &str) -> Option<Issue> {
         if peer_state != "established" {
-            Some(
-                Issue::new(
-                    IssueType::BgpPeerDown,
-                    IssueSeverity::High,
-                    format!("BGP peer {} is not established (state: {})", peer_id, peer_state),
-                    peer_id,
-                )
-            )
+            Some(Issue::new(
+                IssueType::BgpPeerDown,
+                IssueSeverity::High,
+                format!(
+                    "BGP peer {} is not established (state: {})",
+                    peer_id, peer_state
+                ),
+                peer_id,
+            ))
         } else {
             None
         }
     }
 
     pub fn detect_capacity_issues(&self, resource_id: &str, utilization: f64) -> Option<Issue> {
-        let threshold = self.thresholds.get("bandwidth_utilization_percent").unwrap_or(&80.0);
+        let threshold = self
+            .thresholds
+            .get("bandwidth_utilization_percent")
+            .unwrap_or(&80.0);
 
         if utilization > *threshold {
             Some(
                 Issue::new(
                     IssueType::CapacityExhausted,
-                    if utilization > 95.0 { IssueSeverity::Critical } else { IssueSeverity::High },
-                    format!("Capacity exhausted: {:.2}% utilization (threshold: {:.2}%)", utilization, threshold),
+                    if utilization > 95.0 {
+                        IssueSeverity::Critical
+                    } else {
+                        IssueSeverity::High
+                    },
+                    format!(
+                        "Capacity exhausted: {:.2}% utilization (threshold: {:.2}%)",
+                        utilization, threshold
+                    ),
                     resource_id,
                 )
-                .with_metric("utilization_percent", utilization)
+                .with_metric("utilization_percent", utilization),
             )
         } else {
             None

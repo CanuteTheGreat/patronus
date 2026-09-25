@@ -95,7 +95,8 @@ impl GeoDNSManager {
 
     pub async fn list_healthy_endpoints(&self) -> Vec<Endpoint> {
         let endpoints = self.endpoints.read().await;
-        endpoints.values()
+        endpoints
+            .values()
             .filter(|e| e.health == HealthStatus::Healthy)
             .cloned()
             .collect()
@@ -103,7 +104,8 @@ impl GeoDNSManager {
 
     pub async fn resolve(&self, client_location: &GeoLocation) -> Option<Endpoint> {
         let endpoints = self.endpoints.read().await;
-        let healthy: Vec<_> = endpoints.values()
+        let healthy: Vec<_> = endpoints
+            .values()
             .filter(|e| e.health == HealthStatus::Healthy)
             .cloned()
             .collect();
@@ -113,23 +115,20 @@ impl GeoDNSManager {
         }
 
         match self.policy {
-            RoutingPolicy::Geoproximity => {
-                self.resolve_geoproximity(&healthy, client_location)
-            }
-            RoutingPolicy::Latency => {
-                self.resolve_latency(&healthy)
-            }
-            RoutingPolicy::Weighted => {
-                self.resolve_weighted(&healthy)
-            }
-            RoutingPolicy::Failover => {
-                self.resolve_failover(&healthy)
-            }
+            RoutingPolicy::Geoproximity => self.resolve_geoproximity(&healthy, client_location),
+            RoutingPolicy::Latency => self.resolve_latency(&healthy),
+            RoutingPolicy::Weighted => self.resolve_weighted(&healthy),
+            RoutingPolicy::Failover => self.resolve_failover(&healthy),
         }
     }
 
-    fn resolve_geoproximity(&self, endpoints: &[Endpoint], client_loc: &GeoLocation) -> Option<Endpoint> {
-        endpoints.iter()
+    fn resolve_geoproximity(
+        &self,
+        endpoints: &[Endpoint],
+        client_loc: &GeoLocation,
+    ) -> Option<Endpoint> {
+        endpoints
+            .iter()
             .min_by(|a, b| {
                 let dist_a = client_loc.distance_to(&a.location);
                 let dist_b = client_loc.distance_to(&b.location);
@@ -139,7 +138,8 @@ impl GeoDNSManager {
     }
 
     fn resolve_latency(&self, endpoints: &[Endpoint]) -> Option<Endpoint> {
-        endpoints.iter()
+        endpoints
+            .iter()
             .min_by(|a, b| a.latency_ms.partial_cmp(&b.latency_ms).unwrap())
             .cloned()
     }
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn test_geolocation_distance() {
         let loc1 = create_test_location(37.7749, -122.4194); // San Francisco
-        let loc2 = create_test_location(40.7128, -74.0060);  // New York
+        let loc2 = create_test_location(40.7128, -74.0060); // New York
 
         let distance = loc1.distance_to(&loc2);
         assert!(distance > 4000.0 && distance < 5000.0); // ~4130 km
@@ -276,7 +276,7 @@ mod tests {
         let manager = GeoDNSManager::new(RoutingPolicy::Geoproximity);
 
         let ep1 = create_test_endpoint("west", 37.7749, -122.4194); // SF
-        let ep2 = create_test_endpoint("east", 40.7128, -74.0060);  // NY
+        let ep2 = create_test_endpoint("east", 40.7128, -74.0060); // NY
 
         manager.register_endpoint(ep1).await;
         manager.register_endpoint(ep2).await;

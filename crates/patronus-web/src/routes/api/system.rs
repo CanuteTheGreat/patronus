@@ -1,13 +1,13 @@
 //! System API endpoints
 
+use crate::state::AppState;
 use axum::{
     extract::{Path, State},
-    Json,
-    response::{IntoResponse, Response},
     http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
 };
 use serde::{Deserialize, Serialize};
-use crate::state::AppState;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct User {
@@ -51,9 +51,13 @@ pub async fn list_users(State(state): State<AppState>) -> Response {
         Ok(users) => Json(users).into_response(),
         Err(e) => {
             tracing::error!("Failed to list users: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": "Failed to list users"
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to list users"
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -64,9 +68,13 @@ pub async fn list_backups(State(state): State<AppState>) -> Response {
         Ok(backups) => Json(backups).into_response(),
         Err(e) => {
             tracing::error!("Failed to list backups: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": "Failed to list backups"
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to list backups"
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -74,15 +82,23 @@ pub async fn list_backups(State(state): State<AppState>) -> Response {
 /// POST /api/system/backups
 pub async fn create_backup(State(state): State<AppState>) -> Response {
     match state.system.create_backup().await {
-        Ok(backup_id) => (StatusCode::CREATED, Json(serde_json::json!({
-            "id": backup_id,
-            "message": "Backup created successfully"
-        }))).into_response(),
+        Ok(backup_id) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({
+                "id": backup_id,
+                "message": "Backup created successfully"
+            })),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!("Failed to create backup: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": format!("Failed to create backup: {}", e)
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Failed to create backup: {}", e)
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -93,9 +109,13 @@ pub async fn list_updates(State(state): State<AppState>) -> Response {
         Ok(updates) => Json(updates).into_response(),
         Err(e) => {
             tracing::error!("Failed to check updates: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": "Failed to check updates"
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to check updates"
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -106,9 +126,13 @@ pub async fn list_services(State(state): State<AppState>) -> Response {
         Ok(services) => Json(services).into_response(),
         Err(e) => {
             tracing::error!("Failed to list services: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": "Failed to list services"
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to list services"
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -118,12 +142,17 @@ pub async fn start_service(State(state): State<AppState>, Path(name): Path<Strin
     match state.system.start_service(&name).await {
         Ok(_) => Json(serde_json::json!({
             "message": format!("Service {} started successfully", name)
-        })).into_response(),
+        }))
+        .into_response(),
         Err(e) => {
             tracing::error!("Failed to start service {}: {}", name, e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": format!("Failed to start service: {}", e)
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Failed to start service: {}", e)
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -133,12 +162,17 @@ pub async fn stop_service(State(state): State<AppState>, Path(name): Path<String
     match state.system.stop_service(&name).await {
         Ok(_) => Json(serde_json::json!({
             "message": format!("Service {} stopped successfully", name)
-        })).into_response(),
+        }))
+        .into_response(),
         Err(e) => {
             tracing::error!("Failed to stop service {}: {}", name, e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": format!("Failed to stop service: {}", e)
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Failed to stop service: {}", e)
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -148,12 +182,17 @@ pub async fn restart_service(State(state): State<AppState>, Path(name): Path<Str
     match state.system.restart_service(&name).await {
         Ok(_) => Json(serde_json::json!({
             "message": format!("Service {} restarted successfully", name)
-        })).into_response(),
+        }))
+        .into_response(),
         Err(e) => {
             tracing::error!("Failed to restart service {}: {}", name, e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": format!("Failed to restart service: {}", e)
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Failed to restart service: {}", e)
+                })),
+            )
+                .into_response()
         }
     }
 }

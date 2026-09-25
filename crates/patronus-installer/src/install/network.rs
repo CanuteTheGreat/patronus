@@ -182,7 +182,8 @@ async fn configure_openrc_network(target: &Path, config: &NetworkConfig) -> Resu
                     iface.name, address, prefix_len
                 ));
                 if let Some(gw) = gateway {
-                    net_content.push_str(&format!("routes_{}=\"default via {}\"\n", iface.name, gw));
+                    net_content
+                        .push_str(&format!("routes_{}=\"default via {}\"\n", iface.name, gw));
                 }
             }
             NetworkMethod::Disabled => {

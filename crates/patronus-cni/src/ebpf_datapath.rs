@@ -8,8 +8,8 @@ use tracing::{debug, info};
 /// eBPF program type for CNI datapath
 #[derive(Debug, Clone, Copy)]
 pub enum EbpfProgramType {
-    XDP,      // XDP for ingress (host -> pod)
-    TC,       // TC (traffic control) for egress (pod -> host)
+    XDP, // XDP for ingress (host -> pod)
+    TC,  // TC (traffic control) for egress (pod -> host)
 }
 
 /// Pod network endpoint information
@@ -64,7 +64,10 @@ impl EbpfDatapath {
         self.configure_pod_maps(endpoint).await?;
 
         // 5. Store endpoint
-        self.endpoints.write().await.insert(endpoint.container_id.clone(), endpoint.clone());
+        self.endpoints
+            .write()
+            .await
+            .insert(endpoint.container_id.clone(), endpoint.clone());
 
         info!("eBPF programs attached successfully");
         Ok(())
@@ -73,8 +76,7 @@ impl EbpfDatapath {
     /// Detach eBPF programs from pod's host veth
     pub async fn detach_programs(&self, container_id: &str) -> Result<()> {
         let endpoints = self.endpoints.read().await;
-        let endpoint = endpoints.get(container_id)
-            .context("Endpoint not found")?;
+        let endpoint = endpoints.get(container_id).context("Endpoint not found")?;
 
         info!(
             "Detaching eBPF programs from {} for pod {}/{}",
@@ -181,7 +183,10 @@ impl EbpfDatapath {
 
     /// Configure eBPF maps with pod information
     async fn configure_pod_maps(&self, endpoint: &PodEndpoint) -> Result<()> {
-        debug!("Configuring eBPF maps for pod {}/{}", endpoint.namespace, endpoint.pod_name);
+        debug!(
+            "Configuring eBPF maps for pod {}/{}",
+            endpoint.namespace, endpoint.pod_name
+        );
 
         // In production, this would update eBPF maps with:
         // - Pod IP -> Pod metadata mapping
@@ -197,7 +202,10 @@ impl EbpfDatapath {
 
     /// Clean up eBPF maps for pod
     async fn cleanup_pod_maps(&self, endpoint: &PodEndpoint) -> Result<()> {
-        debug!("Cleaning up eBPF maps for pod {}/{}", endpoint.namespace, endpoint.pod_name);
+        debug!(
+            "Cleaning up eBPF maps for pod {}/{}",
+            endpoint.namespace, endpoint.pod_name
+        );
 
         // Remove pod from eBPF maps
 
@@ -226,10 +234,17 @@ impl EbpfDatapath {
     }
 
     /// Get policy verdict
-    pub async fn get_policy(&self, pod_ip: IpAddr, src_ip: IpAddr, dst_ip: IpAddr) -> PolicyVerdict {
+    pub async fn get_policy(
+        &self,
+        pod_ip: IpAddr,
+        src_ip: IpAddr,
+        dst_ip: IpAddr,
+    ) -> PolicyVerdict {
         let key = format!("{}:{}:{}", pod_ip, src_ip, dst_ip);
 
-        self.policy_cache.read().await
+        self.policy_cache
+            .read()
+            .await
             .get(&key)
             .copied()
             .unwrap_or(PolicyVerdict::Allow) // Default allow
@@ -382,7 +397,10 @@ mod tests {
         let dst_ip = IpAddr::from_str("10.96.0.1").unwrap();
 
         // Update policy to deny
-        datapath.update_policy(pod_ip, src_ip, dst_ip, PolicyVerdict::Deny).await.unwrap();
+        datapath
+            .update_policy(pod_ip, src_ip, dst_ip, PolicyVerdict::Deny)
+            .await
+            .unwrap();
 
         // Check policy
         let verdict = datapath.get_policy(pod_ip, src_ip, dst_ip).await;

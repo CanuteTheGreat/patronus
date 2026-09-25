@@ -1,10 +1,10 @@
 //! Automated Retraining Triggers
 
+use anyhow::Result;
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc, Duration};
-use anyhow::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TriggerType {
@@ -61,7 +61,10 @@ impl RetrainingTrigger {
         }
     }
 
-    pub fn performance_based(model_name: impl Into<String>, thresholds: PerformanceThresholds) -> Self {
+    pub fn performance_based(
+        model_name: impl Into<String>,
+        thresholds: PerformanceThresholds,
+    ) -> Self {
         Self {
             id: Uuid::new_v4(),
             model_name: model_name.into(),
@@ -191,7 +194,9 @@ impl RetrainingManager {
     }
 
     pub fn remove_trigger(&mut self, trigger_id: &Uuid) -> Result<()> {
-        let trigger = self.triggers.remove(trigger_id)
+        let trigger = self
+            .triggers
+            .remove(trigger_id)
             .ok_or_else(|| anyhow::anyhow!("Trigger not found"))?;
 
         // Remove from model_triggers
@@ -204,7 +209,9 @@ impl RetrainingManager {
     }
 
     pub fn enable_trigger(&mut self, trigger_id: &Uuid) -> Result<()> {
-        let trigger = self.triggers.get_mut(trigger_id)
+        let trigger = self
+            .triggers
+            .get_mut(trigger_id)
             .ok_or_else(|| anyhow::anyhow!("Trigger not found"))?;
 
         trigger.enabled = true;
@@ -213,7 +220,9 @@ impl RetrainingManager {
     }
 
     pub fn disable_trigger(&mut self, trigger_id: &Uuid) -> Result<()> {
-        let trigger = self.triggers.get_mut(trigger_id)
+        let trigger = self
+            .triggers
+            .get_mut(trigger_id)
             .ok_or_else(|| anyhow::anyhow!("Trigger not found"))?;
 
         trigger.enabled = false;
@@ -235,7 +244,11 @@ impl RetrainingManager {
         models_to_retrain
     }
 
-    pub fn check_performance_triggers(&mut self, model_name: &str, metrics: &HashMap<String, f64>) -> bool {
+    pub fn check_performance_triggers(
+        &mut self,
+        model_name: &str,
+        metrics: &HashMap<String, f64>,
+    ) -> bool {
         if let Some(trigger_ids) = self.model_triggers.get(model_name) {
             for trigger_id in trigger_ids {
                 if let Some(trigger) = self.triggers.get_mut(trigger_id) {
@@ -280,11 +293,7 @@ impl RetrainingManager {
     pub fn list_triggers_for_model(&self, model_name: &str) -> Vec<&RetrainingTrigger> {
         self.model_triggers
             .get(model_name)
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(|id| self.triggers.get(id))
-                    .collect()
-            })
+            .map(|ids| ids.iter().filter_map(|id| self.triggers.get(id)).collect())
             .unwrap_or_default()
     }
 }

@@ -2,8 +2,8 @@
 //!
 //! Integrates with Istio service mesh for L7 traffic management
 
-use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VirtualService {
@@ -71,12 +71,22 @@ impl IstioIntegration {
         Ok(())
     }
 
-    pub async fn create_destination_rule(&self, name: &str, host: &str, subsets: Vec<&str>) -> Result<()> {
+    pub async fn create_destination_rule(
+        &self,
+        name: &str,
+        host: &str,
+        subsets: Vec<&str>,
+    ) -> Result<()> {
         tracing::info!("Creating DestinationRule {} for host {}", name, host);
         Ok(())
     }
 
-    pub async fn create_gateway(&self, name: &str, selector: Vec<(&str, &str)>, servers: Vec<&str>) -> Result<()> {
+    pub async fn create_gateway(
+        &self,
+        name: &str,
+        selector: Vec<(&str, &str)>,
+        servers: Vec<&str>,
+    ) -> Result<()> {
         tracing::info!("Creating Istio Gateway {}", name);
         Ok(())
     }

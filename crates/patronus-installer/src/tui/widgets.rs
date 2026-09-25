@@ -50,7 +50,11 @@ pub fn draw_frame(frame: &mut Frame, title: &str) -> Rect {
 /// Draw the header bar
 fn draw_header(frame: &mut Frame, area: Rect, title: &str) {
     let header = Paragraph::new(title)
-        .style(Style::default().fg(Theme::PRIMARY).add_modifier(Modifier::BOLD))
+        .style(
+            Style::default()
+                .fg(Theme::PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        )
         .alignment(Alignment::Center)
         .block(
             Block::default()
@@ -84,7 +88,13 @@ fn draw_footer(frame: &mut Frame, area: Rect) {
 }
 
 /// Draw a centered box with content
-pub fn draw_centered_box(frame: &mut Frame, area: Rect, title: &str, width: u16, height: u16) -> Rect {
+pub fn draw_centered_box(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    width: u16,
+    height: u16,
+) -> Rect {
     let horizontal_padding = (area.width.saturating_sub(width)) / 2;
     let vertical_padding = (area.height.saturating_sub(height)) / 2;
 
@@ -200,14 +210,12 @@ pub fn draw_progress(frame: &mut Frame, area: Rect, label: &str, progress: f32) 
 
 /// Draw an info box
 pub fn draw_info(frame: &mut Frame, area: Rect, title: &str, content: &str) {
-    let paragraph = Paragraph::new(content)
-        .wrap(Wrap { trim: true })
-        .block(
-            Block::default()
-                .title(title)
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Theme::SECONDARY)),
-        );
+    let paragraph = Paragraph::new(content).wrap(Wrap { trim: true }).block(
+        Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Theme::SECONDARY)),
+    );
 
     frame.render_widget(paragraph, area);
 }
@@ -234,10 +242,7 @@ pub fn draw_table(frame: &mut Frame, area: Rect, title: &str, rows: &[(&str, &st
         .iter()
         .map(|(key, value)| {
             Line::from(vec![
-                Span::styled(
-                    format!("{}: ", key),
-                    Style::default().fg(Theme::MUTED),
-                ),
+                Span::styled(format!("{}: ", key), Style::default().fg(Theme::MUTED)),
                 Span::styled(*value, Style::default().fg(Theme::FOREGROUND)),
             ])
         })

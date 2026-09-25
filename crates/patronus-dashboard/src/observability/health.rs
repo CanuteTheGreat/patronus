@@ -102,7 +102,10 @@ impl HealthCheck {
     }
 
     /// Check SD-WAN engine health
-    pub async fn check_sdwan(&self, db: &std::sync::Arc<patronus_sdwan::database::Database>) -> bool {
+    pub async fn check_sdwan(
+        &self,
+        db: &std::sync::Arc<patronus_sdwan::database::Database>,
+    ) -> bool {
         match db.list_sites().await {
             Ok(_) => {
                 self.update_component("sdwan", HealthStatus::Healthy, None)

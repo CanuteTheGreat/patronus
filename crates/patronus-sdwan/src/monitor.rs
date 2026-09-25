@@ -141,9 +141,12 @@ impl ProbeHistory {
         }
 
         let avg = self.avg_latency();
-        let variance = self.rtt_samples.iter()
+        let variance = self
+            .rtt_samples
+            .iter()
             .map(|&x| (x - avg).powi(2))
-            .sum::<f64>() / self.rtt_samples.len() as f64;
+            .sum::<f64>()
+            / self.rtt_samples.len() as f64;
 
         variance.sqrt()
     }
@@ -374,29 +377,30 @@ impl PathMonitor {
     /// Send UDP probe to target
     async fn send_udp_probe(target: IpAddr, sequence: u64) -> Result<()> {
         // Bind to ephemeral port
-        let socket = UdpSocket::bind("0.0.0.0:0").await
+        let socket = UdpSocket::bind("0.0.0.0:0")
+            .await
             .map_err(|e| Error::Network(format!("Failed to bind UDP socket: {}", e)))?;
 
         // Set timeout
-        let timeout = tokio::time::timeout(
-            PROBE_TIMEOUT,
-            async {
-                // Send probe packet
-                let probe_data = format!("PATRONUS_PROBE_{}", sequence);
-                socket.send_to(probe_data.as_bytes(), (target, 51822)).await?;
+        let timeout = tokio::time::timeout(PROBE_TIMEOUT, async {
+            // Send probe packet
+            let probe_data = format!("PATRONUS_PROBE_{}", sequence);
+            socket
+                .send_to(probe_data.as_bytes(), (target, 51822))
+                .await?;
 
-                // Wait for response
-                let mut buf = [0u8; 1024];
-                let (len, _) = socket.recv_from(&mut buf).await?;
+            // Wait for response
+            let mut buf = [0u8; 1024];
+            let (len, _) = socket.recv_from(&mut buf).await?;
 
-                // Verify response
-                if &buf[..len] == probe_data.as_bytes() {
-                    Ok(())
-                } else {
-                    Err(Error::Network("Invalid probe response".to_string()))
-                }
+            // Verify response
+            if &buf[..len] == probe_data.as_bytes() {
+                Ok(())
+            } else {
+                Err(Error::Network("Invalid probe response".to_string()))
             }
-        ).await;
+        })
+        .await;
 
         timeout.map_err(|_| Error::Network("Probe timeout".to_string()))?
     }
@@ -649,7 +653,8 @@ impl PathMonitor {
     /// Discover path MTU using binary search
     async fn discover_mtu(target: IpAddr) -> Result<u16> {
         // Bind UDP socket
-        let socket = UdpSocket::bind("0.0.0.0:0").await
+        let socket = UdpSocket::bind("0.0.0.0:0")
+            .await
             .map_err(|e| Error::Network(format!("Failed to bind UDP socket: {}", e)))?;
 
         // Binary search for MTU
@@ -692,21 +697,17 @@ impl PathMonitor {
         let test_data = vec![0xAA; payload_size];
 
         // Send with short timeout
-        let result = tokio::time::timeout(
-            Duration::from_millis(500),
-            async {
-                socket.send_to(&test_data, (target, 51824)).await?;
+        let result = tokio::time::timeout(Duration::from_millis(500), async {
+            socket.send_to(&test_data, (target, 51824)).await?;
 
-                // Wait for any response (we don't care about the actual response)
-                let mut buf = [0u8; 64];
-                let _ = tokio::time::timeout(
-                    Duration::from_millis(200),
-                    socket.recv_from(&mut buf)
-                ).await;
+            // Wait for any response (we don't care about the actual response)
+            let mut buf = [0u8; 64];
+            let _ =
+                tokio::time::timeout(Duration::from_millis(200), socket.recv_from(&mut buf)).await;
 
-                Ok::<(), std::io::Error>(())
-            }
-        ).await;
+            Ok::<(), std::io::Error>(())
+        })
+        .await;
 
         match result {
             Ok(Ok(())) => Ok(true),
@@ -730,7 +731,8 @@ impl PathMonitor {
     /// Test bandwidth to a target endpoint
     async fn test_bandwidth(target: IpAddr) -> Result<f64> {
         // Bind UDP socket
-        let socket = UdpSocket::bind("0.0.0.0:0").await
+        let socket = UdpSocket::bind("0.0.0.0:0")
+            .await
             .map_err(|e| Error::Network(format!("Failed to bind UDP socket: {}", e)))?;
 
         // Prepare test data
@@ -739,26 +741,24 @@ impl PathMonitor {
         let start_time = Instant::now();
 
         // Send data for BANDWIDTH_TEST_DURATION
-        let _test_timeout = tokio::time::timeout(
-            BANDWIDTH_TEST_DURATION,
-            async {
-                loop {
-                    // Send packet
-                    match socket.send_to(&test_data, (target, 51823)).await {
-                        Ok(n) => {
-                            bytes_sent += n as u64;
-                        }
-                        Err(e) => {
-                            warn!("Failed to send bandwidth test packet: {}", e);
-                            break;
-                        }
+        let _test_timeout = tokio::time::timeout(BANDWIDTH_TEST_DURATION, async {
+            loop {
+                // Send packet
+                match socket.send_to(&test_data, (target, 51823)).await {
+                    Ok(n) => {
+                        bytes_sent += n as u64;
                     }
-
-                    // Small delay to avoid overwhelming the network
-                    tokio::time::sleep(Duration::from_micros(100)).await;
+                    Err(e) => {
+                        warn!("Failed to send bandwidth test packet: {}", e);
+                        break;
+                    }
                 }
+
+                // Small delay to avoid overwhelming the network
+                tokio::time::sleep(Duration::from_micros(100)).await;
             }
-        ).await;
+        })
+        .await;
 
         let elapsed = start_time.elapsed().as_secs_f64();
 
@@ -831,7 +831,8 @@ impl PathMonitor {
     /// Get metrics for all paths
     pub async fn get_all_metrics(&self) -> HashMap<PathId, PathMetrics> {
         let results = self.probe_results.read().await;
-        results.iter()
+        results
+            .iter()
             .map(|(path_id, history)| (*path_id, history.to_metrics()))
             .collect()
     }

@@ -122,7 +122,10 @@ async fn run_unattended(
         println!("Filesystem: {:?}", config.disk.filesystem);
         println!("Hostname: {}", config.system.hostname);
         println!();
-        println!("WARNING: All data on {} will be erased!", config.disk.device.display());
+        println!(
+            "WARNING: All data on {} will be erased!",
+            config.disk.device.display()
+        );
         println!();
 
         print!("Continue? [y/N] ");
@@ -146,8 +149,9 @@ async fn run_unattended(
 async fn run_installation(config: &InstallConfig) -> anyhow::Result<()> {
     use patronus_installer::disk::{format::format_all_partitions, partition::create_partitions};
     use patronus_installer::install::{
-        bootloader::install_bootloader, configure_network, configure_services,
-        mount_partitions, system::{configure_system, install_base_system},
+        bootloader::install_bootloader,
+        configure_network, configure_services, mount_partitions,
+        system::{configure_system, install_base_system},
         unmount_partitions,
     };
 

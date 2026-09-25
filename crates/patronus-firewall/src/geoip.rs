@@ -9,11 +9,11 @@
 //!
 //! Both integrate seamlessly with nftables for high-performance filtering.
 
-use patronus_core::{Result, Error};
+use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::net::IpAddr;
 use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::process::Command;
 
@@ -50,8 +50,8 @@ pub struct GeoIpRule {
     pub name: String,
     pub enabled: bool,
     pub action: GeoIpAction,
-    pub countries: Vec<String>,  // ISO 3166-1 alpha-2 codes (US, CN, RU, etc.)
-    pub interfaces: Vec<String>,  // Apply to these interfaces ("wan", "eth1")
+    pub countries: Vec<String>, // ISO 3166-1 alpha-2 codes (US, CN, RU, etc.)
+    pub interfaces: Vec<String>, // Apply to these interfaces ("wan", "eth1")
     pub direction: TrafficDirection,
     pub log: bool,
     pub comment: Option<String>,
@@ -115,7 +115,7 @@ impl GeoIpManager {
         } else if PathBuf::from("/usr/share/GeoIP/GeoIP.dat").exists() {
             GeoIpBackend::GeoIpLegacy
         } else {
-            GeoIpBackend::GeoIp2  // Default preference
+            GeoIpBackend::GeoIp2 // Default preference
         }
     }
 
@@ -206,7 +206,10 @@ impl GeoIpManager {
                 // https://www.ipdeny.com/ipblocks/data/aggregated/
                 // or extract from GeoIP2 database
 
-                let url = format!("https://www.ipdeny.com/ipblocks/data/aggregated/{}-aggregated.zone", country.to_lowercase());
+                let url = format!(
+                    "https://www.ipdeny.com/ipblocks/data/aggregated/{}-aggregated.zone",
+                    country.to_lowercase()
+                );
 
                 println!("  Downloading IP blocks from ipdeny.com...");
                 let output = Command::new("curl")
@@ -219,7 +222,10 @@ impl GeoIpManager {
                     .map_err(|e| Error::Firewall(format!("Failed to download IP blocks: {}", e)))?;
 
                 if !output.status.success() {
-                    return Err(Error::Firewall(format!("Failed to download IP blocks for {}", country)));
+                    return Err(Error::Firewall(format!(
+                        "Failed to download IP blocks for {}",
+                        country
+                    )));
                 }
             }
             GeoIpBackend::GeoIpLegacy => {
@@ -227,7 +233,10 @@ impl GeoIpManager {
                 let ipset_file = self.ipsets_dir.join(format!("{}.txt", country));
 
                 // Download IP blocks
-                let url = format!("https://www.ipdeny.com/ipblocks/data/countries/{}.zone", country.to_lowercase());
+                let url = format!(
+                    "https://www.ipdeny.com/ipblocks/data/countries/{}.zone",
+                    country.to_lowercase()
+                );
 
                 let output = Command::new("curl")
                     .arg("-s")
@@ -239,7 +248,10 @@ impl GeoIpManager {
                     .map_err(|e| Error::Firewall(format!("Failed to download IP blocks: {}", e)))?;
 
                 if !output.status.success() {
-                    return Err(Error::Firewall(format!("Failed to download IP blocks for {}", country)));
+                    return Err(Error::Firewall(format!(
+                        "Failed to download IP blocks for {}",
+                        country
+                    )));
                 }
             }
         }
@@ -277,7 +289,8 @@ impl GeoIpManager {
 
                 // Read IP addresses from file
                 if let Ok(content) = fs::read_to_string(&ipset_file).await {
-                    for line in content.lines().take(100) {  // Limit for example
+                    for line in content.lines().take(100) {
+                        // Limit for example
                         let line = line.trim();
                         if !line.is_empty() && !line.starts_with('#') {
                             nft_rules.push_str(&format!("      {},\n", line));
@@ -302,7 +315,7 @@ impl GeoIpManager {
             }
 
             if rule.direction == TrafficDirection::Outbound {
-                continue;  // Skip outbound in input chain
+                continue; // Skip outbound in input chain
             }
 
             let action = match rule.action {
@@ -320,9 +333,7 @@ impl GeoIpManager {
                 let country_lower = country.to_lowercase();
                 nft_rules.push_str(&format!(
                     "    ip saddr @{}_ipv4 {} comment \"{}\"\n",
-                    country_lower,
-                    action,
-                    rule.name
+                    country_lower, action, rule.name
                 ));
 
                 if rule.log {
@@ -349,7 +360,7 @@ impl GeoIpManager {
             }
 
             if rule.direction == TrafficDirection::Inbound {
-                continue;  // Skip inbound in output chain
+                continue; // Skip inbound in output chain
             }
 
             let action = match rule.action {
@@ -361,9 +372,7 @@ impl GeoIpManager {
                 let country_lower = country.to_lowercase();
                 nft_rules.push_str(&format!(
                     "    ip daddr @{}_ipv4 {} comment \"{} outbound\"\n",
-                    country_lower,
-                    action,
-                    rule.name
+                    country_lower, action, rule.name
                 ));
             }
         }
@@ -433,10 +442,10 @@ impl GeoIpManager {
             action: GeoIpAction::Block,
             countries: vec![
                 // Common sources of attacks (adjust based on your needs)
-                "CN".to_string(),  // China
-                "RU".to_string(),  // Russia
-                "KP".to_string(),  // North Korea
-                "IR".to_string(),  // Iran
+                "CN".to_string(), // China
+                "RU".to_string(), // Russia
+                "KP".to_string(), // North Korea
+                "IR".to_string(), // Iran
             ],
             interfaces: vec!["wan".to_string()],
             direction: TrafficDirection::Inbound,
@@ -451,7 +460,7 @@ impl GeoIpManager {
             enabled: true,
             action: GeoIpAction::Allow,
             countries: vec![
-                "US".to_string(),  // Change to your country
+                "US".to_string(), // Change to your country
             ],
             interfaces: vec!["wan".to_string()],
             direction: TrafficDirection::Inbound,
@@ -478,26 +487,26 @@ impl Default for GeoIpConfig {
 pub struct CountryCodes;
 
 impl CountryCodes {
-    pub const US: &'static str = "US";  // United States
-    pub const CN: &'static str = "CN";  // China
-    pub const RU: &'static str = "RU";  // Russia
-    pub const DE: &'static str = "DE";  // Germany
-    pub const GB: &'static str = "GB";  // United Kingdom
-    pub const FR: &'static str = "FR";  // France
-    pub const JP: &'static str = "JP";  // Japan
-    pub const KR: &'static str = "KR";  // South Korea
-    pub const BR: &'static str = "BR";  // Brazil
-    pub const IN: &'static str = "IN";  // India
-    pub const AU: &'static str = "AU";  // Australia
-    pub const CA: &'static str = "CA";  // Canada
-    pub const MX: &'static str = "MX";  // Mexico
-    pub const IT: &'static str = "IT";  // Italy
-    pub const ES: &'static str = "ES";  // Spain
-    pub const NL: &'static str = "NL";  // Netherlands
-    pub const SE: &'static str = "SE";  // Sweden
-    pub const CH: &'static str = "CH";  // Switzerland
-    pub const PL: &'static str = "PL";  // Poland
-    pub const TR: &'static str = "TR";  // Turkey
-    pub const IR: &'static str = "IR";  // Iran
-    pub const KP: &'static str = "KP";  // North Korea
+    pub const US: &'static str = "US"; // United States
+    pub const CN: &'static str = "CN"; // China
+    pub const RU: &'static str = "RU"; // Russia
+    pub const DE: &'static str = "DE"; // Germany
+    pub const GB: &'static str = "GB"; // United Kingdom
+    pub const FR: &'static str = "FR"; // France
+    pub const JP: &'static str = "JP"; // Japan
+    pub const KR: &'static str = "KR"; // South Korea
+    pub const BR: &'static str = "BR"; // Brazil
+    pub const IN: &'static str = "IN"; // India
+    pub const AU: &'static str = "AU"; // Australia
+    pub const CA: &'static str = "CA"; // Canada
+    pub const MX: &'static str = "MX"; // Mexico
+    pub const IT: &'static str = "IT"; // Italy
+    pub const ES: &'static str = "ES"; // Spain
+    pub const NL: &'static str = "NL"; // Netherlands
+    pub const SE: &'static str = "SE"; // Sweden
+    pub const CH: &'static str = "CH"; // Switzerland
+    pub const PL: &'static str = "PL"; // Poland
+    pub const TR: &'static str = "TR"; // Turkey
+    pub const IR: &'static str = "IR"; // Iran
+    pub const KP: &'static str = "KP"; // North Korea
 }

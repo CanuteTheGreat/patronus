@@ -35,8 +35,8 @@ async fn main() -> Result<()> {
     info!("Metrics initialized");
 
     // Get configuration from environment
-    let patronus_api_url = env::var("PATRONUS_API_URL")
-        .unwrap_or_else(|_| "http://patronus-api:8081".to_string());
+    let patronus_api_url =
+        env::var("PATRONUS_API_URL").unwrap_or_else(|_| "http://patronus-api:8081".to_string());
 
     let metrics_port: u16 = env::var("METRICS_PORT")
         .unwrap_or_else(|_| "8080".to_string())

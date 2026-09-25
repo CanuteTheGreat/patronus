@@ -4,10 +4,10 @@
 
 use patronus_core::{types::Interface, Result};
 
-pub mod interfaces;
-pub mod routing;
-pub mod nat64;
 pub mod gateway_groups;
+pub mod interfaces;
+pub mod nat64;
+pub mod routing;
 
 #[cfg(feature = "vlan")]
 pub mod vlan;
@@ -69,10 +69,10 @@ pub use multiwan::MultiWanManager;
 pub use qos::QosManager;
 
 #[cfg(feature = "ha")]
-pub use ha::{HaManager, HaBackend};
+pub use ha::{HaBackend, HaManager};
 
 #[cfg(feature = "intrusion-detection")]
-pub use ids::{IdsManager, IdsBackend};
+pub use ids::{IdsBackend, IdsManager};
 
 #[cfg(feature = "dynamic-routing")]
 pub use frr::FrrManager;

@@ -3,8 +3,8 @@
 //! Implements FEC to reduce retransmissions over lossy WAN links
 //! Uses Reed-Solomon coding for error correction
 
-use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 /// FEC statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -118,7 +118,11 @@ impl FecDecoder {
     /// # Arguments
     /// * `shards` - All shards (None for missing shards)
     /// * `original_size` - Original data size before encoding
-    pub fn decode(&mut self, shards: Vec<Option<Vec<u8>>>, original_size: usize) -> Result<Vec<u8>> {
+    pub fn decode(
+        &mut self,
+        shards: Vec<Option<Vec<u8>>>,
+        original_size: usize,
+    ) -> Result<Vec<u8>> {
         self.stats.packets_decoded += 1;
 
         let total_shards = self.data_shards + self.parity_shards;
@@ -126,7 +130,8 @@ impl FecDecoder {
             anyhow::bail!("Invalid shard count");
         }
 
-        let available: Vec<usize> = shards.iter()
+        let available: Vec<usize> = shards
+            .iter()
             .enumerate()
             .filter_map(|(i, s)| if s.is_some() { Some(i) } else { None })
             .collect();
@@ -146,7 +151,8 @@ impl FecDecoder {
         }
 
         // Reconstruct data shards
-        let shard_size = shards.iter()
+        let shard_size = shards
+            .iter()
             .find_map(|s| s.as_ref().map(|v| v.len()))
             .unwrap_or(0);
 
@@ -203,9 +209,7 @@ mod tests {
         assert_eq!(shards.len(), 6); // 4 data + 2 parity
 
         // Decode with all shards
-        let shards_opt: Vec<Option<Vec<u8>>> = shards.iter()
-            .map(|s| Some(s.clone()))
-            .collect();
+        let shards_opt: Vec<Option<Vec<u8>>> = shards.iter().map(|s| Some(s.clone())).collect();
 
         let decoded = decoder.decode(shards_opt, data.len()).unwrap();
         assert_eq!(&decoded[..], data);
@@ -220,9 +224,7 @@ mod tests {
         let shards = encoder.encode(data).unwrap();
 
         // Simulate losing 2 shards (indices 1 and 3)
-        let mut shards_opt: Vec<Option<Vec<u8>>> = shards.iter()
-            .map(|s| Some(s.clone()))
-            .collect();
+        let mut shards_opt: Vec<Option<Vec<u8>>> = shards.iter().map(|s| Some(s.clone())).collect();
         shards_opt[1] = None;
         shards_opt[3] = None;
 

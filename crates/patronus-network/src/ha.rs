@@ -36,16 +36,16 @@ impl std::fmt::Display for HaBackend {
 /// HA node role
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum HaRole {
-    Master,    // Primary/active node
-    Backup,    // Backup/standby node
+    Master, // Primary/active node
+    Backup, // Backup/standby node
 }
 
 /// HA node state
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum HaState {
-    Master,      // Currently active
-    Backup,      // Currently standby
-    Fault,       // Failed state
+    Master, // Currently active
+    Backup, // Currently standby
+    Fault,  // Failed state
     Unknown,
 }
 
@@ -56,11 +56,11 @@ pub struct VirtualIp {
     pub enabled: bool,
     pub vip: IpAddr,
     pub interface: String,
-    pub vhid: u8,          // Virtual Host ID (1-255)
-    pub priority: u8,      // Priority (0-255, higher = preferred master)
-    pub password: Option<String>,  // Authentication password
-    pub preempt: bool,     // Allow preemption (higher priority takes over)
-    pub advskew: u8,       // Advertisement skew (0-254)
+    pub vhid: u8,                 // Virtual Host ID (1-255)
+    pub priority: u8,             // Priority (0-255, higher = preferred master)
+    pub password: Option<String>, // Authentication password
+    pub preempt: bool,            // Allow preemption (higher priority takes over)
+    pub advskew: u8,              // Advertisement skew (0-254)
 }
 
 impl Default for VirtualIp {
@@ -135,10 +135,10 @@ pub struct VrrpInstance {
     pub interface: String,
     pub virtual_router_id: u8,
     pub priority: u8,
-    pub advert_int: u8,  // Advertisement interval (seconds)
+    pub advert_int: u8, // Advertisement interval (seconds)
     pub virtual_ips: Vec<IpAddr>,
-    pub track_interfaces: Vec<String>,  // Monitor these interfaces
-    pub track_scripts: Vec<String>,     // Health check scripts
+    pub track_interfaces: Vec<String>, // Monitor these interfaces
+    pub track_scripts: Vec<String>,    // Health check scripts
 }
 
 /// HA manager
@@ -166,7 +166,7 @@ impl HaManager {
         } else if Self::is_available("vrrpd") {
             HaBackend::Vrrpd
         } else {
-            HaBackend::Ucarp  // Default
+            HaBackend::Ucarp // Default
         };
 
         Self::new(backend)
@@ -189,11 +189,16 @@ impl HaManager {
     /// Generate ucarp configuration
     fn generate_ucarp_config(&self, vip: &VirtualIp) -> Result<Vec<String>> {
         let mut args = vec![
-            "--interface".to_string(), vip.interface.clone(),
-            "--srcip".to_string(), vip.vip.to_string(),
-            "--vhid".to_string(), vip.vhid.to_string(),
-            "--advskew".to_string(), vip.advskew.to_string(),
-            "--advbase".to_string(), "1".to_string(),
+            "--interface".to_string(),
+            vip.interface.clone(),
+            "--srcip".to_string(),
+            vip.vip.to_string(),
+            "--vhid".to_string(),
+            vip.vhid.to_string(),
+            "--advskew".to_string(),
+            vip.advskew.to_string(),
+            "--advbase".to_string(),
+            "1".to_string(),
         ];
 
         if let Some(pass) = &vip.password {
@@ -262,9 +267,18 @@ impl HaManager {
             config.push_str("  }\n");
 
             // Notify scripts
-            config.push_str(&format!("  notify_master \"/etc/patronus/ha/vip-{}-up.sh\"\n", vip.name));
-            config.push_str(&format!("  notify_backup \"/etc/patronus/ha/vip-{}-down.sh\"\n", vip.name));
-            config.push_str(&format!("  notify_fault \"/etc/patronus/ha/vip-{}-down.sh\"\n", vip.name));
+            config.push_str(&format!(
+                "  notify_master \"/etc/patronus/ha/vip-{}-up.sh\"\n",
+                vip.name
+            ));
+            config.push_str(&format!(
+                "  notify_backup \"/etc/patronus/ha/vip-{}-down.sh\"\n",
+                vip.name
+            ));
+            config.push_str(&format!(
+                "  notify_fault \"/etc/patronus/ha/vip-{}-down.sh\"\n",
+                vip.name
+            ));
 
             config.push_str("}\n\n");
         }
@@ -279,15 +293,22 @@ impl HaManager {
         script.push_str("#!/bin/bash\n");
         script.push_str("# Patronus HA - VIP UP script\n\n");
         script.push_str(&format!("# VIP {} is now MASTER\n", vip.name));
-        script.push_str(&format!("ip addr add {}/{} dev {} 2>/dev/null || true\n",
-            vip.vip, 32, vip.interface));
+        script.push_str(&format!(
+            "ip addr add {}/{} dev {} 2>/dev/null || true\n",
+            vip.vip, 32, vip.interface
+        ));
         script.push_str("# Send gratuitous ARP\n");
-        script.push_str(&format!("arping -c 3 -A -I {} {} 2>/dev/null || true\n",
-            vip.interface, vip.vip));
+        script.push_str(&format!(
+            "arping -c 3 -A -I {} {} 2>/dev/null || true\n",
+            vip.interface, vip.vip
+        ));
         script.push_str("# Trigger firewall reload\n");
         script.push_str("/usr/bin/patronus firewall apply 2>/dev/null || true\n");
         script.push_str("# Log event\n");
-        script.push_str(&format!("logger \"Patronus HA: VIP {} became MASTER\"\n", vip.name));
+        script.push_str(&format!(
+            "logger \"Patronus HA: VIP {} became MASTER\"\n",
+            vip.name
+        ));
 
         Ok(script)
     }
@@ -299,10 +320,15 @@ impl HaManager {
         script.push_str("#!/bin/bash\n");
         script.push_str("# Patronus HA - VIP DOWN script\n\n");
         script.push_str(&format!("# VIP {} is now BACKUP\n", vip.name));
-        script.push_str(&format!("ip addr del {}/{} dev {} 2>/dev/null || true\n",
-            vip.vip, 32, vip.interface));
+        script.push_str(&format!(
+            "ip addr del {}/{} dev {} 2>/dev/null || true\n",
+            vip.vip, 32, vip.interface
+        ));
         script.push_str("# Log event\n");
-        script.push_str(&format!("logger \"Patronus HA: VIP {} became BACKUP\"\n", vip.name));
+        script.push_str(&format!(
+            "logger \"Patronus HA: VIP {} became BACKUP\"\n",
+            vip.name
+        ));
 
         Ok(script)
     }
@@ -313,7 +339,8 @@ impl HaManager {
             return Ok(());
         }
 
-        fs::create_dir_all(&self.config_dir).await
+        fs::create_dir_all(&self.config_dir)
+            .await
             .map_err(|e| Error::Network(format!("Failed to create HA config directory: {}", e)))?;
 
         match self.backend {
@@ -340,9 +367,11 @@ impl HaManager {
             let up_path = self.config_dir.join(format!("vip-{}-up.sh", vip.name));
             let down_path = self.config_dir.join(format!("vip-{}-down.sh", vip.name));
 
-            fs::write(&up_path, up_script).await
+            fs::write(&up_path, up_script)
+                .await
                 .map_err(|e| Error::Network(format!("Failed to write up script: {}", e)))?;
-            fs::write(&down_path, down_script).await
+            fs::write(&down_path, down_script)
+                .await
                 .map_err(|e| Error::Network(format!("Failed to write down script: {}", e)))?;
 
             // Make scripts executable
@@ -365,7 +394,8 @@ impl HaManager {
         let config_path = PathBuf::from("/etc/keepalived/keepalived.conf");
 
         fs::create_dir_all("/etc/keepalived").await.ok();
-        fs::write(&config_path, config).await
+        fs::write(&config_path, config)
+            .await
             .map_err(|e| Error::Network(format!("Failed to write keepalived config: {}", e)))?;
 
         Ok(())
@@ -401,7 +431,8 @@ impl HaManager {
             );
 
             let service_path = self.config_dir.join(format!("ucarp-{}.service", vip.name));
-            fs::write(&service_path, service).await
+            fs::write(&service_path, service)
+                .await
                 .map_err(|e| Error::Network(format!("Failed to write ucarp service: {}", e)))?;
         }
 
@@ -418,15 +449,19 @@ impl HaManager {
 
             // vrrpd is typically started with command-line args
             let args = vec![
-                "-i", &vip.interface,
-                "-v", &vip.vhid.to_string(),
-                "-p", &vip.priority.to_string(),
+                "-i",
+                &vip.interface,
+                "-v",
+                &vip.vhid.to_string(),
+                "-p",
+                &vip.priority.to_string(),
                 &vip.vip.to_string(),
             ];
 
             // Save command for later use
             let cmd_file = self.config_dir.join(format!("vrrpd-{}.cmd", vip.name));
-            fs::write(&cmd_file, args.join(" ")).await
+            fs::write(&cmd_file, args.join(" "))
+                .await
                 .map_err(|e| Error::Network(format!("Failed to write vrrpd command: {}", e)))?;
         }
 
@@ -517,7 +552,8 @@ impl HaManager {
                 "-avz",
                 "--delete",
                 cluster.config_sync_path.to_str().unwrap(),
-                &format!("{}@{}:{}",
+                &format!(
+                    "{}@{}:{}",
                     cluster.config_sync_user,
                     cluster.peer_ip,
                     cluster.config_sync_path.display()

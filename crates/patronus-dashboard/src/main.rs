@@ -2,24 +2,24 @@
 //!
 //! Centralized management and monitoring interface for multi-site SD-WAN deployments.
 
+use axum::http::{header, HeaderValue};
 use axum::{
+    body::Body,
     extract::ws::{WebSocket, WebSocketUpgrade},
     routing::{get, post},
     Router,
-    body::Body,
 };
+use futures::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::{
     cors::CorsLayer,
     services::ServeDir,
-    trace::{DefaultMakeSpan, TraceLayer},
     set_header::SetResponseHeaderLayer,
+    trace::{DefaultMakeSpan, TraceLayer},
 };
-use axum::http::{header, HeaderValue};
 use tracing::{info, Level};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-use futures::{StreamExt, SinkExt};
 
 mod api;
 mod auth;
@@ -33,7 +33,7 @@ mod state;
 mod ws;
 
 use crate::{observability::DashboardMetrics, state::AppState};
-use async_graphql::http::{GraphQLPlaygroundConfig, playground_source};
+use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 
 #[tokio::main]
@@ -77,13 +77,17 @@ async fn main() -> anyhow::Result<()> {
         .route("/health/live", get(liveness_check))
         .route("/health/ready", get(readiness_check))
         // Prometheus metrics
-        .route("/metrics", get(move || async move {
-            metrics_handle.render()
-        }))
+        .route(
+            "/metrics",
+            get(move || async move { metrics_handle.render() }),
+        )
         // API v1 routes (REST)
         .nest("/api/v1", api_routes())
         // API v2 routes (GraphQL)
-        .route("/api/v2/graphql", post(graphql_handler).get(graphql_playground))
+        .route(
+            "/api/v2/graphql",
+            post(graphql_handler).get(graphql_playground),
+        )
         .route("/api/v2/graphql/ws", get(graphql_ws_handler))
         // WebSocket routes
         .route("/ws/metrics", get(ws::metrics_handler))
@@ -219,9 +223,9 @@ async fn graphql_handler(
 
 /// GraphQL Playground UI
 async fn graphql_playground() -> impl axum::response::IntoResponse {
-    axum::response::Html(playground_source(
-        GraphQLPlaygroundConfig::new("/api/v2/graphql")
-    ))
+    axum::response::Html(playground_source(GraphQLPlaygroundConfig::new(
+        "/api/v2/graphql",
+    )))
 }
 
 /// GraphQL WebSocket handler for subscriptions
@@ -239,7 +243,6 @@ async fn graphql_ws_connection(
     _state: Arc<AppState>,
     schema: graphql::AppSchema,
 ) {
-    
     use axum::extract::ws::Message;
 
     let (mut sender, mut receiver) = socket.split();
@@ -288,7 +291,9 @@ async fn spa_fallback() -> impl axum::response::IntoResponse {
             .unwrap(),
         Err(_) => Response::builder()
             .status(StatusCode::NOT_FOUND)
-            .body(Body::from("404 - Frontend not built. Run: ./build-frontend.sh"))
+            .body(Body::from(
+                "404 - Frontend not built. Run: ./build-frontend.sh",
+            ))
             .unwrap(),
     }
 }

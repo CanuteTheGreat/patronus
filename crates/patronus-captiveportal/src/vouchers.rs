@@ -1,9 +1,9 @@
 //! Voucher management system for guest access
 
+use chrono::{DateTime, Duration, Utc};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc, Duration};
-use rand::Rng;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Voucher {
@@ -54,7 +54,7 @@ impl VoucherManager {
         for _ in 0..count {
             let voucher = self.create_voucher(
                 duration_hours,
-                1,  // Single use
+                1, // Single use
                 bandwidth_limit_kbps,
                 created_by.clone(),
             );
@@ -101,8 +101,7 @@ impl VoucherManager {
 
     /// Redeem a voucher
     pub async fn redeem(&mut self, code: &str) -> Result<Voucher, VoucherError> {
-        let voucher = self.vouchers.get_mut(code)
-            .ok_or(VoucherError::NotFound)?;
+        let voucher = self.vouchers.get_mut(code).ok_or(VoucherError::NotFound)?;
 
         // Check expiry
         if Utc::now() > voucher.expires_at {
@@ -121,8 +120,7 @@ impl VoucherManager {
 
     /// Check voucher validity
     pub async fn check(&self, code: &str) -> Result<&Voucher, VoucherError> {
-        let voucher = self.vouchers.get(code)
-            .ok_or(VoucherError::NotFound)?;
+        let voucher = self.vouchers.get(code).ok_or(VoucherError::NotFound)?;
 
         if Utc::now() > voucher.expires_at {
             return Err(VoucherError::Expired);
@@ -154,7 +152,7 @@ impl VoucherManager {
                 if i > 0 && i % 4 == 0 {
                     '-'
                 } else {
-                    let charset = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";  // No confusing chars
+                    let charset = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // No confusing chars
                     charset[rng.gen_range(0..charset.len())] as char
                 }
             })
@@ -168,8 +166,7 @@ impl VoucherManager {
 
     /// Export vouchers to CSV for printing
     pub fn export_to_csv(&self, batch_id: &str) -> Result<String, VoucherError> {
-        let batch = self.batches.get(batch_id)
-            .ok_or(VoucherError::NotFound)?;
+        let batch = self.batches.get(batch_id).ok_or(VoucherError::NotFound)?;
 
         let mut csv = String::from("Code,Duration,Bandwidth Limit,Expires At\n");
 
@@ -178,7 +175,10 @@ impl VoucherManager {
                 "{},{} hours,{},{}\n",
                 voucher.code,
                 voucher.duration_hours,
-                voucher.bandwidth_limit_kbps.map(|b| format!("{} kbps", b)).unwrap_or_else(|| "Unlimited".to_string()),
+                voucher
+                    .bandwidth_limit_kbps
+                    .map(|b| format!("{} kbps", b))
+                    .unwrap_or_else(|| "Unlimited".to_string()),
                 voucher.expires_at.format("%Y-%m-%d %H:%M")
             ));
         }

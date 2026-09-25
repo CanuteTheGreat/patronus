@@ -71,16 +71,16 @@ pub struct OpenVpnServerConfig {
     pub enabled: bool,
     pub protocol: OpenVpnProtocol,
     pub port: u16,
-    pub device: String,  // tun or tap
+    pub device: String, // tun or tap
     pub local_ip: Option<IpAddr>,
-    pub tunnel_network: String,  // e.g., "10.8.0.0/24"
-    pub tunnel_netmask: String,  // e.g., "255.255.255.0"
+    pub tunnel_network: String, // e.g., "10.8.0.0/24"
+    pub tunnel_netmask: String, // e.g., "255.255.255.0"
     pub cipher: OpenVpnCipher,
     pub auth: OpenVpnAuth,
     pub compression: bool,
     pub max_clients: u32,
-    pub push_routes: Vec<String>,  // Routes to push to clients
-    pub push_dns: Vec<IpAddr>,     // DNS servers to push
+    pub push_routes: Vec<String>, // Routes to push to clients
+    pub push_dns: Vec<IpAddr>,    // DNS servers to push
     pub client_to_client: bool,
     pub duplicate_cn: bool,
     pub keepalive_interval: u32,
@@ -216,7 +216,10 @@ impl OpenVpnManager {
         }
 
         // Server network
-        conf.push_str(&format!("server {} {}\n", config.tunnel_network, config.tunnel_netmask));
+        conf.push_str(&format!(
+            "server {} {}\n",
+            config.tunnel_network, config.tunnel_netmask
+        ));
 
         // Topology
         conf.push_str("topology subnet\n");
@@ -262,7 +265,10 @@ impl OpenVpnManager {
         }
 
         // Keepalive
-        conf.push_str(&format!("keepalive {} {}\n", config.keepalive_interval, config.keepalive_timeout));
+        conf.push_str(&format!(
+            "keepalive {} {}\n",
+            config.keepalive_interval, config.keepalive_timeout
+        ));
 
         // Push routes
         for route in &config.push_routes {
@@ -279,8 +285,14 @@ impl OpenVpnManager {
         conf.push_str("persist-tun\n");
 
         // Status and log
-        conf.push_str(&format!("status /var/log/patronus/openvpn-{}-status.log\n", config.name));
-        conf.push_str(&format!("log-append /var/log/patronus/openvpn-{}.log\n", config.name));
+        conf.push_str(&format!(
+            "status /var/log/patronus/openvpn-{}-status.log\n",
+            config.name
+        ));
+        conf.push_str(&format!(
+            "log-append /var/log/patronus/openvpn-{}.log\n",
+            config.name
+        ));
         conf.push_str("verb 3\n");
 
         // User and group for security
@@ -297,7 +309,10 @@ impl OpenVpnManager {
         conf.push_str("client\n");
         conf.push_str(&format!("dev {}\n", config.device));
         conf.push_str(&format!("proto {}\n", config.protocol));
-        conf.push_str(&format!("remote {} {}\n", config.remote_host, config.remote_port));
+        conf.push_str(&format!(
+            "remote {} {}\n",
+            config.remote_host, config.remote_port
+        ));
 
         conf.push_str("resolv-retry infinite\n");
         conf.push_str("nobind\n");
@@ -346,10 +361,12 @@ impl OpenVpnManager {
         let conf_content = self.generate_server_config(config)?;
         let conf_path = self.config_dir.join(format!("{}.conf", config.name));
 
-        fs::create_dir_all(&self.config_dir).await
+        fs::create_dir_all(&self.config_dir)
+            .await
             .map_err(|e| Error::Network(format!("Failed to create config directory: {}", e)))?;
 
-        fs::write(&conf_path, conf_content).await
+        fs::write(&conf_path, conf_content)
+            .await
             .map_err(|e| Error::Network(format!("Failed to write config file: {}", e)))?;
 
         Ok(())
@@ -360,10 +377,12 @@ impl OpenVpnManager {
         let conf_content = self.generate_client_config(config)?;
         let conf_path = self.config_dir.join(format!("{}.conf", config.name));
 
-        fs::create_dir_all(&self.config_dir).await
+        fs::create_dir_all(&self.config_dir)
+            .await
             .map_err(|e| Error::Network(format!("Failed to create config directory: {}", e)))?;
 
-        fs::write(&conf_path, conf_content).await
+        fs::write(&conf_path, conf_content)
+            .await
             .map_err(|e| Error::Network(format!("Failed to write config file: {}", e)))?;
 
         Ok(())
@@ -439,7 +458,8 @@ impl OpenVpnManager {
 
     /// Generate CA certificate and key
     pub async fn generate_ca(&self, common_name: &str) -> Result<()> {
-        fs::create_dir_all(&self.config_dir).await
+        fs::create_dir_all(&self.config_dir)
+            .await
             .map_err(|e| Error::Network(format!("Failed to create config directory: {}", e)))?;
 
         // Generate CA key
@@ -526,7 +546,8 @@ impl OpenVpnManager {
     /// Generate client certificate and key
     pub async fn generate_client_cert(&self, client_name: &str) -> Result<()> {
         let client_dir = self.config_dir.join("clients").join(client_name);
-        fs::create_dir_all(&client_dir).await
+        fs::create_dir_all(&client_dir)
+            .await
             .map_err(|e| Error::Network(format!("Failed to create client directory: {}", e)))?;
 
         // Generate client key
@@ -569,11 +590,14 @@ impl OpenVpnManager {
         let mut ovpn = self.generate_client_config(config)?;
 
         // Read and embed certificates
-        let ca_cert = fs::read_to_string(&config.ca_cert_path).await
+        let ca_cert = fs::read_to_string(&config.ca_cert_path)
+            .await
             .map_err(|e| Error::Network(format!("Failed to read CA cert: {}", e)))?;
-        let client_cert = fs::read_to_string(&config.client_cert_path).await
+        let client_cert = fs::read_to_string(&config.client_cert_path)
+            .await
             .map_err(|e| Error::Network(format!("Failed to read client cert: {}", e)))?;
-        let client_key = fs::read_to_string(&config.client_key_path).await
+        let client_key = fs::read_to_string(&config.client_key_path)
+            .await
             .map_err(|e| Error::Network(format!("Failed to read client key: {}", e)))?;
 
         ovpn.push_str("\n<ca>\n");
@@ -591,7 +615,8 @@ impl OpenVpnManager {
         // Embed TLS key if present
         if config.tls_crypt || config.tls_auth {
             if let Some(tls_key_path) = &config.tls_key_path {
-                let tls_key = fs::read_to_string(tls_key_path).await
+                let tls_key = fs::read_to_string(tls_key_path)
+                    .await
                     .map_err(|e| Error::Network(format!("Failed to read TLS key: {}", e)))?;
 
                 if config.tls_crypt {

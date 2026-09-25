@@ -1,6 +1,6 @@
 //! Site controller implementation
 
-use crate::crd::site::{Site, SitePhase, SiteStatus, ConditionStatus, SiteCondition};
+use crate::crd::site::{ConditionStatus, Site, SiteCondition, SitePhase, SiteStatus};
 use chrono::Utc;
 use futures::StreamExt;
 use kube::{
@@ -181,10 +181,7 @@ fn validate_site_spec(spec: &crate::crd::site::SiteSpec) -> Result<(), String> {
 }
 
 /// Create or update site in Patronus
-async fn create_or_update_patronus_site(
-    site: &Site,
-    ctx: &Context,
-) -> Result<(), SiteError> {
+async fn create_or_update_patronus_site(site: &Site, ctx: &Context) -> Result<(), SiteError> {
     let site_name = site.name_any();
 
     // Build Patronus API request
@@ -210,8 +207,12 @@ async fn create_or_update_patronus_site(
     debug!("Creating/updating site in Patronus: {}", request_body);
 
     // Call Patronus API
-    let response = ctx.http_client
-        .put(&format!("{}/api/v1/sites/{}", ctx.patronus_api_url, site_name))
+    let response = ctx
+        .http_client
+        .put(&format!(
+            "{}/api/v1/sites/{}",
+            ctx.patronus_api_url, site_name
+        ))
         .json(&request_body)
         .send()
         .await
@@ -219,27 +220,34 @@ async fn create_or_update_patronus_site(
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_else(|_| "unknown error".to_string());
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "unknown error".to_string());
         return Err(SiteError::PatronusApiError(format!(
             "API returned {}: {}",
             status, body
         )));
     }
 
-    info!("Successfully created/updated site {} in Patronus", site_name);
+    info!(
+        "Successfully created/updated site {} in Patronus",
+        site_name
+    );
     Ok(())
 }
 
 /// Delete site from Patronus
-async fn delete_patronus_site(
-    site_name: &str,
-    ctx: &Context,
-) -> Result<(), SiteError> {
+async fn delete_patronus_site(site_name: &str, ctx: &Context) -> Result<(), SiteError> {
     debug!("Deleting site {} from Patronus", site_name);
 
     // Call Patronus API to delete site
-    let response = ctx.http_client
-        .delete(&format!("{}/api/v1/sites/{}", ctx.patronus_api_url, site_name))
+    let response = ctx
+        .http_client
+        .delete(&format!(
+            "{}/api/v1/sites/{}",
+            ctx.patronus_api_url, site_name
+        ))
         .send()
         .await
         .map_err(|e| SiteError::PatronusApiError(format!("HTTP request failed: {}", e)))?;
@@ -247,7 +255,10 @@ async fn delete_patronus_site(
     if !response.status().is_success() && response.status().as_u16() != 404 {
         // 404 is ok - site already deleted
         let status = response.status();
-        let body = response.text().await.unwrap_or_else(|_| "unknown error".to_string());
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "unknown error".to_string());
         return Err(SiteError::PatronusApiError(format!(
             "API returned {}: {}",
             status, body

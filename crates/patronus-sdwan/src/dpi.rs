@@ -70,13 +70,13 @@ impl Classifier for PortClassifier {
 
             // Gaming (common game ports)
             27015..=27030 => Some(ApplicationType::Gaming), // Source engine
-            25565 => Some(ApplicationType::Gaming), // Minecraft
-            3074 => Some(ApplicationType::Gaming), // Xbox Live
+            25565 => Some(ApplicationType::Gaming),         // Minecraft
+            3074 => Some(ApplicationType::Gaming),          // Xbox Live
 
             // File Transfer
             20 | 21 => Some(ApplicationType::FileTransfer), // FTP
-            22 => Some(ApplicationType::FileTransfer), // SFTP
-            873 => Some(ApplicationType::FileTransfer), // rsync
+            22 => Some(ApplicationType::FileTransfer),      // SFTP
+            873 => Some(ApplicationType::FileTransfer),     // rsync
 
             // Database
             3306 => Some(ApplicationType::Database), // MySQL
@@ -110,11 +110,17 @@ impl Classifier for HttpClassifier {
         let header = String::from_utf8_lossy(&packet[..std::cmp::min(100, packet.len())]);
 
         // Look for HTTP methods
-        if header.starts_with("GET ") || header.starts_with("POST ") ||
-           header.starts_with("PUT ") || header.starts_with("HEAD ") {
+        if header.starts_with("GET ")
+            || header.starts_with("POST ")
+            || header.starts_with("PUT ")
+            || header.starts_with("HEAD ")
+        {
             // Check for video streaming patterns
-            if header.contains("video/") || header.contains("youtube") ||
-               header.contains("netflix") || header.contains("stream") {
+            if header.contains("video/")
+                || header.contains("youtube")
+                || header.contains("netflix")
+                || header.contains("stream")
+            {
                 return Some(ApplicationType::Video);
             }
 
@@ -190,7 +196,9 @@ impl Classifier for GamingClassifier {
         // Common game port ranges
         if (port >= 7000 && port <= 8000) ||  // Many FPS games
            (port >= 27000 && port <= 28000) || // Source engine
-           (port >= 3000 && port <= 4000) {    // Various games
+           (port >= 3000 && port <= 4000)
+        {
+            // Various games
             return Some(ApplicationType::Gaming);
         }
 
@@ -279,7 +287,10 @@ impl DpiEngine {
 
         // No classifier matched - mark as unknown
         debug!("DPI could not classify flow {:?}", flow);
-        self.flow_cache.write().unwrap().insert(*flow, ApplicationType::Unknown);
+        self.flow_cache
+            .write()
+            .unwrap()
+            .insert(*flow, ApplicationType::Unknown);
 
         {
             let mut stats = self.stats.write().unwrap();
@@ -421,8 +432,14 @@ mod tests {
         let db_flow = create_test_flow(6, 3306);
 
         assert_eq!(engine.classify_packet(&[], &web_flow), ApplicationType::Web);
-        assert_eq!(engine.classify_packet(&[], &voip_flow), ApplicationType::VoIP);
-        assert_eq!(engine.classify_packet(&[], &db_flow), ApplicationType::Database);
+        assert_eq!(
+            engine.classify_packet(&[], &voip_flow),
+            ApplicationType::VoIP
+        );
+        assert_eq!(
+            engine.classify_packet(&[], &db_flow),
+            ApplicationType::Database
+        );
 
         let stats = engine.get_stats();
         assert_eq!(stats.by_type.get(&ApplicationType::Web), Some(&1));

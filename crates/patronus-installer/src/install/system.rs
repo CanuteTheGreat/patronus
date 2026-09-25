@@ -12,10 +12,7 @@ use tracing::{debug, info, warn};
 pub type ProgressCallback = Box<dyn Fn(f32, &str) + Send + Sync>;
 
 /// Mount all partitions for installation
-pub async fn mount_partitions(
-    partitions: &[CreatedPartition],
-    target_root: &Path,
-) -> Result<()> {
+pub async fn mount_partitions(partitions: &[CreatedPartition], target_root: &Path) -> Result<()> {
     info!("Mounting partitions to {}", target_root.display());
 
     // Create target root directory
@@ -44,9 +41,9 @@ pub async fn mount_partitions(
         };
 
         // Create mount point
-        fs::create_dir_all(&mount_point)
-            .await
-            .map_err(|e| InstallerError::Mount(format!("Failed to create {}: {}", mount_point.display(), e)))?;
+        fs::create_dir_all(&mount_point).await.map_err(|e| {
+            InstallerError::Mount(format!("Failed to create {}: {}", mount_point.display(), e))
+        })?;
 
         // Mount
         let output = Command::new("mount")
@@ -65,7 +62,11 @@ pub async fn mount_partitions(
             )));
         }
 
-        info!("Mounted {} to {}", partition.path.display(), mount_point.display());
+        info!(
+            "Mounted {} to {}",
+            partition.path.display(),
+            mount_point.display()
+        );
     }
 
     // Enable swap
@@ -91,18 +92,12 @@ pub async fn mount_partitions(
 }
 
 /// Unmount all partitions after installation
-pub async fn unmount_partitions(
-    partitions: &[CreatedPartition],
-    target_root: &Path,
-) -> Result<()> {
+pub async fn unmount_partitions(partitions: &[CreatedPartition], target_root: &Path) -> Result<()> {
     info!("Unmounting partitions from {}", target_root.display());
 
     // Disable swap first
     for partition in partitions.iter().filter(|p| p.mount_point == "swap") {
-        let _ = Command::new("swapoff")
-            .arg(&partition.path)
-            .output()
-            .await;
+        let _ = Command::new("swapoff").arg(&partition.path).output().await;
     }
 
     // Sort partitions by mount point depth (deepest first)
@@ -253,10 +248,7 @@ async fn install_from_squashfs(
 }
 
 /// Install via rsync from running system
-async fn install_via_rsync(
-    target: &Path,
-    progress: Option<&ProgressCallback>,
-) -> Result<()> {
+async fn install_via_rsync(target: &Path, progress: Option<&ProgressCallback>) -> Result<()> {
     info!("Installing via rsync from live system");
 
     if let Some(cb) = progress {
@@ -297,16 +289,25 @@ async fn install_via_rsync(
 /// Create essential system directories
 async fn create_essential_directories(target: &Path) -> Result<()> {
     let dirs = [
-        "dev", "proc", "sys", "tmp", "run", "mnt", "media",
-        "var/tmp", "var/cache", "var/log", "var/lib",
+        "dev",
+        "proc",
+        "sys",
+        "tmp",
+        "run",
+        "mnt",
+        "media",
+        "var/tmp",
+        "var/cache",
+        "var/log",
+        "var/lib",
         "boot/efi",
     ];
 
     for dir in &dirs {
         let path = target.join(dir);
-        fs::create_dir_all(&path)
-            .await
-            .map_err(|e| InstallerError::Install(format!("Failed to create {}: {}", path.display(), e)))?;
+        fs::create_dir_all(&path).await.map_err(|e| {
+            InstallerError::Install(format!("Failed to create {}: {}", path.display(), e))
+        })?;
     }
 
     // Set correct permissions for /tmp
@@ -374,21 +375,21 @@ async fn generate_fstab(target: &Path, partitions: &[CreatedPartition]) -> Resul
         let uuid = crate::disk::format::get_uuid(&partition.path).await?;
 
         let (fs_type, options, dump, pass) = match &partition.filesystem {
-            crate::disk::partition::PartitionFilesystem::Fat32 => {
-                ("vfat", "umask=0077", "0", "2")
-            }
+            crate::disk::partition::PartitionFilesystem::Fat32 => ("vfat", "umask=0077", "0", "2"),
             crate::disk::partition::PartitionFilesystem::Linux(fs) => {
                 let opts = if partition.mount_point == "/" {
                     "defaults"
                 } else {
                     "defaults"
                 };
-                let pass = if partition.mount_point == "/" { "1" } else { "2" };
+                let pass = if partition.mount_point == "/" {
+                    "1"
+                } else {
+                    "2"
+                };
                 (fs.as_str(), opts, "0", pass)
             }
-            crate::disk::partition::PartitionFilesystem::Swap => {
-                ("swap", "defaults", "0", "0")
-            }
+            crate::disk::partition::PartitionFilesystem::Swap => ("swap", "defaults", "0", "0"),
             crate::disk::partition::PartitionFilesystem::None => continue,
         };
 
@@ -493,11 +494,7 @@ async fn create_user(target: &Path, user: &UserConfig) -> Result<()> {
     info!("Creating user: {}", user.username);
 
     // Create user in chroot
-    let mut args = vec![
-        "-m".to_string(),
-        "-s".to_string(),
-        user.shell.clone(),
-    ];
+    let mut args = vec!["-m".to_string(), "-s".to_string(), user.shell.clone()];
 
     if !user.full_name.is_empty() {
         args.push("-c".to_string());
@@ -530,9 +527,12 @@ async fn create_user(target: &Path, user: &UserConfig) -> Result<()> {
         fs::create_dir_all(&sudoers_dir).await?;
 
         let sudoers_file = sudoers_dir.join(&user.username);
-        fs::write(&sudoers_file, format!("{} ALL=(ALL:ALL) ALL\n", user.username))
-            .await
-            .map_err(|e| InstallerError::User(format!("Failed to write sudoers: {}", e)))?;
+        fs::write(
+            &sudoers_file,
+            format!("{} ALL=(ALL:ALL) ALL\n", user.username),
+        )
+        .await
+        .map_err(|e| InstallerError::User(format!("Failed to write sudoers: {}", e)))?;
 
         // Set permissions (mode 440)
         fs::set_permissions(&sudoers_file, std::fs::Permissions::from_mode(0o440)).await?;

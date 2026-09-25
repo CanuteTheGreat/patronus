@@ -25,28 +25,28 @@
 //!                     └─────────────┘
 //! ```
 
-pub mod mesh;
-pub mod monitor;
-pub mod routing;
-pub mod types;
-pub mod policy;
-pub mod database;
-pub mod error;
-pub mod peering;
-pub mod netpolicy;
-pub mod metrics;
-pub mod traffic_stats;
-pub mod health;
-pub mod failover;
-pub mod export;
 pub mod compression;
+pub mod database;
 pub mod dataplane;
 pub mod dpi;
-pub mod sla;
+pub mod error;
+pub mod export;
+pub mod failover;
+pub mod health;
+pub mod mesh;
+pub mod metrics;
+pub mod monitor;
+pub mod netpolicy;
+pub mod peering;
+pub mod policy;
 pub mod qos;
+pub mod routing;
+pub mod sla;
+pub mod traffic_stats;
+pub mod types;
 
 pub use error::{Error, Result};
-pub use types::{SiteId, PathId, FlowKey, FlowRecord, FlowStats};
+pub use types::{FlowKey, FlowRecord, FlowStats, PathId, SiteId};
 
 use std::sync::Arc;
 

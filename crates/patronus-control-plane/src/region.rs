@@ -1,10 +1,10 @@
 //! Multi-Region Control Plane
 
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use anyhow::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RegionStatus {
@@ -34,7 +34,11 @@ pub struct RegionCapacity {
 }
 
 impl Region {
-    pub fn new(name: impl Into<String>, location: impl Into<String>, endpoint: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        location: impl Into<String>,
+        endpoint: impl Into<String>,
+    ) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
@@ -58,8 +62,8 @@ impl Region {
     }
 
     pub fn has_capacity(&self) -> bool {
-        self.capacity.current_sites < self.capacity.max_sites &&
-        self.capacity.current_tunnels < self.capacity.max_tunnels
+        self.capacity.current_sites < self.capacity.max_sites
+            && self.capacity.current_tunnels < self.capacity.max_tunnels
     }
 
     pub fn utilization_percent(&self) -> f64 {
@@ -120,10 +124,7 @@ impl RegionManager {
     }
 
     pub fn list_active_regions(&self) -> Vec<&Region> {
-        self.regions
-            .values()
-            .filter(|r| r.is_available())
-            .collect()
+        self.regions.values().filter(|r| r.is_available()).collect()
     }
 
     pub fn find_best_region(&self) -> Option<&Region> {
@@ -138,7 +139,9 @@ impl RegionManager {
     }
 
     pub fn update_region_status(&mut self, region_id: &Uuid, status: RegionStatus) -> Result<()> {
-        let region = self.regions.get_mut(region_id)
+        let region = self
+            .regions
+            .get_mut(region_id)
             .ok_or_else(|| anyhow::anyhow!("Region not found"))?;
 
         region.status = status;
@@ -150,7 +153,9 @@ impl RegionManager {
     }
 
     pub fn heartbeat(&mut self, region_id: &Uuid) -> Result<()> {
-        let region = self.regions.get_mut(region_id)
+        let region = self
+            .regions
+            .get_mut(region_id)
             .ok_or_else(|| anyhow::anyhow!("Region not found"))?;
 
         region.last_seen = Utc::now();
@@ -285,7 +290,9 @@ mod tests {
         let region_id = region.id;
         manager.register_region(region).unwrap();
 
-        manager.update_region_status(&region_id, RegionStatus::Degraded).unwrap();
+        manager
+            .update_region_status(&region_id, RegionStatus::Degraded)
+            .unwrap();
 
         let updated = manager.get_region(&region_id).unwrap();
         assert_eq!(updated.status, RegionStatus::Degraded);

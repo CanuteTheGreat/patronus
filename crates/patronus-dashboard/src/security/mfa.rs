@@ -104,13 +104,11 @@ impl MfaManager {
         // Store backup codes
         for code in &backup_codes {
             let code_hash = self.hash_backup_code(code);
-            sqlx::query(
-                "INSERT INTO mfa_backup_codes (user_id, code_hash) VALUES (?, ?)",
-            )
-            .bind(user_id)
-            .bind(code_hash)
-            .execute(&self.pool)
-            .await?;
+            sqlx::query("INSERT INTO mfa_backup_codes (user_id, code_hash) VALUES (?, ?)")
+                .bind(user_id)
+                .bind(code_hash)
+                .execute(&self.pool)
+                .await?;
         }
 
         Ok(TotpSecret {
@@ -123,13 +121,12 @@ impl MfaManager {
     /// Verify TOTP code and enable MFA
     pub async fn verify_and_enable_totp(&self, user_id: &str, code: &str) -> Result<bool> {
         // Get secret
-        let secret: (String,) = sqlx::query_as(
-            "SELECT secret FROM mfa_secrets WHERE user_id = ? AND method = 'totp'",
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await?
-        .ok_or_else(|| anyhow!("TOTP not set up for user"))?;
+        let secret: (String,) =
+            sqlx::query_as("SELECT secret FROM mfa_secrets WHERE user_id = ? AND method = 'totp'")
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await?
+                .ok_or_else(|| anyhow!("TOTP not set up for user"))?;
 
         // Verify code
         if self.verify_totp(&secret.0, code)? {
@@ -151,25 +148,23 @@ impl MfaManager {
     /// Verify TOTP code for login
     pub async fn verify_totp_login(&self, user_id: &str, code: &str) -> Result<bool> {
         // Check if MFA is enabled
-        let mfa_enabled: (i32,) = sqlx::query_as(
-            "SELECT enabled FROM mfa_secrets WHERE user_id = ? AND method = 'totp'",
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await?
-        .ok_or_else(|| anyhow!("MFA not enabled"))?;
+        let mfa_enabled: (i32,) =
+            sqlx::query_as("SELECT enabled FROM mfa_secrets WHERE user_id = ? AND method = 'totp'")
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await?
+                .ok_or_else(|| anyhow!("MFA not enabled"))?;
 
         if mfa_enabled.0 == 0 {
             return Err(anyhow!("MFA not enabled for user"));
         }
 
         // Get secret
-        let secret: (String,) = sqlx::query_as(
-            "SELECT secret FROM mfa_secrets WHERE user_id = ? AND method = 'totp'",
-        )
-        .bind(user_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let secret: (String,) =
+            sqlx::query_as("SELECT secret FROM mfa_secrets WHERE user_id = ? AND method = 'totp'")
+                .bind(user_id)
+                .fetch_one(&self.pool)
+                .await?;
 
         self.verify_totp(&secret.0, code)
     }
@@ -206,12 +201,11 @@ impl MfaManager {
 
     /// Check if user has MFA enabled
     pub async fn is_mfa_enabled(&self, user_id: &str) -> Result<bool> {
-        let result: Option<(i32,)> = sqlx::query_as(
-            "SELECT enabled FROM mfa_secrets WHERE user_id = ?",
-        )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let result: Option<(i32,)> =
+            sqlx::query_as("SELECT enabled FROM mfa_secrets WHERE user_id = ?")
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await?;
 
         Ok(result.map(|(enabled,)| enabled != 0).unwrap_or(false))
     }
@@ -293,8 +287,8 @@ impl MfaManager {
         let time_bytes = time_step.to_be_bytes();
 
         // HMAC-SHA1
-        let mut mac = HmacSha1::new_from_slice(secret)
-            .map_err(|_| anyhow!("Invalid secret length"))?;
+        let mut mac =
+            HmacSha1::new_from_slice(secret).map_err(|_| anyhow!("Invalid secret length"))?;
         mac.update(&time_bytes);
         let result = mac.finalize();
         let bytes = result.into_bytes();
@@ -333,10 +327,7 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_test_db() -> SqlitePool {
-        SqlitePoolOptions::new()
-            .connect(":memory:")
-            .await
-            .unwrap()
+        SqlitePoolOptions::new().connect(":memory:").await.unwrap()
     }
 
     #[tokio::test]
@@ -376,11 +367,8 @@ mod tests {
             .unwrap();
 
         // Generate valid code
-        let secret_bytes = base32::decode(
-            Alphabet::Rfc4648 { padding: false },
-            &secret_data.secret,
-        )
-        .unwrap();
+        let secret_bytes =
+            base32::decode(Alphabet::Rfc4648 { padding: false }, &secret_data.secret).unwrap();
         let time_step = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

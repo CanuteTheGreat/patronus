@@ -29,18 +29,21 @@ impl CertificateAuthority {
 
     pub fn issue_certificate(&self, common_name: &str, validity_days: u32) -> Result<Certificate> {
         let mut params = CertificateParams::new(vec![common_name.to_string()]);
-        params.distinguished_name.push(DnType::CommonName, common_name);
+        params
+            .distinguished_name
+            .push(DnType::CommonName, common_name);
 
         let cert = RcgenCertificate::from_params(params)?;
         let cert_pem = cert.serialize_pem_with_signer(&self.ca_cert)?;
         let key_pem = cert.serialize_private_key_pem();
 
-        tracing::info!("Issued certificate for {} (valid for {} days)", common_name, validity_days);
+        tracing::info!(
+            "Issued certificate for {} (valid for {} days)",
+            common_name,
+            validity_days
+        );
 
-        Ok(Certificate {
-            cert_pem,
-            key_pem,
-        })
+        Ok(Certificate { cert_pem, key_pem })
     }
 
     pub fn revoke_certificate(&self, serial: &str) -> Result<()> {

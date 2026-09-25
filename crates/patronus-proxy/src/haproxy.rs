@@ -3,7 +3,7 @@
 //! Provides enterprise-grade load balancing, reverse proxy, SSL offloading,
 //! and high availability for web services.
 
-use patronus_core::{Result, Error};
+use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -12,22 +12,22 @@ use tokio::process::Command;
 /// HAProxy mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProxyMode {
-    HTTP,     // HTTP/HTTPS load balancing
-    TCP,      // TCP load balancing (layer 4)
-    Health,   // Health check only (no forwarding)
+    HTTP,   // HTTP/HTTPS load balancing
+    TCP,    // TCP load balancing (layer 4)
+    Health, // Health check only (no forwarding)
 }
 
 /// Load balancing algorithm
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BalanceAlgorithm {
-    RoundRobin,      // Each server in turn
-    LeastConn,       // Server with least connections
-    Source,          // Based on source IP hash
-    URI,             // Based on URI hash
-    URLParam,        // Based on URL parameter
-    Header,          // Based on HTTP header
-    Random,          // Random selection
-    Static,          // Based on server weight
+    RoundRobin, // Each server in turn
+    LeastConn,  // Server with least connections
+    Source,     // Based on source IP hash
+    URI,        // Based on URI hash
+    URLParam,   // Based on URL parameter
+    Header,     // Based on HTTP header
+    Random,     // Random selection
+    Static,     // Based on server weight
 }
 
 /// Backend server health check
@@ -44,14 +44,14 @@ pub struct HealthCheck {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HealthCheckMethod {
-    TCP,              // Simple TCP connect
+    TCP,                                           // Simple TCP connect
     HTTP { uri: String, expect: Option<String> },  // HTTP GET request
     HTTPS { uri: String, expect: Option<String> }, // HTTPS GET request
-    SSL,              // SSL handshake check
-    MySQL,            // MySQL protocol check
-    PostgreSQL,       // PostgreSQL protocol check
-    Redis,            // Redis PING
-    SMTP,             // SMTP banner check
+    SSL,                                           // SSL handshake check
+    MySQL,                                         // MySQL protocol check
+    PostgreSQL,                                    // PostgreSQL protocol check
+    Redis,                                         // Redis PING
+    SMTP,                                          // SMTP banner check
 }
 
 /// Backend server configuration
@@ -61,12 +61,12 @@ pub struct BackendServer {
     pub name: String,
     pub address: IpAddr,
     pub port: u16,
-    pub weight: u32,             // Load balancing weight (default 100)
-    pub max_conn: Option<u32>,   // Max concurrent connections
-    pub backup: bool,            // Backup server (only used if all primaries down)
+    pub weight: u32,           // Load balancing weight (default 100)
+    pub max_conn: Option<u32>, // Max concurrent connections
+    pub backup: bool,          // Backup server (only used if all primaries down)
     pub check: HealthCheck,
-    pub ssl: bool,               // Use SSL to backend
-    pub send_proxy: bool,        // Send PROXY protocol header
+    pub ssl: bool,        // Use SSL to backend
+    pub send_proxy: bool, // Send PROXY protocol header
     pub enabled: bool,
 }
 
@@ -78,21 +78,21 @@ pub struct Frontend {
     pub bind_address: IpAddr,
     pub bind_port: u16,
     pub mode: ProxyMode,
-    pub default_backend: String,  // Default backend name
+    pub default_backend: String, // Default backend name
 
     // SSL/TLS
     pub ssl: bool,
     pub ssl_cert: Option<PathBuf>,
     pub ssl_key: Option<PathBuf>,
     pub ssl_ca: Option<PathBuf>,
-    pub force_https: bool,        // Redirect HTTP to HTTPS
+    pub force_https: bool, // Redirect HTTP to HTTPS
 
     // Limits
     pub max_conn: Option<u32>,
-    pub rate_limit: Option<u32>,  // Connections per second
+    pub rate_limit: Option<u32>, // Connections per second
 
     // Timeouts
-    pub client_timeout: u32,      // Seconds
+    pub client_timeout: u32, // Seconds
     pub connect_timeout: u32,
 
     // ACLs and routing
@@ -100,7 +100,7 @@ pub struct Frontend {
     pub use_backend_rules: Vec<BackendRule>,
 
     // Advanced
-    pub xff_enabled: bool,        // Add X-Forwarded-For header
+    pub xff_enabled: bool, // Add X-Forwarded-For header
     pub compression: bool,
     pub http2_enabled: bool,
 
@@ -116,7 +116,7 @@ pub struct AccessControlList {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AclCondition {
-    PathBegins(String),          // Path starts with
+    PathBegins(String),           // Path starts with
     PathEquals(String),           // Path exactly matches
     PathRegex(String),            // Path matches regex
     HostEquals(String),           // Host header equals
@@ -132,9 +132,9 @@ pub enum AclCondition {
 /// Backend routing rule
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendRule {
-    pub acl_name: String,         // Which ACL to match
-    pub backend_name: String,     // Which backend to use
-    pub negate: bool,             // If true, use when ACL doesn't match
+    pub acl_name: String,     // Which ACL to match
+    pub backend_name: String, // Which backend to use
+    pub negate: bool,         // If true, use when ACL doesn't match
 }
 
 /// Backend pool configuration
@@ -148,15 +148,15 @@ pub struct Backend {
 
     // Session persistence
     pub sticky_session: bool,
-    pub cookie_name: Option<String>,  // Cookie for session persistence
+    pub cookie_name: Option<String>, // Cookie for session persistence
 
     // Timeouts
-    pub server_timeout: u32,      // Seconds
+    pub server_timeout: u32, // Seconds
     pub connect_timeout: u32,
 
     // Advanced
-    pub forwardfor: bool,         // Add X-Forwarded-For
-    pub httpclose: bool,          // Force connection close
+    pub forwardfor: bool, // Add X-Forwarded-For
+    pub httpclose: bool,  // Force connection close
 
     pub enabled: bool,
 }
@@ -167,10 +167,10 @@ pub struct StatsConfig {
     pub enabled: bool,
     pub bind_address: IpAddr,
     pub bind_port: u16,
-    pub uri: String,              // "/haproxy-stats"
+    pub uri: String, // "/haproxy-stats"
     pub username: Option<String>,
     pub password: Option<String>,
-    pub refresh: u32,             // Auto-refresh interval (seconds)
+    pub refresh: u32, // Auto-refresh interval (seconds)
 }
 
 /// HAProxy global configuration
@@ -181,9 +181,9 @@ pub struct HAProxyConfig {
     // Global settings
     pub max_conn: u32,
     pub log_level: LogLevel,
-    pub log_facility: String,     // Local syslog facility
-    pub nbproc: u32,              // Number of processes (deprecated, use nbthread)
-    pub nbthread: u32,            // Number of threads
+    pub log_facility: String, // Local syslog facility
+    pub nbproc: u32,          // Number of processes (deprecated, use nbthread)
+    pub nbthread: u32,        // Number of threads
 
     // SSL
     pub ssl_default_bind_ciphers: String,
@@ -303,9 +303,10 @@ impl HAProxyManager {
 
         config.push_str("global\n");
         config.push_str(&format!("    maxconn {}\n", self.config.max_conn));
-        config.push_str(&format!("    log {} local0 {:?}\n",
-            self.config.log_facility,
-            self.config.log_level));
+        config.push_str(&format!(
+            "    log {} local0 {:?}\n",
+            self.config.log_facility, self.config.log_level
+        ));
         config.push_str(&format!("    nbthread {}\n", self.config.nbthread));
         config.push_str("    daemon\n");
         config.push_str("    user haproxy\n");
@@ -313,10 +314,14 @@ impl HAProxyManager {
         config.push_str("    pidfile /var/run/haproxy.pid\n");
 
         // SSL defaults
-        config.push_str(&format!("    ssl-default-bind-ciphers {}\n",
-            self.config.ssl_default_bind_ciphers));
-        config.push_str(&format!("    ssl-default-bind-options {}\n\n",
-            self.config.ssl_default_bind_options));
+        config.push_str(&format!(
+            "    ssl-default-bind-ciphers {}\n",
+            self.config.ssl_default_bind_ciphers
+        ));
+        config.push_str(&format!(
+            "    ssl-default-bind-options {}\n\n",
+            self.config.ssl_default_bind_options
+        ));
 
         // Defaults section
         config.push_str("defaults\n");
@@ -338,15 +343,21 @@ impl HAProxyManager {
         // Statistics page
         if self.config.stats.enabled {
             config.push_str("listen stats\n");
-            config.push_str(&format!("    bind {}:{}\n",
-                self.config.stats.bind_address,
-                self.config.stats.bind_port));
+            config.push_str(&format!(
+                "    bind {}:{}\n",
+                self.config.stats.bind_address, self.config.stats.bind_port
+            ));
             config.push_str("    mode http\n");
             config.push_str("    stats enable\n");
             config.push_str(&format!("    stats uri {}\n", self.config.stats.uri));
-            config.push_str(&format!("    stats refresh {}s\n", self.config.stats.refresh));
+            config.push_str(&format!(
+                "    stats refresh {}s\n",
+                self.config.stats.refresh
+            ));
 
-            if let (Some(user), Some(pass)) = (&self.config.stats.username, &self.config.stats.password) {
+            if let (Some(user), Some(pass)) =
+                (&self.config.stats.username, &self.config.stats.password)
+            {
                 config.push_str(&format!("    stats auth {}:{}\n", user, pass));
             }
             config.push_str("    stats admin if TRUE\n\n");
@@ -362,12 +373,17 @@ impl HAProxyManager {
 
             // Bind
             let bind_str = if frontend.ssl {
-                format!("    bind {}:{} ssl crt {}\n",
+                format!(
+                    "    bind {}:{} ssl crt {}\n",
                     frontend.bind_address,
                     frontend.bind_port,
-                    frontend.ssl_cert.as_ref().unwrap().display())
+                    frontend.ssl_cert.as_ref().unwrap().display()
+                )
             } else {
-                format!("    bind {}:{}\n", frontend.bind_address, frontend.bind_port)
+                format!(
+                    "    bind {}:{}\n",
+                    frontend.bind_address, frontend.bind_port
+                )
             };
             config.push_str(&bind_str);
 
@@ -375,7 +391,10 @@ impl HAProxyManager {
             config.push_str(&format!("    mode {:?}\n", frontend.mode).to_lowercase());
 
             // Timeouts
-            config.push_str(&format!("    timeout client {}s\n", frontend.client_timeout));
+            config.push_str(&format!(
+                "    timeout client {}s\n",
+                frontend.client_timeout
+            ));
 
             // Max connections
             if let Some(max_conn) = frontend.max_conn {
@@ -411,12 +430,17 @@ impl HAProxyManager {
             // Backend routing rules
             for rule in &frontend.use_backend_rules {
                 let negation = if rule.negate { "!" } else { "" };
-                config.push_str(&format!("    use_backend {} if {}{}\n",
-                    rule.backend_name, negation, rule.acl_name));
+                config.push_str(&format!(
+                    "    use_backend {} if {}{}\n",
+                    rule.backend_name, negation, rule.acl_name
+                ));
             }
 
             // Default backend
-            config.push_str(&format!("    default_backend {}\n\n", frontend.default_backend));
+            config.push_str(&format!(
+                "    default_backend {}\n\n",
+                frontend.default_backend
+            ));
         }
 
         // Backends
@@ -431,7 +455,10 @@ impl HAProxyManager {
 
             // Timeouts
             config.push_str(&format!("    timeout server {}s\n", backend.server_timeout));
-            config.push_str(&format!("    timeout connect {}s\n", backend.connect_timeout));
+            config.push_str(&format!(
+                "    timeout connect {}s\n",
+                backend.connect_timeout
+            ));
 
             // X-Forwarded-For
             if backend.forwardfor {
@@ -456,8 +483,10 @@ impl HAProxyManager {
                     continue;
                 }
 
-                let mut server_line = format!("    server {} {}:{}",
-                    server.name, server.address, server.port);
+                let mut server_line = format!(
+                    "    server {} {}:{}",
+                    server.name, server.address, server.port
+                );
 
                 // Weight
                 if server.weight != 100 {
@@ -532,7 +561,10 @@ impl HAProxyManager {
 
         if !output.status.success() {
             let error = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::Config(format!("HAProxy config validation failed: {}", error)));
+            return Err(Error::Config(format!(
+                "HAProxy config validation failed: {}",
+                error
+            )));
         }
 
         Ok(())
@@ -643,7 +675,8 @@ impl Default for HAProxyConfig {
             log_facility: "/dev/log".to_string(),
             nbproc: 1,
             nbthread: 4,
-            ssl_default_bind_ciphers: "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384".to_string(),
+            ssl_default_bind_ciphers: "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384"
+                .to_string(),
             ssl_default_bind_options: "no-sslv3 no-tlsv10 no-tlsv11".to_string(),
             stats: StatsConfig {
                 enabled: true,

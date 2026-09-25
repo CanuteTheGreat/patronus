@@ -12,17 +12,15 @@ pub mod network_policy;
 pub mod service_mesh;
 
 pub use cni_plugin::{
-    PatronusCniPlugin, CniConfig, CniCommand, CniResult, CniError,
-    CniRuntimeConfig, IpamConfig, DnsConfig, Route,
+    CniCommand, CniConfig, CniError, CniResult, CniRuntimeConfig, DnsConfig, IpamConfig,
+    PatronusCniPlugin, Route,
 };
-pub use ebpf_datapath::{
-    EbpfDatapath, PodEndpoint, PolicyVerdict, EbpfProgramType,
-};
+pub use ebpf_datapath::{EbpfDatapath, EbpfProgramType, PodEndpoint, PolicyVerdict};
 pub use network_policy::{
-    NetworkPolicyController, PolicyRule, PolicyType,
-    IngressRule, EgressRule, PeerSelector, PortRule,
+    EgressRule, IngressRule, NetworkPolicyController, PeerSelector, PolicyRule, PolicyType,
+    PortRule,
 };
 pub use service_mesh::{
-    ServiceMeshManager, ServiceMeshConfig, ServiceEndpoint,
-    EnvoyConfig, L7Route, TracingConfig, TracingProvider,
+    EnvoyConfig, L7Route, ServiceEndpoint, ServiceMeshConfig, ServiceMeshManager, TracingConfig,
+    TracingProvider,
 };

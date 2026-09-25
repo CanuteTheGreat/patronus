@@ -1,11 +1,11 @@
 //! ML Training Pipeline
 
+use anyhow::Result;
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use anyhow::Result;
-use async_trait::async_trait;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum PipelineStage {
@@ -90,11 +90,7 @@ impl TrainingConfig {
         }
     }
 
-    pub fn with_hyperparameter(
-        mut self,
-        key: impl Into<String>,
-        value: serde_json::Value,
-    ) -> Self {
+    pub fn with_hyperparameter(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
         self.hyperparameters.insert(key.into(), value);
         self
     }
@@ -142,7 +138,9 @@ impl PipelineRun {
     }
 
     pub fn get_current_stage(&self) -> Option<&StageResult> {
-        self.stages.iter().find(|s| s.status == PipelineStatus::Running)
+        self.stages
+            .iter()
+            .find(|s| s.status == PipelineStatus::Running)
     }
 
     pub fn is_complete(&self) -> bool {
@@ -152,7 +150,11 @@ impl PipelineRun {
 
 #[async_trait]
 pub trait PipelineExecutor: Send + Sync {
-    async fn execute_stage(&self, stage: &PipelineStage, config: &TrainingConfig) -> Result<HashMap<String, f64>>;
+    async fn execute_stage(
+        &self,
+        stage: &PipelineStage,
+        config: &TrainingConfig,
+    ) -> Result<HashMap<String, f64>>;
 }
 
 pub struct TrainingPipeline<E: PipelineExecutor> {
@@ -181,7 +183,9 @@ impl<E: PipelineExecutor> TrainingPipeline<E> {
     }
 
     pub async fn execute_run(&mut self, run_id: &Uuid) -> Result<()> {
-        let run = self.runs.get_mut(run_id)
+        let run = self
+            .runs
+            .get_mut(run_id)
             .ok_or_else(|| anyhow::anyhow!("Run not found"))?;
 
         run.status = PipelineStatus::Running;
@@ -219,7 +223,9 @@ impl<E: PipelineExecutor> TrainingPipeline<E> {
     }
 
     pub fn cancel_run(&mut self, run_id: &Uuid) -> Result<()> {
-        let run = self.runs.get_mut(run_id)
+        let run = self
+            .runs
+            .get_mut(run_id)
             .ok_or_else(|| anyhow::anyhow!("Run not found"))?;
 
         if run.is_complete() {
@@ -250,7 +256,11 @@ mod tests {
 
     #[async_trait]
     impl PipelineExecutor for MockExecutor {
-        async fn execute_stage(&self, _stage: &PipelineStage, _config: &TrainingConfig) -> Result<HashMap<String, f64>> {
+        async fn execute_stage(
+            &self,
+            _stage: &PipelineStage,
+            _config: &TrainingConfig,
+        ) -> Result<HashMap<String, f64>> {
             let mut metrics = HashMap::new();
             metrics.insert("accuracy".to_string(), 0.95);
             Ok(metrics)
@@ -259,8 +269,7 @@ mod tests {
 
     #[test]
     fn test_pipeline_run_creation() {
-        let config = TrainingConfig::new("test-model", "v1.0.0")
-            .with_data_path("/data/training");
+        let config = TrainingConfig::new("test-model", "v1.0.0").with_data_path("/data/training");
 
         let run = PipelineRun::new(config, "alice");
 
@@ -306,7 +315,11 @@ mod tests {
 
     #[async_trait]
     impl PipelineExecutor for FailingExecutor {
-        async fn execute_stage(&self, stage: &PipelineStage, _config: &TrainingConfig) -> Result<HashMap<String, f64>> {
+        async fn execute_stage(
+            &self,
+            stage: &PipelineStage,
+            _config: &TrainingConfig,
+        ) -> Result<HashMap<String, f64>> {
             if stage == &PipelineStage::Training {
                 anyhow::bail!("Training failed");
             }

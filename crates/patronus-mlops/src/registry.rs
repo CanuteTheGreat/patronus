@@ -1,11 +1,11 @@
 //! Model Registry for versioning and tracking
 
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use anyhow::Result;
-use sha2::{Sha256, Digest};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ModelType {
@@ -142,11 +142,7 @@ impl ModelRegistry {
     pub fn get_versions(&self, model_name: &str) -> Vec<&ModelVersion> {
         self.versions_by_name
             .get(model_name)
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(|id| self.models.get(id))
-                    .collect()
-            })
+            .map(|ids| ids.iter().filter_map(|id| self.models.get(id)).collect())
             .unwrap_or_default()
     }
 
@@ -158,7 +154,9 @@ impl ModelRegistry {
     }
 
     pub fn deploy_model(&mut self, model_id: &Uuid) -> Result<()> {
-        let model = self.models.get_mut(model_id)
+        let model = self
+            .models
+            .get_mut(model_id)
             .ok_or_else(|| anyhow::anyhow!("Model not found"))?;
 
         if model.status != ModelStatus::Validated {
@@ -166,7 +164,8 @@ impl ModelRegistry {
         }
 
         model.status = ModelStatus::Deployed;
-        self.deployed_models.insert(model.model_type.clone(), *model_id);
+        self.deployed_models
+            .insert(model.model_type.clone(), *model_id);
 
         tracing::info!("Deployed model: {} ({})", model.model_name, model_id);
         Ok(())
@@ -179,7 +178,9 @@ impl ModelRegistry {
     }
 
     pub fn update_status(&mut self, model_id: &Uuid, status: ModelStatus) -> Result<()> {
-        let model = self.models.get_mut(model_id)
+        let model = self
+            .models
+            .get_mut(model_id)
             .ok_or_else(|| anyhow::anyhow!("Model not found"))?;
 
         model.status = status;
@@ -189,7 +190,9 @@ impl ModelRegistry {
     }
 
     pub fn archive_model(&mut self, model_id: &Uuid) -> Result<()> {
-        let model = self.models.get_mut(model_id)
+        let model = self
+            .models
+            .get_mut(model_id)
             .ok_or_else(|| anyhow::anyhow!("Model not found"))?;
 
         if model.status == ModelStatus::Deployed {
@@ -291,7 +294,9 @@ mod tests {
 
         registry.deploy_model(&model_id).unwrap();
 
-        let deployed = registry.get_deployed_model(&ModelType::AnomalyDetection).unwrap();
+        let deployed = registry
+            .get_deployed_model(&ModelType::AnomalyDetection)
+            .unwrap();
         assert_eq!(deployed.id, model_id);
         assert_eq!(deployed.status, ModelStatus::Deployed);
     }
@@ -317,12 +322,8 @@ mod tests {
     #[test]
     fn test_checksum() {
         let data = b"model_weights_data";
-        let model = ModelVersion::new(
-            "test-model",
-            "v1.0.0",
-            ModelType::AnomalyDetection,
-            "eve",
-        ).with_checksum(data);
+        let model = ModelVersion::new("test-model", "v1.0.0", ModelType::AnomalyDetection, "eve")
+            .with_checksum(data);
 
         assert!(!model.checksum.is_empty());
         assert_eq!(model.size_bytes, data.len() as u64);
@@ -332,19 +333,11 @@ mod tests {
     fn test_tag_search() {
         let mut registry = ModelRegistry::new();
 
-        let model1 = ModelVersion::new(
-            "model-1",
-            "v1.0.0",
-            ModelType::AnomalyDetection,
-            "frank",
-        ).with_tag("environment", "production");
+        let model1 = ModelVersion::new("model-1", "v1.0.0", ModelType::AnomalyDetection, "frank")
+            .with_tag("environment", "production");
 
-        let model2 = ModelVersion::new(
-            "model-2",
-            "v1.0.0",
-            ModelType::PredictiveFailover,
-            "frank",
-        ).with_tag("environment", "staging");
+        let model2 = ModelVersion::new("model-2", "v1.0.0", ModelType::PredictiveFailover, "frank")
+            .with_tag("environment", "staging");
 
         registry.register_model(model1).unwrap();
         registry.register_model(model2).unwrap();

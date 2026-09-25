@@ -4,12 +4,11 @@
 //! alerting, and capacity planning.
 
 use prometheus::{
-    Registry, Counter, Gauge, HistogramOpts,
-    Opts, CounterVec, GaugeVec, HistogramVec,
+    Counter, CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry,
 };
 use std::sync::Arc;
+use sysinfo::{Components, Disks, Networks, System};
 use tokio::time::{interval, Duration};
-use sysinfo::{System, Disks, Networks, Components};
 
 /// Central metrics collector for all Patronus subsystems
 pub struct MetricsCollector {
@@ -104,354 +103,382 @@ impl MetricsCollector {
         // System metrics
         let cpu_usage = Gauge::with_opts(Opts::new(
             "patronus_cpu_usage_percent",
-            "Current CPU usage percentage"
+            "Current CPU usage percentage",
         ))?;
         registry.register(Box::new(cpu_usage.clone()))?;
 
         let memory_usage = Gauge::with_opts(Opts::new(
             "patronus_memory_used_bytes",
-            "Current memory usage in bytes"
+            "Current memory usage in bytes",
         ))?;
         registry.register(Box::new(memory_usage.clone()))?;
 
         let memory_total = Gauge::with_opts(Opts::new(
             "patronus_memory_total_bytes",
-            "Total system memory in bytes"
+            "Total system memory in bytes",
         ))?;
         registry.register(Box::new(memory_total.clone()))?;
 
         let disk_usage = GaugeVec::new(
             Opts::new("patronus_disk_used_bytes", "Disk space used in bytes"),
-            &["device", "mount_point"]
+            &["device", "mount_point"],
         )?;
         registry.register(Box::new(disk_usage.clone()))?;
 
         let disk_total = GaugeVec::new(
             Opts::new("patronus_disk_total_bytes", "Total disk space in bytes"),
-            &["device", "mount_point"]
+            &["device", "mount_point"],
         )?;
         registry.register(Box::new(disk_total.clone()))?;
 
         let system_load = GaugeVec::new(
             Opts::new("patronus_system_load", "System load average"),
-            &["period"]
+            &["period"],
         )?;
         registry.register(Box::new(system_load.clone()))?;
 
         let system_uptime = Gauge::with_opts(Opts::new(
             "patronus_uptime_seconds",
-            "System uptime in seconds"
+            "System uptime in seconds",
         ))?;
         registry.register(Box::new(system_uptime.clone()))?;
 
         let cpu_temperature = GaugeVec::new(
             Opts::new("patronus_cpu_temperature_celsius", "CPU temperature"),
-            &["core"]
+            &["core"],
         )?;
         registry.register(Box::new(cpu_temperature.clone()))?;
 
         // Network interface metrics
         let interface_rx_bytes = GaugeVec::new(
             Opts::new("patronus_interface_rx_bytes_total", "Total bytes received"),
-            &["interface"]
+            &["interface"],
         )?;
         registry.register(Box::new(interface_rx_bytes.clone()))?;
 
         let interface_tx_bytes = GaugeVec::new(
-            Opts::new("patronus_interface_tx_bytes_total", "Total bytes transmitted"),
-            &["interface"]
+            Opts::new(
+                "patronus_interface_tx_bytes_total",
+                "Total bytes transmitted",
+            ),
+            &["interface"],
         )?;
         registry.register(Box::new(interface_tx_bytes.clone()))?;
 
         let interface_rx_packets = GaugeVec::new(
-            Opts::new("patronus_interface_rx_packets_total", "Total packets received"),
-            &["interface"]
+            Opts::new(
+                "patronus_interface_rx_packets_total",
+                "Total packets received",
+            ),
+            &["interface"],
         )?;
         registry.register(Box::new(interface_rx_packets.clone()))?;
 
         let interface_tx_packets = GaugeVec::new(
-            Opts::new("patronus_interface_tx_packets_total", "Total packets transmitted"),
-            &["interface"]
+            Opts::new(
+                "patronus_interface_tx_packets_total",
+                "Total packets transmitted",
+            ),
+            &["interface"],
         )?;
         registry.register(Box::new(interface_tx_packets.clone()))?;
 
         let interface_rx_errors = GaugeVec::new(
             Opts::new("patronus_interface_rx_errors_total", "Total receive errors"),
-            &["interface"]
+            &["interface"],
         )?;
         registry.register(Box::new(interface_rx_errors.clone()))?;
 
         let interface_tx_errors = GaugeVec::new(
-            Opts::new("patronus_interface_tx_errors_total", "Total transmit errors"),
-            &["interface"]
+            Opts::new(
+                "patronus_interface_tx_errors_total",
+                "Total transmit errors",
+            ),
+            &["interface"],
         )?;
         registry.register(Box::new(interface_tx_errors.clone()))?;
 
         let interface_rx_dropped = GaugeVec::new(
-            Opts::new("patronus_interface_rx_dropped_total", "Total receive dropped"),
-            &["interface"]
+            Opts::new(
+                "patronus_interface_rx_dropped_total",
+                "Total receive dropped",
+            ),
+            &["interface"],
         )?;
         registry.register(Box::new(interface_rx_dropped.clone()))?;
 
         let interface_tx_dropped = GaugeVec::new(
-            Opts::new("patronus_interface_tx_dropped_total", "Total transmit dropped"),
-            &["interface"]
+            Opts::new(
+                "patronus_interface_tx_dropped_total",
+                "Total transmit dropped",
+            ),
+            &["interface"],
         )?;
         registry.register(Box::new(interface_tx_dropped.clone()))?;
 
         let interface_speed = GaugeVec::new(
-            Opts::new("patronus_interface_speed_bps", "Interface speed in bits per second"),
-            &["interface"]
+            Opts::new(
+                "patronus_interface_speed_bps",
+                "Interface speed in bits per second",
+            ),
+            &["interface"],
         )?;
         registry.register(Box::new(interface_speed.clone()))?;
 
         // Firewall metrics
         let firewall_packets_total = CounterVec::new(
             Opts::new("patronus_firewall_packets_total", "Total packets processed"),
-            &["chain", "action"]
+            &["chain", "action"],
         )?;
         registry.register(Box::new(firewall_packets_total.clone()))?;
 
         let firewall_bytes_total = CounterVec::new(
             Opts::new("patronus_firewall_bytes_total", "Total bytes processed"),
-            &["chain", "action"]
+            &["chain", "action"],
         )?;
         registry.register(Box::new(firewall_bytes_total.clone()))?;
 
         let firewall_connections_active = Gauge::with_opts(Opts::new(
             "patronus_firewall_connections_active",
-            "Active connection tracking entries"
+            "Active connection tracking entries",
         ))?;
         registry.register(Box::new(firewall_connections_active.clone()))?;
 
         let firewall_connections_total = Counter::with_opts(Opts::new(
             "patronus_firewall_connections_total",
-            "Total connections tracked"
+            "Total connections tracked",
         ))?;
         registry.register(Box::new(firewall_connections_total.clone()))?;
 
         let firewall_rules_count = Gauge::with_opts(Opts::new(
             "patronus_firewall_rules_count",
-            "Number of active firewall rules"
+            "Number of active firewall rules",
         ))?;
         registry.register(Box::new(firewall_rules_count.clone()))?;
 
         let firewall_rule_hits = CounterVec::new(
-            Opts::new("patronus_firewall_rule_hits_total", "Firewall rule hit counter"),
-            &["rule_id", "action"]
+            Opts::new(
+                "patronus_firewall_rule_hits_total",
+                "Firewall rule hit counter",
+            ),
+            &["rule_id", "action"],
         )?;
         registry.register(Box::new(firewall_rule_hits.clone()))?;
 
         let firewall_nat_translations = Gauge::with_opts(Opts::new(
             "patronus_firewall_nat_translations_active",
-            "Active NAT translations"
+            "Active NAT translations",
         ))?;
         registry.register(Box::new(firewall_nat_translations.clone()))?;
 
         // VPN metrics
         let vpn_sessions_active = GaugeVec::new(
             Opts::new("patronus_vpn_sessions_active", "Active VPN sessions"),
-            &["type", "server"]
+            &["type", "server"],
         )?;
         registry.register(Box::new(vpn_sessions_active.clone()))?;
 
         let vpn_sessions_total = CounterVec::new(
             Opts::new("patronus_vpn_sessions_total", "Total VPN sessions created"),
-            &["type", "server"]
+            &["type", "server"],
         )?;
         registry.register(Box::new(vpn_sessions_total.clone()))?;
 
         let vpn_bytes_rx = CounterVec::new(
             Opts::new("patronus_vpn_bytes_rx_total", "Total VPN bytes received"),
-            &["type", "server", "user"]
+            &["type", "server", "user"],
         )?;
         registry.register(Box::new(vpn_bytes_rx.clone()))?;
 
         let vpn_bytes_tx = CounterVec::new(
             Opts::new("patronus_vpn_bytes_tx_total", "Total VPN bytes transmitted"),
-            &["type", "server", "user"]
+            &["type", "server", "user"],
         )?;
         registry.register(Box::new(vpn_bytes_tx.clone()))?;
 
         let vpn_tunnel_status = GaugeVec::new(
             Opts::new("patronus_vpn_tunnel_up", "VPN tunnel status (1=up, 0=down)"),
-            &["type", "name", "remote"]
+            &["type", "name", "remote"],
         )?;
         registry.register(Box::new(vpn_tunnel_status.clone()))?;
 
         // DHCP metrics
         let dhcp_leases_active = Gauge::with_opts(Opts::new(
             "patronus_dhcp_leases_active",
-            "Active DHCP leases"
+            "Active DHCP leases",
         ))?;
         registry.register(Box::new(dhcp_leases_active.clone()))?;
 
         let dhcp_leases_total = Counter::with_opts(Opts::new(
             "patronus_dhcp_leases_total",
-            "Total DHCP leases issued"
+            "Total DHCP leases issued",
         ))?;
         registry.register(Box::new(dhcp_leases_total.clone()))?;
 
         let dhcp_requests = CounterVec::new(
             Opts::new("patronus_dhcp_requests_total", "DHCP requests by type"),
-            &["type"]  // DISCOVER, REQUEST, RELEASE, etc.
+            &["type"], // DISCOVER, REQUEST, RELEASE, etc.
         )?;
         registry.register(Box::new(dhcp_requests.clone()))?;
 
         // DNS metrics
         let dns_queries_total = CounterVec::new(
             Opts::new("patronus_dns_queries_total", "Total DNS queries"),
-            &["type", "result"]  // A, AAAA, CNAME | NOERROR, NXDOMAIN, SERVFAIL
+            &["type", "result"], // A, AAAA, CNAME | NOERROR, NXDOMAIN, SERVFAIL
         )?;
         registry.register(Box::new(dns_queries_total.clone()))?;
 
         let dns_query_duration = HistogramVec::new(
             HistogramOpts::new("patronus_dns_query_duration_seconds", "DNS query duration"),
-            &["type"]
+            &["type"],
         )?;
         registry.register(Box::new(dns_query_duration.clone()))?;
 
-        let dns_cache_hits = Counter::with_opts(Opts::new(
-            "patronus_dns_cache_hits_total",
-            "DNS cache hits"
-        ))?;
+        let dns_cache_hits =
+            Counter::with_opts(Opts::new("patronus_dns_cache_hits_total", "DNS cache hits"))?;
         registry.register(Box::new(dns_cache_hits.clone()))?;
 
         let dns_cache_misses = Counter::with_opts(Opts::new(
             "patronus_dns_cache_misses_total",
-            "DNS cache misses"
+            "DNS cache misses",
         ))?;
         registry.register(Box::new(dns_cache_misses.clone()))?;
 
         let dns_blocked_queries = CounterVec::new(
             Opts::new("patronus_dns_blocked_queries_total", "Blocked DNS queries"),
-            &["list", "domain"]
+            &["list", "domain"],
         )?;
         registry.register(Box::new(dns_blocked_queries.clone()))?;
 
         // HA metrics
         let ha_state = GaugeVec::new(
             Opts::new("patronus_ha_state", "HA state (1=master, 0=backup)"),
-            &["node"]
+            &["node"],
         )?;
         registry.register(Box::new(ha_state.clone()))?;
 
         let ha_failovers_total = Counter::with_opts(Opts::new(
             "patronus_ha_failovers_total",
-            "Total HA failovers"
+            "Total HA failovers",
         ))?;
         registry.register(Box::new(ha_failovers_total.clone()))?;
 
         let ha_sync_errors = Counter::with_opts(Opts::new(
             "patronus_ha_sync_errors_total",
-            "Configuration sync errors"
+            "Configuration sync errors",
         ))?;
         registry.register(Box::new(ha_sync_errors.clone()))?;
 
         let ha_last_sync = Gauge::with_opts(Opts::new(
             "patronus_ha_last_sync_timestamp",
-            "Timestamp of last successful sync"
+            "Timestamp of last successful sync",
         ))?;
         registry.register(Box::new(ha_last_sync.clone()))?;
 
         // IDS/IPS metrics
         let ids_alerts_total = CounterVec::new(
             Opts::new("patronus_ids_alerts_total", "IDS/IPS alerts"),
-            &["severity", "category", "signature"]
+            &["severity", "category", "signature"],
         )?;
         registry.register(Box::new(ids_alerts_total.clone()))?;
 
         let ids_packets_processed = Counter::with_opts(Opts::new(
             "patronus_ids_packets_processed_total",
-            "Packets processed by IDS/IPS"
+            "Packets processed by IDS/IPS",
         ))?;
         registry.register(Box::new(ids_packets_processed.clone()))?;
 
         let ids_packets_dropped = Counter::with_opts(Opts::new(
             "patronus_ids_packets_dropped_total",
-            "Packets dropped by IPS"
+            "Packets dropped by IPS",
         ))?;
         registry.register(Box::new(ids_packets_dropped.clone()))?;
 
         let ids_signatures_loaded = Gauge::with_opts(Opts::new(
             "patronus_ids_signatures_loaded",
-            "Number of loaded IDS signatures"
+            "Number of loaded IDS signatures",
         ))?;
         registry.register(Box::new(ids_signatures_loaded.clone()))?;
 
         // QoS metrics
         let qos_bandwidth_used = GaugeVec::new(
             Opts::new("patronus_qos_bandwidth_used_bps", "Current bandwidth usage"),
-            &["interface", "class"]
+            &["interface", "class"],
         )?;
         registry.register(Box::new(qos_bandwidth_used.clone()))?;
 
         let qos_bandwidth_limit = GaugeVec::new(
             Opts::new("patronus_qos_bandwidth_limit_bps", "Bandwidth limit"),
-            &["interface", "class"]
+            &["interface", "class"],
         )?;
         registry.register(Box::new(qos_bandwidth_limit.clone()))?;
 
         let qos_packets_shaped = CounterVec::new(
             Opts::new("patronus_qos_packets_shaped_total", "Packets shaped by QoS"),
-            &["interface", "class"]
+            &["interface", "class"],
         )?;
         registry.register(Box::new(qos_packets_shaped.clone()))?;
 
         let qos_packets_dropped = CounterVec::new(
-            Opts::new("patronus_qos_packets_dropped_total", "Packets dropped by QoS"),
-            &["interface", "class", "reason"]
+            Opts::new(
+                "patronus_qos_packets_dropped_total",
+                "Packets dropped by QoS",
+            ),
+            &["interface", "class", "reason"],
         )?;
         registry.register(Box::new(qos_packets_dropped.clone()))?;
 
         // Certificate metrics
         let cert_expiry_days = GaugeVec::new(
             Opts::new("patronus_cert_expiry_days", "Days until certificate expiry"),
-            &["domain", "issuer"]
+            &["domain", "issuer"],
         )?;
         registry.register(Box::new(cert_expiry_days.clone()))?;
 
         let cert_renewals_total = CounterVec::new(
             Opts::new("patronus_cert_renewals_total", "Certificate renewals"),
-            &["domain", "status"]
+            &["domain", "status"],
         )?;
         registry.register(Box::new(cert_renewals_total.clone()))?;
 
         let cert_errors_total = CounterVec::new(
             Opts::new("patronus_cert_errors_total", "Certificate errors"),
-            &["domain", "error_type"]
+            &["domain", "error_type"],
         )?;
         registry.register(Box::new(cert_errors_total.clone()))?;
 
         // Web UI metrics
         let http_requests_total = CounterVec::new(
             Opts::new("patronus_http_requests_total", "HTTP requests"),
-            &["method", "path", "status"]
+            &["method", "path", "status"],
         )?;
         registry.register(Box::new(http_requests_total.clone()))?;
 
         let http_request_duration = HistogramVec::new(
-            HistogramOpts::new("patronus_http_request_duration_seconds", "HTTP request duration"),
-            &["method", "path"]
+            HistogramOpts::new(
+                "patronus_http_request_duration_seconds",
+                "HTTP request duration",
+            ),
+            &["method", "path"],
         )?;
         registry.register(Box::new(http_request_duration.clone()))?;
 
         let http_requests_in_flight = Gauge::with_opts(Opts::new(
             "patronus_http_requests_in_flight",
-            "HTTP requests currently being processed"
+            "HTTP requests currently being processed",
         ))?;
         registry.register(Box::new(http_requests_in_flight.clone()))?;
 
         // Service health
         let service_up = GaugeVec::new(
             Opts::new("patronus_service_up", "Service health (1=up, 0=down)"),
-            &["service"]
+            &["service"],
         )?;
         registry.register(Box::new(service_up.clone()))?;
 
         let service_restarts = CounterVec::new(
             Opts::new("patronus_service_restarts_total", "Service restart count"),
-            &["service"]
+            &["service"],
         )?;
         registry.register(Box::new(service_restarts.clone()))?;
 
@@ -552,9 +579,8 @@ impl MetricsCollector {
         // CPU usage
         let cpus = sys.cpus();
         if !cpus.is_empty() {
-            let cpu_usage: f64 = cpus.iter()
-                .map(|p| p.cpu_usage() as f64)
-                .sum::<f64>() / cpus.len() as f64;
+            let cpu_usage: f64 =
+                cpus.iter().map(|p| p.cpu_usage() as f64).sum::<f64>() / cpus.len() as f64;
             self.cpu_usage.set(cpu_usage);
         }
 
@@ -578,9 +604,15 @@ impl MetricsCollector {
 
         // Load average
         let load_avg = System::load_average();
-        self.system_load.with_label_values(&["1m"]).set(load_avg.one);
-        self.system_load.with_label_values(&["5m"]).set(load_avg.five);
-        self.system_load.with_label_values(&["15m"]).set(load_avg.fifteen);
+        self.system_load
+            .with_label_values(&["1m"])
+            .set(load_avg.one);
+        self.system_load
+            .with_label_values(&["5m"])
+            .set(load_avg.five);
+        self.system_load
+            .with_label_values(&["15m"])
+            .set(load_avg.fifteen);
 
         // Uptime
         self.system_uptime.set(System::uptime() as f64);

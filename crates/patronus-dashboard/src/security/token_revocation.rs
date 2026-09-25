@@ -1,11 +1,11 @@
 //! Token revocation system
 
 use chrono::{DateTime, Utc};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use std::sync::Arc;
-use parking_lot::RwLock;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 /// Revoked token entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,11 +50,9 @@ impl TokenRevocation {
         .await?;
 
         // Create index for user lookups
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_revoked_user ON revoked_tokens(user_id)",
-        )
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_revoked_user ON revoked_tokens(user_id)")
+            .execute(&self.pool)
+            .await?;
 
         // Load existing revoked tokens into cache
         self.reload_cache().await?;
@@ -96,15 +94,18 @@ impl TokenRevocation {
     }
 
     /// Revoke all tokens for a user
-    pub async fn revoke_all_user_tokens(&self, user_id: &str, reason: String) -> anyhow::Result<usize> {
+    pub async fn revoke_all_user_tokens(
+        &self,
+        user_id: &str,
+        reason: String,
+    ) -> anyhow::Result<usize> {
         // Get all active tokens for user from JWT claims (this would normally come from session store)
         // For now, we'll revoke all non-expired tokens
-        let tokens: Vec<(String,)> = sqlx::query_as(
-            "SELECT token_id FROM revoked_tokens WHERE user_id = ?",
-        )
-        .bind(user_id)
-        .fetch_all(&self.pool)
-        .await?;
+        let tokens: Vec<(String,)> =
+            sqlx::query_as("SELECT token_id FROM revoked_tokens WHERE user_id = ?")
+                .bind(user_id)
+                .fetch_all(&self.pool)
+                .await?;
 
         let revoked_at = Utc::now();
         let expires_at = Utc::now() + chrono::Duration::hours(1); // Assume 1 hour max token lifetime
@@ -158,12 +159,10 @@ impl TokenRevocation {
     pub async fn cleanup_expired(&self) -> anyhow::Result<usize> {
         let now = Utc::now();
 
-        let result = sqlx::query(
-            "DELETE FROM revoked_tokens WHERE expires_at < ?",
-        )
-        .bind(now.to_rfc3339())
-        .execute(&self.pool)
-        .await?;
+        let result = sqlx::query("DELETE FROM revoked_tokens WHERE expires_at < ?")
+            .bind(now.to_rfc3339())
+            .execute(&self.pool)
+            .await?;
 
         // Reload cache after cleanup
         self.reload_cache().await?;
@@ -173,12 +172,11 @@ impl TokenRevocation {
 
     /// Reload cache from database
     async fn reload_cache(&self) -> anyhow::Result<()> {
-        let tokens: Vec<(String,)> = sqlx::query_as(
-            "SELECT token_id FROM revoked_tokens WHERE expires_at > ?",
-        )
-        .bind(Utc::now().to_rfc3339())
-        .fetch_all(&self.pool)
-        .await?;
+        let tokens: Vec<(String,)> =
+            sqlx::query_as("SELECT token_id FROM revoked_tokens WHERE expires_at > ?")
+                .bind(Utc::now().to_rfc3339())
+                .fetch_all(&self.pool)
+                .await?;
 
         let mut cache = self.revoked_cache.write();
         cache.clear();
@@ -189,12 +187,11 @@ impl TokenRevocation {
 
     /// Get total revoked tokens count
     pub async fn get_revoked_count(&self) -> anyhow::Result<i64> {
-        let (count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM revoked_tokens WHERE expires_at > ?",
-        )
-        .bind(Utc::now().to_rfc3339())
-        .fetch_one(&self.pool)
-        .await?;
+        let (count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM revoked_tokens WHERE expires_at > ?")
+                .bind(Utc::now().to_rfc3339())
+                .fetch_one(&self.pool)
+                .await?;
 
         Ok(count)
     }
@@ -206,10 +203,7 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_test_db() -> SqlitePool {
-        SqlitePoolOptions::new()
-            .connect(":memory:")
-            .await
-            .unwrap()
+        SqlitePoolOptions::new().connect(":memory:").await.unwrap()
     }
 
     #[tokio::test]

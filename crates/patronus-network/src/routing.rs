@@ -1,10 +1,10 @@
 //! Routing table management
 
+use futures::TryStreamExt;
+use netlink_packet_route::route::RouteAddress;
 use patronus_core::{types::IpNetwork, Error, Result};
 use rtnetlink::{new_connection, Handle};
-use futures::TryStreamExt;
 use std::net::{IpAddr, Ipv4Addr};
-use netlink_packet_route::route::RouteAddress;
 
 /// Represents a routing table entry
 #[derive(Debug, Clone)]
@@ -201,7 +201,8 @@ impl RouteManager {
         match (destination, gateway) {
             (Some(dest), Some(gw)) => {
                 // Route to specific destination via gateway
-                let mut request = self.handle
+                let mut request = self
+                    .handle
                     .route()
                     .add()
                     .v4()
@@ -228,14 +229,10 @@ impl RouteManager {
             }
             (None, Some(gw)) => {
                 // Default route
-                let mut request = self.handle
-                    .route()
-                    .add()
-                    .v4()
-                    .gateway(match gw {
-                        IpAddr::V4(addr) => addr,
-                        _ => return Err(Error::Network("Expected IPv4 gateway".to_string())),
-                    });
+                let mut request = self.handle.route().add().v4().gateway(match gw {
+                    IpAddr::V4(addr) => addr,
+                    _ => return Err(Error::Network("Expected IPv4 gateway".to_string())),
+                });
 
                 if let Some(idx) = interface_index {
                     request = request.output_interface(idx);
@@ -256,20 +253,28 @@ impl RouteManager {
                         .destination_prefix(
                             match dest.addr {
                                 IpAddr::V4(addr) => addr,
-                                _ => return Err(Error::Network("Expected IPv4 address".to_string())),
+                                _ => {
+                                    return Err(Error::Network("Expected IPv4 address".to_string()))
+                                }
                             },
                             dest.prefix_len,
                         )
                         .output_interface(idx)
                         .execute()
                         .await
-                        .map_err(|e| Error::Network(format!("Failed to add direct route: {}", e)))?;
+                        .map_err(|e| {
+                            Error::Network(format!("Failed to add direct route: {}", e))
+                        })?;
                 } else {
-                    return Err(Error::Network("Interface required for direct routes".to_string()));
+                    return Err(Error::Network(
+                        "Interface required for direct routes".to_string(),
+                    ));
                 }
             }
             (None, None) => {
-                return Err(Error::Network("At least destination or gateway required".to_string()));
+                return Err(Error::Network(
+                    "At least destination or gateway required".to_string(),
+                ));
             }
         }
 
@@ -283,7 +288,11 @@ impl RouteManager {
     }
 
     /// Add a default gateway
-    pub async fn add_default_gateway(&self, gateway: IpAddr, interface: Option<&str>) -> Result<()> {
+    pub async fn add_default_gateway(
+        &self,
+        gateway: IpAddr,
+        interface: Option<&str>,
+    ) -> Result<()> {
         self.add_route(None, Some(gateway), interface, None).await
     }
 
@@ -317,18 +326,38 @@ impl RouteManager {
                         IpAddr::V4(addr) => {
                             self.handle
                                 .route()
-                                .del(self.handle.route().add().v4().destination_prefix(addr, dest.prefix_len).message_mut().clone())
+                                .del(
+                                    self.handle
+                                        .route()
+                                        .add()
+                                        .v4()
+                                        .destination_prefix(addr, dest.prefix_len)
+                                        .message_mut()
+                                        .clone(),
+                                )
                                 .execute()
                                 .await
-                                .map_err(|e| Error::Network(format!("Failed to delete route: {}", e)))?;
+                                .map_err(|e| {
+                                    Error::Network(format!("Failed to delete route: {}", e))
+                                })?;
                         }
                         IpAddr::V6(addr) => {
                             self.handle
                                 .route()
-                                .del(self.handle.route().add().v6().destination_prefix(addr, dest.prefix_len).message_mut().clone())
+                                .del(
+                                    self.handle
+                                        .route()
+                                        .add()
+                                        .v6()
+                                        .destination_prefix(addr, dest.prefix_len)
+                                        .message_mut()
+                                        .clone(),
+                                )
                                 .execute()
                                 .await
-                                .map_err(|e| Error::Network(format!("Failed to delete route: {}", e)))?;
+                                .map_err(|e| {
+                                    Error::Network(format!("Failed to delete route: {}", e))
+                                })?;
                         }
                     }
                 }
@@ -346,7 +375,9 @@ impl RouteManager {
         for route in routes {
             // Don't remove local routes (table 255)
             if route.table != 255 {
-                self.remove_route(route.destination, route.gateway).await.ok();
+                self.remove_route(route.destination, route.gateway)
+                    .await
+                    .ok();
             }
         }
 

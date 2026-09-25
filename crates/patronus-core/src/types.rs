@@ -150,8 +150,13 @@ impl FirewallRule {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum NatType {
     Masquerade,
-    Snat { to_address: IpAddr },
-    Dnat { to_address: IpAddr, to_port: Option<u16> },
+    Snat {
+        to_address: IpAddr,
+    },
+    Dnat {
+        to_address: IpAddr,
+        to_port: Option<u16>,
+    },
 }
 
 /// NAT rule

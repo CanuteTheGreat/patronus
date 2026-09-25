@@ -1,7 +1,7 @@
 use anyhow::Result;
 use patronus_cni::{
-    PatronusCniPlugin, CniConfig, CniCommand, CniRuntimeConfig,
-    EbpfDatapath, NetworkPolicyController, ServiceMeshManager, ServiceMeshConfig,
+    CniCommand, CniConfig, CniRuntimeConfig, EbpfDatapath, NetworkPolicyController,
+    PatronusCniPlugin, ServiceMeshConfig, ServiceMeshManager,
 };
 use std::env;
 use std::io::{self, Read};
@@ -65,9 +65,12 @@ async fn main() -> Result<()> {
 
                             // Create pod endpoint
                             let endpoint = patronus_cni::PodEndpoint {
-                                pod_name: "pod".to_string(), // Would be extracted from args
+                                pod_name: "pod".to_string(),      // Would be extracted from args
                                 namespace: "default".to_string(), // Would be extracted from args
-                                pod_ip: result.ips[0].address.parse().unwrap_or(std::net::IpAddr::from([0, 0, 0, 0])),
+                                pod_ip: result.ips[0]
+                                    .address
+                                    .parse()
+                                    .unwrap_or(std::net::IpAddr::from([0, 0, 0, 0])),
                                 host_veth: result.interfaces[0].name.clone(),
                                 container_id: plugin.runtime.container_id.clone(),
                             };
@@ -102,7 +105,9 @@ async fn main() -> Result<()> {
                         Ok(()) => {
                             // Detach eBPF programs
                             let datapath = Arc::new(EbpfDatapath::new());
-                            if let Err(e) = datapath.detach_programs(&plugin.runtime.container_id).await {
+                            if let Err(e) =
+                                datapath.detach_programs(&plugin.runtime.container_id).await
+                            {
                                 error!("Failed to detach eBPF programs: {}", e);
                             }
 

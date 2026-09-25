@@ -1,10 +1,10 @@
 //! Rate Limiting with Token Bucket Algorithm
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitConfig {
@@ -35,14 +35,14 @@ impl RateLimiter {
     pub async fn check_rate_limit(&self, key: &str) -> bool {
         let mut buckets = self.buckets.write().await;
 
-        let bucket = buckets.entry(key.to_string()).or_insert_with(|| {
-            TokenBucket {
+        let bucket = buckets
+            .entry(key.to_string())
+            .or_insert_with(|| TokenBucket {
                 tokens: self.config.burst_size as f64,
                 last_refill: Instant::now(),
                 capacity: self.config.burst_size as f64,
                 refill_rate: self.config.requests_per_second as f64,
-            }
-        });
+            });
 
         // Refill tokens based on elapsed time
         let now = Instant::now();
@@ -63,9 +63,7 @@ impl RateLimiter {
         let mut buckets = self.buckets.write().await;
         let now = Instant::now();
 
-        buckets.retain(|_, bucket| {
-            now.duration_since(bucket.last_refill) < max_age
-        });
+        buckets.retain(|_, bucket| now.duration_since(bucket.last_refill) < max_age);
     }
 }
 

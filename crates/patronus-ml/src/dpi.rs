@@ -137,7 +137,10 @@ impl EncryptedDpi {
 
         for (class, confidence) in votes {
             let key = format!("{:?}", class);
-            class_scores.entry(key).or_insert_with(Vec::new).push(confidence);
+            class_scores
+                .entry(key)
+                .or_insert_with(Vec::new)
+                .push(confidence);
         }
 
         // Find class with highest average confidence

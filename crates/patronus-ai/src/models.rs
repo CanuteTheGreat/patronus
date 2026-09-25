@@ -96,9 +96,12 @@ impl IsolationForest {
             return 0.0;
         }
 
-        let avg_path_length: f64 = self.trees.iter()
+        let avg_path_length: f64 = self
+            .trees
+            .iter()
             .map(|tree| self.path_length(features, &tree.root, 0) as f64)
-            .sum::<f64>() / self.trees.len() as f64;
+            .sum::<f64>()
+            / self.trees.len() as f64;
 
         // Anomaly score: 2^(-avg_path / c)
         let score = 2_f64.powf(-avg_path_length / self.avg_path_length);
@@ -111,7 +114,8 @@ impl IsolationForest {
         let mut rng = rand::thread_rng();
 
         let indices: Vec<usize> = (0..data.nrows()).collect();
-        let sampled: Vec<usize> = indices.choose_multiple(&mut rng, self.sample_size.min(data.nrows()))
+        let sampled: Vec<usize> = indices
+            .choose_multiple(&mut rng, self.sample_size.min(data.nrows()))
             .copied()
             .collect();
 
@@ -123,7 +127,12 @@ impl IsolationForest {
         result
     }
 
-    fn build_tree(&self, data: &Array2<f64>, current_height: usize, height_limit: usize) -> Option<Box<TreeNode>> {
+    fn build_tree(
+        &self,
+        data: &Array2<f64>,
+        current_height: usize,
+        height_limit: usize,
+    ) -> Option<Box<TreeNode>> {
         if current_height >= height_limit || data.nrows() <= 1 {
             return None;
         }
@@ -139,7 +148,7 @@ impl IsolationForest {
         let max_val = col.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
 
         if (max_val - min_val).abs() < 1e-10 {
-            return None;  // All values are the same
+            return None; // All values are the same
         }
 
         let split_value = rng.gen_range(min_val..max_val);
@@ -195,7 +204,12 @@ impl IsolationForest {
         result
     }
 
-    fn path_length(&self, features: &Array1<f64>, node: &Option<Box<TreeNode>>, current_height: usize) -> usize {
+    fn path_length(
+        &self,
+        features: &Array1<f64>,
+        node: &Option<Box<TreeNode>>,
+        current_height: usize,
+    ) -> usize {
         match node {
             None => current_height,
             Some(n) => {
@@ -235,7 +249,8 @@ impl ThreatClassifier {
         }
 
         // Convert to feature matrix
-        let vectors: Vec<FeatureVector> = normal_features.iter()
+        let vectors: Vec<FeatureVector> = normal_features
+            .iter()
             .map(FeatureVector::from_source_features)
             .collect();
 

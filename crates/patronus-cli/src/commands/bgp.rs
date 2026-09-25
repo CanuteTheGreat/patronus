@@ -7,7 +7,12 @@ use std::path::PathBuf;
 pub async fn handle_bgp_command(action: BgpCommands, _config_path: PathBuf) -> anyhow::Result<()> {
     match action {
         BgpCommands::Peer { address, asn } => {
-            println!("{} Configured BGP peer {} (AS{})", "✓".green(), address, asn);
+            println!(
+                "{} Configured BGP peer {} (AS{})",
+                "✓".green(),
+                address,
+                asn
+            );
         }
         BgpCommands::Status => {
             println!("BGP Status: Running");

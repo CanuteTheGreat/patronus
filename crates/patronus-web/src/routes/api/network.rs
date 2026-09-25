@@ -1,13 +1,13 @@
 //! Network API endpoints
 
+use crate::state::AppState;
 use axum::{
     extract::{Path, State},
-    Json,
-    response::{IntoResponse, Response},
     http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
 };
 use serde::{Deserialize, Serialize};
-use crate::state::AppState;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NetworkInterface {
@@ -64,9 +64,13 @@ pub async fn list_interfaces(State(state): State<AppState>) -> Response {
         Ok(interfaces) => Json(interfaces).into_response(),
         Err(e) => {
             tracing::error!("Failed to list interfaces: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": "Failed to list interfaces"
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to list interfaces"
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -75,17 +79,22 @@ pub async fn list_interfaces(State(state): State<AppState>) -> Response {
 pub async fn update_interface(
     State(state): State<AppState>,
     Path(name): Path<String>,
-    Json(interface): Json<NetworkInterface>
+    Json(interface): Json<NetworkInterface>,
 ) -> Response {
     match state.network.update_interface(name, interface).await {
         Ok(_) => Json(serde_json::json!({
             "message": "Interface updated successfully"
-        })).into_response(),
+        }))
+        .into_response(),
         Err(e) => {
             tracing::error!("Failed to update interface: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": format!("Failed to update interface: {}", e)
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Failed to update interface: {}", e)
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -95,12 +104,17 @@ pub async fn interface_up(State(state): State<AppState>, Path(name): Path<String
     match state.network.bring_interface_up(&name).await {
         Ok(_) => Json(serde_json::json!({
             "message": format!("Interface {} brought up successfully", name)
-        })).into_response(),
+        }))
+        .into_response(),
         Err(e) => {
             tracing::error!("Failed to bring up interface {}: {}", name, e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": format!("Failed to bring up interface: {}", e)
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Failed to bring up interface: {}", e)
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -110,12 +124,17 @@ pub async fn interface_down(State(state): State<AppState>, Path(name): Path<Stri
     match state.network.bring_interface_down(&name).await {
         Ok(_) => Json(serde_json::json!({
             "message": format!("Interface {} brought down successfully", name)
-        })).into_response(),
+        }))
+        .into_response(),
         Err(e) => {
             tracing::error!("Failed to bring down interface {}: {}", name, e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": format!("Failed to bring down interface: {}", e)
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": format!("Failed to bring down interface: {}", e)
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -126,9 +145,13 @@ pub async fn list_dhcp_pools(State(state): State<AppState>) -> Response {
         Ok(pools) => Json(pools).into_response(),
         Err(e) => {
             tracing::error!("Failed to list DHCP pools: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": "Failed to list DHCP pools"
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to list DHCP pools"
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -139,9 +162,13 @@ pub async fn list_dhcp_leases(State(state): State<AppState>) -> Response {
         Ok(leases) => Json(leases).into_response(),
         Err(e) => {
             tracing::error!("Failed to list DHCP leases: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": "Failed to list DHCP leases"
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to list DHCP leases"
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -152,9 +179,13 @@ pub async fn list_dns_records(State(state): State<AppState>) -> Response {
         Ok(records) => Json(records).into_response(),
         Err(e) => {
             tracing::error!("Failed to list DNS records: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": "Failed to list DNS records"
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to list DNS records"
+                })),
+            )
+                .into_response()
         }
     }
 }
@@ -165,9 +196,13 @@ pub async fn list_routes(State(state): State<AppState>) -> Response {
         Ok(routes) => Json(routes).into_response(),
         Err(e) => {
             tracing::error!("Failed to list routes: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": "Failed to list routes"
-            }))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to list routes"
+                })),
+            )
+                .into_response()
         }
     }
 }

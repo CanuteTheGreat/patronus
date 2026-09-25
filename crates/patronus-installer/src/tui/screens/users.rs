@@ -47,7 +47,10 @@ pub fn draw(frame: &mut Frame, app: &InstallerApp) {
         Line::from(vec![
             Span::styled("Password:  ", Style::default().fg(Theme::MUTED)),
             Span::raw("********"),
-            Span::styled(" (set after installation)", Style::default().fg(Theme::MUTED)),
+            Span::styled(
+                " (set after installation)",
+                Style::default().fg(Theme::MUTED),
+            ),
         ]),
         Line::from(""),
         Line::from(vec![
@@ -77,7 +80,12 @@ pub fn draw(frame: &mut Frame, app: &InstallerApp) {
     // Instructions
     let instructions = Line::from(vec![
         Span::raw("Press "),
-        Span::styled("Enter", Style::default().fg(Theme::HIGHLIGHT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Enter",
+            Style::default()
+                .fg(Theme::HIGHLIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" to continue (password can be set after first boot)"),
     ]);
     let para = Paragraph::new(instructions);

@@ -1,12 +1,12 @@
 //! Automatic Remediation Actions
 
+use crate::detector::{Issue, IssueType};
+use anyhow::Result;
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use anyhow::Result;
-use async_trait::async_trait;
-use crate::detector::{Issue, IssueType};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RemediationAction {
@@ -100,17 +100,26 @@ impl<E: RemediationExecutor> RemediationEngine<E> {
         // Map issue types to remediation actions
         action_map.insert(
             IssueType::TunnelDown,
-            vec![RemediationAction::RestartTunnel, RemediationAction::SwitchToBackupPath],
+            vec![
+                RemediationAction::RestartTunnel,
+                RemediationAction::SwitchToBackupPath,
+            ],
         );
 
         action_map.insert(
             IssueType::HighLatency,
-            vec![RemediationAction::SwitchToBackupPath, RemediationAction::RerouteTraffic],
+            vec![
+                RemediationAction::SwitchToBackupPath,
+                RemediationAction::RerouteTraffic,
+            ],
         );
 
         action_map.insert(
             IssueType::PacketLoss,
-            vec![RemediationAction::SwitchToBackupPath, RemediationAction::RestartTunnel],
+            vec![
+                RemediationAction::SwitchToBackupPath,
+                RemediationAction::RestartTunnel,
+            ],
         );
 
         action_map.insert(
@@ -120,7 +129,10 @@ impl<E: RemediationExecutor> RemediationEngine<E> {
 
         action_map.insert(
             IssueType::CapacityExhausted,
-            vec![RemediationAction::ScaleUpBandwidth, RemediationAction::RerouteTraffic],
+            vec![
+                RemediationAction::ScaleUpBandwidth,
+                RemediationAction::RerouteTraffic,
+            ],
         );
 
         action_map.insert(
@@ -130,7 +142,10 @@ impl<E: RemediationExecutor> RemediationEngine<E> {
 
         action_map.insert(
             IssueType::SecurityThreat,
-            vec![RemediationAction::BlockTraffic, RemediationAction::NotifyOperator],
+            vec![
+                RemediationAction::BlockTraffic,
+                RemediationAction::NotifyOperator,
+            ],
         );
 
         Self {
@@ -165,7 +180,9 @@ impl<E: RemediationExecutor> RemediationEngine<E> {
         attempt.start();
         tracing::info!("Starting remediation: {:?} for issue {}", action, issue.id);
 
-        let result = self.execute_action(&action, &issue.affected_resource_id).await;
+        let result = self
+            .execute_action(&action, &issue.affected_resource_id)
+            .await;
 
         match result {
             Ok(_) => {
@@ -185,9 +202,7 @@ impl<E: RemediationExecutor> RemediationEngine<E> {
 
     async fn execute_action(&self, action: &RemediationAction, resource_id: &str) -> Result<()> {
         match action {
-            RemediationAction::RestartTunnel => {
-                self.executor.restart_tunnel(resource_id).await
-            }
+            RemediationAction::RestartTunnel => self.executor.restart_tunnel(resource_id).await,
             RemediationAction::SwitchToBackupPath => {
                 // Assuming backup path ID is derived
                 let backup_path = format!("{}-backup", resource_id);
@@ -206,9 +221,7 @@ impl<E: RemediationExecutor> RemediationEngine<E> {
             RemediationAction::RollbackConfiguration => {
                 self.executor.rollback_config("last-good").await
             }
-            RemediationAction::BlockTraffic => {
-                self.executor.block_traffic(resource_id).await
-            }
+            RemediationAction::BlockTraffic => self.executor.block_traffic(resource_id).await,
             RemediationAction::NotifyOperator => {
                 tracing::warn!("Manual intervention required for {}", resource_id);
                 Ok(())

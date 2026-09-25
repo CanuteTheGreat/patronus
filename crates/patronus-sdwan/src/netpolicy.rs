@@ -40,11 +40,7 @@
 //! └──────────────────────┘
 //! ```
 
-use crate::{
-    database::Database,
-    policy::CidrNetwork,
-    types::FlowKey, Result,
-};
+use crate::{database::Database, policy::CidrNetwork, types::FlowKey, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -233,15 +229,10 @@ pub enum PeerSelector {
     },
 
     /// Namespace selector (all pods in namespace)
-    NamespaceSelector {
-        selector: LabelSelector,
-    },
+    NamespaceSelector { selector: LabelSelector },
 
     /// IP block (CIDR range)
-    IpBlock {
-        cidr: String,
-        except: Vec<String>,
-    },
+    IpBlock { cidr: String, except: Vec<String> },
 }
 
 /// NetworkPolicy port

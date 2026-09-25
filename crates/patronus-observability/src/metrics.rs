@@ -1,8 +1,8 @@
 //! Prometheus Metrics Collection
 
-use prometheus::{Counter, Gauge, Histogram, Registry, Opts, HistogramOpts};
-use std::sync::Arc;
 use anyhow::Result;
+use prometheus::{Counter, Gauge, Histogram, HistogramOpts, Opts, Registry};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy)]
 pub enum MetricType {
@@ -39,55 +39,64 @@ impl MetricsCollector {
     pub fn new() -> Result<Self> {
         let registry = Registry::new();
 
-        let packets_total = Counter::with_opts(
-            Opts::new("patronus_packets_total", "Total packets processed")
-        )?;
+        let packets_total = Counter::with_opts(Opts::new(
+            "patronus_packets_total",
+            "Total packets processed",
+        ))?;
 
-        let bytes_total = Counter::with_opts(
-            Opts::new("patronus_bytes_total", "Total bytes processed")
-        )?;
+        let bytes_total =
+            Counter::with_opts(Opts::new("patronus_bytes_total", "Total bytes processed"))?;
 
-        let packet_loss = Gauge::with_opts(
-            Opts::new("patronus_packet_loss", "Current packet loss percentage")
-        )?;
+        let packet_loss = Gauge::with_opts(Opts::new(
+            "patronus_packet_loss",
+            "Current packet loss percentage",
+        ))?;
 
         let latency = Histogram::with_opts(
             HistogramOpts::new("patronus_latency_ms", "Latency in milliseconds")
-                .buckets(vec![1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0])
+                .buckets(vec![1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0]),
         )?;
 
-        let tunnels_active = Gauge::with_opts(
-            Opts::new("patronus_tunnels_active", "Number of active tunnels")
-        )?;
+        let tunnels_active = Gauge::with_opts(Opts::new(
+            "patronus_tunnels_active",
+            "Number of active tunnels",
+        ))?;
 
-        let tunnel_failures = Counter::with_opts(
-            Opts::new("patronus_tunnel_failures_total", "Total tunnel failures")
-        )?;
+        let tunnel_failures = Counter::with_opts(Opts::new(
+            "patronus_tunnel_failures_total",
+            "Total tunnel failures",
+        ))?;
 
-        let bgp_peers_up = Gauge::with_opts(
-            Opts::new("patronus_bgp_peers_up", "Number of BGP peers in up state")
-        )?;
+        let bgp_peers_up = Gauge::with_opts(Opts::new(
+            "patronus_bgp_peers_up",
+            "Number of BGP peers in up state",
+        ))?;
 
-        let bgp_routes = Gauge::with_opts(
-            Opts::new("patronus_bgp_routes", "Number of BGP routes")
-        )?;
+        let bgp_routes =
+            Gauge::with_opts(Opts::new("patronus_bgp_routes", "Number of BGP routes"))?;
 
-        let bgp_updates = Counter::with_opts(
-            Opts::new("patronus_bgp_updates_total", "Total BGP updates received")
-        )?;
+        let bgp_updates = Counter::with_opts(Opts::new(
+            "patronus_bgp_updates_total",
+            "Total BGP updates received",
+        ))?;
 
-        let ml_predictions = Counter::with_opts(
-            Opts::new("patronus_ml_predictions_total", "Total ML predictions")
-        )?;
+        let ml_predictions = Counter::with_opts(Opts::new(
+            "patronus_ml_predictions_total",
+            "Total ML predictions",
+        ))?;
 
         let ml_inference_time = Histogram::with_opts(
-            HistogramOpts::new("patronus_ml_inference_ms", "ML inference time in milliseconds")
-                .buckets(vec![0.1, 0.5, 1.0, 5.0, 10.0, 50.0])
+            HistogramOpts::new(
+                "patronus_ml_inference_ms",
+                "ML inference time in milliseconds",
+            )
+            .buckets(vec![0.1, 0.5, 1.0, 5.0, 10.0, 50.0]),
         )?;
 
-        let anomalies_detected = Counter::with_opts(
-            Opts::new("patronus_anomalies_detected_total", "Total anomalies detected")
-        )?;
+        let anomalies_detected = Counter::with_opts(Opts::new(
+            "patronus_anomalies_detected_total",
+            "Total anomalies detected",
+        ))?;
 
         // Register all metrics
         registry.register(Box::new(packets_total.clone()))?;

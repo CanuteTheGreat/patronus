@@ -2,10 +2,10 @@
 //!
 //! Network Address Translation (NAT), Load Balancing, and Web Application Firewall (WAF)
 
-pub mod nat;
 pub mod loadbalancer;
+pub mod nat;
 pub mod waf;
 
-pub use nat::{NatRule, NatType, NatManager};
-pub use loadbalancer::{LoadBalancer, LoadBalancingAlgorithm, Backend, HealthCheck};
-pub use waf::{WafRule, WafManager, WafAction, WafRuleType};
+pub use loadbalancer::{Backend, HealthCheck, LoadBalancer, LoadBalancingAlgorithm};
+pub use nat::{NatManager, NatRule, NatType};
+pub use waf::{WafAction, WafManager, WafRule, WafRuleType};

@@ -7,7 +7,7 @@
 //!
 //! Essential for IPv6-only networks (ISPs, data centers, mobile carriers).
 
-use patronus_core::{Result, Error};
+use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
@@ -17,23 +17,23 @@ use tokio::process::Command;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Nat64Config {
     pub enabled: bool,
-    pub prefix: Ipv6Addr,           // Usually 64:ff9b::/96 (well-known prefix)
-    pub prefix_len: u8,             // Usually 96
-    pub pool_v4_start: Ipv4Addr,    // IPv4 address pool start
-    pub pool_v4_end: Ipv4Addr,      // IPv4 address pool end
-    pub dynamic_pool: bool,          // Dynamic vs static mapping
-    pub nat64_interface: String,     // Interface for NAT64 (WAN)
-    pub dns64_enabled: bool,         // Enable DNS64 in Unbound
-    pub dns64_prefix: String,        // DNS64 prefix (usually same as NAT64)
-    pub clat_support: bool,          // Enable CLAT announcements
+    pub prefix: Ipv6Addr,        // Usually 64:ff9b::/96 (well-known prefix)
+    pub prefix_len: u8,          // Usually 96
+    pub pool_v4_start: Ipv4Addr, // IPv4 address pool start
+    pub pool_v4_end: Ipv4Addr,   // IPv4 address pool end
+    pub dynamic_pool: bool,      // Dynamic vs static mapping
+    pub nat64_interface: String, // Interface for NAT64 (WAN)
+    pub dns64_enabled: bool,     // Enable DNS64 in Unbound
+    pub dns64_prefix: String,    // DNS64 prefix (usually same as NAT64)
+    pub clat_support: bool,      // Enable CLAT announcements
 }
 
 /// DNS64 configuration for Unbound
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dns64Config {
     pub enabled: bool,
-    pub prefix: String,              // e.g., "64:ff9b::/96"
-    pub ignore_aaaa: Vec<String>,    // Don't synthesize for these domains
+    pub prefix: String,                // e.g., "64:ff9b::/96"
+    pub ignore_aaaa: Vec<String>,      // Don't synthesize for these domains
     pub exclude_networks: Vec<String>, // Don't use DNS64 for these IPv4 ranges
 }
 
@@ -43,7 +43,7 @@ pub struct Nat64Stats {
     pub v6_to_v4_packets: u64,
     pub v4_to_v6_packets: u64,
     pub active_sessions: u64,
-    pub pool_utilization: f32,       // Percentage of IPv4 pool used
+    pub pool_utilization: f32, // Percentage of IPv4 pool used
 }
 
 pub struct Nat64Manager {
@@ -120,17 +120,23 @@ impl Nat64Manager {
         config.push_str("tun-device nat64\n");
 
         // IPv4 pool
-        config.push_str(&format!("ipv4-addr {}\n",
-            self.calculate_tayga_ipv4_addr()?));
+        config.push_str(&format!(
+            "ipv4-addr {}\n",
+            self.calculate_tayga_ipv4_addr()?
+        ));
 
         // NAT64 prefix
-        config.push_str(&format!("prefix {}/{}\n",
-            self.config.prefix, self.config.prefix_len));
+        config.push_str(&format!(
+            "prefix {}/{}\n",
+            self.config.prefix, self.config.prefix_len
+        ));
 
         // Dynamic pool
         if self.config.dynamic_pool {
-            config.push_str(&format!("dynamic-pool {}-{}\n",
-                self.config.pool_v4_start, self.config.pool_v4_end));
+            config.push_str(&format!(
+                "dynamic-pool {}-{}\n",
+                self.config.pool_v4_start, self.config.pool_v4_end
+            ));
         }
 
         // Data directory
@@ -194,7 +200,9 @@ impl Nat64Manager {
 
         config.push_str("server:\n");
         config.push_str("    # Enable DNS64\n");
-        config.push_str(&format!("    module-config: \"dns64 validator iterator\"\n\n"));
+        config.push_str(&format!(
+            "    module-config: \"dns64 validator iterator\"\n\n"
+        ));
 
         config.push_str("dns64:\n");
         config.push_str(&format!("    dns64-prefix: {}\n", self.config.dns64_prefix));
@@ -279,9 +287,12 @@ WantedBy=multi-user.target
         // Add route for NAT64 prefix through nat64 interface
         Command::new("ip")
             .args(&[
-                "-6", "route", "add",
+                "-6",
+                "route",
+                "add",
                 &format!("{}/{}", self.config.prefix, self.config.prefix_len),
-                "dev", "nat64"
+                "dev",
+                "nat64",
             ])
             .status()
             .await?;
@@ -295,11 +306,17 @@ WantedBy=multi-user.target
         // Configure NAT for IPv4 pool on WAN interface
         Command::new("nft")
             .args(&[
-                "add", "rule", "inet", "patronus", "postrouting",
-                "oifname", &self.config.nat64_interface,
-                "ip", "saddr", &format!("{}-{}",
-                    self.config.pool_v4_start, self.config.pool_v4_end),
-                "masquerade"
+                "add",
+                "rule",
+                "inet",
+                "patronus",
+                "postrouting",
+                "oifname",
+                &self.config.nat64_interface,
+                "ip",
+                "saddr",
+                &format!("{}-{}", self.config.pool_v4_start, self.config.pool_v4_end),
+                "masquerade",
             ])
             .status()
             .await?;
@@ -311,7 +328,8 @@ WantedBy=multi-user.target
         // Configure PREF64 in radvd for CLAT support
         // PREF64 option allows clients to discover NAT64 prefix automatically
 
-        let radvd_config = format!(r#"
+        let radvd_config = format!(
+            r#"
 # PREF64 for NAT64 prefix discovery (RFC 8781)
 interface {interface} {{
     AdvSendAdvert on;
@@ -348,10 +366,7 @@ interface {interface} {{
     /// Get NAT64 statistics
     pub async fn get_stats(&self) -> Result<Nat64Stats> {
         // Parse tayga statistics
-        let stats_output = Command::new("tayga")
-            .args(&["--stats"])
-            .output()
-            .await;
+        let stats_output = Command::new("tayga").args(&["--stats"]).output().await;
 
         if let Ok(output) = stats_output {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -376,7 +391,8 @@ interface {interface} {{
     }
 
     fn parse_stat(&self, output: &str, key: &str) -> Option<u64> {
-        output.lines()
+        output
+            .lines()
             .find(|line| line.contains(key))
             .and_then(|line| line.split_whitespace().last())
             .and_then(|s| s.parse().ok())
@@ -440,7 +456,8 @@ interface {interface} {{
 
         if map_file.exists() {
             let content = tokio::fs::read_to_string(&map_file).await?;
-            let filtered: String = content.lines()
+            let filtered: String = content
+                .lines()
                 .filter(|line| !line.starts_with(&ipv6.to_string()))
                 .map(|line| format!("{}\n", line))
                 .collect();
@@ -462,7 +479,7 @@ interface {interface} {{
         // Check prefix length
         if self.config.prefix_len != 96 && self.config.prefix_len != 64 {
             return Err(Error::Config(
-                "NAT64 prefix length must be 96 or 64".to_string()
+                "NAT64 prefix length must be 96 or 64".to_string(),
             ));
         }
 
@@ -472,7 +489,7 @@ interface {interface} {{
 
         if start >= end {
             return Err(Error::Config(
-                "IPv4 pool start must be less than end".to_string()
+                "IPv4 pool start must be less than end".to_string(),
             ));
         }
 
@@ -480,7 +497,7 @@ interface {interface} {{
         let pool_size = end - start + 1;
         if pool_size > 65536 {
             return Err(Error::Config(
-                "IPv4 pool too large (max 65536 addresses)".to_string()
+                "IPv4 pool too large (max 65536 addresses)".to_string(),
             ));
         }
 
@@ -492,7 +509,7 @@ impl Default for Nat64Config {
     fn default() -> Self {
         Self {
             enabled: false,
-            prefix: "64:ff9b::".parse().unwrap(),  // Well-known NAT64 prefix
+            prefix: "64:ff9b::".parse().unwrap(), // Well-known NAT64 prefix
             prefix_len: 96,
             pool_v4_start: "192.0.2.1".parse().unwrap(),
             pool_v4_end: "192.0.2.254".parse().unwrap(),
@@ -531,7 +548,7 @@ mod tests {
     #[test]
     fn test_invalid_prefix_length() {
         let config = Nat64Config {
-            prefix_len: 48,  // Invalid
+            prefix_len: 48, // Invalid
             ..Default::default()
         };
 

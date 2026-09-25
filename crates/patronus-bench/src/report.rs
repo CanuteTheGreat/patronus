@@ -5,12 +5,12 @@ use colored::*;
 use serde::{Deserialize, Serialize};
 use std::fs;
 
-use crate::throughput::ThroughputResult;
-use crate::latency::LatencyResult;
 use crate::connection_rate::ConnectionRateResult;
 use crate::cpu_memory::ResourceResult;
 use crate::firewall_rules::FirewallRuleResult;
+use crate::latency::LatencyResult;
 use crate::nat_performance::NatResult;
+use crate::throughput::ThroughputResult;
 use crate::vpn_throughput::VpnResult;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -80,9 +80,24 @@ impl BenchmarkReport {
 
     pub fn print_summary(&self) {
         println!();
-        println!("{}", "═══════════════════════════════════════".bright_cyan().bold());
-        println!("{}", "   PATRONUS FIREWALL BENCHMARK SUMMARY".bright_cyan().bold());
-        println!("{}", "═══════════════════════════════════════".bright_cyan().bold());
+        println!(
+            "{}",
+            "═══════════════════════════════════════"
+                .bright_cyan()
+                .bold()
+        );
+        println!(
+            "{}",
+            "   PATRONUS FIREWALL BENCHMARK SUMMARY"
+                .bright_cyan()
+                .bold()
+        );
+        println!(
+            "{}",
+            "═══════════════════════════════════════"
+                .bright_cyan()
+                .bold()
+        );
         println!();
 
         println!("{}", "System Information:".bright_yellow().bold());
@@ -95,73 +110,118 @@ impl BenchmarkReport {
 
         if let Some(ref tp) = self.throughput {
             println!("{}", "Throughput:".bright_green().bold());
-            println!("  {} pps  |  {} Mbps",
-                     format!("{:.0}", tp.packets_per_second).bright_white().bold(),
-                     format!("{:.0}", tp.megabits_per_second).bright_white().bold());
+            println!(
+                "  {} pps  |  {} Mbps",
+                format!("{:.0}", tp.packets_per_second)
+                    .bright_white()
+                    .bold(),
+                format!("{:.0}", tp.megabits_per_second)
+                    .bright_white()
+                    .bold()
+            );
             println!();
         }
 
         if let Some(ref lat) = self.latency {
             println!("{}", "Latency:".bright_green().bold());
-            println!("  Mean: {:.1} μs  |  P95: {:.1} μs  |  P99: {:.1} μs",
-                     lat.mean_us, lat.p95_us, lat.p99_us);
+            println!(
+                "  Mean: {:.1} μs  |  P95: {:.1} μs  |  P99: {:.1} μs",
+                lat.mean_us, lat.p95_us, lat.p99_us
+            );
             println!();
         }
 
         if let Some(ref conn) = self.connection_rate {
             println!("{}", "Connection Rate:".bright_green().bold());
-            println!("  {} connections/sec",
-                     format!("{:.0}", conn.connections_per_second).bright_white().bold());
+            println!(
+                "  {} connections/sec",
+                format!("{:.0}", conn.connections_per_second)
+                    .bright_white()
+                    .bold()
+            );
             println!();
         }
 
         if let Some(ref res) = self.resources {
             println!("{}", "Resource Usage:".bright_green().bold());
-            println!("  CPU: {:.1}% avg, {:.1}% peak",
-                     res.cpu_mean_percent, res.cpu_max_percent);
-            println!("  Memory: {:.0} MB avg, {:.0} MB peak",
-                     res.memory_mean_mb, res.memory_max_mb);
+            println!(
+                "  CPU: {:.1}% avg, {:.1}% peak",
+                res.cpu_mean_percent, res.cpu_max_percent
+            );
+            println!(
+                "  Memory: {:.0} MB avg, {:.0} MB peak",
+                res.memory_mean_mb, res.memory_max_mb
+            );
             println!();
         }
 
         if let Some(ref nat) = self.nat {
             println!("{}", "NAT Performance:".bright_green().bold());
-            println!("  {} concurrent sessions  |  {:.0} new sessions/sec",
-                     nat.max_concurrent_sessions, nat.new_sessions_per_second);
+            println!(
+                "  {} concurrent sessions  |  {:.0} new sessions/sec",
+                nat.max_concurrent_sessions, nat.new_sessions_per_second
+            );
             println!();
         }
 
         if let Some(ref vpn) = self.vpn {
-            println!("{}", format!("{} VPN:", vpn.vpn_type.to_uppercase()).bright_green().bold());
-            println!("  {:.0} Mbps throughput  |  {:.1}% CPU overhead",
-                     vpn.throughput_mbps, vpn.cpu_overhead_percent);
+            println!(
+                "{}",
+                format!("{} VPN:", vpn.vpn_type.to_uppercase())
+                    .bright_green()
+                    .bold()
+            );
+            println!(
+                "  {:.0} Mbps throughput  |  {:.1}% CPU overhead",
+                vpn.throughput_mbps, vpn.cpu_overhead_percent
+            );
             println!();
         }
 
-        println!("{}", "═══════════════════════════════════════".bright_cyan().bold());
+        println!(
+            "{}",
+            "═══════════════════════════════════════"
+                .bright_cyan()
+                .bold()
+        );
         println!();
     }
 
     pub fn compare(&self, other: &BenchmarkReport) {
         println!("{}", "Performance Comparison".bright_cyan().bold());
-        println!("{}", "─────────────────────────────────────────────────────────".bright_cyan());
-        println!("{:30} {:>12} {:>12} {:>12}",
-                 "Metric".bold(), "Patronus".bold(), "Competitor".bold(), "Difference".bold());
-        println!("{}", "─────────────────────────────────────────────────────────".bright_cyan());
+        println!(
+            "{}",
+            "─────────────────────────────────────────────────────────".bright_cyan()
+        );
+        println!(
+            "{:30} {:>12} {:>12} {:>12}",
+            "Metric".bold(),
+            "Patronus".bold(),
+            "Competitor".bold(),
+            "Difference".bold()
+        );
+        println!(
+            "{}",
+            "─────────────────────────────────────────────────────────".bright_cyan()
+        );
 
         if let (Some(ref tp1), Some(ref tp2)) = (&self.throughput, &other.throughput) {
-            let diff = ((tp1.megabits_per_second - tp2.megabits_per_second) / tp2.megabits_per_second) * 100.0;
+            let diff = ((tp1.megabits_per_second - tp2.megabits_per_second)
+                / tp2.megabits_per_second)
+                * 100.0;
             let diff_str = if diff > 0.0 {
                 format!("+{:.1}%", diff).bright_green().bold()
             } else {
                 format!("{:.1}%", diff).bright_red().bold()
             };
 
-            println!("{:30} {:>12} {:>12} {:>12}",
-                     "Throughput (Mbps)",
-                     format!("{:.0}", tp1.megabits_per_second),
-                     format!("{:.0}", tp2.megabits_per_second),
-                     diff_str);
+            println!(
+                "{:30} {:>12} {:>12} {:>12}",
+                "Throughput (Mbps)",
+                format!("{:.0}", tp1.megabits_per_second),
+                format!("{:.0}", tp2.megabits_per_second),
+                diff_str
+            );
         }
 
         if let (Some(ref lat1), Some(ref lat2)) = (&self.latency, &other.latency) {
@@ -172,49 +232,63 @@ impl BenchmarkReport {
                 format!("+{:.1}%", diff).bright_red().bold()
             };
 
-            println!("{:30} {:>12} {:>12} {:>12}",
-                     "Latency (μs)",
-                     format!("{:.1}", lat1.mean_us),
-                     format!("{:.1}", lat2.mean_us),
-                     diff_str);
+            println!(
+                "{:30} {:>12} {:>12} {:>12}",
+                "Latency (μs)",
+                format!("{:.1}", lat1.mean_us),
+                format!("{:.1}", lat2.mean_us),
+                diff_str
+            );
         }
 
-        if let (Some(ref conn1), Some(ref conn2)) = (&self.connection_rate, &other.connection_rate) {
-            let diff = ((conn1.connections_per_second - conn2.connections_per_second) / conn2.connections_per_second) * 100.0;
+        if let (Some(ref conn1), Some(ref conn2)) = (&self.connection_rate, &other.connection_rate)
+        {
+            let diff = ((conn1.connections_per_second - conn2.connections_per_second)
+                / conn2.connections_per_second)
+                * 100.0;
             let diff_str = if diff > 0.0 {
                 format!("+{:.1}%", diff).bright_green().bold()
             } else {
                 format!("{:.1}%", diff).bright_red().bold()
             };
 
-            println!("{:30} {:>12} {:>12} {:>12}",
-                     "Connections/sec",
-                     format!("{:.0}", conn1.connections_per_second),
-                     format!("{:.0}", conn2.connections_per_second),
-                     diff_str);
+            println!(
+                "{:30} {:>12} {:>12} {:>12}",
+                "Connections/sec",
+                format!("{:.0}", conn1.connections_per_second),
+                format!("{:.0}", conn2.connections_per_second),
+                diff_str
+            );
         }
 
         if let (Some(ref res1), Some(ref res2)) = (&self.resources, &other.resources) {
-            let diff = ((res1.cpu_mean_percent - res2.cpu_mean_percent) / res2.cpu_mean_percent) * 100.0;
+            let diff =
+                ((res1.cpu_mean_percent - res2.cpu_mean_percent) / res2.cpu_mean_percent) * 100.0;
             let diff_str = if diff < 0.0 {
                 format!("{:.1}%", diff).bright_green().bold()
             } else {
                 format!("+{:.1}%", diff).bright_red().bold()
             };
 
-            println!("{:30} {:>12} {:>12} {:>12}",
-                     "CPU Usage (%)",
-                     format!("{:.1}", res1.cpu_mean_percent),
-                     format!("{:.1}", res2.cpu_mean_percent),
-                     diff_str);
+            println!(
+                "{:30} {:>12} {:>12} {:>12}",
+                "CPU Usage (%)",
+                format!("{:.1}", res1.cpu_mean_percent),
+                format!("{:.1}", res2.cpu_mean_percent),
+                diff_str
+            );
         }
 
-        println!("{}", "─────────────────────────────────────────────────────────".bright_cyan());
+        println!(
+            "{}",
+            "─────────────────────────────────────────────────────────".bright_cyan()
+        );
         println!();
     }
 
     pub fn export_html(&self, path: &str) -> Result<()> {
-        let html = format!(r#"
+        let html = format!(
+            r#"
 <!DOCTYPE html>
 <html>
 <head>
@@ -235,7 +309,11 @@ impl BenchmarkReport {
     <pre>{}</pre>
 </body>
 </html>
-        "#, self.timestamp, self.patronus_version, serde_json::to_string_pretty(self)?);
+        "#,
+            self.timestamp,
+            self.patronus_version,
+            serde_json::to_string_pretty(self)?
+        );
 
         fs::write(path, html)?;
         Ok(())
@@ -250,7 +328,10 @@ impl BenchmarkReport {
         if let Some(ref tp) = self.throughput {
             md.push_str("## Throughput\n\n");
             md.push_str(&format!("- Packets/sec: {:.0}\n", tp.packets_per_second));
-            md.push_str(&format!("- Throughput: {:.2} Mbps\n\n", tp.megabits_per_second));
+            md.push_str(&format!(
+                "- Throughput: {:.2} Mbps\n\n",
+                tp.megabits_per_second
+            ));
         }
 
         if let Some(ref lat) = self.latency {

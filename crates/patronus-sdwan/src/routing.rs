@@ -104,7 +104,7 @@ impl RoutingEngine {
                 dst_ip: None,
                 src_port: None,
                 dst_port_range: Some((27000, 28000)), // Steam/Gaming ports
-                protocol: Some(17), // UDP
+                protocol: Some(17),                   // UDP
                 application_class: None,
             },
             path_preference: PathPreference::LowestLatency,
@@ -121,7 +121,7 @@ impl RoutingEngine {
                 dst_ip: None,
                 src_port: None,
                 dst_port_range: Some((20, 21)), // FTP
-                protocol: Some(6), // TCP
+                protocol: Some(6),              // TCP
                 application_class: None,
             },
             path_preference: PathPreference::HighestBandwidth,
@@ -204,7 +204,9 @@ impl RoutingEngine {
             .collect();
 
         if healthy_paths.is_empty() {
-            return Err(crate::Error::Network("No healthy paths available".to_string()));
+            return Err(crate::Error::Network(
+                "No healthy paths available".to_string(),
+            ));
         }
 
         // Score each path based on policy preference

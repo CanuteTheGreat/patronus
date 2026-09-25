@@ -24,7 +24,9 @@ async fn test_traffic_stats_end_to_end() {
     collector.record_packet(1, flow.clone(), 1600).await;
 
     // Get stats
-    let stats = collector.get_policy_stats(1).await
+    let stats = collector
+        .get_policy_stats(1)
+        .await
         .expect("Should have stats for policy 1");
 
     assert_eq!(stats.policy_id, 1);
@@ -103,7 +105,9 @@ async fn test_traffic_stats_flow_cleanup() {
     sleep(Duration::from_millis(100)).await;
 
     // Cleanup stale flows (50ms timeout, so our 100ms old flow should be removed)
-    let removed = collector.cleanup_stale_flows(Duration::from_millis(50)).await;
+    let removed = collector
+        .cleanup_stale_flows(Duration::from_millis(50))
+        .await;
     assert_eq!(removed, 1);
 
     // Active flows should be 0 now

@@ -5,19 +5,18 @@
 use patronus_core::Result;
 use serde::{Deserialize, Serialize};
 
-pub mod store;
-pub mod declarative;
 pub mod apply;
+pub mod declarative;
+pub mod store;
 
-pub use store::ConfigStore;
-pub use declarative::{
-    DeclarativeConfig, ResourceKind, ResourceSpec, Metadata, ConfigParser,
-    FirewallRuleSpec, NatRuleSpec, AddressSpec, RuleAction, Direction,
-};
 pub use apply::{
-    ApplyEngine, StateManager, ConfigChange, ChangeOp, DiffResult,
-    ApplyResult, ConfigSnapshot,
+    ApplyEngine, ApplyResult, ChangeOp, ConfigChange, ConfigSnapshot, DiffResult, StateManager,
 };
+pub use declarative::{
+    AddressSpec, ConfigParser, DeclarativeConfig, Direction, FirewallRuleSpec, Metadata,
+    NatRuleSpec, ResourceKind, ResourceSpec, RuleAction,
+};
+pub use store::ConfigStore;
 
 /// Main system configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

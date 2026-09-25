@@ -1,10 +1,10 @@
 //! Organization Management
 
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use anyhow::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SubscriptionTier {
@@ -236,8 +236,8 @@ mod tests {
 
     #[test]
     fn test_organization_creation() {
-        let org = Organization::new("acme", "Acme Corporation")
-            .with_tier(SubscriptionTier::Professional);
+        let org =
+            Organization::new("acme", "Acme Corporation").with_tier(SubscriptionTier::Professional);
 
         assert_eq!(org.name, "acme");
         assert_eq!(org.display_name, "Acme Corporation");
@@ -249,13 +249,12 @@ mod tests {
     fn test_organization_hierarchy() {
         let mut manager = OrganizationManager::new();
 
-        let parent = Organization::new("parent", "Parent Org")
-            .with_tier(SubscriptionTier::Enterprise);
+        let parent =
+            Organization::new("parent", "Parent Org").with_tier(SubscriptionTier::Enterprise);
         let parent_id = parent.id;
         manager.create_organization(parent).unwrap();
 
-        let child = Organization::new("child", "Child Org")
-            .with_parent(parent_id);
+        let child = Organization::new("child", "Child Org").with_parent(parent_id);
         let child_id = child.id;
         manager.create_organization(child).unwrap();
 
@@ -277,7 +276,9 @@ mod tests {
         let org_id = org.id;
         manager.create_organization(org).unwrap();
 
-        manager.update_tier(&org_id, SubscriptionTier::Enterprise).unwrap();
+        manager
+            .update_tier(&org_id, SubscriptionTier::Enterprise)
+            .unwrap();
 
         let updated = manager.get_organization(&org_id).unwrap();
         assert_eq!(updated.subscription_tier, SubscriptionTier::Enterprise);

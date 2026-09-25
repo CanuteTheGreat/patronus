@@ -1,24 +1,24 @@
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::*;
-use anyhow::Result;
 
-mod throughput;
-mod latency;
 mod connection_rate;
 mod cpu_memory;
 mod firewall_rules;
+mod latency;
 mod nat_performance;
-mod vpn_throughput;
 mod report;
+mod throughput;
+mod vpn_throughput;
 
-use throughput::ThroughputBench;
-use latency::LatencyBench;
 use connection_rate::ConnectionRateBench;
 use cpu_memory::ResourceBench;
 use firewall_rules::FirewallRuleBench;
+use latency::LatencyBench;
 use nat_performance::NatBench;
-use vpn_throughput::VpnBench;
 use report::BenchmarkReport;
+use throughput::ThroughputBench;
+use vpn_throughput::VpnBench;
 
 #[derive(Parser)]
 #[command(name = "patronus-bench")]
@@ -147,15 +147,26 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    println!("{}", "Patronus Firewall Performance Benchmarking Suite".bright_cyan().bold());
-    println!("{}", "==============================================".bright_cyan());
+    println!(
+        "{}",
+        "Patronus Firewall Performance Benchmarking Suite"
+            .bright_cyan()
+            .bold()
+    );
+    println!(
+        "{}",
+        "==============================================".bright_cyan()
+    );
     println!();
 
     match cli.command {
         Commands::All { output, duration } => {
             run_all_benchmarks(&output, duration).await?;
         }
-        Commands::Throughput { packet_size, duration } => {
+        Commands::Throughput {
+            packet_size,
+            duration,
+        } => {
             let bench = ThroughputBench::new(packet_size, duration);
             let result = bench.run().await?;
             result.print();
@@ -190,7 +201,10 @@ async fn main() -> Result<()> {
             let result = bench.run().await?;
             result.print();
         }
-        Commands::Compare { competitor_results, run_first } => {
+        Commands::Compare {
+            competitor_results,
+            run_first,
+        } => {
             if run_first {
                 run_all_benchmarks("patronus-results.json", 30).await?;
             }
@@ -231,7 +245,10 @@ async fn run_all_benchmarks(output: &str, duration: u64) -> Result<()> {
     report.resources = Some(resources.run().await?);
 
     // 5. Firewall rules
-    println!("{}", "5. Testing firewall rule performance...".bright_green());
+    println!(
+        "{}",
+        "5. Testing firewall rule performance...".bright_green()
+    );
     let firewall = FirewallRuleBench::new(10000, true);
     report.firewall_rules = Some(firewall.run().await?);
 
@@ -249,7 +266,12 @@ async fn run_all_benchmarks(output: &str, duration: u64) -> Result<()> {
     report.save(output)?;
 
     println!();
-    println!("{}", format!("✓ All benchmarks complete! Results saved to: {}", output).bright_green().bold());
+    println!(
+        "{}",
+        format!("✓ All benchmarks complete! Results saved to: {}", output)
+            .bright_green()
+            .bold()
+    );
 
     // Print summary
     report.print_summary();
@@ -280,7 +302,10 @@ fn generate_report(input: &str, format: &str) -> Result<()> {
         _ => anyhow::bail!("Unsupported format: {}", format),
     }
 
-    println!("{}", format!("✓ Report generated: benchmark-report.{}", format).bright_green());
+    println!(
+        "{}",
+        format!("✓ Report generated: benchmark-report.{}", format).bright_green()
+    );
 
     Ok(())
 }

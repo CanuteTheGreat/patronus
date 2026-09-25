@@ -77,7 +77,7 @@ impl Default for BfdConfig {
     fn default() -> Self {
         Self {
             local_discriminator: rand::random(),
-            desired_min_tx_interval: 300_000, // 300ms
+            desired_min_tx_interval: 300_000,  // 300ms
             required_min_rx_interval: 300_000, // 300ms
             detect_mult: 3,
             local_addr: "0.0.0.0:3784".parse().unwrap(), // BFD control port
@@ -302,7 +302,10 @@ impl BfdSession {
         };
 
         if new_state != current_state {
-            info!("BFD state transition: {:?} -> {:?}", current_state, new_state);
+            info!(
+                "BFD state transition: {:?} -> {:?}",
+                current_state, new_state
+            );
             *self.state.write().await = new_state;
         }
 
@@ -367,9 +370,15 @@ impl BfdPacket {
             length: bytes[3],
             my_discriminator: u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
             your_discriminator: u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
-            desired_min_tx_interval: u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
-            required_min_rx_interval: u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
-            required_min_echo_rx_interval: u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]),
+            desired_min_tx_interval: u32::from_be_bytes([
+                bytes[12], bytes[13], bytes[14], bytes[15],
+            ]),
+            required_min_rx_interval: u32::from_be_bytes([
+                bytes[16], bytes[17], bytes[18], bytes[19],
+            ]),
+            required_min_echo_rx_interval: u32::from_be_bytes([
+                bytes[20], bytes[21], bytes[22], bytes[23],
+            ]),
         })
     }
 

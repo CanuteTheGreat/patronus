@@ -2,14 +2,14 @@
 //!
 //! Layer 4 and Layer 7 load balancing with health checking
 
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use anyhow::Result;
-use chrono::{DateTime, Utc};
-use std::net::IpAddr;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum LoadBalancingAlgorithm {
@@ -138,7 +138,8 @@ impl LoadBalancer {
 
     pub async fn remove_backend(&self, id: &Uuid) -> Result<()> {
         let mut backends = self.backends.write().await;
-        backends.remove(id)
+        backends
+            .remove(id)
             .ok_or_else(|| anyhow::anyhow!("Backend not found"))?;
         tracing::info!("Removed backend from load balancer: {}", id);
         Ok(())
@@ -156,7 +157,8 @@ impl LoadBalancer {
 
     pub async fn select_backend(&self, client_ip: Option<IpAddr>) -> Option<Backend> {
         let backends = self.backends.read().await;
-        let available: Vec<_> = backends.values()
+        let available: Vec<_> = backends
+            .values()
             .filter(|b| b.is_available())
             .cloned()
             .collect();
@@ -168,21 +170,13 @@ impl LoadBalancer {
         drop(backends);
 
         match self.algorithm {
-            LoadBalancingAlgorithm::RoundRobin => {
-                self.select_round_robin(&available).await
-            }
-            LoadBalancingAlgorithm::LeastConnections => {
-                self.select_least_connections(&available)
-            }
+            LoadBalancingAlgorithm::RoundRobin => self.select_round_robin(&available).await,
+            LoadBalancingAlgorithm::LeastConnections => self.select_least_connections(&available),
             LoadBalancingAlgorithm::WeightedRoundRobin => {
                 self.select_weighted_round_robin(&available).await
             }
-            LoadBalancingAlgorithm::IpHash => {
-                self.select_ip_hash(&available, client_ip)
-            }
-            LoadBalancingAlgorithm::Random => {
-                self.select_random(&available)
-            }
+            LoadBalancingAlgorithm::IpHash => self.select_ip_hash(&available, client_ip),
+            LoadBalancingAlgorithm::Random => self.select_random(&available),
         }
     }
 
@@ -194,7 +188,8 @@ impl LoadBalancer {
     }
 
     fn select_least_connections(&self, backends: &[Backend]) -> Option<Backend> {
-        backends.iter()
+        backends
+            .iter()
             .min_by_key(|b| b.active_connections)
             .cloned()
     }
@@ -245,7 +240,10 @@ impl LoadBalancer {
 
         let random_state = RandomState::new();
         let mut hasher = random_state.build_hasher();
-        Utc::now().timestamp_nanos_opt().unwrap_or(0).hash(&mut hasher);
+        Utc::now()
+            .timestamp_nanos_opt()
+            .unwrap_or(0)
+            .hash(&mut hasher);
         let index = hasher.finish() as usize % backends.len();
 
         backends.get(index).cloned()
@@ -308,8 +306,11 @@ impl LoadBalancer {
             });
         }
 
-        tracing::debug!("Health check results: {} healthy, {} unhealthy",
-            results.healthy, results.unhealthy);
+        tracing::debug!(
+            "Health check results: {} healthy, {} unhealthy",
+            results.healthy,
+            results.unhealthy
+        );
 
         Ok(results)
     }
@@ -321,22 +322,22 @@ impl LoadBalancer {
         // 3. Return true if connection succeeds and response is valid
 
         // For testing, we simulate based on current status
-        matches!(backend.status, BackendStatus::Healthy | BackendStatus::Draining)
+        matches!(
+            backend.status,
+            BackendStatus::Healthy | BackendStatus::Draining
+        )
     }
 
     pub async fn get_stats(&self) -> LoadBalancerStats {
         let backends = self.backends.read().await;
 
         let total_backends = backends.len();
-        let healthy_backends = backends.values()
+        let healthy_backends = backends
+            .values()
             .filter(|b| matches!(b.status, BackendStatus::Healthy))
             .count();
-        let active_connections: u32 = backends.values()
-            .map(|b| b.active_connections)
-            .sum();
-        let total_connections: u64 = backends.values()
-            .map(|b| b.total_connections)
-            .sum();
+        let active_connections: u32 = backends.values().map(|b| b.active_connections).sum();
+        let total_connections: u64 = backends.values().map(|b| b.total_connections).sum();
 
         LoadBalancerStats {
             total_backends,
@@ -378,11 +379,7 @@ mod tests {
 
     #[test]
     fn test_backend_creation() {
-        let backend = Backend::new(
-            "web-1",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-            8080,
-        );
+        let backend = Backend::new("web-1", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), 8080);
 
         assert_eq!(backend.name, "web-1");
         assert_eq!(backend.port, 8080);
@@ -392,11 +389,7 @@ mod tests {
 
     #[test]
     fn test_backend_health_status() {
-        let mut backend = Backend::new(
-            "web-1",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-            8080,
-        );
+        let mut backend = Backend::new("web-1", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), 8080);
 
         assert_eq!(backend.status, BackendStatus::Healthy);
         assert_eq!(backend.consecutive_failures, 0);
@@ -414,11 +407,7 @@ mod tests {
     async fn test_load_balancer_creation() {
         let lb = LoadBalancer::new("web-lb", LoadBalancingAlgorithm::RoundRobin);
 
-        let backend = Backend::new(
-            "web-1",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-            8080,
-        );
+        let backend = Backend::new("web-1", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), 8080);
 
         let id = lb.add_backend(backend).await;
         assert!(lb.get_backend(&id).await.is_some());
@@ -428,16 +417,8 @@ mod tests {
     async fn test_round_robin_selection() {
         let lb = LoadBalancer::new("web-lb", LoadBalancingAlgorithm::RoundRobin);
 
-        let backend1 = Backend::new(
-            "web-1",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-            8080,
-        );
-        let backend2 = Backend::new(
-            "web-2",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 11)),
-            8080,
-        );
+        let backend1 = Backend::new("web-1", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), 8080);
+        let backend2 = Backend::new("web-2", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 11)), 8080);
 
         lb.add_backend(backend1).await;
         lb.add_backend(backend2).await;
@@ -451,26 +432,24 @@ mod tests {
         assert!(selected3.is_some());
 
         // Should cycle through backends
-        assert_ne!(selected1.as_ref().unwrap().id, selected2.as_ref().unwrap().id);
-        assert_eq!(selected1.as_ref().unwrap().id, selected3.as_ref().unwrap().id);
+        assert_ne!(
+            selected1.as_ref().unwrap().id,
+            selected2.as_ref().unwrap().id
+        );
+        assert_eq!(
+            selected1.as_ref().unwrap().id,
+            selected3.as_ref().unwrap().id
+        );
     }
 
     #[tokio::test]
     async fn test_least_connections_selection() {
         let lb = LoadBalancer::new("web-lb", LoadBalancingAlgorithm::LeastConnections);
 
-        let mut backend1 = Backend::new(
-            "web-1",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-            8080,
-        );
+        let mut backend1 = Backend::new("web-1", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), 8080);
         backend1.active_connections = 5;
 
-        let backend2 = Backend::new(
-            "web-2",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 11)),
-            8080,
-        );
+        let backend2 = Backend::new("web-2", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 11)), 8080);
         // backend2 has 0 active connections
 
         lb.add_backend(backend1).await;
@@ -485,17 +464,11 @@ mod tests {
     async fn test_weighted_round_robin() {
         let lb = LoadBalancer::new("web-lb", LoadBalancingAlgorithm::WeightedRoundRobin);
 
-        let backend1 = Backend::new(
-            "web-1",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-            8080,
-        ).with_weight(200); // 2x weight
+        let backend1 = Backend::new("web-1", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), 8080)
+            .with_weight(200); // 2x weight
 
-        let backend2 = Backend::new(
-            "web-2",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 11)),
-            8080,
-        ).with_weight(100);
+        let backend2 = Backend::new("web-2", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 11)), 8080)
+            .with_weight(100);
 
         lb.add_backend(backend1).await;
         lb.add_backend(backend2).await;
@@ -518,16 +491,8 @@ mod tests {
     async fn test_ip_hash_selection() {
         let lb = LoadBalancer::new("web-lb", LoadBalancingAlgorithm::IpHash);
 
-        let backend1 = Backend::new(
-            "web-1",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-            8080,
-        );
-        let backend2 = Backend::new(
-            "web-2",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 11)),
-            8080,
-        );
+        let backend1 = Backend::new("web-1", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), 8080);
+        let backend2 = Backend::new("web-2", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 11)), 8080);
 
         lb.add_backend(backend1).await;
         lb.add_backend(backend2).await;
@@ -540,19 +505,21 @@ mod tests {
         let selected3 = lb.select_backend(Some(client_ip)).await;
 
         assert!(selected1.is_some());
-        assert_eq!(selected1.as_ref().unwrap().id, selected2.as_ref().unwrap().id);
-        assert_eq!(selected1.as_ref().unwrap().id, selected3.as_ref().unwrap().id);
+        assert_eq!(
+            selected1.as_ref().unwrap().id,
+            selected2.as_ref().unwrap().id
+        );
+        assert_eq!(
+            selected1.as_ref().unwrap().id,
+            selected3.as_ref().unwrap().id
+        );
     }
 
     #[tokio::test]
     async fn test_connection_tracking() {
         let lb = LoadBalancer::new("web-lb", LoadBalancingAlgorithm::RoundRobin);
 
-        let backend = Backend::new(
-            "web-1",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-            8080,
-        );
+        let backend = Backend::new("web-1", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), 8080);
 
         let id = lb.add_backend(backend).await;
 
@@ -572,16 +539,8 @@ mod tests {
     async fn test_health_checks() {
         let lb = LoadBalancer::new("web-lb", LoadBalancingAlgorithm::RoundRobin);
 
-        let backend1 = Backend::new(
-            "web-1",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-            8080,
-        );
-        let backend2 = Backend::new(
-            "web-2",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 11)),
-            8080,
-        );
+        let backend1 = Backend::new("web-1", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), 8080);
+        let backend2 = Backend::new("web-2", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 11)), 8080);
 
         lb.add_backend(backend1).await;
         lb.add_backend(backend2).await;
@@ -595,11 +554,7 @@ mod tests {
     async fn test_stats() {
         let lb = LoadBalancer::new("web-lb", LoadBalancingAlgorithm::RoundRobin);
 
-        let backend = Backend::new(
-            "web-1",
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
-            8080,
-        );
+        let backend = Backend::new("web-1", IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), 8080);
 
         let id = lb.add_backend(backend).await;
         lb.increment_connection(&id).await;

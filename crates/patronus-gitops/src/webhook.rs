@@ -1,9 +1,9 @@
+use crate::watcher::GitOpsWatcher;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error};
-use crate::watcher::GitOpsWatcher;
+use tracing::{error, info, warn};
 
 /// GitHub webhook payload
 #[derive(Debug, Deserialize)]
@@ -131,17 +131,17 @@ impl WebhookHandler {
 
     /// Parse GitHub webhook payload
     pub fn parse_github(&self, payload: &str) -> Result<WebhookEvent> {
-        let webhook: GitHubWebhook = serde_json::from_str(payload)
-            .context("Failed to parse GitHub webhook")?;
+        let webhook: GitHubWebhook =
+            serde_json::from_str(payload).context("Failed to parse GitHub webhook")?;
 
         // Extract branch from ref (refs/heads/main -> main)
-        let branch = webhook.git_ref
+        let branch = webhook
+            .git_ref
             .strip_prefix("refs/heads/")
             .unwrap_or(&webhook.git_ref)
             .to_string();
 
-        let latest_commit = webhook.commits.last()
-            .context("No commits in webhook")?;
+        let latest_commit = webhook.commits.last().context("No commits in webhook")?;
 
         let mut files_changed = Vec::new();
         files_changed.extend(latest_commit.modified.clone());
@@ -154,23 +154,26 @@ impl WebhookHandler {
             branch,
             commit_id: latest_commit.id.clone(),
             commit_message: latest_commit.message.clone(),
-            author: format!("{} <{}>", latest_commit.author.name, latest_commit.author.email),
+            author: format!(
+                "{} <{}>",
+                latest_commit.author.name, latest_commit.author.email
+            ),
             files_changed,
         })
     }
 
     /// Parse GitLab webhook payload
     pub fn parse_gitlab(&self, payload: &str) -> Result<WebhookEvent> {
-        let webhook: GitLabWebhook = serde_json::from_str(payload)
-            .context("Failed to parse GitLab webhook")?;
+        let webhook: GitLabWebhook =
+            serde_json::from_str(payload).context("Failed to parse GitLab webhook")?;
 
-        let branch = webhook.git_ref
+        let branch = webhook
+            .git_ref
             .strip_prefix("refs/heads/")
             .unwrap_or(&webhook.git_ref)
             .to_string();
 
-        let latest_commit = webhook.commits.last()
-            .context("No commits in webhook")?;
+        let latest_commit = webhook.commits.last().context("No commits in webhook")?;
 
         let mut files_changed = Vec::new();
         files_changed.extend(latest_commit.modified.clone());
@@ -183,15 +186,20 @@ impl WebhookHandler {
             branch,
             commit_id: latest_commit.id.clone(),
             commit_message: latest_commit.message.clone(),
-            author: format!("{} <{}>", latest_commit.author.name, latest_commit.author.email),
+            author: format!(
+                "{} <{}>",
+                latest_commit.author.name, latest_commit.author.email
+            ),
             files_changed,
         })
     }
 
     /// Handle webhook event
     pub async fn handle_event(&self, event: WebhookEvent) -> Result<()> {
-        info!("Received webhook from {}: {} - {}",
-            event.repository, event.commit_id, event.commit_message);
+        info!(
+            "Received webhook from {}: {} - {}",
+            event.repository, event.commit_id, event.commit_message
+        );
 
         // Trigger sync in watcher
         let mut watcher = self.watcher.write().await;

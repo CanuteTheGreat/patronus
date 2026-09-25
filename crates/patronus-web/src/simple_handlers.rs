@@ -93,7 +93,8 @@ pub async fn simple_firewall(State(state): State<AppState>) -> impl IntoResponse
     let rule_count = rules.len();
     let enabled_count = rules.iter().filter(|r| r.enabled).count();
 
-    let html = format!(r#"
+    let html = format!(
+        r#"
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -158,7 +159,10 @@ pub async fn simple_firewall(State(state): State<AppState>) -> impl IntoResponse
     <p><strong>Note:</strong> This is a simplified view. Full firewall management interface is available through the API endpoints.</p>
 </body>
 </html>
-    "#, rule_count = rule_count, enabled_count = enabled_count);
+    "#,
+        rule_count = rule_count,
+        enabled_count = enabled_count
+    );
 
     Html(html)
 }
@@ -173,11 +177,17 @@ pub async fn simple_status(_state: State<AppState>) -> impl IntoResponse {
 
     let uptime = std::fs::read_to_string("/proc/uptime")
         .ok()
-        .and_then(|uptime| uptime.split_whitespace().next().and_then(|s| s.parse::<f64>().ok()))
+        .and_then(|uptime| {
+            uptime
+                .split_whitespace()
+                .next()
+                .and_then(|s| s.parse::<f64>().ok())
+        })
         .map(|secs| format!("{:.1} hours", secs / 3600.0))
         .unwrap_or_else(|| "Unknown".to_string());
 
-    let html = format!(r#"
+    let html = format!(
+        r#"
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -235,7 +245,10 @@ pub async fn simple_status(_state: State<AppState>) -> impl IntoResponse {
     </script>
 </body>
 </html>
-    "#, hostname = hostname, uptime = uptime);
+    "#,
+        hostname = hostname,
+        uptime = uptime
+    );
 
     Html(html)
 }

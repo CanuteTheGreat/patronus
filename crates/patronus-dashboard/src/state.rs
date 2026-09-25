@@ -112,9 +112,10 @@ impl AppState {
         let (events_tx, _) = tokio::sync::broadcast::channel(100);
 
         // Create SD-WAN routing engine with NetworkPolicy integration
-        let routing_engine = Arc::new(
-            RoutingEngine::with_netpolicy_enforcement(db.clone(), policy_enforcer.clone())
-        );
+        let routing_engine = Arc::new(RoutingEngine::with_netpolicy_enforcement(
+            db.clone(),
+            policy_enforcer.clone(),
+        ));
         routing_engine.start().await?;
 
         // Create health monitor
@@ -122,13 +123,11 @@ impl AppState {
         let health_monitor = Arc::new(
             HealthMonitor::new(db.clone(), health_config)
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to create health monitor: {}", e))?
+                .map_err(|e| anyhow::anyhow!("Failed to create health monitor: {}", e))?,
         );
 
         // Create failover engine with health monitoring integration
-        let failover_engine = Arc::new(
-            FailoverEngine::new(db.clone(), health_monitor.clone())
-        );
+        let failover_engine = Arc::new(FailoverEngine::new(db.clone(), health_monitor.clone()));
 
         Ok(Self {
             db,

@@ -3,7 +3,7 @@
 //! This module implements the data plane that handles actual packet forwarding
 //! through SD-WAN tunnels with compression support.
 
-use crate::compression::{CompressionEngine, CompressionConfig, CompressedPacket};
+use crate::compression::{CompressedPacket, CompressionConfig, CompressionEngine};
 use crate::types::{PathId, SiteId};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -104,7 +104,11 @@ pub struct TunDevice {
 #[cfg(feature = "dataplane")]
 impl TunDevice {
     /// Create a new TUN device
-    pub fn new(name: &str, address: Option<IpAddr>, netmask: Option<IpAddr>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(
+        name: &str,
+        address: Option<IpAddr>,
+        netmask: Option<IpAddr>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut config = tun::Configuration::default();
         config.name(name);
         config.up();
@@ -192,7 +196,9 @@ impl DataPlane {
     /// Create a new data plane
     pub async fn new(config: DataPlaneConfig) -> Result<Self, Box<dyn std::error::Error>> {
         let socket = Arc::new(UdpSocket::bind(config.bind_addr).await?);
-        let compression = Arc::new(RwLock::new(CompressionEngine::new(config.compression.clone())));
+        let compression = Arc::new(RwLock::new(CompressionEngine::new(
+            config.compression.clone(),
+        )));
 
         info!("Data plane bound to {}", config.bind_addr);
 
@@ -205,7 +211,10 @@ impl DataPlane {
                     Some(Arc::new(tun))
                 }
                 Err(e) => {
-                    warn!("Failed to create TUN device: {}. Continuing without TUN.", e);
+                    warn!(
+                        "Failed to create TUN device: {}. Continuing without TUN.",
+                        e
+                    );
                     None
                 }
             }
@@ -306,7 +315,11 @@ impl DataPlane {
 
         // Check MTU
         if packet.len() > self.config.max_packet_size {
-            warn!("Packet exceeds MTU: {} > {}", packet.len(), self.config.max_packet_size);
+            warn!(
+                "Packet exceeds MTU: {} > {}",
+                packet.len(),
+                self.config.max_packet_size
+            );
             let mut stats = self.stats.write().await;
             stats.packets_dropped += 1;
             return Err("Packet exceeds MTU".into());
@@ -397,7 +410,10 @@ impl DataPlane {
         // Decompress if needed
         let payload = if packet_wrapper.compressed {
             let mut compression = self.compression.write().await;
-            compression.decompress(&packet_wrapper.data, packet_wrapper.original_size.map(|s| s as i32))?
+            compression.decompress(
+                &packet_wrapper.data,
+                packet_wrapper.original_size.map(|s| s as i32),
+            )?
         } else {
             packet_wrapper.data
         };
@@ -414,7 +430,10 @@ impl DataPlane {
         if let Some(ref tun) = self.tun_device {
             match tun.write_packet(&payload) {
                 Ok(written) => {
-                    debug!("Injected {} bytes to TUN device from {}", written, from_addr);
+                    debug!(
+                        "Injected {} bytes to TUN device from {}",
+                        written, from_addr
+                    );
                     let mut local_fwd = self.local_forwarded.write().await;
                     *local_fwd += 1;
                 }
@@ -425,11 +444,19 @@ impl DataPlane {
                 }
             }
         } else {
-            debug!("Processed packet: {} bytes from {} (no TUN device)", payload.len(), from_addr);
+            debug!(
+                "Processed packet: {} bytes from {} (no TUN device)",
+                payload.len(),
+                from_addr
+            );
         }
 
         #[cfg(not(feature = "dataplane"))]
-        debug!("Processed packet: {} bytes from {} (TUN disabled)", payload.len(), from_addr);
+        debug!(
+            "Processed packet: {} bytes from {} (TUN disabled)",
+            payload.len(),
+            from_addr
+        );
 
         Ok(())
     }

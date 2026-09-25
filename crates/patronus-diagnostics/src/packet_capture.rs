@@ -3,32 +3,32 @@
 //! Web-based packet capture for network troubleshooting.
 //! Essential diagnostic tool for analyzing traffic.
 
-use patronus_core::{Result, Error};
+use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Stdio;
-use tokio::process::{Command, Child};
 use tokio::io::AsyncBufReadExt;
+use tokio::process::{Child, Command};
 
 /// Packet capture configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureConfig {
     pub interface: String,        // Interface to capture on
     pub filter: Option<String>,   // BPF filter expression
-    pub snaplen: u32,              // Snapshot length (bytes per packet)
-    pub buffer_size: u32,          // Buffer size in MB
-    pub promiscuous: bool,         // Promiscuous mode
-    pub max_packets: Option<u32>,  // Maximum packets to capture
-    pub max_time: Option<u32>,     // Maximum capture time (seconds)
-    pub max_size: Option<u32>,     // Maximum file size (MB)
+    pub snaplen: u32,             // Snapshot length (bytes per packet)
+    pub buffer_size: u32,         // Buffer size in MB
+    pub promiscuous: bool,        // Promiscuous mode
+    pub max_packets: Option<u32>, // Maximum packets to capture
+    pub max_time: Option<u32>,    // Maximum capture time (seconds)
+    pub max_size: Option<u32>,    // Maximum file size (MB)
 }
 
 /// Capture format
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CaptureFormat {
-    Pcap,      // Standard pcap format
-    PcapNg,    // Next generation pcap
-    Text,      // Human-readable text
+    Pcap,   // Standard pcap format
+    PcapNg, // Next generation pcap
+    Text,   // Human-readable text
 }
 
 /// Packet capture session
@@ -72,8 +72,11 @@ impl PacketCaptureManager {
         let session_id = uuid::Uuid::new_v4().to_string();
         let output_file = self.captures_dir.join(format!("{}.pcap", session_id));
 
-        tracing::info!("Starting packet capture on {} to {}",
-            config.interface, output_file.display());
+        tracing::info!(
+            "Starting packet capture on {} to {}",
+            config.interface,
+            output_file.display()
+        );
 
         // Build tcpdump command
         let mut cmd = Command::new("tcpdump");
@@ -109,10 +112,7 @@ impl PacketCaptureManager {
         }
 
         // Start capture process
-        let child = cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+        let child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
 
         Ok(CaptureSession {
             id: session_id,
@@ -190,11 +190,15 @@ impl PacketCaptureManager {
     }
 
     /// Get packet capture in text format
-    pub async fn get_packets_text(&self, capture_file: &PathBuf, count: Option<u32>) -> Result<String> {
+    pub async fn get_packets_text(
+        &self,
+        capture_file: &PathBuf,
+        count: Option<u32>,
+    ) -> Result<String> {
         let mut cmd = Command::new("tcpdump");
         cmd.arg("-r").arg(capture_file);
-        cmd.arg("-n");  // Don't resolve addresses
-        cmd.arg("-v");  // Verbose
+        cmd.arg("-n"); // Don't resolve addresses
+        cmd.arg("-v"); // Verbose
 
         if let Some(n) = count {
             cmd.arg("-c").arg(n.to_string());
@@ -207,12 +211,15 @@ impl PacketCaptureManager {
 
     /// Apply display filter to capture
     pub async fn filter_capture(&self, input_file: &PathBuf, filter: &str) -> Result<PathBuf> {
-        let output_file = self.captures_dir.join(format!("filtered-{}.pcap",
-            uuid::Uuid::new_v4()));
+        let output_file = self
+            .captures_dir
+            .join(format!("filtered-{}.pcap", uuid::Uuid::new_v4()));
 
         let status = Command::new("tcpdump")
-            .arg("-r").arg(input_file)
-            .arg("-w").arg(&output_file)
+            .arg("-r")
+            .arg(input_file)
+            .arg("-w")
+            .arg(&output_file)
             .args(filter.split_whitespace())
             .status()
             .await?;
@@ -225,21 +232,27 @@ impl PacketCaptureManager {
     }
 
     /// Get capture file in different format
-    pub async fn convert_format(&self, input_file: &PathBuf, format: CaptureFormat) -> Result<PathBuf> {
+    pub async fn convert_format(
+        &self,
+        input_file: &PathBuf,
+        format: CaptureFormat,
+    ) -> Result<PathBuf> {
         let extension = match format {
             CaptureFormat::Pcap => "pcap",
             CaptureFormat::PcapNg => "pcapng",
             CaptureFormat::Text => "txt",
         };
 
-        let output_file = self.captures_dir.join(format!("converted-{}.{}",
-            uuid::Uuid::new_v4(), extension));
+        let output_file =
+            self.captures_dir
+                .join(format!("converted-{}.{}", uuid::Uuid::new_v4(), extension));
 
         match format {
             CaptureFormat::PcapNg => {
                 // Convert using editcap
                 Command::new("editcap")
-                    .arg("-F").arg("pcapng")
+                    .arg("-F")
+                    .arg("pcapng")
                     .arg(input_file)
                     .arg(&output_file)
                     .status()
@@ -280,7 +293,8 @@ impl PacketCaptureManager {
                         filename: path.file_name().unwrap().to_string_lossy().to_string(),
                         path: path.clone(),
                         size_bytes: metadata.len(),
-                        created_at: metadata.created()
+                        created_at: metadata
+                            .created()
                             .ok()
                             .and_then(|t| chrono::DateTime::from(t).into()),
                     });
@@ -296,7 +310,10 @@ impl PacketCaptureManager {
         let path = self.captures_dir.join(filename);
 
         if !path.exists() {
-            return Err(Error::Config(format!("Capture file not found: {}", filename)));
+            return Err(Error::Config(format!(
+                "Capture file not found: {}",
+                filename
+            )));
         }
 
         tokio::fs::remove_file(path).await?;
@@ -305,12 +322,18 @@ impl PacketCaptureManager {
     }
 
     /// Get packet details
-    pub async fn get_packet_details(&self, capture_file: &PathBuf, packet_num: u32) -> Result<PacketDetails> {
+    pub async fn get_packet_details(
+        &self,
+        capture_file: &PathBuf,
+        packet_num: u32,
+    ) -> Result<PacketDetails> {
         // Use tshark for detailed packet dissection
         let output = Command::new("tshark")
-            .arg("-r").arg(capture_file)
-            .arg("-Y").arg(&format!("frame.number == {}", packet_num))
-            .arg("-V")  // Verbose (full packet tree)
+            .arg("-r")
+            .arg(capture_file)
+            .arg("-Y")
+            .arg(&format!("frame.number == {}", packet_num))
+            .arg("-V") // Verbose (full packet tree)
             .output()
             .await?;
 
@@ -325,9 +348,11 @@ impl PacketCaptureManager {
     /// Get protocol hierarchy statistics
     pub async fn get_protocol_stats(&self, capture_file: &PathBuf) -> Result<String> {
         let output = Command::new("tshark")
-            .arg("-r").arg(capture_file)
-            .arg("-q")  // Quiet
-            .arg("-z").arg("io,phs")  // Protocol hierarchy statistics
+            .arg("-r")
+            .arg(capture_file)
+            .arg("-q") // Quiet
+            .arg("-z")
+            .arg("io,phs") // Protocol hierarchy statistics
             .output()
             .await?;
 
@@ -337,9 +362,11 @@ impl PacketCaptureManager {
     /// Get conversation statistics
     pub async fn get_conversations(&self, capture_file: &PathBuf) -> Result<String> {
         let output = Command::new("tshark")
-            .arg("-r").arg(capture_file)
+            .arg("-r")
+            .arg(capture_file)
             .arg("-q")
-            .arg("-z").arg("conv,ip")  // IP conversations
+            .arg("-z")
+            .arg("conv,ip") // IP conversations
             .output()
             .await?;
 
@@ -349,9 +376,11 @@ impl PacketCaptureManager {
     /// Follow TCP stream
     pub async fn follow_stream(&self, capture_file: &PathBuf, stream_id: u32) -> Result<String> {
         let output = Command::new("tshark")
-            .arg("-r").arg(capture_file)
+            .arg("-r")
+            .arg(capture_file)
             .arg("-q")
-            .arg("-z").arg(&format!("follow,tcp,ascii,{}", stream_id))
+            .arg("-z")
+            .arg(&format!("follow,tcp,ascii,{}", stream_id))
             .output()
             .await?;
 
@@ -401,8 +430,8 @@ impl Default for CaptureConfig {
         Self {
             interface: "any".to_string(),
             filter: None,
-            snaplen: 65535,  // Maximum
-            buffer_size: 2,  // 2 MB
+            snaplen: 65535, // Maximum
+            buffer_size: 2, // 2 MB
             promiscuous: true,
             max_packets: None,
             max_time: None,

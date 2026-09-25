@@ -40,11 +40,7 @@ pub async fn get_summary(State(state): State<Arc<AppState>>) -> Result<Json<Summ
     };
 
     // Get flow stats
-    let flow_stats = state
-        .db
-        .get_flow_stats()
-        .await
-        .unwrap_or_default();
+    let flow_stats = state.db.get_flow_stats().await.unwrap_or_default();
 
     Ok(Json(SummaryResponse {
         total_sites,
@@ -54,8 +50,7 @@ pub async fn get_summary(State(state): State<Arc<AppState>>) -> Result<Json<Summ
         degraded_paths,
         avg_latency_ms: avg_latency,
         active_flows: flow_stats.active_flows as usize,
-        total_throughput_mbps: (flow_stats.total_bytes_tx + flow_stats.total_bytes_rx) as f64
-            * 8.0
+        total_throughput_mbps: (flow_stats.total_bytes_tx + flow_stats.total_bytes_rx) as f64 * 8.0
             / 1_000_000.0,
     }))
 }
@@ -93,10 +88,8 @@ pub async fn get_timeseries(
         .unwrap_or(now - Duration::hours(1));
 
     // Convert to SystemTime
-    let from_st = SystemTime::UNIX_EPOCH
-        + std::time::Duration::from_secs(from.timestamp() as u64);
-    let to_st =
-        SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(to.timestamp() as u64);
+    let from_st = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(from.timestamp() as u64);
+    let to_st = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(to.timestamp() as u64);
 
     // Fetch data based on metric type
     let data_points = match params.metric_type.as_str() {
@@ -346,10 +339,8 @@ pub async fn export_metrics(
         .map(|ts| DateTime::from_timestamp(ts, 0).unwrap_or(now - Duration::hours(24)))
         .unwrap_or(now - Duration::hours(24));
 
-    let from_st = SystemTime::UNIX_EPOCH
-        + std::time::Duration::from_secs(from.timestamp() as u64);
-    let to_st =
-        SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(to.timestamp() as u64);
+    let from_st = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(from.timestamp() as u64);
+    let to_st = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(to.timestamp() as u64);
 
     let metrics = state.db.get_system_metrics_history(from_st, to_st).await?;
 
@@ -357,7 +348,9 @@ pub async fn export_metrics(
 
     let data = match format.as_str() {
         "csv" => {
-            let mut csv = String::from("timestamp,throughput_mbps,latency_ms,packet_loss,active_flows,cpu,memory\n");
+            let mut csv = String::from(
+                "timestamp,throughput_mbps,latency_ms,packet_loss,active_flows,cpu,memory\n",
+            );
             for m in &metrics {
                 let ts = m
                     .timestamp

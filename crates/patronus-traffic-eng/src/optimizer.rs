@@ -1,7 +1,7 @@
 //! Traffic Optimization Engine
 
 use crate::demand::DemandMatrix;
-use crate::path::{PathComputation, PathConstraints, ComputedPath};
+use crate::path::{ComputedPath, PathComputation, PathConstraints};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -61,10 +61,16 @@ impl TrafficOptimizer {
         let pairs = demand_matrix.get_all_pairs();
 
         // Sort by priority (high priority first)
-        let mut prioritized_pairs: Vec<_> = pairs.iter()
+        let mut prioritized_pairs: Vec<_> = pairs
+            .iter()
             .filter_map(|(src, dst)| {
                 let demand = demand_matrix.get_current_demand(src, dst)?;
-                Some((src.clone(), dst.clone(), demand.priority, demand.bandwidth_mbps))
+                Some((
+                    src.clone(),
+                    dst.clone(),
+                    demand.priority,
+                    demand.bandwidth_mbps,
+                ))
             })
             .collect();
 
@@ -74,7 +80,10 @@ impl TrafficOptimizer {
         for (source, destination, priority, bandwidth) in prioritized_pairs {
             let constraints = self.build_constraints(priority, bandwidth);
 
-            if let Some(path) = self.path_computation.compute_path(&source, &destination, &constraints) {
+            if let Some(path) =
+                self.path_computation
+                    .compute_path(&source, &destination, &constraints)
+            {
                 if path.meets_constraints {
                     // Update link usage
                     for i in 0..path.hops.len().saturating_sub(1) {
@@ -156,7 +165,8 @@ impl TrafficOptimizer {
         match self.objective {
             OptimizationObjective::MinimizeLatency => {
                 // Average path latency (lower is better)
-                let total_latency: f64 = flows.iter()
+                let total_latency: f64 = flows
+                    .iter()
                     .map(|f| self.calculate_path_latency(&f.path))
                     .sum();
 
@@ -185,9 +195,7 @@ impl TrafficOptimizer {
             }
             OptimizationObjective::MinimizeCost => {
                 // Average hop count (lower is better)
-                let total_hops: usize = flows.iter()
-                    .map(|f| f.path.len().saturating_sub(1))
-                    .sum();
+                let total_hops: usize = flows.iter().map(|f| f.path.len().saturating_sub(1)).sum();
 
                 if flows.is_empty() {
                     0.0
@@ -229,18 +237,18 @@ impl TrafficOptimizer {
         bandwidth: f64,
         k: usize,
     ) -> Vec<ComputedPath> {
-        let constraints = PathConstraints::new()
-            .with_min_bandwidth(bandwidth);
+        let constraints = PathConstraints::new().with_min_bandwidth(bandwidth);
 
-        self.path_computation.compute_k_paths(source, destination, k, &constraints)
+        self.path_computation
+            .compute_k_paths(source, destination, k, &constraints)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::path::LinkMetrics;
     use crate::demand::TrafficDemand;
+    use crate::path::LinkMetrics;
 
     fn create_test_optimizer() -> (TrafficOptimizer, DemandMatrix) {
         let mut pc = PathComputation::new();

@@ -47,7 +47,10 @@ impl DashboardMetrics {
         describe_counter!("db_errors_total", "Database errors");
 
         // WebSocket metrics
-        describe_gauge!("websocket_connections_active", "Active WebSocket connections");
+        describe_gauge!(
+            "websocket_connections_active",
+            "Active WebSocket connections"
+        );
         describe_counter!(
             "websocket_messages_sent_total",
             "Total WebSocket messages sent"
@@ -62,14 +65,8 @@ impl DashboardMetrics {
         describe_gauge!("sdwan_paths_total", "Total number of paths");
         describe_gauge!("sdwan_paths_active", "Number of active paths");
         describe_gauge!("sdwan_policies_total", "Total number of policies");
-        describe_histogram!(
-            "sdwan_path_latency_ms",
-            "Path latency in milliseconds"
-        );
-        describe_gauge!(
-            "sdwan_path_packet_loss_pct",
-            "Path packet loss percentage"
-        );
+        describe_histogram!("sdwan_path_latency_ms", "Path latency in milliseconds");
+        describe_gauge!("sdwan_path_packet_loss_pct", "Path packet loss percentage");
 
         // System metrics
         describe_gauge!("system_uptime_seconds", "System uptime in seconds");

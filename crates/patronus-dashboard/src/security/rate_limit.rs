@@ -1,11 +1,11 @@
 //! Rate limiting implementation using token bucket algorithm
 
+use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
 
 /// Rate limit configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,14 +158,14 @@ impl RateLimiter {
         let mut last_cleanup = self.last_cleanup.write();
         if last_cleanup.elapsed() > self.cleanup_interval {
             // Clean up IP buckets with full tokens (inactive)
-            self.ip_buckets.write().retain(|_, bucket| {
-                bucket.tokens < bucket.capacity
-            });
+            self.ip_buckets
+                .write()
+                .retain(|_, bucket| bucket.tokens < bucket.capacity);
 
             // Clean up user buckets with full tokens (inactive)
-            self.user_buckets.write().retain(|_, bucket| {
-                bucket.tokens < bucket.capacity
-            });
+            self.user_buckets
+                .write()
+                .retain(|_, bucket| bucket.tokens < bucket.capacity);
 
             *last_cleanup = Instant::now();
         }

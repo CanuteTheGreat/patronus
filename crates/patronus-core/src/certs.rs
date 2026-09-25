@@ -6,7 +6,7 @@
 //!
 //! The Gentoo Way: Choice of backends!
 
-use crate::{Result, Error};
+use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -46,14 +46,14 @@ pub enum AcmeChallenge {
 pub struct CertConfig {
     pub name: String,
     pub enabled: bool,
-    pub domains: Vec<String>,  // First is primary, rest are SANs
+    pub domains: Vec<String>, // First is primary, rest are SANs
     pub email: String,
     pub challenge: AcmeChallenge,
     pub key_type: KeyType,
     pub key_length: u32,
     pub auto_renew: bool,
-    pub renew_days_before: u32,  // Renew when this many days before expiry
-    pub post_renew_hook: Option<String>,  // Command to run after renewal
+    pub renew_days_before: u32, // Renew when this many days before expiry
+    pub post_renew_hook: Option<String>, // Command to run after renewal
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,7 +114,7 @@ impl CertManager {
         } else if Self::is_command_available("certbot") {
             CertBackend::Certbot
         } else {
-            CertBackend::AcmeSh  // Default preference
+            CertBackend::AcmeSh // Default preference
         }
     }
 
@@ -392,9 +392,7 @@ impl CertManager {
             CertBackend::AcmeSh => {
                 "0 0 * * * /usr/bin/acme.sh --cron --home /etc/patronus/certs/acme > /dev/null\n"
             }
-            CertBackend::Certbot => {
-                "0 0,12 * * * /usr/bin/certbot renew --quiet\n"
-            }
+            CertBackend::Certbot => "0 0,12 * * * /usr/bin/certbot renew --quiet\n",
         };
 
         let cron_file = PathBuf::from("/etc/cron.d/patronus-certs");

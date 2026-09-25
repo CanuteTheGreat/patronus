@@ -1,7 +1,7 @@
 //! Traffic Demand Matrix and Prediction
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,11 +73,9 @@ impl DemandMatrix {
 
     pub fn get_peak_demand(&self, source: &str, destination: &str) -> Option<f64> {
         let key = (source.to_string(), destination.to_string());
-        self.demands.get(&key).map(|demands| {
-            demands.iter()
-                .map(|d| d.bandwidth_mbps)
-                .fold(0.0, f64::max)
-        })
+        self.demands
+            .get(&key)
+            .map(|demands| demands.iter().map(|d| d.bandwidth_mbps).fold(0.0, f64::max))
     }
 
     pub fn get_all_pairs(&self) -> Vec<(String, String)> {
@@ -85,14 +83,16 @@ impl DemandMatrix {
     }
 
     pub fn total_demand(&self) -> f64 {
-        self.demands.values()
+        self.demands
+            .values()
             .filter_map(|demands| demands.last())
             .map(|d| d.bandwidth_mbps)
             .sum()
     }
 
     pub fn high_priority_demand(&self) -> f64 {
-        self.demands.values()
+        self.demands
+            .values()
             .filter_map(|demands| demands.last())
             .filter(|d| d.is_high_priority())
             .map(|d| d.bandwidth_mbps)
@@ -175,12 +175,7 @@ mod tests {
 
     #[test]
     fn test_traffic_demand_creation() {
-        let demand = TrafficDemand::new(
-            "site-a".to_string(),
-            "site-b".to_string(),
-            100.0,
-            3
-        );
+        let demand = TrafficDemand::new("site-a".to_string(), "site-b".to_string(), 100.0, 3);
 
         assert_eq!(demand.source, "site-a");
         assert_eq!(demand.destination, "site-b");
@@ -221,12 +216,7 @@ mod tests {
         let mut matrix = DemandMatrix::new(3);
 
         for i in 1..=5 {
-            let demand = TrafficDemand::new(
-                "a".to_string(),
-                "b".to_string(),
-                i as f64 * 10.0,
-                1
-            );
+            let demand = TrafficDemand::new("a".to_string(), "b".to_string(), i as f64 * 10.0, 1);
             matrix.add_demand(demand);
         }
 

@@ -1,15 +1,14 @@
+use crate::stats::XdpStats;
 ///! SD-WAN fast path forwarding using eBPF/XDP
 ///!
 ///! This module provides high-performance packet forwarding for SD-WAN tunnels
 ///! using XDP to bypass the kernel network stack.
-
-use crate::xdp::{XdpFirewall, XdpConfig, XdpMode};
-use crate::stats::XdpStats;
-use std::net::Ipv4Addr;
-use std::collections::HashMap;
+use crate::xdp::{XdpConfig, XdpFirewall, XdpMode};
 use anyhow::{Context, Result};
-use tokio::sync::RwLock;
+use std::collections::HashMap;
+use std::net::Ipv4Addr;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// SD-WAN tunnel endpoint
 #[derive(Debug, Clone)]
@@ -72,10 +71,15 @@ impl SdwanFastPath {
 
         // Attach XDP to tunnel interface if not already attached
         let mut xdp = self.xdp.write().await;
-        xdp.attach(&tunnel.interface).await
+        xdp.attach(&tunnel.interface)
+            .await
             .context("Failed to attach XDP to tunnel interface")?;
 
-        tracing::info!("Added tunnel {} on interface {}", tunnel.tunnel_id, tunnel.interface);
+        tracing::info!(
+            "Added tunnel {} on interface {}",
+            tunnel.tunnel_id,
+            tunnel.interface
+        );
         Ok(())
     }
 
@@ -87,7 +91,11 @@ impl SdwanFastPath {
             let mut routing_table = self.routing_table.write().await;
             routing_table.retain(|_, tid| *tid != tunnel_id);
 
-            tracing::info!("Removed tunnel {} from interface {}", tunnel_id, tunnel.interface);
+            tracing::info!(
+                "Removed tunnel {} from interface {}",
+                tunnel_id,
+                tunnel.interface
+            );
         }
 
         Ok(())
@@ -97,8 +105,7 @@ impl SdwanFastPath {
     pub async fn add_route(&self, dest_ip: Ipv4Addr, tunnel_id: u32) -> Result<()> {
         // Verify tunnel exists
         let tunnels = self.tunnels.read().await;
-        let _tunnel = tunnels.get(&tunnel_id)
-            .context("Tunnel not found")?;
+        let _tunnel = tunnels.get(&tunnel_id).context("Tunnel not found")?;
 
         // Add to routing table
         let mut routing_table = self.routing_table.write().await;
@@ -108,7 +115,10 @@ impl SdwanFastPath {
         let mut xdp = self.xdp.write().await;
         let dest_ip_u32: u32 = dest_ip.into();
         if let Err(e) = xdp.update_routing_map(dest_ip_u32, tunnel_id) {
-            tracing::warn!("Failed to update XDP routing map: {} (fast path disabled for this route)", e);
+            tracing::warn!(
+                "Failed to update XDP routing map: {} (fast path disabled for this route)",
+                e
+            );
         }
 
         tracing::info!("Added route {} -> tunnel {}", dest_ip, tunnel_id);
@@ -134,11 +144,18 @@ impl SdwanFastPath {
             let mut xdp = self.xdp.write().await;
             let packet_loss_pct = (metrics.packet_loss * 100.0) as u32;
             if let Err(e) = xdp.update_metrics_map(tunnel_id, metrics.latency_ms, packet_loss_pct) {
-                tracing::debug!("Failed to update XDP metrics map: {} (fast path may use stale metrics)", e);
+                tracing::debug!(
+                    "Failed to update XDP metrics map: {} (fast path may use stale metrics)",
+                    e
+                );
             }
 
-            tracing::debug!("Updated metrics for tunnel {}: latency={}ms, loss={:.2}%",
-                tunnel_id, metrics.latency_ms, metrics.packet_loss);
+            tracing::debug!(
+                "Updated metrics for tunnel {}: latency={}ms, loss={:.2}%",
+                tunnel_id,
+                metrics.latency_ms,
+                metrics.packet_loss
+            );
         }
 
         Ok(())
@@ -228,14 +245,17 @@ mod tests {
         // First add a tunnel (required before adding routes)
         {
             let mut tunnels = fastpath.tunnels.write().await;
-            tunnels.insert(tunnel_id, TunnelEndpoint {
+            tunnels.insert(
                 tunnel_id,
-                remote_addr: "10.0.0.1".parse().unwrap(),
-                local_addr: "192.168.1.1".parse().unwrap(),
-                priority: 100,
-                interface: "wg0".to_string(),
-                metrics: LinkMetrics::default(),
-            });
+                TunnelEndpoint {
+                    tunnel_id,
+                    remote_addr: "10.0.0.1".parse().unwrap(),
+                    local_addr: "192.168.1.1".parse().unwrap(),
+                    priority: 100,
+                    interface: "wg0".to_string(),
+                    metrics: LinkMetrics::default(),
+                },
+            );
         }
 
         // Add route (will succeed now that tunnel exists)
@@ -258,33 +278,39 @@ mod tests {
         {
             let mut tunnels = fastpath.tunnels.write().await;
 
-            tunnels.insert(1, TunnelEndpoint {
-                tunnel_id: 1,
-                local_addr: "10.0.0.1".parse().unwrap(),
-                remote_addr: "10.0.0.2".parse().unwrap(),
-                interface: "wg0".to_string(),
-                priority: 100,
-                metrics: LinkMetrics {
-                    latency_ms: 50,
-                    packet_loss: 0.01,
-                    bandwidth_mbps: 1000,
-                    jitter_ms: 5,
+            tunnels.insert(
+                1,
+                TunnelEndpoint {
+                    tunnel_id: 1,
+                    local_addr: "10.0.0.1".parse().unwrap(),
+                    remote_addr: "10.0.0.2".parse().unwrap(),
+                    interface: "wg0".to_string(),
+                    priority: 100,
+                    metrics: LinkMetrics {
+                        latency_ms: 50,
+                        packet_loss: 0.01,
+                        bandwidth_mbps: 1000,
+                        jitter_ms: 5,
+                    },
                 },
-            });
+            );
 
-            tunnels.insert(2, TunnelEndpoint {
-                tunnel_id: 2,
-                local_addr: "10.0.1.1".parse().unwrap(),
-                remote_addr: "10.0.1.2".parse().unwrap(),
-                interface: "wg1".to_string(),
-                priority: 90,
-                metrics: LinkMetrics {
-                    latency_ms: 20,
-                    packet_loss: 0.001,
-                    bandwidth_mbps: 2000,
-                    jitter_ms: 2,
+            tunnels.insert(
+                2,
+                TunnelEndpoint {
+                    tunnel_id: 2,
+                    local_addr: "10.0.1.1".parse().unwrap(),
+                    remote_addr: "10.0.1.2".parse().unwrap(),
+                    interface: "wg1".to_string(),
+                    priority: 90,
+                    metrics: LinkMetrics {
+                        latency_ms: 20,
+                        packet_loss: 0.001,
+                        bandwidth_mbps: 2000,
+                        jitter_ms: 2,
+                    },
                 },
-            });
+            );
         }
 
         let dest_ip: Ipv4Addr = "8.8.8.8".parse().unwrap();

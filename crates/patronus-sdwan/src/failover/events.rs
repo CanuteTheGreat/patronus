@@ -103,12 +103,7 @@ impl FailoverEvent {
     }
 
     /// Create a new failback completed event
-    pub fn completed(
-        policy_id: u64,
-        to_path: PathId,
-        primary_health: f64,
-        reason: String,
-    ) -> Self {
+    pub fn completed(policy_id: u64, to_path: PathId, primary_health: f64, reason: String) -> Self {
         Self {
             event_id: None,
             policy_id,
@@ -181,8 +176,12 @@ impl FailoverEvent {
             FailoverEventType::Triggered => {
                 format!(
                     "Failover triggered from {} to {} (health: {:.1} → {:.1}): {}",
-                    self.from_path_id.map(|p| p.to_string()).unwrap_or_else(|| "unknown".to_string()),
-                    self.to_path_id.map(|p| p.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                    self.from_path_id
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    self.to_path_id
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
                     self.primary_health_score.unwrap_or(0.0),
                     self.backup_health_score.unwrap_or(0.0),
                     self.reason
@@ -191,7 +190,9 @@ impl FailoverEvent {
             FailoverEventType::Completed => {
                 format!(
                     "Failback completed to {} (health: {:.1}): {}",
-                    self.to_path_id.map(|p| p.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                    self.to_path_id
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
                     self.primary_health_score.unwrap_or(0.0),
                     self.reason
                 )
@@ -199,12 +200,8 @@ impl FailoverEvent {
             FailoverEventType::Failed => {
                 format!("Failover failed: {}", self.reason)
             }
-            FailoverEventType::PolicyEnabled => {
-                "Policy enabled".to_string()
-            }
-            FailoverEventType::PolicyDisabled => {
-                "Policy disabled".to_string()
-            }
+            FailoverEventType::PolicyEnabled => "Policy enabled".to_string(),
+            FailoverEventType::PolicyDisabled => "Policy disabled".to_string(),
         }
     }
 }
@@ -227,10 +224,7 @@ mod tests {
             FailoverEventType::from_str("completed"),
             Some(FailoverEventType::Completed)
         );
-        assert_eq!(
-            FailoverEventType::from_str("invalid"),
-            None
-        );
+        assert_eq!(FailoverEventType::from_str("invalid"), None);
     }
 
     #[test]
@@ -255,12 +249,8 @@ mod tests {
 
     #[test]
     fn test_completed_event() {
-        let event = FailoverEvent::completed(
-            1,
-            PathId::new(10),
-            90.0,
-            "Primary recovered".to_string(),
-        );
+        let event =
+            FailoverEvent::completed(1, PathId::new(10), 90.0, "Primary recovered".to_string());
 
         assert_eq!(event.policy_id, 1);
         assert_eq!(event.event_type, FailoverEventType::Completed);
@@ -271,10 +261,7 @@ mod tests {
 
     #[test]
     fn test_failed_event() {
-        let event = FailoverEvent::failed(
-            1,
-            "No healthy backup available".to_string(),
-        );
+        let event = FailoverEvent::failed(1, "No healthy backup available".to_string());
 
         assert_eq!(event.policy_id, 1);
         assert_eq!(event.event_type, FailoverEventType::Failed);

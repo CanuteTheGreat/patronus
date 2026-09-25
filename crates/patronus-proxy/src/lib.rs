@@ -5,8 +5,7 @@
 pub mod haproxy;
 
 pub use haproxy::{
-    HAProxyManager, HAProxyConfig, Frontend, Backend, BackendServer,
-    ProxyMode, BalanceAlgorithm, HealthCheck, HealthCheckMethod,
-    AccessControlList, AclCondition, BackendRule, StatsConfig,
-    HAProxyStats, BackendStats, ServerStats,
+    AccessControlList, AclCondition, Backend, BackendRule, BackendServer, BackendStats,
+    BalanceAlgorithm, Frontend, HAProxyConfig, HAProxyManager, HAProxyStats, HealthCheck,
+    HealthCheckMethod, ProxyMode, ServerStats, StatsConfig,
 };

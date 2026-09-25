@@ -42,10 +42,30 @@ impl Default for PasswordPolicy {
 
 /// Common/default passwords to reject
 const WEAK_PASSWORDS: &[&str] = &[
-    "password", "Password1", "123456", "12345678", "qwerty", "abc123",
-    "monkey", "letmein", "trustno1", "dragon", "baseball", "iloveyou",
-    "master", "sunshine", "ashley", "bailey", "shadow", "superman",
-    "changeme", "secret", "default", "admin", "root", "test",
+    "password",
+    "Password1",
+    "123456",
+    "12345678",
+    "qwerty",
+    "abc123",
+    "monkey",
+    "letmein",
+    "trustno1",
+    "dragon",
+    "baseball",
+    "iloveyou",
+    "master",
+    "sunshine",
+    "ashley",
+    "bailey",
+    "shadow",
+    "superman",
+    "changeme",
+    "secret",
+    "default",
+    "admin",
+    "root",
+    "test",
 ];
 
 /// Validate password strength
@@ -232,10 +252,7 @@ mod tests {
 
     #[test]
     fn test_password_strength() {
-        assert_eq!(
-            validate_password_strength("weak"),
-            PasswordStrength::Weak
-        );
+        assert_eq!(validate_password_strength("weak"), PasswordStrength::Weak);
         assert_eq!(
             validate_password_strength("Medium123"),
             PasswordStrength::Medium

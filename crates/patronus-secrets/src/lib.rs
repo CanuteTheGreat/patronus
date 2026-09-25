@@ -23,9 +23,9 @@ pub mod manager;
 pub mod store;
 pub mod validation;
 
+pub use crypto::{decrypt_secret, derive_key, encrypt_secret};
 pub use manager::{SecretManager, SecretMetadata, SecretType};
-pub use store::{SecretStore, MemoryStore, FileStore};
-pub use crypto::{encrypt_secret, decrypt_secret, derive_key};
+pub use store::{FileStore, MemoryStore, SecretStore};
 pub use validation::{validate_password_strength, PasswordStrength};
 
 use serde::{Deserialize, Serialize};

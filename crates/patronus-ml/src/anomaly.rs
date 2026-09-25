@@ -82,10 +82,15 @@ impl AnomalyDetector {
         let bps_zscore = self.z_score(metrics.bytes_per_second, |m| m.bytes_per_second);
         let pps_zscore = self.z_score(metrics.packets_per_second, |m| m.packets_per_second);
         let syn_zscore = self.z_score(metrics.tcp_syn_ratio, |m| m.tcp_syn_ratio);
-        let unique_ips_zscore = self.z_score(metrics.unique_src_ips as f64, |m| m.unique_src_ips as f64);
+        let unique_ips_zscore =
+            self.z_score(metrics.unique_src_ips as f64, |m| m.unique_src_ips as f64);
 
         // Combine z-scores (simplified Isolation Forest approximation)
-        let combined = (bps_zscore.abs() + pps_zscore.abs() + syn_zscore.abs() * 2.0 + unique_ips_zscore.abs()) / 5.0;
+        let combined = (bps_zscore.abs()
+            + pps_zscore.abs()
+            + syn_zscore.abs() * 2.0
+            + unique_ips_zscore.abs())
+            / 5.0;
 
         // Normalize to 0-1
         (combined / 10.0).min(1.0)
@@ -97,9 +102,7 @@ impl AnomalyDetector {
     {
         let values: Vec<f64> = self.history.iter().map(|m| extractor(m)).collect();
         let mean = values.iter().sum::<f64>() / values.len() as f64;
-        let variance = values.iter()
-            .map(|v| (v - mean).powi(2))
-            .sum::<f64>() / values.len() as f64;
+        let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
         let std_dev = variance.sqrt();
 
         if std_dev == 0.0 {

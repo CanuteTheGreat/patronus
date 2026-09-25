@@ -1,15 +1,15 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use git2::{Repository, RemoteCallbacks, FetchOptions};
+use git2::{FetchOptions, RemoteCallbacks, Repository};
 use notify::Watcher;
-use patronus_config::{ConfigParser, ApplyEngine, DeclarativeConfig};
+use patronus_config::{ApplyEngine, ConfigParser, DeclarativeConfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time;
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 /// GitOps repository configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,15 +113,21 @@ impl GitOpsWatcher {
 
         // Create local directory if it doesn't exist
         if !self.config.local_path.exists() {
-            tokio::fs::create_dir_all(&self.config.local_path).await
+            tokio::fs::create_dir_all(&self.config.local_path)
+                .await
                 .context("Failed to create local repo directory")?;
         }
 
         // Check if repo already exists
         if self.config.local_path.join(".git").exists() {
-            info!("Opening existing repository at {:?}", self.config.local_path);
-            self.repo = Some(Repository::open(&self.config.local_path)
-                .context("Failed to open existing repository")?);
+            info!(
+                "Opening existing repository at {:?}",
+                self.config.local_path
+            );
+            self.repo = Some(
+                Repository::open(&self.config.local_path)
+                    .context("Failed to open existing repository")?,
+            );
         } else {
             info!("Cloning repository from {}", self.config.repo_url);
             self.clone_repository()
@@ -145,14 +151,11 @@ impl GitOpsWatcher {
         if let Some(ssh_key) = &self.config.ssh_key_path {
             let ssh_key = ssh_key.clone();
             callbacks.credentials(move |_url, username_from_url, _allowed_types| {
-                git2::Cred::ssh_key(
-                    username_from_url.unwrap_or("git"),
-                    None,
-                    &ssh_key,
-                    None,
-                )
+                git2::Cred::ssh_key(username_from_url.unwrap_or("git"), None, &ssh_key, None)
             });
-        } else if let (Some(username), Some(password)) = (&self.config.username, &self.config.password) {
+        } else if let (Some(username), Some(password)) =
+            (&self.config.username, &self.config.password)
+        {
             let username = username.clone();
             let password = password.clone();
             callbacks.credentials(move |_url, _username_from_url, _allowed_types| {
@@ -167,22 +170,25 @@ impl GitOpsWatcher {
         builder.fetch_options(fetch_options);
         builder.branch(&self.config.branch);
 
-        self.repo = Some(builder.clone(&self.config.repo_url, &self.config.local_path)
-            .context("Git clone failed")?);
+        self.repo = Some(
+            builder
+                .clone(&self.config.repo_url, &self.config.local_path)
+                .context("Git clone failed")?,
+        );
 
         Ok(())
     }
 
     /// Pull latest changes from remote
     fn pull_changes(&mut self) -> Result<bool> {
-        let repo = self.repo.as_ref()
-            .context("Repository not initialized")?;
+        let repo = self.repo.as_ref().context("Repository not initialized")?;
 
         // Get current commit before pull
         let old_commit = self.get_current_commit_hash(repo)?;
 
         // Fetch from remote
-        let mut remote = repo.find_remote("origin")
+        let mut remote = repo
+            .find_remote("origin")
             .context("Failed to find origin remote")?;
 
         let mut callbacks = RemoteCallbacks::new();
@@ -191,14 +197,11 @@ impl GitOpsWatcher {
         if let Some(ssh_key) = &self.config.ssh_key_path {
             let ssh_key = ssh_key.clone();
             callbacks.credentials(move |_url, username_from_url, _allowed_types| {
-                git2::Cred::ssh_key(
-                    username_from_url.unwrap_or("git"),
-                    None,
-                    &ssh_key,
-                    None,
-                )
+                git2::Cred::ssh_key(username_from_url.unwrap_or("git"), None, &ssh_key, None)
             });
-        } else if let (Some(username), Some(password)) = (&self.config.username, &self.config.password) {
+        } else if let (Some(username), Some(password)) =
+            (&self.config.username, &self.config.password)
+        {
             let username = username.clone();
             let password = password.clone();
             callbacks.credentials(move |_url, _username_from_url, _allowed_types| {
@@ -209,17 +212,21 @@ impl GitOpsWatcher {
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(callbacks);
 
-        remote.fetch(&[&self.config.branch], Some(&mut fetch_options), None)
+        remote
+            .fetch(&[&self.config.branch], Some(&mut fetch_options), None)
             .context("Git fetch failed")?;
 
         // Get reference to remote branch
-        let fetch_head = repo.find_reference("FETCH_HEAD")
+        let fetch_head = repo
+            .find_reference("FETCH_HEAD")
             .context("Failed to find FETCH_HEAD")?;
-        let fetch_commit = repo.reference_to_annotated_commit(&fetch_head)
+        let fetch_commit = repo
+            .reference_to_annotated_commit(&fetch_head)
             .context("Failed to get fetch commit")?;
 
         // Perform merge analysis
-        let (analysis, _) = repo.merge_analysis(&[&fetch_commit])
+        let (analysis, _) = repo
+            .merge_analysis(&[&fetch_commit])
             .context("Merge analysis failed")?;
 
         if analysis.is_up_to_date() {
@@ -230,14 +237,15 @@ impl GitOpsWatcher {
         if analysis.is_fast_forward() {
             // Fast-forward merge
             let refname = format!("refs/heads/{}", self.config.branch);
-            let mut reference = repo.find_reference(&refname)
+            let mut reference = repo
+                .find_reference(&refname)
                 .context("Failed to find branch reference")?;
 
-            reference.set_target(fetch_commit.id(), "Fast-forward merge")
+            reference
+                .set_target(fetch_commit.id(), "Fast-forward merge")
                 .context("Failed to set reference target")?;
 
-            repo.set_head(&refname)
-                .context("Failed to set HEAD")?;
+            repo.set_head(&refname).context("Failed to set HEAD")?;
 
             repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
                 .context("Checkout failed")?;
@@ -255,10 +263,8 @@ impl GitOpsWatcher {
 
     /// Get current commit hash
     fn get_current_commit_hash(&self, repo: &Repository) -> Result<String> {
-        let head = repo.head()
-            .context("Failed to get HEAD")?;
-        let commit = head.peel_to_commit()
-            .context("Failed to get commit")?;
+        let head = repo.head().context("Failed to get HEAD")?;
+        let commit = head.peel_to_commit().context("Failed to get commit")?;
         Ok(commit.id().to_string())
     }
 
@@ -269,7 +275,8 @@ impl GitOpsWatcher {
 
         let message = commit.message().unwrap_or("").to_string();
         let author = commit.author();
-        let author_name = format!("{} <{}>",
+        let author_name = format!(
+            "{} <{}>",
             author.name().unwrap_or("Unknown"),
             author.email().unwrap_or("unknown@example.com")
         );
@@ -332,12 +339,14 @@ impl GitOpsWatcher {
         let mut all_configs = Vec::new();
 
         for file in files {
-            let content = tokio::fs::read_to_string(file).await
+            let content = tokio::fs::read_to_string(file)
+                .await
                 .with_context(|| format!("Failed to read {:?}", file))?;
 
             // Determine format from extension
             let configs = if file.extension().and_then(|e| e.to_str()) == Some("yaml")
-                || file.extension().and_then(|e| e.to_str()) == Some("yml") {
+                || file.extension().and_then(|e| e.to_str()) == Some("yml")
+            {
                 ConfigParser::parse_yaml(&content)
                     .with_context(|| format!("Failed to parse YAML from {:?}", file))?
             } else if file.extension().and_then(|e| e.to_str()) == Some("toml") {
@@ -358,8 +367,7 @@ impl GitOpsWatcher {
         debug!("Starting sync operation");
 
         // Pull latest changes
-        let updated = self.pull_changes()
-            .context("Failed to pull changes")?;
+        let updated = self.pull_changes().context("Failed to pull changes")?;
 
         if !updated {
             return Ok(SyncResult {
@@ -375,13 +383,17 @@ impl GitOpsWatcher {
         let (commit_hash, commit_message, author) = self.get_commit_details(repo)?;
 
         // Find config files
-        let config_files = self.find_config_files().await
+        let config_files = self
+            .find_config_files()
+            .await
             .context("Failed to find config files")?;
 
         info!("Found {} config files", config_files.len());
 
         // Load configs
-        let configs = self.load_configs(&config_files).await
+        let configs = self
+            .load_configs(&config_files)
+            .await
             .context("Failed to load configurations")?;
 
         info!("Loaded {} configurations", configs.len());
@@ -391,8 +403,13 @@ impl GitOpsWatcher {
             commit_hash,
             commit_message,
             author,
-            files_changed: config_files.iter()
-                .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
+            files_changed: config_files
+                .iter()
+                .filter_map(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string())
+                })
                 .collect(),
             configs_found: configs.len(),
             applied: false,
@@ -422,8 +439,11 @@ impl GitOpsWatcher {
             let mut engine = self.apply_engine.write().await;
             match engine.apply(configs).await {
                 Ok(result) => {
-                    info!("Successfully applied configurations: {} changes applied, {} errors",
-                        result.changes_applied, result.errors.len());
+                    info!(
+                        "Successfully applied configurations: {} changes applied, {} errors",
+                        result.changes_applied,
+                        result.errors.len()
+                    );
                     event.applied = true;
                 }
                 Err(e) => {
@@ -462,7 +482,10 @@ impl GitOpsWatcher {
 
     /// Start polling for changes
     pub async fn start_polling(mut self: Arc<Self>) -> Result<()> {
-        info!("Starting GitOps polling with interval {} seconds", self.config.poll_interval_secs);
+        info!(
+            "Starting GitOps polling with interval {} seconds",
+            self.config.poll_interval_secs
+        );
 
         let interval = Duration::from_secs(self.config.poll_interval_secs);
         let mut ticker = time::interval(interval);

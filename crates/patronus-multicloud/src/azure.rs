@@ -30,8 +30,11 @@ impl AzureConnector {
 
     /// Connect to Azure VNet
     pub async fn connect_vnet(&self) -> Result<CloudConnection> {
-        tracing::info!("Connecting to Azure VNet {} in region {}",
-            self.config.vnet_id, self.config.region);
+        tracing::info!(
+            "Connecting to Azure VNet {} in region {}",
+            self.config.vnet_id,
+            self.config.region
+        );
 
         // In production, would use Azure SDK to:
         // 1. Create VPN Gateway

@@ -81,17 +81,28 @@ add rule {} {} forward ct state established,related accept
 add rule {} {} input ip protocol icmp accept
 add rule {} {} input ip6 nexthdr icmpv6 accept
         "#,
-        TABLE_FAMILY, TABLE_NAME,
-        TABLE_FAMILY, TABLE_NAME,
-        TABLE_FAMILY, TABLE_NAME,
-        TABLE_FAMILY, TABLE_NAME,
-        TABLE_FAMILY, TABLE_NAME,
-        TABLE_FAMILY, TABLE_NAME,
-        TABLE_FAMILY, TABLE_NAME,
-        TABLE_FAMILY, TABLE_NAME,
-        TABLE_FAMILY, TABLE_NAME,
-        TABLE_FAMILY, TABLE_NAME,
-        TABLE_FAMILY, TABLE_NAME,
+        TABLE_FAMILY,
+        TABLE_NAME,
+        TABLE_FAMILY,
+        TABLE_NAME,
+        TABLE_FAMILY,
+        TABLE_NAME,
+        TABLE_FAMILY,
+        TABLE_NAME,
+        TABLE_FAMILY,
+        TABLE_NAME,
+        TABLE_FAMILY,
+        TABLE_NAME,
+        TABLE_FAMILY,
+        TABLE_NAME,
+        TABLE_FAMILY,
+        TABLE_NAME,
+        TABLE_FAMILY,
+        TABLE_NAME,
+        TABLE_FAMILY,
+        TABLE_NAME,
+        TABLE_FAMILY,
+        TABLE_NAME,
     );
 
     execute_nft_script(&script)?;
@@ -239,7 +250,10 @@ pub fn nat_rule_to_nft_command(rule: &NatRule) -> String {
     let nat_action = match &rule.nat_type {
         NatType::Masquerade => "masquerade".to_string(),
         NatType::Snat { to_address } => format!("snat to {}", to_address),
-        NatType::Dnat { to_address, to_port } => {
+        NatType::Dnat {
+            to_address,
+            to_port,
+        } => {
             if let Some(port) = to_port {
                 format!("dnat to {}:{}", to_address, port)
             } else {
@@ -256,7 +270,9 @@ pub fn nat_rule_to_nft_command(rule: &NatRule) -> String {
 
     format!(
         "add rule {} {} {} {}",
-        TABLE_FAMILY, TABLE_NAME, chain,
+        TABLE_FAMILY,
+        TABLE_NAME,
+        chain,
         parts.join(" ")
     )
 }

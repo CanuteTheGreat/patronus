@@ -21,7 +21,10 @@ impl BandwidthLimiter {
     }
 
     pub async fn set_limit(&self, mac: &str, download_kbps: u64, upload_kbps: u64) {
-        let limit = BandwidthLimit { download_kbps, upload_kbps };
+        let limit = BandwidthLimit {
+            download_kbps,
+            upload_kbps,
+        };
 
         // Apply tc rules
         self.apply_tc_limit(mac, &limit).await;

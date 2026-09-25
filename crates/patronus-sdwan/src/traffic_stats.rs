@@ -319,7 +319,9 @@ mod tests {
         sleep(Duration::from_millis(100)).await;
 
         // Cleanup stale flows (timeout = 50ms, so our flow should be removed)
-        let removed = collector.cleanup_stale_flows(Duration::from_millis(50)).await;
+        let removed = collector
+            .cleanup_stale_flows(Duration::from_millis(50))
+            .await;
         assert_eq!(removed, 1);
 
         // Active flows should be 0 now

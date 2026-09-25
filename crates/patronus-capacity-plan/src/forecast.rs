@@ -1,7 +1,7 @@
 //! Time Series Forecasting
 
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc, Duration};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ForecastModel {
@@ -40,12 +40,18 @@ impl TimeSeriesForecaster {
             ForecastModel::LinearRegression => {
                 self.forecast_linear_regression(historical_data, timestamps, periods_ahead)
             }
-            ForecastModel::MovingAverage { window_size } => {
-                self.forecast_moving_average(historical_data, timestamps, periods_ahead, *window_size)
-            }
-            ForecastModel::ExponentialSmoothing { alpha } => {
-                self.forecast_exponential_smoothing(historical_data, timestamps, periods_ahead, *alpha)
-            }
+            ForecastModel::MovingAverage { window_size } => self.forecast_moving_average(
+                historical_data,
+                timestamps,
+                periods_ahead,
+                *window_size,
+            ),
+            ForecastModel::ExponentialSmoothing { alpha } => self.forecast_exponential_smoothing(
+                historical_data,
+                timestamps,
+                periods_ahead,
+                *alpha,
+            ),
         }
     }
 
@@ -118,12 +124,14 @@ impl TimeSeriesForecaster {
         let predictions = vec![avg; periods];
 
         // Confidence intervals based on historical variance
-        let variance = last_window.iter()
-            .map(|x| (x - avg).powi(2))
-            .sum::<f64>() / last_window.len() as f64;
+        let variance =
+            last_window.iter().map(|x| (x - avg).powi(2)).sum::<f64>() / last_window.len() as f64;
         let std_dev = variance.sqrt();
 
-        let confidence_lower = predictions.iter().map(|p| (p - 2.0 * std_dev).max(0.0)).collect();
+        let confidence_lower = predictions
+            .iter()
+            .map(|p| (p - 2.0 * std_dev).max(0.0))
+            .collect();
         let confidence_upper = predictions.iter().map(|p| p + 2.0 * std_dev).collect();
 
         // Calculate MAE
@@ -192,7 +200,9 @@ impl TimeSeriesForecaster {
     }
 
     fn calculate_mae(&self, data: &[f64], x: &[f64], slope: f64, intercept: f64) -> f64 {
-        let errors: Vec<f64> = x.iter().zip(data.iter())
+        let errors: Vec<f64> = x
+            .iter()
+            .zip(data.iter())
             .map(|(xi, yi)| (yi - (slope * xi + intercept)).abs())
             .collect();
 
@@ -206,7 +216,7 @@ impl TimeSeriesForecaster {
 
         let mut errors = Vec::new();
         for i in window..data.len() {
-            let avg = data[i-window..i].iter().sum::<f64>() / window as f64;
+            let avg = data[i - window..i].iter().sum::<f64>() / window as f64;
             errors.push((data[i] - avg).abs());
         }
 
@@ -231,28 +241,42 @@ impl TimeSeriesForecaster {
 
     /// Calculate forecast accuracy metrics
     pub fn evaluate_accuracy(&self, actual: &[f64], predicted: &[f64]) -> AccuracyMetrics {
-        assert_eq!(actual.len(), predicted.len(), "Actual and predicted must have same length");
+        assert_eq!(
+            actual.len(),
+            predicted.len(),
+            "Actual and predicted must have same length"
+        );
 
         let n = actual.len() as f64;
 
         // Mean Absolute Error
-        let mae = actual.iter().zip(predicted.iter())
+        let mae = actual
+            .iter()
+            .zip(predicted.iter())
             .map(|(a, p)| (a - p).abs())
-            .sum::<f64>() / n;
+            .sum::<f64>()
+            / n;
 
         // Mean Squared Error
-        let mse = actual.iter().zip(predicted.iter())
+        let mse = actual
+            .iter()
+            .zip(predicted.iter())
             .map(|(a, p)| (a - p).powi(2))
-            .sum::<f64>() / n;
+            .sum::<f64>()
+            / n;
 
         // Root Mean Squared Error
         let rmse = mse.sqrt();
 
         // Mean Absolute Percentage Error
-        let mape = actual.iter().zip(predicted.iter())
+        let mape = actual
+            .iter()
+            .zip(predicted.iter())
             .filter(|(a, _)| **a != 0.0)
             .map(|(a, p)| ((a - p) / a).abs())
-            .sum::<f64>() / n * 100.0;
+            .sum::<f64>()
+            / n
+            * 100.0;
 
         AccuracyMetrics {
             mae,
@@ -265,10 +289,10 @@ impl TimeSeriesForecaster {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccuracyMetrics {
-    pub mae: f64,   // Mean Absolute Error
-    pub mse: f64,   // Mean Squared Error
-    pub rmse: f64,  // Root Mean Squared Error
-    pub mape: f64,  // Mean Absolute Percentage Error (%)
+    pub mae: f64,  // Mean Absolute Error
+    pub mse: f64,  // Mean Squared Error
+    pub rmse: f64, // Root Mean Squared Error
+    pub mape: f64, // Mean Absolute Percentage Error (%)
 }
 
 #[cfg(test)]
@@ -282,9 +306,7 @@ mod tests {
         // Simple upward trend: 10, 20, 30, 40
         let data = vec![10.0, 20.0, 30.0, 40.0];
         let now = Utc::now();
-        let timestamps: Vec<DateTime<Utc>> = (0..4)
-            .map(|i| now + Duration::hours(i))
-            .collect();
+        let timestamps: Vec<DateTime<Utc>> = (0..4).map(|i| now + Duration::hours(i)).collect();
 
         let result = forecaster.forecast(&data, &timestamps, 2);
 
@@ -296,15 +318,11 @@ mod tests {
 
     #[test]
     fn test_moving_average_forecast() {
-        let forecaster = TimeSeriesForecaster::new(
-            ForecastModel::MovingAverage { window_size: 3 }
-        );
+        let forecaster = TimeSeriesForecaster::new(ForecastModel::MovingAverage { window_size: 3 });
 
         let data = vec![100.0, 105.0, 110.0, 115.0, 120.0];
         let now = Utc::now();
-        let timestamps: Vec<DateTime<Utc>> = (0..5)
-            .map(|i| now + Duration::hours(i))
-            .collect();
+        let timestamps: Vec<DateTime<Utc>> = (0..5).map(|i| now + Duration::hours(i)).collect();
 
         let result = forecaster.forecast(&data, &timestamps, 2);
 
@@ -315,15 +333,12 @@ mod tests {
 
     #[test]
     fn test_exponential_smoothing_forecast() {
-        let forecaster = TimeSeriesForecaster::new(
-            ForecastModel::ExponentialSmoothing { alpha: 0.5 }
-        );
+        let forecaster =
+            TimeSeriesForecaster::new(ForecastModel::ExponentialSmoothing { alpha: 0.5 });
 
         let data = vec![10.0, 20.0, 30.0, 40.0];
         let now = Utc::now();
-        let timestamps: Vec<DateTime<Utc>> = (0..4)
-            .map(|i| now + Duration::hours(i))
-            .collect();
+        let timestamps: Vec<DateTime<Utc>> = (0..4).map(|i| now + Duration::hours(i)).collect();
 
         let result = forecaster.forecast(&data, &timestamps, 2);
 
@@ -337,9 +352,7 @@ mod tests {
 
         let data = vec![10.0, 20.0, 30.0, 40.0];
         let now = Utc::now();
-        let timestamps: Vec<DateTime<Utc>> = (0..4)
-            .map(|i| now + Duration::hours(i))
-            .collect();
+        let timestamps: Vec<DateTime<Utc>> = (0..4).map(|i| now + Duration::hours(i)).collect();
 
         let result = forecaster.forecast(&data, &timestamps, 2);
 
@@ -385,9 +398,7 @@ mod tests {
 
         let data = vec![10.0, 20.0, 30.0];
         let now = Utc::now();
-        let timestamps: Vec<DateTime<Utc>> = (0..3)
-            .map(|i| now + Duration::hours(i))
-            .collect();
+        let timestamps: Vec<DateTime<Utc>> = (0..3).map(|i| now + Duration::hours(i)).collect();
 
         let result = forecaster.forecast(&data, &timestamps, 3);
 

@@ -13,15 +13,12 @@ pub mod state;
 pub mod templates;
 pub mod websocket;
 
+pub use auth::{AdminUser, AuthUser, SessionStore};
 pub use state::AppState;
-pub use auth::{SessionStore, AuthUser, AdminUser};
 pub use websocket::WsBroadcaster;
 
 /// Create the web application router
-pub fn create_app(
-    state: AppState,
-    ws_broadcaster: std::sync::Arc<WsBroadcaster>,
-) -> axum::Router {
+pub fn create_app(state: AppState, ws_broadcaster: std::sync::Arc<WsBroadcaster>) -> axum::Router {
     routes::build_router(state, ws_broadcaster)
 }
 

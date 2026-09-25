@@ -2,12 +2,9 @@
 //
 // This module implements all GraphQL query resolvers for fetching data.
 
+use crate::graphql::{get_state, types::*};
 use async_graphql::{Context, Object, Result};
 use chrono::{DateTime, Utc};
-use crate::graphql::{
-    types::*,
-    get_state,
-};
 
 /// Root query object
 pub struct QueryRoot;
@@ -23,30 +20,38 @@ impl QueryRoot {
 
         // Fetch from database
         use patronus_sdwan::types::SiteId;
-        let site_id: SiteId = id.parse().map_err(|_| async_graphql::Error::new("Invalid site ID"))?;
+        let site_id: SiteId = id
+            .parse()
+            .map_err(|_| async_graphql::Error::new("Invalid site ID"))?;
 
         match state.db.get_site(&site_id).await {
-            Ok(Some(site)) => {
-                Ok(Some(GqlSite {
-                    id: site.id.to_string(),
-                    name: site.name,
-                    location: None,
-                    endpoint_count: site.endpoints.len() as i32,
-                    status: match site.status {
-                        patronus_sdwan::types::SiteStatus::Active => SiteStatus::Active,
-                        patronus_sdwan::types::SiteStatus::Degraded => SiteStatus::Degraded,
-                        patronus_sdwan::types::SiteStatus::Inactive => SiteStatus::Offline,
-                    },
-                    created_at: DateTime::from_timestamp(
-                        site.created_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
-                        0
-                    ).unwrap_or_else(|| Utc::now()),
-                    updated_at: DateTime::from_timestamp(
-                        site.last_seen.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
-                        0
-                    ).unwrap_or_else(|| Utc::now()),
-                }))
-            }
+            Ok(Some(site)) => Ok(Some(GqlSite {
+                id: site.id.to_string(),
+                name: site.name,
+                location: None,
+                endpoint_count: site.endpoints.len() as i32,
+                status: match site.status {
+                    patronus_sdwan::types::SiteStatus::Active => SiteStatus::Active,
+                    patronus_sdwan::types::SiteStatus::Degraded => SiteStatus::Degraded,
+                    patronus_sdwan::types::SiteStatus::Inactive => SiteStatus::Offline,
+                },
+                created_at: DateTime::from_timestamp(
+                    site.created_at
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64,
+                    0,
+                )
+                .unwrap_or_else(|| Utc::now()),
+                updated_at: DateTime::from_timestamp(
+                    site.last_seen
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64,
+                    0,
+                )
+                .unwrap_or_else(|| Utc::now()),
+            })),
             Ok(None) => Ok(None),
             Err(e) => Err(async_graphql::Error::new(format!("Database error: {}", e))),
         }
@@ -67,8 +72,9 @@ impl QueryRoot {
         // Fetch from database
         match state.db.list_sites().await {
             Ok(sites) => {
-                let gql_sites: Vec<GqlSite> = sites.into_iter().map(|site| {
-                    GqlSite {
+                let gql_sites: Vec<GqlSite> = sites
+                    .into_iter()
+                    .map(|site| GqlSite {
                         id: site.id.to_string(),
                         name: site.name,
                         location: None,
@@ -79,15 +85,23 @@ impl QueryRoot {
                             patronus_sdwan::types::SiteStatus::Inactive => SiteStatus::Offline,
                         },
                         created_at: DateTime::from_timestamp(
-                            site.created_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
-                            0
-                        ).unwrap_or_else(|| Utc::now()),
+                            site.created_at
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs() as i64,
+                            0,
+                        )
+                        .unwrap_or_else(|| Utc::now()),
                         updated_at: DateTime::from_timestamp(
-                            site.last_seen.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
-                            0
-                        ).unwrap_or_else(|| Utc::now()),
-                    }
-                }).collect();
+                            site.last_seen
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs() as i64,
+                            0,
+                        )
+                        .unwrap_or_else(|| Utc::now()),
+                    })
+                    .collect();
 
                 Ok(gql_sites)
             }
@@ -112,7 +126,8 @@ impl QueryRoot {
 
         // Parse path ID
         use patronus_sdwan::types::PathId;
-        let path_id = id.parse::<u64>()
+        let path_id = id
+            .parse::<u64>()
             .map_err(|_| async_graphql::Error::new("Invalid path ID"))?;
         let path_id = PathId::new(path_id);
 
@@ -135,12 +150,19 @@ impl QueryRoot {
                         patronus_sdwan::types::PathStatus::Degraded => PathStatus::Degraded,
                         patronus_sdwan::types::PathStatus::Down => PathStatus::Failed,
                     },
-                    last_updated: metrics.as_ref().map(|m| {
-                        DateTime::from_timestamp(
-                            m.measured_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
-                            0
-                        ).unwrap_or_else(|| Utc::now())
-                    }).unwrap_or_else(|| Utc::now()),
+                    last_updated: metrics
+                        .as_ref()
+                        .map(|m| {
+                            DateTime::from_timestamp(
+                                m.measured_at
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs() as i64,
+                                0,
+                            )
+                            .unwrap_or_else(|| Utc::now())
+                        })
+                        .unwrap_or_else(|| Utc::now()),
                 }))
             }
             Err(e) => {
@@ -186,12 +208,19 @@ impl QueryRoot {
                             patronus_sdwan::types::PathStatus::Degraded => PathStatus::Degraded,
                             patronus_sdwan::types::PathStatus::Down => PathStatus::Failed,
                         },
-                        last_updated: metrics.as_ref().map(|m| {
-                            DateTime::from_timestamp(
-                                m.measured_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
-                                0
-                            ).unwrap_or_else(|| Utc::now())
-                        }).unwrap_or_else(|| Utc::now()),
+                        last_updated: metrics
+                            .as_ref()
+                            .map(|m| {
+                                DateTime::from_timestamp(
+                                    m.measured_at
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap()
+                                        .as_secs() as i64,
+                                    0,
+                                )
+                                .unwrap_or_else(|| Utc::now())
+                            })
+                            .unwrap_or_else(|| Utc::now()),
                     });
                 }
 
@@ -206,14 +235,19 @@ impl QueryRoot {
         let state = get_state(ctx)?;
 
         // Parse policy ID
-        let policy_id = id.parse::<u64>()
+        let policy_id = id
+            .parse::<u64>()
             .map_err(|_| async_graphql::Error::new("Invalid policy ID"))?;
 
         // Fetch from database
         match state.db.get_policy(policy_id).await {
             Ok(Some(policy)) => {
                 // Get traffic stats (Sprint 30)
-                let stats = state.traffic_stats.get_policy_stats(policy_id).await.unwrap_or_default();
+                let stats = state
+                    .traffic_stats
+                    .get_policy_stats(policy_id)
+                    .await
+                    .unwrap_or_default();
 
                 Ok(Some(GqlPolicy {
                     id: policy.id.to_string(),
@@ -248,22 +282,26 @@ impl QueryRoot {
                 // Get all traffic stats in one go (Sprint 30)
                 let all_stats = state.traffic_stats.get_all_policy_stats().await;
 
-                let gql_policies: Vec<GqlPolicy> = policies.into_iter().map(|policy| {
-                    let stats = all_stats.get(&policy.id).cloned().unwrap_or_default();
+                let gql_policies: Vec<GqlPolicy> = policies
+                    .into_iter()
+                    .map(|policy| {
+                        let stats = all_stats.get(&policy.id).cloned().unwrap_or_default();
 
-                    GqlPolicy {
-                        id: policy.id.to_string(),
-                        name: policy.name,
-                        description: None,
-                        priority: policy.priority as i32,
-                        match_rules: serde_json::to_string(&policy.match_rules).unwrap_or_default(),
-                        action: PolicyAction::Route, // TODO: Map from PathPreference to PolicyAction
-                        enabled: policy.enabled,
-                        packets_matched: stats.packets_matched as i64,
-                        bytes_matched: stats.bytes_matched as i64,
-                        created_at: Utc::now(), // TODO: Add created_at to RoutingPolicy type
-                    }
-                }).collect();
+                        GqlPolicy {
+                            id: policy.id.to_string(),
+                            name: policy.name,
+                            description: None,
+                            priority: policy.priority as i32,
+                            match_rules: serde_json::to_string(&policy.match_rules)
+                                .unwrap_or_default(),
+                            action: PolicyAction::Route, // TODO: Map from PathPreference to PolicyAction
+                            enabled: policy.enabled,
+                            packets_matched: stats.packets_matched as i64,
+                            bytes_matched: stats.bytes_matched as i64,
+                            created_at: Utc::now(), // TODO: Add created_at to RoutingPolicy type
+                        }
+                    })
+                    .collect();
 
                 Ok(gql_policies)
             }
@@ -280,9 +318,14 @@ impl QueryRoot {
 
         Ok(GqlMetrics {
             timestamp: DateTime::from_timestamp(
-                metrics.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
-                0
-            ).unwrap_or_else(|| Utc::now()),
+                metrics
+                    .timestamp
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64,
+                0,
+            )
+            .unwrap_or_else(|| Utc::now()),
             throughput_mbps: metrics.throughput_mbps,
             packets_per_second: metrics.packets_per_second as i64,
             active_flows: metrics.active_flows as i64,
@@ -304,18 +347,24 @@ impl QueryRoot {
         let state = get_state(ctx)?;
 
         // Convert DateTime<Utc> to SystemTime
-        let from_ts = std::time::UNIX_EPOCH + std::time::Duration::from_secs(from.timestamp() as u64);
+        let from_ts =
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(from.timestamp() as u64);
         let to_ts = std::time::UNIX_EPOCH + std::time::Duration::from_secs(to.timestamp() as u64);
 
         // Get metrics history from database
         match state.db.get_system_metrics_history(from_ts, to_ts).await {
             Ok(history) => {
-                let gql_metrics: Vec<GqlMetrics> = history.into_iter().map(|m| {
-                    GqlMetrics {
+                let gql_metrics: Vec<GqlMetrics> = history
+                    .into_iter()
+                    .map(|m| GqlMetrics {
                         timestamp: DateTime::from_timestamp(
-                            m.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
-                            0
-                        ).unwrap_or_else(|| Utc::now()),
+                            m.timestamp
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs() as i64,
+                            0,
+                        )
+                        .unwrap_or_else(|| Utc::now()),
                         throughput_mbps: m.throughput_mbps,
                         packets_per_second: m.packets_per_second as i64,
                         active_flows: m.active_flows as i64,
@@ -323,8 +372,8 @@ impl QueryRoot {
                         avg_packet_loss: m.avg_packet_loss,
                         cpu_usage: m.cpu_usage,
                         memory_usage: m.memory_usage,
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 Ok(gql_metrics)
             }
@@ -341,20 +390,18 @@ impl QueryRoot {
 
         // Fetch from database
         match state.user_repository.get_user(&id).await {
-            Ok(Some(user)) => {
-                Ok(Some(GqlUser {
-                    id: user.id,
-                    email: user.email,
-                    role: match user.role {
-                        crate::auth::users::UserRole::Admin => UserRole::Admin,
-                        crate::auth::users::UserRole::Operator => UserRole::Operator,
-                        crate::auth::users::UserRole::Viewer => UserRole::Viewer,
-                    },
-                    active: user.is_active,
-                    created_at: user.created_at,
-                    last_login: user.last_login,
-                }))
-            }
+            Ok(Some(user)) => Ok(Some(GqlUser {
+                id: user.id,
+                email: user.email,
+                role: match user.role {
+                    crate::auth::users::UserRole::Admin => UserRole::Admin,
+                    crate::auth::users::UserRole::Operator => UserRole::Operator,
+                    crate::auth::users::UserRole::Viewer => UserRole::Viewer,
+                },
+                active: user.is_active,
+                created_at: user.created_at,
+                last_login: user.last_login,
+            })),
             Ok(None) => Ok(None),
             Err(e) => Err(async_graphql::Error::new(format!("Database error: {}", e))),
         }
@@ -374,8 +421,9 @@ impl QueryRoot {
         // Fetch from database
         match state.user_repository.list_users().await {
             Ok(users) => {
-                let gql_users: Vec<GqlUser> = users.into_iter().map(|user| {
-                    GqlUser {
+                let gql_users: Vec<GqlUser> = users
+                    .into_iter()
+                    .map(|user| GqlUser {
                         id: user.id,
                         email: user.email,
                         role: match user.role {
@@ -386,8 +434,8 @@ impl QueryRoot {
                         active: user.is_active,
                         created_at: user.created_at,
                         last_login: user.last_login,
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 Ok(gql_users)
             }
@@ -412,13 +460,16 @@ impl QueryRoot {
         let state = get_state(ctx)?;
 
         // Get audit logs from audit logger
-        let logs = state.audit_logger.get_logs(
-            event_type,
-            severity,
-            since,
-            until,
-            limit.unwrap_or(100) as i64,
-        ).await
+        let logs = state
+            .audit_logger
+            .get_logs(
+                event_type,
+                severity,
+                since,
+                until,
+                limit.unwrap_or(100) as i64,
+            )
+            .await
             .map_err(|e| async_graphql::Error::new(format!("Failed to get audit logs: {}", e)))?;
 
         // Filter by user_id if provided
@@ -431,17 +482,21 @@ impl QueryRoot {
         };
 
         // Convert to GraphQL type
-        let gql_logs: Vec<GqlAuditLog> = logs.into_iter().map(|log| {
-            GqlAuditLog {
+        let gql_logs: Vec<GqlAuditLog> = logs
+            .into_iter()
+            .map(|log| GqlAuditLog {
                 id: log.id.to_string(),
                 user_id: log.user_id.unwrap_or_else(|| "system".to_string()),
                 event_type: log.event_type,
                 description: log.event_data,
                 ip_address: log.ip_address.unwrap_or_else(|| "unknown".to_string()),
                 timestamp: log.timestamp,
-                metadata: Some(format!("{{\"success\": {}, \"severity\": \"{}\"}}", log.success, log.severity)),
-            }
-        }).collect();
+                metadata: Some(format!(
+                    "{{\"success\": {}, \"severity\": \"{}\"}}",
+                    log.success, log.severity
+                )),
+            })
+            .collect();
 
         Ok(gql_logs)
     }
@@ -458,25 +513,32 @@ impl QueryRoot {
         let state = get_state(ctx)?;
 
         // Get mutation logs
-        let logs = state.audit_logger.get_mutation_logs(limit.unwrap_or(100) as i64).await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to get mutation logs: {}", e)))?;
+        let logs = state
+            .audit_logger
+            .get_mutation_logs(limit.unwrap_or(100) as i64)
+            .await
+            .map_err(|e| {
+                async_graphql::Error::new(format!("Failed to get mutation logs: {}", e))
+            })?;
 
         // Convert to GraphQL type
-        let gql_logs: Vec<GqlAuditLog> = logs.into_iter().map(|log| {
-            GqlAuditLog {
+        let gql_logs: Vec<GqlAuditLog> = logs
+            .into_iter()
+            .map(|log| GqlAuditLog {
                 id: log.id.to_string(),
                 user_id: log.user_id.unwrap_or_else(|| "system".to_string()),
                 event_type: log.event_type,
                 description: log.event_data,
                 ip_address: log.ip_address.unwrap_or_else(|| "unknown".to_string()),
                 timestamp: log.timestamp,
-                metadata: Some(format!("{{\"success\": {}, \"severity\": \"{}\", \"user_email\": \"{}\"}}",
+                metadata: Some(format!(
+                    "{{\"success\": {}, \"severity\": \"{}\", \"user_email\": \"{}\"}}",
                     log.success,
                     log.severity,
                     log.user_email.unwrap_or_else(|| "unknown".to_string())
                 )),
-            }
-        }).collect();
+            })
+            .collect();
 
         Ok(gql_logs)
     }

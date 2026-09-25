@@ -129,9 +129,7 @@ pub fn refresh_access_token(refresh_token: &str) -> Result<TokenPair> {
 
     // Verify this is a refresh token
     if claims.token_type != TokenType::Refresh {
-        return Err(ApiError::Unauthorized(
-            "Invalid token type".to_string(),
-        ));
+        return Err(ApiError::Unauthorized("Invalid token type".to_string()));
     }
 
     // Generate new token pair

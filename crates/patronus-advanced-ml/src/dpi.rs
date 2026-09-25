@@ -1,10 +1,10 @@
 //! Deep Learning for Deep Packet Inspection (DPI)
 
+use crate::neural_network::{ActivationFunction, Layer, NeuralNetwork};
+use anyhow::Result;
 use ndarray::Array1;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::Result;
-use crate::neural_network::{NeuralNetwork, Layer, ActivationFunction};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Protocol {
@@ -189,7 +189,8 @@ impl DeepDpiClassifier {
         let input = features.to_vector();
         let class_id = self.model.predict(&input)?;
 
-        Ok(self.protocol_map
+        Ok(self
+            .protocol_map
             .get(&class_id)
             .cloned()
             .unwrap_or(Protocol::Unknown))
@@ -205,7 +206,8 @@ impl DeepDpiClassifier {
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .ok_or_else(|| anyhow::anyhow!("Empty prediction"))?;
 
-        let protocol = self.protocol_map
+        let protocol = self
+            .protocol_map
             .get(&class_id)
             .cloned()
             .unwrap_or(Protocol::Unknown);
@@ -214,10 +216,7 @@ impl DeepDpiClassifier {
     }
 
     pub fn batch_classify(&self, features: &[PacketFeatures]) -> Result<Vec<Protocol>> {
-        features
-            .iter()
-            .map(|f| self.classify(f))
-            .collect()
+        features.iter().map(|f| self.classify(f)).collect()
     }
 }
 

@@ -446,7 +446,9 @@ mod tests {
         manager.add_tutorial(tutorial1).await;
         manager.add_tutorial(tutorial2).await;
 
-        let beginners = manager.list_by_difficulty(&TutorialDifficulty::Beginner).await;
+        let beginners = manager
+            .list_by_difficulty(&TutorialDifficulty::Beginner)
+            .await;
         assert_eq!(beginners.len(), 1);
         assert_eq!(beginners[0].title, "Beginner 1");
     }

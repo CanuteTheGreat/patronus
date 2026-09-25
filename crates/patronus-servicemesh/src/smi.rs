@@ -1,12 +1,22 @@
 //! Service Mesh Interface (SMI) Support
 
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 
 #[async_trait]
 pub trait ServiceMeshInterface {
-    async fn create_traffic_split(&self, name: &str, service: &str, backends: Vec<(String, u32)>) -> Result<()>;
-    async fn create_traffic_access(&self, name: &str, source: &str, destination: &str) -> Result<()>;
+    async fn create_traffic_split(
+        &self,
+        name: &str,
+        service: &str,
+        backends: Vec<(String, u32)>,
+    ) -> Result<()>;
+    async fn create_traffic_access(
+        &self,
+        name: &str,
+        source: &str,
+        destination: &str,
+    ) -> Result<()>;
     async fn get_metrics(&self, service: &str) -> Result<ServiceMetrics>;
 }
 
@@ -23,13 +33,28 @@ pub struct SmiAdapter;
 
 #[async_trait]
 impl ServiceMeshInterface for SmiAdapter {
-    async fn create_traffic_split(&self, name: &str, service: &str, backends: Vec<(String, u32)>) -> Result<()> {
+    async fn create_traffic_split(
+        &self,
+        name: &str,
+        service: &str,
+        backends: Vec<(String, u32)>,
+    ) -> Result<()> {
         tracing::info!("Creating TrafficSplit {} for service {}", name, service);
         Ok(())
     }
 
-    async fn create_traffic_access(&self, name: &str, source: &str, destination: &str) -> Result<()> {
-        tracing::info!("Creating TrafficTarget {} from {} to {}", name, source, destination);
+    async fn create_traffic_access(
+        &self,
+        name: &str,
+        source: &str,
+        destination: &str,
+    ) -> Result<()> {
+        tracing::info!(
+            "Creating TrafficTarget {} from {} to {}",
+            name,
+            source,
+            destination
+        );
         Ok(())
     }
 
@@ -51,7 +76,13 @@ mod tests {
     #[tokio::test]
     async fn test_smi() {
         let smi = SmiAdapter;
-        smi.create_traffic_split("test", "svc", vec![("backend1".to_string(), 80), ("backend2".to_string(), 20)]).await.unwrap();
+        smi.create_traffic_split(
+            "test",
+            "svc",
+            vec![("backend1".to_string(), 80), ("backend2".to_string(), 20)],
+        )
+        .await
+        .unwrap();
         let metrics = smi.get_metrics("svc").await.unwrap();
         assert!(metrics.success_rate > 0.99);
     }

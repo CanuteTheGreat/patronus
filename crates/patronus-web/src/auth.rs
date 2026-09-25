@@ -10,13 +10,13 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use chrono::{DateTime, Duration, Utc};
+use patronus_secrets::crypto::{hash_password, verify_password};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc, Duration};
-use patronus_secrets::crypto::{hash_password, verify_password};
 
 /// Session data stored in memory
 #[derive(Debug, Clone)]
@@ -71,27 +71,33 @@ impl UserStore {
 
         // Create default admin user with hashed password
         let admin_hash = hash_password("admin").unwrap_or_else(|_| "admin".to_string());
-        users.insert("admin".to_string(), User {
-            id: 1,
-            username: "admin".to_string(),
-            password_hash: admin_hash,
-            role: UserRole::Admin,
-            enabled: true,
-            created_at: Utc::now(),
-            last_login: None,
-        });
+        users.insert(
+            "admin".to_string(),
+            User {
+                id: 1,
+                username: "admin".to_string(),
+                password_hash: admin_hash,
+                role: UserRole::Admin,
+                enabled: true,
+                created_at: Utc::now(),
+                last_login: None,
+            },
+        );
 
         // Create operator user
         let operator_hash = hash_password("operator").unwrap_or_else(|_| "operator".to_string());
-        users.insert("operator".to_string(), User {
-            id: 2,
-            username: "operator".to_string(),
-            password_hash: operator_hash,
-            role: UserRole::Operator,
-            enabled: true,
-            created_at: Utc::now(),
-            last_login: None,
-        });
+        users.insert(
+            "operator".to_string(),
+            User {
+                id: 2,
+                username: "operator".to_string(),
+                password_hash: operator_hash,
+                role: UserRole::Operator,
+                enabled: true,
+                created_at: Utc::now(),
+                last_login: None,
+            },
+        );
 
         Self {
             users: Arc::new(RwLock::new(users)),
@@ -132,7 +138,12 @@ impl UserStore {
     }
 
     /// Create a new user
-    pub async fn create_user(&self, username: String, password: &str, role: UserRole) -> anyhow::Result<u32> {
+    pub async fn create_user(
+        &self,
+        username: String,
+        password: &str,
+        role: UserRole,
+    ) -> anyhow::Result<u32> {
         let mut users = self.users.write().await;
 
         if users.contains_key(&username) {
@@ -145,15 +156,18 @@ impl UserStore {
 
         let password_hash = hash_password(password)?;
 
-        users.insert(username.clone(), User {
-            id,
-            username,
-            password_hash,
-            role,
-            enabled: true,
-            created_at: Utc::now(),
-            last_login: None,
-        });
+        users.insert(
+            username.clone(),
+            User {
+                id,
+                username,
+                password_hash,
+                role,
+                enabled: true,
+                created_at: Utc::now(),
+                last_login: None,
+            },
+        );
 
         Ok(id)
     }
@@ -196,14 +210,19 @@ impl UserStore {
 
     /// List all users (without password hashes)
     pub async fn list_users(&self) -> Vec<UserInfo> {
-        self.users.read().await.values().map(|u| UserInfo {
-            id: u.id,
-            username: u.username.clone(),
-            role: u.role,
-            enabled: u.enabled,
-            created_at: u.created_at,
-            last_login: u.last_login,
-        }).collect()
+        self.users
+            .read()
+            .await
+            .values()
+            .map(|u| UserInfo {
+                id: u.id,
+                username: u.username.clone(),
+                role: u.role,
+                enabled: u.enabled,
+                created_at: u.created_at,
+                last_login: u.last_login,
+            })
+            .collect()
     }
 }
 
@@ -244,7 +263,10 @@ impl SessionStore {
             last_active: now,
         };
 
-        self.sessions.write().await.insert(session_id.clone(), session);
+        self.sessions
+            .write()
+            .await
+            .insert(session_id.clone(), session);
         session_id
     }
 
@@ -269,9 +291,10 @@ impl SessionStore {
     /// Clean up expired sessions (older than 24 hours)
     pub async fn cleanup_expired(&self) {
         let cutoff = Utc::now() - Duration::hours(24);
-        self.sessions.write().await.retain(|_, session| {
-            session.last_active > cutoff
-        });
+        self.sessions
+            .write()
+            .await
+            .retain(|_, session| session.last_active > cutoff);
     }
 }
 
@@ -291,15 +314,21 @@ impl IntoResponse for AuthError {
         let (status, message) = match self {
             AuthError::MissingSession => (StatusCode::UNAUTHORIZED, "No session found"),
             AuthError::InvalidSession => (StatusCode::UNAUTHORIZED, "Invalid or expired session"),
-            AuthError::InvalidCredentials => (StatusCode::UNAUTHORIZED, "Invalid username or password"),
+            AuthError::InvalidCredentials => {
+                (StatusCode::UNAUTHORIZED, "Invalid username or password")
+            }
             AuthError::UserDisabled => (StatusCode::FORBIDDEN, "User account is disabled"),
             AuthError::Forbidden => (StatusCode::FORBIDDEN, "Insufficient permissions"),
             AuthError::InternalError => (StatusCode::INTERNAL_SERVER_ERROR, "Internal error"),
         };
 
-        (status, Json(serde_json::json!({
-            "error": message
-        }))).into_response()
+        (
+            status,
+            Json(serde_json::json!({
+                "error": message
+            })),
+        )
+            .into_response()
     }
 }
 
@@ -322,15 +351,13 @@ where
             .get(header::COOKIE)
             .and_then(|cookie| cookie.to_str().ok())
             .and_then(|cookies| {
-                cookies
-                    .split(';')
-                    .find_map(|cookie| {
-                        let mut parts = cookie.trim().splitn(2, '=');
-                        match (parts.next(), parts.next()) {
-                            (Some("session_id"), Some(id)) => Some(id.to_string()),
-                            _ => None,
-                        }
-                    })
+                cookies.split(';').find_map(|cookie| {
+                    let mut parts = cookie.trim().splitn(2, '=');
+                    match (parts.next(), parts.next()) {
+                        (Some("session_id"), Some(id)) => Some(id.to_string()),
+                        _ => None,
+                    }
+                })
             })
             .ok_or(AuthError::MissingSession)?;
 
@@ -412,16 +439,24 @@ pub async fn login(
     Json(req): Json<LoginRequest>,
 ) -> Result<Response, AuthError> {
     // Verify credentials
-    let user = app_state.auth.user_store
+    let user = app_state
+        .auth
+        .user_store
         .verify_credentials(&req.username, &req.password)
         .await
         .ok_or(AuthError::InvalidCredentials)?;
 
     // Update last login time
-    app_state.auth.user_store.update_last_login(&req.username).await;
+    app_state
+        .auth
+        .user_store
+        .update_last_login(&req.username)
+        .await;
 
     // Create session
-    let session_id = app_state.auth.session_store
+    let session_id = app_state
+        .auth
+        .session_store
         .create_session(user.id, user.username.clone(), user.role)
         .await;
 
@@ -437,10 +472,7 @@ pub async fn login(
         role: user.role,
     });
 
-    Ok((
-        [(header::SET_COOKIE, cookie)],
-        response,
-    ).into_response())
+    Ok(([(header::SET_COOKIE, cookie)], response).into_response())
 }
 
 /// Logout handler
@@ -455,18 +487,20 @@ pub async fn logout(
         .get(header::COOKIE)
         .and_then(|cookie| cookie.to_str().ok())
         .and_then(|cookies| {
-            cookies
-                .split(';')
-                .find_map(|cookie| {
-                    let mut parts = cookie.trim().splitn(2, '=');
-                    match (parts.next(), parts.next()) {
-                        (Some("session_id"), Some(id)) => Some(id.to_string()),
-                        _ => None,
-                    }
-                })
+            cookies.split(';').find_map(|cookie| {
+                let mut parts = cookie.trim().splitn(2, '=');
+                match (parts.next(), parts.next()) {
+                    (Some("session_id"), Some(id)) => Some(id.to_string()),
+                    _ => None,
+                }
+            })
         })
     {
-        app_state.auth.session_store.delete_session(&session_id).await;
+        app_state
+            .auth
+            .session_store
+            .delete_session(&session_id)
+            .await;
     }
 
     // Clear cookie
@@ -504,13 +538,17 @@ pub async fn change_password(
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<impl IntoResponse, AuthError> {
     // Verify current password
-    let user = app_state.auth.user_store
+    let user = app_state
+        .auth
+        .user_store
         .verify_credentials(&auth_user.session.username, &req.current_password)
         .await
         .ok_or(AuthError::InvalidCredentials)?;
 
     // Update password
-    app_state.auth.user_store
+    app_state
+        .auth
+        .user_store
         .update_password(&user.username, &req.new_password)
         .await
         .map_err(|_| AuthError::InternalError)?;
@@ -544,7 +582,9 @@ pub async fn create_user(
     _admin: AdminUser,
     Json(req): Json<CreateUserRequest>,
 ) -> Result<impl IntoResponse, AuthError> {
-    let id = app_state.auth.user_store
+    let id = app_state
+        .auth
+        .user_store
         .create_user(req.username.clone(), &req.password, req.role)
         .await
         .map_err(|_| AuthError::InternalError)?;
@@ -562,6 +602,7 @@ pub async fn session_middleware(
     mut req: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> Response {
-    req.extensions_mut().insert(app_state.auth.session_store.clone());
+    req.extensions_mut()
+        .insert(app_state.auth.session_store.clone());
     next.run(req).await
 }

@@ -4,15 +4,15 @@
 
 use crate::metrics::MetricsCollector;
 use axum::{
-    Router,
     extract::State,
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
-    http::StatusCode,
+    Router,
 };
 use prometheus::{Encoder, TextEncoder};
-use std::sync::Arc;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 /// Prometheus metrics exporter
 pub struct PrometheusExporter {
@@ -40,34 +40,31 @@ impl PrometheusExporter {
         tracing::info!("Prometheus exporter listening on {}", self.addr);
 
         let listener = tokio::net::TcpListener::bind(&self.addr).await?;
-        axum::serve(listener, app.into_make_service())
-            .await?;
+        axum::serve(listener, app.into_make_service()).await?;
 
         Ok(())
     }
 }
 
-async fn metrics_handler(
-    State(collector): State<Arc<MetricsCollector>>,
-) -> Response {
+async fn metrics_handler(State(collector): State<Arc<MetricsCollector>>) -> Response {
     let encoder = TextEncoder::new();
     let metric_families = collector.registry().gather();
 
     let mut buffer = Vec::new();
     match encoder.encode(&metric_families, &mut buffer) {
-        Ok(_) => {
-            (
-                StatusCode::OK,
-                [("Content-Type", encoder.format_type())],
-                buffer,
-            ).into_response()
-        }
+        Ok(_) => (
+            StatusCode::OK,
+            [("Content-Type", encoder.format_type())],
+            buffer,
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!("Failed to encode metrics: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to encode metrics: {}", e),
-            ).into_response()
+            )
+                .into_response()
         }
     }
 }

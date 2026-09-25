@@ -33,13 +33,13 @@ pub fn draw(frame: &mut Frame, app: &InstallerApp) {
     let disk_info = [
         ("Device", app.config.disk.device.display().to_string()),
         ("Scheme", app.config.disk.scheme.description().to_string()),
-        ("Filesystem", app.config.disk.filesystem.description().to_string()),
+        (
+            "Filesystem",
+            app.config.disk.filesystem.description().to_string(),
+        ),
         ("Swap", format!("{} MB", app.config.disk.swap_size_mb)),
     ];
-    let disk_refs: Vec<(&str, &str)> = disk_info
-        .iter()
-        .map(|(k, v)| (*k, v.as_str()))
-        .collect();
+    let disk_refs: Vec<(&str, &str)> = disk_info.iter().map(|(k, v)| (*k, v.as_str())).collect();
     draw_table(frame, left_chunks[0], "Disk", &disk_refs);
 
     // System info
@@ -49,10 +49,8 @@ pub fn draw(frame: &mut Frame, app: &InstallerApp) {
         ("Locale", app.config.system.locale.clone()),
         ("Bootloader", format!("{:?}", app.config.system.bootloader)),
     ];
-    let system_refs: Vec<(&str, &str)> = system_info
-        .iter()
-        .map(|(k, v)| (*k, v.as_str()))
-        .collect();
+    let system_refs: Vec<(&str, &str)> =
+        system_info.iter().map(|(k, v)| (*k, v.as_str())).collect();
     draw_table(frame, left_chunks[1], "System", &system_refs);
 
     // Right column: Services & Users
@@ -114,13 +112,23 @@ pub fn draw(frame: &mut Frame, app: &InstallerApp) {
     let confirm = vec![
         Line::from(""),
         Line::from(vec![
-            Span::styled("WARNING: ", Style::default().fg(Theme::WARNING).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "WARNING: ",
+                Style::default()
+                    .fg(Theme::WARNING)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("This will erase all data on the selected disk!"),
         ]),
         Line::from(""),
         Line::from(vec![
             Span::raw("Press "),
-            Span::styled("Enter", Style::default().fg(Theme::HIGHLIGHT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Enter",
+                Style::default()
+                    .fg(Theme::HIGHLIGHT)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" to start installation or "),
             Span::styled("Esc", Style::default().fg(Theme::HIGHLIGHT)),
             Span::raw(" to go back"),

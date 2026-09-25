@@ -3,11 +3,11 @@
 //! Uses content-defined chunking and SHA-256 hashing to detect and eliminate
 //! duplicate data across the WAN
 
-use sha2::{Sha256, Digest};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::{Deserialize, Serialize};
 
 /// Chunk size for deduplication (default 4KB)
 const DEFAULT_CHUNK_SIZE: usize = 4096;

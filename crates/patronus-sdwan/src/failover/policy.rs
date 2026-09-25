@@ -47,9 +47,9 @@ impl FailoverPolicy {
             name,
             primary_path_id,
             backup_path_ids,
-            failover_threshold: 50.0,  // Default: failover when degraded
-            failback_threshold: 80.0,  // Default: failback when healthy
-            failback_delay_secs: 60,   // Default: 1 minute stabilization
+            failover_threshold: 50.0, // Default: failover when degraded
+            failback_threshold: 80.0, // Default: failback when healthy
+            failback_delay_secs: 60,  // Default: 1 minute stabilization
             enabled: true,
         }
     }
@@ -217,7 +217,10 @@ mod tests {
             (PathId::new(30), 60.0),
             (PathId::new(40), 70.0),
         ];
-        assert_eq!(policy.get_best_backup(&backup_health), Some(PathId::new(20)));
+        assert_eq!(
+            policy.get_best_backup(&backup_health),
+            Some(PathId::new(20))
+        );
 
         // First backup is down, second is healthy
         let backup_health = vec![
@@ -225,7 +228,10 @@ mod tests {
             (PathId::new(30), 60.0),
             (PathId::new(40), 70.0),
         ];
-        assert_eq!(policy.get_best_backup(&backup_health), Some(PathId::new(30)));
+        assert_eq!(
+            policy.get_best_backup(&backup_health),
+            Some(PathId::new(30))
+        );
 
         // All backups down, return first anyway
         let backup_health = vec![
@@ -233,7 +239,10 @@ mod tests {
             (PathId::new(30), 20.0),
             (PathId::new(40), 10.0),
         ];
-        assert_eq!(policy.get_best_backup(&backup_health), Some(PathId::new(20)));
+        assert_eq!(
+            policy.get_best_backup(&backup_health),
+            Some(PathId::new(20))
+        );
     }
 
     #[test]

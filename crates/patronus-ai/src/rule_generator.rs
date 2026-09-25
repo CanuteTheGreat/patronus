@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use patronus_core::types::{FirewallRule, FirewallAction, ChainType};
+use patronus_core::types::{ChainType, FirewallAction, FirewallRule};
 use patronus_firewall::rules::RuleManager;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::models::{ThreatDetection, ThreatType};
-use crate::threat_intel::{ThreatIntelDB, ThreatCategory};
+use crate::threat_intel::{ThreatCategory, ThreatIntelDB};
 
 /// Auto-generated rule metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,12 +46,8 @@ impl Default for RuleGenPolicy {
         Self {
             min_confidence: 0.8,
             auto_approve: false,
-            auto_expire_secs: Some(24 * 3600),  // 24 hours
-            enabled_threats: vec![
-                ThreatType::PortScan,
-                ThreatType::SynFlood,
-                ThreatType::DDoS,
-            ],
+            auto_expire_secs: Some(24 * 3600), // 24 hours
+            enabled_threats: vec![ThreatType::PortScan, ThreatType::SynFlood, ThreatType::DDoS],
             max_rules: 1000,
         }
     }
@@ -96,7 +92,10 @@ impl RuleGenerator {
         // Check if we've hit the max rules limit
         let generated_count = self.generated_rules.read().await.len();
         if generated_count >= self.policy.max_rules {
-            warn!("Maximum auto-generated rules ({}) reached", self.policy.max_rules);
+            warn!(
+                "Maximum auto-generated rules ({}) reached",
+                self.policy.max_rules
+            );
             return Ok(None);
         }
 
@@ -107,33 +106,42 @@ impl RuleGenerator {
             id: uuid::Uuid::new_v4().to_string(),
             created_at: Utc::now(),
             rule,
-            reason: format!("{:?} detected with {:.0}% confidence",
-                detection.threat_type, detection.confidence * 100.0),
+            reason: format!(
+                "{:?} detected with {:.0}% confidence",
+                detection.threat_type,
+                detection.confidence * 100.0
+            ),
             threat_type: detection.threat_type.clone(),
             confidence: detection.confidence,
-            auto_expire: self.policy.auto_expire_secs.map(|secs| {
-                Utc::now() + chrono::Duration::seconds(secs as i64)
-            }),
+            auto_expire: self
+                .policy
+                .auto_expire_secs
+                .map(|secs| Utc::now() + chrono::Duration::seconds(secs as i64)),
         };
 
         if self.policy.auto_approve {
             // Auto-approve and apply
             self.apply_rule(&auto_rule).await?;
             self.generated_rules.write().await.push(auto_rule.clone());
-            info!("Auto-generated and applied rule for {}: {}",
-                detection.source_ip, auto_rule.reason);
+            info!(
+                "Auto-generated and applied rule for {}: {}",
+                detection.source_ip, auto_rule.reason
+            );
         } else {
             // Queue for manual approval
             self.pending_approval.write().await.push(auto_rule.clone());
-            info!("Generated rule pending approval for {}: {}",
-                detection.source_ip, auto_rule.reason);
+            info!(
+                "Generated rule pending approval for {}: {}",
+                detection.source_ip, auto_rule.reason
+            );
         }
 
         Ok(Some(auto_rule))
     }
 
     async fn generate_rule_for_threat(&self, detection: &ThreatDetection) -> Result<FirewallRule> {
-        let name = format!("AUTO-{}-{}",
+        let name = format!(
+            "AUTO-{}-{}",
             detection.threat_type.to_string().to_uppercase(),
             Utc::now().timestamp()
         );
@@ -226,7 +234,9 @@ impl RuleGenerator {
     }
 
     async fn apply_rule(&self, auto_rule: &AutoRule) -> Result<()> {
-        self.rule_manager.add_filter_rule(auto_rule.rule.clone()).await
+        self.rule_manager
+            .add_filter_rule(auto_rule.rule.clone())
+            .await
             .map_err(|e| anyhow::anyhow!("Failed to add rule: {}", e))
     }
 
@@ -241,7 +251,10 @@ impl RuleGenerator {
             info!("Approved and applied rule: {}", auto_rule.rule.name);
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Rule {} not found in pending approval", rule_id))
+            Err(anyhow::anyhow!(
+                "Rule {} not found in pending approval",
+                rule_id
+            ))
         }
     }
 
@@ -254,7 +267,10 @@ impl RuleGenerator {
             info!("Rejected rule: {}", auto_rule.rule.name);
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Rule {} not found in pending approval", rule_id))
+            Err(anyhow::anyhow!(
+                "Rule {} not found in pending approval",
+                rule_id
+            ))
         }
     }
 
@@ -303,7 +319,7 @@ impl RuleGenerator {
     pub async fn start_cleanup_task(self: Arc<Self>) {
         info!("Starting rule cleanup task");
 
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));  // Every 5 minutes
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // Every 5 minutes
 
         loop {
             interval.tick().await;
@@ -327,7 +343,8 @@ impl RuleGenerator {
             }
 
             // Get highest confidence threat (use total_cmp to handle NaN safely)
-            let best_threat = match threats.iter()
+            let best_threat = match threats
+                .iter()
                 .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
             {
                 Some(threat) => threat,
@@ -340,7 +357,8 @@ impl RuleGenerator {
 
             let rule = FirewallRule {
                 id: None,
-                name: format!("THREAT-INTEL-{}-{}",
+                name: format!(
+                    "THREAT-INTEL-{}-{}",
                     ip.replace('.', "-"),
                     Utc::now().timestamp()
                 ),
@@ -356,7 +374,10 @@ impl RuleGenerator {
                 interface_out: None,
                 comment: Some(format!(
                     "Threat Intel: {:?} - confidence {:.1}%",
-                    best_threat.categories.first().unwrap_or(&ThreatCategory::Unknown),
+                    best_threat
+                        .categories
+                        .first()
+                        .unwrap_or(&ThreatCategory::Unknown),
                     best_threat.confidence * 100.0
                 )),
             };
@@ -368,9 +389,10 @@ impl RuleGenerator {
                 reason: format!("Threat intelligence: {:?}", best_threat.source),
                 threat_type: ThreatType::Unknown,
                 confidence: best_threat.confidence,
-                auto_expire: self.policy.auto_expire_secs.map(|secs| {
-                    Utc::now() + chrono::Duration::seconds(secs as i64)
-                }),
+                auto_expire: self
+                    .policy
+                    .auto_expire_secs
+                    .map(|secs| Utc::now() + chrono::Duration::seconds(secs as i64)),
             };
 
             if self.policy.auto_approve {
@@ -383,7 +405,10 @@ impl RuleGenerator {
             new_rules.push(auto_rule);
         }
 
-        info!("Generated {} rules from threat intelligence", new_rules.len());
+        info!(
+            "Generated {} rules from threat intelligence",
+            new_rules.len()
+        );
         Ok(new_rules)
     }
 }

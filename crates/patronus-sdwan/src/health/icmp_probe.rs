@@ -3,12 +3,12 @@
 //! This module provides real ICMP Echo Request/Reply probing for network
 //! path health monitoring. Requires CAP_NET_RAW capability or root privileges.
 
+use socket2::{Domain, Protocol, Socket, Type};
 use std::mem::MaybeUninit;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use socket2::{Domain, Protocol, Socket, Type};
 
 /// Errors that can occur during ICMP probing
 #[derive(Debug, thiserror::Error)]
@@ -102,14 +102,13 @@ impl IcmpProber {
     /// Create a new ICMP prober with custom timeout
     pub fn with_timeout(timeout: Duration) -> Result<Self, IcmpError> {
         // Try to create raw socket for ICMP
-        let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::PermissionDenied {
-                    IcmpError::InsufficientPermissions
-                } else {
-                    IcmpError::NetworkError(e)
-                }
-            })?;
+        let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4)).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                IcmpError::InsufficientPermissions
+            } else {
+                IcmpError::NetworkError(e)
+            }
+        })?;
 
         // Set socket timeout
         socket.set_read_timeout(Some(timeout))?;
@@ -156,15 +155,15 @@ impl IcmpProber {
         let target_addr: std::net::SocketAddr = format!("{}:0", target).parse().unwrap();
 
         // Send in blocking task to avoid blocking async runtime
-        tokio::task::spawn_blocking(move || {
-            socket.send_to(&packet, &target_addr.into())
-        })
-        .await
-        .map_err(|e| IcmpError::NetworkError(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))?
-        .map_err(IcmpError::NetworkError)?;
+        tokio::task::spawn_blocking(move || socket.send_to(&packet, &target_addr.into()))
+            .await
+            .map_err(|e| {
+                IcmpError::NetworkError(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
+            })?
+            .map_err(IcmpError::NetworkError)?;
 
         // Wait for reply
         let reply = self.recv_echo_reply(seq).await?;
@@ -189,7 +188,7 @@ impl IcmpProber {
         // ICMP Header
         packet[0] = 8; // Type: Echo Request
         packet[1] = 0; // Code: 0
-        // [2-3] Checksum (calculated later)
+                       // [2-3] Checksum (calculated later)
         packet[4..6].copy_from_slice(&self.identifier.to_be_bytes());
         packet[6..8].copy_from_slice(&seq.to_be_bytes());
 

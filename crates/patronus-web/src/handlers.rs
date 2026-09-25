@@ -1,17 +1,17 @@
 //! Web request handlers
 
+use askama::Template;
 use axum::{
     extract::State,
     response::{Html, IntoResponse, Json},
 };
-use askama::Template;
 use patronus_network;
 use serde_json::json;
-use sysinfo::{System, Disks, Networks};
+use sysinfo::{Disks, Networks, System};
 
 use crate::{
     state::AppState,
-    templates::{DashboardTemplate, SystemInfo, InterfaceInfo, FirewallTemplate, Alias},
+    templates::{Alias, DashboardTemplate, FirewallTemplate, InterfaceInfo, SystemInfo},
 };
 
 /// Get system metrics using sysinfo
@@ -33,7 +33,9 @@ fn get_system_metrics() -> (f32, f32, f32, (f64, f64, f64), u64) {
 
     // Disk usage (percentage of root filesystem)
     let disks = Disks::new_with_refreshed_list();
-    let disk_usage = disks.list().iter()
+    let disk_usage = disks
+        .list()
+        .iter()
         .find(|d| d.mount_point() == std::path::Path::new("/"))
         .map(|d| {
             let total = d.total_space();
@@ -52,17 +54,22 @@ fn get_system_metrics() -> (f32, f32, f32, (f64, f64, f64), u64) {
     // Uptime
     let uptime = System::uptime();
 
-    (cpu_usage, memory_usage, disk_usage, (load_avg.one, load_avg.five, load_avg.fifteen), uptime)
+    (
+        cpu_usage,
+        memory_usage,
+        disk_usage,
+        (load_avg.one, load_avg.five, load_avg.fifteen),
+        uptime,
+    )
 }
 
 /// Get network interface traffic stats
 fn get_interface_traffic() -> std::collections::HashMap<String, (u64, u64)> {
     let networks = Networks::new_with_refreshed_list();
-    networks.list()
+    networks
+        .list()
         .iter()
-        .map(|(name, data)| {
-            (name.clone(), (data.received(), data.transmitted()))
-        })
+        .map(|(name, data)| (name.clone(), (data.received(), data.transmitted())))
         .collect()
 }
 
@@ -73,27 +80,40 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
     let traffic_stats = get_interface_traffic();
 
     // Convert interfaces to template format
-    let interfaces = patronus_network::list_interfaces().await
+    let interfaces = patronus_network::list_interfaces()
+        .await
         .unwrap_or_default()
         .into_iter()
         .map(|iface| {
-            let (rx_bytes, tx_bytes) = traffic_stats.get(&iface.name)
-                .copied()
-                .unwrap_or((0, 0));
+            let (rx_bytes, tx_bytes) = traffic_stats.get(&iface.name).copied().unwrap_or((0, 0));
 
             InterfaceInfo {
                 name: iface.name.clone(),
-                state: if iface.enabled { "UP".to_string() } else { "DOWN".to_string() },
+                state: if iface.enabled {
+                    "UP".to_string()
+                } else {
+                    "DOWN".to_string()
+                },
                 ip_address: iface.ip_addresses.first().map(|ip| ip.to_string()),
                 ip_addresses: iface.ip_addresses.iter().map(|ip| ip.to_string()).collect(),
-                mac_address: iface.mac_address.clone().unwrap_or_else(|| "N/A".to_string()),
+                mac_address: iface
+                    .mac_address
+                    .clone()
+                    .unwrap_or_else(|| "N/A".to_string()),
                 rx_bytes,
                 tx_bytes,
                 mtu: iface.mtu,
                 enabled: iface.enabled,
                 interface_type: "Ethernet".to_string(), // Default type
-                ip_display: iface.ip_addresses.first().map(|ip| ip.to_string()).unwrap_or_else(|| "N/A".to_string()),
-                mac_display: iface.mac_address.clone().unwrap_or_else(|| "N/A".to_string()),
+                ip_display: iface
+                    .ip_addresses
+                    .first()
+                    .map(|ip| ip.to_string())
+                    .unwrap_or_else(|| "N/A".to_string()),
+                mac_display: iface
+                    .mac_address
+                    .clone()
+                    .unwrap_or_else(|| "N/A".to_string()),
                 speed_display: "1 Gbps".to_string(), // Default speed
             }
         })
@@ -102,7 +122,8 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
     let active_rules = state.firewall.list_rules().await.unwrap_or_default().len();
 
     // Count VPN interfaces (wg* or tun* interfaces)
-    let vpn_connections = patronus_network::list_interfaces().await
+    let vpn_connections = patronus_network::list_interfaces()
+        .await
         .unwrap_or_default()
         .iter()
         .filter(|iface| iface.name.starts_with("wg") || iface.name.starts_with("tun"))
@@ -138,7 +159,6 @@ pub async fn list_interfaces() -> impl IntoResponse {
         Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
     }
 }
-
 
 /// Firewall management page
 pub async fn firewall_page(State(state): State<AppState>) -> impl IntoResponse {

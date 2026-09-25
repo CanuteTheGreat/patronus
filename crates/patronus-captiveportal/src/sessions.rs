@@ -1,9 +1,9 @@
 //! Client session management
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
-use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,7 +53,8 @@ impl SessionManager {
     }
 
     pub async fn get_by_mac(&self, mac: &str) -> Option<&ClientSession> {
-        self.mac_to_session.get(mac)
+        self.mac_to_session
+            .get(mac)
             .and_then(|id| self.sessions.get(id))
     }
 

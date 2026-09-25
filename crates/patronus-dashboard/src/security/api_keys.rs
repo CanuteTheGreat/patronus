@@ -62,17 +62,13 @@ impl ApiKeyManager {
         .await?;
 
         // Create indexes
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)",
-        )
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)")
+            .execute(&self.pool)
+            .await?;
 
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix)",
-        )
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix)")
+            .execute(&self.pool)
+            .await?;
 
         Ok(())
     }
@@ -162,21 +158,18 @@ impl ApiKeyManager {
 
             // Check if expired
             if let Some(expires_at_str) = expires_at {
-                let expires_at = DateTime::parse_from_rfc3339(&expires_at_str)?
-                    .with_timezone(&Utc);
+                let expires_at = DateTime::parse_from_rfc3339(&expires_at_str)?.with_timezone(&Utc);
                 if Utc::now() > expires_at {
                     return Err(anyhow!("API key expired"));
                 }
             }
 
             // Update last used
-            let _ = sqlx::query(
-                "UPDATE api_keys SET last_used_at = ? WHERE key_hash = ?",
-            )
-            .bind(Utc::now().to_rfc3339())
-            .bind(&key_hash)
-            .execute(&self.pool)
-            .await;
+            let _ = sqlx::query("UPDATE api_keys SET last_used_at = ? WHERE key_hash = ?")
+                .bind(Utc::now().to_rfc3339())
+                .bind(&key_hash)
+                .execute(&self.pool)
+                .await;
 
             let scopes: Vec<String> = serde_json::from_str(&scopes_json)?;
 
@@ -220,13 +213,11 @@ impl ApiKeyManager {
 
     /// Revoke an API key
     pub async fn revoke_key(&self, key_id: &str, user_id: &str) -> Result<()> {
-        let result = sqlx::query(
-            "UPDATE api_keys SET enabled = 0 WHERE id = ? AND user_id = ?",
-        )
-        .bind(key_id)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await?;
+        let result = sqlx::query("UPDATE api_keys SET enabled = 0 WHERE id = ? AND user_id = ?")
+            .bind(key_id)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
 
         if result.rows_affected() == 0 {
             return Err(anyhow!("API key not found"));
@@ -237,13 +228,11 @@ impl ApiKeyManager {
 
     /// Delete an API key
     pub async fn delete_key(&self, key_id: &str, user_id: &str) -> Result<()> {
-        let result = sqlx::query(
-            "DELETE FROM api_keys WHERE id = ? AND user_id = ?",
-        )
-        .bind(key_id)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await?;
+        let result = sqlx::query("DELETE FROM api_keys WHERE id = ? AND user_id = ?")
+            .bind(key_id)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
 
         if result.rows_affected() == 0 {
             return Err(anyhow!("API key not found"));
@@ -254,12 +243,11 @@ impl ApiKeyManager {
 
     /// Clean up expired keys
     pub async fn cleanup_expired(&self) -> Result<usize> {
-        let result = sqlx::query(
-            "DELETE FROM api_keys WHERE expires_at IS NOT NULL AND expires_at < ?",
-        )
-        .bind(Utc::now().to_rfc3339())
-        .execute(&self.pool)
-        .await?;
+        let result =
+            sqlx::query("DELETE FROM api_keys WHERE expires_at IS NOT NULL AND expires_at < ?")
+                .bind(Utc::now().to_rfc3339())
+                .execute(&self.pool)
+                .await?;
 
         Ok(result.rows_affected() as usize)
     }
@@ -278,10 +266,7 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_test_db() -> SqlitePool {
-        SqlitePoolOptions::new()
-            .connect(":memory:")
-            .await
-            .unwrap()
+        SqlitePoolOptions::new().connect(":memory:").await.unwrap()
     }
 
     #[tokio::test]

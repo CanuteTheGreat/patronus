@@ -125,7 +125,11 @@ async fn test_health_response_time() {
 
         assert_eq!(response.status(), 200);
         // Health checks should be fast (< 100ms)
-        assert!(elapsed.as_millis() < 100, "Health check took {}ms", elapsed.as_millis());
+        assert!(
+            elapsed.as_millis() < 100,
+            "Health check took {}ms",
+            elapsed.as_millis()
+        );
     }
 }
 

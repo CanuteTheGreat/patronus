@@ -2,12 +2,12 @@
 //!
 //! Multi-tenant SaaS platform for managed SD-WAN services
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SubscriptionTier {
@@ -143,7 +143,11 @@ impl SaaSPlatform {
         tenants.get(id).cloned()
     }
 
-    pub async fn create_subscription(&self, tenant_id: Uuid, tier: SubscriptionTier) -> Option<Uuid> {
+    pub async fn create_subscription(
+        &self,
+        tenant_id: Uuid,
+        tier: SubscriptionTier,
+    ) -> Option<Uuid> {
         let subscription = Subscription::new(tenant_id, tier);
         let sub_id = subscription.id;
 
@@ -166,7 +170,11 @@ impl SaaSPlatform {
         subscriptions.get(id).cloned()
     }
 
-    pub async fn upgrade_subscription(&self, subscription_id: &Uuid, new_tier: SubscriptionTier) -> bool {
+    pub async fn upgrade_subscription(
+        &self,
+        subscription_id: &Uuid,
+        new_tier: SubscriptionTier,
+    ) -> bool {
         let mut subscriptions = self.subscriptions.write().await;
         if let Some(subscription) = subscriptions.get_mut(subscription_id) {
             subscription.tier = new_tier;
@@ -188,7 +196,10 @@ impl SaaSPlatform {
 
     pub async fn record_usage(&self, tenant_id: Uuid, metrics: UsageMetrics) {
         let mut usage = self.usage_metrics.write().await;
-        usage.entry(tenant_id).or_insert_with(Vec::new).push(metrics);
+        usage
+            .entry(tenant_id)
+            .or_insert_with(Vec::new)
+            .push(metrics);
     }
 
     pub async fn get_usage_history(&self, tenant_id: &Uuid) -> Vec<UsageMetrics> {
@@ -220,18 +231,20 @@ impl SaaSPlatform {
             return false;
         }
 
-        sites <= subscription.tier.max_sites() &&
-        bandwidth_gbps <= subscription.tier.max_bandwidth_gbps()
+        sites <= subscription.tier.max_sites()
+            && bandwidth_gbps <= subscription.tier.max_bandwidth_gbps()
     }
 
     pub async fn list_active_tenants(&self) -> Vec<Tenant> {
         let tenants = self.tenants.read().await;
         let subscriptions = self.subscriptions.read().await;
 
-        tenants.values()
+        tenants
+            .values()
             .filter(|t| {
                 if let Some(sub_id) = t.subscription_id {
-                    subscriptions.get(&sub_id)
+                    subscriptions
+                        .get(&sub_id)
                         .map(|s| s.is_active())
                         .unwrap_or(false)
                 } else {
@@ -247,16 +260,16 @@ impl SaaSPlatform {
         let subscriptions = self.subscriptions.read().await;
 
         let total_tenants = tenants.len();
-        let active_subscriptions = subscriptions.values()
-            .filter(|s| s.is_active())
-            .count();
+        let active_subscriptions = subscriptions.values().filter(|s| s.is_active()).count();
 
-        let tier_counts = subscriptions.values()
-            .filter(|s| s.is_active())
-            .fold(HashMap::new(), |mut acc, s| {
-                *acc.entry(format!("{:?}", s.tier)).or_insert(0) += 1;
-                acc
-            });
+        let tier_counts =
+            subscriptions
+                .values()
+                .filter(|s| s.is_active())
+                .fold(HashMap::new(), |mut acc, s| {
+                    *acc.entry(format!("{:?}", s.tier)).or_insert(0) += 1;
+                    acc
+                });
 
         PlatformStats {
             total_tenants,
@@ -316,10 +329,9 @@ mod tests {
     #[tokio::test]
     async fn test_platform_create_tenant() {
         let platform = SaaSPlatform::new();
-        let tenant_id = platform.create_tenant(
-            "Test Corp".to_string(),
-            "test@example.com".to_string()
-        ).await;
+        let tenant_id = platform
+            .create_tenant("Test Corp".to_string(), "test@example.com".to_string())
+            .await;
 
         let tenant = platform.get_tenant(&tenant_id).await;
         assert!(tenant.is_some());
@@ -329,12 +341,13 @@ mod tests {
     #[tokio::test]
     async fn test_create_subscription() {
         let platform = SaaSPlatform::new();
-        let tenant_id = platform.create_tenant(
-            "Test Corp".to_string(),
-            "test@example.com".to_string()
-        ).await;
+        let tenant_id = platform
+            .create_tenant("Test Corp".to_string(), "test@example.com".to_string())
+            .await;
 
-        let sub_id = platform.create_subscription(tenant_id, SubscriptionTier::Starter).await;
+        let sub_id = platform
+            .create_subscription(tenant_id, SubscriptionTier::Starter)
+            .await;
         assert!(sub_id.is_some());
 
         let subscription = platform.get_subscription(&sub_id.unwrap()).await;
@@ -345,10 +358,19 @@ mod tests {
     #[tokio::test]
     async fn test_upgrade_subscription() {
         let platform = SaaSPlatform::new();
-        let tenant_id = platform.create_tenant("Test".to_string(), "test@test.com".to_string()).await;
-        let sub_id = platform.create_subscription(tenant_id, SubscriptionTier::Free).await.unwrap();
+        let tenant_id = platform
+            .create_tenant("Test".to_string(), "test@test.com".to_string())
+            .await;
+        let sub_id = platform
+            .create_subscription(tenant_id, SubscriptionTier::Free)
+            .await
+            .unwrap();
 
-        assert!(platform.upgrade_subscription(&sub_id, SubscriptionTier::Professional).await);
+        assert!(
+            platform
+                .upgrade_subscription(&sub_id, SubscriptionTier::Professional)
+                .await
+        );
 
         let sub = platform.get_subscription(&sub_id).await.unwrap();
         assert_eq!(sub.tier, SubscriptionTier::Professional);
@@ -357,8 +379,13 @@ mod tests {
     #[tokio::test]
     async fn test_cancel_subscription() {
         let platform = SaaSPlatform::new();
-        let tenant_id = platform.create_tenant("Test".to_string(), "test@test.com".to_string()).await;
-        let sub_id = platform.create_subscription(tenant_id, SubscriptionTier::Starter).await.unwrap();
+        let tenant_id = platform
+            .create_tenant("Test".to_string(), "test@test.com".to_string())
+            .await;
+        let sub_id = platform
+            .create_subscription(tenant_id, SubscriptionTier::Starter)
+            .await
+            .unwrap();
 
         assert!(platform.cancel_subscription(&sub_id).await);
 
@@ -369,7 +396,9 @@ mod tests {
     #[tokio::test]
     async fn test_usage_tracking() {
         let platform = SaaSPlatform::new();
-        let tenant_id = platform.create_tenant("Test".to_string(), "test@test.com".to_string()).await;
+        let tenant_id = platform
+            .create_tenant("Test".to_string(), "test@test.com".to_string())
+            .await;
 
         let metrics = UsageMetrics {
             tenant_id,
@@ -391,8 +420,12 @@ mod tests {
     #[tokio::test]
     async fn test_check_quota_within_limits() {
         let platform = SaaSPlatform::new();
-        let tenant_id = platform.create_tenant("Test".to_string(), "test@test.com".to_string()).await;
-        platform.create_subscription(tenant_id, SubscriptionTier::Professional).await;
+        let tenant_id = platform
+            .create_tenant("Test".to_string(), "test@test.com".to_string())
+            .await;
+        platform
+            .create_subscription(tenant_id, SubscriptionTier::Professional)
+            .await;
 
         assert!(platform.check_quota(&tenant_id, 50, 50.0).await);
     }
@@ -400,24 +433,41 @@ mod tests {
     #[tokio::test]
     async fn test_check_quota_exceeds_limits() {
         let platform = SaaSPlatform::new();
-        let tenant_id = platform.create_tenant("Test".to_string(), "test@test.com".to_string()).await;
-        platform.create_subscription(tenant_id, SubscriptionTier::Free).await;
+        let tenant_id = platform
+            .create_tenant("Test".to_string(), "test@test.com".to_string())
+            .await;
+        platform
+            .create_subscription(tenant_id, SubscriptionTier::Free)
+            .await;
 
         assert!(!platform.check_quota(&tenant_id, 10, 1.0).await); // Exceeds site limit
-        assert!(!platform.check_quota(&tenant_id, 2, 5.0).await);  // Exceeds bandwidth limit
+        assert!(!platform.check_quota(&tenant_id, 2, 5.0).await); // Exceeds bandwidth limit
     }
 
     #[tokio::test]
     async fn test_list_active_tenants() {
         let platform = SaaSPlatform::new();
 
-        let t1 = platform.create_tenant("Active1".to_string(), "a1@test.com".to_string()).await;
-        let t2 = platform.create_tenant("Active2".to_string(), "a2@test.com".to_string()).await;
-        let t3 = platform.create_tenant("Inactive".to_string(), "i@test.com".to_string()).await;
+        let t1 = platform
+            .create_tenant("Active1".to_string(), "a1@test.com".to_string())
+            .await;
+        let t2 = platform
+            .create_tenant("Active2".to_string(), "a2@test.com".to_string())
+            .await;
+        let t3 = platform
+            .create_tenant("Inactive".to_string(), "i@test.com".to_string())
+            .await;
 
-        platform.create_subscription(t1, SubscriptionTier::Starter).await;
-        platform.create_subscription(t2, SubscriptionTier::Professional).await;
-        let sub3 = platform.create_subscription(t3, SubscriptionTier::Free).await.unwrap();
+        platform
+            .create_subscription(t1, SubscriptionTier::Starter)
+            .await;
+        platform
+            .create_subscription(t2, SubscriptionTier::Professional)
+            .await;
+        let sub3 = platform
+            .create_subscription(t3, SubscriptionTier::Free)
+            .await
+            .unwrap();
 
         platform.cancel_subscription(&sub3).await;
 
@@ -429,11 +479,19 @@ mod tests {
     async fn test_platform_stats() {
         let platform = SaaSPlatform::new();
 
-        let t1 = platform.create_tenant("T1".to_string(), "t1@test.com".to_string()).await;
-        let t2 = platform.create_tenant("T2".to_string(), "t2@test.com".to_string()).await;
+        let t1 = platform
+            .create_tenant("T1".to_string(), "t1@test.com".to_string())
+            .await;
+        let t2 = platform
+            .create_tenant("T2".to_string(), "t2@test.com".to_string())
+            .await;
 
-        platform.create_subscription(t1, SubscriptionTier::Starter).await;
-        platform.create_subscription(t2, SubscriptionTier::Professional).await;
+        platform
+            .create_subscription(t1, SubscriptionTier::Starter)
+            .await;
+        platform
+            .create_subscription(t2, SubscriptionTier::Professional)
+            .await;
 
         let stats = platform.get_platform_stats().await;
         assert_eq!(stats.total_tenants, 2);

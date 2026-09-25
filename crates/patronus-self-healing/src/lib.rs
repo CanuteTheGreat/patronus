@@ -3,9 +3,12 @@
 //! Automatic detection and remediation of network issues
 
 pub mod detector;
-pub mod remediation;
 pub mod healing_loop;
+pub mod remediation;
 
-pub use detector::{Issue, IssueDetector, IssueType, IssueSeverity};
-pub use remediation::{RemediationAction, RemediationAttempt, RemediationEngine, RemediationExecutor, RemediationStatus};
+pub use detector::{Issue, IssueDetector, IssueSeverity, IssueType};
 pub use healing_loop::{HealingLoop, HealingStats};
+pub use remediation::{
+    RemediationAction, RemediationAttempt, RemediationEngine, RemediationExecutor,
+    RemediationStatus,
+};

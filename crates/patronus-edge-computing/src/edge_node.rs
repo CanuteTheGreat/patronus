@@ -91,7 +91,8 @@ impl EdgeNodeManager {
 
     pub async fn get_online_nodes(&self) -> Vec<EdgeNode> {
         let nodes = self.nodes.read().await;
-        nodes.values()
+        nodes
+            .values()
             .filter(|n| n.status == NodeStatus::Online)
             .cloned()
             .collect()
@@ -99,7 +100,8 @@ impl EdgeNodeManager {
 
     pub async fn find_least_loaded_node(&self) -> Option<EdgeNode> {
         let nodes = self.nodes.read().await;
-        nodes.values()
+        nodes
+            .values()
             .filter(|n| n.status == NodeStatus::Online && !n.is_overloaded())
             .min_by(|a, b| {
                 let load_a = a.cpu_usage_percent + a.memory_usage_percent;

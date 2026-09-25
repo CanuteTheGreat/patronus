@@ -3,14 +3,12 @@
 // This module builds the complete GraphQL schema with queries,
 // mutations, and subscriptions.
 
-use async_graphql::{Schema, EmptySubscription};
 use crate::graphql::{
-    queries::QueryRoot,
-    mutations::MutationRoot,
-    subscriptions::SubscriptionRoot,
+    mutations::MutationRoot, queries::QueryRoot, subscriptions::SubscriptionRoot,
 };
-use std::sync::Arc;
 use crate::state::AppState;
+use async_graphql::{EmptySubscription, Schema};
+use std::sync::Arc;
 
 /// The complete GraphQL schema type
 pub type AppSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
@@ -40,7 +38,9 @@ pub fn build_schema(state: Arc<AppState>) -> AppSchema {
 
 /// Build a simpler schema without subscriptions (for testing)
 #[allow(dead_code)]
-pub fn build_simple_schema(state: Arc<AppState>) -> Schema<QueryRoot, MutationRoot, EmptySubscription> {
+pub fn build_simple_schema(
+    state: Arc<AppState>,
+) -> Schema<QueryRoot, MutationRoot, EmptySubscription> {
     Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(state)
         .limit_complexity(100)
@@ -161,7 +161,11 @@ mod tests {
 
         let result = schema.execute(query).await;
         // Metrics should now return real data
-        assert!(result.errors.is_empty(), "Metrics query failed with errors: {:?}", result.errors);
+        assert!(
+            result.errors.is_empty(),
+            "Metrics query failed with errors: {:?}",
+            result.errors
+        );
 
         let data = result.data.into_json().unwrap();
         assert!(data["metrics"]["cpuUsage"].as_f64().unwrap() >= 0.0);
@@ -200,7 +204,11 @@ mod tests {
 
         let req = async_graphql::Request::new(query).data(auth_ctx);
         let result = schema.execute(req).await;
-        assert!(result.errors.is_empty(), "createSite mutation failed with errors: {:?}", result.errors);
+        assert!(
+            result.errors.is_empty(),
+            "createSite mutation failed with errors: {:?}",
+            result.errors
+        );
 
         let data = result.data.into_json().unwrap();
         assert_eq!(data["createSite"]["name"], "Test Site");
@@ -254,7 +262,11 @@ mod tests {
         let req = async_graphql::Request::new(query).data(auth_ctx);
         let result = schema.execute(req).await;
         // This should succeed as it's within complexity limits
-        assert!(result.errors.is_empty(), "Query failed with errors: {:?}", result.errors);
+        assert!(
+            result.errors.is_empty(),
+            "Query failed with errors: {:?}",
+            result.errors
+        );
     }
 
     #[tokio::test]
@@ -284,6 +296,9 @@ mod tests {
         let data = result.data.into_json().unwrap();
         assert_eq!(data["__schema"]["queryType"]["name"], "QueryRoot");
         assert_eq!(data["__schema"]["mutationType"]["name"], "MutationRoot");
-        assert_eq!(data["__schema"]["subscriptionType"]["name"], "SubscriptionRoot");
+        assert_eq!(
+            data["__schema"]["subscriptionType"]["name"],
+            "SubscriptionRoot"
+        );
     }
 }

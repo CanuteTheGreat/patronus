@@ -30,12 +30,12 @@ pub struct HealthThresholds {
 impl Default for HealthThresholds {
     fn default() -> Self {
         Self {
-            max_latency_ms: 100.0,      // 100ms threshold
-            max_packet_loss_pct: 2.0,   // 2% loss threshold
-            max_jitter_ms: 10.0,        // 10ms jitter threshold
-            latency_weight: 0.40,       // 40% weight
-            loss_weight: 0.40,          // 40% weight
-            jitter_weight: 0.20,        // 20% weight
+            max_latency_ms: 100.0,    // 100ms threshold
+            max_packet_loss_pct: 2.0, // 2% loss threshold
+            max_jitter_ms: 10.0,      // 10ms jitter threshold
+            latency_weight: 0.40,     // 40% weight
+            loss_weight: 0.40,        // 40% weight
+            jitter_weight: 0.20,      // 20% weight
         }
     }
 }

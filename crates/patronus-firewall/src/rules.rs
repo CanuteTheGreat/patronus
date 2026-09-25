@@ -1,6 +1,9 @@
 //! Firewall rule management
 
-use patronus_core::{types::{FirewallRule, NatRule}, Result};
+use patronus_core::{
+    types::{FirewallRule, NatRule},
+    Result,
+};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -61,8 +64,11 @@ impl RuleManager {
                 }
             }
 
-            tracing::info!("Applied {} filter rules and {} NAT rules",
-                filter_rules.len(), nat_rules.len());
+            tracing::info!(
+                "Applied {} filter rules and {} NAT rules",
+                filter_rules.len(),
+                nat_rules.len()
+            );
         }
         Ok(())
     }

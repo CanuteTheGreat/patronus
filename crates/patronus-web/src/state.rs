@@ -1,9 +1,9 @@
 //! Application state with full implementations
 
-use patronus_config::ConfigStore;
-use patronus_firewall::RuleManager;
-use patronus_core::types::{FirewallRule as CoreFirewallRule, ChainType, FirewallAction};
 use crate::auth::AuthState;
+use patronus_config::ConfigStore;
+use patronus_core::types::{ChainType, FirewallAction, FirewallRule as CoreFirewallRule};
+use patronus_firewall::RuleManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -20,10 +20,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(
-        rule_manager: RuleManager,
-        config_store: ConfigStore,
-    ) -> Self {
+    pub fn new(rule_manager: RuleManager, config_store: ConfigStore) -> Self {
         Self {
             firewall: Arc::new(FirewallManager::new(rule_manager)),
             vpn: Arc::new(VpnManager::new()),
@@ -135,18 +132,16 @@ impl FirewallManager {
             },
         ];
 
-        let default_nat_rules = vec![
-            crate::templates::NatRule {
-                id: 1,
-                rule_type: "SNAT".to_string(),
-                interface: "wan".to_string(),
-                source: "10.0.0.0/8".to_string(),
-                destination: "any".to_string(),
-                target: "masquerade".to_string(),
-                description: "Masquerade outbound traffic".to_string(),
-                enabled: true,
-            },
-        ];
+        let default_nat_rules = vec![crate::templates::NatRule {
+            id: 1,
+            rule_type: "SNAT".to_string(),
+            interface: "wan".to_string(),
+            source: "10.0.0.0/8".to_string(),
+            destination: "any".to_string(),
+            target: "masquerade".to_string(),
+            description: "Masquerade outbound traffic".to_string(),
+            enabled: true,
+        }];
 
         let default_aliases = vec![
             crate::templates::Alias {
@@ -179,12 +174,18 @@ impl FirewallManager {
         Ok(rules.clone())
     }
 
-    pub async fn get_rule(&self, id: u32) -> anyhow::Result<Option<crate::templates::FirewallRule>> {
+    pub async fn get_rule(
+        &self,
+        id: u32,
+    ) -> anyhow::Result<Option<crate::templates::FirewallRule>> {
         let rules = self.rules.read().await;
         Ok(rules.iter().find(|r| r.id == id).cloned())
     }
 
-    pub async fn add_rule(&self, rule: crate::routes::api::firewall::FirewallRule) -> anyhow::Result<u32> {
+    pub async fn add_rule(
+        &self,
+        rule: crate::routes::api::firewall::FirewallRule,
+    ) -> anyhow::Result<u32> {
         let mut next_id = self.next_id.write().await;
         let id = *next_id;
         *next_id += 1;
@@ -202,7 +203,11 @@ impl FirewallManager {
             enabled: rule.enabled,
             chain: "input".to_string(),
             protocol_display: rule.protocol.to_uppercase(),
-            source_display: if rule.source == "any" { "Any".to_string() } else { rule.source },
+            source_display: if rule.source == "any" {
+                "Any".to_string()
+            } else {
+                rule.source
+            },
             destination_display: format!("{}:{}", rule.destination, rule.port),
             port_display: rule.port,
         };
@@ -212,7 +217,11 @@ impl FirewallManager {
             name: new_rule.name.clone(),
             enabled: new_rule.enabled,
             chain: ChainType::Input,
-            action: if new_rule.action == "Accept" { FirewallAction::Accept } else { FirewallAction::Drop },
+            action: if new_rule.action == "Accept" {
+                FirewallAction::Accept
+            } else {
+                FirewallAction::Drop
+            },
             source: Some(new_rule.source.clone()),
             destination: Some(new_rule.destination.clone()),
             protocol: None,
@@ -232,7 +241,11 @@ impl FirewallManager {
         Ok(id)
     }
 
-    pub async fn update_rule(&self, id: u32, rule: crate::routes::api::firewall::FirewallRule) -> anyhow::Result<()> {
+    pub async fn update_rule(
+        &self,
+        id: u32,
+        rule: crate::routes::api::firewall::FirewallRule,
+    ) -> anyhow::Result<()> {
         let mut rules = self.rules.write().await;
         if let Some(existing) = rules.iter_mut().find(|r| r.id == id) {
             existing.action = rule.action;
@@ -244,7 +257,11 @@ impl FirewallManager {
             existing.description = rule.description;
             existing.enabled = rule.enabled;
             existing.protocol_display = rule.protocol.to_uppercase();
-            existing.source_display = if rule.source == "any" { "Any".to_string() } else { rule.source };
+            existing.source_display = if rule.source == "any" {
+                "Any".to_string()
+            } else {
+                rule.source
+            };
             existing.destination_display = format!("{}:{}", rule.destination, rule.port);
             existing.port_display = rule.port;
         }
@@ -277,7 +294,10 @@ impl FirewallManager {
         Ok(rules.clone())
     }
 
-    pub async fn add_nat_rule(&self, rule: crate::routes::api::firewall::NatRule) -> anyhow::Result<u32> {
+    pub async fn add_nat_rule(
+        &self,
+        rule: crate::routes::api::firewall::NatRule,
+    ) -> anyhow::Result<u32> {
         let mut next_id = self.next_id.write().await;
         let id = *next_id;
         *next_id += 1;
@@ -351,16 +371,14 @@ impl VpnManager {
             },
         ];
 
-        let default_ipsec = vec![
-            crate::templates::IpsecTunnel {
-                id: 1,
-                name: "site-to-site-hq".to_string(),
-                status: "Established".to_string(),
-                local_subnet: "10.0.0.0/24".to_string(),
-                remote_subnet: "10.1.0.0/24".to_string(),
-                remote_gateway: "203.0.113.100".to_string(),
-            },
-        ];
+        let default_ipsec = vec![crate::templates::IpsecTunnel {
+            id: 1,
+            name: "site-to-site-hq".to_string(),
+            status: "Established".to_string(),
+            local_subnet: "10.0.0.0/24".to_string(),
+            remote_subnet: "10.1.0.0/24".to_string(),
+            remote_gateway: "203.0.113.100".to_string(),
+        }];
 
         Self {
             wireguard_peers: Arc::new(RwLock::new(default_peers)),
@@ -370,12 +388,17 @@ impl VpnManager {
         }
     }
 
-    pub async fn list_wireguard_peers(&self) -> anyhow::Result<Vec<crate::templates::WireGuardPeer>> {
+    pub async fn list_wireguard_peers(
+        &self,
+    ) -> anyhow::Result<Vec<crate::templates::WireGuardPeer>> {
         let peers = self.wireguard_peers.read().await;
         Ok(peers.clone())
     }
 
-    pub async fn add_wireguard_peer(&self, peer: crate::routes::api::vpn::WireGuardPeer) -> anyhow::Result<u32> {
+    pub async fn add_wireguard_peer(
+        &self,
+        peer: crate::routes::api::vpn::WireGuardPeer,
+    ) -> anyhow::Result<u32> {
         let mut next_id = self.next_id.write().await;
         let id = *next_id;
         *next_id += 1;
@@ -416,7 +439,9 @@ impl VpnManager {
         }
     }
 
-    pub async fn list_openvpn_tunnels(&self) -> anyhow::Result<Vec<crate::templates::OpenVpnTunnel>> {
+    pub async fn list_openvpn_tunnels(
+        &self,
+    ) -> anyhow::Result<Vec<crate::templates::OpenVpnTunnel>> {
         let tunnels = self.openvpn_tunnels.read().await;
         Ok(tunnels.clone())
     }
@@ -556,18 +581,16 @@ impl NetworkManager {
             },
         ];
 
-        let default_dhcp_pools = vec![
-            crate::templates::DhcpPool {
-                id: 1,
-                interface: "eth1".to_string(),
-                range_start: "10.0.0.100".to_string(),
-                range_end: "10.0.0.200".to_string(),
-                subnet: "10.0.0.0/24".to_string(),
-                gateway: "10.0.0.1".to_string(),
-                lease_time: 86400,
-                enabled: true,
-            },
-        ];
+        let default_dhcp_pools = vec![crate::templates::DhcpPool {
+            id: 1,
+            interface: "eth1".to_string(),
+            range_start: "10.0.0.100".to_string(),
+            range_end: "10.0.0.200".to_string(),
+            subnet: "10.0.0.0/24".to_string(),
+            gateway: "10.0.0.1".to_string(),
+            lease_time: 86400,
+            enabled: true,
+        }];
 
         let default_dhcp_leases = vec![
             crate::templates::DhcpLease {
@@ -640,23 +663,35 @@ impl NetworkManager {
     pub async fn list_interfaces(&self) -> anyhow::Result<Vec<crate::templates::InterfaceInfo>> {
         match patronus_network::list_interfaces().await {
             Ok(ifaces) => {
-                let template_ifaces: Vec<crate::templates::InterfaceInfo> = ifaces.into_iter().map(|iface| {
-                    crate::templates::InterfaceInfo {
+                let template_ifaces: Vec<crate::templates::InterfaceInfo> = ifaces
+                    .into_iter()
+                    .map(|iface| crate::templates::InterfaceInfo {
                         name: iface.name.clone(),
-                        state: if iface.enabled { "UP".to_string() } else { "DOWN".to_string() },
+                        state: if iface.enabled {
+                            "UP".to_string()
+                        } else {
+                            "DOWN".to_string()
+                        },
                         ip_address: iface.ip_addresses.first().map(|ip| ip.to_string()),
                         ip_addresses: iface.ip_addresses.iter().map(|ip| ip.to_string()).collect(),
-                        mac_address: iface.mac_address.clone().unwrap_or_else(|| "N/A".to_string()),
+                        mac_address: iface
+                            .mac_address
+                            .clone()
+                            .unwrap_or_else(|| "N/A".to_string()),
                         rx_bytes: 0,
                         tx_bytes: 0,
                         mtu: iface.mtu,
                         enabled: iface.enabled,
                         interface_type: "Ethernet".to_string(),
-                        ip_display: iface.ip_addresses.first().map(|ip| ip.to_string()).unwrap_or_else(|| "N/A".to_string()),
+                        ip_display: iface
+                            .ip_addresses
+                            .first()
+                            .map(|ip| ip.to_string())
+                            .unwrap_or_else(|| "N/A".to_string()),
                         mac_display: iface.mac_address.unwrap_or_else(|| "N/A".to_string()),
                         speed_display: "1 Gbps".to_string(),
-                    }
-                }).collect();
+                    })
+                    .collect();
                 if !template_ifaces.is_empty() {
                     return Ok(template_ifaces);
                 }
@@ -668,7 +703,11 @@ impl NetworkManager {
         Ok(interfaces.clone())
     }
 
-    pub async fn update_interface(&self, name: String, interface: crate::routes::api::network::NetworkInterface) -> anyhow::Result<()> {
+    pub async fn update_interface(
+        &self,
+        name: String,
+        interface: crate::routes::api::network::NetworkInterface,
+    ) -> anyhow::Result<()> {
         let mut interfaces = self.interfaces.write().await;
         if let Some(iface) = interfaces.iter_mut().find(|i| i.name == name) {
             iface.state = interface.state.clone();
@@ -859,9 +898,17 @@ impl SystemManager {
 
             for line in content.lines() {
                 if line.starts_with("MemTotal:") {
-                    total = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    total = line
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
                 } else if line.starts_with("MemAvailable:") {
-                    available = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    available = line
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
                 }
             }
 
@@ -927,28 +974,29 @@ impl SystemManager {
         let id = backups.len() as u32 + 1;
         let now = chrono::Utc::now();
 
-        backups.insert(0, crate::templates::Backup {
-            id,
-            name: format!("patronus-backup-{}.tar.gz", now.format("%Y%m%d%H%M%S")),
-            created_at: now.format("%Y-%m-%d %H:%M:%S").to_string(),
-            size: "0 MB".to_string(),
-            backup_type: "Full".to_string(),
-            is_valid: true,
-        });
+        backups.insert(
+            0,
+            crate::templates::Backup {
+                id,
+                name: format!("patronus-backup-{}.tar.gz", now.format("%Y%m%d%H%M%S")),
+                created_at: now.format("%Y-%m-%d %H:%M:%S").to_string(),
+                size: "0 MB".to_string(),
+                backup_type: "Full".to_string(),
+                is_valid: true,
+            },
+        );
 
         Ok(id)
     }
 
     pub async fn check_updates(&self) -> anyhow::Result<Vec<crate::templates::Update>> {
-        Ok(vec![
-            crate::templates::Update {
-                package_name: "patronus-core".to_string(),
-                current_version: "0.1.0".to_string(),
-                new_version: "0.1.1".to_string(),
-                security: false,
-                size: "2.5 MB".to_string(),
-            },
-        ])
+        Ok(vec![crate::templates::Update {
+            package_name: "patronus-core".to_string(),
+            current_version: "0.1.0".to_string(),
+            new_version: "0.1.1".to_string(),
+            security: false,
+            size: "2.5 MB".to_string(),
+        }])
     }
 
     pub async fn list_services(&self) -> anyhow::Result<Vec<crate::templates::Service>> {
@@ -1040,7 +1088,9 @@ impl MonitoringManager {
         })
     }
 
-    pub async fn get_interface_stats(&self) -> anyhow::Result<Vec<crate::templates::InterfaceStats>> {
+    pub async fn get_interface_stats(
+        &self,
+    ) -> anyhow::Result<Vec<crate::templates::InterfaceStats>> {
         let mut stats = Vec::new();
 
         if let Ok(content) = std::fs::read_to_string("/proc/net/dev") {
@@ -1048,7 +1098,9 @@ impl MonitoringManager {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 10 {
                     let name = parts[0].trim_end_matches(':');
-                    if name == "lo" { continue; }
+                    if name == "lo" {
+                        continue;
+                    }
 
                     let rx_bytes: u64 = parts[1].parse().unwrap_or(0);
                     let tx_bytes: u64 = parts[9].parse().unwrap_or(0);
@@ -1083,7 +1135,10 @@ impl MonitoringManager {
         Ok(stats)
     }
 
-    pub async fn get_top_connections(&self, limit: usize) -> anyhow::Result<Vec<crate::templates::Connection>> {
+    pub async fn get_top_connections(
+        &self,
+        limit: usize,
+    ) -> anyhow::Result<Vec<crate::templates::Connection>> {
         let connections = vec![
             crate::templates::Connection {
                 protocol: "TCP".to_string(),
@@ -1106,7 +1161,10 @@ impl MonitoringManager {
         Ok(connections.into_iter().take(limit).collect())
     }
 
-    pub async fn get_recent_alerts(&self, limit: usize) -> anyhow::Result<Vec<crate::templates::Alert>> {
+    pub async fn get_recent_alerts(
+        &self,
+        limit: usize,
+    ) -> anyhow::Result<Vec<crate::templates::Alert>> {
         let alerts = self.alerts.read().await;
         Ok(alerts.iter().take(limit).cloned().collect())
     }

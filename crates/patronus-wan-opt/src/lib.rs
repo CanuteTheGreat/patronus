@@ -6,12 +6,12 @@
 //! - Compression
 //! - Forward Error Correction (FEC)
 
-pub mod dedup;
-pub mod protocol;
 pub mod compression;
+pub mod dedup;
 pub mod fec;
+pub mod protocol;
 
-pub use dedup::{Deduplicator, DedupStats};
+pub use compression::{CompressionType, Compressor};
+pub use dedup::{DedupStats, Deduplicator};
+pub use fec::{FecDecoder, FecEncoder, FecStats};
 pub use protocol::{ProtocolOptimizer, ProtocolType};
-pub use compression::{Compressor, CompressionType};
-pub use fec::{FecEncoder, FecDecoder, FecStats};

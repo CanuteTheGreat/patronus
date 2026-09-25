@@ -54,9 +54,9 @@ impl BfdHealthMonitor {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let config = BfdConfig {
             local_discriminator: rand::random(),
-            desired_min_tx_interval: 300_000, // 300ms
+            desired_min_tx_interval: 300_000,  // 300ms
             required_min_rx_interval: 300_000, // 300ms
-            detect_mult: 3, // 3 * 300ms = 900ms detection time
+            detect_mult: 3,                    // 3 * 300ms = 900ms detection time
             local_addr,
             remote_addr,
         };
@@ -281,7 +281,9 @@ mod tests {
         let local_addr: SocketAddr = "127.0.0.1:3784".parse().unwrap();
         let remote_addr: SocketAddr = "127.0.0.1:3785".parse().unwrap();
 
-        let result = monitor.add_session(path_id.clone(), local_addr, remote_addr).await;
+        let result = monitor
+            .add_session(path_id.clone(), local_addr, remote_addr)
+            .await;
         assert!(result.is_ok());
 
         // Check session was added
@@ -302,7 +304,10 @@ mod tests {
         let local_addr: SocketAddr = "127.0.0.1:3784".parse().unwrap();
         let remote_addr: SocketAddr = "127.0.0.1:3785".parse().unwrap();
 
-        monitor.add_session(path_id.clone(), local_addr, remote_addr).await.unwrap();
+        monitor
+            .add_session(path_id.clone(), local_addr, remote_addr)
+            .await
+            .unwrap();
         assert!(monitor.get_session(&path_id).await.is_some());
 
         monitor.remove_session(&path_id).await;

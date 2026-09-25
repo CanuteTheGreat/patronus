@@ -1,7 +1,7 @@
 //! Distributed Tracing with Jaeger
 
-use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TracingConfig {
@@ -16,7 +16,10 @@ pub struct DistributedTracer {
 
 impl DistributedTracer {
     pub fn new(config: TracingConfig) -> Result<Self> {
-        tracing::info!("Initializing distributed tracing to {}", config.jaeger_endpoint);
+        tracing::info!(
+            "Initializing distributed tracing to {}",
+            config.jaeger_endpoint
+        );
         Ok(Self { config })
     }
 

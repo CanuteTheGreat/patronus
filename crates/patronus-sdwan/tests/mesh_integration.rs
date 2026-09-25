@@ -7,11 +7,7 @@
 //! - Intelligent routing with policy enforcement
 
 use patronus_sdwan::{
-    database::Database,
-    mesh::MeshManager,
-    monitor::PathMonitor,
-    routing::RoutingEngine,
-    types::*,
+    database::Database, mesh::MeshManager, monitor::PathMonitor, routing::RoutingEngine, types::*,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -81,8 +77,12 @@ async fn test_path_monitoring_lifecycle() {
         last_seen: std::time::SystemTime::now(),
         status: SiteStatus::Active,
     };
-    db.upsert_site(&site1).await.expect("Failed to insert site1");
-    db.upsert_site(&site2).await.expect("Failed to insert site2");
+    db.upsert_site(&site1)
+        .await
+        .expect("Failed to insert site1");
+    db.upsert_site(&site2)
+        .await
+        .expect("Failed to insert site2");
 
     // Create a test path
     let path = Path {
@@ -142,8 +142,12 @@ async fn test_routing_engine_path_selection() {
         last_seen: std::time::SystemTime::now(),
         status: SiteStatus::Active,
     };
-    db.upsert_site(&site1).await.expect("Failed to insert site1");
-    db.upsert_site(&site2).await.expect("Failed to insert site2");
+    db.upsert_site(&site1)
+        .await
+        .expect("Failed to insert site1");
+    db.upsert_site(&site2)
+        .await
+        .expect("Failed to insert site2");
 
     // Create test paths
     let site1_id = site1.id;
@@ -187,12 +191,20 @@ async fn test_routing_engine_path_selection() {
         status: PathStatus::Up,
     };
 
-    db.insert_path(&path1).await.expect("Failed to insert path1");
-    db.insert_path(&path2).await.expect("Failed to insert path2");
+    db.insert_path(&path1)
+        .await
+        .expect("Failed to insert path1");
+    db.insert_path(&path2)
+        .await
+        .expect("Failed to insert path2");
 
     // Store metrics
-    db.store_path_metrics(path1.id, &path1.metrics).await.expect("Failed to store path1 metrics");
-    db.store_path_metrics(path2.id, &path2.metrics).await.expect("Failed to store path2 metrics");
+    db.store_path_metrics(path1.id, &path1.metrics)
+        .await
+        .expect("Failed to store path1 metrics");
+    db.store_path_metrics(path2.id, &path2.metrics)
+        .await
+        .expect("Failed to store path2 metrics");
 
     // Test flow - VoIP traffic should prefer low-latency path
     let voip_flow = FlowKey {
@@ -200,16 +212,22 @@ async fn test_routing_engine_path_selection() {
         dst_ip: "10.0.0.2".parse().unwrap(),
         src_port: 50000,
         dst_port: 5060, // SIP port
-        protocol: 17, // UDP
+        protocol: 17,   // UDP
     };
 
-    let selected_path = router.select_path(&voip_flow).await.expect("Failed to select path");
+    let selected_path = router
+        .select_path(&voip_flow)
+        .await
+        .expect("Failed to select path");
 
     // Should select path1 (better metrics)
     assert_eq!(selected_path, path1.id);
 
     // Verify sticky routing - same flow should get same path
-    let selected_again = router.select_path(&voip_flow).await.expect("Failed to select path again");
+    let selected_again = router
+        .select_path(&voip_flow)
+        .await
+        .expect("Failed to select path again");
     assert_eq!(selected_again, path1.id);
 
     // Different flow
@@ -221,7 +239,10 @@ async fn test_routing_engine_path_selection() {
         protocol: 6, // TCP
     };
 
-    let web_path = router.select_path(&web_flow).await.expect("Failed to select web path");
+    let web_path = router
+        .select_path(&web_flow)
+        .await
+        .expect("Failed to select web path");
     // Should also select path1 (better overall)
     assert_eq!(web_path, path1.id);
 
@@ -254,8 +275,12 @@ async fn test_path_failover() {
         last_seen: std::time::SystemTime::now(),
         status: SiteStatus::Active,
     };
-    db.upsert_site(&site1).await.expect("Failed to insert site1");
-    db.upsert_site(&site2).await.expect("Failed to insert site2");
+    db.upsert_site(&site1)
+        .await
+        .expect("Failed to insert site1");
+    db.upsert_site(&site2)
+        .await
+        .expect("Failed to insert site2");
 
     let site1_id = site1.id;
     let site2_id = site2.id;
@@ -300,10 +325,18 @@ async fn test_path_failover() {
         status: PathStatus::Degraded,
     };
 
-    db.insert_path(&primary).await.expect("Failed to insert primary");
-    db.insert_path(&backup).await.expect("Failed to insert backup");
-    db.store_path_metrics(primary.id, &primary.metrics).await.expect("Failed to store primary metrics");
-    db.store_path_metrics(backup.id, &backup.metrics).await.expect("Failed to store backup metrics");
+    db.insert_path(&primary)
+        .await
+        .expect("Failed to insert primary");
+    db.insert_path(&backup)
+        .await
+        .expect("Failed to insert backup");
+    db.store_path_metrics(primary.id, &primary.metrics)
+        .await
+        .expect("Failed to store primary metrics");
+    db.store_path_metrics(backup.id, &backup.metrics)
+        .await
+        .expect("Failed to store backup metrics");
 
     // Test flow
     let flow = FlowKey {
@@ -315,17 +348,25 @@ async fn test_path_failover() {
     };
 
     // Should select primary
-    let selected = router.select_path(&flow).await.expect("Failed to select path");
+    let selected = router
+        .select_path(&flow)
+        .await
+        .expect("Failed to select path");
     assert_eq!(selected, primary.id);
 
     // Simulate primary path failure
-    db.update_path_status(primary.id, PathStatus::Down).await.expect("Failed to update status");
+    db.update_path_status(primary.id, PathStatus::Down)
+        .await
+        .expect("Failed to update status");
 
     // Remove flow to force re-evaluation
     router.remove_flow(&flow).await;
 
     // Should now select backup
-    let failover = router.select_path(&flow).await.expect("Failed to select failover");
+    let failover = router
+        .select_path(&flow)
+        .await
+        .expect("Failed to select failover");
     assert_eq!(failover, backup.id);
 
     router.stop().await.expect("Failed to stop router");
@@ -360,14 +401,12 @@ async fn test_database_persistence() {
         id: SiteId::generate(),
         name: "test-site".to_string(),
         public_key: vec![0u8; 32],
-        endpoints: vec![
-            Endpoint {
-                address: "192.168.1.1:51820".parse().unwrap(),
-                interface_type: "ethernet".to_string(),
-                cost_per_gb: 0.0,
-                reachable: true,
-            }
-        ],
+        endpoints: vec![Endpoint {
+            address: "192.168.1.1:51820".parse().unwrap(),
+            interface_type: "ethernet".to_string(),
+            cost_per_gb: 0.0,
+            reachable: true,
+        }],
         created_at: std::time::SystemTime::now(),
         last_seen: std::time::SystemTime::now(),
         status: SiteStatus::Active,
@@ -383,9 +422,14 @@ async fn test_database_persistence() {
     // Update site status
     let mut updated_site = site.clone();
     updated_site.status = SiteStatus::Inactive;
-    db.upsert_site(&updated_site).await.expect("Failed to update site");
+    db.upsert_site(&updated_site)
+        .await
+        .expect("Failed to update site");
 
-    let sites = db.list_sites().await.expect("Failed to list sites after update");
+    let sites = db
+        .list_sites()
+        .await
+        .expect("Failed to list sites after update");
     assert_eq!(sites.len(), 1);
     assert_eq!(sites[0].status, SiteStatus::Inactive);
 }

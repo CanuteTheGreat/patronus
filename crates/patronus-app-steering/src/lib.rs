@@ -76,8 +76,7 @@ impl AppSteering {
             }
 
             if !policy.groups.is_empty() {
-                let has_group = policy.groups.iter()
-                    .any(|g| user.groups.contains(g));
+                let has_group = policy.groups.iter().any(|g| user.groups.contains(g));
                 if !has_group {
                     continue;
                 }

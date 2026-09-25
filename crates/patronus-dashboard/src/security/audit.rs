@@ -11,7 +11,10 @@ use tracing::{error, info};
 #[serde(rename_all = "snake_case")]
 pub enum AuditEvent {
     /// User login attempt
-    LoginAttempt { success: bool, reason: Option<String> },
+    LoginAttempt {
+        success: bool,
+        reason: Option<String>,
+    },
     /// User logout
     Logout,
     /// Password change
@@ -29,15 +32,28 @@ pub enum AuditEvent {
     /// API key revocation
     ApiKeyRevoke { key_id: String },
     /// Permission grant
-    PermissionGrant { target_user: String, permission: String },
+    PermissionGrant {
+        target_user: String,
+        permission: String,
+    },
     /// Permission revoke
-    PermissionRevoke { target_user: String, permission: String },
+    PermissionRevoke {
+        target_user: String,
+        permission: String,
+    },
     /// Resource access
-    ResourceAccess { resource_type: String, resource_id: String, action: String },
+    ResourceAccess {
+        resource_type: String,
+        resource_id: String,
+        action: String,
+    },
     /// Security policy change
     PolicyChange { policy: String, change: String },
     /// Failed authorization
-    AuthorizationFailed { resource: String, required_role: String },
+    AuthorizationFailed {
+        resource: String,
+        required_role: String,
+    },
     /// Suspicious activity detected
     SuspiciousActivity { description: String },
 
@@ -45,21 +61,39 @@ pub enum AuditEvent {
     /// Site created
     SiteCreate { site_id: String, site_name: String },
     /// Site updated
-    SiteUpdate { site_id: String, fields_changed: Vec<String> },
+    SiteUpdate {
+        site_id: String,
+        fields_changed: Vec<String>,
+    },
     /// Site delete attempted
     SiteDelete { site_id: String, blocked: bool },
     /// Policy created
-    PolicyCreate { policy_id: u64, policy_name: String, priority: u32 },
+    PolicyCreate {
+        policy_id: u64,
+        policy_name: String,
+        priority: u32,
+    },
     /// Policy updated
-    PolicyUpdate { policy_id: u64, fields_changed: Vec<String> },
+    PolicyUpdate {
+        policy_id: u64,
+        fields_changed: Vec<String>,
+    },
     /// Policy deleted
     PolicyDelete { policy_id: u64, policy_name: String },
     /// Policy toggled
     PolicyToggle { policy_id: u64, enabled: bool },
     /// User created
-    UserCreate { user_id: String, email: String, role: String },
+    UserCreate {
+        user_id: String,
+        email: String,
+        role: String,
+    },
     /// User role updated
-    UserRoleUpdate { user_id: String, old_role: String, new_role: String },
+    UserRoleUpdate {
+        user_id: String,
+        old_role: String,
+        new_role: String,
+    },
     /// User deactivated
     UserDeactivate { user_id: String, email: String },
     /// User password reset
@@ -142,19 +176,19 @@ impl AuditLogger {
 
         // Create indexes for common queries
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id, timestamp DESC)"
+            "CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id, timestamp DESC)",
         )
         .execute(&self.pool)
         .await?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_audit_event ON audit_logs(event_type, timestamp DESC)"
+            "CREATE INDEX IF NOT EXISTS idx_audit_event ON audit_logs(event_type, timestamp DESC)",
         )
         .execute(&self.pool)
         .await?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_audit_severity ON audit_logs(severity, timestamp DESC)"
+            "CREATE INDEX IF NOT EXISTS idx_audit_severity ON audit_logs(severity, timestamp DESC)",
         )
         .execute(&self.pool)
         .await?;
@@ -268,7 +302,7 @@ impl AuditLogger {
             AuditEvent::MfaVerify { success, .. } => *success,
             AuditEvent::AuthorizationFailed { .. } => false,
             AuditEvent::SuspiciousActivity { .. } => false,
-            AuditEvent::SiteDelete { blocked, .. } => !*blocked,  // Success if not blocked
+            AuditEvent::SiteDelete { blocked, .. } => !*blocked, // Success if not blocked
             _ => true,
         };
 
@@ -295,11 +329,7 @@ impl AuditLogger {
     }
 
     /// Get audit logs for a user
-    pub async fn get_user_logs(
-        &self,
-        user_id: &str,
-        limit: i64,
-    ) -> anyhow::Result<Vec<AuditLog>> {
+    pub async fn get_user_logs(&self, user_id: &str, limit: i64) -> anyhow::Result<Vec<AuditLog>> {
         let logs = sqlx::query_as::<_, (i64, String, Option<String>, Option<String>, Option<String>, Option<String>, String, String, i32, String)>(
             "SELECT id, timestamp, user_id, user_email, ip_address, user_agent, event_type, event_data, success, severity
              FROM audit_logs
@@ -422,7 +452,21 @@ impl AuditLogger {
 
         query.push_str(" ORDER BY timestamp DESC LIMIT ?");
 
-        let mut sqlx_query = sqlx::query_as::<_, (i64, String, Option<String>, Option<String>, Option<String>, Option<String>, String, String, i32, String)>(&query);
+        let mut sqlx_query = sqlx::query_as::<
+            _,
+            (
+                i64,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                String,
+                String,
+                i32,
+                String,
+            ),
+        >(&query);
 
         for param in &params {
             sqlx_query = sqlx_query.bind(param);
@@ -433,38 +477,62 @@ impl AuditLogger {
             .fetch_all(&self.pool)
             .await?
             .into_iter()
-            .map(|(id, timestamp, user_id, user_email, ip_address, user_agent, event_type, event_data, success, severity)| {
-                AuditLog {
+            .map(
+                |(
                     id,
-                    timestamp: DateTime::parse_from_rfc3339(&timestamp).unwrap().with_timezone(&Utc),
+                    timestamp,
                     user_id,
                     user_email,
                     ip_address,
                     user_agent,
                     event_type,
                     event_data,
-                    success: success != 0,
+                    success,
                     severity,
-                }
-            })
+                )| {
+                    AuditLog {
+                        id,
+                        timestamp: DateTime::parse_from_rfc3339(&timestamp)
+                            .unwrap()
+                            .with_timezone(&Utc),
+                        user_id,
+                        user_email,
+                        ip_address,
+                        user_agent,
+                        event_type,
+                        event_data,
+                        success: success != 0,
+                        severity,
+                    }
+                },
+            )
             .collect();
 
         Ok(logs)
     }
 
     /// Get mutation audit logs (Sprint 25)
-    pub async fn get_mutation_logs(
-        &self,
-        limit: i64,
-    ) -> anyhow::Result<Vec<AuditLog>> {
+    pub async fn get_mutation_logs(&self, limit: i64) -> anyhow::Result<Vec<AuditLog>> {
         let mutation_events = vec![
-            "site_create", "site_update", "site_delete",
-            "policy_create", "policy_update", "policy_delete", "policy_toggle",
-            "user_create", "user_role_update", "user_deactivate", "password_reset",
-            "path_health_check", "path_failover", "cache_clear", "system_health_check"
+            "site_create",
+            "site_update",
+            "site_delete",
+            "policy_create",
+            "policy_update",
+            "policy_delete",
+            "policy_toggle",
+            "user_create",
+            "user_role_update",
+            "user_deactivate",
+            "password_reset",
+            "path_health_check",
+            "path_failover",
+            "cache_clear",
+            "system_health_check",
         ];
 
-        let placeholders = mutation_events.iter()
+        let placeholders = mutation_events
+            .iter()
             .map(|_| "?")
             .collect::<Vec<_>>()
             .join(",");
@@ -478,7 +546,21 @@ impl AuditLogger {
             placeholders
         );
 
-        let mut sqlx_query = sqlx::query_as::<_, (i64, String, Option<String>, Option<String>, Option<String>, Option<String>, String, String, i32, String)>(&query);
+        let mut sqlx_query = sqlx::query_as::<
+            _,
+            (
+                i64,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                String,
+                String,
+                i32,
+                String,
+            ),
+        >(&query);
 
         for event in &mutation_events {
             sqlx_query = sqlx_query.bind(event);
@@ -489,20 +571,35 @@ impl AuditLogger {
             .fetch_all(&self.pool)
             .await?
             .into_iter()
-            .map(|(id, timestamp, user_id, user_email, ip_address, user_agent, event_type, event_data, success, severity)| {
-                AuditLog {
+            .map(
+                |(
                     id,
-                    timestamp: DateTime::parse_from_rfc3339(&timestamp).unwrap().with_timezone(&Utc),
+                    timestamp,
                     user_id,
                     user_email,
                     ip_address,
                     user_agent,
                     event_type,
                     event_data,
-                    success: success != 0,
+                    success,
                     severity,
-                }
-            })
+                )| {
+                    AuditLog {
+                        id,
+                        timestamp: DateTime::parse_from_rfc3339(&timestamp)
+                            .unwrap()
+                            .with_timezone(&Utc),
+                        user_id,
+                        user_email,
+                        ip_address,
+                        user_agent,
+                        event_type,
+                        event_data,
+                        success: success != 0,
+                        severity,
+                    }
+                },
+            )
             .collect();
 
         Ok(logs)
@@ -515,10 +612,7 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn setup_test_db() -> SqlitePool {
-        SqlitePoolOptions::new()
-            .connect(":memory:")
-            .await
-            .unwrap()
+        SqlitePoolOptions::new().connect(":memory:").await.unwrap()
     }
 
     #[tokio::test]
@@ -590,10 +684,7 @@ mod tests {
                 reason: Some("Invalid credentials".to_string()),
             };
 
-            logger
-                .log(event, None, None, Some(ip), None)
-                .await
-                .unwrap();
+            logger.log(event, None, None, Some(ip), None).await.unwrap();
         }
 
         let since = Utc::now() - chrono::Duration::minutes(5);

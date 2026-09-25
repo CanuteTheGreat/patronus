@@ -2,10 +2,10 @@
 //!
 //! Organizations, RBAC, and resource isolation
 
+pub mod isolation;
 pub mod organization;
 pub mod rbac;
-pub mod isolation;
 
-pub use organization::{Organization, OrganizationManager, SubscriptionTier, ResourceQuota};
-pub use rbac::{Role, User, RbacManager, Permission};
 pub use isolation::{IsolationManager, ResourceUsage};
+pub use organization::{Organization, OrganizationManager, ResourceQuota, SubscriptionTier};
+pub use rbac::{Permission, RbacManager, Role, User};

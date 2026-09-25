@@ -83,8 +83,12 @@ async fn handle_deletion(policy: &Policy, ctx: &Context) -> Result<Action, Polic
     debug!("Deleting policy {} from Patronus", policy_name);
 
     // Call Patronus API to delete policy
-    let response = ctx.http_client
-        .delete(&format!("{}/api/v1/policies/{}", ctx.patronus_api_url, policy_name))
+    let response = ctx
+        .http_client
+        .delete(&format!(
+            "{}/api/v1/policies/{}",
+            ctx.patronus_api_url, policy_name
+        ))
         .send()
         .await
         .map_err(|e| PolicyError::PatronusApiError(format!("HTTP request failed: {}", e)))?;
@@ -92,8 +96,14 @@ async fn handle_deletion(policy: &Policy, ctx: &Context) -> Result<Action, Polic
     if !response.status().is_success() && response.status().as_u16() != 404 {
         // 404 is ok - policy already deleted
         let status = response.status();
-        let body = response.text().await.unwrap_or_else(|_| "unknown error".to_string());
-        warn!("Failed to delete policy from Patronus: {} - {}", status, body);
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "unknown error".to_string());
+        warn!(
+            "Failed to delete policy from Patronus: {} - {}",
+            status, body
+        );
     }
 
     info!("Successfully deleted policy {} from Patronus", policy_name);
@@ -114,14 +124,18 @@ async fn create_or_update_patronus_policy(
     let policy_name = policy.name_any();
 
     // Build Patronus API request
-    let request_body = serde_json::to_value(&policy.spec)
-        .map_err(|e| PolicyError::SerializationError(e))?;
+    let request_body =
+        serde_json::to_value(&policy.spec).map_err(|e| PolicyError::SerializationError(e))?;
 
     debug!("Creating/updating policy in Patronus: {}", request_body);
 
     // Call Patronus API
-    let response = ctx.http_client
-        .put(&format!("{}/api/v1/policies/{}", ctx.patronus_api_url, policy_name))
+    let response = ctx
+        .http_client
+        .put(&format!(
+            "{}/api/v1/policies/{}",
+            ctx.patronus_api_url, policy_name
+        ))
         .json(&request_body)
         .send()
         .await
@@ -129,14 +143,20 @@ async fn create_or_update_patronus_policy(
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_else(|_| "unknown error".to_string());
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "unknown error".to_string());
         return Err(PolicyError::PatronusApiError(format!(
             "API returned {}: {}",
             status, body
         )));
     }
 
-    info!("Successfully created/updated policy {} in Patronus", policy_name);
+    info!(
+        "Successfully created/updated policy {} in Patronus",
+        policy_name
+    );
     Ok(())
 }
 

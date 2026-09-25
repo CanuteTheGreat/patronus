@@ -205,10 +205,7 @@ async fn handle_logs_socket(socket: WebSocket, broadcaster: Arc<WsBroadcaster>) 
 }
 
 /// Start background task to generate and broadcast metrics
-pub fn start_metrics_broadcaster(
-    broadcaster: Arc<WsBroadcaster>,
-    state: crate::state::AppState,
-) {
+pub fn start_metrics_broadcaster(broadcaster: Arc<WsBroadcaster>, state: crate::state::AppState) {
     tokio::spawn(async move {
         let mut interval = interval(Duration::from_secs(1));
 

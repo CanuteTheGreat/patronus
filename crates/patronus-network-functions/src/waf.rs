@@ -2,14 +2,14 @@
 //!
 //! Protection against common web attacks (SQL injection, XSS, etc.)
 
+use anyhow::Result;
+use chrono::{DateTime, Utc};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use anyhow::Result;
-use chrono::{DateTime, Utc};
-use regex::Regex;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum WafRuleType {
@@ -159,7 +159,8 @@ impl WafManager {
 
     pub async fn remove_rule(&self, id: &Uuid) -> Result<()> {
         let mut rules = self.rules.write().await;
-        rules.remove(id)
+        rules
+            .remove(id)
             .ok_or_else(|| anyhow::anyhow!("WAF rule not found"))?;
         tracing::info!("Removed WAF rule: {}", id);
         Ok(())
@@ -285,7 +286,8 @@ impl WafManager {
             WafRuleType::CrossSiteScripting,
             r"(?i)(<script|javascript:|onerror=|onload=|onclick=|<iframe|<object|<embed)",
             WafAction::Block,
-        ).with_priority(200);
+        )
+        .with_priority(200);
 
         // Path traversal
         let path_traversal = WafRule::new(
@@ -293,7 +295,8 @@ impl WafManager {
             WafRuleType::PathTraversal,
             r"(\.\./|\.\\.)",
             WafAction::Block,
-        ).with_priority(180);
+        )
+        .with_priority(180);
 
         // Command injection
         let cmd_injection = WafRule::new(
@@ -301,7 +304,8 @@ impl WafManager {
             WafRuleType::CommandInjection,
             r"(?i)(;|\||&|`|\$\(|>\s*/|\bcat\b|\bls\b|\bwhoami\b|\bpwd\b)",
             WafAction::Block,
-        ).with_priority(180);
+        )
+        .with_priority(180);
 
         // Remote file inclusion
         let rfi = WafRule::new(
@@ -309,7 +313,8 @@ impl WafManager {
             WafRuleType::RemoteFileInclusion,
             r"(?i)(http://|https://|ftp://|file://|php://)",
             WafAction::Alert,
-        ).with_priority(150);
+        )
+        .with_priority(150);
 
         self.add_rule(sql_injection).await;
         self.add_rule(xss).await;
@@ -519,14 +524,16 @@ mod tests {
             WafRuleType::Custom,
             r"test",
             WafAction::Block,
-        ).with_priority(200);
+        )
+        .with_priority(200);
 
         let low_priority = WafRule::new(
             "Low Priority",
             WafRuleType::Custom,
             r"test",
             WafAction::Alert,
-        ).with_priority(100);
+        )
+        .with_priority(100);
 
         manager.add_rule(high_priority).await;
         manager.add_rule(low_priority).await;

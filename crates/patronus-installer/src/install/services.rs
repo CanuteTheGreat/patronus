@@ -311,7 +311,9 @@ pub async fn configure_ssh(target: &Path, config: &ServiceConfig) -> Result<()> 
     }
 
     // Read existing config
-    let mut content = fs::read_to_string(&sshd_config_path).await.unwrap_or_default();
+    let mut content = fs::read_to_string(&sshd_config_path)
+        .await
+        .unwrap_or_default();
 
     // Update port if non-default
     if config.ssh_port != 22 {

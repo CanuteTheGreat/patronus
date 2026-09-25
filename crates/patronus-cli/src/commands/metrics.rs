@@ -2,10 +2,13 @@
 
 use crate::MetricsCommands;
 use colored::Colorize;
-use comfy_table::{Table, presets::UTF8_FULL};
+use comfy_table::{presets::UTF8_FULL, Table};
 use std::path::PathBuf;
 
-pub async fn handle_metrics_command(action: MetricsCommands, _config_path: PathBuf) -> anyhow::Result<()> {
+pub async fn handle_metrics_command(
+    action: MetricsCommands,
+    _config_path: PathBuf,
+) -> anyhow::Result<()> {
     match action {
         MetricsCommands::Traffic => {
             let mut table = Table::new();
@@ -24,8 +27,18 @@ pub async fn handle_metrics_command(action: MetricsCommands, _config_path: PathB
             let mut table = Table::new();
             table.load_preset(UTF8_FULL);
             table.set_header(vec!["Link", "Status", "Latency", "Loss %"]);
-            table.add_row(vec!["site1-site2", &"Up".green().to_string(), "15ms", "0.1%"]);
-            table.add_row(vec!["site2-site3", &"Up".green().to_string(), "23ms", "0.2%"]);
+            table.add_row(vec![
+                "site1-site2",
+                &"Up".green().to_string(),
+                "15ms",
+                "0.1%",
+            ]);
+            table.add_row(vec![
+                "site2-site3",
+                &"Up".green().to_string(),
+                "23ms",
+                "0.2%",
+            ]);
 
             println!();
             println!("{}", "Link Health".bright_blue().bold());

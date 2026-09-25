@@ -52,7 +52,8 @@ impl ServiceManager {
 
         // Check for OpenRC
         if std::path::Path::new("/run/openrc").exists()
-            || std::path::Path::new("/etc/init.d/functions.sh").exists() {
+            || std::path::Path::new("/etc/init.d/functions.sh").exists()
+        {
             return InitSystem::OpenRC;
         }
 
@@ -72,81 +73,47 @@ impl ServiceManager {
     /// Start a service
     pub fn start(&self, service_name: &str) -> Result<()> {
         match self.init_system {
-            InitSystem::Systemd => {
-                self.systemd_command("start", service_name)
-            }
-            InitSystem::OpenRC => {
-                self.openrc_command("start", service_name)
-            }
-            InitSystem::SysVInit => {
-                self.sysv_command("start", service_name)
-            }
-            InitSystem::Unknown => {
-                Err(Error::Service("Unknown init system".to_string()))
-            }
+            InitSystem::Systemd => self.systemd_command("start", service_name),
+            InitSystem::OpenRC => self.openrc_command("start", service_name),
+            InitSystem::SysVInit => self.sysv_command("start", service_name),
+            InitSystem::Unknown => Err(Error::Service("Unknown init system".to_string())),
         }
     }
 
     /// Stop a service
     pub fn stop(&self, service_name: &str) -> Result<()> {
         match self.init_system {
-            InitSystem::Systemd => {
-                self.systemd_command("stop", service_name)
-            }
-            InitSystem::OpenRC => {
-                self.openrc_command("stop", service_name)
-            }
-            InitSystem::SysVInit => {
-                self.sysv_command("stop", service_name)
-            }
-            InitSystem::Unknown => {
-                Err(Error::Service("Unknown init system".to_string()))
-            }
+            InitSystem::Systemd => self.systemd_command("stop", service_name),
+            InitSystem::OpenRC => self.openrc_command("stop", service_name),
+            InitSystem::SysVInit => self.sysv_command("stop", service_name),
+            InitSystem::Unknown => Err(Error::Service("Unknown init system".to_string())),
         }
     }
 
     /// Restart a service
     pub fn restart(&self, service_name: &str) -> Result<()> {
         match self.init_system {
-            InitSystem::Systemd => {
-                self.systemd_command("restart", service_name)
-            }
-            InitSystem::OpenRC => {
-                self.openrc_command("restart", service_name)
-            }
-            InitSystem::SysVInit => {
-                self.sysv_command("restart", service_name)
-            }
-            InitSystem::Unknown => {
-                Err(Error::Service("Unknown init system".to_string()))
-            }
+            InitSystem::Systemd => self.systemd_command("restart", service_name),
+            InitSystem::OpenRC => self.openrc_command("restart", service_name),
+            InitSystem::SysVInit => self.sysv_command("restart", service_name),
+            InitSystem::Unknown => Err(Error::Service("Unknown init system".to_string())),
         }
     }
 
     /// Reload a service configuration
     pub fn reload(&self, service_name: &str) -> Result<()> {
         match self.init_system {
-            InitSystem::Systemd => {
-                self.systemd_command("reload", service_name)
-            }
-            InitSystem::OpenRC => {
-                self.openrc_command("reload", service_name)
-            }
-            InitSystem::SysVInit => {
-                self.sysv_command("reload", service_name)
-            }
-            InitSystem::Unknown => {
-                Err(Error::Service("Unknown init system".to_string()))
-            }
+            InitSystem::Systemd => self.systemd_command("reload", service_name),
+            InitSystem::OpenRC => self.openrc_command("reload", service_name),
+            InitSystem::SysVInit => self.sysv_command("reload", service_name),
+            InitSystem::Unknown => Err(Error::Service("Unknown init system".to_string())),
         }
     }
 
     /// Enable a service to start on boot
     pub fn enable(&self, service_name: &str) -> Result<()> {
         match self.init_system {
-            InitSystem::Systemd => {
-                self.systemd_command("enable", service_name)
-            }
+            InitSystem::Systemd => self.systemd_command("enable", service_name),
             InitSystem::OpenRC => {
                 // OpenRC uses rc-update
                 let output = Command::new("rc-update")
@@ -193,18 +160,14 @@ impl ServiceManager {
 
                 Ok(())
             }
-            InitSystem::Unknown => {
-                Err(Error::Service("Unknown init system".to_string()))
-            }
+            InitSystem::Unknown => Err(Error::Service("Unknown init system".to_string())),
         }
     }
 
     /// Disable a service from starting on boot
     pub fn disable(&self, service_name: &str) -> Result<()> {
         match self.init_system {
-            InitSystem::Systemd => {
-                self.systemd_command("disable", service_name)
-            }
+            InitSystem::Systemd => self.systemd_command("disable", service_name),
             InitSystem::OpenRC => {
                 let output = Command::new("rc-update")
                     .args(&["del", service_name])
@@ -249,9 +212,7 @@ impl ServiceManager {
 
                 Ok(())
             }
-            InitSystem::Unknown => {
-                Err(Error::Service("Unknown init system".to_string()))
-            }
+            InitSystem::Unknown => Err(Error::Service("Unknown init system".to_string())),
         }
     }
 
@@ -306,9 +267,7 @@ impl ServiceManager {
                     Ok(ServiceState::Stopped)
                 }
             }
-            InitSystem::Unknown => {
-                Err(Error::Service("Unknown init system".to_string()))
-            }
+            InitSystem::Unknown => Err(Error::Service("Unknown init system".to_string())),
         }
     }
 
@@ -324,7 +283,9 @@ impl ServiceManager {
                 let output = Command::new("systemctl")
                     .args(&["is-enabled", service_name])
                     .output()
-                    .map_err(|e| Error::Service(format!("Failed to check if service is enabled: {}", e)))?;
+                    .map_err(|e| {
+                        Error::Service(format!("Failed to check if service is enabled: {}", e))
+                    })?;
 
                 Ok(output.status.success())
             }
@@ -332,7 +293,9 @@ impl ServiceManager {
                 let output = Command::new("rc-update")
                     .arg("show")
                     .output()
-                    .map_err(|e| Error::Service(format!("Failed to check if service is enabled: {}", e)))?;
+                    .map_err(|e| {
+                        Error::Service(format!("Failed to check if service is enabled: {}", e))
+                    })?;
 
                 let list = String::from_utf8_lossy(&output.stdout);
                 Ok(list.contains(service_name))
@@ -341,9 +304,7 @@ impl ServiceManager {
                 // This is more complex and depends on the distribution
                 Ok(false)
             }
-            InitSystem::Unknown => {
-                Err(Error::Service("Unknown init system".to_string()))
-            }
+            InitSystem::Unknown => Err(Error::Service("Unknown init system".to_string())),
         }
     }
 

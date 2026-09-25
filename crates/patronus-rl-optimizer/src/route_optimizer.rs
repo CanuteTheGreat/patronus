@@ -186,14 +186,16 @@ impl RouteOptimizer {
                     .network_state
                     .calculate_path_metrics(&current_path)
                     .quality_score();
-                let next_state = RouteState::new(next_hop.clone(), destination.to_string(), next_quality);
+                let next_state =
+                    RouteState::new(next_hop.clone(), destination.to_string(), next_quality);
                 let next_state_id = self.get_or_create_state_id(next_state);
 
                 // Check if we reached destination
                 let done = next_hop == destination;
 
                 // Update Q-values
-                self.q_learning.update(state_id, action_id, reward, next_state_id, done);
+                self.q_learning
+                    .update(state_id, action_id, reward, next_state_id, done);
 
                 if done {
                     break;
@@ -223,7 +225,12 @@ impl RouteOptimizer {
     }
 
     /// Get full optimized path from source to destination
-    pub fn get_optimal_path(&self, source: &str, destination: &str, max_hops: usize) -> Vec<String> {
+    pub fn get_optimal_path(
+        &self,
+        source: &str,
+        destination: &str,
+        max_hops: usize,
+    ) -> Vec<String> {
         let mut path = Vec::new();
         let mut current = source.to_string();
         let mut visited = std::collections::HashSet::new();
@@ -395,9 +402,11 @@ mod tests {
 
         // Train with multiple episodes
         for _ in 0..20 {
-            let paths = vec![
-                vec!["node2".to_string(), "node3".to_string(), "dest".to_string()],
-            ];
+            let paths = vec![vec![
+                "node2".to_string(),
+                "node3".to_string(),
+                "dest".to_string(),
+            ]];
             optimizer.train_episode("source", "dest", paths);
         }
 

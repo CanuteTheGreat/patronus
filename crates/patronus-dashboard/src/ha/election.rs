@@ -45,9 +45,14 @@ impl LeaderElection {
         election_timeout_secs: u64,
         heartbeat_interval_secs: u64,
     ) -> Self {
-        let default_addr: SocketAddr = "127.0.0.1:8443".parse()
-            .expect("Default address is valid");
-        Self::new(cluster_state, node_id, default_addr, election_timeout_secs, heartbeat_interval_secs)
+        let default_addr: SocketAddr = "127.0.0.1:8443".parse().expect("Default address is valid");
+        Self::new(
+            cluster_state,
+            node_id,
+            default_addr,
+            election_timeout_secs,
+            heartbeat_interval_secs,
+        )
     }
 
     /// Start the leader election process
@@ -224,7 +229,8 @@ mod tests {
     #[tokio::test]
     async fn test_become_follower() {
         let state = Arc::new(ClusterState::new("test-node".to_string()));
-        let election = LeaderElection::new_with_defaults(state.clone(), "test-node".to_string(), 5, 1);
+        let election =
+            LeaderElection::new_with_defaults(state.clone(), "test-node".to_string(), 5, 1);
 
         election.become_follower().await;
 

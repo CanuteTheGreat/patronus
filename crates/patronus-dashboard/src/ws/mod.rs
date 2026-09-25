@@ -4,7 +4,10 @@
 //! for streaming real-time metrics and events to dashboard clients.
 
 use axum::{
-    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, Query, State},
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Query, State,
+    },
     response::{IntoResponse, Response},
 };
 use futures::{sink::SinkExt, stream::StreamExt};
@@ -44,7 +47,10 @@ pub async fn metrics_handler(
                 Some(claims)
             }
             Err(e) => {
-                warn!("WebSocket metrics connection rejected: invalid token - {}", e);
+                warn!(
+                    "WebSocket metrics connection rejected: invalid token - {}",
+                    e
+                );
                 return axum::http::StatusCode::UNAUTHORIZED.into_response();
             }
         },
@@ -85,7 +91,10 @@ pub async fn events_handler(
                 Some(claims)
             }
             Err(e) => {
-                warn!("WebSocket events connection rejected: invalid token - {}", e);
+                warn!(
+                    "WebSocket events connection rejected: invalid token - {}",
+                    e
+                );
                 return axum::http::StatusCode::UNAUTHORIZED.into_response();
             }
         },
@@ -151,7 +160,10 @@ async fn metrics_socket(socket: WebSocket, state: Arc<AppState>, _claims: Option
     {
         let mut counter = state.ws_connections.write().await;
         *counter -= 1;
-        info!(connections = *counter, "Metrics WebSocket client disconnected");
+        info!(
+            connections = *counter,
+            "Metrics WebSocket client disconnected"
+        );
     }
 }
 
@@ -199,6 +211,9 @@ async fn events_socket(socket: WebSocket, state: Arc<AppState>, _claims: Option<
     {
         let mut counter = state.ws_connections.write().await;
         *counter -= 1;
-        info!(connections = *counter, "Events WebSocket client disconnected");
+        info!(
+            connections = *counter,
+            "Events WebSocket client disconnected"
+        );
     }
 }

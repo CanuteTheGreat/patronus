@@ -48,7 +48,7 @@ pub struct SourceFeatures {
     // Port scanning indicators
     pub unique_dst_ips: u32,
     pub unique_dst_ports: u32,
-    pub port_diversity: f64,  // Entropy of port distribution
+    pub port_diversity: f64, // Entropy of port distribution
     pub failed_connections: u32,
 
     // Packet characteristics
@@ -147,7 +147,8 @@ impl FlowAggregator {
     /// Add a flow to the aggregator
     pub async fn add_flow(&self, flow: FlowFeatures) {
         let mut flows = self.flows.write().await;
-        flows.entry(flow.src_ip.clone())
+        flows
+            .entry(flow.src_ip.clone())
             .or_insert_with(Vec::new)
             .push(flow);
     }
@@ -170,7 +171,11 @@ impl FlowAggregator {
     }
 
     /// Compute features for a single source IP
-    fn compute_source_features(&self, src_ip: &str, flows: &[FlowFeatures]) -> Result<SourceFeatures> {
+    fn compute_source_features(
+        &self,
+        src_ip: &str,
+        flows: &[FlowFeatures],
+    ) -> Result<SourceFeatures> {
         let total_flows = flows.len() as u32;
         let total_packets: u64 = flows.iter().map(|f| f.packets).sum();
         let total_bytes: u64 = flows.iter().map(|f| f.bytes).sum();
@@ -184,7 +189,8 @@ impl FlowAggregator {
         };
 
         // Connection rate (flows per second)
-        let time_span = flows.iter()
+        let time_span = flows
+            .iter()
             .map(|f| f.timestamp)
             .max()
             .zip(flows.iter().map(|f| f.timestamp).min())
@@ -194,20 +200,16 @@ impl FlowAggregator {
         let connection_rate = total_flows as f64 / time_span as f64;
 
         // Port scanning indicators
-        let unique_dst_ips: std::collections::HashSet<_> = flows.iter()
-            .map(|f| f.dst_ip.clone())
-            .collect();
-        let unique_dst_ports: std::collections::HashSet<_> = flows.iter()
-            .map(|f| f.dst_port)
-            .collect();
+        let unique_dst_ips: std::collections::HashSet<_> =
+            flows.iter().map(|f| f.dst_ip.clone()).collect();
+        let unique_dst_ports: std::collections::HashSet<_> =
+            flows.iter().map(|f| f.dst_port).collect();
 
         // Port diversity (entropy)
         let port_diversity = self.calculate_port_entropy(flows);
 
         // Failed connections (RST flags)
-        let failed_connections = flows.iter()
-            .filter(|f| f.rst_count > 0)
-            .count() as u32;
+        let failed_connections = flows.iter().filter(|f| f.rst_count > 0).count() as u32;
 
         // Packet characteristics
         let avg_packet_size = if total_packets > 0 {
@@ -216,8 +218,15 @@ impl FlowAggregator {
             0.0
         };
 
-        let packet_sizes: Vec<f64> = flows.iter()
-            .map(|f| if f.packets > 0 { f.bytes as f64 / f.packets as f64 } else { 0.0 })
+        let packet_sizes: Vec<f64> = flows
+            .iter()
+            .map(|f| {
+                if f.packets > 0 {
+                    f.bytes as f64 / f.packets as f64
+                } else {
+                    0.0
+                }
+            })
             .collect();
         let packet_size_variance = self.calculate_variance(&packet_sizes);
 
@@ -239,7 +248,8 @@ impl FlowAggregator {
         // Inter-arrival time
         let mut sorted_flows = flows.to_vec();
         sorted_flows.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-        let inter_arrival_times: Vec<f64> = sorted_flows.windows(2)
+        let inter_arrival_times: Vec<f64> = sorted_flows
+            .windows(2)
             .map(|w| (w[1].timestamp - w[0].timestamp).num_milliseconds() as f64)
             .collect();
         let avg_inter_arrival_time = if !inter_arrival_times.is_empty() {
@@ -258,11 +268,7 @@ impl FlowAggregator {
             total_flows,
             failed_connections,
         );
-        let ddos_score = self.calculate_ddos_score(
-            connection_rate,
-            packets_per_flow,
-            total_flows,
-        );
+        let ddos_score = self.calculate_ddos_score(connection_rate, packets_per_flow, total_flows);
 
         Ok(SourceFeatures {
             ip: src_ip.to_string(),
@@ -317,9 +323,7 @@ impl FlowAggregator {
         }
 
         let mean = values.iter().sum::<f64>() / values.len() as f64;
-        let variance = values.iter()
-            .map(|v| (v - mean).powi(2))
-            .sum::<f64>() / values.len() as f64;
+        let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
 
         variance
     }
@@ -327,7 +331,8 @@ impl FlowAggregator {
     /// Calculate SYN flood score (0-1)
     fn calculate_syn_flood_score(&self, flows: &[FlowFeatures]) -> f64 {
         let syn_count: u32 = flows.iter().map(|f| f.syn_count).sum();
-        let syn_ack_count: u32 = flows.iter()
+        let syn_ack_count: u32 = flows
+            .iter()
             .filter(|f| f.syn_count > 0 && f.fin_count > 0)
             .count() as u32;
 
@@ -361,9 +366,9 @@ impl FlowAggregator {
     /// Calculate DDoS score (0-1)
     fn calculate_ddos_score(&self, conn_rate: f64, pkt_per_flow: f64, total_flows: u32) -> f64 {
         // High connection rate with many packets suggests DDoS
-        let rate_score = (conn_rate / 100.0).min(1.0);  // Normalize to 100 conn/sec
-        let volume_score = (total_flows as f64 / 1000.0).min(1.0);  // Normalize to 1000 flows
-        let packet_score = (pkt_per_flow / 100.0).min(1.0);  // Normalize to 100 pkt/flow
+        let rate_score = (conn_rate / 100.0).min(1.0); // Normalize to 100 conn/sec
+        let volume_score = (total_flows as f64 / 1000.0).min(1.0); // Normalize to 1000 flows
+        let packet_score = (pkt_per_flow / 100.0).min(1.0); // Normalize to 100 pkt/flow
 
         (rate_score * 0.4 + volume_score * 0.3 + packet_score * 0.3).min(1.0)
     }

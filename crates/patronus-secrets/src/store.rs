@@ -1,6 +1,6 @@
 //! Secret storage backends
 
-use crate::{SecretString, crypto};
+use crate::{crypto, SecretString};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -120,11 +120,12 @@ impl FileStore {
         file_path: &PathBuf,
         master_password: &str,
     ) -> Result<(Vec<u8>, HashMap<String, SecretString>)> {
-        let content = tokio::fs::read(file_path).await
+        let content = tokio::fs::read(file_path)
+            .await
             .context("Failed to read secrets file")?;
 
-        let encrypted: EncryptedSecrets = serde_json::from_slice(&content)
-            .context("Failed to parse secrets file")?;
+        let encrypted: EncryptedSecrets =
+            serde_json::from_slice(&content).context("Failed to parse secrets file")?;
 
         let master_key = crypto::derive_key(master_password, &encrypted.salt)?;
 
@@ -132,8 +133,7 @@ impl FileStore {
         for (key, encrypted_value) in encrypted.secrets {
             let plaintext = crypto::decrypt_secret(&encrypted_value, &master_key)?;
             let secret = SecretString::new(
-                String::from_utf8(plaintext)
-                    .context("Invalid UTF-8 in decrypted secret")?
+                String::from_utf8(plaintext).context("Invalid UTF-8 in decrypted secret")?,
             );
             cache.insert(key, secret);
         }
@@ -147,10 +147,8 @@ impl FileStore {
         // Encrypt all secrets
         let mut encrypted_secrets = HashMap::new();
         for (key, value) in cache.iter() {
-            let encrypted = crypto::encrypt_secret(
-                value.expose_secret().as_bytes(),
-                &self.master_key,
-            )?;
+            let encrypted =
+                crypto::encrypt_secret(value.expose_secret().as_bytes(), &self.master_key)?;
             encrypted_secrets.insert(key.clone(), encrypted);
         }
 
@@ -159,10 +157,11 @@ impl FileStore {
             secrets: encrypted_secrets,
         };
 
-        let json = serde_json::to_vec_pretty(&encrypted_file)
-            .context("Failed to serialize secrets")?;
+        let json =
+            serde_json::to_vec_pretty(&encrypted_file).context("Failed to serialize secrets")?;
 
-        tokio::fs::write(&self.file_path, json).await
+        tokio::fs::write(&self.file_path, json)
+            .await
             .context("Failed to write secrets file")?;
 
         // Set restrictive permissions (0600)
@@ -222,8 +221,14 @@ mod tests {
     async fn test_memory_store() {
         let store = MemoryStore::new();
 
-        store.store("key1", SecretString::from("value1")).await.unwrap();
-        store.store("key2", SecretString::from("value2")).await.unwrap();
+        store
+            .store("key1", SecretString::from("value1"))
+            .await
+            .unwrap();
+        store
+            .store("key2", SecretString::from("value2"))
+            .await
+            .unwrap();
 
         assert!(store.exists("key1").await.unwrap());
         assert!(!store.exists("key3").await.unwrap());
@@ -244,8 +249,13 @@ mod tests {
         let file_path = temp_file.path().to_path_buf();
 
         {
-            let store = FileStore::new(file_path.clone(), "master_password").await.unwrap();
-            store.store("test_key", SecretString::from("test_value")).await.unwrap();
+            let store = FileStore::new(file_path.clone(), "master_password")
+                .await
+                .unwrap();
+            store
+                .store("test_key", SecretString::from("test_value"))
+                .await
+                .unwrap();
         }
 
         // Reload from file

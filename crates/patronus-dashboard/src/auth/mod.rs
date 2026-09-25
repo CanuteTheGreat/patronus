@@ -7,4 +7,4 @@ pub mod users;
 
 pub use jwt::{generate_tokens, refresh_access_token};
 pub use password::{hash_password, verify_password};
-pub use users::{User, UserRole, CreateUserRequest, ChangePasswordRequest};
+pub use users::{ChangePasswordRequest, CreateUserRequest, User, UserRole};

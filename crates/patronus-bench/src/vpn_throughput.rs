@@ -14,7 +14,12 @@ pub struct VpnResult {
 
 impl VpnResult {
     pub fn print(&self) {
-        println!("{}", format!("{} VPN Performance Results", self.vpn_type.to_uppercase()).bright_cyan().bold());
+        println!(
+            "{}",
+            format!("{} VPN Performance Results", self.vpn_type.to_uppercase())
+                .bright_cyan()
+                .bold()
+        );
         println!("{}", "==============================".bright_cyan());
         println!("Throughput:             {:.2} Mbps", self.throughput_mbps);
         println!("Latency Overhead:       {:.1} μs", self.latency_overhead_us);

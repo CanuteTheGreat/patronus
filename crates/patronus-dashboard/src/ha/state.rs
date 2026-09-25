@@ -252,10 +252,7 @@ mod tests {
     #[test]
     fn test_state_creation() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let state = DistributedState::new(
-            temp_dir.path().to_str().unwrap(),
-            "test",
-        )?;
+        let state = DistributedState::new(temp_dir.path().to_str().unwrap(), "test")?;
 
         assert_eq!(state.namespace, "test");
         Ok(())
@@ -264,10 +261,7 @@ mod tests {
     #[test]
     fn test_set_and_get() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let state = DistributedState::new(
-            temp_dir.path().to_str().unwrap(),
-            "test",
-        )?;
+        let state = DistributedState::new(temp_dir.path().to_str().unwrap(), "test")?;
 
         #[derive(Serialize, Deserialize, PartialEq, Debug)]
         struct TestData {
@@ -286,10 +280,7 @@ mod tests {
     #[test]
     fn test_delete() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let state = DistributedState::new(
-            temp_dir.path().to_str().unwrap(),
-            "test",
-        )?;
+        let state = DistributedState::new(temp_dir.path().to_str().unwrap(), "test")?;
 
         state.set("key1", &"value1")?;
         assert!(state.exists("key1")?);
@@ -303,10 +294,7 @@ mod tests {
     #[test]
     fn test_prefix_operations() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let state = DistributedState::new(
-            temp_dir.path().to_str().unwrap(),
-            "test",
-        )?;
+        let state = DistributedState::new(temp_dir.path().to_str().unwrap(), "test")?;
 
         state.set("user:1", &"alice")?;
         state.set("user:2", &"bob")?;
@@ -330,10 +318,7 @@ mod tests {
     #[test]
     fn test_batch_operations() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let state = DistributedState::new(
-            temp_dir.path().to_str().unwrap(),
-            "test",
-        )?;
+        let state = DistributedState::new(temp_dir.path().to_str().unwrap(), "test")?;
 
         state.batch_write(|batch| {
             batch.insert("key1", &"value1")?;

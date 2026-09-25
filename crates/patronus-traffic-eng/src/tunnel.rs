@@ -1,11 +1,11 @@
 //! Tunnel Management for Traffic Engineering
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TunnelState {
@@ -214,7 +214,8 @@ impl TunnelManager {
 
     pub async fn get_operational_tunnels(&self) -> Vec<Tunnel> {
         let tunnels = self.tunnels.read().await;
-        tunnels.values()
+        tunnels
+            .values()
             .filter(|t| t.is_operational())
             .cloned()
             .collect()
@@ -222,7 +223,8 @@ impl TunnelManager {
 
     pub async fn get_tunnels_by_path(&self, source: &str, destination: &str) -> Vec<Tunnel> {
         let tunnels = self.tunnels.read().await;
-        tunnels.values()
+        tunnels
+            .values()
             .filter(|t| t.source == source && t.destination == destination)
             .cloned()
             .collect()
@@ -240,7 +242,9 @@ impl TunnelManager {
 
         if let Some(tunnel) = tunnels.get_mut(id) {
             tunnel.metrics.update_sent(bytes_sent, packets_sent);
-            tunnel.metrics.update_received(bytes_received, packets_received);
+            tunnel
+                .metrics
+                .update_received(bytes_received, packets_received);
             true
         } else {
             false
@@ -266,7 +270,8 @@ impl TunnelManager {
 
     pub async fn get_total_bandwidth(&self) -> f64 {
         let tunnels = self.tunnels.read().await;
-        tunnels.values()
+        tunnels
+            .values()
             .filter(|t| t.is_operational())
             .map(|t| t.reserved_bandwidth)
             .sum()
@@ -279,7 +284,8 @@ impl TunnelManager {
 
     pub async fn get_high_priority_tunnels(&self) -> Vec<Tunnel> {
         let tunnels = self.tunnels.read().await;
-        tunnels.values()
+        tunnels
+            .values()
             .filter(|t| t.priority >= 5)
             .cloned()
             .collect()
@@ -423,14 +429,16 @@ mod tests {
     async fn test_create_tunnel() {
         let manager = TunnelManager::new();
 
-        let id = manager.create_tunnel(
-            "test-tunnel".to_string(),
-            "A".to_string(),
-            "B".to_string(),
-            vec!["A".to_string(), "B".to_string()],
-            1000.0,
-            5,
-        ).await;
+        let id = manager
+            .create_tunnel(
+                "test-tunnel".to_string(),
+                "A".to_string(),
+                "B".to_string(),
+                vec!["A".to_string(), "B".to_string()],
+                1000.0,
+                5,
+            )
+            .await;
 
         let tunnel = manager.get_tunnel(&id).await;
         assert!(tunnel.is_some());
@@ -441,23 +449,27 @@ mod tests {
     async fn test_list_tunnels() {
         let manager = TunnelManager::new();
 
-        manager.create_tunnel(
-            "tunnel1".to_string(),
-            "A".to_string(),
-            "B".to_string(),
-            vec!["A".to_string(), "B".to_string()],
-            1000.0,
-            5,
-        ).await;
+        manager
+            .create_tunnel(
+                "tunnel1".to_string(),
+                "A".to_string(),
+                "B".to_string(),
+                vec!["A".to_string(), "B".to_string()],
+                1000.0,
+                5,
+            )
+            .await;
 
-        manager.create_tunnel(
-            "tunnel2".to_string(),
-            "B".to_string(),
-            "C".to_string(),
-            vec!["B".to_string(), "C".to_string()],
-            500.0,
-            3,
-        ).await;
+        manager
+            .create_tunnel(
+                "tunnel2".to_string(),
+                "B".to_string(),
+                "C".to_string(),
+                vec!["B".to_string(), "C".to_string()],
+                500.0,
+                3,
+            )
+            .await;
 
         let tunnels = manager.list_tunnels().await;
         assert_eq!(tunnels.len(), 2);
@@ -467,14 +479,16 @@ mod tests {
     async fn test_bring_tunnel_up_down() {
         let manager = TunnelManager::new();
 
-        let id = manager.create_tunnel(
-            "test".to_string(),
-            "A".to_string(),
-            "B".to_string(),
-            vec!["A".to_string(), "B".to_string()],
-            1000.0,
-            5,
-        ).await;
+        let id = manager
+            .create_tunnel(
+                "test".to_string(),
+                "A".to_string(),
+                "B".to_string(),
+                vec!["A".to_string(), "B".to_string()],
+                1000.0,
+                5,
+            )
+            .await;
 
         assert!(manager.bring_tunnel_up(&id).await);
         let tunnel = manager.get_tunnel(&id).await.unwrap();
@@ -489,14 +503,16 @@ mod tests {
     async fn test_delete_tunnel() {
         let manager = TunnelManager::new();
 
-        let id = manager.create_tunnel(
-            "test".to_string(),
-            "A".to_string(),
-            "B".to_string(),
-            vec!["A".to_string(), "B".to_string()],
-            1000.0,
-            5,
-        ).await;
+        let id = manager
+            .create_tunnel(
+                "test".to_string(),
+                "A".to_string(),
+                "B".to_string(),
+                vec!["A".to_string(), "B".to_string()],
+                1000.0,
+                5,
+            )
+            .await;
 
         assert!(manager.delete_tunnel(&id).await);
         assert!(manager.get_tunnel(&id).await.is_none());
@@ -506,23 +522,27 @@ mod tests {
     async fn test_get_operational_tunnels() {
         let manager = TunnelManager::new();
 
-        let id1 = manager.create_tunnel(
-            "up".to_string(),
-            "A".to_string(),
-            "B".to_string(),
-            vec!["A".to_string(), "B".to_string()],
-            1000.0,
-            5,
-        ).await;
+        let id1 = manager
+            .create_tunnel(
+                "up".to_string(),
+                "A".to_string(),
+                "B".to_string(),
+                vec!["A".to_string(), "B".to_string()],
+                1000.0,
+                5,
+            )
+            .await;
 
-        let _id2 = manager.create_tunnel(
-            "down".to_string(),
-            "B".to_string(),
-            "C".to_string(),
-            vec!["B".to_string(), "C".to_string()],
-            500.0,
-            3,
-        ).await;
+        let _id2 = manager
+            .create_tunnel(
+                "down".to_string(),
+                "B".to_string(),
+                "C".to_string(),
+                vec!["B".to_string(), "C".to_string()],
+                500.0,
+                3,
+            )
+            .await;
 
         manager.bring_tunnel_up(&id1).await;
         // id2 stays down
@@ -536,32 +556,38 @@ mod tests {
     async fn test_get_tunnels_by_path() {
         let manager = TunnelManager::new();
 
-        manager.create_tunnel(
-            "t1".to_string(),
-            "A".to_string(),
-            "B".to_string(),
-            vec!["A".to_string(), "B".to_string()],
-            1000.0,
-            5,
-        ).await;
+        manager
+            .create_tunnel(
+                "t1".to_string(),
+                "A".to_string(),
+                "B".to_string(),
+                vec!["A".to_string(), "B".to_string()],
+                1000.0,
+                5,
+            )
+            .await;
 
-        manager.create_tunnel(
-            "t2".to_string(),
-            "A".to_string(),
-            "B".to_string(),
-            vec!["A".to_string(), "X".to_string(), "B".to_string()],
-            500.0,
-            3,
-        ).await;
+        manager
+            .create_tunnel(
+                "t2".to_string(),
+                "A".to_string(),
+                "B".to_string(),
+                vec!["A".to_string(), "X".to_string(), "B".to_string()],
+                500.0,
+                3,
+            )
+            .await;
 
-        manager.create_tunnel(
-            "t3".to_string(),
-            "B".to_string(),
-            "C".to_string(),
-            vec!["B".to_string(), "C".to_string()],
-            800.0,
-            4,
-        ).await;
+        manager
+            .create_tunnel(
+                "t3".to_string(),
+                "B".to_string(),
+                "C".to_string(),
+                vec!["B".to_string(), "C".to_string()],
+                800.0,
+                4,
+            )
+            .await;
 
         let tunnels = manager.get_tunnels_by_path("A", "B").await;
         assert_eq!(tunnels.len(), 2);
@@ -571,14 +597,16 @@ mod tests {
     async fn test_update_tunnel_metrics() {
         let manager = TunnelManager::new();
 
-        let id = manager.create_tunnel(
-            "test".to_string(),
-            "A".to_string(),
-            "B".to_string(),
-            vec!["A".to_string(), "B".to_string()],
-            1000.0,
-            5,
-        ).await;
+        let id = manager
+            .create_tunnel(
+                "test".to_string(),
+                "A".to_string(),
+                "B".to_string(),
+                vec!["A".to_string(), "B".to_string()],
+                1000.0,
+                5,
+            )
+            .await;
 
         assert!(manager.update_tunnel_metrics(&id, 1000, 2000, 10, 20).await);
 
@@ -591,14 +619,16 @@ mod tests {
     async fn test_record_tunnel_error_auto_degrade() {
         let manager = TunnelManager::new();
 
-        let id = manager.create_tunnel(
-            "test".to_string(),
-            "A".to_string(),
-            "B".to_string(),
-            vec!["A".to_string(), "B".to_string()],
-            1000.0,
-            5,
-        ).await;
+        let id = manager
+            .create_tunnel(
+                "test".to_string(),
+                "A".to_string(),
+                "B".to_string(),
+                vec!["A".to_string(), "B".to_string()],
+                1000.0,
+                5,
+            )
+            .await;
 
         manager.bring_tunnel_up(&id).await;
 
@@ -615,23 +645,27 @@ mod tests {
     async fn test_get_total_bandwidth() {
         let manager = TunnelManager::new();
 
-        let id1 = manager.create_tunnel(
-            "t1".to_string(),
-            "A".to_string(),
-            "B".to_string(),
-            vec!["A".to_string(), "B".to_string()],
-            1000.0,
-            5,
-        ).await;
+        let id1 = manager
+            .create_tunnel(
+                "t1".to_string(),
+                "A".to_string(),
+                "B".to_string(),
+                vec!["A".to_string(), "B".to_string()],
+                1000.0,
+                5,
+            )
+            .await;
 
-        let id2 = manager.create_tunnel(
-            "t2".to_string(),
-            "B".to_string(),
-            "C".to_string(),
-            vec!["B".to_string(), "C".to_string()],
-            500.0,
-            3,
-        ).await;
+        let id2 = manager
+            .create_tunnel(
+                "t2".to_string(),
+                "B".to_string(),
+                "C".to_string(),
+                vec!["B".to_string(), "C".to_string()],
+                500.0,
+                3,
+            )
+            .await;
 
         manager.bring_tunnel_up(&id1).await;
         manager.bring_tunnel_up(&id2).await;
@@ -644,32 +678,38 @@ mod tests {
     async fn test_get_high_priority_tunnels() {
         let manager = TunnelManager::new();
 
-        manager.create_tunnel(
-            "high1".to_string(),
-            "A".to_string(),
-            "B".to_string(),
-            vec!["A".to_string(), "B".to_string()],
-            1000.0,
-            6,
-        ).await;
+        manager
+            .create_tunnel(
+                "high1".to_string(),
+                "A".to_string(),
+                "B".to_string(),
+                vec!["A".to_string(), "B".to_string()],
+                1000.0,
+                6,
+            )
+            .await;
 
-        manager.create_tunnel(
-            "low".to_string(),
-            "B".to_string(),
-            "C".to_string(),
-            vec!["B".to_string(), "C".to_string()],
-            500.0,
-            2,
-        ).await;
+        manager
+            .create_tunnel(
+                "low".to_string(),
+                "B".to_string(),
+                "C".to_string(),
+                vec!["B".to_string(), "C".to_string()],
+                500.0,
+                2,
+            )
+            .await;
 
-        manager.create_tunnel(
-            "high2".to_string(),
-            "C".to_string(),
-            "D".to_string(),
-            vec!["C".to_string(), "D".to_string()],
-            800.0,
-            7,
-        ).await;
+        manager
+            .create_tunnel(
+                "high2".to_string(),
+                "C".to_string(),
+                "D".to_string(),
+                vec!["C".to_string(), "D".to_string()],
+                800.0,
+                7,
+            )
+            .await;
 
         let high_priority = manager.get_high_priority_tunnels().await;
         assert_eq!(high_priority.len(), 2);
@@ -679,16 +719,23 @@ mod tests {
     async fn test_reroute_tunnel() {
         let manager = TunnelManager::new();
 
-        let id = manager.create_tunnel(
-            "test".to_string(),
-            "A".to_string(),
-            "C".to_string(),
-            vec!["A".to_string(), "B".to_string(), "C".to_string()],
-            1000.0,
-            5,
-        ).await;
+        let id = manager
+            .create_tunnel(
+                "test".to_string(),
+                "A".to_string(),
+                "C".to_string(),
+                vec!["A".to_string(), "B".to_string(), "C".to_string()],
+                1000.0,
+                5,
+            )
+            .await;
 
-        let new_path = vec!["A".to_string(), "X".to_string(), "Y".to_string(), "C".to_string()];
+        let new_path = vec![
+            "A".to_string(),
+            "X".to_string(),
+            "Y".to_string(),
+            "C".to_string(),
+        ];
         assert!(manager.reroute_tunnel(&id, new_path.clone()).await);
 
         let tunnel = manager.get_tunnel(&id).await.unwrap();
@@ -699,14 +746,16 @@ mod tests {
     async fn test_adjust_bandwidth() {
         let manager = TunnelManager::new();
 
-        let id = manager.create_tunnel(
-            "test".to_string(),
-            "A".to_string(),
-            "B".to_string(),
-            vec!["A".to_string(), "B".to_string()],
-            1000.0,
-            5,
-        ).await;
+        let id = manager
+            .create_tunnel(
+                "test".to_string(),
+                "A".to_string(),
+                "B".to_string(),
+                vec!["A".to_string(), "B".to_string()],
+                1000.0,
+                5,
+            )
+            .await;
 
         assert!(manager.adjust_bandwidth(&id, 1500.0).await);
 

@@ -2,23 +2,19 @@
 //!
 //! These handlers render Askama templates with data from the application state.
 
-use axum::{
-    extract::State,
-    response::{Html, IntoResponse, Response},
-    http::StatusCode,
+use crate::{
+    auth::AuthUser,
+    state::AppState,
+    templates::{
+        DashboardTemplate, FirewallTemplate, MonitoringTemplate, NetworkTemplate, SystemTemplate,
+        VpnTemplate,
+    },
 };
 use askama::Template;
-use crate::{
-    state::AppState,
-    auth::AuthUser,
-    templates::{
-        DashboardTemplate,
-        FirewallTemplate,
-        VpnTemplate,
-        NetworkTemplate,
-        MonitoringTemplate,
-        SystemTemplate,
-    },
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{Html, IntoResponse, Response},
 };
 
 /// Login page template
@@ -288,7 +284,7 @@ pub async fn monitoring(State(state): State<AppState>) -> Response {
         active_alerts: 3,
         packets_analyzed_rate: 15420,
         packets_total: 2847392,
-        ai_threats: vec![], // TODO: Fetch from AI monitoring system
+        ai_threats: vec![],      // TODO: Fetch from AI monitoring system
         attack_map_data: vec![], // TODO: Fetch geo attack data
         model_performance: crate::templates::ModelPerformance {
             accuracy: 96.7,

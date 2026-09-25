@@ -42,7 +42,13 @@ async fn test_cache_custom_ttl() {
     let cache: Cache<String, String> = Cache::new(Duration::from_secs(60));
 
     // Insert with custom short TTL
-    cache.insert_with_ttl("key1".to_string(), "value1".to_string(), Duration::from_millis(50)).await;
+    cache
+        .insert_with_ttl(
+            "key1".to_string(),
+            "value1".to_string(),
+            Duration::from_millis(50),
+        )
+        .await;
 
     // Should be available immediately
     assert!(cache.get(&"key1".to_string()).await.is_some());
@@ -102,9 +108,27 @@ async fn test_cache_cleanup_partial() {
     let cache: Cache<String, String> = Cache::new(Duration::from_secs(60));
 
     // Insert with different TTLs
-    cache.insert_with_ttl("key1".to_string(), "value1".to_string(), Duration::from_millis(50)).await;
-    cache.insert_with_ttl("key2".to_string(), "value2".to_string(), Duration::from_millis(200)).await;
-    cache.insert_with_ttl("key3".to_string(), "value3".to_string(), Duration::from_millis(50)).await;
+    cache
+        .insert_with_ttl(
+            "key1".to_string(),
+            "value1".to_string(),
+            Duration::from_millis(50),
+        )
+        .await;
+    cache
+        .insert_with_ttl(
+            "key2".to_string(),
+            "value2".to_string(),
+            Duration::from_millis(200),
+        )
+        .await;
+    cache
+        .insert_with_ttl(
+            "key3".to_string(),
+            "value3".to_string(),
+            Duration::from_millis(50),
+        )
+        .await;
 
     // Wait for short TTLs to expire
     sleep(Duration::from_millis(100)).await;
@@ -149,7 +173,13 @@ async fn test_cache_stats() {
 
     // Insert entries with different TTLs
     cache.insert("key1".to_string(), "value1".to_string()).await;
-    cache.insert_with_ttl("key2".to_string(), "value2".to_string(), Duration::from_millis(50)).await;
+    cache
+        .insert_with_ttl(
+            "key2".to_string(),
+            "value2".to_string(),
+            Duration::from_millis(50),
+        )
+        .await;
     cache.insert("key3".to_string(), "value3".to_string()).await;
 
     // Get stats
@@ -210,7 +240,9 @@ async fn test_routing_cache() {
     };
 
     // Insert routing decision
-    cache.insert("flow-key-1".to_string(), decision.clone()).await;
+    cache
+        .insert("flow-key-1".to_string(), decision.clone())
+        .await;
 
     // Retrieve decision
     let retrieved = cache.get(&"flow-key-1".to_string()).await;
@@ -226,11 +258,17 @@ async fn test_cache_overwrite() {
 
     // Insert initial value
     cache.insert("key1".to_string(), "value1".to_string()).await;
-    assert_eq!(cache.get(&"key1".to_string()).await, Some("value1".to_string()));
+    assert_eq!(
+        cache.get(&"key1".to_string()).await,
+        Some("value1".to_string())
+    );
 
     // Overwrite with new value
     cache.insert("key1".to_string(), "value2".to_string()).await;
-    assert_eq!(cache.get(&"key1".to_string()).await, Some("value2".to_string()));
+    assert_eq!(
+        cache.get(&"key1".to_string()).await,
+        Some("value2".to_string())
+    );
 
     // Size should still be 1
     let stats = cache.stats().await;

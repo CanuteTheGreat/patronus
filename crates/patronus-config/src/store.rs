@@ -1,10 +1,13 @@
 //! Configuration storage backend
 
-use patronus_core::{Error, Result, types::{FirewallRule, NatRule, ChainType, FirewallAction, Protocol, PortSpec, NatType}};
+use patronus_core::{
+    types::{ChainType, FirewallAction, FirewallRule, NatRule, NatType, PortSpec, Protocol},
+    Error, Result,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePool, Row};
-use std::path::{Path, PathBuf};
 use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 
 /// Configuration store
 pub struct ConfigStore {
@@ -62,7 +65,7 @@ impl ConfigStore {
 
         sqlx::query(
             "INSERT INTO system_config (key, value, updated_at) VALUES (?, ?, ?)
-             ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = ?"
+             ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = ?",
         )
         .bind(key)
         .bind(value)
@@ -90,14 +93,20 @@ impl ConfigStore {
     /// Save a firewall rule
     pub async fn save_firewall_rule(&self, rule: &FirewallRule) -> Result<i64> {
         let now = chrono::Utc::now().timestamp();
-        let sport_json = rule.sport.as_ref().map(|p| serde_json::to_string(p).unwrap());
-        let dport_json = rule.dport.as_ref().map(|p| serde_json::to_string(p).unwrap());
+        let sport_json = rule
+            .sport
+            .as_ref()
+            .map(|p| serde_json::to_string(p).unwrap());
+        let dport_json = rule
+            .dport
+            .as_ref()
+            .map(|p| serde_json::to_string(p).unwrap());
 
         let result = sqlx::query(
             "INSERT INTO firewall_rules
              (name, enabled, chain, action, source, destination, protocol, sport, dport,
               interface_in, interface_out, comment, priority, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&rule.name)
         .bind(rule.enabled as i32)
@@ -127,7 +136,7 @@ impl ConfigStore {
             "SELECT id, name, enabled, chain, action, source, destination, protocol,
                     sport, dport, interface_in, interface_out, comment
              FROM firewall_rules
-             ORDER BY priority ASC, id ASC"
+             ORDER BY priority ASC, id ASC",
         )
         .fetch_all(self.pool()?)
         .await
@@ -149,7 +158,8 @@ impl ConfigStore {
                 _ => FirewallAction::Drop,
             };
 
-            let protocol = row.get::<Option<String>, _>("protocol")
+            let protocol = row
+                .get::<Option<String>, _>("protocol")
                 .map(|p| match p.as_str() {
                     "tcp" => Protocol::Tcp,
                     "udp" => Protocol::Udp,
@@ -157,10 +167,12 @@ impl ConfigStore {
                     _ => Protocol::All,
                 });
 
-            let sport = row.get::<Option<String>, _>("sport")
+            let sport = row
+                .get::<Option<String>, _>("sport")
                 .and_then(|s| serde_json::from_str(&s).ok());
 
-            let dport = row.get::<Option<String>, _>("dport")
+            let dport = row
+                .get::<Option<String>, _>("dport")
                 .and_then(|s| serde_json::from_str(&s).ok());
 
             rules.push(FirewallRule {
@@ -197,19 +209,27 @@ impl ConfigStore {
     /// Save a NAT rule
     pub async fn save_nat_rule(&self, rule: &NatRule) -> Result<i64> {
         let now = chrono::Utc::now().timestamp();
-        let dport_json = rule.dport.as_ref().map(|p| serde_json::to_string(p).unwrap());
+        let dport_json = rule
+            .dport
+            .as_ref()
+            .map(|p| serde_json::to_string(p).unwrap());
 
         let (nat_type_str, to_address, to_port) = match &rule.nat_type {
             NatType::Masquerade => ("masquerade".to_string(), None, None),
-            NatType::Snat { to_address } => ("snat".to_string(), Some(to_address.to_string()), None),
-            NatType::Dnat { to_address, to_port } => ("dnat".to_string(), Some(to_address.to_string()), *to_port),
+            NatType::Snat { to_address } => {
+                ("snat".to_string(), Some(to_address.to_string()), None)
+            }
+            NatType::Dnat {
+                to_address,
+                to_port,
+            } => ("dnat".to_string(), Some(to_address.to_string()), *to_port),
         };
 
         let result = sqlx::query(
             "INSERT INTO nat_rules
              (name, enabled, nat_type, to_address, to_port, source, destination, protocol,
               dport, interface_out, comment, priority, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&rule.name)
         .bind(rule.enabled as i32)
@@ -238,7 +258,7 @@ impl ConfigStore {
             "SELECT id, name, enabled, nat_type, to_address, to_port, source, destination,
                     protocol, dport, interface_out, comment
              FROM nat_rules
-             ORDER BY priority ASC, id ASC"
+             ORDER BY priority ASC, id ASC",
         )
         .fetch_all(self.pool()?)
         .await
@@ -265,7 +285,8 @@ impl ConfigStore {
                 _ => NatType::Masquerade,
             };
 
-            let protocol = row.get::<Option<String>, _>("protocol")
+            let protocol = row
+                .get::<Option<String>, _>("protocol")
                 .map(|p| match p.as_str() {
                     "tcp" => Protocol::Tcp,
                     "udp" => Protocol::Udp,
@@ -273,7 +294,8 @@ impl ConfigStore {
                     _ => Protocol::All,
                 });
 
-            let dport = row.get::<Option<String>, _>("dport")
+            let dport = row
+                .get::<Option<String>, _>("dport")
                 .and_then(|s| serde_json::from_str(&s).ok());
 
             rules.push(NatRule {
@@ -319,7 +341,7 @@ impl ConfigStore {
         let now = chrono::Utc::now().timestamp();
         let result = sqlx::query(
             "INSERT INTO config_backups (name, description, config_json, created_at)
-             VALUES (?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?)",
         )
         .bind(name)
         .bind(description)

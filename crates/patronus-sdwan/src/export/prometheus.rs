@@ -2,10 +2,10 @@
 //!
 //! Exports SD-WAN metrics in Prometheus exposition format.
 
-use crate::health::{HealthMonitor, PathStatus};
 use crate::failover::FailoverEngine;
-use std::sync::Arc;
+use crate::health::{HealthMonitor, PathStatus};
 use std::fmt::Write as FmtWrite;
+use std::sync::Arc;
 
 /// Prometheus metrics exporter
 pub struct PrometheusExporter {
@@ -15,10 +15,7 @@ pub struct PrometheusExporter {
 
 impl PrometheusExporter {
     /// Create a new Prometheus exporter
-    pub fn new(
-        health_monitor: Arc<HealthMonitor>,
-        failover_engine: Arc<FailoverEngine>,
-    ) -> Self {
+    pub fn new(health_monitor: Arc<HealthMonitor>, failover_engine: Arc<FailoverEngine>) -> Self {
         Self {
             health_monitor,
             failover_engine,
@@ -30,7 +27,11 @@ impl PrometheusExporter {
         let mut output = String::new();
 
         // Add header
-        writeln!(output, "# HELP patronus_sdwan_info SD-WAN instance information").unwrap();
+        writeln!(
+            output,
+            "# HELP patronus_sdwan_info SD-WAN instance information"
+        )
+        .unwrap();
         writeln!(output, "# TYPE patronus_sdwan_info gauge").unwrap();
         writeln!(output, "patronus_sdwan_info{{version=\"0.2.0\"}} 1").unwrap();
         writeln!(output).unwrap();
@@ -47,7 +48,11 @@ impl PrometheusExporter {
     /// Export path health metrics
     async fn export_path_health_metrics(&self, output: &mut String) {
         // Health score
-        writeln!(output, "# HELP patronus_sdwan_path_health_score Path health score (0-100)").unwrap();
+        writeln!(
+            output,
+            "# HELP patronus_sdwan_path_health_score Path health score (0-100)"
+        )
+        .unwrap();
         writeln!(output, "# TYPE patronus_sdwan_path_health_score gauge").unwrap();
 
         let health_map = self.health_monitor.get_all_health().await;
@@ -56,12 +61,17 @@ impl PrometheusExporter {
                 output,
                 "patronus_sdwan_path_health_score{{path_id=\"{}\"}} {:.2}",
                 path_id, health.health_score
-            ).unwrap();
+            )
+            .unwrap();
         }
         writeln!(output).unwrap();
 
         // Latency
-        writeln!(output, "# HELP patronus_sdwan_path_latency_ms Path latency in milliseconds").unwrap();
+        writeln!(
+            output,
+            "# HELP patronus_sdwan_path_latency_ms Path latency in milliseconds"
+        )
+        .unwrap();
         writeln!(output, "# TYPE patronus_sdwan_path_latency_ms gauge").unwrap();
 
         for (path_id, health) in self.health_monitor.get_all_health().await {
@@ -69,12 +79,17 @@ impl PrometheusExporter {
                 output,
                 "patronus_sdwan_path_latency_ms{{path_id=\"{}\"}} {:.2}",
                 path_id, health.latency_ms
-            ).unwrap();
+            )
+            .unwrap();
         }
         writeln!(output).unwrap();
 
         // Packet loss
-        writeln!(output, "# HELP patronus_sdwan_path_packet_loss_pct Path packet loss percentage").unwrap();
+        writeln!(
+            output,
+            "# HELP patronus_sdwan_path_packet_loss_pct Path packet loss percentage"
+        )
+        .unwrap();
         writeln!(output, "# TYPE patronus_sdwan_path_packet_loss_pct gauge").unwrap();
 
         for (path_id, health) in self.health_monitor.get_all_health().await {
@@ -82,12 +97,17 @@ impl PrometheusExporter {
                 output,
                 "patronus_sdwan_path_packet_loss_pct{{path_id=\"{}\"}} {:.2}",
                 path_id, health.packet_loss_pct
-            ).unwrap();
+            )
+            .unwrap();
         }
         writeln!(output).unwrap();
 
         // Jitter
-        writeln!(output, "# HELP patronus_sdwan_path_jitter_ms Path jitter in milliseconds").unwrap();
+        writeln!(
+            output,
+            "# HELP patronus_sdwan_path_jitter_ms Path jitter in milliseconds"
+        )
+        .unwrap();
         writeln!(output, "# TYPE patronus_sdwan_path_jitter_ms gauge").unwrap();
 
         for (path_id, health) in self.health_monitor.get_all_health().await {
@@ -95,12 +115,17 @@ impl PrometheusExporter {
                 output,
                 "patronus_sdwan_path_jitter_ms{{path_id=\"{}\"}} {:.2}",
                 path_id, health.jitter_ms
-            ).unwrap();
+            )
+            .unwrap();
         }
         writeln!(output).unwrap();
 
         // Path status
-        writeln!(output, "# HELP patronus_sdwan_path_status Path status (1=up, 0.5=degraded, 0=down)").unwrap();
+        writeln!(
+            output,
+            "# HELP patronus_sdwan_path_status Path status (1=up, 0.5=degraded, 0=down)"
+        )
+        .unwrap();
         writeln!(output, "# TYPE patronus_sdwan_path_status gauge").unwrap();
 
         for (path_id, health) in self.health_monitor.get_all_health().await {
@@ -112,8 +137,11 @@ impl PrometheusExporter {
             writeln!(
                 output,
                 "patronus_sdwan_path_status{{path_id=\"{}\",status=\"{}\"}} {:.1}",
-                path_id, health.status.as_str(), status_value
-            ).unwrap();
+                path_id,
+                health.status.as_str(),
+                status_value
+            )
+            .unwrap();
         }
         writeln!(output).unwrap();
     }
@@ -121,13 +149,31 @@ impl PrometheusExporter {
     /// Export failover metrics
     async fn export_failover_metrics(&self, output: &mut String) {
         // Failover policies
-        writeln!(output, "# HELP patronus_sdwan_failover_policies_total Total number of failover policies").unwrap();
-        writeln!(output, "# TYPE patronus_sdwan_failover_policies_total gauge").unwrap();
+        writeln!(
+            output,
+            "# HELP patronus_sdwan_failover_policies_total Total number of failover policies"
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "# TYPE patronus_sdwan_failover_policies_total gauge"
+        )
+        .unwrap();
 
         let policies = self.failover_engine.get_policies().await;
         let enabled_policies = policies.iter().filter(|p| p.enabled).count();
-        writeln!(output, "patronus_sdwan_failover_policies_total{{}} {}", policies.len()).unwrap();
-        writeln!(output, "patronus_sdwan_failover_policies_total{{enabled=\"true\"}} {}", enabled_policies).unwrap();
+        writeln!(
+            output,
+            "patronus_sdwan_failover_policies_total{{}} {}",
+            policies.len()
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "patronus_sdwan_failover_policies_total{{enabled=\"true\"}} {}",
+            enabled_policies
+        )
+        .unwrap();
         writeln!(output).unwrap();
 
         // Active path per policy
@@ -147,7 +193,11 @@ impl PrometheusExporter {
         writeln!(output).unwrap();
 
         // Failover count
-        writeln!(output, "# HELP patronus_sdwan_failover_count_total Total number of failovers per policy").unwrap();
+        writeln!(
+            output,
+            "# HELP patronus_sdwan_failover_count_total Total number of failovers per policy"
+        )
+        .unwrap();
         writeln!(output, "# TYPE patronus_sdwan_failover_count_total counter").unwrap();
 
         for policy in &policies {
@@ -156,7 +206,8 @@ impl PrometheusExporter {
                     output,
                     "patronus_sdwan_failover_count_total{{policy_id=\"{}\",policy_name=\"{}\"}} {}",
                     policy.policy_id, policy.name, state.failover_count
-                ).unwrap();
+                )
+                .unwrap();
             }
         }
         writeln!(output).unwrap();
@@ -167,18 +218,25 @@ impl PrometheusExporter {
 mod tests {
     use super::*;
     use crate::database::Database;
+    use crate::failover::FailoverPolicy;
     use crate::health::{HealthConfig, PathHealth};
     use crate::types::PathId;
-    use crate::failover::FailoverPolicy;
     use std::net::IpAddr;
 
-    async fn create_test_exporter() -> (Arc<PrometheusExporter>, Arc<HealthMonitor>, Arc<FailoverEngine>) {
+    async fn create_test_exporter() -> (
+        Arc<PrometheusExporter>,
+        Arc<HealthMonitor>,
+        Arc<FailoverEngine>,
+    ) {
         let db = Arc::new(Database::new_in_memory().await.unwrap());
         let health_config = HealthConfig::default();
         let health_monitor = Arc::new(HealthMonitor::new(db.clone(), health_config).await.unwrap());
         let failover_engine = Arc::new(FailoverEngine::new(db, health_monitor.clone()));
 
-        let exporter = Arc::new(PrometheusExporter::new(health_monitor.clone(), failover_engine.clone()));
+        let exporter = Arc::new(PrometheusExporter::new(
+            health_monitor.clone(),
+            failover_engine.clone(),
+        ));
 
         (exporter, health_monitor, failover_engine)
     }
@@ -201,7 +259,10 @@ mod tests {
         // Add some health data
         let path1 = PathId::new(1);
         let target1: IpAddr = "192.168.1.1".parse().unwrap();
-        health_monitor.check_path_health(&path1, target1).await.unwrap();
+        health_monitor
+            .check_path_health(&path1, target1)
+            .await
+            .unwrap();
 
         let output = exporter.export_metrics().await;
 
@@ -225,8 +286,14 @@ mod tests {
         let path2 = PathId::new(2);
         let target: IpAddr = "192.168.1.1".parse().unwrap();
 
-        health_monitor.check_path_health(&path1, target).await.unwrap();
-        health_monitor.check_path_health(&path2, target).await.unwrap();
+        health_monitor
+            .check_path_health(&path1, target)
+            .await
+            .unwrap();
+        health_monitor
+            .check_path_health(&path2, target)
+            .await
+            .unwrap();
 
         let output = exporter.export_metrics().await;
 
@@ -266,7 +333,10 @@ mod tests {
 
         let path1 = PathId::new(1);
         let target: IpAddr = "192.168.1.1".parse().unwrap();
-        health_monitor.check_path_health(&path1, target).await.unwrap();
+        health_monitor
+            .check_path_health(&path1, target)
+            .await
+            .unwrap();
 
         let output = exporter.export_metrics().await;
 
@@ -306,7 +376,10 @@ mod tests {
 
         let path1 = PathId::new(1);
         let target: IpAddr = "192.168.1.1".parse().unwrap();
-        health_monitor.check_path_health(&path1, target).await.unwrap();
+        health_monitor
+            .check_path_health(&path1, target)
+            .await
+            .unwrap();
 
         let output = exporter.export_metrics().await;
 
