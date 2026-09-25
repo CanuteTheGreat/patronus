@@ -119,7 +119,7 @@ RDEPEND="
 
 DEPEND="${RDEPEND}"
 BDEPEND="
-	>=virtual/rust-1.75
+	>=dev-lang/rust-1.75
 "
 
 QA_FLAGS_IGNORED="usr/bin/patronus.*"
