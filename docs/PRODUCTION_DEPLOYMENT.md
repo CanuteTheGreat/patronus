@@ -4,6 +4,14 @@
 **Last Updated**: 2025-10-12
 **Target Audience**: Operations Teams, DevOps Engineers
 
+> **⚠️ Platform note**: Patronus's primary, supported target is Gentoo
+> Linux via its own Portage overlay (`gentoo/net-firewall/patronus/`), which
+> preserves USE-flag feature selection — see [AGENTS.md](../AGENTS.md) and
+> the main [README](../README.md#gentoo-linux-primary-platform). This guide
+> predates that decision and describes an Ubuntu/apt-based deployment; the
+> commands below work on non-Gentoo Linux but are NOT the recommended path.
+> Treat this as a secondary/legacy reference, not the primary how-to.
+
 ---
 
 ## Overview

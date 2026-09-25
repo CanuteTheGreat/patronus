@@ -3,6 +3,15 @@
 **Version**: 1.0.0
 **Last Updated**: 2025-10-11
 
+> **Note**: The actual, currently-running CI is
+> `.forgejo/workflows/rust-ci.yml` (Forgejo Actions, added 2026-09-24). It
+> runs on this project's own runner fleet, not `ubuntu-latest` as shown in
+> examples below -- see [AGENTS.md](../AGENTS.md) for why generic
+> Debian/Ubuntu runners are the wrong default for this project. This
+> document may describe an earlier/alternate GitHub Actions design;
+> cross-check against the real workflow file before relying on specifics
+> here.
+
 ---
 
 ## Overview

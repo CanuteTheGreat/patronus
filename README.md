@@ -7,10 +7,17 @@
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Rust: 100%](https://img.shields.io/badge/Rust-100%25-orange.svg)](https://www.rust-lang.org/)
 [![Status: Production Ready](https://img.shields.io/badge/Status-Production%20Ready-success.svg)](SECURITY-AND-PERFORMANCE-COMPLETE.md)
+[![Platform: Gentoo](https://img.shields.io/badge/Platform-Gentoo-purple.svg)](https://www.gentoo.org/)
 
 ---
 
 ## 🚀 What is Patronus?
+
+**Patronus is built specifically for Gentoo Linux** via its own Portage
+overlay (`gentoo/net-firewall/patronus/`), embracing source-based
+compilation and USE-flag feature selection the same way Horcrux does --
+see [AGENTS.md](AGENTS.md) for details. It also runs on other modern Linux
+distributions, but Gentoo is the primary, recommended target.
 
 Patronus is a **high-performance, enterprise-grade SD-WAN and firewall platform** that combines **100% feature parity** with pfSense/OPNsense plus revolutionary SD-WAN capabilities:
 
