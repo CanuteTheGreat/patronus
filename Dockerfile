@@ -25,11 +25,20 @@ RUN mkdir -p /etc/portage/repos.conf && \
 RUN echo "net-firewall/patronus ${PATRONUS_USE}" > /etc/portage/package.use/patronus-docker-build
 RUN echo "net-firewall/patronus ~amd64" > /etc/portage/package.accept_keywords/patronus
 
-# The live ebuild (patronus-9999) fetches via git-r3 from GitHub; for a
-# from-source container build we vendor the working tree directly instead,
-# so the image always reflects what's actually in this checkout.
+# The live ebuild (patronus-9999) fetches via git-r3 from this project's own
+# repo (git.canutethegreat.com); for a from-source container build we vendor
+# the working tree directly instead, so the image always reflects what's
+# actually in this checkout, not whatever HEAD happens to be upstream. A
+# versioned release ebuild (patronus-0.1.0, tag v0.1.0) also exists in this
+# overlay for users who want a pinned, non-live install outside Docker.
 COPY . /usr/src/patronus
 RUN cd /usr/src/patronus && cargo vendor /var/cache/distfiles/patronus-vendor 2>&1 | tail -5 || true
+
+# git-r3 would otherwise re-clone from the remote (EGIT_REPO_URI) even though
+# we just vendored the local checkout above, silently ignoring uncommitted
+# local changes. EGIT_OVERRIDE_REPO_<PN> is git-r3's documented mechanism to
+# point it at a local path instead.
+ENV EGIT_OVERRIDE_REPO_PATRONUS=/usr/src/patronus
 
 RUN emerge --verbose --autounmask-write net-firewall/patronus && \
     etc-update --automode -5 || true

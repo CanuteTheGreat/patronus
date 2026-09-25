@@ -2,8 +2,8 @@
 <!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
 <pkgmetadata>
 	<maintainer type="person">
-		<email>maintainer@example.com</email>
-		<name>Patronus Maintainers</name>
+		<email>canutethegreat@errant.solutions</email>
+		<name>CanuteTheGreat</name>
 	</maintainer>
 	<longdescription>
 		Patronus is a modern firewall and network security platform built with Rust on Gentoo Linux.
@@ -34,6 +34,6 @@
 		<flag name="backup">Enable configuration backup/restore</flag>
 	</use>
 	<upstream>
-		<remote-id type="github">yourusername/patronus</remote-id>
+		<bugs-to>https://git.canutethegreat.com/CanuteTheGreat/patronus/issues</bugs-to>
 	</upstream>
 </pkgmetadata>
