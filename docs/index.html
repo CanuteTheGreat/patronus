@@ -254,6 +254,71 @@
             margin-top: 0.5rem;
         }
 
+        /* Donors & Sponsors */
+        .donors {
+            padding: 6rem 0;
+            background: var(--bg-alt);
+        }
+
+        .donors-intro {
+            max-width: 700px;
+            margin: 0 auto 2.5rem;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 1.05rem;
+            line-height: 1.6;
+        }
+
+        .donor-tiers {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2rem;
+            max-width: 900px;
+            margin: 0 auto 2.5rem;
+        }
+
+        .donor-tier {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.75rem;
+        }
+
+        .donor-tier h3 {
+            margin-bottom: 1rem;
+            font-size: 1.2rem;
+        }
+
+        .donor-list {
+            list-style: none;
+        }
+
+        .donor-list li {
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .donor-list li:last-child {
+            border-bottom: none;
+        }
+
+        .donor-list-empty {
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        .donor-cta {
+            text-align: center;
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        .donor-note {
+            margin-top: 1.25rem;
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
         /* Footer */
         footer {
             background: #1e293b;
@@ -296,7 +361,8 @@
                 <li><a href="#features">Features</a></li>
                 <li><a href="#tech">Technology</a></li>
                 <li><a href="#installation">Install</a></li>
-                <li><a href="https://github.com/yourusername/patronus">GitHub</a></li>
+                <li><a href="#donors">Donors</a></li>
+                <li><a href="https://github.com/CanuteTheGreat/patronus">GitHub</a></li>
             </ul>
         </nav>
     </header>
@@ -308,7 +374,8 @@
             <p>Next-generation eBPF/XDP-powered firewall with AI threat detection</p>
             <div class="cta-buttons">
                 <a href="#installation" class="btn btn-primary">Get Started</a>
-                <a href="https://github.com/yourusername/patronus" class="btn btn-secondary">View on GitHub</a>
+                <a href="https://github.com/CanuteTheGreat/patronus" class="btn btn-secondary">View on GitHub</a>
+                <a href="https://github.com/sponsors/CanuteTheGreat" class="btn btn-secondary" target="_blank" rel="noopener">Sponsor This Project</a>
             </div>
         </div>
     </section>
@@ -424,7 +491,7 @@
             <h3 style="margin-top: 2rem;">Gentoo (Recommended)</h3>
             <div class="code-block">
 # Add the Patronus overlay
-eselect repository add patronus git https://github.com/yourusername/patronus-gentoo
+eselect repository add patronus git https://github.com/CanuteTheGreat/patronus
 emaint sync -r patronus
 
 # Install Patronus
@@ -441,7 +508,7 @@ rc-service patronus start
             <h3 style="margin-top: 2rem;">From Source</h3>
             <div class="code-block">
 # Clone the repository
-git clone https://github.com/yourusername/patronus.git
+git clone https://github.com/CanuteTheGreat/patronus.git
 cd patronus
 
 # Build all crates
@@ -488,14 +555,49 @@ cargo run -p patronus-web
         </div>
     </section>
 
+    <!-- Donors & Sponsors -->
+    <section id="donors" class="donors">
+        <div class="container">
+            <h2 class="section-title">Donors & Sponsors</h2>
+            <p class="donors-intro">
+                Patronus is built and maintained by volunteers. Money and hardware donations
+                directly fund development time, CI infrastructure, and test hardware for
+                eBPF/XDP development across architectures. Every donor is listed here publicly
+                with their permission — thank you!
+            </p>
+            <div class="donor-tiers">
+                <div class="donor-tier">
+                    <h3>💰 Financial Donors</h3>
+                    <ul class="donor-list">
+                        <li><strong>Errant Solutions</strong> &mdash; ongoing financial support</li>
+                    </ul>
+                </div>
+                <div class="donor-tier">
+                    <h3>🖥️ Hardware Donors</h3>
+                    <ul class="donor-list">
+                        <li class="donor-list-empty">No hardware donations yet &mdash; be the first!</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="donor-cta">
+                <a href="https://github.com/sponsors/CanuteTheGreat" class="btn btn-primary" target="_blank" rel="noopener">Become a Sponsor</a>
+                <p class="donor-note">
+                    Want to donate hardware (test boards, servers, CI runners) instead? Open an
+                    <a href="https://github.com/CanuteTheGreat/patronus/issues/new" target="_blank" rel="noopener">issue</a>
+                    or reach out via GitHub. All donors are credited here unless they ask to stay anonymous.
+                </p>
+            </div>
+        </div>
+    </section>
+
     <!-- Footer -->
     <footer>
         <div class="container">
             <p>&copy; 2025 Patronus Project. Built with 🦀 Rust.</p>
             <p>
-                <a href="https://github.com/yourusername/patronus">GitHub</a> •
-                <a href="https://github.com/yourusername/patronus/issues">Issues</a> •
-                <a href="https://github.com/yourusername/patronus/blob/main/LICENSE">License</a>
+                <a href="https://github.com/CanuteTheGreat/patronus">GitHub</a> •
+                <a href="https://github.com/CanuteTheGreat/patronus/issues">Issues</a> •
+                <a href="https://github.com/CanuteTheGreat/patronus/blob/main/LICENSE">License</a>
             </p>
             <p style="margin-top: 1rem; opacity: 0.7;">
                 🤖 Generated with <a href="https://claude.com/claude-code">Claude Code</a>
