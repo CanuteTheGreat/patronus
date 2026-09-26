@@ -13,6 +13,12 @@ use std::time::SystemTime;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info};
 
+impl Default for BfdHealthMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// BFD health monitor that tracks path health using BFD sessions
 pub struct BfdHealthMonitor {
     /// Active BFD sessions mapped by path ID
@@ -22,6 +28,7 @@ pub struct BfdHealthMonitor {
     health_cache: Arc<RwLock<HashMap<PathId, PathHealth>>>,
 
     /// Channel for receiving BFD state changes
+    #[allow(clippy::type_complexity, dead_code)]
     state_rx: Arc<RwLock<Option<mpsc::Receiver<(PathId, BfdState)>>>>,
 }
 
@@ -69,16 +76,16 @@ impl BfdHealthMonitor {
         // Store session
         {
             let mut sessions = self.sessions.write().await;
-            sessions.insert(path_id.clone(), session.clone());
+            sessions.insert(path_id, session.clone());
         }
 
         // Initialize health as Down (will be updated when BFD comes up)
         {
             let mut cache = self.health_cache.write().await;
             cache.insert(
-                path_id.clone(),
+                path_id,
                 PathHealth {
-                    path_id: path_id.clone(),
+                    path_id,
                     latency_ms: 0.0,
                     packet_loss_pct: 100.0,
                     jitter_ms: 0.0,
@@ -91,7 +98,7 @@ impl BfdHealthMonitor {
 
         // Start BFD session
         let session_clone = session.clone();
-        let path_id_clone = path_id.clone();
+        let path_id_clone = path_id;
         tokio::spawn(async move {
             if let Err(e) = session_clone.start(state_tx).await {
                 error!("BFD session failed for path {}: {}", path_id_clone, e);
@@ -176,18 +183,18 @@ impl BfdHealthMonitor {
                             // Update cache
                             {
                                 let mut cache = self.health_cache.write().await;
-                                cache.insert(path_id.clone(), new_health.clone());
+                                cache.insert(path_id, new_health.clone());
                             }
 
                             // Notify subscribers
                             if let Some(ref tx) = state_change_tx {
-                                let _ = tx.send((path_id.clone(), new_health.clone())).await;
+                                let _ = tx.send((path_id, new_health.clone())).await;
                             }
                         }
                     } else {
                         // First health check - store it
                         let mut cache = self.health_cache.write().await;
-                        cache.insert(path_id.clone(), new_health);
+                        cache.insert(path_id, new_health);
                     }
                 }
 
@@ -207,7 +214,7 @@ impl BfdHealthMonitor {
         };
 
         PathHealth {
-            path_id: path_id.clone(),
+            path_id: *path_id,
             latency_ms: 0.0, // BFD doesn't measure latency
             packet_loss_pct,
             jitter_ms: 0.0, // BFD doesn't measure jitter
@@ -281,9 +288,7 @@ mod tests {
         let local_addr: SocketAddr = "127.0.0.1:3784".parse().unwrap();
         let remote_addr: SocketAddr = "127.0.0.1:3785".parse().unwrap();
 
-        let result = monitor
-            .add_session(path_id.clone(), local_addr, remote_addr)
-            .await;
+        let result = monitor.add_session(path_id, local_addr, remote_addr).await;
         assert!(result.is_ok());
 
         // Check session was added
@@ -305,7 +310,7 @@ mod tests {
         let remote_addr: SocketAddr = "127.0.0.1:3785".parse().unwrap();
 
         monitor
-            .add_session(path_id.clone(), local_addr, remote_addr)
+            .add_session(path_id, local_addr, remote_addr)
             .await
             .unwrap();
         assert!(monitor.get_session(&path_id).await.is_some());

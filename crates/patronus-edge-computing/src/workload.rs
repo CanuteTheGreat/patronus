@@ -48,6 +48,7 @@ pub struct WorkloadPlacement {
 
 pub struct WorkloadScheduler {
     placements: Arc<RwLock<HashMap<Uuid, WorkloadPlacement>>>,
+    #[allow(dead_code)]
     policy: SchedulingPolicy,
 }
 

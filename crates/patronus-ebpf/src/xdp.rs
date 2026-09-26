@@ -77,8 +77,10 @@ pub struct XdpFirewall {
 struct LoadedProgram {
     interface: String,
     /// BPF object (contains program and maps)
+    #[allow(dead_code)]
     object: Option<Object>,
     /// Fallback file descriptors for when libbpf is not used
+    #[allow(dead_code)]
     program_fd: i32,
     map_fds: std::collections::HashMap<String, i32>,
 }
@@ -228,11 +230,11 @@ impl XdpFirewall {
     pub async fn detach(&mut self, interface: &str) -> Result<(), XdpError> {
         // Find and remove program
         if let Some(pos) = self.programs.iter().position(|p| p.interface == interface) {
-            let program = self.programs.remove(pos);
+            let _program = self.programs.remove(pos);
 
             // Detach from interface
             let status = tokio::process::Command::new("ip")
-                .args(&["link", "set", "dev", interface, "xdp", "off"])
+                .args(["link", "set", "dev", interface, "xdp", "off"])
                 .status()
                 .await?;
 
@@ -324,7 +326,7 @@ impl XdpFirewall {
         let object_path = temp_dir.join("patronus_xdp.o");
 
         let status = std::process::Command::new("clang")
-            .args(&[
+            .args([
                 "-O2",
                 "-target",
                 "bpf",
@@ -493,7 +495,8 @@ char _license[] SEC("license") = "GPL";
         Ok((obj, prog_fd))
     }
 
-    fn load_bpf_program_fallback(&self, path: &Path) -> Result<i32, XdpError> {
+    #[allow(dead_code)]
+    fn load_bpf_program_fallback(&self, _path: &Path) -> Result<i32, XdpError> {
         // Fallback: use ip command directly
         tracing::debug!("Using fallback BPF loading via ip command");
         Ok(0) // Placeholder, actual loading happens during attach
@@ -609,7 +612,7 @@ char _license[] SEC("license") = "GPL";
         };
 
         let status = std::process::Command::new("ip")
-            .args(&[
+            .args([
                 "link",
                 "set",
                 "dev",
@@ -638,7 +641,7 @@ char _license[] SEC("license") = "GPL";
     }
 
     fn populate_rate_limits(&self, map_fd: i32) -> Result<(), XdpError> {
-        for (idx, limit) in self.config.rate_limits.iter().enumerate() {
+        for limit in self.config.rate_limits.iter() {
             if let Some(ip) = limit.source_ip {
                 // Store rate limit: key=IP, value=packets_per_second
                 self.map_update_ip(map_fd, &ip, limit.packets_per_second)?;

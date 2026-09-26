@@ -121,10 +121,7 @@ impl OrganizationManager {
 
         // Update hierarchy if has parent
         if let Some(parent_id) = org.parent_id {
-            self.hierarchy
-                .entry(parent_id)
-                .or_insert_with(Vec::new)
-                .push(org_id);
+            self.hierarchy.entry(parent_id).or_default().push(org_id);
         }
 
         self.organizations.insert(org_id, org);
@@ -204,7 +201,7 @@ impl OrganizationManager {
 
     pub fn delete_organization(&mut self, org_id: &Uuid) -> Result<()> {
         // Check if has children
-        if self.hierarchy.get(org_id).map_or(false, |c| !c.is_empty()) {
+        if self.hierarchy.get(org_id).is_some_and(|c| !c.is_empty()) {
             anyhow::bail!("Cannot delete organization with children");
         }
 

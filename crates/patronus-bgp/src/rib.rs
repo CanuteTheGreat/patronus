@@ -17,7 +17,10 @@ pub struct Rib {
     /// Best routes (after path selection)
     best_routes: Arc<RwLock<HashMap<Ipv4Network, BgpRoute>>>,
 
-    /// Local AS number
+    /// Local AS number. Stored for future use in path selection (AS-path
+    /// loop detection, local-pref tie-breaking) — not yet consumed anywhere,
+    /// but it's part of the public constructor's contract so it stays.
+    #[allow(dead_code)]
     local_asn: u16,
 }
 
@@ -38,7 +41,7 @@ impl Rib {
         debug!("Adding route to RIB: {} via {}", prefix, route.next_hop);
 
         let mut routes = self.routes.write().unwrap();
-        let prefix_routes = routes.entry(prefix).or_insert_with(Vec::new);
+        let prefix_routes = routes.entry(prefix).or_default();
 
         // Check if route already exists (update if so)
         if let Some(existing) = prefix_routes

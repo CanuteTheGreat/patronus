@@ -247,7 +247,7 @@ impl FlowAggregator {
 
         // Inter-arrival time
         let mut sorted_flows = flows.to_vec();
-        sorted_flows.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        sorted_flows.sort_by_key(|a| a.timestamp);
         let inter_arrival_times: Vec<f64> = sorted_flows
             .windows(2)
             .map(|w| (w[1].timestamp - w[0].timestamp).num_milliseconds() as f64)

@@ -194,9 +194,9 @@ impl Classifier for GamingClassifier {
         let port = flow.dst_port;
 
         // Common game port ranges
-        if (port >= 7000 && port <= 8000) ||  // Many FPS games
-           (port >= 27000 && port <= 28000) || // Source engine
-           (port >= 3000 && port <= 4000)
+        if (7000..=8000).contains(&port) ||  // Many FPS games
+           (27000..=28000).contains(&port) || // Source engine
+           (3000..=4000).contains(&port)
         {
             // Various games
             return Some(ApplicationType::Gaming);

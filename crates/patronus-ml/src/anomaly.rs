@@ -100,7 +100,7 @@ impl AnomalyDetector {
     where
         F: Fn(&TrafficMetrics) -> f64,
     {
-        let values: Vec<f64> = self.history.iter().map(|m| extractor(m)).collect();
+        let values: Vec<f64> = self.history.iter().map(extractor).collect();
         let mean = values.iter().sum::<f64>() / values.len() as f64;
         let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
         let std_dev = variance.sqrt();

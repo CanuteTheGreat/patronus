@@ -311,11 +311,9 @@ impl InstallerApp {
                     self.selected_disk += 1;
                 }
             }
-            KeyCode::Enter | KeyCode::Right => {
-                if !self.disks.is_empty() {
-                    self.config.disk.device = self.disks[self.selected_disk].path.clone();
-                    self.current_screen = Screen::PartitionScheme;
-                }
+            KeyCode::Enter | KeyCode::Right if !self.disks.is_empty() => {
+                self.config.disk.device = self.disks[self.selected_disk].path.clone();
+                self.current_screen = Screen::PartitionScheme;
             }
             _ => {}
         }
@@ -405,13 +403,10 @@ impl InstallerApp {
     }
 
     async fn handle_summary_key(&mut self, key: KeyCode) {
-        match key {
-            KeyCode::Enter => {
-                // Start installation
-                self.current_screen = Screen::Installing;
-                self.start_installation().await;
-            }
-            _ => {}
+        if key == KeyCode::Enter {
+            // Start installation
+            self.current_screen = Screen::Installing;
+            self.start_installation().await;
         }
     }
 

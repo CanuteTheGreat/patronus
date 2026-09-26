@@ -6,7 +6,6 @@ use axum::{
     extract::State,
     response::{Html, IntoResponse},
 };
-use patronus_network;
 
 use crate::state::AppState;
 

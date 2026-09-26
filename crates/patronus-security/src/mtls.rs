@@ -14,6 +14,7 @@ pub struct MtlsConfig {
 }
 
 pub struct MtlsManager {
+    #[allow(dead_code)]
     config: MtlsConfig,
 }
 

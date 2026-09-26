@@ -377,11 +377,7 @@ async fn generate_fstab(target: &Path, partitions: &[CreatedPartition]) -> Resul
         let (fs_type, options, dump, pass) = match &partition.filesystem {
             crate::disk::partition::PartitionFilesystem::Fat32 => ("vfat", "umask=0077", "0", "2"),
             crate::disk::partition::PartitionFilesystem::Linux(fs) => {
-                let opts = if partition.mount_point == "/" {
-                    "defaults"
-                } else {
-                    "defaults"
-                };
+                let opts = "defaults";
                 let pass = if partition.mount_point == "/" {
                     "1"
                 } else {

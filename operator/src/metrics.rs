@@ -18,6 +18,7 @@ pub struct Metrics {
     pub reconcile_duration: HistogramVec,
 
     /// Active resources gauge
+    #[allow(dead_code)]
     pub active_resources: IntGaugeVec,
 }
 
@@ -87,6 +88,7 @@ impl Metrics {
     }
 
     /// Update resource count
+    #[allow(dead_code)]
     pub fn set_resource_count(&self, kind: &str, phase: &str, count: i64) {
         self.active_resources
             .with_label_values(&[kind, phase])

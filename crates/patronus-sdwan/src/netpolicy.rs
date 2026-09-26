@@ -50,6 +50,7 @@ use tracing::{debug, info};
 
 /// NetworkPolicy enforcer
 pub struct PolicyEnforcer {
+    #[allow(dead_code)]
     db: Arc<Database>,
     policies: Arc<RwLock<HashMap<PolicyId, NetworkPolicy>>>,
     pod_labels: Arc<RwLock<HashMap<IpAddr, LabelSet>>>, // IP → Labels
@@ -483,7 +484,7 @@ impl PolicyEnforcer {
 
         // Sort policies by priority (highest first)
         let mut sorted_policies: Vec<_> = policies.values().collect();
-        sorted_policies.sort_by(|a, b| b.priority.cmp(&a.priority));
+        sorted_policies.sort_by_key(|p| std::cmp::Reverse(p.priority));
 
         // Evaluate policies in priority order
         for policy in sorted_policies {

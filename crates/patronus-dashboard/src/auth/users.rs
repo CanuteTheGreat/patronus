@@ -30,6 +30,7 @@ impl UserRole {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
             "admin" => Ok(UserRole::Admin),

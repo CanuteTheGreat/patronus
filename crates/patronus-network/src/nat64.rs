@@ -100,7 +100,7 @@ impl Nat64Manager {
 
         // Stop tayga
         Command::new("systemctl")
-            .args(&["stop", "tayga"])
+            .args(["stop", "tayga"])
             .status()
             .await?;
 
@@ -160,14 +160,14 @@ impl Nat64Manager {
         // Setup TUN device (tayga will create it)
         // But we can pre-create it for better control
         Command::new("ip")
-            .args(&["tuntap", "add", "dev", "nat64", "mode", "tun"])
+            .args(["tuntap", "add", "dev", "nat64", "mode", "tun"])
             .status()
             .await
             .ok(); // May fail if already exists
 
         // Bring interface up
         Command::new("ip")
-            .args(&["link", "set", "nat64", "up"])
+            .args(["link", "set", "nat64", "up"])
             .status()
             .await?;
 
@@ -185,7 +185,7 @@ impl Nat64Manager {
 
         // Reload Unbound
         Command::new("systemctl")
-            .args(&["reload", "unbound"])
+            .args(["reload", "unbound"])
             .status()
             .await?;
 
@@ -200,9 +200,7 @@ impl Nat64Manager {
 
         config.push_str("server:\n");
         config.push_str("    # Enable DNS64\n");
-        config.push_str(&format!(
-            "    module-config: \"dns64 validator iterator\"\n\n"
-        ));
+        config.push_str("    module-config: \"dns64 validator iterator\"\n\n");
 
         config.push_str("dns64:\n");
         config.push_str(&format!("    dns64-prefix: {}\n", self.config.dns64_prefix));
@@ -225,7 +223,7 @@ impl Nat64Manager {
 
             // Reload Unbound
             Command::new("systemctl")
-                .args(&["reload", "unbound"])
+                .args(["reload", "unbound"])
                 .status()
                 .await?;
         }
@@ -239,7 +237,7 @@ impl Nat64Manager {
 
         // Start tayga
         let status = Command::new("systemctl")
-            .args(&["start", "tayga"])
+            .args(["start", "tayga"])
             .status()
             .await?;
 
@@ -249,7 +247,7 @@ impl Nat64Manager {
 
         // Enable at boot
         Command::new("systemctl")
-            .args(&["enable", "tayga"])
+            .args(["enable", "tayga"])
             .status()
             .await?;
 
@@ -276,7 +274,7 @@ WantedBy=multi-user.target
 
         // Reload systemd
         Command::new("systemctl")
-            .args(&["daemon-reload"])
+            .args(["daemon-reload"])
             .status()
             .await?;
 
@@ -286,7 +284,7 @@ WantedBy=multi-user.target
     async fn configure_routing(&self) -> Result<()> {
         // Add route for NAT64 prefix through nat64 interface
         Command::new("ip")
-            .args(&[
+            .args([
                 "-6",
                 "route",
                 "add",
@@ -305,7 +303,7 @@ WantedBy=multi-user.target
 
         // Configure NAT for IPv4 pool on WAN interface
         Command::new("nft")
-            .args(&[
+            .args([
                 "add",
                 "rule",
                 "inet",
@@ -353,7 +351,7 @@ interface {interface} {{
 
         // Reload radvd if running
         Command::new("systemctl")
-            .args(&["reload-or-restart", "radvd"])
+            .args(["reload-or-restart", "radvd"])
             .status()
             .await
             .ok(); // May not be running, that's OK
@@ -366,7 +364,7 @@ interface {interface} {{
     /// Get NAT64 statistics
     pub async fn get_stats(&self) -> Result<Nat64Stats> {
         // Parse tayga statistics
-        let stats_output = Command::new("tayga").args(&["--stats"]).output().await;
+        let stats_output = Command::new("tayga").args(["--stats"]).output().await;
 
         if let Ok(output) = stats_output {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -443,7 +441,7 @@ interface {interface} {{
 
         // Reload tayga
         Command::new("systemctl")
-            .args(&["reload", "tayga"])
+            .args(["reload", "tayga"])
             .status()
             .await?;
 
@@ -466,7 +464,7 @@ interface {interface} {{
 
             // Reload tayga
             Command::new("systemctl")
-                .args(&["reload", "tayga"])
+                .args(["reload", "tayga"])
                 .status()
                 .await?;
         }

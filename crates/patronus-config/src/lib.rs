@@ -2,7 +2,6 @@
 //!
 //! Handles configuration storage, loading, and persistence.
 
-use patronus_core::Result;
 use serde::{Deserialize, Serialize};
 
 pub mod apply;

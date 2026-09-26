@@ -7,7 +7,6 @@ use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Stdio;
-use tokio::io::AsyncBufReadExt;
 use tokio::process::{Child, Command};
 
 /// Packet capture configuration
@@ -54,6 +53,12 @@ pub struct CaptureStats {
 
 pub struct PacketCaptureManager {
     captures_dir: PathBuf,
+}
+
+impl Default for PacketCaptureManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PacketCaptureManager {
@@ -332,7 +337,7 @@ impl PacketCaptureManager {
             .arg("-r")
             .arg(capture_file)
             .arg("-Y")
-            .arg(&format!("frame.number == {}", packet_num))
+            .arg(format!("frame.number == {}", packet_num))
             .arg("-V") // Verbose (full packet tree)
             .output()
             .await?;
@@ -380,7 +385,7 @@ impl PacketCaptureManager {
             .arg(capture_file)
             .arg("-q")
             .arg("-z")
-            .arg(&format!("follow,tcp,ascii,{}", stream_id))
+            .arg(format!("follow,tcp,ascii,{}", stream_id))
             .output()
             .await?;
 

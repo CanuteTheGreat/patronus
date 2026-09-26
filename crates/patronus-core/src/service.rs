@@ -117,7 +117,7 @@ impl ServiceManager {
             InitSystem::OpenRC => {
                 // OpenRC uses rc-update
                 let output = Command::new("rc-update")
-                    .args(&["add", service_name, "default"])
+                    .args(["add", service_name, "default"])
                     .output()
                     .map_err(|e| Error::Service(format!("Failed to enable service: {}", e)))?;
 
@@ -134,7 +134,7 @@ impl ServiceManager {
                 // SysV uses update-rc.d or chkconfig
                 if std::path::Path::new("/usr/sbin/update-rc.d").exists() {
                     let output = Command::new("update-rc.d")
-                        .args(&[service_name, "defaults"])
+                        .args([service_name, "defaults"])
                         .output()
                         .map_err(|e| Error::Service(format!("Failed to enable service: {}", e)))?;
 
@@ -146,7 +146,7 @@ impl ServiceManager {
                     }
                 } else if std::path::Path::new("/sbin/chkconfig").exists() {
                     let output = Command::new("chkconfig")
-                        .args(&[service_name, "on"])
+                        .args([service_name, "on"])
                         .output()
                         .map_err(|e| Error::Service(format!("Failed to enable service: {}", e)))?;
 
@@ -170,7 +170,7 @@ impl ServiceManager {
             InitSystem::Systemd => self.systemd_command("disable", service_name),
             InitSystem::OpenRC => {
                 let output = Command::new("rc-update")
-                    .args(&["del", service_name])
+                    .args(["del", service_name])
                     .output()
                     .map_err(|e| Error::Service(format!("Failed to disable service: {}", e)))?;
 
@@ -186,7 +186,7 @@ impl ServiceManager {
             InitSystem::SysVInit => {
                 if std::path::Path::new("/usr/sbin/update-rc.d").exists() {
                     let output = Command::new("update-rc.d")
-                        .args(&[service_name, "remove"])
+                        .args([service_name, "remove"])
                         .output()
                         .map_err(|e| Error::Service(format!("Failed to disable service: {}", e)))?;
 
@@ -198,7 +198,7 @@ impl ServiceManager {
                     }
                 } else if std::path::Path::new("/sbin/chkconfig").exists() {
                     let output = Command::new("chkconfig")
-                        .args(&[service_name, "off"])
+                        .args([service_name, "off"])
                         .output()
                         .map_err(|e| Error::Service(format!("Failed to disable service: {}", e)))?;
 
@@ -221,7 +221,7 @@ impl ServiceManager {
         match self.init_system {
             InitSystem::Systemd => {
                 let output = Command::new("systemctl")
-                    .args(&["is-active", service_name])
+                    .args(["is-active", service_name])
                     .output()
                     .map_err(|e| Error::Service(format!("Failed to get service status: {}", e)))?;
 
@@ -236,7 +236,7 @@ impl ServiceManager {
             }
             InitSystem::OpenRC => {
                 let output = Command::new("rc-service")
-                    .args(&[service_name, "status"])
+                    .args([service_name, "status"])
                     .output()
                     .map_err(|e| Error::Service(format!("Failed to get service status: {}", e)))?;
 
@@ -281,7 +281,7 @@ impl ServiceManager {
         match self.init_system {
             InitSystem::Systemd => {
                 let output = Command::new("systemctl")
-                    .args(&["is-enabled", service_name])
+                    .args(["is-enabled", service_name])
                     .output()
                     .map_err(|e| {
                         Error::Service(format!("Failed to check if service is enabled: {}", e))
@@ -312,7 +312,7 @@ impl ServiceManager {
 
     fn systemd_command(&self, action: &str, service_name: &str) -> Result<()> {
         let output = Command::new("systemctl")
-            .args(&[action, service_name])
+            .args([action, service_name])
             .output()
             .map_err(|e| Error::Service(format!("Failed to {} service: {}", action, e)))?;
 
@@ -329,7 +329,7 @@ impl ServiceManager {
 
     fn openrc_command(&self, action: &str, service_name: &str) -> Result<()> {
         let output = Command::new("rc-service")
-            .args(&[service_name, action])
+            .args([service_name, action])
             .output()
             .map_err(|e| Error::Service(format!("Failed to {} service: {}", action, e)))?;
 

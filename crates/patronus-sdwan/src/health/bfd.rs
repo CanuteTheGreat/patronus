@@ -182,25 +182,22 @@ impl BfdSession {
         loop {
             let tx_interval = *self.tx_interval.read().await;
             let mut timer = interval(tx_interval);
+            timer.tick().await;
 
-            loop {
-                timer.tick().await;
+            let packet = self.create_packet().await;
+            let bytes = packet.to_bytes();
 
-                let packet = self.create_packet().await;
-                let bytes = packet.to_bytes();
-
-                match socket.send(&bytes).await {
-                    Ok(_) => {
-                        debug!(
-                            "Sent BFD packet: state={:?}, my_disc={}, your_disc={}",
-                            *self.state.read().await,
-                            packet.my_discriminator,
-                            packet.your_discriminator
-                        );
-                    }
-                    Err(e) => {
-                        warn!("Failed to send BFD packet: {}", e);
-                    }
+            match socket.send(&bytes).await {
+                Ok(_) => {
+                    debug!(
+                        "Sent BFD packet: state={:?}, my_disc={}, your_disc={}",
+                        *self.state.read().await,
+                        packet.my_discriminator,
+                        packet.your_discriminator
+                    );
+                }
+                Err(e) => {
+                    warn!("Failed to send BFD packet: {}", e);
                 }
             }
         }
@@ -247,17 +244,17 @@ impl BfdSession {
             let detection_time = *self.detection_time.read().await;
 
             // Only check timeout if we're in Init or Up state
-            if current_state == BfdState::Init || current_state == BfdState::Up {
-                if last_rx.elapsed() > detection_time {
-                    warn!("BFD session timeout detected");
+            if (current_state == BfdState::Init || current_state == BfdState::Up)
+                && last_rx.elapsed() > detection_time
+            {
+                warn!("BFD session timeout detected");
 
-                    // Move to Down state
-                    *self.state.write().await = BfdState::Down;
-                    *self.diagnostic.write().await = BfdDiagnostic::ControlDetectionTimeExpired;
+                // Move to Down state
+                *self.state.write().await = BfdState::Down;
+                *self.diagnostic.write().await = BfdDiagnostic::ControlDetectionTimeExpired;
 
-                    // Notify state change
-                    let _ = state_tx.send(BfdState::Down).await;
-                }
+                // Notify state change
+                let _ = state_tx.send(BfdState::Down).await;
             }
         }
     }
@@ -417,7 +414,7 @@ mod tests {
     #[test]
     fn test_bfd_packet_serialization() {
         let packet = BfdPacket {
-            vers_diag: (1 << 5) | 0,
+            vers_diag: (1 << 5),
             state_flags: (BfdState::Up as u8) << 6,
             detect_mult: 3,
             length: 24,

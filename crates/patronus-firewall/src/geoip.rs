@@ -13,7 +13,7 @@ use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::fs;
 use tokio::process::Command;
 
@@ -344,7 +344,7 @@ impl GeoIpManager {
                 }
             }
 
-            nft_rules.push_str("\n");
+            nft_rules.push('\n');
         }
 
         nft_rules.push_str("  }\n");

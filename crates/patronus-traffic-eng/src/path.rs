@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PathConstraints {
     pub max_latency_ms: Option<f64>,
     pub min_bandwidth_mbps: Option<f64>,
@@ -12,19 +12,6 @@ pub struct PathConstraints {
     pub max_loss_percent: Option<f64>,
     pub excluded_nodes: HashSet<String>,
     pub required_nodes: Vec<String>,
-}
-
-impl Default for PathConstraints {
-    fn default() -> Self {
-        Self {
-            max_latency_ms: None,
-            min_bandwidth_mbps: None,
-            max_hops: None,
-            max_loss_percent: None,
-            excluded_nodes: HashSet::new(),
-            required_nodes: Vec::new(),
-        }
-    }
 }
 
 impl PathConstraints {
@@ -135,14 +122,11 @@ impl PathComputation {
     pub fn add_link(&mut self, from: String, to: String, metrics: LinkMetrics) {
         self.topology
             .entry(from.clone())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(to.clone(), metrics.clone());
 
         // Add reverse link for bidirectional
-        self.topology
-            .entry(to)
-            .or_insert_with(HashMap::new)
-            .insert(from, metrics);
+        self.topology.entry(to).or_default().insert(from, metrics);
     }
 
     pub fn get_link(&self, from: &str, to: &str) -> Option<&LinkMetrics> {
@@ -189,7 +173,7 @@ impl PathComputation {
             if node == destination {
                 // Found destination - check constraints
                 let max_util = self.calculate_max_utilization(&path);
-                let meets = self.check_constraints(&path, latency, min_bandwidth, &constraints);
+                let meets = self.check_constraints(&path, latency, min_bandwidth, constraints);
 
                 return Some(ComputedPath {
                     hops: path,
@@ -365,7 +349,7 @@ impl PathComputation {
         {
             if node == destination {
                 let max_util = self.calculate_max_utilization(&path);
-                let meets = self.check_constraints(&path, latency, min_bandwidth, &constraints);
+                let meets = self.check_constraints(&path, latency, min_bandwidth, constraints);
 
                 return Some(ComputedPath {
                     hops: path,
@@ -603,7 +587,7 @@ mod tests {
 
         assert!(!paths.is_empty());
         // Should find at least one path
-        assert!(paths.len() >= 1);
+        assert!(!paths.is_empty());
     }
 
     #[test]

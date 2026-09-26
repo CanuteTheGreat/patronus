@@ -120,11 +120,8 @@ impl InterfaceManager {
 
             // Extract the address
             for attr in &msg.attributes {
-                match attr {
-                    AddressAttribute::Address(addr) => {
-                        ips.push(*addr);
-                    }
-                    _ => {}
+                if let AddressAttribute::Address(addr) = attr {
+                    ips.push(*addr);
                 }
             }
         }
@@ -213,14 +210,7 @@ impl InterfaceManager {
             .add(interface.index, ip.addr, ip.prefix_len)
             .execute()
             .await
-            .map_err(|e| {
-                Error::Network(format!(
-                    "Failed to add IP {} to {}: {}",
-                    ip.to_string(),
-                    name,
-                    e
-                ))
-            })?;
+            .map_err(|e| Error::Network(format!("Failed to add IP {} to {}: {}", ip, name, e)))?;
 
         tracing::info!("Added IP {} to interface {}", ip.to_string(), name);
         Ok(())
@@ -245,12 +235,7 @@ impl InterfaceManager {
             .execute()
             .await
             .map_err(|e| {
-                Error::Network(format!(
-                    "Failed to remove IP {} from {}: {}",
-                    ip.to_string(),
-                    name,
-                    e
-                ))
+                Error::Network(format!("Failed to remove IP {} from {}: {}", ip, name, e))
             })?;
 
         tracing::info!("Removed IP {} from interface {}", ip.to_string(), name);

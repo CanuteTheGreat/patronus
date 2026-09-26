@@ -21,7 +21,7 @@ impl SubscriptionRoot {
         interval_seconds: Option<i32>,
     ) -> Result<impl Stream<Item = GqlMetrics>> {
         let state = get_state(ctx)?;
-        let interval = interval_seconds.unwrap_or(10).max(5).min(60);
+        let interval = interval_seconds.unwrap_or(10).clamp(5, 60);
         let metrics_collector = state.metrics_collector.clone();
 
         // Create a stream that polls metrics at the specified interval

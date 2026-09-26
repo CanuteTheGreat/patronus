@@ -294,7 +294,7 @@ impl BackupManager {
         }
 
         // Sort by creation time (newest first)
-        backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        backups.sort_by_key(|a| std::cmp::Reverse(a.created_at));
 
         Ok(backups)
     }
@@ -310,15 +310,12 @@ impl BackupManager {
         for (idx, backup) in backups.iter().enumerate() {
             let age_hours = (Utc::now() - backup.created_at).num_hours();
 
-            if age_hours < 24 && idx < self.config.retention.keep_hourly as usize {
-                to_keep.insert(&backup.backup_id);
-            } else if age_hours < 24 * 7 && idx < self.config.retention.keep_daily as usize {
-                to_keep.insert(&backup.backup_id);
-            } else if age_hours < 24 * 30 && idx < self.config.retention.keep_weekly as usize {
-                to_keep.insert(&backup.backup_id);
-            } else if age_hours < 24 * 365 && idx < self.config.retention.keep_monthly as usize {
-                to_keep.insert(&backup.backup_id);
-            } else if idx < self.config.retention.keep_yearly as usize {
+            if (age_hours < 24 && idx < self.config.retention.keep_hourly as usize)
+                || (age_hours < 24 * 7 && idx < self.config.retention.keep_daily as usize)
+                || (age_hours < 24 * 30 && idx < self.config.retention.keep_weekly as usize)
+                || (age_hours < 24 * 365 && idx < self.config.retention.keep_monthly as usize)
+                || (idx < self.config.retention.keep_yearly as usize)
+            {
                 to_keep.insert(&backup.backup_id);
             }
         }
@@ -405,7 +402,7 @@ impl BackupManager {
         let list_file_str = list_file.to_str().ok_or(BackupError::InvalidPath)?;
 
         let status = tokio::process::Command::new("tar")
-            .args(&["-czf", output_str, "-T", list_file_str])
+            .args(["-czf", output_str, "-T", list_file_str])
             .status()
             .await?;
 
@@ -425,7 +422,7 @@ impl BackupManager {
         let output_str = output.to_str().ok_or(BackupError::InvalidPath)?;
 
         let status = tokio::process::Command::new("zstd")
-            .args(&[
+            .args([
                 &format!("-{}", self.config.compression.level),
                 path_str,
                 "-o",
@@ -450,7 +447,7 @@ impl BackupManager {
 
         // Use age encryption for simplicity and security
         let status = tokio::process::Command::new("age")
-            .args(&["-e", "-o", output_str, path_str])
+            .args(["-e", "-o", output_str, path_str])
             .status()
             .await?;
 
@@ -468,7 +465,7 @@ impl BackupManager {
         let path_str = path.to_str().ok_or(BackupError::InvalidPath)?;
 
         let status = tokio::process::Command::new("age")
-            .args(&["-d", "-o", output_str, path_str])
+            .args(["-d", "-o", output_str, path_str])
             .status()
             .await?;
 
@@ -486,7 +483,7 @@ impl BackupManager {
         let output_str = output.to_str().ok_or(BackupError::InvalidPath)?;
 
         let status = tokio::process::Command::new("zstd")
-            .args(&["-d", path_str, "-o", output_str])
+            .args(["-d", path_str, "-o", output_str])
             .status()
             .await?;
 
@@ -502,7 +499,7 @@ impl BackupManager {
         let target_str = target.to_str().ok_or(BackupError::InvalidPath)?;
 
         let status = tokio::process::Command::new("tar")
-            .args(&["-xzf", path_str, "-C", target_str])
+            .args(["-xzf", path_str, "-C", target_str])
             .status()
             .await?;
 

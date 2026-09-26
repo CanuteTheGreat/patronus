@@ -1,3 +1,10 @@
+// patronus-bench config structs intentionally carry every CLI-facing knob
+// (interval_secs, duration_secs, workers, etc.) for forward-compat and
+// self-documenting `--help` output even where a given benchmark subcommand
+// doesn't yet read every field internally — allow dead_code at crate level
+// rather than scattering #[allow] across each partially-wired struct.
+#![allow(dead_code)]
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::*;

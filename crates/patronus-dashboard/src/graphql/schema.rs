@@ -52,6 +52,7 @@ pub fn build_simple_schema(
 mod tests {
     use super::*;
     use crate::state::AppState;
+    #[allow(unused_imports)]
     use async_graphql::*;
 
     async fn create_test_state() -> Arc<AppState> {
@@ -65,7 +66,7 @@ mod tests {
         let schema = build_schema(state);
 
         // Verify schema is valid
-        assert!(schema.sdl().len() > 0);
+        assert!(!schema.sdl().is_empty());
     }
 
     #[tokio::test]

@@ -3,7 +3,6 @@
 //! These handlers render Askama templates with data from the application state.
 
 use crate::{
-    auth::AuthUser,
     state::AppState,
     templates::{
         DashboardTemplate, FirewallTemplate, MonitoringTemplate, NetworkTemplate, SystemTemplate,

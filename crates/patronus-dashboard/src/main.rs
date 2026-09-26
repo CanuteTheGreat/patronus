@@ -1,6 +1,7 @@
 //! Patronus SD-WAN Enterprise Dashboard
 //!
 //! Centralized management and monitoring interface for multi-site SD-WAN deployments.
+#![allow(dead_code)]
 
 use axum::http::{header, HeaderValue};
 use axum::{
@@ -58,7 +59,7 @@ async fn main() -> anyhow::Result<()> {
     info!("Prometheus metrics exporter initialized");
 
     // Initialize metrics collector
-    let metrics = DashboardMetrics::new();
+    let _metrics = DashboardMetrics::new();
 
     // Initialize application state
     let state = AppState::new("dashboard.db").await?;
@@ -192,24 +193,13 @@ async fn graphql_handler(
         .and_then(|value| value.to_str().ok())
         .and_then(|auth| {
             // Remove "Bearer " prefix
-            if auth.starts_with("Bearer ") {
-                Some(&auth[7..])
-            } else {
-                None
-            }
+            auth.strip_prefix("Bearer ")
         })
         .and_then(|token| {
             // Validate JWT token
             auth::jwt::validate_token(token).ok()
         })
-        .and_then(|claims| {
-            // Check if token is revoked (Sprint 29)
-            if state.token_revocation.is_revoked(&claims.jti) {
-                None // Token revoked, reject it
-            } else {
-                Some(claims)
-            }
-        });
+        .filter(|claims| !state.token_revocation.is_revoked(&claims.jti));
 
     // Create auth context
     let auth_context = graphql::AuthContext::new(claims);

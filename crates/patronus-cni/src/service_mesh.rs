@@ -102,7 +102,11 @@ impl ServiceMeshManager {
     }
 
     /// Generate Envoy configuration for a pod
-    async fn generate_envoy_config(&self, pod_name: &str, namespace: &str) -> Result<EnvoyConfig> {
+    async fn generate_envoy_config(
+        &self,
+        _pod_name: &str,
+        _namespace: &str,
+    ) -> Result<EnvoyConfig> {
         let config = EnvoyConfig {
             admin: AdminConfig {
                 address: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), self.config.admin_port),
@@ -217,7 +221,7 @@ impl ServiceMeshManager {
     }
 
     /// Configure L7 routing rules
-    pub async fn configure_routing(&self, namespace: &str, rules: Vec<L7Route>) -> Result<()> {
+    pub async fn configure_routing(&self, namespace: &str, _rules: Vec<L7Route>) -> Result<()> {
         info!("Configuring L7 routing for namespace {}", namespace);
 
         // Update Envoy configurations with new routing rules

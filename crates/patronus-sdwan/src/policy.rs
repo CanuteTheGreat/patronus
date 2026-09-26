@@ -171,7 +171,6 @@ impl ApplicationClass {
             // Video conferencing
             (17, 3478..=3481) | (6, 3478..=3481) => Self::VideoConference, // TURN/STUN
             (6, 8801..=8810) | (17, 8801..=8810) => Self::VideoConference, // Zoom
-            (6, 19302..=19310) | (17, 19302..=19310) => Self::VideoConference, // Google Meet
 
             // Web browsing
             (6, 80) | (6, 443) | (6, 8080) | (6, 8443) => Self::Web,
@@ -366,7 +365,7 @@ impl PolicyMatcher {
                 // Inverse scoring: lower cost = higher score
                 // Score is 100 at $0/GB, 50 at $0.10/GB, 0 at $0.20/GB+
                 let score = 100.0 - (cost * 500.0);
-                score.max(0.0).min(100.0)
+                score.clamp(0.0, 100.0)
             }
             None => 50.0, // Default score when cost unknown
         }
@@ -393,8 +392,8 @@ impl PolicyMatcher {
     }
 
     /// Select the best path from a list based on policy
-    pub fn select_best_path<'a>(
-        paths: &'a [(PathMetrics, Option<f64>)], // (metrics, cost_per_gb)
+    pub fn select_best_path(
+        paths: &[(PathMetrics, Option<f64>)], // (metrics, cost_per_gb)
         preference: &PathPreference,
     ) -> Option<(usize, f64)> {
         if paths.is_empty() {
@@ -431,7 +430,7 @@ impl PolicyEngine {
     pub fn add_policy(&mut self, policy: RoutingPolicy) {
         self.policies.push(policy);
         // Sort by priority (highest first)
-        self.policies.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.policies.sort_by_key(|p| std::cmp::Reverse(p.priority));
     }
 
     pub fn remove_policy(&mut self, id: u64) -> Option<RoutingPolicy> {
@@ -452,12 +451,10 @@ impl PolicyEngine {
 
     /// Find the best matching policy for a flow
     pub fn find_matching_policy(&self, flow: &FlowKey) -> Option<&RoutingPolicy> {
-        for policy in &self.policies {
-            if policy.enabled && PolicyMatcher::matches(flow, &policy.match_rules) {
-                return Some(policy);
-            }
-        }
-        None
+        self.policies
+            .iter()
+            .find(|&policy| policy.enabled && PolicyMatcher::matches(flow, &policy.match_rules))
+            .map(|v| v as _)
     }
 }
 

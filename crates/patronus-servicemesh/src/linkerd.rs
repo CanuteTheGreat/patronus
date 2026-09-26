@@ -32,6 +32,7 @@ pub struct RetryBudget {
 }
 
 pub struct LinkerdIntegration {
+    #[allow(dead_code)]
     namespace: String,
 }
 

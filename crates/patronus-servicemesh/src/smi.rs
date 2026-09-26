@@ -37,7 +37,7 @@ impl ServiceMeshInterface for SmiAdapter {
         &self,
         name: &str,
         service: &str,
-        backends: Vec<(String, u32)>,
+        _backends: Vec<(String, u32)>,
     ) -> Result<()> {
         tracing::info!("Creating TrafficSplit {} for service {}", name, service);
         Ok(())
@@ -58,7 +58,7 @@ impl ServiceMeshInterface for SmiAdapter {
         Ok(())
     }
 
-    async fn get_metrics(&self, service: &str) -> Result<ServiceMetrics> {
+    async fn get_metrics(&self, _service: &str) -> Result<ServiceMetrics> {
         Ok(ServiceMetrics {
             success_rate: 0.999,
             latency_p50: 10.0,

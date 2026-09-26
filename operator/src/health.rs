@@ -35,6 +35,7 @@ impl HealthStatus {
     }
 
     /// Mark the operator as alive/dead
+    #[allow(dead_code)]
     pub fn set_alive(&self, alive: bool) {
         self.alive.store(alive, Ordering::SeqCst);
         if !alive {

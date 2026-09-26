@@ -398,7 +398,7 @@ mod tests {
             )
             .await;
 
-        let lsp2 = manager
+        let _lsp2 = manager
             .create_lsp(
                 "lsp2".to_string(),
                 "r2".to_string(),
@@ -515,7 +515,7 @@ mod tests {
             2000.0,
             "10.0.0.2".to_string(),
         );
-        let id2 = conn2.id;
+        let _id2 = conn2.id;
 
         manager.register_provider_connection(conn1).await;
         manager.register_provider_connection(conn2).await;

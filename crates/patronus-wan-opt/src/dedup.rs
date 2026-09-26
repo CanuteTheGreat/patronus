@@ -80,15 +80,15 @@ impl Deduplicator {
             let hash = Self::hash_chunk(chunk);
             stats.chunks_total += 1;
 
-            if chunk_store.contains_key(&hash) {
+            if let std::collections::hash_map::Entry::Vacant(e) = chunk_store.entry(hash) {
+                // Unique chunk
+                e.insert(chunk.to_vec());
+                stats.chunks_unique += 1;
+                stats.unique_bytes += chunk.len() as u64;
+            } else {
                 // Duplicate chunk
                 stats.chunks_duplicate += 1;
                 stats.duplicate_bytes += chunk.len() as u64;
-            } else {
-                // Unique chunk
-                chunk_store.insert(hash, chunk.to_vec());
-                stats.chunks_unique += 1;
-                stats.unique_bytes += chunk.len() as u64;
             }
 
             hashes.push(hash);
@@ -103,11 +103,9 @@ impl Deduplicator {
         let mut data = Vec::new();
 
         for hash in hashes {
-            if let Some(chunk) = chunk_store.get(hash) {
+            {
+                let chunk = chunk_store.get(hash)?;
                 data.extend_from_slice(chunk);
-            } else {
-                // Missing chunk
-                return None;
             }
         }
 

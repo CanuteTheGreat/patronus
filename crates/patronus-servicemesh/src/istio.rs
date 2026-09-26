@@ -55,6 +55,7 @@ pub struct RetryPolicy {
 }
 
 pub struct IstioIntegration {
+    #[allow(dead_code)]
     namespace: String,
 }
 
@@ -75,7 +76,7 @@ impl IstioIntegration {
         &self,
         name: &str,
         host: &str,
-        subsets: Vec<&str>,
+        _subsets: Vec<&str>,
     ) -> Result<()> {
         tracing::info!("Creating DestinationRule {} for host {}", name, host);
         Ok(())
@@ -84,8 +85,8 @@ impl IstioIntegration {
     pub async fn create_gateway(
         &self,
         name: &str,
-        selector: Vec<(&str, &str)>,
-        servers: Vec<&str>,
+        _selector: Vec<(&str, &str)>,
+        _servers: Vec<&str>,
     ) -> Result<()> {
         tracing::info!("Creating Istio Gateway {}", name);
         Ok(())

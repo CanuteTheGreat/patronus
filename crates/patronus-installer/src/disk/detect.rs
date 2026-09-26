@@ -369,10 +369,7 @@ async fn parse_disk_entry(
 
     // Parse partitions
     let partitions = if let Some(children) = device.get("children").and_then(|v| v.as_array()) {
-        children
-            .iter()
-            .filter_map(|p| parse_partition_entry(p))
-            .collect()
+        children.iter().filter_map(parse_partition_entry).collect()
     } else {
         Vec::new()
     };

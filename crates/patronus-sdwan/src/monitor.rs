@@ -198,7 +198,7 @@ impl ProbeHistory {
 
         // Weighted average: 40% latency, 30% jitter, 30% loss
         let score = (latency_score * 0.4 + jitter_score * 0.3 + loss_score * 0.3).round();
-        score.min(100.0).max(0.0) as u8
+        score.clamp(0.0, 100.0) as u8
     }
 
     /// Update bandwidth measurement

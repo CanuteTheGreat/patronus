@@ -89,6 +89,7 @@ pub struct PortalState {
     sessions: Arc<RwLock<SessionManager>>,
     vouchers: Arc<RwLock<VoucherManager>>,
     bandwidth: Arc<BandwidthLimiter>,
+    #[allow(dead_code)]
     auth_providers: HashMap<String, Box<dyn AuthProvider>>,
 }
 
@@ -432,7 +433,7 @@ async fn handle_login(
         // Voucher authentication
         let mut vouchers = state.vouchers.write().await;
         vouchers.redeem(voucher).await.is_ok()
-    } else if let (Some(username), Some(password)) = (&login.username, &login.password) {
+    } else if let (Some(_username), Some(_password)) = (&login.username, &login.password) {
         // Username/password authentication
         // Check against configured auth providers
         true // Placeholder
@@ -443,13 +444,13 @@ async fn handle_login(
     if authenticated {
         // Create session
         let mut sessions = state.sessions.write().await;
-        let session = sessions
+        let _session = sessions
             .create_session(login.mac_address.clone(), login.ip_address.parse().unwrap())
             .await;
 
         // Add MAC to nftables authenticated set
         let _ = tokio::process::Command::new("nft")
-            .args(&[
+            .args([
                 "add",
                 "element",
                 "inet",
@@ -493,7 +494,7 @@ async fn handle_logout(
 
         // Remove from nftables
         let _ = tokio::process::Command::new("nft")
-            .args(&[
+            .args([
                 "delete",
                 "element",
                 "inet",

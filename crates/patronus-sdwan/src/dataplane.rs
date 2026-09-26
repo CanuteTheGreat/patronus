@@ -238,9 +238,9 @@ impl DataPlane {
 
     /// Add a tunnel endpoint
     pub async fn add_tunnel(&self, tunnel: TunnelEndpoint) {
-        let path_id = tunnel.path_id.clone();
+        let path_id = tunnel.path_id;
         let mut tunnels = self.tunnels.write().await;
-        tunnels.insert(path_id.clone(), tunnel);
+        tunnels.insert(path_id, tunnel);
         info!("Added tunnel endpoint for path {}", path_id);
     }
 
@@ -635,7 +635,7 @@ mod tests {
         let destination: IpAddr = "10.0.0.1".parse().unwrap();
         let path_id = PathId::new(1);
 
-        dataplane.add_route(destination, path_id.clone()).await;
+        dataplane.add_route(destination, path_id).await;
 
         let routes = dataplane.get_routes().await;
         assert_eq!(routes.len(), 1);

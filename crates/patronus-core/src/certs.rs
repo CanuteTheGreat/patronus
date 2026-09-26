@@ -8,7 +8,7 @@
 
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::fs;
 use tokio::process::Command;
 
@@ -364,7 +364,7 @@ impl CertManager {
     pub async fn list_certificates(&self) -> Result<Vec<CertStatus>> {
         match self.backend {
             CertBackend::AcmeSh => {
-                let output = Command::new("acme.sh")
+                let _output = Command::new("acme.sh")
                     .arg("--list")
                     .output()
                     .await
@@ -374,7 +374,7 @@ impl CertManager {
                 Ok(Vec::new())
             }
             CertBackend::Certbot => {
-                let output = Command::new("certbot")
+                let _output = Command::new("certbot")
                     .arg("certificates")
                     .output()
                     .await

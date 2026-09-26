@@ -9,25 +9,13 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HealingStats {
     pub issues_detected: u64,
     pub remediations_attempted: u64,
     pub remediations_succeeded: u64,
     pub remediations_failed: u64,
     pub last_run: Option<String>,
-}
-
-impl Default for HealingStats {
-    fn default() -> Self {
-        Self {
-            issues_detected: 0,
-            remediations_attempted: 0,
-            remediations_succeeded: 0,
-            remediations_failed: 0,
-            last_run: None,
-        }
-    }
 }
 
 pub struct HealingLoop<E: RemediationExecutor> {

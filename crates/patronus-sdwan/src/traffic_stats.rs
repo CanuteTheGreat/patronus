@@ -110,8 +110,8 @@ impl TrafficStatsCollector {
         // Update flow stats
         {
             let mut flows = self.active_flows.write().await;
-            let flow_stat = flows.entry(flow.clone()).or_insert_with(|| FlowStats {
-                flow_key: flow.clone(),
+            let flow_stat = flows.entry(flow).or_insert_with(|| FlowStats {
+                flow_key: flow,
                 policy_id,
                 packets: 0,
                 bytes: 0,
@@ -231,7 +231,6 @@ impl TrafficStatsCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::IpAddr;
 
     #[tokio::test]
     async fn test_traffic_stats_collection() {
@@ -246,9 +245,9 @@ mod tests {
         };
 
         // Record some packets
-        collector.record_packet(1, flow.clone(), 1500).await;
-        collector.record_packet(1, flow.clone(), 1500).await;
-        collector.record_packet(1, flow.clone(), 1500).await;
+        collector.record_packet(1, flow, 1500).await;
+        collector.record_packet(1, flow, 1500).await;
+        collector.record_packet(1, flow, 1500).await;
 
         // Check stats
         let stats = collector.get_policy_stats(1).await.unwrap();
@@ -277,9 +276,9 @@ mod tests {
         };
 
         // Record packets for different policies
-        collector.record_packet(1, flow1.clone(), 1500).await;
-        collector.record_packet(2, flow2.clone(), 1400).await;
-        collector.record_packet(1, flow1.clone(), 1500).await;
+        collector.record_packet(1, flow1, 1500).await;
+        collector.record_packet(2, flow2, 1400).await;
+        collector.record_packet(1, flow1, 1500).await;
 
         // Check stats for policy 1
         let stats1 = collector.get_policy_stats(1).await.unwrap();
@@ -308,7 +307,7 @@ mod tests {
         };
 
         // Record a packet
-        collector.record_packet(1, flow.clone(), 1500).await;
+        collector.record_packet(1, flow, 1500).await;
 
         // Update flow counts
         collector.update_flow_counts().await;
@@ -342,8 +341,8 @@ mod tests {
         };
 
         // Record some packets
-        collector.record_packet(1, flow.clone(), 1500).await;
-        collector.record_packet(2, flow.clone(), 1400).await;
+        collector.record_packet(1, flow, 1500).await;
+        collector.record_packet(2, flow, 1400).await;
 
         // Reset policy 1
         collector.reset_policy_stats(1).await;

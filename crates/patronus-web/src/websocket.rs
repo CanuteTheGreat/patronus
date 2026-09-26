@@ -77,6 +77,12 @@ pub struct WsBroadcaster {
     tx: broadcast::Sender<WsMessage>,
 }
 
+impl Default for WsBroadcaster {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WsBroadcaster {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(100);
@@ -114,7 +120,7 @@ pub async fn ws_logs_handler(
 /// Handle WebSocket connection for metrics
 async fn handle_metrics_socket(
     socket: WebSocket,
-    state: crate::state::AppState,
+    _state: crate::state::AppState,
     broadcaster: Arc<WsBroadcaster>,
 ) {
     let (mut sender, mut receiver) = socket.split();
@@ -144,13 +150,8 @@ async fn handle_metrics_socket(
         while let Some(Ok(msg)) = receiver.next().await {
             match msg {
                 Message::Text(text) => {
-                    if let Ok(parsed) = serde_json::from_str::<WsMessage>(&text) {
-                        match parsed {
-                            WsMessage::Ping => {
-                                // Respond with pong (handled by send task via broadcaster)
-                            }
-                            _ => {}
-                        }
+                    if let Ok(WsMessage::Ping) = serde_json::from_str::<WsMessage>(&text) {
+                        // Respond with pong (handled by send task via broadcaster)
                     }
                 }
                 Message::Close(_) => break,
@@ -205,7 +206,7 @@ async fn handle_logs_socket(socket: WebSocket, broadcaster: Arc<WsBroadcaster>) 
 }
 
 /// Start background task to generate and broadcast metrics
-pub fn start_metrics_broadcaster(broadcaster: Arc<WsBroadcaster>, state: crate::state::AppState) {
+pub fn start_metrics_broadcaster(broadcaster: Arc<WsBroadcaster>, _state: crate::state::AppState) {
     tokio::spawn(async move {
         let mut interval = interval(Duration::from_secs(1));
 

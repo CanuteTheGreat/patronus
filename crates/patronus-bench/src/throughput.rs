@@ -89,7 +89,7 @@ impl ThroughputBench {
 
                 // Simulate packet processing (in real impl, would be actual network I/O)
                 // Assume ~1% packet loss for demonstration
-                if packets_sent % 100 != 0 {
+                if !packets_sent.is_multiple_of(100) {
                     packets_received += 1;
                 }
             }

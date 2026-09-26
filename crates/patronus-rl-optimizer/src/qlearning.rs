@@ -30,6 +30,7 @@ impl Default for QLearningConfig {
 /// Q-Table for storing state-action values
 pub struct QTable {
     table: HashMap<(usize, usize), f64>,
+    #[allow(dead_code)]
     num_states: usize,
     num_actions: usize,
 }

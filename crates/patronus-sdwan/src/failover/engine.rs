@@ -33,6 +33,7 @@ pub struct FailoverEngine {
     eval_interval_secs: u64,
 
     /// Channel for receiving BFD state changes
+    #[allow(clippy::type_complexity, dead_code)]
     bfd_state_rx: Arc<RwLock<Option<mpsc::Receiver<(PathId, PathHealth)>>>>,
 }
 
@@ -543,7 +544,7 @@ mod tests {
     async fn test_invalid_policy() {
         let (engine, _) = create_test_engine().await;
 
-        let mut policy = FailoverPolicy::new(
+        let policy = FailoverPolicy::new(
             1,
             "".to_string(), // Invalid: empty name
             PathId::new(10),

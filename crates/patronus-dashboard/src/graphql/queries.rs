@@ -42,7 +42,7 @@ impl QueryRoot {
                         .as_secs() as i64,
                     0,
                 )
-                .unwrap_or_else(|| Utc::now()),
+                .unwrap_or_else(Utc::now),
                 updated_at: DateTime::from_timestamp(
                     site.last_seen
                         .duration_since(std::time::UNIX_EPOCH)
@@ -50,7 +50,7 @@ impl QueryRoot {
                         .as_secs() as i64,
                     0,
                 )
-                .unwrap_or_else(|| Utc::now()),
+                .unwrap_or_else(Utc::now),
             })),
             Ok(None) => Ok(None),
             Err(e) => Err(async_graphql::Error::new(format!("Database error: {}", e))),
@@ -91,7 +91,7 @@ impl QueryRoot {
                                 .as_secs() as i64,
                             0,
                         )
-                        .unwrap_or_else(|| Utc::now()),
+                        .unwrap_or_else(Utc::now),
                         updated_at: DateTime::from_timestamp(
                             site.last_seen
                                 .duration_since(std::time::UNIX_EPOCH)
@@ -99,7 +99,7 @@ impl QueryRoot {
                                 .as_secs() as i64,
                             0,
                         )
-                        .unwrap_or_else(|| Utc::now()),
+                        .unwrap_or_else(Utc::now),
                     })
                     .collect();
 
@@ -160,9 +160,9 @@ impl QueryRoot {
                                     .as_secs() as i64,
                                 0,
                             )
-                            .unwrap_or_else(|| Utc::now())
+                            .unwrap_or_else(Utc::now)
                         })
-                        .unwrap_or_else(|| Utc::now()),
+                        .unwrap_or_else(Utc::now),
                 }))
             }
             Err(e) => {
@@ -218,9 +218,9 @@ impl QueryRoot {
                                         .as_secs() as i64,
                                     0,
                                 )
-                                .unwrap_or_else(|| Utc::now())
+                                .unwrap_or_else(Utc::now)
                             })
-                            .unwrap_or_else(|| Utc::now()),
+                            .unwrap_or_else(Utc::now),
                     });
                 }
 
@@ -325,7 +325,7 @@ impl QueryRoot {
                     .as_secs() as i64,
                 0,
             )
-            .unwrap_or_else(|| Utc::now()),
+            .unwrap_or_else(Utc::now),
             throughput_mbps: metrics.throughput_mbps,
             packets_per_second: metrics.packets_per_second as i64,
             active_flows: metrics.active_flows as i64,
@@ -364,7 +364,7 @@ impl QueryRoot {
                                 .as_secs() as i64,
                             0,
                         )
-                        .unwrap_or_else(|| Utc::now()),
+                        .unwrap_or_else(Utc::now),
                         throughput_mbps: m.throughput_mbps,
                         packets_per_second: m.packets_per_second as i64,
                         active_flows: m.active_flows as i64,
@@ -444,6 +444,7 @@ impl QueryRoot {
     }
 
     /// Get audit logs with optional filters (admin only) - Sprint 25
+    #[allow(clippy::too_many_arguments)]
     async fn audit_logs(
         &self,
         ctx: &Context<'_>,

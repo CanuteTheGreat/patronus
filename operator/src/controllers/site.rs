@@ -31,6 +31,7 @@ pub enum SiteError {
     PatronusApiError(String),
 
     #[error("Invalid site specification: {0}")]
+    #[allow(dead_code)]
     InvalidSpec(String),
 }
 
@@ -209,7 +210,7 @@ async fn create_or_update_patronus_site(site: &Site, ctx: &Context) -> Result<()
     // Call Patronus API
     let response = ctx
         .http_client
-        .put(&format!(
+        .put(format!(
             "{}/api/v1/sites/{}",
             ctx.patronus_api_url, site_name
         ))
@@ -244,7 +245,7 @@ async fn delete_patronus_site(site_name: &str, ctx: &Context) -> Result<(), Site
     // Call Patronus API to delete site
     let response = ctx
         .http_client
-        .delete(&format!(
+        .delete(format!(
             "{}/api/v1/sites/{}",
             ctx.patronus_api_url, site_name
         ))

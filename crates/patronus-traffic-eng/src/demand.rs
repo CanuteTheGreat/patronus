@@ -45,7 +45,7 @@ impl DemandMatrix {
 
     pub fn add_demand(&mut self, demand: TrafficDemand) {
         let key = (demand.source.clone(), demand.destination.clone());
-        let history = self.demands.entry(key).or_insert_with(Vec::new);
+        let history = self.demands.entry(key).or_default();
 
         history.push(demand);
 

@@ -1,8 +1,8 @@
 use crate::stats::XdpStats;
-///! SD-WAN fast path forwarding using eBPF/XDP
-///!
-///! This module provides high-performance packet forwarding for SD-WAN tunnels
-///! using XDP to bypass the kernel network stack.
+// SD-WAN fast path forwarding using eBPF/XDP
+//
+// This module provides high-performance packet forwarding for SD-WAN tunnels
+// using XDP to bypass the kernel network stack.
 use crate::xdp::{XdpConfig, XdpFirewall, XdpMode};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -58,6 +58,7 @@ impl SdwanFastPath {
         let xdp = XdpFirewall::new(config)?;
 
         Ok(Self {
+            #[allow(clippy::arc_with_non_send_sync)]
             xdp: Arc::new(RwLock::new(xdp)),
             tunnels: Arc::new(RwLock::new(HashMap::new())),
             routing_table: Arc::new(RwLock::new(HashMap::new())),
@@ -194,7 +195,7 @@ impl SdwanFastPath {
     /// Get statistics
     pub async fn get_stats(&self) -> Result<XdpStats> {
         let xdp = self.xdp.read().await;
-        xdp.get_stats().await.map_err(|e| anyhow::Error::from(e))
+        xdp.get_stats().await.map_err(anyhow::Error::from)
     }
 
     /// Get all tunnels
@@ -218,7 +219,7 @@ mod tests {
     async fn test_tunnel_management() {
         let fastpath = SdwanFastPath::new().unwrap();
 
-        let tunnel = TunnelEndpoint {
+        let _tunnel = TunnelEndpoint {
             tunnel_id: 1,
             local_addr: "10.0.0.1".parse().unwrap(),
             remote_addr: "10.0.0.2".parse().unwrap(),
@@ -231,7 +232,7 @@ mod tests {
         // In production, would need proper XDP setup
         // fastpath.add_tunnel(tunnel).await.ok();
 
-        let tunnels = fastpath.get_tunnels().await;
+        let _tunnels = fastpath.get_tunnels().await;
         // assert_eq!(tunnels.len(), 0); // Expected to fail without privileges
     }
 

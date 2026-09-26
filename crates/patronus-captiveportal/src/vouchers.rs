@@ -32,6 +32,12 @@ pub struct VoucherManager {
     batches: HashMap<String, VoucherBatch>,
 }
 
+impl Default for VoucherManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VoucherManager {
     pub fn new() -> Self {
         Self {

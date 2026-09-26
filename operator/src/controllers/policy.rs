@@ -30,6 +30,7 @@ pub enum PolicyError {
     PatronusApiError(String),
 
     #[error("Invalid policy specification: {0}")]
+    #[allow(dead_code)]
     InvalidSpec(String),
 }
 
@@ -85,7 +86,7 @@ async fn handle_deletion(policy: &Policy, ctx: &Context) -> Result<Action, Polic
     // Call Patronus API to delete policy
     let response = ctx
         .http_client
-        .delete(&format!(
+        .delete(format!(
             "{}/api/v1/policies/{}",
             ctx.patronus_api_url, policy_name
         ))
@@ -125,14 +126,14 @@ async fn create_or_update_patronus_policy(
 
     // Build Patronus API request
     let request_body =
-        serde_json::to_value(&policy.spec).map_err(|e| PolicyError::SerializationError(e))?;
+        serde_json::to_value(&policy.spec).map_err(PolicyError::SerializationError)?;
 
     debug!("Creating/updating policy in Patronus: {}", request_body);
 
     // Call Patronus API
     let response = ctx
         .http_client
-        .put(&format!(
+        .put(format!(
             "{}/api/v1/policies/{}",
             ctx.patronus_api_url, policy_name
         ))

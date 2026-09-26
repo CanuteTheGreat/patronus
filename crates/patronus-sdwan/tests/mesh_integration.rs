@@ -28,8 +28,8 @@ async fn create_test_site(name: &str) -> (Arc<Database>, MeshManager, PathMonito
 #[tokio::test]
 async fn test_two_site_mesh() {
     // Create two sites
-    let (db1, mesh1, monitor1, router1) = create_test_site("site-alpha").await;
-    let (db2, mesh2, monitor2, router2) = create_test_site("site-beta").await;
+    let (_db1, mesh1, _monitor1, _router1) = create_test_site("site-alpha").await;
+    let (_db2, mesh2, _monitor2, _router2) = create_test_site("site-beta").await;
 
     // Start mesh managers
     mesh1.start().await.expect("Failed to start mesh1");
@@ -374,7 +374,7 @@ async fn test_path_failover() {
 
 #[tokio::test]
 async fn test_policy_enforcement() {
-    let (db, _mesh, _monitor, router) = create_test_site("test-site").await;
+    let (_db, _mesh, _monitor, router) = create_test_site("test-site").await;
 
     router.start().await.expect("Failed to start router");
 

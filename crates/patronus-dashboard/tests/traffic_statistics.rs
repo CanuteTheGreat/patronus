@@ -19,9 +19,9 @@ async fn test_traffic_stats_end_to_end() {
     };
 
     // Record some traffic
-    collector.record_packet(1, flow.clone(), 1500).await;
-    collector.record_packet(1, flow.clone(), 1400).await;
-    collector.record_packet(1, flow.clone(), 1600).await;
+    collector.record_packet(1, flow, 1500).await;
+    collector.record_packet(1, flow, 1400).await;
+    collector.record_packet(1, flow, 1600).await;
 
     // Get stats
     let stats = collector
@@ -60,9 +60,9 @@ async fn test_traffic_stats_multiple_policies() {
     };
 
     // Record packets for different policies
-    collector.record_packet(1, flow1.clone(), 1000).await;
-    collector.record_packet(2, flow2.clone(), 2000).await;
-    collector.record_packet(1, flow1.clone(), 1000).await;
+    collector.record_packet(1, flow1, 1000).await;
+    collector.record_packet(2, flow2, 2000).await;
+    collector.record_packet(1, flow1, 1000).await;
 
     // Check policy 1
     let stats1 = collector.get_policy_stats(1).await.unwrap();
@@ -94,7 +94,7 @@ async fn test_traffic_stats_flow_cleanup() {
     };
 
     // Record packet
-    collector.record_packet(1, flow.clone(), 1500).await;
+    collector.record_packet(1, flow, 1500).await;
 
     // Update flow counts
     collector.update_flow_counts().await;
@@ -132,8 +132,8 @@ async fn test_traffic_stats_reset() {
     };
 
     // Record packets for multiple policies
-    collector.record_packet(1, flow.clone(), 1500).await;
-    collector.record_packet(2, flow.clone(), 1400).await;
+    collector.record_packet(1, flow, 1500).await;
+    collector.record_packet(2, flow, 1400).await;
 
     // Verify stats exist
     assert!(collector.get_policy_stats(1).await.is_some());
@@ -174,9 +174,9 @@ async fn test_traffic_stats_totals() {
     };
 
     // Record packets
-    collector.record_packet(1, flow1.clone(), 1000).await;
-    collector.record_packet(2, flow2.clone(), 2000).await;
-    collector.record_packet(1, flow1.clone(), 1500).await;
+    collector.record_packet(1, flow1, 1000).await;
+    collector.record_packet(2, flow2, 2000).await;
+    collector.record_packet(1, flow1, 1500).await;
 
     // Check totals
     let total_packets = collector.get_total_packets().await;

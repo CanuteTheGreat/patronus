@@ -12,6 +12,7 @@ use tokio::time::{interval, Duration};
 
 /// Central metrics collector for all Patronus subsystems
 pub struct MetricsCollector {
+    #[allow(dead_code)]
     registry: Registry,
 
     // System metrics
@@ -31,68 +32,99 @@ pub struct MetricsCollector {
     interface_tx_packets: GaugeVec,
     interface_rx_errors: GaugeVec,
     interface_tx_errors: GaugeVec,
+    #[allow(dead_code)]
     interface_rx_dropped: GaugeVec,
+    #[allow(dead_code)]
     interface_tx_dropped: GaugeVec,
+    #[allow(dead_code)]
     interface_speed: GaugeVec,
 
     // Firewall metrics
     firewall_packets_total: CounterVec,
     firewall_bytes_total: CounterVec,
     firewall_connections_active: Gauge,
+    #[allow(dead_code)]
     firewall_connections_total: Counter,
+    #[allow(dead_code)]
     firewall_rules_count: Gauge,
+    #[allow(dead_code)]
     firewall_rule_hits: CounterVec,
+    #[allow(dead_code)]
     firewall_nat_translations: Gauge,
 
     // VPN metrics
     vpn_sessions_active: GaugeVec,
     vpn_sessions_total: CounterVec,
+    #[allow(dead_code)]
     vpn_bytes_rx: CounterVec,
+    #[allow(dead_code)]
     vpn_bytes_tx: CounterVec,
+    #[allow(dead_code)]
     vpn_tunnel_status: GaugeVec,
 
     // DHCP metrics
+    #[allow(dead_code)]
     dhcp_leases_active: Gauge,
+    #[allow(dead_code)]
     dhcp_leases_total: Counter,
+    #[allow(dead_code)]
     dhcp_requests: CounterVec,
 
     // DNS metrics
     dns_queries_total: CounterVec,
     dns_query_duration: HistogramVec,
+    #[allow(dead_code)]
     dns_cache_hits: Counter,
+    #[allow(dead_code)]
     dns_cache_misses: Counter,
+    #[allow(dead_code)]
     dns_blocked_queries: CounterVec,
 
     // HA metrics
+    #[allow(dead_code)]
     ha_state: GaugeVec,
+    #[allow(dead_code)]
     ha_failovers_total: Counter,
+    #[allow(dead_code)]
     ha_sync_errors: Counter,
+    #[allow(dead_code)]
     ha_last_sync: Gauge,
 
     // IDS/IPS metrics
     ids_alerts_total: CounterVec,
+    #[allow(dead_code)]
     ids_packets_processed: Counter,
+    #[allow(dead_code)]
     ids_packets_dropped: Counter,
+    #[allow(dead_code)]
     ids_signatures_loaded: Gauge,
 
     // QoS metrics
+    #[allow(dead_code)]
     qos_bandwidth_used: GaugeVec,
+    #[allow(dead_code)]
     qos_bandwidth_limit: GaugeVec,
+    #[allow(dead_code)]
     qos_packets_shaped: CounterVec,
+    #[allow(dead_code)]
     qos_packets_dropped: CounterVec,
 
     // Certificate metrics
     cert_expiry_days: GaugeVec,
+    #[allow(dead_code)]
     cert_renewals_total: CounterVec,
+    #[allow(dead_code)]
     cert_errors_total: CounterVec,
 
     // Web UI metrics
     http_requests_total: CounterVec,
     http_request_duration: HistogramVec,
+    #[allow(dead_code)]
     http_requests_in_flight: Gauge,
 
     // Service health
     service_up: GaugeVec,
+    #[allow(dead_code)]
     service_restarts: CounterVec,
 }
 

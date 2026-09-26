@@ -57,8 +57,11 @@ pub enum AuthError {
 
 // RADIUS authentication provider
 pub struct RadiusAuthProvider {
+    #[allow(dead_code)]
     server: String,
+    #[allow(dead_code)]
     secret: String,
+    #[allow(dead_code)]
     timeout_secs: u64,
 }
 
@@ -96,6 +99,12 @@ impl AuthProvider for RadiusAuthProvider {
 // Local username/password provider
 pub struct LocalAuthProvider {
     users: std::collections::HashMap<String, String>, // username -> password hash
+}
+
+impl Default for LocalAuthProvider {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LocalAuthProvider {

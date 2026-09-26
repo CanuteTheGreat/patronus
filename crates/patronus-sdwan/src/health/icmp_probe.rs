@@ -157,12 +157,7 @@ impl IcmpProber {
         // Send in blocking task to avoid blocking async runtime
         tokio::task::spawn_blocking(move || socket.send_to(&packet, &target_addr.into()))
             .await
-            .map_err(|e| {
-                IcmpError::NetworkError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ))
-            })?
+            .map_err(|e| IcmpError::NetworkError(std::io::Error::other(e.to_string())))?
             .map_err(IcmpError::NetworkError)?;
 
         // Wait for reply
@@ -200,8 +195,8 @@ impl IcmpProber {
         packet[8..16].copy_from_slice(&timestamp.to_be_bytes());
 
         // Fill rest with pattern
-        for i in 16..64 {
-            packet[i] = (i & 0xFF) as u8;
+        for (i, item) in packet.iter_mut().enumerate().take(64).skip(16) {
+            *item = (i & 0xFF) as u8;
         }
 
         // Calculate and set checksum (with checksum field zeroed)
@@ -238,12 +233,7 @@ impl IcmpProber {
                 }
             })
             .await
-            .map_err(|e| {
-                IcmpError::NetworkError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ))
-            })?;
+            .map_err(|e| IcmpError::NetworkError(std::io::Error::other(e.to_string())))?;
 
             let buf = match packet_result {
                 Ok(data) => data,

@@ -82,6 +82,7 @@ impl LeaderElection {
     }
 
     /// Become a candidate and start election
+    #[allow(dead_code)]
     async fn become_candidate(&self) {
         info!("Node {} becoming candidate", self.node_id);
         self.update_role(NodeRole::Candidate).await;
@@ -103,6 +104,7 @@ impl LeaderElection {
     }
 
     /// Become the leader
+    #[allow(dead_code)]
     async fn become_leader(&self, term: u64) {
         info!("Node {} becoming leader for term {}", self.node_id, term);
         self.update_role(NodeRole::Leader).await;

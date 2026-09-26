@@ -219,7 +219,7 @@ mod tests {
     use super::*;
     use crate::database::Database;
     use crate::failover::FailoverPolicy;
-    use crate::health::{HealthConfig, PathHealth};
+    use crate::health::HealthConfig;
     use crate::types::PathId;
     use std::net::IpAddr;
 

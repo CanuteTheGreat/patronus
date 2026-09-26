@@ -364,8 +364,10 @@ mod tests {
 
     #[test]
     fn test_small_packet_skip() {
-        let mut config = CompressionConfig::default();
-        config.min_compress_size = 1000;
+        let config = CompressionConfig {
+            min_compress_size: 1000,
+            ..Default::default()
+        };
 
         let mut engine = CompressionEngine::new(config);
 
@@ -401,7 +403,7 @@ mod tests {
         let bytes = packet.to_bytes();
         let parsed = CompressedPacket::from_bytes(&bytes).unwrap();
 
-        assert_eq!(parsed.compressed, true);
+        assert!(parsed.compressed);
         assert_eq!(parsed.data, compressed_data);
         assert_eq!(parsed.original_size, Some(original_data.len()));
     }
@@ -421,8 +423,10 @@ mod tests {
 
     #[test]
     fn test_disabled_compression() {
-        let mut config = CompressionConfig::default();
-        config.enabled = false;
+        let config = CompressionConfig {
+            enabled: false,
+            ..Default::default()
+        };
 
         let mut engine = CompressionEngine::new(config);
 

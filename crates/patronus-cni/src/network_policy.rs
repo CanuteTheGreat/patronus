@@ -70,6 +70,7 @@ pub struct NetworkPolicyController {
     client: Client,
     policies: Arc<RwLock<HashMap<String, PolicyRule>>>,
     datapath: Arc<EbpfDatapath>,
+    #[allow(dead_code)]
     pod_to_policy: Arc<RwLock<HashMap<String, Vec<String>>>>, // pod_key -> policy_names
 }
 
@@ -135,7 +136,7 @@ impl NetworkPolicyController {
     }
 
     fn parse_network_policy(&self, policy: &NetworkPolicy) -> Result<PolicyRule> {
-        let name = policy.name_any();
+        let _name = policy.name_any();
         let namespace = policy.namespace().unwrap_or_default();
         let spec = policy.spec.as_ref().context("Policy has no spec")?;
 
@@ -149,8 +150,7 @@ impl NetworkPolicyController {
             .collect();
 
         // Determine policy types
-        let policy_type = if spec.policy_types.is_some() {
-            let types = spec.policy_types.as_ref().unwrap();
+        let policy_type = if let Some(types) = &spec.policy_types {
             if types.contains(&"Ingress".to_string()) && types.contains(&"Egress".to_string()) {
                 PolicyType::Both
             } else if types.contains(&"Ingress".to_string()) {
@@ -219,13 +219,13 @@ impl NetworkPolicyController {
                                 .into_iter()
                                 .collect(),
                         })
-                    } else if let Some(ip_block) = &peer.ip_block {
-                        Some(PeerSelector::IpBlock {
-                            cidr: ip_block.cidr.clone(),
-                            except: ip_block.except.clone().unwrap_or_default(),
-                        })
                     } else {
-                        None
+                        peer.ip_block
+                            .as_ref()
+                            .map(|ip_block| PeerSelector::IpBlock {
+                                cidr: ip_block.cidr.clone(),
+                                except: ip_block.except.clone().unwrap_or_default(),
+                            })
                     }
                 })
                 .collect()
@@ -236,15 +236,13 @@ impl NetworkPolicyController {
         let to_ports = if let Some(ports) = &rule.ports {
             ports
                 .iter()
-                .filter_map(|p| {
-                    Some(PortRule {
-                        protocol: p.protocol.clone().unwrap_or_else(|| "TCP".to_string()),
-                        port: p.port.as_ref().and_then(|port| match port {
-                            IntOrString::Int(i) => Some(*i as u16),
-                            IntOrString::String(s) => s.parse::<u16>().ok(),
-                        }),
-                        end_port: p.end_port.map(|e| e as u16),
-                    })
+                .map(|p| PortRule {
+                    protocol: p.protocol.clone().unwrap_or_else(|| "TCP".to_string()),
+                    port: p.port.as_ref().and_then(|port| match port {
+                        IntOrString::Int(i) => Some(*i as u16),
+                        IntOrString::String(s) => s.parse::<u16>().ok(),
+                    }),
+                    end_port: p.end_port.map(|e| e as u16),
                 })
                 .collect()
         } else {
@@ -284,13 +282,13 @@ impl NetworkPolicyController {
                                 .into_iter()
                                 .collect(),
                         })
-                    } else if let Some(ip_block) = &peer.ip_block {
-                        Some(PeerSelector::IpBlock {
-                            cidr: ip_block.cidr.clone(),
-                            except: ip_block.except.clone().unwrap_or_default(),
-                        })
                     } else {
-                        None
+                        peer.ip_block
+                            .as_ref()
+                            .map(|ip_block| PeerSelector::IpBlock {
+                                cidr: ip_block.cidr.clone(),
+                                except: ip_block.except.clone().unwrap_or_default(),
+                            })
                     }
                 })
                 .collect()
@@ -301,15 +299,13 @@ impl NetworkPolicyController {
         let to_ports = if let Some(ports) = &rule.ports {
             ports
                 .iter()
-                .filter_map(|p| {
-                    Some(PortRule {
-                        protocol: p.protocol.clone().unwrap_or_else(|| "TCP".to_string()),
-                        port: p.port.as_ref().and_then(|port| match port {
-                            IntOrString::Int(i) => Some(*i as u16),
-                            IntOrString::String(s) => s.parse::<u16>().ok(),
-                        }),
-                        end_port: p.end_port.map(|e| e as u16),
-                    })
+                .map(|p| PortRule {
+                    protocol: p.protocol.clone().unwrap_or_else(|| "TCP".to_string()),
+                    port: p.port.as_ref().and_then(|port| match port {
+                        IntOrString::Int(i) => Some(*i as u16),
+                        IntOrString::String(s) => s.parse::<u16>().ok(),
+                    }),
+                    end_port: p.end_port.map(|e| e as u16),
                 })
                 .collect()
         } else {
@@ -377,7 +373,7 @@ impl NetworkPolicyController {
         // For each source in the rule
         for source in &rule.from_sources {
             match source {
-                PeerSelector::IpBlock { cidr, except } => {
+                PeerSelector::IpBlock { cidr, except: _ } => {
                     // Parse CIDR and update eBPF map
                     // Allow traffic from CIDR except the exceptions
                     info!("Allow ingress from CIDR {} to {}", cidr, pod_ip);
@@ -416,7 +412,7 @@ impl NetworkPolicyController {
         // For each destination in the rule
         for dest in &rule.to_destinations {
             match dest {
-                PeerSelector::IpBlock { cidr, except } => {
+                PeerSelector::IpBlock { cidr, except: _ } => {
                     info!("Allow egress to CIDR {} from {}", cidr, pod_ip);
 
                     let dst_ip = self.parse_cidr_to_ip(cidr);

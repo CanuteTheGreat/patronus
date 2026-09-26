@@ -194,9 +194,8 @@ async fn events_socket(socket: WebSocket, state: Arc<AppState>, _claims: Option<
     // Handle incoming messages
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
-            match msg {
-                Message::Close(_) => break,
-                _ => {}
+            if let Message::Close(_) = msg {
+                break;
             }
         }
     });

@@ -291,6 +291,7 @@ mod tests {
         let state_dir = PathBuf::from("/tmp/patronus-test");
         let handler = WebhookHandler::new(
             WebhookConfig::default(),
+            #[allow(clippy::arc_with_non_send_sync)]
             Arc::new(RwLock::new(GitOpsWatcher::new(
                 Default::default(),
                 Arc::new(RwLock::new(ApplyEngine::new(state_dir))),

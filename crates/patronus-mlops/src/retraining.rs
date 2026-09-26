@@ -184,7 +184,7 @@ impl RetrainingManager {
 
         self.model_triggers
             .entry(model_name.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(trigger_id);
 
         self.triggers.insert(trigger_id, trigger);

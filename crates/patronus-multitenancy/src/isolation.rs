@@ -7,23 +7,12 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResourceUsage {
     pub sites: u32,
     pub tunnels: u32,
     pub bandwidth_mbps: u32,
     pub users: u32,
-}
-
-impl Default for ResourceUsage {
-    fn default() -> Self {
-        Self {
-            sites: 0,
-            tunnels: 0,
-            bandwidth_mbps: 0,
-            users: 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -126,7 +126,7 @@ impl ModelRegistry {
         // Add to versions_by_name
         self.versions_by_name
             .entry(model_name.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(model_id);
 
         self.models.insert(model_id, model);

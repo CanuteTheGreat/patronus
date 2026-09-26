@@ -54,6 +54,7 @@ impl CapacityMetrics {
 }
 
 pub struct UtilizationHistory {
+    #[allow(dead_code)]
     resource_type: ResourceType,
     max_history: usize,
     history: VecDeque<CapacityMetrics>,

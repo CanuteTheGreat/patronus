@@ -339,6 +339,12 @@ pub struct VpnManager {
     next_id: Arc<RwLock<u32>>,
 }
 
+impl Default for VpnManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VpnManager {
     pub fn new() -> Self {
         let default_peers = vec![
@@ -531,6 +537,12 @@ pub struct NetworkManager {
     routes: Arc<RwLock<Vec<crate::templates::Route>>>,
 }
 
+impl Default for NetworkManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NetworkManager {
     pub fn new() -> Self {
         let default_interfaces = vec![
@@ -661,42 +673,39 @@ impl NetworkManager {
     }
 
     pub async fn list_interfaces(&self) -> anyhow::Result<Vec<crate::templates::InterfaceInfo>> {
-        match patronus_network::list_interfaces().await {
-            Ok(ifaces) => {
-                let template_ifaces: Vec<crate::templates::InterfaceInfo> = ifaces
-                    .into_iter()
-                    .map(|iface| crate::templates::InterfaceInfo {
-                        name: iface.name.clone(),
-                        state: if iface.enabled {
-                            "UP".to_string()
-                        } else {
-                            "DOWN".to_string()
-                        },
-                        ip_address: iface.ip_addresses.first().map(|ip| ip.to_string()),
-                        ip_addresses: iface.ip_addresses.iter().map(|ip| ip.to_string()).collect(),
-                        mac_address: iface
-                            .mac_address
-                            .clone()
-                            .unwrap_or_else(|| "N/A".to_string()),
-                        rx_bytes: 0,
-                        tx_bytes: 0,
-                        mtu: iface.mtu,
-                        enabled: iface.enabled,
-                        interface_type: "Ethernet".to_string(),
-                        ip_display: iface
-                            .ip_addresses
-                            .first()
-                            .map(|ip| ip.to_string())
-                            .unwrap_or_else(|| "N/A".to_string()),
-                        mac_display: iface.mac_address.unwrap_or_else(|| "N/A".to_string()),
-                        speed_display: "1 Gbps".to_string(),
-                    })
-                    .collect();
-                if !template_ifaces.is_empty() {
-                    return Ok(template_ifaces);
-                }
+        if let Ok(ifaces) = patronus_network::list_interfaces().await {
+            let template_ifaces: Vec<crate::templates::InterfaceInfo> = ifaces
+                .into_iter()
+                .map(|iface| crate::templates::InterfaceInfo {
+                    name: iface.name.clone(),
+                    state: if iface.enabled {
+                        "UP".to_string()
+                    } else {
+                        "DOWN".to_string()
+                    },
+                    ip_address: iface.ip_addresses.first().map(|ip| ip.to_string()),
+                    ip_addresses: iface.ip_addresses.iter().map(|ip| ip.to_string()).collect(),
+                    mac_address: iface
+                        .mac_address
+                        .clone()
+                        .unwrap_or_else(|| "N/A".to_string()),
+                    rx_bytes: 0,
+                    tx_bytes: 0,
+                    mtu: iface.mtu,
+                    enabled: iface.enabled,
+                    interface_type: "Ethernet".to_string(),
+                    ip_display: iface
+                        .ip_addresses
+                        .first()
+                        .map(|ip| ip.to_string())
+                        .unwrap_or_else(|| "N/A".to_string()),
+                    mac_display: iface.mac_address.unwrap_or_else(|| "N/A".to_string()),
+                    speed_display: "1 Gbps".to_string(),
+                })
+                .collect();
+            if !template_ifaces.is_empty() {
+                return Ok(template_ifaces);
             }
-            Err(_) => {}
         }
 
         let interfaces = self.interfaces.read().await;
@@ -765,6 +774,12 @@ pub struct SystemManager {
     users: Arc<RwLock<Vec<crate::templates::User>>>,
     backups: Arc<RwLock<Vec<crate::templates::Backup>>>,
     services: Arc<RwLock<Vec<crate::templates::Service>>>,
+}
+
+impl Default for SystemManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SystemManager {
@@ -1044,6 +1059,12 @@ impl SystemManager {
 /// Monitoring operations
 pub struct MonitoringManager {
     alerts: Arc<RwLock<Vec<crate::templates::Alert>>>,
+}
+
+impl Default for MonitoringManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MonitoringManager {

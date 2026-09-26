@@ -218,7 +218,7 @@ async fn test_metrics_cache() {
     };
 
     // Insert metrics
-    cache.insert(123u64, metrics.clone()).await;
+    cache.insert(123u64, metrics).await;
 
     // Retrieve metrics
     let retrieved = cache.get(&123u64).await;

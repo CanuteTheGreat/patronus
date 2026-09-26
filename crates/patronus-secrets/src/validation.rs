@@ -198,13 +198,12 @@ pub fn validate_password(password: &str, policy: &PasswordPolicy) -> Result<()> 
     }
 
     // Check for default/weak patterns
-    if policy.reject_defaults {
-        if password.to_lowercase().contains("changeme")
+    if policy.reject_defaults
+        && (password.to_lowercase().contains("changeme")
             || password.to_lowercase().contains("default")
-            || password.to_lowercase().contains("password")
-        {
-            bail!("Password contains forbidden default patterns");
-        }
+            || password.to_lowercase().contains("password"))
+    {
+        bail!("Password contains forbidden default patterns");
     }
 
     Ok(())

@@ -318,7 +318,7 @@ mod tests {
         assert!(result.is_ok());
 
         let (_protocol, confidence) = result.unwrap();
-        assert!(confidence >= 0.0 && confidence <= 1.0);
+        assert!((0.0..=1.0).contains(&confidence));
     }
 
     #[test]

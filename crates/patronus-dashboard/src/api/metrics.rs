@@ -135,7 +135,7 @@ async fn get_throughput_timeseries(
                 .as_secs() as i64;
             DataPoint {
                 timestamp: DateTime::from_timestamp(ts, 0)
-                    .unwrap_or_else(|| Utc::now())
+                    .unwrap_or_else(Utc::now)
                     .to_rfc3339(),
                 value: m.throughput_mbps,
                 label: None,
@@ -162,7 +162,7 @@ async fn get_latency_timeseries(
                 .as_secs() as i64;
             DataPoint {
                 timestamp: DateTime::from_timestamp(ts, 0)
-                    .unwrap_or_else(|| Utc::now())
+                    .unwrap_or_else(Utc::now)
                     .to_rfc3339(),
                 value: m.avg_latency_ms,
                 label: None,
@@ -189,7 +189,7 @@ async fn get_packet_loss_timeseries(
                 .as_secs() as i64;
             DataPoint {
                 timestamp: DateTime::from_timestamp(ts, 0)
-                    .unwrap_or_else(|| Utc::now())
+                    .unwrap_or_else(Utc::now)
                     .to_rfc3339(),
                 value: m.avg_packet_loss,
                 label: None,
@@ -215,7 +215,7 @@ async fn get_flow_count_timeseries(
                 .as_secs() as i64;
             DataPoint {
                 timestamp: DateTime::from_timestamp(ts, 0)
-                    .unwrap_or_else(|| Utc::now())
+                    .unwrap_or_else(Utc::now)
                     .to_rfc3339(),
                 value: m.active_flows as f64,
                 label: None,
@@ -241,7 +241,7 @@ async fn get_cpu_timeseries(
                 .as_secs() as i64;
             DataPoint {
                 timestamp: DateTime::from_timestamp(ts, 0)
-                    .unwrap_or_else(|| Utc::now())
+                    .unwrap_or_else(Utc::now)
                     .to_rfc3339(),
                 value: m.cpu_usage,
                 label: None,
@@ -267,7 +267,7 @@ async fn get_memory_timeseries(
                 .as_secs() as i64;
             DataPoint {
                 timestamp: DateTime::from_timestamp(ts, 0)
-                    .unwrap_or_else(|| Utc::now())
+                    .unwrap_or_else(Utc::now)
                     .to_rfc3339(),
                 value: m.memory_usage,
                 label: None,
@@ -308,7 +308,7 @@ fn aggregate_datapoints(data_points: Vec<DataPoint>, interval: &str) -> Vec<Data
             let avg = values.iter().sum::<f64>() / values.len() as f64;
             DataPoint {
                 timestamp: DateTime::from_timestamp(ts, 0)
-                    .unwrap_or_else(|| Utc::now())
+                    .unwrap_or_else(Utc::now)
                     .to_rfc3339(),
                 value: avg,
                 label: None,

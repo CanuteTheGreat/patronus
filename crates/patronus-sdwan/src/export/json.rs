@@ -196,8 +196,8 @@ impl JsonExporter {
     pub async fn get_health_snapshot(&self) -> HealthSnapshot {
         let health_map = self.health_monitor.get_all_health().await;
         let paths: Vec<PathHealthJson> = health_map
-            .into_iter()
-            .map(|(_, health)| health.into())
+            .into_values()
+            .map(|health| health.into())
             .collect();
 
         HealthSnapshot {

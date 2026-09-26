@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use git2::{FetchOptions, RemoteCallbacks, Repository};
-use notify::Watcher;
 use patronus_config::{ApplyEngine, ConfigParser, DeclarativeConfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -494,7 +493,7 @@ impl GitOpsWatcher {
             ticker.tick().await;
 
             // Clone Arc to get mutable access
-            let watcher_clone = Arc::clone(&self);
+            let _watcher_clone = Arc::clone(&self);
 
             // Need to use interior mutability pattern here
             // In production, would use RwLock<GitOpsWatcher> or refactor

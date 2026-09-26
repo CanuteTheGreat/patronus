@@ -229,11 +229,7 @@ impl CapacityPlanner {
         }
 
         if let Some(days) = time_to_exhaustion {
-            if days < 30.0 {
-                reasons.push(format!("Capacity exhaustion predicted in {:.0} days", days));
-            } else {
-                reasons.push(format!("Capacity exhaustion predicted in {:.0} days", days));
-            }
+            reasons.push(format!("Capacity exhaustion predicted in {:.0} days", days));
         }
 
         reasons.push(format!(

@@ -88,7 +88,7 @@ impl WafRule {
         }
 
         // Check headers
-        for (_, value) in &request.headers {
+        for value in request.headers.values() {
             if re.is_match(value) {
                 return true;
             }

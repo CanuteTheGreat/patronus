@@ -55,6 +55,12 @@ pub struct SystemMetrics {
     pub path_metrics: HashMap<PathId, PathMetrics>,
 }
 
+impl Default for SystemMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SystemMetrics {
     /// Create a new empty metrics snapshot
     pub fn new() -> Self {
@@ -451,12 +457,12 @@ mod tests {
 
     #[test]
     fn test_throughput_calculation() {
-        let mut stats = TrafficStats::default();
-
-        // Simulate 1MB over 1 second = 8 Mbps
-        stats.bytes_tx = 500_000;
-        stats.bytes_rx = 500_000;
-        stats.last_update = Some(SystemTime::now() - Duration::from_secs(1));
+        let mut stats = TrafficStats {
+            bytes_tx: 500_000,
+            bytes_rx: 500_000,
+            last_update: Some(SystemTime::now() - Duration::from_secs(1)),
+            ..Default::default()
+        };
 
         let throughput = stats.calculate_throughput();
         assert!(throughput > 0.0);

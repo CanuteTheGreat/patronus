@@ -161,7 +161,7 @@ mod tests {
         };
 
         let config = peer.to_config_string();
-        assert!(config.contains("mobile-phone") == false); // Name not in config
+        assert!(!config.contains("mobile-phone")); // Name not in config
         assert!(config.contains("10.0.0.2/24"));
 
         let svg = peer.to_qr_svg().unwrap();
