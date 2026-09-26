@@ -25,10 +25,7 @@ pub async fn get_path(
 ) -> Result<Json<PathResponse>> {
     let path_id = patronus_sdwan::types::PathId::new(id);
 
-    let path = state
-        .db
-        .get_path(path_id)
-        .await?;
+    let path = state.db.get_path(path_id).await?;
 
     Ok(Json(path.into()))
 }

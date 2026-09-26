@@ -16,9 +16,9 @@ use tokio::time::sleep;
 /// Gateway monitoring method
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MonitorMethod {
-    Ping,      // ICMP ping
-    TcpPort,   // TCP connection test
-    HttpGet,   // HTTP GET request
+    Ping,    // ICMP ping
+    TcpPort, // TCP connection test
+    HttpGet, // HTTP GET request
 }
 
 /// Gateway status
@@ -33,10 +33,10 @@ pub enum GatewayStatus {
 /// Load balancing algorithm
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum LoadBalanceAlgorithm {
-    RoundRobin,      // Simple round-robin
-    WeightedRandom,  // Weighted random selection
+    RoundRobin,       // Simple round-robin
+    WeightedRandom,   // Weighted random selection
     LeastConnections, // Least connections (stateful)
-    Failover,        // Primary/backup only
+    Failover,         // Primary/backup only
 }
 
 /// WAN gateway configuration
@@ -46,17 +46,17 @@ pub struct WanGateway {
     pub enabled: bool,
     pub interface: String,
     pub gateway_ip: IpAddr,
-    pub weight: u32,  // For load balancing (1-100)
+    pub weight: u32,   // For load balancing (1-100)
     pub priority: u32, // Lower = higher priority (for failover)
 
     // Monitoring
     pub monitor_enabled: bool,
     pub monitor_method: MonitorMethod,
-    pub monitor_target: Option<String>,  // IP or hostname to monitor
-    pub monitor_interval: u32,  // seconds
-    pub monitor_timeout: u32,   // seconds
-    pub failure_threshold: u32, // Consecutive failures before marking down
-    pub recovery_threshold: u32, // Consecutive successes before marking up
+    pub monitor_target: Option<String>, // IP or hostname to monitor
+    pub monitor_interval: u32,          // seconds
+    pub monitor_timeout: u32,           // seconds
+    pub failure_threshold: u32,         // Consecutive failures before marking down
+    pub recovery_threshold: u32,        // Consecutive successes before marking up
 
     // Metrics
     pub latency_ms: Option<f64>,
@@ -99,8 +99,8 @@ pub struct GatewayGroup {
     pub name: String,
     pub enabled: bool,
     pub algorithm: LoadBalanceAlgorithm,
-    pub gateways: Vec<String>,  // Gateway names
-    pub sticky: bool,  // Use source-based hashing for session persistence
+    pub gateways: Vec<String>, // Gateway names
+    pub sticky: bool,          // Use source-based hashing for session persistence
 }
 
 /// Policy-based routing rule
@@ -111,14 +111,14 @@ pub struct PolicyRoute {
     pub priority: u32,
 
     // Match criteria
-    pub source_network: Option<String>,  // CIDR
+    pub source_network: Option<String>, // CIDR
     pub destination_network: Option<String>,
-    pub protocol: Option<String>,  // tcp, udp, icmp
+    pub protocol: Option<String>, // tcp, udp, icmp
     pub source_port: Option<u16>,
     pub destination_port: Option<u16>,
 
     // Action
-    pub gateway_group: String,  // Which gateway group to use
+    pub gateway_group: String, // Which gateway group to use
 }
 
 /// Multi-WAN manager
@@ -157,7 +157,8 @@ impl MultiWanManager {
     /// Get gateway status
     pub async fn get_gateway(&self, name: &str) -> Result<WanGateway> {
         let gateways = self.gateways.read().await;
-        gateways.get(name)
+        gateways
+            .get(name)
             .cloned()
             .ok_or_else(|| Error::Network(format!("Gateway not found: {}", name)))
     }
@@ -213,7 +214,8 @@ impl MultiWanManager {
     async fn monitor_gateway(&self, gateway_name: &str) -> Result<()> {
         let mut gateway = {
             let gateways = self.gateways.read().await;
-            gateways.get(gateway_name)
+            gateways
+                .get(gateway_name)
                 .ok_or_else(|| Error::Network(format!("Gateway not found: {}", gateway_name)))?
                 .clone()
         };
@@ -222,7 +224,9 @@ impl MultiWanManager {
             return Ok(());
         }
 
-        let target = gateway.monitor_target.as_ref()
+        let target = gateway
+            .monitor_target
+            .as_ref()
             .ok_or_else(|| Error::Network("No monitor target configured".to_string()))?;
 
         // Perform health check
@@ -232,9 +236,7 @@ impl MultiWanManager {
                 // Parse target as host:port
                 self.tcp_check(target, gateway.monitor_timeout).await?
             }
-            MonitorMethod::HttpGet => {
-                self.http_check(target, gateway.monitor_timeout).await?
-            }
+            MonitorMethod::HttpGet => self.http_check(target, gateway.monitor_timeout).await?,
         };
 
         gateway.last_check = Some(SystemTime::now());
@@ -281,7 +283,8 @@ impl MultiWanManager {
         let latency = if is_up {
             // Parse latency from output (simplified)
             let stdout = String::from_utf8_lossy(&output.stdout);
-            stdout.lines()
+            stdout
+                .lines()
                 .find(|line| line.contains("time="))
                 .and_then(|line| {
                     line.split("time=")
@@ -301,14 +304,17 @@ impl MultiWanManager {
         // Use tokio::net::TcpStream with timeout
         let parts: Vec<&str> = target.split(':').collect();
         if parts.len() != 2 {
-            return Err(Error::Network("Invalid TCP target format (use host:port)".to_string()));
+            return Err(Error::Network(
+                "Invalid TCP target format (use host:port)".to_string(),
+            ));
         }
 
         let start = SystemTime::now();
         let result = tokio::time::timeout(
             Duration::from_secs(timeout as u64),
-            tokio::net::TcpStream::connect(target)
-        ).await;
+            tokio::net::TcpStream::connect(target),
+        )
+        .await;
 
         let is_up = result.is_ok() && result.unwrap().is_ok();
         let latency = if is_up {
@@ -326,7 +332,9 @@ impl MultiWanManager {
         let start = SystemTime::now();
 
         // For now, just use TCP check on port 80/443
-        let host = url.trim_start_matches("http://").trim_start_matches("https://");
+        let host = url
+            .trim_start_matches("http://")
+            .trim_start_matches("https://");
         let port = if url.starts_with("https://") { 443 } else { 80 };
         let target = format!("{}:{}", host.split('/').next().unwrap_or(host), port);
 
@@ -397,7 +405,9 @@ impl MultiWanManager {
             }
 
             // Get online gateways in this group
-            let online_gateways: Vec<&WanGateway> = group.gateways.iter()
+            let online_gateways: Vec<&WanGateway> = group
+                .gateways
+                .iter()
                 .filter_map(|gw_name| gateways.get(gw_name))
                 .filter(|gw| gw.enabled && gw.status == GatewayStatus::Online)
                 .collect();
@@ -432,8 +442,10 @@ impl MultiWanManager {
         // Use iproute2 multipath routing
         let mut nexthops = String::new();
         for gw in gateways {
-            nexthops.push_str(&format!("nexthop via {} dev {} weight 1 ",
-                gw.gateway_ip, gw.interface));
+            nexthops.push_str(&format!(
+                "nexthop via {} dev {} weight 1 ",
+                gw.gateway_ip, gw.interface
+            ));
         }
 
         // Add multipath default route
@@ -450,8 +462,10 @@ impl MultiWanManager {
     async fn configure_weighted(&self, gateways: &[&WanGateway]) -> Result<()> {
         let mut nexthops = String::new();
         for gw in gateways {
-            nexthops.push_str(&format!("nexthop via {} dev {} weight {} ",
-                gw.gateway_ip, gw.interface, gw.weight));
+            nexthops.push_str(&format!(
+                "nexthop via {} dev {} weight {} ",
+                gw.gateway_ip, gw.interface, gw.weight
+            ));
         }
 
         Command::new("ip")
@@ -473,9 +487,7 @@ impl MultiWanManager {
     /// Configure failover routing
     async fn configure_failover(&self, gateways: &[&WanGateway]) -> Result<()> {
         // Use highest priority (lowest number) gateway
-        if let Some(primary) = gateways.iter()
-            .min_by_key(|gw| gw.priority) {
-
+        if let Some(primary) = gateways.iter().min_by_key(|gw| gw.priority) {
             Command::new("ip")
                 .args(&["route", "replace", "default", "via"])
                 .arg(primary.gateway_ip.to_string())
@@ -502,11 +514,14 @@ impl MultiWanManager {
             let table_id = table_id + 100; // Start at table 100
 
             // Get group
-            let group = groups.get(&policy.gateway_group)
-                .ok_or_else(|| Error::Network(format!("Group not found: {}", policy.gateway_group)))?;
+            let group = groups.get(&policy.gateway_group).ok_or_else(|| {
+                Error::Network(format!("Group not found: {}", policy.gateway_group))
+            })?;
 
             // Get online gateways
-            let online_gateways: Vec<&WanGateway> = group.gateways.iter()
+            let online_gateways: Vec<&WanGateway> = group
+                .gateways
+                .iter()
                 .filter_map(|gw_name| gateways.get(gw_name))
                 .filter(|gw| gw.enabled && gw.status == GatewayStatus::Online)
                 .collect();
@@ -525,7 +540,12 @@ impl MultiWanManager {
                 rule_args.extend(&["to", dst]);
             }
 
-            rule_args.extend(&["table", &table_id.to_string(), "priority", &policy.priority.to_string()]);
+            rule_args.extend(&[
+                "table",
+                &table_id.to_string(),
+                "priority",
+                &policy.priority.to_string(),
+            ]);
 
             Command::new("ip")
                 .args(&rule_args)
@@ -553,14 +573,17 @@ impl MultiWanManager {
         let mut stats = HashMap::new();
 
         for (name, gw) in gateways.iter() {
-            stats.insert(name.clone(), GatewayStats {
-                status: gw.status.clone(),
-                latency_ms: gw.latency_ms,
-                packet_loss: gw.packet_loss,
-                uptime_seconds: gw.last_check.and_then(|check| {
-                    check.elapsed().ok().map(|d| d.as_secs())
-                }),
-            });
+            stats.insert(
+                name.clone(),
+                GatewayStats {
+                    status: gw.status.clone(),
+                    latency_ms: gw.latency_ms,
+                    packet_loss: gw.packet_loss,
+                    uptime_seconds: gw
+                        .last_check
+                        .and_then(|check| check.elapsed().ok().map(|d| d.as_secs())),
+                },
+            );
         }
 
         Ok(stats)

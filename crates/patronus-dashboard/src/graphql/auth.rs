@@ -3,9 +3,9 @@
 // This module provides authentication guards and role-based access control
 // for GraphQL resolvers.
 
-use async_graphql::{Context, Result, Error};
 use crate::auth::jwt::Claims;
 use crate::auth::users::UserRole;
+use async_graphql::{Context, Error, Result};
 
 /// Authentication context for GraphQL operations
 #[derive(Debug, Clone)]

@@ -1,8 +1,11 @@
 //! Network interface management
 
-use patronus_core::{types::{Interface, IpNetwork}, Error, Result};
-use rtnetlink::{new_connection, Handle};
 use futures::TryStreamExt;
+use patronus_core::{
+    types::{Interface, IpNetwork},
+    Error, Result,
+};
+use rtnetlink::{new_connection, Handle};
 use std::net::IpAddr;
 
 /// Manages network interfaces
@@ -47,19 +50,18 @@ impl InterfaceManager {
                 .unwrap_or_else(|| format!("interface{}", msg.header.index));
 
             // Extract MAC address
-            let mac_address = msg
-                .attributes
-                .iter()
-                .find_map(|attr| {
-                    if let LinkAttribute::Address(addr) = attr {
-                        Some(addr.iter()
+            let mac_address = msg.attributes.iter().find_map(|attr| {
+                if let LinkAttribute::Address(addr) = attr {
+                    Some(
+                        addr.iter()
                             .map(|b| format!("{:02x}", b))
                             .collect::<Vec<_>>()
-                            .join(":"))
-                    } else {
-                        None
-                    }
-                });
+                            .join(":"),
+                    )
+                } else {
+                    None
+                }
+            });
 
             // Get IP addresses for this interface
             let ip_addresses = self.get_interface_ips(msg.header.index).await?;
@@ -78,9 +80,11 @@ impl InterfaceManager {
                 .unwrap_or(1500); // Default MTU
 
             // Check if interface is up by looking for IFF_UP flag
-            let enabled = msg.header.flags.iter().any(|flag| {
-                matches!(flag, netlink_packet_route::link::LinkFlag::Up)
-            });
+            let enabled = msg
+                .header
+                .flags
+                .iter()
+                .any(|flag| matches!(flag, netlink_packet_route::link::LinkFlag::Up));
 
             let interface = Interface {
                 name,
@@ -116,11 +120,8 @@ impl InterfaceManager {
 
             // Extract the address
             for attr in &msg.attributes {
-                match attr {
-                    AddressAttribute::Address(addr) => {
-                        ips.push(*addr);
-                    }
-                    _ => {}
+                if let AddressAttribute::Address(addr) = attr {
+                    ips.push(*addr);
                 }
             }
         }
@@ -142,7 +143,9 @@ impl InterfaceManager {
 
     /// Enable a network interface (bring it up)
     pub async fn enable(&self, name: &str) -> Result<()> {
-        let interface = self.get_by_name(name).await?
+        let interface = self
+            .get_by_name(name)
+            .await?
             .ok_or_else(|| Error::Network(format!("Interface not found: {}", name)))?;
 
         self.handle
@@ -159,7 +162,9 @@ impl InterfaceManager {
 
     /// Disable a network interface (bring it down)
     pub async fn disable(&self, name: &str) -> Result<()> {
-        let interface = self.get_by_name(name).await?
+        let interface = self
+            .get_by_name(name)
+            .await?
             .ok_or_else(|| Error::Network(format!("Interface not found: {}", name)))?;
 
         self.handle
@@ -176,7 +181,9 @@ impl InterfaceManager {
 
     /// Set MTU for an interface
     pub async fn set_mtu(&self, name: &str, mtu: u32) -> Result<()> {
-        let interface = self.get_by_name(name).await?
+        let interface = self
+            .get_by_name(name)
+            .await?
             .ok_or_else(|| Error::Network(format!("Interface not found: {}", name)))?;
 
         self.handle
@@ -193,13 +200,17 @@ impl InterfaceManager {
 
     /// Add an IP address to an interface
     pub async fn add_ip(&self, name: &str, ip: IpNetwork) -> Result<()> {
-        let interface = self.get_by_name(name).await?
+        let interface = self
+            .get_by_name(name)
+            .await?
             .ok_or_else(|| Error::Network(format!("Interface not found: {}", name)))?;
 
-        self.handle.address().add(interface.index, ip.addr, ip.prefix_len)
+        self.handle
+            .address()
+            .add(interface.index, ip.addr, ip.prefix_len)
             .execute()
             .await
-            .map_err(|e| Error::Network(format!("Failed to add IP {} to {}: {}", ip.to_string(), name, e)))?;
+            .map_err(|e| Error::Network(format!("Failed to add IP {} to {}: {}", ip, name, e)))?;
 
         tracing::info!("Added IP {} to interface {}", ip.to_string(), name);
         Ok(())
@@ -207,15 +218,25 @@ impl InterfaceManager {
 
     /// Remove an IP address from an interface
     pub async fn remove_ip(&self, name: &str, ip: IpNetwork) -> Result<()> {
-        let interface = self.get_by_name(name).await?
+        let interface = self
+            .get_by_name(name)
+            .await?
             .ok_or_else(|| Error::Network(format!("Interface not found: {}", name)))?;
 
         self.handle
             .address()
-            .del(self.handle.address().add(interface.index, ip.addr, ip.prefix_len).message_mut().clone())
+            .del(
+                self.handle
+                    .address()
+                    .add(interface.index, ip.addr, ip.prefix_len)
+                    .message_mut()
+                    .clone(),
+            )
             .execute()
             .await
-            .map_err(|e| Error::Network(format!("Failed to remove IP {} from {}: {}", ip.to_string(), name, e)))?;
+            .map_err(|e| {
+                Error::Network(format!("Failed to remove IP {} from {}: {}", ip, name, e))
+            })?;
 
         tracing::info!("Removed IP {} from interface {}", ip.to_string(), name);
         Ok(())
@@ -223,7 +244,9 @@ impl InterfaceManager {
 
     /// Flush all IP addresses from an interface
     pub async fn flush_ips(&self, name: &str) -> Result<()> {
-        let interface = self.get_by_name(name).await?
+        let interface = self
+            .get_by_name(name)
+            .await?
             .ok_or_else(|| Error::Network(format!("Interface not found: {}", name)))?;
 
         // Get all addresses for this interface

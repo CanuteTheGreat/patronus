@@ -4,7 +4,7 @@
 //! for easier firewall rule management. Like pfSense/OPNsense aliases,
 //! but implemented with nftables sets for high performance.
 
-use patronus_core::{Result, Error};
+use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 
@@ -106,7 +106,10 @@ impl AliasManager {
     pub fn add_network_alias(&mut self, alias: NetworkAlias) -> Result<()> {
         // Validate name is unique
         if self.network_aliases.iter().any(|a| a.name == alias.name) {
-            return Err(Error::Firewall(format!("Alias '{}' already exists", alias.name)));
+            return Err(Error::Firewall(format!(
+                "Alias '{}' already exists",
+                alias.name
+            )));
         }
 
         self.network_aliases.push(alias);
@@ -116,7 +119,10 @@ impl AliasManager {
     /// Add a port alias
     pub fn add_port_alias(&mut self, alias: PortAlias) -> Result<()> {
         if self.port_aliases.iter().any(|a| a.name == alias.name) {
-            return Err(Error::Firewall(format!("Alias '{}' already exists", alias.name)));
+            return Err(Error::Firewall(format!(
+                "Alias '{}' already exists",
+                alias.name
+            )));
         }
 
         self.port_aliases.push(alias);
@@ -126,7 +132,10 @@ impl AliasManager {
     /// Add a URL alias
     pub fn add_url_alias(&mut self, alias: UrlAlias) -> Result<()> {
         if self.url_aliases.iter().any(|a| a.name == alias.name) {
-            return Err(Error::Firewall(format!("Alias '{}' already exists", alias.name)));
+            return Err(Error::Firewall(format!(
+                "Alias '{}' already exists",
+                alias.name
+            )));
         }
 
         self.url_aliases.push(alias);
@@ -136,7 +145,10 @@ impl AliasManager {
     /// Add a MAC alias
     pub fn add_mac_alias(&mut self, alias: MacAlias) -> Result<()> {
         if self.mac_aliases.iter().any(|a| a.name == alias.name) {
-            return Err(Error::Firewall(format!("Alias '{}' already exists", alias.name)));
+            return Err(Error::Firewall(format!(
+                "Alias '{}' already exists",
+                alias.name
+            )));
         }
 
         self.mac_aliases.push(alias);
@@ -272,7 +284,11 @@ impl AliasManager {
         }
 
         for alias in &self.mac_aliases {
-            aliases.push((alias.name.clone(), AliasType::Mac, alias.mac_addresses.len()));
+            aliases.push((
+                alias.name.clone(),
+                AliasType::Mac,
+                alias.mac_addresses.len(),
+            ));
         }
 
         aliases
@@ -345,13 +361,13 @@ impl AliasManager {
             name: "EmailPorts".to_string(),
             description: Some("SMTP, IMAP, POP3 ports".to_string()),
             entries: vec![
-                PortEntry::Port(25),   // SMTP
-                PortEntry::Port(587),  // SMTP Submission
-                PortEntry::Port(465),  // SMTPS
-                PortEntry::Port(143),  // IMAP
-                PortEntry::Port(993),  // IMAPS
-                PortEntry::Port(110),  // POP3
-                PortEntry::Port(995),  // POP3S
+                PortEntry::Port(25),  // SMTP
+                PortEntry::Port(587), // SMTP Submission
+                PortEntry::Port(465), // SMTPS
+                PortEntry::Port(143), // IMAP
+                PortEntry::Port(993), // IMAPS
+                PortEntry::Port(110), // POP3
+                PortEntry::Port(995), // POP3S
             ],
         })?;
 
@@ -373,12 +389,10 @@ impl AliasManager {
         self.add_port_alias(PortAlias {
             name: "HighPorts".to_string(),
             description: Some("Ephemeral port range".to_string()),
-            entries: vec![
-                PortEntry::Range {
-                    start: 49152,
-                    end: 65535,
-                },
-            ],
+            entries: vec![PortEntry::Range {
+                start: 49152,
+                end: 65535,
+            }],
         })?;
 
         Ok(())

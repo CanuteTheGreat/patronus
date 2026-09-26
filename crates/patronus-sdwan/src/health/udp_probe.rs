@@ -394,7 +394,7 @@ mod tests {
         assert!(prober.is_port_unreachable(&refused_err));
 
         // Test non-timeout/non-unreachable
-        let other_err = std::io::Error::new(std::io::ErrorKind::Other, "other");
+        let other_err = std::io::Error::other("other");
         assert!(!prober.is_timeout(&other_err));
         assert!(!prober.is_port_unreachable(&other_err));
     }

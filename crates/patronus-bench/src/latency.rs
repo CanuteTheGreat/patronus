@@ -82,12 +82,14 @@ impl LatencyBench {
         let median_us = latencies[latencies.len() / 2];
 
         // Standard deviation
-        let variance = latencies.iter()
+        let variance = latencies
+            .iter()
             .map(|v| {
                 let diff = mean_us - v;
                 diff * diff
             })
-            .sum::<f64>() / latencies.len() as f64;
+            .sum::<f64>()
+            / latencies.len() as f64;
         let stddev_us = variance.sqrt();
 
         // Percentiles

@@ -2,9 +2,9 @@
 //!
 //! Provides VLAN (802.1Q) interface creation and management
 
+use futures::TryStreamExt;
 use patronus_core::{Error, Result};
 use rtnetlink::{new_connection, Handle};
-use futures::TryStreamExt;
 
 /// VLAN interface information
 #[derive(Debug, Clone)]
@@ -33,7 +33,12 @@ impl VlanManager {
     }
 
     /// Create a VLAN interface
-    pub async fn create_vlan(&self, parent: &str, vlan_id: u16, name: Option<&str>) -> Result<String> {
+    pub async fn create_vlan(
+        &self,
+        parent: &str,
+        vlan_id: u16,
+        name: Option<&str>,
+    ) -> Result<String> {
         use crate::interfaces::InterfaceManager;
 
         // Get parent interface
@@ -44,7 +49,9 @@ impl VlanManager {
             .ok_or_else(|| Error::Network(format!("Parent interface not found: {}", parent)))?;
 
         // Generate VLAN interface name if not provided
-        let vlan_name = name.unwrap_or(&format!("{}.{}", parent, vlan_id)).to_string();
+        let vlan_name = name
+            .unwrap_or(&format!("{}.{}", parent, vlan_id))
+            .to_string();
 
         // Create VLAN interface using netlink
         self.handle
@@ -55,7 +62,12 @@ impl VlanManager {
             .await
             .map_err(|e| Error::Network(format!("Failed to create VLAN interface: {}", e)))?;
 
-        tracing::info!("Created VLAN interface {} on {} (VLAN ID: {})", vlan_name, parent, vlan_id);
+        tracing::info!(
+            "Created VLAN interface {} on {} (VLAN ID: {})",
+            vlan_name,
+            parent,
+            vlan_id
+        );
         Ok(vlan_name)
     }
 
@@ -90,7 +102,7 @@ impl VlanManager {
             .await
             .map_err(|e| Error::Network(format!("Failed to get interfaces: {}", e)))?
         {
-            use rtnetlink::packet::link::{LinkAttribute, LinkInfo, InfoKind, InfoVlan};
+            use rtnetlink::packet::link::{InfoKind, InfoVlan, LinkAttribute, LinkInfo};
 
             // Check if this is a VLAN interface
             let mut is_vlan = false;
@@ -131,7 +143,9 @@ impl VlanManager {
 
                 // Get parent interface name
                 let parent = if let Some(parent_idx) = parent_index {
-                    self.get_interface_name(parent_idx).await.unwrap_or_else(|_| format!("if{}", parent_idx))
+                    self.get_interface_name(parent_idx)
+                        .await
+                        .unwrap_or_else(|_| format!("if{}", parent_idx))
                 } else {
                     "unknown".to_string()
                 };

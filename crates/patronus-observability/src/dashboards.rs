@@ -32,30 +32,22 @@ impl GrafanaDashboard {
                 Panel {
                     title: "Throughput".to_string(),
                     panel_type: PanelType::Graph,
-                    targets: vec![
-                        "rate(patronus_bytes_total[5m])".to_string(),
-                    ],
+                    targets: vec!["rate(patronus_bytes_total[5m])".to_string()],
                 },
                 Panel {
                     title: "Packet Loss".to_string(),
                     panel_type: PanelType::Graph,
-                    targets: vec![
-                        "patronus_packet_loss".to_string(),
-                    ],
+                    targets: vec!["patronus_packet_loss".to_string()],
                 },
                 Panel {
                     title: "Latency P95".to_string(),
                     panel_type: PanelType::Graph,
-                    targets: vec![
-                        "histogram_quantile(0.95, patronus_latency_ms)".to_string(),
-                    ],
+                    targets: vec!["histogram_quantile(0.95, patronus_latency_ms)".to_string()],
                 },
                 Panel {
                     title: "Active Tunnels".to_string(),
                     panel_type: PanelType::Stat,
-                    targets: vec![
-                        "patronus_tunnels_active".to_string(),
-                    ],
+                    targets: vec!["patronus_tunnels_active".to_string()],
                 },
             ],
         }
@@ -68,23 +60,17 @@ impl GrafanaDashboard {
                 Panel {
                     title: "ML Predictions".to_string(),
                     panel_type: PanelType::Graph,
-                    targets: vec![
-                        "rate(patronus_ml_predictions_total[5m])".to_string(),
-                    ],
+                    targets: vec!["rate(patronus_ml_predictions_total[5m])".to_string()],
                 },
                 Panel {
                     title: "Inference Time".to_string(),
                     panel_type: PanelType::Heatmap,
-                    targets: vec![
-                        "patronus_ml_inference_ms".to_string(),
-                    ],
+                    targets: vec!["patronus_ml_inference_ms".to_string()],
                 },
                 Panel {
                     title: "Anomalies Detected".to_string(),
                     panel_type: PanelType::Stat,
-                    targets: vec![
-                        "patronus_anomalies_detected_total".to_string(),
-                    ],
+                    targets: vec!["patronus_anomalies_detected_total".to_string()],
                 },
             ],
         }

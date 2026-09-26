@@ -17,7 +17,10 @@ pub struct Rib {
     /// Best routes (after path selection)
     best_routes: Arc<RwLock<HashMap<Ipv4Network, BgpRoute>>>,
 
-    /// Local AS number
+    /// Local AS number. Stored for future use in path selection (AS-path
+    /// loop detection, local-pref tie-breaking) — not yet consumed anywhere,
+    /// but it's part of the public constructor's contract so it stays.
+    #[allow(dead_code)]
     local_asn: u16,
 }
 
@@ -38,10 +41,13 @@ impl Rib {
         debug!("Adding route to RIB: {} via {}", prefix, route.next_hop);
 
         let mut routes = self.routes.write().unwrap();
-        let prefix_routes = routes.entry(prefix).or_insert_with(Vec::new);
+        let prefix_routes = routes.entry(prefix).or_default();
 
         // Check if route already exists (update if so)
-        if let Some(existing) = prefix_routes.iter_mut().find(|r| r.next_hop == route.next_hop) {
+        if let Some(existing) = prefix_routes
+            .iter_mut()
+            .find(|r| r.next_hop == route.next_hop)
+        {
             *existing = route.clone();
         } else {
             prefix_routes.push(route.clone());
@@ -121,8 +127,12 @@ impl Rib {
                 }
             }
 
-            info!("Selected best path for {}: via {} (AS path len: {})",
-                  prefix, best.next_hop, best.as_path.len());
+            info!(
+                "Selected best path for {}: via {} (AS path len: {})",
+                prefix,
+                best.next_hop,
+                best.as_path.len()
+            );
 
             self.best_routes.write().unwrap().insert(prefix, best);
         }
@@ -135,7 +145,9 @@ impl Rib {
 
     /// Get all routes for a prefix
     pub fn get_routes(&self, prefix: &Ipv4Network) -> Vec<BgpRoute> {
-        self.routes.read().unwrap()
+        self.routes
+            .read()
+            .unwrap()
             .get(prefix)
             .cloned()
             .unwrap_or_default()
@@ -143,10 +155,7 @@ impl Rib {
 
     /// Get all best routes
     pub fn get_all_best_routes(&self) -> Vec<BgpRoute> {
-        self.best_routes.read().unwrap()
-            .values()
-            .cloned()
-            .collect()
+        self.best_routes.read().unwrap().values().cloned().collect()
     }
 
     /// Longest prefix match lookup
@@ -173,10 +182,7 @@ impl Rib {
 
     /// Get total number of routes
     pub fn route_count(&self) -> usize {
-        self.routes.read().unwrap()
-            .values()
-            .map(|v| v.len())
-            .sum()
+        self.routes.read().unwrap().values().map(|v| v.len()).sum()
     }
 
     /// Get number of unique prefixes
@@ -280,9 +286,12 @@ mod tests {
         let rib = Rib::new(65000);
 
         // Add routes with different prefix lengths
-        rib.add_route(create_test_route("10.0.0.0/8", "192.168.1.1", vec![65001])).unwrap();
-        rib.add_route(create_test_route("10.0.0.0/16", "192.168.1.2", vec![65001])).unwrap();
-        rib.add_route(create_test_route("10.0.0.0/24", "192.168.1.3", vec![65001])).unwrap();
+        rib.add_route(create_test_route("10.0.0.0/8", "192.168.1.1", vec![65001]))
+            .unwrap();
+        rib.add_route(create_test_route("10.0.0.0/16", "192.168.1.2", vec![65001]))
+            .unwrap();
+        rib.add_route(create_test_route("10.0.0.0/24", "192.168.1.3", vec![65001]))
+            .unwrap();
 
         // Lookup should return most specific match
         let ip = Ipv4Addr::from_str("10.0.0.5").unwrap();
@@ -295,7 +304,8 @@ mod tests {
     #[test]
     fn test_rib_lookup_no_match() {
         let rib = Rib::new(65000);
-        rib.add_route(create_test_route("10.0.0.0/24", "192.168.1.1", vec![65001])).unwrap();
+        rib.add_route(create_test_route("10.0.0.0/24", "192.168.1.1", vec![65001]))
+            .unwrap();
 
         // IP outside the prefix should return None
         let ip = Ipv4Addr::from_str("192.168.1.5").unwrap();
@@ -306,9 +316,12 @@ mod tests {
     fn test_rib_get_all_best_routes() {
         let rib = Rib::new(65000);
 
-        rib.add_route(create_test_route("10.0.0.0/24", "192.168.1.1", vec![65001])).unwrap();
-        rib.add_route(create_test_route("10.1.0.0/24", "192.168.1.2", vec![65001])).unwrap();
-        rib.add_route(create_test_route("10.2.0.0/24", "192.168.1.3", vec![65001])).unwrap();
+        rib.add_route(create_test_route("10.0.0.0/24", "192.168.1.1", vec![65001]))
+            .unwrap();
+        rib.add_route(create_test_route("10.1.0.0/24", "192.168.1.2", vec![65001]))
+            .unwrap();
+        rib.add_route(create_test_route("10.2.0.0/24", "192.168.1.3", vec![65001]))
+            .unwrap();
 
         let all_routes = rib.get_all_best_routes();
         assert_eq!(all_routes.len(), 3);
@@ -318,8 +331,10 @@ mod tests {
     fn test_rib_clear() {
         let rib = Rib::new(65000);
 
-        rib.add_route(create_test_route("10.0.0.0/24", "192.168.1.1", vec![65001])).unwrap();
-        rib.add_route(create_test_route("10.1.0.0/24", "192.168.1.2", vec![65001])).unwrap();
+        rib.add_route(create_test_route("10.0.0.0/24", "192.168.1.1", vec![65001]))
+            .unwrap();
+        rib.add_route(create_test_route("10.1.0.0/24", "192.168.1.2", vec![65001]))
+            .unwrap();
 
         assert_eq!(rib.route_count(), 2);
 

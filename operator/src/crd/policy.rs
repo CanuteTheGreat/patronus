@@ -156,10 +156,7 @@ pub struct PolicyStatus {
 impl Policy {
     /// Check if policy is active
     pub fn is_active(&self) -> bool {
-        self.status
-            .as_ref()
-            .and_then(|s| s.active)
-            .unwrap_or(false)
+        self.status.as_ref().and_then(|s| s.active).unwrap_or(false)
     }
 }
 

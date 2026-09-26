@@ -120,9 +120,8 @@ pub async fn create_partitions(
 
             // Root: fixed size or calculated
             let root_size_mb = calculate_root_size(home_size_mb);
-            partitions.push(
-                create_root_partition(disk, part_num, root_fs, Some(root_size_mb)).await?,
-            );
+            partitions
+                .push(create_root_partition(disk, part_num, root_fs, Some(root_size_mb)).await?);
             part_num += 1;
 
             // Home: remaining space
@@ -214,11 +213,7 @@ async fn create_gpt_table(disk: &Path) -> Result<()> {
 }
 
 /// Create EFI System Partition
-async fn create_esp_partition(
-    disk: &Path,
-    number: u32,
-    size_mb: u64,
-) -> Result<CreatedPartition> {
+async fn create_esp_partition(disk: &Path, number: u32, size_mb: u64) -> Result<CreatedPartition> {
     debug!("Creating ESP partition {} ({}MB)", number, size_mb);
 
     let start = "1MiB";
@@ -311,11 +306,7 @@ async fn create_bios_boot_partition(disk: &Path, number: u32) -> Result<CreatedP
 }
 
 /// Create swap partition
-async fn create_swap_partition(
-    disk: &Path,
-    number: u32,
-    size_mb: u64,
-) -> Result<CreatedPartition> {
+async fn create_swap_partition(disk: &Path, number: u32, size_mb: u64) -> Result<CreatedPartition> {
     debug!("Creating swap partition {} ({}MB)", number, size_mb);
 
     // Calculate start from previous partition

@@ -8,16 +8,8 @@ use tokio::process::Command;
 use tracing::{debug, info};
 
 /// Format a partition with the specified filesystem
-pub async fn format_partition(
-    partition: &Path,
-    fs: Filesystem,
-    label: Option<&str>,
-) -> Result<()> {
-    info!(
-        "Formatting {} as {}",
-        partition.display(),
-        fs.as_str()
-    );
+pub async fn format_partition(partition: &Path, fs: Filesystem, label: Option<&str>) -> Result<()> {
+    info!("Formatting {} as {}", partition.display(), fs.as_str());
 
     let mut cmd = Command::new(fs.mkfs_command());
 
@@ -45,10 +37,9 @@ pub async fn format_partition(
 
     cmd.arg(partition);
 
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| InstallerError::Filesystem(format!("Failed to run {}: {}", fs.mkfs_command(), e)))?;
+    let output = cmd.output().await.map_err(|e| {
+        InstallerError::Filesystem(format!("Failed to run {}: {}", fs.mkfs_command(), e))
+    })?;
 
     if !output.status.success() {
         return Err(InstallerError::Filesystem(format!(

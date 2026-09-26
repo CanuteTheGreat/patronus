@@ -19,6 +19,7 @@ pub struct PeeringManager {
     peers: Arc<RwLock<Vec<PeerConfig>>>,
     interface_name: String,
     listen_port: u16,
+    #[allow(dead_code)]
     network_prefix: String, // e.g., "10.99.0.0/16"
 }
 
@@ -116,7 +117,14 @@ impl PeeringManager {
 
         // ip link add dev wg-sdwan type wireguard
         let output = Command::new("ip")
-            .args(["link", "add", "dev", &self.interface_name, "type", "wireguard"])
+            .args([
+                "link",
+                "add",
+                "dev",
+                &self.interface_name,
+                "type",
+                "wireguard",
+            ])
             .output()
             .map_err(|e| Error::Network(format!("Failed to create interface: {}", e)))?;
 
@@ -141,10 +149,7 @@ impl PeeringManager {
             let stderr = String::from_utf8_lossy(&output.stderr);
             // Ignore if address already exists
             if !stderr.contains("File exists") {
-                return Err(Error::Network(format!(
-                    "Failed to add address: {}",
-                    stderr
-                )));
+                return Err(Error::Network(format!("Failed to add address: {}", stderr)));
             }
         }
 
@@ -156,7 +161,7 @@ impl PeeringManager {
         debug!("Configuring WireGuard interface");
 
         // Convert private key to base64
-        let private_key_b64 = STANDARD.encode(&self.own_private_key);
+        let private_key_b64 = STANDARD.encode(self.own_private_key);
 
         // wg set wg-sdwan private-key <(echo {private_key})
         let mut output = Command::new("wg")
@@ -270,9 +275,7 @@ impl PeeringManager {
             id: PathId::new(0), // Will be assigned by database
             src_site: self.own_site_id,
             dst_site: site.id,
-            src_endpoint: format!("0.0.0.0:{}", self.listen_port)
-                .parse()
-                .unwrap(),
+            src_endpoint: format!("0.0.0.0:{}", self.listen_port).parse().unwrap(),
             dst_endpoint: endpoint.parse().unwrap(),
             wg_interface: Some(self.interface_name.clone()),
             metrics: PathMetrics::default(),
@@ -356,7 +359,13 @@ impl PeeringManager {
         let public_key_b64 = STANDARD.encode(peer.public_key.as_bytes());
 
         let output = Command::new("wg")
-            .args(["set", &self.interface_name, "peer", &public_key_b64, "remove"])
+            .args([
+                "set",
+                &self.interface_name,
+                "peer",
+                &public_key_b64,
+                "remove",
+            ])
             .output()
             .map_err(|e| Error::Network(format!("Failed to remove peer: {}", e)))?;
 
@@ -387,12 +396,7 @@ mod tests {
     async fn test_ip_generation() {
         let site_id = SiteId::generate();
         let db = Arc::new(Database::new(":memory:").await.unwrap());
-        let manager = PeeringManager::new(
-            db,
-            site_id,
-            "wg-test".to_string(),
-            51820,
-        );
+        let manager = PeeringManager::new(db, site_id, "wg-test".to_string(), 51820);
 
         let ip = manager.generate_site_ip();
         assert!(ip.starts_with("10.99."));
@@ -403,12 +407,7 @@ mod tests {
     async fn test_allowed_ips_generation() {
         let site_id = SiteId::generate();
         let db = Arc::new(Database::new(":memory:").await.unwrap());
-        let manager = PeeringManager::new(
-            db,
-            SiteId::generate(),
-            "wg-test".to_string(),
-            51820,
-        );
+        let manager = PeeringManager::new(db, SiteId::generate(), "wg-test".to_string(), 51820);
 
         let allowed_ips = manager.generate_peer_allowed_ips(&site_id);
         assert_eq!(allowed_ips.len(), 1);

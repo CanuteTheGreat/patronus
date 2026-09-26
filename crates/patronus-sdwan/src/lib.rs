@@ -25,28 +25,28 @@
 //!                     └─────────────┘
 //! ```
 
-pub mod mesh;
-pub mod monitor;
-pub mod routing;
-pub mod types;
-pub mod policy;
-pub mod database;
-pub mod error;
-pub mod peering;
-pub mod netpolicy;
-pub mod metrics;
-pub mod traffic_stats;
-pub mod health;
-pub mod failover;
-pub mod export;
 pub mod compression;
+pub mod database;
 pub mod dataplane;
 pub mod dpi;
-pub mod sla;
+pub mod error;
+pub mod export;
+pub mod failover;
+pub mod health;
+pub mod mesh;
+pub mod metrics;
+pub mod monitor;
+pub mod netpolicy;
+pub mod peering;
+pub mod policy;
 pub mod qos;
+pub mod routing;
+pub mod sla;
+pub mod traffic_stats;
+pub mod types;
 
 pub use error::{Error, Result};
-pub use types::{SiteId, PathId, FlowKey, FlowRecord, FlowStats};
+pub use types::{FlowKey, FlowRecord, FlowStats, PathId, SiteId};
 
 use std::sync::Arc;
 
@@ -55,6 +55,7 @@ pub struct SdwanManager {
     mesh: Arc<mesh::MeshManager>,
     monitor: Arc<monitor::PathMonitor>,
     routing: Arc<routing::RoutingEngine>,
+    #[allow(dead_code)]
     db: Arc<database::Database>,
 }
 
@@ -64,7 +65,7 @@ impl SdwanManager {
         let db = Arc::new(database::Database::new(&config.database_path).await?);
 
         let mesh = Arc::new(mesh::MeshManager::new(
-            config.site_id.clone(),
+            config.site_id,
             config.site_name.clone(),
             db.clone(),
         ));

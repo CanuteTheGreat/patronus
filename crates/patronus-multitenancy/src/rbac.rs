@@ -1,9 +1,9 @@
 //! Role-Based Access Control (RBAC)
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
-use anyhow::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Permission {
@@ -74,26 +74,24 @@ impl Role {
 // Pre-defined roles
 impl Role {
     pub fn viewer(org_id: Uuid) -> Self {
-        Self::new("viewer", "Read-only access", org_id)
-            .with_permissions(vec![
-                Permission::SiteRead,
-                Permission::TunnelRead,
-                Permission::PolicyRead,
-                Permission::OrgRead,
-            ])
+        Self::new("viewer", "Read-only access", org_id).with_permissions(vec![
+            Permission::SiteRead,
+            Permission::TunnelRead,
+            Permission::PolicyRead,
+            Permission::OrgRead,
+        ])
     }
 
     pub fn operator(org_id: Uuid) -> Self {
-        Self::new("operator", "Operational access", org_id)
-            .with_permissions(vec![
-                Permission::SiteRead,
-                Permission::SiteWrite,
-                Permission::TunnelRead,
-                Permission::TunnelWrite,
-                Permission::PolicyRead,
-                Permission::PolicyWrite,
-                Permission::OrgRead,
-            ])
+        Self::new("operator", "Operational access", org_id).with_permissions(vec![
+            Permission::SiteRead,
+            Permission::SiteWrite,
+            Permission::TunnelRead,
+            Permission::TunnelWrite,
+            Permission::PolicyRead,
+            Permission::PolicyWrite,
+            Permission::OrgRead,
+        ])
     }
 
     pub fn admin(org_id: Uuid) -> Self {
@@ -150,10 +148,7 @@ impl RbacManager {
         let org_id = role.org_id;
 
         self.roles.insert(role_id, role);
-        self.org_roles
-            .entry(org_id)
-            .or_insert_with(Vec::new)
-            .push(role_id);
+        self.org_roles.entry(org_id).or_default().push(role_id);
 
         tracing::info!("Created role: {}", role_id);
         Ok(role_id)
@@ -165,29 +160,36 @@ impl RbacManager {
 
         // Verify all roles exist and belong to same org
         for role_id in &user.role_ids {
-            let role = self.roles.get(role_id)
+            let role = self
+                .roles
+                .get(role_id)
                 .ok_or_else(|| anyhow::anyhow!("Role not found: {}", role_id))?;
 
             if role.org_id != org_id {
-                anyhow::bail!("Role {} does not belong to organization {}", role_id, org_id);
+                anyhow::bail!(
+                    "Role {} does not belong to organization {}",
+                    role_id,
+                    org_id
+                );
             }
         }
 
         self.users.insert(user_id, user);
-        self.org_users
-            .entry(org_id)
-            .or_insert_with(Vec::new)
-            .push(user_id);
+        self.org_users.entry(org_id).or_default().push(user_id);
 
         tracing::info!("Created user: {}", user_id);
         Ok(user_id)
     }
 
     pub fn assign_role(&mut self, user_id: &Uuid, role_id: &Uuid) -> Result<()> {
-        let user = self.users.get_mut(user_id)
+        let user = self
+            .users
+            .get_mut(user_id)
             .ok_or_else(|| anyhow::anyhow!("User not found"))?;
 
-        let role = self.roles.get(role_id)
+        let role = self
+            .roles
+            .get(role_id)
             .ok_or_else(|| anyhow::anyhow!("Role not found"))?;
 
         if user.org_id != role.org_id {
@@ -297,8 +299,7 @@ mod tests {
         let viewer_id = viewer.id;
         manager.create_role(viewer).unwrap();
 
-        let user = User::new("alice", "alice@example.com", org_id)
-            .with_role(viewer_id);
+        let user = User::new("alice", "alice@example.com", org_id).with_role(viewer_id);
         let user_id = user.id;
         manager.create_user(user).unwrap();
 
@@ -341,8 +342,7 @@ mod tests {
         let role_id = role.id;
         manager.create_role(role).unwrap();
 
-        let user = User::new("charlie", "charlie@example.com", org2)
-            .with_role(role_id);
+        let user = User::new("charlie", "charlie@example.com", org2).with_role(role_id);
 
         let result = manager.create_user(user);
         assert!(result.is_err());
@@ -357,8 +357,7 @@ mod tests {
         let operator_id = operator.id;
         manager.create_role(operator).unwrap();
 
-        let user = User::new("dave", "dave@example.com", org_id)
-            .with_role(operator_id);
+        let user = User::new("dave", "dave@example.com", org_id).with_role(operator_id);
         let user_id = user.id;
         manager.create_user(user).unwrap();
 

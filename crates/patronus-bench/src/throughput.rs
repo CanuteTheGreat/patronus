@@ -27,13 +27,32 @@ impl ThroughputResult {
         println!("{}", "===========================".bright_cyan());
         println!("Packet Size:        {} bytes", self.packet_size);
         println!("Duration:           {} seconds", self.duration_secs);
-        println!("Packets Sent:       {}", self.packets_sent.to_string().bright_yellow());
-        println!("Packets Received:   {}", self.packets_received.to_string().bright_yellow());
-        println!("Packet Loss:        {}%", format!("{:.2}", self.packet_loss_percent).bright_red());
+        println!(
+            "Packets Sent:       {}",
+            self.packets_sent.to_string().bright_yellow()
+        );
+        println!(
+            "Packets Received:   {}",
+            self.packets_received.to_string().bright_yellow()
+        );
+        println!(
+            "Packet Loss:        {}%",
+            format!("{:.2}", self.packet_loss_percent).bright_red()
+        );
         println!();
         println!("{}", "Performance Metrics:".bright_green());
-        println!("  Packets/sec:      {}", format!("{:.0}", self.packets_per_second).bright_green().bold());
-        println!("  Throughput:       {} Mbps", format!("{:.2}", self.megabits_per_second).bright_green().bold());
+        println!(
+            "  Packets/sec:      {}",
+            format!("{:.0}", self.packets_per_second)
+                .bright_green()
+                .bold()
+        );
+        println!(
+            "  Throughput:       {} Mbps",
+            format!("{:.2}", self.megabits_per_second)
+                .bright_green()
+                .bold()
+        );
         println!();
     }
 }
@@ -70,7 +89,7 @@ impl ThroughputBench {
 
                 // Simulate packet processing (in real impl, would be actual network I/O)
                 // Assume ~1% packet loss for demonstration
-                if packets_sent % 100 != 0 {
+                if !packets_sent.is_multiple_of(100) {
                     packets_received += 1;
                 }
             }
@@ -115,7 +134,10 @@ pub async fn benchmark_packet_sizes(duration_secs: u64) -> Result<Vec<Throughput
     let mut results = Vec::new();
 
     for size in packet_sizes {
-        println!("{}", format!("Testing packet size: {} bytes", size).bright_yellow());
+        println!(
+            "{}",
+            format!("Testing packet size: {} bytes", size).bright_yellow()
+        );
         let bench = ThroughputBench::new(size, duration_secs);
         let result = bench.run().await?;
         results.push(result);

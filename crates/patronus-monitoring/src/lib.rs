@@ -3,17 +3,16 @@
 //! Enterprise-grade monitoring with Prometheus metrics, alerting,
 //! and comprehensive system telemetry.
 
-pub mod prometheus;
-pub mod metrics;
 pub mod alerts;
+pub mod metrics;
+pub mod prometheus;
 pub mod status;
 
-pub use prometheus::PrometheusExporter;
-pub use metrics::MetricsCollector;
 pub use alerts::AlertManager;
+pub use metrics::MetricsCollector;
+pub use prometheus::PrometheusExporter;
 pub use status::{
-    StatusPageManager, DashboardConfig, DashboardWidget, WidgetType,
-    InterfaceStatus, DhcpLease, ServiceStatus, IpsecTunnelStatus,
-    OpenVpnClientStatus, WireGuardPeerStatus, GatewayHealth,
-    TrafficDataPoint, LogEntry,
+    DashboardConfig, DashboardWidget, DhcpLease, GatewayHealth, InterfaceStatus, IpsecTunnelStatus,
+    LogEntry, OpenVpnClientStatus, ServiceStatus, StatusPageManager, TrafficDataPoint, WidgetType,
+    WireGuardPeerStatus,
 };

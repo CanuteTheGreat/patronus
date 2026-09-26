@@ -1,7 +1,7 @@
 //! Mutual TLS (mTLS) Implementation
 
-use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,6 +14,7 @@ pub struct MtlsConfig {
 }
 
 pub struct MtlsManager {
+    #[allow(dead_code)]
     config: MtlsConfig,
 }
 

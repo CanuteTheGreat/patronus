@@ -2,14 +2,18 @@
 
 use crate::SiteCommands;
 use colored::Colorize;
-use comfy_table::{Table, presets::UTF8_FULL};
-use std::path::PathBuf;
+use comfy_table::{presets::UTF8_FULL, Table};
 use std::fs;
+use std::path::PathBuf;
 use uuid::Uuid;
 
 pub async fn handle_site_command(action: SiteCommands, config_path: PathBuf) -> anyhow::Result<()> {
     match action {
-        SiteCommands::Create { name, location, address } => {
+        SiteCommands::Create {
+            name,
+            location,
+            address,
+        } => {
             create_site(name, location, address, config_path).await?;
         }
         SiteCommands::List => {
@@ -25,7 +29,12 @@ pub async fn handle_site_command(action: SiteCommands, config_path: PathBuf) -> 
     Ok(())
 }
 
-async fn create_site(name: String, location: String, address: String, config_path: PathBuf) -> anyhow::Result<()> {
+async fn create_site(
+    name: String,
+    location: String,
+    address: String,
+    config_path: PathBuf,
+) -> anyhow::Result<()> {
     println!("{} Creating site '{}'...", "→".bright_blue(), name);
 
     // Load config
@@ -80,7 +89,7 @@ async fn list_sites(config_path: PathBuf) -> anyhow::Result<()> {
         "Location".bold(),
         "Address".bold(),
         "Status".bold(),
-        "ID".bold()
+        "ID".bold(),
     ]);
 
     for site in sites {
@@ -102,7 +111,10 @@ async fn list_sites(config_path: PathBuf) -> anyhow::Result<()> {
     println!();
     println!("{}", table);
     println!();
-    println!("Total sites: {}", sites.len().to_string().bright_blue().bold());
+    println!(
+        "Total sites: {}",
+        sites.len().to_string().bright_blue().bold()
+    );
     println!();
 
     Ok(())
@@ -117,22 +129,50 @@ async fn show_site(site: String, config_path: PathBuf) -> anyhow::Result<()> {
     let sites = config["sites"].as_array().unwrap_or(&empty_vec);
 
     // Find site by name or ID
-    let found_site = sites.iter().find(|s| {
-        s["name"].as_str() == Some(&site) || s["id"].as_str() == Some(&site)
-    });
+    let found_site = sites
+        .iter()
+        .find(|s| s["name"].as_str() == Some(&site) || s["id"].as_str() == Some(&site));
 
     match found_site {
         Some(site_data) => {
             println!();
             println!("{}", "━".repeat(60).bright_blue());
-            println!("  {} {}", "Site:".bright_blue().bold(), site_data["name"].as_str().unwrap_or("N/A"));
+            println!(
+                "  {} {}",
+                "Site:".bright_blue().bold(),
+                site_data["name"].as_str().unwrap_or("N/A")
+            );
             println!("{}", "━".repeat(60).bright_blue());
             println!();
-            println!("  {:<15} {}", "ID:".bold(), site_data["id"].as_str().unwrap_or("N/A"));
-            println!("  {:<15} {}", "Location:".bold(), site_data["location"].as_str().unwrap_or("N/A"));
-            println!("  {:<15} {}", "Address:".bold(), site_data["address"].as_str().unwrap_or("N/A"));
-            println!("  {:<15} {}", "Status:".bold(), if site_data["enabled"].as_bool().unwrap_or(false) { "Active".green() } else { "Inactive".red() });
-            println!("  {:<15} {}", "Created:".bold(), site_data["created_at"].as_str().unwrap_or("N/A"));
+            println!(
+                "  {:<15} {}",
+                "ID:".bold(),
+                site_data["id"].as_str().unwrap_or("N/A")
+            );
+            println!(
+                "  {:<15} {}",
+                "Location:".bold(),
+                site_data["location"].as_str().unwrap_or("N/A")
+            );
+            println!(
+                "  {:<15} {}",
+                "Address:".bold(),
+                site_data["address"].as_str().unwrap_or("N/A")
+            );
+            println!(
+                "  {:<15} {}",
+                "Status:".bold(),
+                if site_data["enabled"].as_bool().unwrap_or(false) {
+                    "Active".green()
+                } else {
+                    "Inactive".red()
+                }
+            );
+            println!(
+                "  {:<15} {}",
+                "Created:".bold(),
+                site_data["created_at"].as_str().unwrap_or("N/A")
+            );
             println!();
         }
         None => {
@@ -152,9 +192,7 @@ async fn delete_site(site: String, config_path: PathBuf) -> anyhow::Result<()> {
 
     // Remove site
     if let Some(sites) = config["sites"].as_array_mut() {
-        sites.retain(|s| {
-            s["name"].as_str() != Some(&site) && s["id"].as_str() != Some(&site)
-        });
+        sites.retain(|s| s["name"].as_str() != Some(&site) && s["id"].as_str() != Some(&site));
     }
 
     // Save config

@@ -7,7 +7,7 @@ pub mod edge_node;
 pub mod fiveg;
 pub mod workload;
 
-pub use device::{IoTDevice, DeviceType, DeviceManager, DeviceMetrics};
+pub use device::{DeviceManager, DeviceMetrics, DeviceType, IoTDevice};
 pub use edge_node::{EdgeNode, EdgeNodeManager, NodeCapabilities, NodeStatus};
-pub use fiveg::{FiveGSlice, NetworkSlice, SliceType, SliceManager};
-pub use workload::{EdgeWorkload, WorkloadScheduler, WorkloadPlacement, SchedulingPolicy};
+pub use fiveg::{FiveGSlice, NetworkSlice, SliceManager, SliceType};
+pub use workload::{EdgeWorkload, SchedulingPolicy, WorkloadPlacement, WorkloadScheduler};

@@ -9,7 +9,7 @@ pub struct XdpStats {
     pub packets_dropped: u64,
     pub packets_passed: u64,
     pub pps: u64,  // Packets per second
-    pub gbps: f64,  // Gigabits per second
+    pub gbps: f64, // Gigabits per second
 }
 
 impl XdpStats {

@@ -77,7 +77,7 @@ impl Default for BfdConfig {
     fn default() -> Self {
         Self {
             local_discriminator: rand::random(),
-            desired_min_tx_interval: 300_000, // 300ms
+            desired_min_tx_interval: 300_000,  // 300ms
             required_min_rx_interval: 300_000, // 300ms
             detect_mult: 3,
             local_addr: "0.0.0.0:3784".parse().unwrap(), // BFD control port
@@ -182,25 +182,22 @@ impl BfdSession {
         loop {
             let tx_interval = *self.tx_interval.read().await;
             let mut timer = interval(tx_interval);
+            timer.tick().await;
 
-            loop {
-                timer.tick().await;
+            let packet = self.create_packet().await;
+            let bytes = packet.to_bytes();
 
-                let packet = self.create_packet().await;
-                let bytes = packet.to_bytes();
-
-                match socket.send(&bytes).await {
-                    Ok(_) => {
-                        debug!(
-                            "Sent BFD packet: state={:?}, my_disc={}, your_disc={}",
-                            *self.state.read().await,
-                            packet.my_discriminator,
-                            packet.your_discriminator
-                        );
-                    }
-                    Err(e) => {
-                        warn!("Failed to send BFD packet: {}", e);
-                    }
+            match socket.send(&bytes).await {
+                Ok(_) => {
+                    debug!(
+                        "Sent BFD packet: state={:?}, my_disc={}, your_disc={}",
+                        *self.state.read().await,
+                        packet.my_discriminator,
+                        packet.your_discriminator
+                    );
+                }
+                Err(e) => {
+                    warn!("Failed to send BFD packet: {}", e);
                 }
             }
         }
@@ -247,17 +244,17 @@ impl BfdSession {
             let detection_time = *self.detection_time.read().await;
 
             // Only check timeout if we're in Init or Up state
-            if current_state == BfdState::Init || current_state == BfdState::Up {
-                if last_rx.elapsed() > detection_time {
-                    warn!("BFD session timeout detected");
+            if (current_state == BfdState::Init || current_state == BfdState::Up)
+                && last_rx.elapsed() > detection_time
+            {
+                warn!("BFD session timeout detected");
 
-                    // Move to Down state
-                    *self.state.write().await = BfdState::Down;
-                    *self.diagnostic.write().await = BfdDiagnostic::ControlDetectionTimeExpired;
+                // Move to Down state
+                *self.state.write().await = BfdState::Down;
+                *self.diagnostic.write().await = BfdDiagnostic::ControlDetectionTimeExpired;
 
-                    // Notify state change
-                    let _ = state_tx.send(BfdState::Down).await;
-                }
+                // Notify state change
+                let _ = state_tx.send(BfdState::Down).await;
             }
         }
     }
@@ -302,7 +299,10 @@ impl BfdSession {
         };
 
         if new_state != current_state {
-            info!("BFD state transition: {:?} -> {:?}", current_state, new_state);
+            info!(
+                "BFD state transition: {:?} -> {:?}",
+                current_state, new_state
+            );
             *self.state.write().await = new_state;
         }
 
@@ -367,9 +367,15 @@ impl BfdPacket {
             length: bytes[3],
             my_discriminator: u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
             your_discriminator: u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
-            desired_min_tx_interval: u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
-            required_min_rx_interval: u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
-            required_min_echo_rx_interval: u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]),
+            desired_min_tx_interval: u32::from_be_bytes([
+                bytes[12], bytes[13], bytes[14], bytes[15],
+            ]),
+            required_min_rx_interval: u32::from_be_bytes([
+                bytes[16], bytes[17], bytes[18], bytes[19],
+            ]),
+            required_min_echo_rx_interval: u32::from_be_bytes([
+                bytes[20], bytes[21], bytes[22], bytes[23],
+            ]),
         })
     }
 
@@ -408,7 +414,7 @@ mod tests {
     #[test]
     fn test_bfd_packet_serialization() {
         let packet = BfdPacket {
-            vers_diag: (1 << 5) | 0,
+            vers_diag: (1 << 5),
             state_flags: (BfdState::Up as u8) << 6,
             detect_mult: 3,
             length: 24,

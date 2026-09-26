@@ -154,14 +154,18 @@ pub fn validate_hostname(hostname: &str) -> Result<()> {
 /// Validate a protocol name
 pub fn validate_protocol(protocol: &str) -> Result<()> {
     const VALID_PROTOCOLS: &[&str] = &[
-        "tcp", "udp", "icmp", "icmpv6", "esp", "ah", "gre", "ipip",
-        "tcp", "udp", "icmp", "sctp", "all", "any",
+        "tcp", "udp", "icmp", "icmpv6", "esp", "ah", "gre", "ipip", "tcp", "udp", "icmp", "sctp",
+        "all", "any",
     ];
 
     let proto_lower = protocol.to_lowercase();
 
     if !VALID_PROTOCOLS.contains(&proto_lower.as_str()) {
-        bail!("Invalid protocol '{}'. Must be one of: {:?}", protocol, VALID_PROTOCOLS);
+        bail!(
+            "Invalid protocol '{}'. Must be one of: {:?}",
+            protocol,
+            VALID_PROTOCOLS
+        );
     }
 
     Ok(())
@@ -174,7 +178,11 @@ pub fn validate_firewall_action(action: &str) -> Result<()> {
     let action_lower = action.to_lowercase();
 
     if !VALID_ACTIONS.contains(&action_lower.as_str()) {
-        bail!("Invalid action '{}'. Must be one of: {:?}", action, VALID_ACTIONS);
+        bail!(
+            "Invalid action '{}'. Must be one of: {:?}",
+            action,
+            VALID_ACTIONS
+        );
     }
 
     Ok(())

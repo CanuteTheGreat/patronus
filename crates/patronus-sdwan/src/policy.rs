@@ -171,30 +171,29 @@ impl ApplicationClass {
             // Video conferencing
             (17, 3478..=3481) | (6, 3478..=3481) => Self::VideoConference, // TURN/STUN
             (6, 8801..=8810) | (17, 8801..=8810) => Self::VideoConference, // Zoom
-            (6, 19302..=19310) | (17, 19302..=19310) => Self::VideoConference, // Google Meet
 
             // Web browsing
             (6, 80) | (6, 443) | (6, 8080) | (6, 8443) => Self::Web,
 
             // Email
             (6, 25) | (6, 465) | (6, 587) => Self::Email, // SMTP
-            (6, 110) | (6, 995) => Self::Email, // POP3
-            (6, 143) | (6, 993) => Self::Email, // IMAP
+            (6, 110) | (6, 995) => Self::Email,           // POP3
+            (6, 143) | (6, 993) => Self::Email,           // IMAP
 
             // File transfer
-            (6, 20) | (6, 21) => Self::FileTransfer, // FTP
-            (6, 22) => Self::FileTransfer, // SFTP/SSH
+            (6, 20) | (6, 21) => Self::FileTransfer,   // FTP
+            (6, 22) => Self::FileTransfer,             // SFTP/SSH
             (6, 445) | (6, 139) => Self::FileTransfer, // SMB
 
             // Database
-            (6, 3306) => Self::Database, // MySQL
-            (6, 5432) => Self::Database, // PostgreSQL
+            (6, 3306) => Self::Database,  // MySQL
+            (6, 5432) => Self::Database,  // PostgreSQL
             (6, 27017) => Self::Database, // MongoDB
-            (6, 6379) => Self::Database, // Redis
-            (6, 1433) => Self::Database, // MS SQL
+            (6, 6379) => Self::Database,  // Redis
+            (6, 1433) => Self::Database,  // MS SQL
 
             // Backup
-            (6, 873) => Self::Backup, // rsync
+            (6, 873) => Self::Backup,           // rsync
             (6, 10000..=10999) => Self::Backup, // Common backup ports
 
             _ => Self::Other,
@@ -210,15 +209,9 @@ impl ApplicationClass {
             Self::FileTransfer | Self::Backup => {
                 PathPreference::Custom(PathScoringWeights::throughput_focused())
             }
-            Self::Web | Self::Email => {
-                PathPreference::Custom(PathScoringWeights::balanced())
-            }
-            Self::Database => {
-                PathPreference::LowestLatency
-            }
-            Self::Other => {
-                PathPreference::Custom(PathScoringWeights::balanced())
-            }
+            Self::Web | Self::Email => PathPreference::Custom(PathScoringWeights::balanced()),
+            Self::Database => PathPreference::LowestLatency,
+            Self::Other => PathPreference::Custom(PathScoringWeights::balanced()),
         }
     }
 }
@@ -334,7 +327,11 @@ impl PolicyMatcher {
     }
 
     /// Score a path based on preferences (0-100, higher is better)
-    pub fn score_path(metrics: &PathMetrics, preference: &PathPreference, cost_per_gb: Option<f64>) -> f64 {
+    pub fn score_path(
+        metrics: &PathMetrics,
+        preference: &PathPreference,
+        cost_per_gb: Option<f64>,
+    ) -> f64 {
         match preference {
             PathPreference::LowestLatency => {
                 // Lower latency = higher score
@@ -368,13 +365,17 @@ impl PolicyMatcher {
                 // Inverse scoring: lower cost = higher score
                 // Score is 100 at $0/GB, 50 at $0.10/GB, 0 at $0.20/GB+
                 let score = 100.0 - (cost * 500.0);
-                score.max(0.0).min(100.0)
+                score.clamp(0.0, 100.0)
             }
             None => 50.0, // Default score when cost unknown
         }
     }
 
-    fn score_with_weights(metrics: &PathMetrics, weights: &PathScoringWeights, cost_per_gb: Option<f64>) -> f64 {
+    fn score_with_weights(
+        metrics: &PathMetrics,
+        weights: &PathScoringWeights,
+        cost_per_gb: Option<f64>,
+    ) -> f64 {
         // Individual component scores (0-100)
         let latency_score = (200.0 - metrics.latency_ms.min(200.0)) / 2.0;
         let jitter_score = (50.0 - metrics.jitter_ms.min(50.0)) * 2.0;
@@ -383,16 +384,16 @@ impl PolicyMatcher {
         let cost_score = Self::score_by_cost(cost_per_gb);
 
         // Weighted sum (weights should sum to 1.0)
-        weights.latency_weight * latency_score +
-        weights.jitter_weight * jitter_score +
-        weights.loss_weight * loss_score +
-        weights.bandwidth_weight * bandwidth_score +
-        weights.cost_weight * cost_score
+        weights.latency_weight * latency_score
+            + weights.jitter_weight * jitter_score
+            + weights.loss_weight * loss_score
+            + weights.bandwidth_weight * bandwidth_score
+            + weights.cost_weight * cost_score
     }
 
     /// Select the best path from a list based on policy
-    pub fn select_best_path<'a>(
-        paths: &'a [(PathMetrics, Option<f64>)], // (metrics, cost_per_gb)
+    pub fn select_best_path(
+        paths: &[(PathMetrics, Option<f64>)], // (metrics, cost_per_gb)
         preference: &PathPreference,
     ) -> Option<(usize, f64)> {
         if paths.is_empty() {
@@ -429,7 +430,7 @@ impl PolicyEngine {
     pub fn add_policy(&mut self, policy: RoutingPolicy) {
         self.policies.push(policy);
         // Sort by priority (highest first)
-        self.policies.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.policies.sort_by_key(|p| std::cmp::Reverse(p.priority));
     }
 
     pub fn remove_policy(&mut self, id: u64) -> Option<RoutingPolicy> {
@@ -450,12 +451,10 @@ impl PolicyEngine {
 
     /// Find the best matching policy for a flow
     pub fn find_matching_policy(&self, flow: &FlowKey) -> Option<&RoutingPolicy> {
-        for policy in &self.policies {
-            if policy.enabled && PolicyMatcher::matches(flow, &policy.match_rules) {
-                return Some(policy);
-            }
-        }
-        None
+        self.policies
+            .iter()
+            .find(|&policy| policy.enabled && PolicyMatcher::matches(flow, &policy.match_rules))
+            .map(|v| v as _)
     }
 }
 
@@ -536,9 +535,18 @@ mod tests {
     fn test_application_class() {
         assert_eq!(ApplicationClass::from_flow(6, 80), ApplicationClass::Web);
         assert_eq!(ApplicationClass::from_flow(6, 443), ApplicationClass::Web);
-        assert_eq!(ApplicationClass::from_flow(17, 5060), ApplicationClass::VoIP);
-        assert_eq!(ApplicationClass::from_flow(6, 3306), ApplicationClass::Database);
-        assert_eq!(ApplicationClass::from_flow(6, 12345), ApplicationClass::Other);
+        assert_eq!(
+            ApplicationClass::from_flow(17, 5060),
+            ApplicationClass::VoIP
+        );
+        assert_eq!(
+            ApplicationClass::from_flow(6, 3306),
+            ApplicationClass::Database
+        );
+        assert_eq!(
+            ApplicationClass::from_flow(6, 12345),
+            ApplicationClass::Other
+        );
     }
 
     #[test]

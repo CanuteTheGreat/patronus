@@ -23,9 +23,9 @@ pub mod manager;
 pub mod store;
 pub mod validation;
 
+pub use crypto::{decrypt_secret, derive_key, encrypt_secret};
 pub use manager::{SecretManager, SecretMetadata, SecretType};
-pub use store::{SecretStore, MemoryStore, FileStore};
-pub use crypto::{encrypt_secret, decrypt_secret, derive_key};
+pub use store::{FileStore, MemoryStore, SecretStore};
 pub use validation::{validate_password_strength, PasswordStrength};
 
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,7 @@ impl SecretString {
         Self(value)
     }
 
-    pub fn from_str(value: &str) -> Self {
+    pub fn from_plain_str(value: &str) -> Self {
         Self(value.to_string())
     }
 
@@ -51,8 +51,7 @@ impl SecretString {
 
     /// Convert to owned String (consumes self)
     pub fn into_string(mut self) -> String {
-        let value = std::mem::take(&mut self.0);
-        value
+        std::mem::take(&mut self.0)
     }
 }
 

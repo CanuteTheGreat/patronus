@@ -55,6 +55,12 @@ pub struct SystemMetrics {
     pub path_metrics: HashMap<PathId, PathMetrics>,
 }
 
+impl Default for SystemMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SystemMetrics {
     /// Create a new empty metrics snapshot
     pub fn new() -> Self {
@@ -175,7 +181,9 @@ impl MetricsCollector {
     pub async fn start(&self) -> Result<tokio::task::JoinHandle<()>> {
         let mut running = self.running.write().await;
         if *running {
-            return Err(crate::Error::Other("Metrics collector already running".to_string()));
+            return Err(crate::Error::Other(
+                "Metrics collector already running".to_string(),
+            ));
         }
 
         info!("Starting metrics collector");
@@ -258,9 +266,9 @@ impl MetricsCollector {
                     // CPU usage (average across all cores)
                     let cpus = sys.cpus();
                     if !cpus.is_empty() {
-                        metrics.cpu_usage = cpus.iter()
-                            .map(|cpu| cpu.cpu_usage() as f64)
-                            .sum::<f64>() / cpus.len() as f64;
+                        metrics.cpu_usage =
+                            cpus.iter().map(|cpu| cpu.cpu_usage() as f64).sum::<f64>()
+                                / cpus.len() as f64;
                     }
 
                     // Memory usage percentage
@@ -326,7 +334,8 @@ impl MetricsCollector {
                 // Calculate cutoff time (30 days ago)
                 let retention_duration = Duration::from_secs(METRICS_RETENTION_DAYS * 86400);
                 let now = SystemTime::now();
-                let cutoff_time = now.checked_sub(retention_duration)
+                let cutoff_time = now
+                    .checked_sub(retention_duration)
                     .unwrap_or(SystemTime::UNIX_EPOCH);
 
                 // Run cleanup
@@ -370,7 +379,8 @@ impl MetricsCollector {
     ) -> Vec<SystemMetrics> {
         let history = self.metrics_history.read().await;
 
-        history.iter()
+        history
+            .iter()
             .filter(|m| m.timestamp >= from && m.timestamp <= to)
             .cloned()
             .collect()
@@ -431,13 +441,15 @@ mod tests {
         let collector = MetricsCollector::new(db);
 
         // Update stats
-        collector.update_traffic_stats(
-            1_000_000, // 1 MB tx
-            2_000_000, // 2 MB rx
-            1000,      // 1000 packets tx
-            2000,      // 2000 packets rx
-            5,         // 5 active flows
-        ).await;
+        collector
+            .update_traffic_stats(
+                1_000_000, // 1 MB tx
+                2_000_000, // 2 MB rx
+                1000,      // 1000 packets tx
+                2000,      // 2000 packets rx
+                5,         // 5 active flows
+            )
+            .await;
 
         let stats = collector.get_traffic_stats().await;
         assert_eq!(stats.active_flows, 5);
@@ -445,12 +457,12 @@ mod tests {
 
     #[test]
     fn test_throughput_calculation() {
-        let mut stats = TrafficStats::default();
-
-        // Simulate 1MB over 1 second = 8 Mbps
-        stats.bytes_tx = 500_000;
-        stats.bytes_rx = 500_000;
-        stats.last_update = Some(SystemTime::now() - Duration::from_secs(1));
+        let mut stats = TrafficStats {
+            bytes_tx: 500_000,
+            bytes_rx: 500_000,
+            last_update: Some(SystemTime::now() - Duration::from_secs(1)),
+            ..Default::default()
+        };
 
         let throughput = stats.calculate_throughput();
         assert!(throughput > 0.0);

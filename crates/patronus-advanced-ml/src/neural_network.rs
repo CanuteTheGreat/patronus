@@ -1,9 +1,9 @@
 //! Deep Neural Network Implementation
 
-use ndarray::{Array1, Array2};
-use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use ndarray::{Array1, Array2};
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActivationFunction {

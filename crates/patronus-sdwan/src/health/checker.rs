@@ -3,8 +3,8 @@
 //! This module implements the health monitoring engine that coordinates
 //! probe execution, health calculation, and database persistence.
 
-use super::{HealthConfig, PathHealth, PathStatus, ProbeConfig, Prober};
 use super::probe::ProbeType;
+use super::{HealthConfig, PathHealth, PathStatus, ProbeConfig, Prober};
 use crate::database::Database;
 use crate::types::PathId;
 use std::collections::HashMap;
@@ -63,7 +63,7 @@ impl HealthMonitor {
             count: self.config.probes_per_check,
             timeout: Duration::from_millis(self.config.probe_timeout_ms),
             interval: Duration::from_millis(200), // 200ms between probes
-            probe_type: ProbeType::Icmp, // Will auto-fallback to UDP if unavailable
+            probe_type: ProbeType::Icmp,          // Will auto-fallback to UDP if unavailable
         };
 
         let prober = Prober::new(probe_config).await;
@@ -72,12 +72,12 @@ impl HealthMonitor {
         let probe_result = prober.probe().await?;
 
         // Calculate health
-        let health = PathHealth::new(path_id.clone(), &probe_result);
+        let health = PathHealth::new(*path_id, &probe_result);
 
         // Update cache
         {
             let mut cache = self.health_cache.write().await;
-            cache.insert(path_id.clone(), health.clone());
+            cache.insert(*path_id, health.clone());
         }
 
         // Persist to database if configured
@@ -127,12 +127,8 @@ impl HealthMonitor {
     ) -> Result<Vec<PathHealth>, Box<dyn std::error::Error + Send + Sync>> {
         let until = until.unwrap_or_else(SystemTime::now);
 
-        let since_secs = since
-            .duration_since(SystemTime::UNIX_EPOCH)?
-            .as_secs() as i64;
-        let until_secs = until
-            .duration_since(SystemTime::UNIX_EPOCH)?
-            .as_secs() as i64;
+        let since_secs = since.duration_since(SystemTime::UNIX_EPOCH)?.as_secs() as i64;
+        let until_secs = until.duration_since(SystemTime::UNIX_EPOCH)?.as_secs() as i64;
 
         use sqlx::Row;
 
@@ -170,15 +166,13 @@ impl HealthMonitor {
             let health_score: f64 = record.try_get("health_score")?;
             let status_str: String = record.try_get("status")?;
 
-            let status = PathStatus::from_str(&status_str)
-                .unwrap_or(PathStatus::Down);
+            let status = PathStatus::from_str(&status_str).unwrap_or(PathStatus::Down);
 
-            let timestamp_sys = SystemTime::UNIX_EPOCH
-                + Duration::from_secs(timestamp as u64);
+            let timestamp_sys = SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp as u64);
 
             // Parse path_id - it's stored as string in DB
             // For now, we'll create a new PathId since we don't have from_string
-            let path_id_parsed = path_id.clone();
+            let path_id_parsed = *path_id;
 
             history.push(PathHealth {
                 path_id: path_id_parsed,
@@ -195,7 +189,10 @@ impl HealthMonitor {
     }
 
     /// Persist health record to database
-    async fn persist_health(&self, health: &PathHealth) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn persist_health(
+        &self,
+        health: &PathHealth,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let timestamp = health
             .last_checked
             .duration_since(SystemTime::UNIX_EPOCH)?
@@ -251,16 +248,12 @@ impl HealthMonitor {
 
                 for (path_id, target_ip) in &paths {
                     let monitor = Arc::clone(&self);
-                    let path_id = path_id.clone();
+                    let path_id = *path_id;
                     let target_ip = *target_ip;
 
                     let task = tokio::spawn(async move {
                         if let Err(e) = monitor.check_path_health(&path_id, target_ip).await {
-                            tracing::error!(
-                                "Health check failed for path {}: {}",
-                                path_id,
-                                e
-                            );
+                            tracing::error!("Health check failed for path {}: {}", path_id, e);
                         }
                     });
 
@@ -383,7 +376,10 @@ mod tests {
 
         // Retrieve from database
         let since = SystemTime::now() - Duration::from_secs(60);
-        let history = monitor.get_health_history(&path_id, since, None).await.unwrap();
+        let history = monitor
+            .get_health_history(&path_id, since, None)
+            .await
+            .unwrap();
 
         // Should have at least one record
         assert!(!history.is_empty());
@@ -419,7 +415,9 @@ mod tests {
 
         assert_eq!(stats.total_paths, 1);
         // Simulated probes should usually result in healthy status
-        assert!(stats.healthy_paths >= 0);
-        assert_eq!(stats.total_paths, stats.healthy_paths + stats.degraded_paths + stats.down_paths);
+        assert_eq!(
+            stats.total_paths,
+            stats.healthy_paths + stats.degraded_paths + stats.down_paths
+        );
     }
 }

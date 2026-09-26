@@ -42,10 +42,30 @@ impl Default for PasswordPolicy {
 
 /// Common/default passwords to reject
 const WEAK_PASSWORDS: &[&str] = &[
-    "password", "Password1", "123456", "12345678", "qwerty", "abc123",
-    "monkey", "letmein", "trustno1", "dragon", "baseball", "iloveyou",
-    "master", "sunshine", "ashley", "bailey", "shadow", "superman",
-    "changeme", "secret", "default", "admin", "root", "test",
+    "password",
+    "Password1",
+    "123456",
+    "12345678",
+    "qwerty",
+    "abc123",
+    "monkey",
+    "letmein",
+    "trustno1",
+    "dragon",
+    "baseball",
+    "iloveyou",
+    "master",
+    "sunshine",
+    "ashley",
+    "bailey",
+    "shadow",
+    "superman",
+    "changeme",
+    "secret",
+    "default",
+    "admin",
+    "root",
+    "test",
 ];
 
 /// Validate password strength
@@ -178,13 +198,12 @@ pub fn validate_password(password: &str, policy: &PasswordPolicy) -> Result<()> 
     }
 
     // Check for default/weak patterns
-    if policy.reject_defaults {
-        if password.to_lowercase().contains("changeme")
+    if policy.reject_defaults
+        && (password.to_lowercase().contains("changeme")
             || password.to_lowercase().contains("default")
-            || password.to_lowercase().contains("password")
-        {
-            bail!("Password contains forbidden default patterns");
-        }
+            || password.to_lowercase().contains("password"))
+    {
+        bail!("Password contains forbidden default patterns");
     }
 
     Ok(())
@@ -232,10 +251,7 @@ mod tests {
 
     #[test]
     fn test_password_strength() {
-        assert_eq!(
-            validate_password_strength("weak"),
-            PasswordStrength::Weak
-        );
+        assert_eq!(validate_password_strength("weak"), PasswordStrength::Weak);
         assert_eq!(
             validate_password_strength("Medium123"),
             PasswordStrength::Medium

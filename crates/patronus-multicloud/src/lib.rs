@@ -13,4 +13,4 @@ pub mod manager;
 pub use aws::AwsConnector;
 pub use azure::AzureConnector;
 pub use gcp::GcpConnector;
-pub use manager::{MultiCloudManager, CloudProvider, CloudConnection};
+pub use manager::{CloudConnection, CloudProvider, MultiCloudManager};

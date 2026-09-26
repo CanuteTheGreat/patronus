@@ -152,7 +152,9 @@ mod tests {
     #[tokio::test]
     async fn test_slice_manager() {
         let manager = SliceManager::new();
-        let id = manager.create_slice("test".to_string(), SliceType::MMTC).await;
+        let id = manager
+            .create_slice("test".to_string(), SliceType::MMTC)
+            .await;
 
         assert!(manager.activate_slice(&id).await);
         let slice = manager.get_slice(&id).await.unwrap();

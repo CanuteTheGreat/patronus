@@ -2,14 +2,14 @@
 //!
 //! Supports SNAT, DNAT, and Port Forwarding
 
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use anyhow::Result;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum NatType {
@@ -181,7 +181,8 @@ impl NatManager {
 
     pub async fn remove_rule(&self, id: &Uuid) -> Result<()> {
         let mut rules = self.rules.write().await;
-        rules.remove(id)
+        rules
+            .remove(id)
             .ok_or_else(|| anyhow::anyhow!("NAT rule not found"))?;
         tracing::info!("Removed NAT rule: {}", id);
         Ok(())
@@ -263,7 +264,9 @@ impl NatManager {
         let now = Utc::now();
 
         sessions.retain(|_, session| {
-            let elapsed = now.signed_duration_since(session.last_activity).num_seconds();
+            let elapsed = now
+                .signed_duration_since(session.last_activity)
+                .num_seconds();
             elapsed < timeout_seconds
         });
 

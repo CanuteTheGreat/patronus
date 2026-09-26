@@ -5,17 +5,17 @@
 //! - JSON for REST API consumption
 //! - Historical data aggregation
 
-pub mod prometheus;
-pub mod json;
 mod aggregator;
+pub mod json;
+pub mod prometheus;
 
-pub use prometheus::PrometheusExporter;
+pub use aggregator::{AggregatedMetrics, AggregationPeriod, MetricsAggregator};
 pub use json::JsonExporter;
-pub use aggregator::{MetricsAggregator, AggregationPeriod, AggregatedMetrics};
+pub use prometheus::PrometheusExporter;
 
 use crate::database::Database;
-use crate::health::HealthMonitor;
 use crate::failover::FailoverEngine;
+use crate::health::HealthMonitor;
 use std::sync::Arc;
 
 /// Export manager coordinating all export formats

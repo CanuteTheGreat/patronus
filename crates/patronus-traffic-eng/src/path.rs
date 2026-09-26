@@ -1,10 +1,10 @@
 //! Path Computation and Constraints
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, BinaryHeap};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PathConstraints {
     pub max_latency_ms: Option<f64>,
     pub min_bandwidth_mbps: Option<f64>,
@@ -12,19 +12,6 @@ pub struct PathConstraints {
     pub max_loss_percent: Option<f64>,
     pub excluded_nodes: HashSet<String>,
     pub required_nodes: Vec<String>,
-}
-
-impl Default for PathConstraints {
-    fn default() -> Self {
-        Self {
-            max_latency_ms: None,
-            min_bandwidth_mbps: None,
-            max_hops: None,
-            max_loss_percent: None,
-            excluded_nodes: HashSet::new(),
-            required_nodes: Vec::new(),
-        }
-    }
 }
 
 impl PathConstraints {
@@ -108,7 +95,10 @@ impl PartialEq for PathNode {
 impl Ord for PathNode {
     fn cmp(&self, other: &Self) -> Ordering {
         // Reverse order for min-heap
-        other.cost.partial_cmp(&self.cost).unwrap_or(Ordering::Equal)
+        other
+            .cost
+            .partial_cmp(&self.cost)
+            .unwrap_or(Ordering::Equal)
     }
 }
 
@@ -132,14 +122,11 @@ impl PathComputation {
     pub fn add_link(&mut self, from: String, to: String, metrics: LinkMetrics) {
         self.topology
             .entry(from.clone())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(to.clone(), metrics.clone());
 
         // Add reverse link for bidirectional
-        self.topology
-            .entry(to)
-            .or_insert_with(HashMap::new)
-            .insert(from, metrics);
+        self.topology.entry(to).or_default().insert(from, metrics);
     }
 
     pub fn get_link(&self, from: &str, to: &str) -> Option<&LinkMetrics> {
@@ -175,11 +162,18 @@ impl PathComputation {
             path: vec![source.to_string()],
         });
 
-        while let Some(PathNode { node, cost, latency, min_bandwidth, path }) = heap.pop() {
+        while let Some(PathNode {
+            node,
+            cost,
+            latency,
+            min_bandwidth,
+            path,
+        }) = heap.pop()
+        {
             if node == destination {
                 // Found destination - check constraints
                 let max_util = self.calculate_max_utilization(&path);
-                let meets = self.check_constraints(&path, latency, min_bandwidth, &constraints);
+                let meets = self.check_constraints(&path, latency, min_bandwidth, constraints);
 
                 return Some(ComputedPath {
                     hops: path,
@@ -309,7 +303,8 @@ impl PathComputation {
 
         for _ in 0..k {
             // Compute path excluding previously used links
-            let path = self.compute_path_excluding(source, destination, constraints, &excluded_links);
+            let path =
+                self.compute_path_excluding(source, destination, constraints, &excluded_links);
 
             if let Some(p) = path {
                 // Add links from this path to exclusion set for next iteration
@@ -344,10 +339,17 @@ impl PathComputation {
             path: vec![source.to_string()],
         });
 
-        while let Some(PathNode { node, cost, latency, min_bandwidth, path }) = heap.pop() {
+        while let Some(PathNode {
+            node,
+            cost,
+            latency,
+            min_bandwidth,
+            path,
+        }) = heap.pop()
+        {
             if node == destination {
                 let max_util = self.calculate_max_utilization(&path);
-                let meets = self.check_constraints(&path, latency, min_bandwidth, &constraints);
+                let meets = self.check_constraints(&path, latency, min_bandwidth, constraints);
 
                 return Some(ComputedPath {
                     hops: path,
@@ -367,7 +369,8 @@ impl PathComputation {
 
             if let Some(neighbors) = self.topology.get(&node) {
                 for (next_node, link) in neighbors {
-                    if visited.contains(next_node) || constraints.excluded_nodes.contains(next_node) {
+                    if visited.contains(next_node) || constraints.excluded_nodes.contains(next_node)
+                    {
                         continue;
                     }
 
@@ -544,12 +547,16 @@ mod tests {
     fn test_compute_path_no_path() {
         let mut pc = PathComputation::new();
 
-        pc.add_link("A".to_string(), "B".to_string(), LinkMetrics {
-            latency_ms: 10.0,
-            bandwidth_mbps: 1000.0,
-            utilization_percent: 20.0,
-            loss_percent: 0.1,
-        });
+        pc.add_link(
+            "A".to_string(),
+            "B".to_string(),
+            LinkMetrics {
+                latency_ms: 10.0,
+                bandwidth_mbps: 1000.0,
+                utilization_percent: 20.0,
+                loss_percent: 0.1,
+            },
+        );
 
         let constraints = PathConstraints::new();
         let path = pc.compute_path("A", "C", &constraints);
@@ -580,7 +587,7 @@ mod tests {
 
         assert!(!paths.is_empty());
         // Should find at least one path
-        assert!(paths.len() >= 1);
+        assert!(!paths.is_empty());
     }
 
     #[test]

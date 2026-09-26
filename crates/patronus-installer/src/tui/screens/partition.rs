@@ -64,31 +64,46 @@ fn get_scheme_details(scheme: PartitionScheme, fs: &Filesystem) -> Vec<Line<'sta
         PartitionScheme::UefiSimple => {
             lines.push(Line::from("Partitions to create:"));
             lines.push(Line::from("  1. EFI System Partition (512 MB, FAT32)"));
-            lines.push(Line::from(format!("  2. Root (/, remaining space, {})", fs.as_str())));
+            lines.push(Line::from(format!(
+                "  2. Root (/, remaining space, {})",
+                fs.as_str()
+            )));
         }
         PartitionScheme::UefiWithSwap => {
             lines.push(Line::from("Partitions to create:"));
             lines.push(Line::from("  1. EFI System Partition (512 MB, FAT32)"));
             lines.push(Line::from("  2. Swap (2 GB)"));
-            lines.push(Line::from(format!("  3. Root (/, remaining space, {})", fs.as_str())));
+            lines.push(Line::from(format!(
+                "  3. Root (/, remaining space, {})",
+                fs.as_str()
+            )));
         }
         PartitionScheme::UefiSeparateHome => {
             lines.push(Line::from("Partitions to create:"));
             lines.push(Line::from("  1. EFI System Partition (512 MB, FAT32)"));
             lines.push(Line::from("  2. Swap (2 GB)"));
             lines.push(Line::from(format!("  3. Root (/, 30 GB, {})", fs.as_str())));
-            lines.push(Line::from(format!("  4. Home (/home, remaining, {})", fs.as_str())));
+            lines.push(Line::from(format!(
+                "  4. Home (/home, remaining, {})",
+                fs.as_str()
+            )));
         }
         PartitionScheme::BiosSimple => {
             lines.push(Line::from("Partitions to create:"));
             lines.push(Line::from("  1. BIOS Boot (2 MB)"));
-            lines.push(Line::from(format!("  2. Root (/, remaining space, {})", fs.as_str())));
+            lines.push(Line::from(format!(
+                "  2. Root (/, remaining space, {})",
+                fs.as_str()
+            )));
         }
         PartitionScheme::BiosWithSwap => {
             lines.push(Line::from("Partitions to create:"));
             lines.push(Line::from("  1. BIOS Boot (2 MB)"));
             lines.push(Line::from("  2. Swap (2 GB)"));
-            lines.push(Line::from(format!("  3. Root (/, remaining space, {})", fs.as_str())));
+            lines.push(Line::from(format!(
+                "  3. Root (/, remaining space, {})",
+                fs.as_str()
+            )));
         }
         PartitionScheme::UseExisting => {
             lines.push(Line::from("Use existing partition layout"));

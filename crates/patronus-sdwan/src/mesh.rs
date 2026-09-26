@@ -136,6 +136,7 @@ pub struct MeshManager {
     site_name: String,
     db: Arc<Database>,
     signing_key: SigningKey,
+    #[allow(dead_code)]
     verifying_key: VerifyingKey,
     running: Arc<RwLock<bool>>,
     known_sites: Arc<RwLock<HashMap<SiteId, SiteInfo>>>,
@@ -373,7 +374,8 @@ impl MeshManager {
                 match socket.recv_from(&mut buf).await {
                     Ok((len, _addr)) => {
                         // Deserialize announcement
-                        let announcement: SiteAnnouncement = match bincode::deserialize(&buf[..len]) {
+                        let announcement: SiteAnnouncement = match bincode::deserialize(&buf[..len])
+                        {
                             Ok(a) => a,
                             Err(e) => {
                                 warn!("Failed to deserialize announcement: {}", e);
@@ -564,7 +566,9 @@ impl MeshManager {
         // Verify signature
         verifying_key
             .verify(&announcement_bytes, &signature)
-            .map_err(|e| Error::AuthenticationFailed(format!("Signature verification failed: {}", e)))?;
+            .map_err(|e| {
+                Error::AuthenticationFailed(format!("Signature verification failed: {}", e))
+            })?;
 
         Ok(())
     }
@@ -588,11 +592,7 @@ mod tests {
     #[tokio::test]
     async fn test_mesh_manager_creation() {
         let db = Arc::new(Database::new(":memory:").await.unwrap());
-        let manager = MeshManager::new(
-            SiteId::generate(),
-            "test-site".to_string(),
-            db,
-        );
+        let manager = MeshManager::new(SiteId::generate(), "test-site".to_string(), db);
 
         assert!(manager.start().await.is_ok());
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -640,11 +640,7 @@ mod tests {
     #[tokio::test]
     async fn test_site_list() {
         let db = Arc::new(Database::new(":memory:").await.unwrap());
-        let manager = MeshManager::new(
-            SiteId::generate(),
-            "test-site".to_string(),
-            db,
-        );
+        let manager = MeshManager::new(SiteId::generate(), "test-site".to_string(), db);
 
         let sites = manager.list_known_sites().await;
         assert_eq!(sites.len(), 0);

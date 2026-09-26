@@ -3,14 +3,11 @@
 // This module implements GraphQL subscription resolvers for streaming
 // real-time updates to clients via WebSocket.
 
-use async_graphql::{Context, Subscription, Result};
+use crate::graphql::{get_state, types::*};
+use async_graphql::{Context, Result, Subscription};
+use chrono::{DateTime, Utc};
 use futures::Stream;
 use std::time::Duration;
-use chrono::{DateTime, Utc};
-use crate::graphql::{
-    types::*,
-    get_state,
-};
 
 /// Root subscription object
 pub struct SubscriptionRoot;
@@ -24,7 +21,7 @@ impl SubscriptionRoot {
         interval_seconds: Option<i32>,
     ) -> Result<impl Stream<Item = GqlMetrics>> {
         let state = get_state(ctx)?;
-        let interval = interval_seconds.unwrap_or(10).max(5).min(60);
+        let interval = interval_seconds.unwrap_or(10).clamp(5, 60);
         let metrics_collector = state.metrics_collector.clone();
 
         // Create a stream that polls metrics at the specified interval
@@ -114,10 +111,7 @@ impl SubscriptionRoot {
     }
 
     /// Subscribe to site status changes (Sprint 26)
-    async fn site_updates(
-        &self,
-        ctx: &Context<'_>,
-    ) -> Result<impl Stream<Item = GqlSite>> {
+    async fn site_updates(&self, ctx: &Context<'_>) -> Result<impl Stream<Item = GqlSite>> {
         let state = get_state(ctx)?;
         let db = state.db.clone();
 
@@ -204,10 +198,7 @@ impl SubscriptionRoot {
     }
 
     /// Subscribe to audit log events (admin only) - Sprint 26
-    async fn audit_events(
-        &self,
-        ctx: &Context<'_>,
-    ) -> Result<impl Stream<Item = GqlAuditLog>> {
+    async fn audit_events(&self, ctx: &Context<'_>) -> Result<impl Stream<Item = GqlAuditLog>> {
         // Require admin role (Sprint 26)
         let _auth = crate::graphql::require_role(ctx, crate::auth::users::UserRole::Admin)?;
 

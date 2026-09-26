@@ -40,7 +40,7 @@ pub struct DashboardWidget {
     pub widget_type: WidgetType,
     pub position: (u32, u32),  // row, column
     pub size: (u32, u32),      // width, height
-    pub refresh_interval: u32,  // seconds
+    pub refresh_interval: u32, // seconds
 }
 
 /// Dashboard configuration
@@ -54,7 +54,7 @@ pub struct DashboardConfig {
 pub struct InterfaceStatus {
     pub name: String,
     pub description: String,
-    pub status: String,  // up, down, no-carrier
+    pub status: String, // up, down, no-carrier
     pub mac_address: String,
     pub ip_addresses: Vec<IpAddr>,
     pub mtu: u32,
@@ -82,8 +82,8 @@ pub struct DhcpLease {
     pub hostname: Option<String>,
     pub lease_start: SystemTime,
     pub lease_end: SystemTime,
-    pub is_online: bool,  // Check via ARP table
-    pub is_static: bool,  // Static mapping vs dynamic lease
+    pub is_online: bool, // Check via ARP table
+    pub is_static: bool, // Static mapping vs dynamic lease
 }
 
 /// Service status
@@ -92,7 +92,7 @@ pub struct ServiceStatus {
     pub name: String,
     pub description: String,
     pub is_running: bool,
-    pub is_enabled: bool,  // Enabled at boot
+    pub is_enabled: bool, // Enabled at boot
     pub pid: Option<u32>,
     pub uptime_seconds: Option<u64>,
     pub memory_mb: Option<f64>,
@@ -103,7 +103,7 @@ pub struct ServiceStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpsecTunnelStatus {
     pub name: String,
-    pub status: String,  // established, connecting, down
+    pub status: String, // established, connecting, down
     pub local_id: String,
     pub remote_id: String,
     pub remote_address: IpAddr,
@@ -141,7 +141,7 @@ pub struct WireGuardPeerStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayHealth {
     pub name: String,
-    pub status: String,  // online, offline, degraded
+    pub status: String, // online, offline, degraded
     pub latency_ms: Option<f64>,
     pub packet_loss_pct: Option<f32>,
     pub last_check: Option<SystemTime>,
@@ -160,8 +160,8 @@ pub struct TrafficDataPoint {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
     pub timestamp: SystemTime,
-    pub severity: String,  // emergency, alert, critical, error, warning, notice, info, debug
-    pub facility: String,   // kern, user, mail, daemon, auth, syslog, etc.
+    pub severity: String, // emergency, alert, critical, error, warning, notice, info, debug
+    pub facility: String, // kern, user, mail, daemon, auth, syslog, etc.
     pub message: String,
     pub source: Option<String>,
 }
@@ -175,24 +175,21 @@ impl StatusPageManager {
 
         // Get interface list
         let output = Command::new("ip")
-            .args(&["-json", "addr", "show"])
+            .args(["-json", "addr", "show"])
             .output()
             .await?;
 
-        let json_str = String::from_utf8_lossy(&output.stdout);
+        let _json_str = String::from_utf8_lossy(&output.stdout);
 
         // Parse JSON (simplified - would use serde_json in production)
         // For now, fall back to text parsing
-        let output = Command::new("ip")
-            .args(&["addr", "show"])
-            .output()
-            .await?;
+        let output = Command::new("ip").args(["addr", "show"]).output().await?;
 
         let text = String::from_utf8_lossy(&output.stdout);
 
         // Get stats for each interface
         let stats_output = Command::new("ip")
-            .args(&["-s", "link", "show"])
+            .args(["-s", "link", "show"])
             .output()
             .await?;
 
@@ -216,7 +213,12 @@ impl StatusPageManager {
         for line in addr_output.lines() {
             let line = line.trim();
             if let Some(idx) = line.find(':') {
-                if line.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                if line
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+                {
                     // Interface line: "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> ..."
                     if let Some(iface) = line.get(idx + 1..).and_then(|s| s.split(':').next()) {
                         name = iface.trim().to_string();
@@ -225,7 +227,10 @@ impl StatusPageManager {
                         status = "up".to_string();
                     }
                     if let Some(mtu_idx) = line.find("mtu ") {
-                        if let Some(mtu_str) = line.get(mtu_idx + 4..).and_then(|s| s.split_whitespace().next()) {
+                        if let Some(mtu_str) = line
+                            .get(mtu_idx + 4..)
+                            .and_then(|s| s.split_whitespace().next())
+                        {
                             mtu = mtu_str.parse().unwrap_or(1500);
                         }
                     }
@@ -330,10 +335,7 @@ impl StatusPageManager {
         }
 
         // Check if each client is online via ARP
-        let arp_output = Command::new("arp")
-            .arg("-n")
-            .output()
-            .await?;
+        let arp_output = Command::new("arp").arg("-n").output().await?;
 
         let arp_table = String::from_utf8_lossy(&arp_output.stdout);
         let online_ips: Vec<Ipv4Addr> = Self::parse_arp_online(&arp_table);
@@ -345,7 +347,7 @@ impl StatusPageManager {
         Ok(leases)
     }
 
-    fn parse_dhcp_leases(content: &str) -> Result<Vec<DhcpLease>> {
+    fn parse_dhcp_leases(_content: &str) -> Result<Vec<DhcpLease>> {
         // Simplified DHCP lease parsing
         // Real implementation would parse ISC DHCP lease file format
         Ok(Vec::new())
@@ -393,7 +395,7 @@ impl StatusPageManager {
     async fn get_service_status(name: &str, description: &str) -> Result<ServiceStatus> {
         // Check systemd service status
         let output = Command::new("systemctl")
-            .args(&["status", name])
+            .args(["status", name])
             .output()
             .await?;
 
@@ -401,7 +403,7 @@ impl StatusPageManager {
 
         // Check if enabled
         let enabled_output = Command::new("systemctl")
-            .args(&["is-enabled", name])
+            .args(["is-enabled", name])
             .output()
             .await?;
 
@@ -410,7 +412,7 @@ impl StatusPageManager {
         // Get PID if running
         let pid = if is_running {
             let show_output = Command::new("systemctl")
-                .args(&["show", "-p", "MainPID", name])
+                .args(["show", "-p", "MainPID", name])
                 .output()
                 .await?;
 
@@ -428,7 +430,7 @@ impl StatusPageManager {
             is_running,
             is_enabled,
             pid,
-            uptime_seconds: None,  // Would calculate from systemd
+            uptime_seconds: None, // Would calculate from systemd
             memory_mb: None,
             cpu_percent: None,
         })
@@ -437,10 +439,7 @@ impl StatusPageManager {
     /// Get IPsec tunnel statuses
     pub async fn get_ipsec_status() -> Result<Vec<IpsecTunnelStatus>> {
         // Use swanctl for strongSwan
-        let output = Command::new("swanctl")
-            .args(&["--list-sas"])
-            .output()
-            .await;
+        let output = Command::new("swanctl").args(["--list-sas"]).output().await;
 
         if let Ok(out) = output {
             let text = String::from_utf8_lossy(&out.stdout);
@@ -450,7 +449,7 @@ impl StatusPageManager {
         Ok(Vec::new())
     }
 
-    fn parse_ipsec_status(output: &str) -> Result<Vec<IpsecTunnelStatus>> {
+    fn parse_ipsec_status(_output: &str) -> Result<Vec<IpsecTunnelStatus>> {
         // Parse swanctl output (simplified)
         Ok(Vec::new())
     }
@@ -468,7 +467,7 @@ impl StatusPageManager {
         Ok(Vec::new())
     }
 
-    fn parse_openvpn_status(content: &str) -> Result<Vec<OpenVpnClientStatus>> {
+    fn parse_openvpn_status(_content: &str) -> Result<Vec<OpenVpnClientStatus>> {
         // Parse OpenVPN status file format
         Ok(Vec::new())
     }
@@ -476,7 +475,7 @@ impl StatusPageManager {
     /// Get WireGuard peer statuses
     pub async fn get_wireguard_peers(interface: &str) -> Result<Vec<WireGuardPeerStatus>> {
         let output = Command::new("wg")
-            .args(&["show", interface, "dump"])
+            .args(["show", interface, "dump"])
             .output()
             .await?;
 
@@ -488,15 +487,20 @@ impl StatusPageManager {
     fn parse_wireguard_status(output: &str) -> Result<Vec<WireGuardPeerStatus>> {
         let mut peers = Vec::new();
 
-        for line in output.lines().skip(1) {  // Skip interface line
+        for line in output.lines().skip(1) {
+            // Skip interface line
             let parts: Vec<&str> = line.split('\t').collect();
 
             if parts.len() >= 8 {
                 peers.push(WireGuardPeerStatus {
                     public_key: parts[0].to_string(),
-                    endpoint: if parts[2].is_empty() { None } else { Some(parts[2].to_string()) },
+                    endpoint: if parts[2].is_empty() {
+                        None
+                    } else {
+                        Some(parts[2].to_string())
+                    },
                     allowed_ips: parts[3].split(',').map(|s| s.to_string()).collect(),
-                    latest_handshake: None,  // Would parse from parts[4]
+                    latest_handshake: None, // Would parse from parts[4]
                     transfer_rx: parts[5].parse().unwrap_or(0),
                     transfer_tx: parts[6].parse().unwrap_or(0),
                     persistent_keepalive: parts[7].parse().ok(),
@@ -530,7 +534,7 @@ impl StatusPageManager {
         limit: u32,
     ) -> Result<Vec<LogEntry>> {
         let mut cmd = Command::new("journalctl");
-        cmd.args(&["-n", &limit.to_string(), "--output=json"]);
+        cmd.args(["-n", &limit.to_string(), "--output=json"]);
 
         if let Some(sev) = severity {
             cmd.arg("-p").arg(sev);
@@ -546,13 +550,15 @@ impl StatusPageManager {
         Self::parse_journal_logs(&text)
     }
 
-    fn parse_journal_logs(output: &str) -> Result<Vec<LogEntry>> {
+    fn parse_journal_logs(_output: &str) -> Result<Vec<LogEntry>> {
         // Parse journalctl JSON output
         Ok(Vec::new())
     }
 
     /// Get dashboard data (all widgets)
-    pub async fn get_dashboard_data(config: &DashboardConfig) -> Result<HashMap<String, serde_json::Value>> {
+    pub async fn get_dashboard_data(
+        config: &DashboardConfig,
+    ) -> Result<HashMap<String, serde_json::Value>> {
         let mut data = HashMap::new();
 
         for widget in &config.widgets {

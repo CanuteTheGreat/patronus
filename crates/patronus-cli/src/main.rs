@@ -5,7 +5,7 @@ use colored::Colorize;
 use std::path::PathBuf;
 
 mod commands;
-use commands::{init, site, tunnel, policy, bgp, status, daemon, deploy, validate, metrics};
+use commands::{bgp, daemon, deploy, init, metrics, policy, site, status, tunnel, validate};
 
 #[derive(Parser)]
 #[command(name = "patronus")]

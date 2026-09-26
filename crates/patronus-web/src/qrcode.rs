@@ -4,8 +4,8 @@
 //! WireGuard mobile apps can scan QR codes to instantly import configuration.
 
 use anyhow::Result;
-use qrcode::{QrCode, EcLevel};
 use qrcode::render::svg;
+use qrcode::{EcLevel, QrCode};
 
 /// Generate WireGuard configuration string
 pub fn generate_wireguard_config(
@@ -26,11 +26,7 @@ pub fn generate_wireguard_config(
         PublicKey = {}\n\
         Endpoint = {}\n\
         AllowedIPs = {}\n",
-        interface_address,
-        private_key,
-        public_key,
-        endpoint,
-        allowed_ips
+        interface_address, private_key, public_key, endpoint, allowed_ips
     );
 
     if let Some(dns_servers) = dns {
@@ -64,7 +60,8 @@ pub fn generate_qr_code_png(config: &str) -> Result<Vec<u8>> {
     let code = QrCode::new(config.as_bytes())?;
 
     // Render as image
-    let image = code.render::<image::Luma<u8>>()
+    let image = code
+        .render::<image::Luma<u8>>()
         .min_dimensions(512, 512)
         .build();
 
@@ -164,7 +161,7 @@ mod tests {
         };
 
         let config = peer.to_config_string();
-        assert!(config.contains("mobile-phone") == false); // Name not in config
+        assert!(!config.contains("mobile-phone")); // Name not in config
         assert!(config.contains("10.0.0.2/24"));
 
         let svg = peer.to_qr_svg().unwrap();

@@ -28,8 +28,11 @@ impl AwsConnector {
 
     /// Connect to AWS VPC
     pub async fn connect_vpc(&self) -> Result<CloudConnection> {
-        tracing::info!("Connecting to AWS VPC {} in region {}",
-            self.config.vpc_id, self.config.region);
+        tracing::info!(
+            "Connecting to AWS VPC {} in region {}",
+            self.config.vpc_id,
+            self.config.region
+        );
 
         // In production, would use AWS SDK to:
         // 1. Create VPN connection
@@ -50,7 +53,10 @@ impl AwsConnector {
 
     /// Connect to Transit Gateway
     pub async fn connect_transit_gateway(&self) -> Result<CloudConnection> {
-        let tgw_id = self.config.transit_gateway_id.as_ref()
+        let tgw_id = self
+            .config
+            .transit_gateway_id
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No Transit Gateway ID configured"))?;
 
         tracing::info!("Connecting to AWS Transit Gateway {}", tgw_id);

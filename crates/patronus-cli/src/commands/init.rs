@@ -1,19 +1,30 @@
 //! Initialize command handler
 
 use colored::Colorize;
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 
-pub async fn handle_init(name: String, org: Option<String>, config_path: PathBuf) -> anyhow::Result<()> {
+pub async fn handle_init(
+    name: String,
+    org: Option<String>,
+    config_path: PathBuf,
+) -> anyhow::Result<()> {
     println!("{}", "━".repeat(60).bright_blue());
-    println!("{}", "  Patronus SD-WAN Initialization  ".bright_blue().bold());
+    println!(
+        "{}",
+        "  Patronus SD-WAN Initialization  ".bright_blue().bold()
+    );
     println!("{}", "━".repeat(60).bright_blue());
     println!();
 
     // Create configuration directory
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)?;
-        println!("{} Created config directory: {}", "✓".green(), parent.display());
+        println!(
+            "{} Created config directory: {}",
+            "✓".green(),
+            parent.display()
+        );
     }
 
     // Generate default configuration
@@ -38,15 +49,25 @@ pub async fn handle_init(name: String, org: Option<String>, config_path: PathBuf
     }))?;
 
     fs::write(&config_path, config)?;
-    println!("{} Created configuration file: {}", "✓".green(), config_path.display());
+    println!(
+        "{} Created configuration file: {}",
+        "✓".green(),
+        config_path.display()
+    );
 
     println!();
     println!("{}", "Initialization complete!".bright_green().bold());
     println!();
     println!("Next steps:");
-    println!("  1. Create sites:   {} patronus site create <name> --location <location> --address <ip>", "$".bright_yellow());
+    println!(
+        "  1. Create sites:   {} patronus site create <name> --location <location> --address <ip>",
+        "$".bright_yellow()
+    );
     println!("  2. Create tunnels: {} patronus tunnel create <name> --source <site1> --destination <site2>", "$".bright_yellow());
-    println!("  3. Start daemon:   {} patronus daemon", "$".bright_yellow());
+    println!(
+        "  3. Start daemon:   {} patronus daemon",
+        "$".bright_yellow()
+    );
     println!();
 
     Ok(())

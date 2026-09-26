@@ -15,13 +15,24 @@ pub struct ConnectionRateResult {
 
 impl ConnectionRateResult {
     pub fn print(&self) {
-        println!("{}", "Connection Rate Benchmark Results".bright_cyan().bold());
+        println!(
+            "{}",
+            "Connection Rate Benchmark Results".bright_cyan().bold()
+        );
         println!("{}", "================================".bright_cyan());
         println!("Total Connections:      {}", self.total_connections);
-        println!("Successful:             {}", self.successful_connections.to_string().bright_green());
+        println!(
+            "Successful:             {}",
+            self.successful_connections.to_string().bright_green()
+        );
         println!("Failed:                 {}", self.failed_connections);
         println!();
-        println!("{}", format!("Connections/sec:        {:.0}", self.connections_per_second).bright_green().bold());
+        println!(
+            "{}",
+            format!("Connections/sec:        {:.0}", self.connections_per_second)
+                .bright_green()
+                .bold()
+        );
         println!();
     }
 }
@@ -33,7 +44,10 @@ pub struct ConnectionRateBench {
 
 impl ConnectionRateBench {
     pub fn new(duration_secs: u64, workers: usize) -> Self {
-        Self { duration_secs, workers }
+        Self {
+            duration_secs,
+            workers,
+        }
     }
 
     pub async fn run(&self) -> Result<ConnectionRateResult> {

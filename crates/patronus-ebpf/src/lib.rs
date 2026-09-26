@@ -27,14 +27,14 @@
 //! 4. Cloud provider infrastructure
 //! 5. 100G+ datacenter networks
 
-pub mod xdp;
 pub mod maps;
 pub mod programs;
-pub mod stats;
 pub mod sdwan;
+pub mod stats;
+pub mod xdp;
 
-pub use xdp::{XdpFirewall, XdpMode, XdpAction};
 pub use maps::{BpfMap, MapType};
 pub use programs::FirewallProgram;
+pub use sdwan::{LinkMetrics, SdwanFastPath, TunnelEndpoint};
 pub use stats::XdpStats;
-pub use sdwan::{SdwanFastPath, TunnelEndpoint, LinkMetrics};
+pub use xdp::{XdpAction, XdpFirewall, XdpMode};

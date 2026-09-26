@@ -157,7 +157,8 @@ impl PatronusCniPlugin {
                 },
                 CniInterface {
                     name: self.runtime.ifname.clone(),
-                    mac: self.get_interface_mac_in_netns(&self.runtime.netns, &self.runtime.ifname)?,
+                    mac: self
+                        .get_interface_mac_in_netns(&self.runtime.netns, &self.runtime.ifname)?,
                     sandbox: Some(self.runtime.netns.clone()),
                 },
             ],
@@ -210,7 +211,10 @@ impl PatronusCniPlugin {
 
         // Verify container veth exists in netns
         if !self.interface_exists_in_netns(&self.runtime.netns, &self.runtime.ifname) {
-            return Err(anyhow::anyhow!("Container interface {} not found in netns", self.runtime.ifname));
+            return Err(anyhow::anyhow!(
+                "Container interface {} not found in netns",
+                self.runtime.ifname
+            ));
         }
 
         Ok(())
@@ -232,7 +236,16 @@ impl PatronusCniPlugin {
         debug!("Creating veth pair: {} <-> {}", host_veth, container_veth);
 
         let output = Command::new("ip")
-            .args(&["link", "add", &host_veth, "type", "veth", "peer", "name", &container_veth])
+            .args([
+                "link",
+                "add",
+                &host_veth,
+                "type",
+                "veth",
+                "peer",
+                "name",
+                &container_veth,
+            ])
             .output()
             .context("Failed to create veth pair")?;
 
@@ -245,7 +258,7 @@ impl PatronusCniPlugin {
 
         // Bring up host veth
         Command::new("ip")
-            .args(&["link", "set", &host_veth, "up"])
+            .args(["link", "set", &host_veth, "up"])
             .output()
             .context("Failed to bring up host veth")?;
 
@@ -257,7 +270,7 @@ impl PatronusCniPlugin {
         debug!("Moving {} to netns {}", ifname, netns);
 
         let output = Command::new("ip")
-            .args(&["link", "set", ifname, "netns", netns])
+            .args(["link", "set", ifname, "netns", netns])
             .output()
             .context("Failed to move interface to netns")?;
 
@@ -275,7 +288,11 @@ impl PatronusCniPlugin {
     fn allocate_ip(&self) -> Result<IpAssignment> {
         // Simple static allocation for now
         // In production, this would interface with a real IPAM system
-        let subnet = self.config.ipam.subnet.as_ref()
+        let subnet = self
+            .config
+            .ipam
+            .subnet
+            .as_ref()
             .context("IPAM subnet not configured")?;
 
         // Parse subnet to get network and allocate an IP
@@ -304,24 +321,30 @@ impl PatronusCniPlugin {
         let temp_name = format!("tmp-{}", &self.runtime.container_id[..8]);
 
         self.exec_in_netns(&[
-            "ip", "link", "set", &temp_name, "name", &self.runtime.ifname
+            "ip",
+            "link",
+            "set",
+            &temp_name,
+            "name",
+            &self.runtime.ifname,
         ])?;
 
         // Set IP address
         self.exec_in_netns(&[
-            "ip", "addr", "add", &ip.address, "dev", &self.runtime.ifname
+            "ip",
+            "addr",
+            "add",
+            &ip.address,
+            "dev",
+            &self.runtime.ifname,
         ])?;
 
         // Bring up interface
-        self.exec_in_netns(&[
-            "ip", "link", "set", &self.runtime.ifname, "up"
-        ])?;
+        self.exec_in_netns(&["ip", "link", "set", &self.runtime.ifname, "up"])?;
 
         // Add default route if gateway is set
         if let Some(gw) = ip.gateway {
-            self.exec_in_netns(&[
-                "ip", "route", "add", "default", "via", &gw.to_string()
-            ])?;
+            self.exec_in_netns(&["ip", "route", "add", "default", "via", &gw.to_string()])?;
         }
 
         Ok(())
@@ -336,12 +359,15 @@ impl PatronusCniPlugin {
 
         // Add route to pod IP via host veth
         let output = Command::new("ip")
-            .args(&["route", "add", ip_only, "dev", host_veth])
+            .args(["route", "add", ip_only, "dev", host_veth])
             .output()
             .context("Failed to add route")?;
 
         if !output.status.success() {
-            warn!("Failed to add route: {}", String::from_utf8_lossy(&output.stderr));
+            warn!(
+                "Failed to add route: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(())
@@ -388,7 +414,7 @@ impl PatronusCniPlugin {
     /// Check if interface exists
     fn interface_exists(&self, ifname: &str) -> bool {
         Command::new("ip")
-            .args(&["link", "show", ifname])
+            .args(["link", "show", ifname])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
@@ -397,7 +423,7 @@ impl PatronusCniPlugin {
     /// Check if interface exists in netns
     fn interface_exists_in_netns(&self, netns: &str, ifname: &str) -> bool {
         Command::new("ip")
-            .args(&["netns", "exec", netns, "ip", "link", "show", ifname])
+            .args(["netns", "exec", netns, "ip", "link", "show", ifname])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
@@ -406,7 +432,7 @@ impl PatronusCniPlugin {
     /// Delete interface
     fn delete_interface(&self, ifname: &str) -> Result<()> {
         Command::new("ip")
-            .args(&["link", "del", ifname])
+            .args(["link", "del", ifname])
             .output()
             .context("Failed to delete interface")?;
         Ok(())
@@ -425,9 +451,12 @@ impl PatronusCniPlugin {
     /// Get interface MAC address in netns
     fn get_interface_mac_in_netns(&self, netns: &str, ifname: &str) -> Result<String> {
         let output = Command::new("ip")
-            .args(&[
-                "netns", "exec", netns,
-                "cat", &format!("/sys/class/net/{}/address", ifname)
+            .args([
+                "netns",
+                "exec",
+                netns,
+                "cat",
+                &format!("/sys/class/net/{}/address", ifname),
             ])
             .output()
             .context("Failed to read MAC address in netns")?;
@@ -442,9 +471,7 @@ impl PatronusCniPlugin {
         use std::str::FromStr;
 
         let base = subnet.split('/').next().context("Invalid subnet")?;
-        let mut parts: Vec<u8> = base.split('.')
-            .map(|p| p.parse().unwrap_or(0))
-            .collect();
+        let mut parts: Vec<u8> = base.split('.').map(|p| p.parse().unwrap_or(0)).collect();
 
         // Increment last octet (very naive)
         parts[3] = parts[3].wrapping_add(10); // Start from .10

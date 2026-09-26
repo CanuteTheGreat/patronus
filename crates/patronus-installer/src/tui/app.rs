@@ -201,7 +201,10 @@ impl InstallerApp {
     }
 
     /// Main event loop
-    async fn main_loop(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    async fn main_loop(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> Result<()> {
         loop {
             // Draw current screen
             terminal
@@ -212,7 +215,9 @@ impl InstallerApp {
             if event::poll(std::time::Duration::from_millis(100))
                 .map_err(|e| InstallerError::Tui(e.to_string()))?
             {
-                if let Event::Key(key) = event::read().map_err(|e| InstallerError::Tui(e.to_string()))? {
+                if let Event::Key(key) =
+                    event::read().map_err(|e| InstallerError::Tui(e.to_string()))?
+                {
                     if key.kind == KeyEventKind::Press {
                         self.handle_key(key.code).await?;
                     }
@@ -306,11 +311,9 @@ impl InstallerApp {
                     self.selected_disk += 1;
                 }
             }
-            KeyCode::Enter | KeyCode::Right => {
-                if !self.disks.is_empty() {
-                    self.config.disk.device = self.disks[self.selected_disk].path.clone();
-                    self.current_screen = Screen::PartitionScheme;
-                }
+            KeyCode::Enter | KeyCode::Right if !self.disks.is_empty() => {
+                self.config.disk.device = self.disks[self.selected_disk].path.clone();
+                self.current_screen = Screen::PartitionScheme;
             }
             _ => {}
         }
@@ -400,13 +403,10 @@ impl InstallerApp {
     }
 
     async fn handle_summary_key(&mut self, key: KeyCode) {
-        match key {
-            KeyCode::Enter => {
-                // Start installation
-                self.current_screen = Screen::Installing;
-                self.start_installation().await;
-            }
-            _ => {}
+        if key == KeyCode::Enter {
+            // Start installation
+            self.current_screen = Screen::Installing;
+            self.start_installation().await;
         }
     }
 
@@ -450,8 +450,9 @@ impl InstallerApp {
     async fn perform_installation(&mut self) -> Result<()> {
         use crate::disk::{format::format_all_partitions, partition::create_partitions};
         use crate::install::{
-            bootloader::install_bootloader, configure_network, configure_services,
-            mount_partitions, system::{configure_system, install_base_system},
+            bootloader::install_bootloader,
+            configure_network, configure_services, mount_partitions,
+            system::{configure_system, install_base_system},
             unmount_partitions,
         };
 
@@ -502,8 +503,12 @@ impl InstallerApp {
         self.install_step = "Configuring services...".to_string();
         self.install_progress = 85.0;
 
-        configure_services(&self.config.target_root, &self.config.services, &self.config.patronus)
-            .await?;
+        configure_services(
+            &self.config.target_root,
+            &self.config.services,
+            &self.config.patronus,
+        )
+        .await?;
 
         // Step 8: Install bootloader
         self.install_step = "Installing bootloader...".to_string();

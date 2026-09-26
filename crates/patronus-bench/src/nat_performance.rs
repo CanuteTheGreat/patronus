@@ -15,9 +15,18 @@ impl NatResult {
     pub fn print(&self) {
         println!("{}", "NAT Performance Results".bright_cyan().bold());
         println!("{}", "======================".bright_cyan());
-        println!("Max Concurrent Sessions:    {}", self.max_concurrent_sessions.to_string().bright_green());
-        println!("New Sessions/sec:           {:.0}", self.new_sessions_per_second);
-        println!("Throughput:                 {:.2} Mbps", self.throughput_mbps);
+        println!(
+            "Max Concurrent Sessions:    {}",
+            self.max_concurrent_sessions.to_string().bright_green()
+        );
+        println!(
+            "New Sessions/sec:           {:.0}",
+            self.new_sessions_per_second
+        );
+        println!(
+            "Throughput:                 {:.2} Mbps",
+            self.throughput_mbps
+        );
         println!();
     }
 }
@@ -29,7 +38,10 @@ pub struct NatBench {
 
 impl NatBench {
     pub fn new(sessions: usize, duration_secs: u64) -> Self {
-        Self { sessions, duration_secs }
+        Self {
+            sessions,
+            duration_secs,
+        }
     }
 
     pub async fn run(&self) -> Result<NatResult> {

@@ -30,12 +30,12 @@ pub struct HealthThresholds {
 impl Default for HealthThresholds {
     fn default() -> Self {
         Self {
-            max_latency_ms: 100.0,      // 100ms threshold
-            max_packet_loss_pct: 2.0,   // 2% loss threshold
-            max_jitter_ms: 10.0,        // 10ms jitter threshold
-            latency_weight: 0.40,       // 40% weight
-            loss_weight: 0.40,          // 40% weight
-            jitter_weight: 0.20,        // 20% weight
+            max_latency_ms: 100.0,    // 100ms threshold
+            max_packet_loss_pct: 2.0, // 2% loss threshold
+            max_jitter_ms: 10.0,      // 10ms jitter threshold
+            latency_weight: 0.40,     // 40% weight
+            loss_weight: 0.40,        // 40% weight
+            jitter_weight: 0.20,      // 20% weight
         }
     }
 }
@@ -57,16 +57,9 @@ pub struct HealthScore {
 }
 
 /// Health scoring calculator
+#[derive(Default)]
 pub struct HealthScorer {
     thresholds: HealthThresholds,
-}
-
-impl Default for HealthScorer {
-    fn default() -> Self {
-        Self {
-            thresholds: HealthThresholds::default(),
-        }
-    }
 }
 
 impl HealthScorer {
@@ -109,7 +102,7 @@ impl HealthScorer {
             + (jitter_score * self.thresholds.jitter_weight);
 
         // Clamp to valid range
-        let score = score.max(0.0).min(100.0);
+        let score = score.clamp(0.0, 100.0);
 
         HealthScore {
             score,

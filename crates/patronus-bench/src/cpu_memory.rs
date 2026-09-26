@@ -38,7 +38,10 @@ pub struct ResourceBench {
 
 impl ResourceBench {
     pub fn new(duration_secs: u64, interval_secs: u64) -> Self {
-        Self { duration_secs, interval_secs }
+        Self {
+            duration_secs,
+            interval_secs,
+        }
     }
 
     pub async fn run(&self) -> Result<ResourceResult> {

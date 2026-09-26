@@ -58,19 +58,16 @@ impl EncryptedDpi {
     }
 
     fn classify_with_trees(&self, features: &TrafficFeatures) -> (TrafficClass, f64) {
-        let mut votes: Vec<(TrafficClass, f64)> = Vec::new();
-
-        // Tree 1: Packet size analysis
-        votes.push(self.tree_packet_size(features));
-
-        // Tree 2: Inter-arrival time analysis
-        votes.push(self.tree_timing(features));
-
-        // Tree 3: Burst pattern analysis
-        votes.push(self.tree_burst(features));
-
-        // Tree 4: TLS handshake analysis
-        votes.push(self.tree_tls(features));
+        let votes: Vec<(TrafficClass, f64)> = vec![
+            // Tree 1: Packet size analysis
+            self.tree_packet_size(features),
+            // Tree 2: Inter-arrival time analysis
+            self.tree_timing(features),
+            // Tree 3: Burst pattern analysis
+            self.tree_burst(features),
+            // Tree 4: TLS handshake analysis
+            self.tree_tls(features),
+        ];
 
         // Aggregate votes
         self.aggregate_votes(votes)
@@ -137,7 +134,7 @@ impl EncryptedDpi {
 
         for (class, confidence) in votes {
             let key = format!("{:?}", class);
-            class_scores.entry(key).or_insert_with(Vec::new).push(confidence);
+            class_scores.entry(key).or_default().push(confidence);
         }
 
         // Find class with highest average confidence

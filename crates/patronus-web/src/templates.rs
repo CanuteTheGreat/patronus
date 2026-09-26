@@ -436,7 +436,11 @@ impl fmt::Display for DhcpLease {
 
 impl fmt::Display for DhcpPool {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {} - {}", self.interface, self.range_start, self.range_end)
+        write!(
+            f,
+            "{}: {} - {}",
+            self.interface, self.range_start, self.range_end
+        )
     }
 }
 
@@ -448,19 +452,31 @@ impl fmt::Display for DnsRecord {
 
 impl fmt::Display for Route {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} via {} dev {}", self.destination, self.gateway, self.interface)
+        write!(
+            f,
+            "{} via {} dev {}",
+            self.destination, self.gateway, self.interface
+        )
     }
 }
 
 impl fmt::Display for FirewallRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {} {} -> {}", self.name, self.action, self.source, self.destination)
+        write!(
+            f,
+            "{}: {} {} -> {}",
+            self.name, self.action, self.source, self.destination
+        )
     }
 }
 
 impl fmt::Display for NatRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {} {} -> {}", self.description, self.rule_type, self.source, self.target)
+        write!(
+            f,
+            "{}: {} {} -> {}",
+            self.description, self.rule_type, self.source, self.target
+        )
     }
 }
 
@@ -496,13 +512,21 @@ impl fmt::Display for InterfaceStats {
 
 impl fmt::Display for Connection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {} -> {}", self.protocol, self.source, self.destination)
+        write!(
+            f,
+            "{} {} -> {}",
+            self.protocol, self.source, self.destination
+        )
     }
 }
 
 impl fmt::Display for Alert {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}] {}: {}", self.severity, self.alert_type, self.message)
+        write!(
+            f,
+            "[{}] {}: {}",
+            self.severity, self.alert_type, self.message
+        )
     }
 }
 
@@ -520,7 +544,11 @@ impl fmt::Display for Backup {
 
 impl fmt::Display for Update {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {} -> {}", self.package_name, self.current_version, self.new_version)
+        write!(
+            f,
+            "{}: {} -> {}",
+            self.package_name, self.current_version, self.new_version
+        )
     }
 }
 
@@ -532,13 +560,21 @@ impl fmt::Display for Service {
 
 impl fmt::Display for AiThreat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {} from {}", self.threat_type, self.severity, self.source_ip)
+        write!(
+            f,
+            "{}: {} from {}",
+            self.threat_type, self.severity, self.source_ip
+        )
     }
 }
 
 impl fmt::Display for AttackEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} attack from {}", self.attack_type, self.source_country)
+        write!(
+            f,
+            "{} attack from {}",
+            self.attack_type, self.source_country
+        )
     }
 }
 
@@ -547,4 +583,3 @@ impl fmt::Display for LogEntry {
         write!(f, "[{}] [{}] {}", self.level, self.component, self.message)
     }
 }
-

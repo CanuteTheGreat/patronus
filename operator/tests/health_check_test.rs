@@ -13,7 +13,7 @@ async fn test_liveness_endpoint() {
 
     // Test /healthz
     let response = client
-        .get(&format!("{}/healthz", HEALTH_BASE_URL))
+        .get(format!("{}/healthz", HEALTH_BASE_URL))
         .timeout(Duration::from_secs(5))
         .send()
         .await
@@ -25,7 +25,7 @@ async fn test_liveness_endpoint() {
 
     // Test /health (alias)
     let response = client
-        .get(&format!("{}/health", HEALTH_BASE_URL))
+        .get(format!("{}/health", HEALTH_BASE_URL))
         .timeout(Duration::from_secs(5))
         .send()
         .await
@@ -42,7 +42,7 @@ async fn test_readiness_endpoint() {
 
     // Test /readyz
     let response = client
-        .get(&format!("{}/readyz", HEALTH_BASE_URL))
+        .get(format!("{}/readyz", HEALTH_BASE_URL))
         .timeout(Duration::from_secs(5))
         .send()
         .await
@@ -53,7 +53,7 @@ async fn test_readiness_endpoint() {
 
     // Test /ready (alias)
     let response = client
-        .get(&format!("{}/ready", HEALTH_BASE_URL))
+        .get(format!("{}/ready", HEALTH_BASE_URL))
         .timeout(Duration::from_secs(5))
         .send()
         .await
@@ -70,7 +70,7 @@ async fn test_alive_endpoint() {
 
     // Test /livez
     let response = client
-        .get(&format!("{}/livez", HEALTH_BASE_URL))
+        .get(format!("{}/livez", HEALTH_BASE_URL))
         .timeout(Duration::from_secs(5))
         .send()
         .await
@@ -80,7 +80,7 @@ async fn test_alive_endpoint() {
 
     // Test /alive (alias)
     let response = client
-        .get(&format!("{}/alive", HEALTH_BASE_URL))
+        .get(format!("{}/alive", HEALTH_BASE_URL))
         .timeout(Duration::from_secs(5))
         .send()
         .await
@@ -96,7 +96,7 @@ async fn test_unknown_endpoint() {
     let client = Client::new();
 
     let response = client
-        .get(&format!("{}/unknown", HEALTH_BASE_URL))
+        .get(format!("{}/unknown", HEALTH_BASE_URL))
         .timeout(Duration::from_secs(5))
         .send()
         .await
@@ -115,7 +115,7 @@ async fn test_health_response_time() {
         let start = std::time::Instant::now();
 
         let response = client
-            .get(&format!("{}/healthz", HEALTH_BASE_URL))
+            .get(format!("{}/healthz", HEALTH_BASE_URL))
             .timeout(Duration::from_secs(5))
             .send()
             .await
@@ -125,7 +125,11 @@ async fn test_health_response_time() {
 
         assert_eq!(response.status(), 200);
         // Health checks should be fast (< 100ms)
-        assert!(elapsed.as_millis() < 100, "Health check took {}ms", elapsed.as_millis());
+        assert!(
+            elapsed.as_millis() < 100,
+            "Health check took {}ms",
+            elapsed.as_millis()
+        );
     }
 }
 
@@ -139,7 +143,7 @@ async fn test_concurrent_health_checks() {
         let handle = tokio::spawn(async {
             let client = Client::new();
             let response = client
-                .get(&format!("{}/healthz", HEALTH_BASE_URL))
+                .get(format!("{}/healthz", HEALTH_BASE_URL))
                 .timeout(Duration::from_secs(5))
                 .send()
                 .await

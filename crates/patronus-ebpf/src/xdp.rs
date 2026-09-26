@@ -2,12 +2,12 @@
 //!
 //! Processes packets at the earliest possible point - the network driver.
 
-use std::path::Path;
+use libbpf_rs::{Object, ObjectBuilder};
+use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::os::fd::AsFd;
 use std::os::unix::io::AsRawFd;
-use serde::{Deserialize, Serialize};
-use libbpf_rs::{Object, ObjectBuilder};
+use std::path::Path;
 
 /// XDP attachment mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,8 +77,10 @@ pub struct XdpFirewall {
 struct LoadedProgram {
     interface: String,
     /// BPF object (contains program and maps)
+    #[allow(dead_code)]
     object: Option<Object>,
     /// Fallback file descriptors for when libbpf is not used
+    #[allow(dead_code)]
     program_fd: i32,
     map_fds: std::collections::HashMap<String, i32>,
 }
@@ -121,14 +123,13 @@ impl XdpFirewall {
     /// Check if XDP is supported on this system
     pub fn is_supported() -> bool {
         // Check kernel version (requires 4.8+)
-        let version = std::fs::read_to_string("/proc/version")
-            .unwrap_or_default();
+        let version = std::fs::read_to_string("/proc/version").unwrap_or_default();
 
         // Parse kernel version
         if let Some(v) = version.split_whitespace().nth(2) {
             if let Some(major) = v.split('.').next() {
                 if let Ok(major_num) = major.parse::<u32>() {
-                    return major_num >= 5;  // Recommend 5.0+ for full features
+                    return major_num >= 5; // Recommend 5.0+ for full features
                 }
             }
         }
@@ -229,11 +230,11 @@ impl XdpFirewall {
     pub async fn detach(&mut self, interface: &str) -> Result<(), XdpError> {
         // Find and remove program
         if let Some(pos) = self.programs.iter().position(|p| p.interface == interface) {
-            let program = self.programs.remove(pos);
+            let _program = self.programs.remove(pos);
 
             // Detach from interface
             let status = tokio::process::Command::new("ip")
-                .args(&["link", "set", "dev", interface, "xdp", "off"])
+                .args(["link", "set", "dev", interface, "xdp", "off"])
                 .status()
                 .await?;
 
@@ -303,7 +304,7 @@ impl XdpFirewall {
             bytes_processed: total_bytes,
             packets_dropped: dropped_packets,
             packets_passed: total_packets - dropped_packets,
-            pps: 0,  // Would calculate from delta
+            pps: 0, // Would calculate from delta
             gbps: 0.0,
         })
     }
@@ -325,11 +326,14 @@ impl XdpFirewall {
         let object_path = temp_dir.join("patronus_xdp.o");
 
         let status = std::process::Command::new("clang")
-            .args(&[
+            .args([
                 "-O2",
-                "-target", "bpf",
-                "-c", source_path.to_str().unwrap(),
-                "-o", object_path.to_str().unwrap(),
+                "-target",
+                "bpf",
+                "-c",
+                source_path.to_str().unwrap(),
+                "-o",
+                object_path.to_str().unwrap(),
             ])
             .status()?;
 
@@ -457,7 +461,8 @@ int xdp_firewall(struct xdp_md *ctx) {
 }
 
 char _license[] SEC("license") = "GPL";
-"#.to_string()
+"#
+        .to_string()
     }
 
     fn load_bpf_program(&self, path: &Path) -> Result<(Object, i32), XdpError> {
@@ -469,20 +474,19 @@ char _license[] SEC("license") = "GPL";
         // Use libbpf-rs to load the BPF object
         let mut obj_builder = ObjectBuilder::default();
 
-        let open_obj = obj_builder.open_file(path)
-            .map_err(|e| {
-                tracing::error!("Failed to open BPF object: {}", e);
-                XdpError::LoadFailed(e.to_string())
-            })?;
+        let open_obj = obj_builder.open_file(path).map_err(|e| {
+            tracing::error!("Failed to open BPF object: {}", e);
+            XdpError::LoadFailed(e.to_string())
+        })?;
 
-        let obj = open_obj.load()
-            .map_err(|e| {
-                tracing::error!("Failed to load BPF object: {}", e);
-                XdpError::LoadFailed(e.to_string())
-            })?;
+        let obj = open_obj.load().map_err(|e| {
+            tracing::error!("Failed to load BPF object: {}", e);
+            XdpError::LoadFailed(e.to_string())
+        })?;
 
         // Get the XDP program FD
-        let prog = obj.prog("xdp_firewall")
+        let prog = obj
+            .prog("xdp_firewall")
             .ok_or_else(|| XdpError::LoadFailed("XDP program not found in object".to_string()))?;
 
         let prog_fd = prog.as_fd().as_raw_fd();
@@ -491,7 +495,8 @@ char _license[] SEC("license") = "GPL";
         Ok((obj, prog_fd))
     }
 
-    fn load_bpf_program_fallback(&self, path: &Path) -> Result<i32, XdpError> {
+    #[allow(dead_code)]
+    fn load_bpf_program_fallback(&self, _path: &Path) -> Result<i32, XdpError> {
         // Fallback: use ip command directly
         tracing::debug!("Using fallback BPF loading via ip command");
         Ok(0) // Placeholder, actual loading happens during attach
@@ -566,11 +571,10 @@ char _license[] SEC("license") = "GPL";
 
     fn attach_xdp_to_interface(&self, interface: &str, program_fd: i32) -> Result<(), XdpError> {
         // Get interface index
-        let ifindex = nix::net::if_::if_nametoindex(interface)
-            .map_err(|e| {
-                tracing::error!("Failed to get interface index for {}: {}", interface, e);
-                XdpError::AttachFailed
-            })?;
+        let ifindex = nix::net::if_::if_nametoindex(interface).map_err(|e| {
+            tracing::error!("Failed to get interface index for {}: {}", interface, e);
+            XdpError::AttachFailed
+        })?;
 
         if self.ebpf_available && program_fd > 0 {
             // Use libbpf-sys for XDP attach
@@ -582,14 +586,20 @@ char _license[] SEC("license") = "GPL";
                 XdpMode::Offload => bpf::XDP_FLAGS_HW_MODE,
             };
 
-            let ret = unsafe {
-                bpf::bpf_xdp_attach(ifindex as i32, program_fd, flags, std::ptr::null())
-            };
+            let ret =
+                unsafe { bpf::bpf_xdp_attach(ifindex as i32, program_fd, flags, std::ptr::null()) };
 
             if ret < 0 {
-                tracing::warn!("libbpf XDP attach failed (ret={}), falling back to ip command", ret);
+                tracing::warn!(
+                    "libbpf XDP attach failed (ret={}), falling back to ip command",
+                    ret
+                );
             } else {
-                tracing::info!("Attached XDP program to {} (ifindex={}) via libbpf", interface, ifindex);
+                tracing::info!(
+                    "Attached XDP program to {} (ifindex={}) via libbpf",
+                    interface,
+                    ifindex
+                );
                 return Ok(());
             }
         }
@@ -602,8 +612,17 @@ char _license[] SEC("license") = "GPL";
         };
 
         let status = std::process::Command::new("ip")
-            .args(&["link", "set", "dev", interface, mode_flag, "obj",
-                   "/tmp/patronus_xdp.o", "sec", "xdp"])
+            .args([
+                "link",
+                "set",
+                "dev",
+                interface,
+                mode_flag,
+                "obj",
+                "/tmp/patronus_xdp.o",
+                "sec",
+                "xdp",
+            ])
             .status()?;
 
         if !status.success() {
@@ -622,7 +641,7 @@ char _license[] SEC("license") = "GPL";
     }
 
     fn populate_rate_limits(&self, map_fd: i32) -> Result<(), XdpError> {
-        for (idx, limit) in self.config.rate_limits.iter().enumerate() {
+        for limit in self.config.rate_limits.iter() {
             if let Some(ip) = limit.source_ip {
                 // Store rate limit: key=IP, value=packets_per_second
                 self.map_update_ip(map_fd, &ip, limit.packets_per_second)?;
@@ -632,7 +651,12 @@ char _license[] SEC("license") = "GPL";
     }
 
     /// Update a BPF map entry with IP address as key
-    pub fn map_update_ip<V: Copy>(&self, map_fd: i32, ip: &IpAddr, value: V) -> Result<(), XdpError> {
+    pub fn map_update_ip<V: Copy>(
+        &self,
+        map_fd: i32,
+        ip: &IpAddr,
+        value: V,
+    ) -> Result<(), XdpError> {
         if map_fd < 0 {
             // Fallback mode, no-op
             return Ok(());
@@ -644,9 +668,8 @@ char _license[] SEC("license") = "GPL";
         };
 
         let value_ptr = &value as *const V as *const u8;
-        let value_bytes = unsafe {
-            std::slice::from_raw_parts(value_ptr, std::mem::size_of::<V>())
-        };
+        let value_bytes =
+            unsafe { std::slice::from_raw_parts(value_ptr, std::mem::size_of::<V>()) };
 
         self.map_update_raw(map_fd, &key_bytes, value_bytes)
     }
@@ -689,9 +712,7 @@ char _license[] SEC("license") = "GPL";
 
         use libbpf_sys as bpf;
 
-        let ret = unsafe {
-            bpf::bpf_map_delete_elem(map_fd, key_bytes.as_ptr() as *const _)
-        };
+        let ret = unsafe { bpf::bpf_map_delete_elem(map_fd, key_bytes.as_ptr() as *const _) };
 
         if ret < 0 {
             tracing::debug!("BPF map delete failed (may not exist): {}", ret);
@@ -706,14 +727,11 @@ char _license[] SEC("license") = "GPL";
         }
 
         let key_ptr = key as *const K as *const u8;
-        let key_bytes = unsafe {
-            std::slice::from_raw_parts(key_ptr, std::mem::size_of::<K>())
-        };
+        let key_bytes = unsafe { std::slice::from_raw_parts(key_ptr, std::mem::size_of::<K>()) };
 
         let value_ptr = value as *const V as *const u8;
-        let value_bytes = unsafe {
-            std::slice::from_raw_parts(value_ptr, std::mem::size_of::<V>())
-        };
+        let value_bytes =
+            unsafe { std::slice::from_raw_parts(value_ptr, std::mem::size_of::<V>()) };
 
         self.map_update_raw(map_fd, key_bytes, value_bytes)
     }
@@ -725,9 +743,7 @@ char _license[] SEC("license") = "GPL";
 
         use libbpf_sys as bpf;
 
-        let ret = unsafe {
-            bpf::bpf_map_delete_elem(map_fd, key as *const K as *const _)
-        };
+        let ret = unsafe { bpf::bpf_map_delete_elem(map_fd, key as *const K as *const _) };
 
         if ret < 0 {
             tracing::debug!("BPF map delete failed: {}", ret);
@@ -770,13 +786,21 @@ char _license[] SEC("license") = "GPL";
                 self.map_update(map_fd, &dest_ip, &tunnel_id)?;
             }
         }
-        tracing::debug!("Updated routing map: {} -> tunnel {}",
-            std::net::Ipv4Addr::from(dest_ip), tunnel_id);
+        tracing::debug!(
+            "Updated routing map: {} -> tunnel {}",
+            std::net::Ipv4Addr::from(dest_ip),
+            tunnel_id
+        );
         Ok(())
     }
 
     /// Update tunnel metrics map (for SD-WAN path selection)
-    pub fn update_metrics_map(&mut self, tunnel_id: u32, latency_ms: u32, packet_loss: u32) -> Result<(), XdpError> {
+    pub fn update_metrics_map(
+        &mut self,
+        tunnel_id: u32,
+        latency_ms: u32,
+        packet_loss: u32,
+    ) -> Result<(), XdpError> {
         // Pack metrics into a single u64 for simplicity
         let metrics: u64 = ((latency_ms as u64) << 32) | (packet_loss as u64);
 
@@ -785,8 +809,12 @@ char _license[] SEC("license") = "GPL";
                 self.map_update(map_fd, &tunnel_id, &metrics)?;
             }
         }
-        tracing::debug!("Updated metrics for tunnel {}: latency={}ms, loss={}%%",
-            tunnel_id, latency_ms, packet_loss);
+        tracing::debug!(
+            "Updated metrics for tunnel {}: latency={}ms, loss={}%%",
+            tunnel_id,
+            latency_ms,
+            packet_loss
+        );
         Ok(())
     }
 
@@ -820,7 +848,7 @@ impl Default for XdpConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            mode: XdpMode::Generic,  // Safe default
+            mode: XdpMode::Generic, // Safe default
             interfaces: vec!["eth0".to_string()],
             block_list: vec![],
             allow_list: vec![],

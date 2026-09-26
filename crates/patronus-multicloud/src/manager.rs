@@ -2,11 +2,11 @@
 //!
 //! Manages connections to multiple cloud providers
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use anyhow::Result;
 
 /// Cloud provider type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -66,14 +66,21 @@ impl MultiCloudManager {
     /// Get connections for specific provider
     pub async fn get_provider_connections(&self, provider: CloudProvider) -> Vec<CloudConnection> {
         let connections = self.connections.read().await;
-        connections.values()
+        connections
+            .values()
             .filter(|c| c.provider == provider)
             .cloned()
             .collect()
     }
 
     /// Update connection status
-    pub async fn update_status(&self, provider: CloudProvider, region: &str, connected: bool, latency: f64) -> Result<()> {
+    pub async fn update_status(
+        &self,
+        provider: CloudProvider,
+        region: &str,
+        connected: bool,
+        latency: f64,
+    ) -> Result<()> {
         let mut connections = self.connections.write().await;
         let key = format!("{:?}_{}", provider, region);
         if let Some(conn) = connections.get_mut(&key) {

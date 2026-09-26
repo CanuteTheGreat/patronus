@@ -1,9 +1,9 @@
 //! Mesh Gateway for multi-cluster communication
 
-use std::collections::HashMap;
-use tokio::sync::RwLock;
-use std::sync::Arc;
 use anyhow::Result;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 pub struct MeshGateway {
     clusters: Arc<RwLock<HashMap<String, ClusterEndpoint>>>,
@@ -26,14 +26,19 @@ impl MeshGateway {
 
     pub async fn register_cluster(&self, cluster: ClusterEndpoint) -> Result<()> {
         let mut clusters = self.clusters.write().await;
-        tracing::info!("Registering cluster {} at {}", cluster.name, cluster.endpoint);
+        tracing::info!(
+            "Registering cluster {} at {}",
+            cluster.name,
+            cluster.endpoint
+        );
         clusters.insert(cluster.name.clone(), cluster);
         Ok(())
     }
 
     pub async fn route_to_cluster(&self, cluster_name: &str, service: &str) -> Result<String> {
         let clusters = self.clusters.read().await;
-        let cluster = clusters.get(cluster_name)
+        let cluster = clusters
+            .get(cluster_name)
             .ok_or_else(|| anyhow::anyhow!("Cluster not found"))?;
         Ok(format!("{}:{}", cluster.endpoint, service))
     }
@@ -61,7 +66,10 @@ mod tests {
         };
 
         gateway.register_cluster(cluster).await.unwrap();
-        let route = gateway.route_to_cluster("us-west", "my-service").await.unwrap();
+        let route = gateway
+            .route_to_cluster("us-west", "my-service")
+            .await
+            .unwrap();
         assert!(route.contains("us-west"));
     }
 }

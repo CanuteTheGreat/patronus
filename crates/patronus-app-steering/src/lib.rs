@@ -56,7 +56,7 @@ impl AppSteering {
     pub async fn add_policy(&self, policy: SteeringPolicy) {
         let mut policies = self.policies.write().await;
         policies.push(policy);
-        policies.sort_by(|a, b| b.priority.cmp(&a.priority));
+        policies.sort_by_key(|p| std::cmp::Reverse(p.priority));
     }
 
     /// Find tunnel for traffic
@@ -76,8 +76,7 @@ impl AppSteering {
             }
 
             if !policy.groups.is_empty() {
-                let has_group = policy.groups.iter()
-                    .any(|g| user.groups.contains(g));
+                let has_group = policy.groups.iter().any(|g| user.groups.contains(g));
                 if !has_group {
                     continue;
                 }

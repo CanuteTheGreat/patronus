@@ -13,8 +13,8 @@ use tokio::fs;
 /// DNS mode
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DnsMode {
-    Resolver,    // Recursive resolver
-    Forwarder,   // Forward to upstream DNS
+    Resolver,  // Recursive resolver
+    Forwarder, // Forward to upstream DNS
 }
 
 /// DNS record type
@@ -41,7 +41,7 @@ pub struct DnsRecord {
 /// Access control entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DnsAccessControl {
-    pub network: String,  // CIDR notation
+    pub network: String, // CIDR notation
     pub action: DnsAction,
 }
 
@@ -51,7 +51,7 @@ pub enum DnsAction {
     Allow,
     Deny,
     Refuse,
-    AllowSnoop,  // Allow but don't cache
+    AllowSnoop, // Allow but don't cache
 }
 
 impl std::fmt::Display for DnsAction {
@@ -81,8 +81,8 @@ pub struct UnboundConfig {
 
     // Forwarding (when mode is Forwarder)
     pub forward_servers: Vec<IpAddr>,
-    pub forward_tls: bool,  // DNS over TLS
-    pub forward_tls_name: Option<String>,  // TLS server name
+    pub forward_tls: bool,                // DNS over TLS
+    pub forward_tls_name: Option<String>, // TLS server name
 
     // DNSSEC
     pub dnssec_enabled: bool,
@@ -90,7 +90,7 @@ pub struct UnboundConfig {
 
     // Performance
     pub num_threads: u32,
-    pub msg_cache_size: String,  // e.g., "50m"
+    pub msg_cache_size: String, // e.g., "50m"
     pub rrset_cache_size: String,
     pub cache_min_ttl: u32,
     pub cache_max_ttl: u32,
@@ -99,19 +99,19 @@ pub struct UnboundConfig {
     pub hide_identity: bool,
     pub hide_version: bool,
     pub minimal_responses: bool,
-    pub qname_minimisation: bool,  // RFC 7816
+    pub qname_minimisation: bool, // RFC 7816
 
     // Custom records
-    pub local_zone: Option<String>,  // e.g., "local."
+    pub local_zone: Option<String>, // e.g., "local."
     pub local_records: Vec<DnsRecord>,
 
     // Blacklist/blocklist
-    pub blocklists: Vec<String>,  // URLs or file paths
+    pub blocklists: Vec<String>, // URLs or file paths
 
     // Logging
     pub log_queries: bool,
     pub log_replies: bool,
-    pub verbosity: u8,  // 0-5
+    pub verbosity: u8, // 0-5
 }
 
 impl Default for UnboundConfig {
@@ -140,8 +140,8 @@ impl Default for UnboundConfig {
                 },
             ],
             forward_servers: vec![
-                IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),  // Cloudflare
-                IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),  // Google
+                IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), // Cloudflare
+                IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), // Google
             ],
             forward_tls: false,
             forward_tls_name: None,
@@ -218,13 +218,19 @@ impl UnboundManager {
 
         // Access control
         for acl in &config.access_control {
-            conf.push_str(&format!("  access-control: {} {}\n", acl.network, acl.action));
+            conf.push_str(&format!(
+                "  access-control: {} {}\n",
+                acl.network, acl.action
+            ));
         }
 
         // Performance
         conf.push_str(&format!("  num-threads: {}\n", config.num_threads));
         conf.push_str(&format!("  msg-cache-size: {}\n", config.msg_cache_size));
-        conf.push_str(&format!("  rrset-cache-size: {}\n", config.rrset_cache_size));
+        conf.push_str(&format!(
+            "  rrset-cache-size: {}\n",
+            config.rrset_cache_size
+        ));
         conf.push_str(&format!("  cache-min-ttl: {}\n", config.cache_min_ttl));
         conf.push_str(&format!("  cache-max-ttl: {}\n", config.cache_max_ttl));
 
@@ -259,32 +265,46 @@ impl UnboundManager {
         for record in &config.local_records {
             match record.record_type {
                 DnsRecordType::A => {
-                    conf.push_str(&format!("  local-data: \"{} IN A {}\"\n",
-                        record.hostname, record.value));
+                    conf.push_str(&format!(
+                        "  local-data: \"{} IN A {}\"\n",
+                        record.hostname, record.value
+                    ));
                 }
                 DnsRecordType::AAAA => {
-                    conf.push_str(&format!("  local-data: \"{} IN AAAA {}\"\n",
-                        record.hostname, record.value));
+                    conf.push_str(&format!(
+                        "  local-data: \"{} IN AAAA {}\"\n",
+                        record.hostname, record.value
+                    ));
                 }
                 DnsRecordType::CNAME => {
-                    conf.push_str(&format!("  local-data: \"{} IN CNAME {}\"\n",
-                        record.hostname, record.value));
+                    conf.push_str(&format!(
+                        "  local-data: \"{} IN CNAME {}\"\n",
+                        record.hostname, record.value
+                    ));
                 }
                 DnsRecordType::PTR => {
-                    conf.push_str(&format!("  local-data: \"{} IN PTR {}\"\n",
-                        record.hostname, record.value));
+                    conf.push_str(&format!(
+                        "  local-data: \"{} IN PTR {}\"\n",
+                        record.hostname, record.value
+                    ));
                 }
                 DnsRecordType::TXT => {
-                    conf.push_str(&format!("  local-data: '{} IN TXT \"{}\"'\n",
-                        record.hostname, record.value));
+                    conf.push_str(&format!(
+                        "  local-data: '{} IN TXT \"{}\"'\n",
+                        record.hostname, record.value
+                    ));
                 }
                 DnsRecordType::MX => {
-                    conf.push_str(&format!("  local-data: \"{} IN MX {}\"\n",
-                        record.hostname, record.value));
+                    conf.push_str(&format!(
+                        "  local-data: \"{} IN MX {}\"\n",
+                        record.hostname, record.value
+                    ));
                 }
                 DnsRecordType::SRV => {
-                    conf.push_str(&format!("  local-data: \"{} IN SRV {}\"\n",
-                        record.hostname, record.value));
+                    conf.push_str(&format!(
+                        "  local-data: \"{} IN SRV {}\"\n",
+                        record.hostname, record.value
+                    ));
                 }
             }
         }
@@ -328,10 +348,12 @@ impl UnboundManager {
     pub async fn save_config(&self, config: &UnboundConfig) -> Result<()> {
         let conf_content = self.generate_config(config)?;
 
-        fs::create_dir_all(&self.conf_dir).await
+        fs::create_dir_all(&self.conf_dir)
+            .await
             .map_err(|e| Error::Network(format!("Failed to create config directory: {}", e)))?;
 
-        fs::write(&self.config_file, conf_content).await
+        fs::write(&self.config_file, conf_content)
+            .await
             .map_err(|e| Error::Network(format!("Failed to write config file: {}", e)))?;
 
         Ok(())
@@ -437,7 +459,8 @@ impl UnboundManager {
             // This would parse the downloaded list
         }
 
-        fs::write(&blocklist_file, content).await
+        fs::write(&blocklist_file, content)
+            .await
             .map_err(|e| Error::Network(format!("Failed to write blocklist: {}", e)))?;
 
         Ok(())

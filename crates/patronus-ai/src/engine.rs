@@ -5,8 +5,8 @@ use tracing::{error, info};
 
 use crate::feature_collector::{FeatureCollector, FlowFeatures};
 use crate::models::ThreatClassifier;
-use crate::threat_intel::{ThreatIntelDB, ThreatFeedAggregator};
-use crate::rule_generator::{RuleGenerator, RuleGenPolicy};
+use crate::rule_generator::{RuleGenPolicy, RuleGenerator};
+use crate::threat_intel::{ThreatFeedAggregator, ThreatIntelDB};
 use patronus_firewall::rules::RuleManager;
 
 /// AI-powered threat detection engine
@@ -19,20 +19,15 @@ pub struct ThreatDetectionEngine {
 }
 
 impl ThreatDetectionEngine {
-    pub fn new(
-        rule_manager: Arc<RuleManager>,
-        rule_gen_policy: RuleGenPolicy,
-    ) -> Self {
+    pub fn new(rule_manager: Arc<RuleManager>, rule_gen_policy: RuleGenPolicy) -> Self {
         // Create feature collector (5min window, collect every 1min)
         let feature_collector = Arc::new(FeatureCollector::new(
-            Duration::from_secs(300),  // 5 minute aggregation window
-            Duration::from_secs(60),   // Collect every minute
+            Duration::from_secs(300), // 5 minute aggregation window
+            Duration::from_secs(60),  // Collect every minute
         ));
 
         // Create threat classifier
-        let threat_classifier = Arc::new(tokio::sync::RwLock::new(
-            ThreatClassifier::new()
-        ));
+        let threat_classifier = Arc::new(tokio::sync::RwLock::new(ThreatClassifier::new()));
 
         // Create threat intelligence database
         let threat_intel_db = Arc::new(ThreatIntelDB::new());
@@ -64,7 +59,7 @@ impl ThreatDetectionEngine {
         self.threat_feeds = Arc::new(
             Arc::try_unwrap(self.threat_feeds)
                 .unwrap_or_else(|arc| (*arc).clone())
-                .with_abuseipdb(api_key)
+                .with_abuseipdb(api_key),
         );
         self
     }
@@ -177,7 +172,10 @@ impl ThreatDetectionEngine {
             }
         }
 
-        info!("Training on {} normal traffic samples", normal_features.len());
+        info!(
+            "Training on {} normal traffic samples",
+            normal_features.len()
+        );
 
         // Train classifier
         let mut classifier = self.threat_classifier.write().await;

@@ -1,7 +1,7 @@
 //! Capacity Metrics and History
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -54,6 +54,7 @@ impl CapacityMetrics {
 }
 
 pub struct UtilizationHistory {
+    #[allow(dead_code)]
     resource_type: ResourceType,
     max_history: usize,
     history: VecDeque<CapacityMetrics>,
@@ -101,13 +102,15 @@ impl UtilizationHistory {
     }
 
     pub fn peak_utilization(&self) -> f64 {
-        self.history.iter()
+        self.history
+            .iter()
             .map(|m| m.utilization_percent)
             .fold(0.0, f64::max)
     }
 
     pub fn min_utilization(&self) -> f64 {
-        self.history.iter()
+        self.history
+            .iter()
             .map(|m| m.utilization_percent)
             .fold(100.0, f64::min)
     }

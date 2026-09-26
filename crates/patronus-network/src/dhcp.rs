@@ -89,8 +89,12 @@ max-lease-time {};
 
         // DNS servers
         if !config.dns_servers.is_empty() {
-            let dns_list: Vec<String> = config.dns_servers.iter().map(|ip| ip.to_string()).collect();
-            conf.push_str(&format!("option domain-name-servers {};\n", dns_list.join(", ")));
+            let dns_list: Vec<String> =
+                config.dns_servers.iter().map(|ip| ip.to_string()).collect();
+            conf.push_str(&format!(
+                "option domain-name-servers {};\n",
+                dns_list.join(", ")
+            ));
         }
 
         // Subnet declaration
@@ -131,8 +135,8 @@ subnet {} netmask {} {{
 
     /// Add static DHCP reservation
     pub async fn add_static_lease(&self, reservation: &StaticLease) -> Result<()> {
-        let mut config_content = std::fs::read_to_string(&self.config_path)
-            .unwrap_or_else(|_| String::new());
+        let mut config_content =
+            std::fs::read_to_string(&self.config_path).unwrap_or_else(|_| String::new());
 
         let static_entry = format!(
             r#"
@@ -142,8 +146,14 @@ host {} {{
     fixed-address {};
 }}
 "#,
-            reservation.hostname.as_ref().unwrap_or(&"unknown".to_string()),
-            reservation.hostname.as_ref().unwrap_or(&reservation.mac_address),
+            reservation
+                .hostname
+                .as_ref()
+                .unwrap_or(&"unknown".to_string()),
+            reservation
+                .hostname
+                .as_ref()
+                .unwrap_or(&reservation.mac_address),
             reservation.mac_address,
             reservation.ip_address
         );
@@ -153,15 +163,18 @@ host {} {{
         std::fs::write(&self.config_path, config_content)
             .map_err(|e| Error::Network(format!("Failed to add static lease: {}", e)))?;
 
-        tracing::info!("Added static DHCP reservation: {} -> {}",
-            reservation.mac_address, reservation.ip_address);
+        tracing::info!(
+            "Added static DHCP reservation: {} -> {}",
+            reservation.mac_address,
+            reservation.ip_address
+        );
         Ok(())
     }
 
     /// Parse DHCP leases file
     pub async fn get_leases(&self) -> Result<Vec<DhcpLease>> {
-        let leases_content = std::fs::read_to_string(&self.leases_path)
-            .unwrap_or_else(|_| String::new());
+        let leases_content =
+            std::fs::read_to_string(&self.leases_path).unwrap_or_else(|_| String::new());
 
         let mut leases = Vec::new();
         let mut current_lease: Option<DhcpLease> = None;
@@ -170,7 +183,10 @@ host {} {{
             let line = line.trim();
 
             if line.starts_with("lease ") {
-                if let Some(ip_str) = line.strip_prefix("lease ").and_then(|s| s.split_whitespace().next()) {
+                if let Some(ip_str) = line
+                    .strip_prefix("lease ")
+                    .and_then(|s| s.split_whitespace().next())
+                {
                     if let Ok(ip) = ip_str.parse::<Ipv4Addr>() {
                         current_lease = Some(DhcpLease {
                             ip_address: ip,
@@ -184,15 +200,25 @@ host {} {{
                 }
             } else if let Some(ref mut lease) = current_lease {
                 if line.starts_with("hardware ethernet ") {
-                    if let Some(mac) = line.strip_prefix("hardware ethernet ").and_then(|s| s.trim_end_matches(';').split_whitespace().next()) {
+                    if let Some(mac) = line
+                        .strip_prefix("hardware ethernet ")
+                        .and_then(|s| s.trim_end_matches(';').split_whitespace().next())
+                    {
                         lease.mac_address = mac.to_string();
                     }
                 } else if line.starts_with("client-hostname ") {
-                    if let Some(hostname) = line.strip_prefix("client-hostname ").and_then(|s| s.trim_matches(|c| c == '"' || c == ';').split_whitespace().next()) {
+                    if let Some(hostname) = line.strip_prefix("client-hostname ").and_then(|s| {
+                        s.trim_matches(|c| c == '"' || c == ';')
+                            .split_whitespace()
+                            .next()
+                    }) {
                         lease.hostname = Some(hostname.to_string());
                     }
                 } else if line.starts_with("binding state ") {
-                    if let Some(state) = line.strip_prefix("binding state ").and_then(|s| s.trim_end_matches(';').split_whitespace().next()) {
+                    if let Some(state) = line
+                        .strip_prefix("binding state ")
+                        .and_then(|s| s.trim_end_matches(';').split_whitespace().next())
+                    {
                         lease.state = match state {
                             "active" => LeaseState::Active,
                             "expired" => LeaseState::Expired,
@@ -224,7 +250,10 @@ host {} {{
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::Network(format!("Failed to start DHCP server: {}", stderr)));
+            return Err(Error::Network(format!(
+                "Failed to start DHCP server: {}",
+                stderr
+            )));
         }
 
         tracing::info!("Started DHCP server");
@@ -240,7 +269,10 @@ host {} {{
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::Network(format!("Failed to stop DHCP server: {}", stderr)));
+            return Err(Error::Network(format!(
+                "Failed to stop DHCP server: {}",
+                stderr
+            )));
         }
 
         tracing::info!("Stopped DHCP server");
@@ -256,7 +288,10 @@ host {} {{
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::Network(format!("Failed to restart DHCP server: {}", stderr)));
+            return Err(Error::Network(format!(
+                "Failed to restart DHCP server: {}",
+                stderr
+            )));
         }
 
         tracing::info!("Restarted DHCP server");

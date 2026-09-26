@@ -47,8 +47,14 @@ pub fn draw(frame: &mut Frame, app: &InstallerApp) {
         Line::from(""),
         Line::from("  1. Remove installation media"),
         Line::from("  2. Reboot the system"),
-        Line::from(format!("  3. Access web interface: http://{}:{}", hostname, web_port)),
-        Line::from(format!("  4. SSH access: ssh admin@{} -p {}", hostname, ssh_port)),
+        Line::from(format!(
+            "  3. Access web interface: http://{}:{}",
+            hostname, web_port
+        )),
+        Line::from(format!(
+            "  4. SSH access: ssh admin@{} -p {}",
+            hostname, ssh_port
+        )),
         Line::from(""),
         Line::from("Default Credentials:"),
         Line::from("  Username: admin"),
@@ -62,9 +68,19 @@ pub fn draw(frame: &mut Frame, app: &InstallerApp) {
     // Actions
     let actions = Line::from(vec![
         Span::raw("Press "),
-        Span::styled("r", Style::default().fg(Theme::HIGHLIGHT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "r",
+            Style::default()
+                .fg(Theme::HIGHLIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" to reboot or "),
-        Span::styled("q", Style::default().fg(Theme::HIGHLIGHT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "q",
+            Style::default()
+                .fg(Theme::HIGHLIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" to exit"),
     ]);
     let para = Paragraph::new(actions).alignment(Alignment::Center);

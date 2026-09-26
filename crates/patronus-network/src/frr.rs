@@ -9,11 +9,11 @@
 //! FRR is a Linux routing stack fork of Quagga, providing enterprise-grade
 //! routing capabilities that rival Cisco and Juniper.
 
-use patronus_core::{Result, Error};
+use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::net::IpAddr;
 use std::collections::HashMap;
+use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::process::Command;
 
@@ -60,7 +60,7 @@ impl std::fmt::Display for RoutingDaemon {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BgpConfig {
     pub enabled: bool,
-    pub asn: u32,  // Autonomous System Number
+    pub asn: u32, // Autonomous System Number
     pub router_id: IpAddr,
     pub networks: Vec<BgpNetwork>,
     pub neighbors: Vec<BgpNeighbor>,
@@ -69,7 +69,7 @@ pub struct BgpConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BgpNetwork {
-    pub prefix: String,  // "10.0.0.0/8"
+    pub prefix: String, // "10.0.0.0/8"
     pub route_map: Option<String>,
 }
 
@@ -99,8 +99,8 @@ pub struct OspfConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OspfArea {
-    pub area_id: String,  // "0.0.0.0" for backbone
-    pub networks: Vec<String>,  // ["10.0.1.0/24"]
+    pub area_id: String,       // "0.0.0.0" for backbone
+    pub networks: Vec<String>, // ["10.0.1.0/24"]
     pub area_type: OspfAreaType,
     pub authentication: Option<OspfAuth>,
 }
@@ -139,7 +139,7 @@ pub enum RipVersion {
 /// Protocol redistribution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedistributeProtocol {
-    pub protocol: String,  // "connected", "static", "ospf", "bgp"
+    pub protocol: String, // "connected", "static", "ospf", "bgp"
     pub route_map: Option<String>,
     pub metric: Option<u32>,
 }
@@ -191,8 +191,8 @@ pub struct PrefixListEntry {
     pub sequence: u32,
     pub action: PrefixListAction,
     pub prefix: String,
-    pub ge: Option<u8>,  // Greater than or equal
-    pub le: Option<u8>,  // Less than or equal
+    pub ge: Option<u8>, // Greater than or equal
+    pub le: Option<u8>, // Less than or equal
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -284,27 +284,37 @@ impl FrrManager {
 
         // Neighbors
         for neighbor in &config.neighbors {
-            conf.push_str(&format!("  neighbor {} remote-as {}\n",
-                neighbor.address, neighbor.remote_asn));
+            conf.push_str(&format!(
+                "  neighbor {} remote-as {}\n",
+                neighbor.address, neighbor.remote_asn
+            ));
 
             if let Some(ref desc) = neighbor.description {
-                conf.push_str(&format!("  neighbor {} description {}\n",
-                    neighbor.address, desc));
+                conf.push_str(&format!(
+                    "  neighbor {} description {}\n",
+                    neighbor.address, desc
+                ));
             }
 
             if let Some(ref password) = neighbor.password {
-                conf.push_str(&format!("  neighbor {} password {}\n",
-                    neighbor.address, password));
+                conf.push_str(&format!(
+                    "  neighbor {} password {}\n",
+                    neighbor.address, password
+                ));
             }
 
             if let Some(multihop) = neighbor.ebgp_multihop {
-                conf.push_str(&format!("  neighbor {} ebgp-multihop {}\n",
-                    neighbor.address, multihop));
+                conf.push_str(&format!(
+                    "  neighbor {} ebgp-multihop {}\n",
+                    neighbor.address, multihop
+                ));
             }
 
             if let Some(ref source) = neighbor.update_source {
-                conf.push_str(&format!("  neighbor {} update-source {}\n",
-                    neighbor.address, source));
+                conf.push_str(&format!(
+                    "  neighbor {} update-source {}\n",
+                    neighbor.address, source
+                ));
             }
         }
 
@@ -324,23 +334,31 @@ impl FrrManager {
             conf.push_str(&format!("    neighbor {} activate\n", neighbor.address));
 
             if let Some(ref rm) = neighbor.route_map_in {
-                conf.push_str(&format!("    neighbor {} route-map {} in\n",
-                    neighbor.address, rm));
+                conf.push_str(&format!(
+                    "    neighbor {} route-map {} in\n",
+                    neighbor.address, rm
+                ));
             }
 
             if let Some(ref rm) = neighbor.route_map_out {
-                conf.push_str(&format!("    neighbor {} route-map {} out\n",
-                    neighbor.address, rm));
+                conf.push_str(&format!(
+                    "    neighbor {} route-map {} out\n",
+                    neighbor.address, rm
+                ));
             }
 
             if let Some(ref pl) = neighbor.prefix_list_in {
-                conf.push_str(&format!("    neighbor {} prefix-list {} in\n",
-                    neighbor.address, pl));
+                conf.push_str(&format!(
+                    "    neighbor {} prefix-list {} in\n",
+                    neighbor.address, pl
+                ));
             }
 
             if let Some(ref pl) = neighbor.prefix_list_out {
-                conf.push_str(&format!("    neighbor {} prefix-list {} out\n",
-                    neighbor.address, pl));
+                conf.push_str(&format!(
+                    "    neighbor {} prefix-list {} out\n",
+                    neighbor.address, pl
+                ));
             }
         }
 
@@ -354,8 +372,10 @@ impl FrrManager {
                 RouteMapAction::Deny => "deny",
             };
 
-            conf.push_str(&format!("route-map {} {} {}\n",
-                route_map.name, action, route_map.sequence));
+            conf.push_str(&format!(
+                "route-map {} {} {}\n",
+                route_map.name, action, route_map.sequence
+            ));
 
             for match_rule in &route_map.match_rules {
                 match match_rule {
@@ -384,7 +404,10 @@ impl FrrManager {
                         conf.push_str(&format!("  set ip next-hop {}\n", ip));
                     }
                     RouteMapSet::AsPathPrepend { asn, count } => {
-                        let prepend = (0..*count).map(|_| asn.to_string()).collect::<Vec<_>>().join(" ");
+                        let prepend = (0..*count)
+                            .map(|_| asn.to_string())
+                            .collect::<Vec<_>>()
+                            .join(" ");
                         conf.push_str(&format!("  set as-path prepend {}\n", prepend));
                     }
                     RouteMapSet::Community { community } => {
@@ -435,8 +458,7 @@ impl FrrManager {
         // Areas and networks
         for area in &config.areas {
             for network in &area.networks {
-                conf.push_str(&format!("  network {} area {}\n",
-                    network, area.area_id));
+                conf.push_str(&format!("  network {} area {}\n", network, area.area_id));
             }
 
             // Area type
@@ -463,8 +485,10 @@ impl FrrManager {
                         conf.push_str(&format!("  area {} authentication\n", area.area_id));
                     }
                     OspfAuth::MD5 { key_id, password } => {
-                        conf.push_str(&format!("  area {} authentication message-digest\n",
-                            area.area_id));
+                        conf.push_str(&format!(
+                            "  area {} authentication message-digest\n",
+                            area.area_id
+                        ));
                     }
                 }
             }
@@ -588,7 +612,7 @@ impl Default for BgpConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            asn: 65000,  // Private ASN
+            asn: 65000, // Private ASN
             router_id: "192.168.1.1".parse().unwrap(),
             networks: Vec::new(),
             neighbors: Vec::new(),
@@ -602,14 +626,12 @@ impl Default for OspfConfig {
         Self {
             enabled: false,
             router_id: "192.168.1.1".parse().unwrap(),
-            areas: vec![
-                OspfArea {
-                    area_id: "0.0.0.0".to_string(),  // Backbone
-                    networks: vec!["192.168.1.0/24".to_string()],
-                    area_type: OspfAreaType::Normal,
-                    authentication: None,
-                },
-            ],
+            areas: vec![OspfArea {
+                area_id: "0.0.0.0".to_string(), // Backbone
+                networks: vec!["192.168.1.0/24".to_string()],
+                area_type: OspfAreaType::Normal,
+                authentication: None,
+            }],
             redistribute: Vec::new(),
             passive_interfaces: Vec::new(),
         }

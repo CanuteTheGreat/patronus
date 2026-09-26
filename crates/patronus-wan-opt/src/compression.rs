@@ -64,7 +64,8 @@ impl Compressor {
     fn compress_gzip(&self, data: &[u8]) -> Result<Vec<u8>> {
         let mut encoder = GzEncoder::new(data, GzCompression::default());
         let mut compressed = Vec::new();
-        encoder.read_to_end(&mut compressed)
+        encoder
+            .read_to_end(&mut compressed)
             .context("Gzip compression failed")?;
         Ok(compressed)
     }
@@ -72,31 +73,28 @@ impl Compressor {
     fn decompress_gzip(&self, data: &[u8]) -> Result<Vec<u8>> {
         let mut decoder = GzDecoder::new(data);
         let mut decompressed = Vec::new();
-        decoder.read_to_end(&mut decompressed)
+        decoder
+            .read_to_end(&mut decompressed)
             .context("Gzip decompression failed")?;
         Ok(decompressed)
     }
 
     // LZ4 implementation
     fn compress_lz4(&self, data: &[u8]) -> Result<Vec<u8>> {
-        lz4::block::compress(data, None, true)
-            .context("LZ4 compression failed")
+        lz4::block::compress(data, None, true).context("LZ4 compression failed")
     }
 
     fn decompress_lz4(&self, data: &[u8]) -> Result<Vec<u8>> {
-        lz4::block::decompress(data, None)
-            .context("LZ4 decompression failed")
+        lz4::block::decompress(data, None).context("LZ4 decompression failed")
     }
 
     // Zstd implementation
     fn compress_zstd(&self, data: &[u8]) -> Result<Vec<u8>> {
-        zstd::bulk::compress(data, 3)
-            .context("Zstd compression failed")
+        zstd::bulk::compress(data, 3).context("Zstd compression failed")
     }
 
     fn decompress_zstd(&self, data: &[u8]) -> Result<Vec<u8>> {
-        zstd::bulk::decompress(data, data.len() * 100)
-            .context("Zstd decompression failed")
+        zstd::bulk::decompress(data, data.len() * 100).context("Zstd decompression failed")
     }
 }
 

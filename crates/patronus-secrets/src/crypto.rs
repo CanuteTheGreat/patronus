@@ -40,8 +40,7 @@ pub fn encrypt_secret(plaintext: &[u8], key: &[u8]) -> Result<Vec<u8>> {
         return Err(anyhow::anyhow!("Key must be 32 bytes for AES-256"));
     }
 
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .context("Failed to create cipher")?;
+    let cipher = Aes256Gcm::new_from_slice(key).context("Failed to create cipher")?;
 
     // Generate random nonce
     let mut nonce_bytes = [0u8; NONCE_SIZE];
@@ -70,8 +69,7 @@ pub fn decrypt_secret(encrypted: &[u8], key: &[u8]) -> Result<Vec<u8>> {
         return Err(anyhow::anyhow!("Invalid encrypted data: too short"));
     }
 
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .context("Failed to create cipher")?;
+    let cipher = Aes256Gcm::new_from_slice(key).context("Failed to create cipher")?;
 
     // Extract nonce and ciphertext
     let nonce = Nonce::from_slice(&encrypted[..NONCE_SIZE]);
@@ -100,8 +98,8 @@ pub fn hash_password(password: &str) -> Result<String> {
 
 /// Verify a password against a hash
 pub fn verify_password(password: &str, hash: &str) -> Result<bool> {
-    let parsed_hash = PasswordHash::new(hash)
-        .map_err(|e| anyhow::anyhow!("Invalid hash format: {}", e))?;
+    let parsed_hash =
+        PasswordHash::new(hash).map_err(|e| anyhow::anyhow!("Invalid hash format: {}", e))?;
 
     Ok(Argon2::default()
         .verify_password(password.as_bytes(), &parsed_hash)
@@ -117,7 +115,8 @@ pub fn generate_token(length: usize) -> String {
 
 /// Generate a cryptographically secure random password
 pub fn generate_password(length: usize) -> String {
-    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
+    const CHARSET: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
     let mut password = Vec::with_capacity(length);
     let mut rng_bytes = vec![0u8; length];
     OsRng.fill_bytes(&mut rng_bytes);

@@ -1,9 +1,9 @@
 //! Authentication and Authorization
 
+use anyhow::Result;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use anyhow::Result;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -23,11 +23,13 @@ impl JwtValidator {
         }
     }
 
-    pub fn create_token(&self, user_id: &str, roles: Vec<String>, ttl_seconds: u64) -> Result<String> {
-        let expiration = SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_secs()
-            + ttl_seconds;
+    pub fn create_token(
+        &self,
+        user_id: &str,
+        roles: Vec<String>,
+        ttl_seconds: u64,
+    ) -> Result<String> {
+        let expiration = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + ttl_seconds;
 
         let claims = Claims {
             sub: user_id.to_string(),
@@ -92,7 +94,9 @@ mod tests {
     fn test_jwt_creation_and_validation() {
         let validator = JwtValidator::new("secret");
 
-        let token = validator.create_token("user123", vec!["admin".to_string()], 3600).unwrap();
+        let token = validator
+            .create_token("user123", vec!["admin".to_string()], 3600)
+            .unwrap();
         let claims = validator.validate_token(&token).unwrap();
 
         assert_eq!(claims.sub, "user123");
@@ -118,7 +122,9 @@ mod tests {
     fn test_auth_service() {
         let service = AuthService::new("secret");
 
-        let token = service.create_session("user123", vec!["viewer".to_string()]).unwrap();
+        let token = service
+            .create_session("user123", vec!["viewer".to_string()])
+            .unwrap();
         let claims = service.authenticate(&token).unwrap();
 
         assert_eq!(claims.sub, "user123");

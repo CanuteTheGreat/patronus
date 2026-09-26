@@ -35,7 +35,7 @@ impl PredictiveFailover {
     pub fn new() -> Self {
         Self {
             history: VecDeque::new(),
-            window_size: 60, // 1 minute of history
+            window_size: 60,         // 1 minute of history
             failure_threshold: 0.75, // 75% probability triggers failover
         }
     }
@@ -102,9 +102,11 @@ impl PredictiveFailover {
         // Tree 5: Trend analysis
         if self.history.len() >= 5 {
             let recent: Vec<&LinkHealth> = self.history.iter().rev().take(5).collect();
-            let latency_trend: f64 = recent.windows(2)
+            let latency_trend: f64 = recent
+                .windows(2)
                 .map(|w| w[0].latency_ms - w[1].latency_ms)
-                .sum::<f64>() / 4.0;
+                .sum::<f64>()
+                / 4.0;
 
             if latency_trend > 10.0 {
                 score += 0.25; // Latency is increasing
@@ -121,9 +123,11 @@ impl PredictiveFailover {
         }
 
         let recent: Vec<&LinkHealth> = self.history.iter().rev().take(5).collect();
-        let avg_latency_increase: f64 = recent.windows(2)
+        let avg_latency_increase: f64 = recent
+            .windows(2)
             .map(|w| (w[0].latency_ms - w[1].latency_ms).max(0.0))
-            .sum::<f64>() / (recent.len() - 1) as f64;
+            .sum::<f64>()
+            / (recent.len() - 1) as f64;
 
         if avg_latency_increase > 5.0 {
             30 // 30 seconds

@@ -2,7 +2,7 @@
 //
 // These types represent the core SD-WAN entities exposed via GraphQL.
 
-use async_graphql::{SimpleObject, Enum, InputObject};
+use async_graphql::{Enum, InputObject, SimpleObject};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

@@ -3,8 +3,8 @@
 //! This module implements ICMP echo (ping) and UDP probes to measure
 //! latency, packet loss, and jitter for network paths.
 
-use super::icmp_probe::{IcmpProber, IcmpError};
-use super::udp_probe::{UdpProber, UdpError};
+use super::icmp_probe::{IcmpError, IcmpProber};
+use super::udp_probe::{UdpError, UdpProber};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -159,7 +159,8 @@ impl Prober {
         let avg_latency = latencies.iter().sum::<f64>() / latencies.len() as f64;
 
         // Calculate packet loss percentage
-        let packet_loss_pct = ((self.config.count - received) as f64 / self.config.count as f64) * 100.0;
+        let packet_loss_pct =
+            ((self.config.count - received) as f64 / self.config.count as f64) * 100.0;
 
         // Calculate jitter (standard deviation of latencies)
         let jitter = if latencies.len() > 1 {
@@ -203,7 +204,9 @@ impl Prober {
     }
 
     /// Send ICMP echo request
-    async fn send_icmp_probe(&self) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn send_icmp_probe(
+        &self,
+    ) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
         if let Some(ref prober) = self.icmp_prober {
             match prober.probe(self.config.target).await {
                 Ok(result) => {
@@ -228,7 +231,9 @@ impl Prober {
     }
 
     /// Send UDP probe
-    async fn send_udp_probe(&self) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn send_udp_probe(
+        &self,
+    ) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
         match self.udp_prober.probe(self.config.target).await {
             Ok(result) => {
                 if result.success {
@@ -251,7 +256,9 @@ impl Prober {
     ///
     /// This simulates realistic network behavior for testing purposes.
     /// In production, this would be replaced with actual ICMP probes.
-    async fn send_simulated_probe(&self) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn send_simulated_probe(
+        &self,
+    ) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
         // Simulate network delay
         let base_latency = 20.0; // Base latency in ms
         let jitter = (rand::random::<f64>() - 0.5) * 10.0; // ±5ms jitter

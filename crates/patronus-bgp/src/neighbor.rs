@@ -29,6 +29,7 @@ pub enum NeighborState {
 #[derive(Debug)]
 pub struct BgpNeighbor {
     /// Neighbor configuration
+    #[allow(dead_code)]
     config: NeighborConfig,
 
     /// Current state

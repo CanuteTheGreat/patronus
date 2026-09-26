@@ -27,8 +27,11 @@ impl GcpConnector {
 
     /// Connect to GCP VPC
     pub async fn connect_vpc(&self) -> Result<CloudConnection> {
-        tracing::info!("Connecting to GCP VPC {} in region {}",
-            self.config.network_name, self.config.region);
+        tracing::info!(
+            "Connecting to GCP VPC {} in region {}",
+            self.config.network_name,
+            self.config.region
+        );
 
         // In production, would use GCP SDK to:
         // 1. Create VPN Gateway

@@ -1,9 +1,9 @@
 //! Network State Representation
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkMetrics {
@@ -250,9 +250,7 @@ mod tests {
 
     #[test]
     fn test_sla_compliance() {
-        let metrics = LinkMetrics::new()
-            .with_latency(10.0)
-            .with_packet_loss(0.5);
+        let metrics = LinkMetrics::new().with_latency(10.0).with_packet_loss(0.5);
 
         assert!(metrics.meets_sla(20.0, 1.0));
         assert!(!metrics.meets_sla(5.0, 1.0));

@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::SystemTime;
 use tokio::process::Command;
-use tokio::io::AsyncBufReadExt;
 
 /// Ping result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,7 +40,7 @@ pub struct TracerouteHop {
     pub hop_number: u32,
     pub hostname: Option<String>,
     pub ip_address: Option<IpAddr>,
-    pub rtt_ms: Vec<Option<f64>>,  // Usually 3 probes
+    pub rtt_ms: Vec<Option<f64>>, // Usually 3 probes
 }
 
 /// Traceroute result
@@ -79,7 +78,7 @@ pub struct DnsRecord {
 pub struct PortTestResult {
     pub host: String,
     pub port: u16,
-    pub protocol: String,  // TCP or UDP
+    pub protocol: String, // TCP or UDP
     pub is_open: bool,
     pub response_time_ms: Option<f64>,
     pub error: Option<String>,
@@ -101,13 +100,13 @@ pub struct NdpEntry {
     pub ip_address: Ipv6Addr,
     pub mac_address: String,
     pub interface: String,
-    pub state: String,  // REACHABLE, STALE, DELAY, etc.
+    pub state: String, // REACHABLE, STALE, DELAY, etc.
 }
 
 /// Routing table entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteEntry {
-    pub destination: String,  // CIDR or "default"
+    pub destination: String, // CIDR or "default"
     pub gateway: Option<IpAddr>,
     pub interface: String,
     pub metric: Option<u32>,
@@ -117,12 +116,12 @@ pub struct RouteEntry {
 /// Socket entry (active network connection)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocketEntry {
-    pub protocol: String,  // TCP, UDP, etc.
+    pub protocol: String, // TCP, UDP, etc.
     pub local_address: String,
     pub local_port: u16,
     pub remote_address: Option<String>,
     pub remote_port: Option<u16>,
-    pub state: Option<String>,  // For TCP: ESTABLISHED, LISTEN, etc.
+    pub state: Option<String>, // For TCP: ESTABLISHED, LISTEN, etc.
     pub pid: Option<u32>,
     pub program: Option<String>,
 }
@@ -146,7 +145,7 @@ pub struct SystemActivity {
     pub cpu_usage_pct: f32,
     pub memory_used_mb: u64,
     pub memory_total_mb: u64,
-    pub load_average: (f32, f32, f32),  // 1, 5, 15 min
+    pub load_average: (f32, f32, f32), // 1, 5, 15 min
     pub processes: Vec<ProcessInfo>,
 }
 
@@ -205,14 +204,16 @@ impl DiagnosticTools {
             // Parse statistics line: "5 packets transmitted, 5 received, 0% packet loss"
             if line.contains("packets transmitted") {
                 let parts: Vec<&str> = line.split(',').collect();
-                if let Some(sent_part) = parts.get(0) {
-                    packets_sent = sent_part.split_whitespace()
+                if let Some(sent_part) = parts.first() {
+                    packets_sent = sent_part
+                        .split_whitespace()
                         .next()
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(0);
                 }
                 if let Some(recv_part) = parts.get(1) {
-                    packets_received = recv_part.split_whitespace()
+                    packets_received = recv_part
+                        .split_whitespace()
                         .next()
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(0);
@@ -252,16 +253,14 @@ impl DiagnosticTools {
     }
 
     /// Traceroute to a host
-    pub async fn traceroute(
-        target: &str,
-        max_hops: u32,
-        ipv6: bool,
-    ) -> Result<TracerouteResult> {
+    pub async fn traceroute(target: &str, max_hops: u32, ipv6: bool) -> Result<TracerouteResult> {
         let traceroute_cmd = if ipv6 { "traceroute6" } else { "traceroute" };
 
         let output = Command::new(traceroute_cmd)
-            .arg("-m").arg(max_hops.to_string())
-            .arg("-q").arg("3")  // 3 queries per hop
+            .arg("-m")
+            .arg(max_hops.to_string())
+            .arg("-q")
+            .arg("3") // 3 queries per hop
             .arg(target)
             .output()
             .await?;
@@ -282,7 +281,8 @@ impl DiagnosticTools {
     fn parse_traceroute_output(output: &str) -> Result<Vec<TracerouteHop>> {
         let mut hops = Vec::new();
 
-        for line in output.lines().skip(1) {  // Skip first line (header)
+        for line in output.lines().skip(1) {
+            // Skip first line (header)
             if line.trim().is_empty() {
                 continue;
             }
@@ -290,7 +290,7 @@ impl DiagnosticTools {
             // Parse line like: " 1  router.local (192.168.1.1)  0.123 ms  0.456 ms  0.789 ms"
             let parts: Vec<&str> = line.split_whitespace().collect();
 
-            if let Some(hop_num_str) = parts.get(0) {
+            if let Some(hop_num_str) = parts.first() {
                 if let Ok(hop_num) = hop_num_str.parse::<u32>() {
                     let mut hop = TracerouteHop {
                         hop_number: hop_num,
@@ -317,7 +317,7 @@ impl DiagnosticTools {
                             let rtt_str = part.trim_end_matches("ms");
                             hop.rtt_ms.push(rtt_str.parse().ok());
                         } else if *part == "*" {
-                            hop.rtt_ms.push(None);  // Timeout
+                            hop.rtt_ms.push(None); // Timeout
                         }
                     }
 
@@ -343,7 +343,7 @@ impl DiagnosticTools {
 
         cmd.arg(query);
         cmd.arg(record_type);
-        cmd.arg("+short");  // Concise output
+        cmd.arg("+short"); // Concise output
 
         let start = SystemTime::now();
         let output = cmd.output().await?;
@@ -381,7 +381,7 @@ impl DiagnosticTools {
             }
 
             records.push(DnsRecord {
-                name: String::new(),  // dig +short doesn't include name
+                name: String::new(), // dig +short doesn't include name
                 record_type: record_type.to_string(),
                 ttl: None,
                 value: line.to_string(),
@@ -392,18 +392,15 @@ impl DiagnosticTools {
     }
 
     /// Test if a TCP port is open
-    pub async fn test_port(
-        host: &str,
-        port: u16,
-        timeout_secs: u64,
-    ) -> Result<PortTestResult> {
+    pub async fn test_port(host: &str, port: u16, timeout_secs: u64) -> Result<PortTestResult> {
         let target = format!("{}:{}", host, port);
 
         let start = SystemTime::now();
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(timeout_secs),
-            tokio::net::TcpStream::connect(&target)
-        ).await;
+            tokio::net::TcpStream::connect(&target),
+        )
+        .await;
 
         let response_time = start.elapsed().ok().map(|d| d.as_secs_f64() * 1000.0);
 
@@ -426,10 +423,7 @@ impl DiagnosticTools {
 
     /// Get ARP table
     pub async fn get_arp_table() -> Result<Vec<ArpEntry>> {
-        let output = Command::new("arp")
-            .arg("-n")
-            .output()
-            .await?;
+        let output = Command::new("arp").arg("-n").output().await?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -439,7 +433,8 @@ impl DiagnosticTools {
     fn parse_arp_table(output: &str) -> Result<Vec<ArpEntry>> {
         let mut entries = Vec::new();
 
-        for line in output.lines().skip(1) {  // Skip header
+        for line in output.lines().skip(1) {
+            // Skip header
             let parts: Vec<&str> = line.split_whitespace().collect();
 
             if parts.len() >= 5 {
@@ -460,7 +455,7 @@ impl DiagnosticTools {
     /// Get NDP (IPv6 neighbor discovery) table
     pub async fn get_ndp_table() -> Result<Vec<NdpEntry>> {
         let output = Command::new("ip")
-            .args(&["-6", "neigh", "show"])
+            .args(["-6", "neigh", "show"])
             .output()
             .await?;
 
@@ -499,7 +494,7 @@ impl DiagnosticTools {
             cmd.arg("-6");
         }
 
-        cmd.args(&["route", "show"]);
+        cmd.args(["route", "show"]);
 
         let output = cmd.output().await?;
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -542,13 +537,9 @@ impl DiagnosticTools {
                             i += 1;
                         }
                     }
-                    "metric" => {
-                        if i + 1 < parts.len() {
-                            metric = parts[i + 1].parse().ok();
-                            i += 2;
-                        } else {
-                            i += 1;
-                        }
+                    "metric" if i + 1 < parts.len() => {
+                        metric = parts[i + 1].parse().ok();
+                        i += 2;
                     }
                     _ => {
                         i += 1;
@@ -571,12 +562,16 @@ impl DiagnosticTools {
     /// Get active sockets
     pub async fn get_sockets(protocol: Option<&str>) -> Result<Vec<SocketEntry>> {
         let mut cmd = Command::new("ss");
-        cmd.args(&["-tunap"]);  // TCP, UDP, numeric, all, processes
+        cmd.args(["-tunap"]); // TCP, UDP, numeric, all, processes
 
         if let Some(proto) = protocol {
             match proto.to_lowercase().as_str() {
-                "tcp" => { cmd.arg("-t"); }
-                "udp" => { cmd.arg("-u"); }
+                "tcp" => {
+                    cmd.arg("-t");
+                }
+                "udp" => {
+                    cmd.arg("-u");
+                }
                 _ => {}
             }
         }
@@ -590,7 +585,8 @@ impl DiagnosticTools {
     fn parse_sockets(output: &str) -> Result<Vec<SocketEntry>> {
         let mut entries = Vec::new();
 
-        for line in output.lines().skip(1) {  // Skip header
+        for line in output.lines().skip(1) {
+            // Skip header
             let parts: Vec<&str> = line.split_whitespace().collect();
 
             if parts.len() >= 5 {
@@ -627,7 +623,7 @@ impl DiagnosticTools {
                     remote_address,
                     remote_port,
                     state,
-                    pid: None,  // Would parse from users field
+                    pid: None, // Would parse from users field
                     program: None,
                 });
             }
@@ -638,17 +634,14 @@ impl DiagnosticTools {
 
     /// Get firewall states (conntrack)
     pub async fn get_firewall_states() -> Result<Vec<FirewallState>> {
-        let output = Command::new("conntrack")
-            .args(&["-L"])
-            .output()
-            .await?;
+        let output = Command::new("conntrack").args(["-L"]).output().await?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
         Self::parse_firewall_states(&stdout)
     }
 
-    fn parse_firewall_states(output: &str) -> Result<Vec<FirewallState>> {
+    fn parse_firewall_states(_output: &str) -> Result<Vec<FirewallState>> {
         // Simplified conntrack parsing
         // Real implementation would parse full conntrack output
         Ok(Vec::new())
@@ -660,9 +653,18 @@ impl DiagnosticTools {
         let loadavg = tokio::fs::read_to_string("/proc/loadavg").await?;
         let load_parts: Vec<&str> = loadavg.split_whitespace().collect();
         let load_average = (
-            load_parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0.0),
-            load_parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0.0),
-            load_parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+            load_parts
+                .first()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.0),
+            load_parts
+                .get(1)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.0),
+            load_parts
+                .get(2)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.0),
         );
 
         // Get memory info from /proc/meminfo
@@ -671,7 +673,7 @@ impl DiagnosticTools {
 
         // Get process list from ps
         let ps_output = Command::new("ps")
-            .args(&["aux", "--sort=-pcpu"])
+            .args(["aux", "--sort=-pcpu"])
             .output()
             .await?;
 
@@ -695,15 +697,19 @@ impl DiagnosticTools {
 
         for line in output.lines() {
             if line.starts_with("MemTotal:") {
-                total = line.split_whitespace()
+                total = line
+                    .split_whitespace()
                     .nth(1)
                     .and_then(|s| s.parse().ok())
-                    .unwrap_or(0) / 1024;  // Convert KB to MB
+                    .unwrap_or(0)
+                    / 1024; // Convert KB to MB
             } else if line.starts_with("MemAvailable:") {
-                available = line.split_whitespace()
+                available = line
+                    .split_whitespace()
                     .nth(1)
                     .and_then(|s| s.parse().ok())
-                    .unwrap_or(0) / 1024;
+                    .unwrap_or(0)
+                    / 1024;
             }
         }
 
@@ -715,7 +721,8 @@ impl DiagnosticTools {
     fn parse_ps_output(output: &str) -> Result<Vec<ProcessInfo>> {
         let mut processes = Vec::new();
 
-        for line in output.lines().skip(1).take(20) {  // Top 20 processes
+        for line in output.lines().skip(1).take(20) {
+            // Top 20 processes
             let parts: Vec<&str> = line.split_whitespace().collect();
 
             if parts.len() >= 11 {

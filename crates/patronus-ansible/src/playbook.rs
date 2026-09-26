@@ -75,7 +75,12 @@ impl PlaybookBuilder {
         self
     }
 
-    pub fn task(mut self, name: String, module: String, params: HashMap<String, serde_json::Value>) -> Self {
+    pub fn task(
+        mut self,
+        name: String,
+        module: String,
+        params: HashMap<String, serde_json::Value>,
+    ) -> Self {
         if let Some(ref mut play) = self.current_play {
             let mut module_map = HashMap::new();
             module_map.insert(module, serde_json::to_value(params).unwrap());
@@ -143,7 +148,11 @@ mod tests {
 
         let playbook = PlaybookBuilder::new()
             .play("Deploy Site".to_string(), "all".to_string())
-            .task("Create site".to_string(), "patronus_site".to_string(), params)
+            .task(
+                "Create site".to_string(),
+                "patronus_site".to_string(),
+                params,
+            )
             .build();
 
         assert_eq!(playbook.plays.len(), 1);

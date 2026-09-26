@@ -61,10 +61,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_level = if args.debug { "debug" } else { "info" };
     tracing_subscriber::registry()
         .with(fmt::layer().with_target(true).with_thread_ids(true))
-        .with(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(format!("patronus_sdwan={},sdwan_cli={}", log_level, log_level))),
-        )
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new(format!(
+                "patronus_sdwan={},sdwan_cli={}",
+                log_level, log_level
+            ))
+        }))
         .init();
 
     info!("Starting Patronus SD-WAN CLI");
@@ -76,13 +78,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check for root privileges (required for WireGuard management)
     if !nix::unistd::geteuid().is_root() {
         error!("This program must be run as root to manage WireGuard interfaces");
-        error!("Try: sudo -E cargo run --example sdwan_cli -- --site-name {}", args.site_name);
+        error!(
+            "Try: sudo -E cargo run --example sdwan_cli -- --site-name {}",
+            args.site_name
+        );
         std::process::exit(1);
     }
 
     // Create SD-WAN configuration
     let db_path = args.database.to_str().unwrap_or("sdwan.db");
-    let control_plane_addr: SocketAddr = args.multicast_group.parse()
+    let control_plane_addr: SocketAddr = args
+        .multicast_group
+        .parse()
         .unwrap_or_else(|_| "239.255.77.77:51821".parse().unwrap());
 
     let site_id = SiteId::generate();
@@ -109,7 +116,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("SD-WAN services started successfully");
     info!("Site ID: {}", site_id);
-    info!("Listening on port {} for WireGuard connections", args.listen_port);
+    info!(
+        "Listening on port {} for WireGuard connections",
+        args.listen_port
+    );
     info!("Multicast discovery enabled on {}", args.multicast_group);
     info!("");
     info!("The SD-WAN node is now running. Press Ctrl+C to stop.");
@@ -122,10 +132,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("  ✓ Automatic failover on path degradation");
     info!("");
     info!("To monitor the network:");
-    info!("  - View discovered sites: sqlite3 {} 'SELECT * FROM sites;'", db_path);
-    info!("  - View active paths: sqlite3 {} 'SELECT * FROM paths;'", db_path);
+    info!(
+        "  - View discovered sites: sqlite3 {} 'SELECT * FROM sites;'",
+        db_path
+    );
+    info!(
+        "  - View active paths: sqlite3 {} 'SELECT * FROM paths;'",
+        db_path
+    );
     info!("  - View path metrics: sqlite3 {} 'SELECT * FROM path_metrics ORDER BY measured_at DESC LIMIT 10;'", db_path);
-    info!("  - View routing policies: sqlite3 {} 'SELECT * FROM policies;'", db_path);
+    info!(
+        "  - View routing policies: sqlite3 {} 'SELECT * FROM policies;'",
+        db_path
+    );
     info!("");
 
     // Start status reporting task
@@ -181,7 +200,10 @@ async fn status_reporter(_manager: Arc<SdwanManager>, db: Arc<Database>) {
                         info!("  • {} (ID: {})", site.name, site.id);
                         if !site.endpoints.is_empty() {
                             for endpoint in &site.endpoints {
-                                info!("    - Endpoint: {} ({})", endpoint.address, endpoint.interface_type);
+                                info!(
+                                    "    - Endpoint: {} ({})",
+                                    endpoint.address, endpoint.interface_type
+                                );
                             }
                         }
                     }
@@ -196,7 +218,9 @@ async fn status_reporter(_manager: Arc<SdwanManager>, db: Arc<Database>) {
                             .count();
                         let degraded_paths = paths
                             .iter()
-                            .filter(|p| matches!(p.status, patronus_sdwan::types::PathStatus::Degraded))
+                            .filter(|p| {
+                                matches!(p.status, patronus_sdwan::types::PathStatus::Degraded)
+                            })
                             .count();
                         let down_paths = paths
                             .iter()
@@ -205,8 +229,13 @@ async fn status_reporter(_manager: Arc<SdwanManager>, db: Arc<Database>) {
 
                         if !paths.is_empty() {
                             info!("");
-                            info!("Active paths: {} (Up: {}, Degraded: {}, Down: {})",
-                                paths.len(), up_paths, degraded_paths, down_paths);
+                            info!(
+                                "Active paths: {} (Up: {}, Degraded: {}, Down: {})",
+                                paths.len(),
+                                up_paths,
+                                degraded_paths,
+                                down_paths
+                            );
 
                             // Show best and worst paths
                             let mut sorted_paths = paths.clone();

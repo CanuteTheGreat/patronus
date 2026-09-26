@@ -10,10 +10,10 @@
 //!
 //! Both are excellent. Choose based on your needs!
 
-use patronus_core::{Result, Error};
+use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::process::Command;
 
@@ -62,16 +62,16 @@ pub struct IdsRule {
     pub name: String,
     pub enabled: bool,
     pub action: RuleAction,
-    pub protocol: String,  // tcp, udp, icmp, ip
+    pub protocol: String, // tcp, udp, icmp, ip
     pub src_ip: String,
     pub src_port: String,
     pub dst_ip: String,
     pub dst_port: String,
     pub msg: String,
-    pub sid: u32,  // Rule ID
-    pub rev: u32,  // Revision
+    pub sid: u32, // Rule ID
+    pub rev: u32, // Revision
     pub content: Option<String>,
-    pub pcre: Option<String>,  // Perl-compatible regex
+    pub pcre: Option<String>, // Perl-compatible regex
     pub classtype: Option<String>,
     pub priority: u32,
 }
@@ -188,10 +188,10 @@ impl IdsManager {
                     IdsBackend::Snort2
                 }
             } else {
-                IdsBackend::Snort2  // Default assumption
+                IdsBackend::Snort2 // Default assumption
             }
         } else {
-            IdsBackend::Suricata  // Default preference
+            IdsBackend::Suricata // Default preference
         }
     }
 
@@ -262,12 +262,15 @@ impl IdsManager {
             IdsMode::IPS => "# IPS mode - inline blocking",
         };
 
-        let workers = config.performance.workers
+        let workers = config
+            .performance
+            .workers
             .map(|w| w.to_string())
             .unwrap_or_else(|| "auto".to_string());
 
         let af_packet_config = if config.performance.af_packet {
-            format!(r#"
+            format!(
+                r#"
 af-packet:
   - interface: {}
     threads: {}
@@ -288,7 +291,8 @@ af-packet:
         let home_net = config.home_net.join(",");
         let external_net = config.external_net.join(",");
 
-        Ok(format!(r#"%YAML 1.1
+        Ok(format!(
+            r#"%YAML 1.1
 ---
 # Patronus IDS/IPS - Suricata Configuration
 {}
@@ -395,7 +399,11 @@ logging:
             config.log_files,
             config.log_flow,
             self.rules_dir.display(),
-            if config.mode == IdsMode::IPS { "auto" } else { "no" },
+            if config.mode == IdsMode::IPS {
+                "auto"
+            } else {
+                "no"
+            },
         ))
     }
 
@@ -420,7 +428,8 @@ logging:
             IdsMode::IPS => "inline",
         };
 
-        Ok(format!(r#"-- Patronus IDS/IPS - Snort 3 Configuration
+        Ok(format!(
+            r#"-- Patronus IDS/IPS - Snort 3 Configuration
 
 ---------------------------------------------------------------------------
 -- Variables
@@ -505,7 +514,8 @@ output = {{
         let home_net = config.home_net.join(",");
         let external_net = config.external_net.join(",");
 
-        Ok(format!(r#"# Patronus IDS/IPS - Snort 2 Configuration
+        Ok(format!(
+            r#"# Patronus IDS/IPS - Snort 2 Configuration
 
 #--------------------------------------------------
 # Variables
@@ -627,19 +637,11 @@ include $RULE_PATH/custom.rules
             };
 
             let mut rule_parts = vec![
-                format!("{} {} {} {} -> {} {}",
-                    action,
-                    rule.protocol,
-                    rule.src_ip,
-                    rule.src_port,
-                    rule.dst_ip,
-                    rule.dst_port
+                format!(
+                    "{} {} {} {} -> {} {}",
+                    action, rule.protocol, rule.src_ip, rule.src_port, rule.dst_ip, rule.dst_port
                 ),
-                format!("(msg:\"{}\"; sid:{}; rev:{};",
-                    rule.msg,
-                    rule.sid,
-                    rule.rev
-                ),
+                format!("(msg:\"{}\"; sid:{}; rev:{};", rule.msg, rule.sid, rule.rev),
             ];
 
             if let Some(ref content) = rule.content {
@@ -672,7 +674,9 @@ include $RULE_PATH/custom.rules
             IdsBackend::Suricata => {
                 Command::new("suricata-update")
                     .spawn()
-                    .map_err(|e| Error::Firewall(format!("Failed to update Suricata rules: {}", e)))?
+                    .map_err(|e| {
+                        Error::Firewall(format!("Failed to update Suricata rules: {}", e))
+                    })?
                     .wait()
                     .await
                     .map_err(|e| Error::Firewall(format!("suricata-update failed: {}", e)))?;
@@ -858,14 +862,13 @@ impl Default for IdsConfig {
             interfaces: vec!["eth0".to_string()],
             home_net: vec!["192.168.1.0/24".to_string()],
             external_net: vec!["!$HOME_NET".to_string()],
-            rule_sources: vec![
-                RuleSource {
-                    name: "Emerging Threats Open".to_string(),
-                    enabled: true,
-                    url: "https://rules.emergingthreats.net/open/suricata/emerging.rules.tar.gz".to_string(),
-                    update_interval_hours: 24,
-                },
-            ],
+            rule_sources: vec![RuleSource {
+                name: "Emerging Threats Open".to_string(),
+                enabled: true,
+                url: "https://rules.emergingthreats.net/open/suricata/emerging.rules.tar.gz"
+                    .to_string(),
+                update_interval_hours: 24,
+            }],
             custom_rules: IdsManager::create_basic_ruleset(),
             enabled_categories: vec![
                 "malware".to_string(),
@@ -875,7 +878,7 @@ impl Default for IdsConfig {
                 "scan".to_string(),
             ],
             performance: IdsPerformance {
-                workers: None,  // Auto-detect
+                workers: None, // Auto-detect
                 ring_size: 4096,
                 af_packet: true,
                 hardware_offload: false,

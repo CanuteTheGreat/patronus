@@ -47,9 +47,9 @@ impl FailoverPolicy {
             name,
             primary_path_id,
             backup_path_ids,
-            failover_threshold: 50.0,  // Default: failover when degraded
-            failback_threshold: 80.0,  // Default: failback when healthy
-            failback_delay_secs: 60,   // Default: 1 minute stabilization
+            failover_threshold: 50.0, // Default: failover when degraded
+            failback_threshold: 80.0, // Default: failback when healthy
+            failback_delay_secs: 60,  // Default: 1 minute stabilization
             enabled: true,
         }
     }
@@ -217,7 +217,10 @@ mod tests {
             (PathId::new(30), 60.0),
             (PathId::new(40), 70.0),
         ];
-        assert_eq!(policy.get_best_backup(&backup_health), Some(PathId::new(20)));
+        assert_eq!(
+            policy.get_best_backup(&backup_health),
+            Some(PathId::new(20))
+        );
 
         // First backup is down, second is healthy
         let backup_health = vec![
@@ -225,7 +228,10 @@ mod tests {
             (PathId::new(30), 60.0),
             (PathId::new(40), 70.0),
         ];
-        assert_eq!(policy.get_best_backup(&backup_health), Some(PathId::new(30)));
+        assert_eq!(
+            policy.get_best_backup(&backup_health),
+            Some(PathId::new(30))
+        );
 
         // All backups down, return first anyway
         let backup_health = vec![
@@ -233,43 +239,54 @@ mod tests {
             (PathId::new(30), 20.0),
             (PathId::new(40), 10.0),
         ];
-        assert_eq!(policy.get_best_backup(&backup_health), Some(PathId::new(20)));
+        assert_eq!(
+            policy.get_best_backup(&backup_health),
+            Some(PathId::new(20))
+        );
     }
 
     #[test]
     fn test_validate_empty_name() {
-        let mut policy = FailoverPolicy::default();
-        policy.name = "".to_string();
-        policy.backup_path_ids = vec![PathId::new(1)];
+        let policy = FailoverPolicy {
+            name: "".to_string(),
+            backup_path_ids: vec![PathId::new(1)],
+            ..Default::default()
+        };
 
         assert!(policy.validate().is_err());
     }
 
     #[test]
     fn test_validate_no_backups() {
-        let mut policy = FailoverPolicy::default();
-        policy.name = "test".to_string();
-        policy.backup_path_ids = Vec::new();
+        let policy = FailoverPolicy {
+            name: "test".to_string(),
+            backup_path_ids: Vec::new(),
+            ..Default::default()
+        };
 
         assert!(policy.validate().is_err());
     }
 
     #[test]
     fn test_validate_primary_in_backups() {
-        let mut policy = FailoverPolicy::default();
-        policy.name = "test".to_string();
-        policy.primary_path_id = PathId::new(10);
-        policy.backup_path_ids = vec![PathId::new(10), PathId::new(20)];
+        let policy = FailoverPolicy {
+            name: "test".to_string(),
+            primary_path_id: PathId::new(10),
+            backup_path_ids: vec![PathId::new(10), PathId::new(20)],
+            ..Default::default()
+        };
 
         assert!(policy.validate().is_err());
     }
 
     #[test]
     fn test_validate_thresholds() {
-        let mut policy = FailoverPolicy::default();
-        policy.name = "test".to_string();
-        policy.primary_path_id = PathId::new(10);
-        policy.backup_path_ids = vec![PathId::new(20)];
+        let mut policy = FailoverPolicy {
+            name: "test".to_string(),
+            primary_path_id: PathId::new(10),
+            backup_path_ids: vec![PathId::new(20)],
+            ..Default::default()
+        };
 
         // Invalid: failover >= failback
         policy.failover_threshold = 80.0;
@@ -289,10 +306,12 @@ mod tests {
 
     #[test]
     fn test_validate_threshold_ranges() {
-        let mut policy = FailoverPolicy::default();
-        policy.name = "test".to_string();
-        policy.primary_path_id = PathId::new(10);
-        policy.backup_path_ids = vec![PathId::new(20)];
+        let mut policy = FailoverPolicy {
+            name: "test".to_string(),
+            primary_path_id: PathId::new(10),
+            backup_path_ids: vec![PathId::new(20)],
+            ..Default::default()
+        };
 
         // Invalid: failover < 0
         policy.failover_threshold = -10.0;

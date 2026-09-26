@@ -8,11 +8,11 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QLearningConfig {
-    pub learning_rate: f64,      // α (alpha)
-    pub discount_factor: f64,    // γ (gamma)
-    pub epsilon: f64,            // ε for exploration
-    pub epsilon_decay: f64,      // Decay rate for epsilon
-    pub min_epsilon: f64,        // Minimum epsilon value
+    pub learning_rate: f64,   // α (alpha)
+    pub discount_factor: f64, // γ (gamma)
+    pub epsilon: f64,         // ε for exploration
+    pub epsilon_decay: f64,   // Decay rate for epsilon
+    pub min_epsilon: f64,     // Minimum epsilon value
 }
 
 impl Default for QLearningConfig {
@@ -30,6 +30,7 @@ impl Default for QLearningConfig {
 /// Q-Table for storing state-action values
 pub struct QTable {
     table: HashMap<(usize, usize), f64>,
+    #[allow(dead_code)]
     num_states: usize,
     num_actions: usize,
 }
@@ -139,8 +140,8 @@ impl QLearning {
 
     /// Decay exploration rate
     pub fn decay_epsilon(&mut self) {
-        self.current_epsilon = (self.current_epsilon * self.config.epsilon_decay)
-            .max(self.config.min_epsilon);
+        self.current_epsilon =
+            (self.current_epsilon * self.config.epsilon_decay).max(self.config.min_epsilon);
         self.episodes_trained += 1;
     }
 

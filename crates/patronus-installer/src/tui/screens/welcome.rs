@@ -39,7 +39,10 @@ pub fn draw(frame: &mut Frame, _app: &InstallerApp) {
         Line::from("  • Service configuration"),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Requirements: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Requirements: ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
             Span::raw("8GB+ disk, 2GB+ RAM"),
         ]),
     ];
@@ -52,9 +55,19 @@ pub fn draw(frame: &mut Frame, _app: &InstallerApp) {
     // Instructions
     let instructions = Line::from(vec![
         Span::raw("Press "),
-        Span::styled("Enter", Style::default().fg(Theme::HIGHLIGHT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Enter",
+            Style::default()
+                .fg(Theme::HIGHLIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" to continue or "),
-        Span::styled("q", Style::default().fg(Theme::HIGHLIGHT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "q",
+            Style::default()
+                .fg(Theme::HIGHLIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" to quit"),
     ]);
 

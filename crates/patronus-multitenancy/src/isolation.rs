@@ -1,29 +1,18 @@
 //! Resource Isolation and Quotas
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use uuid::Uuid;
-use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResourceUsage {
     pub sites: u32,
     pub tunnels: u32,
     pub bandwidth_mbps: u32,
     pub users: u32,
-}
-
-impl Default for ResourceUsage {
-    fn default() -> Self {
-        Self {
-            sites: 0,
-            tunnels: 0,
-            bandwidth_mbps: 0,
-            users: 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,12 +96,18 @@ impl IsolationManager {
         let quotas = self.quotas.read().await;
 
         let current = usage.get(org_id).map(|u| u.sites).unwrap_or(0);
-        let quota = quotas.get(org_id).ok_or_else(|| anyhow::anyhow!("No quota set"))?;
+        let quota = quotas
+            .get(org_id)
+            .ok_or_else(|| anyhow::anyhow!("No quota set"))?;
 
         if quota.check_sites(current, additional) {
             Ok(())
         } else {
-            anyhow::bail!("Site quota exceeded: {}/{:?}", current + additional, quota.max_sites)
+            anyhow::bail!(
+                "Site quota exceeded: {}/{:?}",
+                current + additional,
+                quota.max_sites
+            )
         }
     }
 
@@ -121,12 +116,18 @@ impl IsolationManager {
         let quotas = self.quotas.read().await;
 
         let current = usage.get(org_id).map(|u| u.tunnels).unwrap_or(0);
-        let quota = quotas.get(org_id).ok_or_else(|| anyhow::anyhow!("No quota set"))?;
+        let quota = quotas
+            .get(org_id)
+            .ok_or_else(|| anyhow::anyhow!("No quota set"))?;
 
         if quota.check_tunnels(current, additional) {
             Ok(())
         } else {
-            anyhow::bail!("Tunnel quota exceeded: {}/{:?}", current + additional, quota.max_tunnels)
+            anyhow::bail!(
+                "Tunnel quota exceeded: {}/{:?}",
+                current + additional,
+                quota.max_tunnels
+            )
         }
     }
 
@@ -135,12 +136,18 @@ impl IsolationManager {
         let quotas = self.quotas.read().await;
 
         let current = usage.get(org_id).map(|u| u.bandwidth_mbps).unwrap_or(0);
-        let quota = quotas.get(org_id).ok_or_else(|| anyhow::anyhow!("No quota set"))?;
+        let quota = quotas
+            .get(org_id)
+            .ok_or_else(|| anyhow::anyhow!("No quota set"))?;
 
         if quota.check_bandwidth(current, additional) {
             Ok(())
         } else {
-            anyhow::bail!("Bandwidth quota exceeded: {}/{:?}", current + additional, quota.max_bandwidth_mbps)
+            anyhow::bail!(
+                "Bandwidth quota exceeded: {}/{:?}",
+                current + additional,
+                quota.max_bandwidth_mbps
+            )
         }
     }
 
@@ -149,12 +156,18 @@ impl IsolationManager {
         let quotas = self.quotas.read().await;
 
         let current = usage.get(org_id).map(|u| u.users).unwrap_or(0);
-        let quota = quotas.get(org_id).ok_or_else(|| anyhow::anyhow!("No quota set"))?;
+        let quota = quotas
+            .get(org_id)
+            .ok_or_else(|| anyhow::anyhow!("No quota set"))?;
 
         if quota.check_users(current, additional) {
             Ok(())
         } else {
-            anyhow::bail!("User quota exceeded: {}/{:?}", current + additional, quota.max_users)
+            anyhow::bail!(
+                "User quota exceeded: {}/{:?}",
+                current + additional,
+                quota.max_users
+            )
         }
     }
 
@@ -198,7 +211,9 @@ impl IsolationManager {
 
     pub async fn set_bandwidth(&self, org_id: Uuid, bandwidth_mbps: u32) -> Result<()> {
         let quotas = self.quotas.read().await;
-        let quota = quotas.get(&org_id).ok_or_else(|| anyhow::anyhow!("No quota set"))?;
+        let quota = quotas
+            .get(&org_id)
+            .ok_or_else(|| anyhow::anyhow!("No quota set"))?;
 
         if let Some(max) = quota.max_bandwidth_mbps {
             if bandwidth_mbps > max {

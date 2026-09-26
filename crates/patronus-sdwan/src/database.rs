@@ -1,9 +1,9 @@
 //! Database operations for SD-WAN
 
 use crate::{types::*, Result};
+use serde_json;
 use sqlx::{sqlite::SqlitePool, Row};
 use tracing::{debug, info};
-use serde_json;
 
 /// Database for SD-WAN state
 pub struct Database {
@@ -319,12 +319,14 @@ impl Database {
 
     /// Insert or update a site
     pub async fn upsert_site(&self, site: &Site) -> Result<()> {
-        let created_at = site.created_at
+        let created_at = site
+            .created_at
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
 
-        let last_seen = site.last_seen
+        let last_seen = site
+            .last_seen
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
@@ -383,14 +385,18 @@ impl Database {
             let parsed_site_id: SiteId = site_id.parse().unwrap();
 
             // Load endpoints for this site
-            let endpoints = self.get_endpoints(&parsed_site_id).await.unwrap_or_default();
+            let endpoints = self
+                .get_endpoints(&parsed_site_id)
+                .await
+                .unwrap_or_default();
 
             Ok(Some(Site {
                 id: parsed_site_id,
                 name: site_name,
                 public_key,
                 endpoints,
-                created_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(created_at as u64),
+                created_at: std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(created_at as u64),
                 last_seen: std::time::UNIX_EPOCH + std::time::Duration::from_secs(last_seen as u64),
                 status,
             }))
@@ -430,14 +436,18 @@ impl Database {
             let parsed_site_id: SiteId = site_id.parse().unwrap();
 
             // Load endpoints for this site
-            let endpoints = self.get_endpoints(&parsed_site_id).await.unwrap_or_default();
+            let endpoints = self
+                .get_endpoints(&parsed_site_id)
+                .await
+                .unwrap_or_default();
 
             sites.push(Site {
                 id: parsed_site_id,
                 name: site_name,
                 public_key,
                 endpoints,
-                created_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(created_at as u64),
+                created_at: std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(created_at as u64),
                 last_seen: std::time::UNIX_EPOCH + std::time::Duration::from_secs(last_seen as u64),
                 status,
             });
@@ -571,7 +581,8 @@ impl Database {
 
     /// Record path metrics
     pub async fn record_metrics(&self, path_id: PathId, metrics: &PathMetrics) -> Result<()> {
-        let timestamp = metrics.measured_at
+        let timestamp = metrics
+            .measured_at
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
@@ -782,7 +793,8 @@ impl Database {
             let enabled: i32 = row.try_get("enabled")?;
 
             let match_rules: crate::policy::MatchRules = serde_json::from_str(&match_rules_json)?;
-            let path_preference: crate::policy::PathPreference = serde_json::from_str(&path_preference_json)?;
+            let path_preference: crate::policy::PathPreference =
+                serde_json::from_str(&path_preference_json)?;
 
             Ok(Some(crate::policy::RoutingPolicy {
                 id: policy_id as u64,
@@ -819,7 +831,8 @@ impl Database {
             let enabled: i32 = row.try_get("enabled")?;
 
             let match_rules: crate::policy::MatchRules = serde_json::from_str(&match_rules_json)?;
-            let path_preference: crate::policy::PathPreference = serde_json::from_str(&path_preference_json)?;
+            let path_preference: crate::policy::PathPreference =
+                serde_json::from_str(&path_preference_json)?;
 
             policies.push(crate::policy::RoutingPolicy {
                 id: policy_id as u64,
@@ -850,8 +863,12 @@ impl Database {
     }
 
     /// Store system-wide metrics snapshot
-    pub async fn store_system_metrics(&self, metrics: &crate::metrics::SystemMetrics) -> Result<()> {
-        let timestamp = metrics.timestamp
+    pub async fn store_system_metrics(
+        &self,
+        metrics: &crate::metrics::SystemMetrics,
+    ) -> Result<()> {
+        let timestamp = metrics
+            .timestamp
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
@@ -914,7 +931,10 @@ impl Database {
         from: std::time::SystemTime,
         to: std::time::SystemTime,
     ) -> Result<Vec<crate::metrics::SystemMetrics>> {
-        let from_ts = from.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let from_ts = from
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
         let to_ts = to.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
 
         let rows = sqlx::query(
@@ -953,7 +973,10 @@ impl Database {
 
     /// Clean up old metrics data (retention policy)
     pub async fn cleanup_old_metrics(&self, older_than: std::time::SystemTime) -> Result<u64> {
-        let timestamp = older_than.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let timestamp = older_than
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
 
         // Clean up path metrics
         let path_result = sqlx::query(
@@ -988,12 +1011,18 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        Ok(path_result.rows_affected() + system_result.rows_affected() + policy_result.rows_affected())
+        Ok(path_result.rows_affected()
+            + system_result.rows_affected()
+            + policy_result.rows_affected())
     }
 
     /// Store policy traffic statistics (Sprint 30)
-    pub async fn store_policy_stats(&self, stats: &crate::traffic_stats::PolicyStats) -> Result<()> {
-        let timestamp = stats.last_updated
+    pub async fn store_policy_stats(
+        &self,
+        stats: &crate::traffic_stats::PolicyStats,
+    ) -> Result<()> {
+        let timestamp = stats
+            .last_updated
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
@@ -1018,7 +1047,10 @@ impl Database {
     }
 
     /// Get latest policy statistics (Sprint 30)
-    pub async fn get_latest_policy_stats(&self, policy_id: u64) -> Result<Option<crate::traffic_stats::PolicyStats>> {
+    pub async fn get_latest_policy_stats(
+        &self,
+        policy_id: u64,
+    ) -> Result<Option<crate::traffic_stats::PolicyStats>> {
         let row = sqlx::query(
             r#"
             SELECT policy_id, timestamp, packets_matched, bytes_matched, active_flows
@@ -1040,8 +1072,10 @@ impl Database {
                 packets_matched: row.try_get::<i64, _>("packets_matched")? as u64,
                 bytes_matched: row.try_get::<i64, _>("bytes_matched")? as u64,
                 active_flows: row.try_get::<i64, _>("active_flows")? as u64,
-                last_updated: std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64),
-                first_seen: std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64),
+                last_updated: std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(timestamp as u64),
+                first_seen: std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(timestamp as u64),
             }))
         } else {
             Ok(None)
@@ -1055,7 +1089,10 @@ impl Database {
         from: std::time::SystemTime,
         to: std::time::SystemTime,
     ) -> Result<Vec<crate::traffic_stats::PolicyStats>> {
-        let from_ts = from.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let from_ts = from
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
         let to_ts = to.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
 
         let rows = sqlx::query(
@@ -1081,8 +1118,10 @@ impl Database {
                 packets_matched: row.try_get::<i64, _>("packets_matched")? as u64,
                 bytes_matched: row.try_get::<i64, _>("bytes_matched")? as u64,
                 active_flows: row.try_get::<i64, _>("active_flows")? as u64,
-                last_updated: std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64),
-                first_seen: std::time::UNIX_EPOCH + std::time::Duration::from_secs(timestamp as u64),
+                last_updated: std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(timestamp as u64),
+                first_seen: std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(timestamp as u64),
             });
         }
 
@@ -1131,7 +1170,9 @@ impl Database {
         // Commit transaction
         tx.commit().await?;
 
-        Ok(paths_result.rows_affected() + endpoints_result.rows_affected() + site_result.rows_affected())
+        Ok(paths_result.rows_affected()
+            + endpoints_result.rows_affected()
+            + site_result.rows_affected())
     }
 
     /// Count paths associated with a site (Sprint 30)
@@ -1155,11 +1196,13 @@ impl Database {
 
     /// Insert or update a flow
     pub async fn upsert_flow(&self, flow: &FlowRecord) -> Result<i64> {
-        let started_at = flow.started_at
+        let started_at = flow
+            .started_at
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
-        let last_seen_at = flow.last_seen_at
+        let last_seen_at = flow
+            .last_seen_at
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
@@ -1294,7 +1337,8 @@ impl Database {
         let cutoff = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() as i64 - older_than_secs;
+            .as_secs() as i64
+            - older_than_secs;
 
         // Mark as closed first
         sqlx::query(
@@ -1363,9 +1407,12 @@ impl Database {
             dst_port: row.try_get::<i32, _>("dst_port")? as u16,
             protocol: row.try_get::<i32, _>("protocol")? as u8,
             path_id: row.try_get::<i64, _>("path_id")? as u64,
-            policy_id: row.try_get::<Option<i64>, _>("policy_id")?.map(|p| p as u64),
+            policy_id: row
+                .try_get::<Option<i64>, _>("policy_id")?
+                .map(|p| p as u64),
             started_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(started_at as u64),
-            last_seen_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(last_seen_at as u64),
+            last_seen_at: std::time::UNIX_EPOCH
+                + std::time::Duration::from_secs(last_seen_at as u64),
             bytes_tx: row.try_get::<i64, _>("bytes_tx")? as u64,
             bytes_rx: row.try_get::<i64, _>("bytes_rx")? as u64,
             packets_tx: row.try_get::<i64, _>("packets_tx")? as u64,

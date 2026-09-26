@@ -1,10 +1,10 @@
 //! Distributed Consensus and State Replication
 
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use anyhow::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum NodeRole {
@@ -113,7 +113,9 @@ impl ConsensusCluster {
     }
 
     pub fn elect_leader(&mut self, candidate_id: &Uuid) -> Result<()> {
-        let node = self.nodes.get_mut(candidate_id)
+        let node = self
+            .nodes
+            .get_mut(candidate_id)
             .ok_or_else(|| anyhow::anyhow!("Node not found"))?;
 
         // Simple leader election (in production, use Raft consensus)
@@ -133,8 +135,13 @@ impl ConsensusCluster {
         Ok(())
     }
 
-    pub fn append_entry(&mut self, command: impl Into<String>, data: serde_json::Value) -> Result<u64> {
-        let leader = self.get_leader()
+    pub fn append_entry(
+        &mut self,
+        command: impl Into<String>,
+        data: serde_json::Value,
+    ) -> Result<u64> {
+        let leader = self
+            .get_leader()
             .ok_or_else(|| anyhow::anyhow!("No leader elected"))?;
 
         let index = self.log.len() as u64;
@@ -172,7 +179,9 @@ impl ConsensusCluster {
     }
 
     pub fn has_quorum(&self) -> bool {
-        let active_nodes = self.nodes.values()
+        let active_nodes = self
+            .nodes
+            .values()
             .filter(|n| {
                 let elapsed = Utc::now()
                     .signed_duration_since(n.last_heartbeat)

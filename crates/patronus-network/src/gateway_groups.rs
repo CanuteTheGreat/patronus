@@ -8,7 +8,7 @@
 //!
 //! Example: Fiber (Tier 1) → Cable (Tier 2) → 4G (Tier 3)
 
-use patronus_core::{Result, Error};
+use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -22,8 +22,8 @@ pub type GatewayTier = u8;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayGroupMember {
     pub gateway_name: String,
-    pub tier: GatewayTier,  // 1 = primary, 2 = backup, 3 = last resort, etc.
-    pub weight: u32,         // For load balancing within tier
+    pub tier: GatewayTier, // 1 = primary, 2 = backup, 3 = last resort, etc.
+    pub weight: u32,       // For load balancing within tier
 }
 
 /// Advanced gateway group with tiered failover
@@ -35,14 +35,15 @@ pub struct AdvancedGatewayGroup {
     pub members: Vec<GatewayGroupMember>,
 
     // Behavior settings
-    pub trigger_level: u8,  // Minimum working gateways before failover
-    pub sticky_connections: bool,  // Use source IP hashing for session persistence
+    pub trigger_level: u8,        // Minimum working gateways before failover
+    pub sticky_connections: bool, // Use source IP hashing for session persistence
 }
 
 impl AdvancedGatewayGroup {
     /// Get all gateway names in a specific tier
     pub fn get_tier_gateways(&self, tier: GatewayTier) -> Vec<String> {
-        self.members.iter()
+        self.members
+            .iter()
             .filter(|m| m.tier == tier)
             .map(|m| m.gateway_name.clone())
             .collect()
@@ -50,9 +51,7 @@ impl AdvancedGatewayGroup {
 
     /// Get all tiers in use (sorted from lowest/best to highest/worst)
     pub fn get_tiers(&self) -> Vec<GatewayTier> {
-        let mut tiers: Vec<GatewayTier> = self.members.iter()
-            .map(|m| m.tier)
-            .collect();
+        let mut tiers: Vec<GatewayTier> = self.members.iter().map(|m| m.tier).collect();
         tiers.sort_unstable();
         tiers.dedup();
         tiers
@@ -63,7 +62,8 @@ impl AdvancedGatewayGroup {
         // Find lowest tier with at least one online gateway
         for tier in self.get_tiers() {
             let tier_gateways = self.get_tier_gateways(tier);
-            let online_in_tier: Vec<_> = tier_gateways.iter()
+            let online_in_tier: Vec<_> = tier_gateways
+                .iter()
                 .filter(|gw| online_gateways.contains(gw))
                 .collect();
 
@@ -77,7 +77,8 @@ impl AdvancedGatewayGroup {
     /// Get all members in active tier (for load balancing)
     pub fn get_active_members(&self, online_gateways: &[String]) -> Vec<GatewayGroupMember> {
         if let Some(active_tier) = self.get_active_tier(online_gateways) {
-            self.members.iter()
+            self.members
+                .iter()
                 .filter(|m| m.tier == active_tier && online_gateways.contains(&m.gateway_name))
                 .cloned()
                 .collect()
@@ -97,7 +98,8 @@ impl AdvancedGatewayGroup {
         for member in &self.members {
             if !seen.insert(&member.gateway_name) {
                 return Err(Error::Config(format!(
-                    "Duplicate gateway in group: {}", member.gateway_name
+                    "Duplicate gateway in group: {}",
+                    member.gateway_name
                 )));
             }
         }
@@ -106,7 +108,8 @@ impl AdvancedGatewayGroup {
         for member in &self.members {
             if member.tier == 0 || member.tier > 10 {
                 return Err(Error::Config(format!(
-                    "Invalid tier {} (must be 1-10)", member.tier
+                    "Invalid tier {} (must be 1-10)",
+                    member.tier
                 )));
             }
         }
@@ -115,7 +118,8 @@ impl AdvancedGatewayGroup {
         for member in &self.members {
             if member.weight == 0 || member.weight > 256 {
                 return Err(Error::Config(format!(
-                    "Invalid weight {} (must be 1-256)", member.weight
+                    "Invalid weight {} (must be 1-256)",
+                    member.weight
                 )));
             }
         }
@@ -127,9 +131,9 @@ impl AdvancedGatewayGroup {
 /// Gateway selection for firewall rules
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum GatewaySelection {
-    Default,                      // Use default routing
-    Gateway(String),              // Specific gateway
-    GatewayGroup(String),         // Gateway group (with failover/load balancing)
+    Default,              // Use default routing
+    Gateway(String),      // Specific gateway
+    GatewayGroup(String), // Gateway group (with failover/load balancing)
 }
 
 /// Firewall rule with gateway selection
@@ -160,7 +164,8 @@ impl GatewayGroupManager {
 
     /// Remove a gateway group
     pub fn remove_group(&mut self, name: &str) -> Result<()> {
-        self.groups.remove(name)
+        self.groups
+            .remove(name)
             .ok_or_else(|| Error::Config(format!("Gateway group not found: {}", name)))?;
         Ok(())
     }
@@ -183,37 +188,46 @@ impl GatewayGroupManager {
         gateway_ips: &HashMap<String, IpAddr>,
         gateway_interfaces: &HashMap<String, String>,
     ) -> Result<RoutingConfig> {
-        let group = self.get_group(group_name)
+        let group = self
+            .get_group(group_name)
             .ok_or_else(|| Error::Config(format!("Gateway group not found: {}", group_name)))?;
 
         if !group.enabled {
-            return Err(Error::Config(format!("Gateway group {} is disabled", group_name)));
+            return Err(Error::Config(format!(
+                "Gateway group {} is disabled",
+                group_name
+            )));
         }
 
         let active_members = group.get_active_members(online_gateways);
 
         if active_members.is_empty() {
             return Err(Error::Network(format!(
-                "No online gateways in group {}", group_name
+                "No online gateways in group {}",
+                group_name
             )));
         }
 
-        let active_tier = group.get_active_tier(online_gateways)
+        let active_tier = group
+            .get_active_tier(online_gateways)
             .expect("Active tier should exist if we have active members");
 
         // Build nexthops for multipath routing
         let mut nexthops = Vec::new();
 
         for member in &active_members {
-            let gateway_ip = gateway_ips.get(&member.gateway_name)
-                .ok_or_else(|| Error::Config(format!(
-                    "Gateway IP not found: {}", member.gateway_name
-                )))?;
+            let gateway_ip = gateway_ips.get(&member.gateway_name).ok_or_else(|| {
+                Error::Config(format!("Gateway IP not found: {}", member.gateway_name))
+            })?;
 
-            let interface = gateway_interfaces.get(&member.gateway_name)
-                .ok_or_else(|| Error::Config(format!(
-                    "Gateway interface not found: {}", member.gateway_name
-                )))?;
+            let interface = gateway_interfaces
+                .get(&member.gateway_name)
+                .ok_or_else(|| {
+                    Error::Config(format!(
+                        "Gateway interface not found: {}",
+                        member.gateway_name
+                    ))
+                })?;
 
             nexthops.push(Nexthop {
                 gateway: *gateway_ip,
@@ -231,10 +245,7 @@ impl GatewayGroupManager {
     }
 
     /// Get status summary for all groups
-    pub fn get_status_summary(
-        &self,
-        online_gateways: &[String],
-    ) -> HashMap<String, GroupStatus> {
+    pub fn get_status_summary(&self, online_gateways: &[String]) -> HashMap<String, GroupStatus> {
         let mut summary = HashMap::new();
 
         for (name, group) in &self.groups {
@@ -242,15 +253,18 @@ impl GatewayGroupManager {
             let active_count = group.get_active_members(online_gateways).len();
             let total_count = group.members.len();
 
-            summary.insert(name.clone(), GroupStatus {
-                enabled: group.enabled,
-                active_tier,
-                active_gateways: active_count,
-                total_gateways: total_count,
-                is_healthy: active_tier == Some(1), // Tier 1 is optimal
-                is_degraded: active_tier.is_some() && active_tier != Some(1),
-                is_down: active_tier.is_none(),
-            });
+            summary.insert(
+                name.clone(),
+                GroupStatus {
+                    enabled: group.enabled,
+                    active_tier,
+                    active_gateways: active_count,
+                    total_gateways: total_count,
+                    is_healthy: active_tier == Some(1), // Tier 1 is optimal
+                    is_degraded: active_tier.is_some() && active_tier != Some(1),
+                    is_down: active_tier.is_none(),
+                },
+            );
         }
 
         summary
@@ -286,9 +300,9 @@ pub struct GroupStatus {
     pub active_tier: Option<GatewayTier>,
     pub active_gateways: usize,
     pub total_gateways: usize,
-    pub is_healthy: bool,    // All Tier 1 gateways online
-    pub is_degraded: bool,   // Failover to Tier 2+
-    pub is_down: bool,       // No gateways online
+    pub is_healthy: bool,  // All Tier 1 gateways online
+    pub is_degraded: bool, // Failover to Tier 2+
+    pub is_down: bool,     // No gateways online
 }
 
 /// Example configurations
@@ -302,17 +316,17 @@ impl AdvancedGatewayGroup {
             members: vec![
                 GatewayGroupMember {
                     gateway_name: "fiber_wan".to_string(),
-                    tier: 1,  // Primary
+                    tier: 1, // Primary
                     weight: 100,
                 },
                 GatewayGroupMember {
                     gateway_name: "cable_wan".to_string(),
-                    tier: 2,  // Backup
+                    tier: 2, // Backup
                     weight: 100,
                 },
                 GatewayGroupMember {
                     gateway_name: "lte_wan".to_string(),
-                    tier: 3,  // Emergency
+                    tier: 3, // Emergency
                     weight: 100,
                 },
             ],
@@ -330,22 +344,22 @@ impl AdvancedGatewayGroup {
             members: vec![
                 GatewayGroupMember {
                     gateway_name: "fiber1_wan".to_string(),
-                    tier: 1,  // Primary tier
+                    tier: 1, // Primary tier
                     weight: 100,
                 },
                 GatewayGroupMember {
                     gateway_name: "fiber2_wan".to_string(),
-                    tier: 1,  // Same tier = load balance
+                    tier: 1, // Same tier = load balance
                     weight: 100,
                 },
                 GatewayGroupMember {
                     gateway_name: "cable_wan".to_string(),
-                    tier: 2,  // Backup tier
+                    tier: 2, // Backup tier
                     weight: 100,
                 },
             ],
             trigger_level: 1,
-            sticky_connections: false,  // True round-robin
+            sticky_connections: false, // True round-robin
         }
     }
 
@@ -359,12 +373,12 @@ impl AdvancedGatewayGroup {
                 GatewayGroupMember {
                     gateway_name: "wan_1gbps".to_string(),
                     tier: 1,
-                    weight: 200,  // 2x weight
+                    weight: 200, // 2x weight
                 },
                 GatewayGroupMember {
                     gateway_name: "wan_500mbps".to_string(),
                     tier: 1,
-                    weight: 100,  // 1x weight
+                    weight: 100, // 1x weight
                 },
             ],
             trigger_level: 1,
@@ -382,7 +396,11 @@ mod tests {
         let group = AdvancedGatewayGroup::example_tiered_failover();
 
         // All online - should use Tier 1
-        let online = vec!["fiber_wan".to_string(), "cable_wan".to_string(), "lte_wan".to_string()];
+        let online = vec![
+            "fiber_wan".to_string(),
+            "cable_wan".to_string(),
+            "lte_wan".to_string(),
+        ];
         assert_eq!(group.get_active_tier(&online), Some(1));
 
         // Tier 1 down - should fail to Tier 2
@@ -402,13 +420,17 @@ mod tests {
     fn test_load_balance_within_tier() {
         let group = AdvancedGatewayGroup::example_load_balance_with_backup();
 
-        let online = vec!["fiber1_wan".to_string(), "fiber2_wan".to_string(), "cable_wan".to_string()];
+        let online = vec![
+            "fiber1_wan".to_string(),
+            "fiber2_wan".to_string(),
+            "cable_wan".to_string(),
+        ];
 
         // Should use Tier 1 (both fibers)
         assert_eq!(group.get_active_tier(&online), Some(1));
 
         let active = group.get_active_members(&online);
-        assert_eq!(active.len(), 2);  // Both Tier 1 members
+        assert_eq!(active.len(), 2); // Both Tier 1 members
         assert!(active.iter().all(|m| m.tier == 1));
     }
 
@@ -422,8 +444,14 @@ mod tests {
         assert_eq!(active.len(), 2);
 
         // Check weights
-        let wan1 = active.iter().find(|m| m.gateway_name == "wan_1gbps").unwrap();
-        let wan2 = active.iter().find(|m| m.gateway_name == "wan_500mbps").unwrap();
+        let wan1 = active
+            .iter()
+            .find(|m| m.gateway_name == "wan_1gbps")
+            .unwrap();
+        let wan2 = active
+            .iter()
+            .find(|m| m.gateway_name == "wan_500mbps")
+            .unwrap();
 
         assert_eq!(wan1.weight, 200);
         assert_eq!(wan2.weight, 100);
@@ -441,7 +469,7 @@ mod tests {
         // Invalid tier
         group.members.push(GatewayGroupMember {
             gateway_name: "test".to_string(),
-            tier: 0,  // Invalid
+            tier: 0, // Invalid
             weight: 100,
         });
         assert!(group.validate().is_err());

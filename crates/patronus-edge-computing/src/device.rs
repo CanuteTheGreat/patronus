@@ -1,11 +1,11 @@
 //! IoT Device Management
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DeviceType {
@@ -56,7 +56,10 @@ impl IoTDevice {
     }
 
     pub fn is_low_battery(&self) -> bool {
-        self.metrics.battery_percent.map(|b| b < 20.0).unwrap_or(false)
+        self.metrics
+            .battery_percent
+            .map(|b| b < 20.0)
+            .unwrap_or(false)
     }
 
     pub fn is_weak_signal(&self) -> bool {
@@ -124,7 +127,8 @@ impl DeviceManager {
 
     pub async fn get_devices_by_type(&self, device_type: &DeviceType) -> Vec<IoTDevice> {
         let devices = self.devices.read().await;
-        devices.values()
+        devices
+            .values()
             .filter(|d| &d.device_type == device_type)
             .cloned()
             .collect()
@@ -132,7 +136,8 @@ impl DeviceManager {
 
     pub async fn get_low_battery_devices(&self) -> Vec<IoTDevice> {
         let devices = self.devices.read().await;
-        devices.values()
+        devices
+            .values()
             .filter(|d| d.is_low_battery())
             .cloned()
             .collect()
@@ -292,9 +297,27 @@ mod tests {
     async fn test_get_devices_by_type() {
         let manager = DeviceManager::new();
 
-        manager.register_device(IoTDevice::new("s1".to_string(), DeviceType::Sensor, (0.0, 0.0))).await;
-        manager.register_device(IoTDevice::new("c1".to_string(), DeviceType::Camera, (0.0, 0.0))).await;
-        manager.register_device(IoTDevice::new("s2".to_string(), DeviceType::Sensor, (0.0, 0.0))).await;
+        manager
+            .register_device(IoTDevice::new(
+                "s1".to_string(),
+                DeviceType::Sensor,
+                (0.0, 0.0),
+            ))
+            .await;
+        manager
+            .register_device(IoTDevice::new(
+                "c1".to_string(),
+                DeviceType::Camera,
+                (0.0, 0.0),
+            ))
+            .await;
+        manager
+            .register_device(IoTDevice::new(
+                "s2".to_string(),
+                DeviceType::Sensor,
+                (0.0, 0.0),
+            ))
+            .await;
 
         let sensors = manager.get_devices_by_type(&DeviceType::Sensor).await;
         assert_eq!(sensors.len(), 2);

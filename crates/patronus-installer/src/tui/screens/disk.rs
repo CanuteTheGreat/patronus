@@ -24,12 +24,15 @@ pub fn draw(frame: &mut Frame, app: &InstallerApp) {
         .split(content_area);
 
     // Info text
-    let info = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled("WARNING: ", Style::default().fg(Theme::WARNING).add_modifier(Modifier::BOLD)),
-            Span::raw("The selected disk will be completely erased!"),
-        ]),
-    ]);
+    let info = Paragraph::new(vec![Line::from(vec![
+        Span::styled(
+            "WARNING: ",
+            Style::default()
+                .fg(Theme::WARNING)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("The selected disk will be completely erased!"),
+    ])]);
     frame.render_widget(info, chunks[0]);
 
     // Disk list

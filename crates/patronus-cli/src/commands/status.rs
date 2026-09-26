@@ -1,8 +1,8 @@
 //! Status command handler
 
 use colored::Colorize;
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 
 pub async fn handle_status(detailed: bool, config_path: PathBuf) -> anyhow::Result<()> {
     println!();
@@ -21,8 +21,16 @@ pub async fn handle_status(detailed: bool, config_path: PathBuf) -> anyhow::Resu
 
     println!("  {:<20} {}", "Deployment:".bold(), deployment_name);
     println!("  {:<20} {}", "Status:".bold(), "Running".green());
-    println!("  {:<20} {}", "Sites:".bold(), sites_count.to_string().bright_blue());
-    println!("  {:<20} {}", "Tunnels:".bold(), tunnels_count.to_string().bright_blue());
+    println!(
+        "  {:<20} {}",
+        "Sites:".bold(),
+        sites_count.to_string().bright_blue()
+    );
+    println!(
+        "  {:<20} {}",
+        "Tunnels:".bold(),
+        tunnels_count.to_string().bright_blue()
+    );
     println!("  {:<20} {}", "Version:".bold(), env!("CARGO_PKG_VERSION"));
     println!();
 
@@ -31,7 +39,14 @@ pub async fn handle_status(detailed: bool, config_path: PathBuf) -> anyhow::Resu
         println!("  • Control Plane: {}", "Active".green());
         println!("  • Data Plane: {}", "Active".green());
         println!("  • Monitoring: {}", "Enabled".green());
-        println!("  • BGP: {}", if config["bgp"]["enabled"].as_bool().unwrap_or(false) { "Enabled".green() } else { "Disabled".yellow() });
+        println!(
+            "  • BGP: {}",
+            if config["bgp"]["enabled"].as_bool().unwrap_or(false) {
+                "Enabled".green()
+            } else {
+                "Disabled".yellow()
+            }
+        );
         println!();
     }
 

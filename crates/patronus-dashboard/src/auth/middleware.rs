@@ -55,9 +55,7 @@ pub fn has_role(claims: &super::jwt::Claims, required_role: &UserRole) -> Result
 
     let has_permission = match required_role {
         UserRole::Viewer => true, // Anyone can be a viewer
-        UserRole::Operator => {
-            user_role == UserRole::Operator || user_role == UserRole::Admin
-        }
+        UserRole::Operator => user_role == UserRole::Operator || user_role == UserRole::Admin,
         UserRole::Admin => user_role == UserRole::Admin,
     };
 

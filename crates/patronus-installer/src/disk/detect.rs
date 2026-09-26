@@ -193,9 +193,9 @@ pub async fn detect_disks() -> Result<Vec<DiskInfo>> {
     // Use lsblk to get disk information
     let output = Command::new("lsblk")
         .args([
-            "-J",       // JSON output
-            "-b",       // Size in bytes
-            "-o",       // Output columns
+            "-J", // JSON output
+            "-b", // Size in bytes
+            "-o", // Output columns
             "NAME,TYPE,SIZE,MODEL,SERIAL,TRAN,RO,RM,MOUNTPOINT,FSTYPE,PTTYPE,PHY-SEC,LOG-SEC",
         ])
         .output()
@@ -286,7 +286,10 @@ async fn parse_disk_entry(
 
     let size_bytes = device
         .get("size")
-        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
         .unwrap_or(0);
 
     let model = device
@@ -366,10 +369,7 @@ async fn parse_disk_entry(
 
     // Parse partitions
     let partitions = if let Some(children) = device.get("children").and_then(|v| v.as_array()) {
-        children
-            .iter()
-            .filter_map(|p| parse_partition_entry(p))
-            .collect()
+        children.iter().filter_map(parse_partition_entry).collect()
     } else {
         Vec::new()
     };
@@ -416,7 +416,10 @@ fn parse_partition_entry(partition: &serde_json::Value) -> Option<PartitionInfo>
 
     let size_bytes = partition
         .get("size")
-        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
         .unwrap_or(0);
 
     let filesystem = partition

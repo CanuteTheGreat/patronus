@@ -54,7 +54,12 @@ pub fn draw(frame: &mut Frame, app: &InstallerApp) {
         Span::raw(" Navigate  "),
         Span::styled("Space", Style::default().fg(Theme::HIGHLIGHT)),
         Span::raw(" Toggle  "),
-        Span::styled("→/Enter", Style::default().fg(Theme::HIGHLIGHT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "→/Enter",
+            Style::default()
+                .fg(Theme::HIGHLIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" Continue"),
     ]);
     let para = Paragraph::new(instructions);

@@ -25,9 +25,11 @@ impl IpNetwork {
     pub fn new(addr: IpAddr, prefix_len: u8) -> Self {
         Self { addr, prefix_len }
     }
+}
 
-    pub fn to_string(&self) -> String {
-        format!("{}/{}", self.addr, self.prefix_len)
+impl std::fmt::Display for IpNetwork {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.addr, self.prefix_len)
     }
 }
 
@@ -150,8 +152,13 @@ impl FirewallRule {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum NatType {
     Masquerade,
-    Snat { to_address: IpAddr },
-    Dnat { to_address: IpAddr, to_port: Option<u16> },
+    Snat {
+        to_address: IpAddr,
+    },
+    Dnat {
+        to_address: IpAddr,
+        to_port: Option<u16>,
+    },
 }
 
 /// NAT rule

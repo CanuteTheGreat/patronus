@@ -65,7 +65,8 @@ impl ThreatIntelDB {
     /// Add a threat entry
     pub async fn add_entry(&self, entry: ThreatIntelEntry) {
         let mut entries = self.entries.write().await;
-        entries.entry(entry.ip.clone())
+        entries
+            .entry(entry.ip.clone())
             .or_insert_with(Vec::new)
             .push(entry.clone());
 
@@ -83,7 +84,9 @@ impl ThreatIntelDB {
 
     /// Get threat intelligence for an IP
     pub async fn get_threats(&self, ip: &str) -> Vec<ThreatIntelEntry> {
-        self.entries.read().await
+        self.entries
+            .read()
+            .await
             .get(ip)
             .cloned()
             .unwrap_or_default()
@@ -127,7 +130,7 @@ impl Default for ThreatIntelDB {
 #[derive(Debug, Clone)]
 pub struct AbuseIPDBConfig {
     pub api_key: String,
-    pub confidence_threshold: u32,  // 0-100
+    pub confidence_threshold: u32, // 0-100
 }
 
 /// Threat intelligence feed aggregator
@@ -175,7 +178,9 @@ impl ThreatFeedAggregator {
             }
 
             // Cleanup old entries (>30 days)
-            self.db.cleanup_old_entries(Duration::from_secs(30 * 24 * 3600)).await;
+            self.db
+                .cleanup_old_entries(Duration::from_secs(30 * 24 * 3600))
+                .await;
         }
     }
 
@@ -185,9 +190,9 @@ impl ThreatFeedAggregator {
         // AbuseIPDB
         if self.abuseipdb_config.is_some() {
             let self_clone = Arc::new(self.clone());
-            tasks.push(tokio::spawn(async move {
-                self_clone.update_abuseipdb().await
-            }));
+            tasks.push(tokio::spawn(
+                async move { self_clone.update_abuseipdb().await },
+            ));
         }
 
         // EmergingThreats (free list)
@@ -207,7 +212,9 @@ impl ThreatFeedAggregator {
     }
 
     async fn update_abuseipdb(&self) -> Result<()> {
-        let config = self.abuseipdb_config.as_ref()
+        let config = self
+            .abuseipdb_config
+            .as_ref()
             .context("AbuseIPDB not configured")?;
 
         info!("Updating AbuseIPDB threat feed");
@@ -218,7 +225,8 @@ impl ThreatFeedAggregator {
             config.confidence_threshold
         );
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(&url)
             .header("Key", &config.api_key)
             .header("Accept", "application/json")
@@ -227,7 +235,10 @@ impl ThreatFeedAggregator {
             .context("Failed to fetch AbuseIPDB data")?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("AbuseIPDB API returned error: {}", response.status()));
+            return Err(anyhow::anyhow!(
+                "AbuseIPDB API returned error: {}",
+                response.status()
+            ));
         }
 
         #[derive(Deserialize)]
@@ -243,18 +254,23 @@ impl ThreatFeedAggregator {
             country_code: Option<String>,
         }
 
-        let data: AbuseIPDBResponse = response.json().await
+        let data: AbuseIPDBResponse = response
+            .json()
+            .await
             .context("Failed to parse AbuseIPDB response")?;
 
         // Add to database
         for entry in data.data {
             let threat_entry = ThreatIntelEntry {
                 ip: entry.ip_address,
-                categories: vec![ThreatCategory::Unknown],  // AbuseIPDB doesn't provide detailed categories
+                categories: vec![ThreatCategory::Unknown], // AbuseIPDB doesn't provide detailed categories
                 confidence: entry.abuse_confidence_score as f64 / 100.0,
                 last_seen: Utc::now(),
                 source: ThreatSource::AbuseIPDB,
-                description: Some(format!("AbuseIPDB confidence: {}", entry.abuse_confidence_score)),
+                description: Some(format!(
+                    "AbuseIPDB confidence: {}",
+                    entry.abuse_confidence_score
+                )),
                 country: entry.country_code,
                 asn: None,
             };
@@ -272,14 +288,18 @@ impl ThreatFeedAggregator {
         // Fetch Emerging Threats compromised IPs list
         let url = "https://rules.emergingthreats.net/blockrules/compromised-ips.txt";
 
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(url)
             .send()
             .await
             .context("Failed to fetch EmergingThreats data")?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("EmergingThreats fetch failed: {}", response.status()));
+            return Err(anyhow::anyhow!(
+                "EmergingThreats fetch failed: {}",
+                response.status()
+            ));
         }
 
         let text = response.text().await?;
@@ -319,7 +339,8 @@ impl ThreatFeedAggregator {
         let threats = self.db.get_threats(ip).await;
 
         // Return highest confidence threat (use total_cmp to handle NaN safely)
-        threats.into_iter()
+        threats
+            .into_iter()
             .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
     }
 }
@@ -350,13 +371,11 @@ impl ReputationScorer {
         let threats = self.threat_db.get_threats(ip).await;
 
         if threats.is_empty() {
-            return 1.0;  // No threat data = assume good
+            return 1.0; // No threat data = assume good
         }
 
         // Worst threat confidence becomes the reputation penalty
-        let max_threat_confidence = threats.iter()
-            .map(|t| t.confidence)
-            .fold(0.0, f64::max);
+        let max_threat_confidence = threats.iter().map(|t| t.confidence).fold(0.0, f64::max);
 
         1.0 - max_threat_confidence
     }
@@ -430,6 +449,6 @@ mod tests {
 
         // Bad reputation
         let score = scorer.score_ip("1.2.3.4").await;
-        assert!((score - 0.2).abs() < 0.01);  // 1.0 - 0.8, use approximate comparison
+        assert!((score - 0.2).abs() < 0.01); // 1.0 - 0.8, use approximate comparison
     }
 }

@@ -33,9 +33,19 @@ pub fn draw(frame: &mut Frame, app: &InstallerApp) {
     // Actions
     let actions = Line::from(vec![
         Span::raw("Press "),
-        Span::styled("Enter", Style::default().fg(Theme::HIGHLIGHT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "Enter",
+            Style::default()
+                .fg(Theme::HIGHLIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" to go back and try again or "),
-        Span::styled("q", Style::default().fg(Theme::HIGHLIGHT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "q",
+            Style::default()
+                .fg(Theme::HIGHLIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" to quit"),
     ]);
     let para = Paragraph::new(actions).alignment(Alignment::Center);

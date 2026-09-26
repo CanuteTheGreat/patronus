@@ -5,18 +5,18 @@
 use patronus_core::{Error, Result};
 use std::process::Command;
 
+pub mod aliases;
 pub mod nftables;
 pub mod rules;
-pub mod aliases;
 
 #[cfg(feature = "geoip")]
 pub mod geoip;
 
-pub use rules::RuleManager;
 pub use aliases::AliasManager;
+pub use rules::RuleManager;
 
 #[cfg(feature = "geoip")]
-pub use geoip::{GeoIpManager, GeoIpBackend};
+pub use geoip::{GeoIpBackend, GeoIpManager};
 
 /// Check if nftables is available on the system
 pub fn check_nftables_available() -> Result<bool> {

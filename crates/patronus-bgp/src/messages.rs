@@ -25,7 +25,10 @@ impl TryFrom<u8> for MessageType {
             2 => Ok(MessageType::Update),
             3 => Ok(MessageType::Notification),
             4 => Ok(MessageType::Keepalive),
-            _ => Err(BgpError::ProtocolError(format!("Invalid message type: {}", value))),
+            _ => Err(BgpError::ProtocolError(format!(
+                "Invalid message type: {}",
+                value
+            ))),
         }
     }
 }
@@ -84,7 +87,10 @@ impl MessageHeader {
 
         // Validate length
         if length < Self::MIN_SIZE as u16 || length > Self::MAX_SIZE as u16 {
-            return Err(BgpError::ProtocolError(format!("Invalid length: {}", length)));
+            return Err(BgpError::ProtocolError(format!(
+                "Invalid length: {}",
+                length
+            )));
         }
 
         Ok(Self {
@@ -154,12 +160,17 @@ impl OpenMessage {
     /// Decode OPEN message
     pub fn decode(buf: &mut Bytes) -> Result<Self> {
         if buf.remaining() < 10 {
-            return Err(BgpError::ParseError("Insufficient data for OPEN message".into()));
+            return Err(BgpError::ParseError(
+                "Insufficient data for OPEN message".into(),
+            ));
         }
 
         let version = buf.get_u8();
         if version != 4 {
-            return Err(BgpError::ProtocolError(format!("Unsupported BGP version: {}", version)));
+            return Err(BgpError::ProtocolError(format!(
+                "Unsupported BGP version: {}",
+                version
+            )));
         }
 
         let my_asn = buf.get_u16();
@@ -207,14 +218,18 @@ impl OptionalParameter {
 
     fn decode(buf: &mut Bytes) -> Result<Self> {
         if buf.remaining() < 2 {
-            return Err(BgpError::ParseError("Insufficient data for optional parameter".into()));
+            return Err(BgpError::ParseError(
+                "Insufficient data for optional parameter".into(),
+            ));
         }
 
         let param_type = buf.get_u8();
         let length = buf.get_u8() as usize;
 
         if buf.remaining() < length {
-            return Err(BgpError::ParseError("Insufficient data for parameter value".into()));
+            return Err(BgpError::ParseError(
+                "Insufficient data for parameter value".into(),
+            ));
         }
 
         let mut value = vec![0u8; length];
@@ -284,7 +299,9 @@ impl NotificationMessage {
     /// Decode NOTIFICATION message
     pub fn decode(buf: &mut Bytes) -> Result<Self> {
         if buf.remaining() < 2 {
-            return Err(BgpError::ParseError("Insufficient data for NOTIFICATION".into()));
+            return Err(BgpError::ParseError(
+                "Insufficient data for NOTIFICATION".into(),
+            ));
         }
 
         let error_code = buf.get_u8();
@@ -313,6 +330,12 @@ pub struct UpdateMessage {
     pub path_attributes: Vec<PathAttribute>,
     /// Network Layer Reachability Information (NLRI)
     pub nlri: Vec<IpPrefix>,
+}
+
+impl Default for UpdateMessage {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl UpdateMessage {
@@ -416,7 +439,7 @@ pub struct IpPrefix {
 
 impl IpPrefix {
     fn encoded_len(&self) -> usize {
-        1 + ((self.prefix_len as usize + 7) / 8)
+        1 + (self.prefix_len as usize).div_ceil(8)
     }
 
     fn encode(&self, buf: &mut BytesMut) {
@@ -430,7 +453,7 @@ impl IpPrefix {
         }
 
         let prefix_len = buf.get_u8();
-        let prefix_bytes = (prefix_len as usize + 7) / 8;
+        let prefix_bytes = (prefix_len as usize).div_ceil(8);
 
         if buf.remaining() < prefix_bytes {
             return Err(BgpError::ParseError("Insufficient data for prefix".into()));
@@ -477,7 +500,9 @@ impl PathAttribute {
 
     fn decode(buf: &mut Bytes) -> Result<Self> {
         if buf.remaining() < 3 {
-            return Err(BgpError::ParseError("Insufficient data for path attribute".into()));
+            return Err(BgpError::ParseError(
+                "Insufficient data for path attribute".into(),
+            ));
         }
 
         let flags = buf.get_u8();
@@ -486,7 +511,9 @@ impl PathAttribute {
         let extended = (flags & 0x10) != 0;
         let length = if extended {
             if buf.remaining() < 2 {
-                return Err(BgpError::ParseError("Insufficient data for extended length".into()));
+                return Err(BgpError::ParseError(
+                    "Insufficient data for extended length".into(),
+                ));
             }
             buf.get_u16() as usize
         } else {
@@ -494,7 +521,9 @@ impl PathAttribute {
         };
 
         if buf.remaining() < length {
-            return Err(BgpError::ParseError("Insufficient data for attribute value".into()));
+            return Err(BgpError::ParseError(
+                "Insufficient data for attribute value".into(),
+            ));
         }
 
         let mut value = vec![0u8; length];
@@ -539,8 +568,12 @@ impl BgpMessage {
         match header.msg_type {
             MessageType::Open => Ok(BgpMessage::Open(OpenMessage::decode(&mut buf)?)),
             MessageType::Update => Ok(BgpMessage::Update(UpdateMessage::decode(&mut buf)?)),
-            MessageType::Notification => Ok(BgpMessage::Notification(NotificationMessage::decode(&mut buf)?)),
-            MessageType::Keepalive => Ok(BgpMessage::Keepalive(KeepaliveMessage::decode(&mut buf)?)),
+            MessageType::Notification => Ok(BgpMessage::Notification(NotificationMessage::decode(
+                &mut buf,
+            )?)),
+            MessageType::Keepalive => {
+                Ok(BgpMessage::Keepalive(KeepaliveMessage::decode(&mut buf)?))
+            }
         }
     }
 }
@@ -551,7 +584,7 @@ mod tests {
 
     #[test]
     fn test_keepalive_encode_decode() {
-        let keepalive = KeepaliveMessage;
+        let _keepalive = KeepaliveMessage;
         let bytes = KeepaliveMessage::encode();
 
         assert_eq!(bytes.len(), MessageHeader::MIN_SIZE);
@@ -565,7 +598,7 @@ mod tests {
         let open = OpenMessage::new(65000, 180, 0x01010101);
         let bytes = open.encode();
 
-        let mut buf = Bytes::from(bytes.clone());
+        let mut buf = bytes.clone();
         let _header = MessageHeader::decode(&mut buf).unwrap();
         let decoded = OpenMessage::decode(&mut buf).unwrap();
 
@@ -580,7 +613,7 @@ mod tests {
         let notif = NotificationMessage::new(6, 1); // Cease
         let bytes = notif.encode();
 
-        let mut buf = Bytes::from(bytes.clone());
+        let mut buf = bytes.clone();
         let _header = MessageHeader::decode(&mut buf).unwrap();
         let decoded = NotificationMessage::decode(&mut buf).unwrap();
 

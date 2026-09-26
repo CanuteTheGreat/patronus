@@ -3,9 +3,9 @@
 //! Provides WireGuard tunnel and peer configuration
 
 use patronus_core::{Error, Result};
-use std::process::Command;
-use std::net::IpAddr;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
+use std::process::Command;
 
 /// WireGuard interface configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,7 +99,9 @@ impl WireGuardManager {
             .map_err(|e| Error::Network(format!("Failed to generate preshared key: {}", e)))?;
 
         if !output.status.success() {
-            return Err(Error::Network("Failed to generate preshared key".to_string()));
+            return Err(Error::Network(
+                "Failed to generate preshared key".to_string(),
+            ));
         }
 
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -115,7 +117,10 @@ impl WireGuardManager {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::Network(format!("Failed to create interface: {}", stderr)));
+            return Err(Error::Network(format!(
+                "Failed to create interface: {}",
+                stderr
+            )));
         }
 
         // Configure the interface
@@ -210,7 +215,14 @@ impl WireGuardManager {
         // Set preshared key if provided
         if let Some(ref psk) = peer.preshared_key {
             Command::new("wg")
-                .args(&["set", interface, "peer", &peer.public_key, "preshared-key", "/dev/stdin"])
+                .args(&[
+                    "set",
+                    interface,
+                    "peer",
+                    &peer.public_key,
+                    "preshared-key",
+                    "/dev/stdin",
+                ])
                 .stdin(std::process::Stdio::piped())
                 .spawn()
                 .and_then(|mut child| {
@@ -252,7 +264,10 @@ impl WireGuardManager {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::Network(format!("Failed to delete interface: {}", stderr)));
+            return Err(Error::Network(format!(
+                "Failed to delete interface: {}",
+                stderr
+            )));
         }
 
         tracing::info!("Deleted WireGuard interface: {}", name);

@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: https://github.com/dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - name: Check formatting
@@ -28,13 +28,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: https://github.com/dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libmnl-dev libnftnl-dev libssl-dev pkg-config
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -48,17 +48,39 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --exclude patronus-ebpf --all-targets -- -D warnings
 
+  security-audit:
+    name: Security Audit (cargo-audit)
+    runs-on: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/advisory-db
+          key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-audit-
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Run cargo audit
+        run: cargo audit
+
   test:
     name: Test (non-eBPF crates)
     runs-on: x86_64
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: https://github.com/dtolnay/rust-toolchain@stable
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libmnl-dev libnftnl-dev libssl-dev pkg-config
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -78,11 +100,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: https://github.com/dtolnay/rust-toolchain@stable
       - name: Install libbpf headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev libssl-dev pkg-config
+          sudo apt-get install -y build-essential libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev libssl-dev pkg-config
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -103,11 +125,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: https://github.com/dtolnay/rust-toolchain@stable
       - name: Install libbpf headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev libssl-dev pkg-config
+          sudo apt-get install -y build-essential libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev libssl-dev pkg-config
       - name: Cache cargo
         uses: actions/cache@v4
         with:

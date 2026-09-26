@@ -48,6 +48,7 @@ pub struct WorkloadPlacement {
 
 pub struct WorkloadScheduler {
     placements: Arc<RwLock<HashMap<Uuid, WorkloadPlacement>>>,
+    #[allow(dead_code)]
     policy: SchedulingPolicy,
 }
 
@@ -100,8 +101,8 @@ mod tests {
 
     #[test]
     fn test_workload_with_latency() {
-        let workload = EdgeWorkload::new("app-1".to_string(), 2.0, 4.0)
-            .with_latency_requirement(10.0);
+        let workload =
+            EdgeWorkload::new("app-1".to_string(), 2.0, 4.0).with_latency_requirement(10.0);
         assert_eq!(workload.latency_requirement_ms, Some(10.0));
     }
 

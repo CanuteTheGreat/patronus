@@ -10,13 +10,13 @@ use std::process::Command;
 /// Queueing discipline (qdisc) type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum QdiscType {
-    Htb,       // Hierarchical Token Bucket
-    Sfq,       // Stochastic Fairness Queueing
-    FqCodel,   // Fair/Flow Queue CoDel
-    Cake,      // Common Applications Kept Enhanced
-    Tbf,       // Token Bucket Filter
-    Pfifo,     // Packet-limited First In, First Out
-    Bfifo,     // Byte-limited First In, First Out
+    Htb,     // Hierarchical Token Bucket
+    Sfq,     // Stochastic Fairness Queueing
+    FqCodel, // Fair/Flow Queue CoDel
+    Cake,    // Common Applications Kept Enhanced
+    Tbf,     // Token Bucket Filter
+    Pfifo,   // Packet-limited First In, First Out
+    Bfifo,   // Byte-limited First In, First Out
 }
 
 impl std::fmt::Display for QdiscType {
@@ -36,11 +36,11 @@ impl std::fmt::Display for QdiscType {
 /// Traffic class priority
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TrafficPriority {
-    Realtime,    // VoIP, gaming
-    High,        // Interactive, video
-    Medium,      // Normal traffic
-    Low,         // Bulk transfers
-    Lowest,      // Background
+    Realtime, // VoIP, gaming
+    High,     // Interactive, video
+    Medium,   // Normal traffic
+    Low,      // Bulk transfers
+    Lowest,   // Background
 }
 
 /// HTB class configuration
@@ -48,25 +48,25 @@ pub enum TrafficPriority {
 pub struct HtbClass {
     pub name: String,
     pub interface: String,
-    pub parent: Option<String>,  // Parent class ID (e.g., "1:1")
-    pub class_id: String,        // This class ID (e.g., "1:10")
+    pub parent: Option<String>, // Parent class ID (e.g., "1:1")
+    pub class_id: String,       // This class ID (e.g., "1:10")
 
     // Rate limits
-    pub rate: String,      // Guaranteed rate (e.g., "1mbit", "100kbit")
-    pub ceil: String,      // Maximum rate (burst ceiling)
-    pub burst: Option<String>,  // Burst size
+    pub rate: String,          // Guaranteed rate (e.g., "1mbit", "100kbit")
+    pub ceil: String,          // Maximum rate (burst ceiling)
+    pub burst: Option<String>, // Burst size
 
     // Priority
-    pub priority: u8,      // 0-7, lower = higher priority
+    pub priority: u8, // 0-7, lower = higher priority
 
     // Matching rules
     pub match_dst_port: Option<u16>,
     pub match_src_port: Option<u16>,
-    pub match_protocol: Option<String>,  // tcp, udp, icmp
-    pub match_dst_network: Option<String>,  // CIDR
+    pub match_protocol: Option<String>,    // tcp, udp, icmp
+    pub match_dst_network: Option<String>, // CIDR
     pub match_src_network: Option<String>,
-    pub match_tos: Option<u8>,  // Type of Service
-    pub match_mark: Option<u32>,  // Packet mark
+    pub match_tos: Option<u8>,   // Type of Service
+    pub match_mark: Option<u32>, // Packet mark
 }
 
 /// Traffic shaping rule
@@ -87,15 +87,15 @@ pub struct ShapingRule {
 /// Traffic direction
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TrafficDirection {
-    Ingress,   // Incoming traffic
-    Egress,    // Outgoing traffic
+    Ingress, // Incoming traffic
+    Egress,  // Outgoing traffic
 }
 
 /// Simple bandwidth limiter
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BandwidthLimit {
     pub interface: String,
-    pub download_rate: String,  // e.g., "100mbit"
+    pub download_rate: String, // e.g., "100mbit"
     pub upload_rate: String,
 }
 
@@ -115,7 +115,9 @@ impl QosManager {
 
         // Add root qdisc (HTB)
         Command::new("tc")
-            .args(&["qdisc", "add", "dev", interface, "root", "handle", "1:", "htb", "default", "30"])
+            .args(&[
+                "qdisc", "add", "dev", interface, "root", "handle", "1:", "htb", "default", "30",
+            ])
             .output()
             .map_err(|e| Error::Network(format!("Failed to initialize QoS: {}", e)))?;
 
@@ -127,7 +129,7 @@ impl QosManager {
         Command::new("tc")
             .args(&["qdisc", "del", "dev", interface, "root"])
             .output()
-            .ok();  // Ignore errors (might not exist)
+            .ok(); // Ignore errors (might not exist)
 
         Ok(())
     }
@@ -135,13 +137,21 @@ impl QosManager {
     /// Add an HTB class
     pub async fn add_htb_class(&self, class: &HtbClass) -> Result<()> {
         let mut args = vec![
-            "class", "add", "dev", &class.interface,
-            "parent", class.parent.as_deref().unwrap_or("1:"),
-            "classid", &class.class_id,
+            "class",
+            "add",
+            "dev",
+            &class.interface,
+            "parent",
+            class.parent.as_deref().unwrap_or("1:"),
+            "classid",
+            &class.class_id,
             "htb",
-            "rate", &class.rate,
-            "ceil", &class.ceil,
-            "prio", &class.priority.to_string(),
+            "rate",
+            &class.rate,
+            "ceil",
+            &class.ceil,
+            "prio",
+            &class.priority.to_string(),
         ];
 
         if let Some(burst) = &class.burst {
@@ -156,10 +166,15 @@ impl QosManager {
         // Add leaf qdisc (fq_codel for fair queueing)
         Command::new("tc")
             .args(&[
-                "qdisc", "add", "dev", &class.interface,
-                "parent", &class.class_id,
-                "handle", &format!("{}0:", &class.class_id.replace(":", "")),
-                "fq_codel"
+                "qdisc",
+                "add",
+                "dev",
+                &class.interface,
+                "parent",
+                &class.class_id,
+                "handle",
+                &format!("{}0:", &class.class_id.replace(":", "")),
+                "fq_codel",
             ])
             .output()
             .map_err(|e| Error::Network(format!("Failed to add leaf qdisc: {}", e)))?;
@@ -169,19 +184,32 @@ impl QosManager {
 
     /// Add a filter to match traffic to a class
     pub async fn add_filter(&self, class: &HtbClass) -> Result<()> {
-        let class_num = class.class_id.split(':').nth(1)
+        let class_num = class
+            .class_id
+            .split(':')
+            .nth(1)
             .ok_or_else(|| Error::Network("Invalid class ID format".to_string()))?;
 
-        let handle_id = format!("0x{:x}", class_num.parse::<u32>()
-            .map_err(|_| Error::Network("Invalid class number".to_string()))?);
+        let handle_id = format!(
+            "0x{:x}",
+            class_num
+                .parse::<u32>()
+                .map_err(|_| Error::Network("Invalid class number".to_string()))?
+        );
 
         // Add u32 filter
         let mut filter_args = vec![
-            "filter", "add", "dev", &class.interface,
-            "parent", "1:",
-            "protocol", "ip",
-            "prio", &class.priority.to_string(),
-            "u32"
+            "filter",
+            "add",
+            "dev",
+            &class.interface,
+            "parent",
+            "1:",
+            "protocol",
+            "ip",
+            "prio",
+            &class.priority.to_string(),
+            "u32",
         ];
 
         // Build match expression
@@ -234,11 +262,17 @@ impl QosManager {
         // Add root class
         Command::new("tc")
             .args(&[
-                "class", "add", "dev", &rule.interface,
-                "parent", "1:",
-                "classid", "1:1",
+                "class",
+                "add",
+                "dev",
+                &rule.interface,
+                "parent",
+                "1:",
+                "classid",
+                "1:1",
                 "htb",
-                "rate", "1000mbit"  // Maximum link rate
+                "rate",
+                "1000mbit", // Maximum link rate
             ])
             .output()
             .map_err(|e| Error::Network(format!("Failed to add root class: {}", e)))?;
@@ -259,11 +293,18 @@ impl QosManager {
 
         Command::new("tc")
             .args(&[
-                "qdisc", "add", "dev", &limit.interface,
-                "root", "tbf",
-                "rate", &limit.upload_rate,
-                "burst", "32kbit",
-                "latency", "400ms"
+                "qdisc",
+                "add",
+                "dev",
+                &limit.interface,
+                "root",
+                "tbf",
+                "rate",
+                &limit.upload_rate,
+                "burst",
+                "32kbit",
+                "latency",
+                "400ms",
             ])
             .output()
             .map_err(|e| Error::Network(format!("Failed to set upload limit: {}", e)))?;
@@ -290,16 +331,16 @@ impl QosManager {
                     interface: interface.to_string(),
                     parent: Some("1:1".to_string()),
                     class_id: "1:10".to_string(),
-                    rate: format!("{}mbit", 30),  // 30% of bandwidth
+                    rate: format!("{}mbit", 30), // 30% of bandwidth
                     ceil: total_bandwidth.to_string(),
                     burst: Some("15k".to_string()),
                     priority: 0,
-                    match_dst_port: None,  // Would match specific game ports
+                    match_dst_port: None, // Would match specific game ports
                     match_src_port: None,
                     match_protocol: Some("udp".to_string()),
                     match_dst_network: None,
                     match_src_network: None,
-                    match_tos: Some(0x10),  // Low delay
+                    match_tos: Some(0x10), // Low delay
                     match_mark: Some(1),
                 },
                 // Video streaming - high priority, 40% guarantee
@@ -312,7 +353,7 @@ impl QosManager {
                     ceil: total_bandwidth.to_string(),
                     burst: Some("15k".to_string()),
                     priority: 1,
-                    match_dst_port: Some(443),  // HTTPS streaming
+                    match_dst_port: Some(443), // HTTPS streaming
                     match_src_port: None,
                     match_protocol: Some("tcp".to_string()),
                     match_dst_network: None,
@@ -335,7 +376,7 @@ impl QosManager {
                     match_protocol: None,
                     match_dst_network: None,
                     match_src_network: None,
-                    match_tos: Some(0x08),  // High throughput
+                    match_tos: Some(0x08), // High throughput
                     match_mark: Some(3),
                 },
             ],
@@ -350,25 +391,23 @@ impl QosManager {
             interface: interface.to_string(),
             direction: TrafficDirection::Egress,
             qdisc_type: QdiscType::Htb,
-            classes: vec![
-                HtbClass {
-                    name: "VoIP".to_string(),
-                    interface: interface.to_string(),
-                    parent: Some("1:1".to_string()),
-                    class_id: "1:10".to_string(),
-                    rate: "512kbit".to_string(),
-                    ceil: "2mbit".to_string(),
-                    burst: Some("10k".to_string()),
-                    priority: 0,
-                    match_dst_port: Some(5060),  // SIP
-                    match_src_port: None,
-                    match_protocol: Some("udp".to_string()),
-                    match_dst_network: None,
-                    match_src_network: None,
-                    match_tos: Some(0xb8),  // EF (Expedited Forwarding)
-                    match_mark: None,
-                },
-            ],
+            classes: vec![HtbClass {
+                name: "VoIP".to_string(),
+                interface: interface.to_string(),
+                parent: Some("1:1".to_string()),
+                class_id: "1:10".to_string(),
+                rate: "512kbit".to_string(),
+                ceil: "2mbit".to_string(),
+                burst: Some("10k".to_string()),
+                priority: 0,
+                match_dst_port: Some(5060), // SIP
+                match_src_port: None,
+                match_protocol: Some("udp".to_string()),
+                match_dst_network: None,
+                match_src_network: None,
+                match_tos: Some(0xb8), // EF (Expedited Forwarding)
+                match_mark: None,
+            }],
         }
     }
 
@@ -398,12 +437,17 @@ impl QosManager {
 
         Command::new("tc")
             .args(&[
-                "qdisc", "add", "dev", interface,
-                "root", "cake",
-                "bandwidth", bandwidth,
-                "triple-isolate",  // Per-host + per-flow fairness
-                "diffserv4",       // 4-tier priority
-                "ack-filter"       // ACK acceleration
+                "qdisc",
+                "add",
+                "dev",
+                interface,
+                "root",
+                "cake",
+                "bandwidth",
+                bandwidth,
+                "triple-isolate", // Per-host + per-flow fairness
+                "diffserv4",      // 4-tier priority
+                "ack-filter",     // ACK acceleration
             ])
             .output()
             .map_err(|e| Error::Network(format!("Failed to enable CAKE: {}", e)))?;
@@ -416,10 +460,7 @@ impl QosManager {
         self.clear_interface(interface).await.ok();
 
         Command::new("tc")
-            .args(&[
-                "qdisc", "add", "dev", interface,
-                "root", "fq_codel"
-            ])
+            .args(&["qdisc", "add", "dev", interface, "root", "fq_codel"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to enable FQ-CoDel: {}", e)))?;
 
@@ -443,7 +484,7 @@ mod tests {
         let preset = qos.create_gaming_preset("eth0", "100mbit");
 
         assert_eq!(preset.classes.len(), 3);
-        assert_eq!(preset.classes[0].priority, 0);  // Gaming highest priority
+        assert_eq!(preset.classes[0].priority, 0); // Gaming highest priority
     }
 
     #[test]

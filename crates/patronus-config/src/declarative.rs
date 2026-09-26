@@ -13,11 +13,11 @@
 //! - Template support with variables
 //! - Atomic apply with rollback
 
-use patronus_core::{Result, Error};
+use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
 use std::net::IpAddr;
+use std::path::Path;
 
 /// API version for configuration schema
 pub const API_VERSION: &str = "patronus.firewall/v1";
@@ -122,7 +122,7 @@ pub enum Direction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddressSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub address: Option<String>,  // IP, CIDR, or alias name
+    pub address: Option<String>, // IP, CIDR, or alias name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ports: Option<Vec<u16>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -138,15 +138,15 @@ pub struct PortRange {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub days: Option<Vec<String>>,  // mon, tue, wed, thu, fri, sat, sun
+    pub days: Option<Vec<String>>, // mon, tue, wed, thu, fri, sat, sun
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_range: Option<TimeRange>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeRange {
-    pub start: String,  // HH:MM
-    pub end: String,    // HH:MM
+    pub start: String, // HH:MM
+    pub end: String,   // HH:MM
 }
 
 /// NAT rule specification
@@ -216,8 +216,8 @@ pub struct WireGuardPeer {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenVpnConfig {
-    pub mode: String,  // server or client
-    pub protocol: String,  // udp or tcp
+    pub mode: String,     // server or client
+    pub protocol: String, // udp or tcp
     pub port: u16,
     pub cipher: String,
 }
@@ -276,7 +276,7 @@ pub struct DhcpServerSpec {
 /// DNS resolver specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DnsResolverSpec {
-    pub backend: String,  // unbound, bind, dnsmasq
+    pub backend: String, // unbound, bind, dnsmasq
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forwarders: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -319,7 +319,7 @@ pub struct HealthCheck {
 /// Certificate specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CertificateSpec {
-    pub cert_type: String,  // ca, server, client
+    pub cert_type: String, // ca, server, client
     #[serde(skip_serializing_if = "Option::is_none")]
     pub common_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -489,7 +489,10 @@ impl ConfigParser {
                     return Err(Error::Config(format!("Invalid prefix length: {}", prefix)));
                 }
             } else {
-                return Err(Error::Config(format!("Invalid prefix length: {}", parts[1])));
+                return Err(Error::Config(format!(
+                    "Invalid prefix length: {}",
+                    parts[1]
+                )));
             }
         } else if addr != "any" && addr.parse::<IpAddr>().is_err() {
             // Not a valid IP and not "any"

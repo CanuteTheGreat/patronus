@@ -4,7 +4,10 @@ use colored::Colorize;
 use std::path::PathBuf;
 
 pub async fn handle_daemon(bind: String, _config_path: PathBuf) -> anyhow::Result<()> {
-    println!("{}", "Starting Patronus SD-WAN Daemon...".bright_blue().bold());
+    println!(
+        "{}",
+        "Starting Patronus SD-WAN Daemon...".bright_blue().bold()
+    );
     println!();
     println!("  Bind Address: {}", bind.bright_green());
     println!("  API Endpoint: http://{}/api/v1", bind);

@@ -1,33 +1,21 @@
 //! Self-Healing Control Loop
 
+use crate::detector::IssueDetector;
+use crate::remediation::{RemediationAttempt, RemediationEngine, RemediationExecutor};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
-use anyhow::Result;
-use crate::detector::IssueDetector;
-use crate::remediation::{RemediationEngine, RemediationExecutor, RemediationAttempt};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HealingStats {
     pub issues_detected: u64,
     pub remediations_attempted: u64,
     pub remediations_succeeded: u64,
     pub remediations_failed: u64,
     pub last_run: Option<String>,
-}
-
-impl Default for HealingStats {
-    fn default() -> Self {
-        Self {
-            issues_detected: 0,
-            remediations_attempted: 0,
-            remediations_succeeded: 0,
-            remediations_failed: 0,
-            last_run: None,
-        }
-    }
 }
 
 pub struct HealingLoop<E: RemediationExecutor> {
@@ -39,11 +27,7 @@ pub struct HealingLoop<E: RemediationExecutor> {
 }
 
 impl<E: RemediationExecutor + 'static> HealingLoop<E> {
-    pub fn new(
-        detector: IssueDetector,
-        engine: RemediationEngine<E>,
-        interval_secs: u64,
-    ) -> Self {
+    pub fn new(detector: IssueDetector, engine: RemediationEngine<E>, interval_secs: u64) -> Self {
         Self {
             detector: Arc::new(RwLock::new(detector)),
             engine: Arc::new(RwLock::new(engine)),
@@ -73,7 +57,10 @@ impl<E: RemediationExecutor + 'static> HealingLoop<E> {
         self.stats.read().await.clone()
     }
 
-    pub async fn detect_and_remediate(&self, resource_metrics: &HashMap<String, HashMap<String, f64>>) -> Result<Vec<RemediationAttempt>> {
+    pub async fn detect_and_remediate(
+        &self,
+        resource_metrics: &HashMap<String, HashMap<String, f64>>,
+    ) -> Result<Vec<RemediationAttempt>> {
         let mut all_attempts = Vec::new();
 
         // Check if enabled
@@ -120,7 +107,10 @@ impl<E: RemediationExecutor + 'static> HealingLoop<E> {
         Ok(all_attempts)
     }
 
-    pub async fn run_once(&self, resource_metrics: &HashMap<String, HashMap<String, f64>>) -> Result<Vec<RemediationAttempt>> {
+    pub async fn run_once(
+        &self,
+        resource_metrics: &HashMap<String, HashMap<String, f64>>,
+    ) -> Result<Vec<RemediationAttempt>> {
         self.detect_and_remediate(resource_metrics).await
     }
 
@@ -164,13 +154,27 @@ mod tests {
 
     #[async_trait]
     impl RemediationExecutor for MockExecutor {
-        async fn restart_tunnel(&self, _: &str) -> Result<()> { Ok(()) }
-        async fn switch_path(&self, _: &str, _: &str) -> Result<()> { Ok(()) }
-        async fn restart_bgp_session(&self, _: &str) -> Result<()> { Ok(()) }
-        async fn scale_bandwidth(&self, _: &str, _: u64) -> Result<()> { Ok(()) }
-        async fn reroute_traffic(&self, _: &str, _: &str) -> Result<()> { Ok(()) }
-        async fn rollback_config(&self, _: &str) -> Result<()> { Ok(()) }
-        async fn block_traffic(&self, _: &str) -> Result<()> { Ok(()) }
+        async fn restart_tunnel(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn switch_path(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn restart_bgp_session(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn scale_bandwidth(&self, _: &str, _: u64) -> Result<()> {
+            Ok(())
+        }
+        async fn reroute_traffic(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn rollback_config(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn block_traffic(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
     }
 
     #[tokio::test]
@@ -207,7 +211,10 @@ mod tests {
         tunnel_metrics.insert("state".to_string(), 0.0); // Tunnel down
         resource_metrics.insert("tunnel-123".to_string(), tunnel_metrics);
 
-        let attempts = loop_instance.detect_and_remediate(&resource_metrics).await.unwrap();
+        let attempts = loop_instance
+            .detect_and_remediate(&resource_metrics)
+            .await
+            .unwrap();
 
         assert_eq!(attempts.len(), 1);
     }
@@ -223,7 +230,10 @@ mod tests {
         tunnel_metrics.insert("latency_ms".to_string(), 150.0);
         resource_metrics.insert("tunnel-123".to_string(), tunnel_metrics);
 
-        loop_instance.detect_and_remediate(&resource_metrics).await.unwrap();
+        loop_instance
+            .detect_and_remediate(&resource_metrics)
+            .await
+            .unwrap();
 
         let stats = loop_instance.get_stats().await;
 
@@ -246,7 +256,10 @@ mod tests {
         tunnel_metrics.insert("state".to_string(), 0.0);
         resource_metrics.insert("tunnel-123".to_string(), tunnel_metrics);
 
-        let attempts = loop_instance.detect_and_remediate(&resource_metrics).await.unwrap();
+        let attempts = loop_instance
+            .detect_and_remediate(&resource_metrics)
+            .await
+            .unwrap();
 
         assert_eq!(attempts.len(), 0);
 
@@ -272,7 +285,10 @@ mod tests {
         tunnel2_metrics.insert("packet_loss_percent".to_string(), 10.0);
         resource_metrics.insert("tunnel-2".to_string(), tunnel2_metrics);
 
-        let attempts = loop_instance.detect_and_remediate(&resource_metrics).await.unwrap();
+        let attempts = loop_instance
+            .detect_and_remediate(&resource_metrics)
+            .await
+            .unwrap();
 
         assert_eq!(attempts.len(), 2);
 

@@ -4,17 +4,17 @@
 // offering a more flexible and efficient alternative to REST endpoints.
 
 pub mod auth;
-pub mod schema;
-pub mod types;
-pub mod queries;
 pub mod mutations;
+pub mod queries;
+pub mod schema;
 pub mod subscriptions;
+pub mod types;
 
-pub use auth::{AuthContext, require_auth, require_role, require_min_role};
+pub use auth::{require_auth, require_min_role, require_role, AuthContext};
 pub use schema::{build_schema, AppSchema};
 
-use async_graphql::{Context, Result};
 use crate::state::AppState;
+use async_graphql::{Context, Result};
 use std::sync::Arc;
 
 /// Helper to get AppState from GraphQL context

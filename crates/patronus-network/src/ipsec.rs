@@ -13,11 +13,11 @@ use tokio::fs;
 /// IPsec authentication method
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum IpsecAuthMethod {
-    Psk,           // Pre-shared key
-    PubKey,        // Public key (certificates)
-    Eap,           // EAP (for mobile clients)
-    EapMschapv2,   // EAP-MSCHAPv2
-    EapTls,        // EAP-TLS
+    Psk,         // Pre-shared key
+    PubKey,      // Public key (certificates)
+    Eap,         // EAP (for mobile clients)
+    EapMschapv2, // EAP-MSCHAPv2
+    EapTls,      // EAP-TLS
 }
 
 impl std::fmt::Display for IpsecAuthMethod {
@@ -79,15 +79,15 @@ impl std::fmt::Display for IpsecIntegrity {
 /// Diffie-Hellman group
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DhGroup {
-    Modp1024,  // Group 2
-    Modp1536,  // Group 5
-    Modp2048,  // Group 14
-    Modp3072,  // Group 15
-    Modp4096,  // Group 16
-    Modp8192,  // Group 18
-    Ecp256,    // Group 19
-    Ecp384,    // Group 20
-    Ecp521,    // Group 21
+    Modp1024, // Group 2
+    Modp1536, // Group 5
+    Modp2048, // Group 14
+    Modp3072, // Group 15
+    Modp4096, // Group 16
+    Modp8192, // Group 18
+    Ecp256,   // Group 19
+    Ecp384,   // Group 20
+    Ecp521,   // Group 21
 }
 
 impl std::fmt::Display for DhGroup {
@@ -111,41 +111,41 @@ impl std::fmt::Display for DhGroup {
 pub struct IpsecTunnelConfig {
     pub name: String,
     pub enabled: bool,
-    pub ikev2: bool,  // Use IKEv2 (recommended), false = IKEv1
+    pub ikev2: bool, // Use IKEv2 (recommended), false = IKEv1
 
     // Local configuration
-    pub local_id: Option<String>,  // Local identifier (IP, FQDN, email)
-    pub local_subnets: Vec<String>,  // Local subnets to tunnel
+    pub local_id: Option<String>,   // Local identifier (IP, FQDN, email)
+    pub local_subnets: Vec<String>, // Local subnets to tunnel
     pub local_cert: Option<PathBuf>,
     pub local_key: Option<PathBuf>,
 
     // Remote configuration
     pub remote_id: Option<String>,
-    pub remote_address: String,  // Remote gateway IP/hostname
+    pub remote_address: String, // Remote gateway IP/hostname
     pub remote_subnets: Vec<String>,
     pub remote_cert: Option<PathBuf>,
 
     // Authentication
     pub auth_method: IpsecAuthMethod,
-    pub psk: Option<String>,  // Pre-shared key (if PSK auth)
+    pub psk: Option<String>, // Pre-shared key (if PSK auth)
 
     // Phase 1 (IKE) proposals
     pub ike_cipher: Vec<IpsecCipher>,
     pub ike_integrity: Vec<IpsecIntegrity>,
     pub ike_dh_group: Vec<DhGroup>,
-    pub ike_lifetime: u32,  // seconds
+    pub ike_lifetime: u32, // seconds
 
     // Phase 2 (ESP) proposals
     pub esp_cipher: Vec<IpsecCipher>,
     pub esp_integrity: Vec<IpsecIntegrity>,
     pub esp_dh_group: Vec<DhGroup>,
-    pub esp_lifetime: u32,  // seconds
+    pub esp_lifetime: u32, // seconds
 
     // Options
-    pub auto_start: bool,  // Start on boot
-    pub dpdaction: String,  // Dead peer detection action (restart, clear, hold)
-    pub dpddelay: u32,     // DPD delay in seconds
-    pub close_action: String,  // Action on close (restart, clear)
+    pub auto_start: bool,     // Start on boot
+    pub dpdaction: String,    // Dead peer detection action (restart, clear, hold)
+    pub dpddelay: u32,        // DPD delay in seconds
+    pub close_action: String, // Action on close (restart, clear)
 }
 
 impl Default for IpsecTunnelConfig {
@@ -167,11 +167,11 @@ impl Default for IpsecTunnelConfig {
             ike_cipher: vec![IpsecCipher::Aes256, IpsecCipher::Aes128],
             ike_integrity: vec![IpsecIntegrity::Sha256, IpsecIntegrity::Sha512],
             ike_dh_group: vec![DhGroup::Modp2048, DhGroup::Ecp256],
-            ike_lifetime: 28800,  // 8 hours
+            ike_lifetime: 28800, // 8 hours
             esp_cipher: vec![IpsecCipher::Aes256Gcm128, IpsecCipher::Aes256],
             esp_integrity: vec![IpsecIntegrity::Sha256],
             esp_dh_group: vec![DhGroup::Modp2048, DhGroup::Ecp256],
-            esp_lifetime: 3600,  // 1 hour
+            esp_lifetime: 3600, // 1 hour
             auto_start: true,
             dpdaction: "restart".to_string(),
             dpddelay: 30,
@@ -185,14 +185,14 @@ impl Default for IpsecTunnelConfig {
 pub struct IpsecMobileClientConfig {
     pub name: String,
     pub enabled: bool,
-    pub pool_name: String,  // IP pool for clients
-    pub pool_range: (IpAddr, IpAddr),  // IP range
+    pub pool_name: String,            // IP pool for clients
+    pub pool_range: (IpAddr, IpAddr), // IP range
     pub dns_servers: Vec<IpAddr>,
-    pub push_routes: Vec<String>,  // Routes to push to clients
+    pub push_routes: Vec<String>, // Routes to push to clients
 
     // Authentication
     pub auth_method: IpsecAuthMethod,
-    pub eap_id: Option<String>,  // EAP identity
+    pub eap_id: Option<String>, // EAP identity
 
     // Certificates
     pub ca_cert: PathBuf,
@@ -214,7 +214,7 @@ pub struct IpsecConnectionStatus {
     pub state: IpsecState,
     pub local_ip: Option<IpAddr>,
     pub remote_ip: Option<IpAddr>,
-    pub established: Option<String>,  // Time established
+    pub established: Option<String>, // Time established
     pub bytes_in: u64,
     pub bytes_out: u64,
     pub packets_in: u64,
@@ -330,7 +330,10 @@ impl IpsecManager {
     }
 
     /// Generate mobile client configuration
-    pub fn generate_mobile_client_config(&self, config: &IpsecMobileClientConfig) -> Result<String> {
+    pub fn generate_mobile_client_config(
+        &self,
+        config: &IpsecMobileClientConfig,
+    ) -> Result<String> {
         let mut conf = String::new();
 
         conf.push_str(&format!("conn {}\n", config.name));
@@ -346,12 +349,14 @@ impl IpsecManager {
         // Right (client) side
         conf.push_str("  right=%any\n");
         conf.push_str("  rightauth=eap-mschapv2\n");
-        conf.push_str("  rightsourceip=%dhcp\n");  // Or use pool
+        conf.push_str("  rightsourceip=%dhcp\n"); // Or use pool
         conf.push_str(&format!("  rightsourceip={}\n", config.pool_name));
 
         // DNS
         if !config.dns_servers.is_empty() {
-            let dns = config.dns_servers.iter()
+            let dns = config
+                .dns_servers
+                .iter()
                 .map(|ip| ip.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
@@ -370,7 +375,7 @@ impl IpsecManager {
         let esp_proposals = self.format_esp_proposals(
             &config.esp_cipher,
             &config.esp_integrity,
-            &vec![],  // No PFS for mobile
+            &vec![], // No PFS for mobile
         );
         conf.push_str(&format!("  esp={}\n", esp_proposals));
 
@@ -413,7 +418,10 @@ impl IpsecManager {
 
         for cipher in ciphers {
             // GCM ciphers don't need separate integrity
-            if matches!(cipher, IpsecCipher::Aes128Gcm128 | IpsecCipher::Aes256Gcm128) {
+            if matches!(
+                cipher,
+                IpsecCipher::Aes128Gcm128 | IpsecCipher::Aes256Gcm128
+            ) {
                 if dh_groups.is_empty() {
                     proposals.push(format!("{}", cipher));
                 } else {
@@ -442,20 +450,19 @@ impl IpsecManager {
         let conf_content = self.generate_tunnel_config(config)?;
         let conf_path = self.config_dir.join(format!("{}.conf", config.name));
 
-        fs::create_dir_all(&self.config_dir).await
+        fs::create_dir_all(&self.config_dir)
+            .await
             .map_err(|e| Error::Network(format!("Failed to create config directory: {}", e)))?;
 
-        fs::write(&conf_path, conf_content).await
+        fs::write(&conf_path, conf_content)
+            .await
             .map_err(|e| Error::Network(format!("Failed to write config file: {}", e)))?;
 
         // Update secrets file if PSK
         if config.auth_method == IpsecAuthMethod::Psk {
             if let Some(psk) = &config.psk {
-                self.add_psk_secret(
-                    config.local_id.as_deref(),
-                    config.remote_id.as_deref(),
-                    psk
-                ).await?;
+                self.add_psk_secret(config.local_id.as_deref(), config.remote_id.as_deref(), psk)
+                    .await?;
             }
         }
 
@@ -476,14 +483,17 @@ impl IpsecManager {
 
         // Read existing secrets
         let mut secrets = if self.secrets_file.exists() {
-            fs::read_to_string(&self.secrets_file).await.unwrap_or_default()
+            fs::read_to_string(&self.secrets_file)
+                .await
+                .unwrap_or_default()
         } else {
             String::new()
         };
 
         secrets.push_str(&secret_line);
 
-        fs::write(&self.secrets_file, secrets).await
+        fs::write(&self.secrets_file, secrets)
+            .await
             .map_err(|e| Error::Network(format!("Failed to write secrets file: {}", e)))?;
 
         Ok(())
@@ -563,36 +573,51 @@ impl IpsecManager {
 
     /// Generate certificates
     pub async fn generate_ca(&self, common_name: &str) -> Result<()> {
-        fs::create_dir_all(&self.config_dir).await
+        fs::create_dir_all(&self.config_dir)
+            .await
             .map_err(|e| Error::Network(format!("Failed to create config directory: {}", e)))?;
 
         let pki_dir = self.config_dir.join("pki");
-        fs::create_dir_all(&pki_dir).await
+        fs::create_dir_all(&pki_dir)
+            .await
             .map_err(|e| Error::Network(format!("Failed to create PKI directory: {}", e)))?;
 
         // Generate CA key
         Command::new("ipsec")
-            .args(&["pki", "--gen", "--type", "rsa", "--size", "4096", "--outform", "pem"])
+            .args(&[
+                "pki",
+                "--gen",
+                "--type",
+                "rsa",
+                "--size",
+                "4096",
+                "--outform",
+                "pem",
+            ])
             .output()
-            .map(|output| {
-                std::fs::write(pki_dir.join("ca-key.pem"), output.stdout)
-            })
+            .map(|output| std::fs::write(pki_dir.join("ca-key.pem"), output.stdout))
             .map_err(|e| Error::Network(format!("Failed to generate CA key: {}", e)))?
             .map_err(|e| Error::Network(format!("Failed to write CA key: {}", e)))?;
 
         // Generate CA certificate
         Command::new("ipsec")
             .args(&[
-                "pki", "--self", "--ca", "--lifetime", "3650",
-                "--in", pki_dir.join("ca-key.pem").to_str().unwrap(),
-                "--type", "rsa",
-                "--dn", &format!("CN={}", common_name),
-                "--outform", "pem"
+                "pki",
+                "--self",
+                "--ca",
+                "--lifetime",
+                "3650",
+                "--in",
+                pki_dir.join("ca-key.pem").to_str().unwrap(),
+                "--type",
+                "rsa",
+                "--dn",
+                &format!("CN={}", common_name),
+                "--outform",
+                "pem",
             ])
             .output()
-            .map(|output| {
-                std::fs::write(pki_dir.join("ca-cert.pem"), output.stdout)
-            })
+            .map(|output| std::fs::write(pki_dir.join("ca-cert.pem"), output.stdout))
             .map_err(|e| Error::Network(format!("Failed to generate CA cert: {}", e)))?
             .map_err(|e| Error::Network(format!("Failed to write CA cert: {}", e)))?;
 

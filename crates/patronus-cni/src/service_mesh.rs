@@ -102,7 +102,11 @@ impl ServiceMeshManager {
     }
 
     /// Generate Envoy configuration for a pod
-    async fn generate_envoy_config(&self, pod_name: &str, namespace: &str) -> Result<EnvoyConfig> {
+    async fn generate_envoy_config(
+        &self,
+        _pod_name: &str,
+        _namespace: &str,
+    ) -> Result<EnvoyConfig> {
         let config = EnvoyConfig {
             admin: AdminConfig {
                 address: SocketAddr::new(IpAddr::from([127, 0, 0, 1]), self.config.admin_port),
@@ -114,27 +118,25 @@ impl ServiceMeshManager {
                         name: "inbound".to_string(),
                         address: SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 15006),
                         filter_chains: vec![FilterChain {
-                            filters: vec![
-                                Filter::HttpConnectionManager {
-                                    stat_prefix: "inbound_http".to_string(),
-                                    route_config: RouteConfig {
-                                        name: "inbound_route".to_string(),
-                                        virtual_hosts: vec![VirtualHost {
-                                            name: "inbound_vhost".to_string(),
-                                            domains: vec!["*".to_string()],
-                                            routes: vec![Route {
-                                                match_: RouteMatch {
-                                                    prefix: "/".to_string(),
-                                                },
-                                                route: RouteAction::Cluster {
-                                                    cluster: "local_service".to_string(),
-                                                },
-                                            }],
+                            filters: vec![Filter::HttpConnectionManager {
+                                stat_prefix: "inbound_http".to_string(),
+                                route_config: RouteConfig {
+                                    name: "inbound_route".to_string(),
+                                    virtual_hosts: vec![VirtualHost {
+                                        name: "inbound_vhost".to_string(),
+                                        domains: vec!["*".to_string()],
+                                        routes: vec![Route {
+                                            match_: RouteMatch {
+                                                prefix: "/".to_string(),
+                                            },
+                                            route: RouteAction::Cluster {
+                                                cluster: "local_service".to_string(),
+                                            },
                                         }],
-                                    },
-                                    http_filters: vec![HttpFilter::Router],
-                                }
-                            ],
+                                    }],
+                                },
+                                http_filters: vec![HttpFilter::Router],
+                            }],
                         }],
                     },
                     // Outbound listener for traffic from pod
@@ -142,16 +144,14 @@ impl ServiceMeshManager {
                         name: "outbound".to_string(),
                         address: SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 15001),
                         filter_chains: vec![FilterChain {
-                            filters: vec![
-                                Filter::HttpConnectionManager {
-                                    stat_prefix: "outbound_http".to_string(),
-                                    route_config: RouteConfig {
-                                        name: "outbound_route".to_string(),
-                                        virtual_hosts: vec![],  // Populated dynamically
-                                    },
-                                    http_filters: vec![HttpFilter::Router],
-                                }
-                            ],
+                            filters: vec![Filter::HttpConnectionManager {
+                                stat_prefix: "outbound_http".to_string(),
+                                route_config: RouteConfig {
+                                    name: "outbound_route".to_string(),
+                                    virtual_hosts: vec![], // Populated dynamically
+                                },
+                                http_filters: vec![HttpFilter::Router],
+                            }],
                         }],
                     },
                 ],
@@ -199,7 +199,9 @@ impl ServiceMeshManager {
     /// Get service endpoints
     pub async fn get_endpoints(&self, namespace: &str, service: &str) -> Vec<ServiceEndpoint> {
         let key = format!("{}/{}", namespace, service);
-        self.endpoints.read().await
+        self.endpoints
+            .read()
+            .await
             .get(&key)
             .cloned()
             .into_iter()
@@ -219,7 +221,7 @@ impl ServiceMeshManager {
     }
 
     /// Configure L7 routing rules
-    pub async fn configure_routing(&self, namespace: &str, rules: Vec<L7Route>) -> Result<()> {
+    pub async fn configure_routing(&self, namespace: &str, _rules: Vec<L7Route>) -> Result<()> {
         info!("Configuring L7 routing for namespace {}", namespace);
 
         // Update Envoy configurations with new routing rules

@@ -1,7 +1,7 @@
 //! Linkerd Integration
 
-use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceProfile {
@@ -32,12 +32,15 @@ pub struct RetryBudget {
 }
 
 pub struct LinkerdIntegration {
+    #[allow(dead_code)]
     namespace: String,
 }
 
 impl LinkerdIntegration {
     pub fn new(namespace: impl Into<String>) -> Self {
-        Self { namespace: namespace.into() }
+        Self {
+            namespace: namespace.into(),
+        }
     }
 
     pub async fn create_service_profile(&self, profile: ServiceProfile) -> Result<()> {

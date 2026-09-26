@@ -6,12 +6,12 @@ pub mod packet_capture;
 pub mod tools;
 
 pub use packet_capture::{
-    PacketCaptureManager, CaptureConfig, CaptureSession, CaptureStats,
-    CaptureFormat, CaptureInfo, PacketDetails, BpfFilters,
+    BpfFilters, CaptureConfig, CaptureFormat, CaptureInfo, CaptureSession, CaptureStats,
+    PacketCaptureManager, PacketDetails,
 };
 
 pub use tools::{
-    DiagnosticTools, PingResult, TracerouteResult, TracerouteHop,
-    DnsLookupResult, DnsRecord, PortTestResult, ArpEntry, NdpEntry,
-    RouteEntry, SocketEntry, FirewallState, SystemActivity, ProcessInfo,
+    ArpEntry, DiagnosticTools, DnsLookupResult, DnsRecord, FirewallState, NdpEntry, PingResult,
+    PortTestResult, ProcessInfo, RouteEntry, SocketEntry, SystemActivity, TracerouteHop,
+    TracerouteResult,
 };

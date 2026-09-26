@@ -5,8 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use sysinfo::{Disks, System};
 use tokio::time::{interval, Duration};
-use sysinfo::{System, Disks};
 
 /// Alert severity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,7 +23,7 @@ pub struct AlertRule {
     pub severity: AlertSeverity,
     pub description: String,
     pub condition: AlertCondition,
-    pub duration: Duration,  // How long condition must be true
+    pub duration: Duration, // How long condition must be true
     pub enabled: bool,
 }
 
@@ -71,18 +71,11 @@ pub enum NotificationChannel {
         channel: String,
     },
     /// Discord webhook
-    Discord {
-        webhook_url: String,
-    },
+    Discord { webhook_url: String },
     /// PagerDuty
-    PagerDuty {
-        integration_key: String,
-    },
+    PagerDuty { integration_key: String },
     /// Telegram
-    Telegram {
-        bot_token: String,
-        chat_id: String,
-    },
+    Telegram { bot_token: String, chat_id: String },
     /// Webhook (generic)
     Webhook {
         url: String,
@@ -90,10 +83,7 @@ pub enum NotificationChannel {
         headers: HashMap<String, String>,
     },
     /// Syslog
-    Syslog {
-        server: String,
-        facility: String,
-    },
+    Syslog { server: String, facility: String },
 }
 
 /// Fired alert
@@ -175,9 +165,8 @@ impl AlertManager {
                 if cpus.is_empty() {
                     return false;
                 }
-                let cpu_usage = cpus.iter()
-                    .map(|p| p.cpu_usage() as f64)
-                    .sum::<f64>() / cpus.len() as f64;
+                let cpu_usage =
+                    cpus.iter().map(|p| p.cpu_usage() as f64).sum::<f64>() / cpus.len() as f64;
                 cpu_usage > *percent
             }
             AlertCondition::MemoryUsageAbove { percent } => {
@@ -215,7 +204,10 @@ impl AlertManager {
                     Err(_) => true, // If can't read, assume down
                 }
             }
-            AlertCondition::PacketLossAbove { interface: _, percent: _ } => {
+            AlertCondition::PacketLossAbove {
+                interface: _,
+                percent: _,
+            } => {
                 // Would need to run ping tests - complex to implement inline
                 false
             }
@@ -249,7 +241,10 @@ impl AlertManager {
                     Err(_) => false, // Can't determine status
                 }
             }
-            AlertCondition::IdsAlertsSpike { threshold: _, window_secs: _ } => {
+            AlertCondition::IdsAlertsSpike {
+                threshold: _,
+                window_secs: _,
+            } => {
                 // Would need integration with IDS alert database
                 false
             }
@@ -270,7 +265,10 @@ impl AlertManager {
                     Err(_) => false,
                 }
             }
-            AlertCondition::PrometheusQuery { query: _, threshold: _ } => {
+            AlertCondition::PrometheusQuery {
+                query: _,
+                threshold: _,
+            } => {
                 // Would need Prometheus client to query
                 false
             }
@@ -291,11 +289,7 @@ impl AlertManager {
             details: HashMap::new(),
         };
 
-        tracing::warn!(
-            "Alert fired: {} - {}",
-            alert.rule_name,
-            alert.description
-        );
+        tracing::warn!("Alert fired: {} - {}", alert.rule_name, alert.description);
 
         // Send notifications
         for channel in &self.channels {
@@ -318,10 +312,17 @@ impl AlertManager {
 
     async fn send_notification(&self, channel: &NotificationChannel, alert: &FiredAlert) {
         match channel {
-            NotificationChannel::Email { to, smtp_server, from } => {
+            NotificationChannel::Email {
+                to,
+                smtp_server,
+                from,
+            } => {
                 self.send_email(to, smtp_server, from, alert).await;
             }
-            NotificationChannel::Slack { webhook_url, channel: slack_channel } => {
+            NotificationChannel::Slack {
+                webhook_url,
+                channel: slack_channel,
+            } => {
                 self.send_slack(webhook_url, slack_channel, alert).await;
             }
             NotificationChannel::Discord { webhook_url } => {
@@ -333,7 +334,11 @@ impl AlertManager {
             NotificationChannel::Telegram { bot_token, chat_id } => {
                 self.send_telegram(bot_token, chat_id, alert).await;
             }
-            NotificationChannel::Webhook { url, method, headers } => {
+            NotificationChannel::Webhook {
+                url,
+                method,
+                headers,
+            } => {
                 self.send_webhook(url, method, headers, alert).await;
             }
             NotificationChannel::Syslog { server, facility } => {
@@ -344,12 +349,19 @@ impl AlertManager {
 
     async fn send_resolution(&self, channel: &NotificationChannel, alert: &FiredAlert) {
         match channel {
-            NotificationChannel::Email { to, smtp_server, from } => {
+            NotificationChannel::Email {
+                to,
+                smtp_server,
+                from,
+            } => {
                 // Send resolution email
                 tracing::debug!("Sending resolution email to {:?} via {}", to, smtp_server);
                 let _ = (from, alert); // Use variables to avoid warning
             }
-            NotificationChannel::Slack { webhook_url, channel: slack_channel } => {
+            NotificationChannel::Slack {
+                webhook_url,
+                channel: slack_channel,
+            } => {
                 let payload = serde_json::json!({
                     "channel": slack_channel,
                     "username": "Patronus Alerts",
@@ -435,7 +447,11 @@ impl AlertManager {
                     tracing::error!("Failed to send Telegram resolution: {}", e);
                 }
             }
-            NotificationChannel::Webhook { url, method, headers } => {
+            NotificationChannel::Webhook {
+                url,
+                method,
+                headers,
+            } => {
                 let client = reqwest::Client::new();
                 let mut request = match method.to_uppercase().as_str() {
                     "POST" => client.post(url),
@@ -463,7 +479,13 @@ impl AlertManager {
         }
     }
 
-    async fn send_email(&self, to: &[String], _smtp_server: &str, _from: &str, _alert: &FiredAlert) {
+    async fn send_email(
+        &self,
+        to: &[String],
+        _smtp_server: &str,
+        _from: &str,
+        _alert: &FiredAlert,
+    ) {
         tracing::debug!("Sending email alert to {:?}", to);
         // Full implementation would use lettre crate for SMTP
     }
@@ -514,9 +536,9 @@ impl AlertManager {
 
     async fn send_discord(&self, webhook_url: &str, alert: &FiredAlert) {
         let color = match alert.severity {
-            AlertSeverity::Critical => 0xFF0000,  // Red
-            AlertSeverity::Warning => 0xFFA500,   // Orange
-            AlertSeverity::Info => 0x00FF00,      // Green
+            AlertSeverity::Critical => 0xFF0000, // Red
+            AlertSeverity::Warning => 0xFFA500,  // Orange
+            AlertSeverity::Info => 0x00FF00,     // Green
         };
 
         let payload = serde_json::json!({
@@ -602,7 +624,13 @@ impl AlertManager {
         }
     }
 
-    async fn send_webhook(&self, url: &str, method: &str, headers: &HashMap<String, String>, alert: &FiredAlert) {
+    async fn send_webhook(
+        &self,
+        url: &str,
+        method: &str,
+        headers: &HashMap<String, String>,
+        alert: &FiredAlert,
+    ) {
         let client = reqwest::Client::new();
         let mut request = match method.to_uppercase().as_str() {
             "POST" => client.post(url),
@@ -634,7 +662,7 @@ impl AlertManager {
             severity: AlertSeverity::Warning,
             description: "CPU usage above 80%".to_string(),
             condition: AlertCondition::CpuUsageAbove { percent: 80.0 },
-            duration: Duration::from_secs(300),  // 5 minutes
+            duration: Duration::from_secs(300), // 5 minutes
             enabled: true,
         });
 
@@ -670,7 +698,7 @@ impl AlertManager {
                 domain: "*".to_string(),
                 days: 14,
             },
-            duration: Duration::from_secs(3600),  // 1 hour
+            duration: Duration::from_secs(3600), // 1 hour
             enabled: true,
         });
 
@@ -680,7 +708,7 @@ impl AlertManager {
             severity: AlertSeverity::Critical,
             description: "High availability failover occurred".to_string(),
             condition: AlertCondition::HaFailover,
-            duration: Duration::from_secs(0),  // Immediate
+            duration: Duration::from_secs(0), // Immediate
             enabled: true,
         });
     }
