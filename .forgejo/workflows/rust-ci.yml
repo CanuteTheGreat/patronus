@@ -67,6 +67,11 @@ jobs:
             ${{ runner.os }}-cargo-audit-
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
+      - name: Generate Cargo.lock
+        # Cargo.lock is gitignored and never committed in this workspace, so
+        # a fresh checkout has nothing for cargo-audit to scan (it errors
+        # with "Couldn't load Cargo.lock" rather than silently passing).
+        run: cargo generate-lockfile
       - name: Run cargo audit
         run: cargo audit
 
