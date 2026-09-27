@@ -4,6 +4,7 @@
 
 use libbpf_rs::{Object, ObjectBuilder};
 use serde::{Deserialize, Serialize};
+use std::ffi::CString;
 use std::net::IpAddr;
 use std::os::fd::AsFd;
 use std::os::unix::io::AsRawFd;
@@ -512,6 +513,15 @@ char _license[] SEC("license") = "GPL";
         // Use libbpf-sys for direct syscall
         use libbpf_sys as bpf;
 
+        // The C API requires a real null-terminated string, not a Rust
+        // `&str`'s raw byte pointer (which both has the wrong signedness --
+        // `*const u8` vs the expected `*const c_char`/`i8` -- and, more
+        // seriously, no null terminator at all, which would have been a
+        // real out-of-bounds read once this call actually ran privileged).
+        let name_cstr = CString::new(name).map_err(|_| {
+            XdpError::LibbpfError(format!("map name '{name}' contains an interior NUL byte"))
+        })?;
+
         let opts = bpf::bpf_map_create_opts {
             sz: std::mem::size_of::<bpf::bpf_map_create_opts>() as u64,
             ..Default::default()
@@ -520,7 +530,7 @@ char _license[] SEC("license") = "GPL";
         let fd = unsafe {
             bpf::bpf_map_create(
                 bpf::BPF_MAP_TYPE_HASH,
-                name.as_ptr(),
+                name_cstr.as_ptr(),
                 std::mem::size_of::<u32>() as u32,
                 std::mem::size_of::<u64>() as u32,
                 max_entries,
@@ -544,6 +554,10 @@ char _license[] SEC("license") = "GPL";
 
         use libbpf_sys as bpf;
 
+        let name_cstr = CString::new(name).map_err(|_| {
+            XdpError::LibbpfError(format!("map name '{name}' contains an interior NUL byte"))
+        })?;
+
         let opts = bpf::bpf_map_create_opts {
             sz: std::mem::size_of::<bpf::bpf_map_create_opts>() as u64,
             ..Default::default()
@@ -552,7 +566,7 @@ char _license[] SEC("license") = "GPL";
         let fd = unsafe {
             bpf::bpf_map_create(
                 bpf::BPF_MAP_TYPE_ARRAY,
-                name.as_ptr(),
+                name_cstr.as_ptr(),
                 std::mem::size_of::<u32>() as u32,
                 std::mem::size_of::<u64>() as u32,
                 max_entries,

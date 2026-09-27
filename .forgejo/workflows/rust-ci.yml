@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -55,6 +55,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust
         uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        # cargo-audit itself and its build deps (libc, etc.) need a real C
+        # toolchain -- this runner has nothing pre-installed. Also matches
+        # the clippy/test jobs' own libelf-dev/zlib1g-dev addition: even
+        # though cargo-audit only reads Cargo.lock metadata, `cargo install`
+        # still resolves/builds against this workspace's full dependency
+        # graph in some configurations, which can pull in libbpf-sys.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libelf-dev zlib1g-dev pkg-config
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -85,7 +95,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -134,7 +144,7 @@ jobs:
       - name: Install libbpf headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev libssl-dev pkg-config
+          sudo apt-get install -y build-essential libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev
       - name: Cache cargo
         uses: actions/cache@v4
         with:
