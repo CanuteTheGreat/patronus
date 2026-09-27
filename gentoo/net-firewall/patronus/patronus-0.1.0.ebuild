@@ -124,6 +124,17 @@ BDEPEND="
 
 QA_FLAGS_IGNORED="usr/bin/patronus.*"
 
+# NOTE: both the cargo and git-r3 eclasses export src_unpack; since git-r3 is
+# inherited after cargo, its src_unpack wrapper silently replaces cargo's,
+# so cargo_gen_config() (which cargo_src_unpack would call) never runs and
+# any later cargo_env/cargo_src_compile call dies with:
+#   "FATAL: please call cargo_gen_config before using cargo_env"
+# Define src_unpack explicitly to run both.
+src_unpack() {
+	git-r3_src_unpack
+	cargo_gen_config
+}
+
 src_configure() {
 	local myfeatures=(
 		$(usex web "web" "")
