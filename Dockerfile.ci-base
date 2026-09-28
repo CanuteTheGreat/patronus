@@ -12,6 +12,13 @@ FROM gentoo/stage3:amd64-systemd
 
 ARG PATRONUS_USE="web cli api nftables wireguard multiwan monitoring prometheus backup systemd"
 
+# See Dockerfile for why: Portage's namespace-based sandbox FEATURES
+# (ipc-sandbox/network-sandbox/pid-sandbox) need unshare(2), which fails with
+# EPERM inside a docker build layer (no CAP_SYS_ADMIN) and gets retried
+# forever instead of failing fast -- burning the whole job timeout.
+RUN echo 'FEATURES="${FEATURES} -ipc-sandbox -network-sandbox -pid-sandbox"' \
+    >> /etc/portage/make.conf
+
 RUN emerge-webrsync
 
 # Register the overlay so package.use/package.accept_keywords below

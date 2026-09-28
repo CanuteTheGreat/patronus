@@ -14,6 +14,17 @@ FROM ${CI_BASE_IMAGE} AS builder
 
 ARG PATRONUS_USE="web cli api nftables wireguard multiwan monitoring prometheus backup systemd"
 
+# Portage's default FEATURES include ipc-sandbox/network-sandbox/pid-sandbox,
+# which call unshare(2) to create new namespaces per sandboxed action. Inside
+# a `docker build` layer there's no CAP_SYS_ADMIN, so every one of those calls
+# fails with EPERM -- and instead of failing fast, Portage just retries the
+# unshare repeatedly (visible in CI logs as a flood of "Unable to unshare:
+# EPERM" every few seconds), burning the whole job timeout without making
+# real progress. Disable the namespace-based sandbox features here; the
+# regular filesystem sandbox (FEATURES=sandbox, unaffected) still applies.
+RUN echo 'FEATURES="${FEATURES} -ipc-sandbox -network-sandbox -pid-sandbox"' \
+    >> /etc/portage/make.conf
+
 RUN emerge-webrsync
 
 # Register this project's own overlay as a local Portage repo (already a
