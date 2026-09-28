@@ -179,8 +179,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Gentoo/Portage image (using prebuilt CI base)
-        run: docker build --build-arg CI_BASE_IMAGE=git.canutethegreat.com/canutethegreat/patronus-ci-base:latest -t patronus/web:${{ github.sha }} .
+      - name: Build Gentoo/Portage image (using prebuilt CI base if available)
+        # The prebuilt base (see build-ci-base.yml) is pushed to this repo's
+        # own Forgejo container registry, which isn't always reachable/enabled
+        # (e.g. registry not provisioned server-side yet -> docker login/pull
+        # 404s). Rather than hard-failing this job every run in that case,
+        # probe for the image first and fall back to the public gentoo/stage3
+        # base so the build still exercises something real.
+        run: |
+          BASE_IMAGE=gentoo/stage3:amd64-systemd
+          if docker pull git.canutethegreat.com/canutethegreat/patronus-ci-base:latest; then
+            BASE_IMAGE=git.canutethegreat.com/canutethegreat/patronus-ci-base:latest
+          else
+            echo "::warning::prebuilt CI base image unavailable, falling back to ${BASE_IMAGE}"
+          fi
+          docker build --build-arg CI_BASE_IMAGE="${BASE_IMAGE}" -t patronus/web:${{ github.sha }} .
 
       - name: Smoke-test the built image
         run: docker run --rm patronus/web:${{ github.sha }} --version || docker run --rm patronus/web:${{ github.sha }} --help
