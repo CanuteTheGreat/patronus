@@ -162,24 +162,25 @@ jobs:
     name: Gentoo Docker Build
     runs-on: x86_64
     needs: fmt
-    # This does a full `emerge` release build (LTO=true, codegen-units=1,
-    # plus the IUSE "+"-default feature set, which pulls in more than the
-    # Dockerfile's own PATRONUS_USE ARG implies) and has never completed
-    # within a normal CI window -- every run so far has been killed by the
-    # runner after ~2h40m-3h (failing or cancelled), which turns the whole
-    # commit red even though every real code-quality job above passes.
-    # Bounding the timeout and marking it continue-on-error keeps this
-    # tracked without blocking merges on it; the real fix (disable LTO for
-    # CI-only smoke builds vs. trimming default IUSE flags) changes actual
-    # release build behavior and needs a product decision, not a silent CI
-    # tweak.
+    # Uses the prebuilt patronus-ci-base image (Portage tree pre-synced,
+    # runtime deps pre-installed, Rust toolchain warm -- see
+    # .forgejo/workflows/build-ci-base.yml and Dockerfile.ci-base) so this
+    # job only has to emerge Patronus itself, not the whole dependency
+    # graph from a bare stage3 every single run. Previously this build did
+    # a full `emerge` release build (LTO=true, codegen-units=1, plus the
+    # IUSE "+"-default feature set) from a bare gentoo/stage3 image and
+    # never completed within a normal CI window (every run killed by the
+    # runner after ~2h40m-3h). timeout-minutes/continue-on-error are kept
+    # as a safety net in case the base image is ever stale/missing and it
+    # falls back to a from-scratch build, but the expected path now is a
+    # normal-length build.
     timeout-minutes: 60
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Gentoo/Portage image
-        run: docker build -t patronus/web:${{ github.sha }} .
+      - name: Build Gentoo/Portage image (using prebuilt CI base)
+        run: docker build --build-arg CI_BASE_IMAGE=git.canutethegreat.com/canutethegreat/patronus-ci-base:latest -t patronus/web:${{ github.sha }} .
 
       - name: Smoke-test the built image
         run: docker run --rm patronus/web:${{ github.sha }} --version || docker run --rm patronus/web:${{ github.sha }} --help

@@ -1,0 +1,39 @@
+# Patronus CI base image -- pre-synced Portage tree + pre-installed
+# runtime dependencies, matching the default PATRONUS_USE set in the
+# main Dockerfile, plus a warm Rust toolchain. Built rarely (weekly, or
+# on a manual trigger) and pushed to this repo's own Forgejo container
+# registry -- NOT rebuilt on every commit. The per-commit CI build
+# below (Dockerfile) FROMs this image instead of raw gentoo/stage3, so
+# it only ever compiles Patronus's own (small) Rust codebase, not the
+# whole dependency graph -- this is the actual fix for the 2h40m-3h
+# runtime that never completed in CI.
+
+FROM gentoo/stage3:amd64-systemd
+
+ARG PATRONUS_USE="web cli api nftables wireguard multiwan monitoring prometheus backup systemd"
+
+RUN emerge-webrsync
+
+# Register the overlay so package.use/package.accept_keywords below
+# resolve against the real ebuild's IUSE/dependency graph, same as
+# the main Dockerfile does.
+COPY gentoo /var/db/repos/patronus-overlay
+RUN mkdir -p /etc/portage/repos.conf && \
+    printf '[patronus]\nlocation = /var/db/repos/patronus-overlay\npriority = 50\n' \
+    > /etc/portage/repos.conf/patronus-overlay.conf
+
+RUN echo "net-firewall/patronus ${PATRONUS_USE} -openrc" > /etc/portage/package.use/patronus-docker-build
+RUN echo "net-firewall/patronus ~amd64" > /etc/portage/package.accept_keywords/patronus
+
+# The actual slow part: resolve and emerge every REAL dependency the
+# ebuild declares for the enabled USE flags above (nftables, wireguard-tools,
+# dns backends, monitoring backends, etc.) plus the Rust toolchain itself,
+# WITHOUT building net-firewall/patronus (--onlydeps). This is what used
+# to happen from scratch on every single CI run.
+RUN emerge --verbose --autounmask-write --onlydeps net-firewall/patronus && \
+    etc-update --automode -5 || true
+RUN emerge --verbose --onlydeps net-firewall/patronus
+
+# Pre-warm cargo's own registry/index too, so the per-commit build's
+# `cargo vendor` step doesn't re-fetch the whole crates.io index cold.
+RUN emerge --verbose dev-lang/rust dev-util/cargo-c 2>&1 | tail -20 || true

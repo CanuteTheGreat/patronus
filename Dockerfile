@@ -9,7 +9,8 @@
 # Override USE flags at build time, e.g.:
 #   docker build --build-arg PATRONUS_USE="web cli api nftables wireguard" .
 
-FROM gentoo/stage3:amd64-systemd AS builder
+ARG CI_BASE_IMAGE=gentoo/stage3:amd64-systemd
+FROM ${CI_BASE_IMAGE} AS builder
 
 ARG PATRONUS_USE="web cli api nftables wireguard multiwan monitoring prometheus backup systemd"
 

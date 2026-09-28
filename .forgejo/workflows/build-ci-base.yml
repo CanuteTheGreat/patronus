@@ -1,0 +1,25 @@
+name: Build Patronus CI base image
+
+# Rebuilds and pushes the CI base image (pre-synced Portage tree +
+# pre-installed runtime deps + warm Rust toolchain) to this repo's own
+# Forgejo container registry. Runs weekly (Portage tree drifts) and on
+# manual trigger -- NOT on every commit, since the whole point is that
+# this is the slow part done rarely, not per-push.
+on:
+  schedule:
+    - cron: '0 6 * * 0'  # weekly, Sunday 6am UTC
+  workflow_dispatch: {}
+
+jobs:
+  build-ci-base:
+    name: Build and push CI base image
+    runs-on: x86_64
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to this repo's own Forgejo container registry
+        run: echo "${{ secrets.REGISTRY_PUSH_TOKEN }}" | docker login git.canutethegreat.com -u CanuteTheGreat --password-stdin
+      - name: Build CI base image
+        run: docker build -f Dockerfile.ci-base -t git.canutethegreat.com/canutethegreat/patronus-ci-base:latest .
+      - name: Push CI base image
+        run: docker push git.canutethegreat.com/canutethegreat/patronus-ci-base:latest
