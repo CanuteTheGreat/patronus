@@ -129,9 +129,29 @@ QA_FLAGS_IGNORED="usr/bin/patronus.*"
 # so cargo_gen_config() (which cargo_src_unpack would call) never runs and
 # any later cargo_env/cargo_src_compile call dies with:
 #   "FATAL: please call cargo_gen_config before using cargo_env"
-# Define src_unpack explicitly to run both.
+# Define src_unpack explicitly to run both -- but merely calling
+# cargo_gen_config() (as the previous version of this ebuild did) only
+# writes a cargo config pointing source.gentoo at ECARGO_VENDOR
+# (${WORKDIR}/cargo_home/gentoo); it never actually populates that
+# directory with any crates. This ebuild has no SRC_URI/CRATES-based
+# crate list (CRATES="" above -- deps come from git, same as the live
+# 9999 ebuild), so nothing else vendors them either. Real symptom seen in
+# CI (job 9556, run 2120): cargo build died immediately with "failed to
+# get anyhow as a dependency ... No such file or directory" because
+# ECARGO_VENDOR was empty. cargo_live_src_unpack (which the 9999 ebuild
+# uses) does the real fetch+vendor, but it hard-asserts PV==*9999* so it
+# can't be called here directly -- do the equivalent vendor step by hand
+# instead (real network `cargo vendor` into the exact ECARGO_VENDOR path
+# cargo_gen_config's [source.gentoo] block expects) before generating
+# the config.
 src_unpack() {
 	git-r3_src_unpack
+	mkdir -p "${ECARGO_HOME}" "${ECARGO_VENDOR}" || die
+	pushd "${S}" > /dev/null || die
+	CARGO_HOME="${ECARGO_HOME}" cargo vendor --locked "${ECARGO_VENDOR}" \
+		> "${T}/cargo-vendor.log" 2>&1 || \
+		die "cargo vendor failed to populate ${ECARGO_VENDOR}, see ${T}/cargo-vendor.log"
+	popd > /dev/null || die
 	cargo_gen_config
 }
 
