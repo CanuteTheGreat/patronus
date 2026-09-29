@@ -130,7 +130,7 @@ QA_FLAGS_IGNORED="usr/bin/patronus.*"
 # any later cargo_env/cargo_src_compile call dies with:
 #   "FATAL: please call cargo_gen_config before using cargo_env"
 # Define src_unpack explicitly to run both -- but merely calling
-# cargo_gen_config() (as the previous version of this ebuild did) only
+# cargo_gen_config() (as an even earlier version of this ebuild did) only
 # writes a cargo config pointing source.gentoo at ECARGO_VENDOR
 # (${WORKDIR}/cargo_home/gentoo); it never actually populates that
 # directory with any crates. This ebuild has no SRC_URI/CRATES-based
@@ -144,11 +144,29 @@ QA_FLAGS_IGNORED="usr/bin/patronus.*"
 # instead (real network `cargo vendor` into the exact ECARGO_VENDOR path
 # cargo_gen_config's [source.gentoo] block expects) before generating
 # the config.
+#
+# A follow-up fix (job 9589, run 108) is folded in here too: the first
+# version of this hand-rolled step passed `cargo vendor --locked`, which
+# still failed, this time with a real `cargo vendor` error captured in
+# cargo-vendor.log (not echoed to the Docker build's own stdout, so it
+# took reading upstream cargo semantics + this repo's own .gitignore to
+# diagnose without a local repro). Root cause: `Cargo.lock` is
+# git-ignored in this repo (see .gitignore) and has never been committed,
+# so the `git-r3_src_unpack` checkout of the `v0.1.0` tag just above has
+# *no* Cargo.lock at all -- and `cargo vendor --locked` requires an
+# existing, up-to-date lockfile; with none present it refuses to
+# generate one and fails immediately, before ever touching the network.
+# Fix: drop `--locked`, exactly matching the flags cargo_live_src_unpack
+# itself uses two functions up in this same eclass (`cargo vendor
+# ${offline:+--offline} ${ECARGO_VENDOR}` -- no --locked there either).
+# Without --locked, cargo vendor auto-generates a fresh Cargo.lock from
+# Cargo.toml as needed before vendoring, same as a normal `cargo build`
+# would on first checkout.
 src_unpack() {
 	git-r3_src_unpack
 	mkdir -p "${ECARGO_HOME}" "${ECARGO_VENDOR}" || die
 	pushd "${S}" > /dev/null || die
-	CARGO_HOME="${ECARGO_HOME}" cargo vendor --locked "${ECARGO_VENDOR}" \
+	CARGO_HOME="${ECARGO_HOME}" cargo vendor "${ECARGO_VENDOR}" \
 		> "${T}/cargo-vendor.log" 2>&1 || \
 		die "cargo vendor failed to populate ${ECARGO_VENDOR}, see ${T}/cargo-vendor.log"
 	popd > /dev/null || die
