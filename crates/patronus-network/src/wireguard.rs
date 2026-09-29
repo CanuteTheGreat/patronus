@@ -180,13 +180,26 @@ impl WireGuardManager {
 
     /// Add a peer to a WireGuard interface
     pub async fn add_peer(&self, interface: &str, peer: &WireGuardPeer) -> Result<()> {
+        // Declared here (not inside the `if` blocks below) so these owned
+        // Strings outlive `args`'s borrows of them -- they used to be
+        // declared inside the conditionals, which meant they were dropped
+        // at the end of each `if` block while `args` (built up across the
+        // whole function and used after all the conditionals) still held
+        // references into them: E0597 "does not live long enough" /
+        // E0716 "temporary value dropped while borrowed".
+        let allowed_ips_str = if !peer.allowed_ips.is_empty() {
+            Some(peer.allowed_ips.join(","))
+        } else {
+            None
+        };
+        let keepalive_str = peer.persistent_keepalive.map(|k| k.to_string());
+
         let mut args = vec!["set", interface, "peer", &peer.public_key];
 
         // Allowed IPs
-        if !peer.allowed_ips.is_empty() {
+        if let Some(ref allowed_ips) = allowed_ips_str {
             args.push("allowed-ips");
-            let allowed_ips = peer.allowed_ips.join(",");
-            args.push(&allowed_ips);
+            args.push(allowed_ips);
         }
 
         // Endpoint
@@ -196,10 +209,9 @@ impl WireGuardManager {
         }
 
         // Persistent keepalive
-        if let Some(keepalive) = peer.persistent_keepalive {
+        if let Some(ref keepalive_str) = keepalive_str {
             args.push("persistent-keepalive");
-            let keepalive_str = keepalive.to_string();
-            args.push(&keepalive_str);
+            args.push(keepalive_str);
         }
 
         let output = Command::new("wg")
