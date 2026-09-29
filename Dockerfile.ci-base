@@ -41,6 +41,14 @@ RUN emerge --verbose --autounmask-write --onlydeps net-firewall/patronus && \
     etc-update --automode -5 || true
 RUN emerge --verbose --onlydeps net-firewall/patronus
 
+# Prefer the prebuilt dev-lang/rust-bin over compiling dev-lang/rust from
+# source: compiling rust from source pulls in a from-scratch LLVM + Go
+# bootstrap (observed taking ~2h45m alone in run 105's job log, well past
+# this image's 240min budget with nothing left for the rest of the deps).
+# The ebuilds' BDEPEND now accepts either dev-lang/rust or dev-lang/rust-bin
+# (|| ( ... ) any-of dependency) specifically so this substitution is valid.
+RUN echo "dev-lang/rust-bin ~amd64" >> /etc/portage/package.accept_keywords/patronus && \
+    emerge --verbose dev-lang/rust-bin dev-util/cargo-c
+
 # Pre-warm cargo's own registry/index too, so the per-commit build's
 # `cargo vendor` step doesn't re-fetch the whole crates.io index cold.
-RUN emerge --verbose dev-lang/rust dev-util/cargo-c 2>&1 | tail -20 || true
