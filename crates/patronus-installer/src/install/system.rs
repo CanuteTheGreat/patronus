@@ -1,7 +1,7 @@
 //! Base system installation module
 
-use crate::config::{InstallConfig, UserConfig};
-use crate::disk::partition::CreatedPartition;
+use crate::config::{Filesystem, InstallConfig, UserConfig};
+use crate::disk::partition::{CreatedPartition, PartitionFilesystem};
 use crate::error::{InstallerError, Result};
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -34,6 +34,19 @@ pub async fn mount_partitions(partitions: &[CreatedPartition], target_root: &Pat
 
     // Mount each partition
     for partition in sorted {
+        if matches!(partition.filesystem, PartitionFilesystem::Linux(Filesystem::Zfs)) {
+            // Already mounted by `zpool create -O mountpoint=...` in
+            // `disk::zfs::create_root_pool` — mounting it again with the
+            // regular `mount` command below would fail (it's not a
+            // device `mount` understands the way an ext4/btrfs/xfs
+            // partition is).
+            debug!(
+                "Skipping mount for ZFS root {} — already mounted at pool creation",
+                partition.path.display()
+            );
+            continue;
+        }
+
         let mount_point = if partition.mount_point == "/" {
             target_root.to_path_buf()
         } else {
@@ -114,6 +127,17 @@ pub async fn unmount_partitions(partitions: &[CreatedPartition], target_root: &P
 
     // Unmount each partition
     for partition in sorted {
+        if matches!(partition.filesystem, PartitionFilesystem::Linux(Filesystem::Zfs)) {
+            // `umount` doesn't understand a ZFS pool's mountpoint the way
+            // it does a real block-device mount — export it instead so
+            // the freshly-installed system can import it cleanly on
+            // first boot (a pool can't be imported twice at once).
+            if let Err(e) = crate::disk::zfs::export_root_pool().await {
+                warn!("Failed to export ZFS root pool: {}", e);
+            }
+            continue;
+        }
+
         let mount_point = if partition.mount_point == "/" {
             target_root.to_path_buf()
         } else {
@@ -371,6 +395,21 @@ async fn generate_fstab(target: &Path, partitions: &[CreatedPartition]) -> Resul
     fstab.push_str("# <file system>  <mount point>  <type>  <options>  <dump>  <pass>\n\n");
 
     for partition in partitions {
+        // ZFS root doesn't get an fstab line at all — no `zfs` fstab
+        // entry is needed (the pool's own `mountpoint` property, set at
+        // `zpool create` time, is what mounts it on boot; systemd's
+        // `zfs-mount.service`/`zfs-import-cache.service` units, part of
+        // zfsutils-linux, handle that), and it has no stable block-device
+        // UUID the way a formatted partition does (`blkid` on the whole
+        // disk reports the ZFS member signature, not something fstab
+        // can key a mount off of the way it does for ext4/btrfs/xfs).
+        if matches!(
+            partition.filesystem,
+            PartitionFilesystem::Linux(Filesystem::Zfs)
+        ) {
+            continue;
+        }
+
         // Get UUID
         let uuid = crate::disk::format::get_uuid(&partition.path).await?;
 

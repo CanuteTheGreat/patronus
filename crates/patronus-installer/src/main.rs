@@ -170,7 +170,7 @@ async fn run_installation(config: &InstallConfig) -> anyhow::Result<()> {
 
     // Step 2: Format partitions
     println!("[2/8] Formatting partitions...");
-    format_all_partitions(&partitions).await?;
+    format_all_partitions(&partitions, &config.target_root).await?;
 
     // Step 3: Mount partitions
     println!("[3/8] Mounting partitions...");

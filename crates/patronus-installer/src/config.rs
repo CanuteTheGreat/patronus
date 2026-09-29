@@ -117,7 +117,15 @@ impl PartitionScheme {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Filesystem {
-    /// ext4 filesystem (default, widely compatible)
+    /// ZFS (default when `zpool`/`zfs` tooling is present on the install
+    /// environment — checksummed, self-healing, native snapshots/send-recv;
+    /// same preference and reasoning as the equivalent choice in the
+    /// horcrux project's `StorageType::default()`). Falls back to Ext4
+    /// when the live/installer environment doesn't have ZFS support
+    /// built in — see `Filesystem::preferred()`.
+    Zfs,
+
+    /// ext4 filesystem (fallback when ZFS tooling isn't available)
     #[default]
     Ext4,
 
@@ -129,16 +137,54 @@ pub enum Filesystem {
 }
 
 impl Filesystem {
+    /// Favor ZFS, but only when this install environment can actually
+    /// create a ZFS pool — `zpool`/`zfs` need to be on PATH, which some
+    /// live images don't ship (zfsutils-linux is a real package, not
+    /// guaranteed present the way ext4 tooling always is). Checked at
+    /// call time rather than baked into `#[default]` since `Default`
+    /// can't be async/IO-aware — the installer's config-building step
+    /// should call this instead of relying on `Filesystem::default()`
+    /// whenever it wants the "best available" choice rather than the
+    /// hardcoded ext4 fallback.
+    pub async fn preferred() -> Self {
+        if tokio::process::Command::new("which")
+            .arg("zpool")
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+            && tokio::process::Command::new("which")
+                .arg("zfs")
+                .output()
+                .await
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        {
+            Filesystem::Zfs
+        } else {
+            Filesystem::Ext4
+        }
+    }
+}
+
+impl Filesystem {
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::Zfs => "zfs",
             Self::Ext4 => "ext4",
             Self::Btrfs => "btrfs",
             Self::Xfs => "xfs",
         }
     }
 
+    /// Not meaningful for ZFS (no `mkfs.zfs` — pools are created with
+    /// `zpool create`, a fundamentally different command shape than every
+    /// other variant here). Callers must branch on `Filesystem::Zfs`
+    /// before reaching for this — see `disk::format::format_partition`
+    /// and `disk::zfs::create_root_pool`.
     pub fn mkfs_command(&self) -> &'static str {
         match self {
+            Self::Zfs => "zpool",
             Self::Ext4 => "mkfs.ext4",
             Self::Btrfs => "mkfs.btrfs",
             Self::Xfs => "mkfs.xfs",
@@ -147,6 +193,7 @@ impl Filesystem {
 
     pub fn description(&self) -> &'static str {
         match self {
+            Self::Zfs => "ZFS - Checksummed, self-healing, snapshots (default when available)",
             Self::Ext4 => "ext4 - Stable, widely compatible",
             Self::Btrfs => "Btrfs - Snapshots, compression, modern",
             Self::Xfs => "XFS - High performance, large files",

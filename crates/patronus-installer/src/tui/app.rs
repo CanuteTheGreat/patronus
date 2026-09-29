@@ -473,7 +473,7 @@ impl InstallerApp {
         self.install_step = "Formatting partitions...".to_string();
         self.install_progress = 15.0;
 
-        format_all_partitions(&partitions).await?;
+        format_all_partitions(&partitions, &self.config.target_root).await?;
 
         // Step 3: Mount partitions
         self.install_step = "Mounting partitions...".to_string();

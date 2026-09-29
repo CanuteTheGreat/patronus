@@ -1,7 +1,7 @@
 //! Bootloader installation module
 
-use crate::config::{Bootloader, PartitionScheme};
-use crate::disk::partition::CreatedPartition;
+use crate::config::{Bootloader, Filesystem, PartitionScheme};
+use crate::disk::partition::{CreatedPartition, PartitionFilesystem};
 use crate::error::{InstallerError, Result};
 use crate::install::system::run_in_chroot;
 use std::path::Path;
@@ -54,7 +54,10 @@ async fn install_grub(
     }
 
     // Generate GRUB configuration
-    generate_grub_config(target).await?;
+    let root_is_zfs = partitions.iter().any(|p| {
+        matches!(p.filesystem, PartitionFilesystem::Linux(Filesystem::Zfs))
+    });
+    generate_grub_config(target, root_is_zfs).await?;
 
     Ok(())
 }
@@ -125,23 +128,37 @@ async fn install_grub_bios(target: &Path, disk: &Path) -> Result<()> {
 }
 
 /// Generate GRUB configuration
-async fn generate_grub_config(target: &Path) -> Result<()> {
+async fn generate_grub_config(target: &Path, root_is_zfs: bool) -> Result<()> {
     info!("Generating GRUB configuration");
 
     // Create /etc/default/grub if it doesn't exist
     let grub_default = target.join("etc/default/grub");
     if !grub_default.exists() {
-        let content = r#"# GRUB configuration
+        let preload_modules = if root_is_zfs {
+            // GRUB needs its own `zfs` module to read a root pool's
+            // /boot before the real kernel/zfs.ko take over — without
+            // this in GRUB_PRELOAD_MODULES, `grub-mkconfig`'s bundled
+            // `10_linux_zfs` script (part of zfsutils-linux's grub
+            // integration, ships alongside `zfs-mount.service`) still
+            // finds the pool, but the resulting grub.cfg can fail to
+            // actually boot if grub-install didn't embed zfs support.
+            "part_gpt part_msdos zfs"
+        } else {
+            "part_gpt part_msdos"
+        };
+        let content = format!(
+            r#"# GRUB configuration
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=5
 GRUB_DISTRIBUTOR="Patronus"
 GRUB_CMDLINE_LINUX_DEFAULT="quiet"
 GRUB_CMDLINE_LINUX=""
-GRUB_PRELOAD_MODULES="part_gpt part_msdos"
+GRUB_PRELOAD_MODULES="{preload_modules}"
 GRUB_TERMINAL_OUTPUT="console"
 GRUB_GFXMODE="auto"
 GRUB_GFXPAYLOAD_LINUX="keep"
-"#;
+"#
+        );
         fs::write(&grub_default, content).await?;
     }
 
