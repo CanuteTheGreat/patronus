@@ -197,7 +197,7 @@ src_configure() {
 		$(usex ha "ha" "")
 		$(usex ucarp "carp" "")
 		$(usex monitoring "monitoring" "")
-		$(usex prometheus "prometheus" "")
+		$(usex prometheus "monitoring-prometheus" "")
 		$(usex ntopng "ntopng" "")
 		$(usex netflow "netflow" "")
 		$(usex captive-portal "captive-portal" "")
