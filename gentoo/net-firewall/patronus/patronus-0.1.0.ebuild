@@ -136,6 +136,15 @@ src_unpack() {
 }
 
 src_configure() {
+	# NOTE: IUSE still exposes 'tc' and 'aliases' (they gate real
+	# RDEPEND entries, e.g. tc? ( sys-apps/iproute2 )), but neither maps to
+	# an actual cargo feature anywhere in this workspace (grepped every
+	# crate's Cargo.toml -- no 'tc' or 'aliases' feature is defined by any
+	# member). Forwarding them via usex here made cargo fail hard with
+	# "none of the selected packages contains these features", which is
+	# what was actually killing 'Gentoo Docker Build' in CI (not the
+	# earlier from-source-rust-bootstrap issue, which was already fixed) --
+	# do not re-add without first adding the matching cargo feature.
 	local myfeatures=(
 		$(usex web "web" "")
 		$(usex cli "cli" "")
@@ -157,14 +166,12 @@ src_configure() {
 		$(usex suricata "suricata" "")
 		$(usex vlan "vlan" "")
 		$(usex qos "qos" "")
-		$(usex tc "tc" "")
 		$(usex certificates "certificates" "")
 		$(usex acme "acme" "")
 		$(usex ldap "ldap" "")
 		$(usex radius "radius" "")
 		$(usex totp "totp" "")
 		$(usex geoip "geoip" "")
-		$(usex aliases "aliases" "")
 		$(usex scheduled-rules "scheduled-rules" "")
 		$(usex pppoe "pppoe" "")
 		$(usex wireless "wireless" "")
