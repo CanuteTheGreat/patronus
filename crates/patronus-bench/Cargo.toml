@@ -53,6 +53,9 @@ csv = "1.3"
 # Charts/visualization
 plotters = { version = "0.3", optional = true }
 
+# PDF export (pure-Rust, no external binaries/system deps - Gentoo-friendly)
+printpdf = { version = "0.7", default-features = false }
+
 [features]
 default = []
 charts = ["plotters"]

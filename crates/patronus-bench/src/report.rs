@@ -345,10 +345,202 @@ impl BenchmarkReport {
         Ok(())
     }
 
-    pub fn export_pdf(&self, _path: &str) -> Result<()> {
-        // PDF generation would require a library like printpdf
-        // Stub for now
-        anyhow::bail!("PDF export not yet implemented");
+    pub fn export_pdf(&self, path: &str) -> Result<()> {
+        use printpdf::{BuiltinFont, Mm, PdfDocument};
+        use std::io::BufWriter;
+
+        const PAGE_WIDTH: f32 = 210.0; // A4 mm
+        const PAGE_HEIGHT: f32 = 297.0;
+        const MARGIN: f32 = 15.0;
+        const LINE_HEIGHT: f32 = 6.0;
+        const FONT_SIZE_TITLE: f32 = 16.0;
+        const FONT_SIZE_HEADING: f32 = 12.0;
+        const FONT_SIZE_BODY: f32 = 10.0;
+
+        // Build the report as a list of (text, is_heading) lines, reusing the
+        // same data model as export_markdown/export_html.
+        let mut lines: Vec<(String, bool)> = Vec::new();
+        lines.push(("Patronus Firewall Benchmark Report".to_string(), true));
+        lines.push((format!("Date: {}", self.timestamp), false));
+        lines.push((format!("Version: {}", self.patronus_version), false));
+        lines.push(("".to_string(), false));
+
+        lines.push(("System Information".to_string(), true));
+        lines.push((format!("OS: {}", self.system_info.os), false));
+        lines.push((format!("Kernel: {}", self.system_info.kernel), false));
+        lines.push((format!("CPU: {}", self.system_info.cpu_model), false));
+        lines.push((format!("Cores: {}", self.system_info.cpu_cores), false));
+        lines.push((
+            format!("Memory: {:.1} GB", self.system_info.memory_gb),
+            false,
+        ));
+        lines.push((
+            format!("Network Interface: {}", self.system_info.network_interface),
+            false,
+        ));
+        lines.push(("".to_string(), false));
+
+        if let Some(ref tp) = self.throughput {
+            lines.push(("Throughput".to_string(), true));
+            lines.push((
+                format!("Packets/sec: {:.0}", tp.packets_per_second),
+                false,
+            ));
+            lines.push((
+                format!("Throughput: {:.2} Mbps", tp.megabits_per_second),
+                false,
+            ));
+            lines.push(("".to_string(), false));
+        }
+
+        if let Some(ref lat) = self.latency {
+            lines.push(("Latency".to_string(), true));
+            lines.push((format!("Mean: {:.2} us", lat.mean_us), false));
+            lines.push((format!("Median: {:.2} us", lat.median_us), false));
+            lines.push((format!("Min: {:.2} us", lat.min_us), false));
+            lines.push((format!("Max: {:.2} us", lat.max_us), false));
+            lines.push((format!("StdDev: {:.2} us", lat.stddev_us), false));
+            lines.push((format!("P95: {:.2} us", lat.p95_us), false));
+            lines.push((format!("P99: {:.2} us", lat.p99_us), false));
+            lines.push(("".to_string(), false));
+        }
+
+        if let Some(ref conn) = self.connection_rate {
+            lines.push(("Connection Rate".to_string(), true));
+            lines.push((
+                format!("Duration: {} sec", conn.duration_secs),
+                false,
+            ));
+            lines.push((
+                format!("Total Connections: {}", conn.total_connections),
+                false,
+            ));
+            lines.push((
+                format!("Successful: {}", conn.successful_connections),
+                false,
+            ));
+            lines.push((format!("Failed: {}", conn.failed_connections), false));
+            lines.push((
+                format!(
+                    "Connections/sec: {:.0}",
+                    conn.connections_per_second
+                ),
+                false,
+            ));
+            lines.push(("".to_string(), false));
+        }
+
+        if let Some(ref res) = self.resources {
+            lines.push(("Resource Usage".to_string(), true));
+            lines.push((
+                format!(
+                    "CPU: {:.1}% avg, {:.1}% peak",
+                    res.cpu_mean_percent, res.cpu_max_percent
+                ),
+                false,
+            ));
+            lines.push((
+                format!(
+                    "Memory: {:.0} MB avg, {:.0} MB peak",
+                    res.memory_mean_mb, res.memory_max_mb
+                ),
+                false,
+            ));
+            lines.push(("".to_string(), false));
+        }
+
+        if let Some(ref fw) = self.firewall_rules {
+            lines.push(("Firewall Rule Performance".to_string(), true));
+            lines.push((format!("Rule Count: {}", fw.rule_count), false));
+            lines.push((
+                format!("Lookup Time: {:.2} ns", fw.lookup_time_ns),
+                false,
+            ));
+            lines.push((
+                format!(
+                    "Throughput Impact: {:.2}%",
+                    fw.throughput_impact_percent
+                ),
+                false,
+            ));
+            lines.push(("".to_string(), false));
+        }
+
+        if let Some(ref nat) = self.nat {
+            lines.push(("NAT Performance".to_string(), true));
+            lines.push((
+                format!(
+                    "Max Concurrent Sessions: {}",
+                    nat.max_concurrent_sessions
+                ),
+                false,
+            ));
+            lines.push((
+                format!(
+                    "New Sessions/sec: {:.0}",
+                    nat.new_sessions_per_second
+                ),
+                false,
+            ));
+            lines.push((
+                format!("Throughput: {:.0} Mbps", nat.throughput_mbps),
+                false,
+            ));
+            lines.push(("".to_string(), false));
+        }
+
+        if let Some(ref vpn) = self.vpn {
+            lines.push((format!("{} VPN", vpn.vpn_type.to_uppercase()), true));
+            lines.push((
+                format!("Throughput: {:.0} Mbps", vpn.throughput_mbps),
+                false,
+            ));
+            lines.push((
+                format!("CPU Overhead: {:.1}%", vpn.cpu_overhead_percent),
+                false,
+            ));
+            lines.push(("".to_string(), false));
+        }
+
+        // Render the lines into a paginated PDF document using a built-in
+        // font (no embedded font files/assets needed).
+        let (doc, page1, layer1) =
+            PdfDocument::new("Patronus Firewall Benchmark Report", Mm(PAGE_WIDTH), Mm(PAGE_HEIGHT), "Layer 1");
+        let font = doc.add_builtin_font(BuiltinFont::Helvetica)?;
+        let font_bold = doc.add_builtin_font(BuiltinFont::HelveticaBold)?;
+
+        let mut page = page1;
+        let mut layer = doc.get_page(page).get_layer(layer1);
+        let mut cursor_y = PAGE_HEIGHT - MARGIN;
+
+        for (text, is_heading) in &lines {
+            if cursor_y < MARGIN + LINE_HEIGHT {
+                let (new_page, new_layer) =
+                    doc.add_page(Mm(PAGE_WIDTH), Mm(PAGE_HEIGHT), "Layer 1");
+                page = new_page;
+                layer = doc.get_page(page).get_layer(new_layer);
+                cursor_y = PAGE_HEIGHT - MARGIN;
+            }
+
+            let (use_font, size) = if *is_heading {
+                (&font_bold, if cursor_y > PAGE_HEIGHT - MARGIN - LINE_HEIGHT {
+                    FONT_SIZE_TITLE
+                } else {
+                    FONT_SIZE_HEADING
+                })
+            } else {
+                (&font, FONT_SIZE_BODY)
+            };
+
+            if !text.is_empty() {
+                layer.use_text(text.as_str(), size, Mm(MARGIN), Mm(cursor_y), use_font);
+            }
+
+            cursor_y -= LINE_HEIGHT;
+        }
+
+        doc.save(&mut BufWriter::new(fs::File::create(path)?))?;
+        Ok(())
     }
 }
 
