@@ -255,7 +255,10 @@ impl QueryRoot {
                     description: None,
                     priority: policy.priority as i32,
                     match_rules: serde_json::to_string(&policy.match_rules).unwrap_or_default(),
-                    action: PolicyAction::Route, // TODO: Map from PathPreference to PolicyAction
+                    action: PolicyAction::Route, // RoutingPolicy has no other action type -
+                    // PathPreference (path selection scoring) is orthogonal to
+                    // Allow/Deny/Qos, not a source for them. See issue #2: the
+                    // real remaining gap here is `created_at` below, not this.
                     enabled: policy.enabled,
                     packets_matched: stats.packets_matched as i64,
                     bytes_matched: stats.bytes_matched as i64,
@@ -294,7 +297,10 @@ impl QueryRoot {
                             priority: policy.priority as i32,
                             match_rules: serde_json::to_string(&policy.match_rules)
                                 .unwrap_or_default(),
-                            action: PolicyAction::Route, // TODO: Map from PathPreference to PolicyAction
+                            action: PolicyAction::Route, // RoutingPolicy has no other action
+                            // type - PathPreference (path selection scoring) is orthogonal to
+                            // Allow/Deny/Qos, not a source for them. See issue #2: the real
+                            // remaining gap here is `created_at` below, not this.
                             enabled: policy.enabled,
                             packets_matched: stats.packets_matched as i64,
                             bytes_matched: stats.bytes_matched as i64,
