@@ -359,7 +359,26 @@ mod tests {
 
     #[test]
     fn test_isolation_forest() {
-        let mut forest = IsolationForest::new(10, 8);
+        // NOTE: IsolationForest::train() uses rand::thread_rng() internally with
+        // no way to inject a seed, so this test's outcome depends on real
+        // randomness. With the original tiny parameters (num_trees=10,
+        // sample_size=8, height_limit=ceil(log2(8))=3) the average path length
+        // for both the "normal" and "anomalous" points was frequently the same
+        // (both hitting the 3-level depth cap), making `score_anomaly >
+        // score_normal` a coin flip in practice -- this caused a real,
+        // intermittent CI failure (CI job 10117, run 117:
+        // "assertion failed: score_anomaly > score_normal").
+        //
+        // Fix: use production-realistic forest size (matches
+        // ThreatClassifier::new()'s num_trees=100) so the average path length
+        // is computed over enough independent random trees for the law of
+        // large numbers to suppress single-tree noise, a larger sample_size
+        // for more path-length resolution (height_limit=ceil(log2(32))=5
+        // instead of 3), and a grossly out-of-range anomaly value (1000.0 vs.
+        // a training range of ~0..1.9) so it is isolated in far fewer splits
+        // than a point drawn from the middle of the training distribution,
+        // regardless of which random thresholds the trees happen to pick.
+        let mut forest = IsolationForest::new(100, 32);
 
         // Create simple 2D dataset
         let mut data = Array2::zeros((20, 2));
@@ -375,7 +394,7 @@ mod tests {
         let score_normal = forest.predict(&normal);
 
         // Anomalous point
-        let anomaly = Array1::from_vec(vec![10.0, 10.0]);
+        let anomaly = Array1::from_vec(vec![1000.0, 1000.0]);
         let score_anomaly = forest.predict(&anomaly);
 
         assert!(score_anomaly > score_normal);

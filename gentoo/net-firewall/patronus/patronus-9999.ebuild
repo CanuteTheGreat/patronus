@@ -206,7 +206,19 @@ src_install() {
 	# cli/api/dhcp/dns/wireguard/multiwan/monitoring/... features this
 	# ebuild forwards via myfeatures in src_configure) -- point cargo at it
 	# explicitly instead of the workspace root.
-	CARGO_INSTALL_PATH="crates/patronus-cli" cargo_src_install
+	#
+	# NOTE (2026-09-30, CI job 10120/run 117): a prior fix here set an
+	# ad-hoc CARGO_INSTALL_PATH env var before calling cargo_src_install,
+	# but cargo.eclass's cargo_src_install() has no such variable -- it
+	# only special-cases an explicit "--path" *argument*
+	# (`$(has --path ${@} || echo --path ./)`). The env var was silently
+	# ignored, cargo_src_install still defaulted to `--path ./` (the
+	# workspace root), and the build kept failing with the exact same
+	# "found a virtual manifest ... instead of a package manifest" error.
+	# Fix: pass `--path ./crates/patronus-cli` directly as an argument to
+	# cargo_src_install, which is the real, eclass-documented way to
+	# override the install path in a workspace.
+	cargo_src_install --path ./crates/patronus-cli
 
 	# Install init scripts based on USE flags
 	if use systemd; then
