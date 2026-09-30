@@ -5,11 +5,8 @@
 // or any OTLP-compatible backend.
 
 use opentelemetry::{trace::TracerProvider as _, KeyValue};
-use opentelemetry_sdk::{
-    trace::TracerProvider,
-    Resource,
-};
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::{trace::TracerProvider, Resource};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Initialize OpenTelemetry tracing
@@ -24,21 +21,24 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 /// # Returns
 /// A guard that should be kept alive for the duration of the program.
 /// Dropping it will flush remaining traces.
-pub fn init_tracing(
-    service_name: &str,
-    otlp_endpoint: Option<&str>,
-) -> anyhow::Result<()> {
+pub fn init_tracing(service_name: &str, otlp_endpoint: Option<&str>) -> anyhow::Result<()> {
     // Create resource with service information
     let resource = Resource::new(vec![
         KeyValue::new("service.name", service_name.to_string()),
         KeyValue::new("service.version", env!("CARGO_PKG_VERSION").to_string()),
-        KeyValue::new("deployment.environment", std::env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string())),
+        KeyValue::new(
+            "deployment.environment",
+            std::env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string()),
+        ),
     ]);
 
     // Configure tracer based on whether OTLP endpoint is provided
     let tracer = if let Some(endpoint) = otlp_endpoint {
         // Export traces to OTLP collector (Jaeger, Tempo, etc.)
-        tracing::info!("Initializing OpenTelemetry with OTLP export to {}", endpoint);
+        tracing::info!(
+            "Initializing OpenTelemetry with OTLP export to {}",
+            endpoint
+        );
 
         let exporter = opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()

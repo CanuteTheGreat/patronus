@@ -303,7 +303,10 @@ impl SecretManager {
 
         for metadata in needs_rotation {
             if is_locally_rotatable(metadata.secret_type) {
-                match self.auto_rotate_secret(&metadata.key, metadata.secret_type).await {
+                match self
+                    .auto_rotate_secret(&metadata.key, metadata.secret_type)
+                    .await
+                {
                     Ok(()) => {
                         info!(
                             "Auto-rotated secret: {} (type: {:?})",
