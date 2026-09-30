@@ -540,12 +540,9 @@ impl MultiWanManager {
                 rule_args.extend(&["to", dst]);
             }
 
-            rule_args.extend(&[
-                "table",
-                &table_id.to_string(),
-                "priority",
-                &policy.priority.to_string(),
-            ]);
+            let table_id_str = table_id.to_string();
+            let priority_str = policy.priority.to_string();
+            rule_args.extend(&["table", &table_id_str, "priority", &priority_str]);
 
             Command::new("ip")
                 .args(&rule_args)
