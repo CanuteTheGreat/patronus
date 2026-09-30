@@ -34,7 +34,10 @@ pub async fn mount_partitions(partitions: &[CreatedPartition], target_root: &Pat
 
     // Mount each partition
     for partition in sorted {
-        if matches!(partition.filesystem, PartitionFilesystem::Linux(Filesystem::Zfs)) {
+        if matches!(
+            partition.filesystem,
+            PartitionFilesystem::Linux(Filesystem::Zfs)
+        ) {
             // Already mounted by `zpool create -O mountpoint=...` in
             // `disk::zfs::create_root_pool` — mounting it again with the
             // regular `mount` command below would fail (it's not a
@@ -127,7 +130,10 @@ pub async fn unmount_partitions(partitions: &[CreatedPartition], target_root: &P
 
     // Unmount each partition
     for partition in sorted {
-        if matches!(partition.filesystem, PartitionFilesystem::Linux(Filesystem::Zfs)) {
+        if matches!(
+            partition.filesystem,
+            PartitionFilesystem::Linux(Filesystem::Zfs)
+        ) {
             // `umount` doesn't understand a ZFS pool's mountpoint the way
             // it does a real block-device mount — export it instead so
             // the freshly-installed system can import it cleanly on

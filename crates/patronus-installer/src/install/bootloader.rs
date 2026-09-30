@@ -54,9 +54,9 @@ async fn install_grub(
     }
 
     // Generate GRUB configuration
-    let root_is_zfs = partitions.iter().any(|p| {
-        matches!(p.filesystem, PartitionFilesystem::Linux(Filesystem::Zfs))
-    });
+    let root_is_zfs = partitions
+        .iter()
+        .any(|p| matches!(p.filesystem, PartitionFilesystem::Linux(Filesystem::Zfs)));
     generate_grub_config(target, root_is_zfs).await?;
 
     Ok(())
