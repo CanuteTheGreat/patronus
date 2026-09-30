@@ -11,14 +11,14 @@ license = "MIT"
 patronus-sdwan = { path = "../patronus-sdwan" }
 
 # Web framework
-axum = { version = "0.8", features = ["ws", "macros"] }
+axum.workspace = true
 tokio = { version = "1.40", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "trace", "cors", "set-header"] }
 
 # GraphQL API
 async-graphql = { version = "7.0", features = ["chrono"] }
-async-graphql-axum = "7.0"  # Uses axum 0.8
+async-graphql-axum = "=7.0.11"  # last release compatible with axum 0.7 (workspace pin); 7.0.12+ moved to axum 0.8
 async-stream = "0.3"
 tokio-stream = "0.1"
 
@@ -39,12 +39,11 @@ metrics = "0.23"
 metrics-exporter-prometheus = "0.15"
 
 # OpenTelemetry for distributed tracing
-# TODO: Re-enable after resolving axum version conflicts
-# opentelemetry = { version = "0.27", features = ["trace"] }
-# opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
-# opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"] }
-# opentelemetry-stdout = { version = "0.27", features = ["trace"] }
-# tracing-opentelemetry = "0.28"
+opentelemetry = { version = "0.27", features = ["trace"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"] }
+opentelemetry-stdout = { version = "0.27", features = ["trace"] }
+tracing-opentelemetry = "0.28"
 
 # Error handling
 anyhow = "1.0"

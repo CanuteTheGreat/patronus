@@ -6,7 +6,7 @@
 
 use opentelemetry::{trace::TracerProvider as _, KeyValue};
 use opentelemetry_sdk::{
-    trace::{self, TracerProvider},
+    trace::TracerProvider,
     Resource,
 };
 use opentelemetry_otlp::WithExportConfig;

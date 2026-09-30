@@ -20,7 +20,6 @@ use tower_http::{
     trace::{DefaultMakeSpan, TraceLayer},
 };
 use tracing::{info, Level};
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 mod api;
 mod auth;
@@ -39,15 +38,11 @@ use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
-    // TODO: Re-enable OpenTelemetry after resolving axum version conflicts
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("patronus_dashboard=info,tower_http=debug")),
-        )
-        .init();
+    // Initialize tracing with OpenTelemetry support.
+    // Set OTLP_ENDPOINT to export to a collector (Jaeger, Tempo, etc.);
+    // otherwise traces are emitted to stdout for local development.
+    let otlp_endpoint = std::env::var("OTLP_ENDPOINT").ok();
+    observability::tracing::init_tracing("patronus-dashboard", otlp_endpoint.as_deref())?;
 
     info!("Starting Patronus SD-WAN Dashboard");
 
