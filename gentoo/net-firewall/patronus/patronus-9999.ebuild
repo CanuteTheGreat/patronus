@@ -198,7 +198,15 @@ src_compile() {
 }
 
 src_install() {
-	cargo_src_install
+	# The workspace root Cargo.toml is a virtual manifest (no [package]
+	# section) -- cargo_src_install defaults to `cargo install --path ./`,
+	# which dies with "found a virtual manifest ... instead of a package
+	# manifest" (CI job 10067, run 116). The real installable binary lives
+	# in the crates/patronus-cli member crate (the one carrying the web/
+	# cli/api/dhcp/dns/wireguard/multiwan/monitoring/... features this
+	# ebuild forwards via myfeatures in src_configure) -- point cargo at it
+	# explicitly instead of the workspace root.
+	CARGO_INSTALL_PATH="crates/patronus-cli" cargo_src_install
 
 	# Install init scripts based on USE flags
 	if use systemd; then
