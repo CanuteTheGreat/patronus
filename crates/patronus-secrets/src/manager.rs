@@ -284,17 +284,163 @@ impl SecretManager {
         }
     }
 
-    /// Enforce secret rotation policy
-    pub async fn enforce_rotation_policy(&self) -> Result<Vec<String>> {
+    /// Enforce secret rotation policy.
+    ///
+    /// Secrets are split into two buckets based on [`is_locally_rotatable`]:
+    ///
+    /// * Locally-rotatable secret types (locally-generated shared
+    ///   secrets/keys with no external system that also needs to agree on
+    ///   the new value) are actually regenerated and re-stored here.
+    /// * All other secret types are only ever flagged for manual rotation:
+    ///   this codebase cannot safely rotate them unattended because doing
+    ///   so would desynchronize this secret from an external system of
+    ///   record (a database server, a certificate authority, a cloud IAM
+    ///   API, or an externally-issued token/credential) that Patronus does
+    ///   not control and cannot update automatically.
+    pub async fn enforce_rotation_policy(&self) -> Result<RotationResult> {
         let needs_rotation = self.find_secrets_needing_rotation().await?;
-        let mut rotated = Vec::new();
+        let mut result = RotationResult::default();
 
         for metadata in needs_rotation {
-            warn!("Secret '{}' needs rotation but auto-rotation not implemented. Manual rotation required.", metadata.key);
-            rotated.push(metadata.key);
+            if is_locally_rotatable(metadata.secret_type) {
+                match self.auto_rotate_secret(&metadata.key, metadata.secret_type).await {
+                    Ok(()) => {
+                        info!(
+                            "Auto-rotated secret: {} (type: {:?})",
+                            metadata.key, metadata.secret_type
+                        );
+                        result.auto_rotated.push(metadata.key);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to auto-rotate secret '{}' (type: {:?}): {}. Falling back to manual rotation.",
+                            metadata.key, metadata.secret_type, e
+                        );
+                        result.needs_manual_rotation.push(metadata.key);
+                    }
+                }
+            } else {
+                warn!(
+                    "Secret '{}' (type: {:?}) needs rotation but cannot be safely auto-rotated \
+                     ({}). Manual rotation required.",
+                    metadata.key,
+                    metadata.secret_type,
+                    manual_rotation_reason(metadata.secret_type)
+                );
+                result.needs_manual_rotation.push(metadata.key);
+            }
         }
 
-        Ok(rotated)
+        Ok(result)
+    }
+
+    /// Generate a new value appropriate for `secret_type` and store it,
+    /// preserving the secret's description and rotation policy while
+    /// updating `last_rotated`/`updated_at` via [`Self::rotate_secret`].
+    async fn auto_rotate_secret(&self, key: &str, secret_type: SecretType) -> Result<()> {
+        debug_assert!(
+            is_locally_rotatable(secret_type),
+            "auto_rotate_secret called for a non-locally-rotatable secret type"
+        );
+
+        let new_value = match secret_type {
+            // Pre-shared keys / community strings: strong random password-style value.
+            SecretType::VpnPsk | SecretType::IpsecPsk | SecretType::SnmpCommunity => {
+                crate::crypto::generate_password(32)
+            }
+            // Webhook secrets: opaque high-entropy token.
+            SecretType::WebhookSecret => crate::crypto::generate_token(32),
+            other => {
+                anyhow::bail!(
+                    "internal error: {:?} is marked locally rotatable but has no rotation implementation",
+                    other
+                );
+            }
+        };
+
+        self.rotate_secret(key, SecretString::from(new_value)).await
+    }
+}
+
+/// Result of [`SecretManager::enforce_rotation_policy`]: which keys were
+/// actually regenerated and re-stored, versus which keys merely got
+/// flagged because they require external coordination this codebase
+/// cannot perform unattended.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RotationResult {
+    /// Keys whose value was regenerated locally and re-stored.
+    pub auto_rotated: Vec<String>,
+    /// Keys that need an operator (or an external integration) to rotate
+    /// them; the stored value was left untouched.
+    pub needs_manual_rotation: Vec<String>,
+}
+
+/// Whether `secret_type` can be safely regenerated locally, in place,
+/// without any external system also needing to be updated.
+///
+/// `true`: the secret is a locally-generated shared secret/key whose only
+/// consumer is Patronus-managed config that gets rewritten alongside it
+/// (VPN/IPsec PSKs, SNMP community strings, webhook signing secrets).
+///
+/// `false`: rotating the value here would NOT be sufficient to actually
+/// rotate the credential, because it is either issued by / shared with an
+/// external system of record, or otherwise requires coordinated action
+/// this codebase cannot perform unattended. See [`manual_rotation_reason`]
+/// for the specific reason per type.
+pub fn is_locally_rotatable(secret_type: SecretType) -> bool {
+    matches!(
+        secret_type,
+        SecretType::VpnPsk
+            | SecretType::IpsecPsk
+            | SecretType::WebhookSecret
+            | SecretType::SnmpCommunity
+    )
+}
+
+/// Human-readable reason a given secret type is not locally rotatable.
+/// Panics (via the exhaustive match) if called for a locally-rotatable
+/// type, since it only makes sense for the manual-rotation path.
+fn manual_rotation_reason(secret_type: SecretType) -> &'static str {
+    match secret_type {
+        SecretType::VpnPsk
+        | SecretType::IpsecPsk
+        | SecretType::WebhookSecret
+        | SecretType::SnmpCommunity => {
+            "this secret type is locally rotatable; this reason should not be shown"
+        }
+        SecretType::DatabasePassword => {
+            "regenerating it here would not update the actual database server's password"
+        }
+        SecretType::CertificateKey => {
+            "a new private key requires re-issuing the certificate via a CA, not just a new local value"
+        }
+        SecretType::CloudCredential => {
+            "rotating it requires calling the cloud provider's IAM API to issue/revoke the credential"
+        }
+        SecretType::GitCredential => {
+            "git credentials are issued by an external Git host and cannot be regenerated locally"
+        }
+        SecretType::TelegramToken => {
+            "bot tokens are issued by Telegram (BotFather) and cannot be regenerated locally"
+        }
+        SecretType::DdnsCredential => {
+            "DDNS credentials are issued by the external DDNS provider and cannot be regenerated locally"
+        }
+        SecretType::VpnPassword => {
+            "this is a user-facing VPN login password; changing it locally without notifying the user would lock them out"
+        }
+        SecretType::ApiToken => {
+            "API tokens are typically validated by an external/consuming service that must also be updated"
+        }
+        SecretType::RadiusSecret => {
+            "the RADIUS shared secret must also be updated on the RADIUS server, which this codebase cannot do unattended"
+        }
+        SecretType::HaPassword => {
+            "the HA cluster password must be changed in lockstep on every peer node, which this codebase cannot coordinate unattended"
+        }
+        SecretType::General => {
+            "general secrets have no known external consumer, so auto-rotation cannot be assumed safe"
+        }
     }
 }
 
