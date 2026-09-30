@@ -1059,6 +1059,11 @@ impl SystemManager {
 /// Monitoring operations
 pub struct MonitoringManager {
     alerts: Arc<RwLock<Vec<crate::templates::Alert>>>,
+    /// Real-time threat intelligence database, fed by live external feeds
+    /// (EmergingThreats compromised-IP list, and AbuseIPDB if an API key is
+    /// configured). This backs the "AI Threats" dashboard widget with
+    /// genuine external detections -- see `get_ai_threats`.
+    threat_intel_db: Arc<patronus_ai::ThreatIntelDB>,
 }
 
 impl Default for MonitoringManager {
@@ -1069,6 +1074,21 @@ impl Default for MonitoringManager {
 
 impl MonitoringManager {
     pub fn new() -> Self {
+        let threat_intel_db = Arc::new(patronus_ai::ThreatIntelDB::new());
+
+        // Kick off the live threat feed aggregator in the background. This
+        // hits real external sources (EmergingThreats compromised-ips.txt
+        // needs no API key; AbuseIPDB would need one via with_abuseipdb,
+        // not configured here) on an hourly interval and populates
+        // threat_intel_db with real entries.
+        let feed_aggregator = Arc::new(patronus_ai::ThreatFeedAggregator::new(
+            Arc::clone(&threat_intel_db),
+            std::time::Duration::from_secs(3600),
+        ));
+        tokio::spawn(async move {
+            feed_aggregator.start().await;
+        });
+
         let default_alerts = vec![
             crate::templates::Alert {
                 id: 1,
@@ -1092,6 +1112,7 @@ impl MonitoringManager {
 
         Self {
             alerts: Arc::new(RwLock::new(default_alerts)),
+            threat_intel_db,
         }
     }
 
@@ -1188,6 +1209,158 @@ impl MonitoringManager {
     ) -> anyhow::Result<Vec<crate::templates::Alert>> {
         let alerts = self.alerts.read().await;
         Ok(alerts.iter().take(limit).cloned().collect())
+    }
+
+    /// AI Threats widget: recent detections pulled from the live threat
+    /// intelligence database (`patronus-ai`'s `ThreatIntelDB`), which is
+    /// populated by the `ThreatFeedAggregator` background task started in
+    /// `new()` (EmergingThreats compromised-IP feed today; AbuseIPDB too if
+    /// an API key were configured). This is real external threat data, not
+    /// a synthetic ML pipeline -- the full `ThreatDetectionEngine` (which
+    /// also does local anomaly detection on live traffic via
+    /// `patronus-ai::engine::ThreatDetectionEngine::observe_flow`) is not
+    /// wired up anywhere yet because nothing in the codebase feeds it real
+    /// eBPF/XDP flow telemetry (`patronus-ebpf`'s collector exists but
+    /// nothing calls `observe_flow` with live packet data). Until that flow
+    /// pipeline is wired, confidence/detection_method/ml_model fields below
+    /// reflect "external feed" rather than "local ML classifier".
+    pub async fn get_ai_threats(
+        &self,
+        limit: usize,
+    ) -> anyhow::Result<Vec<crate::templates::AiThreat>> {
+        let blocklist = self.threat_intel_db.get_blocklist().await;
+        let mut threats = Vec::new();
+
+        for ip in blocklist.into_iter().take(limit) {
+            let entries = self.threat_intel_db.get_threats(&ip).await;
+            let Some(best) = entries
+                .iter()
+                .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
+            else {
+                continue;
+            };
+
+            let category = best
+                .categories
+                .first()
+                .map(|c| format!("{:?}", c))
+                .unwrap_or_else(|| "Unknown".to_string());
+
+            threats.push(crate::templates::AiThreat {
+                id: threats.len() as u32 + 1,
+                timestamp: best.last_seen.to_rfc3339(),
+                threat_type: category.clone(),
+                source_ip: ip.clone(),
+                destination: "this host".to_string(),
+                severity: if best.confidence >= 0.9 {
+                    "critical".to_string()
+                } else if best.confidence >= 0.75 {
+                    "high".to_string()
+                } else if best.confidence >= 0.5 {
+                    "medium".to_string()
+                } else {
+                    "low".to_string()
+                },
+                confidence: (best.confidence * 100.0).round(),
+                blocked: false,
+                description: best
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| format!("{} reported by threat intelligence feed", ip)),
+                raw_packet: String::new(),
+                detection_method: format!("{:?}", best.source),
+                ml_model: "external-feed".to_string(),
+                anomaly_score: format!("{:.2}", best.confidence),
+                port: String::new(),
+                protocol: String::new(),
+                packet_count: String::new(),
+                bytes: String::new(),
+                geoip_display: best
+                    .country
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                threat_intel_display: format!("{:?}", best.source),
+                recommended_action: "Review and block if confirmed malicious".to_string(),
+            });
+        }
+
+        Ok(threats)
+    }
+
+    /// Attack map widget: there is currently no real backend data source
+    /// for this. Wiring it honestly requires:
+    ///   1. A per-block-event log with source IP + timestamp -- today
+    ///      nftables rules created by `patronus-firewall` only carry
+    ///      pass/drop counters (see `nftables.rs`), not a queryable event
+    ///      log of *which* IP got blocked *when*. This would need a
+    ///      structured log/SQLite table (following the
+    ///      `patronus-sdwan/src/database.rs` pattern) written every time a
+    ///      firewall/IDS rule matches, likely via nftables' `log` +
+    ///      `SYSLOG_IDENTIFIER` and a journald/syslog consumer, or an
+    ///      nftables counter-object poll loop.
+    ///   2. A GeoIP lookup to turn each blocked source IP into
+    ///      lat/lon + country for map plotting. `patronus-firewall::geoip`
+    ///      already exists and resolves country codes via `mmdblookup`/
+    ///      `geoiplookup`, but only country -- not lat/lon -- and it's
+    ///      gated behind the `geoip` Cargo feature (off by default) and a
+    ///      GeoLite2/legacy GeoIP database file on disk. A country-to-
+    ///      centroid lookup table would be a reasonable follow-up (no need
+    ///      for per-IP lat/lon, a country centroid is enough for this kind
+    ///      of dashboard widget) built on top of `GeoIpManager::lookup_country`.
+    ///
+    /// Until both exist, return an honest empty result instead of fabricated
+    /// coordinates.
+    pub async fn get_attack_map_data(&self) -> anyhow::Result<Vec<crate::templates::AttackEvent>> {
+        Ok(Vec::new())
+    }
+
+    /// Live logs widget: backed by the real system journal via
+    /// `patronus-monitoring::status::StatusPageManager::get_logs`, which
+    /// shells out to `journalctl --output=json`. On Gentoo hosts running
+    /// OpenRC without the `systemd` USE flag there is no journald, so this
+    /// returns an empty list in that case (see doc comment on `get_logs`)
+    /// rather than fabricating log lines.
+    pub async fn get_live_logs(
+        &self,
+        limit: u32,
+    ) -> anyhow::Result<Vec<crate::templates::LogEntry>> {
+        let entries = patronus_monitoring::status::StatusPageManager::get_logs(None, None, limit)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        Ok(entries
+            .into_iter()
+            .map(|e| {
+                let timestamp = e
+                    .timestamp
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| {
+                        chrono::DateTime::<chrono::Utc>::from_timestamp(
+                            d.as_secs() as i64,
+                            d.subsec_nanos(),
+                        )
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+
+                let level_color = match e.severity.as_str() {
+                    "emergency" | "alert" | "critical" | "error" => "#ff4444",
+                    "warning" => "#ffaa00",
+                    "notice" | "info" => "#00aaff",
+                    _ => "#888888",
+                }
+                .to_string();
+
+                crate::templates::LogEntry {
+                    timestamp,
+                    level: e.severity,
+                    component: e.source.unwrap_or(e.facility),
+                    message: e.message,
+                    level_color,
+                }
+            })
+            .collect())
     }
 }
 

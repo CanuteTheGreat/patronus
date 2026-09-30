@@ -97,6 +97,17 @@ impl ThreatIntelDB {
         self.blocklist.read().await.iter().cloned().collect()
     }
 
+    /// Get all known threat intelligence entries (most recently seen first),
+    /// flattened across all tracked source IPs. Used by the dashboard's
+    /// "AI Threats" and "Attack Map" widgets to show real detections instead
+    /// of placeholder data.
+    pub async fn get_all_entries(&self) -> Vec<ThreatIntelEntry> {
+        let entries = self.entries.read().await;
+        let mut all: Vec<ThreatIntelEntry> = entries.values().flatten().cloned().collect();
+        all.sort_by_key(|a| std::cmp::Reverse(a.last_seen));
+        all
+    }
+
     /// Clear old entries
     pub async fn cleanup_old_entries(&self, max_age: Duration) {
         let cutoff = Utc::now() - chrono::Duration::from_std(max_age).unwrap();

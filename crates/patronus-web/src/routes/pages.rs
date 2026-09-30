@@ -269,6 +269,30 @@ pub async fn monitoring(State(state): State<AppState>) -> Response {
         }
     };
 
+    let ai_threats = match state.monitoring.get_ai_threats(50).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("Failed to fetch AI threats: {}", e);
+            vec![]
+        }
+    };
+
+    let attack_map_data = match state.monitoring.get_attack_map_data().await {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::error!("Failed to fetch attack map data: {}", e);
+            vec![]
+        }
+    };
+
+    let live_logs = match state.monitoring.get_live_logs(200).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("Failed to fetch live logs: {}", e);
+            vec![]
+        }
+    };
+
     let template = MonitoringTemplate {
         metrics,
         interface_stats,
@@ -283,8 +307,11 @@ pub async fn monitoring(State(state): State<AppState>) -> Response {
         active_alerts: 3,
         packets_analyzed_rate: 15420,
         packets_total: 2847392,
-        ai_threats: vec![],      // TODO: Fetch from AI monitoring system
-        attack_map_data: vec![], // TODO: Fetch geo attack data
+        ai_threats,
+        // No real backend exists yet for this widget -- see the doc comment
+        // on MonitoringManager::get_attack_map_data for exactly what would
+        // be needed (block-event log + GeoIP-to-coordinates lookup).
+        attack_map_data,
         model_performance: crate::templates::ModelPerformance {
             accuracy: 96.7,
             precision: 94.1,
@@ -294,7 +321,7 @@ pub async fn monitoring(State(state): State<AppState>) -> Response {
             last_trained: "2024-01-15 14:30:00".to_string(),
             training_samples: 150000,
         },
-        live_logs: vec![], // TODO: Fetch from log aggregator
+        live_logs,
     };
 
     match template.render() {

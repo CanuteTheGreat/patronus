@@ -19,6 +19,22 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::time::SystemTime;
 use tokio::process::Command;
 
+/// Map a syslog priority level (0=emergency .. 7=debug) to Patronus's
+/// dashboard severity strings.
+fn priority_to_severity(priority: u8) -> String {
+    match priority {
+        0 => "emergency",
+        1 => "alert",
+        2 => "critical",
+        3 => "error",
+        4 => "warning",
+        5 => "notice",
+        6 => "info",
+        _ => "debug",
+    }
+    .to_string()
+}
+
 /// Dashboard widget type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WidgetType {
@@ -528,13 +544,22 @@ impl StatusPageManager {
     }
 
     /// Get system logs
+    ///
+    /// Note: this shells out to `journalctl`, which requires the host to be
+    /// running systemd-journald. Patronus's Gentoo packaging supports both
+    /// OpenRC (default, no journald) and systemd (optional USE flag) init
+    /// systems -- see docs/GENTOO-INTEGRATION.md. On a pure OpenRC host
+    /// without the systemd USE flag there is no journald, so `journalctl`
+    /// will not exist and this returns an empty list rather than failing;
+    /// callers should treat an empty result plus a missing binary as "log
+    /// aggregation unavailable on this init system" rather than "no logs".
     pub async fn get_logs(
         filter: Option<&str>,
         severity: Option<&str>,
         limit: u32,
     ) -> Result<Vec<LogEntry>> {
         let mut cmd = Command::new("journalctl");
-        cmd.args(["-n", &limit.to_string(), "--output=json"]);
+        cmd.args(["-n", &limit.to_string(), "--output=json", "--no-pager"]);
 
         if let Some(sev) = severity {
             cmd.arg("-p").arg(sev);
@@ -544,15 +569,86 @@ impl StatusPageManager {
             cmd.arg("-g").arg(filt);
         }
 
-        let output = cmd.output().await?;
+        let output = match cmd.output().await {
+            Ok(o) => o,
+            Err(_) => {
+                // journalctl not present (e.g. OpenRC-only Gentoo host without
+                // the systemd USE flag) -- no real log source to read from.
+                return Ok(Vec::new());
+            }
+        };
         let text = String::from_utf8_lossy(&output.stdout);
 
         Self::parse_journal_logs(&text)
     }
 
-    fn parse_journal_logs(_output: &str) -> Result<Vec<LogEntry>> {
-        // Parse journalctl JSON output
-        Ok(Vec::new())
+    /// Parse journalctl's `--output=json` format: one JSON object per line
+    /// (NDJSON), each representing a single journal entry.
+    fn parse_journal_logs(output: &str) -> Result<Vec<LogEntry>> {
+        let mut entries = Vec::new();
+
+        for line in output.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            let value: serde_json::Value = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(_) => continue, // skip malformed/continuation lines
+            };
+
+            let message = value
+                .get("MESSAGE")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            // __REALTIME_TIMESTAMP is microseconds since the Unix epoch,
+            // encoded as a JSON string by journalctl.
+            let timestamp = value
+                .get("__REALTIME_TIMESTAMP")
+                .and_then(|t| t.as_str())
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(|micros| SystemTime::UNIX_EPOCH + std::time::Duration::from_micros(micros))
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+
+            // PRIORITY is a syslog severity level 0 (emergency) - 7 (debug).
+            let severity = value
+                .get("PRIORITY")
+                .and_then(|p| p.as_str())
+                .and_then(|s| s.parse::<u8>().ok())
+                .map(priority_to_severity)
+                .unwrap_or_else(|| "info".to_string());
+
+            let facility = value
+                .get("SYSLOG_FACILITY")
+                .and_then(|f| f.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    value
+                        .get("_TRANSPORT")
+                        .and_then(|t| t.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| "daemon".to_string());
+
+            let source = value
+                .get("SYSLOG_IDENTIFIER")
+                .and_then(|s| s.as_str())
+                .or_else(|| value.get("_COMM").and_then(|s| s.as_str()))
+                .map(|s| s.to_string());
+
+            entries.push(LogEntry {
+                timestamp,
+                severity,
+                facility,
+                message,
+                source,
+            });
+        }
+
+        Ok(entries)
     }
 
     /// Get dashboard data (all widgets)

@@ -21,6 +21,8 @@ patronus-firewall = { path = "../patronus-firewall" }
 patronus-network = { path = "../patronus-network" }
 patronus-config = { path = "../patronus-config" }
 patronus-secrets = { path = "../patronus-secrets" }
+patronus-ai = { path = "../patronus-ai" }
+patronus-monitoring = { path = "../patronus-monitoring" }
 
 tokio.workspace = true
 axum.workspace = true
