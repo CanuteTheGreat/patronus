@@ -35,7 +35,8 @@ RUN mkdir -p /etc/portage/repos.conf && \
     > /etc/portage/repos.conf/patronus-overlay.conf
 
 RUN echo "net-firewall/patronus ${PATRONUS_USE} -openrc" > /etc/portage/package.use/patronus-docker-build
-RUN echo "net-firewall/patronus ~amd64" > /etc/portage/package.accept_keywords/patronus
+RUN echo "net-firewall/patronus ~amd64" > /etc/portage/package.accept_keywords/patronus && \
+    echo "=net-firewall/patronus-9999 **" >> /etc/portage/package.accept_keywords/patronus
 
 # The live ebuild (patronus-9999) fetches via git-r3 from this project's own
 # repo (git.canutethegreat.com); for a from-source container build we vendor

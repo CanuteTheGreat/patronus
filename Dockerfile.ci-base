@@ -30,7 +30,8 @@ RUN mkdir -p /etc/portage/repos.conf && \
     > /etc/portage/repos.conf/patronus-overlay.conf
 
 RUN echo "net-firewall/patronus ${PATRONUS_USE} -openrc" > /etc/portage/package.use/patronus-docker-build
-RUN echo "net-firewall/patronus ~amd64" > /etc/portage/package.accept_keywords/patronus
+RUN echo "net-firewall/patronus ~amd64" > /etc/portage/package.accept_keywords/patronus && \
+    echo "=net-firewall/patronus-9999 **" >> /etc/portage/package.accept_keywords/patronus
 
 # The actual slow part: resolve and emerge every REAL dependency the
 # ebuild declares for the enabled USE flags above (nftables, wireguard-tools,
