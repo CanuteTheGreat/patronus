@@ -382,10 +382,7 @@ impl BenchmarkReport {
 
         if let Some(ref tp) = self.throughput {
             lines.push(("Throughput".to_string(), true));
-            lines.push((
-                format!("Packets/sec: {:.0}", tp.packets_per_second),
-                false,
-            ));
+            lines.push((format!("Packets/sec: {:.0}", tp.packets_per_second), false));
             lines.push((
                 format!("Throughput: {:.2} Mbps", tp.megabits_per_second),
                 false,
@@ -407,10 +404,7 @@ impl BenchmarkReport {
 
         if let Some(ref conn) = self.connection_rate {
             lines.push(("Connection Rate".to_string(), true));
-            lines.push((
-                format!("Duration: {} sec", conn.duration_secs),
-                false,
-            ));
+            lines.push((format!("Duration: {} sec", conn.duration_secs), false));
             lines.push((
                 format!("Total Connections: {}", conn.total_connections),
                 false,
@@ -421,10 +415,7 @@ impl BenchmarkReport {
             ));
             lines.push((format!("Failed: {}", conn.failed_connections), false));
             lines.push((
-                format!(
-                    "Connections/sec: {:.0}",
-                    conn.connections_per_second
-                ),
+                format!("Connections/sec: {:.0}", conn.connections_per_second),
                 false,
             ));
             lines.push(("".to_string(), false));
@@ -452,15 +443,9 @@ impl BenchmarkReport {
         if let Some(ref fw) = self.firewall_rules {
             lines.push(("Firewall Rule Performance".to_string(), true));
             lines.push((format!("Rule Count: {}", fw.rule_count), false));
+            lines.push((format!("Lookup Time: {:.2} ns", fw.lookup_time_ns), false));
             lines.push((
-                format!("Lookup Time: {:.2} ns", fw.lookup_time_ns),
-                false,
-            ));
-            lines.push((
-                format!(
-                    "Throughput Impact: {:.2}%",
-                    fw.throughput_impact_percent
-                ),
+                format!("Throughput Impact: {:.2}%", fw.throughput_impact_percent),
                 false,
             ));
             lines.push(("".to_string(), false));
@@ -469,17 +454,11 @@ impl BenchmarkReport {
         if let Some(ref nat) = self.nat {
             lines.push(("NAT Performance".to_string(), true));
             lines.push((
-                format!(
-                    "Max Concurrent Sessions: {}",
-                    nat.max_concurrent_sessions
-                ),
+                format!("Max Concurrent Sessions: {}", nat.max_concurrent_sessions),
                 false,
             ));
             lines.push((
-                format!(
-                    "New Sessions/sec: {:.0}",
-                    nat.new_sessions_per_second
-                ),
+                format!("New Sessions/sec: {:.0}", nat.new_sessions_per_second),
                 false,
             ));
             lines.push((
@@ -504,8 +483,12 @@ impl BenchmarkReport {
 
         // Render the lines into a paginated PDF document using a built-in
         // font (no embedded font files/assets needed).
-        let (doc, page1, layer1) =
-            PdfDocument::new("Patronus Firewall Benchmark Report", Mm(PAGE_WIDTH), Mm(PAGE_HEIGHT), "Layer 1");
+        let (doc, page1, layer1) = PdfDocument::new(
+            "Patronus Firewall Benchmark Report",
+            Mm(PAGE_WIDTH),
+            Mm(PAGE_HEIGHT),
+            "Layer 1",
+        );
         let font = doc.add_builtin_font(BuiltinFont::Helvetica)?;
         let font_bold = doc.add_builtin_font(BuiltinFont::HelveticaBold)?;
 
@@ -523,11 +506,14 @@ impl BenchmarkReport {
             }
 
             let (use_font, size) = if *is_heading {
-                (&font_bold, if cursor_y > PAGE_HEIGHT - MARGIN - LINE_HEIGHT {
-                    FONT_SIZE_TITLE
-                } else {
-                    FONT_SIZE_HEADING
-                })
+                (
+                    &font_bold,
+                    if cursor_y > PAGE_HEIGHT - MARGIN - LINE_HEIGHT {
+                        FONT_SIZE_TITLE
+                    } else {
+                        FONT_SIZE_HEADING
+                    },
+                )
             } else {
                 (&font, FONT_SIZE_BODY)
             };
