@@ -226,7 +226,15 @@ impl IsolationForest {
         if n <= 1 {
             return 0.0;
         }
-        2.0 * ((n - 1) as f64).ln() + 0.5772156649 - 2.0 * (n - 1) as f64 / n as f64
+        // Euler-Mascheroni constant (gamma), used by the standard Isolation
+        // Forest average-path-length normalization formula c(n). Clippy's
+        // `approx_constant` lint flags this literal because it is close to
+        // the nightly-only, unstable `f64::consts::EULER_GAMMA`; there is no
+        // stable std constant to use instead, so the literal is intentional
+        // here rather than an accidental approximation of e.g. `PI`.
+        #[allow(clippy::approx_constant)]
+        const EULER_MASCHERONI: f64 = 0.5772156649;
+        2.0 * ((n - 1) as f64).ln() + EULER_MASCHERONI - 2.0 * (n - 1) as f64 / n as f64
     }
 }
 
