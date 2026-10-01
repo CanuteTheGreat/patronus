@@ -223,6 +223,23 @@ src_install() {
 	# override the install path in a workspace.
 	cargo_src_install --path ./crates/patronus-cli
 
+	# patronus-web is a SEPARATE member crate with its own [[bin]] (not a
+	# patronus-cli feature) -- the above cargo_src_install call only ever
+	# installs patronus-cli, so /usr/bin/patronus-web was never produced at
+	# all despite the web USE flag existing and the systemd unit/doc/elog
+	# text below all assuming it exists. This is the LIVE (9999) ebuild,
+	# the one actually used by the top-level Dockerfile's `docker build`
+	# (which sets EGIT_OVERRIDE_REPO_PATRONUS + accepts
+	# =net-firewall/patronus-9999 **) -- a prior fix for this exact bug
+	# (commit 04a0faa) only touched the pinned patronus-0.1.0.ebuild,
+	# leaving the Gentoo Docker Build CI job still failing on
+	# `COPY --from=builder /usr/bin/patronus-web` with "not found".
+	# Install it as its own cargo_src_install pass, gated on the same web
+	# USE flag as its static assets just below.
+	if use web; then
+		cargo_src_install --path ./crates/patronus-web
+	fi
+
 	# Install init scripts based on USE flags
 	if use systemd; then
 		systemd_dounit "${FILESDIR}/patronus-web.service"
