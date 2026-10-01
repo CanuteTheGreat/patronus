@@ -75,4 +75,3 @@ livecd/packages:
     net-analyzer/nmap
     net-misc/curl
     net-misc/wget
-    net-dns/bind-tools

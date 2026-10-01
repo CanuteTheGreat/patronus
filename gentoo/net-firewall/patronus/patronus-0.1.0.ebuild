@@ -262,6 +262,19 @@ src_install() {
 	# override the install path in a workspace.
 	cargo_src_install --path ./crates/patronus-cli
 
+	# patronus-web is a SEPARATE member crate with its own [[bin]] (not a
+	# patronus-cli feature) -- the above cargo_src_install call only ever
+	# installs patronus-cli, so /usr/bin/patronus-web was never produced at
+	# all despite the web USE flag existing and the systemd unit/doc/elog
+	# text below all assuming it exists (caught 2026-10-01: the runtime
+	# Docker stage's `COPY --from=builder /usr/bin/patronus-web ...` failed
+	# outright since the file was simply never there). Install it as its
+	# own cargo_src_install pass, gated on the same web USE flag as its
+	# static assets just below.
+	if use web; then
+		cargo_src_install --path ./crates/patronus-web
+	fi
+
 	# Install init scripts based on USE flags
 	if use systemd; then
 		systemd_dounit "${FILESDIR}/patronus-web.service"

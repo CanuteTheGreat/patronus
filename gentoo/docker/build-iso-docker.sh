@@ -9,12 +9,19 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 VERSION="${VERSION:-0.1.0}"
 TIMESTAMP=$(date +%Y%m%d)
 OUTPUT_DIR="${OUTPUT_DIR:-${REPO_ROOT}/output}"
+# "bin" (default): prebuilt dev-lang/rust-bin -- fast, good for local/dev/CI
+# test builds. "source": dev-lang/rust compiled from source through Portage
+# like every other package here -- slower (hours under emulation) but this
+# is what a tagged production/release ISO should use.
+RUST_VARIANT="${RUST_VARIANT:-bin}"
+IMAGE_TAG="patronus-iso-builder:rust-${RUST_VARIANT}"
 
 echo "============================================"
 echo "  Patronus LiveCD ISO Builder"
 echo "============================================"
 echo "Version: ${VERSION}"
 echo "Timestamp: ${TIMESTAMP}"
+echo "Rust variant: ${RUST_VARIANT} ($( [[ "${RUST_VARIANT}" == bin ]] && echo 'prebuilt -- dev/test only, NOT for release' || echo 'from-source -- OK for production/release' ))"
 echo ""
 
 # Check if running as root (required for some operations)
@@ -32,28 +39,29 @@ fi
 mkdir -p "${OUTPUT_DIR}"
 
 # Build the Docker image
-echo "[1/4] Building Docker image..."
-docker build -t patronus-iso-builder:latest \
+echo "[1/4] Building Docker image (RUST_VARIANT=${RUST_VARIANT})..."
+docker build -t "${IMAGE_TAG}" \
+    --build-arg RUST_VARIANT="${RUST_VARIANT}" \
     -f "${SCRIPT_DIR}/Dockerfile.iso-builder" \
     "${REPO_ROOT}/gentoo"
 
-# Build installer binary first (on host)
-echo "[2/4] Building patronus-install binary..."
-cd "${REPO_ROOT}"
-cargo build -p patronus-installer --release
+# Note: patronus-install is built natively INSIDE the container by the
+# entrypoint (gentoo/docker/build-iso-docker-entrypoint.sh), not here on
+# the host -- the host arch (e.g. arm64 on an Apple Silicon/Jetson build
+# machine) would produce a binary useless on the x86_64 LiveCD.
 
 # Run the ISO build in container
-echo "[3/4] Building ISO in container..."
+echo "[2/3] Building ISO in container..."
 docker run --rm \
     --privileged \
     -v "${REPO_ROOT}:/build/patronus:ro" \
     -v "${OUTPUT_DIR}:/output" \
     -e VERSION="${VERSION}" \
     -e TIMESTAMP="${TIMESTAMP}" \
-    patronus-iso-builder:latest
+    "${IMAGE_TAG}"
 
 # Verify output
-echo "[4/4] Verifying output..."
+echo "[3/3] Verifying output..."
 ISO_FILE="${OUTPUT_DIR}/patronus-${VERSION}-amd64-${TIMESTAMP}.iso"
 
 if [[ -f "${ISO_FILE}" ]]; then

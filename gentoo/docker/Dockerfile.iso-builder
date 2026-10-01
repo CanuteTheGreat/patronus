@@ -3,8 +3,48 @@
 
 FROM gentoo/stage3:amd64-systemd
 
-# Install build dependencies
-RUN emerge-webrsync && \
+# RUST_VARIANT selects the toolchain used both for emerge's own Rust
+# dependencies (dev-vcs/git) and, via patronus-installer/patronus ebuilds'
+# BDEPEND, for compiling the installer/firewall itself:
+#  - "bin"    (default): dev-lang/rust-bin, prebuilt upstream toolchain.
+#    Fast (minutes, no LLVM/Go bootstrap) -- fine for local/dev/test ISO
+#    builds and CI smoke tests, but IS NOT a from-source Gentoo build and
+#    should not be what ships in a tagged release.
+#  - "source": dev-lang/rust, compiled from source through Portage like
+#    every other package in this tree. Hours-long (LLVM+Go bootstrap under
+#    emulation) but reproducible/auditable -- use this for production/
+#    release ISOs. Build with:
+#      docker build --build-arg RUST_VARIANT=source ...
+ARG RUST_VARIANT=bin
+
+# dev-util/catalyst only has ~amd64 (testing) releases in this snapshot;
+# accept just that package at the testing keyword rather than unmasking
+# the whole tree. Same applies to dev-lang/rust-bin when RUST_VARIANT=bin
+# (virtual/rust never existed in the Gentoo tree -- see commit 526960a).
+# util-linux[python] and grub[grub_platforms_efi-32] are USE flags
+# catalyst itself requires (autounmask would otherwise block emerge).
+#
+# FEATURES=-sandbox -usersandbox: Gentoo's ptrace-based build sandbox
+# misreads process personality bits under binfmt_misc/QEMU (ARM64 Linux
+# hosts) and under Rosetta 2 (Apple Silicon Docker Desktop), aborting
+# any package with a Rust build-script subprocess (e.g. dev-vcs/git's
+# gitcore) with "unknown x86_64 (CS) personality" / SIGABRT. This is a
+# known sandbox-vs-emulation incompatibility, not a package bug -- safe
+# to disable here since this is a disposable, single-purpose ISO-builder
+# container, not a hardened production Portage tree.
+RUN mkdir -p /etc/portage/package.accept_keywords /etc/portage/package.use && \
+    echo "dev-util/catalyst ~amd64" > /etc/portage/package.accept_keywords/catalyst && \
+    if [ "${RUST_VARIANT}" = "bin" ]; then \
+        echo "dev-lang/rust-bin ~amd64" > /etc/portage/package.accept_keywords/rust-bin; \
+    fi && \
+    echo "sys-apps/util-linux python" > /etc/portage/package.use/catalyst-deps && \
+    echo "sys-boot/grub grub_platforms_efi-32" >> /etc/portage/package.use/catalyst-deps && \
+    echo 'FEATURES="-sandbox -usersandbox -pid-sandbox -ipc-sandbox -network-sandbox"' >> /etc/portage/make.conf
+
+# Install build dependencies (RUST_VARIANT picks dev-lang/rust-bin vs.
+# dev-lang/rust -- see ARG comment above)
+RUN if [ "${RUST_VARIANT}" = "bin" ]; then RUST_PKG="dev-lang/rust-bin"; else RUST_PKG="dev-lang/rust"; fi && \
+    emerge-webrsync && \
     emerge --oneshot --quiet \
         dev-util/catalyst \
         app-cdr/cdrtools \
@@ -12,17 +52,22 @@ RUN emerge-webrsync && \
         sys-boot/syslinux \
         sys-boot/grub:2 \
         dev-vcs/git \
-        virtual/rust \
+        "${RUST_PKG}" \
         sys-fs/dosfstools \
         sys-fs/mtools
 
 # Create build directories
-RUN mkdir -p /var/tmp/catalyst/builds /var/tmp/catalyst/snapshots /build/iso
+RUN mkdir -p /var/tmp/catalyst/builds /var/tmp/catalyst/snapshots /build/iso /build/work
 
 # Copy portage config
 COPY catalyst/portage /etc/portage/
 
+# Copy entrypoint (drives: install binary build, root_overlay staging,
+# spec rendering, catalyst stage1+stage2, ISO collection into /output)
+COPY docker/build-iso-docker-entrypoint.sh /build/entrypoint.sh
+RUN chmod +x /build/entrypoint.sh
+
 WORKDIR /build
 
 # Entry point for building
-ENTRYPOINT ["/build/scripts/build-iso-docker.sh"]
+ENTRYPOINT ["/build/entrypoint.sh"]
