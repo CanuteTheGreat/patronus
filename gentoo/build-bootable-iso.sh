@@ -420,9 +420,13 @@ if [[ -d "${MODDIR}" ]]; then
     cp "${MODDIR}/modules.alias" "${INITRD_DIR}/lib/modules/${KVER}/" 2>/dev/null || true
 fi
 
-# Copy insmod for module loading
+# Copy insmod for module loading (with its shared library dependencies --
+# insmod is dynamically linked against libzstd/liblzma/libz for compressed
+# modules, and without those libs present it fails to run at all, which
+# means NO modules load, including storage drivers, and the live system
+# can never find its root filesystem).
 if command -v insmod &>/dev/null; then
-    cp "$(command -v insmod)" "${INITRD_DIR}/bin/"
+    copy_with_deps "$(command -v insmod)" "${INITRD_DIR}" "bin"
 fi
 
 # Create initramfs init script
