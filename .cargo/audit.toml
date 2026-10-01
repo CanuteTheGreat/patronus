@@ -8,6 +8,14 @@
 # each is addressed.
 [advisories]
 ignore = [
+    "RUSTSEC-2026-0187", # lopdf 0.31.0 - transitive via printpdf 0.7 in patronus-bench
+                         # (PDF *write*-only export path; patronus-bench never parses
+                         # untrusted PDFs via lopdf, so the "deeply nested PDF objects"
+                         # stack-overflow-on-parse advisory has no reachable attack
+                         # surface here. Fixed upstream in lopdf >=0.42, which requires
+                         # printpdf >=0.11 - a breaking API rewrite (layers/use_text API
+                         # replaced entirely by an Op-based model) deferred to a
+                         # dedicated follow-up rather than done blind in a CI-fix pass.
     "RUSTSEC-2026-0258", # h2 0.3.27 - transitive via reqwest 0.11 (many crates)
     "RUSTSEC-2024-0421", # idna 0.2.3/0.4.0 - transitive via url/reqwest/redis chains
     "RUSTSEC-2024-0437", # protobuf 2.28.0 - transitive via opentelemetry-prometheus/prometheus
