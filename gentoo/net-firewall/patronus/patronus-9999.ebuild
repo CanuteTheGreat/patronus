@@ -144,36 +144,39 @@ src_configure() {
 	# what was actually killing 'Gentoo Docker Build' in CI (not the
 	# earlier from-source-rust-bootstrap issue, which was already fixed) --
 	# do not re-add without first adding the matching cargo feature.
+	# NOTE (2026-10-01, CI job 10563/run 130): the previous version of this
+	# list forwarded USE-flag names directly as cargo feature names (e.g.
+	# "dhcp", "dns", "wireguard", "multiwan"), but patronus-cli/Cargo.toml
+	# does not define features by those names -- it defines dhcp-server,
+	# dns-server, vpn-wireguard, vpn-openvpn, vpn-ipsec (multiwan was
+	# missing a crate feature entirely until this commit added one that
+	# forwards to patronus-network/multiwan). Every mismatched name here
+	# made cargo die with "the package 'patronus-cli' does not contain
+	# these features", which is what was actually killing the Gentoo
+	# Docker Build job (not the earlier --path-forwarding issue above,
+	# which was already fixed). Flags with no backing cargo feature at
+	# all (ha/ucarp/monitoring/prometheus/ntopng/netflow/captive-portal/
+	# suricata/vlan/qos/certificates/acme/ldap/radius/totp/geoip/
+	# scheduled-rules/pppoe/wireless) are intentionally left out of this
+	# list -- see the matching IUSE comment for the ones that still gate
+	# real RDEPEND entries only, and do not re-add any of these to
+	# myfeatures without first adding the matching cargo feature.
 	local myfeatures=(
 		$(usex web "web" "")
 		$(usex cli "cli" "")
 		$(usex api "api" "")
-		$(usex dhcp "dhcp" "")
-		$(usex dns "dns" "")
-		$(usex unbound "dns" "")
-		$(usex wireguard "wireguard" "")
-		$(usex openvpn "openvpn" "")
-		$(usex ipsec "ipsec" "")
+		$(usex dhcp "dhcp-server" "")
+		$(usex dns "dns-server" "")
+		$(usex unbound "dns-server" "")
+		$(usex wireguard "vpn-wireguard" "")
+		$(usex openvpn "vpn-openvpn" "")
+		$(usex ipsec "vpn-ipsec" "")
 		$(usex multiwan "multiwan" "")
-		$(usex ha "ha" "")
-		$(usex ucarp "carp" "")
 		$(usex monitoring "monitoring" "")
 		$(usex prometheus "monitoring-prometheus" "")
-		$(usex ntopng "ntopng" "")
-		$(usex netflow "netflow" "")
 		$(usex captive-portal "captive-portal" "")
-		$(usex suricata "suricata" "")
 		$(usex vlan "vlan" "")
 		$(usex qos "qos" "")
-		$(usex certificates "certificates" "")
-		$(usex acme "acme" "")
-		$(usex ldap "ldap" "")
-		$(usex radius "radius" "")
-		$(usex totp "totp" "")
-		$(usex geoip "geoip" "")
-		$(usex scheduled-rules "scheduled-rules" "")
-		$(usex pppoe "pppoe" "")
-		$(usex wireless "wireless" "")
 		$(usex backup "backup" "")
 	)
 

@@ -23,6 +23,7 @@ iptables = ["patronus-firewall/iptables"]
 # Network services
 dhcp-server = ["patronus-network/dhcp"]
 dns-server = ["patronus-network/dns"]
+multiwan = ["patronus-network/multiwan"]
 
 # VPN
 vpn-wireguard = ["patronus-network/wireguard"]
