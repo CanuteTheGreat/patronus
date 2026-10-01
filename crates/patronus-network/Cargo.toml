@@ -18,6 +18,9 @@ ha = []
 intrusion-detection = []
 dynamic-routing = []
 
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
+
 [dependencies]
 patronus-core = { path = "../patronus-core" }
 tokio.workspace = true

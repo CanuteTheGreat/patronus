@@ -448,14 +448,17 @@ impl HaManager {
             }
 
             // vrrpd is typically started with command-line args
+            let vhid_str = vip.vhid.to_string();
+            let priority_str = vip.priority.to_string();
+            let vip_str = vip.vip.to_string();
             let args = vec![
                 "-i",
                 &vip.interface,
                 "-v",
-                &vip.vhid.to_string(),
+                &vhid_str,
                 "-p",
-                &vip.priority.to_string(),
-                &vip.vip.to_string(),
+                &priority_str,
+                &vip_str,
             ];
 
             // Save command for later use
