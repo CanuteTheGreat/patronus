@@ -290,13 +290,13 @@ src_install() {
 	# Install web assets if web USE flag is enabled
 	if use web; then
 		insinto /usr/share/patronus/web
-		doins -r "${S}/web/static" 2>/dev/null || true
+		doins -r "${S}/crates/patronus-web/static" 2>/dev/null || true
 	fi
 
 	# Documentation
 	dodoc README.md
 	dodoc QUICKSTART.md
-	dodoc GENTOO-INTEGRATION.md
+	dodoc GENTOO-INTEGRATION-COMPLETE.md
 	dodoc COMPETITIVE-ANALYSIS.md
 	dodoc INNOVATION-ROADMAP.md
 	dodoc -r docs/ 2>/dev/null || true
@@ -358,5 +358,5 @@ pkg_postinst() {
 	elog "See documentation in /usr/share/doc/${PF}/"
 	elog ""
 	elog "Quick start guide: /usr/share/doc/${PF}/QUICKSTART.md"
-	elog "Gentoo integration: /usr/share/doc/${PF}/GENTOO-INTEGRATION.md"
+	elog "Gentoo integration: /usr/share/doc/${PF}/GENTOO-INTEGRATION-COMPLETE.md"
 }
