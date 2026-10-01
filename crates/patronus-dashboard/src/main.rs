@@ -248,7 +248,7 @@ async fn graphql_ws_connection(
 
                         // Send response
                         if let Ok(json) = serde_json::to_string(&response) {
-                            let _ = sender.send(Message::Text(json.into())).await;
+                            let _ = sender.send(Message::Text(json)).await;
                         }
                     }
                 }

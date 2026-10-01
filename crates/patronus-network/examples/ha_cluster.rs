@@ -3,7 +3,7 @@
 //! This example demonstrates how to configure a Patronus HA cluster
 //! with virtual IPs and automatic failover.
 
-use patronus_network::ha::{HaManager, HaBackend, HaCluster, HaRole, VirtualIp};
+use patronus_network::ha::{HaBackend, HaCluster, HaManager, HaRole, VirtualIp};
 use std::net::IpAddr;
 
 #[tokio::main]
@@ -49,8 +49,8 @@ async fn main() -> anyhow::Result<()> {
         name: "patronus-cluster".to_string(),
         enabled: true,
         backend: backend.clone(),
-        role: HaRole::Master,  // This is the primary node
-        peer_ip: "192.168.1.2".parse().unwrap(),  // Secondary node IP
+        role: HaRole::Master,                    // This is the primary node
+        peer_ip: "192.168.1.2".parse().unwrap(), // Secondary node IP
         sync_interface: "eth1".to_string(),
         sync_enabled: true,
         virtual_ips: vec![
@@ -61,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
                 vip: "192.168.1.100".parse().unwrap(),
                 interface: "eth0".to_string(),
                 vhid: 1,
-                priority: 200,  // Higher = preferred master
+                priority: 200, // Higher = preferred master
                 password: Some("supersecret123".to_string()),
                 preempt: true,
                 advskew: 0,
@@ -112,9 +112,9 @@ async fn main() -> anyhow::Result<()> {
     println!();
 
     cluster.role = HaRole::Backup;
-    cluster.peer_ip = "192.168.1.1".parse().unwrap();  // Primary node IP
+    cluster.peer_ip = "192.168.1.1".parse().unwrap(); // Primary node IP
     for vip in &mut cluster.virtual_ips {
-        vip.priority = 100;  // Lower priority for backup
+        vip.priority = 100; // Lower priority for backup
     }
 
     println!("  Role: BACKUP");

@@ -18,6 +18,18 @@ ha = []
 intrusion-detection = []
 dynamic-routing = []
 
+[[example]]
+name = "ha_cluster"
+required-features = ["ha"]
+
+[[example]]
+name = "ha_test_master"
+required-features = ["ha"]
+
+[[example]]
+name = "ha_test_backup"
+required-features = ["ha"]
+
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
 

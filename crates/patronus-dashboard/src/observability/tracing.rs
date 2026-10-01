@@ -108,8 +108,6 @@ fn example_traced_function() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_tracing_init_no_otlp() {
         // Test initialization without OTLP endpoint (stdout mode)
