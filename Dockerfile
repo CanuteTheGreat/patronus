@@ -20,9 +20,17 @@ ARG PATRONUS_USE="web cli api nftables wireguard multiwan monitoring prometheus 
 # fails with EPERM -- and instead of failing fast, Portage just retries the
 # unshare repeatedly (visible in CI logs as a flood of "Unable to unshare:
 # EPERM" every few seconds), burning the whole job timeout without making
-# real progress. Disable the namespace-based sandbox features here; the
-# regular filesystem sandbox (FEATURES=sandbox, unaffected) still applies.
-RUN echo 'FEATURES="${FEATURES} -ipc-sandbox -network-sandbox -pid-sandbox"' \
+# real progress. Disable the namespace-based sandbox features here.
+#
+# Also disable the base ptrace-based sandbox (FEATURES=sandbox/usersandbox):
+# it misreads process personality bits under binfmt_misc/QEMU (ARM64 Linux
+# hosts) and under Rosetta 2 (Apple Silicon Docker Desktop), aborting any
+# package with a Rust/Go build-script subprocess (e.g. dev-lang/go) with
+# "unknown x86_64 (CS) personality" / SIGABRT -- confirmed live in run #141
+# (dev-lang/go-1.26.7 compile phase). Known sandbox-vs-emulation
+# incompatibility, not a package bug. Already fixed this exact way in
+# gentoo/docker/Dockerfile.iso-builder; this just ports the same fix here.
+RUN echo 'FEATURES="${FEATURES} -sandbox -usersandbox -ipc-sandbox -network-sandbox -pid-sandbox"' \
     >> /etc/portage/make.conf
 
 RUN emerge-webrsync
