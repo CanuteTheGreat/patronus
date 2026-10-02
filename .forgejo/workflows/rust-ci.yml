@@ -196,4 +196,27 @@ jobs:
           docker build --build-arg CI_BASE_IMAGE="${BASE_IMAGE}" -t patronus/web:${{ github.sha }} .
 
       - name: Smoke-test the built image
-        run: docker run --rm patronus/web:${{ github.sha }} --version || docker run --rm patronus/web:${{ github.sha }} --help
+        # patronus-web has no CLI arg parsing (no clap) and the image has no
+        # ENTRYPOINT, just CMD ["patronus-web"] -- `docker run image --version`
+        # therefore replaces the whole command and always fails with
+        # "exec: --version: no such file or directory", regardless of whether
+        # the image itself is healthy. Actually exercise the binary instead:
+        # start it detached, wait for it to come up, hit its real health
+        # endpoint, then tear down.
+        run: |
+          set -e
+          cid=$(docker run -d -p 8443:8443 patronus/web:${{ github.sha }})
+          trap 'docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8443/ >/dev/null 2>&1; then
+              ok=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::patronus-web did not respond on :8443 within 60s"
+            exit 1
+          fi
+          echo "patronus-web responded successfully"
