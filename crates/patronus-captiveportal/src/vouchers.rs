@@ -64,6 +64,12 @@ impl VoucherManager {
                 bandwidth_limit_kbps,
                 created_by.clone(),
             );
+            // Codes aren't committed to self.vouchers until after the full
+            // batch loop (below), so create_voucher's uniqueness check
+            // against self.vouchers alone can't see codes already minted
+            // earlier in *this* batch. Insert as we go so every
+            // generate_unique_code() call sees the complete picture.
+            self.vouchers.insert(voucher.code.clone(), voucher.clone());
             vouchers.push(voucher);
         }
 
@@ -74,11 +80,8 @@ impl VoucherManager {
             vouchers: vouchers.clone(),
         };
 
-        // Store vouchers
-        for voucher in vouchers {
-            self.vouchers.insert(voucher.code.clone(), voucher);
-        }
-
+        // Vouchers were already inserted into self.vouchers above as they
+        // were minted (needed for in-batch uniqueness checking).
         self.batches.insert(batch_id.clone(), batch.clone());
 
         batch
@@ -92,7 +95,7 @@ impl VoucherManager {
         created_by: String,
     ) -> Voucher {
         Voucher {
-            code: Self::generate_code(),
+            code: self.generate_unique_code(),
             created_at: Utc::now(),
             expires_at: Utc::now() + Duration::hours(duration_hours as i64),
             duration_hours,
@@ -148,6 +151,22 @@ impl VoucherManager {
     pub async fn cleanup_expired(&mut self) {
         let now = Utc::now();
         self.vouchers.retain(|_, v| v.expires_at > now);
+    }
+
+    /// Generate a voucher code guaranteed not to collide with any
+    /// currently-stored voucher. generate_code()'s charset gives
+    /// 33^11 possible codes, so collisions are astronomically rare,
+    /// but silently overwriting an existing voucher on collision
+    /// (the previous behavior, since `vouchers` is keyed by code)
+    /// would make that voucher permanently unredeemable with no
+    /// error raised anywhere. Retry instead of trusting luck.
+    fn generate_unique_code(&self) -> String {
+        loop {
+            let code = Self::generate_code();
+            if !self.vouchers.contains_key(&code) {
+                return code;
+            }
+        }
     }
 
     fn generate_code() -> String {
