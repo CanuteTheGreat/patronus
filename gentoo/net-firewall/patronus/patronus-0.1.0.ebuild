@@ -118,8 +118,12 @@ RDEPEND="
 "
 
 DEPEND="${RDEPEND}"
+# dev-libs/protobuf: see patronus-9999.ebuild -- raft-proto's build script
+# needs `protoc` on PATH at compile time; without it the build panics with
+# Option::unwrap() on a None value in protobuf-build's protoc lookup.
 BDEPEND="
 	|| ( >=dev-lang/rust-1.75 >=dev-lang/rust-bin-1.75 )
+	dev-libs/protobuf
 "
 
 QA_FLAGS_IGNORED="usr/bin/patronus.*"

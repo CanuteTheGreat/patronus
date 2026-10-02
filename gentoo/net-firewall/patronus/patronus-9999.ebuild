@@ -118,8 +118,17 @@ RDEPEND="
 "
 
 DEPEND="${RDEPEND}"
+# dev-libs/protobuf: raft-proto's build script (via the protobuf-build crate)
+# shells out to `protoc` to generate Rust bindings from .proto files at
+# compile time; it isn't vendored or built from source, Cargo just expects
+# it on PATH. Without it the build script panics with a bare
+# `Option::unwrap() on a None value` in protobuf-build's own protoc-lookup
+# code -- confirmed live in run #142's compile phase -- rather than a clear
+# "protoc not found" message, because protobuf-build unwraps the lookup
+# result instead of erroring on it.
 BDEPEND="
 	|| ( >=dev-lang/rust-1.75 >=dev-lang/rust-bin-1.75 )
+	dev-libs/protobuf
 "
 
 QA_FLAGS_IGNORED="usr/bin/patronus.*"
