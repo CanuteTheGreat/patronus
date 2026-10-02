@@ -234,10 +234,31 @@ src_install() {
 	# (commit 04a0faa) only touched the pinned patronus-0.1.0.ebuild,
 	# leaving the Gentoo Docker Build CI job still failing on
 	# `COPY --from=builder /usr/bin/patronus-web` with "not found".
-	# Install it as its own cargo_src_install pass, gated on the same web
-	# USE flag as its static assets just below.
+	#
+	# NOTE (2026-10-01, CI run 135/job 10731): the naive fix of just calling
+	# `cargo_src_install --path ./crates/patronus-web` here still fails,
+	# because cargo_src_install() (cargo.eclass) unconditionally appends
+	# the readonly ${ECARGO_ARGS[@]} array -- the --features web/cli/api/
+	# dhcp-server/... flags set up in src_configure's myfeatures for
+	# patronus-cli. patronus-web's own Cargo.toml defines none of those
+	# features (`default = []`, no [features] table entries), so cargo
+	# dies with "the package 'patronus-web' does not contain these
+	# features: api, backup, captive-portal, cli, dhcp-server, ...".
+	# There is no cargo CLI flag to negate features already passed on the
+	# command line, and ECARGO_ARGS is `readonly` (set once in
+	# cargo_src_configure), so we cannot call cargo_src_install() for this
+	# crate at all. Replicate its cargo invocation by hand instead,
+	# deliberately omitting ${ECARGO_ARGS[@]}, so patronus-web builds with
+	# its own (empty) default feature set.
 	if use web; then
-		cargo_src_install --path ./crates/patronus-web
+		set -- "${CARGO}" install --path ./crates/patronus-web \
+			--root "${ED}/usr" \
+			${GIT_CRATES[@]:+--frozen} \
+			$(usex debug --debug "")
+		einfo "${@}"
+		cargo_env "${@}" || die "cargo install (patronus-web) failed"
+		rm -f "${ED}/usr/.crates.toml" || die
+		rm -f "${ED}/usr/.crates2.json" || die
 	fi
 
 	# Install init scripts based on USE flags
