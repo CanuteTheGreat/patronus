@@ -193,7 +193,25 @@ jobs:
           else
             echo "::warning::prebuilt CI base image unavailable, falling back to ${BASE_IMAGE}"
           fi
-          docker build --build-arg CI_BASE_IMAGE="${BASE_IMAGE}" -t patronus/web:${{ github.sha }} .
+          # The emerge inside this build routinely runs 10-20+ minutes, and has
+          # repeatedly failed outright with transient BuildKit/registry network
+          # errors (e.g. "failed to solve: Unavailable: error reading from
+          # server: EOF") well after real build progress was already made --
+          # not an actual build failure, just a dropped connection mid-build.
+          # Retry the whole docker build a few times with backoff before
+          # giving up; BuildKit's layer cache makes a retry after a network
+          # blip cheap, not a full rebuild from scratch.
+          attempt=1
+          max_attempts=3
+          until docker build --build-arg CI_BASE_IMAGE="${BASE_IMAGE}" -t patronus/web:${{ github.sha }} .; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::docker build failed after ${max_attempts} attempts"
+              exit 1
+            fi
+            echo "::warning::docker build attempt ${attempt} failed (likely transient network/registry error), retrying..."
+            attempt=$((attempt + 1))
+            sleep $((attempt * 10))
+          done
 
       - name: Smoke-test the built image
         # patronus-web has no CLI arg parsing (no clap) and the image has no
