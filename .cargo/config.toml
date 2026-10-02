@@ -1,14 +1,27 @@
 # Cargo configuration for Patronus
 # Architecture-specific optimizations
+#
+# NOTE: do NOT put "-C opt-level=3" in these global rustflags. Cargo appends
+# rustflags after the active profile's own -C opt-level flag, and rustc takes
+# the LAST -C opt-level it sees -- so a global opt-level=3 here silently wins
+# over profile.dev's opt-level=1 for every `cargo test`/`cargo check`, not just
+# `cargo build --release`. Confirmed via a real CI job log (Rust CI / Test
+# (non-eBPF crates), run 2350, patronus-sdwan): the actual rustc invocation
+# carried both "-C opt-level=1 ... -C opt-level=3", proving dev/test builds
+# were being compiled at release-grade optimization. That's exactly the kind
+# of extra compile memory/time dev/test builds don't need, and it was enough
+# to get the compiler SIGKILLed on the resource-constrained emulated CI runner.
+# Keep opt-level out of here; profile.release below already sets opt-level = 3
+# for real release builds.
 
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=native", "-C", "opt-level=3"]
+rustflags = ["-C", "target-cpu=native"]
 
 [target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=native", "-C", "opt-level=3"]
+rustflags = ["-C", "target-cpu=native"]
 
 [target.riscv64gc-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=generic-rv64", "-C", "opt-level=3"]
+rustflags = ["-C", "target-cpu=generic-rv64"]
 
 # LTO for release builds
 [profile.release]
