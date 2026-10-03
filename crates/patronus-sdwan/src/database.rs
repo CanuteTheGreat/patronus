@@ -136,12 +136,24 @@ impl Database {
                 priority INTEGER NOT NULL,
                 match_rules TEXT NOT NULL,
                 path_preference TEXT NOT NULL,
-                enabled INTEGER NOT NULL
+                enabled INTEGER NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT 0
             )
             "#,
         )
         .execute(&self.pool)
         .await?;
+
+        // Migration: add created_at to sdwan_policies if upgrading from a
+        // schema version that predates it (CREATE TABLE IF NOT EXISTS above
+        // is a no-op on existing DBs, so older tables need an explicit
+        // ALTER TABLE). SQLite errors if the column already exists; that
+        // error is expected and ignored.
+        let _ = sqlx::query(
+            "ALTER TABLE sdwan_policies ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(&self.pool)
+        .await;
 
         // System metrics table
         sqlx::query(
@@ -746,11 +758,16 @@ impl Database {
     pub async fn upsert_policy(&self, policy: &crate::policy::RoutingPolicy) -> Result<()> {
         let match_rules = serde_json::to_string(&policy.match_rules)?;
         let path_preference = serde_json::to_string(&policy.path_preference)?;
+        let created_at = policy
+            .created_at
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
 
         sqlx::query(
             r#"
-            INSERT INTO sdwan_policies (policy_id, name, priority, match_rules, path_preference, enabled)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO sdwan_policies (policy_id, name, priority, match_rules, path_preference, enabled, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(policy_id) DO UPDATE SET
                 name = excluded.name,
                 priority = excluded.priority,
@@ -765,6 +782,7 @@ impl Database {
         .bind(match_rules)
         .bind(path_preference)
         .bind(policy.enabled as i32)
+        .bind(created_at)
         .execute(&self.pool)
         .await?;
 
@@ -775,7 +793,7 @@ impl Database {
     pub async fn get_policy(&self, policy_id: u64) -> Result<Option<crate::policy::RoutingPolicy>> {
         let row = sqlx::query(
             r#"
-            SELECT policy_id, name, priority, match_rules, path_preference, enabled
+            SELECT policy_id, name, priority, match_rules, path_preference, enabled, created_at
             FROM sdwan_policies
             WHERE policy_id = ?
             "#,
@@ -791,6 +809,7 @@ impl Database {
             let match_rules_json: String = row.try_get("match_rules")?;
             let path_preference_json: String = row.try_get("path_preference")?;
             let enabled: i32 = row.try_get("enabled")?;
+            let created_at: i64 = row.try_get("created_at")?;
 
             let match_rules: crate::policy::MatchRules = serde_json::from_str(&match_rules_json)?;
             let path_preference: crate::policy::PathPreference =
@@ -803,6 +822,8 @@ impl Database {
                 match_rules,
                 path_preference,
                 enabled: enabled != 0,
+                created_at: std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(created_at as u64),
             }))
         } else {
             Ok(None)
@@ -813,7 +834,7 @@ impl Database {
     pub async fn list_policies(&self) -> Result<Vec<crate::policy::RoutingPolicy>> {
         let rows = sqlx::query(
             r#"
-            SELECT policy_id, name, priority, match_rules, path_preference, enabled
+            SELECT policy_id, name, priority, match_rules, path_preference, enabled, created_at
             FROM sdwan_policies
             ORDER BY priority DESC, name
             "#,
@@ -829,6 +850,7 @@ impl Database {
             let match_rules_json: String = row.try_get("match_rules")?;
             let path_preference_json: String = row.try_get("path_preference")?;
             let enabled: i32 = row.try_get("enabled")?;
+            let created_at: i64 = row.try_get("created_at")?;
 
             let match_rules: crate::policy::MatchRules = serde_json::from_str(&match_rules_json)?;
             let path_preference: crate::policy::PathPreference =
@@ -841,6 +863,8 @@ impl Database {
                 match_rules,
                 path_preference,
                 enabled: enabled != 0,
+                created_at: std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(created_at as u64),
             });
         }
 

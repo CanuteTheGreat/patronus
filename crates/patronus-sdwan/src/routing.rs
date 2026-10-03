@@ -92,6 +92,7 @@ impl RoutingEngine {
             },
             path_preference: PathPreference::Custom(PathScoringWeights::latency_sensitive()),
             enabled: true,
+            created_at: std::time::SystemTime::now(),
         });
 
         // Gaming - Ultra-low latency
@@ -109,6 +110,7 @@ impl RoutingEngine {
             },
             path_preference: PathPreference::LowestLatency,
             enabled: true,
+            created_at: std::time::SystemTime::now(),
         });
 
         // Bulk transfers - Prioritize bandwidth
@@ -126,6 +128,7 @@ impl RoutingEngine {
             },
             path_preference: PathPreference::HighestBandwidth,
             enabled: true,
+            created_at: std::time::SystemTime::now(),
         });
 
         // Default policy - Balance all metrics
@@ -143,6 +146,7 @@ impl RoutingEngine {
             },
             path_preference: PathPreference::Custom(PathScoringWeights::latency_sensitive()),
             enabled: true,
+            created_at: std::time::SystemTime::now(),
         });
 
         info!("Loaded {} default routing policies", policies.len());

@@ -329,6 +329,7 @@ impl MutationRoot {
             match_rules,
             path_preference,
             enabled: true,
+            created_at: std::time::SystemTime::now(),
         };
 
         // Insert into database
@@ -367,7 +368,15 @@ impl MutationRoot {
             enabled: true,
             packets_matched: 0,
             bytes_matched: 0,
-            created_at: Utc::now(),
+            created_at: chrono::DateTime::from_timestamp(
+                policy
+                    .created_at
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+                0,
+            )
+            .unwrap_or_else(Utc::now),
         };
 
         // Broadcast event to WebSocket clients (Sprint 28)
@@ -486,7 +495,15 @@ impl MutationRoot {
             enabled: policy.enabled,
             packets_matched: stats.packets_matched as i64,
             bytes_matched: stats.bytes_matched as i64,
-            created_at: Utc::now(),
+            created_at: chrono::DateTime::from_timestamp(
+                policy
+                    .created_at
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+                0,
+            )
+            .unwrap_or_else(Utc::now),
         };
 
         // Broadcast event to WebSocket clients (Sprint 28)
@@ -628,7 +645,15 @@ impl MutationRoot {
             enabled: policy.enabled,
             packets_matched: stats.packets_matched as i64,
             bytes_matched: stats.bytes_matched as i64,
-            created_at: Utc::now(),
+            created_at: chrono::DateTime::from_timestamp(
+                policy
+                    .created_at
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+                0,
+            )
+            .unwrap_or_else(Utc::now),
         };
 
         // Broadcast event to WebSocket clients (Sprint 28)

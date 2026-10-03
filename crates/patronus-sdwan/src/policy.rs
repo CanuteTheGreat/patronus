@@ -24,6 +24,9 @@ pub struct RoutingPolicy {
 
     /// Whether policy is enabled
     pub enabled: bool,
+
+    /// When this policy was created
+    pub created_at: std::time::SystemTime,
 }
 
 /// Match rules for policy
@@ -595,6 +598,7 @@ mod tests {
             },
             path_preference: PathPreference::LowestLatency,
             enabled: true,
+            created_at: std::time::SystemTime::now(),
         });
 
         engine.add_policy(RoutingPolicy {
@@ -608,6 +612,7 @@ mod tests {
             },
             path_preference: PathPreference::Custom(PathScoringWeights::balanced()),
             enabled: true,
+            created_at: std::time::SystemTime::now(),
         });
 
         // VoIP flow should match VoIP policy

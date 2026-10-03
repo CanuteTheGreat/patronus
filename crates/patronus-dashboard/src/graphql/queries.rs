@@ -262,7 +262,15 @@ impl QueryRoot {
                     enabled: policy.enabled,
                     packets_matched: stats.packets_matched as i64,
                     bytes_matched: stats.bytes_matched as i64,
-                    created_at: Utc::now(), // TODO: Add created_at to RoutingPolicy type
+                    created_at: chrono::DateTime::from_timestamp(
+                        policy
+                            .created_at
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as i64,
+                        0,
+                    )
+                    .unwrap_or_else(Utc::now),
                 }))
             }
             Ok(None) => Ok(None),
@@ -304,7 +312,15 @@ impl QueryRoot {
                             enabled: policy.enabled,
                             packets_matched: stats.packets_matched as i64,
                             bytes_matched: stats.bytes_matched as i64,
-                            created_at: Utc::now(), // TODO: Add created_at to RoutingPolicy type
+                            created_at: chrono::DateTime::from_timestamp(
+                                policy
+                                    .created_at
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs() as i64,
+                                0,
+                            )
+                            .unwrap_or_else(Utc::now),
                         }
                     })
                     .collect();
