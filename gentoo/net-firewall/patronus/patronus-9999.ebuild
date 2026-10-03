@@ -193,6 +193,29 @@ src_configure() {
 }
 
 src_compile() {
+	# aws-lc-sys's build.rs hard-codes "-O0" for one translation unit
+	# (third_party/jitterentropy/.../jitterentropy-base.c) -- that file
+	# has a literal #error guard that fires if it's compiled with any
+	# optimization at all ("The CPU Jitter random number generator must
+	# not be compiled with optimizations"). The `cc` crate (cc-rs) that
+	# aws-lc-sys's build script uses appends the profile's CFLAGS/CXXFLAGS
+	# (which Portage exports as plain env vars for every build, including
+	# cargo build-script subprocesses) AFTER its own per-file flags, so
+	# gcc sees "... -O0 ... -O2 -pipe" on the command line and -- since
+	# gcc uses whichever -O flag appears LAST -- picks -O2, the #error
+	# guard fires, and `cargo build` hard-fails for the whole workspace.
+	# Confirmed live in run #146/job 11545 (Gentoo Docker Build).
+	#
+	# Fix: strip any optimization-level flag out of CFLAGS/CXXFLAGS before
+	# invoking cargo, so cc-rs's own per-translation-unit choice (including
+	# the required -O0 for jitterentropy) is never re-overridden. This only
+	# affects the C code cargo build-scripts compile as part of this one
+	# crate's build (aws-lc-sys and friends) -- it does not change how any
+	# other ebuild's C sources get built, and Rust-side optimization is
+	# controlled separately below via CARGO_PROFILE_RELEASE_OPT_LEVEL.
+	export CFLAGS="$(printf '%s' "${CFLAGS}" | sed -E 's/-O[0-9s]?//g')"
+	export CXXFLAGS="$(printf '%s' "${CXXFLAGS}" | sed -E 's/-O[0-9s]?//g')"
+
 	export CARGO_PROFILE_RELEASE_OPT_LEVEL=3
 	export CARGO_PROFILE_RELEASE_LTO=true
 	export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
