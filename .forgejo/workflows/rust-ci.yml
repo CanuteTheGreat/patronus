@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -95,7 +95,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -144,7 +144,7 @@ jobs:
       - name: Install libbpf headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev
+          sudo apt-get install -y build-essential libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler
       - name: Cache cargo
         uses: actions/cache@v4
         with:
