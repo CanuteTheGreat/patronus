@@ -226,9 +226,25 @@ jobs:
         # the image itself is healthy. Actually exercise the binary instead:
         # start it detached, wait for it to come up, hit its real health
         # endpoint, then tear down.
+        #
+        # This job's steps run inside a job container (started by the
+        # Forgejo runner) that talks to the *host* docker daemon over a
+        # mounted docker.sock. `docker run -d -p 8443:8443 ...` therefore
+        # creates a **sibling** container on the host's default bridge
+        # network, not inside this job container's own network namespace --
+        # `curl http://localhost:8443/` from in here can never reach it no
+        # matter how long we wait (confirmed: the app's own logs show it
+        # really did start and bind 0.0.0.0:8443 within ~1s, but the 60s
+        # curl-retry loop still timed out every time). Fix: launch the web
+        # container sharing this job container's network namespace directly
+        # (`--network container:$(hostname)`, since the job container's
+        # hostname is its own container ID under Docker) so "localhost:8443"
+        # resolves to the same netns the app is actually listening on; port
+        # publishing (-p) is meaningless/rejected in that mode since there's
+        # no separate network to publish from.
         run: |
           set -e
-          cid=$(docker run -d -p 8443:8443 patronus/web:${{ github.sha }})
+          cid=$(docker run -d --network "container:$(hostname)" patronus/web:${{ github.sha }})
           trap 'docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
           ok=0
           for i in $(seq 1 30); do
