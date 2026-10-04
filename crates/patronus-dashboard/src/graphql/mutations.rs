@@ -491,7 +491,12 @@ impl MutationRoot {
             description: input.description,
             priority: policy.priority as i32,
             match_rules: serde_json::to_string(&policy.match_rules).unwrap_or_default(),
-            action: PolicyAction::Route, // TODO: Map from PathPreference
+            action: PolicyAction::Route, // RoutingPolicy has no other action type -
+            // PathPreference (path selection scoring) is orthogonal to
+            // Allow/Deny/Qos, not a source for them. Same resolved non-issue as
+            // queries.rs (policy()/policies()) -- this was a stale TODO implying
+            // unfinished work, not an actual gap; keeping the two comments in sync
+            // so a future pass doesn't re-investigate a non-bug.
             enabled: policy.enabled,
             packets_matched: stats.packets_matched as i64,
             bytes_matched: stats.bytes_matched as i64,
@@ -641,7 +646,12 @@ impl MutationRoot {
             description: None,
             priority: policy.priority as i32,
             match_rules: serde_json::to_string(&policy.match_rules).unwrap_or_default(),
-            action: PolicyAction::Route, // TODO: Map from PathPreference
+            action: PolicyAction::Route, // RoutingPolicy has no other action type -
+            // PathPreference (path selection scoring) is orthogonal to
+            // Allow/Deny/Qos, not a source for them. Same resolved non-issue as
+            // queries.rs (policy()/policies()) -- this was a stale TODO implying
+            // unfinished work, not an actual gap; keeping the two comments in sync
+            // so a future pass doesn't re-investigate a non-bug.
             enabled: policy.enabled,
             packets_matched: stats.packets_matched as i64,
             bytes_matched: stats.bytes_matched as i64,
