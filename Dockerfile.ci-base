@@ -16,7 +16,16 @@ ARG PATRONUS_USE="web cli api nftables wireguard multiwan monitoring prometheus 
 # (ipc-sandbox/network-sandbox/pid-sandbox) need unshare(2), which fails with
 # EPERM inside a docker build layer (no CAP_SYS_ADMIN) and gets retried
 # forever instead of failing fast -- burning the whole job timeout.
-RUN echo 'FEATURES="${FEATURES} -ipc-sandbox -network-sandbox -pid-sandbox"' \
+#
+# Also disable the base ptrace-based sandbox (FEATURES=sandbox/usersandbox):
+# it misreads process personality bits under binfmt_misc/QEMU (ARM64 hosts
+# emulating x86_64, e.g. beauxbatons), aborting any package with a Rust/Go
+# build-script subprocess (e.g. dev-lang/go) with "unknown x86_64 (CS)
+# personality" / SIGABRT -- confirmed live in run #152 (task 6120,
+# dev-lang/go-1.26.7 compile phase) on the exact same `onlydeps` step the
+# main Dockerfile already hit and fixed (see that file's history, run #141).
+# This image never got the same fix ported over; doing so now.
+RUN echo 'FEATURES="${FEATURES} -sandbox -usersandbox -ipc-sandbox -network-sandbox -pid-sandbox"' \
     >> /etc/portage/make.conf
 
 RUN emerge-webrsync
