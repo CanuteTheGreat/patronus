@@ -486,16 +486,74 @@ fn parse_egress_rule(spec: EgressRuleSpec) -> Result<EgressRule> {
 fn parse_peer_selector(spec: PeerSelectorSpec) -> Result<PeerSelector> {
     match spec {
         PeerSelectorSpec::PodSelector {
-            namespace_selector: _,
+            namespace_selector,
             pod_selector,
         } => Ok(PeerSelector::PodSelector {
-            namespace: None, // TODO: Parse namespace selector
+            namespace: namespace_selector
+                .map(parse_namespace_selector)
+                .transpose()?,
             selector: parse_label_selector(pod_selector)?,
         }),
         PeerSelectorSpec::IpBlock { ip_block } => Ok(PeerSelector::IpBlock {
             cidr: ip_block.cidr,
             except: ip_block.except,
         }),
+    }
+}
+
+/// Resolve a Kubernetes-style `namespaceSelector` down to a single concrete
+/// namespace name.
+///
+/// `PeerSelector::PodSelector::namespace` in our domain model is a plain
+/// `Option<String>` (one namespace), not a full label selector, so an
+/// arbitrary `namespaceSelector` can't be represented faithfully here --
+/// that would require extending `PeerSelector` to carry a real
+/// `LabelSelector` for namespaces (it already has a separate
+/// `NamespaceSelector` variant for the "match all pods in namespace(s)"
+/// case, but combining *that* with a pod selector in one peer is a bigger
+/// model change). What we *can* support without a bug is the extremely
+/// common convention every Kubernetes 1.21+ cluster relies on: namespaces
+/// are auto-labeled with `kubernetes.io/metadata.name=<namespace>`, so a
+/// `matchLabels: {kubernetes.io/metadata.name: foo}` selector -- by far the
+/// most common way operators scope a podSelector to one namespace -- maps
+/// 1:1 onto our `namespace: Some("foo")` field.
+///
+/// Previously this was silently dropped entirely (`namespace_selector: _`),
+/// which meant any policy author who tried to scope a peer selector to a
+/// namespace got a *more permissive* policy than they asked for (the pod
+/// selector matched across every namespace instead of just the intended
+/// one) with no error or warning at all. Erroring out on selector shapes we
+/// can't faithfully represent is strictly safer than silently widening the
+/// policy's scope.
+fn parse_namespace_selector(spec: LabelSelectorSpec) -> Result<String> {
+    const NAMESPACE_NAME_LABEL: &str = "kubernetes.io/metadata.name";
+
+    if !spec.match_expressions.is_empty() {
+        return Err(crate::error::ApiError::InvalidRequest(
+            "namespaceSelector.matchExpressions is not supported; use matchLabels: {kubernetes.io/metadata.name: <namespace>} to scope to a single namespace"
+                .to_string(),
+        ));
+    }
+
+    match spec.match_labels.len() {
+        1 => spec
+            .match_labels
+            .get(NAMESPACE_NAME_LABEL)
+            .cloned()
+            .ok_or_else(|| {
+                crate::error::ApiError::InvalidRequest(format!(
+                    "namespaceSelector.matchLabels only supports the '{}' key (single-namespace scoping); arbitrary namespace label selectors are not supported",
+                    NAMESPACE_NAME_LABEL
+                ))
+            }),
+        0 => Err(crate::error::ApiError::InvalidRequest(
+            "namespaceSelector was provided but has no matchLabels/matchExpressions; omit namespaceSelector entirely to match all namespaces"
+                .to_string(),
+        )),
+        _ => Err(crate::error::ApiError::InvalidRequest(format!(
+            "namespaceSelector.matchLabels must contain exactly one key ('{}') to scope to a single namespace; arbitrary multi-label namespace selectors are not supported",
+            NAMESPACE_NAME_LABEL
+        ))),
     }
 }
 
