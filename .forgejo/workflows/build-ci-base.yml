@@ -22,4 +22,23 @@ jobs:
       - name: Build CI base image
         run: docker build -f Dockerfile.ci-base -t git.canutethegreat.com/canutethegreat/patronus-ci-base:latest .
       - name: Push CI base image
-        run: docker push git.canutethegreat.com/canutethegreat/patronus-ci-base:latest
+        # Multi-layer image pushes to this registry have been observed to
+        # fail intermittently with "net/http: timeout awaiting response
+        # headers" on an individual blob upload (confirmed run 2455, job
+        # 11868) -- a transient registry/network hiccup, not a build
+        # problem (the image itself built and exported fine). Retry a
+        # few times before giving up, same pattern already used for the
+        # Gentoo Docker Build step's transient BuildKit/registry errors.
+        run: |
+          set -e
+          attempt=1
+          max_attempts=3
+          until docker push git.canutethegreat.com/canutethegreat/patronus-ci-base:latest; do
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "::error::docker push failed after ${max_attempts} attempts"
+              exit 1
+            fi
+            echo "::warning::docker push attempt ${attempt} failed (likely transient registry/network error), retrying..."
+            attempt=$((attempt + 1))
+            sleep $((attempt * 10))
+          done
