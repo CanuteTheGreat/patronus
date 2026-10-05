@@ -130,10 +130,20 @@ jobs:
       - name: Fetch built install media from shared host dir
         run: |
           mkdir -p /tmp/patronus-vm-test
-          cp /Users/rbf/.forgejo-runner-data/ci-handoff/patronus-installer/install.iso \
-             /Users/rbf/.forgejo-runner-data/ci-handoff/patronus-installer/patronus.apkovl.tar.gz \
-             /Users/rbf/.forgejo-runner-data/ci-handoff/patronus-installer/modloop \
-             /tmp/patronus-vm-test/
+          src=/Users/rbf/.forgejo-runner-data/ci-handoff/patronus-installer
+          # Docker Desktop's bind-mount write-back to the host filesystem
+          # can lag slightly behind the container actually exiting (seen
+          # directly: build job reported success, but these files weren't
+          # yet visible here for a few seconds) - poll briefly instead of
+          # assuming the files are already flushed to host disk.
+          for i in $(seq 1 30); do
+            if [ -f "$src/install.iso" ] && [ -f "$src/patronus.apkovl.tar.gz" ] && [ -f "$src/modloop" ]; then
+              break
+            fi
+            echo "Waiting for build job's handoff files to appear ($i/30)..."
+            sleep 2
+          done
+          cp "$src/install.iso" "$src/patronus.apkovl.tar.gz" "$src/modloop" /tmp/patronus-vm-test/
 
       - name: Run real install + reboot test in UTM
         run: |
