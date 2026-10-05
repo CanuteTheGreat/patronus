@@ -19,7 +19,7 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/extract"
 xorriso -osirrox on -indev "$SRC_ISO" -extract / "$WORK/extract" >/dev/null
 
-CMDLINE="ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v3.20/main modloop=${MODLOOP_URL} apkovl=${APKOVL_URL} console=ttyS0,115200 console=tty0 noapic"
+CMDLINE="ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v3.20/main modloop=${MODLOOP_URL} apkovl=${APKOVL_URL} console=ttyS0,115200 console=tty0 noapic loglevel=8"
 # noapic: this VM runs as a pure-TCG (software-emulated, no KVM/HVF)
 # QEMU x86_64 guest on an Apple Silicon host - the IO-APIC timer
 # calibration the stock kernel does at boot reliably fails in that
@@ -27,6 +27,15 @@ CMDLINE="ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v3.20/main mod
 # doesn't work!", confirmed directly via a real serial console capture
 # of this exact panic), and the kernel's own panic message names this
 # as the fix.
+#
+# loglevel=8: the original image's own kernel line already carries
+# "quiet" (confirmed directly in the real upstream ISO), which
+# suppresses normal printk output - but not panics (KERN_EMERG forces
+# through regardless), which is exactly why the only serial output we
+# ever saw before this was either nothing at all, or a panic with no
+# surrounding context. loglevel wins last-specified, so this appended
+# "loglevel=8" overrides "quiet" and restores full kernel boot
+# logging on our only real diagnostic channel into this guest.
 
 patch_grub_cfg() {
   f="$1"
