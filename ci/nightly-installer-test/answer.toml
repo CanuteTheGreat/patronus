@@ -1,0 +1,19 @@
+target_root = "/mnt/install"
+
+[disk]
+device = "/dev/vda"
+scheme = "uefi-simple"
+filesystem = "zfs"
+swap_size_mb = 0
+
+[system]
+hostname = "patronus-citest"
+timezone = "UTC"
+locale = "en_US.UTF-8"
+keyboard = "us"
+bootloader = "grub"
+
+[network]
+interfaces = []
+
+[services]

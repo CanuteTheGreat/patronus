@@ -109,6 +109,24 @@ async fn install_grub_uefi(target: &Path, partitions: &[CreatedPartition]) -> Re
     )
     .await?;
 
+    // Some firmware (notably QEMU/OVMF in CI/test VMs, and some real
+    // hardware with a flaky/reset NVRAM) never gets the efibootmgr NVRAM
+    // entry grub-install just tried to register, and only ever looks at
+    // the UEFI-spec-mandated removable-media fallback path. Without this
+    // a perfectly good install can still fail to boot on first power-on.
+    // Harmless no-op copy when the NVRAM entry worked fine too.
+    let fallback_dir = target.join("boot/efi/EFI/BOOT");
+    fs::create_dir_all(&fallback_dir).await.ok();
+    let _ = run_in_chroot(
+        target,
+        &[
+            "sh",
+            "-c",
+            "cp -f /boot/efi/EFI/PATRONUS/grubx64.efi /boot/efi/EFI/BOOT/BOOTX64.EFI",
+        ],
+    )
+    .await;
+
     Ok(())
 }
 

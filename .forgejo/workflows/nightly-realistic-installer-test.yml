@@ -1,0 +1,105 @@
+name: Nightly Realistic Installer Test
+
+# Runs the REAL patronus-install binary end-to-end inside a throwaway
+# QEMU VM on beauxbatons: real GPT partitioning of a real virtual disk,
+# a real `zpool create` for the ZFS root, and a real reboot off the
+# freshly-installed GRUB/UEFI bootloader -- not just a compile/clippy
+# check like rust-ci.yml. See ci/nightly-installer-test/ for the
+# scripts this orchestrates and a full design writeup.
+#
+# Deliberately separate from rust-ci.yml: this is slow (full VM boot
+# cycles) and only meant to run nightly or on demand, not on every push.
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: '0 9 * * *' # ~02:00 America/Los_Angeles
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-installer-and-media:
+    name: Build installer binary + unattended install media
+    runs-on: x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (musl target)
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install build + ISO-remaster dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools xorriso curl
+
+      - name: Build patronus-install (static musl binary)
+        run: |
+          cargo build --release --target x86_64-unknown-linux-musl -p patronus-installer
+          mkdir -p artifact
+          cp target/x86_64-unknown-linux-musl/release/patronus-install artifact/patronus-install
+
+      - name: Stage unattended-install media inputs
+        run: |
+          cp ci/nightly-installer-test/answer.toml artifact/answer.toml
+          cp ci/nightly-installer-test/patronus-ci.start artifact/patronus-ci.start
+          chmod +x ci/nightly-installer-test/build_apkovl.sh ci/nightly-installer-test/iso_remaster.sh
+
+      - name: Build apkovl (unattended Alpine overlay)
+        run: |
+          ./ci/nightly-installer-test/build_apkovl.sh \
+            artifact/patronus-install artifact/answer.toml artifact/patronus-ci.start \
+            artifact/patronus.apkovl.tar.gz
+
+      - name: Download stock Alpine Standard x86_64 ISO
+        run: |
+          ALPINE_VER=3.20.3
+          ALPINE_BRANCH=v3.20
+          curl -fL -o artifact/alpine-base.iso \
+            "https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/releases/x86_64/alpine-standard-${ALPINE_VER}-x86_64.iso"
+
+      - name: Remaster ISO to auto-boot the unattended installer
+        run: |
+          ./ci/nightly-installer-test/iso_remaster.sh \
+            artifact/alpine-base.iso \
+            "http://10.0.2.2:8788/patronus.apkovl.tar.gz" \
+            "http://10.0.2.2:8788/modloop" \
+            artifact/install.iso
+          # Normalize whatever modloop-* filename Alpine shipped to the
+          # fixed name the remastered cmdline (and the host's report
+          # server) expect.
+          mv artifact/modloop-* artifact/modloop
+          rm -f artifact/alpine-base.iso
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: patronus-install-media
+          path: |
+            artifact/install.iso
+            artifact/patronus.apkovl.tar.gz
+            artifact/modloop
+
+  vm-install-test:
+    name: Real VM install + ZFS + reboot test (beauxbatons UTM)
+    needs: build-installer-and-media
+    runs-on: macos-host
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: patronus-install-media
+          path: /tmp/patronus-vm-test
+
+      - name: Run real install + reboot test in UTM
+        run: |
+          export CI_RUN_ID="${{ gitea.run_id }}"
+          export CI_WORKDIR=/tmp/patronus-vm-test
+          python3 ci/nightly-installer-test/vm_orchestrate.py /tmp/patronus-vm-test/install.iso
+
+      - name: Clean up any leftover VM disk/state
+        if: always()
+        run: |
+          rm -rf /tmp/patronus-vm-test

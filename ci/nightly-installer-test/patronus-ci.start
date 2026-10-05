@@ -1,0 +1,59 @@
+#!/bin/sh
+# Patronus nightly installer CI harness — runs inside the Alpine live
+# (diskless) environment booted directly via UTM's Linux-kernel-boot
+# feature. First boot: perform a real unattended install of Patronus
+# onto /dev/vda (real partitioning + real ZFS root pool). Because
+# install_base_system()'s rsync fallback clones the *running* live
+# rootfs onto the new root, this very script (and its marker file)
+# ends up on the installed system too — so on the *second* boot
+# (now booted from the real installed disk via real GRUB/UEFI) this
+# same script detects the marker and just reports success instead of
+# reinstalling, which is how we get real "did it actually reboot and
+# come back up" evidence without a guest agent.
+set -u
+LOGHOST="10.0.2.2"
+LOGPORT="8788"
+MARKER=/root/.patronus-installed
+
+report() {
+  wget -q -O- --timeout=10 --post-data="$1" "http://${LOGHOST}:${LOGPORT}/report" >/dev/null 2>&1
+}
+
+squash() {
+  tr '\n' ';' | tr ' ' '_'
+}
+
+if [ -f "$MARKER" ]; then
+  report "event=SECOND_BOOT_START"
+  HN=$(hostname)
+  MNT=$(mount | grep ' on / ' | squash)
+  ZP=$(zpool status 2>&1 | squash)
+  ZL=$(zfs list 2>&1 | squash)
+  report "event=SECOND_BOOT_OK;host=${HN};mount=${MNT};zpool=${ZP};zfslist=${ZL}"
+  sleep 3
+  poweroff -f
+  exit 0
+fi
+
+report "event=LIVE_BOOT_START"
+
+# Bring in package index + real tooling needed to install+boot Patronus.
+apk update >/root/apk.log 2>&1
+apk add --no-cache zfs grub grub-efi parted sgdisk dosfstools rsync util-linux e2fsprogs >>/root/apk.log 2>&1
+modprobe zfs >/root/modprobe.log 2>&1
+
+chmod +x /usr/local/bin/patronus-install
+touch "$MARKER"
+
+/usr/local/bin/patronus-install --config /etc/patronus/answer.toml --yes --verbose \
+  > /root/install.log 2>&1
+RC=$?
+
+TAIL=$(tail -c 1200 /root/install.log | squash)
+report "event=INSTALL_DONE;rc=${RC};tail=${TAIL}"
+
+ZP=$(zpool status 2>&1 | squash)
+report "event=POST_INSTALL_ZPOOL;rc=${RC};zpool=${ZP}"
+
+sleep 3
+reboot -f
