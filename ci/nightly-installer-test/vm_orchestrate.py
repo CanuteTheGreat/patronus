@@ -140,7 +140,18 @@ def build_vm_bundle(iso_path, disk_size_gb=8):
                 "Identifier": str(uuid.uuid4()).upper(),
                 "ImageName": cd_name,
                 "ImageType": "CD",
-                "Interface": "USB",
+                # GRUB (built into the EFI firmware's bootx64.efi here -
+                # this VM boots via real UEFI, confirmed by actual
+                # "BdsDxe:" messages over the new serial capture) stalls
+                # silently reading the kernel/initrd off a USB-attached
+                # virtual CD-ROM: the serial log shows real GRUB 2.12
+                # menu output and "Booting `Linux lts'", then nothing
+                # at all - no kernel banner, no panic, just silence,
+                # every single time. IDE is the overwhelmingly standard,
+                # best-tested bus for virtual optical media across every
+                # BIOS/UEFI firmware and bootloader combination; there's
+                # no real reason this needed USB in the first place.
+                "Interface": "IDE",
                 "InterfaceVersion": 1,
                 "ReadOnly": True,
             },
