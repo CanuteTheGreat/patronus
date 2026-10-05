@@ -129,6 +129,28 @@ jobs:
     # the job before the script's own clean timeout/error ever fires.
     timeout-minutes: 75
     steps:
+      - name: Fast-fail if misrouted to Docker instead of real host-exec
+        run: |
+          # KNOWN INTERMITTENT BUG (2026-10-05, not fully root-caused):
+          # even with actions/checkout removed (see note below -- that
+          # fix helped but did not fully eliminate it), this job still
+          # occasionally gets dispatched into a throwaway Docker
+          # container instead of true macos-host:host execution, for
+          # reasons that appear to be on the Forgejo/runner scheduler
+          # side (this runner registration advertises both docker-
+          # backed labels and the host label under one UUID) rather
+          # than anything in this workflow file. When that happens,
+          # the next step's host-filesystem handoff path can never be
+          # visible no matter how long it polls, wasting the full poll
+          # window before failing. Detect it immediately instead: a
+          # real run on beauxbatons is always Darwin; a container is
+          # always Linux.
+          if [ "$(uname -s)" != "Darwin" ]; then
+            echo "ERROR: this macos-host job was scheduled onto a non-host runner (uname=$(uname -s), likely a Docker container)." >&2
+            echo "This is a known intermittent scheduler-side issue, not a code bug in this workflow -- just retry the run." >&2
+            exit 1
+          fi
+
       - name: Checkout (plain git, not actions/checkout -- see note)
         run: |
           set -eu
