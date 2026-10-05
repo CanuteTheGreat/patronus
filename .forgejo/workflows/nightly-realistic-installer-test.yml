@@ -125,7 +125,31 @@ jobs:
     runs-on: macos-host
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (plain git, not actions/checkout -- see note)
+        run: |
+          set -eu
+          # actions/checkout@v4 is a JS action. Using it here is what was
+          # silently pushing this nominally host-mode job (runs-on:
+          # macos-host -> registered label "macos-host:host" on the
+          # beauxbatons runner) into a throwaway Docker container instead:
+          # the real job log for every one of the ~13 consecutive failures
+          # of this workflow showed exactly one `docker create`/`docker run`
+          # for image=node:20-bullseye (entrypoint `tail -f /dev/null`, no
+          # volumes) wrapping the ENTIRE job, not just the checkout step --
+          # so the next step's `/Users/rbf/.forgejo-runner-data/ci-handoff/...`
+          # path (written by the sibling build job via a real bind mount on
+          # the real Mac) could never be visible no matter how long it
+          # polled (already extended 60s -> 180s in a prior attempted fix,
+          # which didn't help because the real problem was never timing).
+          # A plain shell `git` step has no `uses:` action for the runner to
+          # need Node for, so it has no reason to containerize the job at
+          # all, and it runs genuinely natively on beauxbatons as the
+          # "macos-host:host" label promises.
+          rm -rf .git
+          git init -q .
+          git remote add origin "https://git.canutethegreat.com/CanuteTheGreat/patronus.git"
+          git fetch --depth=1 origin "${{ github.sha }}"
+          git checkout -q --force FETCH_HEAD
 
       - name: Fetch built install media from shared host dir
         run: |
