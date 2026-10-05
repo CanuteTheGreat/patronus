@@ -19,7 +19,14 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/extract"
 xorriso -osirrox on -indev "$SRC_ISO" -extract / "$WORK/extract" >/dev/null
 
-CMDLINE="ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v3.20/main modloop=${MODLOOP_URL} apkovl=${APKOVL_URL} console=ttyS0,115200 console=tty0"
+CMDLINE="ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v3.20/main modloop=${MODLOOP_URL} apkovl=${APKOVL_URL} console=ttyS0,115200 console=tty0 noapic"
+# noapic: this VM runs as a pure-TCG (software-emulated, no KVM/HVF)
+# QEMU x86_64 guest on an Apple Silicon host - the IO-APIC timer
+# calibration the stock kernel does at boot reliably fails in that
+# exact combination ("Kernel panic - not syncing: IO-APIC + timer
+# doesn't work!", confirmed directly via a real serial console capture
+# of this exact panic), and the kernel's own panic message names this
+# as the fix.
 
 patch_grub_cfg() {
   f="$1"
