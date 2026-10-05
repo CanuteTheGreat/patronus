@@ -170,7 +170,19 @@ def build_vm_bundle(iso_path, disk_size_gb=8):
                 "MacAddress": "52:54:00:%02x:%02x:%02x" % (
                     os.urandom(1)[0], os.urandom(1)[0], os.urandom(1)[0]
                 ),
-                "Mode": "Shared",
+                # "Shared" is UTM's vmnet-based NAT (a separate, variable
+                # gateway, and on macOS needs its own entitlements/daemon).
+                # The build job bakes the guest's callback URLs as
+                # http://10.0.2.2:$HTTP_PORT/... (see iso_remaster.sh) -
+                # that address is QEMU's own usermode-networking gateway,
+                # which is what UTM's "Emulated" mode actually is. Every
+                # earlier run of this pipeline died before ever reaching a
+                # real boot (runner misrouting, then buffering, then a
+                # host-dir permission issue), so this mismatch - present
+                # since the very first commit of this file - never
+                # mattered until now: the guest booted fine but had
+                # nowhere real to phone home to.
+                "Mode": "Emulated",
                 "PortForward": [],
             }
         ],
