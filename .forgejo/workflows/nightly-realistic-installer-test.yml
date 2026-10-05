@@ -46,9 +46,23 @@ jobs:
       - name: Install build + ISO-remaster dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools xorriso curl
+          sudo apt-get install -y musl-tools xorriso curl gcc-x86-64-linux-gnu
 
       - name: Build patronus-install (static musl binary)
+        env:
+          # This runner's container keeps ending up running as whatever
+          # arch the Docker host actually is (this has flip-flopped
+          # between real x86_64 and the host's native arm64 depending on
+          # local image-cache state, independent of anything this
+          # workflow or the runner's x86_64 label says) - rather than
+          # depend on the container itself being genuine x86_64, install
+          # a real x86_64 cross-linker (gcc-x86-64-linux-gnu, works from
+          # an arm64 host/container same as an amd64 one) and point
+          # rustc at it explicitly. Rust's musl target ships its own
+          # musl CRT objects (self-contained) regardless, so the C
+          # compiler here is only acting as the link driver, not
+          # providing libc - any real x86_64 linker works.
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: x86_64-linux-gnu-gcc
         run: |
           cargo build --release --target x86_64-unknown-linux-musl -p patronus-installer
           mkdir -p artifact
