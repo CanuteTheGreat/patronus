@@ -21,7 +21,20 @@ jobs:
   build-installer-and-media:
     name: Build installer binary + unattended install media
     runs-on: x86_64
-    container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
+    container:
+      image: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
+      # Forgejo's own artifact storage backend has been hard-failing
+      # uploads on this instance since 2026-09-24 (HTTP 500 on finalize)
+      # regardless of actions/upload-artifact version - horcrux hit and
+      # gave up on the same problem for its docs job. Rather than go
+      # through that broken API at all, bind-mount a fixed host
+      # directory straight into this container and hand the built
+      # install media to the vm-install-test job (which runs natively
+      # on this same physical host, no container) via that shared path
+      # instead - both jobs always land on beauxbatons, so this is a
+      # real filesystem, not a cross-machine assumption.
+      volumes:
+        - /Users/rbf/.forgejo-runner-data/ci-handoff/patronus-installer:/handoff
     steps:
       - uses: actions/checkout@v4
 
@@ -100,13 +113,11 @@ jobs:
           mv artifact/modloop-* artifact/modloop
           rm -f artifact/alpine-base.iso
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: patronus-install-media
-          path: |
-            artifact/install.iso
-            artifact/patronus.apkovl.tar.gz
-            artifact/modloop
+      - name: Hand built install media to vm-install-test via shared host dir
+        run: |
+          mkdir -p /handoff
+          rm -f /handoff/*
+          cp artifact/install.iso artifact/patronus.apkovl.tar.gz artifact/modloop /handoff/
 
   vm-install-test:
     name: Real VM install + ZFS + reboot test (beauxbatons UTM)
@@ -116,10 +127,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: patronus-install-media
-          path: /tmp/patronus-vm-test
+      - name: Fetch built install media from shared host dir
+        run: |
+          mkdir -p /tmp/patronus-vm-test
+          cp /Users/rbf/.forgejo-runner-data/ci-handoff/patronus-installer/install.iso \
+             /Users/rbf/.forgejo-runner-data/ci-handoff/patronus-installer/patronus.apkovl.tar.gz \
+             /Users/rbf/.forgejo-runner-data/ci-handoff/patronus-installer/modloop \
+             /tmp/patronus-vm-test/
 
       - name: Run real install + reboot test in UTM
         run: |
