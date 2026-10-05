@@ -36,7 +36,13 @@ import time
 import uuid
 
 UTMCTL = "/Applications/UTM.app/Contents/MacOS/utmctl"
-QEMU_IMG = "/Applications/UTM.app/Contents/Frameworks/qemu-img.framework/qemu-img"
+QEMU_IMG = "/Users/rbf/rustinion-verify/homebrew/bin/qemu-img"
+# UTM's own bundled qemu-img (Contents/Frameworks/qemu-img.framework/qemu-img)
+# is shipped as an MH_DYLIB Mach-O (a real shared library, per `file`/`lipo`),
+# not a standalone executable - the kernel refuses to execve() it at all
+# ("Exec format error", confirmed directly), it's meant to be dlopen'd by
+# UTM's own GUI process internally, not shelled out to. Use a real
+# standalone qemu-img from Homebrew instead.
 UTM_DOCS = os.path.expanduser(
     "~/Library/Containers/com.utmapp.UTM/Data/Documents"
 )
