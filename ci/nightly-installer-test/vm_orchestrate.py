@@ -40,6 +40,21 @@ QEMU_IMG = "/Applications/UTM.app/Contents/Frameworks/qemu-img.framework/qemu-im
 UTM_DOCS = os.path.expanduser(
     "~/Library/Containers/com.utmapp.UTM/Data/Documents"
 )
+# Stage newly-built VM bundles OUTSIDE UTM's sandboxed container. Our
+# process (launched via launchd, not the UTM app itself) cannot write
+# directly into ~/Library/Containers/com.utmapp.UTM/Data/Documents -
+# that's enforced by the app sandbox at the kernel level, independent
+# of ordinary TCC grants like Full Disk Access, and confirmed the hard
+# way (PermissionError on os.makedirs there). Build the bundle in a
+# plain external directory instead, then hand it to the already-running
+# UTM app via `open -a UTM <path>`, same as before - UTM importing a
+# file via LaunchServices' open event is a legitimate user-intent
+# action the sandbox allows, unlike an arbitrary external process
+# writing into the container directly.
+UTM_EXTERNAL_STAGING = os.path.expanduser(
+    "~/.forgejo-runner-data/utm-external-vms"
+)
+
 HTTP_PORT = 8788
 RUN_ID = os.environ.get("CI_RUN_ID", uuid.uuid4().hex[:8])
 VM_NAME = f"patronus-nightly-{RUN_ID}"
@@ -89,7 +104,8 @@ def sanity_check_utmctl():
 
 
 def build_vm_bundle(iso_path, disk_size_gb=8):
-    vm_dir = os.path.join(UTM_DOCS, f"{VM_NAME}.utm")
+    os.makedirs(UTM_EXTERNAL_STAGING, exist_ok=True)
+    vm_dir = os.path.join(UTM_EXTERNAL_STAGING, f"{VM_NAME}.utm")
     data_dir = os.path.join(vm_dir, "Data")
     os.makedirs(data_dir, exist_ok=True)
 
