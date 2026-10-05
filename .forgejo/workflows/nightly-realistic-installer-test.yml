@@ -25,6 +25,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The dtolnay/rust-toolchain action (and later apt/cargo steps)
+      # append their own entries to $GITHUB_PATH, but on this runner the
+      # per-step PATH the runner tracks for later JS-action `docker exec`
+      # invocations doesn't reliably keep the container image's own
+      # baked-in Node.js dir (needed for actions/upload-artifact et al)
+      # once other steps have touched it - we saw actions/upload-artifact
+      # fail with "node: executable file not found in $PATH" even though
+      # the image has a perfectly good node binary. Pin its directory
+      # onto $GITHUB_PATH explicitly, up front, so it survives whatever
+      # later steps add.
+      - name: Keep container's Node.js on PATH for later JS-action steps
+        run: dirname "$(which node)" >> "$GITHUB_PATH"
+
       - name: Install Rust (musl target)
         uses: https://github.com/dtolnay/rust-toolchain@stable
         with:
