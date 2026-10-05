@@ -123,7 +123,11 @@ jobs:
     name: Real VM install + ZFS + reboot test (beauxbatons UTM)
     needs: build-installer-and-media
     runs-on: macos-host
-    timeout-minutes: 45
+    # Bumped from 45: the script's own internal wait budgets (live-boot
+    # 600s + install 1800s + zpool-report 60s + second-boot 600s = 3060s
+    # = 51min worst case) could exceed a 45min job timeout, force-killing
+    # the job before the script's own clean timeout/error ever fires.
+    timeout-minutes: 75
     steps:
       - name: Checkout (plain git, not actions/checkout -- see note)
         run: |
@@ -173,7 +177,7 @@ jobs:
         run: |
           export CI_RUN_ID="${{ github.run_id }}"
           export CI_WORKDIR=/tmp/patronus-vm-test
-          python3 ci/nightly-installer-test/vm_orchestrate.py /tmp/patronus-vm-test/install.iso
+          python3 -u ci/nightly-installer-test/vm_orchestrate.py /tmp/patronus-vm-test/install.iso
 
       - name: Clean up any leftover VM disk/state
         if: always()
