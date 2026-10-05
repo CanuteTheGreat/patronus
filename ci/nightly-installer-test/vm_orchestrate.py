@@ -305,6 +305,31 @@ def capture_serial(host_port, log_path, stop_event):
                 break
 
 
+def attempt_boot(iso_path, serial_log_path, serial_stop, attempt_num):
+    """One full create -> boot -> wait-for-live-boot -> teardown cycle.
+    Returns True if LIVE_BOOT_START was seen, False if that wait timed
+    out (the only outcome we treat as retryable flakiness, not a real
+    failure - see run()). Always tears its own VM down before
+    returning, success or not, so each attempt starts clean."""
+    vm_dir, cfg_uuid = build_vm_bundle(iso_path)
+    vm_uuid = find_vm_uuid_by_name(VM_NAME)
+    print(f"[host] attempt {attempt_num}: VM registered: {VM_NAME} -> {vm_uuid}")
+    try:
+        run([UTMCTL, "start", vm_uuid])
+        serial_thread = threading.Thread(
+            target=capture_serial, args=(SERIAL_PORT, serial_log_path, serial_stop), daemon=True
+        )
+        serial_thread.start()
+        try:
+            wait_for_event(lambda b: "LIVE_BOOT_START" in b, 600, "live ISO boot")
+            return True, vm_uuid
+        except SystemExit as e:
+            print(f"[host] attempt {attempt_num} did not reach live boot: {e}", flush=True)
+            return False, vm_uuid
+    finally:
+        pass
+
+
 def main():
     iso_path = sys.argv[1]
     os.makedirs(WORKDIR, exist_ok=True)
@@ -323,20 +348,41 @@ def main():
     t.start()
     print(f"[host] report server up on :{HTTP_PORT}, serving {WORKDIR}")
 
-    vm_dir, cfg_uuid = build_vm_bundle(iso_path)
-    vm_uuid = find_vm_uuid_by_name(VM_NAME)
-    print(f"[host] VM registered: {VM_NAME} -> {vm_uuid}")
-
     result = {"vm": VM_NAME, "ok": False}
+    vm_dir = None
+    vm_uuid = None
     try:
-        run([UTMCTL, "start", vm_uuid])
+        # The live-boot stage (UEFI -> GRUB -> kernel handoff, reading
+        # off an emulated SATA CD-ROM under pure TCG software emulation)
+        # has shown real non-determinism in back-to-back identical
+        # attempts: one run got as far as a real kernel panic a second
+        # and a half into boot, two adjacent runs with the exact same
+        # config hung completely silent for the full 600s with zero
+        # output at all - not a cmdline-fixable bug, just flaky
+        # virtualization timing. Retry the create/boot cycle itself (not
+        # the later install/reboot stages, which are real functional
+        # checks, not infra flakiness) before giving up for real.
+        MAX_BOOT_ATTEMPTS = 3
+        reached_live_boot = False
+        for attempt in range(1, MAX_BOOT_ATTEMPTS + 1):
+            ok, vm_uuid = attempt_boot(iso_path, serial_log_path, serial_stop, attempt)
+            if ok:
+                reached_live_boot = True
+                vm_dir = os.path.join(UTM_EXTERNAL_STAGING, f"{VM_NAME}.utm")
+                break
+            subprocess.run([UTMCTL, "stop", vm_uuid], capture_output=True)
+            time.sleep(3)
+            subprocess.run([UTMCTL, "delete", vm_uuid], capture_output=True)
+            shutil.rmtree(os.path.join(UTM_EXTERNAL_STAGING, f"{VM_NAME}.utm"), ignore_errors=True)
+            if attempt < MAX_BOOT_ATTEMPTS:
+                print(f"[host] retrying boot (attempt {attempt + 1}/{MAX_BOOT_ATTEMPTS})", flush=True)
 
-        serial_thread = threading.Thread(
-            target=capture_serial, args=(SERIAL_PORT, serial_log_path, serial_stop), daemon=True
-        )
-        serial_thread.start()
+        if not reached_live_boot:
+            raise SystemExit(
+                f"TIMEOUT waiting for: live ISO boot (after {MAX_BOOT_ATTEMPTS} attempts)"
+            )
 
-        wait_for_event(lambda b: "LIVE_BOOT_START" in b, 600, "live ISO boot")
+        vm_dir = os.path.join(UTM_EXTERNAL_STAGING, f"{VM_NAME}.utm")
         done = wait_for_event(lambda b: "INSTALL_DONE" in b, TOTAL_TIMEOUT_S, "installer completion")
         if "rc=0" not in done:
             raise SystemExit(f"Installer reported non-zero exit: {done}")
@@ -363,10 +409,12 @@ def main():
             print("[host] ==== end guest serial console ====", flush=True)
         except OSError as e:
             print(f"[host] could not read serial log: {e}", flush=True)
-        subprocess.run([UTMCTL, "stop", vm_uuid], capture_output=True)
-        time.sleep(3)
-        subprocess.run([UTMCTL, "delete", vm_uuid], capture_output=True)
-        shutil.rmtree(vm_dir, ignore_errors=True)
+        if vm_uuid:
+            subprocess.run([UTMCTL, "stop", vm_uuid], capture_output=True)
+            time.sleep(3)
+            subprocess.run([UTMCTL, "delete", vm_uuid], capture_output=True)
+        if vm_dir:
+            shutil.rmtree(vm_dir, ignore_errors=True)
         server.shutdown()
 
     print(json.dumps(result))
