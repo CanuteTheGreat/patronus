@@ -136,11 +136,11 @@ jobs:
           # directly: build job reported success, but these files weren't
           # yet visible here for a few seconds) - poll briefly instead of
           # assuming the files are already flushed to host disk.
-          for i in $(seq 1 30); do
+          for i in $(seq 1 90); do
             if [ -f "$src/install.iso" ] && [ -f "$src/patronus.apkovl.tar.gz" ] && [ -f "$src/modloop" ]; then
               break
             fi
-            echo "Waiting for build job's handoff files to appear ($i/30)..."
+            echo "Waiting for build job's handoff files to appear ($i/90)..."
             sleep 2
           done
           cp "$src/install.iso" "$src/patronus.apkovl.tar.gz" "$src/modloop" /tmp/patronus-vm-test/
