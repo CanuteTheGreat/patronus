@@ -198,7 +198,15 @@ def build_vm_bundle(iso_path, disk_size_gb=8):
             "TSO": False,
             "UEFIBoot": True,
         },
-        "Serial": [],
+        "Serial": [
+            {
+                "Mode": "TcpServer",
+                "Target": "Auto",
+                "TcpPort": 48788,
+                "WaitForConnection": False,
+                "RemoteConnectionAllowed": False,
+            }
+        ],
         "Sharing": {
             "ClipboardSharing": False,
             "DirectoryShareMode": "None",
@@ -248,11 +256,54 @@ def wait_for_event(predicate, timeout_s, label):
     raise SystemExit(f"TIMEOUT waiting for: {label}\nEvents so far: {events}")
 
 
+SERIAL_PORT = 48788
+serial_log_path = None
+
+
+def capture_serial(host_port, log_path, stop_event):
+    """Connects to the VM's TCP-server serial backend and tees
+    everything it sends (the guest's ttyS0, which the kernel cmdline
+    already targets via console=ttyS0,115200) to a log file - our only
+    real window into what the guest is actually doing during boot,
+    since there's no VNC/screenshot capability available here."""
+    import socket
+    for _ in range(30):
+        if stop_event.is_set():
+            return
+        try:
+            sock = socket.create_connection(("127.0.0.1", host_port), timeout=2)
+            break
+        except OSError:
+            time.sleep(1)
+    else:
+        print(f"[serial] could not connect to serial TCP server on :{host_port}", flush=True)
+        return
+    print(f"[serial] connected to guest serial console on :{host_port}", flush=True)
+    with open(log_path, "ab") as f, sock:
+        sock.settimeout(1)
+        while not stop_event.is_set():
+            try:
+                data = sock.recv(4096)
+                if not data:
+                    break
+                f.write(data)
+                f.flush()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+
+
 def main():
     iso_path = sys.argv[1]
     os.makedirs(WORKDIR, exist_ok=True)
 
     sanity_check_utmctl()
+
+    global serial_log_path
+    serial_log_path = os.path.join(WORKDIR, f"serial-{RUN_ID}.log")
+    open(serial_log_path, "wb").close()
+    serial_stop = threading.Event()
 
     server = http.server.ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), ReportHandler)
     # Serve files (apkovl/modloop) from the same dir the caller staged.
@@ -268,6 +319,11 @@ def main():
     result = {"vm": VM_NAME, "ok": False}
     try:
         run([UTMCTL, "start", vm_uuid])
+
+        serial_thread = threading.Thread(
+            target=capture_serial, args=(SERIAL_PORT, serial_log_path, serial_stop), daemon=True
+        )
+        serial_thread.start()
 
         wait_for_event(lambda b: "LIVE_BOOT_START" in b, 600, "live ISO boot")
         done = wait_for_event(lambda b: "INSTALL_DONE" in b, TOTAL_TIMEOUT_S, "installer completion")
@@ -285,6 +341,17 @@ def main():
         result["install_evidence"] = zpool_ev
         result["reboot_evidence"] = second
     finally:
+        serial_stop.set()
+        time.sleep(0.5)
+        try:
+            with open(serial_log_path, "rb") as f:
+                serial_data = f.read()
+            print(f"[host] ==== captured guest serial console ({len(serial_data)} bytes) ====", flush=True)
+            sys.stdout.buffer.write(serial_data)
+            sys.stdout.flush()
+            print("[host] ==== end guest serial console ====", flush=True)
+        except OSError as e:
+            print(f"[host] could not read serial log: {e}", flush=True)
         subprocess.run([UTMCTL, "stop", vm_uuid], capture_output=True)
         time.sleep(3)
         subprocess.run([UTMCTL, "delete", vm_uuid], capture_output=True)
