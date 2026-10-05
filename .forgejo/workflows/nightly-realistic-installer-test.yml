@@ -137,7 +137,7 @@ jobs:
 
       - name: Run real install + reboot test in UTM
         run: |
-          export CI_RUN_ID="${{ gitea.run_id }}"
+          export CI_RUN_ID="${{ github.run_id }}"
           export CI_WORKDIR=/tmp/patronus-vm-test
           python3 ci/nightly-installer-test/vm_orchestrate.py /tmp/patronus-vm-test/install.iso
 
