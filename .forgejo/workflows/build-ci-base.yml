@@ -14,6 +14,7 @@ jobs:
   build-ci-base:
     name: Build and push CI base image
     runs-on: x86_64
+    container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
