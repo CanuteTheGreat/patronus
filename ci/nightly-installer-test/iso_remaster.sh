@@ -19,15 +19,18 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/extract"
 xorriso -osirrox on -indev "$SRC_ISO" -extract / "$WORK/extract" >/dev/null
 
-CMDLINE="ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v3.20/main modloop=${MODLOOP_URL} apkovl=${APKOVL_URL} console=ttyS0,115200 console=tty0 loglevel=8"
-# None of noapic, noapic+acpi=off, or no_timer_check reliably fixed
-# the "IO-APIC + timer doesn't work!" panic on their own (see
-# 4bdbc71/f194e4a/cf9fdf8) - cmdline workarounds for what looks more
-# like an incomplete emulated CPU feature set confusing APIC/TSC
-# calibration under TCG. Switched the VM's own CPU model to "max"
-# instead (vm_orchestrate.py) to fix this at the root; dropped the
-# cmdline workarounds back out since none of them demonstrably
-# helped and acpi=off demonstrably caused a different silent hang.
+CMDLINE="ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v3.20/main modloop=${MODLOOP_URL} apkovl=${APKOVL_URL} console=ttyS0,115200 console=tty0 noapic loglevel=8"
+# Reverted CPU=max (8cff65d -> 8cff65d-revert): confirmed WORSE, not
+# better - all 3 retried attempts hung completely silent before the
+# kernel ever logged a single line (same shape as the original
+# USB-CD-ROM bug, already fixed), instead of the at-least-diagnosable
+# IO-APIC panic the "default" CPU model + noapic combination produces.
+# Restored noapic + CPU=default as the best-evidenced baseline: it
+# gets furthest (real kernel boot, named panic) of everything tried.
+# The underlying "IO-APIC + timer doesn't work!" panic is still real
+# and still unresolved - noapic alone, noapic+acpi=off, and
+# no_timer_check were each tried and each insufficient/counterproductive;
+# this is restoring the least-bad known state, not a fix.
 #
 # loglevel=8: the original image's own kernel line already carries
 # "quiet" (confirmed directly in the real upstream ISO), which
