@@ -62,18 +62,53 @@ patch_grub_cfg() {
   echo "patched: $f"
 }
 
-find "$WORK/extract" -iname 'grub.cfg' -print0 | while IFS= read -r -d '' f; do
+# BUG FIXED HERE (was the real root cause of every "noapic"/"acpi=off"/
+# "nolapic" cmdline flag never actually reaching the booted kernel,
+# across 7+ prior commits: 071fa5f9 .. 9892f3a0): this find loop patches
+# *every* grub.cfg discovered anywhere in the extracted ISO tree (Alpine
+# Standard ships more than one -- at minimum the BIOS-path
+# /boot/grub/grub.cfg, but also an arch-specific EFI one such as
+# /boot/grub/x86_64-efi/grub.cfg and/or /efi/boot/grub.cfg depending on
+# the release), but the old xorriso invocation below only ever mapped
+# the single hardcoded /boot/grub/grub.cfg path back into the output
+# ISO. Every other grub.cfg this loop patched on disk (including
+# whichever one the real UEFI boot path -- confirmed by the "BdsDxe:"
+# firmware messages in every captured serial log -- actually reads)
+# was silently discarded, so the booted kernel always ran with the
+# *original*, un-patched Alpine default cmdline. This is why the
+# "Linux lts" GRUB menu entry name (untouched by our sed, since it only
+# rewrites the "linux ..." line, not "menuentry ...") always matched,
+# while the kernel panic/hang persisted completely unchanged no matter
+# which cmdline flag was tried. Fixed by collecting every patched file
+# and -map'ing each one back individually, by its real path relative to
+# the extraction root, instead of a single hardcoded guess.
+GRUB_CFGS=()
+while IFS= read -r -d '' f; do
   patch_grub_cfg "$f"
-done
+  GRUB_CFGS+=("$f")
+done < <(find "$WORK/extract" -iname 'grub.cfg' -print0)
 
 # Also patch isolinux (BIOS-only legacy path) as a belt-and-braces fallback.
-find "$WORK/extract" -iname 'syslinux.cfg' -o -iname 'isolinux.cfg' 2>/dev/null | while read -r f; do
+SYSLINUX_CFGS=()
+while IFS= read -r f; do
   sed -i -E "s#^([[:space:]]*append[[:space:]]+.*)\$#\1 ${CMDLINE}#I" "$f" || true
+  SYSLINUX_CFGS+=("$f")
+done < <(find "$WORK/extract" \( -iname 'syslinux.cfg' -o -iname 'isolinux.cfg' \) 2>/dev/null)
+
+XORRISO_MAP_ARGS=()
+for f in "${GRUB_CFGS[@]}" "${SYSLINUX_CFGS[@]}"; do
+  iso_path="/${f#"$WORK/extract/"}"
+  XORRISO_MAP_ARGS+=(-map "$f" "$iso_path")
 done
+
+if [ "${#XORRISO_MAP_ARGS[@]}" -eq 0 ]; then
+  echo "ERROR: no grub.cfg/syslinux.cfg found to patch in $SRC_ISO - refusing to produce an unmodified ISO" >&2
+  exit 1
+fi
 
 xorriso -indev "$SRC_ISO" \
         -outdev "$OUT_ISO" \
-        -map "$WORK/extract/boot/grub/grub.cfg" /boot/grub/grub.cfg \
+        "${XORRISO_MAP_ARGS[@]}" \
         -boot_image any replay
 
 echo "Built remastered ISO: $OUT_ISO ($(du -h "$OUT_ISO" | cut -f1))"
