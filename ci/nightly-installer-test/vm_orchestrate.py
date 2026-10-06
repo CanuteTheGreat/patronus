@@ -226,7 +226,22 @@ def build_vm_bundle(iso_path, disk_size_gb=8):
         "Sound": [],
         "System": {
             "Architecture": "x86_64",
-            "CPU": "default",
+            "CPU": "max",
+            # QEMU's "default"/qemu64 CPU model under pure TCG (no
+            # KVM/HVF - this is an x86_64 guest on Apple Silicon) is
+            # the likely real source of the "IO-APIC + timer doesn't
+            # work!" panic hit repeatedly in this exact VM: three
+            # different cmdline workarounds (noapic, noapic+acpi=off,
+            # no_timer_check) were tried and only noapic+acpi=off
+            # avoided the panic, at the cost of a silent hang
+            # elsewhere - all symptoms consistent with an incomplete
+            # feature set that confuses the kernel's APIC/TSC
+            # calibration rather than something a boot flag should be
+            # routing around. "max" exposes TCG's fullest emulated
+            # feature set (proper invariant TSC, modern APIC support),
+            # which is the standard fix for this class of bug - try
+            # fixing it at the root instead of threading more cmdline
+            # workarounds through iso_remaster.sh.
             "CPUCount": 2,
             "CPUFlagsAdd": [],
             "CPUFlagsRemove": [],
