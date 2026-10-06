@@ -19,23 +19,16 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/extract"
 xorriso -osirrox on -indev "$SRC_ISO" -extract / "$WORK/extract" >/dev/null
 
-CMDLINE="ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v3.20/main modloop=${MODLOOP_URL} apkovl=${APKOVL_URL} console=ttyS0,115200 console=tty0 noapic acpi=off loglevel=8"
-# acpi=off: noapic alone (4bdbc71) did NOT fix the panic - 3 retried
-# attempts (03aa659) all hit the IDENTICAL "IO-APIC + timer doesn't
-# work!" panic again, confirmed via the real serial capture, with
-# setup_IO_APIC still appearing in every stack trace despite noapic
-# being present in the cmdline. IO-APIC detection/setup is driven by
-# ACPI's MADT table parsing, which noapic alone doesn't skip - only
-# changes IRQ routing after the fact. acpi=off disables ACPI
-# entirely, which should prevent setup_IO_APIC from being reached in
-# the first place rather than changing its behavior.
-# noapic: this VM runs as a pure-TCG (software-emulated, no KVM/HVF)
-# QEMU x86_64 guest on an Apple Silicon host - the IO-APIC timer
-# calibration the stock kernel does at boot reliably fails in that
-# exact combination ("Kernel panic - not syncing: IO-APIC + timer
-# doesn't work!", confirmed directly via a real serial console capture
-# of this exact panic), and the kernel's own panic message names this
-# as the fix.
+CMDLINE="ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v3.20/main modloop=${MODLOOP_URL} apkovl=${APKOVL_URL} console=ttyS0,115200 console=tty0 no_timer_check loglevel=8"
+# no_timer_check: noapic alone (4bdbc71) did not stop the panic (3
+# retried attempts all hit it identically). acpi=off on top of noapic
+# (f194e4a) DID stop the panic, but then all 3 attempts hung
+# completely silent instead - plausibly acpi=off disabling device
+# detection paths that this UEFI/OVMF setup actually needs. Replaced
+# both with no_timer_check, a kernel parameter built for exactly this
+# symptom ("IO-APIC + timer doesn't work") - it skips the specific
+# IO-APIC timer-interrupt validation that panics, without disabling
+# ACPI or IO-APIC routing at all, so nothing else should break.
 #
 # loglevel=8: the original image's own kernel line already carries
 # "quiet" (confirmed directly in the real upstream ISO), which
