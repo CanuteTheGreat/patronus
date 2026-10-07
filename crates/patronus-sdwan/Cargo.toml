@@ -78,3 +78,7 @@ dataplane = ["tun"]
 [[example]]
 name = "sdwan_cli"
 required-features = ["cli"]
+
+[[example]]
+name = "real_wireguard_tunnel"
+required-features = ["cli"]

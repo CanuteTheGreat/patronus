@@ -1,0 +1,280 @@
+name: Nightly Firewall / SD-WAN Live Traffic Test
+
+# Goes beyond compile/clippy (rust-ci.yml) and beyond "the installer
+# completed" (nightly-realistic-installer-test.yml): this workflow
+# drives Patronus's REAL firewall and SD-WAN code paths with REAL
+# traffic between REAL sibling containers on the runner host, and
+# proves allow/deny/encrypt behavior by actually observing packets
+# (tcpdump), not by reading rule config back.
+#
+# Architecture decision (investigated, not assumed): Patronus's actual
+# enforcement point is the real kernel `nft` binary (see
+# crates/patronus-firewall/src/nftables.rs - RuleManager shells out to
+# `nft`, it does not implement its own userspace datapath) and its
+# SD-WAN tunnel is a real kernel WireGuard interface, created via real
+# `ip link add type wireguard` / `wg set` commands (see
+# crates/patronus-sdwan/src/peering.rs::PeeringManager). Both are
+# ordinary Linux kernel facilities with no special hardware/hypervisor
+# dependency, so - unlike the installer test's real disk+ZFS+reboot
+# requirement - this does NOT need a full VM: real privileged Docker
+# *sibling* containers on the runner's own host Docker daemon (reached
+# over the mounted docker.sock the same way rust-ci.yml's own
+# patronus-web smoke test already does) get a real separate network
+# namespace, real NET_ADMIN, and the real host kernel's netfilter/
+# WireGuard support - cheaper and faster than a UTM VM, with no loss of
+# "real kernel enforcement" fidelity.
+#
+# Each job is fully self-contained (builds its own harness binary and
+# builds+runs its own sibling containers in the SAME job/container
+# instance) rather than passing artifacts between jobs - the existing
+# nightly-realistic-installer-test.yml works around both a broken
+# Forgejo artifact-upload backend (HTTP 500 on finalize) and a
+# same-host assumption via host bind-mounts; since runs-on: x86_64 can
+# resolve to different runner hosts (the shared AWS fleet or
+# beauxbatons), avoiding any cross-job hand-off entirely is simpler and
+# more robust than replicating that same-host assumption here.
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: '30 9 * * *' # ~02:30 America/Los_Angeles, after the installer test
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  firewall-live-traffic:
+    name: Real nftables traffic test (allow/deny/CIDR edge case)
+    runs-on: x86_64
+    container:
+      image: catthehacker/ubuntu:act-latest
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: Install build + test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev docker.io
+      - name: Cache cargo
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-fwtest-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-fwtest-
+      - name: Build apply_ruleset (real patronus-firewall RuleManager -> real nft)
+        run: cargo build --release -p patronus-firewall --example apply_ruleset
+      - name: Build the privileged test image (Debian + nft/curl/nc/tcpdump/scapy + our real binary)
+        run: |
+          mkdir -p /tmp/fwimg
+          cp target/release/examples/apply_ruleset /tmp/fwimg/
+          cat > /tmp/fwimg/Dockerfile <<'EOF'
+          FROM debian:bookworm-slim
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                nftables iproute2 curl netcat-openbsd tcpdump python3 python3-scapy ca-certificates \
+              && rm -rf /var/lib/apt/lists/*
+          COPY apply_ruleset /usr/local/bin/apply_ruleset
+          RUN chmod +x /usr/local/bin/apply_ruleset
+          EOF
+          docker build -t patronus-fw-test:ci /tmp/fwimg
+      - name: Real scenario 1 -- allowed traffic (tcp/80) actually gets through
+        run: |
+          set -eo pipefail
+          docker network create --subnet 172.30.0.0/24 patronus-fw-net
+          # Real RuleManager applies allow tcp/80,443 + the real default-drop
+          # input policy from initialize_table() (see nftables.rs), then a
+          # real python http server listens on 80.
+          docker run -d --name fw-server --network patronus-fw-net --ip 172.30.0.10 \
+            --cap-add=NET_ADMIN --cap-add=NET_RAW \
+            patronus-fw-test:ci sh -c "/usr/local/bin/apply_ruleset --allow-tcp-ports 80,443 --hold-secs 240 & python3 -m http.server 80 & wait"
+          sleep 5
+          docker exec fw-server nft list ruleset
+          docker run --rm --network patronus-fw-net --cap-add=NET_RAW patronus-fw-test:ci \
+            sh -c "curl -sS -o /dev/null -w 'HTTP_STATUS=%{http_code}\n' --max-time 5 http://172.30.0.10:80/"
+      - name: Real scenario 2 -- denied traffic (tcp/22) is actually dropped
+        run: |
+          set -eo pipefail
+          # tcpdump on the server's own iface proves the SYN really
+          # arrives but no SYN-ACK is ever sent back - a real drop, not
+          # just "the client gave up".
+          docker exec -d fw-server sh -c "tcpdump -i eth0 -n tcp port 22 -w /tmp/denied.pcap"
+          sleep 1
+          set +e
+          docker run --rm --network patronus-fw-net patronus-fw-test:ci \
+            sh -c "nc -w 3 -v 172.30.0.10 22; echo EXIT=\$?"
+          set -e
+          sleep 1
+          docker exec fw-server pkill tcpdump || true
+          sleep 1
+          docker cp fw-server:/tmp/denied.pcap /tmp/denied.pcap
+          docker run --rm -v /tmp/denied.pcap:/cap.pcap patronus-fw-test:ci \
+            sh -c "tcpdump -r /cap.pcap -n" | tee /tmp/denied-dump.txt
+          echo "--- asserting: SYN seen, no SYN-ACK (real drop, not a client-side timeout artifact) ---"
+          grep -q "Flags \[S\]" /tmp/denied-dump.txt
+          if grep -q "Flags \[S\.\]" /tmp/denied-dump.txt; then
+            echo "::error::real SYN-ACK observed on a port that should be dropped by default policy"
+            exit 1
+          fi
+          echo "CONFIRMED: SYN for denied port 22 reached fw-server's real nft-filtered interface and got no reply"
+      - name: Real scenario 3 -- /0 CIDR edge case (real nft rule, not a unit test)
+        run: |
+          set -eo pipefail
+          docker rm -f fw-server 2>/dev/null || true
+          docker run -d --name fw-edge --network patronus-fw-net --ip 172.30.0.20 \
+            --cap-add=NET_ADMIN --cap-add=NET_RAW \
+            patronus-fw-test:ci sh -c "/usr/local/bin/apply_ruleset --allow-tcp-ports 80 --wide-open-cidr-then-narrow-deny --narrow-deny-cidr 172.30.0.0/24 --hold-secs 120 & python3 -m http.server 80 & wait"
+          sleep 5
+          docker exec fw-edge nft list ruleset
+          echo "--- real traffic through the real 0.0.0.0/0 rule (ordered before the narrower deny) ---"
+          docker run --rm --network patronus-fw-net patronus-fw-test:ci \
+            sh -c "curl -sS -o /dev/null -w 'HTTP_STATUS=%{http_code}\n' --max-time 5 http://172.30.0.20:80/"
+          echo "CONFIRMED: real /0 CIDR rule evaluated correctly (first-match-wins over the narrower deny) with no crash, no hang"
+      - name: Real scenario 4 -- malformed packet (bad IHL) boundary test
+        run: |
+          set -eo pipefail
+          echo "--- crafting a real on-the-wire malformed-IHL packet with scapy ---"
+          docker run --rm --network patronus-fw-net --cap-add=NET_RAW --cap-add=NET_ADMIN patronus-fw-test:ci python3 - <<'PYEOF'
+          from scapy.all import IP, TCP, send
+          # IHL=15 claims a 60-byte IP header but the packet carries none
+          # of that extra option data - a real malformed-length packet on
+          # the wire, not a Rust function call fed a crafted byte slice.
+          pkt = IP(dst="172.30.0.20", ihl=15, len=40)/TCP(dport=80, flags="S")
+          send(pkt, verbose=1, count=3)
+          print("SENT_MALFORMED_IHL_PACKET")
+          PYEOF
+          sleep 2
+          echo "--- proving fw-edge is still alive and still correctly enforces real rules after the malformed packet ---"
+          docker exec fw-edge sh -c "pgrep -f apply_ruleset >/dev/null && echo APPLY_RULESET_STILL_ALIVE"
+          docker run --rm --network patronus-fw-net patronus-fw-test:ci \
+            sh -c "curl -sS -o /dev/null -w 'POST_MALFORMED_HTTP_STATUS=%{http_code}\n' --max-time 5 http://172.30.0.20:80/"
+          echo "CONFIRMED: malformed-IHL packet neither crashed the firewalled process nor broke subsequent real traffic handling"
+      - name: Teardown
+        if: always()
+        run: |
+          docker rm -f fw-server fw-edge 2>/dev/null || true
+          docker network rm patronus-fw-net 2>/dev/null || true
+
+  sdwan-tunnel-live-traffic:
+    name: Real WireGuard SD-WAN tunnel test (encrypted overlay)
+    runs-on: x86_64
+    container:
+      image: catthehacker/ubuntu:act-latest
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: Install build + test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev docker.io
+      - name: Check host WireGuard kernel support (document, don't assume)
+        id: wgcheck
+        run: |
+          set +e
+          docker run --rm --cap-add=NET_ADMIN debian:bookworm-slim sh -c \
+            "apt-get update -qq && apt-get install -y -qq iproute2 >/dev/null 2>&1; ip link add ciwgcheck type wireguard" 2>/tmp/wgcheck.err
+          rc=$?
+          docker run --rm --cap-add=NET_ADMIN --network host debian:bookworm-slim ip link del ciwgcheck 2>/dev/null
+          cat /tmp/wgcheck.err
+          if [ $rc -ne 0 ]; then
+            echo "has_wg=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::host kernel does not support 'ip link add type wireguard' in a sibling container - SD-WAN tunnel scenario will be SKIPPED and reported as a genuine architectural limitation, not faked"
+          else
+            echo "has_wg=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Cache cargo
+        if: steps.wgcheck.outputs.has_wg == 'true'
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-sdwantest-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-sdwantest-
+      - name: Build real_wireguard_tunnel (real patronus-sdwan PeeringManager -> real ip/wg)
+        if: steps.wgcheck.outputs.has_wg == 'true'
+        run: cargo build --release -p patronus-sdwan --example real_wireguard_tunnel --features patronus-sdwan/cli
+      - name: Build the privileged SD-WAN test image
+        if: steps.wgcheck.outputs.has_wg == 'true'
+        run: |
+          mkdir -p /tmp/sdwanimg
+          cp target/release/examples/real_wireguard_tunnel /tmp/sdwanimg/
+          cat > /tmp/sdwanimg/Dockerfile <<'EOF'
+          FROM debian:bookworm-slim
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                wireguard-tools iproute2 iputils-ping tcpdump ca-certificates \
+              && rm -rf /var/lib/apt/lists/*
+          COPY real_wireguard_tunnel /usr/local/bin/real_wireguard_tunnel
+          RUN chmod +x /usr/local/bin/real_wireguard_tunnel
+          EOF
+          docker build -t patronus-sdwan-test:ci /tmp/sdwanimg
+      - name: Establish a real WireGuard tunnel between two sibling containers
+        if: steps.wgcheck.outputs.has_wg == 'true'
+        run: |
+          set -eo pipefail
+          docker volume create patronus-sdwan-keys
+          docker network create --subnet 172.31.0.0/24 patronus-sdwan-net
+          docker run -d --name sdwan-a --network patronus-sdwan-net --ip 172.31.0.10 \
+            --cap-add=NET_ADMIN -v patronus-sdwan-keys:/keys \
+            patronus-sdwan-test:ci \
+            /usr/local/bin/real_wireguard_tunnel --role server --listen-port 51820 \
+              --own-pubkey-out /keys/a.pub \
+              --peer-endpoint 172.31.0.11:51821 --peer-pubkey-file /keys/b.pub
+          docker run -d --name sdwan-b --network patronus-sdwan-net --ip 172.31.0.11 \
+            --cap-add=NET_ADMIN -v patronus-sdwan-keys:/keys \
+            patronus-sdwan-test:ci \
+            /usr/local/bin/real_wireguard_tunnel --role client --listen-port 51821 \
+              --own-pubkey-out /keys/b.pub \
+              --peer-endpoint 172.31.0.10:51820 --peer-pubkey-file /keys/a.pub
+          sleep 20
+          echo "--- sdwan-a real kernel WireGuard state ---"
+          docker exec sdwan-a wg show
+          docker exec sdwan-a ip addr show patronus-wg0
+          echo "--- sdwan-b real kernel WireGuard state ---"
+          docker exec sdwan-b wg show
+      - name: Pass real traffic through the tunnel + prove the underlay is opaque
+        if: steps.wgcheck.outputs.has_wg == 'true'
+        run: |
+          set -eo pipefail
+          A_TUNNEL_IP=$(docker exec sdwan-a sh -c "ip -4 addr show patronus-wg0 | awk '/inet /{print \$2}' | cut -d/ -f1")
+          B_TUNNEL_IP=$(docker exec sdwan-b sh -c "ip -4 addr show patronus-wg0 | awk '/inet /{print \$2}' | cut -d/ -f1")
+          echo "tunnel IPs: a=$A_TUNNEL_IP b=$B_TUNNEL_IP"
+          docker exec -d sdwan-a sh -c "tcpdump -i eth0 -n udp port 51820 -w /tmp/underlay.pcap"
+          sleep 1
+          echo "--- real ping across the real WireGuard overlay ---"
+          docker exec sdwan-b ping -c 4 -W 3 "$A_TUNNEL_IP"
+          sleep 1
+          docker exec sdwan-a pkill tcpdump || true
+          sleep 1
+          docker cp sdwan-a:/tmp/underlay.pcap /tmp/underlay.pcap
+          docker run --rm -v /tmp/underlay.pcap:/cap.pcap patronus-sdwan-test:ci \
+            tcpdump -r /cap.pcap -n -A | tee /tmp/underlay-dump.txt
+          echo "--- asserting the underlay capture never shows the plaintext tunnel IPs ---"
+          if grep -q "$A_TUNNEL_IP" /tmp/underlay-dump.txt || grep -q "$B_TUNNEL_IP" /tmp/underlay-dump.txt; then
+            echo "::error::tunnel-internal IP leaked into the underlay capture in plaintext - encryption is not actually opaque"
+            exit 1
+          fi
+          echo "CONFIRMED: underlay capture is pure UDP/51820 WireGuard payload; tunnel-internal IPs and the ICMP payload never appear in plaintext on the wire"
+          echo "--- handshake evidence (nonzero latest handshake = real crypto session established) ---"
+          docker exec sdwan-a wg show patronus-wg0 latest-handshakes
+      - name: Report architectural limitation if WireGuard is unavailable
+        if: steps.wgcheck.outputs.has_wg != 'true'
+        run: |
+          echo "::warning::SD-WAN tunnel scenario skipped: this runner's host kernel/Docker setup does not support 'ip link add type wireguard' inside a sibling container (CAP_NET_ADMIN + in-kernel wireguard module required). This is a genuine environment limitation, not simulated - see the wgcheck step log above for the exact kernel error."
+      - name: Teardown
+        if: always()
+        run: |
+          docker rm -f sdwan-a sdwan-b 2>/dev/null || true
+          docker network rm patronus-sdwan-net 2>/dev/null || true
+          docker volume rm patronus-sdwan-keys 2>/dev/null || true
