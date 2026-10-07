@@ -274,13 +274,66 @@ def build_vm_bundle(iso_path, disk_size_gb=8):
     return vm_dir, cfg["Information"]["UUID"]
 
 
-def find_vm_uuid_by_name(name, retries=10):
+def cleanup_stale_nightly_vms():
+    """Delete every UTM-registered VM left over from a previous failed
+    run (name starts with 'patronus-nightly-' or 'manual-test-', the
+    latter from one-off debugging) before starting a new attempt.
+
+    Found 2026-10-07: these never got cleaned up by old pre-c0380699
+    code whenever VM *registration itself* (not just boot) failed, since
+    that raised straight out of attempt_boot() past every cleanup path.
+    219+ nightly runs of accumulation left ~5+ ghost/orphaned entries in
+    UTM's own VM list (confirmed via `utmctl list` showing
+    patronus-nightly-2527/2533/2623 and a manual probe VM still present,
+    long after their backing directories were already gone). A bigger
+    registered-VM count measurably slows down UTM's own `open -a UTM`
+    import handling (each subsequent registration attempt took
+    30+ seconds instead of the ~5s baseline, confirmed by timing in the
+    job logs below) - this was the real root cause of registration
+    itself timing out, not boot-stage flakiness. Clearing these out
+    before every run keeps UTM's VM list bounded to the real, persistent
+    reference VMs (kali/FreeBSD/Gentoo Base/ubuntu/Windows) only.
+    """
+    out = subprocess.run([UTMCTL, "list"], capture_output=True, text=True)
+    removed = []
+    for line in out.stdout.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        uuid, status, name = parts[0], parts[1], parts[2]
+        if not (name.startswith("patronus-nightly-") or name.startswith("manual-test-")):
+            continue
+        subprocess.run([UTMCTL, "stop", uuid], capture_output=True)
+        time.sleep(1)
+        subprocess.run([UTMCTL, "delete", uuid], capture_output=True)
+        removed.append((uuid, name))
+    if removed:
+        print(f"[host] cleaned up {len(removed)} stale UTM VM(s) before starting: {removed}", flush=True)
+    # Also sweep any leftover external-staging directories, registered
+    # or not (a crashed run can leave the directory behind even after
+    # its UTM entry is gone, or vice versa).
+    if os.path.isdir(UTM_EXTERNAL_STAGING):
+        for entry in os.listdir(UTM_EXTERNAL_STAGING):
+            if entry.startswith("patronus-nightly-") or entry.startswith("manual-test-"):
+                shutil.rmtree(os.path.join(UTM_EXTERNAL_STAGING, entry), ignore_errors=True)
+
+
+def find_vm_uuid_by_name(name, retries=30, interval_s=3):
+    # Was retries=10 @ 2s (20s total). Raised to 90s total: a UTM
+    # instance that already manages several real VMs (kali/FreeBSD/
+    # Gentoo Base/ubuntu/Windows) was observed taking 30-45s to finish
+    # importing a freshly `open -a UTM`'d external bundle even with
+    # stale-VM cleanup in place - not a hang, just genuinely slow Finder/
+    # LaunchServices-mediated import, confirmed by the bundle eventually
+    # appearing in `utmctl list` well past the old 20s window in a
+    # manual same-conditions probe (see cleanup_stale_nightly_vms
+    # docstring for the surrounding investigation).
     for _ in range(retries):
         out = subprocess.run([UTMCTL, "list"], capture_output=True, text=True)
         for line in out.stdout.splitlines():
             if name in line:
                 return line.split()[0]
-        time.sleep(2)
+        time.sleep(interval_s)
     raise SystemExit(f"VM '{name}' never showed up in `utmctl list`:\n{out.stdout}\n{out.stderr}")
 
 
@@ -373,6 +426,7 @@ def main():
     os.makedirs(WORKDIR, exist_ok=True)
 
     sanity_check_utmctl()
+    cleanup_stale_nightly_vms()
 
     global serial_log_path
     serial_log_path = os.path.join(WORKDIR, f"serial-{RUN_ID}.log")
