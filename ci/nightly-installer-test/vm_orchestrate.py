@@ -198,7 +198,24 @@ def build_vm_bundle(iso_path, disk_size_gb=8):
             }
         ],
         "QEMU": {
-            "AdditionalArguments": [],
+            # -no-reboot: every captured serial log for this test so far
+            # has shown the VM silently cycle back to an identical fresh
+            # UEFI firmware + GRUB screen after "Booting `Linux lts'"
+            # with zero diagnostic output in between (see run 2591 /
+            # task 6675) - consistent with the guest hitting a reset
+            # (triple fault or an explicit reboot) before anything new
+            # reaches the serial console, which QEMU's default behavior
+            # silently swallows by actually resetting the VM. Without
+            # this flag that reset erases the only evidence of what
+            # actually went wrong, and the harness has been retrying
+            # blind for days. With -no-reboot, QEMU halts (not resets)
+            # on a guest reset request, so whatever was last printed -
+            # including a panic/triple-fault the firmware itself may
+            # emit - stays on the serial line for this capture instead
+            # of being overwritten by a clean restart.
+            "AdditionalArguments": [
+                {"Argument": "-no-reboot"},
+            ],
             "BalloonDevice": False,
             "DebugLog": False,
             "Hypervisor": True,
