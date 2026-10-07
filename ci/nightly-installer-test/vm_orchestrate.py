@@ -340,7 +340,17 @@ def attempt_boot(iso_path, serial_log_path, serial_stop, attempt_num):
     failure - see run()). Always tears its own VM down before
     returning, success or not, so each attempt starts clean."""
     vm_dir, cfg_uuid = build_vm_bundle(iso_path)
-    vm_uuid = find_vm_uuid_by_name(VM_NAME)
+    try:
+        vm_uuid = find_vm_uuid_by_name(VM_NAME)
+    except SystemExit as e:
+        # Registration itself (UTM GUI importing the bundle after `open
+        # -a UTM`) can be just as flaky as the later boot stage - it
+        # used to raise straight out of attempt_boot(), completely
+        # bypassing the MAX_BOOT_ATTEMPTS retry loop below and failing
+        # the whole job on the very first slow import instead of
+        # getting the same retry treatment as a boot timeout.
+        print(f"[host] attempt {attempt_num}: VM registration failed: {e}", flush=True)
+        return False, None
     print(f"[host] attempt {attempt_num}: VM registered: {VM_NAME} -> {vm_uuid}")
     try:
         run([UTMCTL, "start", vm_uuid])
@@ -398,9 +408,10 @@ def main():
                 reached_live_boot = True
                 vm_dir = os.path.join(UTM_EXTERNAL_STAGING, f"{VM_NAME}.utm")
                 break
-            subprocess.run([UTMCTL, "stop", vm_uuid], capture_output=True)
-            time.sleep(3)
-            subprocess.run([UTMCTL, "delete", vm_uuid], capture_output=True)
+            if vm_uuid:
+                subprocess.run([UTMCTL, "stop", vm_uuid], capture_output=True)
+                time.sleep(3)
+                subprocess.run([UTMCTL, "delete", vm_uuid], capture_output=True)
             shutil.rmtree(os.path.join(UTM_EXTERNAL_STAGING, f"{VM_NAME}.utm"), ignore_errors=True)
             if attempt < MAX_BOOT_ATTEMPTS:
                 print(f"[host] retrying boot (attempt {attempt + 1}/{MAX_BOOT_ATTEMPTS})", flush=True)
