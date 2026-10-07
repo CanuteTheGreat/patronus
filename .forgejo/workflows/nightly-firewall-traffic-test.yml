@@ -45,10 +45,7 @@ jobs:
   firewall-live-traffic:
     name: Real nftables traffic test (allow/deny/CIDR edge case)
     runs-on: x86_64
-    container:
-      image: catthehacker/ubuntu:act-latest
-      volumes:
-        - /var/run/docker.sock:/var/run/docker.sock
+    container: catthehacker/ubuntu:act-latest  # runner auto-mounts /var/run/docker.sock for this image; an explicit volumes: entry here duplicates it (Docker daemon rejects with "Duplicate mount point"), matching rust-ci.yml's existing pattern
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -163,10 +160,7 @@ jobs:
   sdwan-tunnel-live-traffic:
     name: Real WireGuard SD-WAN tunnel test (encrypted overlay)
     runs-on: x86_64
-    container:
-      image: catthehacker/ubuntu:act-latest
-      volumes:
-        - /var/run/docker.sock:/var/run/docker.sock
+    container: catthehacker/ubuntu:act-latest  # runner auto-mounts /var/run/docker.sock for this image; an explicit volumes: entry here duplicates it (Docker daemon rejects with "Duplicate mount point"), matching rust-ci.yml's existing pattern
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
