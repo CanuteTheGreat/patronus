@@ -53,29 +53,44 @@ async fn main() -> anyhow::Result<()> {
     let pubkey_b64 = STANDARD.encode(mgr.public_key().as_bytes());
     println!("PUBKEY={}", pubkey_b64);
     if let Some(path) = &args.own_pubkey_out {
-        std::fs::write(path, &pubkey_b64)?;
+        // Exchange our REAL site ID alongside the pubkey, not just the key:
+        // `generate_peer_allowed_ips`/`generate_site_ip` in peering.rs derive
+        // each side's tunnel /32 deterministically FROM its site ID, so a
+        // peer can only compute our correct `allowed-ips` entry if it knows
+        // our actual site ID. Earlier this only exchanged the pubkey and the
+        // receiving side invented its own random SiteId for the peer record,
+        // so `wg set ... allowed-ips` ended up with a /32 that matched
+        // nobody's real tunnel address - confirmed live in CI: pings across
+        // the tunnel failed with "sendmsg: Required key not available"
+        // (no cryptokey route matched the real destination) even though the
+        // handshake-level config looked plausible in `wg show`.
+        std::fs::write(path, format!("{}|{}", pubkey_b64, mgr.own_site_id()))?;
     }
 
     if let (Some(endpoint), Some(pubkey_file)) = (&args.peer_endpoint, &args.peer_pubkey_file) {
         // Wait for the peer's pubkey file to show up (simple file-based
         // rendezvous across the two sibling containers' shared bind mount).
-        let mut peer_pubkey_b64 = String::new();
+        let mut peer_line = String::new();
         for _ in 0..60 {
             if let Ok(s) = std::fs::read_to_string(pubkey_file) {
                 if !s.trim().is_empty() {
-                    peer_pubkey_b64 = s.trim().to_string();
+                    peer_line = s.trim().to_string();
                     break;
                 }
             }
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
-        if peer_pubkey_b64.is_empty() {
+        if peer_line.is_empty() {
             anyhow::bail!("peer pubkey never appeared at {}", pubkey_file);
         }
+        let (peer_pubkey_b64, peer_site_id_str) = peer_line
+            .split_once('|')
+            .ok_or_else(|| anyhow::anyhow!("malformed peer rendezvous line: {peer_line}"))?;
         let peer_pubkey_bytes = STANDARD.decode(peer_pubkey_b64.as_bytes())?;
+        let peer_site_id: SiteId = peer_site_id_str.parse()?;
 
         let peer_site = Site {
-            id: SiteId::generate(),
+            id: peer_site_id,
             name: format!("peer-of-{}", args.role),
             public_key: peer_pubkey_bytes,
             endpoints: vec![Endpoint {

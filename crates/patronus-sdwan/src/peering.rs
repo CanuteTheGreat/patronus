@@ -73,6 +73,16 @@ impl PeeringManager {
         &self.own_public_key
     }
 
+    /// Get this manager's own site ID, so callers can hand it to a peer
+    /// out-of-band (e.g. over the same side-channel used to exchange public
+    /// keys) - needed because `generate_peer_allowed_ips`/`generate_site_ip`
+    /// derive the tunnel /32 deterministically FROM the site ID, so a peer
+    /// can only compute the correct `allowed-ips` for us if it knows our
+    /// real site ID, not a value it invented itself.
+    pub fn own_site_id(&self) -> SiteId {
+        self.own_site_id
+    }
+
     /// Initialize WireGuard interface
     pub async fn initialize_interface(&self) -> Result<()> {
         info!(
