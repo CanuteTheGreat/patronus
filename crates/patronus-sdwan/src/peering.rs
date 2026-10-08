@@ -8,7 +8,7 @@ use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
-use x25519_dalek::PublicKey;
+use x25519_dalek::{PublicKey, StaticSecret};
 
 /// WireGuard peering manager
 pub struct PeeringManager {
@@ -50,11 +50,31 @@ impl PeeringManager {
         interface_name: String,
         listen_port: u16,
     ) -> Self {
-        // Generate WireGuard keypair
+        // Generate WireGuard keypair. `PublicKey::from([u8; 32])` does NOT
+        // derive a public key from a private scalar via the X25519 base
+        // point - it just wraps the given bytes AS IF they were already a
+        // public key (useful for parsing a peer-supplied public key, wrong
+        // here). The public key this manager advertised was therefore
+        // unrelated to the private key actually handed to the kernel (via
+        // `wg set ... private-key`), which DOES derive+clamp correctly -
+        // confirmed live in CI: `wg show <iface> private-key` differed
+        // from the advertised PUBKEY by exactly the X25519 clamped bits
+        // (byte 0 and byte 31), with every other byte identical, proving
+        // this was returning the raw scalar, not a derived point. Peers
+        // configured with that wrong pubkey could never complete a
+        // handshake with a kernel that only ever had the real, clamped
+        // key pair. Fix: go through `StaticSecret`, which clamps the
+        // scalar the same way `wg`'s own key derivation does, and derive
+        // the public key via scalar multiplication with the base point;
+        // store the CLAMPED bytes as `own_private_key` so what we hand to
+        // the kernel is byte-for-byte what `own_public_key` was derived
+        // from.
         use rand::RngCore;
-        let mut private_key = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut private_key);
-        let public_key = PublicKey::from(private_key);
+        let mut private_key_bytes = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut private_key_bytes);
+        let secret = StaticSecret::from(private_key_bytes);
+        let public_key = PublicKey::from(&secret);
+        let private_key = secret.to_bytes();
 
         Self {
             db,
