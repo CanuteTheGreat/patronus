@@ -54,6 +54,23 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev docker.io
+      - name: Ensure Node.js is present (self-heal)
+        # Same root cause as horcrux's fb065bd and this repo's own
+        # nightly-realistic-installer-test.yml: catthehacker/ubuntu:act-latest
+        # job containers on the beauxbatons runner are reused across runs
+        # instead of recreated per-job, and node has been observed vanishing
+        # mid-job after an apt-get install of unrelated packages, breaking
+        # every JS action (actions/cache, actions/checkout's post step) for
+        # the rest of the job. Root cause is the runner's container
+        # lifecycle (outside this repo); self-heal cheaply here instead of
+        # failing the whole job.
+        run: |
+          if ! command -v node >/dev/null 2>&1; then
+            echo "::warning::node missing from job container PATH - reinstalling"
+            sudo apt-get update -qq
+            sudo apt-get install -y nodejs
+          fi
+          node --version
       - name: Cache cargo
         uses: actions/cache@v4
         continue-on-error: true
@@ -196,6 +213,23 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libssl-dev docker.io
+      - name: Ensure Node.js is present (self-heal)
+        # Same root cause as horcrux's fb065bd and this workflow's own
+        # firewall-live-traffic job: catthehacker/ubuntu:act-latest job
+        # containers on the beauxbatons runner are reused across runs
+        # instead of recreated per-job, and node has been observed
+        # vanishing mid-job after an apt-get install of unrelated packages,
+        # breaking every JS action (actions/cache, actions/checkout's post
+        # step) for the rest of the job. Root cause is the runner's
+        # container lifecycle (outside this repo); self-heal cheaply here
+        # instead of failing the whole job.
+        run: |
+          if ! command -v node >/dev/null 2>&1; then
+            echo "::warning::node missing from job container PATH - reinstalling"
+            sudo apt-get update -qq
+            sudo apt-get install -y nodejs
+          fi
+          node --version
       - name: Check host WireGuard kernel support (document, don't assume)
         id: wgcheck
         run: |
