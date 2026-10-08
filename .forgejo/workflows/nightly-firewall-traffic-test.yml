@@ -132,7 +132,7 @@ jobs:
           # remove any stale leftover (dir or file) from a prior broken run
           # before writing, so this can't silently break every run after it.
           rm -rf "/tmp/denied-${GITHUB_RUN_ID:-$$}.pcap"
-          docker exec -d fw-server sh -c "tcpdump -i eth0 -n tcp port 22 -w /tmp/denied-${GITHUB_RUN_ID:-$$}.pcap"
+          docker exec -d fw-server sh -c "tcpdump -i eth0 -n tcp port 22 -U -w /tmp/denied-${GITHUB_RUN_ID:-$$}.pcap"
           sleep 1
           set +e
           docker run --rm --network patronus-fw-net patronus-fw-test:ci \
@@ -334,7 +334,7 @@ jobs:
           B_TUNNEL_IP=$(docker exec sdwan-b sh -c "ip -4 addr show patronus-wg0 | awk '/inet /{print \$2}' | cut -d/ -f1")
           echo "tunnel IPs: a=$A_TUNNEL_IP b=$B_TUNNEL_IP"
           rm -rf "/tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap"
-          docker exec -d sdwan-a sh -c "tcpdump -i eth0 -n udp port 51820 -w /tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap"
+          docker exec -d sdwan-a sh -c "tcpdump -i eth0 -n udp port 51820 -U -w /tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap"
           sleep 1
           echo "--- real ping across the real WireGuard overlay ---"
           docker exec sdwan-b ping -c 4 -W 3 "$A_TUNNEL_IP"
