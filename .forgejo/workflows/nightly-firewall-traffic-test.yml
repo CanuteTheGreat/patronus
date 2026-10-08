@@ -124,9 +124,21 @@ jobs:
           sleep 1
           docker exec fw-server pkill tcpdump || true
           sleep 1
-          docker cp "fw-server:/tmp/denied-${GITHUB_RUN_ID:-$$}.pcap" "/tmp/denied-${GITHUB_RUN_ID:-$$}.pcap"
-          docker run --rm -v "/tmp/denied-${GITHUB_RUN_ID:-$$}.pcap:/cap.pcap" patronus-fw-test:ci \
-            sh -c "tcpdump -r /cap.pcap -n" | tee /tmp/denied-dump.txt
+          # Read the capture IN PLACE via `docker exec` instead of `docker cp`
+          # + a bind-mounted `-v` read: this job's docker CLI runs inside a
+          # DooD sibling (talks to the HOST dockerd over the mounted
+          # docker.sock), so `docker cp`'s *local* side is written into this
+          # job container's own ephemeral filesystem, while a later
+          # `-v hostpath:...` is resolved by the daemon against the REAL
+          # host filesystem -- a different, unrelated filesystem. Since
+          # hostpath never actually got written there, Docker silently
+          # auto-creates an EMPTY DIRECTORY at that path and bind-mounts
+          # that, so `tcpdump -r` fails with "Is a directory" -- every run,
+          # not just a stale-leftover run (confirmed: run-scoping the path
+          # alone, commit 9717d90, did not fix this). `docker exec` has no
+          # such local/remote path ambiguity -- it reads the file directly
+          # inside fw-server's own namespace where tcpdump wrote it.
+          docker exec fw-server tcpdump -r "/tmp/denied-${GITHUB_RUN_ID:-$$}.pcap" -n | tee /tmp/denied-dump.txt
           echo "--- asserting: SYN seen, no SYN-ACK (real drop, not a client-side timeout artifact) ---"
           grep -q "Flags \[S\]" /tmp/denied-dump.txt
           if grep -q "Flags \[S\.\]" /tmp/denied-dump.txt; then
@@ -237,25 +249,39 @@ jobs:
           # run whose Teardown step never executed, e.g. a killed/crashed runner)
           # that already claims this subnet, so `docker network create` below can't
           # fail with "Pool overlaps with other one on this address space" (the real
-          # failure observed on run 2662/2660/2656/2653/2643).
+          # failure observed on run 2662/2660/2656/2653/2643/2665).
+          #
+          # Root cause of the recurrence despite this same cleanup existing
+          # (commit 9808094): this step's own stale-network sweep only ever
+          # protected 172.31.0.0/24 itself, but a DIFFERENT, legitimate,
+          # permanently-running network on this host (`rwdebug-net`, an
+          # unrelated RedWeek debug proxy with live containers attached --
+          # NOT ours to remove) occupies the much larger 172.31.0.0/16,
+          # which fully contains our /24 and makes it permanently
+          # unavailable no matter how aggressively we prune OUR OWN leftover
+          # networks. Confirmed live: `docker network inspect rwdebug-net`
+          # shows subnet 172.31.0.0/16 with 2 active containers. The fix is
+          # to stop requesting a subnet inside a range another real,
+          # persistent workload already owns -- not to try to clean up a
+          # network we don't own and must not touch.
           docker network rm patronus-sdwan-net 2>/dev/null || true
           for net in $(docker network ls -q); do
             subnet=$(docker network inspect "$net" --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null)
-            case "$subnet" in *172.31.0.0/24*) docker network rm "$net" 2>/dev/null || true ;; esac
+            case "$subnet" in *10.231.31.0/24*) docker network rm "$net" 2>/dev/null || true ;; esac
           done
-          docker network create --subnet 172.31.0.0/24 patronus-sdwan-net
-          docker run -d --name sdwan-a --network patronus-sdwan-net --ip 172.31.0.10 \
+          docker network create --subnet 10.231.31.0/24 patronus-sdwan-net
+          docker run -d --name sdwan-a --network patronus-sdwan-net --ip 10.231.31.10 \
             --cap-add=NET_ADMIN -v patronus-sdwan-keys:/keys \
             patronus-sdwan-test:ci \
             /usr/local/bin/real_wireguard_tunnel --role server --listen-port 51820 \
               --own-pubkey-out /keys/a.pub \
-              --peer-endpoint 172.31.0.11:51821 --peer-pubkey-file /keys/b.pub
-          docker run -d --name sdwan-b --network patronus-sdwan-net --ip 172.31.0.11 \
+              --peer-endpoint 10.231.31.11:51821 --peer-pubkey-file /keys/b.pub
+          docker run -d --name sdwan-b --network patronus-sdwan-net --ip 10.231.31.11 \
             --cap-add=NET_ADMIN -v patronus-sdwan-keys:/keys \
             patronus-sdwan-test:ci \
             /usr/local/bin/real_wireguard_tunnel --role client --listen-port 51821 \
               --own-pubkey-out /keys/b.pub \
-              --peer-endpoint 172.31.0.10:51820 --peer-pubkey-file /keys/a.pub
+              --peer-endpoint 10.231.31.10:51820 --peer-pubkey-file /keys/a.pub
           sleep 20
           echo "--- sdwan-a real kernel WireGuard state ---"
           docker exec sdwan-a wg show
@@ -277,9 +303,12 @@ jobs:
           sleep 1
           docker exec sdwan-a pkill tcpdump || true
           sleep 1
-          docker cp "sdwan-a:/tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap" "/tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap"
-          docker run --rm -v "/tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap:/cap.pcap" patronus-sdwan-test:ci \
-            tcpdump -r /cap.pcap -n -A | tee /tmp/underlay-dump.txt
+          # See the job-1 "Real scenario 2" step for why: read the capture
+          # via `docker exec` in place rather than `docker cp` + a
+          # bind-mounted `-v` read, which fails with "Is a directory" under
+          # docker-outside-of-docker because the cp's local destination and
+          # the -v mount's source resolve against two different filesystems.
+          docker exec sdwan-a tcpdump -r "/tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap" -n -A | tee /tmp/underlay-dump.txt
           echo "--- asserting the underlay capture never shows the plaintext tunnel IPs ---"
           if grep -q "$A_TUNNEL_IP" /tmp/underlay-dump.txt || grep -q "$B_TUNNEL_IP" /tmp/underlay-dump.txt; then
             echo "::error::tunnel-internal IP leaked into the underlay capture in plaintext - encryption is not actually opaque"
