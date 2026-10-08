@@ -270,6 +270,25 @@ impl PeeringManager {
         let mut peers = self.peers.write().await;
         peers.push(peer_config);
 
+        // Persist both sides of the path to the sites table first: sdwan_paths
+        // has FOREIGN KEY(src_site_id/dst_site_id) REFERENCES sdwan_sites(site_id),
+        // and neither our own site nor the peer's site is ever upserted anywhere
+        // else in this manager, so inserting the path directly always failed
+        // with "FOREIGN KEY constraint failed" (confirmed live in CI - the
+        // interface and WireGuard-level peer config both come up fine, it's
+        // purely this bookkeeping insert that never had its prerequisite rows).
+        self.db.upsert_site(site).await?;
+        let own_site = Site {
+            id: self.own_site_id,
+            name: format!("self-{}", self.interface_name),
+            public_key: self.own_public_key.as_bytes().to_vec(),
+            endpoints: vec![],
+            created_at: std::time::SystemTime::now(),
+            last_seen: std::time::SystemTime::now(),
+            status: SiteStatus::Active,
+        };
+        self.db.upsert_site(&own_site).await?;
+
         // Store path in database
         let path = Path {
             id: PathId::new(0), // Will be assigned by database
