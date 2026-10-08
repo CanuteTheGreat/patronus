@@ -83,6 +83,15 @@ jobs:
       - name: Real scenario 1 -- allowed traffic (tcp/80) actually gets through
         run: |
           set -eo pipefail
+          # Defensive: remove any network (ours or an orphaned leftover from a prior
+          # run whose Teardown step never executed, e.g. a killed/crashed runner)
+          # that already claims this subnet, so `docker network create` below can't
+          # fail with "Pool overlaps with other one on this address space".
+          docker network rm patronus-fw-net 2>/dev/null || true
+          for net in $(docker network ls -q); do
+            subnet=$(docker network inspect "$net" --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null)
+            case "$subnet" in *172.30.0.0/24*) docker network rm "$net" 2>/dev/null || true ;; esac
+          done
           docker network create --subnet 172.30.0.0/24 patronus-fw-net
           # Real RuleManager applies allow tcp/80,443 + the real default-drop
           # input policy from initialize_table() (see nftables.rs), then a
@@ -224,6 +233,16 @@ jobs:
         run: |
           set -eo pipefail
           docker volume create patronus-sdwan-keys
+          # Defensive: remove any network (ours or an orphaned leftover from a prior
+          # run whose Teardown step never executed, e.g. a killed/crashed runner)
+          # that already claims this subnet, so `docker network create` below can't
+          # fail with "Pool overlaps with other one on this address space" (the real
+          # failure observed on run 2662/2660/2656/2653/2643).
+          docker network rm patronus-sdwan-net 2>/dev/null || true
+          for net in $(docker network ls -q); do
+            subnet=$(docker network inspect "$net" --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null)
+            case "$subnet" in *172.31.0.0/24*) docker network rm "$net" 2>/dev/null || true ;; esac
+          done
           docker network create --subnet 172.31.0.0/24 patronus-sdwan-net
           docker run -d --name sdwan-a --network patronus-sdwan-net --ip 172.31.0.10 \
             --cap-add=NET_ADMIN -v patronus-sdwan-keys:/keys \
