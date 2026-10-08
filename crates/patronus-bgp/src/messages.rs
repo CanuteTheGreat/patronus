@@ -178,14 +178,24 @@ impl OpenMessage {
         let bgp_identifier = buf.get_u32();
         let opt_param_len = buf.get_u8() as usize;
 
-        // Decode optional parameters
+        // Decode optional parameters. Bound parsing to exactly opt_param_len
+        // bytes via a sub-slice rather than subtracting each parameter's
+        // *computed* encoded_len() from a running counter: a malicious/
+        // malformed peer can send an opt_param_len that doesn't line up with
+        // real parameter boundaries, and encoded_len() > remaining would
+        // underflow the usize counter (panic with overflow checks on, silent
+        // wraparound otherwise), letting attacker-controlled bytes bleed past
+        // the optional-parameters section instead of being rejected as
+        // malformed. Same bug class/fix as UpdateMessage::decode below.
+        if buf.remaining() < opt_param_len {
+            return Err(BgpError::ParseError(
+                "Insufficient data for optional parameters".into(),
+            ));
+        }
+        let mut opt_param_buf = buf.split_to(opt_param_len);
         let mut opt_params = Vec::new();
-        let mut remaining = opt_param_len;
-
-        while remaining > 0 {
-            let param = OptionalParameter::decode(buf)?;
-            remaining -= param.encoded_len();
-            opt_params.push(param);
+        while opt_param_buf.has_remaining() {
+            opt_params.push(OptionalParameter::decode(&mut opt_param_buf)?);
         }
 
         Ok(Self {
