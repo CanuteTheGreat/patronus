@@ -283,6 +283,10 @@ jobs:
               --own-pubkey-out /keys/b.pub \
               --peer-endpoint 10.231.31.10:51820 --peer-pubkey-file /keys/a.pub
           sleep 20
+          echo "--- sdwan-a container logs (first sign of trouble if it already exited) ---"
+          docker logs sdwan-a 2>&1 || true
+          echo "--- sdwan-b container logs ---"
+          docker logs sdwan-b 2>&1 || true
           echo "--- sdwan-a real kernel WireGuard state ---"
           docker exec sdwan-a wg show
           docker exec sdwan-a ip addr show patronus-wg0
