@@ -239,7 +239,7 @@ jobs:
           COPY real_wireguard_tunnel /usr/local/bin/real_wireguard_tunnel
           RUN chmod +x /usr/local/bin/real_wireguard_tunnel
           EOF
-          docker build -t patronus-sdwan-test:ci /tmp/sdwanimg
+          docker build --platform linux/amd64 -t patronus-sdwan-test:ci /tmp/sdwanimg
       - name: Establish a real WireGuard tunnel between two sibling containers
         if: steps.wgcheck.outputs.has_wg == 'true'
         run: |
@@ -271,13 +271,13 @@ jobs:
           done
           docker network create --subnet 10.231.31.0/24 patronus-sdwan-net
           docker run -d --name sdwan-a --network patronus-sdwan-net --ip 10.231.31.10 \
-            --cap-add=NET_ADMIN -v patronus-sdwan-keys:/keys \
+            --platform linux/amd64 --cap-add=NET_ADMIN -v patronus-sdwan-keys:/keys \
             patronus-sdwan-test:ci \
             /usr/local/bin/real_wireguard_tunnel --role server --listen-port 51820 \
               --own-pubkey-out /keys/a.pub \
               --peer-endpoint 10.231.31.11:51821 --peer-pubkey-file /keys/b.pub
           docker run -d --name sdwan-b --network patronus-sdwan-net --ip 10.231.31.11 \
-            --cap-add=NET_ADMIN -v patronus-sdwan-keys:/keys \
+            --platform linux/amd64 --cap-add=NET_ADMIN -v patronus-sdwan-keys:/keys \
             patronus-sdwan-test:ci \
             /usr/local/bin/real_wireguard_tunnel --role client --listen-port 51821 \
               --own-pubkey-out /keys/b.pub \
