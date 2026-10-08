@@ -99,8 +99,14 @@ jobs:
           set -eo pipefail
           # tcpdump on the server's own iface proves the SYN really
           # arrives but no SYN-ACK is ever sent back - a real drop, not
-          # just "the client gave up".
-          docker exec -d fw-server sh -c "tcpdump -i eth0 -n tcp port 22 -w /tmp/denied.pcap"
+          # just "the client gave up". Host-side docker commands here run
+          # via docker-outside-of-docker against the shared runner host's
+          # dockerd, so /tmp paths resolve on that persistent host, not
+          # inside this ephemeral job container - use a run-scoped path and
+          # remove any stale leftover (dir or file) from a prior broken run
+          # before writing, so this can't silently break every run after it.
+          rm -rf "/tmp/denied-${GITHUB_RUN_ID:-$$}.pcap"
+          docker exec -d fw-server sh -c "tcpdump -i eth0 -n tcp port 22 -w /tmp/denied-${GITHUB_RUN_ID:-$$}.pcap"
           sleep 1
           set +e
           docker run --rm --network patronus-fw-net patronus-fw-test:ci \
@@ -109,8 +115,8 @@ jobs:
           sleep 1
           docker exec fw-server pkill tcpdump || true
           sleep 1
-          docker cp fw-server:/tmp/denied.pcap /tmp/denied.pcap
-          docker run --rm -v /tmp/denied.pcap:/cap.pcap patronus-fw-test:ci \
+          docker cp "fw-server:/tmp/denied-${GITHUB_RUN_ID:-$$}.pcap" "/tmp/denied-${GITHUB_RUN_ID:-$$}.pcap"
+          docker run --rm -v "/tmp/denied-${GITHUB_RUN_ID:-$$}.pcap:/cap.pcap" patronus-fw-test:ci \
             sh -c "tcpdump -r /cap.pcap -n" | tee /tmp/denied-dump.txt
           echo "--- asserting: SYN seen, no SYN-ACK (real drop, not a client-side timeout artifact) ---"
           grep -q "Flags \[S\]" /tmp/denied-dump.txt
@@ -244,15 +250,16 @@ jobs:
           A_TUNNEL_IP=$(docker exec sdwan-a sh -c "ip -4 addr show patronus-wg0 | awk '/inet /{print \$2}' | cut -d/ -f1")
           B_TUNNEL_IP=$(docker exec sdwan-b sh -c "ip -4 addr show patronus-wg0 | awk '/inet /{print \$2}' | cut -d/ -f1")
           echo "tunnel IPs: a=$A_TUNNEL_IP b=$B_TUNNEL_IP"
-          docker exec -d sdwan-a sh -c "tcpdump -i eth0 -n udp port 51820 -w /tmp/underlay.pcap"
+          rm -rf "/tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap"
+          docker exec -d sdwan-a sh -c "tcpdump -i eth0 -n udp port 51820 -w /tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap"
           sleep 1
           echo "--- real ping across the real WireGuard overlay ---"
           docker exec sdwan-b ping -c 4 -W 3 "$A_TUNNEL_IP"
           sleep 1
           docker exec sdwan-a pkill tcpdump || true
           sleep 1
-          docker cp sdwan-a:/tmp/underlay.pcap /tmp/underlay.pcap
-          docker run --rm -v /tmp/underlay.pcap:/cap.pcap patronus-sdwan-test:ci \
+          docker cp "sdwan-a:/tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap" "/tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap"
+          docker run --rm -v "/tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap:/cap.pcap" patronus-sdwan-test:ci \
             tcpdump -r /cap.pcap -n -A | tee /tmp/underlay-dump.txt
           echo "--- asserting the underlay capture never shows the plaintext tunnel IPs ---"
           if grep -q "$A_TUNNEL_IP" /tmp/underlay-dump.txt || grep -q "$B_TUNNEL_IP" /tmp/underlay-dump.txt; then
