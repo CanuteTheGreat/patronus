@@ -10,8 +10,25 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  fmt:
-    name: Format Check
+  # fmt/clippy/security-audit/test used to be 4 separate jobs. The only
+  # forgejo-runner currently registered for the `x86_64` label (beauxbatons,
+  # see .forgejo/workflows/rust-ci.yml history around 2026-10-08) has
+  # capacity: 1 -- it can only execute one job at a time, full stop. With 4+
+  # independent jobs all competing for that single slot, later jobs in the
+  # queue routinely sat unclaimed long enough to get marked "Has been
+  # cancelled" before a runner ever picked them up, especially when commits
+  # were pushed in quick succession (each push adds its own 4-6 jobs to the
+  # same single-slot queue). Merging these four into one sequential job
+  # means the whole set only has to win the runner's one slot ONCE instead
+  # of 4 times, and shares one checkout/toolchain-install/apt-get install
+  # instead of paying that setup cost 4x -- both directly shrink the total
+  # queued-and-running wall-clock window this work is exposed to being
+  # starved out by the next push. check-ebpf/check-full-workspace/
+  # gentoo-docker-build stay as separate jobs since they're either
+  # continue-on-error best-effort or meaningfully heavier/slower and don't
+  # need to block fast feedback on the lightweight checks above.
+  lint-test-audit:
+    name: Format + Clippy + Security Audit + Test (non-eBPF crates)
     runs-on: x86_64
     container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
     steps:
@@ -19,20 +36,7 @@ jobs:
       - name: Install Rust
         uses: https://github.com/dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-  clippy:
-    name: Clippy (non-eBPF crates)
-    runs-on: x86_64
-    container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: https://github.com/dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+          components: rustfmt, clippy
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -44,42 +48,15 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.cargo/advisory-db
             target
-          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-lint-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-clippy-
+            ${{ runner.os }}-cargo-lint-test-
+      - name: Check formatting
+        run: cargo fmt --all -- --check
       - name: Run clippy
         run: cargo clippy --workspace --exclude patronus-ebpf --all-targets -- -D warnings
-
-  security-audit:
-    name: Security Audit (cargo-audit)
-    runs-on: x86_64
-    container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: https://github.com/dtolnay/rust-toolchain@stable
-      - name: Install dependencies
-        # cargo-audit itself and its build deps (libc, etc.) need a real C
-        # toolchain -- this runner has nothing pre-installed. Also matches
-        # the clippy/test jobs' own libelf-dev/zlib1g-dev addition: even
-        # though cargo-audit only reads Cargo.lock metadata, `cargo install`
-        # still resolves/builds against this workspace's full dependency
-        # graph in some configurations, which can pull in libbpf-sys.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libelf-dev zlib1g-dev pkg-config
-      - name: Cache cargo
-        uses: actions/cache@v4
-        continue-on-error: true  # runner-side cache action is flaky on beauxbatons (artifactcache timeouts / module-not-found under parallel job races) -- caching is an optimization, never worth failing the job over
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.cargo/advisory-db
-          key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-audit-
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Generate Cargo.lock
@@ -89,30 +66,6 @@ jobs:
         run: cargo generate-lockfile
       - name: Run cargo audit
         run: cargo audit
-
-  test:
-    name: Test (non-eBPF crates)
-    runs-on: x86_64
-    container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: https://github.com/dtolnay/rust-toolchain@stable
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler
-      - name: Cache cargo
-        uses: actions/cache@v4
-        continue-on-error: true  # runner-side cache action is flaky on beauxbatons (artifactcache timeouts / module-not-found under parallel job races) -- caching is an optimization, never worth failing the job over
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-test-
       - name: Run tests
         run: cargo test --workspace --exclude patronus-ebpf
 
@@ -173,7 +126,7 @@ jobs:
     name: Gentoo Docker Build
     runs-on: x86_64
     container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
-    needs: fmt
+    needs: lint-test-audit
     # Uses the prebuilt patronus-ci-base image (Portage tree pre-synced,
     # runtime deps pre-installed, Rust toolchain warm -- see
     # .forgejo/workflows/build-ci-base.yml and Dockerfile.ci-base) so this
