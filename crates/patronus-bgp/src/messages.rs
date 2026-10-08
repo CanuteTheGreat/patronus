@@ -394,26 +394,42 @@ impl UpdateMessage {
             return Err(BgpError::ParseError("Insufficient data for UPDATE".into()));
         }
 
-        // Decode withdrawn routes
+        // Decode withdrawn routes. Bound parsing to exactly withdrawn_len bytes
+        // via a sub-slice rather than subtracting each prefix's *computed*
+        // encoded_len() from a running counter: a malicious/malformed peer can
+        // send a withdrawn_len that doesn't line up with real prefix boundaries,
+        // and encoded_len() > remaining would underflow the usize counter
+        // (panic with overflow checks on, silent wraparound otherwise), letting
+        // attacker-controlled bytes bleed across the withdrawn/path-attribute/
+        // NLRI section boundaries instead of being rejected as malformed.
         let withdrawn_len = buf.get_u16() as usize;
+        if buf.remaining() < withdrawn_len {
+            return Err(BgpError::ParseError(
+                "Insufficient data for withdrawn routes".into(),
+            ));
+        }
+        let mut withdrawn_buf = buf.split_to(withdrawn_len);
         let mut withdrawn_routes = Vec::new();
-        let mut withdrawn_remaining = withdrawn_len;
-
-        while withdrawn_remaining > 0 {
-            let prefix = IpPrefix::decode(buf)?;
-            withdrawn_remaining -= prefix.encoded_len();
-            withdrawn_routes.push(prefix);
+        while withdrawn_buf.has_remaining() {
+            withdrawn_routes.push(IpPrefix::decode(&mut withdrawn_buf)?);
         }
 
-        // Decode path attributes
+        // Decode path attributes (same bounded-sub-slice reasoning as above).
+        if buf.remaining() < 2 {
+            return Err(BgpError::ParseError(
+                "Insufficient data for path attribute length".into(),
+            ));
+        }
         let path_attr_len = buf.get_u16() as usize;
+        if buf.remaining() < path_attr_len {
+            return Err(BgpError::ParseError(
+                "Insufficient data for path attributes".into(),
+            ));
+        }
+        let mut path_attr_buf = buf.split_to(path_attr_len);
         let mut path_attributes = Vec::new();
-        let mut attr_remaining = path_attr_len;
-
-        while attr_remaining > 0 {
-            let attr = PathAttribute::decode(buf)?;
-            attr_remaining -= attr.encoded_len();
-            path_attributes.push(attr);
+        while path_attr_buf.has_remaining() {
+            path_attributes.push(PathAttribute::decode(&mut path_attr_buf)?);
         }
 
         // Decode NLRI
@@ -619,6 +635,54 @@ mod tests {
 
         assert_eq!(decoded.error_code, 6);
         assert_eq!(decoded.error_subcode, 1);
+    }
+
+    #[test]
+    fn test_update_encode_decode_roundtrip() {
+        let mut update = UpdateMessage::new();
+        update.withdrawn_routes.push(IpPrefix {
+            prefix_len: 24,
+            prefix: vec![10, 0, 0],
+        });
+        update.path_attributes.push(PathAttribute {
+            flags: 0x40,
+            type_code: 1,
+            value: vec![0],
+        });
+        update.nlri.push(IpPrefix {
+            prefix_len: 16,
+            prefix: vec![192, 168],
+        });
+
+        let bytes = update.encode();
+        let mut buf = bytes.clone();
+        let _header = MessageHeader::decode(&mut buf).unwrap();
+        let decoded = UpdateMessage::decode(&mut buf).unwrap();
+
+        assert_eq!(decoded.withdrawn_routes.len(), 1);
+        assert_eq!(decoded.withdrawn_routes[0].prefix_len, 24);
+        assert_eq!(decoded.path_attributes.len(), 1);
+        assert_eq!(decoded.nlri.len(), 1);
+        assert_eq!(decoded.nlri[0].prefix_len, 16);
+    }
+
+    #[test]
+    fn test_update_decode_rejects_malformed_withdrawn_len_without_panicking() {
+        // withdrawn_len (2) claims only 2 bytes of withdrawn routes, but the
+        // single prefix inside declares prefix_len=24 (needs 1 + 3 = 4 bytes
+        // total) -- more than the declared section holds. Before the fix this
+        // underflowed an unsigned counter (panic in debug builds); it must now
+        // be rejected cleanly as a parse error instead of panicking or
+        // silently reading past the declared section boundary.
+        let mut buf = BytesMut::new();
+        buf.put_u16(2); // withdrawn_len: only 2 bytes claimed
+        buf.put_u8(24); // prefix_len = 24 -> needs 3 more prefix bytes (total 4)
+        buf.put_u8(10); // only 1 of the 3 needed prefix bytes actually present
+        buf.put_u16(0); // path_attr_len = 0 (unreachable in the buggy path anyway)
+
+        let mut bytes = buf.freeze();
+        let result = UpdateMessage::decode(&mut bytes);
+        assert!(result.is_err());
     }
 
     #[test]
