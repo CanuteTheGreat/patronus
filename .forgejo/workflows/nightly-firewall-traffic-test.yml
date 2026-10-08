@@ -234,7 +234,7 @@ jobs:
           cat > /tmp/sdwanimg/Dockerfile <<'EOF'
           FROM debian:bookworm-slim
           RUN apt-get update && apt-get install -y --no-install-recommends \
-                wireguard-tools iproute2 iputils-ping tcpdump ca-certificates \
+                wireguard-tools iproute2 iputils-ping tcpdump ca-certificates procps \
               && rm -rf /var/lib/apt/lists/*
           COPY real_wireguard_tunnel /usr/local/bin/real_wireguard_tunnel
           RUN chmod +x /usr/local/bin/real_wireguard_tunnel
@@ -271,13 +271,13 @@ jobs:
           done
           docker network create --subnet 10.231.31.0/24 patronus-sdwan-net
           docker run -d --name sdwan-a --network patronus-sdwan-net --ip 10.231.31.10 \
-            --platform linux/amd64 --cap-add=NET_ADMIN -v patronus-sdwan-keys:/keys \
+            --platform linux/amd64 --cap-add=NET_ADMIN --cap-add=NET_RAW -v patronus-sdwan-keys:/keys \
             patronus-sdwan-test:ci \
             /usr/local/bin/real_wireguard_tunnel --role server --listen-port 51820 \
               --own-pubkey-out /keys/a.pub \
               --peer-endpoint 10.231.31.11:51821 --peer-pubkey-file /keys/b.pub
           docker run -d --name sdwan-b --network patronus-sdwan-net --ip 10.231.31.11 \
-            --platform linux/amd64 --cap-add=NET_ADMIN -v patronus-sdwan-keys:/keys \
+            --platform linux/amd64 --cap-add=NET_ADMIN --cap-add=NET_RAW -v patronus-sdwan-keys:/keys \
             patronus-sdwan-test:ci \
             /usr/local/bin/real_wireguard_tunnel --role client --listen-port 51821 \
               --own-pubkey-out /keys/b.pub \
