@@ -269,7 +269,50 @@ def build_vm_bundle(iso_path, disk_size_gb=8):
         plistlib.dump(cfg, f)
 
     # Make UTM (already running in the GUI session) register the bundle.
-    subprocess.run(["open", "-a", "UTM", vm_dir], check=False)
+    #
+    # Was a bare fire-and-forget `check=False` call that discarded both
+    # the exit status and any stderr. Every nightly run from 2026-10-04
+    # onward has failed at the find_vm_uuid_by_name() wait below with
+    # "never showed up in `utmctl list`" after burning through all three
+    # boot-retry attempts (each paying the full 90s registration-wait
+    # budget), and the unified system log for the UTM process shows
+    # *zero* entries in that window - meaning the Apple Event this `open`
+    # is supposed to deliver never even reached the app, i.e. `open`
+    # itself is failing (wrong LaunchServices database state, a stale/
+    # duplicate UTM registration, sandbox quirk, etc.), not "UTM is just
+    # slow to import today" as the retry/backoff tuning upstream of this
+    # function assumed. Capture and print the actual result so the next
+    # failure (if this doesn't fix it outright) shows the real `open`
+    # exit code and stderr instead of silence, and fail fast with a
+    # clear message if `open` itself reports an error rather than
+    # ever bothering to poll utmctl for a bundle that was never opened.
+    if not os.path.isdir(vm_dir):
+        raise SystemExit(f"[host] vm_dir does not exist right before `open`: {vm_dir}")
+    open_result = subprocess.run(
+        ["open", "-a", "UTM", vm_dir], capture_output=True, text=True
+    )
+    print(
+        f"[host] open -a UTM {vm_dir} -> exit {open_result.returncode}"
+        f"{' stdout=' + open_result.stdout.strip() if open_result.stdout.strip() else ''}"
+        f"{' stderr=' + open_result.stderr.strip() if open_result.stderr.strip() else ''}",
+        flush=True,
+    )
+    if open_result.returncode != 0:
+        # Retry once via bundle identifier instead of app name - `open
+        # -a UTM` resolves the app name through LaunchServices and can
+        # fail if that database is stale (multiple UTM.app copies, a
+        # recent reinstall, etc.) even while the already-running UTM
+        # process itself is perfectly healthy; `-b <bundle id>` targets
+        # it directly and sidesteps that particular lookup.
+        retry_result = subprocess.run(
+            ["open", "-b", "com.utmapp.UTM", vm_dir], capture_output=True, text=True
+        )
+        print(
+            f"[host] retry: open -b com.utmapp.UTM {vm_dir} -> exit {retry_result.returncode}"
+            f"{' stdout=' + retry_result.stdout.strip() if retry_result.stdout.strip() else ''}"
+            f"{' stderr=' + retry_result.stderr.strip() if retry_result.stderr.strip() else ''}",
+            flush=True,
+        )
     time.sleep(5)
     return vm_dir, cfg["Information"]["UUID"]
 
