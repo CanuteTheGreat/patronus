@@ -590,15 +590,34 @@ impl BgpMessage {
         // Decode header
         let header = MessageHeader::decode(&mut buf)?;
 
+        // Bound the body to exactly the declared header.length (minus the
+        // header itself) via a sub-slice, same reasoning/fix class as
+        // OpenMessage::decode and UpdateMessage::decode above: `data` here
+        // is frequently a shared read buffer that may already contain one
+        // or more *subsequent* BGP messages back-to-back (this is the
+        // normal TCP streaming case, not an edge case). Without this bound,
+        // body decoders that loop "while buf.has_remaining()" (e.g.
+        // UpdateMessage's NLRI loop) would silently consume bytes belonging
+        // to the next message on the wire instead of stopping at this
+        // message's real boundary -- a framing desync, not just a
+        // malformed-length rejection.
+        let body_len = header.length as usize - MessageHeader::MIN_SIZE;
+        if buf.remaining() < body_len {
+            return Err(BgpError::ParseError(
+                "Insufficient data for message body".into(),
+            ));
+        }
+        let mut body_buf = buf.split_to(body_len);
+
         // Decode message body based on type
         match header.msg_type {
-            MessageType::Open => Ok(BgpMessage::Open(OpenMessage::decode(&mut buf)?)),
-            MessageType::Update => Ok(BgpMessage::Update(UpdateMessage::decode(&mut buf)?)),
-            MessageType::Notification => Ok(BgpMessage::Notification(NotificationMessage::decode(
-                &mut buf,
-            )?)),
+            MessageType::Open => Ok(BgpMessage::Open(OpenMessage::decode(&mut body_buf)?)),
+            MessageType::Update => Ok(BgpMessage::Update(UpdateMessage::decode(&mut body_buf)?)),
+            MessageType::Notification => Ok(BgpMessage::Notification(
+                NotificationMessage::decode(&mut body_buf)?,
+            )),
             MessageType::Keepalive => {
-                Ok(BgpMessage::Keepalive(KeepaliveMessage::decode(&mut buf)?))
+                Ok(BgpMessage::Keepalive(KeepaliveMessage::decode(&mut body_buf)?))
             }
         }
     }
