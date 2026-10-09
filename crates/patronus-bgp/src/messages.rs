@@ -613,12 +613,12 @@ impl BgpMessage {
         match header.msg_type {
             MessageType::Open => Ok(BgpMessage::Open(OpenMessage::decode(&mut body_buf)?)),
             MessageType::Update => Ok(BgpMessage::Update(UpdateMessage::decode(&mut body_buf)?)),
-            MessageType::Notification => Ok(BgpMessage::Notification(
-                NotificationMessage::decode(&mut body_buf)?,
-            )),
-            MessageType::Keepalive => {
-                Ok(BgpMessage::Keepalive(KeepaliveMessage::decode(&mut body_buf)?))
-            }
+            MessageType::Notification => Ok(BgpMessage::Notification(NotificationMessage::decode(
+                &mut body_buf,
+            )?)),
+            MessageType::Keepalive => Ok(BgpMessage::Keepalive(KeepaliveMessage::decode(
+                &mut body_buf,
+            )?)),
         }
     }
 }
