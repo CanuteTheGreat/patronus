@@ -377,6 +377,42 @@ def find_vm_uuid_by_name(name, retries=30, interval_s=3):
             if name in line:
                 return line.split()[0]
         time.sleep(interval_s)
+    # The `open -a UTM <bundle>` call upstream of this has been
+    # observed (2026-10-09) returning exit 0 with no stderr, yet the
+    # bundle still never shows up here after the full retry budget --
+    # disproving the earlier "open itself is failing" theory for at
+    # least this failure mode. The next most likely explanation is a
+    # modal/permission dialog UTM is showing (e.g. an "allow this app
+    # to add a VM configuration" prompt) that nobody is present to
+    # click in this unattended GUI session, silently stalling the
+    # import. We can't inspect UTM's window/dialog state via AppleEvents
+    # from outside this job's own GUI session (System Events AppleEvents
+    # hang/time out over plain SSH, same restriction utmctl itself has
+    # over SSH -- confirmed directly). `screencapture` doesn't need
+    # AppleEvents though, so grab a real screenshot of the GUI session
+    # right at the point of failure and save it next to the VM staging
+    # dir -- next failure's job log prints exactly where this landed,
+    # giving the next investigation an actual picture of what's stuck
+    # on screen instead of guessing blind from retry-loop text alone.
+    screenshot_path = os.path.join(
+        UTM_EXTERNAL_STAGING, f"registration-failure-{name}.png"
+    )
+    try:
+        os.makedirs(UTM_EXTERNAL_STAGING, exist_ok=True)
+        shot = subprocess.run(
+            ["screencapture", "-x", screenshot_path],
+            capture_output=True, text=True, timeout=15,
+        )
+        if shot.returncode == 0 and os.path.isfile(screenshot_path):
+            print(f"[host] saved failure screenshot: {screenshot_path}", flush=True)
+        else:
+            print(
+                f"[host] screenshot capture failed: exit={shot.returncode} "
+                f"stdout={shot.stdout.strip()} stderr={shot.stderr.strip()}",
+                flush=True,
+            )
+    except Exception as exc:
+        print(f"[host] screenshot capture raised: {exc!r}", flush=True)
     raise SystemExit(f"VM '{name}' never showed up in `utmctl list`:\n{out.stdout}\n{out.stderr}")
 
 
