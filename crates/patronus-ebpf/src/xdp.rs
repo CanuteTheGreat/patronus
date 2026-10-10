@@ -326,15 +326,28 @@ impl XdpFirewall {
         // Compile with clang
         let object_path = temp_dir.join("patronus_xdp.o");
 
+        let source_path_str = source_path.to_str().ok_or_else(|| {
+            XdpError::LoadFailed(format!(
+                "BPF source path is not valid UTF-8 (check TMPDIR): {:?}",
+                source_path
+            ))
+        })?;
+        let object_path_str = object_path.to_str().ok_or_else(|| {
+            XdpError::LoadFailed(format!(
+                "BPF object path is not valid UTF-8 (check TMPDIR): {:?}",
+                object_path
+            ))
+        })?;
+
         let status = std::process::Command::new("clang")
             .args([
                 "-O2",
                 "-target",
                 "bpf",
                 "-c",
-                source_path.to_str().unwrap(),
+                source_path_str,
                 "-o",
-                object_path.to_str().unwrap(),
+                object_path_str,
             ])
             .status()?;
 
