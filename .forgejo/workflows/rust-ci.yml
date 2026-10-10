@@ -30,6 +30,17 @@ jobs:
   lint-test-audit:
     name: Format + Clippy + Security Audit + Test (non-eBPF crates)
     runs-on: x86_64
+    # 2026-10-09 run (commit 6dc6e08) died silently 23m35s in with no final
+    # error line -- log just stops mid-clippy-compile (last line "Checking
+    # patronus-sdwan") with no panic/OOM/cancellation message, while the
+    # sibling check-full-workspace job (same runner, same deps, 'cargo
+    # check' instead of clippy) finished clean in 4m18s right after. Root
+    # cause couldn't be confirmed after the fact (beauxbatons is a shared
+    # macOS dev box, runner has capacity 1, no swap -- a transient resource
+    # stall on the host is the leading theory, not a code bug). Adding an
+    # explicit timeout here so a repeat produces a clear 'cancelled: timeout'
+    # instead of a silent unexplained failure with a dead log stream.
+    timeout-minutes: 30
     container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
     steps:
       - uses: actions/checkout@v4
@@ -72,6 +83,7 @@ jobs:
   check-ebpf:
     name: Check eBPF crate (compile only, no run)
     runs-on: x86_64
+    timeout-minutes: 15
     container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
     steps:
       - uses: actions/checkout@v4
@@ -98,6 +110,7 @@ jobs:
   check-full-workspace:
     name: Check full 48-crate workspace (best-effort)
     runs-on: x86_64
+    timeout-minutes: 20
     container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
     continue-on-error: true
     steps:
