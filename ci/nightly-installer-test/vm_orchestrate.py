@@ -417,11 +417,43 @@ def find_vm_uuid_by_name(name, retries=30, interval_s=3):
         if shot.returncode == 0 and os.path.isfile(screenshot_path):
             print(f"[host] saved failure screenshot: {screenshot_path}", flush=True)
         else:
+            stderr = shot.stderr.strip()
             print(
                 f"[host] screenshot capture failed: exit={shot.returncode} "
-                f"stdout={shot.stdout.strip()} stderr={shot.stderr.strip()}",
+                f"stdout={shot.stdout.strip()} stderr={stderr}",
                 flush=True,
             )
+            # Confirmed 2026-10-10 via `sqlite3 TCC.db` on beauxbatons: this
+            # exact "could not create image from display" exit=1 is macOS
+            # refusing kTCCServiceScreenCapture to the forgejo-runner
+            # binary (/Users/rbf/.forgejo-runner-bin/forgejo-runner),
+            # auth_value=0 (denied), auth_reason=4 (user never granted it --
+            # there's no GUI session present when the LaunchAgent-managed
+            # runner process first touched the Screen Recording API to
+            # trigger the one-time TCC prompt). SIP blocks editing TCC.db
+            # directly (confirmed: `UPDATE access ...` -> "attempt to write
+            # a readonly database" even via sudo), so this cannot be fixed
+            # from a script or over SSH -- it requires a human on the
+            # beauxbatons console granting Screen Recording to that runner
+            # binary in System Settings > Privacy & Security > Screen
+            # Recording, then relaunching the runner process. Flagging it
+            # explicitly here so every future failure log says so instead
+            # of re-diagnosing the same dead end. This does not explain the
+            # actual VM-registration timeout above (UTM's AppleEvent-driven
+            # import of the bundle doesn't go through screencapture/TCC at
+            # all) -- it only means we fly blind on the diagnostic
+            # screenshot for that real failure until the permission is
+            # granted.
+            if "could not create image from display" in stderr:
+                print(
+                    "[host] NOTE: this is a known TCC permission gap, not a "
+                    "new bug -- forgejo-runner lacks Screen Recording "
+                    "permission on this host and SIP blocks fixing it "
+                    "programmatically. Needs a human to grant it in System "
+                    "Settings > Privacy & Security > Screen Recording on "
+                    "beauxbatons, then restart the runner.",
+                    flush=True,
+                )
     except Exception as exc:
         print(f"[host] screenshot capture raised: {exc!r}", flush=True)
     raise SystemExit(f"VM '{name}' never showed up in `utmctl list`:\n{out.stdout}\n{out.stderr}")
