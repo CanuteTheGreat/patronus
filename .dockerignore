@@ -1,5 +1,6 @@
 target/
 **/target/
+.git/
 .gitignore
 *.md
 !README.md
