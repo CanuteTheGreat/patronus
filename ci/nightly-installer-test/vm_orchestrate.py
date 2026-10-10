@@ -400,7 +400,18 @@ def find_vm_uuid_by_name(name, retries=30, interval_s=3):
     try:
         os.makedirs(UTM_EXTERNAL_STAGING, exist_ok=True)
         shot = subprocess.run(
-            ["screencapture", "-x", screenshot_path],
+            # Absolute path, not a bare "screencapture" PATH lookup: this
+            # job runs under a LaunchAgent-managed runner process whose
+            # inherited PATH does not reliably include /usr/sbin (unlike
+            # an interactive login-shell PATH) - confirmed directly by
+            # the exact failure mode this produced, a Python
+            # FileNotFoundError(2, 'No such file or directory') raised by
+            # subprocess itself (meaning it could never even locate/exec
+            # the binary), not a non-zero screencapture exit status. That
+            # silently ate every diagnostic screenshot this function was
+            # specifically added to capture, across every nightly failure
+            # since it was introduced.
+            ["/usr/sbin/screencapture", "-x", screenshot_path],
             capture_output=True, text=True, timeout=15,
         )
         if shot.returncode == 0 and os.path.isfile(screenshot_path):
