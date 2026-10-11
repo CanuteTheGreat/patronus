@@ -616,3 +616,74 @@ impl Default for PortalConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod qa_regression_tests {
+    //! Regression tests added by agent-driven QA (2026-10-10) for commit
+    //! 6f33d1325ec96b2a88b9fca75146a8a8b7574eba: handle_login() must not panic
+    //! on a malformed client-supplied ip_address, it must return 400.
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt; // for `oneshot`
+
+    fn test_state() -> Arc<PortalState> {
+        Arc::new(PortalState {
+            config: PortalConfig::default(),
+            sessions: Arc::new(RwLock::new(SessionManager::new())),
+            vouchers: Arc::new(RwLock::new(VoucherManager::new())),
+            bandwidth: Arc::new(BandwidthLimiter::new()),
+            auth_providers: HashMap::new(),
+        })
+    }
+
+    fn router(state: Arc<PortalState>) -> Router {
+        Router::new()
+            .route("/login", post(handle_login))
+            .with_state(state)
+    }
+
+    #[tokio::test]
+    async fn malformed_ip_address_returns_400_not_panic() {
+        let state = test_state();
+        // Force the authenticated branch via username/password (placeholder auth
+        // returns true for any username+password per current handle_login code),
+        // which keeps this test independent of the voucher-manager API.
+        let body = "username=alice&password=whatever&mac_address=AA:BB:CC:DD:EE:FF&ip_address=not-an-ip";
+        let req = Request::builder()
+            .method("POST")
+            .uri("/login")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(body))
+            .unwrap();
+
+        let resp = router(state).oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "malformed ip_address must yield 400, not a panic/500"
+        );
+    }
+
+    #[tokio::test]
+    async fn valid_ip_address_creates_session_successfully() {
+        let state = test_state();
+        let body = "username=alice&password=whatever&mac_address=AA:BB:CC:DD:EE:FF&ip_address=192.168.1.50";
+        let req = Request::builder()
+            .method("POST")
+            .uri("/login")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(body))
+            .unwrap();
+
+        let resp = router(state.clone()).oneshot(req).await.unwrap();
+        assert_ne!(resp.status(), StatusCode::BAD_REQUEST, "a valid ip_address must not be rejected");
+        assert_ne!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let sessions = state.sessions.read().await;
+        assert!(
+            sessions.get_by_mac("AA:BB:CC:DD:EE:FF").await.is_some(),
+            "a session should have been created for the authenticated client"
+        );
+    }
+}
