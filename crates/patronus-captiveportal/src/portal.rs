@@ -4,7 +4,7 @@
 //! and client management.
 
 use crate::{
-    auth::{AuthMethod, AuthProvider},
+    auth::{AuthCredentials, AuthMethod, AuthProvider},
     bandwidth::BandwidthLimiter,
     sessions::SessionManager,
     vouchers::VoucherManager,
@@ -459,10 +459,31 @@ async fn handle_login(
         // Voucher authentication
         let mut vouchers = state.vouchers.write().await;
         vouchers.redeem(voucher).await.is_ok()
-    } else if let (Some(_username), Some(_password)) = (&login.username, &login.password) {
-        // Username/password authentication
-        // Check against configured auth providers
-        true // Placeholder
+    } else if let (Some(username), Some(password)) = (&login.username, &login.password) {
+        // Username/password authentication: delegate to whichever auth providers are
+        // actually configured (RADIUS, local, etc.). This used to be a bare `true`
+        // placeholder that authenticated ANY non-empty username+password pair without
+        // checking anything at all -- a full captive-portal authentication bypass, since
+        // `state.auth_providers` was built into `PortalState` but never consulted. With no
+        // providers registered (the default), username/password login now correctly fails
+        // closed instead of granting network access to everyone.
+        let credentials = AuthCredentials {
+            username: Some(username.clone()),
+            password: Some(password.clone()),
+            email: None,
+            phone: None,
+            oauth_token: None,
+        };
+        let mut ok = false;
+        for provider in state.auth_providers.values() {
+            if let Ok(result) = provider.authenticate(&credentials).await {
+                if result.success {
+                    ok = true;
+                    break;
+                }
+            }
+        }
+        ok
     } else {
         false
     };
@@ -670,12 +691,20 @@ mod qa_regression_tests {
     use tower::ServiceExt; // for `oneshot`
 
     fn test_state() -> Arc<PortalState> {
+        // Register a real LocalAuthProvider with a known user so these tests exercise
+        // the actual provider-authentication path (post auth-bypass fix) instead of
+        // relying on the old unconditional-`true` placeholder.
+        let mut local = crate::auth::LocalAuthProvider::new();
+        local.add_user("alice".to_string(), "whatever".to_string());
+        let mut auth_providers: HashMap<String, Box<dyn AuthProvider>> = HashMap::new();
+        auth_providers.insert("local".to_string(), Box::new(local));
+
         Arc::new(PortalState {
             config: PortalConfig::default(),
             sessions: Arc::new(RwLock::new(SessionManager::new())),
             vouchers: Arc::new(RwLock::new(VoucherManager::new())),
             bandwidth: Arc::new(BandwidthLimiter::new()),
-            auth_providers: HashMap::new(),
+            auth_providers,
         })
     }
 
@@ -754,6 +783,57 @@ mod qa_regression_tests {
         assert!(!is_valid_mac_address("not-a-mac"));
         assert!(!is_valid_mac_address("AA:BB:CC:DD:EE:FF:00")); // too long
         assert!(!is_valid_mac_address("AA:BB:CC:DD:EE:FG")); // non-hex digit
+    }
+
+    #[tokio::test]
+    async fn username_password_login_rejected_with_no_auth_providers_configured() {
+        // Regression test for the auth-bypass fix: with no auth providers registered
+        // (the production default), username/password login must fail closed, not
+        // silently succeed like the old `true // Placeholder` behavior did.
+        let state = Arc::new(PortalState {
+            config: PortalConfig::default(),
+            sessions: Arc::new(RwLock::new(SessionManager::new())),
+            vouchers: Arc::new(RwLock::new(VoucherManager::new())),
+            bandwidth: Arc::new(BandwidthLimiter::new()),
+            auth_providers: HashMap::new(),
+        });
+        let body =
+            "username=anyone&password=anything&mac_address=AA:BB:CC:DD:EE:FF&ip_address=192.168.1.50";
+        let req = Request::builder()
+            .method("POST")
+            .uri("/login")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(body))
+            .unwrap();
+
+        let resp = router(state).oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "username/password login must be rejected when no auth provider is configured"
+        );
+    }
+
+    #[tokio::test]
+    async fn username_password_login_rejected_with_wrong_password() {
+        // Even with a real LocalAuthProvider registered, a wrong password must not
+        // authenticate.
+        let state = test_state();
+        let body =
+            "username=alice&password=totally-wrong&mac_address=AA:BB:CC:DD:EE:FF&ip_address=192.168.1.50";
+        let req = Request::builder()
+            .method("POST")
+            .uri("/login")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(body))
+            .unwrap();
+
+        let resp = router(state).oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "an incorrect password must be rejected, not authenticated"
+        );
     }
 
     #[tokio::test]
