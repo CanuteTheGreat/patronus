@@ -46,6 +46,18 @@ RUN echo "net-firewall/patronus ${PATRONUS_USE} -openrc" > /etc/portage/package.
 RUN echo "net-firewall/patronus ~amd64" > /etc/portage/package.accept_keywords/patronus && \
     echo "=net-firewall/patronus-9999 **" >> /etc/portage/package.accept_keywords/patronus
 
+# Install patronus's DEPENDENCIES only (Go/Rust toolchains, libs, etc.)
+# before copying any application source. Ebuild DEPEND/RDEPEND metadata
+# comes from the overlay .ebuild file (already present above), not from the
+# source tree, so this layer is cache-stable across ordinary commits and
+# only re-runs when the ebuild/overlay/USE flags actually change. This is
+# what actually fixes the "every commit re-emerges the whole toolchain from
+# scratch" problem -- a .dockerignore .git/ exclusion alone was NOT enough,
+# because the expensive dependency build was previously gated behind the
+# full-source COPY below, not behind the (rarely-changing) ebuild metadata.
+RUN emerge --verbose --autounmask-write --onlydeps net-firewall/patronus && \
+    etc-update --automode -5 || true
+
 # The live ebuild (patronus-9999) fetches via git-r3 from this project's own
 # repo (git.canutethegreat.com); for a from-source container build we vendor
 # the working tree directly instead, so the image always reflects what's
@@ -61,8 +73,8 @@ RUN cd /usr/src/patronus && cargo vendor /var/cache/distfiles/patronus-vendor 2>
 # point it at a local path instead.
 ENV EGIT_OVERRIDE_REPO_PATRONUS=/usr/src/patronus
 
-RUN emerge --verbose --autounmask-write net-firewall/patronus && \
-    etc-update --automode -5 || true
+# Dependencies are already merged above, so this now only builds and links
+# patronus itself -- the part that's actually supposed to run on every commit.
 RUN emerge --verbose net-firewall/patronus
 
 # --- Runtime stage --------------------------------------------------------
