@@ -4,6 +4,7 @@ use crate::auth::AuthState;
 use patronus_config::ConfigStore;
 use patronus_core::types::{ChainType, FirewallAction, FirewallRule as CoreFirewallRule};
 use patronus_firewall::RuleManager;
+use patronus_secrets::SecretManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -17,6 +18,12 @@ pub struct AppState {
     pub monitoring: Arc<MonitoringManager>,
     pub config_store: Arc<ConfigStore>,
     pub auth: AuthState,
+    /// Secret storage + rotation. Backed by an in-memory store for now (same
+    /// stub-grade bootstrap as `config_store`'s hardcoded `/tmp` path in
+    /// `main.rs`); swapping in `patronus_secrets::store::FileStore` plus a
+    /// real master-key sourcing strategy (env var / system keyring / HSM) is
+    /// a tracked follow-up, not a decision to make unattended here.
+    pub secrets: Arc<SecretManager>,
 }
 
 impl AppState {
@@ -29,6 +36,9 @@ impl AppState {
             monitoring: Arc::new(MonitoringManager::new()),
             config_store: Arc::new(config_store),
             auth: AuthState::new(),
+            secrets: Arc::new(SecretManager::new(Arc::new(
+                patronus_secrets::store::MemoryStore::new(),
+            ))),
         }
     }
 }

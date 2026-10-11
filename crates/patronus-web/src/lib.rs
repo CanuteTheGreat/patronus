@@ -37,6 +37,40 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
         }
     });
 
+    // Start secret rotation enforcement task. `enforce_rotation_policy()` was
+    // previously implemented but never actually invoked anywhere in the
+    // codebase, so no secret was ever auto-rotated in a running process --
+    // only ever on an ad-hoc call from a test. Run it on the same hourly
+    // cadence as session cleanup.
+    let rotation_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
+        loop {
+            interval.tick().await;
+            match rotation_state.secrets.enforce_rotation_policy().await {
+                Ok(result) => {
+                    if !result.auto_rotated.is_empty() {
+                        tracing::info!(
+                            "Auto-rotated {} secret(s): {:?}",
+                            result.auto_rotated.len(),
+                            result.auto_rotated
+                        );
+                    }
+                    if !result.needs_manual_rotation.is_empty() {
+                        tracing::warn!(
+                            "{} secret(s) need manual rotation: {:?}",
+                            result.needs_manual_rotation.len(),
+                            result.needs_manual_rotation
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to enforce secret rotation policy: {}", e);
+                }
+            }
+        }
+    });
+
     // Start WebSocket broadcaster tasks
     websocket::start_metrics_broadcaster(ws_broadcaster.clone(), state.clone());
     websocket::start_log_broadcaster(ws_broadcaster.clone());
