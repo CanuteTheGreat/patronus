@@ -424,6 +424,32 @@ async fn login_page() -> Html<&'static str> {
     Html("<h1>Login Page</h1>")
 }
 
+/// Validate that a string is a plausible MAC address (`AA:BB:CC:DD:EE:FF` or
+/// `AA-BB-CC-DD-EE-FF`, case-insensitive). `mac_address` values on this module's
+/// endpoints come straight off unauthenticated/placeholder-authenticated HTTP form
+/// POSTs and are interpolated directly into `nft add/delete element ... { <value> }`
+/// command-line arguments. `nft` parses its own argument list as a sequence of
+/// statements (it does not need a shell to chain commands with `;`), so an
+/// unvalidated value there is an nftables ruleset-injection vector, not just a
+/// cosmetic parsing concern. Reject anything that isn't a well-formed MAC before it
+/// ever reaches session bookkeeping or a `Command`.
+fn is_valid_mac_address(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() != 17 {
+        return false;
+    }
+    for (i, b) in bytes.iter().enumerate() {
+        if i % 3 == 2 {
+            if *b != b':' && *b != b'-' {
+                return false;
+            }
+        } else if !b.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+    true
+}
+
 async fn handle_login(
     State(state): State<Arc<PortalState>>,
     Form(login): Form<LoginRequest>,
@@ -456,6 +482,14 @@ async fn handle_login(
                     .into_response();
             }
         };
+
+        if !is_valid_mac_address(&login.mac_address) {
+            return (
+                StatusCode::BAD_REQUEST,
+                "Invalid mac_address in login request",
+            )
+                .into_response();
+        }
 
         // Create session
         let mut sessions = state.sessions.write().await;
@@ -503,6 +537,11 @@ async fn handle_logout(
     Form(params): Form<HashMap<String, String>>,
 ) -> Response {
     if let Some(mac) = params.get("mac_address") {
+        if !is_valid_mac_address(mac) {
+            return (StatusCode::BAD_REQUEST, "Invalid mac_address in logout request")
+                .into_response();
+        }
+
         // Remove session
         let mut sessions = state.sessions.write().await;
         sessions.terminate_by_mac(mac).await;
@@ -689,6 +728,49 @@ mod qa_regression_tests {
         assert!(
             sessions.get_by_mac("AA:BB:CC:DD:EE:FF").await.is_some(),
             "a session should have been created for the authenticated client"
+        );
+    }
+
+    #[test]
+    fn is_valid_mac_address_accepts_well_formed_macs() {
+        assert!(is_valid_mac_address("AA:BB:CC:DD:EE:FF"));
+        assert!(is_valid_mac_address("aa:bb:cc:dd:ee:ff"));
+        assert!(is_valid_mac_address("AA-BB-CC-DD-EE-FF"));
+    }
+
+    #[test]
+    fn is_valid_mac_address_rejects_nftables_injection_payloads() {
+        // A real payload that would otherwise be spliced straight into
+        // `nft add element inet captive_portal authenticated_clients { <value> timeout 1h }`
+        // as a single command-line argument, letting an unauthenticated/placeholder-
+        // authenticated client inject arbitrary additional nft statements.
+        assert!(!is_valid_mac_address(
+            "AA:BB:CC:DD:EE:FF }; add rule inet captive_portal forward accept #"
+        ));
+        assert!(!is_valid_mac_address(""));
+        assert!(!is_valid_mac_address("not-a-mac"));
+        assert!(!is_valid_mac_address("AA:BB:CC:DD:EE:FF:00")); // too long
+        assert!(!is_valid_mac_address("AA:BB:CC:DD:EE:FG")); // non-hex digit
+    }
+
+    #[tokio::test]
+    async fn malformed_mac_address_returns_400_not_injected_into_nft() {
+        let state = test_state();
+        let body = "username=alice&password=whatever&\
+                     mac_address=AA:BB:CC:DD:EE:FF%20%7D%3B%20add%20rule%20inet%20captive_portal%20forward%20accept&\
+                     ip_address=192.168.1.50";
+        let req = Request::builder()
+            .method("POST")
+            .uri("/login")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(body))
+            .unwrap();
+
+        let resp = router(state).oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "a mac_address containing nft syntax must be rejected, not executed"
         );
     }
 }
