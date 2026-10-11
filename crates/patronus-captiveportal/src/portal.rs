@@ -649,7 +649,8 @@ mod qa_regression_tests {
         // Force the authenticated branch via username/password (placeholder auth
         // returns true for any username+password per current handle_login code),
         // which keeps this test independent of the voucher-manager API.
-        let body = "username=alice&password=whatever&mac_address=AA:BB:CC:DD:EE:FF&ip_address=not-an-ip";
+        let body =
+            "username=alice&password=whatever&mac_address=AA:BB:CC:DD:EE:FF&ip_address=not-an-ip";
         let req = Request::builder()
             .method("POST")
             .uri("/login")
@@ -677,7 +678,11 @@ mod qa_regression_tests {
             .unwrap();
 
         let resp = router(state.clone()).oneshot(req).await.unwrap();
-        assert_ne!(resp.status(), StatusCode::BAD_REQUEST, "a valid ip_address must not be rejected");
+        assert_ne!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "a valid ip_address must not be rejected"
+        );
         assert_ne!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
         let sessions = state.sessions.read().await;
