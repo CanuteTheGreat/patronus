@@ -442,10 +442,25 @@ async fn handle_login(
     };
 
     if authenticated {
+        // Validate client-supplied IP address before using it: `login.ip_address` comes
+        // straight off an unauthenticated HTTP form POST (any device on the captive-portal
+        // network can submit arbitrary garbage here), so a bare `.parse().unwrap()` let any
+        // client crash this request with a malformed value instead of just failing the login.
+        let ip_address = match login.ip_address.parse() {
+            Ok(ip) => ip,
+            Err(_) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "Invalid ip_address in login request",
+                )
+                    .into_response();
+            }
+        };
+
         // Create session
         let mut sessions = state.sessions.write().await;
         let _session = sessions
-            .create_session(login.mac_address.clone(), login.ip_address.parse().unwrap())
+            .create_session(login.mac_address.clone(), ip_address)
             .await;
 
         // Add MAC to nftables authenticated set
