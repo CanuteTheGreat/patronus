@@ -538,7 +538,10 @@ async fn handle_logout(
 ) -> Response {
     if let Some(mac) = params.get("mac_address") {
         if !is_valid_mac_address(mac) {
-            return (StatusCode::BAD_REQUEST, "Invalid mac_address in logout request")
+            return (
+                StatusCode::BAD_REQUEST,
+                "Invalid mac_address in logout request",
+            )
                 .into_response();
         }
 
