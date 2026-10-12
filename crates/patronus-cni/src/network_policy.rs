@@ -294,10 +294,7 @@ impl NetworkPolicyController {
         };
 
         let to_ports = if let Some(ports) = &rule.ports {
-            ports
-                .iter()
-                .filter_map(parse_port_rule)
-                .collect()
+            ports.iter().filter_map(parse_port_rule).collect()
         } else {
             Vec::new()
         };
@@ -350,10 +347,7 @@ impl NetworkPolicyController {
         };
 
         let to_ports = if let Some(ports) = &rule.ports {
-            ports
-                .iter()
-                .filter_map(parse_port_rule)
-                .collect()
+            ports.iter().filter_map(parse_port_rule).collect()
         } else {
             Vec::new()
         };
@@ -570,16 +564,15 @@ mod tests {
 
     #[test]
     fn test_parse_port_rule_rejects_out_of_range_end_port() {
-        assert!(
-            parse_port_rule(&port_spec(Some(IntOrString::Int(80)), Some(70000))).is_none()
-        );
+        assert!(parse_port_rule(&port_spec(Some(IntOrString::Int(80)), Some(70000))).is_none());
     }
 
     #[test]
     fn test_parse_port_rule_rejects_unparseable_named_port() {
-        assert!(
-            parse_port_rule(&port_spec(Some(IntOrString::String("not-a-port".into())), None))
-                .is_none()
-        );
+        assert!(parse_port_rule(&port_spec(
+            Some(IntOrString::String("not-a-port".into())),
+            None
+        ))
+        .is_none());
     }
 }
