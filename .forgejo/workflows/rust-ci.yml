@@ -108,7 +108,7 @@ jobs:
         run: cargo check -p patronus-ebpf --all-targets
 
   check-full-workspace:
-    name: Check full 48-crate workspace (best-effort)
+    name: Check full 46-crate workspace (best-effort)
     runs-on: x86_64
     timeout-minutes: 20
     container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
