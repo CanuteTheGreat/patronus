@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use k8s_openapi::api::networking::v1::{
-    NetworkPolicy, NetworkPolicyEgressRule, NetworkPolicyIngressRule,
+    NetworkPolicy, NetworkPolicyEgressRule, NetworkPolicyIngressRule, NetworkPolicyPort,
 };
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::runtime::{watcher, WatchStreamExt};
@@ -72,6 +72,66 @@ pub struct NetworkPolicyController {
     datapath: Arc<EbpfDatapath>,
     #[allow(dead_code)]
     pod_to_policy: Arc<RwLock<HashMap<String, Vec<String>>>>, // pod_key -> policy_names
+}
+
+/// Parse a single `NetworkPolicyPort` entry into a `PortRule`.
+///
+/// Returns `None` (dropping the port entry entirely) if a port or
+/// end_port value is present but out of the valid u16 range (0-65535) or
+/// otherwise unparseable. This must *not* fall back to `port: None`
+/// (which in `PortRule` semantics means "no port restriction, matches
+/// anything") -- doing so would silently widen a narrowly-scoped rule
+/// into an allow-all-ports rule instead of rejecting the malformed
+/// input, which is the opposite of fail-safe for a firewall/network
+/// policy engine. Previously this used `as u16`, which wraps
+/// out-of-range integers (e.g. 70000 -> 4464) instead of rejecting them,
+/// silently wiring up a rule for the wrong port.
+fn parse_port_rule(p: &NetworkPolicyPort) -> Option<PortRule> {
+    let protocol = p.protocol.clone().unwrap_or_else(|| "TCP".to_string());
+
+    let port = match p.port.as_ref() {
+        Some(IntOrString::Int(i)) => match u16::try_from(*i) {
+            Ok(port) => Some(port),
+            Err(_) => {
+                warn!(
+                    "NetworkPolicy port {} is out of range (0-65535); dropping this port rule instead of silently wrapping it",
+                    i
+                );
+                return None;
+            }
+        },
+        Some(IntOrString::String(s)) => match s.parse::<u16>() {
+            Ok(port) => Some(port),
+            Err(_) => {
+                warn!(
+                    "NetworkPolicy named/string port {:?} could not be parsed as a u16 port number; dropping this port rule",
+                    s
+                );
+                return None;
+            }
+        },
+        None => None,
+    };
+
+    let end_port = match p.end_port {
+        Some(e) => match u16::try_from(e) {
+            Ok(end_port) => Some(end_port),
+            Err(_) => {
+                warn!(
+                    "NetworkPolicy end_port {} is out of range (0-65535); dropping this port rule instead of silently wrapping it",
+                    e
+                );
+                return None;
+            }
+        },
+        None => None,
+    };
+
+    Some(PortRule {
+        protocol,
+        port,
+        end_port,
+    })
 }
 
 impl NetworkPolicyController {
@@ -236,14 +296,7 @@ impl NetworkPolicyController {
         let to_ports = if let Some(ports) = &rule.ports {
             ports
                 .iter()
-                .map(|p| PortRule {
-                    protocol: p.protocol.clone().unwrap_or_else(|| "TCP".to_string()),
-                    port: p.port.as_ref().and_then(|port| match port {
-                        IntOrString::Int(i) => Some(*i as u16),
-                        IntOrString::String(s) => s.parse::<u16>().ok(),
-                    }),
-                    end_port: p.end_port.map(|e| e as u16),
-                })
+                .filter_map(parse_port_rule)
                 .collect()
         } else {
             Vec::new()
@@ -299,14 +352,7 @@ impl NetworkPolicyController {
         let to_ports = if let Some(ports) = &rule.ports {
             ports
                 .iter()
-                .map(|p| PortRule {
-                    protocol: p.protocol.clone().unwrap_or_else(|| "TCP".to_string()),
-                    port: p.port.as_ref().and_then(|port| match port {
-                        IntOrString::Int(i) => Some(*i as u16),
-                        IntOrString::String(s) => s.parse::<u16>().ok(),
-                    }),
-                    end_port: p.end_port.map(|e| e as u16),
-                })
+                .filter_map(parse_port_rule)
                 .collect()
         } else {
             Vec::new()
@@ -474,5 +520,66 @@ mod tests {
 
         let ip2 = parse_cidr_to_ip("10.0.0.0/8");
         assert_eq!(ip2.to_string(), "10.0.0.0");
+    }
+
+    fn port_spec(port: Option<IntOrString>, end_port: Option<i32>) -> NetworkPolicyPort {
+        NetworkPolicyPort {
+            end_port,
+            port,
+            protocol: None,
+        }
+    }
+
+    #[test]
+    fn test_parse_port_rule_valid_numeric_port() {
+        let rule = parse_port_rule(&port_spec(Some(IntOrString::Int(443)), None)).unwrap();
+        assert_eq!(rule.protocol, "TCP");
+        assert_eq!(rule.port, Some(443));
+        assert_eq!(rule.end_port, None);
+    }
+
+    #[test]
+    fn test_parse_port_rule_valid_named_port() {
+        let rule =
+            parse_port_rule(&port_spec(Some(IntOrString::String("8080".into())), None)).unwrap();
+        assert_eq!(rule.port, Some(8080));
+    }
+
+    #[test]
+    fn test_parse_port_rule_no_port_restriction() {
+        // A NetworkPolicyPort with no `port` field at all legitimately means
+        // "matches all ports" and must still parse to a rule with `port: None`.
+        let rule = parse_port_rule(&port_spec(None, None)).unwrap();
+        assert_eq!(rule.port, None);
+        assert_eq!(rule.end_port, None);
+    }
+
+    #[test]
+    fn test_parse_port_rule_rejects_out_of_range_port_instead_of_wrapping() {
+        // Regression: this used to silently wrap via `as u16` (70000 -> 4464),
+        // wiring up a rule for the wrong port. It must now drop the whole
+        // rule instead of letting it through as the wrapped port or as
+        // `None` (which would mean "all ports").
+        assert!(parse_port_rule(&port_spec(Some(IntOrString::Int(70000)), None)).is_none());
+    }
+
+    #[test]
+    fn test_parse_port_rule_rejects_negative_port() {
+        assert!(parse_port_rule(&port_spec(Some(IntOrString::Int(-1)), None)).is_none());
+    }
+
+    #[test]
+    fn test_parse_port_rule_rejects_out_of_range_end_port() {
+        assert!(
+            parse_port_rule(&port_spec(Some(IntOrString::Int(80)), Some(70000))).is_none()
+        );
+    }
+
+    #[test]
+    fn test_parse_port_rule_rejects_unparseable_named_port() {
+        assert!(
+            parse_port_rule(&port_spec(Some(IntOrString::String("not-a-port".into())), None))
+                .is_none()
+        );
     }
 }
