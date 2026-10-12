@@ -574,10 +574,22 @@ fn parse_port(spec: NetworkPolicyPortSpec) -> Result<NetworkPolicyPort> {
     let port = spec
         .port
         .map(|p| {
-            if p.is_number() {
-                Ok(PortSpec::Number(p.as_u64().unwrap() as u16))
-            } else if p.is_string() {
-                Ok(PortSpec::Name(p.as_str().unwrap().to_string()))
+            if let Some(n) = p.as_u64() {
+                // `as_u64()` already rejects negative numbers and non-integer
+                // floats (e.g. `-1` or `1.5`), but it happily returns values
+                // far outside u16 range (e.g. 70000) -- `as u16` on those
+                // silently truncates instead of erroring, which would wire
+                // up a firewall rule for the wrong port instead of the one
+                // the client actually asked for. Reject out-of-range values
+                // explicitly rather than truncating.
+                u16::try_from(n).map(PortSpec::Number).map_err(|_| {
+                    crate::error::ApiError::InvalidRequest(format!(
+                        "Invalid port specification: {} is out of range (must be 0-65535)",
+                        n
+                    ))
+                })
+            } else if let Some(s) = p.as_str() {
+                Ok(PortSpec::Name(s.to_string()))
             } else {
                 Err(crate::error::ApiError::InvalidRequest(
                     "Invalid port specification".to_string(),
@@ -591,4 +603,62 @@ fn parse_port(spec: NetworkPolicyPortSpec) -> Result<NetworkPolicyPort> {
         port,
         end_port: spec.end_port,
     })
+}
+
+
+#[cfg(test)]
+mod port_parsing_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn spec_with_port(port: serde_json::Value) -> NetworkPolicyPortSpec {
+        NetworkPolicyPortSpec {
+            protocol: None,
+            port: Some(port),
+            end_port: None,
+        }
+    }
+
+    #[test]
+    fn valid_numeric_port_is_accepted() {
+        let result = parse_port(spec_with_port(json!(8080))).unwrap();
+        match result.port {
+            Some(PortSpec::Number(n)) => assert_eq!(n, 8080),
+            other => panic!("expected PortSpec::Number(8080), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn valid_named_port_is_accepted() {
+        let result = parse_port(spec_with_port(json!("https"))).unwrap();
+        match result.port {
+            Some(PortSpec::Name(ref name)) if name == "https" => {}
+            other => panic!("expected PortSpec::Name(\"https\"), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn out_of_range_port_is_rejected_cleanly() {
+        // Regression: this used to silently wrap via `as u16`, wiring
+        // up a rule for the wrong port (70000 wraps to 4464) instead of
+        // erroring out on the client-supplied value.
+        let err = parse_port(spec_with_port(json!(70000))).unwrap_err();
+        assert!(err.to_string().contains("out of range"));
+    }
+
+    #[test]
+    fn negative_port_is_rejected_not_a_panic() {
+        // Regression: `.as_u64().unwrap()` used to panic on this input
+        // (is_number() is true for negatives, but as_u64() is None),
+        // which would take down the whole request handler.
+        let err = parse_port(spec_with_port(json!(-1))).unwrap_err();
+        assert!(err.to_string().contains("Invalid port specification"));
+    }
+
+    #[test]
+    fn fractional_port_is_rejected_not_a_panic() {
+        // Regression: same panic as above but via a non-integer float.
+        let err = parse_port(spec_with_port(json!(1.5))).unwrap_err();
+        assert!(err.to_string().contains("Invalid port specification"));
+    }
 }
