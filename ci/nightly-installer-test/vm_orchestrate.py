@@ -489,6 +489,63 @@ def find_vm_uuid_by_name(name, retries=30, interval_s=3):
     except Exception as exc:
         print(f"[host] `log show` capture raised: {exc!r}", flush=True)
 
+    # The unified log above shows UTM's own process emitting *zero*
+    # import/XPC activity in this window even though `open -a UTM
+    # <bundle>` reported exit 0 (confirmed directly across the
+    # 2026-10-11/12 failures) -- the same shape of problem already
+    # root-caused for screencapture above: a TCC-gated capability that
+    # silently no-ops instead of erroring. `open -a <App> <path>` is
+    # LaunchServices delivering a kAEOpenDocuments Apple Event to the
+    # target app, which on modern macOS requires the sender
+    # (forgejo-runner, launched headless via LaunchAgent, never
+    # interactively prompted) to hold Automation/Apple-Events TCC
+    # access for that specific target app -- exactly the same class of
+    # gap as the Screen Recording denial already diagnosed, just a
+    # different TCC service. Query TCC.db read-only (the same read-only
+    # access already confirmed to work for the Screen Recording
+    # diagnosis; SIP blocks writing it, so this can only ever report,
+    # never self-heal) for an explicit grant/denial record so the next
+    # failure's log says definitively "yes/no, and which" instead of
+    # re-opening this same investigation from scratch again.
+    try:
+        tcc_db = os.path.expanduser("~/Library/Application Support/com.apple.TCC/TCC.db")
+        if os.path.isfile(tcc_db):
+            query = (
+                "SELECT service, client, auth_value, auth_reason, "
+                "indirect_object_identifier FROM access "
+                "WHERE service IN ('kTCCServiceAppleEvents', 'kTCCServiceSystemPolicyAppleEvents') "
+                "AND (client LIKE '%forgejo-runner%' OR indirect_object_identifier LIKE '%utmapp%');"
+            )
+            tcc_result = subprocess.run(
+                ["/usr/bin/sqlite3", tcc_db, query],
+                capture_output=True, text=True, timeout=15,
+            )
+            rows = tcc_result.stdout.strip()
+            print(
+                f"[host] TCC Apple-Events grant check for forgejo-runner -> UTM "
+                f"(exit={tcc_result.returncode}): "
+                f"{rows if rows else '(no matching rows -- permission likely never requested/granted at all)'}",
+                flush=True,
+            )
+            if tcc_result.stderr.strip():
+                print(f"[host] TCC.db query stderr: {tcc_result.stderr.strip()}", flush=True)
+            if not rows:
+                print(
+                    "[host] NOTE: if this is empty, forgejo-runner has never been "
+                    "granted Automation/Apple-Events access to UTM at all -- `open "
+                    "-a UTM` is then delivering the event into a void with no error "
+                    "surfaced, matching exactly what we observe (exit 0, zero UTM "
+                    "activity). SIP blocks granting this from a script; needs a human "
+                    "on the beauxbatons console: System Settings > Privacy & Security "
+                    "> Automation > forgejo-runner -> enable UTM, then restart the "
+                    "runner process so the grant applies to its running session.",
+                    flush=True,
+                )
+        else:
+            print(f"[host] TCC.db not found at expected path: {tcc_db}", flush=True)
+    except Exception as exc:
+        print(f"[host] TCC Apple-Events check raised: {exc!r}", flush=True)
+
     raise SystemExit(f"VM '{name}' never showed up in `utmctl list`:\n{out.stdout}\n{out.stderr}")
 
 
