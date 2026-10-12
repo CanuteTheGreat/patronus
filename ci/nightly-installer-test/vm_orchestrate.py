@@ -456,6 +456,39 @@ def find_vm_uuid_by_name(name, retries=30, interval_s=3):
                 )
     except Exception as exc:
         print(f"[host] screenshot capture raised: {exc!r}", flush=True)
+
+    # The screenshot path above is blind without the Screen Recording TCC
+    # grant (see note just above). `log show` is a *different* API --
+    # reading the unified system log for events UTM itself already
+    # emitted -- and does not require that same TCC permission (it reads
+    # whatever the current user's own session is allowed to see, which
+    # normally includes userland app activity/crash/sandbox-violation
+    # entries for apps that user launched). If UTM is stuck behind a
+    # modal dialog (the leading theory as of 2026-10-10, see note above)
+    # or hit a sandbox/entitlement violation trying to import this
+    # bundle, that is far more likely to show up here than in a
+    # screenshot anyway. Best-effort only: never let a problem with this
+    # diagnostic itself mask or replace the real SystemExit below.
+    try:
+        log_result = subprocess.run(
+            [
+                "/usr/bin/log", "show", "--last", "3m", "--style", "compact",
+                "--predicate",
+                'process == "UTM" OR senderImagePath CONTAINS "UTM"',
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        tail = "\n".join(log_result.stdout.splitlines()[-200:])
+        print(
+            f"[host] unified log for UTM process in the last 3m "
+            f"(exit={log_result.returncode}, {len(log_result.stdout.splitlines())} lines, showing last 200):\n{tail}",
+            flush=True,
+        )
+        if log_result.stderr.strip():
+            print(f"[host] `log show` stderr: {log_result.stderr.strip()}", flush=True)
+    except Exception as exc:
+        print(f"[host] `log show` capture raised: {exc!r}", flush=True)
+
     raise SystemExit(f"VM '{name}' never showed up in `utmctl list`:\n{out.stdout}\n{out.stderr}")
 
 
