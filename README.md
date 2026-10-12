@@ -31,7 +31,8 @@ Patronus is a **high-performance, enterprise-grade SD-WAN and firewall platform*
 - **Infrastructure as Code** with Terraform and Ansible support
 - **Real-time web dashboard** for monitoring and policy management
 
-Built in **memory-safe Rust** with **zero unsafe code**.
+Built in **memory-safe Rust**, with `unsafe` limited to the eBPF/XDP
+datapath and raw-socket probing where the kernel interface requires it.
 
 ---
 
@@ -215,8 +216,9 @@ spec:
 
 #### 3. **Kubernetes Native CNI Plugin**
 ```bash
-# Deploy as CNI plugin
-kubectl apply -f https://github.com/CanuteTheGreat/patronus/cni/install.yaml
+# Deploy the CNI plugin and CRDs (from a clone of this repo)
+kubectl apply -f operator/crds/crds.yaml
+helm install patronus-operator operator/helm/patronus-operator/
 
 # Enforce NetworkPolicies with eBPF
 apiVersion: networking.k8s.io/v1
@@ -283,7 +285,7 @@ kind: NetworkPolicy
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**23 Specialized Crates (~50,000 LOC):**
+**46 Specialized Crates (~95,000 LOC):**
 - `patronus-core` - Core types, validation, services
 - `patronus-web` - Web interface and API
 - `patronus-firewall` - nftables/eBPF integration
@@ -297,7 +299,7 @@ kind: NetworkPolicy
 - `patronus-bench` - Performance benchmarking
 - **`patronus-sdwan`** - SD-WAN mesh, path selection, NetworkPolicy enforcement
 - **`patronus-dashboard`** - Enterprise web dashboard with real-time monitoring
-- Plus 10 more specialized crates...
+- Plus 33 more specialized crates (full list in `crates/`)...
 
 ---
 
@@ -309,14 +311,22 @@ Patronus is built specifically for **Gentoo Linux**, embracing source-based comp
 
 #### Add the Overlay
 
-```bash
-# Using eselect repository
-eselect repository add patronus git https://github.com/CanuteTheGreat/patronus-overlay
-emaint sync -r patronus
+The Portage overlay ebuilds live in this repository under `gentoo/`
+(there is no separate `patronus-overlay` repo). Point Portage at a
+checkout of this repo's `gentoo/` tree:
 
-# Or manually
+```bash
+# Manually, from a clone of this repository
 mkdir -p /var/db/repos/patronus
-git clone https://github.com/CanuteTheGreat/patronus-overlay /var/db/repos/patronus
+cp -r gentoo/* /var/db/repos/patronus/
+chown -R portage:portage /var/db/repos/patronus
+```
+
+Then add it as a repository in `/etc/portage/repos.conf/patronus.conf`:
+
+```ini
+[patronus]
+location = /var/db/repos/patronus
 ```
 
 #### Install with USE Flags
@@ -628,12 +638,12 @@ cargo run --release --bin patronus-bench -- all
 
 ```
 patronus/
-├── crates/               # 21 Rust crates (~45,000 LOC)
+├── crates/               # 46 Rust crates (~95,000 LOC)
 ├── terraform-provider-patronus/  # Terraform provider (Go)
 ├── ansible-collection-patronus/  # Ansible collection (Python)
 ├── docs/                 # Documentation
-├── deploy/               # Kubernetes manifests
-└── scripts/              # Deployment scripts
+├── operator/             # Kubernetes operator, CRDs, Helm chart
+└── *.sh                  # Build/deploy scripts (repo root)
 ```
 
 ---
