@@ -605,7 +605,6 @@ fn parse_port(spec: NetworkPolicyPortSpec) -> Result<NetworkPolicyPort> {
     })
 }
 
-
 #[cfg(test)]
 mod port_parsing_tests {
     use super::*;
