@@ -5,7 +5,10 @@ use colored::Colorize;
 use std::path::PathBuf;
 
 mod commands;
-use commands::{bgp, daemon, deploy, init, metrics, policy, site, status, tunnel, validate};
+use commands::{
+    bgp, captiveportal, daemon, deploy, firewall, init, metrics, policy, site, status, tunnel,
+    validate, web,
+};
 
 #[derive(Parser)]
 #[command(name = "patronus")]
@@ -59,6 +62,27 @@ enum Commands {
     Bgp {
         #[command(subcommand)]
         action: BgpCommands,
+    },
+
+    /// Start the web management interface
+    /// (what patronus-web.service's ExecStart actually invokes)
+    Web {
+        /// Bind address
+        #[arg(short, long, default_value = "0.0.0.0:8080")]
+        addr: String,
+    },
+
+    /// Manage nftables firewall rules
+    /// (what patronus-firewall.service's ExecStart/ExecStop actually invoke)
+    Firewall {
+        #[command(subcommand)]
+        action: FirewallCommands,
+    },
+
+    /// Guest WiFi captive portal
+    CaptivePortal {
+        #[command(subcommand)]
+        action: CaptivePortalCommands,
     },
 
     /// Show system status
@@ -235,6 +259,29 @@ enum BgpCommands {
 }
 
 #[derive(Subcommand)]
+enum FirewallCommands {
+    /// Apply/reload all configured firewall rules into nftables
+    Apply,
+
+    /// Flush all Patronus-managed nftables rules
+    Flush,
+}
+
+#[derive(Subcommand)]
+enum CaptivePortalCommands {
+    /// Start the captive portal HTTP server
+    Serve {
+        /// Bind address for the portal HTTP server
+        #[arg(short, long)]
+        addr: Option<String>,
+
+        /// Network interface to intercept guest traffic on
+        #[arg(short, long)]
+        interface: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum MetricsCommands {
     /// Show traffic statistics
     Traffic,
@@ -282,6 +329,20 @@ async fn main() -> anyhow::Result<()> {
         Commands::Bgp { action } => {
             bgp::handle_bgp_command(action, cli.config).await?;
         }
+
+        Commands::Web { addr } => {
+            web::handle_web_command(addr, cli.config).await?;
+        }
+
+        Commands::Firewall { action } => {
+            firewall::handle_firewall_command(action).await?;
+        }
+
+        Commands::CaptivePortal { action } => match action {
+            CaptivePortalCommands::Serve { addr, interface } => {
+                captiveportal::handle_captiveportal_command(addr, interface).await?;
+            }
+        },
 
         Commands::Status { detailed } => {
             status::handle_status(detailed, cli.config).await?;

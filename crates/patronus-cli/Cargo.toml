@@ -63,6 +63,7 @@ patronus-mpls = { path = "../patronus-mpls" }
 patronus-geodns = { path = "../patronus-geodns" }
 patronus-saas = { path = "../patronus-saas" }
 patronus-dashboard = { path = "../patronus-dashboard" }
+patronus-captiveportal = { path = "../patronus-captiveportal" }
 
 tokio.workspace = true
 clap = { workspace = true, optional = true, features = ["derive"] }
