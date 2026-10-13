@@ -243,7 +243,11 @@ impl FirewallManager {
         };
 
         let rule_manager = self.rule_manager.write().await;
-        let _ = rule_manager.add_filter_rule(core_rule).await;
+        rule_manager
+            .add_filter_rule(core_rule)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to apply firewall rule to nftables: {e}"))?;
+        drop(rule_manager);
 
         let mut rules = self.rules.write().await;
         rules.push(new_rule);
@@ -279,11 +283,15 @@ impl FirewallManager {
     }
 
     pub async fn delete_rule(&self, id: u32) -> anyhow::Result<()> {
+        let rule_manager = self.rule_manager.read().await;
+        rule_manager
+            .remove_filter_rule(id as u64)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to remove firewall rule from nftables: {e}"))?;
+        drop(rule_manager);
+
         let mut rules = self.rules.write().await;
         rules.retain(|r| r.id != id);
-
-        let rule_manager = self.rule_manager.read().await;
-        let _ = rule_manager.remove_filter_rule(id as u64).await;
 
         Ok(())
     }
