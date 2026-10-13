@@ -112,6 +112,36 @@ RUN emerge --verbose net-firewall/patronus
 RUN useradd -r -u 1000 -m -s /bin/bash patronus 2>/dev/null || true && \
     chown -R patronus:patronus /etc/patronus /var/lib/patronus /var/log/patronus 2>/dev/null || true
 
+# Grant CAP_NET_ADMIN/CAP_NET_RAW to the real nft binary via file
+# capabilities, so the non-root patronus user can still create/manage
+# nftables table/chains.
+#
+# docker-compose.yml runs this container as USER patronus (non-root) with
+# only cap_add: [NET_ADMIN, NET_RAW] -- but docker/compose's cap_add only
+# ever populates the capability BOUNDING set for a non-root exec'd process;
+# CapEff/CapPrm/CapAmb for a non-root user stay all-zero regardless
+# (confirmed via /proc/self/status) unless something grants effective
+# capabilities at exec time. Without this, rule_manager.initialize() at
+# startup (crates/patronus-web/src/main.rs) crash-loops the whole container
+# with "Operation not permitted" from the nft netlink call.
+#
+# patronus-web never touches netlink directly -- every nftables operation
+# shells out to a real `nft` subprocess (patronus-firewall/src/nftables.rs,
+# execute_nft_command/execute_nft_script both use Command::new("nft")) -- so
+# the capability has to live on the `nft` binary's file capabilities, not on
+# patronus-web itself. A file capability's effective bit is honored at exec
+# as long as that capability is still present in the process's capability
+# bounding set, which cap_add does provide, so this works without root.
+#
+# This runs in the same stage that ships as the final image (no
+# COPY --from=builder step since this Dockerfile already reuses the builder
+# stage as runtime), so the xattr-based file capability survives into the
+# image layer -- setcap via a tar-based COPY --from often does not.
+RUN emerge --verbose sys-libs/libcap && \
+    setcap cap_net_admin,cap_net_raw+eip "$(command -v nft)" && \
+    getcap "$(command -v nft)"
+
+
 USER patronus
 WORKDIR /home/patronus
 EXPOSE 8443 51820/udp
