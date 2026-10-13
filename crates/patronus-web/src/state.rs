@@ -2,11 +2,58 @@
 
 use crate::auth::AuthState;
 use patronus_config::ConfigStore;
-use patronus_core::types::{ChainType, FirewallAction, FirewallRule as CoreFirewallRule};
+use patronus_core::types::{
+    ChainType, FirewallAction, FirewallRule as CoreFirewallRule, NatRule as CoreNatRule, NatType,
+};
 use patronus_firewall::RuleManager;
 use patronus_secrets::SecretManager;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+/// Interpret the free-text `rule_type`/`target` fields of an incoming
+/// `NatRule` API payload into a typed `NatType`. `target` holds either the
+/// literal "masquerade" or an `address[:port]` spec; this never splices the
+/// raw string into an nftables script itself (that injection-safety check
+/// lives in `patronus_firewall::nftables::nat_rule_to_nft_command`, which
+/// still runs on the resulting typed rule), it only rejects inputs it can't
+/// make sense of so a malformed/garbage rule fails fast with a clear error
+/// instead of silently being stored as something it isn't.
+fn parse_nat_type(rule_type: &str, target: &str) -> anyhow::Result<NatType> {
+    let trimmed_target = target.trim();
+    if trimmed_target.eq_ignore_ascii_case("masquerade")
+        || rule_type.eq_ignore_ascii_case("masquerade")
+    {
+        return Ok(NatType::Masquerade);
+    }
+
+    let (addr_part, port_part) = match trimmed_target.rsplit_once(':') {
+        Some((addr, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => {
+            (addr, Some(port))
+        }
+        _ => (trimmed_target, None),
+    };
+
+    let to_address = addr_part
+        .parse::<std::net::IpAddr>()
+        .map_err(|_| anyhow::anyhow!("Invalid NAT target address: {:?}", target))?;
+
+    match rule_type.to_uppercase().as_str() {
+        "DNAT" => {
+            let to_port = match port_part {
+                Some(p) => Some(
+                    p.parse::<u16>()
+                        .map_err(|_| anyhow::anyhow!("Invalid NAT target port: {:?}", target))?,
+                ),
+                None => None,
+            };
+            Ok(NatType::Dnat {
+                to_address,
+                to_port,
+            })
+        }
+        _ => Ok(NatType::Snat { to_address }),
+    }
+}
 
 /// Shared application state
 #[derive(Clone)]
@@ -319,17 +366,57 @@ impl FirewallManager {
         let mut next_id = self.next_id.write().await;
         let id = *next_id;
         *next_id += 1;
+        drop(next_id);
 
         let new_rule = crate::templates::NatRule {
             id,
-            rule_type: rule.rule_type,
-            interface: rule.interface,
-            source: rule.source,
-            destination: rule.destination,
-            target: rule.target,
-            description: rule.description,
+            rule_type: rule.rule_type.clone(),
+            interface: rule.interface.clone(),
+            source: rule.source.clone(),
+            destination: rule.destination.clone(),
+            target: rule.target.clone(),
+            description: rule.description.clone(),
             enabled: rule.enabled,
         };
+
+        // Previously this pushed straight into the in-memory list with no
+        // attempt to apply the rule to nftables at all -- unlike add_rule,
+        // it didn't even have a `let _ = ...` discard to point at, it simply
+        // never called into patronus_firewall::RuleManager. Every NAT rule
+        // (SNAT/DNAT/masquerade) therefore only ever existed in the
+        // dashboard's view, never in the real ruleset, regardless of
+        // validity. Build the typed core rule and actually apply it before
+        // trusting it into the rendered list.
+        let nat_type = parse_nat_type(&rule.rule_type, &rule.target)
+            .map_err(|e| anyhow::anyhow!("Invalid NAT rule: {e}"))?;
+
+        let normalize = |s: String| -> Option<String> {
+            if s.is_empty() || s.eq_ignore_ascii_case("any") {
+                None
+            } else {
+                Some(s)
+            }
+        };
+
+        let core_rule = CoreNatRule {
+            id: Some(id as u64),
+            name: new_rule.description.clone(),
+            enabled: new_rule.enabled,
+            nat_type,
+            source: normalize(rule.source),
+            destination: normalize(rule.destination),
+            protocol: None,
+            dport: None,
+            interface_out: normalize(rule.interface),
+            comment: Some(new_rule.description.clone()),
+        };
+
+        let mut rule_manager = self.rule_manager.write().await;
+        rule_manager
+            .add_nat_rule(core_rule)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to apply NAT rule to nftables: {e}"))?;
+        drop(rule_manager);
 
         let mut rules = self.nat_rules.write().await;
         rules.push(new_rule);
@@ -338,8 +425,16 @@ impl FirewallManager {
     }
 
     pub async fn delete_nat_rule(&self, id: u32) -> anyhow::Result<()> {
+        let rule_manager = self.rule_manager.read().await;
+        rule_manager
+            .remove_nat_rule(id as u64)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to remove NAT rule from nftables: {e}"))?;
+        drop(rule_manager);
+
         let mut rules = self.nat_rules.write().await;
         rules.retain(|r| r.id != id);
+
         Ok(())
     }
 
@@ -1395,5 +1490,193 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.2} KB", bytes as f64 / KB as f64)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+#[cfg(test)]
+mod rule_apply_tests {
+    //! Regression tests for the "validation never reaches the HTTP layer"
+    //! bug: `add_rule`/`add_nat_rule` used to discard (or, for
+    //! `add_nat_rule`, never even attempt) the `RuleManager` apply result,
+    //! so a rejected/malicious rule and a backend apply failure both looked
+    //! identical to a successful one from the API's and dashboard's point
+    //! of view. These assert the Result is now real and that the in-memory
+    //! list only ever reflects rules that were actually applied.
+    use super::*;
+    use crate::routes::api::firewall::{FirewallRule as ApiFirewallRule, NatRule as ApiNatRule};
+    use patronus_firewall::RuleManager;
+
+    fn sample_rule(source: &str) -> ApiFirewallRule {
+        ApiFirewallRule {
+            id: None,
+            action: "Accept".to_string(),
+            interface: "eth0".to_string(),
+            protocol: "tcp".to_string(),
+            source: source.to_string(),
+            destination: "any".to_string(),
+            port: "80".to_string(),
+            description: "test rule".to_string(),
+            enabled: true,
+        }
+    }
+
+    fn sample_nat_rule(rule_type: &str, source: &str, target: &str) -> ApiNatRule {
+        ApiNatRule {
+            id: None,
+            rule_type: rule_type.to_string(),
+            interface: "eth0".to_string(),
+            source: source.to_string(),
+            destination: "any".to_string(),
+            target: target.to_string(),
+            description: "test nat rule".to_string(),
+            enabled: true,
+        }
+    }
+
+    // --- These run everywhere (no real nft / CAP_NET_ADMIN needed): the
+    // ruleset-injection validation in `patronus_firewall::nftables` fails
+    // fast, before any OS-level nft call is made, so rejection is testable
+    // in an unprivileged CI container. ---
+
+    #[tokio::test]
+    async fn add_rule_rejects_injection_and_does_not_appear_in_list() {
+        let fw = FirewallManager::new(RuleManager::new());
+        let before = fw.list_rules().await.unwrap().len();
+
+        let malicious = sample_rule("0.0.0.0/0; add rule inet patronus forward accept #");
+        let result = fw.add_rule(malicious).await;
+
+        assert!(
+            result.is_err(),
+            "an nftables ruleset-injection payload must be rejected, not silently applied"
+        );
+        let after = fw.list_rules().await.unwrap();
+        assert_eq!(
+            after.len(),
+            before,
+            "a rejected rule must not appear in the rendered rule list"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_nat_rule_rejects_injection_in_source_and_does_not_appear_in_list() {
+        let fw = FirewallManager::new(RuleManager::new());
+        let before = fw.list_nat_rules().await.unwrap().len();
+
+        let malicious = sample_nat_rule(
+            "MASQUERADE",
+            "0.0.0.0/0; add rule inet patronus forward accept #",
+            "masquerade",
+        );
+        let result = fw.add_nat_rule(malicious).await;
+
+        assert!(
+            result.is_err(),
+            "injection payload in NAT source must be rejected"
+        );
+        let after = fw.list_nat_rules().await.unwrap();
+        assert_eq!(
+            after.len(),
+            before,
+            "a rejected NAT rule must not appear in the rendered NAT rule list"
+        );
+    }
+
+    #[tokio::test]
+    async fn add_nat_rule_rejects_unparseable_target_and_does_not_appear_in_list() {
+        let fw = FirewallManager::new(RuleManager::new());
+        let before = fw.list_nat_rules().await.unwrap().len();
+
+        // add_nat_rule previously never called into RuleManager at all, so
+        // this garbage input used to be pushed straight into the dashboard
+        // list regardless of whether it means anything.
+        let bad = sample_nat_rule("SNAT", "10.0.0.0/8", "not-an-ip-address");
+        let result = fw.add_nat_rule(bad).await;
+
+        assert!(
+            result.is_err(),
+            "an unparseable NAT target must be rejected"
+        );
+        let after = fw.list_nat_rules().await.unwrap();
+        assert_eq!(after.len(), before);
+    }
+
+    // --- These exercise the real nftables backing store end to end -- the
+    // exact gap the QA pass on commit b2859b5 found (HTTP 201 + dashboard
+    // entry with nothing in `nft list table inet patronus`). They need
+    // CAP_NET_ADMIN, the real `nft` binary and a kernel with nf_tables, so
+    // they're `#[ignore]`d for ordinary unprivileged CI runners. Run
+    // explicitly with `cargo test -p patronus-web -- --ignored` on a host
+    // that has those (e.g. `docker run --cap-add=NET_ADMIN ...`). ---
+
+    #[tokio::test]
+    #[ignore] // Requires real nftables (CAP_NET_ADMIN + nf_tables)
+    async fn add_rule_valid_applies_to_real_nftables_and_appears_in_list() {
+        let rule_manager = RuleManager::new();
+        rule_manager
+            .initialize()
+            .await
+            .expect("nft table init (requires CAP_NET_ADMIN)");
+        let fw = FirewallManager::new(rule_manager);
+
+        let marker = format!("patronus-web-test-{}", std::process::id());
+        let mut valid = sample_rule("10.0.0.0/8");
+        valid.description = marker.clone();
+
+        let id = fw
+            .add_rule(valid)
+            .await
+            .expect("a well-formed rule must be accepted");
+        let rules = fw.list_rules().await.unwrap();
+        assert!(
+            rules.iter().any(|r| r.id == id),
+            "accepted rule must appear in the rendered list"
+        );
+
+        let ruleset = std::process::Command::new("nft")
+            .args(["list", "table", "inet", "patronus"])
+            .output()
+            .expect("nft list table");
+        let stdout = String::from_utf8_lossy(&ruleset.stdout);
+        assert!(
+            stdout.contains(&marker),
+            "accepted rule must actually be present in nftables, not just in-memory: {stdout}"
+        );
+
+        fw.delete_rule(id).await.expect("cleanup delete");
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires real nftables (CAP_NET_ADMIN + nf_tables)
+    async fn add_nat_rule_valid_applies_to_real_nftables_and_appears_in_list() {
+        let rule_manager = RuleManager::new();
+        rule_manager
+            .initialize()
+            .await
+            .expect("nft table init (requires CAP_NET_ADMIN)");
+        let fw = FirewallManager::new(rule_manager);
+
+        let marker = format!("patronus-web-nat-test-{}", std::process::id());
+        let mut nat = sample_nat_rule("MASQUERADE", "10.0.0.0/8", "masquerade");
+        nat.description = marker.clone();
+
+        let id = fw
+            .add_nat_rule(nat)
+            .await
+            .expect("a well-formed NAT rule must be accepted");
+        let rules = fw.list_nat_rules().await.unwrap();
+        assert!(rules.iter().any(|r| r.id == id));
+
+        let ruleset = std::process::Command::new("nft")
+            .args(["list", "table", "inet", "patronus"])
+            .output()
+            .expect("nft list table");
+        let stdout = String::from_utf8_lossy(&ruleset.stdout);
+        assert!(
+            stdout.contains(&marker),
+            "accepted NAT rule must actually be present in nftables: {stdout}"
+        );
+
+        fw.delete_nat_rule(id).await.expect("cleanup delete");
     }
 }

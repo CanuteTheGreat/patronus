@@ -9,6 +9,21 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Map an error coming out of `FirewallManager::add_rule`/`add_nat_rule`
+/// into the right HTTP status: the rule-validation layer (nftables
+/// ruleset-injection checks in `patronus_firewall::nftables`, and the
+/// NAT-type/target parsing in `patronus_web::state`) always prefixes its
+/// rejections with "Invalid " -- those are client-input problems (400), not
+/// server/backend failures (500, e.g. the `nft` binary itself erroring or
+/// being unreachable).
+fn status_for_apply_error(e: &anyhow::Error) -> StatusCode {
+    if e.to_string().contains("Invalid ") {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FirewallRule {
     pub id: Option<u32>,
@@ -89,7 +104,7 @@ pub async fn add_rule(State(state): State<AppState>, Json(rule): Json<FirewallRu
         Err(e) => {
             tracing::error!("Failed to add firewall rule: {}", e);
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                status_for_apply_error(&e),
                 Json(serde_json::json!({
                     "error": format!("Failed to add rule: {}", e)
                 })),
@@ -194,7 +209,7 @@ pub async fn add_nat_rule(State(state): State<AppState>, Json(rule): Json<NatRul
         Err(e) => {
             tracing::error!("Failed to add NAT rule: {}", e);
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                status_for_apply_error(&e),
                 Json(serde_json::json!({
                     "error": format!("Failed to add NAT rule: {}", e)
                 })),
