@@ -77,13 +77,38 @@ ENV EGIT_OVERRIDE_REPO_PATRONUS=/usr/src/patronus
 # patronus itself -- the part that's actually supposed to run on every commit.
 RUN emerge --verbose net-firewall/patronus
 
-# --- Runtime stage --------------------------------------------------------
-FROM gentoo/stage3:amd64-systemd
-
-COPY --from=builder /usr/bin/patronus-web /usr/bin/patronus-web
-COPY --from=builder /etc/patronus /etc/patronus
-COPY --from=builder /var/lib/patronus /var/lib/patronus
-
+# --- Runtime --------------------------------------------------------------
+# NOTE: this intentionally does NOT copy just the patronus-web binary into
+# a fresh, bare gentoo/stage3 stage. net-firewall/patronus's RDEPEND
+# includes net-firewall/nftables (see gentoo/net-firewall/patronus/
+# patronus-9999.ebuild, USE=nftables is on by default) because every
+# nft-invoking code path (patronus-web, patronus-firewall, patronus-network,
+# patronus-captiveportal -- all shell out to `nft` by PATH lookup, e.g.
+# patronus-firewall/src/nftables.rs) needs the real `nft` binary and its
+# shared-library dependencies (libnftnl, libmnl, ...) present at runtime.
+#
+# A prior version of this Dockerfile copied only
+# /usr/bin/patronus-web + /etc/patronus + /var/lib/patronus into a bare
+# `FROM gentoo/stage3:amd64-systemd` stage, silently dropping every other
+# RDEPEND nftables actually needs. The container booted and served HTTP
+# fine until the first firewall-initializing request, which failed with
+# "Failed to execute nft script: Broken pipe (os error 32)" -- `nft` was
+# never on PATH in that stage at all, so a request to invoke it ended up
+# spawning (and immediately losing) a shell that couldn't exec it. This
+# wasn't CI flakiness, it reproduced on every single build (see run #311,
+# task 7990's Smoke-test-the-built-image step) and would have broken any
+# real deployment of this image identically.
+#
+# Fix: ship the actual builder stage's root filesystem instead of a
+# fresh/bare one. The builder already ran a real `emerge` of
+# net-firewall/patronus, which pulled in net-firewall/nftables (and
+# everything *it* depends on) as a genuine Portage-resolved RDEPEND --
+# there is no path-guessing involved in "which .so files does nft need"
+# because the builder environment is the one that actually linked it.
+# This trades image size (full Portage tree / build toolchain still
+# present) for correctness; revisit with a real multi-stage COPY (binary
+# + `qlist -e net-firewall/nftables`-derived file list) if image size
+# ever becomes a concrete problem.
 RUN useradd -r -u 1000 -m -s /bin/bash patronus 2>/dev/null || true && \
     chown -R patronus:patronus /etc/patronus /var/lib/patronus /var/log/patronus 2>/dev/null || true
 
