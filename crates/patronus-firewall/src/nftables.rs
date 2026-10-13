@@ -450,8 +450,12 @@ mod qa_regression_tests {
         assert!(is_valid_interface_name("wg0"));
         assert!(is_valid_interface_name("br-lan.100"));
         assert!(!is_valid_interface_name(""));
-        assert!(!is_valid_interface_name("eth0\" }; add rule inet patronus forward accept #"));
-        assert!(!is_valid_interface_name("this-name-is-way-too-long-for-ifnamsiz"));
+        assert!(!is_valid_interface_name(
+            "eth0\" }; add rule inet patronus forward accept #"
+        ));
+        assert!(!is_valid_interface_name(
+            "this-name-is-way-too-long-for-ifnamsiz"
+        ));
     }
 
     #[test]
