@@ -366,6 +366,10 @@ sudo vim /etc/patronus/patronus.toml
 bind_address = "0.0.0.0:8080"
 
 # Enable HTTPS (recommended for production)
+# The dashboard (port 8443) serves self-signed HTTPS by default; a
+# certificate is auto-generated on first run under /etc/patronus/tls.
+# Drop your own CA-issued cert/key at that path (named cert.pem/key.pem)
+# before first start if you don't want the auto-generated one.
 # tls_cert = "/etc/patronus/cert.pem"
 # tls_key = "/etc/patronus/key.pem"
 
@@ -725,7 +729,7 @@ Congratulations! You now have a working Patronus firewall installation.
 
 **1. Harden Security**
 - [ ] Change default admin password (if not done already)
-- [ ] Enable HTTPS for web interface
+- [x] HTTPS for web interface (enabled by default, self-signed cert auto-generated on first run; swap in a CA-issued cert/key for production if desired)
 - [ ] Configure fail2ban for SSH protection
 - [ ] Set up 2FA for web login (coming soon)
 

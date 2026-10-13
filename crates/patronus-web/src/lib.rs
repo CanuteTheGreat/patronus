@@ -11,6 +11,7 @@ pub mod routes;
 pub mod simple_handlers;
 pub mod state;
 pub mod templates;
+pub mod tls;
 pub mod websocket;
 
 pub use auth::{AdminUser, AuthUser, SessionStore};
@@ -22,8 +23,10 @@ pub fn create_app(state: AppState, ws_broadcaster: std::sync::Arc<WsBroadcaster>
     routes::build_router(state, ws_broadcaster)
 }
 
-/// Start the web server
-pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
+/// Wire up the background tasks (session cleanup, secret rotation,
+/// websocket broadcasters) and build the router. Shared by both the
+/// plain-HTTP and TLS listeners.
+fn prepare_app(state: AppState) -> axum::Router {
     let ws_broadcaster = std::sync::Arc::new(WsBroadcaster::new());
 
     // Start session cleanup task
@@ -75,12 +78,35 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     websocket::start_metrics_broadcaster(ws_broadcaster.clone(), state.clone());
     websocket::start_log_broadcaster(ws_broadcaster.clone());
 
-    let app = create_app(state, ws_broadcaster);
+    create_app(state, ws_broadcaster)
+}
 
-    tracing::info!("Starting web server on {}", addr);
+/// Start the web server over plain HTTP. Kept for local development/tests;
+/// the shipped binary serves TLS by default via [`serve_tls`] since the
+/// dashboard is documented and configured as an HTTPS service.
+pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
+    let app = prepare_app(state);
+
+    tracing::info!("Starting web server on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
+/// Start the web server over HTTPS using a self-signed certificate,
+/// generating one on first run if none exists yet under `tls_dir`.
+pub async fn serve_tls(addr: SocketAddr, state: AppState, tls_dir: &std::path::Path) -> anyhow::Result<()> {
+    let app = prepare_app(state);
+
+    let tls_config = tls::ensure_self_signed_cert(tls_dir).await?;
+
+    tracing::info!("Starting web server on https://{}", addr);
+
+    axum_server::bind_rustls(addr, tls_config)
+        .serve(app.into_make_service())
+        .await?;
 
     Ok(())
 }

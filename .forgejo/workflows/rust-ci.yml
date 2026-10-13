@@ -228,7 +228,9 @@ jobs:
           trap 'docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
           ok=0
           for i in $(seq 1 30); do
-            if curl -fsS http://localhost:8443/ >/dev/null 2>&1; then
+            # Dashboard serves self-signed HTTPS on 8443 (see
+            # docker-compose.yml); -k skips verifying the self-signed cert.
+            if curl -kfsS https://localhost:8443/ >/dev/null 2>&1; then
               ok=1
               break
             fi

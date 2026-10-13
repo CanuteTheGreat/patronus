@@ -36,10 +36,17 @@ async fn main() -> Result<()> {
 
     // Bind to address
     let addr = SocketAddr::from(([0, 0, 0, 0], 8443));
-    info!("Web interface listening on http://{}", addr);
+    let tls_dir = patronus_web::tls::default_tls_dir();
+    info!(
+        "Web interface listening on https://{} (self-signed TLS, cert dir: {})",
+        addr,
+        tls_dir.display()
+    );
 
-    // Start server using the library's serve function
-    if let Err(e) = patronus_web::serve(addr, state).await {
+    // Start server using the library's TLS serve function. The dashboard is
+    // documented and configured as HTTPS on 8443, so it serves HTTPS by
+    // default (self-signed cert, auto-generated on first run).
+    if let Err(e) = patronus_web::serve_tls(addr, state, &tls_dir).await {
         error!("Server error: {}", e);
         return Err(e);
     }

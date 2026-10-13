@@ -36,6 +36,10 @@ tracing-subscriber.workspace = true
 askama.workspace = true
 askama_axum.workspace = true
 
+# TLS for the dashboard (self-signed cert on first run; see src/tls.rs)
+axum-server = { version = "0.6", features = ["tls-rustls"] }
+rcgen = "0.11"
+
 # Additional web dependencies
 hyper = "1.4"
 uuid = { version = "1.11", features = ["v4", "serde"] }

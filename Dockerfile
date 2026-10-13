@@ -38,6 +38,14 @@ RUN emerge-webrsync
 # Register this project's own overlay as a local Portage repo (already a
 # fully self-contained repo: has its own metadata/layout.conf + profiles/repo_name)
 COPY gentoo /var/db/repos/patronus-overlay
+# Build-host checkouts of gentoo/ have occasionally had some subdirectories
+# end up mode 700 from a restrictive local umask; COPY preserves that
+# as-is. Portage sources ebuilds as an unprivileged sandbox user, so a
+# non-world-readable/traversable overlay dir fails with "Permission denied"
+# at the depend phase regardless of who owns it -- make the overlay
+# world-readable/traversable so the build doesn't depend on the checkout's
+# local directory permissions.
+RUN chmod -R a+rX /var/db/repos/patronus-overlay
 RUN mkdir -p /etc/portage/repos.conf && \
     printf '[patronus]\nlocation = /var/db/repos/patronus-overlay\npriority = 50\n' \
     > /etc/portage/repos.conf/patronus-overlay.conf
@@ -110,7 +118,8 @@ RUN emerge --verbose net-firewall/patronus
 # + `qlist -e net-firewall/nftables`-derived file list) if image size
 # ever becomes a concrete problem.
 RUN useradd -r -u 1000 -m -s /bin/bash patronus 2>/dev/null || true && \
-    chown -R patronus:patronus /etc/patronus /var/lib/patronus /var/log/patronus 2>/dev/null || true
+    chown -R patronus:patronus /etc/patronus /var/lib/patronus /var/log/patronus 2>/dev/null || true && \
+    mkdir -p /etc/patronus/tls && chown patronus:patronus /etc/patronus/tls
 
 # Grant CAP_NET_ADMIN/CAP_NET_RAW to the real nft binary via file
 # capabilities, so the non-root patronus user can still create/manage
@@ -147,6 +156,6 @@ WORKDIR /home/patronus
 EXPOSE 8443 51820/udp
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8443/ || exit 1
+    CMD curl -kf https://localhost:8443/ || exit 1
 
 CMD ["patronus-web"]
