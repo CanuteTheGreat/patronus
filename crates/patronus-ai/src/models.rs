@@ -100,7 +100,7 @@ impl IsolationForest {
         let avg_path_length: f64 = self
             .trees
             .iter()
-            .map(|tree| self.path_length(features, &tree.root, 0) as f64)
+            .map(|tree| Self::path_length(features, &tree.root, 0) as f64)
             .sum::<f64>()
             / self.trees.len() as f64;
 
@@ -204,8 +204,11 @@ impl IsolationForest {
         result
     }
 
+    // Pure recursive descent over the tree structure -- doesn't read any
+    // `self` state, so clippy::only_used_in_recursion (correctly) flags a
+    // `&self` receiver here: it was only ever passed along to recurse, never
+    // actually used. Made an associated function instead of a method.
     fn path_length(
-        &self,
         features: &Array1<f64>,
         node: &Option<Box<TreeNode>>,
         current_height: usize,
@@ -214,9 +217,9 @@ impl IsolationForest {
             None => current_height,
             Some(n) => {
                 if features[n.split_feature] < n.split_value {
-                    self.path_length(features, &n.left, current_height + 1)
+                    Self::path_length(features, &n.left, current_height + 1)
                 } else {
-                    self.path_length(features, &n.right, current_height + 1)
+                    Self::path_length(features, &n.right, current_height + 1)
                 }
             }
         }

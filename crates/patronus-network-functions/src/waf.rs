@@ -134,14 +134,12 @@ pub struct WafManager {
 
 impl WafManager {
     pub fn new() -> Self {
-        let manager = Self {
+        // Initialize with default rules
+        Self {
             rules: Arc::new(RwLock::new(HashMap::new())),
             events: Arc::new(RwLock::new(Vec::new())),
             max_events: 10000,
-        };
-
-        // Initialize with default rules
-        manager
+        }
     }
 
     pub fn with_max_events(mut self, max: usize) -> Self {
