@@ -216,7 +216,14 @@ pub fn rule_to_nft_command(rule: &FirewallRule) -> Result<String> {
         }
     }
 
-    // Source
+    // Source. "any"/"all" means "match every source" -- the correct way to
+    // express that in nft is to omit the `ip saddr` match entirely, not to
+    // splice the literal word "any" in as if it were an address (nft parses
+    // that as a hostname to resolve, which fails outright: "Could not
+    // resolve hostname: any"). This previously meant every rule with the
+    // UI's default "Any" source/destination was rejected by real nftables
+    // on apply -- invisible before the apply-result propagation fix because
+    // the error used to be discarded.
     if let Some(ref src) = rule.source {
         if !is_valid_address_spec(src) {
             return Err(Error::Firewall(format!(
@@ -224,10 +231,12 @@ pub fn rule_to_nft_command(rule: &FirewallRule) -> Result<String> {
                 src
             )));
         }
-        parts.push(format!("ip saddr {}", src));
+        if !src.eq_ignore_ascii_case("any") && !src.eq_ignore_ascii_case("all") {
+            parts.push(format!("ip saddr {}", src));
+        }
     }
 
-    // Destination
+    // Destination (same "any"/"all" = omit-the-match rule as source, above)
     if let Some(ref dst) = rule.destination {
         if !is_valid_address_spec(dst) {
             return Err(Error::Firewall(format!(
@@ -235,7 +244,9 @@ pub fn rule_to_nft_command(rule: &FirewallRule) -> Result<String> {
                 dst
             )));
         }
-        parts.push(format!("ip daddr {}", dst));
+        if !dst.eq_ignore_ascii_case("any") && !dst.eq_ignore_ascii_case("all") {
+            parts.push(format!("ip daddr {}", dst));
+        }
     }
 
     // Source port
@@ -308,7 +319,7 @@ pub fn nat_rule_to_nft_command(rule: &NatRule) -> Result<String> {
         parts.push(protocol.to_string());
     }
 
-    // Source
+    // Source (see rule_to_nft_command's "any"/"all" note, above)
     if let Some(ref src) = rule.source {
         if !is_valid_address_spec(src) {
             return Err(Error::Firewall(format!(
@@ -316,7 +327,9 @@ pub fn nat_rule_to_nft_command(rule: &NatRule) -> Result<String> {
                 src
             )));
         }
-        parts.push(format!("ip saddr {}", src));
+        if !src.eq_ignore_ascii_case("any") && !src.eq_ignore_ascii_case("all") {
+            parts.push(format!("ip saddr {}", src));
+        }
     }
 
     // Destination
@@ -327,7 +340,9 @@ pub fn nat_rule_to_nft_command(rule: &NatRule) -> Result<String> {
                 dst
             )));
         }
-        parts.push(format!("ip daddr {}", dst));
+        if !dst.eq_ignore_ascii_case("any") && !dst.eq_ignore_ascii_case("all") {
+            parts.push(format!("ip daddr {}", dst));
+        }
     }
 
     // Destination port
@@ -492,6 +507,21 @@ mod qa_regression_tests {
         let command = rule_to_nft_command(&rule).expect("well-formed rule should be accepted");
         assert!(command.contains("ip saddr 10.0.0.0/8"));
         assert!(command.contains("iifname \"eth0\""));
+    }
+
+    #[test]
+    fn rule_to_nft_command_omits_match_for_any_destination_instead_of_splicing_literal_any() {
+        // "any" is a valid value from `is_valid_address_spec`'s point of
+        // view, but it is not a real nftables address -- nft would try to
+        // resolve it as a hostname and fail ("Could not resolve hostname:
+        // any"). A rule with the UI's default "Any" destination/source must
+        // still produce a command nft can actually run.
+        let mut rule = base_rule();
+        rule.destination = Some("any".to_string());
+        rule.source = Some("ALL".to_string());
+        let command = rule_to_nft_command(&rule).expect("'any'/'all' must not be rejected");
+        assert!(!command.contains("ip daddr any"));
+        assert!(!command.contains("ip saddr ALL"));
     }
 
     #[test]
