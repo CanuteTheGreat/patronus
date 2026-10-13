@@ -16,7 +16,15 @@ impl Database {
         let url = if path == ":memory:" {
             "sqlite::memory:".to_string()
         } else {
-            format!("sqlite://{}", path)
+            // mode=rwc: create the database file if it does not already exist.
+            // Without this, sqlx::SqlitePool::connect refuses to open a
+            // nonexistent file (SQLITE_CANTOPEN / "unable to open database
+            // file"), so any fresh install with no pre-existing DB file
+            // crash-loops on first boot. patronus-dashboard/src/state.rs
+            // already does this correctly for its own second connection pool;
+            // this was the one real file-path caller of Database::new that
+            // had not been.
+            format!("sqlite://{}?mode=rwc", path)
         };
 
         info!(url = %url, "Connecting to SD-WAN database");
