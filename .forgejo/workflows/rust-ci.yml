@@ -215,9 +215,16 @@ jobs:
         # resolves to the same netns the app is actually listening on; port
         # publishing (-p) is meaningless/rejected in that mode since there's
         # no separate network to publish from.
+        # patronus-web initializes nftables tables/chains on startup
+        # (crates/patronus-web/src/main.rs -> patronus-firewall), which
+        # opens a netlink socket to the kernel. Docker containers run
+        # without CAP_NET_ADMIN/CAP_NET_RAW by default, so that call
+        # fails with "cache initialization failed: Operation not
+        # permitted" and the process exits before ever binding :8443
+        # -- the 60s curl loop below was never going to succeed.
         run: |
           set -e
-          cid=$(docker run -d --network "container:$(hostname)" patronus/web:${{ github.sha }})
+          cid=$(docker run -d --cap-add=NET_ADMIN --cap-add=NET_RAW --network "container:$(hostname)" patronus/web:${{ github.sha }})
           trap 'docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
           ok=0
           for i in $(seq 1 30); do
