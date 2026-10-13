@@ -65,7 +65,11 @@ fn extract_bgp_section(doc: &serde_yaml::Value) -> anyhow::Result<BgpSection> {
     }
 }
 
-fn save_bgp_section(path: &Path, mut doc: serde_yaml::Value, bgp: &BgpSection) -> anyhow::Result<()> {
+fn save_bgp_section(
+    path: &Path,
+    mut doc: serde_yaml::Value,
+    bgp: &BgpSection,
+) -> anyhow::Result<()> {
     let mapping = doc
         .as_mapping_mut()
         .ok_or_else(|| anyhow::anyhow!("config.yaml root is not a mapping"))?;
@@ -180,9 +184,7 @@ pub async fn handle_bgp_command(action: BgpCommands, config_path: PathBuf) -> an
                     bgp.enabled,
                     bgp.neighbors.len()
                 );
-                println!(
-                    "  Add a peer with: patronus bgp peer --address <ip> --asn <asn>"
-                );
+                println!("  Add a peer with: patronus bgp peer --address <ip> --asn <asn>");
                 return Ok(());
             }
 

@@ -235,7 +235,15 @@ impl LeaderElection {
                     term: new_term,
                     candidate_id: node_id,
                 };
-                client.post(&url).json(&body).send().await.ok()?.json::<VoteResponse>().await.ok()
+                client
+                    .post(&url)
+                    .json(&body)
+                    .send()
+                    .await
+                    .ok()?
+                    .json::<VoteResponse>()
+                    .await
+                    .ok()
             }));
         }
 
@@ -319,7 +327,15 @@ impl LeaderElection {
                     term,
                     leader_id: node_id,
                 };
-                client.post(&url).json(&body).send().await.ok()?.json::<HeartbeatResponse>().await.ok()
+                client
+                    .post(&url)
+                    .json(&body)
+                    .send()
+                    .await
+                    .ok()?
+                    .json::<HeartbeatResponse>()
+                    .await
+                    .ok()
             }));
         }
 
@@ -354,7 +370,8 @@ impl LeaderElection {
         }
 
         let mut voted_for = self.voted_for.write().await;
-        let can_vote = voted_for.is_none() || voted_for.as_deref() == Some(req.candidate_id.as_str());
+        let can_vote =
+            voted_for.is_none() || voted_for.as_deref() == Some(req.candidate_id.as_str());
 
         if can_vote {
             *voted_for = Some(req.candidate_id.clone());

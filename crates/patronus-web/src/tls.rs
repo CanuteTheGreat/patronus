@@ -57,11 +57,17 @@ fn generate_self_signed(cert_path: &Path, key_path: &Path) -> Result<()> {
     }
 
     let hostname = std::env::var("PATRONUS_TLS_HOSTNAME").unwrap_or_else(|_| "localhost".into());
-    let subject_alt_names = vec![hostname, "patronus".to_string(), "patronus.local".to_string()];
+    let subject_alt_names = vec![
+        hostname,
+        "patronus".to_string(),
+        "patronus.local".to_string(),
+    ];
 
     let cert = rcgen::generate_simple_self_signed(subject_alt_names)
         .context("failed to generate self-signed certificate")?;
-    let cert_pem = cert.serialize_pem().context("failed to serialize certificate")?;
+    let cert_pem = cert
+        .serialize_pem()
+        .context("failed to serialize certificate")?;
     let key_pem = cert.serialize_private_key_pem();
 
     std::fs::write(cert_path, cert_pem)

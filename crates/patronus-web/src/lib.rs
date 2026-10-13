@@ -97,7 +97,11 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
 
 /// Start the web server over HTTPS using a self-signed certificate,
 /// generating one on first run if none exists yet under `tls_dir`.
-pub async fn serve_tls(addr: SocketAddr, state: AppState, tls_dir: &std::path::Path) -> anyhow::Result<()> {
+pub async fn serve_tls(
+    addr: SocketAddr,
+    state: AppState,
+    tls_dir: &std::path::Path,
+) -> anyhow::Result<()> {
     let app = prepare_app(state);
 
     let tls_config = tls::ensure_self_signed_cert(tls_dir).await?;

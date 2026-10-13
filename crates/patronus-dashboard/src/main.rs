@@ -113,7 +113,11 @@ async fn main() -> anyhow::Result<()> {
                 state.distributed_state = Some(Arc::new(dstate));
             }
             Err(e) => {
-                tracing::warn!("Failed to open sled distributed-state store at {}: {}", data_dir, e);
+                tracing::warn!(
+                    "Failed to open sled distributed-state store at {}: {}",
+                    data_dir,
+                    e
+                );
             }
         }
 
