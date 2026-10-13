@@ -79,3 +79,4 @@ tmp/
 node_modules/
 frontend/dist/
 frontend/.vite/
+/static/

@@ -1,0 +1,88 @@
+# Patronus SD-WAN Enterprise Dashboard -- container build
+#
+# Builds the `patronus-dashboard` crate (crates/patronus-dashboard), a
+# SEPARATE product from patronus-web / the root Dockerfile: this is the
+# multi-site SD-WAN enterprise dashboard used by docker-compose.ha.yml
+# (dashboard1/2/3 services), not the default single-node firewall image.
+#
+# Unlike the root Dockerfile, patronus-dashboard is a plain Rust binary
+# with no Gentoo ebuild / nftables runtime dependency -- it only needs a
+# Rust toolchain to build and a thin runtime base to run, so this uses a
+# conventional multi-stage cargo build rather than the emerge-based
+# pattern in the root Dockerfile.
+#
+# This image intentionally does NOT build frontend/ -- the built UI is
+# supplied separately by ./build-frontend.sh (run on the host) and
+# bind-mounted in read-only by docker-compose.ha.yml's
+# `./static:/app/static:ro` volume. Run ./build-frontend.sh before
+# `docker-compose -f docker-compose.ha.yml up`.
+
+ARG RUST_VERSION=1.90
+
+# --- Builder ----------------------------------------------------------
+FROM rust:${RUST_VERSION}-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        pkg-config \
+        libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /usr/src/patronus
+
+# Cargo.lock is not committed to this repo (confirmed: untracked in git,
+# not gitignored either -- it's just generated locally), so there is no
+# lockfile to copy in ahead of source for a separate caching layer. Copy
+# the whole workspace in one layer instead and let Cargo resolve+lock at
+# build time.
+COPY . .
+
+# Build only the patronus-dashboard binary and its path-dependency
+# (patronus-sdwan), not the whole workspace.
+RUN cargo build --release -p patronus-dashboard
+
+# --- Runtime ------------------------------------------------------------
+FROM debian:bookworm-slim AS runtime
+
+# docker-compose.ha.yml's healthcheck runs `curl -f http://localhost:8443/health/ready`
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        ca-certificates \
+        libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -r -u 1000 -m -s /usr/sbin/nologin patronus
+
+COPY --from=builder /usr/src/patronus/target/release/patronus-dashboard /usr/local/bin/patronus-dashboard
+
+WORKDIR /app
+
+# docker-compose.ha.yml bind-mounts the host-built frontend here read-only
+# (volumes: ./static:/app/static:ro) -- no COPY needed, but the mountpoint
+# and a data dir for PATRONUS_DATA_DIR/PATRONUS_DB_PATH defaults must exist
+# and be owned by the non-root runtime user.
+RUN mkdir -p /app/static /data && chown -R patronus:patronus /app /data
+
+# Environment variables set per-instance by docker-compose.ha.yml:
+#   PATRONUS_NODE_ID, PATRONUS_NODE_ADDR, PATRONUS_PEERS, PATRONUS_DATA_DIR,
+#   PATRONUS_DB_PATH, PATRONUS_ELECTION_TIMEOUT, PATRONUS_HEARTBEAT_INTERVAL
+# NOTE: as of this image, patronus-dashboard's main.rs does not yet read
+# these env vars (binds 0.0.0.0:8443 and opens ./dashboard.db unconditionally,
+# and its HA leader-election module is not wired into main() at all -- see
+# repo notes / QA findings). They are still declared here via ENV defaults
+# so the binary has sane values in case/when that wiring lands.
+ENV PATRONUS_NODE_ID="" \
+    PATRONUS_NODE_ADDR="0.0.0.0:8443" \
+    PATRONUS_PEERS="" \
+    PATRONUS_DATA_DIR="/data/raft" \
+    PATRONUS_DB_PATH="/data/dashboard.db" \
+    PATRONUS_ELECTION_TIMEOUT="5" \
+    PATRONUS_HEARTBEAT_INTERVAL="1" \
+    RUST_LOG="patronus_dashboard=info,tower_http=debug"
+
+USER patronus
+EXPOSE 8443
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8443/health/ready || exit 1
+
+CMD ["patronus-dashboard"]
