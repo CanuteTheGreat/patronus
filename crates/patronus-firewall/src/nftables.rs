@@ -186,24 +186,42 @@ pub fn rule_to_nft_command(rule: &FirewallRule) -> Result<String> {
 
     let mut parts = Vec::new();
 
-    // Interface filters
+    // Interface filters. "any"/"all" means "match every interface" -- same
+    // rule as the source/destination "any"/"all" handling below: the
+    // correct way to express that in nft is to omit the iifname/oifname
+    // match entirely, not to splice the literal word "any" in as if it were
+    // a real interface name. nft does not resolve "any" as a wildcard here
+    // either -- it fails at apply time ("Could not process rule: No such
+    // file or directory"), and "any" is the UI's own default interface
+    // value, so this broke ordinary legitimate rules, not just injection
+    // attempts.
     if let Some(ref iface) = rule.interface_in {
-        if !is_valid_interface_name(iface) {
+        if !is_valid_interface_name(iface)
+            && !iface.eq_ignore_ascii_case("any")
+            && !iface.eq_ignore_ascii_case("all")
+        {
             return Err(Error::Firewall(format!(
                 "Invalid interface_in name for firewall rule: {:?}",
                 iface
             )));
         }
-        parts.push(format!("iifname \"{}\"", iface));
+        if !iface.eq_ignore_ascii_case("any") && !iface.eq_ignore_ascii_case("all") {
+            parts.push(format!("iifname \"{}\"", iface));
+        }
     }
     if let Some(ref iface) = rule.interface_out {
-        if !is_valid_interface_name(iface) {
+        if !is_valid_interface_name(iface)
+            && !iface.eq_ignore_ascii_case("any")
+            && !iface.eq_ignore_ascii_case("all")
+        {
             return Err(Error::Firewall(format!(
                 "Invalid interface_out name for firewall rule: {:?}",
                 iface
             )));
         }
-        parts.push(format!("oifname \"{}\"", iface));
+        if !iface.eq_ignore_ascii_case("any") && !iface.eq_ignore_ascii_case("all") {
+            parts.push(format!("oifname \"{}\"", iface));
+        }
     }
 
     // Protocol
@@ -303,15 +321,22 @@ pub fn nat_rule_to_nft_command(rule: &NatRule) -> Result<String> {
         NatType::Dnat { .. } => "prerouting",
     };
 
-    // Interface
+    // Interface. See rule_to_nft_command's "any"/"all" interface note,
+    // above -- omit the match entirely rather than splice the literal
+    // placeholder in as an interface name.
     if let Some(ref iface) = rule.interface_out {
-        if !is_valid_interface_name(iface) {
+        if !is_valid_interface_name(iface)
+            && !iface.eq_ignore_ascii_case("any")
+            && !iface.eq_ignore_ascii_case("all")
+        {
             return Err(Error::Firewall(format!(
                 "Invalid interface_out name for NAT rule: {:?}",
                 iface
             )));
         }
-        parts.push(format!("oifname \"{}\"", iface));
+        if !iface.eq_ignore_ascii_case("any") && !iface.eq_ignore_ascii_case("all") {
+            parts.push(format!("oifname \"{}\"", iface));
+        }
     }
 
     // Protocol
@@ -496,6 +521,24 @@ mod qa_regression_tests {
         let mut rule = base_rule();
         rule.interface_in = Some("eth0\" }; add rule inet patronus forward accept #".to_string());
         assert!(rule_to_nft_command(&rule).is_err());
+    }
+
+    #[test]
+    fn rule_to_nft_command_omits_match_for_any_interface_instead_of_splicing_literal_any() {
+        // Same bug class as the source/destination "any"/"all" fix above:
+        // "any" is the UI's own default interface value, but it is not a
+        // real interface name -- nft fails outright trying to apply
+        // `iifname "any"`/`oifname "any"` ("Could not process rule: No
+        // such file or directory"). A rule with the default "Any"
+        // interface_in/interface_out must still produce a command nft can
+        // actually run, by omitting the match entirely.
+        let mut rule = base_rule();
+        rule.interface_in = Some("any".to_string());
+        rule.interface_out = Some("ALL".to_string());
+        let command =
+            rule_to_nft_command(&rule).expect("'any'/'all' interface must not be rejected");
+        assert!(!command.contains("iifname \"any\""));
+        assert!(!command.contains("oifname \"ALL\""));
     }
 
     #[test]

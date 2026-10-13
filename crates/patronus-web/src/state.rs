@@ -74,9 +74,9 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(rule_manager: RuleManager, config_store: ConfigStore) -> Self {
-        Self {
-            firewall: Arc::new(FirewallManager::new(rule_manager)),
+    pub async fn new(rule_manager: RuleManager, config_store: ConfigStore) -> anyhow::Result<Self> {
+        Ok(Self {
+            firewall: Arc::new(FirewallManager::new(rule_manager).await?),
             vpn: Arc::new(VpnManager::new()),
             network: Arc::new(NetworkManager::new()),
             system: Arc::new(SystemManager::new()),
@@ -86,7 +86,7 @@ impl AppState {
             secrets: Arc::new(SecretManager::new(Arc::new(
                 patronus_secrets::store::MemoryStore::new(),
             ))),
-        }
+        })
     }
 }
 
@@ -100,8 +100,62 @@ pub struct FirewallManager {
 }
 
 impl FirewallManager {
-    pub fn new(rule_manager: RuleManager) -> Self {
-        let default_rules = vec![
+    /// Convert one of the seeded default-rule templates into the typed
+    /// `CoreFirewallRule` that `RuleManager::add_filter_rule` understands,
+    /// so the defaults go through the exact same real-apply path as a
+    /// user-submitted rule (see `add_rule`, below) instead of a parallel
+    /// one that only touches the in-memory dashboard list.
+    fn default_rule_to_core(rule: &crate::templates::FirewallRule) -> CoreFirewallRule {
+        let protocol = match rule.protocol.to_ascii_uppercase().as_str() {
+            "TCP" => Some(patronus_core::types::Protocol::Tcp),
+            "UDP" => Some(patronus_core::types::Protocol::Udp),
+            "ICMP" => Some(patronus_core::types::Protocol::Icmp),
+            _ => None, // "any"/"ANY"/unrecognized -- match every protocol
+        };
+        let dport = if rule.port.eq_ignore_ascii_case("any") {
+            None
+        } else {
+            rule.port
+                .parse::<u16>()
+                .ok()
+                .map(patronus_core::types::PortSpec::Single)
+        };
+
+        CoreFirewallRule {
+            id: None,
+            name: rule.name.clone(),
+            enabled: rule.enabled,
+            chain: ChainType::Input,
+            action: if rule.action == "Accept" {
+                FirewallAction::Accept
+            } else {
+                FirewallAction::Drop
+            },
+            source: Some(rule.source.clone()),
+            destination: Some(rule.destination.clone()),
+            protocol,
+            sport: None,
+            dport,
+            interface_in: Some(rule.interface.clone()),
+            interface_out: None,
+            comment: Some(rule.description.clone()),
+        }
+    }
+
+    /// Build the manager and seed its "default" rules (Allow SSH/HTTPS/Web
+    /// Interface/WireGuard, Drop Invalid). These used to be pure in-memory
+    /// data marked `enabled: true` that was NEVER actually passed to
+    /// `RuleManager`/applied to real nftables -- a fresh instance's
+    /// dashboard reported them as active protection while `nft list
+    /// ruleset` had no `inet patronus` table at all. Each default is now
+    /// actually applied via `RuleManager::add_filter_rule`, the same call
+    /// `add_rule` uses for a user-submitted rule. If a given default fails
+    /// to apply (e.g. no CAP_NET_ADMIN, nft missing), it is logged and left
+    /// `enabled: false` in the returned list -- the dashboard must never
+    /// claim protection that isn't actually enforced -- rather than
+    /// aborting construction entirely over one failed default.
+    pub async fn new(rule_manager: RuleManager) -> anyhow::Result<Self> {
+        let mut default_rules = vec![
             crate::templates::FirewallRule {
                 id: 1,
                 name: "Allow SSH".to_string(),
@@ -189,6 +243,22 @@ impl FirewallManager {
             },
         ];
 
+        for rule in default_rules.iter_mut() {
+            if !rule.enabled {
+                continue;
+            }
+            let core_rule = Self::default_rule_to_core(rule);
+            if let Err(e) = rule_manager.add_filter_rule(core_rule).await {
+                tracing::error!(
+                    "Default firewall rule {:?} failed to apply to nftables, \
+                     reporting it as disabled rather than falsely claiming \
+                     protection: {e}",
+                    rule.name
+                );
+                rule.enabled = false;
+            }
+        }
+
         let default_nat_rules = vec![crate::templates::NatRule {
             id: 1,
             rule_type: "SNAT".to_string(),
@@ -217,13 +287,13 @@ impl FirewallManager {
             },
         ];
 
-        Self {
+        Ok(Self {
             rule_manager: Arc::new(RwLock::new(rule_manager)),
             rules: Arc::new(RwLock::new(default_rules)),
             nat_rules: Arc::new(RwLock::new(default_nat_rules)),
             aliases: Arc::new(RwLock::new(default_aliases)),
             next_id: Arc::new(RwLock::new(6)),
-        }
+        })
     }
 
     pub async fn list_rules(&self) -> anyhow::Result<Vec<crate::templates::FirewallRule>> {
@@ -1540,7 +1610,9 @@ mod rule_apply_tests {
 
     #[tokio::test]
     async fn add_rule_rejects_injection_and_does_not_appear_in_list() {
-        let fw = FirewallManager::new(RuleManager::new());
+        let fw = FirewallManager::new(RuleManager::new())
+            .await
+            .expect("default rules must not abort construction on apply failure");
         let before = fw.list_rules().await.unwrap().len();
 
         let malicious = sample_rule("0.0.0.0/0; add rule inet patronus forward accept #");
@@ -1560,7 +1632,9 @@ mod rule_apply_tests {
 
     #[tokio::test]
     async fn add_nat_rule_rejects_injection_in_source_and_does_not_appear_in_list() {
-        let fw = FirewallManager::new(RuleManager::new());
+        let fw = FirewallManager::new(RuleManager::new())
+            .await
+            .expect("default rules must not abort construction on apply failure");
         let before = fw.list_nat_rules().await.unwrap().len();
 
         let malicious = sample_nat_rule(
@@ -1584,7 +1658,9 @@ mod rule_apply_tests {
 
     #[tokio::test]
     async fn add_nat_rule_rejects_unparseable_target_and_does_not_appear_in_list() {
-        let fw = FirewallManager::new(RuleManager::new());
+        let fw = FirewallManager::new(RuleManager::new())
+            .await
+            .expect("default rules must not abort construction on apply failure");
         let before = fw.list_nat_rules().await.unwrap().len();
 
         // add_nat_rule previously never called into RuleManager at all, so
@@ -1617,7 +1693,9 @@ mod rule_apply_tests {
             .initialize()
             .await
             .expect("nft table init (requires CAP_NET_ADMIN)");
-        let fw = FirewallManager::new(rule_manager);
+        let fw = FirewallManager::new(rule_manager)
+            .await
+            .expect("default rules must apply cleanly once the table exists");
 
         let marker = format!("patronus-web-test-{}", std::process::id());
         let mut valid = sample_rule("10.0.0.0/8");
@@ -1654,7 +1732,9 @@ mod rule_apply_tests {
             .initialize()
             .await
             .expect("nft table init (requires CAP_NET_ADMIN)");
-        let fw = FirewallManager::new(rule_manager);
+        let fw = FirewallManager::new(rule_manager)
+            .await
+            .expect("default rules must apply cleanly once the table exists");
 
         let marker = format!("patronus-web-nat-test-{}", std::process::id());
         let mut nat = sample_nat_rule("MASQUERADE", "10.0.0.0/8", "masquerade");

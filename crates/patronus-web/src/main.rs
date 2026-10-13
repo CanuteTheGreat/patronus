@@ -26,9 +26,13 @@ async fn main() -> Result<()> {
 
     // Create minimal application state with stub services
     let rule_manager = patronus_firewall::rules::RuleManager::new();
+    rule_manager
+        .initialize()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to initialize nftables table/chains: {e}"))?;
     let config_store =
         patronus_config::store::ConfigStore::new(std::path::PathBuf::from("/tmp/patronus-config"));
-    let state = AppState::new(rule_manager, config_store);
+    let state = AppState::new(rule_manager, config_store).await?;
 
     // Bind to address
     let addr = SocketAddr::from(([0, 0, 0, 0], 8443));
