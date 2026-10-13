@@ -74,3 +74,8 @@ logs/
 # Temporary files
 *.tmp
 tmp/
+
+# Node (frontend/)
+node_modules/
+frontend/dist/
+frontend/.vite/
