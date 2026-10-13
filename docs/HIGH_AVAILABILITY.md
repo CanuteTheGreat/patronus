@@ -304,13 +304,18 @@ Continue seamlessly
 **Quick Start**:
 
 ```bash
-# 1. Generate SSL certificate (for production)
+# 1. Generate SSL certificate for production use (replace with a real cert;
+#    for local/dev HA testing use the repo's own helper script instead --
+#    see below)
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
   -keyout certs/patronus.key \
   -out certs/patronus.crt
 
 # Combine for HAProxy
 cat certs/patronus.crt certs/patronus.key > certs/patronus.pem
+
+# 1b. For local/dev HA testing, generate a self-signed cert in one step:
+./generate-ha-certs.sh
 
 # 2. Start HA cluster
 docker-compose -f docker-compose.ha.yml up -d
@@ -553,10 +558,9 @@ T+2m:   Instance 1 rejoins cluster
 **Mitigation** (if it occurs):
 
 ```bash
-# Manually force re-election
-curl -X POST https://dashboard1/api/v1/admin/force-election
-
-# Or restart affected instances
+# There is no force-election admin endpoint; force a re-election by
+# restarting the instance(s) you believe are wedged -- a fresh process
+# always starts as a follower and re-runs the real election protocol.
 docker-compose -f docker-compose.ha.yml restart dashboard1
 ```
 
@@ -591,17 +595,18 @@ curl https://localhost/health
 **Test 1: Leader Failure**:
 
 ```bash
-# 1. Identify leader
-curl -s https://localhost/api/v1/cluster/status | jq .leader
+# 1. Identify leader (query any node's HA status endpoint directly, e.g.
+#    dashboard1 on host port 8443)
+curl -s http://localhost:8443/ha/status | jq .leader_id
 
 # 2. Kill leader instance
 docker stop patronus-dashboard-1
 
-# 3. Monitor election (should complete in ~5s)
-watch -n 1 'curl -s https://localhost/api/v1/cluster/status'
+# 3. Monitor election (should complete within PATRONUS_ELECTION_TIMEOUT, ~5-10s)
+watch -n 1 'curl -s http://localhost:8444/ha/status'
 
 # 4. Verify new leader elected
-curl -s https://localhost/api/v1/cluster/status | jq .leader
+curl -s http://localhost:8444/ha/status | jq .leader_id
 
 # 5. Verify no service disruption
 ab -n 1000 -c 10 https://localhost/health
@@ -684,8 +689,8 @@ docker-compose -f docker-compose.ha.yml up -d dashboard4
 docker-compose -f docker-compose.ha.yml exec haproxy \
   haproxy -f /usr/local/etc/haproxy/haproxy.cfg -sf $(pidof haproxy)
 
-# 5. Verify cluster membership
-curl -s https://localhost/api/v1/cluster/status
+# 5. Verify cluster membership (status is per-node; query each one)
+curl -s http://localhost:8443/ha/status
 ```
 
 ### Removing a Node
@@ -697,8 +702,8 @@ curl -s https://localhost/api/v1/cluster/status
 # 2. Stop instance
 docker-compose -f docker-compose.ha.yml stop dashboard3
 
-# 3. Remove from cluster
-curl -X DELETE https://localhost/api/v1/cluster/nodes/dashboard3
+# 3. Remove from cluster: update PATRONUS_PEERS on the remaining nodes to
+#    drop dashboard3 and restart them (there is no live node-removal API)
 
 # 4. Update configurations
 # Remove from docker-compose.ha.yml and haproxy.cfg

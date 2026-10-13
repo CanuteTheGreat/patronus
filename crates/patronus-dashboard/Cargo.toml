@@ -70,6 +70,7 @@ urlencoding = "2.1"
 raft = "0.7"
 sled = "0.34"  # Embedded distributed database
 parking_lot = "0.12"  # Better locks for HA
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }  # peer RPC (vote/heartbeat)
 
 [dev-dependencies]
 tempfile = "3.8"

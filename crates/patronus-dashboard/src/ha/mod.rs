@@ -2,4 +2,5 @@
 
 pub mod cluster;
 pub mod election;
+pub mod rpc;
 pub mod state;

@@ -72,6 +72,14 @@ pub struct AppState {
 
     /// Failover engine for automatic path failover
     pub failover_engine: Arc<FailoverEngine>,
+
+    /// HA leader-election manager (Some when PATRONUS_NODE_ID/PEERS are
+    /// configured; None for a plain single-node run).
+    pub ha: Option<Arc<crate::ha::election::LeaderElection>>,
+
+    /// Sled-backed distributed state store, shared cluster metadata (Some
+    /// alongside `ha`, same enable condition).
+    pub distributed_state: Option<Arc<crate::ha::state::DistributedState>>,
 }
 
 impl AppState {
@@ -145,6 +153,8 @@ impl AppState {
             routing_engine,
             health_monitor,
             failover_engine,
+            ha: None,
+            distributed_state: None,
         })
     }
 }

@@ -56,8 +56,98 @@ async fn main() -> anyhow::Result<()> {
     // Initialize metrics collector
     let _metrics = DashboardMetrics::new();
 
+    // HA / data-dir configuration, read from the env vars docker-compose.ha.yml
+    // sets for every dashboard instance (PATRONUS_NODE_ID, PATRONUS_NODE_ADDR,
+    // PATRONUS_PEERS, PATRONUS_DATA_DIR, PATRONUS_DB_PATH,
+    // PATRONUS_ELECTION_TIMEOUT, PATRONUS_HEARTBEAT_INTERVAL). All are
+    // optional: a plain single-node run (no env vars set) behaves exactly as
+    // before, with HA disabled (`state.ha == None`).
+    let db_path = std::env::var("PATRONUS_DB_PATH").unwrap_or_else(|_| "dashboard.db".to_string());
+
     // Initialize application state
-    let state = AppState::new("dashboard.db").await?;
+    let mut state = AppState::new(&db_path).await?;
+
+    let node_id_env = std::env::var("PATRONUS_NODE_ID").ok();
+    if let Some(node_id) = node_id_env {
+        let node_addr_str =
+            std::env::var("PATRONUS_NODE_ADDR").unwrap_or_else(|_| "0.0.0.0:8443".to_string());
+        let node_addr: SocketAddr = node_addr_str
+            .parse()
+            .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 8443)));
+
+        let peers: Vec<String> = std::env::var("PATRONUS_PEERS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty())
+            .map(|p| p.to_string())
+            .collect();
+
+        let data_dir =
+            std::env::var("PATRONUS_DATA_DIR").unwrap_or_else(|_| "./data/raft".to_string());
+        let election_timeout: u64 = std::env::var("PATRONUS_ELECTION_TIMEOUT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5);
+        let heartbeat_interval: u64 = std::env::var("PATRONUS_HEARTBEAT_INTERVAL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+
+        // Ensure the sled data dir exists (sled::open will also create it,
+        // but fail loudly here if the path is unusable, e.g. permissions).
+        std::fs::create_dir_all(&data_dir).ok();
+
+        // Sled-backed distributed state store (ha::state::DistributedState)
+        // -- real persistence for cluster metadata, shared across restarts.
+        match ha::state::DistributedState::new(&data_dir, "cluster") {
+            Ok(dstate) => {
+                let metadata = ha::state::ClusterMetadata {
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    cluster_id: node_id.clone(),
+                    created_at: chrono::Utc::now(),
+                };
+                if let Err(e) = dstate.set("node_metadata", &metadata) {
+                    tracing::warn!("Failed to persist HA node metadata to sled: {}", e);
+                }
+                state.distributed_state = Some(Arc::new(dstate));
+            }
+            Err(e) => {
+                tracing::warn!("Failed to open sled distributed-state store at {}: {}", data_dir, e);
+            }
+        }
+
+        let cluster_state = Arc::new(ha::cluster::ClusterState::new(node_id.clone()));
+        let election = Arc::new(ha::election::LeaderElection::new(
+            cluster_state,
+            node_id.clone(),
+            node_addr,
+            peers.clone(),
+            election_timeout,
+            heartbeat_interval,
+        ));
+
+        info!(
+            node_id = %node_id,
+            %node_addr,
+            ?peers,
+            election_timeout,
+            heartbeat_interval,
+            "HA leader election enabled"
+        );
+
+        // Run the election + heartbeat loops as background tasks alongside
+        // the axum server, matching this codebase's existing pattern of
+        // spawning long-running background workers from main() (see
+        // policy_enforcer.start() / metrics_collector.start() / etc. above,
+        // which do the same thing one layer down inside AppState::new).
+        election.clone().start();
+
+        state.ha = Some(election);
+    } else {
+        info!("PATRONUS_NODE_ID not set -- running as a standalone single-node dashboard (HA disabled)");
+    }
+
     let state = Arc::new(state);
 
     info!("Application state initialized");
@@ -72,6 +162,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health_check))
         .route("/health/live", get(liveness_check))
         .route("/health/ready", get(readiness_check))
+        // HA leader election RPC (node-to-node) + live status
+        .route("/ha/vote", post(ha::rpc::vote_handler))
+        .route("/ha/heartbeat", post(ha::rpc::heartbeat_handler))
+        .route("/ha/status", get(ha::rpc::status_handler))
         // Prometheus metrics
         .route(
             "/metrics",
@@ -119,7 +213,10 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state);
 
     // Start server
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8443));
+    let addr: SocketAddr = std::env::var("PATRONUS_NODE_ADDR")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 8443)));
     info!("Dashboard server listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
