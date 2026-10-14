@@ -188,6 +188,16 @@ jobs:
 
       - name: Fetch built install media from shared host dir
         run: |
+          # run 345 (2026-10-13) failed outright here with
+          # "cp: /tmp/patronus-vm-test/modloop: Permission denied" -- a
+          # prior run's workdir survived (runner killed externally before
+          # the always()-guarded cleanup step below could run, same class
+          # of external systemctl-stop interruption already called out
+          # elsewhere in this file) leaving a stale file this job's `cp`
+          # couldn't overwrite. The cleanup step is best-effort and can't
+          # be relied on to have run; force a clean workdir here instead
+          # of assuming one.
+          rm -rf /tmp/patronus-vm-test
           mkdir -p /tmp/patronus-vm-test
           src=/Users/rbf/.forgejo-runner-data/ci-handoff/patronus-installer
           # Docker Desktop's bind-mount write-back to the host filesystem
