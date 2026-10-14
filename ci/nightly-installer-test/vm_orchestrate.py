@@ -564,10 +564,15 @@ serial_log_path = None
 
 def capture_serial(host_port, log_path, stop_event):
     """Connects to the VM's TCP-server serial backend and tees
-    everything it sends (the guest's ttyS0, which the kernel cmdline
-    already targets via console=ttyS0,115200) to a log file - our only
-    real window into what the guest is actually doing during boot,
-    since there's no VNC/screenshot capability available here."""
+    everything it sends (the guest's ttyAMA0 on aarch64's "virt"
+    machine, which the kernel cmdline already targets via
+    console=ttyAMA0,115200) to a log file - our only real window into
+    what the guest is actually doing during boot, since there's no
+    VNC/screenshot capability available here. The same socket is also
+    used to WRITE a one-shot UEFI Shell boot command if the guest ever
+    lands there instead of auto-booting (see the Shell-prompt handling
+    below) - bidirectional, not just a tee.
+    """
     import socket
     for _ in range(30):
         if stop_event.is_set():
@@ -581,15 +586,52 @@ def capture_serial(host_port, log_path, stop_event):
         print(f"[serial] could not connect to serial TCP server on :{host_port}", flush=True)
         return
     print(f"[serial] connected to guest serial console on :{host_port}", flush=True)
+    # Confirmed by direct observation (first real aarch64 run, 2026-10-14):
+    # QEMU's aarch64 "virt" EDK2 firmware mapped our USB-attached CD-ROM's
+    # El Torito FAT boot image as FS0 (containing a real
+    # /EFI/BOOT/BOOTAA64.EFI, confirmed by extracting and inspecting that
+    # same image directly) but never auto-booted it - a fresh efi_vars.fd
+    # has no persisted NVRAM Boot### entry for a USB-attached optical
+    # device, so BDS fell through to its last-resort "EFI Internal Shell"
+    # boot option instead, after a "Press ESC ... or any other key" splash
+    # that times out into an interactive Shell> prompt because the FAT
+    # image carries no /startup.nsh for the Shell to auto-run. Rather than
+    # rebuild/re-inject that embedded FAT image just to add a startup.nsh
+    # (xorriso only lets iso_remaster.sh map individual *files* back into
+    # the ISO9660 tree, not rewrite an El-Torito-embedded FAT image), type
+    # the equivalent two commands over this same serial line the moment
+    # the Shell prompt appears - it's the identical, fully-general fix
+    # with far less moving parts. Sends plain "FS0:" first (the
+    # overwhelmingly common alias for a single attached boot device)
+    # then, after a few seconds for the prompt to switch, the actual
+    # EFI binary path - if FS0 turns out to be wrong for some future
+    # drive-layout change, this will visibly do nothing useful in the
+    # serial log rather than silently misbehave, which is enough of a
+    # signal to extend it then.
+    shell_boot_sent = False
+    shell_boot_deadline = None
+    tail_buf = b""
     with open(log_path, "ab") as f, sock:
         sock.settimeout(1)
         while not stop_event.is_set():
+            if (
+                shell_boot_sent
+                and shell_boot_deadline is not None
+                and time.time() >= shell_boot_deadline
+            ):
+                sock.sendall(b"\\EFI\\BOOT\\BOOTAA64.EFI\r\n")
+                shell_boot_deadline = None
             try:
                 data = sock.recv(4096)
                 if not data:
                     break
                 f.write(data)
                 f.flush()
+                tail_buf = (tail_buf + data)[-4096:]
+                if not shell_boot_sent and b"Shell>" in tail_buf:
+                    shell_boot_sent = True
+                    shell_boot_deadline = time.time() + 6
+                    sock.sendall(b"FS0:\r\n")
             except socket.timeout:
                 continue
             except OSError:

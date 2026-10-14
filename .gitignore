@@ -80,3 +80,4 @@ node_modules/
 frontend/dist/
 frontend/.vite/
 /static/
+__pycache__/
