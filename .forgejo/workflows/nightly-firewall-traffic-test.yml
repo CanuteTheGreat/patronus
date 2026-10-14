@@ -41,6 +41,19 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+defaults:
+  run:
+    # Root cause of every "Real scenario N" / tunnel step failing instantly
+    # with "set: Illegal option -o pipefail" (runs 350/8402/8403 etc, and
+    # every scheduled run before that): catthehacker/ubuntu:act-latest's
+    # `run:` steps execute via /bin/sh (dash) on this runner, not bash, and
+    # dash's `set` builtin has no -o pipefail option at all -- so every
+    # `set -eo pipefail` script here aborted on its own second line before
+    # running a single real docker/nft/wg command. Force bash explicitly so
+    # `set -eo pipefail` actually works, matching what GitHub-hosted runners
+    # do implicitly (and what this file always assumed).
+    shell: bash
+
 jobs:
   firewall-live-traffic:
     name: Real nftables traffic test (allow/deny/CIDR edge case)
