@@ -128,15 +128,15 @@ jobs:
     # = 51min worst case) could exceed a 45min job timeout, force-killing
     # the job before the script's own clean timeout/error ever fires.
     #
-    # Bumped again, 45->75->90 (run 3103): this host boots x86_64 guests
-    # under pure TCG (no cross-arch HVF on this arm64 Mac), and a single
-    # live-boot attempt now budgets 1800s on its own (see
-    # vm_orchestrate.py) to give the kernel real time to boot after a
-    # long, consistent ~895s pre-GRUB firmware delay that was eating the
-    # old 600s/900s budgets before the kernel ever got a chance to print
-    # its own boot marker. New worst case: 1800 (boot) + 1800 (install)
-    # + 600 (second boot) = 4200s = 70min, so 75min left zero margin.
-    timeout-minutes: 90
+    # Bumped again, 45->75->90->120 (run 3113): a FULL 1800s live-boot
+    # budget still only got GRUB's "Booting `Linux lts'" printed right
+    # at the very end (~1795s) with the kernel never getting a real
+    # window afterward, under low host load (uptime load avg ~1.7 on a
+    # multi-core M5 Max - this isn't contention). Pure cross-arch TCG
+    # emulation of OVMF+ACPI probing on this host is apparently just
+    # this slow. Budget even more generously (2700s boot + 1800s
+    # install + 600s second-boot = 5100s = 85min) with real headroom.
+    timeout-minutes: 120
     steps:
       - name: Fast-fail if misrouted to Docker instead of real host-exec
         run: |
