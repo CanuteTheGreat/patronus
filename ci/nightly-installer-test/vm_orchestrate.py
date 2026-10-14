@@ -222,11 +222,11 @@ def build_vm_bundle(iso_path, disk_size_gb=8):
             # array of argument strings, e.g. ["-no-reboot"]. It is NOT
             # an array of {"Argument": "..."} dicts. Encoding it as
             # dicts (the previous, broken form, added alongside the
-            # -no-reboot flag itself) throws a type-mismatch while UTM
-            # decodes config.plist, which silently fails the entire
+            # -no-reboot flag itself) threw a type-mismatch while UTM
+            # decoded config.plist, which silently failed the entire
             # `open -a UTM <bundle>` import with UTM's generic "Cannot
             # import this VM. Either the configuration is invalid..."
-            # alert - and leaves *zero* trace in the unified system log,
+            # alert - and left *zero* trace in the unified system log,
             # because it's a caught Swift decoding error inside the app,
             # never logged. That's why every nightly run since -no-reboot
             # was added died at find_vm_uuid_by_name() with "never showed
@@ -237,9 +237,36 @@ def build_vm_bundle(iso_path, disk_size_gb=8):
             # `defaults read com.utmapp.UTM Registry`, varying one field
             # at a time (Drive Interface casing, Architecture, Serial,
             # Sound, Network mode, Hypervisor, efi_vars.fd presence) -
-            # the only change that ever flipped failure to success was
-            # this one.
-            "AdditionalArguments": ["-no-reboot"],
+            # the only change that flipped failure to success was that
+            # one.
+            #
+            # -no-reboot is now DROPPED ENTIRELY rather than fixed to
+            # ["-no-reboot"], for a second, separate reason found right
+            # after the decode bug was fixed and a real import/boot
+            # finally succeeded: ANY non-empty AdditionalArguments makes
+            # UTM's own importUTM() pop a one-button "This virtual
+            # machine uses custom QEMU arguments which is potentially
+            # dangerous..." alert (Platform/UTMData.swift) on every
+            # single import - i.e. every single CI run, since the VM
+            # name/path is unique per run. Confirmed straight from UTM's
+            # source that this alert has no suppression preference
+            # anywhere (it's an unconditional `showLocalizedErrorAlert`
+            # with no "don't show again" or defaults-backed gate) and is
+            # non-blocking to the data model (listAdd/listSelect already
+            # ran before it fires, confirmed empirically too), but on
+            # the real beauxbatons console - not just in CI - it's a
+            # real, disruptive, un-suppressible modal that someone
+            # physically at the machine has to click through every
+            # night. Since there is no config-only way to pass
+            # -no-reboot to QEMU without going through
+            # AdditionalArguments, and losing a few seconds of serial
+            # output on a reset is a far smaller cost than an
+            # un-suppressible dialog on a shared physical machine,
+            # dropping it is the right trade now that registration/boot
+            # itself works (the retry-loop in run() still catches a
+            # reset the same way it always did, just without the extra
+            # serial detail -no-reboot used to preserve).
+            "AdditionalArguments": [],
             "BalloonDevice": False,
             "DebugLog": False,
             "Hypervisor": True,
