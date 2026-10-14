@@ -29,10 +29,11 @@ name: Nightly Firewall / SD-WAN Live Traffic Test
 # instance) rather than passing artifacts between jobs - the existing
 # nightly-realistic-installer-test.yml works around both a broken
 # Forgejo artifact-upload backend (HTTP 500 on finalize) and a
-# same-host assumption via host bind-mounts; since runs-on: x86_64 can
-# resolve to different runner hosts (the shared AWS fleet or
-# beauxbatons), avoiding any cross-job hand-off entirely is simpler and
-# more robust than replicating that same-host assumption here.
+# same-host assumption via host bind-mounts; since runs-on: x86_64 (and now
+# runs-on: linux-cross-x86_64) can resolve to different runner hosts (the
+# shared AWS fleet, beauxbatons, or rw-man-02), avoiding any cross-job
+# hand-off entirely is simpler and more robust than replicating that
+# same-host assumption here.
 on:
   workflow_dispatch: {}
   schedule:
@@ -44,7 +45,7 @@ env:
 jobs:
   firewall-live-traffic:
     name: Real nftables traffic test (allow/deny/CIDR edge case)
-    runs-on: x86_64
+    runs-on: linux-cross-x86_64
     container: catthehacker/ubuntu:act-latest  # runner auto-mounts /var/run/docker.sock for this image; an explicit volumes: entry here duplicates it (Docker daemon rejects with "Duplicate mount point"), matching rust-ci.yml's existing pattern
     steps:
       - uses: actions/checkout@v4
@@ -203,7 +204,7 @@ jobs:
 
   sdwan-tunnel-live-traffic:
     name: Real WireGuard SD-WAN tunnel test (encrypted overlay)
-    runs-on: x86_64
+    runs-on: linux-cross-x86_64
     container: catthehacker/ubuntu:act-latest  # runner auto-mounts /var/run/docker.sock for this image; an explicit volumes: entry here duplicates it (Docker daemon rejects with "Duplicate mount point"), matching rust-ci.yml's existing pattern
     steps:
       - uses: actions/checkout@v4
