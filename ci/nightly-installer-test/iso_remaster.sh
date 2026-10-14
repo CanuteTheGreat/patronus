@@ -19,13 +19,31 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/extract"
 xorriso -osirrox on -indev "$SRC_ISO" -extract / "$WORK/extract" >/dev/null
 
-CMDLINE="ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v3.20/main modloop=${MODLOOP_URL} apkovl=${APKOVL_URL} console=ttyAMA0,115200 console=tty0 loglevel=8"
+CMDLINE="modules=loop,squashfs,sd-mod,usb-storage,virtio_pci,virtio_ring,virtio_net,virtio_blk,virtio_scsi,virtio_console ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v3.20/main modloop=${MODLOOP_URL} apkovl=${APKOVL_URL} console=ttyAMA0,115200 console=tty0 loglevel=8"
 # Guest arch switched x86_64 -> aarch64 (2026-10-14, owner decision):
 # beauxbatons is Apple Silicon, so an aarch64 guest gets real
 # Hypervisor.framework-backed acceleration (HVF, same-ISA) in UTM,
 # unlike x86_64 which was unavoidably stuck in pure QEMU TCG (full
 # software instruction emulation) on this host and never finished a
 # boot+install+reboot cycle within any tried timeout.
+#
+# modules=...,virtio_* appended (first real aarch64 run, 2026-10-14):
+# the stock Alpine aarch64 ISO's own "modules=" list is just
+# loop,squashfs,sd-mod,usb-storage - it relies on udev/mdev coldplug +
+# module aliasing to pick up virtio_net/virtio_blk/virtio_pci on its
+# own rather than listing them explicitly. On this guest that coldplug
+# path never completed: the real first run hung silently forever right
+# after "Alpine Init 3.10.1-r0" printed, with zero further kernel
+# output and zero TCP connections ever reaching the host's report
+# server on :8788 (confirmed directly via `netstat` on beauxbatons
+# during the hang) - i.e. networking never came up at all, not just
+# slowly. modules= is nlplug-findfs's own explicit early-modprobe list
+# (last "modules=" occurrence on the cmdline wins, same convention as
+# every other repeated param here), so listing the virtio drivers here
+# forces them loaded deterministically before anything depends on
+# them, instead of trusting coldplug/hotplug timing on a guest
+# platform ("virt" aarch64 + modern virtio-pci) this harness had never
+# actually exercised end-to-end before.
 #
 # console=ttyAMA0 (not ttyS0): on QEMU's "virt" aarch64 machine type the
 # primary serial device is a PL011 UART, which Linux enumerates as
