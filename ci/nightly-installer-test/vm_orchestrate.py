@@ -213,9 +213,33 @@ def build_vm_bundle(iso_path, disk_size_gb=8):
             # including a panic/triple-fault the firmware itself may
             # emit - stays on the serial line for this capture instead
             # of being overwritten by a clean restart.
-            "AdditionalArguments": [
-                {"Argument": "-no-reboot"},
-            ],
+            # NB (run 3017 / task 8120, root-caused by direct on-runner
+            # repro against the real installed UTM 4.7.5 on beauxbatons,
+            # bisecting every other field in the generated config.plist):
+            # QEMUArgument (UTM's Swift Codable type for each
+            # AdditionalArguments element) decodes as a bare
+            # `String(from: decoder)` - i.e. this key must be a flat
+            # array of argument strings, e.g. ["-no-reboot"]. It is NOT
+            # an array of {"Argument": "..."} dicts. Encoding it as
+            # dicts (the previous, broken form, added alongside the
+            # -no-reboot flag itself) throws a type-mismatch while UTM
+            # decodes config.plist, which silently fails the entire
+            # `open -a UTM <bundle>` import with UTM's generic "Cannot
+            # import this VM. Either the configuration is invalid..."
+            # alert - and leaves *zero* trace in the unified system log,
+            # because it's a caught Swift decoding error inside the app,
+            # never logged. That's why every nightly run since -no-reboot
+            # was added died at find_vm_uuid_by_name() with "never showed
+            # up in `utmctl list`": UTM never even got as far as
+            # registering the bundle. This was NOT a TCC/permission
+            # issue - confirmed directly by registering 10+ hand-built
+            # bundles on beauxbatons via `open -a UTM` + polling
+            # `defaults read com.utmapp.UTM Registry`, varying one field
+            # at a time (Drive Interface casing, Architecture, Serial,
+            # Sound, Network mode, Hypervisor, efi_vars.fd presence) -
+            # the only change that ever flipped failure to success was
+            # this one.
+            "AdditionalArguments": ["-no-reboot"],
             "BalloonDevice": False,
             "DebugLog": False,
             "Hypervisor": True,
