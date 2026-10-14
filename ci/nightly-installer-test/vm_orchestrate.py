@@ -9,7 +9,10 @@ logged-in GUI session a LaunchAgent-run runner has, never over plain
 SSH.
 
 What it actually does (all real, no simulation):
-  1. Creates a fresh small (8GB) QEMU x86_64 VM bundle under UTM.
+  1. Creates a fresh small (8GB) QEMU aarch64 VM bundle under UTM,
+     accelerated by Apple's Hypervisor.framework (same-ISA HVF, since
+     beauxbatons is Apple Silicon) rather than slow x86_64-under-TCG
+     software emulation.
   2. Boots it from a remastered Alpine Linux ISO (built earlier in the
      workflow) that unattended-installs Patronus onto the VM's virtual
      disk: real GPT partitioning, real `zpool create` for the ZFS root.
@@ -140,18 +143,20 @@ def build_vm_bundle(iso_path, disk_size_gb=8):
                 "Identifier": str(uuid.uuid4()).upper(),
                 "ImageName": cd_name,
                 "ImageType": "CD",
-                # GRUB (built into the EFI firmware's bootx64.efi here -
-                # this VM boots via real UEFI, confirmed by actual
-                # "BdsDxe:" messages over the new serial capture) stalls
-                # silently reading the kernel/initrd off a USB-attached
-                # virtual CD-ROM: the serial log shows real GRUB 2.12
-                # menu output and "Booting `Linux lts'", then nothing
-                # at all - no kernel banner, no panic, just silence,
-                # every single time. IDE is the overwhelmingly standard,
-                # best-tested bus for virtual optical media across every
-                # BIOS/UEFI firmware and bootloader combination; there's
-                # no real reason this needed USB in the first place.
-                "Interface": "IDE",
+                # Guest arch switched x86_64 -> aarch64 (2026-10-14).
+                # QEMU's aarch64 "virt" machine model (see System.Target
+                # below) has no legacy PCI IDE controller at all -
+                # IDE was only ever an x86 q35/pc-machine concept, kept
+                # here under the old x86_64 config for the (unrelated)
+                # reason explained in the removed comment below. Every
+                # real aarch64 UTM VM already running on this same
+                # beauxbatons host (FreeBSD/kali/Gentoo Base/ubuntu,
+                # confirmed directly via their own config.plist) attaches
+                # its CD-ROM over USB instead, which is the standard,
+                # working bus for optical media on the "virt" machine
+                # type - use the same, proven pattern rather than
+                # reinventing one.
+                "Interface": "USB",
                 "InterfaceVersion": 1,
                 "ReadOnly": True,
             },
@@ -198,74 +203,13 @@ def build_vm_bundle(iso_path, disk_size_gb=8):
             }
         ],
         "QEMU": {
-            # -no-reboot: every captured serial log for this test so far
-            # has shown the VM silently cycle back to an identical fresh
-            # UEFI firmware + GRUB screen after "Booting `Linux lts'"
-            # with zero diagnostic output in between (see run 2591 /
-            # task 6675) - consistent with the guest hitting a reset
-            # (triple fault or an explicit reboot) before anything new
-            # reaches the serial console, which QEMU's default behavior
-            # silently swallows by actually resetting the VM. Without
-            # this flag that reset erases the only evidence of what
-            # actually went wrong, and the harness has been retrying
-            # blind for days. With -no-reboot, QEMU halts (not resets)
-            # on a guest reset request, so whatever was last printed -
-            # including a panic/triple-fault the firmware itself may
-            # emit - stays on the serial line for this capture instead
-            # of being overwritten by a clean restart.
-            # NB (run 3017 / task 8120, root-caused by direct on-runner
-            # repro against the real installed UTM 4.7.5 on beauxbatons,
-            # bisecting every other field in the generated config.plist):
-            # QEMUArgument (UTM's Swift Codable type for each
-            # AdditionalArguments element) decodes as a bare
-            # `String(from: decoder)` - i.e. this key must be a flat
-            # array of argument strings, e.g. ["-no-reboot"]. It is NOT
-            # an array of {"Argument": "..."} dicts. Encoding it as
-            # dicts (the previous, broken form, added alongside the
-            # -no-reboot flag itself) threw a type-mismatch while UTM
-            # decoded config.plist, which silently failed the entire
-            # `open -a UTM <bundle>` import with UTM's generic "Cannot
-            # import this VM. Either the configuration is invalid..."
-            # alert - and left *zero* trace in the unified system log,
-            # because it's a caught Swift decoding error inside the app,
-            # never logged. That's why every nightly run since -no-reboot
-            # was added died at find_vm_uuid_by_name() with "never showed
-            # up in `utmctl list`": UTM never even got as far as
-            # registering the bundle. This was NOT a TCC/permission
-            # issue - confirmed directly by registering 10+ hand-built
-            # bundles on beauxbatons via `open -a UTM` + polling
-            # `defaults read com.utmapp.UTM Registry`, varying one field
-            # at a time (Drive Interface casing, Architecture, Serial,
-            # Sound, Network mode, Hypervisor, efi_vars.fd presence) -
-            # the only change that flipped failure to success was that
-            # one.
-            #
-            # -no-reboot is now DROPPED ENTIRELY rather than fixed to
-            # ["-no-reboot"], for a second, separate reason found right
-            # after the decode bug was fixed and a real import/boot
-            # finally succeeded: ANY non-empty AdditionalArguments makes
-            # UTM's own importUTM() pop a one-button "This virtual
-            # machine uses custom QEMU arguments which is potentially
-            # dangerous..." alert (Platform/UTMData.swift) on every
-            # single import - i.e. every single CI run, since the VM
-            # name/path is unique per run. Confirmed straight from UTM's
-            # source that this alert has no suppression preference
-            # anywhere (it's an unconditional `showLocalizedErrorAlert`
-            # with no "don't show again" or defaults-backed gate) and is
-            # non-blocking to the data model (listAdd/listSelect already
-            # ran before it fires, confirmed empirically too), but on
-            # the real beauxbatons console - not just in CI - it's a
-            # real, disruptive, un-suppressible modal that someone
-            # physically at the machine has to click through every
-            # night. Since there is no config-only way to pass
-            # -no-reboot to QEMU without going through
-            # AdditionalArguments, and losing a few seconds of serial
-            # output on a reset is a far smaller cost than an
-            # un-suppressible dialog on a shared physical machine,
-            # dropping it is the right trade now that registration/boot
-            # itself works (the retry-loop in run() still catches a
-            # reset the same way it always did, just without the extra
-            # serial detail -no-reboot used to preserve).
+            # -no-reboot stays dropped (see git history for the full
+            # investigation: it required a non-trivial
+            # AdditionalArguments encoding fix to even register, and
+            # then triggered an un-suppressible "custom QEMU arguments"
+            # modal on UTM's real physical console on every single CI
+            # run). None of that reasoning was x86_64-specific, so it's
+            # unchanged for the aarch64 guest.
             "AdditionalArguments": [],
             "BalloonDevice": False,
             "DebugLog": False,
@@ -293,26 +237,29 @@ def build_vm_bundle(iso_path, disk_size_gb=8):
         },
         "Sound": [],
         "System": {
-            "Architecture": "x86_64",
+            # Guest arch switched x86_64 -> aarch64 (2026-10-14, owner
+            # decision, live chat): beauxbatons is Apple Silicon, so an
+            # aarch64 guest gets real same-ISA Hypervisor.framework
+            # acceleration via UTM's "Hypervisor" toggle above, unlike
+            # x86_64 which has no hardware accelerator for a foreign-ISA
+            # guest on this host and was unavoidably stuck in pure QEMU
+            # TCG (full software instruction emulation) - confirmed by
+            # 2+ weeks of nightly runs never completing a boot+install+
+            # reboot cycle within any tried timeout (serial logs reached
+            # GRUB's "Booting `Linux lts'" and no further). "virt" +
+            # "aarch64" is the exact same combination already proven
+            # working on this host by UTM's own FreeBSD reference VM
+            # (same Backend/Hypervisor/Drive-interface shape, confirmed
+            # directly from its config.plist).
+            "Architecture": "aarch64",
             "CPU": "default",
-            # Reverted "max" (8cff65d): confirmed WORSE, not better - all 3
-            # retried attempts under "max" hung completely silent before the
-            # kernel ever logged a single line (identical shape to the
-            # original USB-CD-ROM bug, already fixed separately), instead of
-            # the at-least-diagnosable IO-APIC panic "default" produces.
-            # "max" exposing TCG's fullest feature set apparently confuses
-            # this OVMF/GRUB combination even earlier in the boot chain than
-            # the kernel's own timer calibration. Back to "default" pending a
-            # more targeted fix for the actual panic (noapic/acpi=off/
-            # no_timer_check were each tried alone and individually
-            # insufficient or counterproductive - see iso_remaster.sh).
             "CPUCount": 2,
             "CPUFlagsAdd": [],
             "CPUFlagsRemove": [],
             "ForceMulticore": False,
             "JITCacheSize": 0,
             "MemorySize": 2048,
-            "Target": "q35",
+            "Target": "virt",
         },
     }
 
@@ -707,39 +654,19 @@ def main():
     vm_dir = None
     vm_uuid = None
     try:
-        # The live-boot stage (UEFI -> GRUB -> kernel handoff, reading
-        # off an emulated SATA CD-ROM under pure TCG software emulation)
-        # has shown real non-determinism in back-to-back identical
-        # attempts: one run got as far as a real kernel panic a second
-        # and a half into boot, two adjacent runs with the exact same
-        # config hung completely silent for the full 600s with zero
-        # output at all - not a cmdline-fixable bug, just flaky
-        # virtualization timing. Retry the create/boot cycle itself (not
-        # the later install/reboot stages, which are real functional
-        # checks, not infra flakiness) before giving up for real.
-        #
-        # NB (run 3056, post-import-fix verification): with the
-        # AdditionalArguments decode bug fixed, VM registration/start now
-        # succeeds on every attempt, and the serial console shows real
-        # progress - OVMF -> GRUB -> "Booting `Linux lts'" - but that
-        # didn't happen until right at the tail end of the old 600s
-        # window, so LIVE_BOOT_START (printed by the guest well after
-        # the kernel actually starts) never arrived in time. This host
-        # runs x86_64 guests under pure TCG (no HVF cross-arch
-        # acceleration exists on this arm64 Mac - confirmed straight
-        # from the QEMU command line UTM launches, `-accel tcg`), which
-        # is legitimately much slower than the 600s budget assumed. Trade
-        # attempt count for per-attempt time (2x900s instead of 3x600s,
-        # same 1800s total) so the job's 75-minute ceiling
-        # (1800s boot + 1800s install + 600s second-boot = 4200s = 70min)
-        # still has headroom.
-        # NB (run 3103): with both fixes above live, two back-to-back
-        # attempts both reached GRUB's "Booting `Linux lts'" at ~895s of
-        # a 900s window, almost identically - not randomly flaky, just
-        # a long, consistent pre-GRUB firmware delay under TCG, with no
-        # time left afterward for the actual kernel/initramfs to print
-        # LIVE_BOOT_START. One longer attempt (so the kernel gets a real
-        # window to boot) is a better bet than two budget-starved ones.
+        # The live-boot stage (UEFI -> GRUB -> kernel handoff) now runs
+        # under real same-ISA Hypervisor.framework acceleration (HVF)
+        # instead of pure TCG software emulation, since the guest arch
+        # was switched x86_64 -> aarch64 to match this host's own
+        # (Apple Silicon) CPU. That should be drastically faster than
+        # the x86_64-under-TCG numbers this budget/retry logic was
+        # originally tuned against (every x86_64 attempt for 2+ weeks
+        # only reached GRUB's "Booting `Linux lts'" at the very tail of
+        # a 2700s window, with the kernel never getting a real window
+        # afterward). Keeping the same generous budget and single-
+        # attempt shape for the first aarch64 runs rather than
+        # re-tuning blind - shrink it once real aarch64 timing data
+        # from actual CI runs justifies a smaller number.
         MAX_BOOT_ATTEMPTS = 1
         reached_live_boot = False
         for attempt in range(1, MAX_BOOT_ATTEMPTS + 1):

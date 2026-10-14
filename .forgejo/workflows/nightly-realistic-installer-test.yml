@@ -67,12 +67,21 @@ jobs:
       - name: Install Rust (musl target)
         uses: https://github.com/dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-musl
+          # Guest arch switched x86_64 -> aarch64 (2026-10-14, owner
+          # decision): beauxbatons is Apple Silicon, so an aarch64 guest
+          # gets real Hypervisor.framework-backed acceleration in UTM,
+          # unlike x86_64 which is stuck in slow pure-software TCG there
+          # and never finished a boot+install+reboot cycle within any
+          # tried timeout (see vm_orchestrate.py history). This build
+          # job itself still just needs *a* linux/amd64-or-arm64
+          # container with a working cross-linker; it doesn't need to be
+          # aarch64 itself.
+          targets: aarch64-unknown-linux-musl
 
       - name: Install build + ISO-remaster dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools xorriso curl gcc-x86-64-linux-gnu
+          sudo apt-get install -y musl-tools xorriso curl gcc-aarch64-linux-gnu
 
       - name: Build patronus-install (static musl binary)
         env:
@@ -81,18 +90,18 @@ jobs:
           # between real x86_64 and the host's native arm64 depending on
           # local image-cache state, independent of anything this
           # workflow or the runner's x86_64 label says) - rather than
-          # depend on the container itself being genuine x86_64, install
-          # a real x86_64 cross-linker (gcc-x86-64-linux-gnu, works from
-          # an arm64 host/container same as an amd64 one) and point
-          # rustc at it explicitly. Rust's musl target ships its own
-          # musl CRT objects (self-contained) regardless, so the C
-          # compiler here is only acting as the link driver, not
-          # providing libc - any real x86_64 linker works.
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: x86_64-linux-gnu-gcc
+          # depend on the container's own arch, install a real aarch64
+          # cross-linker (gcc-aarch64-linux-gnu, works from either an
+          # amd64 or arm64 host/container) and point rustc at it
+          # explicitly. Rust's musl target ships its own musl CRT
+          # objects (self-contained) regardless, so the C compiler here
+          # is only acting as the link driver, not providing libc - any
+          # real aarch64 linker works.
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
         run: |
-          cargo build --release --target x86_64-unknown-linux-musl -p patronus-installer
+          cargo build --release --target aarch64-unknown-linux-musl -p patronus-installer
           mkdir -p artifact
-          cp target/x86_64-unknown-linux-musl/release/patronus-install artifact/patronus-install
+          cp target/aarch64-unknown-linux-musl/release/patronus-install artifact/patronus-install
 
       - name: Stage unattended-install media inputs
         run: |
@@ -106,12 +115,12 @@ jobs:
             artifact/patronus-install artifact/answer.toml artifact/patronus-ci.start \
             artifact/patronus.apkovl.tar.gz
 
-      - name: Download stock Alpine Standard x86_64 ISO
+      - name: Download stock Alpine Standard aarch64 ISO
         run: |
           ALPINE_VER=3.20.3
           ALPINE_BRANCH=v3.20
           curl -fL -o artifact/alpine-base.iso \
-            "https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/releases/x86_64/alpine-standard-${ALPINE_VER}-x86_64.iso"
+            "https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/releases/aarch64/alpine-standard-${ALPINE_VER}-aarch64.iso"
 
       - name: Remaster ISO to auto-boot the unattended installer
         run: |

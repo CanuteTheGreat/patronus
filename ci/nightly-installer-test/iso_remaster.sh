@@ -19,31 +19,25 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/extract"
 xorriso -osirrox on -indev "$SRC_ISO" -extract / "$WORK/extract" >/dev/null
 
-CMDLINE="ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v3.20/main modloop=${MODLOOP_URL} apkovl=${APKOVL_URL} console=ttyS0,115200 console=tty0 nolapic loglevel=8"
-# Root cause (finally identified, not another blind flag guess): this
-# VM's "System.Architecture" in vm_orchestrate.py is "x86_64" while the
-# beauxbatons runner host is Apple Silicon (arm64) - there is no
-# hardware accelerator for a foreign-ISA guest here (Apple's
-# Hypervisor.framework / UTM's "Hypervisor" toggle only accelerates
-# same-ISA arm64-on-arm64), so this is unavoidably running under pure
-# QEMU TCG (full software instruction emulation). IO-APIC timer
-# calibration racing against host scheduling jitter under TCG is a
-# known, well-documented source of exactly this panic and exactly this
-# flavor of non-determinism (same config sometimes panics, sometimes
-# silently hangs with zero kernel output - confirmed directly, see
-# 03aa659 and the run history around cf9fdf8/8cff65d/25de4d0). noapic,
-# acpi=off, no_timer_check, and CPU=max were each tried and each
-# insufficient or counterproductive (see prior history in this file's
-# git blame) - none of them disable the actual Local APIC that
-# setup_IO_APIC's calibration path depends on.
+CMDLINE="ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v3.20/main modloop=${MODLOOP_URL} apkovl=${APKOVL_URL} console=ttyAMA0,115200 console=tty0 loglevel=8"
+# Guest arch switched x86_64 -> aarch64 (2026-10-14, owner decision):
+# beauxbatons is Apple Silicon, so an aarch64 guest gets real
+# Hypervisor.framework-backed acceleration (HVF, same-ISA) in UTM,
+# unlike x86_64 which was unavoidably stuck in pure QEMU TCG (full
+# software instruction emulation) on this host and never finished a
+# boot+install+reboot cycle within any tried timeout.
 #
-# nolapic (not noapic): disables the per-CPU Local APIC entirely,
-# forcing the kernel onto the much simpler/older PIT-driven interrupt
-# and timer path instead of IO-APIC+LAPIC routing - specifically
-# documented upstream as the fix for buggy/emulated APIC
-# implementations where IO-APIC calibration fails, which is a
-# materially different (and stronger) change than noapic alone, which
-# only changes IRQ routing after IO-APIC setup already ran.
+# console=ttyAMA0 (not ttyS0): on QEMU's "virt" aarch64 machine type the
+# primary serial device is a PL011 UART, which Linux enumerates as
+# /dev/ttyAMA0, not the 8250/16550-style /dev/ttyS0 x86 PCs (and QEMU's
+# x86 "q35"/"pc" machine types) use. UTM's Serial "Auto" target wires
+# its TCP-server backend to whatever this machine model's own default
+# serial chardev is, so the kernel has to be told the matching device
+# name or none of its console output reaches that port at all. Keeping
+# console=tty0 too is harmless belt-and-braces for any local-display
+# fallback; dropped the old x86-only nolapic/IO-APIC workaround
+# entirely since the Local APIC/IO-APIC timer-calibration race it
+# worked around doesn't exist on aarch64's GIC interrupt controller.
 #
 # loglevel=8: the original image's own kernel line already carries
 # "quiet" (confirmed directly in the real upstream ISO), which

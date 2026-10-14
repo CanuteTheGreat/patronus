@@ -96,12 +96,25 @@ async fn install_grub_uefi(target: &Path, partitions: &[CreatedPartition]) -> Re
         }
     }
 
+    // grub-install's --target and the UEFI-spec removable-media fallback
+    // filename are both architecture-specific (x86_64-efi/BOOTX64.EFI vs.
+    // arm64-efi/BOOTAA64.EFI) - this used to be hardcoded to the x86_64
+    // names, which silently produced an unbootable (wrong-arch) ESP on
+    // any non-x86_64 target, including the aarch64 guest this installer
+    // now also runs on in the nightly CI VM test.
+    #[cfg(target_arch = "aarch64")]
+    let (grub_target, grub_binary, fallback_name) = ("arm64-efi", "grubaa64.efi", "BOOTAA64.EFI");
+    #[cfg(target_arch = "x86_64")]
+    let (grub_target, grub_binary, fallback_name) = ("x86_64-efi", "grubx64.efi", "BOOTX64.EFI");
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    compile_error!("install_grub_uefi: unsupported target_arch, add its grub-install target/fallback filename here");
+
     // Install GRUB EFI
     run_in_chroot(
         target,
         &[
             "grub-install",
-            "--target=x86_64-efi",
+            &format!("--target={grub_target}"),
             "--efi-directory=/boot/efi",
             "--bootloader-id=PATRONUS",
             "--recheck",
@@ -122,7 +135,9 @@ async fn install_grub_uefi(target: &Path, partitions: &[CreatedPartition]) -> Re
         &[
             "sh",
             "-c",
-            "cp -f /boot/efi/EFI/PATRONUS/grubx64.efi /boot/efi/EFI/BOOT/BOOTX64.EFI",
+            &format!(
+                "cp -f /boot/efi/EFI/PATRONUS/{grub_binary} /boot/efi/EFI/BOOT/{fallback_name}"
+            ),
         ],
     )
     .await;
