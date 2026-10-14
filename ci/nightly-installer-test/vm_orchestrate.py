@@ -675,7 +675,7 @@ def attempt_boot(iso_path, serial_log_path, serial_stop, attempt_num):
         )
         serial_thread.start()
         try:
-            wait_for_event(lambda b: "LIVE_BOOT_START" in b, 900, "live ISO boot")
+            wait_for_event(lambda b: "LIVE_BOOT_START" in b, 1800, "live ISO boot")
             return True, vm_uuid
         except SystemExit as e:
             print(f"[host] attempt {attempt_num} did not reach live boot: {e}", flush=True)
@@ -733,7 +733,14 @@ def main():
         # same 1800s total) so the job's 75-minute ceiling
         # (1800s boot + 1800s install + 600s second-boot = 4200s = 70min)
         # still has headroom.
-        MAX_BOOT_ATTEMPTS = 2
+        # NB (run 3103): with both fixes above live, two back-to-back
+        # attempts both reached GRUB's "Booting `Linux lts'" at ~895s of
+        # a 900s window, almost identically - not randomly flaky, just
+        # a long, consistent pre-GRUB firmware delay under TCG, with no
+        # time left afterward for the actual kernel/initramfs to print
+        # LIVE_BOOT_START. One longer attempt (so the kernel gets a real
+        # window to boot) is a better bet than two budget-starved ones.
+        MAX_BOOT_ATTEMPTS = 1
         reached_live_boot = False
         for attempt in range(1, MAX_BOOT_ATTEMPTS + 1):
             ok, vm_uuid = attempt_boot(iso_path, serial_log_path, serial_stop, attempt)
