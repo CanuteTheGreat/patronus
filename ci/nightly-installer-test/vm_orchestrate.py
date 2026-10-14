@@ -717,7 +717,23 @@ def main():
         # virtualization timing. Retry the create/boot cycle itself (not
         # the later install/reboot stages, which are real functional
         # checks, not infra flakiness) before giving up for real.
-        MAX_BOOT_ATTEMPTS = 3
+        #
+        # NB (run 3056, post-import-fix verification): with the
+        # AdditionalArguments decode bug fixed, VM registration/start now
+        # succeeds on every attempt, and the serial console shows real
+        # progress - OVMF -> GRUB -> "Booting `Linux lts'" - but that
+        # didn't happen until right at the tail end of the old 600s
+        # window, so LIVE_BOOT_START (printed by the guest well after
+        # the kernel actually starts) never arrived in time. This host
+        # runs x86_64 guests under pure TCG (no HVF cross-arch
+        # acceleration exists on this arm64 Mac - confirmed straight
+        # from the QEMU command line UTM launches, `-accel tcg`), which
+        # is legitimately much slower than the 600s budget assumed. Trade
+        # attempt count for per-attempt time (2x900s instead of 3x600s,
+        # same 1800s total) so the job's 75-minute ceiling
+        # (1800s boot + 1800s install + 600s second-boot = 4200s = 70min)
+        # still has headroom.
+        MAX_BOOT_ATTEMPTS = 2
         reached_live_boot = False
         for attempt in range(1, MAX_BOOT_ATTEMPTS + 1):
             ok, vm_uuid = attempt_boot(iso_path, serial_log_path, serial_stop, attempt)
