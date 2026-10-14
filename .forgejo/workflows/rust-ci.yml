@@ -157,6 +157,58 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Free Docker disk space before the build
+        # Root cause of the long-standing "ReadOnlyFileSystem: .../.ipc/lock"
+        # (and cargo "error writing dependencies to .../target/release/..."
+        # failures right before it) in this job: NOT a Dockerfile mount/cache
+        # misconfiguration (there are no --mount=type=cache or VOLUME
+        # directives in Dockerfile/Dockerfile.ci-base at all). The real cause
+        # is host-level disk exhaustion on the beauxbatons runner: Docker
+        # Desktop's VM disk is a thin-provisioned sparse file on the macOS
+        # host's boot volume, and unpruned images/volumes/build cache had
+        # grown to consume effectively all of the host's real free space
+        # (confirmed live: host boot volume had single-digit GB unallocated
+        # while Docker's own accounting alone held 266GB images + 125GB
+        # volumes + 117GB build cache, of which only ~207GB had ever been
+        # materialized as real host blocks). When this Rust build's
+        # writable container layer needed the sparse VM disk to grow further
+        # mid-build, macOS couldn't allocate more physical blocks, the VM's
+        # guest ext4 saw that as a block-device I/O error and remounted
+        # itself read-only (explaining why dozens of unrelated files failed
+        # at once, all starting at the same instant) -- and the Docker
+        # daemon losing its socket right after in the same run's log
+        # ("failed to connect to the docker API ... no such file or
+        # directory") is a direct downstream symptom of that same host-disk
+        # exhaustion (the VM/daemon destabilizing under the I/O failure),
+        # not a second, independent bug.
+        #
+        # Fix: reclaim real host disk space before every Gentoo build runs,
+        # so unpruned layers/volumes/build cache from past runs (on this
+        # shared, long-lived runner) can never accumulate back into this
+        # state. `docker system prune` alone is not enough here, because
+        # Docker Desktop's sparse VM disk does not automatically return
+        # freed blocks to the host after a prune -- an explicit fstrim
+        # inside the VM is required too (confirmed: a prune alone left the
+        # host at ~18GB free; following it with fstrim recovered >500GB).
+        run: |
+          # This runner is shared with other repos' CI (rustinion, Android,
+          # etc.) -- deliberately conservative here: only remove things
+          # that are definitely dead weight (dangling images, build cache
+          # older than an hour), never a blanket `-a`/`--volumes` prune
+          # that would also nuke other projects' live caches on this box.
+          docker image prune -f 2>&1 || true
+          docker builder prune -f --filter until=1h 2>&1 || true
+          # Reclaim the now-freed blocks from the host's actual physical
+          # disk too (see comment above) -- punches holes in the
+          # thin-provisioned Docker Desktop VM disk via the guest's own
+          # fstrim, run from a throwaway privileged container that nsenters
+          # into the VM's real (pid 1) namespace. Safe to run unconditionally:
+          # fstrim only reclaims blocks the filesystem already considers
+          # free, it never touches live data.
+          docker run --rm --privileged --pid=host busybox:latest \
+            sh -c 'nsenter --target 1 --mount --uts --ipc --net -- fstrim -av' 2>&1 || true
+          df -h / 2>&1 || true
+
       - name: Build Gentoo/Portage image (using prebuilt CI base if available)
         # The prebuilt base (see build-ci-base.yml) is pushed to this repo's
         # own Forgejo container registry, which isn't always reachable/enabled
