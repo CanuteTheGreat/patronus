@@ -11,8 +11,21 @@ name: Nightly Realistic Installer Test
 # cycles) and only meant to run nightly or on demand, not on every push.
 on:
   workflow_dispatch: {}
-  schedule:
-    - cron: '0 9 * * *' # ~02:00 America/Los_Angeles
+  # PAUSED 2026-10-14 (owner decision, no response in time window -- safe default
+  # chosen over committing to an architecture change): root-caused to beauxbatons'
+  # pure x86_64-under-TCG software emulation on Apple Silicon not completing a real
+  # VM boot+install+reboot cycle within any reasonable timeout (GRUB + kernel boot
+  # command reached reliably, but no further kernel output before 45min timeout,
+  # every run, for 2+ weeks -- confirmed not a config bug). No hardware-accelerated
+  # x86_64 host exists elsewhere (rw-man-02/03 EC2 instances don't expose /dev/kvm).
+  # Two real options when the owner decides: (1) switch the guest to aarch64 (gets
+  # real HW accel on the Mac, but Patronus doesn't build/test aarch64 anywhere else
+  # in CI -- would validate an architecture nothing else ships), or (2) wait for a
+  # real hardware-accelerated x86_64 host to become available. Still runnable
+  # on-demand via workflow_dispatch; just not burning 45 min nightly on a guaranteed
+  # failure. Re-enable the schedule line below once a direction is chosen.
+  # schedule:
+  #   - cron: '0 9 * * *' # ~02:00 America/Los_Angeles
 
 env:
   CARGO_TERM_COLOR: always
