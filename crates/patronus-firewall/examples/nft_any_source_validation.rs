@@ -45,7 +45,10 @@ async fn main() -> anyhow::Result<()> {
         .expect("add_filter_rule (real nft apply of source=any rule) failed");
 
     let listing = patronus_firewall::nftables::list_table().expect("list_table failed");
-    println!("--- nft list table patronus (forward chain) ---\n{}", listing);
+    println!(
+        "--- nft list table patronus (forward chain) ---\n{}",
+        listing
+    );
     assert!(
         listing.contains("validates source=any does not break nft apply"),
         "rule was not actually applied into the live ruleset"
