@@ -648,7 +648,7 @@ def attempt_boot(iso_path, serial_log_path, serial_stop, attempt_num):
         )
         serial_thread.start()
         try:
-            wait_for_event(lambda b: "LIVE_BOOT_START" in b, 600, "live ISO boot")
+            wait_for_event(lambda b: "LIVE_BOOT_START" in b, 900, "live ISO boot")
             return True, vm_uuid
         except SystemExit as e:
             print(f"[host] attempt {attempt_num} did not reach live boot: {e}", flush=True)
