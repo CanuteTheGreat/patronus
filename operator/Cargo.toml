@@ -16,7 +16,7 @@ path = "src/bin/crdgen.rs"
 
 [dependencies]
 # Kubernetes client
-kube = { version = "0.87", features = ["runtime", "derive", "client", "admission"] }
+kube = { version = "0.87", default-features = false, features = ["runtime", "derive", "client", "admission", "openssl-tls"] }
 k8s-openapi = { version = "0.20", features = ["v1_28"] }
 
 # Async runtime
@@ -37,8 +37,11 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
-# HTTP client for Patronus API (using rustls to avoid OpenSSL dependency)
-reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+# HTTP client for Patronus API (switched from rustls-tls to native-tls/OpenSSL:
+# kube's own rustls-tls dep chain was stuck on rustls 0.21.x which has
+# RUSTSEC-2026-0349/0346; rather than mix TLS stacks we use OpenSSL
+# consistently here and for kube below -- libssl-dev is already a CI dep.)
+reqwest = { version = "0.11", default-features = false, features = ["json", "native-tls"] }
 
 # Metrics
 prometheus = "0.13"

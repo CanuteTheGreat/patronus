@@ -37,10 +37,13 @@ impl MtlsManager {
 
     pub fn get_tls_config(&self) -> Result<rustls::ServerConfig> {
         // In production: load certs and create TLS config
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
         Ok(rustls::ServerConfig::builder()
-            .with_safe_defaults()
             .with_no_client_auth()
-            .with_single_cert(vec![], rustls::PrivateKey(vec![]))
+            .with_single_cert(
+                vec![CertificateDer::from(Vec::<u8>::new())],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(Vec::<u8>::new())),
+            )
             .unwrap())
     }
 }
