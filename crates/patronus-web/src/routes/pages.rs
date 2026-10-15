@@ -293,18 +293,33 @@ pub async fn monitoring(State(state): State<AppState>) -> Response {
         }
     };
 
+    // Derive real counts from already-fetched data instead of hardcoding
+    // placeholder numbers. `blocked` on AiThreat is currently always false
+    // (see get_ai_threats doc comment -- external threat-intel feed only,
+    // no active blocking decision is made yet), so threats_blocked_today
+    // will honestly read 0 until that wiring exists, rather than showing a
+    // fabricated nonzero count.
+    let threats_detected_today = ai_threats.len() as u32;
+    let threats_blocked_today = ai_threats.iter().filter(|t| t.blocked).count() as u32;
+    let active_alerts = alerts.len() as u32;
+
     let template = MonitoringTemplate {
         metrics,
         interface_stats,
         top_connections,
         alerts,
-        // AI & Threat Detection - using default values for now
-        threats_detected_today: 42,
-        threats_blocked_today: 38,
+        threats_detected_today,
+        threats_blocked_today,
+        // ai_model_accuracy/ai_model_confidence/system_health_score/
+        // packets_analyzed_rate/packets_total still have no real backing
+        // data source (no local ML classifier is wired to live traffic --
+        // see get_ai_threats doc comment -- and no packet-rate counter
+        // exists outside per-interface stats). Left as explicit
+        // placeholders rather than fabricating a fake computation.
         ai_model_accuracy: 96.7,
         ai_model_confidence: 94.2,
         system_health_score: 87,
-        active_alerts: 3,
+        active_alerts,
         packets_analyzed_rate: 15420,
         packets_total: 2847392,
         ai_threats,
