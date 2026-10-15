@@ -71,7 +71,10 @@ impl Rib {
 
             if prefix_routes.is_empty() {
                 routes.remove(&prefix);
-                self.best_routes.write().unwrap_or_else(|p| p.into_inner()).remove(&prefix);
+                self.best_routes
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&prefix);
                 info!("Removed last route for prefix {}", prefix);
             } else {
                 // Re-run best path selection
@@ -134,13 +137,20 @@ impl Rib {
                 best.as_path.len()
             );
 
-            self.best_routes.write().unwrap_or_else(|p| p.into_inner()).insert(prefix, best);
+            self.best_routes
+                .write()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(prefix, best);
         }
     }
 
     /// Get best route for a prefix
     pub fn get_best_route(&self, prefix: &Ipv4Network) -> Option<BgpRoute> {
-        self.best_routes.read().unwrap_or_else(|p| p.into_inner()).get(prefix).cloned()
+        self.best_routes
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(prefix)
+            .cloned()
     }
 
     /// Get all routes for a prefix
@@ -155,7 +165,12 @@ impl Rib {
 
     /// Get all best routes
     pub fn get_all_best_routes(&self) -> Vec<BgpRoute> {
-        self.best_routes.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect()
+        self.best_routes
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .values()
+            .cloned()
+            .collect()
     }
 
     /// Longest prefix match lookup
@@ -182,7 +197,12 @@ impl Rib {
 
     /// Get total number of routes
     pub fn route_count(&self) -> usize {
-        self.routes.read().unwrap_or_else(|p| p.into_inner()).values().map(|v| v.len()).sum()
+        self.routes
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .values()
+            .map(|v| v.len())
+            .sum()
     }
 
     /// Get number of unique prefixes
@@ -192,8 +212,14 @@ impl Rib {
 
     /// Clear all routes
     pub fn clear(&self) {
-        self.routes.write().unwrap_or_else(|p| p.into_inner()).clear();
-        self.best_routes.write().unwrap_or_else(|p| p.into_inner()).clear();
+        self.routes
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+        self.best_routes
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
         info!("Cleared all routes from RIB");
     }
 }

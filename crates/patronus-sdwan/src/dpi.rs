@@ -255,7 +255,10 @@ impl DpiEngine {
         {
             let cache = self.flow_cache.read().unwrap_or_else(|p| p.into_inner());
             if let Some(&app_type) = cache.get(flow) {
-                self.stats.write().unwrap_or_else(|p| p.into_inner()).cache_hits += 1;
+                self.stats
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .cache_hits += 1;
                 trace!("DPI cache hit for flow {:?}: {}", flow, app_type.as_str());
                 return app_type;
             }
@@ -272,7 +275,10 @@ impl DpiEngine {
                 );
 
                 // Cache the result
-                self.flow_cache.write().unwrap_or_else(|p| p.into_inner()).insert(*flow, app_type);
+                self.flow_cache
+                    .write()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(*flow, app_type);
 
                 // Update statistics
                 {
@@ -314,12 +320,18 @@ impl DpiEngine {
 
     /// Clear flow cache (for testing or periodic cleanup)
     pub fn clear_cache(&self) {
-        self.flow_cache.write().unwrap_or_else(|p| p.into_inner()).clear();
+        self.flow_cache
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
     }
 
     /// Get cache size
     pub fn cache_size(&self) -> usize {
-        self.flow_cache.read().unwrap_or_else(|p| p.into_inner()).len()
+        self.flow_cache
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .len()
     }
 }
 

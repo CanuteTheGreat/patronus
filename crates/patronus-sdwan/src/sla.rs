@@ -149,7 +149,10 @@ impl SlaMonitor {
     /// Configure SLA for a path
     pub fn configure_path(&self, path_id: PathId, config: SlaConfig) {
         debug!("Configuring SLA for path {}: {:?}", path_id, config);
-        self.configs.write().unwrap_or_else(|p| p.into_inner()).insert(path_id, config);
+        self.configs
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(path_id, config);
         self.measurements
             .write()
             .unwrap_or_else(|p| p.into_inner())
@@ -284,12 +287,19 @@ impl SlaMonitor {
 
     /// Get latest SLA measurement for a path
     pub fn get_measurement(&self, path_id: &PathId) -> Option<SlaMeasurement> {
-        self.results.read().unwrap_or_else(|p| p.into_inner()).get(path_id).cloned()
+        self.results
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(path_id)
+            .cloned()
     }
 
     /// Get all SLA measurements
     pub fn get_all_measurements(&self) -> HashMap<PathId, SlaMeasurement> {
-        self.results.read().unwrap_or_else(|p| p.into_inner()).clone()
+        self.results
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     /// Select best path based on SLA requirements
@@ -359,7 +369,11 @@ mod tests {
         monitor.configure_path(path_id, config);
 
         // Verify configuration was stored
-        assert!(monitor.configs.read().unwrap_or_else(|p| p.into_inner()).contains_key(&path_id));
+        assert!(monitor
+            .configs
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains_key(&path_id));
     }
 
     #[test]
@@ -458,40 +472,48 @@ mod tests {
         let path2 = PathId::new(2);
 
         // Path 1: Low latency, good quality
-        monitor.results.write().unwrap_or_else(|p| p.into_inner()).insert(
-            path1,
-            SlaMeasurement {
-                path_id: path1,
-                latency_p50_ms: 20.0,
-                latency_p95_ms: 30.0,
-                latency_p99_ms: 40.0,
-                packet_loss_pct: 0.1,
-                jitter_ms: 5.0,
-                sample_count: 100,
-                timestamp: Instant::now(),
-                latency_met: true,
-                packet_loss_met: true,
-                jitter_met: true,
-            },
-        );
+        monitor
+            .results
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(
+                path1,
+                SlaMeasurement {
+                    path_id: path1,
+                    latency_p50_ms: 20.0,
+                    latency_p95_ms: 30.0,
+                    latency_p99_ms: 40.0,
+                    packet_loss_pct: 0.1,
+                    jitter_ms: 5.0,
+                    sample_count: 100,
+                    timestamp: Instant::now(),
+                    latency_met: true,
+                    packet_loss_met: true,
+                    jitter_met: true,
+                },
+            );
 
         // Path 2: Higher latency
-        monitor.results.write().unwrap_or_else(|p| p.into_inner()).insert(
-            path2,
-            SlaMeasurement {
-                path_id: path2,
-                latency_p50_ms: 50.0,
-                latency_p95_ms: 80.0,
-                latency_p99_ms: 100.0,
-                packet_loss_pct: 0.5,
-                jitter_ms: 15.0,
-                sample_count: 100,
-                timestamp: Instant::now(),
-                latency_met: true,
-                packet_loss_met: true,
-                jitter_met: true,
-            },
-        );
+        monitor
+            .results
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(
+                path2,
+                SlaMeasurement {
+                    path_id: path2,
+                    latency_p50_ms: 50.0,
+                    latency_p95_ms: 80.0,
+                    latency_p99_ms: 100.0,
+                    packet_loss_pct: 0.5,
+                    jitter_ms: 15.0,
+                    sample_count: 100,
+                    timestamp: Instant::now(),
+                    latency_met: true,
+                    packet_loss_met: true,
+                    jitter_met: true,
+                },
+            );
 
         let best = monitor.select_best_path(&[path1, path2], Some(50), None);
         assert_eq!(best, Some(path1));

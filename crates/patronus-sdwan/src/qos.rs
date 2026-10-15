@@ -315,8 +315,11 @@ impl QosScheduler {
             if let Some(queue) = queues.get_mut(&class) {
                 if !queue.is_empty() {
                     // Check rate limiter
-                    if let Some(rate_limiter) =
-                        self.rate_limiter.lock().unwrap_or_else(|p| p.into_inner()).as_mut()
+                    if let Some(rate_limiter) = self
+                        .rate_limiter
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .as_mut()
                     {
                         // Peek at packet size
                         if let Some(packet) = queue.queue.front() {
