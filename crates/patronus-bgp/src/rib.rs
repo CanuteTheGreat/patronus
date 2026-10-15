@@ -354,6 +354,41 @@ mod tests {
     }
 
     #[test]
+    fn test_rib_survives_poisoned_lock() {
+        // Regression test for the 2026-10-15 fix: a panic in one thread
+        // while holding the RIB's internal write lock used to permanently
+        // poison that lock (std Mutex/RwLock semantics), so every
+        // subsequent add_route/get_best_route call from unrelated BGP
+        // sessions would then panic too. Confirms .unwrap_or_else(|p|
+        // p.into_inner()) actually recovers instead of re-panicking.
+        let rib = std::sync::Arc::new(Rib::new(65000));
+
+        rib.add_route(create_test_route("10.0.0.0/24", "192.168.1.1", vec![65001]))
+            .unwrap();
+
+        // Simulate a bug in some other code path that panics while it
+        // happens to be holding the RIB's write lock.
+        let rib_clone = rib.clone();
+        let panicked = std::thread::spawn(move || {
+            let _guard = rib_clone.routes.write().unwrap();
+            panic!("simulated bug while holding RIB write lock");
+        })
+        .join();
+        assert!(panicked.is_err(), "the simulated panic should have unwound");
+
+        // Before the fix, every call below would itself panic with
+        // "PoisonError" because routes.write().unwrap() re-panics once a
+        // RwLock is poisoned. After the fix it should just work.
+        rib.add_route(create_test_route("10.1.0.0/24", "192.168.1.2", vec![65002]))
+            .unwrap();
+        assert_eq!(rib.route_count(), 2);
+        assert_eq!(rib.prefix_count(), 2);
+
+        let prefix = Ipv4Network::from_str("10.0.0.0/24").unwrap();
+        assert!(rib.get_best_route(&prefix).is_some());
+    }
+
+    #[test]
     fn test_rib_clear() {
         let rib = Rib::new(65000);
 
