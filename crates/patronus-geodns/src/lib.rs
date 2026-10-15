@@ -32,6 +32,21 @@ impl GeoLocation {
     }
 }
 
+/// Map NaN to +infinity so it always sorts last in a `min_by` selection.
+///
+/// `partial_cmp(..).unwrap()` panics on NaN (e.g. a haversine distance from an
+/// out-of-range lat/lon, or a bad latency sample), which would take down DNS
+/// resolution entirely. `f64::total_cmp` alone isn't enough either: it orders
+/// negative-sign NaN (what x86 produces for `0.0/0.0`) *below* every real
+/// number, so a NaN endpoint could win. Treat NaN as "worst" explicitly.
+fn nan_last(x: f64) -> f64 {
+    if x.is_nan() {
+        f64::INFINITY
+    } else {
+        x
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Endpoint {
     pub id: Uuid,
@@ -132,7 +147,7 @@ impl GeoDNSManager {
             .min_by(|a, b| {
                 let dist_a = client_loc.distance_to(&a.location);
                 let dist_b = client_loc.distance_to(&b.location);
-                dist_a.partial_cmp(&dist_b).unwrap()
+                nan_last(dist_a).total_cmp(&nan_last(dist_b))
             })
             .cloned()
     }
@@ -140,7 +155,7 @@ impl GeoDNSManager {
     fn resolve_latency(&self, endpoints: &[Endpoint]) -> Option<Endpoint> {
         endpoints
             .iter()
-            .min_by(|a, b| a.latency_ms.partial_cmp(&b.latency_ms).unwrap())
+            .min_by(|a, b| nan_last(a.latency_ms).total_cmp(&nan_last(b.latency_ms)))
             .cloned()
     }
 
@@ -220,6 +235,21 @@ mod tests {
         let endpoint = create_test_endpoint("test", 37.0, -122.0);
         assert_eq!(endpoint.name, "test");
         assert_eq!(endpoint.health, HealthStatus::Healthy);
+    }
+
+    #[tokio::test]
+    async fn test_latency_resolve_ignores_nan_instead_of_panicking() {
+        let manager = GeoDNSManager::new(RoutingPolicy::Latency);
+        let mut bad = create_test_endpoint("bad", 37.0, -122.0);
+        bad.latency_ms = -f64::NAN;
+        let mut good = create_test_endpoint("good", 40.0, -74.0);
+        good.latency_ms = 25.0;
+        manager.register_endpoint(bad).await;
+        manager.register_endpoint(good).await;
+
+        let client = create_test_location(37.0, -122.0);
+        let picked = manager.resolve(&client).await.expect("an endpoint");
+        assert_eq!(picked.name, "good");
     }
 
     #[tokio::test]

@@ -222,8 +222,10 @@ impl SlaMonitor {
             .latency_samples
             .iter()
             .map(|s| s.latency_ms)
+            .filter(|l| !l.is_nan())
             .collect();
-        latencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // NaN samples are dropped above; total_cmp can't panic regardless.
+        latencies.sort_by(|a, b| a.total_cmp(b));
 
         let p50 = Self::percentile(&latencies, 50.0);
         let p95 = Self::percentile(&latencies, 95.0);

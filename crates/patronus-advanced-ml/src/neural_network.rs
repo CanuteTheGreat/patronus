@@ -115,7 +115,11 @@ impl NeuralNetwork {
         let max_idx = output
             .iter()
             .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .max_by(|(_, a), (_, b)| {
+                // NaN output (diverged weights) ranks lowest instead of panicking.
+                let key = |x: f64| if x.is_nan() { f64::NEG_INFINITY } else { x };
+                key(**a).total_cmp(&key(**b))
+            })
             .map(|(idx, _)| idx)
             .ok_or_else(|| anyhow::anyhow!("Empty output"))?;
 

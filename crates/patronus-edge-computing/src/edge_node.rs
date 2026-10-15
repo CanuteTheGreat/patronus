@@ -106,7 +106,9 @@ impl EdgeNodeManager {
             .min_by(|a, b| {
                 let load_a = a.cpu_usage_percent + a.memory_usage_percent;
                 let load_b = b.cpu_usage_percent + b.memory_usage_percent;
-                load_a.partial_cmp(&load_b).unwrap()
+                // NaN load (bad metrics report) sorts last instead of panicking.
+                let key = |x: f64| if x.is_nan() { f64::INFINITY } else { x };
+                key(load_a).total_cmp(&key(load_b))
             })
             .cloned()
     }

@@ -244,7 +244,10 @@ impl RoutingEngine {
         }
 
         // Sort by score (descending)
-        path_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        // NaN scores (e.g. from a corrupt metrics sample) must never panic the
+        // routing engine or win path selection: rank them below every real score.
+        let key = |x: f64| if x.is_nan() { f64::NEG_INFINITY } else { x };
+        path_scores.sort_by(|a, b| key(b.1).total_cmp(&key(a.1)));
 
         // Select best path
         let best_path_id = path_scores[0].0;

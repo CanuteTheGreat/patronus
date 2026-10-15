@@ -203,7 +203,11 @@ impl DeepDpiClassifier {
         let (class_id, &confidence) = proba
             .iter()
             .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .max_by(|(_, a), (_, b)| {
+                // NaN output (diverged weights) ranks lowest instead of panicking.
+                let key = |x: f64| if x.is_nan() { f64::NEG_INFINITY } else { x };
+                key(**a).total_cmp(&key(**b))
+            })
             .ok_or_else(|| anyhow::anyhow!("Empty prediction"))?;
 
         let protocol = self
