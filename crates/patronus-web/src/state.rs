@@ -1470,31 +1470,76 @@ impl MonitoringManager {
         Ok(threats)
     }
 
-    /// Attack map widget: there is currently no real backend data source
-    /// for this. Wiring it honestly requires:
-    ///   1. A per-block-event log with source IP + timestamp -- today
-    ///      nftables rules created by `patronus-firewall` only carry
-    ///      pass/drop counters (see `nftables.rs`), not a queryable event
-    ///      log of *which* IP got blocked *when*. This would need a
-    ///      structured log/SQLite table (following the
-    ///      `patronus-sdwan/src/database.rs` pattern) written every time a
-    ///      firewall/IDS rule matches, likely via nftables' `log` +
-    ///      `SYSLOG_IDENTIFIER` and a journald/syslog consumer, or an
-    ///      nftables counter-object poll loop.
-    ///   2. A GeoIP lookup to turn each blocked source IP into
-    ///      lat/lon + country for map plotting. `patronus-firewall::geoip`
-    ///      already exists and resolves country codes via `mmdblookup`/
-    ///      `geoiplookup`, but only country -- not lat/lon -- and it's
-    ///      gated behind the `geoip` Cargo feature (off by default) and a
-    ///      GeoLite2/legacy GeoIP database file on disk. A country-to-
-    ///      centroid lookup table would be a reasonable follow-up (no need
-    ///      for per-IP lat/lon, a country centroid is enough for this kind
-    ///      of dashboard widget) built on top of `GeoIpManager::lookup_country`.
+    /// Attack map widget. Uses the same real threat-intel blocklist data
+    /// as `get_ai_threats` (EmergingThreats-style compromised-IP feed) and
+    /// plots each entry at its reported country's centroid via
+    /// `crate::geo_centroid::country_centroid`. This is a deliberate
+    /// approximation, not per-IP geolocation: this project's GeoIP setup
+    /// (`patronus-firewall::geoip::GeoIpManager`) only resolves ISO
+    /// country codes, not city-level lat/lon, and is gated behind the
+    /// `geoip` Cargo feature + a GeoLite2/legacy database file on disk --
+    /// true per-IP coordinates aren't available without that. A country
+    /// centroid is good enough for "attacks are coming from roughly here"
+    /// on a dashboard map.
     ///
-    /// Until both exist, return an honest empty result instead of fabricated
-    /// coordinates.
+    /// Entries with no `country` on the threat-intel record, or whose
+    /// country code isn't in the (deliberately partial) centroid table,
+    /// are skipped rather than plotted at a fabricated location.
+    ///
+    /// A real per-block-event log (timestamped firewall/IDS block
+    /// decisions, e.g. via nftables `log` + a journald/syslog consumer, or
+    /// a counter-object poll loop) would let this show actual block
+    /// events instead of "currently known bad IPs" -- that's still a real
+    /// gap, just a separate and larger piece of work than this.
     pub async fn get_attack_map_data(&self) -> anyhow::Result<Vec<crate::templates::AttackEvent>> {
-        Ok(Vec::new())
+        let blocklist = self.threat_intel_db.get_blocklist().await;
+        let mut events = Vec::new();
+
+        for ip in blocklist {
+            let entries = self.threat_intel_db.get_threats(&ip).await;
+            let Some(best) = entries
+                .iter()
+                .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
+            else {
+                continue;
+            };
+
+            let Some(country) = best.country.as_deref() else {
+                continue;
+            };
+            let Some((latitude, longitude)) = crate::geo_centroid::country_centroid(country)
+            else {
+                continue;
+            };
+
+            let attack_type = best
+                .categories
+                .first()
+                .map(|c| format!("{:?}", c))
+                .unwrap_or_else(|| "Unknown".to_string());
+
+            let severity = if best.confidence >= 0.9 {
+                "critical"
+            } else if best.confidence >= 0.75 {
+                "high"
+            } else if best.confidence >= 0.5 {
+                "medium"
+            } else {
+                "low"
+            }
+            .to_string();
+
+            events.push(crate::templates::AttackEvent {
+                latitude,
+                longitude,
+                source_country: country.to_string(),
+                attack_type,
+                timestamp: best.last_seen.to_rfc3339(),
+                severity,
+            });
+        }
+
+        Ok(events)
     }
 
     /// Live logs widget: backed by the real system journal via

@@ -5,6 +5,7 @@
 use std::net::SocketAddr;
 
 pub mod auth;
+pub mod geo_centroid;
 pub mod handlers;
 pub mod qrcode;
 pub mod routes;
