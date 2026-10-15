@@ -92,12 +92,19 @@ struct LatencySample {
     timestamp: Instant,
 }
 
+/// Jitter sample (absolute delta between consecutive latency samples)
+#[derive(Debug, Clone)]
+struct JitterSample {
+    jitter_ms: f64,
+    timestamp: Instant,
+}
+
 /// Path measurements
 struct PathMeasurements {
     latency_samples: Vec<LatencySample>,
     packets_sent: u64,
     packets_lost: u64,
-    jitter_samples: Vec<f64>,
+    jitter_samples: Vec<JitterSample>,
     last_cleanup: Instant,
 }
 
@@ -117,8 +124,10 @@ impl PathMeasurements {
         let cutoff = Instant::now() - window;
 
         self.latency_samples.retain(|s| s.timestamp > cutoff);
-        // Note: jitter is calculated from consecutive latency samples
-        // so we don't need to clean it separately
+        // Jitter samples are derived from latency samples and must age out of
+        // the window too, otherwise one bad value would skew the average forever
+        // and the vector would grow without bound.
+        self.jitter_samples.retain(|s| s.timestamp > cutoff);
 
         self.last_cleanup = Instant::now();
     }
@@ -164,19 +173,30 @@ impl SlaMonitor {
     pub fn record_latency(&self, path_id: &PathId, latency_ms: f64) {
         let mut measurements = self.measurements.write().unwrap_or_else(|p| p.into_inner());
         if let Some(path_meas) = measurements.get_mut(path_id) {
+            // Reject NaN/infinite samples at the door: they would otherwise
+            // poison jitter (NaN/inf delta) and count toward min_samples while
+            // carrying no real information.
+            if !latency_ms.is_finite() {
+                debug!(
+                    "Ignoring non-finite latency sample {} on path {}",
+                    latency_ms, path_id
+                );
+                return;
+            }
+
+            let now = Instant::now();
+            // Calculate jitter against the previous valid sample
+            if let Some(prev) = path_meas.latency_samples.last() {
+                path_meas.jitter_samples.push(JitterSample {
+                    jitter_ms: (latency_ms - prev.latency_ms).abs(),
+                    timestamp: now,
+                });
+            }
+
             path_meas.latency_samples.push(LatencySample {
                 latency_ms,
-                timestamp: Instant::now(),
+                timestamp: now,
             });
-
-            // Calculate jitter if we have a previous sample
-            if path_meas.latency_samples.len() >= 2 {
-                let len = path_meas.latency_samples.len();
-                let jitter = (path_meas.latency_samples[len - 1].latency_ms
-                    - path_meas.latency_samples[len - 2].latency_ms)
-                    .abs();
-                path_meas.jitter_samples.push(jitter);
-            }
         }
     }
 
@@ -212,19 +232,20 @@ impl SlaMonitor {
             path_meas.cleanup(config.window);
         }
 
-        // Check if we have enough samples
-        if path_meas.latency_samples.len() < config.min_samples {
-            return None;
-        }
-
-        // Calculate latency percentiles
+        // Calculate latency percentiles (record_latency already rejects
+        // non-finite values; filter again defensively)
         let mut latencies: Vec<f64> = path_meas
             .latency_samples
             .iter()
             .map(|s| s.latency_ms)
-            .filter(|l| !l.is_nan())
+            .filter(|l| l.is_finite())
             .collect();
-        // NaN samples are dropped above; total_cmp can't panic regardless.
+
+        // Check if we have enough valid samples
+        if latencies.len() < config.min_samples {
+            return None;
+        }
+
         latencies.sort_by(|a, b| a.total_cmp(b));
 
         let p50 = Self::percentile(&latencies, 50.0);
@@ -240,7 +261,12 @@ impl SlaMonitor {
 
         // Calculate average jitter
         let jitter_ms = if !path_meas.jitter_samples.is_empty() {
-            path_meas.jitter_samples.iter().sum::<f64>() / path_meas.jitter_samples.len() as f64
+            path_meas
+                .jitter_samples
+                .iter()
+                .map(|s| s.jitter_ms)
+                .sum::<f64>()
+                / path_meas.jitter_samples.len() as f64
         } else {
             0.0
         };
@@ -519,5 +545,76 @@ mod tests {
 
         let best = monitor.select_best_path(&[path1, path2], Some(50), None);
         assert_eq!(best, Some(path1));
+    }
+
+    fn nan_test_config(window: Duration) -> SlaConfig {
+        SlaConfig {
+            target_latency_ms: 100,
+            target_packet_loss_pct: 1.0,
+            target_jitter_ms: 20,
+            window,
+            min_samples: 3,
+        }
+    }
+
+    #[test]
+    fn test_nan_sample_does_not_poison_jitter() {
+        let monitor = SlaMonitor::new();
+        let path_id = PathId::new(1);
+        monitor.configure_path(path_id, nan_test_config(Duration::from_secs(60)));
+
+        for i in 0..19 {
+            if i == 9 {
+                monitor.record_latency(&path_id, f64::NAN);
+            }
+            monitor.record_latency(&path_id, 10.0);
+        }
+        monitor.record_latency(&path_id, f64::INFINITY);
+
+        let m = monitor.compute_sla(&path_id).expect("enough samples");
+        assert_eq!(m.sample_count, 19);
+        assert!(m.jitter_ms.is_finite());
+        assert_eq!(m.jitter_ms, 0.0);
+        assert!(m.jitter_met);
+        assert!(m.is_compliant());
+    }
+
+    #[test]
+    fn test_all_nan_samples_yield_no_measurement() {
+        let monitor = SlaMonitor::new();
+        let path_id = PathId::new(1);
+        monitor.configure_path(path_id, nan_test_config(Duration::from_secs(60)));
+
+        for _ in 0..10 {
+            monitor.record_latency(&path_id, f64::NAN);
+        }
+
+        // No valid data must not be reported as a 0ms compliant path.
+        assert!(monitor.compute_sla(&path_id).is_none());
+    }
+
+    #[test]
+    fn test_cleanup_prunes_jitter_samples() {
+        let monitor = SlaMonitor::new();
+        let path_id = PathId::new(1);
+        monitor.configure_path(path_id, nan_test_config(Duration::from_millis(1)));
+
+        // Large jitter that is about to fall outside the window
+        monitor.record_latency(&path_id, 10.0);
+        monitor.record_latency(&path_id, 500.0);
+        std::thread::sleep(Duration::from_millis(5));
+
+        {
+            let mut meas = monitor
+                .measurements
+                .write()
+                .unwrap_or_else(|p| p.into_inner());
+            meas.get_mut(&path_id)
+                .unwrap()
+                .cleanup(Duration::from_millis(1));
+            let pm = meas.get(&path_id).unwrap();
+            assert!(pm.latency_samples.is_empty());
+            assert!(pm.jitter_samples.is_empty());
+        }
     }
 }
