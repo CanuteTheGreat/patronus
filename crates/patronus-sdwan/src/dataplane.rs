@@ -156,7 +156,7 @@ impl TunDevice {
 
     /// Get the TUN device name
     pub fn name(&self) -> String {
-        let device = self.device.lock().unwrap();
+        let device = self.device.lock().unwrap_or_else(|p| p.into_inner());
         device.name().to_string()
     }
 }

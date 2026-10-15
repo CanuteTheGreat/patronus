@@ -40,7 +40,7 @@ impl Rib {
 
         debug!("Adding route to RIB: {} via {}", prefix, route.next_hop);
 
-        let mut routes = self.routes.write().unwrap();
+        let mut routes = self.routes.write().unwrap_or_else(|p| p.into_inner());
         let prefix_routes = routes.entry(prefix).or_default();
 
         // Check if route already exists (update if so)
@@ -64,14 +64,14 @@ impl Rib {
     pub fn remove_route(&self, prefix: Ipv4Network, next_hop: Ipv4Addr) -> Result<(), String> {
         debug!("Removing route from RIB: {} via {}", prefix, next_hop);
 
-        let mut routes = self.routes.write().unwrap();
+        let mut routes = self.routes.write().unwrap_or_else(|p| p.into_inner());
 
         if let Some(prefix_routes) = routes.get_mut(&prefix) {
             prefix_routes.retain(|r| r.next_hop != next_hop);
 
             if prefix_routes.is_empty() {
                 routes.remove(&prefix);
-                self.best_routes.write().unwrap().remove(&prefix);
+                self.best_routes.write().unwrap_or_else(|p| p.into_inner()).remove(&prefix);
                 info!("Removed last route for prefix {}", prefix);
             } else {
                 // Re-run best path selection
@@ -85,7 +85,7 @@ impl Rib {
 
     /// Select best path for a prefix using BGP decision process
     fn select_best_path(&self, prefix: Ipv4Network) {
-        let routes = self.routes.read().unwrap();
+        let routes = self.routes.read().unwrap_or_else(|p| p.into_inner());
 
         if let Some(prefix_routes) = routes.get(&prefix) {
             if prefix_routes.is_empty() {
@@ -134,20 +134,20 @@ impl Rib {
                 best.as_path.len()
             );
 
-            self.best_routes.write().unwrap().insert(prefix, best);
+            self.best_routes.write().unwrap_or_else(|p| p.into_inner()).insert(prefix, best);
         }
     }
 
     /// Get best route for a prefix
     pub fn get_best_route(&self, prefix: &Ipv4Network) -> Option<BgpRoute> {
-        self.best_routes.read().unwrap().get(prefix).cloned()
+        self.best_routes.read().unwrap_or_else(|p| p.into_inner()).get(prefix).cloned()
     }
 
     /// Get all routes for a prefix
     pub fn get_routes(&self, prefix: &Ipv4Network) -> Vec<BgpRoute> {
         self.routes
             .read()
-            .unwrap()
+            .unwrap_or_else(|p| p.into_inner())
             .get(prefix)
             .cloned()
             .unwrap_or_default()
@@ -155,12 +155,12 @@ impl Rib {
 
     /// Get all best routes
     pub fn get_all_best_routes(&self) -> Vec<BgpRoute> {
-        self.best_routes.read().unwrap().values().cloned().collect()
+        self.best_routes.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect()
     }
 
     /// Longest prefix match lookup
     pub fn lookup(&self, ip: Ipv4Addr) -> Option<BgpRoute> {
-        let best_routes = self.best_routes.read().unwrap();
+        let best_routes = self.best_routes.read().unwrap_or_else(|p| p.into_inner());
 
         let mut best_match: Option<(Ipv4Network, BgpRoute)> = None;
 
@@ -182,18 +182,18 @@ impl Rib {
 
     /// Get total number of routes
     pub fn route_count(&self) -> usize {
-        self.routes.read().unwrap().values().map(|v| v.len()).sum()
+        self.routes.read().unwrap_or_else(|p| p.into_inner()).values().map(|v| v.len()).sum()
     }
 
     /// Get number of unique prefixes
     pub fn prefix_count(&self) -> usize {
-        self.routes.read().unwrap().len()
+        self.routes.read().unwrap_or_else(|p| p.into_inner()).len()
     }
 
     /// Clear all routes
     pub fn clear(&self) {
-        self.routes.write().unwrap().clear();
-        self.best_routes.write().unwrap().clear();
+        self.routes.write().unwrap_or_else(|p| p.into_inner()).clear();
+        self.best_routes.write().unwrap_or_else(|p| p.into_inner()).clear();
         info!("Cleared all routes from RIB");
     }
 }

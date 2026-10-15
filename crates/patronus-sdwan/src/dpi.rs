@@ -253,9 +253,9 @@ impl DpiEngine {
     pub fn classify_packet(&self, packet: &[u8], flow: &FlowKey) -> ApplicationType {
         // Check cache first
         {
-            let cache = self.flow_cache.read().unwrap();
+            let cache = self.flow_cache.read().unwrap_or_else(|p| p.into_inner());
             if let Some(&app_type) = cache.get(flow) {
-                self.stats.write().unwrap().cache_hits += 1;
+                self.stats.write().unwrap_or_else(|p| p.into_inner()).cache_hits += 1;
                 trace!("DPI cache hit for flow {:?}: {}", flow, app_type.as_str());
                 return app_type;
             }
@@ -272,11 +272,11 @@ impl DpiEngine {
                 );
 
                 // Cache the result
-                self.flow_cache.write().unwrap().insert(*flow, app_type);
+                self.flow_cache.write().unwrap_or_else(|p| p.into_inner()).insert(*flow, app_type);
 
                 // Update statistics
                 {
-                    let mut stats = self.stats.write().unwrap();
+                    let mut stats = self.stats.write().unwrap_or_else(|p| p.into_inner());
                     stats.classified_flows += 1;
                     *stats.by_type.entry(app_type).or_insert(0) += 1;
                 }
@@ -289,11 +289,11 @@ impl DpiEngine {
         debug!("DPI could not classify flow {:?}", flow);
         self.flow_cache
             .write()
-            .unwrap()
+            .unwrap_or_else(|p| p.into_inner())
             .insert(*flow, ApplicationType::Unknown);
 
         {
-            let mut stats = self.stats.write().unwrap();
+            let mut stats = self.stats.write().unwrap_or_else(|p| p.into_inner());
             *stats.by_type.entry(ApplicationType::Unknown).or_insert(0) += 1;
         }
 
@@ -302,7 +302,7 @@ impl DpiEngine {
 
     /// Get classification statistics
     pub fn get_stats(&self) -> DpiStats {
-        let stats = self.stats.read().unwrap();
+        let stats = self.stats.read().unwrap_or_else(|p| p.into_inner());
         DpiStats {
             total_flows: stats.total_flows,
             classified_flows: stats.classified_flows,
@@ -314,12 +314,12 @@ impl DpiEngine {
 
     /// Clear flow cache (for testing or periodic cleanup)
     pub fn clear_cache(&self) {
-        self.flow_cache.write().unwrap().clear();
+        self.flow_cache.write().unwrap_or_else(|p| p.into_inner()).clear();
     }
 
     /// Get cache size
     pub fn cache_size(&self) -> usize {
-        self.flow_cache.read().unwrap().len()
+        self.flow_cache.read().unwrap_or_else(|p| p.into_inner()).len()
     }
 }
 

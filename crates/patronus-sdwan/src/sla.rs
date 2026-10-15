@@ -149,17 +149,17 @@ impl SlaMonitor {
     /// Configure SLA for a path
     pub fn configure_path(&self, path_id: PathId, config: SlaConfig) {
         debug!("Configuring SLA for path {}: {:?}", path_id, config);
-        self.configs.write().unwrap().insert(path_id, config);
+        self.configs.write().unwrap_or_else(|p| p.into_inner()).insert(path_id, config);
         self.measurements
             .write()
-            .unwrap()
+            .unwrap_or_else(|p| p.into_inner())
             .entry(path_id)
             .or_insert_with(PathMeasurements::new);
     }
 
     /// Record a latency measurement
     pub fn record_latency(&self, path_id: &PathId, latency_ms: f64) {
-        let mut measurements = self.measurements.write().unwrap();
+        let mut measurements = self.measurements.write().unwrap_or_else(|p| p.into_inner());
         if let Some(path_meas) = measurements.get_mut(path_id) {
             path_meas.latency_samples.push(LatencySample {
                 latency_ms,
@@ -179,7 +179,7 @@ impl SlaMonitor {
 
     /// Record packet statistics
     pub fn record_packets(&self, path_id: &PathId, sent: u64, lost: u64) {
-        let mut measurements = self.measurements.write().unwrap();
+        let mut measurements = self.measurements.write().unwrap_or_else(|p| p.into_inner());
         if let Some(path_meas) = measurements.get_mut(path_id) {
             path_meas.packets_sent += sent;
             path_meas.packets_lost += lost;
@@ -198,10 +198,10 @@ impl SlaMonitor {
 
     /// Compute SLA measurement for a path
     pub fn compute_sla(&self, path_id: &PathId) -> Option<SlaMeasurement> {
-        let configs = self.configs.read().unwrap();
+        let configs = self.configs.read().unwrap_or_else(|p| p.into_inner());
         let config = configs.get(path_id)?;
 
-        let mut measurements = self.measurements.write().unwrap();
+        let mut measurements = self.measurements.write().unwrap_or_else(|p| p.into_inner());
         let path_meas = measurements.get_mut(path_id)?;
 
         // Cleanup old samples
@@ -276,7 +276,7 @@ impl SlaMonitor {
         // Store result
         self.results
             .write()
-            .unwrap()
+            .unwrap_or_else(|p| p.into_inner())
             .insert(*path_id, measurement.clone());
 
         Some(measurement)
@@ -284,12 +284,12 @@ impl SlaMonitor {
 
     /// Get latest SLA measurement for a path
     pub fn get_measurement(&self, path_id: &PathId) -> Option<SlaMeasurement> {
-        self.results.read().unwrap().get(path_id).cloned()
+        self.results.read().unwrap_or_else(|p| p.into_inner()).get(path_id).cloned()
     }
 
     /// Get all SLA measurements
     pub fn get_all_measurements(&self) -> HashMap<PathId, SlaMeasurement> {
-        self.results.read().unwrap().clone()
+        self.results.read().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     /// Select best path based on SLA requirements
@@ -299,7 +299,7 @@ impl SlaMonitor {
         required_latency_ms: Option<u32>,
         required_loss_pct: Option<f32>,
     ) -> Option<PathId> {
-        let results = self.results.read().unwrap();
+        let results = self.results.read().unwrap_or_else(|p| p.into_inner());
 
         let mut best_path: Option<PathId> = None;
         let mut best_score: f32 = 0.0;
@@ -359,7 +359,7 @@ mod tests {
         monitor.configure_path(path_id, config);
 
         // Verify configuration was stored
-        assert!(monitor.configs.read().unwrap().contains_key(&path_id));
+        assert!(monitor.configs.read().unwrap_or_else(|p| p.into_inner()).contains_key(&path_id));
     }
 
     #[test]
@@ -458,7 +458,7 @@ mod tests {
         let path2 = PathId::new(2);
 
         // Path 1: Low latency, good quality
-        monitor.results.write().unwrap().insert(
+        monitor.results.write().unwrap_or_else(|p| p.into_inner()).insert(
             path1,
             SlaMeasurement {
                 path_id: path1,
@@ -476,7 +476,7 @@ mod tests {
         );
 
         // Path 2: Higher latency
-        monitor.results.write().unwrap().insert(
+        monitor.results.write().unwrap_or_else(|p| p.into_inner()).insert(
             path2,
             SlaMeasurement {
                 path_id: path2,

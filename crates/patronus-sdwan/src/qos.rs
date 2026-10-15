@@ -268,27 +268,28 @@ impl QosScheduler {
     /// Configure rate limiting (bytes per second)
     pub fn set_rate_limit(&self, rate_bps: u64) {
         debug!("Setting rate limit to {} bps", rate_bps);
-        *self.rate_limiter.lock().unwrap() = Some(TokenBucket::new(rate_bps));
+        *self.rate_limiter.lock().unwrap_or_else(|p| p.into_inner()) =
+            Some(TokenBucket::new(rate_bps));
     }
 
     /// Remove rate limiting
     pub fn remove_rate_limit(&self) {
-        *self.rate_limiter.lock().unwrap() = None;
+        *self.rate_limiter.lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
 
     /// Enqueue a packet
     pub fn enqueue(&self, packet: QueuedPacket) -> bool {
         let class = packet.qos_class;
-        let mut queues = self.queues.lock().unwrap();
+        let mut queues = self.queues.lock().unwrap_or_else(|p| p.into_inner());
 
         if let Some(queue) = queues.get_mut(&class) {
             let success = queue.enqueue(packet);
 
             if success {
-                let mut stats = self.stats.lock().unwrap();
+                let mut stats = self.stats.lock().unwrap_or_else(|p| p.into_inner());
                 stats.packets_enqueued += 1;
             } else {
-                let mut stats = self.stats.lock().unwrap();
+                let mut stats = self.stats.lock().unwrap_or_else(|p| p.into_inner());
                 stats.packets_dropped += 1;
                 stats.buffer_overflows += 1;
             }
@@ -301,7 +302,7 @@ impl QosScheduler {
 
     /// Dequeue the next packet (priority scheduling)
     pub fn dequeue(&self) -> Option<QueuedPacket> {
-        let mut queues = self.queues.lock().unwrap();
+        let mut queues = self.queues.lock().unwrap_or_else(|p| p.into_inner());
 
         // Try each queue in priority order
         for class in [
@@ -314,7 +315,9 @@ impl QosScheduler {
             if let Some(queue) = queues.get_mut(&class) {
                 if !queue.is_empty() {
                     // Check rate limiter
-                    if let Some(rate_limiter) = self.rate_limiter.lock().unwrap().as_mut() {
+                    if let Some(rate_limiter) =
+                        self.rate_limiter.lock().unwrap_or_else(|p| p.into_inner()).as_mut()
+                    {
                         // Peek at packet size
                         if let Some(packet) = queue.queue.front() {
                             if !rate_limiter.consume(packet.data.len()) {
@@ -328,7 +331,7 @@ impl QosScheduler {
                         let queue_time = packet.queued_at.elapsed();
 
                         // Update statistics
-                        let mut stats = self.stats.lock().unwrap();
+                        let mut stats = self.stats.lock().unwrap_or_else(|p| p.into_inner());
                         stats.packets_dequeued += 1;
                         stats.bytes_transmitted += packet.data.len() as u64;
 
@@ -359,24 +362,24 @@ impl QosScheduler {
 
     /// Get number of queued packets for a class
     pub fn queue_depth(&self, class: QosClass) -> usize {
-        let queues = self.queues.lock().unwrap();
+        let queues = self.queues.lock().unwrap_or_else(|p| p.into_inner());
         queues.get(&class).map(|q| q.len()).unwrap_or(0)
     }
 
     /// Get total number of queued packets across all classes
     pub fn total_queue_depth(&self) -> usize {
-        let queues = self.queues.lock().unwrap();
+        let queues = self.queues.lock().unwrap_or_else(|p| p.into_inner());
         queues.values().map(|q| q.len()).sum()
     }
 
     /// Get statistics
     pub fn get_stats(&self) -> QosStats {
-        self.stats.lock().unwrap().clone()
+        self.stats.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     /// Clear all queues (for testing)
     pub fn clear(&self) {
-        let mut queues = self.queues.lock().unwrap();
+        let mut queues = self.queues.lock().unwrap_or_else(|p| p.into_inner());
         for queue in queues.values_mut() {
             queue.queue.clear();
             queue.bytes_queued = 0;
