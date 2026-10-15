@@ -1507,8 +1507,7 @@ impl MonitoringManager {
             let Some(country) = best.country.as_deref() else {
                 continue;
             };
-            let Some((latitude, longitude)) = crate::geo_centroid::country_centroid(country)
-            else {
+            let Some((latitude, longitude)) = crate::geo_centroid::country_centroid(country) else {
                 continue;
             };
 
