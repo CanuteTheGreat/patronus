@@ -537,10 +537,20 @@ impl MeshManager {
 
     /// Verify announcement signature
     fn verify_announcement(announcement: &SiteAnnouncement) -> Result<()> {
-        // Extract public key
-        let public_key_bytes: [u8; 32] = announcement.public_key[..32]
-            .try_into()
-            .map_err(|_| Error::AuthenticationFailed("Invalid public key length".to_string()))?;
+        // Extract public key. Announcements arrive over unauthenticated
+        // multicast, so the length must be checked *before* touching the
+        // bytes: slicing `[..32]` first panicked on any shorter key, and since
+        // this runs inside the spawned auto-peering task, one malformed packet
+        // from anyone on the segment permanently killed mesh auto-peering.
+        // Require the exact length too -- a longer key would otherwise verify
+        // against its first 32 bytes and then be stored/peered as-is.
+        let public_key_bytes: [u8; 32] =
+            announcement.public_key.as_slice().try_into().map_err(|_| {
+                Error::AuthenticationFailed(format!(
+                    "Invalid public key length: {} (expected 32)",
+                    announcement.public_key.len()
+                ))
+            })?;
 
         let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
             .map_err(|e| Error::AuthenticationFailed(format!("Invalid public key: {}", e)))?;
@@ -557,9 +567,13 @@ impl MeshManager {
         .map_err(|e| Error::Network(format!("Serialization failed: {}", e)))?;
 
         // Extract signature
-        let signature_bytes: [u8; 64] = announcement.signature[..64]
-            .try_into()
-            .map_err(|_| Error::AuthenticationFailed("Invalid signature length".to_string()))?;
+        let signature_bytes: [u8; 64] =
+            announcement.signature.as_slice().try_into().map_err(|_| {
+                Error::AuthenticationFailed(format!(
+                    "Invalid signature length: {} (expected 64)",
+                    announcement.signature.len()
+                ))
+            })?;
 
         let signature = Signature::from_bytes(&signature_bytes);
 
@@ -635,6 +649,59 @@ mod tests {
 
         // Verify
         assert!(MeshManager::verify_announcement(&signed_announcement).is_ok());
+    }
+
+    fn signed_test_announcement() -> SiteAnnouncement {
+        let mut secret_bytes = [0u8; 32];
+        use rand::RngCore;
+        OsRng.fill_bytes(&mut secret_bytes);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
+        let mut announcement = SiteAnnouncement {
+            site_id: SiteId::generate(),
+            site_name: "test".to_string(),
+            public_key: signing_key.verifying_key().to_bytes().to_vec(),
+            endpoints: Vec::new(),
+            capabilities: SiteCapabilities::default(),
+            timestamp: SystemTime::now(),
+            signature: Vec::new(),
+        };
+        let announcement_bytes = bincode::serialize(&(
+            &announcement.site_id,
+            &announcement.site_name,
+            &announcement.public_key,
+            &announcement.endpoints,
+            &announcement.capabilities,
+            &announcement.timestamp,
+        ))
+        .unwrap();
+        announcement.signature = signing_key.sign(&announcement_bytes).to_bytes().to_vec();
+        announcement
+    }
+
+    /// Announcements come from unauthenticated multicast: malformed key or
+    /// signature lengths must be rejected with an error, never panic (a panic
+    /// here kills the auto-peering task for good).
+    #[test]
+    fn test_announcement_with_bad_lengths_is_rejected_not_panicking() {
+        let good = signed_test_announcement();
+        assert!(MeshManager::verify_announcement(&good).is_ok());
+
+        for len in [0usize, 1, 31, 33, 64] {
+            let mut a = good.clone();
+            a.public_key.resize(len, 0);
+            assert!(
+                MeshManager::verify_announcement(&a).is_err(),
+                "public key of length {len} must be rejected"
+            );
+        }
+        for len in [0usize, 1, 63, 65] {
+            let mut a = good.clone();
+            a.signature.resize(len, 0);
+            assert!(
+                MeshManager::verify_announcement(&a).is_err(),
+                "signature of length {len} must be rejected"
+            );
+        }
     }
 
     #[tokio::test]
