@@ -1,4 +1,4 @@
-import { Outlet, Link, useLocation } from 'react-router-dom'
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   MapPin,
@@ -6,9 +6,13 @@ import {
   Target,
   BarChart3,
   Shield,
-  Settings
+  Settings,
+  Server,
+  LogOut
 } from 'lucide-react'
 import clsx from 'clsx'
+import { LeaderBadge } from './Cluster'
+import { getUser, logout } from '../auth'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -17,11 +21,14 @@ const navigation = [
   { name: 'SLA', href: '/sla', icon: Target },
   { name: 'Traffic', href: '/traffic', icon: BarChart3 },
   { name: 'Security', href: '/security', icon: Shield },
+  { name: 'Cluster', href: '/cluster', icon: Server },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]
 
 export default function Layout() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const user = getUser()
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -54,6 +61,17 @@ export default function Layout() {
 
       {/* Main content */}
       <div className="pl-64">
+        <header className="flex h-12 items-center justify-end gap-4 border-b border-gray-200 bg-white px-8">
+          <LeaderBadge />
+          {user && <span className="text-sm text-gray-600">{user.email} ({user.role})</span>}
+          <button
+            type="button"
+            onClick={() => { logout(); navigate('/login', { replace: true }) }}
+            className="inline-flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900"
+          >
+            <LogOut className="h-4 w-4" /> Sign out
+          </button>
+        </header>
         <main className="p-8">
           <Outlet />
         </main>
