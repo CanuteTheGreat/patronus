@@ -34,6 +34,23 @@ async fn main() -> Result<()> {
         patronus_config::store::ConfigStore::new(std::path::PathBuf::from("/tmp/patronus-config"));
     let state = AppState::new(rule_manager, config_store).await?;
 
+    // Per-install admin password: PATRONUS_ADMIN_PASSWORD, or generated on
+    // first start into /var/lib/patronus/initial-admin-password (0600).
+    // Refuses to start with a known/weak password; there are no default
+    // credentials.
+    match state.auth.user_store.provision_admin_from_env().await? {
+        patronus_web::auth::AdminPasswordSource::Env => {
+            info!("admin password taken from PATRONUS_ADMIN_PASSWORD")
+        }
+        patronus_web::auth::AdminPasswordSource::ExistingFile(p) => {
+            info!("admin password loaded from {}", p.display())
+        }
+        patronus_web::auth::AdminPasswordSource::GeneratedFile(p) => info!(
+            "generated a per-install admin password; log in as 'admin' with the contents of {}",
+            p.display()
+        ),
+    }
+
     // Bind to address
     let addr = SocketAddr::from(([0, 0, 0, 0], 8443));
     let tls_dir = patronus_web::tls::default_tls_dir();

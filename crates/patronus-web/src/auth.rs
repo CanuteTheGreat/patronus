@@ -71,34 +71,125 @@ impl Default for UserStore {
     }
 }
 
+/// Env var holding the admin password (takes precedence over the file).
+pub const ADMIN_PASSWORD_ENV: &str = "PATRONUS_ADMIN_PASSWORD";
+/// Env var overriding where the generated admin password is persisted.
+pub const ADMIN_PASSWORD_FILE_ENV: &str = "PATRONUS_ADMIN_PASSWORD_FILE";
+/// Where a per-install admin password is generated on first start.
+pub const DEFAULT_ADMIN_PASSWORD_FILE: &str = "/var/lib/patronus/initial-admin-password";
+/// Minimum accepted admin password length.
+pub const MIN_ADMIN_PASSWORD_LEN: usize = 12;
+/// Passwords that shipped as defaults or are trivially guessable.
+const KNOWN_DEFAULT_PASSWORDS: &[&str] = &[
+    "admin",
+    "operator",
+    "password",
+    "patronus",
+    "changeme",
+    "change-me",
+    "admin123",
+    "administrator",
+    "pfsense",
+    "opnsense",
+    "123456789012",
+];
+
+/// Where the admin password came from (for the startup log line).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdminPasswordSource {
+    Env,
+    ExistingFile(std::path::PathBuf),
+    GeneratedFile(std::path::PathBuf),
+}
+
+/// Reject publicly known / short admin passwords.
+pub fn check_admin_password(pw: &str) -> Result<(), String> {
+    let lower = pw.to_ascii_lowercase();
+    if KNOWN_DEFAULT_PASSWORDS.contains(&lower.as_str()) {
+        return Err("admin password is a publicly known default".to_string());
+    }
+    if pw.chars().count() < MIN_ADMIN_PASSWORD_LEN {
+        return Err(format!(
+            "admin password must be at least {} characters",
+            MIN_ADMIN_PASSWORD_LEN
+        ));
+    }
+    Ok(())
+}
+
+fn generate_admin_password() -> String {
+    use rand::Rng;
+    const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    let mut rng = rand::thread_rng();
+    (0..24)
+        .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+        .collect()
+}
+
+/// Resolve the per-install admin password: `env` if given (must pass
+/// [`check_admin_password`]), else the contents of `file`, else a newly
+/// generated random password written to `file` with mode 0600.
+pub fn resolve_admin_password(
+    env: Option<String>,
+    file: &std::path::Path,
+) -> Result<(String, AdminPasswordSource), String> {
+    if let Some(pw) = env.filter(|p| !p.is_empty()) {
+        check_admin_password(&pw).map_err(|e| format!("{}: {}", ADMIN_PASSWORD_ENV, e))?;
+        return Ok((pw, AdminPasswordSource::Env));
+    }
+    match std::fs::read_to_string(file) {
+        Ok(contents) => {
+            let pw = contents.trim().to_string();
+            check_admin_password(&pw)
+                .map_err(|e| format!("admin password file {}: {}", file.display(), e))?;
+            Ok((pw, AdminPasswordSource::ExistingFile(file.to_path_buf())))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let pw = generate_admin_password();
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let mut f = opts.open(file).map_err(|e| {
+                format!(
+                    "cannot create admin password file {} ({}); set {} instead",
+                    file.display(),
+                    e,
+                    ADMIN_PASSWORD_ENV
+                )
+            })?;
+            use std::io::Write;
+            writeln!(f, "{}", pw).map_err(|e| format!("cannot write {}: {}", file.display(), e))?;
+            Ok((pw, AdminPasswordSource::GeneratedFile(file.to_path_buf())))
+        }
+        Err(e) => Err(format!(
+            "cannot read admin password file {}: {}",
+            file.display(),
+            e
+        )),
+    }
+}
+
 impl UserStore {
+    /// A store whose only account is a *locked* `admin` (random, never
+    /// disclosed password). Call [`UserStore::provision_admin_from_env`] at
+    /// startup to set the real per-install password. There are no shipped
+    /// default credentials (admin/admin and operator/operator used to work
+    /// on every install).
     pub fn new() -> Self {
         let mut users = HashMap::new();
-
-        // Create default admin user with hashed password
-        let admin_hash = hash_password("admin").unwrap_or_else(|_| "admin".to_string());
+        let locked =
+            hash_password(&generate_admin_password()).unwrap_or_else(|_| "!locked".to_string());
         users.insert(
             "admin".to_string(),
             User {
                 id: 1,
                 username: "admin".to_string(),
-                password_hash: admin_hash,
+                password_hash: locked,
                 role: UserRole::Admin,
-                enabled: true,
-                created_at: Utc::now(),
-                last_login: None,
-            },
-        );
-
-        // Create operator user
-        let operator_hash = hash_password("operator").unwrap_or_else(|_| "operator".to_string());
-        users.insert(
-            "operator".to_string(),
-            User {
-                id: 2,
-                username: "operator".to_string(),
-                password_hash: operator_hash,
-                role: UserRole::Operator,
                 enabled: true,
                 created_at: Utc::now(),
                 last_login: None,
@@ -107,8 +198,30 @@ impl UserStore {
 
         Self {
             users: Arc::new(RwLock::new(users)),
-            next_id: Arc::new(RwLock::new(3)),
+            next_id: Arc::new(RwLock::new(2)),
         }
+    }
+
+    /// Set the admin password from `PATRONUS_ADMIN_PASSWORD` or the
+    /// per-install password file (generated on first start). Fails -- and
+    /// the binary refuses to start -- on a weak/known password.
+    pub async fn provision_admin_from_env(&self) -> anyhow::Result<AdminPasswordSource> {
+        let file = std::env::var(ADMIN_PASSWORD_FILE_ENV)
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from(DEFAULT_ADMIN_PASSWORD_FILE));
+        self.provision_admin(std::env::var(ADMIN_PASSWORD_ENV).ok(), &file)
+            .await
+    }
+
+    /// See [`UserStore::provision_admin_from_env`].
+    pub async fn provision_admin(
+        &self,
+        env: Option<String>,
+        file: &std::path::Path,
+    ) -> anyhow::Result<AdminPasswordSource> {
+        let (pw, source) = resolve_admin_password(env, file).map_err(|e| anyhow::anyhow!(e))?;
+        self.update_password("admin", &pw).await?;
+        Ok(source)
     }
 
     /// Get a user by username
@@ -623,4 +736,79 @@ pub async fn session_middleware(
     req.extensions_mut()
         .insert(app_state.auth.session_store.clone());
     next.run(req).await
+}
+
+#[cfg(test)]
+mod default_credential_tests {
+    use super::*;
+
+    fn tmp_file() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("patronus-web-auth-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("initial-admin-password")
+    }
+
+    #[tokio::test]
+    async fn shipped_default_credentials_do_not_work() {
+        let store = UserStore::new();
+        assert!(store.verify_credentials("admin", "admin").await.is_none());
+        assert!(store
+            .verify_credentials("operator", "operator")
+            .await
+            .is_none());
+        assert!(store.get_user("operator").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn first_start_generates_a_private_per_install_password() {
+        let file = tmp_file();
+        let store = UserStore::new();
+        let src = store.provision_admin(None, &file).await.unwrap();
+        assert_eq!(src, AdminPasswordSource::GeneratedFile(file.clone()));
+        let pw = std::fs::read_to_string(&file).unwrap().trim().to_string();
+        assert!(pw.len() >= MIN_ADMIN_PASSWORD_LEN);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        assert!(store.verify_credentials("admin", &pw).await.is_some());
+        assert!(store.verify_credentials("admin", "admin").await.is_none());
+
+        // Restart: same password is reused, a second install gets another.
+        let again = UserStore::new();
+        let src = again.provision_admin(None, &file).await.unwrap();
+        assert_eq!(src, AdminPasswordSource::ExistingFile(file.clone()));
+        assert!(again.verify_credentials("admin", &pw).await.is_some());
+        let other = tmp_file();
+        UserStore::new()
+            .provision_admin(None, &other)
+            .await
+            .unwrap();
+        assert_ne!(std::fs::read_to_string(&other).unwrap().trim(), pw);
+    }
+
+    #[tokio::test]
+    async fn weak_or_default_admin_password_is_refused() {
+        let file = tmp_file();
+        for weak in ["admin", "ADMIN", "operator", "changeme", "short-pw"] {
+            let err = UserStore::new()
+                .provision_admin(Some(weak.to_string()), &file)
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains(ADMIN_PASSWORD_ENV), "{err}");
+        }
+        std::fs::write(&file, "admin\n").unwrap();
+        assert!(UserStore::new().provision_admin(None, &file).await.is_err());
+        let store = UserStore::new();
+        store
+            .provision_admin(Some("Correct-Horse-Battery-9".to_string()), &file)
+            .await
+            .unwrap();
+        assert!(store
+            .verify_credentials("admin", "Correct-Horse-Battery-9")
+            .await
+            .is_some());
+    }
 }
