@@ -21,6 +21,9 @@ services:
       - PATRONUS_PEERS=dashboard2:8443,dashboard3:8443
       - PATRONUS_DATA_DIR=/data/raft
       - PATRONUS_DB_PATH=/data/dashboard.db
+      # All HA nodes MUST share one JWT signing secret, or tokens issued by the
+      # leader are rejected by followers. Set it in .env (openssl rand -hex 32).
+      - PATRONUS_JWT_SECRET=${PATRONUS_JWT_SECRET:?set PATRONUS_JWT_SECRET (>=32 bytes, e.g. openssl rand -hex 32) shared by all dashboard nodes}
       - PATRONUS_ELECTION_TIMEOUT=5
       - PATRONUS_HEARTBEAT_INTERVAL=1
       - RUST_LOG=patronus_dashboard=info,tower_http=debug
@@ -52,6 +55,9 @@ services:
       - PATRONUS_PEERS=dashboard1:8443,dashboard3:8443
       - PATRONUS_DATA_DIR=/data/raft
       - PATRONUS_DB_PATH=/data/dashboard.db
+      # All HA nodes MUST share one JWT signing secret, or tokens issued by the
+      # leader are rejected by followers. Set it in .env (openssl rand -hex 32).
+      - PATRONUS_JWT_SECRET=${PATRONUS_JWT_SECRET:?set PATRONUS_JWT_SECRET (>=32 bytes, e.g. openssl rand -hex 32) shared by all dashboard nodes}
       - PATRONUS_ELECTION_TIMEOUT=5
       - PATRONUS_HEARTBEAT_INTERVAL=1
       - RUST_LOG=patronus_dashboard=info,tower_http=debug
@@ -83,6 +89,9 @@ services:
       - PATRONUS_PEERS=dashboard1:8443,dashboard2:8443
       - PATRONUS_DATA_DIR=/data/raft
       - PATRONUS_DB_PATH=/data/dashboard.db
+      # All HA nodes MUST share one JWT signing secret, or tokens issued by the
+      # leader are rejected by followers. Set it in .env (openssl rand -hex 32).
+      - PATRONUS_JWT_SECRET=${PATRONUS_JWT_SECRET:?set PATRONUS_JWT_SECRET (>=32 bytes, e.g. openssl rand -hex 32) shared by all dashboard nodes}
       - PATRONUS_ELECTION_TIMEOUT=5
       - PATRONUS_HEARTBEAT_INTERVAL=1
       - RUST_LOG=patronus_dashboard=info,tower_http=debug

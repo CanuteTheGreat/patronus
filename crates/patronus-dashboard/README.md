@@ -315,7 +315,16 @@ PATRONUS_DB_PATH=/var/lib/patronus/dashboard.db \
 
 ### Configuration
 
-The dashboard is configured via environment variables and the `AppState` initialization:
+The dashboard is configured via environment variables and the `AppState` initialization.
+
+JWT signing secret (no built-in default):
+
+- `PATRONUS_JWT_SECRET` -- signing secret, at least 32 bytes
+  (`openssl rand -hex 32`). Required to be identical on every node of an HA
+  cluster (`docker-compose.ha.yml` refuses to start without it).
+- If unset, a random secret is generated on first start and persisted with
+  mode 0600 at `PATRONUS_JWT_SECRET_FILE` (default: `jwt_secret` next to
+  `PATRONUS_DB_PATH`), then reused on restart.
 
 ```rust
 // Default configuration

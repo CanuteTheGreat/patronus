@@ -81,3 +81,6 @@ frontend/dist/
 frontend/.vite/
 /static/
 __pycache__/
+
+# Dashboard JWT signing secret generated on first start (never commit)
+jwt_secret

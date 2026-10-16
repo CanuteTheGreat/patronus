@@ -139,10 +139,16 @@ The frontend automatically:
    - The HSTS header enforces this after first visit
    - Consider using a reverse proxy (nginx, Caddy) for TLS termination
 
-2. **JWT Secret**: Change the default JWT secret in production
-   - Located in `src/auth/jwt.rs`
-   - Use a cryptographically random 32+ byte secret
-   - Store in environment variable, not hardcoded
+2. **JWT Secret**: There is no built-in default secret.
+   - `PATRONUS_JWT_SECRET` (>= 32 bytes, e.g. `openssl rand -hex 32`) is used
+     if set; startup fails if it is shorter.
+   - Otherwise a random secret is generated with the OS RNG on first start and
+     persisted (mode 0600) at `PATRONUS_JWT_SECRET_FILE`, default `jwt_secret`
+     next to `PATRONUS_DB_PATH`; it is reused on restart.
+   - HA deployments MUST give every node the same `PATRONUS_JWT_SECRET`
+     (`docker-compose.ha.yml` requires it), or tokens from one node fail on
+     the others.
+   - Rotating the secret invalidates all issued tokens.
 
 3. **Database Security**:
    - Use file permissions to protect `dashboard.db`
@@ -243,7 +249,7 @@ For compliance with security audit requirements:
 
 ## Security Checklist for Production
 
-- [ ] Change default JWT secret to cryptographically random value
+- [ ] Set `PATRONUS_JWT_SECRET` (>= 32 random bytes; identical on all HA nodes), or protect the generated `jwt_secret` file
 - [ ] Deploy behind HTTPS/TLS (reverse proxy recommended)
 - [ ] Set up firewall rules to limit access
 - [ ] Configure secure database file permissions

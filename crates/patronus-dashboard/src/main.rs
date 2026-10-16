@@ -64,6 +64,27 @@ async fn main() -> anyhow::Result<()> {
     // before, with HA disabled (`state.ha == None`).
     let db_path = std::env::var("PATRONUS_DB_PATH").unwrap_or_else(|_| "dashboard.db".to_string());
 
+    // JWT signing secret: PATRONUS_JWT_SECRET (shared by all HA nodes) or a
+    // persisted random secret file next to the DB. Refuse to start otherwise
+    // -- there is no fixed fallback secret.
+    match auth::jwt::init_from_env(&db_path) {
+        Ok(auth::jwt::SecretSource::Env) => {
+            info!(
+                "JWT signing secret loaded from {}",
+                auth::jwt::JWT_SECRET_ENV
+            )
+        }
+        Ok(auth::jwt::SecretSource::ExistingFile(p)) => {
+            info!("JWT signing secret loaded from {}", p.display())
+        }
+        Ok(auth::jwt::SecretSource::GeneratedFile(p)) => info!(
+            "Generated new JWT signing secret at {} (set {} to share one secret across HA nodes)",
+            p.display(),
+            auth::jwt::JWT_SECRET_ENV
+        ),
+        Err(e) => anyhow::bail!("JWT signing secret setup failed: {}", e),
+    }
+
     // Initialize application state
     let mut state = AppState::new(&db_path).await?;
 

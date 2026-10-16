@@ -317,6 +317,13 @@ cat certs/patronus.crt certs/patronus.key > certs/patronus.pem
 # 1b. For local/dev HA testing, generate a self-signed cert in one step:
 ./generate-ha-certs.sh
 
+# 1c. Create ONE shared JWT signing secret for all dashboard nodes.
+#     Every node must use the same value, otherwise a token issued by one
+#     node (e.g. the leader) is rejected by the others. Compose refuses to
+#     start if it is unset; the dashboard refuses secrets under 32 bytes.
+echo "PATRONUS_JWT_SECRET=$(openssl rand -hex 32)" >> .env
+chmod 600 .env
+
 # 2. Start HA cluster
 docker-compose -f docker-compose.ha.yml up -d
 
@@ -383,6 +390,13 @@ spec:
           value: "5"
         - name: PATRONUS_HEARTBEAT_INTERVAL
           value: "1"
+        # Shared by every replica (kubectl create secret generic
+        # patronus-jwt --from-literal=secret=$(openssl rand -hex 32))
+        - name: PATRONUS_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: patronus-jwt
+              key: secret
         ports:
         - containerPort: 8443
           name: https
