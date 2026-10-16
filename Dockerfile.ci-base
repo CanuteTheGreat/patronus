@@ -10,7 +10,9 @@
 
 FROM gentoo/stage3:amd64-systemd
 
-ARG PATRONUS_USE="web cli api nftables wireguard multiwan monitoring prometheus backup systemd"
+# Superset of every USE flag CI emerges (rust-ci.yml gentoo-docker-build USE_ALL)
+# so all their RDEPENDs (openvpn, strongswan, ...) are pre-installed here.
+ARG PATRONUS_USE="web cli api dashboard nftables dhcp dns unbound vpn wireguard openvpn ipsec multiwan monitoring prometheus captive-portal vlan qos backup systemd"
 
 # See Dockerfile for why: Portage's namespace-based sandbox FEATURES
 # (ipc-sandbox/network-sandbox/pid-sandbox) need unshare(2), which fails with

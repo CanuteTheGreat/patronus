@@ -10,9 +10,17 @@ version: '3.8'
 services:
   # Dashboard Instance 1
   dashboard1:
+    # Same Gentoo/Portage build as the single-node image (root Dockerfile,
+    # real emerge against gentoo/), with USE=dashboard so patronus-dashboard
+    # is installed alongside patronus-web.
+    image: ${PATRONUS_IMAGE:-patronus:ha}
     build:
       context: .
-      dockerfile: Dockerfile.dashboard
+      dockerfile: Dockerfile
+      args:
+        PATRONUS_USE: "web cli api dashboard nftables wireguard multiwan monitoring prometheus backup systemd"
+    command: ["patronus-dashboard"]
+    working_dir: /app
     container_name: patronus-dashboard-1
     hostname: dashboard1
     environment:
@@ -44,9 +52,17 @@ services:
 
   # Dashboard Instance 2
   dashboard2:
+    # Same Gentoo/Portage build as the single-node image (root Dockerfile,
+    # real emerge against gentoo/), with USE=dashboard so patronus-dashboard
+    # is installed alongside patronus-web.
+    image: ${PATRONUS_IMAGE:-patronus:ha}
     build:
       context: .
-      dockerfile: Dockerfile.dashboard
+      dockerfile: Dockerfile
+      args:
+        PATRONUS_USE: "web cli api dashboard nftables wireguard multiwan monitoring prometheus backup systemd"
+    command: ["patronus-dashboard"]
+    working_dir: /app
     container_name: patronus-dashboard-2
     hostname: dashboard2
     environment:
@@ -78,9 +94,17 @@ services:
 
   # Dashboard Instance 3
   dashboard3:
+    # Same Gentoo/Portage build as the single-node image (root Dockerfile,
+    # real emerge against gentoo/), with USE=dashboard so patronus-dashboard
+    # is installed alongside patronus-web.
+    image: ${PATRONUS_IMAGE:-patronus:ha}
     build:
       context: .
-      dockerfile: Dockerfile.dashboard
+      dockerfile: Dockerfile
+      args:
+        PATRONUS_USE: "web cli api dashboard nftables wireguard multiwan monitoring prometheus backup systemd"
+    command: ["patronus-dashboard"]
+    working_dir: /app
     container_name: patronus-dashboard-3
     hostname: dashboard3
     environment:
@@ -115,6 +139,12 @@ services:
     image: haproxy:2.8-alpine
     container_name: patronus-haproxy
     hostname: haproxy
+    # Start as root so haproxy can read the 0600 private key written by
+    # generate-ha-certs.sh; haproxy.cfg's global `user haproxy` drops the
+    # worker processes to the unprivileged user right after startup.
+    user: root
+    environment:
+      - HAPROXY_STATS_PASSWORD=${HAPROXY_STATS_PASSWORD:?set HAPROXY_STATS_PASSWORD for the haproxy stats page (port 8404)}
     volumes:
       - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - ./certs:/etc/ssl/certs:ro

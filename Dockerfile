@@ -12,7 +12,7 @@
 ARG CI_BASE_IMAGE=gentoo/stage3:amd64-systemd
 FROM ${CI_BASE_IMAGE} AS builder
 
-ARG PATRONUS_USE="web cli api nftables wireguard multiwan monitoring prometheus backup systemd"
+ARG PATRONUS_USE="web cli api dashboard nftables wireguard multiwan monitoring prometheus backup systemd"
 
 # Portage's default FEATURES include ipc-sandbox/network-sandbox/pid-sandbox,
 # which call unshare(2) to create new namespaces per sandboxed action. Inside
@@ -119,7 +119,8 @@ RUN emerge --verbose net-firewall/patronus
 # ever becomes a concrete problem.
 RUN useradd -r -u 1000 -m -s /bin/bash patronus 2>/dev/null || true && \
     chown -R patronus:patronus /etc/patronus /var/lib/patronus /var/log/patronus 2>/dev/null || true && \
-    mkdir -p /etc/patronus/tls && chown patronus:patronus /etc/patronus/tls
+    mkdir -p /etc/patronus/tls && chown patronus:patronus /etc/patronus/tls && \
+    mkdir -p /data /app/static && chown patronus:patronus /data /app /app/static
 
 # Grant CAP_NET_ADMIN/CAP_NET_RAW to the real nft binary via file
 # capabilities, so the non-root patronus user can still create/manage
@@ -158,4 +159,7 @@ EXPOSE 8443 51820/udp
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -kf https://localhost:8443/ || exit 1
 
+# The same image also carries patronus-dashboard (USE=dashboard), which
+# docker-compose.ha.yml runs with `command: patronus-dashboard`,
+# `working_dir: /app` and its data under /data.
 CMD ["patronus-web"]

@@ -1,0 +1,7 @@
+# /etc/conf.d/patronus-dashboard
+# The JWT signing secret is generated on first start (mode 0600, next to the
+# database) unless set here. HA clusters must share one secret:
+#export PATRONUS_JWT_SECRET=""
+#export PATRONUS_NODE_ID=""
+#export PATRONUS_PEERS=""
+#export PATRONUS_NODE_ADDR="0.0.0.0:8443"

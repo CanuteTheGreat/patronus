@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+# Copyright 2026 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v3
+
+description="Patronus SD-WAN Enterprise Dashboard"
+
+command="/usr/bin/patronus-dashboard"
+command_background=true
+command_user="${PATRONUS_USER:-patronus}:${PATRONUS_GROUP:-patronus}"
+directory="/var/lib/patronus/dashboard"
+pidfile="/run/${RC_SVCNAME}.pid"
+
+output_log="/var/log/patronus/dashboard.log"
+error_log="/var/log/patronus/dashboard-error.log"
+
+export PATRONUS_DB_PATH="${PATRONUS_DB_PATH:-/var/lib/patronus/dashboard/dashboard.db}"
+export PATRONUS_DATA_DIR="${PATRONUS_DATA_DIR:-/var/lib/patronus/dashboard/raft}"
+
+depend() {
+	need net
+}
+
+start_pre() {
+	checkpath --directory --owner ${command_user} --mode 0750 /var/lib/patronus/dashboard
+	checkpath --directory --owner ${command_user} --mode 0755 /var/log/patronus
+}

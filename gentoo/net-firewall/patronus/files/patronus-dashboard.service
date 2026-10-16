@@ -1,0 +1,26 @@
+[Unit]
+Description=Patronus SD-WAN Enterprise Dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=patronus
+Group=patronus
+WorkingDirectory=/var/lib/patronus/dashboard
+# Optional overrides (PATRONUS_JWT_SECRET, PATRONUS_NODE_ID, PATRONUS_PEERS, ...)
+EnvironmentFile=-/etc/patronus/dashboard.env
+Environment=PATRONUS_DB_PATH=/var/lib/patronus/dashboard/dashboard.db
+Environment=PATRONUS_DATA_DIR=/var/lib/patronus/dashboard/raft
+ExecStart=/usr/bin/patronus-dashboard
+Restart=on-failure
+RestartSec=5s
+
+PrivateTmp=yes
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/patronus/dashboard
+
+[Install]
+WantedBy=multi-user.target

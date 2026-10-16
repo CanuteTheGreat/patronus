@@ -24,6 +24,7 @@ SLOT="0"
 # USE flags matching Patronus feature set (The Gentoo Way - OPTIONS!)
 IUSE="
 	+web +cli +api
+	dashboard
 	+nftables iptables
 	+dhcp +dns +unbound bind dnsmasq
 	+vpn wireguard openvpn ipsec
@@ -293,16 +294,41 @@ src_install() {
 		rm -f "${ED}/usr/.crates2.json" || die
 	fi
 
+	# USE=dashboard: the multi-site SD-WAN enterprise dashboard
+	# (crates/patronus-dashboard, used by docker-compose.ha.yml's 3-node HA
+	# stack). Like patronus-web it is a feature-less sibling crate, so it must
+	# NOT go through cargo_src_install (which would append ECARGO_ARGS'
+	# --features list and die with "does not contain these features") --
+	# call cargo via cargo_env directly.
+	if use dashboard; then
+		set -- "${CARGO}" install --path ./crates/patronus-dashboard \
+			--root "${ED}/usr" \
+			${GIT_CRATES[@]:+--frozen} \
+			$(usex debug --debug "")
+		einfo "${@}"
+		cargo_env "${@}" || die "cargo install (patronus-dashboard) failed"
+		rm -f "${ED}/usr/.crates.toml" || die
+		rm -f "${ED}/usr/.crates2.json" || die
+		keepdir /var/lib/patronus/dashboard
+		fowners patronus:patronus /var/lib/patronus/dashboard
+		fperms 0750 /var/lib/patronus/dashboard
+	fi
+
 	# Install init scripts based on USE flags
 	if use systemd; then
 		systemd_dounit "${FILESDIR}/patronus-web.service"
 		systemd_dounit "${FILESDIR}/patronus-firewall.service"
+		use dashboard && systemd_dounit "${FILESDIR}/patronus-dashboard.service"
 	fi
 
 	if use openrc; then
 		newinitd "${FILESDIR}/patronus-web.initd" patronus-web
 		newinitd "${FILESDIR}/patronus-firewall.initd" patronus-firewall
 		newconfd "${FILESDIR}/patronus.confd" patronus
+		if use dashboard; then
+			newinitd "${FILESDIR}/patronus-dashboard.initd" patronus-dashboard
+			newconfd "${FILESDIR}/patronus-dashboard.confd" patronus-dashboard
+		fi
 	fi
 
 	# Install configuration files
@@ -373,6 +399,7 @@ pkg_postinst() {
 	elog "Features enabled:"
 	use web && elog "  ✓ Web interface"
 	use cli && elog "  ✓ CLI tool"
+	use dashboard && elog "  ✓ SD-WAN enterprise dashboard (patronus-dashboard, :8443)"
 	use api && elog "  ✓ REST API"
 	use vpn && use wireguard && elog "  ✓ WireGuard VPN"
 	use vpn && use openvpn && elog "  ✓ OpenVPN"
