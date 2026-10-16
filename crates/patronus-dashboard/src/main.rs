@@ -197,7 +197,7 @@ async fn main() -> anyhow::Result<()> {
             get(move || async move { metrics_handle.render() }),
         )
         // API v1 routes (REST)
-        .nest("/api/v1", api_routes())
+        .nest("/api/v1", api::routes(state.clone()))
         // API v2 routes (GraphQL)
         .route(
             "/api/v2/graphql",
@@ -248,38 +248,6 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
-}
-
-/// API v1 routes
-fn api_routes() -> Router<Arc<AppState>> {
-    use axum::routing::{delete, put};
-
-    Router::new()
-        // Authentication (public routes)
-        .route("/auth/login", post(api::auth::login))
-        .route("/auth/refresh", post(api::auth::refresh))
-        .route("/auth/init-admin", post(api::auth::init_admin))
-        // Protected routes (require authentication)
-        .route("/auth/me", get(api::auth::me))
-        .route("/auth/change-password", post(api::auth::change_password))
-        // Sites
-        .route("/sites", get(api::sites::list_sites))
-        .route("/sites/:id", get(api::sites::get_site))
-        // Paths
-        .route("/paths", get(api::paths::list_paths))
-        .route("/paths/:id", get(api::paths::get_path))
-        .route("/paths/:id/metrics", get(api::paths::get_path_metrics))
-        // Flows
-        .route("/flows", get(api::flows::list_flows))
-        // Policies
-        .route("/policies", get(api::policies::list_policies))
-        .route("/policies", post(api::policies::create_policy))
-        .route("/policies/:id", get(api::policies::get_policy))
-        .route("/policies/:id", put(api::policies::update_policy))
-        .route("/policies/:id", delete(api::policies::delete_policy))
-        // Metrics
-        .route("/metrics/summary", get(api::metrics::get_summary))
-        .route("/metrics/timeseries", get(api::metrics::get_timeseries))
 }
 
 /// Basic health check endpoint

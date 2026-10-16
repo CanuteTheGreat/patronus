@@ -70,11 +70,45 @@ impl PolicyId {
         use rand::Rng;
         Self(rand::thread_rng().gen())
     }
+
+    /// Raw numeric id (the database key).
+    pub fn as_u64(&self) -> u64 {
+        self.0
+    }
 }
 
 impl std::fmt::Display for PolicyId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "policy-{}", self.0)
+    }
+}
+
+/// Error parsing a [`PolicyId`] from a string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsePolicyIdError(String);
+
+impl std::fmt::Display for ParsePolicyIdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid policy id: {:?}", self.0)
+    }
+}
+
+impl std::error::Error for ParsePolicyIdError {}
+
+/// Accepts both the `Display` form (`policy-<n>`, which is what every API
+/// response returns as the policy's `id`) and the bare number (`<n>`).
+/// Accepting only the bare number made a round-trip of an id the API itself
+/// handed out (e.g. `DELETE /api/v1/policies/policy-42`) fail with 400.
+impl std::str::FromStr for PolicyId {
+    type Err = ParsePolicyIdError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let s = s.trim();
+        let digits = s.strip_prefix("policy-").unwrap_or(s);
+        digits
+            .parse::<u64>()
+            .map(PolicyId)
+            .map_err(|_| ParsePolicyIdError(s.to_string()))
     }
 }
 
@@ -717,6 +751,19 @@ pub struct PolicyStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn policy_id_parses_display_form_and_bare_number() {
+        let id = PolicyId::new(42);
+        assert_eq!(id.to_string().parse::<PolicyId>().unwrap(), id);
+        assert_eq!("policy-42".parse::<PolicyId>().unwrap(), id);
+        assert_eq!("42".parse::<PolicyId>().unwrap(), id);
+        assert_eq!(id.as_u64(), 42);
+        assert!("policy-".parse::<PolicyId>().is_err());
+        assert!("policy-abc".parse::<PolicyId>().is_err());
+        assert!("rule-42".parse::<PolicyId>().is_err());
+        assert!("".parse::<PolicyId>().is_err());
+    }
 
     #[test]
     fn test_label_selector_match() {

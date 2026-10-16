@@ -14,6 +14,16 @@ use std::sync::Arc;
 
 use crate::{error::Result, state::AppState};
 
+/// Parse a policy id from a URL path segment.
+///
+/// Accepts the `policy-<n>` form that every response's `id` field carries
+/// as well as a bare `<n>`, so clients can pass back exactly the id they
+/// were given (previously `DELETE /policies/policy-42` returned 400).
+fn parse_policy_id(id: &str) -> Result<PolicyId> {
+    id.parse::<PolicyId>()
+        .map_err(|_| crate::error::ApiError::InvalidRequest(format!("Invalid policy ID: {}", id)))
+}
+
 /// List all policies
 pub async fn list_policies(
     State(state): State<Arc<AppState>>,
@@ -28,10 +38,7 @@ pub async fn get_policy(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<PolicyResponse>> {
-    let policy_id =
-        PolicyId::new(id.parse().map_err(|_| {
-            crate::error::ApiError::InvalidRequest("Invalid policy ID".to_string())
-        })?);
+    let policy_id = parse_policy_id(&id)?;
 
     let policy = state
         .policy_enforcer
@@ -62,10 +69,7 @@ pub async fn update_policy(
     Path(id): Path<String>,
     Json(req): Json<UpdatePolicyRequest>,
 ) -> Result<Json<PolicyResponse>> {
-    let policy_id =
-        PolicyId::new(id.parse().map_err(|_| {
-            crate::error::ApiError::InvalidRequest("Invalid policy ID".to_string())
-        })?);
+    let policy_id = parse_policy_id(&id)?;
 
     // Remove old policy
     state.policy_enforcer.remove_policy(policy_id).await?;
@@ -89,10 +93,7 @@ pub async fn delete_policy(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
-    let policy_id =
-        PolicyId::new(id.parse().map_err(|_| {
-            crate::error::ApiError::InvalidRequest("Invalid policy ID".to_string())
-        })?);
+    let policy_id = parse_policy_id(&id)?;
 
     state.policy_enforcer.remove_policy(policy_id).await?;
 
@@ -603,6 +604,24 @@ fn parse_port(spec: NetworkPolicyPortSpec) -> Result<NetworkPolicyPort> {
         port,
         end_port: spec.end_port,
     })
+}
+
+#[cfg(test)]
+mod policy_id_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_the_id_the_api_returns() {
+        let id = PolicyId::new(7);
+        assert_eq!(parse_policy_id(&id.to_string()).unwrap(), id);
+        assert_eq!(parse_policy_id("7").unwrap(), id);
+    }
+
+    #[test]
+    fn rejects_garbage_with_400() {
+        let err = parse_policy_id("not-a-policy").unwrap_err();
+        assert!(matches!(err, crate::error::ApiError::InvalidRequest(_)));
+    }
 }
 
 #[cfg(test)]
