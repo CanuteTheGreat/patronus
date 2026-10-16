@@ -32,6 +32,12 @@ pub async fn auth_middleware(
     // Validate token
     let claims = validate_token(token)?;
 
+    // A refresh token is not an API credential (it lives 7 days, access
+    // tokens 15 minutes); only /auth/refresh may consume it.
+    if claims.token_type != super::jwt::TokenType::Access {
+        return Err(ApiError::Unauthorized("Not an access token".to_string()));
+    }
+
     // Logged-out / revoked tokens must not keep working on REST.
     if state.token_revocation.is_revoked(&claims.jti) {
         return Err(ApiError::Unauthorized("Token has been revoked".to_string()));

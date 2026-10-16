@@ -55,20 +55,82 @@ pub struct JwtKeys {
     decoding: DecodingKey,
 }
 
+/// Signing secrets that have shipped in this codebase or its docs, or are
+/// obvious placeholders. Anyone can read these, so a token signed with one
+/// is forgeable: refuse to start rather than run with a public key.
+pub const KNOWN_DEFAULT_SECRETS: &[&str] = &[
+    "your-secret-key-change-in-production",
+    "change-me-in-production-please-32bytes",
+    "patronus-dashboard-jwt-secret-change-me",
+];
+
+/// Substrings that mark a secret as a copy-pasted placeholder.
+const PLACEHOLDER_MARKERS: &[&str] = &[
+    "change-in-production",
+    "changeme",
+    "change-me",
+    "change_me",
+    "your-secret",
+    "your_secret",
+    "replace-me",
+    "replaceme",
+    "example",
+    "placeholder",
+];
+
+/// Reject secrets that are publicly known or trivially guessable.
+pub fn check_secret_strength(secret: &[u8]) -> std::result::Result<(), String> {
+    if secret.len() < MIN_SECRET_LEN {
+        return Err(format!(
+            "JWT secret is {} bytes; at least {} bytes are required",
+            secret.len(),
+            MIN_SECRET_LEN
+        ));
+    }
+    let text = String::from_utf8_lossy(secret).to_ascii_lowercase();
+    if KNOWN_DEFAULT_SECRETS.iter().any(|d| text == *d) {
+        return Err(
+            "JWT secret is a publicly known default value; generate one with `openssl rand -hex 32`"
+                .to_string(),
+        );
+    }
+    if let Some(m) = PLACEHOLDER_MARKERS.iter().find(|m| text.contains(**m)) {
+        return Err(format!(
+            "JWT secret looks like a placeholder (contains {:?}); generate one with `openssl rand -hex 32`",
+            m
+        ));
+    }
+    let distinct: std::collections::HashSet<u8> = secret.iter().copied().collect();
+    if distinct.len() < 8 {
+        return Err(format!(
+            "JWT secret uses only {} distinct bytes; generate one with `openssl rand -hex 32`",
+            distinct.len()
+        ));
+    }
+    Ok(())
+}
+
 impl JwtKeys {
-    /// Build keys from a secret, rejecting secrets shorter than [`MIN_SECRET_LEN`].
+    /// Build keys from a secret, rejecting short, known-default or
+    /// placeholder secrets (see [`check_secret_strength`]).
     pub fn new(secret: &[u8]) -> std::result::Result<Self, String> {
-        if secret.len() < MIN_SECRET_LEN {
-            return Err(format!(
-                "JWT secret is {} bytes; at least {} bytes are required",
-                secret.len(),
-                MIN_SECRET_LEN
-            ));
-        }
+        check_secret_strength(secret)?;
         Ok(Self {
             encoding: EncodingKey::from_secret(secret),
             decoding: DecodingKey::from_secret(secret),
         })
+    }
+}
+
+#[cfg(test)]
+impl JwtKeys {
+    /// Test-only: build keys from any secret (to simulate an attacker using
+    /// a weak/known key) without the strength check.
+    pub(crate) fn unchecked(secret: &[u8]) -> Self {
+        Self {
+            encoding: EncodingKey::from_secret(secret),
+            decoding: DecodingKey::from_secret(secret),
+        }
     }
 }
 
@@ -106,6 +168,7 @@ pub fn resolve_secret(
                 MIN_SECRET_LEN
             ));
         }
+        check_secret_strength(&bytes).map_err(|e| format!("{}: {}", JWT_SECRET_ENV, e))?;
         return Ok((bytes, SecretSource::Env));
     }
     load_or_create_secret_file(file_path)
@@ -128,6 +191,8 @@ pub fn load_or_create_secret_file(
                     JWT_SECRET_ENV
                 ));
             }
+            check_secret_strength(&secret)
+                .map_err(|e| format!("JWT secret file {}: {}", path.display(), e))?;
             warn_if_permissive(path);
             Ok((secret, SecretSource::ExistingFile(path.to_path_buf())))
         }
@@ -214,7 +279,36 @@ fn secret_file_next_to_db(db_path: &str) -> PathBuf {
 pub fn init(secret: &[u8]) -> std::result::Result<(), String> {
     let keys = JwtKeys::new(secret)?;
     KEYS.set(keys)
-        .map_err(|_| "JWT signing keys already initialised".to_string())
+        .map_err(|_| "JWT signing keys already initialised".to_string())?;
+    let _ = CLUSTER_TOKEN.set(derive_cluster_token(secret));
+    Ok(())
+}
+
+/// Node-to-node HA RPC credential (sent as `x-patronus-cluster-token`).
+static CLUSTER_TOKEN: OnceLock<String> = OnceLock::new();
+
+/// Header carrying the cluster RPC credential.
+pub const CLUSTER_TOKEN_HEADER: &str = "x-patronus-cluster-token";
+
+fn derive_cluster_token(secret: &[u8]) -> String {
+    use hmac::{Hmac, Mac};
+    let mut mac =
+        <Hmac<sha2::Sha256> as Mac>::new_from_slice(secret).expect("HMAC accepts any key length");
+    mac.update(b"patronus-ha-cluster-rpc-v1");
+    hex::encode(mac.finalize().into_bytes())
+}
+
+/// Token HA peers must present on `/ha/vote`, `/ha/heartbeat` and
+/// `/ha/submit`. Derived from the shared signing secret, so every node
+/// configured with the same `PATRONUS_JWT_SECRET` agrees on it while
+/// outsiders (who could otherwise inject replicated writes such as a new
+/// admin user) cannot produce it.
+pub fn cluster_rpc_token() -> &'static str {
+    CLUSTER_TOKEN.get_or_init(|| {
+        let mut raw = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut raw);
+        hex::encode(raw)
+    })
 }
 
 /// Load the secret from env / secret file and install it. Called once from `main`.
@@ -372,6 +466,45 @@ pub fn refresh_access_token(refresh_token: &str) -> Result<TokenPair> {
 mod tests {
     use super::*;
 
+    const STRONG_A: &str = "3f9c1a7e5b2d48c6a0e1f7b39d2c5e8a61b4d0f7c3a9e2b5";
+    const STRONG_B: &str = "a81e4c7f09b25d36e7c1f4a8b0d93e62c5f17a4b8e0d2c9f";
+
+    #[test]
+    fn test_known_default_and_placeholder_secrets_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jwt_secret");
+        for bad in KNOWN_DEFAULT_SECRETS.iter().map(|s| s.to_string()).chain([
+            "please-changeme-this-is-my-jwt-secret-value".to_string(),
+            "your-secret-here-0123456789abcdefghijklmnop".to_string(),
+            "x".repeat(64),
+            "abababababababababababababababababababab".to_string(),
+        ]) {
+            // Env path: refuse, and never fall back to a generated file.
+            assert!(
+                resolve_secret(Some(bad.clone()), &path).is_err(),
+                "env secret {:?} must be refused",
+                bad
+            );
+            assert!(!path.exists());
+            assert!(JwtKeys::new(bad.as_bytes()).is_err());
+            // Secret-file path: refuse a planted weak/default value too.
+            std::fs::write(&path, &bad).unwrap();
+            assert!(resolve_secret(None, &path).is_err());
+            std::fs::remove_file(&path).unwrap();
+        }
+        assert!(JwtKeys::new(STRONG_A.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn test_admin_token_forged_with_old_default_is_rejected() {
+        // The QA finding: anyone could mint an admin token with the old
+        // compile-time secret. The running process must not accept it.
+        let old = JwtKeys::unchecked(b"your-secret-key-change-in-production");
+        let forged = generate_tokens_with_keys(&old, "admin-id", "a@b.c", "admin").unwrap();
+        assert!(validate_token(&forged.access_token).is_err());
+        assert!(refresh_access_token(&forged.refresh_token).is_err());
+    }
+
     #[test]
     fn test_generate_and_validate_tokens() {
         let tokens = generate_tokens("user-123", "test@example.com", "admin").unwrap();
@@ -416,8 +549,8 @@ mod tests {
 
     #[test]
     fn test_token_from_other_key_rejected() {
-        let key_a = JwtKeys::new(&[0xAA; 32]).unwrap();
-        let key_b = JwtKeys::new(&[0xBB; 32]).unwrap();
+        let key_a = JwtKeys::new(STRONG_A.as_bytes()).unwrap();
+        let key_b = JwtKeys::new(STRONG_B.as_bytes()).unwrap();
         let tokens = generate_tokens_with_keys(&key_a, "user-1", "a@example.com", "admin").unwrap();
 
         assert!(validate_token_with_keys(&key_a, &tokens.access_token).is_ok());
@@ -428,15 +561,15 @@ mod tests {
     #[test]
     fn test_old_hardcoded_secret_token_rejected() {
         // A token forged with the former compile-time secret must not validate.
-        let old = JwtKeys::new(b"your-secret-key-change-in-production").unwrap();
+        let old = JwtKeys::unchecked(b"your-secret-key-change-in-production");
         let forged = generate_tokens_with_keys(&old, "attacker", "x@example.com", "admin").unwrap();
         assert!(validate_token(&forged.access_token).is_err());
     }
 
     #[test]
     fn test_short_secret_rejected() {
-        assert!(JwtKeys::new(&[1u8; MIN_SECRET_LEN - 1]).is_err());
-        assert!(JwtKeys::new(&[1u8; MIN_SECRET_LEN]).is_ok());
+        assert!(JwtKeys::new(&STRONG_A.as_bytes()[..MIN_SECRET_LEN - 1]).is_err());
+        assert!(JwtKeys::new(&STRONG_A.as_bytes()[..MIN_SECRET_LEN]).is_ok());
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("jwt_secret");
@@ -452,7 +585,7 @@ mod tests {
     fn test_env_secret_used_when_long_enough() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("jwt_secret");
-        let value = "x".repeat(MIN_SECRET_LEN);
+        let value = STRONG_A.to_string();
         let (secret, source) = resolve_secret(Some(value.clone()), &path).unwrap();
         assert_eq!(secret, value.into_bytes());
         assert_eq!(source, SecretSource::Env);

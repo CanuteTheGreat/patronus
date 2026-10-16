@@ -163,11 +163,28 @@ pub async fn init_admin(
     // Hash password
     let password_hash = hash_password(&req.password)?;
 
-    // Force role to be admin for initial user
+    // Force role to be admin for initial user. Replicated so every HA node
+    // (and any future leader) knows the admin account.
+    let id = uuid::Uuid::new_v4().to_string();
+    state
+        .replicate(crate::ha::replication::ReplicatedOp::CreateUser(
+            crate::ha::replication::ReplicatedUser {
+                id: id.clone(),
+                email: req.email.clone(),
+                name: req.name.clone(),
+                role: UserRole::Admin.as_str().to_string(),
+                password_hash,
+                created_at: chrono::Utc::now(),
+                is_active: true,
+            },
+        ))
+        .await
+        .map_err(|e| ApiError::InvalidRequest(e.to_string()))?;
     let user = state
         .user_repository
-        .create_user(&req.email, &req.name, &password_hash, UserRole::Admin)
-        .await?;
+        .get_user(&id)
+        .await?
+        .ok_or_else(|| ApiError::Internal("created admin not found".to_string()))?;
 
     Ok(Json(user.into()))
 }
@@ -200,9 +217,12 @@ pub async fn change_password(
 
     // Update password
     state
-        .user_repository
-        .update_password(&user.id, &new_password_hash)
-        .await?;
+        .replicate(crate::ha::replication::ReplicatedOp::SetPassword {
+            id: user.id.clone(),
+            password_hash: new_password_hash,
+        })
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }
