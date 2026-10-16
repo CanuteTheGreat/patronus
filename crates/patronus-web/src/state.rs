@@ -1803,4 +1803,126 @@ mod rule_apply_tests {
 
         fw.delete_nat_rule(id).await.expect("cleanup delete");
     }
+
+    fn nft_table() -> String {
+        let out = std::process::Command::new("nft")
+            .args(["list", "table", "inet", "patronus"])
+            .output()
+            .expect("nft list table");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    async fn fresh_manager() -> FirewallManager {
+        // Start from a clean table so tests don't see each other's rules.
+        let _ = std::process::Command::new("nft")
+            .args(["delete", "table", "inet", "patronus"])
+            .status();
+        let rule_manager = RuleManager::new();
+        rule_manager
+            .initialize()
+            .await
+            .expect("nft table init (requires CAP_NET_ADMIN)");
+        FirewallManager::new(rule_manager)
+            .await
+            .expect("default rules must apply cleanly once the table exists")
+    }
+
+    /// 7bdac073: the five seeded defaults used to be in-memory only, so a
+    /// fresh instance reported protection that nftables didn't have.
+    #[tokio::test]
+    #[ignore] // Requires real nftables (CAP_NET_ADMIN + nf_tables)
+    async fn seeded_default_rules_are_really_in_nftables() {
+        let fw = fresh_manager().await;
+        let table = nft_table();
+        for r in fw.list_rules().await.unwrap() {
+            if r.enabled {
+                assert!(
+                    table.contains(&r.description),
+                    "default rule {:?} reported enabled but absent from nftables:\n{table}",
+                    r.description
+                );
+            }
+        }
+        assert!(table.contains("Allow SSH access"), "{table}");
+    }
+
+    /// 6501ee75 / 7bdac073: "any" source/destination/interface used to be
+    /// spliced verbatim (`ip saddr any`, `iifname "any"`), which nft rejects.
+    #[tokio::test]
+    #[ignore] // Requires real nftables (CAP_NET_ADMIN + nf_tables)
+    async fn any_source_destination_and_interface_apply_as_wildcards() {
+        let fw = fresh_manager().await;
+        let marker = format!("any-wildcard-{}", std::process::id());
+        let mut rule = sample_rule("any");
+        rule.interface = "any".to_string();
+        rule.description = marker.clone();
+        let id = fw
+            .add_rule(rule)
+            .await
+            .expect("source/destination/interface 'any' must apply");
+        let table = nft_table();
+        let line = table
+            .lines()
+            .find(|l| l.contains(&marker))
+            .unwrap_or_else(|| panic!("rule missing from nftables:\n{table}"));
+        for bad in ["saddr any", "daddr any", "\"any\"", "saddr all"] {
+            assert!(
+                !line.contains(bad),
+                "literal wildcard leaked into nft: {line}"
+            );
+        }
+        assert!(
+            !line.contains("saddr") && !line.contains("iifname"),
+            "{line}"
+        );
+        fw.delete_rule(id).await.unwrap();
+    }
+
+    /// a4d7bf96: delete used to drop the dashboard entry while leaving the
+    /// rule live in nftables (and swallow the error).
+    #[tokio::test]
+    #[ignore] // Requires real nftables (CAP_NET_ADMIN + nf_tables)
+    async fn delete_rule_really_removes_it_from_nftables() {
+        let fw = fresh_manager().await;
+        let marker = format!("delete-me-{}", std::process::id());
+        let mut rule = sample_rule("192.0.2.0/24");
+        rule.description = marker.clone();
+        let id = fw.add_rule(rule).await.unwrap();
+        assert!(nft_table().contains(&marker));
+        fw.delete_rule(id).await.expect("delete must succeed");
+        assert!(
+            !nft_table().contains(&marker),
+            "deleted rule still live in nftables"
+        );
+        assert!(!fw.list_rules().await.unwrap().iter().any(|r| r.id == id));
+    }
+
+    /// a4d7bf96: an nftables apply failure must surface as an error and
+    /// leave no phantom dashboard entry (it used to return success).
+    #[tokio::test]
+    #[ignore] // Requires real nftables (CAP_NET_ADMIN + nf_tables)
+    async fn nft_apply_failure_is_reported_not_swallowed() {
+        let fw = fresh_manager().await;
+        let before = fw.list_rules().await.unwrap().len();
+        // Pull the table out from under the manager: the next real apply fails.
+        let st = std::process::Command::new("nft")
+            .args(["delete", "table", "inet", "patronus"])
+            .status()
+            .unwrap();
+        assert!(st.success());
+        let res = fw.add_rule(sample_rule("198.51.100.0/24")).await;
+        assert!(res.is_err(), "nft failure must be reported to the caller");
+        assert_eq!(fw.list_rules().await.unwrap().len(), before);
+
+        // Deleting a rule nftables no longer has must also report the failure
+        // and keep the dashboard entry, so the two stores never diverge.
+        let some_id = fw.list_rules().await.unwrap()[0].id;
+        assert!(fw.delete_rule(some_id).await.is_err());
+        assert!(fw
+            .list_rules()
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| r.id == some_id));
+    }
 }

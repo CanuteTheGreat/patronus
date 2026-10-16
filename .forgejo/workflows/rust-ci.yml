@@ -84,6 +84,138 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --exclude patronus-ebpf
 
+  privileged-netfilter-tests:
+    # The nftables / raw-socket tests are #[ignore]d in the ordinary
+    # unprivileged test run above (they need CAP_NET_ADMIN / CAP_NET_RAW and
+    # the real `nft` binary). They used to never run in CI at all; this job
+    # gives its (memory/CPU-capped) job container exactly those two
+    # capabilities and runs ONLY the ignored tests (`-- --ignored`), so
+    # every one of them actually executes against the real kernel netfilter
+    # subsystem. Covers the rule-apply/delete error propagation (a4d7bf96),
+    # the literal 'any' wildcard fix (6501ee75/7bdac073), the seeded default
+    # rules really being in nftables, and the SD-WAN ICMP/UDP health probes.
+    name: Privileged netfilter + raw-socket tests (NET_ADMIN)
+    runs-on: linux-cross-x86_64
+    timeout-minutes: 40
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --cap-add NET_ADMIN --cap-add NET_RAW --memory 8g --memory-swap 8g --cpus 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: Install dependencies (+ real nftables)
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler nftables iproute2
+      - name: Prove the job really has CAP_NET_ADMIN (fail loudly, never skip)
+        run: |
+          set -e
+          grep Cap /proc/self/status
+          nft add table inet patronus_ci_probe
+          nft delete table inet patronus_ci_probe
+          echo "nftables writable from this job"
+      - name: Cache cargo
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-priv-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-priv-
+      - name: patronus-web real nftables tests (ignored-by-default set)
+        run: cargo test -p patronus-web --lib -- --ignored --test-threads=1
+      - name: patronus-sdwan ICMP/UDP probe tests (ignored-by-default set)
+        run: cargo test -p patronus-sdwan --lib health:: -- --ignored --test-threads=1
+      - name: nft "source=any" validation harness (real RuleManager -> real nft)
+        run: cargo run -p patronus-firewall --example nft_any_source_validation
+
+  feature-matrix:
+    # `cargo test --workspace` only ever compiles default features, so every
+    # cfg(feature)-gated module (patronus-network's dhcp/dns/wireguard/
+    # openvpn/ipsec/vlan/qos/multiwan/ha/ids/frr, firewall iptables/geoip,
+    # sdwan cli/dataplane, secrets stores, ...) was never built or tested in
+    # CI. This job (1) runs each feature-bearing crate's tests with
+    # --all-features and (2) builds patronus-cli once per Gentoo USE flag ->
+    # cargo feature mapping in the ebuild, so each USE flag compiles on its
+    # own, not just as part of one big set.
+    name: Feature matrix (all features + one build per USE flag)
+    runs-on: linux-cross-x86_64
+    timeout-minutes: 60
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 8g --memory-swap 8g --cpus 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler libdbus-1-dev
+      - name: Cache cargo
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-features-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-features-
+      - name: Tests with --all-features (feature-bearing crates)
+        run: |
+          set -e
+          for c in patronus-network patronus-firewall patronus-core patronus-sdwan patronus-secrets patronus-cli; do
+            echo "::group::cargo test -p $c --all-features"
+            cargo test -p "$c" --all-features
+            echo "::endgroup::"
+          done
+      - name: Build patronus-cli once per ebuild USE-flag feature
+        run: ci/use-flag-feature-check.sh
+
+  operator-k8s-tests:
+    # patronus-operator's site/policy lifecycle and health-endpoint tests are
+    # #[ignore]d because they need a Kubernetes API and a running operator;
+    # they never ran anywhere. This job runs them for real: a capped,
+    # throwaway k3s server container, CRDs generated by the operator's own
+    # crdgen, the real operator binary, then `cargo test -- --ignored`.
+    name: Operator tests against a real k3s cluster
+    runs-on: linux-cross-x86_64
+    timeout-minutes: 45
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 6g --memory-swap 6g --cpus 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
+          sudo apt-get install -y build-essential libssl-dev pkg-config curl
+          docker version
+      - name: Cache cargo
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-operator-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-operator-
+      - name: Real k3s + real operator + ignored integration tests
+        run: ci/operator-k8s-tests.sh
+
   check-ebpf:
     name: Check eBPF crate (compile only, no run)
     runs-on: linux-cross-x86_64
@@ -164,8 +296,7 @@ jobs:
     # as a safety net in case the base image is ever stale/missing and it
     # falls back to a from-scratch build, but the expected path now is a
     # normal-length build.
-    timeout-minutes: 60
-    continue-on-error: true
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -245,7 +376,11 @@ jobs:
           # blip cheap, not a full rebuild from scratch.
           attempt=1
           max_attempts=3
-          until docker build --build-arg CI_BASE_IMAGE="${BASE_IMAGE}" -t patronus/web:${{ github.sha }} .; do
+          # Every USE flag that maps to a cargo feature (see the ebuild's
+          # myfeatures) plus dashboard, so the real emerge compiles and
+          # installs all of them, not just the Dockerfile's default subset.
+          USE_ALL="web cli api dashboard nftables dhcp dns unbound vpn wireguard openvpn ipsec multiwan monitoring prometheus captive-portal vlan qos backup systemd"
+          until docker build --build-arg CI_BASE_IMAGE="${BASE_IMAGE}" --build-arg PATRONUS_USE="${USE_ALL}" -t patronus/web:${{ github.sha }} .; do
             if [ "$attempt" -ge "$max_attempts" ]; then
               echo "::error::docker build failed after ${max_attempts} attempts"
               exit 1
@@ -305,3 +440,71 @@ jobs:
             exit 1
           fi
           echo "patronus-web responded successfully"
+
+      - name: Verify the ebuild install (binaries, USE flags, service files)
+        run: |
+          set -e
+          docker run --rm --entrypoint sh patronus/web:${{ github.sha }} -c '
+            set -e
+            for b in patronus patronus-web patronus-dashboard nft; do command -v "$b"; done
+            for f in /usr/lib/systemd/system/patronus-dashboard.service \
+                     /usr/lib/systemd/system/patronus-web.service \
+                     /usr/lib/systemd/system/patronus-firewall.service \
+                     /etc/patronus/patronus.toml; do test -f "$f" && echo "ok $f"; done
+            use=$(cat /var/db/pkg/net-firewall/patronus-*/USE)
+            echo "installed USE: $use"
+            for u in dashboard dhcp dns wireguard openvpn ipsec vlan qos multiwan captive-portal; do
+              echo " $use " | grep -q " $u " || { echo "USE=$u missing"; exit 1; }
+            done
+            patronus --help >/dev/null
+          '
+
+      - name: Build the dashboard UI (frontend/ -> ./static)
+        run: ./build-frontend.sh
+
+      - name: Real 3-node HA stack e2e (election, replication, failover, haproxy TLS)
+        run: ci/ha-e2e.sh patronus/web:${{ github.sha }} ./static
+
+      - name: Publish the tested image (main only) for QA / deployments
+        # Ready-to-run image = exactly the emerge-built image that just passed
+        # the smoke test, install verification and HA e2e above, plus the
+        # built dashboard UI baked in at /app/static. Daily QA can
+        # `docker pull git.canutethegreat.com/canutethegreat/patronus:latest`
+        # instead of re-emerging Gentoo from source every run.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -e
+          mkdir -p /tmp/pubctx && cp -r static /tmp/pubctx/static
+          printf 'FROM patronus/web:%s\nCOPY --chown=patronus:patronus static /app/static\nLABEL org.opencontainers.image.revision=%s\n' \
+            "${{ github.sha }}" "${{ github.sha }}" > /tmp/pubctx/Dockerfile
+          docker build -t git.canutethegreat.com/canutethegreat/patronus:${{ github.sha }} \
+                       -t git.canutethegreat.com/canutethegreat/patronus:latest /tmp/pubctx
+          echo "${{ secrets.REGISTRY_PUSH_TOKEN }}" | docker login git.canutethegreat.com -u CanuteTheGreat --password-stdin
+          for tag in ${{ github.sha }} latest; do
+            n=1
+            until docker push git.canutethegreat.com/canutethegreat/patronus:$tag; do
+              [ $n -ge 3 ] && { echo "::error::push of $tag failed"; exit 1; }
+              n=$((n+1)); sleep $((n*10))
+            done
+          done
+          docker logout git.canutethegreat.com || true
+
+  frontend:
+    # The shipped dashboard UI (frontend/, built into ./static and served by
+    # every patronus-dashboard node) was never type-checked or built in CI.
+    name: Dashboard UI (type-check + production build)
+    runs-on: linux-cross-x86_64
+    timeout-minutes: 15
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 4g --memory-swap 4g --cpus 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: npm ci + tsc + vite build
+        working-directory: frontend
+        run: |
+          node --version
+          npm ci --no-audit --no-fund
+          npm run build
+          test -f ../static/index.html
+          grep -l "ha/cluster" ../static/assets/*.js
