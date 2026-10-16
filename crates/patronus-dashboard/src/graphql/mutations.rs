@@ -23,6 +23,19 @@ fn get_audit_user_info(ctx: &Context<'_>) -> (Option<String>, Option<String>) {
 /// Root mutation object
 pub struct MutationRoot;
 
+/// Run a state-changing operation through HA replication (or locally when
+/// standalone), mapping failures to a GraphQL error.
+async fn replicate(
+    state: &crate::state::AppState,
+    op: crate::ha::replication::ReplicatedOp,
+    what: &str,
+) -> Result<()> {
+    state
+        .replicate(op)
+        .await
+        .map_err(|e| async_graphql::Error::new(format!("Failed to {}: {}", what, e)))
+}
+
 #[Object]
 impl MutationRoot {
     // ========== Site Mutations ==========
@@ -54,11 +67,12 @@ impl MutationRoot {
         };
 
         // Insert into database
-        state
-            .db
-            .upsert_site(&site)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to create site: {}", e)))?;
+        replicate(
+            state,
+            crate::ha::replication::ReplicatedOp::UpsertSite(site.clone()),
+            "create site",
+        )
+        .await?;
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
@@ -154,11 +168,12 @@ impl MutationRoot {
         site.last_seen = std::time::SystemTime::now();
 
         // Update in database
-        state
-            .db
-            .upsert_site(&site)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to update site: {}", e)))?;
+        replicate(
+            state,
+            crate::ha::replication::ReplicatedOp::UpsertSite(site.clone()),
+            "update site",
+        )
+        .await?;
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
@@ -246,11 +261,13 @@ impl MutationRoot {
         let user_email_for_event = user_email.clone(); // Clone for event broadcasting (Sprint 28)
 
         // Delete site and cascade to paths and endpoints (Sprint 30)
-        let rows_affected = state
-            .db
-            .delete_site(&site_id)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to delete site: {}", e)))?;
+        replicate(
+            state,
+            crate::ha::replication::ReplicatedOp::DeleteSite(site_id.to_string()),
+            "delete site",
+        )
+        .await?;
+        let rows_affected = path_count;
 
         let _ = state
             .audit_logger
@@ -333,11 +350,12 @@ impl MutationRoot {
         };
 
         // Insert into database
-        state
-            .db
-            .upsert_policy(&policy)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to create policy: {}", e)))?;
+        replicate(
+            state,
+            crate::ha::replication::ReplicatedOp::UpsertRoutingPolicy(policy.clone()),
+            "create policy",
+        )
+        .await?;
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
@@ -455,11 +473,12 @@ impl MutationRoot {
         }
 
         // Update in database
-        state
-            .db
-            .upsert_policy(&policy)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to update policy: {}", e)))?;
+        replicate(
+            state,
+            crate::ha::replication::ReplicatedOp::UpsertRoutingPolicy(policy.clone()),
+            "update policy",
+        )
+        .await?;
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
@@ -547,11 +566,12 @@ impl MutationRoot {
             .ok_or_else(|| async_graphql::Error::new("Policy not found"))?;
 
         // Delete from database
-        state
-            .db
-            .delete_policy(policy_id)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to delete policy: {}", e)))?;
+        replicate(
+            state,
+            crate::ha::replication::ReplicatedOp::DeleteRoutingPolicy(policy_id),
+            "delete policy",
+        )
+        .await?;
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
@@ -613,11 +633,12 @@ impl MutationRoot {
         policy.enabled = enabled;
 
         // Update in database
-        state
-            .db
-            .upsert_policy(&policy)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to toggle policy: {}", e)))?;
+        replicate(
+            state,
+            crate::ha::replication::ReplicatedOp::UpsertRoutingPolicy(policy.clone()),
+            "toggle policy",
+        )
+        .await?;
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
@@ -717,16 +738,33 @@ impl MutationRoot {
         };
 
         // Create user using repository method
-        state
+        if state
             .user_repository
-            .create_user(
-                &input.email,
-                "User", // Default name, can be updated later
-                &password_hash,
-                user_role,
-            )
+            .get_user_by_email(&input.email)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to create user: {}", e)))?;
+            .map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))?
+            .is_some()
+        {
+            return Err(async_graphql::Error::new(
+                "Failed to create user: Email already exists",
+            ));
+        }
+        replicate(
+            state,
+            crate::ha::replication::ReplicatedOp::CreateUser(
+                crate::ha::replication::ReplicatedUser {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    email: input.email.clone(),
+                    name: "User".to_string(), // Default name, can be updated later
+                    role: user_role.as_str().to_string(),
+                    password_hash: password_hash.clone(),
+                    created_at: Utc::now(),
+                    is_active: true,
+                },
+            ),
+            "create user",
+        )
+        .await?;
 
         // Fetch the created user to get the full object
         let user = state
@@ -831,11 +869,21 @@ impl MutationRoot {
             is_active: None,
         };
 
+        replicate(
+            state,
+            crate::ha::replication::ReplicatedOp::UpdateUser {
+                id: user_id.clone(),
+                update: update_req,
+            },
+            "update user role",
+        )
+        .await?;
         let user = state
             .user_repository
-            .update_user(&user_id, update_req)
+            .get_user(&user_id)
             .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to update user role: {}", e)))?;
+            .map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))?
+            .ok_or_else(|| async_graphql::Error::new("User not found"))?;
 
         // Audit log (Sprint 25)
         let (admin_id, admin_email) = get_audit_user_info(ctx);
@@ -857,11 +905,10 @@ impl MutationRoot {
 
         // Revoke all user's active tokens (Sprint 29)
         let _ = state
-            .token_revocation
-            .revoke_all_user_tokens(
-                &user_id,
-                format!("Role changed from {} to {}", old_role_str, role_str),
-            )
+            .replicate(crate::ha::replication::ReplicatedOp::RevokeAllUserTokens {
+                user_id: user_id.clone(),
+                reason: format!("Role changed from {} to {}", old_role_str, role_str),
+            })
             .await;
 
         let result = GqlUser {
@@ -917,11 +964,15 @@ impl MutationRoot {
             is_active: Some(false),
         };
 
-        state
-            .user_repository
-            .update_user(&user_id, update_req)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to deactivate user: {}", e)))?;
+        replicate(
+            state,
+            crate::ha::replication::ReplicatedOp::UpdateUser {
+                id: user_id.clone(),
+                update: update_req,
+            },
+            "deactivate user",
+        )
+        .await?;
 
         // Audit log (Sprint 25)
         let (admin_id, admin_email) = get_audit_user_info(ctx);
@@ -953,8 +1004,10 @@ impl MutationRoot {
 
         // Revoke all user's active tokens (Sprint 29)
         let _ = state
-            .token_revocation
-            .revoke_all_user_tokens(&user_id, "User deactivated".to_string())
+            .replicate(crate::ha::replication::ReplicatedOp::RevokeAllUserTokens {
+                user_id: user_id.clone(),
+                reason: "User deactivated".to_string(),
+            })
             .await;
 
         Ok(true)
@@ -987,11 +1040,15 @@ impl MutationRoot {
             .map_err(|e| async_graphql::Error::new(format!("Failed to hash password: {}", e)))?;
 
         // Update password in database
-        state
-            .user_repository
-            .update_password(&user_id, &password_hash)
-            .await
-            .map_err(|e| async_graphql::Error::new(format!("Failed to update password: {}", e)))?;
+        replicate(
+            state,
+            crate::ha::replication::ReplicatedOp::SetPassword {
+                id: user_id.clone(),
+                password_hash: password_hash.clone(),
+            },
+            "update password",
+        )
+        .await?;
 
         // Audit log (Sprint 25)
         let (admin_id, admin_email) = get_audit_user_info(ctx);
@@ -1023,8 +1080,10 @@ impl MutationRoot {
 
         // Revoke all user's active tokens (Sprint 29)
         let _ = state
-            .token_revocation
-            .revoke_all_user_tokens(&user_id, "Password reset by admin".to_string())
+            .replicate(crate::ha::replication::ReplicatedOp::RevokeAllUserTokens {
+                user_id: user_id.clone(),
+                reason: "Password reset by admin".to_string(),
+            })
             .await;
 
         Ok(true)

@@ -21,20 +21,12 @@ use tower_http::{
 };
 use tracing::{info, Level};
 
-mod api;
-mod auth;
-mod cache;
-mod error;
-mod graphql;
-mod ha;
-mod observability;
-mod security;
-mod state;
-mod ws;
+use patronus_dashboard::{api, auth, graphql, ha, observability, state, ws};
 
-use crate::{observability::DashboardMetrics, state::AppState};
 use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
+use observability::DashboardMetrics;
+use state::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -143,14 +135,36 @@ async fn main() -> anyhow::Result<()> {
         }
 
         let cluster_state = Arc::new(ha::cluster::ClusterState::new(node_id.clone()));
-        let election = Arc::new(ha::election::LeaderElection::new(
-            cluster_state,
-            node_id.clone(),
-            node_addr,
-            peers.clone(),
-            election_timeout,
-            heartbeat_interval,
-        ));
+        // Replicated operation log: every write (sites, policies, users,
+        // token revocations, ...) is committed on a majority of nodes before
+        // it is acknowledged, so failover never loses data and all nodes
+        // converge on the same state.
+        let replog_dir = std::path::Path::new(&data_dir).join("replog");
+        let replog = ha::replication::ReplicationLog::open(&replog_dir).map_err(|e| {
+            anyhow::anyhow!(
+                "cannot open HA replication log at {}: {}",
+                replog_dir.display(),
+                e
+            )
+        })?;
+        // Address peers use to reach this node; defaults to <node_id>:<port>,
+        // which matches docker-compose.ha.yml's hostnames.
+        let advertise_addr = std::env::var("PATRONUS_ADVERTISE_ADDR")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| format!("{}:{}", node_id, node_addr.port()));
+        let election = Arc::new(
+            ha::election::LeaderElection::new(
+                cluster_state,
+                node_id.clone(),
+                node_addr,
+                peers.clone(),
+                election_timeout,
+                heartbeat_interval,
+            )
+            .with_advertise_addr(advertise_addr)
+            .with_replication(replog, state.state_machine.clone()),
+        );
 
         info!(
             node_id = %node_id,
@@ -188,9 +202,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/health/live", get(liveness_check))
         .route("/health/ready", get(readiness_check))
         // HA leader election RPC (node-to-node) + live status
-        .route("/ha/vote", post(ha::rpc::vote_handler))
-        .route("/ha/heartbeat", post(ha::rpc::heartbeat_handler))
-        .route("/ha/status", get(ha::rpc::status_handler))
+        .merge(ha::rpc::routes())
         // Prometheus metrics
         .route(
             "/metrics",
@@ -284,7 +296,18 @@ async fn graphql_handler(
             // Validate JWT token
             auth::jwt::validate_token(token).ok()
         })
+        .filter(|claims| claims.token_type == auth::jwt::TokenType::Access)
         .filter(|claims| !state.token_revocation.is_revoked(&claims.jti));
+
+    // Same rule as the REST middleware: the account must still exist and be
+    // active, so deactivating a user cuts off their outstanding tokens.
+    let claims = match claims {
+        Some(c) => match state.user_repository.get_user(&c.sub).await {
+            Ok(Some(user)) if user.is_active => Some(c),
+            _ => None,
+        },
+        None => None,
+    };
 
     // Create auth context
     let auth_context = graphql::AuthContext::new(claims);

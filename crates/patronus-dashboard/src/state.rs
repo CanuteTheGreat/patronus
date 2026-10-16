@@ -77,6 +77,9 @@ pub struct AppState {
     /// configured; None for a plain single-node run).
     pub ha: Option<Arc<crate::ha::election::LeaderElection>>,
 
+    /// Applies replicated operations to this node's stores.
+    pub state_machine: Arc<crate::ha::replication::StateMachine>,
+
     /// Sled-backed distributed state store, shared cluster metadata (Some
     /// alongside `ha`, same enable condition).
     pub distributed_state: Option<Arc<crate::ha::state::DistributedState>>,
@@ -107,6 +110,13 @@ impl AppState {
         // Create token revocation manager (Sprint 29)
         let token_revocation = Arc::new(TokenRevocation::new(pool));
         token_revocation.init().await?;
+
+        let state_machine = Arc::new(crate::ha::replication::StateMachine {
+            db: db.clone(),
+            policy_enforcer: policy_enforcer.clone(),
+            users: user_repository.clone(),
+            revocation: token_revocation.clone(),
+        });
 
         // Create traffic statistics collector (Sprint 30)
         let traffic_stats = Arc::new(TrafficStatsCollector::new(Some(db.clone())));
@@ -154,8 +164,23 @@ impl AppState {
             health_monitor,
             failover_engine,
             ha: None,
+            state_machine,
             distributed_state: None,
         })
+    }
+
+    /// Perform a state-changing operation. Standalone: applied locally. HA:
+    /// committed through the replicated log on a majority of nodes (forwarded
+    /// to the leader when this node is a follower) before returning, so every
+    /// node -- including whichever node becomes leader next -- has it.
+    pub async fn replicate(&self, op: crate::ha::replication::ReplicatedOp) -> anyhow::Result<()> {
+        match &self.ha {
+            Some(ha) if ha.has_replication() => {
+                ha.submit(op).await.map_err(|e| anyhow::anyhow!(e))?;
+                Ok(())
+            }
+            _ => self.state_machine.apply(&op).await,
+        }
     }
 }
 

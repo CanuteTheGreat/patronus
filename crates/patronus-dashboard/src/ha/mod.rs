@@ -2,5 +2,6 @@
 
 pub mod cluster;
 pub mod election;
+pub mod replication;
 pub mod rpc;
 pub mod state;

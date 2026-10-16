@@ -12,7 +12,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{error::Result, state::AppState};
+use crate::{error::Result, ha::replication::ReplicatedOp, state::AppState};
+
+async fn replicate(state: &AppState, op: ReplicatedOp) -> Result<()> {
+    state
+        .replicate(op)
+        .await
+        .map_err(|e| crate::error::ApiError::Internal(e.to_string()))
+}
 
 /// Parse a policy id from a URL path segment.
 ///
@@ -57,8 +64,8 @@ pub async fn create_policy(
     // Parse the policy from the request
     let policy = parse_policy_request(req)?;
 
-    // Add to enforcer
-    state.policy_enforcer.add_policy(policy.clone()).await?;
+    // Add to enforcer (replicated to every HA node)
+    replicate(&state, ReplicatedOp::AddNetworkPolicy(policy.clone())).await?;
 
     Ok(Json(policy.into()))
 }
@@ -71,8 +78,14 @@ pub async fn update_policy(
 ) -> Result<Json<PolicyResponse>> {
     let policy_id = parse_policy_id(&id)?;
 
+    if state.policy_enforcer.get_policy(policy_id).await.is_none() {
+        return Err(crate::error::ApiError::NotFound(format!(
+            "Policy {} not found",
+            id
+        )));
+    }
+
     // Remove old policy
-    state.policy_enforcer.remove_policy(policy_id).await?;
 
     // Create updated policy
     let mut policy = parse_policy_request(CreatePolicyRequest {
@@ -82,8 +95,9 @@ pub async fn update_policy(
     })?;
     policy.id = policy_id; // Keep same ID
 
-    // Add updated policy
-    state.policy_enforcer.add_policy(policy.clone()).await?;
+    // Replace: remove + add, both replicated
+    replicate(&state, ReplicatedOp::RemoveNetworkPolicy(policy_id)).await?;
+    replicate(&state, ReplicatedOp::AddNetworkPolicy(policy.clone())).await?;
 
     Ok(Json(policy.into()))
 }
@@ -95,7 +109,13 @@ pub async fn delete_policy(
 ) -> Result<Json<serde_json::Value>> {
     let policy_id = parse_policy_id(&id)?;
 
-    state.policy_enforcer.remove_policy(policy_id).await?;
+    if state.policy_enforcer.get_policy(policy_id).await.is_none() {
+        return Err(crate::error::ApiError::NotFound(format!(
+            "Policy {} not found",
+            id
+        )));
+    }
+    replicate(&state, ReplicatedOp::RemoveNetworkPolicy(policy_id)).await?;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }

@@ -65,7 +65,7 @@ pub struct CreateUserRequest {
 }
 
 /// Update user request
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateUserRequest {
     pub email: Option<String>,
     pub name: Option<String>,
@@ -250,6 +250,41 @@ impl UserRepository {
         }
 
         Ok(users)
+    }
+
+    /// Insert or overwrite a user record received through HA replication
+    /// (keeps the leader-assigned id so every node agrees on it).
+    pub async fn insert_replicated(
+        &self,
+        u: &crate::ha::replication::ReplicatedUser,
+    ) -> Result<()> {
+        UserRole::from_str(&u.role)?;
+        sqlx::query(
+            r#"
+            INSERT INTO users (id, email, name, role, password_hash, created_at, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                email = excluded.email, name = excluded.name, role = excluded.role,
+                password_hash = excluded.password_hash, is_active = excluded.is_active
+            "#,
+        )
+        .bind(&u.id)
+        .bind(&u.email)
+        .bind(&u.name)
+        .bind(&u.role)
+        .bind(&u.password_hash)
+        .bind(u.created_at.timestamp())
+        .bind(if u.is_active { 1 } else { 0 })
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("UNIQUE") {
+                ApiError::InvalidRequest("Email already exists".to_string())
+            } else {
+                db_error(e)
+            }
+        })?;
+        Ok(())
     }
 
     /// Update user
