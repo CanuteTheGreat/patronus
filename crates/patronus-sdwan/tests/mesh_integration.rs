@@ -18,7 +18,9 @@ async fn create_test_site(name: &str) -> (Arc<Database>, MeshManager, PathMonito
     let db = Arc::new(Database::new(":memory:").await.unwrap());
     let site_id = SiteId::generate();
 
-    let mesh = MeshManager::new(site_id, name.to_string(), db.clone());
+    let mesh = MeshManager::new(Some(site_id), name.to_string(), db.clone())
+        .await
+        .unwrap();
     let monitor = PathMonitor::new(db.clone());
     let router = RoutingEngine::new(db.clone());
 

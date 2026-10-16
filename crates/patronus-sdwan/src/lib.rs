@@ -64,11 +64,9 @@ impl SdwanManager {
     pub async fn new(config: SdwanConfig) -> Result<Self> {
         let db = Arc::new(database::Database::new(&config.database_path).await?);
 
-        let mesh = Arc::new(mesh::MeshManager::new(
-            config.site_id,
-            config.site_name.clone(),
-            db.clone(),
-        ));
+        let mesh = Arc::new(
+            mesh::MeshManager::new(config.site_id, config.site_name.clone(), db.clone()).await?,
+        );
 
         let monitor = Arc::new(monitor::PathMonitor::new(db.clone()));
         let routing = Arc::new(routing::RoutingEngine::new(db.clone()));
@@ -129,8 +127,14 @@ impl SdwanManager {
 /// SD-WAN configuration
 #[derive(Clone, Debug)]
 pub struct SdwanConfig {
-    /// Unique site identifier
-    pub site_id: SiteId,
+    /// Unique site identifier.
+    ///
+    /// `None` (the default) uses the site ID persisted in the database with
+    /// this site's mesh signing key, generating and persisting both on first
+    /// start. `Some(id)` seeds a fresh database with that ID; startup fails if
+    /// the database already holds a different identity, because peers pin
+    /// (trust-on-first-use) the key they first saw for each site ID.
+    pub site_id: Option<SiteId>,
 
     /// Human-readable site name
     pub site_name: String,
@@ -148,7 +152,7 @@ pub struct SdwanConfig {
 impl Default for SdwanConfig {
     fn default() -> Self {
         Self {
-            site_id: SiteId::generate(),
+            site_id: None,
             site_name: "default-site".to_string(),
             database_path: "/var/lib/patronus/sdwan.db".to_string(),
             seed_sites: Vec::new(),

@@ -31,6 +31,26 @@ impl Database {
 
         let pool = SqlitePool::connect(&url).await?;
 
+        // The database holds this site's long-term mesh signing key (see
+        // `sdwan_local_identity`), so it must not be world/group-readable.
+        // Best effort: an fs error here (e.g. a file owned by another user
+        // that we can only write via group perms) is logged, not fatal.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if path != ":memory:" {
+                let restricted =
+                    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+                if let Err(e) = restricted {
+                    tracing::warn!(
+                        path = %path,
+                        error = %e,
+                        "Failed to restrict SD-WAN database permissions to 0600"
+                    );
+                }
+            }
+        }
+
         let db = Self { pool };
 
         // Run migrations
@@ -63,6 +83,23 @@ impl Database {
                 created_at INTEGER NOT NULL,
                 last_seen INTEGER NOT NULL,
                 status TEXT CHECK(status IN ('active', 'inactive', 'degraded')) NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // This site's own mesh identity: a single row holding the persistent
+        // site ID and ed25519 signing key used to sign mesh announcements.
+        // Peers pin (TOFU) the public key they first see for a site ID, so
+        // this key must survive restarts or the site locks itself out.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sdwan_local_identity (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                site_id TEXT NOT NULL,
+                signing_key BLOB NOT NULL,
+                created_at INTEGER NOT NULL
             )
             "#,
         )
@@ -372,6 +409,150 @@ impl Database {
         .await?;
 
         Ok(())
+    }
+
+    /// Insert or update a site announced over the mesh, enforcing
+    /// trust-on-first-use pinning of its public key.
+    ///
+    /// The first public key stored for a site ID is pinned: a later write
+    /// for the same site ID with a *different* key is not applied (no column
+    /// is touched) and `Ok(false)` is returned. The check and the write are a
+    /// single statement, so concurrent announcements can't race past it.
+    /// Returns `Ok(true)` when the row was inserted or updated.
+    ///
+    /// To legitimately re-key a site (e.g. after reinstalling it), delete
+    /// its row with [`Database::delete_site`]; the next announcement pins
+    /// the new key.
+    pub async fn upsert_site_pinned(&self, site: &Site) -> Result<bool> {
+        let created_at = site
+            .created_at
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
+        let last_seen = site
+            .last_seen
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO sdwan_sites (site_id, site_name, public_key, created_at, last_seen, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(site_id) DO UPDATE SET
+                site_name = excluded.site_name,
+                last_seen = excluded.last_seen,
+                status = excluded.status
+            WHERE sdwan_sites.public_key = excluded.public_key
+            "#,
+        )
+        .bind(site.id.to_string())
+        .bind(&site.name)
+        .bind(&site.public_key)
+        .bind(created_at)
+        .bind(last_seen)
+        .bind(site.status.to_string())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Mark a mesh-discovered site inactive after it stops announcing.
+    ///
+    /// Update-only and keyed on the pinned public key: it never inserts a
+    /// row (an operator who deleted the site to re-key it must not have the
+    /// old key silently re-pinned when the stale in-memory entry times out)
+    /// and never touches a row whose key differs.
+    pub async fn mark_site_inactive(
+        &self,
+        site_id: &SiteId,
+        public_key: &[u8],
+        last_seen: std::time::SystemTime,
+    ) -> Result<()> {
+        let last_seen = last_seen
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
+        sqlx::query(
+            r#"
+            UPDATE sdwan_sites
+            SET status = 'inactive', last_seen = ?
+            WHERE site_id = ? AND public_key = ?
+            "#,
+        )
+        .bind(last_seen)
+        .bind(site_id.to_string())
+        .bind(public_key)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Load this site's persisted mesh identity (site ID + ed25519 signing
+    /// key seed), if one has been created.
+    ///
+    /// A stored row that can't be parsed is an error rather than `None`:
+    /// silently generating a fresh identity would change this site's key,
+    /// and every peer that pinned the old one would then reject it.
+    pub async fn get_local_identity(&self) -> Result<Option<(SiteId, [u8; 32])>> {
+        let row = sqlx::query("SELECT site_id, signing_key FROM sdwan_local_identity WHERE id = 1")
+            .fetch_optional(&self.pool)
+            .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let site_id: String = row.try_get("site_id")?;
+        let signing_key: Vec<u8> = row.try_get("signing_key")?;
+
+        let site_id: SiteId = site_id.parse().map_err(|e| {
+            crate::Error::InvalidConfig(format!("Stored local site ID is invalid: {}", e))
+        })?;
+        let signing_key: [u8; 32] = signing_key.as_slice().try_into().map_err(|_| {
+            crate::Error::InvalidConfig(format!(
+                "Stored local signing key has length {} (expected 32)",
+                signing_key.len()
+            ))
+        })?;
+
+        Ok(Some((site_id, signing_key)))
+    }
+
+    /// Persist this site's mesh identity if none exists yet, and return the
+    /// identity that is actually stored.
+    ///
+    /// Uses `INSERT OR IGNORE` on the single-row table, so if two callers
+    /// race, the first one wins and both get the winning identity back.
+    pub async fn init_local_identity(
+        &self,
+        site_id: &SiteId,
+        signing_key: &[u8; 32],
+    ) -> Result<(SiteId, [u8; 32])> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO sdwan_local_identity (id, site_id, signing_key, created_at)
+            VALUES (1, ?, ?, ?)
+            "#,
+        )
+        .bind(site_id.to_string())
+        .bind(signing_key.as_slice())
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        self.get_local_identity().await?.ok_or_else(|| {
+            crate::Error::Other("Local identity missing immediately after insert".to_string())
+        })
     }
 
     /// Get a site by ID

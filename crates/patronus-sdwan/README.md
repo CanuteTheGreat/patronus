@@ -20,6 +20,18 @@ Patronus SD-WAN provides intelligent multi-site networking with automatic path s
 
 ### 🔐 Security
 
+- **Signed Mesh Announcements** - Every site announcement is ed25519-signed and
+  must be fresh (±300 s) and strictly newer than the last one accepted, so captured
+  announcements can't be replayed
+- **Persistent Site Identity** - A site's ID and ed25519 signing key are generated
+  once and stored in the SD-WAN database (`sdwan_local_identity`; the DB file is
+  restricted to mode 0600), so the key is stable across restarts
+- **Trust-on-First-Use Key Pinning** - The first public key seen for a site ID is
+  pinned in `sdwan_sites`; announcements for that site ID signed by any other key
+  are logged and dropped without touching the DB or WireGuard peering. To
+  legitimately re-key a site (e.g. after a reinstall that lost its database),
+  delete its pinned record on each peer (`Database::delete_site`, i.e. the
+  `sdwan_sites` row for that site ID) so the next announcement re-pins
 - **X25519 Key Exchange** - Curve25519 for WireGuard key pairs
 - **ChaCha20-Poly1305** - WireGuard tunnel encryption
 - **Label-based ACLs** - Fine-grained network policy control

@@ -142,7 +142,6 @@ pub struct MeshManager {
     site_name: String,
     db: Arc<Database>,
     signing_key: SigningKey,
-    #[allow(dead_code)]
     verifying_key: VerifyingKey,
     running: Arc<RwLock<bool>>,
     known_sites: Arc<RwLock<HashMap<SiteId, SiteInfo>>>,
@@ -161,14 +160,36 @@ struct SiteInfo {
     announced_at: SystemTime,
 }
 
+/// Result of admitting a fresh, verified, key-pinned announcement.
+struct AdmittedAnnouncement {
+    site: Site,
+    /// No WireGuard peer exists for this site yet (first sighting since
+    /// start/timeout, or the site was re-keyed after an operator unpin).
+    needs_peering: bool,
+    /// An in-memory entry existed with a different key (operator deleted the
+    /// pinned DB row to re-key the site); the old WireGuard peer must go.
+    rekeyed: bool,
+}
+
 impl MeshManager {
-    /// Create a new mesh manager
-    pub fn new(site_id: SiteId, site_name: String, db: Arc<Database>) -> Self {
-        // Generate signing keypair for site authentication
-        let mut secret_bytes = [0u8; 32];
-        use rand::RngCore;
-        OsRng.fill_bytes(&mut secret_bytes);
-        let signing_key = SigningKey::from_bytes(&secret_bytes);
+    /// Create a new mesh manager.
+    ///
+    /// The site's identity (site ID + ed25519 announcement signing key) is
+    /// loaded from the database, or generated and persisted on first start,
+    /// so it is stable across restarts. Peers pin the first key they see for
+    /// a site ID (trust-on-first-use), so a key that changed on every restart
+    /// would lock this site out of the mesh.
+    ///
+    /// `site_id`: `None` uses the persisted site ID (or a new random one on
+    /// first start). `Some(id)` seeds a fresh database with that ID; if the
+    /// database already holds a different identity this is an error rather
+    /// than a silent identity change.
+    pub async fn new(
+        site_id: Option<SiteId>,
+        site_name: String,
+        db: Arc<Database>,
+    ) -> Result<Self> {
+        let (site_id, signing_key) = Self::load_or_create_identity(&db, site_id).await?;
         let verifying_key = signing_key.verifying_key();
 
         let (announcement_tx, announcement_rx) = mpsc::channel(100);
@@ -181,7 +202,7 @@ impl MeshManager {
             51820,
         ));
 
-        Self {
+        Ok(Self {
             site_id,
             site_name,
             db,
@@ -193,7 +214,50 @@ impl MeshManager {
             announcement_rx: Arc::new(RwLock::new(announcement_rx)),
             tasks: Arc::new(RwLock::new(Vec::new())),
             peering_manager,
+        })
+    }
+
+    /// Load the persisted local identity, or generate and persist one.
+    async fn load_or_create_identity(
+        db: &Database,
+        requested_site_id: Option<SiteId>,
+    ) -> Result<(SiteId, SigningKey)> {
+        let (site_id, seed) = match db.get_local_identity().await? {
+            Some(identity) => identity,
+            None => {
+                use rand::RngCore;
+                let mut seed = [0u8; 32];
+                OsRng.fill_bytes(&mut seed);
+                let site_id = requested_site_id.unwrap_or_else(SiteId::generate);
+                // init_local_identity returns whatever is actually stored, so
+                // a concurrent first start can't leave us with a key that
+                // isn't the persisted one.
+                let stored = db.init_local_identity(&site_id, &seed).await?;
+                info!(site_id = %stored.0, "Generated and persisted new mesh site identity");
+                stored
+            }
+        };
+
+        if let Some(requested) = requested_site_id.filter(|r| *r != site_id) {
+            return Err(Error::InvalidConfig(format!(
+                "Configured site ID {} does not match the persisted mesh identity {}; \
+                 peers have pinned the persisted identity's key, so refusing to \
+                 silently change it (leave site_id unset to use the persisted one)",
+                requested, site_id
+            )));
         }
+
+        Ok((site_id, SigningKey::from_bytes(&seed)))
+    }
+
+    /// This site's (persisted) ID.
+    pub fn site_id(&self) -> SiteId {
+        self.site_id
+    }
+
+    /// This site's (persisted) announcement verifying key.
+    pub fn public_key(&self) -> VerifyingKey {
+        self.verifying_key
     }
 
     /// Start the mesh manager
@@ -429,74 +493,48 @@ impl MeshManager {
             while *running.read().await {
                 match rx.recv().await {
                     Some(announcement) => {
-                        // Reject stale / future-dated / replayed announcements
-                        // before spending time on signature verification.
-                        let last_accepted = known_sites
-                            .read()
-                            .await
-                            .get(&announcement.site_id)
-                            .map(|info| info.announced_at);
-                        if let Err(e) = Self::check_announcement_freshness(
-                            announcement.timestamp,
+                        let admitted = match Self::admit_announcement(
+                            &db,
+                            &known_sites,
+                            &announcement,
                             SystemTime::now(),
-                            last_accepted,
-                        ) {
-                            warn!(
-                                "Rejected announcement from site {}: {}",
-                                announcement.site_id, e
-                            );
-                            continue;
-                        }
-
-                        // Verify signature
-                        if let Err(e) = Self::verify_announcement(&announcement) {
-                            warn!(
-                                "Invalid announcement signature from site {}: {}",
-                                announcement.site_id, e
-                            );
-                            continue;
-                        }
-
-                        info!(
-                            site_id = %announcement.site_id,
-                            site_name = %announcement.site_name,
-                            "Received verified site announcement"
-                        );
-
-                        // Create or update site
-                        let site = Site {
-                            id: announcement.site_id,
-                            name: announcement.site_name.clone(),
-                            public_key: announcement.public_key.clone(),
-                            endpoints: announcement.endpoints.clone(),
-                            created_at: announcement.timestamp,
-                            last_seen: SystemTime::now(),
-                            status: SiteStatus::Active,
+                        )
+                        .await
+                        {
+                            Ok(admitted) => admitted,
+                            Err(Error::Database(e)) => {
+                                error!(
+                                    "Failed to store site {} from announcement: {}",
+                                    announcement.site_id, e
+                                );
+                                continue;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    site_id = %announcement.site_id,
+                                    site_name = %announcement.site_name,
+                                    "Rejected announcement: {}",
+                                    e
+                                );
+                                continue;
+                            }
                         };
+                        let site = admitted.site;
 
-                        // Store in database
-                        if let Err(e) = db.upsert_site(&site).await {
-                            error!("Failed to store site: {}", e);
-                            continue;
+                        debug!("Site {} registered in mesh", site.id);
+
+                        if admitted.rekeyed {
+                            info!(
+                                "Site {} was re-keyed after its pin was cleared; replacing WireGuard peer",
+                                site.id
+                            );
+                            if let Err(e) = peering_manager.remove_peer(&site.id).await {
+                                warn!("Failed to remove old WireGuard peer for {}: {}", site.id, e);
+                            }
                         }
 
-                        // Update known sites
-                        let mut sites = known_sites.write().await;
-                        let is_new_site = !sites.contains_key(&site.id);
-                        sites.insert(
-                            site.id,
-                            SiteInfo {
-                                site: site.clone(),
-                                last_announcement: SystemTime::now(),
-                                announced_at: announcement.timestamp,
-                            },
-                        );
-                        drop(sites); // Release lock before async operation
-
-                        debug!("Site {} registered in mesh", announcement.site_id);
-
-                        // Establish VPN tunnel if this is a new site
-                        if is_new_site {
+                        // Establish VPN tunnel if this site has no peer yet
+                        if admitted.needs_peering {
                             info!("Establishing WireGuard tunnel to site {}", site.id);
                             if let Err(e) = peering_manager.add_peer(&site).await {
                                 error!("Failed to establish VPN tunnel: {}", e);
@@ -546,11 +584,11 @@ impl MeshManager {
                 for site_id in timed_out {
                     warn!("Site {} timed out, marking as inactive", site_id);
 
-                    if let Some(mut info) = sites.remove(&site_id) {
-                        info.site.status = SiteStatus::Inactive;
-                        info.site.last_seen = now;
-
-                        if let Err(e) = db.upsert_site(&info.site).await {
+                    if let Some(info) = sites.remove(&site_id) {
+                        if let Err(e) = db
+                            .mark_site_inactive(&site_id, &info.site.public_key, now)
+                            .await
+                        {
                             error!("Failed to update site status: {}", e);
                         }
                     }
@@ -561,6 +599,80 @@ impl MeshManager {
         });
 
         Ok(task)
+    }
+
+    /// Admit one received announcement: freshness/replay check, signature
+    /// check, then trust-on-first-use key pinning, and finally record it in
+    /// the database and `known_sites`.
+    ///
+    /// Key pinning: the first public key stored for a site ID is pinned in
+    /// `sdwan_sites`. A validly signed announcement for that site ID under a
+    /// *different* key is rejected here -- the DB row, `known_sites` and the
+    /// WireGuard peering are all left untouched. Without this, anyone on the
+    /// multicast segment could sign an announcement with their own key for an
+    /// existing site ID and hijack it (signatures only prove possession of
+    /// *some* key, not the site's key). To re-key a site legitimately, delete
+    /// its row (`Database::delete_site`) so the next announcement re-pins.
+    async fn admit_announcement(
+        db: &Database,
+        known_sites: &RwLock<HashMap<SiteId, SiteInfo>>,
+        announcement: &SiteAnnouncement,
+        now: SystemTime,
+    ) -> Result<AdmittedAnnouncement> {
+        // Reject stale / future-dated / replayed announcements before
+        // spending time on signature verification.
+        let last_accepted = known_sites
+            .read()
+            .await
+            .get(&announcement.site_id)
+            .map(|info| info.announced_at);
+        Self::check_announcement_freshness(announcement.timestamp, now, last_accepted)?;
+
+        Self::verify_announcement(announcement)?;
+
+        let site = Site {
+            id: announcement.site_id,
+            name: announcement.site_name.clone(),
+            public_key: announcement.public_key.clone(),
+            endpoints: announcement.endpoints.clone(),
+            created_at: announcement.timestamp,
+            last_seen: now,
+            status: SiteStatus::Active,
+        };
+
+        // Pin check and write are one atomic statement.
+        if !db.upsert_site_pinned(&site).await? {
+            return Err(Error::AuthenticationFailed(format!(
+                "public key for site {} does not match the key pinned on first use; \
+                 ignoring announcement (delete the site record to re-key it)",
+                site.id
+            )));
+        }
+
+        info!(
+            site_id = %site.id,
+            site_name = %site.name,
+            "Accepted verified site announcement"
+        );
+
+        let previous = known_sites.write().await.insert(
+            site.id,
+            SiteInfo {
+                site: site.clone(),
+                last_announcement: now,
+                announced_at: announcement.timestamp,
+            },
+        );
+        let rekeyed = previous
+            .as_ref()
+            .is_some_and(|p| p.site.public_key != site.public_key);
+        let needs_peering = previous.is_none() || rekeyed;
+
+        Ok(AdmittedAnnouncement {
+            site,
+            needs_peering,
+            rekeyed,
+        })
     }
 
     /// Check that an announcement's (signed) timestamp is fresh and strictly
@@ -677,7 +789,9 @@ mod tests {
     #[tokio::test]
     async fn test_mesh_manager_creation() {
         let db = Arc::new(Database::new(":memory:").await.unwrap());
-        let manager = MeshManager::new(SiteId::generate(), "test-site".to_string(), db);
+        let manager = MeshManager::new(None, "test-site".to_string(), db)
+            .await
+            .unwrap();
 
         assert!(manager.start().await.is_ok());
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -806,9 +920,227 @@ mod tests {
     #[tokio::test]
     async fn test_site_list() {
         let db = Arc::new(Database::new(":memory:").await.unwrap());
-        let manager = MeshManager::new(SiteId::generate(), "test-site".to_string(), db);
+        let manager = MeshManager::new(None, "test-site".to_string(), db)
+            .await
+            .unwrap();
 
         let sites = manager.list_known_sites().await;
         assert_eq!(sites.len(), 0);
+    }
+
+    fn test_signing_key() -> SigningKey {
+        use rand::RngCore;
+        let mut secret_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut secret_bytes);
+        SigningKey::from_bytes(&secret_bytes)
+    }
+
+    fn announcement_signed_by(
+        key: &SigningKey,
+        site_id: SiteId,
+        timestamp: SystemTime,
+    ) -> SiteAnnouncement {
+        let mut announcement = SiteAnnouncement {
+            site_id,
+            site_name: "remote".to_string(),
+            public_key: key.verifying_key().to_bytes().to_vec(),
+            endpoints: Vec::new(),
+            capabilities: SiteCapabilities::default(),
+            timestamp,
+            signature: Vec::new(),
+        };
+        let announcement_bytes = bincode::serialize(&(
+            &announcement.site_id,
+            &announcement.site_name,
+            &announcement.public_key,
+            &announcement.endpoints,
+            &announcement.capabilities,
+            &announcement.timestamp,
+        ))
+        .unwrap();
+        announcement.signature = key.sign(&announcement_bytes).to_bytes().to_vec();
+        announcement
+    }
+
+    /// The local signing key and site ID must survive a restart: peers pin
+    /// the first key they see, so a fresh key per start would lock us out.
+    #[tokio::test]
+    async fn test_local_identity_persists_across_restart() {
+        let path = std::env::temp_dir().join(format!(
+            "patronus-mesh-identity-{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let path_str = path.to_str().unwrap().to_string();
+
+        let (site_id, public_key) = {
+            let db = Arc::new(Database::new(&path_str).await.unwrap());
+            let manager = MeshManager::new(None, "a".to_string(), db.clone())
+                .await
+                .unwrap();
+            let identity = (manager.site_id(), manager.public_key());
+            drop(manager);
+            db.pool().close().await;
+            identity
+        };
+
+        // The DB now holds a private key: it must be owner-only.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(
+                mode & 0o077,
+                0,
+                "database must not be group/world accessible"
+            );
+        }
+
+        // "Restart": reopen the same file.
+        let db = Arc::new(Database::new(&path_str).await.unwrap());
+        let reloaded = MeshManager::new(None, "a".to_string(), db.clone())
+            .await
+            .unwrap();
+        assert_eq!(reloaded.site_id(), site_id);
+        assert_eq!(reloaded.public_key(), public_key);
+        assert_eq!(
+            reloaded.signing_key.to_bytes(),
+            MeshManager::new(Some(site_id), "a".to_string(), db.clone())
+                .await
+                .unwrap()
+                .signing_key
+                .to_bytes(),
+            "an explicitly configured matching site ID reuses the persisted key"
+        );
+
+        // A configured site ID that contradicts the persisted identity is
+        // refused rather than silently changing identity.
+        assert!(
+            MeshManager::new(Some(SiteId::generate()), "a".to_string(), db.clone())
+                .await
+                .is_err()
+        );
+
+        db.pool().close().await;
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", path_str, suffix));
+        }
+    }
+
+    /// A configured site ID seeds a fresh database's identity.
+    #[tokio::test]
+    async fn test_configured_site_id_seeds_new_identity() {
+        let db = Arc::new(Database::new(":memory:").await.unwrap());
+        let wanted = SiteId::generate();
+        let manager = MeshManager::new(Some(wanted), "a".to_string(), db.clone())
+            .await
+            .unwrap();
+        assert_eq!(manager.site_id(), wanted);
+        let (stored_id, stored_key) = db.get_local_identity().await.unwrap().unwrap();
+        assert_eq!(stored_id, wanted);
+        assert_eq!(stored_key, manager.signing_key.to_bytes());
+    }
+
+    /// Trust-on-first-use: the first key seen for a site ID is pinned; the
+    /// same key keeps being accepted; a different (validly self-signed) key
+    /// for that site ID is rejected without touching the DB or known_sites.
+    #[tokio::test]
+    async fn test_tofu_pins_first_key_and_rejects_different_key() {
+        let db = Database::new(":memory:").await.unwrap();
+        let known_sites = RwLock::new(HashMap::new());
+        let site_id = SiteId::generate();
+        let real_key = test_signing_key();
+        let attacker_key = test_signing_key();
+        let now = SystemTime::now();
+
+        // First sighting: accepted, pinned, peering requested.
+        let first = announcement_signed_by(&real_key, site_id, now - Duration::from_secs(30));
+        let admitted = MeshManager::admit_announcement(&db, &known_sites, &first, now)
+            .await
+            .expect("first key must be accepted");
+        assert!(admitted.needs_peering);
+        assert!(!admitted.rekeyed);
+        let pinned = real_key.verifying_key().to_bytes().to_vec();
+        assert_eq!(
+            db.get_site(&site_id).await.unwrap().unwrap().public_key,
+            pinned
+        );
+
+        // Same key again: accepted, no re-peering.
+        let again = announcement_signed_by(&real_key, site_id, now - Duration::from_secs(20));
+        let admitted = MeshManager::admit_announcement(&db, &known_sites, &again, now)
+            .await
+            .expect("same key must be accepted again");
+        assert!(!admitted.needs_peering);
+
+        // Forged announcement for the same site ID under a different key:
+        // validly signed (by the attacker's key), fresh, but rejected.
+        let forged = announcement_signed_by(&attacker_key, site_id, now - Duration::from_secs(10));
+        assert!(MeshManager::verify_announcement(&forged).is_ok());
+        let err = match MeshManager::admit_announcement(&db, &known_sites, &forged, now).await {
+            Ok(_) => panic!("different key for a pinned site ID must be rejected"),
+            Err(e) => e,
+        };
+        assert!(matches!(err, Error::AuthenticationFailed(_)));
+        assert_eq!(
+            db.get_site(&site_id).await.unwrap().unwrap().public_key,
+            pinned,
+            "rejected announcement must not overwrite the pinned key"
+        );
+        assert_eq!(
+            known_sites
+                .read()
+                .await
+                .get(&site_id)
+                .unwrap()
+                .site
+                .public_key,
+            pinned
+        );
+
+        // The pin lives in the DB, so it also holds after the site has left
+        // known_sites (timeout or restart).
+        known_sites.write().await.clear();
+        let forged_later =
+            announcement_signed_by(&attacker_key, site_id, now - Duration::from_secs(5));
+        assert!(
+            MeshManager::admit_announcement(&db, &known_sites, &forged_later, now)
+                .await
+                .is_err()
+        );
+        assert!(known_sites.read().await.is_empty());
+
+        // ...while the real key is still accepted (and re-peered).
+        let real_later = announcement_signed_by(&real_key, site_id, now);
+        let admitted = MeshManager::admit_announcement(&db, &known_sites, &real_later, now)
+            .await
+            .expect("pinned key must still be accepted");
+        assert!(admitted.needs_peering);
+    }
+
+    /// Timing a site out must not re-insert a row an operator deleted (to
+    /// re-key it) or touch a row pinned to another key.
+    #[tokio::test]
+    async fn test_mark_site_inactive_never_repins() {
+        let db = Database::new(":memory:").await.unwrap();
+        let known_sites = RwLock::new(HashMap::new());
+        let site_id = SiteId::generate();
+        let key = test_signing_key();
+        let now = SystemTime::now();
+
+        let a = announcement_signed_by(&key, site_id, now);
+        MeshManager::admit_announcement(&db, &known_sites, &a, now)
+            .await
+            .unwrap();
+        let pinned = key.verifying_key().to_bytes().to_vec();
+
+        db.mark_site_inactive(&site_id, &pinned, now).await.unwrap();
+        assert_eq!(
+            db.get_site(&site_id).await.unwrap().unwrap().status,
+            SiteStatus::Inactive
+        );
+
+        db.delete_site(&site_id).await.unwrap();
+        db.mark_site_inactive(&site_id, &pinned, now).await.unwrap();
+        assert!(db.get_site(&site_id).await.unwrap().is_none());
     }
 }

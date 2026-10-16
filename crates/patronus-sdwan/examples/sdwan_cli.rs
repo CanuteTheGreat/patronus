@@ -16,7 +16,7 @@
 //!   --help                     Show this help message
 
 use clap::Parser;
-use patronus_sdwan::{database::Database, types::SiteId, SdwanConfig, SdwanManager};
+use patronus_sdwan::{database::Database, SdwanConfig, SdwanManager};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -92,9 +92,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()
         .unwrap_or_else(|_| "239.255.77.77:51821".parse().unwrap());
 
-    let site_id = SiteId::generate();
+    // site_id: None -> use the site ID + mesh signing key persisted in the
+    // database (generated on first run), so peers' trust-on-first-use key
+    // pins stay valid across restarts.
     let config = SdwanConfig {
-        site_id: site_id.clone(),
+        site_id: None,
         site_name: args.site_name.clone(),
         database_path: db_path.to_string(),
         seed_sites: Vec::new(),
@@ -103,6 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Creating SD-WAN manager");
     let manager = Arc::new(SdwanManager::new(config).await?);
+    let site_id = manager.mesh().site_id();
 
     // Get database reference for status reporting
     let db = Arc::new(Database::new(db_path).await?);
