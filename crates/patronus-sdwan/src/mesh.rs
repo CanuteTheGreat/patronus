@@ -16,6 +16,12 @@ const MULTICAST_ADDR: &str = "239.255.42.1:51821";
 const ANNOUNCEMENT_INTERVAL: Duration = Duration::from_secs(30);
 const SITE_TIMEOUT: Duration = Duration::from_secs(120);
 const WIREGUARD_PORT: u16 = 51820;
+/// Oldest signed announcement timestamp we accept. Announcements are signed
+/// but carry no nonce, so without a freshness bound any captured packet can be
+/// replayed forever to resurrect a site (and re-trigger auto-peering).
+const MAX_ANNOUNCEMENT_AGE: Duration = Duration::from_secs(300);
+/// How far in the future a timestamp may be (tolerated clock skew).
+const MAX_ANNOUNCEMENT_CLOCK_SKEW: Duration = Duration::from_secs(300);
 
 /// Discover network endpoints from system interfaces
 async fn discover_endpoints() -> Vec<Endpoint> {
@@ -151,6 +157,8 @@ pub struct MeshManager {
 struct SiteInfo {
     site: Site,
     last_announcement: SystemTime,
+    /// Signed timestamp of the last accepted announcement (replay ordering).
+    announced_at: SystemTime,
 }
 
 impl MeshManager {
@@ -421,6 +429,25 @@ impl MeshManager {
             while *running.read().await {
                 match rx.recv().await {
                     Some(announcement) => {
+                        // Reject stale / future-dated / replayed announcements
+                        // before spending time on signature verification.
+                        let last_accepted = known_sites
+                            .read()
+                            .await
+                            .get(&announcement.site_id)
+                            .map(|info| info.announced_at);
+                        if let Err(e) = Self::check_announcement_freshness(
+                            announcement.timestamp,
+                            SystemTime::now(),
+                            last_accepted,
+                        ) {
+                            warn!(
+                                "Rejected announcement from site {}: {}",
+                                announcement.site_id, e
+                            );
+                            continue;
+                        }
+
                         // Verify signature
                         if let Err(e) = Self::verify_announcement(&announcement) {
                             warn!(
@@ -461,6 +488,7 @@ impl MeshManager {
                             SiteInfo {
                                 site: site.clone(),
                                 last_announcement: SystemTime::now(),
+                                announced_at: announcement.timestamp,
                             },
                         );
                         drop(sites); // Release lock before async operation
@@ -533,6 +561,49 @@ impl MeshManager {
         });
 
         Ok(task)
+    }
+
+    /// Check that an announcement's (signed) timestamp is fresh and strictly
+    /// newer than the last one accepted from the same site.
+    ///
+    /// The window bounds replay of captured packets; the monotonic check stops
+    /// replay of a still-in-window packet against a site we already track.
+    /// A site whose clock steps backwards is rejected only until it times out
+    /// of `known_sites` (`SITE_TIMEOUT`), after which it is accepted again.
+    fn check_announcement_freshness(
+        timestamp: SystemTime,
+        now: SystemTime,
+        last_accepted: Option<SystemTime>,
+    ) -> Result<()> {
+        match now.duration_since(timestamp) {
+            Ok(age) if age > MAX_ANNOUNCEMENT_AGE => {
+                return Err(Error::AuthenticationFailed(format!(
+                    "Stale announcement: {}s old (max {}s)",
+                    age.as_secs(),
+                    MAX_ANNOUNCEMENT_AGE.as_secs()
+                )));
+            }
+            Ok(_) => {}
+            Err(e) if e.duration() > MAX_ANNOUNCEMENT_CLOCK_SKEW => {
+                return Err(Error::AuthenticationFailed(format!(
+                    "Announcement timestamp {}s in the future (max skew {}s)",
+                    e.duration().as_secs(),
+                    MAX_ANNOUNCEMENT_CLOCK_SKEW.as_secs()
+                )));
+            }
+            Err(_) => {}
+        }
+
+        if let Some(last) = last_accepted {
+            if timestamp <= last {
+                return Err(Error::AuthenticationFailed(
+                    "Replayed or out-of-order announcement (timestamp not newer than last accepted)"
+                        .to_string(),
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     /// Verify announcement signature
@@ -702,6 +773,34 @@ mod tests {
                 "signature of length {len} must be rejected"
             );
         }
+    }
+
+    /// Signed announcements carry no nonce: old, far-future, or repeated
+    /// timestamps must be rejected so captured packets can't be replayed.
+    #[test]
+    fn test_announcement_freshness_rejects_stale_future_and_replay() {
+        let now = SystemTime::now();
+        let check = MeshManager::check_announcement_freshness;
+
+        // Fresh, first sighting.
+        assert!(check(now, now, None).is_ok());
+        assert!(check(now - Duration::from_secs(10), now, None).is_ok());
+        // Modest clock skew either way is tolerated.
+        assert!(check(now + Duration::from_secs(30), now, None).is_ok());
+        assert!(check(now - MAX_ANNOUNCEMENT_AGE, now, None).is_ok());
+
+        // Too old / too far in the future.
+        let stale = now - MAX_ANNOUNCEMENT_AGE - Duration::from_secs(1);
+        assert!(check(stale, now, None).is_err());
+        let future = now + MAX_ANNOUNCEMENT_CLOCK_SKEW + Duration::from_secs(1);
+        assert!(check(future, now, None).is_err());
+
+        // Replay (same timestamp) and out-of-order (older) for a known site.
+        let last = now - Duration::from_secs(30);
+        assert!(check(last, now, Some(last)).is_err());
+        assert!(check(last - Duration::from_secs(1), now, Some(last)).is_err());
+        // Strictly newer is accepted.
+        assert!(check(last + Duration::from_secs(30), now, Some(last)).is_ok());
     }
 
     #[tokio::test]
