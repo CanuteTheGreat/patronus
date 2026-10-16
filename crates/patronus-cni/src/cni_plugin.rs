@@ -7,6 +7,36 @@ use tracing::{debug, info, warn};
 /// CNI version supported
 pub const CNI_VERSION: &str = "1.0.0";
 
+/// Derive the 8-character interface-name suffix for a container.
+///
+/// Linux interface names are capped at 15 bytes, so "veth"/"tmp-" plus 8 chars
+/// is what fits. Docker/containerd/CRI-O IDs are 64-char hex, and for those the
+/// first 8 chars are used verbatim (unchanged from earlier releases, so DEL and
+/// CHECK still find interfaces created by them). The CNI spec only requires
+/// the ID to be non-empty, though, and slicing `[..8]` panicked on anything
+/// shorter than 8 bytes or with a multi-byte char straddling byte 8 -- a panic
+/// in a CNI plugin returns no CNI error JSON to the runtime at all. Any such ID
+/// now gets a deterministic 8-hex-digit FNV-1a hash of the full ID instead.
+pub fn container_id_suffix(container_id: &str) -> String {
+    if container_id
+        .as_bytes()
+        .get(..8)
+        .is_some_and(|p| p.iter().all(u8::is_ascii_alphanumeric))
+    {
+        // All-ASCII, so byte 8 is guaranteed to be a char boundary.
+        return container_id[..8].to_string();
+    }
+    // FNV-1a (32-bit): stable across Rust versions and platforms, unlike
+    // std's DefaultHasher, which matters because DEL may run under a newer
+    // plugin binary than the ADD that created the interface.
+    let mut h: u32 = 0x811c_9dc5;
+    for b in container_id.as_bytes() {
+        h ^= u32::from(*b);
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    format!("{h:08x}")
+}
+
 /// CNI command
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -128,6 +158,13 @@ impl PatronusCniPlugin {
             self.runtime.container_id, self.runtime.netns, self.runtime.ifname
         );
 
+        // CNI spec: CNI_CONTAINERID is required and must be non-empty. Fail with
+        // a proper CNI error instead of creating "veth"/"tmp-" interfaces that
+        // every other ID-less invocation would collide with.
+        if self.runtime.container_id.is_empty() {
+            return Err(anyhow::anyhow!("CNI_CONTAINERID is required but was empty"));
+        }
+
         // 1. Create veth pair
         let (host_veth, container_veth) = self.create_veth_pair()?;
 
@@ -231,7 +268,7 @@ impl PatronusCniPlugin {
     /// Create veth pair
     fn create_veth_pair(&self) -> Result<(String, String)> {
         let host_veth = self.get_host_veth_name();
-        let container_veth = format!("tmp-{}", &self.runtime.container_id[..8]);
+        let container_veth = format!("tmp-{}", container_id_suffix(&self.runtime.container_id));
 
         debug!("Creating veth pair: {} <-> {}", host_veth, container_veth);
 
@@ -318,7 +355,7 @@ impl PatronusCniPlugin {
         debug!("Configuring container interface with IP {}", ip.address);
 
         // Rename temp interface to desired name
-        let temp_name = format!("tmp-{}", &self.runtime.container_id[..8]);
+        let temp_name = format!("tmp-{}", container_id_suffix(&self.runtime.container_id));
 
         self.exec_in_netns(&[
             "ip",
@@ -408,7 +445,7 @@ impl PatronusCniPlugin {
 
     /// Get host veth name for container
     fn get_host_veth_name(&self) -> String {
-        format!("veth{}", &self.runtime.container_id[..8])
+        format!("veth{}", container_id_suffix(&self.runtime.container_id))
     }
 
     /// Check if interface exists
@@ -496,5 +533,38 @@ mod tests {
     fn test_cni_version() {
         let version = PatronusCniPlugin::cmd_version();
         assert_eq!(version["cniVersion"], CNI_VERSION);
+    }
+
+    #[test]
+    fn test_container_id_suffix_keeps_prefix_for_runtime_ids() {
+        // 64-char hex IDs from containerd/docker keep the historical naming.
+        let id = "3f4e5a6b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7081";
+        assert_eq!(container_id_suffix(id), "3f4e5a6b");
+    }
+
+    #[test]
+    fn test_container_id_suffix_never_panics_on_short_or_unicode_ids() {
+        for id in [
+            "",
+            "a",
+            "abc1234",
+            "pod-é-日本語-1",
+            "1234567é",
+            "with space",
+        ] {
+            let s = container_id_suffix(id);
+            assert_eq!(s.len(), 8, "suffix for {id:?} was {s:?}");
+            assert!(s.bytes().all(|b| b.is_ascii_alphanumeric()));
+            // "veth" + suffix must fit IFNAMSIZ-1 (15 bytes).
+            assert!(format!("veth{s}").len() <= 15);
+        }
+    }
+
+    #[test]
+    fn test_container_id_suffix_is_deterministic_and_distinguishes_ids() {
+        assert_eq!(container_id_suffix("abc"), container_id_suffix("abc"));
+        assert_ne!(container_id_suffix("abc"), container_id_suffix("abd"));
+        // Pinned value: changing the hash would orphan host veths on DEL.
+        assert_eq!(container_id_suffix(""), "811c9dc5");
     }
 }
