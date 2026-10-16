@@ -143,7 +143,7 @@ impl FirewallManager {
     }
 
     /// Build the manager and seed its "default" rules (Allow SSH/HTTPS/Web
-    /// Interface/WireGuard, Drop Invalid). These used to be pure in-memory
+    /// Interface/WireGuard). These used to be pure in-memory
     /// data marked `enabled: true` that was NEVER actually passed to
     /// `RuleManager`/applied to real nftables -- a fresh instance's
     /// dashboard reported them as active protection while `nft list
@@ -154,6 +154,13 @@ impl FirewallManager {
     /// `enabled: false` in the returned list -- the dashboard must never
     /// claim protection that isn't actually enforced -- rather than
     /// aborting construction entirely over one failed default.
+    ///
+    /// There is deliberately no seeded "Drop Invalid" rule any more: with
+    /// every field "any" it became an unconditional `drop` in the input
+    /// chain, and since user rules are appended, every rule added through
+    /// the UI landed behind it and never matched. Invalid packets are
+    /// dropped by the base ruleset (`ct state invalid drop`) and the chain
+    /// policy is already drop.
     pub async fn new(rule_manager: RuleManager) -> anyhow::Result<Self> {
         let mut default_rules = vec![
             crate::templates::FirewallRule {
@@ -223,23 +230,6 @@ impl FirewallManager {
                 source_display: "Any".to_string(),
                 destination_display: "Any:51820".to_string(),
                 port_display: "51820".to_string(),
-            },
-            crate::templates::FirewallRule {
-                id: 5,
-                name: "Drop Invalid".to_string(),
-                action: "Drop".to_string(),
-                interface: "any".to_string(),
-                protocol: "any".to_string(),
-                source: "any".to_string(),
-                destination: "any".to_string(),
-                port: "any".to_string(),
-                description: "Drop invalid packets".to_string(),
-                enabled: true,
-                chain: "input".to_string(),
-                protocol_display: "Any".to_string(),
-                source_display: "Any".to_string(),
-                destination_display: "Any".to_string(),
-                port_display: "Any".to_string(),
             },
         ];
 
@@ -1844,6 +1834,42 @@ mod rule_apply_tests {
             }
         }
         assert!(table.contains("Allow SSH access"), "{table}");
+    }
+
+    /// A user-added accept rule must actually be reachable: the seeded
+    /// "Drop Invalid" default used to render as a bare `drop` in the input
+    /// chain, so every rule appended after it (i.e. everything added via the
+    /// UI/API) was dead.
+    #[tokio::test]
+    #[ignore] // Requires real nftables (CAP_NET_ADMIN + nf_tables)
+    async fn user_rules_are_not_shadowed_by_an_unconditional_drop() {
+        let fw = fresh_manager().await;
+        let marker = format!("reachable-{}", std::process::id());
+        let mut rule = sample_rule("any");
+        rule.description = marker.clone();
+        let id = fw.add_rule(rule).await.expect("valid rule must apply");
+        let table = nft_table();
+        let input: Vec<&str> = table
+            .split("chain input")
+            .nth(1)
+            .and_then(|c| c.split('}').next())
+            .unwrap_or_else(|| panic!("no input chain:\n{table}"))
+            .lines()
+            .map(str::trim)
+            .collect();
+        let user_pos = input
+            .iter()
+            .position(|l| l.contains(&marker))
+            .unwrap_or_else(|| panic!("user rule missing:\n{table}"));
+        for l in &input[..user_pos] {
+            let bare = l.split(" comment ").next().unwrap_or(l).trim();
+            assert!(
+                bare != "drop" && bare != "reject",
+                "unconditional {bare:?} before the user rule shadows it:\n{table}"
+            );
+        }
+        assert!(table.contains("ct state invalid drop"), "{table}");
+        fw.delete_rule(id).await.unwrap();
     }
 
     /// 6501ee75 / 7bdac073: "any" source/destination/interface used to be

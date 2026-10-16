@@ -77,10 +77,18 @@ add rule {} {} input iifname "lo" accept
 add rule {} {} input ct state established,related accept
 add rule {} {} forward ct state established,related accept
 
+# Drop invalid packets
+add rule {} {} input ct state invalid drop
+add rule {} {} forward ct state invalid drop
+
 # Allow ICMP
 add rule {} {} input ip protocol icmp accept
 add rule {} {} input ip6 nexthdr icmpv6 accept
         "#,
+        TABLE_FAMILY,
+        TABLE_NAME,
+        TABLE_FAMILY,
+        TABLE_NAME,
         TABLE_FAMILY,
         TABLE_NAME,
         TABLE_FAMILY,

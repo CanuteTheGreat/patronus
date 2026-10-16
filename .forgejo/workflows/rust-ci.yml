@@ -87,35 +87,30 @@ jobs:
   privileged-netfilter-tests:
     # The nftables / raw-socket tests are #[ignore]d in the ordinary
     # unprivileged test run above (they need CAP_NET_ADMIN / CAP_NET_RAW and
-    # the real `nft` binary). They used to never run in CI at all; this job
-    # gives its (memory/CPU-capped) job container exactly those two
-    # capabilities and runs ONLY the ignored tests (`-- --ignored`), so
-    # every one of them actually executes against the real kernel netfilter
-    # subsystem. Covers the rule-apply/delete error propagation (a4d7bf96),
-    # the literal 'any' wildcard fix (6501ee75/7bdac073), the seeded default
-    # rules really being in nftables, and the SD-WAN ICMP/UDP health probes.
+    # the real `nft` binary) and used to never run in CI at all. The runner
+    # drops `--cap-add` from container.options (run 388: CapEff without
+    # NET_ADMIN, `nft add table` -> Operation not permitted), so
+    # ci/privileged-tests.sh compiles the test binaries here and runs ONLY
+    # the ignored tests in a capped sibling container that really has those
+    # capabilities (and proves it first). Covers rule apply/delete error
+    # propagation (a4d7bf96), the literal 'any' wildcard fix
+    # (6501ee75/7bdac073), the seeded default rules really being in
+    # nftables, and the SD-WAN ICMP/UDP health probes.
     name: Privileged netfilter + raw-socket tests (NET_ADMIN)
     runs-on: linux-cross-x86_64
     timeout-minutes: 40
     container:
       image: catthehacker/ubuntu:act-latest
-      options: --cap-add NET_ADMIN --cap-add NET_RAW --memory 8g --memory-swap 8g --cpus 4
+      options: --memory 8g --memory-swap 8g --cpus 4
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
         uses: https://github.com/dtolnay/rust-toolchain@stable
-      - name: Install dependencies (+ real nftables)
+      - name: Install dependencies
         run: |
           sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
           for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
-          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler nftables iproute2
-      - name: Prove the job really has CAP_NET_ADMIN (fail loudly, never skip)
-        run: |
-          set -e
-          grep Cap /proc/self/status
-          nft add table inet patronus_ci_probe
-          nft delete table inet patronus_ci_probe
-          echo "nftables writable from this job"
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler
       - name: Cache cargo
         uses: actions/cache@v4
         continue-on-error: true
@@ -127,12 +122,8 @@ jobs:
           key: ${{ runner.os }}-cargo-priv-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-priv-
-      - name: patronus-web real nftables tests (ignored-by-default set)
-        run: cargo test -p patronus-web --lib -- --ignored --test-threads=1
-      - name: patronus-sdwan ICMP/UDP probe tests (ignored-by-default set)
-        run: "cargo test -p patronus-sdwan --lib health:: -- --ignored --test-threads=1"
-      - name: nft "source=any" validation harness (real RuleManager -> real nft)
-        run: cargo run -p patronus-firewall --example nft_any_source_validation
+      - name: Ignored real-nftables / raw-socket tests in a CAP_NET_ADMIN container
+        run: ci/privileged-tests.sh
 
   feature-matrix:
     # `cargo test --workspace` only ever compiles default features, so every

@@ -10,6 +10,31 @@ use tokio::sync::RwLock;
 #[cfg(feature = "nftables")]
 use crate::nftables;
 
+/// Use `requested` if given (refusing duplicates), else the next free id.
+fn assign_id(next: &mut u64, requested: Option<u64>, existing: &[u64]) -> Result<u64> {
+    let id = match requested {
+        Some(id) => {
+            if existing.contains(&id) {
+                return Err(patronus_core::Error::Firewall(format!(
+                    "rule id {id} already exists"
+                )));
+            }
+            id
+        }
+        None => {
+            let mut id = *next;
+            while existing.contains(&id) {
+                id += 1;
+            }
+            id
+        }
+    };
+    if id >= *next {
+        *next = id + 1;
+    }
+    Ok(id)
+}
+
 /// Manages firewall rules
 pub struct RuleManager {
     filter_rules: Arc<RwLock<Vec<FirewallRule>>>,
@@ -75,10 +100,19 @@ impl RuleManager {
 
     /// Add a new firewall filter rule
     pub async fn add_filter_rule(&self, mut rule: FirewallRule) -> Result<()> {
-        // Assign ID
+        // Assign ID -- keeping a caller-supplied one. patronus-web passes its
+        // own rule id and later deletes by that id; this used to overwrite it
+        // with a private counter, so the two only lined up by coincidence and
+        // deleting a rule (or any NAT rule) removed the wrong one or nothing.
+        let existing: Vec<u64> = self
+            .filter_rules
+            .read()
+            .await
+            .iter()
+            .filter_map(|r| r.id)
+            .collect();
         let mut next_id = self.next_filter_id.write().await;
-        rule.id = Some(*next_id);
-        *next_id += 1;
+        rule.id = Some(assign_id(&mut next_id, rule.id, &existing)?);
         drop(next_id);
 
         // Add to nftables if enabled
@@ -97,10 +131,16 @@ impl RuleManager {
 
     /// Add a new NAT rule
     pub async fn add_nat_rule(&mut self, mut rule: NatRule) -> Result<()> {
-        // Assign ID
+        // Assign ID, keeping a caller-supplied one (see add_filter_rule).
+        let existing: Vec<u64> = self
+            .nat_rules
+            .read()
+            .await
+            .iter()
+            .filter_map(|r| r.id)
+            .collect();
         let mut next_id = self.next_nat_id.write().await;
-        rule.id = Some(*next_id);
-        *next_id += 1;
+        rule.id = Some(assign_id(&mut next_id, rule.id, &existing)?);
         drop(next_id);
 
         // Add to nftables if enabled
@@ -206,5 +246,50 @@ impl RuleManager {
 impl Default for RuleManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod id_tests {
+    use super::*;
+    use patronus_core::types::{ChainType, FirewallAction, NatType};
+
+    fn disabled(name: &str, id: Option<u64>) -> FirewallRule {
+        let mut r = FirewallRule::new(name.into(), ChainType::Input, FirewallAction::Accept);
+        r.enabled = false; // never touches nft
+        r.id = id;
+        r
+    }
+
+    #[tokio::test]
+    async fn caller_supplied_filter_ids_are_kept() {
+        let mgr = RuleManager::new();
+        // patronus-web numbers its rules itself (and shares one counter
+        // between filter and NAT rules), so ids are not 1, 2, 3...
+        mgr.add_filter_rule(disabled("a", Some(1))).await.unwrap();
+        mgr.add_filter_rule(disabled("b", Some(6))).await.unwrap();
+        mgr.add_filter_rule(disabled("c", None)).await.unwrap();
+        let ids: Vec<_> = mgr
+            .list_filter_rules()
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| (r.name.clone(), r.id.unwrap()))
+            .collect();
+        assert_eq!(ids, vec![("a".into(), 1), ("b".into(), 6), ("c".into(), 7)]);
+        assert!(mgr.add_filter_rule(disabled("dup", Some(6))).await.is_err());
+
+        // (Deleting by these ids against real nft is covered by
+        // patronus-web delete_rule_really_removes_it_from_nftables.)
+    }
+
+    #[tokio::test]
+    async fn caller_supplied_nat_ids_are_kept() {
+        let mut mgr = RuleManager::new();
+        let mut r = NatRule::new("masq".into(), NatType::Masquerade);
+        r.enabled = false;
+        r.id = Some(9);
+        mgr.add_nat_rule(r).await.unwrap();
+        assert_eq!(mgr.list_nat_rules().await.unwrap()[0].id, Some(9));
     }
 }
