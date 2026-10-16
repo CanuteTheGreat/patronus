@@ -70,4 +70,4 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 
-cargo test -p patronus-operator -- --ignored --test-threads=1
+cargo test -p patronus-operator --no-fail-fast -- --ignored --test-threads=1

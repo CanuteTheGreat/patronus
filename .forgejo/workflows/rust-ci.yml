@@ -130,7 +130,7 @@ jobs:
       - name: patronus-web real nftables tests (ignored-by-default set)
         run: cargo test -p patronus-web --lib -- --ignored --test-threads=1
       - name: patronus-sdwan ICMP/UDP probe tests (ignored-by-default set)
-        run: cargo test -p patronus-sdwan --lib health:: -- --ignored --test-threads=1
+        run: "cargo test -p patronus-sdwan --lib health:: -- --ignored --test-threads=1"
       - name: nft "source=any" validation harness (real RuleManager -> real nft)
         run: cargo run -p patronus-firewall --example nft_any_source_validation
 
