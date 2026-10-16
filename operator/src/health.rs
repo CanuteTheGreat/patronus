@@ -94,14 +94,16 @@ impl HealthServer {
 
 /// Handle a health check request
 async fn handle_health_request(
-    socket: tokio::net::TcpStream,
+    mut socket: tokio::net::TcpStream,
     status: HealthStatus,
 ) -> anyhow::Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     let mut buf = vec![0; 1024];
 
-    // Read request
-    socket.readable().await?;
-    let n = socket.try_read(&mut buf)?;
+    // Read request. `readable()` + `try_read()` could spuriously return
+    // WouldBlock and drop the probe; a real async read waits for data.
+    let n = socket.read(&mut buf).await?;
 
     if n == 0 {
         return Ok(());
@@ -144,16 +146,20 @@ async fn handle_health_request(
         _ => (404, "Not Found"),
     };
 
-    // Send response
+    // Send response. This server answers exactly one request per
+    // connection, so it must say `Connection: close`: without it HTTP/1.1
+    // clients (reqwest, kubelet with keep-alive) reused the connection we
+    // had already closed and failed with "IncompleteMessage".
     let response = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+        "HTTP/1.1 {} {}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         status_code,
         status_text(status_code),
         body.len(),
         body
     );
 
-    socket.try_write(response.as_bytes())?;
+    socket.write_all(response.as_bytes()).await?;
+    socket.shutdown().await?;
 
     Ok(())
 }
@@ -196,5 +202,46 @@ mod tests {
         assert_eq!(status_text(200), "OK");
         assert_eq!(status_text(404), "Not Found");
         assert_eq!(status_text(503), "Service Unavailable");
+    }
+
+    /// Regression: a keep-alive HTTP/1.1 client (reqwest's pooled client,
+    /// like the ignored integration test `test_health_response_time`) used
+    /// to fail its second request with IncompleteMessage because the server
+    /// closed the connection without sending `Connection: close`.
+    #[tokio::test]
+    async fn sequential_requests_on_a_pooled_client_all_succeed() {
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let status = HealthStatus::new();
+        status.set_ready(true);
+        let server = HealthServer::new(port, status);
+        tokio::spawn(async move { server.run().await });
+
+        let client = reqwest::Client::new();
+        let base = format!("http://127.0.0.1:{}", port);
+        for _ in 0..50 {
+            if client.get(format!("{base}/healthz")).send().await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        for (path, want) in [("/healthz", 200), ("/readyz", 200), ("/nope", 404)]
+            .iter()
+            .cycle()
+            .take(15)
+        {
+            let r = client
+                .get(format!("{base}{path}"))
+                .send()
+                .await
+                .unwrap_or_else(|e| panic!("GET {path} failed: {e}"));
+            assert_eq!(r.status().as_u16(), *want, "{path}");
+            assert_eq!(
+                r.headers().get("connection").and_then(|v| v.to_str().ok()),
+                Some("close")
+            );
+        }
     }
 }
