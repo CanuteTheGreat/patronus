@@ -50,8 +50,8 @@ impl VlanManager {
 
         // Generate VLAN interface name if not provided
         let vlan_name = name
-            .unwrap_or(&format!("{}.{}", parent, vlan_id))
-            .to_string();
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{}.{}", parent, vlan_id));
 
         // Create VLAN interface using netlink
         self.handle
@@ -102,7 +102,9 @@ impl VlanManager {
             .await
             .map_err(|e| Error::Network(format!("Failed to get interfaces: {}", e)))?
         {
-            use rtnetlink::packet::link::{InfoKind, InfoVlan, LinkAttribute, LinkInfo};
+            use netlink_packet_route::link::{
+                InfoData, InfoKind, InfoVlan, LinkAttribute, LinkInfo,
+            };
 
             // Check if this is a VLAN interface
             let mut is_vlan = false;
@@ -116,8 +118,12 @@ impl VlanManager {
                             LinkInfo::Kind(InfoKind::Vlan) => {
                                 is_vlan = true;
                             }
-                            LinkInfo::Data(InfoVlan::Id(id)) => {
-                                vlan_id = Some(*id);
+                            LinkInfo::Data(InfoData::Vlan(vlan_infos)) => {
+                                for v in vlan_infos {
+                                    if let InfoVlan::Id(id) = v {
+                                        vlan_id = Some(*id);
+                                    }
+                                }
                             }
                             _ => {}
                         }

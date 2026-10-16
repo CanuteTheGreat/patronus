@@ -136,6 +136,7 @@ impl QosManager {
 
     /// Add an HTB class
     pub async fn add_htb_class(&self, class: &HtbClass) -> Result<()> {
+        let prio = class.priority.to_string();
         let mut args = vec![
             "class",
             "add",
@@ -151,7 +152,7 @@ impl QosManager {
             "ceil",
             &class.ceil,
             "prio",
-            &class.priority.to_string(),
+            &prio,
         ];
 
         if let Some(burst) = &class.burst {
@@ -198,6 +199,7 @@ impl QosManager {
         );
 
         // Add u32 filter
+        let prio = class.priority.to_string();
         let mut filter_args = vec![
             "filter",
             "add",
@@ -208,7 +210,7 @@ impl QosManager {
             "protocol",
             "ip",
             "prio",
-            &class.priority.to_string(),
+            &prio,
             "u32",
         ];
 

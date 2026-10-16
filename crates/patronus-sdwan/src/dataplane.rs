@@ -15,7 +15,7 @@ use tracing::{debug, error, info, warn};
 #[cfg(feature = "dataplane")]
 use std::io::{Read as IoRead, Write as IoWrite};
 #[cfg(feature = "dataplane")]
-use tun::Device;
+use tun::AbstractDevice;
 
 /// Data plane configuration
 #[derive(Debug, Clone)]
@@ -98,7 +98,7 @@ pub struct DataPlaneStats {
 /// TUN device wrapper for thread-safe access
 #[cfg(feature = "dataplane")]
 pub struct TunDevice {
-    device: std::sync::Mutex<tun::platform::Device>,
+    device: std::sync::Mutex<tun::Device>,
 }
 
 #[cfg(feature = "dataplane")]
@@ -157,7 +157,7 @@ impl TunDevice {
     /// Get the TUN device name
     pub fn name(&self) -> String {
         let device = self.device.lock().unwrap_or_else(|p| p.into_inner());
-        device.name().to_string()
+        device.tun_name().unwrap_or_default()
     }
 }
 
@@ -565,7 +565,7 @@ impl DataPlane {
                             }
                         }
                     }
-                    Ok(Ok((_, 0))) => {
+                    Ok(Ok(_)) => {
                         // No data read, TUN might be closed
                         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                     }

@@ -13,7 +13,9 @@ default = ["web", "cli", "nftables"]
 
 # Core features
 web = ["patronus-web", "dep:axum"]
-cli = ["dep:clap"]
+# The `patronus` binary IS the CLI: it always parses arguments with clap,
+# so clap is not optional (USE=-cli used to make the emerge fail to compile).
+cli = []
 api = []
 
 # Firewall backends
@@ -66,7 +68,7 @@ patronus-dashboard = { path = "../patronus-dashboard" }
 patronus-captiveportal = { path = "../patronus-captiveportal" }
 
 tokio.workspace = true
-clap = { workspace = true, optional = true, features = ["derive"] }
+clap = { workspace = true, features = ["derive"] }
 axum = { workspace = true, optional = true }
 prometheus = { workspace = true, optional = true }
 anyhow.workspace = true
