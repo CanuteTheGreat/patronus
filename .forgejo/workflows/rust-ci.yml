@@ -50,7 +50,11 @@ jobs:
           components: rustfmt, clippy
       - name: Install dependencies
         run: |
-          sudo apt-get update
+          # The runner image ships a Launchpad git-core PPA we don't install anything
+          # from; a Launchpad 503 made `apt-get update` exit 100 and fail the job
+          # (run 385, 2026-10-16). Drop third-party PPA lists and retry archive flakes.
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
           sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler
       - name: Cache cargo
         uses: actions/cache@v4
@@ -91,7 +95,11 @@ jobs:
         uses: https://github.com/dtolnay/rust-toolchain@stable
       - name: Install libbpf headers
         run: |
-          sudo apt-get update
+          # The runner image ships a Launchpad git-core PPA we don't install anything
+          # from; a Launchpad 503 made `apt-get update` exit 100 and fail the job
+          # (run 385, 2026-10-16). Drop third-party PPA lists and retry archive flakes.
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
           sudo apt-get install -y build-essential libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev libssl-dev pkg-config
       - name: Cache cargo
         uses: actions/cache@v4
@@ -119,7 +127,11 @@ jobs:
         uses: https://github.com/dtolnay/rust-toolchain@stable
       - name: Install libbpf headers
         run: |
-          sudo apt-get update
+          # The runner image ships a Launchpad git-core PPA we don't install anything
+          # from; a Launchpad 503 made `apt-get update` exit 100 and fail the job
+          # (run 385, 2026-10-16). Drop third-party PPA lists and retry archive flakes.
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
           sudo apt-get install -y build-essential libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler
       - name: Cache cargo
         uses: actions/cache@v4
