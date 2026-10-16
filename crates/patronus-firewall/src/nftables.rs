@@ -1,7 +1,7 @@
 //! nftables interaction layer
 
 use patronus_core::{
-    types::{FirewallRule, NatRule, NatType, Protocol},
+    types::{FirewallRule, NatRule, NatType, PortSpec, Protocol},
     Error, Result,
 };
 use std::process::Command;
@@ -183,6 +183,47 @@ fn is_valid_interface_name(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
 }
 
+/// nft expression for the protocol and port matches.
+///
+/// These used to be emitted as separate words -- a bare `tcp` before the
+/// address matches and a bare `dport N` after them -- which nft rejects
+/// (`iifname "eth0" tcp ip saddr 10.0.0.0/8 dport 80` -> "syntax error,
+/// unexpected ip"), so every rule with a protocol and a source/destination
+/// failed to apply. A port match must be written `tcp dport N` and needs
+/// tcp or udp; a protocol without ports is `meta l4proto <proto>`.
+fn l4_match(
+    protocol: Option<&Protocol>,
+    sport: Option<&PortSpec>,
+    dport: Option<&PortSpec>,
+) -> Result<Vec<String>> {
+    let proto = match protocol {
+        Some(Protocol::Tcp) => Some("tcp"),
+        Some(Protocol::Udp) => Some("udp"),
+        Some(Protocol::Icmp) => Some("icmp"),
+        Some(Protocol::All) | None => None,
+    };
+    let mut out = Vec::new();
+    if sport.is_some() || dport.is_some() {
+        let p = match proto {
+            Some(p @ ("tcp" | "udp")) => p,
+            _ => {
+                return Err(Error::Firewall(
+                    "Invalid rule: a port match needs protocol tcp or udp".to_string(),
+                ))
+            }
+        };
+        if let Some(s) = sport {
+            out.push(format!("{p} sport {s}"));
+        }
+        if let Some(d) = dport {
+            out.push(format!("{p} dport {d}"));
+        }
+    } else if let Some(p) = proto {
+        out.push(format!("meta l4proto {p}"));
+    }
+    Ok(out)
+}
+
 /// Convert a FirewallRule to nftables command. Returns an error instead of
 /// building a script from a `source`/`destination`/`interface_in`/`interface_out`
 /// value that doesn't pass validation, rather than silently splicing an
@@ -232,16 +273,6 @@ pub fn rule_to_nft_command(rule: &FirewallRule) -> Result<String> {
         }
     }
 
-    // Protocol
-    if let Some(ref protocol) = rule.protocol {
-        match protocol {
-            Protocol::Tcp => parts.push("tcp".to_string()),
-            Protocol::Udp => parts.push("udp".to_string()),
-            Protocol::Icmp => parts.push("icmp".to_string()),
-            Protocol::All => {}
-        }
-    }
-
     // Source. "any"/"all" means "match every source" -- the correct way to
     // express that in nft is to omit the `ip saddr` match entirely, not to
     // splice the literal word "any" in as if it were an address (nft parses
@@ -275,15 +306,12 @@ pub fn rule_to_nft_command(rule: &FirewallRule) -> Result<String> {
         }
     }
 
-    // Source port
-    if let Some(ref sport) = rule.sport {
-        parts.push(format!("sport {}", sport));
-    }
-
-    // Destination port
-    if let Some(ref dport) = rule.dport {
-        parts.push(format!("dport {}", dport));
-    }
+    // Protocol / ports (after the address matches -- see l4_match)
+    parts.extend(l4_match(
+        rule.protocol.as_ref(),
+        rule.sport.as_ref(),
+        rule.dport.as_ref(),
+    )?);
 
     // Action
     parts.push(rule.action.to_string());
@@ -347,11 +375,6 @@ pub fn nat_rule_to_nft_command(rule: &NatRule) -> Result<String> {
         }
     }
 
-    // Protocol
-    if let Some(ref protocol) = rule.protocol {
-        parts.push(protocol.to_string());
-    }
-
     // Source (see rule_to_nft_command's "any"/"all" note, above)
     if let Some(ref src) = rule.source {
         if !is_valid_address_spec(src) {
@@ -378,10 +401,8 @@ pub fn nat_rule_to_nft_command(rule: &NatRule) -> Result<String> {
         }
     }
 
-    // Destination port
-    if let Some(ref dport) = rule.dport {
-        parts.push(format!("dport {}", dport));
-    }
+    // Protocol / port
+    parts.extend(l4_match(rule.protocol.as_ref(), None, rule.dport.as_ref())?);
 
     // NAT action (to_address is a typed std::net::IpAddr, not a raw string,
     // so it can't carry an injection payload)
@@ -547,6 +568,37 @@ mod qa_regression_tests {
             rule_to_nft_command(&rule).expect("'any'/'all' interface must not be rejected");
         assert!(!command.contains("iifname \"any\""));
         assert!(!command.contains("oifname \"ALL\""));
+    }
+
+    /// Regression: protocol + address + port used to render as
+    /// `tcp ip saddr X dport 80`, which nft rejects.
+    #[test]
+    fn protocol_and_ports_render_as_valid_nft_syntax() {
+        let mut rule = base_rule();
+        rule.interface_in = Some("eth0".to_string());
+        rule.source = Some("10.0.0.0/8".to_string());
+        rule.protocol = Some(Protocol::Tcp);
+        rule.dport = Some(PortSpec::Single(80));
+        let c = rule_to_nft_command(&rule).unwrap();
+        assert!(
+            c.contains("iifname \"eth0\" ip saddr 10.0.0.0/8 tcp dport 80"),
+            "{c}"
+        );
+
+        rule.dport = Some(PortSpec::Range(8000, 8010));
+        rule.protocol = Some(Protocol::Udp);
+        assert!(rule_to_nft_command(&rule)
+            .unwrap()
+            .contains("udp dport 8000-8010"));
+
+        rule.dport = None;
+        assert!(rule_to_nft_command(&rule)
+            .unwrap()
+            .contains("meta l4proto udp"));
+
+        rule.protocol = None;
+        rule.dport = Some(PortSpec::Single(80));
+        assert!(rule_to_nft_command(&rule).is_err(), "port without tcp/udp");
     }
 
     #[test]

@@ -106,31 +106,73 @@ impl FirewallManager {
     /// user-submitted rule (see `add_rule`, below) instead of a parallel
     /// one that only touches the in-memory dashboard list.
     fn default_rule_to_core(rule: &crate::templates::FirewallRule) -> CoreFirewallRule {
-        let protocol = match rule.protocol.to_ascii_uppercase().as_str() {
-            "TCP" => Some(patronus_core::types::Protocol::Tcp),
-            "UDP" => Some(patronus_core::types::Protocol::Udp),
-            "ICMP" => Some(patronus_core::types::Protocol::Icmp),
-            _ => None, // "any"/"ANY"/unrecognized -- match every protocol
+        Self::rule_to_core(None, rule).expect("seeded default rules are valid")
+    }
+
+    /// Strictly translate a dashboard rule into the typed rule nftables gets.
+    ///
+    /// User rules used to be applied with protocol and port dropped and with
+    /// any action other than the exact string "Accept" turned into Drop, so
+    /// "accept tcp/8080 from X" became `ip saddr X drop` and
+    /// "Accept tcp/8080 from X" became `ip saddr X accept` -- every port
+    /// open to X. Unknown values are now rejected ("Invalid ..." -> 400)
+    /// instead of being silently widened or flipped.
+    fn rule_to_core(
+        id: Option<u64>,
+        rule: &crate::templates::FirewallRule,
+    ) -> anyhow::Result<CoreFirewallRule> {
+        let protocol = match rule.protocol.trim().to_ascii_lowercase().as_str() {
+            "tcp" => Some(patronus_core::types::Protocol::Tcp),
+            "udp" => Some(patronus_core::types::Protocol::Udp),
+            "icmp" => Some(patronus_core::types::Protocol::Icmp),
+            "any" | "all" | "" => None,
+            other => anyhow::bail!("Invalid protocol {other:?} (tcp, udp, icmp or any)"),
         };
-        let dport = if rule.port.eq_ignore_ascii_case("any") {
+        let port = rule.port.trim();
+        let dport = if port.is_empty() || port.eq_ignore_ascii_case("any") {
             None
         } else {
-            rule.port
-                .parse::<u16>()
-                .ok()
-                .map(patronus_core::types::PortSpec::Single)
+            let parse = |p: &str| {
+                p.trim()
+                    .parse::<u16>()
+                    .ok()
+                    .filter(|n| *n != 0)
+                    .ok_or_else(|| anyhow::anyhow!("Invalid port {:?}", rule.port))
+            };
+            let spec = if let Some((lo, hi)) = port.split_once('-') {
+                let (lo, hi) = (parse(lo)?, parse(hi)?);
+                if lo > hi {
+                    anyhow::bail!("Invalid port range {:?}", rule.port);
+                }
+                patronus_core::types::PortSpec::Range(lo, hi)
+            } else if port.contains(',') {
+                patronus_core::types::PortSpec::Multiple(
+                    port.split(',').map(parse).collect::<anyhow::Result<_>>()?,
+                )
+            } else {
+                patronus_core::types::PortSpec::Single(parse(port)?)
+            };
+            if !matches!(
+                protocol,
+                Some(patronus_core::types::Protocol::Tcp | patronus_core::types::Protocol::Udp)
+            ) {
+                anyhow::bail!("Invalid rule: a port needs protocol tcp or udp");
+            }
+            Some(spec)
+        };
+        let action = match rule.action.trim().to_ascii_lowercase().as_str() {
+            "accept" | "allow" | "pass" => FirewallAction::Accept,
+            "drop" | "deny" | "block" => FirewallAction::Drop,
+            "reject" => FirewallAction::Reject,
+            other => anyhow::bail!("Invalid action {other:?} (accept, drop or reject)"),
         };
 
-        CoreFirewallRule {
-            id: None,
+        Ok(CoreFirewallRule {
+            id,
             name: rule.name.clone(),
             enabled: rule.enabled,
             chain: ChainType::Input,
-            action: if rule.action == "Accept" {
-                FirewallAction::Accept
-            } else {
-                FirewallAction::Drop
-            },
+            action,
             source: Some(rule.source.clone()),
             destination: Some(rule.destination.clone()),
             protocol,
@@ -139,7 +181,7 @@ impl FirewallManager {
             interface_in: Some(rule.interface.clone()),
             interface_out: None,
             comment: Some(rule.description.clone()),
-        }
+        })
     }
 
     /// Build the manager and seed its "default" rules (Allow SSH/HTTPS/Web
@@ -299,15 +341,12 @@ impl FirewallManager {
         Ok(rules.iter().find(|r| r.id == id).cloned())
     }
 
-    pub async fn add_rule(
-        &self,
+    /// Dashboard representation of an API rule.
+    fn api_to_template(
+        id: u32,
         rule: crate::routes::api::firewall::FirewallRule,
-    ) -> anyhow::Result<u32> {
-        let mut next_id = self.next_id.write().await;
-        let id = *next_id;
-        *next_id += 1;
-
-        let new_rule = crate::templates::FirewallRule {
+    ) -> crate::templates::FirewallRule {
+        crate::templates::FirewallRule {
             id,
             name: rule.description.clone(),
             action: rule.action.clone(),
@@ -327,27 +366,20 @@ impl FirewallManager {
             },
             destination_display: format!("{}:{}", rule.destination, rule.port),
             port_display: rule.port,
-        };
+        }
+    }
 
-        let core_rule = CoreFirewallRule {
-            id: Some(id as u64),
-            name: new_rule.name.clone(),
-            enabled: new_rule.enabled,
-            chain: ChainType::Input,
-            action: if new_rule.action == "Accept" {
-                FirewallAction::Accept
-            } else {
-                FirewallAction::Drop
-            },
-            source: Some(new_rule.source.clone()),
-            destination: Some(new_rule.destination.clone()),
-            protocol: None,
-            sport: None,
-            dport: None,
-            interface_in: Some(new_rule.interface.clone()),
-            interface_out: None,
-            comment: Some(new_rule.description.clone()),
-        };
+    pub async fn add_rule(
+        &self,
+        rule: crate::routes::api::firewall::FirewallRule,
+    ) -> anyhow::Result<u32> {
+        let mut next_id = self.next_id.write().await;
+        let id = *next_id;
+        *next_id += 1;
+
+        let new_rule = Self::api_to_template(id, rule);
+
+        let core_rule = Self::rule_to_core(Some(id as u64), &new_rule)?;
 
         let rule_manager = self.rule_manager.write().await;
         rule_manager
@@ -362,30 +394,34 @@ impl FirewallManager {
         Ok(id)
     }
 
+    /// Update a rule in nftables *and* the dashboard. This used to edit
+    /// only the in-memory list, so the UI showed the new rule while
+    /// nftables kept enforcing the old one.
     pub async fn update_rule(
         &self,
         id: u32,
         rule: crate::routes::api::firewall::FirewallRule,
     ) -> anyhow::Result<()> {
+        let rule_manager = self.rule_manager.write().await;
         let mut rules = self.rules.write().await;
-        if let Some(existing) = rules.iter_mut().find(|r| r.id == id) {
-            existing.action = rule.action;
-            existing.interface = rule.interface;
-            existing.protocol = rule.protocol.clone();
-            existing.source = rule.source.clone();
-            existing.destination = rule.destination.clone();
-            existing.port = rule.port.clone();
-            existing.description = rule.description;
-            existing.enabled = rule.enabled;
-            existing.protocol_display = rule.protocol.to_uppercase();
-            existing.source_display = if rule.source == "any" {
-                "Any".to_string()
-            } else {
-                rule.source
-            };
-            existing.destination_display = format!("{}:{}", rule.destination, rule.port);
-            existing.port_display = rule.port;
+        let Some(pos) = rules.iter().position(|r| r.id == id) else {
+            anyhow::bail!("Rule {id} not found");
+        };
+        let old = rules[pos].clone();
+        let updated = Self::api_to_template(id, rule);
+        let core = Self::rule_to_core(Some(id as u64), &updated)?;
+        rule_manager
+            .remove_filter_rule(id as u64)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to remove old rule from nftables: {e}"))?;
+        if let Err(e) = rule_manager.add_filter_rule(core).await {
+            // Put the old rule back so dashboard and nftables stay in sync.
+            if let Ok(old_core) = Self::rule_to_core(Some(id as u64), &old) {
+                let _ = rule_manager.add_filter_rule(old_core).await;
+            }
+            anyhow::bail!("failed to apply updated rule to nftables: {e}");
         }
+        rules[pos] = updated;
         Ok(())
     }
 
@@ -1834,6 +1870,91 @@ mod rule_apply_tests {
             }
         }
         assert!(table.contains("Allow SSH access"), "{table}");
+    }
+
+    /// User rules used to lose protocol/port and flip any action other than
+    /// the exact string "Accept" to Drop (runs everywhere, no nft needed).
+    #[test]
+    fn rule_translation_keeps_protocol_port_and_action() {
+        use patronus_core::types::{PortSpec, Protocol};
+        let t = |action: &str, proto: &str, port: &str| {
+            let mut r = sample_rule("198.51.100.0/24");
+            r.action = action.into();
+            r.protocol = proto.into();
+            r.port = port.into();
+            FirewallManager::rule_to_core(Some(9), &FirewallManager::api_to_template(9, r))
+        };
+        let c = t("accept", "tcp", "8080").unwrap();
+        assert!(matches!(c.action, FirewallAction::Accept));
+        assert!(matches!(c.protocol, Some(Protocol::Tcp)));
+        assert!(matches!(c.dport, Some(PortSpec::Single(8080))));
+        assert!(matches!(
+            t("Accept", "TCP", "8080").unwrap().action,
+            FirewallAction::Accept
+        ));
+        assert!(matches!(
+            t("drop", "udp", "any").unwrap().action,
+            FirewallAction::Drop
+        ));
+        assert!(matches!(
+            t("reject", "tcp", "22").unwrap().action,
+            FirewallAction::Reject
+        ));
+        assert!(matches!(
+            t("accept", "tcp", "8000-8010").unwrap().dport,
+            Some(PortSpec::Range(8000, 8010))
+        ));
+        for (a, p, port) in [
+            ("acept", "tcp", "80"),
+            ("accept", "sctp", "80"),
+            ("accept", "tcp", "http"),
+            ("accept", "tcp", "70000"),
+            ("accept", "any", "80"),
+            ("accept", "tcp", "90-80"),
+        ] {
+            let e = t(a, p, port).unwrap_err().to_string();
+            assert!(e.contains("Invalid"), "{a}/{p}/{port}: {e}");
+        }
+    }
+
+    /// "accept tcp/8080 from X" must become exactly that in nftables (it was
+    /// `ip saddr X drop`), and an update must reach nftables (it only edited
+    /// the dashboard list).
+    #[tokio::test]
+    #[ignore] // Requires real nftables (CAP_NET_ADMIN + nf_tables)
+    async fn added_and_updated_rules_reach_nftables_as_specified() {
+        let fw = fresh_manager().await;
+        let marker = format!("port-rule-{}", std::process::id());
+        let mut rule = sample_rule("198.51.100.0/24");
+        rule.action = "accept".into();
+        rule.port = "8080".into();
+        rule.description = marker.clone();
+        let id = fw.add_rule(rule).await.unwrap();
+        let line = |t: &str| {
+            t.lines()
+                .find(|l| l.contains(&marker))
+                .unwrap_or_else(|| panic!("rule missing:\n{t}"))
+                .to_string()
+        };
+        let l = line(&nft_table());
+        assert!(
+            l.contains("tcp dport 8080") && l.contains("accept") && l.contains("198.51.100.0/24"),
+            "{l}"
+        );
+
+        let mut upd = sample_rule("198.51.100.0/24");
+        upd.action = "drop".into();
+        upd.port = "9090".into();
+        upd.description = marker.clone();
+        fw.update_rule(id, upd).await.unwrap();
+        let table = nft_table();
+        let l = line(&table);
+        assert!(l.contains("tcp dport 9090") && l.contains("drop"), "{l}");
+        assert_eq!(table.matches(&marker).count(), 1, "{table}");
+        let shown = fw.get_rule(id).await.unwrap().unwrap();
+        assert_eq!(shown.port, "9090");
+        fw.delete_rule(id).await.unwrap();
+        assert!(!nft_table().contains(&marker));
     }
 
     /// A user-added accept rule must actually be reachable: the seeded

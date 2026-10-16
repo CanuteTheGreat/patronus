@@ -128,7 +128,11 @@ pub async fn update_rule(
         Err(e) => {
             tracing::error!("Failed to update firewall rule {}: {}", id, e);
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                if e.to_string().contains("not found") {
+                    StatusCode::NOT_FOUND
+                } else {
+                    status_for_apply_error(&e)
+                },
                 Json(serde_json::json!({
                     "error": format!("Failed to update rule: {}", e)
                 })),
