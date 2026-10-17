@@ -481,10 +481,17 @@ impl ConfigStore {
                     comment: row.get("comment"),
                     log: row.get::<i32, _>("log") != 0,
                     schedule: row.get("schedule"),
+                    // An unknown family must not load as "both families"
+                    // (that would widen an accept rule): fail closed.
                     ip_version: match row.get::<Option<String>, _>("ip_version").as_deref() {
+                        None => None,
                         Some("ipv4") => Some(IpVersion::V4),
                         Some("ipv6") => Some(IpVersion::V6),
-                        _ => None,
+                        Some(other) => {
+                            return Err(Error::Config(format!(
+                                "rule {id}: unknown ip_version {other:?} in the store"
+                            )))
+                        }
                     },
                 },
                 RuleOrigin::parse(&row.get::<String, _>("origin")),
@@ -1206,6 +1213,7 @@ mod tests {
             ("dport", "not-json", "unreadable dport"),
             ("sport", "{\"Single\":70000}", "unreadable sport"),
             ("protocol", "sctp", "unknown protocol"),
+            ("ip_version", "ipv5", "unknown ip_version"),
         ] {
             let s = ConfigStore::open_in_memory().await.unwrap();
             let id = s.save_firewall_rule(&rule("damaged")).await.unwrap();
@@ -1238,6 +1246,247 @@ mod tests {
         assert_eq!(back.protocol, Some(Protocol::All));
         assert_eq!(back.sport, Some(PortSpec::Range(1024, 2048)));
         assert_eq!(back.dport, Some(PortSpec::Multiple(vec![22, 8443])));
+    }
+
+    // --- tests added for surviving mutants (ci/mutants.sh baseline) ---
+
+    #[test]
+    fn db_path_comes_from_patronus_db_or_the_installed_default() {
+        // (env is process-global: only this test touches PATRONUS_DB)
+        std::env::remove_var("PATRONUS_DB");
+        assert_eq!(
+            default_db_path(),
+            PathBuf::from("/var/lib/patronus/config.db")
+        );
+        std::env::set_var("PATRONUS_DB", "/tmp/x/config.db");
+        assert_eq!(default_db_path(), PathBuf::from("/tmp/x/config.db"));
+        std::env::remove_var("PATRONUS_DB");
+    }
+
+    #[tokio::test]
+    async fn disabled_rules_and_every_origin_round_trip() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let mut off = rule("off");
+        off.enabled = false;
+        s.save_firewall_rule(&off).await.unwrap();
+        s.insert_firewall_rule(&rule("g"), RuleOrigin::Gitops)
+            .await
+            .unwrap();
+        s.insert_firewall_rule(&rule("d"), RuleOrigin::Default)
+            .await
+            .unwrap();
+        let rows = s.load_firewall_rules_with_origin().await.unwrap();
+        let get = |n: &str| rows.iter().find(|(r, _)| r.name == n).unwrap().clone();
+        assert!(!get("off").0.enabled, "a disabled rule must load disabled");
+        assert!(get("g").0.enabled);
+        assert_eq!(get("g").1, RuleOrigin::Gitops);
+        assert_eq!(get("d").1, RuleOrigin::Default);
+        for o in [
+            RuleOrigin::System,
+            RuleOrigin::Default,
+            RuleOrigin::User,
+            RuleOrigin::Gitops,
+        ] {
+            assert_eq!(RuleOrigin::parse(o.as_str()), o);
+        }
+
+        let mut n = NatRule::new("nat-off".into(), NatType::Masquerade);
+        n.enabled = false;
+        s.save_nat_rule(&n).await.unwrap();
+        s.save_nat_rule(&NatRule::new("nat-on".into(), NatType::Masquerade))
+            .await
+            .unwrap();
+        let nats = s.load_nat_rules().await.unwrap();
+        assert!(!nats.iter().find(|r| r.name == "nat-off").unwrap().enabled);
+        assert!(nats.iter().find(|r| r.name == "nat-on").unwrap().enabled);
+    }
+
+    /// The evaluation order is what keeps a user's block rule from being
+    /// shadowed by the seeded "Allow LAN to any": system, then user/gitops,
+    /// then defaults -- regardless of insertion order.
+    #[tokio::test]
+    async fn defaults_sort_after_user_rules_and_system_first() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.insert_firewall_rule(&rule("default"), RuleOrigin::Default)
+            .await
+            .unwrap();
+        s.save_firewall_rule(&rule("user")).await.unwrap();
+        s.insert_firewall_rule(&rule("gitops"), RuleOrigin::Gitops)
+            .await
+            .unwrap();
+        s.insert_firewall_rule(&rule("system"), RuleOrigin::System)
+            .await
+            .unwrap();
+        let names: Vec<String> = s
+            .load_firewall_rules()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+        assert_eq!(names, vec!["system", "user", "gitops", "default"]);
+    }
+
+    #[tokio::test]
+    async fn nat_delete_removes_user_rows_and_refuses_system_rows() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let u = s
+            .save_nat_rule(&NatRule::new("u".into(), NatType::Masquerade))
+            .await
+            .unwrap() as u64;
+        let sys = s
+            .insert_nat_rule(
+                &NatRule::new("sys".into(), NatType::Masquerade),
+                RuleOrigin::System,
+            )
+            .await
+            .unwrap() as u64;
+        s.delete_nat_rule(u).await.unwrap();
+        assert!(s.delete_nat_rule(sys).await.is_err());
+        let left: Vec<String> = s
+            .load_nat_rules()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+        assert_eq!(left, vec!["sys"]);
+    }
+
+    #[tokio::test]
+    async fn delete_by_name_only_touches_that_origin_and_name() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        for (n, o) in [
+            ("web", RuleOrigin::Gitops),
+            ("web", RuleOrigin::User),
+            ("other", RuleOrigin::Gitops),
+        ] {
+            s.insert_firewall_rule(&rule(n), o).await.unwrap();
+            s.insert_nat_rule(&NatRule::new(n.into(), NatType::Masquerade), o)
+                .await
+                .unwrap();
+        }
+        s.delete_rules_by_name(RuleOrigin::Gitops, "web")
+            .await
+            .unwrap();
+        let fw = s.load_firewall_rules_with_origin().await.unwrap();
+        assert_eq!(fw.len(), 2);
+        assert!(!fw
+            .iter()
+            .any(|(r, o)| r.name == "web" && *o == RuleOrigin::Gitops));
+        let nat = s.load_nat_rules_with_origin().await.unwrap();
+        assert_eq!(nat.len(), 2);
+        assert!(!nat
+            .iter()
+            .any(|(r, o)| r.name == "web" && *o == RuleOrigin::Gitops));
+    }
+
+    #[tokio::test]
+    async fn sysctls_validate_key_and_value_and_can_be_deleted() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        // a valid key with a value that would inject a second line
+        assert!(s
+            .set_sysctl("net.ipv4.ip_forward", "1\nkernel.panic=1", RuleOrigin::User)
+            .await
+            .is_err());
+        assert!(s
+            .set_sysctl("../../etc", "1", RuleOrigin::User)
+            .await
+            .is_err());
+        s.set_sysctl("net.ipv4.ip_forward", "1", RuleOrigin::User)
+            .await
+            .unwrap();
+        s.set_sysctl("net.ipv4.ip_forward", "0", RuleOrigin::User)
+            .await
+            .unwrap();
+        assert_eq!(
+            s.load_sysctls().await.unwrap(),
+            vec![("net.ipv4.ip_forward".to_string(), "0".to_string())]
+        );
+        s.delete_sysctl("net.ipv4.ip_forward").await.unwrap();
+        assert!(s.load_sysctls().await.unwrap().is_empty());
+        assert!(is_valid_sysctl_key(&format!("a.{}", "b".repeat(253))));
+        assert!(!is_valid_sysctl_key(&format!("a.{}", "b".repeat(254))));
+    }
+
+    #[tokio::test]
+    async fn audit_and_backups_are_written() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.audit(
+            "web",
+            "create",
+            "firewall_rule",
+            Some("7"),
+            &serde_json::json!({"a": 1}),
+        )
+        .await
+        .unwrap();
+        let (user, action, id): (String, String, String) =
+            sqlx::query_as("SELECT user, action, entity_id FROM audit_log")
+                .fetch_one(s.pool().unwrap())
+                .await
+                .unwrap();
+        assert_eq!(
+            (user.as_str(), action.as_str(), id.as_str()),
+            ("web", "create", "7")
+        );
+        s.save_firewall_rule(&rule("in-backup")).await.unwrap();
+        let a = s.create_backup("b1", Some("first")).await.unwrap();
+        let b = s.create_backup("b2", None).await.unwrap();
+        assert!(a > 0 && b == a + 1, "{a} {b}");
+        let doc: String = sqlx::query_scalar("SELECT config_json FROM config_backups WHERE id = ?")
+            .bind(a)
+            .fetch_one(s.pool().unwrap())
+            .await
+            .unwrap();
+        assert!(doc.contains("in-backup"));
+    }
+
+    #[tokio::test]
+    async fn export_import_keeps_real_and_integer_columns_exact() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        sqlx::query("CREATE TABLE lane_x (id INTEGER PRIMARY KEY, ratio REAL, big INTEGER)")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO lane_x VALUES (1, 0.25, 9007199254740993)")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        let doc = s.export_json().await.unwrap();
+        assert_eq!(doc["tables"]["lane_x"][0]["ratio"], serde_json::json!(0.25));
+        sqlx::query("DELETE FROM lane_x")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        s.import_json(&doc).await.unwrap();
+        let (ratio, big): (f64, i64) = sqlx::query_as("SELECT ratio, big FROM lane_x")
+            .fetch_one(s.pool().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(ratio, 0.25);
+        assert_eq!(
+            big, 9007199254740993,
+            "integers must not round-trip through f64"
+        );
+        let ty: String = sqlx::query_scalar("SELECT typeof(big) FROM lane_x")
+            .fetch_one(s.pool().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(ty, "integer");
+    }
+
+    #[tokio::test]
+    async fn revisions_are_pruned_to_the_newest_max() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let mut last = 0;
+        for i in 0..(MAX_REVISIONS + 5) {
+            last = s.snapshot("t", &format!("r{i}")).await.unwrap();
+        }
+        let revs = s.list_revisions().await.unwrap();
+        assert_eq!(revs.len() as i64, MAX_REVISIONS);
+        assert_eq!(revs[0].0, last);
+        assert_eq!(revs.last().unwrap().0, last - MAX_REVISIONS + 1);
     }
 
     #[tokio::test]
@@ -1319,5 +1568,139 @@ mod tests {
         assert!(!is_valid_sysctl_key("net.ipv4 .x"));
         assert!(is_valid_role("wan") && is_valid_role("lan") && is_valid_role("opt2"));
         assert!(!is_valid_role("opt") && !is_valid_role("dmz"));
+    }
+
+    #[tokio::test]
+    async fn rule_order_pins_system_first_and_users_before_defaults() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let ins = |name: &'static str, o: RuleOrigin| {
+            let s = &s;
+            async move { s.insert_firewall_rule(&rule(name), o).await.unwrap() as u64 }
+        };
+        let d1 = ins("d1", RuleOrigin::Default).await;
+        let u1 = ins("u1", RuleOrigin::User).await;
+        let sys = ins("sys", RuleOrigin::System).await;
+        let u2 = ins("u2", RuleOrigin::User).await;
+        let d2 = ins("d2", RuleOrigin::Default).await;
+        async fn order(s: &ConfigStore) -> Vec<u64> {
+            s.firewall_rule_order()
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|(i, _)| i)
+                .collect()
+        }
+        async fn priorities(s: &ConfigStore) -> Vec<i64> {
+            sqlx::query_scalar("SELECT priority FROM firewall_rules ORDER BY priority, id")
+                .fetch_all(s.pool().unwrap())
+                .await
+                .unwrap()
+        }
+        assert_eq!(order(&s).await, vec![sys, u1, u2, d1, d2]);
+        let names: Vec<String> = s
+            .load_firewall_rules()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+        assert_eq!(names, ["sys", "u1", "u2", "d1", "d2"]);
+        // explicit order: positions 10, 20, ...; the system rule stays pinned
+        s.set_firewall_rule_order(&[d2, u2, d1, u1]).await.unwrap();
+        assert_eq!(order(&s).await, vec![sys, d2, u2, d1, u1]);
+        assert_eq!(priorities(&s).await, vec![-1000, 10, 20, 30, 40]);
+        // a new user rule goes in front of the first default rule
+        let u3 = ins("u3", RuleOrigin::User).await;
+        assert_eq!(order(&s).await, vec![sys, u3, d2, u2, d1, u1]);
+        // invalid orders are refused and change nothing
+        let e = s.set_firewall_rule_order(&[u3, d2]).await.unwrap_err();
+        assert!(e.to_string().contains("exactly once"), "{e}");
+        let e = s
+            .set_firewall_rule_order(&[sys, u3, d2, u2, d1, u1])
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("pinned"), "{e}");
+        let e = s
+            .set_firewall_rule_order(&[u3, u3, d2, u2, d1])
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("exactly once"), "{e}");
+        assert_eq!(order(&s).await, vec![sys, u3, d2, u2, d1, u1]);
+    }
+
+    #[tokio::test]
+    async fn ip_version_round_trips_and_absent_means_both_families() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        for v in [None, Some(IpVersion::V4), Some(IpVersion::V6)] {
+            let mut r = rule("fam");
+            r.ip_version = v;
+            let id = s.save_firewall_rule(&r).await.unwrap() as u64;
+            let (got, _) = s.get_firewall_rule(id).await.unwrap().unwrap();
+            assert_eq!(got.ip_version, v);
+        }
+    }
+
+    #[tokio::test]
+    async fn nat_rules_update_get_reflection_and_origin_order() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let mut d = NatRule::new("default".into(), NatType::Masquerade);
+        d.interface_out = Some("@wan".into());
+        let did = s.insert_nat_rule(&d, RuleOrigin::Default).await.unwrap() as u64;
+        let mut pf = NatRule::new(
+            "pf".into(),
+            NatType::Dnat {
+                to_address: "192.168.1.10".parse().unwrap(),
+                to_port: Some(22),
+            },
+        );
+        pf.interface_in = Some("@wan".into());
+        pf.protocol = Some(Protocol::Tcp);
+        pf.dport = Some(PortSpec::Single(8022));
+        let uid = s.save_nat_rule(&pf).await.unwrap() as u64;
+        let sys = NatRule::new("sys".into(), NatType::Masquerade);
+        let sid = s.insert_nat_rule(&sys, RuleOrigin::System).await.unwrap() as u64;
+        // evaluation order: system, user, default -- whatever the insert order
+        let ids: Vec<u64> = s
+            .load_nat_rules()
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| r.id.unwrap())
+            .collect();
+        assert_eq!(ids, vec![sid, uid, did]);
+
+        let (got, o) = s.get_nat_rule(uid).await.unwrap().unwrap();
+        assert_eq!(o, RuleOrigin::User);
+        assert_eq!(got.name, "pf");
+        assert!(!got.reflection);
+        assert!(s.get_nat_rule(9999).await.unwrap().is_none());
+
+        let mut edited = pf.clone();
+        edited.name = "pf-edited".into();
+        edited.reflection = true;
+        edited.enabled = false;
+        edited.nat_type = NatType::OneToOne {
+            external: "203.0.113.5".parse().unwrap(),
+            internal: "192.168.1.20".parse().unwrap(),
+        };
+        s.update_nat_rule(uid, &edited).await.unwrap();
+        let (got, o) = s.get_nat_rule(uid).await.unwrap().unwrap();
+        assert_eq!(o, RuleOrigin::User, "origin kept");
+        assert_eq!(got.name, "pf-edited");
+        assert!(got.reflection && !got.enabled);
+        assert!(matches!(
+            got.nat_type,
+            NatType::OneToOne { external, internal }
+                if external.to_string() == "203.0.113.5" && internal.to_string() == "192.168.1.20"
+        ));
+        assert_eq!(got.interface_in.as_deref(), Some("@wan"));
+        // position kept after the edit
+        assert_eq!(s.load_nat_rules().await.unwrap()[1].id, Some(uid));
+        // missing and system rules are refused
+        let e = s.update_nat_rule(9999, &edited).await.unwrap_err();
+        assert!(e.to_string().contains("not found"), "{e}");
+        let e = s.update_nat_rule(sid, &edited).await.unwrap_err();
+        assert!(e.to_string().contains("system rule"), "{e}");
+        assert_eq!(s.get_nat_rule(sid).await.unwrap().unwrap().0.name, "sys");
     }
 }

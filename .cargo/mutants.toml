@@ -1,0 +1,31 @@
+# cargo-mutants configuration (ci/mutants.sh, nightly).
+#
+# Excluded: functions whose only job is to talk to the kernel (`nft`), which
+# the mutants job cannot do (the CI job container has no CAP_NET_ADMIN).
+# They are proven by real kernel state instead: ci/netlab/failure-atomic-
+# apply.sh (lockdown load, previous ruleset kept, forwarding switched off),
+# journey-first-boot.sh (apply), lane-a-foundation.sh (firewall flush =
+# teardown), and the privileged #[ignore] tests in patronus-web.
+exclude_re = [
+    "FirewallApplier::load_lockdown",
+    "patronus-firewall/src/applier.rs.*table_exists",
+    "<impl Applier for FirewallApplier>::apply",
+    "<impl Applier for FirewallApplier>::teardown",
+    "nftables.rs.*execute_nft_command",
+    "nftables.rs.*execute_nft_script",
+    "nftables.rs.*initialize_table",
+    "nftables.rs.*flush_table",
+    "nftables.rs.*delete_table",
+    "nftables.rs.*list_ruleset",
+    "nftables.rs.*list_table",
+    "nftables.rs.*add_rule ",
+    "nftables.rs.*add_nat_rule ",
+    "nftables.rs.*enable_ip_forwarding",
+    "nftables.rs.*disable_ip_forwarding",
+    # ConfigStore::close only releases pool connections early (they are
+    # released on drop anyway); no observable difference to assert.
+    "ConfigStore::close",
+    # Equivalent mutant: the default `&[]` and `Vec::leak(Vec::new())` are
+    # the same empty slice.
+    "patronus-config/src/applier.rs.*Applier::resource_kinds",
+]

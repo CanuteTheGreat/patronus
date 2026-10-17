@@ -344,11 +344,55 @@ mod tests {
         );
         u.interface_in = Some("@lan".into());
         s.save_firewall_rule(&u).await.unwrap();
+        let mut nat = NatRule::new(
+            "Outbound NAT".into(),
+            patronus_core::types::NatType::Masquerade,
+        );
+        nat.interface_out = Some("@lan".into());
+        s.save_nat_rule(&nat).await.unwrap();
         ensure_defaults(&s, None, &[]).await.unwrap();
         assert_eq!(
             s.load_firewall_rules_with_origin().await.unwrap().len(),
             default_filter_rules().len() + 1
         );
+        assert_eq!(
+            s.load_nat_rules().await.unwrap().len(),
+            default_nat_rules().len() + 1
+        );
+    }
+
+    #[test]
+    fn bootstrap_file_missing_is_none_present_is_parsed_unreadable_is_an_error() {
+        let d = tempfile::tempdir().unwrap();
+        assert_eq!(Bootstrap::load(&d.path().join("nope.toml")).unwrap(), None);
+        let f = d.path().join("patronus.toml");
+        std::fs::write(&f, "[network]\nwan_interfaces = [\"eth0\"]\n").unwrap();
+        assert_eq!(
+            Bootstrap::load(&f).unwrap(),
+            Some(Bootstrap {
+                wan: vec!["eth0".into()],
+                lan: vec![],
+            })
+        );
+        // a directory where the file should be: a real error, not "no file"
+        assert!(Bootstrap::load(d.path()).is_err());
+    }
+
+    #[test]
+    fn bootstrap_path_env_and_live_interfaces() {
+        std::env::remove_var("PATRONUS_BOOTSTRAP");
+        assert_eq!(
+            default_bootstrap_path(),
+            PathBuf::from("/etc/patronus/patronus.toml")
+        );
+        std::env::set_var("PATRONUS_BOOTSTRAP", "/tmp/b.toml");
+        assert_eq!(default_bootstrap_path(), PathBuf::from("/tmp/b.toml"));
+        std::env::remove_var("PATRONUS_BOOTSTRAP");
+        let ifs = existing_interfaces();
+        assert!(ifs.iter().any(|i| i == "lo"), "{ifs:?}");
+        let mut sorted = ifs.clone();
+        sorted.sort();
+        assert_eq!(ifs, sorted);
     }
 
     #[tokio::test]

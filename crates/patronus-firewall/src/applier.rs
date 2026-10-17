@@ -975,6 +975,117 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn report_counts_rendered_rules_and_render_shows_warnings() {
+        let s = seeded(&["eth0"], &["eth1", "eth2"]).await;
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        // anti-lockout x2 LANs, LAN->fw x2, LAN->any x2; masquerade x1
+        assert_eq!(
+            r.report.applied,
+            vec![
+                "outbound NAT mode hybrid",
+                "6 filter rule(s), 1 NAT rule(s), 0 alias(es)"
+            ]
+        );
+        let s1 = seeded(&["eth0"], &[]).await;
+        let out = FirewallApplier.render(&s1).await.unwrap();
+        assert!(out.starts_with("add table inet patronus\n"), "{out}");
+        assert!(out.contains("oifname \"eth0\" masquerade"), "{out}");
+        assert_eq!(
+            out.matches("# warning: ").count(),
+            2,
+            "unassigned LAN rules are listed as warnings: {out}"
+        );
+        assert_eq!(FirewallApplier.name(), "firewall");
+        assert_eq!(FirewallApplier.phase(), Phase::Firewall);
+        assert_eq!(
+            FirewallApplier.resource_kinds(),
+            &[ResourceKind::FirewallRule, ResourceKind::NatRule]
+        );
+    }
+
+    #[test]
+    fn declarative_ports_and_nat_translate_one_rule_per_alternative() {
+        let parse = |y: &str| {
+            patronus_config::ConfigParser::parse_yaml(y)
+                .expect("yaml")
+                .remove(0)
+        };
+        let fw = parse(
+            r#"
+- apiVersion: patronus.firewall/v1
+  kind: FirewallRule
+  metadata: { name: ports }
+  spec:
+    action: deny
+    interface: "@lan"
+    direction: inbound
+    source: {}
+    destination: { ports: [22], port_ranges: [ { start: 6000, end: 6010 } ] }
+    protocol: tcp
+    enabled: true
+"#,
+        );
+        let (rules, nats, _) = declarative_to_rules(&fw).unwrap();
+        assert!(nats.is_empty());
+        // input + forward, each: single port 22 and the range
+        assert_eq!(rules.len(), 4, "{rules:?}");
+        assert!(rules
+            .iter()
+            .any(|r| r.dport == Some(PortSpec::Single(22)) && r.chain == ChainType::Input));
+        assert!(
+            rules
+                .iter()
+                .any(|r| r.dport == Some(PortSpec::Range(6000, 6010))
+                    && r.chain == ChainType::Forward)
+        );
+        assert!(rules.iter().all(|r| r.action == FirewallAction::Drop));
+
+        let any = parse(
+            r#"
+- apiVersion: patronus.firewall/v1
+  kind: FirewallRule
+  metadata: { name: any }
+  spec:
+    action: allow
+    interface: "@lan"
+    direction: outbound
+    source: {}
+    destination: { ports: [] }
+    enabled: true
+"#,
+        );
+        let (rules, _, _) = declarative_to_rules(&any).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert!(rules
+            .iter()
+            .all(|r| r.dport.is_none() && r.interface_out.is_some()));
+
+        let pf = parse(
+            r#"
+- apiVersion: patronus.firewall/v1
+  kind: NatRule
+  metadata: { name: pf }
+  spec:
+    nat_type: dnat
+    interface: "@wan"
+    source: {}
+    destination: { ports: [8080] }
+    translation: { address: "192.168.1.10", ports: [80] }
+    enabled: true
+"#,
+        );
+        let (rules, nats, _) = declarative_to_rules(&pf).unwrap();
+        assert!(rules.is_empty());
+        assert_eq!(nats.len(), 2, "tcp + udp: {nats:?}");
+        assert!(nats.iter().all(|n| n.dport == Some(PortSpec::Single(8080))
+            && n.nat_type
+                == NatType::Dnat {
+                    to_address: "192.168.1.10".parse().unwrap(),
+                    to_port: Some(80)
+                }));
+    }
+
+    #[tokio::test]
     async fn gitops_resources_become_store_rows_and_replace_by_name() {
         let yaml = r#"
 - apiVersion: patronus.firewall/v1
@@ -1323,5 +1434,107 @@ mod tests {
         assert!(rules
             .iter()
             .all(|r| r.log && r.schedule.as_deref() == Some("gitops_kids_night")));
+    }
+
+    #[test]
+    fn interface_addresses_lists_only_that_interfaces_addresses() {
+        let lo = interface_addresses("lo");
+        assert!(lo.contains(&"127.0.0.1".parse().unwrap()), "{lo:?}");
+        assert!(lo.iter().all(|a| a.is_loopback()), "{lo:?}");
+        let has_v6_lo = std::fs::read_to_string("/proc/net/if_inet6")
+            .map(|t| {
+                t.lines()
+                    .any(|l| l.ends_with(" lo") && l.starts_with("0000"))
+            })
+            .unwrap_or(false);
+        if has_v6_lo {
+            assert!(lo.contains(&"::1".parse().unwrap()), "{lo:?}");
+        }
+        assert!(interface_addresses("no-such-if0").is_empty());
+    }
+
+    #[tokio::test]
+    async fn rule_with_a_missing_schedule_blocks_always_but_never_allows() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        let mut allow = FirewallRule::new(
+            "ghost-allow".into(),
+            ChainType::Forward,
+            FirewallAction::Accept,
+        );
+        allow.destination = Some("198.51.100.7".into());
+        allow.schedule = Some("nope".into());
+        s.save_firewall_rule(&allow).await.unwrap();
+        let mut block = FirewallRule::new(
+            "ghost-block".into(),
+            ChainType::Forward,
+            FirewallAction::Drop,
+        );
+        block.destination = Some("198.51.100.8".into());
+        block.schedule = Some("nope".into());
+        s.save_firewall_rule(&block).await.unwrap();
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(!r.script.contains("198.51.100.7"), "{}", r.script);
+        assert!(r.script.contains("ip daddr 198.51.100.8"), "{}", r.script);
+        assert!(r
+            .report
+            .warnings
+            .iter()
+            .any(|w| w.contains("ghost-allow") && w.contains("skipped")));
+        assert!(r
+            .report
+            .warnings
+            .iter()
+            .any(|w| w.contains("ghost-block") && w.contains("enforcing it always")));
+    }
+
+    #[tokio::test]
+    async fn nat_rules_are_counted_and_reflection_without_an_address_warns() {
+        // "wan9" does not exist: no address for reflection
+        let s = seeded(&["wan9"], &["lan9"]).await;
+        let base = FirewallApplier.render_script(&s, false).await.unwrap();
+        let mut pf = NatRule::new(
+            "plain-forward".into(),
+            NatType::Dnat {
+                to_address: "192.168.50.10".parse().unwrap(),
+                to_port: None,
+            },
+        );
+        pf.interface_in = Some("@wan".into());
+        pf.protocol = Some(Protocol::Tcp);
+        pf.dport = Some(PortSpec::Single(8022));
+        s.save_nat_rule(&pf).await.unwrap();
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        let count = |rep: &ApplyReport| {
+            rep.applied
+                .iter()
+                .find_map(|l| {
+                    l.split(", ")
+                        .find(|p| p.ends_with("NAT rule(s)"))
+                        .map(|p| p.split(' ').next().unwrap().parse::<u32>().unwrap())
+                })
+                .unwrap()
+        };
+        assert_eq!(count(&r.report), count(&base.report) + 1, "{:?}", r.report);
+        assert!(
+            !r.report.warnings.iter().any(|w| w.contains("reflection")),
+            "no reflection asked: {:?}",
+            r.report.warnings
+        );
+        let mut hairpin = pf.clone();
+        hairpin.name = "hairpin".into();
+        hairpin.dport = Some(PortSpec::Single(8023));
+        hairpin.reflection = true;
+        s.save_nat_rule(&hairpin).await.unwrap();
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert_eq!(count(&r.report), count(&base.report) + 2, "{:?}", r.report);
+        assert!(
+            r.report
+                .warnings
+                .iter()
+                .any(|w| w.contains("hairpin")
+                    && w.contains("NAT reflection needs an address on wan9")),
+            "{:?}",
+            r.report.warnings
+        );
     }
 }

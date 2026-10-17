@@ -919,6 +919,54 @@ mod qa_regression_tests {
         assert!(command.contains("ip saddr 10.0.0.0/8"));
     }
 
+    /// Surviving mutants showed nothing checked the *output* interface or
+    /// the NAT interface/address validation: an injection payload there
+    /// must be refused, a real name rendered, "any"/"all" omitted.
+    #[test]
+    fn interface_out_and_nat_fields_are_validated_rendered_or_omitted() {
+        let evil = "eth0\" accept #";
+        let mut r = base_rule();
+        r.interface_out = Some(evil.into());
+        assert!(rule_to_nft_command(&r).is_err());
+        r.interface_out = Some("wan_1".into());
+        assert!(rule_to_nft_command(&r)
+            .unwrap()
+            .contains("oifname \"wan_1\""));
+        for any in ["any", "ALL"] {
+            let mut r = base_rule();
+            r.interface_in = Some(any.into());
+            r.interface_out = Some(any.into());
+            let c = rule_to_nft_command(&r).unwrap();
+            assert!(!c.contains("ifname"), "{any}: {c}");
+        }
+        assert!(is_valid_interface_name("br_lan0"));
+
+        let mut n = NatRule::new("n".into(), NatType::Masquerade);
+        n.interface_out = Some(evil.into());
+        assert!(nat_rule_to_nft_command(&n).is_err());
+        n.interface_out = Some("eth0".into());
+        n.source = Some("10.0.0.0/8".into());
+        n.destination = Some("192.0.2.1".into());
+        let c = nat_rule_to_nft_command(&n).unwrap();
+        assert!(
+            c.contains("oifname \"eth0\" ip saddr 10.0.0.0/8 ip daddr 192.0.2.1 masquerade"),
+            "{c}"
+        );
+        n.destination = Some("192.0.2.1; flush ruleset".into());
+        assert!(nat_rule_to_nft_command(&n).is_err());
+        for any in ["any", "All"] {
+            let mut n = NatRule::new("n".into(), NatType::Masquerade);
+            n.interface_out = Some(any.into());
+            n.source = Some(any.into());
+            n.destination = Some(any.into());
+            let c = nat_rule_to_nft_command(&n).unwrap();
+            assert!(
+                !c.contains("oifname") && !c.contains("saddr") && !c.contains("daddr"),
+                "{any}: {c}"
+            );
+        }
+    }
+
     #[test]
     fn disabled_rule_still_short_circuits_to_empty_command() {
         let mut rule = base_rule();
@@ -928,5 +976,123 @@ mod qa_regression_tests {
         // pre-existing early-return-on-disabled behavior.
         rule.source = Some("0.0.0.0/0; add rule inet patronus forward accept #".to_string());
         assert_eq!(rule_to_nft_command(&rule).unwrap(), "");
+    }
+}
+
+/// Assertions for code paths the mutation baseline (ci/mutants.sh) found
+/// unchecked: each test pins one rendering rule a real ruleset depends on.
+#[cfg(test)]
+mod render_contract_tests {
+    use super::*;
+    use patronus_core::types::{NatRule, NatType};
+
+    fn none() -> AliasMap {
+        AliasMap::new()
+    }
+
+    #[test]
+    fn port_lists_and_ranges_are_validated() {
+        let e = port_expr(&PortSpec::Multiple(vec![]), &none(), "rule").unwrap_err();
+        assert!(e.to_string().contains("empty port list"), "{e}");
+        let e = port_expr(&PortSpec::Range(90, 80), &none(), "rule").unwrap_err();
+        assert!(e.to_string().contains("port range 90-80"), "{e}");
+        assert_eq!(
+            port_expr(&PortSpec::Range(80, 80), &none(), "rule").unwrap(),
+            "80-80"
+        );
+        assert_eq!(
+            port_expr(&PortSpec::Range(80, 90), &none(), "rule").unwrap(),
+            "80-90"
+        );
+    }
+
+    #[test]
+    fn icmp_is_icmp_for_ipv4_and_unrestricted_ipv6_icmp_for_ipv6() {
+        let icmp = Some(&Protocol::Icmp);
+        for (fam, want) in [
+            (None, "meta l4proto icmp"),
+            (Some(IpVersion::V4), "meta l4proto icmp"),
+            (Some(IpVersion::V6), "meta l4proto ipv6-icmp"),
+        ] {
+            assert_eq!(
+                l4_match(icmp, None, None, fam, &none()).unwrap(),
+                vec![want]
+            );
+        }
+    }
+
+    #[test]
+    fn comments_are_sanitised_and_cut_on_a_char_boundary() {
+        assert_eq!(comment_expr(&None), None);
+        assert_eq!(
+            comment_expr(&Some("a\"b\\c\nd e".into())).unwrap(),
+            "comment \"abcd e\""
+        );
+        let long = "x".repeat(200);
+        assert_eq!(
+            comment_expr(&Some(long)).unwrap(),
+            format!("comment \"{}\"", "x".repeat(120))
+        );
+        // byte 120 falls inside a 2-byte char: cut before it, never after
+        let multi = format!("a{}", "\u{e9}".repeat(70));
+        assert_eq!(
+            comment_expr(&Some(multi)).unwrap(),
+            format!("comment \"a{}\"", "\u{e9}".repeat(59))
+        );
+    }
+
+    #[test]
+    fn nat_lines_is_empty_only_when_every_chain_is_empty() {
+        assert!(NatLines::default().is_empty());
+        for which in 0..3 {
+            let mut l = NatLines::default();
+            match which {
+                0 => l.prerouting.push("x".into()),
+                1 => l.postrouting.push("x".into()),
+                _ => l.forward.push("x".into()),
+            }
+            assert!(!l.is_empty(), "{l:?}");
+        }
+    }
+
+    #[test]
+    fn snat_is_restricted_to_the_family_of_its_target() {
+        let mut r = NatRule::new(
+            "snat".into(),
+            NatType::Snat {
+                to_address: "203.0.113.9".parse().unwrap(),
+            },
+        );
+        r.interface_out = Some("eth0".into());
+        let l = render_nat_rule(&r, &none(), &NatContext::default()).unwrap();
+        assert_eq!(l.postrouting.len(), 1, "{l:?}");
+        assert!(
+            l.postrouting[0].contains("meta nfproto ipv4")
+                && l.postrouting[0].contains("snat ip to 203.0.113.9"),
+            "{l:?}"
+        );
+    }
+
+    #[test]
+    fn reflection_uses_a_literal_destination_even_without_interface_addresses() {
+        let mut r = NatRule::new(
+            "pf".into(),
+            NatType::Dnat {
+                to_address: "192.168.1.10".parse().unwrap(),
+                to_port: Some(22),
+            },
+        );
+        r.interface_in = Some("eth0".into());
+        r.destination = Some("203.0.113.1".into());
+        r.protocol = Some(Protocol::Tcp);
+        r.dport = Some(PortSpec::Single(8022));
+        r.reflection = true;
+        let l = render_nat_rule(&r, &none(), &NatContext::default()).unwrap();
+        assert!(
+            l.prerouting.iter().any(
+                |x| x.contains("iifname != \"eth0\"") && x.contains("ip daddr { 203.0.113.1 }")
+            ),
+            "{l:?}"
+        );
     }
 }

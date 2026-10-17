@@ -296,6 +296,85 @@ mod tests {
         }
     }
 
+    #[test]
+    fn phases_round_trip_by_name() {
+        let names: Vec<&str> = Phase::ALL.iter().map(|p| p.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["sysctl", "interfaces", "routes", "firewall", "services"]
+        );
+        for p in Phase::ALL {
+            assert_eq!(Phase::parse(p.as_str()), Some(p));
+        }
+        assert_eq!(Phase::parse("bogus"), None);
+    }
+
+    #[test]
+    fn reports_record_applied_and_warnings() {
+        let mut r = ApplyReport::default();
+        r.applied("a");
+        r.warn("w");
+        assert_eq!(r.applied, vec!["a"]);
+        assert_eq!(r.warnings, vec!["w"]);
+    }
+
+    struct Gitops;
+    #[async_trait]
+    impl Applier for Gitops {
+        fn name(&self) -> &'static str {
+            "gitops-fw"
+        }
+        fn phase(&self) -> Phase {
+            Phase::Firewall
+        }
+        async fn apply(&self, _s: &ConfigStore) -> Result<ApplyReport> {
+            Ok(ApplyReport::default())
+        }
+        async fn render(&self, _s: &ConfigStore) -> Result<String> {
+            Ok(String::new())
+        }
+        fn resource_kinds(&self) -> &'static [ResourceKind] {
+            &[ResourceKind::FirewallRule]
+        }
+    }
+
+    #[tokio::test]
+    async fn lookup_by_name_and_kind_and_default_resource_handlers_refuse() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let reg = ApplierRegistry::new()
+            .with(Rec {
+                name: "sysctl",
+                phase: Phase::Sysctl,
+                log,
+                fail: false,
+            })
+            .with(Gitops);
+        assert_eq!(reg.by_name("gitops-fw").unwrap().name(), "gitops-fw");
+        assert_eq!(reg.by_name("sysctl").unwrap().name(), "sysctl");
+        assert!(reg.by_name("dhcp").is_none());
+        assert_eq!(
+            reg.for_kind(&ResourceKind::FirewallRule).unwrap().name(),
+            "gitops-fw"
+        );
+        assert!(reg.for_kind(&ResourceKind::NatRule).is_none());
+
+        // an applier that does not own declarative kinds must refuse them,
+        // never pretend to have stored them
+        let sysctl = reg.by_name("sysctl").unwrap();
+        assert!(sysctl.resource_kinds().is_empty());
+        let store = ConfigStore::open_in_memory().await.unwrap();
+        let cfg = crate::ConfigParser::parse_yaml(
+            "- apiVersion: patronus.firewall/v1\n  kind: FirewallRule\n  metadata:\n    name: x\n  spec:\n    action: allow\n    interface: eth0\n    source: {}\n    destination: {}\n",
+        )
+        .expect("yaml")
+        .remove(0);
+        assert!(sysctl.upsert_resource(&store, &cfg).await.is_err());
+        assert!(sysctl
+            .delete_resource(&store, &ResourceKind::FirewallRule, "x")
+            .await
+            .is_err());
+    }
+
     #[tokio::test]
     async fn applies_in_dependency_order_and_continues_past_failures() {
         let log = Arc::new(Mutex::new(Vec::new()));
