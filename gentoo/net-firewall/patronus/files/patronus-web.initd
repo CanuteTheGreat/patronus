@@ -4,8 +4,13 @@
 
 description="Patronus Web Interface"
 
-command="/usr/bin/patronus"
-command_args="web --addr ${PATRONUS_WEB_ADDR:-0.0.0.0:8080}"
+# Same binary/port as the container image: self-signed HTTPS on :8443.
+# (Used to be `/usr/bin/patronus web --addr ...:8080`, a binary that was
+# never installed.) Admin password: /var/lib/patronus/initial-admin-password
+# (generated on first start) or PATRONUS_ADMIN_PASSWORD in conf.d.
+command="/usr/bin/patronus-web"
+# nft needs these as the patronus user
+capabilities="^cap_net_admin,^cap_net_raw"
 command_background=true
 command_user="${PATRONUS_USER:-patronus}:${PATRONUS_GROUP:-patronus}"
 pidfile="/run/${RC_SVCNAME}.pid"
@@ -23,4 +28,6 @@ start_pre() {
 	checkpath --directory --owner ${command_user} --mode 0755 \
 		/var/log/patronus \
 		/var/lib/patronus
+	checkpath --directory --owner ${command_user} --mode 0700 \
+		/etc/patronus/tls
 }

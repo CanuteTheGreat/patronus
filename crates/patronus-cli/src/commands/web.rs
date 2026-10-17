@@ -42,6 +42,11 @@ pub async fn handle_web_command(addr: String, _config_path: PathBuf) -> anyhow::
         let config_store =
             patronus_config::store::ConfigStore::new(PathBuf::from("/var/lib/patronus/config.db"));
         let state = patronus_web::AppState::new(rule_manager, config_store).await?;
+        // No default credentials: same per-install admin password as the
+        // patronus-web binary (PATRONUS_ADMIN_PASSWORD or the generated
+        // /var/lib/patronus/initial-admin-password).
+        let source = state.auth.user_store.provision_admin_from_env().await?;
+        println!("  Admin password source: {:?}", source);
 
         patronus_web::serve(socket_addr, state).await?;
         Ok(())

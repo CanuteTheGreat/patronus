@@ -1,5 +1,5 @@
 [Unit]
-Description=Patronus Web Interface
+Description=Patronus Web Interface (HTTPS on :8443)
 After=network.target patronus-firewall.service
 Wants=patronus-firewall.service
 
@@ -7,16 +7,26 @@ Wants=patronus-firewall.service
 Type=simple
 User=patronus
 Group=patronus
-ExecStart=/usr/bin/patronus web --addr 0.0.0.0:8080
+# Same binary and port as the container image: self-signed HTTPS on :8443
+# (cert generated into /etc/patronus/tls on first start). The admin
+# password is generated on first start into
+# /var/lib/patronus/initial-admin-password, or set PATRONUS_ADMIN_PASSWORD.
+# This used to run `/usr/bin/patronus web --addr 0.0.0.0:8080`, a binary
+# that was never installed (and plain HTTP).
+ExecStart=/usr/bin/patronus-web
 Restart=on-failure
 RestartSec=10s
+
+# patronus-web applies rules with nft, which needs these as the patronus user
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 
 # Security hardening
 PrivateTmp=yes
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/patronus /var/log/patronus
+ReadWritePaths=/var/lib/patronus /var/log/patronus /etc/patronus/tls
 
 [Install]
 WantedBy=multi-user.target

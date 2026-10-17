@@ -6,7 +6,6 @@ description="Patronus Firewall Service"
 
 command="/usr/bin/patronus"
 command_args="firewall apply"
-command_user="${PATRONUS_USER:-patronus}:${PATRONUS_GROUP:-patronus}"
 
 depend() {
 	need localmount net
@@ -15,10 +14,8 @@ depend() {
 }
 
 start() {
-	ebegin "Initializing Patronus firewall"
-	/usr/bin/patronus firewall init
-	eend $?
-
+	# `firewall apply` creates the nftables table/chains itself (there is
+	# no `firewall init` subcommand; calling it made every start fail).
 	ebegin "Applying Patronus firewall rules"
 	/usr/bin/patronus firewall apply
 	eend $?

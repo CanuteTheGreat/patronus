@@ -266,6 +266,10 @@ src_install() {
 	# cargo_src_install, which is the real, eclass-documented way to
 	# override the install path in a workspace.
 	cargo_src_install --path ./crates/patronus-cli
+	# The binary is named patronus-cli, but every init script/unit, the docs
+	# and the elog text call it `patronus` -- which was never installed, so
+	# patronus-firewall (and the old patronus-web unit) could not start.
+	dosym patronus-cli /usr/bin/patronus
 
 	# patronus-web is a SEPARATE member crate with its own [[bin]] (not a
 	# patronus-cli feature) -- the above cargo_src_install call only ever
@@ -350,6 +354,8 @@ src_install() {
 	keepdir /etc/patronus/ipsec
 	keepdir /etc/patronus/unbound
 	keepdir /etc/patronus/certificates
+	# patronus-web generates its self-signed TLS cert here on first start
+	keepdir /etc/patronus/tls
 
 	# Install web assets if web USE flag is enabled
 	if use web; then
@@ -372,10 +378,14 @@ src_install() {
 	fowners patronus:patronus /etc/patronus/ipsec
 	fowners patronus:patronus /etc/patronus/unbound
 	fowners patronus:patronus /etc/patronus/certificates
+	# group patronus so the service user can reach /etc/patronus/tls
+	fowners root:patronus /etc/patronus
 	fperms 0750 /etc/patronus
 	fperms 0750 /etc/patronus/openvpn
 	fperms 0750 /etc/patronus/ipsec
 	fperms 0700 /etc/patronus/certificates
+	fowners patronus:patronus /etc/patronus/tls
+	fperms 0700 /etc/patronus/tls
 }
 
 pkg_postinst() {
