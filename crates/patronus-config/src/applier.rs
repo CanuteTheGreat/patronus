@@ -376,6 +376,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn with_all_registers_every_applier_and_status_defaults_to_null() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let rec = |name, phase| -> Arc<dyn Applier> {
+            Arc::new(Rec {
+                name,
+                phase,
+                log: log.clone(),
+                fail: false,
+            })
+        };
+        let reg = ApplierRegistry::new().with_all(vec![
+            rec("dns", Phase::Services),
+            rec("dhcp", Phase::Services),
+        ]);
+        let names: Vec<&str> = reg.ordered().iter().map(|a| a.name()).collect();
+        assert_eq!(names, vec!["dns", "dhcp"]);
+        let store = ConfigStore::open_in_memory().await.unwrap();
+        let st = reg.by_name("dhcp").unwrap().status(&store).await.unwrap();
+        assert!(st.is_null(), "{st}");
+    }
+
+    #[tokio::test]
     async fn applies_in_dependency_order_and_continues_past_failures() {
         let log = Arc::new(Mutex::new(Vec::new()));
         let mk = |name, phase, fail| Rec {

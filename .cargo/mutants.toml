@@ -28,6 +28,9 @@ exclude_re = [
     # Equivalent mutant: the default `&[]` and `Vec::leak(Vec::new())` are
     # the same empty slice.
     "patronus-config/src/applier.rs.*Applier::resource_kinds",
+    # Equivalent: the default `status` is `Ok(Value::Null)`, which is what
+    # "replace with Ok(Default::default())" returns too.
+    "patronus-config/src/applier.rs.*Applier::status",
     # Equivalent: default_nat_rules() is empty by design (outbound NAT is
     # generated per WAN), so "replace with vec![]" changes nothing.
     "replace default_nat_rules -> Vec<NatRule> with vec!",
