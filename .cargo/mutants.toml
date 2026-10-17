@@ -28,4 +28,9 @@ exclude_re = [
     # Equivalent mutant: the default `&[]` and `Vec::leak(Vec::new())` are
     # the same empty slice.
     "patronus-config/src/applier.rs.*Applier::resource_kinds",
+    # Equivalent: default_nat_rules() is empty by design (outbound NAT is
+    # generated per WAN), so "replace with vec![]" changes nothing.
+    "replace default_nat_rules -> Vec<NatRule> with vec!",
+    # Equivalent: deleting a schedule that does not exist is a no-op.
+    "replace == with != in <impl Applier for FirewallApplier>::delete_resource",
 ]

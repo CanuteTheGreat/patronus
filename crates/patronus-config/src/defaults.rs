@@ -248,13 +248,26 @@ async fn seed_default_rules(store: &ConfigStore) -> Result<()> {
             store.insert_firewall_rule(&rule, origin).await?;
         }
     }
+    seed_nat_rules(store, default_nat_rules()).await?;
+    for (k, v) in DEFAULT_SYSCTLS {
+        store.set_sysctl(k, v, RuleOrigin::Default).await?;
+    }
+    tracing::info!("seeded the default ruleset (anti-lockout, LAN->any, outbound NAT, ip_forward)");
+    Ok(())
+}
+
+/// Insert each default NAT row unless a default row of that name exists
+/// (idempotent like the filter rules; a user row of the same name does not
+/// count). [`default_nat_rules`] is empty today, so this is exercised by
+/// its own test.
+async fn seed_nat_rules(store: &ConfigStore, rules: Vec<NatRule>) -> Result<()> {
     let have_nat: Vec<(String, RuleOrigin)> = store
         .load_nat_rules_with_origin()
         .await?
         .into_iter()
         .map(|(r, o)| (r.name, o))
         .collect();
-    for rule in default_nat_rules() {
+    for rule in rules {
         if !have_nat
             .iter()
             .any(|(n, o)| *n == rule.name && *o == RuleOrigin::Default)
@@ -262,10 +275,6 @@ async fn seed_default_rules(store: &ConfigStore) -> Result<()> {
             store.insert_nat_rule(&rule, RuleOrigin::Default).await?;
         }
     }
-    for (k, v) in DEFAULT_SYSCTLS {
-        store.set_sysctl(k, v, RuleOrigin::Default).await?;
-    }
-    tracing::info!("seeded the default ruleset (anti-lockout, LAN->any, outbound NAT, ip_forward)");
     Ok(())
 }
 
@@ -408,5 +417,40 @@ mod tests {
             .unwrap();
         assert_eq!(s.interfaces_with_role("lan").await.unwrap(), vec!["eth5"]);
         assert!(s.interfaces_with_role("wan").await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn outbound_nat_is_automatic_so_no_default_nat_rows() {
+        assert!(default_nat_rules().is_empty());
+    }
+
+    #[tokio::test]
+    async fn default_nat_seeding_is_idempotent_and_ignores_user_rows_of_the_same_name() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let mk = |n: &str| {
+            let mut r = NatRule::new(n.into(), patronus_core::types::NatType::Masquerade);
+            r.interface_out = Some("@wan".into());
+            r
+        };
+        s.save_nat_rule(&mk("b")).await.unwrap(); // user row named like a default
+        seed_nat_rules(&s, vec![mk("a")]).await.unwrap();
+        seed_nat_rules(&s, vec![mk("a"), mk("b")]).await.unwrap();
+        seed_nat_rules(&s, vec![mk("a"), mk("b")]).await.unwrap();
+        let mut rows: Vec<(String, RuleOrigin)> = s
+            .load_nat_rules_with_origin()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(r, o)| (r.name, o))
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.as_str().cmp(b.1.as_str())));
+        assert_eq!(
+            rows,
+            vec![
+                ("a".to_string(), RuleOrigin::Default),
+                ("b".to_string(), RuleOrigin::Default),
+                ("b".to_string(), RuleOrigin::User),
+            ]
+        );
     }
 }

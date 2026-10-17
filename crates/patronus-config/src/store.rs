@@ -1629,14 +1629,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ip_version_round_trips_and_absent_means_both_families() {
+    async fn ip_version_and_log_round_trip_and_absent_means_both_families() {
         let s = ConfigStore::open_in_memory().await.unwrap();
         for v in [None, Some(IpVersion::V4), Some(IpVersion::V6)] {
             let mut r = rule("fam");
             r.ip_version = v;
+            r.log = v.is_some();
             let id = s.save_firewall_rule(&r).await.unwrap() as u64;
             let (got, _) = s.get_firewall_rule(id).await.unwrap().unwrap();
             assert_eq!(got.ip_version, v);
+            assert_eq!(got.log, r.log, "log flag round trips");
         }
     }
 

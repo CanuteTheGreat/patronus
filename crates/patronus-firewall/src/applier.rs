@@ -135,6 +135,11 @@ pub async fn set_outbound_nat_mode(store: &ConfigStore, mode: OutboundNatMode) -
         .await
 }
 
+/// fe80::/10: link-local addresses are not what a LAN client dials.
+fn is_link_local_v6(ip: &std::net::Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xffc0) == 0xfe80
+}
+
 /// Addresses configured on an interface (for NAT reflection).
 fn interface_addresses(name: &str) -> Vec<std::net::IpAddr> {
     let Ok(addrs) = nix::ifaddrs::getifaddrs() else {
@@ -147,8 +152,7 @@ fn interface_addresses(name: &str) -> Vec<std::net::IpAddr> {
             out.push(std::net::IpAddr::V4(v4.ip()));
         } else if let Some(v6) = sa.as_sockaddr_in6() {
             let ip = v6.ip();
-            // link-local addresses are not what a LAN client dials
-            if (ip.segments()[0] & 0xffc0) != 0xfe80 {
+            if !is_link_local_v6(&ip) {
                 out.push(std::net::IpAddr::V6(ip));
             }
         }
@@ -1536,5 +1540,12 @@ mod tests {
             "{:?}",
             r.report.warnings
         );
+    }
+
+    #[test]
+    fn only_fe80_slash_10_counts_as_link_local() {
+        let ll = |s: &str| is_link_local_v6(&s.parse().unwrap());
+        assert!(ll("fe80::1") && ll("febf::1"));
+        assert!(!ll("fec0::1") && !ll("fe00::1") && !ll("2001:db8::1") && !ll("::1"));
     }
 }

@@ -1,10 +1,13 @@
 # cargo-mutants score floors (percent) for ci/mutants.sh, nightly.
 # package  file  floor
 # Floors only go up: raise one when a run beats it by >= 2 points, in the
-# same commit as the tests that earned it. Baseline measured 2026-10-17.
-patronus-config crates/patronus-config/src/store.rs 0
-patronus-config crates/patronus-config/src/applier.rs 0
-patronus-config crates/patronus-config/src/defaults.rs 0
-patronus-config crates/patronus-config/src/migrate.rs 0
-patronus-firewall crates/patronus-firewall/src/applier.rs 0
-patronus-firewall crates/patronus-firewall/src/nftables.rs 0
+# same commit as the tests that earned it.
+# Baseline 2026-10-17 (before -> after the test-depth pass): store 88->100,
+# config applier 40->100, defaults 60->100, migrate 100, firewall applier
+# 69->100, nftables 64->100. Floors leave ~3 points for new code.
+patronus-config crates/patronus-config/src/store.rs 97
+patronus-config crates/patronus-config/src/applier.rs 95
+patronus-config crates/patronus-config/src/defaults.rs 95
+patronus-config crates/patronus-config/src/migrate.rs 100
+patronus-firewall crates/patronus-firewall/src/applier.rs 95
+patronus-firewall crates/patronus-firewall/src/nftables.rs 97
