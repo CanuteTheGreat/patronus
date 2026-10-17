@@ -1,6 +1,6 @@
 //! Network configuration module
 
-use crate::config::{InterfaceConfig, NetworkConfig, NetworkMethod};
+use crate::config::{InterfaceConfig, InterfaceRole, NetworkConfig, NetworkMethod};
 use crate::error::Result;
 use std::path::Path;
 use tokio::fs;
@@ -26,7 +26,83 @@ pub async fn configure_network(target: &Path, config: &NetworkConfig) -> Result<
     // Configure DNS
     configure_dns(target, config).await?;
 
+    // Tell Patronus which NIC is WAN and which are LAN, so the first
+    // `patronus apply` at boot seeds the default ruleset (anti-lockout on
+    // LAN, LAN->any, outbound NAT on WAN) for the interfaces chosen here.
+    write_patronus_roles(target, config).await?;
+
     Ok(())
+}
+
+/// Write the interface roles chosen in the installer into the `[network]`
+/// section of the target's /etc/patronus/patronus.toml (keeping the rest
+/// of the file and its comments).
+async fn write_patronus_roles(target: &Path, config: &NetworkConfig) -> Result<()> {
+    let path = target.join("etc/patronus/patronus.toml");
+    let existing = fs::read_to_string(&path).await.ok();
+    let Some(text) = patronus_toml_with_roles(existing.as_deref(), config) else {
+        return Ok(());
+    };
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).await?;
+    }
+    fs::write(&path, text).await?;
+    info!("Recorded WAN/LAN interface roles in {}", path.display());
+    Ok(())
+}
+
+/// `existing` with its `[network]` WAN/LAN lines replaced by the
+/// installer's choice; `None` if no interface has a WAN/LAN role.
+/// Management interfaces count as LAN (they get the anti-lockout rule).
+fn patronus_toml_with_roles(existing: Option<&str>, config: &NetworkConfig) -> Option<String> {
+    let names = |want: &[InterfaceRole]| -> Vec<String> {
+        config
+            .interfaces
+            .iter()
+            .filter(|i| want.contains(&i.role) && i.method != NetworkMethod::Disabled)
+            .map(|i| format!("{:?}", i.name))
+            .collect()
+    };
+    let wan = names(&[InterfaceRole::Wan]);
+    let lan = names(&[InterfaceRole::Lan, InterfaceRole::Management]);
+    if wan.is_empty() && lan.is_empty() {
+        return None;
+    }
+    let roles = format!(
+        "# written by patronus-installer\nwan_interfaces = [{}]\nlan_interfaces = [{}]\n",
+        wan.join(", "),
+        lan.join(", ")
+    );
+    let is_role_line = |l: &str| {
+        let t = l.trim_start();
+        ["wan_interface", "lan_interface"].iter().any(|k| {
+            t.strip_prefix(k).is_some_and(|rest| {
+                let rest = rest.strip_prefix('s').unwrap_or(rest).trim_start();
+                rest.starts_with('=')
+            })
+        }) || t == "# written by patronus-installer"
+    };
+    let mut out = String::new();
+    let mut placed = false;
+    for line in existing.unwrap_or("").lines() {
+        if is_role_line(line) {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+        if !placed && line.trim() == "[network]" {
+            out.push_str(&roles);
+            placed = true;
+        }
+    }
+    if !placed {
+        if !out.is_empty() && !out.ends_with("\n\n") {
+            out.push('\n');
+        }
+        out.push_str("[network]\n");
+        out.push_str(&roles);
+    }
+    Some(out)
 }
 
 /// Configure NetworkManager
@@ -316,7 +392,54 @@ pub async fn get_link_state(name: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::InterfaceRole;
+
+    fn iface(name: &str, role: InterfaceRole) -> InterfaceConfig {
+        InterfaceConfig {
+            name: name.into(),
+            method: NetworkMethod::Dhcp,
+            role,
+        }
+    }
+
+    #[test]
+    fn installer_roles_replace_the_template_network_lines() {
+        let template = "[system]\nhostname = \"patronus\"\n\n[network]\n# Primary interfaces\nwan_interface = \"eth0\"\nlan_interface = \"eth1\"\n\n[firewall]\ndefault_input = \"drop\"\n";
+        let cfg = NetworkConfig {
+            interfaces: vec![
+                iface("enp1s0", InterfaceRole::Wan),
+                iface("enp2s0", InterfaceRole::Lan),
+                iface("enp3s0", InterfaceRole::Management),
+                iface("enp4s0", InterfaceRole::Dmz),
+            ],
+            dns_servers: vec![],
+            search_domains: vec![],
+        };
+        let out = patronus_toml_with_roles(Some(template), &cfg).unwrap();
+        assert!(
+            !out.contains("\"eth0\"") && !out.contains("\"eth1\""),
+            "{out}"
+        );
+        assert!(out.contains("wan_interfaces = [\"enp1s0\"]"), "{out}");
+        assert!(
+            out.contains("lan_interfaces = [\"enp2s0\", \"enp3s0\"]"),
+            "{out}"
+        );
+        assert!(out.contains("default_input = \"drop\"") && out.contains("# Primary interfaces"));
+        let v: toml::Value = toml::from_str(&out).unwrap();
+        assert_eq!(v["network"]["lan_interfaces"].as_array().unwrap().len(), 2);
+        // idempotent: running it again changes nothing
+        assert_eq!(patronus_toml_with_roles(Some(&out), &cfg).unwrap(), out);
+        // no file yet: a [network] section is created
+        let fresh = patronus_toml_with_roles(None, &cfg).unwrap();
+        assert!(fresh.starts_with("[network]\n"), "{fresh}");
+        // nothing chosen: leave the file alone
+        let none = NetworkConfig {
+            interfaces: vec![iface("x", InterfaceRole::None)],
+            dns_servers: vec![],
+            search_domains: vec![],
+        };
+        assert!(patronus_toml_with_roles(Some(template), &none).is_none());
+    }
 
     #[test]
     fn test_generate_nm_connection_dhcp() {
