@@ -299,6 +299,15 @@ impl FirewallManager {
         anyhow::anyhow!("{e}")
     }
 
+    /// Record the pre-change configuration (config history / rollback).
+    async fn snapshot(&self, what: String) -> anyhow::Result<()> {
+        self.store
+            .snapshot("web", &format!("before {what}"))
+            .await
+            .map(|_| ())
+            .map_err(Self::e)
+    }
+
     async fn push(&self) -> anyhow::Result<()> {
         self.applier
             .apply(&self.store)
@@ -330,6 +339,8 @@ impl FirewallManager {
     pub async fn add_rule(&self, rule: ApiFirewallRule) -> anyhow::Result<u32> {
         let core = Self::rule_to_core(None, &rule)?;
         let _g = self.edit.lock().await;
+        self.snapshot(format!("create firewall rule {}", core.name))
+            .await?;
         let id = self
             .store
             .save_firewall_rule(&core)
@@ -365,6 +376,8 @@ impl FirewallManager {
         else {
             anyhow::bail!("Rule {id} not found");
         };
+        self.snapshot(format!("update firewall rule {id} {}", old.name))
+            .await?;
         self.store
             .update_firewall_rule(id as u64, &core)
             .await
@@ -396,6 +409,13 @@ impl FirewallManager {
         else {
             anyhow::bail!("Rule {id} not found");
         };
+        if origin == RuleOrigin::System {
+            anyhow::bail!(
+                "Invalid request: rule {id} is a system rule (anti-lockout) and cannot be deleted"
+            );
+        }
+        self.snapshot(format!("delete firewall rule {id} {}", old.name))
+            .await?;
         self.store
             .delete_firewall_rule(id as u64)
             .await
@@ -473,6 +493,8 @@ impl FirewallManager {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         let _g = self.edit.lock().await;
+        self.snapshot(format!("create NAT rule {}", core.name))
+            .await?;
         let id = self.store.save_nat_rule(&core).await.map_err(Self::e)? as u64;
         if let Err(e) = self.push().await {
             let _ = self.store.delete_nat_rule(id).await;

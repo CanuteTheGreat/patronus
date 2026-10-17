@@ -202,7 +202,18 @@ assert_user_rules_live
 assert_default_traffic
 echo "--- nft list ruleset after boot apply:"; R nft list ruleset
 
-echo "=== 3. patronus firewall apply|flush"
+echo "=== 3. config history: roll back to before netlab-wan-2222 was added"
+REVS=$(R "$P" --db $DB config revisions); echo "$REVS"
+REV=$(awk '/before create firewall rule netlab-wan-2222/{print $1; exit}' <<<"$REVS")
+[ -n "$REV" ] || fail "no revision recorded for the API change"
+R "$P" --db $DB config rollback "$REV"
+RS=$(R nft list ruleset)
+grep -q netlab-block-8080 <<<"$RS" || fail "rollback lost the earlier rule"
+if grep -q netlab-wan-2222 <<<"$RS"; then fail "rollback kept the later rule"; fi
+expect_blocked "WAN -> router:2222 after rollback" W python3 /t/conn.py 203.0.113.2 2222
+ok "patronus config rollback restored the store and the kernel to revision $REV"
+
+echo "=== 4. patronus firewall apply|flush"
 R "$P" --db $DB firewall flush
 [ -z "$(R nft list ruleset)" ] || fail "flush left a ruleset"
 R "$P" --db $DB firewall apply --bootstrap "$TOML"

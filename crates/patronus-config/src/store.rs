@@ -77,6 +77,9 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "config_backups",
 ];
 
+/// Revisions kept by [`ConfigStore::snapshot`] (older ones are pruned).
+pub const MAX_REVISIONS: i64 = 200;
+
 /// Configuration store
 pub struct ConfigStore {
     db_path: PathBuf,
@@ -785,7 +788,13 @@ impl ConfigStore {
         .execute(self.pool()?)
         .await
         .map_err(db_err("Failed to record revision"))?;
-        Ok(r.last_insert_rowid())
+        let id = r.last_insert_rowid();
+        sqlx::query("DELETE FROM config_revisions WHERE id <= ?")
+            .bind(id - MAX_REVISIONS)
+            .execute(self.pool()?)
+            .await
+            .map_err(db_err("Failed to prune revisions"))?;
+        Ok(id)
     }
 
     /// (id, created_at, user, summary) of every revision, newest first.
