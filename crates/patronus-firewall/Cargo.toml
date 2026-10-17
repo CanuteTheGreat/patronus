@@ -12,6 +12,7 @@ geoip = []
 
 [dependencies]
 patronus-core = { path = "../patronus-core" }
+patronus-config = { path = "../patronus-config" }
 tokio.workspace = true
 async-trait.workspace = true
 serde.workspace = true

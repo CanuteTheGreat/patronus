@@ -6,8 +6,7 @@
 //! subcommand that simply did not exist in `patronus-cli`'s `Commands` enum
 //! -- any fresh systemd start of that unit would fail immediately with a
 //! clap "unrecognized subcommand" error. This builds the same
-//! `RuleManager` + `ConfigStore` + `AppState` bootstrap `patronus-web`'s own
-//! `main.rs` uses, and serves plain HTTP on the given `--addr` (matching
+//! store-backed `AppState` startup `patronus-web`'s own `main.rs` uses, and serves plain HTTP on the given `--addr` (matching
 //! what the systemd unit actually invokes; `patronus-web`'s own standalone
 //! binary defaults to self-signed HTTPS on :8443, which is a separate,
 //! still-valid way to run the same router).
@@ -16,7 +15,11 @@ use colored::Colorize;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-pub async fn handle_web_command(addr: String, _config_path: PathBuf) -> anyhow::Result<()> {
+pub async fn handle_web_command(
+    addr: String,
+    _config_path: PathBuf,
+    db: Option<PathBuf>,
+) -> anyhow::Result<()> {
     #[cfg(feature = "web")]
     {
         let socket_addr: SocketAddr = addr
@@ -29,19 +32,10 @@ pub async fn handle_web_command(addr: String, _config_path: PathBuf) -> anyhow::
         );
         println!("  Listening on http://{}", socket_addr);
 
-        let rule_manager = patronus_firewall::rules::RuleManager::new();
-        rule_manager
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("failed to initialize nftables table/chains: {e}"))?;
-
-        // Same stub-grade bootstrap patronus-web's own main.rs uses today
-        // (tracked follow-up to source these from patronus.toml instead of
-        // hardcoded paths); matches /var/lib/patronus which the systemd
-        // unit already grants ReadWritePaths= for.
-        let config_store =
-            patronus_config::store::ConfigStore::new(PathBuf::from("/var/lib/patronus/config.db"));
-        let state = patronus_web::AppState::new(rule_manager, config_store).await?;
+        // Same startup as the patronus-web binary: open the config store
+        // (--db / $PATRONUS_DB / /var/lib/patronus/config.db), seed
+        // first-boot defaults, load the stored firewall into nftables.
+        let state = patronus_web::state::startup(db).await?;
         // No default credentials: same per-install admin password as the
         // patronus-web binary (PATRONUS_ADMIN_PASSWORD or the generated
         // /var/lib/patronus/initial-admin-password).
@@ -54,7 +48,7 @@ pub async fn handle_web_command(addr: String, _config_path: PathBuf) -> anyhow::
 
     #[cfg(not(feature = "web"))]
     {
-        let _ = (addr, _config_path);
+        let _ = (addr, _config_path, db);
         anyhow::bail!(
             "this patronus-cli binary was built without the \"web\" feature; rebuild with \
              --features web"

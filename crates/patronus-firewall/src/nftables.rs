@@ -54,66 +54,36 @@ pub fn execute_nft_script(script: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+/// Table family/name every Patronus rule lives in.
+pub const TABLE: &str = "inet patronus";
+
+/// The base table: chains with their policies plus the rules every
+/// ruleset starts with (loopback, established/related, invalid, ICMP).
+/// Shared by [`initialize_table`] and the atomic full-ruleset render in
+/// [`crate::applier`].
+pub fn base_table_script() -> String {
+    let t = TABLE;
+    format!(
+        r#"add table {t}
+add chain {t} input {{ type filter hook input priority 0; policy drop; }}
+add chain {t} output {{ type filter hook output priority 0; policy accept; }}
+add chain {t} forward {{ type filter hook forward priority 0; policy drop; }}
+add chain {t} prerouting {{ type nat hook prerouting priority -100; }}
+add chain {t} postrouting {{ type nat hook postrouting priority 100; }}
+add rule {t} input iifname "lo" accept
+add rule {t} input ct state established,related accept
+add rule {t} forward ct state established,related accept
+add rule {t} input ct state invalid drop
+add rule {t} forward ct state invalid drop
+add rule {t} input ip protocol icmp accept
+add rule {t} input ip6 nexthdr icmpv6 accept
+"#
+    )
+}
+
 /// Initialize the patronus nftables table and chains
 pub fn initialize_table() -> Result<()> {
-    let script = format!(
-        r#"
-# Create table
-add table {} {}
-
-# Create filter chains
-add chain {} {} input {{ type filter hook input priority 0; policy drop; }}
-add chain {} {} output {{ type filter hook output priority 0; policy accept; }}
-add chain {} {} forward {{ type filter hook forward priority 0; policy drop; }}
-
-# Create NAT chains
-add chain {} {} prerouting {{ type nat hook prerouting priority -100; }}
-add chain {} {} postrouting {{ type nat hook postrouting priority 100; }}
-
-# Allow loopback
-add rule {} {} input iifname "lo" accept
-
-# Allow established/related connections
-add rule {} {} input ct state established,related accept
-add rule {} {} forward ct state established,related accept
-
-# Drop invalid packets
-add rule {} {} input ct state invalid drop
-add rule {} {} forward ct state invalid drop
-
-# Allow ICMP
-add rule {} {} input ip protocol icmp accept
-add rule {} {} input ip6 nexthdr icmpv6 accept
-        "#,
-        TABLE_FAMILY,
-        TABLE_NAME,
-        TABLE_FAMILY,
-        TABLE_NAME,
-        TABLE_FAMILY,
-        TABLE_NAME,
-        TABLE_FAMILY,
-        TABLE_NAME,
-        TABLE_FAMILY,
-        TABLE_NAME,
-        TABLE_FAMILY,
-        TABLE_NAME,
-        TABLE_FAMILY,
-        TABLE_NAME,
-        TABLE_FAMILY,
-        TABLE_NAME,
-        TABLE_FAMILY,
-        TABLE_NAME,
-        TABLE_FAMILY,
-        TABLE_NAME,
-        TABLE_FAMILY,
-        TABLE_NAME,
-        TABLE_FAMILY,
-        TABLE_NAME,
-        TABLE_FAMILY,
-        TABLE_NAME,
-    );
-
-    execute_nft_script(&script)?;
+    execute_nft_script(&base_table_script())?;
     tracing::info!("Initialized nftables table: {}", TABLE_NAME);
     Ok(())
 }

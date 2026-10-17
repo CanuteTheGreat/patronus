@@ -196,3 +196,17 @@ pub async fn restart_service(State(state): State<AppState>, Path(name): Path<Str
         }
     }
 }
+
+/// This lane's API routes, mounted under `/api` by `routes::api_routes`
+/// with one `.merge(system::router())` line.
+pub fn router() -> axum::Router<AppState> {
+    use axum::routing::{get, post};
+    axum::Router::new()
+        .route("/system/users", get(list_users))
+        .route("/system/backups", get(list_backups).post(create_backup))
+        .route("/system/updates", get(list_updates))
+        .route("/system/services", get(list_services))
+        .route("/system/services/:name/start", post(start_service))
+        .route("/system/services/:name/stop", post(stop_service))
+        .route("/system/services/:name/restart", post(restart_service))
+}

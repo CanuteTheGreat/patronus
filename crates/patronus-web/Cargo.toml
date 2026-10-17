@@ -25,6 +25,7 @@ patronus-ai = { path = "../patronus-ai" }
 patronus-monitoring = { path = "../patronus-monitoring" }
 
 tokio.workspace = true
+async-trait.workspace = true
 axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true
@@ -38,6 +39,10 @@ askama_axum.workspace = true
 
 # TLS for the dashboard (self-signed cert on first run; see src/tls.rs)
 axum-server = { version = "0.7", features = ["tls-rustls"] }
+# Explicit process-wide crypto provider: when another crate in the same
+# binary (e.g. patronus-cli's `patronus web`) also enables rustls' `ring`,
+# rustls can no longer pick one and panics on the first TLS handshake setup.
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
 rcgen = "0.11"
 
 # Additional web dependencies

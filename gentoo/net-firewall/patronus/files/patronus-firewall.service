@@ -1,5 +1,12 @@
 [Unit]
-Description=Patronus Firewall Service
+# Boot-time apply of the whole stored configuration (the name is kept for
+# compatibility; it does far more than the firewall now). `patronus apply`
+# opens /var/lib/patronus/config.db, seeds the safe default ruleset on first
+# boot (anti-lockout on LAN, LAN->any, WAN inbound dropped, outbound
+# masquerade, ip_forward) using [network] from /etc/patronus/patronus.toml,
+# then applies every subsystem in dependency order:
+#   sysctl -> interfaces/VLANs -> routes/gateways -> firewall/NAT -> services
+Description=Patronus boot apply (sysctl, interfaces, routes, firewall/NAT, services)
 After=network-pre.target
 Before=network.target
 Wants=network-pre.target
@@ -7,10 +14,11 @@ Wants=network-pre.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/patronus firewall apply
+ExecStart=/usr/bin/patronus apply
+ExecReload=/usr/bin/patronus apply
 ExecStop=/usr/bin/patronus firewall flush
 
-# Firewall needs elevated privileges
+# Needs root: nftables, /proc/sys, interfaces, routes, daemons
 User=root
 Group=root
 

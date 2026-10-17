@@ -8,6 +8,7 @@ pub mod gateway_groups;
 pub mod interfaces;
 pub mod nat64;
 pub mod routing;
+pub mod sysctl;
 
 #[cfg(feature = "vlan")]
 pub mod vlan;
@@ -43,6 +44,7 @@ pub mod ids;
 pub mod frr;
 
 pub use interfaces::InterfaceManager;
+pub use sysctl::SysctlApplier;
 
 #[cfg(feature = "vlan")]
 pub use vlan::VlanManager;

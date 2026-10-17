@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 mod commands;
 use commands::{
-    bgp, captiveportal, daemon, deploy, firewall, init, metrics, policy, site, status, tunnel,
-    validate, web,
+    apply, bgp, captiveportal, daemon, deploy, firewall, init, metrics, policy, site, status,
+    tunnel, validate, web,
 };
 
 #[derive(Parser)]
@@ -23,12 +23,41 @@ struct Cli {
     #[arg(short, long)]
     verbose: bool,
 
+    /// Config store (SQLite) path [default: $PATRONUS_DB or /var/lib/patronus/config.db]
+    #[arg(long, global = true)]
+    db: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Apply the whole stored configuration to the system, in dependency
+    /// order: sysctl -> interfaces/VLANs -> routes -> firewall/NAT ->
+    /// services. Seeds the safe default ruleset on first boot. This is what
+    /// the boot unit runs.
+    Apply {
+        /// Bootstrap file with [network] wan_interface/lan_interface
+        /// [default: $PATRONUS_BOOTSTRAP or /etc/patronus/patronus.toml]
+        #[arg(long)]
+        bootstrap: Option<PathBuf>,
+
+        /// Only these phases (sysctl, interfaces, routes, firewall, services)
+        #[arg(long = "phase")]
+        phases: Vec<String>,
+
+        /// Print what would be applied (nft script, sysctls, ...) and change nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Configuration history
+    Config {
+        #[command(subcommand)]
+        action: ConfigCommands,
+    },
+
     /// Initialize a new Patronus deployment
     Init {
         /// Deployment name
@@ -259,9 +288,29 @@ enum BgpCommands {
 }
 
 #[derive(Subcommand)]
+enum ConfigCommands {
+    /// List stored configuration revisions (newest first)
+    Revisions,
+    /// Restore a revision and apply it
+    Rollback {
+        /// Revision id (see `patronus config revisions`)
+        id: i64,
+    },
+}
+
+#[derive(Subcommand)]
 enum FirewallCommands {
-    /// Apply/reload all configured firewall rules into nftables
-    Apply,
+    /// Load every stored filter + NAT rule into nftables (atomically);
+    /// same as `patronus apply --phase firewall`
+    Apply {
+        /// Bootstrap file (see `patronus apply --help`)
+        #[arg(long)]
+        bootstrap: Option<PathBuf>,
+
+        /// Print the nft script instead of loading it
+        #[arg(long)]
+        dry_run: bool,
+    },
 
     /// Flush all Patronus-managed nftables rules
     Flush,
@@ -331,12 +380,42 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Web { addr } => {
-            web::handle_web_command(addr, cli.config).await?;
+            web::handle_web_command(addr, cli.config, cli.db).await?;
         }
 
         Commands::Firewall { action } => {
-            firewall::handle_firewall_command(action).await?;
+            firewall::handle_firewall_command(action, cli.db).await?;
         }
+
+        Commands::Apply {
+            bootstrap,
+            phases,
+            dry_run,
+        } => {
+            apply::run(apply::ApplyOptions {
+                db: cli.db,
+                bootstrap,
+                phases: apply::parse_phases(&phases)?,
+                dry_run,
+            })
+            .await?;
+        }
+
+        Commands::Config { action } => match action {
+            ConfigCommands::Revisions => apply::list_revisions(cli.db.as_deref()).await?,
+            ConfigCommands::Rollback { id } => {
+                apply::rollback(
+                    id,
+                    apply::ApplyOptions {
+                        db: cli.db,
+                        bootstrap: None,
+                        phases: None,
+                        dry_run: false,
+                    },
+                )
+                .await?
+            }
+        },
 
         Commands::CaptivePortal { action } => match action {
             CaptivePortalCommands::Serve { addr, interface } => {

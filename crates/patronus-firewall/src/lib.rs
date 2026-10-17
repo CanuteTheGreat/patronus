@@ -6,6 +6,7 @@ use patronus_core::{Error, Result};
 use std::process::Command;
 
 pub mod aliases;
+pub mod applier;
 pub mod nftables;
 pub mod rules;
 
@@ -13,6 +14,7 @@ pub mod rules;
 pub mod geoip;
 
 pub use aliases::AliasManager;
+pub use applier::FirewallApplier;
 pub use rules::RuleManager;
 
 #[cfg(feature = "geoip")]

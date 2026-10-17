@@ -7,7 +7,14 @@ domain = "local"
 timezone = "UTC"
 
 [network]
-# Primary interfaces
+# Interface roles used on FIRST BOOT only: `patronus apply` assigns these
+# roles in the config store (/var/lib/patronus/config.db) and seeds the safe
+# default ruleset from them -- anti-lockout (SSH + web UI) on the LAN, LAN to
+# any allowed, everything inbound on the WAN dropped, outbound masquerade on
+# the WAN, IPv4/IPv6 forwarding on. After that the store is authoritative.
+# Names that don't exist on the box are ignored; with no LAN the anti-lockout
+# rule goes on the WAN, with no roles at all on every interface.
+# Lists are accepted too: lan_interfaces = ["eth1", "eth2"].
 wan_interface = "eth0"
 lan_interface = "eth1"
 

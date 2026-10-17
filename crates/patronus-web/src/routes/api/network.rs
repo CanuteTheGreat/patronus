@@ -206,3 +206,18 @@ pub async fn list_routes(State(state): State<AppState>) -> Response {
         }
     }
 }
+
+/// This lane's API routes, mounted under `/api` by `routes::api_routes`
+/// with one `.merge(network::router())` line.
+pub fn router() -> axum::Router<AppState> {
+    use axum::routing::{get, post, put};
+    axum::Router::new()
+        .route("/network/interfaces", get(list_interfaces))
+        .route("/network/interfaces/:name", put(update_interface))
+        .route("/network/interfaces/:name/up", post(interface_up))
+        .route("/network/interfaces/:name/down", post(interface_down))
+        .route("/network/dhcp/pools", get(list_dhcp_pools))
+        .route("/network/dhcp/leases", get(list_dhcp_leases))
+        .route("/network/dns/records", get(list_dns_records))
+        .route("/network/routes", get(list_routes))
+}

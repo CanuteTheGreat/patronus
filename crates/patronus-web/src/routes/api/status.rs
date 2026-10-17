@@ -75,3 +75,10 @@ pub async fn system_status(State(state): State<AppState>) -> Response {
 
     Json(status).into_response()
 }
+
+/// This lane's API routes, mounted under `/api` by `routes::api_routes`
+/// with one `.merge(status::router())` line.
+pub fn router() -> axum::Router<AppState> {
+    use axum::routing::get;
+    axum::Router::new().route("/status", get(system_status))
+}

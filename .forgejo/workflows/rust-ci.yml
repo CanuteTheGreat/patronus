@@ -125,6 +125,46 @@ jobs:
       - name: Ignored real-nftables / raw-socket tests in a CAP_NET_ADMIN container
         run: ci/privileged-tests.sh
 
+  netlab:
+    # Kernel-state proof for the config store + boot apply (lane A) and the
+    # later lanes: ci/netlab/run.sh builds the shipped patronus +
+    # patronus-web binaries and runs ci/netlab/lane-*.sh in a capped sibling
+    # container that builds its own network namespaces + veth pairs. Lane A
+    # asserts `nft list ruleset`, /proc/sys and real LAN->WAN / WAN->LAN
+    # traffic after API edits, a patronus-web restart and a fresh-namespace
+    # `patronus apply` (= reboot), plus the fresh-box default ruleset.
+    name: Netlab (network namespaces) - store, boot apply, default ruleset
+    runs-on: linux-cross-x86_64
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 4
+      CARGO_PROFILE_DEV_DEBUG: 0
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 8g --memory-swap 8g --cpus 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler libdbus-1-dev
+      - name: Cache cargo
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-netlab-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-netlab-
+      - name: Netlab tests in a capped NET_ADMIN/SYS_ADMIN container
+        run: ci/netlab/run.sh
+
   feature-matrix:
     # `cargo test --workspace` only ever compiles default features, so every
     # cfg(feature)-gated module (patronus-network's dhcp/dns/wireguard/

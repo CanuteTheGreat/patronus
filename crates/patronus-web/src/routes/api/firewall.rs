@@ -27,6 +27,12 @@ fn status_for_apply_error(e: &anyhow::Error) -> StatusCode {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FirewallRule {
     pub id: Option<u32>,
+    /// Display name (defaults to `description`).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// input (default), forward or output.
+    #[serde(default)]
+    pub chain: Option<String>,
     pub action: String,
     pub interface: String,
     pub protocol: String,
@@ -241,4 +247,19 @@ pub async fn delete_nat_rule(State(state): State<AppState>, Path(id): Path<u32>)
                 .into_response()
         }
     }
+}
+
+/// This lane's API routes, mounted under `/api` by `routes::api_routes`
+/// with one `.merge(firewall::router())` line.
+pub fn router() -> axum::Router<AppState> {
+    use axum::routing::{delete, get, post};
+    axum::Router::new()
+        .route("/firewall/rules", get(list_rules).post(add_rule))
+        .route(
+            "/firewall/rules/:id",
+            get(get_rule).put(update_rule).delete(delete_rule),
+        )
+        .route("/firewall/rules/apply", post(apply_rules))
+        .route("/firewall/nat", get(list_nat_rules).post(add_nat_rule))
+        .route("/firewall/nat/:id", delete(delete_nat_rule))
 }

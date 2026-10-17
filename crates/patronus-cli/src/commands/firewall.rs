@@ -1,44 +1,36 @@
-//! Firewall command handler
+//! `patronus firewall apply|flush`
 //!
-//! Wires the `patronus firewall apply`/`patronus firewall flush`
-//! subcommands to the real `patronus-firewall` crate. Before this,
-//! `patronus-firewall.service`'s `ExecStart=/usr/bin/patronus firewall
-//! apply` / `ExecStop=/usr/bin/patronus firewall flush` referenced CLI
-//! subcommands that simply did not exist in `patronus-cli`'s `Commands`
-//! enum -- any fresh (re)start of that unit would fail immediately.
+//! `apply` is `patronus apply --phase firewall`: it loads every filter and
+//! NAT rule from the config store and loads them as one atomic nftables
+//! transaction (it used to build an empty in-memory `RuleManager`, so the
+//! boot unit always applied a ruleset with no user rules at all).
+//! `flush` removes the Patronus table.
 
 use crate::FirewallCommands;
 use colored::Colorize;
-use patronus_firewall::rules::RuleManager;
+use patronus_config::applier::Phase;
+use std::path::PathBuf;
 
-pub async fn handle_firewall_command(action: FirewallCommands) -> anyhow::Result<()> {
-    let rule_manager = RuleManager::new();
+use super::apply::{self, ApplyOptions};
 
+pub async fn handle_firewall_command(
+    action: FirewallCommands,
+    db: Option<PathBuf>,
+) -> anyhow::Result<()> {
     match action {
-        FirewallCommands::Apply => {
-            rule_manager
-                .initialize()
-                .await
-                .map_err(|e| anyhow::anyhow!("failed to initialize nftables table/chains: {e}"))?;
-            rule_manager
-                .apply_all()
-                .await
-                .map_err(|e| anyhow::anyhow!("failed to apply firewall rules: {e}"))?;
-            println!(
-                "{} Firewall rules applied ({} filter rule(s), {} NAT rule(s))",
-                "✓".green(),
-                rule_manager.list_filter_rules().await?.len(),
-                rule_manager.list_nat_rules().await?.len(),
-            );
+        FirewallCommands::Apply { bootstrap, dry_run } => {
+            apply::run(ApplyOptions {
+                db,
+                bootstrap,
+                phases: Some(vec![Phase::Firewall]),
+                dry_run,
+            })
+            .await
         }
         FirewallCommands::Flush => {
-            rule_manager
-                .flush()
-                .await
-                .map_err(|e| anyhow::anyhow!("failed to flush firewall rules: {e}"))?;
+            apply::flush_firewall().await?;
             println!("{} Firewall rules flushed", "✓".green());
+            Ok(())
         }
     }
-
-    Ok(())
 }

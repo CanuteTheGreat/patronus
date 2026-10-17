@@ -17,7 +17,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::applier::{Applier, ApplierRegistry};
 use crate::declarative::{ConfigParser, DeclarativeConfig, ResourceKind};
+use crate::store::ConfigStore;
+use std::sync::Arc;
 
 /// Change operation type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -253,6 +256,10 @@ impl StateManager {
 pub struct ApplyEngine {
     state_manager: StateManager,
     dry_run: bool,
+    /// Where resources go: the config store plus the appliers that own each
+    /// resource kind. Without a target, `apply` refuses to do anything
+    /// (it used to log and report success while changing nothing).
+    target: Option<(Arc<ConfigStore>, ApplierRegistry)>,
 }
 
 impl ApplyEngine {
@@ -260,7 +267,36 @@ impl ApplyEngine {
         Self {
             state_manager: StateManager::new(state_dir),
             dry_run: false,
+            target: None,
         }
+    }
+
+    /// Attach the store and appliers resources are dispatched to.
+    pub fn with_target(mut self, store: Arc<ConfigStore>, registry: ApplierRegistry) -> Self {
+        self.target = Some((store, registry));
+        self
+    }
+
+    fn target(&self) -> Result<(&ConfigStore, &ApplierRegistry)> {
+        self.target
+            .as_ref()
+            .map(|(s, r)| (s.as_ref(), r))
+            .ok_or_else(|| {
+                Error::Config(
+                    "ApplyEngine has no config store/appliers attached (use with_target)"
+                        .to_string(),
+                )
+            })
+    }
+
+    fn applier_for(&self, kind: &ResourceKind) -> Result<(&ConfigStore, Arc<dyn Applier>)> {
+        let (store, registry) = self.target()?;
+        let a = registry.for_kind(kind).ok_or_else(|| {
+            Error::Config(format!(
+                "no applier is registered for {kind:?} resources; they cannot be applied"
+            ))
+        })?;
+        Ok((store, a))
     }
 
     pub async fn init(&mut self) -> Result<()> {
@@ -421,6 +457,19 @@ impl ApplyEngine {
             });
         }
 
+        // Refuse up front (before touching anything) if some resource kind
+        // has no applier.
+        for change in &diff.changes {
+            if change.operation != ChangeOp::NoChange {
+                self.applier_for(&change.resource_kind)?;
+            }
+        }
+        let (store_arc, _) = self.target.clone().ok_or_else(|| {
+            Error::Config("ApplyEngine has no config store/appliers attached".to_string())
+        })?;
+        let store = store_arc.as_ref();
+        let store_revision = store.snapshot("gitops", "before declarative apply").await?;
+
         // Create snapshot before applying
         let snapshot = self
             .state_manager
@@ -457,27 +506,62 @@ impl ApplyEngine {
                     tracing::error!("{}", error_msg);
                     errors.push(error_msg);
 
-                    // Rollback on first error
+                    // Rollback on first error: nothing has been pushed to
+                    // the system yet, so restoring the store is enough.
                     tracing::warn!("Rolling back to snapshot {}", snapshot.id);
-                    if let Err(rollback_err) = self.rollback_to_snapshot(&snapshot.id).await {
+                    let rolled_back = self.restore_store(store_revision).await;
+                    if let Err(rollback_err) = &rolled_back {
                         errors.push(format!("Rollback failed: {}", rollback_err));
-                        return Ok(ApplyResult {
-                            success: false,
-                            changes_applied,
-                            changes_failed,
-                            errors,
-                            rollback_performed: false,
-                        });
                     }
-
+                    self.state_manager = {
+                        let mut sm = StateManager::new(self.state_manager.state_dir.clone());
+                        sm.init().await?;
+                        sm
+                    };
                     return Ok(ApplyResult {
                         success: false,
                         changes_applied,
                         changes_failed,
                         errors,
-                        rollback_performed: true,
+                        rollback_performed: rolled_back.is_ok(),
                     });
                 }
+            }
+        }
+
+        // Push the new store state to the system: each affected applier
+        // once, in phase order. On failure restore the store and re-apply
+        // the old state so the system and the store agree again.
+        let mut touched: Vec<Arc<dyn Applier>> = Vec::new();
+        for change in &diff.changes {
+            if change.operation == ChangeOp::NoChange {
+                continue;
+            }
+            let (_, a) = self.applier_for(&change.resource_kind)?;
+            if !touched.iter().any(|t| t.name() == a.name()) {
+                touched.push(a);
+            }
+        }
+        touched.sort_by_key(|a| a.phase());
+        for a in &touched {
+            if let Err(e) = a.apply(store).await {
+                errors.push(format!("{} failed to apply: {e}", a.name()));
+                let restored = self.restore_store(store_revision).await;
+                for b in &touched {
+                    if let Err(e2) = b.apply(store).await {
+                        errors.push(format!(
+                            "{} failed to re-apply the old state: {e2}",
+                            b.name()
+                        ));
+                    }
+                }
+                return Ok(ApplyResult {
+                    success: false,
+                    changes_applied,
+                    changes_failed: changes_failed + 1,
+                    errors,
+                    rollback_performed: restored.is_ok(),
+                });
             }
         }
 
@@ -540,41 +624,26 @@ impl ApplyEngine {
     }
 
     async fn create_resource(&self, config: &DeclarativeConfig) -> Result<()> {
-        // Dispatch to appropriate handler based on resource kind
-        // This would integrate with actual firewall/network management code
-
         tracing::debug!("Creating {:?}: {}", config.kind, config.metadata.name);
-
-        match config.kind {
-            ResourceKind::FirewallRule => {
-                // Would call patronus-firewall crate to create rule
-                // For now, just log
-                Ok(())
-            }
-            ResourceKind::NatRule => {
-                // Would call NAT management
-                Ok(())
-            }
-            ResourceKind::VpnConnection => {
-                // Would call VPN management
-                Ok(())
-            }
-            _ => Ok(()),
-        }
+        let (store, applier) = self.applier_for(&config.kind)?;
+        applier.upsert_resource(store, config).await
     }
 
     async fn update_resource(&self, config: &DeclarativeConfig) -> Result<()> {
         tracing::debug!("Updating {:?}: {}", config.kind, config.metadata.name);
-
-        // Similar to create, but update existing resource
-        Ok(())
+        let (store, applier) = self.applier_for(&config.kind)?;
+        applier.upsert_resource(store, config).await
     }
 
     async fn delete_resource(&self, name: &str, kind: &ResourceKind) -> Result<()> {
         tracing::debug!("Deleting {:?}: {}", kind, name);
+        let (store, applier) = self.applier_for(kind)?;
+        applier.delete_resource(store, kind, name).await
+    }
 
-        // Delete the resource
-        Ok(())
+    async fn restore_store(&self, revision: i64) -> Result<()> {
+        let (store, _) = self.target()?;
+        store.restore_revision(revision, "gitops").await
     }
 
     /// Rollback to a specific snapshot

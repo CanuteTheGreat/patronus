@@ -2,22 +2,25 @@
 # Copyright 2025 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v3
 
-description="Patronus Firewall Service"
+# Boot-time apply of the whole stored configuration (the service name is
+# kept for compatibility). `patronus apply` opens
+# /var/lib/patronus/config.db, seeds the safe default ruleset on first boot
+# ([network] in /etc/patronus/patronus.toml names the WAN/LAN interfaces),
+# then applies sysctl -> interfaces/VLANs -> routes -> firewall/NAT ->
+# services. `patronus firewall apply` is the firewall-only subset.
 
-command="/usr/bin/patronus"
-command_args="firewall apply"
+description="Patronus boot apply (sysctl, interfaces, routes, firewall/NAT, services)"
+extra_started_commands="reload"
 
 depend() {
-	need localmount net
-	before net-online
+	need localmount
+	before net
 	provide firewall
 }
 
 start() {
-	# `firewall apply` creates the nftables table/chains itself (there is
-	# no `firewall init` subcommand; calling it made every start fail).
-	ebegin "Applying Patronus firewall rules"
-	/usr/bin/patronus firewall apply
+	ebegin "Applying Patronus configuration"
+	/usr/bin/patronus apply
 	eend $?
 }
 
@@ -28,7 +31,7 @@ stop() {
 }
 
 reload() {
-	ebegin "Reloading Patronus firewall rules"
-	/usr/bin/patronus firewall apply
+	ebegin "Re-applying Patronus configuration"
+	/usr/bin/patronus apply
 	eend $?
 }

@@ -32,9 +32,11 @@ required-features = ["ha"]
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
+tempfile = "3.10"
 
 [dependencies]
 patronus-core = { path = "../patronus-core" }
+patronus-config = { path = "../patronus-config" }
 tokio.workspace = true
 async-trait.workspace = true
 serde.workspace = true

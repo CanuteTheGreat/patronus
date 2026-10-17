@@ -155,6 +155,10 @@ pub struct FirewallRule {
     pub source_display: String,
     pub destination_display: String,
     pub port_display: String,
+    /// "LAN"/"WAN"/"MGMT" for role tokens (@lan...), else the device name.
+    pub interface_display: String,
+    /// "system" (anti-lockout, not deletable), "default", "user", "gitops".
+    pub origin: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,6 +171,8 @@ pub struct NatRule {
     pub target: String,
     pub description: String,
     pub enabled: bool,
+    /// "system", "default", "user" or "gitops".
+    pub origin: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

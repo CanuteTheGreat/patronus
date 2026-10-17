@@ -4,10 +4,14 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod applier;
 pub mod apply;
 pub mod declarative;
+pub mod defaults;
+pub mod migrate;
 pub mod store;
 
+pub use applier::{Applier, ApplierOutcome, ApplierRegistry, ApplyReport, ApplyRunReport, Phase};
 pub use apply::{
     ApplyEngine, ApplyResult, ChangeOp, ConfigChange, ConfigSnapshot, DiffResult, StateManager,
 };
@@ -15,7 +19,8 @@ pub use declarative::{
     AddressSpec, ConfigParser, DeclarativeConfig, Direction, FirewallRuleSpec, Metadata,
     NatRuleSpec, ResourceKind, ResourceSpec, RuleAction,
 };
-pub use store::ConfigStore;
+pub use defaults::{ensure_defaults, Bootstrap};
+pub use store::{ConfigStore, RuleOrigin};
 
 /// Main system configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

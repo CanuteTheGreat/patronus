@@ -1,5 +1,6 @@
 //! Command handlers for the Patronus CLI
 
+pub mod apply;
 pub mod bgp;
 pub mod captiveportal;
 pub mod daemon;

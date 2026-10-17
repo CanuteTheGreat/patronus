@@ -193,3 +193,17 @@ pub async fn list_ipsec_tunnels(State(state): State<AppState>) -> Response {
         }
     }
 }
+
+/// This lane's API routes, mounted under `/api` by `routes::api_routes`
+/// with one `.merge(vpn::router())` line.
+pub fn router() -> axum::Router<AppState> {
+    use axum::routing::{delete, get};
+    axum::Router::new()
+        .route("/vpn/wireguard/peers", get(list_wg_peers).post(add_wg_peer))
+        .route("/vpn/wireguard/peers/:id", delete(delete_wg_peer))
+        .route("/vpn/wireguard/config/:id", get(get_wg_config))
+        .route("/vpn/wireguard/qrcode/:id", get(get_wg_qrcode_svg))
+        .route("/vpn/wireguard/qrcode/:id/png", get(get_wg_qrcode_png))
+        .route("/vpn/openvpn/tunnels", get(list_ovpn_tunnels))
+        .route("/vpn/ipsec/tunnels", get(list_ipsec_tunnels))
+}

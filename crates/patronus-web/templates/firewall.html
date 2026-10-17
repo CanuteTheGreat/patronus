@@ -49,6 +49,7 @@
             <tr>
                 <th>Name</th>
                 <th>Chain</th>
+                <th>Interface</th>
                 <th>Action</th>
                 <th>Protocol</th>
                 <th>Source</th>
@@ -60,8 +61,9 @@
         <tbody>
             {% for rule in filter_rules %}
             <tr>
-                <td>{{ rule.name }}</td>
+                <td>{{ rule.name }}{% if rule.origin == "system" %} <span class="badge" title="Anti-lockout: always enforced, cannot be deleted">system</span>{% endif %}</td>
                 <td>{{ rule.chain }}</td>
+                <td>{{ rule.interface_display }}</td>
                 <td>
                     {% if rule.action == "Accept" %}
                     <span class="badge success">{{ rule.action }}</span>
@@ -93,6 +95,7 @@
             <tr>
                 <th>Name</th>
                 <th>Type</th>
+                <th>Interface</th>
                 <th>Source</th>
                 <th>Destination</th>
                 <th>Target</th>
@@ -104,6 +107,7 @@
             <tr>
                 <td>{{ rule.description }}</td>
                 <td><span class="badge">{{ rule.rule_type }}</span></td>
+                <td>{{ rule.interface }}</td>
                 <td>{{ rule.source }}</td>
                 <td>{{ rule.destination }}</td>
                 <td>{{ rule.target }}</td>

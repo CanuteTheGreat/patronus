@@ -103,6 +103,9 @@ pub async fn serve_tls(
     state: AppState,
     tls_dir: &std::path::Path,
 ) -> anyhow::Result<()> {
+    // Pick the crypto provider explicitly (Err = one is already installed).
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let app = prepare_app(state);
 
     let tls_config = tls::ensure_self_signed_cert(tls_dir).await?;

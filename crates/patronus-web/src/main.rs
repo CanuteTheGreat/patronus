@@ -3,7 +3,6 @@
 //! This is the main entry point for the web-based management interface.
 
 use anyhow::Result;
-use patronus_web::AppState;
 use std::net::SocketAddr;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -24,15 +23,12 @@ async fn main() -> Result<()> {
         env!("CARGO_PKG_VERSION")
     );
 
-    // Create minimal application state with stub services
-    let rule_manager = patronus_firewall::rules::RuleManager::new();
-    rule_manager
-        .initialize()
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to initialize nftables table/chains: {e}"))?;
-    let config_store =
-        patronus_config::store::ConfigStore::new(std::path::PathBuf::from("/tmp/patronus-config"));
-    let state = AppState::new(rule_manager, config_store).await?;
+    // Open the persistent config store ($PATRONUS_DB or
+    // /var/lib/patronus/config.db), seed first-boot defaults if the boot
+    // unit hasn't, and load the stored firewall into nftables. (This used
+    // to keep every rule in memory, with the store pointed at /tmp and
+    // never used, so all rules vanished on restart.)
+    let state = patronus_web::state::startup(None).await?;
 
     // Per-install admin password: PATRONUS_ADMIN_PASSWORD, or generated on
     // first start into /var/lib/patronus/initial-admin-password (0600).
