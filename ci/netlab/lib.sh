@@ -46,7 +46,23 @@ ISP() { ip netns exec nl-isp "$@"; }
 INET() { ip netns exec nl-inet "$@"; }
 
 NL_PIDS=()
-nl_bg() { "$@" >/dev/null 2>&1 & NL_PIDS+=($!); }
+# nl_bg NS-HELPER CMD...: start CMD in that namespace in the background.
+# `ip netns exec` is started directly instead of via R/C/ISP/INET: those are
+# functions, and backgrounding a function forks a subshell, so $! would be the
+# subshell, nl_down would stop only that, and the real server would be
+# orphaned in the deleted namespace (7 leaked processes per nl_up; the
+# nightly's 30 power cuts leaked ~200 into the 2g netlab container).
+nl_bg() {
+  local ns=
+  case $1 in R) ns=nl-rtr ;; C) ns=nl-client ;; ISP) ns=nl-isp ;; INET) ns=nl-inet ;; esac
+  if [ -n "$ns" ]; then
+    shift
+    ip netns exec "$ns" "$@" >/dev/null 2>&1 &
+  else
+    "$@" >/dev/null 2>&1 &
+  fi
+  NL_PIDS+=($!)
+}
 
 # --- servers ---------------------------------------------------------------
 cat > "$NL_T/nl-http.py" <<'EOF'
@@ -83,8 +99,14 @@ EOF
 # --- topology --------------------------------------------------------------
 nl_down() {
   for p in "${NL_PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null; done
+  for p in "${NL_PIDS[@]:-}"; do [ -n "$p" ] && { wait "$p" 2>/dev/null || true; }; done
   NL_PIDS=()
   sleep 0.2
+  # Every server nl_bg started must be gone; a survivor means nl_bg lost track
+  # of the real process (see nl_bg).
+  local left
+  left=$(pgrep -af -- "$NL_T/(nl|lb)-[a-z0-9]+\\.py|nl-dnsmasq\\.pid" || true)
+  [ -z "$left" ] || nl_fail "nl_down left netlab servers running: $left"
   for n in nl-rtr nl-client nl-isp nl-inet; do ip netns del "$n" 2>/dev/null || true; done
   rm -rf /etc/netns/nl-client
 }
