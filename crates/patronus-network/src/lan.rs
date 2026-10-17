@@ -833,6 +833,8 @@ pub fn appliers() -> Vec<Arc<dyn patronus_config::Applier>> {
 }
 
 /// [`appliers`] over a custom environment (tests).
+// cfg-gated pushes: vec![] cannot express them
+#[allow(clippy::vec_init_then_push)]
 pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     #[allow(unused_mut)]
     let mut v: Vec<Arc<dyn patronus_config::Applier>> = Vec::new();

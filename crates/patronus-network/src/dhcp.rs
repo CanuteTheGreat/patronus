@@ -192,7 +192,7 @@ impl RelayInput {
             .iter()
             .find(|a| a.is_multicast() || a.is_unspecified())
         {
-            return Err(invalid(&format!(
+            return Err(invalid(format!(
                 "relay server {m}: give the DHCP server's unicast address"
             )));
         }
