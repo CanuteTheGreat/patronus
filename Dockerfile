@@ -147,9 +147,12 @@ RUN useradd -r -u 1000 -m -s /bin/bash patronus 2>/dev/null || true && \
 # COPY --from=builder step since this Dockerfile already reuses the builder
 # stage as runtime), so the xattr-based file capability survives into the
 # image layer -- setcap via a tar-based COPY --from often does not.
+# wg needs CAP_NET_ADMIN too, or `wg show all dump` fails with EPERM once
+# any WireGuard interface exists and the VPN page/peers API return 503.
 RUN emerge --verbose sys-libs/libcap && \
     setcap cap_net_admin,cap_net_raw+eip "$(command -v nft)" && \
-    getcap "$(command -v nft)"
+    setcap cap_net_admin+eip "$(command -v wg)" && \
+    getcap "$(command -v nft)" "$(command -v wg)"
 
 
 USER patronus
