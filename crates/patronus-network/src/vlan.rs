@@ -1,204 +1,105 @@
-//! VLAN management
+//! 802.1Q VLAN subinterfaces and QinQ (802.1ad service VLANs), created by
+//! the interfaces applier (USE=vlan, cargo feature `vlan`).
 //!
-//! Provides VLAN (802.1Q) interface creation and management
+//! A QinQ customer VLAN is an 802.1Q VLAN whose parent is an 802.1ad VLAN
+//! (`eth0` -> `eth0.100` 802.1ad -> `eth0.100.20` 802.1Q).
 
-use futures::TryStreamExt;
-use patronus_core::{Error, Result};
-use rtnetlink::{new_connection, Handle};
+use crate::linkstate::KLink;
+use crate::netconf::VlanConfig;
 
-/// VLAN interface information
-#[derive(Debug, Clone)]
-pub struct VlanInterface {
-    pub name: String,
-    pub parent: String,
-    pub vlan_id: u16,
-    pub index: u32,
+/// `ip link add` arguments for a VLAN.
+pub fn create_args(v: &VlanConfig) -> Vec<String> {
+    let proto = if v.protocol == "802.1ad" {
+        "802.1ad"
+    } else {
+        "802.1Q"
+    };
+    [
+        "link",
+        "add",
+        "link",
+        &v.parent,
+        "name",
+        &v.name,
+        "type",
+        "vlan",
+        "id",
+        &v.vlan_id.to_string(),
+        "protocol",
+        proto,
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
-/// Manages VLAN interfaces
-pub struct VlanManager {
-    handle: Handle,
+/// An existing device with this name can't be reused as this VLAN.
+pub fn needs_recreate(v: &VlanConfig, k: &KLink) -> bool {
+    k.kind.as_deref() != Some("vlan")
+        || k.link.as_deref() != Some(v.parent.as_str())
+        || k.vlan_id != Some(v.vlan_id)
+        || k.vlan_protocol.as_deref().unwrap_or("802.1q") != v.protocol
 }
 
-impl VlanManager {
-    /// Create a new VLAN manager
-    pub async fn new() -> Result<Self> {
-        let (connection, handle, _) = new_connection()
-            .map_err(|e| Error::Network(format!("Failed to create netlink connection: {}", e)))?;
+/// VLANs ordered so every parent VLAN comes before its children (QinQ).
+pub fn topo_order(vlans: &[VlanConfig]) -> Vec<&VlanConfig> {
+    let mut out: Vec<&VlanConfig> = Vec::new();
+    let mut left: Vec<&VlanConfig> = vlans.iter().collect();
+    while !left.is_empty() {
+        let before = left.len();
+        left.retain(|v| {
+            let parent_is_pending =
+                vlans.iter().any(|p| p.name == v.parent) && !out.iter().any(|o| o.name == v.parent);
+            if parent_is_pending {
+                true
+            } else {
+                out.push(v);
+                false
+            }
+        });
+        if left.len() == before {
+            // a loop (rejected by validation); keep going deterministically
+            out.append(&mut left);
+        }
+    }
+    out
+}
 
-        // Spawn the connection in the background
-        tokio::spawn(connection);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        Ok(Self { handle })
+    fn v(name: &str, parent: &str, id: u16, proto: &str) -> VlanConfig {
+        VlanConfig {
+            name: name.into(),
+            parent: parent.into(),
+            vlan_id: id,
+            protocol: proto.into(),
+            enabled: true,
+            description: None,
+        }
     }
 
-    /// Create a VLAN interface
-    pub async fn create_vlan(
-        &self,
-        parent: &str,
-        vlan_id: u16,
-        name: Option<&str>,
-    ) -> Result<String> {
-        use crate::interfaces::InterfaceManager;
-
-        // Get parent interface
-        let iface_mgr = InterfaceManager::new().await?;
-        let parent_iface = iface_mgr
-            .get_by_name(parent)
-            .await?
-            .ok_or_else(|| Error::Network(format!("Parent interface not found: {}", parent)))?;
-
-        // Generate VLAN interface name if not provided
-        let vlan_name = name
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("{}.{}", parent, vlan_id));
-
-        // Create VLAN interface using netlink
-        self.handle
-            .link()
-            .add()
-            .vlan(vlan_name.clone(), parent_iface.index, vlan_id)
-            .execute()
-            .await
-            .map_err(|e| Error::Network(format!("Failed to create VLAN interface: {}", e)))?;
-
-        tracing::info!(
-            "Created VLAN interface {} on {} (VLAN ID: {})",
-            vlan_name,
-            parent,
-            vlan_id
+    #[test]
+    fn qinq_parents_first_and_args() {
+        let vs = vec![
+            v("c20", "s100", 20, "802.1q"),
+            v("s100", "eth0", 100, "802.1ad"),
+        ];
+        let o: Vec<&str> = topo_order(&vs).iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(o, vec!["s100", "c20"]);
+        assert_eq!(
+            create_args(&vs[1]).join(" "),
+            "link add link eth0 name s100 type vlan id 100 protocol 802.1ad"
         );
-        Ok(vlan_name)
-    }
-
-    /// Delete a VLAN interface
-    pub async fn delete_vlan(&self, name: &str) -> Result<()> {
-        use crate::interfaces::InterfaceManager;
-
-        let iface_mgr = InterfaceManager::new().await?;
-        let iface = iface_mgr
-            .get_by_name(name)
-            .await?
-            .ok_or_else(|| Error::Network(format!("VLAN interface not found: {}", name)))?;
-
-        self.handle
-            .link()
-            .del(iface.index)
-            .execute()
-            .await
-            .map_err(|e| Error::Network(format!("Failed to delete VLAN interface: {}", e)))?;
-
-        tracing::info!("Deleted VLAN interface: {}", name);
-        Ok(())
-    }
-
-    /// List all VLAN interfaces
-    pub async fn list_vlans(&self) -> Result<Vec<VlanInterface>> {
-        let mut vlans = Vec::new();
-        let mut links = self.handle.link().get().execute();
-
-        while let Some(msg) = links
-            .try_next()
-            .await
-            .map_err(|e| Error::Network(format!("Failed to get interfaces: {}", e)))?
-        {
-            use netlink_packet_route::link::{
-                InfoData, InfoKind, InfoVlan, LinkAttribute, LinkInfo,
-            };
-
-            // Check if this is a VLAN interface
-            let mut is_vlan = false;
-            let mut vlan_id = None;
-            let mut parent_index = None;
-
-            for attr in &msg.attributes {
-                if let LinkAttribute::LinkInfo(infos) = attr {
-                    for info in infos {
-                        match info {
-                            LinkInfo::Kind(InfoKind::Vlan) => {
-                                is_vlan = true;
-                            }
-                            LinkInfo::Data(InfoData::Vlan(vlan_infos)) => {
-                                for v in vlan_infos {
-                                    if let InfoVlan::Id(id) = v {
-                                        vlan_id = Some(*id);
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                if let LinkAttribute::Link(idx) = attr {
-                    parent_index = Some(*idx);
-                }
-            }
-
-            if is_vlan {
-                let name = msg
-                    .attributes
-                    .iter()
-                    .find_map(|attr| {
-                        if let LinkAttribute::IfName(name) = attr {
-                            Some(name.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_else(|| format!("vlan{}", msg.header.index));
-
-                // Get parent interface name
-                let parent = if let Some(parent_idx) = parent_index {
-                    self.get_interface_name(parent_idx)
-                        .await
-                        .unwrap_or_else(|_| format!("if{}", parent_idx))
-                } else {
-                    "unknown".to_string()
-                };
-
-                vlans.push(VlanInterface {
-                    name,
-                    parent,
-                    vlan_id: vlan_id.unwrap_or(0),
-                    index: msg.header.index,
-                });
-            }
-        }
-
-        Ok(vlans)
-    }
-
-    /// Get interface name by index
-    async fn get_interface_name(&self, index: u32) -> Result<String> {
-        use crate::interfaces::InterfaceManager;
-
-        let mgr = InterfaceManager::new().await?;
-        if let Some(iface) = mgr.get_by_index(index).await? {
-            Ok(iface.name)
-        } else {
-            Ok(format!("if{}", index))
-        }
-    }
-
-    /// Get VLAN information by name
-    pub async fn get_vlan(&self, name: &str) -> Result<Option<VlanInterface>> {
-        let vlans = self.list_vlans().await?;
-        Ok(vlans.into_iter().find(|v| v.name == name))
-    }
-
-    /// Set VLAN interface up
-    pub async fn enable_vlan(&self, name: &str) -> Result<()> {
-        use crate::interfaces::InterfaceManager;
-
-        let iface_mgr = InterfaceManager::new().await?;
-        iface_mgr.enable(name).await
-    }
-
-    /// Set VLAN interface down
-    pub async fn disable_vlan(&self, name: &str) -> Result<()> {
-        use crate::interfaces::InterfaceManager;
-
-        let iface_mgr = InterfaceManager::new().await?;
-        iface_mgr.disable(name).await
+        let k = KLink {
+            kind: Some("vlan".into()),
+            link: Some("eth0".into()),
+            vlan_id: Some(100),
+            vlan_protocol: Some("802.1ad".into()),
+            ..Default::default()
+        };
+        assert!(!needs_recreate(&vs[1], &k));
+        assert!(needs_recreate(&v("s100", "eth0", 101, "802.1ad"), &k));
     }
 }

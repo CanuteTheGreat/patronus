@@ -117,7 +117,7 @@
         <!-- Interfaces Tab -->
         <div id="interfaces-tab" class="tab-content active">
             <div class="card-header">
-                <h2 class="card-title">Network Interfaces</h2>
+                <h2 class="card-title">Network Interfaces <a class="text-sm" href="/interfaces">(assign roles, VLANs, bonds, bridges, PPPoE &rarr;)</a></h2>
                 <div class="flex gap-2">
                     <input type="search" placeholder="Search interfaces..." class="search-input"
                            oninput="filterTable(this.value, 'interfaces-table')">
@@ -405,15 +405,22 @@
         }
 
         // Interface management
+        // Interface configuration lives on the Interfaces page (lane C).
         function editInterface(name) {
-            alert(`Configure interface: ${name}`);
+            location.href = '/interfaces#' + encodeURIComponent(name);
         }
 
-        function toggleInterface(name, isUp) {
+        async function toggleInterface(name, isUp) {
             const action = isUp ? 'down' : 'up';
-            if (confirm(`Bring interface "${name}" ${action}?`)) {
-                alert(`Interface ${name} is now ${action}`);
+            if (!confirm(`Bring interface "${name}" ${action}?`)) return;
+            let r = await fetch(`/api/interfaces/${encodeURIComponent(name)}/${action}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+            let j = await r.json().catch(() => ({}));
+            if (r.status === 409 && confirm(`${j.error}\n\nApply anyway?`)) {
+                r = await fetch(`/api/interfaces/${encodeURIComponent(name)}/${action}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{"force":true}'});
+                j = await r.json().catch(() => ({}));
             }
+            if (!r.ok) { alert(j.error || `HTTP ${r.status}`); return; }
+            location.reload();
         }
 
         // DHCP management
@@ -473,7 +480,7 @@
         }
 
         function showAddInterfaceModal() {
-            alert('Add Interface modal - TODO');
+            location.href = '/interfaces';
         }
 
         function showAddDHCPPoolModal() {

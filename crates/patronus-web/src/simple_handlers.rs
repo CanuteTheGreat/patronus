@@ -44,11 +44,12 @@ pub async fn simple_index(_state: State<AppState>) -> impl IntoResponse {
         <div class="stat-card info">
             <h3>Network Interfaces</h3>
             <p id="interface-count">Loading...</p>
-            <p><a href="/api/interfaces">View Details (JSON)</a></p>
+            <p><a href="/interfaces">Manage interfaces</a></p>
         </div>
 
         <div class="stat-card warning">
             <h3>Quick Actions</h3>
+            <p><a href="/interfaces">🔌 Interfaces</a></p>
             <p><a href="/simple/firewall">🔥 Firewall Management</a></p>
             <p><a href="/simple/status">📊 System Status</a></p>
         </div>
@@ -69,7 +70,7 @@ pub async fn simple_index(_state: State<AppState>) -> impl IntoResponse {
         fetch('/api/interfaces')
             .then(response => response.json())
             .then(data => {
-                const count = data.interfaces ? data.interfaces.length : 0;
+                const count = data.devices ? data.devices.length : 0;
                 document.getElementById('interface-count').textContent =
                     `${count} network interfaces detected`;
             })
@@ -159,8 +160,8 @@ pub async fn simple_status(_state: State<AppState>) -> impl IntoResponse {
         fetch('/api/interfaces')
             .then(response => response.json())
             .then(data => {{
-                const interfaces = data.interfaces || [];
-                const activeCount = interfaces.filter(i => i.enabled).length;
+                const interfaces = data.devices || [];
+                const activeCount = interfaces.filter(i => i.up).length;
                 document.getElementById('network-status').innerHTML =
                     `✅ ${{interfaces.length}} interfaces discovered<br>✅ ${{activeCount}} interfaces active`;
             }})

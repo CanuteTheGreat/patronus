@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd"]
 
 # Core features
 web = ["patronus-web", "dep:axum"]
@@ -39,7 +39,9 @@ monitoring-prometheus = ["dep:prometheus"]
 # Advanced
 captive-portal = []
 ids-suricata = []
-vlan = ["patronus-network/vlan"]
+vlan = ["patronus-network/vlan", "patronus-web?/vlan"]
+pppoe = ["patronus-network/pppoe", "patronus-web?/pppoe"]
+dhcpcd = ["patronus-network/dhcpcd", "patronus-web?/dhcpcd"]
 qos = ["patronus-network/qos"]
 backup = []
 

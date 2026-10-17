@@ -33,6 +33,7 @@ pub fn build_router(
         .route("/firewall", get(pages::firewall))
         .route("/vpn", get(pages::vpn))
         .route("/network", get(pages::network))
+        .route("/interfaces", get(api::interfaces::page))
         .route("/monitoring", get(pages::monitoring))
         .route("/system", get(pages::system))
         // Simple handler routes (working fallbacks)
@@ -131,6 +132,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::firewall::router())
         .merge(api::vpn::router())
         .merge(api::network::router())
+        .merge(api::interfaces::router())
         .merge(api::system::router())
 }
 

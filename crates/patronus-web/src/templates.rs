@@ -639,3 +639,8 @@ impl fmt::Display for LogEntry {
         write!(f, "[{}] [{}] {}", self.level, self.component, self.message)
     }
 }
+
+/// Interfaces page (lane C). Static shell; data comes from `/api/interfaces`.
+#[derive(Template)]
+#[template(path = "interfaces.html")]
+pub struct InterfacesTemplate;

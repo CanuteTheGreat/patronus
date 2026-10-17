@@ -20,7 +20,7 @@ error_log="/var/log/patronus/web-error.log"
 
 depend() {
 	need net
-	use dns
+	use dns patronus-applyd
 	after firewall
 }
 

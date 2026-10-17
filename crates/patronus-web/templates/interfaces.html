@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interfaces - Patronus</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+        h1 { margin-bottom: 4px; }
+        h2 { margin-top: 32px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+        .muted { color: #6c757d; font-size: 0.9em; }
+        table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+        th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
+        th { background: #f8f9fa; }
+        .badge { padding: 2px 7px; border-radius: 3px; font-size: 0.8em; margin-right: 3px; display: inline-block; }
+        .up { background: #28a745; color: #fff; }
+        .down { background: #dc3545; color: #fff; }
+        .role { background: #007bff; color: #fff; }
+        .dyn { background: #17a2b8; color: #fff; }
+        .grey { background: #e9ecef; color: #333; }
+        .btn { padding: 5px 11px; margin: 2px; border: none; border-radius: 4px; cursor: pointer; background: #6c757d; color: #fff; }
+        .btn-primary { background: #007bff; }
+        .btn-danger { background: #dc3545; }
+        .btn-warning { background: #ffc107; color: #000; }
+        .card { border: 1px solid #ddd; border-radius: 5px; padding: 14px; margin: 12px 0; background: #fcfcfc; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px 18px; }
+        label { display: block; font-size: 0.85em; color: #444; }
+        input, select, textarea { width: 100%; box-sizing: border-box; padding: 5px; margin-top: 2px; }
+        input[type=checkbox] { width: auto; }
+        textarea { font-family: monospace; min-height: 48px; }
+        #msg { margin: 12px 0; padding: 10px; border-radius: 4px; display: none; white-space: pre-wrap; }
+        #msg.ok { display: block; background: #e6f4ea; border: 1px solid #28a745; }
+        #msg.err { display: block; background: #fdecea; border: 1px solid #dc3545; }
+        #msg.warn { display: block; background: #fff8e1; border: 1px solid #ffc107; }
+        .empty { color: #6c757d; font-style: italic; padding: 8px 0; }
+        .mono { font-family: monospace; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <p><a href="/">&larr; Dashboard</a> &middot; <a href="/network">Network services</a> &middot; <a href="/firewall">Firewall</a></p>
+    <h1>Interfaces</h1>
+    <div class="muted" id="session-line">Loading&hellip;</div>
+    <div id="msg"></div>
+
+    <h2>Interface assignments</h2>
+    <p class="muted">Assign WAN / LAN / OPT roles and configure addressing. Rows without
+        configuration are left exactly as the operating system set them up.
+        The anti-lockout rule (SSH + web UI) follows the LAN role (or WAN when there is no LAN).</p>
+    <table id="devices">
+        <thead><tr><th>Interface</th><th>Role</th><th>State</th><th>Addresses</th><th>Configuration</th><th>MAC / MTU</th><th>Traffic</th><th></th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <div id="devices-empty" class="empty hidden">No network interfaces were reported by the kernel.</div>
+    <div id="missing" class="muted"></div>
+
+    <div class="card hidden" id="edit-card">
+        <h3 id="edit-title">Edit</h3>
+        <form id="edit-form" onsubmit="return saveIface(event)">
+            <input type="hidden" name="name">
+            <div class="grid">
+                <div><label>Role</label><select name="role" id="role-select"></select></div>
+                <div><label><input type="checkbox" name="enabled" checked> Enabled (link up)</label></div>
+                <div><label>IPv4</label><select name="ipv4_mode" onchange="modeVis()">
+                    <option value="unmanaged">Leave as is (unmanaged)</option><option value="static">Static</option>
+                    <option value="dhcp">DHCP client</option><option value="none">None</option></select></div>
+                <div class="v4s"><label>IPv4 addresses (CIDR, one per line)</label><textarea name="ipv4" placeholder="192.168.1.1/24"></textarea></div>
+                <div class="v4s"><label>IPv4 gateway (upstream)</label><input name="gateway4" placeholder="optional"></div>
+                <div><label>IPv6</label><select name="ipv6_mode" onchange="modeVis()">
+                    <option value="unmanaged">Leave as is (unmanaged)</option><option value="static">Static</option>
+                    <option value="slaac">SLAAC (router advertisements)</option><option value="dhcp6">DHCPv6 (dhcpcd)</option>
+                    <option value="none">None</option></select></div>
+                <div class="v6s"><label>IPv6 addresses (CIDR, one per line)</label><textarea name="ipv6" placeholder="fd00:1::1/64"></textarea></div>
+                <div class="v6s"><label>IPv6 gateway</label><input name="gateway6" placeholder="optional"></div>
+                <div><label>MTU</label><input name="mtu" type="number" min="68" max="65535" placeholder="default"></div>
+                <div><label>MAC address (spoof)</label><input name="mac" placeholder="hardware default"></div>
+                <div><label>Description</label><input name="description"></div>
+            </div>
+            <p><button class="btn btn-primary" type="submit">Save &amp; apply</button>
+               <button class="btn" type="button" onclick="hide('edit-card')">Cancel</button></p>
+        </form>
+    </div>
+
+    <h2>VLANs <span class="muted">(802.1Q, QinQ via an 802.1ad parent)</span></h2>
+    <div id="vlan-off" class="empty hidden">This build has no VLAN support (Gentoo USE=vlan).</div>
+    <div id="vlan-on">
+        <table id="vlans"><thead><tr><th>Name</th><th>Parent</th><th>Tag</th><th>Protocol</th><th>State</th><th>Description</th><th></th></tr></thead><tbody></tbody></table>
+        <div id="vlans-empty" class="empty hidden">No VLANs configured.</div>
+        <form class="card" id="vlan-form" onsubmit="return addVlan(event)">
+            <div class="grid">
+                <div><label>Parent interface</label><select name="parent" class="parents"></select></div>
+                <div><label>VLAN tag (1-4094)</label><input name="vlan_id" type="number" min="1" max="4094" required></div>
+                <div><label>Protocol</label><select name="protocol"><option value="802.1q">802.1Q</option><option value="802.1ad">802.1ad (QinQ service tag)</option></select></div>
+                <div><label>Name (default parent.tag)</label><input name="name" maxlength="15"></div>
+                <div><label>Description</label><input name="description"></div>
+            </div>
+            <p><button class="btn btn-primary" type="submit">Add VLAN</button></p>
+        </form>
+    </div>
+
+    <h2>Link aggregation (bonds)</h2>
+    <table id="bonds"><thead><tr><th>Name</th><th>Mode</th><th>Members</th><th>Primary</th><th>Kernel state</th><th></th></tr></thead><tbody></tbody></table>
+    <div id="bonds-empty" class="empty hidden">No bonds configured.</div>
+    <form class="card" id="bond-form" onsubmit="return addBond(event)">
+        <div class="grid">
+            <div><label>Name</label><input name="name" value="bond0" maxlength="15" required></div>
+            <div><label>Mode</label><select name="mode">
+                <option value="active-backup">active-backup (failover)</option><option value="802.3ad">802.3ad (LACP)</option>
+                <option value="balance-xor">balance-xor</option><option value="balance-rr">balance-rr</option>
+                <option value="broadcast">broadcast</option><option value="balance-tlb">balance-tlb</option><option value="balance-alb">balance-alb</option></select></div>
+            <div><label>Member ports</label><div class="ports" data-name="members"></div></div>
+            <div><label>Primary (active-backup)</label><input name="primary" placeholder="optional"></div>
+            <div><label>Link monitor (miimon, ms)</label><input name="miimon" type="number" value="100" min="0"></div>
+            <div><label>LACP rate</label><select name="lacp_rate"><option value="">default (slow)</option><option>slow</option><option>fast</option></select></div>
+            <div><label>Transmit hash</label><select name="xmit_hash_policy"><option value="">default</option><option>layer2</option><option>layer2+3</option><option>layer3+4</option></select></div>
+        </div>
+        <p><button class="btn btn-primary" type="submit">Save bond</button></p>
+    </form>
+
+    <h2>Bridges</h2>
+    <table id="bridges"><thead><tr><th>Name</th><th>Members</th><th>STP</th><th>Kernel state</th><th></th></tr></thead><tbody></tbody></table>
+    <div id="bridges-empty" class="empty hidden">No bridges configured.</div>
+    <form class="card" id="bridge-form" onsubmit="return addBridge(event)">
+        <div class="grid">
+            <div><label>Name</label><input name="name" value="br0" maxlength="15" required></div>
+            <div><label>Member ports</label><div class="ports" data-name="members" data-virtual="1"></div></div>
+            <div><label><input type="checkbox" name="stp"> Spanning tree (STP)</label></div>
+        </div>
+        <p><button class="btn btn-primary" type="submit">Save bridge</button></p>
+    </form>
+
+    <h2>PPPoE</h2>
+    <div id="pppoe-off" class="empty hidden">This build has no PPPoE support (Gentoo USE=pppoe).</div>
+    <div id="pppoe-on">
+        <p class="muted">A PPPoE link is a new interface (e.g. <span class="mono">pppoe0</span>); assign it the WAN role above once created.</p>
+        <table id="pppoe"><thead><tr><th>Name</th><th>Over</th><th>User</th><th>MTU</th><th>Link</th><th></th></tr></thead><tbody></tbody></table>
+        <div id="pppoe-empty" class="empty hidden">No PPPoE links configured.</div>
+        <form class="card" id="pppoe-form" onsubmit="return addPppoe(event)">
+            <div class="grid">
+                <div><label>Name</label><input name="name" value="pppoe0" maxlength="15" required></div>
+                <div><label>Over interface</label><select name="parent" class="parents"></select></div>
+                <div><label>Username</label><input name="username" required autocomplete="off"></div>
+                <div><label>Password (blank = keep)</label><input name="password" type="password" autocomplete="new-password"></div>
+                <div><label>Service name</label><input name="service_name" placeholder="optional"></div>
+                <div><label>MTU</label><input name="mtu" type="number" value="1492"></div>
+                <div><label><input type="checkbox" name="default_route" checked> Default route via this link</label></div>
+                <div><label><input type="checkbox" name="use_peer_dns" checked> Use provider DNS</label></div>
+                <div><label><input type="checkbox" name="ipv6"> IPv6 (IPV6CP)</label></div>
+            </div>
+            <p><button class="btn btn-primary" type="submit">Save PPPoE link</button></p>
+        </form>
+    </div>
+
+    <h2>DHCP client</h2>
+    <p class="muted">Used by interfaces in DHCP mode. Build default: <span id="dhcp-default" class="mono"></span>.
+        Running clients: <span id="daemons"></span></p>
+    <p><select id="dhcp-client"><option value="">build default</option><option value="dhcpcd">dhcpcd</option><option value="udhcpc">busybox udhcpc</option></select>
+       <button class="btn" onclick="setDhcpClient()">Save</button>
+       <button class="btn" onclick="call('POST','/api/interfaces/apply')">Re-apply all interfaces</button></p>
+
+<script>
+let D = null;
+let pending = null;
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hide = id => document.getElementById(id).classList.add('hidden');
+const show = id => document.getElementById(id).classList.remove('hidden');
+const fmtBytes = b => b > 1e9 ? (b/1e9).toFixed(1)+' GB' : b > 1e6 ? (b/1e6).toFixed(1)+' MB' : b > 1e3 ? (b/1e3).toFixed(1)+' kB' : b+' B';
+
+function msg(kind, text) {
+    const m = document.getElementById('msg');
+    m.className = kind;
+    m.innerHTML = text;
+}
+
+async function call(method, url, body) {
+    const opts = {method, headers: {'Content-Type': 'application/json'}, credentials: 'same-origin'};
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const r = await fetch(url, opts);
+    let j = {};
+    try { j = await r.json(); } catch (e) {}
+    if (r.status === 409 && j.lockout) {
+        pending = {method, url, body: Object.assign({}, body || {}, {force: true})};
+        msg('warn', esc(j.error) + '<br><button class="btn btn-warning" onclick="forcePending()">Apply anyway</button>');
+        return false;
+    }
+    if (!r.ok) { msg('err', esc(j.error || ('HTTP ' + r.status))); return false; }
+    let t = 'Applied.';
+    if (j.applied && j.applied.length) t += '\n' + j.applied.map(esc).join('\n');
+    if (j.warnings && j.warnings.length) { msg('warn', t + '\nWarnings:\n' + j.warnings.map(esc).join('\n')); }
+    else msg('ok', t);
+    await load();
+    return true;
+}
+
+function forcePending() { if (pending) { const p = pending; pending = null; call(p.method, p.url, p.body); } }
+
+function modeSummary(c) {
+    if (!c) return '<span class="muted">not configured</span>';
+    const p = [];
+    if (!c.enabled) p.push('<span class="badge down">disabled</span>');
+    if (c.ipv4_mode !== 'unmanaged') p.push('IPv4 ' + esc(c.ipv4_mode) + (c.ipv4.length ? ' ' + c.ipv4.map(esc).join(', ') : '') + (c.gateway4 ? ' gw ' + esc(c.gateway4) : ''));
+    if (c.ipv6_mode !== 'unmanaged') p.push('IPv6 ' + esc(c.ipv6_mode) + (c.ipv6.length ? ' ' + c.ipv6.map(esc).join(', ') : ''));
+    if (c.mtu) p.push('MTU ' + c.mtu);
+    if (c.mac) p.push('MAC ' + esc(c.mac));
+    return p.length ? p.join('<br>') : '<span class="muted">role only</span>';
+}
+
+function render() {
+    const devs = D.devices;
+    const cl = D.client_interface;
+    document.getElementById('session-line').innerHTML =
+        (cl ? 'You are connected through <b>' + esc(cl.interface) + '</b>' + (cl.address ? ' (' + esc(cl.address) + ')' : '') + '. ' : '') +
+        'Anti-lockout covers: <b>' + (D.mgmt ? D.mgmt.map(esc).join(', ') : 'every interface (no LAN/WAN assigned)') + '</b>.';
+    const tb = document.querySelector('#devices tbody');
+    tb.innerHTML = '';
+    devs.forEach(d => {
+        const c = d.config;
+        const role = c && c.role ? '<span class="badge role">' + esc(c.role.toUpperCase()) + '</span>' : '';
+        const st = '<span class="badge ' + (d.up ? 'up' : 'down') + '">' + (d.up ? 'up' : 'down') + '</span><br><span class="muted">' + esc(d.operstate) + '</span>';
+        const addrs = d.addresses.map(a => '<span class="mono">' + esc(a.address) + '</span>' + (a.dynamic ? ' <span class="badge dyn">dynamic</span>' : '')).join('<br>') || '<span class="muted">none</span>';
+        const kind = esc(d.kind) + (d.patronus_created ? ' <span class="badge grey">patronus</span>' : '') + (d.master ? '<br><span class="muted">member of ' + esc(d.master) + '</span>' : '');
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td><b>' + esc(d.name) + '</b><br><span class="muted">' + kind + '</span></td><td>' + role + '</td><td>' + st + '</td><td>' + addrs +
+            '</td><td>' + modeSummary(c) + '</td><td class="mono">' + esc(d.mac || '-') + '<br>' + d.mtu + '</td><td>&darr; ' + fmtBytes(d.rx_bytes) + '<br>&uarr; ' + fmtBytes(d.tx_bytes) + '</td>' +
+            '<td><button class="btn btn-primary" data-edit="' + esc(d.name) + '">Edit</button> <button class="btn" data-toggle="' + esc(d.name) + '" data-up="' + (c ? c.enabled : d.up) + '">' + ((c ? c.enabled : d.up) ? 'Disable' : 'Enable') + '</button></td>';
+        tb.appendChild(tr);
+    });
+    tb.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => edit(b.dataset.edit));
+    tb.querySelectorAll('[data-toggle]').forEach(b => b.onclick = () => {
+        const up = b.dataset.up === 'true';
+        if (confirm((up ? 'Disable ' : 'Enable ') + b.dataset.toggle + '?')) call('POST', '/api/interfaces/' + encodeURIComponent(b.dataset.toggle) + (up ? '/down' : '/up'), {});
+    });
+    devs.length ? hide('devices-empty') : show('devices-empty');
+    document.getElementById('missing').textContent = D.missing.length ? 'Configured but not present: ' + D.missing.join(', ') : '';
+
+    const names = devs.map(d => d.name);
+    document.querySelectorAll('select.parents').forEach(s => {
+        const v = s.value;
+        s.innerHTML = names.filter(n => !(n.startsWith('ppp'))).map(n => '<option>' + esc(n) + '</option>').join('');
+        if (v) s.value = v;
+    });
+    document.querySelectorAll('.ports').forEach(div => {
+        const virt = div.dataset.virtual === '1';
+        div.innerHTML = devs.filter(d => virt ? (d.kind !== 'bridge' && !d.name.startsWith('ppp')) : (d.kind === 'ethernet' || d.kind === 'veth'))
+            .map(d => '<label><input type="checkbox" value="' + esc(d.name) + '"> ' + esc(d.name) + '</label>').join('') || '<span class="muted">no ports</span>';
+    });
+
+    const kstate = n => { const d = devs.find(x => x.name === n); return d ? '<span class="badge ' + (d.up ? 'up' : 'down') + '">' + (d.up ? 'up' : 'down') + '</span>' : '<span class="badge down">absent</span>'; };
+    const fill = (id, rows, f) => {
+        const t = document.querySelector('#' + id + ' tbody');
+        t.innerHTML = rows.map(f).join('');
+        rows.length ? hide(id + '-empty') : show(id + '-empty');
+        t.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+            if (confirm('Delete ' + b.dataset.del + '?')) call('DELETE', '/api/interfaces/' + id + '/' + encodeURIComponent(b.dataset.del));
+        });
+    };
+    const del = n => '<button class="btn btn-danger" data-del="' + esc(n) + '">Delete</button>';
+    D.features.vlan ? (show('vlan-on'), hide('vlan-off')) : (hide('vlan-on'), show('vlan-off'));
+    fill('vlans', D.vlans, v => '<tr><td>' + esc(v.name) + '</td><td>' + esc(v.parent) + '</td><td>' + v.vlan_id + '</td><td>' + esc(v.protocol) + '</td><td>' + kstate(v.name) + '</td><td>' + esc(v.description) + '</td><td>' + del(v.name) + '</td></tr>');
+    fill('bonds', D.bonds, b => '<tr><td>' + esc(b.name) + '</td><td>' + esc(b.mode) + '</td><td>' + b.members.map(esc).join(', ') + '</td><td>' + esc(b.primary || '') + '</td><td>' + kstate(b.name) + '</td><td>' + del(b.name) + '</td></tr>');
+    fill('bridges', D.bridges, b => '<tr><td>' + esc(b.name) + '</td><td>' + b.members.map(esc).join(', ') + '</td><td>' + (b.stp ? 'on' : 'off') + '</td><td>' + kstate(b.name) + '</td><td>' + del(b.name) + '</td></tr>');
+    D.features.pppoe ? (show('pppoe-on'), hide('pppoe-off')) : (hide('pppoe-on'), show('pppoe-off'));
+    fill('pppoe', D.pppoe, p => '<tr><td>' + esc(p.name) + '</td><td>' + esc(p.parent) + '</td><td>' + esc(p.username) + '</td><td>' + p.mtu + '</td><td>' + kstate(p.name) + '</td><td>' + del(p.name) + '</td></tr>');
+    document.getElementById('dhcp-default').textContent = D.features.dhcp_client;
+    document.getElementById('dhcp-client').value = D.dhcp_client_override || '';
+    document.getElementById('daemons').innerHTML = D.daemons.length ? D.daemons.map(x => esc(x.service + '[' + x.instance + ']') + ' ' + (x.running ? '<span class="badge up">running</span>' : '<span class="badge down">stopped</span>')).join(', ') : '<span class="muted">none</span>';
+
+    const rs = document.getElementById('role-select');
+    let opts = '<option value="">none</option><option value="wan">WAN</option><option value="lan">LAN</option>';
+    for (let i = 1; i <= 9; i++) opts += '<option value="opt' + i + '">OPT' + i + '</option>';
+    rs.innerHTML = opts;
+}
+
+function modeVis() {
+    const f = document.getElementById('edit-form');
+    document.querySelectorAll('.v4s').forEach(e => e.style.display = f.ipv4_mode.value === 'static' ? '' : 'none');
+    document.querySelectorAll('.v6s').forEach(e => e.style.display = f.ipv6_mode.value === 'static' ? '' : 'none');
+}
+
+function edit(name) {
+    const d = D.devices.find(x => x.name === name) || {name};
+    const c = d.config || {enabled: true, ipv4_mode: 'unmanaged', ipv6_mode: 'unmanaged', ipv4: [], ipv6: []};
+    const f = document.getElementById('edit-form');
+    f.name.value = name;
+    f.role.value = c.role || '';
+    f.enabled.checked = c.enabled;
+    f.ipv4_mode.value = c.ipv4_mode;
+    f.ipv4.value = (c.ipv4 || []).join('\n');
+    f.gateway4.value = c.gateway4 || '';
+    f.ipv6_mode.value = c.ipv6_mode;
+    f.ipv6.value = (c.ipv6 || []).join('\n');
+    f.gateway6.value = c.gateway6 || '';
+    f.mtu.value = c.mtu || '';
+    f.mac.value = c.mac || '';
+    f.description.value = c.description || '';
+    document.getElementById('edit-title').textContent = 'Edit ' + name;
+    modeVis();
+    show('edit-card');
+    document.getElementById('edit-card').scrollIntoView();
+}
+
+const lines = s => s.split(/[\n,]+/).map(x => x.trim()).filter(x => x);
+
+async function saveIface(ev) {
+    ev.preventDefault();
+    const f = ev.target;
+    const body = {
+        role: f.role.value || null, enabled: f.enabled.checked,
+        ipv4_mode: f.ipv4_mode.value, ipv4: lines(f.ipv4.value), gateway4: f.gateway4.value || null,
+        ipv6_mode: f.ipv6_mode.value, ipv6: lines(f.ipv6.value), gateway6: f.gateway6.value || null,
+        mtu: f.mtu.value ? parseInt(f.mtu.value, 10) : null, mac: f.mac.value || null, description: f.description.value || null,
+    };
+    if (await call('PUT', '/api/interfaces/' + encodeURIComponent(f.name.value), body)) hide('edit-card');
+    return false;
+}
+
+const checked = f => Array.from(f.querySelectorAll('.ports input:checked')).map(i => i.value);
+
+function addVlan(ev) {
+    ev.preventDefault();
+    const f = ev.target;
+    call('POST', '/api/interfaces/vlans', {parent: f.parent.value, vlan_id: parseInt(f.vlan_id.value, 10), protocol: f.protocol.value, name: f.name.value || null, description: f.description.value || null});
+    return false;
+}
+function addBond(ev) {
+    ev.preventDefault();
+    const f = ev.target;
+    call('POST', '/api/interfaces/bonds', {name: f.name.value, mode: f.mode.value, members: checked(f), primary: f.primary.value || null,
+        miimon: parseInt(f.miimon.value || '100', 10), lacp_rate: f.lacp_rate.value || null, xmit_hash_policy: f.xmit_hash_policy.value || null});
+    return false;
+}
+function addBridge(ev) {
+    ev.preventDefault();
+    const f = ev.target;
+    call('POST', '/api/interfaces/bridges', {name: f.name.value, members: checked(f), stp: f.stp.checked});
+    return false;
+}
+function addPppoe(ev) {
+    ev.preventDefault();
+    const f = ev.target;
+    call('POST', '/api/interfaces/pppoe', {name: f.name.value, parent: f.parent.value, username: f.username.value, password: f.password.value,
+        service_name: f.service_name.value || null, mtu: parseInt(f.mtu.value || '1492', 10), default_route: f.default_route.checked,
+        use_peer_dns: f.use_peer_dns.checked, ipv6: f.ipv6.checked});
+    f.password.value = '';
+    return false;
+}
+function setDhcpClient() { call('PUT', '/api/interfaces/dhcp-client', {client: document.getElementById('dhcp-client').value}); }
+
+async function load() {
+    const r = await fetch('/api/interfaces', {credentials: 'same-origin'});
+    if (r.status === 401) { location.href = '/login'; return; }
+    if (!r.ok) { msg('err', 'Could not load interfaces (HTTP ' + r.status + ')'); return; }
+    D = await r.json();
+    render();
+    if (location.hash.length > 1) { const n = decodeURIComponent(location.hash.slice(1)); if (D.devices.some(d => d.name === n)) edit(n); location.hash = ''; }
+}
+load();
+</script>
+</body>
+</html>

@@ -47,7 +47,7 @@ pub async fn system_status(State(state): State<AppState>) -> Response {
     let active_rules = state.firewall.count_active_rules().await.unwrap_or(0);
     let vpn_connections = state.vpn.count_active_connections().await.unwrap_or(0);
 
-    let interfaces = match state.network.list_interfaces().await {
+    let interfaces = match state.interfaces.list_template().await {
         Ok(ifaces) => ifaces
             .into_iter()
             .map(|iface| InterfaceStatus {

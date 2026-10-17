@@ -1,0 +1,15 @@
+[Unit]
+# pppd (kernel PPPoE plugin) for the Patronus PPPoE link %i (USE=pppoe).
+# Options, including the credentials (mode 0600), are generated into
+# /var/lib/patronus/net/ppp/%i.options from the config store by
+# `patronus apply`, which also starts/stops this unit.
+Description=Patronus PPPoE link %i
+After=patronus-firewall.service
+
+[Service]
+Type=simple
+EnvironmentFile=/var/lib/patronus/net/svc/patronus-pppoe.%i.env
+# $$ = let the shell (not systemd) expand and word-split the command
+ExecStart=/bin/sh -c 'exec $$PATRONUS_CMD'
+Restart=always
+RestartSec=5

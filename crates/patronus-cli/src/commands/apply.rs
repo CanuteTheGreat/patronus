@@ -28,6 +28,7 @@ pub fn registry() -> ApplierRegistry {
         // --- Phase::Sysctl (lane A) ---
         .with(patronus_network::SysctlApplier::default())
         // --- Phase::Interfaces (lane C: interfaces, VLANs, bonds, bridges) ---
+        .with(patronus_network::InterfacesApplier::default())
         // --- Phase::Routes (lane E: static routes, gateways, groups) ---
         // --- Phase::Firewall (lane B rules; lane A applier) ---
         .with(patronus_firewall::FirewallApplier)
@@ -385,6 +386,9 @@ mod tests {
         assert_eq!(phases, sorted);
         assert_eq!(names.first().unwrap().0, "sysctl");
         assert!(names.iter().any(|(n, _)| *n == "firewall"));
+        assert!(names
+            .iter()
+            .any(|(n, p)| *n == "interfaces" && *p == Phase::Interfaces));
     }
 
     #[test]

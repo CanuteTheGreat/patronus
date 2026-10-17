@@ -33,13 +33,13 @@ IUSE="
 	+monitoring prometheus ntopng netflow collectd
 	+captive-portal
 	intrusion-detection suricata snort
-	vlan qos +tc
+	+vlan qos +tc
 	certificates acme certbot
 	ldap radius totp
 	geoip geoip2
 	+aliases
 	scheduled-rules
-	pppoe
+	+pppoe +dhcpcd
 	wireless hostapd iwd
 	squid tinyproxy
 	+backup
@@ -108,6 +108,10 @@ RDEPEND="
 	geoip? ( dev-libs/geoip )
 	geoip2? ( dev-libs/libmaxminddb )
 	pppoe? ( net-dialup/ppp )
+	# DHCP client for WAN/OPT interfaces in DHCP mode (lane C)
+	dhcpcd? ( net-misc/dhcpcd )
+	!dhcpcd? ( sys-apps/busybox )
+	sys-apps/iproute2
 	squid? ( net-proxy/squid )
 	tinyproxy? ( net-proxy/tinyproxy )
 	wireless? (
@@ -166,8 +170,8 @@ src_configure() {
 	# Docker Build job (not the earlier --path-forwarding issue above,
 	# which was already fixed). Flags with no backing cargo feature at
 	# all (ha/ucarp/monitoring/prometheus/ntopng/netflow/captive-portal/
-	# suricata/vlan/qos/certificates/acme/ldap/radius/totp/geoip/
-	# scheduled-rules/pppoe/wireless) are intentionally left out of this
+	# suricata/qos/certificates/acme/ldap/radius/totp/geoip/
+	# scheduled-rules/wireless) are intentionally left out of this
 	# list -- see the matching IUSE comment for the ones that still gate
 	# real RDEPEND entries only, and do not re-add any of these to
 	# myfeatures without first adding the matching cargo feature.
@@ -186,6 +190,8 @@ src_configure() {
 		$(usex prometheus "monitoring-prometheus" "")
 		$(usex captive-portal "captive-portal" "")
 		$(usex vlan "vlan" "")
+		$(usex pppoe "pppoe" "")
+		$(usex dhcpcd "dhcpcd" "")
 		$(usex qos "qos" "")
 		$(usex backup "backup" "")
 	)
@@ -288,9 +294,18 @@ src_install() {
 	# deliberately omitting ${ECARGO_ARGS[@]}, so patronus-web builds with
 	# its own (empty) default feature set.
 	if use web; then
+		# patronus-web's own features (lane C interfaces): the same USE
+		# flags as patronus-cli, so the UI only offers what is compiled in.
+		local webfeatures=(
+			$(usex vlan "vlan" "")
+			$(usex pppoe "pppoe" "")
+			$(usex dhcpcd "dhcpcd" "")
+		)
 		set -- "${CARGO}" install --path ./crates/patronus-web \
 			--root "${ED}/usr" \
 			${GIT_CRATES[@]:+--frozen} \
+			--no-default-features \
+			--features "${webfeatures[*]}" \
 			$(usex debug --debug "")
 		einfo "${@}"
 		cargo_env "${@}" || die "cargo install (patronus-web) failed"
@@ -322,12 +337,19 @@ src_install() {
 	if use systemd; then
 		systemd_dounit "${FILESDIR}/patronus-web.service"
 		systemd_dounit "${FILESDIR}/patronus-firewall.service"
+		# lane C: root apply broker + per-interface DHCP client / pppd
+		systemd_dounit "${FILESDIR}/patronus-applyd.service"
+		systemd_dounit "${FILESDIR}/patronus-dhcpc@.service"
+		use pppoe && systemd_dounit "${FILESDIR}/patronus-pppoe@.service"
 		use dashboard && systemd_dounit "${FILESDIR}/patronus-dashboard.service"
 	fi
 
 	if use openrc; then
 		newinitd "${FILESDIR}/patronus-web.initd" patronus-web
 		newinitd "${FILESDIR}/patronus-firewall.initd" patronus-firewall
+		newinitd "${FILESDIR}/patronus-applyd.initd" patronus-applyd
+		newinitd "${FILESDIR}/patronus-dhcpc.initd" patronus-dhcpc
+		use pppoe && newinitd "${FILESDIR}/patronus-pppoe.initd" patronus-pppoe
 		newconfd "${FILESDIR}/patronus.confd" patronus
 		if use dashboard; then
 			newinitd "${FILESDIR}/patronus-dashboard.initd" patronus-dashboard
@@ -387,6 +409,7 @@ pkg_postinst() {
 	if use systemd; then
 		elog "To start the web interface (systemd):"
 		elog "  systemctl start patronus-web"
+		elog "  systemctl enable --now patronus-applyd  # lets the web UI start DHCP clients / PPPoE"
 		elog "  systemctl enable patronus-web"
 		elog ""
 		elog "Boot-time apply of the stored config (sysctl, interfaces, routes,"
@@ -397,6 +420,7 @@ pkg_postinst() {
 		elog "To start the web interface (OpenRC):"
 		elog "  rc-service patronus-web start"
 		elog "  rc-update add patronus-web default"
+		elog "  rc-update add patronus-applyd default  # lets the web UI start DHCP clients / PPPoE"
 		elog ""
 		elog "Boot-time apply of the stored config (OpenRC; runs 'patronus apply'):"
 		elog "  rc-update add patronus-firewall boot && rc-service patronus-firewall start"

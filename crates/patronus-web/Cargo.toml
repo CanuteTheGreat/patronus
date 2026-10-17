@@ -13,7 +13,13 @@ name = "patronus_web"
 path = "src/lib.rs"
 
 [features]
-default = []
+# Lane C interface features, mapped from the Gentoo USE flags of the same
+# name (the ebuild builds patronus-web with --no-default-features and the
+# USE-selected list).
+default = ["vlan", "pppoe", "dhcpcd"]
+vlan = ["patronus-network/vlan"]
+pppoe = ["patronus-network/pppoe"]
+dhcpcd = ["patronus-network/dhcpcd"]
 
 [dependencies]
 patronus-core = { path = "../patronus-core" }

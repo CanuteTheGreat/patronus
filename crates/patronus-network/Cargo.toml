@@ -11,7 +11,11 @@ dns = ["dep:trust-dns-server"]
 wireguard = []
 openvpn = []
 ipsec = []
+# Lane C: VLAN/QinQ subinterfaces (USE=vlan), PPPoE client (USE=pppoe),
+# dhcpcd as the preferred DHCP client (USE=dhcpcd; else busybox udhcpc).
 vlan = []
+pppoe = []
+dhcpcd = []
 qos = []
 multiwan = []
 ha = []
@@ -43,7 +47,10 @@ serde.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-nix.workspace = true
+nix = { workspace = true, features = ["signal", "process", "user", "fs"] }
+sqlx.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
 netlink-packet-core.workspace = true
 netlink-packet-route.workspace = true
 rtnetlink = "0.14"

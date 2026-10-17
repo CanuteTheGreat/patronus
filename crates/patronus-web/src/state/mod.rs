@@ -12,12 +12,14 @@
 //! still hold in-memory fixtures that their lanes replace.
 
 pub mod firewall;
+pub mod interfaces;
 pub mod monitoring;
 pub mod network;
 pub mod system;
 pub mod vpn;
 
 pub use firewall::FirewallManager;
+pub use interfaces::InterfacesManager;
 pub use monitoring::MonitoringManager;
 pub use network::NetworkManager;
 pub use system::SystemManager;
@@ -32,6 +34,8 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct AppState {
     pub firewall: Arc<FirewallManager>,
+    /// Interfaces & L2 (lane C): roles, addressing, VLAN/bond/bridge/PPPoE.
+    pub interfaces: Arc<InterfacesManager>,
     pub vpn: Arc<VpnManager>,
     pub network: Arc<NetworkManager>,
     pub system: Arc<SystemManager>,
@@ -54,6 +58,10 @@ impl AppState {
         firewall_applier: Arc<dyn Applier>,
     ) -> anyhow::Result<Self> {
         Ok(Self {
+            interfaces: Arc::new(InterfacesManager::system(
+                config_store.clone(),
+                firewall_applier.clone(),
+            )),
             firewall: Arc::new(FirewallManager::new(config_store.clone(), firewall_applier)),
             vpn: Arc::new(VpnManager::new()),
             network: Arc::new(NetworkManager::new()),
@@ -92,6 +100,16 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
         tracing::warn!("{w}");
     }
     let applier: Arc<dyn Applier> = Arc::new(patronus_firewall::FirewallApplier);
+    let state = AppState::new(store.clone(), applier.clone()).await?;
+    // Interfaces before the firewall (boot phase order). A failure here is
+    // logged, not fatal: the UI must come up to fix it.
+    match state.interfaces.apply().await {
+        Ok(r) => tracing::info!(
+            "interfaces applied from the store: {}",
+            r.applied.join("; ")
+        ),
+        Err(e) => tracing::error!("{e}"),
+    }
     let report = applier
         .apply(&store)
         .await
@@ -100,7 +118,6 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
         "firewall applied from the store: {}",
         report.applied.join("; ")
     );
-    let state = AppState::new(store, applier).await?;
     // scheduled rules switch on/off on time (re-apply on a window edge)
     firewall::spawn_schedule_task(state.firewall.clone());
     Ok(state)

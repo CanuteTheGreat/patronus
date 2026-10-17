@@ -1,0 +1,20 @@
+[Unit]
+# Root apply broker for the web UI: patronus-web runs unprivileged and asks
+# this service (unix socket /run/patronus/applyd.sock, group patronus) to
+# re-apply one subsystem from the config store -- e.g. after an interface
+# change it (re)starts DHCP clients / pppd, which needs root. The request
+# names an applier only; the configuration always comes from the store.
+Description=Patronus apply broker for the web UI
+After=patronus-firewall.service
+Before=patronus-web.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/patronus applyd
+Restart=on-failure
+RestartSec=5
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

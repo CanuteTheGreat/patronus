@@ -51,6 +51,18 @@ that are not finished are listed separately under
   and 1:1 NAT maps an external address to an internal host both ways.
   [C20]
 
+### Interfaces
+
+- The Interfaces page assigns roles and addresses: static IPv4/IPv6, a DHCP
+  WAN (dhcpcd, or busybox udhcpc), a PPPoE WAN, MTU and MAC. Changes reach
+  the kernel at once, and a change that would cut off your own admin
+  session is refused. [C21]
+- VLANs (802.1Q and QinQ), bonds and bridges created on the Interfaces page
+  exist in the kernel and carry traffic; an active-backup bond fails over
+  when a member's link goes down; deleting one removes it. [C22]
+- Interface configuration survives a reboot (`patronus apply` rebuilds it),
+  and applying again changes nothing. [C23]
+
 ### Configuration you can trust
 
 - The configuration survives restarts and reboots: it lives in one SQLite
@@ -95,8 +107,6 @@ They are being wired up one subsystem at a time; each moves to
 [What works today](#what-works-today) only together with its CI proof.
 
 - Firewall: GeoIP/threat-feed blocking, URL-table aliases, IPv6 NPt.
-- Interfaces: assigning roles/addresses from the UI, VLANs, bonds, bridges,
-  PPPoE.
 - LAN services: DHCP server, DNS resolver (Unbound), IPv6 router
   advertisements / DHCPv6.
 - Routing: static routes, gateways, multi-WAN failover/load balancing,

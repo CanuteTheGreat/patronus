@@ -1,0 +1,33 @@
+#!/sbin/openrc-run
+# Copyright 2026 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v3
+
+# Multiplexed: /etc/init.d/patronus-dhcpc.<iface> -> patronus-dhcpc.
+# `patronus apply` creates the symlink and starts/stops the instance when an
+# interface is in DHCP mode; the command line (dhcpcd or busybox udhcpc,
+# per USE=dhcpcd) and its config are generated from the config store into
+# /var/lib/patronus/net. Do not add it to a runlevel by hand.
+
+IFACE="${RC_SVCNAME#*.}"
+ENVFILE="/var/lib/patronus/net/svc/patronus-dhcpc.${IFACE}.env"
+description="Patronus DHCP client on ${IFACE}"
+supervisor=supervise-daemon
+respawn_delay=5
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+	need localmount
+}
+
+start_pre() {
+	if [ "${IFACE}" = "${RC_SVCNAME}" ]; then
+		eerror "Use the per-interface instance (patronus-dhcpc.<iface>)"
+		return 1
+	fi
+	[ -r "${ENVFILE}" ] || { eerror "${ENVFILE} is missing (run 'patronus apply')"; return 1; }
+	. "${ENVFILE}"
+	set -- ${PATRONUS_CMD}
+	command="$1"
+	shift
+	command_args="$*"
+}

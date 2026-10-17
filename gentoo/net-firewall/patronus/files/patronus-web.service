@@ -1,7 +1,7 @@
 [Unit]
 Description=Patronus Web Interface (HTTPS on :8443)
-After=network.target patronus-firewall.service
-Wants=patronus-firewall.service
+After=network.target patronus-firewall.service patronus-applyd.service
+Wants=patronus-firewall.service patronus-applyd.service
 
 [Service]
 Type=simple

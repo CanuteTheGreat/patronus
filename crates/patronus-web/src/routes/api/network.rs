@@ -2,25 +2,12 @@
 
 use crate::state::AppState;
 use axum::{
-    extract::{Path, State},
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct NetworkInterface {
-    pub name: String,
-    pub state: String,
-    pub ip_address: Option<String>,
-    pub netmask: Option<String>,
-    pub gateway: Option<String>,
-    pub mac_address: String,
-    pub mtu: u32,
-    pub rx_bytes: u64,
-    pub tx_bytes: u64,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DhcpPool {
@@ -56,87 +43,6 @@ pub struct Route {
     pub gateway: String,
     pub interface: String,
     pub metric: u32,
-}
-
-/// GET /api/network/interfaces
-pub async fn list_interfaces(State(state): State<AppState>) -> Response {
-    match state.network.list_interfaces().await {
-        Ok(interfaces) => Json(interfaces).into_response(),
-        Err(e) => {
-            tracing::error!("Failed to list interfaces: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "Failed to list interfaces"
-                })),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// PUT /api/network/interfaces/:name
-pub async fn update_interface(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-    Json(interface): Json<NetworkInterface>,
-) -> Response {
-    match state.network.update_interface(name, interface).await {
-        Ok(_) => Json(serde_json::json!({
-            "message": "Interface updated successfully"
-        }))
-        .into_response(),
-        Err(e) => {
-            tracing::error!("Failed to update interface: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("Failed to update interface: {}", e)
-                })),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// POST /api/network/interfaces/:name/up
-pub async fn interface_up(State(state): State<AppState>, Path(name): Path<String>) -> Response {
-    match state.network.bring_interface_up(&name).await {
-        Ok(_) => Json(serde_json::json!({
-            "message": format!("Interface {} brought up successfully", name)
-        }))
-        .into_response(),
-        Err(e) => {
-            tracing::error!("Failed to bring up interface {}: {}", name, e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("Failed to bring up interface: {}", e)
-                })),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// POST /api/network/interfaces/:name/down
-pub async fn interface_down(State(state): State<AppState>, Path(name): Path<String>) -> Response {
-    match state.network.bring_interface_down(&name).await {
-        Ok(_) => Json(serde_json::json!({
-            "message": format!("Interface {} brought down successfully", name)
-        }))
-        .into_response(),
-        Err(e) => {
-            tracing::error!("Failed to bring down interface {}: {}", name, e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("Failed to bring down interface: {}", e)
-                })),
-            )
-                .into_response()
-        }
-    }
 }
 
 /// GET /api/network/dhcp/pools
@@ -210,12 +116,9 @@ pub async fn list_routes(State(state): State<AppState>) -> Response {
 /// This lane's API routes, mounted under `/api` by `routes::api_routes`
 /// with one `.merge(network::router())` line.
 pub fn router() -> axum::Router<AppState> {
-    use axum::routing::{get, post, put};
+    // /network/interfaces* moved to routes/api/interfaces.rs (lane C)
+    use axum::routing::get;
     axum::Router::new()
-        .route("/network/interfaces", get(list_interfaces))
-        .route("/network/interfaces/:name", put(update_interface))
-        .route("/network/interfaces/:name/up", post(interface_up))
-        .route("/network/interfaces/:name/down", post(interface_down))
         .route("/network/dhcp/pools", get(list_dhcp_pools))
         .route("/network/dhcp/leases", get(list_dhcp_leases))
         .route("/network/dns/records", get(list_dns_records))

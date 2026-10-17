@@ -35,7 +35,7 @@ pub async fn login_page() -> Response {
 /// Dashboard page
 pub async fn dashboard(State(state): State<AppState>) -> Response {
     // Fetch dashboard data
-    let interfaces = match state.network.list_interfaces().await {
+    let interfaces = match state.interfaces.list_template().await {
         Ok(ifaces) => ifaces,
         Err(e) => {
             tracing::error!("Failed to fetch interfaces: {}", e);
@@ -150,7 +150,7 @@ pub async fn vpn(State(state): State<AppState>) -> Response {
 /// Network services page
 pub async fn network(State(state): State<AppState>) -> Response {
     // Fetch network data
-    let interfaces = match state.network.list_interfaces().await {
+    let interfaces = match state.interfaces.list_template().await {
         Ok(ifaces) => ifaces,
         Err(e) => {
             tracing::error!("Failed to fetch interfaces: {}", e);

@@ -1,0 +1,25 @@
+#!/sbin/openrc-run
+# Copyright 2026 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v3
+
+# Root apply broker for the web UI (see patronus-applyd.service): lets the
+# unprivileged patronus-web re-apply a subsystem from the config store,
+# e.g. (re)start DHCP clients / pppd after an interface change.
+
+description="Patronus apply broker for the web UI"
+command="/usr/bin/patronus"
+command_args="applyd"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/patronus/applyd.log"
+error_log="/var/log/patronus/applyd.log"
+
+depend() {
+	need localmount
+	after firewall
+	before patronus-web
+}
+
+start_pre() {
+	checkpath --directory --mode 0755 /run/patronus /var/log/patronus
+}

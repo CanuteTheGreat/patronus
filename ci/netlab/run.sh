@@ -70,10 +70,15 @@ case "$(uname -m)" in
   aarch64|arm64) PLATFORM=linux/arm64 ;;
   *) echo "unsupported build arch $(uname -m)"; exit 1 ;;
 esac
-docker create --name "$C" --platform "$PLATFORM" \
-  --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN \
-  --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
-  --memory 2g --memory-swap 2g --cpus 2 -w /t "$IMAGE" bash /t/inner.sh >/dev/null
+# /dev/ppp lets the lane C test run a real PPPoE session (pppd needs it);
+# fall back to no device on a host without the ppp driver.
+create() {
+  docker create --name "$C" --platform "$PLATFORM" \
+    --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN "$@" \
+    --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+    --memory 2g --memory-swap 2g --cpus 2 -w /t "$IMAGE" bash /t/inner.sh >/dev/null
+}
+create --device /dev/ppp 2>/dev/null || { echo "netlab: no /dev/ppp on the docker host"; docker rm -f "$C" >/dev/null 2>&1 || true; create; }
 docker cp "$OUT/." "$C:/t/"
 docker start -a "$C"
 rc=$(docker inspect -f '{{.State.ExitCode}}' "$C")

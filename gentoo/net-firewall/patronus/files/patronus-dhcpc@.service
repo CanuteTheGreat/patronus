@@ -1,0 +1,16 @@
+[Unit]
+# One DHCP client (dhcpcd or busybox udhcpc, per USE=dhcpcd / the
+# dhcp_client setting) for interface %i, started by `patronus apply` when
+# the interface is in DHCP mode on the Interfaces page. The command line
+# and its generated config come from the Patronus config store; do not
+# enable this unit by hand (boot-time `patronus apply` starts it).
+Description=Patronus DHCP client on %i
+After=patronus-firewall.service
+
+[Service]
+Type=simple
+EnvironmentFile=/var/lib/patronus/net/svc/patronus-dhcpc.%i.env
+# $$ = let the shell (not systemd) expand and word-split the command
+ExecStart=/bin/sh -c 'exec $$PATRONUS_CMD'
+Restart=on-failure
+RestartSec=5
