@@ -9,13 +9,15 @@ pub mod aliases;
 pub mod applier;
 pub mod nftables;
 pub mod rules;
+pub mod schedule;
 
 #[cfg(feature = "geoip")]
 pub mod geoip;
 
-pub use aliases::AliasManager;
-pub use applier::FirewallApplier;
+pub use aliases::Alias;
+pub use applier::{FirewallApplier, OutboundNatMode};
 pub use rules::RuleManager;
+pub use schedule::Schedule;
 
 #[cfg(feature = "geoip")]
 pub use geoip::{GeoIpBackend, GeoIpManager};

@@ -171,6 +171,9 @@ impl RuleGenerator {
                     interface_in: None,
                     interface_out: None,
                     comment: Some(description),
+                    log: false,
+                    schedule: None,
+                    ip_version: None,
                 })
             }
 
@@ -190,6 +193,9 @@ impl RuleGenerator {
                     interface_in: None,
                     interface_out: None,
                     comment: Some(description),
+                    log: false,
+                    schedule: None,
+                    ip_version: None,
                 })
             }
 
@@ -209,6 +215,9 @@ impl RuleGenerator {
                     interface_in: None,
                     interface_out: None,
                     comment: Some(description),
+                    log: false,
+                    schedule: None,
+                    ip_version: None,
                 })
             }
 
@@ -228,6 +237,9 @@ impl RuleGenerator {
                     interface_in: None,
                     interface_out: None,
                     comment: Some(description),
+                    log: false,
+                    schedule: None,
+                    ip_version: None,
                 })
             }
         }
@@ -380,6 +392,9 @@ impl RuleGenerator {
                         .unwrap_or(&ThreatCategory::Unknown),
                     best_threat.confidence * 100.0
                 )),
+                log: false,
+                schedule: None,
+                ip_version: None,
             };
 
             let auto_rule = AutoRule {

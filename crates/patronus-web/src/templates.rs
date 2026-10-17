@@ -29,6 +29,38 @@ pub struct FirewallTemplate {
     pub enabled_nat_rules: usize,
     pub accept_rules_count: usize,
     pub drop_rules_count: usize,
+    /// NAT rules split by tab.
+    pub port_forwards: Vec<NatRule>,
+    pub one_to_one: Vec<NatRule>,
+    pub outbound_rules: Vec<NatRule>,
+    pub host_aliases: Vec<Alias>,
+    pub port_aliases: Vec<Alias>,
+    pub schedules: Vec<FirewallSchedule>,
+    /// Interface choices (roles, then devices) for the forms.
+    pub interfaces: Vec<InterfaceOption>,
+    /// automatic | hybrid | manual | disabled
+    pub outbound_mode: String,
+    /// WAN interfaces the automatic outbound NAT covers.
+    pub auto_nat_interfaces: String,
+}
+
+/// A firewall schedule row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FirewallSchedule {
+    pub name: String,
+    pub days: String,
+    pub start: String,
+    pub end: String,
+    pub description: String,
+    /// Active right now.
+    pub active: bool,
+}
+
+/// A choice in an interface drop-down.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterfaceOption {
+    pub value: String,
+    pub label: String,
 }
 
 /// VPN template
@@ -159,16 +191,34 @@ pub struct FirewallRule {
     pub interface_display: String,
     /// "system" (anti-lockout, not deletable), "default", "user", "gitops".
     pub origin: String,
+    /// Forward chain: outbound interface token ("any" if none).
+    pub interface_out: String,
+    pub log: bool,
+    /// Schedule name ("" = always).
+    pub schedule: String,
+    /// ipv4 | ipv6 | any
+    pub ip_version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NatRule {
     pub id: u32,
+    pub name: String,
+    /// MASQUERADE | SNAT | DNAT | 1:1
     pub rule_type: String,
+    /// Display form of the interface (WAN / LAN / device).
     pub interface: String,
+    /// The stored interface token (`@wan`, device, `any`), for edit forms.
+    pub interface_raw: String,
     pub source: String,
     pub destination: String,
     pub target: String,
+    /// 1:1 NAT: external address.
+    pub external_address: String,
+    pub protocol: String,
+    /// Port forward: external port(s) ("any" if none).
+    pub external_port: String,
+    pub reflection: bool,
     pub description: String,
     pub enabled: bool,
     /// "system", "default", "user" or "gitops".

@@ -5,8 +5,7 @@
 use crate::{
     state::AppState,
     templates::{
-        DashboardTemplate, FirewallTemplate, MonitoringTemplate, NetworkTemplate, SystemTemplate,
-        VpnTemplate,
+        DashboardTemplate, MonitoringTemplate, NetworkTemplate, SystemTemplate, VpnTemplate,
     },
 };
 use askama::Template;
@@ -84,45 +83,19 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
     }
 }
 
-/// Firewall rules page
+/// Firewall rules page (rules, NAT, aliases, schedules).
 pub async fn firewall(State(state): State<AppState>) -> Response {
-    // Fetch firewall data
-    let rules = match state.firewall.list_rules().await {
-        Ok(r) => r,
+    let template = match state.firewall.page().await {
+        Ok(t) => t,
         Err(e) => {
-            tracing::error!("Failed to fetch firewall rules: {}", e);
-            vec![]
+            tracing::error!("Failed to load the firewall page: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to load the firewall configuration: {e}"),
+            )
+                .into_response();
         }
     };
-
-    let nat_rules = match state.firewall.list_nat_rules().await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!("Failed to fetch NAT rules: {}", e);
-            vec![]
-        }
-    };
-
-    let aliases = match state.firewall.list_aliases().await {
-        Ok(a) => a,
-        Err(e) => {
-            tracing::error!("Failed to fetch aliases: {}", e);
-            vec![]
-        }
-    };
-
-    let template = FirewallTemplate {
-        rules: rules.clone(),
-        nat_rules: nat_rules.clone(),
-        aliases,
-        // Pre-computed counts for template
-        filter_rules: rules.clone(),
-        enabled_filter_rules: rules.iter().filter(|r| r.enabled).count(),
-        enabled_nat_rules: nat_rules.iter().filter(|r| r.enabled).count(),
-        accept_rules_count: rules.iter().filter(|r| r.action == "Accept").count(),
-        drop_rules_count: rules.iter().filter(|r| r.action == "Drop").count(),
-    };
-
     match template.render() {
         Ok(html) => Html(html).into_response(),
         Err(e) => {

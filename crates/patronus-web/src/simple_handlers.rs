@@ -85,85 +85,11 @@ pub async fn simple_index(_state: State<AppState>) -> impl IntoResponse {
     Html(html)
 }
 
-/// Simple firewall page
-pub async fn simple_firewall(State(state): State<AppState>) -> impl IntoResponse {
-    // Get firewall rules
-    let rules = state.firewall.list_rules().await.unwrap_or_default();
-    let rule_count = rules.len();
-    let enabled_count = rules.iter().filter(|r| r.enabled).count();
-
-    let html = format!(
-        r#"
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Firewall - Patronus</title>
-    <style>
-        body {{ font-family: Arial, sans-serif; margin: 20px; }}
-        .header {{ background: #dc3545; color: white; padding: 20px; margin-bottom: 20px; }}
-        .stat-card {{ border: 1px solid #ddd; padding: 15px; margin: 10px; border-radius: 5px; }}
-        table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
-        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-        th {{ background: #f8f9fa; }}
-        .badge {{ padding: 3px 8px; border-radius: 3px; font-size: 0.8em; }}
-        .success {{ background: #28a745; color: white; }}
-        .danger {{ background: #dc3545; color: white; }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>🔥 Firewall Management</h1>
-        <p><a href="/" style="color: #fff;">← Back to Dashboard</a></p>
-    </div>
-
-    <div style="display: flex; gap: 20px;">
-        <div class="stat-card">
-            <h3>Filter Rules</h3>
-            <p>Total: {rule_count}</p>
-            <p>Enabled: {enabled_count}</p>
-        </div>
-        <div class="stat-card">
-            <h3>Quick Actions</h3>
-            <p>📊 <a href="/api/firewall/rules">View Rules (JSON)</a></p>
-            <p>🔄 Reload Rules</p>
-        </div>
-    </div>
-
-    <h2>Firewall Rules Summary</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Status</th>
-                <th>Information</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td><span class="badge success">System</span></td>
-                <td>Firewall engine is operational and processing rules</td>
-            </tr>
-            <tr>
-                <td><span class="badge success">Rules</span></td>
-                <td>{rule_count} firewall rules loaded ({enabled_count} enabled)</td>
-            </tr>
-            <tr>
-                <td><span class="badge success">API</span></td>
-                <td>RESTful API endpoints available for rule management</td>
-            </tr>
-        </tbody>
-    </table>
-
-    <p><strong>Note:</strong> This is a simplified view. Full firewall management interface is available through the API endpoints.</p>
-</body>
-</html>
-    "#,
-        rule_count = rule_count,
-        enabled_count = enabled_count
-    );
-
-    Html(html)
+/// The old "simple" firewall page claimed the engine was "operational
+/// and processing rules" and that management was API-only; the real page
+/// (rule editor, NAT, aliases, schedules) lives at /firewall.
+pub async fn simple_firewall() -> impl IntoResponse {
+    axum::response::Redirect::to("/firewall")
 }
 
 /// Simple status page

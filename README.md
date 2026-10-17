@@ -33,6 +33,23 @@ that are not finished are listed separately under
   at once, and deleting a rule lifts it. [C3]
 - Rule fields are validated before they reach nftables; ruleset-injection
   attempts are rejected. [C11]
+- The Firewall page adds, edits, deletes, enables and reorders rules
+  (accept, drop, or reject with a TCP reset; optional logging; per
+  interface or role). Rules are evaluated in the order shown and the
+  anti-lockout rule always stays first. [C15]
+- IPv6: rules with IPv6 addresses match IPv6 traffic only, and IPv6 is
+  routed, not NATed. [C16]
+- Host and port aliases are nftables sets: rules use them as `$name`, and
+  editing an alias changes what is blocked or allowed at once, without
+  reloading the ruleset. [C17]
+- Schedules: a rule can be limited to days and hours; it switches on and
+  off on time, and after a reboot. [C18]
+- Port forwards (protocol + external port to an internal host and port)
+  let in exactly the forwarded traffic; NAT reflection lets LAN clients use
+  the WAN address. [C19]
+- Outbound NAT is automatic (every WAN interface), hybrid, manual or off,
+  and 1:1 NAT maps an external address to an internal host both ways.
+  [C20]
 
 ### Configuration you can trust
 
@@ -77,8 +94,7 @@ These exist partly in the source tree but are **not** usable end to end yet.
 They are being wired up one subsystem at a time; each moves to
 [What works today](#what-works-today) only together with its CI proof.
 
-- Firewall: add/edit form on the Firewall page, rule ordering, aliases,
-  schedules, port forwards with ports, 1:1 NAT, GeoIP/threat-feed blocking.
+- Firewall: GeoIP/threat-feed blocking, URL-table aliases, IPv6 NPt.
 - Interfaces: assigning roles/addresses from the UI, VLANs, bonds, bridges,
   PPPoE.
 - LAN services: DHCP server, DNS resolver (Unbound), IPv6 router

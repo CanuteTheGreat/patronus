@@ -1,503 +1,439 @@
-//! Firewall Aliases
+//! Firewall aliases, backed by the config store and rendered as nftables
+//! sets.
 //!
-//! Aliases allow grouping of IP addresses, networks, ports, and URLs
-//! for easier firewall rule management. Like pfSense/OPNsense aliases,
-//! but implemented with nftables sets for high performance.
+//! An alias is a named list that rules reference as `$name` in their
+//! source/destination (host aliases) or port (port aliases) field:
+//!
+//! | kind | entries | nft sets |
+//! |---|---|---|
+//! | host | IPv4/IPv6 addresses, CIDR networks, `a-b` ranges | `alias_<name>_v4`, `alias_<name>_v6` (`flags interval`) |
+//! | port | ports and `a-b` port ranges | `alias_<name>_ports` (`inet_service`, `flags interval`) |
+//!
+//! A rule that references a host alias without an address-family
+//! restriction renders an IPv4 and an IPv6 rule, so adding an IPv6 entry
+//! later takes effect without touching the rule. Changing an alias's
+//! entries only swaps the set elements in one nft transaction
+//! ([`update_sets_script`]): the ruleset is not reloaded.
+//!
+//! Table: `firewall_aliases` (lane B migration 0100).
 
+use crate::nftables::{
+    alias_port_set_name, alias_set_name, is_valid_alias_name, AliasKind, AliasMap, TABLE,
+};
+use patronus_config::ConfigStore;
+use patronus_core::types::IpVersion;
 use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use std::net::IpAddr;
 
-/// Alias type
+/// A stored alias.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AliasType {
-    /// Host addresses and networks
-    Network,
-    /// Port numbers
-    Port,
-    /// URLs and domains
-    Url,
-    /// MAC addresses
-    Mac,
-}
-
-/// Network/Host alias
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkAlias {
+pub struct Alias {
     pub name: String,
+    pub kind: AliasKind,
+    pub entries: Vec<String>,
+    #[serde(default)]
     pub description: Option<String>,
-    pub entries: Vec<NetworkEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum NetworkEntry {
-    /// Single IP address
-    Host(IpAddr),
-    /// Network in CIDR notation
-    Network { addr: IpAddr, prefix: u8 },
-    /// IP range
-    Range { start: IpAddr, end: IpAddr },
-    /// Reference to another alias
-    Alias(String),
-}
-
-/// Port alias
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PortAlias {
-    pub name: String,
-    pub description: Option<String>,
-    pub entries: Vec<PortEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum PortEntry {
-    /// Single port
-    Port(u16),
-    /// Port range
-    Range { start: u16, end: u16 },
-    /// Reference to another port alias
-    Alias(String),
-}
-
-/// URL/Domain alias
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UrlAlias {
-    pub name: String,
-    pub description: Option<String>,
-    pub entries: Vec<UrlEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum UrlEntry {
-    /// Domain name (will be resolved to IPs)
-    Domain(String),
-    /// URL pattern
-    Url(String),
-    /// Reference to another URL alias
-    Alias(String),
-}
-
-/// MAC address alias
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MacAlias {
-    pub name: String,
-    pub description: Option<String>,
-    pub mac_addresses: Vec<String>,
-}
-
-pub struct AliasManager {
-    network_aliases: Vec<NetworkAlias>,
-    port_aliases: Vec<PortAlias>,
-    url_aliases: Vec<UrlAlias>,
-    mac_aliases: Vec<MacAlias>,
-}
-
-impl AliasManager {
-    pub fn new() -> Self {
-        Self {
-            network_aliases: Vec::new(),
-            port_aliases: Vec::new(),
-            url_aliases: Vec::new(),
-            mac_aliases: Vec::new(),
-        }
+impl Serialize for AliasKind {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(kind_str(*self))
     }
+}
 
-    /// Add a network alias
-    pub fn add_network_alias(&mut self, alias: NetworkAlias) -> Result<()> {
-        // Validate name is unique
-        if self.network_aliases.iter().any(|a| a.name == alias.name) {
-            return Err(Error::Firewall(format!(
-                "Alias '{}' already exists",
-                alias.name
+impl<'de> Deserialize<'de> for AliasKind {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        parse_kind(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// `host` or `port`.
+pub fn kind_str(k: AliasKind) -> &'static str {
+    match k {
+        AliasKind::Host => "host",
+        AliasKind::Port => "port",
+    }
+}
+
+/// `host` (also `network`/`address`) or `port`.
+pub fn parse_kind(s: &str) -> Result<AliasKind> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "host" | "hosts" | "network" | "networks" | "address" => Ok(AliasKind::Host),
+        "port" | "ports" => Ok(AliasKind::Port),
+        o => Err(Error::Config(format!(
+            "Invalid alias type {o:?} (host or port)"
+        ))),
+    }
+}
+
+fn fam(a: &IpAddr) -> IpVersion {
+    if a.is_ipv4() {
+        IpVersion::V4
+    } else {
+        IpVersion::V6
+    }
+}
+
+/// One validated host entry: its family and its nft element text.
+fn host_entry(e: &str) -> Result<(IpVersion, String)> {
+    let bad = || {
+        Error::Config(format!(
+            "Invalid alias entry {e:?} (address, CIDR or a-b range)"
+        ))
+    };
+    if let Some((a, p)) = e.split_once('/') {
+        let addr: IpAddr = a.parse().map_err(|_| bad())?;
+        let max = if addr.is_ipv4() { 32 } else { 128 };
+        if p.is_empty() || p.len() > 3 || !p.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(bad());
+        }
+        let plen: u8 = p.parse().map_err(|_| bad())?;
+        if plen > max {
+            return Err(bad());
+        }
+        return Ok((fam(&addr), format!("{addr}/{plen}")));
+    }
+    if let Some((a, b)) = e.split_once('-') {
+        let (a, b): (IpAddr, IpAddr) =
+            (a.parse().map_err(|_| bad())?, b.parse().map_err(|_| bad())?);
+        if fam(&a) != fam(&b) || a > b {
+            return Err(bad());
+        }
+        return Ok((fam(&a), format!("{a}-{b}")));
+    }
+    let a: IpAddr = e.parse().map_err(|_| bad())?;
+    Ok((fam(&a), a.to_string()))
+}
+
+fn port_entry(e: &str) -> Result<String> {
+    let bad = || {
+        Error::Config(format!(
+            "Invalid alias entry {e:?} (port or a-b port range)"
+        ))
+    };
+    let p = |s: &str| s.parse::<u16>().ok().filter(|n| *n != 0).ok_or_else(bad);
+    match e.split_once('-') {
+        Some((a, b)) => {
+            let (a, b) = (p(a)?, p(b)?);
+            if a > b {
+                return Err(bad());
+            }
+            Ok(format!("{a}-{b}"))
+        }
+        None => Ok(p(e)?.to_string()),
+    }
+}
+
+impl Alias {
+    /// Validate the name and every entry (nothing unvalidated ever reaches
+    /// an nft script), trimming whitespace and dropping empty entries.
+    pub fn validated(mut self) -> Result<Self> {
+        if !is_valid_alias_name(&self.name) {
+            return Err(Error::Config(format!(
+                "Invalid alias name {:?} (a letter, then letters, digits or _, at most 31)",
+                self.name
             )));
         }
-
-        self.network_aliases.push(alias);
-        Ok(())
+        self.entries = self
+            .entries
+            .iter()
+            .map(|e| e.trim().to_string())
+            .filter(|e| !e.is_empty())
+            .collect();
+        self.elements()?;
+        Ok(self)
     }
 
-    /// Add a port alias
-    pub fn add_port_alias(&mut self, alias: PortAlias) -> Result<()> {
-        if self.port_aliases.iter().any(|a| a.name == alias.name) {
-            return Err(Error::Firewall(format!(
-                "Alias '{}' already exists",
-                alias.name
-            )));
-        }
-
-        self.port_aliases.push(alias);
-        Ok(())
-    }
-
-    /// Add a URL alias
-    pub fn add_url_alias(&mut self, alias: UrlAlias) -> Result<()> {
-        if self.url_aliases.iter().any(|a| a.name == alias.name) {
-            return Err(Error::Firewall(format!(
-                "Alias '{}' already exists",
-                alias.name
-            )));
-        }
-
-        self.url_aliases.push(alias);
-        Ok(())
-    }
-
-    /// Add a MAC alias
-    pub fn add_mac_alias(&mut self, alias: MacAlias) -> Result<()> {
-        if self.mac_aliases.iter().any(|a| a.name == alias.name) {
-            return Err(Error::Firewall(format!(
-                "Alias '{}' already exists",
-                alias.name
-            )));
-        }
-
-        self.mac_aliases.push(alias);
-        Ok(())
-    }
-
-    /// Generate nftables sets from aliases
-    pub fn generate_nftables(&self) -> Result<String> {
-        let mut nft = String::from("# Patronus Aliases\n\n");
-
-        nft.push_str("table inet aliases {\n");
-
-        // Network aliases
-        if !self.network_aliases.is_empty() {
-            nft.push_str("\n  # Network Aliases\n");
-
-            for alias in &self.network_aliases {
-                if let Some(ref desc) = alias.description {
-                    nft.push_str(&format!("  # {}\n", desc));
-                }
-
-                nft.push_str(&format!("  set {} {{\n", alias.name));
-                nft.push_str("    type ipv4_addr\n");
-                nft.push_str("    flags interval\n");
-                nft.push_str("    elements = {\n");
-
-                for entry in &alias.entries {
-                    match entry {
-                        NetworkEntry::Host(ip) => {
-                            nft.push_str(&format!("      {},\n", ip));
-                        }
-                        NetworkEntry::Network { addr, prefix } => {
-                            nft.push_str(&format!("      {}/{},\n", addr, prefix));
-                        }
-                        NetworkEntry::Range { start, end } => {
-                            nft.push_str(&format!("      {}-{},\n", start, end));
-                        }
-                        NetworkEntry::Alias(alias_name) => {
-                            nft.push_str(&format!("      # Reference: {}\n", alias_name));
-                        }
+    /// (set name, element texts) for every set this alias owns.
+    pub fn elements(&self) -> Result<Vec<(String, Vec<String>)>> {
+        match self.kind {
+            AliasKind::Host => {
+                let (mut v4, mut v6) = (Vec::new(), Vec::new());
+                for e in &self.entries {
+                    match host_entry(e)? {
+                        (IpVersion::V4, t) => v4.push(t),
+                        (IpVersion::V6, t) => v6.push(t),
                     }
                 }
-
-                nft.push_str("    }\n");
-                nft.push_str("  }\n\n");
+                Ok(vec![
+                    (alias_set_name(&self.name, IpVersion::V4), v4),
+                    (alias_set_name(&self.name, IpVersion::V6), v6),
+                ])
+            }
+            AliasKind::Port => {
+                let p = self
+                    .entries
+                    .iter()
+                    .map(|e| port_entry(e))
+                    .collect::<Result<_>>()?;
+                Ok(vec![(alias_port_set_name(&self.name), p)])
             }
         }
+    }
 
-        // Port aliases
-        if !self.port_aliases.is_empty() {
-            nft.push_str("\n  # Port Aliases\n");
+    fn set_type(&self, set: &str) -> &'static str {
+        match self.kind {
+            AliasKind::Port => "inet_service",
+            AliasKind::Host if set.ends_with("_v6") => "ipv6_addr",
+            AliasKind::Host => "ipv4_addr",
+        }
+    }
+}
 
-            for alias in &self.port_aliases {
-                if let Some(ref desc) = alias.description {
-                    nft.push_str(&format!("  # {}\n", desc));
-                }
-
-                nft.push_str(&format!("  set {} {{\n", alias.name));
-                nft.push_str("    type inet_service\n");
-                nft.push_str("    flags interval\n");
-                nft.push_str("    elements = {\n");
-
-                for entry in &alias.entries {
-                    match entry {
-                        PortEntry::Port(port) => {
-                            nft.push_str(&format!("      {},\n", port));
-                        }
-                        PortEntry::Range { start, end } => {
-                            nft.push_str(&format!("      {}-{},\n", start, end));
-                        }
-                        PortEntry::Alias(alias_name) => {
-                            nft.push_str(&format!("      # Reference: {}\n", alias_name));
-                        }
-                    }
-                }
-
-                nft.push_str("    }\n");
-                nft.push_str("  }\n\n");
+/// `add set` + `add element` lines for the full ruleset.
+pub fn sets_script(aliases: &[Alias]) -> Result<String> {
+    let mut s = String::new();
+    for a in aliases {
+        for (set, elems) in a.elements()? {
+            s.push_str(&format!(
+                "add set {TABLE} {set} {{ type {}; flags interval; auto-merge; comment \"alias {}\"; }}\n",
+                a.set_type(&set),
+                a.name
+            ));
+            if !elems.is_empty() {
+                s.push_str(&format!(
+                    "add element {TABLE} {set} {{ {} }}\n",
+                    elems.join(", ")
+                ));
             }
         }
-
-        // MAC aliases
-        if !self.mac_aliases.is_empty() {
-            nft.push_str("\n  # MAC Address Aliases\n");
-
-            for alias in &self.mac_aliases {
-                if let Some(ref desc) = alias.description {
-                    nft.push_str(&format!("  # {}\n", desc));
-                }
-
-                nft.push_str(&format!("  set {} {{\n", alias.name));
-                nft.push_str("    type ether_addr\n");
-                nft.push_str("    elements = {\n");
-
-                for mac in &alias.mac_addresses {
-                    nft.push_str(&format!("      {},\n", mac));
-                }
-
-                nft.push_str("    }\n");
-                nft.push_str("  }\n\n");
-            }
-        }
-
-        nft.push_str("}\n");
-
-        Ok(nft)
     }
+    Ok(s)
+}
 
-    /// Get network alias by name
-    pub fn get_network_alias(&self, name: &str) -> Option<&NetworkAlias> {
-        self.network_aliases.iter().find(|a| a.name == name)
-    }
-
-    /// Get port alias by name
-    pub fn get_port_alias(&self, name: &str) -> Option<&PortAlias> {
-        self.port_aliases.iter().find(|a| a.name == name)
-    }
-
-    /// List all aliases
-    pub fn list_all(&self) -> Vec<(String, AliasType, usize)> {
-        let mut aliases = Vec::new();
-
-        for alias in &self.network_aliases {
-            aliases.push((alias.name.clone(), AliasType::Network, alias.entries.len()));
-        }
-
-        for alias in &self.port_aliases {
-            aliases.push((alias.name.clone(), AliasType::Port, alias.entries.len()));
-        }
-
-        for alias in &self.url_aliases {
-            aliases.push((alias.name.clone(), AliasType::Url, alias.entries.len()));
-        }
-
-        for alias in &self.mac_aliases {
-            aliases.push((
-                alias.name.clone(),
-                AliasType::Mac,
-                alias.mac_addresses.len(),
+/// Replace an existing alias's set contents in ONE nft transaction:
+/// `flush set` + `add element`, no ruleset reload (rules, counters and the
+/// rest of the table are untouched). Fails if the sets don't exist yet.
+pub fn update_sets_script(alias: &Alias) -> Result<String> {
+    let mut s = String::new();
+    for (set, elems) in alias.elements()? {
+        s.push_str(&format!("flush set {TABLE} {set}\n"));
+        if !elems.is_empty() {
+            s.push_str(&format!(
+                "add element {TABLE} {set} {{ {} }}\n",
+                elems.join(", ")
             ));
         }
-
-        aliases
     }
-
-    /// Create common presets
-    pub fn load_common_aliases(&mut self) -> Result<()> {
-        // RFC1918 private networks
-        self.add_network_alias(NetworkAlias {
-            name: "RFC1918".to_string(),
-            description: Some("Private IP address ranges".to_string()),
-            entries: vec![
-                NetworkEntry::Network {
-                    addr: "10.0.0.0".parse().unwrap(),
-                    prefix: 8,
-                },
-                NetworkEntry::Network {
-                    addr: "172.16.0.0".parse().unwrap(),
-                    prefix: 12,
-                },
-                NetworkEntry::Network {
-                    addr: "192.168.0.0".parse().unwrap(),
-                    prefix: 16,
-                },
-            ],
-        })?;
-
-        // Bogon networks (should not appear on internet)
-        self.add_network_alias(NetworkAlias {
-            name: "Bogons".to_string(),
-            description: Some("Reserved/bogon IP ranges".to_string()),
-            entries: vec![
-                NetworkEntry::Network {
-                    addr: "0.0.0.0".parse().unwrap(),
-                    prefix: 8,
-                },
-                NetworkEntry::Network {
-                    addr: "127.0.0.0".parse().unwrap(),
-                    prefix: 8,
-                },
-                NetworkEntry::Network {
-                    addr: "169.254.0.0".parse().unwrap(),
-                    prefix: 16,
-                },
-                NetworkEntry::Network {
-                    addr: "224.0.0.0".parse().unwrap(),
-                    prefix: 4,
-                },
-                NetworkEntry::Network {
-                    addr: "240.0.0.0".parse().unwrap(),
-                    prefix: 4,
-                },
-            ],
-        })?;
-
-        // Common web ports
-        self.add_port_alias(PortAlias {
-            name: "WebPorts".to_string(),
-            description: Some("HTTP and HTTPS ports".to_string()),
-            entries: vec![
-                PortEntry::Port(80),
-                PortEntry::Port(443),
-                PortEntry::Port(8080),
-                PortEntry::Port(8443),
-            ],
-        })?;
-
-        // Email ports
-        self.add_port_alias(PortAlias {
-            name: "EmailPorts".to_string(),
-            description: Some("SMTP, IMAP, POP3 ports".to_string()),
-            entries: vec![
-                PortEntry::Port(25),  // SMTP
-                PortEntry::Port(587), // SMTP Submission
-                PortEntry::Port(465), // SMTPS
-                PortEntry::Port(143), // IMAP
-                PortEntry::Port(993), // IMAPS
-                PortEntry::Port(110), // POP3
-                PortEntry::Port(995), // POP3S
-            ],
-        })?;
-
-        // Database ports
-        self.add_port_alias(PortAlias {
-            name: "DatabasePorts".to_string(),
-            description: Some("Common database ports".to_string()),
-            entries: vec![
-                PortEntry::Port(3306),  // MySQL
-                PortEntry::Port(5432),  // PostgreSQL
-                PortEntry::Port(6379),  // Redis
-                PortEntry::Port(27017), // MongoDB
-                PortEntry::Port(1433),  // MSSQL
-                PortEntry::Port(1521),  // Oracle
-            ],
-        })?;
-
-        // High ports (ephemeral)
-        self.add_port_alias(PortAlias {
-            name: "HighPorts".to_string(),
-            description: Some("Ephemeral port range".to_string()),
-            entries: vec![PortEntry::Range {
-                start: 49152,
-                end: 65535,
-            }],
-        })?;
-
-        Ok(())
-    }
+    Ok(s)
 }
 
-impl Default for AliasManager {
-    fn default() -> Self {
-        let mut manager = Self::new();
-        let _ = manager.load_common_aliases();
-        manager
+/// name -> kind map for the renderer.
+pub fn alias_map(aliases: &[Alias]) -> AliasMap {
+    aliases.iter().map(|a| (a.name.clone(), a.kind)).collect()
+}
+
+fn db(what: &'static str) -> impl Fn(sqlx::Error) -> Error {
+    move |e| Error::Config(format!("{what}: {e}"))
+}
+
+/// All aliases, by name.
+pub async fn load_aliases(store: &ConfigStore) -> Result<Vec<Alias>> {
+    let rows = sqlx::query(
+        "SELECT name, alias_type, entries, description FROM firewall_aliases ORDER BY name",
+    )
+    .fetch_all(store.pool()?)
+    .await
+    .map_err(db("load aliases"))?;
+    rows.iter()
+        .map(|r| {
+            let name: String = r.get(0);
+            Ok(Alias {
+                kind: parse_kind(&r.get::<String, _>(1))?,
+                entries: serde_json::from_str(&r.get::<String, _>(2))
+                    .map_err(|e| Error::Config(format!("alias {name}: bad entries: {e}")))?,
+                description: r.get(3),
+                name,
+            })
+        })
+        .collect()
+}
+
+/// One alias by name.
+pub async fn get_alias(store: &ConfigStore, name: &str) -> Result<Option<Alias>> {
+    Ok(load_aliases(store)
+        .await?
+        .into_iter()
+        .find(|a| a.name == name))
+}
+
+/// Insert or replace an alias (validated).
+pub async fn save_alias(store: &ConfigStore, alias: &Alias) -> Result<()> {
+    let a = alias.clone().validated()?;
+    sqlx::query(
+        "INSERT INTO firewall_aliases (name, alias_type, entries, description, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET alias_type = excluded.alias_type,
+             entries = excluded.entries, description = excluded.description,
+             updated_at = excluded.updated_at",
+    )
+    .bind(&a.name)
+    .bind(kind_str(a.kind))
+    .bind(serde_json::to_string(&a.entries).expect("strings serialize"))
+    .bind(&a.description)
+    .bind(chrono::Utc::now().timestamp())
+    .execute(store.pool()?)
+    .await
+    .map_err(db("save alias"))?;
+    Ok(())
+}
+
+/// Delete an alias. Refused while a filter or NAT rule references it.
+pub async fn delete_alias(store: &ConfigStore, name: &str) -> Result<()> {
+    let users = alias_users(store, name).await?;
+    if !users.is_empty() {
+        return Err(Error::Config(format!(
+            "Invalid request: alias {name} is used by {}",
+            users.join(", ")
+        )));
     }
+    sqlx::query("DELETE FROM firewall_aliases WHERE name = ?")
+        .bind(name)
+        .execute(store.pool()?)
+        .await
+        .map_err(db("delete alias"))?;
+    Ok(())
 }
 
-/// Helper to build network aliases
-pub struct NetworkAliasBuilder {
-    name: String,
-    description: Option<String>,
-    entries: Vec<NetworkEntry>,
+/// Names of the rules that reference `$name`.
+pub async fn alias_users(store: &ConfigStore, name: &str) -> Result<Vec<String>> {
+    let tok = format!("${name}");
+    let port = patronus_core::types::PortSpec::Alias(name.to_string());
+    let mut users = Vec::new();
+    for r in store.load_firewall_rules().await? {
+        if r.source.as_deref() == Some(&tok)
+            || r.destination.as_deref() == Some(&tok)
+            || r.dport.as_ref() == Some(&port)
+            || r.sport.as_ref() == Some(&port)
+        {
+            users.push(format!("rule {:?}", r.name));
+        }
+    }
+    for r in store.load_nat_rules().await? {
+        if r.source.as_deref() == Some(&tok)
+            || r.destination.as_deref() == Some(&tok)
+            || r.dport.as_ref() == Some(&port)
+        {
+            users.push(format!("NAT rule {:?}", r.name));
+        }
+    }
+    Ok(users)
 }
 
-impl NetworkAliasBuilder {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn host(name: &str, e: &[&str]) -> Alias {
+        Alias {
             name: name.into(),
+            kind: AliasKind::Host,
+            entries: e.iter().map(|s| s.to_string()).collect(),
             description: None,
-            entries: Vec::new(),
         }
     }
 
-    pub fn description(mut self, desc: impl Into<String>) -> Self {
-        self.description = Some(desc.into());
-        self
-    }
-
-    pub fn add_host(mut self, ip: IpAddr) -> Self {
-        self.entries.push(NetworkEntry::Host(ip));
-        self
-    }
-
-    pub fn add_network(mut self, addr: IpAddr, prefix: u8) -> Self {
-        self.entries.push(NetworkEntry::Network { addr, prefix });
-        self
-    }
-
-    pub fn add_range(mut self, start: IpAddr, end: IpAddr) -> Self {
-        self.entries.push(NetworkEntry::Range { start, end });
-        self
-    }
-
-    pub fn add_alias(mut self, alias: impl Into<String>) -> Self {
-        self.entries.push(NetworkEntry::Alias(alias.into()));
-        self
-    }
-
-    pub fn build(self) -> NetworkAlias {
-        NetworkAlias {
-            name: self.name,
-            description: self.description,
-            entries: self.entries,
+    #[test]
+    fn host_alias_splits_families_and_validates() {
+        let a = host(
+            "web",
+            &[
+                "192.0.2.1",
+                " 10.0.0.0/8",
+                "2001:db8::/32",
+                "10.1.1.1-10.1.1.9",
+                "",
+            ],
+        )
+        .validated()
+        .unwrap();
+        let el = a.elements().unwrap();
+        assert_eq!(el[0].0, "alias_web_v4");
+        assert_eq!(
+            el[0].1,
+            vec!["192.0.2.1", "10.0.0.0/8", "10.1.1.1-10.1.1.9"]
+        );
+        assert_eq!(el[1].1, vec!["2001:db8::/32"]);
+        let sc = sets_script(std::slice::from_ref(&a)).unwrap();
+        assert!(
+            sc.contains("add set inet patronus alias_web_v6 { type ipv6_addr; flags interval;"),
+            "{sc}"
+        );
+        assert!(sc.contains(
+            "add element inet patronus alias_web_v4 { 192.0.2.1, 10.0.0.0/8, 10.1.1.1-10.1.1.9 }"
+        ));
+        let up = update_sets_script(&a).unwrap();
+        assert!(
+            up.starts_with("flush set inet patronus alias_web_v4\n"),
+            "{up}"
+        );
+        for bad in [
+            "10.0.0.0/33",
+            "host.example",
+            "1.2.3.4; flush ruleset",
+            "10.0.0.9-10.0.0.1",
+            "10.0.0.1-::1",
+            "10.0.0.0/+8",
+        ] {
+            assert!(host("x", &[bad]).validated().is_err(), "{bad}");
+        }
+        for bad in [
+            "1x",
+            "",
+            "a-b",
+            "x;y",
+            "this_alias_name_is_far_too_long_for_nft",
+        ] {
+            assert!(host(bad, &[]).validated().is_err(), "{bad}");
         }
     }
-}
 
-/// Helper to build port aliases
-pub struct PortAliasBuilder {
-    name: String,
-    description: Option<String>,
-    entries: Vec<PortEntry>,
-}
-
-impl PortAliasBuilder {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
+    #[test]
+    fn port_alias() {
+        let a = Alias {
+            name: "webports".into(),
+            kind: AliasKind::Port,
+            entries: vec!["80".into(), "8000-8010".into()],
             description: None,
-            entries: Vec::new(),
-        }
+        };
+        assert_eq!(a.elements().unwrap()[0].1, vec!["80", "8000-8010"]);
+        assert!(sets_script(std::slice::from_ref(&a))
+            .unwrap()
+            .contains("type inet_service"));
+        let mut b = a.clone();
+        b.entries = vec!["0".into()];
+        assert!(b.clone().validated().is_err());
+        b.entries = vec!["90-80".into()];
+        assert!(b.validated().is_err());
     }
 
-    pub fn description(mut self, desc: impl Into<String>) -> Self {
-        self.description = Some(desc.into());
-        self
-    }
-
-    pub fn add_port(mut self, port: u16) -> Self {
-        self.entries.push(PortEntry::Port(port));
-        self
-    }
-
-    pub fn add_range(mut self, start: u16, end: u16) -> Self {
-        self.entries.push(PortEntry::Range { start, end });
-        self
-    }
-
-    pub fn add_alias(mut self, alias: impl Into<String>) -> Self {
-        self.entries.push(PortEntry::Alias(alias.into()));
-        self
-    }
-
-    pub fn build(self) -> PortAlias {
-        PortAlias {
-            name: self.name,
-            description: self.description,
-            entries: self.entries,
-        }
+    #[tokio::test]
+    async fn store_round_trip_and_in_use_aliases_cannot_be_deleted() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        save_alias(&s, &host("bad", &["198.51.100.7"]))
+            .await
+            .unwrap();
+        save_alias(&s, &host("bad", &["198.51.100.8"]))
+            .await
+            .unwrap();
+        assert_eq!(
+            load_aliases(&s).await.unwrap()[0].entries,
+            vec!["198.51.100.8"]
+        );
+        let mut r = patronus_core::types::FirewallRule::new(
+            "block bad".into(),
+            patronus_core::types::ChainType::Forward,
+            patronus_core::types::FirewallAction::Drop,
+        );
+        r.source = Some("$bad".into());
+        let id = s.save_firewall_rule(&r).await.unwrap();
+        let e = delete_alias(&s, "bad").await.unwrap_err().to_string();
+        assert!(e.contains("Invalid") && e.contains("block bad"), "{e}");
+        s.delete_firewall_rule(id as u64).await.unwrap();
+        delete_alias(&s, "bad").await.unwrap();
+        assert!(load_aliases(&s).await.unwrap().is_empty());
     }
 }

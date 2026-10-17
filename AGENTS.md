@@ -78,6 +78,19 @@ config file that only one process knows about.
   `system` (anti-lockout; the store refuses to delete/edit it), `default`
   (seeded once on first boot, user-deletable, never re-seeded), `user`, or
   `gitops` (keyed by name).
+- **Rule order (lane B):** `firewall_rules.priority` is the position.
+  System rules are pinned at -1000; every other rule is renumbered 10, 20,
+  ... by `ConfigStore::set_firewall_rule_order`. New user/GitOps rules go
+  after the existing user rules and before the first seeded default.
+- **Firewall objects (lane B, `patronus_firewall::{aliases,schedule}`):**
+  rules reference aliases as `$name` (source/destination = host alias,
+  port = `PortSpec::Alias`, rendered as nft sets `alias_<name>_v4|_v6|_ports`)
+  and schedules by name (`firewall_rules.schedule`). Outbound NAT is
+  generated per WAN interface by the applier (`system_config`
+  `firewall.outbound_nat_mode`: automatic | hybrid (default) | manual |
+  disabled); NAT rows are manual rules, port forwards (`interface_in`) and
+  1:1 mappings. Tests can fake the schedule clock with
+  `PATRONUS_FAKE_TIME_FILE` (`YYYY-MM-DD HH:MM`).
 - **Policy routing contract (B <-> E):** `firewall_rules.gateway` names a
   gateway or gateway group; lane E resolves it to an fwmark, lane B renders
   `meta mark set`.

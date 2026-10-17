@@ -11,7 +11,7 @@ use sysinfo::{Disks, Networks, System};
 
 use crate::{
     state::AppState,
-    templates::{Alias, DashboardTemplate, FirewallTemplate, InterfaceInfo, SystemInfo},
+    templates::{DashboardTemplate, InterfaceInfo, SystemInfo},
 };
 
 /// Get system metrics using sysinfo
@@ -156,40 +156,6 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
 pub async fn list_interfaces() -> impl IntoResponse {
     match patronus_network::list_interfaces().await {
         Ok(interfaces) => Json(json!({ "interfaces": interfaces })).into_response(),
-        Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
-    }
-}
-
-/// Firewall management page
-pub async fn firewall_page(State(state): State<AppState>) -> impl IntoResponse {
-    // The firewall service already returns template types directly
-    let filter_rules = state.firewall.list_rules().await.unwrap_or_default();
-    let nat_rules = state.firewall.list_nat_rules().await.unwrap_or_default();
-
-    let aliases: Vec<Alias> = state.firewall.list_aliases().await.unwrap_or_default();
-    let enabled_filter_rules = filter_rules.iter().filter(|r| r.enabled).count();
-    let enabled_nat_rules = nat_rules.iter().filter(|r| r.enabled).count();
-    let accept_rules_count = filter_rules.iter().filter(|r| r.action == "Accept").count();
-    let drop_rules_count = filter_rules.iter().filter(|r| r.action == "Drop").count();
-
-    let template = FirewallTemplate {
-        rules: filter_rules.clone(),
-        nat_rules,
-        aliases,
-        filter_rules,
-        enabled_filter_rules,
-        enabled_nat_rules,
-        accept_rules_count,
-        drop_rules_count,
-    };
-
-    Html(template.render().unwrap())
-}
-
-/// List firewall rules (JSON API)
-pub async fn list_firewall_rules(State(state): State<AppState>) -> impl IntoResponse {
-    match state.firewall.list_rules().await {
-        Ok(rules) => Json(json!({ "rules": rules })).into_response(),
         Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
     }
 }

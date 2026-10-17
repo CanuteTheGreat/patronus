@@ -14,7 +14,7 @@
 //!   holds the shared/foundation ones.
 
 use patronus_core::{
-    types::{ChainType, FirewallAction, FirewallRule, NatRule, NatType, Protocol},
+    types::{ChainType, FirewallAction, FirewallRule, IpVersion, NatRule, NatType, Protocol},
     Error, Result,
 };
 use serde_json::{Map, Value};
@@ -233,7 +233,40 @@ impl ConfigStore {
 
     /// Insert a firewall rule with an explicit origin, returning its id.
     /// A caller-supplied `rule.id` is kept (seeding uses fixed ids).
+    ///
+    /// Placement: system rules are pinned first; seeded defaults go last;
+    /// user and GitOps rules go after the existing user rules but ahead of
+    /// the first seeded default (so a new block rule is not shadowed by
+    /// "Allow LAN to any"). Use [`Self::set_firewall_rule_order`] to move
+    /// rules afterwards.
     pub async fn insert_firewall_rule(
+        &self,
+        rule: &FirewallRule,
+        origin: RuleOrigin,
+    ) -> Result<i64> {
+        let id = self.insert_firewall_rule_row(rule, origin).await?;
+        if origin != RuleOrigin::System {
+            let mut order: Vec<(u64, RuleOrigin)> = self
+                .firewall_rule_order()
+                .await?
+                .into_iter()
+                .filter(|(i, o)| *o != RuleOrigin::System && *i != id as u64)
+                .collect();
+            let at = match origin {
+                RuleOrigin::Default => order.len(),
+                _ => order
+                    .iter()
+                    .position(|(_, o)| *o == RuleOrigin::Default)
+                    .unwrap_or(order.len()),
+            };
+            order.insert(at, (id as u64, origin));
+            let ids: Vec<u64> = order.into_iter().map(|(i, _)| i).collect();
+            self.set_firewall_rule_order(&ids).await?;
+        }
+        Ok(id)
+    }
+
+    async fn insert_firewall_rule_row(
         &self,
         rule: &FirewallRule,
         origin: RuleOrigin,
@@ -242,8 +275,9 @@ impl ConfigStore {
         let result = sqlx::query(
             "INSERT INTO firewall_rules
              (id, name, enabled, chain, action, source, destination, protocol, sport, dport,
-              interface_in, interface_out, comment, priority, origin, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              interface_in, interface_out, comment, priority, origin, created_at, updated_at,
+              log, schedule, ip_version)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(rule.id.map(|i| i as i64))
         .bind(&rule.name)
@@ -262,10 +296,74 @@ impl ConfigStore {
         .bind(origin.as_str())
         .bind(now)
         .bind(now)
+        .bind(rule.log as i32)
+        .bind(&rule.schedule)
+        .bind(rule.ip_version.map(|v| v.to_string()))
         .execute(self.pool()?)
         .await
         .map_err(db_err("Failed to save firewall rule"))?;
         Ok(result.last_insert_rowid())
+    }
+
+    /// Every firewall rule id with its origin, in evaluation order.
+    pub async fn firewall_rule_order(&self) -> Result<Vec<(u64, RuleOrigin)>> {
+        let rows =
+            sqlx::query("SELECT id, origin FROM firewall_rules ORDER BY priority ASC, id ASC")
+                .fetch_all(self.pool()?)
+                .await
+                .map_err(db_err("Failed to load rule order"))?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                (
+                    r.get::<i64, _>(0) as u64,
+                    RuleOrigin::parse(&r.get::<String, _>(1)),
+                )
+            })
+            .collect())
+    }
+
+    /// Reorder the rules. `ids` must list every non-system rule exactly
+    /// once, in the new evaluation order; system rules (anti-lockout) stay
+    /// pinned in front of all of them and cannot be moved.
+    pub async fn set_firewall_rule_order(&self, ids: &[u64]) -> Result<()> {
+        let current = self.firewall_rule_order().await?;
+        let mut movable: Vec<u64> = current
+            .iter()
+            .filter(|(_, o)| *o != RuleOrigin::System)
+            .map(|(i, _)| *i)
+            .collect();
+        let mut wanted = ids.to_vec();
+        movable.sort_unstable();
+        wanted.sort_unstable();
+        if movable != wanted {
+            let system: Vec<u64> = current
+                .iter()
+                .filter(|(_, o)| *o == RuleOrigin::System)
+                .map(|(i, _)| *i)
+                .collect();
+            return Err(Error::Config(if ids.iter().any(|i| system.contains(i)) {
+                "Invalid order: system rules (anti-lockout) are pinned first and cannot be moved"
+                    .to_string()
+            } else {
+                "Invalid order: it must list every non-system rule exactly once".to_string()
+            }));
+        }
+        let mut tx = self
+            .pool()?
+            .begin()
+            .await
+            .map_err(db_err("begin reorder"))?;
+        for (i, id) in ids.iter().enumerate() {
+            sqlx::query("UPDATE firewall_rules SET priority = ? WHERE id = ?")
+                .bind((i as i64 + 1) * 10)
+                .bind(*id as i64)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err("Failed to reorder rules"))?;
+        }
+        tx.commit().await.map_err(db_err("commit reorder"))?;
+        Ok(())
     }
 
     /// Replace the contents of firewall rule `id` (origin and priority are
@@ -283,7 +381,8 @@ impl ConfigStore {
         sqlx::query(
             "UPDATE firewall_rules SET name = ?, enabled = ?, chain = ?, action = ?, source = ?,
                  destination = ?, protocol = ?, sport = ?, dport = ?, interface_in = ?,
-                 interface_out = ?, comment = ?, updated_at = ?
+                 interface_out = ?, comment = ?, updated_at = ?, log = ?, schedule = ?,
+                 ip_version = ?
              WHERE id = ?",
         )
         .bind(&rule.name)
@@ -299,6 +398,9 @@ impl ConfigStore {
         .bind(&rule.interface_out)
         .bind(&rule.comment)
         .bind(chrono::Utc::now().timestamp())
+        .bind(rule.log as i32)
+        .bind(&rule.schedule)
+        .bind(rule.ip_version.map(|v| v.to_string()))
         .bind(id as i64)
         .execute(self.pool()?)
         .await
@@ -330,7 +432,8 @@ impl ConfigStore {
     pub async fn load_firewall_rules_with_origin(&self) -> Result<Vec<(FirewallRule, RuleOrigin)>> {
         let rows = sqlx::query(
             "SELECT id, name, enabled, chain, action, source, destination, protocol,
-                    sport, dport, interface_in, interface_out, comment, origin
+                    sport, dport, interface_in, interface_out, comment, origin,
+                    log, schedule, ip_version
              FROM firewall_rules
              ORDER BY priority ASC, id ASC",
         )
@@ -376,6 +479,13 @@ impl ConfigStore {
                     interface_in: row.get("interface_in"),
                     interface_out: row.get("interface_out"),
                     comment: row.get("comment"),
+                    log: row.get::<i32, _>("log") != 0,
+                    schedule: row.get("schedule"),
+                    ip_version: match row.get::<Option<String>, _>("ip_version").as_deref() {
+                        Some("ipv4") => Some(IpVersion::V4),
+                        Some("ipv6") => Some(IpVersion::V6),
+                        _ => None,
+                    },
                 },
                 RuleOrigin::parse(&row.get::<String, _>("origin")),
             ));
@@ -410,12 +520,13 @@ impl ConfigStore {
     /// Insert a NAT rule with an explicit origin, returning its id.
     pub async fn insert_nat_rule(&self, rule: &NatRule, origin: RuleOrigin) -> Result<i64> {
         let now = chrono::Utc::now().timestamp();
-        let (nat_type_str, to_address, to_port) = nat_columns(&rule.nat_type);
+        let (nat_type_str, to_address, to_port, external) = nat_columns(&rule.nat_type);
         let result = sqlx::query(
             "INSERT INTO nat_rules
              (id, name, enabled, nat_type, to_address, to_port, source, destination, protocol,
-              dport, interface_out, comment, priority, origin, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              dport, interface_out, comment, priority, origin, created_at, updated_at,
+              interface_in, reflection, external_address)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(rule.id.map(|i| i as i64))
         .bind(&rule.name)
@@ -433,10 +544,64 @@ impl ConfigStore {
         .bind(origin.as_str())
         .bind(now)
         .bind(now)
+        .bind(&rule.interface_in)
+        .bind(rule.reflection as i32)
+        .bind(external)
         .execute(self.pool()?)
         .await
         .map_err(db_err("Failed to save NAT rule"))?;
         Ok(result.last_insert_rowid())
+    }
+
+    /// Replace the contents of NAT rule `id` (origin and priority are
+    /// kept). System rules are refused.
+    pub async fn update_nat_rule(&self, id: u64, rule: &NatRule) -> Result<()> {
+        match self.get_nat_rule(id).await? {
+            None => return Err(Error::Config(format!("NAT rule {id} not found"))),
+            Some((_, RuleOrigin::System)) => {
+                return Err(Error::Config(format!(
+                    "Invalid request: NAT rule {id} is a system rule and cannot be edited"
+                )))
+            }
+            Some(_) => {}
+        }
+        let (nat_type_str, to_address, to_port, external) = nat_columns(&rule.nat_type);
+        sqlx::query(
+            "UPDATE nat_rules SET name = ?, enabled = ?, nat_type = ?, to_address = ?,
+                 to_port = ?, source = ?, destination = ?, protocol = ?, dport = ?,
+                 interface_out = ?, comment = ?, interface_in = ?, reflection = ?,
+                 external_address = ?, updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(&rule.name)
+        .bind(rule.enabled as i32)
+        .bind(nat_type_str)
+        .bind(to_address)
+        .bind(to_port.map(|p| p as i64))
+        .bind(&rule.source)
+        .bind(&rule.destination)
+        .bind(rule.protocol.as_ref().map(|p| p.to_string()))
+        .bind(port_json(rule.dport.as_ref()))
+        .bind(&rule.interface_out)
+        .bind(&rule.comment)
+        .bind(&rule.interface_in)
+        .bind(rule.reflection as i32)
+        .bind(external)
+        .bind(chrono::Utc::now().timestamp())
+        .bind(id as i64)
+        .execute(self.pool()?)
+        .await
+        .map_err(db_err("Failed to update NAT rule"))?;
+        Ok(())
+    }
+
+    /// One NAT rule and its origin.
+    pub async fn get_nat_rule(&self, id: u64) -> Result<Option<(NatRule, RuleOrigin)>> {
+        Ok(self
+            .load_nat_rules_with_origin()
+            .await?
+            .into_iter()
+            .find(|(r, _)| r.id == Some(id)))
     }
 
     /// Load all NAT rules, in evaluation order.
@@ -453,7 +618,8 @@ impl ConfigStore {
     pub async fn load_nat_rules_with_origin(&self) -> Result<Vec<(NatRule, RuleOrigin)>> {
         let rows = sqlx::query(
             "SELECT id, name, enabled, nat_type, to_address, to_port, source, destination,
-                    protocol, dport, interface_out, comment, origin
+                    protocol, dport, interface_out, comment, origin, interface_in, reflection,
+                    external_address
              FROM nat_rules
              ORDER BY priority ASC, id ASC",
         )
@@ -479,6 +645,15 @@ impl ConfigStore {
                     to_address: addr()?,
                     to_port: row.get::<Option<i64>, _>("to_port").map(|p| p as u16),
                 },
+                "onetoone" => {
+                    let ext: Option<String> = row.get("external_address");
+                    NatType::OneToOne {
+                        external: ext.as_deref().unwrap_or("").parse().map_err(|_| {
+                            Error::Config(format!("NAT rule {id}: bad external_address {ext:?}"))
+                        })?,
+                        internal: addr()?,
+                    }
+                }
                 other => {
                     return Err(Error::Config(format!(
                         "NAT rule {id}: unknown nat_type {other:?}"
@@ -496,6 +671,8 @@ impl ConfigStore {
                     protocol: parse_protocol(id, row.get("protocol"))?,
                     dport: parse_port(id, "dport", row.get("dport"))?,
                     interface_out: row.get("interface_out"),
+                    interface_in: row.get("interface_in"),
+                    reflection: row.get::<i32, _>("reflection") != 0,
                     comment: row.get("comment"),
                 },
                 RuleOrigin::parse(&row.get::<String, _>("origin")),
@@ -859,10 +1036,10 @@ impl ConfigStore {
     }
 }
 
-/// Evaluation order: system rules (anti-lockout) first, then user/GitOps
-/// rules in creation order, then the seeded defaults ("Allow LAN to any"),
-/// so a block rule a user adds is not shadowed by the default allow (until
-/// lane B adds explicit ordering).
+/// Initial `priority` of a new row: system rules (anti-lockout) are pinned
+/// at -1000; other filter rules are then placed by
+/// [`ConfigStore::insert_firewall_rule`] (positions 10, 20, ...). NAT rules
+/// keep these values (system, then user, then defaults).
 fn priority_for(origin: RuleOrigin) -> i64 {
     match origin {
         RuleOrigin::System => -1000,
@@ -907,14 +1084,21 @@ fn parse_protocol(id: i64, s: Option<String>) -> Result<Option<Protocol>> {
     })
 }
 
-fn nat_columns(t: &NatType) -> (&'static str, Option<String>, Option<u16>) {
+/// (nat_type, to_address, to_port, external_address) columns.
+fn nat_columns(t: &NatType) -> (&'static str, Option<String>, Option<u16>, Option<String>) {
     match t {
-        NatType::Masquerade => ("masquerade", None, None),
-        NatType::Snat { to_address } => ("snat", Some(to_address.to_string()), None),
+        NatType::Masquerade => ("masquerade", None, None, None),
+        NatType::Snat { to_address } => ("snat", Some(to_address.to_string()), None, None),
         NatType::Dnat {
             to_address,
             to_port,
-        } => ("dnat", Some(to_address.to_string()), *to_port),
+        } => ("dnat", Some(to_address.to_string()), *to_port, None),
+        NatType::OneToOne { external, internal } => (
+            "onetoone",
+            Some(internal.to_string()),
+            None,
+            Some(external.to_string()),
+        ),
     }
 }
 

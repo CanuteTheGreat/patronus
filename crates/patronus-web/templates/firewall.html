@@ -7,120 +7,582 @@
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         .stat-card { border: 1px solid #ddd; padding: 15px; margin: 10px; border-radius: 5px; }
-        .btn { padding: 8px 16px; margin: 5px; border: none; border-radius: 4px; cursor: pointer; }
+        .btn { padding: 6px 12px; margin: 2px; border: none; border-radius: 4px; cursor: pointer; }
         .btn-primary { background: #007bff; color: white; }
-        .badge { padding: 3px 8px; border-radius: 3px; font-size: 0.8em; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-sm { padding: 3px 8px; font-size: 0.85em; }
+        .badge { padding: 3px 8px; border-radius: 3px; font-size: 0.8em; background: #e9ecef; }
         .badge.success { background: #28a745; color: white; }
         .badge.danger { background: #dc3545; color: white; }
-        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        .badge.warning { background: #ffc107; color: black; }
+        table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+        th, td { border: 1px solid #ddd; padding: 6px; text-align: left; font-size: 0.9em; }
+        th { background: #f8f9fa; }
+        .tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid #ddd; margin: 20px 0; }
+        .tab-btn { padding: 10px 16px; border: none; background: none; cursor: pointer; }
+        .tab-btn.active { background: #f8f9fa; border-bottom: 2px solid #007bff; }
+        .tab { display: none; }
+        .tab.active { display: block; }
+        fieldset { border: 1px solid #ddd; border-radius: 5px; padding: 12px; margin: 12px 0; }
+        .row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
+        .row label { display: flex; flex-direction: column; font-size: 0.85em; min-width: 150px; }
+        .row label.check { flex-direction: row; align-items: center; gap: 6px; min-width: 0; }
+        input, select, textarea { padding: 5px; font-size: 0.95em; }
+        .msg { padding: 8px; margin: 8px 0; border-radius: 4px; display: none; }
+        .msg.error { display: block; background: #f8d7da; color: #721c24; }
+        .msg.ok { display: block; background: #d4edda; color: #155724; }
+        .hint { color: #666; font-size: 0.85em; }
+        .empty { color: #666; font-style: italic; }
     </style>
 </head>
 <body>
-    <h1>Firewall Management</h1>
+    <p><a href="/">&larr; Dashboard</a></p>
+    <h1>Firewall</h1>
 
-    <div style="display: flex; gap: 20px;">
-        <div class="stat-card">
-            <h3>Filter Rules</h3>
-            <div>Total: {{ filter_rules.len() }}</div>
-            <div>Enabled: {{ enabled_filter_rules }}</div>
-        </div>
-
-        <div class="stat-card">
-            <h3>NAT Rules</h3>
-            <div>Total: {{ nat_rules.len() }}</div>
-            <div>Enabled: {{ enabled_nat_rules }}</div>
-        </div>
-
-        <div class="stat-card">
-            <h3>Allow Rules</h3>
-            <div>{{ accept_rules_count }}</div>
-        </div>
-
-        <div class="stat-card">
-            <h3>Drop Rules</h3>
-            <div>{{ drop_rules_count }}</div>
-        </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+        <div class="stat-card"><h3>Filter Rules</h3>
+            <div>Total: {{ filter_rules.len() }}</div><div>Enabled: {{ enabled_filter_rules }}</div></div>
+        <div class="stat-card"><h3>NAT Rules</h3>
+            <div>Total: {{ nat_rules.len() }}</div><div>Enabled: {{ enabled_nat_rules }}</div></div>
+        <div class="stat-card"><h3>Allow Rules</h3><div>{{ accept_rules_count }}</div></div>
+        <div class="stat-card"><h3>Block Rules</h3><div>{{ drop_rules_count }}</div></div>
+        <div class="stat-card"><h3>Outbound NAT</h3><div>{{ outbound_mode }}</div></div>
     </div>
 
-    <h2>Filter Rules</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Chain</th>
-                <th>Interface</th>
-                <th>Action</th>
-                <th>Protocol</th>
-                <th>Source</th>
-                <th>Destination</th>
-                <th>Port</th>
-                <th>Enabled</th>
-            </tr>
-        </thead>
-        <tbody>
+    <div id="msg" class="msg"></div>
+
+    <div class="tabs">
+        <button class="tab-btn active" data-tab="tab-rules">Rules</button>
+        <button class="tab-btn" data-tab="tab-pf">Port Forwards</button>
+        <button class="tab-btn" data-tab="tab-outbound">Outbound NAT</button>
+        <button class="tab-btn" data-tab="tab-onetoone">1:1 NAT</button>
+        <button class="tab-btn" data-tab="tab-aliases">Aliases</button>
+        <button class="tab-btn" data-tab="tab-schedules">Schedules</button>
+    </div>
+
+    <!-- ============================ RULES ============================ -->
+    <div class="tab active" id="tab-rules">
+        <p class="hint">Rules are evaluated top to bottom; the first match wins. The anti-lockout
+            rule is a system rule: it always comes first and cannot be moved, edited or deleted.
+            Traffic that matches no rule is dropped (inbound and forwarded).</p>
+        <table id="rules-table">
+            <thead><tr>
+                <th>#</th><th>Name</th><th>Chain</th><th>Interface</th><th>Action</th><th>Proto</th>
+                <th>Source</th><th>Destination</th><th>Port</th><th>IP</th><th>Log</th>
+                <th>Schedule</th><th>On</th><th>Order / Edit</th>
+            </tr></thead>
+            <tbody>
             {% for rule in filter_rules %}
-            <tr>
-                <td>{{ rule.name }}{% if rule.origin == "system" %} <span class="badge" title="Anti-lockout: always enforced, cannot be deleted">system</span>{% endif %}</td>
+            <tr data-rule-id="{{ rule.id }}">
+                <td>{{ loop.index }}</td>
+                <td>{{ rule.name }}{% if rule.origin == "system" %} <span class="badge" title="Anti-lockout: always enforced, cannot be changed">system</span>{% endif %}{% if rule.origin == "default" %} <span class="badge" title="Seeded default">default</span>{% endif %}</td>
                 <td>{{ rule.chain }}</td>
-                <td>{{ rule.interface_display }}</td>
-                <td>
-                    {% if rule.action == "Accept" %}
-                    <span class="badge success">{{ rule.action }}</span>
-                    {% else if rule.action == "Drop" %}
-                    <span class="badge danger">{{ rule.action }}</span>
-                    {% else %}
-                    <span class="badge">{{ rule.action }}</span>
-                    {% endif %}
-                </td>
+                <td>{{ rule.interface_display }}{% if rule.interface_out != "any" %} &rarr; {{ rule.interface_out }}{% endif %}</td>
+                <td>{% if rule.action == "Accept" %}<span class="badge success">Accept</span>{% else if rule.action == "Drop" %}<span class="badge danger">Drop</span>{% else %}<span class="badge warning">{{ rule.action }}</span>{% endif %}</td>
                 <td>{{ rule.protocol }}</td>
                 <td>{{ rule.source }}</td>
                 <td>{{ rule.destination }}</td>
                 <td>{{ rule.port }}</td>
+                <td>{{ rule.ip_version }}</td>
+                <td>{% if rule.log %}yes{% endif %}</td>
+                <td>{{ rule.schedule }}</td>
+                <td>{% if rule.enabled %}<span class="badge success">On</span>{% else %}<span class="badge danger">Off</span>{% endif %}</td>
                 <td>
-                    {% if rule.enabled %}
-                    <span class="badge success">On</span>
-                    {% else %}
-                    <span class="badge danger">Off</span>
+                    {% if rule.origin != "system" %}
+                    <button class="btn btn-secondary btn-sm" title="Move up" onclick="moveRule({{ rule.id }}, 'up')">&#9650;</button>
+                    <button class="btn btn-secondary btn-sm" title="Move down" onclick="moveRule({{ rule.id }}, 'down')">&#9660;</button>
+                    <button class="btn btn-primary btn-sm" onclick="editRule({{ rule.id }})">Edit</button>
+                    <button class="btn btn-danger btn-sm" onclick="del('/firewall/rules/{{ rule.id }}', 'rule')">Delete</button>
                     {% endif %}
                 </td>
             </tr>
             {% endfor %}
-        </tbody>
-    </table>
+            </tbody>
+        </table>
+        {% if filter_rules.is_empty() %}<p class="empty">No filter rules: everything inbound and forwarded is dropped.</p>{% endif %}
 
-    <h2>NAT Rules</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Interface</th>
-                <th>Source</th>
-                <th>Destination</th>
-                <th>Target</th>
-                <th>Enabled</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for rule in nat_rules %}
-            <tr>
-                <td>{{ rule.description }}</td>
-                <td><span class="badge">{{ rule.rule_type }}</span></td>
-                <td>{{ rule.interface }}</td>
-                <td>{{ rule.source }}</td>
-                <td>{{ rule.destination }}</td>
-                <td>{{ rule.target }}</td>
-                <td>
-                    {% if rule.enabled %}
-                    <span class="badge success">On</span>
-                    {% else %}
-                    <span class="badge danger">Off</span>
-                    {% endif %}
-                </td>
+        <form id="rule-form" onsubmit="return saveRule(event)">
+            <fieldset>
+                <legend id="rule-form-title">Add rule</legend>
+                <input type="hidden" name="id">
+                <div class="row">
+                    <label>Name <input name="name" required maxlength="64"></label>
+                    <label>Action
+                        <select name="action">
+                            <option value="accept">Accept (pass)</option>
+                            <option value="drop">Drop (silently)</option>
+                            <option value="reject">Reject (TCP reset / ICMP unreachable)</option>
+                        </select></label>
+                    <label>Chain
+                        <select name="chain" onchange="chainChanged()">
+                            <option value="input">input (to the firewall)</option>
+                            <option value="forward" selected>forward (through the firewall)</option>
+                            <option value="output">output (from the firewall)</option>
+                        </select></label>
+                    <label>Interface
+                        <select name="interface">
+                            {% for i in interfaces %}<option value="{{ i.value }}">{{ i.label }}</option>{% endfor %}
+                        </select></label>
+                    <label id="rule-iface-out">Out interface (forward)
+                        <select name="interface_out">
+                            {% for i in interfaces %}<option value="{{ i.value }}">{{ i.label }}</option>{% endfor %}
+                        </select></label>
+                    <label>IP version
+                        <select name="ip_version">
+                            <option value="any">IPv4 + IPv6</option>
+                            <option value="ipv4">IPv4 only</option>
+                            <option value="ipv6">IPv6 only</option>
+                        </select></label>
+                </div>
+                <div class="row">
+                    <label>Protocol
+                        <select name="protocol">
+                            <option value="any">any</option><option value="tcp">TCP</option>
+                            <option value="udp">UDP</option><option value="icmp">ICMP</option>
+                        </select></label>
+                    <label>Source <input name="source" value="any" list="host-alias-list" placeholder="any, 10.0.0.0/8, 2001:db8::/32, $alias"></label>
+                    <label>Destination <input name="destination" value="any" list="host-alias-list"></label>
+                    <label>Destination port <input name="port" value="any" list="port-alias-list" placeholder="any, 443, 8000-8010, 22,80, $alias"></label>
+                    <label>Schedule
+                        <select name="schedule">
+                            <option value="">always</option>
+                            {% for s in schedules %}<option value="{{ s.name }}">{{ s.name }}</option>{% endfor %}
+                        </select></label>
+                </div>
+                <div class="row">
+                    <label>Description <input name="description" maxlength="120" size="40"></label>
+                    <label class="check"><input type="checkbox" name="log"> Log matches</label>
+                    <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
+                    <label>Place before
+                        <select name="before">
+                            <option value="">default position (after other user rules)</option>
+                            {% for rule in filter_rules %}{% if rule.origin != "system" %}<option value="{{ rule.id }}">{{ rule.name }}</option>{% endif %}{% endfor %}
+                        </select></label>
+                </div>
+                <button type="submit" class="btn btn-primary">Save rule</button>
+                <button type="button" class="btn btn-secondary" onclick="resetForm('rule-form', 'Add rule')">Clear</button>
+            </fieldset>
+        </form>
+    </div>
+
+    <!-- ========================= PORT FORWARDS ========================= -->
+    <div class="tab" id="tab-pf">
+        <p class="hint">A port forward rewrites traffic arriving on an interface (normally WAN) for the
+            given protocol and port to an internal host, and lets exactly that traffic through.
+            NAT reflection lets LAN clients use the WAN address too.</p>
+        <table id="pf-table">
+            <thead><tr><th>Name</th><th>Interface</th><th>Proto</th><th>External port</th><th>Source</th>
+                <th>Target</th><th>Reflection</th><th>On</th><th></th></tr></thead>
+            <tbody>
+            {% for r in port_forwards %}
+            <tr data-nat-id="{{ r.id }}">
+                <td>{{ r.name }}</td><td>{{ r.interface }}</td><td>{{ r.protocol }}</td>
+                <td>{{ r.external_port }}</td><td>{{ r.source }}</td><td>{{ r.target }}</td>
+                <td>{% if r.reflection %}yes{% endif %}</td>
+                <td>{% if r.enabled %}<span class="badge success">On</span>{% else %}<span class="badge danger">Off</span>{% endif %}</td>
+                <td><button class="btn btn-primary btn-sm" onclick="editNat({{ r.id }}, 'pf-form')">Edit</button>
+                    <button class="btn btn-danger btn-sm" onclick="del('/firewall/nat/{{ r.id }}', 'port forward')">Delete</button></td>
             </tr>
             {% endfor %}
-        </tbody>
-    </table>
+            </tbody>
+        </table>
+        {% if port_forwards.is_empty() %}<p class="empty">No port forwards.</p>{% endif %}
+        <form id="pf-form" onsubmit="return saveNat(event, 'DNAT')">
+            <fieldset><legend>Add port forward</legend>
+                <input type="hidden" name="id">
+                <div class="row">
+                    <label>Name <input name="name" required maxlength="64"></label>
+                    <label>Interface
+                        <select name="interface">
+                            {% for i in interfaces %}<option value="{{ i.value }}" {% if i.value == "@wan" %}selected{% endif %}>{{ i.label }}</option>{% endfor %}
+                        </select></label>
+                    <label>Protocol <select name="protocol"><option value="tcp">TCP</option><option value="udp">UDP</option></select></label>
+                    <label>External port <input name="external_port" required placeholder="8022 or 8000-8010"></label>
+                    <label>External address <input name="destination" value="any" placeholder="any address on the interface"></label>
+                </div>
+                <div class="row">
+                    <label>Target host <input name="target_host" required placeholder="192.168.1.10"></label>
+                    <label>Target port <input name="target_port" placeholder="same as external"></label>
+                    <label>Source <input name="source" value="any" list="host-alias-list"></label>
+                    <label>Description <input name="description" maxlength="120"></label>
+                    <label class="check"><input type="checkbox" name="reflection"> NAT reflection</label>
+                    <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
+                </div>
+                <button type="submit" class="btn btn-primary">Save port forward</button>
+                <button type="button" class="btn btn-secondary" onclick="resetForm('pf-form')">Clear</button>
+            </fieldset>
+        </form>
+    </div>
+
+    <!-- ========================= OUTBOUND NAT ========================= -->
+    <div class="tab" id="tab-outbound">
+        <fieldset><legend>Outbound NAT mode</legend>
+            <div class="row">
+                <label>Mode
+                    <select id="outbound-mode">
+                        <option value="automatic" {% if outbound_mode == "automatic" %}selected{% endif %}>Automatic: masquerade IPv4 on every WAN interface</option>
+                        <option value="hybrid" {% if outbound_mode == "hybrid" %}selected{% endif %}>Hybrid: manual rules first, then automatic</option>
+                        <option value="manual" {% if outbound_mode == "manual" %}selected{% endif %}>Manual: only the rules below</option>
+                        <option value="disabled" {% if outbound_mode == "disabled" %}selected{% endif %}>Disabled: no outbound NAT</option>
+                    </select></label>
+            </div>
+            <p class="hint">Automatic rules cover: {% if auto_nat_interfaces.is_empty() %}<em>no interface has the WAN role</em>{% else %}{{ auto_nat_interfaces }}{% endif %}. IPv6 is routed, not translated.</p>
+            <button class="btn btn-primary" onclick="saveMode()">Save mode</button>
+        </fieldset>
+        <table id="outbound-table">
+            <thead><tr><th>Name</th><th>Type</th><th>Interface</th><th>Source</th><th>Destination</th><th>Translation</th><th>On</th><th></th></tr></thead>
+            <tbody>
+            {% for r in outbound_rules %}
+            <tr data-nat-id="{{ r.id }}">
+                <td>{{ r.name }}</td><td><span class="badge">{{ r.rule_type }}</span></td><td>{{ r.interface }}</td>
+                <td>{{ r.source }}</td><td>{{ r.destination }}</td><td>{{ r.target }}</td>
+                <td>{% if r.enabled %}<span class="badge success">On</span>{% else %}<span class="badge danger">Off</span>{% endif %}</td>
+                <td><button class="btn btn-primary btn-sm" onclick="editNat({{ r.id }}, 'outbound-form')">Edit</button>
+                    <button class="btn btn-danger btn-sm" onclick="del('/firewall/nat/{{ r.id }}', 'outbound rule')">Delete</button></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% if outbound_rules.is_empty() %}<p class="empty">No manual outbound rules.</p>{% endif %}
+        <form id="outbound-form" onsubmit="return saveNat(event, null)">
+            <fieldset><legend>Add manual outbound rule</legend>
+                <input type="hidden" name="id">
+                <div class="row">
+                    <label>Name <input name="name" required maxlength="64"></label>
+                    <label>Type <select name="rule_type"><option value="MASQUERADE">Masquerade (interface address)</option><option value="SNAT">SNAT (fixed address)</option></select></label>
+                    <label>Interface
+                        <select name="interface">
+                            {% for i in interfaces %}<option value="{{ i.value }}" {% if i.value == "@wan" %}selected{% endif %}>{{ i.label }}</option>{% endfor %}
+                        </select></label>
+                    <label>Source <input name="source" value="any" list="host-alias-list"></label>
+                    <label>Destination <input name="destination" value="any" list="host-alias-list"></label>
+                    <label>Translation address (SNAT) <input name="target_host" placeholder="203.0.113.5"></label>
+                    <label>Description <input name="description" maxlength="120"></label>
+                    <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
+                </div>
+                <button type="submit" class="btn btn-primary">Save outbound rule</button>
+                <button type="button" class="btn btn-secondary" onclick="resetForm('outbound-form')">Clear</button>
+            </fieldset>
+        </form>
+    </div>
+
+    <!-- =========================== 1:1 NAT =========================== -->
+    <div class="tab" id="tab-onetoone">
+        <p class="hint">1:1 NAT maps an external address to one internal host in both directions.
+            Add a filter rule (forward chain) to allow the inbound connections you want.</p>
+        <table id="onetoone-table">
+            <thead><tr><th>Name</th><th>Interface</th><th>External</th><th>Internal</th><th>On</th><th></th></tr></thead>
+            <tbody>
+            {% for r in one_to_one %}
+            <tr data-nat-id="{{ r.id }}">
+                <td>{{ r.name }}</td><td>{{ r.interface }}</td><td>{{ r.external_address }}</td><td>{{ r.target }}</td>
+                <td>{% if r.enabled %}<span class="badge success">On</span>{% else %}<span class="badge danger">Off</span>{% endif %}</td>
+                <td><button class="btn btn-primary btn-sm" onclick="editNat({{ r.id }}, 'onetoone-form')">Edit</button>
+                    <button class="btn btn-danger btn-sm" onclick="del('/firewall/nat/{{ r.id }}', '1:1 mapping')">Delete</button></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% if one_to_one.is_empty() %}<p class="empty">No 1:1 mappings.</p>{% endif %}
+        <form id="onetoone-form" onsubmit="return saveNat(event, '1:1')">
+            <fieldset><legend>Add 1:1 mapping</legend>
+                <input type="hidden" name="id">
+                <div class="row">
+                    <label>Name <input name="name" required maxlength="64"></label>
+                    <label>Interface
+                        <select name="interface">
+                            {% for i in interfaces %}<option value="{{ i.value }}" {% if i.value == "@wan" %}selected{% endif %}>{{ i.label }}</option>{% endfor %}
+                        </select></label>
+                    <label>External address <input name="external_address" required placeholder="203.0.113.5"></label>
+                    <label>Internal address <input name="target_host" required placeholder="192.168.1.20"></label>
+                    <label>Description <input name="description" maxlength="120"></label>
+                    <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
+                </div>
+                <button type="submit" class="btn btn-primary">Save 1:1 mapping</button>
+                <button type="button" class="btn btn-secondary" onclick="resetForm('onetoone-form')">Clear</button>
+            </fieldset>
+        </form>
+    </div>
+
+    <!-- =========================== ALIASES =========================== -->
+    <div class="tab" id="tab-aliases">
+        <p class="hint">Use an alias in a rule as <code>$name</code>. Host aliases hold IPv4/IPv6
+            addresses, networks and ranges; port aliases hold ports and port ranges. Saving an alias
+            updates its nftables set immediately, without reloading the ruleset.</p>
+        <table id="aliases-table">
+            <thead><tr><th>Name</th><th>Type</th><th>Entries</th><th>Description</th><th></th></tr></thead>
+            <tbody>
+            {% for a in aliases %}
+            <tr data-alias="{{ a.name }}">
+                <td>${{ a.name }}</td><td>{{ a.alias_type }}</td><td>{{ a.value }}</td><td>{{ a.description }}</td>
+                <td><button class="btn btn-primary btn-sm" onclick="editAlias(this)">Edit</button>
+                    <button class="btn btn-danger btn-sm" onclick="delNamed('/firewall/aliases/', this, 'alias')">Delete</button></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% if aliases.is_empty() %}<p class="empty">No aliases.</p>{% endif %}
+        <form id="alias-form" onsubmit="return saveAlias(event)">
+            <fieldset><legend id="alias-form-title">Add alias</legend>
+                <input type="hidden" name="editing">
+                <div class="row">
+                    <label>Name <input name="name" required pattern="[A-Za-z][A-Za-z0-9_]{0,30}"></label>
+                    <label>Type <select name="type"><option value="host">Host / network</option><option value="port">Port</option></select></label>
+                    <label>Description <input name="description" maxlength="120"></label>
+                </div>
+                <div class="row">
+                    <label>Entries (one per line or comma separated)
+                        <textarea name="entries" rows="4" cols="50" placeholder="192.0.2.10&#10;10.0.0.0/8&#10;2001:db8::/32"></textarea></label>
+                </div>
+                <button type="submit" class="btn btn-primary">Save alias</button>
+                <button type="button" class="btn btn-secondary" onclick="resetForm('alias-form', 'Add alias')">Clear</button>
+            </fieldset>
+        </form>
+        <datalist id="host-alias-list">{% for a in host_aliases %}<option value="${{ a.name }}"></option>{% endfor %}</datalist>
+        <datalist id="port-alias-list">{% for a in port_aliases %}<option value="${{ a.name }}"></option>{% endfor %}</datalist>
+    </div>
+
+    <!-- ========================== SCHEDULES ========================== -->
+    <div class="tab" id="tab-schedules">
+        <p class="hint">A rule with a schedule is enforced only during the schedule's window (local
+            time on the firewall). A window whose end is before its start runs past midnight.</p>
+        <table id="schedules-table">
+            <thead><tr><th>Name</th><th>Days</th><th>From</th><th>Until</th><th>Now</th><th>Description</th><th></th></tr></thead>
+            <tbody>
+            {% for s in schedules %}
+            <tr data-schedule="{{ s.name }}" data-days="{{ s.days }}" data-start="{{ s.start }}" data-end="{{ s.end }}" data-description="{{ s.description }}">
+                <td>{{ s.name }}</td><td>{{ s.days }}</td><td>{{ s.start }}</td><td>{{ s.end }}</td>
+                <td>{% if s.active %}<span class="badge success">active</span>{% else %}<span class="badge">inactive</span>{% endif %}</td>
+                <td>{{ s.description }}</td>
+                <td><button class="btn btn-primary btn-sm" onclick="editSchedule(this)">Edit</button>
+                    <button class="btn btn-danger btn-sm" onclick="delNamed('/firewall/schedules/', this, 'schedule')">Delete</button></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% if schedules.is_empty() %}<p class="empty">No schedules.</p>{% endif %}
+        <form id="schedule-form" onsubmit="return saveSchedule(event)">
+            <fieldset><legend id="schedule-form-title">Add schedule</legend>
+                <input type="hidden" name="editing">
+                <div class="row">
+                    <label>Name <input name="name" required pattern="[A-Za-z][A-Za-z0-9_]{0,30}"></label>
+                    <label>From <input name="start" type="time" required value="09:00"></label>
+                    <label>Until <input name="end" type="time" required value="17:00"></label>
+                    <label>Description <input name="description" maxlength="120"></label>
+                </div>
+                <div class="row">
+                    <label class="check"><input type="checkbox" name="day" value="mon" checked> Mon</label>
+                    <label class="check"><input type="checkbox" name="day" value="tue" checked> Tue</label>
+                    <label class="check"><input type="checkbox" name="day" value="wed" checked> Wed</label>
+                    <label class="check"><input type="checkbox" name="day" value="thu" checked> Thu</label>
+                    <label class="check"><input type="checkbox" name="day" value="fri" checked> Fri</label>
+                    <label class="check"><input type="checkbox" name="day" value="sat"> Sat</label>
+                    <label class="check"><input type="checkbox" name="day" value="sun"> Sun</label>
+                </div>
+                <button type="submit" class="btn btn-primary">Save schedule</button>
+                <button type="button" class="btn btn-secondary" onclick="resetForm('schedule-form', 'Add schedule')">Clear</button>
+            </fieldset>
+        </form>
+    </div>
+
+<script>
+const TAB_KEY = 'patronus-fw-tab';
+function showTab(id) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.id === id));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
+    sessionStorage.setItem(TAB_KEY, id);
+}
+document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+if (sessionStorage.getItem(TAB_KEY) && document.getElementById(sessionStorage.getItem(TAB_KEY))) {
+    showTab(sessionStorage.getItem(TAB_KEY));
+}
+
+function flash(text, ok) {
+    const m = document.getElementById('msg');
+    m.textContent = text;
+    m.className = 'msg ' + (ok ? 'ok' : 'error');
+    window.scrollTo(0, 0);
+}
+
+async function api(method, path, body) {
+    const opts = { method, headers: { 'content-type': 'application/json' }, credentials: 'same-origin' };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const r = await fetch('/api' + path, opts);
+    let data = {};
+    try { data = await r.json(); } catch (e) { }
+    if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+    return data;
+}
+
+async function run(p) {
+    try { await p; sessionStorage.setItem('patronus-fw-flash', 'Saved and applied.'); location.reload(); }
+    catch (e) { flash(e.message, false); }
+    return false;
+}
+if (sessionStorage.getItem('patronus-fw-flash')) {
+    flash(sessionStorage.getItem('patronus-fw-flash'), true);
+    sessionStorage.removeItem('patronus-fw-flash');
+}
+
+function resetForm(id, title) {
+    const f = document.getElementById(id);
+    f.reset();
+    f.querySelectorAll('input[type=hidden]').forEach(i => i.value = '');
+    f.querySelectorAll('input[name=name]').forEach(i => i.readOnly = false);
+    if (title) { const l = f.querySelector('legend'); if (l) l.textContent = title; }
+    if (id === 'rule-form') chainChanged();
+}
+
+function del(path, what) {
+    if (!confirm('Delete this ' + what + '?')) return;
+    run(api('DELETE', path));
+}
+function delNamed(prefix, btn, what) {
+    const tr = btn.closest('tr');
+    const name = tr.dataset.alias || tr.dataset.schedule;
+    if (!confirm('Delete ' + what + ' ' + name + '?')) return;
+    run(api('DELETE', prefix + encodeURIComponent(name)));
+}
+
+// ---- rules ----
+function chainChanged() {
+    const f = document.getElementById('rule-form');
+    document.getElementById('rule-iface-out').style.display = f.elements['chain'].value === 'forward' ? '' : 'none';
+}
+chainChanged();
+
+function moveRule(id, direction) { run(api('POST', '/firewall/rules/' + id + '/move', { direction })); }
+
+async function editRule(id) {
+    try {
+        const r = await api('GET', '/firewall/rules/' + id);
+        const f = document.getElementById('rule-form');
+        f.elements['id'].value = r.id; f.elements['name'].value = r.name; f.elements['action'].value = r.action.toLowerCase();
+        f.elements['chain'].value = r.chain; f.elements['interface'].value = r.interface; f.elements['interface_out'].value = r.interface_out;
+        f.elements['ip_version'].value = r.ip_version; f.elements['protocol'].value = r.protocol; f.elements['source'].value = r.source;
+        f.elements['destination'].value = r.destination; f.elements['port'].value = r.port; f.elements['schedule'].value = r.schedule;
+        f.elements['description'].value = r.description; f.elements['log'].checked = r.log; f.elements['enabled'].checked = r.enabled;
+        f.elements['before'].value = '';
+        document.getElementById('rule-form-title').textContent = 'Edit rule #' + r.id;
+        chainChanged();
+        showTab('tab-rules'); f.scrollIntoView();
+    } catch (e) { flash(e.message, false); }
+}
+
+function saveRule(ev) {
+    ev.preventDefault();
+    const f = ev.target;
+    const body = {
+        name: f.elements['name'].value, action: f.elements['action'].value, chain: f.elements['chain'].value,
+        interface: f.elements['interface'].value,
+        interface_out: f.elements['chain'].value === 'forward' ? f.elements['interface_out'].value : null,
+        ip_version: f.elements['ip_version'].value, protocol: f.elements['protocol'].value,
+        source: f.elements['source'].value, destination: f.elements['destination'].value, port: f.elements['port'].value,
+        schedule: f.elements['schedule'].value || null, description: f.elements['description'].value,
+        log: f.elements['log'].checked, enabled: f.elements['enabled'].checked,
+    };
+    if (f.elements['id'].value) return run(api('PUT', '/firewall/rules/' + f.elements['id'].value, body));
+    if (f.elements['before'].value) body.before = parseInt(f.elements['before'].value, 10);
+    return run(api('POST', '/firewall/rules', body));
+}
+
+// ---- NAT ----
+async function editNat(id, formId) {
+    try {
+        const r = await api('GET', '/firewall/nat/' + id);
+        const f = document.getElementById(formId);
+        f.elements['id'].value = r.id; f.elements['name'].value = r.name; f.elements['interface'].value = r.interface_raw;
+        if (f.elements['description']) f.elements['description'].value = (r.description === r.name ? '' : r.description);
+        f.elements['enabled'].checked = r.enabled;
+        if (f.elements['source']) f.elements['source'].value = r.source;
+        if (f.elements['destination']) f.elements['destination'].value = r.destination;
+        if (f.elements['rule_type']) f.elements['rule_type'].value = r.rule_type;
+        if (f.elements['protocol']) f.elements['protocol'].value = r.protocol;
+        if (f.elements['external_port']) f.elements['external_port'].value = r.external_port === 'any' ? '' : r.external_port;
+        if (f.elements['reflection']) f.elements['reflection'].checked = r.reflection;
+        if (f.elements['external_address']) f.elements['external_address'].value = r.external_address;
+        let host = r.target, port = '';
+        const m = r.target.match(/^\[(.*)\]:(\d+)$/) || r.target.match(/^([^:]*):(\d+)$/);
+        if (m) { host = m[1]; port = m[2]; }
+        if (r.rule_type === 'MASQUERADE') host = '';
+        f.elements['target_host'].value = host;
+        if (f.elements['target_port']) f.elements['target_port'].value = port;
+        f.querySelector('legend').textContent = 'Edit NAT rule #' + r.id;
+        f.scrollIntoView();
+    } catch (e) { flash(e.message, false); }
+}
+
+function saveNat(ev, fixedType) {
+    ev.preventDefault();
+    const f = ev.target;
+    const type = fixedType || f.elements['rule_type'].value;
+    let target = f.elements['target_host'].value.trim();
+    if (type === 'MASQUERADE') target = 'masquerade';
+    if (f.elements['target_port'] && f.elements['target_port'].value.trim()) {
+        target = (target.includes(':') ? '[' + target + ']' : target) + ':' + f.elements['target_port'].value.trim();
+    }
+    const body = {
+        name: f.elements['name'].value, rule_type: type, interface: f.elements['interface'].value,
+        source: f.elements['source'] ? f.elements['source'].value : 'any',
+        destination: f.elements['destination'] ? f.elements['destination'].value : 'any',
+        target, description: f.elements['description'].value, enabled: f.elements['enabled'].checked,
+        protocol: f.elements['protocol'] ? f.elements['protocol'].value : null,
+        external_port: f.elements['external_port'] ? f.elements['external_port'].value : null,
+        external_address: f.elements['external_address'] ? f.elements['external_address'].value : null,
+        reflection: f.elements['reflection'] ? f.elements['reflection'].checked : false,
+    };
+    if (f.elements['id'].value) return run(api('PUT', '/firewall/nat/' + f.elements['id'].value, body));
+    return run(api('POST', '/firewall/nat', body));
+}
+
+function saveMode() {
+    run(api('PUT', '/firewall/nat/outbound', { mode: document.getElementById('outbound-mode').value }));
+}
+
+// ---- aliases ----
+async function editAlias(btn) {
+    const name = btn.closest('tr').dataset.alias;
+    try {
+        const a = await api('GET', '/firewall/aliases/' + encodeURIComponent(name));
+        const f = document.getElementById('alias-form');
+        f.elements['editing'].value = a.name; f.elements['name'].value = a.name; f.elements['name'].readOnly = true;
+        f.elements['type'].value = a.kind; f.elements['entries'].value = a.entries.join('\n');
+        f.elements['description'].value = a.description || '';
+        document.getElementById('alias-form-title').textContent = 'Edit alias $' + a.name;
+        f.scrollIntoView();
+    } catch (e) { flash(e.message, false); }
+}
+
+function saveAlias(ev) {
+    ev.preventDefault();
+    const f = ev.target;
+    const body = { name: f.elements['name'].value, type: f.elements['type'].value, entries: [f.elements['entries'].value], description: f.elements['description'].value };
+    if (f.elements['editing'].value) return run(api('PUT', '/firewall/aliases/' + encodeURIComponent(f.elements['editing'].value), body));
+    return run(api('POST', '/firewall/aliases', body));
+}
+
+// ---- schedules ----
+function editSchedule(btn) {
+    const d = btn.closest('tr').dataset;
+    const f = document.getElementById('schedule-form');
+    f.elements['editing'].value = d.schedule; f.elements['name'].value = d.schedule; f.elements['name'].readOnly = true;
+    f.elements['start'].value = d.start; f.elements['end'].value = d.end; f.elements['description'].value = d.description;
+    const days = d.days.split(',');
+    f.querySelectorAll('input[name=day]').forEach(c => c.checked = days.includes(c.value));
+    document.getElementById('schedule-form-title').textContent = 'Edit schedule ' + d.schedule;
+    f.scrollIntoView();
+}
+
+function saveSchedule(ev) {
+    ev.preventDefault();
+    const f = ev.target;
+    const days = Array.from(f.querySelectorAll('input[name=day]:checked')).map(c => c.value);
+    const body = { days, start: f.elements['start'].value, end: f.elements['end'].value, description: f.elements['description'].value };
+    if (f.elements['editing'].value) return run(api('PUT', '/firewall/schedules/' + encodeURIComponent(f.elements['editing'].value), body));
+    body.name = f.elements['name'].value;
+    return run(api('POST', '/firewall/schedules', body));
+}
+</script>
 </body>
 </html>

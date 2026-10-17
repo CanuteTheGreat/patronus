@@ -100,5 +100,8 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
         "firewall applied from the store: {}",
         report.applied.join("; ")
     );
-    AppState::new(store, applier).await
+    let state = AppState::new(store, applier).await?;
+    // scheduled rules switch on/off on time (re-apply on a window edge)
+    firewall::spawn_schedule_task(state.firewall.clone());
+    Ok(state)
 }

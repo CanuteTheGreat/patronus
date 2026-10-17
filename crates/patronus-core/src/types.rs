@@ -77,6 +77,9 @@ pub enum PortSpec {
     Single(u16),
     Range(u16, u16),
     Multiple(Vec<u16>),
+    /// A port alias (an nftables set of ports maintained by the firewall
+    /// crate); the name is validated there before it reaches nft.
+    Alias(String),
 }
 
 impl std::fmt::Display for PortSpec {
@@ -88,6 +91,7 @@ impl std::fmt::Display for PortSpec {
                 let ports_str: Vec<String> = ports.iter().map(|p| p.to_string()).collect();
                 write!(f, "{{{}}}", ports_str.join(","))
             }
+            PortSpec::Alias(name) => write!(f, "${}", name),
         }
     }
 }
@@ -110,6 +114,23 @@ impl std::fmt::Display for ChainType {
     }
 }
 
+/// Address family a rule is restricted to (`None` = both).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum IpVersion {
+    V4,
+    V6,
+}
+
+impl std::fmt::Display for IpVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IpVersion::V4 => write!(f, "ipv4"),
+            IpVersion::V6 => write!(f, "ipv6"),
+        }
+    }
+}
+
 /// Represents a firewall rule
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FirewallRule {
@@ -126,6 +147,17 @@ pub struct FirewallRule {
     pub interface_in: Option<String>,
     pub interface_out: Option<String>,
     pub comment: Option<String>,
+    /// Log matching packets (nft `log prefix "patronus[<id>] "`).
+    #[serde(default)]
+    pub log: bool,
+    /// Name of a firewall schedule: the rule is only enforced while the
+    /// schedule is active.
+    #[serde(default)]
+    pub schedule: Option<String>,
+    /// Restrict the rule to IPv4 or IPv6 (`None` = whatever the addresses
+    /// imply, or both).
+    #[serde(default)]
+    pub ip_version: Option<IpVersion>,
 }
 
 impl FirewallRule {
@@ -144,6 +176,9 @@ impl FirewallRule {
             interface_in: None,
             interface_out: None,
             comment: None,
+            log: false,
+            schedule: None,
+            ip_version: None,
         }
     }
 }
@@ -155,9 +190,18 @@ pub enum NatType {
     Snat {
         to_address: IpAddr,
     },
+    /// Port forward / destination NAT. Matches traffic arriving on
+    /// `NatRule::interface_in` (with `protocol`/`dport`) and rewrites the
+    /// destination to `to_address[:to_port]`.
     Dnat {
         to_address: IpAddr,
         to_port: Option<u16>,
+    },
+    /// 1:1 NAT: `external` (an address on the WAN side) maps to `internal`
+    /// in both directions (DNAT inbound, SNAT outbound).
+    OneToOne {
+        external: IpAddr,
+        internal: IpAddr,
     },
 }
 
@@ -172,7 +216,15 @@ pub struct NatRule {
     pub destination: Option<String>,
     pub protocol: Option<Protocol>,
     pub dport: Option<PortSpec>,
+    /// Outbound interface (masquerade/SNAT/1:1 outbound half).
     pub interface_out: Option<String>,
+    /// Inbound interface (port forward / 1:1 inbound half), e.g. `@wan`.
+    #[serde(default)]
+    pub interface_in: Option<String>,
+    /// NAT reflection (hairpin): LAN clients reaching the WAN address of a
+    /// port forward are forwarded to the internal host too.
+    #[serde(default)]
+    pub reflection: bool,
     pub comment: Option<String>,
 }
 
@@ -188,6 +240,8 @@ impl NatRule {
             protocol: None,
             dport: None,
             interface_out: None,
+            interface_in: None,
+            reflection: false,
             comment: None,
         }
     }

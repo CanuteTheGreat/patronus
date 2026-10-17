@@ -1,7 +1,7 @@
 //! nftables interaction layer
 
 use patronus_core::{
-    types::{FirewallRule, NatRule, NatType, PortSpec, Protocol},
+    types::{FirewallAction, FirewallRule, IpVersion, NatRule, NatType, PortSpec, Protocol},
     Error, Result,
 };
 use std::process::Command;
@@ -146,11 +146,166 @@ fn is_valid_address_spec(s: &str) -> bool {
 /// most `IFNAMSIZ - 1` (15) bytes and never contain a `"`, so anything
 /// outside that is either not a real interface or an attempt to break out of
 /// the quoted operand (same injection class as `is_valid_address_spec`).
-fn is_valid_interface_name(s: &str) -> bool {
+pub fn is_valid_interface_name(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 15
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
+}
+
+/// What an alias name refers to while rendering (`$name` in a rule).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AliasKind {
+    /// Addresses/networks/ranges: sets `alias_<name>_v4` + `alias_<name>_v6`.
+    Host,
+    /// Ports/port ranges: set `alias_<name>_ports`.
+    Port,
+}
+
+/// Aliases known to the renderer (name -> kind). Empty = no aliases.
+pub type AliasMap = std::collections::BTreeMap<String, AliasKind>;
+
+/// nft set name of a host alias for one address family.
+pub fn alias_set_name(alias: &str, family: IpVersion) -> String {
+    match family {
+        IpVersion::V4 => format!("alias_{alias}_v4"),
+        IpVersion::V6 => format!("alias_{alias}_v6"),
+    }
+}
+
+/// nft set name of a port alias.
+pub fn alias_port_set_name(alias: &str) -> String {
+    format!("alias_{alias}_ports")
+}
+
+/// Alias names: a letter, then letters/digits/underscore, at most 31
+/// characters (they become nft set names, so nothing else may get in).
+pub fn is_valid_alias_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 31
+        && s.as_bytes()[0].is_ascii_alphabetic()
+        && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+/// One side (source or destination) of a rule.
+enum AddrMatch {
+    Any,
+    Literal(String, IpVersion),
+    Alias(String),
+}
+
+fn addr_family(s: &str) -> Option<IpVersion> {
+    let a = s.split_once('/').map(|(a, _)| a).unwrap_or(s);
+    match a.parse::<std::net::IpAddr>().ok()? {
+        std::net::IpAddr::V4(_) => Some(IpVersion::V4),
+        std::net::IpAddr::V6(_) => Some(IpVersion::V6),
+    }
+}
+
+fn parse_addr(
+    field: &str,
+    value: Option<&String>,
+    aliases: &AliasMap,
+    what: &str,
+) -> Result<AddrMatch> {
+    let Some(v) = value else {
+        return Ok(AddrMatch::Any);
+    };
+    if let Some(name) = v.strip_prefix('$') {
+        return match aliases.get(name) {
+            Some(AliasKind::Host) => Ok(AddrMatch::Alias(name.to_string())),
+            Some(AliasKind::Port) => Err(Error::Firewall(format!(
+                "Invalid {field} for {what}: ${name} is a port alias, not a host alias"
+            ))),
+            None => Err(Error::Firewall(format!(
+                "Invalid {field} for {what}: unknown alias ${name}"
+            ))),
+        };
+    }
+    if !is_valid_address_spec(v) {
+        return Err(Error::Firewall(format!(
+            "Invalid {field} address spec for {what}: {v:?}"
+        )));
+    }
+    if v.eq_ignore_ascii_case("any") || v.eq_ignore_ascii_case("all") {
+        return Ok(AddrMatch::Any);
+    }
+    let fam = addr_family(v).expect("validated address");
+    Ok(AddrMatch::Literal(v.clone(), fam))
+}
+
+/// The address families a rule must be rendered for: one nft rule per
+/// entry (`None` = family-agnostic). IPv6 literals are matched with
+/// `ip6 saddr`, not `ip saddr` (which nft rejects / never matches).
+fn families(
+    matches: &[&AddrMatch],
+    forced: Option<IpVersion>,
+    what: &str,
+) -> Result<Vec<Option<IpVersion>>> {
+    let mut lit: Option<IpVersion> = None;
+    let mut alias = false;
+    for m in matches {
+        match m {
+            AddrMatch::Literal(_, f) => {
+                if lit.is_some_and(|l| l != *f) {
+                    return Err(Error::Firewall(format!(
+                        "Invalid {what}: source and destination are different address families"
+                    )));
+                }
+                lit = Some(*f);
+            }
+            AddrMatch::Alias(_) => alias = true,
+            AddrMatch::Any => {}
+        }
+    }
+    if let (Some(f), Some(l)) = (forced, lit) {
+        if f != l {
+            return Err(Error::Firewall(format!(
+                "Invalid {what}: an {l} address in a rule restricted to {f}"
+            )));
+        }
+    }
+    Ok(match (forced.or(lit), alias) {
+        (Some(f), _) => vec![Some(f)],
+        (None, true) => vec![Some(IpVersion::V4), Some(IpVersion::V6)],
+        (None, false) => vec![None],
+    })
+}
+
+fn addr_expr(dir: &str, m: &AddrMatch, fam: Option<IpVersion>) -> Option<String> {
+    let kw = match fam {
+        Some(IpVersion::V6) => "ip6",
+        _ => "ip",
+    };
+    match m {
+        AddrMatch::Any => None,
+        AddrMatch::Literal(v, _) => Some(format!("{kw} {dir} {v}")),
+        AddrMatch::Alias(a) => Some(format!(
+            "{kw} {dir} @{}",
+            alias_set_name(a, fam.unwrap_or(IpVersion::V4))
+        )),
+    }
+}
+
+fn port_expr(p: &PortSpec, aliases: &AliasMap, what: &str) -> Result<String> {
+    match p {
+        PortSpec::Alias(name) => match aliases.get(name) {
+            Some(AliasKind::Port) => Ok(format!("@{}", alias_port_set_name(name))),
+            Some(AliasKind::Host) => Err(Error::Firewall(format!(
+                "Invalid {what}: ${name} is a host alias, not a port alias"
+            ))),
+            None => Err(Error::Firewall(format!(
+                "Invalid {what}: unknown port alias ${name}"
+            ))),
+        },
+        PortSpec::Multiple(v) if v.is_empty() => {
+            Err(Error::Firewall(format!("Invalid {what}: empty port list")))
+        }
+        PortSpec::Range(a, b) if a > b => Err(Error::Firewall(format!(
+            "Invalid {what}: port range {a}-{b}"
+        ))),
+        other => Ok(other.to_string()),
+    }
 }
 
 /// nft expression for the protocol and port matches.
@@ -165,10 +320,13 @@ fn l4_match(
     protocol: Option<&Protocol>,
     sport: Option<&PortSpec>,
     dport: Option<&PortSpec>,
+    fam: Option<IpVersion>,
+    aliases: &AliasMap,
 ) -> Result<Vec<String>> {
     let proto = match protocol {
         Some(Protocol::Tcp) => Some("tcp"),
         Some(Protocol::Udp) => Some("udp"),
+        Some(Protocol::Icmp) if fam == Some(IpVersion::V6) => Some("ipv6-icmp"),
         Some(Protocol::Icmp) => Some("icmp"),
         Some(Protocol::All) | None => None,
     };
@@ -183,10 +341,10 @@ fn l4_match(
             }
         };
         if let Some(s) = sport {
-            out.push(format!("{p} sport {s}"));
+            out.push(format!("{p} sport {}", port_expr(s, aliases, "rule")?));
         }
         if let Some(d) = dport {
-            out.push(format!("{p} dport {d}"));
+            out.push(format!("{p} dport {}", port_expr(d, aliases, "rule")?));
         }
     } else if let Some(p) = proto {
         out.push(format!("meta l4proto {p}"));
@@ -194,110 +352,104 @@ fn l4_match(
     Ok(out)
 }
 
-/// Convert a FirewallRule to nftables command. Returns an error instead of
-/// building a script from a `source`/`destination`/`interface_in`/`interface_out`
-/// value that doesn't pass validation, rather than silently splicing an
-/// unsafe value into the generated nft script.
-pub fn rule_to_nft_command(rule: &FirewallRule) -> Result<String> {
+fn iface_expr(kw: &str, v: Option<&String>, what: &str) -> Result<Option<String>> {
+    let Some(iface) = v else { return Ok(None) };
+    if iface.eq_ignore_ascii_case("any") || iface.eq_ignore_ascii_case("all") {
+        return Ok(None);
+    }
+    if !is_valid_interface_name(iface) {
+        return Err(Error::Firewall(format!(
+            "Invalid interface name {iface:?} ({what})"
+        )));
+    }
+    Ok(Some(format!("{kw} \"{iface}\"")))
+}
+
+fn comment_expr(c: &Option<String>) -> Option<String> {
+    c.as_ref().map(|c| {
+        // nft comments are at most 128 bytes and must not break the quotes
+        let clean: String = c
+            .chars()
+            .filter(|ch| *ch != '"' && *ch != '\\' && !ch.is_control())
+            .collect();
+        let mut end = clean.len().min(120);
+        while !clean.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("comment \"{}\"", &clean[..end])
+    })
+}
+
+/// Render a filter rule into nft `add rule` lines (one per address family
+/// it covers: an alias reference with no family restriction renders an
+/// IPv4 and an IPv6 rule). Every operand is validated first, so nothing
+/// unvalidated is spliced into the script (see `is_valid_address_spec`).
+pub fn render_filter_rule(rule: &FirewallRule, aliases: &AliasMap) -> Result<Vec<String>> {
     if !rule.enabled {
-        return Ok(String::new());
+        return Ok(Vec::new());
     }
-
-    let mut parts = Vec::new();
-
-    // Interface filters. "any"/"all" means "match every interface" -- same
-    // rule as the source/destination "any"/"all" handling below: the
-    // correct way to express that in nft is to omit the iifname/oifname
-    // match entirely, not to splice the literal word "any" in as if it were
-    // a real interface name. nft does not resolve "any" as a wildcard here
-    // either -- it fails at apply time ("Could not process rule: No such
-    // file or directory"), and "any" is the UI's own default interface
-    // value, so this broke ordinary legitimate rules, not just injection
-    // attempts.
-    if let Some(ref iface) = rule.interface_in {
-        if !is_valid_interface_name(iface)
-            && !iface.eq_ignore_ascii_case("any")
-            && !iface.eq_ignore_ascii_case("all")
-        {
-            return Err(Error::Firewall(format!(
-                "Invalid interface_in name for firewall rule: {:?}",
-                iface
-            )));
+    let what = "firewall rule";
+    let iin = iface_expr(
+        "iifname",
+        rule.interface_in.as_ref(),
+        "interface_in of firewall rule",
+    )?;
+    let iout = iface_expr(
+        "oifname",
+        rule.interface_out.as_ref(),
+        "interface_out of firewall rule",
+    )?;
+    let src = parse_addr("source", rule.source.as_ref(), aliases, what)?;
+    let dst = parse_addr("destination", rule.destination.as_ref(), aliases, what)?;
+    let mut lines = Vec::new();
+    for fam in families(&[&src, &dst], rule.ip_version, what)? {
+        let mut parts: Vec<String> = Vec::new();
+        parts.extend(iin.clone());
+        parts.extend(iout.clone());
+        let s = addr_expr("saddr", &src, fam);
+        let d = addr_expr("daddr", &dst, fam);
+        if let (Some(f), None, None) = (fam, &s, &d) {
+            parts.push(format!("meta nfproto {f}"));
         }
-        if !iface.eq_ignore_ascii_case("any") && !iface.eq_ignore_ascii_case("all") {
-            parts.push(format!("iifname \"{}\"", iface));
+        parts.extend(s);
+        parts.extend(d);
+        parts.extend(l4_match(
+            rule.protocol.as_ref(),
+            rule.sport.as_ref(),
+            rule.dport.as_ref(),
+            fam,
+            aliases,
+        )?);
+        if rule.log {
+            let tag = match rule.id {
+                Some(id) => format!("patronus[{id}] {}: ", rule.action),
+                None => format!("patronus {}: ", rule.action),
+            };
+            parts.push(format!("log prefix \"{tag}\""));
         }
+        parts.push(match (&rule.action, &rule.protocol) {
+            (FirewallAction::Reject, Some(Protocol::Tcp)) => "reject with tcp reset".to_string(),
+            (a, _) => a.to_string(),
+        });
+        parts.extend(comment_expr(&rule.comment));
+        lines.push(format!(
+            "add rule {} {} {} {}",
+            TABLE_FAMILY,
+            TABLE_NAME,
+            rule.chain,
+            parts.join(" ")
+        ));
     }
-    if let Some(ref iface) = rule.interface_out {
-        if !is_valid_interface_name(iface)
-            && !iface.eq_ignore_ascii_case("any")
-            && !iface.eq_ignore_ascii_case("all")
-        {
-            return Err(Error::Firewall(format!(
-                "Invalid interface_out name for firewall rule: {:?}",
-                iface
-            )));
-        }
-        if !iface.eq_ignore_ascii_case("any") && !iface.eq_ignore_ascii_case("all") {
-            parts.push(format!("oifname \"{}\"", iface));
-        }
-    }
+    Ok(lines)
+}
 
-    // Source. "any"/"all" means "match every source" -- the correct way to
-    // express that in nft is to omit the `ip saddr` match entirely, not to
-    // splice the literal word "any" in as if it were an address (nft parses
-    // that as a hostname to resolve, which fails outright: "Could not
-    // resolve hostname: any"). This previously meant every rule with the
-    // UI's default "Any" source/destination was rejected by real nftables
-    // on apply -- invisible before the apply-result propagation fix because
-    // the error used to be discarded.
-    if let Some(ref src) = rule.source {
-        if !is_valid_address_spec(src) {
-            return Err(Error::Firewall(format!(
-                "Invalid source address spec for firewall rule: {:?}",
-                src
-            )));
-        }
-        if !src.eq_ignore_ascii_case("any") && !src.eq_ignore_ascii_case("all") {
-            parts.push(format!("ip saddr {}", src));
-        }
-    }
-
-    // Destination (same "any"/"all" = omit-the-match rule as source, above)
-    if let Some(ref dst) = rule.destination {
-        if !is_valid_address_spec(dst) {
-            return Err(Error::Firewall(format!(
-                "Invalid destination address spec for firewall rule: {:?}",
-                dst
-            )));
-        }
-        if !dst.eq_ignore_ascii_case("any") && !dst.eq_ignore_ascii_case("all") {
-            parts.push(format!("ip daddr {}", dst));
-        }
-    }
-
-    // Protocol / ports (after the address matches -- see l4_match)
-    parts.extend(l4_match(
-        rule.protocol.as_ref(),
-        rule.sport.as_ref(),
-        rule.dport.as_ref(),
-    )?);
-
-    // Action
-    parts.push(rule.action.to_string());
-
-    // Comment
-    if let Some(ref comment) = rule.comment {
-        parts.push(format!("comment \"{}\"", comment.replace('"', "\\\"")));
-    }
-
-    Ok(format!(
-        "add rule {} {} {} {}",
-        TABLE_FAMILY,
-        TABLE_NAME,
-        rule.chain,
-        parts.join(" ")
-    ))
+/// Convert a FirewallRule (without aliases) to nftables commands. Returns
+/// an error instead of building a script from a `source`/`destination`/
+/// `interface_in`/`interface_out` value that doesn't pass validation,
+/// rather than silently splicing an unsafe value into the generated nft
+/// script.
+pub fn rule_to_nft_command(rule: &FirewallRule) -> Result<String> {
+    Ok(render_filter_rule(rule, &AliasMap::new())?.join("\n"))
 }
 
 /// Add a firewall rule to nftables
@@ -312,98 +464,242 @@ pub fn add_rule(rule: &FirewallRule) -> Result<()> {
     Ok(())
 }
 
-/// Convert NAT rule to nftables command. Returns an error instead of
-/// splicing an unvalidated `source`/`destination`/`interface_out` value into
-/// the generated nft script (see `is_valid_address_spec`/
-/// `is_valid_interface_name` on `rule_to_nft_command`, above, for why).
-pub fn nat_rule_to_nft_command(rule: &NatRule) -> Result<String> {
+/// nft lines a NAT rule renders to, by chain.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct NatLines {
+    pub prerouting: Vec<String>,
+    pub postrouting: Vec<String>,
+    /// filter/forward accepts paired with a port forward
+    pub forward: Vec<String>,
+}
+
+impl NatLines {
+    pub fn is_empty(&self) -> bool {
+        self.prerouting.is_empty() && self.postrouting.is_empty() && self.forward.is_empty()
+    }
+}
+
+/// Extra inputs for rendering NAT reflection.
+#[derive(Debug, Default, Clone)]
+pub struct NatContext {
+    /// Addresses configured on the port forward's inbound interface(s)
+    /// (the "WAN address" LAN clients use).
+    pub inbound_addresses: Vec<std::net::IpAddr>,
+}
+
+fn fam_of(a: &std::net::IpAddr) -> IpVersion {
+    if a.is_ipv4() {
+        IpVersion::V4
+    } else {
+        IpVersion::V6
+    }
+}
+
+fn nat_target(a: &std::net::IpAddr, port: Option<u16>) -> String {
+    match (a, port) {
+        (std::net::IpAddr::V4(v4), Some(p)) => format!("ip to {v4}:{p}"),
+        (std::net::IpAddr::V4(v4), None) => format!("ip to {v4}"),
+        (std::net::IpAddr::V6(v6), Some(p)) => format!("ip6 to [{v6}]:{p}"),
+        (std::net::IpAddr::V6(v6), None) => format!("ip6 to {v6}"),
+    }
+}
+
+/// Render a NAT rule (interfaces already resolved to device names).
+pub fn render_nat_rule(rule: &NatRule, aliases: &AliasMap, ctx: &NatContext) -> Result<NatLines> {
+    let mut out = NatLines::default();
     if !rule.enabled {
-        return Ok(String::new());
+        return Ok(out);
     }
-
-    let mut parts = Vec::new();
-    let chain = match rule.nat_type {
-        NatType::Masquerade | NatType::Snat { .. } => "postrouting",
-        NatType::Dnat { .. } => "prerouting",
+    let what = "NAT rule";
+    let iin = iface_expr(
+        "iifname",
+        rule.interface_in.as_ref(),
+        "interface_in of NAT rule",
+    )?;
+    let iout = iface_expr(
+        "oifname",
+        rule.interface_out.as_ref(),
+        "interface_out of NAT rule",
+    )?;
+    let src = parse_addr("source", rule.source.as_ref(), aliases, what)?;
+    let dst = parse_addr("destination", rule.destination.as_ref(), aliases, what)?;
+    let comment = comment_expr(&rule.comment);
+    let line = |chain: &str, parts: Vec<String>| {
+        format!(
+            "add rule {TABLE_FAMILY} {TABLE_NAME} {chain} {}",
+            parts.join(" ")
+        )
     };
-
-    // Interface. See rule_to_nft_command's "any"/"all" interface note,
-    // above -- omit the match entirely rather than splice the literal
-    // placeholder in as an interface name.
-    if let Some(ref iface) = rule.interface_out {
-        if !is_valid_interface_name(iface)
-            && !iface.eq_ignore_ascii_case("any")
-            && !iface.eq_ignore_ascii_case("all")
-        {
-            return Err(Error::Firewall(format!(
-                "Invalid interface_out name for NAT rule: {:?}",
-                iface
-            )));
+    match &rule.nat_type {
+        NatType::Masquerade | NatType::Snat { .. } => {
+            let forced = match &rule.nat_type {
+                NatType::Snat { to_address } => Some(fam_of(to_address)),
+                _ => None,
+            };
+            for fam in families(&[&src, &dst], forced, what)? {
+                let mut p: Vec<String> = Vec::new();
+                p.extend(iout.clone());
+                let (s, d) = (addr_expr("saddr", &src, fam), addr_expr("daddr", &dst, fam));
+                if let (Some(f), None, None) = (fam, &s, &d) {
+                    p.push(format!("meta nfproto {f}"));
+                }
+                p.extend(s);
+                p.extend(d);
+                p.extend(l4_match(
+                    rule.protocol.as_ref(),
+                    None,
+                    rule.dport.as_ref(),
+                    fam,
+                    aliases,
+                )?);
+                p.push(match &rule.nat_type {
+                    NatType::Snat { to_address } => {
+                        format!("snat {}", nat_target(to_address, None))
+                    }
+                    _ => "masquerade".to_string(),
+                });
+                p.extend(comment.clone());
+                out.postrouting.push(line("postrouting", p));
+            }
         }
-        if !iface.eq_ignore_ascii_case("any") && !iface.eq_ignore_ascii_case("all") {
-            parts.push(format!("oifname \"{}\"", iface));
-        }
-    }
-
-    // Source (see rule_to_nft_command's "any"/"all" note, above)
-    if let Some(ref src) = rule.source {
-        if !is_valid_address_spec(src) {
-            return Err(Error::Firewall(format!(
-                "Invalid source address spec for NAT rule: {:?}",
-                src
-            )));
-        }
-        if !src.eq_ignore_ascii_case("any") && !src.eq_ignore_ascii_case("all") {
-            parts.push(format!("ip saddr {}", src));
-        }
-    }
-
-    // Destination
-    if let Some(ref dst) = rule.destination {
-        if !is_valid_address_spec(dst) {
-            return Err(Error::Firewall(format!(
-                "Invalid destination address spec for NAT rule: {:?}",
-                dst
-            )));
-        }
-        if !dst.eq_ignore_ascii_case("any") && !dst.eq_ignore_ascii_case("all") {
-            parts.push(format!("ip daddr {}", dst));
-        }
-    }
-
-    // Protocol / port
-    parts.extend(l4_match(rule.protocol.as_ref(), None, rule.dport.as_ref())?);
-
-    // NAT action (to_address is a typed std::net::IpAddr, not a raw string,
-    // so it can't carry an injection payload)
-    let nat_action = match &rule.nat_type {
-        NatType::Masquerade => "masquerade".to_string(),
-        NatType::Snat { to_address } => format!("snat to {}", to_address),
         NatType::Dnat {
             to_address,
             to_port,
         } => {
-            if let Some(port) = to_port {
-                format!("dnat to {}:{}", to_address, port)
-            } else {
-                format!("dnat to {}", to_address)
+            let fam = fam_of(to_address);
+            families(&[&src, &dst], Some(fam), what)?;
+            if to_port.is_some() && !matches!(rule.dport, None | Some(PortSpec::Single(_))) {
+                return Err(Error::Firewall(
+                    "Invalid port forward: a target port needs a single external port (a range or \
+                     list is forwarded to the same ports)"
+                        .into(),
+                ));
+            }
+            if to_port.is_some() && rule.dport.is_none() {
+                return Err(Error::Firewall(
+                    "Invalid port forward: a target port needs an external port".into(),
+                ));
+            }
+            if rule.reflection && iin.is_none() {
+                return Err(Error::Firewall(
+                    "Invalid port forward: NAT reflection needs an inbound interface".into(),
+                ));
+            }
+            let l4 = l4_match(
+                rule.protocol.as_ref(),
+                None,
+                rule.dport.as_ref(),
+                Some(fam),
+                aliases,
+            )?;
+            let target = format!("dnat {}", nat_target(to_address, *to_port));
+            let mut p: Vec<String> = Vec::new();
+            p.extend(iin.clone());
+            p.extend(addr_expr("saddr", &src, Some(fam)));
+            p.extend(addr_expr("daddr", &dst, Some(fam)));
+            p.extend(l4.clone());
+            p.push(target.clone());
+            p.extend(comment.clone());
+            out.prerouting.push(line("prerouting", p));
+
+            // Paired filter rule: let the forwarded traffic through (only
+            // what this forward translated: `ct status dnat`).
+            let kw = if fam == IpVersion::V6 { "ip6" } else { "ip" };
+            let inner_port = match (to_port, &rule.dport) {
+                (Some(p), _) => Some(PortSpec::Single(*p)),
+                (None, d) => d.clone(),
+            };
+            let inner_l4 = l4_match(
+                rule.protocol.as_ref(),
+                None,
+                inner_port.as_ref(),
+                Some(fam),
+                aliases,
+            )?;
+            let mut f: Vec<String> = Vec::new();
+            if !rule.reflection {
+                f.extend(iin.clone());
+            }
+            f.push("ct status dnat".into());
+            f.extend(addr_expr("saddr", &src, Some(fam)));
+            f.push(format!("{kw} daddr {to_address}"));
+            f.extend(inner_l4.clone());
+            f.push("accept".into());
+            f.extend(comment.clone());
+            out.forward.push(line("forward", f));
+
+            if rule.reflection {
+                let iface = iin.clone().expect("checked above");
+                let neg = iface.replacen("iifname ", "iifname != ", 1);
+                let addrs: Vec<String> = match &dst {
+                    AddrMatch::Literal(v, _) => vec![v.clone()],
+                    _ => ctx
+                        .inbound_addresses
+                        .iter()
+                        .filter(|a| fam_of(a) == fam)
+                        .map(|a| a.to_string())
+                        .collect(),
+                };
+                if !addrs.is_empty() {
+                    let mut r: Vec<String> = vec![neg.clone()];
+                    r.push(format!("{kw} daddr {{ {} }}", addrs.join(", ")));
+                    r.extend(l4.clone());
+                    r.push(target);
+                    r.extend(comment.clone());
+                    out.prerouting.push(line("prerouting", r));
+                    // replies must come back through the router: source NAT
+                    // the hairpinned connection to the router's own address
+                    let mut m: Vec<String> = vec![neg];
+                    m.push("ct status dnat".into());
+                    m.push(format!("{kw} daddr {to_address}"));
+                    m.extend(inner_l4);
+                    m.push("masquerade".into());
+                    m.extend(comment.clone());
+                    out.postrouting.push(line("postrouting", m));
+                }
             }
         }
-    };
-    parts.push(nat_action);
-
-    // Comment
-    if let Some(ref comment) = rule.comment {
-        parts.push(format!("comment \"{}\"", comment.replace('"', "\\\"")));
+        NatType::OneToOne { external, internal } => {
+            if fam_of(external) != fam_of(internal) {
+                return Err(Error::Firewall(
+                    "Invalid 1:1 NAT: external and internal addresses are different families"
+                        .into(),
+                ));
+            }
+            let kw = if fam_of(external) == IpVersion::V6 {
+                "ip6"
+            } else {
+                "ip"
+            };
+            let mut p: Vec<String> = Vec::new();
+            p.extend(iin.clone());
+            p.push(format!("{kw} daddr {external}"));
+            p.push(format!("dnat {}", nat_target(internal, None)));
+            p.extend(comment.clone());
+            out.prerouting.push(line("prerouting", p));
+            let mut q: Vec<String> = Vec::new();
+            q.extend(iout.clone());
+            q.push(format!("{kw} saddr {internal}"));
+            q.push(format!("snat {}", nat_target(external, None)));
+            q.extend(comment.clone());
+            out.postrouting.push(line("postrouting", q));
+        }
     }
+    Ok(out)
+}
 
-    Ok(format!(
-        "add rule {} {} {} {}",
-        TABLE_FAMILY,
-        TABLE_NAME,
-        chain,
-        parts.join(" ")
-    ))
+/// Convert a NAT rule (without aliases or reflection context) to nftables
+/// commands. Returns an error instead of splicing an unvalidated
+/// `source`/`destination`/interface value into the generated nft script
+/// (see `is_valid_address_spec`/`is_valid_interface_name`).
+pub fn nat_rule_to_nft_command(rule: &NatRule) -> Result<String> {
+    let l = render_nat_rule(rule, &AliasMap::new(), &NatContext::default())?;
+    Ok(l.prerouting
+        .into_iter()
+        .chain(l.postrouting)
+        .chain(l.forward)
+        .collect::<Vec<_>>()
+        .join("\n"))
 }
 
 /// Add a NAT rule to nftables
