@@ -23,7 +23,9 @@ defaults:
 jobs:
   mutants:
     name: Mutation testing (core modules, score floors)
-    runs-on: linux-cross-x86_64
+    # Heavy scheduled/on-demand work runs on its own low-priority lane (nightly-x86_64, ctg-infrastructure
+    # ci-runners/rw-man-nightly) so it never holds the per-push runners for hours.
+    runs-on: nightly-x86_64
     timeout-minutes: 300
     env:
       CARGO_BUILD_JOBS: 4
@@ -60,7 +62,7 @@ jobs:
 
   netlab-deep:
     name: Deep netlab (previous-release upgrade, 30 power cuts)
-    runs-on: linux-cross-x86_64
+    runs-on: nightly-x86_64
     timeout-minutes: 120
     env:
       CARGO_BUILD_JOBS: 4

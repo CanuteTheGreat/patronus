@@ -57,7 +57,9 @@ defaults:
 jobs:
   firewall-live-traffic:
     name: Real nftables traffic test (allow/deny/CIDR edge case)
-    runs-on: linux-cross-x86_64
+    # Heavy scheduled/on-demand work runs on its own low-priority lane (nightly-x86_64, ctg-infrastructure
+    # ci-runners/rw-man-nightly) so it never holds the per-push runners for hours.
+    runs-on: nightly-x86_64
     container: catthehacker/ubuntu:act-latest  # runner auto-mounts /var/run/docker.sock for this image; an explicit volumes: entry here duplicates it (Docker daemon rejects with "Duplicate mount point"), matching rust-ci.yml's existing pattern
     steps:
       - uses: actions/checkout@v4
@@ -216,7 +218,7 @@ jobs:
 
   sdwan-tunnel-live-traffic:
     name: Real WireGuard SD-WAN tunnel test (encrypted overlay)
-    runs-on: linux-cross-x86_64
+    runs-on: nightly-x86_64
     container: catthehacker/ubuntu:act-latest  # runner auto-mounts /var/run/docker.sock for this image; an explicit volumes: entry here duplicates it (Docker daemon rejects with "Duplicate mount point"), matching rust-ci.yml's existing pattern
     steps:
       - uses: actions/checkout@v4
