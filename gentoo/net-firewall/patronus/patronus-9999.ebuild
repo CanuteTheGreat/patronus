@@ -108,7 +108,6 @@ RDEPEND="
 	geoip? ( dev-libs/geoip )
 	geoip2? ( dev-libs/libmaxminddb )
 	pppoe? ( net-dialup/ppp )
-	# DHCP client for WAN/OPT interfaces in DHCP mode (lane C)
 	dhcpcd? ( net-misc/dhcpcd )
 	!dhcpcd? ( sys-apps/busybox )
 	sys-apps/iproute2
