@@ -576,8 +576,11 @@ const MAX_TRACKED_LOGIN_CLIENTS: usize = 65_536;
 /// not slow down guessing at all.
 #[derive(Clone, Default)]
 pub struct LoginThrottle {
-    failures: Arc<std::sync::Mutex<HashMap<std::net::IpAddr, (u32, DateTime<Utc>)>>>,
+    failures: Arc<std::sync::Mutex<FailureTable>>,
 }
+
+/// Client key -> (failed attempts, start of the current window).
+type FailureTable = HashMap<std::net::IpAddr, (u32, DateTime<Utc>)>;
 
 impl LoginThrottle {
     pub fn new() -> Self {
