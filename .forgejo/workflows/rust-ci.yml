@@ -68,6 +68,8 @@ jobs:
           key: ${{ runner.os }}-cargo-lint-test-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-lint-test-
+      - name: README claims ledger (every claim mapped to a CI-run test)
+        run: ci/claims-check.sh
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run clippy
@@ -133,7 +135,13 @@ jobs:
     # asserts `nft list ruleset`, /proc/sys and real LAN->WAN / WAN->LAN
     # traffic after API edits, a patronus-web restart and a fresh-namespace
     # `patronus apply` (= reboot), plus the fresh-box default ruleset.
-    name: Netlab (network namespaces) - store, boot apply, default ruleset
+    # Test-depth scenarios (ci/netlab/lib.sh harness: LAN client, router,
+    # ISP, internet host with DNS+HTTP): journey-first-boot (install ->
+    # online -> web UI rule -> reboot), journey-backup-restore,
+    # failure-atomic-apply (rejected rules, lockdown, no nft), failure-
+    # power-cut (SIGKILL mid-edit/mid-apply, 4 rounds here, 30 nightly),
+    # upgrade-store (v0.1.0 store layout; previous release nightly).
+    name: Netlab (network namespaces) - journeys, failure/recovery, upgrade
     runs-on: linux-cross-x86_64
     timeout-minutes: 60
     env:

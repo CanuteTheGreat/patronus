@@ -1,0 +1,110 @@
+name: Nightly test depth (mutation baseline, deep netlab, upgrade)
+
+# The slow test-depth layers that do not fit the per-push budget:
+#  - mutants: cargo-mutants on the core (config store, apply engine,
+#    firewall applier/renderer) with per-file minimum scores that only ratchet
+#    up (ci/mutants.sh, ci/mutants-floors.txt). A surviving mutant is a code
+#    change no test notices.
+#  - netlab-deep: the previous release (ci/netlab/previous-release) creates
+#    and edits a store, HEAD boots it (upgrade), 30 power-cut rounds instead
+#    of 4, plus the first-boot journey on the same build.
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: '0 11 * * *' # ~04:00 America/Los_Angeles, after the other nightlies
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  mutants:
+    name: Mutation testing (core modules, score floors)
+    runs-on: linux-cross-x86_64
+    timeout-minutes: 300
+    env:
+      CARGO_BUILD_JOBS: 4
+      CARGO_PROFILE_DEV_DEBUG: 0
+      MUTANTS_JOBS: 2
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 8g --memory-swap 8g --cpus 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler libdbus-1-dev
+      - name: Cache cargo
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-mutants
+            target
+          key: ${{ runner.os }}-cargo-mutants-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-mutants-
+      - name: Install cargo-mutants
+        run: command -v cargo-mutants || cargo install --locked cargo-mutants
+      - name: Mutation testing against the floors
+        run: ci/mutants.sh
+
+  netlab-deep:
+    name: Deep netlab (previous-release upgrade, 30 power cuts)
+    runs-on: linux-cross-x86_64
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: 4
+      CARGO_PROFILE_DEV_DEBUG: 0
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 8g --memory-swap 8g --cpus 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Rust
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler libdbus-1-dev
+      - name: Cache cargo
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-netlab-deep-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-netlab-
+      - name: Build HEAD
+        run: cargo build -p patronus-cli -p patronus-web --bins
+      - name: Build the previous release
+        run: |
+          prev=$(grep -v '^#' ci/netlab/previous-release | head -1)
+          git worktree add --detach /tmp/prev "$prev"
+          (cd /tmp/prev && CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target/prev cargo build -p patronus-cli -p patronus-web --bins)
+          mkdir -p /tmp/prev-bin
+          cp target/prev/debug/patronus-cli /tmp/prev-bin/patronus
+          cp target/prev/debug/patronus-web /tmp/prev-bin/patronus-web
+          git log -1 --format='%h %s' "$prev" > /tmp/prev-bin/version
+          cat /tmp/prev-bin/version
+      - name: Upgrade, power cuts and first-boot journey
+        env:
+          NETLAB_BIN_DIR: target/debug
+          PATRONUS_OLD_DIR: /tmp/prev-bin
+          NETLAB_POWER_CUTS: 30
+        run: ci/netlab/run.sh ci/netlab/upgrade-store.sh ci/netlab/failure-power-cut.sh ci/netlab/journey-first-boot.sh

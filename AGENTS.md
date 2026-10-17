@@ -139,3 +139,19 @@ container (see `ci/netlab/lane-a-foundation.sh`) and asserts on
 `nft list ruleset`, `/proc/sys`, `ip route`, daemon state, and real
 traffic between namespaces. Add your lane's script there and call it from
 `ci/netlab/run.sh`.
+
+Use the shared harness `ci/netlab/lib.sh` (`. "$(dirname "$0")/lib.sh"`):
+`nl_up` builds LAN client / router / ISP / internet host (dnsmasq DNS for
+`*.example.test`, HTTP on :80/:8080), `nl_boot DB` is a reboot (fresh
+namespaces + `patronus apply`), `nl_web_start`/`nl_login`/`nl_api` drive
+the real web UI from the LAN client, and `nl_expect_online`,
+`nl_expect_http[_blocked]`, `nl_expect_dns`, `nl_expect_[no_]tcp`,
+`nl_assert_nft_has/lacks`, `nl_assert_sysctl`, `nl_assert_conntrack`,
+`nl_assert_lockdown` assert real outcomes. Name scripts `lane-*`,
+`journey-*`, `failure-*` or `upgrade-*` and run.sh picks them up.
+
+Every user-visible claim in README.md needs a row in
+`docs/claims-ledger.txt` naming the tests that prove it
+(`ci/claims-check.sh` enforces it). When your lane lands a feature, add
+the claim and its proof together. Core modules have mutation-score floors
+(`ci/mutants-floors.txt`, nightly): add tests until new code holds them.

@@ -1,0 +1,29 @@
+# Claims ledger: every claim README.md makes, and the CI-executed test that
+# proves it. ci/claims-check.sh (rust-ci.yml, every push) fails when
+#   - README.md has a [Cn] marker with no row here, or a row here has no
+#     marker in README.md,
+#   - a proof does not exist (test fn / netlab check / CI script), or a
+#     netlab/CI script is not run by any workflow,
+#   - README.md uses a check mark or a parity/performance/grade boast
+#     outside this ledger.
+# Proof kinds (several per claim, separated by " ; "):
+#   test:<crate dir>:<fn name>     a #[test]/#[tokio::test] fn in crates/<dir>
+#   netlab:<script>:<text>         ci/netlab/<script> contains <text> (an assertion)
+#   ci:<path>                      a script/workflow that CI runs
+# A claim without a proof is removed from README.md, not added here.
+#
+# id | claim | proofs
+C1 | A fresh install routes: the first `patronus apply` turns on forwarding, NATs the LAN out of the WAN and gets a LAN client online (ping, DNS, HTTP). | netlab:journey-first-boot.sh:nl_expect_online ; netlab:lane-a-foundation.sh:LAN -> WAN host (masqueraded) ; test:patronus-firewall:default_ruleset_renders_safe_router_policy
+C2 | The default ruleset is safe: drop policies, SSH and the web UI reachable from the LAN only (anti-lockout, cannot be deleted), nothing accepted from the WAN. | netlab:journey-first-boot.sh:nl_expect_wan_closed ; netlab:lane-a-foundation.sh:WAN -> router SSH ; test:patronus-web:system_rules_are_listed_but_cannot_be_deleted_or_edited ; test:patronus-firewall:single_nic_box_keeps_anti_lockout_on_wan_and_skips_lan_rules
+C3 | Filter and NAT rules added in the web UI / API are enforced by the kernel at once, and deleting them lifts them. | netlab:journey-first-boot.sh:LAN -> blocked.example.test after the rule ; netlab:journey-first-boot.sh:LAN -> blocked.example.test after delete ; test:patronus-web:added_updated_and_deleted_rules_reach_nftables_as_specified ; test:patronus-web:nat_rules_reach_nftables_and_leave_on_delete
+C4 | The configuration survives restarts and reboots: one SQLite store, loaded by `patronus apply` at boot. | netlab:journey-first-boot.sh:after reboot: LAN -> blocked.example.test ; netlab:lane-a-foundation.sh:reboot: fresh namespace ; test:patronus-config:file_store_is_created_migrated_and_persists_across_reopen
+C5 | Applying is atomic and fails closed: a rule the kernel rejects is refused with the running ruleset untouched; a configuration that cannot load at boot falls back to a lockdown ruleset (LAN management only, nothing forwarded); with no firewall at all the box stops routing. | netlab:failure-atomic-apply.sh:loaded ruleset unchanged ; netlab:failure-atomic-apply.sh:nl_assert_lockdown ; netlab:failure-atomic-apply.sh:forwarding switched off ; test:patronus-firewall:lockdown_renders_even_when_stored_rules_are_unreadable ; test:patronus-config:unreadable_ports_or_protocols_are_errors_not_wildcards
+C6 | A crash or power cut while editing or applying never corrupts the store or loses a saved rule, and the next boot enforces exactly what was saved. | netlab:failure-power-cut.sh:kernel rules differ from the store ; netlab:failure-power-cut.sh:nl_assert_store_ok ; test:patronus-config:file_store_is_durable_rollback_journal_with_full_sync ; test:patronus-config:interrupted_seeding_does_not_duplicate_defaults
+C7 | Every change is recorded in the configuration history and can be rolled back (`patronus config revisions` / `rollback`). | netlab:lane-a-foundation.sh:config history: roll back ; netlab:failure-atomic-apply.sh:config rollback ; test:patronus-web:every_change_records_a_revision_and_failed_delete_keeps_the_id
+C8 | Backup and restore: `patronus config export` writes the whole configuration, `patronus config import` restores it onto the same or a replacement box and applies it (reverted if it does not apply). | netlab:journey-backup-restore.sh:restore onto a replacement box ; netlab:failure-atomic-apply.sh:rejected backup import reverted ; test:patronus-config:snapshot_and_restore_round_trip_every_table
+C9 | Upgrades keep the configuration: stores written by earlier releases are migrated in place and their rules stay enforced. | netlab:upgrade-store.sh:legacy block rule enforced ; netlab:upgrade-store.sh:after upgrade prev-block enforced ; ci:.forgejo/workflows/nightly-test-depth.yml
+C10 | The web UI and API require a login; each install gets its own admin password (no shipped defaults); repeated failed logins are locked out. | test:patronus-web:anonymous_api_calls_are_rejected ; test:patronus-web:anonymous_pages_redirect_to_login ; test:patronus-web:shipped_default_credentials_do_not_work ; test:patronus-web:first_start_generates_a_private_per_install_password ; test:patronus-web:locks_out_after_max_failures_until_the_window_passes
+C11 | Rule fields are validated before they reach nftables; ruleset-injection attempts are rejected. | test:patronus-web:add_rule_rejects_injection_and_does_not_appear_in_list ; test:patronus-web:add_nat_rule_rejects_injection_and_unparseable_target ; netlab:lane-a-foundation.sh:injection rejected
+C12 | Built for Gentoo: installed by the in-tree ebuild with an emerge in CI; every USE flag that maps to a cargo feature compiles on its own. | ci:ci/use-flag-feature-check.sh ; ci:.forgejo/workflows/rust-ci.yml
+C13 | The installer partitions a real disk, installs, and the installed system cold-boots (x86_64 VM, nightly). | ci:ci/nightly-installer-test/run.sh ; ci:.forgejo/workflows/nightly-realistic-installer-test.yml
+C14 | The SD-WAN dashboard runs as a 3-node HA cluster: writes replicate to every node and survive a leader failover. | ci:ci/ha-e2e.sh

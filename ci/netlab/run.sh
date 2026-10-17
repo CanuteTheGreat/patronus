@@ -6,7 +6,13 @@
 # /proc/sys needs systempaths=unconfined; the container is still capped and
 # not --privileged).
 #
-# Usage: ci/netlab/run.sh [lane-script ...]   (default: all lane-*.sh)
+# Usage: ci/netlab/run.sh [scenario ...]
+#   default: every lane-*.sh, journey-*.sh, failure-*.sh and upgrade-*.sh.
+#   Scenarios source ci/netlab/lib.sh (topology + traffic/kernel assertions).
+# Env passed into the container: NETLAB_POWER_CUTS (rounds of
+# failure-power-cut.sh). PATRONUS_OLD_DIR=<dir with patronus +
+# patronus-web of the previous release> enables the previous-release half of
+# upgrade-store.sh (the nightly builds them).
 #
 # Same sibling-container pattern as ci/privileged-tests.sh: the Forgejo
 # runner drops --cap-add from the job container, so the job builds and a
@@ -20,12 +26,28 @@ OUT=$(mktemp -d)
 cleanup() { docker rm -f "$C" >/dev/null 2>&1 || true; rm -rf "$OUT"; }
 trap cleanup EXIT
 
-if [ $# -eq 0 ]; then set -- ci/netlab/lane-*.sh; fi
+if [ $# -eq 0 ]; then
+  set -- ci/netlab/lane-*.sh ci/netlab/journey-*.sh ci/netlab/failure-*.sh ci/netlab/upgrade-*.sh
+fi
 
-cargo build -p patronus-cli -p patronus-web --bins
-cp target/debug/patronus-cli "$OUT/patronus"
-cp target/debug/patronus-web "$OUT/patronus-web"
+# NETLAB_BIN_DIR: use already-built patronus-cli + patronus-web from there.
+BIN=${NETLAB_BIN_DIR:-}
+if [ -z "$BIN" ]; then
+  cargo build -p patronus-cli -p patronus-web --bins
+  BIN=target/debug
+fi
+cp "$BIN/patronus-cli" "$OUT/patronus"
+cp "$BIN/patronus-web" "$OUT/patronus-web"
 for s in "$@"; do cp "$s" "$OUT/"; done
+cp ci/netlab/lib.sh "$OUT/"
+cp -r ci/netlab/fixtures "$OUT/"
+OLD_ENV=
+if [ -n "${PATRONUS_OLD_DIR:-}" ]; then
+  mkdir -p "$OUT/old"
+  cp "$PATRONUS_OLD_DIR/patronus" "$PATRONUS_OLD_DIR/patronus-web" "$OUT/old/"
+  [ -f "$PATRONUS_OLD_DIR/version" ] && cp "$PATRONUS_OLD_DIR/version" "$OUT/old-version"
+  OLD_ENV="export PATRONUS_OLD_BIN=/t/old/patronus PATRONUS_OLD_WEB=/t/old/patronus-web"
+fi
 names=$(for s in "$@"; do basename "$s"; done | tr '\n' ' ')
 
 cat > "$OUT/inner.sh" <<INNER
@@ -33,12 +55,14 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
 for i in 1 2 3; do apt-get update -qq && break; [ "\$i" = 3 ] && exit 1; sleep 15; done
-apt-get install -y -qq nftables iproute2 curl python3 >/dev/null
+apt-get install -y -qq nftables iproute2 curl python3 dnsmasq-base conntrack sqlite3 iputils-ping >/dev/null
+export NETLAB_POWER_CUTS=${NETLAB_POWER_CUTS:-4}
+$OLD_ENV
 echo "--- netlab container: \$(uname -m), kernel \$(uname -r)"
 grep Cap /proc/self/status
 ip netns add probe && ip netns del probe && echo "network namespaces: ok"
 cd /t
-for s in $names; do echo "##### \$s"; bash "/t/\$s"; done
+for s in $names; do echo "##### \$s"; start=\$(date +%s); bash "/t/\$s"; echo "##### \$s passed in \$((\$(date +%s) - start)) s"; done
 INNER
 
 case "$(uname -m)" in
