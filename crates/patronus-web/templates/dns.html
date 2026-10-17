@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block title %}DNS - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">DNS</h1>
+    <p class="page-subtitle">Resolver (Unbound) or forwarder (dnsmasq) for the LAN, host and domain overrides,
+        a DNS block list, and dynamic DNS for the WAN address.</p>
+</div>
+
+{% if !error.is_empty() %}<div class="alert-error">{{ error }}</div>{% endif %}
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">DNS service</h2></div>
+    <p class="text-sm">In effect: <b>{{ effective_mode }}</b>
+        {% for svc in services %}
+        &middot; {{ svc.0 }}: {% if svc.1 %}<span class="ok">running</span>{% else %}<span class="text-muted">stopped</span>{% endif %}
+        {% endfor %}
+    </p>
+    <form class="lan-form" onsubmit="return submitJson(event, 'PUT', '/api/dns/settings')">
+        <label>Mode
+            <select name="mode">
+                <option value="auto" {% if mode == "auto" %}selected{% endif %}>auto (resolver if Unbound is installed)</option>
+                <option value="resolver" {% if mode == "resolver" %}selected{% endif %}>Resolver (Unbound)</option>
+                <option value="forwarder" {% if mode == "forwarder" %}selected{% endif %}>Forwarder (dnsmasq)</option>
+                <option value="disabled" {% if mode == "disabled" %}selected{% endif %}>Disabled</option>
+            </select></label>
+        <label>Upstream servers (empty = recurse / resolv.conf)
+            <input name="upstreams" value="{{ upstreams }}" data-keep-empty="1" placeholder="9.9.9.9, 1.1.1.1"></label>
+        <label>Serve on <input name="interfaces" value="{{ interfaces }}"></label>
+        <label>DNSSEC <input type="checkbox" name="dnssec" {% if dnssec %}checked{% endif %}></label>
+        <label>Blocked names answer
+            <select name="block_mode">
+                <option value="nxdomain" {% if block_mode == "nxdomain" %}selected{% endif %}>NXDOMAIN</option>
+                <option value="null" {% if block_mode == "null" %}selected{% endif %}>0.0.0.0 / ::</option>
+            </select></label>
+        <label>Block list URLs (hosts or domain lists, one per line)
+            <textarea name="blocklist_urls" rows="2" cols="50" data-keep-empty="1">{{ blocklist_urls }}</textarea></label>
+        <button class="btn btn-primary btn-sm" type="submit">Save</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="call('POST', '/api/dns/apply')">Re-apply (refresh block lists)</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Host overrides</h2></div>
+    {% if hosts.is_empty() %}<p class="empty">No host overrides.</p>{% else %}
+    <table class="lan" id="dns-hosts">
+        <thead><tr><th>Name</th><th>Address</th><th>Description</th><th></th></tr></thead>
+        <tbody>
+        {% for h in hosts %}
+        <tr><td class="mono">{{ h.name }}</td><td class="mono">{{ h.address }}</td><td>{{ h.description }}</td>
+            <td><button class="btn btn-danger btn-sm" onclick="del('/api/dns/hosts/{{ h.id }}', 'Delete this override?')">Delete</button></td></tr>
+        {% endfor %}
+        </tbody>
+    </table>{% endif %}
+    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dns/hosts')">
+        <label>Host <input name="hostname" placeholder="nas" required></label>
+        <label>Domain <input name="domain" placeholder="home.arpa" required></label>
+        <label>Address <input name="address" placeholder="192.168.1.5" required></label>
+        <label>Description <input name="description"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add host override</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Domain overrides</h2></div>
+    {% if domains.is_empty() %}<p class="empty">No domain overrides.</p>{% else %}
+    <table class="lan" id="dns-domains">
+        <thead><tr><th>Domain</th><th>Server</th><th>Description</th><th></th></tr></thead>
+        <tbody>
+        {% for d in domains %}
+        <tr><td class="mono">{{ d.domain }}</td><td class="mono">{{ d.server }}</td><td>{{ d.description }}</td>
+            <td><button class="btn btn-danger btn-sm" onclick="del('/api/dns/domains/{{ d.id }}', 'Delete this override?')">Delete</button></td></tr>
+        {% endfor %}
+        </tbody>
+    </table>{% endif %}
+    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dns/domains')">
+        <label>Domain <input name="domain" placeholder="corp.example" required></label>
+        <label>Server <input name="server" placeholder="10.0.0.53 or 10.0.0.53@5353" required></label>
+        <label>Description <input name="description"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add domain override</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Block list (DNSBL)</h2></div>
+    {% if blocked.is_empty() %}<p class="empty">No domains blocked by hand.</p>{% else %}
+    <table class="lan" id="dns-blocklist">
+        <thead><tr><th>Domain (and everything below it)</th><th>Description</th><th></th></tr></thead>
+        <tbody>
+        {% for b in blocked %}
+        <tr><td class="mono">{{ b.domain }}</td><td>{{ b.description }}</td>
+            <td><button class="btn btn-danger btn-sm" onclick="del('/api/dns/blocklist/{{ b.id }}', 'Unblock this domain?')">Delete</button></td></tr>
+        {% endfor %}
+        </tbody>
+    </table>{% endif %}
+    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dns/blocklist')">
+        <label>Domain <input name="domain" placeholder="ads.example" required></label>
+        <label>Description <input name="description"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Block</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Dynamic DNS</h2></div>
+    {% if ddns.is_empty() %}<p class="empty">No dynamic DNS client.</p>{% else %}
+    <table class="lan" id="ddns-clients">
+        <thead><tr><th>Hostname</th><th>Provider</th><th>Interface</th><th>Published address</th><th>Last update</th><th>Result</th><th>Enabled</th><th></th></tr></thead>
+        <tbody>
+        {% for c in ddns %}
+        <tr><td class="mono">{{ c.hostname }}</td><td>{{ c.provider }}{% if !c.server.is_empty() %} ({{ c.server }}){% endif %}{% if !c.username.is_empty() %}<br><span class="text-muted text-sm">user {{ c.username }}</span>{% endif %}</td>
+            <td>{{ c.interface }}</td><td class="mono">{{ c.ip }}</td><td>{{ c.last_update }}</td>
+            <td>{% if c.ok %}<span class="ok">{{ c.result }}</span>{% else %}<span class="bad">{{ c.result }}</span>{% endif %}</td>
+            <td>{% if c.enabled %}yes{% else %}no{% endif %}</td>
+            <td><button class="btn btn-danger btn-sm" onclick="del('/api/ddns/{{ c.id }}', 'Delete this client?')">Delete</button></td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <button class="btn btn-secondary btn-sm" onclick="call('POST', '/api/ddns/update')">Update now</button>
+    {% endif %}
+    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/ddns')">
+        <label>Provider
+            <select name="provider">
+                <option value="dyndns2">DynDNS2 protocol (dyndns, No-IP, ...)</option>
+                <option value="duckdns">DuckDNS</option>
+                <option value="cloudflare">Cloudflare</option>
+                <option value="custom">Custom URL</option>
+            </select></label>
+        <label>Hostname <input name="hostname" placeholder="home.example.net" required></label>
+        <label>Interface <input name="interface" value="@wan"></label>
+        <label>Username <input name="username"></label>
+        <label>Password / token <input name="password" type="password" autocomplete="new-password"></label>
+        <label>Server / zone id / URL (%h, %i) <input name="server"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add client</button>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+{% include "lan_js.html" %}
+{% endblock %}

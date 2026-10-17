@@ -20,7 +20,9 @@ depend() {
 
 start() {
 	ebegin "Applying Patronus configuration"
-	/usr/bin/patronus apply
+	# This runs before `net`: queue the DHCP/DNS/NTP daemons (which need
+	# net) instead of starting them inline, which would wait on ourselves.
+	PATRONUS_DEFER_SERVICES=1 /usr/bin/patronus apply
 	eend $?
 }
 

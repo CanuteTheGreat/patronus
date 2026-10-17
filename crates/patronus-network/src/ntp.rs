@@ -1,437 +1,290 @@
-//! NTP Server (Network Time Protocol)
+//! NTP server (lane D): chrony serving time to the LAN.
 //!
-//! Provides time synchronization services using chrony.
-//! Allows the firewall to act as an NTP server for the local network.
+//! With `ntp.enabled=1` Patronus owns `/etc/chrony/chrony.conf` (the file
+//! Gentoo's `chronyd` OpenRC script and systemd unit read; the old module
+//! wrote it but was never compiled, and installed its own systemd unit):
+//! upstream servers from `ntp.servers`, `allow` lines for the subnets of
+//! `ntp.interfaces` (default `@lan`), and `local stratum 10` so clients
+//! keep getting time while the upstreams are unreachable. Turning the
+//! server off keeps chrony as a client with the same upstreams (the box
+//! still needs a correct clock) and drops the `allow` lines. Patronus never
+//! touches a chrony.conf it has not written unless the server is enabled.
 
-use patronus_core::{Result, Error};
+use crate::lan::{self, invalid, LanEnv, ManagedFile};
+use async_trait::async_trait;
+use patronus_config::applier::{Applier, ApplyReport, Phase};
+use patronus_config::store::ConfigStore;
+use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::net::IpAddr;
-use tokio::process::Command;
+use serde_json::{json, Value};
 
-/// NTP server configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NtpConfig {
+pub const CHRONY_CONF: &str = "/etc/chrony/chrony.conf";
+pub const CHRONYD_BIN: &str = "/usr/sbin/chronyd";
+pub const SERVICE: &str = "chronyd";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NtpSettings {
     pub enabled: bool,
-
-    // Upstream NTP servers
-    pub servers: Vec<NtpServer>,
-
-    // Server mode (provide time to clients)
-    pub server_mode: bool,
-    pub allow_networks: Vec<String>,  // CIDR networks allowed to query
-
-    // Time source preferences
-    pub prefer_local_clock: bool,  // Use local clock as fallback
-    pub stratum: u8,               // Local stratum level (if using local clock)
-
-    // Advanced
-    pub drift_file: String,
-    pub log_dir: String,
-    pub max_update_skew: f64,  // Maximum clock skew for updates (seconds)
+    pub servers: Vec<String>,
+    pub interfaces: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NtpServer {
-    pub address: String,  // Hostname or IP
-    pub prefer: bool,     // Prefer this server
-    pub iburst: bool,     // Send burst of packets at startup
-    pub minpoll: u8,      // Minimum poll interval (2^n seconds)
-    pub maxpoll: u8,      // Maximum poll interval (2^n seconds)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NtpInput {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub servers: Option<String>,
+    #[serde(default)]
+    pub interfaces: Option<String>,
 }
 
-/// NTP status information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NtpStatus {
-    pub synchronized: bool,
-    pub stratum: u8,
-    pub reference_id: String,
-    pub offset: f64,          // Time offset in seconds
-    pub jitter: f64,          // Time jitter in seconds
-    pub current_source: Option<String>,
-    pub sources: Vec<NtpSourceStatus>,
+fn split(s: &str) -> Vec<String> {
+    s.split([',', ' ', '\n'])
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(String::from)
+        .collect()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NtpSourceStatus {
-    pub address: String,
-    pub stratum: u8,
-    pub poll: u8,
-    pub reach: u8,       // Reachability (octal)
-    pub offset: f64,
-    pub delay: f64,
-    pub jitter: f64,
-    pub selected: bool,
+fn check_server(s: &str) -> Result<String> {
+    if s.parse::<std::net::IpAddr>().is_ok() || lan::valid_dns_name(s, false) {
+        Ok(s.to_ascii_lowercase())
+    } else {
+        Err(invalid(format!("NTP server {s:?}")))
+    }
 }
 
-pub struct NtpManager {
-    config: NtpConfig,
+pub async fn settings(store: &ConfigStore) -> Result<NtpSettings> {
+    Ok(NtpSettings {
+        enabled: lan::flag(&lan::setting_or(store, "ntp.enabled", "0").await?),
+        servers: split(&lan::setting_or(store, "ntp.servers", "pool.ntp.org").await?),
+        interfaces: split(&lan::setting_or(store, "ntp.interfaces", "@lan").await?),
+    })
 }
 
-impl NtpManager {
-    pub fn new(config: NtpConfig) -> Self {
-        Self { config }
+pub async fn save_settings(store: &ConfigStore, i: &NtpInput) -> Result<()> {
+    let mut kv = Vec::new();
+    if let Some(e) = i.enabled {
+        kv.push(("ntp.enabled", if e { "1" } else { "0" }.to_string()));
+    }
+    if let Some(s) = &i.servers {
+        let v = split(s)
+            .iter()
+            .map(|x| check_server(x))
+            .collect::<Result<Vec<_>>>()?;
+        if v.is_empty() {
+            return Err(invalid("NTP servers: at least one upstream server"));
+        }
+        kv.push(("ntp.servers", v.join(",")));
+    }
+    if let Some(s) = &i.interfaces {
+        let v = split(s)
+            .iter()
+            .map(|x| lan::check_iface_spec(x))
+            .collect::<Result<Vec<_>>>()?;
+        kv.push(("ntp.interfaces", v.join(",")));
+    }
+    for (k, v) in kv {
+        lan::set_setting(store, k, &v).await?;
+    }
+    Ok(())
+}
+
+/// `/etc/chrony/chrony.conf`.
+pub fn render(s: &NtpSettings, allow: &[String]) -> String {
+    let mut c = lan::header("#", "chrony: NTP client and LAN time server");
+    for sv in &s.servers {
+        let kind = if sv.starts_with("pool.") || sv.contains(".pool.") {
+            "pool"
+        } else {
+            "server"
+        };
+        c.push_str(&format!("{kind} {sv} iburst\n"));
+    }
+    c.push_str("driftfile /var/lib/chrony/drift\nmakestep 1.0 3\nrtcsync\n");
+    if s.enabled {
+        for n in allow {
+            c.push_str(&format!("allow {n}\n"));
+        }
+        c.push_str(
+            "# keep serving the LAN while the upstreams are unreachable\nlocal stratum 10\n",
+        );
+    }
+    c
+}
+
+#[derive(Clone, Default)]
+pub struct NtpApplier {
+    env: LanEnv,
+}
+
+impl NtpApplier {
+    pub fn new(env: LanEnv) -> Self {
+        Self { env }
     }
 
-    /// Configure chrony NTP server
-    pub async fn configure(&self) -> Result<()> {
-        tracing::info!("Configuring chrony NTP server");
-
-        let config_content = self.generate_chrony_config();
-
-        // Write chrony configuration
-        tokio::fs::write("/etc/chrony/chrony.conf", config_content).await?;
-
-        // Create systemd service (if not already exists)
-        self.create_systemd_service().await?;
-
-        Ok(())
-    }
-
-    fn generate_chrony_config(&self) -> String {
-        let mut config = String::from("# Chrony Configuration\n");
-        config.push_str("# Generated by Patronus\n\n");
-
-        // Upstream servers
-        config.push_str("# Upstream NTP servers\n");
-        for server in &self.config.servers {
-            let mut server_line = format!("server {}", server.address);
-
-            if server.prefer {
-                server_line.push_str(" prefer");
+    async fn allow(
+        &self,
+        store: &ConfigStore,
+        s: &NtpSettings,
+        rep: &mut ApplyReport,
+    ) -> Result<Vec<String>> {
+        let addrs = self.env.addrs()?;
+        let mut nets = Vec::new();
+        for spec in &s.interfaces {
+            let devs = lan::resolve_iface(store, spec).await?;
+            if devs.is_empty() {
+                rep.warn(format!(
+                    "NTP on {spec}: interface role is not assigned, skipped"
+                ));
             }
-            if server.iburst {
-                server_line.push_str(" iburst");
-            }
-            if server.minpoll != 6 {  // Default is 6 (64 seconds)
-                server_line.push_str(&format!(" minpoll {}", server.minpoll));
-            }
-            if server.maxpoll != 10 {  // Default is 10 (1024 seconds)
-                server_line.push_str(&format!(" maxpoll {}", server.maxpoll));
-            }
-
-            server_line.push('\n');
-            config.push_str(&server_line);
-        }
-        config.push('\n');
-
-        // Server mode - allow clients to query
-        if self.config.server_mode {
-            config.push_str("# Allow NTP client access from local networks\n");
-            for network in &self.config.allow_networks {
-                config.push_str(&format!("allow {}\n", network));
-            }
-            config.push('\n');
-        }
-
-        // Drift file
-        config.push_str(&format!("# Drift file\ndriftfile {}\n\n", self.config.drift_file));
-
-        // Logging
-        config.push_str(&format!("# Logging\nlogdir {}\n", self.config.log_dir));
-        config.push_str("log tracking measurements statistics\n\n");
-
-        // Clock adjustments
-        config.push_str("# Allow system clock to be stepped in the first three updates\n");
-        config.push_str("makestep 1.0 3\n\n");
-
-        // RTC sync
-        config.push_str("# Enable kernel synchronization of the real-time clock (RTC)\n");
-        config.push_str("rtcsync\n\n");
-
-        // Local clock fallback
-        if self.config.prefer_local_clock {
-            config.push_str("# Use local clock as fallback\n");
-            config.push_str(&format!("local stratum {}\n\n", self.config.stratum));
-        }
-
-        // Leap second handling
-        config.push_str("# Leap second handling\n");
-        config.push_str("leapsectz right/UTC\n");
-
-        config
-    }
-
-    async fn create_systemd_service(&self) -> Result<()> {
-        // chrony usually comes with its own systemd service
-        // We'll just ensure it's enabled, not create a new one
-
-        let service = r#"[Unit]
-Description=chrony NTP Server
-After=network.target
-Conflicts=systemd-timesyncd.service ntp.service ntpd.service
-
-[Service]
-Type=forking
-PIDFile=/var/run/chrony/chronyd.pid
-ExecStart=/usr/sbin/chronyd
-ExecReload=/bin/kill -HUP $MAINPID
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-Alias=chronyd.service
-"#;
-
-        // Only write if doesn't exist
-        let service_path = "/etc/systemd/system/chrony.service";
-        if !tokio::fs::try_exists(service_path).await.unwrap_or(false) {
-            tokio::fs::write(service_path, service).await?;
-        }
-
-        Ok(())
-    }
-
-    /// Start NTP service
-    pub async fn start(&self) -> Result<()> {
-        tracing::info!("Starting chrony NTP service");
-
-        // Disable systemd-timesyncd (conflicts with chrony)
-        Command::new("systemctl")
-            .args(&["stop", "systemd-timesyncd"])
-            .status()
-            .await?;
-
-        Command::new("systemctl")
-            .args(&["disable", "systemd-timesyncd"])
-            .status()
-            .await?;
-
-        // Start chrony
-        let status = Command::new("systemctl")
-            .args(&["start", "chronyd"])
-            .status()
-            .await?;
-
-        if !status.success() {
-            return Err(Error::Network("Failed to start chrony".to_string()));
-        }
-
-        Ok(())
-    }
-
-    /// Stop NTP service
-    pub async fn stop(&self) -> Result<()> {
-        Command::new("systemctl")
-            .args(&["stop", "chronyd"])
-            .status()
-            .await?;
-
-        Ok(())
-    }
-
-    /// Restart NTP service
-    pub async fn restart(&self) -> Result<()> {
-        let status = Command::new("systemctl")
-            .args(&["restart", "chronyd"])
-            .status()
-            .await?;
-
-        if !status.success() {
-            return Err(Error::Network("Failed to restart chrony".to_string()));
-        }
-
-        Ok(())
-    }
-
-    /// Get NTP status
-    pub async fn get_status(&self) -> Result<NtpStatus> {
-        // Query chronyc for tracking info
-        let tracking_output = Command::new("chronyc")
-            .arg("tracking")
-            .output()
-            .await?;
-
-        let tracking_str = String::from_utf8_lossy(&tracking_output.stdout);
-
-        // Query sources
-        let sources_output = Command::new("chronyc")
-            .args(&["-n", "sources"])
-            .output()
-            .await?;
-
-        let sources_str = String::from_utf8_lossy(&sources_output.stdout);
-
-        // Parse output
-        let status = self.parse_tracking(&tracking_str);
-        let sources = self.parse_sources(&sources_str);
-
-        Ok(NtpStatus {
-            synchronized: status.0,
-            stratum: status.1,
-            reference_id: status.2,
-            offset: status.3,
-            jitter: status.4,
-            current_source: status.5,
-            sources,
-        })
-    }
-
-    fn parse_tracking(&self, output: &str) -> (bool, u8, String, f64, f64, Option<String>) {
-        let mut synchronized = false;
-        let mut stratum = 16;
-        let mut reference_id = String::new();
-        let mut offset = 0.0;
-        let mut jitter = 0.0;
-        let mut current_source = None;
-
-        for line in output.lines() {
-            if line.starts_with("Reference ID") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() > 3 {
-                    reference_id = parts[3].to_string();
-                    synchronized = reference_id != "00000000";
-                }
-            } else if line.starts_with("Stratum") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() > 2 {
-                    stratum = parts[2].parse().unwrap_or(16);
-                }
-            } else if line.starts_with("System time") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() > 3 {
-                    offset = parts[3].parse().unwrap_or(0.0);
-                }
-            } else if line.starts_with("RMS offset") {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() > 3 {
-                    jitter = parts[3].parse().unwrap_or(0.0);
+            for a in addrs.iter().filter(|a| devs.contains(&a.ifname)) {
+                if a.addr.is_ipv4() || a.is_global_v6() {
+                    if let Some(n) = a.network() {
+                        nets.push(n.to_string());
+                    }
                 }
             }
         }
-
-        (synchronized, stratum, reference_id, offset, jitter, current_source)
-    }
-
-    fn parse_sources(&self, output: &str) -> Vec<NtpSourceStatus> {
-        let mut sources = Vec::new();
-
-        // Skip header lines
-        let lines: Vec<&str> = output.lines().skip(2).collect();
-
-        for line in lines {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 9 {
-                continue;
-            }
-
-            // First char indicates selection (* = current, + = candidate, - = not selected)
-            let selected = parts[0].starts_with('*');
-            let address = parts[1].to_string();
-
-            sources.push(NtpSourceStatus {
-                address,
-                stratum: parts[2].parse().unwrap_or(0),
-                poll: parts[3].parse().unwrap_or(0),
-                reach: parts[4].parse().unwrap_or(0),
-                offset: parts[6].parse().unwrap_or(0.0),
-                delay: parts[7].parse().unwrap_or(0.0),
-                jitter: parts[8].parse().unwrap_or(0.0),
-                selected,
-            });
-        }
-
-        sources
-    }
-
-    /// Force time synchronization
-    pub async fn force_sync(&self) -> Result<()> {
-        tracing::info!("Forcing NTP synchronization");
-
-        let status = Command::new("chronyc")
-            .arg("makestep")
-            .status()
-            .await?;
-
-        if !status.success() {
-            return Err(Error::Network("Failed to force sync".to_string()));
-        }
-
-        Ok(())
-    }
-
-    /// Get list of NTP clients
-    pub async fn get_clients(&self) -> Result<Vec<NtpClient>> {
-        let output = Command::new("chronyc")
-            .arg("clients")
-            .output()
-            .await?;
-
-        let output_str = String::from_utf8_lossy(&output.stdout);
-
-        let mut clients = Vec::new();
-
-        for line in output_str.lines().skip(2) {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 5 {
-                clients.push(NtpClient {
-                    address: parts[0].to_string(),
-                    ntp_packets: parts[1].parse().unwrap_or(0),
-                    cmd_packets: parts[2].parse().unwrap_or(0),
-                    drop_count: parts[3].parse().unwrap_or(0),
-                    interval: parts[4].parse().unwrap_or(0),
-                });
-            }
-        }
-
-        Ok(clients)
+        nets.sort();
+        nets.dedup();
+        Ok(nets)
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NtpClient {
-    pub address: String,
-    pub ntp_packets: u64,
-    pub cmd_packets: u64,
-    pub drop_count: u64,
-    pub interval: u32,
+#[async_trait]
+impl Applier for NtpApplier {
+    fn name(&self) -> &'static str {
+        "ntp"
+    }
+
+    fn phase(&self) -> Phase {
+        Phase::Services
+    }
+
+    async fn apply(&self, store: &ConfigStore) -> Result<ApplyReport> {
+        let mut rep = ApplyReport::default();
+        let s = settings(store).await?;
+        let managed = lan::is_managed(&self.env, CHRONY_CONF);
+        if !s.enabled && !managed {
+            rep.applied("NTP server disabled (chrony config untouched)");
+            return Ok(rep);
+        }
+        if !self.env.has_binary(CHRONYD_BIN) {
+            return Err(Error::Service(
+                "the NTP server needs chrony but /usr/sbin/chronyd is not installed \
+                 (emerge net-misc/chrony, USE=ntp)"
+                    .into(),
+            ));
+        }
+        let allow = self.allow(store, &s, &mut rep).await?;
+        if s.enabled && allow.is_empty() {
+            rep.warn("NTP server enabled but no served interface has an address");
+        }
+        let changed = lan::install(
+            &self.env,
+            &ManagedFile {
+                path: CHRONY_CONF,
+                content: render(&s, &allow),
+                mode: 0o644,
+                group: None,
+                check: Some(vec![CHRONYD_BIN, "-p", "-f", "{}"]),
+            },
+        )?;
+        if changed {
+            rep.applied(format!("wrote {CHRONY_CONF}"));
+        }
+        lan::reconcile(&self.env, SERVICE, true, changed, CHRONY_CONF, &mut rep)?;
+        rep.applied(format!(
+            "NTP server {} ({} subnet(s))",
+            if s.enabled { "on" } else { "off, client only" },
+            allow.len()
+        ));
+        Ok(rep)
+    }
+
+    async fn render(&self, store: &ConfigStore) -> Result<String> {
+        let mut rep = ApplyReport::default();
+        let s = settings(store).await?;
+        if !s.enabled {
+            return Ok("# NTP server disabled\n".into());
+        }
+        let allow = self.allow(store, &s, &mut rep).await?;
+        Ok(format!(
+            "## {CHRONY_CONF} (chronyd)\n{}",
+            render(&s, &allow)
+        ))
+    }
+
+    async fn status(&self, store: &ConfigStore) -> Result<Value> {
+        let s = settings(store).await?;
+        Ok(json!({
+            "enabled": s.enabled,
+            "available": self.env.has_binary(CHRONYD_BIN),
+            "running": self.env.services.is_running(SERVICE),
+        }))
+    }
 }
 
-impl Default for NtpConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            servers: vec![
-                NtpServer {
-                    address: "0.pool.ntp.org".to_string(),
-                    prefer: false,
-                    iburst: true,
-                    minpoll: 6,
-                    maxpoll: 10,
-                },
-                NtpServer {
-                    address: "1.pool.ntp.org".to_string(),
-                    prefer: false,
-                    iburst: true,
-                    minpoll: 6,
-                    maxpoll: 10,
-                },
-                NtpServer {
-                    address: "2.pool.ntp.org".to_string(),
-                    prefer: false,
-                    iburst: true,
-                    minpoll: 6,
-                    maxpoll: 10,
-                },
-            ],
-            server_mode: true,
-            allow_networks: vec![
-                "10.0.0.0/8".to_string(),
-                "172.16.0.0/12".to_string(),
-                "192.168.0.0/16".to_string(),
-            ],
-            prefer_local_clock: false,
-            stratum: 10,
-            drift_file: "/var/lib/chrony/drift".to_string(),
-            log_dir: "/var/log/chrony".to_string(),
-            max_update_skew: 100.0,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lan::testutil::{self, read};
+    use crate::lan::ServiceControl;
+
+    #[tokio::test]
+    async fn serves_lan_subnets_and_leaves_foreign_config_alone() {
+        let t = testutil::env(&[CHRONYD_BIN]);
+        let s = testutil::store().await;
+        std::fs::create_dir_all(t.env.path("/etc/chrony")).unwrap();
+        std::fs::write(t.env.path(CHRONY_CONF), "server my.own.server\n").unwrap();
+        let a = NtpApplier::new(t.env.clone());
+        a.apply(&s).await.unwrap();
+        assert_eq!(read(&t, CHRONY_CONF), "server my.own.server\n");
+        save_settings(
+            &s,
+            &NtpInput {
+                enabled: Some(true),
+                servers: Some("0.pool.ntp.org, 192.0.2.123".into()),
+                interfaces: None,
+            },
+        )
+        .await
+        .unwrap();
+        a.apply(&s).await.unwrap();
+        let c = read(&t, CHRONY_CONF);
+        for want in [
+            "pool 0.pool.ntp.org iburst",
+            "server 192.0.2.123 iburst",
+            "allow 192.168.50.0/24",
+            "allow fd00:50::/64",
+            "local stratum 10",
+        ] {
+            assert!(c.contains(want), "missing {want:?} in\n{c}");
         }
+        assert!(!c.contains("203.0.113"), "never serve the WAN");
+        assert!(t.services.is_running(SERVICE));
+        save_settings(
+            &s,
+            &NtpInput {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        a.apply(&s).await.unwrap();
+        let c = read(&t, CHRONY_CONF);
+        assert!(!c.contains("allow ") && c.contains("pool 0.pool.ntp.org"));
+        assert!(save_settings(
+            &s,
+            &NtpInput {
+                servers: Some("bad_host".into()),
+                ..Default::default()
+            }
+        )
+        .await
+        .is_err());
     }
 }

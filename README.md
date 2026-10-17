@@ -63,6 +63,24 @@ that are not finished are listed separately under
 - Interface configuration survives a reboot (`patronus apply` rebuilds it),
   and applying again changes nothing. [C23]
 
+### LAN services (DHCP, DNS, NTP)
+
+- The DHCP page serves IPv4 pools with static mappings, DHCPv6 pools,
+  IPv6 router advertisements and DHCP relay -- with Kea + radvd (USE=kea) or
+  dnsmasq -- writing the config files those Gentoo packages read and
+  starting them through OpenRC or systemd; clients get leases from the pool
+  or their static mapping, and the lease table shows the server's real
+  leases. [C24]
+- The DNS page runs Unbound as the LAN resolver (or dnsmasq as a forwarder)
+  with host overrides, domain overrides and a DNS block list (manual
+  entries plus downloaded hosts/domain lists); LAN clients resolve the
+  overrides and blocked names come back NXDOMAIN. [C25]
+- The NTP page serves time to the LAN with chrony; dynamic DNS publishes
+  the WAN address to a provider and re-checks it every 5 minutes. [C26]
+- LAN service configuration survives a reboot (`patronus apply` rewrites
+  the configs and starts the daemons), and service files are never
+  written from unvalidated input. [C27]
+
 ### Configuration you can trust
 
 - The configuration survives restarts and reboots: it lives in one SQLite
@@ -107,8 +125,8 @@ They are being wired up one subsystem at a time; each moves to
 [What works today](#what-works-today) only together with its CI proof.
 
 - Firewall: GeoIP/threat-feed blocking, URL-table aliases, IPv6 NPt.
-- LAN services: DHCP server, DNS resolver (Unbound), IPv6 router
-  advertisements / DHCPv6.
+- LAN services: DNS over TLS upstreams, DHCP-registered hostnames in DNS,
+  captive portal.
 - Routing: static routes, gateways, multi-WAN failover/load balancing,
   dynamic routing via FRR.
 - VPN: WireGuard, IPsec, OpenVPN.

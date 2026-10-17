@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+
+{% block title %}DHCP - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">DHCP Server</h1>
+    <p class="page-subtitle">IPv4 pools and static mappings, DHCPv6, router advertisements and relay.
+        Changes are written to the DHCP daemon's own config and applied at once.</p>
+</div>
+
+{% if !error.is_empty() %}<div class="alert-error">{{ error }}</div>{% endif %}
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Service</h2></div>
+    <p class="text-sm">DHCP server: <b>{{ backend_effective }}</b> (setting: {{ backend }}) &middot;
+        Router advertisements: <b>{{ ra_effective }}</b> (setting: {{ ra_backend }}) &middot;
+        Installed: {% if available.is_empty() %}<span class="bad">no DHCP daemon installed</span>{% else %}{{ available }}{% endif %}</p>
+    <p class="text-sm" id="dhcp-services">
+        {% for svc in services %}
+        {{ svc.0 }}: {% if svc.1 %}<span class="ok">running</span>{% else %}<span class="text-muted">stopped</span>{% endif %}{% if !loop.last %} &middot; {% endif %}
+        {% endfor %}
+    </p>
+    <form class="lan-form" onsubmit="return submitJson(event, 'PUT', '/api/dhcp/settings')">
+        <label>DHCP daemon
+            <select name="backend">
+                <option value="auto" {% if backend == "auto" %}selected{% endif %}>auto (Kea if installed)</option>
+                <option value="kea" {% if backend == "kea" %}selected{% endif %}>Kea</option>
+                <option value="dnsmasq" {% if backend == "dnsmasq" %}selected{% endif %}>dnsmasq</option>
+            </select></label>
+        <label>RA daemon
+            <select name="ra_backend">
+                <option value="auto" {% if ra_backend == "auto" %}selected{% endif %}>auto</option>
+                <option value="radvd" {% if ra_backend == "radvd" %}selected{% endif %}>radvd</option>
+                <option value="dnsmasq" {% if ra_backend == "dnsmasq" %}selected{% endif %}>dnsmasq</option>
+            </select></label>
+        <button class="btn btn-primary btn-sm" type="submit">Save</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="call('POST', '/api/dhcp/apply')">Re-apply</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">IPv4 pools</h2></div>
+    {% if pools.is_empty() %}
+    <p class="empty">No DHCP pool configured: the router hands out no addresses. Add one below.</p>
+    {% else %}
+    <table class="lan" id="dhcp-pools">
+        <thead><tr><th>Interface</th><th>Range</th><th>Lease</th><th>Gateway</th><th>DNS</th><th>Domain</th><th>NTP</th><th>Enabled</th><th></th></tr></thead>
+        <tbody>
+        {% for p in pools %}
+        <tr>
+            <td>{{ p.interface }}{% if !p.description.is_empty() %}<br><span class="text-muted text-sm">{{ p.description }}</span>{% endif %}</td>
+            <td class="mono">{{ p.range_start }} - {{ p.range_end }}</td>
+            <td>{{ p.lease_time }} s</td>
+            <td>{% if p.gateway.is_empty() %}<span class="text-muted">router</span>{% else %}{{ p.gateway }}{% endif %}</td>
+            <td>{% if p.dns.is_empty() %}<span class="text-muted">router</span>{% else %}{{ p.dns }}{% endif %}</td>
+            <td>{{ p.domain }}</td>
+            <td>{% if p.ntp.is_empty() %}<span class="text-muted">router if NTP on</span>{% else %}{{ p.ntp }}{% endif %}</td>
+            <td>{% if p.enabled %}yes{% else %}no{% endif %}</td>
+            <td><button class="btn btn-danger btn-sm" onclick="del('/api/dhcp/pools/{{ p.id }}', 'Delete this pool and its static mappings?')">Delete</button></td>
+        </tr>
+        <tr><td></td><td colspan="8">
+            <b>Static mappings</b>
+            {% if p.statics.is_empty() %}<span class="empty">none</span>{% else %}
+            <table class="lan">
+                <thead><tr><th>MAC</th><th>IP address</th><th>Hostname</th><th></th></tr></thead>
+                <tbody>
+                {% for m in p.statics %}
+                <tr><td class="mono">{{ m.mac }}</td><td class="mono">{{ m.ip }}</td><td>{{ m.hostname }}</td>
+                    <td><button class="btn btn-danger btn-sm" onclick="del('/api/dhcp/static/{{ m.id }}', 'Delete this static mapping?')">Delete</button></td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+            <form class="lan-form" id="static-form-{{ p.id }}" onsubmit="return submitJson(event, 'POST', '/api/dhcp/pools/{{ p.id }}/static')">
+                <label>MAC <input name="mac" placeholder="aa:bb:cc:dd:ee:ff" required></label>
+                <label>IP (outside the range) <input name="ip" required></label>
+                <label>Hostname <input name="hostname"></label>
+                <label>Description <input name="description"></label>
+                <button class="btn btn-primary btn-sm" type="submit">Add static mapping</button>
+            </form>
+        </td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    <h3 class="font-bold mt-4">Add a pool</h3>
+    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dhcp/pools')">
+        <label>Interface <input name="interface" value="@lan" required title="@lan, @optN or a device name"></label>
+        <label>Range start <input name="range_start" placeholder="192.168.1.100" required></label>
+        <label>Range end <input name="range_end" placeholder="192.168.1.199" required></label>
+        <label>Lease time (s) <input name="lease_time" type="number" value="86400" min="120"></label>
+        <label>Gateway <input name="gateway" placeholder="router"></label>
+        <label>DNS servers <input name="dns_servers" placeholder="router"></label>
+        <label>Domain <input name="domain" placeholder="lan"></label>
+        <label>NTP servers <input name="ntp_servers" placeholder="router if NTP on"></label>
+        <label>Description <input name="description"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add pool</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Leases</h2></div>
+    {% if leases.is_empty() %}
+    <p class="empty">No leases yet. Leases appear here as soon as a client gets an address.</p>
+    {% else %}
+    <table class="lan" id="dhcp-leases">
+        <thead><tr><th>IP address</th><th>MAC / DUID</th><th>Hostname</th><th>Expires</th><th>State</th><th>Type</th><th></th></tr></thead>
+        <tbody>
+        {% for l in leases %}
+        <tr>
+            <td class="mono">{{ l.ip }}</td><td class="mono">{{ l.mac }}</td><td>{{ l.hostname }}</td>
+            <td>{{ l.expires }}</td><td>{{ l.state }}</td>
+            <td>{{ l.family }} ({{ l.source }}){% if l.is_static %} &middot; <b>static</b>{% endif %}</td>
+            <td>{% if l.family == "ipv4" && !l.is_static %}<button class="btn btn-secondary btn-sm" data-mac="{{ l.mac }}" data-host="{{ l.hostname }}" onclick="makeStatic(this)">Make static</button>{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">DHCPv6</h2></div>
+    {% if v6.is_empty() %}<p class="empty">No DHCPv6 pool. Clients only ask for DHCPv6 addresses when the router advertisement says so (managed/assisted mode).</p>{% else %}
+    <table class="lan" id="dhcp6-pools">
+        <thead><tr><th>Interface</th><th>Range</th><th>Prefix</th><th>Lease</th><th>DNS</th><th>Enabled</th><th></th></tr></thead>
+        <tbody>
+        {% for p in v6 %}
+        <tr><td>{{ p.interface }}</td><td class="mono">{{ p.range }}</td><td>/{{ p.prefix_len }}</td><td>{{ p.lease_time }} s</td>
+            <td>{% if p.dns.is_empty() %}<span class="text-muted">router</span>{% else %}{{ p.dns }}{% endif %}</td>
+            <td>{% if p.enabled %}yes{% else %}no{% endif %}</td>
+            <td><button class="btn btn-danger btn-sm" onclick="del('/api/dhcp/v6/{{ p.id }}', 'Delete this DHCPv6 pool?')">Delete</button></td></tr>
+        {% endfor %}
+        </tbody>
+    </table>{% endif %}
+    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dhcp/v6')">
+        <label>Interface <input name="interface" value="@lan" required></label>
+        <label>Range start <input name="range_start" placeholder="fd00::100" required></label>
+        <label>Range end <input name="range_end" placeholder="fd00::1ff" required></label>
+        <label>Prefix length <input name="prefix_len" type="number" value="64"></label>
+        <label>Lease time (s) <input name="lease_time" type="number" value="86400"></label>
+        <label>DNS servers <input name="dns_servers" placeholder="router"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add DHCPv6 pool</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Router advertisements (SLAAC)</h2></div>
+    {% if ras.is_empty() %}<p class="empty">No router advertisements: IPv6 clients on the LAN get no prefix or default route from this router.</p>{% else %}
+    <table class="lan" id="ra-list">
+        <thead><tr><th>Interface</th><th>Mode</th><th>Prefix</th><th>RDNSS</th><th>Interval</th><th>Enabled</th><th></th></tr></thead>
+        <tbody>
+        {% for r in ras %}
+        <tr><td>{{ r.interface }}</td><td>{{ r.mode }}</td><td class="mono">{{ r.prefix }}</td>
+            <td>{% if r.dns.is_empty() %}<span class="text-muted">router</span>{% else %}{{ r.dns }}{% endif %}</td>
+            <td>{{ r.interval }}</td><td>{% if r.enabled %}yes{% else %}no{% endif %}</td>
+            <td><button class="btn btn-danger btn-sm" onclick="del('/api/dhcp/ra/{{ r.id }}', 'Stop router advertisements here?')">Delete</button></td></tr>
+        {% endfor %}
+        </tbody>
+    </table>{% endif %}
+    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dhcp/ra')">
+        <label>Interface <input name="interface" value="@lan" required></label>
+        <label>Mode
+            <select name="mode">
+                <option value="slaac">SLAAC (unmanaged)</option>
+                <option value="stateless">Stateless DHCPv6 (SLAAC + options)</option>
+                <option value="managed">Managed (DHCPv6 addresses only)</option>
+                <option value="assisted">Assisted (DHCPv6 + SLAAC)</option>
+            </select></label>
+        <label>Prefix <input name="prefix" placeholder="all /64s on the interface"></label>
+        <label>RDNSS <input name="dns_servers" placeholder="router"></label>
+        <label>Min interval (s) <input name="min_interval" type="number" value="200"></label>
+        <label>Max interval (s) <input name="max_interval" type="number" value="600"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Enable RA</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">DHCP relay</h2></div>
+    {% if relays.is_empty() %}<p class="empty">No relay. A relay forwards DHCP requests from an interface to a DHCP server elsewhere (an interface with a local pool cannot also relay).</p>{% else %}
+    <table class="lan" id="relay-list">
+        <thead><tr><th>Interface</th><th>Servers</th><th>Enabled</th><th></th></tr></thead>
+        <tbody>
+        {% for r in relays %}
+        <tr><td>{{ r.interface }}</td><td class="mono">{{ r.servers }}</td><td>{% if r.enabled %}yes{% else %}no{% endif %}</td>
+            <td><button class="btn btn-danger btn-sm" onclick="del('/api/dhcp/relays/{{ r.id }}', 'Delete this relay?')">Delete</button></td></tr>
+        {% endfor %}
+        </tbody>
+    </table>{% endif %}
+    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dhcp/relays')">
+        <label>Interface <input name="interface" placeholder="@opt1" required></label>
+        <label>DHCP servers <input name="servers" placeholder="10.0.0.5, fd00::5" required></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add relay</button>
+    </form>
+    <p class="text-sm text-muted">The firewall must let DHCP in: on a LAN interface it already is; elsewhere add
+        <a href="/firewall">input rules</a> for UDP 67 on the relay interface and, on the interface facing the
+        DHCP servers, for UDP 67 from those servers (their replies come back to the router).</p>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+{% include "lan_js.html" %}
+<script>
+    // "Make static": pre-fill the static mapping form of the first pool.
+    // Lease data (client-chosen hostnames!) is read from data-* attributes,
+    // never spliced into script.
+    function makeStatic(btn) {
+        const f = document.querySelector('form[id^="static-form-"]');
+        if (!f) { alert('Add a DHCP pool first.'); return; }
+        f.elements['mac'].value = btn.dataset.mac;
+        f.elements['hostname'].value = btn.dataset.host;
+        f.elements['ip'].focus();
+        f.scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
+</script>
+{% endblock %}

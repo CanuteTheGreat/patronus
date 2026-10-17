@@ -4,6 +4,7 @@
 
 pub mod firewall;
 pub mod interfaces;
+pub mod lan;
 pub mod network;
 pub mod status;
 pub mod system;

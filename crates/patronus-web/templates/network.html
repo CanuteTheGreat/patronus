@@ -59,7 +59,7 @@
 <body>
     <div class="page-header">
         <h1 class="page-title">Network Services</h1>
-        <p class="page-subtitle">Manage interfaces, DHCP, DNS, and routing</p>
+        <p class="page-subtitle">Manage interfaces and routing (DHCP, DNS and NTP have their own pages)</p>
         <div class="page-actions">
             <button class="btn btn-secondary btn-sm" onclick="restartNetworking()">
                 Restart Networking
@@ -79,15 +79,13 @@
         </div>
 
         <div class="stat-card info">
-            <h3>DHCP Leases</h3>
-            <div class="value">{{ dhcp_leases.len() }}</div>
-            <div class="label">Active leases</div>
+            <h3>DHCP</h3>
+            <div class="label"><a href="/dhcp">Pools, static mappings, leases, DHCPv6, RA, relay</a></div>
         </div>
 
         <div class="stat-card warning">
-            <h3>DNS Records</h3>
-            <div class="value">{{ dns_records.len() }}</div>
-            <div class="label">Local DNS entries</div>
+            <h3>DNS / NTP</h3>
+            <div class="label"><a href="/dns">Resolver, overrides, block list, dynamic DNS</a> &middot; <a href="/ntp">NTP server</a></div>
         </div>
 
         <div class="stat-card danger">
@@ -102,12 +100,6 @@
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab(event, 'interfaces-tab')">
                 Interfaces
-            </button>
-            <button class="tab-btn" onclick="switchTab(event, 'dhcp-tab')">
-                DHCP Server
-            </button>
-            <button class="tab-btn" onclick="switchTab(event, 'dns-tab')">
-                DNS Resolver
             </button>
             <button class="tab-btn" onclick="switchTab(event, 'routing-tab')">
                 Routing
@@ -159,151 +151,6 @@
                             <td>
                                 <button class="btn-icon" onclick="editInterface('{{ iface.name }}')">✎</button>
                                 <button class="btn-icon" onclick="toggleInterface('{{ iface.name }}', {{ iface.enabled }})">⏯</button>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- DHCP Server Tab -->
-        <div id="dhcp-tab" class="tab-content">
-            <div class="card-header">
-                <h2 class="card-title">DHCP Server</h2>
-                <div class="flex gap-2">
-                    <input type="search" placeholder="Search leases..." class="search-input"
-                           oninput="filterTable(this.value, 'dhcp-table')">
-                    <button class="btn btn-sm btn-primary" onclick="showAddDHCPPoolModal()">
-                        Add Pool
-                    </button>
-                </div>
-            </div>
-
-            <!-- DHCP Pools -->
-            <div style="margin-bottom: 2rem;">
-                <h3 class="font-bold mb-2">DHCP Pools</h3>
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Interface</th>
-                                <th>Pool Range</th>
-                                <th>Subnet</th>
-                                <th>Gateway</th>
-                                <th>Lease Time</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for pool in dhcp_pools %}
-                            <tr>
-                                <td><strong>{{ pool.interface }}</strong></td>
-                                <td class="text-sm">{{ pool.range_start }} - {{ pool.range_end }}</td>
-                                <td class="text-sm">{{ pool.subnet }}</td>
-                                <td class="text-sm">{{ pool.gateway }}</td>
-                                <td class="text-sm">{{ pool.lease_time }}</td>
-                                <td>
-                                    {% if pool.enabled %}
-                                    <span class="badge success">Active</span>
-                                    {% else %}
-                                    <span class="badge danger">Disabled</span>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    <button class="btn-icon" onclick="editDHCPPool('{{ pool.interface }}')">✎</button>
-                                    <button class="btn-icon" onclick="deleteDHCPPool('{{ pool.interface }}')">🗑</button>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Active Leases -->
-            <h3 class="font-bold mb-2">Active Leases</h3>
-            <div class="table-container">
-                <table id="dhcp-table">
-                    <thead>
-                        <tr>
-                            <th>IP Address</th>
-                            <th>MAC Address</th>
-                            <th>Hostname</th>
-                            <th>Lease Start</th>
-                            <th>Lease End</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for lease in dhcp_leases %}
-                        <tr class="data-row">
-                            <td><strong>{{ lease.ip_address }}</strong></td>
-                            <td class="text-sm monospace">{{ lease.mac_address }}</td>
-                            <td class="text-sm">{{ lease.hostname_display }}</td>
-                            <td class="text-sm">{{ lease.lease_start }}</td>
-                            <td class="text-sm">{{ lease.lease_end }}</td>
-                            <td>
-                                {% if lease.is_active %}
-                                <span class="badge success">Active</span>
-                                {% else %}
-                                <span class="badge warning">Expired</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <button class="btn btn-sm btn-secondary" onclick="makeStatic('{{ lease.ip_address }}', '{{ lease.mac_address }}')">
-                                    Make Static
-                                </button>
-                                <button class="btn btn-sm btn-danger" onclick="revokeLease('{{ lease.ip_address }}')">
-                                    Revoke
-                                </button>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- DNS Resolver Tab -->
-        <div id="dns-tab" class="tab-content">
-            <div class="card-header">
-                <h2 class="card-title">DNS Resolver</h2>
-                <div class="flex gap-2">
-                    <button class="btn btn-sm btn-secondary" onclick="flushDNSCache()">
-                        Flush Cache
-                    </button>
-                    <button class="btn btn-sm btn-primary" onclick="showAddDNSRecordModal()">
-                        Add Record
-                    </button>
-                </div>
-            </div>
-
-            <!-- DNS Records -->
-            <h3 class="font-bold mb-2">Local DNS Records</h3>
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Hostname</th>
-                            <th>Type</th>
-                            <th>Value</th>
-                            <th>TTL</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for record in dns_records %}
-                        <tr>
-                            <td><strong>{{ record.hostname }}</strong></td>
-                            <td><span class="badge info">{{ record.record_type }}</span></td>
-                            <td class="text-sm">{{ record.value }}</td>
-                            <td class="text-sm">{{ record.ttl }}s</td>
-                            <td>
-                                <button class="btn-icon" onclick="editDNSRecord('{{ record.hostname }}')">✎</button>
-                                <button class="btn-icon" onclick="deleteDNSRecord('{{ record.hostname }}')">🗑</button>
                             </td>
                         </tr>
                         {% endfor %}
@@ -423,44 +270,6 @@
             location.reload();
         }
 
-        // DHCP management
-        function editDHCPPool(iface) {
-            alert(`Edit DHCP pool for ${iface}`);
-        }
-
-        function deleteDHCPPool(iface) {
-            if (confirm(`Delete DHCP pool for ${iface}?`)) {
-                alert(`Deleting pool...`);
-            }
-        }
-
-        function makeStatic(ip, mac) {
-            alert(`Creating static mapping: ${ip} → ${mac}`);
-        }
-
-        function revokeLease(ip) {
-            if (confirm(`Revoke DHCP lease for ${ip}?`)) {
-                alert(`Revoking lease...`);
-            }
-        }
-
-        // DNS management
-        function flushDNSCache() {
-            if (confirm('Flush DNS cache?')) {
-                alert('DNS cache flushed');
-            }
-        }
-
-        function editDNSRecord(hostname) {
-            alert(`Edit DNS record: ${hostname}`);
-        }
-
-        function deleteDNSRecord(hostname) {
-            if (confirm(`Delete DNS record for ${hostname}?`)) {
-                alert(`Deleting record...`);
-            }
-        }
-
         // Routing management
         function editRoute(dest) {
             alert(`Edit route: ${dest}`);
@@ -483,13 +292,7 @@
             location.href = '/interfaces';
         }
 
-        function showAddDHCPPoolModal() {
-            alert('Add DHCP Pool modal - TODO');
-        }
 
-        function showAddDNSRecordModal() {
-            alert('Add DNS Record modal - TODO');
-        }
 
         function showAddRouteModal() {
             alert('Add Route modal - TODO');

@@ -1,6 +1,8 @@
 [Unit]
 Description=Patronus Web Interface (HTTPS on :8443)
 After=network.target patronus-firewall.service patronus-applyd.service
+# root-only changes (DHCP clients, pppd, DHCP/DNS/NTP daemons) go through
+# patronus-applyd
 Wants=patronus-firewall.service patronus-applyd.service
 
 [Service]

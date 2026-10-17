@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 mod commands;
 use commands::{
-    apply, bgp, captiveportal, daemon, deploy, firewall, init, metrics, policy, site, status,
-    tunnel, validate, web,
+    apply, applyd, bgp, captiveportal, daemon, deploy, firewall, init, metrics, policy, site,
+    status, tunnel, validate, web,
 };
 
 #[derive(Parser)]
@@ -53,7 +53,8 @@ enum Commands {
     },
 
     /// Root apply broker for patronus-web (runs one named applier on
-    /// request over a unix socket; see patronus_network::applyd)
+    /// request over a unix socket; see patronus_network::applyd) and the
+    /// periodic dynamic DNS refresh
     Applyd {
         /// Socket path [default: $PATRONUS_APPLYD_SOCKET or /run/patronus/applyd.sock]
         #[arg(long)]
@@ -428,11 +429,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Applyd { socket, group } => {
-            let store = apply::open_store(cli.db.as_deref()).await?;
-            let socket = socket.unwrap_or_else(patronus_network::applyd::socket_path);
-            patronus_network::applyd::serve(apply::registry(), store, &socket, Some(&group))
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            applyd::run(cli.db, socket, group).await?;
         }
 
         Commands::Config { action } => match action {

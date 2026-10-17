@@ -3,8 +3,11 @@
 # Distributed under the terms of the GNU General Public License v3
 
 # Root apply broker for the web UI (see patronus-applyd.service): lets the
-# unprivileged patronus-web re-apply a subsystem from the config store,
-# e.g. (re)start DHCP clients / pppd after an interface change.
+# unprivileged patronus-web re-apply a subsystem from the config store, e.g.
+# (re)start DHCP clients / pppd after an interface change, or write the
+# DHCP/DNS/NTP daemon configs (/etc/kea, /etc/dnsmasq.conf, /etc/unbound,
+# /etc/chrony) and restart those daemons. Also refreshes dynamic DNS every
+# 5 minutes.
 
 description="Patronus apply broker for the web UI"
 command="/usr/bin/patronus"
@@ -16,7 +19,7 @@ error_log="/var/log/patronus/applyd.log"
 
 depend() {
 	need localmount
-	after firewall
+	after firewall patronus-firewall
 	before patronus-web
 }
 

@@ -70,7 +70,7 @@ impl Phase {
 }
 
 /// What one applier did.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize)]
 pub struct ApplyReport {
     /// Human-readable lines describing what was applied.
     pub applied: Vec<String>,
@@ -106,6 +106,13 @@ pub trait Applier: Send + Sync {
     /// Show what `apply` would do without touching the system (the
     /// rendered nft script, the sysctl list, the daemon config file...).
     async fn render(&self, store: &ConfigStore) -> Result<String>;
+
+    /// Live state for the UI (daemon running, DHCP leases, ...), read with
+    /// the applier's privileges (via `patronus applyd` when the caller is
+    /// the unprivileged web UI). Default: nothing to report.
+    async fn status(&self, _store: &ConfigStore) -> Result<serde_json::Value> {
+        Ok(serde_json::Value::Null)
+    }
 
     /// Remove everything this applier manages (e.g. `patronus firewall
     /// flush`). Default: nothing to tear down.
@@ -191,6 +198,15 @@ impl ApplierRegistry {
 
     pub fn register(&mut self, a: Arc<dyn Applier>) {
         self.appliers.push(a);
+    }
+
+    /// Add several appliers (builder style), e.g. every LAN service a
+    /// feature-gated crate compiled in.
+    pub fn with_all(mut self, v: impl IntoIterator<Item = Arc<dyn Applier>>) -> Self {
+        for a in v {
+            self.register(a);
+        }
+        self
     }
 
     /// All appliers in apply order (phase, then registration order).

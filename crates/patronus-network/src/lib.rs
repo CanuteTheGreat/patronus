@@ -12,6 +12,7 @@ pub mod bridge;
 pub mod dhcp_client;
 pub mod gateway_groups;
 pub mod interfaces;
+pub mod lan;
 pub mod linkstate;
 pub mod nat64;
 pub mod netconf;
@@ -44,6 +45,12 @@ pub mod wireguard;
 #[cfg(feature = "dhcp")]
 pub mod dhcp;
 
+#[cfg(feature = "dhcp")]
+pub mod dhcp6;
+
+#[cfg(feature = "dhcp")]
+pub mod ra;
+
 #[cfg(feature = "openvpn")]
 pub mod openvpn;
 
@@ -52,6 +59,12 @@ pub mod ipsec;
 
 #[cfg(feature = "dns")]
 pub mod dns;
+
+#[cfg(feature = "dns")]
+pub mod ddns;
+
+#[cfg(feature = "ntp")]
+pub mod ntp;
 
 #[cfg(feature = "multiwan")]
 pub mod multiwan;
@@ -75,7 +88,7 @@ pub use sysctl::SysctlApplier;
 pub use wireguard::WireGuardManager;
 
 #[cfg(feature = "dhcp")]
-pub use dhcp::DhcpManager;
+pub use dhcp::DhcpApplier;
 
 #[cfg(feature = "openvpn")]
 pub use openvpn::OpenVpnManager;
@@ -84,7 +97,12 @@ pub use openvpn::OpenVpnManager;
 pub use ipsec::IpsecManager;
 
 #[cfg(feature = "dns")]
-pub use dns::UnboundManager;
+pub use ddns::DdnsApplier;
+#[cfg(feature = "dns")]
+pub use dns::DnsApplier;
+
+#[cfg(feature = "ntp")]
+pub use ntp::NtpApplier;
 
 #[cfg(feature = "multiwan")]
 pub use multiwan::MultiWanManager;

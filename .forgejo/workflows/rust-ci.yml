@@ -141,9 +141,9 @@ jobs:
     # failure-atomic-apply (rejected rules, lockdown, no nft), failure-
     # power-cut (SIGKILL mid-edit/mid-apply, 4 rounds here, 30 nightly),
     # upgrade-store (v0.1.0 store layout; previous release nightly).
-    name: Netlab (network namespaces) - journeys, failure/recovery, upgrade
+    name: Netlab (network namespaces) - journeys, failure/recovery, upgrade, LAN services
     runs-on: linux-cross-x86_64
-    timeout-minutes: 60
+    timeout-minutes: 100
     env:
       CARGO_BUILD_JOBS: 4
       CARGO_PROFILE_DEV_DEBUG: 0
@@ -172,6 +172,20 @@ jobs:
             ${{ runner.os }}-cargo-netlab-
       - name: Netlab tests in a capped NET_ADMIN/SYS_ADMIN container
         run: ci/netlab/run.sh
+      # Lane D (LAN services): the same shipped binaries in a real Gentoo
+      # stage3 with kea/dnsmasq/radvd/unbound/chrony from the binhost and the
+      # shipped OpenRC scripts / systemd units; client namespaces must get
+      # DHCPv4/v6 leases, see RAs, resolve overrides, be blocked by the
+      # DNSBL, get NTP time, through the relay too, and it all must come
+      # back after a reboot-equivalent `patronus apply`. Once per init system.
+      - name: Lane D LAN services - OpenRC path (Gentoo stage3, rc-service)
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+        run: ci/netlab/lan-services.sh openrc
+      - name: Lane D LAN services - systemd path (Gentoo stage3, systemd as PID 1)
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+        run: ci/netlab/lan-services.sh systemd
 
   feature-matrix:
     # `cargo test --workspace` only ever compiles default features, so every

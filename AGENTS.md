@@ -119,7 +119,23 @@ Implement `Applier` once per subsystem, in the crate that owns it
 - Daemons are started through `patronus_core::ServiceManager` (systemd AND
   OpenRC) with the Patronus-generated config path passed explicitly
   (`unbound -c`, `dhcpd -cf`, `swanctl --load-all` from /etc/patronus/...).
+- Write the daemon's config **where the distro package's own OpenRC script
+  and systemd unit read it** (`/etc/kea/kea-dhcp4.conf`, `/etc/dnsmasq.conf`,
+  `/etc/unbound/unbound.conf`, ...) or pass the path explicitly; mark files
+  Patronus owns (`patronus_network::lan::MARKER`) and only stop a daemon
+  whose config carries the marker. Validate with the daemon's own checker
+  before replacing the live file (`patronus_network::lan::install`).
+- `status(store)`: live state for the UI (daemon running, leases), read
+  with the applier's privileges.
 - `render(store)`: what `apply` would do, for `patronus apply --dry-run`.
+- **The web UI runs as the unprivileged `patronus` user.** Anything that
+  needs root (writing /etc, starting daemons) goes through `patronus
+  applyd` (root, `/run/patronus/applyd.sock`, root:patronus 0660): wrap
+  your applier with `patronus_network::applyd::RemoteApplier::wrap(applier)`
+  in your web state; when not root, `apply` and `status` go through applyd
+  whenever its socket exists (checked per call, in-process otherwise).
+  applyd serves every applier in `registry()`, so registering there is all
+  it takes.
 - `resource_kinds()` / `upsert_resource()` / `delete_resource()`: the
   GitOps engine (`ApplyEngine::with_target`) dispatches declarative
   resources of those kinds to you, then calls `apply` once.

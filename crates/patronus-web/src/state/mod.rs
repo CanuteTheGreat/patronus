@@ -8,11 +8,12 @@
 //! store and the kernel never disagree. Lanes only touch their own file
 //! here plus one field in [`AppState`].
 //!
-//! `firewall` is store-backed. `vpn`, `network`, `system` and `monitoring`
+//! `firewall` and `lan` are store-backed. `vpn`, `network`, `system` and `monitoring`
 //! still hold in-memory fixtures that their lanes replace.
 
 pub mod firewall;
 pub mod interfaces;
+pub mod lan;
 pub mod monitoring;
 pub mod network;
 pub mod system;
@@ -20,6 +21,7 @@ pub mod vpn;
 
 pub use firewall::FirewallManager;
 pub use interfaces::InterfacesManager;
+pub use lan::LanManager;
 pub use monitoring::MonitoringManager;
 pub use network::NetworkManager;
 pub use system::SystemManager;
@@ -36,6 +38,8 @@ pub struct AppState {
     pub firewall: Arc<FirewallManager>,
     /// Interfaces & L2 (lane C): roles, addressing, VLAN/bond/bridge/PPPoE.
     pub interfaces: Arc<InterfacesManager>,
+    /// DHCP / DNS / NTP / DDNS (lane D).
+    pub lan: Arc<LanManager>,
     pub vpn: Arc<VpnManager>,
     pub network: Arc<NetworkManager>,
     pub system: Arc<SystemManager>,
@@ -63,6 +67,7 @@ impl AppState {
                 firewall_applier.clone(),
             )),
             firewall: Arc::new(FirewallManager::new(config_store.clone(), firewall_applier)),
+            lan: Arc::new(LanManager::new(config_store.clone())),
             vpn: Arc::new(VpnManager::new()),
             network: Arc::new(NetworkManager::new()),
             system: Arc::new(SystemManager::new()),

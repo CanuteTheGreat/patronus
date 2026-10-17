@@ -11,8 +11,10 @@
 //! "re-apply what is already stored".
 //!
 //! Protocol: one JSON line each way.
-//!   -> {"applier":"interfaces"}
+//!   -> {"applier":"interfaces"}            (op "apply", the default)
 //!   <- {"ok":true,"applied":[...],"warnings":[...]} | {"ok":false,"error":"..."}
+//!   -> {"applier":"dhcp","op":"status"}    (live state read as root: daemon
+//!   <- {"ok":true,"status":{...}}            running, DHCP leases, ...)
 
 use async_trait::async_trait;
 use patronus_config::applier::{Applier, ApplierRegistry, ApplyReport, Phase};
@@ -86,33 +88,40 @@ pub async fn serve(
             if rd.read_line(&mut line).await.is_err() {
                 return;
             }
-            let name = serde_json::from_str::<Value>(&line).ok().and_then(|v| {
-                v.get("applier")
-                    .and_then(|a| a.as_str())
-                    .map(str::to_string)
-            });
-            let res = match name.as_deref().and_then(|n| registry.by_name(n)) {
-                Some(a) => {
+            let req = serde_json::from_str::<Value>(&line).unwrap_or(Value::Null);
+            let name = req
+                .get("applier")
+                .and_then(|a| a.as_str())
+                .map(str::to_string);
+            let op = req.get("op").and_then(|o| o.as_str()).unwrap_or("apply");
+            let applier = name.as_deref().and_then(|n| registry.by_name(n));
+            let out = match (applier, op) {
+                (None, _) => reply(&Err(format!("unknown applier {name:?}"))),
+                (Some(a), "apply") => {
                     let _g = lock.lock().await;
                     tracing::info!("applyd: applying {}", a.name());
-                    a.apply(&store).await.map_err(|e| e.to_string())
+                    reply(&a.apply(&store).await.map_err(|e| e.to_string()))
                 }
-                None => Err(format!("unknown applier {name:?}")),
+                (Some(a), "status") => match a.status(&store).await {
+                    Ok(st) => json!({"ok": true, "status": st}),
+                    Err(e) => json!({"ok": false, "error": e.to_string()}),
+                },
+                (Some(_), other) => reply(&Err(format!("unknown op {other:?}"))),
             };
-            let mut out = reply(&res).to_string();
+            let mut out = out.to_string();
             out.push('\n');
             let _ = wr.write_all(out.as_bytes()).await;
         });
     }
 }
 
-/// Ask the broker to run applier `name`.
-pub async fn request(socket: &Path, name: &str) -> Result<ApplyReport> {
+/// One request/response round trip with the broker.
+async fn call(socket: &Path, req: Value) -> Result<Value> {
     let conn = UnixStream::connect(socket)
         .await
         .map_err(|e| Error::Network(format!("apply broker {}: {e}", socket.display())))?;
     let (rd, mut wr) = conn.into_split();
-    wr.write_all(format!("{}\n", json!({ "applier": name })).as_bytes())
+    wr.write_all(format!("{req}\n").as_bytes())
         .await
         .map_err(|e| Error::Network(format!("apply broker: {e}")))?;
     let mut line = String::new();
@@ -120,8 +129,33 @@ pub async fn request(socket: &Path, name: &str) -> Result<ApplyReport> {
         .read_line(&mut line)
         .await
         .map_err(|e| Error::Network(format!("apply broker: {e}")))?;
-    let v: Value = serde_json::from_str(&line)
-        .map_err(|e| Error::Network(format!("apply broker answered {line:?}: {e}")))?;
+    serde_json::from_str(&line)
+        .map_err(|e| Error::Network(format!("apply broker answered {line:?}: {e}")))
+}
+
+fn broker_error(v: &Value) -> Error {
+    // keep the applier's wording: "Invalid ..." stays a 400 in the web UI
+    Error::Network(
+        v.get("error")
+            .and_then(|e| e.as_str())
+            .unwrap_or("apply broker failed")
+            .to_string(),
+    )
+}
+
+/// Ask the broker for applier `name`'s live status (as root).
+pub async fn request_status(socket: &Path, name: &str) -> Result<Value> {
+    let v = call(socket, json!({ "applier": name, "op": "status" })).await?;
+    if v.get("ok").and_then(|o| o.as_bool()) == Some(true) {
+        Ok(v.get("status").cloned().unwrap_or(Value::Null))
+    } else {
+        Err(broker_error(&v))
+    }
+}
+
+/// Ask the broker to run applier `name`.
+pub async fn request(socket: &Path, name: &str) -> Result<ApplyReport> {
+    let v = call(socket, json!({ "applier": name })).await?;
     let strs = |k: &str| -> Vec<String> {
         v.get(k)
             .and_then(|a| a.as_array())
@@ -138,40 +172,51 @@ pub async fn request(socket: &Path, name: &str) -> Result<ApplyReport> {
             warnings: strs("warnings"),
         })
     } else {
-        Err(Error::Network(
-            v.get("error")
-                .and_then(|e| e.as_str())
-                .unwrap_or("apply broker failed")
-                .to_string(),
-        ))
+        Err(broker_error(&v))
     }
 }
 
-/// An applier that applies through the broker and renders locally.
+/// An applier that applies (and reads live status) through the broker and
+/// renders locally.
 pub struct RemoteApplier {
     local: Arc<dyn Applier>,
     socket: PathBuf,
+    /// `wrap`: decide per call (broker only while its socket exists), so
+    /// patronus-web does not depend on starting after patronus-applyd.
+    auto: bool,
 }
 
 impl RemoteApplier {
     pub fn new(local: Arc<dyn Applier>, socket: PathBuf) -> Self {
-        Self { local, socket }
+        Self {
+            local,
+            socket,
+            auto: false,
+        }
     }
 
-    /// The broker when its socket exists and we are not root; otherwise
-    /// the local applier itself (root, containers, tests).
+    /// The broker when we are not root and its socket exists (checked on
+    /// every call); otherwise the local applier itself (root, containers,
+    /// tests).
     pub fn wrap(local: Arc<dyn Applier>) -> Arc<dyn Applier> {
-        let socket = socket_path();
-        if !nix::unistd::geteuid().is_root() && socket.exists() {
-            tracing::info!(
-                "{} changes are applied through the root broker at {}",
-                local.name(),
-                socket.display()
-            );
-            Arc::new(Self::new(local, socket))
-        } else {
-            local
+        if nix::unistd::geteuid().is_root() {
+            return local;
         }
+        let socket = socket_path();
+        tracing::info!(
+            "{} changes are applied through the root broker at {} while it runs",
+            local.name(),
+            socket.display()
+        );
+        Arc::new(Self {
+            local,
+            socket,
+            auto: true,
+        })
+    }
+
+    fn remote(&self) -> bool {
+        !self.auto || self.socket.exists()
     }
 }
 
@@ -183,11 +228,22 @@ impl Applier for RemoteApplier {
     fn phase(&self) -> Phase {
         self.local.phase()
     }
-    async fn apply(&self, _store: &ConfigStore) -> Result<ApplyReport> {
-        request(&self.socket, self.local.name()).await
+    async fn apply(&self, store: &ConfigStore) -> Result<ApplyReport> {
+        if self.remote() {
+            request(&self.socket, self.local.name()).await
+        } else {
+            self.local.apply(store).await
+        }
     }
     async fn render(&self, store: &ConfigStore) -> Result<String> {
         self.local.render(store).await
+    }
+    async fn status(&self, store: &ConfigStore) -> Result<Value> {
+        if self.remote() {
+            request_status(&self.socket, self.local.name()).await
+        } else {
+            self.local.status(store).await
+        }
     }
     fn resource_kinds(&self) -> &'static [ResourceKind] {
         self.local.resource_kinds()
@@ -227,6 +283,9 @@ mod tests {
         async fn render(&self, _s: &ConfigStore) -> Result<String> {
             Ok("local render".into())
         }
+        async fn status(&self, _s: &ConfigStore) -> Result<Value> {
+            Ok(json!({"running": true, "as_root": nix::unistd::geteuid().is_root()}))
+        }
     }
 
     #[tokio::test]
@@ -264,5 +323,11 @@ mod tests {
             .to_string()
             .contains("unknown applier"));
         assert_eq!(remote.render(&web_store).await.unwrap(), "local render");
+        // live status is read by the broker, not the caller
+        assert_eq!(remote.status(&web_store).await.unwrap()["running"], true);
+        let e = call(&sock, json!({"applier": "echo", "op": "nope"}))
+            .await
+            .unwrap();
+        assert!(e["error"].as_str().unwrap().contains("unknown op"), "{e}");
     }
 }

@@ -26,7 +26,7 @@ IUSE="
 	+web +cli +api
 	dashboard
 	+nftables iptables
-	+dhcp +dns +unbound bind dnsmasq
+	+dhcp +dns +unbound bind dnsmasq kea +ntp
 	+vpn wireguard openvpn ipsec
 	+multiwan
 	ha ucarp keepalived vrrpd
@@ -60,16 +60,25 @@ REQUIRED_USE="
 	tinyproxy? ( !squid )
 	geoip2? ( !geoip )
 	bind? ( !unbound !dnsmasq )
-	unbound? ( !bind !dnsmasq )
-	dnsmasq? ( !bind !unbound )
+	unbound? ( !bind )
+	dnsmasq? ( !bind )
 "
 
+# DHCP server (USE=dhcp): Kea (USE=kea; RA via radvd) or dnsmasq (DHCPv4/v6,
+# RA and relay in one daemon). Relays always use dnsmasq. Patronus writes the
+# config these packages' own init scripts read (/etc/kea, /etc/dnsmasq.conf,
+# /etc/radvd.conf) and drives them through OpenRC or systemd. USE=ntp: chrony.
+# (No comments inside RDEPEND: Portage would parse '#' as an atom.)
 RDEPEND="
 	acct-user/patronus
 	acct-group/patronus
 	nftables? ( net-firewall/nftables )
 	iptables? ( net-firewall/iptables )
-	dhcp? ( net-misc/dhcp )
+	dhcp? (
+		kea? ( net-misc/kea net-misc/radvd net-dns/dnsmasq )
+		!kea? ( net-dns/dnsmasq )
+	)
+	ntp? ( net-misc/chrony )
 	dns? (
 		unbound? ( net-dns/unbound )
 		bind? ( net-dns/bind )
@@ -215,6 +224,8 @@ src_configure() {
 		$(usex dhcp "dhcp-server" "")
 		$(usex dns "dns-server" "")
 		$(usex unbound "dns-server" "")
+		$(usex dnsmasq "dns-server" "")
+		$(usex ntp "ntp-server" "")
 		$(usex wireguard "vpn-wireguard" "")
 		$(usex openvpn "vpn-openvpn" "")
 		$(usex ipsec "vpn-ipsec" "")
@@ -300,13 +311,20 @@ src_install() {
 	# deliberately omitting ${ECARGO_ARGS[@]}, so patronus-web builds with
 	# its own (empty) default feature set.
 	if use web; then
-		# patronus-web's own features (lane C interfaces): the same USE
-		# flags as patronus-cli, so the UI only offers what is compiled in.
+		# patronus-web's own features (not patronus-cli's): the same USE
+		# flags, so the UI only offers what is compiled in -- lane C
+		# interfaces (vlan/pppoe/dhcpcd) and the lane D LAN service pages
+		# (dhcp, dns/unbound/dnsmasq, ntp).
 		local webfeatures=(
 			$(usex vlan "vlan" "")
 			$(usex pppoe "pppoe" "")
 			$(usex dhcpcd "dhcpcd" "")
 		)
+		# (not `usex`: ci/use-flag-feature-check.sh reads `usex` lines as
+		# patronus-cli features, and these are patronus-web's own names)
+		use dhcp && webfeatures+=( dhcp )
+		use dns && webfeatures+=( dns )
+		use ntp && webfeatures+=( ntp )
 		set -- "${CARGO}" install --path ./crates/patronus-web \
 			--root "${ED}/usr" \
 			${GIT_CRATES[@]:+--frozen} \
@@ -343,7 +361,7 @@ src_install() {
 	if use systemd; then
 		systemd_dounit "${FILESDIR}/patronus-web.service"
 		systemd_dounit "${FILESDIR}/patronus-firewall.service"
-		# lane C: root apply broker + per-interface DHCP client / pppd
+		# root apply broker (lanes C, D) + per-interface DHCP client / pppd
 		systemd_dounit "${FILESDIR}/patronus-applyd.service"
 		systemd_dounit "${FILESDIR}/patronus-dhcpc@.service"
 		use pppoe && systemd_dounit "${FILESDIR}/patronus-pppoe@.service"
@@ -415,7 +433,7 @@ pkg_postinst() {
 	if use systemd; then
 		elog "To start the web interface (systemd):"
 		elog "  systemctl start patronus-web"
-		elog "  systemctl enable --now patronus-applyd  # lets the web UI start DHCP clients / PPPoE"
+		elog "  systemctl enable --now patronus-applyd  # lets the web UI start DHCP clients / PPPoE and apply DHCP/DNS/NTP"
 		elog "  systemctl enable patronus-web"
 		elog ""
 		elog "Boot-time apply of the stored config (sysctl, interfaces, routes,"
@@ -426,7 +444,7 @@ pkg_postinst() {
 		elog "To start the web interface (OpenRC):"
 		elog "  rc-service patronus-web start"
 		elog "  rc-update add patronus-web default"
-		elog "  rc-update add patronus-applyd default  # lets the web UI start DHCP clients / PPPoE"
+		elog "  rc-update add patronus-applyd default  # lets the web UI start DHCP clients / PPPoE and apply DHCP/DNS/NTP"
 		elog ""
 		elog "Boot-time apply of the stored config (OpenRC; runs 'patronus apply'):"
 		elog "  rc-update add patronus-firewall boot && rc-service patronus-firewall start"

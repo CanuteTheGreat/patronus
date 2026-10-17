@@ -36,6 +36,7 @@ pub fn build_router(
         .route("/interfaces", get(api::interfaces::page))
         .route("/monitoring", get(pages::monitoring))
         .route("/system", get(pages::system))
+        .merge(api::lan::pages())
         // Simple handler routes (working fallbacks)
         .route("/simple", get(crate::simple_handlers::simple_index))
         .route(
@@ -130,6 +131,7 @@ fn api_routes() -> Router<AppState> {
         .route("/auth/me", get(crate::auth::current_user))
         .merge(api::status::router())
         .merge(api::firewall::router())
+        .merge(api::lan::router())
         .merge(api::vpn::router())
         .merge(api::network::router())
         .merge(api::interfaces::router())

@@ -2,8 +2,11 @@
 # Root apply broker for the web UI: patronus-web runs unprivileged and asks
 # this service (unix socket /run/patronus/applyd.sock, group patronus) to
 # re-apply one subsystem from the config store -- e.g. after an interface
-# change it (re)starts DHCP clients / pppd, which needs root. The request
-# names an applier only; the configuration always comes from the store.
+# change it (re)starts DHCP clients / pppd, after a DHCP/DNS/NTP change it
+# writes /etc/kea, /etc/dnsmasq.conf, /etc/unbound, /etc/chrony and restarts
+# those daemons, all of which needs root. The request names an applier only;
+# the configuration always comes from the store. Also refreshes dynamic DNS
+# every 5 minutes.
 Description=Patronus apply broker for the web UI
 After=patronus-firewall.service
 Before=patronus-web.service
@@ -13,6 +16,9 @@ Type=simple
 ExecStart=/usr/bin/patronus applyd
 Restart=on-failure
 RestartSec=5
+RuntimeDirectory=patronus
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
 User=root
 Group=root
 

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}NTP - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">NTP Server</h1>
+    <p class="page-subtitle">Serve time to the LAN with chrony. With the server off, chrony keeps the
+        router's own clock in sync from the same upstream servers.</p>
+</div>
+
+{% if !error.is_empty() %}<div class="alert-error">{{ error }}</div>{% endif %}
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Settings</h2></div>
+    <p class="text-sm" id="ntp-status">chrony: {% if !available %}<span class="bad">not installed (USE=ntp)</span>{% else if running %}<span class="ok">running</span>{% else %}<span class="text-muted">stopped</span>{% endif %}
+        &middot; LAN time server: {% if enabled %}<b>on</b>{% else %}off{% endif %}</p>
+    <form class="lan-form" onsubmit="return submitJson(event, 'PUT', '/api/ntp')">
+        <label>Serve time to the LAN <input type="checkbox" name="enabled" {% if enabled %}checked{% endif %}></label>
+        <label>Upstream servers <input name="servers" value="{{ servers }}" size="40"></label>
+        <label>Serve on <input name="interfaces" value="{{ interfaces }}"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Save</button>
+    </form>
+    <p class="text-sm text-muted">DHCP clients are told to use the router as their NTP server while it is on
+        (unless a pool lists its own NTP servers).</p>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+{% include "lan_js.html" %}
+{% endblock %}

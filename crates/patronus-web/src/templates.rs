@@ -77,9 +77,6 @@ pub struct VpnTemplate {
 #[template(path = "network.html")]
 pub struct NetworkTemplate {
     pub interfaces: Vec<InterfaceInfo>,
-    pub dhcp_pools: Vec<DhcpPool>,
-    pub dhcp_leases: Vec<DhcpLease>,
-    pub dns_records: Vec<DnsRecord>,
     pub routes: Vec<Route>,
 }
 
@@ -266,39 +263,6 @@ pub struct IpsecTunnel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DhcpPool {
-    pub id: u32,
-    pub interface: String,
-    pub range_start: String,
-    pub range_end: String,
-    pub subnet: String,
-    pub gateway: String,
-    pub lease_time: u32,
-    pub enabled: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DhcpLease {
-    pub ip_address: String,
-    pub mac_address: String,
-    pub hostname: Option<String>,
-    pub lease_start: String,
-    pub lease_end: String,
-    pub is_active: bool,
-    pub hostname_display: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DnsRecord {
-    pub id: u32,
-    pub hostname: String,
-    pub ip_address: String,
-    pub record_type: String,
-    pub value: String,
-    pub ttl: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Route {
     pub destination: String,
     pub gateway: String,
@@ -481,28 +445,6 @@ pub struct LogEntry {
 impl fmt::Display for InterfaceInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} ({})", self.name, self.state)
-    }
-}
-
-impl fmt::Display for DhcpLease {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} -> {}", self.mac_address, self.ip_address)
-    }
-}
-
-impl fmt::Display for DhcpPool {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}: {} - {}",
-            self.interface, self.range_start, self.range_end
-        )
-    }
-}
-
-impl fmt::Display for DnsRecord {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} -> {}", self.hostname, self.value)
     }
 }
 

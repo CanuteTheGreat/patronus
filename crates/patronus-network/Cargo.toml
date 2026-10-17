@@ -6,8 +6,11 @@ license.workspace = true
 
 [features]
 default = []
-dhcp = ["dep:dhcproto"]
-dns = ["dep:trust-dns-server"]
+# LAN services (lane D). The daemons are external Gentoo packages (kea or
+# dnsmasq, radvd, unbound, chrony); these features compile the appliers.
+dhcp = []
+dns = []
+ntp = []
 wireguard = []
 openvpn = []
 ipsec = []
@@ -57,7 +60,4 @@ rtnetlink = "0.14"
 ipnetwork = "0.20"
 futures = "0.3"
 
-# Optional features
-dhcproto = { workspace = true, optional = true }
-trust-dns-server = { workspace = true, optional = true }
 # wireguard-control = { workspace = true, optional = true }  # Removed - not used

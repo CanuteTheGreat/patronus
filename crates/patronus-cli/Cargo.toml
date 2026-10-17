@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server"]
 
 # Core features
 web = ["patronus-web", "dep:axum"]
@@ -23,8 +23,11 @@ nftables = ["patronus-firewall/nftables"]
 iptables = ["patronus-firewall/iptables"]
 
 # Network services
-dhcp-server = ["patronus-network/dhcp"]
-dns-server = ["patronus-network/dns"]
+# LAN services (lane D): appliers in patronus apply/applyd, and the web
+# UI's DHCP / DNS / NTP pages. USE=dhcp / dns,unbound,dnsmasq / ntp.
+dhcp-server = ["patronus-network/dhcp", "patronus-web?/dhcp"]
+dns-server = ["patronus-network/dns", "patronus-web?/dns"]
+ntp-server = ["patronus-network/ntp", "patronus-web?/ntp"]
 multiwan = ["patronus-network/multiwan"]
 
 # VPN
@@ -55,7 +58,7 @@ patronus-core = { path = "../patronus-core" }
 patronus-firewall = { path = "../patronus-firewall" }
 patronus-network = { path = "../patronus-network" }
 patronus-config = { path = "../patronus-config" }
-patronus-web = { path = "../patronus-web", optional = true }
+patronus-web = { path = "../patronus-web", optional = true, default-features = false }
 patronus-gitops = { path = "../patronus-gitops", optional = true }
 patronus-ai = { path = "../patronus-ai", optional = true }
 patronus-cni = { path = "../patronus-cni", optional = true }

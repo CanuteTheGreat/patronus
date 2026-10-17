@@ -158,30 +158,6 @@ pub async fn network(State(state): State<AppState>) -> Response {
         }
     };
 
-    let dhcp_pools = match state.network.list_dhcp_pools().await {
-        Ok(pools) => pools,
-        Err(e) => {
-            tracing::error!("Failed to fetch DHCP pools: {}", e);
-            vec![]
-        }
-    };
-
-    let dhcp_leases = match state.network.list_dhcp_leases().await {
-        Ok(leases) => leases,
-        Err(e) => {
-            tracing::error!("Failed to fetch DHCP leases: {}", e);
-            vec![]
-        }
-    };
-
-    let dns_records = match state.network.list_dns_records().await {
-        Ok(records) => records,
-        Err(e) => {
-            tracing::error!("Failed to fetch DNS records: {}", e);
-            vec![]
-        }
-    };
-
     let routes = match state.network.list_routes().await {
         Ok(r) => r,
         Err(e) => {
@@ -190,13 +166,7 @@ pub async fn network(State(state): State<AppState>) -> Response {
         }
     };
 
-    let template = NetworkTemplate {
-        interfaces,
-        dhcp_pools,
-        dhcp_leases,
-        dns_records,
-        routes,
-    };
+    let template = NetworkTemplate { interfaces, routes };
 
     match template.render() {
         Ok(html) => Html(html).into_response(),
