@@ -37,6 +37,7 @@ fn prepare_app(state: AppState) -> axum::Router {
         loop {
             interval.tick().await;
             cleanup_state.auth.session_store.cleanup_expired().await;
+            cleanup_state.auth.login_throttle.cleanup_expired();
             tracing::debug!("Cleaned up expired sessions");
         }
     });
@@ -91,7 +92,12 @@ pub async fn serve(addr: SocketAddr, state: AppState) -> anyhow::Result<()> {
     tracing::info!("Starting web server on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    // Connect info: the login throttle keys failed attempts by client IP.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -113,7 +119,7 @@ pub async fn serve_tls(
     tracing::info!("Starting web server on https://{}", addr);
 
     axum_server::bind_rustls(addr, tls_config)
-        .serve(app.into_make_service())
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .await?;
 
     Ok(())

@@ -432,10 +432,23 @@ pub enum AuthError {
     UserDisabled,
     Forbidden,
     InternalError,
+    /// Too many failed logins; retry after this many seconds.
+    TooManyAttempts(u64),
 }
 
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
+        if let AuthError::TooManyAttempts(secs) = self {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(header::RETRY_AFTER, secs.to_string())],
+                Json(serde_json::json!({
+                    "error": "Too many failed login attempts; try again later",
+                    "retry_after_secs": secs,
+                })),
+            )
+                .into_response();
+        }
         let (status, message) = match self {
             AuthError::MissingSession => (StatusCode::UNAUTHORIZED, "No session found"),
             AuthError::InvalidSession => (StatusCode::UNAUTHORIZED, "Invalid or expired session"),
@@ -444,7 +457,9 @@ impl IntoResponse for AuthError {
             }
             AuthError::UserDisabled => (StatusCode::FORBIDDEN, "User account is disabled"),
             AuthError::Forbidden => (StatusCode::FORBIDDEN, "Insufficient permissions"),
-            AuthError::InternalError => (StatusCode::INTERNAL_SERVER_ERROR, "Internal error"),
+            AuthError::InternalError | AuthError::TooManyAttempts(_) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "Internal error")
+            }
         };
 
         (
@@ -542,11 +557,123 @@ pub struct LoginResponse {
     pub role: UserRole,
 }
 
+/// Failed logins allowed per client within [`LOGIN_FAILURE_WINDOW_SECS`]
+/// before further attempts from that client are refused with 429.
+pub const MAX_LOGIN_FAILURES: u32 = 5;
+/// Window (and lockout length) for [`MAX_LOGIN_FAILURES`].
+pub const LOGIN_FAILURE_WINDOW_SECS: i64 = 15 * 60;
+/// Upper bound on tracked clients, so a spray from many addresses can't
+/// grow the table without limit.
+const MAX_TRACKED_LOGIN_CLIENTS: usize = 65_536;
+
+/// Per-client brute-force throttle for `POST /api/auth/login`.
+///
+/// Before this, the login endpoint accepted unlimited password guesses at
+/// full speed from any client. Clients are keyed by IP address; IPv6
+/// clients by their /64, since one host trivially owns a whole /64. A
+/// successful login clears the client's record. While a client is locked
+/// out even the *correct* password is refused, otherwise the lockout would
+/// not slow down guessing at all.
+#[derive(Clone, Default)]
+pub struct LoginThrottle {
+    failures: Arc<std::sync::Mutex<HashMap<std::net::IpAddr, (u32, DateTime<Utc>)>>>,
+}
+
+impl LoginThrottle {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn key(ip: std::net::IpAddr) -> std::net::IpAddr {
+        match ip {
+            std::net::IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+                Some(v4) => std::net::IpAddr::V4(v4),
+                None => {
+                    let mut o = v6.octets();
+                    o[8..].fill(0);
+                    std::net::IpAddr::V6(std::net::Ipv6Addr::from(o))
+                }
+            },
+            v4 => v4,
+        }
+    }
+
+    fn window() -> Duration {
+        Duration::seconds(LOGIN_FAILURE_WINDOW_SECS)
+    }
+
+    /// `Some(seconds until the client may try again)` if it is locked out.
+    pub fn check(&self, ip: std::net::IpAddr) -> Option<u64> {
+        self.check_at(ip, Utc::now())
+    }
+
+    fn check_at(&self, ip: std::net::IpAddr, now: DateTime<Utc>) -> Option<u64> {
+        let map = self.failures.lock().unwrap_or_else(|e| e.into_inner());
+        let (count, start) = *map.get(&Self::key(ip))?;
+        let until = start + Self::window();
+        if count >= MAX_LOGIN_FAILURES && now < until {
+            Some((until - now).num_seconds().max(1) as u64)
+        } else {
+            None
+        }
+    }
+
+    /// Record a failed login from `ip`.
+    pub fn record_failure(&self, ip: std::net::IpAddr) {
+        self.record_failure_at(ip, Utc::now())
+    }
+
+    fn record_failure_at(&self, ip: std::net::IpAddr, now: DateTime<Utc>) {
+        let mut map = self.failures.lock().unwrap_or_else(|e| e.into_inner());
+        let window = Self::window();
+        if map.len() >= MAX_TRACKED_LOGIN_CLIENTS {
+            map.retain(|_, (_, start)| now < *start + window);
+        }
+        let key = Self::key(ip);
+        if map.len() >= MAX_TRACKED_LOGIN_CLIENTS && !map.contains_key(&key) {
+            tracing::warn!("login throttle table full; not tracking {}", key);
+            return;
+        }
+        let entry = map.entry(key).or_insert((0, now));
+        if now >= entry.1 + window {
+            *entry = (0, now);
+        }
+        entry.0 = entry.0.saturating_add(1);
+        if entry.0 == MAX_LOGIN_FAILURES {
+            tracing::warn!(
+                "{} failed logins from {}; locking it out for {}s",
+                MAX_LOGIN_FAILURES,
+                key,
+                LOGIN_FAILURE_WINDOW_SECS
+            );
+        }
+    }
+
+    /// Forget `ip`'s failures (after a successful login).
+    pub fn record_success(&self, ip: std::net::IpAddr) {
+        self.failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&Self::key(ip));
+    }
+
+    /// Drop records whose window has passed.
+    pub fn cleanup_expired(&self) {
+        let now = Utc::now();
+        let window = Self::window();
+        self.failures
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|_, (_, start)| now < *start + window);
+    }
+}
+
 /// Authentication state (includes user store and session store)
 #[derive(Clone)]
 pub struct AuthState {
     pub user_store: UserStore,
     pub session_store: SessionStore,
+    pub login_throttle: LoginThrottle,
 }
 
 impl Default for AuthState {
@@ -560,6 +687,7 @@ impl AuthState {
         Self {
             user_store: UserStore::new(),
             session_store: SessionStore::new(),
+            login_throttle: LoginThrottle::new(),
         }
     }
 }
@@ -567,15 +695,31 @@ impl AuthState {
 /// Login handler
 pub async fn login(
     State(app_state): State<crate::state::AppState>,
+    connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Response, AuthError> {
+    // Without connection info (in-process callers) every request shares
+    // the unspecified address, which still caps guessing.
+    let client = connect_info
+        .map(|axum::extract::ConnectInfo(addr)| addr.ip())
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    let throttle = &app_state.auth.login_throttle;
+    if let Some(retry_after) = throttle.check(client) {
+        return Err(AuthError::TooManyAttempts(retry_after));
+    }
+
     // Verify credentials
-    let user = app_state
+    let Some(user) = app_state
         .auth
         .user_store
         .verify_credentials(&req.username, &req.password)
         .await
-        .ok_or(AuthError::InvalidCredentials)?;
+    else {
+        throttle.record_failure(client);
+        tracing::warn!("failed login for {:?} from {}", req.username, client);
+        return Err(AuthError::InvalidCredentials);
+    };
+    throttle.record_success(client);
 
     // Update last login time
     app_state
@@ -810,5 +954,63 @@ mod default_credential_tests {
             .verify_credentials("admin", "Correct-Horse-Battery-9")
             .await
             .is_some());
+    }
+}
+
+#[cfg(test)]
+mod login_throttle_tests {
+    use super::*;
+    use std::net::IpAddr;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn locks_out_after_max_failures_until_the_window_passes() {
+        let t = LoginThrottle::new();
+        let now = Utc::now();
+        let a = ip("192.0.2.1");
+        for _ in 0..MAX_LOGIN_FAILURES - 1 {
+            t.record_failure_at(a, now);
+            assert!(t.check_at(a, now).is_none());
+        }
+        t.record_failure_at(a, now);
+        let retry = t.check_at(a, now).expect("locked out");
+        assert!(retry > 0 && retry <= LOGIN_FAILURE_WINDOW_SECS as u64);
+        // Another client is unaffected.
+        assert!(t.check_at(ip("192.0.2.2"), now).is_none());
+        // After the window it may try again, with a fresh count.
+        let later = now + Duration::seconds(LOGIN_FAILURE_WINDOW_SECS + 1);
+        assert!(t.check_at(a, later).is_none());
+        t.record_failure_at(a, later);
+        assert!(t.check_at(a, later).is_none());
+    }
+
+    #[test]
+    fn success_clears_the_record() {
+        let t = LoginThrottle::new();
+        let a = ip("198.51.100.7");
+        for _ in 0..MAX_LOGIN_FAILURES - 1 {
+            t.record_failure(a);
+        }
+        t.record_success(a);
+        t.record_failure(a);
+        assert!(t.check(a).is_none());
+    }
+
+    #[test]
+    fn ipv6_clients_are_grouped_by_slash_64_and_mapped_v4_by_v4() {
+        let t = LoginThrottle::new();
+        for i in 0..MAX_LOGIN_FAILURES {
+            t.record_failure(ip(&format!("2001:db8:1:2::{:x}", i + 1)));
+        }
+        assert!(t.check(ip("2001:db8:1:2:ffff::1")).is_some());
+        assert!(t.check(ip("2001:db8:1:3::1")).is_none());
+
+        for _ in 0..MAX_LOGIN_FAILURES {
+            t.record_failure(ip("::ffff:203.0.113.9"));
+        }
+        assert!(t.check(ip("203.0.113.9")).is_some());
     }
 }

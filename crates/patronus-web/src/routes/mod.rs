@@ -301,4 +301,56 @@ mod auth_gate_tests {
             .unwrap();
         assert_ne!(r.status(), StatusCode::SEE_OTHER);
     }
+
+    fn from_ip(mut r: Request<Body>, ip: &str) -> Request<Body> {
+        let addr: std::net::SocketAddr = format!("{ip}:40000").parse().unwrap();
+        r.extensions_mut().insert(axum::extract::ConnectInfo(addr));
+        r
+    }
+
+    #[tokio::test]
+    async fn repeated_failed_logins_lock_out_that_client_only() {
+        let (app, pw) = app().await;
+        let bad = r#"{"username":"admin","password":"not-the-password"}"#;
+        let good = format!(r#"{{"username":"admin","password":"{pw}"}}"#);
+        let attacker = "203.0.113.50";
+        for i in 0..crate::auth::MAX_LOGIN_FAILURES {
+            let r = app
+                .clone()
+                .oneshot(from_ip(
+                    req(Method::POST, "/api/auth/login", None, Some(bad)),
+                    attacker,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(r.status(), StatusCode::UNAUTHORIZED, "attempt {i}");
+        }
+        // Locked out: even the right password is refused, with Retry-After.
+        let r = app
+            .clone()
+            .oneshot(from_ip(
+                req(Method::POST, "/api/auth/login", None, Some(&good)),
+                attacker,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(r.headers().get(header::SET_COOKIE).is_none());
+        let retry: u64 = r.headers()[header::RETRY_AFTER]
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(retry > 0);
+        // The legitimate admin on another address still gets in.
+        let r = app
+            .clone()
+            .oneshot(from_ip(
+                req(Method::POST, "/api/auth/login", None, Some(&good)),
+                "192.0.2.10",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+    }
 }
