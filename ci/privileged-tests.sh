@@ -45,6 +45,7 @@ export DEBIAN_FRONTEND=noninteractive
 rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
 for i in 1 2 3; do apt-get update -qq && break; [ "$i" = 3 ] && exit 1; sleep 15; done
 apt-get install -y -qq nftables iproute2 >/dev/null
+echo "--- test container arch: $(uname -m)"
 echo "--- capabilities of the test container"
 grep Cap /proc/self/status
 nft add table inet patronus_ci_probe
@@ -59,7 +60,18 @@ echo "=== nft source=any validation harness"
 ./nft-any
 EOF
 
-docker create --name "$C" --cap-add NET_ADMIN --cap-add NET_RAW \
+# The sibling must run the same architecture the test binaries were built
+# for. Without --platform, docker picks the *daemon's* native arch: on
+# beauxbatons (Apple silicon, label linux-cross-x86_64) this job container is
+# linux/amd64 under Rosetta but the sibling came up arm64, so the x86_64
+# binaries died with "rosetta error: failed to open elf at
+# /lib64/ld-linux-x86-64.so.2" (run 394, exit 133).
+case "$(uname -m)" in
+  x86_64) PLATFORM=linux/amd64 ;;
+  aarch64|arm64) PLATFORM=linux/arm64 ;;
+  *) echo "unsupported build arch $(uname -m)"; exit 1 ;;
+esac
+docker create --name "$C" --platform "$PLATFORM" --cap-add NET_ADMIN --cap-add NET_RAW \
   --memory 2g --memory-swap 2g --cpus 2 -w /t "$IMAGE" bash /t/run.sh >/dev/null
 docker cp "$OUT/." "$C:/t/"
 docker start -a "$C"
