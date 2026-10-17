@@ -533,11 +533,19 @@ jobs:
           docker build -t git.canutethegreat.com/canutethegreat/patronus:${{ github.sha }} \
                        -t git.canutethegreat.com/canutethegreat/patronus:latest /tmp/pubctx
           echo "${{ secrets.REGISTRY_PUSH_TOKEN }}" | docker login git.canutethegreat.com -u CanuteTheGreat --password-stdin
+          # Forgejo needs 100-170 s to finalize a ~550 MB layer (it hashes the
+          # blob five ways), but the docker/containerd client gives up after
+          # ~30 s ("timeout awaiting response headers"). The server still
+          # finishes and stores the layer; an immediate retry re-uploads the
+          # same blob concurrently and Forgejo panics on the duplicate
+          # package_blob row (400 / "error from registry: unknown", run 3560).
+          # So wait for the in-flight finalize before retrying: the retry then
+          # sees "Layer already exists" and moves on to the next large layer.
           for tag in ${{ github.sha }} latest; do
             n=1
             until docker push git.canutethegreat.com/canutethegreat/patronus:$tag; do
-              [ $n -ge 3 ] && { echo "::error::push of $tag failed"; exit 1; }
-              n=$((n+1)); sleep $((n*10))
+              [ $n -ge 6 ] && { echo "::error::push of $tag failed"; exit 1; }
+              n=$((n+1)); echo "push attempt $((n-1)) failed; waiting 200s for the registry to finish storing the layer"; sleep 200
             done
           done
           docker logout git.canutethegreat.com || true
