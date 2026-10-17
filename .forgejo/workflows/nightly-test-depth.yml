@@ -23,9 +23,9 @@ defaults:
 jobs:
   mutants:
     name: Mutation testing (core modules, score floors)
-    # Heavy scheduled/on-demand work runs on its own low-priority lane (nightly-x86_64, ctg-infrastructure
-    # ci-runners/rw-man-nightly) so it never holds the per-push runners for hours.
-    runs-on: nightly-x86_64
+    # colo-only lane (rw-man-01, ctg-infrastructure ci-runners/rw-man-colo): mutation / chaos /
+    # security-tool / network-probing CI never runs on the EC2 hosts rw-man-02..05 (GuardDuty).
+    runs-on: colo-x86_64
     timeout-minutes: 300
     env:
       CARGO_BUILD_JOBS: 4
@@ -33,7 +33,7 @@ jobs:
       MUTANTS_JOBS: 2
     container:
       image: catthehacker/ubuntu:act-latest
-      options: --memory 8g --memory-swap 8g --cpus 4
+      options: --memory 7g --memory-swap 7g --cpus 4
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -62,14 +62,16 @@ jobs:
 
   netlab-deep:
     name: Deep netlab (previous-release upgrade, 30 power cuts)
-    runs-on: nightly-x86_64
+    # colo-only lane (rw-man-01, ctg-infrastructure ci-runners/rw-man-colo): mutation / chaos /
+    # security-tool / network-probing CI never runs on the EC2 hosts rw-man-02..05 (GuardDuty).
+    runs-on: colo-x86_64
     timeout-minutes: 120
     env:
       CARGO_BUILD_JOBS: 4
       CARGO_PROFILE_DEV_DEBUG: 0
     container:
       image: catthehacker/ubuntu:act-latest
-      options: --memory 8g --memory-swap 8g --cpus 4
+      options: --memory 7g --memory-swap 7g --cpus 4
     steps:
       - uses: actions/checkout@v4
         with:
