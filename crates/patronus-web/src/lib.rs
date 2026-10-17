@@ -6,10 +6,8 @@ use std::net::SocketAddr;
 
 pub mod auth;
 pub mod geo_centroid;
-pub mod handlers;
 pub mod qrcode;
 pub mod routes;
-pub mod simple_handlers;
 pub mod state;
 pub mod templates;
 pub mod tls;
@@ -76,9 +74,8 @@ fn prepare_app(state: AppState) -> axum::Router {
         }
     });
 
-    // Start WebSocket broadcaster tasks
+    // Start WebSocket broadcaster tasks (measured metrics only)
     websocket::start_metrics_broadcaster(ws_broadcaster.clone(), state.clone());
-    websocket::start_log_broadcaster(ws_broadcaster.clone());
 
     create_app(state, ws_broadcaster)
 }

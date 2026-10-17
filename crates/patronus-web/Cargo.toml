@@ -64,3 +64,5 @@ image = "0.25"
 futures = "0.3"
 rand = "0.8"
 sysinfo = "0.31"
+# statvfs (real disk usage), hostname, CLK_TCK (service uptimes)
+nix = { workspace = true, features = ["fs", "hostname", "feature"] }

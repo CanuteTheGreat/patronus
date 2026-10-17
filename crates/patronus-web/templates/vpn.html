@@ -1,90 +1,71 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VPN - Patronus</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .stat-card { border: 1px solid #ddd; padding: 15px; margin: 10px; border-radius: 5px; }
-        .badge { padding: 3px 8px; border-radius: 3px; font-size: 0.8em; }
-        .badge.success { background: #28a745; color: white; }
-        .badge.info { background: #17a2b8; color: white; }
-        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-    </style>
-</head>
-<body>
-    <h1>VPN Management</h1>
+{% extends "base.html" %}
 
-    <h2>WireGuard Peers ({{ wg_peers.len() }})</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Public Key</th>
-                <th>Allowed IPs</th>
-                <th>Status</th>
-            </tr>
-        </thead>
+{% block title %}VPN - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">VPN</h1>
+    <p class="page-subtitle">Live tunnel state read from the kernel and strongSwan when this page loaded.
+        Creating and editing tunnels from Patronus is not available yet: configure WireGuard with
+        wireguard-tools (wg / wg-quick) and IPsec with swanctl; they show up here.</p>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">WireGuard peers ({{ wg_peers.len() }})</h2></div>
+    {% if !wg_error.is_empty() %}
+    <div class="alert-error">WireGuard state unavailable: {{ wg_error }}</div>
+    {% else if wg_peers.is_empty() %}
+    <p class="empty">No WireGuard peers: no WireGuard interface with peers exists on this system (`wg show` is empty).</p>
+    {% else %}
+    <table class="lan" id="wg-peers">
+        <thead><tr><th>Interface / peer</th><th>Public key</th><th>Allowed IPs</th><th>Endpoint</th><th>Last handshake</th><th>Transfer</th><th>Status</th></tr></thead>
         <tbody>
-            {% for peer in wg_peers %}
-            <tr>
-                <td><strong>{{ peer.name }}</strong></td>
-                <td><code>{{ peer.public_key }}</code></td>
-                <td>{{ peer.allowed_ips }}</td>
-                <td><span class="badge info">{{ peer.status }}</span></td>
-            </tr>
-            {% endfor %}
+        {% for peer in wg_peers %}
+        <tr>
+            <td><strong>{{ peer.name }}</strong></td>
+            <td class="mono">{{ peer.public_key }}</td>
+            <td>{{ peer.allowed_ips }}</td>
+            <td>{% match peer.endpoint %}{% when Some with (e) %}{{ e }}{% when None %}<span class="text-muted">none yet</span>{% endmatch %}</td>
+            <td>{% match peer.last_handshake %}{% when Some with (h) %}{{ h }}{% when None %}<span class="text-muted">never</span>{% endmatch %}</td>
+            <td>{{ peer.transfer }}</td>
+            <td>{% if peer.connected %}<span class="ok">{{ peer.status }}</span>{% else %}<span class="text-muted">{{ peer.status }}</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
         </tbody>
     </table>
+    {% endif %}
+</div>
 
-    <h2>OpenVPN Tunnels ({{ ovpn_tunnels.len() }})</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Status</th>
-                <th>Local IP</th>
-                <th>Remote IP</th>
-                <th>Connected Clients</th>
-            </tr>
-        </thead>
+<div class="card">
+    <div class="card-header"><h2 class="card-title">IPsec security associations ({{ ipsec_tunnels.len() }})</h2></div>
+    {% if !ipsec_error.is_empty() %}
+    <div class="alert-error">IPsec state unavailable: {{ ipsec_error }}</div>
+    {% else if ipsec_tunnels.is_empty() %}
+    <p class="empty">No IPsec SAs (`swanctl --list-sas` is empty).</p>
+    {% else %}
+    <table class="lan">
+        <thead><tr><th>Name</th><th>State</th><th>Local subnets</th><th>Remote subnets</th><th>Remote gateway</th></tr></thead>
         <tbody>
-            {% for tunnel in ovpn_tunnels %}
-            <tr>
-                <td><strong>{{ tunnel.name }}</strong></td>
-                <td><span class="badge info">{{ tunnel.status }}</span></td>
-                <td>{{ tunnel.local_ip }}</td>
-                <td>{{ tunnel.remote_ip }}</td>
-                <td>{{ tunnel.connected_clients }}</td>
-            </tr>
-            {% endfor %}
+        {% for t in ipsec_tunnels %}
+        <tr>
+            <td><strong>{{ t.name }}</strong></td>
+            <td>{% if t.status == "ESTABLISHED" %}<span class="ok">{{ t.status }}</span>{% else %}<span class="text-muted">{{ t.status }}</span>{% endif %}</td>
+            <td>{{ t.local_subnet }}</td>
+            <td>{{ t.remote_subnet }}</td>
+            <td>{{ t.remote_gateway }}</td>
+        </tr>
+        {% endfor %}
         </tbody>
     </table>
+    {% endif %}
+</div>
 
-    <h2>IPsec Tunnels ({{ ipsec_tunnels.len() }})</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Status</th>
-                <th>Local Subnet</th>
-                <th>Remote Subnet</th>
-                <th>Remote Gateway</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for tunnel in ipsec_tunnels %}
-            <tr>
-                <td><strong>{{ tunnel.name }}</strong></td>
-                <td><span class="badge info">{{ tunnel.status }}</span></td>
-                <td>{{ tunnel.local_subnet }}</td>
-                <td>{{ tunnel.remote_subnet }}</td>
-                <td>{{ tunnel.remote_gateway }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</body>
-</html>
+<div class="card">
+    <div class="card-header"><h2 class="card-title">OpenVPN</h2></div>
+    <p class="empty">OpenVPN is not managed or monitored by Patronus.</p>
+</div>
+{% endblock %}

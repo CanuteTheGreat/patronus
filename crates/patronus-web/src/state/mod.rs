@@ -8,10 +8,14 @@
 //! store and the kernel never disagree. Lanes only touch their own file
 //! here plus one field in [`AppState`].
 //!
-//! `firewall` and `lan` are store-backed. `vpn`, `network`, `system` and `monitoring`
-//! still hold in-memory fixtures that their lanes replace.
+//! `firewall`, `interfaces` and `lan` are store-backed. `vpn`, `network`,
+//! `system` and `monitoring` read live system state (wg/swanctl, ip route,
+//! systemd/OpenRC, /proc, backup files); their lanes add the store-backed
+//! configuration. No subsystem may show fixture rows: an empty system shows
+//! an empty list (see tests/no_fixtures.rs).
 
 pub mod firewall;
+pub mod host;
 pub mod interfaces;
 pub mod lan;
 pub mod monitoring;
@@ -70,7 +74,9 @@ impl AppState {
             lan: Arc::new(LanManager::new(config_store.clone())),
             vpn: Arc::new(VpnManager::new()),
             network: Arc::new(NetworkManager::new()),
-            system: Arc::new(SystemManager::new()),
+            system: Arc::new(SystemManager::new(system::backup_dir_for(
+                config_store.path(),
+            ))),
             monitoring: Arc::new(MonitoringManager::new()),
             config_store,
             auth: AuthState::new(),

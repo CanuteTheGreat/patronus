@@ -61,9 +61,6 @@
         <h1 class="page-title">Network Services</h1>
         <p class="page-subtitle">Manage interfaces and routing (DHCP, DNS and NTP have their own pages)</p>
         <div class="page-actions">
-            <button class="btn btn-secondary btn-sm" onclick="restartNetworking()">
-                Restart Networking
-            </button>
             <button class="btn btn-primary btn-sm" onclick="showAddInterfaceModal()">
                 Add Interface
             </button>
@@ -166,11 +163,16 @@
                 <div class="flex gap-2">
                     <input type="search" placeholder="Search routes..." class="search-input"
                            oninput="filterTable(this.value, 'routing-table')">
-                    <button class="btn btn-sm btn-primary" onclick="showAddRouteModal()">
-                        Add Route
-                    </button>
                 </div>
             </div>
+            <p class="text-sm text-muted">The kernel's main routing table (IPv4 and IPv6), read with
+                <code>ip route</code> when this page loaded. Static routes and gateways cannot be
+                configured from Patronus yet.</p>
+            {% if !routes_error.is_empty() %}
+            <p class="badge danger">Routing table unavailable: {{ routes_error }}</p>
+            {% else if routes.is_empty() %}
+            <p class="text-muted"><em>The routing table is empty.</em></p>
+            {% endif %}
 
             <div class="table-container">
                 <table id="routing-table">
@@ -180,9 +182,8 @@
                             <th>Gateway</th>
                             <th>Interface</th>
                             <th>Metric</th>
-                            <th>Type</th>
+                            <th>Origin</th>
                             <th>Status</th>
-                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -192,23 +193,13 @@
                             <td class="text-sm">{{ route.gateway }}</td>
                             <td class="text-sm">{{ route.interface }}</td>
                             <td class="text-sm">{{ route.metric }}</td>
-                            <td>
-                                {% if route.is_static %}
-                                <span class="badge info">Static</span>
-                                {% else %}
-                                <span class="badge warning">Dynamic</span>
-                                {% endif %}
-                            </td>
+                            <td><span class="badge info">{{ route.origin }}</span></td>
                             <td>
                                 {% if route.is_active %}
                                 <span class="badge success">Active</span>
                                 {% else %}
-                                <span class="badge danger">Inactive</span>
+                                <span class="badge danger">Link down</span>
                                 {% endif %}
-                            </td>
-                            <td>
-                                <button class="btn-icon" onclick="editRoute('{{ route.destination }}')">✎</button>
-                                <button class="btn-icon" onclick="deleteRoute('{{ route.destination }}')">🗑</button>
                             </td>
                         </tr>
                         {% endfor %}
@@ -270,32 +261,8 @@
             location.reload();
         }
 
-        // Routing management
-        function editRoute(dest) {
-            alert(`Edit route: ${dest}`);
-        }
-
-        function deleteRoute(dest) {
-            if (confirm(`Delete route to ${dest}?`)) {
-                alert(`Deleting route...`);
-            }
-        }
-
-        // Modals
-        function restartNetworking() {
-            if (confirm('Restart networking?')) {
-                alert('Restarting networking...');
-            }
-        }
-
         function showAddInterfaceModal() {
             location.href = '/interfaces';
-        }
-
-
-
-        function showAddRouteModal() {
-            alert('Add Route modal - TODO');
         }
     </script>
 </body>

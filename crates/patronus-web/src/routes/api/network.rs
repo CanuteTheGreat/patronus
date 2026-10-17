@@ -7,26 +7,17 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Route {
-    pub destination: String,
-    pub gateway: String,
-    pub interface: String,
-    pub metric: u32,
-}
-
-/// GET /api/network/routes
+/// GET /api/network/routes -- the kernel's main routing table (IPv4+IPv6).
 pub async fn list_routes(State(state): State<AppState>) -> Response {
     match state.network.list_routes().await {
         Ok(routes) => Json(routes).into_response(),
         Err(e) => {
             tracing::error!("Failed to list routes: {}", e);
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({
-                    "error": "Failed to list routes"
+                    "error": format!("cannot read the routing table: {e}")
                 })),
             )
                 .into_response()

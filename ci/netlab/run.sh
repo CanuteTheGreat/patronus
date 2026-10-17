@@ -56,6 +56,8 @@ export DEBIAN_FRONTEND=noninteractive
 rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
 for i in 1 2 3; do apt-get update -qq && break; [ "\$i" = 3 ] && exit 1; sleep 15; done
 apt-get install -y -qq nftables iproute2 curl python3 dnsmasq-base conntrack sqlite3 iputils-ping >/dev/null
+# wg(8) only; its "recommends" would pull wireguard-dkms + kernel headers
+apt-get install -y -qq --no-install-recommends wireguard-tools >/dev/null
 export NETLAB_POWER_CUTS=${NETLAB_POWER_CUTS:-4}
 $OLD_ENV
 echo "--- netlab container: \$(uname -m), kernel \$(uname -r)"

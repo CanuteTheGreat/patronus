@@ -1,583 +1,152 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>System - Patronus</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .stat-card { border: 1px solid #ddd; padding: 15px; margin: 10px; border-radius: 5px; }
-        .badge { padding: 3px 8px; border-radius: 3px; font-size: 0.8em; }
-        .badge.success { background: #28a745; color: white; }
-        .badge.info { background: #17a2b8; color: white; }
-        .badge.warning { background: #ffc107; color: black; }
-        .badge.danger { background: #dc3545; color: white; }
-        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        .btn { padding: 6px 12px; margin: 2px; border: none; border-radius: 4px; cursor: pointer; }
-        .btn.btn-primary { background: #007bff; color: white; }
-        .btn.btn-secondary { background: #6c757d; color: white; }
-        .btn.btn-success { background: #28a745; color: white; }
-        .btn.btn-warning { background: #ffc107; color: black; }
-        .btn.btn-danger { background: #dc3545; color: white; }
-        .btn-sm { padding: 4px 8px; font-size: 0.875em; }
-        .btn-icon { background: none; border: none; cursor: pointer; padding: 4px; }
-        .tabs { display: flex; border-bottom: 1px solid #ddd; margin-bottom: 20px; }
-        .tab-btn { padding: 10px 20px; border: none; background: none; cursor: pointer; }
-        .tab-btn.active { background: #f8f9fa; border-bottom: 2px solid #007bff; }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        .card { border: 1px solid #ddd; border-radius: 5px; padding: 20px; margin: 20px 0; }
-        .card-header { margin-bottom: 15px; }
-        .card-title { margin: 0; }
-        .flex { display: flex; }
-        .gap-2 { gap: 8px; }
-        .text-sm { font-size: 0.875em; }
-        .text-muted { color: #6c757d; }
-        .monospace { font-family: monospace; }
-        .font-bold { font-weight: bold; }
-        .search-input { padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; }
-        .w-full { width: 100%; }
-        .hidden { display: none; }
-        .mt-4 { margin-top: 16px; }
-        .mb-2 { margin-bottom: 8px; }
-        .mb-3 { margin-bottom: 12px; }
-        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 20px 0; }
-        .value { font-size: 2em; font-weight: bold; color: #007bff; }
-        .label { color: #6c757d; margin-top: 5px; }
-        .page-header { margin-bottom: 30px; }
-        .page-title { margin: 0; color: #333; }
-        .page-subtitle { margin: 5px 0 0 0; color: #6c757d; }
-        .page-actions { margin-top: 15px; }
-        .table-container { overflow-x: auto; }
-        .alert { padding: 12px; margin: 16px 0; border-radius: 4px; }
-        .alert.alert-warning { background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; }
-        .danger-card { border: 2px solid #dc3545; }
-        .danger-header { background: #dc3545; color: white; padding: 15px; margin: -20px -20px 20px -20px; }
-    </style>
-</head>
-<body>
-    <div class="page-header">
-        <h1 class="page-title">System Settings</h1>
-        <p class="page-subtitle">Configure system parameters, users, backups, and updates</p>
-        <div class="page-actions">
-            <button class="btn btn-secondary btn-sm" onclick="createBackup()">
-                Create Backup
-            </button>
-            <button class="btn btn-primary btn-sm" onclick="checkUpdates()">
-                Check for Updates
-            </button>
-        </div>
+{% extends "base.html" %}
+
+{% block title %}System - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">System</h1>
+    <p class="page-subtitle">Host facts, web accounts, configuration backups and services, read from the
+        system when this page loaded.</p>
+</div>
+
+<div class="stat-grid">
+    <div class="stat-card">
+        <h3>Uptime</h3>
+        <div class="value">{{ uptime }}</div>
     </div>
-
-    <!-- System Status Stats -->
-    <div class="stat-grid">
-        <div class="stat-card success">
-            <h3>System Health</h3>
-            <div class="value">{{ system_health }}/100</div>
-            <div class="label">All services running</div>
-        </div>
-
-        <div class="stat-card info">
-            <h3>Uptime</h3>
-            <div class="value">{{ uptime_days }}d</div>
-            <div class="label">{{ uptime }}</div>
-        </div>
-
-        <div class="stat-card warning">
-            <h3>Disk Usage</h3>
-            <div class="value">{{ disk_usage_percent }}%</div>
-            <div class="label">{{ disk_used }} / {{ disk_total }}</div>
-        </div>
-
-        <div class="stat-card danger">
-            <h3>Updates Available</h3>
-            <div class="value">{{ updates_available }}</div>
-            <div class="label">{{ security_updates }} security updates</div>
-        </div>
+    <div class="stat-card">
+        <h3>Disk (/)</h3>
+        <div class="value">{{ disk_usage_percent }}%</div>
+        <div class="label">{{ disk_used }} used of {{ disk_total }}</div>
     </div>
-
-    <!-- System Tabs -->
-    <div class="card">
-        <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab(event, 'general-tab')">
-                General
-            </button>
-            <button class="tab-btn" onclick="switchTab(event, 'users-tab')">
-                Users & Access
-            </button>
-            <button class="tab-btn" onclick="switchTab(event, 'backup-tab')">
-                Backup & Restore
-            </button>
-            <button class="tab-btn" onclick="switchTab(event, 'updates-tab')">
-                Updates
-            </button>
-            <button class="tab-btn" onclick="switchTab(event, 'services-tab')">
-                Services
-            </button>
-        </div>
-
-        <!-- General Settings Tab -->
-        <div id="general-tab" class="tab-content active">
-            <div class="card-header">
-                <h2 class="card-title">General System Settings</h2>
-            </div>
-
-            <div style="display: grid; gap: 2rem;">
-                <!-- System Identity -->
-                <div>
-                    <h3 class="font-bold mb-3">System Identity</h3>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem;">
-                        <div>
-                            <label class="font-bold mb-1">Hostname</label>
-                            <input type="text" class="w-full" value="patronus-fw">
-                        </div>
-                        <div>
-                            <label class="font-bold mb-1">Domain</label>
-                            <input type="text" class="w-full" value="local">
-                        </div>
-                        <div>
-                            <label class="font-bold mb-1">Timezone</label>
-                            <select class="w-full">
-                                <option selected>UTC</option>
-                                <option>America/New_York</option>
-                                <option>Europe/London</option>
-                                <option>Asia/Tokyo</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="font-bold mb-1">Language</label>
-                            <select class="w-full">
-                                <option selected>English</option>
-                                <option>Spanish</option>
-                                <option>French</option>
-                                <option>German</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- System Information -->
-                <div>
-                    <h3 class="font-bold mb-3">System Information</h3>
-                    <table>
-                        <tr>
-                            <td><strong>Version</strong></td>
-                            <td>Patronus SD-WAN v2.1.0</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Kernel</strong></td>
-                            <td>Linux 6.16.12-gentoo</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Architecture</strong></td>
-                            <td>x86_64</td>
-                        </tr>
-                        <tr>
-                            <td><strong>CPU</strong></td>
-                            <td>Intel Core i7 (8 cores)</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Memory</strong></td>
-                            <td>16 GB</td>
-                        </tr>
-                    </table>
-                </div>
-            </div>
-
-            <div class="flex gap-2 mt-4">
-                <button class="btn btn-primary">Save Settings</button>
-                <button class="btn btn-secondary">Reset to Defaults</button>
-            </div>
-        </div>
-
-        <!-- Users & Access Tab -->
-        <div id="users-tab" class="tab-content">
-            <div class="card-header">
-                <h2 class="card-title">User Management</h2>
-                <button class="btn btn-sm btn-primary" onclick="showAddUserModal()">
-                    Add User
-                </button>
-            </div>
-
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Username</th>
-                            <th>Full Name</th>
-                            <th>Role</th>
-                            <th>2FA Enabled</th>
-                            <th>Last Login</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for user in users %}
-                        <tr>
-                            <td><strong>{{ user.username }}</strong></td>
-                            <td class="text-sm">{{ user.full_name }}</td>
-                            <td>
-                                {% if user.role == "admin" %}
-                                <span class="badge danger">Administrator</span>
-                                {% else %}
-                                <span class="badge info">User</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if user.two_factor_enabled %}
-                                <span class="badge success">Enabled</span>
-                                {% else %}
-                                <span class="badge warning">Disabled</span>
-                                {% endif %}
-                            </td>
-                            <td class="text-sm">{{ user.last_login_display }}</td>
-                            <td>
-                                {% if user.is_active %}
-                                <span class="badge success">Active</span>
-                                {% else %}
-                                <span class="badge danger">Disabled</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <button class="btn-icon" onclick="editUser('{{ user.username }}')">✎</button>
-                                {% if !user.is_system_user %}
-                                <button class="btn-icon" onclick="deleteUser('{{ user.username }}')">🗑</button>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Backup & Restore Tab -->
-        <div id="backup-tab" class="tab-content">
-            <div class="card-header">
-                <h2 class="card-title">Backup & Restore</h2>
-                <div class="flex gap-2">
-                    <button class="btn btn-sm btn-secondary" onclick="showRestoreModal()">
-                        Restore from Backup
-                    </button>
-                    <button class="btn btn-sm btn-primary" onclick="createBackup()">
-                        Create Backup Now
-                    </button>
-                </div>
-            </div>
-
-            <!-- Recent Backups -->
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Backup Name</th>
-                            <th>Created</th>
-                            <th>Size</th>
-                            <th>Type</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for backup in backups %}
-                        <tr>
-                            <td><strong>{{ backup.name }}</strong></td>
-                            <td class="text-sm">{{ backup.created_at }}</td>
-                            <td class="text-sm">{{ backup.size }}</td>
-                            <td>
-                                {% if backup.backup_type == "full" %}
-                                <span class="badge info">Full</span>
-                                {% else %}
-                                <span class="badge">Config Only</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if backup.is_valid %}
-                                <span class="badge success">Valid</span>
-                                {% else %}
-                                <span class="badge danger">Corrupted</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <button class="btn btn-sm btn-secondary" onclick="downloadBackup('{{ backup.id }}')">
-                                    Download
-                                </button>
-                                <button class="btn btn-sm btn-primary" onclick="restoreBackup('{{ backup.id }}')">
-                                    Restore
-                                </button>
-                                <button class="btn-icon" onclick="deleteBackup('{{ backup.id }}')">🗑</button>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Updates Tab -->
-        <div id="updates-tab" class="tab-content">
-            <div class="card-header">
-                <h2 class="card-title">System Updates</h2>
-                <button class="btn btn-sm btn-primary" onclick="checkUpdates()">
-                    Check for Updates
-                </button>
-            </div>
-
-            {% if updates_available > 0 %}
-            <div class="alert alert-warning" style="margin-bottom: 1.5rem;">
-                <strong>{{ updates_available }} updates available</strong> ({{ security_updates }} security updates)
-                <button class="btn btn-sm btn-primary mt-4" onclick="installAllUpdates()">Install All Updates</button>
-            </div>
-            {% endif %}
-
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Package</th>
-                            <th>Current Version</th>
-                            <th>New Version</th>
-                            <th>Type</th>
-                            <th>Size</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for update in updates %}
-                        <tr>
-                            <td><strong>{{ update.package_name }}</strong></td>
-                            <td class="text-sm">{{ update.current_version }}</td>
-                            <td class="text-sm">{{ update.new_version }}</td>
-                            <td>
-                                {% if update.security %}
-                                <span class="badge danger">Security</span>
-                                {% else %}
-                                <span class="badge info">Regular</span>
-                                {% endif %}
-                            </td>
-                            <td class="text-sm">{{ update.size }}</td>
-                            <td>
-                                <button class="btn btn-sm btn-primary" onclick="installUpdate('{{ update.package_name }}')">
-                                    Install
-                                </button>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Services Tab -->
-        <div id="services-tab" class="tab-content">
-            <div class="card-header">
-                <h2 class="card-title">System Services</h2>
-                <button class="btn btn-sm btn-secondary" onclick="restartAllServices()">
-                    Restart All Services
-                </button>
-            </div>
-
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Service</th>
-                            <th>Status</th>
-                            <th>Uptime</th>
-                            <th>Auto-start</th>
-                            <th>Memory</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for service in services %}
-                        <tr>
-                            <td><strong>{{ service.name }}</strong></td>
-                            <td>
-                                {% if service.is_running %}
-                                <span class="badge success">Running</span>
-                                {% else %}
-                                <span class="badge danger">Stopped</span>
-                                {% endif %}
-                            </td>
-                            <td class="text-sm">{{ service.uptime_display }}</td>
-                            <td>
-                                {% if service.enabled %}
-                                <span class="badge success">Enabled</span>
-                                {% else %}
-                                <span class="badge">Disabled</span>
-                                {% endif %}
-                            </td>
-                            <td class="text-sm">{{ service.memory_display }}</td>
-                            <td>
-                                {% if service.is_running %}
-                                <button class="btn btn-sm btn-warning" onclick="restartService('{{ service.name }}')">
-                                    Restart
-                                </button>
-                                <button class="btn btn-sm btn-danger" onclick="stopService('{{ service.name }}')">
-                                    Stop
-                                </button>
-                                {% else %}
-                                <button class="btn btn-sm btn-success" onclick="startService('{{ service.name }}')">
-                                    Start
-                                </button>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
+    <div class="stat-card">
+        <h3>Memory</h3>
+        <div class="value">{{ memory_total }}</div>
+        <div class="label">installed</div>
     </div>
-
-    <!-- Danger Zone -->
-    <div class="card danger-card" style="margin-top: 2rem;">
-        <div class="danger-header">
-            <h2 class="card-title">⚠️ Danger Zone</h2>
-        </div>
-
-        <div style="display: grid; gap: 1rem;">
-            <div>
-                <h4 class="font-bold">Restart System</h4>
-                <p class="text-sm text-muted mb-2">Reboot the firewall. All connections will be temporarily interrupted.</p>
-                <button class="btn btn-warning" onclick="rebootSystem()">Reboot System</button>
-            </div>
-
-            <div>
-                <h4 class="font-bold">Shutdown System</h4>
-                <p class="text-sm text-muted mb-2">Power off the firewall. You will need physical access to power it back on.</p>
-                <button class="btn btn-warning" onclick="shutdownSystem()">Shutdown System</button>
-            </div>
-
-            <div>
-                <h4 class="font-bold">Factory Reset</h4>
-                <p class="text-sm text-muted mb-2">Reset all configuration to factory defaults. This action cannot be undone!</p>
-                <button class="btn btn-danger" onclick="factoryReset()">Factory Reset</button>
-            </div>
-        </div>
+    <div class="stat-card">
+        <h3>Patronus</h3>
+        <div class="value">{{ version }}</div>
+        <div class="label">init system: {{ init_system }}</div>
     </div>
+</div>
 
-    <script>
-        // Tab switching
-        function switchTab(event, tabId) {
-            document.querySelectorAll('.tab-content').forEach(tab => {
-                tab.classList.remove('active');
-            });
+<div class="card">
+    <div class="card-header"><h2 class="card-title">General</h2></div>
+    <table class="lan" id="system-facts">
+        <tr><td>Hostname</td><td>{{ config.hostname }}</td></tr>
+        <tr><td>DNS domain</td><td>{% if config.domain.is_empty() %}<span class="text-muted">none set</span>{% else %}{{ config.domain }}{% endif %}</td></tr>
+        <tr><td>Time zone</td><td>{{ config.timezone }}</td></tr>
+        <tr><td>Resolvers (/etc/resolv.conf)</td><td>{% if config.dns_servers.is_empty() %}<span class="text-muted">none</span>{% else %}{{ config.dns_servers.join(", ") }}{% endif %}</td></tr>
+        <tr><td>Kernel</td><td>{{ kernel }}</td></tr>
+        <tr><td>Architecture</td><td>{{ arch }}</td></tr>
+        <tr><td>CPU</td><td>{{ cpu }}</td></tr>
+    </table>
+    <p class="text-sm text-muted">Hostname, domain and time zone are system settings (on Gentoo:
+        /etc/hostname or /etc/conf.d/hostname, /etc/timezone or /etc/localtime); Patronus does not edit them yet.</p>
+</div>
 
-            document.querySelectorAll('.tab-btn').forEach(btn => {
-                btn.classList.remove('active');
-            });
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Web accounts</h2></div>
+    {% if users.is_empty() %}
+    <p class="empty">No accounts.</p>
+    {% else %}
+    <table class="lan">
+        <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Created</th><th>Last login</th></tr></thead>
+        <tbody>
+        {% for user in users %}
+        <tr>
+            <td><strong>{{ user.username }}</strong></td>
+            <td>{{ user.role }}</td>
+            <td>{% if user.is_active %}<span class="ok">active</span>{% else %}<span class="bad">disabled</span>{% endif %}</td>
+            <td>{{ user.created_at }}</td>
+            <td>{{ user.last_login_display }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    <p class="text-sm text-muted">The admin account is created at first start. Adding accounts and
+        two-factor authentication are not available yet.</p>
+</div>
 
-            document.getElementById(tabId).classList.add('active');
-            event.target.classList.add('active');
-        }
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">Configuration backups</h2>
+        <button class="btn btn-sm btn-primary" id="create-backup" onclick="call('POST', '/api/system/backups')">Create backup now</button>
+    </div>
+    <p class="text-sm">A backup is a full export of the configuration store, written to <span class="mono">{{ backup_dir }}</span>.
+        To restore one on the box: <span class="mono">patronus config import &lt;file&gt;</span>
+        (the configuration it replaces is kept as a revision; it is applied at once).</p>
+    {% if !backups_error.is_empty() %}
+    <div class="alert-error">Backups unavailable: {{ backups_error }}</div>
+    {% else if backups.is_empty() %}
+    <p class="empty">No backups yet.</p>
+    {% else %}
+    <table class="lan" id="backups">
+        <thead><tr><th>File</th><th>Created</th><th>Size</th><th>Contents</th><th></th></tr></thead>
+        <tbody>
+        {% for backup in backups %}
+        <tr>
+            <td class="mono">{{ backup.name }}</td>
+            <td>{{ backup.created_at }}</td>
+            <td>{{ backup.size }}</td>
+            <td>{% if backup.is_valid %}<span class="ok">valid export</span>{% else %}<span class="bad">not a valid export</span>{% endif %}</td>
+            <td>
+                <a class="btn btn-sm btn-secondary" href="/api/system/backups/{{ backup.id }}">Download</a>
+                <button class="btn btn-sm btn-danger" onclick="del('/api/system/backups/{{ backup.id }}', 'Delete {{ backup.name }}?')">Delete</button>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
 
-        // User management
-        function editUser(username) {
-            alert(`Edit user: ${username}`);
-        }
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Services</h2></div>
+    {% if services.is_empty() %}
+    <p class="empty">None of the services Patronus manages are installed on this system (or the init system is not systemd/OpenRC).</p>
+    {% else %}
+    <table class="lan" id="services">
+        <thead><tr><th>Service</th><th>Purpose</th><th>Status</th><th>Running for</th><th>Memory</th><th>Starts at boot</th><th></th></tr></thead>
+        <tbody>
+        {% for service in services %}
+        <tr>
+            <td><strong>{{ service.name }}</strong></td>
+            <td class="text-sm">{{ service.description }}</td>
+            <td>{% if service.is_running %}<span class="ok">{{ service.status }}</span>{% else %}<span class="bad">{{ service.status }}</span>{% endif %}</td>
+            <td>{{ service.uptime_display }}</td>
+            <td>{{ service.memory_display }}</td>
+            <td>{% if service.enabled %}yes{% else %}no{% endif %}</td>
+            <td>
+                {% if service.is_running %}
+                <button class="btn btn-sm btn-secondary" onclick="if (confirm('Restart {{ service.name }}?')) call('POST', '/api/system/services/{{ service.name }}/restart')">Restart</button>
+                <button class="btn btn-sm btn-danger" onclick="if (confirm('Stop {{ service.name }}?')) call('POST', '/api/system/services/{{ service.name }}/stop')">Stop</button>
+                {% else %}
+                <button class="btn btn-sm btn-success" onclick="call('POST', '/api/system/services/{{ service.name }}/start')">Start</button>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <p class="text-sm text-muted">Start/stop runs through the init system as the user patronus-web runs as;
+        when that is refused (unprivileged service) the error is shown and nothing changes.</p>
+    {% endif %}
+</div>
 
-        function deleteUser(username) {
-            if (confirm(`Delete user "${username}"? This cannot be undone.`)) {
-                alert(`Deleting user ${username}...`);
-            }
-        }
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Updates</h2></div>
+    <p class="text-sm">Patronus does not check for updates itself. On Gentoo, update through Portage:
+        <span class="mono">emaint sync -a &amp;&amp; emerge -1u net-firewall/patronus</span>.</p>
+</div>
+{% endblock %}
 
-        function showAddUserModal() {
-            alert('Add User modal - TODO');
-        }
-
-        // Backup management
-        function createBackup() {
-            if (confirm('Create a backup now? This may take a few minutes.')) {
-                alert('Creating backup...');
-            }
-        }
-
-        function downloadBackup(id) {
-            alert(`Downloading backup ${id}...`);
-        }
-
-        function restoreBackup(id) {
-            if (confirm('Restore from this backup? The system will reboot after restoration.')) {
-                alert(`Restoring from backup ${id}...`);
-            }
-        }
-
-        function deleteBackup(id) {
-            if (confirm('Delete this backup?')) {
-                alert(`Deleting backup ${id}...`);
-            }
-        }
-
-        function showRestoreModal() {
-            alert('Restore from uploaded backup - TODO');
-        }
-
-        // Updates
-        function checkUpdates() {
-            alert('Checking for updates...');
-        }
-
-        function installUpdate(pkg) {
-            if (confirm(`Install update for ${pkg}?`)) {
-                alert(`Installing ${pkg}...`);
-            }
-        }
-
-        function installAllUpdates() {
-            if (confirm('Install all available updates? The system may need to reboot.')) {
-                alert('Installing all updates...');
-            }
-        }
-
-        // Services
-        function startService(name) {
-            alert(`Starting ${name}...`);
-        }
-
-        function stopService(name) {
-            if (confirm(`Stop ${name} service?`)) {
-                alert(`Stopping ${name}...`);
-            }
-        }
-
-        function restartService(name) {
-            if (confirm(`Restart ${name} service?`)) {
-                alert(`Restarting ${name}...`);
-            }
-        }
-
-        function restartAllServices() {
-            if (confirm('Restart all services? This may briefly interrupt connectivity.')) {
-                alert('Restarting all services...');
-            }
-        }
-
-        // Danger zone
-        function rebootSystem() {
-            const confirmed = prompt('Type "REBOOT" to confirm system reboot:');
-            if (confirmed === 'REBOOT') {
-                alert('Rebooting system in 10 seconds...');
-            }
-        }
-
-        function shutdownSystem() {
-            const confirmed = prompt('Type "SHUTDOWN" to confirm system shutdown:');
-            if (confirmed === 'SHUTDOWN') {
-                alert('Shutting down system in 10 seconds...');
-            }
-        }
-
-        function factoryReset() {
-            const confirmed = prompt('Type "FACTORY RESET" to confirm. THIS CANNOT BE UNDONE:');
-            if (confirmed === 'FACTORY RESET') {
-                alert('Performing factory reset...');
-            }
-        }
-    </script>
-</body>
-</html>
+{% block extra_scripts %}
+{% include "lan_js.html" %}
+{% endblock %}

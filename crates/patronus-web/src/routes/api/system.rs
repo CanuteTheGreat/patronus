@@ -1,200 +1,151 @@
-//! System API endpoints
+//! System API endpoints: users (auth store), configuration backups (real
+//! files), services (systemd/OpenRC), updates (not implemented: 501).
 
-use crate::state::AppState;
+use crate::state::{system::ServiceError, AppState};
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct User {
-    pub id: u32,
-    pub username: String,
-    pub email: Option<String>,
-    pub role: String,
-    pub created_at: String,
-    pub last_login: Option<String>,
+fn error(code: StatusCode, msg: impl Into<String>) -> Response {
+    (code, Json(serde_json::json!({ "error": msg.into() }))).into_response()
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Backup {
-    pub id: u32,
-    pub filename: String,
-    pub created_at: String,
-    pub size: u64,
-    pub description: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Update {
-    pub package: String,
-    pub current_version: String,
-    pub available_version: String,
-    pub description: String,
-    pub security: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Service {
-    pub name: String,
-    pub status: String,
-    pub enabled: bool,
-    pub description: String,
+/// The web UI accounts from the auth user store, for display.
+pub async fn users(state: &AppState) -> Vec<crate::templates::User> {
+    let mut list = state.auth.user_store.list_users().await;
+    list.sort_by_key(|u| u.id);
+    list.into_iter()
+        .map(|u| crate::templates::User {
+            id: u.id,
+            username: u.username,
+            role: match u.role {
+                crate::auth::UserRole::Admin => "admin",
+                crate::auth::UserRole::Operator => "operator",
+                crate::auth::UserRole::ReadOnly => "read-only",
+            }
+            .to_string(),
+            is_active: u.enabled,
+            created_at: u.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+            last_login_display: u
+                .last_login
+                .map(|t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_else(|| "never".to_string()),
+        })
+        .collect()
 }
 
 /// GET /api/system/users
 pub async fn list_users(State(state): State<AppState>) -> Response {
-    match state.system.list_users().await {
-        Ok(users) => Json(users).into_response(),
-        Err(e) => {
-            tracing::error!("Failed to list users: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "Failed to list users"
-                })),
-            )
-                .into_response()
-        }
-    }
+    Json(users(&state).await).into_response()
 }
 
-/// GET /api/system/backups
+/// GET /api/system/backups -- backup files with their real sizes.
 pub async fn list_backups(State(state): State<AppState>) -> Response {
     match state.system.list_backups().await {
-        Ok(backups) => Json(backups).into_response(),
+        Ok(b) => Json(b).into_response(),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// POST /api/system/backups -- export the config store to a new file.
+pub async fn create_backup(State(state): State<AppState>) -> Response {
+    match state.system.create_backup(&state.config_store).await {
+        Ok(b) => (StatusCode::CREATED, Json(b)).into_response(),
         Err(e) => {
-            tracing::error!("Failed to list backups: {}", e);
-            (
+            tracing::error!("Failed to create backup: {e}");
+            error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "Failed to list backups"
-                })),
+                format!("Failed to create backup: {e}"),
             )
-                .into_response()
         }
     }
 }
 
-/// POST /api/system/backups
-pub async fn create_backup(State(state): State<AppState>) -> Response {
-    match state.system.create_backup().await {
-        Ok(backup_id) => (
-            StatusCode::CREATED,
-            Json(serde_json::json!({
-                "id": backup_id,
-                "message": "Backup created successfully"
-            })),
+/// GET /api/system/backups/:name -- download the file.
+pub async fn download_backup(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    match state.system.read_backup(&name).await {
+        Ok(Some(bytes)) => (
+            [
+                (header::CONTENT_TYPE, "application/json".to_string()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{name}\""),
+                ),
+            ],
+            bytes,
         )
             .into_response(),
-        Err(e) => {
-            tracing::error!("Failed to create backup: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("Failed to create backup: {}", e)
-                })),
-            )
-                .into_response()
-        }
+        Ok(None) => error(StatusCode::NOT_FOUND, "no such backup"),
+        Err(e) => error(StatusCode::BAD_REQUEST, e.to_string()),
     }
 }
 
-/// GET /api/system/updates
-pub async fn list_updates(State(state): State<AppState>) -> Response {
-    match state.system.check_updates().await {
-        Ok(updates) => Json(updates).into_response(),
-        Err(e) => {
-            tracing::error!("Failed to check updates: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "Failed to check updates"
-                })),
-            )
-                .into_response()
+/// DELETE /api/system/backups/:name
+pub async fn delete_backup(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    match state.system.delete_backup(&name).await {
+        Ok(true) => {
+            Json(serde_json::json!({ "message": format!("deleted {name}") })).into_response()
         }
+        Ok(false) => error(StatusCode::NOT_FOUND, "no such backup"),
+        Err(e) => error(StatusCode::BAD_REQUEST, e.to_string()),
     }
 }
 
-/// GET /api/system/services
+/// GET /api/system/updates -- not implemented. This used to announce a
+/// `patronus-core 0.1.1` update on every box.
+pub async fn list_updates() -> Response {
+    error(
+        StatusCode::NOT_IMPLEMENTED,
+        format!(
+            "Patronus {} does not check for updates itself. On Gentoo update through Portage: \
+             `emaint sync -a && emerge -1u net-firewall/patronus` (or `emerge -uDN @world`).",
+            env!("CARGO_PKG_VERSION")
+        ),
+    )
+}
+
+/// GET /api/system/services -- installed Patronus-related services and
+/// their real state.
 pub async fn list_services(State(state): State<AppState>) -> Response {
     match state.system.list_services().await {
-        Ok(services) => Json(services).into_response(),
+        Ok(s) => Json(s).into_response(),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+async fn control(state: AppState, name: String, action: &str) -> Response {
+    match state.system.control_service(&name, action).await {
+        Ok(()) => Json(serde_json::json!({
+            "message": format!("{action} {name}: done")
+        }))
+        .into_response(),
+        Err(e @ ServiceError::NotManaged(_)) => error(StatusCode::NOT_FOUND, e.to_string()),
         Err(e) => {
-            tracing::error!("Failed to list services: {}", e);
-            (
+            tracing::error!("{action} {name}: {e}");
+            error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "Failed to list services"
-                })),
+                format!("{action} {name} failed: {e}"),
             )
-                .into_response()
         }
     }
 }
 
 /// POST /api/system/services/:name/start
 pub async fn start_service(State(state): State<AppState>, Path(name): Path<String>) -> Response {
-    match state.system.start_service(&name).await {
-        Ok(_) => Json(serde_json::json!({
-            "message": format!("Service {} started successfully", name)
-        }))
-        .into_response(),
-        Err(e) => {
-            tracing::error!("Failed to start service {}: {}", name, e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("Failed to start service: {}", e)
-                })),
-            )
-                .into_response()
-        }
-    }
+    control(state, name, "start").await
 }
 
 /// POST /api/system/services/:name/stop
 pub async fn stop_service(State(state): State<AppState>, Path(name): Path<String>) -> Response {
-    match state.system.stop_service(&name).await {
-        Ok(_) => Json(serde_json::json!({
-            "message": format!("Service {} stopped successfully", name)
-        }))
-        .into_response(),
-        Err(e) => {
-            tracing::error!("Failed to stop service {}: {}", name, e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("Failed to stop service: {}", e)
-                })),
-            )
-                .into_response()
-        }
-    }
+    control(state, name, "stop").await
 }
 
 /// POST /api/system/services/:name/restart
 pub async fn restart_service(State(state): State<AppState>, Path(name): Path<String>) -> Response {
-    match state.system.restart_service(&name).await {
-        Ok(_) => Json(serde_json::json!({
-            "message": format!("Service {} restarted successfully", name)
-        }))
-        .into_response(),
-        Err(e) => {
-            tracing::error!("Failed to restart service {}: {}", name, e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("Failed to restart service: {}", e)
-                })),
-            )
-                .into_response()
-        }
-    }
+    control(state, name, "restart").await
 }
 
 /// This lane's API routes, mounted under `/api` by `routes::api_routes`
@@ -204,6 +155,10 @@ pub fn router() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/system/users", get(list_users))
         .route("/system/backups", get(list_backups).post(create_backup))
+        .route(
+            "/system/backups/:name",
+            get(download_backup).delete(delete_backup),
+        )
         .route("/system/updates", get(list_updates))
         .route("/system/services", get(list_services))
         .route("/system/services/:name/start", post(start_service))

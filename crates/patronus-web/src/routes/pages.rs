@@ -1,9 +1,12 @@
 //! HTML page handlers
 //!
-//! These handlers render Askama templates with data from the application state.
+//! These handlers render Askama templates with data from the application
+//! state. Every value on these pages is read from the store or the live
+//! system; where nothing exists the page says so (empty state), it never
+//! fills in sample values.
 
 use crate::{
-    state::AppState,
+    state::{host, AppState},
     templates::{
         DashboardTemplate, MonitoringTemplate, NetworkTemplate, SystemTemplate, VpnTemplate,
     },
@@ -20,67 +23,48 @@ use axum::{
 #[template(path = "login.html")]
 pub struct LoginTemplate;
 
-/// Login page (public)
-pub async fn login_page() -> Response {
-    let template = LoginTemplate;
-    match template.render() {
+fn render(t: &impl Template, what: &str) -> Response {
+    match t.render() {
         Ok(html) => Html(html).into_response(),
         Err(e) => {
-            tracing::error!("Failed to render login template: {}", e);
+            tracing::error!("Failed to render {what} template: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
         }
     }
 }
 
-/// Dashboard page
-pub async fn dashboard(State(state): State<AppState>) -> Response {
-    // Fetch dashboard data
-    let interfaces = match state.interfaces.list_template().await {
-        Ok(ifaces) => ifaces,
-        Err(e) => {
-            tracing::error!("Failed to fetch interfaces: {}", e);
-            vec![]
-        }
-    };
+/// Login page (public)
+pub async fn login_page() -> Response {
+    render(&LoginTemplate, "login")
+}
 
-    let active_rules = match state.firewall.count_active_rules().await {
-        Ok(count) => count,
-        Err(e) => {
+/// Dashboard page (`/`).
+pub async fn dashboard(State(state): State<AppState>) -> Response {
+    let interfaces = state.interfaces.list_template().await.unwrap_or_else(|e| {
+        tracing::error!("Failed to fetch interfaces: {}", e);
+        vec![]
+    });
+    let active_rules = state
+        .firewall
+        .count_active_rules()
+        .await
+        .unwrap_or_else(|e| {
             tracing::error!("Failed to count firewall rules: {}", e);
             0
-        }
-    };
-
-    let vpn_connections = match state.vpn.count_active_connections().await {
-        Ok(count) => count,
-        Err(e) => {
-            tracing::error!("Failed to count VPN connections: {}", e);
-            0
-        }
-    };
-
-    let system_info = match state.system.get_info().await {
-        Ok(info) => info,
-        Err(e) => {
-            tracing::error!("Failed to fetch system info: {}", e);
-            Default::default()
-        }
-    };
-
+        });
+    let vpn_connections = state.vpn.snapshot().await.active_connections();
+    let system_info = state.system.get_info().await.unwrap_or_default();
+    let services = state.system.list_services().await.unwrap_or_default();
     let template = DashboardTemplate {
+        page: "dashboard",
+        uptime: host::format_duration(system_info.uptime),
         interfaces,
         active_rules,
         vpn_connections,
         system_info,
+        services,
     };
-
-    match template.render() {
-        Ok(html) => Html(html).into_response(),
-        Err(e) => {
-            tracing::error!("Failed to render dashboard template: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
-        }
-    }
+    render(&template, "dashboard")
 }
 
 /// Firewall rules page (rules, NAT, aliases, schedules).
@@ -96,266 +80,128 @@ pub async fn firewall(State(state): State<AppState>) -> Response {
                 .into_response();
         }
     };
-    match template.render() {
-        Ok(html) => Html(html).into_response(),
-        Err(e) => {
-            tracing::error!("Failed to render firewall template: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
-        }
-    }
+    render(&template, "firewall")
 }
 
-/// VPN management page
+/// VPN page: live WireGuard peers and IPsec SAs.
 pub async fn vpn(State(state): State<AppState>) -> Response {
-    // Fetch VPN data
-    let wg_peers = match state.vpn.list_wireguard_peers().await {
-        Ok(peers) => peers,
-        Err(e) => {
-            tracing::error!("Failed to fetch WireGuard peers: {}", e);
-            vec![]
-        }
-    };
-
-    let ovpn_tunnels = match state.vpn.list_openvpn_tunnels().await {
-        Ok(tunnels) => tunnels,
-        Err(e) => {
-            tracing::error!("Failed to fetch OpenVPN tunnels: {}", e);
-            vec![]
-        }
-    };
-
-    let ipsec_tunnels = match state.vpn.list_ipsec_tunnels().await {
-        Ok(tunnels) => tunnels,
-        Err(e) => {
-            tracing::error!("Failed to fetch IPsec tunnels: {}", e);
-            vec![]
-        }
-    };
-
+    let s = state.vpn.snapshot().await;
     let template = VpnTemplate {
-        wg_peers,
-        ovpn_tunnels,
-        ipsec_tunnels,
+        page: "vpn",
+        wg_peers: s.wg_peers,
+        wg_error: s.wg_error.unwrap_or_default(),
+        ipsec_tunnels: s.ipsec_tunnels,
+        ipsec_error: s.ipsec_error.unwrap_or_default(),
     };
-
-    match template.render() {
-        Ok(html) => Html(html).into_response(),
-        Err(e) => {
-            tracing::error!("Failed to render VPN template: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
-        }
-    }
+    render(&template, "VPN")
 }
 
-/// Network services page
+/// Network page: interfaces and the kernel routing table.
 pub async fn network(State(state): State<AppState>) -> Response {
-    // Fetch network data
-    let interfaces = match state.interfaces.list_template().await {
-        Ok(ifaces) => ifaces,
-        Err(e) => {
-            tracing::error!("Failed to fetch interfaces: {}", e);
-            vec![]
-        }
+    let interfaces = state.interfaces.list_template().await.unwrap_or_else(|e| {
+        tracing::error!("Failed to fetch interfaces: {}", e);
+        vec![]
+    });
+    let (routes, routes_error) = match state.network.list_routes().await {
+        Ok(r) => (r, String::new()),
+        Err(e) => (vec![], e.to_string()),
     };
-
-    let routes = match state.network.list_routes().await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!("Failed to fetch routes: {}", e);
-            vec![]
-        }
+    let template = NetworkTemplate {
+        interfaces,
+        routes,
+        routes_error,
     };
-
-    let template = NetworkTemplate { interfaces, routes };
-
-    match template.render() {
-        Ok(html) => Html(html).into_response(),
-        Err(e) => {
-            tracing::error!("Failed to render network template: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
-        }
-    }
+    render(&template, "network")
 }
 
 /// Monitoring page
 pub async fn monitoring(State(state): State<AppState>) -> Response {
-    // Fetch monitoring data
-    let metrics = match state.monitoring.get_current_metrics().await {
-        Ok(m) => m,
-        Err(e) => {
-            tracing::error!("Failed to fetch metrics: {}", e);
-            Default::default()
-        }
+    let sample = host::sample(std::time::Duration::from_millis(500)).await;
+    let metrics = state.monitoring.metrics_from(&sample);
+    let interface_stats = state.monitoring.interface_stats_from(&sample);
+    let (top_connections, connections_error) = match state.monitoring.get_top_connections(20).await
+    {
+        Ok(c) => (c, String::new()),
+        Err(e) => (vec![], e.to_string()),
     };
-
-    let interface_stats = match state.monitoring.get_interface_stats().await {
-        Ok(stats) => stats,
-        Err(e) => {
-            tracing::error!("Failed to fetch interface stats: {}", e);
+    let alerts = state
+        .monitoring
+        .get_recent_alerts(20)
+        .await
+        .unwrap_or_default();
+    let ai_threats = state
+        .monitoring
+        .get_ai_threats(50)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to fetch threat feed: {}", e);
             vec![]
-        }
+        });
+    let (live_logs, logs_error) = match state.monitoring.get_live_logs(200).await {
+        Ok(l) => (l, String::new()),
+        Err(e) => (vec![], e.to_string()),
     };
-
-    let top_connections = match state.monitoring.get_top_connections(10).await {
-        Ok(conns) => conns,
-        Err(e) => {
-            tracing::error!("Failed to fetch top connections: {}", e);
-            vec![]
-        }
-    };
-
-    let alerts = match state.monitoring.get_recent_alerts(20).await {
-        Ok(a) => a,
-        Err(e) => {
-            tracing::error!("Failed to fetch alerts: {}", e);
-            vec![]
-        }
-    };
-
-    let ai_threats = match state.monitoring.get_ai_threats(50).await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::error!("Failed to fetch AI threats: {}", e);
-            vec![]
-        }
-    };
-
-    let attack_map_data = match state.monitoring.get_attack_map_data().await {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("Failed to fetch attack map data: {}", e);
-            vec![]
-        }
-    };
-
-    let live_logs = match state.monitoring.get_live_logs(200).await {
-        Ok(l) => l,
-        Err(e) => {
-            tracing::error!("Failed to fetch live logs: {}", e);
-            vec![]
-        }
-    };
-
-    // Derive real counts from already-fetched data instead of hardcoding
-    // placeholder numbers. `blocked` on AiThreat is currently always false
-    // (see get_ai_threats doc comment -- external threat-intel feed only,
-    // no active blocking decision is made yet), so threats_blocked_today
-    // will honestly read 0 until that wiring exists, rather than showing a
-    // fabricated nonzero count.
-    let threats_detected_today = ai_threats.len() as u32;
-    let threats_blocked_today = ai_threats.iter().filter(|t| t.blocked).count() as u32;
-    let active_alerts = alerts.len() as u32;
 
     let template = MonitoringTemplate {
+        page: "monitoring",
+        rx_rate: crate::state::monitoring::format_rate(metrics.network_rx_rate),
+        tx_rate: crate::state::monitoring::format_rate(metrics.network_tx_rate),
         metrics,
         interface_stats,
         top_connections,
+        connections_error,
+        threats_detected: ai_threats.len() as u32,
+        threats_blocked: ai_threats.iter().filter(|t| t.blocked).count() as u32,
+        active_alerts: alerts.len() as u32,
         alerts,
-        threats_detected_today,
-        threats_blocked_today,
-        // ai_model_accuracy/ai_model_confidence/system_health_score/
-        // packets_analyzed_rate/packets_total still have no real backing
-        // data source (no local ML classifier is wired to live traffic --
-        // see get_ai_threats doc comment -- and no packet-rate counter
-        // exists outside per-interface stats). Left as explicit
-        // placeholders rather than fabricating a fake computation.
-        ai_model_accuracy: 96.7,
-        ai_model_confidence: 94.2,
-        system_health_score: 87,
-        active_alerts,
-        packets_analyzed_rate: 15420,
-        packets_total: 2847392,
+        packet_rate: sample.packet_rate(),
+        packets_total: sample.packets_total(),
         ai_threats,
-        // No real backend exists yet for this widget -- see the doc comment
-        // on MonitoringManager::get_attack_map_data for exactly what would
-        // be needed (block-event log + GeoIP-to-coordinates lookup).
-        attack_map_data,
-        model_performance: crate::templates::ModelPerformance {
-            accuracy: 96.7,
-            precision: 94.1,
-            recall: 92.8,
-            f1_score: 93.4,
-            false_positive_rate: 2.1,
-            last_trained: "2024-01-15 14:30:00".to_string(),
-            training_samples: 150000,
-        },
         live_logs,
+        logs_error,
     };
-
-    match template.render() {
-        Ok(html) => Html(html).into_response(),
-        Err(e) => {
-            tracing::error!("Failed to render monitoring template: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
-        }
-    }
+    render(&template, "monitoring")
 }
 
-/// System settings page
+/// System page: host facts, users, backups, services.
 pub async fn system(State(state): State<AppState>) -> Response {
-    // Fetch system data
-    let users = match state.system.list_users().await {
-        Ok(u) => u,
-        Err(e) => {
-            tracing::error!("Failed to fetch users: {}", e);
-            vec![]
-        }
+    let users = crate::routes::api::system::users(&state).await;
+    let (backups, backups_error) = match state.system.list_backups().await {
+        Ok(b) => (b, String::new()),
+        Err(e) => (vec![], e.to_string()),
     };
-
-    let backups = match state.system.list_backups().await {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::error!("Failed to fetch backups: {}", e);
-            vec![]
-        }
-    };
-
-    let updates = match state.system.check_updates().await {
-        Ok(u) => u,
-        Err(e) => {
-            tracing::error!("Failed to check updates: {}", e);
-            vec![]
-        }
-    };
-
-    let services = match state.system.list_services().await {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!("Failed to fetch services: {}", e);
-            vec![]
-        }
-    };
-
-    let config = match state.system.get_config().await {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("Failed to fetch config: {}", e);
-            Default::default()
-        }
-    };
-
+    let services = state.system.list_services().await.unwrap_or_default();
+    let config = state.system.get_config().await.unwrap_or_default();
+    let disk = host::disk("/");
+    let dash = || "unknown".to_string();
     let template = SystemTemplate {
+        page: "system",
         users,
         backups,
-        updates: updates.clone(),
+        backup_dir: state.system.backup_dir().display().to_string(),
+        backups_error,
         services,
+        init_system: format!("{:?}", patronus_core::ServiceManager::detect_init_system()),
         config,
-        // System status information - using sample values
-        system_health: 94,
-        uptime_days: 15,
-        uptime: "15 days, 8 hours, 42 minutes".to_string(),
-        disk_usage_percent: 68.7,
-        disk_used: "137.4 GB".to_string(),
-        disk_total: "200 GB".to_string(),
-        updates_available: updates.len() as u32,
-        security_updates: updates.iter().filter(|u| u.security).count() as u32,
+        uptime: host::uptime_secs()
+            .map(host::format_duration)
+            .unwrap_or_else(dash),
+        disk_usage_percent: disk
+            .map(|(u, t)| format!("{:.1}", u as f64 * 100.0 / t as f64))
+            .unwrap_or_else(dash),
+        disk_used: disk
+            .map(|d| crate::state::vpn::format_bytes(d.0))
+            .unwrap_or_else(dash),
+        disk_total: disk
+            .map(|d| crate::state::vpn::format_bytes(d.1))
+            .unwrap_or_else(dash),
+        memory_total: host::memory()
+            .map(|m| crate::state::vpn::format_bytes(m.1))
+            .unwrap_or_else(dash),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        kernel: host::kernel(),
+        arch: std::env::consts::ARCH.to_string(),
+        cpu: host::cpu_model(),
     };
-
-    match template.render() {
-        Ok(html) => Html(html).into_response(),
-        Err(e) => {
-            tracing::error!("Failed to render system template: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
-        }
-    }
+    render(&template, "system")
 }

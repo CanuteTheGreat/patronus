@@ -1,76 +1,76 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - Patronus</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .stat-card { border: 1px solid #ddd; padding: 15px; margin: 10px; border-radius: 5px; }
-        .badge { padding: 3px 8px; border-radius: 3px; font-size: 0.8em; }
-        .badge.success { background: #28a745; color: white; }
-        .badge.info { background: #17a2b8; color: white; }
-        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-    </style>
-</head>
-<body>
-    <h1>Patronus SD-WAN Dashboard</h1>
+{% extends "base.html" %}
 
-    <div style="display: flex; gap: 20px;">
-        <div class="stat-card">
-            <h3>Interfaces</h3>
-            <div>Total: {{ interfaces.len() }}</div>
-        </div>
+{% block title %}Dashboard - Patronus{% endblock %}
 
-        <div class="stat-card">
-            <h3>Active Rules</h3>
-            <div>{{ active_rules }}</div>
-        </div>
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% endblock %}
 
-        <div class="stat-card">
-            <h3>VPN Connections</h3>
-            <div>{{ vpn_connections }}</div>
-        </div>
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Dashboard</h1>
+    <p class="page-subtitle">{{ system_info.hostname }} &middot; up {{ uptime }} &middot; measured when this page loaded</p>
+</div>
 
-        <div class="stat-card">
-            <h3>System</h3>
-            <div>{{ system_info.hostname }}</div>
-            <div>CPU: {{ system_info.cpu_usage }}%</div>
-            <div>Memory: {{ system_info.memory_usage }}%</div>
-        </div>
+<div class="stat-grid">
+    <div class="stat-card">
+        <h3>Interfaces</h3>
+        <div class="value">{{ interfaces.len() }}</div>
+        <div class="label"><a href="/interfaces">Interfaces</a></div>
     </div>
+    <div class="stat-card">
+        <h3>Active firewall rules</h3>
+        <div class="value">{{ active_rules }}</div>
+        <div class="label"><a href="/firewall">Firewall</a></div>
+    </div>
+    <div class="stat-card">
+        <h3>VPN connections</h3>
+        <div class="value" id="vpn-connections">{{ vpn_connections }}</div>
+        <div class="label">WireGuard peers with a handshake in the last 3 min + established IPsec SAs (<a href="/vpn">VPN</a>)</div>
+    </div>
+    <div class="stat-card">
+        <h3>System</h3>
+        <div class="label">CPU {{ "{:.1}"|format(system_info.cpu_usage) }}% &middot;
+            memory {{ "{:.1}"|format(system_info.memory_usage) }}% &middot;
+            disk / {{ "{:.1}"|format(system_info.disk_usage) }}%</div>
+        <div class="label">load {{ system_info.load_avg.0 }} / {{ system_info.load_avg.1 }} / {{ system_info.load_avg.2 }}</div>
+    </div>
+</div>
 
-    <h2>Network Interfaces</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Interface</th>
-                <th>Status</th>
-                <th>IP Addresses</th>
-                <th>MAC Address</th>
-                <th>RX Bytes</th>
-                <th>TX Bytes</th>
-            </tr>
-        </thead>
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Network interfaces</h2></div>
+    {% if interfaces.is_empty() %}
+    <p class="empty">No network interfaces found.</p>
+    {% else %}
+    <table class="lan">
+        <thead><tr><th>Interface</th><th>Status</th><th>IP addresses</th><th>MAC</th><th>RX bytes</th><th>TX bytes</th></tr></thead>
         <tbody>
-            {% for iface in interfaces %}
-            <tr>
-                <td><strong>{{ iface.name }}</strong></td>
-                <td>
-                    {% if iface.enabled %}
-                    <span class="badge success">{{ iface.state }}</span>
-                    {% else %}
-                    <span class="badge">{{ iface.state }}</span>
-                    {% endif %}
-                </td>
-                <td>{{ iface.ip_display }}</td>
-                <td>{{ iface.mac_display }}</td>
-                <td>{{ iface.rx_bytes }}</td>
-                <td>{{ iface.tx_bytes }}</td>
-            </tr>
-            {% endfor %}
+        {% for iface in interfaces %}
+        <tr>
+            <td><strong>{{ iface.name }}</strong></td>
+            <td>{% if iface.enabled %}<span class="ok">{{ iface.state }}</span>{% else %}<span class="text-muted">{{ iface.state }}</span>{% endif %}</td>
+            <td>{{ iface.ip_display }}</td>
+            <td class="mono">{{ iface.mac_display }}</td>
+            <td>{{ iface.rx_bytes }}</td>
+            <td>{{ iface.tx_bytes }}</td>
+        </tr>
+        {% endfor %}
         </tbody>
     </table>
-</body>
-</html>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Services</h2></div>
+    {% if services.is_empty() %}
+    <p class="empty">None of the services Patronus manages are installed on this system (or the init system is not systemd/OpenRC).</p>
+    {% else %}
+    <p class="text-sm">
+        {% for s in services %}
+        {{ s.name }}: {% if s.is_running %}<span class="ok">running</span>{% else %}<span class="text-muted">{{ s.status|lower }}</span>{% endif %}{% if !loop.last %} &middot; {% endif %}
+        {% endfor %}
+        &middot; <a href="/system">details</a>
+    </p>
+    {% endif %}
+</div>
+{% endblock %}

@@ -8,6 +8,7 @@ pub mod api;
 pub mod pages;
 
 use axum::{
+    response::Redirect,
     routing::{get, post},
     Router,
 };
@@ -29,7 +30,7 @@ pub fn build_router(
         // .route("/ws/metrics", get(crate::websocket::ws_metrics_handler))
         // .route("/ws/logs", get(crate::websocket::ws_logs_handler))
         // Protected page routes (HTML) - require authentication
-        .route("/", get(crate::simple_handlers::simple_index))
+        .route("/", get(pages::dashboard))
         .route("/firewall", get(pages::firewall))
         .route("/vpn", get(pages::vpn))
         .route("/network", get(pages::network))
@@ -37,13 +38,14 @@ pub fn build_router(
         .route("/monitoring", get(pages::monitoring))
         .route("/system", get(pages::system))
         .merge(api::lan::pages())
-        // Simple handler routes (working fallbacks)
-        .route("/simple", get(crate::simple_handlers::simple_index))
+        // The old "simple" pages claimed services were operational and
+        // listed invented "recent activity"; keep the URLs as redirects.
+        .route("/simple", get(|| async { Redirect::to("/") }))
         .route(
             "/simple/firewall",
-            get(crate::simple_handlers::simple_firewall),
+            get(|| async { Redirect::to("/firewall") }),
         )
-        .route("/simple/status", get(crate::simple_handlers::simple_status))
+        .route("/simple/status", get(|| async { Redirect::to("/system") }))
         // API routes (JSON)
         .nest("/api", api_routes())
         // Static files
@@ -137,6 +139,9 @@ fn api_routes() -> Router<AppState> {
         .merge(api::interfaces::router())
         .merge(api::system::router())
 }
+
+#[cfg(test)]
+mod honesty_tests;
 
 #[cfg(test)]
 mod auth_gate_tests {

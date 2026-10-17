@@ -10,10 +10,13 @@ use std::fmt;
 #[derive(Template)]
 #[template(path = "dashboard.html")]
 pub struct DashboardTemplate {
+    pub page: &'static str,
     pub interfaces: Vec<InterfaceInfo>,
     pub active_rules: usize,
     pub vpn_connections: usize,
     pub system_info: SystemInfo,
+    pub uptime: String,
+    pub services: Vec<Service>,
 }
 
 /// Firewall template
@@ -67,9 +70,12 @@ pub struct InterfaceOption {
 #[derive(Template)]
 #[template(path = "vpn.html")]
 pub struct VpnTemplate {
+    pub page: &'static str,
     pub wg_peers: Vec<WireGuardPeer>,
-    pub ovpn_tunnels: Vec<OpenVpnTunnel>,
+    /// Why WireGuard state could not be read ("" = read fine).
+    pub wg_error: String,
     pub ipsec_tunnels: Vec<IpsecTunnel>,
+    pub ipsec_error: String,
 }
 
 /// Network template
@@ -78,49 +84,58 @@ pub struct VpnTemplate {
 pub struct NetworkTemplate {
     pub interfaces: Vec<InterfaceInfo>,
     pub routes: Vec<Route>,
+    /// Why the routing table could not be read ("" = read fine).
+    pub routes_error: String,
 }
 
-/// Monitoring template
+/// Monitoring template. Every number is measured; there is no local ML
+/// model, health score or alert producer yet, so none is shown.
 #[derive(Template)]
 #[template(path = "monitoring.html")]
 pub struct MonitoringTemplate {
+    pub page: &'static str,
     pub metrics: SystemMetrics,
     pub interface_stats: Vec<InterfaceStats>,
     pub top_connections: Vec<Connection>,
+    /// Why the conntrack table could not be read ("" = read fine).
+    pub connections_error: String,
     pub alerts: Vec<Alert>,
-    // AI & Threat Detection
-    pub threats_detected_today: u32,
-    pub threats_blocked_today: u32,
-    pub ai_model_accuracy: f64,
-    pub ai_model_confidence: f64,
-    pub system_health_score: u32,
+    /// Threat-intel feed entries currently known.
+    pub threats_detected: u32,
+    pub threats_blocked: u32,
     pub active_alerts: u32,
-    pub packets_analyzed_rate: u32,
+    /// Packets/s over all non-loopback interfaces (sampled now).
+    pub packet_rate: u64,
+    /// Packets since boot over all non-loopback interfaces.
     pub packets_total: u64,
+    pub rx_rate: String,
+    pub tx_rate: String,
     pub ai_threats: Vec<AiThreat>,
-    pub attack_map_data: Vec<AttackEvent>,
-    pub model_performance: ModelPerformance,
     pub live_logs: Vec<LogEntry>,
+    pub logs_error: String,
 }
 
 /// System template
 #[derive(Template)]
 #[template(path = "system.html")]
 pub struct SystemTemplate {
+    pub page: &'static str,
     pub users: Vec<User>,
     pub backups: Vec<Backup>,
-    pub updates: Vec<Update>,
+    pub backup_dir: String,
+    pub backups_error: String,
     pub services: Vec<Service>,
+    pub init_system: String,
     pub config: SystemConfig,
-    // System status information
-    pub system_health: u32,
-    pub uptime_days: u32,
     pub uptime: String,
-    pub disk_usage_percent: f64,
+    pub disk_usage_percent: String,
     pub disk_used: String,
     pub disk_total: String,
-    pub updates_available: u32,
-    pub security_updates: u32,
+    pub memory_total: String,
+    pub version: String,
+    pub kernel: String,
+    pub arch: String,
+    pub cpu: String,
 }
 
 // Data structures used in templates
@@ -235,11 +250,16 @@ pub struct Alias {
 pub struct WireGuardPeer {
     pub id: u32,
     pub name: String,
+    /// The WireGuard interface the peer belongs to.
+    pub interface: String,
     pub public_key: String,
     pub allowed_ips: String,
     pub endpoint: Option<String>,
     pub status: String,
+    /// Handshake within the last 180 s.
+    pub connected: bool,
     pub last_handshake: Option<String>,
+    pub transfer: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,7 +288,8 @@ pub struct Route {
     pub gateway: String,
     pub interface: String,
     pub metric: u32,
-    pub is_static: bool,
+    /// The kernel's route protocol: kernel, boot, static, dhcp, ra, bgp, ...
+    pub origin: String,
     pub is_active: bool,
 }
 
@@ -324,41 +345,37 @@ pub struct Alert {
     pub acknowledged: bool,
 }
 
+/// A web UI account (from the auth user store).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: u32,
     pub username: String,
-    pub full_name: String,
+    /// admin | operator | read-only
     pub role: String,
-    pub two_factor_enabled: bool,
-    pub last_login: Option<String>,
     pub is_active: bool,
-    pub is_system_user: bool,
+    pub created_at: String,
     pub last_login_display: String,
 }
 
+/// A configuration backup file (export of the config store).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Backup {
-    pub id: u32,
+    /// The file name; also the id in /api/system/backups/:id.
+    pub id: String,
     pub name: String,
     pub created_at: String,
     pub size: String,
+    pub size_bytes: u64,
     pub backup_type: String,
+    /// Parses as a config export.
     pub is_valid: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Update {
-    pub package_name: String,
-    pub current_version: String,
-    pub new_version: String,
-    pub security: bool,
-    pub size: String,
-}
-
+/// An init-managed service and its live state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Service {
     pub name: String,
+    pub description: String,
     pub status: String,
     pub is_running: bool,
     pub enabled: bool,
@@ -366,23 +383,13 @@ pub struct Service {
     pub memory_display: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Hostname / DNS / time zone as the system has them. Empty = not set.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SystemConfig {
     pub hostname: String,
     pub domain: String,
     pub timezone: String,
     pub dns_servers: Vec<String>,
-}
-
-impl Default for SystemConfig {
-    fn default() -> Self {
-        Self {
-            hostname: "patronus".to_string(),
-            domain: "local".to_string(),
-            timezone: "UTC".to_string(),
-            dns_servers: vec!["8.8.8.8".to_string(), "8.8.4.4".to_string()],
-        }
-    }
 }
 
 // Additional monitoring and AI-related structures
@@ -419,17 +426,6 @@ pub struct AttackEvent {
     pub attack_type: String,
     pub timestamp: String,
     pub severity: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelPerformance {
-    pub accuracy: f64,
-    pub precision: f64,
-    pub recall: f64,
-    pub f1_score: f64,
-    pub false_positive_rate: f64,
-    pub last_trained: String,
-    pub training_samples: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -537,16 +533,6 @@ impl fmt::Display for User {
 impl fmt::Display for Backup {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} ({})", self.name, self.created_at)
-    }
-}
-
-impl fmt::Display for Update {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}: {} -> {}",
-            self.package_name, self.current_version, self.new_version
-        )
     }
 }
 

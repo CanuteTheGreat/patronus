@@ -123,9 +123,9 @@ mod tests {
     fn test_generate_config() {
         let config = generate_wireguard_config(
             "10.0.0.2/24",
-            "cBVRKzyV6FkeN9tYPqJCILdNXJKF8xhHxEYczGzfE3M=",
-            "RZv3iVQPxjKqBVLPEMJJX/xJ7FDGZdKzxcY5WV9vwVU=",
-            "vpn.example.com:51820",
+            "aGVsbG8tY2xpZW50LXRlc3Qta2V5LTMyLWJ5dGVzISE=",
+            "aGVsbG8tc2VydmVyLXRlc3Qta2V5LTMyLWJ5dGVzISE=",
+            "vpn.test.invalid:51820",
             "0.0.0.0/0",
             Some("1.1.1.1, 8.8.8.8"),
             Some(25),
@@ -152,9 +152,9 @@ mod tests {
         let peer = WireGuardPeerConfig {
             peer_name: "mobile-phone".to_string(),
             interface_address: "10.0.0.2/24".to_string(),
-            private_key: "cBVRKzyV6FkeN9tYPqJCILdNXJKF8xhHxEYczGzfE3M=".to_string(),
-            server_public_key: "RZv3iVQPxjKqBVLPEMJJX/xJ7FDGZdKzxcY5WV9vwVU=".to_string(),
-            server_endpoint: "vpn.example.com:51820".to_string(),
+            private_key: "aGVsbG8tY2xpZW50LXRlc3Qta2V5LTMyLWJ5dGVzISE=".to_string(),
+            server_public_key: "aGVsbG8tc2VydmVyLXRlc3Qta2V5LTMyLWJ5dGVzISE=".to_string(),
+            server_endpoint: "vpn.test.invalid:51820".to_string(),
             allowed_ips: "0.0.0.0/0".to_string(),
             dns_servers: Some("1.1.1.1".to_string()),
             persistent_keepalive: Some(25),

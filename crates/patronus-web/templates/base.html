@@ -719,8 +719,8 @@
                     </button>
 
                     <div class="user-menu">
-                        <div class="user-avatar">A</div>
-                        <span>Admin</span>
+                        <div class="user-avatar" id="user-avatar">?</div>
+                        <span id="user-name"></span>
                     </div>
                 </div>
             </header>
@@ -770,15 +770,16 @@
             }
         }
 
-        // Auto-refresh (every 5 seconds)
-        let autoRefreshEnabled = true;
-        function refreshData() {
-            if (autoRefreshEnabled) {
-                // Fetch fresh data via AJAX
-                console.log('Refreshing data...');
-            }
-        }
-        setInterval(refreshData, 5000);
+        // The signed-in account (not a hard-coded "Admin").
+        fetch('/api/auth/me', {credentials: 'same-origin'})
+            .then(r => r.ok ? r.json() : null)
+            .then(me => {
+                const name = me && (me.username || (me.user && me.user.username));
+                if (!name) return;
+                document.getElementById('user-name').textContent = name;
+                document.getElementById('user-avatar').textContent = name.charAt(0).toUpperCase();
+            })
+            .catch(() => {});
     </script>
 
     {% block extra_scripts %}{% endblock %}

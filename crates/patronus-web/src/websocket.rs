@@ -205,22 +205,27 @@ async fn handle_logs_socket(socket: WebSocket, broadcaster: Arc<WsBroadcaster>) 
     };
 }
 
-/// Start background task to generate and broadcast metrics
+/// Start background task that measures and broadcasts system metrics
+/// (CPU over the last second, memory, root filesystem, throughput in
+/// bits/s) while anyone is subscribed. This used to broadcast random
+/// numbers.
 pub fn start_metrics_broadcaster(broadcaster: Arc<WsBroadcaster>, _state: crate::state::AppState) {
+    use crate::state::host;
     tokio::spawn(async move {
         let mut interval = interval(Duration::from_secs(1));
 
         loop {
             interval.tick().await;
-
-            // Fetch current metrics (in production, this would come from actual system monitoring)
-            // For now, generate mock data
+            if broadcaster.tx.receiver_count() == 0 {
+                continue;
+            }
+            let s = host::sample(Duration::from_millis(500)).await;
             let metrics = WsMessage::SystemMetrics {
-                cpu: rand::random::<f64>() * 100.0,
-                memory: rand::random::<f64>() * 100.0,
-                disk: rand::random::<f64>() * 100.0,
-                network_rx: (rand::random::<u64>() % 1000000) * 8, // Convert to bits
-                network_tx: (rand::random::<u64>() % 1000000) * 8,
+                cpu: s.cpu_percent.unwrap_or(0.0),
+                memory: host::memory().map(|m| m.0).unwrap_or(0.0),
+                disk: host::disk_percent("/").unwrap_or(0.0),
+                network_rx: s.rx_rate() * 8,
+                network_tx: s.tx_rate() * 8,
             };
 
             broadcaster.broadcast(metrics);
@@ -228,37 +233,9 @@ pub fn start_metrics_broadcaster(broadcaster: Arc<WsBroadcaster>, _state: crate:
     });
 }
 
-/// Start background task to generate and broadcast log entries
-pub fn start_log_broadcaster(broadcaster: Arc<WsBroadcaster>) {
-    tokio::spawn(async move {
-        let mut interval = interval(Duration::from_secs(2));
-
-        let levels = ["INFO", "WARN", "ERROR", "DEBUG"];
-        let components = ["FIREWALL", "VPN", "DNS", "DHCP", "SYSTEM"];
-        let messages = [
-            "Connection established from 192.168.1.100",
-            "DNS query for example.com resolved",
-            "DHCP lease assigned to 00:11:22:33:44:55",
-            "Firewall rule applied: ACCEPT",
-            "VPN peer handshake successful",
-            "Network interface eth0 up",
-            "Route updated: 10.0.0.0/24 via 192.168.1.1",
-        ];
-
-        loop {
-            interval.tick().await;
-
-            let log = WsMessage::LogEntry {
-                timestamp: chrono::Utc::now().to_rfc3339(),
-                level: levels[rand::random::<usize>() % levels.len()].to_string(),
-                component: components[rand::random::<usize>() % components.len()].to_string(),
-                message: messages[rand::random::<usize>() % messages.len()].to_string(),
-            };
-
-            broadcaster.broadcast(log);
-        }
-    });
-}
+// There is deliberately no log broadcaster: the one that was here
+// broadcast invented log lines ("DHCP lease assigned to 00:11:22:33:44:55")
+// every 2 s. Log entries reach clients only from a real source.
 
 /// Broadcast a firewall event
 pub fn broadcast_firewall_event(

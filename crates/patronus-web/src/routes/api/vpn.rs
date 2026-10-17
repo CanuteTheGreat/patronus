@@ -1,4 +1,6 @@
-//! VPN API endpoints
+//! VPN API endpoints. Reads are live (`wg show`, `swanctl --list-sas`);
+//! tunnel management is lane F, so the write/config endpoints answer 501
+//! with the reason instead of pretending to work.
 
 use crate::state::AppState;
 use axum::{
@@ -9,6 +11,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Request body of POST /api/vpn/wireguard/peers (accepted for API
+/// compatibility; refused with 501 until lane F lands).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WireGuardPeer {
     pub id: Option<u32>,
@@ -20,178 +24,71 @@ pub struct WireGuardPeer {
     pub enabled: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct OpenVpnTunnel {
-    pub id: u32,
-    pub name: String,
-    pub status: String,
-    pub local_ip: String,
-    pub remote_ip: String,
-    pub connected_clients: usize,
+/// What the write endpoints say until tunnels are managed here.
+pub const NOT_MANAGED: &str = "WireGuard peers are not managed by Patronus yet: this page shows \
+    the live kernel state (`wg show`). Configure peers with wireguard-tools (wg / wg-quick) \
+    for now; nothing was changed.";
+
+fn unavailable(msg: String) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({ "error": msg })),
+    )
+        .into_response()
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct IpsecTunnel {
-    pub id: u32,
-    pub name: String,
-    pub status: String,
-    pub local_subnet: String,
-    pub remote_subnet: String,
-    pub remote_gateway: String,
+fn not_implemented() -> Response {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(serde_json::json!({ "error": NOT_MANAGED })),
+    )
+        .into_response()
 }
 
-/// GET /api/vpn/wireguard/peers
+/// GET /api/vpn/wireguard/peers -- live peers of every WireGuard interface.
 pub async fn list_wg_peers(State(state): State<AppState>) -> Response {
     match state.vpn.list_wireguard_peers().await {
         Ok(peers) => Json(peers).into_response(),
-        Err(e) => {
-            tracing::error!("Failed to list WireGuard peers: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "Failed to list WireGuard peers"
-                })),
-            )
-                .into_response()
-        }
+        Err(e) => unavailable(format!("cannot read WireGuard state: {e}")),
     }
 }
 
-/// POST /api/vpn/wireguard/peers
-pub async fn add_wg_peer(
-    State(state): State<AppState>,
-    Json(peer): Json<WireGuardPeer>,
-) -> Response {
-    match state.vpn.add_wireguard_peer(peer).await {
-        Ok(id) => (
-            StatusCode::CREATED,
-            Json(serde_json::json!({
-                "id": id,
-                "message": "WireGuard peer added successfully"
-            })),
-        )
-            .into_response(),
-        Err(e) => {
-            tracing::error!("Failed to add WireGuard peer: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("Failed to add peer: {}", e)
-                })),
-            )
-                .into_response()
-        }
-    }
+/// POST /api/vpn/wireguard/peers -- 501 (used to add a fake "Pending" row).
+pub async fn add_wg_peer(Json(_peer): Json<WireGuardPeer>) -> Response {
+    not_implemented()
 }
 
-/// DELETE /api/vpn/wireguard/peers/:id
-pub async fn delete_wg_peer(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
-    match state.vpn.delete_wireguard_peer(id).await {
-        Ok(_) => Json(serde_json::json!({
-            "message": "WireGuard peer deleted successfully"
-        }))
-        .into_response(),
-        Err(e) => {
-            tracing::error!("Failed to delete WireGuard peer {}: {}", id, e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("Failed to delete peer: {}", e)
-                })),
-            )
-                .into_response()
-        }
-    }
+/// DELETE /api/vpn/wireguard/peers/:id -- 501.
+pub async fn delete_wg_peer(Path(_id): Path<u32>) -> Response {
+    not_implemented()
 }
 
-/// GET /api/vpn/wireguard/config/:id
-pub async fn get_wg_config(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
-    match state.vpn.get_wireguard_config(id).await {
-        Ok(config) => Json(serde_json::json!({
-            "config": config
-        }))
-        .into_response(),
-        Err(e) => {
-            tracing::error!("Failed to get WireGuard config for peer {}: {}", id, e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("Failed to get config: {}", e)
-                })),
-            )
-                .into_response()
-        }
-    }
+/// GET /api/vpn/wireguard/config/:id and the QR code variants -- 501:
+/// a client config needs the client's private key, which only exists once
+/// Patronus generates peers (lane F). These used to return configs with a
+/// placeholder private key and a made-up server endpoint.
+pub async fn get_wg_config(Path(_id): Path<u32>) -> Response {
+    not_implemented()
 }
 
-/// GET /api/vpn/wireguard/qrcode/:id - Get QR code as SVG
-pub async fn get_wg_qrcode_svg(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
-    match state.vpn.get_wireguard_qrcode_svg(id).await {
-        Ok(svg) => ([(axum::http::header::CONTENT_TYPE, "image/svg+xml")], svg).into_response(),
-        Err(e) => {
-            tracing::error!("Failed to generate QR code for peer {}: {}", id, e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("Failed to generate QR code: {}", e)
-                })),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// GET /api/vpn/wireguard/qrcode/:id/png - Get QR code as PNG
-pub async fn get_wg_qrcode_png(State(state): State<AppState>, Path(id): Path<u32>) -> Response {
-    match state.vpn.get_wireguard_qrcode_png(id).await {
-        Ok(png_bytes) => {
-            ([(axum::http::header::CONTENT_TYPE, "image/png")], png_bytes).into_response()
-        }
-        Err(e) => {
-            tracing::error!("Failed to generate QR code PNG for peer {}: {}", id, e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": format!("Failed to generate QR code: {}", e)
-                })),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// GET /api/vpn/openvpn/tunnels
-pub async fn list_ovpn_tunnels(State(state): State<AppState>) -> Response {
-    match state.vpn.list_openvpn_tunnels().await {
-        Ok(tunnels) => Json(tunnels).into_response(),
-        Err(e) => {
-            tracing::error!("Failed to list OpenVPN tunnels: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "Failed to list OpenVPN tunnels"
-                })),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// GET /api/vpn/ipsec/tunnels
+/// GET /api/vpn/ipsec/tunnels -- live IKE SAs.
 pub async fn list_ipsec_tunnels(State(state): State<AppState>) -> Response {
     match state.vpn.list_ipsec_tunnels().await {
         Ok(tunnels) => Json(tunnels).into_response(),
-        Err(e) => {
-            tracing::error!("Failed to list IPsec tunnels: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": "Failed to list IPsec tunnels"
-                })),
-            )
-                .into_response()
-        }
+        Err(e) => unavailable(format!("cannot read IPsec state: {e}")),
     }
+}
+
+/// GET /api/vpn/openvpn/tunnels -- OpenVPN is neither managed nor
+/// monitored: say so rather than return an empty list that reads as "none".
+pub async fn list_ovpn_tunnels() -> Response {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(serde_json::json!({
+            "error": "OpenVPN is not managed or monitored by Patronus"
+        })),
+    )
+        .into_response()
 }
 
 /// This lane's API routes, mounted under `/api` by `routes::api_routes`
@@ -202,8 +99,8 @@ pub fn router() -> axum::Router<AppState> {
         .route("/vpn/wireguard/peers", get(list_wg_peers).post(add_wg_peer))
         .route("/vpn/wireguard/peers/:id", delete(delete_wg_peer))
         .route("/vpn/wireguard/config/:id", get(get_wg_config))
-        .route("/vpn/wireguard/qrcode/:id", get(get_wg_qrcode_svg))
-        .route("/vpn/wireguard/qrcode/:id/png", get(get_wg_qrcode_png))
+        .route("/vpn/wireguard/qrcode/:id", get(get_wg_config))
+        .route("/vpn/wireguard/qrcode/:id/png", get(get_wg_config))
         .route("/vpn/openvpn/tunnels", get(list_ovpn_tunnels))
         .route("/vpn/ipsec/tunnels", get(list_ipsec_tunnels))
 }

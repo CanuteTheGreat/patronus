@@ -16,7 +16,11 @@ pub struct SystemStatus {
     pub memory_usage: f64,
     pub disk_usage: f64,
     pub active_rules: usize,
+    /// WireGuard peers with a handshake in the last 180 s + established
+    /// IPsec IKE SAs, read live.
     pub vpn_connections: usize,
+    /// Why VPN state could not be read (then vpn_connections is a floor).
+    pub vpn_errors: Vec<String>,
     pub interfaces: Vec<InterfaceStatus>,
 }
 
@@ -45,7 +49,15 @@ pub async fn system_status(State(state): State<AppState>) -> Response {
     };
 
     let active_rules = state.firewall.count_active_rules().await.unwrap_or(0);
-    let vpn_connections = state.vpn.count_active_connections().await.unwrap_or(0);
+    let vpn = state.vpn.snapshot().await;
+    let vpn_connections = vpn.active_connections();
+    // Only real read failures (not "tool not installed": then there is no
+    // tunnel of that kind to count).
+    let vpn_errors: Vec<String> = [vpn.wg_error, vpn.ipsec_error]
+        .into_iter()
+        .flatten()
+        .filter(|e| !e.contains("not installed"))
+        .collect();
 
     let interfaces = match state.interfaces.list_template().await {
         Ok(ifaces) => ifaces
@@ -70,6 +82,7 @@ pub async fn system_status(State(state): State<AppState>) -> Response {
         disk_usage: system_info.disk_usage,
         active_rules,
         vpn_connections,
+        vpn_errors,
         interfaces,
     };
 

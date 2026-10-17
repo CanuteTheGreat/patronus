@@ -1,17 +1,19 @@
-//! Monitoring state. Lane I replaces the fixtures below with real data.
+//! Monitoring state: live metrics, per-interface throughput, the
+//! connection-tracking table, the threat-intel feed and the system journal.
+//!
+//! This file used to return fixtures: fixed network rates (1 234 567 /
+//! 987 654 B/s), an "eth0" row when /proc/net/dev was unreadable, two
+//! invented "top connections" and two alerts from January 2024. Alerts have
+//! no producer yet (lane I), so the list is honestly empty.
 
 use std::sync::Arc;
-use tokio::sync::RwLock;
-
-use super::SystemManager;
 
 /// Monitoring operations
 pub struct MonitoringManager {
-    alerts: Arc<RwLock<Vec<crate::templates::Alert>>>,
     /// Real-time threat intelligence database, fed by live external feeds
     /// (EmergingThreats compromised-IP list, and AbuseIPDB if an API key is
-    /// configured). This backs the "AI Threats" dashboard widget with
-    /// genuine external detections -- see `get_ai_threats`.
+    /// configured). This backs the threat-feed widget -- see
+    /// `get_ai_threats`.
     threat_intel_db: Arc<patronus_ai::ThreatIntelDB>,
 }
 
@@ -38,141 +40,98 @@ impl MonitoringManager {
             feed_aggregator.start().await;
         });
 
-        let default_alerts = vec![
-            crate::templates::Alert {
-                id: 1,
-                alert_type: "Performance".to_string(),
-                severity: "warning".to_string(),
-                component: "eth0".to_string(),
-                message: "High CPU usage detected on eth0".to_string(),
-                timestamp: "2024-01-15 14:30:00".to_string(),
-                acknowledged: false,
-            },
-            crate::templates::Alert {
-                id: 2,
-                alert_type: "VPN".to_string(),
-                severity: "info".to_string(),
-                component: "wireguard".to_string(),
-                message: "New WireGuard peer connected".to_string(),
-                timestamp: "2024-01-15 14:25:00".to_string(),
-                acknowledged: true,
-            },
-        ];
+        Self { threat_intel_db }
+    }
 
-        Self {
-            alerts: Arc::new(RwLock::new(default_alerts)),
-            threat_intel_db,
+    /// CPU, memory, disk and total throughput, measured over `sample`.
+    pub fn metrics_from(&self, sample: &super::host::Sample) -> crate::templates::SystemMetrics {
+        crate::templates::SystemMetrics {
+            cpu_percent: sample.cpu_percent.unwrap_or(0.0),
+            memory_percent: super::host::memory().map(|m| m.0).unwrap_or(0.0),
+            disk_percent: super::host::disk_percent("/").unwrap_or(0.0),
+            network_rx_rate: sample.rx_rate(),
+            network_tx_rate: sample.tx_rate(),
         }
     }
 
     pub async fn get_current_metrics(&self) -> anyhow::Result<crate::templates::SystemMetrics> {
-        let cpu_percent = SystemManager::get_cpu_usage();
-        let (memory_percent, _) = SystemManager::get_memory_info();
-        let disk_percent = SystemManager::get_disk_usage();
+        let s = super::host::sample(std::time::Duration::from_millis(250)).await;
+        Ok(self.metrics_from(&s))
+    }
 
-        Ok(crate::templates::SystemMetrics {
-            cpu_percent,
-            memory_percent,
-            disk_percent,
-            network_rx_rate: 1_234_567,
-            network_tx_rate: 987_654,
-        })
+    /// Per-interface rates (over the sample window) and counters.
+    pub fn interface_stats_from(
+        &self,
+        sample: &super::host::Sample,
+    ) -> Vec<crate::templates::InterfaceStats> {
+        sample
+            .interfaces
+            .iter()
+            .map(|(n, rx, tx, _)| crate::templates::InterfaceStats {
+                name: n.name.clone(),
+                rx_rate: format_rate(*rx),
+                tx_rate: format_rate(*tx),
+                rx_packets: n.rx_packets.to_string(),
+                tx_packets: n.tx_packets.to_string(),
+                errors: (n.rx_errors + n.tx_errors).to_string(),
+            })
+            .collect()
     }
 
     pub async fn get_interface_stats(
         &self,
     ) -> anyhow::Result<Vec<crate::templates::InterfaceStats>> {
-        let mut stats = Vec::new();
-
-        if let Ok(content) = std::fs::read_to_string("/proc/net/dev") {
-            for line in content.lines().skip(2) {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 10 {
-                    let name = parts[0].trim_end_matches(':');
-                    if name == "lo" {
-                        continue;
-                    }
-
-                    let rx_bytes: u64 = parts[1].parse().unwrap_or(0);
-                    let tx_bytes: u64 = parts[9].parse().unwrap_or(0);
-                    let rx_packets: u64 = parts[2].parse().unwrap_or(0);
-                    let tx_packets: u64 = parts[10].parse().unwrap_or(0);
-                    let rx_errors: u64 = parts[3].parse().unwrap_or(0);
-                    let tx_errors: u64 = parts[11].parse().unwrap_or(0);
-
-                    stats.push(crate::templates::InterfaceStats {
-                        name: name.to_string(),
-                        rx_rate: format_bytes(rx_bytes),
-                        tx_rate: format_bytes(tx_bytes),
-                        rx_packets: format!("{}", rx_packets),
-                        tx_packets: format!("{}", tx_packets),
-                        errors: format!("{}", rx_errors + tx_errors),
-                    });
-                }
-            }
-        }
-
-        if stats.is_empty() {
-            stats.push(crate::templates::InterfaceStats {
-                name: "eth0".to_string(),
-                rx_rate: "1.23 GB".to_string(),
-                tx_rate: "987 MB".to_string(),
-                rx_packets: "1000000".to_string(),
-                tx_packets: "800000".to_string(),
-                errors: "0".to_string(),
-            });
-        }
-
-        Ok(stats)
+        let s = super::host::sample(std::time::Duration::from_millis(250)).await;
+        Ok(self.interface_stats_from(&s))
     }
 
+    /// The largest flows in the kernel's connection-tracking table
+    /// (/proc/net/nf_conntrack, else `conntrack -L`). Errors say why the
+    /// table could not be read.
     pub async fn get_top_connections(
         &self,
         limit: usize,
     ) -> anyhow::Result<Vec<crate::templates::Connection>> {
-        let connections = vec![
-            crate::templates::Connection {
-                protocol: "TCP".to_string(),
-                source: "192.168.1.100:54321".to_string(),
-                destination: "192.168.1.1:8443".to_string(),
-                bytes: "1.2 MB".to_string(),
-                packets: "1024".to_string(),
-                duration: "5m 30s".to_string(),
-            },
-            crate::templates::Connection {
-                protocol: "UDP".to_string(),
-                source: "203.0.113.50:51820".to_string(),
-                destination: "10.99.0.1:51820".to_string(),
-                bytes: "256 KB".to_string(),
-                packets: "512".to_string(),
-                duration: "2h 15m".to_string(),
-            },
-        ];
-
-        Ok(connections.into_iter().take(limit).collect())
+        tokio::task::spawn_blocking(move || {
+            let text = match std::fs::read_to_string("/proc/net/nf_conntrack") {
+                Ok(t) => t,
+                Err(proc_err) => {
+                    match std::process::Command::new("conntrack")
+                        .args(["-L", "-o", "extended"])
+                        .output()
+                    {
+                        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+                        Ok(o) => anyhow::bail!(
+                            "connection tracking table unreadable: /proc/net/nf_conntrack: {proc_err}; conntrack: {}",
+                            String::from_utf8_lossy(&o.stderr).trim()
+                        ),
+                        Err(e) => anyhow::bail!(
+                            "connection tracking table unreadable: /proc/net/nf_conntrack: {proc_err}; conntrack: {e}"
+                        ),
+                    }
+                }
+            };
+            let mut flows = parse_conntrack(&text);
+            flows.sort_by_key(|f| std::cmp::Reverse(f.0));
+            Ok(flows.into_iter().take(limit).map(|(_, c)| c).collect())
+        })
+        .await?
     }
 
+    /// No alert producer exists yet (lane I): an honest empty list.
     pub async fn get_recent_alerts(
         &self,
-        limit: usize,
+        _limit: usize,
     ) -> anyhow::Result<Vec<crate::templates::Alert>> {
-        let alerts = self.alerts.read().await;
-        Ok(alerts.iter().take(limit).cloned().collect())
+        Ok(Vec::new())
     }
 
-    /// AI Threats widget: recent detections pulled from the live threat
-    /// intelligence database (`patronus-ai`'s `ThreatIntelDB`), which is
-    /// populated by the `ThreatFeedAggregator` background task started in
-    /// `new()` (EmergingThreats compromised-IP feed today; AbuseIPDB too if
-    /// an API key were configured). This is real external threat data, not
-    /// a synthetic ML pipeline -- the full `ThreatDetectionEngine` (which
-    /// also does local anomaly detection on live traffic via
-    /// `patronus-ai::engine::ThreatDetectionEngine::observe_flow`) is not
-    /// wired up anywhere yet because nothing in the codebase feeds it real
-    /// eBPF/XDP flow telemetry (`patronus-ebpf`'s collector exists but
-    /// nothing calls `observe_flow` with live packet data). Until that flow
-    /// pipeline is wired, confidence/detection_method/ml_model fields below
-    /// reflect "external feed" rather than "local ML classifier".
+    /// Threat-feed widget: recent entries from the live threat
+    /// intelligence database (`patronus-ai`'s `ThreatIntelDB`), populated
+    /// by the `ThreatFeedAggregator` started in `new()`. This is external
+    /// feed data, not a local ML classifier: nothing feeds live flows into
+    /// `ThreatDetectionEngine` yet, so detection_method/ml_model say
+    /// "external feed" and `blocked` is false (no automatic blocking).
     pub async fn get_ai_threats(
         &self,
         limit: usize,
@@ -201,15 +160,7 @@ impl MonitoringManager {
                 threat_type: category.clone(),
                 source_ip: ip.clone(),
                 destination: "this host".to_string(),
-                severity: if best.confidence >= 0.9 {
-                    "critical".to_string()
-                } else if best.confidence >= 0.75 {
-                    "high".to_string()
-                } else if best.confidence >= 0.5 {
-                    "medium".to_string()
-                } else {
-                    "low".to_string()
-                },
+                severity: severity(best.confidence),
                 confidence: (best.confidence * 100.0).round(),
                 blocked: false,
                 description: best
@@ -236,83 +187,11 @@ impl MonitoringManager {
         Ok(threats)
     }
 
-    /// Attack map widget. Uses the same real threat-intel blocklist data
-    /// as `get_ai_threats` (EmergingThreats-style compromised-IP feed) and
-    /// plots each entry at its reported country's centroid via
-    /// `crate::geo_centroid::country_centroid`. This is a deliberate
-    /// approximation, not per-IP geolocation: this project's GeoIP setup
-    /// (`patronus-firewall::geoip::GeoIpManager`) only resolves ISO
-    /// country codes, not city-level lat/lon, and is gated behind the
-    /// `geoip` Cargo feature + a GeoLite2/legacy database file on disk --
-    /// true per-IP coordinates aren't available without that. A country
-    /// centroid is good enough for "attacks are coming from roughly here"
-    /// on a dashboard map.
-    ///
-    /// Entries with no `country` on the threat-intel record, or whose
-    /// country code isn't in the (deliberately partial) centroid table,
-    /// are skipped rather than plotted at a fabricated location.
-    ///
-    /// A real per-block-event log (timestamped firewall/IDS block
-    /// decisions, e.g. via nftables `log` + a journald/syslog consumer, or
-    /// a counter-object poll loop) would let this show actual block
-    /// events instead of "currently known bad IPs" -- that's still a real
-    /// gap, just a separate and larger piece of work than this.
-    pub async fn get_attack_map_data(&self) -> anyhow::Result<Vec<crate::templates::AttackEvent>> {
-        let blocklist = self.threat_intel_db.get_blocklist().await;
-        let mut events = Vec::new();
-
-        for ip in blocklist {
-            let entries = self.threat_intel_db.get_threats(&ip).await;
-            let Some(best) = entries
-                .iter()
-                .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
-            else {
-                continue;
-            };
-
-            let Some(country) = best.country.as_deref() else {
-                continue;
-            };
-            let Some((latitude, longitude)) = crate::geo_centroid::country_centroid(country) else {
-                continue;
-            };
-
-            let attack_type = best
-                .categories
-                .first()
-                .map(|c| format!("{:?}", c))
-                .unwrap_or_else(|| "Unknown".to_string());
-
-            let severity = if best.confidence >= 0.9 {
-                "critical"
-            } else if best.confidence >= 0.75 {
-                "high"
-            } else if best.confidence >= 0.5 {
-                "medium"
-            } else {
-                "low"
-            }
-            .to_string();
-
-            events.push(crate::templates::AttackEvent {
-                latitude,
-                longitude,
-                source_country: country.to_string(),
-                attack_type,
-                timestamp: best.last_seen.to_rfc3339(),
-                severity,
-            });
-        }
-
-        Ok(events)
-    }
-
     /// Live logs widget: backed by the real system journal via
     /// `patronus-monitoring::status::StatusPageManager::get_logs`, which
     /// shells out to `journalctl --output=json`. On Gentoo hosts running
     /// OpenRC without the `systemd` USE flag there is no journald, so this
-    /// returns an empty list in that case (see doc comment on `get_logs`)
-    /// rather than fabricating log lines.
+    /// returns an empty list in that case rather than fabricating lines.
     pub async fn get_live_logs(
         &self,
         limit: u32,
@@ -357,18 +236,120 @@ impl MonitoringManager {
     }
 }
 
-fn format_bytes(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.2} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.2} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.2} KB", bytes as f64 / KB as f64)
+fn severity(confidence: f64) -> String {
+    if confidence >= 0.9 {
+        "critical"
+    } else if confidence >= 0.75 {
+        "high"
+    } else if confidence >= 0.5 {
+        "medium"
     } else {
-        format!("{} B", bytes)
+        "low"
+    }
+    .to_string()
+}
+
+/// "12.3 KiB/s"
+pub fn format_rate(bytes_per_sec: u64) -> String {
+    format!("{}/s", super::vpn::format_bytes(bytes_per_sec))
+}
+
+/// Parse conntrack entries (/proc/net/nf_conntrack lines start with
+/// `ipv4 2 tcp 6 ...`, `conntrack -L -o extended` lines too). Returns
+/// (total bytes, row) per flow; bytes/packets are only known when
+/// nf_conntrack_acct is on, the age only with nf_conntrack_timestamp.
+pub fn parse_conntrack(text: &str) -> Vec<(u64, crate::templates::Connection)> {
+    const PROTOS: &[&str] = &[
+        "tcp", "udp", "icmp", "icmpv6", "sctp", "dccp", "gre", "udplite", "unknown",
+    ];
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let Some(proto) = words.iter().find(|w| PROTOS.contains(w)) else {
+            continue;
+        };
+        let first = |k: &str| {
+            words
+                .iter()
+                .find_map(|w| w.strip_prefix(k).and_then(|v| v.strip_prefix('=')))
+        };
+        let sum = |k: &str| -> Option<u64> {
+            let v: Vec<u64> = words
+                .iter()
+                .filter_map(|w| w.strip_prefix(k).and_then(|v| v.strip_prefix('=')))
+                .filter_map(|v| v.parse().ok())
+                .collect();
+            (!v.is_empty()).then(|| v.iter().sum())
+        };
+        let (Some(src), Some(dst)) = (first("src"), first("dst")) else {
+            continue;
+        };
+        let ep = |a: &str, p: Option<&str>| match p {
+            Some(p) if a.contains(':') => format!("[{a}]:{p}"),
+            Some(p) => format!("{a}:{p}"),
+            None => a.to_string(),
+        };
+        let bytes = sum("bytes");
+        out.push((
+            bytes.unwrap_or(0),
+            crate::templates::Connection {
+                protocol: proto.to_uppercase(),
+                source: ep(src, first("sport")),
+                destination: ep(dst, first("dport")),
+                bytes: bytes
+                    .map(super::vpn::format_bytes)
+                    .unwrap_or_else(|| "— (accounting off)".into()),
+                packets: sum("packets")
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                duration: first("delta-time")
+                    .and_then(|v| v.parse().ok())
+                    .map(super::host::format_duration)
+                    .unwrap_or_else(|| "—".into()),
+            },
+        ));
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conntrack_flows_come_from_the_kernel_table() {
+        let proc = "\
+ipv4     2 tcp      6 431999 ESTABLISHED src=192.168.50.10 dst=198.51.100.10 sport=40000 dport=80 packets=10 bytes=800 src=198.51.100.10 dst=203.0.113.2 sport=80 dport=40000 packets=8 bytes=9000 [ASSURED] mark=0 delta-time=125 use=1
+ipv6     10 udp      17 29 src=fd00::10 dst=2001:db8::53 sport=5353 dport=53 src=2001:db8::53 dst=fd00::10 sport=53 dport=5353 mark=0 use=1
+ipv4     2 icmp     1 29 src=192.168.50.10 dst=198.51.100.10 type=8 code=0 id=7 packets=1 bytes=84 src=198.51.100.10 dst=192.168.50.10 type=0 code=0 id=7 packets=1 bytes=84 mark=0 use=1
+";
+        let mut f = parse_conntrack(proc);
+        assert_eq!(f.len(), 3);
+        f.sort_by_key(|x| std::cmp::Reverse(x.0));
+        let (bytes, c) = &f[0];
+        assert_eq!(*bytes, 9800, "both directions");
+        assert_eq!(c.protocol, "TCP");
+        assert_eq!(c.source, "192.168.50.10:40000");
+        assert_eq!(c.destination, "198.51.100.10:80");
+        assert_eq!(c.packets, "18");
+        assert_eq!(c.duration, "2 min");
+        let udp = &f.iter().find(|x| x.1.protocol == "UDP").unwrap().1;
+        assert_eq!(udp.source, "[fd00::10]:5353");
+        assert_eq!(udp.bytes, "— (accounting off)");
+        assert_eq!(udp.duration, "—");
+        let icmp = &f.iter().find(|x| x.1.protocol == "ICMP").unwrap().1;
+        assert_eq!(icmp.destination, "198.51.100.10");
+        assert!(parse_conntrack("").is_empty());
+    }
+
+    #[tokio::test]
+    async fn no_invented_alerts_or_interfaces() {
+        let m = MonitoringManager::new();
+        assert!(m.get_recent_alerts(20).await.unwrap().is_empty());
+        let empty = super::super::host::Sample::default();
+        assert!(m.interface_stats_from(&empty).is_empty());
+        let metrics = m.metrics_from(&empty);
+        assert_eq!(metrics.network_rx_rate, 0);
+        assert_eq!(metrics.network_tx_rate, 0);
     }
 }
