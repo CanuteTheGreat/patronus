@@ -1,15 +1,17 @@
 #!/bin/sh
-# Patronus nightly installer CI harness — runs inside the Alpine live
-# (diskless) environment booted directly via UTM's Linux-kernel-boot
-# feature. First boot: perform a real unattended install of Patronus
-# onto /dev/vda (real partitioning + real ZFS root pool). Because
-# install_base_system()'s rsync fallback clones the *running* live
-# rootfs onto the new root, this very script (and its marker file)
-# ends up on the installed system too — so on the *second* boot
-# (now booted from the real installed disk via real GRUB/UEFI) this
-# same script detects the marker and just reports success instead of
-# reinstalling, which is how we get real "did it actually reboot and
-# come back up" evidence without a guest agent.
+# Patronus nightly installer CI harness. Runs inside the Alpine Extended live
+# (diskless) environment booted under QEMU/KVM by vm_orchestrate.py.
+#
+# First boot: turn the live system into a complete, bootable system image,
+# then run the REAL unattended patronus-install against /dev/vda (real GPT
+# partitioning, real ZFS root pool, GRUB on the ESP). patronus-install has no
+# squashfs image to unpack on Alpine, so it takes its "rsync the running live
+# rootfs" path - which also clones this script and its marker file onto the
+# installed system.
+#
+# Second boot (the orchestrator removes the install media, so this can only be
+# the installed disk via its own GRUB/UEFI entry): the marker is present, so we
+# just report what we booted from and power off.
 set -u
 LOGHOST="10.0.2.2"
 LOGPORT="8788"
@@ -23,36 +25,104 @@ squash() {
   tr '\n' ';' | tr ' ' '_'
 }
 
+step() {
+  echo "[patronus-ci] $*" > /dev/console
+}
+
 if [ -f "$MARKER" ]; then
   report "event=SECOND_BOOT_START"
   HN=$(hostname)
-  MNT=$(mount | grep ' on / ' | squash)
+  MNT=$(grep ' / ' /proc/mounts | squash)
   ZP=$(zpool status 2>&1 | squash)
   ZL=$(zfs list 2>&1 | squash)
-  report "event=SECOND_BOOT_OK;host=${HN};mount=${MNT};zpool=${ZP};zfslist=${ZL}"
+  report "event=SECOND_BOOT_OK;host=${HN};root=${MNT};zpool=${ZP};zfslist=${ZL}"
   sleep 3
   poweroff -f
   exit 0
 fi
 
-report "event=LIVE_BOOT_START"
+report "event=LIVE_BOOT_START;kernel=$(uname -r)"
 
-# Bring in package index + real tooling needed to install+boot Patronus.
+fail() {
+  report "event=INSTALL_DONE;rc=99;tail=harness:_$(echo "$*" | squash)"
+  sleep 3
+  reboot -f
+  exit 1
+}
+
+# Tooling the installer drives (zfs from the same 3.20 release as the
+# Extended ISO, whose modloop already carries the matching zfs.ko).
+step "apk add"
 apk update >/root/apk.log 2>&1
-apk add --no-cache zfs grub grub-efi parted sgdisk dosfstools rsync util-linux e2fsprogs >>/root/apk.log 2>&1
-modprobe zfs >/root/modprobe.log 2>&1
+apk add --no-cache zfs grub grub-efi efibootmgr parted sgdisk dosfstools rsync \
+  util-linux e2fsprogs mkinitfs >>/root/apk.log 2>&1 || fail "apk add failed: $(tail -5 /root/apk.log)"
+modprobe zfs >/root/modprobe.log 2>&1 || fail "modprobe zfs failed: $(cat /root/modprobe.log)"
+
+# Alpine diskless keeps the kernel on the boot media and the modules on the
+# modloop squashfs (/lib/modules is a symlink into /.modloop). Materialize
+# both into the live root so the rsync clone is a complete system with a
+# real kernel, modules and a ZFS-capable initramfs.
+step "materialize kernel, modules, initramfs"
+KVER=$(uname -r)
+mkdir -p /media/cdrom /boot
+grep -q ' /media/cdrom ' /proc/mounts || mount -t iso9660 -o ro /dev/sr0 /media/cdrom 2>/dev/null \
+  || fail "cannot mount install media"
+cp /media/cdrom/boot/vmlinuz-lts /boot/vmlinuz-lts || fail "no vmlinuz-lts on media"
+for d in /lib/modules /lib/firmware; do
+  if [ -L "$d" ]; then
+    src=$(readlink -f "$d")
+    rm "$d" && mkdir -p "$d" && cp -a "$src/." "$d/" || fail "copy $d failed"
+  fi
+done
+[ -d "/lib/modules/$KVER" ] || fail "no /lib/modules/$KVER after materializing"
+# Same hostid in the live system, the pool, the installed /etc/hostid and the
+# initramfs, so the first import on the installed system isn't refused.
+zgenhostid -f >/dev/null 2>&1 || true
+echo 'features="ata base ide scsi usb virtio ext4 zfs nvme"' > /etc/mkinitfs/mkinitfs.conf
+mkinitfs -o /boot/initramfs-lts "$KVER" >/root/mkinitfs.log 2>&1 || fail "mkinitfs: $(tail -5 /root/mkinitfs.log)"
+
+# Boot config the installer's grub-mkconfig picks up (it only writes its own
+# /etc/default/grub when none exists): serial console so the second boot is
+# observable, and the zfs module loaded early by the initramfs.
+cat > /etc/default/grub <<'EOF'
+GRUB_DEFAULT=0
+GRUB_TIMEOUT=2
+GRUB_DISTRIBUTOR="Patronus"
+GRUB_CMDLINE_LINUX_DEFAULT=""
+GRUB_CMDLINE_LINUX="modules=sd-mod,usb-storage,virtio_blk,zfs console=tty0 console=ttyS0,115200"
+GRUB_PRELOAD_MODULES="part_gpt part_msdos zfs"
+GRUB_TERMINAL="serial console"
+GRUB_SERIAL_COMMAND="serial --speed=115200"
+GRUB_DISABLE_RECOVERY=true
+EOF
+
+# Services the installed system needs on its own (the live boot gets these
+# from the initramfs/apkovl instead).
+for s in devfs dmesg mdev hwdrivers modules zfs-import zfs-mount; do
+  [ -e "/etc/init.d/$s" ] && rc-update add "$s" sysinit >/dev/null 2>&1
+done
+for s in hwclock hostname bootmisc syslog networking; do
+  [ -e "/etc/init.d/$s" ] && rc-update add "$s" boot >/dev/null 2>&1
+done
+rc-update add local default >/dev/null 2>&1
 
 chmod +x /usr/local/bin/patronus-install
 touch "$MARKER"
 
+step "running patronus-install"
 /usr/local/bin/patronus-install --config /etc/patronus/answer.toml --yes --verbose \
   > /root/install.log 2>&1
 RC=$?
+tail -40 /root/install.log > /dev/console
 
-TAIL=$(tail -c 1200 /root/install.log | squash)
+TAIL=$(tail -c 1500 /root/install.log | squash)
 report "event=INSTALL_DONE;rc=${RC};tail=${TAIL}"
 
-ZP=$(zpool status 2>&1 | squash)
+# The installer exports the pool at the end; import it read-only to report
+# its real state, then export again so the installed system imports cleanly.
+zpool import -N -o readonly=on rpool >/dev/null 2>&1
+ZP=$(zpool status rpool 2>&1 | squash)
+zpool export rpool >/dev/null 2>&1
 report "event=POST_INSTALL_ZPOOL;rc=${RC};zpool=${ZP}"
 
 sleep 3

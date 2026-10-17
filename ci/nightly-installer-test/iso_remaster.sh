@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# Remaster a stock Alpine Standard x86_64 ISO so it boots straight into
-# our unattended Patronus installer harness, by rewriting the ISO's own
-# GRUB config to append our kernel cmdline (apkovl=/modloop=/alpine_repo=)
-# instead of doing a fragile direct-kernel-boot config in UTM. Reuses the
+# Remaster a stock Alpine Extended x86_64 ISO so it boots straight into
+# our unattended Patronus installer harness: the apkovl goes onto the ISO root
+# (Alpine's init picks up a *.apkovl.tar.gz from the boot media by itself, no
+# network needed in the initramfs - the Extended initramfs has no DHCP client,
+# "ERROR: DHCP requested but not present in initrd") and the ISO's own GRUB
+# config gets our kernel cmdline appended. (Extended, not Standard:
+# its modloop ships zfs.ko/spl.ko built for the ISO's own kernel.) Reuses the
 # ISO's existing (known-good) BIOS+UEFI hybrid boot catalog via xorriso's
 # "-boot_image any replay" so we don't have to regenerate El Torito/EFI
 # boot images ourselves.
 set -euo pipefail
 
-SRC_ISO="${1:?usage: iso_remaster.sh <src.iso> <apkovl-url> <modloop-url> <out.iso>}"
-APKOVL_URL="${2:?missing apkovl url}"
-MODLOOP_URL="${3:?missing modloop url}"
-OUT_ISO="${4:?missing output iso path}"
+SRC_ISO="${1:?usage: iso_remaster.sh <src.iso> <apkovl.tar.gz> <out.iso>}"
+APKOVL="${2:?missing apkovl file}"
+OUT_ISO="${3:?missing output iso path}"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -19,52 +21,17 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/extract"
 xorriso -osirrox on -indev "$SRC_ISO" -extract / "$WORK/extract" >/dev/null
 
-CMDLINE="modules=loop,squashfs,sd-mod,usb-storage,virtio_pci,virtio_ring,virtio_net,virtio_blk,virtio_scsi,virtio_console ip=dhcp alpine_repo=http://dl-cdn.alpinelinux.org/alpine/v3.20/main modloop=${MODLOOP_URL} apkovl=${APKOVL_URL} console=ttyAMA0,115200 console=tty0 loglevel=8"
-# Guest arch switched x86_64 -> aarch64 (2026-10-14, owner decision):
-# beauxbatons is Apple Silicon, so an aarch64 guest gets real
-# Hypervisor.framework-backed acceleration (HVF, same-ISA) in UTM,
-# unlike x86_64 which was unavoidably stuck in pure QEMU TCG (full
-# software instruction emulation) on this host and never finished a
-# boot+install+reboot cycle within any tried timeout.
+CMDLINE="modules=loop,squashfs,sd-mod,usb-storage,virtio_pci,virtio_ring,virtio_net,virtio_blk,virtio_scsi,virtio_console console=tty0 console=ttyS0,115200 loglevel=8"
+# x86_64 guest under QEMU/KVM on rw-man-01 (the kvm-x86_64 runner). History:
+# the guest ran x86_64 under pure TCG on beauxbatons (Apple Silicon) and never
+# finished booting, then aarch64 under UTM/HVF; both retired 2026-10-16 when
+# the test moved to real KVM on an x86_64 host.
 #
-# modules=...,virtio_* appended (first real aarch64 run, 2026-10-14):
-# the stock Alpine aarch64 ISO's own "modules=" list is just
-# loop,squashfs,sd-mod,usb-storage - it relies on udev/mdev coldplug +
-# module aliasing to pick up virtio_net/virtio_blk/virtio_pci on its
-# own rather than listing them explicitly. On this guest that coldplug
-# path never completed: the real first run hung silently forever right
-# after "Alpine Init 3.10.1-r0" printed, with zero further kernel
-# output and zero TCP connections ever reaching the host's report
-# server on :8788 (confirmed directly via `netstat` on beauxbatons
-# during the hang) - i.e. networking never came up at all, not just
-# slowly. modules= is nlplug-findfs's own explicit early-modprobe list
-# (last "modules=" occurrence on the cmdline wins, same convention as
-# every other repeated param here), so listing the virtio drivers here
-# forces them loaded deterministically before anything depends on
-# them, instead of trusting coldplug/hotplug timing on a guest
-# platform ("virt" aarch64 + modern virtio-pci) this harness had never
-# actually exercised end-to-end before.
-#
-# console=ttyAMA0 (not ttyS0): on QEMU's "virt" aarch64 machine type the
-# primary serial device is a PL011 UART, which Linux enumerates as
-# /dev/ttyAMA0, not the 8250/16550-style /dev/ttyS0 x86 PCs (and QEMU's
-# x86 "q35"/"pc" machine types) use. UTM's Serial "Auto" target wires
-# its TCP-server backend to whatever this machine model's own default
-# serial chardev is, so the kernel has to be told the matching device
-# name or none of its console output reaches that port at all. Keeping
-# console=tty0 too is harmless belt-and-braces for any local-display
-# fallback; dropped the old x86-only nolapic/IO-APIC workaround
-# entirely since the Local APIC/IO-APIC timer-calibration race it
-# worked around doesn't exist on aarch64's GIC interrupt controller.
-#
-# loglevel=8: the original image's own kernel line already carries
-# "quiet" (confirmed directly in the real upstream ISO), which
-# suppresses normal printk output - but not panics (KERN_EMERG forces
-# through regardless), which is exactly why the only serial output we
-# ever saw before this was either nothing at all, or a panic with no
-# surrounding context. loglevel wins last-specified, so this appended
-# "loglevel=8" overrides "quiet" and restores full kernel boot
-# logging on our only real diagnostic channel into this guest.
+# modules=...,virtio_*: nlplug-findfs's explicit early-modprobe list (the last
+# "modules=" on the cmdline wins), so the virtio disk/net drivers load
+# deterministically instead of depending on mdev coldplug timing.
+# console=ttyS0 LAST so it becomes /dev/console: QEMU's -serial file: is our
+# only window into the guest. loglevel=8 overrides the ISO's own "quiet".
 
 patch_grub_cfg() {
   f="$1"
@@ -117,6 +84,7 @@ if [ "${#XORRISO_MAP_ARGS[@]}" -eq 0 ]; then
   echo "ERROR: no grub.cfg/syslinux.cfg found to patch in $SRC_ISO - refusing to produce an unmodified ISO" >&2
   exit 1
 fi
+XORRISO_MAP_ARGS+=(-map "$APKOVL" "/patronus.apkovl.tar.gz")
 
 xorriso -indev "$SRC_ISO" \
         -outdev "$OUT_ISO" \
@@ -124,13 +92,3 @@ xorriso -indev "$SRC_ISO" \
         -boot_image any replay
 
 echo "Built remastered ISO: $OUT_ISO ($(du -h "$OUT_ISO" | cut -f1))"
-
-# Modloop filename varies by kernel flavor (lts/virt) -- hand the caller
-# whatever this ISO actually ships, don't hardcode it.
-MODLOOP_SRC="$(find "$WORK/extract/boot" -maxdepth 1 -iname 'modloop-*' | head -1)"
-if [ -n "$MODLOOP_SRC" ]; then
-  cp "$MODLOOP_SRC" "$(dirname "$OUT_ISO")/$(basename "$MODLOOP_SRC")"
-  echo "Extracted modloop: $(basename "$MODLOOP_SRC")"
-else
-  echo "WARNING: no modloop-* found under /boot in source ISO" >&2
-fi

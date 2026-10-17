@@ -1,29 +1,24 @@
 name: Nightly Realistic Installer Test
 
-# Runs the REAL patronus-install binary end-to-end inside a throwaway
-# QEMU VM on beauxbatons: real GPT partitioning of a real virtual disk,
-# a real `zpool create` for the ZFS root, and a real reboot off the
-# freshly-installed GRUB/UEFI bootloader -- not just a compile/clippy
-# check like rust-ci.yml. See ci/nightly-installer-test/ for the
-# scripts this orchestrates and a full design writeup.
+# Runs the REAL patronus-install binary end-to-end inside a throwaway x86_64
+# QEMU/KVM VM: real GPT partitioning of a real virtual disk, a real
+# `zpool create` for the ZFS root, GRUB on the ESP, then a cold boot of the
+# installed disk with the install media removed. Not just a compile/clippy
+# check like rust-ci.yml. Everything lives in ci/nightly-installer-test/
+# (run.sh is the single entry point, also usable for local reproduction on
+# any x86_64 host with /dev/kvm - see its header).
 #
-# Deliberately separate from rust-ci.yml: this is slow (full VM boot
-# cycles) and only meant to run nightly or on demand, not on every push.
+# Runs on kvm-x86_64: rw-man-01's dedicated VM-test runner, the one CI host
+# with hardware virtualization (ctg-infrastructure ci-runners/rw-man-kvm).
+# History: until 2026-10-16 this ran under UTM on beauxbatons (Apple Silicon),
+# where an x86_64 guest under TCG never finished booting and the schedule was
+# paused; on KVM the live system is up in ~25 s and the whole install + reboot
+# cycle takes ~6 min.
+#
+# Deliberately separate from rust-ci.yml: nightly / on demand, not every push.
 on:
   workflow_dispatch: {}
-  # PAUSED 2026-10-14 (owner decision, no response in time window -- safe default
-  # chosen over committing to an architecture change): root-caused to beauxbatons'
-  # pure x86_64-under-TCG software emulation on Apple Silicon not completing a real
-  # VM boot+install+reboot cycle within any reasonable timeout (GRUB + kernel boot
-  # command reached reliably, but no further kernel output before 45min timeout,
-  # every run, for 2+ weeks -- confirmed not a config bug). No hardware-accelerated
-  # x86_64 host exists elsewhere (rw-man-02/03 EC2 instances don't expose /dev/kvm).
-  # Two real options when the owner decides: (1) switch the guest to aarch64 (gets
-  # real HW accel on the Mac, but Patronus doesn't build/test aarch64 anywhere else
-  # in CI -- would validate an architecture nothing else ships), or (2) wait for a
-  # real hardware-accelerated x86_64 host to become available. Still runnable
-  # on-demand via workflow_dispatch; just not burning 45 min nightly on a guaranteed
-  # failure. Re-enable the schedule line below once a direction is chosen.
+  # schedule re-enabled once the KVM run is green (see commit history)
   # schedule:
   #   - cron: '0 9 * * *' # ~02:00 America/Los_Angeles
 
@@ -31,218 +26,11 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-installer-and-media:
-    name: Build installer binary + unattended install media
-    runs-on: x86_64
-    container:
-      image: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
-      # Forgejo's own artifact storage backend has been hard-failing
-      # uploads on this instance since 2026-09-24 (HTTP 500 on finalize)
-      # regardless of actions/upload-artifact version - horcrux hit and
-      # gave up on the same problem for its docs job. Rather than go
-      # through that broken API at all, bind-mount a fixed host
-      # directory straight into this container and hand the built
-      # install media to the vm-install-test job (which runs natively
-      # on this same physical host, no container) via that shared path
-      # instead - both jobs always land on beauxbatons, so this is a
-      # real filesystem, not a cross-machine assumption.
-      volumes:
-        - /Users/rbf/.forgejo-runner-data/ci-handoff/patronus-installer:/handoff
+  vm-install-test:
+    name: Real VM install + ZFS + reboot test (QEMU/KVM)
+    runs-on: kvm-x86_64
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
-
-      # The dtolnay/rust-toolchain action (and later apt/cargo steps)
-      # append their own entries to $GITHUB_PATH, but on this runner the
-      # per-step PATH the runner tracks for later JS-action `docker exec`
-      # invocations doesn't reliably keep the container image's own
-      # baked-in Node.js dir (needed for actions/upload-artifact et al)
-      # once other steps have touched it - we saw actions/upload-artifact
-      # fail with "node: executable file not found in $PATH" even though
-      # the image has a perfectly good node binary. Pin its directory
-      # onto $GITHUB_PATH explicitly, up front, so it survives whatever
-      # later steps add.
-      - name: Keep container's Node.js on PATH for later JS-action steps
-        run: dirname "$(which node)" >> "$GITHUB_PATH"
-
-      - name: Install Rust (musl target)
-        uses: https://github.com/dtolnay/rust-toolchain@stable
-        with:
-          # Guest arch switched x86_64 -> aarch64 (2026-10-14, owner
-          # decision): beauxbatons is Apple Silicon, so an aarch64 guest
-          # gets real Hypervisor.framework-backed acceleration in UTM,
-          # unlike x86_64 which is stuck in slow pure-software TCG there
-          # and never finished a boot+install+reboot cycle within any
-          # tried timeout (see vm_orchestrate.py history). This build
-          # job itself still just needs *a* linux/amd64-or-arm64
-          # container with a working cross-linker; it doesn't need to be
-          # aarch64 itself.
-          targets: aarch64-unknown-linux-musl
-
-      - name: Install build + ISO-remaster dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools xorriso curl gcc-aarch64-linux-gnu
-
-      - name: Build patronus-install (static musl binary)
-        env:
-          # This runner's container keeps ending up running as whatever
-          # arch the Docker host actually is (this has flip-flopped
-          # between real x86_64 and the host's native arm64 depending on
-          # local image-cache state, independent of anything this
-          # workflow or the runner's x86_64 label says) - rather than
-          # depend on the container's own arch, install a real aarch64
-          # cross-linker (gcc-aarch64-linux-gnu, works from either an
-          # amd64 or arm64 host/container) and point rustc at it
-          # explicitly. Rust's musl target ships its own musl CRT
-          # objects (self-contained) regardless, so the C compiler here
-          # is only acting as the link driver, not providing libc - any
-          # real aarch64 linker works.
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
-        run: |
-          cargo build --release --target aarch64-unknown-linux-musl -p patronus-installer
-          mkdir -p artifact
-          cp target/aarch64-unknown-linux-musl/release/patronus-install artifact/patronus-install
-
-      - name: Stage unattended-install media inputs
-        run: |
-          cp ci/nightly-installer-test/answer.toml artifact/answer.toml
-          cp ci/nightly-installer-test/patronus-ci.start artifact/patronus-ci.start
-          chmod +x ci/nightly-installer-test/build_apkovl.sh ci/nightly-installer-test/iso_remaster.sh
-
-      - name: Build apkovl (unattended Alpine overlay)
-        run: |
-          ./ci/nightly-installer-test/build_apkovl.sh \
-            artifact/patronus-install artifact/answer.toml artifact/patronus-ci.start \
-            artifact/patronus.apkovl.tar.gz
-
-      - name: Download stock Alpine Standard aarch64 ISO
-        run: |
-          ALPINE_VER=3.20.3
-          ALPINE_BRANCH=v3.20
-          curl -fL -o artifact/alpine-base.iso \
-            "https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/releases/aarch64/alpine-standard-${ALPINE_VER}-aarch64.iso"
-
-      - name: Remaster ISO to auto-boot the unattended installer
-        run: |
-          ./ci/nightly-installer-test/iso_remaster.sh \
-            artifact/alpine-base.iso \
-            "http://10.0.2.2:8788/patronus.apkovl.tar.gz" \
-            "http://10.0.2.2:8788/modloop" \
-            artifact/install.iso
-          # Normalize whatever modloop-* filename Alpine shipped to the
-          # fixed name the remastered cmdline (and the host's report
-          # server) expect.
-          mv artifact/modloop-* artifact/modloop
-          rm -f artifact/alpine-base.iso
-
-      - name: Hand built install media to vm-install-test via shared host dir
-        run: |
-          mkdir -p /handoff
-          rm -f /handoff/*
-          cp artifact/install.iso artifact/patronus.apkovl.tar.gz artifact/modloop /handoff/
-
-  vm-install-test:
-    name: Real VM install + ZFS + reboot test (beauxbatons UTM)
-    needs: build-installer-and-media
-    runs-on: macos-host
-    # Bumped from 45: the script's own internal wait budgets (live-boot
-    # 600s + install 1800s + zpool-report 60s + second-boot 600s = 3060s
-    # = 51min worst case) could exceed a 45min job timeout, force-killing
-    # the job before the script's own clean timeout/error ever fires.
-    #
-    # Bumped again, 45->75->90->120 (run 3113): a FULL 1800s live-boot
-    # budget still only got GRUB's "Booting `Linux lts'" printed right
-    # at the very end (~1795s) with the kernel never getting a real
-    # window afterward, under low host load (uptime load avg ~1.7 on a
-    # multi-core M5 Max - this isn't contention). Pure cross-arch TCG
-    # emulation of OVMF+ACPI probing on this host is apparently just
-    # this slow. Budget even more generously (2700s boot + 1800s
-    # install + 600s second-boot = 5100s = 85min) with real headroom.
-    timeout-minutes: 120
-    steps:
-      - name: Fast-fail if misrouted to Docker instead of real host-exec
-        run: |
-          # KNOWN INTERMITTENT BUG (2026-10-05, not fully root-caused):
-          # even with actions/checkout removed (see note below -- that
-          # fix helped but did not fully eliminate it), this job still
-          # occasionally gets dispatched into a throwaway Docker
-          # container instead of true macos-host:host execution, for
-          # reasons that appear to be on the Forgejo/runner scheduler
-          # side (this runner registration advertises both docker-
-          # backed labels and the host label under one UUID) rather
-          # than anything in this workflow file. When that happens,
-          # the next step's host-filesystem handoff path can never be
-          # visible no matter how long it polls, wasting the full poll
-          # window before failing. Detect it immediately instead: a
-          # real run on beauxbatons is always Darwin; a container is
-          # always Linux.
-          if [ "$(uname -s)" != "Darwin" ]; then
-            echo "ERROR: this macos-host job was scheduled onto a non-host runner (uname=$(uname -s), likely a Docker container)." >&2
-            echo "This is a known intermittent scheduler-side issue, not a code bug in this workflow -- just retry the run." >&2
-            exit 1
-          fi
-
-      - name: Checkout (plain git, not actions/checkout -- see note)
-        run: |
-          set -eu
-          # actions/checkout@v4 is a JS action. Using it here is what was
-          # silently pushing this nominally host-mode job (runs-on:
-          # macos-host -> registered label "macos-host:host" on the
-          # beauxbatons runner) into a throwaway Docker container instead:
-          # the real job log for every one of the ~13 consecutive failures
-          # of this workflow showed exactly one `docker create`/`docker run`
-          # for image=node:20-bullseye (entrypoint `tail -f /dev/null`, no
-          # volumes) wrapping the ENTIRE job, not just the checkout step --
-          # so the next step's `/Users/rbf/.forgejo-runner-data/ci-handoff/...`
-          # path (written by the sibling build job via a real bind mount on
-          # the real Mac) could never be visible no matter how long it
-          # polled (already extended 60s -> 180s in a prior attempted fix,
-          # which didn't help because the real problem was never timing).
-          # A plain shell `git` step has no `uses:` action for the runner to
-          # need Node for, so it has no reason to containerize the job at
-          # all, and it runs genuinely natively on beauxbatons as the
-          # "macos-host:host" label promises.
-          rm -rf .git
-          git init -q .
-          git remote add origin "https://git.canutethegreat.com/CanuteTheGreat/patronus.git"
-          git fetch --depth=1 origin "${{ github.sha }}"
-          git checkout -q --force FETCH_HEAD
-
-      - name: Fetch built install media from shared host dir
-        run: |
-          # run 345 (2026-10-13) failed outright here with
-          # "cp: /tmp/patronus-vm-test/modloop: Permission denied" -- a
-          # prior run's workdir survived (runner killed externally before
-          # the always()-guarded cleanup step below could run, same class
-          # of external systemctl-stop interruption already called out
-          # elsewhere in this file) leaving a stale file this job's `cp`
-          # couldn't overwrite. The cleanup step is best-effort and can't
-          # be relied on to have run; force a clean workdir here instead
-          # of assuming one.
-          rm -rf /tmp/patronus-vm-test
-          mkdir -p /tmp/patronus-vm-test
-          src=/Users/rbf/.forgejo-runner-data/ci-handoff/patronus-installer
-          # Docker Desktop's bind-mount write-back to the host filesystem
-          # can lag slightly behind the container actually exiting (seen
-          # directly: build job reported success, but these files weren't
-          # yet visible here for a few seconds) - poll briefly instead of
-          # assuming the files are already flushed to host disk.
-          for i in $(seq 1 90); do
-            if [ -f "$src/install.iso" ] && [ -f "$src/patronus.apkovl.tar.gz" ] && [ -f "$src/modloop" ]; then
-              break
-            fi
-            echo "Waiting for build job's handoff files to appear ($i/90)..."
-            sleep 2
-          done
-          cp "$src/install.iso" "$src/patronus.apkovl.tar.gz" "$src/modloop" /tmp/patronus-vm-test/
-
-      - name: Run real install + reboot test in UTM
-        run: |
-          export CI_RUN_ID="${{ github.run_id }}"
-          export CI_WORKDIR=/tmp/patronus-vm-test
-          python3 -u ci/nightly-installer-test/vm_orchestrate.py /tmp/patronus-vm-test/install.iso
-
-      - name: Clean up any leftover VM disk/state
-        if: always()
-        run: |
-          rm -rf /tmp/patronus-vm-test
+      - name: Build installer + unattended media, install + reboot a real VM under KVM
+        run: ci/nightly-installer-test/run.sh

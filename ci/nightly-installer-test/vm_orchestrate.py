@@ -1,80 +1,66 @@
 #!/usr/bin/env python3
 """
-Host-side orchestration for the Patronus nightly realistic installer
-test. Runs on beauxbatons (macOS, arm64) as a step of the
-`nightly-realistic-installer-test` Forgejo Actions workflow, on the
-`macos-host` (host-execution, not docker) runner label, because it
-needs real Apple Events access to utmctl — which only works inside the
-logged-in GUI session a LaunchAgent-run runner has, never over plain
-SSH.
+Host-side orchestration for the Patronus nightly realistic installer test.
 
-What it actually does (all real, no simulation):
-  1. Creates a fresh small (8GB) QEMU aarch64 VM bundle under UTM,
-     accelerated by Apple's Hypervisor.framework (same-ISA HVF, since
-     beauxbatons is Apple Silicon) rather than slow x86_64-under-TCG
-     software emulation.
-  2. Boots it from a remastered Alpine Linux ISO (built earlier in the
-     workflow) that unattended-installs Patronus onto the VM's virtual
-     disk: real GPT partitioning, real `zpool create` for the ZFS root.
-  3. Verifies the install really finished (exit code + zpool status)
-     via a report the guest POSTs to a tiny HTTP server we run here,
-     over the VM's slirp NAT (guest always reaches host at 10.0.2.2) --
-     chosen instead of the UTM guest agent because that agent isn't
-     present on a bare live ISO.
-  4. Lets the guest reboot for real, off the now-installed disk via
-     its real GRUB/UEFI boot entry, and waits for a second report that
-     proves the second boot actually came up, still showing the real
-     zpool.
-  5. Tears the VM and its disk down afterward (disk budget hygiene).
+Runs inside the job container of the `kvm-x86_64` runner (rw-man-01, the one
+CI host with /dev/kvm; see ctg-infrastructure ci-runners/rw-man-kvm) and
+drives QEMU/KVM directly - no UTM, no GUI session, no Apple Events.
+
+What it does (all real, no simulation):
+  1. Creates a fresh 8 GiB qcow2 disk and a per-run copy of the OVMF
+     UEFI variable store.
+  2. Boots an x86_64 q35 VM (KVM-accelerated, `-cpu host`) from the
+     remastered Alpine ISO built earlier in the job. The ISO's cmdline
+     pulls our apkovl, whose start script runs the REAL patronus-install
+     unattended against /dev/vda: real GPT partitioning, a real
+     `zpool create` for the ZFS root, GRUB on the ESP.
+  3. Collects the guest's reports (LIVE_BOOT_START, INSTALL_DONE rc=0,
+     POST_INSTALL_ZPOOL) over a small HTTP server here; the guest reaches it
+     at 10.0.2.2 through QEMU user networking, which maps to this
+     container's loopback.
+  4. The guest reboots; QEMU runs with -no-reboot so that ends phase 1.
+     Phase 2 cold-boots the same disk + NVRAM with the install media
+     REMOVED, so the only way to come up is the freshly installed
+     GRUB/UEFI entry. The installed system's start script reports
+     SECOND_BOOT_OK with the live zpool state, then powers off.
+  5. Prints both serial console logs and fails with a clear reason at the
+     first missing milestone (or immediately if QEMU dies early).
 """
 import http.server
 import json
 import os
-import plistlib
 import shutil
 import subprocess
 import sys
 import threading
 import time
-import uuid
-
-UTMCTL = "/Applications/UTM.app/Contents/MacOS/utmctl"
-QEMU_IMG = "/Users/rbf/rustinion-verify/homebrew/bin/qemu-img"
-# UTM's own bundled qemu-img (Contents/Frameworks/qemu-img.framework/qemu-img)
-# is shipped as an MH_DYLIB Mach-O (a real shared library, per `file`/`lipo`),
-# not a standalone executable - the kernel refuses to execve() it at all
-# ("Exec format error", confirmed directly), it's meant to be dlopen'd by
-# UTM's own GUI process internally, not shelled out to. Use a real
-# standalone qemu-img from Homebrew instead.
-UTM_DOCS = os.path.expanduser(
-    "~/Library/Containers/com.utmapp.UTM/Data/Documents"
-)
-# Stage newly-built VM bundles OUTSIDE UTM's sandboxed container. Our
-# process (launched via launchd, not the UTM app itself) cannot write
-# directly into ~/Library/Containers/com.utmapp.UTM/Data/Documents -
-# that's enforced by the app sandbox at the kernel level, independent
-# of ordinary TCC grants like Full Disk Access, and confirmed the hard
-# way (PermissionError on os.makedirs there). Build the bundle in a
-# plain external directory instead, then hand it to the already-running
-# UTM app via `open -a UTM <path>`, same as before - UTM importing a
-# file via LaunchServices' open event is a legitimate user-intent
-# action the sandbox allows, unlike an arbitrary external process
-# writing into the container directly.
-UTM_EXTERNAL_STAGING = os.path.expanduser(
-    "~/.forgejo-runner-data/utm-external-vms"
-)
 
 HTTP_PORT = 8788
-RUN_ID = os.environ.get("CI_RUN_ID", uuid.uuid4().hex[:8])
-VM_NAME = f"patronus-nightly-{RUN_ID}"
 WORKDIR = os.environ.get("CI_WORKDIR", "/tmp/patronus-vm-test")
-TOTAL_TIMEOUT_S = int(os.environ.get("CI_TOTAL_TIMEOUT_S", "1800"))
+MEM_MB = int(os.environ.get("VM_MEM_MB", "4096"))
+CPUS = int(os.environ.get("VM_CPUS", "4"))
+LIVE_BOOT_TIMEOUT_S = int(os.environ.get("LIVE_BOOT_TIMEOUT_S", "600"))
+INSTALL_TIMEOUT_S = int(os.environ.get("INSTALL_TIMEOUT_S", "1800"))
+SECOND_BOOT_TIMEOUT_S = int(os.environ.get("SECOND_BOOT_TIMEOUT_S", "600"))
+
+OVMF_CODE_CANDIDATES = [
+    "/usr/share/OVMF/OVMF_CODE_4M.fd",
+    "/usr/share/OVMF/OVMF_CODE.fd",
+    "/usr/share/ovmf/OVMF.fd",
+]
+OVMF_VARS_CANDIDATES = [
+    "/usr/share/OVMF/OVMF_VARS_4M.fd",
+    "/usr/share/OVMF/OVMF_VARS.fd",
+]
 
 events = []
 events_lock = threading.Lock()
 
 
-class ReportHandler(http.server.BaseHTTPRequestHandler):
+class ReportHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, directory=WORKDIR, **kw)
+
     def log_message(self, fmt, *args):
         sys.stderr.write("[http] " + (fmt % args) + "\n")
 
@@ -87,682 +73,166 @@ class ReportHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
 
-    def do_GET(self):
-        # Serves the apkovl / modloop files for the guest to fetch.
-        return super().do_GET()
+
+def first_existing(paths, what):
+    for p in paths:
+        if os.path.isfile(p):
+            return p
+    raise SystemExit(f"{what} not found (tried {paths}); install the 'ovmf' package")
 
 
-def run(cmd, **kw):
-    print("+ " + " ".join(cmd), flush=True)
-    return subprocess.run(cmd, check=True, **kw)
-
-
-def sanity_check_utmctl():
-    out = subprocess.run([UTMCTL, "list"], capture_output=True, text=True)
-    combined = (out.stdout or "") + (out.stderr or "")
-    if "does not work from SSH sessions" in combined:
-        print(combined)
+def check_kvm():
+    if not os.path.exists("/dev/kvm"):
         raise SystemExit(
-            "ARCHITECTURE CHECK FAILED: utmctl is not usable from this "
-            "job's execution context (looks like an SSH-only session, "
-            "not the LaunchAgent's GUI session). Host-execution label "
-            "is not actually reaching the GUI session."
+            "/dev/kvm is missing in this job container. This job must run on the "
+            "kvm-x86_64 runner (rw-man-01, container option --device=/dev/kvm); "
+            "refusing to fall back to TCG software emulation, which never finishes."
         )
-    print("utmctl list OK (host-exec / GUI session confirmed reachable):")
-    print(combined)
-
-
-def build_vm_bundle(iso_path, disk_size_gb=8):
-    os.makedirs(UTM_EXTERNAL_STAGING, exist_ok=True)
-    vm_dir = os.path.join(UTM_EXTERNAL_STAGING, f"{VM_NAME}.utm")
-    data_dir = os.path.join(vm_dir, "Data")
-    os.makedirs(data_dir, exist_ok=True)
-
-    disk_uuid = str(uuid.uuid4()).upper()
-    disk_name = f"{disk_uuid}.qcow2"
-    disk_path = os.path.join(data_dir, disk_name)
-    run([QEMU_IMG, "create", "-f", "qcow2", disk_path, f"{disk_size_gb}G"])
-
-    cd_name = "install.iso"
-    shutil.copyfile(iso_path, os.path.join(data_dir, cd_name))
-
-    cfg = {
-        "Backend": "QEMU",
-        "ConfigurationVersion": 4,
-        "Display": [
-            {
-                "DownscalingFilter": "Linear",
-                "DynamicResolution": True,
-                "Hardware": "virtio-ramfb",
-                "NativeResolution": False,
-                "UpscalingFilter": "Nearest",
-            }
-        ],
-        "Drive": [
-            {
-                "Identifier": str(uuid.uuid4()).upper(),
-                "ImageName": cd_name,
-                "ImageType": "CD",
-                # Guest arch switched x86_64 -> aarch64 (2026-10-14).
-                # QEMU's aarch64 "virt" machine model (see System.Target
-                # below) has no legacy PCI IDE controller at all -
-                # IDE was only ever an x86 q35/pc-machine concept, kept
-                # here under the old x86_64 config for the (unrelated)
-                # reason explained in the removed comment below. Every
-                # real aarch64 UTM VM already running on this same
-                # beauxbatons host (FreeBSD/kali/Gentoo Base/ubuntu,
-                # confirmed directly via their own config.plist) attaches
-                # its CD-ROM over USB instead, which is the standard,
-                # working bus for optical media on the "virt" machine
-                # type - use the same, proven pattern rather than
-                # reinventing one.
-                "Interface": "USB",
-                "InterfaceVersion": 1,
-                "ReadOnly": True,
-            },
-            {
-                "Identifier": disk_uuid,
-                "ImageName": disk_name,
-                "ImageType": "Disk",
-                "Interface": "VirtIO",
-                "InterfaceVersion": 1,
-                "ReadOnly": False,
-            },
-        ],
-        "Information": {
-            "IconCustom": False,
-            "Name": VM_NAME,
-            "UUID": str(uuid.uuid4()).upper(),
-        },
-        "Input": {
-            "MaximumUsbShare": 3,
-            "UsbBusSupport": "3.0",
-            "UsbSharing": False,
-        },
-        "Network": [
-            {
-                "Hardware": "virtio-net-pci",
-                "IsolateFromHost": False,
-                "MacAddress": "52:54:00:%02x:%02x:%02x" % (
-                    os.urandom(1)[0], os.urandom(1)[0], os.urandom(1)[0]
-                ),
-                # "Shared" is UTM's vmnet-based NAT (a separate, variable
-                # gateway, and on macOS needs its own entitlements/daemon).
-                # The build job bakes the guest's callback URLs as
-                # http://10.0.2.2:$HTTP_PORT/... (see iso_remaster.sh) -
-                # that address is QEMU's own usermode-networking gateway,
-                # which is what UTM's "Emulated" mode actually is. Every
-                # earlier run of this pipeline died before ever reaching a
-                # real boot (runner misrouting, then buffering, then a
-                # host-dir permission issue), so this mismatch - present
-                # since the very first commit of this file - never
-                # mattered until now: the guest booted fine but had
-                # nowhere real to phone home to.
-                "Mode": "Emulated",
-                "PortForward": [],
-            }
-        ],
-        "QEMU": {
-            # -no-reboot stays dropped (see git history for the full
-            # investigation: it required a non-trivial
-            # AdditionalArguments encoding fix to even register, and
-            # then triggered an un-suppressible "custom QEMU arguments"
-            # modal on UTM's real physical console on every single CI
-            # run). None of that reasoning was x86_64-specific, so it's
-            # unchanged for the aarch64 guest.
-            "AdditionalArguments": [],
-            "BalloonDevice": False,
-            "DebugLog": False,
-            "Hypervisor": True,
-            "PS2Controller": False,
-            "RNGDevice": True,
-            "RTCLocalTime": False,
-            "TPMDevice": False,
-            "TSO": False,
-            "UEFIBoot": True,
-        },
-        "Serial": [
-            {
-                "Mode": "TcpServer",
-                "Target": "Auto",
-                "TcpPort": 48788,
-                "WaitForConnection": False,
-                "RemoteConnectionAllowed": False,
-            }
-        ],
-        "Sharing": {
-            "ClipboardSharing": False,
-            "DirectoryShareMode": "None",
-            "DirectoryShareReadOnly": True,
-        },
-        "Sound": [],
-        "System": {
-            # Guest arch switched x86_64 -> aarch64 (2026-10-14, owner
-            # decision, live chat): beauxbatons is Apple Silicon, so an
-            # aarch64 guest gets real same-ISA Hypervisor.framework
-            # acceleration via UTM's "Hypervisor" toggle above, unlike
-            # x86_64 which has no hardware accelerator for a foreign-ISA
-            # guest on this host and was unavoidably stuck in pure QEMU
-            # TCG (full software instruction emulation) - confirmed by
-            # 2+ weeks of nightly runs never completing a boot+install+
-            # reboot cycle within any tried timeout (serial logs reached
-            # GRUB's "Booting `Linux lts'" and no further). "virt" +
-            # "aarch64" is the exact same combination already proven
-            # working on this host by UTM's own FreeBSD reference VM
-            # (same Backend/Hypervisor/Drive-interface shape, confirmed
-            # directly from its config.plist).
-            "Architecture": "aarch64",
-            "CPU": "default",
-            "CPUCount": 2,
-            "CPUFlagsAdd": [],
-            "CPUFlagsRemove": [],
-            "ForceMulticore": False,
-            "JITCacheSize": 0,
-            "MemorySize": 2048,
-            "Target": "virt",
-        },
-    }
-
-    with open(os.path.join(vm_dir, "config.plist"), "wb") as f:
-        plistlib.dump(cfg, f)
-
-    # Make UTM (already running in the GUI session) register the bundle.
-    #
-    # Was a bare fire-and-forget `check=False` call that discarded both
-    # the exit status and any stderr. Every nightly run from 2026-10-04
-    # onward has failed at the find_vm_uuid_by_name() wait below with
-    # "never showed up in `utmctl list`" after burning through all three
-    # boot-retry attempts (each paying the full 90s registration-wait
-    # budget), and the unified system log for the UTM process shows
-    # *zero* entries in that window - meaning the Apple Event this `open`
-    # is supposed to deliver never even reached the app, i.e. `open`
-    # itself is failing (wrong LaunchServices database state, a stale/
-    # duplicate UTM registration, sandbox quirk, etc.), not "UTM is just
-    # slow to import today" as the retry/backoff tuning upstream of this
-    # function assumed. Capture and print the actual result so the next
-    # failure (if this doesn't fix it outright) shows the real `open`
-    # exit code and stderr instead of silence, and fail fast with a
-    # clear message if `open` itself reports an error rather than
-    # ever bothering to poll utmctl for a bundle that was never opened.
-    if not os.path.isdir(vm_dir):
-        raise SystemExit(f"[host] vm_dir does not exist right before `open`: {vm_dir}")
-    open_result = subprocess.run(
-        ["open", "-a", "UTM", vm_dir], capture_output=True, text=True
-    )
-    print(
-        f"[host] open -a UTM {vm_dir} -> exit {open_result.returncode}"
-        f"{' stdout=' + open_result.stdout.strip() if open_result.stdout.strip() else ''}"
-        f"{' stderr=' + open_result.stderr.strip() if open_result.stderr.strip() else ''}",
-        flush=True,
-    )
-    if open_result.returncode != 0:
-        # Retry once via bundle identifier instead of app name - `open
-        # -a UTM` resolves the app name through LaunchServices and can
-        # fail if that database is stale (multiple UTM.app copies, a
-        # recent reinstall, etc.) even while the already-running UTM
-        # process itself is perfectly healthy; `-b <bundle id>` targets
-        # it directly and sidesteps that particular lookup.
-        retry_result = subprocess.run(
-            ["open", "-b", "com.utmapp.UTM", vm_dir], capture_output=True, text=True
-        )
-        print(
-            f"[host] retry: open -b com.utmapp.UTM {vm_dir} -> exit {retry_result.returncode}"
-            f"{' stdout=' + retry_result.stdout.strip() if retry_result.stdout.strip() else ''}"
-            f"{' stderr=' + retry_result.stderr.strip() if retry_result.stderr.strip() else ''}",
-            flush=True,
-        )
-    time.sleep(5)
-    return vm_dir, cfg["Information"]["UUID"]
-
-
-def cleanup_stale_nightly_vms():
-    """Delete every UTM-registered VM left over from a previous failed
-    run (name starts with 'patronus-nightly-' or 'manual-test-', the
-    latter from one-off debugging) before starting a new attempt.
-
-    Found 2026-10-07: these never got cleaned up by old pre-c0380699
-    code whenever VM *registration itself* (not just boot) failed, since
-    that raised straight out of attempt_boot() past every cleanup path.
-    219+ nightly runs of accumulation left ~5+ ghost/orphaned entries in
-    UTM's own VM list (confirmed via `utmctl list` showing
-    patronus-nightly-2527/2533/2623 and a manual probe VM still present,
-    long after their backing directories were already gone). A bigger
-    registered-VM count measurably slows down UTM's own `open -a UTM`
-    import handling (each subsequent registration attempt took
-    30+ seconds instead of the ~5s baseline, confirmed by timing in the
-    job logs below) - this was the real root cause of registration
-    itself timing out, not boot-stage flakiness. Clearing these out
-    before every run keeps UTM's VM list bounded to the real, persistent
-    reference VMs (kali/FreeBSD/Gentoo Base/ubuntu/Windows) only.
-    """
-    out = subprocess.run([UTMCTL, "list"], capture_output=True, text=True)
-    removed = []
-    for line in out.stdout.splitlines():
-        parts = line.split(None, 2)
-        if len(parts) < 3:
-            continue
-        uuid, status, name = parts[0], parts[1], parts[2]
-        if not (name.startswith("patronus-nightly-") or name.startswith("manual-test-")):
-            continue
-        subprocess.run([UTMCTL, "stop", uuid], capture_output=True)
-        time.sleep(1)
-        subprocess.run([UTMCTL, "delete", uuid], capture_output=True)
-        removed.append((uuid, name))
-    if removed:
-        print(f"[host] cleaned up {len(removed)} stale UTM VM(s) before starting: {removed}", flush=True)
-    # Also sweep any leftover external-staging directories, registered
-    # or not (a crashed run can leave the directory behind even after
-    # its UTM entry is gone, or vice versa).
-    if os.path.isdir(UTM_EXTERNAL_STAGING):
-        for entry in os.listdir(UTM_EXTERNAL_STAGING):
-            if entry.startswith("patronus-nightly-") or entry.startswith("manual-test-"):
-                shutil.rmtree(os.path.join(UTM_EXTERNAL_STAGING, entry), ignore_errors=True)
-
-
-def find_vm_uuid_by_name(name, retries=30, interval_s=3):
-    # Was retries=10 @ 2s (20s total). Raised to 90s total: a UTM
-    # instance that already manages several real VMs (kali/FreeBSD/
-    # Gentoo Base/ubuntu/Windows) was observed taking 30-45s to finish
-    # importing a freshly `open -a UTM`'d external bundle even with
-    # stale-VM cleanup in place - not a hang, just genuinely slow Finder/
-    # LaunchServices-mediated import, confirmed by the bundle eventually
-    # appearing in `utmctl list` well past the old 20s window in a
-    # manual same-conditions probe (see cleanup_stale_nightly_vms
-    # docstring for the surrounding investigation).
-    for _ in range(retries):
-        out = subprocess.run([UTMCTL, "list"], capture_output=True, text=True)
-        for line in out.stdout.splitlines():
-            if name in line:
-                return line.split()[0]
-        time.sleep(interval_s)
-    # The `open -a UTM <bundle>` call upstream of this has been
-    # observed (2026-10-09) returning exit 0 with no stderr, yet the
-    # bundle still never shows up here after the full retry budget --
-    # disproving the earlier "open itself is failing" theory for at
-    # least this failure mode. The next most likely explanation is a
-    # modal/permission dialog UTM is showing (e.g. an "allow this app
-    # to add a VM configuration" prompt) that nobody is present to
-    # click in this unattended GUI session, silently stalling the
-    # import. We can't inspect UTM's window/dialog state via AppleEvents
-    # from outside this job's own GUI session (System Events AppleEvents
-    # hang/time out over plain SSH, same restriction utmctl itself has
-    # over SSH -- confirmed directly). `screencapture` doesn't need
-    # AppleEvents though, so grab a real screenshot of the GUI session
-    # right at the point of failure and save it next to the VM staging
-    # dir -- next failure's job log prints exactly where this landed,
-    # giving the next investigation an actual picture of what's stuck
-    # on screen instead of guessing blind from retry-loop text alone.
-    screenshot_path = os.path.join(
-        UTM_EXTERNAL_STAGING, f"registration-failure-{name}.png"
-    )
     try:
-        os.makedirs(UTM_EXTERNAL_STAGING, exist_ok=True)
-        shot = subprocess.run(
-            # Absolute path, not a bare "screencapture" PATH lookup: this
-            # job runs under a LaunchAgent-managed runner process whose
-            # inherited PATH does not reliably include /usr/sbin (unlike
-            # an interactive login-shell PATH) - confirmed directly by
-            # the exact failure mode this produced, a Python
-            # FileNotFoundError(2, 'No such file or directory') raised by
-            # subprocess itself (meaning it could never even locate/exec
-            # the binary), not a non-zero screencapture exit status. That
-            # silently ate every diagnostic screenshot this function was
-            # specifically added to capture, across every nightly failure
-            # since it was introduced.
-            ["/usr/sbin/screencapture", "-x", screenshot_path],
-            capture_output=True, text=True, timeout=15,
-        )
-        if shot.returncode == 0 and os.path.isfile(screenshot_path):
-            print(f"[host] saved failure screenshot: {screenshot_path}", flush=True)
-        else:
-            stderr = shot.stderr.strip()
-            print(
-                f"[host] screenshot capture failed: exit={shot.returncode} "
-                f"stdout={shot.stdout.strip()} stderr={stderr}",
-                flush=True,
-            )
-            # Confirmed 2026-10-10 via `sqlite3 TCC.db` on beauxbatons: this
-            # exact "could not create image from display" exit=1 is macOS
-            # refusing kTCCServiceScreenCapture to the forgejo-runner
-            # binary (/Users/rbf/.forgejo-runner-bin/forgejo-runner),
-            # auth_value=0 (denied), auth_reason=4 (user never granted it --
-            # there's no GUI session present when the LaunchAgent-managed
-            # runner process first touched the Screen Recording API to
-            # trigger the one-time TCC prompt). SIP blocks editing TCC.db
-            # directly (confirmed: `UPDATE access ...` -> "attempt to write
-            # a readonly database" even via sudo), so this cannot be fixed
-            # from a script or over SSH -- it requires a human on the
-            # beauxbatons console granting Screen Recording to that runner
-            # binary in System Settings > Privacy & Security > Screen
-            # Recording, then relaunching the runner process. Flagging it
-            # explicitly here so every future failure log says so instead
-            # of re-diagnosing the same dead end. This does not explain the
-            # actual VM-registration timeout above (UTM's AppleEvent-driven
-            # import of the bundle doesn't go through screencapture/TCC at
-            # all) -- it only means we fly blind on the diagnostic
-            # screenshot for that real failure until the permission is
-            # granted.
-            if "could not create image from display" in stderr:
-                print(
-                    "[host] NOTE: this is a known TCC permission gap, not a "
-                    "new bug -- forgejo-runner lacks Screen Recording "
-                    "permission on this host and SIP blocks fixing it "
-                    "programmatically. Needs a human to grant it in System "
-                    "Settings > Privacy & Security > Screen Recording on "
-                    "beauxbatons, then restart the runner.",
-                    flush=True,
-                )
-    except Exception as exc:
-        print(f"[host] screenshot capture raised: {exc!r}", flush=True)
-
-    # The screenshot path above is blind without the Screen Recording TCC
-    # grant (see note just above). `log show` is a *different* API --
-    # reading the unified system log for events UTM itself already
-    # emitted -- and does not require that same TCC permission (it reads
-    # whatever the current user's own session is allowed to see, which
-    # normally includes userland app activity/crash/sandbox-violation
-    # entries for apps that user launched). If UTM is stuck behind a
-    # modal dialog (the leading theory as of 2026-10-10, see note above)
-    # or hit a sandbox/entitlement violation trying to import this
-    # bundle, that is far more likely to show up here than in a
-    # screenshot anyway. Best-effort only: never let a problem with this
-    # diagnostic itself mask or replace the real SystemExit below.
-    try:
-        log_result = subprocess.run(
-            [
-                "/usr/bin/log", "show", "--last", "3m", "--style", "compact",
-                "--predicate",
-                'process == "UTM" OR senderImagePath CONTAINS "UTM"',
-            ],
-            capture_output=True, text=True, timeout=30,
-        )
-        tail = "\n".join(log_result.stdout.splitlines()[-200:])
-        print(
-            f"[host] unified log for UTM process in the last 3m "
-            f"(exit={log_result.returncode}, {len(log_result.stdout.splitlines())} lines, showing last 200):\n{tail}",
-            flush=True,
-        )
-        if log_result.stderr.strip():
-            print(f"[host] `log show` stderr: {log_result.stderr.strip()}", flush=True)
-    except Exception as exc:
-        print(f"[host] `log show` capture raised: {exc!r}", flush=True)
-
-    # The unified log above shows UTM's own process emitting *zero*
-    # import/XPC activity in this window even though `open -a UTM
-    # <bundle>` reported exit 0 (confirmed directly across the
-    # 2026-10-11/12 failures) -- the same shape of problem already
-    # root-caused for screencapture above: a TCC-gated capability that
-    # silently no-ops instead of erroring. `open -a <App> <path>` is
-    # LaunchServices delivering a kAEOpenDocuments Apple Event to the
-    # target app, which on modern macOS requires the sender
-    # (forgejo-runner, launched headless via LaunchAgent, never
-    # interactively prompted) to hold Automation/Apple-Events TCC
-    # access for that specific target app -- exactly the same class of
-    # gap as the Screen Recording denial already diagnosed, just a
-    # different TCC service. Query TCC.db read-only (the same read-only
-    # access already confirmed to work for the Screen Recording
-    # diagnosis; SIP blocks writing it, so this can only ever report,
-    # never self-heal) for an explicit grant/denial record so the next
-    # failure's log says definitively "yes/no, and which" instead of
-    # re-opening this same investigation from scratch again.
-    try:
-        tcc_db = os.path.expanduser("~/Library/Application Support/com.apple.TCC/TCC.db")
-        if os.path.isfile(tcc_db):
-            query = (
-                "SELECT service, client, auth_value, auth_reason, "
-                "indirect_object_identifier FROM access "
-                "WHERE service IN ('kTCCServiceAppleEvents', 'kTCCServiceSystemPolicyAppleEvents') "
-                "AND (client LIKE '%forgejo-runner%' OR indirect_object_identifier LIKE '%utmapp%');"
-            )
-            tcc_result = subprocess.run(
-                ["/usr/bin/sqlite3", tcc_db, query],
-                capture_output=True, text=True, timeout=15,
-            )
-            rows = tcc_result.stdout.strip()
-            print(
-                f"[host] TCC Apple-Events grant check for forgejo-runner -> UTM "
-                f"(exit={tcc_result.returncode}): "
-                f"{rows if rows else '(no matching rows -- permission likely never requested/granted at all)'}",
-                flush=True,
-            )
-            if tcc_result.stderr.strip():
-                print(f"[host] TCC.db query stderr: {tcc_result.stderr.strip()}", flush=True)
-            if not rows:
-                print(
-                    "[host] NOTE: if this is empty, forgejo-runner has never been "
-                    "granted Automation/Apple-Events access to UTM at all -- `open "
-                    "-a UTM` is then delivering the event into a void with no error "
-                    "surfaced, matching exactly what we observe (exit 0, zero UTM "
-                    "activity). SIP blocks granting this from a script; needs a human "
-                    "on the beauxbatons console: System Settings > Privacy & Security "
-                    "> Automation > forgejo-runner -> enable UTM, then restart the "
-                    "runner process so the grant applies to its running session.",
-                    flush=True,
-                )
-        else:
-            print(f"[host] TCC.db not found at expected path: {tcc_db}", flush=True)
-    except Exception as exc:
-        print(f"[host] TCC Apple-Events check raised: {exc!r}", flush=True)
-
-    raise SystemExit(f"VM '{name}' never showed up in `utmctl list`:\n{out.stdout}\n{out.stderr}")
+        fd = os.open("/dev/kvm", os.O_RDWR)
+        os.close(fd)
+    except OSError as e:
+        raise SystemExit(f"/dev/kvm present but not usable: {e}")
+    print("[host] /dev/kvm usable - KVM acceleration available", flush=True)
 
 
-def wait_for_event(predicate, timeout_s, label):
+def find_event(predicate):
+    with events_lock:
+        for _, body in events:
+            if predicate(body):
+                return body
+    return None
+
+
+def wait_for_event(predicate, timeout_s, label, proc, serial_log):
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        with events_lock:
-            for ts, body in events:
-                if predicate(body):
-                    return body
-        time.sleep(3)
-    raise SystemExit(f"TIMEOUT waiting for: {label}\nEvents so far: {events}")
+        body = find_event(predicate)
+        if body is not None:
+            return body
+        if proc.poll() is not None:
+            # QEMU exited; give in-flight reports a moment, then decide.
+            time.sleep(2)
+            body = find_event(predicate)
+            if body is not None:
+                return body
+            dump_serial(serial_log)
+            raise SystemExit(f"QEMU exited (rc={proc.returncode}) before: {label}\nEvents so far: {events}")
+        time.sleep(2)
+    dump_serial(serial_log)
+    raise SystemExit(f"TIMEOUT ({timeout_s}s) waiting for: {label}\nEvents so far: {events}")
 
 
-SERIAL_PORT = 48788
-serial_log_path = None
-
-
-def capture_serial(host_port, log_path, stop_event):
-    """Connects to the VM's TCP-server serial backend and tees
-    everything it sends (the guest's ttyAMA0 on aarch64's "virt"
-    machine, which the kernel cmdline already targets via
-    console=ttyAMA0,115200) to a log file - our only real window into
-    what the guest is actually doing during boot, since there's no
-    VNC/screenshot capability available here. The same socket is also
-    used to WRITE a one-shot UEFI Shell boot command if the guest ever
-    lands there instead of auto-booting (see the Shell-prompt handling
-    below) - bidirectional, not just a tee.
-    """
-    import socket
-    for _ in range(30):
-        if stop_event.is_set():
-            return
-        try:
-            sock = socket.create_connection(("127.0.0.1", host_port), timeout=2)
-            break
-        except OSError:
-            time.sleep(1)
-    else:
-        print(f"[serial] could not connect to serial TCP server on :{host_port}", flush=True)
+def dump_serial(path, max_lines=400):
+    try:
+        with open(path, "rb") as f:
+            data = f.read().decode("utf-8", "replace").splitlines()
+    except OSError as e:
+        print(f"[host] could not read {path}: {e}", flush=True)
         return
-    print(f"[serial] connected to guest serial console on :{host_port}", flush=True)
-    # Confirmed by direct observation (first real aarch64 run, 2026-10-14):
-    # QEMU's aarch64 "virt" EDK2 firmware mapped our USB-attached CD-ROM's
-    # El Torito FAT boot image as FS0 (containing a real
-    # /EFI/BOOT/BOOTAA64.EFI, confirmed by extracting and inspecting that
-    # same image directly) but never auto-booted it - a fresh efi_vars.fd
-    # has no persisted NVRAM Boot### entry for a USB-attached optical
-    # device, so BDS fell through to its last-resort "EFI Internal Shell"
-    # boot option instead, after a "Press ESC ... or any other key" splash
-    # that times out into an interactive Shell> prompt because the FAT
-    # image carries no /startup.nsh for the Shell to auto-run. Rather than
-    # rebuild/re-inject that embedded FAT image just to add a startup.nsh
-    # (xorriso only lets iso_remaster.sh map individual *files* back into
-    # the ISO9660 tree, not rewrite an El-Torito-embedded FAT image), type
-    # the equivalent two commands over this same serial line the moment
-    # the Shell prompt appears - it's the identical, fully-general fix
-    # with far less moving parts. Sends plain "FS0:" first (the
-    # overwhelmingly common alias for a single attached boot device)
-    # then, after a few seconds for the prompt to switch, the actual
-    # EFI binary path - if FS0 turns out to be wrong for some future
-    # drive-layout change, this will visibly do nothing useful in the
-    # serial log rather than silently misbehave, which is enough of a
-    # signal to extend it then.
-    shell_boot_sent = False
-    shell_boot_deadline = None
-    tail_buf = b""
-    with open(log_path, "ab") as f, sock:
-        sock.settimeout(1)
-        while not stop_event.is_set():
-            if (
-                shell_boot_sent
-                and shell_boot_deadline is not None
-                and time.time() >= shell_boot_deadline
-            ):
-                sock.sendall(b"\\EFI\\BOOT\\BOOTAA64.EFI\r\n")
-                shell_boot_deadline = None
-            try:
-                data = sock.recv(4096)
-                if not data:
-                    break
-                f.write(data)
-                f.flush()
-                tail_buf = (tail_buf + data)[-4096:]
-                if not shell_boot_sent and b"Shell>" in tail_buf:
-                    shell_boot_sent = True
-                    shell_boot_deadline = time.time() + 6
-                    sock.sendall(b"FS0:\r\n")
-            except socket.timeout:
-                continue
-            except OSError:
-                break
+    shown = data[-max_lines:]
+    print(f"[host] ==== {os.path.basename(path)}: last {len(shown)} of {len(data)} lines ====", flush=True)
+    for line in shown:
+        print(line)
+    print("[host] ==== end serial ====", flush=True)
 
 
-def attempt_boot(iso_path, serial_log_path, serial_stop, attempt_num):
-    """One full create -> boot -> wait-for-live-boot -> teardown cycle.
-    Returns True if LIVE_BOOT_START was seen, False if that wait timed
-    out (the only outcome we treat as retryable flakiness, not a real
-    failure - see run()). Always tears its own VM down before
-    returning, success or not, so each attempt starts clean."""
-    vm_dir, cfg_uuid = build_vm_bundle(iso_path)
+def qemu_cmd(disk, code, vars_fd, serial_log, iso=None):
+    cmd = [
+        "qemu-system-x86_64",
+        "-name", "patronus-nightly",
+        "-machine", "q35,accel=kvm",
+        "-cpu", "host",
+        "-smp", str(CPUS),
+        "-m", str(MEM_MB),
+        "-drive", f"if=pflash,format=raw,readonly=on,file={code}",
+        "-drive", f"if=pflash,format=raw,file={vars_fd}",
+        "-drive", f"file={disk},if=none,id=hd0,format=qcow2",
+        "-device", f"virtio-blk-pci,drive=hd0,bootindex={1 if iso else 0}",
+        "-netdev", "user,id=n0",
+        "-device", "virtio-net-pci,netdev=n0",
+        "-device", "virtio-rng-pci",
+        "-serial", f"file:{serial_log}",
+        "-display", "none",
+        "-monitor", "none",
+        "-no-reboot",
+    ]
+    if iso:
+        cmd += [
+            "-drive", f"file={iso},if=none,id=cd0,media=cdrom,readonly=on",
+            "-device", "ide-cd,drive=cd0,bus=ide.0,bootindex=0",
+        ]
+    return cmd
+
+
+def start_qemu(cmd):
+    print("+ " + " ".join(cmd), flush=True)
+    return subprocess.Popen(cmd)
+
+
+def stop_qemu(proc, grace_s):
     try:
-        vm_uuid = find_vm_uuid_by_name(VM_NAME)
-    except SystemExit as e:
-        # Registration itself (UTM GUI importing the bundle after `open
-        # -a UTM`) can be just as flaky as the later boot stage - it
-        # used to raise straight out of attempt_boot(), completely
-        # bypassing the MAX_BOOT_ATTEMPTS retry loop below and failing
-        # the whole job on the very first slow import instead of
-        # getting the same retry treatment as a boot timeout.
-        print(f"[host] attempt {attempt_num}: VM registration failed: {e}", flush=True)
-        return False, None
-    print(f"[host] attempt {attempt_num}: VM registered: {VM_NAME} -> {vm_uuid}")
-    try:
-        run([UTMCTL, "start", vm_uuid])
-        serial_thread = threading.Thread(
-            target=capture_serial, args=(SERIAL_PORT, serial_log_path, serial_stop), daemon=True
-        )
-        serial_thread.start()
-        try:
-            wait_for_event(lambda b: "LIVE_BOOT_START" in b, 2700, "live ISO boot")
-            return True, vm_uuid
-        except SystemExit as e:
-            print(f"[host] attempt {attempt_num} did not reach live boot: {e}", flush=True)
-            return False, vm_uuid
-    finally:
-        pass
+        proc.wait(timeout=grace_s)
+    except subprocess.TimeoutExpired:
+        print(f"[host] QEMU still running after {grace_s}s - killing it", flush=True)
+        proc.kill()
+        proc.wait()
 
 
 def main():
-    iso_path = sys.argv[1]
+    iso = os.path.abspath(sys.argv[1])
+    check_kvm()
     os.makedirs(WORKDIR, exist_ok=True)
-
-    sanity_check_utmctl()
-    cleanup_stale_nightly_vms()
-
-    global serial_log_path
-    serial_log_path = os.path.join(WORKDIR, f"serial-{RUN_ID}.log")
-    open(serial_log_path, "wb").close()
-    serial_stop = threading.Event()
+    code = first_existing(OVMF_CODE_CANDIDATES, "OVMF code")
+    vars_src = first_existing(OVMF_VARS_CANDIDATES, "OVMF vars")
+    vars_fd = os.path.join(WORKDIR, "OVMF_VARS.fd")
+    shutil.copyfile(vars_src, vars_fd)
+    disk = os.path.join(WORKDIR, "disk.qcow2")
+    subprocess.run(["qemu-img", "create", "-f", "qcow2", disk, "8G"], check=True)
+    serial1 = os.path.join(WORKDIR, "serial-install.log")
+    serial2 = os.path.join(WORKDIR, "serial-second-boot.log")
 
     server = http.server.ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), ReportHandler)
-    # Serve files (apkovl/modloop) from the same dir the caller staged.
-    os.chdir(WORKDIR)
-    t = threading.Thread(target=server.serve_forever, daemon=True)
-    t.start()
-    print(f"[host] report server up on :{HTTP_PORT}, serving {WORKDIR}")
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    print(f"[host] report/file server on :{HTTP_PORT}, serving {WORKDIR}", flush=True)
 
-    result = {"vm": VM_NAME, "ok": False}
-    vm_dir = None
-    vm_uuid = None
+    result = {"ok": False}
+    proc = None
     try:
-        # The live-boot stage (UEFI -> GRUB -> kernel handoff) now runs
-        # under real same-ISA Hypervisor.framework acceleration (HVF)
-        # instead of pure TCG software emulation, since the guest arch
-        # was switched x86_64 -> aarch64 to match this host's own
-        # (Apple Silicon) CPU. That should be drastically faster than
-        # the x86_64-under-TCG numbers this budget/retry logic was
-        # originally tuned against (every x86_64 attempt for 2+ weeks
-        # only reached GRUB's "Booting `Linux lts'" at the very tail of
-        # a 2700s window, with the kernel never getting a real window
-        # afterward). Keeping the same generous budget and single-
-        # attempt shape for the first aarch64 runs rather than
-        # re-tuning blind - shrink it once real aarch64 timing data
-        # from actual CI runs justifies a smaller number.
-        MAX_BOOT_ATTEMPTS = 1
-        reached_live_boot = False
-        for attempt in range(1, MAX_BOOT_ATTEMPTS + 1):
-            ok, vm_uuid = attempt_boot(iso_path, serial_log_path, serial_stop, attempt)
-            if ok:
-                reached_live_boot = True
-                vm_dir = os.path.join(UTM_EXTERNAL_STAGING, f"{VM_NAME}.utm")
-                break
-            if vm_uuid:
-                subprocess.run([UTMCTL, "stop", vm_uuid], capture_output=True)
-                time.sleep(3)
-                subprocess.run([UTMCTL, "delete", vm_uuid], capture_output=True)
-            shutil.rmtree(os.path.join(UTM_EXTERNAL_STAGING, f"{VM_NAME}.utm"), ignore_errors=True)
-            if attempt < MAX_BOOT_ATTEMPTS:
-                print(f"[host] retrying boot (attempt {attempt + 1}/{MAX_BOOT_ATTEMPTS})", flush=True)
-
-        if not reached_live_boot:
-            raise SystemExit(
-                f"TIMEOUT waiting for: live ISO boot (after {MAX_BOOT_ATTEMPTS} attempts)"
-            )
-
-        vm_dir = os.path.join(UTM_EXTERNAL_STAGING, f"{VM_NAME}.utm")
-        done = wait_for_event(lambda b: "INSTALL_DONE" in b, TOTAL_TIMEOUT_S, "installer completion")
+        t0 = time.time()
+        proc = start_qemu(qemu_cmd(disk, code, vars_fd, serial1, iso=iso))
+        wait_for_event(lambda b: "LIVE_BOOT_START" in b, LIVE_BOOT_TIMEOUT_S, "live ISO boot", proc, serial1)
+        print(f"[host] live system up after {time.time() - t0:.0f}s", flush=True)
+        done = wait_for_event(lambda b: "INSTALL_DONE" in b, INSTALL_TIMEOUT_S, "installer completion", proc, serial1)
         if "rc=0" not in done:
+            dump_serial(serial1)
             raise SystemExit(f"Installer reported non-zero exit: {done}")
-        zpool_ev = wait_for_event(lambda b: "POST_INSTALL_ZPOOL" in b, 60, "post-install zpool report")
-        if "state: ONLINE" not in zpool_ev and "ONLINE" not in zpool_ev:
-            raise SystemExit(f"zpool not ONLINE after install: {zpool_ev}")
-        print(f"[host] REAL install verified, real zpool ONLINE: {zpool_ev}")
+        zp = wait_for_event(lambda b: "POST_INSTALL_ZPOOL" in b, 120, "post-install zpool report", proc, serial1)
+        if "ONLINE" not in zp:
+            dump_serial(serial1)
+            raise SystemExit(f"zpool not ONLINE after install: {zp}")
+        print(f"[host] REAL install verified after {time.time() - t0:.0f}s, zpool ONLINE", flush=True)
+        # The guest reboots itself; -no-reboot turns that into a QEMU exit.
+        stop_qemu(proc, 120)
+        proc = None
+        dump_serial(serial1, max_lines=150)
 
-        second = wait_for_event(lambda b: "SECOND_BOOT_OK" in b, 600, "second boot (installed system) report")
-        print(f"[host] REAL reboot into installed system verified: {second}")
-
-        result["ok"] = True
-        result["install_evidence"] = zpool_ev
-        result["reboot_evidence"] = second
+        t1 = time.time()
+        proc = start_qemu(qemu_cmd(disk, code, vars_fd, serial2, iso=None))
+        second = wait_for_event(lambda b: "SECOND_BOOT_OK" in b, SECOND_BOOT_TIMEOUT_S,
+                                "second boot (installed system, no install media attached)", proc, serial2)
+        if "ONLINE" not in second:
+            dump_serial(serial2)
+            raise SystemExit(f"second boot came up but zpool not ONLINE: {second}")
+        print(f"[host] REAL boot of the installed system verified after {time.time() - t1:.0f}s", flush=True)
+        stop_qemu(proc, 60)
+        proc = None
+        dump_serial(serial2, max_lines=200)
+        result = {"ok": True, "install_evidence": zp, "reboot_evidence": second}
     finally:
-        serial_stop.set()
-        time.sleep(0.5)
-        try:
-            with open(serial_log_path, "rb") as f:
-                serial_data = f.read()
-            print(f"[host] ==== captured guest serial console ({len(serial_data)} bytes) ====", flush=True)
-            sys.stdout.buffer.write(serial_data)
-            sys.stdout.flush()
-            print("[host] ==== end guest serial console ====", flush=True)
-        except OSError as e:
-            print(f"[host] could not read serial log: {e}", flush=True)
-        if vm_uuid:
-            subprocess.run([UTMCTL, "stop", vm_uuid], capture_output=True)
-            time.sleep(3)
-            subprocess.run([UTMCTL, "delete", vm_uuid], capture_output=True)
-        if vm_dir:
-            shutil.rmtree(vm_dir, ignore_errors=True)
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()
         server.shutdown()
 
     print(json.dumps(result))

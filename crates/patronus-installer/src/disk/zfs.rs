@@ -21,6 +21,21 @@ use tracing::info;
 /// installer) avoids needing to prompt for one.
 pub const ROOT_POOL_NAME: &str = "rpool";
 
+/// Pool features GRUB 2 can read (OpenZFS Root-on-ZFS guide, boot pool).
+const GRUB_POOL_FEATURES: &[&str] = &[
+    "feature@async_destroy=enabled",
+    "feature@bookmarks=enabled",
+    "feature@embedded_data=enabled",
+    "feature@empty_bpobj=enabled",
+    "feature@enabled_txg=enabled",
+    "feature@extensible_dataset=enabled",
+    "feature@filesystem_limits=enabled",
+    "feature@hole_birth=enabled",
+    "feature@large_blocks=enabled",
+    "feature@lz4_compress=enabled",
+    "feature@spacemap_histogram=enabled",
+];
+
 /// Create the root pool on `disk` (a whole block device, e.g. `/dev/sda`
 /// — no partition, ZFS uses the disk directly) and a `ROOT` dataset
 /// mounted at `mount_point` (normally the installer's `target_root`).
@@ -34,13 +49,32 @@ pub async fn create_root_pool(disk: &Path, mount_point: &Path) -> Result<()> {
         disk.display()
     );
 
+    // `-R <target>` (altroot) + `mountpoint=/`: the pool is mounted at the
+    // installer's target root for the duration of the install, but the
+    // dataset's persistent `mountpoint` property is `/`, which is what the
+    // installed system's initramfs/zfs-mount need on first boot. Setting
+    // `mountpoint=<target_root>` directly (the old behaviour) left the
+    // installed root pointing at e.g. /mnt/install forever.
+    //
+    // GRUB-readable feature set: /boot lives on this pool (the ESP only
+    // holds GRUB itself), so GRUB's own read-only ZFS driver must be able to
+    // open it, and GRUB rejects pools with newer features ("unsupported
+    // features"). `-d` disables every feature, then exactly the set from the
+    // OpenZFS Root-on-ZFS guide's GRUB boot pool is enabled. (Not
+    // `-o compatibility=grub2`: that needs /usr/share/zfs/compatibility.d,
+    // which e.g. Alpine's zfs package doesn't ship - "could not read/parse
+    // feature file(s): grub2".) Both found by the nightly KVM installer test.
+    let altroot = mount_point.display().to_string();
     let output = Command::new("zpool")
         .args(["create", "-f"])
         .args(["-o", "ashift=12"])
+        .arg("-d")
+        .args(GRUB_POOL_FEATURES.iter().flat_map(|f| ["-o", *f]))
+        .args(["-R", &altroot])
         .args(["-O", "compression=lz4"])
         .args(["-O", "atime=off"])
         .args(["-O", "xattr=sa"])
-        .args(["-O", &format!("mountpoint={}", mount_point.display())])
+        .args(["-O", "mountpoint=/"])
         .arg(ROOT_POOL_NAME)
         .arg(disk)
         .output()

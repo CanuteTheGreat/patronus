@@ -356,7 +356,9 @@ async fn create_root_partition(
     let output = Command::new("parted")
         .args(["-s", "--"])
         .arg(disk)
-        .args(["mkpart", "root", filesystem.as_str(), &start, &end])
+        .args(["mkpart", "root"])
+        .args(filesystem.parted_fs_type())
+        .args([&start, &end])
         .output()
         .await
         .map_err(|e| InstallerError::Partition(format!("Failed to create root: {}", e)))?;
@@ -396,7 +398,9 @@ async fn create_home_partition(
     let output = Command::new("parted")
         .args(["-s", "--"])
         .arg(disk)
-        .args(["mkpart", "home", filesystem.as_str(), &start, &end])
+        .args(["mkpart", "home"])
+        .args(filesystem.parted_fs_type())
+        .args([&start, &end])
         .output()
         .await
         .map_err(|e| InstallerError::Partition(format!("Failed to create home: {}", e)))?;
@@ -429,11 +433,22 @@ async fn get_next_start(disk: &Path) -> Result<String> {
         .map_err(|e| InstallerError::Partition(format!("Failed to query partitions: {}", e)))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(format!("{}MiB", last_partition_end_mib(&stdout)))
+}
 
-    // Find the last partition end or first free space
+/// End (MiB, rounded up) of the last real partition in `parted -m unit MiB
+/// print free` output, or 1 when the disk has none yet.
+fn last_partition_end_mib(stdout: &str) -> u64 {
     let mut last_end = 1u64; // Start at 1MiB by default
 
     for line in stdout.lines() {
+        // `print free` also emits free-space rows ("1:513MiB:8192MiB:7679MiB:free;").
+        // Counting their end as a partition end made the next partition start
+        // at the END of the disk ("location 8192MiB is outside of the device"),
+        // found by the nightly KVM installer test - only real partitions count.
+        if line.trim_end_matches(';').ends_with(":free") {
+            continue;
+        }
         let parts: Vec<&str> = line.split(':').collect();
         if parts.len() >= 3 {
             // Try to parse as partition info
@@ -446,7 +461,7 @@ async fn get_next_start(disk: &Path) -> Result<String> {
         }
     }
 
-    Ok(format!("{}MiB", last_end))
+    last_end
 }
 
 /// Parse MiB value from string like "512MiB"
@@ -521,5 +536,26 @@ mod tests {
     fn test_parse_mib() {
         assert_eq!(parse_mib("512MiB").unwrap(), 512);
         assert_eq!(parse_mib("1024MiB").unwrap(), 1024);
+    }
+}
+
+#[cfg(test)]
+mod next_start_tests {
+    use super::last_partition_end_mib;
+
+    #[test]
+    fn free_space_rows_are_not_partitions() {
+        let out = "BYT;\n/dev/vda:8192MiB:virtblk:512:512:gpt:Virtio Block Device:;\n\
+                   1:0.02MiB:1.00MiB:0.98MiB:free;\n\
+                   1:1.00MiB:513MiB:512MiB:fat32:ESP:boot, esp;\n\
+                   1:513MiB:8192MiB:7679MiB:free;\n";
+        assert_eq!(last_partition_end_mib(out), 513);
+    }
+
+    #[test]
+    fn empty_disk_starts_at_one_mib() {
+        let out = "BYT;\n/dev/vda:8192MiB:virtblk:512:512:gpt:Virtio Block Device:;\n\
+                   1:0.02MiB:8192MiB:8192MiB:free;\n";
+        assert_eq!(last_partition_end_mib(out), 1);
     }
 }

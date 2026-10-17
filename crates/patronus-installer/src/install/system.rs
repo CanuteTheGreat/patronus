@@ -111,6 +111,8 @@ pub async fn mount_partitions(partitions: &[CreatedPartition], target_root: &Pat
 pub async fn unmount_partitions(partitions: &[CreatedPartition], target_root: &Path) -> Result<()> {
     info!("Unmounting partitions from {}", target_root.display());
 
+    unmount_chroot_mounts(target_root).await;
+
     // Disable swap first
     for partition in partitions.iter().filter(|p| p.mount_point == "swap") {
         let _ = Command::new("swapoff").arg(&partition.path).output().await;
@@ -138,9 +140,10 @@ pub async fn unmount_partitions(partitions: &[CreatedPartition], target_root: &P
             // it does a real block-device mount — export it instead so
             // the freshly-installed system can import it cleanly on
             // first boot (a pool can't be imported twice at once).
-            if let Err(e) = crate::disk::zfs::export_root_pool().await {
-                warn!("Failed to export ZFS root pool: {}", e);
-            }
+            // Not just a warning: an unexported root pool cannot be imported
+            // by the installed system's initramfs (different hostid), so the
+            // install would "succeed" and then never boot.
+            crate::disk::zfs::export_root_pool().await?;
             continue;
         }
 
@@ -621,41 +624,67 @@ pub async fn run_in_chroot(target: &Path, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// Mount filesystems for chroot
+/// Mount filesystems for chroot. Idempotent: `run_in_chroot` calls this for
+/// every command, and stacking a fresh set of bind mounts per call is what left
+/// the target busy. /dev and /sys are recursive binds (rslave) so submounts the
+/// chroot needs are visible too - notably efivarfs under /sys/firmware/efi,
+/// without which `grub-install` cannot register its NVRAM boot entry ("EFI
+/// variables are not supported on this system").
 async fn mount_for_chroot(target: &Path) -> Result<()> {
-    // Bind mount /dev
-    let dev = target.join("dev");
-    let _ = Command::new("mount")
-        .args(["--bind", "/dev"])
-        .arg(&dev)
-        .output()
-        .await;
+    let mounts = fs::read_to_string("/proc/mounts").await.unwrap_or_default();
+    let is_mounted = |p: &Path| {
+        let p = p.to_string_lossy().to_string();
+        mounts
+            .lines()
+            .any(|l| l.split_whitespace().nth(1) == Some(p.as_str()))
+    };
 
-    // Mount /proc
-    let proc = target.join("proc");
-    let _ = Command::new("mount")
-        .args(["-t", "proc", "proc"])
-        .arg(&proc)
-        .output()
-        .await;
-
-    // Mount /sys
-    let sys = target.join("sys");
-    let _ = Command::new("mount")
-        .args(["--bind", "/sys"])
-        .arg(&sys)
-        .output()
-        .await;
-
-    // Bind mount /run
-    let run = target.join("run");
-    let _ = Command::new("mount")
-        .args(["--bind", "/run"])
-        .arg(&run)
-        .output()
-        .await;
+    for (src, dst, args) in [
+        ("/dev", "dev", &["--rbind", "--make-rslave"][..]),
+        ("proc", "proc", &["-t", "proc"][..]),
+        ("/sys", "sys", &["--rbind", "--make-rslave"][..]),
+        ("/run", "run", &["--bind"][..]),
+    ] {
+        let mp = target.join(dst);
+        if is_mounted(&mp) {
+            continue;
+        }
+        let _ = fs::create_dir_all(&mp).await;
+        let _ = Command::new("mount")
+            .args(args)
+            .arg(src)
+            .arg(&mp)
+            .output()
+            .await;
+    }
 
     Ok(())
+}
+
+/// Undo `mount_for_chroot` (recursively; lazily as a last resort). Must run
+/// before the target's own filesystems are unmounted / the ZFS root pool is
+/// exported: leftover /dev,/proc,/sys,/run mounts keep the pool busy, the
+/// export fails, and the installed system then refuses to import its root
+/// pool on first boot ("pool was previously in use from another system").
+/// Found by the nightly KVM installer test.
+pub async fn unmount_chroot_mounts(target: &Path) {
+    for dst in ["run", "sys", "proc", "dev"] {
+        let mp = target.join(dst);
+        let ok = Command::new("umount")
+            .arg("-R")
+            .arg(&mp)
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !ok {
+            let _ = Command::new("umount")
+                .args(["-R", "-l"])
+                .arg(&mp)
+                .output()
+                .await;
+        }
+    }
 }
 
 use std::os::unix::fs::PermissionsExt;

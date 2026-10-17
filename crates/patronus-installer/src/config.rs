@@ -177,6 +177,17 @@ impl Filesystem {
         }
     }
 
+    /// The filesystem-type hint passed to `parted mkpart`. parted has no
+    /// "zfs" type (`parted: invalid token: zfs`, found by the nightly KVM
+    /// installer test), and the hint is optional for GPT, so ZFS gets none:
+    /// the pool is created on the plain partition by `zpool create`.
+    pub fn parted_fs_type(&self) -> Option<&'static str> {
+        match self {
+            Self::Zfs => None,
+            other => Some(other.as_str()),
+        }
+    }
+
     /// Not meaningful for ZFS (no `mkfs.zfs` — pools are created with
     /// `zpool create`, a fundamentally different command shape than every
     /// other variant here). Callers must branch on `Filesystem::Zfs`
