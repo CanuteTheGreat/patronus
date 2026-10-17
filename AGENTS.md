@@ -91,6 +91,12 @@ config file that only one process knows about.
   disabled); NAT rows are manual rules, port forwards (`interface_in`) and
   1:1 mappings. Tests can fake the schedule clock with
   `PATRONUS_FAKE_TIME_FILE` (`YYYY-MM-DD HH:MM`).
+- **Bridges are layer 2 (lane B):** every firewall apply writes 0 to
+  `net.bridge.bridge-nf-call-{iptables,ip6tables,arptables}` when
+  `br_netfilter` is loaded (`bridges_stay_layer2`), otherwise frames between
+  members of a Patronus bridge hit the routed `forward` policy (drop).
+  Netlab hosts without the module (rw-man-04) can't reproduce this; the CI
+  runners (rw-man-01..03) have it loaded.
 - **Policy routing contract (B <-> E):** `firewall_rules.gateway` names a
   gateway or gateway group; lane E resolves it to an fwmark, lane B renders
   `meta mark set`.

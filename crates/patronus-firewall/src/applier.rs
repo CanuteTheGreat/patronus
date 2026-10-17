@@ -423,6 +423,42 @@ pub fn disable_forwarding(proc_sys: &std::path::Path) -> Vec<String> {
     off
 }
 
+/// br_netfilter keys that push *bridged* frames through the inet hooks.
+const BRIDGE_NF_KEYS: [&str; 3] = [
+    "net/bridge/bridge-nf-call-iptables",
+    "net/bridge/bridge-nf-call-ip6tables",
+    "net/bridge/bridge-nf-call-arptables",
+];
+
+/// A Patronus bridge is a layer-2 switch: frames between its member ports
+/// are not routed and must not meet the routed `forward` policy (drop).
+/// When the `br_netfilter` module is loaded (Docker and many distros load
+/// it; a new network namespace then starts with `bridge-nf-call-*=1`), the
+/// kernel would push every bridged frame through `inet patronus forward`,
+/// where nothing matches `br0 -> br0` and the policy drops it: hosts on the
+/// same bridge could no longer reach each other. Switch those hooks off at
+/// every firewall apply (also catches a module loaded after boot); with the
+/// module absent the keys don't exist and nothing is touched. Returns the
+/// keys that were changed.
+pub fn bridges_stay_layer2(proc_sys: &std::path::Path) -> Vec<String> {
+    let mut changed = Vec::new();
+    for key in BRIDGE_NF_KEYS {
+        let path = proc_sys.join(key);
+        let Ok(v) = std::fs::read_to_string(&path) else {
+            continue; // module not loaded
+        };
+        if v.trim() == "0" {
+            continue;
+        }
+        if let Err(e) = std::fs::write(&path, "0\n") {
+            tracing::warn!("could not set {key} = 0: {e}");
+        } else {
+            changed.push(key.replace('/', "."));
+        }
+    }
+    changed
+}
+
 #[async_trait]
 impl Applier for FirewallApplier {
     fn name(&self) -> &'static str {
@@ -439,8 +475,16 @@ impl Applier for FirewallApplier {
         let err = match full {
             Ok(r) => match nftables::execute_nft_script(&r.script) {
                 Ok(_) => {
-                    tracing::info!("firewall applied: {}", r.report.applied.join("; "));
-                    return Ok(r.report);
+                    let mut report = r.report;
+                    let l2 = bridges_stay_layer2(std::path::Path::new("/proc/sys"));
+                    if !l2.is_empty() {
+                        report.applied(format!(
+                            "bridged traffic kept out of the routed filter ({} = 0)",
+                            l2.join(", ")
+                        ));
+                    }
+                    tracing::info!("firewall applied: {}", report.applied.join("; "));
+                    return Ok(report);
                 }
                 Err(e) => e,
             },
@@ -900,6 +944,34 @@ mod tests {
             assert_eq!(std::fs::read_to_string(d.path().join(f)).unwrap(), "0\n");
         }
         assert!(disable_forwarding(&d.path().join("missing")).is_empty());
+    }
+
+    #[test]
+    fn bridges_stay_layer2_turns_br_netfilter_hooks_off_only_when_present() {
+        let d = tempfile::tempdir().unwrap();
+        // module absent: nothing to do, nothing created
+        assert!(bridges_stay_layer2(d.path()).is_empty());
+        assert!(!d.path().join("net/bridge").exists());
+        std::fs::create_dir_all(d.path().join("net/bridge")).unwrap();
+        for k in BRIDGE_NF_KEYS {
+            std::fs::write(d.path().join(k), "1\n").unwrap();
+        }
+        // already-0 keys are left alone and not reported
+        std::fs::write(d.path().join(BRIDGE_NF_KEYS[2]), "0\n").unwrap();
+        assert_eq!(
+            bridges_stay_layer2(d.path()),
+            vec![
+                "net.bridge.bridge-nf-call-iptables",
+                "net.bridge.bridge-nf-call-ip6tables"
+            ]
+        );
+        for k in BRIDGE_NF_KEYS {
+            assert_eq!(
+                std::fs::read_to_string(d.path().join(k)).unwrap().trim(),
+                "0"
+            );
+        }
+        assert!(bridges_stay_layer2(d.path()).is_empty());
     }
 
     #[tokio::test]

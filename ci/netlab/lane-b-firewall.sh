@@ -255,6 +255,33 @@ nl_assert_nft_has "ip daddr 203.0.113.50 dnat ip to 192.168.50.10" "ip saddr 192
 expect_sees "WAN -> 203.0.113.50:9000 reaches the internal host" ISP 203.0.113.50 9000 203.0.113.1
 expect_sees "internal host -> internet leaves as 203.0.113.50" C $NL_WWW 9000 203.0.113.50
 
+echo "=== 8b. a bridge stays layer 2 (br_netfilter must not feed it to the forward policy)"
+# Hosts on the same bridge talk at layer 2. With br_netfilter loaded (Docker
+# hosts, many distros) a new netns starts with bridge-nf-call-iptables=1 and
+# every bridged frame would hit `inet patronus forward` (policy drop).
+for n in nl-lbh1 nl-lbh2; do ip netns del $n 2>/dev/null || true; ip netns add $n; ip -n $n link set lo up; done
+R ip link add br-lb type bridge; R ip link set br-lb up
+for i in 1 2; do
+  ip link add lb-p$i netns nl-rtr type veth peer name eth0 netns nl-lbh$i
+  R ip link set lb-p$i master br-lb; R ip link set lb-p$i up
+  ip -n nl-lbh$i addr add 10.77.0.1$i/24 dev eth0; ip -n nl-lbh$i link set eth0 up
+done
+if R test -e /proc/sys/net/bridge/bridge-nf-call-iptables; then
+  R sh -c 'for k in iptables ip6tables arptables; do echo 1 > /proc/sys/net/bridge/bridge-nf-call-$k; done'
+  api_ok POST /firewall/aliases '{"name":"lb_l2","type":"host","entries":["198.51.100.99"]}'   # any change re-applies
+  for k in iptables ip6tables arptables; do
+    nl_assert_sysctl net.bridge.bridge-nf-call-$k 0
+  done
+  ip netns exec nl-lbh1 ping -c1 -W2 10.77.0.12 >/dev/null 2>&1 || nl_fail "bridged ping h1 -> h2 dropped with br_netfilter loaded"
+  nl_ok "br_netfilter loaded: bridged hosts still reach each other (bridge-nf-call-* switched off by the firewall apply)"
+  api_ok DELETE /firewall/aliases/lb_l2
+else
+  ip netns exec nl-lbh1 ping -c1 -W2 10.77.0.12 >/dev/null 2>&1 || nl_fail "bridged ping h1 -> h2 failed"
+  nl_ok "bridged hosts reach each other (br_netfilter not loaded on this host: hook check skipped)"
+fi
+R ip link del br-lb; R ip link del lb-p1 2>/dev/null || true; R ip link del lb-p2 2>/dev/null || true
+for n in nl-lbh1 nl-lbh2; do ip netns del $n; done
+
 echo "=== 9. reboot: everything comes back from the store"
 api_ok POST /firewall/aliases '{"name":"lb_keep","type":"host","entries":["198.51.100.20"]}'
 api_ok POST /firewall/rules "$(rule lb-keep-block drop '$lb_keep' 80)"
