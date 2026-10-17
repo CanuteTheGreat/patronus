@@ -52,9 +52,14 @@ for round in $(seq 1 "$ROUNDS"); do
   sleep "$(python3 -c 'import random; print(round(random.uniform(0.5, 3.0), 2))')"
   kill -9 "$NL_WEB_PID"; wait "$NL_WEB_PID" 2>/dev/null || true; NL_WEB_PID=
   kill "$editor" 2>/dev/null; wait "$editor" 2>/dev/null || true
-  # also kill a boot-time apply part way through, every other round
+  # also kill a boot-time apply part way through, every other round.
+  # Not via the R() helper: `R ... &` backgrounds a bash subshell running the
+  # function, so $! is that subshell and kill -9 orphaned the real patronus
+  # process, which kept running and held the store's write lock (nightly run
+  # 420 died on round 26: "database is locked" from the integrity check).
+  # `ip netns exec` execs into the binary, so here $! is patronus itself.
   if [ $((round % 2)) = 0 ]; then
-    R "$P" --db "$DB" apply --bootstrap "$NL_TOML" >/dev/null 2>&1 &
+    ip netns exec nl-rtr "$P" --db "$DB" apply --bootstrap "$NL_TOML" >/dev/null 2>&1 &
     a=$!
     sleep "0.0$((RANDOM % 9 + 1))"
     kill -9 "$a" 2>/dev/null || true; wait "$a" 2>/dev/null || true
