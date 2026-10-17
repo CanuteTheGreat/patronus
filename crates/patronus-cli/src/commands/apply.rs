@@ -116,7 +116,10 @@ async fn emergency_lockdown(bootstrap: Option<&Path>) -> String {
     if let Err(e) = seed(&scratch, bootstrap).await {
         println!("{} {e}", "!".yellow());
     }
-    match patronus_firewall::FirewallApplier.load_lockdown(&scratch).await {
+    match patronus_firewall::FirewallApplier
+        .load_lockdown(&scratch)
+        .await
+    {
         Ok(()) => "lockdown ruleset loaded: only anti-lockout access is allowed".into(),
         Err(e) => e.to_string(),
     }
@@ -259,7 +262,10 @@ pub async fn list_revisions(db: Option<&Path>) -> anyhow::Result<()> {
 /// `patronus config rollback <id>`: restore a revision and apply it.
 pub async fn rollback(id: i64, opts: ApplyOptions) -> anyhow::Result<()> {
     let store = open_store(opts.db.as_deref()).await?;
-    let before = store.export_json().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    let before = store
+        .export_json()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     store
         .restore_revision(id, "cli")
         .await
@@ -285,10 +291,9 @@ async fn apply_or_revert(opts: ApplyOptions, before: serde_json::Value) -> anyho
         return Ok(());
     };
     let store = open_store(again.db.as_deref()).await?;
-    store
-        .import_json(&before)
-        .await
-        .map_err(|e2| anyhow::anyhow!("{e}; restoring the previous configuration failed too: {e2}"))?;
+    store.import_json(&before).await.map_err(|e2| {
+        anyhow::anyhow!("{e}; restoring the previous configuration failed too: {e2}")
+    })?;
     store.close().await;
     println!(
         "{} the new configuration did not apply; restored the previous one",
@@ -304,7 +309,10 @@ async fn apply_or_revert(opts: ApplyOptions, before: serde_json::Value) -> anyho
 /// (a backup). Written 0600: later lanes keep secrets (VPN keys) here.
 pub async fn export(db: Option<&Path>, output: Option<&Path>) -> anyhow::Result<()> {
     let store = open_store(db).await?;
-    let doc = store.export_json().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    let doc = store
+        .export_json()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     store.close().await;
     let text = serde_json::to_string_pretty(&doc)? + "\n";
     match output {
@@ -321,7 +329,11 @@ pub async fn export(db: Option<&Path>, output: Option<&Path>) -> anyhow::Result<
                 .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
             f.write_all(text.as_bytes())?;
             f.sync_all()?;
-            eprintln!("{} configuration exported to {}", "•".cyan(), path.display());
+            eprintln!(
+                "{} configuration exported to {}",
+                "•".cyan(),
+                path.display()
+            );
         }
     }
     Ok(())
@@ -336,7 +348,10 @@ pub async fn import(file: &Path, apply: bool, opts: ApplyOptions) -> anyhow::Res
     let doc: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| anyhow::anyhow!("{} is not a Patronus config export: {e}", file.display()))?;
     let store = open_store(opts.db.as_deref()).await?;
-    let before = store.export_json().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    let before = store
+        .export_json()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     store
         .snapshot("cli", &format!("before import of {}", file.display()))
         .await

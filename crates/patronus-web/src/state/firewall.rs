@@ -749,7 +749,11 @@ mod tests {
         }
         a.fail.store(true, Ordering::SeqCst);
         assert!(fw.delete_rule(id).await.is_err());
-        let back = fw.get_rule(id).await.unwrap().expect("same id after a failed delete");
+        let back = fw
+            .get_rule(id)
+            .await
+            .unwrap()
+            .expect("same id after a failed delete");
         assert_eq!(back.port, "8080");
     }
 

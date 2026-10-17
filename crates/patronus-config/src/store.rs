@@ -1000,7 +1000,10 @@ mod tests {
             .await
             .unwrap()
             .get(0);
-        assert_eq!(mode, "delete", "boot unit (root) and web (patronus) share the file");
+        assert_eq!(
+            mode, "delete",
+            "boot unit (root) and web (patronus) share the file"
+        );
         let sync: i64 = sqlx::query("PRAGMA synchronous")
             .fetch_one(s.pool().unwrap())
             .await

@@ -200,13 +200,15 @@ impl FirewallApplier {
     /// error: a box without any ruleset must at least not route.
     pub async fn load_lockdown(&self, store: &ConfigStore) -> Result<()> {
         let lock = self.render_lockdown(store).await;
-        nftables::execute_nft_script(&lock).map(|_| ()).map_err(|e| {
-            let off = disable_forwarding(std::path::Path::new("/proc/sys"));
-            Error::Firewall(format!(
-                "the lockdown ruleset failed too: {e}; forwarding switched off ({})",
-                off.join(", ")
-            ))
-        })
+        nftables::execute_nft_script(&lock)
+            .map(|_| ())
+            .map_err(|e| {
+                let off = disable_forwarding(std::path::Path::new("/proc/sys"));
+                Error::Firewall(format!(
+                    "the lockdown ruleset failed too: {e}; forwarding switched off ({})",
+                    off.join(", ")
+                ))
+            })
     }
 }
 
@@ -602,13 +604,21 @@ mod tests {
             l.starts_with("add table inet patronus\ndelete table inet patronus\n"),
             "{l}"
         );
-        assert!(l.contains("chain inet patronus forward { type filter hook forward priority 0; policy drop; }"), "{l}");
+        assert!(
+            l.contains(
+                "chain inet patronus forward { type filter hook forward priority 0; policy drop; }"
+            ),
+            "{l}"
+        );
         assert!(
             l.contains("add rule inet patronus input iifname \"eth1\" tcp dport {22,8443} accept"),
             "{l}"
         );
         assert!(!l.contains("eth0\" tcp dport"), "never on WAN: {l}");
-        assert!(!l.contains("masquerade") && !l.contains("forward iifname"), "{l}");
+        assert!(
+            !l.contains("masquerade") && !l.contains("forward iifname"),
+            "{l}"
+        );
 
         // roles unreadable too: anti-lockout on any interface, still nothing forwarded
         sqlx::query("DROP TABLE interfaces")
@@ -620,7 +630,10 @@ mod tests {
             l.contains("add rule inet patronus input tcp dport {22,8443} accept"),
             "{l}"
         );
-        assert!(!l.contains("forward iifname") && !l.contains("masquerade"), "{l}");
+        assert!(
+            !l.contains("forward iifname") && !l.contains("masquerade"),
+            "{l}"
+        );
     }
 
     #[test]
