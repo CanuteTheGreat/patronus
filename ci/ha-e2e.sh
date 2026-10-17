@@ -105,10 +105,17 @@ leader_of() { # prints the leader all listed nodes agree on, or nothing
   l=$(echo $ids | tr ' ' '\n' | sort -u)
   if [ "$(echo "$l" | wc -l)" = 1 ] && [ -n "$l" ]; then echo "$l"; fi
 }
-wait_leader() {
-  local l=""
-  for _ in $(seq 1 60); do l=$(leader_of "$@"); [ -n "$l" ] && break; sleep 1; done
-  [ -n "$l" ] || fail "no agreed leader among $*"
+wait_leader() { # [--not <old-leader>] nodes...  (followers keep reporting
+  # the dead leader until their election timeout fires, so after a failover
+  # wait for agreement on a *different* leader)
+  local l="" not=""
+  if [ "$1" = --not ]; then not=$2; shift 2; fi
+  for _ in $(seq 1 60); do
+    l=$(leader_of "$@")
+    [ -n "$l" ] && [ "$l" != "$not" ] && break
+    l=""; sleep 1
+  done
+  [ -n "$l" ] || fail "no agreed leader${not:+ other than $not} among $*"
   echo "$l"
 }
 LEADER=$(wait_leader dashboard1 dashboard2 dashboard3)
@@ -174,7 +181,7 @@ LIDX=${LEADER#dashboard}
 log "killing leader $LEADER"
 docker kill "$TAG-d$LIDX" >/dev/null
 SURV=$(for i in 1 2 3; do [ "$i" != "$LIDX" ] && echo dashboard$i; done | tr '\n' ' ')
-NEW=$(wait_leader $SURV)
+NEW=$(wait_leader --not "$LEADER" $SURV)
 [ "$NEW" != "$LEADER" ] || fail "leader did not change"
 log "new leader: $NEW"
 SN=$(sites_on "$NEW")

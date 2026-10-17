@@ -136,7 +136,11 @@ jobs:
     # own, not just as part of one big set.
     name: Feature matrix (all features + one build per USE flag)
     runs-on: linux-cross-x86_64
-    timeout-minutes: 60
+    timeout-minutes: 75
+    env:
+      # keep peak memory well inside the 8g cap (the 2026-10-16 run stalled
+      # on a loaded runner with no output for 45 min)
+      CARGO_BUILD_JOBS: 4
     container:
       image: catthehacker/ubuntu:act-latest
       options: --memory 8g --memory-swap 8g --cpus 4
@@ -163,7 +167,9 @@ jobs:
       - name: Tests with --all-features (feature-bearing crates)
         run: |
           set -e
-          for c in patronus-network patronus-firewall patronus-core patronus-sdwan patronus-secrets patronus-cli; do
+          # (patronus-cli is covered by the per-USE-flag builds below, which
+          # end with a full build of every USE-mapped feature together.)
+          for c in patronus-network patronus-firewall patronus-core patronus-sdwan patronus-secrets; do
             echo "::group::cargo test -p $c --all-features"
             cargo test -p "$c" --all-features
             echo "::endgroup::"
@@ -435,19 +441,35 @@ jobs:
       - name: Verify the ebuild install (binaries, USE flags, service files)
         run: |
           set -e
-          docker run --rm --entrypoint sh patronus/web:${{ github.sha }} -c '
-            set -e
-            for b in patronus-cli patronus-web patronus-dashboard nft; do command -v "$b"; done
+          docker run --rm --entrypoint bash patronus/web:${{ github.sha }} -c '
+            set -euo pipefail
+            fail() { echo "::error::$*"; exit 1; }
+            for b in patronus patronus-cli patronus-web patronus-dashboard nft; do
+              p=$(command -v "$b") || { ls -l /usr/bin | grep -i patronus || true; fail "binary $b not installed"; }
+              echo "ok $p"
+            done
             for f in /usr/lib/systemd/system/patronus-dashboard.service \
                      /usr/lib/systemd/system/patronus-web.service \
                      /usr/lib/systemd/system/patronus-firewall.service \
-                     /etc/patronus/patronus.toml; do test -f "$f" && echo "ok $f"; done
+                     /etc/patronus/patronus.toml; do
+              [ -f "$f" ] || fail "missing $f"; echo "ok $f"
+            done
+            # Every ExecStart/ExecStop of every shipped unit must point at an
+            # installed executable (they referenced /usr/bin/patronus, which
+            # was never installed, so the services could not start).
+            for u in /usr/lib/systemd/system/patronus-*.service; do
+              for bin in $(sed -n "s/^Exec\(Start\|Stop\)=\([^ ]*\).*/\2/p" "$u"); do
+                [ -x "$bin" ] || fail "$u runs $bin, which is not installed"
+                echo "ok $u -> $bin"
+              done
+            done
             use=$(cat /var/db/pkg/net-firewall/patronus-*/USE)
             echo "installed USE: $use"
             for u in dashboard dhcp dns wireguard openvpn ipsec vlan qos multiwan captive-portal; do
-              echo " $use " | grep -q " $u " || { echo "USE=$u missing"; exit 1; }
+              echo " $use " | grep -q " $u " || fail "USE=$u missing"
             done
-            patronus-cli --help >/dev/null
+            patronus --help >/dev/null
+            patronus-cli --version
           '
 
       - name: Build the dashboard UI (frontend/ -> ./static)
