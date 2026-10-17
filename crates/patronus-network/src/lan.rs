@@ -65,6 +65,7 @@ pub(crate) fn invalid(msg: impl std::fmt::Display) -> Error {
 }
 
 /// A UNIQUE-constraint failure is a client error ("Invalid ..." -> 400).
+#[cfg(any(feature = "dhcp", feature = "dns"))]
 pub(crate) fn unique_err(e: sqlx::Error, what: &str) -> Error {
     if e.to_string().contains("UNIQUE") {
         invalid(format!("request: {what} is already configured"))

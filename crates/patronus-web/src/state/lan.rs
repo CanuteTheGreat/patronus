@@ -61,6 +61,11 @@ impl LanManager {
         }
     }
 
+    // used by every LAN page; dead only in a build without any of them
+    #[cfg_attr(
+        not(any(feature = "dhcp", feature = "dns", feature = "ntp")),
+        allow(dead_code)
+    )]
     async fn begin(&self, what: &str) -> anyhow::Result<Value> {
         self.store
             .snapshot("web", &format!("before {what}"))
@@ -70,6 +75,10 @@ impl LanManager {
     }
 
     /// Run `names` after a store write; undo the write on failure.
+    #[cfg_attr(
+        not(any(feature = "dhcp", feature = "dns", feature = "ntp")),
+        allow(dead_code)
+    )]
     async fn commit(&self, what: &str, snap: Value, names: &[&str]) -> anyhow::Result<()> {
         let mut failure = None;
         for n in names {

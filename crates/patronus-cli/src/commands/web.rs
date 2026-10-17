@@ -11,7 +11,9 @@
 //! binary defaults to self-signed HTTPS on :8443, which is a separate,
 //! still-valid way to run the same router).
 
+#[cfg(feature = "web")]
 use colored::Colorize;
+#[cfg(feature = "web")]
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
