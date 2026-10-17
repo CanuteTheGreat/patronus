@@ -437,7 +437,7 @@ jobs:
           set -e
           docker run --rm --entrypoint sh patronus/web:${{ github.sha }} -c '
             set -e
-            for b in patronus patronus-web patronus-dashboard nft; do command -v "$b"; done
+            for b in patronus-cli patronus-web patronus-dashboard nft; do command -v "$b"; done
             for f in /usr/lib/systemd/system/patronus-dashboard.service \
                      /usr/lib/systemd/system/patronus-web.service \
                      /usr/lib/systemd/system/patronus-firewall.service \
@@ -447,7 +447,7 @@ jobs:
             for u in dashboard dhcp dns wireguard openvpn ipsec vlan qos multiwan captive-portal; do
               echo " $use " | grep -q " $u " || { echo "USE=$u missing"; exit 1; }
             done
-            patronus --help >/dev/null
+            patronus-cli --help >/dev/null
           '
 
       - name: Build the dashboard UI (frontend/ -> ./static)
