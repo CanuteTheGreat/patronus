@@ -391,6 +391,16 @@ impl InterfacesManager {
                 if let Err(e2) = self.applier.apply(&self.store).await {
                     tracing::error!("re-applying the previous interfaces config: {e2}");
                 }
+                // The re-apply leaves rows the previous config did not
+                // manage alone, so addresses the failed attempt already put
+                // on such an interface would stay: take them off again.
+                let now = self.kernel().await;
+                for (dev, net) in leftover_addrs(&kernel, &now, &after) {
+                    let a = ["addr", "del", &net, "dev", &dev].map(str::to_string);
+                    if let Err(e3) = self.cmd.run("ip", &a).await {
+                        tracing::error!("removing {net} from {dev} after a failed apply: {e3}");
+                    }
+                }
                 if roles_changed {
                     let _ = self.firewall.apply(&self.store).await;
                 }
@@ -823,6 +833,32 @@ impl InterfacesManager {
     }
 }
 
+/// Static addresses the rejected config (`wanted`) asked for that are on
+/// the kernel now but were not before the attempt (`before`): what a
+/// half-applied change left behind. DHCP/SLAAC (finite lifetime) and
+/// link-local addresses are never touched.
+fn leftover_addrs(
+    before: &KernelState,
+    now: &KernelState,
+    wanted: &NetConfig,
+) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for i in &wanted.interfaces {
+        let Some(link) = now.get(&i.name) else {
+            continue;
+        };
+        let had = before.get(&i.name);
+        for a in &link.addrs {
+            let asked = i.ipv4.contains(&a.net) || i.ipv6.contains(&a.net);
+            let existed = had.is_some_and(|h| h.addrs.iter().any(|o| o.net == a.net));
+            if asked && !existed && !a.dynamic && a.scope == "global" {
+                out.push((i.name.clone(), a.net.to_string()));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1059,6 +1095,48 @@ mod tests {
         moved.force = true;
         m.update_interface("eth1", moved, admin()).await.unwrap();
         assert!(store.interfaces_with_role("lan").await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_half_applied_change_leaves_only_the_addresses_it_added_for_cleanup() {
+        let links = r#"[{"ifindex":4,"ifname":"eth2","flags":["UP"],"mtu":1500,"operstate":"UP","link_type":"ether","address":"52:54:00:00:00:03"}]"#;
+        let addr = |extra: &str| {
+            format!(
+                r#"[{{"ifname":"eth2","addr_info":[
+                    {{"family":"inet","local":"10.0.0.7","prefixlen":24,"scope":"global","valid_life_time":4294967295}},
+                    {{"family":"inet6","local":"fe80::1","prefixlen":64,"scope":"link","valid_life_time":4294967295}}{extra}]}}]"#
+            )
+        };
+        let before = KernelState::parse(links, &addr("")).unwrap();
+        let now = KernelState::parse(
+            links,
+            &addr(
+                r#",{"family":"inet","local":"10.9.9.1","prefixlen":24,"scope":"global","valid_life_time":4294967295},
+                   {"family":"inet","local":"10.8.8.8","prefixlen":24,"scope":"global","valid_life_time":4294967295},
+                   {"family":"inet6","local":"fd00:9::1","prefixlen":64,"scope":"global","valid_life_time":4294967295},
+                   {"family":"inet","local":"203.0.113.5","prefixlen":24,"scope":"global","valid_life_time":600}"#,
+            ),
+        )
+        .unwrap();
+        let mut wanted = NetConfig::default();
+        let mut i = IfaceConfig::new("eth2");
+        i.ipv4_mode = V4Mode::Static;
+        i.ipv4 = vec![
+            "10.9.9.1/24".parse().unwrap(),
+            "10.0.0.7/24".parse().unwrap(),
+        ];
+        i.ipv6_mode = V6Mode::Static;
+        i.ipv6 = vec!["fd00:9::1/64".parse().unwrap()];
+        wanted.interfaces.push(i);
+        // added by the attempt -> removed; already there before (10.0.0.7),
+        // not asked for (10.8.8.8), DHCP (finite lifetime), link-local -> kept
+        assert_eq!(
+            leftover_addrs(&before, &now, &wanted),
+            vec![
+                ("eth2".to_string(), "10.9.9.1/24".to_string()),
+                ("eth2".to_string(), "fd00:9::1/64".to_string())
+            ]
+        );
     }
 
     #[tokio::test]
