@@ -525,6 +525,13 @@ impl FirewallManager {
         else {
             anyhow::bail!("NAT rule {id} not found");
         };
+        if origin == RuleOrigin::System {
+            anyhow::bail!("Invalid request: NAT rule {id} is a system rule and cannot be deleted");
+        }
+        // Every other edit records a revision; deleting a NAT rule did not,
+        // so it could not be rolled back from the config history.
+        self.snapshot(format!("delete NAT rule {id} {}", old.name))
+            .await?;
         self.store
             .delete_nat_rule(id as u64)
             .await
@@ -705,6 +712,45 @@ mod tests {
             .await
             .is_err());
         assert!(fw.list_nat_rules().await.unwrap().is_empty());
+    }
+
+    /// Every change made through the UI/API is undoable from the config
+    /// history (NAT deletes recorded nothing), and a delete that fails to
+    /// apply puts the rule back under the same id.
+    #[tokio::test]
+    async fn every_change_records_a_revision_and_failed_delete_keeps_the_id() {
+        let (fw, a, store) = fake().await;
+        let id = fw.add_rule(sample_rule("192.0.2.0/24")).await.unwrap();
+        let mut upd = sample_rule("192.0.2.0/24");
+        upd.port = "8080".into();
+        fw.update_rule(id, upd).await.unwrap();
+        let nat = fw
+            .add_nat_rule(sample_nat_rule("MASQUERADE", "10.0.0.0/8", "masquerade"))
+            .await
+            .unwrap();
+        fw.delete_nat_rule(nat).await.unwrap();
+        let summaries: Vec<String> = store
+            .list_revisions()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(_, _, _, s)| s)
+            .collect();
+        for want in [
+            "before create firewall rule",
+            "before update firewall rule",
+            "before create NAT rule",
+            "before delete NAT rule",
+        ] {
+            assert!(
+                summaries.iter().any(|s| s.starts_with(want)),
+                "{want}: {summaries:?}"
+            );
+        }
+        a.fail.store(true, Ordering::SeqCst);
+        assert!(fw.delete_rule(id).await.is_err());
+        let back = fw.get_rule(id).await.unwrap().expect("same id after a failed delete");
+        assert_eq!(back.port, "8080");
     }
 
     #[tokio::test]

@@ -18,7 +18,9 @@ use patronus_core::{
     Error, Result,
 };
 use serde_json::{Map, Value};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
+};
 use sqlx::{Column, Row, TypeInfo, ValueRef};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -149,6 +151,15 @@ impl ConfigStore {
             .filename(&self.db_path)
             .create_if_missing(true)
             .foreign_keys(true)
+            // Rollback journal + synchronous=FULL, pinned on purpose: a
+            // committed change (a block rule the UI reported as saved)
+            // survives a power cut, and a crash mid-write never leaves a
+            // torn database (proven by ci/netlab/failure-power-cut.sh).
+            // Not WAL: the boot unit (root) and patronus-web (the patronus
+            // user) share this file, and root-owned -wal/-shm files would
+            // lock the web UI out of the store.
+            .journal_mode(SqliteJournalMode::Delete)
+            .synchronous(SqliteSynchronous::Full)
             .busy_timeout(Duration::from_secs(10));
         let pool = SqlitePoolOptions::new()
             .max_connections(4)
@@ -359,9 +370,9 @@ impl ConfigStore {
                     action,
                     source: row.get("source"),
                     destination: row.get("destination"),
-                    protocol: parse_protocol(row.get("protocol")),
-                    sport: parse_port(row.get("sport")),
-                    dport: parse_port(row.get("dport")),
+                    protocol: parse_protocol(id, row.get("protocol"))?,
+                    sport: parse_port(id, "sport", row.get("sport"))?,
+                    dport: parse_port(id, "dport", row.get("dport"))?,
                     interface_in: row.get("interface_in"),
                     interface_out: row.get("interface_out"),
                     comment: row.get("comment"),
@@ -482,8 +493,8 @@ impl ConfigStore {
                     nat_type,
                     source: row.get("source"),
                     destination: row.get("destination"),
-                    protocol: parse_protocol(row.get("protocol")),
-                    dport: parse_port(row.get("dport")),
+                    protocol: parse_protocol(id, row.get("protocol"))?,
+                    dport: parse_port(id, "dport", row.get("dport"))?,
                     interface_out: row.get("interface_out"),
                     comment: row.get("comment"),
                 },
@@ -864,16 +875,35 @@ fn port_json(p: Option<&patronus_core::types::PortSpec>) -> Option<String> {
     p.map(|p| serde_json::to_string(p).expect("PortSpec serializes"))
 }
 
-fn parse_port(s: Option<String>) -> Option<patronus_core::types::PortSpec> {
-    s.and_then(|s| serde_json::from_str(&s).ok())
+/// A stored port that does not parse is an error, never "any port": an
+/// accept rule whose port column is damaged (or was written by a newer
+/// version) must not silently open every port.
+fn parse_port(
+    id: i64,
+    column: &str,
+    s: Option<String>,
+) -> Result<Option<patronus_core::types::PortSpec>> {
+    match s {
+        None => Ok(None),
+        Some(s) => serde_json::from_str(&s).map(Some).map_err(|_| {
+            Error::Config(format!("rule {id}: unreadable {column} {s:?} in the store"))
+        }),
+    }
 }
 
-fn parse_protocol(s: Option<String>) -> Option<Protocol> {
-    s.map(|p| match p.as_str() {
-        "tcp" => Protocol::Tcp,
-        "udp" => Protocol::Udp,
-        "icmp" => Protocol::Icmp,
-        _ => Protocol::All,
+/// Same for protocols: an unknown protocol is an error, never "all".
+fn parse_protocol(id: i64, s: Option<String>) -> Result<Option<Protocol>> {
+    Ok(match s.as_deref() {
+        None => None,
+        Some("tcp") => Some(Protocol::Tcp),
+        Some("udp") => Some(Protocol::Udp),
+        Some("icmp") => Some(Protocol::Icmp),
+        Some("all") => Some(Protocol::All),
+        Some(other) => {
+            return Err(Error::Config(format!(
+                "rule {id}: unknown protocol {other:?} in the store"
+            )))
+        }
     })
 }
 
@@ -959,6 +989,68 @@ mod tests {
             .unwrap()
             .get(0);
         assert_eq!(n as usize, crate::migrate::MIGRATIONS.len());
+    }
+
+    #[tokio::test]
+    async fn file_store_is_durable_rollback_journal_with_full_sync() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = ConfigStore::open(dir.path().join("c.db")).await.unwrap();
+        let mode: String = sqlx::query("PRAGMA journal_mode")
+            .fetch_one(s.pool().unwrap())
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(mode, "delete", "boot unit (root) and web (patronus) share the file");
+        let sync: i64 = sqlx::query("PRAGMA synchronous")
+            .fetch_one(s.pool().unwrap())
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(sync, 2, "synchronous=FULL: commits survive a power cut");
+    }
+
+    /// A damaged or newer-than-this-binary row must make loading fail (the
+    /// applier then fails closed), never widen a rule: an accept for
+    /// tcp/8443 whose port column can't be read used to load as "accept
+    /// every port", an unknown protocol as "all protocols".
+    #[tokio::test]
+    async fn unreadable_ports_or_protocols_are_errors_not_wildcards() {
+        for (col, val, want) in [
+            ("dport", "not-json", "unreadable dport"),
+            ("sport", "{\"Single\":70000}", "unreadable sport"),
+            ("protocol", "sctp", "unknown protocol"),
+        ] {
+            let s = ConfigStore::open_in_memory().await.unwrap();
+            let id = s.save_firewall_rule(&rule("damaged")).await.unwrap();
+            sqlx::query(&format!("UPDATE firewall_rules SET {col} = ? WHERE id = ?"))
+                .bind(val)
+                .bind(id)
+                .execute(s.pool().unwrap())
+                .await
+                .unwrap();
+            let e = s.load_firewall_rules_with_origin().await.unwrap_err();
+            assert!(e.to_string().contains(want), "{col}={val}: {e}");
+        }
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let mut n = NatRule::new("pf".into(), NatType::Masquerade);
+        n.dport = Some(PortSpec::Single(80));
+        let id = s.save_nat_rule(&n).await.unwrap();
+        sqlx::query("UPDATE nat_rules SET dport = 'garbage' WHERE id = ?")
+            .bind(id)
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        assert!(s.load_nat_rules_with_origin().await.is_err());
+        // what the store wrote, it reads back unchanged
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let mut r = rule("all-protocols");
+        r.protocol = Some(Protocol::All);
+        r.sport = Some(PortSpec::Range(1024, 2048));
+        s.save_firewall_rule(&r).await.unwrap();
+        let (back, _) = s.load_firewall_rules_with_origin().await.unwrap().remove(0);
+        assert_eq!(back.protocol, Some(Protocol::All));
+        assert_eq!(back.sport, Some(PortSpec::Range(1024, 2048)));
+        assert_eq!(back.dport, Some(PortSpec::Multiple(vec![22, 8443])));
     }
 
     #[tokio::test]

@@ -164,8 +164,67 @@ impl FirewallApplier {
     }
 }
 
+impl FirewallApplier {
+    /// The lockdown ruleset: base chains (policy drop) plus anti-lockout
+    /// only, no NAT. Built from the built-in anti-lockout definition and the
+    /// interface roles -- never from the stored rules -- so it still loads
+    /// when the stored rules are what failed (a damaged row, a rule from a
+    /// newer version). If even the roles can't be read, anti-lockout is
+    /// open on every interface: reachable beats locked out, and nothing is
+    /// forwarded either way.
+    pub async fn render_lockdown(&self, store: &ConfigStore) -> String {
+        let roles = load_roles(store).await.unwrap_or_default();
+        let mut script = format!("add table {TABLE}\ndelete table {TABLE}\n");
+        script.push_str(&base_table_script());
+        for (rule, origin) in patronus_config::defaults::default_filter_rules() {
+            if origin != RuleOrigin::System {
+                continue;
+            }
+            for i in resolve_iface(&rule.interface_in, &roles).unwrap_or_else(|| vec![None]) {
+                let mut r = rule.clone();
+                r.interface_in = i;
+                r.comment = Some(r.name.clone());
+                if let Ok(cmd) = rule_to_nft_command(&r) {
+                    script.push_str(&cmd);
+                    script.push('\n');
+                }
+            }
+        }
+        script
+    }
+}
+
+impl FirewallApplier {
+    /// Load the lockdown ruleset ([`render_lockdown`](Self::render_lockdown)).
+    /// If even that cannot be loaded, switch forwarding off and return the
+    /// error: a box without any ruleset must at least not route.
+    pub async fn load_lockdown(&self, store: &ConfigStore) -> Result<()> {
+        let lock = self.render_lockdown(store).await;
+        nftables::execute_nft_script(&lock).map(|_| ()).map_err(|e| {
+            let off = disable_forwarding(std::path::Path::new("/proc/sys"));
+            Error::Firewall(format!(
+                "the lockdown ruleset failed too: {e}; forwarding switched off ({})",
+                off.join(", ")
+            ))
+        })
+    }
+}
+
 fn table_exists() -> bool {
     nftables::list_table().is_ok()
+}
+
+/// Last resort when no ruleset at all could be loaded: stop routing, so a
+/// box without a firewall at least does not forward between WAN and LAN.
+/// Returns what was switched off.
+pub fn disable_forwarding(proc_sys: &std::path::Path) -> Vec<String> {
+    let mut off = Vec::new();
+    for key in ["net/ipv4/ip_forward", "net/ipv6/conf/all/forwarding"] {
+        if std::fs::write(proc_sys.join(key), "0\n").is_ok() {
+            off.push(key.replace('/', "."));
+        }
+    }
+    off
 }
 
 #[async_trait]
@@ -198,15 +257,16 @@ impl Applier for FirewallApplier {
                 "{err} (previous ruleset left in place)"
             )));
         }
-        // Nothing was loaded before (boot): don't leave the box open.
-        let lock = self.render_script(store, true).await?;
-        match nftables::execute_nft_script(&lock.script) {
-            Ok(_) => Err(Error::Firewall(format!(
+        // Nothing was loaded before (boot): don't leave the box open. The
+        // lockdown ruleset does not read the stored rules, so it loads even
+        // when they are what failed (this used to `?` out of the same
+        // failing render and leave a booted box with no ruleset at all and
+        // forwarding on).
+        match self.load_lockdown(store).await {
+            Ok(()) => Err(Error::Firewall(format!(
                 "{err} (lockdown ruleset loaded: only anti-lockout access is allowed)"
             ))),
-            Err(e2) => Err(Error::Firewall(format!(
-                "{err}; the lockdown ruleset failed too: {e2}"
-            ))),
+            Err(e2) => Err(Error::Firewall(format!("{err}; {e2}"))),
         }
     }
 
@@ -523,6 +583,62 @@ mod tests {
         bad.source = Some("not an address".into());
         s.save_firewall_rule(&bad).await.unwrap();
         assert!(FirewallApplier.render_script(&s, false).await.is_err());
+    }
+
+    /// The lockdown ruleset must not depend on the stored rules: a damaged
+    /// row used to fail the lockdown render too, leaving a booted box with
+    /// no ruleset and forwarding on.
+    #[tokio::test]
+    async fn lockdown_renders_even_when_stored_rules_are_unreadable() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        sqlx::query("UPDATE firewall_rules SET dport = 'garbage'")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        assert!(FirewallApplier.render_script(&s, false).await.is_err());
+        assert!(FirewallApplier.render_script(&s, true).await.is_err());
+        let l = FirewallApplier.render_lockdown(&s).await;
+        assert!(
+            l.starts_with("add table inet patronus\ndelete table inet patronus\n"),
+            "{l}"
+        );
+        assert!(l.contains("chain inet patronus forward { type filter hook forward priority 0; policy drop; }"), "{l}");
+        assert!(
+            l.contains("add rule inet patronus input iifname \"eth1\" tcp dport {22,8443} accept"),
+            "{l}"
+        );
+        assert!(!l.contains("eth0\" tcp dport"), "never on WAN: {l}");
+        assert!(!l.contains("masquerade") && !l.contains("forward iifname"), "{l}");
+
+        // roles unreadable too: anti-lockout on any interface, still nothing forwarded
+        sqlx::query("DROP TABLE interfaces")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        let l = FirewallApplier.render_lockdown(&s).await;
+        assert!(
+            l.contains("add rule inet patronus input tcp dport {22,8443} accept"),
+            "{l}"
+        );
+        assert!(!l.contains("forward iifname") && !l.contains("masquerade"), "{l}");
+    }
+
+    #[test]
+    fn disable_forwarding_writes_zero_to_both_families() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("net/ipv4")).unwrap();
+        std::fs::create_dir_all(d.path().join("net/ipv6/conf/all")).unwrap();
+        std::fs::write(d.path().join("net/ipv4/ip_forward"), "1\n").unwrap();
+        std::fs::write(d.path().join("net/ipv6/conf/all/forwarding"), "1\n").unwrap();
+        let off = disable_forwarding(d.path());
+        assert_eq!(
+            off,
+            vec!["net.ipv4.ip_forward", "net.ipv6.conf.all.forwarding"]
+        );
+        for f in ["net/ipv4/ip_forward", "net/ipv6/conf/all/forwarding"] {
+            assert_eq!(std::fs::read_to_string(d.path().join(f)).unwrap(), "0\n");
+        }
+        assert!(disable_forwarding(&d.path().join("missing")).is_empty());
     }
 
     #[tokio::test]

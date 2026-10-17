@@ -296,6 +296,21 @@ enum ConfigCommands {
         /// Revision id (see `patronus config revisions`)
         id: i64,
     },
+    /// Write the whole configuration as JSON (a backup)
+    Export {
+        /// Output file (mode 0600) [default: stdout]
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Replace the configuration with an export and apply it; reverted if
+    /// it does not apply
+    Import {
+        /// File written by `patronus config export`
+        file: PathBuf,
+        /// Only write the store; apply at the next `patronus apply`/boot
+        #[arg(long)]
+        no_apply: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -406,6 +421,22 @@ async fn main() -> anyhow::Result<()> {
             ConfigCommands::Rollback { id } => {
                 apply::rollback(
                     id,
+                    apply::ApplyOptions {
+                        db: cli.db,
+                        bootstrap: None,
+                        phases: None,
+                        dry_run: false,
+                    },
+                )
+                .await?
+            }
+            ConfigCommands::Export { output } => {
+                apply::export(cli.db.as_deref(), output.as_deref()).await?
+            }
+            ConfigCommands::Import { file, no_apply } => {
+                apply::import(
+                    &file,
+                    !no_apply,
                     apply::ApplyOptions {
                         db: cli.db,
                         bootstrap: None,

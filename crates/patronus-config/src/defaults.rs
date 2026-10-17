@@ -235,12 +235,34 @@ pub const DEFAULT_SYSCTLS: &[(&str, &str)] = &[
     ("net.ipv6.conf.all.forwarding", "1"),
 ];
 
+/// Idempotent: a row that is already there (same name and origin) is not
+/// inserted again, so a power cut between seeding and recording
+/// [`DEFAULTS_SEEDED_KEY`] does not duplicate the defaults on the next boot.
 async fn seed_default_rules(store: &ConfigStore) -> Result<()> {
+    let have: Vec<(String, RuleOrigin)> = store
+        .load_firewall_rules_with_origin()
+        .await?
+        .into_iter()
+        .map(|(r, o)| (r.name, o))
+        .collect();
     for (rule, origin) in default_filter_rules() {
-        store.insert_firewall_rule(&rule, origin).await?;
+        if !have.iter().any(|(n, o)| *n == rule.name && *o == origin) {
+            store.insert_firewall_rule(&rule, origin).await?;
+        }
     }
+    let have_nat: Vec<(String, RuleOrigin)> = store
+        .load_nat_rules_with_origin()
+        .await?
+        .into_iter()
+        .map(|(r, o)| (r.name, o))
+        .collect();
     for rule in default_nat_rules() {
-        store.insert_nat_rule(&rule, RuleOrigin::Default).await?;
+        if !have_nat
+            .iter()
+            .any(|(n, o)| *n == rule.name && *o == RuleOrigin::Default)
+        {
+            store.insert_nat_rule(&rule, RuleOrigin::Default).await?;
+        }
     }
     for (k, v) in DEFAULT_SYSCTLS {
         store.set_sysctl(k, v, RuleOrigin::Default).await?;
@@ -295,6 +317,37 @@ mod tests {
         let r = ensure_defaults(&s, Some(&b), &existing).await.unwrap();
         assert!(!r.defaults_seeded);
         assert_eq!(s.load_firewall_rules().await.unwrap().len(), 2);
+    }
+
+    /// A power cut after the default rows were written but before the
+    /// "seeded" marker was: the next boot must not add a second copy.
+    #[tokio::test]
+    async fn interrupted_seeding_does_not_duplicate_defaults() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        seed_default_rules(&s).await.unwrap();
+        // marker never written; boot again
+        let rep = ensure_defaults(&s, None, &[]).await.unwrap();
+        assert!(rep.defaults_seeded);
+        let rules = s.load_firewall_rules_with_origin().await.unwrap();
+        assert_eq!(rules.len(), default_filter_rules().len(), "{rules:?}");
+        assert_eq!(
+            s.load_nat_rules().await.unwrap().len(),
+            default_nat_rules().len()
+        );
+        // a user rule with a default's name is not mistaken for the default
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let mut u = FirewallRule::new(
+            "Allow LAN to any".into(),
+            ChainType::Forward,
+            FirewallAction::Drop,
+        );
+        u.interface_in = Some("@lan".into());
+        s.save_firewall_rule(&u).await.unwrap();
+        ensure_defaults(&s, None, &[]).await.unwrap();
+        assert_eq!(
+            s.load_firewall_rules_with_origin().await.unwrap().len(),
+            default_filter_rules().len() + 1
+        );
     }
 
     #[tokio::test]

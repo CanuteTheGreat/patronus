@@ -104,8 +104,39 @@ pub async fn seed(store: &ConfigStore, bootstrap: Option<&Path>) -> anyhow::Resu
     Ok(())
 }
 
+/// The store cannot be opened at boot (unreadable, corrupt, disk gone):
+/// nothing would be applied and the box would come up with no firewall.
+/// Build the defaults from patronus.toml in memory and load the lockdown
+/// ruleset from them (anti-lockout on the LAN only, nothing forwarded).
+async fn emergency_lockdown(bootstrap: Option<&Path>) -> String {
+    let scratch = match ConfigStore::open_in_memory().await {
+        Ok(s) => s,
+        Err(e) => return format!("no scratch store for the lockdown ruleset: {e}"),
+    };
+    if let Err(e) = seed(&scratch, bootstrap).await {
+        println!("{} {e}", "!".yellow());
+    }
+    match patronus_firewall::FirewallApplier.load_lockdown(&scratch).await {
+        Ok(()) => "lockdown ruleset loaded: only anti-lockout access is allowed".into(),
+        Err(e) => e.to_string(),
+    }
+}
+
 pub async fn run(opts: ApplyOptions) -> anyhow::Result<()> {
-    let store = open_store(opts.db.as_deref()).await?;
+    let store = match open_store(opts.db.as_deref()).await {
+        Ok(s) => s,
+        Err(e) => {
+            let firewall_phase = opts
+                .phases
+                .as_ref()
+                .is_none_or(|p| p.contains(&Phase::Firewall));
+            if opts.dry_run || !firewall_phase {
+                return Err(e);
+            }
+            let what = emergency_lockdown(opts.bootstrap.as_deref()).await;
+            anyhow::bail!("{e} ({what})");
+        }
+    };
     let reg = registry();
     let phases = opts.phases.clone();
 
@@ -138,7 +169,12 @@ pub async fn run(opts: ApplyOptions) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    seed(&store, opts.bootstrap.as_deref()).await?;
+    // A seeding failure (unwritable store, bad patronus.toml) must not stop
+    // the appliers: the box would boot with no firewall at all.
+    let seeded = seed(&store, opts.bootstrap.as_deref()).await;
+    if let Err(e) = &seeded {
+        println!("{} first-boot seeding failed: {e}", "✗".red());
+    }
     let run = reg.apply_all(&store, phases.as_deref()).await;
     for o in &run.outcomes {
         match (&o.report, &o.error) {
@@ -175,7 +211,7 @@ pub async fn run(opts: ApplyOptions) -> anyhow::Result<()> {
         let names: Vec<&str> = run.failures().iter().map(|o| o.applier).collect();
         anyhow::bail!("apply failed for: {}", names.join(", "));
     }
-    Ok(())
+    seeded
 }
 
 /// `patronus firewall flush`
@@ -223,13 +259,98 @@ pub async fn list_revisions(db: Option<&Path>) -> anyhow::Result<()> {
 /// `patronus config rollback <id>`: restore a revision and apply it.
 pub async fn rollback(id: i64, opts: ApplyOptions) -> anyhow::Result<()> {
     let store = open_store(opts.db.as_deref()).await?;
+    let before = store.export_json().await.map_err(|e| anyhow::anyhow!("{e}"))?;
     store
         .restore_revision(id, "cli")
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     store.close().await;
     println!("{} restored revision {id}; applying", "•".cyan());
-    run(opts).await
+    apply_or_revert(opts, before).await
+}
+
+/// Apply what was just written to the store. If it does not apply, put the
+/// previous configuration back into the store and apply that, so the store
+/// (what the next boot loads) never disagrees with what is enforced. Used
+/// to leave the store holding the change while the kernel kept the old
+/// ruleset -- and the next boot then failed into lockdown.
+async fn apply_or_revert(opts: ApplyOptions, before: serde_json::Value) -> anyhow::Result<()> {
+    let again = ApplyOptions {
+        db: opts.db.clone(),
+        bootstrap: opts.bootstrap.clone(),
+        phases: opts.phases.clone(),
+        dry_run: false,
+    };
+    let Err(e) = run(opts).await else {
+        return Ok(());
+    };
+    let store = open_store(again.db.as_deref()).await?;
+    store
+        .import_json(&before)
+        .await
+        .map_err(|e2| anyhow::anyhow!("{e}; restoring the previous configuration failed too: {e2}"))?;
+    store.close().await;
+    println!(
+        "{} the new configuration did not apply; restored the previous one",
+        "!".yellow()
+    );
+    match run(again).await {
+        Ok(()) => anyhow::bail!("{e} (the previous configuration was restored and re-applied)"),
+        Err(e2) => anyhow::bail!("{e}; re-applying the previous configuration failed too: {e2}"),
+    }
+}
+
+/// `patronus config export [-o FILE]`: the whole configuration as JSON
+/// (a backup). Written 0600: later lanes keep secrets (VPN keys) here.
+pub async fn export(db: Option<&Path>, output: Option<&Path>) -> anyhow::Result<()> {
+    let store = open_store(db).await?;
+    let doc = store.export_json().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    store.close().await;
+    let text = serde_json::to_string_pretty(&doc)? + "\n";
+    match output {
+        None => print!("{text}"),
+        Some(path) => {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(path)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+            f.write_all(text.as_bytes())?;
+            f.sync_all()?;
+            eprintln!("{} configuration exported to {}", "•".cyan(), path.display());
+        }
+    }
+    Ok(())
+}
+
+/// `patronus config import FILE`: replace the configuration with a backup
+/// and apply it (atomically in the store; reverted if it does not apply).
+/// The configuration it replaces is kept as a revision.
+pub async fn import(file: &Path, apply: bool, opts: ApplyOptions) -> anyhow::Result<()> {
+    let text =
+        std::fs::read_to_string(file).map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+    let doc: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| anyhow::anyhow!("{} is not a Patronus config export: {e}", file.display()))?;
+    let store = open_store(opts.db.as_deref()).await?;
+    let before = store.export_json().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    store
+        .snapshot("cli", &format!("before import of {}", file.display()))
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    store
+        .import_json(&doc)
+        .await
+        .map_err(|e| anyhow::anyhow!("{} was not imported: {e}", file.display()))?;
+    store.close().await;
+    println!("{} imported {}", "•".cyan(), file.display());
+    if !apply {
+        return Ok(());
+    }
+    apply_or_revert(opts, before).await
 }
 
 #[cfg(test)]
