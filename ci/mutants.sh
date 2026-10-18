@@ -13,6 +13,8 @@
 # Usage: ci/mutants.sh [floors-file]       env: MUTANTS_JOBS (default 2)
 set -uo pipefail
 cd "$(dirname "$0")/.."
+# colo lane only (rw-man-01): refuse on the EC2 hosts rw-man-02..05 (GuardDuty), CI or by hand.
+sh ci/ec2-guard.sh "mutation testing" || exit 1
 FLOORS=${1:-ci/mutants-floors.txt}
 JOBS=${MUTANTS_JOBS:-2}
 OUTROOT=${MUTANTS_OUT:-target/mutants}
