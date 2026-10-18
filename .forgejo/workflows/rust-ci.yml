@@ -41,7 +41,9 @@ jobs:
   # need to block fast feedback on the lightweight checks above.
   lint-test-audit:
     name: Format + Clippy + Security Audit + Test (non-eBPF crates)
-    runs-on: linux-cross-x86_64
+    # linux-any: arch-independent, served by the arm64 hosts and the x86 linux-cross slots
+    # (ctg-infrastructure ci-runners); ci-rust-env.sh pins mold/sccache for both arches.
+    runs-on: linux-any
     # 2026-10-09 run (commit 6dc6e08) died silently 23m35s in with no final
     # error line -- log just stops mid-clippy-compile (last line "Checking
     # patronus-sdwan") with no panic/OOM/cancellation message, while the
@@ -92,9 +94,9 @@ jobs:
             ~/.cargo/git
             ~/.cargo/advisory-db
             target
-          key: ${{ runner.os }}-cargo-lint-test-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-lint-test-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-lint-test-
+            ${{ runner.os }}-${{ runner.arch }}-cargo-lint-test-
       - name: README claims ledger (every claim mapped to a CI-run test)
         run: ci/claims-check.sh
       - name: Check formatting
@@ -155,9 +157,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-priv-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-priv-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-priv-
+            ${{ runner.os }}-${{ runner.arch }}-cargo-priv-
       - name: Ignored real-nftables / raw-socket tests in a CAP_NET_ADMIN container
         run: ci/privileged-tests.sh
 
@@ -208,9 +210,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-netlab-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-netlab-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-netlab-
+            ${{ runner.os }}-${{ runner.arch }}-cargo-netlab-
       - name: Netlab tests in a capped NET_ADMIN/SYS_ADMIN container
         run: ci/netlab/run.sh
       # Lane D (LAN services): the same shipped binaries in a real Gentoo
@@ -238,7 +240,9 @@ jobs:
     # cargo feature mapping in the ebuild, so each USE flag compiles on its
     # own, not just as part of one big set.
     name: Feature matrix (all features + one build per USE flag)
-    runs-on: linux-cross-x86_64
+    # linux-any: arch-independent, served by the arm64 hosts and the x86 linux-cross slots
+    # (ctg-infrastructure ci-runners); ci-rust-env.sh pins mold/sccache for both arches.
+    runs-on: linux-any
     timeout-minutes: 75
     env:
       # keep peak memory well inside the cap (the 2026-10-16 run stalled
@@ -274,9 +278,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-features-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-features-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-features-
+            ${{ runner.os }}-${{ runner.arch }}-cargo-features-
       - name: Tests with --all-features (feature-bearing crates)
         run: |
           set -e
@@ -327,9 +331,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-operator-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-operator-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-operator-
+            ${{ runner.os }}-${{ runner.arch }}-cargo-operator-
       - name: Real k3s + real operator + ignored integration tests
         run: ci/operator-k8s-tests.sh
 
@@ -358,15 +362,17 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-ebpf-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-ebpf-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-ebpf-
+            ${{ runner.os }}-${{ runner.arch }}-cargo-ebpf-
       - name: cargo check patronus-ebpf
         run: cargo check -p patronus-ebpf --all-targets
 
   check-full-workspace:
     name: Check full 46-crate workspace (best-effort)
-    runs-on: linux-cross-x86_64
+    # linux-any: arch-independent, served by the arm64 hosts and the x86 linux-cross slots
+    # (ctg-infrastructure ci-runners); ci-rust-env.sh pins mold/sccache for both arches.
+    runs-on: linux-any
     timeout-minutes: 20
     container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
     continue-on-error: true
@@ -390,9 +396,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-full-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-full-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-full-
+            ${{ runner.os }}-${{ runner.arch }}-cargo-full-
       - name: cargo check --workspace --all-targets --keep-going
         run: cargo check --workspace --all-targets --keep-going
 
@@ -634,7 +640,9 @@ jobs:
     # The shipped dashboard UI (frontend/, built into ./static and served by
     # every patronus-dashboard node) was never type-checked or built in CI.
     name: Dashboard UI (type-check + production build)
-    runs-on: linux-cross-x86_64
+    # linux-any: arch-independent, served by the arm64 hosts and the x86 linux-cross slots
+    # (ctg-infrastructure ci-runners); ci-rust-env.sh pins mold/sccache for both arches.
+    runs-on: linux-any
     timeout-minutes: 15
     container:
       image: catthehacker/ubuntu:act-latest
