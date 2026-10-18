@@ -251,11 +251,15 @@ src_compile() {
 	export CARGO_PROFILE_RELEASE_LTO=true
 	export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 
-	# Architecture-specific optimizations
+	# CPU target. Never default to target-cpu=native: the Gentoo Docker
+	# Build job publishes the resulting image/binpkg, and a native build on
+	# an Intel runner (AVX512-FP16) dies with SIGILL (exit 132) on AMD hosts.
+	# Default to a portable baseline; set PATRONUS_TARGET_CPU=native (or any
+	# rustc target-cpu) in make.conf/env for a host-tuned local build.
 	if use amd64; then
-		export RUSTFLAGS="${RUSTFLAGS} -C target-cpu=native"
+		export RUSTFLAGS="${RUSTFLAGS} -C target-cpu=${PATRONUS_TARGET_CPU:-x86-64-v2}"
 	elif use arm64; then
-		export RUSTFLAGS="${RUSTFLAGS} -C target-cpu=native"
+		export RUSTFLAGS="${RUSTFLAGS} -C target-cpu=${PATRONUS_TARGET_CPU:-generic}"
 	elif use riscv; then
 		export RUSTFLAGS="${RUSTFLAGS} -C target-cpu=generic-rv64"
 	fi
