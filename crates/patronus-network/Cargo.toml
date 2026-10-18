@@ -20,6 +20,9 @@ vlan = []
 pppoe = []
 dhcpcd = []
 qos = []
+# Lane E: gateway groups (multi-WAN failover / load balancing) and the
+# default route through them (USE=multiwan). Static routes, gateways and
+# gateway monitoring are always built.
 multiwan = []
 ha = []
 intrusion-detection = []

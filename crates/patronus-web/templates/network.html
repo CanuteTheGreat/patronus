@@ -167,8 +167,8 @@
                 </div>
             </div>
             <p class="text-sm text-muted">The kernel's main routing table (IPv4 and IPv6), read with
-                <code>ip route</code> when this page loaded. Static routes and gateways cannot be
-                configured from Patronus yet.</p>
+                <code>ip route</code> when this page loaded. Gateways, multi-WAN groups, the default
+                gateway and static routes are configured on the <a href="/routing">Routing</a> page.</p>
             {% if !routes_error.is_empty() %}
             <p class="badge danger">Routing table unavailable: {{ routes_error }}</p>
             {% else if routes.is_empty() %}

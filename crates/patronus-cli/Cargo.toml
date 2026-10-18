@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan"]
 
 # Core features
 web = ["patronus-web", "dep:axum"]

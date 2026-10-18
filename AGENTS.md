@@ -100,6 +100,22 @@ config file that only one process knows about.
 - **Policy routing contract (B <-> E):** `firewall_rules.gateway` names a
   gateway or gateway group; lane E resolves it to an fwmark, lane B renders
   `meta mark set`.
+- **Routing (lane E, `patronus_network::routes`):** gateways
+  (`route_gateways`; `address` NULL = dynamic, learned from the main-table
+  default route the interfaces phase / DHCP / pppd installed on that
+  device), gateway groups (`route_gateway_groups` + `_members`, USE=multiwan;
+  lowest tier with a usable member wins, same tier = ECMP by weight),
+  static routes (`routes`, gateway = IP or gateway name) and the default
+  gateway (`system_config` `routing.default_gateway4|6`, empty = automatic).
+  Kernel routes Patronus owns carry route protocol 251 (static), 252
+  (monitor host route) or 253 (default); the default lives in table 4250,
+  reached through `ip rule` prefs 31000 (`lookup main
+  suppress_prefixlength 0`) and 31001 (`lookup 4250`), so it beats any
+  main-table default whatever its metric while LAN/static routes still win.
+  The gateway monitor (`routes::Monitor`) runs in `patronus applyd` (or in
+  patronus-web when there is no applyd), pings once a second and re-applies
+  the routes phase when a gateway's state or address changes. Interfaces
+  that carry an IPv4 gateway get automatic outbound NAT like the WAN.
 - History: `ConfigStore::snapshot()` before a change set,
   `restore_revision()` to roll back (`patronus config revisions|rollback`).
   `export_json()`/`import_json()` cover every lane's tables automatically.

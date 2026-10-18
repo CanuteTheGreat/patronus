@@ -63,6 +63,20 @@ that are not finished are listed separately under
 - Interface configuration survives a reboot (`patronus apply` rebuilds it),
   and applying again changes nothing. [C23]
 
+### Routing and multi-WAN
+
+- The Routing page manages gateways (a fixed address, or dynamic: whatever
+  the DHCP/PPPoE/static WAN currently uses) and monitors each one with a
+  ping a second, showing online, packet loss, high latency or down. [C28]
+- A gateway group (USE=multiwan) set as the default gateway fails over: when
+  the tier-1 gateway stops answering, traffic moves to the next tier within
+  seconds and comes back when it recovers; gateways in the same tier share
+  the traffic (load balancing), and every uplink with a gateway gets
+  outbound NAT. [C29]
+- Static routes go via an IP address or a named gateway, and all routing
+  configuration survives a reboot (`patronus apply` rebuilds it; applying
+  again changes nothing). [C30]
+
 ### LAN services (DHCP, DNS, NTP)
 
 - The DHCP page serves IPv4 pools with static mappings, DHCPv6 pools,
@@ -127,8 +141,8 @@ They are being wired up one subsystem at a time; each moves to
 - Firewall: GeoIP/threat-feed blocking, URL-table aliases, IPv6 NPt.
 - LAN services: DNS over TLS upstreams, DHCP-registered hostnames in DNS,
   captive portal.
-- Routing: static routes, gateways, multi-WAN failover/load balancing,
-  dynamic routing via FRR.
+- Routing: policy routing (send matching traffic out a chosen gateway),
+  DHCPv6 prefix delegation on the WAN, dynamic routing via FRR.
 - VPN: WireGuard, IPsec, OpenVPN.
 - Firewall HA (VRRP + state sync), users and 2FA, web-UI backups, services
   control, metrics/alerts, diagnostics, captive portal, IDS/IPS, traffic

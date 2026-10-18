@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+
+{% block title %}Routing - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Routing</h1>
+    <p class="page-subtitle">Gateways and their health, multi-WAN gateway groups, the default gateway and
+        static routes. Saved to the configuration store, applied to the kernel at once and again at every boot.</p>
+</div>
+
+{% if !error.is_empty() %}<div class="alert-error">{{ error }}</div>{% endif %}
+{% for w in warnings %}<div class="alert-error" id="routing-warning">{{ w }}</div>{% endfor %}
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Gateways</h2></div>
+    <p class="text-sm text-muted">A gateway is an upstream router behind one interface. Leave the address empty for a
+        dynamic gateway (DHCP, PPPoE, IPv6 router advertisements): Patronus uses whatever default route that interface
+        currently has. The monitor pings each gateway (or its monitor IP) once a second.
+        {% if !monitor_running %}<b>Gateway monitor: not running yet</b> (it runs in <code>patronus applyd</code>).{% endif %}</p>
+    {% if gateways.is_empty() %}<p class="empty">No gateways configured.</p>{% else %}
+    <table class="lan" id="gateways">
+        <thead><tr><th>Name</th><th>Interface</th><th>Address</th><th>Monitor</th><th>Status</th><th>Loss</th><th>RTT</th><th>Description</th><th></th></tr></thead>
+        <tbody>
+        {% for g in gateways %}
+        <tr data-gateway="{{ g.name }}">
+            <td class="mono"><b>{{ g.name }}</b>{% if g.family == "inet6" %} <span class="text-muted">(IPv6)</span>{% endif %}</td>
+            <td>{{ g.interface }}{% if !g.dev.is_empty() %} <span class="text-muted">= {{ g.dev }}</span>{% endif %}</td>
+            <td class="mono">{% if g.dynamic %}dynamic{% if !g.resolved.is_empty() %}: {{ g.resolved }}{% endif %}{% else %}{{ g.address }}{% endif %}</td>
+            <td class="mono">{% if !g.monitor_enabled %}off{% else if g.monitor_ip.is_empty() %}gateway{% else %}{{ g.monitor_ip }}{% endif %}</td>
+            <td class="gw-state"><span class="{{ g.state_class }}">{{ g.state }}</span>{% if !g.problem.is_empty() %}<br><span class="text-sm text-muted">{{ g.problem }}</span>{% endif %}</td>
+            <td>{{ g.loss }}</td><td>{{ g.rtt }}</td>
+            <td>{{ g.description }}</td>
+            <td><button class="btn btn-secondary btn-sm" onclick="editGateway(this)"
+                    data-name="{{ g.name }}" data-interface="{{ g.interface }}" data-family="{{ g.family }}"
+                    data-address="{{ g.address }}" data-monitor="{{ g.monitor_ip }}" data-monitor-enabled="{{ g.monitor_enabled }}"
+                    data-loss="{{ g.loss_threshold }}" data-latency="{{ g.latency_threshold }}" data-description="{{ g.description }}">Edit</button>
+                <button class="btn btn-danger btn-sm" onclick="del('/api/routing/gateways/{{ g.name }}', 'Delete gateway {{ g.name }}?')">Delete</button></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>{% endif %}
+    <form class="lan-form" id="gateway-form" onsubmit="return saveGateway(event)">
+        <input type="hidden" name="_editing" value="">
+        <label>Name <input name="name" placeholder="WAN_GW" required></label>
+        <label>Interface <input name="interface" placeholder="@wan" required></label>
+        <label>Family <select name="family"><option value="inet">IPv4</option><option value="inet6">IPv6</option></select></label>
+        <label>Address (empty = dynamic) <input name="address" placeholder="203.0.113.1"></label>
+        <label>Monitor IP (empty = gateway) <input name="monitor_ip" placeholder="9.9.9.9"></label>
+        <label>Monitor <input type="checkbox" name="monitor_enabled" checked></label>
+        <label>Loss threshold % <input type="number" name="loss_threshold" value="20" min="1" max="100"></label>
+        <label>Latency threshold ms <input type="number" name="latency_threshold" value="500" min="1"></label>
+        <label>Description <input name="description"></label>
+        <button class="btn btn-primary btn-sm" type="submit" id="gateway-submit">Add gateway</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Gateway groups (multi-WAN)</h2></div>
+    {% if !multiwan %}
+    <p class="empty">This Patronus is built without multi-WAN. Rebuild with <code>USE=multiwan</code> (emerge net-firewall/patronus) for failover and load-balancing groups.</p>
+    {% else %}
+    <p class="text-sm text-muted">Members are <code>gateway:tier[:weight]</code>. The lowest tier with a usable member carries the
+        traffic; several usable members in that tier share it by weight; when the whole tier fails the next tier takes over.
+        The trigger decides what makes a member unusable.</p>
+    {% if groups.is_empty() %}<p class="empty">No gateway groups.</p>{% else %}
+    <table class="lan" id="gateway-groups">
+        <thead><tr><th>Name</th><th>Trigger</th><th>Members (tier / weight / state)</th><th>Description</th><th></th></tr></thead>
+        <tbody>
+        {% for g in groups %}
+        <tr data-group="{{ g.name }}">
+            <td class="mono"><b>{{ g.name }}</b></td>
+            <td>{{ g.trigger }}</td>
+            <td>{% for m in g.members %}<div class="mono">{{ m.gateway }} &middot; tier {{ m.tier }} &middot; weight {{ m.weight }} &middot; {{ m.state }}{% if m.active %} <span class="ok">active</span>{% endif %}</div>{% endfor %}</td>
+            <td>{{ g.description }}</td>
+            <td><button class="btn btn-secondary btn-sm" onclick="editGroup(this)" data-name="{{ g.name }}" data-trigger="{{ g.trigger }}"
+                    data-members="{{ g.members_spec }}" data-description="{{ g.description }}">Edit</button>
+                <button class="btn btn-danger btn-sm" onclick="del('/api/routing/groups/{{ g.name }}', 'Delete group {{ g.name }}?')">Delete</button></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>{% endif %}
+    <form class="lan-form" id="group-form" onsubmit="return saveGroup(event)">
+        <input type="hidden" name="_editing" value="">
+        <label>Name <input name="name" placeholder="WAN_FAILOVER" required></label>
+        <label>Members <input name="members" placeholder="WAN_GW:1, BACKUP_GW:2" size="34" required></label>
+        <label>Trigger
+            <select name="trigger">
+                <option value="down">Member down</option>
+                <option value="loss">Packet loss</option>
+                <option value="latency">High latency</option>
+                <option value="loss_latency">Packet loss or high latency</option>
+            </select></label>
+        <label>Description <input name="description"></label>
+        <button class="btn btn-primary btn-sm" type="submit" id="group-submit">Add group</button>
+    </form>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Default gateway</h2></div>
+    <p class="text-sm text-muted">Automatic = the interfaces' own default routes decide (WAN first, then OPT1, ...).
+        Choosing a gateway or group makes Patronus route all other traffic through it.</p>
+    <form class="lan-form" id="default-form" onsubmit="return submitJson(event, 'PUT', '/api/routing/default')">
+        <label>IPv4
+            <select name="ipv4" data-keep-empty="1">
+                <option value="">Automatic</option>
+                {% for c in choices4 %}<option value="{{ c }}" {% if c.as_str() == default4.as_str() %}selected{% endif %}>{{ c }}</option>{% endfor %}
+            </select></label>
+        <label>IPv6
+            <select name="ipv6" data-keep-empty="1">
+                <option value="">Automatic</option>
+                {% for c in choices6 %}<option value="{{ c }}" {% if c.as_str() == default6.as_str() %}selected{% endif %}>{{ c }}</option>{% endfor %}
+            </select></label>
+        <button class="btn btn-primary btn-sm" type="submit">Save</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="call('POST', '/api/routing/apply')">Re-apply</button>
+    </form>
+    <p class="text-sm" id="default-via">Now routing IPv4 via: <b>{% if default_via4.is_empty() %}automatic{% else %}{{ default_via4 }}{% endif %}</b>
+        &middot; IPv6 via: <b>{% if default_via6.is_empty() %}automatic{% else %}{{ default_via6 }}{% endif %}</b></p>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Static routes</h2></div>
+    {% if routes.is_empty() %}<p class="empty">No static routes.</p>{% else %}
+    <table class="lan" id="static-routes">
+        <thead><tr><th>Destination</th><th>Gateway</th><th>Interface</th><th>Metric</th><th>Enabled</th><th>Description</th><th></th></tr></thead>
+        <tbody>
+        {% for r in routes %}
+        <tr>
+            <td class="mono">{{ r.destination }}</td><td class="mono">{{ r.gateway }}</td><td>{{ r.interface }}</td>
+            <td>{{ r.metric }}</td><td>{% if r.enabled %}yes{% else %}no{% endif %}</td><td>{{ r.description }}</td>
+            <td><button class="btn btn-secondary btn-sm" onclick="editRoute(this)" data-id="{{ r.id }}" data-destination="{{ r.destination }}"
+                    data-gateway="{{ r.gateway }}" data-interface="{{ r.interface }}" data-metric="{{ r.metric }}"
+                    data-enabled="{{ r.enabled }}" data-description="{{ r.description }}">Edit</button>
+                <button class="btn btn-danger btn-sm" onclick="del('/api/routing/routes/{{ r.id }}', 'Delete the route to {{ r.destination }}?')">Delete</button></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>{% endif %}
+    <form class="lan-form" id="route-form" onsubmit="return saveRoute(event)">
+        <input type="hidden" name="_editing" value="">
+        <label>Destination <input name="destination" placeholder="10.20.0.0/16" required></label>
+        <label>Gateway (IP or gateway name) <input name="gateway" placeholder="192.168.1.2"></label>
+        <label>Interface <input name="interface" placeholder="@lan"></label>
+        <label>Metric <input type="number" name="metric" min="0"></label>
+        <label>Enabled <input type="checkbox" name="enabled" checked></label>
+        <label>Description <input name="description"></label>
+        <button class="btn btn-primary btn-sm" type="submit" id="route-submit">Add route</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Kernel routing table</h2></div>
+    <p class="text-sm text-muted">What the kernel routes right now (<code>ip route</code>, main table). Patronus' own routes carry
+        protocol 251 (static), 252 (monitor) and 253 (default gateway).</p>
+    {% if !kernel_error.is_empty() %}<p class="bad">Routing table unavailable: {{ kernel_error }}</p>
+    {% else if kernel_routes.is_empty() %}<p class="empty">The routing table is empty.</p>{% else %}
+    <table class="lan" id="kernel-routes">
+        <thead><tr><th>Destination</th><th>Gateway</th><th>Interface</th><th>Metric</th><th>Origin</th></tr></thead>
+        <tbody>
+        {% for r in kernel_routes %}
+        <tr><td class="mono">{{ r.destination }}</td><td class="mono">{{ r.gateway }}</td><td>{{ r.interface }}</td><td>{{ r.metric }}</td><td>{{ r.origin }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>{% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+{% include "lan_js.html" %}
+<script>
+    function editing(form, key, btn, label) {
+        form.elements['_editing'].value = key;
+        document.getElementById(btn).textContent = label;
+        form.scrollIntoView({behavior: 'smooth'});
+    }
+    function saveGateway(ev) {
+        ev.preventDefault();
+        const f = ev.target, o = formJson(f), ed = f.elements['_editing'].value;
+        delete o._editing;
+        if (!f.elements['address'].value) o.address = '';
+        if (!f.elements['monitor_ip'].value) o.monitor_ip = '';
+        call(ed ? 'PUT' : 'POST', ed ? '/api/routing/gateways/' + encodeURIComponent(ed) : '/api/routing/gateways', o);
+        return false;
+    }
+    function editGateway(b) {
+        const f = document.getElementById('gateway-form'), d = b.dataset;
+        f.elements['name'].value = d.name; f.elements['interface'].value = d.interface;
+        f.elements['family'].value = d.family; f.elements['address'].value = d.address;
+        f.elements['monitor_ip'].value = d.monitor; f.elements['monitor_enabled'].checked = d.monitorEnabled === 'true';
+        f.elements['loss_threshold'].value = d.loss; f.elements['latency_threshold'].value = d.latency;
+        f.elements['description'].value = d.description;
+        editing(f, d.name, 'gateway-submit', 'Save gateway ' + d.name);
+    }
+    function saveGroup(ev) {
+        ev.preventDefault();
+        const f = ev.target, o = formJson(f), ed = f.elements['_editing'].value;
+        delete o._editing;
+        call(ed ? 'PUT' : 'POST', ed ? '/api/routing/groups/' + encodeURIComponent(ed) : '/api/routing/groups', o);
+        return false;
+    }
+    function editGroup(b) {
+        const f = document.getElementById('group-form'), d = b.dataset;
+        f.elements['name'].value = d.name; f.elements['members'].value = d.members;
+        f.elements['trigger'].value = d.trigger; f.elements['description'].value = d.description;
+        editing(f, d.name, 'group-submit', 'Save group ' + d.name);
+    }
+    function saveRoute(ev) {
+        ev.preventDefault();
+        const f = ev.target, o = formJson(f), ed = f.elements['_editing'].value;
+        delete o._editing;
+        call(ed ? 'PUT' : 'POST', ed ? '/api/routing/routes/' + ed : '/api/routing/routes', o);
+        return false;
+    }
+    function editRoute(b) {
+        const f = document.getElementById('route-form'), d = b.dataset;
+        f.elements['destination'].value = d.destination; f.elements['gateway'].value = d.gateway;
+        f.elements['interface'].value = d.interface; f.elements['metric'].value = d.metric;
+        f.elements['enabled'].checked = d.enabled === 'true'; f.elements['description'].value = d.description;
+        editing(f, d.id, 'route-submit', 'Save route');
+    }
+</script>
+{% endblock %}

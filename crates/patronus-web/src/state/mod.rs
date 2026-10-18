@@ -8,7 +8,7 @@
 //! store and the kernel never disagree. Lanes only touch their own file
 //! here plus one field in [`AppState`].
 //!
-//! `firewall`, `interfaces` and `lan` are store-backed. `vpn`, `network`,
+//! `firewall`, `interfaces`, `routing` and `lan` are store-backed. `vpn`, `network`,
 //! `system` and `monitoring` read live system state (wg/swanctl, ip route,
 //! systemd/OpenRC, /proc, backup files); their lanes add the store-backed
 //! configuration. No subsystem may show fixture rows: an empty system shows
@@ -20,6 +20,7 @@ pub mod interfaces;
 pub mod lan;
 pub mod monitoring;
 pub mod network;
+pub mod routing;
 pub mod system;
 pub mod vpn;
 
@@ -28,6 +29,7 @@ pub use interfaces::InterfacesManager;
 pub use lan::LanManager;
 pub use monitoring::MonitoringManager;
 pub use network::NetworkManager;
+pub use routing::RoutingManager;
 pub use system::SystemManager;
 pub use vpn::VpnManager;
 
@@ -44,6 +46,8 @@ pub struct AppState {
     pub interfaces: Arc<InterfacesManager>,
     /// DHCP / DNS / NTP / DDNS (lane D).
     pub lan: Arc<LanManager>,
+    /// Gateways, gateway groups, default gateway, static routes (lane E).
+    pub routing: Arc<RoutingManager>,
     pub vpn: Arc<VpnManager>,
     pub network: Arc<NetworkManager>,
     pub system: Arc<SystemManager>,
@@ -70,8 +74,15 @@ impl AppState {
                 config_store.clone(),
                 firewall_applier.clone(),
             )),
-            firewall: Arc::new(FirewallManager::new(config_store.clone(), firewall_applier)),
+            firewall: Arc::new(FirewallManager::new(
+                config_store.clone(),
+                firewall_applier.clone(),
+            )),
             lan: Arc::new(LanManager::new(config_store.clone())),
+            routing: Arc::new(RoutingManager::new(
+                config_store.clone(),
+                firewall_applier.clone(),
+            )),
             vpn: Arc::new(VpnManager::new()),
             network: Arc::new(NetworkManager::new()),
             system: Arc::new(SystemManager::new(system::backup_dir_for(
@@ -121,6 +132,12 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
         ),
         Err(e) => tracing::error!("{e}"),
     }
+    // then static routes / the default gateway (lane E), likewise not fatal
+    match state.routing.apply().await {
+        Ok(r) => tracing::info!("routes applied from the store: {}", r.join("; ")),
+        Err(e) => tracing::error!("routes: {e}"),
+    }
+    state.routing.spawn_local_monitor();
     let report = applier
         .apply(&store)
         .await

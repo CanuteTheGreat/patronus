@@ -339,7 +339,14 @@ async fn routes_services_updates_and_pages_are_live_or_honest() {
 
     let host = crate::state::host::hostname();
     let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap();
-    for uri in ["/", "/system", "/monitoring", "/network", "/vpn"] {
+    for uri in [
+        "/",
+        "/system",
+        "/monitoring",
+        "/network",
+        "/vpn",
+        "/routing",
+    ] {
         let (s, page) = a.call(Method::GET, uri, None).await;
         assert_eq!(s, StatusCode::OK, "{uri}");
         if uri == "/" || uri == "/system" {
@@ -418,6 +425,7 @@ async fn page_assets_and_the_favicon_are_served() {
         "/vpn",
         "/network",
         "/interfaces",
+        "/routing",
         "/monitoring",
         "/system",
         "/login",
@@ -447,4 +455,54 @@ async fn page_assets_and_the_favicon_are_served() {
             assert_eq!(s, StatusCode::OK, "{page} loads {url}");
         }
     }
+}
+
+/// Routing (lane E): an empty box shows empty lists, never sample gateways;
+/// bad input is a 400 before anything is stored.
+#[tokio::test]
+async fn routing_starts_empty_and_refuses_bad_input() {
+    let a = app().await;
+    let (s, body) = a.call(Method::GET, "/api/routing", None).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["gateways"], serde_json::json!([]));
+    assert_eq!(v["routes"], serde_json::json!([]));
+    assert!(v["default4"].is_null());
+    let (s, page) = a.call(Method::GET, "/routing", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(page.contains("No gateways configured.") && page.contains("No static routes."));
+    for (uri, body) in [
+        (
+            "/api/routing/gateways",
+            r#"{"name":"1bad","interface":"@wan"}"#,
+        ),
+        (
+            "/api/routing/gateways",
+            r#"{"name":"W","interface":"@wan","address":"nope"}"#,
+        ),
+        (
+            "/api/routing/routes",
+            r#"{"destination":"10.0.0.0/8","gateway":"NOSUCHGW"}"#,
+        ),
+        (
+            "/api/routing/routes",
+            r#"{"destination":"0.0.0.0/0","gateway":"192.0.2.1"}"#,
+        ),
+    ] {
+        let (s, b) = a.call(Method::POST, uri, Some(body)).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{uri} {body}: {b}");
+    }
+    let (s, _) = a
+        .call(
+            Method::PUT,
+            "/api/routing/default",
+            Some(r#"{"ipv4":"NOSUCHGW"}"#),
+        )
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = a
+        .call(Method::DELETE, "/api/routing/gateways/NOPE", None)
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let _ = std::fs::remove_dir_all(&a.dir);
 }

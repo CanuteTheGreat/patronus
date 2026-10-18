@@ -35,6 +35,7 @@ pub fn build_router(
         .route("/vpn", get(pages::vpn))
         .route("/network", get(pages::network))
         .route("/interfaces", get(api::interfaces::page))
+        .route("/routing", get(api::routing::page))
         .route("/monitoring", get(pages::monitoring))
         .route("/system", get(pages::system))
         .merge(api::lan::pages())
@@ -158,6 +159,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::lan::router())
         .merge(api::vpn::router())
         .merge(api::network::router())
+        .merge(api::routing::router())
         .merge(api::interfaces::router())
         .merge(api::system::router())
 }

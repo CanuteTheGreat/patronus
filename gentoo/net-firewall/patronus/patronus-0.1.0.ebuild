@@ -91,6 +91,7 @@ RDEPEND="
 		openvpn? ( net-vpn/openvpn )
 		ipsec? ( net-vpn/strongswan )
 	)
+	|| ( net-misc/iputils sys-apps/busybox )
 	multiwan? ( sys-apps/iproute2 )
 	ha? (
 		ucarp? ( net-misc/ucarp )
@@ -332,6 +333,7 @@ src_install() {
 		use dhcp && webfeatures+=( dhcp )
 		use dns && webfeatures+=( dns )
 		use ntp && webfeatures+=( ntp )
+		use multiwan && webfeatures+=( multiwan )
 		set -- "${CARGO}" install --path ./crates/patronus-web \
 			--root "${ED}/usr" \
 			${GIT_CRATES[@]:+--frozen} \

@@ -10,13 +10,12 @@ pub mod applyd;
 pub mod bond;
 pub mod bridge;
 pub mod dhcp_client;
-pub mod gateway_groups;
 pub mod interfaces;
 pub mod lan;
 pub mod linkstate;
 pub mod nat64;
 pub mod netconf;
-pub mod routing;
+pub mod routes;
 pub mod supervise;
 pub mod sysctl;
 
@@ -66,9 +65,6 @@ pub mod ddns;
 #[cfg(feature = "ntp")]
 pub mod ntp;
 
-#[cfg(feature = "multiwan")]
-pub mod multiwan;
-
 #[cfg(feature = "qos")]
 pub mod qos;
 
@@ -82,6 +78,7 @@ pub mod ids;
 pub mod frr;
 
 pub use interfaces::{InterfaceManager, InterfacesApplier};
+pub use routes::RoutesApplier;
 pub use sysctl::SysctlApplier;
 
 #[cfg(feature = "wireguard")]
@@ -103,9 +100,6 @@ pub use dns::DnsApplier;
 
 #[cfg(feature = "ntp")]
 pub use ntp::NtpApplier;
-
-#[cfg(feature = "multiwan")]
-pub use multiwan::MultiWanManager;
 
 #[cfg(feature = "qos")]
 pub use qos::QosManager;

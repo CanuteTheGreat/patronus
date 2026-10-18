@@ -30,6 +30,7 @@ pub fn registry() -> ApplierRegistry {
         // --- Phase::Interfaces (lane C: interfaces, VLANs, bonds, bridges) ---
         .with(patronus_network::InterfacesApplier::default())
         // --- Phase::Routes (lane E: static routes, gateways, groups) ---
+        .with(patronus_network::RoutesApplier::default())
         // --- Phase::Firewall (lane B rules; lane A applier) ---
         .with(patronus_firewall::FirewallApplier)
         // --- Phase::Services (lanes D, F, G, J: dhcp, dns, vpn, ha, ids) ---
@@ -390,6 +391,9 @@ mod tests {
         assert!(names
             .iter()
             .any(|(n, p)| *n == "interfaces" && *p == Phase::Interfaces));
+        assert!(names
+            .iter()
+            .any(|(n, p)| *n == "routes" && *p == Phase::Routes));
     }
 
     #[test]

@@ -53,6 +53,32 @@ async fn load_roles(store: &ConfigStore) -> Result<Roles> {
     Ok(roles)
 }
 
+/// Devices behind the IPv4 gateways of lane E's `route_gateways` table
+/// (device names, or roles resolved through `roles`; unassigned roles are
+/// skipped).
+async fn gateway_interfaces(store: &ConfigStore, roles: &Roles) -> Result<Vec<String>> {
+    let rows = sqlx::query(
+        "SELECT DISTINCT interface FROM route_gateways WHERE family = 'inet' ORDER BY interface",
+    )
+    .fetch_all(store.pool()?)
+    .await
+    .map_err(|e| Error::Config(format!("read gateways: {e}")))?;
+    let mut out = Vec::new();
+    for r in rows {
+        let spec: String = sqlx::Row::get(&r, 0);
+        match spec.strip_prefix('@') {
+            Some(role) => out.extend(
+                roles
+                    .get(&role.to_ascii_lowercase())
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+            None => out.push(spec),
+        }
+    }
+    Ok(out)
+}
+
 /// Resolve one interface field. `Ok(None)` = an unassigned role (skip the
 /// rule); `Ok(Some(v))` = the concrete values (`None` inside = no match).
 fn resolve_iface(value: &Option<String>, roles: &Roles) -> Option<Vec<Option<String>>> {
@@ -326,7 +352,16 @@ impl FirewallApplier {
                 }
             }
             if mode.auto_rules() {
-                for wan in roles.get("wan").into_iter().flatten() {
+                // every WAN, plus every interface an IPv4 gateway sits behind
+                // (a second uplink on OPTn: multi-WAN, lane E) -- the
+                // pfSense rule "interfaces with a gateway get outbound NAT"
+                let mut nat_devs: Vec<String> = roles.get("wan").cloned().unwrap_or_default();
+                for dev in gateway_interfaces(store, &roles).await? {
+                    if !nat_devs.contains(&dev) {
+                        nat_devs.push(dev);
+                    }
+                }
+                for wan in &nat_devs {
                     if !nftables::is_valid_interface_name(wan) {
                         report.warn(format!(
                             "WAN interface {wan:?}: invalid name, no outbound NAT"
@@ -976,6 +1011,50 @@ mod tests {
             );
         }
         assert!(bridges_stay_layer2(d.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn interfaces_behind_an_ipv4_gateway_get_outbound_nat_too() {
+        // multi-WAN: a second uplink on OPT1 carrying a gateway (lane E)
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        s.set_interface_role("eth5", Some("opt1")).await.unwrap();
+        for (name, iface, fam) in [
+            ("WAN2", "@opt1", "inet"),
+            ("DIRECT", "eth6", "inet"),
+            ("WAN1", "@wan", "inet"),
+            ("V6ONLY", "eth7", "inet6"),
+            ("NOPE", "@opt9", "inet"),
+        ] {
+            sqlx::query(
+                "INSERT INTO route_gateways (name, interface, family, updated_at) VALUES (?, ?, ?, 0)",
+            )
+            .bind(name)
+            .bind(iface)
+            .bind(fam)
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        }
+        let out = FirewallApplier.render(&s).await.unwrap();
+        for dev in ["eth0", "eth5", "eth6"] {
+            assert_eq!(
+                out.matches(&format!("oifname \"{dev}\" masquerade"))
+                    .count(),
+                1,
+                "{dev}: {out}"
+            );
+        }
+        assert!(
+            !out.contains("oifname \"eth7\" masquerade"),
+            "IPv6 is routed: {out}"
+        );
+        assert!(!out.contains("oifname \"eth1\" masquerade"), "{out}");
+        // manual mode: none of the automatic ones
+        set_outbound_nat_mode(&s, OutboundNatMode::Manual)
+            .await
+            .unwrap();
+        let out = FirewallApplier.render(&s).await.unwrap();
+        assert!(!out.contains("masquerade"), "{out}");
     }
 
     #[tokio::test]
