@@ -74,7 +74,7 @@ async fn test_site_update() {
     let sites: Api<Site> = Api::namespaced(client.clone(), "test-operator");
 
     // Create initial site
-    let mut site = Site::new(
+    let site = Site::new(
         "test-site-update",
         SiteSpec {
             location: Some("Original Location".to_string()),
@@ -88,19 +88,37 @@ async fn test_site_update() {
         },
     );
 
-    let created = sites
+    let _created = sites
         .create(&PostParams::default(), &site)
         .await
         .expect("Failed to create site");
 
-    // Update the site
-    site.spec.location = Some("Updated Location".to_string());
-    site.metadata.resource_version = created.metadata.resource_version;
-
-    let updated = sites
-        .replace("test-site-update", &PostParams::default(), &site)
-        .await
-        .expect("Failed to update site");
+    // Update the site. The operator reconciles the new object right away
+    // (finalizer, status), bumping its resourceVersion, so a replace based
+    // on the create response can lose with 409 Conflict (run 4449): do
+    // what every kube client does -- re-read and retry on conflict.
+    let mut updated = None;
+    for _ in 0..10 {
+        let mut latest = sites
+            .get("test-site-update")
+            .await
+            .expect("Failed to read site");
+        latest.spec.location = Some("Updated Location".to_string());
+        match sites
+            .replace("test-site-update", &PostParams::default(), &latest)
+            .await
+        {
+            Ok(s) => {
+                updated = Some(s);
+                break;
+            }
+            Err(kube::Error::Api(e)) if e.code == 409 => {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            Err(e) => panic!("Failed to update site: {e:?}"),
+        }
+    }
+    let updated = updated.expect("site update kept conflicting");
 
     assert_eq!(updated.spec.location, Some("Updated Location".to_string()));
 
