@@ -4,8 +4,7 @@
 
 use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tokio::fs;
@@ -286,8 +285,8 @@ impl OpenVpnManager {
 
         // Status and log
         conf.push_str(&format!(
-            "status /var/log/patronus/openvpn-{}-status.log\n",
-            config.name
+            "status {}\n",
+            status_log_path(&config.name).display()
         ));
         conf.push_str(&format!(
             "log-append /var/log/patronus/openvpn-{}.log\n",
@@ -427,10 +426,10 @@ impl OpenVpnManager {
         Ok(())
     }
 
-    /// Get OpenVPN status
+    /// Get OpenVPN status. For a server, `bytes_sent`/`bytes_received`
+    /// are the totals over the clients currently listed in its status log
+    /// (0 when the log can't be read or lists nobody).
     pub async fn get_status(&self, name: &str) -> Result<OpenVpnConnectionStatus> {
-        let status_path = PathBuf::from(format!("/var/log/patronus/openvpn-{}-status.log", name));
-
         let is_running = Command::new("pgrep")
             .arg("-f")
             .arg(format!("openvpn.*{}.conf", name))
@@ -444,13 +443,19 @@ impl OpenVpnManager {
             OpenVpnState::Disconnected
         };
 
+        let clients = if is_running {
+            self.list_connected_clients(name).await.unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
         Ok(OpenVpnConnectionStatus {
             name: name.to_string(),
             state,
             local_ip: None,
             remote_ip: None,
-            bytes_sent: 0,
-            bytes_received: 0,
+            bytes_sent: clients.iter().map(|c| c.bytes_sent).sum(),
+            bytes_received: clients.iter().map(|c| c.bytes_received).sum(),
             connected_since: None,
             uptime: None,
         })
@@ -635,12 +640,155 @@ impl OpenVpnManager {
         Ok(ovpn)
     }
 
-    /// List connected clients (server only)
+    /// List connected clients (server only), read from the server's
+    /// `status` log. An error (not an empty list) when the log can't be
+    /// read, so "no clients" is never reported for a server we can't see.
     pub async fn list_connected_clients(&self, server_name: &str) -> Result<Vec<OpenVpnClient>> {
-        // This would parse the status log file
-        // For now, return empty vector
-        Ok(vec![])
+        if server_name.is_empty()
+            || server_name.starts_with('.')
+            || !server_name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        {
+            return Err(Error::Network(format!(
+                "invalid OpenVPN server name {server_name:?}"
+            )));
+        }
+        let path = status_log_path(server_name);
+        let text = fs::read_to_string(&path).await.map_err(|e| {
+            Error::Network(format!(
+                "cannot read OpenVPN status log {}: {e}",
+                path.display()
+            ))
+        })?;
+        Ok(parse_status_log(&text))
     }
+}
+
+/// Where a server's `status` directive writes its client list.
+pub fn status_log_path(name: &str) -> PathBuf {
+    PathBuf::from(format!("/var/log/patronus/openvpn-{name}-status.log"))
+}
+
+/// Parse an OpenVPN server status log into its connected clients.
+///
+/// Handles `--status-version 1` (the default, which the generated server
+/// config uses: a `CLIENT LIST` section plus a `ROUTING TABLE` that holds
+/// the virtual addresses) and versions 2/3 (`CLIENT_LIST` rows, comma- or
+/// tab-separated, columns located by their `HEADER` row). Byte counts are
+/// from the server's side: `bytes_sent` went to the client.
+pub fn parse_status_log(text: &str) -> Vec<OpenVpnClient> {
+    let lines: Vec<&str> = text.lines().map(|l| l.trim_end_matches('\r')).collect();
+    if lines
+        .iter()
+        .any(|l| l.starts_with("CLIENT_LIST,") || l.starts_with("CLIENT_LIST\t"))
+    {
+        parse_status_v2(&lines)
+    } else {
+        parse_status_v1(&lines)
+    }
+}
+
+fn parse_status_v1(lines: &[&str]) -> Vec<OpenVpnClient> {
+    enum Sect {
+        None,
+        Clients,
+        Routes,
+    }
+    let mut sect = Sect::None;
+    let mut clients: Vec<OpenVpnClient> = Vec::new();
+    for l in lines {
+        match *l {
+            "OpenVPN CLIENT LIST" => {
+                sect = Sect::Clients;
+                continue;
+            }
+            "ROUTING TABLE" => {
+                sect = Sect::Routes;
+                continue;
+            }
+            "GLOBAL STATS" | "END" => {
+                sect = Sect::None;
+                continue;
+            }
+            _ => {}
+        }
+        let f: Vec<&str> = l.split(',').collect();
+        match sect {
+            Sect::Clients if f.len() >= 5 && f[0] != "Updated" && f[0] != "Common Name" => {
+                let (Ok(rx), Ok(tx)) = (f[2].parse::<u64>(), f[3].parse::<u64>()) else {
+                    continue;
+                };
+                clients.push(OpenVpnClient {
+                    common_name: f[0].to_string(),
+                    real_address: f[1].to_string(),
+                    virtual_address: String::new(),
+                    bytes_received: rx,
+                    bytes_sent: tx,
+                    connected_since: f[4..].join(","),
+                });
+            }
+            Sect::Routes if f.len() >= 3 && f[0] != "Virtual Address" => {
+                // iroute subnets ("10.9.0.0/24") and learned MACs share this
+                // table; the client's own address is the plain host entry.
+                let virt = f[0];
+                if virt.contains('/') || virt.parse::<IpAddr>().is_err() {
+                    continue;
+                }
+                if let Some(c) = clients.iter_mut().find(|c| {
+                    c.virtual_address.is_empty() && c.common_name == f[1] && c.real_address == f[2]
+                }) {
+                    c.virtual_address = virt.to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+    clients
+}
+
+fn parse_status_v2(lines: &[&str]) -> Vec<OpenVpnClient> {
+    let sep = if lines.iter().any(|l| l.starts_with("CLIENT_LIST\t")) {
+        '\t'
+    } else {
+        ','
+    };
+    let header: Vec<&str> = lines
+        .iter()
+        .find(|l| l.starts_with(&format!("HEADER{sep}CLIENT_LIST{sep}")))
+        .map(|l| l.split(sep).collect())
+        .unwrap_or_default();
+    // Default column positions (2.4+), overridden by the HEADER row, which
+    // carries one extra leading "HEADER" field.
+    let col = |name: &str, default: usize| -> usize {
+        header
+            .iter()
+            .position(|c| *c == name)
+            .map(|i| i - 1)
+            .unwrap_or(default)
+    };
+    let cn = col("Common Name", 1);
+    let real = col("Real Address", 2);
+    let virt = col("Virtual Address", 3);
+    let rx = col("Bytes Received", 5);
+    let tx = col("Bytes Sent", 6);
+    let since = col("Connected Since", 7);
+    lines
+        .iter()
+        .filter(|l| l.starts_with(&format!("CLIENT_LIST{sep}")))
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split(sep).collect();
+            let get = |i: usize| f.get(i).copied();
+            Some(OpenVpnClient {
+                common_name: get(cn)?.to_string(),
+                real_address: get(real)?.to_string(),
+                virtual_address: get(virt).unwrap_or_default().to_string(),
+                bytes_received: get(rx)?.parse().ok()?,
+                bytes_sent: get(tx)?.parse().ok()?,
+                connected_since: get(since).unwrap_or_default().to_string(),
+            })
+        })
+        .collect()
 }
 
 impl Default for OpenVpnManager {
@@ -691,5 +839,84 @@ mod tests {
 
         assert!(conf.contains("client"));
         assert!(conf.contains("remote vpn.example.com 1194"));
+    }
+
+    const STATUS_V1: &str = "OpenVPN CLIENT LIST\r
+Updated,2026-10-17 12:00:00\r
+Common Name,Real Address,Bytes Received,Bytes Sent,Connected Since\r
+alice,203.0.113.5:51234,12345,67890,2026-10-17 11:00:00\r
+bob,198.51.100.7:40000,10,20,2026-10-17 11:30:00\r
+ROUTING TABLE\r
+Virtual Address,Common Name,Real Address,Last Ref\r
+10.9.0.0/24,bob,198.51.100.7:40000,2026-10-17 11:59:00\r
+10.8.0.6,alice,203.0.113.5:51234,2026-10-17 11:59:00\r
+10.8.0.10,bob,198.51.100.7:40000,2026-10-17 11:59:30\r
+GLOBAL STATS\r
+Max bcast/mcast queue length,0\r
+END\r
+";
+
+    #[test]
+    fn status_v1_lists_clients_with_their_virtual_addresses() {
+        let c = parse_status_log(STATUS_V1);
+        assert_eq!(c.len(), 2, "{c:?}");
+        assert_eq!(c[0].common_name, "alice");
+        assert_eq!(c[0].real_address, "203.0.113.5:51234");
+        assert_eq!(c[0].virtual_address, "10.8.0.6");
+        assert_eq!((c[0].bytes_received, c[0].bytes_sent), (12345, 67890));
+        assert_eq!(c[0].connected_since, "2026-10-17 11:00:00");
+        // the iroute subnet is not bob's address
+        assert_eq!(c[1].virtual_address, "10.8.0.10");
+        assert_eq!((c[1].bytes_received, c[1].bytes_sent), (10, 20));
+    }
+
+    #[test]
+    fn status_v2_and_v3_use_the_header_columns() {
+        let v2 = "TITLE,OpenVPN 2.6.12\n\
+HEADER,CLIENT_LIST,Common Name,Real Address,Virtual Address,Virtual IPv6 Address,Bytes Received,Bytes Sent,Connected Since,Connected Since (time_t),Username,Client ID,Peer ID,Data Channel Cipher\n\
+CLIENT_LIST,alice,203.0.113.5:51234,10.8.0.6,,111,222,2026-10-17 11:00:00,1792260000,UNDEF,0,0,AES-256-GCM\n\
+HEADER,ROUTING_TABLE,Virtual Address,Common Name,Real Address,Last Ref,Last Ref (time_t)\n\
+ROUTING_TABLE,10.8.0.6,alice,203.0.113.5:51234,2026-10-17 11:59:00,1792263540\n\
+END\n";
+        let c = parse_status_log(v2);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].virtual_address, "10.8.0.6");
+        assert_eq!((c[0].bytes_received, c[0].bytes_sent), (111, 222));
+        assert_eq!(c[0].connected_since, "2026-10-17 11:00:00");
+
+        // 2.3 has no IPv6 column; v3 is tab-separated
+        let v3 = "HEADER\tCLIENT_LIST\tCommon Name\tReal Address\tVirtual Address\tBytes Received\tBytes Sent\tConnected Since\n\
+CLIENT_LIST\tbob\t198.51.100.7:40000\t10.8.0.10\t5\t6\tThu Oct 17 11:30:00 2026\n";
+        let c = parse_status_log(v3);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].common_name, "bob");
+        assert_eq!((c[0].bytes_received, c[0].bytes_sent), (5, 6));
+        assert_eq!(c[0].connected_since, "Thu Oct 17 11:30:00 2026");
+    }
+
+    #[test]
+    fn status_log_with_no_clients_or_garbage_is_empty() {
+        assert!(parse_status_log("").is_empty());
+        assert!(parse_status_log("OpenVPN CLIENT LIST\nUpdated,x\nCommon Name,Real Address,Bytes Received,Bytes Sent,Connected Since\nROUTING TABLE\nEND\n").is_empty());
+        assert!(
+            parse_status_log("OpenVPN CLIENT LIST\nalice,1.2.3.4:1,notanumber,2,x\n").is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn listing_clients_rejects_path_like_names() {
+        let m = OpenVpnManager::new();
+        for bad in ["", "../etc/passwd", ".hidden", "a/b"] {
+            assert!(m.list_connected_clients(bad).await.is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn server_config_status_path_matches_the_reader() {
+        let conf = OpenVpnManager::new()
+            .generate_server_config(&OpenVpnServerConfig::default())
+            .unwrap();
+        let name = OpenVpnServerConfig::default().name;
+        assert!(conf.contains(&format!("status {}\n", status_log_path(&name).display())));
     }
 }
