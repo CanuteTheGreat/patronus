@@ -7,7 +7,12 @@
 //! and calls the provider when the address differs from the last
 //! successful update, the last attempt failed, the last update is older
 //! than 25 days (providers expire idle names), or the user pressed
-//! "Update now" (`ddns.force`). Results are kept in
+//! "Update now" (`ddns.force`). A failed attempt is retried on the next
+//! apply, except when the provider refused the settings themselves
+//! (dyndns2 `badauth`/`nohost`/`abuse`/..., DuckDNS `KO`): the dyndns2
+//! protocol forbids retrying those and providers block accounts that keep
+//! sending them, so that client is held until its settings are edited or
+//! "Update now" is pressed. Results are kept in
 //! `/var/lib/patronus/ddns-status.json` (runtime state, not config).
 //!
 //! Providers: `dyndns2` (DynDNS/No-IP/Google-style `/nic/update`, `server`
@@ -44,6 +49,9 @@ pub struct DdnsClient {
     pub password: Option<String>,
     pub server: Option<String>,
     pub description: Option<String>,
+    /// When the row was last saved (unix seconds); 0 for unsaved input.
+    #[serde(default)]
+    pub updated_at: i64,
 }
 
 impl DdnsClient {
@@ -175,6 +183,7 @@ impl DdnsInput {
             password,
             server,
             description: lan::check_description(self.description.as_deref())?,
+            updated_at: old.map(|o| o.updated_at).unwrap_or(0),
         })
     }
 }
@@ -196,6 +205,7 @@ pub async fn list(store: &ConfigStore) -> Result<Vec<DdnsClient>> {
             password: r.get("password"),
             server: r.get("server"),
             description: r.get("description"),
+            updated_at: r.get("updated_at"),
         })
         .collect())
 }
@@ -269,6 +279,84 @@ pub struct ClientStatus {
     pub last_check: i64,
     pub ok: bool,
     pub message: String,
+    /// The last attempt failed because the provider refused the settings
+    /// (see [`UpdateError::Refused`]); no retry until they change.
+    #[serde(default)]
+    pub refused: bool,
+}
+
+/// Why a provider update failed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum UpdateError {
+    /// Transport error, HTTP error, server trouble (`911`, `dnserr`) or an
+    /// unknown answer: try again on the next apply.
+    Retry(String),
+    /// The provider rejected these settings (bad credentials, unknown host,
+    /// account blocked). Retrying unchanged settings only gets the account
+    /// flagged for abuse.
+    Refused(String),
+}
+
+impl std::fmt::Display for UpdateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UpdateError::Retry(m) => f.write_str(m),
+            UpdateError::Refused(m) => write!(
+                f,
+                "{m} (refused; not retried until the settings change or Update now)"
+            ),
+        }
+    }
+}
+
+impl From<Error> for UpdateError {
+    fn from(e: Error) -> Self {
+        UpdateError::Retry(e.to_string())
+    }
+}
+
+impl From<serde_json::Error> for UpdateError {
+    fn from(e: serde_json::Error) -> Self {
+        UpdateError::Retry(format!("bad JSON from provider: {e}"))
+    }
+}
+
+/// dyndns2 answers that reject the request itself. The protocol (dyn.com
+/// "Return Codes", No-IP's integration guide) says a client must stop
+/// and wait for the user after any of these.
+const DYNDNS2_REFUSALS: &[&str] = &[
+    "badauth", "!donator", "notfqdn", "nohost", "numhost", "abuse", "badagent", "!yours",
+];
+
+/// Interpret a dyndns2 `/nic/update` answer.
+fn dyndns2_answer(body: &str) -> std::result::Result<String, UpdateError> {
+    let t = body.trim();
+    let code = t.split_whitespace().next().unwrap_or("");
+    if code == "good" || code == "nochg" {
+        Ok(t.to_string())
+    } else if DYNDNS2_REFUSALS.contains(&code) {
+        Err(UpdateError::Refused(format!("provider answered {t:?}")))
+    } else {
+        Err(UpdateError::Retry(format!("provider answered {t:?}")))
+    }
+}
+
+/// Interpret a DuckDNS answer: `OK`, or `KO` for a bad token/domain.
+fn duckdns_answer(body: &str) -> std::result::Result<String, UpdateError> {
+    match body.trim() {
+        t if t.starts_with("OK") => Ok("OK".into()),
+        "KO" => Err(UpdateError::Refused(
+            "DuckDNS answered \"KO\" (wrong token or domain)".into(),
+        )),
+        t => Err(UpdateError::Retry(format!("DuckDNS answered {t:?}"))),
+    }
+}
+
+/// Whether a client whose last attempt was refused must stay held: only if
+/// the attempt came after the last edit of its settings and after the last
+/// "Update now".
+fn held_after_refusal(prev: &ClientStatus, c: &DdnsClient, force: i64) -> bool {
+    prev.refused && !prev.ok && c.updated_at < prev.last_check && force <= prev.last_check
 }
 
 pub fn load_status(env: &LanEnv) -> BTreeMap<String, ClientStatus> {
@@ -362,7 +450,7 @@ pub async fn http(
 }
 
 /// Perform the provider update; Ok(message) on success.
-pub async fn update(c: &DdnsClient, ip: Ipv4Addr) -> Result<String> {
+pub async fn update(c: &DdnsClient, ip: Ipv4Addr) -> std::result::Result<String, UpdateError> {
     let pass = c.password.clone().unwrap_or_default();
     match c.provider.as_str() {
         "duckdns" => {
@@ -372,12 +460,7 @@ pub async fn update(c: &DdnsClient, ip: Ipv4Addr) -> Result<String> {
                 urlenc(sub),
                 urlenc(&pass)
             );
-            let b = http("GET", &url, None, &[], None).await?;
-            if b.trim().starts_with("OK") {
-                Ok("OK".into())
-            } else {
-                Err(Error::Network(format!("DuckDNS answered {:?}", b.trim())))
-            }
+            duckdns_answer(&http("GET", &url, None, &[], None).await?)
         }
         "cloudflare" => {
             let zone = c.server.clone().unwrap_or_default();
@@ -407,7 +490,7 @@ pub async fn update(c: &DdnsClient, ip: Ipv4Addr) -> Result<String> {
             if res["success"].as_bool() == Some(true) {
                 Ok("record updated".into())
             } else {
-                Err(Error::Network(format!("Cloudflare: {}", res["errors"])))
+                Err(UpdateError::Retry(format!("Cloudflare: {}", res["errors"])))
             }
         }
         "custom" => {
@@ -431,13 +514,7 @@ pub async fn update(c: &DdnsClient, ip: Ipv4Addr) -> Result<String> {
                 urlenc(&c.hostname)
             );
             let auth = format!("{}:{pass}", c.username.clone().unwrap_or_default());
-            let b = http("GET", &url, Some(&auth), &[], None).await?;
-            let t = b.trim();
-            if t.starts_with("good") || t.starts_with("nochg") {
-                Ok(t.to_string())
-            } else {
-                Err(Error::Network(format!("provider answered {t:?}")))
-            }
+            dyndns2_answer(&http("GET", &url, Some(&auth), &[], None).await?)
         }
     }
 }
@@ -532,12 +609,20 @@ impl Applier for DdnsApplier {
             if !due {
                 continue;
             }
+            if held_after_refusal(&prev, c, force) {
+                rep.warn(format!(
+                    "DDNS {}: held, the provider refused it: {} (edit it or press Update now)",
+                    c.hostname, prev.message
+                ));
+                continue;
+            }
             let mut s = ClientStatus {
                 ip: prev.ip.clone(),
                 last_update: prev.last_update,
                 last_check: t,
                 ok: false,
                 message: String::new(),
+                refused: false,
             };
             match update(c, ip).await {
                 Ok(msg) => {
@@ -548,6 +633,7 @@ impl Applier for DdnsApplier {
                     rep.applied(format!("DDNS {} -> {ip} ({})", c.hostname, c.provider));
                 }
                 Err(e) => {
+                    s.refused = matches!(e, UpdateError::Refused(_));
                     s.message = e.to_string();
                     failures.push(format!("{}: {e}", c.hostname));
                 }
@@ -626,5 +712,91 @@ mod tests {
         .is_err());
         assert_eq!(curl_quote("a\"b\\c"), "\"a\\\"b\\\\c\"");
         assert_eq!(urlenc("a b&c"), "a%20b%26c");
+    }
+
+    #[test]
+    fn provider_answers_split_into_success_retry_and_refused() {
+        assert_eq!(
+            dyndns2_answer("good 203.0.113.2\n").unwrap(),
+            "good 203.0.113.2"
+        );
+        assert_eq!(
+            dyndns2_answer("nochg 203.0.113.2").unwrap(),
+            "nochg 203.0.113.2"
+        );
+        for refused in [
+            "badauth", "nohost", "abuse", "!donator", "notfqdn", "badagent",
+        ] {
+            assert!(
+                matches!(dyndns2_answer(refused), Err(UpdateError::Refused(_))),
+                "{refused}"
+            );
+        }
+        // server-side trouble and unknown answers are retried
+        assert!(matches!(dyndns2_answer("911"), Err(UpdateError::Retry(_))));
+        assert!(matches!(
+            dyndns2_answer("dnserr"),
+            Err(UpdateError::Retry(_))
+        ));
+        assert!(matches!(
+            dyndns2_answer("<html>"),
+            Err(UpdateError::Retry(_))
+        ));
+        // "goodbye" is not "good"
+        assert!(dyndns2_answer("goodbye").is_err());
+
+        assert_eq!(duckdns_answer("OK\n").unwrap(), "OK");
+        assert!(matches!(duckdns_answer("KO"), Err(UpdateError::Refused(_))));
+        assert!(matches!(duckdns_answer(""), Err(UpdateError::Retry(_))));
+        // a transport error is a retry
+        assert!(matches!(
+            UpdateError::from(Error::Network("timeout".into())),
+            UpdateError::Retry(_)
+        ));
+    }
+
+    #[test]
+    fn refused_client_is_held_until_edited_or_forced() {
+        let c = DdnsClient {
+            id: 1,
+            enabled: true,
+            provider: "dyndns2".into(),
+            hostname: "home.example.net".into(),
+            interface: "@wan".into(),
+            username: Some("me".into()),
+            password: Some("wrong".into()),
+            server: None,
+            description: None,
+            updated_at: 1_000,
+        };
+        let refused = ClientStatus {
+            last_check: 2_000,
+            refused: true,
+            message: "provider answered \"badauth\"".into(),
+            ..Default::default()
+        };
+        // refused after the last edit, no Update now since: held
+        assert!(held_after_refusal(&refused, &c, 0));
+        assert!(held_after_refusal(&refused, &c, 1_500));
+        // the user pressed Update now after the refusal
+        assert!(!held_after_refusal(&refused, &c, 2_001));
+        // the user edited the client after the refusal
+        let edited = DdnsClient {
+            updated_at: 2_100,
+            ..c.clone()
+        };
+        assert!(!held_after_refusal(&refused, &edited, 0));
+        // an ordinary failure is always retried
+        let failed = ClientStatus {
+            refused: false,
+            ..refused.clone()
+        };
+        assert!(!held_after_refusal(&failed, &c, 0));
+        // status files written before `refused` existed still parse
+        let old: ClientStatus = serde_json::from_str(
+            r#"{"ip":null,"last_update":0,"last_check":5,"ok":false,"message":"x"}"#,
+        )
+        .unwrap();
+        assert!(!old.refused);
     }
 }
