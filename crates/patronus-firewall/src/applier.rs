@@ -1081,6 +1081,11 @@ mod tests {
             .await
             .unwrap();
         }
+        assert_eq!(
+            auto_nat_devices(&s).await.unwrap(),
+            vec!["eth0", "eth5", "eth6"],
+            "WAN first, then gateway interfaces, no duplicates"
+        );
         let out = FirewallApplier.render(&s).await.unwrap();
         for dev in ["eth0", "eth5", "eth6"] {
             assert_eq!(
@@ -1201,6 +1206,45 @@ mod tests {
             FirewallApplier.resource_kinds(),
             &[ResourceKind::FirewallRule, ResourceKind::NatRule]
         );
+    }
+
+    #[test]
+    fn declarative_gateway_steers_only_inbound_forwarded_traffic() {
+        let parse = |y: &str| {
+            patronus_config::ConfigParser::parse_yaml(y)
+                .expect("yaml")
+                .remove(0)
+        };
+        let doc = |action: &str, direction: &str| {
+            format!(
+                r#"
+- apiVersion: patronus.firewall/v1
+  kind: FirewallRule
+  metadata: {{ name: pbr }}
+  spec:
+    action: {action}
+    interface: "@lan"
+    direction: {direction}
+    source: {{}}
+    destination: {{ ports: [8080] }}
+    protocol: tcp
+    gateway: WAN2
+    enabled: true
+"#
+            )
+        };
+        let (rules, _, _) = declarative_to_rules(&parse(&doc("allow", "both"))).unwrap();
+        let steered: Vec<_> = rules.iter().filter(|r| r.gateway.is_some()).collect();
+        assert_eq!(steered.len(), 1, "{rules:?}");
+        assert_eq!(steered[0].chain, ChainType::Forward);
+        assert_eq!(steered[0].interface_in.as_deref(), Some("@lan"));
+        assert_eq!(steered[0].gateway.as_deref(), Some("WAN2"));
+        // the rest (input, outbound placements) carry no gateway
+        assert_eq!(rules.len(), 4);
+        let e = declarative_to_rules(&parse(&doc("deny", "inbound")))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("needs action allow"), "{e}");
     }
 
     #[test]
