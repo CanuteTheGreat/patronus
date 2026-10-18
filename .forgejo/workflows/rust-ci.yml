@@ -130,7 +130,7 @@ jobs:
     timeout-minutes: 40
     container:
       image: catthehacker/ubuntu:act-latest
-      options: --memory 8g --memory-swap 8g --cpus 4
+      options: --memory 6g --memory-swap 6g --cpus 4
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -183,7 +183,7 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
     container:
       image: catthehacker/ubuntu:act-latest
-      options: --memory 8g --memory-swap 8g --cpus 4
+      options: --memory 6g --memory-swap 6g --cpus 4
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -241,12 +241,15 @@ jobs:
     runs-on: linux-cross-x86_64
     timeout-minutes: 75
     env:
-      # keep peak memory well inside the 8g cap (the 2026-10-16 run stalled
-      # on a loaded runner with no output for 45 min)
+      # keep peak memory well inside the cap (the 2026-10-16 run stalled
+      # on a loaded runner with no output for 45 min). Measured 2026-10-17
+      # with line-tables debuginfo + mold: 5.7 GB cgroup peak (mostly page
+      # cache), 1.8 GB anon, so 6g (was 8g: 11 GB / 2.1 GB anon before).
+      # netlab's build 3.4 GB and the privileged tests fit 6g as well.
       CARGO_BUILD_JOBS: 4
     container:
       image: catthehacker/ubuntu:act-latest
-      options: --memory 8g --memory-swap 8g --cpus 4
+      options: --memory 6g --memory-swap 6g --cpus 4
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
