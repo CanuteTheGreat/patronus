@@ -41,7 +41,7 @@ impl Cmd for FakeCmd {
                 match self.owned.get(&(fam.to_string(), p.to_string())) {
                     Some(o) => o.clone(),
                     // iproute2 6.x: listing a table nothing created yet fails
-                    None if *t != "main" => {
+                    None if t.parse::<u32>().is_ok() => {
                         return Err(Error::Network(format!(
                             "`{line}` failed: Error: ipv4: FIB table does not exist."
                         )))
@@ -580,42 +580,107 @@ fn kernel_route_listings_parse_including_split_ipv6_multipath() {
 }
 
 #[test]
-fn policy_rules_exist_exactly_while_a_default_gateway_is_set() {
+fn policy_rules_follow_the_tables_in_use() {
+    let route = |table: u32, v6: bool| KRoute {
+        v6,
+        dst: "default".into(),
+        metric: 1,
+        proto: "253".into(),
+        table,
+        hops: vec![],
+    };
+    let d = Desired {
+        routes: vec![
+            route(DEFAULT_TABLE, false),
+            route(0x2_0001, false),
+            route(0x1_0002, false),
+            route(0x1_0003, true),
+            kr("10.0.0.0/8", 0, "251", &[("192.0.2.1", None, 1)]),
+        ],
+        ..Default::default()
+    };
+    let want = wanted_rules(&d);
+    let lines: Vec<String> = rule_ops(&want, &[]).iter().map(|o| o.join(" ")).collect();
+    assert_eq!(
+        lines,
+        [
+            "-4 rule add pref 31000 lookup main suppress_prefixlength 0",
+            "-4 rule add pref 31100 fwmark 0x10002 lookup 65538",
+            "-4 rule add pref 31101 fwmark 0x20001 lookup 131073",
+            "-4 rule add pref 31900 lookup 4250",
+            "-6 rule add pref 31000 lookup main suppress_prefixlength 0",
+            "-6 rule add pref 31100 fwmark 0x10003 lookup 65539",
+        ]
+    );
+    // the kernel's listing of exactly those: nothing to do
     let listing = r#"[{"priority":0,"src":"all","table":"local"},
         {"priority":31000,"src":"all","table":"main","suppress_prefixlen":0},
-        {"priority":31001,"src":"all","table":"4250"},
+        {"priority":31100,"src":"all","fwmark":"0x10002","table":"65538"},
+        {"priority":31101,"src":"all","fwmark":"0x20001","table":"131073"},
+        {"priority":31900,"src":"all","table":"4250"},
         {"priority":32766,"src":"all","table":"main"}]"#;
-    let have = parse_rules(listing, false).unwrap();
-    assert_eq!(have.len(), 2, "only Patronus' priorities");
-    assert!(rule_ops(&[true, false], &have).is_empty(), "already right");
-    let ops: Vec<String> = rule_ops(&[false, true], &have)
-        .iter()
-        .map(|o| o.join(" "))
-        .collect();
+    let have4 = parse_rules(listing, false).unwrap();
+    assert_eq!(have4.len(), 4, "only Patronus' priorities");
+    let want4: Vec<KRule> = want.iter().filter(|r| !r.v6).cloned().collect();
+    assert!(rule_ops(&want4, &have4).is_empty(), "already right");
+    // no default gateway, no gateways: every rule of ours goes, others stay
+    let ops: Vec<String> = rule_ops(&[], &have4).iter().map(|o| o.join(" ")).collect();
     assert_eq!(
         ops,
         [
             "-4 rule del pref 31000",
-            "-4 rule del pref 31001",
-            "-6 rule add pref 31000 lookup main suppress_prefixlength 0",
-            "-6 rule add pref 31001 lookup 4250",
+            "-4 rule del pref 31100",
+            "-4 rule del pref 31101",
+            "-4 rule del pref 31900",
         ]
     );
-    // something else squatting on our priority is replaced
-    let odd = parse_rules(r#"[{"priority":31001,"src":"all","table":"main"}]"#, false).unwrap();
-    let ops: Vec<String> = rule_ops(&[true, false], &odd)
-        .iter()
-        .map(|o| o.join(" "))
-        .collect();
-    assert_eq!(
-        ops,
-        [
-            "-4 rule add pref 31000 lookup main suppress_prefixlength 0",
-            "-4 rule del pref 31001",
-            "-4 rule add pref 31001 lookup 4250",
-        ]
-    );
+    // something else squatting on one of our priorities is replaced
+    let odd = parse_rules(r#"[{"priority":31900,"src":"all","table":"main"}]"#, false).unwrap();
+    let ops: Vec<String> = rule_ops(&want4, &odd).iter().map(|o| o.join(" ")).collect();
+    assert_eq!(ops.len(), 5);
+    assert_eq!(ops[3], "-4 rule del pref 31900");
+    assert_eq!(ops[4], "-4 rule add pref 31900 lookup 4250");
     assert!(parse_rules("", true).unwrap().is_empty());
+    assert!(wanted_rules(&Desired::default()).is_empty());
+}
+
+#[test]
+fn every_gateway_and_group_gets_a_policy_table() {
+    let (mut cfg, res) = two_wan_cfg();
+    cfg.marks = BTreeMap::from([
+        ("WAN1".to_string(), 0x1_0001),
+        ("WAN2".to_string(), 0x1_0002),
+        ("FAILOVER".to_string(), 0x2_0001),
+    ]);
+    let s = BTreeMap::from([("WAN1".to_string(), st(GwState::Down))]);
+    let d = desired(&cfg, &res, &s, &BTreeMap::new());
+    let lines: Vec<String> = d
+        .routes
+        .iter()
+        .map(|r| r.replace_args().join(" "))
+        .collect();
+    // a single gateway's table keeps it even while it is down (like the
+    // default gateway: there is nothing else to send that traffic to)
+    assert!(
+        lines.contains(
+            &"-4 route replace default table 65537 metric 1 proto 253 via 198.51.100.1 dev wan1"
+                .to_string()
+        ),
+        "{lines:?}"
+    );
+    assert!(
+        lines.contains(
+            &"-4 route replace default table 65538 metric 1 proto 253 via 203.0.113.1 dev wan2"
+                .to_string()
+        ),
+        "{lines:?}"
+    );
+    if MULTIWAN {
+        // the group's table follows its failover
+        assert!(lines.contains(&"-4 route replace default table 131073 metric 1 proto 253 nexthop via 203.0.113.1 dev wan2 weight 1 nexthop via 192.0.2.1 dev wan3 weight 3".to_string()), "{lines:?}");
+    }
+    // WAN3 has no mark (not stored yet): no table
+    assert!(!lines.iter().any(|l| l.contains("table 65539")));
 }
 
 // ---------------------------------------------------------------------------
@@ -923,7 +988,7 @@ async fn apply_installs_the_routes_and_removes_only_its_own_stale_ones() {
     );
     f.owned.insert(
         ("-4".into(), "253".into()),
-        r#"[{"dst":"default","gateway":"198.51.100.1","dev":"wan1","metric":1,"flags":[]}]"#.into(),
+        r#"[{"dst":"default","table":"4250","gateway":"198.51.100.1","dev":"wan1","metric":1,"flags":[]}]"#.into(),
     );
     let f = Arc::new(f);
     let a =
@@ -932,14 +997,16 @@ async fn apply_installs_the_routes_and_removes_only_its_own_stale_ones() {
     assert_eq!(
         f.writes(),
         [
+            "ip -4 route replace default table 65537 metric 1 proto 253 via 198.51.100.1 dev wan1",
             "ip -4 route replace 10.20.0.0/16 metric 0 proto 251 via 192.168.1.2 dev lan0",
             "ip -4 route del 10.99.0.0/16 metric 0 proto 251",
             "ip -4 rule add pref 31000 lookup main suppress_prefixlength 0",
-            "ip -4 rule add pref 31001 lookup 4250",
+            "ip -4 rule add pref 31100 fwmark 0x10001 lookup 65537",
+            "ip -4 rule add pref 31900 lookup 4250",
         ],
         "the default route was already right; nothing else is touched"
     );
-    assert_eq!(rep.applied.len(), 4);
+    assert_eq!(rep.applied.len(), 6);
     // the dry run shows the same plan without running anything
     let out = a.render(&s).await.unwrap();
     assert!(out.contains(

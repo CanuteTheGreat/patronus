@@ -48,6 +48,8 @@ pub struct FirewallTemplate {
     pub outbound_mode: String,
     /// WAN interfaces the automatic outbound NAT covers.
     pub auto_nat_interfaces: String,
+    /// Gateways and gateway groups a rule can route through (Routing page).
+    pub gateways: Vec<String>,
 }
 
 /// A firewall schedule row.
@@ -215,6 +217,10 @@ pub struct FirewallRule {
     pub schedule: String,
     /// ipv4 | ipv6 | any
     pub ip_version: String,
+    /// Policy routing: gateway or gateway group this traffic is sent
+    /// through ("" = the default route).
+    #[serde(default)]
+    pub gateway: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

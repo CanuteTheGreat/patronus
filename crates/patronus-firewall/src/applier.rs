@@ -22,8 +22,8 @@
 
 use crate::aliases::{alias_map, load_aliases, sets_script};
 use crate::nftables::{
-    self, base_table_script, render_filter_rule, render_nat_rule, rule_to_nft_command, NatContext,
-    TABLE,
+    self, base_table_script, policy_chain_script, render_filter_rule, render_nat_rule,
+    render_policy_rule, rule_to_nft_command, NatContext, TABLE,
 };
 use crate::schedule::{load_schedules, now as schedule_now};
 use async_trait::async_trait;
@@ -77,6 +77,23 @@ async fn gateway_interfaces(store: &ConfigStore, roles: &Roles) -> Result<Vec<St
         }
     }
     Ok(out)
+}
+
+/// Devices the automatic outbound NAT covers: the WAN role plus every
+/// interface an IPv4 gateway sits behind.
+async fn nat_devices(store: &ConfigStore, roles: &Roles) -> Result<Vec<String>> {
+    let mut v: Vec<String> = roles.get("wan").cloned().unwrap_or_default();
+    for dev in gateway_interfaces(store, roles).await? {
+        if !v.contains(&dev) {
+            v.push(dev);
+        }
+    }
+    Ok(v)
+}
+
+/// [`nat_devices`] for the UI ("automatic outbound NAT covers ...").
+pub async fn auto_nat_devices(store: &ConfigStore) -> Result<Vec<String>> {
+    nat_devices(store, &load_roles(store).await?).await
 }
 
 /// Resolve one interface field. `Ok(None)` = an unassigned role (skip the
@@ -226,6 +243,13 @@ impl FirewallApplier {
         let amap = alias_map(&aliases);
 
         let (mut nfilter, mut nnat, mut nsched) = (0usize, 0usize, 0usize);
+        // policy routing (lane E contract): gateway/group name -> mark
+        let marks = if lockdown {
+            Default::default()
+        } else {
+            patronus_config::policy::policy_marks(store).await?
+        };
+        let mut policy = String::new();
         for (rule, origin) in store.load_firewall_rules_with_origin().await? {
             if !rule.enabled || (lockdown && origin != RuleOrigin::System) {
                 continue;
@@ -275,6 +299,25 @@ impl FirewallApplier {
                                 script.push('\n');
                                 nfilter += 1;
                             }
+                            if let Some(g) = &rule.gateway {
+                                match marks.get(g) {
+                                    Some(m) => match render_policy_rule(&r, &amap, *m) {
+                                        Ok(pl) => {
+                                            for l in pl {
+                                                policy.push_str(&l);
+                                                policy.push('\n');
+                                            }
+                                        }
+                                        Err(e) => {
+                                            report.warn(format!("{label}: no policy routing ({e})"))
+                                        }
+                                    },
+                                    None => report.warn(format!(
+                                        "{label}: gateway {g:?} does not exist; its traffic \
+                                         follows the default route"
+                                    )),
+                                }
+                            }
                         }
                         Err(e) if rule.action == FirewallAction::Accept => {
                             report.warn(format!("{label} skipped (cannot render: {e})"));
@@ -291,6 +334,10 @@ impl FirewallApplier {
             }
         }
 
+        if !policy.is_empty() {
+            script.push_str(&policy_chain_script());
+            script.push_str(&policy);
+        }
         if !lockdown {
             let mode = outbound_nat_mode(store).await?;
             let mut forward_tail = String::new();
@@ -355,12 +402,7 @@ impl FirewallApplier {
                 // every WAN, plus every interface an IPv4 gateway sits behind
                 // (a second uplink on OPTn: multi-WAN, lane E) -- the
                 // pfSense rule "interfaces with a gateway get outbound NAT"
-                let mut nat_devs: Vec<String> = roles.get("wan").cloned().unwrap_or_default();
-                for dev in gateway_interfaces(store, &roles).await? {
-                    if !nat_devs.contains(&dev) {
-                        nat_devs.push(dev);
-                    }
-                }
+                let nat_devs = nat_devices(store, &roles).await?;
                 for wan in &nat_devs {
                     if !nftables::is_valid_interface_name(wan) {
                         report.warn(format!(
@@ -680,9 +722,9 @@ pub fn declarative_to_rules(
                     .map_err(|e| Error::Config(format!("{name}: {e}")))?,
                 ),
             };
-            if s.gateway.is_some() {
+            if s.gateway.is_some() && !matches!(s.action, RuleAction::Allow) {
                 return Err(Error::Config(format!(
-                    "{name}: policy routing (gateway) is not supported by the firewall applier yet"
+                    "{name}: a gateway (policy routing) needs action allow"
                 )));
             }
             let action = match s.action {
@@ -727,6 +769,10 @@ pub fn declarative_to_rules(
                         r.comment = Some(format!("gitops:{name}"));
                         r.log = s.log;
                         r.schedule = schedule.as_ref().map(|x| x.name.clone());
+                        // policy routing steers traffic entering the router
+                        if inbound && chain == ChainType::Forward {
+                            r.gateway = s.gateway.clone();
+                        }
                         out.push(r);
                     }
                 }
@@ -1055,6 +1101,77 @@ mod tests {
             .unwrap();
         let out = FirewallApplier.render(&s).await.unwrap();
         assert!(!out.contains("masquerade"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn rules_with_a_gateway_mark_their_traffic_for_policy_routing() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        sqlx::query(
+            "INSERT INTO route_gateways (name, interface, family, updated_at) VALUES ('WAN2', 'eth5', 'inet', 0)",
+        )
+        .execute(s.pool().unwrap())
+        .await
+        .unwrap();
+        let mut r = FirewallRule::new("pbr".into(), ChainType::Forward, FirewallAction::Accept);
+        r.interface_in = Some("@lan".into());
+        r.protocol = Some(Protocol::Tcp);
+        r.dport = Some(PortSpec::Single(8080));
+        r.gateway = Some("WAN2".into());
+        s.save_firewall_rule(&r).await.unwrap();
+        let mut ghost = r.clone();
+        ghost.name = "ghost".into();
+        ghost.gateway = Some("NOPE".into());
+        s.save_firewall_rule(&ghost).await.unwrap();
+        let mut drop = r.clone();
+        drop.name = "dropper".into();
+        drop.action = FirewallAction::Drop;
+        s.save_firewall_rule(&drop).await.unwrap();
+        let out = FirewallApplier.render_script(&s, false).await.unwrap();
+        let script = out.script;
+        assert!(
+            script.contains("add chain inet patronus pbr { type filter hook prerouting priority mangle; policy accept; }"),
+            "{script}"
+        );
+        assert_eq!(
+            script.matches("meta mark set").count(),
+            1,
+            "only the accept rule naming an existing gateway marks: {script}"
+        );
+        assert!(
+            script.contains(
+                "add rule inet patronus pbr iifname \"eth1\" tcp dport 8080 meta mark set 0x10001 comment \"policy route WAN2\""
+            ),
+            "{script}"
+        );
+        // the filter rule itself still passes the traffic
+        assert!(
+            script
+                .contains("add rule inet patronus forward iifname \"eth1\" tcp dport 8080 accept"),
+            "{script}"
+        );
+        let w = out.report.warnings.join("\n");
+        assert!(w.contains("gateway \"NOPE\" does not exist"), "{w}");
+        assert!(
+            w.contains("dropper") && w.contains("no policy routing"),
+            "{w}"
+        );
+        // no policy rules, no policy chain; lockdown never marks
+        let lock = FirewallApplier
+            .render_script(&s, true)
+            .await
+            .unwrap()
+            .script;
+        assert!(
+            !lock.contains("chain inet patronus pbr") && !lock.contains("meta mark"),
+            "{lock}"
+        );
+        let plain = seeded(&["eth0"], &["eth1"]).await;
+        let p = FirewallApplier
+            .render_script(&plain, false)
+            .await
+            .unwrap()
+            .script;
+        assert!(!p.contains("chain inet patronus pbr"), "{p}");
     }
 
     #[tokio::test]

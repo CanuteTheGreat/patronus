@@ -158,6 +158,11 @@ pub struct FirewallRule {
     /// imply, or both).
     #[serde(default)]
     pub ip_version: Option<IpVersion>,
+    /// Policy routing: send traffic this (accept) rule matches through this
+    /// gateway or gateway group (routing lane E) instead of the default
+    /// route.
+    #[serde(default)]
+    pub gateway: Option<String>,
 }
 
 impl FirewallRule {
@@ -179,6 +184,7 @@ impl FirewallRule {
             log: false,
             schedule: None,
             ip_version: None,
+            gateway: None,
         }
     }
 }

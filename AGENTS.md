@@ -110,8 +110,14 @@ config file that only one process knows about.
   Kernel routes Patronus owns carry route protocol 251 (static), 252
   (monitor host route) or 253 (default); the default lives in table 4250,
   reached through `ip rule` prefs 31000 (`lookup main
-  suppress_prefixlength 0`) and 31001 (`lookup 4250`), so it beats any
+  suppress_prefixlength 0`) and 31900 (`lookup 4250`), so it beats any
   main-table default whatever its metric while LAN/static routes still win.
+  Policy routing: every gateway / group also has a table numbered like its
+  firewall mark (`patronus_config::policy`: 0x10000+gateway id,
+  0x20000+group id) with `fwmark` rules from pref 31100; an accept rule
+  with `gateway` makes the firewall add `meta mark set` in the `pbr`
+  chain (prerouting, mangle priority). Patronus owns rule prefs
+  31000-31999 and removes anything else there.
   The gateway monitor (`routes::Monitor`) runs in `patronus applyd` (or in
   patronus-web when there is no applyd), pings once a second and re-applies
   the routes phase when a gateway's state or address changes. Interfaces

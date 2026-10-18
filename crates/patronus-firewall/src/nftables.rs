@@ -1,7 +1,9 @@
 //! nftables interaction layer
 
 use patronus_core::{
-    types::{FirewallAction, FirewallRule, IpVersion, NatRule, NatType, PortSpec, Protocol},
+    types::{
+        ChainType, FirewallAction, FirewallRule, IpVersion, NatRule, NatType, PortSpec, Protocol,
+    },
     Error, Result,
 };
 use std::process::Command;
@@ -443,6 +445,60 @@ pub fn render_filter_rule(rule: &FirewallRule, aliases: &AliasMap) -> Result<Vec
     Ok(lines)
 }
 
+/// Name of the chain that marks policy-routed traffic (prerouting, mangle
+/// priority: before the routing decision).
+pub const POLICY_CHAIN: &str = "pbr";
+
+/// The chain for [`render_policy_rule`] lines.
+pub fn policy_chain_script() -> String {
+    format!(
+        "add chain {TABLE_FAMILY} {TABLE_NAME} {POLICY_CHAIN} \
+         {{ type filter hook prerouting priority mangle; policy accept; }}\n"
+    )
+}
+
+/// Policy routing: the lines that mark the packets an accept rule with a
+/// gateway matches, so the routing decision uses that gateway's table
+/// (`fwmark` rule, routing lane E). Same matching as
+/// [`render_filter_rule`]; only traffic entering the router can be
+/// steered, so the rule must be an accept rule in the forward or input
+/// chain without an outbound interface.
+pub fn render_policy_rule(
+    rule: &FirewallRule,
+    aliases: &AliasMap,
+    mark: u32,
+) -> Result<Vec<String>> {
+    if rule.action != FirewallAction::Accept
+        || rule.chain == ChainType::Output
+        || rule.interface_out.is_some()
+    {
+        return Err(Error::Firewall(format!(
+            "Invalid rule {:?}: a gateway (policy routing) needs an accept rule for traffic \
+             entering the router, without an outbound interface",
+            rule.name
+        )));
+    }
+    let mut probe = rule.clone();
+    probe.log = false;
+    probe.comment = None;
+    probe.chain = ChainType::Forward;
+    let prefix = format!("add rule {TABLE_FAMILY} {TABLE_NAME} forward ");
+    render_filter_rule(&probe, aliases)?
+        .into_iter()
+        .map(|l| {
+            let m = l
+                .strip_prefix(&prefix)
+                .and_then(|x| x.strip_suffix(" accept"))
+                .ok_or_else(|| Error::Firewall(format!("unexpected rule rendering {l:?}")))?;
+            Ok(format!(
+                "add rule {TABLE_FAMILY} {TABLE_NAME} {POLICY_CHAIN} {m} meta mark set {mark:#x} \
+                 comment \"policy route {}\"",
+                rule.gateway.as_deref().unwrap_or("")
+            ))
+        })
+        .collect()
+}
+
 /// Convert a FirewallRule (without aliases) to nftables commands. Returns
 /// an error instead of building a script from a `source`/`destination`/
 /// `interface_in`/`interface_out` value that doesn't pass validation,
@@ -752,6 +808,54 @@ mod qa_regression_tests {
         );
         r.enabled = true;
         r
+    }
+
+    #[test]
+    fn policy_rules_match_like_the_filter_rule_and_set_the_mark() {
+        let mut r = base_rule();
+        r.chain = ChainType::Forward;
+        r.interface_in = Some("lan0".into());
+        r.source = Some("192.168.50.0/24".into());
+        r.protocol = Some(Protocol::Tcp);
+        r.dport = Some(PortSpec::Single(443));
+        r.log = true;
+        r.comment = Some("keep out of the mark rule".into());
+        r.gateway = Some("WAN2".into());
+        let l = render_policy_rule(&r, &AliasMap::new(), 0x1_0002).unwrap();
+        assert_eq!(
+            l,
+            vec!["add rule inet patronus pbr iifname \"lan0\" ip saddr 192.168.50.0/24 tcp dport 443 meta mark set 0x10002 comment \"policy route WAN2\""]
+        );
+        // input-chain accept rules can steer too (same match)
+        r.chain = ChainType::Input;
+        assert_eq!(
+            render_policy_rule(&r, &AliasMap::new(), 7).unwrap().len(),
+            1
+        );
+        for bad in [
+            {
+                let mut x = r.clone();
+                x.action = FirewallAction::Drop;
+                x
+            },
+            {
+                let mut x = r.clone();
+                x.chain = ChainType::Output;
+                x
+            },
+            {
+                let mut x = r.clone();
+                x.chain = ChainType::Forward;
+                x.interface_out = Some("wan0".into());
+                x
+            },
+        ] {
+            let e = render_policy_rule(&bad, &AliasMap::new(), 7)
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("Invalid rule"), "{e}");
+        }
+        assert!(policy_chain_script().contains("hook prerouting priority mangle"));
     }
 
     #[test]

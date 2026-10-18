@@ -87,7 +87,7 @@
                 <td>{{ rule.port }}</td>
                 <td>{{ rule.ip_version }}</td>
                 <td>{% if rule.log %}yes{% endif %}</td>
-                <td>{{ rule.schedule }}</td>
+                <td>{{ rule.schedule }}{% if !rule.gateway.is_empty() %}<br><span class="badge info" title="Policy routing: matching traffic leaves through this gateway">via {{ rule.gateway }}</span>{% endif %}</td>
                 <td>{% if rule.enabled %}<span class="badge success">On</span>{% else %}<span class="badge danger">Off</span>{% endif %}</td>
                 <td>
                     {% if rule.origin != "system" %}
@@ -149,6 +149,11 @@
                         <select name="schedule">
                             <option value="">always</option>
                             {% for s in schedules %}<option value="{{ s.name }}">{{ s.name }}</option>{% endfor %}
+                        </select></label>
+                    <label title="Policy routing (accept rules): send matching traffic out through this gateway or gateway group instead of the default route">Gateway
+                        <select name="gateway">
+                            <option value="">default route</option>
+                            {% for g in gateways %}<option value="{{ g }}">{{ g }}</option>{% endfor %}
                         </select></label>
                 </div>
                 <div class="row">
@@ -463,6 +468,7 @@ async function editRule(id) {
         f.elements['chain'].value = r.chain; f.elements['interface'].value = r.interface; f.elements['interface_out'].value = r.interface_out;
         f.elements['ip_version'].value = r.ip_version; f.elements['protocol'].value = r.protocol; f.elements['source'].value = r.source;
         f.elements['destination'].value = r.destination; f.elements['port'].value = r.port; f.elements['schedule'].value = r.schedule;
+        f.elements['gateway'].value = r.gateway || '';
         f.elements['description'].value = r.description; f.elements['log'].checked = r.log; f.elements['enabled'].checked = r.enabled;
         f.elements['before'].value = '';
         document.getElementById('rule-form-title').textContent = 'Edit rule #' + r.id;
@@ -481,6 +487,7 @@ function saveRule(ev) {
         ip_version: f.elements['ip_version'].value, protocol: f.elements['protocol'].value,
         source: f.elements['source'].value, destination: f.elements['destination'].value, port: f.elements['port'].value,
         schedule: f.elements['schedule'].value || null, description: f.elements['description'].value,
+        gateway: f.elements['gateway'].value || null,
         log: f.elements['log'].checked, enabled: f.elements['enabled'].checked,
     };
     if (f.elements['id'].value) return run(api('PUT', '/firewall/rules/' + f.elements['id'].value, body));

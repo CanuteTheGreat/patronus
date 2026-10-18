@@ -9,6 +9,7 @@ pub mod apply;
 pub mod declarative;
 pub mod defaults;
 pub mod migrate;
+pub mod policy;
 pub mod store;
 
 pub use applier::{Applier, ApplierOutcome, ApplierRegistry, ApplyReport, ApplyRunReport, Phase};

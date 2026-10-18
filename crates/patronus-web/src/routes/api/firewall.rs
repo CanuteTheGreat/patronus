@@ -69,6 +69,10 @@ pub struct FirewallRule {
     /// `ipv4`, `ipv6` or `any` (default: implied by the addresses).
     #[serde(default)]
     pub ip_version: Option<String>,
+    /// Policy routing: a gateway or gateway group (Routing page) that
+    /// traffic this accept rule matches is sent through.
+    #[serde(default)]
+    pub gateway: Option<String>,
     /// Create only: place the new rule just before rule `before`.
     #[serde(default)]
     pub before: Option<u32>,

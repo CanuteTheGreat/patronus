@@ -313,6 +313,12 @@ impl FirewallManager {
             log: rule.log,
             schedule,
             ip_version: parse_ip_version(rule.ip_version.as_deref())?,
+            gateway: rule
+                .gateway
+                .as_deref()
+                .map(str::trim)
+                .filter(|g| !g.is_empty())
+                .map(str::to_string),
         })
     }
 
@@ -329,6 +335,17 @@ impl FirewallManager {
         probe.enabled = true;
         patronus_firewall::nftables::render_filter_rule(&probe, &self.alias_map().await?)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        if let Some(g) = &core.gateway {
+            if !patronus_config::policy::policy_marks(&self.store)
+                .await
+                .map_err(Self::e)?
+                .contains_key(g)
+            {
+                anyhow::bail!("Invalid rule: gateway {g:?} does not exist (Routing page)");
+            }
+            patronus_firewall::nftables::render_policy_rule(&probe, &self.alias_map().await?, 1)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+        }
         if let Some(s) = &core.schedule {
             let all = schedule::load_schedules(&self.store)
                 .await
@@ -392,6 +409,7 @@ impl FirewallManager {
             origin: origin.as_str().to_string(),
             log: r.log,
             schedule: r.schedule.clone().unwrap_or_default(),
+            gateway: r.gateway.clone().unwrap_or_default(),
             ip_version: r
                 .ip_version
                 .map(|v| v.to_string())
@@ -906,10 +924,10 @@ impl FirewallManager {
         Ok(())
     }
 
-    /// Interfaces the automatic outbound NAT covers (the WAN role).
+    /// Interfaces the automatic outbound NAT covers: the WAN role plus
+    /// every interface an IPv4 gateway sits behind (Routing page).
     pub async fn auto_nat_interfaces(&self) -> anyhow::Result<Vec<String>> {
-        self.store
-            .interfaces_with_role("wan")
+        patronus_firewall::applier::auto_nat_devices(&self.store)
             .await
             .map_err(Self::e)
     }
@@ -1270,6 +1288,11 @@ impl FirewallManager {
             interfaces: self.interface_options().await?,
             outbound_mode: self.outbound_mode().await?.as_str().to_string(),
             auto_nat_interfaces: self.auto_nat_interfaces().await?.join(", "),
+            gateways: patronus_config::policy::policy_marks(&self.store)
+                .await
+                .map_err(Self::e)?
+                .into_keys()
+                .collect(),
         })
     }
 }
@@ -1366,6 +1389,7 @@ mod tests {
             log: false,
             schedule: None,
             ip_version: None,
+            gateway: None,
             before: None,
         }
     }

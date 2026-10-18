@@ -276,8 +276,8 @@ impl ConfigStore {
             "INSERT INTO firewall_rules
              (id, name, enabled, chain, action, source, destination, protocol, sport, dport,
               interface_in, interface_out, comment, priority, origin, created_at, updated_at,
-              log, schedule, ip_version)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              log, schedule, ip_version, gateway)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(rule.id.map(|i| i as i64))
         .bind(&rule.name)
@@ -299,6 +299,7 @@ impl ConfigStore {
         .bind(rule.log as i32)
         .bind(&rule.schedule)
         .bind(rule.ip_version.map(|v| v.to_string()))
+        .bind(&rule.gateway)
         .execute(self.pool()?)
         .await
         .map_err(db_err("Failed to save firewall rule"))?;
@@ -382,7 +383,7 @@ impl ConfigStore {
             "UPDATE firewall_rules SET name = ?, enabled = ?, chain = ?, action = ?, source = ?,
                  destination = ?, protocol = ?, sport = ?, dport = ?, interface_in = ?,
                  interface_out = ?, comment = ?, updated_at = ?, log = ?, schedule = ?,
-                 ip_version = ?
+                 ip_version = ?, gateway = ?
              WHERE id = ?",
         )
         .bind(&rule.name)
@@ -401,6 +402,7 @@ impl ConfigStore {
         .bind(rule.log as i32)
         .bind(&rule.schedule)
         .bind(rule.ip_version.map(|v| v.to_string()))
+        .bind(&rule.gateway)
         .bind(id as i64)
         .execute(self.pool()?)
         .await
@@ -433,7 +435,7 @@ impl ConfigStore {
         let rows = sqlx::query(
             "SELECT id, name, enabled, chain, action, source, destination, protocol,
                     sport, dport, interface_in, interface_out, comment, origin,
-                    log, schedule, ip_version
+                    log, schedule, ip_version, gateway
              FROM firewall_rules
              ORDER BY priority ASC, id ASC",
         )
@@ -481,6 +483,7 @@ impl ConfigStore {
                     comment: row.get("comment"),
                     log: row.get::<i32, _>("log") != 0,
                     schedule: row.get("schedule"),
+                    gateway: row.get("gateway"),
                     // An unknown family must not load as "both families"
                     // (that would widen an accept rule): fail closed.
                     ip_version: match row.get::<Option<String>, _>("ip_version").as_deref() {
@@ -1640,6 +1643,38 @@ mod tests {
             assert_eq!(got.ip_version, v);
             assert_eq!(got.log, r.log, "log flag round trips");
         }
+        // policy routing gateway: stored on insert and on update
+        let mut r = rule("pbr");
+        r.gateway = Some("WAN2".into());
+        let id = s.save_firewall_rule(&r).await.unwrap() as u64;
+        assert_eq!(
+            s.get_firewall_rule(id)
+                .await
+                .unwrap()
+                .unwrap()
+                .0
+                .gateway
+                .as_deref(),
+            Some("WAN2")
+        );
+        r.gateway = Some("FAILOVER".into());
+        s.update_firewall_rule(id, &r).await.unwrap();
+        assert_eq!(
+            s.get_firewall_rule(id)
+                .await
+                .unwrap()
+                .unwrap()
+                .0
+                .gateway
+                .as_deref(),
+            Some("FAILOVER")
+        );
+        r.gateway = None;
+        s.update_firewall_rule(id, &r).await.unwrap();
+        assert_eq!(
+            s.get_firewall_rule(id).await.unwrap().unwrap().0.gateway,
+            None
+        );
     }
 
     #[tokio::test]

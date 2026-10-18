@@ -60,11 +60,19 @@ pub const DEFAULT_METRIC: u32 = 1;
 /// `suppress_prefixlength 0` pattern wg-quick uses:
 ///   pref [`RULE_PREF_MAIN`]   lookup main suppress_prefixlength 0
 ///   pref [`RULE_PREF_TABLE`]  lookup [`DEFAULT_TABLE`]
-/// Without a default gateway set, both rules and the table are removed and
+/// Without a default gateway set, that rule and the table are removed and
 /// the main table's per-interface defaults route as before.
+///
+/// Policy routing: every gateway and gateway group also gets its own table
+/// (numbered like its firewall mark, `patronus_config::policy`) with a
+/// default route through it, reached by `fwmark <mark> lookup <mark>` rules
+/// from [`RULE_PREF_POLICY`] on; firewall rules with a gateway set the mark.
 pub const DEFAULT_TABLE: u32 = 4250;
 pub const RULE_PREF_MAIN: u32 = 31000;
-pub const RULE_PREF_TABLE: u32 = 31001;
+pub const RULE_PREF_POLICY: u32 = 31100;
+pub const RULE_PREF_TABLE: u32 = 31900;
+/// Priorities Patronus owns (rules outside are never touched).
+const RULE_PREFS: std::ops::RangeInclusive<u32> = 31000..=31999;
 const MAIN_TABLE: u32 = 254;
 const OUR_PROTOS: [&str; 3] = [STATIC_PROTO, MONITOR_PROTO, DEFAULT_PROTO];
 
@@ -202,6 +210,8 @@ pub struct RoutingConfig {
     pub routes: Vec<StaticRoute>,
     pub default4: Option<String>,
     pub default6: Option<String>,
+    /// Firewall mark (= routing table) per gateway / group name.
+    pub marks: BTreeMap<String, u32>,
 }
 
 impl RoutingConfig {
@@ -331,6 +341,7 @@ pub async fn load(store: &ConfigStore) -> Result<RoutingConfig> {
             enabled: r.get::<i64, _>(7) != 0,
         });
     }
+    c.marks = patronus_config::policy::policy_marks(store).await?;
     let setting = |v: Option<String>| v.filter(|s| !s.trim().is_empty());
     c.default4 = setting(store.load_system_config(DEFAULT_GW4_KEY).await?);
     c.default6 = setting(store.load_system_config(DEFAULT_GW6_KEY).await?);
@@ -1439,6 +1450,13 @@ pub fn parse_owned(json: &str, v6: bool, proto: &str, table: u32) -> Result<Vec<
                 weight: 1,
             }],
         };
+        // `table all` listings name the table of every non-main route
+        let table = match r.get("table") {
+            Some(Value::Number(n)) => n.as_u64().map(|n| n as u32).unwrap_or(table),
+            Some(Value::String(t)) if t == "main" => MAIN_TABLE,
+            Some(Value::String(t)) => t.parse().unwrap_or(table),
+            _ => table,
+        };
         let k = KRoute {
             v6,
             dst: norm_dst(&dst, v6),
@@ -1580,6 +1598,49 @@ pub fn desired(
             });
         }
     }
+    // policy routing: one table per gateway / group, numbered like its mark
+    for g in &cfg.gateways {
+        let (Some(&mark), Some(h)) = (
+            cfg.marks.get(&g.name),
+            resolved.get(&g.name).and_then(|r| hop_for(&g.name, r, 1)),
+        ) else {
+            continue;
+        };
+        d.routes.push(KRoute {
+            v6: g.family.v6(),
+            dst: "default".into(),
+            metric: DEFAULT_METRIC,
+            proto: DEFAULT_PROTO.into(),
+            table: mark,
+            hops: vec![h],
+        });
+    }
+    if MULTIWAN {
+        for g in &cfg.groups {
+            let (Some(&mark), Some(fam)) = (cfg.marks.get(&g.name), group_family(cfg, g)) else {
+                continue;
+            };
+            let hops: Vec<Hop> = select_members(g, resolved, status)
+                .into_iter()
+                .filter_map(|m| {
+                    resolved
+                        .get(&m.gateway)
+                        .and_then(|r| hop_for(&m.gateway, r, m.weight))
+                })
+                .collect();
+            if hops.is_empty() {
+                continue;
+            }
+            d.routes.push(KRoute {
+                v6: fam.v6(),
+                dst: "default".into(),
+                metric: DEFAULT_METRIC,
+                proto: DEFAULT_PROTO.into(),
+                table: mark,
+                hops,
+            });
+        }
+    }
     // monitor host routes: probes for a monitor IP leave via that gateway
     for g in &cfg.gateways {
         let (Some(mon), Some(r)) = (g.monitor_ip, resolved.get(&g.name)) else {
@@ -1682,16 +1743,39 @@ pub fn diff(want: &[KRoute], have: &[KRoute]) -> Vec<Vec<String>> {
     ops
 }
 
-/// One of our two policy rules as the kernel lists it.
+/// A routing policy rule in Patronus' priority range, as the kernel lists
+/// it or as wanted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KRule {
     pub v6: bool,
     pub pref: u32,
+    /// Table name or number (`main`, `4250`, `65537`).
     pub table: String,
     pub suppress: Option<u64>,
+    pub fwmark: Option<u32>,
 }
 
-/// Parse `ip -j rule show`, keeping only the priorities Patronus uses.
+impl KRule {
+    fn add_args(&self) -> Vec<String> {
+        let mut a = argv(&[
+            if self.v6 { "-6" } else { "-4" },
+            "rule",
+            "add",
+            "pref",
+            &self.pref.to_string(),
+        ]);
+        if let Some(m) = self.fwmark {
+            a.extend(argv(&["fwmark", &format!("{m:#x}")]));
+        }
+        a.extend(argv(&["lookup", &self.table]));
+        if let Some(sp) = self.suppress {
+            a.extend(argv(&["suppress_prefixlength", &sp.to_string()]));
+        }
+        a
+    }
+}
+
+/// Parse `ip -j rule show`, keeping only the priorities Patronus owns.
 pub fn parse_rules(json: &str, v6: bool) -> Result<Vec<KRule>> {
     if json.trim().is_empty() {
         return Ok(Vec::new());
@@ -1701,7 +1785,7 @@ pub fn parse_rules(json: &str, v6: bool) -> Result<Vec<KRule>> {
     Ok(v.iter()
         .filter_map(|r| {
             let pref = r.get("priority").and_then(Value::as_u64)? as u32;
-            if pref != RULE_PREF_MAIN && pref != RULE_PREF_TABLE {
+            if !RULE_PREFS.contains(&pref) {
                 return None;
             }
             Some(KRule {
@@ -1716,61 +1800,105 @@ pub fn parse_rules(json: &str, v6: bool) -> Result<Vec<KRule>> {
                     .get("suppress_prefixlen")
                     .or_else(|| r.get("suppress_prefixlength"))
                     .and_then(Value::as_u64),
+                fwmark: match r.get("fwmark") {
+                    Some(Value::String(m)) => m
+                        .strip_prefix("0x")
+                        .and_then(|h| u32::from_str_radix(h, 16).ok())
+                        .or_else(|| m.parse().ok()),
+                    Some(Value::Number(n)) => n.as_u64().map(|n| n as u32),
+                    _ => None,
+                },
             })
         })
         .collect())
 }
 
-/// The `ip rule` calls that make the policy rules match: present for a
-/// family exactly when it has a Patronus default route.
-pub fn rule_ops(want: &[bool; 2], have: &[KRule]) -> Vec<Vec<String>> {
+/// The policy rules the desired routes need, per family: the main-table
+/// rule ahead of everything else, one fwmark rule per policy table, then
+/// the default-gateway table.
+pub fn wanted_rules(d: &Desired) -> Vec<KRule> {
+    let mut out = Vec::new();
+    for v6 in [false, true] {
+        let mut tables: Vec<u32> = d
+            .routes
+            .iter()
+            .filter(|r| r.v6 == v6 && r.table != MAIN_TABLE && r.table != DEFAULT_TABLE)
+            .map(|r| r.table)
+            .collect();
+        tables.sort();
+        tables.dedup();
+        let default = d
+            .routes
+            .iter()
+            .any(|r| r.v6 == v6 && r.table == DEFAULT_TABLE);
+        if tables.is_empty() && !default {
+            continue;
+        }
+        out.push(KRule {
+            v6,
+            pref: RULE_PREF_MAIN,
+            table: "main".into(),
+            suppress: Some(0),
+            fwmark: None,
+        });
+        for (i, t) in tables.into_iter().enumerate() {
+            let pref = RULE_PREF_POLICY + i as u32;
+            if pref >= RULE_PREF_TABLE {
+                break;
+            }
+            out.push(KRule {
+                v6,
+                pref,
+                table: t.to_string(),
+                suppress: None,
+                fwmark: Some(t),
+            });
+        }
+        if default {
+            out.push(KRule {
+                v6,
+                pref: RULE_PREF_TABLE,
+                table: DEFAULT_TABLE.to_string(),
+                suppress: None,
+                fwmark: None,
+            });
+        }
+    }
+    out
+}
+
+/// The `ip rule` calls that turn `have` (rules in Patronus' priority range)
+/// into `want`.
+pub fn rule_ops(want: &[KRule], have: &[KRule]) -> Vec<Vec<String>> {
     let mut ops = Vec::new();
-    for (i, v6) in [false, true].into_iter().enumerate() {
+    for v6 in [false, true] {
         let fam = if v6 { "-6" } else { "-4" };
-        let table = DEFAULT_TABLE.to_string();
-        let specs: [(u32, Vec<&str>, &str, Option<u64>); 2] = [
-            (
-                RULE_PREF_MAIN,
-                vec!["lookup", "main", "suppress_prefixlength", "0"],
-                "main",
-                Some(0),
-            ),
-            (
-                RULE_PREF_TABLE,
-                vec!["lookup", table.as_str()],
-                table.as_str(),
-                None,
-            ),
-        ];
-        for (pref, args, t, sup) in specs {
+        let prefs: BTreeSet<u32> = want
+            .iter()
+            .chain(have.iter())
+            .filter(|r| r.v6 == v6)
+            .map(|r| r.pref)
+            .collect();
+        for pref in prefs {
+            let w = want.iter().find(|r| r.v6 == v6 && r.pref == pref);
             let mine: Vec<&KRule> = have
                 .iter()
                 .filter(|r| r.v6 == v6 && r.pref == pref)
                 .collect();
-            let exact = mine.len() == 1 && mine[0].table == t && mine[0].suppress == sup;
-            if want[i] && exact {
-                continue;
+            if let Some(w) = w {
+                if mine.len() == 1 && mine[0] == w {
+                    continue;
+                }
             }
             for _ in &mine {
                 ops.push(argv(&[fam, "rule", "del", "pref", &pref.to_string()]));
             }
-            if want[i] {
-                let mut a = argv(&[fam, "rule", "add", "pref", &pref.to_string()]);
-                a.extend(args.iter().map(|x| x.to_string()));
-                ops.push(a);
+            if let Some(w) = w {
+                ops.push(w.add_args());
             }
         }
     }
     ops
-}
-
-fn wanted_rules(d: &Desired) -> [bool; 2] {
-    let has = |v6: bool| {
-        d.routes
-            .iter()
-            .any(|r| r.table == DEFAULT_TABLE && r.v6 == v6)
-    };
-    [has(false), has(true)]
 }
 
 // ===========================================================================
@@ -1820,12 +1948,12 @@ impl RoutesApplier {
 
     async fn owned_routes(&self) -> Result<Vec<KRoute>> {
         let mut v = Vec::new();
-        let dt = DEFAULT_TABLE.to_string();
         for (v6, fam) in [(false, "-4"), (true, "-6")] {
+            // default routes live in the default-gateway and policy tables
             for (p, table) in [
                 (STATIC_PROTO, "main"),
                 (MONITOR_PROTO, "main"),
-                (DEFAULT_PROTO, dt.as_str()),
+                (DEFAULT_PROTO, "all"),
             ] {
                 let out = self
                     .cmd
@@ -1834,13 +1962,8 @@ impl RoutesApplier {
                         &argv(&["-j", fam, "route", "show", "table", table, "proto", p]),
                     )
                     .await;
-                let t = if table == "main" {
-                    MAIN_TABLE
-                } else {
-                    DEFAULT_TABLE
-                };
                 match out {
-                    Ok(o) => v.extend(parse_owned(&o, v6, p, t)?),
+                    Ok(o) => v.extend(parse_owned(&o, v6, p, MAIN_TABLE)?),
                     // our table is only created with the first default route
                     Err(e) if e.to_string().contains("table does not exist") => {}
                     // IPv6 disabled on this box: nothing of ours there
@@ -1895,30 +2018,34 @@ impl RoutesApplier {
     /// Load balancing spreads flows by ports too, not only by address pair
     /// (one client talking to one server would otherwise never spread).
     fn multipath_hashing(&self, d: &Desired, rep: &mut ApplyReport) {
-        if !d.routes.iter().any(|r| r.hops.len() > 1) {
-            return;
-        }
-        // replies of a load-balanced flow come back on the uplink it left
-        // by, which strict reverse-path filtering would drop
+        // With two or more uplinks (load balancing or policy routing) a
+        // flow's replies come back on the uplink it left by, which is not
+        // always the one the main default route names: strict
+        // reverse-path filtering would drop them.
         let devs: BTreeSet<&str> = d
             .routes
             .iter()
-            .filter(|r| r.hops.len() > 1 && !r.v6)
+            .filter(|r| r.table != MAIN_TABLE && !r.v6)
             .flat_map(|r| r.hops.iter().filter_map(|h| h.dev.as_deref()))
             .collect();
-        for dev in devs {
-            let p = self.proc_sys.join(format!("net/ipv4/conf/{dev}/rp_filter"));
-            if std::fs::read_to_string(&p)
-                .map(|s| s.trim() == "1")
-                .unwrap_or(false)
-            {
-                match std::fs::write(&p, "2") {
-                    Ok(()) => {
-                        rep.applied(format!("{dev}: loose reverse-path filter (rp_filter=2)"))
+        if devs.len() >= 2 {
+            for dev in devs {
+                let p = self.proc_sys.join(format!("net/ipv4/conf/{dev}/rp_filter"));
+                if std::fs::read_to_string(&p)
+                    .map(|s| s.trim() == "1")
+                    .unwrap_or(false)
+                {
+                    match std::fs::write(&p, "2") {
+                        Ok(()) => {
+                            rep.applied(format!("{dev}: loose reverse-path filter (rp_filter=2)"))
+                        }
+                        Err(e) => rep.warn(format!("{}: {e}", p.display())),
                     }
-                    Err(e) => rep.warn(format!("{}: {e}", p.display())),
                 }
             }
+        }
+        if !d.routes.iter().any(|r| r.hops.len() > 1) {
+            return;
         }
         for fam in ["ipv4", "ipv6"] {
             let p = self
@@ -2097,7 +2224,7 @@ impl Applier for RoutesApplier {
     }
 
     async fn teardown(&self) -> Result<()> {
-        for op in rule_ops(&[false, false], &self.owned_rules().await?) {
+        for op in rule_ops(&[], &self.owned_rules().await?) {
             self.cmd.run("ip", &op).await?;
         }
         for h in self.owned_routes().await? {

@@ -21,6 +21,8 @@
 #    returns to WAN1
 #  - load balancing: both in tier 1 -> one multipath default route, port
 #    hashing on, connections from one client spread over both uplinks
+#  - policy routing: a firewall rule with a gateway sends one service out
+#    WAN2 while everything else uses the default gateway; survives reboot
 #  - static routes via an IP and via a gateway name reach the kernel (proto
 #    251); bad input and deleting a gateway in use are refused (400)
 #  - reboot (fresh namespaces + `patronus apply`) rebuilds all of it; a
@@ -137,7 +139,7 @@ must 201 POST /routing/groups '{"name":"FAILOVER","members":"WAN1:1, WAN2:2","tr
 must 200 PUT /routing/default '{"ipv4":"FAILOVER"}'
 via_is 'via 203.0.113.1 dev rtr-wan' || fail "default via group: $(default_via)"
 rules=$(R ip -4 rule show)
-grep -q '^31000:.*lookup main suppress_prefixlength 0' <<<"$rules" && grep -q '^31001:.*lookup 4250' <<<"$rules" \
+grep -q '^31000:.*lookup main suppress_prefixlength 0' <<<"$rules" && grep -q '^31900:.*lookup 4250' <<<"$rules" \
   || fail "policy rules: $rules"
 [ "$(who)" = "$NL_RTR_WAN" ] || fail "LAN should leave via WAN1"
 nl_ok "default gateway FAILOVER: tier 1 (WAN1) carries the traffic"
@@ -167,6 +169,22 @@ nl_ok "load balancing: 40 connections from one client used both uplinks"
 must 200 PUT /routing/groups/FAILOVER '{"name":"FAILOVER","members":"WAN1:1, WAN2:2","trigger":"down"}'
 via_is 'via 203.0.113.1 dev rtr-wan' || fail "back to failover: $(default_via)"
 
+# --- 4b. policy routing: one service via WAN2 while the default is WAN1 ----
+who8080() { C curl -s --max-time 4 "http://$NL_WWW:8080/" | awk '{print $3}'; }
+[ "$(who8080)" = "$NL_RTR_WAN" ] || fail ":8080 should leave via WAN1 before the policy rule"
+must 201 POST /firewall/rules '{"name":"pbr-8080","chain":"forward","action":"accept","interface":"@lan","protocol":"tcp","source":"any","destination":"198.51.100.10","port":"8080","description":"pbr-8080","enabled":true,"gateway":"WAN2"}'
+PBR_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$NL_OUT")
+pol=$(R nft list chain inet patronus pbr 2>&1)
+grep -qE 'meta mark set 0x0*10002' <<<"$pol" || fail "pbr chain: $pol"
+R ip -4 rule show | grep -q 'fwmark 0x10002 lookup 65538' || fail "no fwmark rule for WAN2: $(R ip -4 rule show)"
+got=$(who8080)
+[ "$got" = 100.64.0.2 ] || fail "policy rule: :8080 should leave via WAN2, got '$got'"
+[ "$(who)" = "$NL_RTR_WAN" ] || fail "policy rule: :80 should still leave via WAN1"
+nl_ok "policy routing: :8080 leaves via WAN2 (sees 100.64.0.2) while :80 stays on WAN1"
+must 400 POST /firewall/rules '{"name":"pbr-bad","chain":"forward","action":"accept","interface":"@lan","protocol":"tcp","destination":"198.51.100.10","port":"8081","description":"x","enabled":true,"gateway":"NOSUCH"}'
+must 400 POST /firewall/rules '{"name":"pbr-drop","chain":"forward","action":"drop","interface":"@lan","protocol":"tcp","destination":"198.51.100.10","port":"8082","description":"x","enabled":true,"gateway":"WAN2"}'
+nl_ok "a policy rule naming no gateway, or a drop rule with a gateway, is refused (400)"
+
 # --- 5. static routes -------------------------------------------------------
 C ip addr add 10.77.0.1/32 dev lo
 must 201 POST /routing/routes '{"destination":"10.77.0.0/24","gateway":"192.168.50.10","description":"lab behind client"}'
@@ -193,7 +211,8 @@ via_is 'via 203.0.113.1 dev rtr-wan' || fail "default after reboot: $(default_vi
 R ip -4 route show proto 251 | grep -q '10.77.0.0/24 via 192.168.50.10' || fail "static route lost on reboot"
 R ip -4 route show proto 252 | grep -q '192.0.2.10 via 100.64.0.1' || fail "monitor route lost on reboot"
 [ "$(who)" = "$NL_RTR_WAN" ] || fail "after reboot the LAN should leave via WAN1"
-nl_ok "reboot: patronus apply rebuilt the default gateway group, static and monitor routes"
+[ "$(who8080)" = 100.64.0.2 ] || fail "after reboot the policy rule should still send :8080 via WAN2"
+nl_ok "reboot: patronus apply rebuilt the default gateway group, policy routing, static and monitor routes"
 nl_apply "$DB" --phase routes || { cat "$NL_OUT"; fail "second apply"; }
 grep -q 'routes up to date' "$NL_OUT" || { cat "$NL_OUT"; fail "second apply was not a no-op"; }
 nl_ok "a second apply changes nothing"
@@ -214,7 +233,12 @@ nl_web_start "$DB"; nl_login
 must 200 PUT /routing/default '{"ipv4":""}'
 [ -z "$(default_via)" ] || fail "Default = automatic left a Patronus default route: $(default_via)"
 rules=$(R ip -4 rule show)
-if grep -qE '^3100[01]:' <<<"$rules"; then fail "policy rules left behind: $rules"; fi
+if grep -qE '^31900:' <<<"$rules"; then fail "default-gateway rule left behind: $rules"; fi
 [ "$(who)" = "$NL_RTR_WAN" ] || fail "automatic: WAN1 (role WAN, metric 100) should win"
+[ "$(who8080)" = 100.64.0.2 ] || fail "policy routing does not depend on a default gateway"
+must 200 DELETE "/firewall/rules/$PBR_ID"
+[ "$(who8080)" = "$NL_RTR_WAN" ] || fail "rule deleted: :8080 should follow the default route again"
+nl_assert_nft_lacks 'meta mark set'
+nl_ok "deleting the policy rule sends :8080 back to the default route"
 nl_ok "Default gateway automatic: Patronus' default route is gone, WAN keeps routing"
 echo "lane-e-routing: all checks passed"

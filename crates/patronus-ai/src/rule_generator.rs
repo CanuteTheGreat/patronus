@@ -174,6 +174,7 @@ impl RuleGenerator {
                     log: false,
                     schedule: None,
                     ip_version: None,
+                    gateway: None,
                 })
             }
 
@@ -196,6 +197,7 @@ impl RuleGenerator {
                     log: false,
                     schedule: None,
                     ip_version: None,
+                    gateway: None,
                 })
             }
 
@@ -218,6 +220,7 @@ impl RuleGenerator {
                     log: false,
                     schedule: None,
                     ip_version: None,
+                    gateway: None,
                 })
             }
 
@@ -240,6 +243,7 @@ impl RuleGenerator {
                     log: false,
                     schedule: None,
                     ip_version: None,
+                    gateway: None,
                 })
             }
         }
@@ -395,6 +399,7 @@ impl RuleGenerator {
                 log: false,
                 schedule: None,
                 ip_version: None,
+                gateway: None,
             };
 
             let auto_rule = AutoRule {

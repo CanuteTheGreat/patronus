@@ -76,6 +76,9 @@ that are not finished are listed separately under
 - Static routes go via an IP address or a named gateway, and all routing
   configuration survives a reboot (`patronus apply` rebuilds it; applying
   again changes nothing). [C30]
+- Policy routing: a firewall pass rule can name a gateway or group, and the
+  traffic it matches leaves through that uplink while everything else
+  follows the default gateway. [C31]
 
 ### LAN services (DHCP, DNS, NTP)
 
@@ -141,8 +144,7 @@ They are being wired up one subsystem at a time; each moves to
 - Firewall: GeoIP/threat-feed blocking, URL-table aliases, IPv6 NPt.
 - LAN services: DNS over TLS upstreams, DHCP-registered hostnames in DNS,
   captive portal.
-- Routing: policy routing (send matching traffic out a chosen gateway),
-  DHCPv6 prefix delegation on the WAN, dynamic routing via FRR.
+- Routing: DHCPv6 prefix delegation on the WAN, dynamic routing via FRR.
 - VPN: WireGuard, IPsec, OpenVPN.
 - Firewall HA (VRRP + state sync), users and 2FA, web-UI backups, services
   control, metrics/alerts, diagnostics, captive portal, IDS/IPS, traffic
