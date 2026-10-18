@@ -4,9 +4,9 @@ This directory contains integration tests for the Patronus Kubernetes Operator.
 
 ## Test Organization
 
-- `site_lifecycle_test.rs` - Site CRD create/update/delete lifecycle tests
-- `policy_lifecycle_test.rs` - Policy CRD lifecycle and priority tests
-- `health_check_test.rs` - Health check endpoint E2E tests
+- `it/site_lifecycle_test.rs` - Site CRD create/update/delete lifecycle tests
+- `it/policy_lifecycle_test.rs` - Policy CRD lifecycle and priority tests
+- `it/health_check_test.rs` - Health check endpoint E2E tests
 
 ## Running Tests
 

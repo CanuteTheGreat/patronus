@@ -33,6 +33,10 @@ strip = true
 # Optimized dev builds for faster iteration
 [profile.dev]
 opt-level = 1
+# Line tables only (backtraces keep file:line). Full DWARF made every test
+# binary several times larger: the workspace test build wrote ~20 GB of
+# target/ and was the CI memory peak (~/.hermes/state/build-slimming/patronus.md).
+debug = "line-tables-only"
 
 # Build scripts and proc-macros
 [profile.release.build-override]
