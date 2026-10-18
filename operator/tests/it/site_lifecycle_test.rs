@@ -208,7 +208,15 @@ async fn test_multiple_sites() {
         .await
         .expect("Failed to list sites");
 
-    assert!(site_list.items.len() >= 3);
+    let names: Vec<String> = site_list.items.iter().map(|s| s.name_any()).collect();
+    for i in 1..=3 {
+        assert!(
+            names.contains(&format!("test-site-{}", i)),
+            "test-site-{} missing from the site list: {:?}",
+            i,
+            names
+        );
+    }
 
     // Cleanup
     for i in 1..=3 {
@@ -216,4 +224,89 @@ async fn test_multiple_sites() {
             .delete(&format!("test-site-{}", i), &DeleteParams::default())
             .await;
     }
+}
+
+/// The operator must settle: once a Site's status says what the last
+/// reconcile found, nothing more is written. Rewriting the status (with a
+/// fresh lastTransitionTime) on every reconcile re-triggered the controller's
+/// own watch, so every Site was reconciled -- and the Patronus API called --
+/// every few milliseconds, forever.
+#[tokio::test]
+#[ignore] // Requires Kubernetes cluster
+async fn test_site_status_settles() {
+    let client = Client::try_default()
+        .await
+        .expect("Failed to create client");
+
+    let namespaces: Api<Namespace> = Api::all(client.clone());
+    let test_ns = Namespace {
+        metadata: k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta {
+            name: Some("test-operator".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let _ = namespaces.create(&PostParams::default(), &test_ns).await;
+
+    let sites: Api<Site> = Api::namespaced(client.clone(), "test-operator");
+    let site = Site::new(
+        "test-site-settle",
+        SiteSpec {
+            location: Some("Settle".to_string()),
+            wireguard: WireGuardConfig {
+                public_key: "YjE2OTNkMWQxYzYwZGU3ZWZhMDU4MWU3YzU4MTU4MD0=".to_string(),
+                listen_port: 51830,
+                endpoints: vec!["203.0.113.30:51830".to_string()],
+            },
+            resources: None,
+            mesh: None,
+        },
+    );
+    sites
+        .create(&PostParams::default(), &site)
+        .await
+        .expect("Failed to create site");
+
+    // Wait for the operator's first status write.
+    let mut reconciled = false;
+    for _ in 0..60 {
+        let s = sites
+            .get("test-site-settle")
+            .await
+            .expect("Failed to get site");
+        if s.status.as_ref().and_then(|st| st.phase.as_ref()).is_some() {
+            reconciled = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    assert!(
+        reconciled,
+        "operator never wrote a status for test-site-settle"
+    );
+
+    // Give any follow-up reconcile (triggered by that status write) time to
+    // run, then the object must stay put.
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    let before = sites
+        .get("test-site-settle")
+        .await
+        .expect("Failed to get site");
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    let after = sites
+        .get("test-site-settle")
+        .await
+        .expect("Failed to get site");
+
+    let _ = sites
+        .delete("test-site-settle", &DeleteParams::default())
+        .await;
+
+    assert_eq!(
+        before.resource_version(),
+        after.resource_version(),
+        "Site status keeps being rewritten with nothing changed (status before: {:?}, after: {:?})",
+        before.status,
+        after.status
+    );
 }

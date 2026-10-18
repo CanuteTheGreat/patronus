@@ -85,7 +85,7 @@ pub async fn reconcile(site: Arc<Site>, ctx: Arc<Context>) -> Result<Action, Sit
 
         update_site_status(
             &sites,
-            &site_name,
+            &site,
             SitePhase::Failed,
             &format!("Invalid specification: {}", e),
         )
@@ -101,14 +101,14 @@ pub async fn reconcile(site: Arc<Site>, ctx: Arc<Context>) -> Result<Action, Sit
     let result = match create_or_update_patronus_site(&site, &ctx).await {
         Ok(_) => {
             info!("Successfully created/updated site in Patronus");
-            update_site_status(&sites, &site_name, SitePhase::Active, "Site is active").await?;
+            update_site_status(&sites, &site, SitePhase::Active, "Site is active").await?;
             Ok(Action::requeue(Duration::from_secs(300)))
         }
         Err(e) => {
             error!("Failed to create/update site in Patronus: {}", e);
             update_site_status(
                 &sites,
-                &site_name,
+                &site,
                 SitePhase::Failed,
                 &format!("Failed to create/update: {}", e),
             )
@@ -270,35 +270,85 @@ async fn delete_patronus_site(site_name: &str, ctx: &Context) -> Result<(), Site
     Ok(())
 }
 
-/// Update site status
+/// The status a reconcile should write, or `None` when `current` already says
+/// the same thing.
+///
+/// Every status patch bumps the object's resourceVersion, and the controller
+/// watches the Site itself, so a patch triggers another reconcile. Writing an
+/// unchanged status (with a fresh timestamp) on every pass therefore looped
+/// forever: each Site was reconciled, and the Patronus API called, every few
+/// milliseconds. `lastTransitionTime` now only moves when the Ready condition
+/// actually transitions, and an unchanged status is not written at all.
+fn desired_site_status(
+    current: Option<&SiteStatus>,
+    phase: SitePhase,
+    message: &str,
+    now: &str,
+) -> Option<SiteStatus> {
+    let ready = if phase == SitePhase::Active {
+        ConditionStatus::True
+    } else {
+        ConditionStatus::False
+    };
+    let current_ready = current.and_then(|s| s.conditions.iter().find(|c| c.type_ == "Ready"));
+
+    let unchanged = matches!(
+        (current, current_ready),
+        (Some(cur), Some(cond))
+            if cur.phase.as_ref() == Some(&phase)
+                && cond.status == ready
+                && cond.reason.as_deref() == Some("Reconciled")
+                && cond.message.as_deref() == Some(message)
+    );
+    if unchanged {
+        return None;
+    }
+
+    let last_transition_time = match current_ready {
+        Some(cond) if cond.status == ready && cond.last_transition_time.is_some() => {
+            cond.last_transition_time.clone()
+        }
+        _ => Some(now.to_string()),
+    };
+
+    Some(SiteStatus {
+        phase: Some(phase),
+        conditions: vec![SiteCondition {
+            type_: "Ready".to_string(),
+            status: ready,
+            last_transition_time,
+            reason: Some("Reconciled".to_string()),
+            message: Some(message.to_string()),
+        }],
+        peers: None,
+        active_paths: None,
+        health_score: None,
+    })
+}
+
+/// Update site status (no-op when it is already up to date)
 async fn update_site_status(
     sites: &Api<Site>,
-    name: &str,
+    site: &Site,
     phase: SitePhase,
     message: &str,
 ) -> Result<(), SiteError> {
-    let status = json!({
-        "status": SiteStatus {
-            phase: Some(phase.clone()),
-            conditions: vec![SiteCondition {
-                type_: "Ready".to_string(),
-                status: if phase == SitePhase::Active {
-                    ConditionStatus::True
-                } else {
-                    ConditionStatus::False
-                },
-                last_transition_time: Some(Utc::now().to_rfc3339()),
-                reason: Some("Reconciled".to_string()),
-                message: Some(message.to_string()),
-            }],
-            peers: None,
-            active_paths: None,
-            health_score: None,
-        }
-    });
+    let Some(status) = desired_site_status(
+        site.status.as_ref(),
+        phase,
+        message,
+        &Utc::now().to_rfc3339(),
+    ) else {
+        debug!("Site status unchanged, not patching");
+        return Ok(());
+    };
 
     sites
-        .patch_status(name, &PatchParams::default(), &Patch::Merge(&status))
+        .patch_status(
+            &site.name_any(),
+            &PatchParams::default(),
+            &Patch::Merge(&json!({ "status": status })),
+        )
         .await?;
 
     Ok(())
@@ -386,5 +436,98 @@ mod tests {
         };
 
         assert!(validate_site_spec(&spec).is_err());
+    }
+
+    fn status(phase: SitePhase, ready: ConditionStatus, msg: &str, t: &str) -> SiteStatus {
+        SiteStatus {
+            phase: Some(phase),
+            conditions: vec![SiteCondition {
+                type_: "Ready".to_string(),
+                status: ready,
+                last_transition_time: Some(t.to_string()),
+                reason: Some("Reconciled".to_string()),
+                message: Some(msg.to_string()),
+            }],
+            peers: None,
+            active_paths: None,
+            health_score: None,
+        }
+    }
+
+    #[test]
+    fn unchanged_status_is_not_rewritten() {
+        let cur = status(
+            SitePhase::Active,
+            ConditionStatus::True,
+            "Site is active",
+            "T0",
+        );
+        assert!(
+            desired_site_status(Some(&cur), SitePhase::Active, "Site is active", "T1").is_none()
+        );
+
+        let cur = status(
+            SitePhase::Failed,
+            ConditionStatus::False,
+            "Failed to create/update: x",
+            "T0",
+        );
+        assert!(desired_site_status(
+            Some(&cur),
+            SitePhase::Failed,
+            "Failed to create/update: x",
+            "T1"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn first_status_and_transitions_get_a_new_timestamp() {
+        let new = desired_site_status(None, SitePhase::Active, "Site is active", "T1").unwrap();
+        assert_eq!(new.phase, Some(SitePhase::Active));
+        assert_eq!(new.conditions[0].status, ConditionStatus::True);
+        assert_eq!(
+            new.conditions[0].last_transition_time.as_deref(),
+            Some("T1")
+        );
+
+        let cur = status(
+            SitePhase::Failed,
+            ConditionStatus::False,
+            "Failed to create/update: x",
+            "T0",
+        );
+        let new =
+            desired_site_status(Some(&cur), SitePhase::Active, "Site is active", "T1").unwrap();
+        assert_eq!(new.conditions[0].status, ConditionStatus::True);
+        assert_eq!(
+            new.conditions[0].last_transition_time.as_deref(),
+            Some("T1")
+        );
+    }
+
+    #[test]
+    fn message_change_without_transition_keeps_the_timestamp() {
+        let cur = status(
+            SitePhase::Failed,
+            ConditionStatus::False,
+            "Failed to create/update: x",
+            "T0",
+        );
+        let new = desired_site_status(
+            Some(&cur),
+            SitePhase::Failed,
+            "Failed to create/update: y",
+            "T1",
+        )
+        .unwrap();
+        assert_eq!(
+            new.conditions[0].message.as_deref(),
+            Some("Failed to create/update: y")
+        );
+        assert_eq!(
+            new.conditions[0].last_transition_time.as_deref(),
+            Some("T0")
+        );
     }
 }
