@@ -574,6 +574,12 @@ jobs:
               p=$(command -v "$b") || { ls -l /usr/bin | grep -i patronus || true; fail "binary $b not installed"; }
               echo "ok $p"
             done
+            # Monitoring top connections falls back to conntrack -L on
+            # kernels without /proc/net/nf_conntrack (USE=web RDEPEND), and
+            # the non-root image user needs its file capability.
+            ct=$(command -v conntrack) || fail "conntrack (net-firewall/conntrack-tools) not installed"
+            getcap "$ct" | grep -q cap_net_admin || fail "$ct has no cap_net_admin"
+            echo "ok $ct ($(getcap "$ct"))"
             for f in /usr/lib/systemd/system/patronus-dashboard.service \
                      /usr/lib/systemd/system/patronus-web.service \
                      /usr/lib/systemd/system/patronus-firewall.service \

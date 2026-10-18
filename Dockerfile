@@ -149,9 +149,12 @@ RUN useradd -r -u 1000 -m -s /bin/bash patronus 2>/dev/null || true && \
 # image layer -- setcap via a tar-based COPY --from often does not.
 # wg needs CAP_NET_ADMIN too, or `wg show all dump` fails with EPERM once
 # any WireGuard interface exists and the VPN page/peers API return 503.
+# conntrack (USE=web) likewise, or the Monitoring page's top-connections
+# table is unreadable on kernels without /proc/net/nf_conntrack.
 RUN emerge --verbose sys-libs/libcap && \
     setcap cap_net_admin,cap_net_raw+eip "$(command -v nft)" && \
     setcap cap_net_admin+eip "$(command -v wg)" && \
+    if ct=$(command -v conntrack); then setcap cap_net_admin+eip "$ct" && getcap "$ct"; fi && \
     getcap "$(command -v nft)" "$(command -v wg)"
 
 

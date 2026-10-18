@@ -68,6 +68,8 @@ REQUIRED_USE="
 # RA and relay in one daemon). Relays always use dnsmasq. Patronus writes the
 # config these packages' own init scripts read (/etc/kea, /etc/dnsmasq.conf,
 # /etc/radvd.conf) and drives them through OpenRC or systemd. USE=ntp: chrony.
+# USE=web: conntrack-tools, the Monitoring page's "top connections" reader on
+# kernels without CONFIG_NF_CONNTRACK_PROCFS (no /proc/net/nf_conntrack).
 # (No comments inside RDEPEND: Portage would parse '#' as an atom.)
 RDEPEND="
 	acct-user/patronus
@@ -120,6 +122,7 @@ RDEPEND="
 	dhcpcd? ( net-misc/dhcpcd )
 	!dhcpcd? ( sys-apps/busybox )
 	sys-apps/iproute2
+	web? ( net-firewall/conntrack-tools )
 	squid? ( net-proxy/squid )
 	tinyproxy? ( net-proxy/tinyproxy )
 	wireless? (
