@@ -32,10 +32,17 @@ jobs:
         # problem (the image itself built and exported fine). Retry a
         # few times before giving up, same pattern already used for the
         # Gentoo Docker Build step's transient BuildKit/registry errors.
+        # The timeout is client-side only: Forgejo keeps finalizing the
+        # big blob and the next attempt reports it "Layer already exists"
+        # (runs 4046 and 4391/job 22696), so every retry gets further.
+        # Run 4391 hit a slow blob on all three attempts and failed with
+        # the last layers nearly done. Allow 6 attempts and wait longer
+        # between them (30s, 60s, ... 150s; about 7.5 min of waiting at
+        # most) so the registry has time to finish the previous upload.
         run: |
           set -e
           attempt=1
-          max_attempts=3
+          max_attempts=6
           until docker push git.canutethegreat.com/canutethegreat/patronus-ci-base:latest; do
             if [ "$attempt" -ge "$max_attempts" ]; then
               echo "::error::docker push failed after ${max_attempts} attempts"
@@ -43,5 +50,5 @@ jobs:
             fi
             echo "::warning::docker push attempt ${attempt} failed (likely transient registry/network error), retrying..."
             attempt=$((attempt + 1))
-            sleep $((attempt * 10))
+            sleep $(((attempt - 1) * 30))
           done
