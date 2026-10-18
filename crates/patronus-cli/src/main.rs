@@ -369,8 +369,24 @@ enum MetricsCommands {
     Bandwidth,
 }
 
+/// `patronus ... | head` or `| grep -q`: when the reader goes away, end quietly like other Unix
+/// tools (killed by SIGPIPE) instead of panicking in `println!` with "failed printing to
+/// stdout: Broken pipe" (Rust starts programs with SIGPIPE ignored).
+#[cfg(unix)]
+fn restore_default_sigpipe() {
+    // SAFETY: only resets the process-wide disposition of SIGPIPE to the default action; no
+    // handler code runs and nothing in this program relies on SIGPIPE being ignored.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_default_sigpipe() {}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    restore_default_sigpipe();
     let cli = Cli::parse();
 
     // Initialize logging

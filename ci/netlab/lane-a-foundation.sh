@@ -217,7 +217,7 @@ echo "=== 4. patronus firewall apply|flush"
 R "$P" --db $DB firewall flush
 [ -z "$(R nft list ruleset)" ] || fail "flush left a ruleset"
 R "$P" --db $DB firewall apply --bootstrap "$TOML"
-R nft list ruleset | grep -q netlab-block-8080 || fail "firewall apply did not restore user rules"
+grep -q netlab-block-8080 <<<"$(R nft list ruleset)" || fail "firewall apply did not restore user rules"
 ok "firewall flush removes the table, firewall apply restores it from the store"
 
 stop_web; topology_down

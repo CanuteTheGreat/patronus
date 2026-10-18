@@ -86,3 +86,7 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 colored = "2.1"
 comfy-table = "7.1"
+
+[target.'cfg(unix)'.dependencies]
+# restore_default_sigpipe() in main.rs
+libc = "0.2"

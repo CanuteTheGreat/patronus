@@ -203,15 +203,15 @@ api_ok POST /firewall/rules "$(rule lb-sched-block drop $NL_WWW 9000 ',"schedule
 nl_assert_nft_has lb-sched-block
 expect_timeout "Mon 10:00 (inside lb_work): scheduled block active" C $NL_WWW 9000
 echo "2026-10-12 18:30" > "$FAKE"
-for _ in $(seq 1 20); do R nft list ruleset | grep -q lb-sched-block || break; sleep 0.5; done
+for _ in $(seq 1 20); do grep -q lb-sched-block <<<"$(R nft list ruleset)" || break; sleep 0.5; done
 nl_assert_nft_lacks lb-sched-block
 expect_sees "Mon 18:30 (outside lb_work): rule lifted by the schedule task" C $NL_WWW 9000 $NL_RTR_WAN
 echo "2026-10-13 09:05" > "$FAKE"
-for _ in $(seq 1 20); do R nft list ruleset | grep -q lb-sched-block && break; sleep 0.5; done
+for _ in $(seq 1 20); do grep -q lb-sched-block <<<"$(R nft list ruleset)" && break; sleep 0.5; done
 nl_assert_nft_has lb-sched-block
 expect_timeout "Tue 09:05: the block is back" C $NL_WWW 9000
 echo "2026-10-17 10:00" > "$FAKE"   # Saturday
-for _ in $(seq 1 20); do R nft list ruleset | grep -q lb-sched-block || break; sleep 0.5; done
+for _ in $(seq 1 20); do grep -q lb-sched-block <<<"$(R nft list ruleset)" || break; sleep 0.5; done
 expect_sees "Sat 10:00 (not a scheduled day): allowed" C $NL_WWW 9000 $NL_RTR_WAN
 
 echo "=== 6. port forward + NAT reflection"
