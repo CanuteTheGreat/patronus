@@ -8,10 +8,26 @@ name: Nightly test depth (mutation baseline, deep netlab, upgrade)
 #  - netlab-deep: the previous release (ci/netlab/previous-release) creates
 #    and edits a store, HEAD boots it (upgrade), 30 power-cut rounds instead
 #    of 4, plus the first-boot journey on the same build.
+# mutants runs every file (floors) on Wednesdays (UTC) and on demand; the other nights only the
+# lines changed since its last green run (cargo-mutants --in-diff, decided by
+# ci/mutation-incremental.py - canonical copy in ctg-infrastructure ci-runners/mutation-incremental),
+# failing on any new surviving mutant there; with no change it finishes in about a minute.
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'mutants: auto (full on Wednesdays, else changed lines only), full or incremental'
+        required: false
+        default: 'auto'
   schedule:
-    - cron: '0 11 * * *' # ~04:00 America/Los_Angeles, after the other nightlies
+    # 08:10 UTC, staggered across the colo lane's day (ctg-infrastructure ci-runners/rw-man-colo)
+    - cron: '10 8 * * *'
+
+# A newer queued run replaces an older one that has not started (ci-supersede-sweeper,
+# replace: groups); a started run is never cancelled.
+concurrency:
+  group: "replace:${{ github.workflow }}@${{ github.ref }}"
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -28,22 +44,41 @@ jobs:
     runs-on: colo-x86_64
     timeout-minutes: 300
     env:
-      CARGO_BUILD_JOBS: 4
+      # MUTANTS_JOBS mutants at a time x 2 rustc / 2 test threads each = the 4 CPUs below
+      # (was 2 x 4 rustc + 8 libtest threads per mutant on 4 CPUs)
+      CARGO_BUILD_JOBS: 2
+      RUST_TEST_THREADS: 2
       CARGO_PROFILE_DEV_DEBUG: 0
       MUTANTS_JOBS: 2
+      MUT_ID: mutants
     container:
       image: catthehacker/ubuntu:act-latest
       options: --memory 7g --memory-swap 7g --cpus 4
     steps:
       - uses: actions/checkout@v4
+        with:
+          # the incremental diff starts at the last green run
+          fetch-depth: 0
+      - name: Mutation baseline (last green run)
+        uses: actions/cache@v4
+        with:
+          path: .mutation-baseline
+          # saved only when the job succeeds; restore-keys picks the newest green baseline
+          key: mutation-baseline-mutants-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: mutation-baseline-mutants-
+      - name: Full or incremental?
+        run: python3 ci/mutation-incremental.py plan --id mutants --full-dow 3 --mode "${{ github.event.inputs.mode }}" -- $(bash ci/mutants.sh --files)
       - name: Install Rust
+        if: env.MUT_MODE != 'skip'
         uses: https://github.com/dtolnay/rust-toolchain@stable
       - name: Install dependencies
+        if: env.MUT_MODE != 'skip'
         run: |
           sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
           for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
           sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler libdbus-1-dev
       - name: Cache cargo
+        if: env.MUT_MODE != 'skip'
         uses: actions/cache@v4
         continue-on-error: true
         with:
@@ -56,8 +91,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-mutants-
       - name: Install cargo-mutants
+        if: env.MUT_MODE != 'skip'
         run: command -v cargo-mutants || cargo install --locked cargo-mutants
-      - name: Mutation testing against the floors
+      - name: Mutation testing against the floors (full) / new survivors in changed lines (incremental)
+        if: env.MUT_MODE != 'skip'
         run: ci/mutants.sh
 
   netlab-deep:
