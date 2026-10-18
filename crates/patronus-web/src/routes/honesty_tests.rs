@@ -392,3 +392,59 @@ async fn every_template_link_resolves_to_a_page() {
         assert!(!links.contains(gone), "{gone} has no page");
     }
 }
+
+/// No page may reference an asset that 404s (the Firewall page logged a
+/// favicon 404 on every load; the login page linked a stylesheet that
+/// never existed). /favicon.ico is served without a session, since
+/// browsers fetch it on the login page too.
+#[tokio::test]
+async fn page_assets_and_the_favicon_are_served() {
+    let a = app().await;
+    for path in ["/favicon.ico", "/favicon.svg"] {
+        let r = a
+            .app
+            .clone()
+            .oneshot(req(Method::GET, path, None, None))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK, "{path} without a session");
+        assert_eq!(r.headers()[header::CONTENT_TYPE], "image/svg+xml");
+        let body = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        assert!(body.starts_with(b"<svg"), "{path}");
+    }
+    let pages = [
+        "/",
+        "/firewall",
+        "/vpn",
+        "/network",
+        "/interfaces",
+        "/monitoring",
+        "/system",
+        "/login",
+    ];
+    for page in pages {
+        let (s, html) = a.call(Method::GET, page, None).await;
+        assert_eq!(s, StatusCode::OK, "{page}");
+        assert!(
+            html.contains(r#"<link rel="icon" href="/favicon.svg""#),
+            "{page} declares the favicon"
+        );
+        // Every local stylesheet/script/image the page loads must exist.
+        for tag in html.split('<').skip(1) {
+            let tag = tag.split('>').next().unwrap_or("");
+            let attr = if tag.starts_with("link ") {
+                "href=\"/"
+            } else if tag.starts_with("script ") || tag.starts_with("img ") {
+                "src=\"/"
+            } else {
+                continue;
+            };
+            let Some(rest) = tag.split(attr).nth(1) else {
+                continue;
+            };
+            let url = format!("/{}", rest.split('"').next().unwrap_or(""));
+            let (s, _) = a.call(Method::GET, &url, None).await;
+            assert_eq!(s, StatusCode::OK, "{page} loads {url}");
+        }
+    }
+}

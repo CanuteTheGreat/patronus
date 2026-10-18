@@ -46,6 +46,12 @@ pub fn build_router(
             get(|| async { Redirect::to("/firewall") }),
         )
         .route("/simple/status", get(|| async { Redirect::to("/system") }))
+        // The favicon is compiled in, so it is served even when the
+        // process's working directory has no static/ (the shipped image
+        // and the OpenRC/systemd services): browsers request
+        // /favicon.ico on every page and logged a 404 for it.
+        .route("/favicon.svg", get(favicon))
+        .route("/favicon.ico", get(favicon))
         // API routes (JSON)
         .nest("/api", api_routes())
         // Static files
@@ -63,10 +69,26 @@ pub fn build_router(
         ))
 }
 
+/// The Patronus shield icon (`static/favicon.svg`, compiled in).
+pub(crate) const FAVICON_SVG: &str = include_str!("../../static/favicon.svg");
+
+async fn favicon() -> impl axum::response::IntoResponse {
+    use axum::http::header;
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        FAVICON_SVG,
+    )
+}
+
 /// Paths reachable without a session.
 fn is_public(method: &axum::http::Method, path: &str) -> bool {
     use axum::http::Method;
     path == "/login"
+        || path == "/favicon.ico"
+        || path == "/favicon.svg"
         || path.starts_with("/static/")
         || (method == Method::POST && path == "/api/auth/login")
 }
