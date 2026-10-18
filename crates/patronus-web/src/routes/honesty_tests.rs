@@ -359,3 +359,36 @@ async fn routes_services_updates_and_pages_are_live_or_honest() {
         .unwrap();
     assert_eq!(r.headers()[header::LOCATION], "/system");
 }
+
+/// Every in-app link in every template leads to a page that exists (the
+/// sidebar used to link /ai and /gitops, which never had a route -- the
+/// AI and GitOps features are not reachable from a shipped binary yet).
+#[tokio::test]
+async fn every_template_link_resolves_to_a_page() {
+    let a = app().await;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let mut links = std::collections::BTreeSet::new();
+    for e in std::fs::read_dir(&root).unwrap().flatten() {
+        let text = std::fs::read_to_string(e.path()).unwrap();
+        for chunk in text.split("<a ").skip(1) {
+            let tag = chunk.split('>').next().unwrap_or("");
+            if let Some(rest) = tag.split("href=\"").nth(1) {
+                let href = rest.split('"').next().unwrap_or("");
+                if href.starts_with('/') && !href.contains('{') {
+                    links.insert(href.to_string());
+                }
+            }
+        }
+    }
+    assert!(links.contains("/firewall") && links.len() >= 8, "{links:?}");
+    for href in &links {
+        let (s, _) = a.call(Method::GET, href, None).await;
+        assert!(
+            s.is_success() || s.is_redirection(),
+            "template link {href} answers {s}"
+        );
+    }
+    for gone in ["/ai", "/gitops"] {
+        assert!(!links.contains(gone), "{gone} has no page");
+    }
+}
