@@ -4,7 +4,6 @@
 
 use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -469,34 +468,36 @@ impl IpsecManager {
         Ok(())
     }
 
-    /// Add PSK secret
+    /// Add or replace the PSK secret for a `local remote` ID pair.
+    ///
+    /// The secrets file is rewritten atomically with mode 0600 (it holds
+    /// every tunnel's pre-shared key). An existing entry for the same pair
+    /// is replaced rather than appended to: strongSwan uses the first
+    /// matching entry, so an appended duplicate meant a rotated PSK never
+    /// took effect.
     async fn add_psk_secret(
         &self,
         local_id: Option<&str>,
         remote_id: Option<&str>,
         psk: &str,
     ) -> Result<()> {
-        let local = local_id.unwrap_or("%any");
-        let remote = remote_id.unwrap_or("%any");
-
-        let secret_line = format!("{} {} : PSK \"{}\"\n", local, remote, psk);
-
-        // Read existing secrets
-        let mut secrets = if self.secrets_file.exists() {
-            fs::read_to_string(&self.secrets_file)
-                .await
-                .unwrap_or_default()
-        } else {
-            String::new()
+        // Read existing secrets. A file that exists but can't be read must
+        // not be treated as empty: rewriting it would drop every other
+        // tunnel's key.
+        let existing = match fs::read_to_string(&self.secrets_file).await {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                return Err(Error::Network(format!(
+                    "Failed to read secrets file {}: {}",
+                    self.secrets_file.display(),
+                    e
+                )))
+            }
         };
 
-        secrets.push_str(&secret_line);
-
-        fs::write(&self.secrets_file, secrets)
-            .await
-            .map_err(|e| Error::Network(format!("Failed to write secrets file: {}", e)))?;
-
-        Ok(())
+        let secrets = upsert_psk_secret(&existing, local_id, remote_id, psk)?;
+        write_private_file(&self.secrets_file, secrets.as_bytes()).await
     }
 
     /// Start strongSwan
@@ -625,6 +626,121 @@ impl IpsecManager {
     }
 }
 
+/// Validate an IKE identity used as an ipsec.secrets selector. The selector
+/// is whitespace-separated and `"`/`#` start a quoted string/comment, so any
+/// of those (or a control character such as a newline) would let an ID
+/// split into extra selectors or inject a whole new secrets line.
+fn validate_secret_selector(id: &str) -> Result<()> {
+    if id.is_empty()
+        || id
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || c == '"' || c == '#' || c == '\'')
+    {
+        return Err(Error::Config(format!(
+            "invalid IPsec identity for ipsec.secrets: {:?}",
+            id
+        )));
+    }
+    Ok(())
+}
+
+/// Hex-encode a PSK as strongSwan's `0x...` secret form, so any byte
+/// (quotes, backslashes, newlines) is stored literally instead of ending
+/// the quoted string early.
+fn encode_psk(psk: &str) -> String {
+    let mut out = String::with_capacity(2 + psk.len() * 2);
+    out.push_str("0x");
+    for b in psk.bytes() {
+        out.push_str(&format!("{:02x}", b));
+    }
+    out
+}
+
+/// Return `existing` ipsec.secrets content with the PSK entry for
+/// `local remote` set to `psk`: any existing PSK line for that exact pair is
+/// dropped and one new line is appended. Every other line is kept as is.
+fn upsert_psk_secret(
+    existing: &str,
+    local_id: Option<&str>,
+    remote_id: Option<&str>,
+    psk: &str,
+) -> Result<String> {
+    let local = local_id.unwrap_or("%any");
+    let remote = remote_id.unwrap_or("%any");
+    validate_secret_selector(local)?;
+    validate_secret_selector(remote)?;
+    if psk.is_empty() {
+        return Err(Error::Config("IPsec PSK must not be empty".to_string()));
+    }
+
+    let mut out = String::with_capacity(existing.len() + 128);
+    for line in existing.lines() {
+        if !is_psk_line_for(line, local, remote) {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out.push_str(&format!("{} {} : PSK {}\n", local, remote, encode_psk(psk)));
+    Ok(out)
+}
+
+/// Whether an ipsec.secrets line is the PSK entry for exactly `local remote`.
+fn is_psk_line_for(line: &str, local: &str, remote: &str) -> bool {
+    let Some((selectors, secret)) = line.split_once(" : ") else {
+        return false;
+    };
+    let mut ids = selectors.split_whitespace();
+    ids.next() == Some(local)
+        && ids.next() == Some(remote)
+        && ids.next().is_none()
+        && secret.trim_start().starts_with("PSK ")
+}
+
+/// Atomically replace `path` with `contents`, readable by the owner only.
+/// The temp file is created 0600 (never briefly world-readable) and renamed
+/// over the target, so a crash can't leave a truncated secrets file and a
+/// pre-existing 0644 file is replaced by a 0600 one.
+async fn write_private_file(path: &Path, contents: &[u8]) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .await
+            .map_err(|e| Error::Network(format!("Failed to create {}: {}", parent.display(), e)))?;
+    }
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| Error::Config(format!("not a file path: {}", path.display())))?;
+    let mut tmp_name = std::ffi::OsString::from(".");
+    tmp_name.push(file_name);
+    tmp_name.push(".tmp");
+    let tmp = path.with_file_name(tmp_name);
+
+    let write = async {
+        // A stale temp file from a crashed write may carry other permissions.
+        let _ = fs::remove_file(&tmp).await;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)
+            .await?;
+        f.write_all(contents).await?;
+        f.sync_all().await?;
+        drop(f);
+        fs::rename(&tmp, path).await
+    };
+    if let Err(e) = write.await {
+        let _ = fs::remove_file(&tmp).await;
+        return Err(Error::Network(format!(
+            "Failed to write secrets file {}: {}",
+            path.display(),
+            e
+        )));
+    }
+    Ok(())
+}
+
 impl Default for IpsecManager {
     fn default() -> Self {
         Self::new()
@@ -658,5 +774,113 @@ mod tests {
         );
 
         assert_eq!(ike_prop, "aes256-sha256-modp2048");
+    }
+
+    fn manager_in(dir: &Path) -> IpsecManager {
+        IpsecManager {
+            config_dir: dir.to_path_buf(),
+            secrets_file: dir.join("ipsec.secrets"),
+        }
+    }
+
+    #[test]
+    fn psk_is_hex_encoded_so_quotes_and_newlines_cannot_break_out() {
+        let psk = "a\"b\n%any %any : PSK \"evil";
+        let out = upsert_psk_secret("", Some("siteA"), Some("siteB"), psk).unwrap();
+        assert_eq!(out.lines().count(), 1, "{out}");
+        let hex: String = psk.bytes().map(|b| format!("{:02x}", b)).collect();
+        assert_eq!(out, format!("siteA siteB : PSK 0x{hex}\n"));
+        assert_eq!(encode_psk("Ab1"), "0x416231");
+    }
+
+    #[test]
+    fn rotating_a_psk_replaces_the_entry_instead_of_appending() {
+        let existing = "# managed\n\
+                        siteA siteB : PSK 0x6f6c64\n\
+                        siteA siteC : PSK 0x6f74686572\n\
+                        siteA siteB : RSA key.pem\n";
+        let out = upsert_psk_secret(existing, Some("siteA"), Some("siteB"), "new").unwrap();
+        assert_eq!(
+            out,
+            "# managed\n\
+             siteA siteC : PSK 0x6f74686572\n\
+             siteA siteB : RSA key.pem\n\
+             siteA siteB : PSK 0x6e6577\n"
+        );
+        // Missing IDs default to %any on both sides, and only that pair is replaced.
+        let out2 = upsert_psk_secret(&out, None, None, "x").unwrap();
+        let out3 = upsert_psk_secret(&out2, None, None, "y").unwrap();
+        assert_eq!(out3.matches("%any %any : PSK").count(), 1, "{out3}");
+        assert!(out3.ends_with("%any %any : PSK 0x79\n"));
+        assert!(out3.contains("siteA siteB : PSK 0x6e6577\n"));
+    }
+
+    #[test]
+    fn identities_that_could_inject_secrets_lines_are_rejected() {
+        for bad in ["", "a b", "a\nb", "a\"b", "a#b", "a'b", "a\tb"] {
+            assert!(
+                upsert_psk_secret("", Some(bad), Some("ok"), "k").is_err(),
+                "local {bad:?}"
+            );
+            assert!(
+                upsert_psk_secret("", Some("ok"), Some(bad), "k").is_err(),
+                "remote {bad:?}"
+            );
+        }
+        assert!(upsert_psk_secret("", Some("ok"), Some("ok"), "").is_err());
+        // IPv6 addresses and FQDN/email/DN-less IDs stay valid.
+        assert!(upsert_psk_secret("", Some("2001:db8::1"), Some("@peer.example"), "k").is_ok());
+        assert!(upsert_psk_secret("", Some("user@example.com"), Some("192.0.2.1"), "k").is_ok());
+    }
+
+    #[tokio::test]
+    async fn secrets_file_is_owner_only_and_keeps_other_tunnels() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = manager_in(dir.path());
+        // A pre-existing world-readable file must come out 0600.
+        std::fs::write(&mgr.secrets_file, "siteA siteC : PSK 0x6f74686572\n").unwrap();
+        std::fs::set_permissions(&mgr.secrets_file, std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+
+        mgr.add_psk_secret(Some("siteA"), Some("siteB"), "first")
+            .await
+            .unwrap();
+        mgr.add_psk_secret(Some("siteA"), Some("siteB"), "second")
+            .await
+            .unwrap();
+
+        let mode = std::fs::metadata(&mgr.secrets_file)
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "mode {:o}", mode);
+        let content = std::fs::read_to_string(&mgr.secrets_file).unwrap();
+        assert_eq!(
+            content,
+            format!(
+                "siteA siteC : PSK 0x6f74686572\nsiteA siteB : PSK {}\n",
+                encode_psk("second")
+            )
+        );
+        // No temp file left behind.
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("ipsec.secrets")]);
+    }
+
+    #[tokio::test]
+    async fn unreadable_secrets_file_is_an_error_not_an_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mgr = manager_in(dir.path());
+        // A directory where the file should be: read fails with something
+        // other than NotFound, so nothing may be rewritten.
+        mgr.secrets_file = dir.path().join("is-a-dir");
+        std::fs::create_dir(&mgr.secrets_file).unwrap();
+        assert!(mgr.add_psk_secret(None, None, "k").await.is_err());
+        assert!(mgr.secrets_file.is_dir());
     }
 }
