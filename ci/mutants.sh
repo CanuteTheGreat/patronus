@@ -21,11 +21,11 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 # colo lane only (rw-man-01): refuse on the EC2 hosts rw-man-02..05 (GuardDuty), CI or by hand.
-sh ci/ec2-guard.sh "mutation testing" || exit 1
 if [ "${1:-}" = "--files" ]; then
   awk '$1 !~ /^#/ && NF >= 2 {print $2}' "${2:-ci/mutants-floors.txt}"
   exit 0
 fi
+sh ci/ec2-guard.sh "mutation testing" || exit 1
 MODE=${MUT_MODE:-full}
 FLOORS=${1:-ci/mutants-floors.txt}
 JOBS=${MUTANTS_JOBS:-2}
