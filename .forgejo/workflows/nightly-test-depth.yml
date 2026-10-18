@@ -44,10 +44,8 @@ jobs:
     runs-on: colo-x86_64
     timeout-minutes: 300
     env:
-      # MUTANTS_JOBS mutants at a time x 2 rustc / 2 test threads each = the 4 CPUs below
-      # (was 2 x 4 rustc + 8 libtest threads per mutant on 4 CPUs)
+      # MUTANTS_JOBS mutants at a time x 2 rustc each = the 4 CPUs below (was 2 x 4 rustc)
       CARGO_BUILD_JOBS: 2
-      RUST_TEST_THREADS: 2
       CARGO_PROFILE_DEV_DEBUG: 0
       MUTANTS_JOBS: 2
       MUT_ID: mutants
