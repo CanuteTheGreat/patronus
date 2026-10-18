@@ -44,6 +44,8 @@
     <div class="card-header"><h2 class="card-title">IPsec security associations ({{ ipsec_tunnels.len() }})</h2></div>
     {% if !ipsec_error.is_empty() %}
     <div class="alert-error">IPsec state unavailable: {{ ipsec_error }}</div>
+    {% else if ipsec_not_running %}
+    <p class="empty" id="ipsec-not-running">IPsec is not running: strongSwan is installed but its charon daemon is stopped, so there are no SAs (IPsec is not in use on this box).</p>
     {% else if ipsec_tunnels.is_empty() %}
     <p class="empty">No IPsec SAs (`swanctl --list-sas` is empty).</p>
     {% else %}

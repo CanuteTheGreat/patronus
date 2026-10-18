@@ -24,6 +24,9 @@ pub struct VpnSnapshot {
     pub wg_error: Option<String>,
     pub ipsec_tunnels: Vec<crate::templates::IpsecTunnel>,
     pub ipsec_error: Option<String>,
+    /// strongSwan is installed but charon is not running: IPsec is not in
+    /// use, so there are no SAs. A normal state, not an error.
+    pub ipsec_not_running: bool,
 }
 
 impl VpnSnapshot {
@@ -71,6 +74,57 @@ fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// Why `swanctl --list-sas` produced no SA list.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SwanctlFailure {
+    /// strongSwan is not installed.
+    NotInstalled,
+    /// strongSwan is installed but charon is not running (no VICI socket,
+    /// or a stale one): IPsec is simply not in use. Not an error.
+    NotRunning,
+    /// A real failure (e.g. permission denied on the VICI socket), with
+    /// swanctl's plugin noise and usage text stripped.
+    Error(String),
+}
+
+fn run_swanctl_list_sas() -> Result<String, SwanctlFailure> {
+    match Command::new("swanctl").arg("--list-sas").output() {
+        Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
+        Ok(o) => Err(classify_swanctl_failure(&format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&o.stderr),
+            String::from_utf8_lossy(&o.stdout)
+        ))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(SwanctlFailure::NotInstalled),
+        Err(e) => Err(SwanctlFailure::Error(format!("`swanctl`: {e}"))),
+    }
+}
+
+/// Classify the output of a failed `swanctl --list-sas`. With charon
+/// stopped swanctl prints plugin-load warnings, `connecting to
+/// 'unix:///var/run/charon.vici' failed: No such file or directory`
+/// (or `Connection refused` for a stale socket), then its whole usage
+/// text, and exits 2 -- that is "IPsec not running", not a failure.
+pub fn classify_swanctl_failure(output: &str) -> SwanctlFailure {
+    let lines: Vec<&str> = output
+        .lines()
+        .map(str::trim)
+        .take_while(|l| *l != "usage:" && !(l.starts_with("strongSwan ") && l.contains(" swanctl")))
+        .filter(|l| !l.is_empty() && !(l.starts_with("plugin '") && l.contains("failed to load")))
+        .collect();
+    let not_running = lines.iter().any(|l| {
+        l.contains("connecting to")
+            && (l.contains("No such file or directory") || l.contains("Connection refused"))
+    });
+    if not_running {
+        SwanctlFailure::NotRunning
+    } else if lines.is_empty() {
+        SwanctlFailure::Error("`swanctl --list-sas` failed".into())
+    } else {
+        SwanctlFailure::Error(format!("`swanctl --list-sas` failed: {}", lines.join("; ")))
+    }
+}
+
 impl VpnManager {
     pub fn new() -> Self {
         Self
@@ -91,12 +145,14 @@ impl VpnManager {
                 }
                 Err(e) => s.wg_error = Some(e),
             }
-            match run("swanctl", &["--list-sas"]) {
+            match run_swanctl_list_sas() {
                 Ok(out) => s.ipsec_tunnels = parse_swanctl_list_sas(&out),
-                Err(e) if e == NOT_INSTALLED => {
+                Err(SwanctlFailure::NotInstalled) => {
                     s.ipsec_error = Some("strongSwan (`swanctl`) is not installed".into())
                 }
-                Err(e) => s.ipsec_error = Some(e),
+                // Installed but unused: a normal state, no SAs to list.
+                Err(SwanctlFailure::NotRunning) => s.ipsec_not_running = true,
+                Err(SwanctlFailure::Error(e)) => s.ipsec_error = Some(e),
             }
             s
         })
@@ -327,6 +383,56 @@ mod tests {
             ..Default::default()
         };
         assert!(none.read_errors().is_empty());
+    }
+
+    #[test]
+    fn swanctl_with_charon_stopped_is_not_running_not_an_error() {
+        // Real output of `swanctl --list-sas` (strongSwan 5.9.8) with charon
+        // stopped: exit 2, VICI connect error, then the usage text.
+        let out = "\
+plugin 'ldap': failed to load - ldap_plugin_create not found and no plugin file available
+plugin 'curl': failed to load - curl_plugin_create not found and no plugin file available
+connecting to 'unix:///var/run/charon.vici' failed: No such file or directory
+Error: connecting to 'default' URI failed: No such file or directory
+strongSwan 5.9.8 swanctl
+usage:
+  swanctl --list-sas [--ike <name>|--ike-id <id>] [--child <name>|--child-id <id>]
+           --help            (-h)  show usage information
+";
+        assert_eq!(classify_swanctl_failure(out), SwanctlFailure::NotRunning);
+        // strongSwan 6.0.7 (Gentoo): different socket path and usage header.
+        let v6 = "\
+connecting to 'unix:///run/charon.vici' failed: No such file or directory
+strongSwan 6.0.7 swanctl (--list-sas/-l)
+list currently active IKE_SAs
+usage:
+  swanctl --list-sas [--ike <name>|--ike-id <id>] [--child <name>|--child-id <id>]
+";
+        assert_eq!(classify_swanctl_failure(v6), SwanctlFailure::NotRunning);
+        let stale = "connecting to 'unix:///var/run/charon.vici' failed: Connection refused\n\
+                     Error: connecting to 'default' URI failed: Connection refused\n";
+        assert_eq!(classify_swanctl_failure(stale), SwanctlFailure::NotRunning);
+
+        // A real failure stays an error, without the usage text.
+        let denied = "connecting to 'unix:///var/run/charon.vici' failed: Permission denied\n\
+                      Error: connecting to 'default' URI failed: Permission denied\n\
+                      strongSwan 5.9.8 swanctl\nusage:\n  swanctl --list-sas\n";
+        match classify_swanctl_failure(denied) {
+            SwanctlFailure::Error(e) => {
+                assert!(e.contains("Permission denied"), "{e}");
+                assert!(!e.contains("usage"), "{e}");
+                assert!(!e.contains("--help"), "{e}");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // Not running: no error anywhere (VPN page, /api/status, dashboard).
+        let snap = VpnSnapshot {
+            ipsec_not_running: true,
+            ..Default::default()
+        };
+        assert!(snap.read_errors().is_empty());
+        assert_eq!(snap.active_connections(), 0);
     }
 
     #[test]

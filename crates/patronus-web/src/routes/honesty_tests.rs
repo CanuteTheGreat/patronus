@@ -266,6 +266,25 @@ async fn vpn_reads_the_system_and_refuses_to_fake_writes() {
     let (s, page) = a.call(Method::GET, "/vpn", None).await;
     assert_eq!(s, StatusCode::OK);
     assert!(page.contains("WireGuard"));
+    // strongSwan installed but charon stopped (every USE=ipsec box that
+    // doesn't use IPsec, and the Gentoo CI base image) is a normal state:
+    // 200 + empty list, no error text, the page says "not running".
+    let (s, body) = a.call(Method::GET, "/api/vpn/ipsec/tunnels", None).await;
+    if snap.ipsec_error.is_none() {
+        assert_eq!(s, StatusCode::OK, "{body}");
+    } else {
+        assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    }
+    assert!(!body.contains("usage:"), "{body}");
+    if snap.ipsec_not_running {
+        assert_eq!(body.trim(), "[]");
+        assert!(page.contains("id=\"ipsec-not-running\""));
+        assert!(!st.to_string().contains("swanctl"), "{st}");
+    }
+    eprintln!(
+        "ipsec state on this host: not_running={} error={:?}",
+        snap.ipsec_not_running, snap.ipsec_error
+    );
 }
 
 #[tokio::test]

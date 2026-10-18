@@ -97,6 +97,7 @@ pub async fn vpn(State(state): State<AppState>) -> Response {
         wg_error: s.wg_error.unwrap_or_default(),
         ipsec_tunnels: s.ipsec_tunnels,
         ipsec_error: s.ipsec_error.unwrap_or_default(),
+        ipsec_not_running: s.ipsec_not_running,
     };
     render(&template, "VPN")
 }

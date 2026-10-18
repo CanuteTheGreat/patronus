@@ -79,6 +79,8 @@ pub struct VpnTemplate {
     pub wg_error: String,
     pub ipsec_tunnels: Vec<IpsecTunnel>,
     pub ipsec_error: String,
+    /// strongSwan installed, charon not running (normal, not an error).
+    pub ipsec_not_running: bool,
 }
 
 /// Network template
