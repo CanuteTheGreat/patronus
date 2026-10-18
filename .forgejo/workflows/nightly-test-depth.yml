@@ -39,9 +39,9 @@ defaults:
 jobs:
   mutants:
     name: Mutation testing (core modules, score floors)
-    # colo-only lane (rw-man-01, ctg-infrastructure ci-runners/rw-man-colo): mutation / chaos /
-    # security-tool / network-probing CI never runs on the EC2 hosts rw-man-02..05 (GuardDuty).
-    runs-on: colo-x86_64
+    # shared mutation/chaos lane (x86 slots on rw-man-01..05 since 2026-10-18,
+    # ctg-infrastructure ci-runners/README.md); jobs that must stay on colo set CI_COLO_ONLY=1.
+    runs-on: mutation-x86_64
     timeout-minutes: 300
     env:
       # MUTANTS_JOBS mutants at a time x 2 rustc each = the 4 CPUs below (was 2 x 4 rustc)
@@ -51,7 +51,7 @@ jobs:
       MUT_ID: mutants
     container:
       image: catthehacker/ubuntu:act-latest
-      options: --memory 7g --memory-swap 7g --cpus 4
+      options: --memory 6g --memory-swap 6g --cpus 3
     steps:
       - uses: actions/checkout@v4
         with:
@@ -97,16 +97,16 @@ jobs:
 
   netlab-deep:
     name: Deep netlab (previous-release upgrade, 30 power cuts)
-    # colo-only lane (rw-man-01, ctg-infrastructure ci-runners/rw-man-colo): mutation / chaos /
-    # security-tool / network-probing CI never runs on the EC2 hosts rw-man-02..05 (GuardDuty).
-    runs-on: colo-x86_64
+    # shared mutation/chaos lane (x86 slots on rw-man-01..05 since 2026-10-18,
+    # ctg-infrastructure ci-runners/README.md); jobs that must stay on colo set CI_COLO_ONLY=1.
+    runs-on: mutation-x86_64
     timeout-minutes: 120
     env:
       CARGO_BUILD_JOBS: 4
       CARGO_PROFILE_DEV_DEBUG: 0
     container:
       image: catthehacker/ubuntu:act-latest
-      options: --memory 7g --memory-swap 7g --cpus 4
+      options: --memory 6g --memory-swap 6g --cpus 3
     steps:
       - uses: actions/checkout@v4
         with:
