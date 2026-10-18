@@ -101,9 +101,11 @@ impl RaInput {
         }
         let min_interval = self.min_interval.unwrap_or(200);
         let max_interval = self.max_interval.unwrap_or(600);
+        // RFC 4861 6.2.1; widened so a huge `min_interval` from the API
+        // cannot wrap `* 4` (u32) past the 0.75 x max bound.
         if !(4..=1800).contains(&max_interval)
             || min_interval < 3
-            || min_interval * 4 > max_interval * 3
+            || u64::from(min_interval) * 4 > u64::from(max_interval) * 3
         {
             return Err(invalid(
                 "RA intervals (max 4-1800 s, min >= 3 s and <= 0.75 x max)",
@@ -365,5 +367,26 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn intervals_follow_rfc4861_without_overflow() {
+        let v = |min: u32, max: u32| {
+            RaInput {
+                interface: "@lan".into(),
+                min_interval: Some(min),
+                max_interval: Some(max),
+                ..Default::default()
+            }
+            .validate()
+        };
+        assert!(v(3, 4).is_ok());
+        assert!(v(450, 600).is_ok());
+        assert!(v(451, 600).is_err(), "min > 0.75 x max");
+        assert!(v(2, 600).is_err(), "min < 3");
+        assert!(v(3, 1801).is_err(), "max > 1800");
+        // 2^30 * 4 wraps to 0 in u32: must still be rejected, not panic
+        assert!(v(1 << 30, 600).is_err());
+        assert!(v(u32::MAX, 1800).is_err());
     }
 }
