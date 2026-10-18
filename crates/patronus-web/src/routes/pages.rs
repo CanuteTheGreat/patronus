@@ -52,7 +52,11 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
             tracing::error!("Failed to count firewall rules: {}", e);
             0
         });
-    let vpn_connections = state.vpn.snapshot().await.active_connections();
+    let vpn = state.vpn.snapshot().await;
+    let vpn_connections = vpn.active_connections();
+    // A failed read makes the count a floor (a live tunnel may hide behind
+    // it), so the tile shows the error instead of a bare number.
+    let vpn_errors = vpn.read_errors();
     let system_info = state.system.get_info().await.unwrap_or_default();
     let services = state.system.list_services().await.unwrap_or_default();
     let template = DashboardTemplate {
@@ -61,6 +65,7 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
         interfaces,
         active_rules,
         vpn_connections,
+        vpn_errors,
         system_info,
         services,
     };

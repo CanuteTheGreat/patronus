@@ -23,11 +23,21 @@
         <div class="value">{{ active_rules }}</div>
         <div class="label"><a href="/firewall">Firewall</a></div>
     </div>
+    {% if vpn_errors.is_empty() %}
     <div class="stat-card">
         <h3>VPN connections</h3>
         <div class="value" id="vpn-connections">{{ vpn_connections }}</div>
         <div class="label">WireGuard peers with a handshake in the last 3 min + established IPsec SAs (<a href="/vpn">VPN</a>)</div>
     </div>
+    {% else %}
+    <div class="stat-card warning" id="vpn-connections-card">
+        <h3>VPN connections</h3>
+        <div class="value" id="vpn-connections">{% if vpn_connections > 0 %}at least {{ vpn_connections }}{% else %}unknown{% endif %}</div>
+        <div class="alert-error" id="vpn-errors">VPN state could not be read:
+            {% for e in vpn_errors %}{{ e }}{% if !loop.last %}; {% endif %}{% endfor %}</div>
+        <div class="label">Live tunnels may be missing from this count (<a href="/vpn">VPN</a>)</div>
+    </div>
+    {% endif %}
     <div class="stat-card">
         <h3>System</h3>
         <div class="label">CPU {{ "{:.1}"|format(system_info.cpu_usage) }}% &middot;

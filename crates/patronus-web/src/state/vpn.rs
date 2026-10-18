@@ -36,6 +36,19 @@ impl VpnSnapshot {
                 .filter(|t| t.status.eq_ignore_ascii_case("ESTABLISHED"))
                 .count()
     }
+
+    /// Real read failures, in display order (WireGuard, IPsec). "Tool not
+    /// installed" is not one: then there is no tunnel of that kind to
+    /// count. When this is non-empty `active_connections()` is only a
+    /// floor -- the dashboard and /api/status must say so.
+    pub fn read_errors(&self) -> Vec<String> {
+        [&self.wg_error, &self.ipsec_error]
+            .into_iter()
+            .flatten()
+            .filter(|e| !e.contains(NOT_INSTALLED))
+            .cloned()
+            .collect()
+    }
 }
 
 /// Reads VPN state from the system.
@@ -296,6 +309,24 @@ mod tests {
     fn no_wireguard_interfaces_means_no_peers() {
         assert!(parse_wg_dump("", NOW).is_empty());
         assert_eq!(VpnSnapshot::default().active_connections(), 0);
+    }
+
+    #[test]
+    fn read_errors_skip_missing_tools_but_keep_real_failures() {
+        let snap = VpnSnapshot {
+            wg_error: Some("`wg show all dump` failed: Operation not permitted".into()),
+            ipsec_error: Some("strongSwan (`swanctl`) is not installed".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            snap.read_errors(),
+            vec!["`wg show all dump` failed: Operation not permitted".to_string()]
+        );
+        let none = VpnSnapshot {
+            wg_error: Some("wireguard-tools (`wg`) is not installed".into()),
+            ..Default::default()
+        };
+        assert!(none.read_errors().is_empty());
     }
 
     #[test]

@@ -53,11 +53,7 @@ pub async fn system_status(State(state): State<AppState>) -> Response {
     let vpn_connections = vpn.active_connections();
     // Only real read failures (not "tool not installed": then there is no
     // tunnel of that kind to count).
-    let vpn_errors: Vec<String> = [vpn.wg_error, vpn.ipsec_error]
-        .into_iter()
-        .flatten()
-        .filter(|e| !e.contains("not installed"))
-        .collect();
+    let vpn_errors = vpn.read_errors();
 
     let interfaces = match state.interfaces.list_template().await {
         Ok(ifaces) => ifaces

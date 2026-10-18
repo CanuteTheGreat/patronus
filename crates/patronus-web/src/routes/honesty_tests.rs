@@ -250,6 +250,19 @@ async fn vpn_reads_the_system_and_refuses_to_fake_writes() {
     if snap.wg_peers.is_empty() && snap.ipsec_tunnels.is_empty() {
         assert_eq!(st["vpn_connections"], 0, "no tunnels, no connections");
     }
+    assert_eq!(
+        st["vpn_errors"].as_array().unwrap().len(),
+        snap.read_errors().len()
+    );
+    // The dashboard tile shows the same read failures, never a bare count.
+    let (s, dash) = a.call(Method::GET, "/", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(
+        dash.contains("VPN state could not be read"),
+        !snap.read_errors().is_empty(),
+        "dashboard VPN tile vs read errors {:?}",
+        snap.read_errors()
+    );
     let (s, page) = a.call(Method::GET, "/vpn", None).await;
     assert_eq!(s, StatusCode::OK);
     assert!(page.contains("WireGuard"));

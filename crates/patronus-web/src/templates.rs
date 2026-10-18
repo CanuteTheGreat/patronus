@@ -14,6 +14,9 @@ pub struct DashboardTemplate {
     pub interfaces: Vec<InterfaceInfo>,
     pub active_rules: usize,
     pub vpn_connections: usize,
+    /// Why (part of) the VPN state could not be read; then
+    /// `vpn_connections` is a floor and the tile says so.
+    pub vpn_errors: Vec<String>,
     pub system_info: SystemInfo,
     pub uptime: String,
     pub services: Vec<Service>,
@@ -572,3 +575,46 @@ impl fmt::Display for LogEntry {
 #[derive(Template)]
 #[template(path = "interfaces.html")]
 pub struct InterfacesTemplate;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dashboard(vpn_connections: usize, vpn_errors: Vec<String>) -> String {
+        DashboardTemplate {
+            page: "dashboard",
+            interfaces: vec![],
+            active_rules: 0,
+            vpn_connections,
+            vpn_errors,
+            system_info: SystemInfo::default(),
+            uptime: "1 min".into(),
+            services: vec![],
+        }
+        .render()
+        .unwrap()
+    }
+
+    /// A failed VPN read must not render as a plain "0" (finding: a box
+    /// with a live tunnel showed "VPN connections 0" and no error).
+    #[test]
+    fn dashboard_vpn_tile_shows_read_errors_instead_of_a_bare_count() {
+        let ok = dashboard(2, vec![]);
+        assert!(ok.contains(r#"id="vpn-connections">2</div>"#), "{ok}");
+        assert!(!ok.contains("vpn-errors"));
+
+        let failed = dashboard(
+            0,
+            vec!["`wg show all dump` failed: Operation not permitted".into()],
+        );
+        assert!(failed.contains(r#"id="vpn-connections">unknown</div>"#));
+        assert!(!failed.contains(r#"id="vpn-connections">0</div>"#));
+        assert!(failed.contains("VPN state could not be read"));
+        assert!(failed.contains("Operation not permitted"));
+        assert!(failed.contains("stat-card warning"));
+
+        let partial = dashboard(1, vec!["a".into(), "b".into()]);
+        assert!(partial.contains(r#"id="vpn-connections">at least 1</div>"#));
+        assert!(partial.contains("a; b"));
+    }
+}
