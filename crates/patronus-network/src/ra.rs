@@ -255,6 +255,11 @@ pub fn flags(mode: &str) -> (bool, bool, bool) {
     }
 }
 
+/// Modes whose RA must carry the M flag (addresses via DHCPv6).
+pub fn needs_managed_flag(mode: &str) -> bool {
+    flags(mode).0
+}
+
 fn rdnss(r: &ResolvedRa, dns_on: bool) -> Vec<String> {
     if !r.ra.dns_servers.is_empty() {
         r.ra.dns_servers.iter().map(|a| a.to_string()).collect()
@@ -297,6 +302,9 @@ pub fn render_radvd(ras: &[ResolvedRa], dns_on: bool) -> String {
 }
 
 /// dnsmasq lines for an interface with RA but no DHCPv6 pool.
+///
+/// dnsmasq cannot set the M flag here, so `managed`/`assisted` come out as
+/// `ra-only` (SLAAC); [`crate::dhcp`]'s plan warns about that.
 pub fn dnsmasq_ra_only_lines(r: &ResolvedRa, dns_on: bool) -> Vec<String> {
     let kind = match r.ra.mode.as_str() {
         "stateless" => "ra-stateless",

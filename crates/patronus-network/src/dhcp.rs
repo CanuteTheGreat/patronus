@@ -719,6 +719,23 @@ async fn plan(store: &ConfigStore, env: &LanEnv, rep: &mut ApplyReport) -> Resul
     let v4 = resolve_pools(store, &addrs, rep).await?;
     let v6 = dhcp6::resolve(store, &addrs, rep).await?;
     let ras = ra::resolve(store, &addrs, rep).await?;
+    if ra_backend == RaBackend::Dnsmasq {
+        // dnsmasq only sets the M flag (and clears A) for a DHCPv6 range it
+        // serves itself; without one it can only send `ra-only`, i.e. plain
+        // SLAAC. Say so instead of silently downgrading managed/assisted.
+        for r in &ras {
+            let pool_here = backend == Backend::Dnsmasq && v6.iter().any(|p| p.dev == r.dev);
+            if !pool_here && ra::needs_managed_flag(&r.ra.mode) {
+                rep.warn(format!(
+                    "router advertisements on {}: mode {} needs the M flag, which dnsmasq only \
+                     sets for a DHCPv6 pool it serves on that interface; advertising SLAAC only. \
+                     Add a DHCPv6 pool there, or use radvd as the RA backend when DHCPv6 comes \
+                     from Kea or a relay",
+                    r.dev, r.ra.mode
+                ));
+            }
+        }
+    }
     let (dns_on, ntp_on) = service_flags(store, env).await?;
     let mut relays = Vec::new();
     for r in list_relays(store).await?.into_iter().filter(|r| r.enabled) {
@@ -1256,7 +1273,12 @@ mod tests {
         upsert_relay(&s, None, &relay).await.unwrap();
 
         let a = DhcpApplier::new(t.env.clone());
-        a.apply(&s).await.unwrap();
+        let rep = a.apply(&s).await.unwrap();
+        // managed RA with dnsmasq's own pool on the interface: M flag works
+        assert!(
+            !rep.warnings.iter().any(|w| w.contains("M flag")),
+            "{rep:?}"
+        );
         let c = read(&t, lan::DNSMASQ_CONF);
         for want in [
             "interface=rtr-lan",
@@ -1296,6 +1318,45 @@ mod tests {
         }
         a.apply(&s).await.unwrap();
         assert!(!t.services.is_running("dnsmasq"));
+    }
+
+    #[tokio::test]
+    async fn managed_ra_without_a_dnsmasq_pool_warns_instead_of_silently_going_slaac() {
+        // Kea serves DHCPv6, radvd is not installed -> auto RA backend is
+        // dnsmasq, which cannot advertise the M flag for Kea's pool.
+        let t = testutil::env(&[KEA4_BIN, dhcp6::KEA6_BIN, lan::DNSMASQ_BIN]);
+        let s = testutil::store().await;
+        let p6 = dhcp6::Dhcp6Input {
+            interface: "@lan".into(),
+            enabled: true,
+            range_start: "fd00:50::100".into(),
+            range_end: "fd00:50::1ff".into(),
+            ..Default::default()
+        }
+        .validate()
+        .unwrap();
+        dhcp6::upsert(&s, None, &p6).await.unwrap();
+        for mode in ["managed", "assisted", "stateless", "slaac"] {
+            for r in ra::list(&s).await.unwrap() {
+                ra::delete(&s, r.id).await.unwrap();
+            }
+            let ra = ra::RaInput {
+                interface: "@lan".into(),
+                enabled: true,
+                mode: Some(mode.into()),
+                ..Default::default()
+            }
+            .validate()
+            .unwrap();
+            ra::upsert(&s, None, &ra).await.unwrap();
+            let rep = DhcpApplier::new(t.env.clone()).apply(&s).await.unwrap();
+            let warned = rep
+                .warnings
+                .iter()
+                .any(|w| w.contains("rtr-lan") && w.contains("M flag"));
+            assert_eq!(warned, ra::needs_managed_flag(mode), "{mode}: {rep:?}");
+            assert!(read(&t, lan::DNSMASQ_CONF).contains("enable-ra"), "{mode}");
+        }
     }
 
     #[tokio::test]
