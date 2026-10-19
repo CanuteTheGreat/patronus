@@ -35,6 +35,8 @@ pub fn registry() -> ApplierRegistry {
         .with(patronus_firewall::FirewallApplier)
         // --- Phase::Services (lanes D, F, G, J: dhcp, dns, vpn, ha, ids) ---
         .with_all(patronus_network::lan::appliers())
+        // --- lane F: WireGuard (interfaces phase), IPsec (services phase) ---
+        .with_all(patronus_network::vpn_appliers())
 }
 
 /// Options shared by `apply`, `firewall apply` and `config rollback`.

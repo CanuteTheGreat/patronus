@@ -1,7 +1,14 @@
-//! Authentication and session management
+//! Authentication, web accounts and sessions.
 //!
-//! Provides secure authentication using patronus-secrets for password hashing
-//! and session management using secure cookies.
+//! Accounts live in the config store (`web_users`, lane H): they survive
+//! restarts, are part of backups/revisions, and can be managed from the
+//! System page (admins) -- add, change role, disable, reset 2FA, delete;
+//! the last enabled admin can never be removed. Passwords are argon2
+//! hashes (patronus-secrets). With USE=totp an account can enrol a TOTP
+//! second factor (RFC 6238) plus one-time recovery codes; login then needs
+//! the code. Sessions are in memory (a restart logs everyone out) and are
+//! dropped when the account is disabled, deleted, demoted or its password
+//! changes.
 
 use axum::{
     async_trait,
@@ -10,9 +17,11 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, TimeZone, Utc};
+use patronus_config::ConfigStore;
 use patronus_secrets::crypto::{hash_password, verify_password};
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -44,9 +53,35 @@ impl UserRole {
     pub fn is_admin(&self) -> bool {
         matches!(self, UserRole::Admin)
     }
+
+    /// The stored form (`admin`, `operator`, `readonly`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            UserRole::Admin => "admin",
+            UserRole::Operator => "operator",
+            UserRole::ReadOnly => "readonly",
+        }
+    }
+
+    /// For display (`read-only`).
+    pub fn label(&self) -> &'static str {
+        match self {
+            UserRole::ReadOnly => "read-only",
+            r => r.as_str(),
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "admin" => Some(UserRole::Admin),
+            "operator" => Some(UserRole::Operator),
+            "readonly" | "read-only" | "read_only" => Some(UserRole::ReadOnly),
+            _ => None,
+        }
+    }
 }
 
-/// User record stored in the user database
+/// A web account.
 #[derive(Debug, Clone)]
 pub struct User {
     pub id: u32,
@@ -56,19 +91,25 @@ pub struct User {
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub last_login: Option<DateTime<Utc>>,
+    /// Confirmed TOTP secret (base32): two-factor login is on.
+    pub totp_secret: Option<String>,
+    /// Enrolment started, not confirmed yet.
+    pub totp_pending: Option<String>,
+    pub totp_last_step: Option<u64>,
+    /// SHA-256 digests of the unused recovery codes.
+    pub recovery_codes: Vec<String>,
 }
 
-/// User database - in-memory for now, can be swapped with real DB later
+impl User {
+    pub fn two_factor(&self) -> bool {
+        self.totp_secret.is_some()
+    }
+}
+
+/// Web accounts over the config store.
 #[derive(Clone)]
 pub struct UserStore {
-    users: Arc<RwLock<HashMap<String, User>>>,
-    next_id: Arc<RwLock<u32>>,
-}
-
-impl Default for UserStore {
-    fn default() -> Self {
-        Self::new()
-    }
+    store: Arc<ConfigStore>,
 }
 
 /// Env var holding the admin password (takes precedence over the file).
@@ -77,7 +118,7 @@ pub const ADMIN_PASSWORD_ENV: &str = "PATRONUS_ADMIN_PASSWORD";
 pub const ADMIN_PASSWORD_FILE_ENV: &str = "PATRONUS_ADMIN_PASSWORD_FILE";
 /// Where a per-install admin password is generated on first start.
 pub const DEFAULT_ADMIN_PASSWORD_FILE: &str = "/var/lib/patronus/initial-admin-password";
-/// Minimum accepted admin password length.
+/// Minimum accepted password length (every account).
 pub const MIN_ADMIN_PASSWORD_LEN: usize = 12;
 /// Passwords that shipped as defaults or are trivially guessable.
 const KNOWN_DEFAULT_PASSWORDS: &[&str] = &[
@@ -100,6 +141,9 @@ pub enum AdminPasswordSource {
     Env,
     ExistingFile(std::path::PathBuf),
     GeneratedFile(std::path::PathBuf),
+    /// The admin account already exists in the store; its password is
+    /// whatever was last set (the UI's "change password" sticks).
+    Stored,
 }
 
 /// Reject publicly known / short admin passwords.
@@ -115,6 +159,28 @@ pub fn check_admin_password(pw: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// The same policy for every account ("Invalid ..." -> HTTP 400).
+pub fn check_password(pw: &str) -> anyhow::Result<()> {
+    check_admin_password(pw).map_err(|e| anyhow::anyhow!("Invalid {}", e.replacen("admin ", "", 1)))
+}
+
+/// 1-32 of `[a-z0-9._-]`, starting with a letter or digit.
+pub fn check_username(u: &str) -> anyhow::Result<String> {
+    let u = u.trim().to_ascii_lowercase();
+    let ok = !u.is_empty()
+        && u.len() <= 32
+        && u.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        && u.chars().next().is_some_and(|c| c.is_ascii_alphanumeric());
+    if ok {
+        Ok(u)
+    } else {
+        Err(anyhow::anyhow!(
+            "Invalid username {u:?}: 1-32 letters, digits, '.', '_' or '-'"
+        ))
+    }
 }
 
 fn generate_admin_password() -> String {
@@ -173,33 +239,63 @@ pub fn resolve_admin_password(
     }
 }
 
-impl UserStore {
-    /// A store whose only account is a *locked* `admin` (random, never
-    /// disclosed password). Call [`UserStore::provision_admin_from_env`] at
-    /// startup to set the real per-install password. There are no shipped
-    /// default credentials (admin/admin and operator/operator used to work
-    /// on every install).
-    pub fn new() -> Self {
-        let mut users = HashMap::new();
-        let locked =
-            hash_password(&generate_admin_password()).unwrap_or_else(|_| "!locked".to_string());
-        users.insert(
-            "admin".to_string(),
-            User {
-                id: 1,
-                username: "admin".to_string(),
-                password_hash: locked,
-                role: UserRole::Admin,
-                enabled: true,
-                created_at: Utc::now(),
-                last_login: None,
-            },
-        );
+fn now_ts() -> i64 {
+    Utc::now().timestamp()
+}
 
-        Self {
-            users: Arc::new(RwLock::new(users)),
-            next_id: Arc::new(RwLock::new(2)),
-        }
+fn ts(v: Option<i64>) -> Option<DateTime<Utc>> {
+    v.and_then(|t| Utc.timestamp_opt(t, 0).single())
+}
+
+const USER_COLS: &str = "id, username, password_hash, role, enabled, created_at, last_login, \
+     totp_secret, totp_pending, totp_last_step, recovery_codes";
+
+fn row_user(r: &sqlx::sqlite::SqliteRow) -> User {
+    let codes: Option<String> = r.get(10);
+    User {
+        id: r.get::<i64, _>(0) as u32,
+        username: r.get(1),
+        password_hash: r.get(2),
+        role: UserRole::parse(&r.get::<String, _>(3)).unwrap_or(UserRole::ReadOnly),
+        enabled: r.get::<i64, _>(4) != 0,
+        created_at: ts(Some(r.get(5))).unwrap_or_else(Utc::now),
+        last_login: ts(r.get(6)),
+        totp_secret: r.get(7),
+        totp_pending: r.get(8),
+        totp_last_step: r.get::<Option<i64>, _>(9).map(|s| s as u64),
+        recovery_codes: codes
+            .and_then(|c| serde_json::from_str(&c).ok())
+            .unwrap_or_default(),
+    }
+}
+
+/// What [`UserStore::update_user`] may change.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct UserUpdate {
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+impl UserStore {
+    pub fn new(store: Arc<ConfigStore>) -> Self {
+        Self { store }
+    }
+
+    /// A store of its own in memory (tests).
+    pub async fn in_memory() -> Self {
+        Self::new(Arc::new(
+            ConfigStore::open_in_memory()
+                .await
+                .expect("in-memory config store"),
+        ))
+    }
+
+    fn pool(&self) -> anyhow::Result<&sqlx::SqlitePool> {
+        self.store.pool().map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     /// Set the admin password from `PATRONUS_ADMIN_PASSWORD` or the
@@ -213,135 +309,347 @@ impl UserStore {
             .await
     }
 
-    /// See [`UserStore::provision_admin_from_env`].
+    /// Make sure the `admin` account exists: created from `env` / the
+    /// password file on first start; afterwards its stored password stands
+    /// unless `env` (`PATRONUS_ADMIN_PASSWORD`) is set, which re-applies
+    /// that password (and re-enables the account) on every start -- the
+    /// way back in when the admin password is lost.
     pub async fn provision_admin(
         &self,
         env: Option<String>,
         file: &std::path::Path,
     ) -> anyhow::Result<AdminPasswordSource> {
+        let env = env.filter(|p| !p.is_empty());
+        let existing = self.get_user("admin").await;
+        if existing.is_some() && env.is_none() {
+            return Ok(AdminPasswordSource::Stored);
+        }
         let (pw, source) = resolve_admin_password(env, file).map_err(|e| anyhow::anyhow!(e))?;
-        self.update_password("admin", &pw).await?;
+        match existing {
+            Some(u) => {
+                self.update_password("admin", &pw).await?;
+                sqlx::query(
+                    "UPDATE web_users SET enabled = 1, role = 'admin', updated_at = ? WHERE id = ?",
+                )
+                .bind(now_ts())
+                .bind(u.id as i64)
+                .execute(self.pool()?)
+                .await?;
+            }
+            None => {
+                self.insert("admin", &pw, UserRole::Admin).await?;
+            }
+        }
         Ok(source)
+    }
+
+    async fn insert(&self, username: &str, password: &str, role: UserRole) -> anyhow::Result<u32> {
+        let hash = hash_password(password)?;
+        let r = sqlx::query(
+            "INSERT INTO web_users (username, password_hash, role, enabled, created_at, updated_at)
+             VALUES (?, ?, ?, 1, ?, ?)",
+        )
+        .bind(username)
+        .bind(hash)
+        .bind(role.as_str())
+        .bind(now_ts())
+        .bind(now_ts())
+        .execute(self.pool()?)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("UNIQUE") {
+                anyhow::anyhow!("Invalid username: {username} already exists")
+            } else {
+                anyhow::anyhow!("store: {e}")
+            }
+        })?;
+        Ok(r.last_insert_rowid() as u32)
     }
 
     /// Get a user by username
     pub async fn get_user(&self, username: &str) -> Option<User> {
-        self.users.read().await.get(username).cloned()
+        let q = format!("SELECT {USER_COLS} FROM web_users WHERE username = ?");
+        sqlx::query(&q)
+            .bind(username)
+            .fetch_optional(self.pool().ok()?)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| row_user(&r))
+    }
+
+    pub async fn get_by_id(&self, id: u32) -> Option<User> {
+        let q = format!("SELECT {USER_COLS} FROM web_users WHERE id = ?");
+        sqlx::query(&q)
+            .bind(id as i64)
+            .fetch_optional(self.pool().ok()?)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| row_user(&r))
     }
 
     /// Verify user credentials and return user if valid
     pub async fn verify_credentials(&self, username: &str, password: &str) -> Option<User> {
-        let users = self.users.read().await;
-
-        if let Some(user) = users.get(username) {
-            if !user.enabled {
-                return None;
-            }
-
-            // Verify password hash
-            match verify_password(password, &user.password_hash) {
-                Ok(true) => Some(user.clone()),
-                _ => None,
-            }
-        } else {
-            None
+        let user = self.get_user(&username.trim().to_ascii_lowercase()).await?;
+        if !user.enabled {
+            return None;
+        }
+        match verify_password(password, &user.password_hash) {
+            Ok(true) => Some(user),
+            _ => None,
         }
     }
 
     /// Update last login time for a user
     pub async fn update_last_login(&self, username: &str) {
-        let mut users = self.users.write().await;
-        if let Some(user) = users.get_mut(username) {
-            user.last_login = Some(Utc::now());
+        if let Ok(p) = self.pool() {
+            let _ = sqlx::query("UPDATE web_users SET last_login = ? WHERE username = ?")
+                .bind(now_ts())
+                .bind(username)
+                .execute(p)
+                .await;
         }
     }
 
-    /// Create a new user
+    /// Create a new account (username and password policy checked).
     pub async fn create_user(
         &self,
         username: String,
         password: &str,
         role: UserRole,
     ) -> anyhow::Result<u32> {
-        let mut users = self.users.write().await;
-
-        if users.contains_key(&username) {
-            return Err(anyhow::anyhow!("User already exists"));
-        }
-
-        let mut next_id = self.next_id.write().await;
-        let id = *next_id;
-        *next_id += 1;
-
-        let password_hash = hash_password(password)?;
-
-        users.insert(
-            username.clone(),
-            User {
-                id,
-                username,
-                password_hash,
-                role,
-                enabled: true,
-                created_at: Utc::now(),
-                last_login: None,
-            },
-        );
-
-        Ok(id)
+        let username = check_username(&username)?;
+        check_password(password)?;
+        self.insert(&username, password, role).await
     }
 
-    /// Update a user's password
+    /// Update a user's password (no policy check: callers check).
     pub async fn update_password(&self, username: &str, new_password: &str) -> anyhow::Result<()> {
-        let mut users = self.users.write().await;
-
-        if let Some(user) = users.get_mut(username) {
-            user.password_hash = hash_password(new_password)?;
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("User not found"))
+        let hash = hash_password(new_password)?;
+        let r = sqlx::query(
+            "UPDATE web_users SET password_hash = ?, updated_at = ? WHERE username = ?",
+        )
+        .bind(hash)
+        .bind(now_ts())
+        .bind(username)
+        .execute(self.pool()?)
+        .await?;
+        if r.rows_affected() == 0 {
+            anyhow::bail!("User not found");
         }
+        Ok(())
+    }
+
+    async fn enabled_admins_except(&self, id: u32) -> anyhow::Result<i64> {
+        Ok(sqlx::query(
+            "SELECT COUNT(*) FROM web_users WHERE role = 'admin' AND enabled = 1 AND id != ?",
+        )
+        .bind(id as i64)
+        .fetch_one(self.pool()?)
+        .await?
+        .get(0))
+    }
+
+    /// Change role / enabled / password of account `id`. The last enabled
+    /// admin cannot be demoted or disabled.
+    pub async fn update_user(&self, id: u32, u: &UserUpdate) -> anyhow::Result<User> {
+        let cur = self
+            .get_by_id(id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no such user {id}"))?;
+        let role = match &u.role {
+            Some(r) => UserRole::parse(r).ok_or_else(|| {
+                anyhow::anyhow!("Invalid role {r:?}: admin, operator or readonly")
+            })?,
+            None => cur.role,
+        };
+        let enabled = u.enabled.unwrap_or(cur.enabled);
+        if cur.role == UserRole::Admin
+            && cur.enabled
+            && (role != UserRole::Admin || !enabled)
+            && self.enabled_admins_except(id).await? == 0
+        {
+            anyhow::bail!("Invalid change: at least one enabled admin account must remain");
+        }
+        if let Some(pw) = &u.password {
+            check_password(pw)?;
+            self.update_password(&cur.username, pw).await?;
+        }
+        sqlx::query("UPDATE web_users SET role = ?, enabled = ?, updated_at = ? WHERE id = ?")
+            .bind(role.as_str())
+            .bind(enabled as i64)
+            .bind(now_ts())
+            .bind(id as i64)
+            .execute(self.pool()?)
+            .await?;
+        self.get_by_id(id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no such user {id}"))
+    }
+
+    /// Delete account `id` (never the last enabled admin).
+    pub async fn delete_user(&self, id: u32) -> anyhow::Result<bool> {
+        let Some(cur) = self.get_by_id(id).await else {
+            return Ok(false);
+        };
+        if cur.role == UserRole::Admin && cur.enabled && self.enabled_admins_except(id).await? == 0
+        {
+            anyhow::bail!("Invalid change: at least one enabled admin account must remain");
+        }
+        sqlx::query("DELETE FROM web_users WHERE id = ?")
+            .bind(id as i64)
+            .execute(self.pool()?)
+            .await?;
+        Ok(true)
     }
 
     /// Disable a user
     pub async fn disable_user(&self, username: &str) -> anyhow::Result<()> {
-        let mut users = self.users.write().await;
-
-        if let Some(user) = users.get_mut(username) {
-            user.enabled = false;
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("User not found"))
-        }
+        let u = self
+            .get_user(username)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("User not found"))?;
+        self.update_user(
+            u.id,
+            &UserUpdate {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .map(|_| ())
     }
 
     /// Enable a user
     pub async fn enable_user(&self, username: &str) -> anyhow::Result<()> {
-        let mut users = self.users.write().await;
-
-        if let Some(user) = users.get_mut(username) {
-            user.enabled = true;
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("User not found"))
-        }
+        let u = self
+            .get_user(username)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("User not found"))?;
+        self.update_user(
+            u.id,
+            &UserUpdate {
+                enabled: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .map(|_| ())
     }
 
-    /// List all users (without password hashes)
+    /// List all users (without password hashes or secrets), by id.
     pub async fn list_users(&self) -> Vec<UserInfo> {
-        self.users
-            .read()
+        let q = format!("SELECT {USER_COLS} FROM web_users ORDER BY id");
+        let Ok(pool) = self.pool() else {
+            return Vec::new();
+        };
+        sqlx::query(&q)
+            .fetch_all(pool)
             .await
-            .values()
-            .map(|u| UserInfo {
-                id: u.id,
-                username: u.username.clone(),
-                role: u.role,
-                enabled: u.enabled,
-                created_at: u.created_at,
-                last_login: u.last_login,
-            })
+            .unwrap_or_default()
+            .iter()
+            .map(|r| UserInfo::from(&row_user(r)))
             .collect()
+    }
+
+    // --- second factor (TOTP) -------------------------------------------
+
+    /// Turn two-factor login off for account `id` (admin reset, the
+    /// account's own "disable", `patronus users reset-2fa`).
+    pub async fn totp_reset(&self, id: u32) -> anyhow::Result<bool> {
+        let r = sqlx::query(
+            "UPDATE web_users SET totp_secret = NULL, totp_pending = NULL, totp_last_step = NULL,
+                recovery_codes = NULL, updated_at = ? WHERE id = ?",
+        )
+        .bind(now_ts())
+        .bind(id as i64)
+        .execute(self.pool()?)
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Start enrolment: a new pending secret (base32).
+    #[cfg(feature = "totp")]
+    pub async fn totp_begin(&self, id: u32) -> anyhow::Result<String> {
+        let secret = crate::totp::generate_secret();
+        sqlx::query("UPDATE web_users SET totp_pending = ?, updated_at = ? WHERE id = ?")
+            .bind(&secret)
+            .bind(now_ts())
+            .bind(id as i64)
+            .execute(self.pool()?)
+            .await?;
+        Ok(secret)
+    }
+
+    /// Confirm enrolment with a code from the app: two-factor login is on;
+    /// returns the one-time recovery codes (shown once, stored hashed).
+    #[cfg(feature = "totp")]
+    pub async fn totp_confirm(&self, id: u32, code: &str) -> anyhow::Result<Vec<String>> {
+        let u = self
+            .get_by_id(id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("no such user {id}"))?;
+        let secret = u
+            .totp_pending
+            .ok_or_else(|| anyhow::anyhow!("Invalid request: start the two-factor setup first"))?;
+        let step = crate::totp::verify(&secret, code, now_ts() as u64, None)
+            .ok_or_else(|| anyhow::anyhow!("Invalid two-factor code (check the phone's clock)"))?;
+        let (codes, hashes) = crate::totp::generate_recovery_codes();
+        sqlx::query(
+            "UPDATE web_users SET totp_secret = ?, totp_pending = NULL, totp_last_step = ?,
+                recovery_codes = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(&secret)
+        .bind(step as i64)
+        .bind(serde_json::to_string(&hashes)?)
+        .bind(now_ts())
+        .bind(id as i64)
+        .execute(self.pool()?)
+        .await?;
+        Ok(codes)
+    }
+
+    /// Check a login's second factor: a TOTP code newer than the last one
+    /// accepted, or an unused recovery code (consumed).
+    #[cfg(feature = "totp")]
+    pub async fn totp_check(&self, user: &User, code: &str) -> bool {
+        let Some(secret) = &user.totp_secret else {
+            return true;
+        };
+        let Ok(pool) = self.pool() else { return false };
+        if let Some(step) = crate::totp::verify(secret, code, now_ts() as u64, user.totp_last_step)
+        {
+            // only advance: a concurrent login with the same code loses
+            let r = sqlx::query(
+                "UPDATE web_users SET totp_last_step = ? WHERE id = ?
+                   AND (totp_last_step IS NULL OR totp_last_step < ?)",
+            )
+            .bind(step as i64)
+            .bind(user.id as i64)
+            .bind(step as i64)
+            .execute(pool)
+            .await;
+            return matches!(r, Ok(r) if r.rows_affected() == 1);
+        }
+        let digest = crate::totp::recovery_digest(code);
+        if code.trim().len() >= 10 && user.recovery_codes.contains(&digest) {
+            let left: Vec<&String> = user
+                .recovery_codes
+                .iter()
+                .filter(|h| **h != digest)
+                .collect();
+            let r = sqlx::query(
+                "UPDATE web_users SET recovery_codes = ? WHERE id = ? AND recovery_codes = ?",
+            )
+            .bind(serde_json::to_string(&left).unwrap_or_default())
+            .bind(user.id as i64)
+            .bind(serde_json::to_string(&user.recovery_codes).unwrap_or_default())
+            .execute(pool)
+            .await;
+            return matches!(r, Ok(r) if r.rows_affected() == 1);
+        }
+        false
     }
 }
 
@@ -354,9 +662,26 @@ pub struct UserInfo {
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub last_login: Option<DateTime<Utc>>,
+    pub two_factor: bool,
+    pub recovery_codes_left: usize,
 }
 
-/// Session store - in-memory for now, can be swapped with Redis/DB later
+impl From<&User> for UserInfo {
+    fn from(u: &User) -> Self {
+        Self {
+            id: u.id,
+            username: u.username.clone(),
+            role: u.role,
+            enabled: u.enabled,
+            created_at: u.created_at,
+            last_login: u.last_login,
+            two_factor: u.two_factor(),
+            recovery_codes_left: u.recovery_codes.len(),
+        }
+    }
+}
+
+/// Session store - in memory (a restart logs everyone out)
 #[derive(Clone)]
 pub struct SessionStore {
     sessions: Arc<RwLock<HashMap<String, Session>>>,
@@ -413,6 +738,14 @@ impl SessionStore {
         self.sessions.write().await.remove(session_id);
     }
 
+    /// End every session of account `user_id` except `keep`.
+    pub async fn drop_user(&self, user_id: u32, keep: Option<&str>) {
+        self.sessions
+            .write()
+            .await
+            .retain(|id, s| s.user_id != user_id || Some(id.as_str()) == keep);
+    }
+
     /// Clean up expired sessions (older than 24 hours)
     pub async fn cleanup_expired(&self) {
         let cutoff = Utc::now() - Duration::hours(24);
@@ -434,20 +767,41 @@ pub enum AuthError {
     InternalError,
     /// Too many failed logins; retry after this many seconds.
     TooManyAttempts(u64),
+    /// Password right, the account has two-factor login: send `totp_code`.
+    TotpRequired,
+    /// The two-factor code was wrong (or already used).
+    InvalidTotp,
+    /// The account has two-factor login but this build has no TOTP.
+    TotpUnavailable,
 }
 
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
-        if let AuthError::TooManyAttempts(secs) = self {
-            return (
-                StatusCode::TOO_MANY_REQUESTS,
-                [(header::RETRY_AFTER, secs.to_string())],
-                Json(serde_json::json!({
-                    "error": "Too many failed login attempts; try again later",
-                    "retry_after_secs": secs,
-                })),
-            )
-                .into_response();
+        match self {
+            AuthError::TooManyAttempts(secs) => {
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    [(header::RETRY_AFTER, secs.to_string())],
+                    Json(serde_json::json!({
+                        "error": "Too many failed login attempts; try again later",
+                        "retry_after_secs": secs,
+                    })),
+                )
+                    .into_response();
+            }
+            AuthError::TotpRequired | AuthError::InvalidTotp => {
+                let msg = if matches!(self, AuthError::TotpRequired) {
+                    "Two-factor code required"
+                } else {
+                    "Invalid two-factor code"
+                };
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({ "error": msg, "totp_required": true })),
+                )
+                    .into_response();
+            }
+            _ => {}
         }
         let (status, message) = match self {
             AuthError::MissingSession => (StatusCode::UNAUTHORIZED, "No session found"),
@@ -457,9 +811,13 @@ impl IntoResponse for AuthError {
             }
             AuthError::UserDisabled => (StatusCode::FORBIDDEN, "User account is disabled"),
             AuthError::Forbidden => (StatusCode::FORBIDDEN, "Insufficient permissions"),
-            AuthError::InternalError | AuthError::TooManyAttempts(_) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "Internal error")
-            }
+            AuthError::TotpUnavailable => (
+                StatusCode::FORBIDDEN,
+                "This account uses two-factor login, but this Patronus is built without TOTP \
+                 (USE=totp). Rebuild with it, or turn the account's 2FA off on the box with \
+                 `patronus users reset-2fa <name>`.",
+            ),
+            _ => (StatusCode::INTERNAL_SERVER_ERROR, "Internal error"),
         };
 
         (
@@ -472,9 +830,26 @@ impl IntoResponse for AuthError {
     }
 }
 
+/// The `session_id` cookie of a request.
+pub fn session_cookie(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get(header::COOKIE)
+        .and_then(|cookie| cookie.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|cookie| {
+                let mut parts = cookie.trim().splitn(2, '=');
+                match (parts.next(), parts.next()) {
+                    (Some("session_id"), Some(id)) => Some(id.to_string()),
+                    _ => None,
+                }
+            })
+        })
+}
+
 /// Authenticated user extractor for protected routes
 pub struct AuthUser {
     pub session: Session,
+    pub session_id: String,
 }
 
 #[async_trait]
@@ -485,21 +860,7 @@ where
     type Rejection = AuthError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        // Extract session cookie
-        let session_id = parts
-            .headers
-            .get(header::COOKIE)
-            .and_then(|cookie| cookie.to_str().ok())
-            .and_then(|cookies| {
-                cookies.split(';').find_map(|cookie| {
-                    let mut parts = cookie.trim().splitn(2, '=');
-                    match (parts.next(), parts.next()) {
-                        (Some("session_id"), Some(id)) => Some(id.to_string()),
-                        _ => None,
-                    }
-                })
-            })
-            .ok_or(AuthError::MissingSession)?;
+        let session_id = session_cookie(&parts.headers).ok_or(AuthError::MissingSession)?;
 
         // Get session store from extensions (set by middleware)
         let store = parts
@@ -513,13 +874,17 @@ where
             .await
             .ok_or(AuthError::InvalidSession)?;
 
-        Ok(AuthUser { session })
+        Ok(AuthUser {
+            session,
+            session_id,
+        })
     }
 }
 
 /// Admin-only extractor for admin routes
 pub struct AdminUser {
     pub session: Session,
+    pub session_id: String,
 }
 
 #[async_trait]
@@ -538,6 +903,7 @@ where
 
         Ok(AdminUser {
             session: auth_user.session,
+            session_id: auth_user.session_id,
         })
     }
 }
@@ -547,6 +913,9 @@ where
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
+    /// TOTP code (or a recovery code) for accounts with two-factor login.
+    #[serde(default)]
+    pub totp_code: Option<String>,
 }
 
 /// Login response
@@ -573,7 +942,7 @@ const MAX_TRACKED_LOGIN_CLIENTS: usize = 65_536;
 /// clients by their /64, since one host trivially owns a whole /64. A
 /// successful login clears the client's record. While a client is locked
 /// out even the *correct* password is refused, otherwise the lockout would
-/// not slow down guessing at all.
+/// not slow down guessing at all. Wrong two-factor codes count as failures.
 #[derive(Clone, Default)]
 pub struct LoginThrottle {
     failures: Arc<std::sync::Mutex<FailureTable>>,
@@ -679,16 +1048,10 @@ pub struct AuthState {
     pub login_throttle: LoginThrottle,
 }
 
-impl Default for AuthState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl AuthState {
-    pub fn new() -> Self {
+    pub fn new(store: Arc<ConfigStore>) -> Self {
         Self {
-            user_store: UserStore::new(),
+            user_store: UserStore::new(store),
             session_store: SessionStore::new(),
             login_throttle: LoginThrottle::new(),
         }
@@ -722,13 +1085,38 @@ pub async fn login(
         tracing::warn!("failed login for {:?} from {}", req.username, client);
         return Err(AuthError::InvalidCredentials);
     };
+
+    // Second factor
+    if user.two_factor() {
+        #[cfg(feature = "totp")]
+        {
+            let code = req.totp_code.as_deref().map(str::trim).unwrap_or("");
+            if code.is_empty() {
+                return Err(AuthError::TotpRequired);
+            }
+            if !app_state.auth.user_store.totp_check(&user, code).await {
+                throttle.record_failure(client);
+                tracing::warn!(
+                    "wrong two-factor code for {:?} from {}",
+                    user.username,
+                    client
+                );
+                return Err(AuthError::InvalidTotp);
+            }
+        }
+        #[cfg(not(feature = "totp"))]
+        {
+            let _ = &req.totp_code;
+            return Err(AuthError::TotpUnavailable);
+        }
+    }
     throttle.record_success(client);
 
     // Update last login time
     app_state
         .auth
         .user_store
-        .update_last_login(&req.username)
+        .update_last_login(&user.username)
         .await;
 
     // Create session
@@ -756,30 +1144,13 @@ pub async fn login(
 /// Logout handler
 pub async fn logout(
     State(app_state): State<crate::state::AppState>,
-    _auth_user: AuthUser,
-    parts: Parts,
+    auth_user: AuthUser,
 ) -> impl IntoResponse {
-    // Extract session ID from cookie
-    if let Some(session_id) = parts
-        .headers
-        .get(header::COOKIE)
-        .and_then(|cookie| cookie.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|cookie| {
-                let mut parts = cookie.trim().splitn(2, '=');
-                match (parts.next(), parts.next()) {
-                    (Some("session_id"), Some(id)) => Some(id.to_string()),
-                    _ => None,
-                }
-            })
-        })
-    {
-        app_state
-            .auth
-            .session_store
-            .delete_session(&session_id)
-            .await;
-    }
+    app_state
+        .auth
+        .session_store
+        .delete_session(&auth_user.session_id)
+        .await;
 
     // Clear cookie
     let cookie = "session_id=; HttpOnly; SameSite=Strict; Max-Age=0; Path=/";
@@ -794,11 +1165,21 @@ pub async fn logout(
 }
 
 /// Get current user info
-pub async fn current_user(auth_user: AuthUser) -> impl IntoResponse {
+pub async fn current_user(
+    State(app_state): State<crate::state::AppState>,
+    auth_user: AuthUser,
+) -> impl IntoResponse {
+    let u = app_state
+        .auth
+        .user_store
+        .get_by_id(auth_user.session.user_id)
+        .await;
     Json(serde_json::json!({
         "username": auth_user.session.username,
         "role": auth_user.session.role,
         "user_id": auth_user.session.user_id,
+        "two_factor": u.as_ref().is_some_and(|u| u.two_factor()),
+        "totp_available": cfg!(feature = "totp"),
     }))
 }
 
@@ -809,69 +1190,174 @@ pub struct ChangePasswordRequest {
     pub new_password: String,
 }
 
-/// Change password handler
+fn bad_request(msg: impl Into<String>) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({ "error": msg.into() })),
+    )
+        .into_response()
+}
+
+/// POST /api/auth/password -- change one's own password (any role). Other
+/// sessions of the account end.
 pub async fn change_password(
     State(app_state): State<crate::state::AppState>,
     auth_user: AuthUser,
     Json(req): Json<ChangePasswordRequest>,
-) -> Result<impl IntoResponse, AuthError> {
-    // Verify current password
-    let user = app_state
-        .auth
-        .user_store
+) -> Response {
+    let us = &app_state.auth.user_store;
+    let Some(user) = us
         .verify_credentials(&auth_user.session.username, &req.current_password)
         .await
-        .ok_or(AuthError::InvalidCredentials)?;
-
-    // Update password
-    app_state
-        .auth
-        .user_store
+    else {
+        return AuthError::InvalidCredentials.into_response();
+    };
+    if let Err(e) = check_password(&req.new_password) {
+        return bad_request(e.to_string());
+    }
+    if us
         .update_password(&user.username, &req.new_password)
         .await
-        .map_err(|_| AuthError::InternalError)?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "Password changed successfully"
-    })))
-}
-
-/// List users (admin only)
-pub async fn list_users(
-    State(app_state): State<crate::state::AppState>,
-    _admin: AdminUser,
-) -> impl IntoResponse {
-    let users = app_state.auth.user_store.list_users().await;
-    Json(users)
-}
-
-/// Create user request
-#[derive(Debug, Deserialize)]
-pub struct CreateUserRequest {
-    pub username: String,
-    pub password: String,
-    pub role: UserRole,
-}
-
-/// Create user handler (admin only)
-pub async fn create_user(
-    State(app_state): State<crate::state::AppState>,
-    _admin: AdminUser,
-    Json(req): Json<CreateUserRequest>,
-) -> Result<impl IntoResponse, AuthError> {
-    let id = app_state
+        .is_err()
+    {
+        return AuthError::InternalError.into_response();
+    }
+    app_state
         .auth
-        .user_store
-        .create_user(req.username.clone(), &req.password, req.role)
-        .await
-        .map_err(|_| AuthError::InternalError)?;
-
-    Ok(Json(serde_json::json!({
+        .session_store
+        .drop_user(user.id, Some(&auth_user.session_id))
+        .await;
+    Json(serde_json::json!({
         "success": true,
-        "id": id,
-        "username": req.username
-    })))
+        "message": "Password changed"
+    }))
+    .into_response()
+}
+
+// --- two-factor enrolment (own account) --------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct TotpSetupRequest {
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TotpCodeRequest {
+    pub code: String,
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+#[cfg(not(feature = "totp"))]
+fn totp_not_built() -> Response {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(serde_json::json!({
+            "error": "two-factor authentication is not built into this Patronus (rebuild with USE=totp)"
+        })),
+    )
+        .into_response()
+}
+
+/// POST /api/auth/2fa/setup {password} -> {secret, otpauth_uri, qr_svg}:
+/// a new secret to scan; nothing changes for login until it is confirmed.
+pub async fn totp_setup(
+    State(app_state): State<crate::state::AppState>,
+    auth_user: AuthUser,
+    Json(req): Json<TotpSetupRequest>,
+) -> Response {
+    #[cfg(feature = "totp")]
+    {
+        let us = &app_state.auth.user_store;
+        let Some(user) = us
+            .verify_credentials(&auth_user.session.username, &req.password)
+            .await
+        else {
+            return AuthError::InvalidCredentials.into_response();
+        };
+        if user.two_factor() {
+            return bad_request(
+                "Invalid request: two-factor login is already on (disable it first)",
+            );
+        }
+        let secret = match us.totp_begin(user.id).await {
+            Ok(s) => s,
+            Err(_) => return AuthError::InternalError.into_response(),
+        };
+        let uri = crate::totp::otpauth_uri(&user.username, &secret);
+        let qr = crate::qrcode::generate_qr_code_svg(&uri).unwrap_or_default();
+        Json(serde_json::json!({ "secret": secret, "otpauth_uri": uri, "qr_svg": qr }))
+            .into_response()
+    }
+    #[cfg(not(feature = "totp"))]
+    {
+        let _ = (&app_state, &auth_user, &req.password);
+        totp_not_built()
+    }
+}
+
+/// POST /api/auth/2fa/enable {code} -> {recovery_codes}: confirm with a
+/// code from the app; from now on login needs a code.
+pub async fn totp_enable(
+    State(app_state): State<crate::state::AppState>,
+    auth_user: AuthUser,
+    Json(req): Json<TotpCodeRequest>,
+) -> Response {
+    #[cfg(feature = "totp")]
+    {
+        match app_state
+            .auth
+            .user_store
+            .totp_confirm(auth_user.session.user_id, &req.code)
+            .await
+        {
+            Ok(codes) => Json(serde_json::json!({ "enabled": true, "recovery_codes": codes }))
+                .into_response(),
+            Err(e) => bad_request(e.to_string()),
+        }
+    }
+    #[cfg(not(feature = "totp"))]
+    {
+        let _ = (&app_state, &auth_user, &req.code);
+        totp_not_built()
+    }
+}
+
+/// POST /api/auth/2fa/disable {password, code}: turn one's own two-factor
+/// login off (needs both factors).
+pub async fn totp_disable(
+    State(app_state): State<crate::state::AppState>,
+    auth_user: AuthUser,
+    Json(req): Json<TotpCodeRequest>,
+) -> Response {
+    #[cfg(feature = "totp")]
+    {
+        let us = &app_state.auth.user_store;
+        let Some(user) = us
+            .verify_credentials(
+                &auth_user.session.username,
+                req.password.as_deref().unwrap_or(""),
+            )
+            .await
+        else {
+            return AuthError::InvalidCredentials.into_response();
+        };
+        if !user.two_factor() {
+            return bad_request("Invalid request: two-factor login is not on");
+        }
+        if !us.totp_check(&user, &req.code).await {
+            return AuthError::InvalidTotp.into_response();
+        }
+        match us.totp_reset(user.id).await {
+            Ok(_) => Json(serde_json::json!({ "enabled": false })).into_response(),
+            Err(_) => AuthError::InternalError.into_response(),
+        }
+    }
+    #[cfg(not(feature = "totp"))]
+    {
+        let _ = (&app_state, &auth_user, &req.code);
+        totp_not_built()
+    }
 }
 
 /// Middleware to inject session store into request extensions
@@ -897,7 +1383,8 @@ mod default_credential_tests {
 
     #[tokio::test]
     async fn shipped_default_credentials_do_not_work() {
-        let store = UserStore::new();
+        let store = UserStore::in_memory().await;
+        store.provision_admin(None, &tmp_file()).await.unwrap();
         assert!(store.verify_credentials("admin", "admin").await.is_none());
         assert!(store
             .verify_credentials("operator", "operator")
@@ -909,7 +1396,9 @@ mod default_credential_tests {
     #[tokio::test]
     async fn first_start_generates_a_private_per_install_password() {
         let file = tmp_file();
-        let store = UserStore::new();
+        let db = file.with_file_name("config.db");
+        let cs = Arc::new(ConfigStore::open(&db).await.unwrap());
+        let store = UserStore::new(cs.clone());
         let src = store.provision_admin(None, &file).await.unwrap();
         assert_eq!(src, AdminPasswordSource::GeneratedFile(file.clone()));
         let pw = std::fs::read_to_string(&file).unwrap().trim().to_string();
@@ -923,13 +1412,38 @@ mod default_credential_tests {
         assert!(store.verify_credentials("admin", &pw).await.is_some());
         assert!(store.verify_credentials("admin", "admin").await.is_none());
 
-        // Restart: same password is reused, a second install gets another.
-        let again = UserStore::new();
-        let src = again.provision_admin(None, &file).await.unwrap();
-        assert_eq!(src, AdminPasswordSource::ExistingFile(file.clone()));
+        // Restart (a new process over the same store): the account and its
+        // password persist; a password changed in the UI sticks.
+        let again = UserStore::new(Arc::new(ConfigStore::open(&db).await.unwrap()));
+        assert_eq!(
+            again.provision_admin(None, &file).await.unwrap(),
+            AdminPasswordSource::Stored
+        );
         assert!(again.verify_credentials("admin", &pw).await.is_some());
+        again
+            .update_password("admin", "Changed-In-The-UI-42")
+            .await
+            .unwrap();
+        let third = UserStore::new(Arc::new(ConfigStore::open(&db).await.unwrap()));
+        third.provision_admin(None, &file).await.unwrap();
+        assert!(third
+            .verify_credentials("admin", "Changed-In-The-UI-42")
+            .await
+            .is_some());
+        // ... unless PATRONUS_ADMIN_PASSWORD is set: the way back in
+        third
+            .provision_admin(Some("Recovery-Passw0rd-1".into()), &file)
+            .await
+            .unwrap();
+        assert!(third
+            .verify_credentials("admin", "Recovery-Passw0rd-1")
+            .await
+            .is_some());
+
+        // a second install gets another password
         let other = tmp_file();
-        UserStore::new()
+        UserStore::in_memory()
+            .await
             .provision_admin(None, &other)
             .await
             .unwrap();
@@ -940,15 +1454,20 @@ mod default_credential_tests {
     async fn weak_or_default_admin_password_is_refused() {
         let file = tmp_file();
         for weak in ["admin", "ADMIN", "operator", "changeme", "short-pw"] {
-            let err = UserStore::new()
+            let err = UserStore::in_memory()
+                .await
                 .provision_admin(Some(weak.to_string()), &file)
                 .await
                 .unwrap_err();
             assert!(err.to_string().contains(ADMIN_PASSWORD_ENV), "{err}");
         }
         std::fs::write(&file, "admin\n").unwrap();
-        assert!(UserStore::new().provision_admin(None, &file).await.is_err());
-        let store = UserStore::new();
+        assert!(UserStore::in_memory()
+            .await
+            .provision_admin(None, &file)
+            .await
+            .is_err());
+        let store = UserStore::in_memory().await;
         store
             .provision_admin(Some("Correct-Horse-Battery-9".to_string()), &file)
             .await
@@ -957,6 +1476,169 @@ mod default_credential_tests {
             .verify_credentials("admin", "Correct-Horse-Battery-9")
             .await
             .is_some());
+    }
+}
+
+#[cfg(test)]
+mod account_tests {
+    use super::*;
+
+    async fn store() -> UserStore {
+        let s = UserStore::in_memory().await;
+        s.provision_admin(
+            Some("Admin-Passw0rd-123".into()),
+            &std::env::temp_dir().join("unused"),
+        )
+        .await
+        .unwrap();
+        s
+    }
+
+    #[tokio::test]
+    async fn accounts_are_created_validated_and_the_last_admin_stays() {
+        let s = store().await;
+        let id = s
+            .create_user("Alice".into(), "Alice-Passw0rd-1", UserRole::Operator)
+            .await
+            .unwrap();
+        let a = s.get_by_id(id).await.unwrap();
+        assert_eq!((a.username.as_str(), a.role), ("alice", UserRole::Operator));
+        assert!(s
+            .verify_credentials("ALICE", "Alice-Passw0rd-1")
+            .await
+            .is_some());
+        for (u, p) in [
+            ("alice", "Another-Passw0rd"),
+            ("bad name", "Another-Passw0rd"),
+            ("-x", "Another-Passw0rd"),
+            ("bob", "short"),
+            ("bob", "changeme"),
+        ] {
+            let e = s
+                .create_user(u.into(), p, UserRole::ReadOnly)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(e.starts_with("Invalid"), "{u}/{p}: {e}");
+        }
+        // disabled accounts cannot log in
+        s.update_user(
+            id,
+            &UserUpdate {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(s
+            .verify_credentials("alice", "Alice-Passw0rd-1")
+            .await
+            .is_none());
+
+        let admin = s.get_user("admin").await.unwrap();
+        for u in [
+            UserUpdate {
+                role: Some("operator".into()),
+                ..Default::default()
+            },
+            UserUpdate {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        ] {
+            let e = s.update_user(admin.id, &u).await.unwrap_err().to_string();
+            assert!(e.contains("at least one enabled admin"), "{e}");
+        }
+        assert!(s.delete_user(admin.id).await.is_err());
+        // with a second admin the first may go
+        s.update_user(
+            id,
+            &UserUpdate {
+                role: Some("admin".into()),
+                enabled: Some(true),
+                password: Some("Alice-New-Passw0rd".into()),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(s
+            .verify_credentials("alice", "Alice-New-Passw0rd")
+            .await
+            .is_some());
+        assert!(s.delete_user(admin.id).await.unwrap());
+        assert!(!s.delete_user(admin.id).await.unwrap());
+        let list = s.list_users().await;
+        assert_eq!(list.len(), 1);
+        let json = serde_json::to_string(&list).unwrap();
+        assert!(
+            !json.contains("argon2"),
+            "no hashes in the API view: {json}"
+        );
+        assert!(s
+            .update_user(
+                id,
+                &UserUpdate {
+                    role: Some("root".into()),
+                    ..Default::default()
+                }
+            )
+            .await
+            .is_err());
+    }
+
+    #[cfg(feature = "totp")]
+    #[tokio::test]
+    async fn totp_enrolment_codes_and_recovery_codes() {
+        let s = store().await;
+        let admin = s.get_user("admin").await.unwrap();
+        assert!(!admin.two_factor());
+        let secret = s.totp_begin(admin.id).await.unwrap();
+        // pending: login does not need a code yet
+        assert!(!s.get_by_id(admin.id).await.unwrap().two_factor());
+        let now = Utc::now().timestamp() as u64;
+        let code = crate::totp::code_at(&secret, now).unwrap();
+        // a wrong code (none of the accepted steps') does not enrol
+        let wrong = (0..1_000_000u32)
+            .map(|n| format!("{n:06}"))
+            .find(|c| crate::totp::verify(&secret, c, now, None).is_none())
+            .unwrap();
+        assert!(s.totp_confirm(admin.id, &wrong).await.is_err());
+        assert!(!s.get_by_id(admin.id).await.unwrap().two_factor());
+        let recovery = s.totp_confirm(admin.id, &code).await.unwrap();
+        assert_eq!(recovery.len(), crate::totp::RECOVERY_CODES);
+        let u = s.get_by_id(admin.id).await.unwrap();
+        assert!(u.two_factor() && u.totp_pending.is_none());
+        // the confirming code cannot be replayed at login
+        assert!(!s.totp_check(&u, &code).await);
+        // the next step's code works once
+        let next = crate::totp::code_at(&secret, now + crate::totp::PERIOD).unwrap();
+        assert!(s.totp_check(&u, &next).await);
+        let u = s.get_by_id(admin.id).await.unwrap();
+        assert!(!s.totp_check(&u, &next).await, "replay refused");
+        // a recovery code works once
+        assert!(s.totp_check(&u, &recovery[0].to_uppercase()).await);
+        let u = s.get_by_id(admin.id).await.unwrap();
+        assert_eq!(u.recovery_codes.len(), crate::totp::RECOVERY_CODES - 1);
+        assert!(!s.totp_check(&u, &recovery[0]).await);
+        assert!(!s.totp_check(&u, "garbage-code").await);
+        // reset (admin / CLI) turns it off
+        assert!(s.totp_reset(admin.id).await.unwrap());
+        assert!(!s.get_by_id(admin.id).await.unwrap().two_factor());
+    }
+
+    #[tokio::test]
+    async fn sessions_of_a_user_can_be_ended() {
+        let ss = SessionStore::new();
+        let a = ss.create_session(1, "a".into(), UserRole::Admin).await;
+        let b = ss.create_session(1, "a".into(), UserRole::Admin).await;
+        let c = ss.create_session(2, "c".into(), UserRole::ReadOnly).await;
+        ss.drop_user(1, Some(&a)).await;
+        assert!(ss.get_session(&a).await.is_some());
+        assert!(ss.get_session(&b).await.is_none());
+        assert!(ss.get_session(&c).await.is_some());
+        ss.drop_user(2, None).await;
+        assert!(ss.get_session(&c).await.is_none());
     }
 }
 

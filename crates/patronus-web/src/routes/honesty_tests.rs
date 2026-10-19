@@ -222,22 +222,78 @@ async fn vpn_reads_the_system_and_refuses_to_fake_writes() {
         // no wireguard-tools / not permitted: an error, never a list
         _ => assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{body}"),
     }
-    for (m, uri, body) in [
+    // Writes are real now (lane F): nothing configured -> honest answers,
+    // never a fake "Pending" row or a placeholder config.
+    // (without USE=wireguard / USE=ipsec: 501 naming the USE flag)
+    let wg = |s: StatusCode| {
+        if cfg!(feature = "wireguard") {
+            s
+        } else {
+            StatusCode::NOT_IMPLEMENTED
+        }
+    };
+    let ipsec_404 = if cfg!(feature = "ipsec") {
+        StatusCode::NOT_FOUND
+    } else {
+        StatusCode::NOT_IMPLEMENTED
+    };
+    for (m, uri, body, want) in [
         (
             Method::POST,
             "/api/vpn/wireguard/peers",
             Some(
                 r#"{"name":"x","public_key":"k","allowed_ips":"10.0.0.9/32","endpoint":null,"persistent_keepalive":null,"enabled":true}"#,
             ),
+            wg(StatusCode::BAD_REQUEST),
         ),
-        (Method::DELETE, "/api/vpn/wireguard/peers/1", None),
-        (Method::GET, "/api/vpn/wireguard/config/1", None),
-        (Method::GET, "/api/vpn/wireguard/qrcode/1", None),
-        (Method::GET, "/api/vpn/openvpn/tunnels", None),
+        (
+            Method::DELETE,
+            "/api/vpn/wireguard/peers/1",
+            None,
+            wg(StatusCode::NOT_FOUND),
+        ),
+        (
+            Method::GET,
+            "/api/vpn/wireguard/config/1",
+            None,
+            wg(StatusCode::NOT_FOUND),
+        ),
+        (
+            Method::GET,
+            "/api/vpn/wireguard/qrcode/1",
+            None,
+            wg(StatusCode::NOT_FOUND),
+        ),
+        (
+            Method::DELETE,
+            "/api/vpn/ipsec/connections/1",
+            None,
+            ipsec_404,
+        ),
+        (
+            Method::GET,
+            "/api/vpn/openvpn/tunnels",
+            None,
+            StatusCode::NOT_IMPLEMENTED,
+        ),
     ] {
-        let (s, _) = a.call(m.clone(), uri, body).await;
-        assert_eq!(s, StatusCode::NOT_IMPLEMENTED, "{m} {uri}");
+        let (s, body) = a.call(m.clone(), uri, body).await;
+        assert_eq!(s, want, "{m} {uri}: {body}");
     }
+    let (s, body) = a.call(Method::GET, "/api/vpn", None).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    if cfg!(feature = "wireguard") {
+        assert_eq!(v["wireguard"]["tunnels"], serde_json::json!([]), "{body}");
+    }
+    if cfg!(feature = "ipsec") {
+        assert_eq!(v["ipsec"], serde_json::json!([]), "{body}");
+    }
+    assert_eq!(
+        v["features"]["wireguard"],
+        serde_json::json!(cfg!(feature = "wireguard"))
+    );
+
     // The counters are derived from the same live read.
     let (s, body) = a.call(Method::GET, "/api/status", None).await;
     assert_eq!(s, StatusCode::OK);

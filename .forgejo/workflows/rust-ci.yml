@@ -229,6 +229,23 @@ jobs:
         env:
           REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
         run: ci/netlab/lan-services.sh systemd
+      # Lanes F + H in the same Gentoo images (ci/netlab/vpn-services-test.sh):
+      # an IKEv2 tunnel configured through the API of a patronus-web running
+      # as user patronus (applyd as root) comes up against a second charon,
+      # carries LAN <-> remote-LAN traffic both ways un-NATed, comes back
+      # after a reboot-equivalent `patronus apply`; strongSwan stop/start
+      # from the web API through applyd; WireGuard created by the
+      # unprivileged UI. Once per init system.
+      - name: Lanes F/H IPsec + service control - OpenRC path (Gentoo stage3)
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          NETLAB_TEST: vpn-services-test.sh
+        run: ci/netlab/lan-services.sh openrc
+      - name: Lanes F/H IPsec + service control - systemd path (Gentoo stage3)
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          NETLAB_TEST: vpn-services-test.sh
+        run: ci/netlab/lan-services.sh systemd
 
   feature-matrix:
     # `cargo test --workspace` only ever compiles default features, so every

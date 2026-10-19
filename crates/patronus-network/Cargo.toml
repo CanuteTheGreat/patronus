@@ -11,9 +11,11 @@ default = []
 dhcp = []
 dns = []
 ntp = []
-wireguard = []
+# Lane F: WireGuard tunnels (keys generated in-process, kernel module +
+# wireguard-tools at runtime) and IPsec IKEv2 via strongSwan swanctl.
+wireguard = ["dep:x25519-dalek", "dep:base64", "dep:rand"]
 openvpn = []
-ipsec = []
+ipsec = ["dep:rand"]
 # Lane C: VLAN/QinQ subinterfaces (USE=vlan), PPPoE client (USE=pppoe),
 # dhcpcd as the preferred DHCP client (USE=dhcpcd; else busybox udhcpc).
 vlan = []
@@ -62,5 +64,8 @@ netlink-packet-route.workspace = true
 rtnetlink = "0.14"
 ipnetwork = "0.20"
 futures = "0.3"
+x25519-dalek = { version = "2.0", features = ["static_secrets"], optional = true }
+base64 = { version = "0.22", optional = true }
+rand = { version = "0.8", optional = true }
 
 # wireguard-control = { workspace = true, optional = true }  # Removed - not used

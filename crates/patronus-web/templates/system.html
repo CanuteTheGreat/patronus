@@ -52,36 +52,105 @@
 
 <div class="card">
     <div class="card-header"><h2 class="card-title">Web accounts</h2></div>
+    <p class="text-sm text-muted">Admins manage accounts, backups and restores; operators change the configuration;
+        read-only accounts only look. Accounts are stored in the configuration (they are part of backups).</p>
     {% if users.is_empty() %}
     <p class="empty">No accounts.</p>
     {% else %}
-    <table class="lan">
-        <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Created</th><th>Last login</th></tr></thead>
+    <table class="lan" id="users">
+        <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Two-factor</th><th>Created</th><th>Last login</th><th></th></tr></thead>
         <tbody>
         {% for user in users %}
-        <tr>
-            <td><strong>{{ user.username }}</strong></td>
+        <tr data-user="{{ user.username }}">
+            <td><strong>{{ user.username }}</strong>{% if user.id == me_id %} <span class="text-muted">(you)</span>{% endif %}</td>
             <td>{{ user.role }}</td>
             <td>{% if user.is_active %}<span class="ok">active</span>{% else %}<span class="bad">disabled</span>{% endif %}</td>
+            <td class="user-2fa">{% if user.two_factor %}<span class="ok">on</span> <span class="text-sm text-muted">({{ user.recovery_codes_left }} recovery codes left)</span>{% else %}off{% endif %}</td>
             <td>{{ user.created_at }}</td>
             <td>{{ user.last_login_display }}</td>
+            <td>{% if is_admin %}
+                <select onchange="if (this.value) call('PUT', '/api/system/users/{{ user.id }}', {role: this.value})">
+                    <option value="">role...</option><option value="admin">admin</option><option value="operator">operator</option><option value="readonly">read-only</option>
+                </select>
+                {% if user.is_active %}<button class="btn btn-sm btn-secondary" onclick="call('PUT', '/api/system/users/{{ user.id }}', {enabled: false})">Disable</button>
+                {% else %}<button class="btn btn-sm btn-success" onclick="call('PUT', '/api/system/users/{{ user.id }}', {enabled: true})">Enable</button>{% endif %}
+                <button class="btn btn-sm btn-secondary" onclick="setPassword({{ user.id }}, '{{ user.username }}')">Set password</button>
+                {% if user.two_factor %}<button class="btn btn-sm btn-secondary" onclick="if (confirm('Turn two-factor login off for {{ user.username }}?')) call('POST', '/api/system/users/{{ user.id }}/2fa/reset')">Reset 2FA</button>{% endif %}
+                {% if user.id != me_id %}<button class="btn btn-sm btn-danger" onclick="del('/api/system/users/{{ user.id }}', 'Delete account {{ user.username }}?')">Delete</button>{% endif %}
+            {% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
     {% endif %}
-    <p class="text-sm text-muted">The admin account is created at first start. Adding accounts and
-        two-factor authentication are not available yet.</p>
+    {% if is_admin %}
+    <form class="lan-form" id="user-form" onsubmit="return submitJson(event, 'POST', '/api/system/users')">
+        <label>Username <input name="username" required></label>
+        <label>Password (12+ characters) <input name="password" type="password" autocomplete="new-password" required></label>
+        <label>Role <select name="role"><option value="readonly">read-only</option><option value="operator">operator</option><option value="admin">admin</option></select></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add account</button>
+    </form>
+    {% endif %}
+</div>
+
+<div class="card" id="my-account">
+    <div class="card-header"><h2 class="card-title">Your account ({{ me_username }})</h2></div>
+    <form class="lan-form" id="password-form" onsubmit="return submitJson(event, 'POST', '/api/auth/password')">
+        <label>Current password <input name="current_password" type="password" autocomplete="current-password" required></label>
+        <label>New password (12+ characters) <input name="new_password" type="password" autocomplete="new-password" required></label>
+        <button class="btn btn-primary btn-sm" type="submit">Change password</button>
+    </form>
+    <h3 class="text-sm">Two-factor login (TOTP)</h3>
+    {% if !totp_available %}
+    <p class="empty" id="totp-not-built">This Patronus is built without two-factor authentication. Rebuild with
+        <code>USE=totp</code> (emerge net-firewall/patronus) to protect accounts with an authenticator app.</p>
+    {% else if me_two_factor %}
+    <p><span class="ok">On</span>: logging in needs a code from your authenticator app (or a recovery code).</p>
+    <form class="lan-form" id="totp-disable-form" onsubmit="return submitJson(event, 'POST', '/api/auth/2fa/disable')">
+        <label>Password <input name="password" type="password" required></label>
+        <label>Current code <input name="code" required></label>
+        <button class="btn btn-danger btn-sm" type="submit">Turn two-factor login off</button>
+    </form>
+    {% else %}
+    <p class="text-sm">Off. Scan a QR code with an authenticator app (Aegis, FreeOTP, Google Authenticator, ...),
+        confirm with a code, and keep the recovery codes somewhere safe.</p>
+    <form class="lan-form" id="totp-setup-form" onsubmit="return totpSetup(event)">
+        <label>Password <input name="password" type="password" required></label>
+        <button class="btn btn-primary btn-sm" type="submit">Set up two-factor login</button>
+    </form>
+    <div id="totp-enrol" style="display:none">
+        <div id="totp-qr" style="width:240px"></div>
+        <p class="text-sm">Or enter this secret by hand: <span class="mono" id="totp-secret"></span></p>
+        <form class="lan-form" id="totp-enable-form" onsubmit="return totpEnable(event)">
+            <label>Code from the app <input name="code" required autocomplete="one-time-code"></label>
+            <button class="btn btn-primary btn-sm" type="submit">Turn on</button>
+        </form>
+    </div>
+    <div id="totp-recovery" style="display:none">
+        <p><b>Recovery codes</b> (each works once instead of a code; they are not shown again):</p>
+        <pre class="mono" id="totp-recovery-codes"></pre>
+        <button class="btn btn-secondary btn-sm" onclick="location.reload()">Done</button>
+    </div>
+    {% endif %}
 </div>
 
 <div class="card">
     <div class="card-header">
         <h2 class="card-title">Configuration backups</h2>
-        <button class="btn btn-sm btn-primary" id="create-backup" onclick="call('POST', '/api/system/backups')">Create backup now</button>
+        {% if is_admin %}<button class="btn btn-sm btn-primary" id="create-backup" onclick="call('POST', '/api/system/backups')">Create backup now</button>{% endif %}
     </div>
-    <p class="text-sm">A backup is a full export of the configuration store, written to <span class="mono">{{ backup_dir }}</span>.
-        To restore one on the box: <span class="mono">patronus config import &lt;file&gt;</span>
-        (the configuration it replaces is kept as a revision; it is applied at once).</p>
+    <p class="text-sm">A backup is a full export of the configuration store (accounts, firewall, interfaces, routing,
+        LAN services, VPN keys), written to <span class="mono">{{ backup_dir }}</span>. Restoring one replaces the
+        configuration and applies it to the whole system at once; the configuration it replaces is kept as a revision,
+        and if any part cannot be applied the restore is undone. On the box: <span class="mono">patronus config import &lt;file&gt;</span>.</p>
+    {% if is_admin %}
+    <form class="lan-form" id="restore-upload-form" onsubmit="return restoreUpload(event)">
+        <label>Restore from a file <input type="file" name="file" accept=".json,application/json" required></label>
+        <button class="btn btn-sm btn-danger" type="submit">Upload and restore</button>
+    </form>
+    {% else %}
+    <p class="text-sm text-muted">Backups contain password hashes and VPN keys: only admins can create, download or restore them.</p>
+    {% endif %}
     {% if !backups_error.is_empty() %}
     <div class="alert-error">Backups unavailable: {{ backups_error }}</div>
     {% else if backups.is_empty() %}
@@ -96,10 +165,11 @@
             <td>{{ backup.created_at }}</td>
             <td>{{ backup.size }}</td>
             <td>{% if backup.is_valid %}<span class="ok">valid export</span>{% else %}<span class="bad">not a valid export</span>{% endif %}</td>
-            <td>
+            <td>{% if is_admin %}
                 <a class="btn btn-sm btn-secondary" href="/api/system/backups/{{ backup.id }}">Download</a>
+                {% if backup.is_valid %}<button class="btn btn-sm btn-danger" onclick="restoreStored('{{ backup.id }}')">Restore</button>{% endif %}
                 <button class="btn btn-sm btn-danger" onclick="del('/api/system/backups/{{ backup.id }}', 'Delete {{ backup.name }}?')">Delete</button>
-            </td>
+            {% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -124,19 +194,24 @@
             <td>{{ service.memory_display }}</td>
             <td>{% if service.enabled %}yes{% else %}no{% endif %}</td>
             <td>
+                {% if can_modify %}
                 {% if service.is_running %}
                 <button class="btn btn-sm btn-secondary" onclick="if (confirm('Restart {{ service.name }}?')) call('POST', '/api/system/services/{{ service.name }}/restart')">Restart</button>
-                <button class="btn btn-sm btn-danger" onclick="if (confirm('Stop {{ service.name }}?')) call('POST', '/api/system/services/{{ service.name }}/stop')">Stop</button>
+                {% if !service.name.starts_with("patronus-") %}<button class="btn btn-sm btn-danger" onclick="if (confirm('Stop {{ service.name }}?')) call('POST', '/api/system/services/{{ service.name }}/stop')">Stop</button>{% endif %}
+                {% else if service.name.starts_with("patronus-") %}
+                <button class="btn btn-sm btn-success" onclick="call('POST', '/api/system/services/{{ service.name }}/restart')">Start</button>
                 {% else %}
                 <button class="btn btn-sm btn-success" onclick="call('POST', '/api/system/services/{{ service.name }}/start')">Start</button>
+                {% endif %}
                 {% endif %}
             </td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
-    <p class="text-sm text-muted">Start/stop runs through the init system as the user patronus-web runs as;
-        when that is refused (unprivileged service) the error is shown and nothing changes.</p>
+    <p class="text-sm text-muted">Start/stop/restart run through the init system ({{ init_system }}) as root, via
+        <code>patronus applyd</code>; patronus-web, patronus-applyd and patronus-firewall can only be restarted
+        (restarting patronus-firewall re-applies the whole configuration).</p>
     {% endif %}
 </div>
 
@@ -149,4 +224,54 @@
 
 {% block extra_scripts %}
 {% include "lan_js.html" %}
+<script>
+    function setPassword(id, name) {
+        const pw = prompt('New password for ' + name + ' (12+ characters):');
+        if (pw) call('PUT', '/api/system/users/' + id, {password: pw});
+    }
+    async function post(url, body, raw) {
+        const r = await fetch(url, {
+            method: 'POST', credentials: 'same-origin',
+            headers: {'content-type': 'application/json'},
+            body: raw ? body : JSON.stringify(body),
+        });
+        let j = {};
+        try { j = await r.json(); } catch (_) {}
+        if (!r.ok) { alert('Not applied: ' + (j.error || r.status)); return null; }
+        return j;
+    }
+    async function totpSetup(ev) {
+        ev.preventDefault();
+        const j = await post('/api/auth/2fa/setup', formJson(ev.target));
+        if (!j) return false;
+        document.getElementById('totp-qr').innerHTML = j.qr_svg;
+        document.getElementById('totp-secret').textContent = j.secret;
+        document.getElementById('totp-enrol').style.display = 'block';
+        ev.target.style.display = 'none';
+        return false;
+    }
+    async function totpEnable(ev) {
+        ev.preventDefault();
+        const j = await post('/api/auth/2fa/enable', formJson(ev.target));
+        if (!j) return false;
+        document.getElementById('totp-enrol').style.display = 'none';
+        document.getElementById('totp-recovery-codes').textContent = j.recovery_codes.join('\n');
+        document.getElementById('totp-recovery').style.display = 'block';
+        return false;
+    }
+    async function restoreStored(name) {
+        if (!confirm('Replace the whole configuration with ' + name + ' and apply it now?')) return;
+        const j = await post('/api/system/backups/' + encodeURIComponent(name) + '/restore', {});
+        if (j) { alert('Restored ' + j.restored + '.'); location.reload(); }
+    }
+    async function restoreUpload(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements['file'].files[0];
+        if (!f) return false;
+        if (!confirm('Replace the whole configuration with ' + f.name + ' and apply it now?')) return false;
+        const j = await post('/api/system/restore', await f.text(), true);
+        if (j) { alert('Restored (kept as ' + j.restored + ').'); location.reload(); }
+        return false;
+    }
+</script>
 {% endblock %}

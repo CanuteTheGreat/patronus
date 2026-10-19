@@ -79,9 +79,11 @@ grep -qF "$CPUB" "$NL_OUT" || nl_fail "VPN page does not show the peer"
 no_fixtures "VPN page"
 nl_ok "VPN page shows the live peer and nothing else"
 nl_api POST /vpn/wireguard/peers '{"name":"x","public_key":"'"$RPUB"'","allowed_ips":"10.99.0.9/32","endpoint":null,"persistent_keepalive":null,"enabled":true}'
-[ "$NL_CODE" = 501 ] || nl_fail "add peer should be 501 until lane F, got $NL_CODE"
+# wg0 was made by hand (not by Patronus): a peer can only go on a tunnel
+# Patronus manages, and the hand-made one is never touched (lane F)
+[ "$NL_CODE" = 400 ] || nl_fail "add peer without a Patronus tunnel should be 400, got $NL_CODE"
 [ "$(R wg show wg0 peers | wc -l)" = 1 ] || nl_fail "the refused add changed the kernel"
-nl_ok "adding a peer from the UI is refused (501), the kernel is unchanged"
+nl_ok "adding a peer without a Patronus-managed tunnel is refused (400), the hand-made wg0 is unchanged"
 
 echo "=== routing table"
 R ip route add 10.77.0.0/24 via $NL_CLIENT

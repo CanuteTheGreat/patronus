@@ -35,7 +35,7 @@ IUSE="
 	intrusion-detection suricata snort
 	+vlan qos +tc
 	certificates acme certbot
-	ldap radius totp
+	ldap radius +totp
 	geoip geoip2
 	+aliases
 	scheduled-rules
@@ -182,7 +182,7 @@ src_configure() {
 	# Docker Build job (not the earlier --path-forwarding issue above,
 	# which was already fixed). Flags with no backing cargo feature at
 	# all (ha/ucarp/monitoring/prometheus/ntopng/netflow/captive-portal/
-	# suricata/qos/certificates/acme/ldap/radius/totp/geoip/
+	# suricata/qos/certificates/acme/ldap/radius/geoip/
 	# scheduled-rules/wireless) are intentionally left out of this
 	# list -- see the matching IUSE comment for the ones that still gate
 	# real RDEPEND entries only, and do not re-add any of these to
@@ -208,6 +208,7 @@ src_configure() {
 		$(usex dhcpcd "dhcpcd" "")
 		$(usex qos "qos" "")
 		$(usex backup "backup" "")
+		$(usex totp "totp" "")
 	)
 
 	cargo_src_configure --no-default-features
@@ -327,6 +328,10 @@ src_install() {
 		use dns && webfeatures+=( dns )
 		use ntp && webfeatures+=( ntp )
 		use multiwan && webfeatures+=( multiwan )
+		# lane F VPN forms (WireGuard / IPsec), lane H TOTP 2FA
+		use wireguard && webfeatures+=( wireguard )
+		use ipsec && webfeatures+=( ipsec )
+		use totp && webfeatures+=( totp )
 		set -- "${CARGO}" install --path ./crates/patronus-web \
 			--root "${ED}/usr" \
 			${GIT_CRATES[@]:+--frozen} \

@@ -72,6 +72,10 @@ impl RuleOrigin {
 
 /// Tables that are bookkeeping, not configuration: left out of
 /// export/import (snapshots, backups).
+/// Tables [`ConfigStore::import_json`] leaves alone when the document has
+/// no entry for them (it predates them).
+const KEEP_WHEN_ABSENT: &[&str] = &["web_users"];
+
 const NON_CONFIG_TABLES: &[&str] = &[
     "schema_migrations",
     "config_revisions",
@@ -907,8 +911,11 @@ impl ConfigStore {
     }
 
     /// Replace the configuration with an [`export_json`](Self::export_json)
-    /// document, atomically. Tables missing from the document are emptied;
-    /// unknown tables in the document are an error.
+    /// document, atomically. Tables missing from the document are emptied,
+    /// except the web accounts (`web_users`): a document from before they
+    /// were stored here keeps the current accounts, so restoring an old
+    /// backup never locks everyone out. Unknown tables in the document are
+    /// an error.
     pub async fn import_json(&self, doc: &Value) -> Result<()> {
         let tables = doc
             .get("tables")
@@ -928,6 +935,9 @@ impl ConfigStore {
             .await
             .map_err(db_err("defer fks"))?;
         for t in &known {
+            if KEEP_WHEN_ABSENT.contains(&t.as_str()) && !tables.contains_key(t) {
+                continue;
+            }
             sqlx::query(&format!("DELETE FROM \"{t}\""))
                 .execute(&mut *tx)
                 .await
@@ -1477,6 +1487,41 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ty, "integer");
+    }
+
+    #[tokio::test]
+    async fn importing_an_old_backup_keeps_the_web_accounts() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let add = |name: &'static str| {
+            sqlx::query(
+                "INSERT INTO web_users (username, password_hash, role, created_at, updated_at)
+                 VALUES (?, 'h', 'admin', 0, 0)",
+            )
+            .bind(name)
+            .execute(s.pool().unwrap())
+        };
+        add("admin").await.unwrap();
+        let mut doc = s.export_json().await.unwrap();
+        let tables = doc["tables"].as_object_mut().unwrap();
+        // a backup from before accounts were stored: no web_users entry
+        tables.remove("web_users");
+        let old = doc.clone();
+        add("second").await.unwrap();
+        s.import_json(&old).await.unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM web_users")
+            .fetch_one(s.pool().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(n, 2, "accounts kept when the document predates them");
+        // a document that has the table replaces it like any other
+        let mut with = s.export_json().await.unwrap();
+        with["tables"]["web_users"] = serde_json::json!([]);
+        s.import_json(&with).await.unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM web_users")
+            .fetch_one(s.pool().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
     }
 
     #[tokio::test]

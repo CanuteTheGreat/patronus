@@ -338,11 +338,28 @@ impl FirewallApplier {
             script.push_str(&policy_chain_script());
             script.push_str(&policy);
         }
+        // lane F: VPN listen ports, IPsec SA traffic, IPsec NAT exemption
+        let vpn = if lockdown {
+            crate::vpn_rules::VpnRules::default()
+        } else {
+            crate::vpn_rules::vpn_rules(store).await?
+        };
+        for l in &vpn.filter {
+            script.push_str(l);
+            script.push('\n');
+            nfilter += 1;
+        }
         if !lockdown {
             let mode = outbound_nat_mode(store).await?;
             let mut forward_tail = String::new();
             let mut pre = String::new();
             let mut post = String::new();
+            // IPsec site-to-site traffic must not be masqueraded (lane F)
+            for l in &vpn.nat_exempt {
+                post.push_str(l);
+                post.push('\n');
+                nnat += 1;
+            }
             for (rule, _) in store.load_nat_rules_with_origin().await? {
                 if !rule.enabled || (is_outbound(&rule.nat_type) && !mode.manual_rules()) {
                     continue;

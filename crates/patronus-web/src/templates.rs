@@ -83,6 +83,71 @@ pub struct VpnTemplate {
     pub ipsec_error: String,
     /// strongSwan installed, charon not running (normal, not an error).
     pub ipsec_not_running: bool,
+    /// USE=wireguard / USE=ipsec: the configuration forms are built in.
+    pub has_wireguard: bool,
+    pub has_ipsec: bool,
+    /// The session may change configuration (operator / admin).
+    pub can_modify: bool,
+    /// Stored WireGuard tunnels / peers and IPsec connections (lane F).
+    pub tunnels: Vec<WgTunnelRow>,
+    pub peers: Vec<WgPeerRow>,
+    pub connections: Vec<IpsecConnRow>,
+    /// Why the stored VPN configuration could not be read.
+    pub config_error: String,
+}
+
+/// A stored WireGuard tunnel (never its private key).
+#[derive(Debug, Clone)]
+pub struct WgTunnelRow {
+    pub name: String,
+    pub enabled: bool,
+    pub public_key: String,
+    pub listen_port: u16,
+    pub addresses: String,
+    pub endpoint: String,
+    pub client_dns: String,
+    pub client_allowed_ips: String,
+    pub description: String,
+    pub peers: usize,
+}
+
+/// A stored WireGuard peer with its live kernel state.
+#[derive(Debug, Clone)]
+pub struct WgPeerRow {
+    pub id: i64,
+    pub interface: String,
+    pub name: String,
+    pub enabled: bool,
+    pub public_key: String,
+    pub allowed_ips: String,
+    pub endpoint: String,
+    pub keepalive: String,
+    /// Patronus holds its private key: client config / QR available.
+    pub exportable: bool,
+    pub has_psk: bool,
+    pub status: String,
+    pub connected: bool,
+    pub handshake: String,
+    pub transfer: String,
+    pub description: String,
+}
+
+/// A stored IPsec tunnel (never its PSK) with its live SA state.
+#[derive(Debug, Clone)]
+pub struct IpsecConnRow {
+    pub id: i64,
+    pub name: String,
+    pub enabled: bool,
+    pub local_address: String,
+    pub remote_address: String,
+    pub local_id: String,
+    pub remote_id: String,
+    pub local_ts: String,
+    pub remote_ts: String,
+    pub start_action: String,
+    pub state: String,
+    pub established: bool,
+    pub description: String,
 }
 
 /// Network template
@@ -128,6 +193,14 @@ pub struct MonitoringTemplate {
 pub struct SystemTemplate {
     pub page: &'static str,
     pub users: Vec<User>,
+    /// The logged-in account.
+    pub me_id: u32,
+    pub me_username: String,
+    pub me_two_factor: bool,
+    pub is_admin: bool,
+    pub can_modify: bool,
+    /// USE=totp: two-factor enrolment is built in.
+    pub totp_available: bool,
     pub backups: Vec<Backup>,
     pub backup_dir: String,
     pub backups_error: String,
@@ -363,7 +436,12 @@ pub struct User {
     pub username: String,
     /// admin | operator | read-only
     pub role: String,
+    /// admin | operator | readonly (form value)
+    pub role_key: String,
     pub is_active: bool,
+    /// TOTP two-factor login is on.
+    pub two_factor: bool,
+    pub recovery_codes_left: usize,
     pub created_at: String,
     pub last_login_display: String,
 }

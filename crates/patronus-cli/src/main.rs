@@ -7,7 +7,7 @@ use std::path::PathBuf;
 mod commands;
 use commands::{
     apply, applyd, bgp, captiveportal, daemon, deploy, firewall, init, metrics, policy, site,
-    status, tunnel, validate, web,
+    status, tunnel, users, validate, web,
 };
 
 #[derive(Parser)]
@@ -68,6 +68,12 @@ enum Commands {
     Config {
         #[command(subcommand)]
         action: ConfigCommands,
+    },
+
+    /// Web UI accounts (recovery on the box: lost second factor)
+    Users {
+        #[command(subcommand)]
+        action: UsersCommands,
     },
 
     /// Initialize a new Patronus deployment
@@ -300,6 +306,19 @@ enum BgpCommands {
 }
 
 #[derive(Subcommand)]
+enum UsersCommands {
+    /// List the web UI accounts (role, enabled, two-factor)
+    List,
+    /// Turn an account's two-factor login off (lost authenticator); it can
+    /// log in with its password and enrol again
+    #[command(name = "reset-2fa")]
+    Reset2fa {
+        /// Account name
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum ConfigCommands {
     /// List stored configuration revisions (newest first)
     Revisions,
@@ -443,6 +462,11 @@ async fn main() -> anyhow::Result<()> {
             })
             .await?;
         }
+
+        Commands::Users { action } => match action {
+            UsersCommands::List => users::list(cli.db.as_deref()).await?,
+            UsersCommands::Reset2fa { name } => users::reset_2fa(cli.db.as_deref(), &name).await?,
+        },
 
         Commands::Applyd { socket, group } => {
             applyd::run(cli.db, socket, group).await?;

@@ -11,6 +11,8 @@ pub mod routes;
 pub mod state;
 pub mod templates;
 pub mod tls;
+#[cfg(feature = "totp")]
+pub mod totp;
 pub mod websocket;
 
 pub use auth::{AdminUser, AuthUser, SessionStore};

@@ -1,33 +1,54 @@
-//! System API endpoints: users (auth store), configuration backups (real
-//! files), services (systemd/OpenRC), updates (not implemented: 501).
+//! System API endpoints (lane H): web accounts, configuration backups
+//! (create / download / upload / restore, admins only: backups carry
+//! password hashes and VPN keys), services (systemd/OpenRC, through
+//! `patronus applyd` as root), updates (not implemented: 501).
 
+use crate::auth::{AdminUser, UserRole, UserUpdate};
 use crate::state::{system::ServiceError, AppState};
 use axum::{
+    body::Bytes,
     extract::{Path, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
+use serde::Deserialize;
+use serde_json::json;
 
 fn error(code: StatusCode, msg: impl Into<String>) -> Response {
-    (code, Json(serde_json::json!({ "error": msg.into() }))).into_response()
+    (code, Json(json!({ "error": msg.into() }))).into_response()
+}
+
+fn err(e: anyhow::Error) -> Response {
+    let msg = e.to_string();
+    let code = if msg.starts_with("Invalid") || msg.contains(": Invalid") {
+        StatusCode::BAD_REQUEST
+    } else if msg.starts_with("no such") {
+        StatusCode::NOT_FOUND
+    } else if msg.contains("could not be applied") {
+        StatusCode::CONFLICT
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    };
+    error(code, msg)
 }
 
 /// The web UI accounts from the auth user store, for display.
 pub async fn users(state: &AppState) -> Vec<crate::templates::User> {
-    let mut list = state.auth.user_store.list_users().await;
-    list.sort_by_key(|u| u.id);
-    list.into_iter()
+    state
+        .auth
+        .user_store
+        .list_users()
+        .await
+        .into_iter()
         .map(|u| crate::templates::User {
             id: u.id,
             username: u.username,
-            role: match u.role {
-                crate::auth::UserRole::Admin => "admin",
-                crate::auth::UserRole::Operator => "operator",
-                crate::auth::UserRole::ReadOnly => "read-only",
-            }
-            .to_string(),
+            role: u.role.label().to_string(),
+            role_key: u.role.as_str().to_string(),
             is_active: u.enabled,
+            two_factor: u.two_factor,
+            recovery_codes_left: u.recovery_codes_left,
             created_at: u.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
             last_login_display: u
                 .last_login
@@ -39,7 +60,113 @@ pub async fn users(state: &AppState) -> Vec<crate::templates::User> {
 
 /// GET /api/system/users
 pub async fn list_users(State(state): State<AppState>) -> Response {
-    Json(users(&state).await).into_response()
+    Json(state.auth.user_store.list_users().await).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateUser {
+    pub username: String,
+    pub password: String,
+    pub role: String,
+}
+
+/// POST /api/system/users (admin)
+pub async fn create_user(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(req): Json<CreateUser>,
+) -> Response {
+    let Some(role) = UserRole::parse(&req.role) else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid role {:?}: admin, operator or readonly", req.role),
+        );
+    };
+    match state
+        .auth
+        .user_store
+        .create_user(req.username, &req.password, role)
+        .await
+    {
+        Ok(id) => {
+            let _ = state
+                .config_store
+                .audit(
+                    "web",
+                    "create",
+                    "user",
+                    Some(&id.to_string()),
+                    &serde_json::Value::Null,
+                )
+                .await;
+            let u = state.auth.user_store.get_by_id(id).await;
+            (
+                StatusCode::CREATED,
+                Json(json!({ "id": id, "user": u.as_ref().map(crate::auth::UserInfo::from) })),
+            )
+                .into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+/// PUT /api/system/users/:id (admin) {role?, enabled?, password?}. The
+/// account's sessions end (it logs in again with the new role/password).
+pub async fn update_user(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(id): Path<u32>,
+    Json(req): Json<UserUpdate>,
+) -> Response {
+    match state.auth.user_store.update_user(id, &req).await {
+        Ok(u) => {
+            let keep =
+                (id == admin.session.user_id && req.role.is_none() && req.enabled != Some(false))
+                    .then_some(admin.session_id.as_str());
+            state.auth.session_store.drop_user(id, keep).await;
+            Json(json!({ "ok": true, "user": crate::auth::UserInfo::from(&u) })).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+/// DELETE /api/system/users/:id (admin; never the last enabled admin)
+pub async fn delete_user(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(id): Path<u32>,
+) -> Response {
+    if id == admin.session.user_id {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Invalid request: you cannot delete the account you are logged in with",
+        );
+    }
+    match state.auth.user_store.delete_user(id).await {
+        Ok(true) => {
+            state.auth.session_store.drop_user(id, None).await;
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => error(StatusCode::NOT_FOUND, format!("no such user {id}")),
+        Err(e) => err(e),
+    }
+}
+
+/// POST /api/system/users/:id/2fa/reset (admin): turn the account's
+/// two-factor login off (lost phone).
+pub async fn reset_2fa(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(id): Path<u32>,
+) -> Response {
+    match state.auth.user_store.totp_reset(id).await {
+        Ok(true) => {
+            state.auth.session_store.drop_user(id, None).await;
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => error(StatusCode::NOT_FOUND, format!("no such user {id}")),
+        Err(e) => err(e),
+    }
 }
 
 /// GET /api/system/backups -- backup files with their real sizes.
@@ -51,7 +178,7 @@ pub async fn list_backups(State(state): State<AppState>) -> Response {
 }
 
 /// POST /api/system/backups -- export the config store to a new file.
-pub async fn create_backup(State(state): State<AppState>) -> Response {
+pub async fn create_backup(State(state): State<AppState>, _admin: AdminUser) -> Response {
     match state.system.create_backup(&state.config_store).await {
         Ok(b) => (StatusCode::CREATED, Json(b)).into_response(),
         Err(e) => {
@@ -64,8 +191,13 @@ pub async fn create_backup(State(state): State<AppState>) -> Response {
     }
 }
 
-/// GET /api/system/backups/:name -- download the file.
-pub async fn download_backup(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+/// GET /api/system/backups/:name -- download the file (admin: it holds
+/// password hashes and VPN keys).
+pub async fn download_backup(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(name): Path<String>,
+) -> Response {
     match state.system.read_backup(&name).await {
         Ok(Some(bytes)) => (
             [
@@ -74,6 +206,7 @@ pub async fn download_backup(State(state): State<AppState>, Path(name): Path<Str
                     header::CONTENT_DISPOSITION,
                     format!("attachment; filename=\"{name}\""),
                 ),
+                (header::CACHE_CONTROL, "no-store".to_string()),
             ],
             bytes,
         )
@@ -84,13 +217,58 @@ pub async fn download_backup(State(state): State<AppState>, Path(name): Path<Str
 }
 
 /// DELETE /api/system/backups/:name
-pub async fn delete_backup(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+pub async fn delete_backup(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(name): Path<String>,
+) -> Response {
     match state.system.delete_backup(&name).await {
-        Ok(true) => {
-            Json(serde_json::json!({ "message": format!("deleted {name}") })).into_response()
-        }
+        Ok(true) => Json(json!({ "message": format!("deleted {name}") })).into_response(),
         Ok(false) => error(StatusCode::NOT_FOUND, "no such backup"),
         Err(e) => error(StatusCode::BAD_REQUEST, e.to_string()),
+    }
+}
+
+/// POST /api/system/backups/:name/restore -- replace the configuration
+/// with a stored backup and apply it (undone if any subsystem refuses it).
+pub async fn restore_backup(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(name): Path<String>,
+) -> Response {
+    let doc = match state.system.backup_doc(&name).await {
+        Ok(Some(d)) => d,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "no such backup"),
+        Err(e) => return err(e),
+    };
+    match state.system.restore(&state.config_store, &doc, &name).await {
+        Ok(lines) => {
+            Json(json!({ "ok": true, "restored": name, "applied": lines })).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+/// POST /api/system/restore -- upload an exported configuration (the
+/// file's bytes as the body), keep it as a backup file and restore it.
+pub async fn upload_restore(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    body: Bytes,
+) -> Response {
+    let (b, doc) = match state.system.save_upload(&body).await {
+        Ok(x) => x,
+        Err(e) => return err(e),
+    };
+    match state
+        .system
+        .restore(&state.config_store, &doc, &b.name)
+        .await
+    {
+        Ok(lines) => {
+            Json(json!({ "ok": true, "restored": b.name, "applied": lines })).into_response()
+        }
+        Err(e) => err(e),
     }
 }
 
@@ -118,11 +296,14 @@ pub async fn list_services(State(state): State<AppState>) -> Response {
 
 async fn control(state: AppState, name: String, action: &str) -> Response {
     match state.system.control_service(&name, action).await {
-        Ok(()) => Json(serde_json::json!({
+        Ok(()) => Json(json!({
             "message": format!("{action} {name}: done")
         }))
         .into_response(),
         Err(e @ ServiceError::NotManaged(_)) => error(StatusCode::NOT_FOUND, e.to_string()),
+        Err(e) if e.to_string().contains("can only be restarted") => {
+            error(StatusCode::BAD_REQUEST, e.to_string())
+        }
         Err(e) => {
             tracing::error!("{action} {name}: {e}");
             error(
@@ -148,16 +329,26 @@ pub async fn restart_service(State(state): State<AppState>, Path(name): Path<Str
     control(state, name, "restart").await
 }
 
+/// Largest configuration upload accepted (an export is a few hundred KiB).
+pub const MAX_UPLOAD: usize = 16 << 20;
+
 /// This lane's API routes, mounted under `/api` by `routes::api_routes`
 /// with one `.merge(system::router())` line.
 pub fn router() -> axum::Router<AppState> {
-    use axum::routing::{get, post};
+    use axum::routing::{get, post, put};
     axum::Router::new()
-        .route("/system/users", get(list_users))
+        .route("/system/users", get(list_users).post(create_user))
+        .route("/system/users/:id", put(update_user).delete(delete_user))
+        .route("/system/users/:id/2fa/reset", post(reset_2fa))
         .route("/system/backups", get(list_backups).post(create_backup))
         .route(
             "/system/backups/:name",
             get(download_backup).delete(delete_backup),
+        )
+        .route("/system/backups/:name/restore", post(restore_backup))
+        .route(
+            "/system/restore",
+            post(upload_restore).layer(axum::extract::DefaultBodyLimit::max(MAX_UPLOAD)),
         )
         .route("/system/updates", get(list_updates))
         .route("/system/services", get(list_services))

@@ -8,38 +8,20 @@
 //! auth store (`state.auth.user_store`); update checks are not implemented
 //! (Gentoo updates through Portage) and the API says so.
 
+use patronus_config::{Applier, ConfigStore};
 use patronus_core::service::{InitSystem, ServiceManager, ServiceState};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-/// Daemons Patronus starts or relies on. Only those actually installed on
-/// the box (unit file / init script present) are listed or controllable.
-pub const KNOWN_SERVICES: &[(&str, &str)] = &[
-    ("patronus-firewall", "Boot-time `patronus apply`"),
-    ("patronus-web", "Web interface"),
-    ("patronus-applyd", "Root apply broker for the web interface"),
-    ("patronus-dashboard", "SD-WAN dashboard"),
-    ("kea-dhcp4", "DHCPv4 server"),
-    ("kea-dhcp6", "DHCPv6 server"),
-    ("dnsmasq", "DHCP / DNS forwarder / RA / relay"),
-    ("unbound", "DNS resolver"),
-    ("radvd", "IPv6 router advertisements"),
-    ("chronyd", "NTP"),
-    ("keepalived", "VRRP high availability"),
-    ("conntrackd", "Connection-state sync"),
-    ("strongswan", "IPsec"),
-    ("sshd", "SSH"),
-];
-
-const SYSTEMD_UNIT_DIRS: &[&str] = &[
-    "/etc/systemd/system",
-    "/run/systemd/system",
-    "/usr/lib/systemd/system",
-    "/lib/systemd/system",
-];
+pub use patronus_network::services::KNOWN_SERVICES;
 
 /// System management operations.
 pub struct SystemManager {
     backup_dir: PathBuf,
+    /// Every subsystem applier this process can drive (through applyd when
+    /// it runs), used to apply a restored configuration.
+    appliers: Vec<Arc<dyn Applier>>,
 }
 
 /// Where configuration backups live: `$PATRONUS_BACKUP_DIR`, else a
@@ -91,7 +73,132 @@ impl std::fmt::Display for ServiceError {
 
 impl SystemManager {
     pub fn new(backup_dir: PathBuf) -> Self {
-        Self { backup_dir }
+        Self {
+            backup_dir,
+            appliers: Vec::new(),
+        }
+    }
+
+    /// The appliers a restore runs, in any order (sorted by boot phase).
+    pub fn with_appliers(mut self, mut v: Vec<Arc<dyn Applier>>) -> Self {
+        v.sort_by_key(|a| a.phase());
+        self.appliers = v;
+        self
+    }
+
+    async fn apply_all(&self, store: &ConfigStore) -> Result<Vec<String>, String> {
+        let mut out = Vec::new();
+        for a in &self.appliers {
+            match a.apply(store).await {
+                Ok(r) => {
+                    out.extend(r.applied.into_iter().map(|l| format!("{}: {l}", a.name())));
+                    out.extend(
+                        r.warnings
+                            .into_iter()
+                            .map(|l| format!("{}: warning: {l}", a.name())),
+                    );
+                }
+                Err(e) => return Err(format!("{}: {e}", a.name())),
+            }
+        }
+        Ok(out)
+    }
+
+    /// Replace the configuration with an export document and apply it to
+    /// the whole system. The previous configuration is kept as a revision;
+    /// if any subsystem refuses the restored configuration it is put back
+    /// (and re-applied) and the error says which one. A document without
+    /// an enabled admin account keeps the current accounts, so a restore
+    /// can never lock everyone out.
+    pub async fn restore(
+        &self,
+        store: &ConfigStore,
+        doc: &Value,
+        what: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let mut doc = doc.clone();
+        let tables = doc
+            .get_mut("tables")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Invalid backup: not a Patronus configuration export (no \"tables\")"
+                )
+            })?;
+        let mut notes = Vec::new();
+        if let Some(users) = tables.get("web_users") {
+            let has_admin = users.as_array().is_some_and(|rows| {
+                rows.iter().any(|r| {
+                    r.get("role").and_then(Value::as_str) == Some("admin")
+                        && r.get("enabled").and_then(Value::as_i64).unwrap_or(1) != 0
+                })
+            });
+            if !has_admin {
+                tables.remove("web_users");
+                notes.push(
+                    "the backup has no enabled admin account: kept the current web accounts"
+                        .to_string(),
+                );
+            }
+        }
+        let rev = store
+            .snapshot("web", &format!("before restore of {what}"))
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        store
+            .import_json(&doc)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        match self.apply_all(store).await {
+            Ok(lines) => {
+                let _ = store
+                    .audit("web", "restore", "config", Some(what), &Value::Null)
+                    .await;
+                notes.extend(lines);
+                Ok(notes)
+            }
+            Err(failed) => {
+                if let Err(e) = store.restore_revision(rev, "web").await {
+                    tracing::error!(
+                        "could not put the configuration back after a failed restore: {e}"
+                    );
+                }
+                if let Err(e) = self.apply_all(store).await {
+                    tracing::warn!("re-applying the previous configuration: {e}");
+                }
+                Err(anyhow::anyhow!(
+                    "restore of {what} was undone because it could not be applied: {failed}"
+                ))
+            }
+        }
+    }
+
+    /// Store an uploaded export as a backup file (so it is listed, can be
+    /// downloaded again and restored), after checking it is one.
+    pub async fn save_upload(
+        &self,
+        bytes: &[u8],
+    ) -> anyhow::Result<(crate::templates::Backup, Value)> {
+        let doc: Value = serde_json::from_slice(bytes)
+            .map_err(|e| anyhow::anyhow!("Invalid backup file: not JSON ({e})"))?;
+        if !doc.get("tables").is_some_and(Value::is_object) {
+            anyhow::bail!(
+                "Invalid backup file: not a Patronus configuration export (no \"tables\")"
+            );
+        }
+        let text = String::from_utf8_lossy(bytes).into_owned();
+        let b = self.write_backup_file(text, "-upload").await?;
+        Ok((b, doc))
+    }
+
+    /// Read a stored backup as a document.
+    pub async fn backup_doc(&self, name: &str) -> anyhow::Result<Option<Value>> {
+        match self.read_backup(name).await? {
+            None => Ok(None),
+            Some(b) => Ok(Some(serde_json::from_slice(&b).map_err(|e| {
+                anyhow::anyhow!("Invalid backup {name}: not JSON ({e})")
+            })?)),
+        }
     }
 
     pub fn backup_dir(&self) -> &Path {
@@ -148,6 +255,15 @@ impl SystemManager {
             .await
             .map_err(|e| anyhow::anyhow!("exporting the configuration: {e}"))?;
         let text = serde_json::to_string_pretty(&doc)? + "\n";
+        self.write_backup_file(text, "").await
+    }
+
+    /// Write `text` to a new 0600 file `patronus-config-<time><suffix>.json`.
+    async fn write_backup_file(
+        &self,
+        text: String,
+        suffix: &'static str,
+    ) -> anyhow::Result<crate::templates::Backup> {
         let dir = self.backup_dir.clone();
         tokio::task::spawn_blocking(move || {
             use std::io::Write;
@@ -159,7 +275,7 @@ impl SystemManager {
                 .map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
             let now = chrono::Utc::now();
             let base = format!(
-                "patronus-config-{}-{:03}",
+                "patronus-config-{}-{:03}{suffix}",
                 now.format("%Y%m%d-%H%M%S"),
                 now.timestamp_subsec_millis()
             );
@@ -234,25 +350,28 @@ impl SystemManager {
     }
 
     /// start / stop / restart through systemd or OpenRC. Only installed
-    /// [`KNOWN_SERVICES`] can be controlled.
+    /// [`KNOWN_SERVICES`] can be controlled. patronus-web runs unprivileged,
+    /// so the request goes to `patronus applyd` (root) whenever its socket
+    /// exists; as root (containers) it runs here.
     pub async fn control_service(&self, name: &str, action: &str) -> Result<(), ServiceError> {
+        let mgr = ServiceManager::new();
+        let installed = installed_services(mgr.init_system());
+        if !installed.iter().any(|(n, _)| *n == name) {
+            return Err(ServiceError::NotManaged(name.to_string()));
+        }
+        patronus_network::services::check(name, action, &installed)
+            .map_err(|e| ServiceError::Failed(e.to_string()))?;
+        let socket = patronus_network::applyd::socket_path();
+        if !nix::unistd::geteuid().is_root() && socket.exists() {
+            return patronus_network::applyd::request_service(&socket, name, action)
+                .await
+                .map_err(|e| ServiceError::Failed(e.to_string()));
+        }
         let name = name.to_string();
         let action = action.to_string();
         tokio::task::spawn_blocking(move || {
-            let mgr = ServiceManager::new();
-            if !installed_services(mgr.init_system())
-                .iter()
-                .any(|(n, _)| *n == name)
-            {
-                return Err(ServiceError::NotManaged(name));
-            }
-            let r = match action.as_str() {
-                "start" => mgr.start(&name),
-                "stop" => mgr.stop(&name),
-                "restart" => mgr.restart(&name),
-                other => return Err(ServiceError::Failed(format!("unknown action {other}"))),
-            };
-            r.map_err(|e| ServiceError::Failed(e.to_string()))
+            patronus_network::services::control(&name, &action)
+                .map_err(|e| ServiceError::Failed(e.to_string()))
         })
         .await
         .map_err(|e| ServiceError::Failed(e.to_string()))?
@@ -293,19 +412,7 @@ fn describe_backup(path: &Path, name: &str) -> anyhow::Result<crate::templates::
 }
 
 fn installed_services(init: InitSystem) -> Vec<(&'static str, &'static str)> {
-    KNOWN_SERVICES
-        .iter()
-        .copied()
-        .filter(|(name, _)| match init {
-            InitSystem::Systemd => SYSTEMD_UNIT_DIRS
-                .iter()
-                .any(|d| Path::new(d).join(format!("{name}.service")).exists()),
-            InitSystem::OpenRC | InitSystem::SysVInit => {
-                Path::new("/etc/init.d").join(name).exists()
-            }
-            InitSystem::Unknown => false,
-        })
-        .collect()
+    patronus_network::services::installed(init)
 }
 
 fn probe_service(

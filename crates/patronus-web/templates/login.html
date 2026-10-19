@@ -92,6 +92,11 @@
                 <input type="password" id="password" name="password" required>
             </div>
 
+            <div class="form-group" id="totp-group" style="display:none">
+                <label for="totp_code">Two-factor code (authenticator app, or a recovery code)</label>
+                <input type="text" id="totp_code" name="totp_code" autocomplete="one-time-code" inputmode="text">
+            </div>
+
             <button type="submit" class="btn-login">Sign In</button>
         </form>
     </div>
@@ -105,6 +110,7 @@
 
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
+            const totp_code = document.getElementById('totp_code').value.trim();
 
             try {
                 const response = await fetch('/api/auth/login', {
@@ -112,7 +118,7 @@
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ username, password }),
+                    body: JSON.stringify(totp_code ? { username, password, totp_code } : { username, password }),
                 });
 
                 if (response.ok) {
@@ -120,6 +126,11 @@
                     window.location.href = '/';
                 } else {
                     const error = await response.json();
+                    if (error.totp_required) {
+                        // password accepted: ask for the second factor
+                        document.getElementById('totp-group').style.display = 'block';
+                        document.getElementById('totp_code').focus();
+                    }
                     errorMsg.textContent = error.error || 'Login failed';
                     errorMsg.classList.add('show');
                 }

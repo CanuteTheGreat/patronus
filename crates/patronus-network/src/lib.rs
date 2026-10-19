@@ -16,8 +16,10 @@ pub mod linkstate;
 pub mod nat64;
 pub mod netconf;
 pub mod routes;
+pub mod services;
 pub mod supervise;
 pub mod sysctl;
+pub mod vpn;
 
 #[cfg(feature = "vlan")]
 pub mod vlan;
@@ -82,7 +84,7 @@ pub use routes::RoutesApplier;
 pub use sysctl::SysctlApplier;
 
 #[cfg(feature = "wireguard")]
-pub use wireguard::WireGuardManager;
+pub use wireguard::WireGuardApplier;
 
 #[cfg(feature = "dhcp")]
 pub use dhcp::DhcpApplier;
@@ -91,7 +93,29 @@ pub use dhcp::DhcpApplier;
 pub use openvpn::OpenVpnManager;
 
 #[cfg(feature = "ipsec")]
-pub use ipsec::IpsecManager;
+pub use ipsec::IpsecApplier;
+
+/// Which VPNs this build has (USE=wireguard / USE=ipsec).
+pub fn vpn_features() -> serde_json::Value {
+    serde_json::json!({
+        "wireguard": cfg!(feature = "wireguard"),
+        "ipsec": cfg!(feature = "ipsec"),
+    })
+}
+
+/// The lane F appliers compiled into this build (WireGuard in the
+/// interfaces phase, IPsec in the services phase).
+// cfg-gated pushes: vec![] cannot express them
+#[allow(clippy::vec_init_then_push)]
+pub fn vpn_appliers() -> Vec<std::sync::Arc<dyn patronus_config::Applier>> {
+    #[allow(unused_mut)]
+    let mut v: Vec<std::sync::Arc<dyn patronus_config::Applier>> = Vec::new();
+    #[cfg(feature = "wireguard")]
+    v.push(std::sync::Arc::new(wireguard::WireGuardApplier::default()));
+    #[cfg(feature = "ipsec")]
+    v.push(std::sync::Arc::new(ipsec::IpsecApplier::default()));
+    v
+}
 
 #[cfg(feature = "dns")]
 pub use ddns::DdnsApplier;

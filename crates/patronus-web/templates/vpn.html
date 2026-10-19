@@ -9,13 +9,163 @@
 {% block content %}
 <div class="page-header">
     <h1 class="page-title">VPN</h1>
-    <p class="page-subtitle">Live tunnel state read from the kernel and strongSwan when this page loaded.
-        Creating and editing tunnels from Patronus is not available yet: configure WireGuard with
-        wireguard-tools (wg / wg-quick) and IPsec with swanctl; they show up here.</p>
+    <p class="page-subtitle">WireGuard tunnels and IPsec (IKEv2) site-to-site tunnels. Saved to the configuration store,
+        applied at once and again at every boot; the status columns are read live from the kernel and strongSwan.</p>
+</div>
+
+{% if !config_error.is_empty() %}<div class="alert-error">VPN configuration unavailable: {{ config_error }}</div>{% endif %}
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">WireGuard tunnels</h2></div>
+    {% if !has_wireguard %}
+    <p class="empty" id="wg-not-built">This Patronus is built without WireGuard. Rebuild with <code>USE=wireguard</code>
+        (emerge net-firewall/patronus) to manage tunnels here; live peers are still listed below.</p>
+    {% else %}
+    <p class="text-sm text-muted">A tunnel is a WireGuard interface with its own key pair and UDP port (opened on the firewall
+        automatically). What peers may reach is decided by firewall rules on the tunnel interface (e.g. interface <code>wg0</code>).</p>
+    {% if tunnels.is_empty() %}<p class="empty">No WireGuard tunnels configured.</p>{% else %}
+    <table class="lan" id="wg-tunnels">
+        <thead><tr><th>Interface</th><th>Port</th><th>Tunnel addresses</th><th>Public key</th><th>Client endpoint</th><th>Peers</th><th>Enabled</th><th></th></tr></thead>
+        <tbody>
+        {% for t in tunnels %}
+        <tr data-tunnel="{{ t.name }}">
+            <td class="mono"><b>{{ t.name }}</b>{% if !t.description.is_empty() %}<br><span class="text-sm text-muted">{{ t.description }}</span>{% endif %}</td>
+            <td>{{ t.listen_port }}</td>
+            <td class="mono">{{ t.addresses }}</td>
+            <td class="mono text-sm">{{ t.public_key }}</td>
+            <td class="mono">{% if t.endpoint.is_empty() %}<span class="text-muted">not set</span>{% else %}{{ t.endpoint }}{% endif %}</td>
+            <td>{{ t.peers }}</td>
+            <td>{% if t.enabled %}yes{% else %}<span class="bad">no</span>{% endif %}</td>
+            <td>{% if can_modify %}<button class="btn btn-secondary btn-sm" onclick="editTunnel(this)" data-name="{{ t.name }}"
+                    data-port="{{ t.listen_port }}" data-addresses="{{ t.addresses }}" data-endpoint="{{ t.endpoint }}"
+                    data-dns="{{ t.client_dns }}" data-allowed="{{ t.client_allowed_ips }}" data-enabled="{{ t.enabled }}"
+                    data-description="{{ t.description }}">Edit</button>
+                <button class="btn btn-danger btn-sm" onclick="del('/api/vpn/wireguard/tunnels/{{ t.name }}', 'Delete tunnel {{ t.name }} and its peers?')">Delete</button>{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>{% endif %}
+    {% if can_modify %}
+    <form class="lan-form" id="wg-tunnel-form" onsubmit="return saveTunnel(event)">
+        <input type="hidden" name="_editing" value="">
+        <label>Interface <input name="name" placeholder="wg0 (automatic)"></label>
+        <label>Listen port <input type="number" name="listen_port" placeholder="51820" min="1" max="65535"></label>
+        <label>Tunnel addresses <input name="addresses" placeholder="10.99.0.1/24, fd00:99::1/64" size="28"></label>
+        <label>Public endpoint (for client configs) <input name="endpoint" placeholder="vpn.example.org"></label>
+        <label>Client DNS <input name="client_dns" placeholder="10.99.0.1"></label>
+        <label>Client routes <input name="client_allowed_ips" placeholder="0.0.0.0/0, ::/0"></label>
+        <label>Enabled <input type="checkbox" name="enabled" checked></label>
+        <label>Description <input name="description"></label>
+        <button class="btn btn-primary btn-sm" type="submit" id="wg-tunnel-submit">Add tunnel</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="call('POST', '/api/vpn/wireguard/apply')">Re-apply</button>
+    </form>
+    {% endif %}
+    {% endif %}
+</div>
+
+{% if has_wireguard %}
+<div class="card">
+    <div class="card-header"><h2 class="card-title">WireGuard peers</h2></div>
+    <p class="text-sm text-muted">Leave the public key empty to have Patronus generate the peer's key pair: its config file
+        and QR code can then be downloaded here (for phones and laptops). For a site-to-site peer paste the other side's
+        public key and give its endpoint and the networks behind it.</p>
+    {% if peers.is_empty() %}<p class="empty">No peers configured.</p>{% else %}
+    <table class="lan" id="wg-config-peers">
+        <thead><tr><th>Peer</th><th>Tunnel</th><th>Allowed IPs</th><th>Endpoint</th><th>Status</th><th>Last handshake</th><th>Transfer</th><th></th></tr></thead>
+        <tbody>
+        {% for p in peers %}
+        <tr data-peer="{{ p.name }}">
+            <td><b>{{ p.name }}</b>{% if p.has_psk %} <span class="text-sm text-muted">(PSK)</span>{% endif %}<br><span class="mono text-sm">{{ p.public_key }}</span></td>
+            <td class="mono">{{ p.interface }}</td>
+            <td class="mono">{{ p.allowed_ips }}</td>
+            <td class="mono">{{ p.endpoint }}</td>
+            <td class="peer-status">{% if !p.enabled %}<span class="text-muted">disabled</span>{% else if p.connected %}<span class="ok">{{ p.status }}</span>{% else %}<span class="text-muted">{{ p.status }}</span>{% endif %}</td>
+            <td>{{ p.handshake }}</td>
+            <td>{{ p.transfer }}</td>
+            <td>{% if can_modify %}
+                {% if p.exportable %}<a class="btn btn-secondary btn-sm" href="/api/vpn/wireguard/config/{{ p.id }}">Config</a>
+                <button class="btn btn-secondary btn-sm" onclick="showQr({{ p.id }})">QR</button>{% endif %}
+                <button class="btn btn-secondary btn-sm" onclick="editPeer(this)" data-id="{{ p.id }}" data-name="{{ p.name }}"
+                    data-interface="{{ p.interface }}" data-allowed="{{ p.allowed_ips }}" data-endpoint="{{ p.endpoint }}"
+                    data-keepalive="{{ p.keepalive }}" data-psk="{{ p.has_psk }}" data-enabled="{{ p.enabled }}" data-description="{{ p.description }}">Edit</button>
+                <button class="btn btn-danger btn-sm" onclick="del('/api/vpn/wireguard/peers/{{ p.id }}', 'Delete peer {{ p.name }}?')">Delete</button>{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>{% endif %}
+    <div id="qr-box" style="display:none; margin: 8px 0;"><img id="qr-img" alt="WireGuard client QR code" width="280" height="280"></div>
+    {% if can_modify && !tunnels.is_empty() %}
+    <form class="lan-form" id="wg-peer-form" onsubmit="return savePeer(event)">
+        <input type="hidden" name="_editing" value="">
+        <label>Name <input name="name" placeholder="laptop" required></label>
+        <label>Tunnel <select name="interface">{% for t in tunnels %}<option value="{{ t.name }}">{{ t.name }}</option>{% endfor %}</select></label>
+        <label>Public key (empty = generate) <input name="public_key" size="46"></label>
+        <label>Allowed IPs (empty = next free) <input name="allowed_ips" placeholder="10.99.0.2/32"></label>
+        <label>Endpoint (site-to-site) <input name="endpoint" placeholder="198.51.100.2:51820"></label>
+        <label>Keepalive s <input type="number" name="persistent_keepalive" min="0" max="65535"></label>
+        <label>Pre-shared key <input type="checkbox" name="preshared_key"></label>
+        <label>Enabled <input type="checkbox" name="enabled" checked></label>
+        <label>Description <input name="description"></label>
+        <button class="btn btn-primary btn-sm" type="submit" id="wg-peer-submit">Add peer</button>
+    </form>
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">IPsec tunnels (IKEv2, site-to-site)</h2></div>
+    {% if !has_ipsec %}
+    <p class="empty" id="ipsec-not-built">This Patronus is built without IPsec. Rebuild with <code>USE=ipsec</code>
+        (emerge net-firewall/patronus; pulls in net-vpn/strongswan) to manage tunnels here.</p>
+    {% else %}
+    <p class="text-sm text-muted">Pre-shared-key IKEv2 tunnels run by strongSwan (<code>/etc/swanctl/conf.d/patronus.conf</code>).
+        IKE/ESP are allowed on the firewall, traffic between the tunnel's networks is allowed and not NATed.
+        Leave the key empty to have one generated (shown once).</p>
+    {% if connections.is_empty() %}<p class="empty">No IPsec tunnels configured.</p>{% else %}
+    <table class="lan" id="ipsec-connections">
+        <thead><tr><th>Name</th><th>Local</th><th>Remote gateway</th><th>Local networks</th><th>Remote networks</th><th>Start</th><th>State</th><th></th></tr></thead>
+        <tbody>
+        {% for c in connections %}
+        <tr data-ipsec="{{ c.name }}">
+            <td><b>{{ c.name }}</b>{% if !c.enabled %} <span class="bad">disabled</span>{% endif %}{% if !c.description.is_empty() %}<br><span class="text-sm text-muted">{{ c.description }}</span>{% endif %}</td>
+            <td class="mono">{% if c.local_address.is_empty() %}any{% else %}{{ c.local_address }}{% endif %}</td>
+            <td class="mono">{{ c.remote_address }}</td>
+            <td class="mono">{{ c.local_ts }}</td>
+            <td class="mono">{{ c.remote_ts }}</td>
+            <td>{{ c.start_action }}</td>
+            <td class="ipsec-state">{% if c.established %}<span class="ok">{{ c.state }}</span>{% else %}<span class="text-muted">{{ c.state }}</span>{% endif %}</td>
+            <td>{% if can_modify %}<button class="btn btn-secondary btn-sm" onclick="editIpsec(this)" data-id="{{ c.id }}" data-name="{{ c.name }}"
+                    data-local="{{ c.local_address }}" data-remote="{{ c.remote_address }}" data-localid="{{ c.local_id }}" data-remoteid="{{ c.remote_id }}"
+                    data-lts="{{ c.local_ts }}" data-rts="{{ c.remote_ts }}" data-start="{{ c.start_action }}" data-enabled="{{ c.enabled }}"
+                    data-description="{{ c.description }}">Edit</button>
+                <button class="btn btn-danger btn-sm" onclick="del('/api/vpn/ipsec/connections/{{ c.id }}', 'Delete IPsec tunnel {{ c.name }}?')">Delete</button>{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>{% endif %}
+    {% if can_modify %}
+    <form class="lan-form" id="ipsec-form" onsubmit="return saveIpsec(event)">
+        <input type="hidden" name="_editing" value="">
+        <label>Name <input name="name" placeholder="site-b" required></label>
+        <label>Local address <input name="local_address" placeholder="203.0.113.2 (empty = any)"></label>
+        <label>Remote gateway <input name="remote_address" placeholder="198.51.100.2" required></label>
+        <label>Local identity <input name="local_id" placeholder="(local address)"></label>
+        <label>Remote identity <input name="remote_id" placeholder="(remote gateway)"></label>
+        <label>Pre-shared key <input name="psk" type="password" placeholder="empty = generate / keep" autocomplete="new-password"></label>
+        <label>Local networks <input name="local_ts" placeholder="192.168.1.0/24" required></label>
+        <label>Remote networks <input name="remote_ts" placeholder="10.2.0.0/16" required></label>
+        <label>Start <select name="start_action"><option value="start">start (initiate)</option><option value="trap">trap (on traffic)</option><option value="none">none (respond only)</option></select></label>
+        <label>Enabled <input type="checkbox" name="enabled" checked></label>
+        <label>Description <input name="description"></label>
+        <button class="btn btn-primary btn-sm" type="submit" id="ipsec-submit">Add tunnel</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="call('POST', '/api/vpn/ipsec/apply')">Re-apply</button>
+    </form>
+    {% endif %}
+    {% endif %}
 </div>
 
 <div class="card">
-    <div class="card-header"><h2 class="card-title">WireGuard peers ({{ wg_peers.len() }})</h2></div>
+    <div class="card-header"><h2 class="card-title">Live WireGuard peers ({{ wg_peers.len() }})</h2></div>
     {% if !wg_error.is_empty() %}
     <div class="alert-error">WireGuard state unavailable: {{ wg_error }}</div>
     {% else if wg_peers.is_empty() %}
@@ -49,7 +199,7 @@
     {% else if ipsec_tunnels.is_empty() %}
     <p class="empty">No IPsec SAs (`swanctl --list-sas` is empty).</p>
     {% else %}
-    <table class="lan">
+    <table class="lan" id="ipsec-sas">
         <thead><tr><th>Name</th><th>State</th><th>Local subnets</th><th>Remote subnets</th><th>Remote gateway</th></tr></thead>
         <tbody>
         {% for t in ipsec_tunnels %}
@@ -70,4 +220,78 @@
     <div class="card-header"><h2 class="card-title">OpenVPN</h2></div>
     <p class="empty">OpenVPN is not managed or monitored by Patronus.</p>
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+{% include "lan_js.html" %}
+<script>
+    function editing(form, key, btn, label) {
+        form.elements['_editing'].value = key;
+        document.getElementById(btn).textContent = label;
+        form.scrollIntoView({behavior: 'smooth'});
+    }
+    function saveTunnel(ev) {
+        ev.preventDefault();
+        const f = ev.target, o = formJson(f), ed = f.elements['_editing'].value;
+        delete o._editing;
+        for (const k of ['addresses', 'endpoint', 'client_dns']) if (ed && !f.elements[k].value) o[k] = '';
+        call(ed ? 'PUT' : 'POST', ed ? '/api/vpn/wireguard/tunnels/' + encodeURIComponent(ed) : '/api/vpn/wireguard/tunnels', o);
+        return false;
+    }
+    function editTunnel(b) {
+        const f = document.getElementById('wg-tunnel-form'), d = b.dataset;
+        f.elements['name'].value = d.name; f.elements['listen_port'].value = d.port;
+        f.elements['addresses'].value = d.addresses; f.elements['endpoint'].value = d.endpoint;
+        f.elements['client_dns'].value = d.dns; f.elements['client_allowed_ips'].value = d.allowed;
+        f.elements['enabled'].checked = d.enabled === 'true'; f.elements['description'].value = d.description;
+        editing(f, d.name, 'wg-tunnel-submit', 'Save tunnel ' + d.name);
+    }
+    function savePeer(ev) {
+        ev.preventDefault();
+        const f = ev.target, o = formJson(f), ed = f.elements['_editing'].value;
+        delete o._editing;
+        if (ed && !f.elements['endpoint'].value) o.endpoint = '';
+        call(ed ? 'PUT' : 'POST', ed ? '/api/vpn/wireguard/peers/' + ed : '/api/vpn/wireguard/peers', o);
+        return false;
+    }
+    function editPeer(b) {
+        const f = document.getElementById('wg-peer-form'), d = b.dataset;
+        f.elements['name'].value = d.name; f.elements['interface'].value = d.interface;
+        f.elements['public_key'].value = ''; f.elements['allowed_ips'].value = d.allowed;
+        f.elements['endpoint'].value = d.endpoint; f.elements['persistent_keepalive'].value = d.keepalive;
+        f.elements['preshared_key'].checked = d.psk === 'true';
+        f.elements['enabled'].checked = d.enabled === 'true'; f.elements['description'].value = d.description;
+        editing(f, d.id, 'wg-peer-submit', 'Save peer ' + d.name);
+    }
+    function showQr(id) {
+        document.getElementById('qr-img').src = '/api/vpn/wireguard/qrcode/' + id + '?t=' + Date.now();
+        document.getElementById('qr-box').style.display = 'block';
+    }
+    async function saveIpsec(ev) {
+        ev.preventDefault();
+        const f = ev.target, o = formJson(f), ed = f.elements['_editing'].value;
+        delete o._editing;
+        if (ed) for (const k of ['local_address', 'local_id', 'remote_id']) if (!f.elements[k].value) o[k] = '';
+        const r = await fetch(ed ? '/api/vpn/ipsec/connections/' + ed : '/api/vpn/ipsec/connections', {
+            method: ed ? 'PUT' : 'POST', credentials: 'same-origin',
+            headers: {'content-type': 'application/json'}, body: JSON.stringify(o),
+        });
+        let j = {};
+        try { j = await r.json(); } catch (_) {}
+        if (!r.ok) { alert('Not applied: ' + (j.error || r.status)); return false; }
+        if (j.generated_psk) prompt('Pre-shared key for the other side (shown only now):', j.generated_psk);
+        location.reload();
+        return false;
+    }
+    function editIpsec(b) {
+        const f = document.getElementById('ipsec-form'), d = b.dataset;
+        f.elements['name'].value = d.name; f.elements['local_address'].value = d.local;
+        f.elements['remote_address'].value = d.remote; f.elements['local_id'].value = d.localid;
+        f.elements['remote_id'].value = d.remoteid; f.elements['psk'].value = '';
+        f.elements['local_ts'].value = d.lts; f.elements['remote_ts'].value = d.rts;
+        f.elements['start_action'].value = d.start; f.elements['enabled'].checked = d.enabled === 'true';
+        f.elements['description'].value = d.description;
+        editing(f, d.id, 'ipsec-submit', 'Save tunnel ' + d.name);
+    }
+</script>
 {% endblock %}

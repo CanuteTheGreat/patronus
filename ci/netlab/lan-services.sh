@@ -21,6 +21,10 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 INIT=${1:?usage: lan-services.sh openrc|systemd [patronus-cli patronus-web]}
+# NETLAB_TEST: the test run inside the container (default: lane D's;
+# ci/netlab/vpn-services-test.sh is lane F's IPsec + WireGuard + lane H's
+# service control in the same Gentoo image)
+TEST=${NETLAB_TEST:-lan-services-test.sh}
 CLI=${2:-target/debug/patronus-cli}
 WEB=${3:-target/debug/patronus-web}
 case "$INIT" in openrc|systemd) ;; *) echo "bad init $INIT"; exit 2 ;; esac
@@ -61,7 +65,7 @@ trap cleanup EXIT
 
 cp "$CLI" "$OUT/patronus-cli"
 cp "$WEB" "$OUT/patronus-web"
-cp ci/netlab/lan-services-test.sh "$OUT/"
+cp "ci/netlab/$TEST" "$OUT/"
 cp gentoo/net-firewall/patronus/files/patronus-{applyd,web,firewall}.{service,initd} "$OUT/"
 
 COMMON=(--cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN
@@ -90,12 +94,12 @@ fi
 docker exec "$C" mkdir -p /t
 docker cp "$OUT/." "$C:/t/"
 set +e
-docker exec "$C" bash /t/lan-services-test.sh "$INIT"
+docker exec "$C" bash "/t/$TEST" "$INIT"
 rc=$?
 set -e
 if [ $rc -ne 0 ]; then
   echo "===== diagnostics ($INIT)"
-  docker exec "$C" bash -c 'for f in /etc/kea/kea-dhcp4.conf /etc/dnsmasq.conf /etc/unbound/unbound.conf /etc/radvd.conf /etc/chrony/chrony.conf /var/log/patronus/*.log /t/*.log; do [ -f "$f" ] && { echo "--- $f"; tail -60 "$f"; }; done' || true
+  docker exec "$C" bash -c 'for f in /etc/kea/kea-dhcp4.conf /etc/dnsmasq.conf /etc/unbound/unbound.conf /etc/radvd.conf /etc/chrony/chrony.conf /etc/swanctl/conf.d/patronus.conf /var/log/patronus/*.log /t/*.log; do [ -f "$f" ] && { echo "--- $f"; tail -60 "$f"; }; done' || true
   if [ "$INIT" = systemd ]; then
     docker exec "$C" journalctl --no-pager -n 120 || true
   fi

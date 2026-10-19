@@ -7,9 +7,7 @@
 
 use crate::{
     state::{host, AppState},
-    templates::{
-        DashboardTemplate, MonitoringTemplate, NetworkTemplate, SystemTemplate, VpnTemplate,
-    },
+    templates::{DashboardTemplate, MonitoringTemplate, NetworkTemplate, SystemTemplate},
 };
 use askama::Template;
 use axum::{
@@ -23,7 +21,7 @@ use axum::{
 #[template(path = "login.html")]
 pub struct LoginTemplate;
 
-fn render(t: &impl Template, what: &str) -> Response {
+pub(crate) fn render(t: &impl Template, what: &str) -> Response {
     match t.render() {
         Ok(html) => Html(html).into_response(),
         Err(e) => {
@@ -86,20 +84,6 @@ pub async fn firewall(State(state): State<AppState>) -> Response {
         }
     };
     render(&template, "firewall")
-}
-
-/// VPN page: live WireGuard peers and IPsec SAs.
-pub async fn vpn(State(state): State<AppState>) -> Response {
-    let s = state.vpn.snapshot().await;
-    let template = VpnTemplate {
-        page: "vpn",
-        wg_peers: s.wg_peers,
-        wg_error: s.wg_error.unwrap_or_default(),
-        ipsec_tunnels: s.ipsec_tunnels,
-        ipsec_error: s.ipsec_error.unwrap_or_default(),
-        ipsec_not_running: s.ipsec_not_running,
-    };
-    render(&template, "VPN")
 }
 
 /// Network page: interfaces and the kernel routing table.
@@ -170,8 +154,11 @@ pub async fn monitoring(State(state): State<AppState>) -> Response {
 }
 
 /// System page: host facts, users, backups, services.
-pub async fn system(State(state): State<AppState>) -> Response {
+pub async fn system(State(state): State<AppState>, me: crate::auth::AuthUser) -> Response {
     let users = crate::routes::api::system::users(&state).await;
+    let me_two_factor = users
+        .iter()
+        .any(|u| u.id == me.session.user_id && u.two_factor);
     let (backups, backups_error) = match state.system.list_backups().await {
         Ok(b) => (b, String::new()),
         Err(e) => (vec![], e.to_string()),
@@ -183,6 +170,12 @@ pub async fn system(State(state): State<AppState>) -> Response {
     let template = SystemTemplate {
         page: "system",
         users,
+        me_id: me.session.user_id,
+        me_username: me.session.username.clone(),
+        me_two_factor,
+        is_admin: me.session.role.is_admin(),
+        can_modify: me.session.role.can_modify(),
+        totp_available: cfg!(feature = "totp"),
         backups,
         backup_dir: state.system.backup_dir().display().to_string(),
         backups_error,

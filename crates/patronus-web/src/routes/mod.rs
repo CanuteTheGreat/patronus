@@ -32,7 +32,7 @@ pub fn build_router(
         // Protected page routes (HTML) - require authentication
         .route("/", get(pages::dashboard))
         .route("/firewall", get(pages::firewall))
-        .route("/vpn", get(pages::vpn))
+        .route("/vpn", get(api::vpn::page))
         .route("/network", get(pages::network))
         .route("/interfaces", get(api::interfaces::page))
         .route("/routing", get(api::routing::page))
@@ -126,7 +126,12 @@ async fn require_session(
     match session {
         Ok(session) => {
             let mutating = !matches!(parts.method, Method::GET | Method::HEAD | Method::OPTIONS);
-            if is_api && mutating && path != "/api/auth/logout" && !session.role.can_modify() {
+            // a read-only account may still log out, change its own
+            // password and manage its own second factor
+            let own_account = path == "/api/auth/logout"
+                || path == "/api/auth/password"
+                || path.starts_with("/api/auth/2fa/");
+            if is_api && mutating && !own_account && !session.role.can_modify() {
                 return (
                     StatusCode::FORBIDDEN,
                     axum::Json(serde_json::json!({"error": "read-only account"})),
@@ -154,6 +159,10 @@ fn api_routes() -> Router<AppState> {
         .route("/auth/login", post(crate::auth::login))
         .route("/auth/logout", post(crate::auth::logout))
         .route("/auth/me", get(crate::auth::current_user))
+        .route("/auth/password", post(crate::auth::change_password))
+        .route("/auth/2fa/setup", post(crate::auth::totp_setup))
+        .route("/auth/2fa/enable", post(crate::auth::totp_enable))
+        .route("/auth/2fa/disable", post(crate::auth::totp_disable))
         .merge(api::status::router())
         .merge(api::firewall::router())
         .merge(api::lan::router())
@@ -166,6 +175,9 @@ fn api_routes() -> Router<AppState> {
 
 #[cfg(test)]
 mod honesty_tests;
+
+#[cfg(test)]
+mod lane_fh_tests;
 
 #[cfg(test)]
 mod auth_gate_tests {

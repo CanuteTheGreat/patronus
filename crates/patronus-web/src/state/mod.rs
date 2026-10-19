@@ -22,6 +22,7 @@ pub mod monitoring;
 pub mod network;
 pub mod routing;
 pub mod system;
+pub mod tunnels;
 pub mod vpn;
 
 pub use firewall::FirewallManager;
@@ -31,6 +32,7 @@ pub use monitoring::MonitoringManager;
 pub use network::NetworkManager;
 pub use routing::RoutingManager;
 pub use system::SystemManager;
+pub use tunnels::TunnelsManager;
 pub use vpn::VpnManager;
 
 use crate::auth::AuthState;
@@ -48,7 +50,10 @@ pub struct AppState {
     pub lan: Arc<LanManager>,
     /// Gateways, gateway groups, default gateway, static routes (lane E).
     pub routing: Arc<RoutingManager>,
+    /// Live VPN state (wg show / swanctl --list-sas).
     pub vpn: Arc<VpnManager>,
+    /// WireGuard tunnels/peers and IPsec tunnels (lane F).
+    pub tunnels: Arc<TunnelsManager>,
     pub network: Arc<NetworkManager>,
     pub system: Arc<SystemManager>,
     pub monitoring: Arc<MonitoringManager>,
@@ -69,6 +74,10 @@ impl AppState {
         config_store: Arc<ConfigStore>,
         firewall_applier: Arc<dyn Applier>,
     ) -> anyhow::Result<Self> {
+        let tunnels = Arc::new(TunnelsManager::new(
+            config_store.clone(),
+            firewall_applier.clone(),
+        ));
         Ok(Self {
             interfaces: Arc::new(InterfacesManager::system(
                 config_store.clone(),
@@ -83,19 +92,44 @@ impl AppState {
                 config_store.clone(),
                 firewall_applier.clone(),
             )),
-            vpn: Arc::new(VpnManager::new()),
+            vpn: Arc::new(VpnManager::with_ipsec(
+                config_store.clone(),
+                tunnels.ipsec_applier(),
+            )),
+            tunnels,
             network: Arc::new(NetworkManager::new()),
-            system: Arc::new(SystemManager::new(system::backup_dir_for(
-                config_store.path(),
-            ))),
+            system: Arc::new(
+                SystemManager::new(system::backup_dir_for(config_store.path()))
+                    .with_appliers(all_appliers(firewall_applier.clone())),
+            ),
             monitoring: Arc::new(MonitoringManager::new()),
+            auth: AuthState::new(config_store.clone()),
             config_store,
-            auth: AuthState::new(),
             secrets: Arc::new(SecretManager::new(Arc::new(
                 patronus_secrets::store::MemoryStore::new(),
             ))),
         })
     }
+}
+
+/// Every subsystem applier patronus-web can drive (each through `patronus
+/// applyd` when its socket exists), for applying a restored backup to the
+/// whole system. `firewall` is the firewall applier the state uses.
+pub fn all_appliers(firewall: Arc<dyn Applier>) -> Vec<Arc<dyn Applier>> {
+    use patronus_network::applyd::RemoteApplier;
+    let mut v: Vec<Arc<dyn Applier>> = vec![
+        RemoteApplier::wrap(Arc::new(patronus_network::SysctlApplier::default())),
+        RemoteApplier::wrap(Arc::new(patronus_network::InterfacesApplier::default())),
+        RemoteApplier::wrap(Arc::new(patronus_network::RoutesApplier::default())),
+        firewall,
+    ];
+    v.extend(
+        patronus_network::lan::appliers()
+            .into_iter()
+            .chain(patronus_network::vpn_appliers())
+            .map(RemoteApplier::wrap),
+    );
+    v
 }
 
 /// What the shipped `patronus-web` (and `patronus web`) do at startup:
@@ -138,6 +172,13 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
         Err(e) => tracing::error!("routes: {e}"),
     }
     state.routing.spawn_local_monitor();
+    // WireGuard tunnels (lane F, interfaces phase), likewise not fatal
+    if state.tunnels.has(tunnels::Kind::WireGuard) {
+        match state.tunnels.reapply(tunnels::Kind::WireGuard).await {
+            Ok(r) => tracing::info!("WireGuard applied from the store: {}", r.join("; ")),
+            Err(e) => tracing::error!("WireGuard: {e}"),
+        }
+    }
     let report = applier
         .apply(&store)
         .await
@@ -146,6 +187,13 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
         "firewall applied from the store: {}",
         report.applied.join("; ")
     );
+    // IPsec (lane F, services phase): only when tunnels exist -- with none
+    // configured the applier leaves strongSwan alone anyway
+    if state.tunnels.has(tunnels::Kind::Ipsec) {
+        if let Err(e) = state.tunnels.reapply(tunnels::Kind::Ipsec).await {
+            tracing::error!("IPsec: {e}");
+        }
+    }
     // scheduled rules switch on/off on time (re-apply on a window edge)
     firewall::spawn_schedule_task(state.firewall.clone());
     Ok(state)

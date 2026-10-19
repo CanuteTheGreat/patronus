@@ -122,6 +122,29 @@ config file that only one process knows about.
   patronus-web when there is no applyd), pings once a second and re-applies
   the routes phase when a gateway's state or address changes. Interfaces
   that carry an IPv4 gateway get automatic outbound NAT like the WAN.
+- **VPN (lane F, `patronus_network::{wireguard,ipsec,vpn}`):**
+  `wg_interfaces` / `wg_peers` (keys generated in-process with
+  x25519-dalek; private keys and PSKs never leave the store through the
+  API, client configs are exported only for peers whose key pair Patronus
+  generated) applied in the interfaces phase: links tagged ifalias
+  `patronus-wg` (foreign WireGuard links are never touched), `wg syncconf`
+  from 0600 files in the state dir, peer networks routed with protocol 249.
+  `ipsec_tunnels` (IKEv2 PSK site-to-site) become
+  `/etc/swanctl/conf.d/patronus.conf` (0600), charon is started through the
+  distro service (Gentoo OpenRC `ipsec`, systemd `strongswan`) only when it
+  is not answering on VICI, then `swanctl --load-all` (never a restart: it
+  would drop every SA); live SAs are read as root in the applier's status.
+  The firewall applier adds the listen ports, IKE/ESP, `meta ipsec exists`
+  accepts between the tunnel subnets and a postrouting NAT exemption
+  (`patronus_firewall::vpn_rules`). USE=wireguard / USE=ipsec gate the
+  appliers and the web forms (501 naming the flag otherwise).
+- **Web accounts (lane H, `patronus-web/src/auth.rs`):** `web_users` in the
+  store (argon2 hashes, role admin|operator|readonly, TOTP secret + hashed
+  recovery codes with USE=totp). `PATRONUS_ADMIN_PASSWORD` re-applies the
+  admin password at every start (recovery); otherwise the stored password
+  stands. `import_json` keeps `web_users` when a document predates it, and a
+  web restore of a document without an enabled admin keeps the current
+  accounts. `patronus users list|reset-2fa` on the box.
 - History: `ConfigStore::snapshot()` before a change set,
   `restore_revision()` to roll back (`patronus config revisions|rollback`).
   `export_json()`/`import_json()` cover every lane's tables automatically.
@@ -157,7 +180,9 @@ Implement `Applier` once per subsystem, in the crate that owns it
   in your web state; when not root, `apply` and `status` go through applyd
   whenever its socket exists (checked per call, in-process otherwise).
   applyd serves every applier in `registry()`, so registering there is all
-  it takes.
+  it takes. applyd also starts/stops/restarts the installed services of
+  `patronus_network::services::KNOWN_SERVICES` for the System page (op
+  `service`; patronus-web/applyd/firewall restart only).
 - `resource_kinds()` / `upsert_resource()` / `delete_resource()`: the
   GitOps engine (`ApplyEngine::with_target`) dispatches declarative
   resources of those kinds to you, then calls `apply` once.

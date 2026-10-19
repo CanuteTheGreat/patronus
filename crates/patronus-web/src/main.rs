@@ -41,6 +41,9 @@ async fn main() -> Result<()> {
         patronus_web::auth::AdminPasswordSource::ExistingFile(p) => {
             info!("admin password loaded from {}", p.display())
         }
+        patronus_web::auth::AdminPasswordSource::Stored => {
+            info!("admin account loaded from the config store")
+        }
         patronus_web::auth::AdminPasswordSource::GeneratedFile(p) => info!(
             "generated a per-install admin password; log in as 'admin' with the contents of {}",
             p.display()

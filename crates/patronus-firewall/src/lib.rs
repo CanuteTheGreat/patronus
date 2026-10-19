@@ -10,6 +10,7 @@ pub mod applier;
 pub mod nftables;
 pub mod rules;
 pub mod schedule;
+pub mod vpn_rules;
 
 #[cfg(feature = "geoip")]
 pub mod geoip;

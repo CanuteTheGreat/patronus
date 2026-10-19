@@ -9,7 +9,9 @@
 //! configs with placeholder private keys and a made-up server endpoint),
 //! which also made the dashboard report 4 VPN connections on every box.
 
+use patronus_config::{Applier, ConfigStore};
 use std::process::Command;
+use std::sync::Arc;
 
 /// A peer counts as connected when its last handshake is this recent:
 /// WireGuard re-handshakes every 2 minutes while traffic flows
@@ -54,9 +56,35 @@ impl VpnSnapshot {
     }
 }
 
-/// Reads VPN state from the system.
+/// Reads VPN state from the system. With the IPsec applier (lane F) the
+/// SAs are read through it -- i.e. by `patronus applyd` as root when it
+/// runs, since charon's VICI socket is root-only.
 #[derive(Default)]
-pub struct VpnManager;
+pub struct VpnManager {
+    ipsec: Option<(Arc<ConfigStore>, Arc<dyn Applier>)>,
+}
+
+/// IPsec state from the IPsec applier's status (`installed`, `running`,
+/// `sas`, `error`) into the snapshot fields.
+pub fn ipsec_from_status(st: &serde_json::Value, s: &mut VpnSnapshot) {
+    if st.get("installed").and_then(|v| v.as_bool()) == Some(false) {
+        s.ipsec_error = Some("strongSwan (`swanctl`) is not installed".into());
+        return;
+    }
+    if st.get("running").and_then(|v| v.as_bool()) == Some(true) {
+        s.ipsec_tunnels =
+            parse_swanctl_list_sas(st.get("sas").and_then(|v| v.as_str()).unwrap_or(""));
+        return;
+    }
+    let err = st.get("error").and_then(|v| v.as_str()).unwrap_or("");
+    match classify_swanctl_failure(err) {
+        SwanctlFailure::NotRunning => s.ipsec_not_running = true,
+        SwanctlFailure::NotInstalled => {
+            s.ipsec_error = Some("strongSwan (`swanctl`) is not installed".into())
+        }
+        SwanctlFailure::Error(e) => s.ipsec_error = Some(e),
+    }
+}
 
 /// What `run` returns when the tool is not installed.
 const NOT_INSTALLED: &str = "not installed";
@@ -127,12 +155,20 @@ pub fn classify_swanctl_failure(output: &str) -> SwanctlFailure {
 
 impl VpnManager {
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Read IPsec SAs through the IPsec applier (`patronus applyd`).
+    pub fn with_ipsec(store: Arc<ConfigStore>, ipsec: Option<Arc<dyn Applier>>) -> Self {
+        Self {
+            ipsec: ipsec.map(|a| (store, a)),
+        }
     }
 
     /// Read WireGuard and IPsec state now.
     pub async fn snapshot(&self) -> VpnSnapshot {
-        tokio::task::spawn_blocking(|| {
+        let via_applier = self.ipsec.is_some();
+        let mut snap = tokio::task::spawn_blocking(move || {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -144,6 +180,9 @@ impl VpnManager {
                     s.wg_error = Some("wireguard-tools (`wg`) is not installed".into())
                 }
                 Err(e) => s.wg_error = Some(e),
+            }
+            if via_applier {
+                return s;
             }
             match run_swanctl_list_sas() {
                 Ok(out) => s.ipsec_tunnels = parse_swanctl_list_sas(&out),
@@ -157,7 +196,14 @@ impl VpnManager {
             s
         })
         .await
-        .unwrap_or_default()
+        .unwrap_or_default();
+        if let Some((store, a)) = &self.ipsec {
+            match a.status(store).await {
+                Ok(st) => ipsec_from_status(&st, &mut snap),
+                Err(e) => snap.ipsec_error = Some(format!("cannot read IPsec state: {e}")),
+            }
+        }
+        snap
     }
 
     pub async fn list_wireguard_peers(

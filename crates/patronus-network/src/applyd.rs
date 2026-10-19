@@ -15,6 +15,11 @@
 //!   <- {"ok":true,"applied":[...],"warnings":[...]} | {"ok":false,"error":"..."}
 //!   -> {"applier":"dhcp","op":"status"}    (live state read as root: daemon
 //!   <- {"ok":true,"status":{...}}            running, DHCP leases, ...)
+//!   -> {"op":"service","service":"unbound","action":"restart"}
+//!   <- {"ok":true} | {"ok":false,"error":"..."}
+//!      start/stop/restart one of the installed services the web UI lists
+//!      (`crate::services::KNOWN_SERVICES`; the web UI's own service and
+//!      this broker can only be restarted). Nothing else can be named.
 
 use async_trait::async_trait;
 use patronus_config::applier::{Applier, ApplierRegistry, ApplyReport, Phase};
@@ -94,6 +99,30 @@ pub async fn serve(
                 .and_then(|a| a.as_str())
                 .map(str::to_string);
             let op = req.get("op").and_then(|o| o.as_str()).unwrap_or("apply");
+            if op == "service" {
+                let svc = req
+                    .get("service")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let action = req
+                    .get("action")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                tracing::info!("applyd: {action} {svc}");
+                let r =
+                    tokio::task::spawn_blocking(move || crate::services::control(&svc, &action))
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r.map_err(|e| e.to_string()));
+                let out = match r {
+                    Ok(()) => json!({"ok": true}),
+                    Err(e) => json!({"ok": false, "error": e}),
+                };
+                let _ = wr.write_all(format!("{out}\n").as_bytes()).await;
+                return;
+            }
             let applier = name.as_deref().and_then(|n| registry.by_name(n));
             let out = match (applier, op) {
                 (None, _) => reply(&Err(format!("unknown applier {name:?}"))),
@@ -150,6 +179,25 @@ pub async fn request_status(socket: &Path, name: &str) -> Result<Value> {
         Ok(v.get("status").cloned().unwrap_or(Value::Null))
     } else {
         Err(broker_error(&v))
+    }
+}
+
+/// Ask the broker to start/stop/restart an installed service (as root).
+pub async fn request_service(socket: &Path, service: &str, action: &str) -> Result<()> {
+    let v = call(
+        socket,
+        json!({ "op": "service", "service": service, "action": action }),
+    )
+    .await?;
+    if v.get("ok").and_then(|o| o.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        Err(Error::Service(
+            v.get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("apply broker failed")
+                .to_string(),
+        ))
     }
 }
 
@@ -329,5 +377,12 @@ mod tests {
             .await
             .unwrap();
         assert!(e["error"].as_str().unwrap().contains("unknown op"), "{e}");
+        // service control: only installed Patronus services, checked by
+        // the broker (nothing it does not list can be named)
+        let e = request_service(&sock, "definitely-not-a-service", "stop")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("not a Patronus-managed service"), "{e}");
     }
 }

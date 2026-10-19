@@ -1,886 +1,834 @@
-//! IPsec VPN management using strongSwan
+//! IPsec (lane F): IKEv2 site-to-site tunnels with pre-shared keys,
+//! configured through strongSwan's swanctl (VICI), the modern interface
+//! (the old module generated a legacy ipsec.conf and was never reachable).
 //!
-//! Provides IPsec tunnel configuration and management using strongSwan (IKEv2).
+//! - The store's `ipsec_tunnels` become `/etc/swanctl/conf.d/patronus.conf`
+//!   (0600, marked as Patronus-owned), which the stock `swanctl.conf`
+//!   includes (`include conf.d/*.conf`). Nothing else under /etc/swanctl is
+//!   touched.
+//! - charon is started through the distro's own service (Gentoo: OpenRC
+//!   `ipsec`, systemd `strongswan`; elsewhere `strongswan-swanctl` where
+//!   that exists) via [`crate::lan::ServiceControl`], then `swanctl --load-all`
+//!   loads the connections and secrets and unloads deleted ones, without
+//!   restarting charon (other tunnels stay up). With no tunnel left the
+//!   service is stopped again, but only while our file is the managed one.
+//! - Live SAs (`swanctl --list-sas`) are read as root in [`IpsecApplier`]'s
+//!   status, so the unprivileged web UI sees them through `patronus applyd`.
+//! - Firewall: IKE/ESP and the tunnel's traffic are allowed and exempt from
+//!   outbound NAT by `patronus_firewall::vpn_rules`.
 
+use crate::lan::{self, check_description, db_err, invalid, now, LanEnv, ManagedFile};
+use crate::vpn::{check_host, check_networks, split_list};
+use async_trait::async_trait;
+use patronus_config::applier::{Applier, ApplyReport, Phase};
+use patronus_config::store::ConfigStore;
 use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
-use std::net::IpAddr;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use tokio::fs;
+use serde_json::{json, Value};
+use sqlx::Row;
 
-/// IPsec authentication method
+pub const SWANCTL_CONF: &str = "/etc/swanctl/conf.d/patronus.conf";
+pub const SWANCTL_BIN: &str = "/usr/sbin/swanctl";
+/// Prefix of every connection name Patronus loads into charon.
+pub const CONN_PREFIX: &str = "patronus-";
+
+pub const DEFAULT_IKE: &str = "aes256gcm16-prfsha384-ecp384,aes256-sha256-modp2048";
+pub const DEFAULT_ESP: &str = "aes256gcm16-ecp384,aes256-sha256-modp2048";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum IpsecAuthMethod {
-    Psk,         // Pre-shared key
-    PubKey,      // Public key (certificates)
-    Eap,         // EAP (for mobile clients)
-    EapMschapv2, // EAP-MSCHAPv2
-    EapTls,      // EAP-TLS
-}
-
-impl std::fmt::Display for IpsecAuthMethod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Psk => write!(f, "psk"),
-            Self::PubKey => write!(f, "pubkey"),
-            Self::Eap => write!(f, "eap"),
-            Self::EapMschapv2 => write!(f, "eap-mschapv2"),
-            Self::EapTls => write!(f, "eap-tls"),
-        }
-    }
-}
-
-/// IPsec encryption algorithm
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum IpsecCipher {
-    Aes128,
-    Aes192,
-    Aes256,
-    Aes128Gcm128,
-    Aes256Gcm128,
-}
-
-impl std::fmt::Display for IpsecCipher {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Aes128 => write!(f, "aes128"),
-            Self::Aes192 => write!(f, "aes192"),
-            Self::Aes256 => write!(f, "aes256"),
-            Self::Aes128Gcm128 => write!(f, "aes128gcm128"),
-            Self::Aes256Gcm128 => write!(f, "aes256gcm128"),
-        }
-    }
-}
-
-/// IPsec integrity algorithm
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum IpsecIntegrity {
-    Sha1,
-    Sha256,
-    Sha384,
-    Sha512,
-    AesXcbc,
-}
-
-impl std::fmt::Display for IpsecIntegrity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Sha1 => write!(f, "sha1"),
-            Self::Sha256 => write!(f, "sha256"),
-            Self::Sha384 => write!(f, "sha384"),
-            Self::Sha512 => write!(f, "sha512"),
-            Self::AesXcbc => write!(f, "aesxcbc"),
-        }
-    }
-}
-
-/// Diffie-Hellman group
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum DhGroup {
-    Modp1024, // Group 2
-    Modp1536, // Group 5
-    Modp2048, // Group 14
-    Modp3072, // Group 15
-    Modp4096, // Group 16
-    Modp8192, // Group 18
-    Ecp256,   // Group 19
-    Ecp384,   // Group 20
-    Ecp521,   // Group 21
-}
-
-impl std::fmt::Display for DhGroup {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Modp1024 => write!(f, "modp1024"),
-            Self::Modp1536 => write!(f, "modp1536"),
-            Self::Modp2048 => write!(f, "modp2048"),
-            Self::Modp3072 => write!(f, "modp3072"),
-            Self::Modp4096 => write!(f, "modp4096"),
-            Self::Modp8192 => write!(f, "modp8192"),
-            Self::Ecp256 => write!(f, "ecp256"),
-            Self::Ecp384 => write!(f, "ecp384"),
-            Self::Ecp521 => write!(f, "ecp521"),
-        }
-    }
-}
-
-/// IPsec tunnel configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpsecTunnelConfig {
+pub struct IpsecTunnel {
+    pub id: i64,
     pub name: String,
     pub enabled: bool,
-    pub ikev2: bool, // Use IKEv2 (recommended), false = IKEv1
-
-    // Local configuration
-    pub local_id: Option<String>,   // Local identifier (IP, FQDN, email)
-    pub local_subnets: Vec<String>, // Local subnets to tunnel
-    pub local_cert: Option<PathBuf>,
-    pub local_key: Option<PathBuf>,
-
-    // Remote configuration
+    pub local_address: Option<String>,
+    pub remote_address: String,
+    pub local_id: Option<String>,
     pub remote_id: Option<String>,
-    pub remote_address: String, // Remote gateway IP/hostname
-    pub remote_subnets: Vec<String>,
-    pub remote_cert: Option<PathBuf>,
-
-    // Authentication
-    pub auth_method: IpsecAuthMethod,
-    pub psk: Option<String>, // Pre-shared key (if PSK auth)
-
-    // Phase 1 (IKE) proposals
-    pub ike_cipher: Vec<IpsecCipher>,
-    pub ike_integrity: Vec<IpsecIntegrity>,
-    pub ike_dh_group: Vec<DhGroup>,
-    pub ike_lifetime: u32, // seconds
-
-    // Phase 2 (ESP) proposals
-    pub esp_cipher: Vec<IpsecCipher>,
-    pub esp_integrity: Vec<IpsecIntegrity>,
-    pub esp_dh_group: Vec<DhGroup>,
-    pub esp_lifetime: u32, // seconds
-
-    // Options
-    pub auto_start: bool,     // Start on boot
-    pub dpdaction: String,    // Dead peer detection action (restart, clear, hold)
-    pub dpddelay: u32,        // DPD delay in seconds
-    pub close_action: String, // Action on close (restart, clear)
+    #[serde(skip_serializing, default)]
+    pub psk: String,
+    pub local_ts: String,
+    pub remote_ts: String,
+    pub ike_proposals: String,
+    pub esp_proposals: String,
+    pub start_action: String,
+    pub dpd_delay: u32,
+    pub description: Option<String>,
 }
 
-impl Default for IpsecTunnelConfig {
-    fn default() -> Self {
-        Self {
-            name: "tunnel1".to_string(),
-            enabled: true,
-            ikev2: true,
-            local_id: None,
-            local_subnets: vec!["10.0.1.0/24".to_string()],
-            local_cert: None,
-            local_key: None,
-            remote_id: None,
-            remote_address: "203.0.113.1".to_string(),
-            remote_subnets: vec!["10.0.2.0/24".to_string()],
-            remote_cert: None,
-            auth_method: IpsecAuthMethod::Psk,
-            psk: Some("changeme".to_string()),
-            ike_cipher: vec![IpsecCipher::Aes256, IpsecCipher::Aes128],
-            ike_integrity: vec![IpsecIntegrity::Sha256, IpsecIntegrity::Sha512],
-            ike_dh_group: vec![DhGroup::Modp2048, DhGroup::Ecp256],
-            ike_lifetime: 28800, // 8 hours
-            esp_cipher: vec![IpsecCipher::Aes256Gcm128, IpsecCipher::Aes256],
-            esp_integrity: vec![IpsecIntegrity::Sha256],
-            esp_dh_group: vec![DhGroup::Modp2048, DhGroup::Ecp256],
-            esp_lifetime: 3600, // 1 hour
-            auto_start: true,
-            dpdaction: "restart".to_string(),
-            dpddelay: 30,
-            close_action: "restart".to_string(),
-        }
-    }
+pub async fn list_tunnels(store: &ConfigStore) -> Result<Vec<IpsecTunnel>> {
+    let rows = sqlx::query(
+        "SELECT id, name, enabled, local_address, remote_address, local_id, remote_id, psk,
+                local_ts, remote_ts, ike_proposals, esp_proposals, start_action, dpd_delay,
+                description FROM ipsec_tunnels ORDER BY name",
+    )
+    .fetch_all(store.pool()?)
+    .await
+    .map_err(db_err("read ipsec_tunnels"))?;
+    Ok(rows
+        .iter()
+        .map(|r| IpsecTunnel {
+            id: r.get(0),
+            name: r.get(1),
+            enabled: r.get::<i64, _>(2) != 0,
+            local_address: r.get(3),
+            remote_address: r.get(4),
+            local_id: r.get(5),
+            remote_id: r.get(6),
+            psk: r.get(7),
+            local_ts: r.get(8),
+            remote_ts: r.get(9),
+            ike_proposals: r.get(10),
+            esp_proposals: r.get(11),
+            start_action: r.get(12),
+            dpd_delay: r.get::<i64, _>(13) as u32,
+            description: r.get(14),
+        })
+        .collect())
 }
 
-/// Mobile client (road warrior) configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpsecMobileClientConfig {
-    pub name: String,
-    pub enabled: bool,
-    pub pool_name: String,            // IP pool for clients
-    pub pool_range: (IpAddr, IpAddr), // IP range
-    pub dns_servers: Vec<IpAddr>,
-    pub push_routes: Vec<String>, // Routes to push to clients
-
-    // Authentication
-    pub auth_method: IpsecAuthMethod,
-    pub eap_id: Option<String>, // EAP identity
-
-    // Certificates
-    pub ca_cert: PathBuf,
-    pub server_cert: PathBuf,
-    pub server_key: PathBuf,
-
-    // Proposals
-    pub ike_cipher: Vec<IpsecCipher>,
-    pub ike_integrity: Vec<IpsecIntegrity>,
-    pub ike_dh_group: Vec<DhGroup>,
-    pub esp_cipher: Vec<IpsecCipher>,
-    pub esp_integrity: Vec<IpsecIntegrity>,
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TunnelInput {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub local_address: Option<String>,
+    #[serde(default)]
+    pub remote_address: Option<String>,
+    #[serde(default)]
+    pub local_id: Option<String>,
+    #[serde(default)]
+    pub remote_id: Option<String>,
+    /// Empty on create = generate one (shown once in the API answer).
+    #[serde(default)]
+    pub psk: Option<String>,
+    #[serde(default)]
+    pub local_ts: Option<String>,
+    #[serde(default)]
+    pub remote_ts: Option<String>,
+    #[serde(default)]
+    pub ike_proposals: Option<String>,
+    #[serde(default)]
+    pub esp_proposals: Option<String>,
+    #[serde(default)]
+    pub start_action: Option<String>,
+    #[serde(default)]
+    pub dpd_delay: Option<u32>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
-/// IPsec connection status
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpsecConnectionStatus {
-    pub name: String,
-    pub state: IpsecState,
-    pub local_ip: Option<IpAddr>,
-    pub remote_ip: Option<IpAddr>,
-    pub established: Option<String>, // Time established
-    pub bytes_in: u64,
-    pub bytes_out: u64,
-    pub packets_in: u64,
-    pub packets_out: u64,
+fn opt(s: &Option<String>) -> Option<&str> {
+    s.as_deref().map(str::trim).filter(|v| !v.is_empty())
 }
 
-/// IPsec connection state
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum IpsecState {
-    Established,
-    Connecting,
-    Disconnected,
-    Failed,
-}
-
-/// strongSwan manager
-pub struct IpsecManager {
-    config_dir: PathBuf,
-    secrets_file: PathBuf,
-}
-
-impl IpsecManager {
-    /// Create a new IPsec manager
-    pub fn new() -> Self {
-        Self {
-            config_dir: PathBuf::from("/etc/patronus/ipsec"),
-            secrets_file: PathBuf::from("/etc/patronus/ipsec/ipsec.secrets"),
-        }
-    }
-
-    /// Generate ipsec.conf configuration
-    pub fn generate_tunnel_config(&self, config: &IpsecTunnelConfig) -> Result<String> {
-        let mut conf = String::new();
-
-        conf.push_str(&format!("conn {}\n", config.name));
-
-        // IKE version
-        if config.ikev2 {
-            conf.push_str("  keyexchange=ikev2\n");
-        } else {
-            conf.push_str("  keyexchange=ikev1\n");
-        }
-
-        // Auto start
-        if config.auto_start {
-            conf.push_str("  auto=start\n");
-        } else {
-            conf.push_str("  auto=add\n");
-        }
-
-        // Local configuration
-        if let Some(local_id) = &config.local_id {
-            conf.push_str(&format!("  leftid={}\n", local_id));
-        }
-
-        let local_subnets = config.local_subnets.join(",");
-        conf.push_str(&format!("  leftsubnet={}\n", local_subnets));
-
-        // Authentication method
-        match config.auth_method {
-            IpsecAuthMethod::Psk => {
-                conf.push_str("  leftauth=psk\n");
-                conf.push_str("  rightauth=psk\n");
-            }
-            IpsecAuthMethod::PubKey => {
-                conf.push_str("  leftauth=pubkey\n");
-                conf.push_str("  rightauth=pubkey\n");
-                if let Some(cert) = &config.local_cert {
-                    conf.push_str(&format!("  leftcert={}\n", cert.display()));
-                }
-            }
-            _ => {
-                conf.push_str(&format!("  leftauth={}\n", config.auth_method));
-            }
-        }
-
-        // Remote configuration
-        conf.push_str(&format!("  right={}\n", config.remote_address));
-
-        if let Some(remote_id) = &config.remote_id {
-            conf.push_str(&format!("  rightid={}\n", remote_id));
-        }
-
-        let remote_subnets = config.remote_subnets.join(",");
-        conf.push_str(&format!("  rightsubnet={}\n", remote_subnets));
-
-        // IKE proposals
-        let ike_proposals = self.format_ike_proposals(
-            &config.ike_cipher,
-            &config.ike_integrity,
-            &config.ike_dh_group,
-        );
-        conf.push_str(&format!("  ike={}\n", ike_proposals));
-        conf.push_str(&format!("  ikelifetime={}s\n", config.ike_lifetime));
-
-        // ESP proposals
-        let esp_proposals = self.format_esp_proposals(
-            &config.esp_cipher,
-            &config.esp_integrity,
-            &config.esp_dh_group,
-        );
-        conf.push_str(&format!("  esp={}\n", esp_proposals));
-        conf.push_str(&format!("  lifetime={}s\n", config.esp_lifetime));
-
-        // DPD
-        conf.push_str(&format!("  dpdaction={}\n", config.dpdaction));
-        conf.push_str(&format!("  dpddelay={}s\n", config.dpddelay));
-        conf.push_str(&format!("  closeaction={}\n", config.close_action));
-
-        conf.push_str("\n");
-
-        Ok(conf)
-    }
-
-    /// Generate mobile client configuration
-    pub fn generate_mobile_client_config(
-        &self,
-        config: &IpsecMobileClientConfig,
-    ) -> Result<String> {
-        let mut conf = String::new();
-
-        conf.push_str(&format!("conn {}\n", config.name));
-        conf.push_str("  keyexchange=ikev2\n");
-        conf.push_str("  auto=add\n");
-
-        // Left (server) side
-        conf.push_str("  left=%any\n");
-        conf.push_str(&format!("  leftcert={}\n", config.server_cert.display()));
-        conf.push_str("  leftid=%any\n");
-        conf.push_str("  leftsubnet=0.0.0.0/0\n");
-
-        // Right (client) side
-        conf.push_str("  right=%any\n");
-        conf.push_str("  rightauth=eap-mschapv2\n");
-        conf.push_str("  rightsourceip=%dhcp\n"); // Or use pool
-        conf.push_str(&format!("  rightsourceip={}\n", config.pool_name));
-
-        // DNS
-        if !config.dns_servers.is_empty() {
-            let dns = config
-                .dns_servers
-                .iter()
-                .map(|ip| ip.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            conf.push_str(&format!("  rightdns={}\n", dns));
-        }
-
-        // IKE proposals
-        let ike_proposals = self.format_ike_proposals(
-            &config.ike_cipher,
-            &config.ike_integrity,
-            &config.ike_dh_group,
-        );
-        conf.push_str(&format!("  ike={}\n", ike_proposals));
-
-        // ESP proposals
-        let esp_proposals = self.format_esp_proposals(
-            &config.esp_cipher,
-            &config.esp_integrity,
-            &vec![], // No PFS for mobile
-        );
-        conf.push_str(&format!("  esp={}\n", esp_proposals));
-
-        conf.push_str("  dpdaction=clear\n");
-        conf.push_str("  rekey=no\n");
-
-        conf.push_str("\n");
-
-        Ok(conf)
-    }
-
-    /// Format IKE proposals
-    fn format_ike_proposals(
-        &self,
-        ciphers: &[IpsecCipher],
-        integrities: &[IpsecIntegrity],
-        dh_groups: &[DhGroup],
-    ) -> String {
-        let mut proposals = Vec::new();
-
-        for cipher in ciphers {
-            for integrity in integrities {
-                for dh in dh_groups {
-                    proposals.push(format!("{}-{}-{}", cipher, integrity, dh));
-                }
-            }
-        }
-
-        proposals.join(",")
-    }
-
-    /// Format ESP proposals
-    fn format_esp_proposals(
-        &self,
-        ciphers: &[IpsecCipher],
-        integrities: &[IpsecIntegrity],
-        dh_groups: &[DhGroup],
-    ) -> String {
-        let mut proposals = Vec::new();
-
-        for cipher in ciphers {
-            // GCM ciphers don't need separate integrity
-            if matches!(
-                cipher,
-                IpsecCipher::Aes128Gcm128 | IpsecCipher::Aes256Gcm128
-            ) {
-                if dh_groups.is_empty() {
-                    proposals.push(format!("{}", cipher));
-                } else {
-                    for dh in dh_groups {
-                        proposals.push(format!("{}-{}", cipher, dh));
-                    }
-                }
-            } else {
-                for integrity in integrities {
-                    if dh_groups.is_empty() {
-                        proposals.push(format!("{}-{}", cipher, integrity));
-                    } else {
-                        for dh in dh_groups {
-                            proposals.push(format!("{}-{}-{}", cipher, integrity, dh));
-                        }
-                    }
-                }
-            }
-        }
-
-        proposals.join(",")
-    }
-
-    /// Save tunnel configuration
-    pub async fn save_tunnel_config(&self, config: &IpsecTunnelConfig) -> Result<()> {
-        let conf_content = self.generate_tunnel_config(config)?;
-        let conf_path = self.config_dir.join(format!("{}.conf", config.name));
-
-        fs::create_dir_all(&self.config_dir)
-            .await
-            .map_err(|e| Error::Network(format!("Failed to create config directory: {}", e)))?;
-
-        fs::write(&conf_path, conf_content)
-            .await
-            .map_err(|e| Error::Network(format!("Failed to write config file: {}", e)))?;
-
-        // Update secrets file if PSK
-        if config.auth_method == IpsecAuthMethod::Psk {
-            if let Some(psk) = &config.psk {
-                self.add_psk_secret(config.local_id.as_deref(), config.remote_id.as_deref(), psk)
-                    .await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Add or replace the PSK secret for a `local remote` ID pair.
-    ///
-    /// The secrets file is rewritten atomically with mode 0600 (it holds
-    /// every tunnel's pre-shared key). An existing entry for the same pair
-    /// is replaced rather than appended to: strongSwan uses the first
-    /// matching entry, so an appended duplicate meant a rotated PSK never
-    /// took effect.
-    async fn add_psk_secret(
-        &self,
-        local_id: Option<&str>,
-        remote_id: Option<&str>,
-        psk: &str,
-    ) -> Result<()> {
-        // Read existing secrets. A file that exists but can't be read must
-        // not be treated as empty: rewriting it would drop every other
-        // tunnel's key.
-        let existing = match fs::read_to_string(&self.secrets_file).await {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(e) => {
-                return Err(Error::Network(format!(
-                    "Failed to read secrets file {}: {}",
-                    self.secrets_file.display(),
-                    e
-                )))
-            }
-        };
-
-        let secrets = upsert_psk_secret(&existing, local_id, remote_id, psk)?;
-        write_private_file(&self.secrets_file, secrets.as_bytes()).await
-    }
-
-    /// Start strongSwan
-    pub async fn start(&self) -> Result<()> {
-        Command::new("systemctl")
-            .args(&["start", "strongswan"])
-            .output()
-            .map_err(|e| Error::Network(format!("Failed to start strongSwan: {}", e)))?;
-
-        Ok(())
-    }
-
-    /// Stop strongSwan
-    pub async fn stop(&self) -> Result<()> {
-        Command::new("systemctl")
-            .args(&["stop", "strongswan"])
-            .output()
-            .map_err(|e| Error::Network(format!("Failed to stop strongSwan: {}", e)))?;
-
-        Ok(())
-    }
-
-    /// Restart strongSwan
-    pub async fn restart(&self) -> Result<()> {
-        Command::new("systemctl")
-            .args(&["restart", "strongswan"])
-            .output()
-            .map_err(|e| Error::Network(format!("Failed to restart strongSwan: {}", e)))?;
-
-        Ok(())
-    }
-
-    /// Reload configuration
-    pub async fn reload(&self) -> Result<()> {
-        Command::new("ipsec")
-            .arg("reload")
-            .output()
-            .map_err(|e| Error::Network(format!("Failed to reload IPsec: {}", e)))?;
-
-        Ok(())
-    }
-
-    /// Start a specific tunnel
-    pub async fn start_tunnel(&self, name: &str) -> Result<()> {
-        Command::new("ipsec")
-            .args(&["up", name])
-            .output()
-            .map_err(|e| Error::Network(format!("Failed to start tunnel: {}", e)))?;
-
-        Ok(())
-    }
-
-    /// Stop a specific tunnel
-    pub async fn stop_tunnel(&self, name: &str) -> Result<()> {
-        Command::new("ipsec")
-            .args(&["down", name])
-            .output()
-            .map_err(|e| Error::Network(format!("Failed to stop tunnel: {}", e)))?;
-
-        Ok(())
-    }
-
-    /// Get status of all tunnels
-    pub async fn get_status(&self) -> Result<Vec<IpsecConnectionStatus>> {
-        let output = Command::new("ipsec")
-            .arg("status")
-            .output()
-            .map_err(|e| Error::Network(format!("Failed to get status: {}", e)))?;
-
-        // Parse output (simplified - would need proper parsing)
-        // For now, return empty vector
-        Ok(vec![])
-    }
-
-    /// Generate certificates
-    pub async fn generate_ca(&self, common_name: &str) -> Result<()> {
-        fs::create_dir_all(&self.config_dir)
-            .await
-            .map_err(|e| Error::Network(format!("Failed to create config directory: {}", e)))?;
-
-        let pki_dir = self.config_dir.join("pki");
-        fs::create_dir_all(&pki_dir)
-            .await
-            .map_err(|e| Error::Network(format!("Failed to create PKI directory: {}", e)))?;
-
-        // Generate CA key
-        Command::new("ipsec")
-            .args(&[
-                "pki",
-                "--gen",
-                "--type",
-                "rsa",
-                "--size",
-                "4096",
-                "--outform",
-                "pem",
-            ])
-            .output()
-            .map(|output| std::fs::write(pki_dir.join("ca-key.pem"), output.stdout))
-            .map_err(|e| Error::Network(format!("Failed to generate CA key: {}", e)))?
-            .map_err(|e| Error::Network(format!("Failed to write CA key: {}", e)))?;
-
-        // Generate CA certificate
-        Command::new("ipsec")
-            .args(&[
-                "pki",
-                "--self",
-                "--ca",
-                "--lifetime",
-                "3650",
-                "--in",
-                pki_dir.join("ca-key.pem").to_str().unwrap(),
-                "--type",
-                "rsa",
-                "--dn",
-                &format!("CN={}", common_name),
-                "--outform",
-                "pem",
-            ])
-            .output()
-            .map(|output| std::fs::write(pki_dir.join("ca-cert.pem"), output.stdout))
-            .map_err(|e| Error::Network(format!("Failed to generate CA cert: {}", e)))?
-            .map_err(|e| Error::Network(format!("Failed to write CA cert: {}", e)))?;
-
-        Ok(())
-    }
-}
-
-/// Validate an IKE identity used as an ipsec.secrets selector. The selector
-/// is whitespace-separated and `"`/`#` start a quoted string/comment, so any
-/// of those (or a control character such as a newline) would let an ID
-/// split into extra selectors or inject a whole new secrets line.
-fn validate_secret_selector(id: &str) -> Result<()> {
-    if id.is_empty()
-        || id
+/// Connection names become swanctl section names.
+pub fn check_tunnel_name(s: &str) -> Result<String> {
+    let s = s.trim();
+    if s.is_empty()
+        || s.len() > 32
+        || !s
             .chars()
-            .any(|c| c.is_whitespace() || c.is_control() || c == '"' || c == '#' || c == '\'')
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
-        return Err(Error::Config(format!(
-            "invalid IPsec identity for ipsec.secrets: {:?}",
-            id
+        return Err(invalid(format!(
+            "tunnel name {s:?}: 1-32 letters, digits, '-' or '_'"
         )));
     }
-    Ok(())
+    Ok(s.to_string())
 }
 
-/// Hex-encode a PSK as strongSwan's `0x...` secret form, so any byte
-/// (quotes, backslashes, newlines) is stored literally instead of ending
-/// the quoted string early.
-fn encode_psk(psk: &str) -> String {
-    let mut out = String::with_capacity(2 + psk.len() * 2);
-    out.push_str("0x");
-    for b in psk.bytes() {
-        out.push_str(&format!("{:02x}", b));
+/// Pre-shared keys go into a quoted swanctl string: printable ASCII
+/// without quotes or backslashes, 16-128 characters.
+pub fn check_psk(s: &str) -> Result<String> {
+    if !(16..=128).contains(&s.len())
+        || !s
+            .chars()
+            .all(|c| c.is_ascii_graphic() && c != '"' && c != '\\')
+    {
+        return Err(invalid(
+            "pre-shared key: 16-128 printable characters without quotes or backslashes",
+        ));
     }
-    out
+    Ok(s.to_string())
 }
 
-/// Return `existing` ipsec.secrets content with the PSK entry for
-/// `local remote` set to `psk`: any existing PSK line for that exact pair is
-/// dropped and one new line is appended. Every other line is kept as is.
-fn upsert_psk_secret(
-    existing: &str,
-    local_id: Option<&str>,
-    remote_id: Option<&str>,
-    psk: &str,
-) -> Result<String> {
-    let local = local_id.unwrap_or("%any");
-    let remote = remote_id.unwrap_or("%any");
-    validate_secret_selector(local)?;
-    validate_secret_selector(remote)?;
-    if psk.is_empty() {
-        return Err(Error::Config("IPsec PSK must not be empty".to_string()));
-    }
+/// A random 40-character pre-shared key.
+pub fn generate_psk() -> String {
+    use rand::Rng;
+    const CS: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    let mut rng = rand::rngs::OsRng;
+    (0..40)
+        .map(|_| CS[rng.gen_range(0..CS.len())] as char)
+        .collect()
+}
 
-    let mut out = String::with_capacity(existing.len() + 128);
-    for line in existing.lines() {
-        if !is_psk_line_for(line, local, remote) {
-            out.push_str(line);
-            out.push('\n');
+/// IKE identities: an address, a FQDN or `user@fqdn` (no spaces/quotes).
+fn check_identity(what: &str, s: &str) -> Result<String> {
+    let s = s.trim();
+    if s.is_empty()
+        || s.len() > 255
+        || !s
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '@' | ':'))
+    {
+        return Err(invalid(format!(
+            "{what} {s:?}: an address, host name or user@domain"
+        )));
+    }
+    Ok(s.to_string())
+}
+
+/// strongSwan proposal lists: comma-separated `alg-alg-...` keywords.
+fn check_proposals(what: &str, s: &str) -> Result<String> {
+    let v = split_list(s);
+    if v.is_empty()
+        || !v.iter().all(|p| {
+            p.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+    {
+        return Err(invalid(format!("{what}: e.g. {DEFAULT_IKE}")));
+    }
+    Ok(v.join(","))
+}
+
+/// Create (`id` = None) or edit a tunnel. Returns (id, generated psk).
+pub async fn save_tunnel(
+    store: &ConfigStore,
+    id: Option<i64>,
+    t: &TunnelInput,
+) -> Result<(i64, Option<String>)> {
+    let all = list_tunnels(store).await?;
+    let cur = match id {
+        Some(id) => Some(
+            all.iter()
+                .find(|x| x.id == id)
+                .cloned()
+                .ok_or_else(|| Error::Config(format!("no IPsec tunnel {id}")))?,
+        ),
+        None => None,
+    };
+    let name = match (opt(&t.name), &cur) {
+        (Some(n), _) => check_tunnel_name(n)?,
+        (None, Some(c)) => c.name.clone(),
+        (None, None) => return Err(invalid("tunnel: a name is required")),
+    };
+    if all.iter().any(|x| x.name == name && Some(x.id) != id) {
+        return Err(invalid(format!("tunnel: {name} already exists")));
+    }
+    let local_address = match (&t.local_address, &cur) {
+        (Some(a), _) if a.trim().is_empty() => None,
+        (Some(a), _) => Some(check_host("local address", a)?),
+        (None, Some(c)) => c.local_address.clone(),
+        (None, None) => None,
+    };
+    let remote_address = match (opt(&t.remote_address), &cur) {
+        (Some("%any"), _) => "%any".to_string(),
+        (Some(a), _) => check_host("remote gateway", a)?,
+        (None, Some(c)) => c.remote_address.clone(),
+        (None, None) => {
+            return Err(invalid(
+                "remote gateway: required (or %any to only respond)",
+            ))
+        }
+    };
+    let local_id = match (&t.local_id, &cur) {
+        (Some(a), _) if a.trim().is_empty() => None,
+        (Some(a), _) => Some(check_identity("local identity", a)?),
+        (None, Some(c)) => c.local_id.clone(),
+        (None, None) => None,
+    };
+    let remote_id = match (&t.remote_id, &cur) {
+        (Some(a), _) if a.trim().is_empty() => None,
+        (Some(a), _) => Some(check_identity("remote identity", a)?),
+        (None, Some(c)) => c.remote_id.clone(),
+        (None, None) => None,
+    };
+    if remote_address == "%any" && remote_id.is_none() {
+        return Err(invalid(
+            "remote identity: required when the remote gateway is %any",
+        ));
+    }
+    let mut generated = None;
+    let psk = match (opt(&t.psk), &cur) {
+        (Some(p), _) => check_psk(p)?,
+        (None, Some(c)) => c.psk.clone(),
+        (None, None) => {
+            let p = generate_psk();
+            generated = Some(p.clone());
+            p
+        }
+    };
+    let local_ts = match (&t.local_ts, &cur) {
+        (Some(v), _) => check_networks("local networks", v, false)?,
+        (None, Some(c)) => c.local_ts.clone(),
+        (None, None) => return Err(invalid("local networks: required")),
+    };
+    let remote_ts = match (&t.remote_ts, &cur) {
+        (Some(v), _) => check_networks("remote networks", v, false)?,
+        (None, Some(c)) => c.remote_ts.clone(),
+        (None, None) => return Err(invalid("remote networks: required")),
+    };
+    let ike_proposals = match (opt(&t.ike_proposals), &cur) {
+        (Some(v), _) => check_proposals("IKE proposals", v)?,
+        (None, Some(c)) => c.ike_proposals.clone(),
+        (None, None) => DEFAULT_IKE.into(),
+    };
+    let esp_proposals = match (opt(&t.esp_proposals), &cur) {
+        (Some(v), _) => check_proposals("ESP proposals", v)?,
+        (None, Some(c)) => c.esp_proposals.clone(),
+        (None, None) => DEFAULT_ESP.into(),
+    };
+    let start_action = match (opt(&t.start_action), &cur) {
+        (Some(v @ ("start" | "trap" | "none")), _) => v.to_string(),
+        (Some(v), _) => return Err(invalid(format!("start action {v:?}: start, trap or none"))),
+        (None, Some(c)) => c.start_action.clone(),
+        (None, None) => "start".into(),
+    };
+    if remote_address == "%any" && start_action != "none" {
+        return Err(invalid(
+            "start action: a tunnel to %any can only respond (start action none)",
+        ));
+    }
+    let dpd_delay = match (t.dpd_delay, &cur) {
+        (Some(d), _) if d > 3600 => return Err(invalid("DPD delay: 0-3600 seconds")),
+        (Some(d), _) => d,
+        (None, Some(c)) => c.dpd_delay,
+        (None, None) => 30,
+    };
+    let description = match (&t.description, &cur) {
+        (Some(d), _) => check_description(Some(d))?,
+        (None, Some(c)) => c.description.clone(),
+        (None, None) => None,
+    };
+    let enabled = t
+        .enabled
+        .or(cur.as_ref().map(|c| c.enabled))
+        .unwrap_or(true);
+    let sql = if id.is_some() {
+        "UPDATE ipsec_tunnels SET name=?, enabled=?, local_address=?, remote_address=?, local_id=?,
+            remote_id=?, psk=?, local_ts=?, remote_ts=?, ike_proposals=?, esp_proposals=?,
+            start_action=?, dpd_delay=?, description=?, updated_at=? WHERE id=?"
+    } else {
+        "INSERT INTO ipsec_tunnels (name, enabled, local_address, remote_address, local_id,
+            remote_id, psk, local_ts, remote_ts, ike_proposals, esp_proposals, start_action,
+            dpd_delay, description, updated_at, id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    };
+    let r = sqlx::query(sql)
+        .bind(&name)
+        .bind(enabled as i64)
+        .bind(&local_address)
+        .bind(&remote_address)
+        .bind(&local_id)
+        .bind(&remote_id)
+        .bind(&psk)
+        .bind(&local_ts)
+        .bind(&remote_ts)
+        .bind(&ike_proposals)
+        .bind(&esp_proposals)
+        .bind(&start_action)
+        .bind(dpd_delay as i64)
+        .bind(&description)
+        .bind(now())
+        .bind(id)
+        .execute(store.pool()?)
+        .await
+        .map_err(db_err("save IPsec tunnel"))?;
+    Ok((id.unwrap_or_else(|| r.last_insert_rowid()), generated))
+}
+
+pub async fn delete_tunnel(store: &ConfigStore, id: i64) -> Result<bool> {
+    let r = sqlx::query("DELETE FROM ipsec_tunnels WHERE id = ?")
+        .bind(id)
+        .execute(store.pool()?)
+        .await
+        .map_err(db_err("delete IPsec tunnel"))?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// `/etc/swanctl/conf.d/patronus.conf` for the enabled tunnels.
+pub fn render(tunnels: &[&IpsecTunnel], redact: bool) -> String {
+    let mut c = lan::header("#", "IPsec tunnels, strongSwan swanctl");
+    c.push_str("connections {\n");
+    for t in tunnels {
+        let local_addrs = t.local_address.as_deref().unwrap_or("%any");
+        c.push_str(&format!(
+            "    {CONN_PREFIX}{name} {{\n        version = 2\n        local_addrs = {local_addrs}\n        \
+             remote_addrs = {remote}\n        proposals = {ike}\n        dpd_delay = {dpd}s\n",
+            name = t.name,
+            remote = t.remote_address,
+            ike = t.ike_proposals,
+            dpd = t.dpd_delay,
+        ));
+        c.push_str("        local {\n            auth = psk\n");
+        if let Some(id) = t.local_id.as_ref().or(t.local_address.as_ref()) {
+            c.push_str(&format!("            id = {id}\n"));
+        }
+        c.push_str("        }\n        remote {\n            auth = psk\n");
+        let remote_id = t
+            .remote_id
+            .clone()
+            .or_else(|| (t.remote_address != "%any").then(|| t.remote_address.clone()));
+        if let Some(id) = &remote_id {
+            c.push_str(&format!("            id = {id}\n"));
+        }
+        let (dpd_action, close_action) = match t.start_action.as_str() {
+            "start" => ("restart", "start"),
+            "trap" => ("trap", "trap"),
+            _ => ("clear", "none"),
+        };
+        c.push_str(&format!(
+            "        }}\n        children {{\n            {name} {{\n                local_ts = {lts}\n                \
+             remote_ts = {rts}\n                esp_proposals = {esp}\n                start_action = {sa}\n                \
+             dpd_action = {dpd_action}\n                close_action = {close_action}\n            }}\n        }}\n    }}\n",
+            name = t.name,
+            lts = split_list(&t.local_ts).join(","),
+            rts = split_list(&t.remote_ts).join(","),
+            esp = t.esp_proposals,
+            sa = t.start_action,
+        ));
+    }
+    c.push_str("}\n\nsecrets {\n");
+    for t in tunnels {
+        c.push_str(&format!("    ike-{CONN_PREFIX}{} {{\n", t.name));
+        let mut n = 1;
+        if let Some(id) = t.local_id.as_ref().or(t.local_address.as_ref()) {
+            c.push_str(&format!("        id-{n} = {id}\n"));
+            n += 1;
+        }
+        let remote_id = t
+            .remote_id
+            .clone()
+            .or_else(|| (t.remote_address != "%any").then(|| t.remote_address.clone()));
+        if let Some(id) = &remote_id {
+            c.push_str(&format!("        id-{n} = {id}\n"));
+        }
+        let secret = if redact { "(hidden)" } else { t.psk.as_str() };
+        c.push_str(&format!("        secret = \"{secret}\"\n    }}\n"));
+    }
+    c.push_str("}\n");
+    c
+}
+
+/// The distro service that runs charon: Gentoo's OpenRC script is `ipsec`
+/// (starter + charon), its systemd unit `strongswan` (charon-systemd);
+/// other distros use `strongswan` / `strongswan-swanctl`.
+pub fn service_name(env: &LanEnv) -> &'static str {
+    let systemd =
+        patronus_core::ServiceManager::detect_init_system() == patronus_core::InitSystem::Systemd;
+    let unit_dirs = [
+        "/etc/systemd/system",
+        "/usr/lib/systemd/system",
+        "/lib/systemd/system",
+    ];
+    let found = |n: &str| {
+        if systemd {
+            unit_dirs
+                .iter()
+                .any(|d| env.path(&format!("{d}/{n}.service")).exists())
+        } else {
+            env.path(&format!("/etc/init.d/{n}")).exists()
+        }
+    };
+    let candidates: &[&'static str] = if systemd {
+        &["strongswan", "strongswan-swanctl"]
+    } else {
+        &["ipsec", "strongswan", "strongswan-swanctl"]
+    };
+    candidates
+        .iter()
+        .copied()
+        .find(|n| found(n))
+        .unwrap_or("strongswan")
+}
+
+/// Runs `swanctl` (a seam for tests).
+pub trait Swanctl: Send + Sync {
+    fn run(&self, args: &[&str]) -> Result<String>;
+}
+
+pub struct SystemSwanctl;
+
+impl Swanctl for SystemSwanctl {
+    fn run(&self, args: &[&str]) -> Result<String> {
+        let o = std::process::Command::new("swanctl")
+            .args(args)
+            .output()
+            .map_err(|e| Error::Service(format!("swanctl: {e}")))?;
+        let out = String::from_utf8_lossy(&o.stdout).into_owned();
+        if o.status.success() {
+            Ok(out)
+        } else {
+            Err(Error::Service(format!(
+                "`swanctl {}` failed: {}{}",
+                args.join(" "),
+                String::from_utf8_lossy(&o.stderr).trim(),
+                if out.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", out.trim())
+                }
+            )))
         }
     }
-    out.push_str(&format!("{} {} : PSK {}\n", local, remote, encode_psk(psk)));
-    Ok(out)
 }
 
-/// Whether an ipsec.secrets line is the PSK entry for exactly `local remote`.
-fn is_psk_line_for(line: &str, local: &str, remote: &str) -> bool {
-    let Some((selectors, secret)) = line.split_once(" : ") else {
-        return false;
-    };
-    let mut ids = selectors.split_whitespace();
-    ids.next() == Some(local)
-        && ids.next() == Some(remote)
-        && ids.next().is_none()
-        && secret.trim_start().starts_with("PSK ")
+#[derive(Clone)]
+pub struct IpsecApplier {
+    env: LanEnv,
+    swanctl: std::sync::Arc<dyn Swanctl>,
 }
 
-/// Atomically replace `path` with `contents`, readable by the owner only.
-/// The temp file is created 0600 (never briefly world-readable) and renamed
-/// over the target, so a crash can't leave a truncated secrets file and a
-/// pre-existing 0644 file is replaced by a 0600 one.
-async fn write_private_file(path: &Path, contents: &[u8]) -> Result<()> {
-    use tokio::io::AsyncWriteExt;
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .await
-            .map_err(|e| Error::Network(format!("Failed to create {}: {}", parent.display(), e)))?;
-    }
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| Error::Config(format!("not a file path: {}", path.display())))?;
-    let mut tmp_name = std::ffi::OsString::from(".");
-    tmp_name.push(file_name);
-    tmp_name.push(".tmp");
-    let tmp = path.with_file_name(tmp_name);
-
-    let write = async {
-        // A stale temp file from a crashed write may carry other permissions.
-        let _ = fs::remove_file(&tmp).await;
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp)
-            .await?;
-        f.write_all(contents).await?;
-        f.sync_all().await?;
-        drop(f);
-        fs::rename(&tmp, path).await
-    };
-    if let Err(e) = write.await {
-        let _ = fs::remove_file(&tmp).await;
-        return Err(Error::Network(format!(
-            "Failed to write secrets file {}: {}",
-            path.display(),
-            e
-        )));
-    }
-    Ok(())
-}
-
-impl Default for IpsecManager {
+impl Default for IpsecApplier {
     fn default() -> Self {
-        Self::new()
+        Self::new(LanEnv::system(), std::sync::Arc::new(SystemSwanctl))
+    }
+}
+
+impl IpsecApplier {
+    pub fn new(env: LanEnv, swanctl: std::sync::Arc<dyn Swanctl>) -> Self {
+        Self { env, swanctl }
+    }
+
+    /// charon answers on its VICI socket. (The distro service's own
+    /// status is not used: Gentoo's OpenRC `ipsec` script reports
+    /// `ipsec statusall` output instead of started/stopped.)
+    fn charon_up(&self) -> bool {
+        self.swanctl.run(&["--stats"]).is_ok()
+    }
+
+    fn wait_up(&self, secs: u64) -> bool {
+        for _ in 0..secs * 4 {
+            if self.charon_up() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        self.charon_up()
+    }
+
+    /// `swanctl --load-all`, retried while charon's VICI socket comes up
+    /// (a start queued at boot).
+    fn load_all(&self) -> Result<String> {
+        let mut last = None;
+        for i in 0..60 {
+            match self.swanctl.run(&["--load-all", "--noprompt"]) {
+                Ok(o) => return Ok(o),
+                Err(e) => last = Some(e),
+            }
+            if i < 59 {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+        }
+        Err(last.unwrap_or_else(|| Error::Service("swanctl --load-all failed".into())))
+    }
+}
+
+#[async_trait]
+impl Applier for IpsecApplier {
+    fn name(&self) -> &'static str {
+        "ipsec"
+    }
+
+    fn phase(&self) -> Phase {
+        Phase::Services
+    }
+
+    async fn apply(&self, store: &ConfigStore) -> Result<ApplyReport> {
+        let mut rep = ApplyReport::default();
+        let all = list_tunnels(store).await?;
+        let on: Vec<&IpsecTunnel> = all.iter().filter(|t| t.enabled).collect();
+        let managed = lan::is_managed(&self.env, SWANCTL_CONF);
+        if on.is_empty() && !managed {
+            rep.applied("no IPsec tunnels configured (strongSwan untouched)");
+            return Ok(rep);
+        }
+        if !on.is_empty() && !self.env.has_binary(SWANCTL_BIN) {
+            return Err(Error::Service(
+                "IPsec needs strongSwan but /usr/sbin/swanctl is not installed \
+                 (emerge net-vpn/strongswan, USE=ipsec)"
+                    .into(),
+            ));
+        }
+        let changed = lan::install(
+            &self.env,
+            &ManagedFile {
+                path: SWANCTL_CONF,
+                content: render(&on, false),
+                mode: 0o600,
+                group: None,
+                check: None,
+            },
+        )?;
+        if changed {
+            rep.applied(format!("wrote {SWANCTL_CONF}"));
+        }
+        let svc = service_name(&self.env);
+        let up = self.charon_up();
+        if !on.is_empty() {
+            // start charon if needed; never restart a running one (that
+            // would drop every SA): new/changed/deleted connections are
+            // (un)loaded with swanctl --load-all
+            if !up {
+                if let Err(e) = self.env.services.restart(svc) {
+                    if !self.wait_up(10) {
+                        return Err(e);
+                    }
+                }
+                rep.applied(format!("{svc} started"));
+            }
+            self.load_all().map_err(|e| {
+                Error::Service(format!("loading the IPsec configuration into charon: {e}"))
+            })?;
+            rep.applied(format!(
+                "{} IPsec tunnel(s) loaded (swanctl --load-all)",
+                on.len()
+            ));
+        } else if up {
+            // our last tunnel is gone: unload it; stop charon unless it
+            // still carries connections Patronus does not manage
+            self.load_all()
+                .map_err(|e| Error::Service(format!("unloading the IPsec configuration: {e}")))?;
+            let others = self.swanctl.run(&["--list-conns"]).unwrap_or_default();
+            if others.trim().is_empty() {
+                self.env.services.stop(svc)?;
+                rep.applied(format!("{svc} stopped (no IPsec tunnel left)"));
+            } else {
+                rep.applied("IPsec tunnels unloaded; charon keeps running for other connections");
+            }
+        }
+        Ok(rep)
+    }
+
+    async fn render(&self, store: &ConfigStore) -> Result<String> {
+        let all = list_tunnels(store).await?;
+        let on: Vec<&IpsecTunnel> = all.iter().filter(|t| t.enabled).collect();
+        if on.is_empty() {
+            return Ok("# no IPsec tunnels\n".into());
+        }
+        Ok(format!("## {SWANCTL_CONF}\n{}", render(&on, true)))
+    }
+
+    /// `{"installed", "running", "sas": <swanctl --list-sas text>, "error"}`
+    async fn status(&self, _store: &ConfigStore) -> Result<Value> {
+        let installed = self.env.has_binary(SWANCTL_BIN);
+        if !installed {
+            return Ok(json!({"installed": false, "running": false, "sas": ""}));
+        }
+        let me = self.clone();
+        Ok(
+            tokio::task::spawn_blocking(move || match me.swanctl.run(&["--list-sas"]) {
+                Ok(out) => json!({"installed": true, "running": true, "sas": out}),
+                Err(e) => {
+                    json!({"installed": true, "running": false, "sas": "", "error": e.to_string()})
+                }
+            })
+            .await
+            .unwrap_or(Value::Null),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lan::testutil::{self, read};
+    use crate::lan::ServiceControl;
+    use std::sync::Mutex;
 
-    #[test]
-    fn test_tunnel_config_generation() {
-        let manager = IpsecManager::new();
-        let config = IpsecTunnelConfig::default();
-
-        let conf = manager.generate_tunnel_config(&config).unwrap();
-
-        assert!(conf.contains("conn tunnel1"));
-        assert!(conf.contains("keyexchange=ikev2"));
-        assert!(conf.contains("auto=start"));
+    /// charon is "up" while the recorded service runs.
+    #[derive(Default)]
+    struct FakeSwanctl {
+        calls: Mutex<Vec<String>>,
+        services: Option<std::sync::Arc<crate::lan::RecordingServices>>,
     }
-
-    #[test]
-    fn test_proposal_formatting() {
-        let manager = IpsecManager::new();
-
-        let ike_prop = manager.format_ike_proposals(
-            &[IpsecCipher::Aes256],
-            &[IpsecIntegrity::Sha256],
-            &[DhGroup::Modp2048],
-        );
-
-        assert_eq!(ike_prop, "aes256-sha256-modp2048");
-    }
-
-    fn manager_in(dir: &Path) -> IpsecManager {
-        IpsecManager {
-            config_dir: dir.to_path_buf(),
-            secrets_file: dir.join("ipsec.secrets"),
+    impl Swanctl for FakeSwanctl {
+        fn run(&self, args: &[&str]) -> Result<String> {
+            self.calls.lock().unwrap().push(args.join(" "));
+            let up = self
+                .services
+                .as_ref()
+                .is_some_and(|s| s.is_running("strongswan"));
+            if !up {
+                return Err(Error::Service(
+                    "connecting to 'unix:///run/charon.vici' failed".into(),
+                ));
+            }
+            Ok(String::new())
         }
     }
 
-    #[test]
-    fn psk_is_hex_encoded_so_quotes_and_newlines_cannot_break_out() {
-        let psk = "a\"b\n%any %any : PSK \"evil";
-        let out = upsert_psk_secret("", Some("siteA"), Some("siteB"), psk).unwrap();
-        assert_eq!(out.lines().count(), 1, "{out}");
-        let hex: String = psk.bytes().map(|b| format!("{:02x}", b)).collect();
-        assert_eq!(out, format!("siteA siteB : PSK 0x{hex}\n"));
-        assert_eq!(encode_psk("Ab1"), "0x416231");
-    }
-
-    #[test]
-    fn rotating_a_psk_replaces_the_entry_instead_of_appending() {
-        let existing = "# managed\n\
-                        siteA siteB : PSK 0x6f6c64\n\
-                        siteA siteC : PSK 0x6f74686572\n\
-                        siteA siteB : RSA key.pem\n";
-        let out = upsert_psk_secret(existing, Some("siteA"), Some("siteB"), "new").unwrap();
-        assert_eq!(
-            out,
-            "# managed\n\
-             siteA siteC : PSK 0x6f74686572\n\
-             siteA siteB : RSA key.pem\n\
-             siteA siteB : PSK 0x6e6577\n"
-        );
-        // Missing IDs default to %any on both sides, and only that pair is replaced.
-        let out2 = upsert_psk_secret(&out, None, None, "x").unwrap();
-        let out3 = upsert_psk_secret(&out2, None, None, "y").unwrap();
-        assert_eq!(out3.matches("%any %any : PSK").count(), 1, "{out3}");
-        assert!(out3.ends_with("%any %any : PSK 0x79\n"));
-        assert!(out3.contains("siteA siteB : PSK 0x6e6577\n"));
-    }
-
-    #[test]
-    fn identities_that_could_inject_secrets_lines_are_rejected() {
-        for bad in ["", "a b", "a\nb", "a\"b", "a#b", "a'b", "a\tb"] {
-            assert!(
-                upsert_psk_secret("", Some(bad), Some("ok"), "k").is_err(),
-                "local {bad:?}"
-            );
-            assert!(
-                upsert_psk_secret("", Some("ok"), Some(bad), "k").is_err(),
-                "remote {bad:?}"
-            );
+    fn input(name: &str) -> TunnelInput {
+        TunnelInput {
+            name: Some(name.into()),
+            local_address: Some("203.0.113.2".into()),
+            remote_address: Some("198.51.100.2".into()),
+            psk: Some("correct-horse-battery-staple".into()),
+            local_ts: Some("192.168.50.0/24".into()),
+            remote_ts: Some("10.2.0.0/16, fd00:2::/64".into()),
+            ..Default::default()
         }
-        assert!(upsert_psk_secret("", Some("ok"), Some("ok"), "").is_err());
-        // IPv6 addresses and FQDN/email/DN-less IDs stay valid.
-        assert!(upsert_psk_secret("", Some("2001:db8::1"), Some("@peer.example"), "k").is_ok());
-        assert!(upsert_psk_secret("", Some("user@example.com"), Some("192.0.2.1"), "k").is_ok());
     }
 
     #[tokio::test]
-    async fn secrets_file_is_owner_only_and_keeps_other_tunnels() {
+    async fn tunnels_become_a_swanctl_file_charon_loads() {
+        let t = testutil::env(&[SWANCTL_BIN]);
+        let s = testutil::store().await;
+        let sw = std::sync::Arc::new(FakeSwanctl {
+            services: Some(t.services.clone()),
+            ..Default::default()
+        });
+        let a = IpsecApplier::new(t.env.clone(), sw.clone());
+        // nothing configured: strongSwan is not touched at all
+        a.apply(&s).await.unwrap();
+        assert!(!t.env.path(SWANCTL_CONF).exists());
+        assert!(t.services.log.lock().unwrap().is_empty());
+
+        let (id, generated) = save_tunnel(&s, None, &input("site-b")).await.unwrap();
+        assert!(generated.is_none(), "the given PSK is kept");
+        a.apply(&s).await.unwrap();
+        let c = read(&t, SWANCTL_CONF);
+        for want in [
+            "patronus-site-b {",
+            "version = 2",
+            "local_addrs = 203.0.113.2",
+            "remote_addrs = 198.51.100.2",
+            "auth = psk",
+            "id = 203.0.113.2",
+            "id = 198.51.100.2",
+            "local_ts = 192.168.50.0/24",
+            "remote_ts = 10.2.0.0/16,fd00:2::/64",
+            "start_action = start",
+            "dpd_action = restart",
+            "ike-patronus-site-b {",
+            "secret = \"correct-horse-battery-staple\"",
+        ] {
+            assert!(c.contains(want), "missing {want:?} in\n{c}");
+        }
         use std::os::unix::fs::PermissionsExt;
-
-        let dir = tempfile::tempdir().unwrap();
-        let mgr = manager_in(dir.path());
-        // A pre-existing world-readable file must come out 0600.
-        std::fs::write(&mgr.secrets_file, "siteA siteC : PSK 0x6f74686572\n").unwrap();
-        std::fs::set_permissions(&mgr.secrets_file, std::fs::Permissions::from_mode(0o644))
-            .unwrap();
-
-        mgr.add_psk_secret(Some("siteA"), Some("siteB"), "first")
-            .await
-            .unwrap();
-        mgr.add_psk_secret(Some("siteA"), Some("siteB"), "second")
-            .await
-            .unwrap();
-
-        let mode = std::fs::metadata(&mgr.secrets_file)
-            .unwrap()
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o600, "mode {:o}", mode);
-        let content = std::fs::read_to_string(&mgr.secrets_file).unwrap();
         assert_eq!(
-            content,
-            format!(
-                "siteA siteC : PSK 0x6f74686572\nsiteA siteB : PSK {}\n",
-                encode_psk("second")
-            )
+            std::fs::metadata(t.env.path(SWANCTL_CONF))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
         );
-        // No temp file left behind.
-        let names: Vec<_> = std::fs::read_dir(dir.path())
+        assert!(t.services.is_running("strongswan"), "charon started");
+        assert!(sw
+            .calls
+            .lock()
             .unwrap()
-            .map(|e| e.unwrap().file_name())
-            .collect();
-        assert_eq!(names, vec![std::ffi::OsString::from("ipsec.secrets")]);
+            .iter()
+            .any(|c| c.starts_with("--load-all")));
+        // the dry-run render never shows the key
+        let r = a.render(&s).await.unwrap();
+        assert!(
+            !r.contains("correct-horse") && r.contains("(hidden)"),
+            "{r}"
+        );
+
+        // an edit reloads without restarting charon
+        let restarts = || {
+            t.services
+                .log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|l| l.starts_with("restart"))
+                .count()
+        };
+        let before = restarts();
+        save_tunnel(
+            &s,
+            Some(id),
+            &TunnelInput {
+                remote_ts: Some("10.3.0.0/16".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        a.apply(&s).await.unwrap();
+        assert!(read(&t, SWANCTL_CONF).contains("remote_ts = 10.3.0.0/16"));
+        assert_eq!(restarts(), before, "other SAs survive an edit");
+
+        // last tunnel deleted: connections unloaded, charon stopped
+        delete_tunnel(&s, id).await.unwrap();
+        a.apply(&s).await.unwrap();
+        assert!(!read(&t, SWANCTL_CONF).contains("patronus-site-b"));
+        assert!(!t.services.is_running("strongswan"));
     }
 
     #[tokio::test]
-    async fn unreadable_secrets_file_is_an_error_not_an_empty_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut mgr = manager_in(dir.path());
-        // A directory where the file should be: read fails with something
-        // other than NotFound, so nothing may be rewritten.
-        mgr.secrets_file = dir.path().join("is-a-dir");
-        std::fs::create_dir(&mgr.secrets_file).unwrap();
-        assert!(mgr.add_psk_secret(None, None, "k").await.is_err());
-        assert!(mgr.secrets_file.is_dir());
+    async fn bad_input_is_refused_and_psk_is_generated_when_empty() {
+        let s = testutil::store().await;
+        let mut i = input("x");
+        i.psk = None;
+        let (_, psk) = save_tunnel(&s, None, &i).await.unwrap();
+        let psk = psk.expect("generated");
+        assert_eq!(psk.len(), 40);
+        assert!(check_psk(&psk).is_ok());
+        assert!(
+            save_tunnel(&s, None, &input("x")).await.is_err(),
+            "duplicate name"
+        );
+        for (f, v) in [
+            ("name", "bad name"),
+            ("psk", "short"),
+            ("psk", "has \"quote\" in it......"),
+            ("remote", "bad host!"),
+            ("lts", "10.0.0.0/99"),
+            ("start", "always"),
+            ("ike", "aes256;rm"),
+        ] {
+            let mut i = input("y");
+            match f {
+                "name" => i.name = Some(v.into()),
+                "psk" => i.psk = Some(v.into()),
+                "remote" => i.remote_address = Some(v.into()),
+                "lts" => i.local_ts = Some(v.into()),
+                "start" => i.start_action = Some(v.into()),
+                _ => i.ike_proposals = Some(v.into()),
+            }
+            let e = save_tunnel(&s, None, &i).await.unwrap_err().to_string();
+            assert!(
+                e.starts_with("Invalid") || e.contains("Invalid"),
+                "{f}: {e}"
+            );
+        }
+        // a responder-only tunnel needs the peer's identity
+        let mut i = input("roam");
+        i.remote_address = Some("%any".into());
+        assert!(save_tunnel(&s, None, &i).await.is_err());
+        i.remote_id = Some("branch.example.org".into());
+        i.start_action = Some("none".into());
+        save_tunnel(&s, None, &i).await.unwrap();
+        let all = list_tunnels(&s).await.unwrap();
+        let roam: Vec<&IpsecTunnel> = all.iter().filter(|t| t.name == "roam").collect();
+        let c = render(&roam, false);
+        assert!(
+            c.contains("remote_addrs = %any") && c.contains("id = branch.example.org"),
+            "{c}"
+        );
+        assert!(
+            c.contains("start_action = none") && c.contains("close_action = none"),
+            "{c}"
+        );
+        // the API never serializes the key
+        assert!(!serde_json::to_string(&all).unwrap().contains(&psk));
+    }
+
+    #[tokio::test]
+    async fn missing_strongswan_is_reported_not_faked() {
+        let t = testutil::env(&[]);
+        let s = testutil::store().await;
+        save_tunnel(&s, None, &input("a")).await.unwrap();
+        let a = IpsecApplier::new(t.env.clone(), std::sync::Arc::new(FakeSwanctl::default()));
+        let e = a.apply(&s).await.unwrap_err().to_string();
+        assert!(e.contains("net-vpn/strongswan"), "{e}");
+        assert_eq!(a.status(&s).await.unwrap()["installed"], false);
     }
 }
