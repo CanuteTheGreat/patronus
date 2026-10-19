@@ -120,13 +120,13 @@ async fn test_policy_priority() {
     }
 
     // List and verify priorities
-    let policy_list = policies
-        .list(&Default::default())
-        .await
-        .expect("Failed to list policies");
+    let want: Vec<String> = priorities
+        .iter()
+        .map(|p| format!("test-policy-pri-{}", p))
+        .collect();
+    let policy_list = crate::list_until_present(&policies, &want).await;
 
     let mut found_priorities: Vec<i32> = policy_list
-        .items
         .iter()
         .filter(|p| p.name_any().starts_with("test-policy-pri-"))
         .map(|p| p.spec.priority)

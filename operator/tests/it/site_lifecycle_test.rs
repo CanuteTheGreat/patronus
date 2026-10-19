@@ -203,12 +203,10 @@ async fn test_multiple_sites() {
     }
 
     // List sites
-    let site_list = sites
-        .list(&Default::default())
-        .await
-        .expect("Failed to list sites");
+    let want: Vec<String> = (1..=3).map(|i| format!("test-site-{}", i)).collect();
+    let site_list = crate::list_until_present(&sites, &want).await;
 
-    let names: Vec<String> = site_list.items.iter().map(|s| s.name_any()).collect();
+    let names: Vec<String> = site_list.iter().map(|s| s.name_any()).collect();
     for i in 1..=3 {
         assert!(
             names.contains(&format!("test-site-{}", i)),
