@@ -1805,4 +1805,59 @@ mod tests {
         assert!(ll("fe80::1") && ll("febf::1"));
         assert!(!ll("fec0::1") && !ll("fe00::1") && !ll("2001:db8::1") && !ll("::1"));
     }
+
+    #[tokio::test]
+    async fn vpn_rules_are_counted_and_ipsec_exemption_precedes_masquerade() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        let counts = |rep: &ApplyReport| {
+            let line = rep
+                .applied
+                .iter()
+                .find(|l| l.contains("filter rule(s)"))
+                .unwrap_or_else(|| panic!("no count line: {rep:?}"));
+            let n = |suffix: &str| {
+                line.split(", ")
+                    .find(|p| p.ends_with(suffix))
+                    .map(|p| p.split(' ').next().unwrap().parse::<usize>().unwrap())
+                    .unwrap()
+            };
+            (n("filter rule(s)"), n("NAT rule(s)"))
+        };
+        let base = FirewallApplier.render_script(&s, false).await.unwrap();
+        let (f0, n0) = counts(&base.report);
+        let pool = s.pool().unwrap();
+        sqlx::query(
+            "INSERT INTO wg_interfaces (name, private_key, listen_port, updated_at)
+             VALUES ('wg0','k',51820,0)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO ipsec_tunnels (name, remote_address, psk, local_ts, remote_ts, updated_at)
+             VALUES ('siteb','198.51.100.2','x','192.168.50.0/24, fd00:50::/64','10.2.0.0/16,fd00:2::/64',0)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        // filter: WireGuard port, IKE, ESP, then input+forward per family
+        // pair (v4, v6) = 3 + 4; NAT: one exemption per family pair = 2
+        assert_eq!(counts(&r.report), (f0 + 7, n0 + 2), "{:?}", r.report);
+        let sc = &r.script;
+        let exempt = sc
+            .find("postrouting ip saddr 192.168.50.0/24 ip daddr 10.2.0.0/16 accept")
+            .unwrap_or_else(|| panic!("no IPsec NAT exemption: {sc}"));
+        let masq = sc
+            .find("oifname \"eth0\" masquerade")
+            .unwrap_or_else(|| panic!("no masquerade: {sc}"));
+        assert!(
+            exempt < masq,
+            "site-to-site traffic must skip NAT before the masquerade: {sc}"
+        );
+        // lockdown renders no VPN rules at all
+        let l = FirewallApplier.render_script(&s, true).await.unwrap();
+        assert!(!l.script.contains("51820"), "{}", l.script);
+        assert!(!l.script.contains("IPsec"), "{}", l.script);
+    }
 }
