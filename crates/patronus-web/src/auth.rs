@@ -1058,17 +1058,63 @@ impl AuthState {
     }
 }
 
+/// The client address [`LoginThrottle`] keys on. Without connection info
+/// (in-process callers) every request shares the unspecified address,
+/// which still caps guessing.
+fn client_ip(
+    connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+) -> std::net::IpAddr {
+    connect_info
+        .map(|axum::extract::ConnectInfo(addr)| addr.ip())
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
+}
+
+/// Re-check the session owner's password before an own-account change
+/// (password change, 2FA setup/disable), under the same per-client
+/// [`LoginThrottle`] as `POST /api/auth/login`.
+///
+/// These endpoints used to call `verify_credentials` with no throttle, so
+/// anyone holding a session cookie (a stolen or forgotten one) could guess
+/// the account's password -- and, through `2fa/disable`, its TOTP codes --
+/// at full speed, then change the password and lock the owner out. Wrong
+/// guesses here count as failed logins, and a locked-out client is refused
+/// (429) even with the right password.
+async fn reauth(
+    app_state: &crate::state::AppState,
+    client: std::net::IpAddr,
+    username: &str,
+    password: &str,
+) -> Result<User, Response> {
+    let throttle = &app_state.auth.login_throttle;
+    if let Some(retry_after) = throttle.check(client) {
+        return Err(AuthError::TooManyAttempts(retry_after).into_response());
+    }
+    match app_state
+        .auth
+        .user_store
+        .verify_credentials(username, password)
+        .await
+    {
+        Some(user) => Ok(user),
+        None => {
+            throttle.record_failure(client);
+            tracing::warn!(
+                "wrong password re-entered for {:?} from {}",
+                username,
+                client
+            );
+            Err(AuthError::InvalidCredentials.into_response())
+        }
+    }
+}
+
 /// Login handler
 pub async fn login(
     State(app_state): State<crate::state::AppState>,
     connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Response, AuthError> {
-    // Without connection info (in-process callers) every request shares
-    // the unspecified address, which still caps guessing.
-    let client = connect_info
-        .map(|axum::extract::ConnectInfo(addr)| addr.ip())
-        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    let client = client_ip(connect_info);
     let throttle = &app_state.auth.login_throttle;
     if let Some(retry_after) = throttle.check(client) {
         return Err(AuthError::TooManyAttempts(retry_after));
@@ -1202,15 +1248,21 @@ fn bad_request(msg: impl Into<String>) -> Response {
 /// sessions of the account end.
 pub async fn change_password(
     State(app_state): State<crate::state::AppState>,
+    connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     auth_user: AuthUser,
     Json(req): Json<ChangePasswordRequest>,
 ) -> Response {
     let us = &app_state.auth.user_store;
-    let Some(user) = us
-        .verify_credentials(&auth_user.session.username, &req.current_password)
-        .await
-    else {
-        return AuthError::InvalidCredentials.into_response();
+    let user = match reauth(
+        &app_state,
+        client_ip(connect_info),
+        &auth_user.session.username,
+        &req.current_password,
+    )
+    .await
+    {
+        Ok(u) => u,
+        Err(r) => return r,
     };
     if let Err(e) = check_password(&req.new_password) {
         return bad_request(e.to_string());
@@ -1263,17 +1315,23 @@ fn totp_not_built() -> Response {
 /// a new secret to scan; nothing changes for login until it is confirmed.
 pub async fn totp_setup(
     State(app_state): State<crate::state::AppState>,
+    connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     auth_user: AuthUser,
     Json(req): Json<TotpSetupRequest>,
 ) -> Response {
     #[cfg(feature = "totp")]
     {
         let us = &app_state.auth.user_store;
-        let Some(user) = us
-            .verify_credentials(&auth_user.session.username, &req.password)
-            .await
-        else {
-            return AuthError::InvalidCredentials.into_response();
+        let user = match reauth(
+            &app_state,
+            client_ip(connect_info),
+            &auth_user.session.username,
+            &req.password,
+        )
+        .await
+        {
+            Ok(u) => u,
+            Err(r) => return r,
         };
         if user.two_factor() {
             return bad_request(
@@ -1291,7 +1349,7 @@ pub async fn totp_setup(
     }
     #[cfg(not(feature = "totp"))]
     {
-        let _ = (&app_state, &auth_user, &req.password);
+        let _ = (&app_state, &connect_info, &auth_user, &req.password);
         totp_not_built()
     }
 }
@@ -1327,25 +1385,30 @@ pub async fn totp_enable(
 /// login off (needs both factors).
 pub async fn totp_disable(
     State(app_state): State<crate::state::AppState>,
+    connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     auth_user: AuthUser,
     Json(req): Json<TotpCodeRequest>,
 ) -> Response {
     #[cfg(feature = "totp")]
     {
         let us = &app_state.auth.user_store;
-        let Some(user) = us
-            .verify_credentials(
-                &auth_user.session.username,
-                req.password.as_deref().unwrap_or(""),
-            )
-            .await
-        else {
-            return AuthError::InvalidCredentials.into_response();
+        let client = client_ip(connect_info);
+        let user = match reauth(
+            &app_state,
+            client,
+            &auth_user.session.username,
+            req.password.as_deref().unwrap_or(""),
+        )
+        .await
+        {
+            Ok(u) => u,
+            Err(r) => return r,
         };
         if !user.two_factor() {
             return bad_request("Invalid request: two-factor login is not on");
         }
         if !us.totp_check(&user, &req.code).await {
+            app_state.auth.login_throttle.record_failure(client);
             return AuthError::InvalidTotp.into_response();
         }
         match us.totp_reset(user.id).await {
@@ -1355,7 +1418,7 @@ pub async fn totp_disable(
     }
     #[cfg(not(feature = "totp"))]
     {
-        let _ = (&app_state, &auth_user, &req.code);
+        let _ = (&app_state, &connect_info, &auth_user, &req.code);
         totp_not_built()
     }
 }

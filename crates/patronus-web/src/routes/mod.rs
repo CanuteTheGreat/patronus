@@ -398,4 +398,110 @@ mod auth_gate_tests {
             .unwrap();
         assert_eq!(r.status(), StatusCode::OK);
     }
+
+    #[tokio::test]
+    async fn password_guesses_through_a_stolen_session_are_throttled() {
+        // Re-auth endpoints (password change, 2FA setup) used to check the
+        // password with no throttle: a stolen session cookie gave unlimited
+        // guesses, and the right one let the thief change the password.
+        let (app, pw) = app().await;
+        let good = format!(r#"{{"username":"admin","password":"{pw}"}}"#);
+        let r = app
+            .clone()
+            .oneshot(from_ip(
+                req(Method::POST, "/api/auth/login", None, Some(&good)),
+                "192.0.2.10",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+        let cookie = r.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        let thief = "203.0.113.77";
+        let guess =
+            r#"{"current_password":"guess-Passw0rd-1","new_password":"Thief-Owns-It-1234"}"#;
+        for i in 0..crate::auth::MAX_LOGIN_FAILURES {
+            let (uri, body) = if i % 2 == 0 {
+                ("/api/auth/password", guess.to_string())
+            } else {
+                (
+                    "/api/auth/2fa/setup",
+                    r#"{"password":"guess-Passw0rd-2"}"#.to_string(),
+                )
+            };
+            let r = app
+                .clone()
+                .oneshot(from_ip(
+                    req(Method::POST, uri, Some(&cookie), Some(&body)),
+                    thief,
+                ))
+                .await
+                .unwrap();
+            let s = r.status();
+            // 501 = built without USE=totp: that endpoint checks nothing
+            assert!(
+                s == StatusCode::UNAUTHORIZED || s == StatusCode::NOT_IMPLEMENTED,
+                "{uri} attempt {i}: {s}"
+            );
+            if s == StatusCode::NOT_IMPLEMENTED {
+                // count it the same way through the password endpoint
+                let r = app
+                    .clone()
+                    .oneshot(from_ip(
+                        req(
+                            Method::POST,
+                            "/api/auth/password",
+                            Some(&cookie),
+                            Some(guess),
+                        ),
+                        thief,
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(r.status(), StatusCode::UNAUTHORIZED, "attempt {i}");
+            }
+        }
+        // Locked out: the right current password no longer changes anything.
+        let right = format!(r#"{{"current_password":"{pw}","new_password":"Thief-Owns-It-1234"}}"#);
+        let r = app
+            .clone()
+            .oneshot(from_ip(
+                req(
+                    Method::POST,
+                    "/api/auth/password",
+                    Some(&cookie),
+                    Some(&right),
+                ),
+                thief,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(r.headers().contains_key(header::RETRY_AFTER));
+        // ...nor does logging in from that client...
+        let r = app
+            .clone()
+            .oneshot(from_ip(
+                req(Method::POST, "/api/auth/login", None, Some(&good)),
+                thief,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+        // ...and the owner, elsewhere, still has the original password.
+        let r = app
+            .clone()
+            .oneshot(from_ip(
+                req(Method::POST, "/api/auth/login", None, Some(&good)),
+                "192.0.2.10",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK, "password must be unchanged");
+    }
 }
