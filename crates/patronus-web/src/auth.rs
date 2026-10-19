@@ -1084,10 +1084,10 @@ async fn reauth(
     client: std::net::IpAddr,
     username: &str,
     password: &str,
-) -> Result<User, Response> {
+) -> Result<User, AuthError> {
     let throttle = &app_state.auth.login_throttle;
     if let Some(retry_after) = throttle.check(client) {
-        return Err(AuthError::TooManyAttempts(retry_after).into_response());
+        return Err(AuthError::TooManyAttempts(retry_after));
     }
     match app_state
         .auth
@@ -1103,7 +1103,7 @@ async fn reauth(
                 username,
                 client
             );
-            Err(AuthError::InvalidCredentials.into_response())
+            Err(AuthError::InvalidCredentials)
         }
     }
 }
@@ -1262,7 +1262,7 @@ pub async fn change_password(
     .await
     {
         Ok(u) => u,
-        Err(r) => return r,
+        Err(e) => return e.into_response(),
     };
     if let Err(e) = check_password(&req.new_password) {
         return bad_request(e.to_string());
@@ -1331,7 +1331,7 @@ pub async fn totp_setup(
         .await
         {
             Ok(u) => u,
-            Err(r) => return r,
+            Err(e) => return e.into_response(),
         };
         if user.two_factor() {
             return bad_request(
@@ -1402,7 +1402,7 @@ pub async fn totp_disable(
         .await
         {
             Ok(u) => u,
-            Err(r) => return r,
+            Err(e) => return e.into_response(),
         };
         if !user.two_factor() {
             return bad_request("Invalid request: two-factor login is not on");
