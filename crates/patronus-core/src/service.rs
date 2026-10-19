@@ -235,31 +235,37 @@ impl ServiceManager {
                 }
             }
             InitSystem::OpenRC => {
+                // OpenRC's own records first: readable by any user and
+                // what `rc-service status` reports for ordinary scripts.
+                // Scripts with their own status() never say started /
+                // stopped and may need root: Gentoo's strongSwan `ipsec`
+                // runs `ipsec statusall`, so an unprivileged patronus-web
+                // saw a running ipsec as Unknown or Stopped.
+                let recorded = openrc_recorded_state(
+                    OPENRC_STATE_DIRS.iter().map(std::path::Path::new),
+                    service_name,
+                );
+                if matches!(recorded, ServiceState::Stopped | ServiceState::Failed) {
+                    return Ok(recorded);
+                }
                 let output = Command::new("rc-service")
                     .args([service_name, "status"])
                     .output()
                     .map_err(|e| Error::Service(format!("Failed to get service status: {}", e)))?;
-
-                if output.status.success() {
-                    let status = String::from_utf8_lossy(&output.stdout);
-                    if status.contains("started") {
-                        Ok(ServiceState::Running)
-                    } else if status.contains("stopped") {
-                        Ok(ServiceState::Stopped)
-                    } else if status.contains("crashed") {
-                        Ok(ServiceState::Failed)
-                    } else {
-                        // Scripts with their own status() (Gentoo's
-                        // strongSwan `ipsec` prints `ipsec statusall`)
-                        // never say started/stopped: ask OpenRC's own
-                        // state directory, as `service_started` does.
-                        Ok(openrc_recorded_state(
-                            OPENRC_STATE_DIRS.iter().map(std::path::Path::new),
-                            service_name,
-                        ))
-                    }
-                } else {
+                let status = String::from_utf8_lossy(&output.stdout);
+                if status.contains("crashed") {
+                    // marked started, daemon gone
+                    Ok(ServiceState::Failed)
+                } else if recorded == ServiceState::Running {
+                    Ok(ServiceState::Running)
+                } else if !output.status.success() {
                     Ok(ServiceState::Stopped)
+                } else if status.contains("started") {
+                    Ok(ServiceState::Running)
+                } else if status.contains("stopped") {
+                    Ok(ServiceState::Stopped)
+                } else {
+                    Ok(ServiceState::Unknown)
                 }
             }
             InitSystem::SysVInit => {

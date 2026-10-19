@@ -285,7 +285,7 @@ svc_status() { python3 -c 'import json,sys; print(next(s["status"] for s in json
 # Gentoo's OpenRC `ipsec` script answers `status` with `ipsec statusall`
 # output (no started/stopped word): it used to be listed as "Unknown".
 if [ "$INIT" != fake ]; then
-  [ "$(svc_status)" = Running ] || fail "System page lists running $SVC as '$(svc_status)'"
+  [ "$(svc_status)" = Running ] || fail "System page lists running $SVC as '$(svc_status)' (OpenRC started: $(ls /run/openrc/started 2>&1 | tr '\n' ' '))"
   ok "System page lists $SVC as Running"
 fi
 want 200 POST "/api/system/services/$SVC/stop"
