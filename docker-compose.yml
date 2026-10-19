@@ -8,8 +8,15 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
+    # /proc/sys is read-only in a container: load balancing over a gateway
+    # group spreads flows by ports only with this set here (otherwise the
+    # Routing page warns that flows are spread by address pair only).
+    sysctls:
+      net.ipv4.fib_multipath_hash_policy: 1
     ports:
       - "8443:8443"
+      # WireGuard tunnels created on the VPN page (default listen port)
+      - "51820:51820/udp"
     volumes:
       - ./config:/etc/patronus
       - patronus-data:/var/lib/patronus

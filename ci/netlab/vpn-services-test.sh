@@ -281,9 +281,20 @@ ok "after reboot: config rewritten, $SVC started, tunnel ESTABLISHED, traffic fl
 echo "=== 6. service control from the web UI (through applyd, as root)"
 want 200 GET /api/system/services
 has "$(cat /tmp/api.out)" "\"name\":\"$SVC\"" "services list lacks $SVC"
+svc_status() { python3 -c 'import json,sys; print(next(s["status"] for s in json.load(open("/tmp/api.out")) if s["name"]==sys.argv[1]))' "$SVC"; }
+# Gentoo's OpenRC `ipsec` script answers `status` with `ipsec statusall`
+# output (no started/stopped word): it used to be listed as "Unknown".
+if [ "$INIT" != fake ]; then
+  [ "$(svc_status)" = Running ] || fail "System page lists running $SVC as '$(svc_status)'"
+  ok "System page lists $SVC as Running"
+fi
 want 200 POST "/api/system/services/$SVC/stop"
 for i in $(seq 1 20); do charon_up || break; sleep 0.5; done
 if charon_up; then fail "$SVC still running after stop from the web UI"; fi
+want 200 GET /api/system/services
+if [ "$INIT" != fake ]; then
+  [ "$(svc_status)" = Stopped ] || fail "System page lists stopped $SVC as '$(svc_status)'"
+fi
 ok "web UI stopped $SVC (patronus-web is unprivileged: applyd did it)"
 want 200 POST "/api/system/services/$SVC/start"
 for i in $(seq 1 20); do charon_up && break; sleep 0.5; done

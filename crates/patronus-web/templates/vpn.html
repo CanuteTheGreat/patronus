@@ -117,6 +117,8 @@
     {% if !has_ipsec %}
     <p class="empty" id="ipsec-not-built">This Patronus is built without IPsec. Rebuild with <code>USE=ipsec</code>
         (emerge net-firewall/patronus; pulls in net-vpn/strongswan) to manage tunnels here.</p>
+    {% else if !ipsec_unavailable.is_empty() %}
+    <p class="empty" id="ipsec-unavailable">IPsec cannot be configured here: {{ ipsec_unavailable }}.</p>
     {% else %}
     <p class="text-sm text-muted">Pre-shared-key IKEv2 tunnels run by strongSwan (<code>/etc/swanctl/conf.d/patronus.conf</code>).
         IKE/ESP are allowed on the firewall, traffic between the tunnel's networks is allowed and not NATed.

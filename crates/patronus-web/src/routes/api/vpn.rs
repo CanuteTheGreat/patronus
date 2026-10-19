@@ -36,7 +36,9 @@ fn error(code: StatusCode, msg: impl Into<String>) -> Response {
 
 fn err(e: anyhow::Error) -> Response {
     let msg = e.to_string();
-    let code = if msg.contains("USE=") && msg.contains("not built") {
+    let code = if (msg.contains("USE=") && msg.contains("not built"))
+        || msg.starts_with("IPsec needs root")
+    {
         StatusCode::NOT_IMPLEMENTED
     } else if msg.contains("Invalid") {
         StatusCode::BAD_REQUEST
@@ -332,6 +334,10 @@ fn not_built(what: &str, flag: &str) -> Response {
 async fn overview(State(state): State<AppState>) -> Response {
     #[allow(unused_mut)]
     let mut out = json!({ "features": patronus_network::vpn_features() });
+    // built in but not usable by this process (container image): say why
+    if let Some(why) = state.tunnels.ipsec_unavailable() {
+        out["ipsec_unavailable"] = json!(why);
+    }
     #[cfg(feature = "wireguard")]
     match wg::overview(&state).await {
         Ok(v) => out["wireguard"] = v,
@@ -542,6 +548,7 @@ pub async fn page(State(state): State<AppState>, user: AuthUser) -> Response {
         ipsec_not_running: s.ipsec_not_running,
         has_wireguard: cfg!(feature = "wireguard"),
         has_ipsec: cfg!(feature = "ipsec"),
+        ipsec_unavailable: state.tunnels.ipsec_unavailable().unwrap_or_default(),
         can_modify: user.session.role.can_modify(),
         tunnels: Vec::new(),
         peers: Vec::new(),

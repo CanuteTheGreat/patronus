@@ -18,11 +18,41 @@ pub struct TunnelsManager {
     wireguard: Option<Arc<dyn Applier>>,
     ipsec: Option<Arc<dyn Applier>>,
     firewall: Arc<dyn Applier>,
+    /// (running as root, `patronus applyd` socket present), asked per call.
+    privilege: fn() -> (bool, bool),
     edit: Mutex<()>,
 }
 
 fn e(e: patronus_core::Error) -> anyhow::Error {
     anyhow::anyhow!("{e}")
+}
+
+fn system_privilege() -> (bool, bool) {
+    (
+        nix::unistd::geteuid().is_root(),
+        patronus_network::applyd::socket_path().exists(),
+    )
+}
+
+/// Why IPsec changes cannot be applied by this process, if they cannot.
+///
+/// IPsec writes /etc/swanctl/conf.d and starts/loads strongSwan's charon:
+/// root only. WireGuard and routes get by with CAP_NET_ADMIN on `ip`/`wg`;
+/// IPsec has no such path, so an unprivileged patronus-web needs the root
+/// broker. The container image (USER patronus, no applyd, no init) is that
+/// case: refuse up front instead of storing the tunnel and failing halfway
+/// with "Permission denied".
+pub fn ipsec_blocker(root: bool, broker: bool) -> Option<String> {
+    if root || broker {
+        return None;
+    }
+    Some(format!(
+        "IPsec needs root: this patronus-web runs unprivileged and no root broker \
+         (`patronus applyd`, socket {}) is running to write /etc/swanctl and run \
+         strongSwan's charon. Install Patronus with its systemd/OpenRC services (they \
+         start patronus-applyd); the container image does not run IPsec",
+        patronus_network::applyd::socket_path().display()
+    ))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -43,7 +73,7 @@ impl TunnelsManager {
                 _ => {}
             }
         }
-        Self::with_appliers(store, wg, ipsec, firewall)
+        Self::with_appliers(store, wg, ipsec, firewall).with_privilege(system_privilege)
     }
 
     /// Custom appliers (tests).
@@ -58,8 +88,24 @@ impl TunnelsManager {
             wireguard,
             ipsec,
             firewall,
+            // custom appliers do their own thing; tests opt in to the gate
+            privilege: || (true, false),
             edit: Mutex::new(()),
         }
+    }
+
+    /// Gate IPsec on these privileges (the system check, or a test's).
+    pub fn with_privilege(mut self, privilege: fn() -> (bool, bool)) -> Self {
+        self.privilege = privilege;
+        self
+    }
+
+    /// Why IPsec cannot be configured from here right now (None = it can,
+    /// or IPsec is not built in).
+    pub fn ipsec_unavailable(&self) -> Option<String> {
+        self.ipsec.as_ref()?;
+        let (root, broker) = (self.privilege)();
+        ipsec_blocker(root, broker)
     }
 
     pub fn store(&self) -> &ConfigStore {
@@ -107,6 +153,11 @@ impl TunnelsManager {
         Fut: std::future::Future<Output = patronus_core::Result<T>>,
     {
         let applier = self.applier(k)?.clone();
+        if k == Kind::Ipsec {
+            if let Some(why) = self.ipsec_unavailable() {
+                anyhow::bail!(why);
+            }
+        }
         let _g = self.edit.lock().await;
         self.store
             .snapshot("web", &format!("before {what}"))
@@ -146,6 +197,11 @@ impl TunnelsManager {
     /// Re-run one VPN subsystem from the store.
     pub async fn reapply(&self, k: Kind) -> anyhow::Result<Vec<String>> {
         let a = self.applier(k)?.clone();
+        if k == Kind::Ipsec {
+            if let Some(why) = self.ipsec_unavailable() {
+                anyhow::bail!(why);
+            }
+        }
         let _g = self.edit.lock().await;
         let r = a.apply(&self.store).await.map_err(e)?;
         Ok(r.applied.into_iter().chain(r.warnings).collect())

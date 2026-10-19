@@ -151,9 +151,20 @@ RUN useradd -r -u 1000 -m -s /bin/bash patronus 2>/dev/null || true && \
 # any WireGuard interface exists and the VPN page/peers API return 503.
 # conntrack (USE=web) likewise, or the Monitoring page's top-connections
 # table is unreadable on kernels without /proc/net/nf_conntrack.
+# ip (iproute2) as well: routes/gateways/multi-WAN (`ip route`, `ip rule`) and
+# WireGuard tunnels (`ip link add ... type wireguard`, addresses) are
+# applied by patronus-web itself here (no root patronus-applyd in the
+# image), and without it every gateway or tunnel add failed with "RTNETLINK
+# answers: Operation not permitted". setcap needs the real file, not the
+# /usr/sbin -> /usr/bin merged-usr path. ci/container-as-shipped.sh proves
+# it from the API of the image run exactly like docker-compose.yml.
+# IPsec has no capability path (/etc/swanctl + charon need root): without
+# applyd the API refuses it with 501 and the VPN page says why.
 RUN emerge --verbose sys-libs/libcap && \
     setcap cap_net_admin,cap_net_raw+eip "$(command -v nft)" && \
     setcap cap_net_admin+eip "$(command -v wg)" && \
+    setcap cap_net_admin+eip "$(readlink -f "$(command -v ip)")" && \
+    getcap "$(readlink -f "$(command -v ip)")" | grep -q cap_net_admin && \
     if ct=$(command -v conntrack); then setcap cap_net_admin+eip "$ct" && getcap "$ct"; fi && \
     getcap "$(command -v nft)" "$(command -v wg)"
 

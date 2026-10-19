@@ -249,7 +249,14 @@ impl ServiceManager {
                     } else if status.contains("crashed") {
                         Ok(ServiceState::Failed)
                     } else {
-                        Ok(ServiceState::Unknown)
+                        // Scripts with their own status() (Gentoo's
+                        // strongSwan `ipsec` prints `ipsec statusall`)
+                        // never say started/stopped: ask OpenRC's own
+                        // state directory, as `service_started` does.
+                        Ok(openrc_recorded_state(
+                            OPENRC_STATE_DIRS.iter().map(std::path::Path::new),
+                            service_name,
+                        ))
                     }
                 } else {
                     Ok(ServiceState::Stopped)
@@ -364,6 +371,30 @@ impl ServiceManager {
     }
 }
 
+/// Where OpenRC records service states (`$RC_SVCDIR`: /run/openrc on Linux,
+/// /lib/rc/init.d on old installs).
+const OPENRC_STATE_DIRS: &[&str] = &["/run/openrc", "/lib/rc/init.d"];
+
+/// The state OpenRC itself recorded for `name`: a `started/<name>` (or
+/// `starting`/`failed`/...) entry in the first state directory that exists.
+/// No entry = stopped (OpenRC removes it on stop).
+fn openrc_recorded_state<'a>(
+    dirs: impl IntoIterator<Item = &'a std::path::Path>,
+    name: &str,
+) -> ServiceState {
+    let Some(dir) = dirs.into_iter().find(|d| d.join("started").is_dir()) else {
+        return ServiceState::Unknown;
+    };
+    let has = |state: &str| dir.join(state).join(name).symlink_metadata().is_ok();
+    if has("started") || has("starting") {
+        ServiceState::Running
+    } else if has("failed") {
+        ServiceState::Failed
+    } else {
+        ServiceState::Stopped
+    }
+}
+
 impl Default for ServiceManager {
     fn default() -> Self {
         Self::new()
@@ -385,5 +416,34 @@ mod tests {
     fn test_service_manager_creation() {
         let manager = ServiceManager::new();
         assert_ne!(manager.init_system(), InitSystem::Unknown);
+    }
+
+    /// Gentoo's strongSwan `ipsec` script answers `status` with `ipsec
+    /// statusall` (no started/stopped word): the state comes from OpenRC's
+    /// own records, so the System page shows Running/Stopped, not Unknown.
+    #[test]
+    fn openrc_state_comes_from_its_state_directory() {
+        let root = std::env::temp_dir().join(format!("patronus-openrc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let rc = root.join("run-openrc");
+        for d in ["started", "failed", "starting"] {
+            std::fs::create_dir_all(rc.join(d)).unwrap();
+        }
+        std::os::unix::fs::symlink("/etc/init.d/ipsec", rc.join("started/ipsec")).unwrap();
+        std::os::unix::fs::symlink("/etc/init.d/unbound", rc.join("failed/unbound")).unwrap();
+        let missing = root.join("nope");
+        let dirs = [missing.as_path(), rc.as_path()];
+        assert_eq!(openrc_recorded_state(dirs, "ipsec"), ServiceState::Running);
+        assert_eq!(openrc_recorded_state(dirs, "unbound"), ServiceState::Failed);
+        assert_eq!(
+            openrc_recorded_state(dirs, "kea-dhcp4"),
+            ServiceState::Stopped
+        );
+        // no OpenRC state directory at all: cannot tell
+        assert_eq!(
+            openrc_recorded_state([missing.as_path()], "ipsec"),
+            ServiceState::Unknown
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

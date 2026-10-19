@@ -11,7 +11,7 @@
 //!
 //! The shipped web UI runs as the unprivileged `patronus` user, so the
 //! appliers run in `patronus applyd` (root) through its socket whenever
-//! that socket exists; otherwise (container running as root) in-process.
+//! that socket exists; otherwise (root, or the container image) in-process.
 
 use patronus_config::{Applier, ConfigStore};
 use patronus_network::lan;

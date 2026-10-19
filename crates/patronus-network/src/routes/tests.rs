@@ -1108,6 +1108,62 @@ async fn load_balancing_turns_on_port_hashing() {
     let _ = s;
 }
 
+/// A container's read-only /proc/sys: the hash policy cannot be written.
+/// The apply report and every status read must say so (with the fix), not
+/// report the load balancing as fully applied.
+#[test]
+fn an_unwritable_hash_policy_is_a_warning_in_apply_and_status() {
+    let dir = std::env::temp_dir().join(format!("patronus-routes-ro-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("net/ipv4")).unwrap();
+    // a directory in place of the file: writing fails even as root
+    std::fs::create_dir_all(dir.join("net/ipv4/fib_multipath_hash_policy")).unwrap();
+    let a = RoutesApplier::new(Arc::new(fake()), dir.clone());
+    let lb = Desired {
+        routes: vec![kr(
+            "default",
+            1,
+            "253",
+            &[
+                ("198.51.100.1", Some("wan1"), 1),
+                ("203.0.113.1", Some("wan2"), 1),
+            ],
+        )],
+        ..Default::default()
+    };
+    let mut rep = ApplyReport::default();
+    a.multipath_hashing(&lb, &mut rep);
+    assert!(rep.applied.is_empty(), "{:?}", rep.applied);
+    assert_eq!(rep.warnings.len(), 1, "{:?}", rep.warnings);
+    assert!(rep.warnings[0].contains("net.ipv4.fib_multipath_hash_policy should be 1"));
+    assert!(rep.warnings[0].contains("--sysctl net.ipv4.fib_multipath_hash_policy=1"));
+    let w = a.multipath_hash_warnings(&lb);
+    assert_eq!(w.len(), 1, "{w:?}");
+    assert!(w[0].contains("address pair only"), "{w:?}");
+
+    // a readable 0 (sysctl not set) is reported too; 1 clears it
+    std::fs::remove_dir_all(dir.join("net/ipv4/fib_multipath_hash_policy")).unwrap();
+    std::fs::write(dir.join("net/ipv4/fib_multipath_hash_policy"), "0\n").unwrap();
+    let w = a.multipath_hash_warnings(&lb);
+    assert!(w.len() == 1 && w[0].contains("but it is 0"), "{w:?}");
+    std::fs::write(dir.join("net/ipv4/fib_multipath_hash_policy"), "1\n").unwrap();
+    assert!(a.multipath_hash_warnings(&lb).is_empty());
+
+    // one uplink, or load balancing in the other family only: no warning
+    std::fs::write(dir.join("net/ipv4/fib_multipath_hash_policy"), "0\n").unwrap();
+    let one = Desired {
+        routes: vec![kr(
+            "default",
+            1,
+            "253",
+            &[("198.51.100.1", Some("wan1"), 1)],
+        )],
+        ..Default::default()
+    };
+    assert!(a.multipath_hash_warnings(&one).is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Replies per target; a target missing from the map never answers.
 struct FakeProber(Mutex<BTreeMap<IpAddr, f64>>);
 

@@ -86,6 +86,9 @@ pub struct VpnTemplate {
     /// USE=wireguard / USE=ipsec: the configuration forms are built in.
     pub has_wireguard: bool,
     pub has_ipsec: bool,
+    /// IPsec is built in but cannot be applied by this process (unprivileged,
+    /// no root broker): why, shown instead of the form ("" = usable).
+    pub ipsec_unavailable: String,
     /// The session may change configuration (operator / admin).
     pub can_modify: bool,
     /// Stored WireGuard tunnels / peers and IPsec connections (lane F).

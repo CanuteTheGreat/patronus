@@ -731,3 +731,69 @@ async fn without_use_wireguard_the_forms_say_how_to_get_them() {
     let (_, page, _) = t.raw(Method::GET, "/vpn", Some(&c), None).await;
     assert!(page.contains("id=\"wg-not-built\"") && !page.contains("id=\"wg-tunnel-form\""));
 }
+
+/// The container image runs patronus-web as user patronus with no root
+/// broker: an IPsec tunnel can be neither written to /etc/swanctl nor
+/// loaded. The API refuses it up front (501 naming applyd), stores nothing,
+/// never calls the applier, and the page shows why instead of the form.
+#[cfg(feature = "ipsec")]
+#[tokio::test]
+async fn unprivileged_without_applyd_ipsec_is_refused_up_front() {
+    let dir = std::env::temp_dir().join(format!("patronus-web-fh-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("pw"), format!("{ADMIN_PW}\n")).unwrap();
+    let mut state = state_at(&dir).await;
+    let ipsec = Fake::new("ipsec", Phase::Services);
+    state.tunnels = Arc::new(
+        crate::state::TunnelsManager::with_appliers(
+            state.config_store.clone(),
+            None,
+            Some(ipsec.clone()),
+            Arc::new(crate::state::firewall::NoopApplier),
+        )
+        .with_privilege(|| (false, false)),
+    );
+    let t = T {
+        app: super::build_router(state.clone(), Arc::new(crate::WsBroadcaster::new())),
+        state,
+        dir: dir.clone(),
+        wg: Fake::new("wireguard", Phase::Interfaces),
+        restore_fake: Fake::new("firewall", Phase::Firewall),
+    };
+    let c = t.admin().await;
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/vpn/ipsec/connections",
+            Some(json!({"name": "site-b", "remote_address": "198.51.100.2",
+                        "local_ts": "192.168.50.0/24", "remote_ts": "10.2.0.0/16"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::NOT_IMPLEMENTED, "{b}");
+    let msg = b["error"].as_str().unwrap();
+    assert!(
+        msg.contains("IPsec needs root") && msg.contains("patronus applyd"),
+        "{msg}"
+    );
+    assert_eq!(
+        ipsec.applies.load(Ordering::SeqCst),
+        0,
+        "applier never called"
+    );
+    let (s, _) = t.call(&c, Method::POST, "/api/vpn/ipsec/apply", None).await;
+    assert_eq!(s, StatusCode::NOT_IMPLEMENTED);
+    let (_, ov) = t.call(&c, Method::GET, "/api/vpn", None).await;
+    assert_eq!(ov["ipsec"], json!([]), "nothing stored: {ov}");
+    assert!(
+        ov["ipsec_unavailable"].as_str().unwrap().contains("applyd"),
+        "{ov}"
+    );
+    let (_, page, _) = t.raw(Method::GET, "/vpn", Some(&c), None).await;
+    assert!(page.contains("id=\"ipsec-unavailable\"") && !page.contains("id=\"ipsec-form\""));
+
+    // with the broker running (or as root) the same request goes through
+    assert!(crate::state::tunnels::ipsec_blocker(false, true).is_none());
+    assert!(crate::state::tunnels::ipsec_blocker(true, false).is_none());
+    let _ = std::fs::remove_dir_all(&t.dir);
+}

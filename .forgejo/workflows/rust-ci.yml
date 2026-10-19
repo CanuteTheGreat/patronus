@@ -581,6 +581,12 @@ jobs:
           fi
           echo "patronus-web responded successfully"
 
+      - name: Run the image as shipped (non-root, compose caps) - gateways, WireGuard, IPsec refusal
+        # netlab runs as root / with applyd; this is the docker-compose.yml
+        # setup (USER patronus, cap_add NET_ADMIN/NET_RAW, no applyd) where
+        # gateway and WireGuard adds used to fail with EPERM.
+        run: ci/container-as-shipped.sh patronus/web:${{ github.sha }}
+
       - name: Verify the ebuild install (binaries, USE flags, service files)
         run: |
           set -e

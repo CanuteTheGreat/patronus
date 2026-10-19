@@ -34,8 +34,18 @@ fn err(e: anyhow::Error) -> Response {
     (code, Json(json!({ "error": msg }))).into_response()
 }
 
-fn done() -> Response {
-    Json(json!({ "ok": true })).into_response()
+/// Applied; `warnings`: what the kernel only partly took (e.g. load balancing
+/// without port hashing in a container), never dropped.
+fn done(warnings: Vec<String>) -> Response {
+    Json(json!({ "ok": true, "warnings": warnings })).into_response()
+}
+
+fn created(warnings: Vec<String>) -> Response {
+    (
+        StatusCode::CREATED,
+        Json(json!({ "ok": true, "warnings": warnings })),
+    )
+        .into_response()
 }
 
 async fn overview(State(state): State<AppState>) -> Response {
@@ -52,7 +62,7 @@ async fn add_gateway(
     Json(i): Json<routes::GatewayInput>,
 ) -> Response {
     match state.routing.save_gateway(None, i).await {
-        Ok(()) => (StatusCode::CREATED, Json(json!({ "ok": true }))).into_response(),
+        Ok(w) => created(w),
         Err(e) => err(e),
     }
 }
@@ -66,7 +76,7 @@ async fn put_gateway(
         .routing
         .save_gateway(Some(name), i)
         .await
-        .map(|_| done())
+        .map(done)
         .unwrap_or_else(err)
 }
 
@@ -75,13 +85,13 @@ async fn del_gateway(State(state): State<AppState>, Path(name): Path<String>) ->
         .routing
         .delete_gateway(name)
         .await
-        .map(|_| done())
+        .map(done)
         .unwrap_or_else(err)
 }
 
 async fn add_group(State(state): State<AppState>, Json(i): Json<routes::GroupInput>) -> Response {
     match state.routing.save_group(None, i).await {
-        Ok(()) => (StatusCode::CREATED, Json(json!({ "ok": true }))).into_response(),
+        Ok(w) => created(w),
         Err(e) => err(e),
     }
 }
@@ -95,7 +105,7 @@ async fn put_group(
         .routing
         .save_group(Some(name), i)
         .await
-        .map(|_| done())
+        .map(done)
         .unwrap_or_else(err)
 }
 
@@ -104,7 +114,7 @@ async fn del_group(State(state): State<AppState>, Path(name): Path<String>) -> R
         .routing
         .delete_group(name)
         .await
-        .map(|_| done())
+        .map(done)
         .unwrap_or_else(err)
 }
 
@@ -122,13 +132,17 @@ async fn put_default(State(state): State<AppState>, Json(i): Json<DefaultInput>)
         .routing
         .set_defaults(i.ipv4, i.ipv6)
         .await
-        .map(|_| done())
+        .map(done)
         .unwrap_or_else(err)
 }
 
 async fn add_route(State(state): State<AppState>, Json(i): Json<routes::RouteInput>) -> Response {
     match state.routing.save_route(None, i).await {
-        Ok(id) => (StatusCode::CREATED, Json(json!({ "id": id }))).into_response(),
+        Ok((id, w)) => (
+            StatusCode::CREATED,
+            Json(json!({ "id": id, "warnings": w })),
+        )
+            .into_response(),
         Err(e) => err(e),
     }
 }
@@ -142,7 +156,7 @@ async fn put_route(
         .routing
         .save_route(Some(id), i)
         .await
-        .map(|_| done())
+        .map(|(_, w)| done(w))
         .unwrap_or_else(err)
 }
 
@@ -151,7 +165,7 @@ async fn del_route(State(state): State<AppState>, Path(id): Path<i64>) -> Respon
         .routing
         .delete_route(id)
         .await
-        .map(|_| done())
+        .map(done)
         .unwrap_or_else(err)
 }
 

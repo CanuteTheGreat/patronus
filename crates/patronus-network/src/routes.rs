@@ -2044,16 +2044,7 @@ impl RoutesApplier {
                 }
             }
         }
-        if !d.routes.iter().any(|r| r.hops.len() > 1) {
-            return;
-        }
-        for fam in ["ipv4", "ipv6"] {
-            let p = self
-                .proc_sys
-                .join(format!("net/{fam}/fib_multipath_hash_policy"));
-            if !p.exists() {
-                continue;
-            }
+        for (fam, p) in self.multipath_hash_paths(d) {
             if std::fs::read_to_string(&p)
                 .map(|s| s.trim() == "1")
                 .unwrap_or(false)
@@ -2064,10 +2055,60 @@ impl RoutesApplier {
                 Ok(()) => rep.applied(format!(
                     "{fam} multipath hashing by ports (fib_multipath_hash_policy=1)"
                 )),
-                Err(e) => rep.warn(format!("{}: {e}", p.display())),
+                Err(e) => rep.warn(hash_policy_warning(
+                    fam,
+                    &format!("writing {} failed: {e}", p.display()),
+                )),
             }
         }
     }
+
+    /// `fib_multipath_hash_policy` of every family that has a load-balanced
+    /// (multi-nexthop) route in `d`, where the kernel has the setting.
+    fn multipath_hash_paths(&self, d: &Desired) -> Vec<(&'static str, std::path::PathBuf)> {
+        let mut v = Vec::new();
+        for (fam, v6) in [("ipv4", false), ("ipv6", true)] {
+            if !d.routes.iter().any(|r| r.v6 == v6 && r.hops.len() > 1) {
+                continue;
+            }
+            let p = self
+                .proc_sys
+                .join(format!("net/{fam}/fib_multipath_hash_policy"));
+            if p.exists() {
+                v.push((fam, p));
+            }
+        }
+        v
+    }
+
+    /// Load balancing whose port hashing is not in effect -- e.g. a
+    /// container without the sysctl, where /proc/sys is read-only and the
+    /// apply could not set it. Read on every status so the Routing page and
+    /// GET /api/routing say so instead of only the apply report.
+    pub(crate) fn multipath_hash_warnings(&self, d: &Desired) -> Vec<String> {
+        self.multipath_hash_paths(d)
+            .into_iter()
+            .filter_map(|(fam, p)| match std::fs::read_to_string(&p) {
+                Ok(v) if v.trim() == "1" => None,
+                Ok(v) => Some(hash_policy_warning(fam, &format!("it is {}", v.trim()))),
+                Err(e) => Some(hash_policy_warning(
+                    fam,
+                    &format!("reading {} failed: {e}", p.display()),
+                )),
+            })
+            .collect()
+    }
+}
+
+/// The warning for load balancing without port hashing (`why`: what went
+/// wrong), naming how to fix it where Patronus cannot (containers).
+pub fn hash_policy_warning(fam: &str, why: &str) -> String {
+    format!(
+        "load balancing spreads flows by address pair only (one client talking to one \
+         server always uses the same uplink): net.{fam}.fib_multipath_hash_policy should \
+         be 1 but {why}; in a container set it with `--sysctl \
+         net.{fam}.fib_multipath_hash_policy=1` (docker-compose.yml `sysctls:`)"
+    )
 }
 
 #[async_trait]
@@ -2218,7 +2259,12 @@ impl Applier for RoutesApplier {
             "default4": cfg.default4,
             "default6": cfg.default6,
             "default_via": d.default_hops,
-            "warnings": d.warnings,
+            "warnings": d
+                .warnings
+                .iter()
+                .cloned()
+                .chain(self.multipath_hash_warnings(&d))
+                .collect::<Vec<_>>(),
             "routes": cfg.routes,
         }))
     }

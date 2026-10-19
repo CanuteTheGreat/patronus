@@ -7,7 +7,8 @@
 //! tables, re-apply and return the error ("Invalid ..." errors become HTTP
 //! 400). Gateway state (online / loss / latency / down) comes from the
 //! gateway monitor running in `patronus applyd` (or in this process when
-//! there is no applyd, e.g. the container image running as root).
+//! there is no applyd, e.g. the container image: it runs as user patronus
+//! with CAP_NET_ADMIN file capabilities on ip/wg/nft, see the Dockerfile).
 
 use patronus_config::{Applier, ConfigStore};
 use patronus_network::routes::{self, Family};
@@ -60,7 +61,7 @@ impl RoutingManager {
         }
     }
 
-    /// Without `patronus applyd` (container running as root) nothing else
+    /// Without `patronus applyd` (container image, or root) nothing else
     /// runs the gateway monitor: run it in this process, pausing whenever
     /// the applyd socket exists (applyd's own monitor is in charge then).
     pub fn spawn_local_monitor(&self) {
@@ -105,7 +106,14 @@ impl RoutingManager {
         Ok(r.applied.into_iter().chain(r.warnings).collect())
     }
 
-    async fn change<F, Fut, T>(&self, what: &str, gateways: bool, f: F) -> anyhow::Result<T>
+    /// Returns `f`'s result and the routes apply's warnings (e.g. load
+    /// balancing without port hashing), which the API passes on.
+    async fn change<F, Fut, T>(
+        &self,
+        what: &str,
+        gateways: bool,
+        f: F,
+    ) -> anyhow::Result<(T, Vec<String>)>
     where
         F: FnOnce(Arc<ConfigStore>) -> Fut,
         Fut: std::future::Future<Output = patronus_core::Result<T>>,
@@ -118,7 +126,12 @@ impl RoutingManager {
         let snap = routes::snapshot_tables(&self.store).await.map_err(e)?;
         let out = f(self.store.clone()).await.map_err(e)?;
         let fw = self.firewall.as_ref().filter(|_| gateways);
-        let mut res = self.applier.apply(&self.store).await.map(|_| ());
+        let mut warnings = Vec::new();
+        let mut res = self
+            .applier
+            .apply(&self.store)
+            .await
+            .map(|r| warnings = r.warnings);
         if let (Ok(()), Some(fw)) = (&res, fw) {
             res = fw.apply(&self.store).await.map(|_| ());
         }
@@ -128,7 +141,7 @@ impl RoutingManager {
                     .store
                     .audit("web", "update", "routing", Some(what), &Value::Null)
                     .await;
-                Ok(out)
+                Ok((out, warnings))
             }
             Err(err) => {
                 if let Err(re) = routes::restore_tables(&self.store, &snap).await {
@@ -151,26 +164,28 @@ impl RoutingManager {
         &self,
         existing: Option<String>,
         i: routes::GatewayInput,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Vec<String>> {
         let g = i.validated().map_err(e)?;
         self.change(&format!("gateway {}", g.name), true, |s| async move {
             routes::save_gateway(&s, existing.as_deref(), &g).await
         })
         .await
+        .map(|(_, w)| w)
     }
 
-    pub async fn delete_gateway(&self, name: String) -> anyhow::Result<()> {
+    pub async fn delete_gateway(&self, name: String) -> anyhow::Result<Vec<String>> {
         self.change(&format!("delete gateway {name}"), true, |s| async move {
             routes::delete_gateway(&s, &name).await
         })
         .await
+        .map(|(_, w)| w)
     }
 
     pub async fn save_group(
         &self,
         existing: Option<String>,
         i: routes::GroupInput,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Vec<String>> {
         let g = i.validated().map_err(e)?;
         self.change(
             &format!("gateway group {}", g.name),
@@ -178,18 +193,24 @@ impl RoutingManager {
             |s| async move { routes::save_group(&s, existing.as_deref(), &g).await },
         )
         .await
+        .map(|(_, w)| w)
     }
 
-    pub async fn delete_group(&self, name: String) -> anyhow::Result<()> {
+    pub async fn delete_group(&self, name: String) -> anyhow::Result<Vec<String>> {
         self.change(
             &format!("delete gateway group {name}"),
             false,
             |s| async move { routes::delete_group(&s, &name).await },
         )
         .await
+        .map(|(_, w)| w)
     }
 
-    pub async fn set_defaults(&self, v4: Option<String>, v6: Option<String>) -> anyhow::Result<()> {
+    pub async fn set_defaults(
+        &self,
+        v4: Option<String>,
+        v6: Option<String>,
+    ) -> anyhow::Result<Vec<String>> {
         self.change("default gateway", false, |s| async move {
             if let Some(v) = v4 {
                 routes::set_default(&s, Family::Inet, Some(&v)).await?;
@@ -200,9 +221,14 @@ impl RoutingManager {
             Ok(())
         })
         .await
+        .map(|(_, w)| w)
     }
 
-    pub async fn save_route(&self, id: Option<i64>, i: routes::RouteInput) -> anyhow::Result<i64> {
+    pub async fn save_route(
+        &self,
+        id: Option<i64>,
+        i: routes::RouteInput,
+    ) -> anyhow::Result<(i64, Vec<String>)> {
         let cfg = routes::load(&self.store).await.map_err(e)?;
         let r = i.validated(&cfg, id.unwrap_or(0)).map_err(e)?;
         self.change(
@@ -213,13 +239,14 @@ impl RoutingManager {
         .await
     }
 
-    pub async fn delete_route(&self, id: i64) -> anyhow::Result<()> {
+    pub async fn delete_route(&self, id: i64) -> anyhow::Result<Vec<String>> {
         self.change(
             &format!("delete static route {id}"),
             false,
             |s| async move { routes::delete_route(&s, id).await },
         )
         .await
+        .map(|(_, w)| w)
     }
 }
 
@@ -235,6 +262,8 @@ mod tests {
     struct Recording {
         applies: AtomicU32,
         fail: AtomicBool,
+        /// Warnings every successful apply reports.
+        warnings: std::sync::Mutex<Vec<String>>,
     }
 
     #[async_trait::async_trait]
@@ -252,7 +281,11 @@ mod tests {
                     "`ip -4 route replace 10.9.0.0/16` failed: Nexthop has invalid gateway".into(),
                 ));
             }
-            Ok(ApplyReport::default())
+            let mut r = ApplyReport::default();
+            for w in self.warnings.lock().unwrap().iter() {
+                r.warn(w.clone());
+            }
+            Ok(r)
         }
         async fn render(&self, _s: &ConfigStore) -> patronus_core::Result<String> {
             Ok(String::new())
@@ -288,7 +321,8 @@ mod tests {
                 },
             )
             .await
-            .unwrap();
+            .unwrap()
+            .0;
         m.set_defaults(Some("WAN1".into()), None).await.unwrap();
         assert_eq!(rec.applies.load(Ordering::SeqCst), 3);
         let cfg = routes::load(m.store()).await.unwrap();
@@ -323,6 +357,27 @@ mod tests {
         m.delete_route(id).await.unwrap();
         m.delete_gateway("WAN1".into()).await.unwrap();
         assert!(routes::load(m.store()).await.unwrap().gateways.is_empty());
+    }
+
+    /// Load balancing the kernel only half applied (no port hashing in a
+    /// container) is saved, but the caller gets the warning instead of a
+    /// bare ok.
+    #[tokio::test]
+    async fn apply_warnings_are_returned_to_the_caller() {
+        let (m, rec) = mgr().await;
+        assert!(m.save_gateway(None, gw("WAN1")).await.unwrap().is_empty());
+        rec.warnings
+            .lock()
+            .unwrap()
+            .push("net.ipv4.fib_multipath_hash_policy should be 1 but it is 0".into());
+        let w = m.set_defaults(Some("WAN1".into()), None).await.unwrap();
+        assert_eq!(w.len(), 1);
+        assert!(w[0].contains("fib_multipath_hash_policy"), "{w:?}");
+        assert_eq!(
+            routes::load(m.store()).await.unwrap().default4.as_deref(),
+            Some("WAN1"),
+            "a warning does not undo the change"
+        );
     }
 
     #[tokio::test]
