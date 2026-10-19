@@ -152,9 +152,34 @@ for c in /usr/libexec/ipsec/charon /usr/lib/ipsec/charon /usr/sbin/charon-system
   [ -x "$c" ] && { CHARON=$c; break; }
 done
 [ -n "$CHARON" ] || fail "no charon binary"
-ip netns exec siteb unshare -m --propagation private sh -c \
-  "mount -t tmpfs tmpfs /run && chmod 1777 /run && mount --bind /t/siteb/swanctl /etc/swanctl && exec $CHARON" \
-  >/t/charon-siteb.log 2>&1 &
+# its own strongswan.conf: log to stderr (the log below), stay root
+cat > /t/siteb/strongswan.conf <<'EOF'
+charon {
+    user = root
+    group = root
+    filelog {
+        stderr {
+            default = 1
+            ike = 2
+        }
+    }
+    plugins {
+        include strongswan.d/charon/*.conf
+    }
+}
+include strongswan.d/*.conf
+EOF
+cat > /t/siteb-charon.sh <<EOF
+#!/bin/sh
+# inside siteb's netns, in a private mount namespace: own /run, own config
+mount -t tmpfs tmpfs /run || exit 10
+chmod 1777 /run
+mount --bind /t/siteb/swanctl /etc/swanctl || exit 11
+mount --bind /t/siteb/strongswan.conf /etc/strongswan.conf || exit 12
+exec $CHARON
+EOF
+chmod +x /t/siteb-charon.sh
+ip netns exec siteb unshare -m --propagation private /t/siteb-charon.sh >/t/charon-siteb.log 2>&1 &
 SITEB_CHARON=$!
 SBNS=$(ip netns exec siteb readlink /proc/self/ns/net)
 SBPID=
@@ -164,7 +189,13 @@ for i in $(seq 1 20); do
   done
   [ -n "$SBPID" ] && break; sleep 0.25
 done
-[ -n "$SBPID" ] || { cat /t/charon-siteb.log; fail "siteb charon did not start"; }
+if [ -z "$SBPID" ]; then
+  echo "--- charon-siteb.log"; cat /t/charon-siteb.log
+  echo "--- processes"; ps -eo pid,user,args | grep -E '[c]haron|[u]nshare' || true
+  if kill -0 "$SITEB_CHARON" 2>/dev/null; then echo "launcher $SITEB_CHARON still running"
+  else rc=0; wait "$SITEB_CHARON" || rc=$?; echo "launcher exited with $rc"; fi
+  fail "siteb charon did not start"
+fi
 SB() { nsenter -t "$SBPID" -m -n "$@"; }
 LOADED=
 for i in $(seq 1 20); do LOADED=$(SB swanctl --load-all --noprompt 2>&1) && break; sleep 0.5; done
