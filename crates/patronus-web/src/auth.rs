@@ -1355,7 +1355,9 @@ pub async fn totp_setup(
 }
 
 /// POST /api/auth/2fa/enable {code} -> {recovery_codes}: confirm with a
-/// code from the app; from now on login needs a code.
+/// code from the app; from now on login needs a code. Other sessions of the
+/// account end: one opened with the password alone (say, by whoever made the
+/// owner turn two-factor on) must not outlive the switch.
 pub async fn totp_enable(
     State(app_state): State<crate::state::AppState>,
     auth_user: AuthUser,
@@ -1369,8 +1371,15 @@ pub async fn totp_enable(
             .totp_confirm(auth_user.session.user_id, &req.code)
             .await
         {
-            Ok(codes) => Json(serde_json::json!({ "enabled": true, "recovery_codes": codes }))
-                .into_response(),
+            Ok(codes) => {
+                app_state
+                    .auth
+                    .session_store
+                    .drop_user(auth_user.session.user_id, Some(&auth_user.session_id))
+                    .await;
+                Json(serde_json::json!({ "enabled": true, "recovery_codes": codes }))
+                    .into_response()
+            }
             Err(e) => bad_request(e.to_string()),
         }
     }
@@ -1382,7 +1391,8 @@ pub async fn totp_enable(
 }
 
 /// POST /api/auth/2fa/disable {password, code}: turn one's own two-factor
-/// login off (needs both factors).
+/// login off (needs both factors). Other sessions of the account end, as on
+/// a password change.
 pub async fn totp_disable(
     State(app_state): State<crate::state::AppState>,
     connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
@@ -1412,7 +1422,14 @@ pub async fn totp_disable(
             return AuthError::InvalidTotp.into_response();
         }
         match us.totp_reset(user.id).await {
-            Ok(_) => Json(serde_json::json!({ "enabled": false })).into_response(),
+            Ok(_) => {
+                app_state
+                    .auth
+                    .session_store
+                    .drop_user(user.id, Some(&auth_user.session_id))
+                    .await;
+                Json(serde_json::json!({ "enabled": false })).into_response()
+            }
             Err(_) => AuthError::InternalError.into_response(),
         }
     }

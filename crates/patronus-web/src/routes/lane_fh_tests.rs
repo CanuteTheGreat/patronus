@@ -563,6 +563,71 @@ async fn two_factor_login_needs_the_code_after_enrolment() {
     assert_eq!(t.login("admin", ADMIN_PW, None).await.0, StatusCode::OK);
 }
 
+#[cfg(feature = "totp")]
+#[tokio::test]
+async fn turning_two_factor_on_or_off_ends_the_accounts_other_sessions() {
+    let t = setup().await;
+    let mine = t.admin().await;
+    let other = t.admin().await;
+    let tr = &t;
+    let alive =
+        move |c: String| async move { tr.call(&c, Method::GET, "/api/system/users", None).await.0 };
+    assert_eq!(alive(other.clone()).await, StatusCode::OK);
+
+    let (s, b) = t
+        .call(
+            &mine,
+            Method::POST,
+            "/api/auth/2fa/setup",
+            Some(json!({"password": ADMIN_PW})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let secret = b["secret"].as_str().unwrap().to_string();
+    // setup alone changes nothing for login, so nothing ends yet
+    assert_eq!(alive(other.clone()).await, StatusCode::OK);
+    let now = chrono::Utc::now().timestamp() as u64;
+    let (s, b) = t
+        .call(
+            &mine,
+            Method::POST,
+            "/api/auth/2fa/enable",
+            Some(json!({"code": crate::totp::code_at(&secret, now).unwrap()})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let recovery: Vec<String> = serde_json::from_value(b["recovery_codes"].clone()).unwrap();
+    assert_eq!(
+        alive(other).await,
+        StatusCode::UNAUTHORIZED,
+        "a password-only session must not survive two-factor being turned on"
+    );
+    assert_eq!(alive(mine.clone()).await, StatusCode::OK);
+
+    let (s, again, b) = t.login("admin", ADMIN_PW, Some(&recovery[0])).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let again = again.unwrap();
+    let (s, b) = t
+        .call(
+            &mine,
+            Method::POST,
+            "/api/auth/2fa/disable",
+            Some(json!({"password": ADMIN_PW, "code": recovery[1]})),
+        )
+        .await;
+    assert_eq!(
+        (s, b["enabled"].as_bool()),
+        (StatusCode::OK, Some(false)),
+        "{b}"
+    );
+    assert_eq!(
+        alive(again).await,
+        StatusCode::UNAUTHORIZED,
+        "turning two-factor off ends the other sessions"
+    );
+    assert_eq!(alive(mine).await, StatusCode::OK, "the caller's own stays");
+}
+
 #[tokio::test]
 async fn backups_restore_from_the_list_and_from_an_upload() {
     let t = setup().await;
