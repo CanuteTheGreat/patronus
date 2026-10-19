@@ -19,6 +19,10 @@ on:
         description: 'mutants: auto (full on Wednesdays, else changed lines only), full or incremental'
         required: false
         default: 'auto'
+      only:
+        description: 'run just one job (mutants or netlab-deep) to re-check it; empty = both'
+        required: false
+        default: ''
   schedule:
     # 08:10 UTC, staggered across the colo lane's day (ctg-infrastructure ci-runners/rw-man-colo)
     - cron: '10 8 * * *'
@@ -39,6 +43,7 @@ defaults:
 jobs:
   mutants:
     name: Mutation testing (core modules, score floors)
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.only != 'netlab-deep'
     # shared mutation/chaos lane (x86 slots on rw-man-01..05 since 2026-10-18,
     # ctg-infrastructure ci-runners/README.md); jobs that must stay on colo set CI_COLO_ONLY=1.
     runs-on: mutation-x86_64
@@ -97,6 +102,7 @@ jobs:
 
   netlab-deep:
     name: Deep netlab (previous-release upgrade, 30 power cuts)
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.only != 'mutants'
     # shared mutation/chaos lane (x86 slots on rw-man-01..05 since 2026-10-18,
     # ctg-infrastructure ci-runners/README.md); jobs that must stay on colo set CI_COLO_ONLY=1.
     runs-on: mutation-x86_64
