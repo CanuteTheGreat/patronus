@@ -628,6 +628,84 @@ async fn turning_two_factor_on_or_off_ends_the_accounts_other_sessions() {
     assert_eq!(alive(mine).await, StatusCode::OK, "the caller's own stays");
 }
 
+#[cfg(feature = "totp")]
+#[tokio::test]
+async fn wrong_codes_confirming_two_factor_setup_hit_the_login_throttle() {
+    async fn begin(t: &T, c: &str) -> String {
+        let (s, b) = t
+            .call(
+                c,
+                Method::POST,
+                "/api/auth/2fa/setup",
+                Some(json!({"password": ADMIN_PW})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        b["secret"].as_str().unwrap().to_string()
+    }
+    async fn enable(t: &T, c: &str, code: &str) -> (StatusCode, Value) {
+        t.call(
+            c,
+            Method::POST,
+            "/api/auth/2fa/enable",
+            Some(json!({"code": code})),
+        )
+        .await
+    }
+    fn wrong_code(secret: &str) -> String {
+        let now = chrono::Utc::now().timestamp() as u64;
+        // wrong for every step accepted now or in the next half minute
+        (0..1_000_000u32)
+            .map(|n| format!("{n:06}"))
+            .find(|c| (0..=30).all(|d| crate::totp::verify(secret, c, now + d, None).is_none()))
+            .unwrap()
+    }
+    let right =
+        |secret: &str| crate::totp::code_at(secret, chrono::Utc::now().timestamp() as u64).unwrap();
+    let on = |t: &T| {
+        let us = t.state.auth.user_store.clone();
+        async move { us.get_user("admin").await.unwrap().two_factor() }
+    };
+
+    // Below the limit: a confirm with no setup started is not a guess and
+    // does not count; after MAX-1 wrong codes the right one still works.
+    let t = setup().await;
+    let c = t.admin().await;
+    let (s, _) = enable(&t, &c, "123456").await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let secret = begin(&t, &c).await;
+    let wrong = wrong_code(&secret);
+    for _ in 1..crate::auth::MAX_LOGIN_FAILURES {
+        let (s, b) = enable(&t, &c, &wrong).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
+    }
+    let (s, b) = enable(&t, &c, &right(&secret)).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(on(&t).await);
+
+    // At the limit the client is locked out: even the right code is refused
+    // and two-factor stays off.
+    let t = setup().await;
+    let c = t.admin().await;
+    let secret = begin(&t, &c).await;
+    let wrong = wrong_code(&secret);
+    for _ in 0..crate::auth::MAX_LOGIN_FAILURES {
+        let (s, b) = enable(&t, &c, &wrong).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
+    }
+    let (s, b) = enable(&t, &c, &right(&secret)).await;
+    assert_eq!(s, StatusCode::TOO_MANY_REQUESTS, "{b}");
+    assert!(
+        !on(&t).await,
+        "a locked-out client cannot turn two-factor on"
+    );
+    // the same budget as the login form
+    assert_eq!(
+        t.login("admin", ADMIN_PW, None).await.0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
 #[tokio::test]
 async fn backups_restore_from_the_list_and_from_an_upload() {
     let t = setup().await;

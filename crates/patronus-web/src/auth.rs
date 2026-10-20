@@ -608,6 +608,7 @@ impl UserStore {
 
     /// Confirm enrolment with a code from the app: two-factor login is on;
     /// returns the one-time recovery codes (shown once, stored hashed).
+    /// A code that does not match fails with [`WrongTotpCode`].
     #[cfg(feature = "totp")]
     pub async fn totp_confirm(&self, id: u32, code: &str) -> anyhow::Result<Vec<String>> {
         let u = self
@@ -617,8 +618,8 @@ impl UserStore {
         let secret = u
             .totp_pending
             .ok_or_else(|| anyhow::anyhow!("Invalid request: start the two-factor setup first"))?;
-        let step = crate::totp::verify(&secret, code, now_ts() as u64, None)
-            .ok_or_else(|| anyhow::anyhow!("Invalid two-factor code (check the phone's clock)"))?;
+        let step =
+            crate::totp::verify(&secret, code, now_ts() as u64, None).ok_or(WrongTotpCode)?;
         let (codes, hashes) = crate::totp::generate_recovery_codes();
         sqlx::query(
             "UPDATE web_users SET totp_secret = ?, totp_pending = NULL, totp_last_step = ?,
@@ -973,6 +974,23 @@ pub const LOGIN_FAILURE_WINDOW_SECS: i64 = 15 * 60;
 /// Upper bound on tracked clients, so a spray from many addresses can't
 /// grow the table without limit.
 const MAX_TRACKED_LOGIN_CLIENTS: usize = 65_536;
+
+/// [`UserStore::totp_confirm`]'s error for a code that does not match the
+/// pending secret -- the failure a code guesser produces, as opposed to
+/// "no setup started".
+#[cfg(feature = "totp")]
+#[derive(Debug)]
+pub struct WrongTotpCode;
+
+#[cfg(feature = "totp")]
+impl std::fmt::Display for WrongTotpCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Invalid two-factor code (check the phone's clock)")
+    }
+}
+
+#[cfg(feature = "totp")]
+impl std::error::Error for WrongTotpCode {}
 
 /// Per-client brute-force throttle for `POST /api/auth/login`.
 ///
@@ -1397,13 +1415,25 @@ pub async fn totp_setup(
 /// code from the app; from now on login needs a code. Other sessions of the
 /// account end: one opened with the password alone (say, by whoever made the
 /// owner turn two-factor on) must not outlive the switch.
+///
+/// Wrong codes count as failed logins in the [`LoginThrottle`], and a
+/// locked-out client is refused (429). Without that, a session holder could
+/// try all 10^6 codes against a pending setup at full speed (about three
+/// codes are valid at any moment), turn two-factor on with a secret the
+/// owner may never have scanned, and walk off with the recovery codes.
 pub async fn totp_enable(
     State(app_state): State<crate::state::AppState>,
+    connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     auth_user: AuthUser,
     Json(req): Json<TotpCodeRequest>,
 ) -> Response {
     #[cfg(feature = "totp")]
     {
+        let client = client_ip(connect_info);
+        let throttle = &app_state.auth.login_throttle;
+        if let Some(retry_after) = throttle.check(client) {
+            return AuthError::TooManyAttempts(retry_after).into_response();
+        }
         match app_state
             .auth
             .user_store
@@ -1419,12 +1449,22 @@ pub async fn totp_enable(
                 Json(serde_json::json!({ "enabled": true, "recovery_codes": codes }))
                     .into_response()
             }
-            Err(e) => bad_request(e.to_string()),
+            Err(e) => {
+                if e.is::<WrongTotpCode>() {
+                    throttle.record_failure(client);
+                    tracing::warn!(
+                        "wrong two-factor code confirming setup for {:?} from {}",
+                        auth_user.session.username,
+                        client
+                    );
+                }
+                bad_request(e.to_string())
+            }
         }
     }
     #[cfg(not(feature = "totp"))]
     {
-        let _ = (&app_state, &auth_user, &req.code);
+        let _ = (&app_state, &connect_info, &auth_user, &req.code);
         totp_not_built()
     }
 }
