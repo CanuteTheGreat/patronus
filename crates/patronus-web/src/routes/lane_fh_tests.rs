@@ -707,6 +707,73 @@ async fn wrong_codes_confirming_two_factor_setup_hit_the_login_throttle() {
 }
 
 #[tokio::test]
+async fn an_admin_cannot_set_their_own_password_without_the_current_one() {
+    let t = setup().await;
+    let c = t.admin().await;
+    let me = t.state.auth.user_store.get_user("admin").await.unwrap().id;
+    // the admin "set password" route skips the current-password check, so
+    // it refuses one's own account (a stolen session must not lock the
+    // owner out) ...
+    let (s, b) = t
+        .call(
+            &c,
+            Method::PUT,
+            &format!("/api/system/users/{me}"),
+            Some(json!({"password": "Stolen-Session-Pw-1"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
+    assert!(b.to_string().contains("/api/auth/password"), "{b}");
+    assert_eq!(
+        t.login("admin", "Stolen-Session-Pw-1", None).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(t.login("admin", ADMIN_PW, None).await.0, StatusCode::OK);
+    // ... and the refusal didn't end the admin's session
+    let (s, _) = t.call(&c, Method::GET, "/api/status", None).await;
+    assert_eq!(s, StatusCode::OK);
+    // other edits of one's own row still work (nothing here changes)
+    let (s, b) = t
+        .call(
+            &c,
+            Method::PUT,
+            &format!("/api/system/users/{me}"),
+            Some(json!({"enabled": true})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    // setting another account's password is unchanged
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/users",
+            Some(json!({"username": "ops", "password": "Ops-Passw0rd-123", "role": "operator"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let ops = b["id"].as_u64().unwrap();
+    let (s, b) = t
+        .call(
+            &c,
+            Method::PUT,
+            &format!("/api/system/users/{ops}"),
+            Some(json!({"password": "Ops-New-Passw0rd-1"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(
+        t.login("ops", "Ops-New-Passw0rd-1", None).await.0,
+        StatusCode::OK
+    );
+    // the page offers "Set password" for others only
+    let (s, page, _) = t.raw(Method::GET, "/system", Some(&c), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(!page.contains(&format!("setPassword({me},")), "own row");
+    assert!(page.contains(&format!("setPassword({ops},")), "other row");
+}
+
+#[tokio::test]
 async fn backups_restore_from_the_list_and_from_an_upload() {
     let t = setup().await;
     let c = t.admin().await;

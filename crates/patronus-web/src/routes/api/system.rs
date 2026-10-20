@@ -112,12 +112,24 @@ pub async fn create_user(
 
 /// PUT /api/system/users/:id (admin) {role?, enabled?, password?}. The
 /// account's sessions end (it logs in again with the new role/password).
+///
+/// An admin cannot set their *own* password here: `POST /api/auth/password`
+/// asks for the current one (throttled like login), and this route would
+/// let anyone holding an admin's session skip that check, change the
+/// owner's password and lock them out of their own router.
 pub async fn update_user(
     State(state): State<AppState>,
     admin: AdminUser,
     Path(id): Path<u32>,
     Json(req): Json<UserUpdate>,
 ) -> Response {
+    if id == admin.session.user_id && req.password.is_some() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Invalid request: change your own password under \"Your account\" \
+             (POST /api/auth/password, which asks for the current password)",
+        );
+    }
     match state.auth.user_store.update_user(id, &req).await {
         Ok(u) => {
             let keep =
