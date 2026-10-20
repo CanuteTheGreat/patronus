@@ -54,6 +54,9 @@ impl CapacityMetrics {
 }
 
 pub struct UtilizationHistory {
+    // Retained for future per-resource-type filtering/labeling of history
+    // entries; not yet read directly (each entry already carries its own type).
+    #[allow(dead_code)]
     resource_type: ResourceType,
     max_history: usize,
     history: VecDeque<CapacityMetrics>,

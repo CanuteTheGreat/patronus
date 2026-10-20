@@ -303,7 +303,7 @@ WantedBy=multi-user.target
 
         // Start IPsec first
         let ipsec_status = Command::new("systemctl")
-            .args(&["start", "ipsec"])
+            .args(["start", "ipsec"])
             .status()
             .await?;
 
@@ -313,7 +313,7 @@ WantedBy=multi-user.target
 
         // Then start xl2tpd
         let xl2tpd_status = Command::new("systemctl")
-            .args(&["start", "xl2tpd"])
+            .args(["start", "xl2tpd"])
             .status()
             .await?;
 
@@ -327,12 +327,12 @@ WantedBy=multi-user.target
     /// Stop L2TP server
     pub async fn stop(&self) -> Result<()> {
         Command::new("systemctl")
-            .args(&["stop", "xl2tpd"])
+            .args(["stop", "xl2tpd"])
             .status()
             .await?;
 
         Command::new("systemctl")
-            .args(&["stop", "ipsec"])
+            .args(["stop", "ipsec"])
             .status()
             .await?;
 

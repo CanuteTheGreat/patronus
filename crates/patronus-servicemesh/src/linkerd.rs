@@ -41,7 +41,12 @@ impl LinkerdIntegration {
     }
 
     pub async fn create_service_profile(&self, profile: ServiceProfile) -> Result<()> {
-        tracing::info!("Creating Linkerd ServiceProfile {}", profile.name);
+        tracing::info!(
+            "Creating Linkerd ServiceProfile {}/{}",
+            self.namespace,
+            profile.name
+        );
+        // In production: use Kubernetes API to create CRD
         Ok(())
     }
 

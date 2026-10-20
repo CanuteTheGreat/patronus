@@ -10,7 +10,6 @@ use axum::{
 use askama::Template;
 use crate::{
     state::AppState,
-    auth::AuthUser,
     templates::{
         DashboardTemplate,
         FirewallTemplate,

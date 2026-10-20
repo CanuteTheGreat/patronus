@@ -123,6 +123,16 @@ impl LoadBalancer {
         }
     }
 
+    /// Unique identifier for this load balancer instance.
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+
+    /// Configured name for this load balancer instance.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn with_health_check(mut self, health_check: HealthCheck) -> Self {
         self.health_check = health_check;
         self
@@ -241,12 +251,10 @@ impl LoadBalancer {
 
     fn select_random(&self, backends: &[Backend]) -> Option<Backend> {
         use std::collections::hash_map::RandomState;
-        use std::hash::{BuildHasher, Hash, Hasher};
+        use std::hash::BuildHasher;
 
         let random_state = RandomState::new();
-        let mut hasher = random_state.build_hasher();
-        Utc::now().timestamp_nanos_opt().unwrap_or(0).hash(&mut hasher);
-        let index = hasher.finish() as usize % backends.len();
+        let index = random_state.hash_one(Utc::now().timestamp_nanos_opt().unwrap_or(0)) as usize % backends.len();
 
         backends.get(index).cloned()
     }
@@ -413,6 +421,8 @@ mod tests {
     #[tokio::test]
     async fn test_load_balancer_creation() {
         let lb = LoadBalancer::new("web-lb", LoadBalancingAlgorithm::RoundRobin);
+        assert_eq!(lb.name(), "web-lb");
+        let _lb_id = lb.id();
 
         let backend = Backend::new(
             "web-1",

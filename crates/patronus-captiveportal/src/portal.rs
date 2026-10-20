@@ -429,9 +429,24 @@ async fn handle_login(
         let mut vouchers = state.vouchers.write().await;
         vouchers.redeem(voucher).await.is_ok()
     } else if let (Some(username), Some(password)) = (&login.username, &login.password) {
-        // Username/password authentication
-        // Check against configured auth providers
-        true  // Placeholder
+        // Username/password authentication against configured auth providers
+        let credentials = crate::auth::AuthCredentials {
+            username: Some(username.clone()),
+            password: Some(password.clone()),
+            email: None,
+            phone: None,
+            oauth_token: None,
+        };
+        let mut authenticated_by_any = false;
+        for provider in state.auth_providers.values() {
+            if let Ok(result) = provider.authenticate(&credentials).await {
+                if result.success {
+                    authenticated_by_any = true;
+                    break;
+                }
+            }
+        }
+        authenticated_by_any
     } else {
         false
     };
@@ -439,14 +454,14 @@ async fn handle_login(
     if authenticated {
         // Create session
         let mut sessions = state.sessions.write().await;
-        let session = sessions.create_session(
+        let _session = sessions.create_session(
             login.mac_address.clone(),
             login.ip_address.parse().unwrap(),
         ).await;
 
         // Add MAC to nftables authenticated set
         let _ = tokio::process::Command::new("nft")
-            .args(&["add", "element", "inet", "captive_portal", "authenticated_clients",
+            .args(["add", "element", "inet", "captive_portal", "authenticated_clients",
                     &format!("{{ {} timeout 1h }}", login.mac_address)])
             .output()
             .await;
@@ -479,7 +494,7 @@ async fn handle_logout(
 
         // Remove from nftables
         let _ = tokio::process::Command::new("nft")
-            .args(&["delete", "element", "inet", "captive_portal", "authenticated_clients",
+            .args(["delete", "element", "inet", "captive_portal", "authenticated_clients",
                     &format!("{{ {} }}", mac)])
             .output()
             .await;

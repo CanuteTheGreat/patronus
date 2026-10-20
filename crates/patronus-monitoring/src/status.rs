@@ -175,16 +175,15 @@ impl StatusPageManager {
 
         // Get interface list
         let output = Command::new("ip")
-            .args(&["-json", "addr", "show"])
+            .args(["-json", "addr", "show"])
             .output()
             .await?;
 
-        let json_str = String::from_utf8_lossy(&output.stdout);
-
-        // Parse JSON (simplified - would use serde_json in production)
-        // For now, fall back to text parsing
+        // TODO: not yet parsed as JSON (would use serde_json in production);
+        // falls back to text parsing below instead.
+        let _json_str = String::from_utf8_lossy(&output.stdout);
         let output = Command::new("ip")
-            .args(&["addr", "show"])
+            .args(["addr", "show"])
             .output()
             .await?;
 
@@ -192,7 +191,7 @@ impl StatusPageManager {
 
         // Get stats for each interface
         let stats_output = Command::new("ip")
-            .args(&["-s", "link", "show"])
+            .args(["-s", "link", "show"])
             .output()
             .await?;
 
@@ -345,9 +344,9 @@ impl StatusPageManager {
         Ok(leases)
     }
 
-    fn parse_dhcp_leases(content: &str) -> Result<Vec<DhcpLease>> {
-        // Simplified DHCP lease parsing
-        // Real implementation would parse ISC DHCP lease file format
+    // TODO: real implementation would parse ISC DHCP lease file format;
+    // currently a stub that always returns no leases.
+    fn parse_dhcp_leases(_content: &str) -> Result<Vec<DhcpLease>> {
         Ok(Vec::new())
     }
 
@@ -393,7 +392,7 @@ impl StatusPageManager {
     async fn get_service_status(name: &str, description: &str) -> Result<ServiceStatus> {
         // Check systemd service status
         let output = Command::new("systemctl")
-            .args(&["status", name])
+            .args(["status", name])
             .output()
             .await?;
 
@@ -401,7 +400,7 @@ impl StatusPageManager {
 
         // Check if enabled
         let enabled_output = Command::new("systemctl")
-            .args(&["is-enabled", name])
+            .args(["is-enabled", name])
             .output()
             .await?;
 
@@ -410,7 +409,7 @@ impl StatusPageManager {
         // Get PID if running
         let pid = if is_running {
             let show_output = Command::new("systemctl")
-                .args(&["show", "-p", "MainPID", name])
+                .args(["show", "-p", "MainPID", name])
                 .output()
                 .await?;
 
@@ -438,7 +437,7 @@ impl StatusPageManager {
     pub async fn get_ipsec_status() -> Result<Vec<IpsecTunnelStatus>> {
         // Use swanctl for strongSwan
         let output = Command::new("swanctl")
-            .args(&["--list-sas"])
+            .args(["--list-sas"])
             .output()
             .await;
 
@@ -450,8 +449,9 @@ impl StatusPageManager {
         Ok(Vec::new())
     }
 
-    fn parse_ipsec_status(output: &str) -> Result<Vec<IpsecTunnelStatus>> {
-        // Parse swanctl output (simplified)
+    // TODO: real implementation would parse `swanctl --list-sas` output;
+    // currently a stub that always returns no tunnels.
+    fn parse_ipsec_status(_output: &str) -> Result<Vec<IpsecTunnelStatus>> {
         Ok(Vec::new())
     }
 
@@ -468,15 +468,16 @@ impl StatusPageManager {
         Ok(Vec::new())
     }
 
-    fn parse_openvpn_status(content: &str) -> Result<Vec<OpenVpnClientStatus>> {
-        // Parse OpenVPN status file format
+    // TODO: real implementation would parse the OpenVPN status file format;
+    // currently a stub that always returns no clients.
+    fn parse_openvpn_status(_content: &str) -> Result<Vec<OpenVpnClientStatus>> {
         Ok(Vec::new())
     }
 
     /// Get WireGuard peer statuses
     pub async fn get_wireguard_peers(interface: &str) -> Result<Vec<WireGuardPeerStatus>> {
         let output = Command::new("wg")
-            .args(&["show", interface, "dump"])
+            .args(["show", interface, "dump"])
             .output()
             .await?;
 
@@ -530,7 +531,7 @@ impl StatusPageManager {
         limit: u32,
     ) -> Result<Vec<LogEntry>> {
         let mut cmd = Command::new("journalctl");
-        cmd.args(&["-n", &limit.to_string(), "--output=json"]);
+        cmd.args(["-n", &limit.to_string(), "--output=json"]);
 
         if let Some(sev) = severity {
             cmd.arg("-p").arg(sev);
@@ -546,8 +547,9 @@ impl StatusPageManager {
         Self::parse_journal_logs(&text)
     }
 
-    fn parse_journal_logs(output: &str) -> Result<Vec<LogEntry>> {
-        // Parse journalctl JSON output
+    // TODO: real implementation would parse journalctl's JSON output;
+    // currently a stub that always returns no entries.
+    fn parse_journal_logs(_output: &str) -> Result<Vec<LogEntry>> {
         Ok(Vec::new())
     }
 

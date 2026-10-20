@@ -36,7 +36,7 @@ impl FailoverEventType {
     }
 
     /// Parse from string
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s {
             "triggered" => Some(FailoverEventType::Triggered),
             "completed" => Some(FailoverEventType::Completed),
@@ -220,15 +220,15 @@ mod tests {
         assert_eq!(FailoverEventType::Failed.as_str(), "failed");
 
         assert_eq!(
-            FailoverEventType::from_str("triggered"),
+            FailoverEventType::parse_str("triggered"),
             Some(FailoverEventType::Triggered)
         );
         assert_eq!(
-            FailoverEventType::from_str("completed"),
+            FailoverEventType::parse_str("completed"),
             Some(FailoverEventType::Completed)
         );
         assert_eq!(
-            FailoverEventType::from_str("invalid"),
+            FailoverEventType::parse_str("invalid"),
             None
         );
     }

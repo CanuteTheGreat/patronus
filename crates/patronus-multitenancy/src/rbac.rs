@@ -152,7 +152,7 @@ impl RbacManager {
         self.roles.insert(role_id, role);
         self.org_roles
             .entry(org_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(role_id);
 
         tracing::info!("Created role: {}", role_id);
@@ -176,7 +176,7 @@ impl RbacManager {
         self.users.insert(user_id, user);
         self.org_users
             .entry(org_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(user_id);
 
         tracing::info!("Created user: {}", user_id);

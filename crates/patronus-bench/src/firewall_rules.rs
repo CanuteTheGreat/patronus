@@ -24,6 +24,9 @@ impl FirewallRuleResult {
 
 pub struct FirewallRuleBench {
     rules: u32,
+    // Not yet consumed: run() is currently a stub returning fixed results
+    // rather than branching on whether to include a throughput sub-test.
+    #[allow(dead_code)]
     throughput_test: bool,
 }
 

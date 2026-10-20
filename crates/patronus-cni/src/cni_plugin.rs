@@ -232,7 +232,7 @@ impl PatronusCniPlugin {
         debug!("Creating veth pair: {} <-> {}", host_veth, container_veth);
 
         let output = Command::new("ip")
-            .args(&["link", "add", &host_veth, "type", "veth", "peer", "name", &container_veth])
+            .args(["link", "add", &host_veth, "type", "veth", "peer", "name", &container_veth])
             .output()
             .context("Failed to create veth pair")?;
 
@@ -245,7 +245,7 @@ impl PatronusCniPlugin {
 
         // Bring up host veth
         Command::new("ip")
-            .args(&["link", "set", &host_veth, "up"])
+            .args(["link", "set", &host_veth, "up"])
             .output()
             .context("Failed to bring up host veth")?;
 
@@ -257,7 +257,7 @@ impl PatronusCniPlugin {
         debug!("Moving {} to netns {}", ifname, netns);
 
         let output = Command::new("ip")
-            .args(&["link", "set", ifname, "netns", netns])
+            .args(["link", "set", ifname, "netns", netns])
             .output()
             .context("Failed to move interface to netns")?;
 
@@ -336,7 +336,7 @@ impl PatronusCniPlugin {
 
         // Add route to pod IP via host veth
         let output = Command::new("ip")
-            .args(&["route", "add", ip_only, "dev", host_veth])
+            .args(["route", "add", ip_only, "dev", host_veth])
             .output()
             .context("Failed to add route")?;
 
@@ -388,7 +388,7 @@ impl PatronusCniPlugin {
     /// Check if interface exists
     fn interface_exists(&self, ifname: &str) -> bool {
         Command::new("ip")
-            .args(&["link", "show", ifname])
+            .args(["link", "show", ifname])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
@@ -397,7 +397,7 @@ impl PatronusCniPlugin {
     /// Check if interface exists in netns
     fn interface_exists_in_netns(&self, netns: &str, ifname: &str) -> bool {
         Command::new("ip")
-            .args(&["netns", "exec", netns, "ip", "link", "show", ifname])
+            .args(["netns", "exec", netns, "ip", "link", "show", ifname])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
@@ -406,7 +406,7 @@ impl PatronusCniPlugin {
     /// Delete interface
     fn delete_interface(&self, ifname: &str) -> Result<()> {
         Command::new("ip")
-            .args(&["link", "del", ifname])
+            .args(["link", "del", ifname])
             .output()
             .context("Failed to delete interface")?;
         Ok(())
@@ -425,7 +425,7 @@ impl PatronusCniPlugin {
     /// Get interface MAC address in netns
     fn get_interface_mac_in_netns(&self, netns: &str, ifname: &str) -> Result<String> {
         let output = Command::new("ip")
-            .args(&[
+            .args([
                 "netns", "exec", netns,
                 "cat", &format!("/sys/class/net/{}/address", ifname)
             ])

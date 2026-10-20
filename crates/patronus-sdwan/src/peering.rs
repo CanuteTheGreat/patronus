@@ -19,6 +19,8 @@ pub struct PeeringManager {
     peers: Arc<RwLock<Vec<PeerConfig>>>,
     interface_name: String,
     listen_port: u16,
+    // Retained for future dynamic subnet allocation; not yet read.
+    #[allow(dead_code)]
     network_prefix: String, // e.g., "10.99.0.0/16"
 }
 
@@ -156,7 +158,7 @@ impl PeeringManager {
         debug!("Configuring WireGuard interface");
 
         // Convert private key to base64
-        let private_key_b64 = STANDARD.encode(&self.own_private_key);
+        let private_key_b64 = STANDARD.encode(self.own_private_key);
 
         // wg set wg-sdwan private-key <(echo {private_key})
         let mut output = Command::new("wg")

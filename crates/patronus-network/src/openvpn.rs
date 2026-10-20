@@ -444,7 +444,7 @@ impl OpenVpnManager {
 
         // Generate CA key
         Command::new("openssl")
-            .args(&["genrsa", "-out"])
+            .args(["genrsa", "-out"])
             .arg(self.config_dir.join("ca.key"))
             .arg("4096")
             .output()
@@ -452,11 +452,11 @@ impl OpenVpnManager {
 
         // Generate CA certificate
         Command::new("openssl")
-            .args(&["req", "-new", "-x509", "-days", "3650", "-key"])
+            .args(["req", "-new", "-x509", "-days", "3650", "-key"])
             .arg(self.config_dir.join("ca.key"))
-            .args(&["-out"])
+            .args(["-out"])
             .arg(self.config_dir.join("ca.crt"))
-            .args(&["-subj", &format!("/CN={}", common_name)])
+            .args(["-subj", &format!("/CN={}", common_name)])
             .output()
             .map_err(|e| Error::Network(format!("Failed to generate CA certificate: {}", e)))?;
 
@@ -467,7 +467,7 @@ impl OpenVpnManager {
     pub async fn generate_server_cert(&self, common_name: &str) -> Result<()> {
         // Generate server key
         Command::new("openssl")
-            .args(&["genrsa", "-out"])
+            .args(["genrsa", "-out"])
             .arg(self.config_dir.join("server.key"))
             .arg("4096")
             .output()
@@ -475,25 +475,25 @@ impl OpenVpnManager {
 
         // Generate server certificate request
         Command::new("openssl")
-            .args(&["req", "-new", "-key"])
+            .args(["req", "-new", "-key"])
             .arg(self.config_dir.join("server.key"))
-            .args(&["-out"])
+            .args(["-out"])
             .arg(self.config_dir.join("server.csr"))
-            .args(&["-subj", &format!("/CN={}", common_name)])
+            .args(["-subj", &format!("/CN={}", common_name)])
             .output()
             .map_err(|e| Error::Network(format!("Failed to generate server CSR: {}", e)))?;
 
         // Sign server certificate
         Command::new("openssl")
-            .args(&["x509", "-req", "-in"])
+            .args(["x509", "-req", "-in"])
             .arg(self.config_dir.join("server.csr"))
-            .args(&["-CA"])
+            .args(["-CA"])
             .arg(self.config_dir.join("ca.crt"))
-            .args(&["-CAkey"])
+            .args(["-CAkey"])
             .arg(self.config_dir.join("ca.key"))
-            .args(&["-CAcreateserial", "-out"])
+            .args(["-CAcreateserial", "-out"])
             .arg(self.config_dir.join("server.crt"))
-            .args(&["-days", "3650"])
+            .args(["-days", "3650"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to sign server certificate: {}", e)))?;
 
@@ -503,7 +503,7 @@ impl OpenVpnManager {
     /// Generate Diffie-Hellman parameters
     pub async fn generate_dh_params(&self, bits: u32) -> Result<()> {
         Command::new("openssl")
-            .args(&["dhparam", "-out"])
+            .args(["dhparam", "-out"])
             .arg(self.config_dir.join(format!("dh{}.pem", bits)))
             .arg(bits.to_string())
             .output()
@@ -515,7 +515,7 @@ impl OpenVpnManager {
     /// Generate TLS authentication key
     pub async fn generate_tls_key(&self) -> Result<()> {
         Command::new("openvpn")
-            .args(&["--genkey", "--secret"])
+            .args(["--genkey", "--secret"])
             .arg(self.config_dir.join("ta.key"))
             .output()
             .map_err(|e| Error::Network(format!("Failed to generate TLS key: {}", e)))?;
@@ -531,7 +531,7 @@ impl OpenVpnManager {
 
         // Generate client key
         Command::new("openssl")
-            .args(&["genrsa", "-out"])
+            .args(["genrsa", "-out"])
             .arg(client_dir.join("client.key"))
             .arg("4096")
             .output()
@@ -539,25 +539,25 @@ impl OpenVpnManager {
 
         // Generate client certificate request
         Command::new("openssl")
-            .args(&["req", "-new", "-key"])
+            .args(["req", "-new", "-key"])
             .arg(client_dir.join("client.key"))
-            .args(&["-out"])
+            .args(["-out"])
             .arg(client_dir.join("client.csr"))
-            .args(&["-subj", &format!("/CN={}", client_name)])
+            .args(["-subj", &format!("/CN={}", client_name)])
             .output()
             .map_err(|e| Error::Network(format!("Failed to generate client CSR: {}", e)))?;
 
         // Sign client certificate
         Command::new("openssl")
-            .args(&["x509", "-req", "-in"])
+            .args(["x509", "-req", "-in"])
             .arg(client_dir.join("client.csr"))
-            .args(&["-CA"])
+            .args(["-CA"])
             .arg(self.config_dir.join("ca.crt"))
-            .args(&["-CAkey"])
+            .args(["-CAkey"])
             .arg(self.config_dir.join("ca.key"))
-            .args(&["-CAcreateserial", "-out"])
+            .args(["-CAcreateserial", "-out"])
             .arg(client_dir.join("client.crt"))
-            .args(&["-days", "3650"])
+            .args(["-days", "3650"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to sign client certificate: {}", e)))?;
 

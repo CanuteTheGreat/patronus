@@ -160,8 +160,7 @@ impl IcmpProber {
             socket.send_to(&packet, &target_addr.into())
         })
         .await
-        .map_err(|e| IcmpError::NetworkError(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        .map_err(|e| IcmpError::NetworkError(std::io::Error::other(
             e.to_string(),
         )))?
         .map_err(IcmpError::NetworkError)?;
@@ -201,8 +200,8 @@ impl IcmpProber {
         packet[8..16].copy_from_slice(&timestamp.to_be_bytes());
 
         // Fill rest with pattern
-        for i in 16..64 {
-            packet[i] = (i & 0xFF) as u8;
+        for (i, byte) in packet.iter_mut().enumerate().take(64).skip(16) {
+            *byte = (i & 0xFF) as u8;
         }
 
         // Calculate and set checksum (with checksum field zeroed)
@@ -240,8 +239,7 @@ impl IcmpProber {
             })
             .await
             .map_err(|e| {
-                IcmpError::NetworkError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                IcmpError::NetworkError(std::io::Error::other(
                     e.to_string(),
                 ))
             })?;

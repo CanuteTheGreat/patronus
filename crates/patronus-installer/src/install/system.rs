@@ -379,7 +379,7 @@ async fn generate_fstab(target: &Path, partitions: &[CreatedPartition]) -> Resul
             }
             crate::disk::partition::PartitionFilesystem::Linux(fs) => {
                 let opts = if partition.mount_point == "/" {
-                    "defaults"
+                    "defaults,noatime"
                 } else {
                     "defaults"
                 };

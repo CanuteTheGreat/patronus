@@ -308,7 +308,7 @@ WantedBy=multi-user.target
         tracing::info!("Starting SNMP agent");
 
         let status = Command::new("systemctl")
-            .args(&["start", "snmpd"])
+            .args(["start", "snmpd"])
             .status()
             .await?;
 
@@ -322,7 +322,7 @@ WantedBy=multi-user.target
     /// Stop SNMP agent
     pub async fn stop(&self) -> Result<()> {
         Command::new("systemctl")
-            .args(&["stop", "snmpd"])
+            .args(["stop", "snmpd"])
             .status()
             .await?;
 
@@ -332,7 +332,7 @@ WantedBy=multi-user.target
     /// Restart SNMP agent
     pub async fn restart(&self) -> Result<()> {
         let status = Command::new("systemctl")
-            .args(&["restart", "snmpd"])
+            .args(["restart", "snmpd"])
             .status()
             .await?;
 
@@ -347,7 +347,7 @@ WantedBy=multi-user.target
     pub async fn get_stats(&self) -> Result<SnmpStats> {
         // Query SNMP stats from agent
         let output = Command::new("snmpstatus")
-            .args(&["-v", "2c", "-c", &self.config.v2c.community, "localhost"])
+            .args(["-v", "2c", "-c", &self.config.v2c.community, "localhost"])
             .output()
             .await?;
 
@@ -368,7 +368,7 @@ WantedBy=multi-user.target
         tracing::info!("Testing SNMP agent");
 
         let output = Command::new("snmpwalk")
-            .args(&[
+            .args([
                 "-v", "2c",
                 "-c", &self.config.v2c.community,
                 "localhost",
@@ -388,7 +388,7 @@ WantedBy=multi-user.target
 
         for dest in &self.config.trap_destinations {
             let _output = Command::new("snmptrap")
-                .args(&[
+                .args([
                     "-v", "2c",
                     "-c", &dest.community,
                     &format!("{}:{}", dest.address, dest.port),
@@ -406,7 +406,7 @@ WantedBy=multi-user.target
     /// Get system information via SNMP
     pub async fn get_system_info(&self) -> Result<SnmpSystemInfo> {
         let output = Command::new("snmpget")
-            .args(&[
+            .args([
                 "-v", "2c",
                 "-c", &self.config.v2c.community,
                 "localhost",

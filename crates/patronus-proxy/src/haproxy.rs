@@ -500,7 +500,7 @@ impl HAProxyManager {
                 config.push_str(&server_line);
             }
 
-            config.push_str("\n");
+            config.push('\n');
         }
 
         config
@@ -526,7 +526,7 @@ impl HAProxyManager {
 
     async fn validate_config(&self) -> Result<()> {
         let output = Command::new("haproxy")
-            .args(&["-c", "-f", self.config_path.to_str().unwrap()])
+            .args(["-c", "-f", self.config_path.to_str().unwrap()])
             .output()
             .await?;
 
@@ -566,7 +566,7 @@ WantedBy=multi-user.target
         tracing::info!("Starting HAProxy");
 
         let status = Command::new("systemctl")
-            .args(&["start", "haproxy"])
+            .args(["start", "haproxy"])
             .status()
             .await?;
 
@@ -580,7 +580,7 @@ WantedBy=multi-user.target
     /// Stop HAProxy
     pub async fn stop(&self) -> Result<()> {
         Command::new("systemctl")
-            .args(&["stop", "haproxy"])
+            .args(["stop", "haproxy"])
             .status()
             .await?;
 
@@ -594,7 +594,7 @@ WantedBy=multi-user.target
 
         // Reload
         let status = Command::new("systemctl")
-            .args(&["reload", "haproxy"])
+            .args(["reload", "haproxy"])
             .status()
             .await?;
 

@@ -29,6 +29,9 @@ pub enum NeighborState {
 #[derive(Debug)]
 pub struct BgpNeighbor {
     /// Neighbor configuration
+    // Retained for reconnection/reconfiguration logic; not yet read directly (fields
+    // are consumed individually via constructor args below).
+    #[allow(dead_code)]
     config: NeighborConfig,
 
     /// Current state

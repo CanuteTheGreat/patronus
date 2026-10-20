@@ -56,7 +56,7 @@ impl AppSteering {
     pub async fn add_policy(&self, policy: SteeringPolicy) {
         let mut policies = self.policies.write().await;
         policies.push(policy);
-        policies.sort_by(|a, b| b.priority.cmp(&a.priority));
+        policies.sort_by_key(|a| std::cmp::Reverse(a.priority));
     }
 
     /// Find tunnel for traffic

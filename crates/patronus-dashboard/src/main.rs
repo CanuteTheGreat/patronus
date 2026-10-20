@@ -21,18 +21,7 @@ use tracing::{info, Level};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use futures::{StreamExt, SinkExt};
 
-mod api;
-mod auth;
-mod cache;
-mod error;
-mod graphql;
-mod ha;
-mod observability;
-mod security;
-mod state;
-mod ws;
-
-use crate::{observability::DashboardMetrics, state::AppState};
+use patronus_dashboard::{api, auth, graphql, observability::DashboardMetrics, state::AppState, ws};
 use async_graphql::http::{GraphQLPlaygroundConfig, playground_source};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 
@@ -57,8 +46,9 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Prometheus metrics exporter initialized");
 
-    // Initialize metrics collector
-    let metrics = DashboardMetrics::new();
+    // Dashboard-level metrics collector; not yet wired into AppState/handlers
+    // (see observability::DashboardMetrics for the metric definitions).
+    let _metrics = DashboardMetrics::new();
 
     // Initialize application state
     let state = AppState::new("dashboard.db").await?;
@@ -186,25 +176,14 @@ async fn graphql_handler(
     let claims = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        .and_then(|auth| {
-            // Remove "Bearer " prefix
-            if auth.starts_with("Bearer ") {
-                Some(&auth[7..])
-            } else {
-                None
-            }
-        })
+        .and_then(|auth| auth.strip_prefix("Bearer "))
         .and_then(|token| {
             // Validate JWT token
             auth::jwt::validate_token(token).ok()
         })
-        .and_then(|claims| {
+        .filter(|claims| {
             // Check if token is revoked (Sprint 29)
-            if state.token_revocation.is_revoked(&claims.jti) {
-                None // Token revoked, reject it
-            } else {
-                Some(claims)
-            }
+            !state.token_revocation.is_revoked(&claims.jti)
         });
 
     // Create auth context

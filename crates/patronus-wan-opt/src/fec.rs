@@ -50,7 +50,7 @@ impl FecEncoder {
     /// Encode data with FEC
     /// Returns data shards + parity shards
     pub fn encode(&mut self, data: &[u8]) -> Result<Vec<Vec<u8>>> {
-        let shard_size = (data.len() + self.data_shards - 1) / self.data_shards;
+        let shard_size = data.len().div_ceil(self.data_shards);
         let mut shards = Vec::new();
 
         // Split data into shards

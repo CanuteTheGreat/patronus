@@ -336,7 +336,7 @@ WantedBy=multi-user.target
         match self.config.protocol {
             FlowProtocol::NetFlowV5 | FlowProtocol::NetFlowV9 | FlowProtocol::IPFIX => {
                 let status = Command::new("systemctl")
-                    .args(&["start", "nfacctd"])
+                    .args(["start", "nfacctd"])
                     .status()
                     .await?;
 
@@ -347,12 +347,12 @@ WantedBy=multi-user.target
             FlowProtocol::SFlow => {
                 // Start both sfacctd and hsflowd
                 Command::new("systemctl")
-                    .args(&["start", "sfacctd"])
+                    .args(["start", "sfacctd"])
                     .status()
                     .await?;
 
                 let status = Command::new("systemctl")
-                    .args(&["start", "hsflowd"])
+                    .args(["start", "hsflowd"])
                     .status()
                     .await?;
 
@@ -371,18 +371,18 @@ WantedBy=multi-user.target
         match self.config.protocol {
             FlowProtocol::NetFlowV5 | FlowProtocol::NetFlowV9 | FlowProtocol::IPFIX => {
                 Command::new("systemctl")
-                    .args(&["stop", "nfacctd"])
+                    .args(["stop", "nfacctd"])
                     .status()
                     .await?;
             }
             FlowProtocol::SFlow => {
                 Command::new("systemctl")
-                    .args(&["stop", "sfacctd"])
+                    .args(["stop", "sfacctd"])
                     .status()
                     .await?;
 
                 Command::new("systemctl")
-                    .args(&["stop", "hsflowd"])
+                    .args(["stop", "hsflowd"])
                     .status()
                     .await?;
             }
@@ -395,7 +395,7 @@ WantedBy=multi-user.target
     pub async fn get_stats(&self) -> Result<FlowStats> {
         // Query pmacct for statistics
         let output = Command::new("pmacct")
-            .args(&["-s"])
+            .args(["-s"])
             .output()
             .await?;
 
@@ -454,7 +454,7 @@ WantedBy=multi-user.target
 
         // Load rules
         Command::new("nft")
-            .args(&["-f", "/etc/nftables.d/flow-export.nft"])
+            .args(["-f", "/etc/nftables.d/flow-export.nft"])
             .status()
             .await?;
 

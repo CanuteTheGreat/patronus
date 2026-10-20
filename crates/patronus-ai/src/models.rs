@@ -38,7 +38,6 @@ pub struct IsolationForest {
 
 struct IsolationTree {
     root: Option<Box<TreeNode>>,
-    height_limit: usize,
 }
 
 struct TreeNode {
@@ -76,7 +75,6 @@ impl IsolationForest {
             // Build tree
             let mut tree = IsolationTree {
                 root: None,
-                height_limit,
             };
             tree.root = self.build_tree(&sample, 0, height_limit);
 
@@ -101,9 +99,7 @@ impl IsolationForest {
             .sum::<f64>() / self.trees.len() as f64;
 
         // Anomaly score: 2^(-avg_path / c)
-        let score = 2_f64.powf(-avg_path_length / self.avg_path_length);
-
-        score
+        2_f64.powf(-avg_path_length / self.avg_path_length)
     }
 
     fn sample_data(&self, data: &Array2<f64>) -> Array2<f64> {

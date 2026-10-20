@@ -109,7 +109,7 @@ impl WireGuardManager {
     pub async fn create_interface(&self, config: &WireGuardInterface) -> Result<()> {
         // Create the interface using ip link
         let output = Command::new("ip")
-            .args(&["link", "add", &config.name, "type", "wireguard"])
+            .args(["link", "add", &config.name, "type", "wireguard"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to create WireGuard interface: {}", e)))?;
 
@@ -124,7 +124,7 @@ impl WireGuardManager {
         // Assign IP addresses
         for addr in &config.address {
             let output = Command::new("ip")
-                .args(&["address", "add", addr, "dev", &config.name])
+                .args(["address", "add", addr, "dev", &config.name])
                 .output()
                 .map_err(|e| Error::Network(format!("Failed to add address: {}", e)))?;
 
@@ -135,7 +135,7 @@ impl WireGuardManager {
 
         // Bring interface up
         Command::new("ip")
-            .args(&["link", "set", &config.name, "up"])
+            .args(["link", "set", &config.name, "up"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to bring interface up: {}", e)))?;
 
@@ -147,7 +147,7 @@ impl WireGuardManager {
     async fn configure_interface(&self, config: &WireGuardInterface) -> Result<()> {
         // Set private key
         Command::new("wg")
-            .args(&["set", &config.name, "private-key", "/dev/stdin"])
+            .args(["set", &config.name, "private-key", "/dev/stdin"])
             .stdin(std::process::Stdio::piped())
             .spawn()
             .and_then(|mut child| {
@@ -161,7 +161,7 @@ impl WireGuardManager {
 
         // Set listen port
         Command::new("wg")
-            .args(&[
+            .args([
                 "set",
                 &config.name,
                 "listen-port",
@@ -210,7 +210,7 @@ impl WireGuardManager {
         // Set preshared key if provided
         if let Some(ref psk) = peer.preshared_key {
             Command::new("wg")
-                .args(&["set", interface, "peer", &peer.public_key, "preshared-key", "/dev/stdin"])
+                .args(["set", interface, "peer", &peer.public_key, "preshared-key", "/dev/stdin"])
                 .stdin(std::process::Stdio::piped())
                 .spawn()
                 .and_then(|mut child| {
@@ -230,7 +230,7 @@ impl WireGuardManager {
     /// Remove a peer from a WireGuard interface
     pub async fn remove_peer(&self, interface: &str, public_key: &str) -> Result<()> {
         let output = Command::new("wg")
-            .args(&["set", interface, "peer", public_key, "remove"])
+            .args(["set", interface, "peer", public_key, "remove"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to remove peer: {}", e)))?;
 
@@ -246,7 +246,7 @@ impl WireGuardManager {
     /// Delete a WireGuard interface
     pub async fn delete_interface(&self, name: &str) -> Result<()> {
         let output = Command::new("ip")
-            .args(&["link", "delete", name])
+            .args(["link", "delete", name])
             .output()
             .map_err(|e| Error::Network(format!("Failed to delete interface: {}", e)))?;
 
@@ -262,7 +262,7 @@ impl WireGuardManager {
     /// Get WireGuard interface status
     pub async fn get_status(&self, interface: &str) -> Result<WireGuardStatus> {
         let output = Command::new("wg")
-            .args(&["show", interface, "dump"])
+            .args(["show", interface, "dump"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to get WireGuard status: {}", e)))?;
 
@@ -333,7 +333,7 @@ impl WireGuardManager {
     /// Save WireGuard configuration to file
     pub async fn save_config(&self, interface: &str, path: &str) -> Result<()> {
         let output = Command::new("wg")
-            .args(&["showconf", interface])
+            .args(["showconf", interface])
             .output()
             .map_err(|e| Error::Network(format!("Failed to get config: {}", e)))?;
 
@@ -352,7 +352,7 @@ impl WireGuardManager {
     /// Load WireGuard configuration from file
     pub async fn load_config(&self, interface: &str, path: &str) -> Result<()> {
         Command::new("wg")
-            .args(&["setconf", interface, path])
+            .args(["setconf", interface, path])
             .output()
             .map_err(|e| Error::Network(format!("Failed to load config: {}", e)))?;
 

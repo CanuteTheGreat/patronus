@@ -184,7 +184,7 @@ impl MutationRoot {
             created_at: chrono::DateTime::from_timestamp(
                 site.created_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
                 0
-            ).unwrap_or_else(|| Utc::now()),
+            ).unwrap_or_else(Utc::now),
             updated_at: Utc::now(),
         };
 
@@ -392,7 +392,7 @@ impl MutationRoot {
         }
 
         if let Some(priority) = input.priority {
-            if priority < 0 || priority > 1000 {
+            if !(0..=1000).contains(&priority) {
                 return Err(async_graphql::Error::new("Priority must be between 0 and 1000"));
             }
             policy.priority = priority as u32;
@@ -984,7 +984,7 @@ impl MutationRoot {
             last_updated: chrono::DateTime::from_timestamp(
                 metrics.measured_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
                 0
-            ).unwrap_or_else(|| Utc::now()),
+            ).unwrap_or_else(Utc::now),
         };
 
         // Broadcast event to WebSocket clients (Sprint 28)

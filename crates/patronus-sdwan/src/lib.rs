@@ -55,6 +55,8 @@ pub struct SdwanManager {
     mesh: Arc<mesh::MeshManager>,
     monitor: Arc<monitor::PathMonitor>,
     routing: Arc<routing::RoutingEngine>,
+    // Retained for future direct-DB access by manager methods; not yet read.
+    #[allow(dead_code)]
     db: Arc<database::Database>,
 }
 
@@ -64,7 +66,7 @@ impl SdwanManager {
         let db = Arc::new(database::Database::new(&config.database_path).await?);
 
         let mesh = Arc::new(mesh::MeshManager::new(
-            config.site_id.clone(),
+            config.site_id,
             config.site_name.clone(),
             db.clone(),
         ));

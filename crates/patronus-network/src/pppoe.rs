@@ -344,7 +344,7 @@ stop() {{
 
         // Parse ifconfig output for ppp0
         let output = Command::new("ip")
-            .args(&["addr", "show", "ppp0"])
+            .args(["addr", "show", "ppp0"])
             .output()
             .await?;
 
@@ -437,7 +437,7 @@ proxyarp
     /// Start PPPoE server
     pub async fn start_server(&self, server_config: &PppoeServerConfig) -> Result<()> {
         let status = Command::new("pppoe-server")
-            .args(&[
+            .args([
                 "-I", &server_config.interface,
                 "-L", &server_config.local_ip.to_string(),
                 "-R", &server_config.remote_ip_range,

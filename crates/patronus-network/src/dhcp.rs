@@ -218,7 +218,7 @@ host {} {{
     /// Start DHCP server
     pub async fn start(&self) -> Result<()> {
         let output = Command::new("systemctl")
-            .args(&["start", "dhcpd"])
+            .args(["start", "dhcpd"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to start DHCP server: {}", e)))?;
 
@@ -234,7 +234,7 @@ host {} {{
     /// Stop DHCP server
     pub async fn stop(&self) -> Result<()> {
         let output = Command::new("systemctl")
-            .args(&["stop", "dhcpd"])
+            .args(["stop", "dhcpd"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to stop DHCP server: {}", e)))?;
 
@@ -250,7 +250,7 @@ host {} {{
     /// Restart DHCP server (apply configuration changes)
     pub async fn restart(&self) -> Result<()> {
         let output = Command::new("systemctl")
-            .args(&["restart", "dhcpd"])
+            .args(["restart", "dhcpd"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to restart DHCP server: {}", e)))?;
 
@@ -266,7 +266,7 @@ host {} {{
     /// Get DHCP server status
     pub async fn status(&self) -> Result<bool> {
         let output = Command::new("systemctl")
-            .args(&["is-active", "dhcpd"])
+            .args(["is-active", "dhcpd"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to check DHCP status: {}", e)))?;
 

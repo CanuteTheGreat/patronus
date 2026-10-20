@@ -7,7 +7,6 @@ use std::env;
 use std::io::{self, Read};
 use std::sync::Arc;
 use tracing::{error, info};
-use tracing_subscriber;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -159,7 +158,8 @@ async fn run_daemon() -> Result<()> {
     // Initialize components
     let datapath = Arc::new(EbpfDatapath::new());
     let policy_controller = Arc::new(NetworkPolicyController::new(Arc::clone(&datapath)).await?);
-    let service_mesh = Arc::new(ServiceMeshManager::new(ServiceMeshConfig::default()));
+    // TODO: service mesh isn't started yet; retained for future wiring.
+    let _service_mesh = Arc::new(ServiceMeshManager::new(ServiceMeshConfig::default()));
 
     // Start policy controller
     let policy_task = {

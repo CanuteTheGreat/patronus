@@ -12,6 +12,15 @@ use tokio::time::{interval, Duration};
 use sysinfo::{System, Disks, Networks, Components};
 
 /// Central metrics collector for all Patronus subsystems
+///
+/// Many of these Prometheus metrics are registered here but not yet updated
+/// by `collect()` below — the corresponding subsystems (VPN, DHCP, DNS, HA,
+/// IDS/IPS, QoS, cert renewal, HTTP in-flight, service restarts) don't yet
+/// report into this collector. Kept (not removed) because the metric names
+/// and registration are part of the intended Prometheus surface; wiring
+/// each producer is tracked as follow-up work, not something to silently
+/// drop during a lint-cleanup pass.
+#[allow(dead_code)]
 pub struct MetricsCollector {
     registry: Registry,
 

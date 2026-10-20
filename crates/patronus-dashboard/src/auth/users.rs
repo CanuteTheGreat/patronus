@@ -30,7 +30,7 @@ impl UserRole {
         }
     }
 
-    pub fn from_str(s: &str) -> Result<Self> {
+    pub fn parse_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
             "admin" => Ok(UserRole::Admin),
             "operator" => Ok(UserRole::Operator),
@@ -176,7 +176,7 @@ impl UserRepository {
                 id: row.get(0),
                 email: row.get(1),
                 name: row.get(2),
-                role: UserRole::from_str(row.get(3))?,
+                role: UserRole::parse_str(row.get(3))?,
                 password_hash: row.get(4),
                 created_at: DateTime::from_timestamp(row.get(5), 0).unwrap_or_default(),
                 last_login: row
@@ -207,7 +207,7 @@ impl UserRepository {
                 id: row.get(0),
                 email: row.get(1),
                 name: row.get(2),
-                role: UserRole::from_str(row.get(3))?,
+                role: UserRole::parse_str(row.get(3))?,
                 password_hash: row.get(4),
                 created_at: DateTime::from_timestamp(row.get(5), 0).unwrap_or_default(),
                 last_login: row
@@ -238,7 +238,7 @@ impl UserRepository {
                 id: row.get(0),
                 email: row.get(1),
                 name: row.get(2),
-                role: UserRole::from_str(row.get(3))?,
+                role: UserRole::parse_str(row.get(3))?,
                 password_hash: row.get(4),
                 created_at: DateTime::from_timestamp(row.get(5), 0).unwrap_or_default(),
                 last_login: row
@@ -263,7 +263,7 @@ impl UserRepository {
         let email = req.email.as_deref().unwrap_or(&user.email);
         let name = req.name.as_deref().unwrap_or(&user.name);
         let role = if let Some(role_str) = req.role {
-            UserRole::from_str(&role_str)?
+            UserRole::parse_str(&role_str)?
         } else {
             user.role.clone()
         };

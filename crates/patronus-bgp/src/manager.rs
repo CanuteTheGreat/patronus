@@ -70,7 +70,7 @@ impl BgpManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{NeighborConfig, NetworkConfig, TimersConfig};
+    use crate::config::{NeighborConfig, TimersConfig};
     use std::str::FromStr;
 
     #[test]

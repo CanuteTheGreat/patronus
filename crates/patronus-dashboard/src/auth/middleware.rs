@@ -51,7 +51,7 @@ pub async fn auth_middleware(
 
 /// Check if user has required role based on claims
 pub fn has_role(claims: &super::jwt::Claims, required_role: &UserRole) -> Result<bool, ApiError> {
-    let user_role = UserRole::from_str(&claims.role)?;
+    let user_role = UserRole::parse_str(&claims.role)?;
 
     let has_permission = match required_role {
         UserRole::Viewer => true, // Anyone can be a viewer

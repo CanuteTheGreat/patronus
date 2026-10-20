@@ -1,7 +1,7 @@
-///! SD-WAN fast path forwarding using eBPF/XDP
-///!
-///! This module provides high-performance packet forwarding for SD-WAN tunnels
-///! using XDP to bypass the kernel network stack.
+//! SD-WAN fast path forwarding using eBPF/XDP
+//!
+//! This module provides high-performance packet forwarding for SD-WAN tunnels
+//! using XDP to bypass the kernel network stack.
 
 use crate::xdp::{XdpFirewall, XdpConfig, XdpMode};
 use crate::stats::XdpStats;
@@ -59,6 +59,12 @@ impl SdwanFastPath {
         let xdp = XdpFirewall::new(config)?;
 
         Ok(Self {
+            // SAFETY: libbpf-rs's `Object` wraps a kernel `bpf_object` handle (fd-based).
+            // Kernel fd handles are safe to access from any thread as long as access is
+            // serialized, which this `RwLock` guarantees. `Object` merely lacks a Send/Sync
+            // marker because libbpf-rs errs conservative; no unsynchronized raw-pointer
+            // access occurs here.
+            #[allow(clippy::arc_with_non_send_sync)]
             xdp: Arc::new(RwLock::new(xdp)),
             tunnels: Arc::new(RwLock::new(HashMap::new())),
             routing_table: Arc::new(RwLock::new(HashMap::new())),
@@ -177,7 +183,7 @@ impl SdwanFastPath {
     /// Get statistics
     pub async fn get_stats(&self) -> Result<XdpStats> {
         let xdp = self.xdp.read().await;
-        xdp.get_stats().await.map_err(|e| anyhow::Error::from(e))
+        xdp.get_stats().await.map_err(anyhow::Error::from)
     }
 
     /// Get all tunnels
@@ -210,12 +216,17 @@ mod tests {
             metrics: LinkMetrics::default(),
         };
 
-        // Note: This will fail in test environment without privileges
-        // In production, would need proper XDP setup
-        // fastpath.add_tunnel(tunnel).await.ok();
+        // Insert directly via the internal map rather than add_tunnel(), since
+        // add_tunnel() also attempts real XDP/BPF map programming which needs
+        // privileges this test environment doesn't have.
+        {
+            let mut tunnels = fastpath.tunnels.write().await;
+            tunnels.insert(tunnel.tunnel_id, tunnel.clone());
+        }
 
         let tunnels = fastpath.get_tunnels().await;
-        // assert_eq!(tunnels.len(), 0); // Expected to fail without privileges
+        assert_eq!(tunnels.len(), 1);
+        assert_eq!(tunnels[0].tunnel_id, tunnel.tunnel_id);
     }
 
     #[tokio::test]

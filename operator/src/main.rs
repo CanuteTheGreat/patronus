@@ -96,7 +96,8 @@ async fn main() -> Result<()> {
         _ = shutdown_signal() => {
             info!("Shutdown signal received, initiating graceful shutdown");
             health_status.set_ready(false);
-            info!("Marked operator as not ready");
+            health_status.set_alive(false);
+            info!("Marked operator as not ready and not alive");
         }
     }
 

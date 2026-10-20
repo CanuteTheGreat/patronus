@@ -72,12 +72,12 @@ impl HealthMonitor {
         let probe_result = prober.probe().await?;
 
         // Calculate health
-        let health = PathHealth::new(path_id.clone(), &probe_result);
+        let health = PathHealth::new(*path_id, &probe_result);
 
         // Update cache
         {
             let mut cache = self.health_cache.write().await;
-            cache.insert(path_id.clone(), health.clone());
+            cache.insert(*path_id, health.clone());
         }
 
         // Persist to database if configured
@@ -170,7 +170,7 @@ impl HealthMonitor {
             let health_score: f64 = record.try_get("health_score")?;
             let status_str: String = record.try_get("status")?;
 
-            let status = PathStatus::from_str(&status_str)
+            let status = PathStatus::parse_str(&status_str)
                 .unwrap_or(PathStatus::Down);
 
             let timestamp_sys = SystemTime::UNIX_EPOCH
@@ -178,7 +178,7 @@ impl HealthMonitor {
 
             // Parse path_id - it's stored as string in DB
             // For now, we'll create a new PathId since we don't have from_string
-            let path_id_parsed = path_id.clone();
+            let path_id_parsed = *path_id;
 
             history.push(PathHealth {
                 path_id: path_id_parsed,
@@ -251,7 +251,7 @@ impl HealthMonitor {
 
                 for (path_id, target_ip) in &paths {
                     let monitor = Arc::clone(&self);
-                    let path_id = path_id.clone();
+                    let path_id = *path_id;
                     let target_ip = *target_ip;
 
                     let task = tokio::spawn(async move {
@@ -418,8 +418,7 @@ mod tests {
         let stats = monitor.get_stats().await;
 
         assert_eq!(stats.total_paths, 1);
-        // Simulated probes should usually result in healthy status
-        assert!(stats.healthy_paths >= 0);
+        // total_paths must equal the sum of the three status buckets.
         assert_eq!(stats.total_paths, stats.healthy_paths + stats.degraded_paths + stats.down_paths);
     }
 }

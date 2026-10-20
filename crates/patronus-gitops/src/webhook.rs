@@ -281,6 +281,9 @@ mod tests {
         }"#;
 
         let state_dir = PathBuf::from("/tmp/patronus-test");
+        // Test-only: GitOpsWatcher's internal fields aren't Sync, but this
+        // handler is never shared across real threads in the test.
+        #[allow(clippy::arc_with_non_send_sync)]
         let handler = WebhookHandler::new(
             WebhookConfig::default(),
             Arc::new(RwLock::new(GitOpsWatcher::new(

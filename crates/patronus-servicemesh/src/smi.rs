@@ -24,7 +24,12 @@ pub struct SmiAdapter;
 #[async_trait]
 impl ServiceMeshInterface for SmiAdapter {
     async fn create_traffic_split(&self, name: &str, service: &str, backends: Vec<(String, u32)>) -> Result<()> {
-        tracing::info!("Creating TrafficSplit {} for service {}", name, service);
+        tracing::info!(
+            "Creating TrafficSplit {} for service {} with backends {:?}",
+            name,
+            service,
+            backends
+        );
         Ok(())
     }
 
@@ -34,6 +39,7 @@ impl ServiceMeshInterface for SmiAdapter {
     }
 
     async fn get_metrics(&self, service: &str) -> Result<ServiceMetrics> {
+        tracing::debug!("Fetching SMI metrics for service {}", service);
         Ok(ServiceMetrics {
             success_rate: 0.999,
             latency_p50: 10.0,

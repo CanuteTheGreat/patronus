@@ -55,8 +55,8 @@ impl PluginRegistry {
         Ok(())
     }
 
-    pub fn get(&self, name: &str) -> Option<&Box<dyn Plugin>> {
-        self.plugins.get(name)
+    pub fn get(&self, name: &str) -> Option<&dyn Plugin> {
+        self.plugins.get(name).map(|p| p.as_ref())
     }
 
     pub fn list(&self) -> Vec<PluginMetadata> {

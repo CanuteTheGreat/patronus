@@ -187,18 +187,18 @@ Alias=chronyd.service
 
         // Disable systemd-timesyncd (conflicts with chrony)
         Command::new("systemctl")
-            .args(&["stop", "systemd-timesyncd"])
+            .args(["stop", "systemd-timesyncd"])
             .status()
             .await?;
 
         Command::new("systemctl")
-            .args(&["disable", "systemd-timesyncd"])
+            .args(["disable", "systemd-timesyncd"])
             .status()
             .await?;
 
         // Start chrony
         let status = Command::new("systemctl")
-            .args(&["start", "chronyd"])
+            .args(["start", "chronyd"])
             .status()
             .await?;
 
@@ -212,7 +212,7 @@ Alias=chronyd.service
     /// Stop NTP service
     pub async fn stop(&self) -> Result<()> {
         Command::new("systemctl")
-            .args(&["stop", "chronyd"])
+            .args(["stop", "chronyd"])
             .status()
             .await?;
 
@@ -222,7 +222,7 @@ Alias=chronyd.service
     /// Restart NTP service
     pub async fn restart(&self) -> Result<()> {
         let status = Command::new("systemctl")
-            .args(&["restart", "chronyd"])
+            .args(["restart", "chronyd"])
             .status()
             .await?;
 
@@ -245,7 +245,7 @@ Alias=chronyd.service
 
         // Query sources
         let sources_output = Command::new("chronyc")
-            .args(&["-n", "sources"])
+            .args(["-n", "sources"])
             .output()
             .await?;
 

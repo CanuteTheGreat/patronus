@@ -136,6 +136,8 @@ pub struct MeshManager {
     site_name: String,
     db: Arc<Database>,
     signing_key: SigningKey,
+    // Kept alongside signing_key for future signature verification of peer announcements.
+    #[allow(dead_code)]
     verifying_key: VerifyingKey,
     running: Arc<RwLock<bool>>,
     known_sites: Arc<RwLock<HashMap<SiteId, SiteInfo>>>,

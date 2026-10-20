@@ -340,7 +340,7 @@ impl UnboundManager {
     /// Start Unbound
     pub async fn start(&self) -> Result<()> {
         Command::new("systemctl")
-            .args(&["start", "unbound"])
+            .args(["start", "unbound"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to start Unbound: {}", e)))?;
 
@@ -350,7 +350,7 @@ impl UnboundManager {
     /// Stop Unbound
     pub async fn stop(&self) -> Result<()> {
         Command::new("systemctl")
-            .args(&["stop", "unbound"])
+            .args(["stop", "unbound"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to stop Unbound: {}", e)))?;
 
@@ -360,7 +360,7 @@ impl UnboundManager {
     /// Restart Unbound
     pub async fn restart(&self) -> Result<()> {
         Command::new("systemctl")
-            .args(&["restart", "unbound"])
+            .args(["restart", "unbound"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to restart Unbound: {}", e)))?;
 

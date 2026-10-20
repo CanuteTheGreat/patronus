@@ -40,7 +40,8 @@ impl SecretString {
         Self(value)
     }
 
-    pub fn from_str(value: &str) -> Self {
+    /// Construct from a string slice
+    pub fn from_string_slice(value: &str) -> Self {
         Self(value.to_string())
     }
 
@@ -51,8 +52,7 @@ impl SecretString {
 
     /// Convert to owned String (consumes self)
     pub fn into_string(mut self) -> String {
-        let value = std::mem::take(&mut self.0);
-        value
+        std::mem::take(&mut self.0)
     }
 }
 

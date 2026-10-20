@@ -492,7 +492,7 @@ impl IpsecManager {
     /// Start strongSwan
     pub async fn start(&self) -> Result<()> {
         Command::new("systemctl")
-            .args(&["start", "strongswan"])
+            .args(["start", "strongswan"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to start strongSwan: {}", e)))?;
 
@@ -502,7 +502,7 @@ impl IpsecManager {
     /// Stop strongSwan
     pub async fn stop(&self) -> Result<()> {
         Command::new("systemctl")
-            .args(&["stop", "strongswan"])
+            .args(["stop", "strongswan"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to stop strongSwan: {}", e)))?;
 
@@ -512,7 +512,7 @@ impl IpsecManager {
     /// Restart strongSwan
     pub async fn restart(&self) -> Result<()> {
         Command::new("systemctl")
-            .args(&["restart", "strongswan"])
+            .args(["restart", "strongswan"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to restart strongSwan: {}", e)))?;
 
@@ -532,7 +532,7 @@ impl IpsecManager {
     /// Start a specific tunnel
     pub async fn start_tunnel(&self, name: &str) -> Result<()> {
         Command::new("ipsec")
-            .args(&["up", name])
+            .args(["up", name])
             .output()
             .map_err(|e| Error::Network(format!("Failed to start tunnel: {}", e)))?;
 
@@ -542,7 +542,7 @@ impl IpsecManager {
     /// Stop a specific tunnel
     pub async fn stop_tunnel(&self, name: &str) -> Result<()> {
         Command::new("ipsec")
-            .args(&["down", name])
+            .args(["down", name])
             .output()
             .map_err(|e| Error::Network(format!("Failed to stop tunnel: {}", e)))?;
 
@@ -572,7 +572,7 @@ impl IpsecManager {
 
         // Generate CA key
         Command::new("ipsec")
-            .args(&["pki", "--gen", "--type", "rsa", "--size", "4096", "--outform", "pem"])
+            .args(["pki", "--gen", "--type", "rsa", "--size", "4096", "--outform", "pem"])
             .output()
             .map(|output| {
                 std::fs::write(pki_dir.join("ca-key.pem"), output.stdout)
@@ -582,7 +582,7 @@ impl IpsecManager {
 
         // Generate CA certificate
         Command::new("ipsec")
-            .args(&[
+            .args([
                 "pki", "--self", "--ca", "--lifetime", "3650",
                 "--in", pki_dir.join("ca-key.pem").to_str().unwrap(),
                 "--type", "rsa",

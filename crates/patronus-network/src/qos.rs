@@ -115,7 +115,7 @@ impl QosManager {
 
         // Add root qdisc (HTB)
         Command::new("tc")
-            .args(&["qdisc", "add", "dev", interface, "root", "handle", "1:", "htb", "default", "30"])
+            .args(["qdisc", "add", "dev", interface, "root", "handle", "1:", "htb", "default", "30"])
             .output()
             .map_err(|e| Error::Network(format!("Failed to initialize QoS: {}", e)))?;
 
@@ -125,7 +125,7 @@ impl QosManager {
     /// Clear all traffic control rules from an interface
     pub async fn clear_interface(&self, interface: &str) -> Result<()> {
         Command::new("tc")
-            .args(&["qdisc", "del", "dev", interface, "root"])
+            .args(["qdisc", "del", "dev", interface, "root"])
             .output()
             .ok();  // Ignore errors (might not exist)
 
@@ -155,7 +155,7 @@ impl QosManager {
 
         // Add leaf qdisc (fq_codel for fair queueing)
         Command::new("tc")
-            .args(&[
+            .args([
                 "qdisc", "add", "dev", &class.interface,
                 "parent", &class.class_id,
                 "handle", &format!("{}0:", &class.class_id.replace(":", "")),
@@ -233,7 +233,7 @@ impl QosManager {
 
         // Add root class
         Command::new("tc")
-            .args(&[
+            .args([
                 "class", "add", "dev", &rule.interface,
                 "parent", "1:",
                 "classid", "1:1",
@@ -258,7 +258,7 @@ impl QosManager {
         self.clear_interface(&limit.interface).await.ok();
 
         Command::new("tc")
-            .args(&[
+            .args([
                 "qdisc", "add", "dev", &limit.interface,
                 "root", "tbf",
                 "rate", &limit.upload_rate,
@@ -375,7 +375,7 @@ impl QosManager {
     /// Get current traffic control statistics
     pub async fn get_stats(&self, interface: &str) -> Result<String> {
         let output = Command::new("tc")
-            .args(&["-s", "qdisc", "show", "dev", interface])
+            .args(["-s", "qdisc", "show", "dev", interface])
             .output()
             .map_err(|e| Error::Network(format!("Failed to get stats: {}", e)))?;
 
@@ -385,7 +385,7 @@ impl QosManager {
     /// Get class statistics
     pub async fn get_class_stats(&self, interface: &str) -> Result<String> {
         let output = Command::new("tc")
-            .args(&["-s", "class", "show", "dev", interface])
+            .args(["-s", "class", "show", "dev", interface])
             .output()
             .map_err(|e| Error::Network(format!("Failed to get class stats: {}", e)))?;
 
@@ -397,7 +397,7 @@ impl QosManager {
         self.clear_interface(interface).await.ok();
 
         Command::new("tc")
-            .args(&[
+            .args([
                 "qdisc", "add", "dev", interface,
                 "root", "cake",
                 "bandwidth", bandwidth,
@@ -416,7 +416,7 @@ impl QosManager {
         self.clear_interface(interface).await.ok();
 
         Command::new("tc")
-            .args(&[
+            .args([
                 "qdisc", "add", "dev", interface,
                 "root", "fq_codel"
             ])

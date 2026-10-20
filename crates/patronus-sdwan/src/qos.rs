@@ -202,6 +202,8 @@ impl TokenBucket {
         }
     }
 
+    /// Current token count (useful for diagnostics/tests).
+    #[allow(dead_code)]
     fn available(&self) -> u64 {
         self.tokens
     }
@@ -328,7 +330,7 @@ impl QosScheduler {
                         stats.packets_dequeued += 1;
                         stats.bytes_transmitted += packet.data.len() as u64;
 
-                        let class_stats = stats.by_class.entry(class).or_insert_with(ClassStats::default);
+                        let class_stats = stats.by_class.entry(class).or_default();
                         class_stats.packets += 1;
                         class_stats.bytes += packet.data.len() as u64;
 
@@ -466,7 +468,7 @@ mod tests {
             dequeued_count += 1;
         }
 
-        assert!(dequeued_count >= 9 && dequeued_count <= 11);
+        assert!((9..=11).contains(&dequeued_count));
 
         // Wait for bucket to refill
         thread::sleep(Duration::from_millis(200));

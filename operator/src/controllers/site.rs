@@ -93,7 +93,7 @@ pub async fn reconcile(site: Arc<Site>, ctx: Arc<Context>) -> Result<Action, Sit
         let metrics = crate::metrics::Metrics::global();
         metrics.record_reconcile_error("site", "validation_failed", duration);
 
-        return Ok(Action::requeue(Duration::from_secs(300)));
+        return Err(SiteError::InvalidSpec(e));
     }
 
     // Create or update site in Patronus
@@ -211,7 +211,7 @@ async fn create_or_update_patronus_site(
 
     // Call Patronus API
     let response = ctx.http_client
-        .put(&format!("{}/api/v1/sites/{}", ctx.patronus_api_url, site_name))
+        .put(format!("{}/api/v1/sites/{}", ctx.patronus_api_url, site_name))
         .json(&request_body)
         .send()
         .await
@@ -239,7 +239,7 @@ async fn delete_patronus_site(
 
     // Call Patronus API to delete site
     let response = ctx.http_client
-        .delete(&format!("{}/api/v1/sites/{}", ctx.patronus_api_url, site_name))
+        .delete(format!("{}/api/v1/sites/{}", ctx.patronus_api_url, site_name))
         .send()
         .await
         .map_err(|e| SiteError::PatronusApiError(format!("HTTP request failed: {}", e)))?;
@@ -288,6 +288,16 @@ async fn update_site_status(
     sites
         .patch_status(name, &PatchParams::default(), &Patch::Merge(&status))
         .await?;
+
+    // Reflect the resulting phase in the "active resources" gauge so
+    // operators can see phase distribution across all Site resources.
+    let phase_label = match phase {
+        SitePhase::Pending => "Pending",
+        SitePhase::Active => "Active",
+        SitePhase::Failed => "Failed",
+        SitePhase::Terminating => "Terminating",
+    };
+    crate::metrics::Metrics::global().set_resource_count("Site", phase_label, 1);
 
     Ok(())
 }

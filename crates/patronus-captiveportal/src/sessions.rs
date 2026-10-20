@@ -24,6 +24,12 @@ pub struct SessionManager {
     mac_to_session: HashMap<String, String>,
 }
 
+impl Default for SessionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionManager {
     pub fn new() -> Self {
         Self {

@@ -13,6 +13,12 @@ pub struct BandwidthLimit {
     pub upload_kbps: u64,
 }
 
+impl Default for BandwidthLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BandwidthLimiter {
     pub fn new() -> Self {
         Self {
@@ -38,17 +44,22 @@ impl BandwidthLimiter {
     }
 
     async fn apply_tc_limit(&self, mac: &str, limit: &BandwidthLimit) {
+        // TODO: this stub doesn't yet target the specific `mac`/`limit`
+        // (always applies a fixed class); parameters kept for the real impl.
+        let _ = (mac, limit);
         // Use Linux tc (traffic control) to limit bandwidth
         // Example: tc filter add dev eth0 protocol ip parent 1:0 prio 1 u32 match ether src AA:BB:CC:DD:EE:FF flowid 1:10
         // Then: tc class add dev eth0 parent 1:0 classid 1:10 htb rate 1mbit ceil 1mbit
 
         let _ = Command::new("tc")
-            .args(&["class", "add", "dev", "eth0", "parent", "1:0"])
+            .args(["class", "add", "dev", "eth0", "parent", "1:0"])
             .output()
             .await;
     }
 
     async fn remove_tc_limit(&self, mac: &str) {
-        // Remove tc rules for this MAC
+        // TODO: remove tc rules for this MAC; not yet implemented (parameter
+        // currently unused by the stub).
+        let _ = mac;
     }
 }

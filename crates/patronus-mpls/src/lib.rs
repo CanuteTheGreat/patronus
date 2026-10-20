@@ -382,7 +382,9 @@ mod tests {
             MplsServiceClass::RealTime,
         ).await;
 
-        let lsp2 = manager.create_lsp(
+        // Note: lsp2 is created to exercise multi-LSP creation but this test
+        // only asserts on lsp1's activation, not lsp2 itself.
+        let _lsp2 = manager.create_lsp(
             "lsp2".to_string(),
             "r2".to_string(),
             "r3".to_string(),
@@ -489,7 +491,9 @@ mod tests {
             2000.0,
             "10.0.0.2".to_string(),
         );
-        let id2 = conn2.id;
+        // Note: id2 is created to exercise dual-connection registration but
+        // this test only asserts on id1's connection state.
+        let _id2 = conn2.id;
 
         manager.register_provider_connection(conn1).await;
         manager.register_provider_connection(conn2).await;

@@ -59,6 +59,15 @@ impl WorkloadScheduler {
         }
     }
 
+    /// Scheduling policy this scheduler was configured with. Node selection
+    /// itself is currently the caller's responsibility (schedule_workload
+    /// takes an explicit node_id); this exposes the policy so callers /
+    /// future placement logic can honor it rather than it silently doing
+    /// nothing.
+    pub fn policy(&self) -> &SchedulingPolicy {
+        &self.policy
+    }
+
     pub async fn schedule_workload(&self, workload: &EdgeWorkload, node_id: Uuid) -> bool {
         let placement = WorkloadPlacement {
             workload_id: workload.id,
@@ -108,6 +117,7 @@ mod tests {
     #[tokio::test]
     async fn test_schedule_workload() {
         let scheduler = WorkloadScheduler::new(SchedulingPolicy::LeastLoaded);
+        assert_eq!(scheduler.policy(), &SchedulingPolicy::LeastLoaded);
         let workload = EdgeWorkload::new("app-1".to_string(), 2.0, 4.0);
         let node_id = Uuid::new_v4();
 

@@ -44,7 +44,18 @@ impl QTable {
     }
 
     pub fn get(&self, state: usize, action: usize) -> f64 {
+        debug_assert!(
+            state < self.num_states,
+            "state {} out of bounds (num_states={})",
+            state,
+            self.num_states
+        );
         *self.table.get(&(state, action)).unwrap_or(&0.0)
+    }
+
+    /// Number of distinct states this table was sized for.
+    pub fn num_states(&self) -> usize {
+        self.num_states
     }
 
     pub fn set(&mut self, state: usize, action: usize, value: f64) {
@@ -181,7 +192,7 @@ mod tests {
     #[test]
     fn test_q_table_creation() {
         let q_table = QTable::new(5, 3);
-        assert_eq!(q_table.num_states, 5);
+        assert_eq!(q_table.num_states(), 5);
         assert_eq!(q_table.num_actions, 3);
         assert_eq!(q_table.get(0, 0), 0.0);
     }

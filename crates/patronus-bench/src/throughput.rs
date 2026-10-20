@@ -70,7 +70,7 @@ impl ThroughputBench {
 
                 // Simulate packet processing (in real impl, would be actual network I/O)
                 // Assume ~1% packet loss for demonstration
-                if packets_sent % 100 != 0 {
+                if !packets_sent.is_multiple_of(100) {
                     packets_received += 1;
                 }
             }
@@ -110,6 +110,9 @@ impl ThroughputBench {
 }
 
 /// Benchmark throughput with different packet sizes
+// Not yet wired into the CLI subcommand dispatch; retained as a reusable
+// benchmark utility for future multi-size throughput sweeps.
+#[allow(dead_code)]
 pub async fn benchmark_packet_sizes(duration_secs: u64) -> Result<Vec<ThroughputResult>> {
     let packet_sizes = vec![64, 128, 256, 512, 1024, 1500, 9000]; // Including jumbo frames
     let mut results = Vec::new();

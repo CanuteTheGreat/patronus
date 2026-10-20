@@ -33,6 +33,9 @@ impl ResourceResult {
 
 pub struct ResourceBench {
     duration_secs: u64,
+    // Not yet consumed: run() is currently a stub returning fixed sample
+    // intervals rather than actually sampling every `interval_secs`.
+    #[allow(dead_code)]
     interval_secs: u64,
 }
 

@@ -75,7 +75,7 @@ impl PathStatus {
     }
 
     /// Parse status from string
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s {
             "up" => Some(PathStatus::Up),
             "degraded" => Some(PathStatus::Degraded),
@@ -205,10 +205,10 @@ mod tests {
         assert_eq!(PathStatus::Degraded.as_str(), "degraded");
         assert_eq!(PathStatus::Down.as_str(), "down");
 
-        assert_eq!(PathStatus::from_str("up"), Some(PathStatus::Up));
-        assert_eq!(PathStatus::from_str("degraded"), Some(PathStatus::Degraded));
-        assert_eq!(PathStatus::from_str("down"), Some(PathStatus::Down));
-        assert_eq!(PathStatus::from_str("invalid"), None);
+        assert_eq!(PathStatus::parse_str("up"), Some(PathStatus::Up));
+        assert_eq!(PathStatus::parse_str("degraded"), Some(PathStatus::Degraded));
+        assert_eq!(PathStatus::parse_str("down"), Some(PathStatus::Down));
+        assert_eq!(PathStatus::parse_str("invalid"), None);
     }
 
     #[test]

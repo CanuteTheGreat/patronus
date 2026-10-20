@@ -88,7 +88,7 @@ impl TimeSeriesForecaster {
         };
 
         let future_timestamps: Vec<DateTime<Utc>> = (1..=periods)
-            .map(|i| timestamps.last().unwrap().clone() + interval * i as i32)
+            .map(|i| *timestamps.last().unwrap() + interval * i as i32)
             .collect();
 
         ForecastResult {
@@ -136,7 +136,7 @@ impl TimeSeriesForecaster {
         };
 
         let future_timestamps: Vec<DateTime<Utc>> = (1..=periods)
-            .map(|i| timestamps.last().unwrap().clone() + interval * i as i32)
+            .map(|i| *timestamps.last().unwrap() + interval * i as i32)
             .collect();
 
         ForecastResult {
@@ -178,7 +178,7 @@ impl TimeSeriesForecaster {
         };
 
         let future_timestamps: Vec<DateTime<Utc>> = (1..=periods)
-            .map(|i| timestamps.last().unwrap().clone() + interval * i as i32)
+            .map(|i| *timestamps.last().unwrap() + interval * i as i32)
             .collect();
 
         ForecastResult {

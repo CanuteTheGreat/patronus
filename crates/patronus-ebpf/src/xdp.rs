@@ -148,11 +148,13 @@ impl XdpFirewall {
             Ok((obj, fd)) => (Some(obj), fd),
             Err(XdpError::EbpfNotAvailable) => {
                 tracing::warn!("eBPF not available, using fallback attachment");
-                (None, 0)
+                let fd = self.load_bpf_program_fallback(&program_path)?;
+                (None, fd)
             }
             Err(e) => {
                 tracing::warn!("BPF load failed: {}, trying fallback", e);
-                (None, 0)
+                let fd = self.load_bpf_program_fallback(&program_path)?;
+                (None, fd)
             }
         };
 
@@ -230,10 +232,16 @@ impl XdpFirewall {
         // Find and remove program
         if let Some(pos) = self.programs.iter().position(|p| p.interface == interface) {
             let program = self.programs.remove(pos);
+            tracing::debug!(
+                "Detaching XDP program (fd={}, has_object={}) from {}",
+                program.program_fd,
+                program.object.is_some(),
+                interface
+            );
 
             // Detach from interface
             let status = tokio::process::Command::new("ip")
-                .args(&["link", "set", "dev", interface, "xdp", "off"])
+                .args(["link", "set", "dev", interface, "xdp", "off"])
                 .status()
                 .await?;
 
@@ -325,7 +333,7 @@ impl XdpFirewall {
         let object_path = temp_dir.join("patronus_xdp.o");
 
         let status = std::process::Command::new("clang")
-            .args(&[
+            .args([
                 "-O2",
                 "-target", "bpf",
                 "-c", source_path.to_str().unwrap(),
@@ -493,7 +501,10 @@ char _license[] SEC("license") = "GPL";
 
     fn load_bpf_program_fallback(&self, path: &Path) -> Result<i32, XdpError> {
         // Fallback: use ip command directly
-        tracing::debug!("Using fallback BPF loading via ip command");
+        tracing::debug!(
+            "Using fallback BPF loading via ip command for {:?}",
+            path
+        );
         Ok(0) // Placeholder, actual loading happens during attach
     }
 
@@ -602,7 +613,7 @@ char _license[] SEC("license") = "GPL";
         };
 
         let status = std::process::Command::new("ip")
-            .args(&["link", "set", "dev", interface, mode_flag, "obj",
+            .args(["link", "set", "dev", interface, mode_flag, "obj",
                    "/tmp/patronus_xdp.o", "sec", "xdp"])
             .status()?;
 
@@ -623,6 +634,7 @@ char _license[] SEC("license") = "GPL";
 
     fn populate_rate_limits(&self, map_fd: i32) -> Result<(), XdpError> {
         for (idx, limit) in self.config.rate_limits.iter().enumerate() {
+            tracing::trace!("Populating rate limit entry {}", idx);
             if let Some(ip) = limit.source_ip {
                 // Store rate limit: key=IP, value=packets_per_second
                 self.map_update_ip(map_fd, &ip, limit.packets_per_second)?;

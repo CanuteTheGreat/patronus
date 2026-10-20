@@ -40,11 +40,11 @@ impl QueryRoot {
                     created_at: DateTime::from_timestamp(
                         site.created_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
                         0
-                    ).unwrap_or_else(|| Utc::now()),
+                    ).unwrap_or_else(Utc::now),
                     updated_at: DateTime::from_timestamp(
                         site.last_seen.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
                         0
-                    ).unwrap_or_else(|| Utc::now()),
+                    ).unwrap_or_else(Utc::now),
                 }))
             }
             Ok(None) => Ok(None),
@@ -81,11 +81,11 @@ impl QueryRoot {
                         created_at: DateTime::from_timestamp(
                             site.created_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
                             0
-                        ).unwrap_or_else(|| Utc::now()),
+                        ).unwrap_or_else(Utc::now),
                         updated_at: DateTime::from_timestamp(
                             site.last_seen.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
                             0
-                        ).unwrap_or_else(|| Utc::now()),
+                        ).unwrap_or_else(Utc::now),
                     }
                 }).collect();
 
@@ -139,8 +139,8 @@ impl QueryRoot {
                         DateTime::from_timestamp(
                             m.measured_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
                             0
-                        ).unwrap_or_else(|| Utc::now())
-                    }).unwrap_or_else(|| Utc::now()),
+                        ).unwrap_or_else(Utc::now)
+                    }).unwrap_or_else(Utc::now),
                 }))
             }
             Err(e) => {
@@ -190,8 +190,8 @@ impl QueryRoot {
                             DateTime::from_timestamp(
                                 m.measured_at.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
                                 0
-                            ).unwrap_or_else(|| Utc::now())
-                        }).unwrap_or_else(|| Utc::now()),
+                            ).unwrap_or_else(Utc::now)
+                        }).unwrap_or_else(Utc::now),
                     });
                 }
 
@@ -282,7 +282,7 @@ impl QueryRoot {
             timestamp: DateTime::from_timestamp(
                 metrics.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
                 0
-            ).unwrap_or_else(|| Utc::now()),
+            ).unwrap_or_else(Utc::now),
             throughput_mbps: metrics.throughput_mbps,
             packets_per_second: metrics.packets_per_second as i64,
             active_flows: metrics.active_flows as i64,
@@ -315,7 +315,7 @@ impl QueryRoot {
                         timestamp: DateTime::from_timestamp(
                             m.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
                             0
-                        ).unwrap_or_else(|| Utc::now()),
+                        ).unwrap_or_else(Utc::now),
                         throughput_mbps: m.throughput_mbps,
                         packets_per_second: m.packets_per_second as i64,
                         active_flows: m.active_flows as i64,
@@ -396,6 +396,9 @@ impl QueryRoot {
     }
 
     /// Get audit logs with optional filters (admin only) - Sprint 25
+    // GraphQL resolver arguments are dictated by the schema's field arguments;
+    // bundling them into a struct would change the public GraphQL API.
+    #[allow(clippy::too_many_arguments)]
     async fn audit_logs(
         &self,
         ctx: &Context<'_>,

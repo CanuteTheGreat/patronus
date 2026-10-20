@@ -337,7 +337,6 @@ struct TcProgram {
 ///     return TC_ACT_OK;
 /// }
 /// ```
-
 #[cfg(test)]
 mod tests {
     use super::*;

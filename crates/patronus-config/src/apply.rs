@@ -14,7 +14,7 @@
 use patronus_core::{Result, Error};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 
 use crate::declarative::{DeclarativeConfig, ResourceKind, ConfigParser};
@@ -163,7 +163,7 @@ impl StateManager {
         }
 
         // Sort by timestamp (newest first)
-        self.snapshots.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        self.snapshots.sort_by_key(|s| std::cmp::Reverse(s.timestamp));
 
         tracing::info!("Loaded {} snapshots", self.snapshots.len());
 
@@ -350,7 +350,7 @@ impl ApplyEngine {
         old_yaml != new_yaml
     }
 
-    fn get_dependencies(&self, config: &DeclarativeConfig) -> Vec<String> {
+    fn get_dependencies(&self, _config: &DeclarativeConfig) -> Vec<String> {
         // Extract dependency names from config
         // For example, firewall rules might depend on aliases or interfaces
         // This is simplified - real implementation would parse spec

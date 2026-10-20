@@ -28,6 +28,9 @@ impl ConnectionRateResult {
 
 pub struct ConnectionRateBench {
     duration_secs: u64,
+    // Not yet consumed: run() is currently a stub that returns fixed results
+    // rather than actually running `workers` connections for `duration_secs`.
+    #[allow(dead_code)]
     workers: usize,
 }
 

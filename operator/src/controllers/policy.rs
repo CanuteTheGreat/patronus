@@ -60,7 +60,10 @@ pub async fn reconcile(policy: Arc<Policy>, ctx: Arc<Context>) -> Result<Action,
     // Validate spec
     if let Err(e) = validate_policy_spec(&policy.spec) {
         warn!("Invalid policy specification: {}", e);
-        return Ok(Action::requeue(Duration::from_secs(300)));
+        // Reflect the validation failure in status instead of silently
+        // requeuing as if the policy were still active.
+        update_policy_status(&policies, &policy_name, false).await?;
+        return Err(PolicyError::InvalidSpec(e));
     }
 
     // Create or update policy in Patronus
@@ -84,7 +87,7 @@ async fn handle_deletion(policy: &Policy, ctx: &Context) -> Result<Action, Polic
 
     // Call Patronus API to delete policy
     let response = ctx.http_client
-        .delete(&format!("{}/api/v1/policies/{}", ctx.patronus_api_url, policy_name))
+        .delete(format!("{}/api/v1/policies/{}", ctx.patronus_api_url, policy_name))
         .send()
         .await
         .map_err(|e| PolicyError::PatronusApiError(format!("HTTP request failed: {}", e)))?;
@@ -115,13 +118,13 @@ async fn create_or_update_patronus_policy(
 
     // Build Patronus API request
     let request_body = serde_json::to_value(&policy.spec)
-        .map_err(|e| PolicyError::SerializationError(e))?;
+        .map_err(PolicyError::SerializationError)?;
 
     debug!("Creating/updating policy in Patronus: {}", request_body);
 
     // Call Patronus API
     let response = ctx.http_client
-        .put(&format!("{}/api/v1/policies/{}", ctx.patronus_api_url, policy_name))
+        .put(format!("{}/api/v1/policies/{}", ctx.patronus_api_url, policy_name))
         .json(&request_body)
         .send()
         .await
@@ -156,6 +159,11 @@ async fn update_policy_status(
     policies
         .patch_status(name, &PatchParams::default(), &Patch::Merge(&status))
         .await?;
+
+    // Reflect the resulting activity state in the "active resources" gauge
+    // so operators can see how many Policy resources are active vs failed.
+    let phase_label = if active { "Active" } else { "Failed" };
+    crate::metrics::Metrics::global().set_resource_count("Policy", phase_label, 1);
 
     Ok(())
 }

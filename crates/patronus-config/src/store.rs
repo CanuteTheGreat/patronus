@@ -1,10 +1,8 @@
 //! Configuration storage backend
 
-use patronus_core::{Error, Result, types::{FirewallRule, NatRule, ChainType, FirewallAction, Protocol, PortSpec, NatType}};
-use serde::{Deserialize, Serialize};
+use patronus_core::{Error, Result, types::{FirewallRule, NatRule, ChainType, FirewallAction, Protocol, NatType}};
 use sqlx::{sqlite::SqlitePool, Row};
-use std::path::{Path, PathBuf};
-use std::net::IpAddr;
+use std::path::PathBuf;
 
 /// Configuration store
 pub struct ConfigStore {

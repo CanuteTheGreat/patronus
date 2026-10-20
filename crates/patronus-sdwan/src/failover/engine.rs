@@ -12,6 +12,9 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::{interval, Duration};
 
+/// BFD health-change event: (path identifier, new path health)
+type BfdHealthEvent = (PathId, PathHealth);
+
 /// Failover engine that monitors health and executes failovers
 pub struct FailoverEngine {
     /// Database for persistence
@@ -33,7 +36,9 @@ pub struct FailoverEngine {
     eval_interval_secs: u64,
 
     /// Channel for receiving BFD state changes
-    bfd_state_rx: Arc<RwLock<Option<mpsc::Receiver<(PathId, PathHealth)>>>>,
+    /// Reserved for a future consumer task that drains BFD health-change events.
+    #[allow(dead_code)]
+    bfd_state_rx: Arc<RwLock<Option<mpsc::Receiver<BfdHealthEvent>>>>,
 }
 
 impl FailoverEngine {
@@ -528,7 +533,7 @@ mod tests {
     async fn test_invalid_policy() {
         let (engine, _) = create_test_engine().await;
 
-        let mut policy = FailoverPolicy::new(
+        let policy = FailoverPolicy::new(
             1,
             "".to_string(), // Invalid: empty name
             PathId::new(10),

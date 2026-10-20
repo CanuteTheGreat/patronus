@@ -77,6 +77,9 @@ impl LeaderElection {
     }
 
     /// Become a candidate and start election
+    // TODO: not yet triggered anywhere (election timeout / heartbeat-loss detection
+    // is not wired up); retained as the entry point for that future logic.
+    #[allow(dead_code)]
     async fn become_candidate(&self) {
         info!("Node {} becoming candidate", self.node_id);
         self.update_role(NodeRole::Candidate).await;

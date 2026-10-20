@@ -24,6 +24,9 @@ impl NatResult {
 
 pub struct NatBench {
     sessions: usize,
+    // Not yet consumed: run() is currently a stub returning fixed results
+    // rather than actually running for `duration_secs`.
+    #[allow(dead_code)]
     duration_secs: u64,
 }
 

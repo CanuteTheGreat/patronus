@@ -52,19 +52,17 @@ impl PolicyEngine {
         let mut reason = "No matching policies".to_string();
 
         for policy in self.policies.values() {
-            for rule in &policy.rules {
+            if let Some(rule) = policy.rules.first() {
                 match rule.effect {
                     Effect::Allow => {
                         allowed = true;
                         matched_policies.push(policy.id.clone());
                         reason = format!("Allowed by policy: {}", policy.name);
-                        break;
                     }
                     Effect::Deny => {
                         allowed = false;
                         matched_policies.push(policy.id.clone());
                         reason = format!("Denied by policy: {}", policy.name);
-                        break;
                     }
                 }
             }

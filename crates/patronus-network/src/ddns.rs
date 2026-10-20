@@ -141,7 +141,7 @@ impl DdnsManager {
 
     async fn get_interface_ip(&self, interface: &str) -> Result<IpAddr> {
         let output = Command::new("ip")
-            .args(&["-4", "addr", "show", interface])
+            .args(["-4", "addr", "show", interface])
             .output()
             .await?;
 
@@ -170,7 +170,7 @@ impl DdnsManager {
             .unwrap_or("https://api.ipify.org");
 
         let output = Command::new("curl")
-            .args(&["-s", "-4", check_url])
+            .args(["-s", "-4", check_url])
             .output()
             .await?;
 
@@ -253,7 +253,7 @@ impl DdnsManager {
         );
 
         let output = Command::new("curl")
-            .args(&[
+            .args([
                 "-s",
                 "-u", &format!("{}:{}", username, password),
                 &url
@@ -292,7 +292,7 @@ impl DdnsManager {
         );
 
         let output = Command::new("curl")
-            .args(&["-s", &url])
+            .args(["-s", &url])
             .output()
             .await?;
 
@@ -314,7 +314,7 @@ impl DdnsManager {
         );
 
         let output = Command::new("curl")
-            .args(&[
+            .args([
                 "-s",
                 "-u", &format!("{}:{}", username, password),
                 &url
@@ -340,7 +340,7 @@ impl DdnsManager {
         );
 
         let output = Command::new("curl")
-            .args(&[
+            .args([
                 "-s",
                 "-u", &format!("{}:{}", username, password),
                 &url
@@ -366,7 +366,7 @@ impl DdnsManager {
         );
 
         let output = Command::new("curl")
-            .args(&["-s", &url])
+            .args(["-s", &url])
             .output()
             .await?;
 
@@ -391,7 +391,7 @@ impl DdnsManager {
         );
 
         let output = Command::new("curl")
-            .args(&["-s", &url])
+            .args(["-s", &url])
             .output()
             .await?;
 

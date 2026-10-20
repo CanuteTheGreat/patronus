@@ -315,6 +315,12 @@ pub struct UpdateMessage {
     pub nlri: Vec<IpPrefix>,
 }
 
+impl Default for UpdateMessage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UpdateMessage {
     /// Create a new UPDATE message
     pub fn new() -> Self {
@@ -416,7 +422,7 @@ pub struct IpPrefix {
 
 impl IpPrefix {
     fn encoded_len(&self) -> usize {
-        1 + ((self.prefix_len as usize + 7) / 8)
+        1 + (self.prefix_len as usize).div_ceil(8)
     }
 
     fn encode(&self, buf: &mut BytesMut) {
@@ -430,7 +436,7 @@ impl IpPrefix {
         }
 
         let prefix_len = buf.get_u8();
-        let prefix_bytes = (prefix_len as usize + 7) / 8;
+        let prefix_bytes = (prefix_len as usize).div_ceil(8);
 
         if buf.remaining() < prefix_bytes {
             return Err(BgpError::ParseError("Insufficient data for prefix".into()));
@@ -551,7 +557,7 @@ mod tests {
 
     #[test]
     fn test_keepalive_encode_decode() {
-        let keepalive = KeepaliveMessage;
+        let _keepalive = KeepaliveMessage;
         let bytes = KeepaliveMessage::encode();
 
         assert_eq!(bytes.len(), MessageHeader::MIN_SIZE);
@@ -565,7 +571,7 @@ mod tests {
         let open = OpenMessage::new(65000, 180, 0x01010101);
         let bytes = open.encode();
 
-        let mut buf = Bytes::from(bytes.clone());
+        let mut buf = bytes.clone();
         let _header = MessageHeader::decode(&mut buf).unwrap();
         let decoded = OpenMessage::decode(&mut buf).unwrap();
 
@@ -580,7 +586,7 @@ mod tests {
         let notif = NotificationMessage::new(6, 1); // Cease
         let bytes = notif.encode();
 
-        let mut buf = Bytes::from(bytes.clone());
+        let mut buf = bytes.clone();
         let _header = MessageHeader::decode(&mut buf).unwrap();
         let decoded = NotificationMessage::decode(&mut buf).unwrap();
 

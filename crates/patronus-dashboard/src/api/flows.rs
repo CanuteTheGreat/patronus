@@ -82,7 +82,7 @@ impl From<patronus_sdwan::FlowRecord> for FlowResponse {
                 .as_secs() as i64,
             0,
         )
-        .unwrap_or_else(|| Utc::now());
+        .unwrap_or_else(Utc::now);
 
         let last_seen_at = DateTime::from_timestamp(
             flow.last_seen_at
@@ -91,7 +91,7 @@ impl From<patronus_sdwan::FlowRecord> for FlowResponse {
                 .as_secs() as i64,
             0,
         )
-        .unwrap_or_else(|| Utc::now());
+        .unwrap_or_else(Utc::now);
 
         let duration_secs = (last_seen_at - started_at).num_seconds().max(1);
         let total_bytes = flow.bytes_tx + flow.bytes_rx;

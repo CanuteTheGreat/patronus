@@ -167,7 +167,7 @@ impl PrometheusExporter {
 mod tests {
     use super::*;
     use crate::database::Database;
-    use crate::health::{HealthConfig, PathHealth};
+    use crate::health::HealthConfig;
     use crate::types::PathId;
     use crate::failover::FailoverPolicy;
     use std::net::IpAddr;

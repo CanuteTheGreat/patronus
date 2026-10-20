@@ -489,7 +489,7 @@ Channel={}
         match self.backend {
             WirelessBackend::Hostapd => {
                 let status = Command::new("hostapd")
-                    .args(&["-B", "/etc/hostapd/hostapd.conf"])
+                    .args(["-B", "/etc/hostapd/hostapd.conf"])
                     .status()
                     .await?;
 
@@ -499,7 +499,7 @@ Channel={}
             }
             WirelessBackend::Iwd => {
                 let status = Command::new("iwctl")
-                    .args(&["ap", &self.config.interface, "start", &self.config.ssid])
+                    .args(["ap", &self.config.interface, "start", &self.config.ssid])
                     .status()
                     .await?;
 
@@ -523,7 +523,7 @@ Channel={}
             }
             WirelessBackend::Iwd => {
                 Command::new("iwctl")
-                    .args(&["ap", &self.config.interface, "stop"])
+                    .args(["ap", &self.config.interface, "stop"])
                     .status()
                     .await?;
             }
@@ -543,7 +543,7 @@ Channel={}
     async fn get_hostapd_clients(&self) -> Result<Vec<WirelessClient>> {
         // Query hostapd_cli for station list
         let output = Command::new("hostapd_cli")
-            .args(&["-i", &self.config.interface, "all_sta"])
+            .args(["-i", &self.config.interface, "all_sta"])
             .output()
             .await?;
 
@@ -577,7 +577,7 @@ Channel={}
     async fn get_iwd_clients(&self) -> Result<Vec<WirelessClient>> {
         // Query iwd for connected stations
         let output = Command::new("iwctl")
-            .args(&["ap", &self.config.interface, "show"])
+            .args(["ap", &self.config.interface, "show"])
             .output()
             .await?;
 
@@ -593,7 +593,7 @@ Channel={}
     /// Get wireless statistics
     pub async fn get_stats(&self) -> Result<WirelessStats> {
         let output = Command::new("iw")
-            .args(&["dev", &self.config.interface, "info"])
+            .args(["dev", &self.config.interface, "info"])
             .output()
             .await?;
 
@@ -617,7 +617,7 @@ Channel={}
     /// Scan for available channels (site survey)
     pub async fn scan_channels(&self) -> Result<Vec<ChannelInfo>> {
         let output = Command::new("iw")
-            .args(&["dev", &self.config.interface, "scan"])
+            .args(["dev", &self.config.interface, "scan"])
             .output()
             .await?;
 

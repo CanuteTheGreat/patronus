@@ -14,6 +14,9 @@ pub struct MtlsConfig {
 }
 
 pub struct MtlsManager {
+    // Retained for future cert-rotation scheduling and re-verification against
+    // config.verify_client; not yet read.
+    #[allow(dead_code)]
     config: MtlsConfig,
 }
 

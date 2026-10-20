@@ -273,7 +273,7 @@ impl MultiWanManager {
     /// Ping check
     async fn ping_check(&self, target: &str, timeout: u32) -> Result<(bool, Option<f64>)> {
         let output = Command::new("ping")
-            .args(&["-c", "1", "-W", &timeout.to_string(), target])
+            .args(["-c", "1", "-W", &timeout.to_string(), target])
             .output()
             .map_err(|e| Error::Network(format!("Ping failed: {}", e)))?;
 
@@ -438,7 +438,7 @@ impl MultiWanManager {
 
         // Add multipath default route
         Command::new("ip")
-            .args(&["route", "replace", "default"])
+            .args(["route", "replace", "default"])
             .arg(&nexthops.trim())
             .output()
             .map_err(|e| Error::Network(format!("Failed to configure routing: {}", e)))?;
@@ -455,7 +455,7 @@ impl MultiWanManager {
         }
 
         Command::new("ip")
-            .args(&["route", "replace", "default"])
+            .args(["route", "replace", "default"])
             .arg(&nexthops.trim())
             .output()
             .map_err(|e| Error::Network(format!("Failed to configure routing: {}", e)))?;
@@ -477,9 +477,9 @@ impl MultiWanManager {
             .min_by_key(|gw| gw.priority) {
 
             Command::new("ip")
-                .args(&["route", "replace", "default", "via"])
+                .args(["route", "replace", "default", "via"])
                 .arg(primary.gateway_ip.to_string())
-                .args(&["dev", &primary.interface])
+                .args(["dev", &primary.interface])
                 .output()
                 .map_err(|e| Error::Network(format!("Failed to configure routing: {}", e)))?;
         }
@@ -536,9 +536,9 @@ impl MultiWanManager {
             // (simplified - would configure based on group algorithm)
             if let Some(gw) = online_gateways.first() {
                 Command::new("ip")
-                    .args(&["route", "replace", "default", "via"])
+                    .args(["route", "replace", "default", "via"])
                     .arg(gw.gateway_ip.to_string())
-                    .args(&["dev", &gw.interface, "table", &table_id.to_string()])
+                    .args(["dev", &gw.interface, "table", &table_id.to_string()])
                     .output()
                     .map_err(|e| Error::Network(format!("Failed to add route: {}", e)))?;
             }

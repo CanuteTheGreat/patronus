@@ -174,8 +174,8 @@ impl JsonExporter {
     pub async fn get_health_snapshot(&self) -> HealthSnapshot {
         let health_map = self.health_monitor.get_all_health().await;
         let paths: Vec<PathHealthJson> = health_map
-            .into_iter()
-            .map(|(_, health)| health.into())
+            .into_values()
+            .map(|health| health.into())
             .collect();
 
         HealthSnapshot {
@@ -285,7 +285,7 @@ impl JsonExporter {
 
             use crate::failover::FailoverEventType;
 
-            if let Some(event_type_enum) = FailoverEventType::from_str(&event_type) {
+            if let Some(event_type_enum) = FailoverEventType::parse_str(&event_type) {
                 events.push(FailoverEvent {
                     event_id: None,
                     policy_id: policy_id as u64,

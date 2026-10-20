@@ -65,6 +65,12 @@ pub struct UserStore {
     next_id: Arc<RwLock<u32>>,
 }
 
+impl Default for UserStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UserStore {
     pub fn new() -> Self {
         let mut users = HashMap::new();
@@ -222,6 +228,12 @@ pub struct UserInfo {
 #[derive(Clone)]
 pub struct SessionStore {
     sessions: Arc<RwLock<HashMap<String, Session>>>,
+}
+
+impl Default for SessionStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SessionStore {
@@ -395,6 +407,12 @@ pub struct LoginResponse {
 pub struct AuthState {
     pub user_store: UserStore,
     pub session_store: SessionStore,
+}
+
+impl Default for AuthState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AuthState {

@@ -68,7 +68,7 @@ impl TrafficOptimizer {
             })
             .collect();
 
-        prioritized_pairs.sort_by(|a, b| b.2.cmp(&a.2));
+        prioritized_pairs.sort_by_key(|&(_, _, priority, _)| std::cmp::Reverse(priority));
 
         // Allocate flows based on priority
         for (source, destination, priority, bandwidth) in prioritized_pairs {

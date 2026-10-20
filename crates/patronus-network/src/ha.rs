@@ -438,7 +438,7 @@ impl HaManager {
         match self.backend {
             HaBackend::Keepalived => {
                 Command::new("systemctl")
-                    .args(&["start", "keepalived"])
+                    .args(["start", "keepalived"])
                     .output()
                     .map_err(|e| Error::Network(format!("Failed to start keepalived: {}", e)))?;
             }
@@ -459,7 +459,7 @@ impl HaManager {
         match self.backend {
             HaBackend::Keepalived => {
                 Command::new("systemctl")
-                    .args(&["stop", "keepalived"])
+                    .args(["stop", "keepalived"])
                     .output()
                     .ok();
             }
@@ -482,7 +482,7 @@ impl HaManager {
             HaBackend::Keepalived => {
                 // Parse keepalived status
                 let output = Command::new("systemctl")
-                    .args(&["status", "keepalived"])
+                    .args(["status", "keepalived"])
                     .output()
                     .ok();
 
@@ -513,7 +513,7 @@ impl HaManager {
 
         // Use rsync to sync configuration to peer
         Command::new("rsync")
-            .args(&[
+            .args([
                 "-avz",
                 "--delete",
                 cluster.config_sync_path.to_str().unwrap(),
@@ -535,7 +535,7 @@ impl HaManager {
             HaBackend::Keepalived => {
                 // Reload keepalived with lower priority
                 Command::new("systemctl")
-                    .args(&["reload", "keepalived"])
+                    .args(["reload", "keepalived"])
                     .output()
                     .map_err(|e| Error::Network(format!("Failed to trigger failover: {}", e)))?;
             }

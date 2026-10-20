@@ -131,7 +131,7 @@ impl OpenVpnExporter {
 
         // Generate client key
         Command::new("openssl")
-            .args(&[
+            .args([
                 "genrsa",
                 "-out", key_path.to_str().unwrap(),
                 "2048"
@@ -142,7 +142,7 @@ impl OpenVpnExporter {
         // Generate certificate signing request
         let csr_path = cert_dir.join(format!("{}.csr", username));
         Command::new("openssl")
-            .args(&[
+            .args([
                 "req",
                 "-new",
                 "-key", key_path.to_str().unwrap(),
@@ -154,7 +154,7 @@ impl OpenVpnExporter {
 
         // Sign certificate with CA
         Command::new("openssl")
-            .args(&[
+            .args([
                 "x509",
                 "-req",
                 "-in", csr_path.to_str().unwrap(),
@@ -316,7 +316,7 @@ impl OpenVpnExporter {
 
         // Revoke with OpenSSL
         Command::new("openssl")
-            .args(&[
+            .args([
                 "ca",
                 "-revoke", cert_path.to_str().unwrap(),
                 "-config", "/etc/openvpn/ca/openssl.cnf"
@@ -333,7 +333,7 @@ impl OpenVpnExporter {
     async fn update_crl(&self) -> Result<()> {
         // Generate Certificate Revocation List
         Command::new("openssl")
-            .args(&[
+            .args([
                 "ca",
                 "-gencrl",
                 "-out", "/etc/openvpn/crl.pem",

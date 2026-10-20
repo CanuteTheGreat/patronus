@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::SystemTime;
 use tokio::process::Command;
-use tokio::io::AsyncBufReadExt;
 
 /// Ping result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,7 +204,7 @@ impl DiagnosticTools {
             // Parse statistics line: "5 packets transmitted, 5 received, 0% packet loss"
             if line.contains("packets transmitted") {
                 let parts: Vec<&str> = line.split(',').collect();
-                if let Some(sent_part) = parts.get(0) {
+                if let Some(sent_part) = parts.first() {
                     packets_sent = sent_part.split_whitespace()
                         .next()
                         .and_then(|s| s.parse().ok())
@@ -290,7 +289,7 @@ impl DiagnosticTools {
             // Parse line like: " 1  router.local (192.168.1.1)  0.123 ms  0.456 ms  0.789 ms"
             let parts: Vec<&str> = line.split_whitespace().collect();
 
-            if let Some(hop_num_str) = parts.get(0) {
+            if let Some(hop_num_str) = parts.first() {
                 if let Ok(hop_num) = hop_num_str.parse::<u32>() {
                     let mut hop = TracerouteHop {
                         hop_number: hop_num,
@@ -460,7 +459,7 @@ impl DiagnosticTools {
     /// Get NDP (IPv6 neighbor discovery) table
     pub async fn get_ndp_table() -> Result<Vec<NdpEntry>> {
         let output = Command::new("ip")
-            .args(&["-6", "neigh", "show"])
+            .args(["-6", "neigh", "show"])
             .output()
             .await?;
 
@@ -499,7 +498,7 @@ impl DiagnosticTools {
             cmd.arg("-6");
         }
 
-        cmd.args(&["route", "show"]);
+        cmd.args(["route", "show"]);
 
         let output = cmd.output().await?;
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -542,13 +541,9 @@ impl DiagnosticTools {
                             i += 1;
                         }
                     }
-                    "metric" => {
-                        if i + 1 < parts.len() {
-                            metric = parts[i + 1].parse().ok();
-                            i += 2;
-                        } else {
-                            i += 1;
-                        }
+                    "metric" if i + 1 < parts.len() => {
+                        metric = parts[i + 1].parse().ok();
+                        i += 2;
                     }
                     _ => {
                         i += 1;
@@ -571,7 +566,7 @@ impl DiagnosticTools {
     /// Get active sockets
     pub async fn get_sockets(protocol: Option<&str>) -> Result<Vec<SocketEntry>> {
         let mut cmd = Command::new("ss");
-        cmd.args(&["-tunap"]);  // TCP, UDP, numeric, all, processes
+        cmd.args(["-tunap"]);  // TCP, UDP, numeric, all, processes
 
         if let Some(proto) = protocol {
             match proto.to_lowercase().as_str() {
@@ -639,7 +634,7 @@ impl DiagnosticTools {
     /// Get firewall states (conntrack)
     pub async fn get_firewall_states() -> Result<Vec<FirewallState>> {
         let output = Command::new("conntrack")
-            .args(&["-L"])
+            .args(["-L"])
             .output()
             .await?;
 
@@ -648,9 +643,9 @@ impl DiagnosticTools {
         Self::parse_firewall_states(&stdout)
     }
 
-    fn parse_firewall_states(output: &str) -> Result<Vec<FirewallState>> {
-        // Simplified conntrack parsing
-        // Real implementation would parse full conntrack output
+    // TODO: real implementation would parse full conntrack output;
+    // currently a stub that always returns no states.
+    fn parse_firewall_states(_output: &str) -> Result<Vec<FirewallState>> {
         Ok(Vec::new())
     }
 
@@ -660,7 +655,7 @@ impl DiagnosticTools {
         let loadavg = tokio::fs::read_to_string("/proc/loadavg").await?;
         let load_parts: Vec<&str> = loadavg.split_whitespace().collect();
         let load_average = (
-            load_parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0.0),
+            load_parts.first().and_then(|s| s.parse().ok()).unwrap_or(0.0),
             load_parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0.0),
             load_parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0),
         );
@@ -671,7 +666,7 @@ impl DiagnosticTools {
 
         // Get process list from ps
         let ps_output = Command::new("ps")
-            .args(&["aux", "--sort=-pcpu"])
+            .args(["aux", "--sort=-pcpu"])
             .output()
             .await?;
 

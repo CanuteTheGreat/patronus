@@ -74,18 +74,16 @@ impl RadiusAuthProvider {
 
 #[async_trait]
 impl AuthProvider for RadiusAuthProvider {
-    async fn authenticate(&self, credentials: &AuthCredentials) -> Result<AuthResult, AuthError> {
-        // Implement RADIUS authentication
-        // Would use radius crate in production
-        Ok(AuthResult {
-            success: true,
-            user_id: credentials.username.clone().unwrap_or_default(),
-            user_info: UserInfo {
-                name: credentials.username.clone(),
-                email: None,
-                groups: vec![],
-            },
-        })
+    async fn authenticate(&self, _credentials: &AuthCredentials) -> Result<AuthResult, AuthError> {
+        // TODO: this provider is not implemented yet (would use the `radius`
+        // crate to talk to `self.server`/`self.secret` with `self.timeout_secs`).
+        // Fail closed rather than fabricating a successful login.
+        tracing::warn!(
+            "RADIUS auth requested against {} but RadiusAuthProvider is a stub; denying",
+            self.server
+        );
+        let _ = (&self.secret, self.timeout_secs);
+        Err(AuthError::Unavailable)
     }
 
     fn name(&self) -> &str {
@@ -96,6 +94,12 @@ impl AuthProvider for RadiusAuthProvider {
 // Local username/password provider
 pub struct LocalAuthProvider {
     users: std::collections::HashMap<String, String>,  // username -> password hash
+}
+
+impl Default for LocalAuthProvider {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LocalAuthProvider {

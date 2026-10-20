@@ -72,12 +72,26 @@ impl IstioIntegration {
     }
 
     pub async fn create_destination_rule(&self, name: &str, host: &str, subsets: Vec<&str>) -> Result<()> {
-        tracing::info!("Creating DestinationRule {} for host {}", name, host);
+        tracing::info!(
+            "Creating DestinationRule {}/{} for host {} with subsets {:?}",
+            self.namespace,
+            name,
+            host,
+            subsets
+        );
+        // In production: use Kubernetes API to create CRD
         Ok(())
     }
 
     pub async fn create_gateway(&self, name: &str, selector: Vec<(&str, &str)>, servers: Vec<&str>) -> Result<()> {
-        tracing::info!("Creating Istio Gateway {}", name);
+        tracing::info!(
+            "Creating Istio Gateway {}/{} with selector {:?} and servers {:?}",
+            self.namespace,
+            name,
+            selector,
+            servers
+        );
+        // In production: use Kubernetes API to create CRD
         Ok(())
     }
 }

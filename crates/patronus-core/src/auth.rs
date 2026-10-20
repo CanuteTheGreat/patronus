@@ -263,7 +263,7 @@ impl AuthManager {
 
         // Use ldapsearch command (in production, would use ldap3 crate)
         let output = Command::new("ldapsearch")
-            .args(&[
+            .args([
                 "-H", &ldap_config.server,
                 "-D", &ldap_config.bind_dn,
                 "-w", &ldap_config.bind_password,
@@ -287,7 +287,7 @@ impl AuthManager {
 
         // Attempt bind with user credentials
         let bind_result = Command::new("ldapwhoami")
-            .args(&[
+            .args([
                 "-H", &ldap_config.server,
                 "-D", &user_dn,
                 "-w", password,
@@ -341,7 +341,7 @@ impl AuthManager {
         let search_filter = ldap_config.group_search_filter.replace("%s", user_dn);
 
         let output = Command::new("ldapsearch")
-            .args(&[
+            .args([
                 "-H", &ldap_config.server,
                 "-D", &ldap_config.bind_dn,
                 "-w", &ldap_config.bind_password,
@@ -373,7 +373,7 @@ impl AuthManager {
 
         // Use radtest command (in production, would use radius crate)
         let output = Command::new("radtest")
-            .args(&[
+            .args([
                 username,
                 password,
                 &radius_config.server.to_string(),
@@ -510,7 +510,7 @@ impl AuthManager {
             .ok_or_else(|| AuthError::ConfigError("LDAP not configured".to_string()))?;
 
         let output = Command::new("ldapwhoami")
-            .args(&[
+            .args([
                 "-H", &ldap_config.server,
                 "-D", &ldap_config.bind_dn,
                 "-w", &ldap_config.bind_password,
@@ -528,7 +528,7 @@ impl AuthManager {
 
         // Use radtest with test credentials
         let output = Command::new("radtest")
-            .args(&[
+            .args([
                 "test",
                 "test",
                 &radius_config.server.to_string(),

@@ -151,7 +151,7 @@ impl GeoDNSManager {
         }
 
         // Simple weighted selection (in production, use proper random selection)
-        let target = (total_weight / 2) as u32;
+        let target = total_weight / 2;
         let mut cumulative = 0;
 
         for endpoint in endpoints {
