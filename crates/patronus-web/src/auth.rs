@@ -720,17 +720,24 @@ impl SessionStore {
         session_id
     }
 
-    /// Get session by ID
+    /// Get session by ID. A session older than [`SESSION_LIFETIME_SECS`]
+    /// (counted from login, not from last use) is gone: it is removed and
+    /// `None` is returned, so a copied cookie value cannot be kept alive
+    /// forever by using it, and an expired session does not keep working
+    /// until the hourly [`Self::cleanup_expired`] sweep.
     pub async fn get_session(&self, session_id: &str) -> Option<Session> {
-        let mut sessions = self.sessions.write().await;
+        self.get_session_at(session_id, Utc::now()).await
+    }
 
-        if let Some(session) = sessions.get_mut(session_id) {
-            // Update last active time
-            session.last_active = Utc::now();
-            Some(session.clone())
-        } else {
-            None
+    async fn get_session_at(&self, session_id: &str, now: DateTime<Utc>) -> Option<Session> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions.get_mut(session_id)?;
+        if !session_alive(session, now) {
+            sessions.remove(session_id);
+            return None;
         }
+        session.last_active = now;
+        Some(session.clone())
     }
 
     /// Delete session (logout)
@@ -746,14 +753,22 @@ impl SessionStore {
             .retain(|id, s| s.user_id != user_id || Some(id.as_str()) == keep);
     }
 
-    /// Clean up expired sessions (older than 24 hours)
+    /// Remove sessions past [`SESSION_LIFETIME_SECS`].
     pub async fn cleanup_expired(&self) {
-        let cutoff = Utc::now() - Duration::hours(24);
+        let now = Utc::now();
         self.sessions
             .write()
             .await
-            .retain(|_, session| session.last_active > cutoff);
+            .retain(|_, session| session_alive(session, now));
     }
+}
+
+/// How long a web session lasts from login. The session cookie's
+/// `Max-Age` is the same, so the browser and the server agree.
+pub const SESSION_LIFETIME_SECS: i64 = 24 * 60 * 60;
+
+fn session_alive(s: &Session, now: DateTime<Utc>) -> bool {
+    s.created_at > now - Duration::seconds(SESSION_LIFETIME_SECS)
 }
 
 /// Authentication errors
@@ -1174,8 +1189,8 @@ pub async fn login(
 
     // Set secure cookie
     let cookie = format!(
-        "session_id={}; HttpOnly; SameSite=Strict; Max-Age=86400; Path=/",
-        session_id
+        "session_id={}; HttpOnly; SameSite=Strict; Max-Age={}; Path=/",
+        session_id, SESSION_LIFETIME_SECS
     );
 
     let response = Json(LoginResponse {
@@ -1719,6 +1734,44 @@ mod account_tests {
         assert!(ss.get_session(&c).await.is_some());
         ss.drop_user(2, None).await;
         assert!(ss.get_session(&c).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_session_ends_a_day_after_login_even_if_it_keeps_being_used() {
+        let ss = SessionStore::new();
+        let id = ss.create_session(1, "a".into(), UserRole::Admin).await;
+        let login = ss.sessions.read().await[&id].created_at;
+        let life = Duration::seconds(SESSION_LIFETIME_SECS);
+        // used every hour for most of a day: still valid
+        for h in 1..24 {
+            let at = login + Duration::hours(h);
+            assert!(ss.get_session_at(&id, at).await.is_some(), "hour {h}");
+        }
+        // one second before the lifetime: valid
+        let edge = login + life - Duration::seconds(1);
+        assert!(ss.get_session_at(&id, edge).await.is_some());
+        // at the lifetime: gone, although it was used a second ago,
+        // and it is removed from the table, not just refused
+        assert!(ss.get_session_at(&id, login + life).await.is_none());
+        assert!(!ss.sessions.read().await.contains_key(&id));
+        assert!(ss.get_session_at(&id, edge).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn the_sweep_removes_sessions_past_their_lifetime() {
+        let ss = SessionStore::new();
+        let old = ss.create_session(1, "a".into(), UserRole::Admin).await;
+        let new = ss.create_session(2, "b".into(), UserRole::ReadOnly).await;
+        {
+            let mut t = ss.sessions.write().await;
+            let s = t.get_mut(&old).unwrap();
+            s.created_at -= Duration::seconds(SESSION_LIFETIME_SECS + 1);
+            s.last_active = Utc::now(); // recent use does not save it
+        }
+        ss.cleanup_expired().await;
+        let t = ss.sessions.read().await;
+        assert!(!t.contains_key(&old));
+        assert!(t.contains_key(&new));
     }
 }
 
