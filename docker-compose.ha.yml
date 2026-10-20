@@ -2,10 +2,22 @@ version: '3.8'
 
 # High Availability Setup for Patronus Dashboard
 # This compose file sets up:
-# - 3 Dashboard instances with leader election
-# - HAProxy load balancer
-# - Shared distributed state (Sled)
-# - Database replication (SQLite with Litestream)
+# - 3 dashboard instances with majority-quorum leader election
+#   (crates/patronus-dashboard/src/ha/election.rs)
+# - Leader-only writes: followers forward /api/* to the leader, and the
+#   leader ships every change to the followers as an encrypted database
+#   snapshot, confirmed by a quorum before the API call returns
+#   (src/ha/gate.rs, src/ha/replication.rs). A failover therefore keeps all
+#   acknowledged data.
+# - HAProxy in front, routing only to the current leader (/ha/leader check)
+# - Litestream continuous backup of dashboard1's database (optional)
+#
+# Setup:
+#   echo "PATRONUS_JWT_SECRET=$(openssl rand -hex 32)" > .env
+#   ./generate-ha-certs.sh
+#   docker compose -f docker-compose.ha.yml up -d --build
+# The UI is built into the image (Dockerfile.dashboard); browse to
+# https://localhost/ and open "Cluster" to see the live leader/followers.
 
 services:
   # Dashboard Instance 1
@@ -29,7 +41,6 @@ services:
       - RUST_LOG=patronus_dashboard=info,tower_http=debug
     volumes:
       - dashboard1-data:/data
-      - ./static:/app/static:ro
     networks:
       - patronus-ha
     ports:
@@ -63,7 +74,6 @@ services:
       - RUST_LOG=patronus_dashboard=info,tower_http=debug
     volumes:
       - dashboard2-data:/data
-      - ./static:/app/static:ro
     networks:
       - patronus-ha
     ports:
@@ -97,7 +107,6 @@ services:
       - RUST_LOG=patronus_dashboard=info,tower_http=debug
     volumes:
       - dashboard3-data:/data
-      - ./static:/app/static:ro
     networks:
       - patronus-ha
     ports:

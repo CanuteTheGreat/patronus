@@ -29,9 +29,21 @@ fi
 
 mkdir -p "$CERTS_DIR"
 
+fix_pem_permissions() {
+    local pem="$1" gid="${HAPROXY_GID:-99}"
+    if [ "$(id -u)" -eq 0 ] && chgrp "$gid" "$pem" 2>/dev/null; then
+        chmod 640 "$pem"
+    else
+        chmod 644 "$pem"
+    fi
+}
+
 if [ -f "$CERTS_DIR/patronus.pem" ]; then
     echo "✅ $CERTS_DIR/patronus.pem already exists -- leaving it in place."
     echo "   Delete it first if you want to regenerate (e.g. CN changed)."
+    # Older versions of this script wrote it 0600 root-only, which haproxy
+    # (uid/gid 99) can't read; repair that in place.
+    fix_pem_permissions "$CERTS_DIR/patronus.pem"
     exit 0
 fi
 
@@ -46,7 +58,16 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 
 # HAProxy wants cert+key concatenated in a single PEM.
 cat "$CERTS_DIR/patronus.crt" "$CERTS_DIR/patronus.key" > "$CERTS_DIR/patronus.pem"
-chmod 600 "$CERTS_DIR/patronus.key" "$CERTS_DIR/patronus.pem"
+chmod 600 "$CERTS_DIR/patronus.key"
+
+# The haproxy container runs as the unprivileged `haproxy` user (uid/gid 99
+# in the official haproxy:*-alpine image) and reads the PEM through the
+# read-only bind mount. A root-owned 0600 PEM made haproxy crash-loop with
+# "cannot open the file '/etc/ssl/certs/patronus.pem'" on a fresh HA stack.
+# Give that group read access (0640, group 99) when we can chown -- i.e.
+# running as root -- otherwise the file belongs to the invoking user and
+# needs 0644 for uid 99 to read it.
+fix_pem_permissions "$CERTS_DIR/patronus.pem"
 
 echo ""
 echo "✅ Generated:"

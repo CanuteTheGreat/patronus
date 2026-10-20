@@ -11,7 +11,15 @@ services:
     ports:
       - "8443:8443"
     volumes:
-      - ./config:/etc/patronus
+      # Named volume, not a ./config bind mount: Docker creates a missing
+      # bind-mount source as root:root, and the container runs as the
+      # unprivileged `patronus` user (acct-user/patronus), so a fresh
+      # `docker compose up` crash-looped with "Permission denied" writing
+      # /etc/patronus/tls. A named volume is seeded from the image with the
+      # right ownership. To edit config from the host, use
+      # `docker compose cp` or bind-mount a directory you chown to the
+      # container's patronus uid (`docker compose run --rm patronus-web id -u`).
+      - patronus-config:/etc/patronus
       - patronus-data:/var/lib/patronus
       - patronus-logs:/var/log/patronus
     environment:
@@ -57,6 +65,7 @@ services:
       - prometheus
 
 volumes:
+  patronus-config:
   patronus-data:
   patronus-logs:
   prometheus-data:

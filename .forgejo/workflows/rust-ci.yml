@@ -135,6 +135,25 @@ jobs:
       - name: cargo check --workspace --all-targets --keep-going
         run: cargo check --workspace --all-targets --keep-going
 
+  ha-failover-test:
+    # Real 3-node HA dashboard cluster (docker-compose.ha.yml, images built
+    # from this commit, UI included): kills the leader twice and asserts no
+    # acknowledged write is lost, haproxy follows the leader, and
+    # unauthenticated cluster/REST calls are refused. See
+    # ci/ha-failover-test.sh. Added after the 2026-10-16 QA failover run
+    # found every node holding a different data set.
+    name: HA failover + replication test (3-node dashboard cluster)
+    runs-on: linux-cross-x86_64
+    container: catthehacker/ubuntu:act-latest  # same pin as the other jobs (see lint-test-audit)
+    needs: lint-test-audit
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker + compose versions
+        run: docker version --format '{{.Server.Version}}' && docker compose version
+      - name: Run HA failover test
+        run: HA_TEST_PROJECT="patronus-ha-ci-${{ github.run_id }}" bash ci/ha-failover-test.sh
+
   gentoo-docker-build:
     name: Gentoo Docker Build
     runs-on: linux-cross-x86_64

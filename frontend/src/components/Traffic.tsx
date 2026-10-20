@@ -1,141 +1,87 @@
-import { useQuery, gql } from '@apollo/client'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { useMemo, useState } from 'react'
+import { useQuery } from '@apollo/client'
+import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { format } from 'date-fns'
+import { METRICS_HISTORY } from '../graphql/operations'
+import { Card, Empty, ErrorBanner, PageHeader } from './ui'
 
-const TRAFFIC_QUERY = gql`
-  query Traffic {
-    trafficStats {
-      siteId
-      siteName
-      totalBytes
-      totalPackets
-      applications {
-        name
-        bytes
-        packets
-        percentage
-      }
-    }
-  }
-`
-
-interface Application {
-  name: string
-  bytes: number
-  packets: number
-  percentage: number
+interface Point {
+  timestamp: string
+  throughputMbps: number
+  packetsPerSecond: number
+  activeFlows: number
+  avgLatencyMs: number
+  avgPacketLoss: number
 }
 
-interface TrafficStat {
-  siteId: string
-  siteName: string
-  totalBytes: number
-  totalPackets: number
-  applications: Application[]
-}
-
-interface TrafficData {
-  trafficStats: TrafficStat[]
-}
+const RANGES = [
+  { label: '15 min', minutes: 15 },
+  { label: '1 hour', minutes: 60 },
+  { label: '24 hours', minutes: 24 * 60 },
+]
 
 export default function Traffic() {
-  const { loading, error, data } = useQuery<TrafficData>(TRAFFIC_QUERY, {
-    pollInterval: 10000,
-  })
+  const [minutes, setMinutes] = useState(60)
+  // Recompute the window when the range changes; polling refreshes it.
+  const vars = useMemo(() => {
+    const to = new Date()
+    return { from: new Date(to.getTime() - minutes * 60_000).toISOString(), to: to.toISOString() }
+  }, [minutes])
+  const { data, error, loading } = useQuery<{ metricsHistory: Point[] }>(METRICS_HISTORY, { variables: vars, pollInterval: 30000 })
 
-  if (loading) return <div>Loading traffic data...</div>
-  if (error) return <div>Error: {error.message}</div>
-  if (!data) return <div>No data</div>
-
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
+  const points = (data?.metricsHistory ?? []).map((p) => ({
+    ...p,
+    time: format(new Date(p.timestamp), minutes > 60 ? 'MM-dd HH:mm' : 'HH:mm:ss'),
+  }))
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-3xl font-bold text-gray-900">Traffic Analysis</h1>
-
-      {data.trafficStats.map((stat) => (
-        <div key={stat.siteId} className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">{stat.siteName}</h2>
-              <p className="text-sm text-gray-600">Site ID: {stat.siteId}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-2xl font-bold text-gray-900">
-                {formatBytes(stat.totalBytes)}
-              </p>
-              <p className="text-sm text-gray-600">Total Traffic</p>
-            </div>
-          </div>
-
-          {/* Application Traffic Chart */}
-          <div className="mb-6">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">
-              Traffic by Application
-            </h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={stat.applications}>
+    <div>
+      <PageHeader title="Traffic">
+        {RANGES.map((r) => (
+          <button
+            key={r.minutes}
+            onClick={() => setMinutes(r.minutes)}
+            className={`rounded-lg px-3 py-1.5 text-sm ${minutes === r.minutes ? 'bg-primary-600 text-white' : 'bg-white ring-1 ring-gray-300'}`}
+          >
+            {r.label}
+          </button>
+        ))}
+      </PageHeader>
+      <ErrorBanner error={error} />
+      {loading && !data && <p className="text-gray-500">Loading…</p>}
+      {data && points.length === 0 && <Empty>No metrics were recorded in this window.</Empty>}
+      {points.length > 0 && (
+        <div className="space-y-6">
+          <Card title="Throughput and flows">
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={points}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip formatter={(value: number) => formatBytes(value)} />
+                <XAxis dataKey="time" />
+                <YAxis yAxisId="left" />
+                <YAxis yAxisId="right" orientation="right" />
+                <Tooltip />
                 <Legend />
-                <Bar dataKey="bytes" fill="#0ea5e9" name="Bytes" />
-              </BarChart>
+                <Line yAxisId="left" type="monotone" dataKey="throughputMbps" name="Throughput (Mbps)" stroke="#0ea5e9" dot={false} />
+                <Line yAxisId="right" type="monotone" dataKey="activeFlows" name="Active flows" stroke="#8b5cf6" dot={false} />
+              </LineChart>
             </ResponsiveContainer>
-          </div>
-
-          {/* Application Table */}
-          <div>
-            <h3 className="text-lg font-medium text-gray-900 mb-4">
-              Application Details
-            </h3>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Application
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Bytes
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Packets
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Percentage
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {stat.applications.map((app) => (
-                    <tr key={app.name}>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                        {app.name}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                        {formatBytes(app.bytes)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                        {app.packets.toLocaleString()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                        {app.percentage.toFixed(2)}%
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          </Card>
+          <Card title="Latency and loss">
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={points}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="time" />
+                <YAxis yAxisId="left" />
+                <YAxis yAxisId="right" orientation="right" />
+                <Tooltip />
+                <Legend />
+                <Line yAxisId="left" type="monotone" dataKey="avgLatencyMs" name="Avg latency (ms)" stroke="#10b981" dot={false} />
+                <Line yAxisId="right" type="monotone" dataKey="avgPacketLoss" name="Avg loss (%)" stroke="#ef4444" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </Card>
         </div>
-      ))}
+      )}
     </div>
   )
 }

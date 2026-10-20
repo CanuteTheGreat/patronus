@@ -69,6 +69,39 @@ impl Database {
         &self.pool
     }
 
+    /// Insert or replace a stored NetworkPolicy (JSON-encoded).
+    pub async fn save_network_policy(&self, policy_id: &str, policy_json: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO sdwan_network_policies (policy_id, policy_json, updated_at)
+             VALUES (?1, ?2, strftime('%s','now'))
+             ON CONFLICT(policy_id) DO UPDATE SET policy_json = excluded.policy_json,
+                                                  updated_at = excluded.updated_at",
+        )
+        .bind(policy_id)
+        .bind(policy_json)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Delete a stored NetworkPolicy. Deleting a missing id is not an error.
+    pub async fn delete_network_policy(&self, policy_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM sdwan_network_policies WHERE policy_id = ?1")
+            .bind(policy_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// All stored NetworkPolicies as JSON strings.
+    pub async fn list_network_policies(&self) -> Result<Vec<String>> {
+        let rows: Vec<String> =
+            sqlx::query_scalar("SELECT policy_json FROM sdwan_network_policies ORDER BY policy_id")
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows)
+    }
+
     /// Run database migrations
     async fn migrate(&self) -> Result<()> {
         debug!("Running database migrations");
@@ -167,6 +200,22 @@ impl Database {
             r#"
             CREATE INDEX IF NOT EXISTS idx_path_metrics_time
             ON sdwan_path_metrics(path_id, timestamp)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Kubernetes-style NetworkPolicies managed via the dashboard's REST
+        // API (`/api/v1/policies`). Stored as JSON so the enforcer's
+        // in-memory set survives restarts and HA failover (it used to be
+        // memory-only, so every policy vanished on restart).
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS sdwan_network_policies (
+                policy_id TEXT PRIMARY KEY,
+                policy_json TEXT NOT NULL,
+                updated_at INTEGER NOT NULL DEFAULT 0
+            )
             "#,
         )
         .execute(&self.pool)

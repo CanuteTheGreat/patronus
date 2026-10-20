@@ -1,178 +1,80 @@
-import { useQuery, gql } from '@apollo/client'
-import { Activity, AlertTriangle, CheckCircle, Clock } from 'lucide-react'
-import MetricsChart from './MetricsChart'
-import TopologyPreview from './TopologyPreview'
+import { useQuery, useSubscription } from '@apollo/client'
+import { DASHBOARD, METRICS_STREAM } from '../graphql/operations'
+import { Card, ErrorBanner, PageHeader, Stat, fmtDate, fmtNum } from './ui'
 
-const DASHBOARD_QUERY = gql`
-  query Dashboard {
-    overview {
-      totalSites
-      activeSites
-      totalLinks
-      healthyLinks
-      avgLatency
-      totalThroughput
-      packetLoss
-    }
-    recentAlerts {
-      id
-      severity
-      message
-      timestamp
-      siteId
-    }
-    linkMetrics {
-      timestamp
-      throughput
-      latency
-      packetLoss
-    }
-  }
-`
+interface Metrics {
+  timestamp: string
+  throughputMbps: number
+  packetsPerSecond: number
+  activeFlows: number
+  avgLatencyMs: number
+  avgPacketLoss: number
+  cpuUsage: number
+  memoryUsage: number
+}
 
 interface DashboardData {
-  overview: {
-    totalSites: number
-    activeSites: number
-    totalLinks: number
-    healthyLinks: number
-    avgLatency: number
-    totalThroughput: number
-    packetLoss: number
-  }
-  recentAlerts: Array<{
-    id: string
-    severity: 'critical' | 'warning' | 'info'
-    message: string
-    timestamp: string
-    siteId: string
-  }>
-  linkMetrics: Array<{
-    timestamp: string
-    throughput: number
-    latency: number
-    packetLoss: number
-  }>
+  health: string
+  version: string
+  siteCount: number
+  sites: { id: string; name: string; status: string }[]
+  paths: { id: string; status: string; qualityScore: number }[]
+  policies: { id: string; enabled: boolean }[]
+  metrics: Metrics
 }
 
 export default function Dashboard() {
-  const { loading, error, data } = useQuery<DashboardData>(DASHBOARD_QUERY, {
-    pollInterval: 5000,
-  })
+  const { data, error, loading } = useQuery<DashboardData>(DASHBOARD, { pollInterval: 15000 })
+  // Live push over the GraphQL WebSocket; falls back to the polled value.
+  const live = useSubscription<{ metricsStream: Metrics }>(METRICS_STREAM)
+  const metrics = live.data?.metricsStream ?? data?.metrics
 
-  if (loading) return <div>Loading...</div>
-  if (error) return <div>Error: {error.message}</div>
-  if (!data) return <div>No data</div>
-
-  const { overview, recentAlerts, linkMetrics } = data
-
-  const stats = [
-    {
-      name: 'Active Sites',
-      value: `${overview.activeSites}/${overview.totalSites}`,
-      icon: Activity,
-      color: 'text-green-600',
-      bgColor: 'bg-green-50',
-    },
-    {
-      name: 'Healthy Links',
-      value: `${overview.healthyLinks}/${overview.totalLinks}`,
-      icon: CheckCircle,
-      color: 'text-blue-600',
-      bgColor: 'bg-blue-50',
-    },
-    {
-      name: 'Avg Latency',
-      value: `${overview.avgLatency.toFixed(1)}ms`,
-      icon: Clock,
-      color: 'text-yellow-600',
-      bgColor: 'bg-yellow-50',
-    },
-    {
-      name: 'Packet Loss',
-      value: `${(overview.packetLoss * 100).toFixed(2)}%`,
-      icon: AlertTriangle,
-      color: overview.packetLoss > 0.01 ? 'text-red-600' : 'text-green-600',
-      bgColor: overview.packetLoss > 0.01 ? 'bg-red-50' : 'bg-green-50',
-    },
-  ]
+  const sitesDown = data?.sites.filter((s) => s.status !== 'ACTIVE').length ?? 0
+  const pathsFailed = data?.paths.filter((p) => p.status === 'FAILED').length ?? 0
+  const pathsDegraded = data?.paths.filter((p) => p.status === 'DEGRADED').length ?? 0
+  const policiesOn = data?.policies.filter((p) => p.enabled).length ?? 0
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        {stats.map((stat) => (
-          <div key={stat.name} className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">{stat.name}</p>
-                <p className="mt-2 text-3xl font-semibold text-gray-900">
-                  {stat.value}
-                </p>
-              </div>
-              <div className={`rounded-full p-3 ${stat.bgColor}`}>
-                <stat.icon className={`h-6 w-6 ${stat.color}`} />
-              </div>
-            </div>
+    <div>
+      <PageHeader title="Dashboard" />
+      <ErrorBanner error={error} />
+      {loading && !data && <p className="text-gray-500">Loading…</p>}
+      {data && (
+        <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
+            <Stat label="Sites" value={data.siteCount} hint={sitesDown ? `${sitesDown} not active` : 'all active'} to="/sites" />
+            <Stat
+              label="Paths"
+              value={data.paths.length}
+              hint={data.paths.length ? `${pathsFailed} failed, ${pathsDegraded} degraded` : 'none discovered yet'}
+              to="/paths"
+            />
+            <Stat label="Policies" value={data.policies.length} hint={`${policiesOn} enabled`} to="/policies" />
+            <Stat label="Active flows" value={metrics?.activeFlows ?? '—'} hint="see traffic history" to="/traffic" />
           </div>
-        ))}
-      </div>
-
-      {/* Charts and Topology */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
-            Network Performance
-          </h2>
-          <MetricsChart data={linkMetrics} />
-        </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
-            Network Topology
-          </h2>
-          <TopologyPreview />
-        </div>
-      </div>
-
-      {/* Recent Alerts */}
-      <div className="bg-white rounded-lg shadow">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">Recent Alerts</h2>
-        </div>
-        <div className="divide-y divide-gray-200">
-          {recentAlerts.length === 0 ? (
-            <div className="px-6 py-8 text-center text-gray-500">
-              No recent alerts
-            </div>
-          ) : (
-            recentAlerts.map((alert) => (
-              <div key={alert.id} className="px-6 py-4 hover:bg-gray-50">
-                <div className="flex items-center gap-3">
-                  <AlertTriangle
-                    className={
-                      alert.severity === 'critical'
-                        ? 'h-5 w-5 text-red-600'
-                        : alert.severity === 'warning'
-                        ? 'h-5 w-5 text-yellow-600'
-                        : 'h-5 w-5 text-blue-600'
-                    }
-                  />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-900">
-                      {alert.message}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      Site: {alert.siteId} • {new Date(alert.timestamp).toLocaleString()}
-                    </p>
-                  </div>
+          <Card title="Live system metrics">
+            {metrics ? (
+              <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4 text-sm">
+                <div><dt className="text-gray-500">Throughput</dt><dd className="text-xl font-semibold">{fmtNum(metrics.throughputMbps, 2)} Mbps</dd></div>
+                <div><dt className="text-gray-500">Packets/s</dt><dd className="text-xl font-semibold">{metrics.packetsPerSecond}</dd></div>
+                <div><dt className="text-gray-500">Avg latency</dt><dd className="text-xl font-semibold">{fmtNum(metrics.avgLatencyMs)} ms</dd></div>
+                <div><dt className="text-gray-500">Avg packet loss</dt><dd className="text-xl font-semibold">{fmtNum(metrics.avgPacketLoss, 2)} %</dd></div>
+                <div><dt className="text-gray-500">CPU</dt><dd className="text-xl font-semibold">{fmtNum(metrics.cpuUsage)} %</dd></div>
+                <div><dt className="text-gray-500">Memory</dt><dd className="text-xl font-semibold">{fmtNum(metrics.memoryUsage)} %</dd></div>
+                <div className="col-span-2">
+                  <dt className="text-gray-500">Last update</dt>
+                  <dd className="text-sm">{fmtDate(metrics.timestamp)} {live.data ? '(live)' : '(polled)'}</dd>
                 </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
+              </dl>
+            ) : (
+              <p className="text-gray-500">No metrics yet.</p>
+            )}
+            <p className="mt-4 text-xs text-gray-400">
+              API {data.health} · {data.version}
+            </p>
+          </Card>
+        </>
+      )}
     </div>
   )
 }

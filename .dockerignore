@@ -12,3 +12,8 @@ examples/
 logs/
 .env
 .env.*
+
+# Built inside Dockerfile.dashboard's frontend stage; never copy host builds
+frontend/node_modules/
+static/
+certs/

@@ -117,9 +117,13 @@ RUN emerge --verbose net-firewall/patronus
 # present) for correctness; revisit with a real multi-stage COPY (binary
 # + `qlist -e net-firewall/nftables`-derived file list) if image size
 # ever becomes a concrete problem.
+# The patronus user normally already exists (the ebuild depends on
+# acct-user/patronus, which picks its own uid -- 999 in practice), so the
+# useradd below is only a fallback. Don't assume uid 1000 anywhere: the
+# compose file uses a named volume for /etc/patronus for exactly that reason.
 RUN useradd -r -u 1000 -m -s /bin/bash patronus 2>/dev/null || true && \
-    chown -R patronus:patronus /etc/patronus /var/lib/patronus /var/log/patronus 2>/dev/null || true && \
-    mkdir -p /etc/patronus/tls && chown patronus:patronus /etc/patronus/tls
+    mkdir -p /etc/patronus/tls /var/lib/patronus /var/log/patronus /home/patronus && \
+    chown -R patronus:patronus /etc/patronus /var/lib/patronus /var/log/patronus /home/patronus
 
 # Grant CAP_NET_ADMIN/CAP_NET_RAW to the real nft binary via file
 # capabilities, so the non-root patronus user can still create/manage

@@ -583,8 +583,18 @@ impl BgpMessage {
         }
     }
 
-    /// Decode a BGP message from bytes
+    /// Decode the first BGP message in `data`. Bytes after that message
+    /// are ignored; use [`BgpMessage::decode_framed`] to walk a stream.
     pub fn decode(data: &[u8]) -> Result<Self> {
+        Self::decode_framed(data).map(|(msg, _)| msg)
+    }
+
+    /// Decode the first BGP message in `data` and also return how many
+    /// bytes it occupied (its header's declared length), so a session
+    /// reader can advance its receive buffer and decode the next message.
+    /// Without this a caller had no way to find where message N ends and
+    /// N+1 begins in a TCP read buffer holding several messages.
+    pub fn decode_framed(data: &[u8]) -> Result<(Self, usize)> {
         let mut buf = Bytes::copy_from_slice(data);
 
         // Decode header
@@ -610,22 +620,43 @@ impl BgpMessage {
         let mut body_buf = buf.split_to(body_len);
 
         // Decode message body based on type
-        match header.msg_type {
-            MessageType::Open => Ok(BgpMessage::Open(OpenMessage::decode(&mut body_buf)?)),
-            MessageType::Update => Ok(BgpMessage::Update(UpdateMessage::decode(&mut body_buf)?)),
-            MessageType::Notification => Ok(BgpMessage::Notification(NotificationMessage::decode(
-                &mut body_buf,
-            )?)),
-            MessageType::Keepalive => Ok(BgpMessage::Keepalive(KeepaliveMessage::decode(
-                &mut body_buf,
-            )?)),
-        }
+        let msg = match header.msg_type {
+            MessageType::Open => BgpMessage::Open(OpenMessage::decode(&mut body_buf)?),
+            MessageType::Update => BgpMessage::Update(UpdateMessage::decode(&mut body_buf)?),
+            MessageType::Notification => {
+                BgpMessage::Notification(NotificationMessage::decode(&mut body_buf)?)
+            }
+            MessageType::Keepalive => {
+                BgpMessage::Keepalive(KeepaliveMessage::decode(&mut body_buf)?)
+            }
+        };
+        Ok((msg, header.length as usize))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_decode_framed_walks_back_to_back_messages() {
+        // Two messages in one buffer, as a TCP read commonly delivers them.
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&KeepaliveMessage::encode());
+        stream.extend_from_slice(&KeepaliveMessage::encode());
+        stream.extend_from_slice(&[0xff; 3]); // start of a third, incomplete one
+
+        let (first, used) = BgpMessage::decode_framed(&stream).unwrap();
+        assert!(matches!(first, BgpMessage::Keepalive(_)));
+        assert_eq!(used, MessageHeader::MIN_SIZE);
+
+        let (second, used2) = BgpMessage::decode_framed(&stream[used..]).unwrap();
+        assert!(matches!(second, BgpMessage::Keepalive(_)));
+        assert_eq!(used + used2, 2 * MessageHeader::MIN_SIZE);
+
+        // The partial trailing message is reported as incomplete, not misparsed.
+        assert!(BgpMessage::decode_framed(&stream[used + used2..]).is_err());
+    }
 
     #[test]
     fn test_keepalive_encode_decode() {

@@ -145,6 +145,14 @@ pub async fn me(State(state): State<Arc<AppState>>, req: Request) -> Result<Json
     Ok(Json(user.into()))
 }
 
+/// Whether first-run setup is done (an admin exists). Public, so the login
+/// screen can offer "create the first admin" on a fresh install instead of
+/// a login form nobody can use.
+pub async fn status(State(state): State<Arc<AppState>>) -> Result<Json<serde_json::Value>> {
+    let initialized = state.user_repository.has_users().await?;
+    Ok(Json(serde_json::json!({ "initialized": initialized })))
+}
+
 /// Create initial admin user (only works if no users exist)
 pub async fn init_admin(
     State(state): State<Arc<AppState>>,

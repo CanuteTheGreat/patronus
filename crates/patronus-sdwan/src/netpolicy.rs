@@ -414,6 +414,8 @@ impl PolicyEnforcer {
     pub async fn start(&self) -> Result<()> {
         info!("Starting NetworkPolicy enforcer");
 
+        self.reload_from_db().await?;
+
         let mut running = self.running.write().await;
         *running = true;
 
@@ -441,15 +443,46 @@ impl PolicyEnforcer {
             "Adding NetworkPolicy"
         );
 
+        // Persist first: a policy the API reported as saved must survive a
+        // restart (and reach HA followers via database replication).
+        let json = serde_json::to_string(&policy)?;
+        self.db
+            .save_network_policy(&policy.id.0.to_string(), &json)
+            .await?;
+
         let mut policies = self.policies.write().await;
         policies.insert(policy.id, policy);
 
         Ok(())
     }
 
+    /// Replace the in-memory policy set with what the database holds
+    /// (startup, and after an HA follower applied a snapshot from the
+    /// leader). Rows that no longer parse are skipped with a warning.
+    pub async fn reload_from_db(&self) -> Result<()> {
+        let rows = self.db.list_network_policies().await?;
+        let mut loaded = HashMap::new();
+        for row in rows {
+            match serde_json::from_str::<NetworkPolicy>(&row) {
+                Ok(p) => {
+                    loaded.insert(p.id, p);
+                }
+                Err(e) => tracing::warn!(error = %e, "Skipping unreadable stored NetworkPolicy"),
+            }
+        }
+        let count = loaded.len();
+        *self.policies.write().await = loaded;
+        debug!(count, "Loaded NetworkPolicies from database");
+        Ok(())
+    }
+
     /// Remove a NetworkPolicy
     pub async fn remove_policy(&self, policy_id: PolicyId) -> Result<()> {
         info!(policy_id = %policy_id, "Removing NetworkPolicy");
+
+        self.db
+            .delete_network_policy(&policy_id.0.to_string())
+            .await?;
 
         let mut policies = self.policies.write().await;
         policies.remove(&policy_id);

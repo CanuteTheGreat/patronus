@@ -27,6 +27,13 @@ use tracing::{debug, info, warn};
 pub struct VoteRequest {
     pub term: u64,
     pub candidate_id: String,
+    /// Replication generation of the candidate's data (see
+    /// `ha::replication`). Voters refuse candidates holding older data than
+    /// their own, so a node that missed committed writes can't win an
+    /// election and silently roll the cluster back (Raft's "up-to-date log"
+    /// rule). Defaults to 0 for peers running an older build.
+    #[serde(default)]
+    pub generation: u64,
 }
 
 /// Vote request RPC response, peer -> candidate.
@@ -41,6 +48,9 @@ pub struct VoteResponse {
 pub struct HeartbeatRequest {
     pub term: u64,
     pub leader_id: String,
+    /// Address followers forward API requests to (`host:port`).
+    #[serde(default)]
+    pub leader_addr: Option<String>,
 }
 
 /// Heartbeat RPC response, peer -> leader.
@@ -60,6 +70,15 @@ pub struct HaStatus {
     pub voted_for: Option<String>,
     pub peers: Vec<String>,
     pub cluster_size: usize,
+    /// Address this node advertises to peers (`host:port`).
+    #[serde(default)]
+    pub advertise_addr: String,
+    /// Address of the current leader, if known.
+    #[serde(default)]
+    pub leader_addr: Option<String>,
+    /// Replication generation of this node's data.
+    #[serde(default)]
+    pub generation: u64,
 }
 
 /// Leader election manager
@@ -79,6 +98,26 @@ pub struct LeaderElection {
     /// granted a vote. Used to drive the randomized election timeout.
     last_contact: Arc<RwLock<Instant>>,
     http_client: reqwest::Client,
+    /// `host:port` peers use to reach this node.
+    advertise_addr: String,
+    /// `host:port` of the current leader (learned from heartbeats).
+    leader_addr: Arc<RwLock<Option<String>>>,
+    /// Replication generation of the local data, shared with the
+    /// replicator (which bumps it on every applied/pushed snapshot).
+    generation: Arc<AtomicU64>,
+    /// Credential sent on, and required from, every `/ha/*` RPC.
+    rpc_token: Option<String>,
+}
+
+/// Header carrying the HA RPC credential between nodes.
+pub const CLUSTER_AUTH_HEADER: &str = "x-patronus-cluster-auth";
+
+/// Length-independent-timing byte comparison for credentials.
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 impl LeaderElection {
@@ -107,7 +146,77 @@ impl LeaderElection {
             leader_id: Arc::new(RwLock::new(None)),
             last_contact: Arc::new(RwLock::new(Instant::now())),
             http_client,
+            advertise_addr: node_addr.to_string(),
+            leader_addr: Arc::new(RwLock::new(None)),
+            generation: Arc::new(AtomicU64::new(0)),
+            rpc_token: None,
         }
+    }
+
+    /// Address peers use to reach this node (default: the bind address,
+    /// which is only right outside containers -- `main` sets
+    /// `<node_id>:<port>` or `PATRONUS_ADVERTISE_ADDR`).
+    pub fn with_advertise_addr(mut self, addr: String) -> Self {
+        self.advertise_addr = addr;
+        self
+    }
+
+    /// Share the replication generation counter with the replicator.
+    pub fn with_generation(mut self, generation: Arc<AtomicU64>) -> Self {
+        self.generation = generation;
+        self
+    }
+
+    /// Require and send this credential on every `/ha/*` RPC.
+    pub fn with_rpc_token(mut self, token: Option<String>) -> Self {
+        self.rpc_token = token;
+        self
+    }
+
+    /// True if `presented` matches this cluster's RPC credential (always
+    /// true when no credential is configured, e.g. unit tests).
+    pub fn rpc_authorized(&self, presented: Option<&str>) -> bool {
+        match (&self.rpc_token, presented) {
+            (None, _) => true,
+            (Some(expected), Some(got)) => constant_time_eq(expected.as_bytes(), got.as_bytes()),
+            (Some(_), None) => false,
+        }
+    }
+
+    pub fn node_id(&self) -> &str {
+        &self.node_id
+    }
+
+    pub fn peers(&self) -> &[String] {
+        &self.peers
+    }
+
+    pub fn advertise_addr(&self) -> &str {
+        &self.advertise_addr
+    }
+
+    pub fn current_term(&self) -> u64 {
+        self.current_term.load(Ordering::SeqCst)
+    }
+
+    pub fn majority_size(&self) -> usize {
+        self.majority()
+    }
+
+    pub fn http_client(&self) -> reqwest::Client {
+        self.http_client.clone()
+    }
+
+    pub fn rpc_token(&self) -> Option<&str> {
+        self.rpc_token.as_deref()
+    }
+
+    /// Address of the current leader, if one is known.
+    pub async fn leader_addr(&self) -> Option<String> {
+        if self.is_leader() {
+            return Some(self.advertise_addr.clone());
+        }
+        self.leader_addr.read().await.clone()
     }
 
     /// Create with default address and no peers (for backward compatibility
@@ -224,9 +333,15 @@ impl LeaderElection {
         );
 
         let mut votes: usize = 1; // vote for self
+        let generation = self.generation.load(Ordering::SeqCst);
         let mut futures = Vec::new();
         for peer in &self.peers {
             let client = self.http_client.clone();
+            let token = self.rpc_token.clone();
+            let authed = move |r: reqwest::RequestBuilder| match &token {
+                Some(t) => r.header(CLUSTER_AUTH_HEADER, t),
+                None => r,
+            };
             let peer = peer.clone();
             let node_id = self.node_id.clone();
             futures.push(tokio::spawn(async move {
@@ -234,9 +349,9 @@ impl LeaderElection {
                 let body = VoteRequest {
                     term: new_term,
                     candidate_id: node_id,
+                    generation,
                 };
-                client
-                    .post(&url)
+                authed(client.post(&url))
                     .json(&body)
                     .send()
                     .await
@@ -285,6 +400,7 @@ impl LeaderElection {
     async fn become_leader(&self, term: u64) {
         info!(node_id = %self.node_id, term, "Node elected as LEADER");
         *self.leader_id.write().await = Some(self.node_id.clone());
+        *self.leader_addr.write().await = Some(self.advertise_addr.clone());
         self.update_role(NodeRole::Leader).await;
         // Assert leadership immediately rather than waiting for the next
         // heartbeat tick, so followers converge fast.
@@ -295,6 +411,8 @@ impl LeaderElection {
     async fn step_down(&self, term: u64) {
         self.current_term.store(term, Ordering::SeqCst);
         *self.voted_for.write().await = None;
+        *self.leader_id.write().await = None;
+        *self.leader_addr.write().await = None;
         self.update_role(NodeRole::Follower).await;
         self.reset_timeout().await;
     }
@@ -319,6 +437,12 @@ impl LeaderElection {
         let mut futures = Vec::new();
         for peer in &self.peers {
             let client = self.http_client.clone();
+            let advertise = self.advertise_addr.clone();
+            let token = self.rpc_token.clone();
+            let authed = move |r: reqwest::RequestBuilder| match &token {
+                Some(t) => r.header(CLUSTER_AUTH_HEADER, t),
+                None => r,
+            };
             let peer_url = peer.clone();
             let node_id = self.node_id.clone();
             futures.push(tokio::spawn(async move {
@@ -326,9 +450,9 @@ impl LeaderElection {
                 let body = HeartbeatRequest {
                     term,
                     leader_id: node_id,
+                    leader_addr: Some(advertise),
                 };
-                client
-                    .post(&url)
+                authed(client.post(&url))
                     .json(&body)
                     .send()
                     .await
@@ -366,7 +490,25 @@ impl LeaderElection {
             self.current_term.store(req.term, Ordering::SeqCst);
             *self.voted_for.write().await = None;
             *self.leader_id.write().await = None;
+            *self.leader_addr.write().await = None;
             self.update_role(NodeRole::Follower).await;
+        }
+
+        // Up-to-date check: never hand leadership to a node holding older
+        // data than ours, or committed writes would be lost on failover.
+        let own_generation = self.generation.load(Ordering::SeqCst);
+        if req.generation < own_generation {
+            info!(
+                node_id = %self.node_id,
+                candidate = %req.candidate_id,
+                candidate_generation = req.generation,
+                own_generation,
+                "Refusing vote: candidate's data is older than ours"
+            );
+            return VoteResponse {
+                term: self.current_term.load(Ordering::SeqCst),
+                vote_granted: false,
+            };
         }
 
         let mut voted_for = self.voted_for.write().await;
@@ -405,6 +547,9 @@ impl LeaderElection {
 
         self.current_term.store(req.term, Ordering::SeqCst);
         *self.leader_id.write().await = Some(req.leader_id.clone());
+        if req.leader_addr.is_some() {
+            *self.leader_addr.write().await = req.leader_addr.clone();
+        }
         self.reset_timeout().await;
 
         if self.cluster_state.get_node(&self.node_id).map(|n| n.role) != Some(NodeRole::Follower) {
@@ -445,6 +590,9 @@ impl LeaderElection {
             voted_for: self.voted_for.read().await.clone(),
             peers: self.peers.clone(),
             cluster_size: self.total_nodes(),
+            advertise_addr: self.advertise_addr.clone(),
+            leader_addr: self.leader_addr().await,
+            generation: self.generation.load(Ordering::SeqCst),
         }
     }
 
@@ -507,6 +655,7 @@ mod tests {
             .handle_vote_request(VoteRequest {
                 term: 3,
                 candidate_id: "node2".to_string(),
+                generation: 0,
             })
             .await;
 
@@ -524,10 +673,64 @@ mod tests {
             .handle_heartbeat(HeartbeatRequest {
                 term: 1,
                 leader_id: "node2".to_string(),
+                leader_addr: Some("node2:8443".to_string()),
             })
             .await;
 
         assert!(resp.success);
         assert_eq!(election.get_role(), NodeRole::Follower);
+    }
+
+    #[tokio::test]
+    async fn test_vote_refused_for_candidate_with_older_data() {
+        let state = Arc::new(ClusterState::new("node1".to_string()));
+        let generation = Arc::new(AtomicU64::new(7));
+        let election = LeaderElection::new_with_defaults(state, "node1".to_string(), 5, 1)
+            .with_generation(generation);
+
+        let stale = election
+            .handle_vote_request(VoteRequest {
+                term: 2,
+                candidate_id: "node2".to_string(),
+                generation: 6,
+            })
+            .await;
+        assert!(!stale.vote_granted, "older data must not win a vote");
+
+        let fresh = election
+            .handle_vote_request(VoteRequest {
+                term: 2,
+                candidate_id: "node3".to_string(),
+                generation: 7,
+            })
+            .await;
+        assert!(fresh.vote_granted);
+    }
+
+    #[tokio::test]
+    async fn test_follower_learns_leader_addr_from_heartbeat() {
+        let state = Arc::new(ClusterState::new("node1".to_string()));
+        let election = LeaderElection::new_with_defaults(state, "node1".to_string(), 5, 1);
+        assert_eq!(election.leader_addr().await, None);
+        election
+            .handle_heartbeat(HeartbeatRequest {
+                term: 1,
+                leader_id: "node2".to_string(),
+                leader_addr: Some("node2:8443".to_string()),
+            })
+            .await;
+        assert_eq!(election.leader_addr().await.as_deref(), Some("node2:8443"));
+    }
+
+    #[test]
+    fn test_rpc_authorization() {
+        let state = Arc::new(ClusterState::new("node1".to_string()));
+        let open = LeaderElection::new_with_defaults(state.clone(), "node1".to_string(), 5, 1);
+        assert!(open.rpc_authorized(None));
+        let locked = LeaderElection::new_with_defaults(state, "node1".to_string(), 5, 1)
+            .with_rpc_token(Some("s3cret".to_string()));
+        assert!(!locked.rpc_authorized(None));
+        assert!(!locked.rpc_authorized(Some("wrong!")));
+        assert!(locked.rpc_authorized(Some("s3cret")));
     }
 }

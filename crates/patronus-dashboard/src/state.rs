@@ -80,6 +80,16 @@ pub struct AppState {
     /// Sled-backed distributed state store, shared cluster metadata (Some
     /// alongside `ha`, same enable condition).
     pub distributed_state: Option<Arc<crate::ha::state::DistributedState>>,
+
+    /// Leader -> follower database replication (Some alongside `ha`).
+    pub replicator: Option<Arc<crate::ha::replication::Replicator>>,
+
+    /// Connection pool on the dashboard database file (users, audit log,
+    /// token revocation, and the SD-WAN tables -- one SQLite file).
+    pub db_pool: SqlitePool,
+
+    /// HTTP client followers use to forward API requests to the leader.
+    pub forward_client: reqwest::Client,
 }
 
 impl AppState {
@@ -105,7 +115,7 @@ impl AppState {
         audit_logger.init().await?;
 
         // Create token revocation manager (Sprint 29)
-        let token_revocation = Arc::new(TokenRevocation::new(pool));
+        let token_revocation = Arc::new(TokenRevocation::new(pool.clone()));
         token_revocation.init().await?;
 
         // Create traffic statistics collector (Sprint 30)
@@ -155,6 +165,9 @@ impl AppState {
             failover_engine,
             ha: None,
             distributed_state: None,
+            replicator: None,
+            db_pool: pool,
+            forward_client: crate::ha::gate::forward_client(),
         })
     }
 }

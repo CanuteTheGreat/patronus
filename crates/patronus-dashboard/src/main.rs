@@ -6,11 +6,10 @@
 use axum::http::{header, HeaderValue};
 use axum::{
     body::Body,
-    extract::ws::{WebSocket, WebSocketUpgrade},
+    extract::ws::WebSocketUpgrade,
     routing::{get, post},
     Router,
 };
-use futures::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::{
@@ -88,7 +87,12 @@ async fn main() -> anyhow::Result<()> {
     // Initialize application state
     let mut state = AppState::new(&db_path).await?;
 
-    let node_id_env = std::env::var("PATRONUS_NODE_ID").ok();
+    // An empty PATRONUS_NODE_ID (e.g. an image-level `ENV PATRONUS_NODE_ID=""`
+    // default) means standalone, not "HA with a blank node id".
+    let node_id_env = std::env::var("PATRONUS_NODE_ID")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
     if let Some(node_id) = node_id_env {
         let node_addr_str =
             std::env::var("PATRONUS_NODE_ADDR").unwrap_or_else(|_| "0.0.0.0:8443".to_string());
@@ -143,22 +147,73 @@ async fn main() -> anyhow::Result<()> {
         }
 
         let cluster_state = Arc::new(ha::cluster::ClusterState::new(node_id.clone()));
-        let election = Arc::new(ha::election::LeaderElection::new(
-            cluster_state,
-            node_id.clone(),
-            node_addr,
-            peers.clone(),
-            election_timeout,
-            heartbeat_interval,
+        // Address peers use to reach this node: PATRONUS_ADVERTISE_ADDR, else
+        // `<node_id>:<port>` (the node id is the container hostname in
+        // docker-compose.ha.yml). The bind address (0.0.0.0) is useless to
+        // a peer.
+        let advertise_addr = std::env::var("PATRONUS_ADVERTISE_ADDR")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| format!("{}:{}", node_id, node_addr.port()));
+
+        let generation = Arc::new(std::sync::atomic::AtomicU64::new(
+            ha::replication::Replicator::load_generation(std::path::Path::new(&data_dir)),
         ));
+        let rpc_token = auth::jwt::cluster_rpc_token().map(|s| s.to_string());
+        if rpc_token.is_none() {
+            anyhow::bail!("HA enabled but no cluster credential could be derived from the JWT secret");
+        }
+        let election = Arc::new(
+            ha::election::LeaderElection::new(
+                cluster_state,
+                node_id.clone(),
+                node_addr,
+                peers.clone(),
+                election_timeout,
+                heartbeat_interval,
+            )
+            .with_advertise_addr(advertise_addr.clone())
+            .with_generation(generation.clone())
+            .with_rpc_token(rpc_token),
+        );
+
+        let replicator = Arc::new(ha::replication::Replicator::new(
+            election.clone(),
+            state.db_pool.clone(),
+            &db_path,
+            std::path::Path::new(&data_dir),
+            generation,
+            auth::jwt::cluster_replication_key().copied(),
+        )
+        // In-memory state loaded from the database must follow the
+        // replicated data, or a promoted follower would enforce stale
+        // policies / accept tokens revoked on the old leader.
+        .with_after_apply({
+            let enforcer = state.policy_enforcer.clone();
+            let revocation = state.token_revocation.clone();
+            Arc::new(move || {
+                let enforcer = enforcer.clone();
+                let revocation = revocation.clone();
+                Box::pin(async move {
+                    if let Err(e) = enforcer.reload_from_db().await {
+                        tracing::warn!(error = %e, "Reloading NetworkPolicies after HA snapshot failed");
+                    }
+                    if let Err(e) = revocation.reload_cache().await {
+                        tracing::warn!(error = %e, "Reloading revoked tokens after HA snapshot failed");
+                    }
+                })
+            })
+        }));
 
         info!(
             node_id = %node_id,
             %node_addr,
+            %advertise_addr,
             ?peers,
             election_timeout,
             heartbeat_interval,
-            "HA leader election enabled"
+            generation = replicator.generation(),
+            "HA leader election + replication enabled"
         );
 
         // Run the election + heartbeat loops as background tasks alongside
@@ -167,7 +222,9 @@ async fn main() -> anyhow::Result<()> {
         // policy_enforcer.start() / metrics_collector.start() / etc. above,
         // which do the same thing one layer down inside AppState::new).
         election.clone().start();
+        replicator.clone().start();
 
+        state.replicator = Some(replicator);
         state.ha = Some(election);
     } else {
         info!("PATRONUS_NODE_ID not set -- running as a standalone single-node dashboard (HA disabled)");
@@ -191,13 +248,20 @@ async fn main() -> anyhow::Result<()> {
         .route("/ha/vote", post(ha::rpc::vote_handler))
         .route("/ha/heartbeat", post(ha::rpc::heartbeat_handler))
         .route("/ha/status", get(ha::rpc::status_handler))
+        .route("/ha/leader", get(ha::rpc::leader_handler))
+        .route("/ha/cluster", get(ha::rpc::cluster_handler))
+        .route(
+            "/ha/replicate",
+            post(ha::rpc::replicate_handler)
+                .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024 * 1024)),
+        )
         // Prometheus metrics
         .route(
             "/metrics",
             get(move || async move { metrics_handle.render() }),
         )
         // API v1 routes (REST)
-        .nest("/api/v1", api_routes())
+        .nest("/api/v1", api_routes(state.clone()))
         // API v2 routes (GraphQL)
         .route(
             "/api/v2/graphql",
@@ -234,6 +298,12 @@ async fn main() -> anyhow::Result<()> {
             HeaderValue::from_static("max-age=31536000; includeSubDomains"),
         ))
         .layer(CorsLayer::permissive())
+        // HA: followers forward /api/* to the leader; the leader confirms
+        // writes on a quorum before answering (no-op without HA).
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            ha::gate::leader_gate,
+        ))
         .layer(axum::Extension(schema))
         .with_state(state);
 
@@ -251,15 +321,32 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// API v1 routes
-fn api_routes() -> Router<Arc<AppState>> {
+///
+/// Everything except login/refresh/init-admin requires a valid bearer token
+/// (`auth::middleware::auth_middleware`, which also puts the caller's claims
+/// in the request extensions that `/auth/me` and `/auth/change-password`
+/// read). Before this was wired, the "protected" REST routes were open to
+/// anyone and those two handlers always failed for lack of claims.
+fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
     use axum::routing::{delete, put};
 
-    Router::new()
-        // Authentication (public routes)
+    let public = Router::new()
         .route("/auth/login", post(api::auth::login))
         .route("/auth/refresh", post(api::auth::refresh))
         .route("/auth/init-admin", post(api::auth::init_admin))
-        // Protected routes (require authentication)
+        .route("/auth/status", get(api::auth::status));
+
+    // Policy changes need at least the Operator role (same rule as the
+    // GraphQL policy mutations).
+    let policy_writes = Router::new()
+        .route("/policies", post(api::policies::create_policy))
+        .route("/policies/:id", put(api::policies::update_policy))
+        .route("/policies/:id", delete(api::policies::delete_policy))
+        .route_layer(axum::middleware::from_fn(
+            auth::middleware::require_operator,
+        ));
+
+    let protected = Router::new()
         .route("/auth/me", get(api::auth::me))
         .route("/auth/change-password", post(api::auth::change_password))
         // Sites
@@ -273,13 +360,17 @@ fn api_routes() -> Router<Arc<AppState>> {
         .route("/flows", get(api::flows::list_flows))
         // Policies
         .route("/policies", get(api::policies::list_policies))
-        .route("/policies", post(api::policies::create_policy))
         .route("/policies/:id", get(api::policies::get_policy))
-        .route("/policies/:id", put(api::policies::update_policy))
-        .route("/policies/:id", delete(api::policies::delete_policy))
+        .merge(policy_writes)
         // Metrics
         .route("/metrics/summary", get(api::metrics::get_summary))
         .route("/metrics/timeseries", get(api::metrics::get_timeseries))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state,
+            auth::middleware::auth_middleware,
+        ));
+
+    public.merge(protected)
 }
 
 /// Basic health check endpoint
@@ -335,52 +426,45 @@ async fn graphql_playground() -> impl axum::response::IntoResponse {
     )))
 }
 
-/// GraphQL WebSocket handler for subscriptions
+/// GraphQL WebSocket endpoint for subscriptions.
+///
+/// Speaks the real GraphQL-over-WebSocket protocols (`graphql-transport-ws`
+/// as used by the `graphql-ws` client, and legacy `graphql-ws`), so
+/// `subscription { ... }` operations actually stream. The previous handler
+/// ran each text frame as a one-shot query, which can't execute a
+/// subscription at all. A bearer token may be sent in the connection_init
+/// payload (`{"Authorization": "Bearer <jwt>"}`) for role-gated streams.
 async fn graphql_ws_handler(
     ws: WebSocketUpgrade,
+    protocol: async_graphql_axum::GraphQLProtocol,
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
     schema: axum::Extension<graphql::AppSchema>,
 ) -> impl axum::response::IntoResponse {
-    ws.on_upgrade(move |socket| graphql_ws_connection(socket, state, schema.0))
+    let schema = schema.0.clone();
+    ws.protocols(async_graphql::http::ALL_WEBSOCKET_PROTOCOLS)
+        .on_upgrade(move |socket| {
+            async_graphql_axum::GraphQLWebSocket::new(socket, schema, protocol)
+                .on_connection_init(move |payload| {
+                    let state = state.clone();
+                    async move {
+                        let claims = ws_init_token(&payload)
+                            .and_then(|t| auth::jwt::validate_token(&t).ok())
+                            .filter(|c| !state.token_revocation.is_revoked(&c.jti));
+                        let mut data = async_graphql::Data::default();
+                        data.insert(graphql::AuthContext::new(claims));
+                        Ok(data)
+                    }
+                })
+                .serve()
+        })
 }
 
-/// Handle GraphQL WebSocket connection
-async fn graphql_ws_connection(
-    socket: WebSocket,
-    _state: Arc<AppState>,
-    schema: graphql::AppSchema,
-) {
-    use axum::extract::ws::Message;
-
-    let (mut sender, mut receiver) = socket.split();
-
-    // Create a simple message handler
-    // This is a simplified implementation for now
-    // Full GraphQL-WS protocol can be added later if needed
-    while let Some(Ok(msg)) = receiver.next().await {
-        match msg {
-            Message::Text(text) => {
-                // Parse as GraphQL request and execute
-                if let Ok(request) = serde_json::from_str::<serde_json::Value>(&text) {
-                    // Check if it's a subscription request
-                    if let Some(query) = request.get("query").and_then(|q| q.as_str()) {
-                        // Execute the query
-                        let gql_request = async_graphql::Request::new(query);
-                        let response = schema.execute(gql_request).await;
-
-                        // Send response
-                        if let Ok(json) = serde_json::to_string(&response) {
-                            let _ = sender.send(Message::Text(json)).await;
-                        }
-                    }
-                }
-            }
-            Message::Close(_) => {
-                break;
-            }
-            _ => {}
-        }
-    }
+/// Bearer token from a graphql-ws `connection_init` payload, if any.
+fn ws_init_token(payload: &serde_json::Value) -> Option<String> {
+    ["Authorization", "authorization", "token"]
+        .iter()
+        .find_map(|k| payload.get(*k).and_then(|v| v.as_str()))
+        .map(|v| v.strip_prefix("Bearer ").unwrap_or(v).to_string())
 }
 
 /// SPA fallback handler - serves index.html for all non-API routes

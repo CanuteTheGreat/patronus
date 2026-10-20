@@ -210,11 +210,54 @@ fn secret_file_next_to_db(db_path: &str) -> PathBuf {
         .join(DEFAULT_SECRET_FILE_NAME)
 }
 
+/// Node-to-node HA RPC credential, derived from the signing secret at `init`.
+static CLUSTER_RPC_TOKEN: OnceLock<String> = OnceLock::new();
+
+/// Derive the HA RPC credential from the shared signing secret. Every HA
+/// node is already required to share `PATRONUS_JWT_SECRET`, so the cluster
+/// needs no second secret; a domain-separated HMAC means the RPC token never
+/// reveals the signing secret itself.
+pub fn derive_cluster_rpc_token(secret: &[u8]) -> String {
+    use hmac::{Hmac, Mac};
+    let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(secret)
+        .expect("HMAC accepts keys of any length");
+    mac.update(b"patronus-ha-rpc-v1");
+    hex::encode(mac.finalize().into_bytes())
+}
+
+/// Credential HA peers must present on `/ha/*` RPCs (vote, heartbeat,
+/// replicate). `None` until [`init`] ran.
+pub fn cluster_rpc_token() -> Option<&'static str> {
+    CLUSTER_RPC_TOKEN.get().map(|s| s.as_str())
+}
+
+/// Symmetric key HA nodes use to encrypt+authenticate database snapshots
+/// sent between them (the DB holds password hashes, MFA secrets and the
+/// site's mesh signing key, so it never crosses the wire in clear).
+static CLUSTER_REPLICATION_KEY: OnceLock<[u8; 32]> = OnceLock::new();
+
+/// Derive the snapshot-encryption key from the shared signing secret.
+pub fn derive_cluster_replication_key(secret: &[u8]) -> [u8; 32] {
+    use hmac::{Hmac, Mac};
+    let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(secret)
+        .expect("HMAC accepts keys of any length");
+    mac.update(b"patronus-ha-replication-v1");
+    mac.finalize().into_bytes().into()
+}
+
+/// Snapshot-encryption key; `None` until [`init`] ran.
+pub fn cluster_replication_key() -> Option<&'static [u8; 32]> {
+    CLUSTER_REPLICATION_KEY.get()
+}
+
 /// Install the process-wide signing keys. Fails if already initialised.
 pub fn init(secret: &[u8]) -> std::result::Result<(), String> {
     let keys = JwtKeys::new(secret)?;
     KEYS.set(keys)
-        .map_err(|_| "JWT signing keys already initialised".to_string())
+        .map_err(|_| "JWT signing keys already initialised".to_string())?;
+    let _ = CLUSTER_RPC_TOKEN.set(derive_cluster_rpc_token(secret));
+    let _ = CLUSTER_REPLICATION_KEY.set(derive_cluster_replication_key(secret));
+    Ok(())
 }
 
 /// Load the secret from env / secret file and install it. Called once from `main`.

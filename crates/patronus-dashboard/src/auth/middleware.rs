@@ -32,6 +32,11 @@ pub async fn auth_middleware(
     // Validate token
     let claims = validate_token(token)?;
 
+    // Logged-out / revoked tokens are rejected here too, not only on GraphQL.
+    if state.token_revocation.is_revoked(&claims.jti) {
+        return Err(ApiError::Unauthorized("Token has been revoked".to_string()));
+    }
+
     // Verify user is active
     let user = state
         .user_repository
@@ -46,6 +51,21 @@ pub async fn auth_middleware(
     // Store claims in request extensions for downstream handlers
     req.extensions_mut().insert(claims);
 
+    Ok(next.run(req).await)
+}
+
+/// Route layer for write endpoints: require at least the Operator role.
+/// Must run after [`auth_middleware`] (which stores the claims).
+pub async fn require_operator(req: Request, next: Next) -> Result<Response, ApiError> {
+    let claims = req
+        .extensions()
+        .get::<super::jwt::Claims>()
+        .ok_or_else(|| ApiError::Unauthorized("Not authenticated".to_string()))?;
+    if !has_role(claims, &UserRole::Operator)? {
+        return Err(ApiError::Forbidden(
+            "Operator or Admin role required".to_string(),
+        ));
+    }
     Ok(next.run(req).await)
 }
 

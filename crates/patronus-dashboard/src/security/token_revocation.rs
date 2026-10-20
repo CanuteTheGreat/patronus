@@ -171,7 +171,7 @@ impl TokenRevocation {
     }
 
     /// Reload cache from database
-    async fn reload_cache(&self) -> anyhow::Result<()> {
+    pub async fn reload_cache(&self) -> anyhow::Result<()> {
         let tokens: Vec<(String,)> =
             sqlx::query_as("SELECT token_id FROM revoked_tokens WHERE expires_at > ?")
                 .bind(Utc::now().to_rfc3339())
