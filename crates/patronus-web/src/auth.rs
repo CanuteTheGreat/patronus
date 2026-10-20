@@ -27,6 +27,25 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+/// A fixed argon2 hash (same parameters as every account's) that logins
+/// for unknown or disabled accounts are checked against; no account can
+/// have it, since it never leaves this process.
+fn decoy_hash() -> &'static str {
+    static DECOY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DECOY.get_or_init(|| {
+        hash_password(&patronus_secrets::crypto::generate_token(32)).unwrap_or_default()
+    })
+}
+
+/// The hash a login attempt is verified against: the account's own if it
+/// exists and is enabled, else [`decoy_hash`] (equal work either way).
+fn hash_to_check(user: Option<&User>) -> &str {
+    match user {
+        Some(u) if u.enabled => &u.password_hash,
+        _ => decoy_hash(),
+    }
+}
+
 /// Session data stored in memory
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -390,15 +409,20 @@ impl UserStore {
     }
 
     /// Verify user credentials and return user if valid
+    ///
+    /// Unknown and disabled accounts are checked against a decoy argon2 hash, so
+    /// they take as long as a wrong password for a real account. Before
+    /// this they returned before any argon2 work, and the response time
+    /// told an unauthenticated client which usernames exist (and are
+    /// enabled): it could then spend the login throttle's budget on real
+    /// accounts only.
     pub async fn verify_credentials(&self, username: &str, password: &str) -> Option<User> {
-        let user = self.get_user(&username.trim().to_ascii_lowercase()).await?;
-        if !user.enabled {
-            return None;
-        }
-        match verify_password(password, &user.password_hash) {
-            Ok(true) => Some(user),
-            _ => None,
-        }
+        let user = self.get_user(&username.trim().to_ascii_lowercase()).await;
+        let ok = matches!(
+            verify_password(password, hash_to_check(user.as_ref())),
+            Ok(true)
+        );
+        user.filter(|u| u.enabled && ok)
     }
 
     /// Update last login time for a user
@@ -1587,6 +1611,64 @@ mod account_tests {
         .await
         .unwrap();
         s
+    }
+
+    /// Unknown or disabled usernames must cost the same argon2 check as a
+    /// wrong password for a real account, or the response time tells an
+    /// unauthenticated client which accounts exist.
+    #[tokio::test]
+    async fn unknown_and_disabled_accounts_cost_a_full_password_check() {
+        let s = store().await;
+        let id = s
+            .create_user("carol".into(), "Carol-Passw0rd-1", UserRole::Operator)
+            .await
+            .unwrap();
+        let carol = s.get_by_id(id).await.unwrap();
+        // "$argon2id$v=19$m=..,t=..,p=.." -- algorithm, version and cost
+        let params = |h: &str| h.rsplitn(3, '$').nth(2).unwrap_or_default().to_string();
+        assert!(
+            params(decoy_hash()).starts_with("$argon2"),
+            "{}",
+            decoy_hash()
+        );
+        assert_eq!(params(decoy_hash()), params(&carol.password_hash));
+        // a well-formed hash: verifying against it does the full work
+        assert!(matches!(
+            verify_password("Carol-Passw0rd-1", decoy_hash()),
+            Ok(false)
+        ));
+
+        assert_eq!(hash_to_check(Some(&carol)), carol.password_hash);
+        assert_eq!(hash_to_check(None), decoy_hash());
+        let mut off = carol.clone();
+        off.enabled = false;
+        assert_eq!(hash_to_check(Some(&off)), decoy_hash());
+
+        assert!(s
+            .verify_credentials("nobody", "Carol-Passw0rd-1")
+            .await
+            .is_none());
+        assert!(s
+            .verify_credentials("carol", "Wrong-Passw0rd-1")
+            .await
+            .is_none());
+        assert!(s
+            .verify_credentials("carol", "Carol-Passw0rd-1")
+            .await
+            .is_some());
+        s.update_user(
+            id,
+            &UserUpdate {
+                enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(s
+            .verify_credentials("carol", "Carol-Passw0rd-1")
+            .await
+            .is_none());
     }
 
     #[tokio::test]
