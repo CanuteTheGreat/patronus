@@ -1044,6 +1044,17 @@ impl DhcpApplier {
         ]
     }
 
+    /// A daemon's file rendered from an empty configuration (no subnets, no
+    /// pools, no reservations, no RA interfaces): what is left on disk when
+    /// the daemon is no longer needed.
+    fn idle_content(svc: &str, p: &Plan) -> String {
+        match svc {
+            "kea-dhcp4" => render_kea4(&[], p.dns_on, p.ntp_on),
+            "kea-dhcp6" => dhcp6::render_kea(&[], p.dns_on),
+            _ => ra::render_radvd(&[], p.dns_on),
+        }
+    }
+
     /// Status for the UI: backend, daemons, leases.
     pub async fn status_value(&self, store: &ConfigStore) -> Result<Value> {
         let b = backend(store, &self.env).await?;
@@ -1078,7 +1089,10 @@ impl Applier for DhcpApplier {
         let env = &self.env;
         for (svc, bin, f, needed) in self.files(&p) {
             if !needed {
-                lan::reconcile(env, svc, false, false, f.path, &mut rep)?;
+                // the last pool was deleted / the backend switched: the
+                // daemon's file must not keep serving the old pools
+                let idle = Self::idle_content(svc, &p);
+                lan::retire(env, svc, ManagedFile { content: idle, ..f }, &mut rep)?;
                 continue;
             }
             if !env.has_binary(bin) {
@@ -1231,6 +1245,47 @@ mod tests {
         assert_eq!(t.services.log.lock().unwrap().len(), 1);
         // kea serves DHCP; nothing needs dnsmasq
         assert!(read(&t, lan::DNSMASQ_CONF).is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_the_last_pool_empties_the_kea_config_before_stopping_kea() {
+        let t = testutil::env(&[KEA4_BIN, lan::DNSMASQ_BIN, "/usr/sbin/unbound"]);
+        let s = testutil::store().await;
+        let id = seed(&s).await;
+        let a = DhcpApplier::new(t.env.clone());
+        a.apply(&s).await.unwrap();
+        assert!(t.services.is_running("kea-dhcp4"));
+        assert!(read(&t, KEA4_CONF).contains("192.168.50.100 - 192.168.50.199"));
+
+        delete_pool(&s, id).await.unwrap();
+        let rep = a.apply(&s).await.unwrap();
+        assert!(!t.services.is_running("kea-dhcp4"), "{rep:?}");
+        let conf = read(&t, KEA4_CONF);
+        assert!(conf.starts_with("// Managed by Patronus"), "{conf}");
+        for gone in ["192.168.50", "aa:bb:cc:00:00:02", "rtr-lan"] {
+            assert!(!conf.contains(gone), "deleted pool left {gone}: {conf}");
+        }
+        let body: String = conf
+            .lines()
+            .filter(|l| !l.starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let j: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(j["Dhcp4"]["subnet4"], json!([]));
+        assert_eq!(j["Dhcp4"]["interfaces-config"]["interfaces"], json!([]));
+        assert!(
+            rep.applied.iter().any(|l| l.contains("nothing configured")),
+            "{rep:?}"
+        );
+        // a second apply changes nothing
+        let n = t.services.log.lock().unwrap().len();
+        a.apply(&s).await.unwrap();
+        assert_eq!(t.services.log.lock().unwrap().len(), n);
+
+        // a hand-maintained Kea file is never touched
+        std::fs::write(t.env.path(KEA4_CONF), "{\"mine\": true}\n").unwrap();
+        a.apply(&s).await.unwrap();
+        assert_eq!(read(&t, KEA4_CONF), "{\"mine\": true}\n");
     }
 
     #[tokio::test]

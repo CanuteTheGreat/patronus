@@ -273,6 +273,16 @@ has /etc/dnsmasq.conf "dhcp-range=set:p$POOL,192.168.50.100,192.168.50.150,255.2
 has /etc/dnsmasq.conf "port=0"
 expect_running dnsmasq unbound
 expect_stopped kea-dhcp4 kea-dhcp6 radvd
+# the retired daemons' files no longer describe the old pools (a manual
+# start would otherwise serve them next to dnsmasq), and Kea accepts them
+for f in /etc/kea/kea-dhcp4.conf /etc/kea/kea-dhcp6.conf /etc/radvd.conf; do
+  has "$f" "Managed by Patronus"
+  if grep -qE '192\.168\.50\.|fd00:50::|aa:bb:cc:00:00:02|rtr-lan' "$f"; then cat "$f"; fail "$f still lists a retired pool"; fi
+done
+grep -q '"subnet4": \[\]' /etc/kea/kea-dhcp4.conf || { cat /etc/kea/kea-dhcp4.conf; fail "kea-dhcp4.conf still has subnets"; }
+kea-dhcp4 -t /etc/kea/kea-dhcp4.conf >/tmp/kea-t.out 2>&1 || { cat /tmp/kea-t.out; fail "kea-dhcp4 -t rejects the idle config"; }
+kea-dhcp6 -t /etc/kea/kea-dhcp6.conf >/tmp/kea-t.out 2>&1 || { cat /tmp/kea-t.out; fail "kea-dhcp6 -t rejects the idle config"; }
+ok "kea/radvd configs emptied when the backend moved to dnsmasq (kea -t accepts them)"
 check_v4 "dnsmasq"
 check_v6 "dnsmasq RA + DHCPv6"
 want 200 GET /api/dhcp/leases

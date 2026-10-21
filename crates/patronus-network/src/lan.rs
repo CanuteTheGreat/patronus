@@ -650,6 +650,31 @@ pub fn reconcile(
     Ok(())
 }
 
+/// A daemon that is no longer needed: if Patronus owns its config file,
+/// first replace the file with `idle` (the same file rendered from an empty
+/// configuration, so it serves nothing), then stop the daemon. Without the
+/// rewrite the file kept the deleted pools/reservations, and a manual or
+/// boot-time start of the distro service would serve them again.
+/// A hand-maintained file (no marker) and its daemon are left alone.
+pub fn retire(env: &LanEnv, svc: &str, idle: ManagedFile, rep: &mut ApplyReport) -> Result<()> {
+    if !is_managed(env, idle.path) {
+        return Ok(());
+    }
+    let path = idle.path;
+    // the idle file is a fixed rendering of an empty list; don't depend on
+    // the daemon's validator (the package may have been removed meanwhile)
+    if install(
+        env,
+        &ManagedFile {
+            check: None,
+            ..idle
+        },
+    )? {
+        rep.applied(format!("wrote {path} (nothing configured)"));
+    }
+    reconcile(env, svc, false, false, path, rep)
+}
+
 // ---------------------------------------------------------------------------
 // dnsmasq: shared by DHCP (v4/v6/RA/relay) and DNS (forwarder mode)
 // ---------------------------------------------------------------------------
@@ -746,8 +771,27 @@ pub async fn sync_dnsmasq(store: &ConfigStore, env: &LanEnv, rep: &mut ApplyRepo
             }
             reconcile(env, "dnsmasq", true, changed, DNSMASQ_CONF, rep)
         }
-        None => reconcile(env, "dnsmasq", false, false, DNSMASQ_CONF, rep),
+        None => retire(
+            env,
+            "dnsmasq",
+            ManagedFile {
+                path: DNSMASQ_CONF,
+                content: idle_dnsmasq(),
+                mode: 0o644,
+                group: None,
+                check: None,
+            },
+            rep,
+        ),
     }
+}
+
+/// `/etc/dnsmasq.conf` when nothing needs dnsmasq: no DHCP ranges, no DNS.
+pub fn idle_dnsmasq() -> String {
+    header(
+        "#",
+        "dnsmasq: DHCP, router advertisements, relay, DNS forwarder",
+    ) + "# nothing configured: no DHCP, no router advertisements, no DNS\nport=0\n"
 }
 
 // ---------------------------------------------------------------------------
