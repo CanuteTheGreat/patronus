@@ -68,6 +68,41 @@ pub fn build_router(
             app_state,
             crate::auth::session_middleware,
         ))
+        // Outermost, so 401s, login redirects and errors get them too.
+        .layer(axum::middleware::map_response(security_headers))
+}
+
+/// Browser hardening headers on every response (the SD-WAN dashboard,
+/// `patronus-dashboard`, already sent these; the firewall's own UI didn't):
+///
+/// - `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'`: no other site
+///   can frame the management UI and trick an admin into clicking
+///   "Delete"/"Restore" under an overlay (clickjacking). The session
+///   cookie's `SameSite=Strict` already keeps a cross-site frame logged
+///   out in current browsers; this doesn't depend on that.
+/// - `X-Content-Type-Options: nosniff`: a response is never interpreted as
+///   anything but its declared type.
+/// - `Referrer-Policy: same-origin`: the router's address and page paths
+///   don't leak to sites linked from the UI.
+/// - `Cache-Control: no-store` unless the handler chose its own (the
+///   favicon is cacheable): pages and API answers carry live config, user
+///   lists and one-time recovery codes, which must not stay in the
+///   browser's disk cache on a shared machine.
+///
+/// The CSP is only `frame-ancestors`: the templates use inline scripts.
+async fn security_headers(mut res: axum::response::Response) -> axum::response::Response {
+    use axum::http::{header, HeaderValue};
+    let h = res.headers_mut();
+    for (name, value) in [
+        (header::X_FRAME_OPTIONS, "DENY"),
+        (header::CONTENT_SECURITY_POLICY, "frame-ancestors 'none'"),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (header::REFERRER_POLICY, "same-origin"),
+        (header::CACHE_CONTROL, "no-store"),
+    ] {
+        h.entry(name).or_insert(HeaderValue::from_static(value));
+    }
+    res
 }
 
 /// The Patronus shield icon (`static/favicon.svg`, compiled in).
@@ -288,6 +323,61 @@ mod auth_gate_tests {
             .await
             .unwrap();
         assert_eq!(r.status(), StatusCode::OK);
+    }
+
+    /// Every response -- public page, 401, login redirect, logged-in API
+    /// answer -- carries the anti-framing/nosniff/referrer headers and
+    /// isn't cached; a handler's own Cache-Control (favicon) is kept.
+    #[tokio::test]
+    async fn every_response_has_the_security_headers() {
+        let (app, pw) = app().await;
+        let login = format!(r#"{{"username":"admin","password":"{pw}"}}"#);
+        let r = app
+            .clone()
+            .oneshot(req(Method::POST, "/api/auth/login", None, Some(&login)))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+        let cookie = r.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        for (uri, c, want) in [
+            ("/login", None, StatusCode::OK),
+            ("/system", None, StatusCode::SEE_OTHER),
+            ("/api/status", None, StatusCode::UNAUTHORIZED),
+            ("/system", Some(cookie.as_str()), StatusCode::OK),
+            ("/api/system/users", Some(cookie.as_str()), StatusCode::OK),
+        ] {
+            let r = app
+                .clone()
+                .oneshot(req(Method::GET, uri, c, None))
+                .await
+                .unwrap();
+            assert_eq!(r.status(), want, "{uri}");
+            let h = r.headers();
+            assert_eq!(h[header::X_FRAME_OPTIONS], "DENY", "{uri}");
+            assert_eq!(
+                h[header::CONTENT_SECURITY_POLICY],
+                "frame-ancestors 'none'",
+                "{uri}"
+            );
+            assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff", "{uri}");
+            assert_eq!(h[header::REFERRER_POLICY], "same-origin", "{uri}");
+            assert_eq!(h[header::CACHE_CONTROL], "no-store", "{uri}");
+            assert_eq!(h.get_all(header::CACHE_CONTROL).iter().count(), 1, "{uri}");
+        }
+        let r = app
+            .clone()
+            .oneshot(req(Method::GET, "/favicon.ico", None, None))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(r.headers()[header::CACHE_CONTROL], "public, max-age=86400");
+        assert_eq!(r.headers()[header::X_FRAME_OPTIONS], "DENY");
     }
 
     #[tokio::test]
