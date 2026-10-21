@@ -254,11 +254,31 @@ pub async fn delete_backup(
     }
 }
 
+/// After a restore that replaced the web accounts, end every session but
+/// the caller's. Sessions cache the user id and role from login, so they
+/// would otherwise outlive the restore for up to a day: an account the
+/// backup doesn't have (say, one an intruder added, the usual reason to
+/// restore an older backup) or one it has disabled, demoted or with
+/// another password kept working until the session expired. The caller
+/// keeps theirs only if their id is still the same enabled admin.
+async fn end_sessions_after_restore(state: &AppState, admin: &AdminUser, doc: &serde_json::Value) {
+    if !crate::state::system::restores_accounts(doc) {
+        return;
+    }
+    let keep = match state.auth.user_store.get_by_id(admin.session.user_id).await {
+        Some(u) if u.enabled && u.role.is_admin() && u.username == admin.session.username => {
+            Some(admin.session_id.as_str())
+        }
+        _ => None,
+    };
+    state.auth.session_store.drop_all(keep).await;
+}
+
 /// POST /api/system/backups/:name/restore -- replace the configuration
 /// with a stored backup and apply it (undone if any subsystem refuses it).
 pub async fn restore_backup(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    admin: AdminUser,
     Path(name): Path<String>,
 ) -> Response {
     let doc = match state.system.backup_doc(&name).await {
@@ -268,6 +288,7 @@ pub async fn restore_backup(
     };
     match state.system.restore(&state.config_store, &doc, &name).await {
         Ok(lines) => {
+            end_sessions_after_restore(&state, &admin, &doc).await;
             Json(json!({ "ok": true, "restored": name, "applied": lines })).into_response()
         }
         Err(e) => err(e),
@@ -278,7 +299,7 @@ pub async fn restore_backup(
 /// file's bytes as the body), keep it as a backup file and restore it.
 pub async fn upload_restore(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    admin: AdminUser,
     body: Bytes,
 ) -> Response {
     let (b, doc) = match state.system.save_upload(&body).await {
@@ -291,6 +312,7 @@ pub async fn upload_restore(
         .await
     {
         Ok(lines) => {
+            end_sessions_after_restore(&state, &admin, &doc).await;
             Json(json!({ "ok": true, "restored": b.name, "applied": lines })).into_response()
         }
         Err(e) => err(e),

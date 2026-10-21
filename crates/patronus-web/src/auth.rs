@@ -778,6 +778,16 @@ impl SessionStore {
             .retain(|id, s| s.user_id != user_id || Some(id.as_str()) == keep);
     }
 
+    /// End every session except `keep` (a restore that replaced the
+    /// accounts: a session's cached user id and role may no longer mean
+    /// the account it was opened for).
+    pub async fn drop_all(&self, keep: Option<&str>) {
+        self.sessions
+            .write()
+            .await
+            .retain(|id, _| Some(id.as_str()) == keep);
+    }
+
     /// Remove sessions past [`SESSION_LIFETIME_SECS`].
     pub async fn cleanup_expired(&self) {
         let now = Utc::now();

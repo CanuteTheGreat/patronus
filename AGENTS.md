@@ -144,7 +144,9 @@ config file that only one process knows about.
   admin password at every start (recovery); otherwise the stored password
   stands. `import_json` keeps `web_users` when a document predates it, and a
   web restore of a document without an enabled admin keeps the current
-  accounts. `patronus users list|reset-2fa` on the box.
+  accounts; one that replaces them ends every other session (sessions cache
+  id + role), keeping the caller's only if its id is still the same enabled
+  admin. `patronus users list|reset-2fa` on the box.
 - History: `ConfigStore::snapshot()` before a change set,
   `restore_revision()` to roll back (`patronus config revisions|rollback`).
   `export_json()`/`import_json()` cover every lane's tables automatically.

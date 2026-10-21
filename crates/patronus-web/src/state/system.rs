@@ -16,6 +16,25 @@ use std::sync::Arc;
 
 pub use patronus_network::services::KNOWN_SERVICES;
 
+/// Whether restoring export document `doc` replaces the web accounts:
+/// only a document whose `web_users` has an enabled admin does;
+/// [`SystemManager::restore`] keeps the current accounts otherwise, so a
+/// restore can never lock everyone out.
+pub fn restores_accounts(doc: &Value) -> bool {
+    doc.get("tables")
+        .and_then(|t| t.get("web_users"))
+        .is_some_and(has_enabled_admin)
+}
+
+fn has_enabled_admin(users: &Value) -> bool {
+    users.as_array().is_some_and(|rows| {
+        rows.iter().any(|r| {
+            r.get("role").and_then(Value::as_str) == Some("admin")
+                && r.get("enabled").and_then(Value::as_i64).unwrap_or(1) != 0
+        })
+    })
+}
+
 /// System management operations.
 pub struct SystemManager {
     backup_dir: PathBuf,
@@ -126,20 +145,15 @@ impl SystemManager {
                 )
             })?;
         let mut notes = Vec::new();
-        if let Some(users) = tables.get("web_users") {
-            let has_admin = users.as_array().is_some_and(|rows| {
-                rows.iter().any(|r| {
-                    r.get("role").and_then(Value::as_str) == Some("admin")
-                        && r.get("enabled").and_then(Value::as_i64).unwrap_or(1) != 0
-                })
-            });
-            if !has_admin {
-                tables.remove("web_users");
-                notes.push(
-                    "the backup has no enabled admin account: kept the current web accounts"
-                        .to_string(),
-                );
-            }
+        if tables
+            .get("web_users")
+            .is_some_and(|users| !has_enabled_admin(users))
+        {
+            tables.remove("web_users");
+            notes.push(
+                "the backup has no enabled admin account: kept the current web accounts"
+                    .to_string(),
+            );
         }
         let rev = store
             .snapshot("web", &format!("before restore of {what}"))

@@ -965,6 +965,106 @@ async fn backups_restore_from_the_list_and_from_an_upload() {
     assert_eq!(t.login("admin", ADMIN_PW, None).await.0, StatusCode::OK);
 }
 
+/// A restore that replaces the accounts ends the sessions opened before
+/// it (they cache user id and role): an account the backup doesn't have,
+/// such as one an intruder added after it was taken, is out at once rather
+/// than when its session expires a day later. The restoring admin stays
+/// logged in while their account is still the same enabled admin.
+#[tokio::test]
+async fn a_restore_that_replaces_the_accounts_ends_the_other_sessions() {
+    let t = setup().await;
+    let c = t.admin().await;
+    let (s, b) = t.call(&c, Method::POST, "/api/system/backups", None).await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let name = b["name"].as_str().unwrap().to_string();
+    let (_, file, _) = t
+        .raw(
+            Method::GET,
+            &format!("/api/system/backups/{name}"),
+            Some(&c),
+            None,
+        )
+        .await;
+    for (u, role) in [("intruder", "admin"), ("later", "operator")] {
+        let (s, b) = t
+            .call(
+                &c,
+                Method::POST,
+                "/api/system/users",
+                Some(json!({"username": u, "password": "Added-Later-Passw0rd", "role": role})),
+            )
+            .await;
+        assert!(s.is_success(), "{u}: {s} {b}");
+    }
+    let tr = &t;
+    let me = move |cookie: String| async move {
+        tr.call(&cookie, Method::GET, "/api/auth/me", None).await.0
+    };
+    let (_, intruder, _) = t.login("intruder", "Added-Later-Passw0rd", None).await;
+    let (_, later, _) = t.login("later", "Added-Later-Passw0rd", None).await;
+    let (intruder, later) = (intruder.unwrap(), later.unwrap());
+    let other_admin = t.admin().await;
+    assert_eq!(me(intruder.clone()).await, StatusCode::OK);
+
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            &format!("/api/system/backups/{name}/restore"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(t.state.auth.user_store.get_user("intruder").await.is_none());
+    assert_eq!(me(intruder).await, StatusCode::UNAUTHORIZED, "gone account");
+    assert_eq!(me(later).await, StatusCode::UNAUTHORIZED, "gone account");
+    assert_eq!(
+        me(other_admin).await,
+        StatusCode::UNAUTHORIZED,
+        "another session of the admin (its password may differ now)"
+    );
+    assert_eq!(me(c.clone()).await, StatusCode::OK, "the restoring admin");
+
+    // a document without an enabled admin keeps the accounts: no logout
+    let other_admin = t.admin().await;
+    let mut doc: Value = serde_json::from_str(&file).unwrap();
+    let rows = doc["tables"]["web_users"].clone();
+    doc["tables"]["web_users"] = json!([]);
+    let (s, b, _) = t
+        .raw(
+            Method::POST,
+            "/api/system/restore",
+            Some(&c),
+            Some(doc.to_string()),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(me(other_admin.clone()).await, StatusCode::OK);
+
+    // the restoring admin's own account is another one in the backup
+    // (renamed here): their session ends too
+    let mut rows = rows;
+    for r in rows.as_array_mut().unwrap() {
+        if r["username"] == json!("admin") {
+            r["username"] = json!("root");
+        }
+    }
+    doc["tables"]["web_users"] = rows;
+    let (s, b, _) = t
+        .raw(
+            Method::POST,
+            "/api/system/restore",
+            Some(&c),
+            Some(doc.to_string()),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(me(c).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(me(other_admin).await, StatusCode::UNAUTHORIZED);
+    let (s, _, b) = t.login("root", ADMIN_PW, None).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+}
+
 #[tokio::test]
 async fn service_control_refuses_unknown_and_self_stopping_services() {
     let t = setup().await;
