@@ -609,29 +609,49 @@ impl UserStore {
     /// Confirm enrolment with a code from the app: two-factor login is on;
     /// returns the one-time recovery codes (shown once, stored hashed).
     /// A code that does not match fails with [`WrongTotpCode`].
+    ///
+    /// Only the first confirmation of a pending secret wins. The write is a
+    /// compare-and-set on "two-factor still off and this secret still
+    /// pending": without it, two confirmations racing (a double-clicked
+    /// "Enable", two tabs) both passed the read, both wrote, and the second
+    /// write replaced the recovery codes the first response had already
+    /// shown -- the owner could save a set that no longer works. A
+    /// confirmation for an account whose two-factor login is already on is
+    /// refused and changes nothing (secret, last step and recovery codes
+    /// stay as they are).
     #[cfg(feature = "totp")]
     pub async fn totp_confirm(&self, id: u32, code: &str) -> anyhow::Result<Vec<String>> {
         let u = self
             .get_by_id(id)
             .await
             .ok_or_else(|| anyhow::anyhow!("no such user {id}"))?;
+        if u.two_factor() {
+            anyhow::bail!("Invalid request: two-factor login is already on (disable it first)");
+        }
         let secret = u
             .totp_pending
             .ok_or_else(|| anyhow::anyhow!("Invalid request: start the two-factor setup first"))?;
         let step =
             crate::totp::verify(&secret, code, now_ts() as u64, None).ok_or(WrongTotpCode)?;
         let (codes, hashes) = crate::totp::generate_recovery_codes();
-        sqlx::query(
+        let r = sqlx::query(
             "UPDATE web_users SET totp_secret = ?, totp_pending = NULL, totp_last_step = ?,
-                recovery_codes = ?, updated_at = ? WHERE id = ?",
+                recovery_codes = ?, updated_at = ?
+              WHERE id = ? AND totp_secret IS NULL AND totp_pending = ?",
         )
         .bind(&secret)
         .bind(step as i64)
         .bind(serde_json::to_string(&hashes)?)
         .bind(now_ts())
         .bind(id as i64)
+        .bind(&secret)
         .execute(self.pool()?)
         .await?;
+        if r.rows_affected() != 1 {
+            anyhow::bail!(
+                "Invalid request: the two-factor setup was already confirmed or restarted (reload and check)"
+            );
+        }
         Ok(codes)
     }
 
@@ -1852,6 +1872,47 @@ mod account_tests {
         // reset (admin / CLI) turns it off
         assert!(s.totp_reset(admin.id).await.unwrap());
         assert!(!s.get_by_id(admin.id).await.unwrap().two_factor());
+    }
+
+    /// Two confirmations of the same pending setup (double-clicked
+    /// "Enable", two tabs) must not both "succeed": the later write used to
+    /// replace the recovery codes the earlier response had shown.
+    #[cfg(feature = "totp")]
+    #[tokio::test]
+    async fn only_one_confirmation_of_a_pending_setup_wins() {
+        let s = store().await;
+        let admin = s.get_user("admin").await.unwrap();
+        let secret = s.totp_begin(admin.id).await.unwrap();
+        let now = Utc::now().timestamp() as u64;
+        let code = crate::totp::code_at(&secret, now).unwrap();
+        let (a, b) = tokio::join!(
+            s.totp_confirm(admin.id, &code),
+            s.totp_confirm(admin.id, &code)
+        );
+        let won: Vec<Vec<String>> = [a, b].into_iter().filter_map(Result::ok).collect();
+        assert_eq!(won.len(), 1, "exactly one confirmation succeeds");
+        // the codes that response showed are the ones stored
+        let u = s.get_by_id(admin.id).await.unwrap();
+        assert!(u.two_factor());
+        assert!(s.totp_check(&u, &won[0][0]).await);
+
+        // two-factor already on and a pending secret left over (say, from a
+        // restored backup): confirming it is refused and changes nothing
+        let other = crate::totp::generate_secret();
+        sqlx::query("UPDATE web_users SET totp_pending = ? WHERE id = ?")
+            .bind(&other)
+            .bind(admin.id as i64)
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        let before = s.get_by_id(admin.id).await.unwrap();
+        let other_code = crate::totp::code_at(&other, now).unwrap();
+        let e = s.totp_confirm(admin.id, &other_code).await.unwrap_err();
+        assert!(e.to_string().contains("already on"), "{e}");
+        let after = s.get_by_id(admin.id).await.unwrap();
+        assert_eq!(after.totp_secret, before.totp_secret);
+        assert_eq!(after.recovery_codes, before.recovery_codes);
+        assert_eq!(after.totp_last_step, before.totp_last_step);
     }
 
     #[tokio::test]
