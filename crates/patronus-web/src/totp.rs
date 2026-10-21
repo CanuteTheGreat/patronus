@@ -171,6 +171,51 @@ mod tests {
     }
 
     #[test]
+    fn base32_rfc4648_vectors_cover_every_tail_length() {
+        // RFC 4648 section 10 (without padding): 1..=5 leftover bytes give
+        // every partial-group tail the 20-byte secrets never reach.
+        for (raw, enc) in [
+            (&b""[..], ""),
+            (&b"f"[..], "MY"),
+            (&b"fo"[..], "MZXQ"),
+            (&b"foo"[..], "MZXW6"),
+            (&b"foob"[..], "MZXW6YQ"),
+            (&b"fooba"[..], "MZXW6YTB"),
+            (&b"foobar"[..], "MZXW6YTBOI"),
+        ] {
+            assert_eq!(base32_encode(raw), enc, "{raw:?}");
+            assert_eq!(base32_decode(enc).unwrap(), raw, "{enc}");
+        }
+        assert_eq!(
+            base32_decode("MZXW6YQ=").unwrap(),
+            b"foob",
+            "padding ignored"
+        );
+        assert_eq!(base32_decode("mzxw6ytboi").unwrap(), b"foobar");
+        assert!(base32_decode("MZXW1").is_none(), "1 is not base32");
+    }
+
+    #[test]
+    fn verify_accepts_one_step_early_but_not_two() {
+        // The phone's clock may be ahead of the router's by up to SKEW steps.
+        // RFC secret: the codes for steps step-1..=step+2 are all distinct
+        // (466049, 070128, 115379, 517401), so each check is unambiguous.
+        let s = base32_encode(b"12345678901234567890");
+        let now = 1_760_000_010u64;
+        let step = now / PERIOD;
+        let early = code_at(&s, now + PERIOD).unwrap();
+        assert_eq!(early, "115379");
+        assert_eq!(verify(&s, &early, now, None), Some(step + 1));
+        assert_eq!(verify(&s, &early, now, Some(step)), Some(step + 1));
+        let too_early = code_at(&s, now + 2 * PERIOD).unwrap();
+        assert_eq!(verify(&s, &too_early, now, None), None, "two steps early");
+        // Step 0 has no previous step to look at (no underflow); RFC 4226
+        // appendix D, count 0.
+        assert_eq!(code_at(&s, 0).unwrap(), "755224");
+        assert_eq!(verify(&s, "755224", 0, None), Some(0));
+    }
+
+    #[test]
     fn verify_accepts_skew_once_and_rejects_junk() {
         let s = generate_secret();
         assert_eq!(base32_decode(&s).unwrap().len(), 20);
@@ -217,5 +262,26 @@ mod tests {
         assert!(!hashes
             .iter()
             .any(|h| codes.iter().any(|c| h.contains(c.as_str()))));
+        for c in &codes {
+            let b = c.as_bytes();
+            assert_eq!(b.len(), 11, "{c}");
+            assert_eq!(b[5], b'-', "{c}");
+            assert!(
+                c.chars()
+                    .filter(|&ch| ch != '-')
+                    .all(|ch| "abcdefghjkmnpqrstuvwxyz23456789".contains(ch)),
+                "{c}"
+            );
+        }
+        let mut h = hashes.clone();
+        h.sort();
+        h.dedup();
+        assert_eq!(h.len(), RECOVERY_CODES, "one digest per code");
+        // A fixed vector, so the digest is really SHA-256 of the normalised
+        // code (and not some constant both sides would agree on).
+        assert_eq!(
+            recovery_digest(" A-b C "),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }
