@@ -546,21 +546,78 @@ async fn two_factor_login_needs_the_code_after_enrolment() {
         .await;
     assert_eq!(s, StatusCode::UNAUTHORIZED, "never without the password");
 
-    // the accounts list shows it; an admin can reset someone else's
+    // the accounts list shows it
     let (_, users) = t.call(&c, Method::GET, "/api/system/users", None).await;
     assert_eq!(users[0]["two_factor"], true);
     assert_eq!(users[0]["recovery_codes_left"], 9);
-    let id = users[0]["id"].as_u64().unwrap();
-    let (s, _) = t
+    let me = users[0]["id"].as_u64().unwrap();
+
+    // the admin reset skips the password + code that /api/auth/2fa/disable
+    // asks for, so it refuses one's own account: a stolen session must not
+    // strip the owner's second factor
+    let (s, b) = t
         .call(
             &c,
             Method::POST,
-            &format!("/api/system/users/{id}/2fa/reset"),
+            &format!("/api/system/users/{me}/2fa/reset"),
             None,
         )
         .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
+    assert!(b.to_string().contains("/api/auth/2fa/disable"), "{b}");
+    let (s, _, b) = t.login("admin", ADMIN_PW, None).await;
+    assert_eq!(
+        (s, b["totp_required"].as_bool()),
+        (StatusCode::UNAUTHORIZED, Some(true)),
+        "two-factor login is still on"
+    );
+    let (s, _) = t.call(&c, Method::GET, "/api/status", None).await;
+    assert_eq!(s, StatusCode::OK, "the refusal didn't end the session");
+
+    // an admin can still reset someone else's (lost phone)
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/users",
+            Some(json!({"username": "ops", "password": "Ops-Passw0rd-123", "role": "operator"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let ops = b["id"].as_u64().unwrap();
+    let us = &t.state.auth.user_store;
+    let ops_secret = us.totp_begin(ops as u32).await.unwrap();
+    us.totp_confirm(ops as u32, &crate::totp::code_at(&ops_secret, now).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        t.login("ops", "Ops-Passw0rd-123", None).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    // the page offers "Reset 2FA" on the other account's row only
+    let (s, page, _) = t.raw(Method::GET, "/system", Some(&c), None).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(t.login("admin", ADMIN_PW, None).await.0, StatusCode::OK);
+    assert!(
+        !page.contains(&format!("/api/system/users/{me}/2fa/reset")),
+        "own row"
+    );
+    assert!(
+        page.contains(&format!("/api/system/users/{ops}/2fa/reset")),
+        "other row"
+    );
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            &format!("/api/system/users/{ops}/2fa/reset"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(
+        t.login("ops", "Ops-Passw0rd-123", None).await.0,
+        StatusCode::OK
+    );
 }
 
 #[cfg(feature = "totp")]

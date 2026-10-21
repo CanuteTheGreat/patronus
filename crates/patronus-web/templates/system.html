@@ -75,7 +75,7 @@
                 {% if user.is_active %}<button class="btn btn-sm btn-secondary" onclick="call('PUT', '/api/system/users/{{ user.id }}', {enabled: false})">Disable</button>
                 {% else %}<button class="btn btn-sm btn-success" onclick="call('PUT', '/api/system/users/{{ user.id }}', {enabled: true})">Enable</button>{% endif %}
                 {% if user.id != me_id %}<button class="btn btn-sm btn-secondary" onclick="setPassword({{ user.id }}, '{{ user.username }}')">Set password</button>{% endif %}
-                {% if user.two_factor %}<button class="btn btn-sm btn-secondary" onclick="if (confirm('Turn two-factor login off for {{ user.username }}?')) call('POST', '/api/system/users/{{ user.id }}/2fa/reset')">Reset 2FA</button>{% endif %}
+                {% if user.two_factor && user.id != me_id %}<button class="btn btn-sm btn-secondary" onclick="if (confirm('Turn two-factor login off for {{ user.username }}?')) call('POST', '/api/system/users/{{ user.id }}/2fa/reset')">Reset 2FA</button>{% endif %}
                 {% if user.id != me_id %}<button class="btn btn-sm btn-danger" onclick="del('/api/system/users/{{ user.id }}', 'Delete account {{ user.username }}?')">Delete</button>{% endif %}
             {% endif %}</td>
         </tr>

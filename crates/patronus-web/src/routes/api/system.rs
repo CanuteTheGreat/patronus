@@ -166,11 +166,24 @@ pub async fn delete_user(
 
 /// POST /api/system/users/:id/2fa/reset (admin): turn the account's
 /// two-factor login off (lost phone).
+///
+/// Not for the admin's *own* account: `POST /api/auth/2fa/disable` asks for
+/// the password and a current code (throttled like login), and this route
+/// would let anyone holding an admin's session strip the owner's second
+/// factor without either. An admin locked out of their own 2FA isn't
+/// logged in anyway; that is what `patronus users reset-2fa` is for.
 pub async fn reset_2fa(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    admin: AdminUser,
     Path(id): Path<u32>,
 ) -> Response {
+    if id == admin.session.user_id {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Invalid request: turn your own two-factor login off under \"Your account\" \
+             (POST /api/auth/2fa/disable, which asks for the password and a current code)",
+        );
+    }
     match state.auth.user_store.totp_reset(id).await {
         Ok(true) => {
             state.auth.session_store.drop_user(id, None).await;
