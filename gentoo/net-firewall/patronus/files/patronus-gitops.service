@@ -1,0 +1,22 @@
+[Unit]
+# GitOps (USE=gitops): polls the repository named in the [gitops] section of
+# /etc/patronus/patronus.toml and applies the declarative resources it holds
+# (firewall/NAT rules, interfaces, routes: apiVersion patronus.firewall/v1)
+# through the same appliers as `patronus apply`, so a commit ends up in the
+# config store and in the running system. With auto_apply = false it only
+# validates and logs what would change (`patronus gitops sync --apply`).
+Description=Patronus GitOps watcher
+After=network-online.target patronus-firewall.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/patronus gitops watch
+Restart=on-failure
+RestartSec=30
+StateDirectory=patronus/gitops
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

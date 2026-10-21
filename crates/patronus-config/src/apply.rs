@@ -116,7 +116,7 @@ impl StateManager {
 
         if state_file.exists() {
             let content = tokio::fs::read_to_string(&state_file).await?;
-            let configs = ConfigParser::parse_yaml(&content)?;
+            let configs = parse_state(&content)?;
 
             for config in configs {
                 self.current_state
@@ -132,20 +132,20 @@ impl StateManager {
         Ok(())
     }
 
+    /// Write the state as ONE YAML list (what [`parse_state`] and
+    /// `ConfigParser::parse_yaml` read), sorted by name, atomically. It used
+    /// to be written as `---`-separated single documents that the next
+    /// process could not load ("expected a sequence"), so every GitOps run
+    /// after the first failed at startup.
     async fn save_current_state(&self) -> Result<()> {
         let state_file = self.state_dir.join("current.yaml");
-
-        let configs: Vec<&DeclarativeConfig> = self.current_state.values().collect();
-
-        // Serialize all configs to YAML (multi-document)
-        let mut yaml = String::new();
-        for config in configs {
-            yaml.push_str(&ConfigParser::to_yaml(config)?);
-            yaml.push_str("\n---\n");
-        }
-
-        tokio::fs::write(&state_file, yaml).await?;
-
+        let mut configs: Vec<&DeclarativeConfig> = self.current_state.values().collect();
+        configs.sort_by(|a, b| a.metadata.name.cmp(&b.metadata.name));
+        let yaml = serde_yaml::to_string(&configs)
+            .map_err(|e| Error::Config(format!("serialize GitOps state: {e}")))?;
+        let tmp = self.state_dir.join(".current.yaml.new");
+        tokio::fs::write(&tmp, yaml).await?;
+        tokio::fs::rename(&tmp, &state_file).await?;
         Ok(())
     }
 
@@ -678,6 +678,29 @@ impl ApplyEngine {
     }
 }
 
+/// Read a GitOps state file: one YAML list (current format) or the old
+/// `---`-separated single documents (state written before the fix above).
+pub fn parse_state(content: &str) -> Result<Vec<DeclarativeConfig>> {
+    if content.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    if let Ok(v) = serde_yaml::from_str::<Vec<DeclarativeConfig>>(content) {
+        return Ok(v);
+    }
+    let mut out = Vec::new();
+    for doc in serde_yaml::Deserializer::from_str(content) {
+        let v = serde_yaml::Value::deserialize(doc)
+            .map_err(|e| Error::Config(format!("GitOps state: {e}")))?;
+        if v.is_null() {
+            continue;
+        }
+        out.push(
+            serde_yaml::from_value(v).map_err(|e| Error::Config(format!("GitOps state: {e}")))?,
+        );
+    }
+    Ok(out)
+}
+
 /// Pretty-print diff result
 pub fn format_diff(diff: &DiffResult) -> String {
     let mut output = String::new();
@@ -750,6 +773,41 @@ mod tests {
         assert_eq!(diff.creates, 1);
         assert_eq!(diff.updates, 0);
         assert_eq!(diff.deletes, 0);
+    }
+
+    #[tokio::test]
+    async fn gitops_state_is_readable_by_the_next_process() {
+        let d = tempfile::tempdir().unwrap();
+        let yaml = |n: &str| {
+            format!(
+                "- apiVersion: patronus.firewall/v1\n  kind: FirewallRule\n  metadata:\n    name: {n}\n  spec:\n    action: allow\n    source: {{ address: \"0.0.0.0/0\" }}\n    destination: {{ address: \"192.168.1.10\", ports: [443] }}\n    protocol: tcp\n    enabled: true\n"
+            )
+        };
+        let mut sm = StateManager::new(d.path().to_path_buf());
+        sm.init().await.unwrap();
+        for n in ["b-rule", "a-rule"] {
+            sm.update(ConfigParser::parse_yaml(&yaml(n)).unwrap().remove(0));
+        }
+        sm.save_current_state().await.unwrap();
+        // a new process (the next `patronus gitops sync`) loads it
+        let mut again = StateManager::new(d.path().to_path_buf());
+        again.init().await.unwrap();
+        assert!(again.get("a-rule").is_some() && again.get("b-rule").is_some());
+        assert_eq!(again.list().len(), 2);
+        // state files written by older versions (--- separated docs) load too
+        let old = format!(
+            "{}\n---\n{}\n---\n",
+            yaml("x").trim_start_matches("- ").replace("\n  ", "\n"),
+            yaml("y").trim_start_matches("- ").replace("\n  ", "\n")
+        );
+        let v = parse_state(&old).unwrap();
+        assert_eq!(
+            v.iter()
+                .map(|c| c.metadata.name.as_str())
+                .collect::<Vec<_>>(),
+            ["x", "y"]
+        );
+        assert!(parse_state("").unwrap().is_empty());
     }
 
     #[test]

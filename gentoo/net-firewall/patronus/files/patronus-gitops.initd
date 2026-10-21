@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+# Copyright 2026 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v3
+
+# GitOps watcher (USE=gitops, see patronus-gitops.service): polls the
+# repository from [gitops] in /etc/patronus/patronus.toml and applies its
+# declarative resources (firewall/NAT rules, interfaces, routes) through the
+# same appliers as `patronus apply`.
+
+description="Patronus GitOps watcher"
+command="/usr/bin/patronus"
+command_args="gitops watch"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/patronus/gitops.log"
+error_log="/var/log/patronus/gitops.log"
+
+depend() {
+	need net localmount
+	after firewall patronus-firewall
+}
+
+start_pre() {
+	checkpath --directory --mode 0750 /var/lib/patronus/gitops
+	checkpath --directory --mode 0755 /var/log/patronus
+}

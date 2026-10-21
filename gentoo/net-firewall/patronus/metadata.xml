@@ -33,6 +33,7 @@
 		<flag name="vlan">Enable VLAN support</flag>
 		<flag name="qos">Enable Quality of Service (traffic shaping)</flag>
 		<flag name="backup">Enable configuration backup/restore</flag>
+		<flag name="gitops">GitOps: `patronus gitops sync|watch` and the patronus-gitops service apply firewall/NAT/interface/route resources kept in a git repository</flag>
 	</use>
 	<upstream>
 		<bugs-to>https://git.canutethegreat.com/CanuteTheGreat/patronus/issues</bugs-to>

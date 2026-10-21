@@ -5,6 +5,8 @@ use colored::Colorize;
 use std::path::PathBuf;
 
 mod commands;
+#[cfg(feature = "gitops")]
+use commands::gitops;
 use commands::{
     apply, applyd, bgp, captiveportal, daemon, deploy, firewall, init, metrics, policy, site,
     status, tunnel, users, validate, web,
@@ -68,6 +70,14 @@ enum Commands {
     Config {
         #[command(subcommand)]
         action: ConfigCommands,
+    },
+
+    /// GitOps: apply the firewall/NAT/interface/route resources kept in a
+    /// git repository ([gitops] in patronus.toml; USE=gitops)
+    #[cfg(feature = "gitops")]
+    Gitops {
+        #[command(subcommand)]
+        action: GitopsCommands,
     },
 
     /// Web UI accounts (recovery on the box: lost second factor)
@@ -318,6 +328,39 @@ enum UsersCommands {
     },
 }
 
+#[cfg(feature = "gitops")]
+#[derive(Subcommand)]
+enum GitopsCommands {
+    /// Fetch the repository once and apply what changed (auto_apply decides
+    /// unless --apply / --dry-run is given)
+    Sync {
+        /// Apply even when auto_apply is off
+        #[arg(long, conflicts_with = "dry_run")]
+        apply: bool,
+        /// Validate and show what would change, apply nothing
+        #[arg(long)]
+        dry_run: bool,
+        /// Repository URL instead of [gitops] repo_url
+        #[arg(long)]
+        repo: Option<String>,
+        /// patronus.toml with the [gitops] section [default: $PATRONUS_BOOTSTRAP or /etc/patronus/patronus.toml]
+        #[arg(long)]
+        bootstrap: Option<PathBuf>,
+        /// Engine state directory [default: /var/lib/patronus/gitops/state]
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+    },
+    /// Poll the repository and apply every new commit (the patronus-gitops service)
+    Watch {
+        /// patronus.toml with the [gitops] section [default: $PATRONUS_BOOTSTRAP or /etc/patronus/patronus.toml]
+        #[arg(long)]
+        bootstrap: Option<PathBuf>,
+        /// Engine state directory [default: /var/lib/patronus/gitops/state]
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+    },
+}
+
 #[derive(Subcommand)]
 enum ConfigCommands {
     /// List stored configuration revisions (newest first)
@@ -500,6 +543,47 @@ async fn main() -> anyhow::Result<()> {
                         dry_run: false,
                     },
                 )
+                .await?
+            }
+        },
+
+        #[cfg(feature = "gitops")]
+        Commands::Gitops { action } => match action {
+            GitopsCommands::Sync {
+                apply,
+                dry_run,
+                repo,
+                bootstrap,
+                state_dir,
+            } => {
+                let mode = if apply {
+                    Some(true)
+                } else if dry_run {
+                    Some(false)
+                } else {
+                    None
+                };
+                gitops::sync(
+                    gitops::Options {
+                        db: cli.db,
+                        bootstrap,
+                        state_dir,
+                        repo,
+                    },
+                    mode,
+                )
+                .await?
+            }
+            GitopsCommands::Watch {
+                bootstrap,
+                state_dir,
+            } => {
+                gitops::watch(gitops::Options {
+                    db: cli.db,
+                    bootstrap,
+                    state_dir,
+                    repo: None,
+                })
                 .await?
             }
         },

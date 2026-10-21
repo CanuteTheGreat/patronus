@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops"]
 
 # Core features
 web = ["patronus-web", "dep:axum"]
@@ -87,6 +87,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx.workspace = true
 serde_yaml = "0.9"
+toml.workspace = true
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 colored = "2.1"
@@ -95,3 +96,6 @@ comfy-table = "7.1"
 [target.'cfg(unix)'.dependencies]
 # restore_default_sigpipe() in main.rs
 libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3.10"

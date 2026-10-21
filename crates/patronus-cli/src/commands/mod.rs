@@ -7,6 +7,8 @@ pub mod captiveportal;
 pub mod daemon;
 pub mod deploy;
 pub mod firewall;
+#[cfg(feature = "gitops")]
+pub mod gitops;
 pub mod init;
 pub mod metrics;
 pub mod policy;

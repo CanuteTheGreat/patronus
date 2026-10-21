@@ -43,6 +43,7 @@ IUSE="
 	wireless hostapd iwd
 	squid tinyproxy
 	+backup
+	gitops
 	+systemd +openrc
 	test
 "
@@ -74,6 +75,7 @@ REQUIRED_USE="
 RDEPEND="
 	acct-user/patronus
 	acct-group/patronus
+	gitops? ( dev-libs/openssl:0= sys-libs/zlib:= )
 	nftables? ( net-firewall/nftables )
 	iptables? ( net-firewall/iptables )
 	dhcp? (
@@ -243,6 +245,7 @@ src_configure() {
 		$(usex qos "qos" "")
 		$(usex backup "backup" "")
 		$(usex totp "totp" "")
+		$(usex gitops "gitops" "")
 	)
 
 	cargo_src_configure --no-default-features
@@ -377,6 +380,7 @@ src_install() {
 		systemd_dounit "${FILESDIR}/patronus-firewall.service"
 		# root apply broker (lanes C, D) + per-interface DHCP client / pppd
 		systemd_dounit "${FILESDIR}/patronus-applyd.service"
+		use gitops && systemd_dounit "${FILESDIR}/patronus-gitops.service"
 		systemd_dounit "${FILESDIR}/patronus-dhcpc@.service"
 		use pppoe && systemd_dounit "${FILESDIR}/patronus-pppoe@.service"
 		use dashboard && systemd_dounit "${FILESDIR}/patronus-dashboard.service"
@@ -386,6 +390,7 @@ src_install() {
 		newinitd "${FILESDIR}/patronus-web.initd" patronus-web
 		newinitd "${FILESDIR}/patronus-firewall.initd" patronus-firewall
 		newinitd "${FILESDIR}/patronus-applyd.initd" patronus-applyd
+		use gitops && newinitd "${FILESDIR}/patronus-gitops.initd" patronus-gitops
 		newinitd "${FILESDIR}/patronus-dhcpc.initd" patronus-dhcpc
 		use pppoe && newinitd "${FILESDIR}/patronus-pppoe.initd" patronus-pppoe
 		newconfd "${FILESDIR}/patronus.confd" patronus
@@ -448,6 +453,7 @@ pkg_postinst() {
 		elog "To start the web interface (systemd):"
 		elog "  systemctl start patronus-web"
 		elog "  systemctl enable --now patronus-applyd  # lets the web UI start DHCP clients / PPPoE and apply DHCP/DNS/NTP"
+		use gitops && elog "  systemctl enable --now patronus-gitops  # GitOps: set [gitops] repo_url in /etc/patronus/patronus.toml first"
 		elog "  systemctl enable patronus-web"
 		elog ""
 		elog "Boot-time apply of the stored config (sysctl, interfaces, routes,"
@@ -459,6 +465,7 @@ pkg_postinst() {
 		elog "  rc-service patronus-web start"
 		elog "  rc-update add patronus-web default"
 		elog "  rc-update add patronus-applyd default  # lets the web UI start DHCP clients / PPPoE and apply DHCP/DNS/NTP"
+		use gitops && elog "  rc-update add patronus-gitops default  # GitOps: set [gitops] repo_url in /etc/patronus/patronus.toml first"
 		elog ""
 		elog "Boot-time apply of the stored config (OpenRC; runs 'patronus apply'):"
 		elog "  rc-update add patronus-firewall boot && rc-service patronus-firewall start"

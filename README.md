@@ -130,6 +130,11 @@ that are not finished are listed separately under
   [C8]
 - Upgrades keep the configuration: stores written by earlier releases are
   migrated in place and their rules stay enforced. [C9]
+- GitOps (USE=gitops): firewall rules kept as YAML in a git repository
+  (`[gitops]` in patronus.toml) are applied by `patronus gitops sync` or the
+  `patronus-gitops` service; later commits that change or delete a rule are
+  followed, a broken commit is refused with the file named, and applied
+  rules survive a reboot. [C38]
 
 ### Administration
 
@@ -173,7 +178,7 @@ They are being wired up one subsystem at a time; each moves to
 - VPN: OpenVPN, IPsec road warriors (EAP / certificates), L2TP.
 - Firewall HA (VRRP + state sync), LDAP/RADIUS login, API keys,
   metrics/alerts, diagnostics, captive portal, IDS/IPS, traffic shaping.
-- SD-WAN path selection and policies in the dashboard, GitOps apply.
+- SD-WAN path selection and policies in the dashboard.
 
 Many Gentoo USE flags currently only pull in dependencies for these.
 
