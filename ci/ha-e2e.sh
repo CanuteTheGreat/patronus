@@ -180,7 +180,9 @@ CL=$(hc -k https://haproxy/ha/cluster)
 LIDX=${LEADER#dashboard}
 log "killing leader $LEADER"
 docker kill "$TAG-d$LIDX" >/dev/null
-SURV=$(for i in 1 2 3; do [ "$i" != "$LIDX" ] && echo dashboard$i; done | tr '\n' ' ')
+# `if`, not `[ ] && echo`: with LIDX=3 the last iteration would return 1 and
+# set -e/pipefail would abort the run whenever dashboard3 wins the election.
+SURV=$(for i in 1 2 3; do if [ "$i" != "$LIDX" ]; then echo dashboard$i; fi; done | tr '\n' ' ')
 NEW=$(wait_leader --not "$LEADER" $SURV)
 [ "$NEW" != "$LEADER" ] || fail "leader did not change"
 log "new leader: $NEW"
