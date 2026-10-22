@@ -107,12 +107,7 @@ pub fn check_response(
     if resp[1] != id {
         return Err("answer to a different request".into());
     }
-    let want = md5(&[
-        &resp[..4],
-        req_auth,
-        &resp[20..],
-        secret.as_bytes(),
-    ]);
+    let want = md5(&[&resp[..4], req_auth, &resp[20..], secret.as_bytes()]);
     // constant-time compare
     let diff = want
         .iter()
@@ -152,7 +147,11 @@ pub async fn authenticate(
         .map_err(|e| format!("resolving {addr}: {e}"))?
         .next()
         .ok_or_else(|| format!("{addr} does not resolve"))?;
-    let bind = if target.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
+    let bind = if target.is_ipv6() {
+        "[::]:0"
+    } else {
+        "0.0.0.0:0"
+    };
     let sock = UdpSocket::bind(bind)
         .await
         .map_err(|e| format!("udp socket: {e}"))?;
@@ -234,7 +233,9 @@ pub async fn add_server(
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ' '))
     {
-        anyhow::bail!("Invalid server name {name:?}: 1-40 letters, digits, '-', '_', '.' or spaces");
+        anyhow::bail!(
+            "Invalid server name {name:?}: 1-40 letters, digits, '-', '_', '.' or spaces"
+        );
     }
     let host = host.trim();
     if host.is_empty()
@@ -250,7 +251,9 @@ pub async fn add_server(
     }
     let role = default_role.unwrap_or("readonly");
     if !matches!(role, "readonly" | "operator") {
-        anyhow::bail!("Invalid default role {role:?}: readonly or operator (admins are promoted by hand)");
+        anyhow::bail!(
+            "Invalid default role {role:?}: readonly or operator (admins are promoted by hand)"
+        );
     }
     let timeout = timeout_secs.unwrap_or(5);
     if !(1..=30).contains(&timeout) {
@@ -342,7 +345,10 @@ pub(crate) mod testserver {
     }
 
     /// Accepts `(user, password)` pairs in `accounts`; `secret` is shared.
-    pub async fn start(secret: &'static str, accounts: Vec<(&'static str, &'static str)>) -> Server {
+    pub async fn start(
+        secret: &'static str,
+        accounts: Vec<(&'static str, &'static str)>,
+    ) -> Server {
         let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let addr = sock.local_addr().unwrap();
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -350,7 +356,9 @@ pub(crate) mod testserver {
         tokio::spawn(async move {
             let mut buf = vec![0u8; 4096];
             loop {
-                let Ok((n, peer)) = sock.recv_from(&mut buf).await else { return };
+                let Ok((n, peer)) = sock.recv_from(&mut buf).await else {
+                    return;
+                };
                 let p = &buf[..n];
                 if p.len() < 20 || p[0] != ACCESS_REQUEST {
                     continue;
@@ -450,26 +458,47 @@ mod tests {
             r[4..20].copy_from_slice(&a);
             r
         };
-        assert_eq!(check_response(&mk(ACCESS_ACCEPT, 9, "secret"), 9, &ra, "secret"), Ok(Outcome::Accept));
-        assert_eq!(check_response(&mk(ACCESS_REJECT, 9, "secret"), 9, &ra, "secret"), Ok(Outcome::Reject));
+        assert_eq!(
+            check_response(&mk(ACCESS_ACCEPT, 9, "secret"), 9, &ra, "secret"),
+            Ok(Outcome::Accept)
+        );
+        assert_eq!(
+            check_response(&mk(ACCESS_REJECT, 9, "secret"), 9, &ra, "secret"),
+            Ok(Outcome::Reject)
+        );
         // wrong secret, wrong id, truncated, tampered code: never an accept
         assert!(check_response(&mk(ACCESS_ACCEPT, 9, "other"), 9, &ra, "secret").is_err());
         assert!(check_response(&mk(ACCESS_ACCEPT, 8, "secret"), 9, &ra, "secret").is_err());
         assert!(check_response(&mk(ACCESS_ACCEPT, 9, "secret")[..10], 9, &ra, "secret").is_err());
         let mut forged = mk(ACCESS_REJECT, 9, "secret");
         forged[0] = ACCESS_ACCEPT;
-        assert!(check_response(&forged, 9, &ra, "secret").is_err(), "flipping reject to accept must not verify");
+        assert!(
+            check_response(&forged, 9, &ra, "secret").is_err(),
+            "flipping reject to accept must not verify"
+        );
         // a challenge is a refusal
-        assert_eq!(check_response(&mk(11, 9, "secret"), 9, &ra, "secret"), Ok(Outcome::Reject));
+        assert_eq!(
+            check_response(&mk(11, 9, "secret"), 9, &ra, "secret"),
+            Ok(Outcome::Reject)
+        );
     }
 
     #[tokio::test]
     async fn a_real_udp_exchange_accepts_rejects_and_survives_a_dead_server() {
-        let srv = testserver::start("s3cret", vec![("alice", "correct horse battery staple")]).await;
+        let srv =
+            testserver::start("s3cret", vec![("alice", "correct horse battery staple")]).await;
         let addr = srv.addr.to_string();
         let t = Duration::from_secs(2);
         assert_eq!(
-            authenticate(&addr, "s3cret", "alice", "correct horse battery staple", t, 0).await,
+            authenticate(
+                &addr,
+                "s3cret",
+                "alice",
+                "correct horse battery staple",
+                t,
+                0
+            )
+            .await,
             Ok(Outcome::Accept)
         );
         assert_eq!(
@@ -481,17 +510,35 @@ mod tests {
             Ok(Outcome::Reject)
         );
         // the server saw the password exactly as typed (hidden on the wire)
-        assert!(srv.seen.lock().unwrap().contains(&("alice".into(), "correct horse battery staple".into())));
+        assert!(srv
+            .seen
+            .lock()
+            .unwrap()
+            .contains(&("alice".into(), "correct horse battery staple".into())));
         // a shared-secret mismatch is an error, not an accept
-        assert!(authenticate(&addr, "wrong-secret", "alice", "correct horse battery staple", t, 0)
-            .await
-            .is_err());
+        assert!(authenticate(
+            &addr,
+            "wrong-secret",
+            "alice",
+            "correct horse battery staple",
+            t,
+            0
+        )
+        .await
+        .is_err());
         // nobody listening: an error after the timeout
         let dead = authenticate("127.0.0.1:9", "s", "u", "p", Duration::from_millis(200), 1).await;
         assert!(dead.is_err(), "{dead:?}");
         // passwords longer than one block
         let long = "a-very-long-passphrase-that-needs-three-blocks-of-sixteen!";
-        let srv2 = testserver::start("k", vec![("bob", "a-very-long-passphrase-that-needs-three-blocks-of-sixteen!")]).await;
+        let srv2 = testserver::start(
+            "k",
+            vec![(
+                "bob",
+                "a-very-long-passphrase-that-needs-three-blocks-of-sixteen!",
+            )],
+        )
+        .await;
         assert_eq!(
             authenticate(&srv2.addr.to_string(), "k", "bob", long, t, 0).await,
             Ok(Outcome::Accept)

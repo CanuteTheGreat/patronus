@@ -86,14 +86,21 @@ pub async fn save(store: &ConfigStore, id: Option<i64>, i: &ShaperInput) -> Resu
         (None, Some(c)) => c.interface.clone(),
         (None, None) => return Err(invalid("shaper: an interface is required")),
     };
-    if all.iter().any(|s| s.interface == interface && Some(s.id) != id) {
+    if all
+        .iter()
+        .any(|s| s.interface == interface && Some(s.id) != id)
+    {
         return Err(invalid(format!("shaper: {interface} already has one")));
     }
     let mode = match (i.mode.as_deref(), &cur) {
         (Some(m @ ("cake" | "fq_codel" | "limit")), _) => m.to_string(),
         (Some(m), _) => return Err(invalid(format!("mode {m:?}: cake, fq_codel or limit"))),
         (None, Some(c)) => c.mode.clone(),
-        (None, None) => return Err(invalid("shaper: a mode is required (cake, fq_codel, limit)")),
+        (None, None) => {
+            return Err(invalid(
+                "shaper: a mode is required (cake, fq_codel, limit)",
+            ))
+        }
     };
     let rate = match (i.rate_kbit, &cur) {
         (Some(r), _) => Some(r),
@@ -115,7 +122,10 @@ pub async fn save(store: &ConfigStore, id: Option<i64>, i: &ShaperInput) -> Resu
         (None, Some(c)) => c.description.clone(),
         (None, None) => None,
     };
-    let enabled = i.enabled.or(cur.as_ref().map(|c| c.enabled)).unwrap_or(true);
+    let enabled = i
+        .enabled
+        .or(cur.as_ref().map(|c| c.enabled))
+        .unwrap_or(true);
     let sql = if id.is_some() {
         "UPDATE qos_shapers SET interface=?, mode=?, rate_kbit=?, enabled=?, description=?, updated_at=? WHERE id=?"
     } else {
@@ -230,7 +240,11 @@ impl ShapingApplier {
         self.env.root == std::path::Path::new("/")
     }
 
-    async fn wanted(&self, store: &ConfigStore, rep: &mut ApplyReport) -> Result<Vec<(String, Shaper)>> {
+    async fn wanted(
+        &self,
+        store: &ConfigStore,
+        rep: &mut ApplyReport,
+    ) -> Result<Vec<(String, Shaper)>> {
         let mut v = Vec::new();
         for s in list(store).await?.into_iter().filter(|s| s.enabled) {
             let devs = lan::resolve_iface(store, &s.interface).await?;
@@ -280,7 +294,10 @@ impl Applier for ShapingApplier {
                 match self.tc.run(&args) {
                     Ok(_) => rep.applied(format!("removed the shaper from {dev}")),
                     // device or qdisc already gone
-                    Err(e) if e.to_string().contains("Cannot find") || e.to_string().contains("No such") || e.to_string().contains("Cannot delete") => {}
+                    Err(e)
+                        if e.to_string().contains("Cannot find")
+                            || e.to_string().contains("No such")
+                            || e.to_string().contains("Cannot delete") => {}
                     Err(e) => {
                         rep.warn(e.to_string());
                         kept.push(dev.clone());
@@ -300,7 +317,9 @@ impl Applier for ShapingApplier {
                     Ok(_) => rep.applied(format!(
                         "{dev}: {}{}",
                         s.mode,
-                        s.rate_kbit.map(|r| format!(" {r} kbit/s")).unwrap_or_default()
+                        s.rate_kbit
+                            .map(|r| format!(" {r} kbit/s"))
+                            .unwrap_or_default()
                     )),
                     Err(e) => {
                         failed.push(format!("{dev}: {e}"));
@@ -394,19 +413,27 @@ mod tests {
 
     #[test]
     fn qdisc_arguments_per_mode() {
-        assert_eq!(qdisc_args("cake", Some(50_000)).join(" "), "cake bandwidth 50000kbit");
+        assert_eq!(
+            qdisc_args("cake", Some(50_000)).join(" "),
+            "cake bandwidth 50000kbit"
+        );
         assert_eq!(qdisc_args("fq_codel", None).join(" "), "fq_codel");
         let l = qdisc_args("limit", Some(8000)).join(" ");
         assert_eq!(l, "tbf rate 8000kbit burst 32768 latency 50ms");
         // a fast link gets a bigger burst
-        assert!(qdisc_args("limit", Some(1_000_000)).join(" ").contains("burst 1250000 "));
+        assert!(qdisc_args("limit", Some(1_000_000))
+            .join(" ")
+            .contains("burst 1250000 "));
     }
 
     #[test]
     fn root_qdisc_kind_is_read_from_tc_output() {
         let t = "qdisc tbf 8001: root refcnt 2 rate 8Mbit burst 32Kb lat 50ms\nqdisc ingress ffff: parent ffff:fff1 ----------------\n";
         assert_eq!(root_kind(t).as_deref(), Some("tbf"));
-        assert_eq!(root_kind("qdisc noqueue 0: root refcnt 2 \n").as_deref(), Some("noqueue"));
+        assert_eq!(
+            root_kind("qdisc noqueue 0: root refcnt 2 \n").as_deref(),
+            Some("noqueue")
+        );
         assert_eq!(root_kind(""), None);
     }
 
@@ -414,16 +441,68 @@ mod tests {
     async fn shapers_are_validated_stored_and_applied_with_tc() {
         let s = testutil::store().await;
         for (inp, why) in [
-            (ShaperInput { interface: Some("@wan".into()), mode: Some("weird".into()), ..Default::default() }, "cake, fq_codel or limit"),
-            (ShaperInput { interface: Some("@wan".into()), mode: Some("cake".into()), ..Default::default() }, "rate in kbit/s is required"),
-            (ShaperInput { interface: Some("@wan".into()), mode: Some("limit".into()), rate_kbit: Some(1), ..Default::default() }, "rate:"),
-            (ShaperInput { mode: Some("cake".into()), rate_kbit: Some(1000), ..Default::default() }, "interface is required"),
+            (
+                ShaperInput {
+                    interface: Some("@wan".into()),
+                    mode: Some("weird".into()),
+                    ..Default::default()
+                },
+                "cake, fq_codel or limit",
+            ),
+            (
+                ShaperInput {
+                    interface: Some("@wan".into()),
+                    mode: Some("cake".into()),
+                    ..Default::default()
+                },
+                "rate in kbit/s is required",
+            ),
+            (
+                ShaperInput {
+                    interface: Some("@wan".into()),
+                    mode: Some("limit".into()),
+                    rate_kbit: Some(1),
+                    ..Default::default()
+                },
+                "rate:",
+            ),
+            (
+                ShaperInput {
+                    mode: Some("cake".into()),
+                    rate_kbit: Some(1000),
+                    ..Default::default()
+                },
+                "interface is required",
+            ),
         ] {
             let e = save(&s, None, &inp).await.unwrap_err().to_string();
             assert!(e.contains("Invalid") && e.contains(why), "{e}");
         }
-        let id = save(&s, None, &ShaperInput { interface: Some("@wan".into()), mode: Some("limit".into()), rate_kbit: Some(8000), ..Default::default() }).await.unwrap();
-        assert!(save(&s, None, &ShaperInput { interface: Some("@wan".into()), mode: Some("fq_codel".into()), ..Default::default() }).await.unwrap_err().to_string().contains("already has one"));
+        let id = save(
+            &s,
+            None,
+            &ShaperInput {
+                interface: Some("@wan".into()),
+                mode: Some("limit".into()),
+                rate_kbit: Some(8000),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(save(
+            &s,
+            None,
+            &ShaperInput {
+                interface: Some("@wan".into()),
+                mode: Some("fq_codel".into()),
+                ..Default::default()
+            }
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("already has one"));
         let t = testutil::env(&[]);
         let tc = Arc::new(FakeTc::default());
         let a = ShapingApplier::new(t.env.clone(), tc.clone());
@@ -431,7 +510,10 @@ mod tests {
         let r = a.apply(&s).await.unwrap();
         assert!(tc.calls.lock().unwrap().is_empty(), "{r:?}");
         let render = a.render(&s).await.unwrap();
-        assert_eq!(render, "tc qdisc replace dev rtr-wan root tbf rate 8000kbit burst 32768 latency 50ms\n");
+        assert_eq!(
+            render,
+            "tc qdisc replace dev rtr-wan root tbf rate 8000kbit burst 32768 latency 50ms\n"
+        );
         assert_eq!(list(&s).await.unwrap()[0].rate_kbit, Some(8000));
         delete(&s, id).await.unwrap();
         assert!(delete(&s, id).await.is_err());

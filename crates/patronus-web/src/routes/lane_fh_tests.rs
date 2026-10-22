@@ -1770,7 +1770,10 @@ async fn radius_users_log_in_with_their_server_credentials_and_nothing_else_chan
     let c = t.admin().await;
     let srv = crate::radius::testserver::start(
         "shared-secret",
-        vec![("carol", "carols-radius-password"), ("admin", "radius-admin-password")],
+        vec![
+            ("carol", "carols-radius-password"),
+            ("admin", "radius-admin-password"),
+        ],
     )
     .await;
     // no server yet: an unknown name is refused
@@ -1787,10 +1790,17 @@ async fn radius_users_log_in_with_their_server_credentials_and_nothing_else_chan
         .await;
     assert_eq!(s, StatusCode::CREATED, "{b}");
     // the list never shows the secret; admins only; a role of admin is refused
-    let (_, b) = t.call(&c, Method::GET, "/api/system/auth-servers", None).await;
+    let (_, b) = t
+        .call(&c, Method::GET, "/api/system/auth-servers", None)
+        .await;
     assert!(!b.to_string().contains("shared-secret"), "{b}");
     let (s, _) = t
-        .call(&c, Method::POST, "/api/system/auth-servers", Some(json!({"name":"x","host":"h","secret":"s","default_role":"admin"})))
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/auth-servers",
+            Some(json!({"name":"x","host":"h","secret":"s","default_role":"admin"})),
+        )
         .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 
@@ -1807,29 +1817,65 @@ async fn radius_users_log_in_with_their_server_credentials_and_nothing_else_chan
     assert_eq!(s, StatusCode::UNAUTHORIZED);
     // the stored account has no usable local password
     let (_, users) = t.call(&c, Method::GET, "/api/system/users", None).await;
-    let carol = users.as_array().unwrap().iter().find(|u| u["username"] == "carol").unwrap().clone();
+    let carol = users
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["username"] == "carol")
+        .unwrap()
+        .clone();
     assert_eq!(carol["role"], "Operator", "{carol}");
-    assert!(!users.to_string().contains("!external"), "hash leaked: {users}");
+    assert!(
+        !users.to_string().contains("!external"),
+        "hash leaked: {users}"
+    );
 
     // a local admin is never taken over by a RADIUS account of the same name
     let (s, _, _) = t.login("admin", "radius-admin-password", None).await;
-    assert_eq!(s, StatusCode::UNAUTHORIZED, "RADIUS must not log in as a local-password account");
+    assert_eq!(
+        s,
+        StatusCode::UNAUTHORIZED,
+        "RADIUS must not log in as a local-password account"
+    );
     let (s, _, _) = t.login("admin", ADMIN_PW, None).await;
     assert_eq!(s, StatusCode::OK, "the local admin still logs in");
 
     // an admin can disable the external account: RADIUS acceptance no longer helps
     let id = carol["id"].as_i64().unwrap();
-    let (s, _) = t.call(&c, Method::PUT, &format!("/api/system/users/{id}"), Some(json!({"enabled": false}))).await;
+    let (s, _) = t
+        .call(
+            &c,
+            Method::PUT,
+            &format!("/api/system/users/{id}"),
+            Some(json!({"enabled": false})),
+        )
+        .await;
     assert_eq!(s, StatusCode::OK);
     let (s, _, _) = t.login("carol", "carols-radius-password", None).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
 
     // delete the server: carol (re-enabled) cannot log in any more
-    let (s, _) = t.call(&c, Method::PUT, &format!("/api/system/users/{id}"), Some(json!({"enabled": true}))).await;
+    let (s, _) = t
+        .call(
+            &c,
+            Method::PUT,
+            &format!("/api/system/users/{id}"),
+            Some(json!({"enabled": true})),
+        )
+        .await;
     assert_eq!(s, StatusCode::OK);
-    let (_, l) = t.call(&c, Method::GET, "/api/system/auth-servers", None).await;
+    let (_, l) = t
+        .call(&c, Method::GET, "/api/system/auth-servers", None)
+        .await;
     let sid = l[0]["id"].as_i64().unwrap();
-    let (s, _) = t.call(&c, Method::DELETE, &format!("/api/system/auth-servers/{sid}"), None).await;
+    let (s, _) = t
+        .call(
+            &c,
+            Method::DELETE,
+            &format!("/api/system/auth-servers/{sid}"),
+            None,
+        )
+        .await;
     assert_eq!(s, StatusCode::OK);
     let (s, _, _) = t.login("carol", "carols-radius-password", None).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
@@ -1857,7 +1903,12 @@ async fn traffic_shaping_is_managed_through_the_api_and_undone_when_tc_refuses()
     };
     let c = t.admin().await;
     let (s, b) = t
-        .call(&c, Method::POST, "/api/qos", Some(json!({"interface":"@wan","mode":"limit","rate_kbit":8000})))
+        .call(
+            &c,
+            Method::POST,
+            "/api/qos",
+            Some(json!({"interface":"@wan","mode":"limit","rate_kbit":8000})),
+        )
         .await;
     assert_eq!(s, StatusCode::CREATED, "{b}");
     let id = b["id"].as_i64().unwrap();
@@ -1868,22 +1919,45 @@ async fn traffic_shaping_is_managed_through_the_api_and_undone_when_tc_refuses()
         json!({"interface":"@lan","mode":"limit","rate_kbit":1}),
         json!({"interface":"@lan","mode":"teleport"}),
     ] {
-        let (s, _) = t.call(&c, Method::POST, "/api/qos", Some(body.clone())).await;
+        let (s, _) = t
+            .call(&c, Method::POST, "/api/qos", Some(body.clone()))
+            .await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
     }
-    let (s, _) = t.call(&c, Method::PUT, &format!("/api/qos/{id}"), Some(json!({"rate_kbit": 16000}))).await;
+    let (s, _) = t
+        .call(
+            &c,
+            Method::PUT,
+            &format!("/api/qos/{id}"),
+            Some(json!({"rate_kbit": 16000})),
+        )
+        .await;
     assert_eq!(s, StatusCode::OK);
     qos.fail.store(true, Ordering::SeqCst);
-    let (s, _) = t.call(&c, Method::PUT, &format!("/api/qos/{id}"), Some(json!({"rate_kbit": 99000}))).await;
+    let (s, _) = t
+        .call(
+            &c,
+            Method::PUT,
+            &format!("/api/qos/{id}"),
+            Some(json!({"rate_kbit": 99000})),
+        )
+        .await;
     assert_eq!(s, StatusCode::INTERNAL_SERVER_ERROR);
     qos.fail.store(false, Ordering::SeqCst);
     let (_, b) = t.call(&c, Method::GET, "/api/qos", None).await;
-    assert_eq!(b["shapers"][0]["rate_kbit"], 16000, "refused change was not undone: {b}");
+    assert_eq!(
+        b["shapers"][0]["rate_kbit"], 16000,
+        "refused change was not undone: {b}"
+    );
     let (s, body, _) = t.raw(Method::GET, "/qos", Some(&c), None).await;
     assert_eq!(s, StatusCode::OK);
     assert!(body.contains("Traffic shaping") && body.contains("id=\"qos-form\""));
-    let (s, _) = t.call(&c, Method::DELETE, &format!("/api/qos/{id}"), None).await;
+    let (s, _) = t
+        .call(&c, Method::DELETE, &format!("/api/qos/{id}"), None)
+        .await;
     assert_eq!(s, StatusCode::OK);
-    let (s, _) = t.call(&c, Method::DELETE, &format!("/api/qos/{id}"), None).await;
+    let (s, _) = t
+        .call(&c, Method::DELETE, &format!("/api/qos/{id}"), None)
+        .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }

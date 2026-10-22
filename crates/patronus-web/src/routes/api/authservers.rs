@@ -64,11 +64,7 @@ pub async fn create(
 }
 
 /// DELETE /api/system/auth-servers/:id
-pub async fn remove(
-    State(state): State<AppState>,
-    _a: AdminUser,
-    Path(id): Path<i64>,
-) -> Response {
+pub async fn remove(State(state): State<AppState>, _a: AdminUser, Path(id): Path<i64>) -> Response {
     match radius::delete_server(&state.config_store, id).await {
         Ok(true) => Json(json!({"ok": true})).into_response(),
         Ok(false) => error(StatusCode::NOT_FOUND, "no such server"),
