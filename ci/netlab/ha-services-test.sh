@@ -286,7 +286,7 @@ has "$KA" "unicast_peer" "peer not configured"
 has "$KA" "track_interface" "no tracked links"
 has "$(cat /etc/patronus/ha-notify.sh)" "conntrackd" "notify script missing"
 [ -x /etc/patronus/ha-notify.sh ] || fail "notify script not executable"
-nft list ruleset | grep -Eq 'l4proto (112|vrrp) accept comment "HA VRRP"' || fail "firewall does not accept VRRP"
+nft list ruleset | grep -Eq 'l4proto (112|vrrp|carp) accept comment "HA VRRP"' || { nft list chain inet patronus input; fail "firewall does not accept VRRP"; }
 ok "keepalived.conf + notify script written, VRRP opened in nftables"
 wait_for "A's keepalived is running (via $INIT)" 20 a_running keepalived
 wait_for "A reports BACKUP (B is the master)" 20 state_is BACKUP
