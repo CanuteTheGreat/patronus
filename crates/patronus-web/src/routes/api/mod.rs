@@ -3,6 +3,7 @@
 //! All API endpoints return JSON responses.
 
 pub mod apikeys;
+pub mod authservers;
 pub mod firewall;
 pub mod ha;
 pub mod interfaces;

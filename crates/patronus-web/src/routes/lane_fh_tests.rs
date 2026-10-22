@@ -1763,3 +1763,74 @@ async fn npt_mappings_are_managed_through_the_nat_api() {
         "NPTv6 tab missing"
     );
 }
+
+#[tokio::test]
+async fn radius_users_log_in_with_their_server_credentials_and_nothing_else_changes() {
+    let t = setup().await;
+    let c = t.admin().await;
+    let srv = crate::radius::testserver::start(
+        "shared-secret",
+        vec![("carol", "carols-radius-password"), ("admin", "radius-admin-password")],
+    )
+    .await;
+    // no server yet: an unknown name is refused
+    let (s, _, _) = t.login("carol", "carols-radius-password", None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/auth-servers",
+            Some(json!({"name":"corp","host":"127.0.0.1","port":srv.addr.port(),"secret":"shared-secret","default_role":"operator","timeout_secs":2})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    // the list never shows the secret; admins only; a role of admin is refused
+    let (_, b) = t.call(&c, Method::GET, "/api/system/auth-servers", None).await;
+    assert!(!b.to_string().contains("shared-secret"), "{b}");
+    let (s, _) = t
+        .call(&c, Method::POST, "/api/system/auth-servers", Some(json!({"name":"x","host":"h","secret":"s","default_role":"admin"})))
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    // carol logs in with her RADIUS password; the account is created with the default role
+    let (s, cookie, b) = t.login("carol", "carols-radius-password", None).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["role"], "Operator");
+    let cc = cookie.unwrap();
+    let (s, me) = t.call(&cc, Method::GET, "/api/auth/me", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(me["username"], "carol");
+    // wrong password, and a password that only works locally for nobody
+    let (s, _, _) = t.login("carol", "wrong", None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    // the stored account has no usable local password
+    let (_, users) = t.call(&c, Method::GET, "/api/system/users", None).await;
+    let carol = users.as_array().unwrap().iter().find(|u| u["username"] == "carol").unwrap().clone();
+    assert_eq!(carol["role"], "Operator", "{carol}");
+    assert!(!users.to_string().contains("!external"), "hash leaked: {users}");
+
+    // a local admin is never taken over by a RADIUS account of the same name
+    let (s, _, _) = t.login("admin", "radius-admin-password", None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "RADIUS must not log in as a local-password account");
+    let (s, _, _) = t.login("admin", ADMIN_PW, None).await;
+    assert_eq!(s, StatusCode::OK, "the local admin still logs in");
+
+    // an admin can disable the external account: RADIUS acceptance no longer helps
+    let id = carol["id"].as_i64().unwrap();
+    let (s, _) = t.call(&c, Method::PUT, &format!("/api/system/users/{id}"), Some(json!({"enabled": false}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _, _) = t.login("carol", "carols-radius-password", None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+
+    // delete the server: carol (re-enabled) cannot log in any more
+    let (s, _) = t.call(&c, Method::PUT, &format!("/api/system/users/{id}"), Some(json!({"enabled": true}))).await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, l) = t.call(&c, Method::GET, "/api/system/auth-servers", None).await;
+    let sid = l[0]["id"].as_i64().unwrap();
+    let (s, _) = t.call(&c, Method::DELETE, &format!("/api/system/auth-servers/{sid}"), None).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _, _) = t.login("carol", "carols-radius-password", None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+}

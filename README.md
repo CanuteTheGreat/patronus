@@ -146,6 +146,9 @@ that are not finished are listed separately under
   with VRRP (keepalived), preemption and a maintenance mode, connection-state
   sync (conntrackd) so a failover keeps established connections, and alias
   addresses; configured from the HA page or `/api/ha`. [C42]
+- External login: people on a RADIUS server (PAP, answers verified with the
+  shared secret) can log in to the web UI; local accounts never fall back to
+  RADIUS and RADIUS accounts never start as admin. [C44]
 - IPv6 network prefix translation (NPTv6): map an internal (ULA) prefix to
   an external prefix in both directions from the firewall's NPTv6 tab. [C43]
 - Updates and power: the System page checks and applies updates through

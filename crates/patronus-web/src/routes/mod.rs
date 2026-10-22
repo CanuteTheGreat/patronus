@@ -178,6 +178,7 @@ async fn require_session(
         // key management are for people
         let people_only = (path.starts_with("/api/auth/") && path != "/api/auth/me")
             || path.starts_with("/api/system/api-keys")
+            || path.starts_with("/api/system/auth-servers")
             || path.starts_with("/api/system/users");
         if !(path.starts_with("/api/") || path == "/metrics") || people_only {
             return (
@@ -255,6 +256,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::interfaces::router())
         .merge(api::system::router())
         .merge(api::apikeys::router())
+        .merge(api::authservers::router())
         .merge(api::telemetry::router())
 }
 

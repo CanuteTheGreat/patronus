@@ -262,6 +262,31 @@
 </div>
 
 {% if is_admin %}
+<div class="card" id="auth-servers">
+    <div class="card-header"><h2 class="card-title">External login (RADIUS)</h2></div>
+    <p class="text-sm text-muted">People whose account is on a RADIUS server can log in here with those credentials
+        (PAP over UDP; the answer is verified with the shared secret). The first successful login creates a
+        password-less account with the server's default role (never admin: promote it above); disable or delete it
+        like any other. Local accounts never fall back to RADIUS, and there is no two-factor step for RADIUS logins
+        (use the RADIUS server's own). User names are 1-32 letters, digits, '.', '_' or '-'.</p>
+    <table class="lan" id="auth-servers-table">
+        <thead><tr><th>Name</th><th>Server</th><th>Default role</th><th>Timeout</th><th></th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <p class="empty" id="auth-servers-empty" style="display:none">No RADIUS servers: only local accounts can log in.</p>
+    <form class="lan-form" id="auth-server-form" onsubmit="return addAuthServer(event)">
+        <label>Name <input name="name" required></label>
+        <label>Host <input name="host" required placeholder="radius.example.net"></label>
+        <label>Port <input name="port" type="number" value="1812"></label>
+        <label>Shared secret <input name="secret" type="password" autocomplete="new-password" required></label>
+        <label>Default role <select name="default_role"><option value="readonly">read-only</option><option value="operator">operator</option></select></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add RADIUS server</button>
+    </form>
+</div>
+
+{% endif %}
+
+{% if is_admin %}
 <div class="card" id="power-card">
     <div class="card-header"><h2 class="card-title">Power</h2></div>
     <p class="text-sm">Reboot or power off this firewall. The configuration is re-applied from the store at boot.</p>
@@ -354,7 +379,31 @@
         if (j) { ev.target.reset(); loadEvents(); }
         return false;
     }
-    document.addEventListener('DOMContentLoaded', () => { loadUpdates(); loadEvents(); });
+    async function loadAuthServers() {
+        if (!{{ is_admin }}) return;
+        const l = await getJson('/api/system/auth-servers');
+        if (!l) return;
+        const tb = document.querySelector('#auth-servers-table tbody'); tb.textContent = '';
+        document.getElementById('auth-servers-empty').style.display = l.length ? 'none' : '';
+        for (const s of l) {
+            const tr = document.createElement('tr'); tr.dataset.server = s.name;
+            cell(tr, s.name); cell(tr, s.host + ':' + s.port); cell(tr, s.default_role === 'readonly' ? 'read-only' : s.default_role); cell(tr, s.timeout_secs + ' s');
+            const td = document.createElement('td'); const b = document.createElement('button');
+            b.className = 'btn btn-sm btn-danger'; b.textContent = 'Delete';
+            b.onclick = async () => { if (!confirm('Delete RADIUS server ' + s.name + '?')) return;
+                const d = await fetch('/api/system/auth-servers/' + s.id, {method: 'DELETE', credentials: 'same-origin'}); if (d.ok) loadAuthServers(); };
+            td.appendChild(b); tr.appendChild(td); tb.appendChild(tr);
+        }
+    }
+    async function addAuthServer(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements;
+        const body = {name: f['name'].value, host: f['host'].value, secret: f['secret'].value, default_role: f['default_role'].value};
+        if (f['port'].value) body.port = parseInt(f['port'].value, 10);
+        if (await post('/api/system/auth-servers', body)) { ev.target.reset(); loadAuthServers(); }
+        return false;
+    }
+    document.addEventListener('DOMContentLoaded', () => { loadUpdates(); loadEvents(); loadAuthServers(); });
 </script>
 <script>
     const fmtTs = t => t ? new Date(t * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : '';

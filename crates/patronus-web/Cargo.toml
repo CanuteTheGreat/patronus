@@ -76,6 +76,8 @@ sysinfo = "0.31"
 # lane H: web accounts live in the config store (web_users)
 sqlx.workspace = true
 sha2 = "0.10"
+# RADIUS (RFC 2865) for external web logins
+md-5 = "0.10"
 # TOTP (RFC 6238) for USE=totp
 hmac = { version = "0.12", optional = true }
 sha1 = { version = "0.10", optional = true }

@@ -46,6 +46,10 @@ fn hash_to_check(user: Option<&User>) -> &str {
     }
 }
 
+/// `web_users.password_hash` of an account whose password lives on an
+/// external server: not a PHC string, so no local password ever verifies.
+pub const EXTERNAL_PREFIX: &str = "!external:";
+
 /// Session data stored in memory
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -423,6 +427,43 @@ impl UserStore {
             Ok(true)
         );
         user.filter(|u| u.enabled && ok)
+    }
+
+    /// Is this a password-less account whose login is checked by an
+    /// external server (RADIUS)?
+    pub fn is_external(u: &User) -> bool {
+        u.password_hash.starts_with(EXTERNAL_PREFIX)
+    }
+
+    /// The account of a person authenticated by an external server: the
+    /// existing one (kept as an admin left it: role, enabled), or a new
+    /// password-less account with `role`.
+    pub async fn external_user(
+        &self,
+        username: &str,
+        role: UserRole,
+    ) -> anyhow::Result<Option<User>> {
+        let name = check_username(username)?;
+        if let Some(u) = self.get_user(&name).await {
+            // a local-password account is never taken over by an external login
+            return Ok(Self::is_external(&u).then_some(u));
+        }
+        let r = sqlx::query(
+            "INSERT INTO web_users (username, password_hash, role, enabled, created_at, updated_at)
+             VALUES (?, ?, ?, 1, ?, ?)",
+        )
+        .bind(&name)
+        .bind(format!("{EXTERNAL_PREFIX}radius"))
+        .bind(role.as_str())
+        .bind(now_ts())
+        .bind(now_ts())
+        .execute(self.pool()?)
+        .await;
+        match r {
+            Ok(_) => Ok(self.get_user(&name).await),
+            // created by a parallel login
+            Err(_) => Ok(self.get_user(&name).await.filter(Self::is_external)),
+        }
     }
 
     /// Update last login time for a user
@@ -1225,13 +1266,18 @@ pub async fn login(
         return Err(AuthError::TooManyAttempts(retry_after));
     }
 
-    // Verify credentials
-    let Some(user) = app_state
+    // Verify credentials: the local account, else (for names that are not a
+    // local-password account) the RADIUS servers
+    let local = app_state
         .auth
         .user_store
         .verify_credentials(&req.username, &req.password)
-        .await
-    else {
+        .await;
+    let user = match local {
+        Some(u) => Some(u),
+        None => external_login(&app_state, &req.username, &req.password).await,
+    };
+    let Some(user) = user else {
         throttle.record_failure(client);
         tracing::warn!("failed login for {:?} from {}", req.username, client);
         return Err(AuthError::InvalidCredentials);
@@ -1290,6 +1336,31 @@ pub async fn login(
     });
 
     Ok(([(header::SET_COOKIE, cookie)], response).into_response())
+}
+
+/// A login the local store did not accept, offered to the RADIUS servers.
+/// Local-password accounts never get here with success (their failed
+/// password stays failed); a disabled external account stays refused.
+async fn external_login(
+    app_state: &crate::state::AppState,
+    username: &str,
+    password: &str,
+) -> Option<User> {
+    let name = username.trim().to_ascii_lowercase();
+    if let Some(u) = app_state.auth.user_store.get_user(&name).await {
+        if !UserStore::is_external(&u) || !u.enabled {
+            return None;
+        }
+    }
+    let server = crate::radius::check_login(&app_state.config_store, &name, password).await?;
+    let role = UserRole::parse(&server.default_role).unwrap_or(UserRole::ReadOnly);
+    let u = app_state
+        .auth
+        .user_store
+        .external_user(&name, role)
+        .await
+        .ok()??;
+    u.enabled.then_some(u)
 }
 
 /// Logout handler
