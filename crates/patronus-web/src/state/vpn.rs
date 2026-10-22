@@ -291,6 +291,7 @@ pub fn parse_wg_dump(out: &str, now_unix: u64) -> Vec<crate::templates::WireGuar
             status,
             connected,
             last_handshake: age.map(format_age),
+            handshake_age_secs: age,
             transfer: format!(
                 "{} in / {} out",
                 format_bytes(rx.parse().unwrap_or(0)),

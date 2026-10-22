@@ -384,8 +384,13 @@ async fn routes_services_updates_and_pages_are_live_or_honest() {
         .await;
     assert_eq!(s, StatusCode::NOT_FOUND, "only Patronus' own services");
 
-    let (s, _) = a.call(Method::GET, "/api/system/updates", None).await;
-    assert_eq!(s, StatusCode::NOT_IMPLEMENTED);
+    // updates are real now (Portage jobs); with nothing checked there is
+    // nothing pending -- no invented "patronus-core 0.1.1"
+    let (s, body) = a.call(Method::GET, "/api/system/updates", None).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    let u: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(u["job"]["state"], "none", "{body}");
+    assert_eq!(u["last_check"]["pending"], serde_json::json!([]), "{body}");
 
     let (s, body) = a.call(Method::GET, "/api/system/users", None).await;
     assert_eq!(s, StatusCode::OK);

@@ -1164,3 +1164,400 @@ async fn unprivileged_without_applyd_ipsec_is_refused_up_front() {
     assert!(crate::state::tunnels::ipsec_blocker(true, false).is_none());
     let _ = std::fs::remove_dir_all(&t.dir);
 }
+
+impl T {
+    /// A request with one extra header (API key tests).
+    async fn with_header(
+        &self,
+        m: Method,
+        uri: &str,
+        header_name: &str,
+        value: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let mut b = Request::builder()
+            .method(m)
+            .uri(uri)
+            .header(header_name, value);
+        if body.is_some() {
+            b = b.header(header::CONTENT_TYPE, "application/json");
+        }
+        let r = self
+            .app
+            .clone()
+            .oneshot(
+                b.body(
+                    body.map(|v| Body::from(v.to_string()))
+                        .unwrap_or_else(Body::empty),
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let s = r.status();
+        let bytes = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        (
+            s,
+            serde_json::from_str(&text).unwrap_or(Value::String(text)),
+        )
+    }
+}
+
+#[tokio::test]
+async fn api_keys_authenticate_automation_with_least_privilege() {
+    let t = setup().await;
+    let c = t.admin().await;
+
+    // admin creates a read-only and an operator key; the token is shown once
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/api-keys",
+            Some(json!({"name": "rustinion"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let ro = b["token"].as_str().unwrap().to_string();
+    assert!(ro.starts_with("pat_"));
+    assert_eq!(b["key"]["scope"], "readonly");
+    let ro_id = b["key"]["id"].as_i64().unwrap();
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/api-keys",
+            Some(json!({"name": "terraform", "scope": "operator", "expires_in_days": 30})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let op = b["token"].as_str().unwrap().to_string();
+    // the list never has the token
+    let (s, b) = t.call(&c, Method::GET, "/api/system/api-keys", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(
+        !b.to_string().contains(&ro) && !b.to_string().contains(&op),
+        "{b}"
+    );
+    assert_eq!(b.as_array().unwrap().len(), 2);
+    // bad scope / name
+    let (s, _) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/api-keys",
+            Some(json!({"name": "x", "scope": "admin"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    // read-only key: reads work with either header, writes are refused
+    let bearer = format!("Bearer {ro}");
+    let (s, b) = t
+        .with_header(Method::GET, "/api/status", "authorization", &bearer, None)
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let (s, _) = t
+        .with_header(Method::GET, "/api/firewall/rules", "x-api-key", &ro, None)
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, b) = t
+        .with_header(Method::GET, "/api/auth/me", "authorization", &bearer, None)
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["username"], "api-key:rustinion");
+    assert_eq!(b["role"], "ReadOnly");
+    let rule = json!({"name":"k","action":"accept","interface":"any","protocol":"tcp","source":"any","destination":"any","port":"9","description":"","enabled":true,"chain":"input"});
+    let (s, b) = t
+        .with_header(
+            Method::POST,
+            "/api/firewall/rules",
+            "authorization",
+            &bearer,
+            Some(rule.clone()),
+        )
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "{b}");
+    // keys never reach accounts, credentials or key management
+    for (m, uri) in [
+        (Method::GET, "/api/system/users"),
+        (Method::GET, "/api/system/api-keys"),
+        (Method::POST, "/api/auth/password"),
+        (Method::POST, "/api/system/backups"),
+    ] {
+        let (s, _) = t
+            .with_header(m.clone(), uri, "authorization", &bearer, None)
+            .await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{m} {uri}");
+    }
+    // pages are for people
+    let (s, _) = t
+        .with_header(Method::GET, "/firewall", "authorization", &bearer, None)
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+
+    // operator key may change configuration, but is still no admin
+    let opb = format!("Bearer {op}");
+    let (s, b) = t
+        .with_header(
+            Method::POST,
+            "/api/firewall/rules",
+            "authorization",
+            &opb,
+            Some(rule),
+        )
+        .await;
+    assert!(s.is_success(), "{s} {b}");
+    let (s, _) = t
+        .with_header(
+            Method::POST,
+            "/api/system/backups",
+            "authorization",
+            &opb,
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _) = t
+        .with_header(
+            Method::POST,
+            "/api/system/api-keys",
+            "authorization",
+            &opb,
+            Some(json!({"name": "escalate", "scope": "operator"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+
+    // wrong / malformed keys are 401, and a cookie does not rescue them
+    let (s, _) = t
+        .with_header(
+            Method::GET,
+            "/api/status",
+            "authorization",
+            "Bearer pat_wrong",
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    let (s, _) = t
+        .with_header(Method::GET, "/api/status", "x-api-key", "nope", None)
+        .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+
+    // revoked -> 401 at once
+    let (s, _) = t
+        .call(
+            &c,
+            Method::DELETE,
+            &format!("/api/system/api-keys/{ro_id}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = t
+        .with_header(Method::GET, "/api/status", "authorization", &bearer, None)
+        .await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+    let (s, _) = t
+        .call(&c, Method::DELETE, "/api/system/api-keys/99999", None)
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // a read-only web account cannot create keys either
+    let (s, _) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/users",
+            Some(json!({"username":"viewer","password":"Viewer-Passw0rd-1","role":"readonly"})),
+        )
+        .await;
+    assert!(s.is_success());
+    let (s, vc, _) = t.login("viewer", "Viewer-Passw0rd-1", None).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = t
+        .call(
+            vc.as_deref().unwrap(),
+            Method::POST,
+            "/api/system/api-keys",
+            Some(json!({"name": "v"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn summary_metrics_events_and_hooks_serve_a_collector() {
+    let t = setup().await;
+    let c = t.admin().await;
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/api-keys",
+            Some(json!({"name": "collector"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED);
+    let bearer = format!("Bearer {}", b["token"].as_str().unwrap());
+
+    let (s, b) = t
+        .with_header(
+            Method::GET,
+            "/api/status/summary",
+            "authorization",
+            &bearer,
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["product"], "patronus");
+    assert_eq!(b["version"], env!("CARGO_PKG_VERSION"));
+    for k in [
+        "gateways",
+        "gateway_groups",
+        "vpn",
+        "conntrack",
+        "dhcp",
+        "services",
+        "firewall",
+        "config",
+    ] {
+        assert!(b.get(k).is_some(), "summary lacks {k}: {b}");
+    }
+    assert!(
+        b["firewall"]["rules_hash"]
+            .as_str()
+            .is_some_and(|h| h.len() == 16),
+        "{b}"
+    );
+
+    let (s, body, h) = t.raw(Method::GET, "/metrics", Some(&c), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(h[header::CONTENT_TYPE]
+        .to_str()
+        .unwrap()
+        .starts_with("text/plain"));
+    assert!(body.contains("patronus_info{version=\""), "{body}");
+    assert!(
+        body.contains("# TYPE patronus_uptime_seconds gauge"),
+        "{body}"
+    );
+    let (s, _, _) = t.raw(Method::GET, "/metrics", None, None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "metrics need a session or key");
+
+    // events: record two, read them back with the resume cursor
+    for k in ["gateway_down", "tunnel_up"] {
+        crate::state::telemetry::record(
+            &t.state.config_store,
+            &crate::state::telemetry::Event {
+                id: 0,
+                ts: 1,
+                kind: k.into(),
+                subject: "x".into(),
+                severity: "info".into(),
+                detail: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let (s, b) = t
+        .with_header(Method::GET, "/api/events", "authorization", &bearer, None)
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let first = b[0]["id"].as_i64().unwrap();
+    assert_eq!(b.as_array().unwrap().len(), 2);
+    let (_, b) = t
+        .with_header(
+            Method::GET,
+            &format!("/api/events?after={first}&kind=tunnel_up"),
+            "authorization",
+            &bearer,
+            None,
+        )
+        .await;
+    assert_eq!(b.as_array().unwrap().len(), 1);
+
+    // webhooks are admin-only and never show the secret
+    let (s, _) = t
+        .with_header(
+            Method::GET,
+            "/api/system/hooks",
+            "authorization",
+            &bearer,
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/hooks",
+            Some(json!({"name": "ops", "url": "https://hooks.example/x", "secret": "hunter2hunter2", "kinds": "gateway_down"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let (_, b) = t.call(&c, Method::GET, "/api/system/hooks", None).await;
+    assert_eq!(b[0]["has_secret"], true);
+    assert!(!b.to_string().contains("hunter2"), "{b}");
+    let (s, _) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/hooks",
+            Some(json!({"name": "bad", "url": "file:///etc/passwd"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let id = b[0]["id"].as_i64().unwrap();
+    let (s, _) = t
+        .call(&c, Method::DELETE, &format!("/api/system/hooks/{id}"), None)
+        .await;
+    assert_eq!(s, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn updates_report_honestly_and_power_needs_an_admin() {
+    let t = setup().await;
+    let c = t.admin().await;
+    let (s, b) = t.call(&c, Method::GET, "/api/system/updates", None).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(b["job"]["state"], "none");
+    // a viewer cannot start jobs or reboot
+    let (s, _) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/users",
+            Some(json!({"username":"viewer2","password":"Viewer-Passw0rd-2","role":"operator"})),
+        )
+        .await;
+    assert!(s.is_success());
+    let (_, vc, _) = t.login("viewer2", "Viewer-Passw0rd-2", None).await;
+    let vc = vc.unwrap();
+    for uri in [
+        "/api/system/reboot",
+        "/api/system/shutdown",
+        "/api/system/updates/check",
+        "/api/system/updates/apply",
+    ] {
+        let (s, _) = t.call(&vc, Method::POST, uri, Some(json!({}))).await;
+        assert_eq!(s, StatusCode::FORBIDDEN, "{uri}");
+    }
+    // a bad scope is a 400, not a shell command: only reachable with Portage
+    // or root, so here the request is refused one way or the other
+    let (s, _) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/updates/apply",
+            Some(json!({"scope": "x; rm -rf /"})),
+        )
+        .await;
+    assert_ne!(s, StatusCode::ACCEPTED);
+}

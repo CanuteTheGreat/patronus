@@ -4,6 +4,7 @@
 
 use std::net::SocketAddr;
 
+pub mod apikeys;
 pub mod auth;
 pub mod geo_centroid;
 pub mod qrcode;

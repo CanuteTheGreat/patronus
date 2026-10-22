@@ -123,6 +123,26 @@ pub async fn serve(
                 let _ = wr.write_all(format!("{out}\n").as_bytes()).await;
                 return;
             }
+            if op == "system" {
+                let action = req
+                    .get("action")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let params = req.get("params").cloned().unwrap_or(Value::Null);
+                tracing::info!("applyd: system {action}");
+                let r =
+                    tokio::task::spawn_blocking(move || crate::sysops::handle(&action, &params))
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r.map_err(|e| e.to_string()));
+                let out = match r {
+                    Ok(v) => json!({"ok": true, "result": v}),
+                    Err(e) => json!({"ok": false, "error": e}),
+                };
+                let _ = wr.write_all(format!("{out}\n").as_bytes()).await;
+                return;
+            }
             let applier = name.as_deref().and_then(|n| registry.by_name(n));
             let out = match (applier, op) {
                 (None, _) => reply(&Err(format!("unknown applier {name:?}"))),
@@ -198,6 +218,21 @@ pub async fn request_service(socket: &Path, service: &str, action: &str) -> Resu
                 .unwrap_or("apply broker failed")
                 .to_string(),
         ))
+    }
+}
+
+/// Ask the broker for a privileged system operation (reboot, shutdown,
+/// update_check, update_apply, update_status; see `crate::sysops`).
+pub async fn request_system(socket: &Path, action: &str, params: Value) -> Result<Value> {
+    let v = call(
+        socket,
+        json!({ "op": "system", "action": action, "params": params }),
+    )
+    .await?;
+    if v.get("ok").and_then(|o| o.as_bool()) == Some(true) {
+        Ok(v.get("result").cloned().unwrap_or(Value::Null))
+    } else {
+        Err(broker_error(&v))
     }
 }
 

@@ -22,6 +22,7 @@ pub mod monitoring;
 pub mod network;
 pub mod routing;
 pub mod system;
+pub mod telemetry;
 pub mod tunnels;
 pub mod vpn;
 
@@ -196,5 +197,7 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
     }
     // scheduled rules switch on/off on time (re-apply on a window edge)
     firewall::spawn_schedule_task(state.firewall.clone());
+    // gateway / tunnel / HA / configuration events for the event log and webhooks
+    telemetry::spawn_watcher(state.clone());
     Ok(state)
 }

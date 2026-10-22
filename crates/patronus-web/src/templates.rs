@@ -346,6 +346,9 @@ pub struct WireGuardPeer {
     /// Handshake within the last 180 s.
     pub connected: bool,
     pub last_handshake: Option<String>,
+    /// Seconds since the last handshake (None = never).
+    #[serde(default)]
+    pub handshake_age_secs: Option<u64>,
     pub transfer: String,
 }
 

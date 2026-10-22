@@ -391,6 +391,30 @@ impl SystemManager {
         .map_err(|e| ServiceError::Failed(e.to_string()))?
     }
 
+    /// A privileged system operation (reboot, shutdown, update_*): through
+    /// `patronus applyd` (root) when its socket exists, else here (root).
+    pub async fn system_op(
+        &self,
+        action: &str,
+        params: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let socket = patronus_network::applyd::socket_path();
+        if !nix::unistd::geteuid().is_root() && socket.exists() {
+            return patronus_network::applyd::request_system(&socket, action, params)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"));
+        }
+        if !nix::unistd::geteuid().is_root() {
+            anyhow::bail!(
+                "this needs root: patronus-web runs unprivileged and patronus-applyd is not running"
+            );
+        }
+        let action = action.to_string();
+        tokio::task::spawn_blocking(move || patronus_network::sysops::handle(&action, &params))
+            .await?
+            .map_err(|e| anyhow::anyhow!("{e}"))
+    }
+
     /// Hostname, DNS domain, time zone and resolvers as the system has them.
     pub async fn get_config(&self) -> anyhow::Result<crate::templates::SystemConfig> {
         let resolv = std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default();

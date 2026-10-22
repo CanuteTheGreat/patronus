@@ -1,7 +1,7 @@
 //! System API endpoints (lane H): web accounts, configuration backups
 //! (create / download / upload / restore, admins only: backups carry
 //! password hashes and VPN keys), services (systemd/OpenRC, through
-//! `patronus applyd` as root), updates (not implemented: 501).
+//! `patronus applyd` as root), Portage updates, reboot/shutdown.
 
 use crate::auth::{AdminUser, UserRole, UserUpdate};
 use crate::state::{system::ServiceError, AppState};
@@ -319,17 +319,93 @@ pub async fn upload_restore(
     }
 }
 
-/// GET /api/system/updates -- not implemented. This used to announce a
-/// `patronus-core 0.1.1` update on every box.
-pub async fn list_updates() -> Response {
-    error(
-        StatusCode::NOT_IMPLEMENTED,
-        format!(
-            "Patronus {} does not check for updates itself. On Gentoo update through Portage: \
-             `emaint sync -a && emerge -1u net-firewall/patronus` (or `emerge -uDN @world`).",
-            env!("CARGO_PKG_VERSION")
-        ),
-    )
+/// GET /api/system/updates -- Portage update state: whether this system
+/// has Portage, the last finished check (what is pending, in particular a
+/// newer Patronus) and the running/last job with its log tail.
+pub async fn list_updates(State(_state): State<AppState>) -> Response {
+    let mut v = match patronus_network::sysops::handle("update_status", &serde_json::Value::Null) {
+        Ok(v) => v,
+        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+    v["version"] = json!(env!("CARGO_PKG_VERSION"));
+    if v["portage"] == false {
+        v["note"] = json!(
+            "This system has no Portage (emerge): Patronus updates through Portage on Gentoo \
+             (`emaint sync -a && emerge -1u net-firewall/patronus`)."
+        );
+    }
+    Json(v).into_response()
+}
+
+#[derive(Deserialize, Default)]
+pub struct UpdateRequest {
+    /// `patronus` (default) or `world` for an apply
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// check: sync the Portage tree first (default true)
+    #[serde(default)]
+    pub sync: Option<bool>,
+}
+
+async fn update_job(state: AppState, action: &str, req: UpdateRequest) -> Response {
+    let params = json!({"scope": req.scope, "sync": req.sync});
+    match state.system.system_op(action, params).await {
+        Ok(v) => (StatusCode::ACCEPTED, Json(v)).into_response(),
+        Err(e) => {
+            let m = e.to_string();
+            let code = if m.starts_with("Invalid") {
+                StatusCode::BAD_REQUEST
+            } else if m.contains("already running") {
+                StatusCode::CONFLICT
+            } else if m.contains("no Portage") {
+                StatusCode::NOT_IMPLEMENTED
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            error(code, m)
+        }
+    }
+}
+
+/// POST /api/system/updates/check -- sync the tree and list pending updates
+/// (a background job; poll GET /api/system/updates).
+pub async fn check_updates(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    body: Option<Json<UpdateRequest>>,
+) -> Response {
+    update_job(state, "update_check", body.map(|b| b.0).unwrap_or_default()).await
+}
+
+/// POST /api/system/updates/apply -- `emerge` the Patronus package (or all
+/// of @world) as a background job.
+pub async fn apply_updates(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    body: Option<Json<UpdateRequest>>,
+) -> Response {
+    update_job(state, "update_apply", body.map(|b| b.0).unwrap_or_default()).await
+}
+
+/// POST /api/system/reboot and /api/system/shutdown (admins; the box goes
+/// down a few seconds after the answer).
+async fn power(state: AppState, action: &str) -> Response {
+    match state
+        .system
+        .system_op(action, serde_json::Value::Null)
+        .await
+    {
+        Ok(v) => (StatusCode::ACCEPTED, Json(v)).into_response(),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+pub async fn reboot(State(state): State<AppState>, _admin: AdminUser) -> Response {
+    power(state, "reboot").await
+}
+
+pub async fn shutdown(State(state): State<AppState>, _admin: AdminUser) -> Response {
+    power(state, "shutdown").await
 }
 
 /// GET /api/system/services -- installed Patronus-related services and
@@ -398,6 +474,10 @@ pub fn router() -> axum::Router<AppState> {
             post(upload_restore).layer(axum::extract::DefaultBodyLimit::max(MAX_UPLOAD)),
         )
         .route("/system/updates", get(list_updates))
+        .route("/system/updates/check", post(check_updates))
+        .route("/system/updates/apply", post(apply_updates))
+        .route("/system/reboot", post(reboot))
+        .route("/system/shutdown", post(shutdown))
         .route("/system/services", get(list_services))
         .route("/system/services/:name/start", post(start_service))
         .route("/system/services/:name/stop", post(stop_service))

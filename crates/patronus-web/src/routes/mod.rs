@@ -53,6 +53,8 @@ pub fn build_router(
         // /favicon.ico on every page and logged a 404 for it.
         .route("/favicon.svg", get(favicon))
         .route("/favicon.ico", get(favicon))
+        // Prometheus/OpenMetrics text for collectors (session or API key)
+        .route("/metrics", get(api::telemetry::metrics))
         // API routes (JSON)
         .nest("/api", api_routes())
         // Static files
@@ -153,10 +155,54 @@ async fn require_session(
     }
 
     let (mut parts, body) = req.into_parts();
+    // API key (Authorization: Bearer pat_... / X-API-Key): authenticates
+    // on its own; a bad key is a 401, never a fallback to a cookie.
+    if let Some(token) = crate::apikeys::request_token(&parts.headers) {
+        let keys = parts
+            .extensions
+            .get::<crate::apikeys::ApiKeyStore>()
+            .cloned();
+        let key = match keys {
+            Some(k) => k.verify(&token).await,
+            None => None,
+        };
+        let Some(key) = key else {
+            return (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({"error": "invalid or expired API key"})),
+            )
+                .into_response();
+        };
+        // keys automate configuration; accounts, their own credentials and
+        // key management are for people
+        let people_only = (path.starts_with("/api/auth/") && path != "/api/auth/me")
+            || path.starts_with("/api/system/api-keys")
+            || path.starts_with("/api/system/users");
+        if !(path.starts_with("/api/") || path == "/metrics") || people_only {
+            return (
+                StatusCode::FORBIDDEN,
+                axum::Json(serde_json::json!({"error": "not available to API keys"})),
+            )
+                .into_response();
+        }
+        if !key.role().can_modify()
+            && !matches!(parts.method, Method::GET | Method::HEAD | Method::OPTIONS)
+        {
+            return (
+                StatusCode::FORBIDDEN,
+                axum::Json(serde_json::json!({"error": "read-only API key"})),
+            )
+                .into_response();
+        }
+        parts
+            .extensions
+            .insert(crate::apikeys::ApiKeyPrincipal(key));
+        return next.run(axum::http::Request::from_parts(parts, body)).await;
+    }
     let session = crate::auth::AuthUser::from_request_parts(&mut parts, &())
         .await
         .map(|u| u.session);
-    let is_api = path.starts_with("/api/");
+    let is_api = path.starts_with("/api/") || path == "/metrics";
 
     match session {
         Ok(session) => {
@@ -206,6 +252,8 @@ fn api_routes() -> Router<AppState> {
         .merge(api::routing::router())
         .merge(api::interfaces::router())
         .merge(api::system::router())
+        .merge(api::apikeys::router())
+        .merge(api::telemetry::router())
 }
 
 #[cfg(test)]

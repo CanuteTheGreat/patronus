@@ -93,6 +93,31 @@
     {% endif %}
 </div>
 
+<div class="card" id="api-keys">
+    <div class="card-header"><h2 class="card-title">API keys</h2></div>
+    <p class="text-sm text-muted">Bearer tokens for automation (monitoring collectors, Terraform, scripts). Send
+        <span class="mono">Authorization: Bearer pat_...</span> or <span class="mono">X-API-Key: pat_...</span>.
+        A <b>read-only</b> key can only read; an <b>operator</b> key can also change configuration. Keys never manage
+        accounts, backups or other keys. The token is shown once; only a digest is stored.</p>
+    <table class="lan" id="api-keys-table">
+        <thead><tr><th>Name</th><th>Token</th><th>Scope</th><th>Created</th><th>Expires</th><th>Last used</th><th></th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <p class="empty" id="api-keys-empty" style="display:none">No API keys.</p>
+    {% if is_admin %}
+    <form class="lan-form" id="api-key-form" onsubmit="return createApiKey(event)">
+        <label>Name <input name="name" required></label>
+        <label>Scope <select name="scope"><option value="readonly">read-only</option><option value="operator">operator</option></select></label>
+        <label>Expires in days (empty = never) <input name="expires_in_days" type="number" min="1" max="3650"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Create key</button>
+    </form>
+    <div id="api-key-new" style="display:none">
+        <p><b>New token</b> (copy it now, it is not shown again):</p>
+        <pre class="mono" id="api-key-token"></pre>
+    </div>
+    {% endif %}
+</div>
+
 <div class="card" id="my-account">
     <div class="card-header"><h2 class="card-title">Your account ({{ me_username }})</h2></div>
     <form class="lan-form" id="password-form" onsubmit="return submitJson(event, 'POST', '/api/auth/password')">
@@ -215,15 +240,166 @@
     {% endif %}
 </div>
 
-<div class="card">
-    <div class="card-header"><h2 class="card-title">Updates</h2></div>
-    <p class="text-sm">Patronus does not check for updates itself. On Gentoo, update through Portage:
-        <span class="mono">emaint sync -a &amp;&amp; emerge -1u net-firewall/patronus</span>.</p>
+<div class="card" id="updates-card">
+    <div class="card-header"><h2 class="card-title">Updates (Portage)</h2></div>
+    <p class="text-sm text-muted" id="updates-note">Patronus is a Gentoo system: updates come from Portage. <b>Check</b> syncs the
+        tree and lists what would be merged; <b>Update Patronus</b> runs <span class="mono">emerge -1u net-firewall/patronus</span>;
+        <b>Update everything</b> runs <span class="mono">emerge -uDN @world</span>. Jobs run in the background and survive a
+        restart of this interface; restart the services (or reboot) afterwards to run the new version.</p>
+    <p id="updates-state" class="text-sm"></p>
+    {% if is_admin %}
+    <p>
+        <button class="btn btn-sm btn-secondary" id="update-check" onclick="updateJob('check', {sync: true})">Check for updates</button>
+        <button class="btn btn-sm btn-primary" id="update-patronus" onclick="if (confirm('Update the Patronus package now?')) updateJob('apply', {scope: 'patronus'})">Update Patronus</button>
+        <button class="btn btn-sm btn-danger" id="update-world" onclick="if (confirm('Update ALL packages (@world)? This can take hours.')) updateJob('apply', {scope: 'world'})">Update everything</button>
+    </p>
+    {% endif %}
+    <table class="lan" id="updates-table" style="display:none">
+        <thead><tr><th>Package</th><th>Installed</th><th>Available</th><th></th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <pre class="mono" id="updates-log" style="display:none;max-height:20em;overflow:auto"></pre>
+</div>
+
+{% if is_admin %}
+<div class="card" id="power-card">
+    <div class="card-header"><h2 class="card-title">Power</h2></div>
+    <p class="text-sm">Reboot or power off this firewall. The configuration is re-applied from the store at boot.</p>
+    <button class="btn btn-sm btn-danger" id="reboot-btn" onclick="if (confirm('Reboot this firewall now? Traffic through it stops for a minute or two.')) powerOp('reboot')">Reboot</button>
+    <button class="btn btn-sm btn-danger" id="shutdown-btn" onclick="if (confirm('Power off this firewall? You will need physical access to start it again.')) powerOp('shutdown')">Shut down</button>
+</div>
+{% endif %}
+
+<div class="card" id="events-card">
+    <div class="card-header"><h2 class="card-title">Events and webhooks</h2></div>
+    <p class="text-sm text-muted">Gateway up/down, gateway-group failover, tunnel up/down, HA state changes and configuration
+        changes are logged here and POSTed to the webhooks below (JSON, signed with HMAC-SHA256 in
+        <span class="mono">X-Patronus-Signature: sha256=...</span> when a secret is set). Collectors can also read
+        <span class="mono">GET /api/events?after=&lt;id&gt;</span>, <span class="mono">GET /api/status/summary</span> and
+        <span class="mono">GET /metrics</span> with an API key.</p>
+    <table class="lan" id="events-table"><thead><tr><th>Time</th><th>Event</th><th>About</th><th>Detail</th></tr></thead><tbody></tbody></table>
+    <p class="empty" id="events-empty" style="display:none">No events yet.</p>
+    {% if is_admin %}
+    <h3 class="text-sm">Webhooks</h3>
+    <table class="lan" id="hooks-table"><thead><tr><th>Name</th><th>URL</th><th>Events</th><th>Last delivery</th><th></th></tr></thead><tbody></tbody></table>
+    <form class="lan-form" id="hook-form" onsubmit="return createHook(event)">
+        <label>Name <input name="name" required></label>
+        <label>URL <input name="url" type="url" placeholder="https://..." required></label>
+        <label>Secret (optional) <input name="secret" autocomplete="off"></label>
+        <label>Events (comma separated, empty = all) <input name="kinds" placeholder="gateway_down, tunnel_down"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add webhook</button>
+    </form>
+    {% endif %}
 </div>
 {% endblock %}
 
 {% block extra_scripts %}
 {% include "lan_js.html" %}
+<script>
+    async function getJson(url) { const r = await fetch(url, {credentials: 'same-origin'}); return r.ok ? r.json() : null; }
+    function cell(tr, text) { const td = document.createElement('td'); td.textContent = text; tr.appendChild(td); return td; }
+    async function loadUpdates() {
+        const u = await getJson('/api/system/updates');
+        if (!u) return;
+        const st = document.getElementById('updates-state');
+        const job = u.job || {state: 'none'};
+        const lc = u.last_check || {};
+        let t = 'Patronus ' + u.version + '. ';
+        if (!u.portage) t += (u.note || 'No Portage on this system.') + ' ';
+        else if (lc.checked_at) t += 'Last check ' + fmtTs(lc.checked_at) + ': ' + (lc.pending || []).length + ' package(s) pending'
+            + (lc.patronus ? ', Patronus ' + lc.patronus.version + ' is available' : '') + '. ';
+        else t += 'Not checked yet. ';
+        if (job.state !== 'none') t += 'Job: ' + job.kind + (job.kind === 'apply' ? ' (' + job.scope + ')' : '') + ' ' + job.state
+            + (job.exit_code != null ? ' (exit ' + job.exit_code + ')' : '') + '.';
+        st.textContent = t;
+        const tb = document.querySelector('#updates-table tbody'); tb.textContent = '';
+        const pend = lc.pending || [];
+        document.getElementById('updates-table').style.display = pend.length ? '' : 'none';
+        for (const p of pend) { const tr = document.createElement('tr'); tr.dataset.atom = p.atom;
+            cell(tr, p.atom); cell(tr, p.from || 'new'); cell(tr, p.version); cell(tr, p.kind); tb.appendChild(tr); }
+        const log = document.getElementById('updates-log');
+        log.style.display = job.log_tail ? '' : 'none'; log.textContent = job.log_tail || '';
+        if (job.state === 'running') setTimeout(loadUpdates, 4000);
+    }
+    async function updateJob(kind, body) {
+        const j = await post('/api/system/updates/' + kind, body);
+        if (j) loadUpdates();
+    }
+    async function powerOp(what) {
+        const j = await post('/api/system/' + what, {});
+        if (j) document.body.insertAdjacentHTML('afterbegin', '<div class="alert-error" style="margin:1em">The firewall is going down for ' + what + ' in a few seconds.</div>');
+    }
+    async function loadEvents() {
+        const ev = await getJson('/api/events?limit=50');
+        if (!ev) return;
+        const tb = document.querySelector('#events-table tbody'); tb.textContent = '';
+        document.getElementById('events-empty').style.display = ev.length ? 'none' : '';
+        for (const e of ev.reverse()) { const tr = document.createElement('tr'); tr.dataset.kind = e.kind;
+            cell(tr, fmtTs(e.ts)); cell(tr, e.kind); cell(tr, e.subject); cell(tr, e.detail); tb.appendChild(tr); }
+        if (!{{ is_admin }}) return;
+        const hooks = await getJson('/api/system/hooks');
+        const hb = document.querySelector('#hooks-table tbody'); hb.textContent = '';
+        for (const h of hooks || []) { const tr = document.createElement('tr'); tr.dataset.hook = h.name;
+            cell(tr, h.name); cell(tr, h.url); cell(tr, h.kinds || 'all'); cell(tr, h.last_attempt_at ? fmtTs(h.last_attempt_at) + ': ' + h.last_result : 'never');
+            const td = document.createElement('td'); const b = document.createElement('button');
+            b.className = 'btn btn-sm btn-danger'; b.textContent = 'Delete';
+            b.onclick = async () => { if (!confirm('Delete webhook ' + h.name + '?')) return;
+                const d = await fetch('/api/system/hooks/' + h.id, {method: 'DELETE', credentials: 'same-origin'}); if (d.ok) loadEvents(); };
+            td.appendChild(b); tr.appendChild(td); hb.appendChild(tr); }
+    }
+    async function createHook(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements;
+        const j = await post('/api/system/hooks', {name: f['name'].value, url: f['url'].value, secret: f['secret'].value, kinds: f['kinds'].value});
+        if (j) { ev.target.reset(); loadEvents(); }
+        return false;
+    }
+    document.addEventListener('DOMContentLoaded', () => { loadUpdates(); loadEvents(); });
+</script>
+<script>
+    const fmtTs = t => t ? new Date(t * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : '';
+    async function loadApiKeys() {
+        if (!{{ is_admin }}) { document.getElementById('api-keys').style.display = 'none'; return; }
+        const r = await fetch('/api/system/api-keys', {credentials: 'same-origin'});
+        if (!r.ok) return;
+        const keys = await r.json();
+        const tb = document.querySelector('#api-keys-table tbody');
+        tb.textContent = '';
+        document.getElementById('api-keys-empty').style.display = keys.length ? 'none' : '';
+        for (const k of keys) {
+            const tr = document.createElement('tr');
+            tr.dataset.key = k.name;
+            for (const v of [k.name, k.prefix + '...', k.scope === 'readonly' ? 'read-only' : k.scope,
+                             fmtTs(k.created_at) + ' by ' + k.created_by, k.expires_at ? fmtTs(k.expires_at) : 'never',
+                             k.last_used_at ? fmtTs(k.last_used_at) : 'never']) {
+                const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+            }
+            const td = document.createElement('td');
+            const b = document.createElement('button');
+            b.className = 'btn btn-sm btn-danger'; b.textContent = 'Revoke';
+            b.onclick = async () => {
+                if (!confirm('Revoke API key ' + k.name + '? Anything using it stops working.')) return;
+                const d = await fetch('/api/system/api-keys/' + k.id, {method: 'DELETE', credentials: 'same-origin'});
+                if (d.ok) loadApiKeys(); else alert('Not revoked: ' + d.status);
+            };
+            td.appendChild(b); tr.appendChild(td); tb.appendChild(tr);
+        }
+    }
+    async function createApiKey(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements;
+        const body = {name: f['name'].value, scope: f['scope'].value};
+        if (f['expires_in_days'].value) body.expires_in_days = parseInt(f['expires_in_days'].value, 10);
+        const j = await post('/api/system/api-keys', body);
+        if (!j) return false;
+        document.getElementById('api-key-token').textContent = j.token;
+        document.getElementById('api-key-new').style.display = '';
+        ev.target.reset();
+        loadApiKeys();
+        return false;
+    }
+    document.addEventListener('DOMContentLoaded', loadApiKeys);
+</script>
 <script>
     function setPassword(id, name) {
         const pw = prompt('New password for ' + name + ' (12+ characters):');

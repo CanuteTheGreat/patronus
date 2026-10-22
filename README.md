@@ -135,6 +135,15 @@ that are not finished are listed separately under
   `patronus-gitops` service; later commits that change or delete a rule are
   followed, a broken commit is refused with the file named, and applied
   rules survive a reboot. [C38]
+- API keys for automation: bearer tokens (read-only or operator, never
+  admin) for collectors and scripts; only a digest is stored and a revoked key
+  stops working at once. [C39]
+- Monitoring: `GET /api/status/summary` and `GET /metrics` (Prometheus text)
+  report gateways, tunnels, conntrack, DHCP leases and services; gateway
+  up/down, failover and tunnel changes are logged at `GET /api/events` and
+  POSTed to signed webhooks. [C40]
+- Updates and power: the System page checks and applies updates through
+  Portage as background jobs, and reboots or powers off the box. [C41]
 
 ### Administration
 

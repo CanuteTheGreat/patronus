@@ -930,6 +930,21 @@ where
     type Rejection = AuthError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        // A request the gate authenticated with an API key: a synthetic
+        // session (user id 0, never an admin).
+        if let Some(p) = parts.extensions.get::<crate::apikeys::ApiKeyPrincipal>() {
+            let now = Utc::now();
+            return Ok(AuthUser {
+                session: Session {
+                    user_id: 0,
+                    username: format!("api-key:{}", p.0.name),
+                    role: p.0.role(),
+                    created_at: now,
+                    last_active: now,
+                },
+                session_id: String::new(),
+            });
+        }
         let session_id = session_cookie(&parts.headers).ok_or(AuthError::MissingSession)?;
 
         // Get session store from extensions (set by middleware)
@@ -1133,14 +1148,17 @@ pub struct AuthState {
     pub user_store: UserStore,
     pub session_store: SessionStore,
     pub login_throttle: LoginThrottle,
+    /// API keys for automation (bearer tokens), see `crate::apikeys`.
+    pub api_keys: crate::apikeys::ApiKeyStore,
 }
 
 impl AuthState {
     pub fn new(store: Arc<ConfigStore>) -> Self {
         Self {
-            user_store: UserStore::new(store),
+            user_store: UserStore::new(store.clone()),
             session_store: SessionStore::new(),
             login_throttle: LoginThrottle::new(),
+            api_keys: crate::apikeys::ApiKeyStore::new(store),
         }
     }
 }
@@ -1557,6 +1575,7 @@ pub async fn session_middleware(
 ) -> Response {
     req.extensions_mut()
         .insert(app_state.auth.session_store.clone());
+    req.extensions_mut().insert(app_state.auth.api_keys.clone());
     next.run(req).await
 }
 

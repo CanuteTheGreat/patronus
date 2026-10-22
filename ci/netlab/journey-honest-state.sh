@@ -129,8 +129,9 @@ nl_api GET /system/services
 no_fixtures "services API"
 nl_ok "services API: $(json 'print(len(d))') installed Patronus-related services, live state"
 nl_api GET /system/updates
-[ "$NL_CODE" = 501 ] || nl_fail "updates should be 501 (not implemented), got $NL_CODE"
-nl_ok "updates: 501, no invented update"
+[ "$NL_CODE" = 200 ] || nl_fail "updates should answer 200, got $NL_CODE"
+grep -q '"pending":\[\]' "$NL_OUT" || nl_fail "an unchecked box must have nothing pending: $(cat "$NL_OUT")"
+nl_ok "updates: nothing pending before a check, no invented update"
 
 nl_web_stop
 R ip link del wg0; C ip link del wg1
