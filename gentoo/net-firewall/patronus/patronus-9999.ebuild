@@ -94,7 +94,6 @@ RDEPEND="
 	)
 	|| ( net-misc/iputils sys-apps/busybox )
 	multiwan? ( sys-apps/iproute2 )
-	# USE=ha: VRRP virtual IPs (keepalived) + connection-state sync (conntrackd)
 	ha? ( sys-cluster/keepalived net-firewall/conntrack-tools )
 	monitoring? (
 		prometheus? ( app-metrics/prometheus )
