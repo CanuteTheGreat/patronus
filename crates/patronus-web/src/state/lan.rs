@@ -472,6 +472,44 @@ mod ha_impl {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Traffic shaping (lane C, USE=qos)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "qos")]
+mod qos_impl {
+    use super::*;
+    use patronus_network::shaping;
+
+    impl LanManager {
+        pub async fn qos_overview(&self) -> anyhow::Result<Value> {
+            Ok(serde_json::json!({
+                "shapers": shaping::list(&self.store).await.map_err(e)?,
+                "status": self.status("qos").await?,
+            }))
+        }
+
+        pub async fn save_shaper(
+            &self,
+            id: Option<i64>,
+            i: shaping::ShaperInput,
+        ) -> anyhow::Result<i64> {
+            let _g = self.edit.lock().await;
+            let snap = self.begin("change traffic shaping").await?;
+            let id = shaping::save(&self.store, id, &i).await.map_err(e)?;
+            self.commit("traffic shaping", snap, &["qos"]).await?;
+            Ok(id)
+        }
+
+        pub async fn delete_shaper(&self, id: i64) -> anyhow::Result<()> {
+            let _g = self.edit.lock().await;
+            let snap = self.begin("delete a shaper").await?;
+            shaping::delete(&self.store, id).await.map_err(e)?;
+            self.commit("traffic shaping", snap, &["qos"]).await
+        }
+    }
+}
+
 #[cfg(all(test, feature = "dhcp", feature = "dns"))]
 mod tests {
     use super::*;

@@ -49,6 +49,8 @@ pub const LAN_TABLES: &[&str] = &[
     "ddns_clients",
     // lane G (HA): virtual IPs; the `ha.*` settings live in lan_settings
     "ha_vips",
+    // lane C: traffic shaping (USE=qos)
+    "qos_shapers",
 ];
 
 pub(crate) fn db_err(what: &'static str) -> impl Fn(sqlx::Error) -> Error {
@@ -895,6 +897,11 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::ddns::DdnsApplier::new(env.clone())));
     #[cfg(feature = "ha")]
     v.push(Arc::new(crate::ha::HaApplier::new(env.clone())));
+    #[cfg(feature = "qos")]
+    v.push(Arc::new(crate::shaping::ShapingApplier::new(
+        env.clone(),
+        Arc::new(crate::shaping::SystemTc),
+    )));
     let _ = env;
     v
 }

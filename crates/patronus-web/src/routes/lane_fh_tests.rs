@@ -1834,3 +1834,56 @@ async fn radius_users_log_in_with_their_server_credentials_and_nothing_else_chan
     let (s, _, _) = t.login("carol", "carols-radius-password", None).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
 }
+
+#[cfg(feature = "qos")]
+#[tokio::test]
+async fn traffic_shaping_is_managed_through_the_api_and_undone_when_tc_refuses() {
+    let dir = std::env::temp_dir().join(format!("patronus-web-qos-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("pw"), format!("{ADMIN_PW}\n")).unwrap();
+    let mut state = state_at(&dir).await;
+    let qos = Fake::new("qos", Phase::Services);
+    state.lan = Arc::new(crate::state::LanManager::with_appliers(
+        state.config_store.clone(),
+        vec![qos.clone()],
+    ));
+    let app = super::build_router(state.clone(), Arc::new(crate::WsBroadcaster::new()));
+    let t = T {
+        app,
+        state,
+        dir,
+        wg: Fake::new("wireguard", Phase::Interfaces),
+        restore_fake: Fake::new("firewall", Phase::Firewall),
+    };
+    let c = t.admin().await;
+    let (s, b) = t
+        .call(&c, Method::POST, "/api/qos", Some(json!({"interface":"@wan","mode":"limit","rate_kbit":8000})))
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let id = b["id"].as_i64().unwrap();
+    assert_eq!(qos.applies.load(Ordering::SeqCst), 1);
+    for body in [
+        json!({"interface":"@wan","mode":"fq_codel"}),
+        json!({"interface":"@lan","mode":"cake"}),
+        json!({"interface":"@lan","mode":"limit","rate_kbit":1}),
+        json!({"interface":"@lan","mode":"teleport"}),
+    ] {
+        let (s, _) = t.call(&c, Method::POST, "/api/qos", Some(body.clone())).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    }
+    let (s, _) = t.call(&c, Method::PUT, &format!("/api/qos/{id}"), Some(json!({"rate_kbit": 16000}))).await;
+    assert_eq!(s, StatusCode::OK);
+    qos.fail.store(true, Ordering::SeqCst);
+    let (s, _) = t.call(&c, Method::PUT, &format!("/api/qos/{id}"), Some(json!({"rate_kbit": 99000}))).await;
+    assert_eq!(s, StatusCode::INTERNAL_SERVER_ERROR);
+    qos.fail.store(false, Ordering::SeqCst);
+    let (_, b) = t.call(&c, Method::GET, "/api/qos", None).await;
+    assert_eq!(b["shapers"][0]["rate_kbit"], 16000, "refused change was not undone: {b}");
+    let (s, body, _) = t.raw(Method::GET, "/qos", Some(&c), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(body.contains("Traffic shaping") && body.contains("id=\"qos-form\""));
+    let (s, _) = t.call(&c, Method::DELETE, &format!("/api/qos/{id}"), None).await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = t.call(&c, Method::DELETE, &format!("/api/qos/{id}"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}

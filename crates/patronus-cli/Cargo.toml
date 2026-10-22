@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos"]
 
 # Core features
 web = ["patronus-web", "dep:axum"]
@@ -51,7 +51,7 @@ ids-suricata = []
 vlan = ["patronus-network/vlan", "patronus-web?/vlan"]
 pppoe = ["patronus-network/pppoe", "patronus-web?/pppoe"]
 dhcpcd = ["patronus-network/dhcpcd", "patronus-web?/dhcpcd"]
-qos = ["patronus-network/qos"]
+qos = ["patronus-network/qos", "patronus-web?/qos"]
 backup = []
 
 # Revolutionary features

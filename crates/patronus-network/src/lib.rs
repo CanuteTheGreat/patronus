@@ -69,7 +69,7 @@ pub mod ddns;
 pub mod ntp;
 
 #[cfg(feature = "qos")]
-pub mod qos;
+pub mod shaping;
 
 #[cfg(feature = "ha")]
 pub mod ha;
@@ -125,9 +125,6 @@ pub use dns::DnsApplier;
 
 #[cfg(feature = "ntp")]
 pub use ntp::NtpApplier;
-
-#[cfg(feature = "qos")]
-pub use qos::QosManager;
 
 #[cfg(feature = "intrusion-detection")]
 pub use ids::{IdsBackend, IdsManager};

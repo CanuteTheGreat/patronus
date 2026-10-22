@@ -9,6 +9,7 @@ pub mod ha;
 pub mod interfaces;
 pub mod lan;
 pub mod network;
+pub mod qos;
 pub mod routing;
 pub mod status;
 pub mod system;

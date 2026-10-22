@@ -146,6 +146,8 @@ that are not finished are listed separately under
   with VRRP (keepalived), preemption and a maintenance mode, connection-state
   sync (conntrackd) so a failover keeps established connections, and alias
   addresses; configured from the HA page or `/api/ha`. [C42]
+- Traffic shaping (USE=qos): CAKE, fq_codel or a rate limit per interface from
+  the Traffic shaping page, applied with `tc` and re-applied at boot. [C45]
 - External login: people on a RADIUS server (PAP, answers verified with the
   shared secret) can log in to the web UI; local accounts never fall back to
   RADIUS and RADIUS accounts never start as admin. [C44]

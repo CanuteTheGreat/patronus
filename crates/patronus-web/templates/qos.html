@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}Traffic shaping - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Traffic shaping</h1>
+    <p class="page-subtitle">One queue discipline per interface, applied with <code>tc</code>: <b>CAKE</b> at a
+        bandwidth (fair queueing per flow and host, fixes bufferbloat), <b>fq_codel</b> (no limit) or a plain
+        <b>rate limit</b>. Traffic <i>leaving</i> the interface is shaped: put it on the WAN to shape upload, on
+        the LAN to shape download. Set the rate a little below the link speed so the queue builds here.</p>
+</div>
+
+<div class="card" id="qos-card">
+    <div class="card-header"><h2 class="card-title">Shapers</h2></div>
+    <table class="lan" id="qos-table">
+        <thead><tr><th>Interface</th><th>Mode</th><th>Rate</th><th>Enabled</th><th>In the kernel</th><th></th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <p class="empty" id="qos-empty" style="display:none">No traffic shaping configured.</p>
+    {% if can_modify %}
+    <form class="lan-form" id="qos-form" onsubmit="return addShaper(event)">
+        <label>Interface (device or @wan, @lan) <input name="interface" value="@wan" required></label>
+        <label>Mode <select name="mode"><option value="cake">CAKE</option><option value="fq_codel">fq_codel</option><option value="limit">rate limit</option></select></label>
+        <label>Rate (kbit/s; not for fq_codel) <input name="rate_kbit" type="number" min="64" placeholder="50000"></label>
+        <label>Description <input name="description"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add shaper</button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+{% include "lan_js.html" %}
+<script>
+    async function api2(method, url, body) {
+        const r = await fetch(url, {method, credentials: 'same-origin',
+            headers: body ? {'content-type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+        let j = {}; try { j = await r.json(); } catch (_) {}
+        if (!r.ok) { alert('Not applied: ' + (j.error || r.status)); return null; }
+        return j;
+    }
+    async function loadQos() {
+        const r = await fetch('/api/qos', {credentials: 'same-origin'});
+        if (!r.ok) return;
+        const d = await r.json();
+        const kern = {};
+        for (const s of (d.status || {}).shapers || []) kern[s.dev] = s;
+        const tb = document.querySelector('#qos-table tbody'); tb.textContent = '';
+        document.getElementById('qos-empty').style.display = d.shapers.length ? 'none' : '';
+        for (const s of d.shapers) {
+            const tr = document.createElement('tr'); tr.dataset.shaper = s.interface;
+            const k = Object.values(kern).filter(x => x.mode === s.mode);
+            const live = !s.enabled ? '-' : (k.length ? k.map(x => x.dev + ': ' + (x.kernel || 'none') + (x.active ? ' (active)' : ' (NOT applied)')).join(', ') : 'not assigned');
+            for (const v of [s.interface, s.mode === 'limit' ? 'rate limit' : s.mode, s.rate_kbit ? s.rate_kbit + ' kbit/s' : '-', s.enabled ? 'yes' : 'no', live]) {
+                const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+            }
+            const td = document.createElement('td'); const b = document.createElement('button');
+            b.className = 'btn btn-sm btn-danger'; b.textContent = 'Delete';
+            b.onclick = async () => { if (confirm('Remove the shaper on ' + s.interface + '?') && await api2('DELETE', '/api/qos/' + s.id)) loadQos(); };
+            td.appendChild(b); tr.appendChild(td); tb.appendChild(tr);
+        }
+    }
+    async function addShaper(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements;
+        const body = {interface: f['interface'].value, mode: f['mode'].value};
+        if (f['rate_kbit'].value) body.rate_kbit = parseInt(f['rate_kbit'].value, 10);
+        if (f['description'].value) body.description = f['description'].value;
+        if (await api2('POST', '/api/qos', body)) { ev.target.reset(); loadQos(); }
+        return false;
+    }
+    document.addEventListener('DOMContentLoaded', loadQos);
+</script>
+{% endblock %}
