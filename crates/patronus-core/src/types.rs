@@ -209,6 +209,15 @@ pub enum NatType {
         external: IpAddr,
         internal: IpAddr,
     },
+    /// IPv6 network prefix translation (NPTv6): the `internal` /N prefix
+    /// (matched on the way out of `interface_out`) is rewritten to the
+    /// `external` /N prefix, and back for traffic to `external`
+    /// arriving on `interface_in`. Host bits are kept. Both are `addr/len`
+    /// strings of the same length, validated where the rule is built.
+    Npt {
+        external: String,
+        internal: String,
+    },
 }
 
 /// NAT rule

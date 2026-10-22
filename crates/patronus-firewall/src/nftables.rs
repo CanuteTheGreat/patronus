@@ -740,8 +740,52 @@ pub fn render_nat_rule(rule: &NatRule, aliases: &AliasMap, ctx: &NatContext) -> 
             q.extend(comment.clone());
             out.postrouting.push(line("postrouting", q));
         }
+        NatType::Npt { external, internal } => {
+            let (ext, int) = (npt_prefix(external)?, npt_prefix(internal)?);
+            if ext.1 != int.1 {
+                return Err(Error::Firewall(
+                    "Invalid NPTv6 rule: the external and internal prefixes must have the same length"
+                        .into(),
+                ));
+            }
+            let mut p: Vec<String> = Vec::new();
+            p.extend(iin.clone());
+            p.push(format!("ip6 daddr {external}"));
+            p.push(format!("dnat ip6 prefix to {internal}"));
+            p.extend(comment.clone());
+            out.prerouting.push(line("prerouting", p));
+            let mut q: Vec<String> = Vec::new();
+            q.extend(iout.clone());
+            q.push(format!("ip6 saddr {internal}"));
+            q.push(format!("snat ip6 prefix to {external}"));
+            q.extend(comment.clone());
+            out.postrouting.push(line("postrouting", q));
+        }
     }
     Ok(out)
+}
+
+/// An IPv6 prefix `addr/len` (1-112) whose host bits are zero:
+/// (address, length).
+pub fn npt_prefix(s: &str) -> Result<(std::net::Ipv6Addr, u8)> {
+    let bad = || {
+        Error::Firewall(format!(
+            "Invalid NPTv6 prefix {s:?}: use an IPv6 prefix such as 2001:db8:1::/64"
+        ))
+    };
+    let (a, l) = s.split_once('/').ok_or_else(bad)?;
+    let addr: std::net::Ipv6Addr = a.parse().map_err(|_| bad())?;
+    let len: u8 = l
+        .parse()
+        .ok()
+        .filter(|l| (1..=112).contains(l))
+        .ok_or_else(bad)?;
+    let bits = u128::from(addr);
+    let host_mask = if len >= 128 { 0 } else { u128::MAX >> len };
+    if bits & host_mask != 0 || addr.is_multicast() || addr.is_loopback() || addr.is_unspecified() {
+        return Err(bad());
+    }
+    Ok((addr, len))
 }
 
 /// Convert a NAT rule (without aliases or reflection context) to nftables
@@ -1092,6 +1136,49 @@ mod render_contract_tests {
 
     fn none() -> AliasMap {
         AliasMap::new()
+    }
+
+    #[test]
+    fn npt_prefixes_translate_both_ways_and_are_validated() {
+        let mut r = NatRule::new(
+            "npt".into(),
+            NatType::Npt {
+                external: "2001:db8:50::/64".into(),
+                internal: "fd00:50::/64".into(),
+            },
+        );
+        r.interface_in = Some("eth0".into());
+        r.interface_out = Some("eth0".into());
+        let l = render_nat_rule(&r, &none(), &NatContext::default()).unwrap();
+        assert_eq!(
+            l.prerouting,
+            vec!["add rule inet patronus prerouting iifname \"eth0\" ip6 daddr 2001:db8:50::/64 dnat ip6 prefix to fd00:50::/64".to_string()]
+        );
+        assert_eq!(
+            l.postrouting,
+            vec!["add rule inet patronus postrouting oifname \"eth0\" ip6 saddr fd00:50::/64 snat ip6 prefix to 2001:db8:50::/64".to_string()]
+        );
+        for (e, i, why) in [
+            ("2001:db8:50::/64", "fd00:50::/48", "same length"),
+            ("2001:db8:50::/64", "10.0.0.0/24", "NPTv6 prefix"),
+            ("2001:db8:50::1/64", "fd00:50::/64", "NPTv6 prefix"),
+            ("2001:db8:50::/129", "fd00:50::/64", "NPTv6 prefix"),
+            ("2001:db8:50::", "fd00:50::/64", "NPTv6 prefix"),
+            ("2001:db8:50::/64; drop", "fd00:50::/64", "NPTv6 prefix"),
+        ] {
+            let mut bad = r.clone();
+            bad.nat_type = NatType::Npt {
+                external: e.into(),
+                internal: i.into(),
+            };
+            let err = render_nat_rule(&bad, &none(), &NatContext::default())
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("Invalid") && err.contains(why),
+                "{e} {i}: {err}"
+            );
+        }
     }
 
     #[test]

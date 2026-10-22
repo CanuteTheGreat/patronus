@@ -668,6 +668,12 @@ impl ConfigStore {
                         internal: addr()?,
                     }
                 }
+                "npt" => NatType::Npt {
+                    external: row
+                        .get::<Option<String>, _>("external_address")
+                        .unwrap_or_default(),
+                    internal: to_address.clone().unwrap_or_default(),
+                },
                 other => {
                     return Err(Error::Config(format!(
                         "NAT rule {id}: unknown nat_type {other:?}"
@@ -1119,6 +1125,9 @@ fn nat_columns(t: &NatType) -> (&'static str, Option<String>, Option<u16>, Optio
             None,
             Some(external.to_string()),
         ),
+        NatType::Npt { external, internal } => {
+            ("npt", Some(internal.clone()), None, Some(external.clone()))
+        }
     }
 }
 

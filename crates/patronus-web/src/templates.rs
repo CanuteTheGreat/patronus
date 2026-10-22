@@ -38,6 +38,7 @@ pub struct FirewallTemplate {
     /// NAT rules split by tab.
     pub port_forwards: Vec<NatRule>,
     pub one_to_one: Vec<NatRule>,
+    pub npt: Vec<NatRule>,
     pub outbound_rules: Vec<NatRule>,
     pub host_aliases: Vec<Alias>,
     pub port_aliases: Vec<Alias>,

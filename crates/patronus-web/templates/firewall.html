@@ -58,6 +58,7 @@
         <button class="tab-btn" data-tab="tab-pf">Port Forwards</button>
         <button class="tab-btn" data-tab="tab-outbound">Outbound NAT</button>
         <button class="tab-btn" data-tab="tab-onetoone">1:1 NAT</button>
+        <button class="tab-btn" data-tab="tab-npt">NPTv6</button>
         <button class="tab-btn" data-tab="tab-aliases">Aliases</button>
         <button class="tab-btn" data-tab="tab-schedules">Schedules</button>
     </div>
@@ -307,6 +308,45 @@
                 </div>
                 <button type="submit" class="btn btn-primary">Save 1:1 mapping</button>
                 <button type="button" class="btn btn-secondary" onclick="resetForm('onetoone-form')">Clear</button>
+            </fieldset>
+        </form>
+    </div>
+
+    <!-- =========================== NPTv6 =========================== -->
+    <div class="tab" id="tab-npt">
+        <p class="hint">IPv6 network prefix translation: the internal prefix (e.g. a ULA <code>fd00:50::/64</code>) is
+            rewritten to the external prefix on the way out of the interface and back for traffic to the external prefix.
+            Both prefixes must have the same length; host bits are kept. Add a filter rule (forward chain) for what may come in.</p>
+        <table id="npt-table">
+            <thead><tr><th>Name</th><th>Interface</th><th>External prefix</th><th>Internal prefix</th><th>On</th><th></th></tr></thead>
+            <tbody>
+            {% for r in npt %}
+            <tr data-nat-id="{{ r.id }}">
+                <td>{{ r.name }}</td><td>{{ r.interface }}</td><td>{{ r.external_address }}</td><td>{{ r.target }}</td>
+                <td>{% if r.enabled %}<span class="badge success">On</span>{% else %}<span class="badge danger">Off</span>{% endif %}</td>
+                <td><button class="btn btn-primary btn-sm" onclick="editNat({{ r.id }}, 'npt-form')">Edit</button>
+                    <button class="btn btn-danger btn-sm" onclick="del('/firewall/nat/{{ r.id }}', 'NPTv6 mapping')">Delete</button></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% if npt.is_empty() %}<p class="empty">No NPTv6 mappings.</p>{% endif %}
+        <form id="npt-form" onsubmit="return saveNat(event, 'NPT')">
+            <fieldset><legend>Add NPTv6 mapping</legend>
+                <input type="hidden" name="id">
+                <div class="row">
+                    <label>Name <input name="name" required maxlength="64"></label>
+                    <label>Interface
+                        <select name="interface">
+                            {% for i in interfaces %}<option value="{{ i.value }}" {% if i.value == "@wan" %}selected{% endif %}>{{ i.label }}</option>{% endfor %}
+                        </select></label>
+                    <label>External prefix <input name="external_address" required placeholder="2001:db8:50::/64"></label>
+                    <label>Internal prefix <input name="target_host" required placeholder="fd00:50::/64"></label>
+                    <label>Description <input name="description" maxlength="120"></label>
+                    <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
+                </div>
+                <button type="submit" class="btn btn-primary">Save NPTv6 mapping</button>
+                <button type="button" class="btn btn-secondary" onclick="resetForm('npt-form')">Clear</button>
             </fieldset>
         </form>
     </div>

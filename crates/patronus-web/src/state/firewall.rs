@@ -63,6 +63,20 @@ pub(crate) fn parse_nat_type(
     if t.eq_ignore_ascii_case("masquerade") || kind == "MASQUERADE" || kind == "NAT" {
         return Ok(NatType::Masquerade);
     }
+    if matches!(kind.as_str(), "NPT" | "NPTV6" | "NPT_V6") {
+        let ext = external
+            .map(str::trim)
+            .filter(|e| !e.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Invalid NPTv6 rule: the external prefix is required")
+            })?;
+        patronus_firewall::nftables::npt_prefix(ext).map_err(|e| anyhow::anyhow!("{e}"))?;
+        patronus_firewall::nftables::npt_prefix(t).map_err(|e| anyhow::anyhow!("{e}"))?;
+        return Ok(NatType::Npt {
+            external: ext.to_string(),
+            internal: t.to_string(),
+        });
+    }
     let (to_address, to_port) = parse_addr_port(t)?;
     match kind.as_str() {
         "DNAT" | "PORT_FORWARD" | "PORTFORWARD" | "RDR" => Ok(NatType::Dnat {
@@ -436,9 +450,10 @@ impl FirewallManager {
             NatType::OneToOne { external, internal } => {
                 ("1:1", internal.to_string(), external.to_string())
             }
+            NatType::Npt { external, internal } => ("NPTv6", internal.clone(), external.clone()),
         };
         let iface = match &r.nat_type {
-            NatType::Dnat { .. } | NatType::OneToOne { .. } => {
+            NatType::Dnat { .. } | NatType::OneToOne { .. } | NatType::Npt { .. } => {
                 r.interface_in.as_deref().or(r.interface_out.as_deref())
             }
             _ => r.interface_out.as_deref(),
@@ -768,7 +783,7 @@ impl FirewallManager {
         }
         let (interface_in, interface_out) = match &nat_type {
             NatType::Dnat { .. } => (iface, None),
-            NatType::OneToOne { .. } => (iface.clone(), iface),
+            NatType::OneToOne { .. } | NatType::Npt { .. } => (iface.clone(), iface),
             _ => (None, iface),
         };
         if rule.reflection && !matches!(nat_type, NatType::Dnat { .. }) {
@@ -1265,6 +1280,11 @@ impl FirewallManager {
             one_to_one: nat_rules
                 .iter()
                 .filter(|r| r.rule_type == "1:1")
+                .cloned()
+                .collect(),
+            npt: nat_rules
+                .iter()
+                .filter(|r| r.rule_type == "NPTv6")
                 .cloned()
                 .collect(),
             outbound_rules: nat_rules

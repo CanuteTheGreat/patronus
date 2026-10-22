@@ -1717,3 +1717,49 @@ async fn ha_is_managed_through_the_api_and_undone_when_the_applier_refuses() {
         "{body}"
     );
 }
+
+#[tokio::test]
+async fn npt_mappings_are_managed_through_the_nat_api() {
+    let t = setup().await;
+    let c = t.admin().await;
+    let rule = |ext: &str, int: &str| {
+        json!({"name":"npt-lan","rule_type":"NPT","interface":"@wan","source":"any","destination":"any",
+               "target":int,"external_address":ext,"description":"","enabled":true,
+               "protocol":null,"external_port":null,"reflection":false})
+    };
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/firewall/nat",
+            Some(rule("2001:db8:50::/64", "fd00:50::/64")),
+        )
+        .await;
+    assert!(s.is_success(), "{s} {b}");
+    let (_, b) = t.call(&c, Method::GET, "/api/firewall/nat", None).await;
+    let r = b
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "npt-lan")
+        .unwrap();
+    assert_eq!(r["rule_type"], "NPTv6");
+    assert_eq!(r["external_address"], "2001:db8:50::/64");
+    assert_eq!(r["target"], "fd00:50::/64");
+    for (e, i) in [
+        ("2001:db8:50::/64", "fd00:50::/48"),
+        ("203.0.113.0/24", "fd00:50::/64"),
+        ("", "fd00:50::/64"),
+    ] {
+        let (s, _) = t
+            .call(&c, Method::POST, "/api/firewall/nat", Some(rule(e, i)))
+            .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{e} {i}");
+    }
+    let (s, body, _) = t.raw(Method::GET, "/firewall", Some(&c), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(
+        body.contains("tab-npt") && body.contains("2001:db8:50::/64"),
+        "NPTv6 tab missing"
+    );
+}
