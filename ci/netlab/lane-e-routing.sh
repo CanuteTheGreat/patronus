@@ -113,6 +113,12 @@ must 201 POST /routing/gateways '{"name":"WAN1","interface":"@wan"}'
 must 201 POST /routing/gateways '{"name":"WAN2","interface":"@opt1","monitor_ip":"192.0.2.10","description":"backup uplink"}'
 nl_assert_nft_has 'oifname "rtr-wan2" masquerade'
 nl_ok "an OPT interface with a gateway gets automatic outbound NAT"
+# the monitor installs the pinned host route on its next tick (1 s): poll,
+# a loaded CI host can be late
+for _ in $(seq 1 30); do
+  R ip -4 route show proto 252 | grep -q '192.0.2.10 via 100.64.0.1 dev rtr-wan2' && break
+  sleep 0.5
+done
 R ip -4 route show proto 252 | grep -q '192.0.2.10 via 100.64.0.1 dev rtr-wan2' \
   || fail "monitor IP host route missing: $(R ip -4 route show proto 252)"
 nl_ok "monitor IP 192.0.2.10 is pinned to WAN2 (proto 252)"
