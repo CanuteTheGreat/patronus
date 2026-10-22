@@ -17,7 +17,7 @@ path = "src/lib.rs"
 # builds patronus-web with --no-default-features and the USE-selected list):
 # lane C interfaces (vlan, pppoe, dhcpcd) and the lane D LAN-service pages
 # (dhcp, dns, ntp).
-default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp"]
+default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha"]
 vlan = ["patronus-network/vlan"]
 pppoe = ["patronus-network/pppoe"]
 dhcpcd = ["patronus-network/dhcpcd"]
@@ -29,6 +29,8 @@ multiwan = ["patronus-network/multiwan"]
 # lane F: WireGuard tunnels/peers and IPsec tunnels managed from the VPN page
 wireguard = ["patronus-network/wireguard"]
 ipsec = ["patronus-network/ipsec"]
+# lane G: high availability (keepalived VRRP virtual IPs + conntrackd state sync)
+ha = ["patronus-network/ha"]
 # lane H: TOTP two-factor authentication for web accounts
 totp = ["dep:hmac", "dep:sha1"]
 

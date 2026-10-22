@@ -4,6 +4,7 @@
 
 pub mod apikeys;
 pub mod firewall;
+pub mod ha;
 pub mod interfaces;
 pub mod lan;
 pub mod network;

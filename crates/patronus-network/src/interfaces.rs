@@ -569,7 +569,14 @@ impl<'a> Planner<'a> {
             })
             .unwrap_or_default();
         for (a, dynamic) in &have {
-            if !want.contains(a) && !(keep_dynamic && *dynamic) {
+            // lane G: HA virtual IPs / aliases are the HA applier's
+            let foreign = self
+                .inp
+                .cfg
+                .keep_addrs
+                .iter()
+                .any(|(d, n)| d == dev && n.ip() == a.ip());
+            if !want.contains(a) && !(keep_dynamic && *dynamic) && !foreign {
                 self.push(ip(&["addr", "del", &a.to_string(), "dev", dev]));
             }
         }

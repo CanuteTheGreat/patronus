@@ -142,6 +142,10 @@ that are not finished are listed separately under
   report gateways, tunnels, conntrack, DHCP leases and services; gateway
   up/down, failover and tunnel changes are logged at `GET /api/events` and
   POSTed to signed webhooks. [C40]
+- High availability (USE=ha): virtual IPs that fail over between two firewalls
+  with VRRP (keepalived), preemption and a maintenance mode, connection-state
+  sync (conntrackd) so a failover keeps established connections, and alias
+  addresses; configured from the HA page or `/api/ha`. [C42]
 - Updates and power: the System page checks and applies updates through
   Portage as background jobs, and reboots or powers off the box. [C41]
 

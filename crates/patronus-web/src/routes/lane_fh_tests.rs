@@ -1561,3 +1561,159 @@ async fn updates_report_honestly_and_power_needs_an_admin() {
         .await;
     assert_ne!(s, StatusCode::ACCEPTED);
 }
+
+#[cfg(feature = "ha")]
+#[tokio::test]
+async fn ha_is_managed_through_the_api_and_undone_when_the_applier_refuses() {
+    let dir = std::env::temp_dir().join(format!("patronus-web-ha-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("pw"), format!("{ADMIN_PW}\n")).unwrap();
+    let mut state = state_at(&dir).await;
+    let ha = Fake::new("ha", Phase::Services);
+    state.lan = Arc::new(crate::state::LanManager::with_appliers(
+        state.config_store.clone(),
+        vec![ha.clone()],
+    ));
+    state
+        .config_store
+        .set_interface_role("eth1", Some("lan"))
+        .await
+        .unwrap();
+    let app = super::build_router(state.clone(), Arc::new(crate::WsBroadcaster::new()));
+    let t = T {
+        app,
+        state,
+        dir,
+        wg: Fake::new("wireguard", Phase::Interfaces),
+        restore_fake: Fake::new("firewall", Phase::Firewall),
+    };
+    let c = t.admin().await;
+
+    // virtual IP + settings; every change runs the applier
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/ha/vips",
+            Some(json!({"name":"lan-gw","interface":"@lan","address":"192.168.50.254/24"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let id = b["id"].as_i64().unwrap();
+    let (s, b) = t
+        .call(
+            &c,
+            Method::PUT,
+            "/api/ha/settings",
+            Some(json!({"enabled": true, "priority": 150, "peer": "192.168.50.3"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(ha.applies.load(Ordering::SeqCst) >= 2);
+    let (s, b) = t.call(&c, Method::GET, "/api/ha", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(b["settings"]["priority"], 150);
+    assert_eq!(
+        b["settings"]["password"].as_str().unwrap().len(),
+        8,
+        "admins see the VRRP password: {b}"
+    );
+    assert_eq!(b["vips"][0]["address"], "192.168.50.254/24");
+
+    // bad input is a 400 and nothing changes
+    for (m, uri, body) in [
+        (
+            Method::POST,
+            "/api/ha/vips",
+            json!({"name":"x","interface":"@lan","address":"192.168.50.0/24"}),
+        ),
+        (
+            Method::POST,
+            "/api/ha/vips",
+            json!({"name":"lan-gw","interface":"@lan","address":"192.168.50.9/24"}),
+        ),
+        (Method::PUT, "/api/ha/settings", json!({"priority": 0})),
+        (Method::PUT, "/api/ha/settings", json!({"peer": "nope"})),
+    ] {
+        let (s, _) = t.call(&c, m.clone(), uri, Some(body)).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{m} {uri}");
+    }
+
+    // the applier refusing (keepalived missing...) undoes the store write
+    ha.fail.store(true, Ordering::SeqCst);
+    let (s, b) = t
+        .call(
+            &c,
+            Method::PUT,
+            "/api/ha/settings",
+            Some(json!({"priority": 200})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::INTERNAL_SERVER_ERROR, "{b}");
+    let (_, b) = t.call(&c, Method::GET, "/api/ha", None).await;
+    assert_eq!(
+        b["settings"]["priority"], 150,
+        "refused change was not undone: {b}"
+    );
+    ha.fail.store(false, Ordering::SeqCst);
+
+    // maintenance mode
+    let (s, _) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/ha/maintenance",
+            Some(json!({"enabled": true})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, b) = t.call(&c, Method::GET, "/api/ha", None).await;
+    assert_eq!(b["settings"]["maintenance"], true);
+
+    // a read-only account sees HA but not the password, and cannot change it
+    let (s, _) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/users",
+            Some(json!({"username":"viewer3","password":"Viewer-Passw0rd-3","role":"readonly"})),
+        )
+        .await;
+    assert!(s.is_success());
+    let (_, vc, _) = t.login("viewer3", "Viewer-Passw0rd-3", None).await;
+    let vc = vc.unwrap();
+    let (s, b) = t.call(&vc, Method::GET, "/api/ha", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(b["settings"]["password"], "");
+    let (s, _) = t
+        .call(
+            &vc,
+            Method::PUT,
+            "/api/ha/settings",
+            Some(json!({"priority": 10})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+
+    // delete
+    let (s, _) = t
+        .call(&c, Method::DELETE, &format!("/api/ha/vips/{id}"), None)
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = t
+        .call(&c, Method::DELETE, &format!("/api/ha/vips/{id}"), None)
+        .await;
+    assert_eq!(
+        s,
+        StatusCode::INTERNAL_SERVER_ERROR
+            .min(StatusCode::NOT_FOUND)
+            .max(StatusCode::NOT_FOUND)
+    );
+    // the page renders
+    let (s, body, _) = t.raw(Method::GET, "/ha", Some(&c), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(
+        body.contains("High availability") && body.contains("id=\"ha-form\""),
+        "{body}"
+    );
+}

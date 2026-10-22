@@ -29,7 +29,7 @@ IUSE="
 	+dhcp +dns +unbound bind dnsmasq kea +ntp
 	+vpn wireguard openvpn ipsec
 	+multiwan
-	ha ucarp keepalived vrrpd
+	ha
 	+monitoring prometheus ntopng netflow collectd
 	+captive-portal
 	intrusion-detection suricata snort
@@ -54,7 +54,6 @@ REQUIRED_USE="
 	dns? ( || ( unbound bind dnsmasq ) )
 	vpn? ( || ( wireguard openvpn ipsec ) )
 	intrusion-detection? ( || ( suricata snort ) )
-	ha? ( || ( ucarp keepalived vrrpd ) )
 	certificates? ( || ( acme certbot ) )
 	wireless? ( || ( hostapd iwd ) )
 	squid? ( !tinyproxy )
@@ -95,11 +94,8 @@ RDEPEND="
 	)
 	|| ( net-misc/iputils sys-apps/busybox )
 	multiwan? ( sys-apps/iproute2 )
-	ha? (
-		ucarp? ( net-misc/ucarp )
-		keepalived? ( sys-cluster/keepalived )
-		vrrpd? ( net-misc/vrrpd )
-	)
+	# USE=ha: VRRP virtual IPs (keepalived) + connection-state sync (conntrackd)
+	ha? ( sys-cluster/keepalived net-firewall/conntrack-tools )
 	monitoring? (
 		prometheus? ( app-metrics/prometheus )
 		ntopng? ( net-analyzer/ntopng )
@@ -217,7 +213,7 @@ src_configure() {
 	# these features", which is what was actually killing the Gentoo
 	# Docker Build job (not the earlier --path-forwarding issue above,
 	# which was already fixed). Flags with no backing cargo feature at
-	# all (ha/ucarp/monitoring/prometheus/ntopng/netflow/captive-portal/
+	# all (monitoring/prometheus/ntopng/netflow/captive-portal/
 	# suricata/qos/certificates/acme/ldap/radius/geoip/
 	# scheduled-rules/wireless) are intentionally left out of this
 	# list -- see the matching IUSE comment for the ones that still gate
@@ -246,6 +242,7 @@ src_configure() {
 		$(usex backup "backup" "")
 		$(usex totp "totp" "")
 		$(usex gitops "gitops" "")
+		$(usex ha "ha" "")
 	)
 
 	cargo_src_configure --no-default-features

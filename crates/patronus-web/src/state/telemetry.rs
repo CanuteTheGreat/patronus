@@ -112,14 +112,16 @@ pub fn diff(prev: &BTreeMap<String, String>, cur: &BTreeMap<String, String>) -> 
                 }
             }
             "ha" => {
-                if let Some(old) = old {
-                    out.push(ev(
-                        "ha_state",
-                        name,
-                        if new == "MASTER" { "warning" } else { "info" },
-                        format!("HA state {old} -> {new}"),
-                    ));
-                }
+                // a state appearing for the first time (HA just came up) is news too
+                out.push(ev(
+                    "ha_state",
+                    name,
+                    if new == "MASTER" { "warning" } else { "info" },
+                    format!(
+                        "HA state {} -> {new}",
+                        old.map_or("unknown", String::as_str)
+                    ),
+                ));
             }
             _ => {}
         }
@@ -592,9 +594,16 @@ pub async fn summary(state: &AppState) -> Value {
     })
 }
 
-/// HA state for the summary (filled in by the HA lane; null until then).
-async fn ha_summary(_state: &AppState) -> Value {
-    Value::Null
+/// HA state for the summary: null while HA is off or not built.
+async fn ha_summary(state: &AppState) -> Value {
+    match state.lan.status("ha").await {
+        Ok(v) if v["enabled"] == true => json!({
+            "enabled": true, "state": v["state"], "since": v["since"],
+            "maintenance": v["maintenance"], "keepalived": v["keepalived"],
+            "conntrackd": v["conntrackd"], "vips": v["vips"],
+        }),
+        _ => Value::Null,
+    }
 }
 
 fn esc(v: &str) -> String {
@@ -999,10 +1008,15 @@ mod tests {
             ("tunnel:ipsec x", "down"),
             ("tunnel:ipsec y", "up"),
             ("group:G", "A"),
+            ("ha:state", "BACKUP"),
         ]);
         assert_eq!(
             kinds(&diff(&prev, &cur)),
-            vec![("gateway_down", "B"), ("tunnel_up", "ipsec y")]
+            vec![
+                ("gateway_down", "B"),
+                ("ha_state", "state"),
+                ("tunnel_up", "ipsec y")
+            ]
         );
         // a pending gateway turning online is not a recovery
         let e = diff(

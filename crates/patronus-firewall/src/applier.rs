@@ -339,11 +339,15 @@ impl FirewallApplier {
             script.push_str(&policy);
         }
         // lane F: VPN listen ports, IPsec SA traffic, IPsec NAT exemption
-        let vpn = if lockdown {
+        let mut vpn = if lockdown {
             crate::vpn_rules::VpnRules::default()
         } else {
             crate::vpn_rules::vpn_rules(store).await?
         };
+        // lane G: VRRP and connection-state sync between the HA nodes
+        if !lockdown {
+            vpn.filter.extend(crate::ha_rules::ha_rules(store).await?);
+        }
         for l in &vpn.filter {
             script.push_str(l);
             script.push('\n');

@@ -129,9 +129,6 @@ pub use ntp::NtpApplier;
 #[cfg(feature = "qos")]
 pub use qos::QosManager;
 
-#[cfg(feature = "ha")]
-pub use ha::{HaBackend, HaManager};
-
 #[cfg(feature = "intrusion-detection")]
 pub use ids::{IdsBackend, IdsManager};
 

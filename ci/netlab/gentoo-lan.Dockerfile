@@ -19,7 +19,7 @@ RUN echo 'FEATURES="${FEATURES} -sandbox -usersandbox -ipc-sandbox -network-sand
 RUN emerge-webrsync -q
 
 # Daemons Patronus manages (kea, dnsmasq, radvd, unbound, chrony; lane F:
-# strongSwan for IPsec, wireguard-tools) + test
+# strongSwan for IPsec, wireguard-tools; lane G: keepalived + conntrack-tools) + test
 # clients (dhcpcd for DHCPv4/v6, dig from bind, rdisc6 from ndisc6, curl,
 # python for the fake DDNS endpoint) + nftables/iproute2 for patronus apply.
 RUN emerge --getbinpkg --usepkg --quiet-build --noreplace \
@@ -27,8 +27,9 @@ RUN emerge --getbinpkg --usepkg --quiet-build --noreplace \
       net-misc/dhcpcd net-dns/bind net-firewall/nftables sys-apps/iproute2 \
       net-misc/curl dev-lang/python \
       net-vpn/strongswan net-vpn/wireguard-tools \
+      sys-cluster/keepalived net-firewall/conntrack-tools \
  && emerge --quiet-build --noreplace net-misc/ndisc6 \
  && rm -rf /var/cache/distfiles/* /var/cache/binpkgs/*
 
-RUN for b in kea-dhcp4 kea-dhcp6 dnsmasq radvd unbound chronyd dhcpcd dig rdisc6 nft ip curl python3 swanctl wg nsenter; do \
+RUN for b in kea-dhcp4 kea-dhcp6 dnsmasq radvd unbound chronyd dhcpcd dig rdisc6 nft ip curl python3 swanctl wg nsenter keepalived conntrackd conntrack; do \
       command -v "$b" >/dev/null || { echo "missing $b"; exit 1; }; done

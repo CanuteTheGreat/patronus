@@ -427,6 +427,51 @@ mod ntp_impl {
     }
 }
 
+// ---------------------------------------------------------------------------
+// High availability (lane G)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "ha")]
+mod ha_impl {
+    use super::*;
+    use patronus_network::ha;
+
+    impl LanManager {
+        pub async fn ha_overview(&self) -> anyhow::Result<Value> {
+            Ok(serde_json::json!({
+                "settings": ha::settings(&self.store).await.map_err(e)?,
+                "vips": ha::list_vips(&self.store).await.map_err(e)?,
+                "status": self.status("ha").await?,
+            }))
+        }
+
+        pub async fn save_ha_settings(&self, i: ha::SettingsInput) -> anyhow::Result<()> {
+            let _g = self.edit.lock().await;
+            let snap = self.begin("change HA settings").await?;
+            ha::save_settings(&self.store, &i).await.map_err(e)?;
+            self.commit("HA settings", snap, &["ha"]).await
+        }
+
+        pub async fn save_vip(&self, id: Option<i64>, i: ha::VipInput) -> anyhow::Result<i64> {
+            let _g = self.edit.lock().await;
+            let snap = self.begin("change virtual IPs").await?;
+            let id = match ha::save_vip(&self.store, id, &i).await {
+                Ok(id) => id,
+                Err(err) => return Err(e(err)),
+            };
+            self.commit("virtual IP", snap, &["ha"]).await?;
+            Ok(id)
+        }
+
+        pub async fn delete_vip(&self, id: i64) -> anyhow::Result<()> {
+            let _g = self.edit.lock().await;
+            let snap = self.begin("delete a virtual IP").await?;
+            ha::delete_vip(&self.store, id).await.map_err(e)?;
+            self.commit("virtual IP", snap, &["ha"]).await
+        }
+    }
+}
+
 #[cfg(all(test, feature = "dhcp", feature = "dns"))]
 mod tests {
     use super::*;

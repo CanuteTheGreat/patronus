@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha"]
 
 # Core features
 web = ["patronus-web", "dep:axum"]
@@ -36,6 +36,8 @@ multiwan = ["patronus-network/multiwan"]
 vpn-wireguard = ["patronus-network/wireguard", "patronus-web?/wireguard"]
 vpn-openvpn = ["patronus-network/openvpn"]
 vpn-ipsec = ["patronus-network/ipsec", "patronus-web?/ipsec"]
+# Lane G: keepalived VRRP virtual IPs + conntrackd state sync (USE=ha).
+ha = ["patronus-network/ha", "patronus-web?/ha"]
 # Lane H: TOTP two-factor login for web accounts (USE=totp).
 totp = ["patronus-web?/totp"]
 

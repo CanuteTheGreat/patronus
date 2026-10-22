@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block title %}High availability - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">High availability</h1>
+    <p class="page-subtitle">Virtual IPs that move between two firewalls (VRRP via keepalived) and connection-state
+        sync (conntrackd), so a failover keeps established connections. Run the same configuration on both nodes
+        with different priorities; the node with the higher priority carries the addresses.</p>
+</div>
+
+<div class="card" id="ha-status-card">
+    <div class="card-header"><h2 class="card-title">State</h2></div>
+    <p id="ha-state" class="text-sm">Loading...</p>
+    {% if can_modify %}
+    <p>
+        <button class="btn btn-sm btn-secondary" id="ha-maint-on" onclick="maint(true)">Enter maintenance mode</button>
+        <button class="btn btn-sm btn-secondary" id="ha-maint-off" onclick="maint(false)">Leave maintenance mode</button>
+    </p>
+    <p class="text-sm text-muted">Maintenance mode advertises the lowest priority, so the other node takes over all
+        virtual IPs; leave it to hand them back (this node preempts again).</p>
+    {% endif %}
+</div>
+
+<div class="card" id="ha-settings-card">
+    <div class="card-header"><h2 class="card-title">This node</h2></div>
+    <form class="lan-form" id="ha-form" onsubmit="return saveHa(event)">
+        <label>High availability <input type="checkbox" name="enabled"></label>
+        <label>Priority (1-254, higher = master) <input name="priority" type="number" min="1" max="254" value="100"></label>
+        <label>Take the addresses back when back (preempt) <input type="checkbox" name="preempt" checked></label>
+        <label>Peer address on the VIP interface (unicast VRRP; empty = multicast) <input name="peer" data-keep-empty="1"></label>
+        <label>VRRP password (same on both nodes, max 8) <input name="password" data-keep-empty="1" autocomplete="off"></label>
+        <label>Sync connection states <input type="checkbox" name="sync"></label>
+        <label>Sync interface (device or @opt1) <input name="sync_interface" data-keep-empty="1"></label>
+        <label>Peer address on the sync interface <input name="sync_peer" data-keep-empty="1"></label>
+        {% if can_modify %}<button class="btn btn-primary btn-sm" type="submit">Save and apply</button>{% endif %}
+    </form>
+</div>
+
+<div class="card" id="ha-vips-card">
+    <div class="card-header"><h2 class="card-title">Virtual IPs</h2></div>
+    <p class="text-sm text-muted"><b>carp</b>: the address fails over between the HA nodes (VRRP); clients use it as
+        their gateway. <b>alias</b>: just an extra address on this node's interface (no failover).</p>
+    <table class="lan" id="ha-vips">
+        <thead><tr><th>Name</th><th>Interface</th><th>Address</th><th>VRID</th><th>Mode</th><th>On this node</th><th></th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <p class="empty" id="ha-vips-empty" style="display:none">No virtual IPs.</p>
+    {% if can_modify %}
+    <form class="lan-form" id="vip-form" onsubmit="return addVip(event)">
+        <label>Name <input name="name" required></label>
+        <label>Interface (device or @lan, @wan) <input name="interface" value="@lan" required></label>
+        <label>Address/prefix <input name="address" placeholder="192.168.50.254/24" required></label>
+        <label>VRID <input name="vrid" type="number" min="1" max="255" value="51"></label>
+        <label>Mode <select name="mode"><option value="carp">carp (failover)</option><option value="alias">alias</option></select></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add virtual IP</button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+{% include "lan_js.html" %}
+<script>
+    async function api(method, url, body) {
+        const r = await fetch(url, {method, credentials: 'same-origin',
+            headers: body ? {'content-type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+        let j = {}; try { j = await r.json(); } catch (_) {}
+        if (!r.ok) { alert('Not applied: ' + (j.error || r.status)); return null; }
+        return j;
+    }
+    async function loadHa() {
+        const r = await fetch('/api/ha', {credentials: 'same-origin'});
+        if (!r.ok) return;
+        const d = await r.json();
+        const s = d.settings, st = d.status || {};
+        const f = document.getElementById('ha-form').elements;
+        f['enabled'].checked = s.enabled; f['priority'].value = s.priority; f['preempt'].checked = s.preempt;
+        f['peer'].value = s.peer || ''; f['password'].value = s.password || '';
+        f['sync'].checked = s.sync; f['sync_interface'].value = s.sync_interface || ''; f['sync_peer'].value = s.sync_peer || '';
+        const el = document.getElementById('ha-state');
+        let t = st.installed === false ? 'keepalived is not installed (emerge sys-cluster/keepalived). ' : '';
+        if (!s.enabled) t += 'High availability is off on this node.';
+        else {
+            t += 'This node is ' + (st.state ? st.state : 'not reporting a state yet') + '. keepalived: '
+                + (st.keepalived ? 'running' : 'stopped') + '; state sync: ' + (s.sync ? (st.conntrackd ? 'running' : 'stopped') : 'off') + '.';
+            if (s.maintenance) t += ' MAINTENANCE MODE (lowest priority).';
+        }
+        el.textContent = t; el.dataset.state = st.state || '';
+        const tb = document.querySelector('#ha-vips tbody'); tb.textContent = '';
+        const byName = {}; for (const v of st.vips || []) byName[v.name] = v;
+        document.getElementById('ha-vips-empty').style.display = d.vips.length ? 'none' : '';
+        for (const v of d.vips) {
+            const tr = document.createElement('tr'); tr.dataset.vip = v.name;
+            for (const x of [v.name, v.interface, v.address, v.mode === 'carp' ? v.vrid : '', v.mode,
+                             byName[v.name] ? (byName[v.name].present ? 'yes' : 'no') : (v.enabled ? '-' : 'disabled')]) {
+                const td = document.createElement('td'); td.textContent = x; tr.appendChild(td);
+            }
+            const td = document.createElement('td');
+            const b = document.createElement('button'); b.className = 'btn btn-sm btn-danger'; b.textContent = 'Delete';
+            b.onclick = async () => { if (confirm('Delete virtual IP ' + v.name + '?') && await api('DELETE', '/api/ha/vips/' + v.id)) loadHa(); };
+            td.appendChild(b); tr.appendChild(td); tb.appendChild(tr);
+        }
+    }
+    async function saveHa(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements;
+        const body = {enabled: f['enabled'].checked, priority: Number(f['priority'].value), preempt: f['preempt'].checked,
+            peer: f['peer'].value, sync: f['sync'].checked, sync_interface: f['sync_interface'].value, sync_peer: f['sync_peer'].value};
+        if (f['password'].value) body.password = f['password'].value;
+        if (await api('PUT', '/api/ha/settings', body)) loadHa();
+        return false;
+    }
+    async function addVip(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements;
+        const body = {name: f['name'].value, interface: f['interface'].value, address: f['address'].value,
+            vrid: Number(f['vrid'].value), mode: f['mode'].value};
+        if (await api('POST', '/api/ha/vips', body)) { ev.target.reset(); loadHa(); }
+        return false;
+    }
+    async function maint(on) { if (await api('POST', '/api/ha/maintenance', {enabled: on})) loadHa(); }
+    document.addEventListener('DOMContentLoaded', () => { loadHa(); setInterval(loadHa, 5000); });
+</script>
+{% endblock %}

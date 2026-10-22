@@ -246,6 +246,21 @@ jobs:
           REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
           NETLAB_TEST: vpn-services-test.sh
         run: ci/netlab/lan-services.sh systemd
+      # Lane G in the same images (ci/netlab/ha-services-test.sh): VIPs from
+      # the API become a keepalived config that negotiates VRRP with an
+      # independent peer (priority 200); failover within seconds, preemption,
+      # traffic via the VIP, conntrackd state sync into the peer's kernel
+      # table, maintenance mode, alias VIPs, reboot, HA off. Once per init system.
+      - name: Lane G high availability - OpenRC path (Gentoo stage3)
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          NETLAB_TEST: ha-services-test.sh
+        run: ci/netlab/lan-services.sh openrc
+      - name: Lane G high availability - systemd path (Gentoo stage3)
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          NETLAB_TEST: ha-services-test.sh
+        run: ci/netlab/lan-services.sh systemd
 
   feature-matrix:
     # `cargo test --workspace` only ever compiles default features, so every

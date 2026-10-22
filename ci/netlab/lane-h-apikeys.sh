@@ -45,7 +45,7 @@ nl_ok "read-only key: /api/status/summary and /metrics (Prometheus text) from th
 
 kreq "$TOK" POST /api/firewall/rules '{"name":"k","action":"accept","interface":"any","protocol":"tcp","source":"any","destination":"any","port":"9","description":"","enabled":true,"chain":"input"}'
 [ "$NL_CODE" = 403 ] || nl_fail "a read-only key changed the firewall: $NL_CODE"
-for p in /api/system/users /api/system/api-keys /api/system/backups; do
+for p in /api/system/users /api/system/api-keys /api/system/hooks; do
   kreq "$TOK" GET "$p"
   [ "$NL_CODE" = 403 ] || nl_fail "read-only key reached $p: $NL_CODE"
 done
@@ -53,7 +53,7 @@ kreq "$TOK" POST /api/system/reboot
 [ "$NL_CODE" = 403 ] || nl_fail "a read-only key may not reboot: $NL_CODE"
 kreq pat_wrong GET /api/status/summary
 [ "$NL_CODE" = 401 ] || nl_fail "bad key: $NL_CODE"
-nl_ok "the key cannot write, reach accounts/keys/backups or reboot; a wrong key is 401"
+nl_ok "the key cannot write, reach accounts/keys/webhooks or reboot; a wrong key is 401"
 
 nl_api DELETE "/system/api-keys/$KEY_ID"
 [ "$NL_CODE" = 200 ] || nl_fail "revoke: $NL_CODE"

@@ -39,6 +39,7 @@ pub fn build_router(
         .route("/monitoring", get(pages::monitoring))
         .route("/system", get(pages::system))
         .merge(api::lan::pages())
+        .merge(api::ha::pages())
         // The old "simple" pages claimed services were operational and
         // listed invented "recent activity"; keep the URLs as redirects.
         .route("/simple", get(|| async { Redirect::to("/") }))
@@ -247,6 +248,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::status::router())
         .merge(api::firewall::router())
         .merge(api::lan::router())
+        .merge(api::ha::router())
         .merge(api::vpn::router())
         .merge(api::network::router())
         .merge(api::routing::router())

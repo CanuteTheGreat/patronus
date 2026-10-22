@@ -258,6 +258,11 @@ pub struct NetConfig {
     pub bonds: Vec<BondConfig>,
     pub bridges: Vec<BridgeConfig>,
     pub pppoe: Vec<PppoeConfig>,
+    /// Addresses other appliers own on these devices (lane G: HA virtual
+    /// IPs, which keepalived adds on the master only, and alias
+    /// addresses): never removed by an interfaces apply.
+    #[serde(default)]
+    pub keep_addrs: Vec<(String, IpNetwork)>,
 }
 
 /// Tables lane C owns (plus `interfaces.role`, restored with its row).
@@ -788,6 +793,29 @@ impl NetConfig {
                 enabled: r.get::<i64, _>(9) != 0,
                 description: r.get(10),
             });
+        }
+        // lane G: HA virtual IPs and aliases belong to the HA applier
+        let vips = sqlx::query("SELECT interface, address FROM ha_vips WHERE enabled = 1")
+            .fetch_all(pool)
+            .await
+            .map_err(db("load virtual IPs"))?;
+        for r in vips {
+            let spec: String = r.get(0);
+            let Ok(net) = r.get::<String, _>(1).parse::<IpNetwork>() else {
+                continue;
+            };
+            let devs: Vec<String> = match spec.strip_prefix('@') {
+                Some(role) => cfg
+                    .interfaces
+                    .iter()
+                    .filter(|i| i.role.as_deref() == Some(role))
+                    .map(|i| i.name.clone())
+                    .collect(),
+                None => vec![spec],
+            };
+            for d in devs {
+                cfg.keep_addrs.push((d, net));
+            }
         }
         Ok(cfg)
     }
