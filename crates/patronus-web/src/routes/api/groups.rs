@@ -41,20 +41,47 @@ pub async fn list(State(s): State<AppState>, _a: AdminUser) -> Response {
     }
 }
 
-pub async fn create(State(s): State<AppState>, _a: AdminUser, Json(g): Json<GroupInput>) -> Response {
+pub async fn create(
+    State(s): State<AppState>,
+    _a: AdminUser,
+    Json(g): Json<GroupInput>,
+) -> Response {
     match s.auth.rbac.create(&g).await {
         Ok(id) => {
-            let _ = s.config_store.audit("web", "create", "group", Some(&id.to_string()), &json!(g.privileges)).await;
+            let _ = s
+                .config_store
+                .audit(
+                    "web",
+                    "create",
+                    "group",
+                    Some(&id.to_string()),
+                    &json!(g.privileges),
+                )
+                .await;
             (StatusCode::CREATED, Json(json!({"id": id}))).into_response()
         }
         Err(e) => err(e),
     }
 }
 
-pub async fn update(State(s): State<AppState>, _a: AdminUser, Path(id): Path<i64>, Json(g): Json<GroupInput>) -> Response {
+pub async fn update(
+    State(s): State<AppState>,
+    _a: AdminUser,
+    Path(id): Path<i64>,
+    Json(g): Json<GroupInput>,
+) -> Response {
     match s.auth.rbac.update(id, &g).await {
         Ok(()) => {
-            let _ = s.config_store.audit("web", "update", "group", Some(&id.to_string()), &json!(g.privileges)).await;
+            let _ = s
+                .config_store
+                .audit(
+                    "web",
+                    "update",
+                    "group",
+                    Some(&id.to_string()),
+                    &json!(g.privileges),
+                )
+                .await;
             Json(json!({"ok": true})).into_response()
         }
         Err(e) => err(e),
@@ -75,12 +102,20 @@ pub struct Membership {
 
 /// PUT /api/system/users/:id/group {group_id|null}. Admins have every
 /// privilege already, so they cannot be put in a group.
-pub async fn set_group(State(s): State<AppState>, _a: AdminUser, Path(uid): Path<u32>, Json(m): Json<Membership>) -> Response {
+pub async fn set_group(
+    State(s): State<AppState>,
+    _a: AdminUser,
+    Path(uid): Path<u32>,
+    Json(m): Json<Membership>,
+) -> Response {
     let Some(u) = s.auth.user_store.get_by_id(uid).await else {
         return error(StatusCode::NOT_FOUND, "no such account");
     };
     if u.role.is_admin() && m.group_id.is_some() {
-        return error(StatusCode::BAD_REQUEST, "Invalid: admins have every privilege and cannot be put in a group");
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Invalid: admins have every privilege and cannot be put in a group",
+        );
     }
     match s.auth.rbac.set_member(uid as i64, m.group_id).await {
         Ok(()) => Json(json!({"ok": true})).into_response(),

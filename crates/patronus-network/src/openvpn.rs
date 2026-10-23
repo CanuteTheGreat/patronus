@@ -2,6 +2,8 @@
 //!
 //! Provides OpenVPN server and client configuration and management.
 
+#![allow(clippy::useless_format, clippy::needless_borrows_for_generic_args)]
+
 use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;

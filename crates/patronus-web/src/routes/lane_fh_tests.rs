@@ -2095,56 +2095,103 @@ async fn feature_pages_validate_apply_undo_and_report_what_is_not_built() {
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }
 
-
 #[tokio::test]
 async fn groups_grant_per_area_privileges_that_the_gate_enforces() {
     let t = setup().await;
     let c = t.admin().await;
     // an operator (may write everything by role) ...
     let (s, b) = t
-        .call(&c, Method::POST, "/api/system/users",
-            Some(json!({"username": "net", "password": "Net-Passw0rd-123", "role": "operator"})))
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/users",
+            Some(json!({"username": "net", "password": "Net-Passw0rd-123", "role": "operator"})),
+        )
         .await;
     assert_eq!(s, StatusCode::CREATED, "{b}");
     let uid = b["id"].as_u64().unwrap();
     let (_, nc, _) = t.login("net", "Net-Passw0rd-123", None).await;
     let nc = nc.unwrap();
-    let (s, _) = t.call(&nc, Method::POST, "/api/firewall/aliases", Some(json!({}))).await;
-    assert_ne!(s, StatusCode::FORBIDDEN, "no group: the operator role applies");
+    let (s, _) = t
+        .call(&nc, Method::POST, "/api/firewall/aliases", Some(json!({})))
+        .await;
+    assert_ne!(
+        s,
+        StatusCode::FORBIDDEN,
+        "no group: the operator role applies"
+    );
 
     // ... put in a group that may read the firewall and write routing only
     let (s, b) = t
-        .call(&c, Method::POST, "/api/system/groups",
-            Some(json!({"name": "netops", "privileges": {"firewall": "read", "routing": "write"}})))
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/groups",
+            Some(json!({"name": "netops", "privileges": {"firewall": "read", "routing": "write"}})),
+        )
         .await;
     assert_eq!(s, StatusCode::CREATED, "{b}");
     let gid = b["id"].as_i64().unwrap();
     let (s, _) = t
-        .call(&c, Method::POST, "/api/system/groups", Some(json!({"name": "bad", "privileges": {"nope": "read"}})))
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/groups",
+            Some(json!({"name": "bad", "privileges": {"nope": "read"}})),
+        )
         .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
     let (s, _) = t
-        .call(&c, Method::PUT, &format!("/api/system/users/{uid}/group"), Some(json!({"group_id": gid})))
+        .call(
+            &c,
+            Method::PUT,
+            &format!("/api/system/users/{uid}/group"),
+            Some(json!({"group_id": gid})),
+        )
         .await;
     assert_eq!(s, StatusCode::OK);
     // admins cannot be grouped
     let (s, _) = t
-        .call(&c, Method::PUT, "/api/system/users/1/group", Some(json!({"group_id": gid})))
+        .call(
+            &c,
+            Method::PUT,
+            "/api/system/users/1/group",
+            Some(json!({"group_id": gid})),
+        )
         .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 
     let (s, _) = t.call(&nc, Method::GET, "/api/firewall/rules", None).await;
     assert_eq!(s, StatusCode::OK, "firewall read allowed");
-    let (s, b) = t.call(&nc, Method::POST, "/api/firewall/aliases", Some(json!({}))).await;
+    let (s, b) = t
+        .call(&nc, Method::POST, "/api/firewall/aliases", Some(json!({})))
+        .await;
     assert_eq!(s, StatusCode::FORBIDDEN, "firewall write refused: {b}");
     let (s, _) = t.call(&nc, Method::GET, "/api/vpn/wireguard", None).await;
     assert_eq!(s, StatusCode::FORBIDDEN, "vpn not in the group");
     let (s, _) = t.call(&nc, Method::GET, "/api/system/backups", None).await;
     assert_eq!(s, StatusCode::FORBIDDEN, "system not in the group");
-    let (s, _) = t.call(&nc, Method::POST, "/api/routing/routes", Some(json!({}))).await;
-    assert_ne!(s, StatusCode::FORBIDDEN, "routing write allowed (the body is rejected, not the caller)");
-    let (s, _) = t.call(&nc, Method::POST, "/api/system/groups", Some(json!({"name": "x"}))).await;
-    assert_eq!(s, StatusCode::FORBIDDEN, "a group can never grant account management");
+    let (s, _) = t
+        .call(&nc, Method::POST, "/api/routing/routes", Some(json!({})))
+        .await;
+    assert_ne!(
+        s,
+        StatusCode::FORBIDDEN,
+        "routing write allowed (the body is rejected, not the caller)"
+    );
+    let (s, _) = t
+        .call(
+            &nc,
+            Method::POST,
+            "/api/system/groups",
+            Some(json!({"name": "x"})),
+        )
+        .await;
+    assert_eq!(
+        s,
+        StatusCode::FORBIDDEN,
+        "a group can never grant account management"
+    );
     let (s, b, _) = t.raw(Method::GET, "/vpn", Some(&nc), None).await;
     assert_eq!(s, StatusCode::FORBIDDEN, "pages are gated too: {b}");
 
@@ -2153,7 +2200,14 @@ async fn groups_grant_per_area_privileges_that_the_gate_enforces() {
     assert!(st2.auth.rbac.privileges_of(uid as i64).await.is_some());
 
     // removing the group gives the role back
-    let (s, _) = t.call(&c, Method::DELETE, &format!("/api/system/groups/{gid}"), None).await;
+    let (s, _) = t
+        .call(
+            &c,
+            Method::DELETE,
+            &format!("/api/system/groups/{gid}"),
+            None,
+        )
+        .await;
     assert_eq!(s, StatusCode::OK);
     let (s, _) = t.call(&nc, Method::GET, "/api/vpn/wireguard", None).await;
     assert_ne!(s, StatusCode::FORBIDDEN, "back to the operator role");

@@ -105,7 +105,9 @@ pub fn is_sealed(bytes: &[u8]) -> bool {
 /// Inverse of [`seal_with_passphrase`].
 pub fn open_with_passphrase(bytes: &[u8], passphrase: &str) -> Result<Vec<u8>> {
     if !is_sealed(bytes) || bytes.len() < 4 + 16 + NONCE_SIZE {
-        return Err(anyhow::anyhow!("Invalid file: not a passphrase-sealed Patronus file"));
+        return Err(anyhow::anyhow!(
+            "Invalid file: not a passphrase-sealed Patronus file"
+        ));
     }
     let key = derive_key(passphrase, &bytes[4..20])?;
     decrypt_secret(&bytes[20..], &key)

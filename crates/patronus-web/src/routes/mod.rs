@@ -234,7 +234,11 @@ async fn require_session(
                                 if mutating { "write" } else { "read" }
                             );
                             return if is_api {
-                                (StatusCode::FORBIDDEN, axum::Json(serde_json::json!({"error": msg}))).into_response()
+                                (
+                                    StatusCode::FORBIDDEN,
+                                    axum::Json(serde_json::json!({"error": msg})),
+                                )
+                                    .into_response()
                             } else {
                                 (StatusCode::FORBIDDEN, msg).into_response()
                             };

@@ -72,7 +72,9 @@ impl Svc for OpenVpnSvc {
 // ---- PKI ------------------------------------------------------------------
 
 fn run(cmd: &mut Command, what: &str) -> Result<()> {
-    let out = cmd.output().map_err(|e| Error::Service(format!("OpenVPN PKI ({what}): {e}")))?;
+    let out = cmd
+        .output()
+        .map_err(|e| Error::Service(format!("OpenVPN PKI ({what}): {e}")))?;
     if !out.status.success() {
         return Err(Error::Service(format!(
             "OpenVPN PKI ({what}): {}",
@@ -91,11 +93,24 @@ fn issue(dir: &Path, cn: &str, eku: &str) -> Result<(String, String)> {
         dir.join(format!("{cn}.ext")),
     );
     run(
-        Command::new("openssl").args(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out"]).arg(&key),
+        Command::new("openssl")
+            .args([
+                "ecparam",
+                "-name",
+                "prime256v1",
+                "-genkey",
+                "-noout",
+                "-out",
+            ])
+            .arg(&key),
         "key",
     )?;
     run(
-        Command::new("openssl").args(["req", "-new", "-key"]).arg(&key).args(["-subj", &format!("/CN={cn}"), "-out"]).arg(&csr),
+        Command::new("openssl")
+            .args(["req", "-new", "-key"])
+            .arg(&key)
+            .args(["-subj", &format!("/CN={cn}"), "-out"])
+            .arg(&csr),
         "request",
     )?;
     std::fs::write(&ext, format!("basicConstraints=CA:FALSE\nextendedKeyUsage={eku}\nkeyUsage=digitalSignature,keyAgreement\n"))
@@ -114,7 +129,9 @@ fn issue(dir: &Path, cn: &str, eku: &str) -> Result<(String, String)> {
             .arg(&crt),
         "sign",
     )?;
-    let rd = |p: &Path| std::fs::read_to_string(p).map_err(|e| Error::Service(format!("{}: {e}", p.display())));
+    let rd = |p: &Path| {
+        std::fs::read_to_string(p).map_err(|e| Error::Service(format!("{}: {e}", p.display())))
+    };
     Ok((rd(&crt)?, rd(&key)?))
 }
 
@@ -154,7 +171,8 @@ async fn client_names(store: &ConfigStore) -> Result<Vec<(String, bool)>> {
 pub async fn ensure_pki(store: &ConfigStore) -> Result<()> {
     if which("openssl").is_none() || which("openvpn").is_none() {
         return Err(Error::Service(
-            "the OpenVPN server needs openssl and openvpn (emerge net-vpn/openvpn, USE=openvpn)".into(),
+            "the OpenVPN server needs openssl and openvpn (emerge net-vpn/openvpn, USE=openvpn)"
+                .into(),
         ));
     }
     let clients = client_names(store).await?;
@@ -177,15 +195,33 @@ pub async fn ensure_pki(store: &ConfigStore) -> Result<()> {
     let _ = std::fs::remove_dir_all(&tmp);
     {
         use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new().mode(0o700).create(&tmp).map_err(|e| Error::Service(format!("{}: {e}", tmp.display())))?;
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&tmp)
+            .map_err(|e| Error::Service(format!("{}: {e}", tmp.display())))?;
     }
     let res = async {
         // bring the existing CA back to disk (or make one)
-        if let (Some(crt), Some(key)) = (pki_get(store, "ca.crt").await?, pki_get(store, "ca.key").await?) {
+        if let (Some(crt), Some(key)) = (
+            pki_get(store, "ca.crt").await?,
+            pki_get(store, "ca.key").await?,
+        ) {
             std::fs::write(tmp.join("ca.crt"), crt).ok();
             std::fs::write(tmp.join("ca.key"), key).ok();
         } else {
-            run(Command::new("openssl").args(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out"]).arg(tmp.join("ca.key")), "CA key")?;
+            run(
+                Command::new("openssl")
+                    .args([
+                        "ecparam",
+                        "-name",
+                        "prime256v1",
+                        "-genkey",
+                        "-noout",
+                        "-out",
+                    ])
+                    .arg(tmp.join("ca.key")),
+                "CA key",
+            )?;
             run(
                 Command::new("openssl")
                     .args(["req", "-new", "-x509", "-days", "3650", "-key"])
@@ -195,7 +231,12 @@ pub async fn ensure_pki(store: &ConfigStore) -> Result<()> {
                 "CA certificate",
             )?;
             for f in ["ca.crt", "ca.key"] {
-                pki_put(store, f, &std::fs::read_to_string(tmp.join(f)).unwrap_or_default()).await?;
+                pki_put(
+                    store,
+                    f,
+                    &std::fs::read_to_string(tmp.join(f)).unwrap_or_default(),
+                )
+                .await?;
             }
         }
         if pki_get(store, "server.crt").await?.is_none() {
@@ -205,8 +246,16 @@ pub async fn ensure_pki(store: &ConfigStore) -> Result<()> {
         }
         if pki_get(store, "tls-crypt.key").await?.is_none() {
             let p = tmp.join("tc.key");
-            run(Command::new("openvpn").args(["--genkey", "secret"]).arg(&p), "tls-crypt key")?;
-            pki_put(store, "tls-crypt.key", &std::fs::read_to_string(&p).unwrap_or_default()).await?;
+            run(
+                Command::new("openvpn").args(["--genkey", "secret"]).arg(&p),
+                "tls-crypt key",
+            )?;
+            pki_put(
+                store,
+                "tls-crypt.key",
+                &std::fs::read_to_string(&p).unwrap_or_default(),
+            )
+            .await?;
         }
         for (n, _) in &clients {
             if pki_get(store, &format!("client:{n}:crt")).await?.is_none() {
@@ -231,7 +280,9 @@ pub async fn export_profile(store: &ConfigStore, name: &str) -> Result<String> {
     }
     let host = s.s("public_host");
     if host.is_empty() {
-        return Err(invalid("OpenVPN: set \"Address clients connect to\" before exporting a profile"));
+        return Err(invalid(
+            "OpenVPN: set \"Address clients connect to\" before exporting a profile",
+        ));
     }
     ensure_pki(store).await?;
     let get = |k: String| async move { pki_get(store, &k).await.map(|v| v.unwrap_or_default()) };
@@ -244,8 +295,19 @@ pub async fn export_profile(store: &ConfigStore, name: &str) -> Result<String> {
     Ok(render_profile(&s, &host, &ca, &crt, &key, &tc))
 }
 
-pub fn render_profile(s: &Settings, host: &str, ca: &str, crt: &str, key: &str, tc: &str) -> String {
-    let crt = crt.split("-----END CERTIFICATE-----").next().map(|c| format!("{c}-----END CERTIFICATE-----\n")).unwrap_or_default();
+pub fn render_profile(
+    s: &Settings,
+    host: &str,
+    ca: &str,
+    crt: &str,
+    key: &str,
+    tc: &str,
+) -> String {
+    let crt = crt
+        .split("-----END CERTIFICATE-----")
+        .next()
+        .map(|c| format!("{c}-----END CERTIFICATE-----\n"))
+        .unwrap_or_default();
     format!(
         "# OpenVPN profile generated by Patronus\nclient\ndev tun\nproto {}\nremote {host} {}\nresolv-retry infinite\nnobind\n\
          persist-key\npersist-tun\nremote-cert-tls server\ndata-ciphers AES-256-GCM:CHACHA20-POLY1305\nverb 3\n\
@@ -261,9 +323,15 @@ pub fn render_profile(s: &Settings, host: &str, ca: &str, crt: &str, key: &str, 
 // ---- server config ---------------------------------------------------------
 
 pub fn pool(cidr: &str) -> Result<(String, String)> {
-    let (ip, len) = cidr.split_once('/').ok_or_else(|| invalid("OpenVPN: the client pool is a CIDR like 10.8.0.0/24"))?;
-    let len: u32 = len.parse().map_err(|_| invalid("OpenVPN: bad pool prefix"))?;
-    let ip: std::net::Ipv4Addr = ip.parse().map_err(|_| invalid("OpenVPN: the client pool must be IPv4"))?;
+    let (ip, len) = cidr
+        .split_once('/')
+        .ok_or_else(|| invalid("OpenVPN: the client pool is a CIDR like 10.8.0.0/24"))?;
+    let len: u32 = len
+        .parse()
+        .map_err(|_| invalid("OpenVPN: bad pool prefix"))?;
+    let ip: std::net::Ipv4Addr = ip
+        .parse()
+        .map_err(|_| invalid("OpenVPN: the client pool must be IPv4"))?;
     if !(8..=29).contains(&len) {
         return Err(invalid("OpenVPN: the client pool prefix is 8 to 29"));
     }
@@ -278,8 +346,15 @@ fn route_line(cidr: &str) -> Option<String> {
         let (ip, len) = cidr.split_once('/')?;
         let len: u32 = len.parse().ok()?;
         let ip: std::net::Ipv4Addr = ip.parse().ok()?;
-        let mask = if len == 0 { 0 } else { u32::MAX << (32 - len.min(32)) };
-        Some((std::net::Ipv4Addr::from(u32::from(ip) & mask).to_string(), std::net::Ipv4Addr::from(mask).to_string()))
+        let mask = if len == 0 {
+            0
+        } else {
+            u32::MAX << (32 - len.min(32))
+        };
+        Some((
+            std::net::Ipv4Addr::from(u32::from(ip) & mask).to_string(),
+            std::net::Ipv4Addr::from(mask).to_string(),
+        ))
     })?;
     Some(format!("push \"route {n} {m}\"\n"))
 }
@@ -295,7 +370,10 @@ pub fn render_server(s: &Settings, dir: &str, ccd: &str) -> Result<String> {
         s.s("proto"),
         s.s("port")
     ));
-    if let Some(r) = Some(s.s("lan_route")).filter(|r| !r.is_empty()).and_then(|r| route_line(&r)) {
+    if let Some(r) = Some(s.s("lan_route"))
+        .filter(|r| !r.is_empty())
+        .and_then(|r| route_line(&r))
+    {
         c.push_str(&r);
     }
     Ok(c)
@@ -308,7 +386,9 @@ pub struct OpenVpnApplier {
 
 impl Default for OpenVpnApplier {
     fn default() -> Self {
-        Self { sup: Supervisor::detect() }
+        Self {
+            sup: Supervisor::detect(),
+        }
     }
 }
 
@@ -333,15 +413,21 @@ impl Applier for OpenVpnApplier {
         let s = Settings::load(store, &SPEC).await?;
         if !s.b("enabled") {
             let was = self.sup.stop(svc::DAEMON_SERVICE, INSTANCE).await?;
-            rep.applied(if was { "OpenVPN server stopped" } else { "OpenVPN server is off" });
+            rep.applied(if was {
+                "OpenVPN server stopped"
+            } else {
+                "OpenVPN server is off"
+            });
             return Ok(rep);
         }
         pool(&s.s("tunnel_net"))?;
         ensure_pki(store).await?;
-        let bin = which("openvpn").ok_or_else(|| Error::Service("openvpn is not installed".into()))?;
+        let bin =
+            which("openvpn").ok_or_else(|| Error::Service("openvpn is not installed".into()))?;
         let dir = self.sup.paths.state_dir.join("openvpn");
         let ccd = dir.join("ccd");
-        std::fs::create_dir_all(&ccd).map_err(|e| Error::Service(format!("{}: {e}", ccd.display())))?;
+        std::fs::create_dir_all(&ccd)
+            .map_err(|e| Error::Service(format!("{}: {e}", ccd.display())))?;
         let mut files: Vec<(std::path::PathBuf, String, u32)> = Vec::new();
         for (name, secret) in [
             ("ca.crt", false),
@@ -363,20 +449,40 @@ impl Applier for OpenVpnApplier {
             }
         }
         for (n, on) in &clients {
-            files.push((ccd.join(n), if *on { "# enabled\n".into() } else { "disable\n".into() }, 0o644));
+            files.push((
+                ccd.join(n),
+                if *on {
+                    "# enabled\n".into()
+                } else {
+                    "disable\n".into()
+                },
+                0o644,
+            ));
         }
         let conf = dir.join("server.conf");
-        files.push((conf.clone(), render_server(&s, &dir.to_string_lossy(), &ccd.to_string_lossy())?, 0o644));
+        files.push((
+            conf.clone(),
+            render_server(&s, &dir.to_string_lossy(), &ccd.to_string_lossy())?,
+            0o644,
+        ));
         let started = svc::ensure_daemon(
             &self.sup,
             INSTANCE,
-            vec![bin.to_string_lossy().into(), "--config".into(), conf.to_string_lossy().into()],
+            vec![
+                bin.to_string_lossy().into(),
+                "--config".into(),
+                conf.to_string_lossy().into(),
+            ],
             files,
         )
         .await?;
         rep.applied(format!(
             "openvpn {} on {}/{} ({} client(s))",
-            if started { "(re)started" } else { "running, unchanged" },
+            if started {
+                "(re)started"
+            } else {
+                "running, unchanged"
+            },
             s.s("proto"),
             s.s("port"),
             clients.len()
@@ -398,7 +504,10 @@ impl Applier for OpenVpnApplier {
         let connected: Vec<String> = std::fs::read_to_string(status)
             .unwrap_or_default()
             .lines()
-            .filter_map(|l| l.strip_prefix("CLIENT_LIST,").map(|r| r.split(',').next().unwrap_or("").to_string()))
+            .filter_map(|l| {
+                l.strip_prefix("CLIENT_LIST,")
+                    .map(|r| r.split(',').next().unwrap_or("").to_string())
+            })
             .filter(|n| !n.is_empty() && n != "Common Name")
             .collect();
         Ok(json!({
@@ -424,11 +533,22 @@ mod tests {
 
     #[test]
     fn pool_and_server_config() {
-        assert_eq!(pool("10.8.0.7/24").unwrap(), ("10.8.0.0".into(), "255.255.255.0".into()));
+        assert_eq!(
+            pool("10.8.0.7/24").unwrap(),
+            ("10.8.0.0".into(), "255.255.255.0".into())
+        );
         assert!(pool("10.8.0.0/31").is_err() && pool("nope").is_err());
-        let s = settings(&[("proto", "tcp"), ("port", "443"), ("tunnel_net", "10.9.0.0/24"), ("lan_route", "192.168.1.0/24")]);
+        let s = settings(&[
+            ("proto", "tcp"),
+            ("port", "443"),
+            ("tunnel_net", "10.9.0.0/24"),
+            ("lan_route", "192.168.1.0/24"),
+        ]);
         let c = render_server(&s, "/d", "/d/ccd").unwrap();
-        assert!(c.contains("dev pat-ovpn\n") && c.contains("proto tcp\nport 443\nserver 10.9.0.0 255.255.255.0\n"));
+        assert!(
+            c.contains("dev pat-ovpn\n")
+                && c.contains("proto tcp\nport 443\nserver 10.9.0.0 255.255.255.0\n")
+        );
         assert!(c.contains("tls-crypt /d/tls-crypt.key") && c.contains("client-config-dir /d/ccd"));
         assert!(c.contains("push \"route 192.168.1.0 255.255.255.0\""));
     }
@@ -436,11 +556,24 @@ mod tests {
     #[test]
     fn profile_has_everything_inline() {
         let s = settings(&[("proto", "udp"), ("port", "1194")]);
-        let p = render_profile(&s, "vpn.example.net", "CA\n", "CRT\n-----END CERTIFICATE-----\nextra", "KEY\n", "TC\n");
+        let p = render_profile(
+            &s,
+            "vpn.example.net",
+            "CA\n",
+            "CRT\n-----END CERTIFICATE-----\nextra",
+            "KEY\n",
+            "TC\n",
+        );
         assert!(p.contains("remote vpn.example.net 1194\n"));
-        for tag in ["<ca>\nCA\n</ca>", "<key>\nKEY\n</key>", "<tls-crypt>\nTC\n</tls-crypt>"] {
+        for tag in [
+            "<ca>\nCA\n</ca>",
+            "<key>\nKEY\n</key>",
+            "<tls-crypt>\nTC\n</tls-crypt>",
+        ] {
             assert!(p.contains(tag), "{tag}");
         }
-        assert!(p.contains("<cert>\nCRT\n-----END CERTIFICATE-----\n</cert>") && !p.contains("extra"));
+        assert!(
+            p.contains("<cert>\nCRT\n-----END CERTIFICATE-----\n</cert>") && !p.contains("extra")
+        );
     }
 }

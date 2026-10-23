@@ -193,6 +193,7 @@ pub fn pd_hook_script() -> String {
 }
 
 /// The daemon spec for `dev`.
+#[allow(clippy::too_many_arguments)]
 pub fn spec(
     dev: &str,
     v4: bool,

@@ -33,10 +33,23 @@ pub async fn list(State(s): State<AppState>, _a: AdminUser) -> Response {
     }
 }
 
-pub async fn create(State(s): State<AppState>, _a: AdminUser, Json(t): Json<TargetInput>) -> Response {
+pub async fn create(
+    State(s): State<AppState>,
+    _a: AdminUser,
+    Json(t): Json<TargetInput>,
+) -> Response {
     match s.backup_targets.create(&t).await {
         Ok(id) => {
-            let _ = s.config_store.audit("web", "create", "backup-target", Some(&id.to_string()), &json!({"name": t.name})).await;
+            let _ = s
+                .config_store
+                .audit(
+                    "web",
+                    "create",
+                    "backup-target",
+                    Some(&id.to_string()),
+                    &json!({"name": t.name}),
+                )
+                .await;
             (StatusCode::CREATED, Json(json!({"id": id}))).into_response()
         }
         Err(e) => err(e),

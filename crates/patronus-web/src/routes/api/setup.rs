@@ -115,7 +115,10 @@ pub async fn apply(
     Json(b): Json<SetupBody>,
 ) -> Response {
     if b.wan_interface == b.lan_interface {
-        return error(StatusCode::BAD_REQUEST, "Invalid setup: WAN and LAN need different interfaces");
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Invalid setup: WAN and LAN need different interfaces",
+        );
     }
     let client = ci.map(|ConnectInfo(a)| a.ip());
     let static_wan = b.wan_mode.as_deref() == Some("static");
@@ -156,7 +159,10 @@ pub async fn apply(
     #[cfg(feature = "dhcp")]
     if b.dhcp {
         let (Some(s), Some(e)) = (b.dhcp_start.clone(), b.dhcp_end.clone()) else {
-            return error(StatusCode::BAD_REQUEST, "Invalid setup: the DHCP pool needs a start and an end address");
+            return error(
+                StatusCode::BAD_REQUEST,
+                "Invalid setup: the DHCP pool needs a start and an end address",
+            );
         };
         let lan_ip = b.lan_ipv4.split('/').next().unwrap_or("").to_string();
         let pool = patronus_network::dhcp::PoolInput {
@@ -165,25 +171,42 @@ pub async fn apply(
             range_start: s,
             range_end: e,
             gateway: Some(lan_ip.clone()),
-            dns_servers: b.dns_servers.clone().filter(|d| !d.is_empty()).or(Some(lan_ip)),
+            dns_servers: b
+                .dns_servers
+                .clone()
+                .filter(|d| !d.is_empty())
+                .or(Some(lan_ip)),
             description: Some("created by the setup wizard".into()),
             ..Default::default()
         };
         if let Err(e) = state.lan.save_pool(None, pool).await {
             let m = e.to_string();
-            let code = if m.contains("Invalid") { StatusCode::BAD_REQUEST } else { StatusCode::INTERNAL_SERVER_ERROR };
+            let code = if m.contains("Invalid") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
             return error(code, format!("DHCP pool: {m}"));
         }
         applied.push("dhcp".into());
     }
     #[cfg(not(feature = "dhcp"))]
     if b.dhcp {
-        return error(StatusCode::NOT_IMPLEMENTED, "this build has no DHCP server (USE=dhcp)");
+        return error(
+            StatusCode::NOT_IMPLEMENTED,
+            "this build has no DHCP server (USE=dhcp)",
+        );
     }
     let _ = patronus_network::lan::set_setting(&state.config_store, DONE_KEY, "1").await;
     let _ = state
         .config_store
-        .audit("web", "apply", "setup-wizard", None, &json!({"wan": b.wan_interface, "lan": b.lan_interface}))
+        .audit(
+            "web",
+            "apply",
+            "setup-wizard",
+            None,
+            &json!({"wan": b.wan_interface, "lan": b.lan_interface}),
+        )
         .await;
     Json(json!({ "message": "applied", "applied": applied, "completed": true })).into_response()
 }

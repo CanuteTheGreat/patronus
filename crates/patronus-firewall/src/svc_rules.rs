@@ -148,8 +148,16 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
     // side only; connections miniupnpd mapped (DNAT) may reach the LAN
     let u = settings(store, "upnp").await?;
     if on(&u, "enabled") {
-        let lan_devs = devices(store, u.get("interface").map(String::as_str).unwrap_or("@lan")).await;
-        let wan_devs = devices(store, u.get("ext_interface").map(String::as_str).unwrap_or("@wan")).await;
+        let lan_devs = devices(
+            store,
+            u.get("interface").map(String::as_str).unwrap_or("@lan"),
+        )
+        .await;
+        let wan_devs = devices(
+            store,
+            u.get("ext_interface").map(String::as_str).unwrap_or("@wan"),
+        )
+        .await;
         for d in &lan_devs {
             out.filter.push(format!(
                 "add rule {t} input iifname \"{d}\" udp dport {{ 1900, 5351 }} accept comment \"UPnP/NAT-PMP\""
@@ -168,9 +176,18 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
     // --- OpenVPN server: the listen port, and the tunnel may reach the LAN
     let ov = settings(store, "openvpn").await?;
     if on(&ov, "enabled") {
-        let proto = if ov.get("proto").map(String::as_str) == Some("tcp") { "tcp" } else { "udp" };
+        let proto = if ov.get("proto").map(String::as_str) == Some("tcp") {
+            "tcp"
+        } else {
+            "udp"
+        };
         let port: u16 = ov.get("port").and_then(|p| p.parse().ok()).unwrap_or(1194);
-        for d in devices(store, ov.get("interface").map(String::as_str).unwrap_or("@wan")).await {
+        for d in devices(
+            store,
+            ov.get("interface").map(String::as_str).unwrap_or("@wan"),
+        )
+        .await
+        {
             out.filter.push(format!(
                 "add rule {t} input iifname \"{d}\" {proto} dport {port} accept comment \"OpenVPN server\""
             ));
@@ -189,7 +206,12 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
     if on(&px, "enabled") {
         let port: u16 = px.get("port").and_then(|p| p.parse().ok()).unwrap_or(3128);
         let icpt = on(&px, "transparent");
-        for d in devices(store, px.get("interface").map(String::as_str).unwrap_or("@lan")).await {
+        for d in devices(
+            store,
+            px.get("interface").map(String::as_str).unwrap_or("@lan"),
+        )
+        .await
+        {
             out.filter.push(format!(
                 "add rule {t} input iifname \"{d}\" tcp dport {port} accept comment \"web proxy\""
             ));

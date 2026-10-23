@@ -25,11 +25,17 @@ static FIELDS: [Field; 5] = [
     Field::new("enabled", "Web proxy", Kind::Bool).def("0"),
     Field::new("interface", "Serve clients on", Kind::Iface)
         .def("@lan")
-        .help("the proxy port is opened on this interface only; only its networks may use the proxy"),
+        .help(
+            "the proxy port is opened on this interface only; only its networks may use the proxy",
+        ),
     Field::new("port", "Proxy port", Kind::Int(1025, 65535)).def("3128"),
-    Field::new("transparent", "Intercept plain HTTP from the LAN", Kind::Bool)
-        .def("0")
-        .help("redirects TCP 80 from the LAN to the proxy; HTTPS is not intercepted"),
+    Field::new(
+        "transparent",
+        "Intercept plain HTTP from the LAN",
+        Kind::Bool,
+    )
+    .def("0")
+    .help("redirects TCP 80 from the LAN to the proxy; HTTPS is not intercepted"),
     Field::new("cache_mb", "Memory cache (MB)", Kind::Int(0, 4096)).def("64"),
 ];
 
@@ -69,12 +75,19 @@ pub fn safe_domain(d: &str) -> bool {
     !d.is_empty()
         && d.len() <= 253
         && !d.starts_with('.')
-        && d.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        && d.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
 }
 
 /// squid.conf. `nets` are the CIDRs of the served interfaces, `listen` the
 /// addresses to bind.
-pub fn render_conf(s: &Settings, nets: &[String], listen: &[String], blocked: &[String], dir: &str) -> String {
+pub fn render_conf(
+    s: &Settings,
+    nets: &[String],
+    listen: &[String],
+    blocked: &[String],
+    dir: &str,
+) -> String {
     let port = s.n("port");
     let mut c = lan::header("#", "squid");
     for l in listen {
@@ -113,7 +126,9 @@ pub struct ProxyApplier {
 
 impl Default for ProxyApplier {
     fn default() -> Self {
-        Self { sup: Supervisor::detect() }
+        Self {
+            sup: Supervisor::detect(),
+        }
     }
 }
 
@@ -163,7 +178,11 @@ impl Applier for ProxyApplier {
         let s = Settings::load(store, &SPEC).await?;
         if !s.b("enabled") {
             let was = self.sup.stop(svc::DAEMON_SERVICE, INSTANCE).await?;
-            rep.applied(if was { "web proxy stopped" } else { "web proxy is off" });
+            rep.applied(if was {
+                "web proxy stopped"
+            } else {
+                "web proxy is off"
+            });
             return Ok(rep);
         }
         let bin = which("squid").ok_or_else(|| {
@@ -171,21 +190,38 @@ impl Applier for ProxyApplier {
         })?;
         let (nets, listen) = served(store, &s.s("interface")).await?;
         if listen.is_empty() {
-            return Err(invalid("web proxy: the LAN interface has no static IPv4 address to listen on"));
+            return Err(invalid(
+                "web proxy: the LAN interface has no static IPv4 address to listen on",
+            ));
         }
         let b = blocked(store).await?;
         let conf = self.sup.paths.state_dir.join("squid.conf");
-        let text = render_conf(&s, &nets, &listen, &b, &self.sup.paths.state_dir.to_string_lossy());
+        let text = render_conf(
+            &s,
+            &nets,
+            &listen,
+            &b,
+            &self.sup.paths.state_dir.to_string_lossy(),
+        );
         let started = svc::ensure_daemon(
             &self.sup,
             INSTANCE,
-            vec![bin.to_string_lossy().into(), "-N".into(), "-f".into(), conf.to_string_lossy().into()],
+            vec![
+                bin.to_string_lossy().into(),
+                "-N".into(),
+                "-f".into(),
+                conf.to_string_lossy().into(),
+            ],
             vec![(conf, text, 0o644)],
         )
         .await?;
         rep.applied(format!(
             "squid {}: {} on port {}, {} blocked domain(s)",
-            if started { "(re)started" } else { "running, unchanged" },
+            if started {
+                "(re)started"
+            } else {
+                "running, unchanged"
+            },
             listen.join(", "),
             s.n("port"),
             b.len()
@@ -199,7 +235,13 @@ impl Applier for ProxyApplier {
             return Ok("# web proxy off\n".into());
         }
         let (nets, listen) = served(store, &s.s("interface")).await.unwrap_or_default();
-        Ok(render_conf(&s, &nets, &listen, &blocked(store).await.unwrap_or_default(), "/tmp"))
+        Ok(render_conf(
+            &s,
+            &nets,
+            &listen,
+            &blocked(store).await.unwrap_or_default(),
+            "/tmp",
+        ))
     }
 
     async fn status(&self, store: &ConfigStore) -> Result<Value> {

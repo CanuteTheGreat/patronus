@@ -76,8 +76,16 @@ pub fn allows(privs: &BTreeMap<String, String>, area: &str, write: bool) -> bool
 
 fn validate(g: &GroupInput) -> anyhow::Result<()> {
     let name = g.name.trim();
-    if name.is_empty() || name.len() > 64 || !name.chars().all(|c| c.is_alphanumeric() || "-_. ".contains(c)) {
-        anyhow::bail!("Invalid group name {:?}: 1-64 letters, digits, space . - _", g.name);
+    if name.is_empty()
+        || name.len() > 64
+        || !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || "-_. ".contains(c))
+    {
+        anyhow::bail!(
+            "Invalid group name {:?}: 1-64 letters, digits, space . - _",
+            g.name
+        );
     }
     for (a, l) in &g.privileges {
         if !AREAS.iter().any(|(k, _)| k == a) {
@@ -105,9 +113,10 @@ impl RbacStore {
 
     pub async fn list(&self) -> anyhow::Result<Vec<Group>> {
         let pool = self.pool()?;
-        let rows = sqlx::query("SELECT id, name, description, privileges FROM rbac_groups ORDER BY name")
-            .fetch_all(pool)
-            .await?;
+        let rows =
+            sqlx::query("SELECT id, name, description, privileges FROM rbac_groups ORDER BY name")
+                .fetch_all(pool)
+                .await?;
         let mut out = Vec::new();
         for r in rows {
             let id: i64 = r.get(0);
@@ -152,13 +161,15 @@ impl RbacStore {
 
     pub async fn update(&self, id: i64, g: &GroupInput) -> anyhow::Result<()> {
         validate(g)?;
-        let r = sqlx::query("UPDATE rbac_groups SET name = ?, description = ?, privileges = ? WHERE id = ?")
-            .bind(g.name.trim())
-            .bind(&g.description)
-            .bind(serde_json::to_string(&g.privileges)?)
-            .bind(id)
-            .execute(self.pool()?)
-            .await?;
+        let r = sqlx::query(
+            "UPDATE rbac_groups SET name = ?, description = ?, privileges = ? WHERE id = ?",
+        )
+        .bind(g.name.trim())
+        .bind(&g.description)
+        .bind(serde_json::to_string(&g.privileges)?)
+        .bind(id)
+        .execute(self.pool()?)
+        .await?;
         if r.rows_affected() == 0 {
             anyhow::bail!("no such group");
         }
@@ -167,11 +178,17 @@ impl RbacStore {
 
     pub async fn delete(&self, id: i64) -> anyhow::Result<()> {
         let pool = self.pool()?;
-        let r = sqlx::query("DELETE FROM rbac_groups WHERE id = ?").bind(id).execute(pool).await?;
+        let r = sqlx::query("DELETE FROM rbac_groups WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
         if r.rows_affected() == 0 {
             anyhow::bail!("no such group");
         }
-        sqlx::query("DELETE FROM rbac_members WHERE group_id = ?").bind(id).execute(pool).await?;
+        sqlx::query("DELETE FROM rbac_members WHERE group_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
         Ok(())
     }
 
@@ -180,7 +197,10 @@ impl RbacStore {
         let pool = self.pool()?;
         match group {
             None => {
-                sqlx::query("DELETE FROM rbac_members WHERE user_id = ?").bind(user_id).execute(pool).await?;
+                sqlx::query("DELETE FROM rbac_members WHERE user_id = ?")
+                    .bind(user_id)
+                    .execute(pool)
+                    .await?;
             }
             Some(gid) => {
                 let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM rbac_groups WHERE id = ?")
@@ -190,12 +210,14 @@ impl RbacStore {
                 if n == 0 {
                     anyhow::bail!("no such group");
                 }
-                sqlx::query("INSERT INTO rbac_members (user_id, group_id) VALUES (?, ?) \
-                             ON CONFLICT(user_id) DO UPDATE SET group_id = excluded.group_id")
-                    .bind(user_id)
-                    .bind(gid)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "INSERT INTO rbac_members (user_id, group_id) VALUES (?, ?) \
+                             ON CONFLICT(user_id) DO UPDATE SET group_id = excluded.group_id",
+                )
+                .bind(user_id)
+                .bind(gid)
+                .execute(pool)
+                .await?;
             }
         }
         Ok(())
@@ -203,7 +225,10 @@ impl RbacStore {
 
     pub async fn forget_user(&self, user_id: i64) {
         if let Ok(p) = self.pool() {
-            let _ = sqlx::query("DELETE FROM rbac_members WHERE user_id = ?").bind(user_id).execute(p).await;
+            let _ = sqlx::query("DELETE FROM rbac_members WHERE user_id = ?")
+                .bind(user_id)
+                .execute(p)
+                .await;
         }
     }
 

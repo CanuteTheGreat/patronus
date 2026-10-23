@@ -158,14 +158,27 @@ async fn export_openvpn(
     Path(name): Path<String>,
 ) -> Response {
     use axum::http::{header, StatusCode};
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || "._:@+-".contains(c)) {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid client name"}))).into_response();
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "._:@+-".contains(c))
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Invalid client name"})),
+        )
+            .into_response();
     }
     match patronus_network::openvpn_server::export_profile(&st.config_store, &name).await {
         Ok(p) => (
             [
-                (header::CONTENT_TYPE, "application/x-openvpn-profile".to_string()),
-                (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}.ovpn\"")),
+                (
+                    header::CONTENT_TYPE,
+                    "application/x-openvpn-profile".to_string(),
+                ),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{name}.ovpn\""),
+                ),
             ],
             p,
         )

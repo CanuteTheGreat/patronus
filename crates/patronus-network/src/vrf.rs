@@ -21,24 +21,41 @@ use std::process::Command;
 pub const PREFIX: &str = "vrf-";
 
 static VRF_FIELDS: [Field; 2] = [
-    Field::new("name", "Name", Kind::Token).req().help("1-11 letters/digits/-/_; the device is vrf-<name>"),
+    Field::new("name", "Name", Kind::Token)
+        .req()
+        .help("1-11 letters/digits/-/_; the device is vrf-<name>"),
     Field::new("table_id", "Routing table", Kind::Int(100, 4000)).req(),
 ];
 static MEMBER_FIELDS: [Field; 2] = [
     Field::new("vrf", "VRF", Kind::Token).req(),
-    Field::new("interface", "Interface", Kind::Iface).req().help("an interface can be in one VRF"),
+    Field::new("interface", "Interface", Kind::Iface)
+        .req()
+        .help("an interface can be in one VRF"),
 ];
 
 static SPEC: Spec = Spec {
     slug: "vrf",
     title: "VRF (segmentation)",
-    blurb: "Virtual routing and forwarding: give a group of interfaces a routing table of their own. \
+    blurb:
+        "Virtual routing and forwarding: give a group of interfaces a routing table of their own. \
             Member interfaces are enslaved to the VRF device; routes stay inside it.",
     applier: "vrf",
     fields: &[],
     colls: &[
-        Coll { key: "vrfs", title: "VRFs", table: "vrf_instances", fields: &VRF_FIELDS, unique: Some("name") },
-        Coll { key: "members", title: "Members", table: "vrf_members", fields: &MEMBER_FIELDS, unique: None },
+        Coll {
+            key: "vrfs",
+            title: "VRFs",
+            table: "vrf_instances",
+            fields: &VRF_FIELDS,
+            unique: Some("name"),
+        },
+        Coll {
+            key: "members",
+            title: "Members",
+            table: "vrf_members",
+            fields: &MEMBER_FIELDS,
+            unique: None,
+        },
     ],
     actions: &[],
 };
@@ -59,11 +76,20 @@ pub fn plan(vrfs: &[(String, u32)], members: &[(String, Vec<String>)]) -> Result
     let mut out = Plan::new();
     let mut tables = BTreeSet::new();
     for (n, t) in vrfs {
-        if n.is_empty() || n.len() > 11 || !n.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-            return Err(invalid(format!("VRF name {n:?}: 1-11 letters, digits, - or _")));
+        if n.is_empty()
+            || n.len() > 11
+            || !n
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(invalid(format!(
+                "VRF name {n:?}: 1-11 letters, digits, - or _"
+            )));
         }
         if !tables.insert(*t) {
-            return Err(invalid(format!("VRF {n}: routing table {t} is used by another VRF")));
+            return Err(invalid(format!(
+                "VRF {n}: routing table {t} is used by another VRF"
+            )));
         }
         if matches!(*t, 253..=255) {
             return Err(invalid(format!("VRF {n}: routing table {t} is reserved")));
@@ -74,7 +100,9 @@ pub fn plan(vrfs: &[(String, u32)], members: &[(String, Vec<String>)]) -> Result
     for (v, devs) in members {
         let key = format!("{PREFIX}{v}");
         let Some(e) = out.get_mut(&key) else {
-            return Err(invalid(format!("VRF member refers to the unknown VRF {v:?}")));
+            return Err(invalid(format!(
+                "VRF member refers to the unknown VRF {v:?}"
+            )));
         };
         for d in devs {
             if let Some(o) = seen.insert(d.clone(), v.clone()) {
@@ -115,7 +143,10 @@ fn names(out: &str) -> Vec<String> {
 fn current_table(dev: &str) -> Option<u32> {
     let d = ip(&["-d", "link", "show", dev]).ok()?;
     let w: Vec<&str> = d.split_whitespace().collect();
-    w.iter().position(|x| *x == "table").and_then(|i| w.get(i + 1)).and_then(|t| t.parse().ok())
+    w.iter()
+        .position(|x| *x == "table")
+        .and_then(|i| w.get(i + 1))
+        .and_then(|t| t.parse().ok())
 }
 
 /// Reconcile the kernel with `want`.
@@ -176,7 +207,11 @@ async fn load(store: &ConfigStore) -> Result<Plan> {
         .map(|r| {
             (
                 r["name"].as_str().unwrap_or("").to_string(),
-                r["table_id"].as_str().and_then(|t| t.parse().ok()).or_else(|| r["table_id"].as_i64().map(|i| i as u32)).unwrap_or(0),
+                r["table_id"]
+                    .as_str()
+                    .and_then(|t| t.parse().ok())
+                    .or_else(|| r["table_id"].as_i64().map(|i| i as u32))
+                    .unwrap_or(0),
             )
         })
         .collect();
@@ -241,13 +276,39 @@ mod tests {
     #[test]
     fn plans_are_checked() {
         let v = vec![("red".to_string(), 100u32), ("blue".to_string(), 200)];
-        let p = plan(&v, &[("red".into(), vec!["eth1".into()]), ("blue".into(), vec!["eth2".into()])]).unwrap();
+        let p = plan(
+            &v,
+            &[
+                ("red".into(), vec!["eth1".into()]),
+                ("blue".into(), vec!["eth2".into()]),
+            ],
+        )
+        .unwrap();
         assert_eq!(p["vrf-red"], (100, vec!["eth1".to_string()]));
-        assert!(plan(&[("a".into(), 100), ("b".into(), 100)], &[]).is_err(), "shared table");
-        assert!(plan(&v, &[("red".into(), vec!["eth1".into()]), ("blue".into(), vec!["eth1".into()])]).is_err(), "two VRFs");
-        assert!(plan(&v, &[("green".into(), vec![])]).is_err(), "unknown vrf");
+        assert!(
+            plan(&[("a".into(), 100), ("b".into(), 100)], &[]).is_err(),
+            "shared table"
+        );
+        assert!(
+            plan(
+                &v,
+                &[
+                    ("red".into(), vec!["eth1".into()]),
+                    ("blue".into(), vec!["eth1".into()])
+                ]
+            )
+            .is_err(),
+            "two VRFs"
+        );
+        assert!(
+            plan(&v, &[("green".into(), vec![])]).is_err(),
+            "unknown vrf"
+        );
         assert!(plan(&[("this-name-is-too-long".into(), 100)], &[]).is_err());
         assert!(plan(&[("x".into(), 254)], &[]).is_err());
-        assert_eq!(names("vrf-red UP 1.2.3.4\nrtr-lan@if5 UP"), vec!["vrf-red", "rtr-lan"]);
+        assert_eq!(
+            names("vrf-red UP 1.2.3.4\nrtr-lan@if5 UP"),
+            vec!["vrf-red", "rtr-lan"]
+        );
     }
 }

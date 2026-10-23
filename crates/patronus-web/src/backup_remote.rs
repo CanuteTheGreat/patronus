@@ -75,7 +75,10 @@ fn validate(t: &TargetInput) -> anyhow::Result<()> {
         .iter()
         .any(|p| t.url.starts_with(p));
     if !ok || t.url.chars().any(|c| c.is_whitespace() || c.is_control()) {
-        anyhow::bail!("Invalid URL {:?}: http(s)://, sftp:// or ftps:// without spaces", t.url);
+        anyhow::bail!(
+            "Invalid URL {:?}: http(s)://, sftp:// or ftps:// without spaces",
+            t.url
+        );
     }
     if !(0..=24 * 366).contains(&t.interval_hours) {
         anyhow::bail!("Invalid interval: 0 (manual) to 8784 hours");
@@ -174,7 +177,9 @@ impl BackupTargets {
             .ok_or_else(|| anyhow::anyhow!("no such backup target"))?;
         let (url, user, pass, phrase, insecure): (String, String, String, String, i64) =
             (row.get(0), row.get(1), row.get(2), row.get(3), row.get(4));
-        let res = self.upload(&url, &user, &pass, &phrase, insecure != 0).await;
+        let res = self
+            .upload(&url, &user, &pass, &phrase, insecure != 0)
+            .await;
         let (status, file) = match &res {
             Ok(f) => ("ok".to_string(), Some(f.clone())),
             Err(e) => (format!("failed: {e}"), None),
@@ -189,14 +194,24 @@ impl BackupTargets {
         res
     }
 
-    async fn upload(&self, url: &str, user: &str, pass: &str, phrase: &str, insecure: bool) -> anyhow::Result<String> {
+    async fn upload(
+        &self,
+        url: &str,
+        user: &str,
+        pass: &str,
+        phrase: &str,
+        insecure: bool,
+    ) -> anyhow::Result<String> {
         let doc = self
             .store
             .export_json()
             .await
             .map_err(|e| anyhow::anyhow!("exporting the configuration: {e}"))?;
         let mut bytes = (serde_json::to_string_pretty(&doc)? + "\n").into_bytes();
-        let mut name = format!("patronus-config-{}.json", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+        let mut name = format!(
+            "patronus-config-{}.json",
+            chrono::Utc::now().format("%Y%m%d-%H%M%S")
+        );
         if !phrase.is_empty() {
             let p = phrase.to_string();
             bytes = tokio::task::spawn_blocking(move || encrypt(&bytes, &p)).await??;
@@ -206,19 +221,34 @@ impl BackupTargets {
         let tmp = dir.join(format!(".patronus-upload-{}", uuid::Uuid::new_v4()));
         {
             use std::os::unix::fs::OpenOptionsExt;
-            let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp)?;
             std::io::Write::write_all(&mut f, &bytes)?;
         }
         let target = format!("{}/{}", url.trim_end_matches('/'), name);
         let mut cmd = tokio::process::Command::new("curl");
-        cmd.args(["--silent", "--show-error", "--fail", "--max-time", "120", "--config", "-", "-T"])
-            .arg(&tmp)
-            .arg(&target)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped());
+        cmd.args([
+            "--silent",
+            "--show-error",
+            "--fail",
+            "--max-time",
+            "120",
+            "--config",
+            "-",
+            "-T",
+        ])
+        .arg(&tmp)
+        .arg(&target)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
         let out = async {
-            let mut child = cmd.spawn().map_err(|e| anyhow::anyhow!("running curl: {e}"))?;
+            let mut child = cmd
+                .spawn()
+                .map_err(|e| anyhow::anyhow!("running curl: {e}"))?;
             let mut cfg = String::new();
             if !user.is_empty() {
                 cfg.push_str(&format!("user = \"{user}:{pass}\"\n"));
@@ -249,7 +279,9 @@ impl BackupTargets {
             if !t.enabled || t.interval_hours == 0 {
                 continue;
             }
-            if t.last_run.is_none_or(|l| now - l >= t.interval_hours * 3600) {
+            if t.last_run
+                .is_none_or(|l| now - l >= t.interval_hours * 3600)
+            {
                 match self.run(t.id).await {
                     Ok(f) => tracing::info!("remote backup {}: uploaded {f}", t.name),
                     Err(e) => tracing::warn!("remote backup {}: {e}", t.name),
@@ -268,7 +300,10 @@ mod tests {
         let enc = encrypt(b"{\"tables\":{}}", "correct horse battery").unwrap();
         assert!(is_encrypted(&enc));
         assert!(!String::from_utf8_lossy(&enc).contains("tables"));
-        assert_eq!(decrypt(&enc, "correct horse battery").unwrap(), b"{\"tables\":{}}");
+        assert_eq!(
+            decrypt(&enc, "correct horse battery").unwrap(),
+            b"{\"tables\":{}}"
+        );
         assert!(decrypt(&enc, "wrong passphrase").is_err());
         assert!(!is_encrypted(b"{}"));
     }

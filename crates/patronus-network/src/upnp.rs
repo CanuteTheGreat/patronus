@@ -36,7 +36,8 @@ static FIELDS: [Field; 8] = [
 static SPEC: Spec = Spec {
     slug: "upnp",
     title: "UPnP / NAT-PMP",
-    blurb: "Lets LAN programs (games, VoIP, torrent clients) open WAN port mappings by themselves. \
+    blurb:
+        "Lets LAN programs (games, VoIP, torrent clients) open WAN port mappings by themselves. \
             Runs miniupnpd. Off by default: enable it only on trusted LANs.",
     applier: "upnp",
     fields: &FIELDS,
@@ -56,12 +57,18 @@ impl Svc for UpnpSvc {
         let cur = Settings::load(store, &SPEC).await?;
         let n = |k: &str| {
             body.get(k)
-                .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|i| i.to_string())))
+                .and_then(|v| {
+                    v.as_str()
+                        .map(|s| s.to_string())
+                        .or_else(|| v.as_i64().map(|i| i.to_string()))
+                })
                 .and_then(|s| s.trim().parse::<i64>().ok())
                 .unwrap_or_else(|| cur.n(k))
         };
         if n("port_min") > n("port_max") {
-            return Err(lan::invalid("UPnP: the lowest mappable port is above the highest"));
+            return Err(lan::invalid(
+                "UPnP: the lowest mappable port is above the highest",
+            ));
         }
         svc::put_settings(store, &SPEC, body).await
     }
@@ -70,7 +77,13 @@ impl Svc for UpnpSvc {
 /// miniupnpd.conf. `lan_dev`/`wan_dev` are device names; `ext_private` is set
 /// when the WAN address is private (double NAT), where miniupnpd refuses to
 /// map unless told otherwise.
-pub fn render_conf(s: &Settings, lan_devs: &[String], wan_dev: &str, ext_private: bool, lease: &str) -> String {
+pub fn render_conf(
+    s: &Settings,
+    lan_devs: &[String],
+    wan_dev: &str,
+    ext_private: bool,
+    lease: &str,
+) -> String {
     let mut c = lan::header("#", "miniupnpd");
     c.push_str(&format!("ext_ifname={wan_dev}\n"));
     for d in lan_devs {
@@ -90,7 +103,9 @@ pub fn render_conf(s: &Settings, lan_devs: &[String], wan_dev: &str, ext_private
     c.push_str("friendly_name=Patronus\n");
     // only the configured range, from any LAN address; everything else denied
     let (lo, hi) = (s.n("port_min").max(1024), s.n("port_max").min(65535));
-    c.push_str(&format!("allow {lo}-{hi} 0.0.0.0/0 {lo}-{hi}\ndeny 0-65535 0.0.0.0/0 0-65535\n"));
+    c.push_str(&format!(
+        "allow {lo}-{hi} 0.0.0.0/0 {lo}-{hi}\ndeny 0-65535 0.0.0.0/0 0-65535\n"
+    ));
     c
 }
 
@@ -101,7 +116,9 @@ pub struct UpnpApplier {
 
 impl Default for UpnpApplier {
     fn default() -> Self {
-        Self { sup: Supervisor::detect() }
+        Self {
+            sup: Supervisor::detect(),
+        }
     }
 }
 
@@ -138,7 +155,11 @@ impl Applier for UpnpApplier {
         let s = Settings::load(store, &SPEC).await?;
         if !s.b("enabled") {
             let was = self.sup.stop(svc::DAEMON_SERVICE, INSTANCE).await?;
-            rep.applied(if was { "UPnP/NAT-PMP stopped" } else { "UPnP/NAT-PMP is off" });
+            rep.applied(if was {
+                "UPnP/NAT-PMP stopped"
+            } else {
+                "UPnP/NAT-PMP is off"
+            });
             return Ok(rep);
         }
         let bin = which("miniupnpd").ok_or_else(|| {
@@ -149,21 +170,38 @@ impl Applier for UpnpApplier {
         let lan_devs = lan::resolve_iface(store, &s.s("interface")).await?;
         let wan_devs = lan::resolve_iface(store, &s.s("ext_interface")).await?;
         let (Some(wan), false) = (wan_devs.first(), lan_devs.is_empty()) else {
-            return Err(lan::invalid("UPnP: the LAN and WAN interfaces need a role (Interfaces page)"));
+            return Err(lan::invalid(
+                "UPnP: the LAN and WAN interfaces need a role (Interfaces page)",
+            ));
         };
         let conf = self.sup.paths.state_dir.join("miniupnpd.conf");
         let lease = self.sup.paths.state_dir.join("upnp.leases");
-        let text = render_conf(&s, &lan_devs, wan, wan_is_private(store, wan).await, &lease.to_string_lossy());
+        let text = render_conf(
+            &s,
+            &lan_devs,
+            wan,
+            wan_is_private(store, wan).await,
+            &lease.to_string_lossy(),
+        );
         let started = svc::ensure_daemon(
             &self.sup,
             INSTANCE,
-            vec![bin.to_string_lossy().into(), "-d".into(), "-f".into(), conf.to_string_lossy().into()],
+            vec![
+                bin.to_string_lossy().into(),
+                "-d".into(),
+                "-f".into(),
+                conf.to_string_lossy().into(),
+            ],
             vec![(conf, text, 0o644)],
         )
         .await?;
         rep.applied(format!(
             "miniupnpd {} (WAN {wan}, clients on {})",
-            if started { "(re)started" } else { "running, unchanged" },
+            if started {
+                "(re)started"
+            } else {
+                "running, unchanged"
+            },
             lan_devs.join(", ")
         ));
         Ok(rep)
@@ -174,9 +212,19 @@ impl Applier for UpnpApplier {
         if !s.b("enabled") {
             return Ok("# UPnP/NAT-PMP off\n".into());
         }
-        let lan_devs = lan::resolve_iface(store, &s.s("interface")).await.unwrap_or_default();
-        let wan = lan::resolve_iface(store, &s.s("ext_interface")).await.unwrap_or_default();
-        Ok(render_conf(&s, &lan_devs, wan.first().map(String::as_str).unwrap_or("?"), false, "upnp.leases"))
+        let lan_devs = lan::resolve_iface(store, &s.s("interface"))
+            .await
+            .unwrap_or_default();
+        let wan = lan::resolve_iface(store, &s.s("ext_interface"))
+            .await
+            .unwrap_or_default();
+        Ok(render_conf(
+            &s,
+            &lan_devs,
+            wan.first().map(String::as_str).unwrap_or("?"),
+            false,
+            "upnp.leases",
+        ))
     }
 
     async fn status(&self, store: &ConfigStore) -> Result<Value> {

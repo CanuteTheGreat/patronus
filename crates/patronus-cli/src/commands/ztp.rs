@@ -29,20 +29,35 @@ pub struct Provisioning {
 
 /// The `[provisioning]` section of the bootstrap file, if any.
 pub fn parse(text: &str) -> anyhow::Result<Option<Provisioning>> {
-    let v: toml::Value = text.parse().map_err(|e| anyhow::anyhow!("patronus.toml: {e}"))?;
+    let v: toml::Value = text
+        .parse()
+        .map_err(|e| anyhow::anyhow!("patronus.toml: {e}"))?;
     let Some(p) = v.get("provisioning") else {
         return Ok(None);
     };
-    let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
-    if !["http://", "https://", "sftp://", "ftps://"].iter().any(|s| url.starts_with(s))
+    let url = p
+        .get("url")
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .to_string();
+    if !["http://", "https://", "sftp://", "ftps://"]
+        .iter()
+        .any(|s| url.starts_with(s))
         || url.chars().any(|c| c.is_whitespace() || c.is_control())
     {
         anyhow::bail!("[provisioning] url {url:?}: http(s)://, sftp:// or ftps:// without spaces");
     }
     Ok(Some(Provisioning {
         url,
-        passphrase_file: p.get("passphrase_file").and_then(|u| u.as_str()).map(PathBuf::from),
-        wait_secs: p.get("wait_secs").and_then(|u| u.as_integer()).unwrap_or(180).clamp(0, 3600) as u64,
+        passphrase_file: p
+            .get("passphrase_file")
+            .and_then(|u| u.as_str())
+            .map(PathBuf::from),
+        wait_secs: p
+            .get("wait_secs")
+            .and_then(|u| u.as_integer())
+            .unwrap_or(180)
+            .clamp(0, 3600) as u64,
     }))
 }
 
@@ -56,8 +71,8 @@ pub fn open_bundle(bytes: &[u8], passphrase: Option<&str>) -> anyhow::Result<ser
     } else {
         bytes.to_vec()
     };
-    let doc: serde_json::Value =
-        serde_json::from_slice(&plain).map_err(|e| anyhow::anyhow!("the bundle is not JSON: {e}"))?;
+    let doc: serde_json::Value = serde_json::from_slice(&plain)
+        .map_err(|e| anyhow::anyhow!("the bundle is not JSON: {e}"))?;
     if !doc.get("tables").is_some_and(serde_json::Value::is_object) {
         anyhow::bail!("the bundle is not a Patronus configuration export (no \"tables\")");
     }
@@ -68,37 +83,67 @@ fn fetch(url: &str, wait_secs: u64) -> anyhow::Result<Vec<u8>> {
     let end = std::time::Instant::now() + std::time::Duration::from_secs(wait_secs);
     loop {
         let out = std::process::Command::new("curl")
-            .args(["--silent", "--show-error", "--fail", "--location", "--max-time", "30", url])
+            .args([
+                "--silent",
+                "--show-error",
+                "--fail",
+                "--location",
+                "--max-time",
+                "30",
+                url,
+            ])
             .output()
             .map_err(|e| anyhow::anyhow!("running curl: {e}"))?;
         if out.status.success() {
             return Ok(out.stdout);
         }
         if std::time::Instant::now() >= end {
-            anyhow::bail!("could not fetch {url}: {}", String::from_utf8_lossy(&out.stderr).trim());
+            anyhow::bail!(
+                "could not fetch {url}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
-        println!("{} waiting for {url} ({})", "•".cyan(), String::from_utf8_lossy(&out.stderr).trim());
+        println!(
+            "{} waiting for {url} ({})",
+            "•".cyan(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
         std::thread::sleep(std::time::Duration::from_secs(5));
     }
 }
 
 async fn marker(db: Option<&Path>) -> anyhow::Result<Option<String>> {
     let store = apply::open_store(db).await?;
-    let v = patronus_network::lan::get_setting(&store, "ztp.done").await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    let v = patronus_network::lan::get_setting(&store, "ztp.done")
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     store.close().await;
     Ok(v)
 }
 
-pub async fn run(db: Option<PathBuf>, bootstrap: Option<PathBuf>, force: bool) -> anyhow::Result<()> {
-    let path = bootstrap.clone().unwrap_or_else(patronus_config::defaults::default_bootstrap_path);
+pub async fn run(
+    db: Option<PathBuf>,
+    bootstrap: Option<PathBuf>,
+    force: bool,
+) -> anyhow::Result<()> {
+    let path = bootstrap
+        .clone()
+        .unwrap_or_else(patronus_config::defaults::default_bootstrap_path);
     let text = std::fs::read_to_string(&path).unwrap_or_default();
     let Some(p) = parse(&text)? else {
-        println!("{} no [provisioning] section in {}: nothing to do", "•".cyan(), path.display());
+        println!(
+            "{} no [provisioning] section in {}: nothing to do",
+            "•".cyan(),
+            path.display()
+        );
         return Ok(());
     };
     if !force {
         if let Some(when) = marker(db.as_deref()).await? {
-            println!("{} already provisioned (at {when}); use --force to repeat", "•".cyan());
+            println!(
+                "{} already provisioned (at {when}); use --force to repeat",
+                "•".cyan()
+            );
             return Ok(());
         }
     }
@@ -118,20 +163,31 @@ pub async fn run(db: Option<PathBuf>, bootstrap: Option<PathBuf>, force: bool) -
     let tmp = std::env::temp_dir().join(format!(".patronus-ztp-{}.json", std::process::id()));
     {
         use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)?;
         std::io::Write::write_all(&mut f, serde_json::to_string(&doc)?.as_bytes())?;
     }
     let res = apply::import(
         &tmp,
         true,
-        ApplyOptions { db: db.clone(), bootstrap, phases: None, dry_run: false },
+        ApplyOptions {
+            db: db.clone(),
+            bootstrap,
+            phases: None,
+            dry_run: false,
+        },
     )
     .await;
     let _ = std::fs::remove_file(&tmp);
     res?;
     let store = apply::open_store(db.as_deref()).await?;
     let now = chrono::Utc::now().to_rfc3339();
-    patronus_network::lan::set_setting(&store, "ztp.done", &now).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    patronus_network::lan::set_setting(&store, "ztp.done", &now)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     store.close().await;
     println!("{} provisioned from {}", "•".cyan(), p.url);
     Ok(())
@@ -144,8 +200,15 @@ mod tests {
     #[test]
     fn parses_the_provisioning_section() {
         assert_eq!(parse("[network]\nwan_interfaces=[\"a\"]\n").unwrap(), None);
-        let p = parse("[provisioning]\nurl = \"https://p.example/x.json\"\npassphrase_file = \"/etc/p\"\n").unwrap().unwrap();
-        assert_eq!((p.url.as_str(), p.wait_secs), ("https://p.example/x.json", 180));
+        let p = parse(
+            "[provisioning]\nurl = \"https://p.example/x.json\"\npassphrase_file = \"/etc/p\"\n",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            (p.url.as_str(), p.wait_secs),
+            ("https://p.example/x.json", 180)
+        );
         assert_eq!(p.passphrase_file, Some(PathBuf::from("/etc/p")));
         assert!(parse("[provisioning]\nurl = \"file:///etc/shadow\"\n").is_err());
     }
@@ -154,7 +217,8 @@ mod tests {
     fn bundles_open_plain_or_sealed() {
         let doc = br#"{"tables":{}}"#;
         assert!(open_bundle(doc, None).is_ok());
-        let sealed = patronus_secrets::crypto::seal_with_passphrase(doc, "correct horse battery").unwrap();
+        let sealed =
+            patronus_secrets::crypto::seal_with_passphrase(doc, "correct horse battery").unwrap();
         assert!(open_bundle(&sealed, None).is_err());
         assert!(open_bundle(&sealed, Some("wrong wrong wrong")).is_err());
         assert!(open_bundle(&sealed, Some("correct horse battery")).is_ok());

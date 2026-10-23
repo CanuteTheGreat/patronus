@@ -306,7 +306,10 @@ pub async fn upload_restore(
 ) -> Response {
     // an encrypted remote backup (PBK1): decrypt with X-Backup-Passphrase
     let body = if crate::backup_remote::is_encrypted(&body) {
-        let Some(p) = headers.get("x-backup-passphrase").and_then(|v| v.to_str().ok()) else {
+        let Some(p) = headers
+            .get("x-backup-passphrase")
+            .and_then(|v| v.to_str().ok())
+        else {
             return error(
                 StatusCode::BAD_REQUEST,
                 "Invalid backup: it is encrypted, send the passphrase in the X-Backup-Passphrase header",
@@ -490,7 +493,10 @@ pub async fn factory_reset(
     Json(req): Json<FactoryReset>,
 ) -> Response {
     if req.confirm != "RESET" {
-        return error(StatusCode::BAD_REQUEST, "Invalid request: type RESET to confirm");
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Invalid request: type RESET to confirm",
+        );
     }
     if state
         .auth
@@ -534,8 +540,14 @@ pub async fn factory_reset(
         Ok(Err(e)) => return error(StatusCode::INTERNAL_SERVER_ERROR, e),
         Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
-    match state.system.restore(&state.config_store, &doc, "factory reset").await {
-        Ok(lines) => Json(json!({ "ok": true, "backup": backup.name, "applied": lines })).into_response(),
+    match state
+        .system
+        .restore(&state.config_store, &doc, "factory reset")
+        .await
+    {
+        Ok(lines) => {
+            Json(json!({ "ok": true, "backup": backup.name, "applied": lines })).into_response()
+        }
         Err(e) => err(e),
     }
 }
