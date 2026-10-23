@@ -466,8 +466,69 @@ impl FirewallApplier {
                 at.format("%a %H:%M")
             ));
         }
+        let script = if lockdown {
+            script
+        } else {
+            via_vrf_devices(&script, &vrf_members(store).await)
+        };
         Ok(Rendered { script, report })
     }
+}
+
+/// (member device, VRF device) pairs from the store; empty when VRF is not
+/// configured (or the table does not exist yet).
+async fn vrf_members(store: &ConfigStore) -> Vec<(String, String)> {
+    use sqlx::Row;
+    let Ok(pool) = store.pool() else {
+        return Vec::new();
+    };
+    sqlx::query(
+        "SELECT m.interface, m.vrf FROM vrf_members m JOIN vrf_instances v ON v.name = m.vrf",
+    )
+    .fetch_all(pool)
+    .await
+    .map(|rows| {
+        rows.iter()
+            .map(|r| {
+                (
+                    r.get::<String, _>(0),
+                    format!("vrf-{}", r.get::<String, _>(1)),
+                )
+            })
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// The kernel hands local traffic that arrives on a VRF member to the INPUT
+/// hook with the VRF device as the input interface, so `input iifname "eth1"`
+/// never matches a member of a VRF: the management UI, DNS, DHCP and every
+/// service rule would go dark. Input rules for a member also match its VRF
+/// device. (Forwarded traffic still shows the member itself.)
+pub fn via_vrf_devices(script: &str, members: &[(String, String)]) -> String {
+    if members.is_empty() {
+        return script.to_string();
+    }
+    let mut out = String::with_capacity(script.len() + 64);
+    for line in script.lines() {
+        let mut l = line.to_string();
+        if let Some(pos) = line.find(" input iifname \"") {
+            for (dev, vrf) in members {
+                let needle = format!(" input iifname \"{dev}\" ");
+                if line[pos..].starts_with(&needle) {
+                    l = line.replacen(
+                        &needle,
+                        &format!(" input iifname {{ \"{dev}\", \"{vrf}\" }} "),
+                        1,
+                    );
+                    break;
+                }
+            }
+        }
+        out.push_str(&l);
+        out.push('\n');
+    }
+    out
 }
 
 impl FirewallApplier {
@@ -1042,6 +1103,21 @@ mod tests {
             !l.contains("forward iifname") && !l.contains("masquerade"),
             "{l}"
         );
+    }
+
+    #[test]
+    fn vrf_members_are_matched_on_their_vrf_device_for_input_rules() {
+        let m = vec![("eth1".to_string(), "vrf-red".to_string())];
+        let src = "add rule inet patronus input iifname \"eth1\" tcp dport {22,8443} accept\n\
+                   add rule inet patronus input iifname \"eth2\" tcp dport 22 accept\n\
+                   add rule inet patronus forward iifname \"eth1\" accept\n";
+        let out = via_vrf_devices(src, &m);
+        assert!(out.contains(
+            "input iifname { \"eth1\", \"vrf-red\" } tcp dport {22,8443} accept"
+        ));
+        assert!(out.contains("input iifname \"eth2\" tcp dport 22 accept"));
+        assert!(out.contains("forward iifname \"eth1\" accept"));
+        assert_eq!(via_vrf_devices(src, &[]), src);
     }
 
     #[test]

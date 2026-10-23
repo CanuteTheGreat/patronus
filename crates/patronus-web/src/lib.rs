@@ -9,6 +9,8 @@ pub mod auth;
 pub mod backup_remote;
 pub mod geo_centroid;
 pub mod qrcode;
+#[cfg(feature = "ldap")]
+pub mod ldap;
 pub mod radius;
 pub mod rbac;
 pub mod routes;

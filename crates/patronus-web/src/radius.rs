@@ -191,12 +191,19 @@ pub struct AuthServer {
     pub default_role: String,
     pub timeout_secs: u32,
     pub enabled: bool,
+    /// LDAP only (empty for RADIUS)
+    pub base_dn: String,
+    pub bind_dn: String,
+    pub user_filter: String,
+    pub tls: String,
+    pub operator_group: String,
 }
 
 pub async fn servers(store: &patronus_config::ConfigStore) -> anyhow::Result<Vec<AuthServer>> {
     let pool = store.pool().map_err(|e| anyhow::anyhow!("{e}"))?;
     let rows = sqlx::query(
-        "SELECT id, name, kind, host, port, secret, default_role, timeout_secs, enabled
+        "SELECT id, name, kind, host, port, secret, default_role, timeout_secs, enabled,
+                base_dn, bind_dn, user_filter, tls, operator_group
          FROM auth_servers ORDER BY id",
     )
     .fetch_all(pool)
@@ -213,6 +220,11 @@ pub async fn servers(store: &patronus_config::ConfigStore) -> anyhow::Result<Vec
             default_role: r.get(6),
             timeout_secs: r.get::<i64, _>(7) as u32,
             enabled: r.get::<i64, _>(8) != 0,
+            base_dn: r.get(9),
+            bind_dn: r.get(10),
+            user_filter: r.get(11),
+            tls: r.get(12),
+            operator_group: r.get(13),
         })
         .collect())
 }
@@ -275,6 +287,113 @@ pub async fn add_server(
     .bind(role)
     .bind(i64::from(timeout))
     .bind(chrono::Utc::now().timestamp())
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        if e.to_string().contains("UNIQUE") {
+            anyhow::anyhow!("Invalid server name: {name} already exists")
+        } else {
+            anyhow::anyhow!("saving the server: {e}")
+        }
+    })?;
+    Ok(r.last_insert_rowid())
+}
+
+/// The settings of an LDAP server (what `add_ldap_server` validates).
+#[derive(Debug, Default, Clone)]
+pub struct LdapInput {
+    pub name: String,
+    pub host: String,
+    pub port: Option<u16>,
+    pub base_dn: String,
+    pub bind_dn: String,
+    pub bind_password: String,
+    pub user_filter: Option<String>,
+    pub tls: Option<String>,
+    pub operator_group: String,
+    pub default_role: Option<String>,
+    pub timeout_secs: Option<u32>,
+}
+
+fn plain_dn(x: &str) -> bool {
+    x.len() <= 512 && !x.chars().any(|c| c.is_control())
+}
+
+pub async fn add_ldap_server(
+    store: &patronus_config::ConfigStore,
+    i: &LdapInput,
+) -> anyhow::Result<i64> {
+    let name = i.name.trim();
+    if name.is_empty()
+        || name.len() > 40
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ' '))
+    {
+        anyhow::bail!("Invalid server name {name:?}: 1-40 letters, digits, '-', '_', '.' or spaces");
+    }
+    let host = i.host.trim();
+    if host.is_empty()
+        || host.len() > 253
+        || !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | ':'))
+    {
+        anyhow::bail!("Invalid server address {host:?}: a host name or IP address");
+    }
+    let tls = i.tls.as_deref().unwrap_or("none");
+    if !matches!(tls, "none" | "starttls" | "ldaps") {
+        anyhow::bail!("Invalid tls {tls:?}: none, starttls or ldaps");
+    }
+    let port = i.port.unwrap_or(if tls == "ldaps" { 636 } else { 389 });
+    if port == 0 {
+        anyhow::bail!("Invalid port: 1-65535");
+    }
+    if i.base_dn.trim().is_empty() || !plain_dn(&i.base_dn) {
+        anyhow::bail!("Invalid base DN: the entry the user search starts at");
+    }
+    if !plain_dn(&i.bind_dn) || !plain_dn(&i.operator_group) {
+        anyhow::bail!("Invalid DN: printable characters only");
+    }
+    if i.bind_dn.is_empty() != i.bind_password.is_empty() {
+        anyhow::bail!("Invalid search account: give both the bind DN and its password, or neither (anonymous search)");
+    }
+    if i.bind_password.len() > 128 || i.bind_password.chars().any(|c| c.is_control()) {
+        anyhow::bail!("Invalid password: at most 128 printable characters");
+    }
+    let filter = i.user_filter.as_deref().unwrap_or("(uid={u})");
+    #[cfg(feature = "ldap")]
+    if !crate::ldap::check_filter(filter) {
+        anyhow::bail!("Invalid user filter {filter:?}: parenthesised and containing {{u}}, e.g. (uid={{u}})");
+    }
+    #[cfg(not(feature = "ldap"))]
+    anyhow::bail!("Invalid server kind: this build has no LDAP support (USE=ldap)");
+    let role = i.default_role.as_deref().unwrap_or("readonly");
+    if !matches!(role, "readonly" | "operator") {
+        anyhow::bail!("Invalid default role {role:?}: readonly or operator (admins are promoted by hand)");
+    }
+    let timeout = i.timeout_secs.unwrap_or(5);
+    if !(1..=30).contains(&timeout) {
+        anyhow::bail!("Invalid timeout: 1-30 seconds");
+    }
+    let pool = store.pool().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let r = sqlx::query(
+        "INSERT INTO auth_servers (name, kind, host, port, secret, default_role, timeout_secs, enabled, created_at,
+                                   base_dn, bind_dn, user_filter, tls, operator_group)
+         VALUES (?, 'ldap', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(name)
+    .bind(host)
+    .bind(i64::from(port))
+    .bind(&i.bind_password)
+    .bind(role)
+    .bind(i64::from(timeout))
+    .bind(chrono::Utc::now().timestamp())
+    .bind(i.base_dn.trim())
+    .bind(&i.bind_dn)
+    .bind(filter.trim())
+    .bind(tls)
+    .bind(&i.operator_group)
     .execute(pool)
     .await
     .map_err(|e| {

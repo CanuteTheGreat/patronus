@@ -1354,8 +1354,26 @@ async fn external_login(
             return None;
         }
     }
-    let server = crate::radius::check_login(&app_state.config_store, &name, password).await?;
-    let role = UserRole::parse(&server.default_role).unwrap_or(UserRole::ReadOnly);
+    // user names that could not be an account are not offered to a directory
+    check_username(&name).ok()?;
+    let role = if let Some(server) =
+        crate::radius::check_login(&app_state.config_store, &name, password).await
+    {
+        UserRole::parse(&server.default_role).unwrap_or(UserRole::ReadOnly)
+    } else {
+        #[cfg(feature = "ldap")]
+        {
+            let (server, found) =
+                crate::ldap::check_login(&app_state.config_store, &name, password).await?;
+            if found.operator {
+                UserRole::Operator
+            } else {
+                UserRole::parse(&server.default_role).unwrap_or(UserRole::ReadOnly)
+            }
+        }
+        #[cfg(not(feature = "ldap"))]
+        return None;
+    };
     let u = app_state
         .auth
         .user_store

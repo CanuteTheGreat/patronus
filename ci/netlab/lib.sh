@@ -200,7 +200,7 @@ nl_web_stop() {
 nl_web() {
   local data=()
   [ $# -ge 3 ] && data=(-d "$3")
-  NL_CODE=$(C curl -sk -b "$NL_T/nl-jar" -c "$NL_T/nl-jar" -o "$NL_OUT" -w '%{http_code}' \
+  NL_CODE=$(C curl -sk -m 60 -b "$NL_T/nl-jar" -c "$NL_T/nl-jar" -o "$NL_OUT" -w '%{http_code}' \
     -X "$1" -H 'content-type: application/json' "${data[@]}" "$NL_UI$2")
 }
 nl_api() { local m=$1 p=$2; shift 2; nl_web "$m" "/api$p" "$@"; }

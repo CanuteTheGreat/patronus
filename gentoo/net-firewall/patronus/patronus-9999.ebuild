@@ -352,6 +352,7 @@ src_install() {
 		use wireguard && webfeatures+=( wireguard )
 		use ipsec && webfeatures+=( ipsec )
 		use totp && webfeatures+=( totp )
+		use ldap && webfeatures+=( ldap )
 		use syslog && webfeatures+=( syslog )
 		use netflow && webfeatures+=( netflow )
 		use igmp && webfeatures+=( igmp )
