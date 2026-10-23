@@ -33,7 +33,7 @@ IUSE="
 	+monitoring prometheus ntopng netflow collectd
 	+captive-portal
 	intrusion-detection suricata snort
-	syslog igmp nat64 l2tp upnp web-proxy dynamic-routing sdwan
+	syslog igmp nat64 l2tp upnp vrf web-proxy dynamic-routing sdwan
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp
@@ -224,6 +224,7 @@ src_configure() {
 		$(usex nat64 "nat64" "")
 		$(usex l2tp "l2tp" "")
 		$(usex upnp "upnp" "")
+		$(usex vrf "vrf" "")
 		$(usex web-proxy "web-proxy" "")
 		$(usex intrusion-detection "intrusion-detection" "")
 		$(usex dynamic-routing "dynamic-routing" "")
@@ -357,6 +358,7 @@ src_install() {
 		use nat64 && webfeatures+=( nat64 )
 		use l2tp && webfeatures+=( l2tp )
 		use upnp && webfeatures+=( upnp )
+		use vrf && webfeatures+=( vrf )
 		use openvpn && webfeatures+=( openvpn )
 		use web-proxy && webfeatures+=( web-proxy )
 		use intrusion-detection && webfeatures+=( intrusion-detection )

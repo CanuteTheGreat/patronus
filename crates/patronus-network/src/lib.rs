@@ -97,6 +97,8 @@ pub mod nat64;
 pub mod l2tp;
 #[cfg(feature = "upnp")]
 pub mod upnp;
+#[cfg(feature = "vrf")]
+pub mod vrf;
 #[cfg(feature = "web-proxy")]
 pub mod proxy;
 
