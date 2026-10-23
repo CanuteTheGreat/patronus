@@ -147,7 +147,7 @@ fn svc_appliers(spec: &patronus_network::svc::Spec) -> Vec<&'static str> {
     }
     if matches!(
         spec.slug,
-        "igmp" | "nat64" | "l2tp" | "upnp" | "openvpn" | "proxy" | "ids" | "frr" | "edge"
+        "igmp" | "nat64" | "l2tp" | "upnp" | "openvpn" | "proxy" | "ids" | "frr" | "edge" | "vrf"
     ) {
         v.push("firewall");
     }
@@ -155,6 +155,68 @@ fn svc_appliers(spec: &patronus_network::svc::Spec) -> Vec<&'static str> {
         v.push("dns");
     }
     v
+}
+
+#[cfg(feature = "plugins")]
+impl LanManager {
+    pub fn plugin_store(&self) -> Arc<ConfigStore> {
+        self.store.clone()
+    }
+
+    pub async fn plugin_install(
+        &self,
+        bundle: &str,
+    ) -> anyhow::Result<(patronus_network::plugins::Manifest, bool)> {
+        let _g = self.edit.lock().await;
+        let snap = self.begin("install a plugin").await?;
+        let sup = patronus_network::supervise::Supervisor::detect();
+        let r = patronus_network::plugins::install(&self.store, &sup, bundle)
+            .await
+            .map_err(e)?;
+        self.commit("plugins", snap, &["plugins", "firewall"]).await?;
+        Ok(r)
+    }
+
+    pub async fn plugin_remove(&self, name: &str) -> anyhow::Result<bool> {
+        let _g = self.edit.lock().await;
+        let snap = self.begin("remove a plugin").await?;
+        let sup = patronus_network::supervise::Supervisor::detect();
+        let gone = patronus_network::plugins::remove(&self.store, &sup, name)
+            .await
+            .map_err(e)?;
+        self.commit("plugins", snap, &["plugins", "firewall"]).await?;
+        Ok(gone)
+    }
+
+    pub async fn plugin_enable(&self, name: &str, on: bool) -> anyhow::Result<bool> {
+        let _g = self.edit.lock().await;
+        let snap = self.begin("switch a plugin").await?;
+        let found = patronus_network::plugins::set_enabled(&self.store, name, on)
+            .await
+            .map_err(e)?;
+        self.commit("plugins", snap, &["plugins", "firewall"]).await?;
+        Ok(found)
+    }
+
+    pub async fn plugin_key_add(&self, label: &str, public: &str) -> anyhow::Result<String> {
+        let _g = self.edit.lock().await;
+        let snap = self.begin("trust a plugin key").await?;
+        let id = patronus_network::plugins::add_key(&self.store, label, public)
+            .await
+            .map_err(e)?;
+        self.commit("plugins", snap, &["plugins", "firewall"]).await?;
+        Ok(id)
+    }
+
+    pub async fn plugin_key_delete(&self, id: &str) -> anyhow::Result<bool> {
+        let _g = self.edit.lock().await;
+        let snap = self.begin("revoke a plugin key").await?;
+        let gone = patronus_network::plugins::delete_key(&self.store, id)
+            .await
+            .map_err(e)?;
+        self.commit("plugins", snap, &["plugins", "firewall"]).await?;
+        Ok(gone)
+    }
 }
 
 impl LanManager {

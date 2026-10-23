@@ -26,7 +26,7 @@
 		<flag name="ipsec">Enable IPsec/strongSwan support</flag>
 		<flag name="monitoring">Enable system and traffic monitoring</flag>
 		<flag name="prometheus">Enable Prometheus metrics export</flag>
-		<flag name="ntopng">Enable ntopng traffic monitoring</flag>
+		<flag name="plugins">Signed plugins and optional components (Packages page, patronus plugin)</flag>
 		<flag name="syslog">Forward the system log to remote collectors from the web UI (rsyslog)</flag>
 		<flag name="igmp">IGMP proxy for multicast forwarding (igmpproxy)</flag>
 		<flag name="nat64">NAT64 / DNS64 for IPv6-only clients (tayga + Unbound)</flag>

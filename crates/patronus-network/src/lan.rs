@@ -67,6 +67,9 @@ pub const LAN_TABLES: &[&str] = &[
     "wol_hosts",
     "edge_endpoints",
     "edge_subnets",
+    // signed plugins (USE=plugins)
+    "plugin_keys",
+    "plugins",
 ];
 
 pub(crate) fn db_err(what: &'static str) -> impl Fn(sqlx::Error) -> Error {
@@ -942,6 +945,8 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::frr::FrrApplier::new(env.clone())));
     #[cfg(feature = "sdwan-edge")]
     v.push(Arc::new(crate::edge::EdgeApplier::default()));
+    #[cfg(feature = "plugins")]
+    v.push(Arc::new(crate::plugins::PluginsApplier::default()));
     let _ = env;
     v
 }

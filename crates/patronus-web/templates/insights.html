@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}Traffic insights - Patronus{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Traffic insights</h1>
+    <p class="page-subtitle">Built in, no extra daemon: who is talking, to which services, and how fast each
+        interface moves. Read from the kernel's connection-tracking table (per-flow byte counters) and the
+        interface counters, refreshed every 5 seconds. Counts cover the flows tracked right now, not history.</p>
+</div>
+
+<div class="card" id="ins-status"><p class="text-sm" id="ins-summary">Loading...</p></div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Interfaces</h2></div>
+    <table class="lan" id="ins-ifaces">
+        <thead><tr><th>Interface</th><th>State</th><th>Receive</th><th>Transmit</th><th>Received total</th><th>Sent total</th></tr></thead>
+        <tbody></tbody>
+    </table>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Top hosts</h2></div>
+    <table class="lan" id="ins-hosts">
+        <thead><tr><th>Host (source)</th><th>Traffic</th><th>Packets</th><th>Flows</th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <p class="empty" id="ins-hosts-empty" style="display:none">No tracked flows.</p>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Top services</h2></div>
+    <table class="lan" id="ins-services">
+        <thead><tr><th>Protocol</th><th>Port</th><th>Service</th><th>Traffic</th><th>Flows</th></tr></thead>
+        <tbody></tbody>
+    </table>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Protocols</h2></div>
+    <table class="lan" id="ins-protocols">
+        <thead><tr><th>Protocol</th><th>Traffic</th><th>Flows</th></tr></thead>
+        <tbody></tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    let prev = null;
+    function human(n) {
+        const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; n = Number(n);
+        while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+        return (i ? n.toFixed(1) : n.toFixed(0)) + ' ' + u[i];
+    }
+    function rate(bytes, ms) { return ms > 0 ? human(bytes * 1000 / ms) + '/s' : '-'; }
+    function fill(id, rows) {
+        const tb = document.querySelector('#' + id + ' tbody'); tb.textContent = '';
+        for (const r of rows) {
+            const tr = document.createElement('tr');
+            for (const c of r) { const td = document.createElement('td'); td.textContent = c; tr.appendChild(td); }
+            tb.appendChild(tr);
+        }
+    }
+    async function refresh() {
+        let d;
+        try {
+            const r = await fetch('/api/insights', {credentials: 'same-origin'});
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            d = await r.json();
+        } catch (e) { document.getElementById('ins-summary').textContent = 'Could not load insights: ' + e; return; }
+        document.getElementById('ins-summary').textContent = d.error ? d.error :
+            d.flows + ' tracked flow(s)' + (d.accounting || d.flows === 0 ? '' :
+            '; byte counters are off (connection-tracking accounting is not enabled), so traffic amounts show 0');
+        const dt = prev ? d.time - prev.time : 0, old = {};
+        if (prev) for (const i of prev.interfaces) old[i.name] = i;
+        fill('ins-ifaces', d.interfaces.map(i => [i.name, i.state,
+            old[i.name] ? rate(i.rx_bytes - old[i.name].rx_bytes, dt) : '-',
+            old[i.name] ? rate(i.tx_bytes - old[i.name].tx_bytes, dt) : '-',
+            human(i.rx_bytes), human(i.tx_bytes)]));
+        fill('ins-hosts', d.top_hosts.map(h => [h.host, human(h.bytes), h.packets, h.flows]));
+        document.getElementById('ins-hosts-empty').style.display = d.top_hosts.length ? 'none' : '';
+        fill('ins-services', d.top_services.map(s => [s.proto, s.port === null ? '-' : s.port, s.name, human(s.bytes), s.flows]));
+        fill('ins-protocols', d.protocols.map(p => [p.proto, human(p.bytes), p.flows]));
+        prev = d;
+    }
+    document.addEventListener('DOMContentLoaded', () => { refresh(); setInterval(refresh, 5000); });
+</script>
+{% endblock %}

@@ -70,9 +70,17 @@ impl SysctlApplier {
                 }
             }
         }
+        // Per-flow byte/packet counters in the connection-tracking table: the
+        // Traffic insights page (top hosts/services) reads them. Skipped with a
+        // warning where nf_conntrack is not loaded yet.
+        if !v.iter().any(|(k, _)| k == CONNTRACK_ACCT) {
+            v.push((CONNTRACK_ACCT.into(), "1".into()));
+        }
         Ok(v)
     }
 }
+
+pub const CONNTRACK_ACCT: &str = "net.netfilter.nf_conntrack_acct";
 
 /// Keys whose target depends on a device existing (`...conf.<dev>...`,
 /// `...neigh.<dev>...`), other than the `all`/`default` pseudo-devices.
@@ -106,7 +114,11 @@ impl Applier for SysctlApplier {
                 }
             };
             if !path.exists() {
-                if let Some(dev) = device_of(&key) {
+                if key == CONNTRACK_ACCT {
+                    report.warn(format!(
+                        "sysctl {key} skipped: connection tracking is not loaded (Traffic insights show no byte counts)"
+                    ));
+                } else if let Some(dev) = device_of(&key) {
                     report.warn(format!(
                         "sysctl {key} skipped: interface {} does not exist yet",
                         dev.replace('/', ".")
@@ -160,6 +172,7 @@ mod tests {
             "net/ipv6/conf/all/forwarding",
             "net/ipv6/conf/eth0/accept_ra",
             "net/ipv6/conf/eth0.100/accept_ra",
+            "net/netfilter/nf_conntrack_acct",
         ] {
             let f = d.path().join(p);
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
@@ -188,6 +201,17 @@ mod tests {
         assert_eq!(read("net/ipv6/conf/eth0/accept_ra"), "2\n");
         assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings); // ghost9 missing
         assert!(r.warnings[0].contains("ghost9"));
+        // conntrack accounting (Traffic insights) is switched on
+        assert_eq!(read("net/netfilter/nf_conntrack_acct"), "1\n");
+    }
+
+    #[tokio::test]
+    async fn missing_conntrack_is_a_warning_not_an_error() {
+        let proc = fake_proc();
+        std::fs::remove_file(proc.path().join("net/netfilter/nf_conntrack_acct")).unwrap();
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let r = SysctlApplier::with_root(proc.path()).apply(&s).await.unwrap();
+        assert!(r.warnings.iter().any(|w| w.contains("nf_conntrack_acct")), "{:?}", r.warnings);
     }
 
     #[tokio::test]

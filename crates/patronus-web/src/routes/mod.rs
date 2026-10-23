@@ -41,6 +41,8 @@ pub fn build_router(
         .merge(api::lan::pages())
         .merge(api::ha::pages())
         .merge(api::qos::pages())
+        .merge(api::insights::pages())
+        .merge(api::packages::pages())
         .merge(api::svc::pages())
         .merge(api::setup::pages())
         // The old "simple" pages claimed services were operational and
@@ -284,6 +286,8 @@ fn api_routes() -> Router<AppState> {
         .merge(api::lan::router())
         .merge(api::ha::router())
         .merge(api::qos::router())
+        .merge(api::insights::router())
+        .merge(api::packages::router())
         .merge(api::svc::router())
         .merge(api::vpn::router())
         .merge(api::network::router())

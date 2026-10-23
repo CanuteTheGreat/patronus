@@ -17,7 +17,7 @@ path = "src/lib.rs"
 # builds patronus-web with --no-default-features and the USE-selected list):
 # lane C interfaces (vlan, pppoe, dhcpcd) and the lane D LAN-service pages
 # (dhcp, dns, ntp).
-default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap"]
+default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins"]
 vlan = ["patronus-network/vlan"]
 pppoe = ["patronus-network/pppoe"]
 dhcpcd = ["patronus-network/dhcpcd"]
@@ -50,6 +50,8 @@ sdwan-edge = ["patronus-network/sdwan-edge"]
 totp = ["dep:hmac", "dep:sha1"]
 # LDAP / Active Directory web login (USE=ldap)
 ldap = ["dep:ldap3"]
+# signed plugins + Gentoo component packages (Packages page)
+plugins = ["patronus-network/plugins"]
 
 [dependencies]
 patronus-core = { path = "../patronus-core" }

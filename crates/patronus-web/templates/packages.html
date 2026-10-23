@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}Packages - Patronus{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Packages and plugins</h1>
+    <p class="page-subtitle">Optional components are Gentoo packages installed with Portage
+        (binary packages from the Gentoo binhost when they exist, otherwise built here); each one serves a
+        Patronus USE flag. Plugins are signed bundles: nothing installs unless its signature verifies against a key
+        you trust below, and plugin services run as root, so trust only keys you control.</p>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Optional components</h2></div>
+    <p class="text-sm text-muted" id="pk-portage"></p>
+    <table class="lan" id="pk-components">
+        <thead><tr><th>Component</th><th>For feature</th><th>Package</th><th>Installed</th><th>Last job</th><th></th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <pre id="pk-log" style="display:none; max-height: 18em; overflow: auto;"></pre>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Plugins</h2></div>
+    <table class="lan" id="pk-plugins">
+        <thead><tr><th>Name</th><th>Version</th><th>Signed by</th><th>Trust</th><th>Service</th><th></th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <p class="empty" id="pk-plugins-empty" style="display:none">No plugins installed.</p>
+    {% if is_admin %}
+    <form class="lan-form" id="pk-install" onsubmit="return installPlugin(event)">
+        <label>Signed bundle (.pplug) <input type="file" name="bundle" required></label>
+        <button class="btn btn-primary btn-sm" type="submit">Install or update</button>
+    </form>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Trusted plugin keys</h2></div>
+    <table class="lan" id="pk-keys">
+        <thead><tr><th>Key id</th><th>Public key</th><th></th></tr></thead>
+        <tbody></tbody>
+    </table>
+    {% if is_admin %}
+    <form class="lan-form" id="pk-key-form" onsubmit="return addKey(event)">
+        <label>Label <input name="label" required></label>
+        <label>Public key (base64, from <code>patronus plugin keygen</code>) <input name="public_key" required></label>
+        <button class="btn btn-primary btn-sm" type="submit">Trust this key</button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const ADMIN = {{ is_admin }};
+    function cellText(tr, t) { const td = document.createElement('td'); td.textContent = t; tr.appendChild(td); return td; }
+    function btn(label, cls, fn) { const b = document.createElement('button'); b.className = 'btn btn-sm ' + cls; b.textContent = label; b.onclick = fn; return b; }
+    async function call(method, url, body, raw) {
+        const r = await fetch(url, {method, credentials: 'same-origin',
+            headers: raw ? {'content-type': 'application/json'} : (body ? {'content-type': 'application/json'} : {}),
+            body: raw ? body : (body ? JSON.stringify(body) : undefined)});
+        let j = null; try { j = await r.json(); } catch (e) {}
+        if (!r.ok) { alert((j && j.error) || ('HTTP ' + r.status)); return null; }
+        return j || {};
+    }
+    async function showLog(id) {
+        const r = await fetch('/api/packages/jobs/' + id + '/log', {credentials: 'same-origin'});
+        const j = await r.json(); const p = document.getElementById('pk-log');
+        p.style.display = ''; p.textContent = j.log || '(no output yet)';
+    }
+    let timer = null;
+    async function load() {
+        const r = await fetch('/api/packages', {credentials: 'same-origin'});
+        if (!r.ok) return; const d = await r.json();
+        document.getElementById('pk-portage').textContent = d.portage ? '' :
+            'This system has no Portage (emerge): components can only be installed on Gentoo.';
+        let busy = false;
+        const tb = document.querySelector('#pk-components tbody'); tb.textContent = '';
+        for (const c of d.components) {
+            const tr = document.createElement('tr'); tr.dataset.component = c.id;
+            cellText(tr, c.title); cellText(tr, c.feature); cellText(tr, c.atom); cellText(tr, c.installed ? 'yes' : 'no');
+            const j = c.last_job; if (j && j.status === 'running') busy = true;
+            const lj = cellText(tr, j ? (j.action + ': ' + j.status + (j.exit_code === null || j.exit_code === undefined ? '' : ' (exit ' + j.exit_code + ')')) : '-');
+            if (j) { const a = document.createElement('a'); a.href = '#'; a.textContent = ' log'; a.onclick = (e) => { e.preventDefault(); showLog(j.id); }; lj.appendChild(a); }
+            const td = document.createElement('td');
+            if (ADMIN && d.portage) {
+                const act = (name) => btn(name, 'btn-secondary', async () => { if (await call('POST', '/api/packages/components/' + c.id + '/' + name)) load(); });
+                td.appendChild(act(c.installed ? 'update' : 'install'));
+                if (c.installed) td.appendChild(btn('remove', 'btn-danger', async () => { if (confirm('Remove ' + c.atom + '?') && await call('POST', '/api/packages/components/' + c.id + '/remove')) load(); }));
+            }
+            tr.appendChild(td); tb.appendChild(tr);
+        }
+        const pb = document.querySelector('#pk-plugins tbody'); pb.textContent = '';
+        document.getElementById('pk-plugins-empty').style.display = d.plugins.length ? 'none' : '';
+        for (const p of d.plugins) {
+            const tr = document.createElement('tr'); tr.dataset.plugin = p.name;
+            cellText(tr, p.name); cellText(tr, p.version); cellText(tr, p.key_id); cellText(tr, p.trust);
+            cellText(tr, p.service ? (p.running ? 'running' : (p.enabled ? 'not running' : 'disabled')) : 'files only');
+            const td = document.createElement('td');
+            if (ADMIN) {
+                td.appendChild(btn(p.enabled ? 'disable' : 'enable', 'btn-secondary', async () => { if (await call('PUT', '/api/packages/plugins/' + p.name, {enabled: !p.enabled})) load(); }));
+                td.appendChild(btn('remove', 'btn-danger', async () => { if (confirm('Remove plugin ' + p.name + '?') && await call('DELETE', '/api/packages/plugins/' + p.name)) load(); }));
+            }
+            tr.appendChild(td); pb.appendChild(tr);
+        }
+        const kb = document.querySelector('#pk-keys tbody'); kb.textContent = '';
+        for (const k of d.keys) {
+            const tr = document.createElement('tr'); cellText(tr, k.key_id); cellText(tr, k.public_key);
+            const td = document.createElement('td');
+            if (ADMIN) td.appendChild(btn('revoke', 'btn-danger', async () => { if (confirm('Stop trusting key ' + k.key_id + '? Its plugins stop.') && await call('DELETE', '/api/packages/keys/' + k.key_id)) load(); }));
+            tr.appendChild(td); kb.appendChild(tr);
+        }
+        clearTimeout(timer); if (busy) timer = setTimeout(load, 4000);
+    }
+    async function installPlugin(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements['bundle'].files[0]; if (!f) return false;
+        const j = await call('POST', '/api/packages/plugins', await f.text(), true);
+        if (j) { ev.target.reset(); load(); }
+        return false;
+    }
+    async function addKey(ev) {
+        ev.preventDefault(); const f = ev.target.elements;
+        if (await call('POST', '/api/packages/keys', {label: f['label'].value, public_key: f['public_key'].value})) { ev.target.reset(); load(); }
+        return false;
+    }
+    document.addEventListener('DOMContentLoaded', load);
+</script>
+{% endblock %}

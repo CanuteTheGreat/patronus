@@ -93,6 +93,13 @@ enum Commands {
         action: GitopsCommands,
     },
 
+    /// Signed plugins: make keys and bundles, check a bundle (USE=plugins)
+    #[cfg(feature = "plugins")]
+    Plugin {
+        #[command(subcommand)]
+        action: PluginCommands,
+    },
+
     /// Web UI accounts (recovery on the box: lost second factor)
     Users {
         #[command(subcommand)]
@@ -365,6 +372,30 @@ enum UsersCommands {
     },
 }
 
+#[cfg(feature = "plugins")]
+#[derive(Subcommand)]
+enum PluginCommands {
+    /// Make an ed25519 signing key pair (<out>.key private, <out>.pub public)
+    Keygen {
+        #[arg(long)]
+        out: std::path::PathBuf,
+    },
+    /// Pack a plugin directory (plugin.json + files/) into a signed bundle
+    Pack {
+        dir: std::path::PathBuf,
+        #[arg(long)]
+        key: std::path::PathBuf,
+        #[arg(long)]
+        out: std::path::PathBuf,
+    },
+    /// Check a bundle against a public key file
+    Verify {
+        bundle: std::path::PathBuf,
+        #[arg(long = "pub")]
+        public: std::path::PathBuf,
+    },
+}
+
 #[cfg(feature = "gitops")]
 #[derive(Subcommand)]
 enum GitopsCommands {
@@ -590,6 +621,13 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await?
             }
+        },
+
+        #[cfg(feature = "plugins")]
+        Commands::Plugin { action } => match action {
+            PluginCommands::Keygen { out } => commands::plugin::keygen(&out)?,
+            PluginCommands::Pack { dir, key, out } => commands::plugin::pack(&dir, &key, &out)?,
+            PluginCommands::Verify { bundle, public } => commands::plugin::verify(&bundle, &public)?,
         },
 
         #[cfg(feature = "gitops")]

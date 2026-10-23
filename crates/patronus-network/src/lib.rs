@@ -101,6 +101,10 @@ pub mod proxy;
 pub mod upnp;
 #[cfg(feature = "vrf")]
 pub mod vrf;
+#[cfg(feature = "plugins")]
+pub mod packages;
+#[cfg(feature = "plugins")]
+pub mod plugins;
 
 #[cfg(feature = "intrusion-detection")]
 pub mod ids;

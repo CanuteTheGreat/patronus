@@ -57,7 +57,6 @@ vpn-ipsec = []
 # Monitoring
 monitoring = []
 monitoring-prometheus = []
-monitoring-ntopng = []
 
 # Advanced features
 captive-portal = []

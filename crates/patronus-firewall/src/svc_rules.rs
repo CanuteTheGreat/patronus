@@ -74,6 +74,28 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
     let mut out = VpnRules::default();
     let t = TABLE;
 
+    // --- signed plugins: the port a verified, running plugin serves on the
+    // LAN (expose_port is kept 0 by the plugins applier when it is not)
+    if let Ok(rows) = sqlx::query(
+        "SELECT name, expose_proto, expose_port FROM plugins WHERE enabled = 1 AND expose_port > 0",
+    )
+    .fetch_all(store.pool()?)
+    .await
+    {
+        for r in rows {
+            let (name, proto, port): (String, String, i64) = (r.get(0), r.get(1), r.get(2));
+            if !matches!(proto.as_str(), "tcp" | "udp") || !(1024..=65535).contains(&port) {
+                continue;
+            }
+            for d in devices(store, "@lan").await {
+                out.filter.push(format!(
+                    "add rule {t} input iifname \"{d}\" {proto} dport {port} accept comment \"plugin {}\"",
+                    name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>()
+                ));
+            }
+        }
+    }
+
     // --- IGMP proxy
     let igmp = settings(store, "igmp").await?;
     if on(&igmp, "enabled") {

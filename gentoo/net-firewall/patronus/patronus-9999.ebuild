@@ -30,13 +30,13 @@ IUSE="
 	+vpn wireguard openvpn ipsec
 	+multiwan
 	ha
-	+monitoring prometheus ntopng netflow collectd
+	+monitoring prometheus netflow collectd
 	+captive-portal
 	intrusion-detection suricata snort
 	syslog igmp nat64 l2tp upnp vrf web-proxy dynamic-routing sdwan
 	+vlan qos +tc
 	certificates acme certbot
-	ldap radius +totp
+	ldap radius +totp +plugins
 	geoip geoip2
 	+aliases
 	scheduled-rules
@@ -107,7 +107,6 @@ RDEPEND="
 	sdwan? ( net-vpn/wireguard-tools dev-libs/openssl:0= || ( net-misc/iputils sys-apps/busybox ) )
 	monitoring? (
 		prometheus? ( app-metrics/prometheus )
-		ntopng? ( net-analyzer/ntopng )
 		netflow? ( net-analyzer/softflowd )
 		collectd? ( app-metrics/collectd )
 	)
@@ -122,7 +121,6 @@ RDEPEND="
 		acme? ( app-crypt/acme-sh )
 		certbot? ( app-crypt/certbot )
 	)
-	ldap? ( net-nds/openldap )
 	radius? ( net-dialup/freeradius )
 	geoip? ( dev-libs/geoip )
 	geoip2? ( dev-libs/libmaxminddb )
@@ -188,7 +186,7 @@ src_configure() {
 	# these features", which is what was actually killing the Gentoo
 	# Docker Build job (not the earlier --path-forwarding issue above,
 	# which was already fixed). Flags with no backing cargo feature at
-	# all (monitoring/prometheus/ntopng/netflow/captive-portal/
+	# all (monitoring/prometheus/netflow/captive-portal/
 	# suricata/qos/certificates/acme/ldap/radius/geoip/
 	# scheduled-rules/wireless) are intentionally left out of this
 	# list -- see the matching IUSE comment for the ones that still gate
@@ -229,6 +227,8 @@ src_configure() {
 		$(usex intrusion-detection "intrusion-detection" "")
 		$(usex dynamic-routing "dynamic-routing" "")
 		$(usex sdwan "sdwan-edge" "")
+		$(usex ldap "ldap" "")
+		$(usex plugins "plugins" "")
 	)
 
 	cargo_src_configure --no-default-features
@@ -353,6 +353,7 @@ src_install() {
 		use ipsec && webfeatures+=( ipsec )
 		use totp && webfeatures+=( totp )
 		use ldap && webfeatures+=( ldap )
+		use plugins && webfeatures+=( plugins )
 		use syslog && webfeatures+=( syslog )
 		use netflow && webfeatures+=( netflow )
 		use igmp && webfeatures+=( igmp )
