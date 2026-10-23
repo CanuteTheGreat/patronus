@@ -116,6 +116,10 @@ pub struct IfaceConfig {
     pub mtu: Option<u32>,
     pub mac: Option<String>,
     pub description: Option<String>,
+    /// DHCPv6 prefix delegation (WAN): the interfaces that get a sub-prefix
+    /// of what the ISP delegates (empty = no prefix delegation).
+    #[serde(default)]
+    pub pd_downstream: Vec<String>,
 }
 
 impl IfaceConfig {
@@ -613,6 +617,22 @@ impl NetConfig {
                     )));
                 }
             }
+            if !i.pd_downstream.is_empty() {
+                if i.ipv6_mode != V6Mode::Dhcp6 {
+                    return Err(invalid(format!(
+                        "{}: prefix delegation needs IPv6 mode dhcp6",
+                        i.name
+                    )));
+                }
+                for d in &i.pd_downstream {
+                    if !is_valid_ifname(d) || *d == i.name {
+                        return Err(invalid(format!(
+                            "prefix delegation target {d:?} on {}",
+                            i.name
+                        )));
+                    }
+                }
+            }
             if i.ipv6_mode != V6Mode::Static && !i.ipv6.is_empty() {
                 return Err(invalid(format!(
                     "{}: IPv6 addresses are only used in static mode",
@@ -649,7 +669,7 @@ impl NetConfig {
         let mut cfg = NetConfig::default();
         let rows = sqlx::query(
             "SELECT name, role, enabled, ipv4_mode, ipv6_mode, gateway4, gateway6, mtu, mac,
-                    description, dhcp
+                    description, dhcp, pd_downstream
              FROM interfaces ORDER BY name",
         )
         .fetch_all(pool)
@@ -671,6 +691,13 @@ impl NetConfig {
             i.mtu = r.get::<Option<i64>, _>(7).map(|m| m as u32);
             i.mac = r.get(8);
             i.description = r.get(9);
+            i.pd_downstream = r
+                .get::<Option<String>, _>(11)
+                .unwrap_or_default()
+                .split(',')
+                .filter(|d| !d.is_empty())
+                .map(String::from)
+                .collect();
             cfg.interfaces.push(i);
         }
         let addrs = sqlx::query(
@@ -859,14 +886,15 @@ impl NetConfig {
         for i in &self.interfaces {
             sqlx::query(
                 "INSERT INTO interfaces (name, role, enabled, dhcp, ipv4_mode, ipv6_mode,
-                     gateway4, gateway6, mtu, mac, description, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     gateway4, gateway6, mtu, mac, description, pd_downstream, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(name) DO UPDATE SET role = excluded.role,
                      enabled = excluded.enabled, dhcp = excluded.dhcp,
                      ipv4_mode = excluded.ipv4_mode, ipv6_mode = excluded.ipv6_mode,
                      gateway4 = excluded.gateway4, gateway6 = excluded.gateway6,
                      mtu = excluded.mtu, mac = excluded.mac,
-                     description = excluded.description, updated_at = excluded.updated_at",
+                     description = excluded.description,
+                     pd_downstream = excluded.pd_downstream, updated_at = excluded.updated_at",
             )
             .bind(&i.name)
             .bind(&i.role)
@@ -879,6 +907,7 @@ impl NetConfig {
             .bind(i.mtu.map(|m| m as i64))
             .bind(&i.mac)
             .bind(&i.description)
+            .bind(i.pd_downstream.join(","))
             .bind(now)
             .execute(&mut *tx)
             .await

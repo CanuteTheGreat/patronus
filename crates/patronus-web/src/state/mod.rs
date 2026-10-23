@@ -109,8 +109,8 @@ impl AppState {
             ),
             monitoring: Arc::new(MonitoringManager::new()),
             auth: AuthState::new(config_store.clone()),
-            config_store,
             backup_targets: crate::backup_remote::BackupTargets::new(config_store.clone()),
+            config_store,
             secrets: Arc::new(SecretManager::new(Arc::new(
                 patronus_secrets::store::MemoryStore::new(),
             ))),

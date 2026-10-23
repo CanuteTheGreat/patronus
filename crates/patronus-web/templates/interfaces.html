@@ -72,6 +72,7 @@
                     <option value="slaac">SLAAC (router advertisements)</option><option value="dhcp6">DHCPv6 (dhcpcd)</option>
                     <option value="none">None</option></select></div>
                 <div class="v6s"><label>IPv6 addresses (CIDR, one per line)</label><textarea name="ipv6" placeholder="fd00:1::1/64"></textarea></div>
+                <div class="v6pd"><label>Delegate prefix to (DHCPv6-PD, comma-separated interface names)</label><input name="pd_downstream" placeholder="e.g. eth1"></div>
                 <div class="v6s"><label>IPv6 gateway</label><input name="gateway6" placeholder="optional"></div>
                 <div><label>MTU</label><input name="mtu" type="number" min="68" max="65535" placeholder="default"></div>
                 <div><label>MAC address (spoof)</label><input name="mac" placeholder="hardware default"></div>
@@ -200,7 +201,7 @@ function modeSummary(c) {
     const p = [];
     if (!c.enabled) p.push('<span class="badge down">disabled</span>');
     if (c.ipv4_mode !== 'unmanaged') p.push('IPv4 ' + esc(c.ipv4_mode) + (c.ipv4.length ? ' ' + c.ipv4.map(esc).join(', ') : '') + (c.gateway4 ? ' gw ' + esc(c.gateway4) : ''));
-    if (c.ipv6_mode !== 'unmanaged') p.push('IPv6 ' + esc(c.ipv6_mode) + (c.ipv6.length ? ' ' + c.ipv6.map(esc).join(', ') : ''));
+    if (c.ipv6_mode !== 'unmanaged') p.push('IPv6 ' + esc(c.ipv6_mode) + (c.ipv6.length ? ' ' + c.ipv6.map(esc).join(', ') : '') + ((c.pd_downstream || []).length ? ' (delegating to ' + c.pd_downstream.map(esc).join(', ') + ')' : ''));
     if (c.mtu) p.push('MTU ' + c.mtu);
     if (c.mac) p.push('MAC ' + esc(c.mac));
     return p.length ? p.join('<br>') : '<span class="muted">role only</span>';
@@ -276,6 +277,7 @@ function modeVis() {
     const f = document.getElementById('edit-form');
     document.querySelectorAll('.v4s').forEach(e => e.style.display = f.ipv4_mode.value === 'static' ? '' : 'none');
     document.querySelectorAll('.v6s').forEach(e => e.style.display = f.ipv6_mode.value === 'static' ? '' : 'none');
+    document.querySelectorAll('.v6pd').forEach(e => e.style.display = f.ipv6_mode.value === 'dhcp6' ? '' : 'none');
 }
 
 function edit(name) {
@@ -291,6 +293,7 @@ function edit(name) {
     f.ipv6_mode.value = c.ipv6_mode;
     f.ipv6.value = (c.ipv6 || []).join('\n');
     f.gateway6.value = c.gateway6 || '';
+    f.pd_downstream.value = (c.pd_downstream || []).join(', ');
     f.mtu.value = c.mtu || '';
     f.mac.value = c.mac || '';
     f.description.value = c.description || '';
@@ -308,7 +311,7 @@ async function saveIface(ev) {
     const body = {
         role: f.role.value || null, enabled: f.enabled.checked,
         ipv4_mode: f.ipv4_mode.value, ipv4: lines(f.ipv4.value), gateway4: f.gateway4.value || null,
-        ipv6_mode: f.ipv6_mode.value, ipv6: lines(f.ipv6.value), gateway6: f.gateway6.value || null,
+        ipv6_mode: f.ipv6_mode.value, ipv6: lines(f.ipv6.value), gateway6: f.gateway6.value || null, pd_downstream: f.pd_downstream.value.split(',').map(x => x.trim()).filter(x => x),
         mtu: f.mtu.value ? parseInt(f.mtu.value, 10) : null, mac: f.mac.value || null, description: f.description.value || null,
     };
     if (await call('PUT', '/api/interfaces/' + encodeURIComponent(f.name.value), body)) hide('edit-card');

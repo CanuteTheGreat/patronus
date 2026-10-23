@@ -638,7 +638,14 @@ impl<'a> Planner<'a> {
             V6Mode::None => {
                 self.sysctl(dev, "accept_ra", "0");
                 self.sysctl(dev, "autoconf", "0");
-                self.addr_diff(dev, &[], true, false);
+                // a prefix delegated by the ISP lands here through dhcpcd
+                let pd_target = self
+                    .inp
+                    .cfg
+                    .interfaces
+                    .iter()
+                    .any(|w| w.pd_downstream.iter().any(|d| d == dev));
+                self.addr_diff(dev, &[], true, pd_target);
                 self.gateway(dev, true, None, metric);
             }
         }
@@ -663,6 +670,7 @@ impl<'a> Planner<'a> {
                         *client,
                         prefix,
                         self.inp.paths,
+                        &i.pd_downstream,
                     ) {
                         Ok(s) => self.push(Op::Ensure(s)),
                         Err(e) => self.warn(format!("{dev}: DHCP client not started: {e}")),

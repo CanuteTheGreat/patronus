@@ -42,6 +42,8 @@ pub struct InterfaceUpdate {
     pub ipv6_mode: String,
     pub ipv6: Vec<String>,
     pub gateway6: Option<String>,
+    /// DHCPv6-PD (WAN, ipv6_mode dhcp6): interfaces that get a /64 slice
+    pub pd_downstream: Vec<String>,
     pub mtu: Option<u32>,
     pub mac: Option<String>,
     pub description: Option<String>,
@@ -566,6 +568,12 @@ impl InterfacesManager {
         let ipv6 = parse_nets(&u.ipv6, true)?;
         let gateway4 = parse_ip(&u.gateway4)?;
         let gateway6 = parse_ip(&u.gateway6)?;
+        let pd_downstream: Vec<String> = u
+            .pd_downstream
+            .iter()
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty())
+            .collect();
         let mac = opt(&u.mac)
             .map(|m| netconf::normalize_mac(&m))
             .transpose()
@@ -601,6 +609,11 @@ impl InterfacesManager {
                 gateway6
             } else {
                 None
+            };
+            i.pd_downstream = if ipv6_mode == V6Mode::Dhcp6 {
+                pd_downstream
+            } else {
+                Vec::new()
             };
             i.mtu = u.mtu.filter(|m| *m > 0);
             i.mac = mac;
