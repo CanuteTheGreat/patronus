@@ -89,7 +89,7 @@ pub fn render_conf(
     for d in lan_devs {
         c.push_str(&format!("listening_ip={d}\n"));
     }
-    c.push_str("port=5000\nnat_pmp=");
+    c.push_str("port=5000\nenable_natpmp=");
     c.push_str(if s.b("natpmp") { "yes\n" } else { "no\n" });
     c.push_str("enable_upnp=");
     c.push_str(if s.b("upnp") { "yes\n" } else { "no\n" });
@@ -260,7 +260,7 @@ mod tests {
         ]);
         let c = render_conf(&s, &["eth1".into()], "eth0", true, "/x/leases");
         assert!(c.contains("ext_ifname=eth0\nlistening_ip=eth1\n"));
-        assert!(c.contains("nat_pmp=yes\n") && c.contains("enable_upnp=no\n"));
+        assert!(c.contains("enable_natpmp=yes\n") && c.contains("enable_upnp=no\n"));
         assert!(c.contains("secure_mode=yes\n") && c.contains("ext_allow_private_ipv4=yes\n"));
         assert!(c.contains("allow 2000-3000 0.0.0.0/0 2000-3000\ndeny 0-65535"));
         assert!(!render_conf(&s, &["eth1".into()], "eth0", false, "l").contains("allow_private"));

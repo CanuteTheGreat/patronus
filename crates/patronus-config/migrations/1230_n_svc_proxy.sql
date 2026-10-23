@@ -2,6 +2,6 @@
 CREATE TABLE IF NOT EXISTS proxy_blocked (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     domain TEXT NOT NULL,
-    note TEXT NOT NULL DEFAULT '',
+    note TEXT,
     updated_at INTEGER NOT NULL
 );

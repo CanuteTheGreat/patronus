@@ -24,11 +24,11 @@ import http.server, sys, os
 os.chdir(sys.argv[1])
 http.server.test(HandlerClass=http.server.SimpleHTTPRequestHandler, port=8082, bind="0.0.0.0")
 PY
-nl_bg INET python3 "$NL_T/nl-ztp-srv.py" "$SRV"
-sleep 1
 
 echo "=== a blank box provisions itself"
 nl_boot "$BLANK"       # fresh namespaces, default ruleset only
+nl_bg INET python3 "$NL_T/nl-ztp-srv.py" "$SRV"
+sleep 1
 nl_assert_nft_lacks ztp-block-9000
 cat >>"$NL_TOML" <<EOT
 
