@@ -1348,6 +1348,21 @@ impl Database {
         // Start a transaction
         let mut tx = self.pool.begin().await?;
 
+        // Metrics reference paths (FK), so they go first
+        sqlx::query(
+            r#"
+            DELETE FROM sdwan_path_metrics
+            WHERE path_id IN (
+                SELECT path_id FROM sdwan_paths
+                WHERE src_site_id = ? OR dst_site_id = ?
+            )
+            "#,
+        )
+        .bind(site_id.to_string())
+        .bind(site_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+
         // Delete paths where this site is source or destination
         let paths_result = sqlx::query(
             r#"
@@ -1691,5 +1706,49 @@ mod tests {
 
         let sites = db.list_sites().await.unwrap();
         assert_eq!(sites.len(), 3);
+    }
+
+    /// Revoking an edge deletes its site; paths, their metrics and endpoints
+    /// must go first or the FK constraints turn it into a 500.
+    #[tokio::test]
+    async fn test_delete_site_removes_paths_metrics_and_endpoints() {
+        let db = Database::new(":memory:").await.unwrap();
+        let mk = |n: &str| Site {
+            id: SiteId::generate(),
+            name: n.to_string(),
+            public_key: vec![1, 2, 3, 4],
+            endpoints: Vec::new(),
+            created_at: SystemTime::now(),
+            last_seen: SystemTime::now(),
+            status: SiteStatus::Active,
+        };
+        let (a, b) = (mk("a"), mk("b"));
+        db.upsert_site(&a).await.unwrap();
+        db.upsert_site(&b).await.unwrap();
+        let ep = Endpoint {
+            address: "203.0.113.2:51820".parse().unwrap(),
+            interface_type: "fiber".to_string(),
+            cost_per_gb: 0.0,
+            reachable: true,
+        };
+        db.store_endpoints(&a.id, &[ep]).await.unwrap();
+        let path = Path {
+            id: PathId::new(0),
+            src_site: a.id.clone(),
+            dst_site: b.id.clone(),
+            src_endpoint: "203.0.113.2:51820".parse().unwrap(),
+            dst_endpoint: "203.0.114.2:51820".parse().unwrap(),
+            wg_interface: Some("sdwan0".to_string()),
+            metrics: PathMetrics::default(),
+            status: PathStatus::Up,
+        };
+        let pid = db.insert_path(&path).await.unwrap();
+        db.record_metrics(pid, &PathMetrics::default()).await.unwrap();
+
+        db.delete_site(&b.id).await.unwrap();
+        assert!(db.get_site(&b.id).await.unwrap().is_none());
+        assert_eq!(db.count_site_paths(&a.id).await.unwrap(), 0);
+        db.delete_site(&a.id).await.unwrap();
+        assert!(db.get_site(&a.id).await.unwrap().is_none());
     }
 }
