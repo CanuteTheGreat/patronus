@@ -1,0 +1,18 @@
+[Unit]
+# Zero-touch provisioning: fetches the configuration named in the
+# [provisioning] section of /etc/patronus/patronus.toml (once; a marker is kept
+# in the store), imports it and applies it. Does nothing without that section.
+# Enable with: systemctl enable patronus-ztp
+Description=Patronus zero-touch provisioning
+After=network-online.target patronus-firewall.service
+Wants=network-online.target
+ConditionPathExists=/etc/patronus/patronus.toml
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/patronus ztp
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

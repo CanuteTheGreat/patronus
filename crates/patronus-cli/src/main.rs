@@ -57,6 +57,19 @@ enum Commands {
     /// Root apply broker for patronus-web (runs one named applier on
     /// request over a unix socket; see patronus_network::applyd) and the
     /// periodic dynamic DNS refresh
+    /// Zero-touch provisioning: fetch the configuration named in the
+    /// [provisioning] section of patronus.toml (url, optional
+    /// passphrase_file for an encrypted bundle), import it and apply it.
+    /// Runs once (a marker is kept in the store); --force repeats it.
+    Ztp {
+        /// Bootstrap file [default: $PATRONUS_BOOTSTRAP or /etc/patronus/patronus.toml]
+        #[arg(long)]
+        bootstrap: Option<PathBuf>,
+        /// Provision again although it already happened
+        #[arg(long)]
+        force: bool,
+    },
+
     Applyd {
         /// Socket path [default: $PATRONUS_APPLYD_SOCKET or /run/patronus/applyd.sock]
         #[arg(long)]
@@ -538,6 +551,10 @@ async fn main() -> anyhow::Result<()> {
             UsersCommands::List => users::list(cli.db.as_deref()).await?,
             UsersCommands::Reset2fa { name } => users::reset_2fa(cli.db.as_deref(), &name).await?,
         },
+
+        Commands::Ztp { bootstrap, force } => {
+            commands::ztp::run(cli.db, bootstrap, force).await?;
+        }
 
         Commands::Applyd { socket, group } => {
             applyd::run(cli.db, socket, group).await?;

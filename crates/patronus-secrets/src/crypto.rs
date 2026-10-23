@@ -83,6 +83,35 @@ pub fn decrypt_secret(encrypted: &[u8], key: &[u8]) -> Result<Vec<u8>> {
     Ok(plaintext)
 }
 
+/// Magic of a passphrase-sealed file (backups, provisioning bundles).
+pub const SEALED_MAGIC: &[u8; 4] = b"PBK1";
+
+/// Encrypt `plain` under a key derived (Argon2id) from `passphrase`:
+/// `PBK1` + 16-byte salt + AES-256-GCM(nonce || ciphertext).
+pub fn seal_with_passphrase(plain: &[u8], passphrase: &str) -> Result<Vec<u8>> {
+    let salt = generate_salt();
+    let key = derive_key(passphrase, &salt)?;
+    let ct = encrypt_secret(plain, &key)?;
+    let mut out = SEALED_MAGIC.to_vec();
+    out.extend_from_slice(&salt);
+    out.extend_from_slice(&ct);
+    Ok(out)
+}
+
+pub fn is_sealed(bytes: &[u8]) -> bool {
+    bytes.starts_with(SEALED_MAGIC)
+}
+
+/// Inverse of [`seal_with_passphrase`].
+pub fn open_with_passphrase(bytes: &[u8], passphrase: &str) -> Result<Vec<u8>> {
+    if !is_sealed(bytes) || bytes.len() < 4 + 16 + NONCE_SIZE {
+        return Err(anyhow::anyhow!("Invalid file: not a passphrase-sealed Patronus file"));
+    }
+    let key = derive_key(passphrase, &bytes[4..20])?;
+    decrypt_secret(&bytes[20..], &key)
+        .map_err(|_| anyhow::anyhow!("Invalid passphrase (or the file is damaged)"))
+}
+
 /// Hash a password for storage using Argon2id
 pub fn hash_password(password: &str) -> Result<String> {
     let salt = SaltString::generate(&mut OsRng);

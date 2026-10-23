@@ -19,3 +19,4 @@ pub mod tunnel;
 pub mod users;
 pub mod validate;
 pub mod web;
+pub mod ztp;

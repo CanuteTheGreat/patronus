@@ -102,6 +102,7 @@ serde_json = "1.0"
 sqlx.workspace = true
 serde_yaml = "0.9"
 toml.workspace = true
+patronus-secrets = { path = "../patronus-secrets" }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 colored = "2.1"

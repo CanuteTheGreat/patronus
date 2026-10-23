@@ -14,29 +14,16 @@ use sqlx::Row;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 
-pub const MAGIC: &[u8; 4] = b"PBK1";
-
 pub fn encrypt(plain: &[u8], passphrase: &str) -> anyhow::Result<Vec<u8>> {
-    let salt = patronus_secrets::crypto::generate_salt();
-    let key = patronus_secrets::crypto::derive_key(passphrase, &salt)?;
-    let ct = patronus_secrets::crypto::encrypt_secret(plain, &key)?;
-    let mut out = MAGIC.to_vec();
-    out.extend_from_slice(&salt);
-    out.extend_from_slice(&ct);
-    Ok(out)
+    patronus_secrets::crypto::seal_with_passphrase(plain, passphrase)
 }
 
 pub fn is_encrypted(bytes: &[u8]) -> bool {
-    bytes.starts_with(MAGIC)
+    patronus_secrets::crypto::is_sealed(bytes)
 }
 
 pub fn decrypt(bytes: &[u8], passphrase: &str) -> anyhow::Result<Vec<u8>> {
-    if !is_encrypted(bytes) || bytes.len() < 4 + 16 + 12 {
-        anyhow::bail!("Invalid backup: not an encrypted Patronus backup");
-    }
-    let key = patronus_secrets::crypto::derive_key(passphrase, &bytes[4..20])?;
-    patronus_secrets::crypto::decrypt_secret(&bytes[20..], &key)
-        .map_err(|_| anyhow::anyhow!("Invalid passphrase (or the file is damaged)"))
+    patronus_secrets::crypto::open_with_passphrase(bytes, passphrase)
 }
 
 #[derive(Debug, Clone, Serialize)]

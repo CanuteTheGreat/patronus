@@ -1,0 +1,20 @@
+#!/sbin/openrc-run
+# Copyright 2026 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v3
+
+# Zero-touch provisioning (see patronus-ztp.service): fetches the configuration
+# named in [provisioning] of /etc/patronus/patronus.toml once, imports and
+# applies it. Enable with: rc-update add patronus-ztp default
+
+description="Patronus zero-touch provisioning"
+
+depend() {
+	need net localmount
+	after firewall patronus-firewall
+}
+
+start() {
+	ebegin "Patronus zero-touch provisioning"
+	/usr/bin/patronus ztp >>/var/log/patronus/ztp.log 2>&1
+	eend $?
+}

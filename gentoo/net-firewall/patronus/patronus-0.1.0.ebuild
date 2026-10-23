@@ -410,6 +410,7 @@ src_install() {
 		# root apply broker (lanes C, D) + per-interface DHCP client / pppd
 		systemd_dounit "${FILESDIR}/patronus-applyd.service"
 		use gitops && systemd_dounit "${FILESDIR}/patronus-gitops.service"
+		systemd_dounit "${FILESDIR}/patronus-ztp.service"
 		systemd_dounit "${FILESDIR}/patronus-dhcpc@.service"
 		systemd_dounit "${FILESDIR}/patronus-daemon@.service"
 		use pppoe && systemd_dounit "${FILESDIR}/patronus-pppoe@.service"
@@ -421,6 +422,7 @@ src_install() {
 		newinitd "${FILESDIR}/patronus-firewall.initd" patronus-firewall
 		newinitd "${FILESDIR}/patronus-applyd.initd" patronus-applyd
 		use gitops && newinitd "${FILESDIR}/patronus-gitops.initd" patronus-gitops
+		newinitd "${FILESDIR}/patronus-ztp.initd" patronus-ztp
 		newinitd "${FILESDIR}/patronus-dhcpc.initd" patronus-dhcpc
 		newinitd "${FILESDIR}/patronus-daemon.initd" patronus-daemon
 		use pppoe && newinitd "${FILESDIR}/patronus-pppoe.initd" patronus-pppoe
