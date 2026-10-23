@@ -44,6 +44,8 @@ R() { ip netns exec nl-rtr "$@"; }
 C() { ip netns exec nl-client "$@"; }
 ISP() { ip netns exec nl-isp "$@"; }
 INET() { ip netns exec nl-inet "$@"; }
+# (exported so polling loops can run `bash -c "R ip route ..."`)
+export -f R C ISP INET
 
 NL_PIDS=()
 # nl_bg NS-HELPER CMD...: start CMD in that namespace in the background.
@@ -301,3 +303,36 @@ nl_assert_lockdown() {
   nl_expect_http_blocked "LAN -> internet in lockdown" "http://$NL_WWW/"
   nl_expect_wan_closed
 }
+
+# --- helpers for the daemon-backed feature scenarios (lane J) -------------------
+# nl_wait SECONDS CMD...: poll until CMD succeeds (quiet).
+nl_wait() {
+  local t=$1; shift
+  local end=$((SECONDS + t))
+  while [ "$SECONDS" -lt "$end" ]; do
+    "$@" >/dev/null 2>&1 && return 0
+    sleep 0.3
+  done
+  return 1
+}
+# nl_kill_daemons NAME...: a reboot ends the daemons Patronus started
+# directly (no init system in the netlab container) and their pid files.
+nl_kill_daemons() {
+  for n in "$@"; do pkill -x "$n" 2>/dev/null || true; done
+  sleep 0.5
+  rm -rf /var/lib/patronus/net /run/patronus
+}
+# nl_api_ok DESC METHOD PATH [JSON]: the call must answer 2xx.
+nl_api_ok() {
+  local d=$1; shift
+  nl_api "$@"
+  case "$NL_CODE" in 2??) ;; *) nl_fail "$d: $NL_CODE $(cat "$NL_OUT")";; esac
+}
+# nl_api_code DESC WANT METHOD PATH [JSON]
+nl_api_code() {
+  local d=$1 want=$2; shift 2
+  nl_api "$@"
+  [ "$NL_CODE" = "$want" ] || nl_fail "$d: got $NL_CODE (want $want): $(cat "$NL_OUT")"
+}
+# nl_json FILE PYTHON-EXPR: print a field of a JSON file (d = the document).
+nl_json() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$1" "$2"; }

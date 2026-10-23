@@ -53,6 +53,9 @@ pub struct DnsSettings {
     pub interfaces: Vec<String>,
     pub blocklist_urls: Vec<String>,
     pub block_mode: String,
+    /// NAT64 prefix to synthesize AAAA records for (USE=nat64 with DNS64 on).
+    #[serde(default)]
+    pub dns64_prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -126,6 +129,17 @@ pub async fn settings(store: &ConfigStore) -> Result<DnsSettings> {
         interfaces: split_list(&g("dns.interfaces", "@lan")),
         blocklist_urls: split_list(&g("dns.blocklist_urls", "")),
         block_mode: g("dns.block_mode", "nxdomain"),
+        dns64_prefix: {
+            let n = lan::settings_with_prefix(store, "nat64.").await?;
+            let on = n.get("nat64.enabled").is_some_and(|v| lan::flag(v))
+                && n.get("nat64.dns64").is_none_or(|v| lan::flag(v));
+            on.then(|| {
+                n.get("nat64.prefix")
+                    .filter(|v| !v.trim().is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| "64:ff9b::/96".to_string())
+            })
+        },
     })
 }
 
@@ -599,8 +613,18 @@ pub fn render_unbound(
         c.push_str(&format!(
             "    auto-trust-anchor-file: \"{UNBOUND_ANCHOR}\"\n"
         ));
+        if s.dns64_prefix.is_some() {
+            c.push_str("    module-config: \"dns64 validator iterator\"\n");
+        }
+    } else if s.dns64_prefix.is_some() {
+        c.push_str("    module-config: \"dns64 iterator\"\n");
     } else {
         c.push_str("    module-config: \"iterator\"\n");
+    }
+    // DNS64 (USE=nat64): synthesize AAAA records for IPv4-only names so
+    // IPv6-only clients reach them through the NAT64 gateway.
+    if let Some(p) = &s.dns64_prefix {
+        c.push_str(&format!("    dns64-prefix: {p}\n"));
     }
     // One local-zone per name (unbound rejects duplicates). Host overrides:
     // transparent zones answer the override and resolve every other name in

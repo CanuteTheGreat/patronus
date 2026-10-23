@@ -28,6 +28,7 @@ import Pagination from '../components/Pagination'
 import ConfirmModal from '../components/ConfirmModal'
 import EmptyState from '../components/EmptyState'
 import StatusBadge from '../components/StatusBadge'
+import EdgeEnrollment from '../components/EdgeEnrollment'
 
 export default function Sites() {
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -141,6 +142,8 @@ export default function Sites() {
           Add Site
         </button>
       </div>
+
+      <EdgeEnrollment />
 
       {/* Filters */}
       <div className="card">

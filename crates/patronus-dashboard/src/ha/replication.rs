@@ -81,6 +81,27 @@ pub enum ReplicatedOp {
         path_id: u64,
         status: PathStatus,
     },
+    /// An enrollment token for a new edge (only its digest is stored).
+    EdgeToken {
+        digest: String,
+        label: String,
+        created_at: i64,
+    },
+    /// An edge enrolled: its site, endpoints, overlay record; the token is used up.
+    EdgeEnroll {
+        site: Site,
+        edge: patronus_sdwan::edge::EdgeRecord,
+        used_token: String,
+        at: i64,
+    },
+    /// An edge's heartbeat: seen now, with the site status the measurements imply.
+    EdgeHeartbeat {
+        site_id: String,
+        at: i64,
+        status: String,
+    },
+    /// An edge was revoked: its credential, record and site are removed.
+    EdgeRevoke(String),
 }
 
 /// A log entry: an operation stamped with its position and leader term.
@@ -274,6 +295,38 @@ impl StateMachine {
                 self.db
                     .update_path_status(PathId::new(*path_id), *status)
                     .await?
+            }
+            ReplicatedOp::EdgeToken {
+                digest,
+                label,
+                created_at,
+            } => {
+                patronus_sdwan::edge::put_token(self.db.pool(), digest, label, *created_at).await?
+            }
+            ReplicatedOp::EdgeEnroll {
+                site,
+                edge,
+                used_token,
+                at,
+            } => {
+                self.db.upsert_site(site).await?;
+                self.db.store_endpoints(&site.id, &site.endpoints).await?;
+                patronus_sdwan::edge::upsert_edge(self.db.pool(), edge).await?;
+                patronus_sdwan::edge::consume_token(self.db.pool(), used_token, *at).await?;
+            }
+            ReplicatedOp::EdgeHeartbeat {
+                site_id,
+                at,
+                status,
+            } => {
+                patronus_sdwan::edge::touch_edge(self.db.pool(), site_id, *at).await?;
+                patronus_sdwan::edge::touch_site(self.db.pool(), site_id, *at, status).await?;
+            }
+            ReplicatedOp::EdgeRevoke(site_id) => {
+                patronus_sdwan::edge::delete_edge(self.db.pool(), site_id).await?;
+                if let Ok(id) = SiteId::from_str(site_id) {
+                    self.db.delete_site(&id).await?;
+                }
             }
         }
         Ok(())

@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    pre.svc-pre { background: #f3f4f6; padding: 8px 10px; border-radius: 6px; max-height: 260px; overflow: auto; font-size: 0.8em; white-space: pre-wrap; }
+    .svc-help { color: #6b7280; font-size: 0.8em; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">{{ title }}</h1>
+    <p class="page-subtitle">{{ blurb }}</p>
+</div>
+
+<div id="svc-error" class="alert-error" style="display:none"></div>
+
+<div class="card" id="svc-settings-card" style="display:none">
+    <div class="card-header"><h2 class="card-title">Settings</h2></div>
+    <form class="lan-form" id="svc-settings-form" onsubmit="return svcSaveSettings(event)"></form>
+</div>
+
+<div id="svc-actions" class="card" style="display:none">
+    <div class="card-header"><h2 class="card-title">Actions</h2></div>
+    <div id="svc-action-buttons"></div>
+    <pre class="svc-pre" id="svc-action-result" style="display:none"></pre>
+</div>
+
+<div id="svc-collections"></div>
+
+<div class="card" id="svc-status-card">
+    <div class="card-header"><h2 class="card-title">Live status</h2></div>
+    <div id="svc-status"><p class="empty">Loading...</p></div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const SLUG = '{{ slug }}';
+    const CAN_MODIFY = {% if can_modify %}true{% else %}false{% endif %};
+    let SCHEMA = null;
+    const editing = {};
+
+    function showError(msg) {
+        const el = document.getElementById('svc-error');
+        el.textContent = msg; el.style.display = msg ? '' : 'none';
+    }
+    async function api(method, url, body) {
+        const r = await fetch(url, {method, credentials: 'same-origin',
+            headers: body !== undefined ? {'content-type': 'application/json'} : {},
+            body: body !== undefined ? JSON.stringify(body) : undefined});
+        let j = {}; try { j = await r.json(); } catch (_) {}
+        if (!r.ok) { showError('Not applied: ' + (j.error || r.status)); return null; }
+        showError('');
+        return j;
+    }
+    function inputFor(f, value) {
+        let el;
+        if (f.type === 'bool') {
+            el = document.createElement('input'); el.type = 'checkbox'; el.checked = value === true || (value === undefined && f.default === '1');
+        } else if (f.type === 'select') {
+            el = document.createElement('select');
+            for (const o of f.extra) { const op = document.createElement('option'); op.value = o; op.textContent = o; el.appendChild(op); }
+            el.value = value !== undefined && value !== '' ? value : (f.default || f.extra[0]);
+        } else {
+            el = document.createElement('input');
+            el.type = f.type === 'number' ? 'number' : (f.type === 'secret' ? 'password' : 'text');
+            if (f.type === 'number') { el.min = f.extra.min; el.max = f.extra.max; }
+            if (f.type === 'secret') el.autocomplete = 'new-password';
+            el.value = value !== undefined && value !== null ? value : f.default;
+            if (f.type === 'secret' && value) el.placeholder = 'unchanged';
+            if (f.type === 'secret') el.value = '';
+        }
+        el.name = f.key;
+        if (f.required && f.type !== 'bool') el.required = true;
+        return el;
+    }
+    function labelFor(f, el) {
+        const l = document.createElement('label');
+        l.appendChild(document.createTextNode(f.label));
+        l.appendChild(el);
+        if (f.help) { const h = document.createElement('span'); h.className = 'svc-help'; h.textContent = f.help; l.appendChild(h); }
+        return l;
+    }
+    function readForm(form, fields, partialSecrets) {
+        const o = {};
+        for (const f of fields) {
+            const el = form.elements[f.key];
+            if (!el) continue;
+            if (f.type === 'bool') { o[f.key] = el.checked; continue; }
+            if (el.value === '') { if (f.type === 'secret') continue; if (!el.required) { o[f.key] = ''; } continue; }
+            o[f.key] = f.type === 'number' ? Number(el.value) : el.value;
+        }
+        return o;
+    }
+    function renderValue(v) {
+        if (v === true) return 'yes'; if (v === false) return 'no';
+        if (v === null || v === undefined || v === '') return '-';
+        return String(v);
+    }
+    function renderStatus(st) {
+        const box = document.getElementById('svc-status'); box.textContent = '';
+        if (!st || typeof st !== 'object') { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'No live status reported.'; box.appendChild(p); return; }
+        const t = document.createElement('table'); t.className = 'lan';
+        for (const [k, v] of Object.entries(st)) {
+            const tr = document.createElement('tr');
+            const th = document.createElement('th'); th.textContent = k.replace(/_/g, ' '); tr.appendChild(th);
+            const td = document.createElement('td');
+            if (Array.isArray(v) && v.every(x => typeof x === 'string')) {
+                if (v.length === 0) td.textContent = '-';
+                else { const pre = document.createElement('pre'); pre.className = 'svc-pre'; pre.textContent = v.join('\n'); td.appendChild(pre); }
+            } else if (v !== null && typeof v === 'object') {
+                const pre = document.createElement('pre'); pre.className = 'svc-pre'; pre.textContent = JSON.stringify(v, null, 1); td.appendChild(pre);
+            } else td.textContent = renderValue(v);
+            tr.appendChild(td); t.appendChild(tr);
+        }
+        box.appendChild(t);
+    }
+    async function svcSaveSettings(ev) {
+        ev.preventDefault();
+        const r = await api('PUT', '/api/svc/' + SLUG, readForm(ev.target, SCHEMA.fields));
+        if (r) load();
+        return false;
+    }
+    function renderCollection(c, rows) {
+        const wrap = document.createElement('div'); wrap.className = 'card'; wrap.dataset.coll = c.key;
+        const h = document.createElement('div'); h.className = 'card-header';
+        const h2 = document.createElement('h2'); h2.className = 'card-title'; h2.textContent = c.title; h.appendChild(h2); wrap.appendChild(h);
+        const t = document.createElement('table'); t.className = 'lan';
+        const head = document.createElement('tr');
+        for (const f of c.fields) { const th = document.createElement('th'); th.textContent = f.label; head.appendChild(th); }
+        head.appendChild(document.createElement('th')); t.appendChild(head);
+        for (const row of rows) {
+            const tr = document.createElement('tr'); tr.dataset.id = row.id;
+            for (const f of c.fields) {
+                const td = document.createElement('td');
+                td.textContent = f.type === 'secret' ? (row[f.key] ? 'set' : '-') : renderValue(row[f.key]);
+                tr.appendChild(td);
+            }
+            const td = document.createElement('td');
+            if (CAN_MODIFY) {
+                const eb = document.createElement('button'); eb.className = 'btn btn-sm'; eb.textContent = 'Edit';
+                eb.onclick = () => { editing[c.key] = row.id; fillForm(c, row); };
+                const db = document.createElement('button'); db.className = 'btn btn-sm btn-danger'; db.textContent = 'Delete'; db.style.marginLeft = '6px';
+                db.onclick = async () => { if (confirm('Delete this entry?') && await api('DELETE', '/api/svc/' + SLUG + '/' + c.key + '/' + row.id)) load(); };
+                td.appendChild(eb); td.appendChild(db);
+            }
+            tr.appendChild(td); t.appendChild(tr);
+        }
+        wrap.appendChild(t);
+        if (!rows.length) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'Nothing configured.'; wrap.appendChild(p); }
+        if (CAN_MODIFY) {
+            const form = document.createElement('form'); form.className = 'lan-form'; form.id = 'svc-form-' + c.key;
+            for (const f of c.fields) form.appendChild(labelFor(f, inputFor(f, undefined)));
+            const b = document.createElement('button'); b.className = 'btn btn-primary btn-sm'; b.type = 'submit'; b.textContent = 'Save entry'; form.appendChild(b);
+            form.onsubmit = async (ev) => {
+                ev.preventDefault();
+                const body = readForm(form, c.fields);
+                const id = editing[c.key];
+                const r = id ? await api('PUT', '/api/svc/' + SLUG + '/' + c.key + '/' + id, body) : await api('POST', '/api/svc/' + SLUG + '/' + c.key, body);
+                if (r) { delete editing[c.key]; load(); }
+                return false;
+            };
+            wrap.appendChild(form);
+        }
+        return wrap;
+    }
+    function fillForm(c, row) {
+        const form = document.getElementById('svc-form-' + c.key);
+        for (const f of c.fields) {
+            const el = form.elements[f.key]; if (!el) continue;
+            if (f.type === 'bool') el.checked = row[f.key] === true;
+            else if (f.type === 'secret') el.value = '';
+            else el.value = row[f.key] === null || row[f.key] === undefined ? '' : row[f.key];
+        }
+    }
+    async function load() {
+        const r = await fetch('/api/svc/' + SLUG, {credentials: 'same-origin'});
+        if (!r.ok) { showError('Could not load: ' + r.status); return; }
+        const d = await r.json();
+        SCHEMA = d.schema;
+        const sc = document.getElementById('svc-settings-card');
+        const sf = document.getElementById('svc-settings-form'); sf.textContent = '';
+        sc.style.display = SCHEMA.fields.length ? '' : 'none';
+        for (const f of SCHEMA.fields) sf.appendChild(labelFor(f, inputFor(f, d.settings[f.key])));
+        if (SCHEMA.fields.length && CAN_MODIFY) { const b = document.createElement('button'); b.className = 'btn btn-primary btn-sm'; b.type = 'submit'; b.textContent = 'Save and apply'; sf.appendChild(b); }
+        if (!CAN_MODIFY) for (const el of sf.elements) el.disabled = true;
+        const ab = document.getElementById('svc-action-buttons'); ab.textContent = '';
+        document.getElementById('svc-actions').style.display = SCHEMA.actions.length && CAN_MODIFY ? '' : 'none';
+        for (const a of SCHEMA.actions) {
+            const b = document.createElement('button'); b.className = 'btn btn-sm btn-primary'; b.textContent = a.label; b.style.marginRight = '8px';
+            b.onclick = async () => {
+                const body = {};
+                if (SLUG === 'wol') { const mac = prompt('MAC address to wake (aa:bb:cc:dd:ee:ff)'); if (!mac) return; body.mac = mac; body.interface = '@lan'; }
+                const res = await api('POST', '/api/svc/' + SLUG + '/action/' + a.name, body);
+                if (res) { const pre = document.getElementById('svc-action-result'); pre.style.display = ''; pre.textContent = JSON.stringify(res, null, 1); load(); }
+            };
+            ab.appendChild(b);
+        }
+        const cols = document.getElementById('svc-collections'); cols.textContent = '';
+        for (const c of SCHEMA.collections) {
+            const el = renderCollection(c, d.collections[c.key] || []);
+            if (SLUG === 'wol' && CAN_MODIFY) {
+                for (const tr of el.querySelectorAll('tr[data-id]')) {
+                    const wake = document.createElement('button'); wake.className = 'btn btn-sm btn-primary'; wake.textContent = 'Wake'; wake.style.marginLeft = '6px';
+                    wake.onclick = async () => { const res = await api('POST', '/api/svc/wol/action/wake', {id: Number(tr.dataset.id)}); if (res) alert('Magic packet sent: ' + res.sent_to.join(', ')); };
+                    tr.lastChild.appendChild(wake);
+                }
+            }
+            cols.appendChild(el);
+        }
+        renderStatus(d.status);
+    }
+    document.addEventListener('DOMContentLoaded', load);
+</script>
+{% endblock %}

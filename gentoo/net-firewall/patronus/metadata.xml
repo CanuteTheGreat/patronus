@@ -27,6 +27,13 @@
 		<flag name="monitoring">Enable system and traffic monitoring</flag>
 		<flag name="prometheus">Enable Prometheus metrics export</flag>
 		<flag name="ntopng">Enable ntopng traffic monitoring</flag>
+		<flag name="syslog">Forward the system log to remote collectors from the web UI (rsyslog)</flag>
+		<flag name="igmp">IGMP proxy for multicast forwarding (igmpproxy)</flag>
+		<flag name="nat64">NAT64 / DNS64 for IPv6-only clients (tayga + Unbound)</flag>
+		<flag name="l2tp">L2TP server with PPP users (xl2tpd)</flag>
+		<flag name="sdwan">SD-WAN edge agent: join a Patronus SD-WAN overlay (WireGuard mesh, endpoint failover, path reporting)</flag>
+		<flag name="netflow">Export NetFlow / IPFIX flow records from an interface (softflowd)</flag>
+		<flag name="dynamic-routing">BGP and OSPF dynamic routing (FRRouting)</flag>
 		<flag name="captive-portal">Enable captive portal functionality</flag>
 		<flag name="intrusion-detection">Enable IDS/IPS functionality</flag>
 		<flag name="suricata">Use Suricata for intrusion detection</flag>

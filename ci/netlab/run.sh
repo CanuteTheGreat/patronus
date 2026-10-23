@@ -33,11 +33,13 @@ fi
 # NETLAB_BIN_DIR: use already-built patronus-cli + patronus-web from there.
 BIN=${NETLAB_BIN_DIR:-}
 if [ -z "$BIN" ]; then
-  cargo build -p patronus-cli -p patronus-web --bins
+  cargo build -p patronus-cli -p patronus-web -p patronus-dashboard --bins
   BIN=target/debug
 fi
 cp "$BIN/patronus-cli" "$OUT/patronus"
 cp "$BIN/patronus-web" "$OUT/patronus-web"
+# lane K (SD-WAN edge) runs a real dashboard
+[ -f "$BIN/patronus-dashboard" ] && cp "$BIN/patronus-dashboard" "$OUT/patronus-dashboard"
 for s in "$@"; do cp "$s" "$OUT/"; done
 cp ci/netlab/lib.sh "$OUT/"
 cp -r ci/netlab/fixtures "$OUT/"
@@ -54,8 +56,14 @@ cat > "$OUT/inner.sh" <<INNER
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+# installing a daemon package must not start it in this container (the
+# scenarios start what they test, in their own namespaces)
+printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d; chmod +x /usr/sbin/policy-rc.d
 for i in 1 2 3; do apt-get update -qq && break; [ "\$i" = 3 ] && exit 1; sleep 15; done
 apt-get install -y -qq nftables iproute2 curl python3 dnsmasq-base conntrack sqlite3 iputils-ping >/dev/null
+# lane J feature scenarios: rsyslog (syslog), softflowd (NetFlow), igmpproxy, tayga + unbound
+# (NAT64/DNS64), xl2tpd + ppp (L2TP), suricata (IDS/IPS), frr (BGP/OSPF)
+apt-get install -y -qq --no-install-recommends rsyslog softflowd igmpproxy tayga unbound xl2tpd ppp suricata frr >/dev/null
 # wg(8) only; its "recommends" would pull wireguard-dkms + kernel headers
 apt-get install -y -qq --no-install-recommends wireguard-tools >/dev/null
 export NETLAB_POWER_CUTS=${NETLAB_POWER_CUTS:-4}
@@ -74,13 +82,15 @@ case "$(uname -m)" in
 esac
 # /dev/ppp lets the lane C test run a real PPPoE session (pppd needs it);
 # fall back to no device on a host without the ppp driver.
+DEVS=()
+for d in /dev/ppp /dev/net/tun; do [ -e "$d" ] && DEVS+=(--device "$d"); done
 create() {
   docker create --name "$C" --platform "$PLATFORM" \
-    --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN "$@" \
+    --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN ${DEVS[@]+"${DEVS[@]}"} "$@" \
     --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
     --memory 2g --memory-swap 2g --cpus 2 -w /t "$IMAGE" bash /t/inner.sh >/dev/null
 }
-create --device /dev/ppp 2>/dev/null || { echo "netlab: no /dev/ppp on the docker host"; docker rm -f "$C" >/dev/null 2>&1 || true; create; }
+create 2>/dev/null || { echo "netlab: could not pass /dev/ppp and /dev/net/tun to the container"; docker rm -f "$C" >/dev/null 2>&1 || true; DEVS=(); create; }
 docker cp "$OUT/." "$C:/t/"
 docker start -a "$C"
 rc=$(docker inspect -f '{{.State.ExitCode}}' "$C")

@@ -41,6 +41,7 @@ pub fn build_router(
         .merge(api::lan::pages())
         .merge(api::ha::pages())
         .merge(api::qos::pages())
+        .merge(api::svc::pages())
         // The old "simple" pages claimed services were operational and
         // listed invented "recent activity"; keep the URLs as redirects.
         .route("/simple", get(|| async { Redirect::to("/") }))
@@ -252,6 +253,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::lan::router())
         .merge(api::ha::router())
         .merge(api::qos::router())
+        .merge(api::svc::router())
         .merge(api::vpn::router())
         .merge(api::network::router())
         .merge(api::routing::router())

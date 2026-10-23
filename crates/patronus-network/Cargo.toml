@@ -29,6 +29,14 @@ multiwan = []
 ha = []
 intrusion-detection = []
 dynamic-routing = []
+# Feature pages (svc.rs): each needs its daemon at runtime (Gentoo USE flag of the same name)
+syslog = []
+netflow = []
+igmp = []
+nat64 = []
+l2tp = []
+# SD-WAN edge agent page + applier (the agent itself is `patronus edge run`)
+sdwan-edge = ["wireguard"]
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }

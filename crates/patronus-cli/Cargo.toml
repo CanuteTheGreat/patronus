@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "intrusion-detection", "dynamic-routing", "sdwan-edge"]
 
 # Core features
 web = ["patronus-web", "dep:axum"]
@@ -52,6 +52,15 @@ vlan = ["patronus-network/vlan", "patronus-web?/vlan"]
 pppoe = ["patronus-network/pppoe", "patronus-web?/pppoe"]
 dhcpcd = ["patronus-network/dhcpcd", "patronus-web?/dhcpcd"]
 qos = ["patronus-network/qos", "patronus-web?/qos"]
+# Feature pages (patronus-network svc.rs): USE flags of the same name
+syslog = ["patronus-network/syslog", "patronus-web?/syslog"]
+netflow = ["patronus-network/netflow", "patronus-web?/netflow"]
+igmp = ["patronus-network/igmp", "patronus-web?/igmp"]
+nat64 = ["patronus-network/nat64", "patronus-web?/nat64"]
+l2tp = ["patronus-network/l2tp", "patronus-web?/l2tp"]
+intrusion-detection = ["patronus-network/intrusion-detection", "patronus-web?/intrusion-detection"]
+dynamic-routing = ["patronus-network/dynamic-routing", "patronus-web?/dynamic-routing"]
+sdwan-edge = ["patronus-network/sdwan-edge", "patronus-web?/sdwan-edge", "dep:reqwest"]
 backup = []
 
 # Revolutionary features
@@ -68,10 +77,10 @@ patronus-web = { path = "../patronus-web", optional = true, default-features = f
 patronus-gitops = { path = "../patronus-gitops", optional = true }
 patronus-ai = { path = "../patronus-ai", optional = true }
 patronus-cni = { path = "../patronus-cni", optional = true }
+reqwest = { workspace = true, optional = true }
 
 # SD-WAN modules
 patronus-sdwan = { path = "../patronus-sdwan" }
-patronus-bgp = { path = "../patronus-bgp" }
 patronus-mpls = { path = "../patronus-mpls" }
 patronus-geodns = { path = "../patronus-geodns" }
 patronus-saas = { path = "../patronus-saas" }

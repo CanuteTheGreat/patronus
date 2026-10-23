@@ -1,0 +1,34 @@
+#!/sbin/openrc-run
+# Copyright 2026 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v3
+
+# Multiplexed: /etc/init.d/patronus-daemon.<instance> -> patronus-daemon
+# (softflowd-<dev>, igmpproxy, tayga, xl2tpd, suricata). `patronus apply` and
+# the web UI create the symlink and start/stop the instance when the matching
+# feature page is switched on; the command line and its config are generated
+# from the config store into /var/lib/patronus/net. Do not add it to a
+# runlevel by hand.
+
+INSTANCE="${RC_SVCNAME#*.}"
+ENVFILE="/var/lib/patronus/net/svc/patronus-daemon.${INSTANCE}.env"
+description="Patronus daemon ${INSTANCE}"
+supervisor=supervise-daemon
+respawn_delay=5
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+	need localmount
+}
+
+start_pre() {
+	if [ "${INSTANCE}" = "${RC_SVCNAME}" ]; then
+		eerror "Use the instance (patronus-daemon.<iface>)"
+		return 1
+	fi
+	[ -r "${ENVFILE}" ] || { eerror "${ENVFILE} is missing (run 'patronus apply')"; return 1; }
+	. "${ENVFILE}"
+	set -- ${PATRONUS_CMD}
+	command="$1"
+	shift
+	command_args="$*"
+}

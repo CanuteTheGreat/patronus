@@ -88,7 +88,9 @@ impl AppState {
                 config_store.clone(),
                 firewall_applier.clone(),
             )),
-            lan: Arc::new(LanManager::new(config_store.clone())),
+            lan: Arc::new(
+                LanManager::new(config_store.clone()).with_firewall(firewall_applier.clone()),
+            ),
             routing: Arc::new(RoutingManager::new(
                 config_store.clone(),
                 firewall_applier.clone(),

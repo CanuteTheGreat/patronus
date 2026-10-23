@@ -188,6 +188,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let state = Arc::new(state);
+    api::edge::spawn_staleness_task(state.clone());
 
     info!("Application state initialized");
 

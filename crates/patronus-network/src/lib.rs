@@ -13,7 +13,6 @@ pub mod dhcp_client;
 pub mod interfaces;
 pub mod lan;
 pub mod linkstate;
-pub mod nat64;
 pub mod netconf;
 pub mod routes;
 pub mod services;
@@ -74,6 +73,27 @@ pub mod shaping;
 #[cfg(feature = "ha")]
 pub mod ha;
 
+pub mod svc;
+pub mod wol;
+
+#[cfg(feature = "sdwan-edge")]
+pub mod edge;
+
+#[cfg(feature = "syslog")]
+pub mod syslog;
+
+#[cfg(feature = "netflow")]
+pub mod netflow;
+
+#[cfg(feature = "igmp")]
+pub mod igmp;
+
+#[cfg(feature = "nat64")]
+pub mod nat64;
+
+#[cfg(feature = "l2tp")]
+pub mod l2tp;
+
 #[cfg(feature = "intrusion-detection")]
 pub mod ids;
 
@@ -125,12 +145,6 @@ pub use dns::DnsApplier;
 
 #[cfg(feature = "ntp")]
 pub use ntp::NtpApplier;
-
-#[cfg(feature = "intrusion-detection")]
-pub use ids::{IdsBackend, IdsManager};
-
-#[cfg(feature = "dynamic-routing")]
-pub use frr::FrrManager;
 
 /// Get all network interfaces on the system
 pub async fn list_interfaces() -> Result<Vec<Interface>> {

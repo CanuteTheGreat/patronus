@@ -8,7 +8,7 @@ mod commands;
 #[cfg(feature = "gitops")]
 use commands::gitops;
 use commands::{
-    apply, applyd, bgp, captiveportal, daemon, deploy, firewall, init, metrics, policy, site,
+    apply, applyd, bgp, captiveportal, daemon, deploy, edge, firewall, init, metrics, policy, site,
     status, tunnel, users, validate, web,
 };
 
@@ -113,6 +113,12 @@ enum Commands {
     Policy {
         #[command(subcommand)]
         action: PolicyCommands,
+    },
+
+    /// SD-WAN edge agent (join the overlay of a Patronus SD-WAN dashboard)
+    Edge {
+        #[command(subcommand)]
+        action: EdgeCommands,
     },
 
     /// BGP routing management
@@ -296,6 +302,16 @@ enum PolicyCommands {
 }
 
 #[derive(Subcommand)]
+enum EdgeCommands {
+    /// Run the agent (what the patronus-daemon@edge-agent service does)
+    Run,
+    /// One enroll/sync/measure/report round, then exit
+    Sync,
+    /// What the agent last did
+    Status,
+}
+
+#[derive(Subcommand)]
 enum BgpCommands {
     /// Configure BGP peer
     Peer {
@@ -306,6 +322,14 @@ enum BgpCommands {
         /// Peer AS number
         #[arg(short = 's', long)]
         asn: u32,
+
+        /// Our AS number (default: the stored one, else 65001)
+        #[arg(long)]
+        local_asn: Option<u32>,
+
+        /// Router ID (an IPv4 address); required the first time
+        #[arg(long)]
+        router_id: Option<String>,
     },
 
     /// Show BGP status
@@ -480,8 +504,12 @@ async fn main() -> anyhow::Result<()> {
             policy::handle_policy_command(action, cli.config).await?;
         }
 
+        Commands::Edge { action } => {
+            edge::handle_edge_command(action, cli.db).await?;
+        }
+
         Commands::Bgp { action } => {
-            bgp::handle_bgp_command(action, cli.config).await?;
+            bgp::handle_bgp_command(action, cli.db).await?;
         }
 
         Commands::Web { addr } => {

@@ -6,6 +6,7 @@ pub mod bgp;
 pub mod captiveportal;
 pub mod daemon;
 pub mod deploy;
+pub mod edge;
 pub mod firewall;
 #[cfg(feature = "gitops")]
 pub mod gitops;

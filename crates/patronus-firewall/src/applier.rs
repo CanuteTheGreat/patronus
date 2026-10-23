@@ -347,6 +347,10 @@ impl FirewallApplier {
         // lane G: VRRP and connection-state sync between the HA nodes
         if !lockdown {
             vpn.filter.extend(crate::ha_rules::ha_rules(store).await?);
+            // IGMP proxy, NAT64, L2TP, inline IDS
+            let sr = crate::svc_rules::svc_rules(store).await?;
+            vpn.filter.extend(sr.filter);
+            vpn.nat_exempt.extend(sr.nat_exempt);
         }
         for l in &vpn.filter {
             script.push_str(l);

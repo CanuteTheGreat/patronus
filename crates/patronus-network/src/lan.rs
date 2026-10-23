@@ -51,13 +51,24 @@ pub const LAN_TABLES: &[&str] = &[
     "ha_vips",
     // lane C: traffic shaping (USE=qos)
     "qos_shapers",
+    // feature pages (crate::svc): syslog, IGMP proxy, L2TP, IDS, FRR, Wake-on-LAN
+    "syslog_targets",
+    "igmp_interfaces",
+    "l2tp_users",
+    "ids_rules",
+    "frr_bgp_neighbors",
+    "frr_bgp_networks",
+    "frr_ospf_interfaces",
+    "wol_hosts",
+    "edge_endpoints",
+    "edge_subnets",
 ];
 
 pub(crate) fn db_err(what: &'static str) -> impl Fn(sqlx::Error) -> Error {
     move |e| Error::Config(format!("{what}: {e}"))
 }
 
-pub(crate) fn now() -> i64 {
+pub fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -902,6 +913,22 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
         env.clone(),
         Arc::new(crate::shaping::SystemTc),
     )));
+    #[cfg(feature = "syslog")]
+    v.push(Arc::new(crate::syslog::SyslogApplier::new(env.clone())));
+    #[cfg(feature = "netflow")]
+    v.push(Arc::new(crate::netflow::NetflowApplier::default()));
+    #[cfg(feature = "igmp")]
+    v.push(Arc::new(crate::igmp::IgmpApplier::default()));
+    #[cfg(feature = "nat64")]
+    v.push(Arc::new(crate::nat64::Nat64Applier::default()));
+    #[cfg(feature = "l2tp")]
+    v.push(Arc::new(crate::l2tp::L2tpApplier::default()));
+    #[cfg(feature = "intrusion-detection")]
+    v.push(Arc::new(crate::ids::IdsApplier::default()));
+    #[cfg(feature = "dynamic-routing")]
+    v.push(Arc::new(crate::frr::FrrApplier::new(env.clone())));
+    #[cfg(feature = "sdwan-edge")]
+    v.push(Arc::new(crate::edge::EdgeApplier::default()));
     let _ = env;
     v
 }

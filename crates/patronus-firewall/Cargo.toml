@@ -23,6 +23,7 @@ nix.workspace = true
 sqlx.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
+ipnetwork = "0.20"
 
 # For nftables interaction (optional)
 nftnl = { version = "0.9", optional = true }

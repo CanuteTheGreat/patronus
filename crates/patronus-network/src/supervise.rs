@@ -184,8 +184,15 @@ fn pid_alive(pid: i32, argv0: Option<&str>) -> bool {
     match argv0 {
         None => true,
         Some(a) => {
-            let base: String = a.rsplit('/').next().unwrap_or(a).chars().take(15).collect();
+            let full = a.rsplit('/').next().unwrap_or(a);
+            let base: String = full.chars().take(15).collect();
+            // some daemons rename their threads (Suricata's main thread is
+            // "Suricata-Main"): the executable is the reliable identity then
             comm.trim_end() == base
+                || std::fs::read_link(format!("/proc/{pid}/exe"))
+                    .ok()
+                    .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                    .is_some_and(|n| n == full)
         }
     }
 }

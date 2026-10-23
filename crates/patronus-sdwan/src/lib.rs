@@ -29,6 +29,7 @@ pub mod compression;
 pub mod database;
 pub mod dataplane;
 pub mod dpi;
+pub mod edge;
 pub mod error;
 pub mod export;
 pub mod failover;

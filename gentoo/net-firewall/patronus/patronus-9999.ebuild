@@ -33,6 +33,7 @@ IUSE="
 	+monitoring prometheus ntopng netflow collectd
 	+captive-portal
 	intrusion-detection suricata snort
+	syslog igmp nat64 l2tp dynamic-routing sdwan
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp
@@ -95,6 +96,13 @@ RDEPEND="
 	|| ( net-misc/iputils sys-apps/busybox )
 	multiwan? ( sys-apps/iproute2 )
 	ha? ( sys-cluster/keepalived net-firewall/conntrack-tools )
+	syslog? ( app-admin/rsyslog )
+	igmp? ( net-misc/igmpproxy )
+	nat64? ( net-proxy/tayga )
+	l2tp? ( net-dialup/xl2tpd net-dialup/ppp )
+	dynamic-routing? ( net-misc/frr )
+	netflow? ( net-analyzer/softflowd )
+	sdwan? ( net-vpn/wireguard-tools dev-libs/openssl:0= || ( net-misc/iputils sys-apps/busybox ) )
 	monitoring? (
 		prometheus? ( app-metrics/prometheus )
 		ntopng? ( net-analyzer/ntopng )
@@ -208,6 +216,14 @@ src_configure() {
 		$(usex totp "totp" "")
 		$(usex gitops "gitops" "")
 		$(usex ha "ha" "")
+		$(usex syslog "syslog" "")
+		$(usex netflow "netflow" "")
+		$(usex igmp "igmp" "")
+		$(usex nat64 "nat64" "")
+		$(usex l2tp "l2tp" "")
+		$(usex intrusion-detection "intrusion-detection" "")
+		$(usex dynamic-routing "dynamic-routing" "")
+		$(usex sdwan "sdwan-edge" "")
 	)
 
 	cargo_src_configure --no-default-features
@@ -331,6 +347,14 @@ src_install() {
 		use wireguard && webfeatures+=( wireguard )
 		use ipsec && webfeatures+=( ipsec )
 		use totp && webfeatures+=( totp )
+		use syslog && webfeatures+=( syslog )
+		use netflow && webfeatures+=( netflow )
+		use igmp && webfeatures+=( igmp )
+		use nat64 && webfeatures+=( nat64 )
+		use l2tp && webfeatures+=( l2tp )
+		use intrusion-detection && webfeatures+=( intrusion-detection )
+		use dynamic-routing && webfeatures+=( dynamic-routing )
+		use sdwan && webfeatures+=( sdwan-edge )
 		set -- "${CARGO}" install --path ./crates/patronus-web \
 			--root "${ED}/usr" \
 			${GIT_CRATES[@]:+--frozen} \
@@ -371,6 +395,7 @@ src_install() {
 		systemd_dounit "${FILESDIR}/patronus-applyd.service"
 		use gitops && systemd_dounit "${FILESDIR}/patronus-gitops.service"
 		systemd_dounit "${FILESDIR}/patronus-dhcpc@.service"
+		systemd_dounit "${FILESDIR}/patronus-daemon@.service"
 		use pppoe && systemd_dounit "${FILESDIR}/patronus-pppoe@.service"
 		use dashboard && systemd_dounit "${FILESDIR}/patronus-dashboard.service"
 	fi
@@ -381,6 +406,7 @@ src_install() {
 		newinitd "${FILESDIR}/patronus-applyd.initd" patronus-applyd
 		use gitops && newinitd "${FILESDIR}/patronus-gitops.initd" patronus-gitops
 		newinitd "${FILESDIR}/patronus-dhcpc.initd" patronus-dhcpc
+		newinitd "${FILESDIR}/patronus-daemon.initd" patronus-daemon
 		use pppoe && newinitd "${FILESDIR}/patronus-pppoe.initd" patronus-pppoe
 		newconfd "${FILESDIR}/patronus.confd" patronus
 		if use dashboard; then

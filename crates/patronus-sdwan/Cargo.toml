@@ -31,6 +31,7 @@ ed25519-dalek = "2.1"
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 rand = "0.8"
 base64 = "0.22"
+sha2 = "0.10"
 
 # Data structures
 dashmap = "6.1"

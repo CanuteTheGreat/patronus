@@ -12,6 +12,7 @@ pub mod network;
 pub mod qos;
 pub mod routing;
 pub mod status;
+pub mod svc;
 pub mod system;
 pub mod telemetry;
 pub mod vpn;

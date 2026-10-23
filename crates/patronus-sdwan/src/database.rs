@@ -370,6 +370,8 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        crate::edge::init(&self.pool).await?;
+
         info!("Database migrations completed");
         Ok(())
     }

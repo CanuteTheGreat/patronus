@@ -1,556 +1,366 @@
-//! NAT64/DNS64 - IPv6 Transition Mechanism
+//! NAT64 / DNS64 (USE=nat64): lets IPv6-only clients reach IPv4-only servers.
 //!
-//! Enables IPv6-only clients to access IPv4-only servers by:
-//! - NAT64: Translates IPv6 packets to IPv4 at network layer
-//! - DNS64: Generates synthetic AAAA records from A records
-//! - 464XLAT/CLAT: Client-side translation for legacy apps
+//! - NAT64: `tayga` (userspace stateless-ish translator on a TUN device
+//!   `nat64`). Patronus creates the device, brings it up, routes the NAT64
+//!   prefix (default `64:ff9b::/96`) and the IPv4 translation pool into it and
+//!   runs tayga through the supervisor (`patronus-daemon@tayga`). The firewall
+//!   forwards the clients' traffic to the prefix, forwards the translated
+//!   IPv4 out of the WAN and masquerades the pool
+//!   (`patronus_firewall::svc_rules`).
+//! - DNS64: Unbound synthesizes AAAA records from A records inside the NAT64
+//!   prefix (`dns64` module; the DNS applier reads `nat64.dns64`).
 //!
-//! Essential for IPv6-only networks (ISPs, data centers, mobile carriers).
+//! Only /96 prefixes are accepted (the form every DNS64 client expects).
 
+use crate::lan::{self, invalid};
+use crate::supervise::{which, Supervisor};
+use crate::svc::{self, Field, Kind, Settings, Spec, Svc};
+use async_trait::async_trait;
+use patronus_config::applier::{Applier, ApplyReport, Phase};
+use patronus_config::store::ConfigStore;
 use patronus_core::{Error, Result};
-use serde::{Deserialize, Serialize};
-use std::net::{Ipv4Addr, Ipv6Addr};
-use std::path::PathBuf;
-use tokio::process::Command;
+use serde_json::{json, Value};
 
-/// NAT64 configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Nat64Config {
-    pub enabled: bool,
-    pub prefix: Ipv6Addr,        // Usually 64:ff9b::/96 (well-known prefix)
-    pub prefix_len: u8,          // Usually 96
-    pub pool_v4_start: Ipv4Addr, // IPv4 address pool start
-    pub pool_v4_end: Ipv4Addr,   // IPv4 address pool end
-    pub dynamic_pool: bool,      // Dynamic vs static mapping
-    pub nat64_interface: String, // Interface for NAT64 (WAN)
-    pub dns64_enabled: bool,     // Enable DNS64 in Unbound
-    pub dns64_prefix: String,    // DNS64 prefix (usually same as NAT64)
-    pub clat_support: bool,      // Enable CLAT announcements
-}
+pub const DEV: &str = "nat64";
+pub const INSTANCE: &str = "tayga";
+/// The router's own addresses on the TUN device (outside every pool).
+const DEV_V4: &str = "169.254.64.1";
+const DEV_V6: &str = "fd64:6464::1";
+const TAYGA_V6: &str = "fd64:6464::2";
 
-/// DNS64 configuration for Unbound
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Dns64Config {
-    pub enabled: bool,
-    pub prefix: String,                // e.g., "64:ff9b::/96"
-    pub ignore_aaaa: Vec<String>,      // Don't synthesize for these domains
-    pub exclude_networks: Vec<String>, // Don't use DNS64 for these IPv4 ranges
-}
+static FIELDS: [Field; 6] = [
+    Field::new("enabled", "NAT64", Kind::Bool).def("0"),
+    Field::new("prefix", "NAT64 prefix", Kind::Cidr6)
+        .def("64:ff9b::/96")
+        .help("IPv6 addresses inside it map to IPv4 (must be a /96). The well-known 64:ff9b::/96 only translates public IPv4 addresses; use a /96 of your own IPv6 space to reach private ones"),
+    Field::new("pool", "IPv4 translation pool", Kind::Cidr4)
+        .def("192.168.255.0/24")
+        .help("private addresses the translator uses; masqueraded to the WAN address"),
+    Field::new("clients", "IPv6-only clients on", Kind::Iface)
+        .def("@lan")
+        .help("interface whose clients may use the NAT64 gateway"),
+    Field::new("dns64", "DNS64 in Unbound", Kind::Bool)
+        .def("1")
+        .help("synthesize AAAA records for IPv4-only names (needs the Unbound resolver)"),
+    Field::new("description", "Note", Kind::Text),
+];
 
-/// NAT64 statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Nat64Stats {
-    pub v6_to_v4_packets: u64,
-    pub v4_to_v6_packets: u64,
-    pub active_sessions: u64,
-    pub pool_utilization: f32, // Percentage of IPv4 pool used
-}
+static SPEC: Spec = Spec {
+    slug: "nat64",
+    title: "NAT64 / DNS64",
+    blurb: "Let IPv6-only clients reach IPv4-only servers. tayga translates packets sent to the \
+            NAT64 prefix; Unbound's DNS64 answers AAAA queries for IPv4-only names with addresses \
+            in that prefix.",
+    applier: "nat64",
+    fields: &FIELDS,
+    colls: &[],
+    actions: &[],
+};
 
-pub struct Nat64Manager {
-    config: Nat64Config,
-    tayga_conf_path: PathBuf,
-}
+pub struct Nat64Svc;
 
-impl Nat64Manager {
-    pub fn new(config: Nat64Config) -> Self {
-        Self {
-            config,
-            tayga_conf_path: PathBuf::from("/etc/tayga.conf"),
+#[async_trait]
+impl Svc for Nat64Svc {
+    fn spec(&self) -> &'static Spec {
+        &SPEC
+    }
+
+    async fn put(&self, store: &ConfigStore, body: &Value) -> Result<()> {
+        // refuse bad prefixes before they are stored
+        if let Some(p) = body.get("prefix").and_then(Value::as_str) {
+            if !p.trim().is_empty() {
+                check_prefix(p)?;
+            }
         }
-    }
-
-    /// Start NAT64 service
-    pub async fn start(&self) -> Result<()> {
-        if !self.config.enabled {
-            return Ok(());
-        }
-
-        tracing::info!("Starting NAT64/DNS64 service");
-
-        // Generate tayga configuration
-        self.generate_tayga_config().await?;
-
-        // Create TUN interface for tayga
-        self.setup_tun_interface().await?;
-
-        // Configure DNS64 in Unbound
-        if self.config.dns64_enabled {
-            self.configure_dns64().await?;
-        }
-
-        // Start tayga daemon
-        self.start_tayga().await?;
-
-        // Configure routing
-        self.configure_routing().await?;
-
-        // Configure PREF64 announcements if CLAT support
-        if self.config.clat_support {
-            self.configure_pref64().await?;
-        }
-
-        tracing::info!("NAT64/DNS64 service started successfully");
-
-        Ok(())
-    }
-
-    /// Stop NAT64 service
-    pub async fn stop(&self) -> Result<()> {
-        tracing::info!("Stopping NAT64/DNS64 service");
-
-        // Stop tayga
-        Command::new("systemctl")
-            .args(["stop", "tayga"])
-            .status()
-            .await?;
-
-        // Remove DNS64 configuration
-        if self.config.dns64_enabled {
-            self.remove_dns64_config().await?;
-        }
-
-        Ok(())
-    }
-
-    async fn generate_tayga_config(&self) -> Result<()> {
-        let mut config = String::from("# Tayga NAT64 Configuration\n");
-        config.push_str("# Generated by Patronus\n\n");
-
-        // TUN device
-        config.push_str("tun-device nat64\n");
-
-        // IPv4 pool
-        config.push_str(&format!(
-            "ipv4-addr {}\n",
-            self.calculate_tayga_ipv4_addr()?
-        ));
-
-        // NAT64 prefix
-        config.push_str(&format!(
-            "prefix {}/{}\n",
-            self.config.prefix, self.config.prefix_len
-        ));
-
-        // Dynamic pool
-        if self.config.dynamic_pool {
-            config.push_str(&format!(
-                "dynamic-pool {}-{}\n",
-                self.config.pool_v4_start, self.config.pool_v4_end
-            ));
-        }
-
-        // Data directory
-        config.push_str("data-dir /var/lib/tayga\n");
-
-        // Write configuration
-        tokio::fs::write(&self.tayga_conf_path, config).await?;
-
-        Ok(())
-    }
-
-    fn calculate_tayga_ipv4_addr(&self) -> Result<Ipv4Addr> {
-        // Use first address in pool for tayga itself
-        Ok(self.config.pool_v4_start)
-    }
-
-    async fn setup_tun_interface(&self) -> Result<()> {
-        // Create data directory
-        tokio::fs::create_dir_all("/var/lib/tayga").await?;
-
-        // Setup TUN device (tayga will create it)
-        // But we can pre-create it for better control
-        Command::new("ip")
-            .args(["tuntap", "add", "dev", "nat64", "mode", "tun"])
-            .status()
-            .await
-            .ok(); // May fail if already exists
-
-        // Bring interface up
-        Command::new("ip")
-            .args(["link", "set", "nat64", "up"])
-            .status()
-            .await?;
-
-        Ok(())
-    }
-
-    async fn configure_dns64(&self) -> Result<()> {
-        let dns64_config = self.generate_dns64_config();
-
-        // Write DNS64 configuration to Unbound include file
-        let dns64_path = PathBuf::from("/etc/unbound/unbound.conf.d/dns64.conf");
-
-        tokio::fs::create_dir_all(dns64_path.parent().unwrap()).await?;
-        tokio::fs::write(&dns64_path, dns64_config).await?;
-
-        // Reload Unbound
-        Command::new("systemctl")
-            .args(["reload", "unbound"])
-            .status()
-            .await?;
-
-        tracing::info!("DNS64 configured in Unbound");
-
-        Ok(())
-    }
-
-    fn generate_dns64_config(&self) -> String {
-        let mut config = String::from("# DNS64 Configuration\n");
-        config.push_str("# Generated by Patronus\n\n");
-
-        config.push_str("server:\n");
-        config.push_str("    # Enable DNS64\n");
-        config.push_str("    module-config: \"dns64 validator iterator\"\n\n");
-
-        config.push_str("dns64:\n");
-        config.push_str(&format!("    dns64-prefix: {}\n", self.config.dns64_prefix));
-
-        // Ignore AAAA for specific domains
-        if !self.config.dns64_prefix.is_empty() {
-            config.push_str("    # Don't synthesize AAAA for these domains\n");
-            // Example: ignore native IPv6 domains
-            config.push_str("    dns64-ignore-aaaa: \"ipv6.google.com\"\n");
-        }
-
-        config
-    }
-
-    async fn remove_dns64_config(&self) -> Result<()> {
-        let dns64_path = PathBuf::from("/etc/unbound/unbound.conf.d/dns64.conf");
-
-        if dns64_path.exists() {
-            tokio::fs::remove_file(&dns64_path).await?;
-
-            // Reload Unbound
-            Command::new("systemctl")
-                .args(["reload", "unbound"])
-                .status()
-                .await?;
-        }
-
-        Ok(())
-    }
-
-    async fn start_tayga(&self) -> Result<()> {
-        // Create systemd service if doesn't exist
-        self.create_tayga_service().await?;
-
-        // Start tayga
-        let status = Command::new("systemctl")
-            .args(["start", "tayga"])
-            .status()
-            .await?;
-
-        if !status.success() {
-            return Err(Error::Network("Failed to start tayga".to_string()));
-        }
-
-        // Enable at boot
-        Command::new("systemctl")
-            .args(["enable", "tayga"])
-            .status()
-            .await?;
-
-        Ok(())
-    }
-
-    async fn create_tayga_service(&self) -> Result<()> {
-        let service = r#"[Unit]
-Description=Tayga NAT64 Gateway
-After=network.target
-
-[Service]
-Type=forking
-ExecStart=/usr/sbin/tayga -d
-ExecStop=/usr/bin/killall tayga
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-"#;
-
-        let service_path = PathBuf::from("/etc/systemd/system/tayga.service");
-        tokio::fs::write(&service_path, service).await?;
-
-        // Reload systemd
-        Command::new("systemctl")
-            .args(["daemon-reload"])
-            .status()
-            .await?;
-
-        Ok(())
-    }
-
-    async fn configure_routing(&self) -> Result<()> {
-        // Add route for NAT64 prefix through nat64 interface
-        Command::new("ip")
-            .args([
-                "-6",
-                "route",
-                "add",
-                &format!("{}/{}", self.config.prefix, self.config.prefix_len),
-                "dev",
-                "nat64",
-            ])
-            .status()
-            .await?;
-
-        // Enable IPv4 forwarding (required for NAT64)
-        tokio::fs::write("/proc/sys/net/ipv4/ip_forward", "1").await?;
-
-        // Enable IPv6 forwarding
-        tokio::fs::write("/proc/sys/net/ipv6/conf/all/forwarding", "1").await?;
-
-        // Configure NAT for IPv4 pool on WAN interface
-        Command::new("nft")
-            .args([
-                "add",
-                "rule",
-                "inet",
-                "patronus",
-                "postrouting",
-                "oifname",
-                &self.config.nat64_interface,
-                "ip",
-                "saddr",
-                &format!("{}-{}", self.config.pool_v4_start, self.config.pool_v4_end),
-                "masquerade",
-            ])
-            .status()
-            .await?;
-
-        Ok(())
-    }
-
-    async fn configure_pref64(&self) -> Result<()> {
-        // Configure PREF64 in radvd for CLAT support
-        // PREF64 option allows clients to discover NAT64 prefix automatically
-
-        let radvd_config = format!(
-            r#"
-# PREF64 for NAT64 prefix discovery (RFC 8781)
-interface {interface} {{
-    AdvSendAdvert on;
-
-    # NAT64 prefix (PREF64 option)
-    PREF64 {prefix}/{prefix_len} {{
-        AdvPreferredLifetime 300;
-        AdvValidLifetime 300;
-    }};
-}};
-"#,
-            interface = self.config.nat64_interface,
-            prefix = self.config.prefix,
-            prefix_len = self.config.prefix_len
-        );
-
-        // Append to radvd config or create separate file
-        let pref64_path = PathBuf::from("/etc/radvd.d/nat64-pref64.conf");
-        tokio::fs::create_dir_all(pref64_path.parent().unwrap()).await?;
-        tokio::fs::write(&pref64_path, radvd_config).await?;
-
-        // Reload radvd if running
-        Command::new("systemctl")
-            .args(["reload-or-restart", "radvd"])
-            .status()
-            .await
-            .ok(); // May not be running, that's OK
-
-        tracing::info!("PREF64 configured for NAT64 prefix discovery");
-
-        Ok(())
-    }
-
-    /// Get NAT64 statistics
-    pub async fn get_stats(&self) -> Result<Nat64Stats> {
-        // Parse tayga statistics
-        let stats_output = Command::new("tayga").args(["--stats"]).output().await;
-
-        if let Ok(output) = stats_output {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-
-            // Parse statistics (example format)
-            let stats = Nat64Stats {
-                v6_to_v4_packets: self.parse_stat(&stdout, "IPv6 to IPv4").unwrap_or(0),
-                v4_to_v6_packets: self.parse_stat(&stdout, "IPv4 to IPv6").unwrap_or(0),
-                active_sessions: self.get_active_sessions().await.unwrap_or(0),
-                pool_utilization: self.calculate_pool_utilization().await.unwrap_or(0.0),
-            };
-
-            Ok(stats)
-        } else {
-            Ok(Nat64Stats {
-                v6_to_v4_packets: 0,
-                v4_to_v6_packets: 0,
-                active_sessions: 0,
-                pool_utilization: 0.0,
-            })
-        }
-    }
-
-    fn parse_stat(&self, output: &str, key: &str) -> Option<u64> {
-        output
-            .lines()
-            .find(|line| line.contains(key))
-            .and_then(|line| line.split_whitespace().last())
-            .and_then(|s| s.parse().ok())
-    }
-
-    async fn get_active_sessions(&self) -> Result<u64> {
-        // Count active NAT64 sessions from tayga state
-        let state_file = PathBuf::from("/var/lib/tayga/dynamic.map");
-
-        if state_file.exists() {
-            let content = tokio::fs::read_to_string(&state_file).await?;
-            Ok(content.lines().count() as u64)
-        } else {
-            Ok(0)
-        }
-    }
-
-    async fn calculate_pool_utilization(&self) -> Result<f32> {
-        let active = self.get_active_sessions().await?;
-        let total = self.calculate_pool_size()?;
-
-        Ok((active as f32 / total as f32) * 100.0)
-    }
-
-    fn calculate_pool_size(&self) -> Result<u32> {
-        // Calculate number of addresses in pool
-        let start: u32 = self.config.pool_v4_start.into();
-        let end: u32 = self.config.pool_v4_end.into();
-        Ok(end - start + 1)
-    }
-
-    /// Add static NAT64 mapping
-    pub async fn add_static_mapping(&self, ipv6: Ipv6Addr, ipv4: Ipv4Addr) -> Result<()> {
-        // Add to tayga static mappings
-        let mapping = format!("{} {}\n", ipv6, ipv4);
-
-        let map_file = PathBuf::from("/var/lib/tayga/static.map");
-
-        // Append to static map file
-        use tokio::io::AsyncWriteExt;
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&map_file)
-            .await?;
-
-        file.write_all(mapping.as_bytes()).await?;
-
-        // Reload tayga
-        Command::new("systemctl")
-            .args(["reload", "tayga"])
-            .status()
-            .await?;
-
-        Ok(())
-    }
-
-    /// Remove static NAT64 mapping
-    pub async fn remove_static_mapping(&self, ipv6: Ipv6Addr) -> Result<()> {
-        let map_file = PathBuf::from("/var/lib/tayga/static.map");
-
-        if map_file.exists() {
-            let content = tokio::fs::read_to_string(&map_file).await?;
-            let filtered: String = content
-                .lines()
-                .filter(|line| !line.starts_with(&ipv6.to_string()))
-                .map(|line| format!("{}\n", line))
-                .collect();
-
-            tokio::fs::write(&map_file, filtered).await?;
-
-            // Reload tayga
-            Command::new("systemctl")
-                .args(["reload", "tayga"])
-                .status()
-                .await?;
-        }
-
-        Ok(())
-    }
-
-    /// Validate NAT64 configuration
-    pub fn validate(&self) -> Result<()> {
-        // Check prefix length
-        if self.config.prefix_len != 96 && self.config.prefix_len != 64 {
-            return Err(Error::Config(
-                "NAT64 prefix length must be 96 or 64".to_string(),
-            ));
-        }
-
-        // Check pool is valid
-        let start: u32 = self.config.pool_v4_start.into();
-        let end: u32 = self.config.pool_v4_end.into();
-
-        if start >= end {
-            return Err(Error::Config(
-                "IPv4 pool start must be less than end".to_string(),
-            ));
-        }
-
-        // Check pool size is reasonable
-        let pool_size = end - start + 1;
-        if pool_size > 65536 {
-            return Err(Error::Config(
-                "IPv4 pool too large (max 65536 addresses)".to_string(),
-            ));
-        }
-
-        Ok(())
+        svc::put_settings(store, &SPEC, body).await
     }
 }
 
-impl Default for Nat64Config {
+pub fn check_prefix(p: &str) -> Result<()> {
+    let n: ipnetwork::IpNetwork = p
+        .trim()
+        .parse()
+        .map_err(|_| invalid(format!("NAT64 prefix {p:?}")))?;
+    if n.is_ipv6() && n.prefix() == 96 {
+        Ok(())
+    } else {
+        Err(invalid(format!("NAT64 prefix {p:?} (an IPv6 /96)")))
+    }
+}
+
+/// First usable address of an IPv4 pool.
+pub fn tayga_v4(pool: &str) -> Result<String> {
+    let n: ipnetwork::Ipv4Network = pool
+        .parse()
+        .map_err(|_| invalid(format!("NAT64 pool {pool:?}")))?;
+    if n.prefix() > 28 {
+        return Err(invalid(format!("NAT64 pool {pool:?} (at least a /28)")));
+    }
+    Ok(std::net::Ipv4Addr::from(u32::from(n.network()) + 1).to_string())
+}
+
+pub fn render(prefix: &str, pool: &str, data_dir: &str) -> Result<String> {
+    check_prefix(prefix)?;
+    let mut c = lan::header("#", "tayga NAT64");
+    c.push_str(&format!(
+        "tun-device {DEV}\nipv4-addr {}\nipv6-addr {TAYGA_V6}\nprefix {prefix}\ndynamic-pool {pool}\ndata-dir {data_dir}\n",
+        tayga_v4(pool)?
+    ));
+    Ok(c)
+}
+
+fn ip(args: &[&str]) -> Result<String> {
+    let o = std::process::Command::new("ip")
+        .args(args)
+        .output()
+        .map_err(|e| Error::Network(format!("ip: {e}")))?;
+    if o.status.success() {
+        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+    } else {
+        Err(Error::Network(format!(
+            "`ip {}` failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&o.stderr).trim()
+        )))
+    }
+}
+
+fn dev_exists() -> bool {
+    std::path::Path::new(&format!("/sys/class/net/{DEV}")).exists()
+}
+
+#[derive(Clone)]
+pub struct Nat64Applier {
+    sup: Supervisor,
+    /// Touch the kernel (devices, routes, sysctls). False in unit tests.
+    live: bool,
+}
+
+impl Default for Nat64Applier {
     fn default() -> Self {
         Self {
-            enabled: false,
-            prefix: "64:ff9b::".parse().unwrap(), // Well-known NAT64 prefix
-            prefix_len: 96,
-            pool_v4_start: "192.0.2.1".parse().unwrap(),
-            pool_v4_end: "192.0.2.254".parse().unwrap(),
-            dynamic_pool: true,
-            nat64_interface: "wan0".to_string(),
-            dns64_enabled: true,
-            dns64_prefix: "64:ff9b::/96".to_string(),
-            clat_support: true,
+            sup: Supervisor::detect(),
+            live: true,
         }
+    }
+}
+
+impl Nat64Applier {
+    pub fn with_supervisor(sup: Supervisor, live: bool) -> Self {
+        Self { sup, live }
+    }
+
+    fn data_dir(&self) -> std::path::PathBuf {
+        self.sup.paths.state_dir.join("tayga")
+    }
+
+    fn conf(&self) -> std::path::PathBuf {
+        self.sup.paths.state_dir.join("tayga.conf")
+    }
+
+    fn teardown(&self) {
+        if self.live && dev_exists() {
+            let _ = ip(&["link", "del", DEV]);
+        }
+    }
+}
+
+fn write_sysctl(path: &str, v: &str) {
+    let _ = std::fs::write(path, v);
+}
+
+#[async_trait]
+impl Applier for Nat64Applier {
+    fn name(&self) -> &'static str {
+        "nat64"
+    }
+
+    fn phase(&self) -> Phase {
+        Phase::Services
+    }
+
+    async fn apply(&self, store: &ConfigStore) -> Result<ApplyReport> {
+        let mut rep = ApplyReport::default();
+        let s = Settings::load(store, &SPEC).await?;
+        if !s.b("enabled") {
+            let was = self.sup.stop(svc::DAEMON_SERVICE, INSTANCE).await?;
+            if was || (self.live && dev_exists() && self.conf().exists()) {
+                self.teardown();
+                rep.applied("NAT64 stopped and its device removed");
+            } else {
+                rep.applied("NAT64 is off");
+            }
+            return Ok(rep);
+        }
+        let (prefix, pool) = (s.s("prefix"), s.s("pool"));
+        let data = self.data_dir();
+        let conf_text = render(&prefix, &pool, &data.to_string_lossy())?;
+        let bin = which("tayga").ok_or_else(|| {
+            Error::Service(
+                "NAT64 needs tayga, which is not installed (emerge net-proxy/tayga, USE=nat64)"
+                    .into(),
+            )
+        })?;
+        if s.b("dns64") {
+            let dns = lan::setting_or(store, "dns.mode", "auto").await?;
+            if dns == "forwarder" {
+                rep.warn("DNS64 needs the Unbound resolver; the DNS page is set to the dnsmasq forwarder");
+            }
+        }
+        let conf = self.conf();
+        std::fs::create_dir_all(&data)
+            .map_err(|e| Error::Service(format!("{}: {e}", data.display())))?;
+        let changed = crate::supervise::write_atomic(&conf, &conf_text, 0o644)?;
+        if self.live {
+            if changed && dev_exists() {
+                // address/prefix changed: rebuild the device cleanly
+                let _ = self.sup.stop(svc::DAEMON_SERVICE, INSTANCE).await;
+                self.teardown();
+            }
+            if !dev_exists() {
+                let o = std::process::Command::new(&bin)
+                    .args(["-c", &conf.to_string_lossy(), "--mktun"])
+                    .output()
+                    .map_err(|e| Error::Service(format!("tayga --mktun: {e}")))?;
+                if !o.status.success() {
+                    return Err(Error::Service(format!(
+                        "tayga --mktun failed (is /dev/net/tun available?): {}",
+                        String::from_utf8_lossy(&o.stderr).trim()
+                    )));
+                }
+            }
+            ip(&["link", "set", DEV, "up"])?;
+            ip(&["addr", "replace", &format!("{DEV_V4}/32"), "dev", DEV])?;
+            ip(&[
+                "-6",
+                "addr",
+                "replace",
+                &format!("{DEV_V6}/128"),
+                "dev",
+                DEV,
+            ])?;
+            ip(&["route", "replace", &pool, "dev", DEV])?;
+            ip(&["-6", "route", "replace", &prefix, "dev", DEV])?;
+            // the box forwards IPv6 now: keep router advertisements on the WAN
+            for w in lan::resolve_iface(store, "@wan").await? {
+                write_sysctl(&format!("/proc/sys/net/ipv6/conf/{w}/accept_ra"), "2");
+            }
+            write_sysctl("/proc/sys/net/ipv6/conf/all/forwarding", "1");
+            write_sysctl("/proc/sys/net/ipv4/ip_forward", "1");
+            rep.applied(format!(
+                "device {DEV} up, {prefix} and {pool} routed into it"
+            ));
+        }
+        let started = svc::ensure_daemon(
+            &self.sup,
+            INSTANCE,
+            vec![
+                bin.to_string_lossy().into(),
+                "-c".into(),
+                conf.to_string_lossy().into(),
+                "--nodetach".into(),
+            ],
+            vec![],
+        )
+        .await?;
+        rep.applied(format!(
+            "tayga {} (prefix {prefix}, pool {pool})",
+            if started {
+                "(re)started"
+            } else {
+                "running, unchanged"
+            }
+        ));
+        Ok(rep)
+    }
+
+    async fn render(&self, store: &ConfigStore) -> Result<String> {
+        let s = Settings::load(store, &SPEC).await?;
+        if !s.b("enabled") {
+            return Ok("# NAT64 off\n".into());
+        }
+        Ok(format!(
+            "## tayga.conf\n{}",
+            render(
+                &s.s("prefix"),
+                &s.s("pool"),
+                &self.data_dir().to_string_lossy()
+            )?
+        ))
+    }
+
+    async fn status(&self, store: &ConfigStore) -> Result<Value> {
+        let s = Settings::load(store, &SPEC).await?;
+        Ok(json!({
+            "enabled": s.b("enabled"),
+            "installed": which("tayga").is_some(),
+            "running": self.sup.is_running(svc::DAEMON_SERVICE, INSTANCE),
+            "device": dev_exists(),
+            "prefix": s.s("prefix"),
+            "pool": s.s("pool"),
+        }))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::supervise::{InitMode, NetPaths};
 
     #[test]
-    fn test_pool_size_calculation() {
-        let config = Nat64Config {
-            pool_v4_start: "192.0.2.1".parse().unwrap(),
-            pool_v4_end: "192.0.2.254".parse().unwrap(),
-            ..Default::default()
-        };
-
-        let manager = Nat64Manager::new(config);
-        assert_eq!(manager.calculate_pool_size().unwrap(), 254);
+    fn config_for_the_default_prefix_and_pool() {
+        let c = render(
+            "64:ff9b::/96",
+            "192.168.255.0/24",
+            "/var/lib/patronus/net/tayga",
+        )
+        .unwrap();
+        for want in [
+            "tun-device nat64",
+            "ipv4-addr 192.168.255.1",
+            "prefix 64:ff9b::/96",
+            "dynamic-pool 192.168.255.0/24",
+            "data-dir /var/lib/patronus/net/tayga",
+        ] {
+            assert!(c.contains(want), "missing {want}: {c}");
+        }
+        assert!(render("64:ff9b::/64", "192.168.255.0/24", "/x").is_err());
+        assert!(render("64:ff9b::/96", "192.168.255.0/30", "/x").is_err());
     }
 
-    #[test]
-    fn test_validation() {
-        let config = Nat64Config::default();
-        let manager = Nat64Manager::new(config);
-        assert!(manager.validate().is_ok());
-    }
-
-    #[test]
-    fn test_invalid_prefix_length() {
-        let config = Nat64Config {
-            prefix_len: 48, // Invalid
-            ..Default::default()
-        };
-
-        let manager = Nat64Manager::new(config);
-        assert!(manager.validate().is_err());
+    #[tokio::test]
+    async fn settings_are_validated_and_apply_needs_tayga() {
+        let s = crate::lan::testutil::store().await;
+        let d = tempfile::tempdir().unwrap();
+        let a = Nat64Applier::with_supervisor(
+            Supervisor::new(InitMode::Direct, NetPaths::under(d.path())),
+            false,
+        );
+        a.apply(&s).await.unwrap();
+        for bad in [
+            json!({"prefix": "10.0.0.0/8"}),
+            json!({"pool": "fd00::/64"}),
+            json!({"clients": "lan;x"}),
+        ] {
+            assert!(Nat64Svc.put(&s, &bad).await.is_err(), "{bad}");
+        }
+        assert!(Nat64Svc
+            .put(&s, &json!({"prefix": "2001:db8::/64"}))
+            .await
+            .is_err());
+        Nat64Svc.put(&s, &json!({"enabled": true})).await.unwrap();
+        if which("tayga").is_none() {
+            let e = a.apply(&s).await.unwrap_err();
+            assert!(e.to_string().contains("tayga"), "{e}");
+        }
+        assert!(a.render(&s).await.unwrap().contains("prefix 64:ff9b::/96"));
+        // DNS64 is switched on for the resolver
+        #[cfg(feature = "dns")]
+        {
+            let dns = crate::dns::settings(&s).await.unwrap();
+            assert_eq!(dns.dns64_prefix.as_deref(), Some("64:ff9b::/96"));
+            Nat64Svc.put(&s, &json!({"dns64": false})).await.unwrap();
+            assert_eq!(crate::dns::settings(&s).await.unwrap().dns64_prefix, None);
+        }
     }
 }

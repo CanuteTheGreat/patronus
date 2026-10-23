@@ -155,6 +155,33 @@ that are not finished are listed separately under
   an external prefix in both directions from the firewall's NPTv6 tab. [C43]
 - Updates and power: the System page checks and applies updates through
   Portage as background jobs, and reboots or powers off the box. [C41]
+- Syslog (USE=syslog): forward the system log to remote collectors (UDP or
+  TCP, from a chosen severity up) through an rsyslog drop-in written and
+  validated by Patronus, and read the local log on the Syslog page. [C46]
+- NetFlow / IPFIX export (USE=netflow): softflowd on a chosen interface
+  exports flow records (v5, v9 or IPFIX) to a collector. [C47]
+- IGMP proxy (USE=igmp): igmpproxy forwards multicast streams from the WAN to
+  LAN interfaces, with the firewall rules it needs generated for it. [C48]
+- NAT64 / DNS64 (USE=nat64): IPv6-only clients reach IPv4-only servers through
+  tayga, and Unbound answers AAAA queries for IPv4-only names with addresses
+  in the NAT64 prefix. [C49]
+- L2TP server (USE=l2tp): xl2tpd with PPP MS-CHAPv2 users managed on the L2TP
+  page (L2TP itself is not encrypted: pair it with IPsec on untrusted
+  networks). [C50]
+- Intrusion detection and prevention (USE=intrusion-detection): Suricata
+  watches an interface and alerts on your rules, or runs inline where `drop`
+  rules really drop packets; the rules are checked by Suricata before they
+  replace the running ones. [C51]
+- Dynamic routing (USE=dynamic-routing): BGP and OSPF through FRRouting, set up
+  on the BGP / OSPF page; learned routes are installed in the kernel and the
+  session state is shown live. [C52]
+- Wake-on-LAN: saved hosts (MAC + interface) are woken with a magic packet
+  broadcast on their network. [C53]
+- SD-WAN edge (USE=sdwan): the edge agent enrolls this firewall with a
+  Patronus SD-WAN dashboard using a one-time token, builds an encrypted
+  WireGuard mesh to the other sites with their subnets routed through it,
+  switches a site to its next endpoint when the preferred one stops working,
+  and reports measured paths back to the dashboard. [C54]
 
 ### Administration
 

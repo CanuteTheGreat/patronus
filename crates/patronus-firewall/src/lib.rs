@@ -11,6 +11,7 @@ pub mod ha_rules;
 pub mod nftables;
 pub mod rules;
 pub mod schedule;
+pub mod svc_rules;
 pub mod vpn_rules;
 
 #[cfg(feature = "geoip")]

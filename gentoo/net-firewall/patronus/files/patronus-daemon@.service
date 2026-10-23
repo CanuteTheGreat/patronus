@@ -1,0 +1,16 @@
+[Unit]
+# One supervised feature daemon instance %i (softflowd-<dev>, igmpproxy, tayga,
+# xl2tpd, suricata, ...), started by `patronus apply` / the web UI when the
+# matching feature page (NetFlow export, IGMP proxy, NAT64, L2TP server,
+# intrusion detection) is switched on. The command line and its generated
+# config come from the Patronus config store; do not enable this unit by hand.
+Description=Patronus daemon %i
+After=patronus-firewall.service
+
+[Service]
+Type=simple
+EnvironmentFile=/var/lib/patronus/net/svc/patronus-daemon.%i.env
+# $$ = let the shell (not systemd) expand and word-split the command
+ExecStart=/bin/sh -c 'exec $$PATRONUS_CMD'
+Restart=on-failure
+RestartSec=5

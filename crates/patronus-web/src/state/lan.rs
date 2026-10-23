@@ -40,6 +40,14 @@ impl LanManager {
         Self::with_appliers(store, v)
     }
 
+    /// Also drive the firewall after changes that need firewall rules
+    /// (IGMP proxy, NAT64, L2TP, inline IDS, dynamic routing, HA): the
+    /// state's firewall applier is registered as `firewall`.
+    pub fn with_firewall(mut self, fw: Arc<dyn Applier>) -> Self {
+        self.appliers.insert("firewall", fw);
+        self
+    }
+
     /// Custom appliers (tests).
     pub fn with_appliers(store: Arc<ConfigStore>, v: Vec<Arc<dyn Applier>>) -> Self {
         Self {
@@ -122,6 +130,90 @@ impl LanManager {
             .ok_or_else(|| anyhow::anyhow!("{name} is not built into this binary"))?;
         let r = a.apply(&self.store).await.map_err(e)?;
         Ok(r.applied.into_iter().chain(r.warnings).collect())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Feature pages (patronus_network::svc): syslog, NetFlow, IGMP proxy, NAT64,
+// L2TP, IDS, dynamic routing, Wake-on-LAN
+// ---------------------------------------------------------------------------
+
+/// Appliers to run after a change to feature `slug`: its own, plus the
+/// firewall (auto rules) and DNS (DNS64) where the feature needs them.
+fn svc_appliers(spec: &patronus_network::svc::Spec) -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = Vec::new();
+    if !spec.applier.is_empty() {
+        v.push(spec.applier);
+    }
+    if matches!(
+        spec.slug,
+        "igmp" | "nat64" | "l2tp" | "ids" | "frr" | "edge"
+    ) {
+        v.push("firewall");
+    }
+    if spec.slug == "nat64" {
+        v.push("dns");
+    }
+    v
+}
+
+impl LanManager {
+    fn svc_model(slug: &str) -> anyhow::Result<Arc<dyn patronus_network::svc::Svc>> {
+        patronus_network::svc::find(slug).ok_or_else(|| {
+            anyhow::anyhow!("no {slug} in this build (rebuild with the matching USE flag)")
+        })
+    }
+
+    pub async fn svc_overview(&self, slug: &str) -> anyhow::Result<Value> {
+        let m = Self::svc_model(slug)?;
+        let spec = m.spec();
+        let mut v = m.get(&self.store).await.map_err(e)?;
+        v["schema"] = patronus_network::svc::schema(spec);
+        v["status"] = if spec.applier.is_empty() {
+            Value::Null
+        } else {
+            self.status(spec.applier).await.unwrap_or(Value::Null)
+        };
+        Ok(v)
+    }
+
+    pub async fn svc_put(&self, slug: &str, body: Value) -> anyhow::Result<()> {
+        let m = Self::svc_model(slug)?;
+        let _g = self.edit.lock().await;
+        let snap = self.begin(&format!("change {slug} settings")).await?;
+        m.put(&self.store, &body).await.map_err(e)?;
+        self.commit(&format!("{slug} settings"), snap, &svc_appliers(m.spec()))
+            .await
+    }
+
+    pub async fn svc_save_row(
+        &self,
+        slug: &str,
+        coll: &str,
+        id: Option<i64>,
+        body: Value,
+    ) -> anyhow::Result<i64> {
+        let m = Self::svc_model(slug)?;
+        let _g = self.edit.lock().await;
+        let snap = self.begin(&format!("change {slug} {coll}")).await?;
+        let id = m.save_row(&self.store, coll, id, &body).await.map_err(e)?;
+        self.commit(&format!("{slug} {coll}"), snap, &svc_appliers(m.spec()))
+            .await?;
+        Ok(id)
+    }
+
+    pub async fn svc_delete_row(&self, slug: &str, coll: &str, id: i64) -> anyhow::Result<()> {
+        let m = Self::svc_model(slug)?;
+        let _g = self.edit.lock().await;
+        let snap = self.begin(&format!("delete a {slug} row")).await?;
+        m.delete_row(&self.store, coll, id).await.map_err(e)?;
+        self.commit(&format!("{slug} {coll}"), snap, &svc_appliers(m.spec()))
+            .await
+    }
+
+    pub async fn svc_action(&self, slug: &str, name: &str, body: Value) -> anyhow::Result<Value> {
+        let m = Self::svc_model(slug)?;
+        m.action(&self.store, name, &body).await.map_err(e)
     }
 }
 

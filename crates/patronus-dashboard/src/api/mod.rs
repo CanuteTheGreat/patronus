@@ -1,6 +1,7 @@
 //! API endpoints
 
 pub mod auth;
+pub mod edge;
 pub mod flows;
 pub mod metrics;
 pub mod paths;
@@ -32,12 +33,21 @@ pub fn routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
     let public = Router::new()
         .route("/auth/login", post(auth::login))
         .route("/auth/refresh", post(auth::refresh))
-        .route("/auth/init-admin", post(auth::init_admin));
+        .route("/auth/init-admin", post(auth::init_admin))
+        // edge agents authenticate with their own credential / enrollment token
+        .route("/edge/enroll", post(edge::enroll))
+        .route("/edge/config", get(edge::config))
+        .route("/edge/heartbeat", post(edge::heartbeat));
 
     let policy_writes = Router::new()
         .route("/policies", post(policies::create_policy))
         .route("/policies/:id", put(policies::update_policy))
         .route("/policies/:id", delete(policies::delete_policy))
+        .route_layer(from_fn(crate::auth::middleware::require_operator));
+
+    let edge_admin = Router::new()
+        .route("/edge/tokens", post(edge::create_token))
+        .route("/edge/edges/:id", delete(edge::revoke))
         .route_layer(from_fn(crate::auth::middleware::require_operator));
 
     let protected = Router::new()
@@ -56,6 +66,9 @@ pub fn routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/policies", get(policies::list_policies))
         .route("/policies/:id", get(policies::get_policy))
         .merge(policy_writes)
+        // SD-WAN edges (agent-facing routes are public above: they carry their own credential)
+        .route("/edge/edges", get(edge::list_edges))
+        .merge(edge_admin)
         // Metrics
         .route("/metrics/summary", get(metrics::get_summary))
         .route("/metrics/timeseries", get(metrics::get_timeseries))

@@ -1961,3 +1961,136 @@ async fn traffic_shaping_is_managed_through_the_api_and_undone_when_tc_refuses()
         .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
+
+#[cfg(feature = "syslog")]
+#[tokio::test]
+async fn feature_pages_validate_apply_undo_and_report_what_is_not_built() {
+    let dir = std::env::temp_dir().join(format!("patronus-web-svc-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("pw"), format!("{ADMIN_PW}\n")).unwrap();
+    let mut state = state_at(&dir).await;
+    let syslog = Fake::new("syslog", Phase::Services);
+    state.lan = Arc::new(crate::state::LanManager::with_appliers(
+        state.config_store.clone(),
+        vec![syslog.clone()],
+    ));
+    let app = super::build_router(state.clone(), Arc::new(crate::WsBroadcaster::new()));
+    let t = T {
+        app,
+        state,
+        dir,
+        wg: Fake::new("wireguard", Phase::Interfaces),
+        restore_fake: Fake::new("firewall", Phase::Firewall),
+    };
+    let c = t.admin().await;
+
+    // the list of built features and one feature's overview with its schema
+    let (s, b) = t.call(&c, Method::GET, "/api/svc", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(
+        b.as_array().unwrap().iter().any(|f| f["slug"] == "syslog"),
+        "{b}"
+    );
+    let (s, b) = t.call(&c, Method::GET, "/api/svc/syslog", None).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(b["schema"]["collections"][0]["key"], "targets");
+    assert!(b["collections"]["targets"].as_array().unwrap().is_empty());
+
+    // validation answers 400 and applies nothing
+    for body in [
+        json!({"host": "a b"}),
+        json!({"host": "10.0.0.5", "port": 0}),
+        json!({"host": "10.0.0.5", "proto": "icmp"}),
+        json!({}),
+    ] {
+        let (s, _) = t
+            .call(
+                &c,
+                Method::POST,
+                "/api/svc/syslog/targets",
+                Some(body.clone()),
+            )
+            .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    }
+    assert_eq!(syslog.applies.load(Ordering::SeqCst), 0);
+
+    // a valid row is stored and applied once; a refused edit is undone
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/svc/syslog/targets",
+            Some(json!({"host": "10.0.0.5", "severity": "warning"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let id = b["id"].as_i64().unwrap();
+    assert_eq!(syslog.applies.load(Ordering::SeqCst), 1);
+    syslog.fail.store(true, Ordering::SeqCst);
+    let (s, _) = t
+        .call(
+            &c,
+            Method::PUT,
+            &format!("/api/svc/syslog/targets/{id}"),
+            Some(json!({"port": 6514})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::INTERNAL_SERVER_ERROR);
+    syslog.fail.store(false, Ordering::SeqCst);
+    let (_, b) = t.call(&c, Method::GET, "/api/svc/syslog", None).await;
+    assert_eq!(
+        b["collections"]["targets"][0]["port"], 514,
+        "refused change was not undone: {b}"
+    );
+
+    // the page renders; a feature the binary was not built with says so
+    let (s, body, _) = t.raw(Method::GET, "/svc/syslog", Some(&c), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(body.contains("svc-settings-form") && body.contains("Syslog"));
+    let (s, _) = t.call(&c, Method::GET, "/api/svc/nothing", None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, body, _) = t.raw(Method::GET, "/svc/nothing", Some(&c), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert!(body.contains("Not part of this build"));
+
+    // delete, twice
+    let (s, _) = t
+        .call(
+            &c,
+            Method::DELETE,
+            &format!("/api/svc/syslog/targets/{id}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = t
+        .call(
+            &c,
+            Method::DELETE,
+            &format!("/api/svc/syslog/targets/{id}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // Wake-on-LAN keeps its hosts without an applier
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/svc/wol/hosts",
+            Some(json!({"name": "nas", "mac": "AA:BB:CC:DD:EE:FF"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let (s, _) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/svc/wol/action/wake",
+            Some(json!({"mac": "nope"})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+}
