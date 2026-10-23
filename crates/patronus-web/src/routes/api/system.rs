@@ -472,6 +472,67 @@ pub async fn restart_service(State(state): State<AppState>, Path(name): Path<Str
 /// Largest configuration upload accepted (an export is a few hundred KiB).
 pub const MAX_UPLOAD: usize = 16 << 20;
 
+#[derive(Deserialize)]
+pub struct FactoryReset {
+    pub password: String,
+    pub confirm: String,
+}
+
+/// POST /api/system/factory-reset {password, confirm: "RESET"} (admin, not
+/// API keys): back the configuration up, then replace it with a first-boot
+/// one (interface roles from patronus.toml, the safe default ruleset),
+/// applied to the whole system. Web accounts are kept (so the admin can
+/// still log in); groups, VPNs, services, rules and the like are gone. The
+/// reset is a restore, so it is also kept as a revision.
+pub async fn factory_reset(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Json(req): Json<FactoryReset>,
+) -> Response {
+    if req.confirm != "RESET" {
+        return error(StatusCode::BAD_REQUEST, "Invalid request: type RESET to confirm");
+    }
+    if state
+        .auth
+        .user_store
+        .verify_credentials(&admin.session.username, &req.password)
+        .await
+        .is_none()
+    {
+        return error(StatusCode::FORBIDDEN, "wrong password");
+    }
+    let backup = match state.system.create_backup(&state.config_store).await {
+        Ok(b) => b,
+        Err(e) => return err(e),
+    };
+    let scratch = match patronus_config::ConfigStore::open_in_memory().await {
+        Ok(s) => s,
+        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+    let bootstrap = patronus_config::defaults::Bootstrap::load(
+        &patronus_config::defaults::default_bootstrap_path(),
+    )
+    .ok()
+    .flatten();
+    if let Err(e) = patronus_config::defaults::ensure_defaults(
+        &scratch,
+        bootstrap.as_ref(),
+        &patronus_config::defaults::existing_interfaces(),
+    )
+    .await
+    {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, format!("building the defaults: {e}"));
+    }
+    let doc = match scratch.export_json().await {
+        Ok(d) => d,
+        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+    match state.system.restore(&state.config_store, &doc, "factory reset").await {
+        Ok(lines) => Json(json!({ "ok": true, "backup": backup.name, "applied": lines })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
 /// This lane's API routes, mounted under `/api` by `routes::api_routes`
 /// with one `.merge(system::router())` line.
 pub fn router() -> axum::Router<AppState> {
@@ -493,6 +554,7 @@ pub fn router() -> axum::Router<AppState> {
         .route("/system/updates", get(list_updates))
         .route("/system/updates/check", post(check_updates))
         .route("/system/updates/apply", post(apply_updates))
+        .route("/system/factory-reset", post(factory_reset))
         .route("/system/reboot", post(reboot))
         .route("/system/shutdown", post(shutdown))
         .route("/system/services", get(list_services))

@@ -183,6 +183,7 @@ async fn require_session(
             || path.starts_with("/api/system/api-keys")
             || path.starts_with("/api/system/auth-servers")
             || path.starts_with("/api/system/groups")
+            || path.starts_with("/api/system/factory-reset")
             || path.starts_with("/api/system/backup-targets")
             || path.starts_with("/api/system/users");
         if !(path.starts_with("/api/") || path == "/metrics") || people_only {

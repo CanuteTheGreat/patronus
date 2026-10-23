@@ -326,6 +326,7 @@
 <div class="card" id="power-card">
     <div class="card-header"><h2 class="card-title">Power</h2></div>
     <p class="text-sm">Reboot or power off this firewall. The configuration is re-applied from the store at boot.</p>
+    <button class="btn btn-sm btn-danger" id="factory-reset-btn" onclick="factoryReset()">Factory reset</button>
     <button class="btn btn-sm btn-danger" id="reboot-btn" onclick="if (confirm('Reboot this firewall now? Traffic through it stops for a minute or two.')) powerOp('reboot')">Reboot</button>
     <button class="btn btn-sm btn-danger" id="shutdown-btn" onclick="if (confirm('Power off this firewall? You will need physical access to start it again.')) powerOp('shutdown')">Shut down</button>
 </div>
@@ -385,6 +386,16 @@
     async function updateJob(kind, body) {
         const j = await post('/api/system/updates/' + kind, body);
         if (j) loadUpdates();
+    }
+    async function factoryReset() {
+        if (!{{ is_admin }}) return alert('Only admins can reset the configuration.');
+        if (!confirm('Factory reset: all rules, VPNs, services and settings are replaced by a first-boot configuration. Web accounts stay. A backup is made first. Continue?')) return;
+        const confirmText = prompt('Type RESET to confirm');
+        if (confirmText !== 'RESET') return;
+        const pw = prompt('Your admin password');
+        if (!pw) return;
+        const j = await post('/api/system/factory-reset', {password: pw, confirm: confirmText});
+        if (j) { alert('Reset done. Backup: ' + j.backup); location.reload(); }
     }
     async function powerOp(what) {
         const j = await post('/api/system/' + what, {});
