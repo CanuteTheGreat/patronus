@@ -97,8 +97,8 @@ sqlx.workspace = true
 sha2 = "0.10"
 # RADIUS (RFC 2865) for external web logins
 md-5 = "0.10"
-# LDAP login for USE=ldap (TLS via rustls; no native OpenSSL)
-ldap3 = { version = "0.11", default-features = false, features = ["tls-rustls"], optional = true }
+# LDAP login for USE=ldap (TLS via native-tls/OpenSSL: ldap3's rustls path pins rustls 0.21, which cargo audit rejects)
+ldap3 = { version = "0.11", default-features = false, features = ["tls-native"], optional = true }
 # TOTP (RFC 6238) for USE=totp
 hmac = { version = "0.12", optional = true }
 sha1 = { version = "0.10", optional = true }

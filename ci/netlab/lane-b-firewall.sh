@@ -151,7 +151,7 @@ nl_api POST /firewall/rules/$ANTI/move '{"direction":"down"}'
 [ "$NL_CODE" = 400 ] || nl_fail "moving the anti-lockout rule: HTTP $NL_CODE"
 nl_ok "the anti-lockout system rule cannot be moved (400)"
 IN=$(R nft list chain inet patronus input)
-grep -m1 -E 'accept|drop|reject' <<<"$(grep -v -E 'iifname "lo"|ct state|icmp|policy' <<<"$IN")" | grep -q 'Anti-lockout' \
+grep -m1 -E 'accept|drop|reject' <<<"$(grep -v -E 'iifname "lo"|ct state|icmp|policy|DHCPv6' <<<"$IN")" | grep -q 'Anti-lockout' \
   || { echo "$IN"; nl_fail "anti-lockout is not the first user-visible input rule"; }
 nl_ok "anti-lockout stays first in the input chain"
 

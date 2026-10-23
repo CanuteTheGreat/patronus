@@ -121,6 +121,7 @@ RDEPEND="
 		acme? ( app-crypt/acme-sh )
 		certbot? ( app-crypt/certbot )
 	)
+	ldap? ( dev-libs/openssl:0= )
 	radius? ( net-dialup/freeradius )
 	geoip? ( dev-libs/geoip )
 	geoip2? ( dev-libs/libmaxminddb )
