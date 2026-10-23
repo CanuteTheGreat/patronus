@@ -77,14 +77,14 @@ impl Svc for UpnpSvc {
     }
 }
 
-/// miniupnpd.conf. `lan_dev`/`wan_dev` are device names; `ext_private` is set
+/// miniupnpd.conf. `lan_dev`/`wan_dev` are device names; `ext_ip` declares the WAN address
 /// when the WAN address is private (double NAT), where miniupnpd refuses to
 /// map unless told otherwise.
 pub fn render_conf(
     s: &Settings,
     lan_devs: &[String],
     wan_dev: &str,
-    ext_private: bool,
+    ext_ip: Option<&str>,
     lease: &str,
 ) -> String {
     let mut c = lan::header("#", "miniupnpd");
@@ -100,8 +100,9 @@ pub fn render_conf(
         "secure_mode={}\nsystem_uptime=yes\nlease_file={lease}\nclean_ruleset_interval=600\n",
         if s.b("secure_mode") { "yes" } else { "no" }
     ));
-    if ext_private {
-        c.push_str("ext_allow_private_ipv4=yes\n");
+    if let Some(ip) = ext_ip {
+        // a private or reserved WAN address: declare it as the public one
+        c.push_str(&format!("ext_ip={ip}\n"));
     }
     c.push_str("friendly_name=Patronus\n");
     // only the configured range, from any LAN address; everything else denied
@@ -129,6 +130,20 @@ impl UpnpApplier {
     pub fn with_supervisor(sup: Supervisor) -> Self {
         Self { sup }
     }
+}
+
+/// The first IPv4 address on `dev` (what miniupnpd finds itself).
+fn kernel_ipv4(dev: &str) -> Option<String> {
+    let out = std::process::Command::new("ip")
+        .args(["-4", "-o", "addr", "show", "dev", dev])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .skip_while(|w| *w != "inet")
+        .nth(1)
+        .and_then(|a| a.split('/').next())
+        .map(String::from)
 }
 
 async fn wan_is_private(store: &ConfigStore, dev: &str) -> bool {
@@ -183,7 +198,12 @@ impl Applier for UpnpApplier {
             &s,
             &lan_devs,
             wan,
-            s.b("allow_private_wan") || wan_is_private(store, wan).await,
+            if s.b("allow_private_wan") || wan_is_private(store, wan).await {
+                kernel_ipv4(wan)
+            } else {
+                None
+            }
+            .as_deref(),
             &lease.to_string_lossy(),
         );
         let started = svc::ensure_daemon(
@@ -225,7 +245,7 @@ impl Applier for UpnpApplier {
             &s,
             &lan_devs,
             wan.first().map(String::as_str).unwrap_or("?"),
-            false,
+            None,
             "upnp.leases",
         ))
     }
@@ -261,11 +281,11 @@ mod tests {
             ("port_min", "2000"),
             ("port_max", "3000"),
         ]);
-        let c = render_conf(&s, &["eth1".into()], "eth0", true, "/x/leases");
+        let c = render_conf(&s, &["eth1".into()], "eth0", Some("10.0.0.2"), "/x/leases");
         assert!(c.contains("ext_ifname=eth0\nlistening_ip=eth1\n"));
         assert!(c.contains("enable_natpmp=yes\n") && c.contains("enable_upnp=no\n"));
-        assert!(c.contains("secure_mode=yes\n") && c.contains("ext_allow_private_ipv4=yes\n"));
+        assert!(c.contains("secure_mode=yes\n") && c.contains("ext_ip=10.0.0.2\n"));
         assert!(c.contains("allow 2000-3000 0.0.0.0/0 2000-3000\ndeny 0-65535"));
-        assert!(!render_conf(&s, &["eth1".into()], "eth0", false, "l").contains("allow_private"));
+        assert!(!render_conf(&s, &["eth1".into()], "eth0", None, "l").contains("ext_ip"));
     }
 }
