@@ -181,6 +181,7 @@ async fn require_session(
         let people_only = (path.starts_with("/api/auth/") && path != "/api/auth/me")
             || path.starts_with("/api/system/api-keys")
             || path.starts_with("/api/system/auth-servers")
+            || path.starts_with("/api/system/groups")
             || path.starts_with("/api/system/users");
         if !(path.starts_with("/api/") || path == "/metrics") || people_only {
             return (
@@ -216,6 +217,29 @@ async fn require_session(
             let own_account = path == "/api/auth/logout"
                 || path == "/api/auth/password"
                 || path.starts_with("/api/auth/2fa/");
+            // Group membership replaces the coarse role: an account in a
+            // group gets exactly the group's per-area privileges.
+            if !session.role.is_admin() && !own_account {
+                if let (Some(rbac), Some(area)) = (
+                    parts.extensions.get::<crate::rbac::RbacStore>().cloned(),
+                    crate::rbac::area_for_path(&path),
+                ) {
+                    if let Some(privs) = rbac.privileges_of(session.user_id as i64).await {
+                        if !crate::rbac::allows(&privs, area, mutating) {
+                            let msg = format!(
+                                "your group has no {} access to {area}",
+                                if mutating { "write" } else { "read" }
+                            );
+                            return if is_api {
+                                (StatusCode::FORBIDDEN, axum::Json(serde_json::json!({"error": msg}))).into_response()
+                            } else {
+                                (StatusCode::FORBIDDEN, msg).into_response()
+                            };
+                        }
+                        return next.run(axum::http::Request::from_parts(parts, body)).await;
+                    }
+                }
+            }
             if is_api && mutating && !own_account && !session.role.can_modify() {
                 return (
                     StatusCode::FORBIDDEN,
@@ -260,6 +284,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::interfaces::router())
         .merge(api::system::router())
         .merge(api::apikeys::router())
+        .merge(api::groups::router())
         .merge(api::authservers::router())
         .merge(api::telemetry::router())
 }

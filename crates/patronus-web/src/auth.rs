@@ -1191,6 +1191,7 @@ pub struct AuthState {
     pub login_throttle: LoginThrottle,
     /// API keys for automation (bearer tokens), see `crate::apikeys`.
     pub api_keys: crate::apikeys::ApiKeyStore,
+    pub rbac: crate::rbac::RbacStore,
 }
 
 impl AuthState {
@@ -1199,7 +1200,8 @@ impl AuthState {
             user_store: UserStore::new(store.clone()),
             session_store: SessionStore::new(),
             login_throttle: LoginThrottle::new(),
-            api_keys: crate::apikeys::ApiKeyStore::new(store),
+            api_keys: crate::apikeys::ApiKeyStore::new(store.clone()),
+            rbac: crate::rbac::RbacStore::new(store),
         }
     }
 }
@@ -1647,6 +1649,7 @@ pub async fn session_middleware(
     req.extensions_mut()
         .insert(app_state.auth.session_store.clone());
     req.extensions_mut().insert(app_state.auth.api_keys.clone());
+    req.extensions_mut().insert(app_state.auth.rbac.clone());
     next.run(req).await
 }
 

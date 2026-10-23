@@ -93,6 +93,25 @@
     {% endif %}
 </div>
 
+<div class="card" id="groups-card" style="display:none">
+    <div class="card-header"><h2 class="card-title">Groups and privileges</h2></div>
+    <p class="text-sm text-muted">A group grants read or write on areas of the product. A non-admin account in a group gets exactly
+        the group's privileges (instead of its role); admins always have everything. Enforced on every page and API call.</p>
+    <p class="empty" id="groups-empty">No groups yet.</p>
+    <table class="lan" id="groups-table"><thead><tr><th>Group</th><th>Privileges</th><th>Members</th><th></th></tr></thead><tbody></tbody></table>
+    <form class="lan-form" id="group-form" onsubmit="return saveGroup(event)">
+        <label>Name <input name="name" required></label>
+        <label>Description <input name="description"></label>
+        <div id="group-areas"></div>
+        <button class="btn btn-primary btn-sm" type="submit">Add group</button>
+    </form>
+    <form class="lan-form" id="member-form" onsubmit="return setMember(event)">
+        <label>Account <select name="user" id="member-user"></select></label>
+        <label>Group <select name="group" id="member-group"></select></label>
+        <button class="btn btn-secondary btn-sm" type="submit">Set group</button>
+    </form>
+</div>
+
 <div class="card" id="api-keys">
     <div class="card-header"><h2 class="card-title">API keys</h2></div>
     <p class="text-sm text-muted">Bearer tokens for automation (monitoring collectors, Terraform, scripts). Send
@@ -450,13 +469,67 @@
     document.addEventListener('DOMContentLoaded', loadApiKeys);
 </script>
 <script>
+    async function loadGroups() {
+        if (!{{ is_admin }}) return;
+        const r = await fetch('/api/system/groups', {credentials: 'same-origin'});
+        if (!r.ok) return;
+        const d = await r.json();
+        document.getElementById('groups-card').style.display = '';
+        const tb = document.querySelector('#groups-table tbody'); tb.textContent = '';
+        document.getElementById('groups-empty').style.display = d.groups.length ? 'none' : '';
+        document.getElementById('groups-table').style.display = d.groups.length ? '' : 'none';
+        const sel = document.getElementById('member-group'); sel.textContent = '';
+        const none = document.createElement('option'); none.value = ''; none.textContent = '(no group: use the role)'; sel.appendChild(none);
+        for (const g of d.groups) {
+            const tr = document.createElement('tr'); tr.dataset.group = g.name;
+            const td = document.createElement('td'); td.textContent = g.name; tr.appendChild(td);
+            cell(tr, Object.entries(g.privileges).map(([a, l]) => a + ':' + l).join(', ') || 'none');
+            cell(tr, g.members.join(', '));
+            const act = document.createElement('td');
+            const b = document.createElement('button'); b.className = 'btn btn-sm btn-danger'; b.textContent = 'Delete';
+            b.onclick = async () => { if (!confirm('Delete group ' + g.name + '?')) return;
+                const x = await fetch('/api/system/groups/' + g.id, {method: 'DELETE', credentials: 'same-origin'});
+                if (x.ok) loadGroups(); else alert('Not deleted: ' + x.status); };
+            act.appendChild(b); tr.appendChild(act); tb.appendChild(tr);
+            const o = document.createElement('option'); o.value = g.id; o.textContent = g.name; sel.appendChild(o);
+        }
+        const ar = document.getElementById('group-areas');
+        if (!ar.childElementCount) for (const a of d.areas) {
+            const l = document.createElement('label'); l.textContent = a.key + ' ';
+            l.title = a.description;
+            const s = document.createElement('select'); s.dataset.area = a.key;
+            for (const v of ['', 'read', 'write']) { const o = document.createElement('option'); o.value = v; o.textContent = v || 'none'; s.appendChild(o); }
+            l.appendChild(s); ar.appendChild(l);
+        }
+        const us = await getJson('/api/system/users');
+        const mu = document.getElementById('member-user'); mu.textContent = '';
+        for (const u of (us || [])) if (u.role !== 'admin') { const o = document.createElement('option'); o.value = u.id; o.textContent = u.username; mu.appendChild(o); }
+    }
+    async function saveGroup(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements; const privileges = {};
+        document.querySelectorAll('#group-areas select').forEach(s => { if (s.value) privileges[s.dataset.area] = s.value; });
+        const j = await post('/api/system/groups', {name: f['name'].value, description: f['description'].value, privileges});
+        if (j) { ev.target.reset(); loadGroups(); }
+        return false;
+    }
+    async function setMember(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements; const g = f['group'].value;
+        const j = await post('/api/system/users/' + f['user'].value + '/group', {group_id: g ? parseInt(g, 10) : null}, false, 'PUT');
+        if (j) loadGroups();
+        return false;
+    }
+    document.addEventListener('DOMContentLoaded', loadGroups);
+</script>
+<script>
     function setPassword(id, name) {
         const pw = prompt('New password for ' + name + ' (12+ characters):');
         if (pw) call('PUT', '/api/system/users/' + id, {password: pw});
     }
-    async function post(url, body, raw) {
+    async function post(url, body, raw, method) {
         const r = await fetch(url, {
-            method: 'POST', credentials: 'same-origin',
+            method: method || 'POST', credentials: 'same-origin',
             headers: {'content-type': 'application/json'},
             body: raw ? body : JSON.stringify(body),
         });

@@ -157,6 +157,7 @@ pub async fn delete_user(
     match state.auth.user_store.delete_user(id).await {
         Ok(true) => {
             state.auth.session_store.drop_user(id, None).await;
+            state.auth.rbac.forget_user(id as i64).await;
             Json(json!({ "ok": true })).into_response()
         }
         Ok(false) => error(StatusCode::NOT_FOUND, format!("no such user {id}")),

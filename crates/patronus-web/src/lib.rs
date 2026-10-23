@@ -9,6 +9,7 @@ pub mod auth;
 pub mod geo_centroid;
 pub mod qrcode;
 pub mod radius;
+pub mod rbac;
 pub mod routes;
 pub mod state;
 pub mod templates;
