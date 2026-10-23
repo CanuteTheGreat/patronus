@@ -183,7 +183,7 @@ impl Applier for UpnpApplier {
             &s,
             &lan_devs,
             wan,
-            wan_is_private(store, wan).await,
+            s.b("allow_private_wan") || wan_is_private(store, wan).await,
             &lease.to_string_lossy(),
         );
         let started = svc::ensure_daemon(

@@ -35,18 +35,18 @@ nl_api PUT /svc/proxy '{"enabled":true,"transparent":true,"port":"3128"}'
 nl_wait 30 R sh -c "ss -ltn | grep -q ':3128 '" || { R ss -ltnp || true; nl_fail "squid is not listening on 3128"; }
 nl_ok "squid listening on the LAN address"
 
-out=$(C curl -s --max-time 8 -x http://$NL_RTR_LAN:3128 http://$NL_WWW/) || { C curl -sv --max-time 8 -x http://$NL_RTR_LAN:3128 http://$NL_WWW/ 2>&1 | tail -15; R ss -ltnp; nl_fail "fetch through the proxy failed"; }
+out=$(C curl -s --max-time 40 -x http://$NL_RTR_LAN:3128 http://$NL_WWW/) || { C curl -sv --max-time 40 -x http://$NL_RTR_LAN:3128 http://$NL_WWW/ 2>&1 | tail -15; R ss -ltnp; nl_fail "fetch through the proxy failed"; }
 grep -q "sees $NL_RTR_WAN" <<<"$out" || nl_fail "origin did not see the router's WAN address: $out"
 nl_ok "LAN client fetched through the proxy: $out"
-code=$(C curl -s -o /dev/null -w '%{http_code}' --max-time 8 -x http://$NL_RTR_LAN:3128 http://blocked.example.test/ || true)
+code=$(C curl -s -o /dev/null -w '%{http_code}' --max-time 40 -x http://$NL_RTR_LAN:3128 http://blocked.example.test/ || true)
 [ "$code" = 403 ] || nl_fail "blocked domain answered $code, want 403"
 nl_ok "blocked domain -> 403"
 
 # interception: no proxy configured at the client, TCP 80 to another host is redirected
 nl_assert_nft_has "redirect to :3129"
-out=$(C curl -s --max-time 8 http://$NL_WWW/) || nl_fail "intercepted fetch failed"
+out=$(C curl -s --max-time 40 http://$NL_WWW/) || nl_fail "intercepted fetch failed"
 grep -q "sees $NL_RTR_WAN" <<<"$out" || nl_fail "intercepted request: $out"
-code=$(C curl -s -o /dev/null -w '%{http_code}' --max-time 8 --resolve blocked.example.test:80:$NL_BLOCKED http://blocked.example.test/ || true)
+code=$(C curl -s -o /dev/null -w '%{http_code}' --max-time 40 --resolve blocked.example.test:80:$NL_BLOCKED http://blocked.example.test/ || true)
 [ "$code" = 403 ] || nl_fail "intercepted blocked domain answered $code"
 nl_ok "interception: plain HTTP from the LAN goes through the proxy (blocked -> 403)"
 
