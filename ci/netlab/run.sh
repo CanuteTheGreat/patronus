@@ -72,6 +72,11 @@ apt-get install -y -qq nftables iproute2 curl python3 dnsmasq-base conntrack sql
 # lane J feature scenarios: rsyslog (syslog), softflowd (NetFlow), igmpproxy, tayga + unbound
 # (NAT64/DNS64), xl2tpd + ppp (L2TP), suricata (IDS/IPS), frr (BGP/OSPF)
 apt-get install -y -qq --no-install-recommends rsyslog softflowd igmpproxy tayga unbound xl2tpd ppp suricata frr >/dev/null
+# lane N LDAP login: OpenLDAP (preseeded so the postinst needs no questions); installed here
+# because scenarios that ran before it leave the container without working DNS
+apt-get install -y -qq debconf-utils >/dev/null
+printf 'slapd slapd/password1 password Ldap-Admin-Pw-1\\nslapd slapd/password2 password Ldap-Admin-Pw-1\\nslapd slapd/domain string example.net\\nslapd shared/organization string Example\\nslapd slapd/no_configuration boolean false\\n' | debconf-set-selections
+apt-get install -y -qq slapd ldap-utils >/dev/null
 # wg(8) only; its "recommends" would pull wireguard-dkms + kernel headers
 apt-get install -y -qq --no-install-recommends wireguard-tools >/dev/null
 export NETLAB_POWER_CUTS=${NETLAB_POWER_CUTS:-4}
