@@ -69,8 +69,7 @@ pub async fn status(State(state): State<AppState>) -> Response {
             matches!(
                 d["kind"].as_str(),
                 Some("ethernet") | Some("wlan") | Some("veth") | None
-            )
-                && d["master"].is_null()
+            ) && d["master"].is_null()
         })
         .map(|d| {
             json!({
@@ -123,8 +122,14 @@ pub async fn apply(
             "Invalid setup: WAN and LAN need different interfaces",
         );
     }
-    if b.dhcp && (b.dhcp_start.as_deref().unwrap_or("").is_empty() || b.dhcp_end.as_deref().unwrap_or("").is_empty()) {
-        return error(StatusCode::BAD_REQUEST, "Invalid setup: the DHCP pool needs a start and an end address");
+    if b.dhcp
+        && (b.dhcp_start.as_deref().unwrap_or("").is_empty()
+            || b.dhcp_end.as_deref().unwrap_or("").is_empty())
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Invalid setup: the DHCP pool needs a start and an end address",
+        );
     }
     let client = ci.map(|ConnectInfo(a)| a.ip());
     let static_wan = b.wan_mode.as_deref() == Some("static");
