@@ -505,26 +505,33 @@ pub async fn factory_reset(
         Ok(b) => b,
         Err(e) => return err(e),
     };
-    let scratch = match patronus_config::ConfigStore::open_in_memory().await {
-        Ok(s) => s,
-        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-    };
-    let bootstrap = patronus_config::defaults::Bootstrap::load(
-        &patronus_config::defaults::default_bootstrap_path(),
-    )
-    .ok()
-    .flatten();
-    if let Err(e) = patronus_config::defaults::ensure_defaults(
-        &scratch,
-        bootstrap.as_ref(),
-        &patronus_config::defaults::existing_interfaces(),
-    )
-    .await
-    {
-        return error(StatusCode::INTERNAL_SERVER_ERROR, format!("building the defaults: {e}"));
-    }
-    let doc = match scratch.export_json().await {
-        Ok(d) => d,
+    // the defaults are built on a scratch store; that future is not Send,
+    // so it runs on a blocking thread
+    let handle = tokio::runtime::Handle::current();
+    let doc = tokio::task::spawn_blocking(move || {
+        handle.block_on(async {
+            let scratch = patronus_config::ConfigStore::open_in_memory()
+                .await
+                .map_err(|e| e.to_string())?;
+            let bootstrap = patronus_config::defaults::Bootstrap::load(
+                &patronus_config::defaults::default_bootstrap_path(),
+            )
+            .ok()
+            .flatten();
+            patronus_config::defaults::ensure_defaults(
+                &scratch,
+                bootstrap.as_ref(),
+                &patronus_config::defaults::existing_interfaces(),
+            )
+            .await
+            .map_err(|e| format!("building the defaults: {e}"))?;
+            scratch.export_json().await.map_err(|e| e.to_string())
+        })
+    })
+    .await;
+    let doc = match doc {
+        Ok(Ok(d)) => d,
+        Ok(Err(e)) => return error(StatusCode::INTERNAL_SERVER_ERROR, e),
         Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
     match state.system.restore(&state.config_store, &doc, "factory reset").await {

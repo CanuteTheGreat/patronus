@@ -241,13 +241,15 @@ pub fn spec(
         Client::Dhcpcd => {
             let conf: PathBuf = dir.join(format!("dhcpcd-{dev}.conf"));
             let mut text = dhcpcd_conf(dev, v4, v6, metric, pd);
+            let mut hook_file = None;
             if v6 && !pd.is_empty() {
                 // after dhcpcd's own hooks, make radvd re-read the prefix
                 let hook = dir.join(format!("pd-hook-{dev}.sh"));
                 text.push_str(&format!("script {}\n", hook.display()));
-                files.push((hook, pd_hook_script(), 0o755));
+                hook_file = Some((hook, pd_hook_script(), 0o755));
             }
             files.push((conf.clone(), text, 0o644));
+            files.extend(hook_file);
             argv.extend(
                 ["-B", "-f", &conf.to_string_lossy(), dev]
                     .iter()
