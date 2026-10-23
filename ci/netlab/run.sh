@@ -77,6 +77,10 @@ apt-get install -y -qq --no-install-recommends rsyslog softflowd igmpproxy tayga
 apt-get install -y -qq debconf-utils >/dev/null
 printf 'slapd slapd/password1 password Ldap-Admin-Pw-1\\nslapd slapd/password2 password Ldap-Admin-Pw-1\\nslapd slapd/domain string example.net\\nslapd shared/organization string Example\\nslapd slapd/no_configuration boolean false\\n' | debconf-set-selections
 apt-get install -y -qq slapd ldap-utils >/dev/null
+# lane N scenarios (OpenVPN, Squid, UPnP, DHCPv6-PD): installed here while DNS still works
+apt-get install -y -qq --no-install-recommends openvpn squid miniupnpc radvd isc-dhcp-server git >/dev/null
+apt-get install -y -qq --no-install-recommends miniupnpd-nftables >/dev/null 2>&1 || apt-get install -y -qq --no-install-recommends miniupnpd >/dev/null
+apt-get install -y -qq dhcpcd-base >/dev/null 2>&1 || apt-get install -y -qq dhcpcd5 >/dev/null 2>&1 || apt-get install -y -qq dhcpcd >/dev/null
 # wg(8) only; its "recommends" would pull wireguard-dkms + kernel headers
 apt-get install -y -qq --no-install-recommends wireguard-tools >/dev/null
 export NETLAB_POWER_CUTS=${NETLAB_POWER_CUTS:-4}
