@@ -33,7 +33,7 @@ if [ $# -eq 0 ]; then
   set -- ci/netlab/lane-*.sh ci/netlab/journey-*.sh ci/netlab/failure-*.sh ci/netlab/upgrade-*.sh
   if [ -z "${NETLAB_ALL:-}" ]; then
     keep=()
-    for s in "$@"; do case "$s" in */lane-j-*|*/lane-k-*) ;; *) keep+=("$s") ;; esac; done
+    for s in "$@"; do case "$s" in */lane-j-*|*/lane-k-*|*/lane-n-*) ;; *) keep+=("$s") ;; esac; done
     set -- "${keep[@]}"
   fi
 fi
