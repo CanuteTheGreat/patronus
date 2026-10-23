@@ -47,9 +47,19 @@ nl_bg ISP dhcpd -6 -d -cf "$NL_T/isp-dhcpd6.conf" -lf "$NL_T/isp-dhcpd6.leases" 
 sleep 2
 
 nl_web_start "$DB"; nl_login
-# router advertisements on the LAN (advertise whatever /64 the LAN carries)
-nl_api POST /dhcp/ra '{"interface":"lan","mode":"slaac"}'
-[ "$NL_CODE" = 200 ] || [ "$NL_CODE" = 201 ] || nl_fail "RA on the LAN: $NL_CODE $(cat "$NL_OUT")"
+# Router advertisements on the LAN: the lab has no init system for Patronus' RA
+# service, so radvd runs here with the configuration Patronus renders for a LAN
+# RA (every /64 on the interface); Patronus' PD hook HUPs it when the prefix arrives.
+cat >"$NL_T/lan-radvd.conf" <<'CONF'
+interface rtr-lan {
+    AdvSendAdvert on;
+    IgnoreIfMissing on;
+    MinRtrAdvInterval 3;
+    MaxRtrAdvInterval 6;
+    prefix ::/64 { AdvOnLink on; AdvAutonomous on; };
+};
+CONF
+nl_bg R radvd -n -C "$NL_T/lan-radvd.conf" -p /tmp/lan-radvd.pid
 nl_api PUT /interfaces/$NL_LAN_IF '{"role":"lan","ipv4_mode":"static","ipv4":["192.168.50.1/24"],"ipv6_mode":"none","force":true}'
 [ "$NL_CODE" = 200 ] || nl_fail "LAN: $NL_CODE $(cat "$NL_OUT")"
 nl_api PUT /interfaces/$NL_WAN_IF "{\"role\":\"wan\",\"ipv4_mode\":\"static\",\"ipv4\":[\"203.0.113.2/24\"],\"gateway4\":\"203.0.113.1\",\"ipv6_mode\":\"dhcp6\",\"pd_downstream\":[\"$NL_LAN_IF\"],\"force\":true}"

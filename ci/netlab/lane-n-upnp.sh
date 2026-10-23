@@ -29,7 +29,7 @@ nl_api GET /svc/upnp; [ "$NL_CODE" = 200 ] || nl_fail "upnp page API: $NL_CODE"
 nl_assert_nft_lacks 5351
 nl_ok "off by default: no daemon, no firewall rule"
 
-nl_api PUT /svc/upnp '{"enabled":true,"port_min":"1024","port_max":"65535"}'
+nl_api PUT /svc/upnp '{"enabled":true,"allow_private_wan":true,"port_min":"1024","port_max":"65535"}'
 [ "$NL_CODE" = 200 ] || nl_fail "enable UPnP: $NL_CODE $(cat "$NL_OUT")"
 nl_wait 20 alive miniupnpd || nl_fail "miniupnpd did not start"
 nl_assert_nft_has "udp dport { 1900, 5351 }"
