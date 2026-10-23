@@ -36,12 +36,12 @@ cat >>"$NL_TOML" <<EOT
 url = "http://$NL_WWW:8082/site.json"
 wait_secs = 30
 EOT
-out=$(R "$P" --db "$BLANK" ztp 2>&1) || { echo "$out"; nl_fail "patronus ztp failed"; }
+out=$(R "$P" --db "$BLANK" ztp --bootstrap "$NL_TOML" 2>&1) || { echo "$out"; nl_fail "patronus ztp failed"; }
 grep -q "provisioned from" <<<"$out" || nl_fail "no success line: $out"
 nl_assert_nft_has "ztp-block-9000"
 nl_ok "the blank box fetched the bundle, imported and applied it (rule is in nftables)"
 [ -n "$(sqlite3 "$BLANK" "SELECT value FROM lan_settings WHERE key='ztp.done'")" ] || nl_fail "no marker in the store"
-out=$(R "$P" --db "$BLANK" ztp 2>&1) || nl_fail "second run failed"
+out=$(R "$P" --db "$BLANK" ztp --bootstrap "$NL_TOML" 2>&1) || nl_fail "second run failed"
 grep -q "already provisioned" <<<"$out" || nl_fail "second run did not skip: $out"
 nl_ok "second run is a no-op (marker)"
 
@@ -55,7 +55,7 @@ rm -f "$NL_T/nl-jar"
 BLANK2=/t/lane-n-ztp-blank2.db; rm -f $BLANK2
 nl_boot "$BLANK2"
 sed -i 's#site.json#missing.json#' "$NL_TOML"
-if R "$P" --db "$BLANK2" ztp >"$NL_OUT" 2>&1; then nl_fail "a 404 bundle should fail"; fi
+if R "$P" --db "$BLANK2" ztp --bootstrap "$NL_TOML" >"$NL_OUT" 2>&1; then nl_fail "a 404 bundle should fail"; fi
 nl_assert_nft_lacks ztp-block-9000
 [ -z "$(sqlite3 "$BLANK2" "SELECT value FROM lan_settings WHERE key='ztp.done'" 2>/dev/null)" ] || nl_fail "marker set after a failed run"
 nl_ok "404: fails, no marker, firewall untouched"

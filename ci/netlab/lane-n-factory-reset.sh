@@ -34,7 +34,8 @@ nl_api POST /system/factory-reset "{\"password\":\"$NL_PASS\",\"confirm\":\"RESE
 BK=$(jget 'd["backup"]')
 nl_assert_nft_lacks "reset-me"
 nl_ok "the rule is gone from nftables"
-nl_expect_online
+online() { nl_expect_ping $NL_WWW; nl_expect_http "LAN -> www (masqueraded)" http://$NL_WWW/ "sees $NL_RTR_WAN"; }
+online
 [ "$(sqlite3 "$DB" 'SELECT COUNT(*) FROM rbac_groups')" = 0 ] || nl_fail "the group survived"
 nl_ok "the router still works (default ruleset), groups are gone"
 rm -f "$NL_T/nl-jar"; nl_login
@@ -46,5 +47,5 @@ echo "=== reboot: still the defaults"
 nl_web_stop
 nl_boot "$DB"
 nl_assert_nft_lacks "reset-me"
-nl_expect_online
+online
 echo "PASS lane-n-factory-reset"

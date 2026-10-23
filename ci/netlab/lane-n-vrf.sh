@@ -8,6 +8,15 @@
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 
+if ! ip link add pat-vrf-probe type vrf table 999 2>/dev/null; then
+  modprobe vrf 2>/dev/null || true
+  if ! ip link add pat-vrf-probe type vrf table 999 2>/dev/null; then
+    echo "SKIP lane-n-vrf: this host kernel has no VRF support (CONFIG_NET_VRF / vrf.ko missing); the VRF scenario needs a kernel with it"
+    exit 0
+  fi
+fi
+ip link del pat-vrf-probe 2>/dev/null || true
+
 DB=/t/lane-n-vrf.db
 rm -f "$DB" "$NL_T/nl-jar"
 nl_write_installer_toml
