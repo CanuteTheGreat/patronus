@@ -93,8 +93,10 @@ case "$(uname -m)" in
 esac
 # /dev/ppp lets the lane C test run a real PPPoE session (pppd needs it);
 # fall back to no device on a host without the ppp driver.
-DEVS=()
-for d in /dev/ppp /dev/net/tun; do [ -e "$d" ] && DEVS+=(--device "$d"); done
+# --device paths are resolved by the docker daemon on the HOST, so do not test
+# for them inside this (job) container: a runner job container usually has no
+# /dev/ppp even though the host does (create falls back below if it lacks it)
+DEVS=(--device /dev/ppp --device /dev/net/tun)
 create() {
   docker create --name "$C" --platform "$PLATFORM" \
     --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN ${DEVS[@]+"${DEVS[@]}"} "$@" \
