@@ -79,6 +79,7 @@ add rule {t} input ct state invalid drop
 add rule {t} forward ct state invalid drop
 add rule {t} input ip protocol icmp accept
 add rule {t} input ip6 nexthdr icmpv6 accept
+add rule {t} input ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept comment "DHCPv6 replies (WAN client, prefix delegation)"
 "#
     )
 }

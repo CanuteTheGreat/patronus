@@ -338,6 +338,17 @@ pub fn handle(action: &str, params: &Value) -> Result<Value> {
 pub fn handle_in(dir: &Path, action: &str, params: &Value) -> Result<Value> {
     match action {
         "reboot" | "shutdown" => power(action),
+        #[cfg(feature = "plugins")]
+        "package_job" => {
+            let job = params.get("job").and_then(Value::as_i64).unwrap_or(0);
+            let comp = params.get("component").and_then(Value::as_str).unwrap_or("");
+            let act = params.get("action").and_then(Value::as_str).unwrap_or("");
+            // dir is the broker's state dir for update jobs; package jobs live
+            // under the net state dir both processes derive the same way
+            let state = crate::supervise::NetPaths::default().state_dir;
+            crate::packages::spawn_emerge(&state, job, comp, act)?;
+            Ok(json!({"ok": true, "job": job}))
+        }
         "update_status" => Ok(json!({
             "portage": has_portage(),
             "job": job_status(dir),

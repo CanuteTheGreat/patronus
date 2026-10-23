@@ -74,7 +74,7 @@ fn jobs_dir(paths: &NetPaths) -> PathBuf {
 /// What the page shows: every component, whether its program is installed,
 /// and the latest job per component.
 pub async fn overview(store: &ConfigStore) -> Result<Value> {
-    fail_orphans(store).await;
+    settle_jobs(store, &NetPaths::default()).await;
     let rows = sqlx::query(
         "SELECT id, component, action, status, started_at, finished_at, exit_code FROM package_jobs ORDER BY id DESC LIMIT 30",
     )
@@ -100,23 +100,51 @@ pub async fn overview(store: &ConfigStore) -> Result<Value> {
     Ok(json!({"portage": emerge_path().is_some(), "components": comps, "jobs": jobs}))
 }
 
-static RUNNING: std::sync::Mutex<Option<i64>> = std::sync::Mutex::new(None);
+/// Serializes `start` (the check for a running job and the insert).
+static START: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Rows left "running" by a restarted web process are failed.
-async fn fail_orphans(store: &ConfigStore) {
-    let live = *RUNNING.lock().unwrap();
-    if let Ok(pool) = store.pool() {
+fn exit_file(paths: &NetPaths, id: i64) -> PathBuf {
+    jobs_dir(paths).join(format!("job-{id}.exit"))
+}
+
+/// Finish rows whose exit file exists; give up on rows with none after 6 h.
+/// Returns the id of a job that is still running.
+async fn settle_jobs(store: &ConfigStore, paths: &NetPaths) -> Option<i64> {
+    let pool = store.pool().ok()?;
+    let rows = sqlx::query("SELECT id, started_at FROM package_jobs WHERE status = 'running'")
+        .fetch_all(pool)
+        .await
+        .ok()?;
+    let now = chrono::Utc::now().timestamp();
+    let mut live = None;
+    for r in rows {
+        let (id, started): (i64, i64) = (r.get(0), r.get(1));
+        let code = std::fs::read_to_string(exit_file(paths, id))
+            .ok()
+            .and_then(|t| t.trim().parse::<i64>().ok());
+        let (status, code) = match code {
+            Some(c) => (if c == 0 { "ok" } else { "failed" }, Some(c)),
+            None if now - started > 6 * 3600 => ("failed", Some(-1)),
+            None => {
+                live = Some(id);
+                continue;
+            }
+        };
         let _ = sqlx::query(
-            "UPDATE package_jobs SET status = 'failed', finished_at = ? WHERE status = 'running' AND id IS NOT ?",
+            "UPDATE package_jobs SET status = ?, finished_at = ?, exit_code = ? WHERE id = ?",
         )
-        .bind(chrono::Utc::now().timestamp())
-        .bind(live)
+        .bind(status)
+        .bind(now)
+        .bind(code)
+        .bind(id)
         .execute(pool)
         .await;
     }
+    live
 }
 
-/// Start `action` on component `id` in the background; returns the job id.
+/// Start `action` on component `id` in the background (as root: directly when
+/// we are root, else through the applyd broker); returns the job id.
 pub async fn start(
     store: &std::sync::Arc<ConfigStore>,
     paths: &NetPaths,
@@ -124,90 +152,99 @@ pub async fn start(
     action: &str,
 ) -> Result<i64> {
     let c = find(id).ok_or_else(|| Error::Config(format!("no component {id:?}")))?;
-    let args = emerge_args(c, action)
+    emerge_args(c, action)
         .ok_or_else(|| crate::lan::invalid(format!("action {action:?}: install, update or remove")))?;
-    let emerge = emerge_path().ok_or_else(|| {
-        Error::Service("not a Portage system: emerge is not installed (501)".into())
-    })?;
-    fail_orphans(store).await;
-    {
-        let mut g = RUNNING.lock().unwrap();
-        if g.is_some() {
-            return Err(crate::lan::invalid(
-                "another package job is running (Portage allows one at a time)",
-            ));
-        }
-        *g = Some(-1);
+    let root = nix::unistd::geteuid().is_root();
+    if emerge_path().is_none() {
+        return Err(Error::Service(
+            "not a Portage system: emerge is not installed (501)".into(),
+        ));
     }
-    let dir = jobs_dir(paths);
-    let started = chrono::Utc::now().timestamp();
-    let res = async {
-        std::fs::create_dir_all(&dir).map_err(|e| Error::Config(format!("{}: {e}", dir.display())))?;
-        let jid = sqlx::query(
-            "INSERT INTO package_jobs (component, action, status, started_at) VALUES (?, ?, 'running', ?)",
-        )
-        .bind(c.id)
-        .bind(action)
-        .bind(started)
-        .execute(store.pool()?)
-        .await
-        .map_err(|e| Error::Config(format!("save job: {e}")))?
-        .last_insert_rowid();
-        Ok::<i64, Error>(jid)
+    let _g = START.lock().await;
+    if settle_jobs(store, paths).await.is_some() {
+        return Err(crate::lan::invalid(
+            "another package job is running (Portage allows one at a time)",
+        ));
     }
-    .await;
-    let jid = match res {
-        Ok(j) => j,
-        Err(e) => {
-            *RUNNING.lock().unwrap() = None;
-            return Err(e);
-        }
-    };
-    *RUNNING.lock().unwrap() = Some(jid);
-    let log = dir.join(format!("job-{jid}.log"));
+    let jid = sqlx::query(
+        "INSERT INTO package_jobs (component, action, status, started_at, log_path) VALUES (?, ?, 'running', ?, '')",
+    )
+    .bind(c.id)
+    .bind(action)
+    .bind(chrono::Utc::now().timestamp())
+    .execute(store.pool()?)
+    .await
+    .map_err(|e| Error::Config(format!("save job: {e}")))?
+    .last_insert_rowid();
+    let log = jobs_dir(paths).join(format!("job-{jid}.log"));
     let _ = sqlx::query("UPDATE package_jobs SET log_path = ? WHERE id = ?")
         .bind(log.to_string_lossy().as_ref())
         .bind(jid)
         .execute(store.pool()?)
         .await;
-    let store = store.clone();
-    let action = action.to_string();
-    tokio::spawn(async move {
-        let code = run_job(&emerge, &args, &log, &action).await;
-        if let Ok(pool) = store.pool() {
-            let _ = sqlx::query(
-                "UPDATE package_jobs SET status = ?, finished_at = ?, exit_code = ? WHERE id = ?",
-            )
-            .bind(if code == 0 { "ok" } else { "failed" })
+    let res = if root {
+        spawn_emerge(&paths.state_dir, jid, c.id, action)
+    } else {
+        crate::applyd::request_system(
+            &crate::applyd::socket_path(),
+            "package_job",
+            json!({"job": jid, "component": c.id, "action": action}),
+        )
+            .await
+            .map(|_| ())
+    };
+    if let Err(e) = res {
+        let _ = sqlx::query("UPDATE package_jobs SET status = 'failed', finished_at = ?, exit_code = -1 WHERE id = ?")
             .bind(chrono::Utc::now().timestamp())
-            .bind(code)
             .bind(jid)
-            .execute(pool)
+            .execute(store.pool()?)
             .await;
-        }
-        *RUNNING.lock().unwrap() = None;
-    });
+        return Err(e);
+    }
     Ok(jid)
 }
 
-async fn run_job(emerge: &std::path::Path, args: &[String], log: &std::path::Path, _action: &str) -> i64 {
-    let out = match std::fs::File::create(log) {
-        Ok(f) => f,
-        Err(_) => return -1,
-    };
-    let err = out.try_clone();
-    let Ok(err) = err else { return -1 };
-    let st = tokio::process::Command::new(emerge)
-        .args(args)
-        .stdin(std::process::Stdio::null())
-        .stdout(out)
-        .stderr(err)
-        .status()
-        .await;
-    match st {
-        Ok(s) => i64::from(s.code().unwrap_or(-1)),
-        Err(_) => -1,
+/// The detached `emerge` run for a job (called by the root broker): output
+/// to job-<id>.log, exit code to job-<id>.exit when it is done.
+pub fn spawn_emerge(state_dir: &std::path::Path, job: i64, id: &str, action: &str) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+    let c = find(id).ok_or_else(|| Error::Config(format!("no component {id:?}")))?;
+    let args = emerge_args(c, action)
+        .ok_or_else(|| crate::lan::invalid(format!("action {action:?}: install, update or remove")))?;
+    let emerge = emerge_path().ok_or_else(|| {
+        Error::Service("not a Portage system: emerge is not installed (501)".into())
+    })?;
+    let dir = state_dir.join("packages");
+    std::fs::create_dir_all(&dir).map_err(|e| Error::Config(format!("{}: {e}", dir.display())))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755));
     }
+    let log = dir.join(format!("job-{job}.log"));
+    let exit = dir.join(format!("job-{job}.exit"));
+    let _ = std::fs::remove_file(&exit);
+    let script = r#"log=$1; exit=$2; shift 2; chmod 644 "$log" 2>/dev/null; "$@" >"$log" 2>&1 </dev/null; echo $? > "$exit.tmp"; chmod 644 "$exit.tmp"; mv "$exit.tmp" "$exit""#;
+    std::fs::File::create(&log).map_err(|e| Error::Config(format!("{}: {e}", log.display())))?;
+    let mut cmd = std::process::Command::new("sh");
+    cmd.arg("-c")
+        .arg(script)
+        .arg("sh")
+        .arg(&log)
+        .arg(&exit)
+        .arg(&emerge)
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    // its own session: the job outlives the broker's connection and a restart of it
+    unsafe {
+        cmd.pre_exec(|| {
+            nix::unistd::setsid().map(|_| ()).map_err(std::io::Error::from)
+        });
+    }
+    cmd.spawn()
+        .map_err(|e| Error::Service(format!("starting emerge: {e}")))?;
+    Ok(())
 }
 
 /// The last 64 KiB of a job's log.

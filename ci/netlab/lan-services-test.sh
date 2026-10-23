@@ -307,6 +307,38 @@ expect_running dnsmasq
 if grep -q '^port=0' /etc/dnsmasq.conf; then fail "forwarder mode still has port=0"; fi
 check_dns "dnsmasq forwarder"
 
+echo "=== 10b. optional component through Portage: web (user patronus) -> applyd (root) -> emerge from the Gentoo binhost"
+want 200 GET /api/packages
+command -v igmpproxy >/dev/null && fail "igmpproxy is installed before the test"
+[ "$(python3 -c 'import json; d=json.load(open("/tmp/api.out")); print(d["portage"])')" = True ] || fail "the Packages page does not see Portage"
+want 202 POST /api/packages/components/igmpproxy/install
+pk_wait() { # up to 900 s for the newest job to leave 'running'
+  local i
+  for i in $(seq 1 450); do
+    api GET /api/packages >/dev/null
+    st=$(python3 -c 'import json; d=json.load(open("/tmp/api.out")); print(d["jobs"][0]["status"])')
+    [ "$st" = running ] || return 0
+    sleep 2
+  done
+  fail "package job still running after 15 minutes"
+}
+pk_wait
+[ "$st" = ok ] || { api GET /api/packages/jobs/1/log; cat /tmp/api.out; fail "install job ended $st"; }
+command -v igmpproxy >/dev/null || fail "the job succeeded but igmpproxy is not installed"
+JOB=$(python3 -c 'import json; d=json.load(open("/tmp/api.out")); print(d["jobs"][0]["id"])' < /dev/null 2>/dev/null || echo 1)
+api GET /api/packages >/dev/null
+INST=$(python3 -c 'import json; d=json.load(open("/tmp/api.out")); print([c for c in d["components"] if c["id"]=="igmpproxy"][0]["installed"])')
+[ "$INST" = True ] || fail "the page does not show igmpproxy as installed"
+ok "igmpproxy installed by an install job started from the API; the page reports it installed"
+want 202 POST /api/packages/components/igmpproxy/remove
+pk_wait
+[ "$st" = ok ] || fail "remove job ended $st"
+command -v igmpproxy >/dev/null && fail "igmpproxy is still installed after the remove job"
+ok "removed again through Portage"
+code=$(api POST /api/packages/components/igmpproxy/explode); [ "$code" = 400 ] || fail "an unknown action must be refused, got $code"
+code=$(api POST /api/packages/components/net-misc%2Figmpproxy/install); [ "$code" = 404 ] || [ "$code" = 400 ] || fail "an atom must not be accepted as a component id, got $code"
+ok "only catalog components and known actions are accepted"
+
 echo "=== 11. reboot: daemons stopped, generated configs deleted, only 'patronus apply'"
 for s in patronus-web patronus-applyd dnsmasq unbound chronyd kea-dhcp4 kea-dhcp6 radvd; do svc stop "$s" >/dev/null 2>&1 || true; done
 rm -f /etc/dnsmasq.conf /etc/unbound/unbound.conf /etc/chrony/chrony.conf /etc/kea/kea-dhcp4.conf /etc/radvd.conf
