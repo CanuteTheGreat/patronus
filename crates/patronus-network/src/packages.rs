@@ -27,7 +27,7 @@ pub struct Component {
 
 pub const CATALOG: &[Component] = &[
     Component { id: "igmpproxy", feature: "igmp", title: "IGMP proxy", atom: "net-misc/igmpproxy", binary: "igmpproxy" },
-    Component { id: "miniupnpd", feature: "upnp", title: "UPnP / NAT-PMP daemon", atom: "net-misc/miniupnpd", binary: "miniupnpd" },
+    Component { id: "miniupnpd", feature: "upnp", title: "UPnP / NAT-PMP daemon", atom: "net-misc/miniupnpd[nftables]", binary: "miniupnpd" },
     Component { id: "squid", feature: "web-proxy", title: "Squid web proxy", atom: "net-proxy/squid", binary: "squid" },
     Component { id: "frr", feature: "dynamic-routing", title: "FRRouting (BGP/OSPF)", atom: "net-misc/frr", binary: "vtysh" },
     Component { id: "softflowd", feature: "netflow", title: "NetFlow exporter", atom: "net-analyzer/softflowd", binary: "softflowd" },

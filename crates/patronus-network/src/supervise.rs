@@ -189,6 +189,11 @@ fn pid_alive(pid: i32, argv0: Option<&str>) -> bool {
             // some daemons rename their threads (Suricata's main thread is
             // "Suricata-Main"): the executable is the reliable identity then
             comm.trim_end() == base
+                // an interpreted script (a plugin's `#!/usr/bin/env python3`)
+                // runs as its interpreter: its path is then an argument
+                || std::fs::read(format!("/proc/{pid}/cmdline"))
+                    .map(|c| c.split(|b| *b == 0).any(|w| w == a.as_bytes()))
+                    .unwrap_or(false)
                 || std::fs::read_link(format!("/proc/{pid}/exe"))
                     .ok()
                     .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))

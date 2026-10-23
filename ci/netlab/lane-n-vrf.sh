@@ -35,9 +35,14 @@ nl_api POST /svc/vrf/members '{"vrf":"nope","interface":"rtr-lan"}'
 nl_ok "bad plans refused and rolled back"
 
 R ip -4 route show | grep -q '192.168.50.0/24 dev rtr-lan' || nl_fail "precondition: connected LAN route in main"
-nl_api POST /svc/vrf/members "{\"vrf\":\"red\",\"interface\":\"$NL_LAN_IF\"}"
-[ "$NL_CODE" = 200 ] || [ "$NL_CODE" = 201 ] || nl_fail "add member: $NL_CODE $(cat "$NL_OUT")"
+# The request that moves the LAN (the interface this very connection arrives on)
+# into a VRF may lose its own response: the kernel re-homes the established
+# flow. Judge it by the kernel and by a NEW connection.
+NL_CURL_MAX=10 nl_api POST /svc/vrf/members "{\"vrf\":\"red\",\"interface\":\"$NL_LAN_IF\"}" || true
+nl_wait 20 bash -c "ip netns exec nl-rtr ip link show $NL_LAN_IF | grep -q 'master vrf-red'" || nl_fail "add member: the interface did not join the VRF ($NL_CODE)"
 [ "$(R cat /proc/sys/net/ipv4/tcp_l3mdev_accept)" = 1 ] || nl_fail "tcp_l3mdev_accept is off: the UI would vanish from the enslaved LAN"
+rm -f "$NL_T/nl-jar"; nl_login
+nl_ok "the management UI is still reachable from the LAN after the LAN joined the VRF"
 R ip -d link show vrf-red | grep -q 'vrf table 100' || { R ip -d link; nl_fail "no vrf-red device bound to table 100"; }
 R ip link show $NL_LAN_IF | grep -q 'master vrf-red' || nl_fail "$NL_LAN_IF is not enslaved to vrf-red"
 nl_ok "vrf-red (table 100) exists and $NL_LAN_IF is enslaved to it"
@@ -54,8 +59,9 @@ nl_ok "after reboot the VRF and its member are back (patronus apply from the sto
 echo "=== removal"
 nl_web_start "$DB"; nl_login
 MID=$(sqlite3 "$DB" "SELECT id FROM vrf_members LIMIT 1"); VID=$(sqlite3 "$DB" "SELECT id FROM vrf_instances LIMIT 1")
-nl_api DELETE /svc/vrf/members/$MID; [ "$NL_CODE" = 200 ] || nl_fail "delete member $NL_CODE"
-R ip link show $NL_LAN_IF | grep -q 'master vrf-red' && nl_fail "member not released"
+NL_CURL_MAX=10 nl_api DELETE /svc/vrf/members/$MID || true
+nl_wait 20 bash -c "! ip netns exec nl-rtr ip link show $NL_LAN_IF | grep -q 'master vrf-red'" || nl_fail "member not released"
+rm -f "$NL_T/nl-jar"; nl_login
 nl_api DELETE /svc/vrf/vrfs/$VID; [ "$NL_CODE" = 200 ] || nl_fail "delete VRF $NL_CODE"
 ! R ip link show vrf-red >/dev/null 2>&1 || nl_fail "vrf-red still exists"
 nl_ok "member released, VRF device removed"

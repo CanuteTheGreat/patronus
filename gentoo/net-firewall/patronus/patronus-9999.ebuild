@@ -100,7 +100,7 @@ RDEPEND="
 	igmp? ( net-misc/igmpproxy )
 	nat64? ( net-proxy/tayga )
 	l2tp? ( net-dialup/xl2tpd net-dialup/ppp )
-	upnp? ( net-misc/miniupnpd )
+	upnp? ( net-misc/miniupnpd[nftables] )
 	web-proxy? ( net-proxy/squid )
 	dynamic-routing? ( net-misc/frr )
 	netflow? ( net-analyzer/softflowd )
