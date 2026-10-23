@@ -11,12 +11,7 @@
 //! - `POST   /api/packages/keys` {label, public_key}, `DELETE /api/packages/keys/<id>`
 
 use crate::state::AppState;
-use axum::{
-    http::StatusCode,
-    response::{Html, IntoResponse, Response},
-    Json,
-};
-use serde_json::json;
+use axum::response::{Html, IntoResponse};
 
 #[cfg(feature = "plugins")]
 mod built {
@@ -24,13 +19,18 @@ mod built {
     use crate::auth::AdminUser;
     use askama::Template;
     use axum::extract::{Path, State};
+    use axum::{http::StatusCode, response::Response, Json};
     use patronus_network::{packages, plugins};
+    use serde_json::json;
 
     fn err(e: impl std::fmt::Display) -> Response {
         let msg = e.to_string();
         let code = if msg.contains("not a Portage system") {
             StatusCode::NOT_IMPLEMENTED
-        } else if msg.contains("Invalid") || msg.contains("not newer") || msg.contains("another package job") {
+        } else if msg.contains("Invalid")
+            || msg.contains("not newer")
+            || msg.contains("another package job")
+        {
             StatusCode::BAD_REQUEST
         } else if msg.starts_with("no ") {
             StatusCode::NOT_FOUND
@@ -131,7 +131,11 @@ mod built {
         }
     }
 
-    async fn remove(State(s): State<AppState>, _a: AdminUser, Path(name): Path<String>) -> Response {
+    async fn remove(
+        State(s): State<AppState>,
+        _a: AdminUser,
+        Path(name): Path<String>,
+    ) -> Response {
         match s.lan.plugin_remove(&name).await {
             Ok(true) => Json(json!({"ok": true})).into_response(),
             Ok(false) => err("no such plugin"),

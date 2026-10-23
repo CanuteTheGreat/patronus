@@ -173,7 +173,8 @@ impl LanManager {
         let r = patronus_network::plugins::install(&self.store, &sup, bundle)
             .await
             .map_err(e)?;
-        self.commit("plugins", snap, &["plugins", "firewall"]).await?;
+        self.commit("plugins", snap, &["plugins", "firewall"])
+            .await?;
         Ok(r)
     }
 
@@ -184,7 +185,8 @@ impl LanManager {
         let gone = patronus_network::plugins::remove(&self.store, &sup, name)
             .await
             .map_err(e)?;
-        self.commit("plugins", snap, &["plugins", "firewall"]).await?;
+        self.commit("plugins", snap, &["plugins", "firewall"])
+            .await?;
         Ok(gone)
     }
 
@@ -194,7 +196,8 @@ impl LanManager {
         let found = patronus_network::plugins::set_enabled(&self.store, name, on)
             .await
             .map_err(e)?;
-        self.commit("plugins", snap, &["plugins", "firewall"]).await?;
+        self.commit("plugins", snap, &["plugins", "firewall"])
+            .await?;
         Ok(found)
     }
 
@@ -204,7 +207,8 @@ impl LanManager {
         let id = patronus_network::plugins::add_key(&self.store, label, public)
             .await
             .map_err(e)?;
-        self.commit("plugins", snap, &["plugins", "firewall"]).await?;
+        self.commit("plugins", snap, &["plugins", "firewall"])
+            .await?;
         Ok(id)
     }
 
@@ -214,7 +218,8 @@ impl LanManager {
         let gone = patronus_network::plugins::delete_key(&self.store, id)
             .await
             .map_err(e)?;
-        self.commit("plugins", snap, &["plugins", "firewall"]).await?;
+        self.commit("plugins", snap, &["plugins", "firewall"])
+            .await?;
         Ok(gone)
     }
 }

@@ -323,8 +323,15 @@ mod tests {
         assert!(c.contains("allow 2000-3000 0.0.0.0/0 2000-3000\ndeny 0-65535"));
         assert!(c.contains("upnp_table_name=patronus_upnp\nupnp_nat_table_name=patronus_upnp\n"));
         assert!(c.contains("upnp_nat_chain=prerouting_miniupnpd\n"));
-        for chain in ["forward_miniupnpd", "prerouting_miniupnpd", "postrouting_miniupnpd"] {
-            assert!(NFT_SKELETON.contains(&format!("chain {chain} {{ }}")), "{chain}");
+        for chain in [
+            "forward_miniupnpd",
+            "prerouting_miniupnpd",
+            "postrouting_miniupnpd",
+        ] {
+            assert!(
+                NFT_SKELETON.contains(&format!("chain {chain} {{ }}")),
+                "{chain}"
+            );
         }
         assert!(!render_conf(&s, &["eth1".into()], "eth0", None, "l").contains("ext_ip"));
     }

@@ -156,7 +156,10 @@ fn current_table(dev: &str) -> Option<u32> {
 fn allow_unbound_listeners(rep: &mut ApplyReport) {
     for k in ["tcp_l3mdev_accept", "udp_l3mdev_accept"] {
         let p = format!("/proc/sys/net/ipv4/{k}");
-        if std::fs::read_to_string(&p).map(|v| v.trim() == "1").unwrap_or(true) {
+        if std::fs::read_to_string(&p)
+            .map(|v| v.trim() == "1")
+            .unwrap_or(true)
+        {
             continue;
         }
         match std::fs::write(&p, "1") {

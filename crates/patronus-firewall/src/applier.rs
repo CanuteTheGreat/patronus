@@ -1112,9 +1112,7 @@ mod tests {
                    add rule inet patronus input iifname \"eth2\" tcp dport 22 accept\n\
                    add rule inet patronus forward iifname \"eth1\" accept\n";
         let out = via_vrf_devices(src, &m);
-        assert!(out.contains(
-            "input iifname { \"eth1\", \"vrf-red\" } tcp dport {22,8443} accept"
-        ));
+        assert!(out.contains("input iifname { \"eth1\", \"vrf-red\" } tcp dport {22,8443} accept"));
         assert!(out.contains("input iifname \"eth2\" tcp dport 22 accept"));
         assert!(out.contains("forward iifname \"eth1\" accept"));
         assert_eq!(via_vrf_devices(src, &[]), src);

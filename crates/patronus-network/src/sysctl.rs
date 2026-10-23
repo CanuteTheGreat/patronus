@@ -210,8 +210,15 @@ mod tests {
         let proc = fake_proc();
         std::fs::remove_file(proc.path().join("net/netfilter/nf_conntrack_acct")).unwrap();
         let s = ConfigStore::open_in_memory().await.unwrap();
-        let r = SysctlApplier::with_root(proc.path()).apply(&s).await.unwrap();
-        assert!(r.warnings.iter().any(|w| w.contains("nf_conntrack_acct")), "{:?}", r.warnings);
+        let r = SysctlApplier::with_root(proc.path())
+            .apply(&s)
+            .await
+            .unwrap();
+        assert!(
+            r.warnings.iter().any(|w| w.contains("nf_conntrack_acct")),
+            "{:?}",
+            r.warnings
+        );
     }
 
     #[tokio::test]

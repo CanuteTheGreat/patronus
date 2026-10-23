@@ -14,8 +14,8 @@ pub fn keygen(out: &Path) -> Result<()> {
         bail!("{} or {} exists already", sec.display(), pubf.display());
     }
     {
-        use std::os::unix::fs::OpenOptionsExt;
         use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -26,7 +26,10 @@ pub fn keygen(out: &Path) -> Result<()> {
     }
     std::fs::write(&pubf, format!("{public}\n"))?;
     println!("secret key: {} (keep it private)", sec.display());
-    println!("public key: {} (trust it on the Packages page)", pubf.display());
+    println!(
+        "public key: {} (trust it on the Packages page)",
+        pubf.display()
+    );
     println!("key id:     {}", plugins::key_id(&public));
     Ok(())
 }
@@ -48,7 +51,11 @@ pub fn verify(bundle: &Path, public: &Path) -> Result<()> {
         m.name,
         m.version,
         m.files.len(),
-        if m.service.is_some() { ", runs a service" } else { "" }
+        if m.service.is_some() {
+            ", runs a service"
+        } else {
+            ""
+        }
     );
     Ok(())
 }

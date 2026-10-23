@@ -95,16 +95,16 @@ pub mod nat64;
 
 #[cfg(feature = "l2tp")]
 pub mod l2tp;
+#[cfg(feature = "plugins")]
+pub mod packages;
+#[cfg(feature = "plugins")]
+pub mod plugins;
 #[cfg(feature = "web-proxy")]
 pub mod proxy;
 #[cfg(feature = "upnp")]
 pub mod upnp;
 #[cfg(feature = "vrf")]
 pub mod vrf;
-#[cfg(feature = "plugins")]
-pub mod packages;
-#[cfg(feature = "plugins")]
-pub mod plugins;
 
 #[cfg(feature = "intrusion-detection")]
 pub mod ids;

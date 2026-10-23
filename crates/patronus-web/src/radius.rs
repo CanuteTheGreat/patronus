@@ -315,10 +315,12 @@ pub struct LdapInput {
     pub timeout_secs: Option<u32>,
 }
 
+#[cfg(feature = "ldap")]
 fn plain_dn(x: &str) -> bool {
     x.len() <= 512 && !x.chars().any(|c| c.is_control())
 }
 
+#[cfg(feature = "ldap")]
 pub async fn add_ldap_server(
     store: &patronus_config::ConfigStore,
     i: &LdapInput,
@@ -330,7 +332,9 @@ pub async fn add_ldap_server(
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ' '))
     {
-        anyhow::bail!("Invalid server name {name:?}: 1-40 letters, digits, '-', '_', '.' or spaces");
+        anyhow::bail!(
+            "Invalid server name {name:?}: 1-40 letters, digits, '-', '_', '.' or spaces"
+        );
     }
     let host = i.host.trim();
     if host.is_empty()
@@ -364,13 +368,17 @@ pub async fn add_ldap_server(
     let filter = i.user_filter.as_deref().unwrap_or("(uid={u})");
     #[cfg(feature = "ldap")]
     if !crate::ldap::check_filter(filter) {
-        anyhow::bail!("Invalid user filter {filter:?}: parenthesised and containing {{u}}, e.g. (uid={{u}})");
+        anyhow::bail!(
+            "Invalid user filter {filter:?}: parenthesised and containing {{u}}, e.g. (uid={{u}})"
+        );
     }
     #[cfg(not(feature = "ldap"))]
     anyhow::bail!("Invalid server kind: this build has no LDAP support (USE=ldap)");
     let role = i.default_role.as_deref().unwrap_or("readonly");
     if !matches!(role, "readonly" | "operator") {
-        anyhow::bail!("Invalid default role {role:?}: readonly or operator (admins are promoted by hand)");
+        anyhow::bail!(
+            "Invalid default role {role:?}: readonly or operator (admins are promoted by hand)"
+        );
     }
     let timeout = i.timeout_secs.unwrap_or(5);
     if !(1..=30).contains(&timeout) {
@@ -404,6 +412,14 @@ pub async fn add_ldap_server(
         }
     })?;
     Ok(r.last_insert_rowid())
+}
+
+#[cfg(not(feature = "ldap"))]
+pub async fn add_ldap_server(
+    _store: &patronus_config::ConfigStore,
+    _i: &LdapInput,
+) -> anyhow::Result<i64> {
+    anyhow::bail!("Invalid server kind: this build has no LDAP support (USE=ldap)")
 }
 
 pub async fn delete_server(store: &patronus_config::ConfigStore, id: i64) -> anyhow::Result<bool> {

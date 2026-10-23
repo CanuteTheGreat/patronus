@@ -26,18 +26,90 @@ pub struct Component {
 }
 
 pub const CATALOG: &[Component] = &[
-    Component { id: "igmpproxy", feature: "igmp", title: "IGMP proxy", atom: "net-misc/igmpproxy", binary: "igmpproxy" },
-    Component { id: "miniupnpd", feature: "upnp", title: "UPnP / NAT-PMP daemon", atom: "net-misc/miniupnpd[nftables]", binary: "miniupnpd" },
-    Component { id: "squid", feature: "web-proxy", title: "Squid web proxy", atom: "net-proxy/squid", binary: "squid" },
-    Component { id: "frr", feature: "dynamic-routing", title: "FRRouting (BGP/OSPF)", atom: "net-misc/frr", binary: "vtysh" },
-    Component { id: "softflowd", feature: "netflow", title: "NetFlow exporter", atom: "net-analyzer/softflowd", binary: "softflowd" },
-    Component { id: "tayga", feature: "nat64", title: "NAT64 (tayga)", atom: "net-proxy/tayga", binary: "tayga" },
-    Component { id: "xl2tpd", feature: "l2tp", title: "L2TP daemon", atom: "net-dialup/xl2tpd", binary: "xl2tpd" },
-    Component { id: "rsyslog", feature: "syslog", title: "Remote syslog", atom: "app-admin/rsyslog", binary: "rsyslogd" },
-    Component { id: "keepalived", feature: "ha", title: "VRRP (keepalived)", atom: "sys-cluster/keepalived", binary: "keepalived" },
-    Component { id: "suricata", feature: "intrusion-detection", title: "Suricata IDS/IPS", atom: "net-analyzer/suricata", binary: "suricata" },
-    Component { id: "openvpn", feature: "vpn-openvpn", title: "OpenVPN", atom: "net-vpn/openvpn", binary: "openvpn" },
-    Component { id: "strongswan", feature: "vpn-ipsec", title: "strongSwan (IPsec)", atom: "net-vpn/strongswan", binary: "swanctl" },
+    Component {
+        id: "igmpproxy",
+        feature: "igmp",
+        title: "IGMP proxy",
+        atom: "net-misc/igmpproxy",
+        binary: "igmpproxy",
+    },
+    Component {
+        id: "miniupnpd",
+        feature: "upnp",
+        title: "UPnP / NAT-PMP daemon",
+        atom: "net-misc/miniupnpd[nftables]",
+        binary: "miniupnpd",
+    },
+    Component {
+        id: "squid",
+        feature: "web-proxy",
+        title: "Squid web proxy",
+        atom: "net-proxy/squid",
+        binary: "squid",
+    },
+    Component {
+        id: "frr",
+        feature: "dynamic-routing",
+        title: "FRRouting (BGP/OSPF)",
+        atom: "net-misc/frr",
+        binary: "vtysh",
+    },
+    Component {
+        id: "softflowd",
+        feature: "netflow",
+        title: "NetFlow exporter",
+        atom: "net-analyzer/softflowd",
+        binary: "softflowd",
+    },
+    Component {
+        id: "tayga",
+        feature: "nat64",
+        title: "NAT64 (tayga)",
+        atom: "net-proxy/tayga",
+        binary: "tayga",
+    },
+    Component {
+        id: "xl2tpd",
+        feature: "l2tp",
+        title: "L2TP daemon",
+        atom: "net-dialup/xl2tpd",
+        binary: "xl2tpd",
+    },
+    Component {
+        id: "rsyslog",
+        feature: "syslog",
+        title: "Remote syslog",
+        atom: "app-admin/rsyslog",
+        binary: "rsyslogd",
+    },
+    Component {
+        id: "keepalived",
+        feature: "ha",
+        title: "VRRP (keepalived)",
+        atom: "sys-cluster/keepalived",
+        binary: "keepalived",
+    },
+    Component {
+        id: "suricata",
+        feature: "intrusion-detection",
+        title: "Suricata IDS/IPS",
+        atom: "net-analyzer/suricata",
+        binary: "suricata",
+    },
+    Component {
+        id: "openvpn",
+        feature: "vpn-openvpn",
+        title: "OpenVPN",
+        atom: "net-vpn/openvpn",
+        binary: "openvpn",
+    },
+    Component {
+        id: "strongswan",
+        feature: "vpn-ipsec",
+        title: "strongSwan (IPsec)",
+        atom: "net-vpn/strongswan",
+        binary: "swanctl",
+    },
 ];
 
 pub fn find(id: &str) -> Option<&'static Component> {
@@ -152,8 +224,9 @@ pub async fn start(
     action: &str,
 ) -> Result<i64> {
     let c = find(id).ok_or_else(|| Error::Config(format!("no component {id:?}")))?;
-    emerge_args(c, action)
-        .ok_or_else(|| crate::lan::invalid(format!("action {action:?}: install, update or remove")))?;
+    emerge_args(c, action).ok_or_else(|| {
+        crate::lan::invalid(format!("action {action:?}: install, update or remove"))
+    })?;
     let root = nix::unistd::geteuid().is_root();
     if emerge_path().is_none() {
         return Err(Error::Service(
@@ -190,8 +263,8 @@ pub async fn start(
             "package_job",
             json!({"job": jid, "component": c.id, "action": action}),
         )
-            .await
-            .map(|_| ())
+        .await
+        .map(|_| ())
     };
     if let Err(e) = res {
         let _ = sqlx::query("UPDATE package_jobs SET status = 'failed', finished_at = ?, exit_code = -1 WHERE id = ?")
@@ -209,8 +282,9 @@ pub async fn start(
 pub fn spawn_emerge(state_dir: &std::path::Path, job: i64, id: &str, action: &str) -> Result<()> {
     use std::os::unix::process::CommandExt;
     let c = find(id).ok_or_else(|| Error::Config(format!("no component {id:?}")))?;
-    let args = emerge_args(c, action)
-        .ok_or_else(|| crate::lan::invalid(format!("action {action:?}: install, update or remove")))?;
+    let args = emerge_args(c, action).ok_or_else(|| {
+        crate::lan::invalid(format!("action {action:?}: install, update or remove"))
+    })?;
     let emerge = emerge_path().ok_or_else(|| {
         Error::Service("not a Portage system: emerge is not installed (501)".into())
     })?;
@@ -239,7 +313,9 @@ pub fn spawn_emerge(state_dir: &std::path::Path, job: i64, id: &str, action: &st
     // its own session: the job outlives the broker's connection and a restart of it
     unsafe {
         cmd.pre_exec(|| {
-            nix::unistd::setsid().map(|_| ()).map_err(std::io::Error::from)
+            nix::unistd::setsid()
+                .map(|_| ())
+                .map_err(std::io::Error::from)
         });
     }
     cmd.spawn()
@@ -273,7 +349,9 @@ mod tests {
         let i = emerge_args(c, "install").unwrap();
         assert_eq!(i.last().unwrap(), "net-vpn/openvpn");
         assert!(i.contains(&"--getbinpkg".to_string()) && i.contains(&"--noreplace".to_string()));
-        assert!(emerge_args(c, "update").unwrap().contains(&"--update".to_string()));
+        assert!(emerge_args(c, "update")
+            .unwrap()
+            .contains(&"--update".to_string()));
         assert_eq!(emerge_args(c, "remove").unwrap()[0], "--depclean");
         assert!(emerge_args(c, "--sync").is_none() && emerge_args(c, "install; rm").is_none());
         assert!(find("net-vpn/openvpn").is_none() && find("../x").is_none());
@@ -282,7 +360,9 @@ mod tests {
         ids.sort();
         ids.dedup();
         assert_eq!(ids.len(), CATALOG.len());
-        assert!(CATALOG.iter().all(|c| c.atom.matches('/').count() == 1 && !c.atom.contains(' ')));
+        assert!(CATALOG
+            .iter()
+            .all(|c| c.atom.matches('/').count() == 1 && !c.atom.contains(' ')));
     }
 
     #[tokio::test]

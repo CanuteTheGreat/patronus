@@ -75,7 +75,7 @@ This document provides a detailed comparison of Patronus against pfSense and OPN
 | **Remote Logging** | ✓ | ✓ | Planned |
 | **NetFlow** | Via package | Via package | Planned |
 | **Prometheus** | Via package | Via package | USE flag |
-| **ntopng** | Package | Plugin | USE flag |
+| **ntopng** | Package | Built-in "Traffic insights" page (top hosts, services, protocols, interface rates from conntrack); ntopng itself is not integrated | n/a |
 | **Packet Capture** | ✓ | ✓ | Planned |
 
 ## High Availability

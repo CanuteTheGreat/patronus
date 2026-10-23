@@ -627,7 +627,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Plugin { action } => match action {
             PluginCommands::Keygen { out } => commands::plugin::keygen(&out)?,
             PluginCommands::Pack { dir, key, out } => commands::plugin::pack(&dir, &key, &out)?,
-            PluginCommands::Verify { bundle, public } => commands::plugin::verify(&bundle, &public)?,
+            PluginCommands::Verify { bundle, public } => {
+                commands::plugin::verify(&bundle, &public)?
+            }
         },
 
         #[cfg(feature = "gitops")]

@@ -46,7 +46,6 @@ Note: At least one firewall backend must be enabled.
 |----------|-------------|---------|
 | `monitoring` | Enable system monitoring | No |
 | `prometheus` | Enable Prometheus metrics export | No |
-| `ntopng` | Enable ntopng traffic analysis | No |
 
 ### Advanced Features
 

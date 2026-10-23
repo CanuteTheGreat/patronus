@@ -34,7 +34,8 @@ pub fn area_for_path(path: &str) -> Option<&'static str> {
     let p = path.strip_prefix("/api").unwrap_or(path);
     let first = p.trim_start_matches('/').split('/').next().unwrap_or("");
     Some(match first {
-        "" | "status" | "metrics" | "events" | "monitoring" | "insights" | "telemetry" | "simple" => "dashboard",
+        "" | "status" | "metrics" | "events" | "monitoring" | "insights" | "telemetry"
+        | "simple" => "dashboard",
         "firewall" => "firewall",
         "interfaces" | "network" => "interfaces",
         "routing" => "routing",

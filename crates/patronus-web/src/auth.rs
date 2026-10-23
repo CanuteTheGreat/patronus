@@ -1356,23 +1356,9 @@ async fn external_login(
     }
     // user names that could not be an account are not offered to a directory
     check_username(&name).ok()?;
-    let role = if let Some(server) =
-        crate::radius::check_login(&app_state.config_store, &name, password).await
-    {
-        UserRole::parse(&server.default_role).unwrap_or(UserRole::ReadOnly)
-    } else {
-        #[cfg(feature = "ldap")]
-        {
-            let (server, found) =
-                crate::ldap::check_login(&app_state.config_store, &name, password).await?;
-            if found.operator {
-                UserRole::Operator
-            } else {
-                UserRole::parse(&server.default_role).unwrap_or(UserRole::ReadOnly)
-            }
-        }
-        #[cfg(not(feature = "ldap"))]
-        return None;
+    let role = match crate::radius::check_login(&app_state.config_store, &name, password).await {
+        Some(server) => UserRole::parse(&server.default_role).unwrap_or(UserRole::ReadOnly),
+        None => directory_role(app_state, &name, password).await?,
     };
     let u = app_state
         .auth
@@ -1381,6 +1367,30 @@ async fn external_login(
         .await
         .ok()??;
     u.enabled.then_some(u)
+}
+
+/// The role an LDAP directory login gets (None: no directory accepted it).
+#[cfg(feature = "ldap")]
+async fn directory_role(
+    app_state: &crate::state::AppState,
+    name: &str,
+    password: &str,
+) -> Option<UserRole> {
+    let (server, found) = crate::ldap::check_login(&app_state.config_store, name, password).await?;
+    Some(if found.operator {
+        UserRole::Operator
+    } else {
+        UserRole::parse(&server.default_role).unwrap_or(UserRole::ReadOnly)
+    })
+}
+
+#[cfg(not(feature = "ldap"))]
+async fn directory_role(
+    _app_state: &crate::state::AppState,
+    _name: &str,
+    _password: &str,
+) -> Option<UserRole> {
+    None
 }
 
 /// Logout handler

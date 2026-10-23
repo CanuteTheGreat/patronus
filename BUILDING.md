@@ -61,7 +61,7 @@ cargo build --release \
   --features "web,cli,api,nftables,iptables,\
 dhcp-server,dns-server,dns-unbound,\
 vpn-wireguard,vpn-openvpn,vpn-ipsec,\
-monitoring,monitoring-prometheus,monitoring-ntopng,\
+monitoring,monitoring-prometheus,\
 captive-portal,ids-suricata,vlan,qos,backup,\
 gitops,ai,kubernetes"
 ```
@@ -166,7 +166,7 @@ cat >> /etc/portage/package.use/patronus <<EOF
 net-firewall/patronus web cli api nftables iptables
   dhcp dns dns-unbound
   vpn-wireguard vpn-openvpn vpn-ipsec
-  monitoring monitoring-prometheus monitoring-ntopng
+  monitoring monitoring-prometheus
   captive-portal ids-suricata vlan qos backup
   gitops ai kubernetes arch-native
 EOF
@@ -220,7 +220,6 @@ systemctl enable --now patronus-web
 | `vpn-ipsec` | `vpn-ipsec` | IPsec VPN |
 | `monitoring` | `monitoring` | Metrics collection |
 | `monitoring-prometheus` | `monitoring-prometheus` | Prometheus exporter |
-| `monitoring-ntopng` | `monitoring-ntopng` | ntopng DPI integration |
 | `captive-portal` | `captive-portal` | Guest network portal |
 | `ids-suricata` | `ids-suricata` | Suricata IDS/IPS |
 | `vlan` | `vlan` | VLAN support |

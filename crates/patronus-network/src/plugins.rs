@@ -165,13 +165,19 @@ pub fn check_manifest(m: &Manifest) -> Result<()> {
     let mut seen = std::collections::BTreeSet::new();
     for f in &m.files {
         if !safe_rel(&f.path) {
-            return Err(invalid(format!("file path {:?} is not a plain relative path", f.path)));
+            return Err(invalid(format!(
+                "file path {:?} is not a plain relative path",
+                f.path
+            )));
         }
         if !seen.insert(&f.path) {
             return Err(invalid(format!("file {:?} listed twice", f.path)));
         }
         if !matches!(f.mode, 0o644 | 0o755 | 0o600 | 0o700) {
-            return Err(invalid(format!("file {:?}: mode must be 644, 755, 600 or 700", f.path)));
+            return Err(invalid(format!(
+                "file {:?}: mode must be 644, 755, 600 or 700",
+                f.path
+            )));
         }
         let data = B64
             .decode(&f.data)
@@ -182,14 +188,22 @@ pub fn check_manifest(m: &Manifest) -> Result<()> {
         }
         let want = format!("{:x}", Sha256::digest(&data));
         if want != f.sha256.to_ascii_lowercase() {
-            return Err(invalid(format!("file {:?}: sha256 does not match its content", f.path)));
+            return Err(invalid(format!(
+                "file {:?}: sha256 does not match its content",
+                f.path
+            )));
         }
     }
     if let Some(s) = &m.service {
         let Some(first) = s.exec.first() else {
             return Err(invalid("service.exec is empty"));
         };
-        if !safe_rel(first) || !m.files.iter().any(|f| &f.path == first && f.mode & 0o100 != 0) {
+        if !safe_rel(first)
+            || !m
+                .files
+                .iter()
+                .any(|f| &f.path == first && f.mode & 0o100 != 0)
+        {
             return Err(invalid(
                 "service.exec[0] must be an executable file shipped in the plugin",
             ));
@@ -197,12 +211,17 @@ pub fn check_manifest(m: &Manifest) -> Result<()> {
         if s.exec.len() > 32 || s.exec.iter().any(|a| a.len() > 256 || a.contains('\0')) {
             return Err(invalid("service.exec: too many or too long arguments"));
         }
-        if !matches!(s.proto.as_str(), "tcp" | "udp") || !matches!(s.expose.as_str(), "lan" | "none")
+        if !matches!(s.proto.as_str(), "tcp" | "udp")
+            || !matches!(s.expose.as_str(), "lan" | "none")
         {
-            return Err(invalid("service: proto is tcp or udp, expose is lan or none"));
+            return Err(invalid(
+                "service: proto is tcp or udp, expose is lan or none",
+            ));
         }
         if s.expose == "lan" && !s.port.is_some_and(|p| p >= 1024) {
-            return Err(invalid("service: exposing to the LAN needs a port of 1024 or more"));
+            return Err(invalid(
+                "service: exposing to the LAN needs a port of 1024 or more",
+            ));
         }
     }
     Ok(())
@@ -285,9 +304,11 @@ pub fn verify(bundle: &str, trusted: &[(String, String)]) -> Result<(Manifest, S
         .and_then(|v| v.try_into().ok())
         .ok_or_else(|| invalid("signature is malformed"))?;
     vk.verify(b.manifest.as_bytes(), &Signature::from_bytes(&sig))
-        .map_err(|_| invalid("the signature does not match the contents (tampered or wrong key)"))?;
-    let m: Manifest = serde_json::from_str(&b.manifest)
-        .map_err(|e| invalid(format!("manifest: {e}")))?;
+        .map_err(|_| {
+            invalid("the signature does not match the contents (tampered or wrong key)")
+        })?;
+    let m: Manifest =
+        serde_json::from_str(&b.manifest).map_err(|e| invalid(format!("manifest: {e}")))?;
     check_manifest(&m)?;
     Ok((m, b.key_id))
 }
@@ -356,7 +377,11 @@ pub fn plugins_dir(sup: &Supervisor) -> PathBuf {
 /// Verify and install (or update) a bundle: files under
 /// `<plugins>/<name>/<version>/`, the bundle in the store. A plugin that is
 /// already installed must be updated to a HIGHER version.
-pub async fn install(store: &ConfigStore, sup: &Supervisor, bundle: &str) -> Result<(Manifest, bool)> {
+pub async fn install(
+    store: &ConfigStore,
+    sup: &Supervisor,
+    bundle: &str,
+) -> Result<(Manifest, bool)> {
     let keys = trusted_keys(store).await?;
     let (m, kid) = verify(bundle, &keys)?;
     let old = sqlx::query("SELECT version FROM plugins WHERE name = ?")
@@ -471,10 +496,12 @@ pub async fn set_enabled(store: &ConfigStore, name: &str, on: bool) -> Result<bo
 /// One installed plugin as the API shows it.
 pub async fn list(store: &ConfigStore, sup: &Supervisor) -> Result<Vec<Value>> {
     let keys = trusted_keys(store).await?;
-    let rows = sqlx::query("SELECT name, version, key_id, enabled, bundle, installed_at FROM plugins ORDER BY name")
-        .fetch_all(store.pool()?)
-        .await
-        .map_err(|e| Error::Config(format!("read plugins: {e}")))?;
+    let rows = sqlx::query(
+        "SELECT name, version, key_id, enabled, bundle, installed_at FROM plugins ORDER BY name",
+    )
+    .fetch_all(store.pool()?)
+    .await
+    .map_err(|e| Error::Config(format!("read plugins: {e}")))?;
     Ok(rows
         .iter()
         .map(|r| {
@@ -484,9 +511,7 @@ pub async fn list(store: &ConfigStore, sup: &Supervisor) -> Result<Vec<Value>> {
                 Ok((m, _)) => (Some(m), "verified".to_string()),
                 Err(e) => (None, e.to_string()),
             };
-            let running = m
-                .as_ref()
-                .is_some_and(|m| m.service.is_some())
+            let running = m.as_ref().is_some_and(|m| m.service.is_some())
                 && sup.is_running(crate::svc::DAEMON_SERVICE, &format!("{SVC_PREFIX}{name}"));
             json!({
                 "name": name, "version": r.get::<String,_>(1), "key_id": r.get::<String,_>(2),
@@ -582,7 +607,11 @@ impl Applier for PluginsApplier {
             rep.applied(format!(
                 "plugin {name} {} {}",
                 m.version,
-                if started { "(re)started" } else { "running, unchanged" }
+                if started {
+                    "(re)started"
+                } else {
+                    "running, unchanged"
+                }
             ));
         }
         for s in crate::svc::stop_daemons(&self.sup, SVC_PREFIX, &keep).await? {
@@ -630,14 +659,20 @@ mod tests {
         assert_eq!((m.name.as_str(), m.version.as_str()), ("hello", "1.0.0"));
         assert_eq!(kid, key_id(&public));
         // not trusted
-        assert!(verify(&bundle, &[]).unwrap_err().to_string().contains("not trusted"));
+        assert!(verify(&bundle, &[])
+            .unwrap_err()
+            .to_string()
+            .contains("not trusted"));
         // another key's claim
         let (_, other) = keygen();
         let forged = bundle.replace(&key_id(&public), &key_id(&other));
         assert!(verify(&forged, &[(key_id(&other), other)]).is_err());
         // content changed after signing (manifest text edited)
         let tampered = bundle.replace("hello", "hellp");
-        assert!(verify(&tampered, &trusted).unwrap_err().to_string().contains("signature"));
+        assert!(verify(&tampered, &trusted)
+            .unwrap_err()
+            .to_string()
+            .contains("signature"));
     }
 
     #[test]
@@ -664,7 +699,12 @@ mod tests {
         m.files[0].sha256 = "00".into();
         assert!(check_manifest(&m).is_err());
         let mut m = mk("a", 0o755);
-        m.service = Some(Service { exec: vec!["/bin/sh".into()], port: None, proto: "tcp".into(), expose: "none".into() });
+        m.service = Some(Service {
+            exec: vec!["/bin/sh".into()],
+            port: None,
+            proto: "tcp".into(),
+            expose: "none".into(),
+        });
         assert!(check_manifest(&m).is_err(), "exec outside the plugin");
         assert!(parse_version("1.10.0") > parse_version("1.9.9"));
         assert!(parse_version("1.0.0") <= parse_version("1"));
@@ -684,19 +724,31 @@ mod tests {
         let src = d.path().join("src");
         make(&src, "1.0.0", "#!/bin/sh\nexit 0\n");
         let b1 = pack(&src, &sec).unwrap();
-        assert!(install(&store, &sup, &b1).await.is_err(), "no trusted key yet");
+        assert!(
+            install(&store, &sup, &b1).await.is_err(),
+            "no trusted key yet"
+        );
         add_key(&store, "test", &public).await.unwrap();
         let (m, updated) = install(&store, &sup, &b1).await.unwrap();
         assert_eq!((m.version.as_str(), updated), ("1.0.0", false));
         assert!(plugins_dir(&sup).join("hello/1.0.0/bin/run").exists());
-        assert!(install(&store, &sup, &b1).await.is_err(), "same version refused");
+        assert!(
+            install(&store, &sup, &b1).await.is_err(),
+            "same version refused"
+        );
         make(&src, "1.1.0", "#!/bin/sh\nexit 1\n");
         let b2 = pack(&src, &sec).unwrap();
         let (_, updated) = install(&store, &sup, &b2).await.unwrap();
         assert!(updated);
         assert!(plugins_dir(&sup).join("hello/1.1.0").exists());
-        assert!(!plugins_dir(&sup).join("hello/1.0.0").exists(), "old version pruned");
-        assert!(install(&store, &sup, &b1).await.is_err(), "downgrade refused");
+        assert!(
+            !plugins_dir(&sup).join("hello/1.0.0").exists(),
+            "old version pruned"
+        );
+        assert!(
+            install(&store, &sup, &b1).await.is_err(),
+            "downgrade refused"
+        );
         let port = || async {
             sqlx::query("SELECT expose_port FROM plugins WHERE name = 'hello'")
                 .fetch_one(store.pool().unwrap())
@@ -706,8 +758,15 @@ mod tests {
         };
         assert_eq!(port().await, 18099);
         delete_key(&store, &key_id(&public)).await.unwrap();
-        let rep = PluginsApplier::with_supervisor(sup.clone()).apply(&store).await.unwrap();
-        assert!(rep.warnings.iter().any(|w| w.contains("not trusted")), "{:?}", rep.warnings);
+        let rep = PluginsApplier::with_supervisor(sup.clone())
+            .apply(&store)
+            .await
+            .unwrap();
+        assert!(
+            rep.warnings.iter().any(|w| w.contains("not trusted")),
+            "{:?}",
+            rep.warnings
+        );
         assert_eq!(port().await, 0, "no trust, no exposure");
         let l = list(&store, &sup).await.unwrap();
         assert!(l[0]["trust"].as_str().unwrap().contains("not trusted"));

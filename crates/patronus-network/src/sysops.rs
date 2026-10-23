@@ -341,7 +341,10 @@ pub fn handle_in(dir: &Path, action: &str, params: &Value) -> Result<Value> {
         #[cfg(feature = "plugins")]
         "package_job" => {
             let job = params.get("job").and_then(Value::as_i64).unwrap_or(0);
-            let comp = params.get("component").and_then(Value::as_str).unwrap_or("");
+            let comp = params
+                .get("component")
+                .and_then(Value::as_str)
+                .unwrap_or("");
             let act = params.get("action").and_then(Value::as_str).unwrap_or("");
             // dir is the broker's state dir for update jobs; package jobs live
             // under the net state dir both processes derive the same way

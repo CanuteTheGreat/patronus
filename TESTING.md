@@ -231,7 +231,7 @@ USE="web cli nftables vpn-wireguard dhcp dns monitoring" emerge -av net-firewall
 ```bash
 USE="web cli api nftables iptables dhcp dns dns-unbound \
      vpn-wireguard vpn-openvpn vpn-ipsec \
-     monitoring monitoring-prometheus monitoring-ntopng \
+     monitoring monitoring-prometheus \
      captive-portal ids-suricata vlan qos backup \
      gitops ai kubernetes arch-native" \
   emerge -av net-firewall/patronus
