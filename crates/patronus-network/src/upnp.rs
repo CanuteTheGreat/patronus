@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 
 pub const INSTANCE: &str = "miniupnpd";
 
-static FIELDS: [Field; 8] = [
+static FIELDS: [Field; 9] = [
     Field::new("enabled", "UPnP / NAT-PMP", Kind::Bool)
         .def("0")
         .help("Off by default: any program on the LAN can open WAN ports while this is on"),
@@ -28,6 +28,9 @@ static FIELDS: [Field; 8] = [
     Field::new("ext_interface", "WAN interface", Kind::Iface).def("@wan"),
     Field::new("upnp", "UPnP IGD", Kind::Bool).def("1"),
     Field::new("natpmp", "NAT-PMP / PCP", Kind::Bool).def("1"),
+    Field::new("allow_private_wan", "WAN address is private or reserved", Kind::Bool)
+        .def("0")
+        .help("double NAT or a lab: otherwise miniupnpd refuses to map ports behind a non-public WAN address"),
     Field::new("secure_mode", "Clients map only their own address", Kind::Bool).def("1"),
     Field::new("port_min", "Lowest mappable external port", Kind::Int(1024, 65535)).def("1024"),
     Field::new("port_max", "Highest mappable external port", Kind::Int(1024, 65535)).def("65535"),

@@ -14,7 +14,9 @@ command -v miniupnpd >/dev/null || apt-get install -y -qq miniupnpd-nftables >/d
 command -v upnpc >/dev/null || apt-get install -y -qq miniupnpc >/dev/null
 command -v miniupnpd >/dev/null && command -v upnpc >/dev/null || nl_fail "miniupnpd/upnpc not installed"
 pkill -x miniupnpd 2>/dev/null || true
-systemctl stop miniupnpd 2>/dev/null || true
+# a daemon is running: not a zombie (the lab container has no init to reap them)
+alive() { ps -eo stat=,comm= | awk -v n="$1" '$2 == n && $1 !~ /^Z/ { f = 1 } END { exit !f }'; }
+export -f alive
 
 nl_write_installer_toml
 nl_boot "$DB"
@@ -23,13 +25,13 @@ jget() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval
 
 nl_api GET /svc/upnp; [ "$NL_CODE" = 200 ] || nl_fail "upnp page API: $NL_CODE"
 
-! R pgrep -x miniupnpd >/dev/null || nl_fail "miniupnpd runs although UPnP is off by default"
+! alive miniupnpd || nl_fail "miniupnpd runs although UPnP is off by default"
 nl_assert_nft_lacks 5351
 nl_ok "off by default: no daemon, no firewall rule"
 
 nl_api PUT /svc/upnp '{"enabled":true,"port_min":"1024","port_max":"65535"}'
 [ "$NL_CODE" = 200 ] || nl_fail "enable UPnP: $NL_CODE $(cat "$NL_OUT")"
-nl_wait 20 R pgrep -x miniupnpd || nl_fail "miniupnpd did not start"
+nl_wait 20 alive miniupnpd || nl_fail "miniupnpd did not start"
 nl_assert_nft_has "udp dport { 1900, 5351 }"
 nl_ok "enabled: miniupnpd runs, firewall opens SSDP/NAT-PMP/control on the LAN side"
 
@@ -49,7 +51,7 @@ nl_ok "secure mode refused a mapping for another host's address"
 echo "=== switch off"
 nl_api PUT /svc/upnp '{"enabled":false}'
 [ "$NL_CODE" = 200 ] || nl_fail "disable: $NL_CODE"
-nl_wait 20 sh -c '! ip netns exec nl-rtr pgrep -x miniupnpd' || nl_fail "miniupnpd still running after switching off"
+nl_wait 20 bash -c '! alive miniupnpd' || nl_fail "miniupnpd still running after switching off"
 nl_assert_nft_lacks "UPnP"
 nl_ok "off again: daemon stopped, rules gone"
 echo "PASS lane-n-upnp"
