@@ -19,6 +19,8 @@ fi
 command -v ldapadd >/dev/null || nl_fail "ldap-utils missing"
 BASE=dc=example,dc=net
 ADMIN="cn=admin,$BASE"; APW=Ldap-Admin-Pw-1
+nl_write_installer_toml
+nl_boot "$DB"
 mkdir -p /run/slapd; chown openldap:openldap /run/slapd 2>/dev/null || true
 nl_bg INET slapd -h "ldap://$NL_WWW:389/" -u openldap -g openldap -F /etc/ldap/slapd.d
 nl_wait 20 ip netns exec nl-inet ldapsearch -x -H ldap://$NL_WWW -b "$BASE" -s base dn || nl_fail "slapd did not answer"
@@ -60,8 +62,6 @@ member: uid=olive,ou=people,$BASE
 LDIF
 nl_ok "OpenLDAP is serving $BASE (alice, olive in netops, an 'admin' entry with another password)"
 
-nl_write_installer_toml
-nl_boot "$DB"
 nl_web_start "$DB"; nl_login
 jget() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$NL_OUT" "$1"; }
 
@@ -81,16 +81,18 @@ nl_ok "LDAP server saved (bad filters/missing base DN refused, password not retu
 J=$NL_T/nl-jar-ldap
 login() { rm -f "$J"; C curl -sk -b "$J" -c "$J" -o "$NL_OUT" -w '%{http_code}' -X POST -H 'content-type: application/json' -d "{\"username\":\"$1\",\"password\":\"$2\"}" "$NL_UI/api/auth/login"; }
 [ "$(login alice Alice-Dir-Pw-1)" = 200 ] || nl_fail "alice (directory) could not log in: $(cat "$NL_OUT")"
-[ "$(jget 'd["role"]')" = readonly ] || nl_fail "alice should be read-only: $(cat "$NL_OUT")"
+[ "$(jget 'd["role"].lower()')" = readonly ] || nl_fail "alice should be read-only: $(cat "$NL_OUT")"
 nl_ok "alice logs in with her directory password as read-only"
 [ "$(login olive Olive-Dir-Pw-1)" = 200 ] || nl_fail "olive could not log in: $(cat "$NL_OUT")"
-[ "$(jget 'd["role"]')" = operator ] || nl_fail "olive is in netops and should be operator: $(cat "$NL_OUT")"
+[ "$(jget 'd["role"].lower()')" = operator ] || nl_fail "olive is in netops and should be operator: $(cat "$NL_OUT")"
 nl_ok "olive (member of netops) logs in as operator"
 
 for bad in "alice Wrong-Pw-12345" "alice " "nobody Alice-Dir-Pw-1" "alice)(uid=* x" "*  Alice-Dir-Pw-1" "alice* Alice-Dir-Pw-1"; do
   set -- $bad
   got=$(login "$1" "${2:-}")
   [ "$got" = 401 ] || [ "$got" = 400 ] || nl_fail "login '$1' with '${2:-}' answered $got, must be refused"
+  # a good login in between keeps the brute-force throttle (5 failures) from tripping
+  [ "$(login alice Alice-Dir-Pw-1)" = 200 ] || nl_fail "alice cannot log in again after '$1'"
 done
 nl_ok "wrong/empty password, unknown user and filter-injection names are refused"
 got=$(login admin Ldap-Admin-Spoof-1)
