@@ -28,9 +28,8 @@ static FIELDS: [Field; 9] = [
     Field::new("ext_interface", "WAN interface", Kind::Iface).def("@wan"),
     Field::new("upnp", "UPnP IGD", Kind::Bool).def("1"),
     Field::new("natpmp", "NAT-PMP / PCP", Kind::Bool).def("1"),
-    Field::new("allow_private_wan", "WAN address is private or reserved", Kind::Bool)
-        .def("0")
-        .help("double NAT or a lab: otherwise miniupnpd refuses to map ports behind a non-public WAN address"),
+    Field::new("ext_ip", "Announce this public address", Kind::Ipv4)
+        .help("optional: for 1:1 NAT or double NAT, where the WAN address is private; miniupnpd refuses private WAN addresses otherwise"),
     Field::new("secure_mode", "Clients map only their own address", Kind::Bool).def("1"),
     Field::new("port_min", "Lowest mappable external port", Kind::Int(1024, 65535)).def("1024"),
     Field::new("port_max", "Highest mappable external port", Kind::Int(1024, 65535)).def("65535"),
@@ -132,32 +131,6 @@ impl UpnpApplier {
     }
 }
 
-/// The first IPv4 address on `dev` (what miniupnpd finds itself).
-fn kernel_ipv4(dev: &str) -> Option<String> {
-    let out = std::process::Command::new("ip")
-        .args(["-4", "-o", "addr", "show", "dev", dev])
-        .output()
-        .ok()?;
-    String::from_utf8_lossy(&out.stdout)
-        .split_whitespace()
-        .skip_while(|w| *w != "inet")
-        .nth(1)
-        .and_then(|a| a.split('/').next())
-        .map(String::from)
-}
-
-async fn wan_is_private(store: &ConfigStore, dev: &str) -> bool {
-    let Ok(cfg) = crate::netconf::NetConfig::load(store).await else {
-        return false;
-    };
-    cfg.iface(dev).is_some_and(|i| {
-        i.ipv4.iter().any(|n| match n.ip() {
-            std::net::IpAddr::V4(a) => a.is_private() || a.is_link_local(),
-            _ => false,
-        })
-    })
-}
-
 #[async_trait]
 impl Applier for UpnpApplier {
     fn name(&self) -> &'static str {
@@ -198,12 +171,7 @@ impl Applier for UpnpApplier {
             &s,
             &lan_devs,
             wan,
-            if s.b("allow_private_wan") || wan_is_private(store, wan).await {
-                kernel_ipv4(wan)
-            } else {
-                None
-            }
-            .as_deref(),
+            Some(s.s("ext_ip")).filter(|a| !a.is_empty()).as_deref(),
             &lease.to_string_lossy(),
         );
         let started = svc::ensure_daemon(
