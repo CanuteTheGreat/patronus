@@ -2141,8 +2141,8 @@ async fn groups_grant_per_area_privileges_that_the_gate_enforces() {
     assert_eq!(s, StatusCode::FORBIDDEN, "vpn not in the group");
     let (s, _) = t.call(&nc, Method::GET, "/api/system/backups", None).await;
     assert_eq!(s, StatusCode::FORBIDDEN, "system not in the group");
-    let (s, _) = t.call(&nc, Method::GET, "/api/routing/routes", None).await;
-    assert_eq!(s, StatusCode::OK);
+    let (s, _) = t.call(&nc, Method::POST, "/api/routing/routes", Some(json!({}))).await;
+    assert_ne!(s, StatusCode::FORBIDDEN, "routing write allowed (the body is rejected, not the caller)");
     let (s, _) = t.call(&nc, Method::POST, "/api/system/groups", Some(json!({"name": "x"}))).await;
     assert_eq!(s, StatusCode::FORBIDDEN, "a group can never grant account management");
     let (s, b, _) = t.raw(Method::GET, "/vpn", Some(&nc), None).await;
