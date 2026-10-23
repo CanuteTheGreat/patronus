@@ -1734,8 +1734,8 @@ mod tests {
         db.store_endpoints(&a.id, &[ep]).await.unwrap();
         let path = Path {
             id: PathId::new(0),
-            src_site: a.id.clone(),
-            dst_site: b.id.clone(),
+            src_site: a.id,
+            dst_site: b.id,
             src_endpoint: "203.0.113.2:51820".parse().unwrap(),
             dst_endpoint: "203.0.114.2:51820".parse().unwrap(),
             wg_interface: Some("sdwan0".to_string()),
