@@ -173,6 +173,10 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     v.push(Arc::new(crate::nat64::Nat64Svc));
     #[cfg(feature = "l2tp")]
     v.push(Arc::new(crate::l2tp::L2tpSvc));
+    #[cfg(feature = "upnp")]
+    v.push(Arc::new(crate::upnp::UpnpSvc));
+    #[cfg(feature = "web-proxy")]
+    v.push(Arc::new(crate::proxy::ProxySvc));
     #[cfg(feature = "intrusion-detection")]
     v.push(Arc::new(crate::ids::IdsSvc));
     #[cfg(feature = "dynamic-routing")]
@@ -192,6 +196,7 @@ pub const SVC_TABLES: &[&str] = &[
     "syslog_targets",
     "igmp_interfaces",
     "l2tp_users",
+    "proxy_blocked",
     "ids_rules",
     "frr_bgp_neighbors",
     "frr_bgp_networks",

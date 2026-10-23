@@ -35,6 +35,8 @@ netflow = []
 igmp = []
 nat64 = []
 l2tp = []
+upnp = []
+web-proxy = []
 # SD-WAN edge agent page + applier (the agent itself is `patronus edge run`)
 sdwan-edge = ["wireguard"]
 

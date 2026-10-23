@@ -351,6 +351,7 @@ impl FirewallApplier {
             let sr = crate::svc_rules::svc_rules(store).await?;
             vpn.filter.extend(sr.filter);
             vpn.nat_exempt.extend(sr.nat_exempt);
+            vpn.nat_pre.extend(sr.nat_pre);
         }
         for l in &vpn.filter {
             script.push_str(l);
@@ -366,6 +367,11 @@ impl FirewallApplier {
             for l in &vpn.nat_exempt {
                 post.push_str(l);
                 post.push('\n');
+                nnat += 1;
+            }
+            for l in &vpn.nat_pre {
+                pre.push_str(l);
+                pre.push('\n');
                 nnat += 1;
             }
             for (rule, _) in store.load_nat_rules_with_origin().await? {

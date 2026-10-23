@@ -28,6 +28,8 @@ pub struct VpnRules {
     pub filter: Vec<String>,
     /// postrouting NAT exemptions, before any masquerade
     pub nat_exempt: Vec<String>,
+    /// prerouting NAT rules (the web proxy's HTTP interception)
+    pub nat_pre: Vec<String>,
 }
 
 /// `a.b.c.d/n` or `v6/n` (a bare address = host) -> (family keyword, text).

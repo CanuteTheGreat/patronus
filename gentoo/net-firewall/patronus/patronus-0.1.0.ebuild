@@ -33,7 +33,7 @@ IUSE="
 	+monitoring prometheus ntopng netflow collectd
 	+captive-portal
 	intrusion-detection suricata snort
-	syslog igmp nat64 l2tp dynamic-routing sdwan
+	syslog igmp nat64 l2tp upnp web-proxy dynamic-routing sdwan
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp
@@ -100,6 +100,8 @@ RDEPEND="
 	igmp? ( net-misc/igmpproxy )
 	nat64? ( net-proxy/tayga )
 	l2tp? ( net-dialup/xl2tpd net-dialup/ppp )
+	upnp? ( net-misc/miniupnpd )
+	web-proxy? ( net-proxy/squid )
 	dynamic-routing? ( net-misc/frr )
 	netflow? ( net-analyzer/softflowd )
 	sdwan? ( net-vpn/wireguard-tools dev-libs/openssl:0= || ( net-misc/iputils sys-apps/busybox ) )
@@ -255,6 +257,8 @@ src_configure() {
 		$(usex igmp "igmp" "")
 		$(usex nat64 "nat64" "")
 		$(usex l2tp "l2tp" "")
+		$(usex upnp "upnp" "")
+		$(usex web-proxy "web-proxy" "")
 		$(usex intrusion-detection "intrusion-detection" "")
 		$(usex dynamic-routing "dynamic-routing" "")
 		$(usex sdwan "sdwan-edge" "")
@@ -359,6 +363,8 @@ src_install() {
 		use igmp && webfeatures+=( igmp )
 		use nat64 && webfeatures+=( nat64 )
 		use l2tp && webfeatures+=( l2tp )
+		use upnp && webfeatures+=( upnp )
+		use web-proxy && webfeatures+=( web-proxy )
 		use intrusion-detection && webfeatures+=( intrusion-detection )
 		use dynamic-routing && webfeatures+=( dynamic-routing )
 		use sdwan && webfeatures+=( sdwan-edge )

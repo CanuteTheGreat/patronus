@@ -17,7 +17,7 @@ path = "src/lib.rs"
 # builds patronus-web with --no-default-features and the USE-selected list):
 # lane C interfaces (vlan, pppoe, dhcpcd) and the lane D LAN-service pages
 # (dhcp, dns, ntp).
-default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "intrusion-detection", "dynamic-routing", "sdwan-edge"]
+default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "upnp", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge"]
 vlan = ["patronus-network/vlan"]
 pppoe = ["patronus-network/pppoe"]
 dhcpcd = ["patronus-network/dhcpcd"]
@@ -39,6 +39,8 @@ netflow = ["patronus-network/netflow"]
 igmp = ["patronus-network/igmp"]
 nat64 = ["patronus-network/nat64"]
 l2tp = ["patronus-network/l2tp"]
+upnp = ["patronus-network/upnp"]
+web-proxy = ["patronus-network/web-proxy"]
 intrusion-detection = ["patronus-network/intrusion-detection"]
 dynamic-routing = ["patronus-network/dynamic-routing"]
 sdwan-edge = ["patronus-network/sdwan-edge"]

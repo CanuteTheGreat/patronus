@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "intrusion-detection", "dynamic-routing", "sdwan-edge"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "upnp", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge"]
 
 # Core features
 web = ["patronus-web", "dep:axum"]
@@ -58,6 +58,8 @@ netflow = ["patronus-network/netflow", "patronus-web?/netflow"]
 igmp = ["patronus-network/igmp", "patronus-web?/igmp"]
 nat64 = ["patronus-network/nat64", "patronus-web?/nat64"]
 l2tp = ["patronus-network/l2tp", "patronus-web?/l2tp"]
+upnp = ["patronus-network/upnp", "patronus-web?/upnp"]
+web-proxy = ["patronus-network/web-proxy", "patronus-web?/web-proxy"]
 intrusion-detection = ["patronus-network/intrusion-detection", "patronus-web?/intrusion-detection"]
 dynamic-routing = ["patronus-network/dynamic-routing", "patronus-web?/dynamic-routing"]
 sdwan-edge = ["patronus-network/sdwan-edge", "patronus-web?/sdwan-edge", "dep:reqwest"]

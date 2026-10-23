@@ -144,6 +144,49 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- UPnP / NAT-PMP (off by default): discovery + control on the LAN
+    // side only; connections miniupnpd mapped (DNAT) may reach the LAN
+    let u = settings(store, "upnp").await?;
+    if on(&u, "enabled") {
+        let lan_devs = devices(store, u.get("interface").map(String::as_str).unwrap_or("@lan")).await;
+        let wan_devs = devices(store, u.get("ext_interface").map(String::as_str).unwrap_or("@wan")).await;
+        for d in &lan_devs {
+            out.filter.push(format!(
+                "add rule {t} input iifname \"{d}\" udp dport {{ 1900, 5351 }} accept comment \"UPnP/NAT-PMP\""
+            ));
+            out.filter.push(format!(
+                "add rule {t} input iifname \"{d}\" tcp dport 5000 accept comment \"UPnP control\""
+            ));
+            for w in &wan_devs {
+                out.filter.push(format!(
+                    "add rule {t} forward iifname \"{w}\" oifname \"{d}\" ct status dnat accept comment \"UPnP mapped ports\""
+                ));
+            }
+        }
+    }
+
+    // --- web proxy: the proxy ports on the LAN side; optional interception
+    let px = settings(store, "proxy").await?;
+    if on(&px, "enabled") {
+        let port: u16 = px.get("port").and_then(|p| p.parse().ok()).unwrap_or(3128);
+        let icpt = on(&px, "transparent");
+        for d in devices(store, px.get("interface").map(String::as_str).unwrap_or("@lan")).await {
+            out.filter.push(format!(
+                "add rule {t} input iifname \"{d}\" tcp dport {port} accept comment \"web proxy\""
+            ));
+            if icpt {
+                out.filter.push(format!(
+                    "add rule {t} input iifname \"{d}\" tcp dport 3129 accept comment \"web proxy (intercepted HTTP)\""
+                ));
+                // the router's own web server must stay reachable: only
+                // traffic to other hosts is redirected
+                out.nat_pre.push(format!(
+                    "add rule {t} prerouting iifname \"{d}\" fib daddr type != local tcp dport 80 redirect to :3129 comment \"web proxy intercept\""
+                ));
+            }
+        }
+    }
+
     // --- L2TP
     let l = settings(store, "l2tp").await?;
     if on(&l, "enabled") {
