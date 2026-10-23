@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "upnp", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "vpn-openvpn", "upnp", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge"]
 
 # Core features
 web = ["patronus-web", "dep:axum"]
@@ -34,7 +34,7 @@ multiwan = ["patronus-network/multiwan"]
 # Lane F: WireGuard tunnels / IPsec (strongSwan swanctl) appliers in
 # patronus apply/applyd and the web UI's VPN forms. USE=wireguard / ipsec.
 vpn-wireguard = ["patronus-network/wireguard", "patronus-web?/wireguard"]
-vpn-openvpn = ["patronus-network/openvpn"]
+vpn-openvpn = ["patronus-network/openvpn", "patronus-web?/openvpn"]
 vpn-ipsec = ["patronus-network/ipsec", "patronus-web?/ipsec"]
 # Lane G: keepalived VRRP virtual IPs + conntrackd state sync (USE=ha).
 ha = ["patronus-network/ha", "patronus-web?/ha"]

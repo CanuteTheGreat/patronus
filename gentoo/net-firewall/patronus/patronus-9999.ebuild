@@ -357,6 +357,7 @@ src_install() {
 		use nat64 && webfeatures+=( nat64 )
 		use l2tp && webfeatures+=( l2tp )
 		use upnp && webfeatures+=( upnp )
+		use openvpn && webfeatures+=( openvpn )
 		use web-proxy && webfeatures+=( web-proxy )
 		use intrusion-detection && webfeatures+=( intrusion-detection )
 		use dynamic-routing && webfeatures+=( dynamic-routing )

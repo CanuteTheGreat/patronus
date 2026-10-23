@@ -54,6 +54,8 @@ pub mod ra;
 
 #[cfg(feature = "openvpn")]
 pub mod openvpn;
+#[cfg(feature = "openvpn")]
+pub mod openvpn_server;
 
 #[cfg(feature = "ipsec")]
 pub mod ipsec;

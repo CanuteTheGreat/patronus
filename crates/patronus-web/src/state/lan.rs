@@ -147,7 +147,7 @@ fn svc_appliers(spec: &patronus_network::svc::Spec) -> Vec<&'static str> {
     }
     if matches!(
         spec.slug,
-        "igmp" | "nat64" | "l2tp" | "upnp" | "proxy" | "ids" | "frr" | "edge"
+        "igmp" | "nat64" | "l2tp" | "upnp" | "openvpn" | "proxy" | "ids" | "frr" | "edge"
     ) {
         v.push("firewall");
     }

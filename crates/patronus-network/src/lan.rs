@@ -56,6 +56,8 @@ pub const LAN_TABLES: &[&str] = &[
     "igmp_interfaces",
     "l2tp_users",
     "proxy_blocked",
+    "openvpn_clients",
+    "openvpn_pki",
     "ids_rules",
     "frr_bgp_neighbors",
     "frr_bgp_networks",
@@ -926,6 +928,8 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::l2tp::L2tpApplier::default()));
     #[cfg(feature = "upnp")]
     v.push(Arc::new(crate::upnp::UpnpApplier::default()));
+    #[cfg(feature = "openvpn")]
+    v.push(Arc::new(crate::openvpn_server::OpenVpnApplier::default()));
     #[cfg(feature = "web-proxy")]
     v.push(Arc::new(crate::proxy::ProxyApplier::default()));
     #[cfg(feature = "intrusion-detection")]

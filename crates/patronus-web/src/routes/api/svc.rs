@@ -149,10 +149,37 @@ async fn action(
     }
 }
 
+/// GET /api/svc/openvpn/export/:name -> the client's `.ovpn` profile (admin
+/// sessions only: it contains the client's private key).
+#[cfg(feature = "openvpn")]
+async fn export_openvpn(
+    State(st): State<AppState>,
+    _admin: crate::auth::AdminUser,
+    Path(name): Path<String>,
+) -> Response {
+    use axum::http::{header, StatusCode};
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || "._:@+-".contains(c)) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid client name"}))).into_response();
+    }
+    match patronus_network::openvpn_server::export_profile(&st.config_store, &name).await {
+        Ok(p) => (
+            [
+                (header::CONTENT_TYPE, "application/x-openvpn-profile".to_string()),
+                (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}.ovpn\"")),
+            ],
+            p,
+        )
+            .into_response(),
+        Err(e) => err(e.into()),
+    }
+}
+
 pub fn router() -> axum::Router<AppState> {
     use axum::routing::{post, put};
-    axum::Router::new()
-        .route("/svc", get(list))
+    let r = axum::Router::new();
+    #[cfg(feature = "openvpn")]
+    let r = r.route("/svc/openvpn/export/:name", get(export_openvpn));
+    r.route("/svc", get(list))
         .route("/svc/:slug", get(overview).put(put_settings))
         .route("/svc/:slug/action/:name", post(action))
         .route("/svc/:slug/:coll", post(add_row))

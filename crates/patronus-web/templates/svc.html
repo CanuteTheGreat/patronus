@@ -210,6 +210,14 @@
                     tr.lastChild.appendChild(wake);
                 }
             }
+            if (SLUG === 'openvpn' && c.key === 'clients') {
+                for (const tr of el.querySelectorAll('tr[data-id]')) {
+                    const name = (tr.querySelector('td') || {}).textContent || '';
+                    const dl = document.createElement('a'); dl.className = 'btn btn-sm btn-primary'; dl.textContent = 'Download profile';
+                    dl.style.marginLeft = '6px'; dl.href = '/api/svc/openvpn/export/' + encodeURIComponent(name.trim());
+                    tr.lastChild.appendChild(dl);
+                }
+            }
             cols.appendChild(el);
         }
         renderStatus(d.status);

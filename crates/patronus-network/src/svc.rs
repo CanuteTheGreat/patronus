@@ -175,6 +175,8 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     v.push(Arc::new(crate::l2tp::L2tpSvc));
     #[cfg(feature = "upnp")]
     v.push(Arc::new(crate::upnp::UpnpSvc));
+    #[cfg(feature = "openvpn")]
+    v.push(Arc::new(crate::openvpn_server::OpenVpnSvc));
     #[cfg(feature = "web-proxy")]
     v.push(Arc::new(crate::proxy::ProxySvc));
     #[cfg(feature = "intrusion-detection")]
@@ -197,6 +199,8 @@ pub const SVC_TABLES: &[&str] = &[
     "igmp_interfaces",
     "l2tp_users",
     "proxy_blocked",
+    "openvpn_clients",
+    "openvpn_pki",
     "ids_rules",
     "frr_bgp_neighbors",
     "frr_bgp_networks",
