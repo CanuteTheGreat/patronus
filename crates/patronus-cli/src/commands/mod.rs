@@ -12,6 +12,7 @@ pub mod firewall;
 pub mod gitops;
 pub mod init;
 pub mod metrics;
+#[cfg(feature = "plugins")]
 pub mod plugin;
 pub mod policy;
 pub mod site;

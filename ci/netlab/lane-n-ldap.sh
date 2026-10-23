@@ -13,8 +13,9 @@ DB=/t/lane-n-ldap.db
 rm -f "$DB" "$NL_T/nl-jar"
 export DEBIAN_FRONTEND=noninteractive
 if ! command -v slapd >/dev/null; then
+  apt-get install -y -qq debconf-utils >"$NL_OUT" 2>&1 || { tail -20 "$NL_OUT"; nl_fail "debconf-utils could not be installed"; }
   printf 'slapd slapd/password1 password Ldap-Admin-Pw-1\nslapd slapd/password2 password Ldap-Admin-Pw-1\nslapd slapd/domain string example.net\nslapd shared/organization string Example\nslapd slapd/no_configuration boolean false\n' | debconf-set-selections
-  apt-get install -y -qq slapd ldap-utils >/dev/null 2>&1 || nl_fail "slapd could not be installed"
+  apt-get install -y -qq slapd ldap-utils >"$NL_OUT" 2>&1 || { tail -30 "$NL_OUT"; nl_fail "slapd could not be installed"; }
 fi
 command -v ldapadd >/dev/null || nl_fail "ldap-utils missing"
 BASE=dc=example,dc=net
