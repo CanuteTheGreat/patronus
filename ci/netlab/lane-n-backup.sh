@@ -61,6 +61,7 @@ nl_login
 nl_api POST /system/backup-targets "{\"name\":\"nightly\",\"url\":\"http://$NL_WWW:8081/dav\",\"username\":\"backup\",\"password\":\"s3cret\",\"interval_hours\":24}"
 [ "$NL_CODE" = 201 ] || nl_fail "create nightly: $NL_CODE"
 nl_wait 150 sh -c "ls $DAV/*.json >/dev/null 2>&1" || nl_fail "scheduled upload of a plain backup"
-grep -q '"tables"' "$DAV"/*.json || nl_fail "plain backup is not a configuration export"
+sleep 2
+grep -q "\"tables\"" "$DAV"/*.json || nl_fail "plain backup is not a configuration export"
 nl_ok "the scheduler uploaded a plain backup by itself"
 echo "PASS lane-n-backup"

@@ -66,7 +66,10 @@ pub async fn status(State(state): State<AppState>) -> Response {
         .unwrap_or_default()
         .into_iter()
         .filter(|d| {
-            matches!(d["kind"].as_str(), Some("ethernet") | Some("wlan") | None)
+            matches!(
+                d["kind"].as_str(),
+                Some("ethernet") | Some("wlan") | Some("veth") | None
+            )
                 && d["master"].is_null()
         })
         .map(|d| {
