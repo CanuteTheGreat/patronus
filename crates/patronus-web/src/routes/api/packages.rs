@@ -32,7 +32,7 @@ mod built {
             || msg.contains("another package job")
         {
             StatusCode::BAD_REQUEST
-        } else if msg.starts_with("no ") {
+        } else if msg.starts_with("no ") || msg.contains("no component") {
             StatusCode::NOT_FOUND
         } else {
             StatusCode::INTERNAL_SERVER_ERROR
