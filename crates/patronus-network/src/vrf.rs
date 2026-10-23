@@ -149,8 +149,28 @@ fn current_table(dev: &str) -> Option<u32> {
         .and_then(|t| t.parse().ok())
 }
 
+/// Sockets bound to no device (the web UI, SSH, DNS, DHCP) only answer
+/// traffic that arrives on a VRF-enslaved interface when the l3mdev accept
+/// sysctls are on; without them the management UI vanishes from a LAN the
+/// moment that LAN joins a VRF.
+fn allow_unbound_listeners(rep: &mut ApplyReport) {
+    for k in ["tcp_l3mdev_accept", "udp_l3mdev_accept"] {
+        let p = format!("/proc/sys/net/ipv4/{k}");
+        if std::fs::read_to_string(&p).map(|v| v.trim() == "1").unwrap_or(true) {
+            continue;
+        }
+        match std::fs::write(&p, "1") {
+            Ok(()) => rep.applied(format!("net.ipv4.{k}=1 (listeners answer inside VRFs)")),
+            Err(e) => rep.warn(format!("net.ipv4.{k}: {e}")),
+        }
+    }
+}
+
 /// Reconcile the kernel with `want`.
 pub fn reconcile(want: &Plan, rep: &mut ApplyReport) -> Result<()> {
+    if want.values().any(|(_, m)| !m.is_empty()) {
+        allow_unbound_listeners(rep);
+    }
     let have: Vec<String> = names(&ip(&["-br", "link", "show", "type", "vrf"]).unwrap_or_default())
         .into_iter()
         .filter(|n| n.starts_with(PREFIX))

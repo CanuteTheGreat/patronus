@@ -104,12 +104,77 @@ pub fn render_conf(
         c.push_str(&format!("ext_ip={ip}\n"));
     }
     c.push_str("friendly_name=Patronus\n");
+    // miniupnpd's nftables backend writes into chains that must already
+    // exist; it never creates them. They live in a table of Patronus' own.
+    c.push_str(&format!(
+        "upnp_table_name={NFT_TABLE}\nupnp_nat_table_name={NFT_TABLE}\nupnp_forward_chain=forward_miniupnpd\nupnp_nat_chain=prerouting_miniupnpd\nupnp_nat_postrouting_chain=postrouting_miniupnpd\n"
+    ));
     // only the configured range, from any LAN address; everything else denied
     let (lo, hi) = (s.n("port_min").max(1024), s.n("port_max").min(65535));
     c.push_str(&format!(
         "allow {lo}-{hi} 0.0.0.0/0 {lo}-{hi}\ndeny 0-65535 0.0.0.0/0 0-65535\n"
     ));
     c
+}
+
+/// The nft table holding miniupnpd's mapping chains (kernel state, not
+/// persisted by the firewall applier: recreated here at every apply).
+pub const NFT_TABLE: &str = "patronus_upnp";
+
+const NFT_SKELETON: &str = "table inet patronus_upnp {
+  chain forward { type filter hook forward priority -10; policy accept; jump forward_miniupnpd; }
+  chain forward_miniupnpd { }
+  chain prerouting { type nat hook prerouting priority dstnat; policy accept; jump prerouting_miniupnpd; }
+  chain prerouting_miniupnpd { }
+  chain postrouting { type nat hook postrouting priority srcnat; policy accept; jump postrouting_miniupnpd; }
+  chain postrouting_miniupnpd { }
+}
+";
+
+fn nft_table_exists() -> bool {
+    std::process::Command::new("nft")
+        .args(["list", "table", "inet", NFT_TABLE])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Create the mapping chains once (a later apply keeps live mappings).
+fn ensure_nft_table() -> Result<()> {
+    use std::io::Write;
+    if nft_table_exists() {
+        return Ok(());
+    }
+    let mut child = std::process::Command::new("nft")
+        .args(["-f", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| Error::Service(format!("nft: {e}")))?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| Error::Service("nft: no stdin".into()))?
+        .write_all(NFT_SKELETON.as_bytes())
+        .map_err(|e| Error::Service(format!("nft: {e}")))?;
+    let out = child
+        .wait_with_output()
+        .map_err(|e| Error::Service(format!("nft: {e}")))?;
+    if !out.status.success() {
+        return Err(Error::Service(format!(
+            "UPnP: nft table: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
+fn drop_nft_table() {
+    if nft_table_exists() {
+        let _ = std::process::Command::new("nft")
+            .args(["delete", "table", "inet", NFT_TABLE])
+            .output();
+    }
 }
 
 #[derive(Clone)]
@@ -146,6 +211,7 @@ impl Applier for UpnpApplier {
         let s = Settings::load(store, &SPEC).await?;
         if !s.b("enabled") {
             let was = self.sup.stop(svc::DAEMON_SERVICE, INSTANCE).await?;
+            drop_nft_table();
             rep.applied(if was {
                 "UPnP/NAT-PMP stopped"
             } else {
@@ -174,6 +240,7 @@ impl Applier for UpnpApplier {
             Some(s.s("ext_ip")).filter(|a| !a.is_empty()).as_deref(),
             &lease.to_string_lossy(),
         );
+        ensure_nft_table()?;
         let started = svc::ensure_daemon(
             &self.sup,
             INSTANCE,
@@ -254,6 +321,11 @@ mod tests {
         assert!(c.contains("enable_natpmp=yes\n") && c.contains("enable_upnp=no\n"));
         assert!(c.contains("secure_mode=yes\n") && c.contains("ext_ip=10.0.0.2\n"));
         assert!(c.contains("allow 2000-3000 0.0.0.0/0 2000-3000\ndeny 0-65535"));
+        assert!(c.contains("upnp_table_name=patronus_upnp\nupnp_nat_table_name=patronus_upnp\n"));
+        assert!(c.contains("upnp_nat_chain=prerouting_miniupnpd\n"));
+        for chain in ["forward_miniupnpd", "prerouting_miniupnpd", "postrouting_miniupnpd"] {
+            assert!(NFT_SKELETON.contains(&format!("chain {chain} {{ }}")), "{chain}");
+        }
         assert!(!render_conf(&s, &["eth1".into()], "eth0", None, "l").contains("ext_ip"));
     }
 }

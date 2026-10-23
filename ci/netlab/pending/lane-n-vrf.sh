@@ -37,6 +37,7 @@ nl_ok "bad plans refused and rolled back"
 R ip -4 route show | grep -q '192.168.50.0/24 dev rtr-lan' || nl_fail "precondition: connected LAN route in main"
 nl_api POST /svc/vrf/members "{\"vrf\":\"red\",\"interface\":\"$NL_LAN_IF\"}"
 [ "$NL_CODE" = 200 ] || [ "$NL_CODE" = 201 ] || nl_fail "add member: $NL_CODE $(cat "$NL_OUT")"
+[ "$(R cat /proc/sys/net/ipv4/tcp_l3mdev_accept)" = 1 ] || nl_fail "tcp_l3mdev_accept is off: the UI would vanish from the enslaved LAN"
 R ip -d link show vrf-red | grep -q 'vrf table 100' || { R ip -d link; nl_fail "no vrf-red device bound to table 100"; }
 R ip link show $NL_LAN_IF | grep -q 'master vrf-red' || nl_fail "$NL_LAN_IF is not enslaved to vrf-red"
 nl_ok "vrf-red (table 100) exists and $NL_LAN_IF is enslaved to it"
