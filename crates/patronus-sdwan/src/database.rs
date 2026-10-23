@@ -1743,7 +1743,9 @@ mod tests {
             status: PathStatus::Up,
         };
         let pid = db.insert_path(&path).await.unwrap();
-        db.record_metrics(pid, &PathMetrics::default()).await.unwrap();
+        db.record_metrics(pid, &PathMetrics::default())
+            .await
+            .unwrap();
 
         db.delete_site(&b.id).await.unwrap();
         assert!(db.get_site(&b.id).await.unwrap().is_none());
