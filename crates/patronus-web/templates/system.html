@@ -112,6 +112,23 @@
     </form>
 </div>
 
+<div class="card" id="backup-targets-card" style="display:none">
+    <div class="card-header"><h2 class="card-title">Remote backups</h2></div>
+    <p class="text-sm text-muted">Upload the configuration automatically to a WebDAV/HTTPS server (PUT), SFTP or FTPS. With a passphrase the
+        file is encrypted (AES-256-GCM, Argon2id key) before it leaves this box; restore an encrypted file by uploading it with the passphrase.</p>
+    <p class="empty" id="backup-targets-empty">No remote targets.</p>
+    <table class="lan" id="backup-targets-table"><thead><tr><th>Name</th><th>URL</th><th>Every</th><th>Encrypted</th><th>Last run</th><th></th></tr></thead><tbody></tbody></table>
+    <form class="lan-form" id="backup-target-form" onsubmit="return addBackupTarget(event)">
+        <label>Name <input name="name" required></label>
+        <label>URL <input name="url" placeholder="https://dav.example.net/patronus" required></label>
+        <label>User <input name="username" autocomplete="off"></label>
+        <label>Password <input name="password" type="password" autocomplete="new-password"></label>
+        <label>Encryption passphrase (blank = plain) <input name="passphrase" type="password" autocomplete="new-password"></label>
+        <label>Every (hours, 0 = manual) <input name="interval_hours" type="number" min="0" value="24"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add target</button>
+    </form>
+</div>
+
 <div class="card" id="api-keys">
     <div class="card-header"><h2 class="card-title">API keys</h2></div>
     <p class="text-sm text-muted">Bearer tokens for automation (monitoring collectors, Terraform, scripts). Send
@@ -521,6 +538,41 @@
         return false;
     }
     document.addEventListener('DOMContentLoaded', loadGroups);
+</script>
+<script>
+    async function loadBackupTargets() {
+        if (!{{ is_admin }}) return;
+        const r = await fetch('/api/system/backup-targets', {credentials: 'same-origin'});
+        if (!r.ok) return;
+        const list = await r.json();
+        document.getElementById('backup-targets-card').style.display = '';
+        const tb = document.querySelector('#backup-targets-table tbody'); tb.textContent = '';
+        document.getElementById('backup-targets-empty').style.display = list.length ? 'none' : '';
+        document.getElementById('backup-targets-table').style.display = list.length ? '' : 'none';
+        for (const t of list) {
+            const tr = document.createElement('tr'); tr.dataset.target = t.name;
+            cell(tr, t.name); cell(tr, t.url); cell(tr, t.interval_hours ? t.interval_hours + ' h' : 'manual');
+            cell(tr, t.encrypted ? 'yes' : 'no');
+            cell(tr, t.last_run ? fmtTs(t.last_run) + ' - ' + (t.last_status || '') : 'never');
+            const td = document.createElement('td');
+            const run = document.createElement('button'); run.className = 'btn btn-sm btn-secondary'; run.textContent = 'Back up now';
+            run.onclick = async () => { const j = await post('/api/system/backup-targets/' + t.id + '/run', {}); loadBackupTargets(); };
+            const del = document.createElement('button'); del.className = 'btn btn-sm btn-danger'; del.textContent = 'Delete';
+            del.onclick = async () => { if (!confirm('Delete target ' + t.name + '?')) return;
+                const x = await fetch('/api/system/backup-targets/' + t.id, {method: 'DELETE', credentials: 'same-origin'});
+                if (x.ok) loadBackupTargets(); };
+            td.appendChild(run); td.appendChild(del); tr.appendChild(td); tb.appendChild(tr);
+        }
+    }
+    async function addBackupTarget(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements;
+        const j = await post('/api/system/backup-targets', {name: f['name'].value, url: f['url'].value, username: f['username'].value,
+            password: f['password'].value, passphrase: f['passphrase'].value, interval_hours: parseInt(f['interval_hours'].value || '24', 10)});
+        if (j) { ev.target.reset(); loadBackupTargets(); }
+        return false;
+    }
+    document.addEventListener('DOMContentLoaded', loadBackupTargets);
 </script>
 <script>
     function setPassword(id, name) {

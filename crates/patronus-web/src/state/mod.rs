@@ -65,6 +65,8 @@ pub struct AppState {
     /// swapping in `patronus_secrets::store::FileStore` plus a real
     /// master-key strategy is lane A/H follow-up work.
     pub secrets: Arc<SecretManager>,
+    /// Remote / encrypted automatic backups.
+    pub backup_targets: crate::backup_remote::BackupTargets,
 }
 
 impl AppState {
@@ -108,6 +110,7 @@ impl AppState {
             monitoring: Arc::new(MonitoringManager::new()),
             auth: AuthState::new(config_store.clone()),
             config_store,
+            backup_targets: crate::backup_remote::BackupTargets::new(config_store.clone()),
             secrets: Arc::new(SecretManager::new(Arc::new(
                 patronus_secrets::store::MemoryStore::new(),
             ))),

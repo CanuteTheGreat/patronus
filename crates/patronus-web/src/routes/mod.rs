@@ -42,6 +42,7 @@ pub fn build_router(
         .merge(api::ha::pages())
         .merge(api::qos::pages())
         .merge(api::svc::pages())
+        .merge(api::setup::pages())
         // The old "simple" pages claimed services were operational and
         // listed invented "recent activity"; keep the URLs as redirects.
         .route("/simple", get(|| async { Redirect::to("/") }))
@@ -182,6 +183,7 @@ async fn require_session(
             || path.starts_with("/api/system/api-keys")
             || path.starts_with("/api/system/auth-servers")
             || path.starts_with("/api/system/groups")
+            || path.starts_with("/api/system/backup-targets")
             || path.starts_with("/api/system/users");
         if !(path.starts_with("/api/") || path == "/metrics") || people_only {
             return (
@@ -285,6 +287,8 @@ fn api_routes() -> Router<AppState> {
         .merge(api::system::router())
         .merge(api::apikeys::router())
         .merge(api::groups::router())
+        .merge(api::backup_targets::router())
+        .merge(api::setup::router())
         .merge(api::authservers::router())
         .merge(api::telemetry::router())
 }

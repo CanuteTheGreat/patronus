@@ -301,8 +301,24 @@ pub async fn restore_backup(
 pub async fn upload_restore(
     State(state): State<AppState>,
     admin: AdminUser,
+    headers: axum::http::HeaderMap,
     body: Bytes,
 ) -> Response {
+    // an encrypted remote backup (PBK1): decrypt with X-Backup-Passphrase
+    let body = if crate::backup_remote::is_encrypted(&body) {
+        let Some(p) = headers.get("x-backup-passphrase").and_then(|v| v.to_str().ok()) else {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "Invalid backup: it is encrypted, send the passphrase in the X-Backup-Passphrase header",
+            );
+        };
+        match crate::backup_remote::decrypt(&body, p) {
+            Ok(plain) => Bytes::from(plain),
+            Err(e) => return err(e),
+        }
+    } else {
+        body
+    };
     let (b, doc) = match state.system.save_upload(&body).await {
         Ok(x) => x,
         Err(e) => return err(e),

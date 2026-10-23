@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 
 pub mod apikeys;
 pub mod auth;
+pub mod backup_remote;
 pub mod geo_centroid;
 pub mod qrcode;
 pub mod radius;
@@ -42,6 +43,16 @@ fn prepare_app(state: AppState) -> axum::Router {
             cleanup_state.auth.session_store.cleanup_expired().await;
             cleanup_state.auth.login_throttle.cleanup_expired();
             tracing::debug!("Cleaned up expired sessions");
+        }
+    });
+
+    // Remote / encrypted automatic backups: upload to every target that is due.
+    let backup_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            backup_state.backup_targets.run_due().await;
         }
     });
 

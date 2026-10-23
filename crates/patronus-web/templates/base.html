@@ -770,6 +770,7 @@
 
             <!-- Page Content -->
             <main class="content">
+                <div id="setup-banner" style="display:none;background:#fff3cd;color:#664d03;padding:.6em 1em;margin-bottom:1em;border-radius:4px">This router has not been set up yet. <a href="/setup">Run the setup wizard</a></div>
                 {% block content %}{% endblock %}
             </main>
         </div>
@@ -825,6 +826,7 @@
             .catch(() => {});
     </script>
 
+    <script>if (location.pathname !== '/setup') fetch('/api/setup/status', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(d => { if (d && !d.completed) document.getElementById('setup-banner').style.display = ''; }).catch(() => {});</script>
     {% block extra_scripts %}{% endblock %}
 </body>
 </html>

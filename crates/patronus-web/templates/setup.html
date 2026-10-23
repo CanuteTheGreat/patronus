@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}Setup wizard - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Setup wizard</h1>
+    <p class="page-subtitle">Pick the WAN and LAN ports, give the LAN an address and (optionally) a DHCP pool. Everything is
+        saved in the configuration, applied to the system now and again at every boot. The same settings stay editable on the
+        Interfaces and DHCP pages.</p>
+</div>
+<div class="card">
+    <p id="setup-state" class="text-sm text-muted">Loading ports...</p>
+    <form class="lan-form" id="setup-form" onsubmit="return runSetup(event)">
+        <label>WAN port <select name="wan_interface" required></select></label>
+        <label>WAN address <select name="wan_mode" onchange="document.getElementById('wan-static').style.display = this.value === 'static' ? '' : 'none'"><option value="dhcp">DHCP from the ISP</option><option value="static">Static</option></select></label>
+        <span id="wan-static" style="display:none">
+            <label>WAN address (CIDR) <input name="wan_ipv4" placeholder="203.0.113.2/29"></label>
+            <label>WAN gateway <input name="wan_gateway" placeholder="203.0.113.1"></label>
+        </span>
+        <label>LAN port <select name="lan_interface" required></select></label>
+        <label>LAN address (CIDR) <input name="lan_ipv4" value="192.168.1.1/24" required></label>
+        <label><input type="checkbox" name="dhcp" checked> Serve DHCP on the LAN</label>
+        <label>Pool start <input name="dhcp_start" value="192.168.1.100"></label>
+        <label>Pool end <input name="dhcp_end" value="192.168.1.199"></label>
+        <label>DNS servers handed to clients (blank = this router) <input name="dns_servers"></label>
+        <label><input type="checkbox" name="force"> Apply even if it may cut off this session</label>
+        <button class="btn btn-primary" type="submit">Apply setup</button>
+        <button class="btn btn-secondary" type="button" onclick="skipSetup()">Skip the wizard</button>
+    </form>
+    <pre id="setup-result" class="text-sm"></pre>
+</div>
+<script>
+    async function loadSetup() {
+        const r = await fetch('/api/setup/status', {credentials: 'same-origin'});
+        if (!r.ok) return;
+        const d = await r.json();
+        document.getElementById('setup-state').textContent = d.completed
+            ? 'The wizard was completed before; running it again re-applies the settings below.'
+            : 'This router has not been set up yet.';
+        const f = document.getElementById('setup-form').elements;
+        for (const sel of [f['wan_interface'], f['lan_interface']]) {
+            sel.textContent = '';
+            for (const i of d.interfaces) {
+                const o = document.createElement('option'); o.value = i.name;
+                o.textContent = i.name + (i.role ? ' (' + i.role + ')' : '') + (i.up ? '' : ' - down');
+                sel.appendChild(o);
+            }
+        }
+        const roles = Object.fromEntries(d.interfaces.map(i => [i.role, i.name]));
+        if (roles.wan) f['wan_interface'].value = roles.wan;
+        if (roles.lan) f['lan_interface'].value = roles.lan;
+        else if (d.interfaces.length > 1) f['lan_interface'].selectedIndex = 1;
+    }
+    async function runSetup(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements;
+        const body = {wan_interface: f['wan_interface'].value, wan_mode: f['wan_mode'].value,
+            wan_ipv4: f['wan_ipv4'].value || null, wan_gateway: f['wan_gateway'].value || null,
+            lan_interface: f['lan_interface'].value, lan_ipv4: f['lan_ipv4'].value,
+            dhcp: f['dhcp'].checked, dhcp_start: f['dhcp_start'].value, dhcp_end: f['dhcp_end'].value,
+            dns_servers: f['dns_servers'].value || null, force: f['force'].checked};
+        const r = await fetch('/api/setup/apply', {method: 'POST', credentials: 'same-origin',
+            headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
+        let j = {}; try { j = await r.json(); } catch (_) {}
+        document.getElementById('setup-result').textContent = r.ok
+            ? 'Applied: ' + (j.applied || []).join(', ') : 'Not applied (' + r.status + '): ' + (j.error || '');
+        if (r.ok) loadSetup();
+        return false;
+    }
+    async function skipSetup() {
+        const r = await fetch('/api/setup/complete', {method: 'POST', credentials: 'same-origin'});
+        if (r.ok) location.href = '/';
+    }
+    document.addEventListener('DOMContentLoaded', loadSetup);
+</script>
+{% endblock %}
