@@ -262,6 +262,50 @@ jobs:
           NETLAB_TEST: ha-services-test.sh
         run: ci/netlab/lan-services.sh systemd
 
+  netlab-features:
+    # Lane J (syslog, NetFlow, IGMP, NAT64/DNS64, L2TP, Suricata IDS/IPS,
+    # FRR BGP/OSPF, Wake-on-LAN) and lane K (SD-WAN edge agents enrolling with
+    # a real dashboard): the same shipped binaries, one scenario per feature
+    # in network namespaces with the real daemons (claims C46-C54).
+    name: Netlab features (lane J feature pages + lane K SD-WAN edge)
+    runs-on: linux-cross-x86_64
+    timeout-minutes: 100
+    env:
+      CARGO_BUILD_JOBS: 4
+      CARGO_PROFILE_DEV_DEBUG: 0
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 6g --memory-swap 6g --cpus 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler libdbus-1-dev
+      - name: Build env (mold linker, no incremental)
+        # ci/ci-rust-env.sh: pinned mold release (sha256-checked) as the
+        # linker for every following step. No sccache here: a job container
+        # has no persistent cache volume. RUSTFLAGS replaces the
+        # target-cpu=native rustflags of .cargo/config.toml for CI builds,
+        # which is fine for tests (and keeps the result host-independent).
+        run: CI_NO_SCCACHE=1 CI_RUST_ENV_EXPORT=1 . ci/ci-rust-env.sh
+      - name: Cache cargo
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-netlabf-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-netlabf-
+      - name: Lane J + K scenarios in a capped NET_ADMIN/SYS_ADMIN container
+        run: ci/netlab/run.sh ci/netlab/lane-j-*.sh ci/netlab/lane-k-*.sh
+
   feature-matrix:
     # `cargo test --workspace` only ever compiles default features, so every
     # cfg(feature)-gated module (patronus-network's dhcp/dns/wireguard/

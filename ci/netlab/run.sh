@@ -27,7 +27,15 @@ cleanup() { docker rm -f "$C" >/dev/null 2>&1 || true; rm -rf "$OUT"; }
 trap cleanup EXIT
 
 if [ $# -eq 0 ]; then
+  # lanes J (feature pages) and K (SD-WAN edge) run as their own CI job
+  # (netlab-features, `run.sh ci/netlab/lane-j-*.sh ci/netlab/lane-k-*.sh`);
+  # NETLAB_ALL=1 puts them back into the default set for a full local run.
   set -- ci/netlab/lane-*.sh ci/netlab/journey-*.sh ci/netlab/failure-*.sh ci/netlab/upgrade-*.sh
+  if [ -z "${NETLAB_ALL:-}" ]; then
+    keep=()
+    for s in "$@"; do case "$s" in */lane-j-*|*/lane-k-*) ;; *) keep+=("$s") ;; esac; done
+    set -- "${keep[@]}"
+  fi
 fi
 
 # NETLAB_BIN_DIR: use already-built patronus-cli + patronus-web from there.
