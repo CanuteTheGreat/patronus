@@ -1,0 +1,50 @@
+name: windows-check
+
+# On-demand Windows check for a Patronus crate (replaces the retired AWS dev-account `ron-test-PA` Windows EC2).
+# As of 2026-10-24 Patronus has NO cfg(windows) code (grep verified) -- this exists for the day a Windows
+# agent/monitoring path lands. Owner rules: workflow_dispatch ONLY (never push/PR/schedule), dispatch only
+# when expected to pass, never a GitHub PR. Source of truth is Forgejo; the push mirror carries this file.
+#   gh workflow run windows-check.yml -R CanuteTheGreat/patronus -f package=<crate> [-f test_filter=<name>]
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "cargo package to build+test on Windows (e.g. a crate that gained cfg(windows) code)"
+        required: true
+      test_filter:
+        description: "cargo test name filter (empty = all tests of the package)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-check
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: win-patronus-${{ hashFiles('Cargo.lock') }}
+          restore-keys: win-patronus-
+      - name: Build
+        shell: pwsh
+        run: cargo build -p ${{ inputs.package }}
+      - name: Test
+        shell: pwsh
+        env:
+          TEST_FILTER: ${{ inputs.test_filter }}
+        run: |
+          if ($env:TEST_FILTER) { cargo test -p ${{ inputs.package }} --no-fail-fast $env:TEST_FILTER -- --nocapture }
+          else { cargo test -p ${{ inputs.package }} --no-fail-fast }
