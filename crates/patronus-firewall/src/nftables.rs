@@ -1140,6 +1140,18 @@ mod render_contract_tests {
     }
 
     #[test]
+    fn npt_prefix_rejects_each_reserved_kind_on_its_own() {
+        // aligned (no host bits) so only the address kind can reject them
+        for bad in ["ff00::/16", "ff02::/16", "::/64", "::/1"] {
+            assert!(npt_prefix(bad).is_err(), "{bad} must be rejected");
+        }
+        assert_eq!(
+            npt_prefix("2001:db8:1::/64").unwrap(),
+            ("2001:db8:1::".parse().unwrap(), 64)
+        );
+    }
+
+    #[test]
     fn npt_prefixes_translate_both_ways_and_are_validated() {
         let mut r = NatRule::new(
             "npt".into(),

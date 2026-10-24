@@ -1105,6 +1105,83 @@ mod tests {
         );
     }
 
+    async fn put_setting(s: &ConfigStore, k: &str, v: &str) {
+        sqlx::query(
+            "INSERT OR REPLACE INTO lan_settings (key, value, updated_at) VALUES (?, ?, 0)",
+        )
+        .bind(k)
+        .bind(v)
+        .execute(s.pool().unwrap())
+        .await
+        .unwrap();
+    }
+
+    /// The N in the report line "F filter rule(s), N NAT rule(s), A alias(es)".
+    fn nat_count(r: &Rendered) -> usize {
+        let line = r
+            .report
+            .applied
+            .iter()
+            .find(|l| l.contains("NAT rule(s)"))
+            .expect("summary line");
+        line.split("filter rule(s), ")
+            .nth(1)
+            .and_then(|t| t.split(' ').next())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or_else(|| panic!("unparseable summary {line:?}"))
+    }
+
+    #[tokio::test]
+    async fn service_rules_and_their_nat_are_rendered_and_counted_except_in_lockdown() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        let off = FirewallApplier.render_script(&s, false).await.unwrap();
+        put_setting(&s, "proxy.enabled", "1").await;
+        put_setting(&s, "proxy.transparent", "1").await;
+        let on = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(on.script.contains("web proxy intercept"), "{}", on.script);
+        assert!(
+            on.script.contains("tcp dport 3128 accept comment \"web proxy\""),
+            "{}",
+            on.script
+        );
+        assert!(!off.script.contains("web proxy"), "{}", off.script);
+        // the interception redirect is one more NAT rule
+        assert_eq!(nat_count(&on), nat_count(&off) + 1);
+        // lockdown keeps only anti-lockout: no service rules at all
+        let lock = FirewallApplier.render_script(&s, true).await.unwrap();
+        assert!(!lock.script.contains("web proxy"), "{}", lock.script);
+    }
+
+    #[tokio::test]
+    async fn vrf_members_from_the_store_get_their_vrf_device_in_input_rules() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        assert!(vrf_members(&s).await.is_empty());
+        sqlx::query(
+            "INSERT INTO vrf_instances (name, table_id, updated_at) VALUES ('red', 100, 0)",
+        )
+        .execute(s.pool().unwrap())
+        .await
+        .unwrap();
+        // a member of a VRF that does not exist is ignored (the JOIN)
+        sqlx::query(
+            "INSERT INTO vrf_members (vrf, interface, updated_at) VALUES ('red', 'eth1', 0), ('ghost', 'eth2', 0)",
+        )
+        .execute(s.pool().unwrap())
+        .await
+        .unwrap();
+        assert_eq!(
+            vrf_members(&s).await,
+            vec![("eth1".to_string(), "vrf-red".to_string())]
+        );
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(
+            r.script
+                .contains("input iifname { \"eth1\", \"vrf-red\" } tcp dport {22,8443} accept"),
+            "{}",
+            r.script
+        );
+    }
+
     #[test]
     fn vrf_members_are_matched_on_their_vrf_device_for_input_rules() {
         let m = vec![("eth1".to_string(), "vrf-red".to_string())];
