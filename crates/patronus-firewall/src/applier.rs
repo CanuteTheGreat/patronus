@@ -1140,7 +1140,8 @@ mod tests {
         let on = FirewallApplier.render_script(&s, false).await.unwrap();
         assert!(on.script.contains("web proxy intercept"), "{}", on.script);
         assert!(
-            on.script.contains("tcp dport 3128 accept comment \"web proxy\""),
+            on.script
+                .contains("tcp dport 3128 accept comment \"web proxy\""),
             "{}",
             on.script
         );
