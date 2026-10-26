@@ -112,6 +112,13 @@ established() { local o; o=$(RWS --list-sas 2>/dev/null || true); grep -q ESTABL
 has_conn() { local o; o=$(swanctl --list-conns 2>/dev/null || true); grep -q "$1" <<<"$o"; }
 rw_down() { RWS --terminate --ike "$1" >/dev/null 2>&1 || true; sleep 0.5; }
 
+# Ubuntu 24.04 (the act image) ships strongSwan without eap-mschapv2/md4: the
+# EAP *connection* steps need it (Debian/Gentoo have it); everything else
+# (config, firewall, exports, certificate profile) is proven either way.
+MSCHAP=0
+ls /usr/lib/ipsec/plugins/libstrongswan-eap-mschapv2.so /usr/lib/*/ipsec/plugins/libstrongswan-eap-mschapv2.so >/dev/null 2>&1 && MSCHAP=1
+[ "$MSCHAP" = 1 ] || echo "NOTE: no eap-mschapv2 plugin in this strongSwan: live EAP connection steps are skipped"
+
 boot
 nl_web_start "$DB"; nl_login
 api_ok GET /vpn/ipsec/roadwarrior
@@ -158,6 +165,7 @@ openssl verify -CAfile "$RWD/swanctl/x509ca/patronus-ca.pem" /etc/swanctl/x509/p
 nl_ok "the CA downloads and the server certificate verifies against it"
 
 SECRET() { printf 'secrets {\n  eap-alice { id = alice\n    secret = "%s" }\n}\n' "$1"; }
+if [ "$MSCHAP" = 1 ]; then
 rw_conf rw eap.vpn.test "      auth = eap-mschapv2
       eap_id = alice" "$(SECRET "wrong-password-1")"
 rw_up || true
@@ -181,17 +189,23 @@ POOLS=$(swanctl --list-pools 2>/dev/null || true); grep patronus-rw-eap <<<"$POO
 nl_ok "the router's pool shows the lease: $(swanctl --list-pools 2>/dev/null | grep patronus-rw-eap | tr -s ' ')"
 RW python3 "$NL_T/nl-conn.py" $NL_WWW 80 >/dev/null 2>&1 && nl_fail "a profile limited to the LAN let the client reach the internet host" || true
 nl_ok "traffic outside the profile's networks does not go through the tunnel"
+fi
 
 echo "--- a disabled user is refused"
 rw_down rw
 api_ok PUT /vpn/ipsec/roadwarrior/users/$UID_A '{"enabled":false}'
 ! grep -q 'id = alice' /etc/swanctl/conf.d/patronus.conf || nl_fail "a disabled user's secret is still loaded"
-rw_up || true
-if established; then nl_fail "a disabled user connected"; fi
-nl_ok "a disabled user cannot connect"
+if [ "$MSCHAP" = 1 ]; then
+  rw_up || true
+  if established; then nl_fail "a disabled user connected"; fi
+  nl_ok "a disabled user cannot connect"
+fi
 api_ok PUT /vpn/ipsec/roadwarrior/users/$UID_A '{"enabled":true}'
-rw_up || { cat "$NL_OUT"; nl_fail "re-enabled user cannot connect"; }
-nl_ok "re-enabling the user lets her connect again"
+grep -q 'id = alice' /etc/swanctl/conf.d/patronus.conf || nl_fail "a re-enabled user's secret is not loaded again"
+if [ "$MSCHAP" = 1 ]; then
+  rw_up || { cat "$NL_OUT"; nl_fail "re-enabled user cannot connect"; }
+  nl_ok "re-enabling the user lets her connect again"
+fi
 rw_down rw
 
 echo "=== 2. setup files for the phones and Windows"
@@ -296,6 +310,7 @@ has_conn patronus-rw-eap || nl_fail "after reboot charon lacks the EAP profile"
 # bob was deleted: a certificate profile without users has no connection
 has_conn patronus-rw-cert && nl_fail "a certificate profile without users still has a connection"
 nl_assert_nft_has 'meta ipsec exists ip saddr 10.99.50.0/24'
+if [ "$MSCHAP" = 1 ]; then
 rw_conf rw eap.vpn.test "      auth = eap-mschapv2
       eap_id = alice" "$(SECRET "$PW")"
 cp /dev/null "$RWD/swanctl/x509ca/patronus-ca.pem"
@@ -304,6 +319,7 @@ nl_api GET /vpn/ipsec/roadwarrior/ca; cp "$NL_OUT" "$RWD/swanctl/x509ca/patronus
 rw_up || { cat "$NL_OUT"; nl_fail "alice cannot connect after the reboot (same CA, same password)"; }
 nl_ok "after a reboot both profiles are loaded and alice connects with the same CA and password"
 rw_down rw
+fi
 
 echo "=== 5. deleting the profiles removes everything"
 api_ok DELETE /vpn/ipsec/roadwarrior/profiles/$PID
