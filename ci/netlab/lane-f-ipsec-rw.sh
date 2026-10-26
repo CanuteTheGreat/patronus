@@ -314,7 +314,9 @@ if [ "$MSCHAP" = 1 ]; then
 rw_conf rw eap.vpn.test "      auth = eap-mschapv2
       eap_id = alice" "$(SECRET "$PW")"
 cp /dev/null "$RWD/swanctl/x509ca/patronus-ca.pem"
+fi
 nl_web_start "$DB"; nl_login
+if [ "$MSCHAP" = 1 ]; then
 nl_api GET /vpn/ipsec/roadwarrior/ca; cp "$NL_OUT" "$RWD/swanctl/x509ca/patronus-ca.pem"
 rw_up || { cat "$NL_OUT"; nl_fail "alice cannot connect after the reboot (same CA, same password)"; }
 nl_ok "after a reboot both profiles are loaded and alice connects with the same CA and password"
