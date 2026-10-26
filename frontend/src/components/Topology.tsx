@@ -67,7 +67,8 @@ export default function Topology() {
       id: site.id,
       name: site.name,
       location: site.location,
-      status: site.status,
+      // the API's SiteStatus enum is ACTIVE | DEGRADED | OFFLINE | MAINTENANCE
+      status: ({ ACTIVE: 'active', DEGRADED: 'degraded' } as Record<string, string>)[String(site.status).toUpperCase()] ?? 'inactive',
     })),
     links: data.links.map(link => ({
       source: link.sourceId,

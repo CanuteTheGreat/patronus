@@ -15,18 +15,12 @@ use patronus_dashboard::{graphql, state::AppState};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Pages whose queries target SD-WAN/overview/security data that the API
-/// does not expose yet. Wiring those features into the dashboard API/UI was
-/// assigned (owner, 2026-10-16) to the dedicated SD-WAN wiring work. This is
-/// a ratchet: the test FAILS once a listed file validates, so it must be
-/// removed from this list in the same change that wires it.
-const PENDING_SDWAN_WIRING: &[&str] = &[
-    "components/Dashboard.tsx",
-    "components/Security.tsx",
-    "components/SLA.tsx",
-    "components/Topology.tsx",
-    "components/Traffic.tsx",
-];
+/// Pages whose queries target data the API does not expose yet. Empty since
+/// the SD-WAN views (overview, links, slaPolicies, trafficStats, securityEvents
+/// ...) were wired in `graphql/views.rs`. This stays a ratchet: add a file
+/// here only for a page whose API is genuinely still missing; the test FAILS
+/// once a listed file validates, so remove it in the same change that wires it.
+const PENDING_SDWAN_WIRING: &[&str] = &[];
 
 fn frontend_src() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../frontend/src")

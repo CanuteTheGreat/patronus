@@ -85,6 +85,50 @@ impl SlaMeasurement {
     }
 }
 
+/// Compliance of a set of recorded samples against an [`SlaConfig`]
+/// (what the dashboard shows per path over its last 24 hours).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SlaSummary {
+    pub samples: usize,
+    /// Samples that broke the latency, loss or jitter target.
+    pub violations: usize,
+    /// Share of samples inside every target, 0-100.
+    pub compliance_pct: f64,
+    /// Share of samples in which the path carried traffic (loss < 50 %), 0-100.
+    pub availability_pct: f64,
+}
+
+/// Evaluate `(latency_ms, loss_pct, jitter_ms)` samples. Non-finite samples
+/// count as violations (a probe that produced no number is not compliant).
+/// No samples gives `None`: there is nothing to say about the path.
+pub fn summarize(config: &SlaConfig, samples: &[(f64, f64, f64)]) -> Option<SlaSummary> {
+    if samples.is_empty() {
+        return None;
+    }
+    let mut violations = 0usize;
+    let mut available = 0usize;
+    for &(latency, loss, jitter) in samples {
+        let finite = latency.is_finite() && loss.is_finite() && jitter.is_finite();
+        let ok = finite
+            && latency <= config.target_latency_ms as f64
+            && loss <= config.target_packet_loss_pct as f64
+            && jitter <= config.target_jitter_ms as f64;
+        if !ok {
+            violations += 1;
+        }
+        if loss.is_finite() && loss < 50.0 {
+            available += 1;
+        }
+    }
+    let n = samples.len() as f64;
+    Some(SlaSummary {
+        samples: samples.len(),
+        violations,
+        compliance_pct: (samples.len() - violations) as f64 / n * 100.0,
+        availability_pct: available as f64 / n * 100.0,
+    })
+}
+
 /// Latency sample
 #[derive(Debug, Clone)]
 struct LatencySample {
@@ -378,6 +422,35 @@ impl Default for SlaMonitor {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn summarize_counts_violations_and_availability() {
+        let cfg = SlaConfig::default(); // 100 ms, 1 %, 20 ms
+        let s = summarize(
+            &cfg,
+            &[
+                (20.0, 0.0, 1.0),   // ok
+                (150.0, 0.0, 1.0),  // latency
+                (20.0, 5.0, 1.0),   // loss
+                (20.0, 0.0, 40.0),  // jitter
+                (20.0, 100.0, 0.0), // down: also a violation, unavailable
+            ],
+        )
+        .unwrap();
+        assert_eq!(s.samples, 5);
+        assert_eq!(s.violations, 4);
+        assert!((s.compliance_pct - 20.0).abs() < 1e-9);
+        assert!((s.availability_pct - 80.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn summarize_nothing_or_nan_is_not_compliant() {
+        let cfg = SlaConfig::default();
+        assert!(summarize(&cfg, &[]).is_none());
+        let s = summarize(&cfg, &[(f64::NAN, 0.0, 0.0)]).unwrap();
+        assert_eq!(s.violations, 1);
+        assert_eq!(s.compliance_pct, 0.0);
+    }
+
     use super::*;
 
     #[test]

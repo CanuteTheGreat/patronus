@@ -2,7 +2,7 @@
 //
 // This module implements all GraphQL query resolvers for fetching data.
 
-use crate::graphql::{get_state, types::*};
+use crate::graphql::{get_state, types::*, views};
 use async_graphql::{Context, Object, Result};
 use chrono::{DateTime, Utc};
 
@@ -566,6 +566,119 @@ impl QueryRoot {
         Ok(gql_logs)
     }
 
+    // ========== Dashboard page views (Overview, Topology, SLA, Traffic, Security) ==========
+
+    /// Headline numbers for the Overview page, from live sites, paths and metrics.
+    async fn overview(&self, ctx: &Context<'_>) -> Result<views::Overview> {
+        let _auth = crate::graphql::require_auth(ctx)?;
+        let state = get_state(ctx)?;
+        let sites = dbq(state.db.list_sites().await)?;
+        let paths = paths_with_metrics(state).await?;
+        let mbps = state
+            .metrics_collector
+            .get_current_metrics()
+            .await
+            .throughput_mbps;
+        Ok(views::build_overview(&sites, &paths, mbps))
+    }
+
+    /// What is wrong right now: offline/degraded sites, down/degraded paths.
+    async fn recent_alerts(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<Vec<views::Alert>> {
+        let _auth = crate::graphql::require_auth(ctx)?;
+        let state = get_state(ctx)?;
+        let sites = dbq(state.db.list_sites().await)?;
+        let paths = paths_with_metrics(state).await?;
+        let names = site_names(&sites);
+        let limit = limit.unwrap_or(20).clamp(1, 200) as usize;
+        Ok(views::build_alerts(&sites, &paths, &names, limit))
+    }
+
+    /// Throughput / latency / loss over the last hour (recorded system metrics).
+    async fn link_metrics(&self, ctx: &Context<'_>) -> Result<Vec<views::LinkMetric>> {
+        let _auth = crate::graphql::require_auth(ctx)?;
+        let state = get_state(ctx)?;
+        let now = std::time::SystemTime::now();
+        let from = now - std::time::Duration::from_secs(3600);
+        let history = dbq(state.db.get_system_metrics_history(from, now).await)?;
+        Ok(history
+            .into_iter()
+            .map(|m| views::LinkMetric {
+                timestamp: DateTime::from_timestamp(
+                    m.timestamp
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0),
+                    0,
+                )
+                .unwrap_or_else(Utc::now),
+                throughput: m.throughput_mbps,
+                latency: m.avg_latency_ms,
+                packet_loss: m.avg_packet_loss,
+            })
+            .collect())
+    }
+
+    /// Site-to-site paths for the Topology page.
+    async fn links(&self, ctx: &Context<'_>) -> Result<Vec<views::Link>> {
+        let _auth = crate::graphql::require_auth(ctx)?;
+        let state = get_state(ctx)?;
+        let paths = paths_with_metrics(state).await?;
+        let flows = dbq(state.db.list_active_flows().await)?;
+        Ok(views::build_links(
+            &paths,
+            &views::path_throughput_bps(&flows),
+        ))
+    }
+
+    /// Per-path SLA compliance over the last 24 h of recorded measurements.
+    async fn sla_policies(&self, ctx: &Context<'_>) -> Result<Vec<views::SlaPolicy>> {
+        let _auth = crate::graphql::require_auth(ctx)?;
+        let state = get_state(ctx)?;
+        let sites = dbq(state.db.list_sites().await)?;
+        let paths = dbq(state.db.list_paths().await)?;
+        let since = std::time::SystemTime::now() - std::time::Duration::from_secs(24 * 3600);
+        let mut history = std::collections::HashMap::new();
+        for p in &paths {
+            let h = dbq(state.db.get_path_metrics_history(p.id, since).await)?;
+            history.insert(p.id.as_u64(), h);
+        }
+        Ok(views::build_sla_policies(
+            &paths,
+            &history,
+            &site_names(&sites),
+        ))
+    }
+
+    /// Live traffic per originating site, split by DPI application class.
+    async fn traffic_stats(&self, ctx: &Context<'_>) -> Result<Vec<views::SiteTraffic>> {
+        let _auth = crate::graphql::require_auth(ctx)?;
+        let state = get_state(ctx)?;
+        let sites = dbq(state.db.list_sites().await)?;
+        let paths = dbq(state.db.list_paths().await)?;
+        let flows = dbq(state.db.list_active_flows().await)?;
+        Ok(views::build_traffic(&flows, &paths, &sites))
+    }
+
+    /// Security events from the audit log (admin only, like `auditLogs`).
+    async fn security_events(
+        &self,
+        ctx: &Context<'_>,
+        limit: Option<i32>,
+    ) -> Result<Vec<views::SecurityEvent>> {
+        let (events, _) = security_view(ctx, limit.unwrap_or(100)).await?;
+        Ok(events)
+    }
+
+    /// Counts of those events (admin only).
+    async fn threat_stats(&self, ctx: &Context<'_>) -> Result<views::ThreatStats> {
+        let (_, stats) = security_view(ctx, 1000).await?;
+        Ok(stats)
+    }
+
     /// Health check endpoint
     async fn health(&self, ctx: &Context<'_>) -> Result<String> {
         let _state = get_state(ctx)?;
@@ -577,4 +690,43 @@ impl QueryRoot {
         let _state = get_state(ctx)?;
         Ok("v2.0.0".to_string())
     }
+}
+
+fn dbq<T>(r: std::result::Result<T, patronus_sdwan::Error>) -> Result<T> {
+    r.map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))
+}
+
+fn site_names(sites: &[patronus_sdwan::types::Site]) -> std::collections::HashMap<String, String> {
+    sites
+        .iter()
+        .map(|s| (s.id.to_string(), s.name.clone()))
+        .collect()
+}
+
+/// Every path with its latest recorded metrics (`None` when never measured).
+async fn paths_with_metrics(state: &crate::state::AppState) -> Result<Vec<views::PathView>> {
+    let paths = dbq(state.db.list_paths().await)?;
+    let mut out = Vec::with_capacity(paths.len());
+    for p in paths {
+        let m = state.db.get_latest_metrics(p.id).await.ok();
+        out.push((p, m));
+    }
+    Ok(out)
+}
+
+async fn security_view(
+    ctx: &Context<'_>,
+    limit: i32,
+) -> Result<(Vec<views::SecurityEvent>, views::ThreatStats)> {
+    let _auth = crate::graphql::require_role(ctx, crate::auth::users::UserRole::Admin)?;
+    let state = get_state(ctx)?;
+    let since = Utc::now() - chrono::Duration::hours(24);
+    let logs = state
+        .audit_logger
+        .get_logs(None, None, Some(since), None, 1000)
+        .await
+        .map_err(|e| async_graphql::Error::new(format!("Failed to get audit logs: {}", e)))?;
+    let (mut events, stats) = views::build_security(&logs);
+    events.truncate(limit.clamp(1, 1000) as usize);
+    Ok((events, stats))
 }

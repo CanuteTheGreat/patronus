@@ -12,6 +12,7 @@ mod frontend_contract;
 mod ha_replication;
 mod rest_auth;
 mod rest_auth_tokens;
+mod sdwan_views;
 mod token_revocation;
 mod traffic_statistics;
 mod websocket_events;

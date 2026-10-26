@@ -9,6 +9,7 @@ pub mod queries;
 pub mod schema;
 pub mod subscriptions;
 pub mod types;
+pub mod views;
 
 pub use auth::{require_auth, require_min_role, require_role, AuthContext};
 pub use schema::{build_schema, AppSchema};

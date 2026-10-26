@@ -945,6 +945,46 @@ impl Database {
         })
     }
 
+    /// Every metrics sample recorded for a path since `since`, oldest first.
+    pub async fn get_path_metrics_history(
+        &self,
+        path_id: PathId,
+        since: std::time::SystemTime,
+    ) -> Result<Vec<PathMetrics>> {
+        let since_ts = since
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let rows = sqlx::query(
+            r#"
+            SELECT latency_ms, jitter_ms, packet_loss_pct, bandwidth_mbps, mtu, score, timestamp
+            FROM sdwan_path_metrics
+            WHERE path_id = ? AND timestamp >= ?
+            ORDER BY timestamp ASC
+            "#,
+        )
+        .bind(path_id.as_u64() as i64)
+        .bind(since_ts)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let timestamp: i64 = row.try_get("timestamp")?;
+            out.push(PathMetrics {
+                latency_ms: row.try_get("latency_ms")?,
+                jitter_ms: row.try_get("jitter_ms")?,
+                packet_loss_pct: row.try_get("packet_loss_pct")?,
+                bandwidth_mbps: row.try_get("bandwidth_mbps")?,
+                mtu: row.try_get::<i32, _>("mtu")? as u16,
+                measured_at: std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(timestamp.max(0) as u64),
+                score: row.try_get::<i32, _>("score")? as u8,
+            });
+        }
+        Ok(out)
+    }
+
     /// Insert or update a routing policy
     pub async fn upsert_policy(&self, policy: &crate::policy::RoutingPolicy) -> Result<()> {
         let match_rules = serde_json::to_string(&policy.match_rules)?;
