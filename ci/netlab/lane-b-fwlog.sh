@@ -33,7 +33,7 @@ rule() { # NAME ACTION DST
 }
 
 nl_boot "$DB"
-ip netns exec nl-inet python3 -m http.server 8099 --bind $NL_WWW --directory "$FEEDS" >/t/feedsrv.log 2>&1 &
+ip netns exec nl-inet python3 -m http.server 8099 --bind 0.0.0.0 --directory "$FEEDS" >/t/feedsrv.log 2>&1 &
 NL_PIDS+=($!)
 nl_web_start "$DB"; nl_login
 

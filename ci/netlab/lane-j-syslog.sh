@@ -85,8 +85,9 @@ nl_wait 15 grep -qF -- "marker-info2-$$" /tmp/syslog-rx || nl_fail "info not for
 nl_ok "after editing the severity to info, info messages are forwarded too"
 
 echo "=== local log in the status"
-nl_api GET /svc/syslog
-python3 - "$NL_OUT" "marker-err-$$" <<'PY' || nl_fail "status.recent_log lacks the local message"
+# rsyslog writes /var/log/syslog asynchronously (`-` prefix): the message can
+# take a moment to reach the file the status reads, so ask again for a few seconds
+cat > "$NL_T/syslog-check.py" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 st = d["status"]
@@ -94,6 +95,13 @@ assert st["installed"] and st["running"], st
 assert any(sys.argv[2] in l for l in st["recent_log"]), st["recent_log"][-5:]
 assert st["forwarding_to"], st
 PY
+ok=
+for _ in $(seq 1 15); do
+  nl_api GET /svc/syslog
+  if python3 "$NL_T/syslog-check.py" "$NL_OUT" "marker-err-$$" 2>/dev/null; then ok=1; break; fi
+  sleep 1
+done
+[ -n "$ok" ] || { python3 "$NL_T/syslog-check.py" "$NL_OUT" "marker-err-$$" || true; nl_fail "status.recent_log lacks the local message"; }
 nl_ok "status shows rsyslog running and the recent local log (including the message just sent)"
 nl_web GET /svc/syslog
 [ "$NL_CODE" = 200 ] && grep -q 'svc-settings-form' "$NL_OUT" || nl_fail "Syslog page: $NL_CODE"
