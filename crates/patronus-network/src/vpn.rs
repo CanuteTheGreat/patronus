@@ -8,7 +8,14 @@ use patronus_core::Result;
 use serde_json::Value;
 
 /// Every lane F table, parents first.
-pub const VPN_TABLES: &[&str] = &["wg_interfaces", "wg_peers", "ipsec_tunnels"];
+pub const VPN_TABLES: &[&str] = &[
+    "wg_interfaces",
+    "wg_peers",
+    "ipsec_tunnels",
+    "ipsec_rw_profiles",
+    "ipsec_rw_users",
+    "ipsec_pki",
+];
 
 /// Split a comma/space/newline separated list.
 pub fn split_list(s: &str) -> Vec<String> {

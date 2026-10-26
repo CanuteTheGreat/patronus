@@ -43,8 +43,10 @@ drop_rule() { # NAME DESTINATION
 reach() { nl_expect_tcp "$1" C "$2" 9000; }
 blocked() { nl_expect_no_tcp "$1" C "$2" 9000; }
 start_feed_server() {
-  nl_bg INET python3 -m http.server 8099 --bind $NL_WWW --directory "$FEEDS"
-  for _ in $(seq 1 30); do INET curl -s -m 2 -o /dev/null "$FEED_URL/" && return 0; sleep 0.2; done
+  ip netns exec nl-inet python3 -m http.server 8099 --bind $NL_WWW --directory "$FEEDS" >/t/feedsrv.log 2>&1 &
+  NL_PIDS+=($!)
+  for _ in $(seq 1 50); do INET curl -s -m 2 -o /dev/null "$FEED_URL/" && return 0; sleep 0.2; done
+  cat /t/feedsrv.log; INET ss -ltn || true
   nl_fail "the feed server did not start"
 }
 stop_feed_server() {

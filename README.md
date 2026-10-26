@@ -106,6 +106,12 @@ that are not finished are listed separately under
   by strongSwan (swanctl, started through OpenRC or systemd); traffic flows
   both ways between the two LANs without being NATed, live SA state shows
   on the page, and tunnels come back after a reboot. [C33]
+- IPsec road warriors (USE=ipsec): an IKEv2 remote-access profile hands out
+  addresses from a pool; users log in with a password (EAP-MSCHAPv2) or with
+  a client certificate Patronus issues from its own CA (deleting the user
+  revokes it). The page exports a ready-made setup file per user: iOS / macOS
+  `.mobileconfig`, Android strongSwan `.sswan`, a Windows PowerShell script
+  or the `.p12`. [C60]
 
 ### LAN services (DHCP, DNS, NTP)
 

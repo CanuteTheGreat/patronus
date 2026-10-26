@@ -59,6 +59,8 @@ pub mod openvpn_server;
 
 #[cfg(feature = "ipsec")]
 pub mod ipsec;
+#[cfg(feature = "ipsec")]
+pub mod ipsec_rw;
 
 #[cfg(feature = "dns")]
 pub mod dns;

@@ -166,6 +166,43 @@
     {% endif %}
 </div>
 
+
+{% if has_ipsec %}{% if ipsec_unavailable.is_empty() %}
+<div class="card" id="rw-card">
+    <div class="card-header"><h2 class="card-title">IPsec road warriors (IKEv2 remote access)</h2></div>
+    <p class="text-sm text-muted">Phones and laptops connect with the built-in IKEv2 client. A profile hands out
+        addresses from a pool and authenticates users with a <b>password</b> (EAP-MSCHAPv2) or a
+        <b>client certificate</b> that Patronus issues from its own CA (removing or disabling the user revokes it).
+        IKE/ESP are opened on the firewall and the pool may reach the networks you list. Export a ready-made
+        setup file for each user: iOS / macOS (<code>.mobileconfig</code>), Android (strongSwan app
+        <code>.sswan</code>) or Windows (PowerShell script).</p>
+    <div id="rw-msg" class="text-sm"></div>
+    <table class="lan" id="rw-profiles"><thead><tr><th>Profile</th><th>Auth</th><th>Server name</th><th>Pool</th><th>Reaches</th><th>Users</th><th></th></tr></thead><tbody></tbody></table>
+    <p><button class="btn btn-secondary btn-sm" type="button" onclick="window.location = '/api/vpn/ipsec/roadwarrior/ca'">Download the CA certificate (PEM)</button></p>
+    {% if can_modify %}
+    <form class="lan-form" id="rw-profile-form" onsubmit="return rwSaveProfile(event)">
+        <input type="hidden" name="_editing" value="">
+        <label>Name <input name="name" placeholder="phones" required></label>
+        <label>Authentication <select name="auth"><option value="eap">password (EAP-MSCHAPv2)</option><option value="cert">client certificate</option></select></label>
+        <label>Server name or address <input name="server_id" placeholder="vpn.example.org or 203.0.113.2" required></label>
+        <label>Local address <input name="local_address" placeholder="(any)"></label>
+        <label>Client address pool <input name="pool" placeholder="10.99.50.0/24" required></label>
+        <label>DNS servers <input name="dns" placeholder="192.168.1.1"></label>
+        <label>Networks reachable <input name="local_ts" placeholder="192.168.1.0/24 (empty = everything)"></label>
+        <label>Enabled <input type="checkbox" name="enabled" checked></label>
+        <label>Description <input name="description"></label>
+        <button class="btn btn-primary btn-sm" type="submit" id="rw-profile-submit">Add profile</button>
+    </form>
+    <form class="lan-form" id="rw-user-form" onsubmit="return rwSaveUser(event)">
+        <label>Profile <select name="profile" id="rw-user-profile"></select></label>
+        <label>User name <input name="username" placeholder="alice" required></label>
+        <label>Password <input name="password" type="password" placeholder="empty = generate (EAP profiles)" autocomplete="new-password"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add user</button>
+    </form>
+    {% endif %}
+</div>
+{% endif %}{% endif %}
+
 <div class="card">
     <div class="card-header"><h2 class="card-title">Live WireGuard peers ({{ wg_peers.len() }})</h2></div>
     {% if !wg_error.is_empty() %}
@@ -285,6 +322,106 @@
         location.reload();
         return false;
     }
+
+    // ---- IPsec road warriors ----
+    async function rwApi(method, path, body) {
+        const r = await fetch('/api/vpn/ipsec/roadwarrior' + path, { method, credentials: 'same-origin',
+            headers: {'content-type': 'application/json'}, body: body === undefined ? undefined : JSON.stringify(body) });
+        let j = {};
+        try { j = await r.json(); } catch (_) {}
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        return j;
+    }
+    function rwMsg(t, ok) { const m = document.getElementById('rw-msg'); if (m) { m.textContent = t; m.className = 'text-sm ' + (ok ? 'ok' : 'bad'); } }
+    async function rwLoad() {
+        if (!document.getElementById('rw-card')) return;
+        let d;
+        try { d = await rwApi('GET', ''); } catch (e) { rwMsg(e.message, false); return; }
+        const tb = document.querySelector('#rw-profiles tbody'); tb.innerHTML = '';
+        const sel = document.getElementById('rw-user-profile'); if (sel) sel.innerHTML = '';
+        d.profiles.forEach(row => {
+            const p = row.profile;
+            if (sel) sel.add(new Option(p.name, p.id));
+            const tr = tb.insertRow(); tr.dataset.profile = p.name;
+            const c0 = tr.insertCell(); c0.innerHTML = ''; const b = document.createElement('b'); b.textContent = p.name; c0.appendChild(b);
+            if (!p.enabled) { const s = document.createElement('span'); s.className = 'bad'; s.textContent = ' disabled'; c0.appendChild(s); }
+            tr.insertCell().textContent = p.auth === 'eap' ? 'password (EAP-MSCHAPv2)' : 'client certificate';
+            tr.insertCell().textContent = p.server_id;
+            tr.insertCell().textContent = p.pool;
+            tr.insertCell().textContent = p.local_ts;
+            const uc = tr.insertCell();
+            row.users.forEach(u => {
+                const div = document.createElement('div'); div.className = 'rw-user'; div.dataset.user = u.username;
+                const n = document.createElement('span'); n.textContent = u.username + (u.enabled ? ' ' : ' (disabled) '); div.appendChild(n);
+                [['mobileconfig', 'iOS / macOS'], ['sswan', 'Android'], ['ps1', 'Windows']].concat(p.auth === 'cert' ? [['p12', '.p12']] : []).forEach(f => {
+                    const a = document.createElement('button'); a.className = 'btn btn-secondary btn-sm'; a.textContent = f[1]; a.title = 'Download the setup file';
+                    a.onclick = () => rwExport(u.id, f[0], p.auth);
+                    div.appendChild(a);
+                });
+                {% if can_modify %}
+                const t = document.createElement('button'); t.className = 'btn btn-secondary btn-sm'; t.textContent = u.enabled ? 'Disable' : 'Enable';
+                t.onclick = () => rwUserCall('PUT', '/users/' + u.id, { enabled: !u.enabled });
+                div.appendChild(t);
+                const x = document.createElement('button'); x.className = 'btn btn-danger btn-sm'; x.textContent = 'Delete';
+                x.onclick = () => { if (confirm('Delete user ' + u.username + '?')) rwUserCall('DELETE', '/users/' + u.id); };
+                div.appendChild(x);
+                {% endif %}
+                uc.appendChild(div);
+            });
+            {% if can_modify %}
+            const ac = tr.insertCell();
+            const e = document.createElement('button'); e.className = 'btn btn-secondary btn-sm'; e.textContent = 'Edit';
+            e.onclick = () => rwEdit(p);
+            const x = document.createElement('button'); x.className = 'btn btn-danger btn-sm'; x.textContent = 'Delete';
+            x.onclick = () => { if (confirm('Delete profile ' + p.name + ' and its users?')) rwUserCall('DELETE', '/profiles/' + p.id); };
+            ac.appendChild(e); ac.appendChild(x);
+            {% endif %}
+        });
+        if (!d.profiles.length) { const tr = tb.insertRow(); const c = tr.insertCell(); c.colSpan = 7; c.className = 'empty'; c.textContent = 'No road-warrior profiles.'; }
+    }
+    function rwExport(uid, format, auth) {
+        let q = '';
+        if (auth === 'cert') {
+            const pw = prompt('Password to protect the client certificate (8 or more characters; the file asks for it on import):');
+            if (!pw) return;
+            q = '?password=' + encodeURIComponent(pw);
+        }
+        window.location = '/api/vpn/ipsec/roadwarrior/export/' + uid + '/' + format + q;
+    }
+    async function rwUserCall(method, path, body) {
+        try { await rwApi(method, path, body); await rwLoad(); rwMsg('Saved and applied.', true); } catch (e) { rwMsg('Not applied: ' + e.message, false); }
+    }
+    function rwEdit(p) {
+        const f = document.getElementById('rw-profile-form');
+        f.elements['_editing'].value = p.id; f.elements['name'].value = p.name; f.elements['name'].readOnly = true;
+        f.elements['auth'].value = p.auth; f.elements['auth'].disabled = true;
+        f.elements['server_id'].value = p.server_id; f.elements['local_address'].value = p.local_address || '';
+        f.elements['pool'].value = p.pool; f.elements['dns'].value = p.dns; f.elements['local_ts'].value = p.local_ts;
+        f.elements['enabled'].checked = p.enabled; f.elements['description'].value = p.description || '';
+        document.getElementById('rw-profile-submit').textContent = 'Save profile ' + p.name;
+        f.scrollIntoView({behavior: 'smooth'});
+    }
+    async function rwSaveProfile(ev) {
+        ev.preventDefault();
+        const f = ev.target, ed = f.elements['_editing'].value;
+        const o = { name: f.elements['name'].value, auth: f.elements['auth'].value, server_id: f.elements['server_id'].value,
+            local_address: f.elements['local_address'].value, pool: f.elements['pool'].value, dns: f.elements['dns'].value,
+            local_ts: f.elements['local_ts'].value, enabled: f.elements['enabled'].checked, description: f.elements['description'].value };
+        try { await rwApi(ed ? 'PUT' : 'POST', ed ? '/profiles/' + ed : '/profiles', o); location.reload(); }
+        catch (e) { rwMsg('Not applied: ' + e.message, false); }
+        return false;
+    }
+    async function rwSaveUser(ev) {
+        ev.preventDefault();
+        const f = ev.target;
+        try {
+            const r = await rwApi('POST', '/profiles/' + f.elements['profile'].value + '/users', { username: f.elements['username'].value, password: f.elements['password'].value });
+            if (r.generated_password) prompt('Password for ' + f.elements['username'].value + ' (shown only now):', r.generated_password);
+            location.reload();
+        } catch (e) { rwMsg('Not applied: ' + e.message, false); }
+        return false;
+    }
+    rwLoad();
     function editIpsec(b) {
         const f = document.getElementById('ipsec-form'), d = b.dataset;
         f.elements['name'].value = d.name; f.elements['local_address'].value = d.local;

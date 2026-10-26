@@ -18,6 +18,8 @@
 //!   if empty and returned once)
 //! - `PUT|DELETE /api/vpn/ipsec/connections/:id`
 //! - `POST /api/vpn/ipsec/apply`
+//! - `/api/vpn/ipsec/roadwarrior/*`                 IKEv2 remote access (EAP / certificates) and
+//!   the iOS/macOS, Android and Windows setup files, see `ipsec_rw.rs`
 
 use crate::auth::AuthUser;
 use crate::state::tunnels::Kind;
@@ -518,10 +520,13 @@ pub fn router() -> axum::Router<AppState> {
     #[cfg(feature = "ipsec")]
     {
         use axum::routing::put;
-        r = r.route("/vpn/ipsec/connections", post(ipsec::add)).route(
-            "/vpn/ipsec/connections/:id",
-            put(ipsec::put).delete(ipsec::del),
-        );
+        r = r
+            .route("/vpn/ipsec/connections", post(ipsec::add))
+            .route(
+                "/vpn/ipsec/connections/:id",
+                put(ipsec::put).delete(ipsec::del),
+            )
+            .merge(super::ipsec_rw::router());
     }
     #[cfg(not(feature = "ipsec"))]
     {

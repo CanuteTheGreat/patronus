@@ -15,7 +15,7 @@ ntp = []
 # wireguard-tools at runtime) and IPsec IKEv2 via strongSwan swanctl.
 wireguard = ["dep:x25519-dalek", "dep:base64", "dep:rand"]
 openvpn = []
-ipsec = ["dep:rand"]
+ipsec = ["dep:rand", "dep:base64"]
 # Lane C: VLAN/QinQ subinterfaces (USE=vlan), PPPoE client (USE=pppoe),
 # dhcpcd as the preferred DHCP client (USE=dhcpcd; else busybox udhcpc).
 vlan = []

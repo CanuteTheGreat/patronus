@@ -350,6 +350,16 @@ pub async fn delete_tunnel(store: &ConfigStore, id: i64) -> Result<bool> {
 
 /// `/etc/swanctl/conf.d/patronus.conf` for the enabled tunnels.
 pub fn render(tunnels: &[&IpsecTunnel], redact: bool) -> String {
+    render_with(tunnels, &crate::ipsec_rw::RwConfig::default(), redact)
+}
+
+/// [`render`] plus the road-warrior profiles' connections, pools and EAP
+/// secrets (one `connections`, `pools` and `secrets` section each).
+pub fn render_with(
+    tunnels: &[&IpsecTunnel],
+    rw: &crate::ipsec_rw::RwConfig,
+    redact: bool,
+) -> String {
     let mut c = lan::header("#", "IPsec tunnels, strongSwan swanctl");
     c.push_str("connections {\n");
     for t in tunnels {
@@ -390,7 +400,12 @@ pub fn render(tunnels: &[&IpsecTunnel], redact: bool) -> String {
             sa = t.start_action,
         ));
     }
-    c.push_str("}\n\nsecrets {\n");
+    c.push_str(&rw.connections);
+    c.push_str("}\n\n");
+    if !rw.pools.is_empty() {
+        c.push_str(&format!("pools {{\n{}}}\n\n", rw.pools));
+    }
+    c.push_str("secrets {\n");
     for t in tunnels {
         c.push_str(&format!("    ike-{CONN_PREFIX}{} {{\n", t.name));
         let mut n = 1;
@@ -408,8 +423,50 @@ pub fn render(tunnels: &[&IpsecTunnel], redact: bool) -> String {
         let secret = if redact { "(hidden)" } else { t.psk.as_str() };
         c.push_str(&format!("        secret = \"{secret}\"\n    }}\n"));
     }
+    c.push_str(&rw.secrets);
     c.push_str("}\n");
     c
+}
+
+/// Write the road-warrior certificates and keys under /etc/swanctl and
+/// remove the ones of profiles/users that are gone. Returns whether
+/// anything changed.
+fn install_rw_files(env: &LanEnv, rw: &crate::ipsec_rw::RwConfig) -> Result<bool> {
+    use crate::ipsec_rw::{PRIVATE_DIR, RW_PREFIX, X509CA_DIR, X509_DIR};
+    use std::os::unix::fs::PermissionsExt;
+    let mut changed = false;
+    for (dir, name, content, mode) in &rw.files {
+        let d = env.path(dir);
+        std::fs::create_dir_all(&d)
+            .map_err(|e| Error::Config(format!("create {}: {e}", d.display())))?;
+        let path = d.join(name);
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(content.as_str()) {
+            std::fs::write(&path, content)
+                .map_err(|e| Error::Config(format!("write {}: {e}", path.display())))?;
+            changed = true;
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(*mode))
+            .map_err(|e| Error::Config(format!("chmod {}: {e}", path.display())))?;
+    }
+    for dir in [X509_DIR, X509CA_DIR, PRIVATE_DIR] {
+        let d = env.path(dir);
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if n.starts_with(RW_PREFIX)
+                && !rw
+                    .files
+                    .iter()
+                    .any(|(fd, fname, _, _)| *fd == dir && *fname == n)
+            {
+                let _ = std::fs::remove_file(e.path());
+                changed = true;
+            }
+        }
+    }
+    Ok(changed)
 }
 
 /// The distro service that runs charon: Gentoo's OpenRC script is `ipsec`
@@ -541,33 +598,44 @@ impl Applier for IpsecApplier {
         let all = list_tunnels(store).await?;
         let on: Vec<&IpsecTunnel> = all.iter().filter(|t| t.enabled).collect();
         let managed = lan::is_managed(&self.env, SWANCTL_CONF);
-        if on.is_empty() && !managed {
+        let rw_on = crate::ipsec_rw::list_profiles(store)
+            .await?
+            .iter()
+            .any(|p| p.enabled);
+        if on.is_empty() && !rw_on && !managed {
             rep.applied("no IPsec tunnels configured (strongSwan untouched)");
             return Ok(rep);
         }
-        if !on.is_empty() && !self.env.has_binary(SWANCTL_BIN) {
+        if (!on.is_empty() || rw_on) && !self.env.has_binary(SWANCTL_BIN) {
             return Err(Error::Service(
                 "IPsec needs strongSwan but /usr/sbin/swanctl is not installed \
                  (emerge net-vpn/strongswan, USE=ipsec)"
                     .into(),
             ));
         }
+        if rw_on {
+            // CA, server and client certificates (openssl) before charon needs them
+            crate::ipsec_rw::ensure_pki(store).await?;
+        }
+        let rw = crate::ipsec_rw::build_config(store, false).await?;
+        let files_changed = install_rw_files(&self.env, &rw)?;
         let changed = lan::install(
             &self.env,
             &ManagedFile {
                 path: SWANCTL_CONF,
-                content: render(&on, false),
+                content: render_with(&on, &rw, false),
                 mode: 0o600,
                 group: None,
                 check: None,
             },
         )?;
-        if changed {
+        if changed || files_changed {
             rep.applied(format!("wrote {SWANCTL_CONF}"));
         }
         let svc = service_name(&self.env);
         let up = self.charon_up();
-        if !on.is_empty() {
+        let have = !on.is_empty() || !rw.is_empty();
+        if have {
             // start charon if needed; never restart a running one (that
             // would drop every SA): new/changed/deleted connections are
             // (un)loaded with swanctl --load-all
@@ -583,8 +651,9 @@ impl Applier for IpsecApplier {
                 Error::Service(format!("loading the IPsec configuration into charon: {e}"))
             })?;
             rep.applied(format!(
-                "{} IPsec tunnel(s) loaded (swanctl --load-all)",
-                on.len()
+                "{} IPsec tunnel(s) and {} road-warrior profile(s) loaded (swanctl --load-all)",
+                on.len(),
+                rw.connections.matches("version = 2").count()
             ));
         } else if up {
             // our last tunnel is gone: unload it; stop charon unless it
@@ -605,10 +674,14 @@ impl Applier for IpsecApplier {
     async fn render(&self, store: &ConfigStore) -> Result<String> {
         let all = list_tunnels(store).await?;
         let on: Vec<&IpsecTunnel> = all.iter().filter(|t| t.enabled).collect();
-        if on.is_empty() {
+        let rw = crate::ipsec_rw::build_config(store, true).await?;
+        if on.is_empty() && rw.is_empty() {
             return Ok("# no IPsec tunnels\n".into());
         }
-        Ok(format!("## {SWANCTL_CONF}\n{}", render(&on, true)))
+        Ok(format!(
+            "## {SWANCTL_CONF}\n{}",
+            render_with(&on, &rw, true)
+        ))
     }
 
     /// `{"installed", "running", "sas": <swanctl --list-sas text>, "error"}`

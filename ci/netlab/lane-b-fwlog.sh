@@ -33,7 +33,8 @@ rule() { # NAME ACTION DST
 }
 
 nl_boot "$DB"
-nl_bg INET python3 -m http.server 8099 --bind $NL_WWW --directory "$FEEDS"
+ip netns exec nl-inet python3 -m http.server 8099 --bind $NL_WWW --directory "$FEEDS" >/t/feedsrv.log 2>&1 &
+NL_PIDS+=($!)
 nl_web_start "$DB"; nl_login
 
 echo "=== collector"

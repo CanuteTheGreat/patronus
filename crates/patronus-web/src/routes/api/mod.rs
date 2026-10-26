@@ -10,6 +10,8 @@ pub mod groups;
 pub mod ha;
 pub mod insights;
 pub mod interfaces;
+#[cfg(feature = "ipsec")]
+pub mod ipsec_rw;
 pub mod lan;
 pub mod network;
 pub mod packages;

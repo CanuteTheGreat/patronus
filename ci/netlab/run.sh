@@ -83,6 +83,8 @@ apt-get install -y -qq --no-install-recommends miniupnpd-nftables >/dev/null 2>&
 apt-get install -y -qq dhcpcd-base >/dev/null 2>&1 || apt-get install -y -qq dhcpcd5 >/dev/null 2>&1 || apt-get install -y -qq dhcpcd >/dev/null
 # wg(8) only; its "recommends" would pull wireguard-dkms + kernel headers
 apt-get install -y -qq --no-install-recommends wireguard-tools >/dev/null
+# lane F IPsec road warriors (lane-f-ipsec-rw.sh): strongSwan server + a second charon as the client
+apt-get install -y -qq --no-install-recommends strongswan-swanctl charon-systemd libcharon-extra-plugins libstrongswan-extra-plugins libstrongswan-standard-plugins openssl >/dev/null
 export NETLAB_POWER_CUTS=${NETLAB_POWER_CUTS:-4}
 $OLD_ENV
 echo "--- netlab container: \$(uname -m), kernel \$(uname -r)"

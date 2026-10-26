@@ -91,7 +91,7 @@ RDEPEND="
 	vpn? (
 		wireguard? ( net-vpn/wireguard-tools )
 		openvpn? ( net-vpn/openvpn )
-		ipsec? ( net-vpn/strongswan )
+		ipsec? ( net-vpn/strongswan dev-libs/openssl )
 	)
 	|| ( net-misc/iputils sys-apps/busybox )
 	multiwan? ( sys-apps/iproute2 )

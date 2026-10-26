@@ -89,7 +89,14 @@ pub async fn vpn_rules(store: &ConfigStore) -> Result<VpnRules> {
     .fetch_all(store.pool()?)
     .await
     .map_err(db)?;
-    if !ipsec.is_empty() {
+    // road warriors (IKEv2 remote access): the clients' virtual-IP pools
+    let rw = sqlx::query(
+        "SELECT name, pool, local_ts FROM ipsec_rw_profiles WHERE enabled = 1 ORDER BY name",
+    )
+    .fetch_all(store.pool()?)
+    .await
+    .map_err(db)?;
+    if !ipsec.is_empty() || !rw.is_empty() {
         out.filter.push(format!(
             "add rule {TABLE} input udp dport {{ 500, 4500 }} accept comment \"IPsec IKE\""
         ));
@@ -117,6 +124,36 @@ pub async fn vpn_rules(store: &ConfigStore) -> Result<VpnRules> {
                      comment \"IPsec {name}: no NAT\""
                 ));
             }
+        }
+    }
+    for r in rw {
+        let name = safe(&r.get::<String, _>(0));
+        let pool = nets(&r.get::<String, _>(1));
+        let local = nets(&r.get::<String, _>(2));
+        for (pf, pn) in &pool {
+            for (lf, l) in &local {
+                if pf != lf {
+                    continue;
+                }
+                // 0.0.0.0/0 and ::/0: the clients may reach anything
+                let any = l.ends_with("/0");
+                let to = if any {
+                    String::new()
+                } else {
+                    format!(" {lf} daddr {l}")
+                };
+                for chain in ["input", "forward"] {
+                    out.filter.push(format!(
+                        "add rule {TABLE} {chain} meta ipsec exists {pf} saddr {pn}{to} accept \
+                         comment \"IPsec road warriors {name}\""
+                    ));
+                }
+            }
+            // answers to a client are not masqueraded (they would miss the IPsec policy)
+            out.nat_exempt.push(format!(
+                "add rule {TABLE} postrouting {pf} daddr {pn} accept \
+                 comment \"IPsec road warriors {name}: no NAT\""
+            ));
         }
     }
     Ok(out)
@@ -174,6 +211,34 @@ mod tests {
         assert_eq!(r.nat_exempt.len(), 2, "{:?}", r.nat_exempt);
         assert!(r.nat_exempt[0]
             .contains("postrouting ip saddr 192.168.50.0/24 ip daddr 10.2.0.0/16 accept"));
+        sqlx::query(
+            "INSERT INTO ipsec_rw_profiles (name, server_id, pool, local_ts, ike_proposals, esp_proposals, updated_at)
+             VALUES ('rw','vpn.example','10.99.50.0/24','192.168.50.0/24, fd00:50::/64','a','b',0),
+                    ('full','vpn.example','10.99.60.0/24','0.0.0.0/0, ::/0','a','b',0)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        let r = vpn_rules(&s).await.unwrap();
+        let f = r.filter.join("\n");
+        assert!(
+            f.contains("forward meta ipsec exists ip saddr 10.99.50.0/24 ip daddr 192.168.50.0/24 accept comment \"IPsec road warriors rw\""),
+            "{f}"
+        );
+        assert!(f.contains("input meta ipsec exists ip saddr 10.99.60.0/24 accept comment \"IPsec road warriors full\""), "{f}");
+        assert!(
+            !f.contains("ip6 saddr 10.99"),
+            "pools of one family match their own family: {f}"
+        );
+        let n = r.nat_exempt.join("\n");
+        assert!(
+            n.contains("postrouting ip daddr 10.99.50.0/24 accept"),
+            "{n}"
+        );
+        assert!(
+            n.contains("postrouting ip daddr 10.99.60.0/24 accept"),
+            "{n}"
+        );
         assert_eq!(net("10.0.0.1"), Some(("ip", "10.0.0.1/32".into())));
         assert_eq!(net("10.0.0.0/40"), None);
         assert_eq!(net("x;drop"), None);
