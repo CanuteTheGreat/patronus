@@ -89,7 +89,8 @@ nl_api_ok "rule -> drop" PUT "/svc/ids/rules/$RID" '{"action":"drop"}'
 nl_api_ok "mode -> ips" PUT /svc/ids '{"mode":"ips"}'
 suri_q3() { pgrep -af '^/usr/bin/suricata -c' | grep -q -- '-q 3'; }
 nl_wait 60 suri_q3 || nl_fail "suricata was not restarted in NFQUEUE mode"
-R nft list chain inet patronus ids_ips | grep -q 'queue' || { R nft list ruleset | tail -30; nl_fail "no queue rule in the ids_ips chain"; }
+ids_chain=$(R nft list chain inet patronus ids_ips 2>&1 || true)
+grep -q 'queue' <<<"$ids_chain" || { echo "$ids_chain"; R nft list ruleset | tail -30; nl_fail "no queue rule in the ids_ips chain"; }
 nl_ok "firewall: ids_ips chain queues forwarded traffic ($(R nft list chain inet patronus ids_ips | grep -c queue) rules); suricata runs with -q 3"
 sleep 8
 plain || nl_fail "ordinary traffic does not pass in IPS mode"
@@ -102,7 +103,9 @@ nl_web_stop
 suri_kill
 nl_boot "$DB"
 nl_wait 60 suri_up || nl_fail "suricata not started by the boot apply"
-R nft list chain inet patronus ids_ips | grep -q queue || nl_fail "queue rule missing after the boot apply"
+# capture first: `nft | grep -q` under pipefail dies of SIGPIPE when grep exits early
+ids_chain=$(R nft list chain inet patronus ids_ips 2>&1 || true)
+grep -q queue <<<"$ids_chain" || { echo "$ids_chain"; R nft list ruleset | tail -30; nl_fail "queue rule missing after the boot apply"; }
 sleep 10
 plain || nl_fail "ordinary traffic blocked after the reboot"
 if evil; then nl_fail "pattern not dropped after the reboot"; fi
