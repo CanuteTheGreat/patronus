@@ -48,8 +48,29 @@ EOF
   ip netns exec nl-isp xl2tpd -D -c "$NL_T/l2tp-client.conf" -C /tmp/l2tp-client-ctl -p /tmp/l2tp-client.pid >/tmp/l2tp-client.log 2>&1 &
   CLIENT_PID=$!
 }
-client_down() { kill "${CLIENT_PID:-0}" 2>/dev/null || true; pkill -f "l2tp-client.conf" 2>/dev/null || true; ISP pkill -x pppd 2>/dev/null || true; sleep 1; }
+# the server's side of a session: its ppp interface with the tunnel address
+srv_ppp() { R ip -o addr show 2>/dev/null | grep -q 'ppp[0-9]* .*10.88.0.1'; }
+client_down() {
+  kill "${CLIENT_PID:-0}" 2>/dev/null || true; pkill -f "l2tp-client.conf" 2>/dev/null || true; ISP pkill -x pppd 2>/dev/null || true; sleep 1
+  # a client that dials again while the server still holds the old tunnel
+  # (the server notices a dead peer only after its timeouts) can wait for its
+  # redial for a long time: let the server drop the session first
+  if srv_ppp; then
+    nl_wait 30 sh -c '! ip netns exec nl-rtr ip -o addr show | grep -q "ppp[0-9]* .*10.88.0.1"' \
+      || echo "note: the server still holds the old PPP session after 30 s"
+  fi
+}
 isp_ppp() { ISP ip -o addr show 2>/dev/null | grep -q 'ppp[0-9]* .*inet 10.88.0.'; }
+# dial and wait; a client whose first attempt got lost is started once more
+connect() { # USER
+  client_up "$1"
+  nl_wait 25 isp_ppp && return 0
+  echo "note: no PPP address after 25 s; starting the client again"
+  tail -5 /tmp/l2tp-client.log || true
+  client_down
+  client_up "$1"
+  nl_wait 40 isp_ppp
+}
 
 nl_boot "$DB"
 nl_web_start "$DB"; nl_login
@@ -78,8 +99,7 @@ nl_ok "chap-secrets has the user in a Patronus block, the foreign line is kept, 
 nl_assert_nft_has "iifname \"$NL_WAN_IF\" udp dport 1701 accept"
 
 echo "=== a real L2TP client dials in"
-client_up alice
-nl_wait 40 isp_ppp || { cat /tmp/l2tp-client.log | tail -20; tail -20 /run/patronus/patronus-daemon.xl2tpd.log; nl_fail "the L2TP client never got a PPP address"; }
+connect alice || { cat /tmp/l2tp-client.log | tail -20; tail -20 /run/patronus/patronus-daemon.xl2tpd.log; nl_fail "the L2TP client never got a PPP address"; }
 nl_ok "client got a PPP address: $(ISP ip -o addr show | grep -o 'inet 10.88.0.[0-9]*' | head -1)"
 ISP ping -c 3 -W 2 10.88.0.1 >/dev/null || nl_fail "client cannot ping the server's tunnel address through PPP"
 nl_ok "client pings the server's tunnel address 10.88.0.1 through the L2TP/PPP link"
@@ -107,8 +127,7 @@ isp_ppp && nl_fail "a disabled user connected"
 nl_ok "alice (disabled) is refused: no PPP address after 12 s"
 client_down
 nl_api_ok "enable alice again" PUT "/svc/l2tp/users/$ID" '{"enabled":true}'
-client_up alice
-nl_wait 40 isp_ppp || nl_fail "alice could not connect after being re-enabled"
+connect alice || { tail -20 /tmp/l2tp-client.log; tail -20 /run/patronus/patronus-daemon.xl2tpd.log; nl_fail "alice could not connect after being re-enabled"; }
 nl_ok "re-enabled user connects again"
 client_down
 
@@ -118,8 +137,7 @@ nl_kill_daemons xl2tpd pppd
 nl_boot "$DB"
 nl_wait 10 pgrep -x xl2tpd || nl_fail "xl2tpd not started by the boot apply"
 nl_assert_nft_has "udp dport 1701 accept"
-client_up alice
-nl_wait 40 isp_ppp || nl_fail "no L2TP session after the reboot"
+connect alice || { tail -20 /tmp/l2tp-client.log; tail -20 /run/patronus/patronus-daemon.xl2tpd.log; nl_fail "no L2TP session after the reboot"; }
 nl_ok "after reboot: a client connects again"
 client_down
 

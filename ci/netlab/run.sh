@@ -93,7 +93,7 @@ ip netns add probe && ip netns del probe && echo "network namespaces: ok"
 cd /t
 # scenarios share this container: leave nothing of the previous one behind
 # (lanes J/K stop their own daemons but not the lib.sh DNS/HTTP helpers)
-scrub() { pkill -f 'nl-dnsmasq.pid' 2>/dev/null || true; pkill -f '/t/(nl|lb)-[a-z0-9]+[.]py' 2>/dev/null || true; pkill -x 'suricata|bgpd|ospfd|zebra|staticd|mgmtd|xl2tpd|softflowd|igmpproxy|tayga|unbound|rsyslogd|patronus-web|patronus-dashboard' 2>/dev/null || true; for n in \$(ip netns list | cut -d' ' -f1); do ip netns del "\$n" 2>/dev/null || true; done; sleep 1; }
+scrub() { pkill -f 'nl-dnsmasq.pid' 2>/dev/null || true; pkill -f '/t/(nl|lb)-[a-z0-9]+[.]py' 2>/dev/null || true; pkill -x 'suricata|bgpd|ospfd|zebra|staticd|mgmtd|xl2tpd|softflowd|igmpproxy|tayga|unbound|rsyslogd|patronus-web|patronus-dashboard|charon-systemd' 2>/dev/null || true; rm -f /tmp/charon-rtr.pid /run/charon.vici /run/charon-client.vici; for n in \$(ip netns list | cut -d' ' -f1); do ip netns del "\$n" 2>/dev/null || true; done; sleep 1; }
 for s in $names; do scrub; echo "##### \$s"; start=\$(date +%s); bash "/t/\$s"; echo "##### \$s passed in \$((\$(date +%s) - start)) s"; done
 INNER
 
@@ -114,8 +114,24 @@ create() {
     --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
     --memory 2g --memory-swap 2g --cpus 2 -w /t "$IMAGE" bash /t/inner.sh >/dev/null
 }
-create 2>/dev/null || { echo "netlab: could not pass /dev/ppp and /dev/net/tun to the container"; docker rm -f "$C" >/dev/null 2>&1 || true; DEVS=(); create; }
-docker cp "$OUT/." "$C:/t/"
-docker start -a "$C"
-rc=$(docker inspect -f '{{.State.ExitCode}}' "$C")
+run_container() {
+  create 2>/dev/null || { echo "netlab: could not pass /dev/ppp and /dev/net/tun to the container"; docker rm -f "$C" >/dev/null 2>&1 || true; DEVS=(); create; }
+  docker cp "$OUT/." "$C:/t/"
+  docker start -a "$C" || true
+  rc=$(docker inspect -f '{{.State.ExitCode}}' "$C")
+}
+run_container
+# Exit 137 = SIGKILL. When it was the kernel's OOM killer (the 2g cap) that is
+# a real problem and says so; when something outside killed the container (a
+# runner restart, another job's cleanup of "orphan" containers) nothing is
+# wrong with the code under test: run everything once more.
+if [ "$rc" = 137 ]; then
+  if [ "$(docker inspect -f '{{.State.OOMKilled}}' "$C")" = true ]; then
+    echo "netlab: the container was killed by the OOM killer (memory cap 2g): a scenario or the build leaks memory"
+  else
+    echo "netlab: the container was killed from outside (exit 137, not OOM); running all scenarios once more"
+    docker rm -f "$C" >/dev/null 2>&1 || true
+    run_container
+  fi
+fi
 exit "$rc"
