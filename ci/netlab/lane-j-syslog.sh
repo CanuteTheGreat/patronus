@@ -28,6 +28,9 @@ esac
 exit 0
 EOF
 chmod 755 /etc/init.d/rsyslog
+# installing systemd (strongSwan's charon-systemd) leaves /var/log root:syslog 0755: rsyslog,
+# running as user syslog, then cannot create /var/log/syslog
+chgrp syslog /var/log 2>/dev/null || true; chmod 775 /var/log
 rm -f /etc/rsyslog.d/50-patronus.conf
 grep -q 'rsyslog.d' /etc/rsyslog.conf || echo '$IncludeConfig /etc/rsyslog.d/*.conf' >> /etc/rsyslog.conf
 
