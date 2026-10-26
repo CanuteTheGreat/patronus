@@ -16,4 +16,4 @@ tracing.workspace = true
 sha2 = "0.10"
 flate2 = "1.0"
 lz4 = "1.25"
-zstd = "0.13"
+zstd = "0.14"
