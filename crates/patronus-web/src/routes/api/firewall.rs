@@ -1,8 +1,9 @@
 //! Firewall API endpoints
 
+use crate::state::firewall::FirewallManager;
 use crate::state::AppState;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
@@ -130,6 +131,10 @@ pub struct AliasBody {
     pub entries: Vec<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// URL table / GeoIP / threat-feed source (type `geoip`, `urltable`
+    /// and `urltable_ports` fill it from `entries` when omitted).
+    #[serde(default)]
+    pub source: Option<patronus_firewall::aliases::AliasSource>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -445,12 +450,16 @@ pub async fn list_aliases(State(state): State<AppState>) -> Response {
 
 /// POST /api/firewall/aliases
 pub async fn create_alias(State(state): State<AppState>, Json(b): Json<AliasBody>) -> Response {
+    let name = b.name.clone().unwrap_or_default().trim().to_string();
     match state.firewall.create_alias(b).await {
-        Ok(_) => (
-            StatusCode::CREATED,
-            Json(serde_json::json!({ "message": "Alias created" })),
-        )
-            .into_response(),
+        Ok(_) => {
+            FirewallManager::spawn_refresh(state.firewall.clone(), name);
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({ "message": "Alias created" })),
+            )
+                .into_response()
+        }
         Err(e) => err("Failed to create alias", e),
     }
 }
@@ -473,11 +482,14 @@ pub async fn update_alias(
     Json(b): Json<AliasBody>,
 ) -> Response {
     match state.firewall.update_alias(&name, b).await {
-        Ok(live) => Json(serde_json::json!({
-            "message": "Alias updated",
-            "live": live,
-        }))
-        .into_response(),
+        Ok(live) => {
+            FirewallManager::spawn_refresh(state.firewall.clone(), name.clone());
+            Json(serde_json::json!({
+                "message": "Alias updated",
+                "live": live,
+            }))
+            .into_response()
+        }
         Err(e) => err("Failed to update alias", e),
     }
 }
@@ -487,6 +499,198 @@ pub async fn delete_alias(State(state): State<AppState>, Path(name): Path<String
     match state.firewall.delete_alias(&name).await {
         Ok(_) => ok("Alias deleted"),
         Err(e) => err("Failed to delete alias", e),
+    }
+}
+
+/// POST /api/firewall/aliases/refresh  {"names": [..]} (empty = every
+/// URL table, GeoIP and threat alias)
+pub async fn refresh_aliases(
+    State(state): State<AppState>,
+    body: Option<Json<RefreshBody>>,
+) -> Response {
+    let names = body.map(|Json(b)| b.names).unwrap_or_default();
+    let only = if names.is_empty() {
+        match state.firewall.list_alias_objects().await {
+            Ok(a) => Some(
+                a.into_iter()
+                    .filter(|a| a.source.is_some())
+                    .map(|a| a.name)
+                    .collect::<Vec<_>>(),
+            ),
+            Err(e) => return err("Failed to refresh aliases", e),
+        }
+    } else {
+        Some(names)
+    };
+    match state.firewall.refresh_feeds(only).await {
+        Ok(o) => Json(serde_json::json!({
+            "results": o.iter().map(|x| serde_json::json!({
+                "alias": x.alias, "ok": x.ok, "status": x.status, "count": x.count,
+            })).collect::<Vec<_>>(),
+        }))
+        .into_response(),
+        Err(e) => err("Failed to refresh aliases", e),
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RefreshBody {
+    #[serde(default)]
+    pub names: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GeoConfigBody {
+    #[serde(default)]
+    pub db_url: String,
+    #[serde(default = "thirty")]
+    pub refresh_days: u64,
+}
+
+fn thirty() -> u64 {
+    30
+}
+
+/// GET /api/firewall/geoip
+pub async fn get_geoip(State(state): State<AppState>) -> Response {
+    match state.firewall.geoip_overview().await {
+        Ok(o) => Json(o).into_response(),
+        Err(e) => err("Failed to read the GeoIP settings", e),
+    }
+}
+
+/// PUT /api/firewall/geoip  {"db_url": "", "refresh_days": 30}
+pub async fn put_geoip(State(state): State<AppState>, Json(b): Json<GeoConfigBody>) -> Response {
+    match state
+        .firewall
+        .set_geoip_config(&b.db_url, b.refresh_days)
+        .await
+    {
+        Ok(_) => ok("GeoIP database settings saved"),
+        Err(e) => err("Failed to save the GeoIP settings", e),
+    }
+}
+
+/// POST /api/firewall/geoip/refresh -- download the database now
+pub async fn refresh_geoip(State(state): State<AppState>) -> Response {
+    match state.firewall.refresh_geoip().await {
+        Ok(o) => Json(serde_json::json!({
+            "results": o.iter().map(|x| serde_json::json!({
+                "alias": x.alias, "ok": x.ok, "status": x.status, "count": x.count,
+            })).collect::<Vec<_>>(),
+        }))
+        .into_response(),
+        Err(e) => err("Failed to refresh the GeoIP database", e),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct IpQuery {
+    pub ip: String,
+}
+
+/// GET /api/firewall/geoip/lookup?ip=1.2.3.4
+pub async fn geoip_lookup(State(state): State<AppState>, Query(q): Query<IpQuery>) -> Response {
+    let Ok(ip) = q.ip.trim().parse::<std::net::IpAddr>() else {
+        return err(
+            "Invalid request",
+            anyhow::anyhow!("Invalid request: not an IP address"),
+        );
+    };
+    match state.firewall.geoip_lookup(ip).await {
+        Ok(c) => Json(serde_json::json!({ "ip": ip.to_string(), "country": c })).into_response(),
+        Err(e) => err("GeoIP lookup failed", e),
+    }
+}
+
+/// GET /api/firewall/threatintel
+pub async fn get_threat(State(state): State<AppState>) -> Response {
+    match state.firewall.threat_overview().await {
+        Ok(o) => Json(o).into_response(),
+        Err(e) => err("Failed to read the threat feeds", e),
+    }
+}
+
+/// PUT /api/firewall/threatintel/:id -- enable/configure a feed
+pub async fn put_threat(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(b): Json<crate::state::fwfeeds::ThreatBody>,
+) -> Response {
+    match state.firewall.set_threat_feed(&id, b).await {
+        Ok(_) => {
+            FirewallManager::spawn_refresh(
+                state.firewall.clone(),
+                patronus_firewall::feeds::threat_alias_name(&id),
+            );
+            ok("Threat feed saved")
+        }
+        Err(e) => err("Failed to save the threat feed", e),
+    }
+}
+
+/// DELETE /api/firewall/threatintel/:id
+pub async fn delete_threat(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    match state.firewall.delete_threat_feed(&id).await {
+        Ok(_) => ok("Threat feed removed"),
+        Err(e) => err("Failed to remove the threat feed", e),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BudgetBody {
+    pub max_total: u64,
+}
+
+/// PUT /api/firewall/threatintel-budget  {"max_total": 400000}
+pub async fn put_threat_budget(
+    State(state): State<AppState>,
+    Json(b): Json<BudgetBody>,
+) -> Response {
+    match state.firewall.set_threat_max_total(b.max_total).await {
+        Ok(_) => ok("Threat-feed budget saved"),
+        Err(e) => err("Failed to save the budget", e),
+    }
+}
+
+/// GET /api/firewall/logs?rule=&action=&src=&dst=&proto=&port=&iface=&q=&minutes=&since_id=&limit=
+pub async fn get_logs(
+    State(state): State<AppState>,
+    Query(q): Query<crate::state::fwlog::LogQuery>,
+) -> Response {
+    match crate::state::fwlog::search(&state.firewall.store, &q).await {
+        Ok((entries, last_id)) => Json(serde_json::json!({
+            "entries": entries,
+            "last_id": last_id,
+            "collector": crate::state::fwlog::collector_status(),
+            "log_default_deny": state.firewall.log_default_deny().await.unwrap_or(false),
+        }))
+        .into_response(),
+        Err(e) => err("Failed to read the firewall log", e),
+    }
+}
+
+/// DELETE /api/firewall/logs
+pub async fn clear_logs(State(state): State<AppState>) -> Response {
+    match crate::state::fwlog::clear(&state.firewall.store).await {
+        Ok(_) => ok("Firewall log cleared"),
+        Err(e) => err("Failed to clear the firewall log", e),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DefaultDenyBody {
+    pub enabled: bool,
+}
+
+/// PUT /api/firewall/logs/default-deny  {"enabled": true}
+pub async fn put_default_deny(
+    State(state): State<AppState>,
+    Json(b): Json<DefaultDenyBody>,
+) -> Response {
+    match state.firewall.set_log_default_deny(b.enabled).await {
+        Ok(_) => ok("Default-deny logging updated"),
+        Err(e) => err("Failed to change default-deny logging", e),
     }
 }
 
@@ -566,6 +770,18 @@ pub fn router() -> axum::Router<AppState> {
                 .delete(delete_nat_rule),
         )
         .route("/firewall/aliases", get(list_aliases).post(create_alias))
+        .route("/firewall/aliases/refresh", post(refresh_aliases))
+        .route("/firewall/logs", get(get_logs).delete(clear_logs))
+        .route("/firewall/logs/default-deny", put(put_default_deny))
+        .route("/firewall/geoip", get(get_geoip).put(put_geoip))
+        .route("/firewall/geoip/refresh", post(refresh_geoip))
+        .route("/firewall/geoip/lookup", get(geoip_lookup))
+        .route("/firewall/threatintel", get(get_threat))
+        .route("/firewall/threatintel-budget", put(put_threat_budget))
+        .route(
+            "/firewall/threatintel/:id",
+            put(put_threat).delete(delete_threat),
+        )
         .route(
             "/firewall/aliases/:name",
             get(get_alias).put(update_alias).delete(delete_alias),

@@ -203,6 +203,16 @@ fn interface_addresses(name: &str) -> Vec<std::net::IpAddr> {
     out
 }
 
+/// Append the threat-feed rules; returns how many.
+fn push_threat_rules(script: &mut String, aliases: &[crate::aliases::Alias]) -> usize {
+    let rules = crate::feeds::threat_rules(aliases);
+    for l in &rules {
+        script.push_str(l);
+        script.push('\n');
+    }
+    rules.len()
+}
+
 /// Is a NAT rule an outbound (source NAT) rule, governed by the mode?
 fn is_outbound(t: &NatType) -> bool {
     matches!(t, NatType::Masquerade | NatType::Snat { .. })
@@ -250,7 +260,14 @@ impl FirewallApplier {
             patronus_config::policy::policy_marks(store).await?
         };
         let mut policy = String::new();
+        // lane B: threat-intelligence feeds drop right after the system
+        // (anti-lockout) rules, ahead of everything the user wrote
+        let mut threat_done = lockdown;
         for (rule, origin) in store.load_firewall_rules_with_origin().await? {
+            if !threat_done && origin != RuleOrigin::System {
+                threat_done = true;
+                nfilter += push_threat_rules(&mut script, &aliases);
+            }
             if !rule.enabled || (lockdown && origin != RuleOrigin::System) {
                 continue;
             }
@@ -334,6 +351,9 @@ impl FirewallApplier {
             }
         }
 
+        if !threat_done {
+            nfilter += push_threat_rules(&mut script, &aliases);
+        }
         if !policy.is_empty() {
             script.push_str(&policy_chain_script());
             script.push_str(&policy);
@@ -460,6 +480,23 @@ impl FirewallApplier {
             "{nfilter} filter rule(s), {nnat} NAT rule(s), {} alias(es)",
             aliases.len()
         ));
+        // log what the default policy drops (rate limited), last of all
+        if !lockdown
+            && store
+                .load_system_config(crate::feeds::CFG_LOG_DEFAULT_DENY)
+                .await?
+                .map(|v| v == "1")
+                .unwrap_or(false)
+        {
+            for chain in ["input", "forward"] {
+                script.push_str(&format!(
+                    "add rule {TABLE} {chain} limit rate 5/second burst 20 packets \
+                     log prefix \"patronus[default] drop: \" group {}\n",
+                    crate::feeds::NFLOG_GROUP
+                ));
+            }
+            report.applied("default-deny logging on".to_string());
+        }
         if nsched > 0 {
             report.applied(format!(
                 "{nsched} scheduled rule(s) inactive at {}",
@@ -1576,7 +1613,7 @@ mod tests {
             .script;
         assert!(
             sc.contains(&format!(
-                "forward iifname \"eth1\" ip6 daddr 2001:db8:113::1 tcp dport 8080 log prefix \"patronus[{id}] reject: \" reject with tcp reset"
+                "forward iifname \"eth1\" ip6 daddr 2001:db8:113::1 tcp dport 8080 log prefix \"patronus[{id}] reject: \" group 7 reject with tcp reset"
             )),
             "{sc}"
         );
@@ -1609,6 +1646,7 @@ mod tests {
                 kind: crate::nftables::AliasKind::Host,
                 entries: vec!["198.51.100.0/24".into(), "2001:db8:bad::/48".into()],
                 description: None,
+                source: None,
             },
         )
         .await
@@ -1620,6 +1658,7 @@ mod tests {
                 kind: crate::nftables::AliasKind::Port,
                 entries: vec!["80".into(), "443".into()],
                 description: None,
+                source: None,
             },
         )
         .await

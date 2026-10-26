@@ -15,6 +15,8 @@
 //! an empty list (see tests/no_fixtures.rs).
 
 pub mod firewall;
+pub mod fwfeeds;
+pub mod fwlog;
 pub mod host;
 pub mod interfaces;
 pub mod lan;
@@ -202,6 +204,10 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
     }
     // scheduled rules switch on/off on time (re-apply on a window edge)
     firewall::spawn_schedule_task(state.firewall.clone());
+    // URL tables, GeoIP sets and threat feeds refresh themselves
+    fwfeeds::spawn_feed_task(state.firewall.clone());
+    // NFLOG collector behind the firewall log viewer
+    fwlog::spawn_collector(state.firewall.clone());
     // gateway / tunnel / HA / configuration events for the event log and webhooks
     telemetry::spawn_watcher(state.clone());
     Ok(state)

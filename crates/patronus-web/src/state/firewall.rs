@@ -227,12 +227,14 @@ impl Move {
 
 /// Firewall management operations
 pub struct FirewallManager {
-    store: Arc<ConfigStore>,
-    applier: Arc<dyn Applier>,
+    pub(crate) store: Arc<ConfigStore>,
+    pub(crate) applier: Arc<dyn Applier>,
     /// Serializes edit+apply so two requests can't interleave.
-    edit: Mutex<()>,
+    pub(crate) edit: Mutex<()>,
     /// Scheduled-rule states the kernel was last loaded with.
     sched_state: Mutex<Option<Vec<(u64, bool)>>>,
+    /// Where URL tables / GeoIP / threat feeds download from (curl).
+    pub(crate) fetcher: std::sync::RwLock<Arc<dyn patronus_firewall::feeds::Fetcher>>,
 }
 
 impl FirewallManager {
@@ -242,10 +244,11 @@ impl FirewallManager {
             applier,
             edit: Mutex::new(()),
             sched_state: Mutex::new(None),
+            fetcher: std::sync::RwLock::new(Arc::new(patronus_firewall::feeds::CurlFetcher)),
         }
     }
 
-    fn e(e: patronus_core::Error) -> anyhow::Error {
+    pub(crate) fn e(e: patronus_core::Error) -> anyhow::Error {
         anyhow::anyhow!("{e}")
     }
 
@@ -482,7 +485,7 @@ impl FirewallManager {
     }
 
     /// Record the pre-change configuration (config history / rollback).
-    async fn snapshot(&self, what: String) -> anyhow::Result<()> {
+    pub(crate) async fn snapshot(&self, what: String) -> anyhow::Result<()> {
         self.store
             .snapshot("web", &format!("before {what}"))
             .await
@@ -490,14 +493,20 @@ impl FirewallManager {
             .map_err(Self::e)
     }
 
-    async fn audit(&self, action: &str, entity: &str, id: &str, details: serde_json::Value) {
+    pub(crate) async fn audit(
+        &self,
+        action: &str,
+        entity: &str,
+        id: &str,
+        details: serde_json::Value,
+    ) {
         let _ = self
             .store
             .audit("web", action, entity, Some(id), &details)
             .await;
     }
 
-    async fn push(&self) -> anyhow::Result<()> {
+    pub(crate) async fn push(&self) -> anyhow::Result<()> {
         self.applier
             .apply(&self.store)
             .await
@@ -963,8 +972,31 @@ impl FirewallManager {
             .into_iter()
             .map(|a| templates::Alias {
                 id: 0,
-                alias_type: aliases::kind_str(a.kind).to_string(),
-                value: a.entries.join(", "),
+                alias_type: match a.source.as_ref().map(|s| s.kind.as_str()) {
+                    Some("geoip") => "geoip".to_string(),
+                    Some("threat") => "threat feed".to_string(),
+                    Some(_) if a.kind == patronus_firewall::nftables::AliasKind::Port => {
+                        "url table (ports)".to_string()
+                    }
+                    Some(_) => "url table".to_string(),
+                    None => aliases::kind_str(a.kind).to_string(),
+                },
+                value: match &a.source {
+                    Some(src) => match src.kind.as_str() {
+                        "geoip" => {
+                            format!("{} ({} ranges)", src.countries.join(", "), a.entries.len())
+                        }
+                        _ => format!(
+                            "{} ({} entries; {})",
+                            src.url.clone().unwrap_or_default(),
+                            a.entries.len(),
+                            src.last_status
+                                .clone()
+                                .unwrap_or_else(|| "not fetched yet".into())
+                        ),
+                    },
+                    None => a.entries.join(", "),
+                },
                 description: a.description.unwrap_or_default(),
                 name: a.name,
             })
@@ -972,20 +1004,71 @@ impl FirewallManager {
     }
 
     fn body_to_alias(name: &str, b: &AliasBody) -> anyhow::Result<Alias> {
-        let kind = aliases::parse_kind(&b.alias_type).map_err(Self::e)?;
-        Alias {
+        use patronus_firewall::aliases::AliasSource;
+        use patronus_firewall::feeds;
+        let t = b.alias_type.trim().to_ascii_lowercase();
+        let entries: Vec<String> = b
+            .entries
+            .iter()
+            .flat_map(|e| e.split([',', '\n', ' ']))
+            .map(str::trim)
+            .filter(|e| !e.is_empty())
+            .map(str::to_string)
+            .collect();
+        // pfSense-style alias types that fill themselves
+        let (kind, source) = match t.as_str() {
+            "geoip" => {
+                let mut s = b
+                    .source
+                    .clone()
+                    .unwrap_or_else(|| AliasSource::new(feeds::KIND_GEOIP));
+                if s.countries.is_empty() {
+                    s.countries = entries.clone();
+                }
+                s.kind = feeds::KIND_GEOIP.into();
+                (patronus_firewall::nftables::AliasKind::Host, Some(s))
+            }
+            "urltable" | "url_table" | "url" | "urltable_ports" | "url_table_ports"
+            | "url_ports" => {
+                let mut s = b
+                    .source
+                    .clone()
+                    .unwrap_or_else(|| AliasSource::new(feeds::KIND_URL));
+                if s.url.as_deref().unwrap_or("").is_empty() {
+                    s.url = entries.first().cloned();
+                }
+                if s.kind != feeds::KIND_THREAT {
+                    s.kind = feeds::KIND_URL.into();
+                }
+                let k = if t.ends_with("ports") {
+                    patronus_firewall::nftables::AliasKind::Port
+                } else {
+                    patronus_firewall::nftables::AliasKind::Host
+                };
+                (k, Some(s))
+            }
+            _ => (
+                aliases::parse_kind(&b.alias_type).map_err(Self::e)?,
+                b.source.clone(),
+            ),
+        };
+        let mut a = Alias {
             name: name.to_string(),
             kind,
-            entries: b
-                .entries
-                .iter()
-                .flat_map(|e| e.split([',', '\n', ' ']))
-                .map(str::to_string)
-                .collect(),
+            entries: if source.is_some() {
+                Vec::new()
+            } else {
+                entries
+            },
             description: b.description.clone().filter(|d| !d.trim().is_empty()),
+            source,
         }
         .validated()
-        .map_err(Self::e)
+        .map_err(Self::e)?;
+        if let Some(s) = a.source.clone() {
+            a.source = Some(feeds::check_source(&a, &s).map_err(Self::e)?);
+        }
+        Ok(a)
     }
 
     pub async fn create_alias(&self, b: AliasBody) -> anyhow::Result<()> {
@@ -1022,7 +1105,7 @@ impl FirewallManager {
     /// transaction, no ruleset reload); a type change needs a full apply.
     /// Returns true if the update was applied live (sets only).
     pub async fn update_alias(&self, name: &str, b: AliasBody) -> anyhow::Result<bool> {
-        let a = Self::body_to_alias(name, &b)?;
+        let mut a = Self::body_to_alias(name, &b)?;
         let _g = self.edit.lock().await;
         let Some(old) = aliases::get_alias(&self.store, name)
             .await
@@ -1030,6 +1113,10 @@ impl FirewallManager {
         else {
             anyhow::bail!("Alias {name} not found");
         };
+        // a self-filling alias keeps what it fetched until the next refresh
+        if a.source.is_some() {
+            a.entries = old.entries.clone();
+        }
         if old.kind != a.kind
             && !aliases::alias_users(&self.store, name)
                 .await
@@ -1720,6 +1807,7 @@ mod tests {
             alias_type: "host".into(),
             entries: vec!["192.0.2.1, 2001:db8::1".into()],
             description: None,
+            source: None,
         })
         .await
         .unwrap();
@@ -2001,6 +2089,7 @@ mod tests {
             alias_type: "host".into(),
             entries: vec!["198.51.100.1".into()],
             description: None,
+            source: None,
         })
         .await
         .unwrap();
@@ -2032,6 +2121,7 @@ mod tests {
                     alias_type: "host".into(),
                     entries: vec!["198.51.100.2".into(), "2001:db8::2".into()],
                     description: None,
+                    source: None,
                 },
             )
             .await

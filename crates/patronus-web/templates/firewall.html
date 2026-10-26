@@ -61,6 +61,9 @@
         <button class="tab-btn" data-tab="tab-npt">NPTv6</button>
         <button class="tab-btn" data-tab="tab-aliases">Aliases</button>
         <button class="tab-btn" data-tab="tab-schedules">Schedules</button>
+        <button class="tab-btn" data-tab="tab-geoip">GeoIP</button>
+        <button class="tab-btn" data-tab="tab-threat">Threat Intel</button>
+        <button class="tab-btn" data-tab="tab-logs">Logs</button>
     </div>
 
     <!-- ============================ RULES ============================ -->
@@ -374,14 +377,22 @@
                 <input type="hidden" name="editing">
                 <div class="row">
                     <label>Name <input name="name" required pattern="[A-Za-z][A-Za-z0-9_]{0,30}"></label>
-                    <label>Type <select name="type"><option value="host">Host / network</option><option value="port">Port</option></select></label>
+                    <label>Type <select name="type" onchange="aliasTypeChanged()"><option value="host">Host / network</option><option value="port">Port</option><option value="urltable">URL table (IPs)</option><option value="urltable_ports">URL table (ports)</option><option value="geoip">GeoIP (countries)</option></select></label>
                     <label>Description <input name="description" maxlength="120"></label>
                 </div>
-                <div class="row">
-                    <label>Entries (one per line or comma separated)
+                <div class="row" id="alias-entries-row">
+                    <label id="alias-entries-label">Entries (one per line or comma separated)
                         <textarea name="entries" rows="4" cols="50" placeholder="192.0.2.10&#10;10.0.0.0/8&#10;2001:db8::/32"></textarea></label>
                 </div>
+                <div class="row" id="alias-url-row" style="display:none">
+                    <label>List URL (http/https; one address, network or range per line)
+                        <input name="url" size="60" placeholder="https://example.org/blocklist.txt"></label>
+                    <label>Refresh every (hours) <input name="refresh_hours" type="number" min="1" max="8760" value="24"></label>
+                    <label>Max entries <input name="max_entries" type="number" min="1" max="500000" value="100000"></label>
+                </div>
+                <p class="hint" id="alias-source-status"></p>
                 <button type="submit" class="btn btn-primary">Save alias</button>
+                <button type="button" class="btn btn-secondary" onclick="refreshAliases()">Refresh URL / GeoIP aliases now</button>
                 <button type="button" class="btn btn-secondary" onclick="resetForm('alias-form', 'Add alias')">Clear</button>
             </fieldset>
         </form>
@@ -430,6 +441,102 @@
                 <button type="button" class="btn btn-secondary" onclick="resetForm('schedule-form', 'Add schedule')">Clear</button>
             </fieldset>
         </form>
+    </div>
+
+
+    <!-- ============================ GEOIP ============================ -->
+    <div class="tab" id="tab-geoip">
+        <p class="hint">GeoIP aliases hold every address range of the chosen countries, taken from the free
+            <a href="https://db-ip.com/db/download/ip-to-country-lite" rel="noopener">DB-IP "IP to Country Lite"</a>
+            database (CC BY 4.0; attribution: IP Geolocation by DB-IP). Use the alias as a rule's source or
+            destination (<code>$name</code>): one block rule per country set. The database is downloaded
+            monthly; the sets are rebuilt when it changes. A failed download keeps the old data.</p>
+        <fieldset><legend>Database</legend>
+            <div id="geo-db" class="hint">loading...</div>
+            <form id="geo-config-form" onsubmit="return saveGeoConfig(event)">
+                <div class="row">
+                    <label>Database URL (empty = DB-IP monthly download) <input name="db_url" size="70"></label>
+                    <label>Refresh every (days) <input name="refresh_days" type="number" min="1" max="365" value="30"></label>
+                </div>
+                <button type="submit" class="btn btn-primary">Save</button>
+                <button type="button" class="btn btn-secondary" onclick="refreshGeo()">Download / rebuild now</button>
+            </form>
+            <form onsubmit="return geoLookup(event)">
+                <label>Which country is this address in? <input name="ip" placeholder="8.8.8.8"></label>
+                <button type="submit" class="btn btn-secondary">Look up</button> <span id="geo-lookup-result"></span>
+            </form>
+        </fieldset>
+        <table id="geo-table"><thead><tr><th>Alias</th><th>Countries</th><th>Ranges</th><th>Status</th><th>Used by rules</th><th></th></tr></thead><tbody></tbody></table>
+        <form id="geo-form" onsubmit="return saveGeo(event)">
+            <fieldset><legend>Add a country set</legend>
+                <div class="row">
+                    <label>Alias name <input name="name" required pattern="[A-Za-z][A-Za-z0-9_]{0,30}" placeholder="blocked_countries"></label>
+                    <label>Countries (hold Ctrl to pick several)
+                        <select name="countries" multiple size="8" style="min-width:260px"></select></label>
+                    <label>Also add a rule
+                        <select name="rule"><option value="">no, I will write the rule</option>
+                            <option value="block-in">block inbound from these countries (WAN)</option>
+                            <option value="block-out">block outbound to these countries (LAN)</option></select></label>
+                </div>
+                <button type="submit" class="btn btn-primary">Create country set</button>
+            </fieldset>
+        </form>
+    </div>
+
+    <!-- ========================== THREAT INTEL ========================== -->
+    <div class="tab" id="tab-threat">
+        <p class="hint">Threat-intelligence feeds are public blocklists. An enabled feed is refreshed on its
+            schedule, capped in size, and its addresses are dropped (logged, rate limited) right after the
+            anti-lockout rule and before your own rules. Private and reserved ranges are never blocked,
+            whatever a feed lists. Put hosts that must never be blocked into a host alias named
+            <code>ti_allow</code>. A failed refresh keeps the previous list.</p>
+        <div id="threat-summary" class="hint">loading...</div>
+        <table id="threat-table"><thead><tr><th>Feed</th><th>On</th><th>Direction</th><th>Refresh</th><th>Entries</th><th>Status</th><th></th></tr></thead><tbody></tbody></table>
+        <button class="btn btn-secondary" onclick="refreshThreat()">Refresh enabled feeds now</button>
+        <form id="threat-budget" onsubmit="return saveBudget(event)" style="display:inline">
+            <label>Total entries across all feeds <input name="max_total" type="number" min="1000" max="1000000" value="400000"></label>
+            <button class="btn btn-primary" type="submit">Save budget</button>
+        </form>
+        <form id="threat-custom" onsubmit="return saveCustomFeed(event)">
+            <fieldset><legend>Add a custom feed</legend>
+                <div class="row">
+                    <label>Id (a-z, 0-9, _) <input name="id" required pattern="[a-z0-9_]{1,24}"></label>
+                    <label>URL <input name="url" required size="60" placeholder="https://example.org/ips.txt"></label>
+                    <label>Direction <select name="direction"><option value="both">both</option><option value="in">inbound</option><option value="out">outbound</option></select></label>
+                    <label>Refresh every (hours) <input name="refresh_hours" type="number" min="1" value="24"></label>
+                    <label>Max entries <input name="max_entries" type="number" min="1" max="500000" value="100000"></label>
+                </div>
+                <button type="submit" class="btn btn-primary">Add feed</button>
+            </fieldset>
+        </form>
+    </div>
+
+    <!-- ============================== LOGS ============================== -->
+    <div class="tab" id="tab-logs">
+        <p class="hint">Packets matched by a rule with <b>Log</b> ticked (and threat-feed drops) are recorded
+            here with the rule that caught them. History is kept (newest 20 000 lines); filters match
+            the stored lines.</p>
+        <form id="log-filter" onsubmit="return logSearch(event)">
+            <div class="row">
+                <label>Rule (id or name) <input name="rule" size="14"></label>
+                <label>Action <select name="action"><option value="">any</option><option>accept</option><option>drop</option><option>reject</option></select></label>
+                <label>Source <input name="src" size="16" placeholder="192.0.2.1 or 10.0."></label>
+                <label>Destination <input name="dst" size="16"></label>
+                <label>Proto <select name="proto"><option value="">any</option><option>TCP</option><option>UDP</option><option>ICMP</option><option>ICMPV6</option></select></label>
+                <label>Port <input name="port" size="6"></label>
+                <label>Interface <input name="iface" size="8"></label>
+                <label>Text <input name="q" size="14"></label>
+                <label>Last (minutes) <input name="minutes" type="number" min="1" size="6"></label>
+                <label class="check"><input type="checkbox" id="log-live" onchange="logLive()"> Live</label>
+                <label class="check"><input type="checkbox" id="log-default-deny" onchange="setDefaultDeny()"> Also log default-deny drops</label>
+            </div>
+            <button type="submit" class="btn btn-primary">Search</button>
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('log-filter').reset(); logSearch()">Clear filters</button>
+            <button type="button" class="btn btn-danger" onclick="clearLog()">Clear stored log</button>
+            <span id="log-status" class="hint"></span>
+        </form>
+        <table id="log-table"><thead><tr><th>Time</th><th>Rule</th><th>Action</th><th>Chain</th><th>In</th><th>Out</th><th>Proto</th><th>Source</th><th>Destination</th><th>Len</th></tr></thead><tbody></tbody></table>
+        <p id="log-empty" class="empty" style="display:none">No log lines match.</p>
     </div>
 
 <script>
@@ -595,8 +702,13 @@ async function editAlias(btn) {
         const a = await api('GET', '/firewall/aliases/' + encodeURIComponent(name));
         const f = document.getElementById('alias-form');
         f.elements['editing'].value = a.name; f.elements['name'].value = a.name; f.elements['name'].readOnly = true;
-        f.elements['type'].value = a.kind; f.elements['entries'].value = a.entries.join('\n');
+        f.elements['type'].value = a.kind; f.elements['entries'].value = a.entries.slice(0, 200).join('\n');
         f.elements['description'].value = a.description || '';
+        const sc = a.source;
+        if (sc && sc.kind === 'geoip') { f.elements['type'].value = 'geoip'; f.elements['entries'].value = sc.countries.join(', '); }
+        else if (sc) { f.elements['type'].value = a.kind === 'port' ? 'urltable_ports' : 'urltable'; f.elements['url'].value = sc.url || ''; f.elements['refresh_hours'].value = Math.max(1, Math.round(sc.refresh_secs / 3600)); f.elements['max_entries'].value = sc.max_entries; }
+        document.getElementById('alias-source-status').textContent = sc ? ('Last refresh: ' + (sc.last_status || 'never') + (sc.last_count != null ? ' (' + sc.last_count + ' entries)' : '')) : '';
+        aliasTypeChanged();
         document.getElementById('alias-form-title').textContent = 'Edit alias $' + a.name;
         f.scrollIntoView();
     } catch (e) { flash(e.message, false); }
@@ -605,9 +717,31 @@ async function editAlias(btn) {
 function saveAlias(ev) {
     ev.preventDefault();
     const f = ev.target;
-    const body = { name: f.elements['name'].value, type: f.elements['type'].value, entries: [f.elements['entries'].value], description: f.elements['description'].value };
+    const t = f.elements['type'].value;
+    const body = { name: f.elements['name'].value, type: t, entries: [f.elements['entries'].value], description: f.elements['description'].value };
+    if (t === 'urltable' || t === 'urltable_ports') {
+        body.entries = [];
+        body.source = { kind: 'url', url: f.elements['url'].value.trim(), refresh_secs: Math.round(parseFloat(f.elements['refresh_hours'].value || '24') * 3600), max_entries: parseInt(f.elements['max_entries'].value || '100000', 10) };
+    }
     if (f.elements['editing'].value) return run(api('PUT', '/firewall/aliases/' + encodeURIComponent(f.elements['editing'].value), body));
     return run(api('POST', '/firewall/aliases', body));
+}
+
+
+// ---- aliases: self-filling types ----
+function aliasTypeChanged() {
+    const f = document.getElementById('alias-form');
+    const t = f.elements['type'].value;
+    const src = t === 'urltable' || t === 'urltable_ports';
+    document.getElementById('alias-url-row').style.display = src ? '' : 'none';
+    document.getElementById('alias-entries-row').style.display = src ? 'none' : '';
+    document.getElementById('alias-entries-label').firstChild.textContent = t === 'geoip' ? 'Countries (two-letter codes: DE, US, CN)' : 'Entries (one per line or comma separated)';
+}
+function refreshAliases() {
+    api('POST', '/firewall/aliases/refresh', {}).then(r => {
+        flash((r.results.length ? r.results.map(x => x.alias + ': ' + x.status).join('; ') : 'No URL, GeoIP or threat aliases.'), true);
+        setTimeout(() => location.reload(), 1200);
+    }).catch(e => flash(e.message, false));
 }
 
 // ---- schedules ----
@@ -631,6 +765,140 @@ function saveSchedule(ev) {
     body.name = f.elements['name'].value;
     return run(api('POST', '/firewall/schedules', body));
 }
+
+// ---- GeoIP ----
+const fmtTime = t => t ? new Date(t * 1000).toLocaleString() : 'never';
+async function loadGeo() {
+    try {
+        const g = await api('GET', '/firewall/geoip');
+        const d = g.database;
+        document.getElementById('geo-db').textContent = (d.present ? ('Database present (' + Math.round(d.size_bytes / 1048576) + ' MiB), last updated ' + fmtTime(d.updated) + '. ') : 'No database yet. ') + 'Status: ' + d.status;
+        const f = document.getElementById('geo-config-form');
+        f.elements['db_url'].value = d.db_url; f.elements['db_url'].placeholder = g.default_url; f.elements['refresh_days'].value = d.refresh_days;
+        const sel = document.getElementById('geo-form').elements['countries'];
+        if (!sel.options.length) g.countries.forEach(c => sel.add(new Option(c.name + ' (' + c.code + ')', c.code)));
+        const tb = document.querySelector('#geo-table tbody'); tb.innerHTML = '';
+        g.aliases.forEach(a => {
+            const tr = tb.insertRow(); tr.dataset.alias = a.name;
+            [ '$' + a.name, a.countries.join(', '), a.ranges, a.status + (a.last_refresh ? ' (' + fmtTime(a.last_refresh) + ')' : ''), a.used_by.join(', ') || 'no rule yet' ].forEach(v => tr.insertCell().textContent = v);
+            const c = tr.insertCell();
+            const b = document.createElement('button'); b.className = 'btn btn-danger btn-sm'; b.textContent = 'Delete';
+            b.onclick = () => delNamed('/firewall/aliases/', b, 'country set');
+            c.appendChild(b);
+        });
+    } catch (e) { flash(e.message, false); }
+}
+function saveGeoConfig(ev) { ev.preventDefault(); const f = ev.target; return run(api('PUT', '/firewall/geoip', { db_url: f.elements['db_url'].value.trim(), refresh_days: parseInt(f.elements['refresh_days'].value, 10) })); }
+function refreshGeo() { flash('Downloading the database (this can take a minute)...', true); api('POST', '/firewall/geoip/refresh', {}).then(() => { sessionStorage.setItem('patronus-fw-flash', 'GeoIP database refreshed.'); location.reload(); }).catch(e => flash(e.message, false)); }
+async function geoLookup(ev) {
+    ev.preventDefault();
+    try { const r = await api('GET', '/firewall/geoip/lookup?ip=' + encodeURIComponent(ev.target.elements['ip'].value.trim())); document.getElementById('geo-lookup-result').textContent = r.ip + ' -> ' + (r.country || 'not in the database'); }
+    catch (e) { document.getElementById('geo-lookup-result').textContent = e.message; }
+    return false;
+}
+async function saveGeo(ev) {
+    ev.preventDefault();
+    const f = ev.target;
+    const countries = Array.from(f.elements['countries'].selectedOptions).map(o => o.value);
+    if (!countries.length) { flash('Pick at least one country.', false); return false; }
+    const name = f.elements['name'].value;
+    try {
+        await api('POST', '/firewall/aliases', { name, type: 'geoip', entries: [], source: { kind: 'geoip', countries }, description: 'GeoIP: ' + countries.join(', ') });
+        const mode = f.elements['rule'].value;
+        if (mode) {
+            const inb = mode === 'block-in';
+            for (const chain of (inb ? ['input', 'forward'] : ['forward'])) {
+                await api('POST', '/firewall/rules', { name: 'Block ' + (inb ? 'from ' : 'to ') + name + ' (' + chain + ')', action: 'drop', chain,
+                    interface: inb ? '@wan' : '@lan', interface_out: null, ip_version: 'any', protocol: 'any',
+                    source: inb ? '$' + name : 'any', destination: inb ? 'any' : '$' + name, port: 'any', schedule: null, description: 'GeoIP country block', gateway: null, log: true, enabled: true });
+            }
+        }
+        sessionStorage.setItem('patronus-fw-flash', 'Country set created; the address ranges are being built.'); location.reload();
+    } catch (e) { flash(e.message, false); }
+    return false;
+}
+
+// ---- threat intel ----
+async function loadThreat() {
+    try {
+        const t = await api('GET', '/firewall/threatintel');
+        document.getElementById('threat-summary').textContent = t.total_entries + ' entries in enabled feeds (budget ' + t.max_total + ')';
+        document.getElementById('threat-budget').elements['max_total'].value = t.max_total;
+        const tb = document.querySelector('#threat-table tbody'); tb.innerHTML = '';
+        t.feeds.forEach(x => {
+            const tr = tb.insertRow(); tr.dataset.feed = x.id;
+            const n = tr.insertCell(); n.innerHTML = ''; const b = document.createElement('b'); b.textContent = x.name; n.appendChild(b);
+            n.appendChild(document.createElement('br')); const sm = document.createElement('small'); sm.textContent = x.description; n.appendChild(sm);
+            const on = tr.insertCell(); const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = x.enabled; cb.className = 'feed-on';
+            cb.onchange = () => run(api('PUT', '/firewall/threatintel/' + x.id, { enabled: cb.checked })); on.appendChild(cb);
+            const dir = tr.insertCell(); const sel = document.createElement('select');
+            [['both', 'both'], ['in', 'inbound'], ['out', 'outbound']].forEach(o => sel.add(new Option(o[1], o[0]))); sel.value = x.direction;
+            sel.onchange = () => run(api('PUT', '/firewall/threatintel/' + x.id, { direction: sel.value })); dir.appendChild(sel);
+            tr.insertCell().textContent = x.configured ? 'every ' + Math.max(1, Math.round(x.refresh_secs / 3600)) + ' h, max ' + x.max_entries : '';
+            tr.insertCell().textContent = x.count;
+            tr.insertCell().textContent = x.status + (x.last_refresh ? ' (' + fmtTime(x.last_refresh) + ')' : '');
+            const c = tr.insertCell();
+            if (x.configured) { const d = document.createElement('button'); d.className = 'btn btn-danger btn-sm'; d.textContent = 'Remove'; d.onclick = () => { if (confirm('Remove feed ' + x.name + '?')) run(api('DELETE', '/firewall/threatintel/' + x.id)); }; c.appendChild(d); }
+        });
+    } catch (e) { flash(e.message, false); }
+}
+function refreshThreat() {
+    api('GET', '/firewall/threatintel').then(t => api('POST', '/firewall/aliases/refresh', { names: t.feeds.filter(f => f.enabled).map(f => 'ti_' + f.id) }))
+        .then(r => { flash(r.results.map(x => x.alias + ': ' + x.status).join('; ') || 'No enabled feeds.', true); setTimeout(loadThreat, 500); }).catch(e => flash(e.message, false));
+}
+function saveBudget(ev) { ev.preventDefault(); return run(api('PUT', '/firewall/threatintel-budget', { max_total: parseInt(ev.target.elements['max_total'].value, 10) })); }
+function saveCustomFeed(ev) {
+    ev.preventDefault(); const f = ev.target;
+    return run(api('PUT', '/firewall/threatintel/' + f.elements['id'].value, { enabled: true, url: f.elements['url'].value.trim(), direction: f.elements['direction'].value,
+        refresh_secs: Math.round(parseFloat(f.elements['refresh_hours'].value || '24') * 3600), max_entries: parseInt(f.elements['max_entries'].value || '100000', 10) }));
+}
+
+// ---- log viewer ----
+let logLast = 0, logTimer = null;
+function logQuery(extra) {
+    const f = document.getElementById('log-filter');
+    const p = new URLSearchParams();
+    ['rule', 'action', 'src', 'dst', 'proto', 'port', 'iface', 'q', 'minutes'].forEach(k => { const v = f.elements[k].value.trim(); if (v) p.set(k, v); });
+    Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
+    return p.toString();
+}
+function logRow(e) {
+    const tr = document.createElement('tr'); tr.dataset.id = e.id;
+    const ep = (a, p) => a + (p ? ':' + p : '');
+    [new Date(e.ts * 1000).toLocaleString(), e.rule, e.action, e.chain, e.iface_in, e.iface_out, e.proto, ep(e.src, e.sport), ep(e.dst, e.dport), e.length || ''].forEach(v => tr.insertCell().textContent = v);
+    return tr;
+}
+async function logSearch(ev) {
+    if (ev) ev.preventDefault();
+    try {
+        const r = await api('GET', '/firewall/logs?' + logQuery({ limit: 300 }));
+        const tb = document.querySelector('#log-table tbody'); tb.innerHTML = '';
+        r.entries.forEach(e => tb.appendChild(logRow(e)));
+        logLast = Math.max(logLast, r.last_id || 0);
+        document.getElementById('log-default-deny').checked = !!r.log_default_deny;
+        document.getElementById('log-empty').style.display = r.entries.length ? 'none' : '';
+        document.getElementById('log-status').textContent = r.entries.length + ' line(s)' + (r.collector.running ? '' : ' - the collector is not running: ' + (r.collector.error || 'no logging rule has fired yet'));
+    } catch (e) { flash(e.message, false); }
+    return false;
+}
+async function logPoll() {
+    try {
+        const r = await api('GET', '/firewall/logs?' + logQuery({ limit: 200, since_id: logLast }));
+        const tb = document.querySelector('#log-table tbody');
+        r.entries.slice().reverse().forEach(e => tb.insertBefore(logRow(e), tb.firstChild));
+        while (tb.rows.length > 500) tb.deleteRow(-1);
+        if (r.entries.length) document.getElementById('log-empty').style.display = 'none';
+        logLast = Math.max(logLast, r.last_id || 0);
+    } catch (e) { }
+}
+function logLive() {
+    clearInterval(logTimer);
+    if (document.getElementById('log-live').checked) logTimer = setInterval(logPoll, 2000);
+}
+function setDefaultDeny() { api('PUT', '/firewall/logs/default-deny', { enabled: document.getElementById('log-default-deny').checked }).then(() => flash('Default-deny logging updated.', true)).catch(e => flash(e.message, false)); }
+function clearLog() { if (confirm('Delete the stored firewall log?')) api('DELETE', '/firewall/logs').then(() => logSearch()).catch(e => flash(e.message, false)); }
+
+loadGeo(); loadThreat(); logSearch(); aliasTypeChanged();
 </script>
 </body>
 </html>

@@ -35,6 +35,72 @@ pub struct Alias {
     pub entries: Vec<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// Set for aliases that fill themselves (URL table, GeoIP, threat
+    /// feed): `entries` is then rewritten by [`crate::feeds`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<AliasSource>,
+}
+
+/// Where a self-filling alias gets its entries (table
+/// `firewall_alias_sources`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AliasSource {
+    /// `url`, `geoip` or `threat`.
+    pub kind: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    /// geoip: ISO 3166-1 alpha-2 country codes.
+    #[serde(default)]
+    pub countries: Vec<String>,
+    #[serde(default = "default_refresh")]
+    pub refresh_secs: u64,
+    #[serde(default = "default_max_entries")]
+    pub max_entries: u64,
+    /// threat: `in`, `out` or `both`.
+    #[serde(default = "default_direction")]
+    pub direction: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub last_attempt: Option<i64>,
+    #[serde(default)]
+    pub last_refresh: Option<i64>,
+    #[serde(default)]
+    pub last_status: Option<String>,
+    #[serde(default)]
+    pub last_count: Option<i64>,
+}
+
+impl AliasSource {
+    /// A source of `kind` with the defaults (daily, 100 000 entries).
+    pub fn new(kind: &str) -> Self {
+        AliasSource {
+            kind: kind.to_string(),
+            url: None,
+            countries: Vec::new(),
+            refresh_secs: default_refresh(),
+            max_entries: default_max_entries(),
+            direction: default_direction(),
+            enabled: true,
+            last_attempt: None,
+            last_refresh: None,
+            last_status: None,
+            last_count: None,
+        }
+    }
+}
+
+fn default_refresh() -> u64 {
+    86_400
+}
+fn default_max_entries() -> u64 {
+    100_000
+}
+fn default_direction() -> String {
+    "both".into()
+}
+fn default_true() -> bool {
+    true
 }
 
 impl Serialize for AliasKind {
@@ -78,7 +144,7 @@ fn fam(a: &IpAddr) -> IpVersion {
 }
 
 /// One validated host entry: its family and its nft element text.
-fn host_entry(e: &str) -> Result<(IpVersion, String)> {
+pub(crate) fn host_entry(e: &str) -> Result<(IpVersion, String)> {
     let bad = || {
         Error::Config(format!(
             "Invalid alias entry {e:?} (address, CIDR or a-b range)"
@@ -238,6 +304,7 @@ pub async fn load_aliases(store: &ConfigStore) -> Result<Vec<Alias>> {
     .fetch_all(store.pool()?)
     .await
     .map_err(db("load aliases"))?;
+    let mut sources = load_sources(store).await?;
     rows.iter()
         .map(|r| {
             let name: String = r.get(0);
@@ -246,10 +313,46 @@ pub async fn load_aliases(store: &ConfigStore) -> Result<Vec<Alias>> {
                 entries: serde_json::from_str(&r.get::<String, _>(2))
                     .map_err(|e| Error::Config(format!("alias {name}: bad entries: {e}")))?,
                 description: r.get(3),
+                source: sources.remove(&name),
                 name,
             })
         })
         .collect()
+}
+
+/// Every alias source row, by alias name.
+pub async fn load_sources(
+    store: &ConfigStore,
+) -> Result<std::collections::HashMap<String, AliasSource>> {
+    let rows = sqlx::query(
+        "SELECT alias, kind, url, countries, refresh_secs, max_entries, direction, enabled,
+                last_attempt, last_refresh, last_status, last_count
+         FROM firewall_alias_sources",
+    )
+    .fetch_all(store.pool()?)
+    .await
+    .map_err(db("load alias sources"))?;
+    Ok(rows
+        .iter()
+        .map(|r| {
+            (
+                r.get::<String, _>(0),
+                AliasSource {
+                    kind: r.get(1),
+                    url: r.get(2),
+                    countries: serde_json::from_str(&r.get::<String, _>(3)).unwrap_or_default(),
+                    refresh_secs: r.get::<i64, _>(4).max(0) as u64,
+                    max_entries: r.get::<i64, _>(5).max(0) as u64,
+                    direction: r.get(6),
+                    enabled: r.get::<i64, _>(7) != 0,
+                    last_attempt: r.get(8),
+                    last_refresh: r.get(9),
+                    last_status: r.get(10),
+                    last_count: r.get(11),
+                },
+            )
+        })
+        .collect())
 }
 
 /// One alias by name.
@@ -278,6 +381,38 @@ pub async fn save_alias(store: &ConfigStore, alias: &Alias) -> Result<()> {
     .execute(store.pool()?)
     .await
     .map_err(db("save alias"))?;
+    match &a.source {
+        Some(src) => {
+            let src = crate::feeds::check_source(&a, src)?;
+            sqlx::query(
+                "INSERT INTO firewall_alias_sources
+                     (alias, kind, url, countries, refresh_secs, max_entries, direction, enabled)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(alias) DO UPDATE SET kind = excluded.kind, url = excluded.url,
+                     countries = excluded.countries, refresh_secs = excluded.refresh_secs,
+                     max_entries = excluded.max_entries, direction = excluded.direction,
+                     enabled = excluded.enabled",
+            )
+            .bind(&a.name)
+            .bind(&src.kind)
+            .bind(&src.url)
+            .bind(serde_json::to_string(&src.countries).expect("strings serialize"))
+            .bind(src.refresh_secs as i64)
+            .bind(src.max_entries as i64)
+            .bind(&src.direction)
+            .bind(src.enabled as i64)
+            .execute(store.pool()?)
+            .await
+            .map_err(db("save alias source"))?;
+        }
+        None => {
+            sqlx::query("DELETE FROM firewall_alias_sources WHERE alias = ?")
+                .bind(&a.name)
+                .execute(store.pool()?)
+                .await
+                .map_err(db("save alias"))?;
+        }
+    }
     Ok(())
 }
 
@@ -291,6 +426,11 @@ pub async fn delete_alias(store: &ConfigStore, name: &str) -> Result<()> {
         )));
     }
     sqlx::query("DELETE FROM firewall_aliases WHERE name = ?")
+        .bind(name)
+        .execute(store.pool()?)
+        .await
+        .map_err(db("delete alias"))?;
+    sqlx::query("DELETE FROM firewall_alias_sources WHERE alias = ?")
         .bind(name)
         .execute(store.pool()?)
         .await
@@ -333,6 +473,7 @@ mod tests {
             kind: AliasKind::Host,
             entries: e.iter().map(|s| s.to_string()).collect(),
             description: None,
+            source: None,
         }
     }
 
@@ -398,6 +539,7 @@ mod tests {
             kind: AliasKind::Port,
             entries: vec!["80".into(), "8000-8010".into()],
             description: None,
+            source: None,
         };
         assert_eq!(a.elements().unwrap()[0].1, vec!["80", "8000-8010"]);
         assert!(sets_script(std::slice::from_ref(&a))

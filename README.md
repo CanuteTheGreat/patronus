@@ -42,6 +42,20 @@ that are not finished are listed separately under
 - Host and port aliases are nftables sets: rules use them as `$name`, and
   editing an alias changes what is blocked or allowed at once, without
   reloading the ruleset. [C17]
+- URL-table aliases (like pfSense's "URL Table"): an alias whose addresses (or
+  ports) come from a list on a web server, refreshed on a schedule you set,
+  capped in size; a failed download keeps the previous list and the alias shows
+  why. [C56]
+- GeoIP blocking: a country-set alias holds every address range of the
+  countries you pick (free DB-IP "country lite" database, downloaded monthly);
+  use it as a source or destination in any rule. [C57]
+- Threat-intelligence feeds (Spamhaus DROP/EDROP, FireHOL level 1, abuse.ch or a
+  feed of your own): enabled feeds are refreshed, capped, and their addresses
+  are dropped ahead of your rules; private ranges a feed lists are never
+  blocked and an `ti_allow` alias exempts hosts. [C58]
+- Firewall log viewer: packets that a logging rule (or a threat feed, or the
+  default policy) drops or accepts are recorded with the rule that caught them;
+  search by rule, action, address, port, interface or text, follow it live. [C59]
 - Schedules: a rule can be limited to days and hours; it switches on and
   off on time, and after a reboot. [C18]
 - Port forwards (protocol + external port to an internal host and port)

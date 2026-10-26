@@ -91,6 +91,13 @@ config file that only one process knows about.
   disabled); NAT rows are manual rules, port forwards (`interface_in`) and
   1:1 mappings. Tests can fake the schedule clock with
   `PATRONUS_FAKE_TIME_FILE` (`YYYY-MM-DD HH:MM`).
+- **Self-filling aliases (lane B, `patronus_firewall::feeds`):**
+  `firewall_alias_sources` turns an alias into a URL table, a GeoIP country
+  set (DB-IP lite) or a threat feed (`ti_<id>`, rules in chain `ti_check`);
+  `refresh_due`/`refresh_alias` fetch, parse, merge, cap and store the entries
+  (a failed fetch keeps the old ones) and patronus-web swaps the live nft set.
+  Logging rules write to NFLOG group 7, collected into `firewall_log`
+  (`state/fwlog.rs`). See docs/FIREWALL-FEEDS.md.
 - **Bridges are layer 2 (lane B):** every firewall apply writes 0 to
   `net.bridge.bridge-nf-call-{iptables,ip6tables,arptables}` when
   `br_netfilter` is loaded (`bridges_stay_layer2`), otherwise frames between

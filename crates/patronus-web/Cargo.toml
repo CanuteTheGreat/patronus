@@ -104,3 +104,4 @@ hmac = { version = "0.12", optional = true }
 sha1 = { version = "0.10", optional = true }
 # statvfs (real disk usage), hostname, CLK_TCK (service uptimes)
 nix = { workspace = true, features = ["fs", "hostname", "feature"] }
+libc = "0.2"

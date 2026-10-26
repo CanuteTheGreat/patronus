@@ -428,7 +428,10 @@ pub fn render_filter_rule(rule: &FirewallRule, aliases: &AliasMap) -> Result<Vec
                 Some(id) => format!("patronus[{id}] {}: ", rule.action),
                 None => format!("patronus {}: ", rule.action),
             };
-            parts.push(format!("log prefix \"{tag}\""));
+            parts.push(format!(
+                "log prefix \"{tag}\" group {}",
+                crate::feeds::NFLOG_GROUP
+            ));
         }
         parts.push(match (&rule.action, &rule.protocol) {
             (FirewallAction::Reject, Some(Protocol::Tcp)) => "reject with tcp reset".to_string(),

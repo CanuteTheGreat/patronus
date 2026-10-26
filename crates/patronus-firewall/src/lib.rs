@@ -7,6 +7,7 @@ use std::process::Command;
 
 pub mod aliases;
 pub mod applier;
+pub mod feeds;
 pub mod ha_rules;
 pub mod nftables;
 pub mod rules;
