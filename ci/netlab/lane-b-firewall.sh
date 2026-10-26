@@ -123,7 +123,7 @@ echo "=== 1. allow/block per rule; reject vs drop; logging"
 expect_sees "LAN -> internet :9000 before any rule" C $NL_WWW 9000 $NL_RTR_WAN
 api_ok POST /firewall/rules "$(rule lb-block-9000 reject $NL_WWW 9000 ',"log":true')"
 BLOCK=$(json_id)
-nl_assert_nft_has "ip daddr $NL_WWW tcp dport 9000 log prefix \"patronus[$BLOCK] reject: \" reject with tcp reset"
+nl_assert_nft_has "ip daddr $NL_WWW tcp dport 9000 log prefix \"patronus[$BLOCK] reject: \" group 7 reject with tcp reset"
 expect_refused "LAN -> internet :9000 with a reject rule" C $NL_WWW 9000
 nl_expect_http "LAN -> internet :80 (not matched) still allowed" "http://$NL_WWW/" "sees $NL_RTR_WAN"
 api_ok PUT /firewall/rules/$BLOCK "$(rule lb-block-9000 drop $NL_WWW 9000)"
