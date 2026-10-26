@@ -527,6 +527,120 @@ pub async fn delete_user(store: &ConfigStore, id: i64) -> Result<bool> {
 }
 
 // ---------------------------------------------------------------------
+// GitOps
+// ---------------------------------------------------------------------
+
+/// `kind: IpsecRoadWarrior` from a repository: the profile form's fields
+/// (`auth, server_id, local_address, pool, dns, local_ts, ike_proposals,
+/// esp_proposals, enabled, description`) and its users:
+///
+/// ```yaml
+/// users:
+///   - { username: alice, password_file: /etc/patronus/secrets/alice }   # eap
+///   - { username: bob }                                                 # cert
+/// ```
+///
+/// The user list is authoritative: users not listed are removed. A new EAP
+/// user needs `password` or `password_file`; an existing one keeps its
+/// password when neither is given.
+pub async fn gitops_upsert_profile(
+    store: &ConfigStore,
+    name: &str,
+    spec: &serde_json::Value,
+) -> Result<()> {
+    let mut input: ProfileInput = serde_json::from_value(spec.clone())
+        .map_err(|e| invalid(format!("road-warrior profile {name}: {e}")))?;
+    input.name = Some(name.to_string());
+    let users: Vec<serde_json::Value> = spec
+        .get("users")
+        .and_then(|u| u.as_array())
+        .cloned()
+        .unwrap_or_default();
+    // validate the whole list before touching anything
+    let mut wanted = Vec::new();
+    for u in &users {
+        let uname = u.get("username").and_then(|n| n.as_str()).ok_or_else(|| {
+            invalid(format!(
+                "road-warrior profile {name}: a user needs a username"
+            ))
+        })?;
+        wanted.push(check_username(uname)?);
+    }
+    let cur = list_profiles(store)
+        .await?
+        .into_iter()
+        .find(|p| p.name == name);
+    // refuse a list that cannot be applied before anything is written
+    let auth = opt(&input.auth)
+        .map(str::to_string)
+        .or_else(|| cur.as_ref().map(|c| c.auth.clone()))
+        .unwrap_or_else(|| "eap".into());
+    let known: Vec<String> = list_users(store)
+        .await?
+        .into_iter()
+        .filter(|u| u.profile == name)
+        .map(|u| u.username)
+        .collect();
+    for (u, uname) in users.iter().zip(&wanted) {
+        if auth == "eap"
+            && !known.contains(uname)
+            && crate::ipsec::secret_from(u, "password", "password_file")?.is_none()
+        {
+            return Err(invalid(format!(
+                "road-warrior user {uname}: a new EAP user needs password or password_file"
+            )));
+        }
+    }
+    let id = save_profile(store, cur.as_ref().map(|p| p.id), &input).await?;
+    let profile = list_profiles(store)
+        .await?
+        .into_iter()
+        .find(|p| p.id == id)
+        .ok_or_else(|| Error::Config("profile vanished".into()))?;
+    let existing: Vec<RwUser> = list_users(store)
+        .await?
+        .into_iter()
+        .filter(|u| u.profile == name)
+        .collect();
+    for e in &existing {
+        if !wanted.contains(&e.username) {
+            delete_user(store, e.id).await?;
+        }
+    }
+    for (u, uname) in users.iter().zip(&wanted) {
+        let password = crate::ipsec::secret_from(u, "password", "password_file")?;
+        let cur = existing.iter().find(|e| &e.username == uname);
+        if profile.auth == "eap" && cur.is_none() && password.is_none() {
+            return Err(invalid(format!(
+                "road-warrior user {uname}: a new EAP user needs password or password_file"
+            )));
+        }
+        let ui = UserInput {
+            username: Some(uname.clone()),
+            enabled: u.get("enabled").and_then(|v| v.as_bool()),
+            password,
+            description: u
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+        };
+        save_user(store, name, cur.map(|c| c.id), &ui).await?;
+    }
+    Ok(())
+}
+
+pub async fn gitops_delete_profile(store: &ConfigStore, name: &str) -> Result<()> {
+    if let Some(p) = list_profiles(store)
+        .await?
+        .into_iter()
+        .find(|p| p.name == name)
+    {
+        delete_profile(store, p.id).await?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
 // PKI (openssl)
 // ---------------------------------------------------------------------
 
@@ -1410,6 +1524,62 @@ mod tests {
             .iter()
             .all(|u| u.profile == "rwc"));
         assert!(!delete_user(&s, uid).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn road_warrior_profiles_from_a_repository_reconcile_their_users() {
+        let s = testutil::store().await;
+        let spec = serde_json::json!({
+            "auth": "eap", "server_id": "vpn.example.test", "pool": "10.99.50.0/24",
+            "local_ts": "192.168.50.0/24",
+            "users": [
+                { "username": "alice", "password": "alice-secret-pw" },
+                { "username": "bob", "password": "bob-secret-pw12", "enabled": false },
+            ],
+        });
+        gitops_upsert_profile(&s, "rw", &spec).await.unwrap();
+        let u = list_users(&s).await.unwrap();
+        assert_eq!(u.len(), 2);
+        assert!(u.iter().any(|x| x.username == "bob" && !x.enabled));
+        // the user list is authoritative; an existing user keeps its password
+        let spec2 = serde_json::json!({
+            "auth": "eap", "server_id": "vpn.example.test", "pool": "10.99.50.0/24",
+            "users": [ { "username": "alice" }, { "username": "carol", "password": "carol-secret-1" } ],
+        });
+        gitops_upsert_profile(&s, "rw", &spec2).await.unwrap();
+        let u = list_users(&s).await.unwrap();
+        let names: Vec<&str> = u.iter().map(|x| x.username.as_str()).collect();
+        assert_eq!(names, vec!["alice", "carol"]);
+        assert_eq!(u[0].password.as_deref(), Some("alice-secret-pw"));
+        assert_eq!(
+            list_profiles(&s).await.unwrap()[0].local_ts,
+            "192.168.50.0/24",
+            "edit keeps unset fields"
+        );
+        // a new EAP user needs a password; nothing is half-applied on a bad list
+        let bad = serde_json::json!({
+            "auth": "eap", "server_id": "vpn.example.test", "pool": "10.99.50.0/24",
+            "users": [ { "username": "dave" } ],
+        });
+        assert!(gitops_upsert_profile(&s, "rw", &bad).await.is_err());
+        let bad = serde_json::json!({ "auth": "eap", "server_id": "vpn.example.test", "pool": "10.99.50.0/24", "users": [ { "username": "bad name", "password": "longenough12" } ] });
+        assert!(gitops_upsert_profile(&s, "rw", &bad).await.is_err());
+        let names: Vec<String> = list_users(&s)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|u| u.username)
+            .collect();
+        assert_eq!(
+            names,
+            vec!["alice", "carol"],
+            "a refused list changes nothing"
+        );
+        gitops_delete_profile(&s, "rw").await.unwrap();
+        gitops_delete_profile(&s, "rw").await.unwrap();
+        assert!(
+            list_profiles(&s).await.unwrap().is_empty() && list_users(&s).await.unwrap().is_empty()
+        );
     }
 
     fn have_openssl() -> bool {

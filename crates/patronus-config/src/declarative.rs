@@ -46,6 +46,17 @@ pub enum ResourceKind {
     Certificate,
     User,
     SystemSettings,
+    /// Firewall alias: host/port list, URL table, GeoIP country set or
+    /// threat feed (`spec` is a free-form object, see docs/GITOPS.md).
+    Alias,
+    /// WireGuard tunnel with its peers.
+    WireGuardTunnel,
+    /// IKEv2 site-to-site tunnel.
+    IpsecTunnel,
+    /// IKEv2 road-warrior profile with its users.
+    IpsecRoadWarrior,
+    /// RBAC group (`privileges: {firewall: write, vpn: read}`).
+    Group,
 }
 
 /// Resource metadata
@@ -74,7 +85,22 @@ pub enum ResourceSpec {
     HaProxyBackend(HaProxyBackendSpec),
     Certificate(CertificateSpec),
     User(UserSpec),
+    /// Specs of the kinds whose shape their applier owns (Alias, WireGuard
+    /// tunnels, IPsec, accounts and groups): a free-form object. Must stay
+    /// before `SystemSettings`, whose fields are all optional.
+    Generic(serde_json::Value),
     SystemSettings(SystemSettingsSpec),
+}
+
+/// The free-form spec object of a [`ResourceSpec::Generic`] resource.
+pub fn spec_value(config: &DeclarativeConfig) -> Result<&serde_json::Value> {
+    match &config.spec {
+        ResourceSpec::Generic(v) if v.is_object() => Ok(v),
+        _ => Err(Error::Config(format!(
+            "{}: the spec of a {:?} must be an object",
+            config.metadata.name, config.kind
+        ))),
+    }
 }
 
 /// Firewall rule specification
@@ -410,6 +436,15 @@ impl ConfigParser {
             (ResourceKind::VpnConnection, ResourceSpec::VpnConnection(spec)) => {
                 Self::validate_vpn_connection(spec)?;
             }
+            (
+                ResourceKind::Alias
+                | ResourceKind::WireGuardTunnel
+                | ResourceKind::IpsecTunnel
+                | ResourceKind::IpsecRoadWarrior
+                | ResourceKind::User
+                | ResourceKind::Group,
+                ResourceSpec::Generic(v),
+            ) if v.is_object() => {}
             _ => {
                 return Err(Error::Config(format!(
                     "Kind {:?} does not match spec",

@@ -370,6 +370,10 @@ enum UsersCommands {
         /// Account name
         name: String,
     },
+    /// Print the argon2 hash of a password (read from stdin, one line) for a
+    /// GitOps `User` resource's `password_hash`
+    #[command(name = "hash-password")]
+    HashPassword,
 }
 
 #[cfg(feature = "plugins")]
@@ -581,6 +585,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Users { action } => match action {
             UsersCommands::List => users::list(cli.db.as_deref()).await?,
             UsersCommands::Reset2fa { name } => users::reset_2fa(cli.db.as_deref(), &name).await?,
+            UsersCommands::HashPassword => users::hash_password()?,
         },
 
         Commands::Ztp { bootstrap, force } => {

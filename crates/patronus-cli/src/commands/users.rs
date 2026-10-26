@@ -34,6 +34,20 @@ pub async fn list(db: Option<&Path>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `patronus users hash-password`: the argon2 hash of the password on stdin,
+/// for `password_hash:` in a GitOps `User` resource (the password itself
+/// never goes into the repository).
+pub fn hash_password() -> anyhow::Result<()> {
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    let pw = line.trim_end_matches(['\n', '\r']);
+    if pw.len() < 8 {
+        anyhow::bail!("the password must have at least 8 characters");
+    }
+    println!("{}", patronus_secrets::crypto::hash_password(pw)?);
+    Ok(())
+}
+
 pub async fn reset_2fa(db: Option<&Path>, name: &str) -> anyhow::Result<()> {
     let store = open_store(db).await?;
     let r = sqlx::query(

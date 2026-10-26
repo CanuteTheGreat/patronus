@@ -1004,9 +1004,6 @@ impl FirewallManager {
     }
 
     fn body_to_alias(name: &str, b: &AliasBody) -> anyhow::Result<Alias> {
-        use patronus_firewall::aliases::AliasSource;
-        use patronus_firewall::feeds;
-        let t = b.alias_type.trim().to_ascii_lowercase();
         let entries: Vec<String> = b
             .entries
             .iter()
@@ -1015,60 +1012,14 @@ impl FirewallManager {
             .filter(|e| !e.is_empty())
             .map(str::to_string)
             .collect();
-        // pfSense-style alias types that fill themselves
-        let (kind, source) = match t.as_str() {
-            "geoip" => {
-                let mut s = b
-                    .source
-                    .clone()
-                    .unwrap_or_else(|| AliasSource::new(feeds::KIND_GEOIP));
-                if s.countries.is_empty() {
-                    s.countries = entries.clone();
-                }
-                s.kind = feeds::KIND_GEOIP.into();
-                (patronus_firewall::nftables::AliasKind::Host, Some(s))
-            }
-            "urltable" | "url_table" | "url" | "urltable_ports" | "url_table_ports"
-            | "url_ports" => {
-                let mut s = b
-                    .source
-                    .clone()
-                    .unwrap_or_else(|| AliasSource::new(feeds::KIND_URL));
-                if s.url.as_deref().unwrap_or("").is_empty() {
-                    s.url = entries.first().cloned();
-                }
-                if s.kind != feeds::KIND_THREAT {
-                    s.kind = feeds::KIND_URL.into();
-                }
-                let k = if t.ends_with("ports") {
-                    patronus_firewall::nftables::AliasKind::Port
-                } else {
-                    patronus_firewall::nftables::AliasKind::Host
-                };
-                (k, Some(s))
-            }
-            _ => (
-                aliases::parse_kind(&b.alias_type).map_err(Self::e)?,
-                b.source.clone(),
-            ),
-        };
-        let mut a = Alias {
-            name: name.to_string(),
-            kind,
-            entries: if source.is_some() {
-                Vec::new()
-            } else {
-                entries
-            },
-            description: b.description.clone().filter(|d| !d.trim().is_empty()),
-            source,
-        }
-        .validated()
-        .map_err(Self::e)?;
-        if let Some(s) = a.source.clone() {
-            a.source = Some(feeds::check_source(&a, &s).map_err(Self::e)?);
-        }
-        Ok(a)
+        patronus_firewall::feeds::build_alias(
+            name,
+            &b.alias_type,
+            entries,
+            b.description.clone(),
+            b.source.clone(),
+        )
+        .map_err(Self::e)
     }
 
     pub async fn create_alias(&self, b: AliasBody) -> anyhow::Result<()> {

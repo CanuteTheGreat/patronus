@@ -203,6 +203,63 @@ pub fn check_source(alias: &Alias, s: &AliasSource) -> Result<AliasSource> {
     Ok(s)
 }
 
+/// Build a validated alias from the user-facing description shared by the
+/// web API and GitOps: `alias_type` is `host`, `port`, `geoip`,
+/// `urltable` or `urltable_ports`; for the self-filling types `entries`
+/// are the countries (geoip) or the URL (urltable) unless `source` says
+/// more. The entries of a self-filling alias come from refreshing it.
+pub fn build_alias(
+    name: &str,
+    alias_type: &str,
+    entries: Vec<String>,
+    description: Option<String>,
+    source: Option<AliasSource>,
+) -> Result<Alias> {
+    let t = alias_type.trim().to_ascii_lowercase();
+    let (kind, source) = match t.as_str() {
+        "geoip" => {
+            let mut s = source.unwrap_or_else(|| AliasSource::new(KIND_GEOIP));
+            if s.countries.is_empty() {
+                s.countries = entries.clone();
+            }
+            s.kind = KIND_GEOIP.into();
+            (AliasKind::Host, Some(s))
+        }
+        "urltable" | "url_table" | "url" | "urltable_ports" | "url_table_ports" | "url_ports" => {
+            let mut s = source.unwrap_or_else(|| AliasSource::new(KIND_URL));
+            if s.url.as_deref().unwrap_or("").is_empty() {
+                s.url = entries.first().cloned();
+            }
+            if s.kind != KIND_THREAT {
+                s.kind = KIND_URL.into();
+            }
+            let k = if t.ends_with("ports") {
+                AliasKind::Port
+            } else {
+                AliasKind::Host
+            };
+            (k, Some(s))
+        }
+        _ => (aliases::parse_kind(alias_type)?, source),
+    };
+    let mut a = Alias {
+        name: name.to_string(),
+        kind,
+        entries: if source.is_some() {
+            Vec::new()
+        } else {
+            entries
+        },
+        description: description.filter(|d| !d.trim().is_empty()),
+        source,
+    }
+    .validated()?;
+    if let Some(s) = a.source.clone() {
+        a.source = Some(check_source(&a, &s)?);
+    }
+    Ok(a)
+}
+
 // ---------------------------------------------------------------------
 // ranges: parse, merge, subtract, render
 // ---------------------------------------------------------------------

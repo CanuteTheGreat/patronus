@@ -414,19 +414,27 @@ impl ApplyEngine {
     }
 
     fn sort_by_dependencies(&self, mut changes: Vec<ConfigChange>) -> Result<Vec<ConfigChange>> {
-        // Topological sort based on dependencies
-        // For now, simple ordering: Create before Update before Delete
-        changes.sort_by(|a, b| match (&a.operation, &b.operation) {
-            (ChangeOp::Create, ChangeOp::Create) => std::cmp::Ordering::Equal,
-            (ChangeOp::Create, _) => std::cmp::Ordering::Less,
-            (_, ChangeOp::Create) => std::cmp::Ordering::Greater,
-            (ChangeOp::Update, ChangeOp::Update) => std::cmp::Ordering::Equal,
-            (ChangeOp::Update, ChangeOp::Delete) => std::cmp::Ordering::Less,
-            (ChangeOp::Delete, ChangeOp::Update) => std::cmp::Ordering::Greater,
-            (ChangeOp::Delete, ChangeOp::Delete) => std::cmp::Ordering::Equal,
-            _ => std::cmp::Ordering::Equal,
+        // Create before Update before Delete. Within that, what others refer
+        // to comes first when something is made (aliases before the rules
+        // naming them, groups before the users in them) and last when it is
+        // removed (a rule goes before the alias it used).
+        let op = |c: &ConfigChange| match c.operation {
+            ChangeOp::Create => 0,
+            ChangeOp::Update => 1,
+            ChangeOp::Delete => 2,
+            ChangeOp::NoChange => 3,
+        };
+        let referred =
+            |c: &ConfigChange| matches!(c.resource_kind, ResourceKind::Alias | ResourceKind::Group);
+        changes.sort_by_key(|c| {
+            let kind_rank = match (c.operation == ChangeOp::Delete, referred(c)) {
+                (false, true) => 0,
+                (false, false) => 1,
+                (true, false) => 0,
+                (true, true) => 1,
+            };
+            (op(c), kind_rank)
         });
-
         Ok(changes)
     }
 

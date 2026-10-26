@@ -111,12 +111,67 @@ pub async fn sync(opts: Options, apply: Option<bool>) -> anyhow::Result<()> {
         }
         None => println!("{} nothing new", "•".cyan()),
     }
+    if applying {
+        refresh_feeds(opts.db.as_deref(), true).await;
+    }
     Ok(())
+}
+
+/// URL-table / GeoIP / threat-feed aliases that a repository declared start
+/// empty: fetch whatever is due (everything new is) and load the result.
+/// patronus-web does the same every minute when it runs; this covers boxes
+/// that only run the `patronus-gitops` service.
+async fn refresh_feeds(db: Option<&std::path::Path>, announce: bool) {
+    let store = match super::apply::open_store(db).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("alias refresh: {e}");
+            return;
+        }
+    };
+    let now = chrono::Utc::now().timestamp();
+    let out = match patronus_firewall::feeds::refresh_due(
+        &store,
+        &patronus_firewall::feeds::CurlFetcher,
+        None,
+        now,
+    )
+    .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!("alias refresh: {e}");
+            return;
+        }
+    };
+    for o in &out {
+        if announce || !o.ok {
+            println!(
+                "{} alias {}: {}",
+                if o.ok { "✓".green() } else { "✗".red() },
+                o.alias,
+                o.status
+            );
+        }
+    }
+    if out.iter().any(|o| o.changed.is_some()) {
+        use patronus_config::Applier;
+        if let Err(e) = patronus_firewall::FirewallApplier.apply(&store).await {
+            tracing::warn!("loading the refreshed aliases: {e}");
+        }
+    }
 }
 
 /// Poll forever (the `patronus-gitops` service).
 pub async fn watch(opts: Options) -> anyhow::Result<()> {
     let mut w = watcher(&opts).await?;
+    let db = opts.db.clone();
+    // (a thread driving the future: the store's futures are not Send)
+    let rt = tokio::runtime::Handle::current();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        rt.block_on(refresh_feeds(db.as_deref(), false));
+    });
     w.run().await
 }
 

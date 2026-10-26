@@ -34,6 +34,8 @@ pub fn registry() -> ApplierRegistry {
         // --- Phase::Firewall (lane B rules; lane A applier) ---
         .with(patronus_firewall::FirewallApplier)
         // --- Phase::Services (lanes D, F, G, J: dhcp, dns, vpn, ha, ids) ---
+        // web accounts + RBAC groups (GitOps `User` / `Group`; rows only)
+        .with(patronus_config::accounts::AccountsApplier)
         .with_all(patronus_network::lan::appliers())
         // --- lane F: WireGuard (interfaces phase), IPsec (services phase) ---
         .with_all(patronus_network::vpn_appliers())

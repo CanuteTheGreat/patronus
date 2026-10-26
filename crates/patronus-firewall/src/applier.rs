@@ -737,11 +737,18 @@ impl Applier for FirewallApplier {
     }
 
     fn resource_kinds(&self) -> &'static [ResourceKind] {
-        &[ResourceKind::FirewallRule, ResourceKind::NatRule]
+        &[
+            ResourceKind::FirewallRule,
+            ResourceKind::NatRule,
+            ResourceKind::Alias,
+        ]
     }
 
     async fn upsert_resource(&self, store: &ConfigStore, config: &DeclarativeConfig) -> Result<()> {
         let name = &config.metadata.name;
+        if config.kind == ResourceKind::Alias {
+            return upsert_alias_resource(store, config).await;
+        }
         let (filters, nats, schedule) = declarative_to_rules(config)?;
         store.delete_rules_by_name(RuleOrigin::Gitops, name).await?;
         if let Some(s) = &schedule {
@@ -759,9 +766,17 @@ impl Applier for FirewallApplier {
     async fn delete_resource(
         &self,
         store: &ConfigStore,
-        _kind: &ResourceKind,
+        kind: &ResourceKind,
         name: &str,
     ) -> Result<()> {
+        if *kind == ResourceKind::Alias {
+            // a rule that still names the alias keeps it alive (the repository
+            // deleted both: the rule's own delete runs in the same pass)
+            return match crate::aliases::get_alias(store, name).await? {
+                Some(_) => crate::aliases::delete_alias(store, name).await,
+                None => Ok(()),
+            };
+        }
         store.delete_rules_by_name(RuleOrigin::Gitops, name).await?;
         let sched = gitops_schedule_name(name);
         if crate::schedule::load_schedules(store)
@@ -773,6 +788,80 @@ impl Applier for FirewallApplier {
         }
         Ok(())
     }
+}
+
+/// `kind: Alias` from a repository.
+///
+/// ```yaml
+/// spec:
+///   type: geoip              # host | port | geoip | urltable | urltable_ports
+///   entries: [CN, RU]        # addresses / ports / countries / the URL
+///   url: https://...         # urltable (instead of entries)
+///   refresh_secs: 86400
+///   max_entries: 100000
+///   source: { kind: threat, url: ..., direction: both }   # a threat feed (name ti_<id>)
+///   description: ...
+/// ```
+async fn upsert_alias_resource(store: &ConfigStore, config: &DeclarativeConfig) -> Result<()> {
+    #[derive(serde::Deserialize)]
+    struct Spec {
+        #[serde(rename = "type", default = "host_type")]
+        alias_type: String,
+        #[serde(default)]
+        entries: Vec<String>,
+        #[serde(default)]
+        url: Option<String>,
+        #[serde(default)]
+        refresh_secs: Option<u64>,
+        #[serde(default)]
+        max_entries: Option<u64>,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        source: Option<crate::aliases::AliasSource>,
+    }
+    fn host_type() -> String {
+        "host".into()
+    }
+    let name = &config.metadata.name;
+    let v = patronus_config::declarative::spec_value(config)?;
+    let s: Spec = serde_json::from_value(v.clone())
+        .map_err(|e| Error::Config(format!("Invalid alias {name}: {e}")))?;
+    let mut source = s.source;
+    if source.is_none() && (s.url.is_some() || s.refresh_secs.is_some() || s.max_entries.is_some())
+    {
+        let mut x = crate::aliases::AliasSource::new(crate::feeds::KIND_URL);
+        x.url = s.url.clone();
+        source = Some(x);
+    }
+    if let (Some(x), Some(u)) = (source.as_mut(), s.url.as_ref()) {
+        x.url.get_or_insert_with(|| u.clone());
+    }
+    if let Some(x) = source.as_mut() {
+        if let Some(r) = s.refresh_secs {
+            x.refresh_secs = r;
+        }
+        if let Some(m) = s.max_entries {
+            x.max_entries = m;
+        }
+    }
+    let mut a = crate::feeds::build_alias(
+        name,
+        &s.alias_type,
+        s.entries,
+        s.description
+            .or_else(|| config.metadata.description.clone()),
+        source,
+    )?;
+    // a self-filling alias keeps what it fetched until its next refresh
+    if a.source.is_some() {
+        if let Some(old) = crate::aliases::get_alias(store, name).await? {
+            if old.kind == a.kind {
+                a.entries = old.entries;
+            }
+        }
+    }
+    crate::aliases::save_alias(store, &a).await
 }
 
 fn protocol_of(p: Option<&str>) -> Result<Option<Protocol>> {
@@ -995,6 +1084,98 @@ mod tests {
         let existing: Vec<String> = wan.iter().chain(lan).map(|s| s.to_string()).collect();
         ensure_defaults(&s, Some(&b), &existing).await.unwrap();
         s
+    }
+
+    #[tokio::test]
+    async fn alias_resources_from_a_repository_are_upserted_kept_and_deleted() {
+        use patronus_config::ConfigParser;
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        let docs = ConfigParser::parse_yaml(
+            "- apiVersion: patronus.firewall/v1\n  kind: Alias\n  metadata: { name: office }\n  spec: { type: host, entries: [192.0.2.1, 10.0.0.0/8], description: HQ }\n\
+             - apiVersion: patronus.firewall/v1\n  kind: Alias\n  metadata: { name: cn }\n  spec: { type: geoip, entries: [cn, ru], max_entries: 5000 }\n\
+             - apiVersion: patronus.firewall/v1\n  kind: Alias\n  metadata: { name: bad }\n  spec: { type: urltable, url: \"https://lists.example.test/bad.txt\", refresh_secs: 3600 }\n\
+             - apiVersion: patronus.firewall/v1\n  kind: Alias\n  metadata: { name: ti_lab }\n  spec: { type: host, source: { kind: threat, url: \"https://lists.example.test/drop.txt\", direction: out } }\n",
+        )
+        .unwrap();
+        assert_eq!(docs.len(), 4);
+        for d in &docs {
+            FirewallApplier.upsert_resource(&s, d).await.unwrap();
+        }
+        let all = crate::aliases::load_aliases(&s).await.unwrap();
+        let get = |n: &str| all.iter().find(|a| a.name == n).unwrap().clone();
+        assert_eq!(get("office").entries, vec!["192.0.2.1", "10.0.0.0/8"]);
+        assert_eq!(get("office").description.as_deref(), Some("HQ"));
+        let cn = get("cn").source.unwrap();
+        assert_eq!(
+            (cn.kind.as_str(), cn.countries.clone(), cn.max_entries),
+            ("geoip", vec!["CN".to_string(), "RU".to_string()], 5000)
+        );
+        let bad = get("bad").source.unwrap();
+        assert_eq!(
+            (bad.kind.as_str(), bad.url.as_deref(), bad.refresh_secs),
+            ("url", Some("https://lists.example.test/bad.txt"), 3600)
+        );
+        let ti = get("ti_lab").source.unwrap();
+        assert_eq!((ti.kind.as_str(), ti.direction.as_str()), ("threat", "out"));
+        // an update of a self-filling alias keeps what it fetched
+        sqlx::query(
+            "UPDATE firewall_aliases SET entries = '[\"198.51.100.0/24\"]' WHERE name = 'bad'",
+        )
+        .execute(s.pool().unwrap())
+        .await
+        .unwrap();
+        FirewallApplier.upsert_resource(&s, &docs[2]).await.unwrap();
+        assert_eq!(
+            crate::aliases::get_alias(&s, "bad")
+                .await
+                .unwrap()
+                .unwrap()
+                .entries,
+            vec!["198.51.100.0/24"]
+        );
+        // the rendered ruleset has the sets
+        let r = FirewallApplier
+            .render_script(&s, false)
+            .await
+            .unwrap()
+            .script;
+        assert!(
+            r.contains("alias_office_v4")
+                && r.contains("alias_cn_v6")
+                && r.contains("alias_bad_v4"),
+            "{r}"
+        );
+        // bad specs are refused
+        let mut d = docs[0].clone();
+        d.spec = patronus_config::ResourceSpec::Generic(
+            serde_json::json!({ "type": "urltable", "url": "file:///etc/passwd" }),
+        );
+        assert!(FirewallApplier.upsert_resource(&s, &d).await.is_err());
+        d.spec = patronus_config::ResourceSpec::Generic(
+            serde_json::json!({ "type": "host", "entries": ["not an ip"] }),
+        );
+        assert!(FirewallApplier.upsert_resource(&s, &d).await.is_err());
+        // deleting (twice is fine); an alias in use is kept
+        let mut r1 = FirewallRule::new("r".into(), ChainType::Forward, FirewallAction::Drop);
+        r1.source = Some("$office".into());
+        let id = s.save_firewall_rule(&r1).await.unwrap();
+        assert!(FirewallApplier
+            .delete_resource(&s, &ResourceKind::Alias, "office")
+            .await
+            .is_err());
+        s.delete_firewall_rule(id as u64).await.unwrap();
+        for n in ["office", "cn", "bad", "ti_lab", "ti_lab"] {
+            FirewallApplier
+                .delete_resource(&s, &ResourceKind::Alias, n)
+                .await
+                .unwrap();
+        }
+        assert!(crate::aliases::load_aliases(&s).await.unwrap().is_empty());
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM firewall_alias_sources")
+            .fetch_one(s.pool().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
     }
 
     #[tokio::test]
@@ -1424,7 +1605,11 @@ mod tests {
         assert_eq!(FirewallApplier.phase(), Phase::Firewall);
         assert_eq!(
             FirewallApplier.resource_kinds(),
-            &[ResourceKind::FirewallRule, ResourceKind::NatRule]
+            &[
+                ResourceKind::FirewallRule,
+                ResourceKind::NatRule,
+                ResourceKind::Alias
+            ]
         );
     }
 

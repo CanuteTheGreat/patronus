@@ -469,6 +469,64 @@ fn install_rw_files(env: &LanEnv, rw: &crate::ipsec_rw::RwConfig) -> Result<bool
     Ok(changed)
 }
 
+/// A secret given inline (`psk: ...`) or by file (`psk_file: /etc/patronus/secrets/x`,
+/// read when the resource is applied, so the repository need not hold it).
+pub fn secret_from(v: &Value, inline: &str, file: &str) -> Result<Option<String>> {
+    if let Some(s) = v
+        .get(inline)
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        return Ok(Some(s.to_string()));
+    }
+    if let Some(f) = v
+        .get(file)
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        if !f.starts_with('/') {
+            return Err(invalid(format!("{file}: an absolute path")));
+        }
+        let t =
+            std::fs::read_to_string(f).map_err(|e| Error::Config(format!("{file} {f}: {e}")))?;
+        return Ok(Some(t.trim().to_string()));
+    }
+    Ok(None)
+}
+
+/// `kind: IpsecTunnel` from a repository: the fields of the VPN page's
+/// tunnel form (`local_address, remote_address, local_id, remote_id, psk |
+/// psk_file, local_ts, remote_ts, ike_proposals, esp_proposals,
+/// start_action, dpd_delay, enabled, description`). A new tunnel needs a PSK.
+pub async fn gitops_upsert_tunnel(store: &ConfigStore, name: &str, spec: &Value) -> Result<()> {
+    let mut input: TunnelInput = serde_json::from_value(spec.clone())
+        .map_err(|e| invalid(format!("IPsec tunnel {name}: {e}")))?;
+    input.name = Some(name.to_string());
+    input.psk = secret_from(spec, "psk", "psk_file")?;
+    let cur = list_tunnels(store)
+        .await?
+        .into_iter()
+        .find(|t| t.name == name);
+    if cur.is_none() && input.psk.is_none() {
+        return Err(invalid(format!(
+            "IPsec tunnel {name}: a new tunnel needs psk or psk_file"
+        )));
+    }
+    save_tunnel(store, cur.map(|t| t.id), &input).await?;
+    Ok(())
+}
+
+pub async fn gitops_delete_tunnel(store: &ConfigStore, name: &str) -> Result<()> {
+    if let Some(t) = list_tunnels(store)
+        .await?
+        .into_iter()
+        .find(|t| t.name == name)
+    {
+        delete_tunnel(store, t.id).await?;
+    }
+    Ok(())
+}
+
 /// The distro service that runs charon: Gentoo's OpenRC script is `ipsec`
 /// (starter + charon), its systemd unit `strongswan` (charon-systemd);
 /// other distros use `strongswan` / `strongswan-swanctl`.
@@ -591,6 +649,45 @@ impl Applier for IpsecApplier {
 
     fn phase(&self) -> Phase {
         Phase::Services
+    }
+
+    fn resource_kinds(&self) -> &'static [patronus_config::ResourceKind] {
+        &[
+            patronus_config::ResourceKind::IpsecTunnel,
+            patronus_config::ResourceKind::IpsecRoadWarrior,
+        ]
+    }
+
+    async fn upsert_resource(
+        &self,
+        store: &ConfigStore,
+        config: &patronus_config::DeclarativeConfig,
+    ) -> Result<()> {
+        let v = patronus_config::declarative::spec_value(config)?;
+        match config.kind {
+            patronus_config::ResourceKind::IpsecTunnel => {
+                gitops_upsert_tunnel(store, &config.metadata.name, v).await
+            }
+            patronus_config::ResourceKind::IpsecRoadWarrior => {
+                crate::ipsec_rw::gitops_upsert_profile(store, &config.metadata.name, v).await
+            }
+            _ => Err(invalid("resource kind for the IPsec applier")),
+        }
+    }
+
+    async fn delete_resource(
+        &self,
+        store: &ConfigStore,
+        kind: &patronus_config::ResourceKind,
+        name: &str,
+    ) -> Result<()> {
+        match kind {
+            patronus_config::ResourceKind::IpsecTunnel => gitops_delete_tunnel(store, name).await,
+            patronus_config::ResourceKind::IpsecRoadWarrior => {
+                crate::ipsec_rw::gitops_delete_profile(store, name).await
+            }
+            _ => Err(invalid("resource kind for the IPsec applier")),
+        }
     }
 
     async fn apply(&self, store: &ConfigStore) -> Result<ApplyReport> {
@@ -892,6 +989,49 @@ mod tests {
         );
         // the API never serializes the key
         assert!(!serde_json::to_string(&all).unwrap().contains(&psk));
+    }
+
+    #[tokio::test]
+    async fn tunnels_from_a_repository_are_created_updated_and_deleted() {
+        let s = testutil::store().await;
+        let psk_file = std::env::temp_dir().join(format!("pa-psk-{}", std::process::id()));
+        std::fs::write(&psk_file, "psk-from-a-file-0123456789\n").unwrap();
+        let spec = serde_json::json!({
+            "remote_address": "198.51.100.2",
+            "psk_file": psk_file.to_str().unwrap(),
+            "local_ts": "192.168.50.0/24",
+            "remote_ts": "10.2.0.0/16",
+            "description": "site b",
+        });
+        gitops_upsert_tunnel(&s, "site-b", &spec).await.unwrap();
+        let t = list_tunnels(&s).await.unwrap();
+        assert_eq!(
+            (t[0].name.as_str(), t[0].remote_ts.as_str()),
+            ("site-b", "10.2.0.0/16")
+        );
+        assert_eq!(
+            t[0].psk, "psk-from-a-file-0123456789",
+            "read from the file, trimmed"
+        );
+        // an edit keeps the PSK when none is given
+        let spec2 = serde_json::json!({ "remote_address": "198.51.100.2", "local_ts": "192.168.50.0/24", "remote_ts": "10.3.0.0/16" });
+        gitops_upsert_tunnel(&s, "site-b", &spec2).await.unwrap();
+        let t = list_tunnels(&s).await.unwrap();
+        assert_eq!(
+            (t.len(), t[0].remote_ts.as_str(), t[0].psk.as_str()),
+            (1, "10.3.0.0/16", "psk-from-a-file-0123456789")
+        );
+        // a new tunnel needs a key
+        assert!(gitops_upsert_tunnel(&s, "other", &spec2).await.is_err());
+        assert!(
+            gitops_upsert_tunnel(&s, "x", &serde_json::json!({ "psk_file": "relative/path" }))
+                .await
+                .is_err()
+        );
+        gitops_delete_tunnel(&s, "site-b").await.unwrap();
+        gitops_delete_tunnel(&s, "site-b").await.unwrap();
+        assert!(list_tunnels(&s).await.unwrap().is_empty());
+        let _ = std::fs::remove_file(&psk_file);
     }
 
     #[tokio::test]

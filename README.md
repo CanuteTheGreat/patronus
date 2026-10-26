@@ -155,6 +155,12 @@ that are not finished are listed separately under
   `patronus-gitops` service; later commits that change or delete a rule are
   followed, a broken commit is refused with the file named, and applied
   rules survive a reboot. [C38]
+- GitOps resources beyond rules: aliases (host lists, URL tables, GeoIP
+  country sets, threat feeds), WireGuard tunnels with their peers, IPsec
+  tunnels, IPsec road-warrior profiles with their users, web accounts (only
+  the password hash goes into git) and RBAC groups are applied from the same
+  repository, enforced, followed on later commits, removed when their file is
+  deleted and rebuilt from the store at boot. [C61]
 - API keys for automation: bearer tokens (read-only or operator, never
   admin) for collectors and scripts; only a digest is stored and a revoked key
   stops working at once. [C39]
