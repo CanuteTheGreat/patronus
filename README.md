@@ -182,6 +182,10 @@ that are not finished are listed separately under
   WireGuard mesh to the other sites with their subnets routed through it,
   switches a site to its next endpoint when the preferred one stops working,
   and reports measured paths back to the dashboard. [C54]
+- SD-WAN dashboard pages: Overview, Topology, SLA, Traffic and Security show
+  what the dashboard's store holds right now (sites, paths and their recorded
+  measurements, live flows classified by application, the audit log); with
+  nothing enrolled they are empty, not filled with sample data. [C55]
 
 ### Administration
 
