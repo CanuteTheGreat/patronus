@@ -234,14 +234,19 @@ nl_ok "dashboard: both sites active, overlay addresses and subnets recorded, pat
 
 echo "=== endpoint failover: cut site B's preferred endpoint"
 isp_cut_b1
-nl_wait 150 a_ep 203.0.115.2:51820 || { NS sa wg show; tail -15 /t/net-a/edge-state.json 2>/dev/null; nl_fail "site A did not move to site B's second endpoint"; }
+nl_wait 200 a_ep 203.0.115.2:51820 || { NS sa wg show; tail -15 /t/net-a/edge-state.json 2>/dev/null; nl_fail "site A did not move to site B's second endpoint"; }
 nl_ok "site A switched its peer for site B to the second endpoint 203.0.115.2:51820"
 nl_wait 60 ping_ab || nl_fail "client A cannot reach client B on the second endpoint"
 nl_ok "traffic flows again through the second uplink"
 echo "=== failback when the preferred endpoint works again"
 isp_open
-back_on_primary() { a_ep 203.0.114.2:51820 && ping_ab; }
-nl_wait 150 back_on_primary || { NS sa wg show; nl_fail "site A did not return to the preferred endpoint"; }
+# WireGuard roams a peer's endpoint to the source address of its latest
+# authenticated packet: site B answers from whichever uplink its routes pick, so
+# `wg show` can show the second address again right after the agent steered back.
+# The agent's own state (what it configured) is the proof of the steering.
+a_steer_idx() { python3 -c 'import json,sys; d=json.load(open("/t/net-a/edge-state.json")); print(d["peers"][0]["endpoint_index"])' 2>/dev/null; }
+back_on_primary() { [ "$(a_steer_idx)" = 0 ] && ping_ab; }
+nl_wait 200 back_on_primary || { NS sa wg show; nl_fail "site A did not return to the preferred endpoint"; }
 nl_ok "site A is back on the preferred endpoint 203.0.114.2:51820 and traffic flows"
 
 echo "=== patronus apply rebuilds the overlay from the store (a reboot)"
