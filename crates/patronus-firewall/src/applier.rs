@@ -1178,6 +1178,271 @@ mod tests {
         assert_eq!(n, 0);
     }
 
+    /// A threat feed alias (`ti_<id>`) holding `entries`, as GitOps declares
+    /// it and a refresh fills it.
+    async fn threat_feed(s: &ConfigStore, id: &str, direction: &str, entries: &str) {
+        use patronus_config::ConfigParser;
+        let docs = ConfigParser::parse_yaml(&format!(
+            "- apiVersion: patronus.firewall/v1\n  kind: Alias\n  metadata: {{ name: ti_{id} }}\n  spec: {{ type: host, source: {{ kind: threat, url: \"https://lists.example.test/{id}.txt\", direction: {direction} }} }}\n"
+        ))
+        .unwrap();
+        FirewallApplier.upsert_resource(s, &docs[0]).await.unwrap();
+        sqlx::query("UPDATE firewall_aliases SET entries = ? WHERE name = ?")
+            .bind(entries)
+            .bind(format!("ti_{id}"))
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+    }
+
+    /// The N in the report line "F filter rule(s), ...".
+    fn filter_count(r: &Rendered) -> usize {
+        let line = r
+            .report
+            .applied
+            .iter()
+            .find(|l| l.contains("filter rule(s)"))
+            .expect("summary line");
+        line.split(" filter rule(s)")
+            .next()
+            .and_then(|t| t.trim().parse().ok())
+            .unwrap_or_else(|| panic!("unparseable summary {line:?}"))
+    }
+
+    /// Threat-feed drops go once, right after the system (anti-lockout) rules
+    /// and ahead of every rule the user wrote, and are counted as filter rules.
+    #[tokio::test]
+    async fn threat_feed_rules_follow_the_system_rules_once_and_are_counted() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        let mut user = FirewallRule::new("mine".into(), ChainType::Forward, FirewallAction::Drop);
+        user.comment = Some("user-rule-marker".into());
+        s.save_firewall_rule(&user).await.unwrap();
+        let plain = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(!plain.script.contains("ti_check"), "{}", plain.script);
+
+        threat_feed(&s, "lab", "in", r#"["198.51.100.0/24"]"#).await;
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        let sc = &r.script;
+        let aliases = load_aliases(&s).await.unwrap();
+        let rules = crate::feeds::threat_rules(&aliases);
+        assert!(rules.len() > 2, "{rules:?}");
+        // once: one chain, one jump per base chain, one drop per family
+        assert_eq!(
+            sc.matches("add chain inet patronus ti_check").count(),
+            1,
+            "{sc}"
+        );
+        assert_eq!(
+            sc.matches("add rule inet patronus input jump ti_check")
+                .count(),
+            1,
+            "{sc}"
+        );
+        assert_eq!(
+            sc.matches("ti_check ip saddr @alias_ti_lab_v4 counter drop")
+                .count(),
+            1,
+            "{sc}"
+        );
+        // after the anti-lockout rule, before the user's rule
+        let anti = sc.find("Anti-lockout").expect("anti-lockout rule");
+        let jump = sc
+            .find("add rule inet patronus input jump ti_check")
+            .unwrap();
+        let mine = sc.find("user-rule-marker").expect("user rule");
+        assert!(
+            anti < jump && jump < mine,
+            "anti {anti} jump {jump} user {mine}\n{sc}"
+        );
+        // the threat rules count as filter rules, line for line
+        assert!(filter_count(&plain) > 0, "{:?}", plain.report);
+        assert_eq!(
+            filter_count(&r),
+            filter_count(&plain) + rules.len(),
+            "{:?}",
+            r.report
+        );
+        // lockdown keeps only system rules: no threat rules
+        let l = FirewallApplier.render_script(&s, true).await.unwrap();
+        assert!(!l.script.contains("ti_check"), "{}", l.script);
+    }
+
+    /// With nothing but system rules stored, the threat rules still land (at
+    /// the end of the filter section), once.
+    #[tokio::test]
+    async fn threat_feed_rules_land_when_only_system_rules_exist() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        for (r, o) in s.load_firewall_rules_with_origin().await.unwrap() {
+            if o != RuleOrigin::System {
+                s.delete_firewall_rule(r.id.unwrap()).await.unwrap();
+            }
+        }
+        assert!(s
+            .load_firewall_rules_with_origin()
+            .await
+            .unwrap()
+            .iter()
+            .all(|(_, o)| *o == RuleOrigin::System));
+        let before = FirewallApplier.render_script(&s, false).await.unwrap();
+        threat_feed(&s, "solo", "both", r#"["203.0.113.7"]"#).await;
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        let rules = crate::feeds::threat_rules(&load_aliases(&s).await.unwrap());
+        assert_eq!(
+            r.script.matches("add chain inet patronus ti_check").count(),
+            1,
+            "{}",
+            r.script
+        );
+        assert!(
+            r.script
+                .contains("ti_check ip daddr @alias_ti_solo_v4 counter drop"),
+            "{}",
+            r.script
+        );
+        assert!(filter_count(&before) > 0, "{:?}", before.report);
+        assert_eq!(filter_count(&r), filter_count(&before) + rules.len());
+    }
+
+    /// `firewall.log_default_deny` adds the rate-limited default-drop logging
+    /// (input + forward) last of all, and never in lockdown.
+    #[tokio::test]
+    async fn default_deny_logging_follows_its_setting_and_never_runs_in_lockdown() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        let log = |r: &Rendered| {
+            r.script
+                .lines()
+                .filter(|l| l.contains("patronus[default] drop: "))
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+        };
+        let off = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(log(&off).is_empty(), "unset: no logging");
+        s.save_system_config(crate::feeds::CFG_LOG_DEFAULT_DENY, "0")
+            .await
+            .unwrap();
+        let zero = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(log(&zero).is_empty(), "0: no logging");
+        s.save_system_config(crate::feeds::CFG_LOG_DEFAULT_DENY, "1")
+            .await
+            .unwrap();
+        let on = FirewallApplier.render_script(&s, false).await.unwrap();
+        let lines = log(&on);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(
+            lines[0].starts_with(
+                "add rule inet patronus input limit rate 5/second burst 20 packets log prefix"
+            ),
+            "{}",
+            lines[0]
+        );
+        assert!(
+            lines[1].starts_with(
+                "add rule inet patronus forward limit rate 5/second burst 20 packets log prefix"
+            ),
+            "{}",
+            lines[1]
+        );
+        assert!(lines.iter().all(|l| l.ends_with("group 7")), "{lines:?}");
+        assert!(
+            on.report
+                .applied
+                .iter()
+                .any(|l| l == "default-deny logging on"),
+            "{:?}",
+            on.report
+        );
+        assert!(!off
+            .report
+            .applied
+            .iter()
+            .any(|l| l.contains("default-deny")));
+        // last of all: after every other rule line
+        let lines_all: Vec<&str> = on.script.lines().collect();
+        let last_rule = lines_all
+            .iter()
+            .rposition(|l| l.starts_with("add rule") && !l.contains("patronus[default]"))
+            .unwrap();
+        let first_log = on
+            .script
+            .lines()
+            .position(|l| l.contains("patronus[default] drop: "))
+            .unwrap();
+        assert!(first_log > last_rule, "{}", on.script);
+        // lockdown never logs, whatever the setting
+        let lock = FirewallApplier.render_script(&s, true).await.unwrap();
+        assert!(log(&lock).is_empty(), "{}", lock.script);
+        assert!(!lock
+            .report
+            .applied
+            .iter()
+            .any(|l| l.contains("default-deny")));
+    }
+
+    /// A GitOps `kind: Alias` without `type` is a host alias, and `url`,
+    /// `refresh_secs` or `max_entries` alone each make it a self-filling one.
+    #[tokio::test]
+    async fn alias_resource_defaults_to_host_and_each_source_knob_alone_counts() {
+        use patronus_config::ConfigParser;
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        let up = |yaml: String| {
+            let s = &s;
+            async move {
+                let docs = ConfigParser::parse_yaml(&yaml).unwrap();
+                FirewallApplier.upsert_resource(s, &docs[0]).await.unwrap();
+            }
+        };
+        let doc = |name: &str, spec: &str| {
+            format!("- apiVersion: patronus.firewall/v1\n  kind: Alias\n  metadata: {{ name: {name} }}\n  spec: {{ {spec} }}\n")
+        };
+        up(doc("plain", "entries: [192.0.2.9]")).await;
+        let a = crate::aliases::get_alias(&s, "plain")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (a.kind, a.entries.clone(), a.source.is_none()),
+            (
+                crate::nftables::AliasKind::Host,
+                vec!["192.0.2.9".to_string()],
+                true
+            )
+        );
+        let u = "https://lists.example.test/u.txt";
+        // url alone
+        up(doc("u_only", &format!("type: urltable, url: \"{u}\""))).await;
+        let a = crate::aliases::get_alias(&s, "u_only")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.source.unwrap().url.as_deref(), Some(u));
+        // refresh_secs alone (the URL comes from entries)
+        up(doc(
+            "r_only",
+            &format!("type: urltable, entries: [\"{u}\"], refresh_secs: 600"),
+        ))
+        .await;
+        let x = crate::aliases::get_alias(&s, "r_only")
+            .await
+            .unwrap()
+            .unwrap()
+            .source
+            .unwrap();
+        assert_eq!((x.url.as_deref(), x.refresh_secs), (Some(u), 600));
+        // max_entries alone
+        up(doc(
+            "m_only",
+            &format!("type: urltable, entries: [\"{u}\"], max_entries: 77"),
+        ))
+        .await;
+        let x = crate::aliases::get_alias(&s, "m_only")
+            .await
+            .unwrap()
+            .unwrap()
+            .source
+            .unwrap();
+        assert_eq!((x.url.as_deref(), x.max_entries), (Some(u), 77));
+    }
+
     #[tokio::test]
     async fn default_ruleset_renders_safe_router_policy() {
         let s = seeded(&["eth0"], &["eth1"]).await;
