@@ -1,0 +1,5 @@
+target
+.git
+gentoo/live-iso
+gentoo/iso
+**/target

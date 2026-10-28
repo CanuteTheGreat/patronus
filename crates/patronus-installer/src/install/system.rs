@@ -185,14 +185,16 @@ pub async fn install_base_system(
         cb(0.0, "Starting base system installation...");
     }
 
-    // Check if we're on a LiveCD with squashfs
-    let squashfs_path = PathBuf::from("/mnt/cdrom/image.squashfs");
-    let alt_squashfs = PathBuf::from("/run/initramfs/live/image.squashfs");
+    // Check if we're on a LiveCD with squashfs. The Gentoo live ISO
+    // (gentoo/live-iso, dracut dmsquash-live) keeps the root image at
+    // LiveOS/squashfs.img on the medium.
+    let live_image = LIVE_IMAGE_CANDIDATES
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.exists());
 
-    if squashfs_path.exists() {
-        install_from_squashfs(&squashfs_path, target, progress).await?;
-    } else if alt_squashfs.exists() {
-        install_from_squashfs(&alt_squashfs, target, progress).await?;
+    if let Some(image) = live_image {
+        install_from_squashfs(&image, target, progress).await?;
     } else {
         // Fallback: rsync from live environment
         install_via_rsync(target, progress).await?;
@@ -211,6 +213,14 @@ pub async fn install_base_system(
 
     Ok(())
 }
+
+/// Where a live medium keeps its root squashfs, in order of preference.
+const LIVE_IMAGE_CANDIDATES: &[&str] = &[
+    "/run/initramfs/live/LiveOS/squashfs.img",
+    "/mnt/cdrom/LiveOS/squashfs.img",
+    "/mnt/cdrom/image.squashfs",
+    "/run/initramfs/live/image.squashfs",
+];
 
 /// Install from squashfs image
 async fn install_from_squashfs(
@@ -416,6 +426,13 @@ async fn generate_fstab(target: &Path, partitions: &[CreatedPartition]) -> Resul
             partition.filesystem,
             PartitionFilesystem::Linux(Filesystem::Zfs)
         ) {
+            continue;
+        }
+
+        // The BIOS-boot (ef02) partition carries no filesystem and so no UUID:
+        // it never gets an fstab line (blkid on it made every BIOS install
+        // fail with "Empty UUID for /dev/vdaN").
+        if matches!(partition.filesystem, PartitionFilesystem::None) {
             continue;
         }
 

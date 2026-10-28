@@ -1,5 +1,8 @@
 # Patronus Installation Walkthrough
 
+> **Live/installer ISO:** a bootable x86_64 ISO (UEFI + BIOS, USB-writable, `patronus-install` included) is built daily - see [ISO-INSTALL.md](ISO-INSTALL.md) for the download URL, writing it to USB and Secure Boot status.
+
+
 **Video Tutorial Script and Reference Guide**
 **Duration:** ~15 minutes
 **Difficulty:** Intermediate

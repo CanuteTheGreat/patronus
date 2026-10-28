@@ -160,6 +160,28 @@ async fn install_grub_bios(target: &Path, disk: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `/etc/default/grub` content with the kernel and GRUB itself on the serial
+/// console (ttyS0, 115200 8N1) in addition to the VGA console. Idempotent.
+fn with_serial_console(content: &str) -> String {
+    let mut out: String = content
+        .lines()
+        .filter(|l| {
+            let l = l.trim_start();
+            !(l.starts_with("GRUB_CMDLINE_LINUX=")
+                || l.starts_with("GRUB_TERMINAL=")
+                || l.starts_with("GRUB_TERMINAL_OUTPUT=")
+                || l.starts_with("GRUB_SERIAL_COMMAND="))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    out.push_str(
+        "\nGRUB_CMDLINE_LINUX=\"console=tty0 console=ttyS0,115200n8\"\n\
+         GRUB_TERMINAL=\"console serial\"\n\
+         GRUB_SERIAL_COMMAND=\"serial --unit=0 --speed=115200\"\n",
+    );
+    out
+}
+
 /// Generate GRUB configuration
 async fn generate_grub_config(target: &Path, root_is_zfs: bool) -> Result<()> {
     info!("Generating GRUB configuration");
@@ -195,8 +217,50 @@ GRUB_GFXPAYLOAD_LINUX="keep"
         fs::write(&grub_default, content).await?;
     }
 
+    // Keep the serial console the installer itself was booted with (QEMU/KVM
+    // test VMs, headless boxes): without it the installed system boots with
+    // no output on ttyS0 and cannot be driven. The file may already exist
+    // (shipped in the live image), so patch it either way.
+    let serial = std::fs::read_to_string("/proc/cmdline")
+        .map(|c| c.contains("console=ttyS0"))
+        .unwrap_or(false);
+    if serial {
+        let current = fs::read_to_string(&grub_default).await.unwrap_or_default();
+        fs::write(&grub_default, with_serial_console(&current)).await?;
+        // login prompt on the serial console (init script ships in the live image)
+        let _ = run_in_chroot(
+            target,
+            &[
+                "sh",
+                "-c",
+                "[ -x /etc/init.d/live-serial ] && rc-update add live-serial default",
+            ],
+        )
+        .await;
+    }
+
+    // Let udev publish the new partitions' UUID links so grub-mkconfig can
+    // write root=UUID=... (a /dev/vdaN or /dev/sdXN name can change between
+    // boots when USB media or another disk is present).
+    let _ = tokio::process::Command::new("udevadm")
+        .args(["settle", "--timeout=10"])
+        .output()
+        .await;
+
     // Generate grub.cfg
     run_in_chroot(target, &["grub-mkconfig", "-o", "/boot/grub/grub.cfg"]).await?;
+
+    // Belt and braces: turn any remaining root=/dev/... into root=UUID=...
+    let _ = run_in_chroot(
+        target,
+        &[
+            "sh",
+            "-c",
+            "for d in $(grep -o 'root=/dev/[A-Za-z0-9/_-]*' /boot/grub/grub.cfg | sort -u | cut -d= -f2); do \
+             u=$(blkid -s UUID -o value $d); [ -n \"$u\" ] && sed -i \"s#root=$d#root=UUID=$u#g\" /boot/grub/grub.cfg; done; true",
+        ],
+    )
+    .await;
 
     Ok(())
 }
@@ -345,6 +409,18 @@ async fn copy_kernel_to_esp(target: &Path, version: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serial_console_replaces_existing_keys_and_is_idempotent() {
+        let orig = "GRUB_TIMEOUT=5\nGRUB_CMDLINE_LINUX=\"quiet\"\n#GRUB_TERMINAL=console\nGRUB_TERMINAL=console\n";
+        let once = with_serial_console(orig);
+        assert!(once.contains("GRUB_TIMEOUT=5"));
+        assert!(once.contains("console=ttyS0,115200n8"));
+        assert!(!once.contains("GRUB_CMDLINE_LINUX=\"quiet\""));
+        assert!(once.contains("#GRUB_TERMINAL=console"), "comments are kept");
+        assert_eq!(once.matches("GRUB_TERMINAL=").count(), 1 + 1); // comment + ours
+        assert_eq!(with_serial_console(&once), once);
+    }
 
     #[test]
     fn test_bootloader_description() {

@@ -1,0 +1,14 @@
+# Patronus = firewall / router appliance
+net-firewall/nftables
+net-firewall/conntrack-tools
+net-dns/dnsmasq
+net-dns/unbound
+net-misc/chrony
+net-vpn/wireguard-tools
+net-dialup/ppp
+net-misc/bridge-utils
+sys-apps/ethtool
+net-analyzer/tcpdump
+net-analyzer/mtr
+dev-libs/elfutils
+dev-db/sqlite
