@@ -111,7 +111,7 @@ jobs:
           COPY apply_ruleset /usr/local/bin/apply_ruleset
           RUN chmod +x /usr/local/bin/apply_ruleset
           EOF
-          docker build -t patronus-fw-test:ci /tmp/fwimg
+          docker build -t patronus-fw-test:${{ github.run_id }} /tmp/fwimg
       - name: Real scenario 1 -- allowed traffic (tcp/80) actually gets through
         run: |
           set -eo pipefail
@@ -119,21 +119,21 @@ jobs:
           # run whose Teardown step never executed, e.g. a killed/crashed runner)
           # that already claims this subnet, so `docker network create` below can't
           # fail with "Pool overlaps with other one on this address space".
-          docker network rm patronus-fw-net 2>/dev/null || true
+          docker network rm patronus-fw-net-${{ github.run_id }} 2>/dev/null || true
           for net in $(docker network ls -q); do
             subnet=$(docker network inspect "$net" --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null)
             case "$subnet" in *172.30.0.0/24*) docker network rm "$net" 2>/dev/null || true ;; esac
           done
-          docker network create --subnet 172.30.0.0/24 patronus-fw-net
+          docker network create --subnet 172.30.0.0/24 patronus-fw-net-${{ github.run_id }}
           # Real RuleManager applies allow tcp/80,443 + the real default-drop
           # input policy from initialize_table() (see nftables.rs), then a
           # real python http server listens on 80.
-          docker run -d --name fw-server --network patronus-fw-net --ip 172.30.0.10 \
+          docker run -d --name fw-server-${{ github.run_id }} --network patronus-fw-net-${{ github.run_id }} --ip 172.30.0.10 \
             --cap-add=NET_ADMIN --cap-add=NET_RAW \
-            patronus-fw-test:ci sh -c "/usr/local/bin/apply_ruleset --allow-tcp-ports 80,443 --hold-secs 240 & python3 -m http.server 80 & wait"
+            patronus-fw-test:${{ github.run_id }} sh -c "/usr/local/bin/apply_ruleset --allow-tcp-ports 80,443 --hold-secs 240 & python3 -m http.server 80 & wait"
           sleep 5
-          docker exec fw-server nft list ruleset
-          docker run --rm --network patronus-fw-net --cap-add=NET_RAW patronus-fw-test:ci \
+          docker exec fw-server-${{ github.run_id }} nft list ruleset
+          docker run --rm --network patronus-fw-net-${{ github.run_id }} --cap-add=NET_RAW patronus-fw-test:${{ github.run_id }} \
             sh -c "curl -sS -o /dev/null -w 'HTTP_STATUS=%{http_code}\n' --max-time 5 http://172.30.0.10:80/"
       - name: Real scenario 2 -- denied traffic (tcp/22) is actually dropped
         run: |
@@ -147,14 +147,14 @@ jobs:
           # remove any stale leftover (dir or file) from a prior broken run
           # before writing, so this can't silently break every run after it.
           rm -rf "/tmp/denied-${GITHUB_RUN_ID:-$$}.pcap"
-          docker exec -d fw-server sh -c "tcpdump -i eth0 -n tcp port 22 -U -w /tmp/denied-${GITHUB_RUN_ID:-$$}.pcap"
+          docker exec -d fw-server-${{ github.run_id }} sh -c "tcpdump -i eth0 -n tcp port 22 -U -w /tmp/denied-${GITHUB_RUN_ID:-$$}.pcap"
           sleep 1
           set +e
-          docker run --rm --network patronus-fw-net patronus-fw-test:ci \
+          docker run --rm --network patronus-fw-net-${{ github.run_id }} patronus-fw-test:${{ github.run_id }} \
             sh -c "nc -w 3 -v 172.30.0.10 22; echo EXIT=\$?"
           set -e
           sleep 1
-          docker exec fw-server pkill tcpdump || true
+          docker exec fw-server-${{ github.run_id }} pkill tcpdump || true
           sleep 1
           # Read the capture IN PLACE via `docker exec` instead of `docker cp`
           # + a bind-mounted `-v` read: this job's docker CLI runs inside a
@@ -169,33 +169,33 @@ jobs:
           # not just a stale-leftover run (confirmed: run-scoping the path
           # alone, commit 9717d90, did not fix this). `docker exec` has no
           # such local/remote path ambiguity -- it reads the file directly
-          # inside fw-server's own namespace where tcpdump wrote it.
-          docker exec fw-server tcpdump -r "/tmp/denied-${GITHUB_RUN_ID:-$$}.pcap" -n | tee /tmp/denied-dump.txt
+          # inside fw-server-${{ github.run_id }}'s own namespace where tcpdump wrote it.
+          docker exec fw-server-${{ github.run_id }} tcpdump -r "/tmp/denied-${GITHUB_RUN_ID:-$$}.pcap" -n | tee /tmp/denied-dump.txt
           echo "--- asserting: SYN seen, no SYN-ACK (real drop, not a client-side timeout artifact) ---"
           grep -q "Flags \[S\]" /tmp/denied-dump.txt
           if grep -q "Flags \[S\.\]" /tmp/denied-dump.txt; then
             echo "::error::real SYN-ACK observed on a port that should be dropped by default policy"
             exit 1
           fi
-          echo "CONFIRMED: SYN for denied port 22 reached fw-server's real nft-filtered interface and got no reply"
+          echo "CONFIRMED: SYN for denied port 22 reached fw-server-${{ github.run_id }}'s real nft-filtered interface and got no reply"
       - name: Real scenario 3 -- /0 CIDR edge case (real nft rule, not a unit test)
         run: |
           set -eo pipefail
-          docker rm -f fw-server 2>/dev/null || true
-          docker run -d --name fw-edge --network patronus-fw-net --ip 172.30.0.20 \
+          docker rm -f fw-server-${{ github.run_id }} 2>/dev/null || true
+          docker run -d --name fw-edge-${{ github.run_id }} --network patronus-fw-net-${{ github.run_id }} --ip 172.30.0.20 \
             --cap-add=NET_ADMIN --cap-add=NET_RAW \
-            patronus-fw-test:ci sh -c "/usr/local/bin/apply_ruleset --allow-tcp-ports 80 --wide-open-cidr-then-narrow-deny --narrow-deny-cidr 172.30.0.0/24 --hold-secs 120 & python3 -m http.server 80 & wait"
+            patronus-fw-test:${{ github.run_id }} sh -c "/usr/local/bin/apply_ruleset --allow-tcp-ports 80 --wide-open-cidr-then-narrow-deny --narrow-deny-cidr 172.30.0.0/24 --hold-secs 120 & python3 -m http.server 80 & wait"
           sleep 5
-          docker exec fw-edge nft list ruleset
+          docker exec fw-edge-${{ github.run_id }} nft list ruleset
           echo "--- real traffic through the real 0.0.0.0/0 rule (ordered before the narrower deny) ---"
-          docker run --rm --network patronus-fw-net patronus-fw-test:ci \
+          docker run --rm --network patronus-fw-net-${{ github.run_id }} patronus-fw-test:${{ github.run_id }} \
             sh -c "curl -sS -o /dev/null -w 'HTTP_STATUS=%{http_code}\n' --max-time 5 http://172.30.0.20:80/"
           echo "CONFIRMED: real /0 CIDR rule evaluated correctly (first-match-wins over the narrower deny) with no crash, no hang"
       - name: Real scenario 4 -- malformed packet (bad IHL) boundary test
         run: |
           set -eo pipefail
           echo "--- crafting a real on-the-wire malformed-IHL packet with scapy ---"
-          docker run --rm --network patronus-fw-net --cap-add=NET_RAW --cap-add=NET_ADMIN patronus-fw-test:ci python3 - <<'PYEOF'
+          docker run --rm --network patronus-fw-net-${{ github.run_id }} --cap-add=NET_RAW --cap-add=NET_ADMIN patronus-fw-test:${{ github.run_id }} python3 - <<'PYEOF'
           from scapy.all import IP, TCP, send
           # IHL=15 claims a 60-byte IP header but the packet carries none
           # of that extra option data - a real malformed-length packet on
@@ -205,16 +205,17 @@ jobs:
           print("SENT_MALFORMED_IHL_PACKET")
           PYEOF
           sleep 2
-          echo "--- proving fw-edge is still alive and still correctly enforces real rules after the malformed packet ---"
-          docker exec fw-edge sh -c "pgrep -f apply_ruleset >/dev/null && echo APPLY_RULESET_STILL_ALIVE"
-          docker run --rm --network patronus-fw-net patronus-fw-test:ci \
+          echo "--- proving fw-edge-${{ github.run_id }} is still alive and still correctly enforces real rules after the malformed packet ---"
+          docker exec fw-edge-${{ github.run_id }} sh -c "pgrep -f apply_ruleset >/dev/null && echo APPLY_RULESET_STILL_ALIVE"
+          docker run --rm --network patronus-fw-net-${{ github.run_id }} patronus-fw-test:${{ github.run_id }} \
             sh -c "curl -sS -o /dev/null -w 'POST_MALFORMED_HTTP_STATUS=%{http_code}\n' --max-time 5 http://172.30.0.20:80/"
           echo "CONFIRMED: malformed-IHL packet neither crashed the firewalled process nor broke subsequent real traffic handling"
       - name: Teardown
         if: always()
         run: |
-          docker rm -f fw-server fw-edge 2>/dev/null || true
-          docker network rm patronus-fw-net 2>/dev/null || true
+          docker rm -fv fw-server-${{ github.run_id }} fw-edge-${{ github.run_id }} 2>/dev/null || true
+          docker network rm patronus-fw-net-${{ github.run_id }} 2>/dev/null || true
+          docker rmi patronus-fw-test:${{ github.run_id }} 2>/dev/null || true
 
   sdwan-tunnel-live-traffic:
     name: Real WireGuard SD-WAN tunnel test (encrypted overlay)
@@ -288,12 +289,12 @@ jobs:
           COPY real_wireguard_tunnel /usr/local/bin/real_wireguard_tunnel
           RUN chmod +x /usr/local/bin/real_wireguard_tunnel
           EOF
-          docker build --platform linux/amd64 -t patronus-sdwan-test:ci /tmp/sdwanimg
+          docker build --platform linux/amd64 -t patronus-sdwan-test:${{ github.run_id }} /tmp/sdwanimg
       - name: Establish a real WireGuard tunnel between two sibling containers
         if: steps.wgcheck.outputs.has_wg == 'true'
         run: |
           set -eo pipefail
-          docker volume create patronus-sdwan-keys
+          docker volume create patronus-sdwan-keys-${{ github.run_id }}
           # Defensive: remove any network (ours or an orphaned leftover from a prior
           # run whose Teardown step never executed, e.g. a killed/crashed runner)
           # that already claims this subnet, so `docker network create` below can't
@@ -313,55 +314,55 @@ jobs:
           # to stop requesting a subnet inside a range another real,
           # persistent workload already owns -- not to try to clean up a
           # network we don't own and must not touch.
-          docker network rm patronus-sdwan-net 2>/dev/null || true
+          docker network rm patronus-sdwan-net-${{ github.run_id }} 2>/dev/null || true
           for net in $(docker network ls -q); do
             subnet=$(docker network inspect "$net" --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null)
             case "$subnet" in *10.231.31.0/24*) docker network rm "$net" 2>/dev/null || true ;; esac
           done
-          docker network create --subnet 10.231.31.0/24 patronus-sdwan-net
-          docker run -d --name sdwan-a --network patronus-sdwan-net --ip 10.231.31.10 \
-            --platform linux/amd64 --cap-add=NET_ADMIN --cap-add=NET_RAW -v patronus-sdwan-keys:/keys \
-            patronus-sdwan-test:ci \
+          docker network create --subnet 10.231.31.0/24 patronus-sdwan-net-${{ github.run_id }}
+          docker run -d --name sdwan-a-${{ github.run_id }} --network patronus-sdwan-net-${{ github.run_id }} --ip 10.231.31.10 \
+            --platform linux/amd64 --cap-add=NET_ADMIN --cap-add=NET_RAW -v patronus-sdwan-keys-${{ github.run_id }}:/keys \
+            patronus-sdwan-test:${{ github.run_id }} \
             /usr/local/bin/real_wireguard_tunnel --role server --listen-port 51820 \
               --own-pubkey-out /keys/a.pub \
               --peer-endpoint 10.231.31.11:51821 --peer-pubkey-file /keys/b.pub
-          docker run -d --name sdwan-b --network patronus-sdwan-net --ip 10.231.31.11 \
-            --platform linux/amd64 --cap-add=NET_ADMIN --cap-add=NET_RAW -v patronus-sdwan-keys:/keys \
-            patronus-sdwan-test:ci \
+          docker run -d --name sdwan-b-${{ github.run_id }} --network patronus-sdwan-net-${{ github.run_id }} --ip 10.231.31.11 \
+            --platform linux/amd64 --cap-add=NET_ADMIN --cap-add=NET_RAW -v patronus-sdwan-keys-${{ github.run_id }}:/keys \
+            patronus-sdwan-test:${{ github.run_id }} \
             /usr/local/bin/real_wireguard_tunnel --role client --listen-port 51821 \
               --own-pubkey-out /keys/b.pub \
               --peer-endpoint 10.231.31.10:51820 --peer-pubkey-file /keys/a.pub
           sleep 20
-          echo "--- sdwan-a container logs (first sign of trouble if it already exited) ---"
-          docker logs sdwan-a 2>&1 || true
-          echo "--- sdwan-b container logs ---"
-          docker logs sdwan-b 2>&1 || true
-          echo "--- sdwan-a real kernel WireGuard state ---"
-          docker exec sdwan-a wg show
-          docker exec sdwan-a ip addr show patronus-wg0
-          echo "--- sdwan-b real kernel WireGuard state ---"
-          docker exec sdwan-b wg show
+          echo "--- sdwan-a-${{ github.run_id }} container logs (first sign of trouble if it already exited) ---"
+          docker logs sdwan-a-${{ github.run_id }} 2>&1 || true
+          echo "--- sdwan-b-${{ github.run_id }} container logs ---"
+          docker logs sdwan-b-${{ github.run_id }} 2>&1 || true
+          echo "--- sdwan-a-${{ github.run_id }} real kernel WireGuard state ---"
+          docker exec sdwan-a-${{ github.run_id }} wg show
+          docker exec sdwan-a-${{ github.run_id }} ip addr show patronus-wg0
+          echo "--- sdwan-b-${{ github.run_id }} real kernel WireGuard state ---"
+          docker exec sdwan-b-${{ github.run_id }} wg show
       - name: Pass real traffic through the tunnel + prove the underlay is opaque
         if: steps.wgcheck.outputs.has_wg == 'true'
         run: |
           set -eo pipefail
-          A_TUNNEL_IP=$(docker exec sdwan-a sh -c "ip -4 addr show patronus-wg0 | awk '/inet /{print \$2}' | cut -d/ -f1")
-          B_TUNNEL_IP=$(docker exec sdwan-b sh -c "ip -4 addr show patronus-wg0 | awk '/inet /{print \$2}' | cut -d/ -f1")
+          A_TUNNEL_IP=$(docker exec sdwan-a-${{ github.run_id }} sh -c "ip -4 addr show patronus-wg0 | awk '/inet /{print \$2}' | cut -d/ -f1")
+          B_TUNNEL_IP=$(docker exec sdwan-b-${{ github.run_id }} sh -c "ip -4 addr show patronus-wg0 | awk '/inet /{print \$2}' | cut -d/ -f1")
           echo "tunnel IPs: a=$A_TUNNEL_IP b=$B_TUNNEL_IP"
           rm -rf "/tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap"
-          docker exec -d sdwan-a sh -c "tcpdump -i eth0 -n udp port 51820 -U -w /tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap"
+          docker exec -d sdwan-a-${{ github.run_id }} sh -c "tcpdump -i eth0 -n udp port 51820 -U -w /tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap"
           sleep 1
           echo "--- real ping across the real WireGuard overlay ---"
-          docker exec sdwan-b ping -c 4 -W 3 "$A_TUNNEL_IP"
+          docker exec sdwan-b-${{ github.run_id }} ping -c 4 -W 3 "$A_TUNNEL_IP"
           sleep 1
-          docker exec sdwan-a pkill tcpdump || true
+          docker exec sdwan-a-${{ github.run_id }} pkill tcpdump || true
           sleep 1
           # See the job-1 "Real scenario 2" step for why: read the capture
           # via `docker exec` in place rather than `docker cp` + a
           # bind-mounted `-v` read, which fails with "Is a directory" under
           # docker-outside-of-docker because the cp's local destination and
           # the -v mount's source resolve against two different filesystems.
-          docker exec sdwan-a tcpdump -r "/tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap" -n -A | tee /tmp/underlay-dump.txt
+          docker exec sdwan-a-${{ github.run_id }} tcpdump -r "/tmp/underlay-${GITHUB_RUN_ID:-$$}.pcap" -n -A | tee /tmp/underlay-dump.txt
           echo "--- asserting the underlay capture never shows the plaintext tunnel IPs ---"
           if grep -q "$A_TUNNEL_IP" /tmp/underlay-dump.txt || grep -q "$B_TUNNEL_IP" /tmp/underlay-dump.txt; then
             echo "::error::tunnel-internal IP leaked into the underlay capture in plaintext - encryption is not actually opaque"
@@ -369,7 +370,7 @@ jobs:
           fi
           echo "CONFIRMED: underlay capture is pure UDP/51820 WireGuard payload; tunnel-internal IPs and the ICMP payload never appear in plaintext on the wire"
           echo "--- handshake evidence (nonzero latest handshake = real crypto session established) ---"
-          docker exec sdwan-a wg show patronus-wg0 latest-handshakes
+          docker exec sdwan-a-${{ github.run_id }} wg show patronus-wg0 latest-handshakes
       - name: Report architectural limitation if WireGuard is unavailable
         if: steps.wgcheck.outputs.has_wg != 'true'
         run: |
@@ -377,6 +378,7 @@ jobs:
       - name: Teardown
         if: always()
         run: |
-          docker rm -f sdwan-a sdwan-b 2>/dev/null || true
-          docker network rm patronus-sdwan-net 2>/dev/null || true
-          docker volume rm patronus-sdwan-keys 2>/dev/null || true
+          docker rm -fv sdwan-a-${{ github.run_id }} sdwan-b-${{ github.run_id }} 2>/dev/null || true
+          docker network rm patronus-sdwan-net-${{ github.run_id }} 2>/dev/null || true
+          docker volume rm patronus-sdwan-keys-${{ github.run_id }} 2>/dev/null || true
+          docker rmi patronus-sdwan-test:${{ github.run_id }} 2>/dev/null || true

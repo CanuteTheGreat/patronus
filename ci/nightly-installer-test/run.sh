@@ -9,7 +9,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 HERE=ci/nightly-installer-test
-WORK="${CI_WORKDIR:-/tmp/patronus-vm-test}"
+WORK="${CI_WORKDIR:-/tmp/patronus-vm-test-${GITHUB_RUN_ID:-$$}}"   # run-scoped: cleanup removes exactly this run's disk + logs
+# Always-run cleanup: the qcow2 install disk, OVMF NVRAM, ISO remaster and serial logs (tails printed first on failure).
+cleanup() {
+  rc=$?
+  if [ "$rc" -ne 0 ]; then for l in "$WORK"/serial-*.log; do [ -f "$l" ] && { echo "---- tail $l"; tail -n 60 "$l"; }; done; fi
+  rm -rf "$WORK"
+  exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 143' TERM INT
 ALPINE_VER=3.20.3
 ALPINE_BRANCH=v3.20
 ISO_NAME="alpine-extended-${ALPINE_VER}-x86_64.iso"
