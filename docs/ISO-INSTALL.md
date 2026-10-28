@@ -164,7 +164,7 @@ Patronus specifics: it is a firewall/router appliance. A laptop with one wired N
 ## What is tested automatically
 
 `.forgejo/workflows/live-iso.yml` (daily, and on every `v*` tag) builds the ISO on a rw-man host and runs
-`gentoo/live-iso/common/qemu-test.py` under QEMU/KVM. Four full installs per run:
+`gentoo/live-iso/common/qemu-test.py` under QEMU/KVM. Five QEMU runs per build (four full installs plus the no-answer-file check):
 
 | run | firmware / media | installer | WAN / LAN | SSH |
 |---|---|---|---|---|
@@ -172,6 +172,7 @@ Patronus specifics: it is a firewall/router appliance. A laptop with one wired N
 | 2 | BIOS + CD | guided TUI over the **serial** console (scripted keystrokes) | DHCP / `10.77.0.1/24` | key-only |
 | 3 | UEFI + USB stick | guided TUI on the **VGA** console (QMP keystrokes + screenshots) | DHCP / `10.77.0.1/24` | key-only |
 | 4 | UEFI + USB stick | answer file (unattended) | DHCP / `10.77.0.1/24` | key-only |
+| 5 | BIOS + CD | *Automated install* entry **without** an answer file: must refuse and start the guided installer on the VGA screen; the disk stays untouched | - | - |
 
 Every run then reboots from the installed disk alone (no ISO) and asserts:
 
@@ -197,7 +198,7 @@ A `v*` release gets a stable ISO attached (non-pre-release asset
 1. the repository's own CI is not red (`failure`/`error`) for that commit;
 2. the ISO builds from the tag from scratch-equivalent inputs (Gentoo stage3 + binhost, the tag's source);
 3. ISO size < 2 GiB (Forgejo asset limit) and its SHA256 verifies;
-4. **all four** QEMU installs above pass (both firmware types, both media types, unattended + serial wizard + VGA wizard), including the SSH/web assertions;
+4. **all five** QEMU runs above pass (both firmware types, both media types, unattended + serial wizard + VGA wizard), including the SSH/web assertions;
 5. no step reported `FAIL` in the evidence bundle (attached to the release).
 
 If any criterion fails, nothing is attached and the failure is recorded in the `daily-status` marker
