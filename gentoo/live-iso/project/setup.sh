@@ -1,6 +1,6 @@
 #!/bin/sh
 set -e
-chmod +x /etc/init.d/patronus-* /usr/libexec/live-install-hook
+chmod +x /etc/init.d/patronus-*
 getent group patronus >/dev/null || groupadd -r patronus
 getent passwd patronus >/dev/null || useradd -r -g patronus -d /var/lib/patronus -s /sbin/nologin patronus
 mkdir -p /var/lib/patronus /var/log/patronus /etc/patronus/tls /run/patronus

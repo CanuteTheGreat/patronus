@@ -1,10 +1,8 @@
 
   Patronus (Gentoo-based firewall live / installer)
-  --------------------------------------------------
-  Install to disk : patronus-install            (interactive TUI)
-                    patronus-install --config answers.toml --yes
-  Web UI          : https://<this-ip>:8443     user: admin
-                    password: cat /var/lib/patronus/initial-admin-password
-  Console login   : root / patronus  (change it!)
+  ----------------------------------------
+  Install to disk : live-installer              (guided installer)
+  Live console    : root is passwordless here (physical access only); sshd is OFF
   Wi-Fi           : iwctl   (then: station wlan0 connect <ssid>)
+  After installing: https://<ip>:8443  user: admin  (the password you chose)
 

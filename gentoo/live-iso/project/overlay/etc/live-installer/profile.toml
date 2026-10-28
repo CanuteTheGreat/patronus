@@ -1,0 +1,13 @@
+# Patronus profile for the shared guided installer (live-installer)
+name = "patronus"
+title = "Patronus"
+network_mode = "wan-lan"             # OPNsense-style WAN/LAN assignment
+filesystems = ["ext4"]
+swap_mb = 1024
+web_scheme = "https"
+web_port = 8443
+default_hostname = "patronus.localdomain"
+# patronus-web reads this file on its first start (PATRONUS_ADMIN_PASSWORD_FILE default), then it is deleted
+admin_password_file = "/var/lib/patronus/initial-admin-password"
+admin_password_owner = "patronus"
+services = ["patronus-firewall", "patronus-applyd", "patronus-web", "chronyd", "sshd", "dhcpcd"]
