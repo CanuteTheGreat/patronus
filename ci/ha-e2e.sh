@@ -68,7 +68,7 @@ if docker run --name "$TAG-bad" --memory 256m --cpus 0.5 \
   fail "patronus-dashboard started with the old hardcoded secret"
 fi
 grep -qi "publicly known default" "$WORK/bad.log" || { cat "$WORK/bad.log"; fail "unexpected refusal reason"; }
-docker rm -f "$TAG-bad" >/dev/null
+docker rm -fv "$TAG-bad" >/dev/null
 
 # --- 1. three dashboard nodes ----------------------------------------------
 start_node() {

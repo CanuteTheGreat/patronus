@@ -16,7 +16,7 @@ cd "$(dirname "$0")/.."
 IMAGE=${PRIV_TEST_IMAGE:-catthehacker/ubuntu:act-latest}
 C=ppriv-${GITHUB_RUN_ID:-local}-$$
 OUT=$(mktemp -d)
-cleanup() { docker rm -f "$C" >/dev/null 2>&1 || true; rm -rf "$OUT"; }
+cleanup() { docker rm -fv "$C" >/dev/null 2>&1 || true; rm -rf "$OUT"; }
 trap cleanup EXIT
 
 test_bins() {

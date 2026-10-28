@@ -181,7 +181,7 @@ jobs:
       - name: Real scenario 3 -- /0 CIDR edge case (real nft rule, not a unit test)
         run: |
           set -eo pipefail
-          docker rm -f fw-server-${{ github.run_id }} 2>/dev/null || true
+          docker rm -fv fw-server-${{ github.run_id }} 2>/dev/null || true
           docker run -d --name fw-edge-${{ github.run_id }} --network patronus-fw-net-${{ github.run_id }} --ip 172.30.0.20 \
             --cap-add=NET_ADMIN --cap-add=NET_RAW \
             patronus-fw-test:${{ github.run_id }} sh -c "/usr/local/bin/apply_ruleset --allow-tcp-ports 80 --wide-open-cidr-then-narrow-deny --narrow-deny-cidr 172.30.0.0/24 --hold-secs 120 & python3 -m http.server 80 & wait"

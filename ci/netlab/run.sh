@@ -23,7 +23,7 @@ cd "$(dirname "$0")/../.."
 IMAGE=${NETLAB_IMAGE:-catthehacker/ubuntu:act-latest}
 C=netlab-${GITHUB_RUN_ID:-local}-$$
 OUT=$(mktemp -d)
-cleanup() { docker rm -f "$C" "${C%-retry}" >/dev/null 2>&1 || true; rm -rf "$OUT"; }
+cleanup() { docker rm -fv "$C" "${C%-retry}" >/dev/null 2>&1 || true; rm -rf "$OUT"; }
 trap cleanup EXIT
 
 if [ $# -eq 0 ]; then
@@ -115,7 +115,7 @@ create() {
     --memory 2g --memory-swap 2g --cpus 2 -w /t "$IMAGE" bash /t/inner.sh >/dev/null
 }
 run_container() {
-  create 2>/dev/null || { echo "netlab: could not pass /dev/ppp and /dev/net/tun to the container"; docker rm -f "$C" >/dev/null 2>&1 || true; DEVS=(); create; }
+  create 2>/dev/null || { echo "netlab: could not pass /dev/ppp and /dev/net/tun to the container"; docker rm -fv "$C" >/dev/null 2>&1 || true; DEVS=(); create; }
   docker cp "$OUT/." "$C:/t/"
   docker start -a "$C" || true
   rc=$(docker inspect -f '{{.State.ExitCode}}' "$C")
@@ -133,7 +133,7 @@ if [ "$rc" = 137 ]; then
     # the killed container may still be mid-removal (the thing that killed it
     # is often a cleanup of "orphans"), so the old name can stay taken for a
     # while: the second run gets a fresh name (cleanup removes both)
-    docker rm -f "$C" >/dev/null 2>&1 || true
+    docker rm -fv "$C" >/dev/null 2>&1 || true
     C="$C-retry"
     run_container
   fi

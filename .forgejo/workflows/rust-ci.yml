@@ -623,7 +623,7 @@ jobs:
         run: |
           set -e
           cid=$(docker run -d --cap-add=NET_ADMIN --cap-add=NET_RAW --network "container:$(hostname)" patronus/web:${{ github.sha }})
-          trap 'docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          trap 'docker logs "$cid" || true; docker rm -fv "$cid" >/dev/null 2>&1 || true' EXIT
           ok=0
           for i in $(seq 1 30); do
             # Dashboard serves self-signed HTTPS on 8443 (see
