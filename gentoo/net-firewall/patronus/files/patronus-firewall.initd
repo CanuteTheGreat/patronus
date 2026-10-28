@@ -18,12 +18,36 @@ depend() {
 	provide firewall
 }
 
+# The store is opened by root here (patronus apply) and by the unprivileged
+# patronus-web: whatever root creates or rewrites must stay writable by the
+# patronus user, else the web UI fails with "attempt to write a readonly
+# database" (seen on a first boot where this service created config.db).
+fix_store_perms() {
+	checkpath --directory --owner patronus:patronus --mode 0755 /var/lib/patronus /var/log/patronus
+	for f in /var/lib/patronus/config.db /var/lib/patronus/config.db-wal \
+		/var/lib/patronus/config.db-shm /var/lib/patronus/config.db-journal; do
+		[ -e "$f" ] && chown patronus:patronus "$f" && chmod 0640 "$f"
+	done
+	return 0
+}
+
+start_pre() {
+	fix_store_perms
+}
+
 start() {
 	ebegin "Applying Patronus configuration"
 	# This runs before `net`: queue the DHCP/DNS/NTP daemons (which need
 	# net) instead of starting them inline, which would wait on ourselves.
-	PATRONUS_DEFER_SERVICES=1 /usr/bin/patronus apply
-	eend $?
+	# One retry: a transient failure here left the service stopped with
+	# ip_forward=0 until someone re-applied by hand. Forwarding is switched
+	# on by the apply itself (sysctl stage) from the stored config, after the
+	# ruleset is in place, so a failed apply stays fail-closed.
+	PATRONUS_DEFER_SERVICES=1 /usr/bin/patronus apply \
+		|| { sleep 2; PATRONUS_DEFER_SERVICES=1 /usr/bin/patronus apply; }
+	local rc=$?
+	fix_store_perms
+	eend $rc
 }
 
 stop() {

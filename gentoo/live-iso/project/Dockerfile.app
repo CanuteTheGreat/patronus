@@ -9,10 +9,13 @@ ENV CARGO_TARGET_DIR=/cache/target CARGO_PROFILE_RELEASE_DEBUG=0
 ARG JOBS=4
 RUN --mount=type=cache,target=/cache/target --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git \
     set -e; export CARGO_BUILD_JOBS=${JOBS}; \
+    case "$(uname -m)" in x86_64) cpu=x86-64-v2; trip=X86_64_UNKNOWN_LINUX_GNU;; aarch64) cpu=generic; trip=AARCH64_UNKNOWN_LINUX_GNU;; riscv64) cpu=generic-rv64; trip=RISCV64GC_UNKNOWN_LINUX_GNU;; *) echo "unsupported arch"; exit 1;; esac; \
+    export CARGO_TARGET_${trip}_RUSTFLAGS="-C target-cpu=$cpu"; \
     cargo build --release -p patronus-cli -p patronus-web -p patronus-installer; \
     mkdir -p /out/usr/bin /out/etc/init.d /out/etc/conf.d /out/etc/patronus; \
     cp /cache/target/release/patronus-cli /cache/target/release/patronus-web /cache/target/release/patronus-install /out/usr/bin/; \
     ln -s patronus-cli /out/usr/bin/patronus; \
+    python3 gentoo/live-iso/common/check-cpu-baseline.py /out/usr/bin/patronus-cli /out/usr/bin/patronus-web /out/usr/bin/patronus-install; \
     cp gentoo/net-firewall/patronus/files/patronus.toml /out/etc/patronus/patronus.toml
 COPY gentoo/net-firewall/patronus/files/patronus-web.initd /out/etc/init.d/patronus-web
 COPY gentoo/net-firewall/patronus/files/patronus-applyd.initd /out/etc/init.d/patronus-applyd

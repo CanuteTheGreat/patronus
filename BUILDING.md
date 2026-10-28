@@ -104,7 +104,11 @@ For maximum performance on your CPU:
 
 ```bash
 RUSTFLAGS="-C target-cpu=native" cargo build --release --all-features
+# or: PATRONUS_NATIVE=1 ./build-arch.sh
 ```
+
+Release/ISO/package builds always use the portable baseline (x86-64-v2, generic
+arm64, rv64gc; see `.cargo/config.toml`): never ship a `native` build.
 
 **Performance gain:** 5-15% throughput improvement
 **Warning:** Binary only works on CPUs with similar instruction sets

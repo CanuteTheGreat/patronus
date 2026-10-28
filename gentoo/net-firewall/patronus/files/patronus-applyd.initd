@@ -24,5 +24,11 @@ depend() {
 }
 
 start_pre() {
-	checkpath --directory --mode 0755 /run/patronus /var/log/patronus
+	checkpath --directory --mode 0755 /run/patronus
+	checkpath --directory --owner patronus:patronus --mode 0755 /var/lib/patronus /var/log/patronus
+	# the store may have been created by root (boot apply): keep it writable by patronus-web
+	for f in /var/lib/patronus/config.db /var/lib/patronus/config.db-wal /var/lib/patronus/config.db-shm; do
+		[ -e "$f" ] && chown patronus:patronus "$f"
+	done
+	return 0
 }

@@ -14,11 +14,21 @@
 # Keep opt-level out of here; profile.release below already sets opt-level = 3
 # for real release builds.
 
+# Portable baseline for every release/ISO/package/container build: x86-64-v2
+# (SSE4.2 + POPCNT, any x86_64 CPU since ~2009), the generic ARMv8-A baseline
+# on aarch64, rv64gc on riscv64. NEVER "target-cpu=native" here: a native build
+# on the AMD/AVX-512 CI host emitted instructions (BMI2/AVX2/AVX-512) that
+# crashed with "invalid opcode" on a real Intel box (2026-10-28 lab VM).
+# Host-tuned LOCAL dev builds are opt-in (RUSTFLAGS replaces these flags):
+#     PATRONUS_NATIVE=1 ./build-arch.sh        or
+#     RUSTFLAGS="-C target-cpu=native" cargo build --release
+# ci/check-no-native-cpu.sh and gentoo/live-iso/common/check-cpu-baseline.py
+# (run inside the ISO build) fail CI if this regresses.
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=native"]
+rustflags = ["-C", "target-cpu=x86-64-v2"]
 
 [target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=native"]
+rustflags = ["-C", "target-cpu=generic"]
 
 [target.riscv64gc-unknown-linux-gnu]
 rustflags = ["-C", "target-cpu=generic-rv64"]

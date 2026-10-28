@@ -3,3 +3,4 @@ target
 gentoo/live-iso
 gentoo/iso
 **/target
+!gentoo/live-iso/common/check-cpu-baseline.py

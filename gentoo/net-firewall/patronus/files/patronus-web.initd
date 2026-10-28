@@ -30,4 +30,9 @@ start_pre() {
 		/var/lib/patronus
 	checkpath --directory --owner ${command_user} --mode 0700 \
 		/etc/patronus/tls
+	# a store created by root (boot apply) would make the first write fail with "readonly database"
+	for f in /var/lib/patronus/config.db /var/lib/patronus/config.db-wal /var/lib/patronus/config.db-shm; do
+		[ -e "$f" ] && chown ${command_user} "$f"
+	done
+	return 0
 }
