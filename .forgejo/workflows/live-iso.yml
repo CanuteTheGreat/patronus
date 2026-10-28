@@ -44,6 +44,7 @@ jobs:
         env:
           FORGEJO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           JOBS: '4'
+          SYNC_MODE: '--upstream'
         run: |
           set -u
           case "${GITHUB_REF_TYPE:-}" in

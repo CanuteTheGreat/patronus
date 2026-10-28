@@ -11,3 +11,10 @@ default_hostname = "patronus.localdomain"
 admin_password_file = "/var/lib/patronus/initial-admin-password"
 admin_password_owner = "patronus"
 services = ["patronus-firewall", "patronus-applyd", "patronus-web", "chronyd", "sshd", "dhcpcd"]
+# console menu (installed system)
+web_service = "patronus-web"
+db_path = "/var/lib/patronus/config.db"
+db_table = "web_users"
+config_paths = ["/etc/patronus", "/var/lib/patronus/config.db"]
+factory_reset_files = ["/var/lib/patronus/initial-admin-password"]
+reapply_services = ["patronus-firewall", "patronus-applyd"]
