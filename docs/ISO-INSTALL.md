@@ -214,3 +214,7 @@ never creates tags or bumps versions.
 * No ZFS install for Patronus yet (ext4 only); no LVM/RAID layout.
 * The notification e-mail is recorded in `/etc/patronus/notify-email`; the product does not read it yet.
 * The live image has no desktop; the Portage tree is stripped from the image, so run `emerge-webrsync` before using `emerge` on a live/installed system.
+
+## Legacy catalyst / `patronus-install` paths
+
+The catalyst stage3/livecd scripts no longer set `root:patronus` / `patronus:patronus` (accounts are locked, sshd is `PermitRootLogin prohibit-password` + `PasswordAuthentication no`), and `patronus-install` writes `PasswordAuthentication no` and refuses a plaintext user password shorter than 12 characters.
