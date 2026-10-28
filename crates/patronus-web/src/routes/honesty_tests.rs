@@ -468,7 +468,13 @@ async fn every_template_link_resolves_to_a_page() {
 #[tokio::test]
 async fn page_assets_and_the_favicon_are_served() {
     let a = app().await;
-    for path in ["/favicon.ico", "/favicon.svg"] {
+    for (path, ctype) in [
+        ("/favicon.ico", "image/x-icon"),
+        ("/favicon-32.png", "image/png"),
+        ("/apple-touch-icon.png", "image/png"),
+        ("/brand/mark.png", "image/png"),
+        ("/brand/full.png", "image/png"),
+    ] {
         let r = a
             .app
             .clone()
@@ -476,9 +482,9 @@ async fn page_assets_and_the_favicon_are_served() {
             .await
             .unwrap();
         assert_eq!(r.status(), StatusCode::OK, "{path} without a session");
-        assert_eq!(r.headers()[header::CONTENT_TYPE], "image/svg+xml");
+        assert_eq!(r.headers()[header::CONTENT_TYPE], ctype);
         let body = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
-        assert!(body.starts_with(b"<svg"), "{path}");
+        assert!(body.len() > 100, "{path} is a real image");
     }
     let pages = [
         "/",
@@ -495,7 +501,7 @@ async fn page_assets_and_the_favicon_are_served() {
         let (s, html) = a.call(Method::GET, page, None).await;
         assert_eq!(s, StatusCode::OK, "{page}");
         assert!(
-            html.contains(r#"<link rel="icon" href="/favicon.svg""#),
+            html.contains(r#"<link rel="icon" href="/favicon.ico""#),
             "{page} declares the favicon"
         );
         // Every local stylesheet/script/image the page loads must exist.

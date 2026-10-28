@@ -18,3 +18,8 @@ db_table = "web_users"
 config_paths = ["/etc/patronus", "/var/lib/patronus/config.db"]
 factory_reset_files = ["/var/lib/patronus/initial-admin-password"]
 reapply_services = ["patronus-firewall", "patronus-applyd"]
+
+# official logo, crop/scale only (branding/README.md); the installer GUI + boot menu read these
+logo_mark = "/usr/share/live-installer/branding/mark-256.png"
+logo_full = "/usr/share/live-installer/branding/full.png"
+logo_wordmark = "/usr/share/live-installer/branding/wordmark.png"

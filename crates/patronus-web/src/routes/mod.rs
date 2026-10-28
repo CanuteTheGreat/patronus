@@ -57,8 +57,30 @@ pub fn build_router(
         // process's working directory has no static/ (the shipped image
         // and the OpenRC/systemd services): browsers request
         // /favicon.ico on every page and logged a 404 for it.
-        .route("/favicon.svg", get(favicon))
-        .route("/favicon.ico", get(favicon))
+        .route(
+            "/favicon.ico",
+            get(|| brand_asset(BRAND_FAVICON_ICO, "image/x-icon")),
+        )
+        .route(
+            "/favicon-32.png",
+            get(|| brand_asset(BRAND_FAVICON_32, "image/png")),
+        )
+        .route(
+            "/apple-touch-icon.png",
+            get(|| brand_asset(BRAND_APPLE_TOUCH, "image/png")),
+        )
+        .route(
+            "/brand/mark.png",
+            get(|| brand_asset(BRAND_MARK, "image/png")),
+        )
+        .route(
+            "/brand/wordmark.png",
+            get(|| brand_asset(BRAND_WORDMARK, "image/png")),
+        )
+        .route(
+            "/brand/full.png",
+            get(|| brand_asset(BRAND_FULL, "image/png")),
+        )
         // Prometheus/OpenMetrics text for collectors (session or API key)
         .route("/metrics", get(api::telemetry::metrics))
         // API routes (JSON)
@@ -113,17 +135,26 @@ async fn security_headers(mut res: axum::response::Response) -> axum::response::
     res
 }
 
-/// The Patronus shield icon (`static/favicon.svg`, compiled in).
-pub(crate) const FAVICON_SVG: &str = include_str!("../../static/favicon.svg");
+// The official Patronus logo, cropped/scaled only (branding/README.md); compiled in
+// so it is served even when the process has no static/ directory.
+const BRAND_FAVICON_ICO: &[u8] = include_bytes!("../../static/brand/favicon.ico");
+const BRAND_FAVICON_32: &[u8] = include_bytes!("../../static/brand/favicon-32.png");
+const BRAND_APPLE_TOUCH: &[u8] = include_bytes!("../../static/brand/apple-touch-icon.png");
+const BRAND_MARK: &[u8] = include_bytes!("../../static/brand/mark.png");
+const BRAND_WORDMARK: &[u8] = include_bytes!("../../static/brand/wordmark.png");
+const BRAND_FULL: &[u8] = include_bytes!("../../static/brand/full.png");
 
-async fn favicon() -> impl axum::response::IntoResponse {
+async fn brand_asset(
+    bytes: &'static [u8],
+    content_type: &'static str,
+) -> impl axum::response::IntoResponse {
     use axum::http::header;
     (
         [
-            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CONTENT_TYPE, content_type),
             (header::CACHE_CONTROL, "public, max-age=86400"),
         ],
-        FAVICON_SVG,
+        bytes,
     )
 }
 
@@ -132,7 +163,9 @@ fn is_public(method: &axum::http::Method, path: &str) -> bool {
     use axum::http::Method;
     path == "/login"
         || path == "/favicon.ico"
-        || path == "/favicon.svg"
+        || path == "/favicon-32.png"
+        || path == "/apple-touch-icon.png"
+        || path.starts_with("/brand/")
         || path.starts_with("/static/")
         || (method == Method::POST && path == "/api/auth/login")
 }

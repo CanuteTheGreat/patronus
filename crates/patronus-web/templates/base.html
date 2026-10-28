@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <meta name="theme-color" content="#00000b">
     <title>{% block title %}Patronus Firewall{% endblock %}</title>
     <style>
         :root {
@@ -167,8 +170,40 @@
         /* Main Content */
         .main-content {
             flex: 1;
+            min-width: 0;
             display: flex;
             flex-direction: column;
+        }
+
+        .logo-mark {
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
+            flex: none;
+            display: block;
+        }
+
+        .header-brand {
+            display: none;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text);
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .header-brand img {
+            width: 32px;
+            height: 32px;
+            border-radius: 7px;
+        }
+
+        .backdrop {
+            display: none;
+        }
+
+        .content img, .content pre, .content table {
+            max-width: 100%;
         }
 
         .header {
@@ -494,22 +529,98 @@
         }
 
         /* Mobile Responsive */
-        @media (max-width: 768px) {
+        /* Below 900px the sidebar is an off-canvas drawer: hidden by default, opened by the
+           hamburger in the top bar, closed by a nav tap, a tap outside, or Escape. */
+        @media (max-width: 900px) {
+            html, body {
+                overflow-x: hidden;
+            }
+
             .sidebar {
                 position: fixed;
-                z-index: 100;
-            }
-
-            .sidebar.collapsed {
+                top: 0;
+                left: 0;
+                bottom: 0;
+                height: auto;
+                width: min(280px, 85vw);
+                z-index: 200;
                 transform: translateX(-100%);
+                visibility: hidden;
+                transition: transform 0.25s ease, visibility 0s linear 0.25s;
             }
 
-            .menu-toggle {
+            body.nav-open .sidebar {
+                transform: none;
+                visibility: visible;
+                box-shadow: 4px 0 24px rgba(0,0,0,0.35);
+                transition: transform 0.25s ease;
+            }
+
+            .backdrop {
+                display: block;
+                position: fixed;
+                inset: 0;
+                z-index: 150;
+                background: rgba(0,0,0,0.55);
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.25s ease;
+            }
+
+            body.nav-open .backdrop {
+                opacity: 1;
+                pointer-events: auto;
+            }
+
+            body.nav-open {
+                overflow: hidden;
+            }
+
+            .layout {
                 display: block;
             }
 
-            .search-input {
-                width: 150px;
+            .main-content {
+                width: 100%;
+            }
+
+            .header {
+                padding: 0.5rem 0.75rem;
+            }
+
+            .header-brand {
+                display: flex;
+            }
+
+            .content {
+                padding: 1rem 0.75rem;
+            }
+
+            .page-title {
+                font-size: 1.4rem;
+            }
+
+            .menu-toggle {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                font-size: 1.6rem;
+            }
+
+            .search-box {
+                display: none;
+            }
+
+            .content table {
+                display: block;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            .content pre {
+                overflow-x: auto;
             }
 
             .stat-grid {
@@ -589,12 +700,13 @@
     {% block extra_head %}{% endblock %}
 </head>
 <body>
+    <div class="backdrop" id="navBackdrop"></div>
     <div class="layout">
         <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <a href="/" class="logo">
-                    <span class="logo-icon">🛡️</span>
+                    <img class="logo-mark" src="/brand/mark.png" alt="" width="44" height="44">
                     <div class="logo-text">
                         <h1>Patronus</h1>
                         <p>Firewall</p>
@@ -754,7 +866,8 @@
             <!-- Header -->
             <header class="header">
                 <div class="header-left">
-                    <button class="menu-toggle" id="menuToggle">☰</button>
+                    <button class="menu-toggle" id="menuToggle" type="button" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">☰</button>
+                    <a href="/" class="header-brand"><img src="/brand/mark.png" alt="" width="32" height="32"><span>Patronus</span></a>
                     <div class="breadcrumbs">
                         <a href="/">Home</a>
                         {% if page != "dashboard" %}
@@ -811,9 +924,22 @@
         const menuToggle = document.getElementById('menuToggle');
         const sidebar = document.getElementById('sidebar');
 
+        const mobileNav = window.matchMedia('(max-width: 900px)');
+        function setNav(open) {
+            body.classList.toggle('nav-open', open);
+            menuToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
         menuToggle.addEventListener('click', () => {
-            sidebar.classList.toggle('collapsed');
+            if (mobileNav.matches) {
+                setNav(!body.classList.contains('nav-open'));
+            } else {
+                sidebar.classList.toggle('collapsed');
+            }
         });
+        document.getElementById('navBackdrop').addEventListener('click', () => setNav(false));
+        sidebar.addEventListener('click', (e) => { if (e.target.closest('a.nav-item, .logo')) setNav(false); });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setNav(false); });
+        mobileNav.addEventListener('change', () => { setNav(false); sidebar.classList.remove('collapsed'); });
 
         // Toggle advanced sections
         function toggleAdvanced(btn) {

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="branding/patronus-logo-official.png" alt="Patronus" width="260">
+</p>
+
 # Patronus
 
 **An open-source firewall/router for Gentoo Linux, with an SD-WAN dashboard.**
