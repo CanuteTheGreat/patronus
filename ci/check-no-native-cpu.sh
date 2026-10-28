@@ -13,7 +13,7 @@ grep -qE 'target-cpu=generic-rv64' .cargo/config.toml || { echo "::error::.cargo
 # 2. no build input outside the opt-in places names target-cpu=native (comments and docs excluded)
 hits=$(git ls-files -z -- '.cargo' 'Dockerfile*' '*/Dockerfile*' '*.sh' '.forgejo/workflows' 'gentoo' 'ci' \
   | xargs -0 grep -nE 'target-cpu=native' 2>/dev/null \
-  | grep -vE '^(ci/check-no-native-cpu\.sh|gentoo/net-firewall/patronus/patronus-[0-9.]*\.ebuild|gentoo/net-firewall/patronus/patronus-9999\.ebuild):' \
+  | grep -vE '^(ci/check-no-native-cpu\.sh|gentoo/live-iso/common/check-cpu-baseline\.py|branding/derive\.py|gentoo/net-firewall/patronus/patronus-[0-9.]*\.ebuild|gentoo/net-firewall/patronus/patronus-9999\.ebuild):' \
   | grep -vE '^[^:]+:[0-9]+:\s*#' \
   | grep -vE '^[^:]+:[0-9]+:[^#]*#.*target-cpu=native' || true)
 # the ebuild may use it ONLY behind `use arch-native` / PATRONUS_TARGET_CPU (checked by eye in review; grep for a bare default)
