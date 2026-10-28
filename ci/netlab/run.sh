@@ -23,7 +23,7 @@ cd "$(dirname "$0")/../.."
 IMAGE=${NETLAB_IMAGE:-catthehacker/ubuntu:act-latest}
 C=netlab-${GITHUB_RUN_ID:-local}-$$
 OUT=$(mktemp -d)
-cleanup() { docker rm -f "$C" >/dev/null 2>&1 || true; rm -rf "$OUT"; }
+cleanup() { docker rm -f "$C" "${C%-retry}" >/dev/null 2>&1 || true; rm -rf "$OUT"; }
 trap cleanup EXIT
 
 if [ $# -eq 0 ]; then
@@ -130,7 +130,11 @@ if [ "$rc" = 137 ]; then
     echo "netlab: the container was killed by the OOM killer (memory cap 2g): a scenario or the build leaks memory"
   else
     echo "netlab: the container was killed from outside (exit 137, not OOM); running all scenarios once more"
+    # the killed container may still be mid-removal (the thing that killed it
+    # is often a cleanup of "orphans"), so the old name can stay taken for a
+    # while: the second run gets a fresh name (cleanup removes both)
     docker rm -f "$C" >/dev/null 2>&1 || true
+    C="$C-retry"
     run_container
   fi
 fi
