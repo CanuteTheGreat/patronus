@@ -322,7 +322,7 @@ pub async fn configure_ssh(target: &Path, config: &ServiceConfig) -> Result<()> 
 
     // Security hardening
     content = update_ssh_config(&content, "PermitRootLogin", "prohibit-password");
-    content = update_ssh_config(&content, "PasswordAuthentication", "yes");
+    content = update_ssh_config(&content, "PasswordAuthentication", "no");
     content = update_ssh_config(&content, "X11Forwarding", "no");
     content = update_ssh_config(&content, "MaxAuthTries", "3");
 

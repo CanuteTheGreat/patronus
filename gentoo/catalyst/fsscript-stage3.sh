@@ -47,15 +47,15 @@ EOF
 systemctl enable patronus-firewall
 systemctl enable patronus-web
 
-# Set root password (change in production!)
-echo "root:patronus" | chpasswd
+# No default root password: lock root; the installer sets credentials
+passwd -l root
 
 # Configure SSH
 mkdir -p /etc/ssh
 cat > /etc/ssh/sshd_config <<EOF
-PermitRootLogin yes
+PermitRootLogin prohibit-password
 PubkeyAuthentication yes
-PasswordAuthentication yes
+PasswordAuthentication no
 EOF
 
 systemctl enable sshd

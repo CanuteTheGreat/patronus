@@ -577,6 +577,11 @@ async fn create_user(target: &Path, user: &UserConfig) -> Result<()> {
 
     // Set password
     if let Some(ref password) = user.password {
+        if password.chars().count() < 12 {
+            return Err(InstallerError::User(
+                "password must be at least 12 characters".to_string(),
+            ));
+        }
         set_user_password(target, &user.username, password).await?;
     } else if let Some(ref hash) = user.password_hash {
         set_user_password_hash(target, &user.username, hash).await?;

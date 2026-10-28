@@ -7,7 +7,9 @@ echo "Patronus LiveCD: Configuring..."
 
 # Create patronus user
 useradd -m -G wheel -s /bin/bash patronus
-echo "patronus:patronus" | chpasswd
+# No default password: the account is locked (no fixed credentials on the image)
+passwd -l patronus >/dev/null
+passwd -l root >/dev/null 2>&1 || true
 
 # Allow wheel group sudo without password
 echo "%wheel ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
