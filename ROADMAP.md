@@ -1,5 +1,7 @@
 # Patronus SD-WAN Development Roadmap
 
+> **Superseded for release planning:** the live stable-1.0 checklist is [docs/ROADMAP.md](docs/ROADMAP.md). This older file is a feature backlog and may be out of date.
+
 This document outlines the planned features and enhancements for Patronus SD-WAN.
 
 ## Current State (as of Sprint 39)

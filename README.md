@@ -14,6 +14,8 @@ repository's own overlay (`gentoo/net-firewall/patronus/`), with USE flags
 selecting what is compiled in (see [AGENTS.md](AGENTS.md)). It is written in
 Rust and enforces its firewall with the kernel's nftables.
 
+Commercial support is **planned after a stable 1.0** (a paid stable update channel with best-effort email support; the free channel stays complete).
+
 Patronus is under active development. This README only states what the
 product does today, and **every claim below is proven by a test that runs in
 CI** -- the `[Cn]` marker after a claim is its row in
@@ -21,6 +23,8 @@ CI** -- the `[Cn]` marker after a claim is its row in
 `ci/claims-check.sh` fails the build if a claim loses its proof. Features
 that are not finished are listed separately under
 [Being built](#being-built), without claims.
+
+**[Roadmap to 1.0 (live checklist)](docs/ROADMAP.md)** | **[Stable channel design](docs/stable-channel.md)** | **[Installing from the ISO](docs/ISO-INSTALL.md)**
 
 ---
 
