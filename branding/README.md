@@ -14,3 +14,4 @@ rounded background tile only (no AI upscaling, no redrawing); regenerate with `b
 
 The web UI embeds the web-sized subset from `crates/patronus-web/static/brand/` (copies of these files).
 The live ISO / installer / GRUB theme read `branding/` (see `gentoo/live-iso/`).
+| `patronus-grub-splash.png` | 1024x768 GRUB background: the full logo scaled and centred under the menu (compose with the full logo only) | live-ISO boot menu |
