@@ -10,7 +10,8 @@ chgrp patronus /etc/patronus && chmod 0750 /etc/patronus
 chgrp patronus /etc/patronus/patronus.toml && chmod 0640 /etc/patronus/patronus.toml
 # patronus-firewall = boot-time `patronus apply` (seeds + applies the ruleset); the stock
 # nftables service is NOT enabled (patronus owns the ruleset)
-for s in patronus-firewall patronus-applyd patronus-web chronyd; do rc-update add $s default >/dev/null 2>&1 || echo "warn: rc-update add $s"; done
+# NOT in the live runlevel: the installer enables them on the installed system (profile services); "Try it live" starts
+# patronus-applyd + patronus-web through live-product with a random admin password (firewall rules are not applied to the live host).
 # every shipped binary must resolve its libraries on the live system
 bad=0; for b in /usr/bin/patronus-cli /usr/bin/patronus-web /usr/bin/patronus-install; do
   if ldd $b | grep -q 'not found'; then echo "MISSING LIBS for $b:"; ldd $b | grep 'not found'; bad=1; fi; done

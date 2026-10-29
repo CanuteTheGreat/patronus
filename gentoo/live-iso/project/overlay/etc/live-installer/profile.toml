@@ -23,3 +23,5 @@ reapply_services = ["patronus-firewall", "patronus-applyd"]
 logo_mark = "/usr/share/live-installer/branding/mark-256.png"
 logo_full = "/usr/share/live-installer/branding/full.png"
 logo_wordmark = "/usr/share/live-installer/branding/wordmark.png"
+# "Try it live" boot entry: services started from RAM (random admin password per session; the firewall rules are NOT applied to the live host)
+live_services = ["patronus-applyd", "patronus-web"]
