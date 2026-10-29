@@ -1,0 +1,172 @@
+{
+ "key": "patronus",
+ "repo": "patronus",
+ "name": "Patronus",
+ "version": "0.x",
+ "banner": "Daily builds for testing. Not for production.",
+ "tagline": "Patronus is a free, Gentoo-based firewall and router with an SD-WAN dashboard, written in Rust. Pre-1.0.",
+ "lead": "A Gentoo-based firewall and router with an SD-WAN dashboard, written in Rust and enforced by the kernel's nftables.",
+ "logo_w": 227,
+ "logo_h": 340,
+ "what_html": "<p>Patronus is a firewall and router for Gentoo, aimed at the space pfSense and OPNsense occupy. It configures nftables, routing, VPNs and SD-WAN from a web UI and an API. It ships as an ebuild whose USE flags choose what is compiled in.</p><p>It is a one-person project in early development. Every claim in its README is tied to a test in CI; features that are not finished are listed without claims.</p>",
+ "status": "Patronus is pre-1.0. Configuration and on-disk formats can still change between builds. Do not put it in front of a network you cannot afford to lose.",
+ "works": [
+  "Daily ISOs for x86_64 and aarch64: a QEMU test boots, installs (unattended, serial wizard, VGA wizard; UEFI and BIOS on x86_64), reboots from disk and logs in to the web UI.",
+  "Nightly live traffic tests of the firewall and SD-WAN paths in network namespaces, and an installer test on a real ZFS root.",
+  "A claims ledger: each README claim names the CI tests that prove it, and CI fails if a claim loses its proof."
+ ],
+ "gaps": [
+  "No stable release. No in-place upgrade or rollback test of an installed appliance yet.",
+  "A bug found on real hardware: the firewall service did not start after a reboot. A fix is in progress; the roadmap keeps this open until CI covers it.",
+  "A CPU-specific crash on Intel (fixed on main, not yet confirmed on that machine).",
+  "The graphical installer is in progress; today the installer is a text wizard.",
+  "Secure Boot is not supported. The automated security audit in the repo is not an independent review."
+ ],
+ "isos": [
+  [
+   "x86_64 (UEFI + BIOS, hybrid USB/CD)",
+   "patronus-daily-x86_64.iso"
+  ],
+  [
+   "aarch64 (UEFI)",
+   "patronus-daily-aarch64.iso"
+  ]
+ ],
+ "dl_note": "The aarch64 build is tested under QEMU emulation, not on real arm64 hardware.",
+ "evidence": "patronus-daily-test-evidence.tgz",
+ "shots": [
+  [
+   "installer/patronus/04b-interface-assignment-filled.png",
+   "Assigning WAN and LAN interfaces"
+  ],
+  [
+   "installer/patronus/05b-wan-lan-addressing-filled.png",
+   "WAN and LAN addressing"
+  ],
+  [
+   "installer/patronus/09-finished.png",
+   "Install finished: web UI address"
+  ]
+ ],
+ "docs": [
+  [
+   "ISO-INSTALL.md",
+   "Installing from the ISO"
+  ],
+  [
+   "QUICKSTART.md",
+   "Quick start"
+  ],
+  [
+   "PRODUCTION_DEPLOYMENT.md",
+   "Production deployment"
+  ],
+  [
+   "OPERATIONS_RUNBOOK.md",
+   "Operations runbook"
+  ],
+  [
+   "HIGH_AVAILABILITY.md",
+   "High availability"
+  ],
+  [
+   "DISASTER_RECOVERY.md",
+   "Disaster recovery"
+  ],
+  [
+   "MONITORING.md",
+   "Monitoring"
+  ],
+  [
+   "SDWAN-DEPLOYMENT.md",
+   "SD-WAN deployment"
+  ],
+  [
+   "IPSEC-ROADWARRIORS.md",
+   "IPsec road warriors"
+  ],
+  [
+   "BGP_INTEGRATION.md",
+   "BGP"
+  ],
+  [
+   "FIREWALL-FEEDS.md",
+   "Firewall feeds"
+  ],
+  [
+   "GENTOO-INTEGRATION.md",
+   "Gentoo integration"
+  ],
+  [
+   "PERFORMANCE_TUNING.md",
+   "Performance tuning"
+  ]
+ ],
+ "docs_index": [
+  [
+   "ISO-INSTALL.md",
+   "Installing from the ISO",
+   "Daily ISO, USB, installer, unattended installs, what is tested"
+  ],
+  [
+   "QUICKSTART.md",
+   "Quick start",
+   ""
+  ],
+  [
+   "PRODUCTION_DEPLOYMENT.md",
+   "Production deployment",
+   ""
+  ],
+  [
+   "OPERATIONS_RUNBOOK.md",
+   "Operations runbook",
+   ""
+  ],
+  [
+   "HIGH_AVAILABILITY.md",
+   "High availability",
+   ""
+  ],
+  [
+   "DISASTER_RECOVERY.md",
+   "Disaster recovery",
+   ""
+  ],
+  [
+   "MONITORING.md",
+   "Monitoring",
+   ""
+  ],
+  [
+   "SDWAN-DEPLOYMENT.md",
+   "SD-WAN deployment",
+   ""
+  ],
+  [
+   "IPSEC-ROADWARRIORS.md",
+   "IPsec road warriors",
+   ""
+  ],
+  [
+   "BGP_INTEGRATION.md",
+   "BGP",
+   ""
+  ],
+  [
+   "FIREWALL-FEEDS.md",
+   "Firewall feeds",
+   ""
+  ],
+  [
+   "GENTOO-INTEGRATION.md",
+   "Gentoo integration",
+   ""
+  ],
+  [
+   "PERFORMANCE_TUNING.md",
+   "Performance tuning",
+   ""
+  ]
+ ]
+}
