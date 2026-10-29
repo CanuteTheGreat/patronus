@@ -2,8 +2,9 @@
 name = "patronus"
 title = "Patronus"
 network_mode = "wan-lan"             # OPNsense-style WAN/LAN assignment
-filesystems = ["ext4"]
-swap_mb = 1024
+filesystems = ["xfs", "ext4"]         # no ZFS in the firewall image: XFS is the fallback (ext4 = manual choice only)
+swap_mb = 0
+portable_swap = false              # firewall appliance: never an on-disk swap (zram only), even on a laptop-class box under auto
 web_scheme = "https"
 web_port = 8443
 default_hostname = "patronus.localdomain"
@@ -25,3 +26,12 @@ logo_full = "/usr/share/live-installer/branding/full.png"
 logo_wordmark = "/usr/share/live-installer/branding/wordmark.png"
 # "Try it live" boot entry: services started from RAM (random admin password per session; the firewall rules are NOT applied to the live host)
 live_services = ["patronus-applyd", "patronus-web"]
+
+# installer pages (stages.py)
+brand_color = "#1f6fb2"
+services_optional = ["chronyd"]
+service_info = { chronyd = "NTP time synchronisation (keeps certificates and logs correct)" }
+# a firewall routes: its own sysctl applier owns the network sysctls, so the installer's hardening set stays off
+sysctl_hardening = false
+use_critical = ["net-firewall/nftables:json"]
+use_critical_why = { "net-firewall/nftables:json" = "Patronus reads and writes the ruleset as JSON" }

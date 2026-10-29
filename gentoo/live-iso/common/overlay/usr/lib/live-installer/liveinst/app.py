@@ -1,15 +1,17 @@
-"""Guided installer: screens, unattended runner and entry point."""
+"""Guided installer, text front-end: renders the shared stages (stages.py) with curses, plus the unattended runner."""
 import curses
 import os
 import sys
 import threading
 import time
 
+from . import stages as ST
 from . import system as S
+from . import portableswap
 from . import tui
-from .tui import Field, Abort, run_form, run_disk_picker, message, progress_screen
-
-ERASE_WORD = "ERASE"
+from . import useflags as UF
+from .stages import ERASE_WORD, Field
+from .tui import Abort, run_form, run_disk_picker, message, progress_screen
 
 
 class State:
@@ -18,71 +20,75 @@ class State:
         self.c = S.default_config(profile)
         self.nics = []
         self.dry = False
+        self.ctx = ST.Ctx(profile, self.c)
+
+    def sync(self):
+        self.ctx.nics = self.nics
 
 
 # --------------------------------------------------------------------------
-# screens - each returns "next" or "back"
+# generic form stage - the same declarative Field list the GUI renders
 # --------------------------------------------------------------------------
-def s_locale(t, st, step):
-    c = st.c
-    f = [Field("locale", "Language", "list", c["locale"], S.LOCALES, hint="Language of the installed system (the installer itself is English)"),
-         Field("keymap", "Keyboard layout", "list", c["keymap"], [(k, k) for k in S.keymaps()]),
-         Field("timezone", "Time zone", "list", c["timezone"], [(z, z) for z in S.timezones()], hint="Enter opens a list; type to filter")]
-    b, v = run_form(t, step, "Language, keyboard and time zone",
-                    "Choose how the installed system should speak and tell time.", f, buttons=("Abort", "Next"))
+def tui_stage(t, st, stage, step, fields=None, buttons=("Back", "Next")):
+    ctx = st.ctx
+    f = fields if fields is not None else stage.fields(ctx)
+    adv = [x for x in f if x.advanced]
+    if adv:
+        f.append(Field("__adv", "Show advanced options", "check", os.environ.get("LIVE_INSTALLER_EXPERT") == "1", hint="Space toggles the advanced options of this screen"))
+        for x in adv:
+            old = x.visible
+            x.visible = (lambda v, old=old: bool(v.get("__adv")) and (old is None or old(v)))
+    b, v = run_form(t, step, stage.title, stage.intro, f, buttons=buttons, validate_all=lambda a: stage.validate(ctx, a))
+    return b, v
+
+
+def s_keymap(t, st, step):
+    b, v = tui_stage(t, st, ST.BY_ID["keymap"], step, buttons=("Abort", "Next"))
     if b == "Abort":
         raise Abort()
-    c.update(v)
-    S.apply_live_keymap(c["keymap"])
+    ST.BY_ID["keymap"].commit(st.ctx, v)
+    S.apply_live_keymap(st.c["keymap"])
     return "next"
 
 
-def s_fs(t, st, step):
-    c, p = st.c, st.p
-    opts = {"ext4": "ext4 (default, robust)", "xfs": "XFS", "zfs": "ZFS (checksums, snapshots, mirror)"}
-    f = [Field("fs", "Root file system", "choice", c["fs"], [(x, opts.get(x, x)) for x in p["filesystems"]]),
-         Field("zfs_raid", "ZFS layout", "choice", c["zfs_raid"], [("single", "single disk"), ("mirror", "mirror (RAID1, two disks)")],
-               visible=lambda v: v["fs"] == "zfs")]
-    b, v = run_form(t, step, "File system",
-                    "ext4 and XFS use one disk. ZFS uses the whole disk as a pool 'rpool'; a mirror needs two disks "
-                    "(it survives one disk failing; /boot lives on the first disk only).", f)
+def s_hostname(t, st, step):
+    b, v = tui_stage(t, st, ST.BY_ID["hostname"], step)
     if b == "Back":
         return "back"
-    c["fs"], c["zfs_raid"] = v["fs"], v["zfs_raid"]
-    if c["fs"] == "zfs" and not st.dry and S.sh("modprobe zfs && test -e /dev/zfs")[0] != 0:
-        message(t, "ZFS not available", "The ZFS kernel module could not be loaded on this machine. Choose ext4 or XFS.", "err")
-        return "again"
+    ST.BY_ID["hostname"].commit(st.ctx, v)
     return "next"
 
 
 def s_disk(t, st, step):
     c = st.c
-    disks = S.list_disks()
+    stage = ST.BY_ID["disk"]
+    if len(st.p["filesystems"]) > 1:
+        b, v = tui_stage(t, st, stage, step)
+        if b == "Back":
+            return "back"
+        stage.commit(st.ctx, v)
+        if c["fs"] == "zfs" and not st.dry and S.sh("modprobe zfs && test -e /dev/zfs")[0] != 0:
+            message(t, "ZFS not available", "The ZFS kernel module could not be loaded on this machine. Choose XFS.", "err")
+            return "again"
+    disks = st.ctx.disks if st.dry else S.list_disks()
+    st.ctx.disks = disks
     if not disks:
         message(t, "No disk found", "No usable internal disk (>= 2 GB) was found. If the disk is behind a RAID/VMD "
                 "controller, switch the firmware to AHCI mode. The installer will exit to a shell.", "err")
         raise Abort()
-    mirror = c["fs"] == "zfs" and c["zfs_raid"] == "mirror"
-    intro = ("Select the TWO disks for the mirror." if mirror else "Select the disk to install to.") + \
+    mirror = stage.need_disks(c) == 2
+    intro = (stage.intro.split(".")[0] + ". ") + ("Select the TWO disks for the mirror." if mirror else "Select the disk to install to.") + \
             " Everything on a selected disk will be ERASED. The live USB stick is not listed."
     sel = [d for d in c["disks"] if any(x["path"] == d for x in disks)]
     while True:
         b, sel = run_disk_picker(t, step, "Target disk" + ("s" if mirror else ""), intro, disks, sel, mirror, S.fmt_size)
         if b == "Back":
             return "back"
-        need = 2 if mirror else 1
-        if len(sel) != need:
-            message(t, "Disk selection", f"Select exactly {need} disk{'s' if need > 1 else ''} (selected: {len(sel)}).", "err")
+        err, warn = stage.check_selection(st.ctx, sel)
+        if err:
+            message(t, "Disk selection", err, "err")
             continue
-        if mirror:
-            sizes = [next(d["size"] for d in disks if d["path"] == x) for x in sel]
-            if abs(sizes[0] - sizes[1]) > 0.1 * max(sizes):
-                if message(t, "Different disk sizes", "The disks differ in size by more than 10%; the mirror is limited to the smaller one.",
-                           "warn", ("Back", "Continue")) != "Continue":
-                    continue
-        small = [d for d in disks if d["path"] in sel and d["size"] < 8 * 10**9]
-        if small:
-            message(t, "Disk too small", f"{small[0]['path']} is smaller than 8 GB; the installed system needs more room.", "err")
+        if warn and message(t, "Different disk sizes", warn, "warn", ("Back", "Continue")) != "Continue":
             continue
         c["disks"] = sel
         return "next"
@@ -127,7 +133,6 @@ def s_mgmt(t, st, step):
         n["iface"] = (up or wired or st.nics)[0]["name"]
     cur_ip = S.nic_ip(n["iface"])
     f = [Field("iface", "Management NIC", "list", n["iface"], nics, width=60, hint="The interface that carries the web UI and SSH"),
-         Field("hostname", "Hostname (FQDN)", "text", c["hostname"], validate=lambda v, a: S.hostname_problem(v), width=40),
          Field("mode", "IP configuration", "choice", n["mode"], [("dhcp", "DHCP (automatic)"), ("static", "Static address")]),
          Field("address", "IP address / prefix", "text", n["address"] or cur_ip, validate=lambda v, a: S.cidr_problem(v),
                visible=lambda v: v["mode"] == "static", hint="e.g. 192.168.1.50/24"),
@@ -136,10 +141,9 @@ def s_mgmt(t, st, step):
          Field("dns", "DNS server(s)", "text", n["dns"] or default_dns(), validate=lambda v, a: S.dns_problem(v),
                visible=lambda v: v["mode"] == "static", hint="space separated")]
     b, v = run_form(t, step, "Management network",
-                    "Pick the network interface for the management web UI and SSH, and set the host name.", f)
+                    "Pick the network interface for the management web UI and SSH.", f)
     if b == "Back":
         return "back"
-    c["hostname"] = v["hostname"].strip().lower()
     n.update({k: v[k].strip() if isinstance(v[k], str) else v[k] for k in ("iface", "mode", "address", "gateway", "dns")})
     if next(x for x in st.nics if x["name"] == n["iface"])["wifi"]:
         r = s_wifi(t, st, step, n["iface"])
@@ -253,8 +257,7 @@ def s_addr(t, st, step):
     c = st.c
     w, l = c["wan"], c["lan"]
     wifi = bool(c["wifi"])
-    f = [Field("hostname", "Hostname (FQDN)", "text", c["hostname"], validate=lambda v, a: S.hostname_problem(v), width=40),
-         Field("wmode", "WAN addressing", "choice", w["mode"], [("dhcp", "DHCP (from the ISP / upstream)"), ("static", "Static address")]),
+    f = [Field("wmode", "WAN addressing", "choice", w["mode"], [("dhcp", "DHCP (from the ISP / upstream)"), ("static", "Static address")]),
          Field("waddr", "WAN address/prefix", "text", w["address"], validate=lambda v, a: S.cidr_problem(v), visible=lambda v: v["wmode"] == "static"),
          Field("wgw", "WAN gateway", "text", w["gateway"], validate=lambda v, a: S.ip_problem(v, a.get("waddr")), visible=lambda v: v["wmode"] == "static"),
          Field("wdns", "DNS server(s)", "text", w["dns"], validate=lambda v, a: S.dns_problem(v), visible=lambda v: v["wmode"] == "static")]
@@ -262,73 +265,199 @@ def s_addr(t, st, step):
         f.append(Field("laddr", "LAN address/prefix", "text", l["address"], validate=lambda v, a: S.cidr_problem(v),
                        hint="The firewall's own LAN address; also the web UI address"))
     b, v = run_form(t, step, "WAN / LAN addressing",
-                    "Set the host name and how the WAN gets its address. The LAN is static (a DHCP server for LAN clients can be enabled later in the web UI)."
+                    "Set how the WAN gets its address. The LAN is static (a DHCP server for LAN clients can be enabled later in the web UI)."
                     + (" WAN is Wi-Fi (DHCP)." if wifi else ""), f)
     if b == "Back":
         return "back"
-    c["hostname"] = v["hostname"].strip().lower()
     w.update({"mode": "dhcp" if wifi else v["wmode"], "address": v.get("waddr", ""), "gateway": v.get("wgw", ""), "dns": v.get("wdns", "")})
     if l["iface"]:
         l["address"] = v["laddr"].strip()
     return "next"
 
 
-def s_account(t, st, step):
-    c, p = st.c, st.p
-    f = [Field("pw", "Password", "password", c["root_password"], width=40,
-               hint="Min 12 chars, mixed. Used for console root and web admin"),
-         Field("pw2", "Confirm password", "password", c["root_password"], width=40),
-         Field("strength", "Strength", "info", lambda a: S.password_strength(a["pw"]) if a["pw"] else "-"),
-         Field("email", "E-mail (notifications)", "text", c["email"], validate=lambda v, a: S.email_problem(v), width=40,
-               hint="Alerts and notices are addressed here"),
-         Field("key", "SSH public key", "text", "\n".join(c["ssh_keys"]), optional=True, width=40,
-               validate=lambda v, a: S.ssh_key_problem(v), hint="Optional: paste one ssh-ed25519/ssh-rsa line for root key login"),
-         Field("pwauth", "Allow SSH password login", "check", c["ssh_password_auth"],
-               hint="OFF is recommended: root can then log in over SSH with a key only"),
-         Field("conopen", "Open console menu (no login on the console)", "check", c["console_open"],
-               hint="OFF (default): the console asks for the root password first. ON = OPNsense style: anyone at the console can use the menu"),
-         Field("warn", "WARNING: password SSH login exposes the system to password guessing from the network.", "label", "", hint="warn",
-               visible=lambda v: v["pwauth"])]
+def s_stage(sid):
+    def run(t, st, step):
+        stage = ST.BY_ID[sid]
+        b, v = tui_stage(t, st, stage, step)
+        if b == "Back":
+            return "back"
+        stage.commit(st.ctx, v)
+        return "next"
+    return run
 
-    def check(a):
-        if a["pw"] != a["pw2"]:
-            return "The two passwords do not match."
-        e = S.password_problem(a["pw"], c["hostname"])
-        if e:
-            return e
-        return None
-    b, v = run_form(t, step, "Administrator account",
-                    "Set the administrator password (REQUIRED - there is no default password). SSH is key-only unless you enable password login below.",
-                    f, validate_all=check)
-    if b == "Back":
-        return "back"
-    c["root_password"], c["web_password"] = v["pw"], v["pw"]
-    c["root_hash"] = ""
-    c["email"] = v["email"].strip()
-    c["ssh_keys"] = [v["key"].strip()] if v["key"].strip() else []
-    c["ssh_password_auth"] = bool(v["pwauth"])
-    c["console_open"] = bool(v["conopen"])
-    return "next"
+
+def s_rootpass(t, st, step):
+    return s_stage("rootpass")(t, st, step)
+
+
+def s_netconfig_mgmt(t, st, step):
+    return s_mgmt(t, st, step)
+
+
+# --------------------------------------------------------------------------
+# USE flags (text front-end): preset bar, filter + flag list, live Portage sanity check
+# --------------------------------------------------------------------------
+def s_use(t, st, step):
+    stage = ST.BY_ID["use_flags"]
+    meta = UF.load_meta()
+    if not meta:
+        message(t, "Software (USE flags)", "This image carries no Portage metadata, so the USE flags cannot be edited. "
+                "The tested image defaults are used.", "warn")
+        return "next"
+    st.ctx.use_meta = meta
+    use = st.c["use"]
+    rows = meta.flag_rows()
+    group_names = ["All groups"] + [g for g in UF.GROUPS if any(r["group"] == g for r in rows)]
+    gi, flt, cur, top = 0, "", 0, 0
+    focus = "list"            # preset | list | buttons
+    pi = [x[0] for x in UF.PRESETS].index(use["preset"]) if use["preset"] in [x[0] for x in UF.PRESETS] else 0
+    bsel = 2
+    msg = ""
+    while True:
+        choices = UF.effective_choices(meta, st.p, use)
+        issues = UF.check(meta, st.p, choices)
+        shown = [r for r in meta.search(flt, rows) if gi == 0 or r["group"] == group_names[gi]]
+        h, w = t.frame(step, stage.title)
+        pname = use["preset"]
+        t.put(4, 2, "Preset: ", t.a("bold"))
+        x = 10
+        for k, label, _d in UF.PRESETS:
+            lab = f"< {label} >" if k == pname else f"  {label}  "
+            t.put(4, x, lab, t.a("sel") if (focus == "preset" and k == UF.PRESETS[pi][0]) else (t.a("title") if k == pname else 0))
+            x += len(lab) + 1
+        if pname == "custom":
+            t.put(4, x, "(custom)", t.a("warn"))
+        t.put(5, 2, "Group:  " + group_names[gi] + "   (Ctrl-G changes)", 0)
+        t.put(6, 2, "Filter: " + flt + ("_" if focus == "list" else ""), t.a("bold") if focus == "list" else 0)
+        rows_n = max(3, h - 17)
+        cur = min(cur, max(0, len(shown) - 1))
+        if cur < top:
+            top = cur
+        if cur >= top + rows_n:
+            top = cur - rows_n + 1
+        for i in range(top, min(len(shown), top + rows_n)):
+            r = shown[i]
+            f = r["flag"]
+            want = choices.get(f)
+            now = want if want is not None else r["state"]
+            mark = "[x]" if now is True else ("[ ]" if now is False else "[~]")
+            chg = "*" if f in choices else " "
+            line = f"{mark}{chg}{f:<22} {r['desc']}"
+            t.put(7 + i - top, 2, line[: w - 4], t.a("sel") if (focus == "list" and i == cur) else (t.a("bold") if f in choices else 0))
+        y = 7 + rows_n
+        sel = shown[cur] if shown else None
+        if sel:
+            pk = ", ".join(sel["packages"][:3]) + (" ..." if len(sel["packages"]) > 3 else "") if sel["packages"] else "no installed package uses it"
+            t.put(y, 2, ("Used by: " + pk)[: w - 4])
+        y += 1
+        errs = [i for i in issues if i.level == "error"]
+        warns = [i for i in issues if i.level == "warning"]
+        t.put(y, 2, f"Portage check: {len(errs)} error(s), {len(warns)} warning(s)", t.a("err") if errs else (t.a("warn") if warns else t.a("ok")))
+        y += 1
+        for i in (errs + warns + [x for x in issues if x.level == "info"])[:2]:
+            t.put(y, 3, (("ERROR " if i.level == "error" else "warn  " if i.level == "warning" else "note  ") + i.text)[: w - 5],
+                  t.a("err") if i.level == "error" else 0)
+            y += 1
+        t.put(y, 2, UF.summary_line(meta, choices)[: w - 4])
+        by = h - 3
+        bx = 2
+        for i, b in enumerate(("Back", "Details", "Next")):
+            lab = f"< {b} >"
+            t.put(by, bx, lab, t.a("sel") if (focus == "buttons" and i == bsel) else 0)
+            bx += len(lab) + 2
+        t.footer(msg or "Tab: preset/list/buttons  Space: toggle flag  type: filter  Ctrl-G: group  Esc: abort", t.a("err") if msg else 0)
+        msg = ""
+        t.scr.refresh()
+        k = t.key()
+        if k == tui.ESC:
+            if message(t, "Abort installation?", "Leave the installer? Nothing has been changed on disk yet.", "warn", ("Continue", "Abort")) == "Abort":
+                raise Abort()
+        elif k == "\x07":
+            gi = (gi + 1) % len(group_names)
+            cur = top = 0
+        elif k == tui.TAB:
+            focus = {"preset": "list", "list": "buttons", "buttons": "preset"}[focus]
+        elif k == tui.BTAB:
+            focus = {"preset": "buttons", "list": "preset", "buttons": "list"}[focus]
+        elif focus == "preset":
+            if k in (tui.LEFT, tui.RIGHT):
+                pi = (pi + (1 if k == tui.RIGHT else -1)) % len(UF.PRESETS)
+            elif k in (tui.ENTER, " "):
+                use["preset"] = UF.PRESETS[pi][0]
+                use["flags"] = {}
+            elif k in (tui.DOWN,):
+                focus = "list"
+        elif focus == "buttons":
+            if k in (tui.LEFT, tui.RIGHT):
+                bsel = (bsel + (1 if k == tui.RIGHT else -1)) % 3
+            elif k == tui.UP:
+                focus = "list"
+            elif k == tui.ENTER:
+                if bsel == 0:
+                    return "back"
+                if bsel == 1:
+                    lines = [("ERROR: " if i.level == "error" else "warning: " if i.level == "warning" else "note: ") + i.text for i in issues] or ["No problems found."]
+                    imp = UF.impact(meta, choices)
+                    lines += ["", UF.summary_line(meta, choices)] + [f"  {p_}  ~{m} min" for p_, m in imp["list"][:8]]
+                    message(t, "Portage sanity check and build impact", "\n".join(lines), "warn" if issues else "ok")
+                else:
+                    if errs:
+                        msg = "Fix the error first: " + errs[0].text
+                        focus = "list"
+                        continue
+                    if errs == [] and use["preset"] != "recommended" or use["flags"]:
+                        pass
+                    return "next"
+        else:
+            if k == tui.UP:
+                cur = max(0, cur - 1)
+            elif k == tui.DOWN:
+                cur = min(len(shown) - 1, cur + 1)
+            elif k == tui.PGUP:
+                cur = max(0, cur - rows_n)
+            elif k == tui.PGDN:
+                cur = min(len(shown) - 1, cur + rows_n)
+            elif k == tui.ENTER:
+                focus = "buttons"
+            elif k == " " and sel:
+                f = sel["flag"]
+                now = choices.get(f, sel["state"])
+                flags = dict(choices)           # freeze preset into explicit choices, then edit
+                nv = (not now) if now is not None else True
+                if nv == sel["state"]:
+                    flags.pop(f, None)
+                else:
+                    flags[f] = nv
+                use["flags"] = flags
+                use["preset"] = "custom"
+            elif k == tui.BACKSPACE:
+                flt = flt[:-1]
+                cur = top = 0
+            elif k == "CLEAR":
+                flt = ""
+            elif len(k) == 1 and k >= " ":
+                flt += k
+                cur = top = 0
+
+
+def swap_summary(c):
+    hp, _hm = S.hwprofile.detect()
+    return portableswap.describe(portableswap.plan(c, S.mem_mb(), hp))
 
 
 def summary_lines(st):
     c, p = st.c, st.p
-    out = [("Boot mode", "UEFI" if S.efi_boot() else "legacy BIOS"),
-           ("Language / keyboard", f"{c['locale']} / {c['keymap']}"), ("Time zone", c["timezone"]),
-           ("Target disk(s)", ", ".join(c["disks"])),
-           ("File system", c["fs"] + (f" ({c['zfs_raid']})" if c["fs"] == "zfs" else "")),
+    out = [("Install type", c["install_type"].capitalize() + f"   ({'UEFI' if S.efi_boot() else 'legacy BIOS'})"),
+           ("Language / keyboard", f"{c['locale']} / {c['keymap']} / {c['timezone']}"),
+           ("Target disk(s)", ", ".join(c["disks"]) + f"   {c['fs']}" + (f" ({c['zfs_raid']})" if c["fs"] == "zfs" else "")),
            ("Hostname", c["hostname"])]
-    if p["network_mode"] == "wan-lan":
-        w, l = c["wan"], c["lan"]
-        out.append(("WAN", f"{w['iface'] or '-'}: " + (w["address"] if w["mode"] == "static" else "DHCP") + (" (Wi-Fi)" if c["wifi"] else "")))
-        out.append(("LAN", f"{l['iface'] or '-'}: {l['address'] if l['iface'] else '-'}"))
-    else:
-        n = c["mgmt"]
-        out.append(("Management NIC", f"{n['iface'] or '-'}: " + (f"{n['address']} gw {n['gateway']} dns {n['dns']}" if n["mode"] == "static" else "DHCP")
-                    + (" (Wi-Fi)" if c["wifi"] else "")))
+    for line in ST.BY_ID["netconfig"].plan(st.ctx):
+        out.append(("Network", line))
     out.append(("E-mail", c["email"] or "-"))
-    out.append(("Console menu", "OPEN (no login)" if c["console_open"] else "after root login"))
-    out.append(("SSH", ("key" if c["ssh_keys"] else "no key") + (", PASSWORD login ON" if c["ssh_password_auth"] else ", password login off")))
+    out.append(("Services", ", ".join(x for x in p["services"] if x not in c["services_off"] and x != "sshd") or "-"))
+    out.append(("SSH", ("off" if not c["ssh_enabled"] else (("key" if c["ssh_keys"] else "no key") + (", PASSWORD login ON" if c["ssh_password_auth"] else ", password login off")))))
+    out.append(("Hardening", "sysctl " + ("on" if c["sysctl_hardening"] else "off") + "; console menu " + ("OPEN (no login)" if c["console_open"] else "after root login")))
+    out.append(("Software", ST.BY_ID["use_flags"].plan(st.ctx)[0]))
     return out
 
 
@@ -354,6 +483,7 @@ def s_install(t, st, step):
         state["pct"], state["note"] = pct, note
 
     inst = S.Installer(st.p, st.c, log, prog)
+    inst._ctx = st.ctx
 
     def work():
         try:
@@ -420,16 +550,17 @@ def s_done(t, st, step):
 # --------------------------------------------------------------------------
 # flow
 # --------------------------------------------------------------------------
-def flow(profile):
-    scr = [s_locale]
-    if len(profile["filesystems"]) > 1:
-        scr.append(s_fs)
-    scr.append(s_disk)
+def flow(profile, st=None):
+    scr = [s_keymap, s_hostname, s_disk]
+    hp, _hm = S.hwprofile.detect()
+    desk = [s_stage("desktop")] if hp and hp.get("defaults", {}).get("desktop") else []      # Surface: desktop user + autologin
+    if st is not None:                                  # Apple T2 Mac / Desktop image: their own pages (backend keys t2*, user_*)
+        desk += [s_stage(sid) for sid in ("t2", "gnome") if ST.BY_ID[sid].applies(st.ctx)]
     if profile["network_mode"] == "wan-lan":
-        scr += [s_ifaces, s_addr]
+        scr += [s_rootpass] + desk + [s_ifaces, s_addr]
     else:
-        scr.append(s_mgmt)
-    scr += [s_account, s_summary, s_install, s_done]
+        scr += [s_rootpass] + desk + [s_mgmt]
+    scr += [s_stage("services"), s_stage("hardening"), s_use, s_summary, s_install, s_done]
     return scr
 
 
@@ -439,12 +570,16 @@ def interactive(profile, dry=False):
 
     def run(stdscr):
         t = tui.Term(stdscr, f"{profile['title']} installer", "UEFI" if S.efi_boot() else "BIOS")
+        if dry:
+            st.ctx.disks = [{"path": "/dev/vda", "name": "vda", "size": 64 * 10**9, "model": "QEMU HARDDISK", "kind": "SSD", "removable": False, "parts": []},
+                            {"path": "/dev/vdb", "name": "vdb", "size": 64 * 10**9, "model": "QEMU HARDDISK", "kind": "SSD", "removable": False, "parts": []}]
         st.nics = S.list_nics() if not dry else [{"name": "eth0", "mac": "52:54:00:12:34:56", "wifi": False, "driver": "virtio_net", "model": "Virtio"},
                                                     {"name": "eth1", "mac": "52:54:00:12:34:57", "wifi": False, "driver": "virtio_net", "model": "Virtio"}]
         S.bring_up(st.nics)
         if not dry and S.large_screen():
             S.sh("setfont ter-v32n", timeout=10)
-        screens = flow(profile)
+        st.sync()
+        screens = flow(profile, st)
         i = 0
         total = len(screens)
         while 0 <= i < total:
@@ -507,12 +642,13 @@ def unattended(profile, answers_path, halt=True):
                 c["lan"]["iface"] = lan_pool[0]["name"] if lan_pool else ""
         else:
             resolve("mgmt", 0)
+        c["ssh_enabled"] = c["ssh_enabled"] and True
         errs = S.validate_config(profile, c, unattended=True)
         if errs:
             for e in errs:
                 say("ANSWER-FILE-ERROR " + e)
             raise S.InstallError("invalid answer file")
-        say(f"AUTOINSTALL-PLAN disks={','.join(c['disks'])} fs={c['fs']} host={c['hostname']} net={c['mgmt']['iface'] or (c['wan']['iface'] + '/' + c['lan']['iface'])}")
+        say(f"AUTOINSTALL-PLAN disks={','.join(c['disks'])} fs={c['fs']} swap={c.get('swap', 'auto')} host={c['hostname']} net={c['mgmt']['iface'] or (c['wan']['iface'] + '/' + c['lan']['iface'])}")
         last = {"n": -1}
 
         def prog(pct, note):
@@ -535,11 +671,22 @@ def main(argv=None):
     ap.add_argument("--answers", help="answer file path, or 'auto' to look for one (kernel arg / labelled volume)")
     ap.add_argument("--no-halt", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="walk the screens without touching disks")
+    ap.add_argument("--ui", choices=["auto", "gui", "tui"], default="tui",
+                    help="gui = GTK4 front-end (needs a Wayland/X display; exits 75 when it cannot start), tui = curses")
+    ap.add_argument("--plan", action="store_true", help="print the stage plan for the answer file (or the defaults) and exit")
     a = ap.parse_args(argv)
     if os.geteuid() != 0 and not a.dry_run:
         print("The installer must run as root.")
         return 1
     profile = S.load_profile(a.profile)
+    if a.plan:
+        c = S.config_from_answers(profile, a.answers) if a.answers and a.answers != "auto" else S.default_config(profile)
+        ctx = ST.Ctx(profile, c, disks=S.list_disks())
+        for sid, lines in ST.full_plan(ctx):
+            print(f"[{sid}]")
+            for l in lines:
+                print("  " + l)
+        return 0
     if a.answers:
         path = a.answers
         if path == "auto":
@@ -554,7 +701,26 @@ def main(argv=None):
             time.sleep(2)
             S.sh("poweroff")
         return rc
-    r = interactive(profile, dry=a.dry_run)
+    if a.ui in ("gui", "auto"):
+        try:
+            from . import gui
+        except Exception as e:  # noqa - no GTK/PyGObject on this image
+            print("graphical installer unavailable:", e, file=sys.stderr)
+            return 75
+        r = gui.run(profile, dry=a.dry_run)
+        res = os.environ.get("LIVEINST_RESULT")
+        if res:
+            try:
+                with open(res, "w") as f:
+                    f.write(r + "\n")
+            except OSError:
+                pass
+        if r == "xkb":
+            return 0
+        if r == "fallback":
+            return 75
+    else:
+        r = interactive(profile, dry=a.dry_run)
     if r == "reboot":
         print("\nRebooting - remove the installation medium now.", flush=True)
         os.sync()

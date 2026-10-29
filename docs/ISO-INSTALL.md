@@ -120,6 +120,77 @@ the nightly test.
 After the install: remove the stick and boot. The web UI is at `https://<ip>:8443` (self-signed
 certificate; user `admin`, the password you set). The first-boot ruleset puts anti-lockout (SSH + web UI) on the LAN; the WAN drops everything inbound.
 
+## Graphical installer (default)
+
+The default boot entry, **Graphical install**, starts a kiosk (the `cage` Wayland compositor, one fullscreen window) running a
+GTK4 installer. It is the same installer as the text one - both walk the same *stages* and write the same answer-file model - with:
+
+* one screen per stage, a **step sidebar**, **Back / Next** (Alt+Left / Alt+Right), and an **Advanced options** expander on every screen that has expert settings;
+* a **live disk-layout preview** (ESP/BIOS-boot, `/boot`, swap, root drawn to scale, next to the partitions that will be destroyed);
+* **link state per NIC** (up / no link / Wi-Fi, address) refreshed live on the network screen;
+* **mouse, keyboard and touch**: large hit targets, an **on-screen keyboard** (top right) for machines without a keyboard, a searchable list instead of drop-downs for long lists (time zone, keyboard layout);
+* **HiDPI**: the interface scales with the screen (override with `LIVEINST_SCALE=2`), plus **High contrast** and **Larger text** switches (top right);
+* product branding (colour and monogram from the product profile).
+
+If there is no usable display (no DRM device, `nomodeset`, a serial console, or the GUI cannot start) the installer **falls back to the text
+installer automatically**. The text installer can also be chosen directly: boot entry *Install (text mode)* (hotkey `2`). In the *Serial console* submenu the
+*Graphical install* entry keeps the GUI on the screen and gives the UART a root shell (support, tests). The keyboard layout chosen on the first screen is applied to the compositor too.
+
+Support and tests: `/usr/libexec/live-installer-atspi tree|press|focus|settext` talks to the GUI through AT-SPI (the accessibility tree
+is complete: every control has a name), and `/run/live-installer/gui-status.json` records the current screen.
+
+### Install stages
+
+The installer is a list of small stages, like FreeBSD's `bsdinstall`. Each stage can describe what it will do (`plan`) without touching
+anything, and applies it in sequence. The GUI, the text installer and the answer file all run the same list; `live-installer --plan --answers
+answer.toml` prints the plan of an answer file.
+
+| stage | what it does |
+|---|---|
+| `keymap` | install type (**Server**, default; *Workstation* is reserved for a later desktop profile), language, keyboard layout, time zone |
+| `hostname` | host name (FQDN) |
+| `disk` | file system, disk(s), partition layout (ext4, XFS, ZFS single/mirror) |
+| `extract` | copy the system image to the new root |
+| `rootpass` | administrator password (web `admin` + console `root`), e-mail, optional SSH key |
+| `netconfig` | interfaces and addressing (link state live; Wi-Fi) |
+| `services` | which optional services start at boot |
+| `hardening` | SSH on/off, key-only (password login is an opt-in with a warning), kernel/network sysctl hardening, login-first vs open console menu |
+| `use_flags` | Portage USE flags (below) |
+| `finish` | boot loader, unmount |
+
+On a **Server** install the graphical stack is removed again from the installed system (it is live-only); a future Workstation install keeps it.
+
+### USE flags
+
+The **Software** screen (graphical and text) lists *every* Portage USE flag with its description, grouped (security, networking,
+virtualization, storage, graphics, audio/video, hardware, compression, languages, documentation/development, internationalization) and searchable by flag, description or package.
+
+* **Presets**: *Recommended* (the tested image defaults; every package stays a pre-built binary), *Minimal* (no desktop/sound/docs/debug features), *Full* (extra protocols, compression, hardware features).
+* **Portage sanity check**, live while you click: `REQUIRED_USE` violations are explained in plain language ("because 'c' is on, 'a' must be on"), USE-dependency and blocker conflicts between installed packages are reported the way Portage would, **product-critical flags** (listed in the profile, e.g. the QEMU/libvirt flags Patronus needs) are hard errors, and **security warnings** appear when a protective flag (`pam`, `ssl`, `seccomp`, ...) is switched off or a risky one (`debug`, `X` on a server) is switched on. Errors block *Next*.
+* **Binary or source?** The installed system boots from the image's binaries. Every package whose USE set you change must be rebuilt from source later (`emerge`); the page shows how many, with a time and build-space estimate (heuristic, 4 cores). The choices are written to `/etc/portage/package.use/00-live-installer` and the package list to `/etc/live-installer/use-rebuild-pending`.
+* Data source: `/usr/share/live-installer/portage-meta.json.xz` (about 37 KiB), generated at build time from the Portage tree (`use.desc`, `use.local.desc`) and the installed-package database (IUSE, USE, REQUIRED_USE, USE-dependent dependencies, blockers); the Portage tree itself is not shipped.
+
+Answer file keys (all optional; see also the examples above):
+
+```toml
+[global]
+install_type = "server"            # only "server" today
+
+[services]
+disable = ["docker"]               # optional services only (see the services screen)
+
+[hardening]
+ssh = true                         # false = no SSH server
+sysctl = true                      # kernel/network hardening
+ssh_password_auth = false
+console_menu_open = false
+
+[use_flags]
+preset = "minimal"                 # recommended | minimal | full
+enable  = ["spice"]
+disable = ["debug"]                # checked with the same sanity check as the GUI; errors abort with ANSWER-FILE-ERROR
+```
+
 ## Unattended install (answer file)
 
 Boot the *Automated install* entry with an **answer file** available in one of two ways:
@@ -280,7 +351,7 @@ stale copy are caught.
 * **Real hardware**: only QEMU/KVM (OVMF + SeaBIOS, USB-storage and CD boot) is tested automatically. The ThinkPad and Surface Pro notes above are expectations, not results. In particular untested: Wi-Fi scan/connect (needs a real adapter; the code path is exercised only by unit logic), the *Auto-detect (replug the cable)* link detection (real PHYs only), NVMe/eMMC device naming (`part_path` is unit-tested), the large console font on high-DPI panels (`setfont ter-v32n` when the framebuffer is >= 1600 px wide), touch/Type Cover input.
 * The installer is text mode (curses). A graphical installer is not provided.
 * Installer language: only the *installed system's* locale/keymap are selectable; the wizard text is English.
-* No ZFS install for Patronus yet (ext4 only); no LVM/RAID layout.
+* No ZFS install for Patronus yet (XFS by default, ext4 as a manual choice); no LVM/RAID layout.
 * The notification e-mail is recorded in `/etc/patronus/notify-email`; the product does not read it yet.
 * The live image has no desktop; the Portage tree is stripped from the image, so run `emerge-webrsync` before using `emerge` on a live/installed system.
 
