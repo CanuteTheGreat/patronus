@@ -12,6 +12,7 @@ pub mod ha_rules;
 pub mod nftables;
 pub mod rules;
 pub mod schedule;
+pub mod seg_rules;
 pub mod svc_rules;
 pub mod vpn_rules;
 

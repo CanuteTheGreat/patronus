@@ -37,6 +37,11 @@ nat64 = []
 l2tp = []
 upnp = []
 vrf = []
+# device segmentation (lane s): L2 isolation settings (proxy ARP, isolated bridge ports)
+# for the nft default-deny table; the rules themselves are always compiled
+segmentation = []
+# per-device Wi-Fi credentials: hostapd config + wpa_psk_file (RDEPEND net-wireless/hostapd)
+wifi-ap = ["segmentation"]
 # signed plugins + Gentoo package jobs (Packages page)
 plugins = ["dep:ed25519-dalek", "dep:base64", "dep:rand", "dep:sha2"]
 web-proxy = []

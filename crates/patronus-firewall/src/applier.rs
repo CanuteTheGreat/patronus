@@ -503,11 +503,25 @@ impl FirewallApplier {
                 at.format("%a %H:%M")
             ));
         }
-        let script = if lockdown {
+        let mut script = if lockdown {
             script
         } else {
             via_vrf_devices(&script, &vrf_members(store).await)
         };
+        if !lockdown {
+            // device segmentation: own table at priority -10, same atomic transaction
+            let sr = crate::seg_rules::seg_rules(store).await?;
+            script.push_str(&sr.script);
+            for w in sr.warnings {
+                report.warn(w);
+            }
+            if sr.active {
+                report.applied(format!(
+                    "device segmentation: default-deny isolation, {} device(s)",
+                    sr.devices
+                ));
+            }
+        }
         Ok(Rendered { script, report })
     }
 }
@@ -733,6 +747,8 @@ impl Applier for FirewallApplier {
         if table_exists() {
             nftables::delete_table()?;
         }
+        // the segmentation table goes with it (best effort: it may not exist)
+        let _ = nftables::execute_nft_command(&["delete", "table", "inet", "patronus_seg"]);
         Ok(())
     }
 

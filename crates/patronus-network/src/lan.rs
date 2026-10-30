@@ -70,6 +70,12 @@ pub const LAN_TABLES: &[&str] = &[
     // signed plugins (USE=plugins)
     "plugin_keys",
     "plugins",
+    // device segmentation (lane s, USE=segmentation): groups before devices
+    "seg_groups",
+    "seg_devices",
+    "seg_links",
+    "seg_services",
+    "seg_segments",
 ];
 
 pub(crate) fn db_err(what: &'static str) -> impl Fn(sqlx::Error) -> Error {
@@ -935,6 +941,8 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::upnp::UpnpApplier::default()));
     #[cfg(feature = "vrf")]
     v.push(Arc::new(crate::vrf::VrfApplier));
+    #[cfg(feature = "segmentation")]
+    v.push(Arc::new(crate::seg::SegApplier::default()));
     #[cfg(feature = "openvpn")]
     v.push(Arc::new(crate::openvpn_server::OpenVpnApplier::default()));
     #[cfg(feature = "web-proxy")]

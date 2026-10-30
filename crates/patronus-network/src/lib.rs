@@ -103,6 +103,8 @@ pub mod packages;
 pub mod plugins;
 #[cfg(feature = "web-proxy")]
 pub mod proxy;
+#[cfg(feature = "segmentation")]
+pub mod seg;
 #[cfg(feature = "upnp")]
 pub mod upnp;
 #[cfg(feature = "vrf")]
