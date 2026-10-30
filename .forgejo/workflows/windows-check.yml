@@ -1,0 +1,50 @@
+name: windows-check
+
+# On-demand Windows check for a Patronus crate, on OUR Windows Server 2022 VM (rw-man-01, runner label `windows-x86_64`,
+# ctg-infrastructure ci-runners/rw-man-windows). The GitHub copy (.github/workflows/windows-check.yml) is only a
+# workflow_dispatch fallback for when that VM is down. As of 2026-10-24 Patronus has NO cfg(windows) code: this exists for
+# the day a Windows agent/monitoring path lands. workflow_dispatch ONLY.
+#   POST /repos/CanuteTheGreat/patronus/actions/workflows/windows-check.yml/dispatches
+#        {"ref":"main","inputs":{"package":"<crate>","test_filter":"<name>"}}
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "cargo package to build+test on Windows (e.g. a crate that gained cfg(windows) code)"
+        required: true
+      test_filter:
+        description: "cargo test name filter (empty = all tests of the package)"
+        required: false
+        default: ""
+
+concurrency:
+  group: windows-check
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-x86_64
+    timeout-minutes: 90
+    env:
+      CARGO_TARGET_DIR: C:\ci\target\patronus-windows
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Build
+        shell: pwsh
+        run: |
+          cargo build -p ${{ inputs.package }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test
+        shell: pwsh
+        env:
+          TEST_FILTER: ${{ inputs.test_filter }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          if ($env:TEST_FILTER) { cargo test -p ${{ inputs.package }} --no-fail-fast $env:TEST_FILTER -- --nocapture 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath test-out.txt }
+          else { cargo test -p ${{ inputs.package }} --no-fail-fast 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath test-out.txt }
+          $code = $LASTEXITCODE
+          $pass = 0; $fail = 0; $ign = 0
+          foreach ($m in (Select-String -Path test-out.txt -Pattern 'test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored')) { $pass += [int]$m.Matches[0].Groups[1].Value; $fail += [int]$m.Matches[0].Groups[2].Value; $ign += [int]$m.Matches[0].Groups[3].Value }
+          "WINDOWS-TEST-COUNTS package=${{ inputs.package }} passed=$pass failed=$fail ignored=$ign"
+          exit $code
