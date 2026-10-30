@@ -5,26 +5,26 @@
 {% block content %}
 {% include "lan_head.html" %}
 <style>
-    .ins-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border, #e5e7eb); margin: 12px 0 16px; }
-    .ins-tab-btn { padding: 8px 14px; border: none; background: none; cursor: pointer; color: var(--text-muted, #6b7280); border-bottom: 2px solid transparent; font: inherit; }
-    .ins-tab-btn.active { color: var(--text, #111827); border-bottom-color: var(--primary, #2563eb); font-weight: 600; }
+    .ins-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border, var(--line)); margin: 12px 0 16px; }
+    .ins-tab-btn { padding: 8px 14px; border: none; background: none; cursor: pointer; color: var(--text-muted, var(--muted)); border-bottom: 2px solid transparent; font: inherit; }
+    .ins-tab-btn.active { color: var(--text, #111827); border-bottom-color: var(--primary, var(--accent)); font-weight: 600; }
     .ins-tab { display: none; }
     .ins-tab.active { display: block; }
     .ins-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-    .ins-controls select, .ins-controls input { padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 4px; }
+    .ins-controls select, .ins-controls input { padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 4px; }
     .ins-scroll { overflow-x: auto; }
     .ins-bar { display: inline-block; height: 8px; background: #3b82f6; border-radius: 2px; vertical-align: middle; }
     .ins-chart { width: 100%; height: auto; display: block; }
-    .ins-chart text { font-size: 10px; fill: #6b7280; }
+    .ins-chart text { font-size: 10px; fill: var(--muted); }
     .ins-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
     .ins-stats { display: flex; flex-wrap: wrap; gap: 20px; margin: 8px 0; }
     .ins-stat b { display: block; font-size: 1.3em; }
-    .ins-stat span { font-size: 0.8em; color: #6b7280; }
-    .ins-probe { display: inline-block; margin: 2px 6px 2px 0; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; background: #dcfce7; color: #166534; }
-    .ins-probe.fail { background: #fee2e2; color: #991b1b; }
-    .ins-probe.warn { background: #fef3c7; color: #92400e; }
-    .ins-note { font-size: 0.85em; color: #6b7280; }
-    .ins-foot { margin: 24px 0 8px; font-size: 0.8em; color: #6b7280; }
+    .ins-stat span { font-size: 0.8em; color: var(--muted); }
+    .ins-probe { display: inline-block; margin: 2px 6px 2px 0; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; background: var(--ok-bg); color: var(--ok-fg); }
+    .ins-probe.fail { background: var(--bad-bg); color: var(--bad-fg); }
+    .ins-probe.warn { background: var(--warn-bg); color: var(--warn-fg); }
+    .ins-note { font-size: 0.85em; color: var(--muted); }
+    .ins-foot { margin: 24px 0 8px; font-size: 0.8em; color: var(--muted); }
     @media (max-width: 600px) { .ins-grid { grid-template-columns: 1fr; } .ins-tab-btn { padding: 8px 10px; } }
 </style>
 
@@ -383,8 +383,8 @@
         const step = samples.length > 1 ? Math.max(60, (samples[1].ts - samples[0].ts)) : 60;
         for (const p of samples) {
             if (p.state === 'down' || p.state === 'loss' || p.state === 'latency' || p.degraded || p.dns_failed || p.tcp_failed || p.http_failed) {
-                const c = p.state === 'down' ? '#fecaca' : '#fde68a';
-                const r = svgEl('rect', {x: xs(p.ts), y: 2, width: Math.max(2, xs(p.ts + step) - xs(p.ts)), height: H - P - 2, fill: c});
+                const c = p.state === 'down' ? 'var(--chart-down)' : 'var(--chart-warn)';
+                const r = svgEl('rect', {x: xs(p.ts), y: 2, width: Math.max(2, xs(p.ts + step) - xs(p.ts)), height: H - P - 2, style: 'fill:' + c});
                 r.appendChild(svgEl('title')).textContent = new Date(p.ts * 1000).toLocaleString() + ': ' + p.state + (p.dns_failed ? ', DNS failing' : '') + (p.tcp_failed ? ', TCP failing' : '') + (p.http_failed ? ', HTTP failing' : '');
                 s.appendChild(r);
             }
@@ -392,7 +392,7 @@
         let d = '';
         for (const p of samples) { if (p.rtt_ms === null) continue; d += (d ? 'L' : 'M') + xs(p.ts).toFixed(1) + ' ' + (H - P - (H - P - 4) * p.rtt_ms / max).toFixed(1); }
         if (d) s.appendChild(svgEl('path', {d: d, fill: 'none', stroke: '#2563eb', 'stroke-width': 1.5}));
-        s.appendChild(svgEl('line', {x1: P, y1: H - P, x2: W - 4, y2: H - P, stroke: '#d1d5db'}));
+        s.appendChild(svgEl('line', {x1: P, y1: H - P, x2: W - 4, y2: H - P, style: 'stroke:var(--chart-axis)'}));
         const t1 = svgEl('text', {x: 0, y: 10}); t1.textContent = max.toFixed(0) + ' ms';
         const t2 = svgEl('text', {x: P, y: H - 14}); t2.textContent = new Date(from * 1000).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
         const t3 = svgEl('text', {x: W - 190, y: H - 14}); t3.textContent = 'line: RTT, red: down, amber: degraded';

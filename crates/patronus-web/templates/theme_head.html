@@ -1,0 +1,131 @@
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f5f5f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)">
+<script>
+/* Follow the device light/dark setting by default (live, no flash: this runs before first paint).
+   An explicit choice from the header button is kept in localStorage 'patronus-theme' and sets
+   <html data-theme="light|dark">; no attribute = follow the system. */
+(function () {
+    try {
+        var t = localStorage.getItem('patronus-theme');
+        if (t === 'light' || t === 'dark') {
+            document.documentElement.setAttribute('data-theme', t);
+            var c = t === 'dark' ? '#1a1a1a' : '#f5f5f5';
+            document.write('<meta name="theme-color" content="' + c + '">');
+        }
+    } catch (e) {}
+})();
+</script>
+<style>
+    :root {
+        color-scheme: light dark;
+        --bg: #f5f5f5;
+        --card-bg: #ffffff;
+        --text: #222222;
+        --text-muted: #5b6472;
+        --border: #e5e5e5;
+        --shadow: rgba(0,0,0,0.1);
+        --primary: #4452cf;
+        --primary-dark: #3643b5;
+        --primary-solid: #4452cf;        /* fill behind white text */
+        --primary-solid-hover: #3643b5;
+        --accent: #0b5ed7;
+        --success: #0f7b55;
+        --warning: #a85d00;
+        --danger: #c62828;
+        --info: #1d5fd0;
+        --line: #e5e7eb;
+        --line-strong: #c5cad3;
+        --surface-2: #f3f4f6;
+        --surface-3: #e9ecef;
+        --ink: #222222;
+        --ink-2: #374151;
+        --muted: #5b6472;
+        --ok-bg: #dcfce7;   --ok-fg: #166534;
+        --bad-bg: #fee2e2;  --bad-fg: #991b1b;
+        --warn-bg: #fef3c7; --warn-fg: #92400e;
+        --info-bg: #e0e7ff; --info-fg: #3730a3;
+        --note-bg: #eff6ff; --note-bd: #bfdbfe; --note-fg: #1e3a8a;
+        --wnote-bg: #fffbeb; --wnote-bd: #fde68a; --wnote-fg: #78350f;
+        --quar-bg: #ffedd5; --quar-fg: #9a3412;
+        --row-bad: #fff1f2;
+        --b-primary: #0b5ed7; --b-secondary: #5c636a; --b-success: #1e7e34;
+        --b-info: #117a8b; --b-danger: #c82333; --b-blue: #1d4ed8; --b-blue-hover: #1e3fae;
+        --login-bg: #eef1f8;
+        --chart-down: #fecaca; --chart-warn: #fde68a; --chart-axis: #9aa3b2;
+    }
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+            --bg: #1a1a1a;
+            --card-bg: #2a2a2a;
+            --text: #e5e5e5;
+            --text-muted: #a3a9b5;
+            --border: #404040;
+            --shadow: rgba(0,0,0,0.3);
+            --primary: #a99bf6;
+            --primary-dark: #8f7ff0;
+            --primary-solid: #5b4fe0;
+            --primary-solid-hover: #4a3fcb;
+            --accent: #7db0ff;
+            --success: #34d399;
+            --warning: #fbbf24;
+            --danger: #f87171;
+            --info: #7db0ff;
+            --line: #3a3d44;
+            --line-strong: #4f545e;
+            --surface-2: #23262b;
+            --surface-3: #363b43;
+            --ink: #e5e5e5;
+            --ink-2: #cfd3da;
+            --muted: #a3a9b5;
+            --ok-bg: #12351f;   --ok-fg: #86efac;
+            --bad-bg: #3d1717;  --bad-fg: #fca5a5;
+            --warn-bg: #3b2e0d; --warn-fg: #fcd34d;
+            --info-bg: #1f2547; --info-fg: #c7d2fe;
+            --note-bg: #14233d; --note-bd: #2b4a7d; --note-fg: #bfdbfe;
+            --wnote-bg: #33280f; --wnote-bd: #5c4a17; --wnote-fg: #fde68a;
+            --quar-bg: #3b2210; --quar-fg: #fdba74;
+            --row-bad: #35191c;
+            --b-blue-hover: #2a5ee0;
+            --login-bg: #00000b;
+            --chart-down: #5a2326; --chart-warn: #4f3d0f; --chart-axis: #5b616c;
+        }
+    }
+    :root[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #1a1a1a;
+        --card-bg: #2a2a2a;
+        --text: #e5e5e5;
+        --text-muted: #a3a9b5;
+        --border: #404040;
+        --shadow: rgba(0,0,0,0.3);
+        --primary: #a99bf6;
+        --primary-dark: #8f7ff0;
+        --primary-solid: #5b4fe0;
+        --primary-solid-hover: #4a3fcb;
+        --accent: #7db0ff;
+        --success: #34d399;
+        --warning: #fbbf24;
+        --danger: #f87171;
+        --info: #7db0ff;
+        --line: #3a3d44;
+        --line-strong: #4f545e;
+        --surface-2: #23262b;
+        --surface-3: #363b43;
+        --ink: #e5e5e5;
+        --ink-2: #cfd3da;
+        --muted: #a3a9b5;
+        --ok-bg: #12351f;   --ok-fg: #86efac;
+        --bad-bg: #3d1717;  --bad-fg: #fca5a5;
+        --warn-bg: #3b2e0d; --warn-fg: #fcd34d;
+        --info-bg: #1f2547; --info-fg: #c7d2fe;
+        --note-bg: #14233d; --note-bd: #2b4a7d; --note-fg: #bfdbfe;
+        --wnote-bg: #33280f; --wnote-bd: #5c4a17; --wnote-fg: #fde68a;
+        --quar-bg: #3b2210; --quar-fg: #fdba74;
+        --row-bad: #35191c;
+        --b-blue-hover: #2a5ee0;
+        --login-bg: #00000b;
+        --chart-down: #5a2326; --chart-warn: #4f3d0f; --chart-axis: #5b616c;
+    }
+    :root[data-theme="light"] { color-scheme: light; }
+</style>

@@ -5,27 +5,27 @@
 {% block extra_head %}
 {% include "lan_head.html" %}
 <style>
-    .seg-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 0 0 14px; border-bottom: 1px solid #e5e7eb; }
-    .seg-tab { padding: 8px 14px; cursor: pointer; border: 0; background: none; font-size: 0.95em; color: #6b7280; border-bottom: 2px solid transparent; }
-    .seg-tab.active { color: #2563eb; border-bottom-color: #2563eb; font-weight: 600; }
+    .seg-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 0 0 14px; border-bottom: 1px solid var(--line); }
+    .seg-tab { padding: 8px 14px; cursor: pointer; border: 0; background: none; font-size: 0.95em; color: var(--muted); border-bottom: 2px solid transparent; }
+    .seg-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
     .seg-panel { display: none; }
     .seg-panel.active { display: block; }
     .seg-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    .seg-note { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a8a; padding: 10px 12px; border-radius: 6px; margin: 8px 0 14px; font-size: 0.88em; line-height: 1.45; }
-    .seg-note.warn { background: #fffbeb; border-color: #fde68a; color: #78350f; }
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.78em; font-weight: 600; background: #e5e7eb; color: #374151; }
-    .badge.on { background: #dcfce7; color: #166534; }
-    .badge.off { background: #f3f4f6; color: #6b7280; }
-    .badge.pending { background: #fef3c7; color: #92400e; }
-    .badge.revoked { background: #fee2e2; color: #991b1b; }
-    .badge.quar { background: #ffedd5; color: #9a3412; }
-    .seg-seg { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
+    .seg-note { background: var(--note-bg); border: 1px solid var(--note-bd); color: var(--note-fg); padding: 10px 12px; border-radius: 6px; margin: 8px 0 14px; font-size: 0.88em; line-height: 1.45; }
+    .seg-note.warn { background: var(--wnote-bg); border-color: var(--wnote-bd); color: var(--wnote-fg); }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.78em; font-weight: 600; background: var(--line); color: var(--ink-2); }
+    .badge.on { background: var(--ok-bg); color: var(--ok-fg); }
+    .badge.off { background: var(--surface-2); color: var(--muted); }
+    .badge.pending { background: var(--warn-bg); color: var(--warn-fg); }
+    .badge.revoked { background: var(--bad-bg); color: var(--bad-fg); }
+    .badge.quar { background: var(--quar-bg); color: var(--quar-fg); }
+    .seg-seg { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--surface-2); }
     .seg-seg .name { font-weight: 600; min-width: 90px; }
-    .seg-seg .meta { color: #6b7280; font-size: 0.85em; flex: 1 1 200px; }
-    button.small { padding: 3px 9px; font-size: 0.82em; border: 1px solid #d1d5db; background: #fff; border-radius: 4px; cursor: pointer; }
-    button.small.danger { color: #b91c1c; border-color: #fecaca; }
-    button.small.primary { color: #fff; background: #2563eb; border-color: #2563eb; }
-    pre.seg-pre { background: #f3f4f6; padding: 8px 10px; border-radius: 6px; max-height: 320px; overflow: auto; font-size: 0.78em; white-space: pre; }
+    .seg-seg .meta { color: var(--muted); font-size: 0.85em; flex: 1 1 200px; }
+    button.small { padding: 3px 9px; font-size: 0.82em; border: 1px solid var(--line-strong); background: var(--card-bg); border-radius: 4px; cursor: pointer; }
+    button.small.danger { color: var(--bad-fg); border-color: var(--bad-bg); }
+    button.small.primary { color: #fff; background: var(--b-blue); border-color: var(--accent); }
+    pre.seg-pre { background: var(--surface-2); padding: 8px 10px; border-radius: 6px; max-height: 320px; overflow: auto; font-size: 0.78em; white-space: pre; }
     @media (max-width: 640px) {
         form.lan-form { flex-direction: column; align-items: stretch; }
         form.lan-form input, form.lan-form select { min-width: 0; width: 100%; box-sizing: border-box; }

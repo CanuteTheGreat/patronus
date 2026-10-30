@@ -4,36 +4,37 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" href="/favicon.ico" sizes="any">
+    {% include "theme_head.html" %}
     <title>Interfaces - Patronus</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; color: #222; }
+        body { font-family: Arial, sans-serif; margin: 20px; color: var(--ink); }
         h1 { margin-bottom: 4px; }
-        h2 { margin-top: 32px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
-        .muted { color: #6c757d; font-size: 0.9em; }
+        h2 { margin-top: 32px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+        .muted { color: var(--muted); font-size: 0.9em; }
         table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-        th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
-        th { background: #f8f9fa; }
+        th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+        th { background: var(--surface-2); }
         .badge { padding: 2px 7px; border-radius: 3px; font-size: 0.8em; margin-right: 3px; display: inline-block; }
-        .up { background: #28a745; color: #fff; }
-        .down { background: #dc3545; color: #fff; }
-        .role { background: #007bff; color: #fff; }
-        .dyn { background: #17a2b8; color: #fff; }
-        .grey { background: #e9ecef; color: #333; }
-        .btn { padding: 5px 11px; margin: 2px; border: none; border-radius: 4px; cursor: pointer; background: #6c757d; color: #fff; }
-        .btn-primary { background: #007bff; }
-        .btn-danger { background: #dc3545; }
+        .up { background: var(--b-success); color: #fff; }
+        .down { background: var(--b-danger); color: #fff; }
+        .role { background: var(--b-primary); color: #fff; }
+        .dyn { background: var(--b-info); color: #fff; }
+        .grey { background: var(--surface-3); color: var(--ink); }
+        .btn { padding: 5px 11px; margin: 2px; border: none; border-radius: 4px; cursor: pointer; background: var(--b-secondary); color: #fff; }
+        .btn-primary { background: var(--b-primary); }
+        .btn-danger { background: var(--b-danger); }
         .btn-warning { background: #ffc107; color: #000; }
-        .card { border: 1px solid #ddd; border-radius: 5px; padding: 14px; margin: 12px 0; background: #fcfcfc; }
+        .card { border: 1px solid var(--line); border-radius: 5px; padding: 14px; margin: 12px 0; background: var(--surface-2); }
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px 18px; }
-        label { display: block; font-size: 0.85em; color: #444; }
+        label { display: block; font-size: 0.85em; color: var(--ink); }
         input, select, textarea { width: 100%; box-sizing: border-box; padding: 5px; margin-top: 2px; }
         input[type=checkbox] { width: auto; }
         textarea { font-family: monospace; min-height: 48px; }
         #msg { margin: 12px 0; padding: 10px; border-radius: 4px; display: none; white-space: pre-wrap; }
-        #msg.ok { display: block; background: #e6f4ea; border: 1px solid #28a745; }
-        #msg.err { display: block; background: #fdecea; border: 1px solid #dc3545; }
-        #msg.warn { display: block; background: #fff8e1; border: 1px solid #ffc107; }
-        .empty { color: #6c757d; font-style: italic; padding: 8px 0; }
+        #msg.ok { display: block; background: var(--ok-bg); border: 1px solid #28a745; }
+        #msg.err { display: block; background: var(--bad-bg); border: 1px solid #dc3545; }
+        #msg.warn { display: block; background: var(--warn-bg); border: 1px solid #ffc107; }
+        .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
         .mono { font-family: monospace; }
         .hidden { display: none; }
     </style>

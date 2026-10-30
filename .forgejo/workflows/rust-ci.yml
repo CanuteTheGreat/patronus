@@ -98,7 +98,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-lint-test-
       - name: README claims ledger (every claim mapped to a CI-run test)
-        run: ci/claims-check.sh && ci/shipped-crates-check.sh && ci/check-no-native-cpu.sh && ci/lint-no-pipe-grep-q.sh
+        run: ci/claims-check.sh && ci/shipped-crates-check.sh && ci/check-no-native-cpu.sh && ci/lint-no-pipe-grep-q.sh && python3 ci/check-web-theme.py
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run clippy

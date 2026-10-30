@@ -6,21 +6,21 @@
 {% include "lan_head.html" %}
 <style>
     .tabs-seg { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
-    .tabs-seg a { padding: 6px 14px; border-radius: 16px; border: 1px solid #d1d5db; color: #374151; text-decoration: none; font-size: 0.9em; }
-    .tabs-seg a.on { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+    .tabs-seg a { padding: 6px 14px; border-radius: 16px; border: 1px solid var(--line-strong); color: var(--ink-2); text-decoration: none; font-size: 0.9em; }
+    .tabs-seg a.on { background: var(--b-blue); border-color: var(--b-blue); color: #fff; }
     .scroll-x { overflow-x: auto; }
-    .pill { display: inline-block; padding: 1px 10px; border-radius: 10px; font-size: 0.8em; font-weight: 600; background: #e0e7ff; color: #3730a3; margin-right: 4px; }
-    .pill.blocked { background: #fee2e2; color: #991b1b; }
-    .hint { color: #6b7280; font-size: 0.85em; margin: 4px 0 10px; }
+    .pill { display: inline-block; padding: 1px 10px; border-radius: 10px; font-size: 0.8em; font-weight: 600; background: var(--info-bg); color: var(--info-fg); margin-right: 4px; }
+    .pill.blocked { background: var(--bad-bg); color: var(--bad-fg); }
+    .hint { color: var(--muted); font-size: 0.85em; margin: 4px 0 10px; }
     .row-actions button { margin: 2px 4px 2px 0; }
-    tr.blockedrow td { background: #fff1f2; }
+    tr.blockedrow td { background: var(--row-bad); }
     @media (max-width: 640px) { form.lan-form input, form.lan-form select, form.lan-form textarea { min-width: 0; width: 100%; } form.lan-form label { width: 100%; } }
     @media (max-width: 640px) {
         table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; box-sizing: border-box; }
         table.stack tr.hd { display: none; }
-        table.stack tr { border-bottom: 1px solid #e5e7eb; padding: 8px 0; }
+        table.stack tr { border-bottom: 1px solid var(--line); padding: 8px 0; }
         table.stack td { border: 0; padding: 3px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; text-align: right; }
-        table.stack td::before { content: attr(data-label); color: #6b7280; font-size: 0.8em; text-align: left; flex: 0 0 34%; }
+        table.stack td::before { content: attr(data-label); color: var(--muted); font-size: 0.8em; text-align: left; flex: 0 0 34%; }
         table.stack td > * { max-width: 62%; }
         table.stack td.rules { display: block; text-align: left; }
         table.stack td.rules::before { display: block; margin-bottom: 4px; }
@@ -56,7 +56,7 @@
         <label>Name<input name="name" required maxlength="32" pattern="[a-z0-9_-]+" placeholder="kids"></label>
         <label>Blocked answer<select name="block_mode"><option value="nxdomain">NXDOMAIN</option><option value="null">0.0.0.0 / ::</option></select></label>
         <label>Log retention (days)<input name="log_retention_days" type="number" min="1" max="365" value="7"></label>
-        <label style="flex-basis:100%">Extra block lists (URLs, one per line)<textarea name="blocklist_urls" rows="2" style="padding:5px 8px;border:1px solid #d1d5db;border-radius:4px"></textarea></label>
+        <label style="flex-basis:100%">Extra block lists (URLs, one per line)<textarea name="blocklist_urls" rows="2" style="padding:5px 8px;border:1px solid var(--line-strong);border-radius:4px"></textarea></label>
         <label><span>Family preset (adult + malware lists, safe search)</span><input name="family" type="checkbox"></label>
         <label><span>Log queries (personal data!)</span><input name="log_queries" type="checkbox"></label>
         <label><span>Keep the global block lists and overrides</span><input name="inherit_global" type="checkbox" checked></label>
