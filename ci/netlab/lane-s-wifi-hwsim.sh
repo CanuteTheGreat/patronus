@@ -135,7 +135,7 @@ expect_refused() { # DESC STA
   nl_ok "$1 (refused, state $(sta_state "$2"))"
 }
 ap_authorized() { # IFACE MAC
-  R hostapd_cli -p "$CTRL" -i "$1" all_sta 2>/dev/null | awk -v m="$2" 'tolower($0)==m {f=1; next} f && /^flags=/ {print; exit}' | grep -q AUTHORIZED
+  R hostapd_cli -p "$CTRL" -i "$1" all_sta 2>/dev/null | awk -v m="$2" 'tolower($0)==m {f=1; next} f && /^flags=/ {print; exit}' | grep AUTHORIZED >/dev/null
 }
 hostapd_pid() { cat "/run/patronus/patronus-hostapd.$1.pid" 2>/dev/null; }
 
@@ -167,9 +167,9 @@ nl_ok "radio discovery: hwsim radios support AP mode on 2.4 GHz"
 nl_api POST /segmentation/wifi/networks "{\"name\":\"home\",\"ssid\":\"$SSID_HOME\",\"ifname\":\"$IF1\",\"channel\":6,\"security\":\"wpa2\",\"segment\":\"@lan\"}"
 [ "$NL_CODE" = 201 ] || nl_fail "create network: $NL_CODE $(cat "$NL_OUT")"
 nl_wait 20 R hostapd_cli -p "$CTRL" -i "$IF1" status || nl_fail "hostapd is not answering on $CTRL/$IF1"
-R hostapd_cli -p "$CTRL" -i "$IF1" status | grep -q 'state=ENABLED' || nl_fail "hostapd is not ENABLED"
+R hostapd_cli -p "$CTRL" -i "$IF1" status | grep 'state=ENABLED' >/dev/null || nl_fail "hostapd is not ENABLED"
 nl_ok "hostapd started by Patronus on $IF1 (state=ENABLED), joined to br0"
-R bridge link show | grep -q "$IF1" || nl_fail "$IF1 is not a port of br0"
+R bridge link show | grep "$IF1" >/dev/null || nl_fail "$IF1 is not a port of br0"
 grep -q '^ap_isolate=1' /var/lib/patronus/net/hostapd/home.conf || nl_fail "ap_isolate is not set"
 [ "$(stat -c %a /var/lib/patronus/net/hostapd/home.conf)" = 600 ] && [ "$(stat -c %a /var/lib/patronus/net/hostapd/home.psk)" = 600 ] || nl_fail "config files are not 0600"
 nl_ok "ap_isolate=1; hostapd.conf and the PSK file are 0600"
@@ -226,7 +226,7 @@ mkdev cam ""; S_CAM=$SECRET; D_CAM=$DID
 grep -q "keyid=dev-$D_CAM 00:00:00:00:00:00 " /var/lib/patronus/net/hostapd/home.psk || nl_fail "pending device has no wildcard entry"
 nl_ok "pending device created: wildcard PSK entry keyid=dev-$D_CAM"
 sta_join sta4 "$SSID_HOME" psk "$S_CAM"; expect_joined "pending camera joins with its own passphrase" sta4
-nl_wait 20 sh -c "sqlite3 $DB \"SELECT state FROM seg_devices WHERE id=$D_CAM\" | grep -q active" || { tail -5 /run/patronus/patronus-wifi-events.home.log 2>/dev/null; nl_fail "the router did not learn the camera's MAC at its first join"; }
+nl_wait 20 sh -c "sqlite3 $DB \"SELECT state FROM seg_devices WHERE id=$D_CAM\" | grep active >/dev/null" || { tail -5 /run/patronus/patronus-wifi-events.home.log 2>/dev/null; nl_fail "the router did not learn the camera's MAC at its first join"; }
 [ "$(sqlite3 "$DB" "SELECT mac FROM seg_devices WHERE id=$D_CAM")" = "$(smac sta4)" ] || nl_fail "learned the wrong MAC"
 nl_ok "first join enrolled the device: MAC $(smac sta4) learned from AP-STA-CONNECTED keyid=dev-$D_CAM"
 nl_wait 10 grep -q "keyid=dev-$D_CAM $(smac sta4) $S_CAM" /var/lib/patronus/net/hostapd/home.psk || nl_fail "the PSK entry was not rewritten to the learned MAC"

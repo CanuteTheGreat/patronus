@@ -87,7 +87,7 @@ wait_state() { # WANT (state): the API says so AND the ticker has moved the kern
 used() { tablet | cut -d/ -f3; }
 page() { C curl -s -m 5 "http://$NL_WWW/"; }   # port 80: redirected to the page while limited
 wait_page() { # PATTERN: the redirected page shows PATTERN within 10 s (the ticker has to add the element)
-  for _ in $(seq 1 20); do page | grep -q "$1" && return 0; sleep 0.5; done
+  for _ in $(seq 1 20); do page | grep "$1" >/dev/null && return 0; sleep 0.5; done
   nl_fail "page never showed '$1': $(page)"
 }
 blocked_traffic() { nl_expect_no_tcp "$1" C $NL_WWW 9000; nl_expect_http_blocked "$1 (http 8080)" "http://$NL_WWW:8080/"; }

@@ -87,7 +87,7 @@ nl_ok "on: a public name pointing into the LAN is stripped, a mixed answer keeps
 echo "=== exception"
 nl_api_ok "exception" PUT /dns/settings '{"rebind_exceptions":"corp.example.org"}'
 nl_wait 10 grep -q 'private-domain: "corp.example.org."' /etc/unbound/unbound.conf || nl_fail "exception not rendered"
-if ! nl_wait 20 sh -c "C python3 $NL_T/seg-a.py lan.corp.example.org 192.168.50.1 | grep -q 192.168.77.9"; then
+if ! nl_wait 20 bash -c "C python3 $NL_T/seg-a.py lan.corp.example.org 192.168.50.1 | grep 192.168.77.9 >/dev/null"; then
   echo "--- diagnostics"; ps -eo stat,pid,lstart,args | grep -E "[u]nbound"; grep -nE "private|^server|interface" /etc/unbound/unbound.conf | head -30
   unbound-checkconf /etc/unbound/unbound.conf 2>&1 | tail -3
   echo "answer: $(ask lan.corp.example.org 2>&1 | tail -1) | upstream direct: $(R python3 "$NL_T/seg-a.py" lan.corp.example.org $UP 2>&1 | tail -1)"
@@ -103,7 +103,7 @@ nl_ok "hostile exception refused (400)"
 echo "=== off"
 nl_api_ok "off" PUT /dns/settings '{"rebind_protection":false}'
 nl_wait 10 sh -c "! grep -q private-address /etc/unbound/unbound.conf" || nl_fail "private-address still rendered"
-nl_wait 15 sh -c "C python3 $NL_T/seg-a.py rebind.example.org 192.168.50.1 | grep -q 192.168.77.7" || nl_fail "off: the private record did not come back"
+nl_wait 15 bash -c "C python3 $NL_T/seg-a.py rebind.example.org 192.168.50.1 | grep 192.168.77.7 >/dev/null" || nl_fail "off: the private record did not come back"
 nl_ok "off: rebind.example.org -> 192.168.77.7 again"
 nl_api_ok "on again" PUT /dns/settings '{"rebind_protection":true}'
 nl_web_stop

@@ -137,10 +137,10 @@ nl_api POST /segmentation/segments '{"segment":"@lan","enabled":true}'
 nl_ok "enabled; adoption: $(jget 'len(d["adoption"]["adopted"])') device(s) adopted"
 [ "$(jget 'len(d["adoption"]["adopted"])')" -ge 3 ] || nl_fail "adoption missed the devices on the segment: $(cat "$NL_OUT")"
 nl_assert_nft_has "table inet patronus_seg" "unbound or revoked destination"
-seg_prio() { R nft list table inet patronus_seg | grep -qE 'hook (forward|input) priority (filter - 10|-10)'; }
+seg_prio() { R nft list table inet patronus_seg | grep -E 'hook (forward|input) priority (filter - 10|-10)' >/dev/null; }
 seg_prio || { R nft list table inet patronus_seg; nl_fail "the segmentation hooks are not at priority -10"; }
 nl_ok "forward and input hooks at priority -10 (before the main table)"
-port_iso() { R bridge -d link show dev "$1" | grep -q "isolated $2"; }
+port_iso() { R bridge -d link show dev "$1" | grep "isolated $2" >/dev/null; }
 port_iso p12 on && port_iso p13 on && port_iso rtr-lan on || { R bridge -d link show; nl_fail "bridge ports are not isolated"; }
 [ "$(R cat /proc/sys/net/ipv4/conf/br0/proxy_arp_pvlan)" = 1 ] || nl_fail "proxy_arp_pvlan is off"
 nl_ok "bridge ports isolated, proxy ARP on"
@@ -150,7 +150,7 @@ nl_ok "admin UI reachable from the adopted laptop"
 want_ok "day one: laptop -> cam 8080 (home allows everything)" C curl -s -m 3 -o /dev/null http://192.168.50.12:8080/
 want_ok "day one: cam -> tv 8080" http_ok nl-cam 192.168.50.13 8080
 want_ok "day one: laptop still online" C curl -s -m 5 -o /dev/null "http://$NL_WWW/"
-R nft list chain inet patronus_seg seg_forward | grep -E 'comment "group [0-9]+"' | grep -qE 'packets [1-9]' \
+R nft list chain inet patronus_seg seg_forward | grep -E 'comment "group [0-9]+"' | grep -E 'packets [1-9]' >/dev/null \
   || { R nft list chain inet patronus_seg seg_forward; nl_fail "no packet was counted by the group rule: traffic did not go through the router"; }
 nl_ok "device-to-device traffic is counted by the router's group rule (it really is routed)"
 
