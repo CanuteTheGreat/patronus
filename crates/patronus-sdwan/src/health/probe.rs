@@ -327,8 +327,10 @@ mod tests {
         // Should have sent 10 probes
         assert_eq!(probe_result.probes_sent, 10);
 
-        // Should have received most of them (allowing for simulated loss)
-        assert!(probe_result.probes_received >= 7);
+        // Should have received most of them. The simulated probe drops 5% at random, so "at least 7 of
+        // 10" failed about once in a thousand runs and "loss < 30%" (a 3rd lost probe is exactly 30%) about
+        // once in a hundred: that flaked main's CI. 5 of 10 fails with probability ~1e-6.
+        assert!(probe_result.probes_received >= 5);
 
         // Latency should be reasonable
         assert!(probe_result.latency_ms > 0.0);
@@ -339,7 +341,7 @@ mod tests {
         assert!(probe_result.jitter_ms < 50.0);
 
         // Packet loss should be low
-        assert!(probe_result.packet_loss_pct < 30.0);
+        assert!(probe_result.packet_loss_pct <= 50.0);
     }
 
     #[tokio::test]
