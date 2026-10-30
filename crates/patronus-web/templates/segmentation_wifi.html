@@ -30,14 +30,18 @@
         root.appendChild(mk('div', {id: 'wifi-issued'}));
 
         root.appendChild(mk('h3', {text: 'Networks'}));
-        const nt = mk('table', {class: 'lan'});
+        const nt = mk('table', {class: 'lan', id: 'seg-wifi-networks-table'});
         nt.appendChild(mk('thead', {}, (() => { const tr = document.createElement('tr'); for (const h of ['Name', 'SSID', 'Radio', 'Band / channel', 'Security', 'Unknown devices', 'State', '']) tr.appendChild(mk('th', {text: h})); return tr; })()));
         const nb = document.createElement('tbody');
         const radios = (st.radios || []);
         for (const n of d.networks) {
             const run = (st.networks || []).find(x => x.network === n.name);
             const tr = document.createElement('tr');
-            for (const v of [n.name, n.ssid, n.ifname, n.band + ' / ' + n.channel, n.security + (n.restart_on_credential_change ? ' (credential changes restart the Wi-Fi)' : ''), n.unknown_policy]) tr.appendChild(mk('td', {text: v}));
+            for (const v of [n.name, n.ssid, n.ifname, n.band + ' / ' + n.channel, n.security, n.unknown_policy]) {
+                const td = mk('td', {text: v});
+                if (v === n.security && n.restart_on_credential_change) td.appendChild(mk('span', {class: 'seg-wide', text: ' (credential changes restart the Wi-Fi)'}));
+                tr.appendChild(td);
+            }
             const sc = document.createElement('td');
             sc.appendChild(badge(!n.enabled ? 'disabled' : (run && run.running ? 'running' : 'stopped'), run && run.running ? 'on' : 'off'));
             if (run && run.stations) sc.appendChild(document.createTextNode(' ' + run.stations.filter(x => x.authorized).length + ' station(s)'));
@@ -78,7 +82,7 @@
 
         // devices with a Wi-Fi credential
         root.appendChild(mk('h3', {text: 'Devices and passphrases'}));
-        const ct = mk('table', {class: 'lan'});
+        const ct = mk('table', {class: 'lan', id: 'seg-wifi-creds-table'});
         ct.appendChild(mk('thead', {}, (() => { const tr = document.createElement('tr'); for (const h of ['Device', 'Network', 'Kind', 'State', 'Expires', '']) tr.appendChild(mk('th', {text: h})); return tr; })()));
         const cb = document.createElement('tbody');
         for (const c of d.credentials) {

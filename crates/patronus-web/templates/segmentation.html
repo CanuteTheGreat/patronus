@@ -35,6 +35,16 @@
         #seg-devices-table th:nth-child(5), #seg-devices-table td:nth-child(5),
         #seg-devices-table th:nth-child(7), #seg-devices-table td:nth-child(7) { display: none; }
         #seg-devices-table td select { max-width: 92px; }
+        /* Wi-Fi networks: keep name, SSID, security and state (+ buttons); drop radio, band/channel and the unknown-device policy */
+        #seg-wifi-networks-table th:nth-child(3), #seg-wifi-networks-table td:nth-child(3),
+        #seg-wifi-networks-table th:nth-child(4), #seg-wifi-networks-table td:nth-child(4),
+        #seg-wifi-networks-table th:nth-child(6), #seg-wifi-networks-table td:nth-child(6) { display: none; }
+        /* Wi-Fi devices: drop kind and expiry */
+        #seg-wifi-creds-table th:nth-child(3), #seg-wifi-creds-table td:nth-child(3),
+        #seg-wifi-creds-table th:nth-child(5), #seg-wifi-creds-table td:nth-child(5) { display: none; }
+        .seg-wide { display: none; }
+        #seg-wifi-networks-table td:last-child button, #seg-wifi-creds-table td:last-child button { display: block; margin: 2px 0; padding: 2px 5px; font-size: 0.74em; white-space: normal; }
+        #seg-wifi-networks-table th, #seg-wifi-networks-table td { padding-left: 3px; padding-right: 3px; }
     }
 </style>
 {% endblock %}
