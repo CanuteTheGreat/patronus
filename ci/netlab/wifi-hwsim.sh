@@ -64,7 +64,13 @@ if [ -z "$C" ]; then
 fi
 
 PID=$(docker inspect -f '{{.State.Pid}}' "$C")
-mapfile -t PHYS < <(ls /sys/class/ieee80211 | sort -V | tail -n "$RADIOS")
+# The phys appear in the HOST's network namespace. A CI job container has its own namespace (and sysfs),
+# where /sys/class/ieee80211 is empty even though the module is loaded ("expected 6 hwsim radios, found
+# 0" in the nightly), so ask a --net=host sibling, which sees the host's sysfs, instead of looking locally.
+host_phys() {
+  docker run --rm --net=host "$IMAGE" sh -c 'ls /sys/class/ieee80211 2>/dev/null' | sort -V | tail -n "$RADIOS"
+}
+mapfile -t PHYS < <(host_phys)
 [ "${#PHYS[@]}" -eq "$RADIOS" ] || { echo "expected $RADIOS hwsim radios, found ${#PHYS[@]}"; exit 1; }
 docker run --rm --net=host --pid=host --cap-add NET_ADMIN "$IMAGE" sh -c \
   "command -v iw >/dev/null || (apt-get update -qq >/dev/null && apt-get install -y -qq iw >/dev/null); for p in ${PHYS[*]}; do iw phy \$p set netns $PID || exit 1; done"
