@@ -133,7 +133,16 @@ create() {
     --memory 2g --memory-swap 2g --cpus 2 -w /t "$IMAGE" bash /t/inner.sh >/dev/null
 }
 run_container() {
-  create 2>/dev/null || { echo "netlab: could not pass /dev/ppp and /dev/net/tun to the container"; docker rm -fv "$C" >/dev/null 2>&1 || true; DEVS=(); create; }
+  # a docker create that fails for a moment (daemon busy, a name still being released) used to drop
+  # /dev/ppp silently and fail lane-c-interfaces much later with "Couldn't open the /dev/ppp device":
+  # retry, show docker's own error, and only then fall back to no devices
+  local try cerr=""
+  for try in 1 2 3; do
+    if cerr=$(create 2>&1); then break; fi
+    docker rm -fv "$C" >/dev/null 2>&1 || true
+    [ "$try" = 3 ] && { echo "netlab: could not pass /dev/ppp and /dev/net/tun to the container after 3 tries: $cerr"; DEVS=(); create; }
+    sleep 5
+  done
   docker cp "$OUT/." "$C:/t/"
   docker start -a "$C" || true
   rc=$(docker inspect -f '{{.State.ExitCode}}' "$C")

@@ -3,4 +3,4 @@
 # (ci/netlab/upgrade-store.sh). Bump this to the commit of the last
 # published/released image whenever a release is cut or the store format
 # changes (a new migration).
-178325c1b790e7ebefe372fd082a244e3c6adcce
+55bf0500028cc6c34d4c25c1cb3dd3c5369c25bb
