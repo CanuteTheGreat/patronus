@@ -1,0 +1,69 @@
+ok - booted with LAN = bridge br0
+ok - before opt-in: cam -> laptop tcp 7000 reaches directly
+ok - before opt-in: unknown -> cam 8080 (nothing is isolated)
+ok - opt-in: no segmentation table and no isolation on an upgraded/fresh store
+ok - enabled; adoption: 3 device(s) adopted
+ok - nft ruleset has: table inet patronus_seg unbound or revoked destination
+ok - forward and input hooks at priority -10 (before the main table)
+ok - bridge ports isolated, proxy ARP on
+ok - admin UI reachable from the adopted laptop
+ok - day one: laptop -> cam 8080 (home allows everything)
+ok - day one: cam -> tv 8080
+ok - day one: laptop still online
+ok - device-to-device traffic is counted by the router's group rule (it really is routed)
+ok - devices: dev-000012:02:aa:00:00:00:12:192.168.50.12 dev-000013:02:aa:00:00:00:13:192.168.50.13 dev-000010:02:aa:00:00:00:10:192.168.50.10
+ok - laptop -> cam icmp (denied)
+ok - cam -> laptop tcp 7000 (denied)
+ok - laptop -> tv tcp 8080 (denied)
+ok - cam -> tv tcp 8080 (same group)
+ok - tv -> cam tcp 8081 (same group)
+ok - laptop is still online (internet allow)
+ok - cam is online too
+ok - linked: laptop -> cam 8081
+ok - linked: cam -> laptop 7000 (links are bidirectional)
+ok - unlinked: laptop -> cam 8081 (denied)
+ok - one-way service: laptop -> cam tcp 8080 (request and reply)
+ok - one-way service: laptop -> cam tcp 8081 (other port) (denied)
+ok - one-way service: cam -> laptop tcp 7000 (reverse stays denied) (denied)
+ok - one-way service: laptop -> tv tcp 8080 (names cam only) (denied)
+ok - unknown device -> cam 8080 (denied)
+ok - unknown device -> laptop 7000 (denied)
+ok - unknown device -> internet (denied)
+ok - unknown device -> router: ping still answers (ICMP)
+ok - adopted laptop -> router SSH (22) stays reachable
+ok - quarantine/unknown -> router SSH (22) (denied)
+ok - quarantine/unknown -> admin UI (8443) (denied)
+ok - adopted laptop -> admin UI (8443)
+ok - unknown device with the LAPTOP's IP -> cam 8080 (denied)
+ok - unknown device with the LAPTOP's MAC (own IP) -> cam 8080 (denied)
+ok - quarantined tv -> cam 8081 (denied)
+ok - quarantined tv -> internet (denied)
+ok - quarantined tv -> admin UI (denied)
+ok - cam -> quarantined tv (denied)
+ok - released tv -> cam 8081 again
+ok - the unknown host shows up under Discovered
+ok - adopted guest -> internet
+ok - guest (home) -> laptop 7000
+=== revocation
+ok - an ESTABLISHED laptop -> cam connection answered before the revoke and is cut after it
+ok - after revoke: laptop -> cam 8080 (service rule gone) (denied)
+ok - after revoke: tv -> cam 8081 (denied)
+ok - after revoke: revoked cam -> tv 8080 (denied)
+ok - after revoke: revoked cam -> internet (denied)
+ok - nft ruleset lacks: 02:aa:00:00:00:12
+ok - the revoked MAC is in no nft set
+ok - refused changes (unknown endpoint, hostile name) left the ruleset byte-identical
+ok - guest in quarantine -> router SSH (denied)
+=== reboot
+ok - nft ruleset has: table inet patronus_seg
+ok - after reboot: laptop -> tv tcp 8080 still denied (denied)
+ok - after reboot: revoked cam stays revoked (cam -> tv) (denied)
+ok - after reboot: quarantined guest -> router SSH (denied)
+ok - after reboot: quarantined guest -> admin UI (denied)
+ok - after reboot: quarantined guest -> laptop (denied)
+ok - after reboot: the adopted laptop still logs in to the admin UI (8443)
+ok - off: table deleted, ports no longer isolated
+PASS lane-s-segmentation
+exit=0
+# host: Linux 6.18.57-gentoo-dist-bin x86_64, nftables v1.1.7 (Commodore Bullmoose #8)
+# VM nft tables before: table inet patronus table inet cve_2026_98432  / after: table inet patronus table inet cve_2026_98432 

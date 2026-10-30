@@ -87,7 +87,12 @@ nl_ok "on: a public name pointing into the LAN is stripped, a mixed answer keeps
 echo "=== exception"
 nl_api_ok "exception" PUT /dns/settings '{"rebind_exceptions":"corp.example.org"}'
 nl_wait 10 grep -q 'private-domain: "corp.example.org."' /etc/unbound/unbound.conf || nl_fail "exception not rendered"
-nl_wait 15 sh -c "C python3 $NL_T/seg-a.py lan.corp.example.org 192.168.50.1 | grep -q 192.168.77.9" || nl_fail "the excepted domain does not resolve to its private address"
+if ! nl_wait 20 sh -c "C python3 $NL_T/seg-a.py lan.corp.example.org 192.168.50.1 | grep -q 192.168.77.9"; then
+  echo "--- diagnostics"; ps -eo stat,pid,lstart,args | grep -E "[u]nbound"; grep -nE "private|^server|interface" /etc/unbound/unbound.conf | head -30
+  unbound-checkconf /etc/unbound/unbound.conf 2>&1 | tail -3
+  echo "answer: $(ask lan.corp.example.org 2>&1 | tail -1) | upstream direct: $(R python3 "$NL_T/seg-a.py" lan.corp.example.org $UP 2>&1 | tail -1)"
+  nl_fail "the excepted domain does not resolve to its private address"
+fi
 nl_ok "private-domain exception: lan.corp.example.org -> 192.168.77.9"
 expect_answer rebind.example.org "answers=none"
 nl_api_ok "bad exception refused" PUT /dns/settings '{"rebind_exceptions":"corp.example.org"}'

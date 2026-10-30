@@ -31,6 +31,10 @@
         form.lan-form input, form.lan-form select { min-width: 0; width: 100%; box-sizing: border-box; }
         table.lan th, table.lan td { padding: 6px 5px; font-size: 0.82em; }
         .seg-tab { padding: 8px 10px; }
+        /* devices: keep name, MAC, address, group, state and the buttons; drop kind and last seen */
+        #seg-devices-table th:nth-child(5), #seg-devices-table td:nth-child(5),
+        #seg-devices-table th:nth-child(7), #seg-devices-table td:nth-child(7) { display: none; }
+        #seg-devices-table td select { max-width: 92px; }
     }
 </style>
 {% endblock %}
