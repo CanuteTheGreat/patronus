@@ -1,126 +1,110 @@
 name: Release
 
+# A pushed v* tag builds the two shipped binaries (patronus-web, patronus-cli) natively for the
+# architectures Patronus ships on and attaches the archives + .sha256 to the Forgejo release of that tag
+# (created here if it does not exist yet; the body is the CHANGELOG section of the version).
+# The stable live ISO is attached to the same release by live-iso.yml (docs/ISO-INSTALL.md "Stable ISO criteria").
+#
+# History: this workflow used to build x86_64/aarch64 gnu+musl and riscv64 with `cross` and upload through
+# GitHub-only actions. It had never produced a release: patronus-network links libmnl/libnftnl (nftables),
+# libelf (eBPF) and libdbus, which neither `cross`' images nor musl targets provide, and
+# softprops/action-gh-release / upload-artifact@v4 do not exist on Forgejo. Only the glibc targets with a
+# native build host are built now: x86_64 on linux-cross-x86_64, aarch64 on the arm64 hosts. musl and riscv64
+# archives are not shipped (the ISO and the Gentoo ebuild are the supported ways to run on those).
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'build and attach the archives of this existing tag (e.g. v0.2.0): for a tag pushed before this workflow was fixed'
+        required: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build-release:
-    name: Build Release
-    runs-on: linux-cross-x86_64
-    container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
+    name: Build and attach (${{ matrix.target }})
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            archive: tar.gz
-            cross: false
-          - target: x86_64-unknown-linux-musl
-            archive: tar.gz
-            cross: false
+            runner: linux-cross-x86_64
           - target: aarch64-unknown-linux-gnu
-            archive: tar.gz
-            cross: true
-          - target: aarch64-unknown-linux-musl
-            archive: tar.gz
-            cross: true
-          - target: riscv64gc-unknown-linux-gnu
-            archive: tar.gz
-            cross: true
+            runner: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: 3
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 6g --memory-swap 6g --cpus 4
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Install Rust toolchain
         uses: https://github.com/dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
-      - name: Install musl tools
-        if: contains(matrix.target, 'musl') && !matrix.cross
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-
-      - name: Install cross
-        if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-release-${{ matrix.target }}-${{ hashFiles('**/Cargo.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-release-${{ matrix.target }}-
-
-      # Building only the two user-facing binaries this release ships:
-      # patronus-web (the server) and patronus-cli. Other crates
-      # (patronus-ebpf especially) need kernel/eBPF headers not available
-      # in this generic cross-compile environment - see rust-ci.yml's
-      # --exclude patronus-ebpf for the same constraint on the test side.
-      - name: Build web server
+      - name: Install dependencies
         run: |
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} -p patronus-web
-          else
-            cargo build --release --target ${{ matrix.target }} -p patronus-web
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler libdbus-1-dev
+
+      # Only the two user-facing binaries ship (patronus-ebpf needs kernel headers; same exclusion as rust-ci.yml).
+      - name: Build patronus-web and patronus-cli
+        run: cargo build --release -p patronus-web -p patronus-cli
+
+      - name: Create the archive
+        run: |
+          set -eu
+          v=$TAG
+          d=patronus-$v-${{ matrix.target }}
+          mkdir -p "dist/$d"
+          cp target/release/patronus-web target/release/patronus-cli "dist/$d/"
+          cp README.md LICENSE CHANGELOG.md "dist/$d/"
+          cp -r docs "dist/$d/docs"
+          tar -C dist -czf "$d.tar.gz" "$d"
+          sha256sum "$d.tar.gz" > "$d.tar.gz.sha256"
+          # the shipped binaries must at least start: --version on the very files in the archive
+          "dist/$d/patronus-cli" --version
+          ls -l "$d.tar.gz"*
+
+      - name: Attach to the release
+        env:
+          FORGEJO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          api="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY"
+          auth=(-H "Authorization: token $FORGEJO_TOKEN")
+          tag=$TAG; ver=${tag#v}
+          rel_id() { curl -fsS "${auth[@]}" "$api/releases/tags/$tag" 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])' 2>/dev/null || true; }
+          id=$(rel_id)
+          if [ -z "$id" ]; then
+            # the CHANGELOG section of this version is the release body
+            awk -v v="$ver" '$0 ~ "^## \\[" v "\\]" {f=1; next} f && /^## \[/ {exit} f' CHANGELOG.md > body.md || true
+            [ -s body.md ] || echo "Release $tag" > body.md
+            pre=false; case "$tag" in *alpha*|*beta*|*rc*) pre=true ;; esac
+            b=$(python3 -c 'import json,sys;print(json.dumps({"tag_name":sys.argv[1],"target_commitish":sys.argv[2],"name":sys.argv[1],"body":open("body.md").read(),"prerelease":sys.argv[3]=="true"}))' "$tag" "$(git rev-parse HEAD)" "$pre")
+            curl -fsS "${auth[@]}" -H 'Content-Type: application/json' -d "$b" "$api/releases" >/dev/null || true   # another job (or live-iso) may have created it a moment ago
+            sleep 2; id=$(rel_id)
           fi
-
-      - name: Build CLI
-        run: |
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} -p patronus-cli
-          else
-            cargo build --release --target ${{ matrix.target }} -p patronus-cli
-          fi
-
-      - name: Create archive
-        run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/patronus-web dist/
-          cp target/${{ matrix.target }}/release/patronus-cli dist/
-          cp README.md LICENSE dist/ 2>/dev/null || true
-          cp -r docs dist/ 2>/dev/null || true
-          cd dist
-          tar -czvf ../patronus-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }} *
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: patronus-${{ matrix.target }}
-          path: patronus-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
-
-  create-release:
-    name: Create Release
-    runs-on: linux-cross-x86_64
-    container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
-    needs: [build-release]
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Generate changelog
-        id: changelog
-        run: |
-          echo "## Changes" > CHANGELOG.md
-          git log --pretty=format:"- %s" $(git describe --tags --abbrev=0 HEAD^)..HEAD >> CHANGELOG.md 2>/dev/null || echo "- Initial release" >> CHANGELOG.md
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          body_path: CHANGELOG.md
-          files: |
-            artifacts/**/*.tar.gz
-          draft: false
-          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          [ -n "$id" ] || { echo "cannot find or create the release of $tag"; exit 1; }
+          # Forgejo keeps assets on Backblaze B2, which intermittently drops a PUT: retry with a fresh slot each time
+          for f in patronus-$tag-${{ matrix.target }}.tar.gz patronus-$tag-${{ matrix.target }}.tar.gz.sha256; do
+            ok=
+            for n in 1 2 3 4 5 6; do
+              old=$(curl -fsS "${auth[@]}" "$api/releases/$id/assets" | python3 -c 'import json,sys;print(" ".join(str(a["id"]) for a in json.load(sys.stdin) if a["name"]==sys.argv[1]))' "$f")
+              for a in $old; do curl -fsS -X DELETE "${auth[@]}" "$api/releases/$id/assets/$a" || true; done
+              if curl -fsS "${auth[@]}" -F "attachment=@$f" "$api/releases/$id/assets?name=$f" >/dev/null; then ok=1; break; fi
+              echo "upload of $f failed (attempt $n), retrying"; sleep $((n * 10))
+            done
+            [ -n "$ok" ] || { echo "could not upload $f"; exit 1; }
+            echo "attached $f"
+          done
