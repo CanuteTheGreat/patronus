@@ -33,12 +33,17 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             runner: linux-cross-x86_64
+            lto: fat
+          # fat LTO of patronus-web on aarch64 needs more than the 6 GiB lane slot (rustc SIGKILLed by the
+          # cgroup OOM killer in the first run): thin LTO there, fat everywhere else
           - target: aarch64-unknown-linux-gnu
             runner: arm64
+            lto: thin
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:
       CARGO_BUILD_JOBS: 3
+      CARGO_PROFILE_RELEASE_LTO: ${{ matrix.lto }}
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
     container:
       image: catthehacker/ubuntu:act-latest
