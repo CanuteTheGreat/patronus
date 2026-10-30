@@ -99,16 +99,16 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
+      <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Dashboard</h1>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((stat) => (
-          <div key={stat.name} className="bg-white rounded-lg shadow p-6">
+          <div key={stat.name} className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-600">{stat.name}</p>
-                <p className="mt-2 text-3xl font-semibold text-gray-900">
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-300">{stat.name}</p>
+                <p className="mt-2 text-3xl font-semibold text-gray-900 dark:text-gray-100">
                   {stat.value}
                 </p>
               </div>
@@ -122,14 +122,14 @@ export default function Dashboard() {
 
       {/* Charts and Topology */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
             Network Performance
           </h2>
           <MetricsChart data={linkMetrics} />
         </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
             Network Topology
           </h2>
           <TopologyPreview />
@@ -137,33 +137,33 @@ export default function Dashboard() {
       </div>
 
       {/* Recent Alerts */}
-      <div className="bg-white rounded-lg shadow">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">Recent Alerts</h2>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Recent Alerts</h2>
         </div>
-        <div className="divide-y divide-gray-200">
+        <div className="divide-y divide-gray-200 dark:divide-gray-700">
           {recentAlerts.length === 0 ? (
-            <div className="px-6 py-8 text-center text-gray-500">
+            <div className="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
               No recent alerts
             </div>
           ) : (
             recentAlerts.map((alert) => (
-              <div key={alert.id} className="px-6 py-4 hover:bg-gray-50">
+              <div key={alert.id} className="px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700">
                 <div className="flex items-center gap-3">
                   <AlertTriangle
                     className={
                       alert.severity === 'critical'
-                        ? 'h-5 w-5 text-red-600'
+                        ? 'h-5 w-5 text-red-700 dark:text-red-400'
                         : alert.severity === 'warning'
-                        ? 'h-5 w-5 text-yellow-600'
-                        : 'h-5 w-5 text-blue-600'
+                        ? 'h-5 w-5 text-yellow-700 dark:text-yellow-400'
+                        : 'h-5 w-5 text-blue-600 dark:text-blue-400'
                     }
                   />
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-900">
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
                       {alert.message}
                     </p>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
                       Site: {alert.siteId} • {new Date(alert.timestamp).toLocaleString()}
                     </p>
                   </div>

@@ -768,6 +768,9 @@ jobs:
         run: |
           node --version
           npm ci --no-audit --no-fund
+          # owner rule: the UI follows the device light/dark setting (sources + index.html metas)
+          npm run check:theme
           npm run build
+          npm run check:theme
           test -f ../static/index.html
           grep -l "ha/cluster" ../static/assets/*.js

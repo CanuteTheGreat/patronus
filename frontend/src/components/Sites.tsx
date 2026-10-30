@@ -53,10 +53,10 @@ interface SitesData {
 }
 
 const statusColor: Record<string, string> = {
-  ACTIVE: 'text-green-600 bg-green-50',
-  DEGRADED: 'text-yellow-600 bg-yellow-50',
-  OFFLINE: 'text-red-600 bg-red-50',
-  MAINTENANCE: 'text-gray-600 bg-gray-50',
+  ACTIVE: 'text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/30',
+  DEGRADED: 'text-yellow-700 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/30',
+  OFFLINE: 'text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/30',
+  MAINTENANCE: 'text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-900',
 }
 
 export default function Sites() {
@@ -94,52 +94,52 @@ export default function Sites() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Sites</h1>
-        <div className="text-sm text-gray-600" data-testid="site-count">
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Sites</h1>
+        <div className="text-sm text-gray-600 dark:text-gray-300" data-testid="site-count">
           Total: {data.sites.length} sites
         </div>
       </div>
 
       {canWrite && (
-        <form onSubmit={onCreate} className="flex flex-wrap items-end gap-3 rounded-lg bg-white p-4 shadow" aria-label="Add site">
+        <form onSubmit={onCreate} className="flex flex-wrap items-end gap-3 rounded-lg bg-white dark:bg-gray-800 p-4 shadow" aria-label="Add site">
           <div>
-            <label htmlFor="site-name" className="block text-xs text-gray-600">Name</label>
+            <label htmlFor="site-name" className="block text-xs text-gray-600 dark:text-gray-300">Name</label>
             <input id="site-name" required value={name} onChange={(e) => setName(e.target.value)}
-              className="mt-1 rounded border border-gray-300 px-3 py-2" />
+              className="mt-1 rounded border border-gray-300 dark:border-gray-600 px-3 py-2" />
           </div>
           <div>
-            <label htmlFor="site-location" className="block text-xs text-gray-600">Location</label>
+            <label htmlFor="site-location" className="block text-xs text-gray-600 dark:text-gray-300">Location</label>
             <input id="site-location" value={location} onChange={(e) => setLocation(e.target.value)}
-              className="mt-1 rounded border border-gray-300 px-3 py-2" />
+              className="mt-1 rounded border border-gray-300 dark:border-gray-600 px-3 py-2" />
           </div>
           <button type="submit" disabled={createState.loading}
-            className="inline-flex items-center gap-1 rounded bg-primary-600 px-4 py-2 text-white hover:bg-primary-700 disabled:opacity-50">
+            className="inline-flex items-center gap-1 rounded bg-primary-700 px-4 py-2 text-white hover:bg-primary-800 disabled:opacity-50">
             <Plus className="h-4 w-4" /> Add site
           </button>
-          {mutationError && <p role="alert" className="w-full text-sm text-red-600">{mutationError}</p>}
+          {mutationError && <p role="alert" className="w-full text-sm text-red-700 dark:text-red-400">{mutationError}</p>}
         </form>
       )}
 
       {data.sites.length === 0 && (
-        <p className="text-gray-600">No sites yet.{canWrite ? ' Add the first one above.' : ''}</p>
+        <p className="text-gray-600 dark:text-gray-300">No sites yet.{canWrite ? ' Add the first one above.' : ''}</p>
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {data.sites.map((site) => (
-          <div key={site.id} className="bg-white rounded-lg shadow p-6" data-testid="site-card">
+          <div key={site.id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-6" data-testid="site-card">
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-primary-50 rounded-lg">
-                  <MapPin className="h-6 w-6 text-primary-600" />
+                <div className="p-2 bg-primary-50 dark:bg-primary-900/40 rounded-lg">
+                  <MapPin className="h-6 w-6 text-primary-700 dark:text-primary-400" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900">{site.name}</h3>
-                  <p className="text-sm text-gray-600">{site.location ?? 'No location'}</p>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{site.name}</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-300">{site.location ?? 'No location'}</p>
                 </div>
               </div>
               <span className={clsx(
                 'inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium',
-                statusColor[site.status] ?? 'text-gray-600 bg-gray-50',
+                statusColor[site.status] ?? 'text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-900',
               )}>
                 {site.status === 'ACTIVE' ? <Activity className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
                 {site.status.toLowerCase()}
@@ -148,22 +148,22 @@ export default function Sites() {
 
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
-                <p className="text-xs text-gray-600">Endpoints</p>
-                <p className="text-lg font-semibold text-gray-900">{site.endpointCount}</p>
+                <p className="text-xs text-gray-600 dark:text-gray-300">Endpoints</p>
+                <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">{site.endpointCount}</p>
               </div>
               <div>
-                <p className="text-xs text-gray-600">Site ID</p>
-                <p className="truncate font-mono text-xs text-gray-700" title={site.id}>{site.id}</p>
+                <p className="text-xs text-gray-600 dark:text-gray-300">Site ID</p>
+                <p className="truncate font-mono text-xs text-gray-700 dark:text-gray-300" title={site.id}>{site.id}</p>
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-4 border-t border-gray-200">
-              <p className="text-xs text-gray-600">
+            <div className="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-700">
+              <p className="text-xs text-gray-600 dark:text-gray-300">
                 Updated: {new Date(site.updatedAt).toLocaleString()}
               </p>
               {canDelete && (
                 <button type="button" onClick={() => onDelete(site)}
-                  className="inline-flex items-center gap-1 text-sm text-red-600 hover:text-red-800"
+                  className="inline-flex items-center gap-1 text-sm text-red-700 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200"
                   aria-label={`Delete site ${site.name}`}>
                   <Trash2 className="h-4 w-4" /> Delete
                 </button>

@@ -62,94 +62,94 @@ export default function SLA() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">SLA Compliance</h1>
-        <div className="text-sm text-gray-600">
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">SLA Compliance</h1>
+        <div className="text-sm text-gray-600 dark:text-gray-300">
           {data.slaPolicies.length} policies
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6">
         {data.slaPolicies.map((policy) => (
-          <div key={policy.id} className="bg-white rounded-lg shadow p-6">
+          <div key={policy.id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-center gap-3">
                 <div className={clsx('p-2 rounded-lg', getComplianceBgColor(policy.compliance))}>
                   <Target className={clsx('h-6 w-6', getComplianceColor(policy.compliance))} />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                     {policy.name}
                   </h3>
-                  <p className="text-sm text-gray-600">{policy.description}</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-300">{policy.description}</p>
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-3xl font-bold text-gray-900">
+                <p className="text-3xl font-bold text-gray-900 dark:text-gray-100">
                   {policy.compliance.toFixed(1)}%
                 </p>
-                <p className="text-xs text-gray-600">Compliance</p>
+                <p className="text-xs text-gray-600 dark:text-gray-300">Compliance</p>
               </div>
             </div>
 
             <div className="grid grid-cols-3 gap-4 mb-4">
               {/* Latency */}
-              <div className="border border-gray-200 rounded-lg p-4">
+              <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm font-medium text-gray-700">Latency</p>
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Latency</p>
                   {policy.currentLatency <= policy.targetLatency ? (
-                    <TrendingDown className="h-4 w-4 text-green-600" />
+                    <TrendingDown className="h-4 w-4 text-green-700 dark:text-green-400" />
                   ) : (
-                    <TrendingUp className="h-4 w-4 text-red-600" />
+                    <TrendingUp className="h-4 w-4 text-red-700 dark:text-red-400" />
                   )}
                 </div>
-                <p className="text-2xl font-bold text-gray-900">
+                <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
                   {policy.currentLatency.toFixed(1)}ms
                 </p>
-                <p className="text-xs text-gray-600">
+                <p className="text-xs text-gray-600 dark:text-gray-300">
                   Target: {policy.targetLatency}ms
                 </p>
               </div>
 
               {/* Packet Loss */}
-              <div className="border border-gray-200 rounded-lg p-4">
+              <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm font-medium text-gray-700">Packet Loss</p>
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Packet Loss</p>
                   {policy.currentPacketLoss <= policy.targetPacketLoss ? (
-                    <TrendingDown className="h-4 w-4 text-green-600" />
+                    <TrendingDown className="h-4 w-4 text-green-700 dark:text-green-400" />
                   ) : (
-                    <TrendingUp className="h-4 w-4 text-red-600" />
+                    <TrendingUp className="h-4 w-4 text-red-700 dark:text-red-400" />
                   )}
                 </div>
-                <p className="text-2xl font-bold text-gray-900">
+                <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
                   {(policy.currentPacketLoss * 100).toFixed(3)}%
                 </p>
-                <p className="text-xs text-gray-600">
+                <p className="text-xs text-gray-600 dark:text-gray-300">
                   Target: {(policy.targetPacketLoss * 100).toFixed(3)}%
                 </p>
               </div>
 
               {/* Availability */}
-              <div className="border border-gray-200 rounded-lg p-4">
+              <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm font-medium text-gray-700">Availability</p>
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Availability</p>
                   {policy.currentAvailability >= policy.targetAvailability ? (
-                    <TrendingUp className="h-4 w-4 text-green-600" />
+                    <TrendingUp className="h-4 w-4 text-green-700 dark:text-green-400" />
                   ) : (
-                    <TrendingDown className="h-4 w-4 text-red-600" />
+                    <TrendingDown className="h-4 w-4 text-red-700 dark:text-red-400" />
                   )}
                 </div>
-                <p className="text-2xl font-bold text-gray-900">
+                <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
                   {(policy.currentAvailability * 100).toFixed(2)}%
                 </p>
-                <p className="text-xs text-gray-600">
+                <p className="text-xs text-gray-600 dark:text-gray-300">
                   Target: {(policy.targetAvailability * 100).toFixed(2)}%
                 </p>
               </div>
             </div>
 
             {policy.violations > 0 && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                <p className="text-sm text-red-800">
+              <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg p-3">
+                <p className="text-sm text-red-800 dark:text-red-200">
                   <span className="font-semibold">{policy.violations}</span> violations in the last 24 hours
                 </p>
               </div>

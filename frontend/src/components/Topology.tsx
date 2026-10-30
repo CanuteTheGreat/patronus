@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, gql } from '@apollo/client'
 import ForceGraph2D from 'react-force-graph-2d'
+import { useIsDark } from '../useColorScheme'
 
 const TOPOLOGY_QUERY = gql`
   query Topology {
@@ -45,6 +46,18 @@ interface TopologyData {
 }
 
 export default function Topology() {
+  const isDark = useIsDark()
+  // react-force-graph sizes to the window by default, which overflows a phone next to padding.
+  const boxRef = useRef<HTMLDivElement>(null)
+  const [boxWidth, setBoxWidth] = useState<number | undefined>(undefined)
+  useEffect(() => {
+    const el = boxRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setBoxWidth(el.clientWidth))
+    ro.observe(el)
+    setBoxWidth(el.clientWidth)
+    return () => ro.disconnect()
+  })
   const { loading, error, data } = useQuery<TopologyData>(TOPOLOGY_QUERY, {
     pollInterval: 10000,
   })
@@ -109,25 +122,27 @@ export default function Topology() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Network Topology</h1>
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Network Topology</h1>
         <div className="flex gap-4">
           <div className="flex items-center gap-2">
             <div className="h-3 w-3 rounded-full bg-green-500" />
-            <span className="text-sm text-gray-600">Active</span>
+            <span className="text-sm text-gray-600 dark:text-gray-300">Active</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="h-3 w-3 rounded-full bg-yellow-500" />
-            <span className="text-sm text-gray-600">Degraded</span>
+            <span className="text-sm text-gray-600 dark:text-gray-300">Degraded</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="h-3 w-3 rounded-full bg-red-500" />
-            <span className="text-sm text-gray-600">Down</span>
+            <span className="text-sm text-gray-600 dark:text-gray-300">Down</span>
           </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow" style={{ height: '700px' }}>
+      <div ref={boxRef} className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden" style={{ height: '700px' }}>
         <ForceGraph2D
+          width={boxWidth}
+          height={700}
           ref={graphRef}
           graphData={graphData}
           nodeLabel={(node: any) => `${node.name}\n${node.location}`}
@@ -140,7 +155,7 @@ export default function Topology() {
           }
           linkDirectionalParticles={2}
           linkDirectionalParticleSpeed={0.005}
-          backgroundColor="#ffffff"
+          backgroundColor={isDark ? '#1f2937' : '#ffffff'}
         />
       </div>
     </div>
