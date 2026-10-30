@@ -8,6 +8,7 @@ pub mod backup_targets;
 pub mod firewall;
 pub mod groups;
 pub mod ha;
+pub mod insight_history;
 pub mod insights;
 pub mod interfaces;
 #[cfg(feature = "ipsec")]

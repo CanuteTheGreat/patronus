@@ -39,7 +39,7 @@ IUSE="
 	ldap radius +totp +plugins
 	+segmentation wifi-ap
 	geoip geoip2
-	+aliases
+	+aliases +insight
 	scheduled-rules
 	+pppoe +dhcpcd
 	wireless hostapd iwd
@@ -134,6 +134,10 @@ RDEPEND="
 	!dhcpcd? ( sys-apps/busybox )
 	sys-apps/iproute2
 	web? ( net-firewall/conntrack-tools net-misc/curl )
+	insight? (
+		net-misc/curl
+		openrc? ( virtual/cron )
+	)
 	squid? ( net-proxy/squid )
 	tinyproxy? ( net-proxy/tinyproxy )
 	wireless? (
@@ -452,6 +456,21 @@ src_install() {
 		fi
 	fi
 
+	# USE=insight: monthly refresh of the DB-IP country + ASN databases
+	# (patronus ipdb update) behind the traffic insight page.
+	if use insight; then
+		keepdir /var/lib/patronus/feeds
+		fowners patronus:patronus /var/lib/patronus/feeds
+		if use systemd; then
+			systemd_dounit "${FILESDIR}/patronus-ipdb.service"
+			systemd_dounit "${FILESDIR}/patronus-ipdb.timer"
+		fi
+		if use openrc; then
+			exeinto /etc/cron.monthly
+			newexe "${FILESDIR}/patronus-ipdb.cron" patronus-ipdb
+		fi
+	fi
+
 	# Install configuration files
 	insinto /etc/patronus
 	doins "${FILESDIR}/patronus.toml"
@@ -508,6 +527,7 @@ pkg_postinst() {
 		use gitops && elog "  systemctl enable --now patronus-gitops  # GitOps: set [gitops] repo_url in /etc/patronus/patronus.toml first"
 		elog "  systemctl enable patronus-web"
 		elog ""
+		use insight && elog "  systemctl enable --now patronus-ipdb.timer  # monthly DB-IP country/ASN database update (traffic insight)"
 		elog "Boot-time apply of the stored config (sysctl, interfaces, routes,"
 		elog "firewall/NAT, services; seeds a safe default ruleset on first boot):"
 		elog "  systemctl enable --now patronus-firewall   # runs 'patronus apply'"
@@ -543,6 +563,7 @@ pkg_postinst() {
 	use qos && elog "  ✓ Traffic Shaping/QoS"
 	use certificates && use acme && elog "  ✓ ACME/Let's Encrypt"
 	use geoip && elog "  ✓ GeoIP blocking"
+	use insight && elog "  ✓ Traffic insight history (country/ASN by DB-IP, CC BY 4.0; monthly update job)"
 	elog ""
 	elog "See documentation in /usr/share/doc/${PF}/"
 	elog ""

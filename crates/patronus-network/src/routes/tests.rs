@@ -113,6 +113,7 @@ fn st(state: GwState) -> GwStatus {
         samples: 10,
         detail: None,
         since: 0,
+        probes: Vec::new(),
     }
 }
 
@@ -1259,4 +1260,153 @@ async fn the_monitor_marks_a_silent_gateway_down_and_reapplies_on_changes_only()
     m.tick(&s).await.unwrap();
     assert_ne!(m.states()["WAN1"].state, GwState::Down);
     assert!(*applier.0.lock().unwrap() > after_down);
+}
+
+/// Answers per probe id (`true` = ok); an id missing from the map fails.
+struct FakeExtra(Mutex<BTreeMap<i64, bool>>);
+
+#[async_trait]
+impl ExtraProber for FakeExtra {
+    async fn run(&self, _dev: &str, spec: &ProbeSpec) -> std::result::Result<f64, String> {
+        if self
+            .0
+            .lock()
+            .unwrap()
+            .get(&spec.id)
+            .copied()
+            .unwrap_or(false)
+        {
+            Ok(12.0)
+        } else {
+            Err(format!("{} refused", spec.kind.as_str()))
+        }
+    }
+}
+
+/// One tick, then give the background probe round time to land.
+async fn tick_and_settle(m: &mut Monitor, s: &ConfigStore) {
+    m.tick(s).await.unwrap();
+    for _ in 0..200 {
+        if !m.extra_busy.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_failing_critical_probe_takes_the_gateway_down_a_plain_one_only_shows() {
+    let s = store().await;
+    save_gateway(&s, None, &gi("WAN1", "@wan").validated().unwrap())
+        .await
+        .unwrap();
+    for (kind, target, port, name, critical) in [
+        ("dns", "1.1.1.1", Some(53), "example.com", 1),
+        ("http", "https://example.com/", None, "", 0),
+    ] {
+        sqlx::query("INSERT INTO ins_uplink_probes (gateway, kind, target, port, name, critical, enabled) VALUES ('WAN1',?,?,?,?,?,1)")
+            .bind(kind).bind(target).bind(port).bind(name).bind(critical)
+            .execute(s.pool().unwrap()).await.unwrap();
+    }
+    let ids: Vec<i64> = load_probes(&s).await.iter().map(|p| p.id).collect();
+    let (dns, http) = (ids[0], ids[1]);
+    let prober = Arc::new(FakeProber(Mutex::new(BTreeMap::from([(
+        "198.51.100.1".parse().unwrap(),
+        2.0,
+    )]))));
+    let extra = Arc::new(FakeExtra(Mutex::new(BTreeMap::from([
+        (dns, true),
+        (http, true),
+    ]))));
+    let applier = Arc::new(CountingApplier::default());
+    let mut m = Monitor::new(applier, Arc::new(fake()), prober).with_extra(extra.clone());
+    // without with_extra nothing is probed: a monitor built the old way has no extra results
+    for _ in 0..6 {
+        tick_and_settle(&mut m, &s).await;
+    }
+    let st = &m.states()["WAN1"];
+    assert_eq!(st.state, GwState::Online);
+    assert_eq!(st.probes.len(), 2, "both probes ran: {:?}", st.probes);
+    assert!(st.probes.iter().all(|p| p.ok) && st.probes.iter().any(|p| p.critical));
+    // the plain HTTP probe fails: shown, but ping still decides the state
+    extra.0.lock().unwrap().insert(http, false);
+    for _ in 0..12 {
+        tick_and_settle(&mut m, &s).await;
+    }
+    let st = &m.states()["WAN1"];
+    assert_eq!(
+        st.state,
+        GwState::Online,
+        "a non-critical probe never fails a gateway over"
+    );
+    let p = st.probes.iter().find(|p| p.id == http).unwrap();
+    assert!(!p.ok && p.error.as_deref() == Some("http refused"), "{p:?}");
+    // the critical DNS probe fails: after the hysteresis the samples count as lost -> Down
+    extra.0.lock().unwrap().insert(dns, false);
+    for _ in 0..25 {
+        tick_and_settle(&mut m, &s).await;
+    }
+    let st = &m.states()["WAN1"];
+    assert_eq!(
+        st.state,
+        GwState::Down,
+        "ping answers but critical DNS is dead: {st:?}"
+    );
+    assert!(
+        st.detail
+            .as_deref()
+            .unwrap_or("")
+            .contains("critical dns probe"),
+        "{:?}",
+        st.detail
+    );
+    assert!(
+        !usable(st.state, Trigger::Down),
+        "so a group with trigger 'down' stops using it"
+    );
+    // DNS comes back: the gateway recovers
+    extra.0.lock().unwrap().insert(dns, true);
+    for _ in 0..40 {
+        tick_and_settle(&mut m, &s).await;
+        if m.states()["WAN1"].state == GwState::Online {
+            break;
+        }
+    }
+    assert_eq!(m.states()["WAN1"].state, GwState::Online);
+}
+
+#[tokio::test]
+async fn disabled_probes_are_skipped_and_a_deleted_gateway_takes_its_probes_along() {
+    let s = store().await;
+    save_gateway(&s, None, &gi("WAN1", "@wan").validated().unwrap())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO ins_uplink_probes (gateway, kind, target, port, name, critical, enabled) VALUES ('WAN1','tcp','192.0.2.9',443,'',0,1)")
+        .execute(s.pool().unwrap()).await.unwrap();
+    sqlx::query("INSERT INTO ins_uplink_probes (gateway, kind, target, port, name, critical, enabled) VALUES ('WAN1','tcp','192.0.2.10',443,'',0,0)")
+        .execute(s.pool().unwrap()).await.unwrap();
+    let extra = Arc::new(FakeExtra(Mutex::new(BTreeMap::new())));
+    let prober = Arc::new(FakeProber(Mutex::new(BTreeMap::from([(
+        "198.51.100.1".parse().unwrap(),
+        2.0,
+    )]))));
+    let mut m = Monitor::new(
+        Arc::new(CountingApplier::default()),
+        Arc::new(fake()),
+        prober,
+    )
+    .with_extra(extra);
+    tick_and_settle(&mut m, &s).await;
+    tick_and_settle(&mut m, &s).await; // the first round's results are read by the next tick
+    assert_eq!(
+        m.states()["WAN1"].probes.len(),
+        1,
+        "the disabled probe is skipped"
+    );
+    // deleting the gateway removes its probes (foreign key) and their results disappear
+    sqlx::query("DELETE FROM route_gateways WHERE name='WAN1'")
+        .execute(s.pool().unwrap())
+        .await
+        .unwrap();
+    assert!(load_probes(&s).await.is_empty());
 }

@@ -1,0 +1,12 @@
+[Unit]
+Description=Monthly Patronus IP country/ASN database update
+
+[Timer]
+# DB-IP publishes once a month; the first run after boot fetches a missing file
+OnBootSec=15min
+OnCalendar=monthly
+RandomizedDelaySec=1d
+Persistent=true
+
+[Install]
+WantedBy=timers.target

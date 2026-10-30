@@ -618,6 +618,9 @@ impl GeoDb {
                 _ => {}
             }
         }
+        // sorted so `lookup` can binary-search (DB-IP ranges do not overlap)
+        db.v4.sort_unstable_by_key(|r| r.0);
+        db.v6.sort_unstable_by_key(|r| r.0);
         db
     }
 
@@ -659,24 +662,20 @@ impl GeoDb {
         r
     }
 
-    /// Country of one address (for the UI's lookup box).
+    /// Country of one address (binary search over the sorted ranges).
     pub fn lookup(&self, ip: IpAddr) -> Option<String> {
         let cc = match ip {
             IpAddr::V4(a) => {
                 let x = u32::from(a);
-                self.v4
-                    .iter()
-                    .find(|(s, e, _)| *s <= x && x <= *e)
-                    .map(|t| t.2)
+                let i = self.v4.partition_point(|r| r.0 <= x);
+                self.v4.get(i.checked_sub(1)?).filter(|r| x <= r.1)?.2
             }
             IpAddr::V6(a) => {
                 let x = u128::from(a);
-                self.v6
-                    .iter()
-                    .find(|(s, e, _)| *s <= x && x <= *e)
-                    .map(|t| t.2)
+                let i = self.v6.partition_point(|r| r.0 <= x);
+                self.v6.get(i.checked_sub(1)?).filter(|r| x <= r.1)?.2
             }
-        }?;
+        };
         Some(String::from_utf8_lossy(&cc).into_owned())
     }
 

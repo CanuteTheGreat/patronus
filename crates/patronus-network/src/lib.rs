@@ -17,6 +17,7 @@ pub mod netconf;
 pub mod routes;
 pub mod services;
 pub mod supervise;
+pub mod uplink_probe;
 pub mod sysctl;
 pub mod sysops;
 pub mod vpn;

@@ -76,5 +76,6 @@ base64 = { version = "0.22", optional = true }
 ed25519-dalek = { version = "2.1", optional = true }
 sha2 = { version = "0.10", optional = true }
 rand = { version = "0.8", optional = true }
+socket2 = { version = "0.5", features = ["all"] }
 
 # wireguard-control = { workspace = true, optional = true }  # Removed - not used

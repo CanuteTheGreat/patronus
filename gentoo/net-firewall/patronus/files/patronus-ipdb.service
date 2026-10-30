@@ -1,0 +1,16 @@
+[Unit]
+# Monthly refresh of the DB-IP lite country + ASN databases behind the traffic
+# insight (/insights, GeoIP alias sets). Idempotent: a database younger than
+# its refresh interval is left alone; a failed download keeps the old file.
+# IP geolocation by DB-IP.com (CC BY 4.0).
+Description=Patronus IP country/ASN database update
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/patronus
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/patronus ipdb update
+User=patronus
+Group=patronus
+Nice=10

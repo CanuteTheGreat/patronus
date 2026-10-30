@@ -87,6 +87,11 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "seg_dns_log_pos",
     "seg_time_state",
     "seg_time_usage",
+    // traffic insight and uplink health history (lane s, part d): measured
+    // data, large, and not something a rollback or restore may rewind
+    "ins_usage",
+    "ins_uplink_samples",
+    "ins_uplink_hourly",
 ];
 
 /// Revisions kept by [`ConfigStore::snapshot`] (older ones are pruned).

@@ -11,6 +11,7 @@ pub mod firewall;
 #[cfg(feature = "gitops")]
 pub mod gitops;
 pub mod init;
+pub mod ipdb;
 pub mod metrics;
 #[cfg(feature = "plugins")]
 pub mod plugin;

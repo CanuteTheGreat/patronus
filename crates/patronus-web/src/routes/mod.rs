@@ -356,6 +356,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::ha::router())
         .merge(api::qos::router())
         .merge(api::insights::router())
+        .merge(api::insight_history::router())
         .merge(api::packages::router())
         .merge(api::svc::router())
         .merge(api::segmentation::router())
@@ -376,6 +377,8 @@ fn api_routes() -> Router<AppState> {
 
 #[cfg(test)]
 mod honesty_tests;
+#[cfg(test)]
+mod insight_api_tests;
 
 #[cfg(test)]
 mod lane_fh_tests;
