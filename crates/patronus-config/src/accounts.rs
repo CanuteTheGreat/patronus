@@ -45,6 +45,7 @@ pub const AREAS: &[&str] = &[
     "services",
     "qos",
     "ha",
+    "segmentation",
     "system",
 ];
 

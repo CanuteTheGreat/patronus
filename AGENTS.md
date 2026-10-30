@@ -59,7 +59,8 @@ config file that only one process knows about.
   that is already on main -- add a new one. Each lane owns a number range
   and the `lane_ranges_are_respected` test enforces it:
   A 1-99, B 100-199, C 200-299, D 300-399, E 400-499, F 500-599,
-  G 600-699, H 700-799, I 800-899, J 900-999, K 1000-1099, M 1100-1199.
+  G 600-699, H 700-799, I 800-899, J 900-999, K 1000-1099, M 1100-1199,
+  N 1200-1299, S 1300-1399 (device segmentation).
 - **Table ownership:** a lane creates and owns its own tables (prefix them
   with the subsystem, e.g. `dhcp_pools`, `wg_peers`). Shared foundation
   tables: `system_config`, `interfaces` (lane C owns the columns except
@@ -104,6 +105,22 @@ config file that only one process knows about.
   members of a Patronus bridge hit the routed `forward` policy (drop).
   Netlab hosts without the module (rw-man-04) can't reproduce this; the CI
   runners (rw-man-01..03) have it loaded.
+- **Device segmentation (lane S, `patronus_config::seg`, docs/design/device-segmentation.md):**
+  `seg_groups` / `seg_devices` / `seg_links` / `seg_services` / `seg_segments` (migration 1300),
+  built-in groups `home` and `quarantine`. Isolation is opt-in per segment
+  (`seg_segments.enabled`, a role token or interface name); enabling adopts every
+  host currently on the segment into `home` (allow-all), so nothing changes on day one.
+  The rules are a SEPARATE nft table `inet patronus_seg` (hook priority -10, rendered by
+  `patronus_firewall::seg_rules` and appended to the same atomic `nft -f` as the main
+  table, so it can drop before the main table's `ct state established accept`). It only
+  drops or lets the packet through to the main table. Unbound (iface, MAC, IPv4)
+  sources, revoked/unknown destinations in the segment subnet and quarantine members
+  forward nothing and reach the router only for DHCP/DNS/ICMP (never 22/8443). The L2
+  side (isolated bridge ports, proxy ARP) is `patronus_network::seg::SegApplier`
+  (USE=segmentation; registered in `lan::appliers_with`). Web mutations go through
+  `LanManager` (`state/segmentation.rs`: snapshot -> write -> apply segmentation, dhcp,
+  firewall -> undo on failure); the `seg_*` tables are in `LAN_TABLES`. Wired devices behind
+  an unmanaged switch cannot be isolated from each other (document, group them).
 - **Policy routing contract (B <-> E):** `firewall_rules.gateway` names a
   gateway or gateway group; lane E resolves it to an fwmark, lane B renders
   `meta mark set`.

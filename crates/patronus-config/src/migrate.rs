@@ -36,6 +36,7 @@ pub const LANE_RANGES: &[(&str, u32, u32)] = &[
     ("k", 1000, 1099), // SD-WAN
     ("m", 1100, 1199), // differentiators (eBPF, AI, GitOps, plugins)
     ("n", 1200, 1299), // stub-elimination pass: RBAC, backups, PD, proxy, OpenVPN, VRF
+    ("s", 1300, 1399), // device segmentation: groups, devices, isolation, Wi-Fi credentials, DNS/time policy
 ];
 
 /// Apply every migration that has not been applied yet. Returns the
