@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 /// Every applier this binary knows about.
 pub fn registry() -> ApplierRegistry {
-    ApplierRegistry::new()
+    let r = ApplierRegistry::new()
         // --- Phase::Sysctl (lane A) ---
         .with(patronus_network::SysctlApplier::default())
         // --- Phase::Interfaces (lane C: interfaces, VLANs, bonds, bridges) ---
@@ -38,7 +38,12 @@ pub fn registry() -> ApplierRegistry {
         .with(patronus_config::accounts::AccountsApplier)
         .with_all(patronus_network::lan::appliers())
         // --- lane F: WireGuard (interfaces phase), IPsec (services phase) ---
-        .with_all(patronus_network::vpn_appliers())
+        .with_all(patronus_network::vpn_appliers());
+    // device segmentation: parental time-limit sets, computed at boot before
+    // the first forwarded packet (Phase::Firewall)
+    #[cfg(feature = "segmentation")]
+    let r = r.with(patronus_firewall::seg_time::SegTimeApplier);
+    r
 }
 
 /// Options shared by `apply`, `firewall apply` and `config rollback`.

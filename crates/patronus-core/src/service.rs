@@ -324,10 +324,26 @@ impl ServiceManager {
     // Private helper methods
 
     fn systemd_command(&self, action: &str, service_name: &str) -> Result<()> {
-        let output = Command::new("systemctl")
-            .args([action, service_name])
-            .output()
-            .map_err(|e| Error::Service(format!("Failed to {} service: {}", action, e)))?;
+        let run = || {
+            Command::new("systemctl")
+                .args([action, service_name])
+                .output()
+                .map_err(|e| Error::Service(format!("Failed to {} service: {}", action, e)))
+        };
+        let mut output = run()?;
+        // systemd refuses more than 5 starts in 10 s ("start of the service was
+        // attempted too often"). Config changes made through the API (one
+        // restart each, e.g. a script adding DNS rules) can hit that limit
+        // although nothing is crash-looping: clear the counter and retry once.
+        if !output.status.success()
+            && matches!(action, "start" | "restart")
+            && String::from_utf8_lossy(&output.stderr).contains("attempted too often")
+        {
+            let _ = Command::new("systemctl")
+                .args(["reset-failed", service_name])
+                .output();
+            output = run()?;
+        }
 
         if !output.status.success() {
             return Err(Error::Service(format!(

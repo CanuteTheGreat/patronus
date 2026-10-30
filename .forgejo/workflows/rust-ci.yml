@@ -261,6 +261,21 @@ jobs:
           REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
           NETLAB_TEST: ha-services-test.sh
         run: ci/netlab/lan-services.sh systemd
+      # Device segmentation, per-device/group DNS policy
+      # (ci/netlab/segmentation-dns-services-test.sh): real Unbound views per
+      # group and device, family preset, block/allow/override rules, bypass
+      # redirect, per-device query logs through the API, reboot. Once per
+      # init system.
+      - name: Segmentation DNS policy + logs - OpenRC path (Gentoo stage3)
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          NETLAB_TEST: segmentation-dns-services-test.sh
+        run: ci/netlab/lan-services.sh openrc
+      - name: Segmentation DNS policy + logs - systemd path (Gentoo stage3)
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          NETLAB_TEST: segmentation-dns-services-test.sh
+        run: ci/netlab/lan-services.sh systemd
 
   netlab-features:
     # Lane J (syslog, NetFlow, IGMP, NAT64/DNS64, L2TP, Suricata IDS/IPS,

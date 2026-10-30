@@ -96,6 +96,37 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- parental time limits: the plain-HTTP "time's up" page. Devices that
+    // ran out of time are redirected to it (table inet patronus_time), so the
+    // port must be open on the segments that have devices.
+    if let Ok(n) = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM seg_time_policies")
+        .fetch_one(store.pool()?)
+        .await
+    {
+        if n > 0 {
+            let port = crate::seg_time::portal_port(store).await;
+            let mut specs: Vec<String> =
+                sqlx::query_scalar("SELECT DISTINCT segment FROM seg_devices")
+                    .fetch_all(store.pool()?)
+                    .await
+                    .unwrap_or_default();
+            if specs.is_empty() {
+                specs.push("@lan".into());
+            }
+            let mut seen = Vec::new();
+            for spec in specs {
+                for d in devices(store, &spec).await {
+                    if !seen.contains(&d) {
+                        out.filter.push(format!(
+                            "add rule {t} input iifname \"{d}\" tcp dport {port} accept comment \"time limit page\""
+                        ));
+                        seen.push(d);
+                    }
+                }
+            }
+        }
+    }
+
     // --- IGMP proxy
     let igmp = settings(store, "igmp").await?;
     if on(&igmp, "enabled") {

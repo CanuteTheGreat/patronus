@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+
+{% block title %}DNS policy and logs - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    .tabs-seg { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+    .tabs-seg a { padding: 6px 14px; border-radius: 16px; border: 1px solid #d1d5db; color: #374151; text-decoration: none; font-size: 0.9em; }
+    .tabs-seg a.on { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+    .scroll-x { overflow-x: auto; }
+    .pill { display: inline-block; padding: 1px 10px; border-radius: 10px; font-size: 0.8em; font-weight: 600; background: #e0e7ff; color: #3730a3; margin-right: 4px; }
+    .pill.blocked { background: #fee2e2; color: #991b1b; }
+    .hint { color: #6b7280; font-size: 0.85em; margin: 4px 0 10px; }
+    .row-actions button { margin: 2px 4px 2px 0; }
+    tr.blockedrow td { background: #fff1f2; }
+    @media (max-width: 640px) { form.lan-form input, form.lan-form select, form.lan-form textarea { min-width: 0; width: 100%; } form.lan-form label { width: 100%; } }
+    @media (max-width: 640px) {
+        table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; box-sizing: border-box; }
+        table.stack tr.hd { display: none; }
+        table.stack tr { border-bottom: 1px solid #e5e7eb; padding: 8px 0; }
+        table.stack td { border: 0; padding: 3px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; text-align: right; }
+        table.stack td::before { content: attr(data-label); color: #6b7280; font-size: 0.8em; text-align: left; flex: 0 0 34%; }
+        table.stack td > * { max-width: 62%; }
+        table.logt th:nth-child(4), table.logt td:nth-child(4) { display: none; }
+        table.logt th, table.logt td { padding: 4px 3px; font-size: 0.74em; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">DNS policy &amp; logs</h1>
+    <p class="page-subtitle">Per-group and per-device block lists, overrides, family filtering (safe search, adult and malware lists) and query logs.</p>
+</div>
+<div class="tabs-seg">
+    <a href="/segmentation">Devices &amp; groups</a>
+    <a href="/segmentation/time">Time limits</a>
+    <a href="/segmentation/dns" class="on">DNS policy &amp; logs</a>
+</div>
+<div id="d-error" class="alert-error" style="display:none"></div>
+<div id="d-status" class="hint"></div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Policies</h2></div>
+    <div class="scroll-x" id="d-policies"><p class="empty">Loading...</p></div>
+</div>
+
+<div class="card" id="d-new-card">
+    <div class="card-header"><h2 class="card-title" id="d-form-title">New policy</h2></div>
+    <form class="lan-form" id="d-form" onsubmit="return savePolicy(event)">
+        <label>Name<input name="name" required maxlength="32" pattern="[a-z0-9_-]+" placeholder="kids"></label>
+        <label>Blocked answer<select name="block_mode"><option value="nxdomain">NXDOMAIN</option><option value="null">0.0.0.0 / ::</option></select></label>
+        <label>Log retention (days)<input name="log_retention_days" type="number" min="1" max="365" value="7"></label>
+        <label style="flex-basis:100%">Extra block lists (URLs, one per line)<textarea name="blocklist_urls" rows="2" style="padding:5px 8px;border:1px solid #d1d5db;border-radius:4px"></textarea></label>
+        <label><span>Family preset (adult + malware lists, safe search)</span><input name="family" type="checkbox"></label>
+        <label><span>Log queries (personal data!)</span><input name="log_queries" type="checkbox"></label>
+        <label><span>Keep the global block lists and overrides</span><input name="inherit_global" type="checkbox" checked></label>
+        <button class="btn btn-primary btn-sm" type="submit" id="d-save">Create policy</button>
+        <button class="btn btn-sm" type="button" id="d-cancel" style="display:none" onclick="resetForm()">Cancel edit</button>
+    </form>
+    <p class="hint">Devices with a policy are sent to this router's resolver even if they have another DNS server configured, and DNS-over-TLS (port 853) is refused. DNS-over-HTTPS cannot be blocked reliably. Query logs are off by default and stored only for the policies that switch them on.</p>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Who it applies to</h2></div>
+    <form class="lan-form" onsubmit="return assignPolicy(event)" id="d-assign">
+        <label>Applies to<select name="kind"><option value="group">group</option><option value="device">device</option></select></label>
+        <label>Name<select name="id" id="d-target"></select></label>
+        <label>Policy<select name="policy_id" id="d-policy-pick"></select></label>
+        <button class="btn btn-primary btn-sm" type="submit">Apply</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Query log</h2></div>
+    <form class="lan-form" onsubmit="return searchLog(event)" id="d-search">
+        <label>Device<select name="device" id="d-dev"><option value="">all</option></select></label>
+        <label>Name contains<input name="q" placeholder="example.com"></label>
+        <label>Since<select name="since"><option value="0">any time</option><option value="3600">last hour</option><option value="86400">last 24 h</option><option value="604800">last 7 days</option></select></label>
+        <label><span>Blocked only</span><input name="blocked" type="checkbox"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Search</button>
+        <button class="btn btn-sm" type="button" onclick="exportCsv()">Export CSV</button>
+        <button class="btn btn-sm btn-danger" type="button" id="d-clear" onclick="clearLog()">Clear log</button>
+    </form>
+    <div class="scroll-x" id="d-log"><p class="empty">Loading...</p></div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const CAN_MODIFY = {% if can_modify %}true{% else %}false{% endif %};
+    let DATA = null, EDIT = null;
+    function h(tag, attrs, kids) {
+        const el = document.createElement(tag);
+        for (const [k, v] of Object.entries(attrs || {})) {
+            if (k === 'class') el.className = v; else if (k === 'text') el.textContent = v;
+            else if (k.startsWith('on')) el.addEventListener(k.slice(2), v); else el.setAttribute(k, v);
+        }
+        for (const c of [].concat(kids || [])) el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+        return el;
+    }
+    function stackify(t) {
+        const rows = [...t.querySelectorAll('tr')];
+        if (!rows.length) return;
+        const labels = [...rows[0].children].map(c => c.textContent);
+        rows[0].classList.add('hd');
+        for (const r of rows.slice(1)) [...r.children].forEach((c, i) => { if (labels[i]) c.setAttribute('data-label', labels[i]); });
+        t.classList.add('stack');
+    }
+    function showError(msg) { const el = document.getElementById('d-error'); el.textContent = msg; el.style.display = msg ? '' : 'none'; }
+    async function api(method, url, body) {
+        const r = await fetch(url, {method, credentials: 'same-origin',
+            headers: body !== undefined ? {'content-type': 'application/json'} : {},
+            body: body !== undefined ? JSON.stringify(body) : undefined});
+        let j = {}; try { j = await r.json(); } catch (_) {}
+        if (!r.ok) { showError('Not applied: ' + (j.error || r.status)); return null; }
+        showError(''); return j;
+    }
+    function renderPolicies() {
+        const box = document.getElementById('d-policies'); box.textContent = '';
+        const ps = DATA.policies;
+        if (!ps.length) { box.appendChild(h('p', {class: 'empty', text: 'No DNS policies. Create one below, then apply it to a group or device.'})); return; }
+        const t = h('table', {class: 'lan'});
+        t.appendChild(h('tr', {}, ['Name', 'Settings', 'Rules', 'Applies to', ''].map(x => h('th', {text: x}))));
+        for (const p of ps) {
+            const flags = [];
+            if (p.family) flags.push('family preset'); if (p.log_queries) flags.push('logs ' + p.log_retention_days + ' d');
+            if (!p.inherit_global) flags.push('own rules only'); flags.push(p.block_mode);
+            const rules = h('td', {});
+            for (const r of p.rules) {
+                const chip = h('div', {}, [h('span', {class: 'pill' + (r.action === 'block' ? ' blocked' : ''), text: r.action}), r.domain + (r.address ? ' -> ' + r.address : '')]);
+                if (CAN_MODIFY) chip.appendChild(h('button', {class: 'btn btn-sm btn-link', text: 'remove', onclick: async () => { if (await api('DELETE', '/api/segmentation/dns/policies/' + p.id + '/rules/' + r.id)) load(); }}));
+                rules.appendChild(chip);
+            }
+            if (CAN_MODIFY) {
+                const f = h('form', {class: 'lan-form', onsubmit: async (ev) => { ev.preventDefault(); const e = ev.target.elements;
+                    const body = {action: e['action'].value, domain: e['domain'].value, address: e['address'].value || null};
+                    if (await api('POST', '/api/segmentation/dns/policies/' + p.id + '/rules', body)) load(); return false; }}, [
+                    h('select', {name: 'action'}, ['block', 'allow', 'override'].map(a => h('option', {value: a, text: a}))),
+                    h('input', {name: 'domain', placeholder: 'domain', required: ''}),
+                    h('input', {name: 'address', placeholder: 'address (override)'}),
+                    h('button', {class: 'btn btn-sm', type: 'submit', text: 'Add rule'})]);
+                rules.appendChild(f);
+            }
+            const who = p.groups.map(g => 'group ' + g).concat(p.devices.map(d => 'device ' + d)).join(', ') || '-';
+            const acts = h('td', {class: 'row-actions'});
+            if (CAN_MODIFY) {
+                acts.appendChild(h('button', {class: 'btn btn-sm', text: 'Edit', onclick: () => editPolicy(p)}));
+                acts.appendChild(h('button', {class: 'btn btn-sm btn-danger', text: 'Delete', onclick: async () => {
+                    if (confirm('Delete policy ' + p.name + '?')) { if (await api('DELETE', '/api/segmentation/dns/policies/' + p.id)) load(); } }}));
+            }
+            t.appendChild(h('tr', {}, [h('td', {}, [h('b', {text: p.name})]), h('td', {text: flags.join(', ')}), rules, h('td', {text: who}), acts]));
+        }
+        stackify(t); box.appendChild(t);
+    }
+    function resetForm() {
+        EDIT = null; document.getElementById('d-form').reset();
+        document.getElementById('d-form-title').textContent = 'New policy';
+        document.getElementById('d-save').textContent = 'Create policy';
+        document.getElementById('d-cancel').style.display = 'none';
+    }
+    function editPolicy(p) {
+        EDIT = p.id; const e = document.getElementById('d-form').elements;
+        e['name'].value = p.name; e['block_mode'].value = p.block_mode; e['log_retention_days'].value = p.log_retention_days;
+        e['blocklist_urls'].value = p.blocklist_urls.join('\n'); e['family'].checked = p.family; e['log_queries'].checked = p.log_queries; e['inherit_global'].checked = p.inherit_global;
+        document.getElementById('d-form-title').textContent = 'Edit policy ' + p.name;
+        document.getElementById('d-save').textContent = 'Save policy';
+        document.getElementById('d-cancel').style.display = '';
+        document.getElementById('d-form').scrollIntoView({behavior: 'smooth'});
+    }
+    async function savePolicy(ev) {
+        ev.preventDefault(); const e = ev.target.elements;
+        const body = {name: e['name'].value, block_mode: e['block_mode'].value, log_retention_days: Number(e['log_retention_days'].value),
+            blocklist_urls: e['blocklist_urls'].value, family: e['family'].checked, log_queries: e['log_queries'].checked, inherit_global: e['inherit_global'].checked};
+        const r = EDIT ? await api('PUT', '/api/segmentation/dns/policies/' + EDIT, body) : await api('POST', '/api/segmentation/dns/policies', body);
+        if (r) { resetForm(); load(); }
+        return false;
+    }
+    async function assignPolicy(ev) {
+        ev.preventDefault(); const e = ev.target.elements; const pid = e['policy_id'].value;
+        if (await api('POST', '/api/segmentation/dns/assign', {kind: e['kind'].value, id: Number(e['id'].value), policy_id: pid === '' ? null : Number(pid)})) load();
+        return false;
+    }
+    let DEVICES = [];
+    async function fillTargets() {
+        const kind = document.querySelector('#d-assign select[name=kind]').value;
+        const sel = document.getElementById('d-target'); sel.textContent = '';
+        let rows = [];
+        try { const r = await fetch('/api/segmentation/' + (kind === 'group' ? 'groups' : 'devices'), {credentials: 'same-origin'}); if (r.ok) { const j = await r.json(); rows = Array.isArray(j) ? j : (j.groups || j.devices || []); if (kind === 'device') DEVICES = rows; } } catch (_) {}
+        if (!rows.length) sel.appendChild(h('option', {value: '', text: '(none defined yet)'}));
+        for (const x of rows) sel.appendChild(h('option', {value: x.id, text: x.name}));
+        const pick = document.getElementById('d-policy-pick'); pick.textContent = '';
+        pick.appendChild(h('option', {value: '', text: '(no policy)'}));
+        for (const p of DATA.policies) pick.appendChild(h('option', {value: p.id, text: p.name}));
+        const dev = document.getElementById('d-dev'); const cur = dev.value; dev.textContent = '';
+        dev.appendChild(h('option', {value: '', text: 'all'}));
+        for (const c of DATA.clients) dev.appendChild(h('option', {value: c.device_id, text: c.name + ' (' + c.ip + ')'}));
+        dev.value = cur;
+    }
+    function qs() {
+        const e = document.getElementById('d-search').elements; const p = new URLSearchParams();
+        if (e['device'].value) p.set('device', e['device'].value);
+        if (e['q'].value) p.set('q', e['q'].value);
+        if (e['blocked'].checked) p.set('blocked', 'true');
+        const since = Number(e['since'].value); if (since > 0) p.set('since', String(Math.floor(Date.now() / 1000) - since));
+        return p;
+    }
+    async function searchLog(ev) { if (ev) ev.preventDefault(); await loadLog(); return false; }
+    async function loadLog() {
+        const box = document.getElementById('d-log'); box.textContent = '';
+        const p = qs(); p.set('limit', '300');
+        const j = await api('GET', '/api/segmentation/dns/log?' + p.toString()); if (!j) return;
+        if (!j.rows.length) { box.appendChild(h('p', {class: 'empty', text: 'No queries logged. Switch "Log queries" on for a policy, apply it, and queries from its devices appear here.'})); return; }
+        const t = h('table', {class: 'lan logt'});
+        t.appendChild(h('tr', {}, ['Time', 'Device', 'Name', 'Type', 'Answer'].map(x => h('th', {text: x}))));
+        for (const r of j.rows) {
+            const tr = h('tr', {class: r.blocked ? 'blockedrow' : ''}, [
+                h('td', {text: new Date(r.ts * 1000).toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'})}), h('td', {text: r.device || r.client}),
+                h('td', {class: 'mono', text: r.qname}), h('td', {text: r.qtype || ''}),
+                h('td', {}, [r.blocked ? h('span', {class: 'pill blocked', text: 'blocked'}) : '', r.rcode || ''])]);
+            t.appendChild(tr);
+        }
+        box.appendChild(t);
+    }
+    function exportCsv() { window.location = '/api/segmentation/dns/log.csv?' + qs().toString(); }
+    async function clearLog() {
+        const dev = document.getElementById('d-dev').value;
+        if (!confirm(dev ? 'Delete the logged queries of this device?' : 'Delete ALL logged DNS queries?')) return;
+        if (await api('DELETE', '/api/segmentation/dns/log' + (dev ? '?device=' + dev : ''))) loadLog();
+    }
+    async function load() {
+        const j = await api('GET', '/api/segmentation/dns/policies'); if (!j) return;
+        DATA = j; renderPolicies(); await fillTargets();
+        const s = await api('GET', '/api/segmentation/dns/status');
+        if (s) {
+            const mode = (s.dns && s.dns.effective_mode) || 'unknown';
+            let t = 'DNS mode: ' + mode + '. Devices under a policy: ' + s.enforced_devices + '. Logged queries: ' + s.log_rows + '.';
+            if (mode !== 'resolver' && s.enforced_devices > 0) t += ' WARNING: policies are only enforced in resolver (Unbound) mode.';
+            document.getElementById('d-status').textContent = t;
+        }
+        loadLog();
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelector('#d-assign select[name=kind]').addEventListener('change', fillTargets);
+        if (!CAN_MODIFY) { for (const id of ['d-new-card', 'd-assign', 'd-clear']) { const e = document.getElementById(id); if (e) (e.closest('.card') || e).style.display = 'none'; } }
+        load();
+    });
+</script>
+{% endblock %}

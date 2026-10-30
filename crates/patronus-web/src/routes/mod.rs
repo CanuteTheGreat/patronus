@@ -45,6 +45,8 @@ pub fn build_router(
         .merge(api::packages::pages())
         .merge(api::svc::pages())
         .merge(api::segmentation::pages())
+        .merge(seg_time_pages())
+        .merge(seg_dns_pages())
         .merge(api::setup::pages())
         // The old "simple" pages claimed services were operational and
         // listed invented "recent activity"; keep the URLs as redirects.
@@ -301,6 +303,39 @@ async fn require_session(
     }
 }
 
+#[cfg(feature = "segmentation")]
+fn seg_time_pages() -> Router<AppState> {
+    api::seg_time::pages()
+}
+#[cfg(not(feature = "segmentation"))]
+fn seg_time_pages() -> Router<AppState> {
+    Router::new()
+}
+#[cfg(feature = "segmentation")]
+fn seg_time_router() -> Router<AppState> {
+    api::seg_time::router()
+}
+#[cfg(not(feature = "segmentation"))]
+fn seg_time_router() -> Router<AppState> {
+    Router::new()
+}
+#[cfg(all(feature = "dns", feature = "segmentation"))]
+fn seg_dns_pages() -> Router<AppState> {
+    api::seg_dns::pages()
+}
+#[cfg(all(feature = "dns", feature = "segmentation"))]
+fn seg_dns_router() -> Router<AppState> {
+    api::seg_dns::router()
+}
+#[cfg(not(all(feature = "dns", feature = "segmentation")))]
+fn seg_dns_pages() -> Router<AppState> {
+    Router::new()
+}
+#[cfg(not(all(feature = "dns", feature = "segmentation")))]
+fn seg_dns_router() -> Router<AppState> {
+    Router::new()
+}
+
 /// Build API routes.
 ///
 /// Convention: each subsystem's endpoints live in `routes/api/<subsystem>.rs`
@@ -324,6 +359,8 @@ fn api_routes() -> Router<AppState> {
         .merge(api::packages::router())
         .merge(api::svc::router())
         .merge(api::segmentation::router())
+        .merge(seg_time_router())
+        .merge(seg_dns_router())
         .merge(api::vpn::router())
         .merge(api::network::router())
         .merge(api::routing::router())

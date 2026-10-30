@@ -81,6 +81,12 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "config_revisions",
     "audit_log",
     "config_backups",
+    // device segmentation: logs and counters, not configuration (a revision
+    // or a rollback must not rewind usage minutes or carry 200k log rows)
+    "seg_dns_log",
+    "seg_dns_log_pos",
+    "seg_time_state",
+    "seg_time_usage",
 ];
 
 /// Revisions kept by [`ConfigStore::snapshot`] (older ones are pruned).

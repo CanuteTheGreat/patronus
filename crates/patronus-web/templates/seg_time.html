@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+
+{% block title %}Time limits - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    .tabs-seg { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+    .tabs-seg a { padding: 6px 14px; border-radius: 16px; border: 1px solid #d1d5db; color: #374151; text-decoration: none; font-size: 0.9em; }
+    .tabs-seg a.on { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+    .scroll-x { overflow-x: auto; }
+    .bar { background: #e5e7eb; border-radius: 6px; height: 12px; min-width: 120px; overflow: hidden; }
+    .bar > span { display: block; height: 100%; background: #16a34a; }
+    .bar.warn > span { background: #d97706; }
+    .bar.blocked > span { background: #dc2626; }
+    .pill { display: inline-block; padding: 1px 10px; border-radius: 10px; font-size: 0.8em; font-weight: 600; }
+    .pill.ok { background: #dcfce7; color: #166534; }
+    .pill.warn { background: #fef3c7; color: #92400e; }
+    .pill.blocked { background: #fee2e2; color: #991b1b; }
+    .row-actions button { margin: 2px 4px 2px 0; }
+    .days label { flex-direction: row; align-items: center; gap: 3px; margin-right: 6px; }
+    .days input { min-width: 0; }
+    .win { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+    .hint { color: #6b7280; font-size: 0.85em; margin: 4px 0 10px; }
+    @media (max-width: 640px) { form.lan-form input, form.lan-form select { min-width: 0; width: 100%; } form.lan-form label { width: 100%; } }
+    @media (max-width: 640px) {
+        table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; box-sizing: border-box; }
+        table.stack tr.hd { display: none; }
+        table.stack tr { border-bottom: 1px solid #e5e7eb; padding: 8px 0; }
+        table.stack td { border: 0; padding: 3px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; text-align: right; }
+        table.stack td::before { content: attr(data-label); color: #6b7280; font-size: 0.8em; text-align: left; flex: 0 0 34%; }
+        table.stack td > * { max-width: 62%; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Time limits</h1>
+    <p class="page-subtitle">Parental controls: when each device may be online, and a daily quota of active minutes.</p>
+</div>
+<div class="tabs-seg">
+    <a href="/segmentation">Devices &amp; groups</a>
+    <a href="/segmentation/time" class="on">Time limits</a>
+    <a href="/segmentation/dns">DNS policy &amp; logs</a>
+</div>
+<div id="t-error" class="alert-error" style="display:none"></div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Devices with a limit <span class="hint" id="t-now"></span></h2></div>
+    <div class="scroll-x" id="t-usage"><p class="empty">Loading...</p></div>
+    <p class="hint">A minute counts as used when the device moved more than the policy's "active bytes per minute"; an idle phone does not burn the quota. The day starts at the policy's reset hour. When time runs out, DNS keeps working, other traffic stops, and the browser shows the "time's up" page.</p>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Policies</h2></div>
+    <div class="scroll-x" id="t-policies"><p class="empty">Loading...</p></div>
+</div>
+
+<div class="card" id="t-new-card">
+    <div class="card-header"><h2 class="card-title" id="t-form-title">New policy</h2></div>
+    <form class="lan-form" id="t-form" onsubmit="return savePolicy(event)">
+        <label>Name<input name="name" required maxlength="32" pattern="[a-z0-9_-]+" placeholder="school-nights"></label>
+        <label>Daily limit (minutes, 0 = none)<input name="daily_limit_minutes" type="number" min="0" max="1440" value="120"></label>
+        <label>Day starts at (hour)<input name="reset_hour" type="number" min="0" max="23" value="6"></label>
+        <label>Active bytes per minute<input name="active_bytes_per_min" type="number" min="0" value="20000"></label>
+        <label>Warn before the cut (minutes, 0 = off)<input name="grace_minutes" type="number" min="0" max="120" value="5"></label>
+        <label><span>Keep DNS and DHCP while blocked</span><input name="allow_dns" type="checkbox" checked></label>
+        <div style="flex-basis:100%">
+            <div class="hint">Allowed windows (the device is only online inside one; none = always):</div>
+            <div id="t-windows"></div>
+            <button type="button" class="btn btn-sm" onclick="addWindow()">Add window</button>
+        </div>
+        <button class="btn btn-primary btn-sm" type="submit" id="t-save">Create policy</button>
+        <button class="btn btn-sm" type="button" id="t-cancel" style="display:none" onclick="resetForm()">Cancel edit</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Who it applies to</h2></div>
+    <form class="lan-form" onsubmit="return assignPolicy(event)" id="t-assign">
+        <label>Applies to<select name="kind"><option value="group">group</option><option value="device">device</option></select></label>
+        <label>Name<select name="id" id="t-target"></select></label>
+        <label>Policy<select name="policy_id" id="t-policy-pick"></select></label>
+        <button class="btn btn-primary btn-sm" type="submit">Apply</button>
+    </form>
+    <p class="hint">A device's own policy wins over its group's. Groups and devices are managed on the Segmentation page.</p>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const CAN_MODIFY = {% if can_modify %}true{% else %}false{% endif %};
+    const DAYS = ['mon','tue','wed','thu','fri','sat','sun'];
+    let DATA = null, EDIT = null;
+
+    function h(tag, attrs, kids) {
+        const el = document.createElement(tag);
+        for (const [k, v] of Object.entries(attrs || {})) {
+            if (k === 'class') el.className = v; else if (k === 'text') el.textContent = v;
+            else if (k.startsWith('on')) el.addEventListener(k.slice(2), v); else el.setAttribute(k, v);
+        }
+        for (const c of [].concat(kids || [])) el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+        return el;
+    }
+    function stackify(t) {
+        const rows = [...t.querySelectorAll('tr')];
+        if (!rows.length) return;
+        const labels = [...rows[0].children].map(c => c.textContent);
+        rows[0].classList.add('hd');
+        for (const r of rows.slice(1)) [...r.children].forEach((c, i) => { if (labels[i]) c.setAttribute('data-label', labels[i]); });
+        t.classList.add('stack');
+    }
+    function showError(msg) { const el = document.getElementById('t-error'); el.textContent = msg; el.style.display = msg ? '' : 'none'; }
+    async function api(method, url, body) {
+        const r = await fetch(url, {method, credentials: 'same-origin',
+            headers: body !== undefined ? {'content-type': 'application/json'} : {},
+            body: body !== undefined ? JSON.stringify(body) : undefined});
+        let j = {}; try { j = await r.json(); } catch (_) {}
+        if (!r.ok) { showError('Not applied: ' + (j.error || r.status)); return null; }
+        showError(''); return j;
+    }
+    function pill(state, reason) {
+        return h('span', {class: 'pill ' + state, text: state === 'blocked' ? 'blocked (' + reason + ')' : (state === 'warn' ? 'ending soon' : 'online ok')});
+    }
+    function renderUsage() {
+        const box = document.getElementById('t-usage'); box.textContent = '';
+        const u = DATA.usage;
+        document.getElementById('t-now').textContent = ' - router time ' + DATA.now;
+        if (!u.length) { box.appendChild(h('p', {class: 'empty', text: 'No device has a time policy yet. Create a policy below and apply it to a group or device.'})); return; }
+        const t = h('table', {class: 'lan'});
+        t.appendChild(h('tr', {}, ['Device', 'Policy', 'State', 'Used today', 'Left', 'Back at', ''].map(x => h('th', {text: x}))));
+        for (const r of u) {
+            const pct = r.limit_minutes ? Math.min(100, Math.round(100 * r.used_minutes / r.limit_minutes)) : 0;
+            const bar = h('div', {class: 'bar ' + r.state}, [h('span', {style: 'width:' + pct + '%'})]);
+            const used = r.limit_minutes ? r.used_minutes + ' / ' + r.limit_minutes + ' min' : r.used_minutes + ' min (no quota)';
+            const left = r.remaining_minutes !== null ? r.remaining_minutes + ' min' : (r.window_ends_in !== null ? 'window ends in ' + r.window_ends_in + ' min' : '-');
+            const acts = h('td', {class: 'row-actions'});
+            if (CAN_MODIFY) {
+                acts.appendChild(h('button', {class: 'btn btn-sm', text: '+30 min today', onclick: () => act(r.device_id, 'bonus', {minutes: 30})}));
+                acts.appendChild(r.paused
+                    ? h('button', {class: 'btn btn-sm btn-success', text: 'Resume', onclick: () => act(r.device_id, 'resume')})
+                    : h('button', {class: 'btn btn-sm btn-danger', text: 'Pause internet now', onclick: () => act(r.device_id, 'pause')}));
+            }
+            t.appendChild(h('tr', {}, [
+                h('td', {}, [h('b', {text: r.device}), h('div', {class: 'hint', text: r.ip})]),
+                h('td', {text: r.policy}), h('td', {}, [pill(r.state, r.reason)]),
+                h('td', {}, [h('div', {text: used}), r.limit_minutes ? bar : '']),
+                h('td', {text: left}), h('td', {text: r.resume_at || '-'}), acts]));
+        }
+        stackify(t); box.appendChild(t);
+    }
+    function winText(w) { return w.days.join(',') + ' ' + w.start + '-' + w.end; }
+    function renderPolicies() {
+        const box = document.getElementById('t-policies'); box.textContent = '';
+        const ps = DATA.policies;
+        if (!ps.length) { box.appendChild(h('p', {class: 'empty', text: 'No policies.'})); return; }
+        const t = h('table', {class: 'lan'});
+        t.appendChild(h('tr', {}, ['Name', 'Quota', 'Windows', 'Applies to', ''].map(x => h('th', {text: x}))));
+        for (const p of ps) {
+            const who = p.groups.map(g => 'group ' + g).concat(p.devices.map(d => 'device ' + d)).join(', ') || '-';
+            const acts = h('td', {class: 'row-actions'});
+            if (CAN_MODIFY) {
+                acts.appendChild(h('button', {class: 'btn btn-sm', text: 'Edit', onclick: () => editPolicy(p)}));
+                acts.appendChild(h('button', {class: 'btn btn-sm btn-danger', text: 'Delete', onclick: async () => {
+                    if (confirm('Delete policy ' + p.name + '? Devices that use it become unlimited.')) { if (await api('DELETE', '/api/segmentation/time/policies/' + p.id)) load(); } }}));
+            }
+            t.appendChild(h('tr', {}, [
+                h('td', {}, [h('b', {text: p.name}), h('div', {class: 'hint', text: (p.allow_dns ? 'DNS kept' : 'everything cut') + ', warn ' + p.grace_minutes + ' min'})]),
+                h('td', {text: p.daily_limit_minutes ? p.daily_limit_minutes + ' min/day (day starts ' + String(p.reset_hour).padStart(2, '0') + ':00)' : 'none'}),
+                h('td', {text: p.windows.length ? p.windows.map(winText).join('; ') : 'always'}),
+                h('td', {text: who}), acts]));
+        }
+        stackify(t); box.appendChild(t);
+    }
+    function addWindow(w) {
+        w = w || {days: ['mon','tue','wed','thu','fri'], start: '16:00', end: '20:00'};
+        const box = document.getElementById('t-windows');
+        const row = h('div', {class: 'win'});
+        const days = h('span', {class: 'days'});
+        for (const d of DAYS) { const c = h('input', {type: 'checkbox', 'data-day': d}); c.checked = w.days.includes(d); days.appendChild(h('label', {}, [c, d])); }
+        row.appendChild(days);
+        row.appendChild(h('input', {type: 'time', class: 'w-start', value: w.start, required: ''}));
+        row.appendChild(document.createTextNode(' to '));
+        row.appendChild(h('input', {type: 'time', class: 'w-end', value: w.end, required: ''}));
+        row.appendChild(h('button', {type: 'button', class: 'btn btn-sm btn-danger', text: 'Remove', onclick: () => row.remove()}));
+        box.appendChild(row);
+    }
+    function readWindows() {
+        return [...document.querySelectorAll('#t-windows .win')].map(r => ({
+            days: [...r.querySelectorAll('input[data-day]')].filter(c => c.checked).map(c => c.getAttribute('data-day')),
+            start: r.querySelector('.w-start').value, end: r.querySelector('.w-end').value}));
+    }
+    function resetForm() {
+        EDIT = null; const f = document.getElementById('t-form'); f.reset();
+        document.getElementById('t-windows').textContent = '';
+        document.getElementById('t-form-title').textContent = 'New policy';
+        document.getElementById('t-save').textContent = 'Create policy';
+        document.getElementById('t-cancel').style.display = 'none';
+    }
+    function editPolicy(p) {
+        EDIT = p.id; const f = document.getElementById('t-form');
+        f.elements['name'].value = p.name; f.elements['daily_limit_minutes'].value = p.daily_limit_minutes || 0;
+        f.elements['reset_hour'].value = p.reset_hour; f.elements['active_bytes_per_min'].value = p.active_bytes_per_min;
+        f.elements['grace_minutes'].value = p.grace_minutes; f.elements['allow_dns'].checked = p.allow_dns;
+        document.getElementById('t-windows').textContent = ''; p.windows.forEach(addWindow);
+        document.getElementById('t-form-title').textContent = 'Edit policy ' + p.name;
+        document.getElementById('t-save').textContent = 'Save policy';
+        document.getElementById('t-cancel').style.display = '';
+        f.scrollIntoView({behavior: 'smooth'});
+    }
+    async function savePolicy(ev) {
+        ev.preventDefault(); const f = ev.target;
+        const body = {name: f.elements['name'].value, daily_limit_minutes: Number(f.elements['daily_limit_minutes'].value),
+            reset_hour: Number(f.elements['reset_hour'].value), active_bytes_per_min: Number(f.elements['active_bytes_per_min'].value),
+            grace_minutes: Number(f.elements['grace_minutes'].value), allow_dns: f.elements['allow_dns'].checked, windows: readWindows()};
+        const r = EDIT ? await api('PUT', '/api/segmentation/time/policies/' + EDIT, body) : await api('POST', '/api/segmentation/time/policies', body);
+        if (r) { resetForm(); load(); }
+        return false;
+    }
+    async function act(id, what, body) { if (await api('POST', '/api/segmentation/devices/' + id + '/time/' + what, body || {})) load(); }
+    async function assignPolicy(ev) {
+        ev.preventDefault(); const f = ev.target;
+        const pid = f.elements['policy_id'].value;
+        const r = await api('POST', '/api/segmentation/time/assign', {kind: f.elements['kind'].value, id: Number(f.elements['id'].value), policy_id: pid === '' ? null : Number(pid)});
+        if (r) load();
+        return false;
+    }
+    async function fillTargets() {
+        const f = document.getElementById('t-assign'); const kind = f.elements['kind'].value;
+        const sel = document.getElementById('t-target'); sel.textContent = '';
+        let rows = [];
+        try { const r = await fetch('/api/segmentation/' + (kind === 'group' ? 'groups' : 'devices'), {credentials: 'same-origin'}); if (r.ok) { const j = await r.json(); rows = Array.isArray(j) ? j : (j.groups || j.devices || []); } } catch (_) {}
+        if (!rows.length) sel.appendChild(h('option', {value: '', text: '(none defined yet)'}));
+        for (const x of rows) sel.appendChild(h('option', {value: x.id, text: x.name}));
+        const pick = document.getElementById('t-policy-pick'); pick.textContent = '';
+        pick.appendChild(h('option', {value: '', text: '(no limit)'}));
+        for (const p of DATA.policies) pick.appendChild(h('option', {value: p.id, text: p.name}));
+    }
+    async function load() {
+        const j = await api('GET', '/api/segmentation/time/policies'); if (!j) return;
+        DATA = j; renderUsage(); renderPolicies(); fillTargets();
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelector('#t-assign select[name=kind]').addEventListener('change', fillTargets);
+        if (!CAN_MODIFY) { for (const id of ['t-new-card', 't-assign']) { const e = document.getElementById(id); if (e) (e.closest('.card') || e).style.display = 'none'; } }
+        load(); setInterval(load, 15000);
+    });
+</script>
+{% endblock %}

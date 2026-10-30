@@ -24,6 +24,8 @@ pub mod monitoring;
 pub mod network;
 pub mod routing;
 #[cfg(feature = "segmentation")]
+pub mod seg;
+#[cfg(feature = "segmentation")]
 pub mod segmentation;
 #[cfg(feature = "wifi-ap")]
 pub mod segmentation_wifi;
@@ -135,6 +137,10 @@ pub fn all_appliers(firewall: Arc<dyn Applier>) -> Vec<Arc<dyn Applier>> {
         RemoteApplier::wrap(Arc::new(patronus_network::RoutesApplier::default())),
         firewall,
     ];
+    #[cfg(feature = "segmentation")]
+    v.push(RemoteApplier::wrap(Arc::new(
+        patronus_firewall::seg_time::SegTimeApplier,
+    )));
     v.extend(
         patronus_network::lan::appliers()
             .into_iter()
@@ -212,6 +218,14 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
     fwfeeds::spawn_feed_task(state.firewall.clone());
     // NFLOG collector behind the firewall log viewer
     fwlog::spawn_collector(state.firewall.clone());
+    // device segmentation: parental time limits + the time's-up page, DNS query log
+    #[cfg(feature = "segmentation")]
+    {
+        seg::spawn_time_ticker(store.clone());
+        seg::spawn_timeup_portal(store.clone());
+        #[cfg(feature = "dns")]
+        seg::spawn_dns_log_collector(store.clone());
+    }
     // gateway / tunnel / HA / configuration events for the event log and webhooks
     telemetry::spawn_watcher(state.clone());
     Ok(state)

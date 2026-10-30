@@ -153,6 +153,16 @@ that are not finished are listed separately under
   `stop-dns-rebind`) strips private addresses from public answers, with an
   exception list; it is on for a new install and stays off for a store that
   predates it. [C63]
+- Per-group and per-device DNS policy: Unbound answers differently for each
+  group or device (block, allow and override rules, extra block lists, a
+  family preset with safe search and adult/malware lists), devices cannot
+  bypass it with another resolver, and queries can be logged per device
+  (off by default, with retention, search and export). [C65]
+- Parental time limits: weekly windows and a daily quota of active minutes per
+  group or device cut a device's traffic in the kernel and restore it on time,
+  warn before the cut, show a "time's up" page, keep DNS working, never open
+  the admin UI, let parents add minutes or pause, and still block after a
+  reboot. [C66]
 
 - With USE=wifi-ap Patronus runs the access point (hostapd) with a passphrase
   per device, bound to the device's MAC: add, revoke and rotate are live on

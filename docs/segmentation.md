@@ -158,3 +158,64 @@ a SAE per-device password works without an identifier (the MAC selects it).
 
 Every change is validate -> snapshot -> write -> apply (segmentation, dhcp,
 firewall) -> restore on failure. RBAC area: `segmentation`.
+
+## DNS policy and query logs (Segmentation > DNS policy & logs)
+
+A *DNS policy* is attached to a group or to one device (the device wins).
+Unbound renders one `view:` per policy in use and maps the devices' reserved
+IPv4 addresses to it (`access-control-view`), so DNS and the nft isolation
+layer use the same identity. Needs the Unbound resolver mode; with the
+dnsmasq forwarder the policies are not enforced and the applier says so.
+
+- Rules per policy: `block`, `allow`, `override` (A/AAAA) and extra block-list
+  URLs. By default the global block lists and overrides still apply
+  (`view-first`); a policy with *allow* rules cannot fall back to the global
+  zones (unbound would let the global block win), so its view carries a copy of
+  the global zones minus the allowed names.
+- Family preset: adult and malware lists (`dns.family_lists`, default
+  StevenBlack porn-only and the URLhaus filter), safe-search enforcement
+  (Google, YouTube strict, Bing, DuckDuckGo, Brave: `redirect` zones so the
+  answer carries the target's addresses) and the DoH canary names (Firefox,
+  iCloud Private Relay answer NXDOMAIN so those clients switch their encrypted
+  DNS off). Lists are fetched at most every 6 hours.
+- Devices with a policy cannot bypass the resolver: udp/tcp 53 to any other
+  address is redirected to the router's resolver and DNS-over-TLS (853) is
+  refused (own table `inet patronus_dnspol`). DNS-over-HTTPS cannot be blocked
+  reliably.
+- Query logs are personal data: off by default, per policy, with a retention
+  (default 7 days) and a hard cap of 200k rows. unbound writes
+  `/var/log/unbound/unbound.log` (`log-replies`, `log-local-actions`, logrotate
+  `copytruncate` snippet installed); patronus-web tails it into `seg_dns_log`
+  for the devices whose policy logs. Search by device / name / blocked / age,
+  CSV export, clear. The log tables are not part of the configuration export.
+
+API: `/api/segmentation/dns/policies` (+ `/rules`), `/dns/assign`, `/dns/log`
+(`.csv`, DELETE clears), `/dns/status`.
+
+## Parental time limits (Segmentation > Time limits)
+
+A *time policy* (group or device, the device wins) has weekly windows (the
+device is online only inside one; none = always, `end <= start` wraps past
+midnight, `PATRONUS_FAKE_TIME_FILE` drives the clock in tests) and an optional
+daily quota of *active* minutes. A minute counts as used when the device moved
+more than `active_bytes_per_min` bytes in it (conntrack byte counters, so an idle
+phone does not burn the quota; minutes in which the device was blocked never
+count). The day rolls over at the policy's reset hour (default 06:00).
+
+Enforcement is its own nft table `inet patronus_time` (hook priority -11, before
+the isolation table at -10; it survives every firewall re-apply). Device
+addresses are elements of `blocked_v4` (or `blocked_hard_v4` when the policy cuts
+DNS too), toggled with one atomic `nft -f` per change, so other devices see no
+blip. A blocked device: forwarded traffic is reset/dropped in both directions
+(IPv6 by MAC), the router still answers ICMP, DNS and DHCP and serves the
+"time's up" page, never SSH or the admin UI. Plain HTTP of a blocked device is
+redirected to that page (`patronus-captiveportal::timeup`, port 8081, answers
+from the stored decision by client address), so a phone's own captive-portal check
+opens it; the Android probe gets 200 instead of 204 while blocked. A grace warning
+(`grace_minutes`, default 5) redirects the device's HTTP to the page once, for two
+minutes, saying how many minutes are left. Parents can add minutes for today,
+pause and resume from the page. `patronus apply` recomputes the sets at boot
+before the first forwarded packet; usage rows live in the store.
+
+API: `/api/segmentation/time/policies`, `/time/assign`, `/time/usage`,
+`/api/segmentation/devices/{id}/time/{bonus,pause,resume}`.

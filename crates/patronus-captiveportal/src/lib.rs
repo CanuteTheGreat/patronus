@@ -7,6 +7,7 @@ pub mod auth;
 pub mod bandwidth;
 pub mod portal;
 pub mod sessions;
+pub mod timeup;
 pub mod vouchers;
 
 pub use auth::{AuthMethod, AuthProvider};

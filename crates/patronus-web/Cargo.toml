@@ -53,12 +53,13 @@ ldap = ["dep:ldap3"]
 # signed plugins + Gentoo component packages (Packages page)
 plugins = ["patronus-network/plugins"]
 # device groups, per-device isolation and Wi-Fi credentials (page + API)
-segmentation = ["patronus-network/segmentation"]
+segmentation = ["patronus-network/segmentation", "dep:patronus-captiveportal"]
 wifi-ap = ["patronus-network/wifi-ap", "segmentation"]
 
 [dependencies]
 patronus-core = { path = "../patronus-core" }
 patronus-firewall = { path = "../patronus-firewall" }
+patronus-captiveportal = { path = "../patronus-captiveportal", optional = true }
 patronus-network = { path = "../patronus-network" }
 patronus-config = { path = "../patronus-config" }
 patronus-secrets = { path = "../patronus-secrets" }

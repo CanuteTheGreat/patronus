@@ -502,6 +502,64 @@ fn cache_name(url: &str) -> String {
     format!("{h:016x}.txt")
 }
 
+/// One block list: download (when `fetch`; the last good copy is kept on
+/// failure) and parse it. `None` when there is no copy yet.
+pub(crate) async fn load_list(
+    env: &LanEnv,
+    url: &str,
+    fetch: bool,
+    max_age_secs: u64,
+    rep: &mut ApplyReport,
+) -> Option<BTreeSet<String>> {
+    let dir = env.path(DNSBL_CACHE);
+    let cache = dir.join(cache_name(url));
+    // a copy younger than `max_age_secs` is not downloaded again
+    let fresh = max_age_secs > 0
+        && std::fs::metadata(&cache)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age.as_secs() < max_age_secs);
+    if fetch && !fresh {
+        let _ = std::fs::create_dir_all(&dir);
+        let tmp = cache.with_extension("new");
+        let res = tokio::process::Command::new("curl")
+            .args([
+                "-fsSL",
+                "--max-time",
+                "60",
+                "--max-filesize",
+                "67108864",
+                "-o",
+            ])
+            .arg(&tmp)
+            .arg(url)
+            .output()
+            .await;
+        match res {
+            Ok(o) if o.status.success() => {
+                let _ = std::fs::rename(&tmp, &cache);
+            }
+            Ok(o) => rep.warn(format!(
+                "block list {url}: download failed ({}), using the cached copy",
+                String::from_utf8_lossy(&o.stderr).trim()
+            )),
+            Err(e) => rep.warn(format!("block list {url}: cannot run curl: {e}")),
+        }
+    }
+    match std::fs::read_to_string(&cache) {
+        Ok(body) => {
+            let d = parse_blocklist(&body);
+            rep.applied(format!("block list {url}: {} domains", d.len()));
+            Some(d)
+        }
+        Err(_) => {
+            rep.warn(format!("block list {url}: no copy available yet"));
+            None
+        }
+    }
+}
+
 /// Fetch every configured list (keeping the last good copy on failure) and
 /// return the full set of blocked domains.
 pub async fn blocked_domains(
@@ -516,43 +574,9 @@ pub async fn blocked_domains(
         .into_iter()
         .map(|b| b.domain)
         .collect();
-    let dir = env.path(DNSBL_CACHE);
     for url in &s.blocklist_urls {
-        let cache = dir.join(cache_name(url));
-        if fetch {
-            let _ = std::fs::create_dir_all(&dir);
-            let tmp = cache.with_extension("new");
-            let res = tokio::process::Command::new("curl")
-                .args([
-                    "-fsSL",
-                    "--max-time",
-                    "60",
-                    "--max-filesize",
-                    "67108864",
-                    "-o",
-                ])
-                .arg(&tmp)
-                .arg(url)
-                .output()
-                .await;
-            match res {
-                Ok(o) if o.status.success() => {
-                    let _ = std::fs::rename(&tmp, &cache);
-                }
-                Ok(o) => rep.warn(format!(
-                    "block list {url}: download failed ({}), using the cached copy",
-                    String::from_utf8_lossy(&o.stderr).trim()
-                )),
-                Err(e) => rep.warn(format!("block list {url}: cannot run curl: {e}")),
-            }
-        }
-        match std::fs::read_to_string(&cache) {
-            Ok(body) => {
-                let d = parse_blocklist(&body);
-                rep.applied(format!("block list {url}: {} domains", d.len()));
-                all.extend(d);
-            }
-            Err(_) => rep.warn(format!("block list {url}: no copy available yet")),
+        if let Some(d) = load_list(env, url, fetch, 0, rep).await {
+            all.extend(d);
         }
     }
     Ok(all)
@@ -869,15 +893,58 @@ impl DnsApplier {
         let sv = served(store, &self.env, &s, rep).await?;
         let blocked = blocked_domains(store, &self.env, &s, fetch, rep).await?;
         let dnssec = s.dnssec && (!fetch || self.ensure_anchor(rep));
-        Ok(render_unbound(
-            &s,
-            &sv.addrs,
-            &sv.nets,
-            &list_hosts(store).await?,
-            &list_domains(store).await?,
-            &blocked,
-            dnssec,
-        ))
+        let hosts = list_hosts(store).await?;
+        let domains = list_domains(store).await?;
+        let conf = render_unbound(&s, &sv.addrs, &sv.nets, &hosts, &domains, &blocked, dnssec);
+        // per-device / per-group DNS policy views (device segmentation)
+        #[cfg(feature = "segmentation")]
+        {
+            let globals = crate::seg_dns::Globals {
+                kind: s.block_mode.clone(),
+                hosts,
+                domains,
+                blocked,
+            };
+            crate::seg_dns::augment(store, &self.env, conf, globals, fetch, rep).await
+        }
+        #[cfg(not(feature = "segmentation"))]
+        {
+            Ok(conf)
+        }
+    }
+
+    /// Query-log directory + rotation and the "use my resolver" nft table
+    /// for devices that have a DNS policy.
+    #[cfg(feature = "segmentation")]
+    async fn segmentation_side_effects(
+        &self,
+        store: &ConfigStore,
+        rep: &mut ApplyReport,
+    ) -> Result<()> {
+        let cl = crate::seg_dns::clients(store).await.unwrap_or_default();
+        if self.env.check_configs {
+            let log = std::path::Path::new(crate::seg_dns::UNBOUND_LOG);
+            if let Some(dir) = log.parent() {
+                let _ = std::fs::create_dir_all(dir);
+                if let Ok(Some(u)) = nix::unistd::User::from_name("unbound") {
+                    let _ = nix::unistd::chown(dir, Some(u.uid), Some(u.gid));
+                }
+            }
+            let logging = crate::seg_dns::any_logging(store).await;
+            crate::seg_dns::systemd_querylog_dropin(logging, rep);
+            if std::path::Path::new("/etc/logrotate.d").is_dir() {
+                let _ = std::fs::write(
+                    "/etc/logrotate.d/patronus-unbound",
+                    crate::seg_dns::LOGROTATE_CONF,
+                );
+            }
+            // an empty set removes the redirect of devices that lost their policy
+            let ips: Vec<std::net::Ipv4Addr> = cl.iter().map(|c| c.ip).collect();
+            if !ips.is_empty() || crate::seg_dns::enforce_table_exists() {
+                crate::seg_dns::apply_enforce(&ips, rep);
+            }
+        }
+        Ok(())
     }
 
     pub async fn status_value(&self, store: &ConfigStore) -> Result<Value> {
@@ -934,11 +1001,25 @@ impl Applier for DnsApplier {
             if changed {
                 rep.applied(format!("wrote {UNBOUND_CONF}"));
             }
+            #[cfg(feature = "segmentation")]
+            self.segmentation_side_effects(store, &mut rep).await?;
             // dnsmasq (DHCP) must give up port 53 before unbound binds it
             lan::sync_dnsmasq(store, env, &mut rep).await?;
             lan::reconcile(env, "unbound", true, changed, UNBOUND_CONF, &mut rep)?;
         } else {
             lan::reconcile(env, "unbound", false, false, UNBOUND_CONF, &mut rep)?;
+            #[cfg(feature = "segmentation")]
+            if !crate::seg_dns::clients(store)
+                .await
+                .unwrap_or_default()
+                .is_empty()
+            {
+                rep.warn(
+                    "per-device DNS policies need DNS mode \"resolver\" (Unbound): the dnsmasq \
+                     forwarder has no per-client views, so they are NOT enforced"
+                        .to_string(),
+                );
+            }
             if mode == "forwarder" {
                 // refresh the block list cache before dnsmasq reads it
                 blocked_domains(store, env, &s, true, &mut rep).await?;

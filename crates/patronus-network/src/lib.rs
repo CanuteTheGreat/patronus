@@ -67,6 +67,8 @@ pub mod dns;
 
 #[cfg(feature = "dns")]
 pub mod ddns;
+#[cfg(all(feature = "dns", feature = "segmentation"))]
+pub mod seg_dns;
 
 #[cfg(feature = "ntp")]
 pub mod ntp;

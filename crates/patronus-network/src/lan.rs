@@ -58,6 +58,9 @@ pub const LAN_TABLES: &[&str] = &[
     "proxy_blocked",
     "vrf_instances",
     "vrf_members",
+    // device segmentation: DNS policies (c2); rules after their policies
+    "seg_dns_policies",
+    "seg_dns_rules",
     "openvpn_clients",
     "openvpn_pki",
     "ids_rules",
