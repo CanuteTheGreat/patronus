@@ -1,0 +1,335 @@
+{% extends "base.html" %}
+
+{% block title %}Device segmentation - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    .seg-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 0 0 14px; border-bottom: 1px solid #e5e7eb; }
+    .seg-tab { padding: 8px 14px; cursor: pointer; border: 0; background: none; font-size: 0.95em; color: #6b7280; border-bottom: 2px solid transparent; }
+    .seg-tab.active { color: #2563eb; border-bottom-color: #2563eb; font-weight: 600; }
+    .seg-panel { display: none; }
+    .seg-panel.active { display: block; }
+    .seg-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .seg-note { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a8a; padding: 10px 12px; border-radius: 6px; margin: 8px 0 14px; font-size: 0.88em; line-height: 1.45; }
+    .seg-note.warn { background: #fffbeb; border-color: #fde68a; color: #78350f; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.78em; font-weight: 600; background: #e5e7eb; color: #374151; }
+    .badge.on { background: #dcfce7; color: #166534; }
+    .badge.off { background: #f3f4f6; color: #6b7280; }
+    .badge.pending { background: #fef3c7; color: #92400e; }
+    .badge.revoked { background: #fee2e2; color: #991b1b; }
+    .badge.quar { background: #ffedd5; color: #9a3412; }
+    .seg-seg { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
+    .seg-seg .name { font-weight: 600; min-width: 90px; }
+    .seg-seg .meta { color: #6b7280; font-size: 0.85em; flex: 1 1 200px; }
+    button.small { padding: 3px 9px; font-size: 0.82em; border: 1px solid #d1d5db; background: #fff; border-radius: 4px; cursor: pointer; }
+    button.small.danger { color: #b91c1c; border-color: #fecaca; }
+    button.small.primary { color: #fff; background: #2563eb; border-color: #2563eb; }
+    pre.seg-pre { background: #f3f4f6; padding: 8px 10px; border-radius: 6px; max-height: 320px; overflow: auto; font-size: 0.78em; white-space: pre; }
+    @media (max-width: 640px) {
+        form.lan-form { flex-direction: column; align-items: stretch; }
+        form.lan-form input, form.lan-form select { min-width: 0; width: 100%; box-sizing: border-box; }
+        table.lan th, table.lan td { padding: 6px 5px; font-size: 0.82em; }
+        .seg-tab { padding: 8px 10px; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Device segmentation</h1>
+    <p class="page-subtitle">Groups of devices, default-deny isolation between them, one-way service rules. Opt-in per interface.</p>
+</div>
+
+<div id="seg-error" class="alert-error" style="display:none"></div>
+<div id="seg-warn" class="seg-note warn" style="display:none"></div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Isolation</h2></div>
+    <div class="seg-note" id="seg-optin"></div>
+    <div id="seg-segments"><p class="empty">Loading...</p></div>
+    <div class="seg-note warn" id="seg-wired"></div>
+</div>
+
+<div class="seg-tabs" role="tablist">
+    <button class="seg-tab active" data-tab="devices" onclick="segTab('devices')">Devices</button>
+    <button class="seg-tab" data-tab="discovered" onclick="segTab('discovered')">Discovered</button>
+    <button class="seg-tab" data-tab="groups" onclick="segTab('groups')">Groups &amp; policy</button>
+    {% if wifi %}<button class="seg-tab" data-tab="wifi" onclick="segTab('wifi')">Wi-Fi</button>{% endif %}
+    <button class="seg-tab" data-tab="status" onclick="segTab('status')">Status</button>
+</div>
+
+<div class="seg-panel active card" id="tab-devices">
+    <div class="seg-wrap"><table class="lan" id="seg-devices-table"><thead><tr>
+        <th>Name</th><th>MAC</th><th>IPv4</th><th>Group</th><th>Kind</th><th>State</th><th>Last seen</th><th></th>
+    </tr></thead><tbody></tbody></table></div>
+    <p class="empty" id="seg-devices-empty" style="display:none">No devices yet. Switch isolation on above to adopt what is on the network, or add one below.</p>
+    {% if can_modify %}
+    <h3>Add a device</h3>
+    <form class="lan-form" onsubmit="return segAddDevice(event)">
+        <label>Name<input name="name" required pattern="[a-z0-9_-]{1,32}" placeholder="living-room-tv"></label>
+        <label>MAC<input name="mac" placeholder="aa:bb:cc:dd:ee:ff"></label>
+        <label>Group<select name="group" class="seg-group-select"></select></label>
+        <label>Segment<select name="segment" class="seg-segment-select"></select></label>
+        <label>Kind<select name="kind"><option>wired</option><option>wifi</option></select></label>
+        <label>IPv4 (blank = allocate)<input name="ip4" placeholder="auto"></label>
+        <button class="btn btn-primary" type="submit">Add</button>
+    </form>
+    {% endif %}
+</div>
+
+<div class="seg-panel card" id="tab-discovered">
+    <p>Hosts seen in the DHCP leases and the neighbour table that are not enrolled. While isolation is on they can reach DHCP, DNS and ping on the router, and nothing else.</p>
+    <div class="seg-wrap"><table class="lan" id="seg-disc-table"><thead><tr>
+        <th>MAC</th><th>IPv4</th><th>Hostname</th><th>Segment</th><th></th>
+    </tr></thead><tbody></tbody></table></div>
+    <p class="empty" id="seg-disc-empty" style="display:none">Nothing unknown on the network.</p>
+</div>
+
+<div class="seg-panel card" id="tab-groups">
+    <h3>Groups</h3>
+    <div class="seg-wrap"><table class="lan" id="seg-groups-table"><thead><tr>
+        <th>Name</th><th>Members</th><th>Talk to each other</th><th>Internet</th><th>Kind</th><th></th>
+    </tr></thead><tbody></tbody></table></div>
+    {% if can_modify %}
+    <form class="lan-form" onsubmit="return segAddGroup(event)">
+        <label>Name<input name="name" required pattern="[a-z0-9_-]{1,32}" placeholder="iot"></label>
+        <label>Members talk to each other<select name="intra"><option value="true">yes</option><option value="false">no</option></select></label>
+        <label>Internet<select name="internet"><option>allow</option><option>deny</option></select></label>
+        <button class="btn btn-primary" type="submit">Add group</button>
+    </form>
+    {% endif %}
+    <h3>Links <span class="badge off">both directions</span></h3>
+    <p class="seg-note">A link lets two groups open new connections to each other, in both directions.</p>
+    <div class="seg-wrap"><table class="lan" id="seg-links-table"><thead><tr><th>Group</th><th>Group</th><th></th></tr></thead><tbody></tbody></table></div>
+    {% if can_modify %}
+    <form class="lan-form" onsubmit="return segAddLink(event)">
+        <label>Group<select name="a" class="seg-group-select"></select></label>
+        <label>Group<select name="b" class="seg-group-select"></select></label>
+        <button class="btn btn-primary" type="submit">Link</button>
+    </form>
+    {% endif %}
+    <h3>One-way service rules</h3>
+    <p class="seg-note">The source may open new connections to the destination on these ports. Replies are allowed, the reverse direction stays denied.</p>
+    <div class="seg-wrap"><table class="lan" id="seg-services-table"><thead><tr><th>Name</th><th>From</th><th>To</th><th>Protocol</th><th>Ports</th><th></th></tr></thead><tbody></tbody></table></div>
+    {% if can_modify %}
+    <form class="lan-form" onsubmit="return segAddService(event)">
+        <label>Name<input name="name" required pattern="[a-z0-9_-]{1,32}" placeholder="laptop-printer"></label>
+        <label>From<select name="src" class="seg-endpoint-select"></select></label>
+        <label>To<select name="dst" class="seg-endpoint-select"></select></label>
+        <label>Protocol<select name="proto"><option>tcp</option><option>udp</option></select></label>
+        <label>Ports<input name="ports" required placeholder="631,9100"></label>
+        <button class="btn btn-primary" type="submit">Add rule</button>
+    </form>
+    {% endif %}
+</div>
+
+{% if wifi %}
+<div class="seg-panel card" id="tab-wifi">
+    <div id="seg-wifi"><p class="empty">Loading...</p></div>
+</div>
+{% endif %}
+
+<div class="seg-panel card" id="tab-status">
+    <h3>Layer 2</h3>
+    <pre class="seg-pre" id="seg-l2">...</pre>
+    <h3>Rendered nftables table <button class="small" onclick="segPreview()">Refresh</button></h3>
+    <pre class="seg-pre" id="seg-nft">Press Refresh.</pre>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const CAN_MODIFY = {% if can_modify %}true{% else %}false{% endif %};
+    const HAS_WIFI = {% if wifi %}true{% else %}false{% endif %};
+    let SEG = null;
+
+    function showError(msg) {
+        const el = document.getElementById('seg-error');
+        el.textContent = msg; el.style.display = msg ? '' : 'none';
+        if (msg) window.scrollTo({top: 0, behavior: 'smooth'});
+    }
+    async function api(method, url, body) {
+        const r = await fetch(url, {method, credentials: 'same-origin',
+            headers: body !== undefined ? {'content-type': 'application/json'} : {},
+            body: body !== undefined ? JSON.stringify(body) : undefined});
+        let j = {}; try { j = await r.json(); } catch (_) {}
+        if (!r.ok) { showError('Not applied: ' + (j.error || r.status)); return null; }
+        showError('');
+        return j;
+    }
+    function segTab(name) {
+        for (const t of document.querySelectorAll('.seg-tab')) t.classList.toggle('active', t.dataset.tab === name);
+        for (const p of document.querySelectorAll('.seg-panel')) p.classList.toggle('active', p.id === 'tab-' + name);
+        if (name === 'discovered') segLoadDiscovered();
+        if (name === 'status') segPreview();
+        if (name === 'wifi' && typeof wifiLoad === 'function') wifiLoad();
+        history.replaceState(null, '', '#' + name);
+    }
+    function td(text, cls) { const c = document.createElement('td'); if (cls) c.className = cls; c.textContent = text === null || text === undefined ? '' : text; return c; }
+    function btn(label, cls, fn) { const b = document.createElement('button'); b.className = 'small ' + (cls || ''); b.textContent = label; b.onclick = fn; return b; }
+    function badge(text, cls) { const s = document.createElement('span'); s.className = 'badge ' + (cls || ''); s.textContent = text; return s; }
+    function ago(ts) {
+        if (!ts) return '';
+        const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+        if (s < 90) return s + ' s ago'; if (s < 5400) return Math.round(s / 60) + ' min ago';
+        if (s < 129600) return Math.round(s / 3600) + ' h ago'; return Math.round(s / 86400) + ' d ago';
+    }
+    function fillSelect(sel, values, keep) {
+        const cur = keep ? sel.value : '';
+        sel.innerHTML = '';
+        for (const v of values) { const o = document.createElement('option'); o.value = v.value; o.textContent = v.label; sel.appendChild(o); }
+        if (cur) sel.value = cur;
+    }
+
+    function render(d) {
+        SEG = d;
+        document.getElementById('seg-optin').textContent = d.notes.opt_in;
+        document.getElementById('seg-wired').textContent = d.notes.wired + ' ' + d.notes.ipv6;
+        const w = document.getElementById('seg-warn');
+        w.textContent = (d.warnings || []).join(' '); w.style.display = (d.warnings || []).length ? '' : 'none';
+
+        const segs = document.getElementById('seg-segments'); segs.innerHTML = '';
+        if (!d.segments.length) { segs.innerHTML = '<p class="empty">No LAN-side interface has a role yet (Interfaces page).</p>'; }
+        for (const s of d.segments) {
+            const row = document.createElement('div'); row.className = 'seg-seg';
+            const name = document.createElement('span'); name.className = 'name'; name.textContent = s.segment; row.appendChild(name);
+            row.appendChild(badge(s.enabled ? 'isolation on' : 'isolation off', s.enabled ? 'on' : 'off'));
+            const meta = document.createElement('span'); meta.className = 'meta';
+            meta.textContent = (s.interfaces.join(', ') || 'no interface') + (s.subnets.length ? ' - ' + s.subnets.join(', ') : '') + (s.adopted_at ? ' - adopted ' + ago(s.adopted_at) : '');
+            row.appendChild(meta);
+            if (CAN_MODIFY) {
+                if (s.enabled) row.appendChild(btn('Turn off', '', () => segSet(s.segment, false)));
+                else row.appendChild(btn('Turn on and adopt current devices', 'primary', () => {
+                    if (confirm('Turn on default-deny isolation for ' + s.segment + '?\n\nEvery device that is on it now is adopted into the group "home" (they keep talking to each other and the internet). Devices that join later are held in quarantine until you approve them.')) segSet(s.segment, true);
+                }));
+            }
+            segs.appendChild(row);
+        }
+
+        const gsel = d.groups.map(g => ({value: g.name, label: g.name}));
+        for (const el of document.querySelectorAll('.seg-group-select')) fillSelect(el, gsel, true);
+        for (const el of document.querySelectorAll('.seg-segment-select')) fillSelect(el, d.segments.map(s => ({value: s.segment, label: s.segment})), true);
+        const eps = d.groups.map(g => ({value: 'group:' + g.name, label: 'group ' + g.name}))
+            .concat(d.devices.filter(x => x.state !== 'revoked').map(x => ({value: 'device:' + x.name, label: 'device ' + x.name})));
+        for (const el of document.querySelectorAll('.seg-endpoint-select')) fillSelect(el, eps, true);
+
+        const tb = document.querySelector('#seg-devices-table tbody'); tb.innerHTML = '';
+        document.getElementById('seg-devices-empty').style.display = d.devices.length ? 'none' : '';
+        for (const x of d.devices) {
+            const tr = document.createElement('tr');
+            tr.appendChild(td(x.name)); tr.appendChild(td(x.mac || '(pending)', 'mono')); tr.appendChild(td(x.ip4 || '', 'mono'));
+            const gc = document.createElement('td');
+            if (CAN_MODIFY && x.state !== 'revoked') {
+                const sel = document.createElement('select');
+                for (const g of d.groups) { const o = document.createElement('option'); o.value = g.name; o.textContent = g.name; sel.appendChild(o); }
+                sel.value = x.group; sel.onchange = () => segMove(x.id, sel.value); gc.appendChild(sel);
+            } else gc.textContent = x.group;
+            tr.appendChild(gc); tr.appendChild(td(x.kind));
+            const sc = document.createElement('td');
+            const grp = d.groups.find(g => g.name === x.group);
+            sc.appendChild(badge(x.state, x.state === 'active' ? (grp && grp.quarantine ? 'quar' : 'on') : x.state));
+            tr.appendChild(sc);
+            tr.appendChild(td(ago(x.last_seen)));
+            const ac = document.createElement('td');
+            if (CAN_MODIFY) {
+                if (x.state !== 'revoked') ac.appendChild(btn('Revoke', 'danger', () => segRevoke(x)));
+                ac.appendChild(btn('Delete', 'danger', () => { if (confirm('Delete ' + x.name + '?')) segCall('DELETE', '/api/segmentation/devices/' + x.id); }));
+            }
+            tr.appendChild(ac); tb.appendChild(tr);
+        }
+
+        const gb = document.querySelector('#seg-groups-table tbody'); gb.innerHTML = '';
+        for (const g of d.groups) {
+            const tr = document.createElement('tr');
+            tr.appendChild(td(g.name)); tr.appendChild(td(g.members));
+            const ic = document.createElement('td');
+            if (CAN_MODIFY && !g.quarantine) {
+                const sel = document.createElement('select');
+                for (const v of ['yes', 'no']) { const o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o); }
+                sel.value = g.intra ? 'yes' : 'no'; sel.onchange = () => segGroupPut(g, {intra: sel.value === 'yes'}); ic.appendChild(sel);
+            } else ic.textContent = g.quarantine ? 'no' : (g.intra ? 'yes' : 'no');
+            tr.appendChild(ic);
+            const nc = document.createElement('td');
+            if (CAN_MODIFY) {
+                const sel = document.createElement('select');
+                for (const v of ['allow', 'deny']) { const o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o); }
+                sel.value = g.internet; sel.onchange = () => segGroupPut(g, {internet: sel.value}); nc.appendChild(sel);
+            } else nc.textContent = g.internet;
+            tr.appendChild(nc);
+            const kc = document.createElement('td');
+            if (g.quarantine) kc.appendChild(badge('quarantine', 'quar')); else if (g.builtin) kc.appendChild(badge('built in', 'off'));
+            tr.appendChild(kc);
+            const ac = document.createElement('td');
+            if (CAN_MODIFY && !g.builtin) ac.appendChild(btn('Delete', 'danger', () => { if (confirm('Delete group ' + g.name + '?')) segCall('DELETE', '/api/segmentation/groups/' + g.id); }));
+            tr.appendChild(ac); gb.appendChild(tr);
+        }
+
+        const lb = document.querySelector('#seg-links-table tbody'); lb.innerHTML = '';
+        for (const l of d.links) {
+            const tr = document.createElement('tr'); tr.appendChild(td(l.a)); tr.appendChild(td(l.b));
+            const ac = document.createElement('td');
+            if (CAN_MODIFY) ac.appendChild(btn('Remove', 'danger', () => segCall('DELETE', '/api/segmentation/links/' + l.id)));
+            tr.appendChild(ac); lb.appendChild(tr);
+        }
+        const sb = document.querySelector('#seg-services-table tbody'); sb.innerHTML = '';
+        for (const s of d.services) {
+            const tr = document.createElement('tr');
+            tr.appendChild(td(s.name)); tr.appendChild(td(s.src)); tr.appendChild(td(s.dst)); tr.appendChild(td(s.proto)); tr.appendChild(td(s.ports, 'mono'));
+            const ac = document.createElement('td');
+            if (CAN_MODIFY) ac.appendChild(btn('Remove', 'danger', () => segCall('DELETE', '/api/segmentation/services/' + s.id)));
+            tr.appendChild(ac); sb.appendChild(tr);
+        }
+        document.getElementById('seg-l2').textContent = JSON.stringify(d.l2, null, 2) + '\nenforced: ' + d.enforced + ' (' + d.enforced_devices + ' device(s) bound)';
+    }
+
+    async function segLoad() { const d = await api('GET', '/api/segmentation'); if (d) render(d); }
+    async function segCall(method, url, body) { const r = await api(method, url, body); if (r !== null) { await segLoad(); if (document.getElementById('tab-discovered').classList.contains('active')) segLoadDiscovered(); } return r; }
+    async function segSet(segment, on) {
+        const r = await segCall('POST', '/api/segmentation/segments', {segment, enabled: on});
+        if (r && r.adoption) showError('');
+    }
+    function segMove(id, group) { segCall('PUT', '/api/segmentation/devices/' + id, {group}); }
+    function segRevoke(x) {
+        if (confirm('Revoke ' + x.name + '? It is cut off at once, established connections included.')) segCall('POST', '/api/segmentation/devices/' + x.id + '/revoke');
+    }
+    function segGroupPut(g, patch) {
+        segCall('PUT', '/api/segmentation/groups/' + g.id, Object.assign({name: g.name, description: g.description, intra: g.intra, internet: g.internet, quarantine: g.quarantine}, patch));
+    }
+    function formBody(form) {
+        const o = {};
+        for (const el of form.elements) { if (!el.name || el.value === '') continue; o[el.name] = el.value; }
+        return o;
+    }
+    async function segAddDevice(ev) { ev.preventDefault(); const r = await segCall('POST', '/api/segmentation/devices', formBody(ev.target)); if (r) ev.target.reset(); return false; }
+    async function segAddGroup(ev) {
+        ev.preventDefault(); const b = formBody(ev.target); b.intra = b.intra === 'true';
+        const r = await segCall('POST', '/api/segmentation/groups', b); if (r) ev.target.reset(); return false;
+    }
+    async function segAddLink(ev) { ev.preventDefault(); await segCall('POST', '/api/segmentation/links', formBody(ev.target)); return false; }
+    async function segAddService(ev) { ev.preventDefault(); const r = await segCall('POST', '/api/segmentation/services', formBody(ev.target)); if (r) ev.target.reset(); return false; }
+    async function segLoadDiscovered() {
+        const d = await api('GET', '/api/segmentation/discovered'); if (!d) return;
+        const tb = document.querySelector('#seg-disc-table tbody'); tb.innerHTML = '';
+        document.getElementById('seg-disc-empty').style.display = d.length ? 'none' : '';
+        for (const h of d) {
+            const tr = document.createElement('tr');
+            tr.appendChild(td(h.mac, 'mono')); tr.appendChild(td(h.ip, 'mono')); tr.appendChild(td(h.hostname || '')); tr.appendChild(td(h.segment));
+            const ac = document.createElement('td');
+            if (CAN_MODIFY) {
+                const sel = document.createElement('select');
+                for (const g of (SEG ? SEG.groups : []).filter(g => !g.quarantine)) { const o = document.createElement('option'); o.value = g.name; o.textContent = g.name; sel.appendChild(o); }
+                ac.appendChild(sel);
+                ac.appendChild(btn('Adopt', 'primary', () => segCall('POST', '/api/segmentation/discovered/' + encodeURIComponent(h.mac) + '/adopt', {group: sel.value, segment: h.segment})));
+            }
+            tr.appendChild(ac); tb.appendChild(tr);
+        }
+    }
+    async function segPreview() {
+        const r = await api('POST', '/api/segmentation/preview', {});
+        if (r) document.getElementById('seg-nft').textContent = r.script + (r.warnings.length ? '\n# ' + r.warnings.join('\n# ') : '');
+    }
+    segLoad().then(() => { const h = location.hash.replace('#', ''); if (h && document.getElementById('tab-' + h)) segTab(h); });
+</script>
+{% if wifi %}{% include "segmentation_wifi.html" %}{% endif %}
+{% endblock %}

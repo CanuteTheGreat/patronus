@@ -23,6 +23,8 @@ pub mod lan;
 pub mod monitoring;
 pub mod network;
 pub mod routing;
+#[cfg(feature = "segmentation")]
+pub mod segmentation;
 pub mod system;
 pub mod telemetry;
 pub mod tunnels;

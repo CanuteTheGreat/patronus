@@ -22,6 +22,10 @@ pub const AREAS: &[(&str, &str)] = &[
     ("services", "DHCP, DNS, NTP and other LAN services"),
     ("qos", "Traffic shaping"),
     ("ha", "High availability"),
+    (
+        "segmentation",
+        "Device groups, isolation and Wi-Fi credentials",
+    ),
     ("system", "System settings, updates, service control, power"),
 ];
 
@@ -43,6 +47,7 @@ pub fn area_for_path(path: &str) -> Option<&'static str> {
         "dhcp" | "dns" | "ntp" | "svc" | "lan" => "services",
         "qos" => "qos",
         "ha" => "ha",
+        "segmentation" => "segmentation",
         // everything else, including unknown API paths, needs "system"
         _ => "system",
     })

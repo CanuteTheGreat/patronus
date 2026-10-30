@@ -17,7 +17,7 @@ path = "src/lib.rs"
 # builds patronus-web with --no-default-features and the USE-selected list):
 # lane C interfaces (vlan, pppoe, dhcpcd) and the lane D LAN-service pages
 # (dhcp, dns, ntp).
-default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins"]
+default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation"]
 vlan = ["patronus-network/vlan"]
 pppoe = ["patronus-network/pppoe"]
 dhcpcd = ["patronus-network/dhcpcd"]
@@ -52,6 +52,9 @@ totp = ["dep:hmac", "dep:sha1"]
 ldap = ["dep:ldap3"]
 # signed plugins + Gentoo component packages (Packages page)
 plugins = ["patronus-network/plugins"]
+# device groups, per-device isolation and Wi-Fi credentials (page + API)
+segmentation = ["patronus-network/segmentation"]
+wifi-ap = ["patronus-network/wifi-ap", "segmentation"]
 
 [dependencies]
 patronus-core = { path = "../patronus-core" }

@@ -17,6 +17,7 @@ pub mod network;
 pub mod packages;
 pub mod qos;
 pub mod routing;
+pub mod segmentation;
 pub mod setup;
 pub mod status;
 pub mod svc;

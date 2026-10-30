@@ -37,6 +37,7 @@ IUSE="
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp +plugins
+	+segmentation wifi-ap
 	geoip geoip2
 	+aliases
 	scheduled-rules
@@ -57,6 +58,7 @@ REQUIRED_USE="
 	intrusion-detection? ( || ( suricata snort ) )
 	certificates? ( || ( acme certbot ) )
 	wireless? ( || ( hostapd iwd ) )
+	wifi-ap? ( segmentation )
 	squid? ( !tinyproxy )
 	tinyproxy? ( !squid )
 	geoip2? ( !geoip )
@@ -115,6 +117,8 @@ RDEPEND="
 		snort? ( net-analyzer/snort )
 	)
 	vlan? ( sys-apps/iproute2 )
+	segmentation? ( sys-apps/iproute2 net-firewall/nftables )
+	wifi-ap? ( net-wireless/hostapd )
 	qos? ( sys-apps/iproute2 )
 	tc? ( sys-apps/iproute2 )
 	certificates? (
@@ -264,6 +268,8 @@ src_configure() {
 		$(usex sdwan "sdwan-edge" "")
 		$(usex ldap "ldap" "")
 		$(usex plugins "plugins" "")
+		$(usex segmentation "segmentation" "")
+		$(usex wifi-ap "wifi-ap" "")
 	)
 
 	cargo_src_configure --no-default-features
@@ -362,6 +368,8 @@ src_install() {
 		use totp && webfeatures+=( totp )
 		use ldap && webfeatures+=( ldap )
 		use plugins && webfeatures+=( plugins )
+		use segmentation && webfeatures+=( segmentation )
+		use wifi-ap && webfeatures+=( wifi-ap )
 		use syslog && webfeatures+=( syslog )
 		use netflow && webfeatures+=( netflow )
 		use igmp && webfeatures+=( igmp )

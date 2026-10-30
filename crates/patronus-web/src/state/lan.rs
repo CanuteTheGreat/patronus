@@ -21,9 +21,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 pub struct LanManager {
-    store: Arc<ConfigStore>,
+    pub(super) store: Arc<ConfigStore>,
     appliers: BTreeMap<&'static str, Arc<dyn Applier>>,
-    edit: Mutex<()>,
+    pub(super) edit: Mutex<()>,
 }
 
 fn e(e: patronus_core::Error) -> anyhow::Error {
@@ -71,10 +71,15 @@ impl LanManager {
 
     // used by every LAN page; dead only in a build without any of them
     #[cfg_attr(
-        not(any(feature = "dhcp", feature = "dns", feature = "ntp")),
+        not(any(
+            feature = "dhcp",
+            feature = "dns",
+            feature = "ntp",
+            feature = "segmentation"
+        )),
         allow(dead_code)
     )]
-    async fn begin(&self, what: &str) -> anyhow::Result<Value> {
+    pub(super) async fn begin(&self, what: &str) -> anyhow::Result<Value> {
         self.store
             .snapshot("web", &format!("before {what}"))
             .await
@@ -84,10 +89,20 @@ impl LanManager {
 
     /// Run `names` after a store write; undo the write on failure.
     #[cfg_attr(
-        not(any(feature = "dhcp", feature = "dns", feature = "ntp")),
+        not(any(
+            feature = "dhcp",
+            feature = "dns",
+            feature = "ntp",
+            feature = "segmentation"
+        )),
         allow(dead_code)
     )]
-    async fn commit(&self, what: &str, snap: Value, names: &[&str]) -> anyhow::Result<()> {
+    pub(super) async fn commit(
+        &self,
+        what: &str,
+        snap: Value,
+        names: &[&str],
+    ) -> anyhow::Result<()> {
         let mut failure = None;
         for n in names {
             if let Some(a) = self.appliers.get(n) {

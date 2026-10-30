@@ -44,6 +44,7 @@ pub fn build_router(
         .merge(api::insights::pages())
         .merge(api::packages::pages())
         .merge(api::svc::pages())
+        .merge(api::segmentation::pages())
         .merge(api::setup::pages())
         // The old "simple" pages claimed services were operational and
         // listed invented "recent activity"; keep the URLs as redirects.
@@ -322,6 +323,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::insights::router())
         .merge(api::packages::router())
         .merge(api::svc::router())
+        .merge(api::segmentation::router())
         .merge(api::vpn::router())
         .merge(api::network::router())
         .merge(api::routing::router())
@@ -340,6 +342,9 @@ mod honesty_tests;
 
 #[cfg(test)]
 mod lane_fh_tests;
+
+#[cfg(all(test, feature = "segmentation"))]
+mod seg_tests;
 
 #[cfg(test)]
 mod auth_gate_tests {
