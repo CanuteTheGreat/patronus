@@ -10,18 +10,31 @@ key-only unless you opt in.
 
 | | URL |
 |---|---|
-| Latest **daily** test build (rolling pre-release, replaced after the QEMU test passed) | `https://patronus.errant.solutions/download/patronus-daily-x86_64.iso` |
-| SHA256 of the daily | `https://patronus.errant.solutions/download/patronus-daily-x86_64.iso.sha256` |
-| **Stable** build (only for `v*` releases that met the criteria below) | `https://patronus.errant.solutions/download/patronus-<tag>-x86_64.iso` |
+| Latest **daily** test build (rolling pre-release, replaced after the QEMU test passed) | `https://patronus.errant.solutions/download/patronus-server-openrc-daily-x86_64.iso` |
+| SHA256 of the daily | `https://patronus.errant.solutions/download/patronus-server-openrc-daily-x86_64.iso.sha256` |
+| **Stable** build (only for `v*` releases that met the criteria below) | `https://patronus.errant.solutions/download/patronus-server-openrc-<tag>-x86_64.iso` (tag like `v0.2.0`) |
 
-Always verify: `sha256sum -c patronus-daily-x86_64.iso.sha256` (run it next to the downloaded files).
+Always verify: `sha256sum -c patronus-server-openrc-daily-x86_64.iso.sha256` (run it next to the downloaded files).
+
+### Image names
+
+`<product>-<desktop-env or "server">-<init>-<channel>-<arch>.iso` (one scheme for Horcrux and Patronus, defined in `gentoo/live-iso/common/image-name.sh`): Patronus ships `server` images (no desktop, a firewall appliance) with `openrc`, channel `daily` or a release tag, arch `x86_64` or `aarch64`.
+Old names keep working: the product-domain URL of `patronus-daily-<arch>.iso` (and its `.sha256` / `-test-evidence.tgz`) and of `patronus-<tag>-<arch>.iso` answers **301** to the new name.
+
+| old name | new name |
+|---|---|
+| `patronus-server-openrc-daily-x86_64.iso` | `patronus-server-openrc-daily-x86_64.iso` |
+| `patronus-server-openrc-daily-aarch64.iso` | `patronus-server-openrc-daily-aarch64.iso` |
+| `patronus-<tag>-<arch>.iso` (stable) | `patronus-server-openrc-<tag>-<arch>.iso` |
+
+The workflow's `only=` input and the status marker use `<desktop env>-<init>-<arch>`: `only=server-openrc-x86_64`, marker `daily-status-server-openrc-x86_64` (old: `daily-status`, `daily-status-aarch64`). The `.sha256` file names the NEW file name.
 
 ## Architectures
 
 | arch | boot | serial console | built on | tested with | assets |
 |---|---|---|---|---|---|
-| **x86_64** | UEFI **and** legacy BIOS (hybrid ISO) | `ttyS0` | rw-man-01 (`kvm-x86_64` runner) | QEMU/KVM, OVMF + SeaBIOS | `patronus-daily-x86_64.iso` |
-| **aarch64** | UEFI only (GRUB `arm64-efi`, `EFI/BOOT/BOOTAA64.EFI`); there is no BIOS on arm64 | `ttyAMA0` (PL011) | rw-man-04/05 (`arm64` runner, native Graviton build, no emulation) | QEMU `virt` + AAVMF; **TCG** (the Graviton hosts have no `/dev/kvm`), timeouts x3 | `patronus-daily-aarch64.iso` |
+| **x86_64** | UEFI **and** legacy BIOS (hybrid ISO) | `ttyS0` | rw-man-01 (`kvm-x86_64` runner) | QEMU/KVM, OVMF + SeaBIOS | `patronus-server-openrc-daily-x86_64.iso` |
+| **aarch64** | UEFI only (GRUB `arm64-efi`, `EFI/BOOT/BOOTAA64.EFI`); there is no BIOS on arm64 | `ttyAMA0` (PL011) | rw-man-04/05 (`arm64` runner, native Graviton build, no emulation) | QEMU `virt` + AAVMF; **TCG** (the Graviton hosts have no `/dev/kvm`), timeouts x3 | `patronus-server-openrc-daily-aarch64.iso` |
 | riscv64 | UEFI only (GRUB `riscv64-efi`) | `ttyS0` | not built in CI yet | not tested | - |
 
 Per-architecture facts (stage3 tag, GRUB target, EFI file name, serial device, squashfs filter, the **per-arch
@@ -31,15 +44,15 @@ to compiling everything), and the BuildKit cache mounts are keyed by arch. Downl
 
 | | URL |
 |---|---|
-| daily aarch64 | `https://patronus.errant.solutions/download/patronus-daily-aarch64.iso` (+ `.sha256`) |
-| stable aarch64 | `https://patronus.errant.solutions/download/patronus-<tag>-aarch64.iso` |
+| daily aarch64 | `https://patronus.errant.solutions/download/patronus-server-openrc-daily-aarch64.iso` (+ `.sha256`) |
+| stable aarch64 | `https://patronus.errant.solutions/download/patronus-server-openrc-<tag>-aarch64.iso` |
 
-Each architecture has its own job, its own assets and its own status marker (`daily-status` for x86_64,
-`daily-status-aarch64`), so a failing arch never blocks the other. Test evidence is attached per arch
-(`patronus-daily-<arch>-test-evidence.tgz`). Build one yourself on a native host: `ARCH=aarch64 build/live-iso/build.sh -o ./iso`
+Each architecture has its own job, its own assets and its own status marker (`daily-status-server-openrc-x86_64`,
+`daily-status-server-openrc-aarch64`), so a failing arch never blocks the other. Test evidence is attached per arch
+(`patronus-server-openrc-daily-<arch>-test-evidence.tgz`). Build one yourself on a native host: `ARCH=aarch64 build/live-iso/build.sh -o ./iso`
 (`ALLOW_EMULATED=1` is needed to build a foreign arch under qemu-user; not supported for the app stage).
 On arm64 machines the ISO is written to the stick exactly as on x86 (`dd`); firmware must be UEFI (Secure Boot off).
-Test it in QEMU: `qemu-system-aarch64 -machine virt -cpu max -m 4G -drive if=pflash,format=raw,readonly=on,file=AAVMF_CODE.fd -drive if=pflash,format=raw,file=VARS.fd -device qemu-xhci -device usb-storage,drive=iso -drive if=none,id=iso,file=patronus-daily-aarch64.iso,format=raw -device virtio-gpu-pci -device usb-kbd -serial stdio`.
+Test it in QEMU: `qemu-system-aarch64 -machine virt -cpu max -m 4G -drive if=pflash,format=raw,readonly=on,file=AAVMF_CODE.fd -drive if=pflash,format=raw,file=VARS.fd -device qemu-xhci -device usb-storage,drive=iso -drive if=none,id=iso,file=patronus-server-openrc-daily-aarch64.iso,format=raw -device virtio-gpu-pci -device usb-kbd -serial stdio`.
 
 **riscv64** is not in CI: there is no RISC-V runner, the official binhost has only ~600 riscv64 packages (about 40 of the
 ones the image needs would compile from source under emulation: QEMU, libvirt, docker, ZFS, GRUB, dracut, ...), no
@@ -51,11 +64,11 @@ cross-compile stage for the app plus a long-running weekly emulated job.
 
 Linux (replace `/dev/sdX` - check with `lsblk`; **not** a partition like `sdX1`):
 
-    sudo dd if=patronus-daily-x86_64.iso of=/dev/sdX bs=4M conv=fsync status=progress
+    sudo dd if=patronus-server-openrc-daily-x86_64.iso of=/dev/sdX bs=4M conv=fsync status=progress
     sync
 
 macOS: `diskutil list`, `diskutil unmountDisk /dev/diskN`, then
-`sudo dd if=patronus-daily-x86_64.iso of=/dev/rdiskN bs=4m`.
+`sudo dd if=patronus-server-openrc-daily-x86_64.iso of=/dev/rdiskN bs=4m`.
 
 Windows: [Rufus](https://rufus.ie) -> select the ISO -> when asked choose **"Write in DD Image mode"**
 (not "ISO Image mode"), or use balenaEtcher / `dd` for Windows. Ventoy also works.
@@ -285,8 +298,8 @@ Every run then reboots from the installed disk alone (no ISO) and asserts:
 * host name, time zone, root file system type.
 
 Publishing happens only when all of that passed. The run's serial logs, per-screen text captures and PNG
-screenshots are attached to the release as `patronus-daily-test-evidence.tgz`. The workflow never turns the job
-red on a failure (that would e-mail the owner); the result is recorded in the `daily-status` release marker instead.
+screenshots are attached to the release as `patronus-server-openrc-daily-x86_64-test-evidence.tgz`. The workflow never turns the job
+red on a failure (that would e-mail the owner); the result is recorded in the `daily-status-server-openrc-<arch>` release marker instead.
 Unit tests of the installer's validation rules (`common/tests`) run first.
 
 Build it yourself on any x86_64 Docker host: `gentoo/live-iso/build.sh -o ./iso` (BuildKit required; a
@@ -303,7 +316,7 @@ A `v*` release gets a stable ISO attached (non-pre-release asset
 4. **all five** QEMU runs above pass (both firmware types, both media types, unattended + serial wizard + VGA wizard), including the SSH/web assertions;
 5. no step reported `FAIL` in the evidence bundle (attached to the release).
 
-If any criterion fails, nothing is attached and the failure is recorded in the `daily-status` marker
+If any criterion fails, nothing is attached and the failure is recorded in the `daily-status-server-openrc-<arch>` marker
 (mode `stable`). The previous release stays as is. Tags must be cut by the maintainers; the workflow
 never creates tags or bumps versions.
 

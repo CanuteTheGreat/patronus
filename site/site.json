@@ -24,16 +24,16 @@
  ],
  "isos": [
   [
-   "x86_64 (UEFI + BIOS, hybrid USB/CD)",
-   "patronus-daily-x86_64.iso"
+   "Server \u00b7 OpenRC \u00b7 x86_64 (UEFI + BIOS, hybrid USB/CD)",
+   "patronus-server-openrc-daily-x86_64.iso"
   ],
   [
-   "aarch64 (UEFI)",
-   "patronus-daily-aarch64.iso"
+   "Server \u00b7 OpenRC \u00b7 aarch64 (UEFI)",
+   "patronus-server-openrc-daily-aarch64.iso"
   ]
  ],
  "dl_note": "The aarch64 build is tested under QEMU emulation, not on real arm64 hardware.",
- "evidence": "patronus-daily-test-evidence.tgz",
+ "evidence": "patronus-server-openrc-daily-x86_64-test-evidence.tgz",
  "shots": [
   [
    "installer/patronus/04b-interface-assignment-filled.png",

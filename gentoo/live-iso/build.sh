@@ -52,7 +52,8 @@ lap "stage 3: assembly toolbox"
 # parallel build) between this build and the docker run below (Horcrux run 7066: "pull access denied").
 docker build $PLAT $ARCHARGS -q -f common/Dockerfile.tools -t $TAG-tools .
 lap "stage 4: export rootfs + assemble ISO (no bind mounts: works from a job container using the host docker)"
-ISO_NAME=$ISO_PREFIX-$SUFFIX-$ARCH.iso
+. "$HERE/common/image-name.sh"      # IMG=<DE|server>-<init>: <product>-<DE|server>-<init>-<channel>-<arch>.iso (patronus-server-openrc-daily-x86_64.iso)
+ISO_NAME=$ISO_PREFIX-$IMG-$SUFFIX-$ARCH.iso
 docker rm -f $TAG-asm >/dev/null 2>&1 || true
 cid=$(docker create $TAG-rootfs /bin/true)
 docker export "$cid" | docker run -i $PLAT -e ARCH=$ARCH --name $TAG-asm --memory=8g --cpus=$JOBS $TAG-tools \
