@@ -22,6 +22,10 @@
         table.stack td { border: 0; padding: 3px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; text-align: right; }
         table.stack td::before { content: attr(data-label); color: #6b7280; font-size: 0.8em; text-align: left; flex: 0 0 34%; }
         table.stack td > * { max-width: 62%; }
+        table.stack td.rules { display: block; text-align: left; }
+        table.stack td.rules::before { display: block; margin-bottom: 4px; }
+        table.stack td.rules > * { max-width: 100%; }
+        table.stack td.rules form.lan-form { flex-direction: column; align-items: stretch; }
         table.logt th:nth-child(4), table.logt td:nth-child(4) { display: none; }
         table.logt th, table.logt td { padding: 4px 3px; font-size: 0.74em; }
     }
@@ -127,7 +131,7 @@
             const flags = [];
             if (p.family) flags.push('family preset'); if (p.log_queries) flags.push('logs ' + p.log_retention_days + ' d');
             if (!p.inherit_global) flags.push('own rules only'); flags.push(p.block_mode);
-            const rules = h('td', {});
+            const rules = h('td', {class: 'rules'});
             for (const r of p.rules) {
                 const chip = h('div', {}, [h('span', {class: 'pill' + (r.action === 'block' ? ' blocked' : ''), text: r.action}), r.domain + (r.address ? ' -> ' + r.address : '')]);
                 if (CAN_MODIFY) chip.appendChild(h('button', {class: 'btn btn-sm btn-link', text: 'remove', onclick: async () => { if (await api('DELETE', '/api/segmentation/dns/policies/' + p.id + '/rules/' + r.id)) load(); }}));
@@ -139,7 +143,7 @@
                     if (await api('POST', '/api/segmentation/dns/policies/' + p.id + '/rules', body)) load(); return false; }}, [
                     h('select', {name: 'action'}, ['block', 'allow', 'override'].map(a => h('option', {value: a, text: a}))),
                     h('input', {name: 'domain', placeholder: 'domain', required: ''}),
-                    h('input', {name: 'address', placeholder: 'address (override)'}),
+                    h('input', {name: 'address', placeholder: 'address (for override)'}),
                     h('button', {class: 'btn btn-sm', type: 'submit', text: 'Add rule'})]);
                 rules.appendChild(f);
             }
