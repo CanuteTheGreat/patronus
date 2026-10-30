@@ -774,7 +774,8 @@ class Runner:
         if a.fs == "zfs":
             kb.key("TAB")                                  # -> 'Encrypt the disk' check box (ZFS native encryption, off)
             if mirror:                                     # NOTE: mirror via the text wizard is not exercised by the default runs
-                kb.key("TAB"); kb.key("SPACE")             # 'Show advanced options' -> the ZFS layout row appears
+                kb.key("TAB"); kb.key("SPACE")             # 'Show advanced options' -> the ZFS layout row appears ABOVE the focus (the focus index stays: it is now on 'Encrypt')
+                kb.key("UP")                               # -> 'ZFS layout'
                 kb.key("RIGHT")
                 shot("03b-filesystem-zfs-mirror")
                 kb.key("TAB")
@@ -1586,7 +1587,11 @@ class Runner:
             self.step("answer-file-use-flags-applied", rc == 0 and len(parts) >= 3 and "*/* -" in parts[0] and "minimal" in parts[1], re.sub(r"\s+", " ", uf)[:220])
             self.step("hardening-sysctl-applied", parts[-1].strip().endswith("2"), "kernel.kptr_restrict=" + parts[-1].strip()[-3:])
         rc, g = ssh(FWD_SSH, self.key, "command -v cage; ls /var/db/pkg/gui-wm /var/db/pkg/gui-libs 2>&1 | head -3; python3 -c 'import gi' 2>&1 | tail -1; echo END")
-        self.step("graphical-installer-stack-removed-from-server", "/cage" not in g.split("END")[0].replace("No such", "") and "ModuleNotFound" in g and "gtk" not in g, re.sub(r"\s+", " ", g)[:160])
+        rc, vr = ssh(FWD_SSH, self.key, "cat /etc/live-iso-variant 2>/dev/null")
+        if "desktop" in vr:                 # the Desktop image IS a GTK/GNOME system: its GUI packages are part of the product, not live-only
+            self.step("graphical-installer-stack-removed-from-server", True, "n/a on the Desktop image (GNOME stays)")
+        else:
+            self.step("graphical-installer-stack-removed-from-server", "/cage" not in g.split("END")[0].replace("No such", "") and "ModuleNotFound" in g and "gtk" not in g, re.sub(r"\s+", " ", g)[:160])
         self.step("hostname-and-timezone", f"{a.project}-t1" in out and "Europe/Berlin" in out, "host name + Europe/Berlin applied")
         self.step("root-filesystem", ("xfs" if a.fs == "xfs-luks" else a.fs) in out.replace("\r", "").split("\n"), f"/ is {a.fs}" + (" (the installer's own default, never ext4)" if a.fs_default else ""))
         # OWNER RULE: a server/firewall install has NO on-disk swap (partition, LV or file): zram is the only swap

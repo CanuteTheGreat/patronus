@@ -51,6 +51,9 @@ def apply(inst):
         raise InstallError("desktop profile needs a password for " + name)
     have = set(l.split(":")[0] for l in open(f"{T}/etc/group"))
     groups = ",".join(g for g in GROUPS if g in have)
+    # the home dataset must be mounted BEFORE useradd -m: a home created in the root dataset is hidden
+    # (empty home, no session) once rpool/home is mounted over it
+    inst.run(["zfs", "mount", "-a"], check=False)
     inst.run(["useradd", "-m", "-G", groups, "-s", "/bin/bash", "-c", c.get("user_fullname", name), name], chroot=True)
     if c.get("user_hash"):
         inst.run(["chpasswd", "-e"], chroot=True, input_=f"{name}:{c['user_hash']}\n")
@@ -69,6 +72,10 @@ def apply(inst):
     inst.write("/etc/conf.d/xdm", 'DISPLAYMANAGER="gdm"\n')
     # wired + Wi-Fi by NetworkManager (iwd backend) from now on
     inst.write("/etc/NetworkManager/conf.d/10-horcrux.conf", "[device]\nwifi.backend=iwd\n")
+    # the iwd backend only autoconnects networks iwd knows: turn every Wi-Fi profile (joined on the live system or carried over) into /var/lib/iwd/<ssid>.psk
+    from . import system as _system
+    for p in _system.carry_wifi_to_iwd(T, sources=("/etc/NetworkManager/system-connections", T + "/etc/NetworkManager/system-connections")):
+        inst.log(f"desktop: Wi-Fi network carried over to iwd: {os.path.basename(p)}")
     if c.get("user_autologin"):
         inst.write("/etc/gdm/custom.conf", f"[daemon]\nAutomaticLoginEnable=True\nAutomaticLogin={name}\nWaylandEnable=true\n")
     else:
