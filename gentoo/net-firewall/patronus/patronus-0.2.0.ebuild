@@ -1,0 +1,572 @@
+# Copyright 2025 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v3
+
+EAPI=8
+
+CRATES=""
+
+inherit cargo git-r3 systemd
+
+DESCRIPTION="Modern firewall and network security platform built with Rust"
+HOMEPAGE="https://git.canutethegreat.com/CanuteTheGreat/patronus"
+
+EGIT_REPO_URI="https://git.canutethegreat.com/CanuteTheGreat/patronus.git"
+
+if [[ ${PV} != 9999 ]]; then
+	EGIT_COMMIT="v${PV}"
+	KEYWORDS="~amd64 ~arm64 ~riscv"
+fi
+# Live (9999) ebuilds are intentionally left unkeyworded per Gentoo devmanual.
+
+LICENSE="GPL-3+"
+SLOT="0"
+
+# USE flags matching Patronus feature set (The Gentoo Way - OPTIONS!)
+IUSE="
+	+web +cli +api
+	dashboard
+	+nftables iptables
+	+dhcp +dns +unbound bind dnsmasq kea +ntp
+	+vpn wireguard openvpn ipsec
+	+multiwan
+	ha
+	+monitoring prometheus netflow collectd
+	+captive-portal
+	intrusion-detection suricata snort
+	syslog igmp nat64 l2tp upnp vrf web-proxy dynamic-routing sdwan
+	+vlan qos +tc
+	certificates acme certbot
+	ldap radius +totp +plugins
+	+segmentation wifi-ap
+	geoip geoip2
+	+aliases +insight
+	scheduled-rules
+	+pppoe +dhcpcd
+	wireless hostapd iwd
+	squid tinyproxy
+	+backup
+	gitops
+	+systemd +openrc
+	test
+"
+
+REQUIRED_USE="
+	|| ( nftables iptables )
+	|| ( systemd openrc )
+	dns? ( || ( unbound bind dnsmasq ) )
+	vpn? ( || ( wireguard openvpn ipsec ) )
+	intrusion-detection? ( || ( suricata snort ) )
+	certificates? ( || ( acme certbot ) )
+	wireless? ( || ( hostapd iwd ) )
+	wifi-ap? ( segmentation )
+	squid? ( !tinyproxy )
+	tinyproxy? ( !squid )
+	geoip2? ( !geoip )
+	bind? ( !unbound !dnsmasq )
+	unbound? ( !bind )
+	dnsmasq? ( !bind )
+"
+
+# DHCP server (USE=dhcp): Kea (USE=kea; RA via radvd) or dnsmasq (DHCPv4/v6,
+# RA and relay in one daemon). Relays always use dnsmasq. Patronus writes the
+# config these packages' own init scripts read (/etc/kea, /etc/dnsmasq.conf,
+# /etc/radvd.conf) and drives them through OpenRC or systemd. USE=ntp: chrony.
+# USE=web: curl (event webhooks, DDNS), conntrack-tools, the Monitoring page's "top connections" reader on
+# kernels without CONFIG_NF_CONNTRACK_PROCFS (no /proc/net/nf_conntrack).
+# (No comments inside RDEPEND: Portage would parse '#' as an atom.)
+RDEPEND="
+	acct-user/patronus
+	acct-group/patronus
+	gitops? ( dev-libs/openssl:0= sys-libs/zlib:= )
+	nftables? ( net-firewall/nftables )
+	iptables? ( net-firewall/iptables )
+	dhcp? (
+		kea? ( net-misc/kea net-misc/radvd net-dns/dnsmasq )
+		!kea? ( net-dns/dnsmasq )
+	)
+	ntp? ( net-misc/chrony )
+	dns? (
+		unbound? ( net-dns/unbound )
+		bind? ( net-dns/bind )
+		dnsmasq? ( net-dns/dnsmasq )
+	)
+	vpn? (
+		wireguard? ( net-vpn/wireguard-tools )
+		openvpn? ( net-vpn/openvpn )
+		ipsec? ( net-vpn/strongswan )
+	)
+	|| ( net-misc/iputils sys-apps/busybox )
+	multiwan? ( sys-apps/iproute2 )
+	ha? ( sys-cluster/keepalived net-firewall/conntrack-tools )
+	syslog? ( app-admin/rsyslog )
+	igmp? ( net-misc/igmpproxy )
+	nat64? ( net-proxy/tayga )
+	l2tp? ( net-dialup/xl2tpd net-dialup/ppp )
+	upnp? ( net-misc/miniupnpd[nftables] )
+	web-proxy? ( net-proxy/squid )
+	dynamic-routing? ( net-misc/frr )
+	netflow? ( net-analyzer/softflowd )
+	sdwan? ( net-vpn/wireguard-tools dev-libs/openssl:0= || ( net-misc/iputils sys-apps/busybox ) )
+	monitoring? (
+		prometheus? ( app-metrics/prometheus )
+		netflow? ( net-analyzer/softflowd )
+		collectd? ( app-metrics/collectd )
+	)
+	intrusion-detection? (
+		suricata? ( net-analyzer/suricata )
+		snort? ( net-analyzer/snort )
+	)
+	vlan? ( sys-apps/iproute2 )
+	segmentation? ( sys-apps/iproute2 net-firewall/nftables )
+	wifi-ap? ( net-wireless/hostapd )
+	qos? ( sys-apps/iproute2 )
+	tc? ( sys-apps/iproute2 )
+	certificates? (
+		acme? ( app-crypt/acme-sh )
+		certbot? ( app-crypt/certbot )
+	)
+	ldap? ( dev-libs/openssl:0= )
+	radius? ( net-dialup/freeradius )
+	geoip? ( dev-libs/geoip )
+	geoip2? ( dev-libs/libmaxminddb )
+	pppoe? ( net-dialup/ppp )
+	dhcpcd? ( net-misc/dhcpcd )
+	!dhcpcd? ( sys-apps/busybox )
+	sys-apps/iproute2
+	web? ( net-firewall/conntrack-tools net-misc/curl )
+	insight? (
+		net-misc/curl
+		openrc? ( virtual/cron )
+	)
+	squid? ( net-proxy/squid )
+	tinyproxy? ( net-proxy/tinyproxy )
+	wireless? (
+		hostapd? ( net-wireless/hostapd )
+		iwd? ( net-wireless/iwd )
+	)
+	systemd? ( sys-apps/systemd )
+	openrc? ( sys-apps/openrc )
+"
+
+DEPEND="${RDEPEND}"
+# dev-libs/protobuf: see patronus-9999.ebuild -- raft-proto's build script
+# needs `protoc` on PATH at compile time; without it the build panics with
+# Option::unwrap() on a None value in protobuf-build's protoc lookup.
+BDEPEND="
+	|| ( >=dev-lang/rust-1.75 >=dev-lang/rust-bin-1.75 )
+	dev-libs/protobuf
+"
+
+QA_FLAGS_IGNORED="usr/bin/patronus.*"
+
+# NOTE: both the cargo and git-r3 eclasses export src_unpack; since git-r3 is
+# inherited after cargo, its src_unpack wrapper silently replaces cargo's,
+# so cargo_gen_config() (which cargo_src_unpack would call) never runs and
+# any later cargo_env/cargo_src_compile call dies with:
+#   "FATAL: please call cargo_gen_config before using cargo_env"
+# Define src_unpack explicitly to run both -- but merely calling
+# cargo_gen_config() (as an even earlier version of this ebuild did) only
+# writes a cargo config pointing source.gentoo at ECARGO_VENDOR
+# (${WORKDIR}/cargo_home/gentoo); it never actually populates that
+# directory with any crates. This ebuild has no SRC_URI/CRATES-based
+# crate list (CRATES="" above -- deps come from git, same as the live
+# 9999 ebuild), so nothing else vendors them either. Real symptom seen in
+# CI (job 9556, run 2120): cargo build died immediately with "failed to
+# get anyhow as a dependency ... No such file or directory" because
+# ECARGO_VENDOR was empty. cargo_live_src_unpack (which the 9999 ebuild
+# uses) does the real fetch+vendor, but it hard-asserts PV==*9999* so it
+# can't be called here directly -- do the equivalent vendor step by hand
+# instead (real network `cargo vendor` into the exact ECARGO_VENDOR path
+# cargo_gen_config's [source.gentoo] block expects) before generating
+# the config.
+#
+# A follow-up fix (job 9589, run 108) is folded in here too: the first
+# version of this hand-rolled step passed `cargo vendor --locked`, which
+# still failed, this time with a real `cargo vendor` error captured in
+# cargo-vendor.log (not echoed to the Docker build's own stdout, so it
+# took reading upstream cargo semantics + this repo's own .gitignore to
+# diagnose without a local repro). Root cause: `Cargo.lock` is
+# git-ignored in this repo (see .gitignore) and has never been committed,
+# so the `git-r3_src_unpack` checkout of the `v0.1.0` tag just above has
+# *no* Cargo.lock at all -- and `cargo vendor --locked` requires an
+# existing, up-to-date lockfile; with none present it refuses to
+# generate one and fails immediately, before ever touching the network.
+# Fix: drop `--locked`, exactly matching the flags cargo_live_src_unpack
+# itself uses two functions up in this same eclass (`cargo vendor
+# ${offline:+--offline} ${ECARGO_VENDOR}` -- no --locked there either).
+# Without --locked, cargo vendor auto-generates a fresh Cargo.lock from
+# Cargo.toml as needed before vendoring, same as a normal `cargo build`
+# would on first checkout.
+src_unpack() {
+	git-r3_src_unpack
+	mkdir -p "${ECARGO_HOME}" "${ECARGO_VENDOR}" || die
+	pushd "${S}" > /dev/null || die
+	CARGO_HOME="${ECARGO_HOME}" cargo vendor "${ECARGO_VENDOR}" \
+		> "${T}/cargo-vendor.log" 2>&1 || \
+		die "cargo vendor failed to populate ${ECARGO_VENDOR}, see ${T}/cargo-vendor.log"
+	popd > /dev/null || die
+	cargo_gen_config
+}
+
+src_configure() {
+	# NOTE: IUSE still exposes 'tc' and 'aliases' (they gate real
+	# RDEPEND entries, e.g. tc? ( sys-apps/iproute2 )), but neither maps to
+	# an actual cargo feature anywhere in this workspace (grepped every
+	# crate's Cargo.toml -- no 'tc' or 'aliases' feature is defined by any
+	# member). Forwarding them via usex here made cargo fail hard with
+	# "none of the selected packages contains these features", which is
+	# what was actually killing 'Gentoo Docker Build' in CI (not the
+	# earlier from-source-rust-bootstrap issue, which was already fixed) --
+	# do not re-add without first adding the matching cargo feature.
+	# NOTE (2026-10-01, CI job 10563/run 130): the previous version of this
+	# list forwarded USE-flag names directly as cargo feature names (e.g.
+	# "dhcp", "dns", "wireguard", "multiwan"), but patronus-cli/Cargo.toml
+	# does not define features by those names -- it defines dhcp-server,
+	# dns-server, vpn-wireguard, vpn-openvpn, vpn-ipsec (multiwan was
+	# missing a crate feature entirely until this commit added one that
+	# forwards to patronus-network/multiwan). Every mismatched name here
+	# made cargo die with "the package 'patronus-cli' does not contain
+	# these features", which is what was actually killing the Gentoo
+	# Docker Build job (not the earlier --path-forwarding issue above,
+	# which was already fixed). Flags with no backing cargo feature at
+	# all (monitoring/prometheus/netflow/captive-portal/
+	# suricata/qos/certificates/acme/ldap/radius/geoip/
+	# scheduled-rules/wireless) are intentionally left out of this
+	# list -- see the matching IUSE comment for the ones that still gate
+	# real RDEPEND entries only, and do not re-add any of these to
+	# myfeatures without first adding the matching cargo feature.
+	local myfeatures=(
+		$(usex web "web" "")
+		$(usex cli "cli" "")
+		$(usex api "api" "")
+		$(usex dhcp "dhcp-server" "")
+		$(usex dns "dns-server" "")
+		$(usex unbound "dns-server" "")
+		$(usex dnsmasq "dns-server" "")
+		$(usex ntp "ntp-server" "")
+		$(usex wireguard "vpn-wireguard" "")
+		$(usex openvpn "vpn-openvpn" "")
+		$(usex ipsec "vpn-ipsec" "")
+		$(usex multiwan "multiwan" "")
+		$(usex monitoring "monitoring" "")
+		$(usex prometheus "monitoring-prometheus" "")
+		$(usex captive-portal "captive-portal" "")
+		$(usex vlan "vlan" "")
+		$(usex pppoe "pppoe" "")
+		$(usex dhcpcd "dhcpcd" "")
+		$(usex qos "qos" "")
+		$(usex backup "backup" "")
+		$(usex totp "totp" "")
+		$(usex gitops "gitops" "")
+		$(usex ha "ha" "")
+		$(usex syslog "syslog" "")
+		$(usex netflow "netflow" "")
+		$(usex igmp "igmp" "")
+		$(usex nat64 "nat64" "")
+		$(usex l2tp "l2tp" "")
+		$(usex upnp "upnp" "")
+		$(usex vrf "vrf" "")
+		$(usex web-proxy "web-proxy" "")
+		$(usex intrusion-detection "intrusion-detection" "")
+		$(usex dynamic-routing "dynamic-routing" "")
+		$(usex sdwan "sdwan-edge" "")
+		$(usex ldap "ldap" "")
+		$(usex plugins "plugins" "")
+		$(usex segmentation "segmentation" "")
+		$(usex wifi-ap "wifi-ap" "")
+	)
+
+	cargo_src_configure --no-default-features
+}
+
+src_compile() {
+	export CARGO_PROFILE_RELEASE_OPT_LEVEL=3
+	export CARGO_PROFILE_RELEASE_LTO=true
+	export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
+
+	# CPU target. Never default to target-cpu=native: the Gentoo Docker
+	# Build job publishes the resulting image/binpkg, and a native build on
+	# an Intel runner (AVX512-FP16) dies with SIGILL (exit 132) on AMD hosts.
+	# Default to a portable baseline; set PATRONUS_TARGET_CPU=native (or any
+	# rustc target-cpu) in make.conf/env for a host-tuned local build.
+	if use amd64; then
+		export RUSTFLAGS="${RUSTFLAGS} -C target-cpu=${PATRONUS_TARGET_CPU:-x86-64-v2}"
+	elif use arm64; then
+		export RUSTFLAGS="${RUSTFLAGS} -C target-cpu=${PATRONUS_TARGET_CPU:-generic}"
+	elif use riscv; then
+		export RUSTFLAGS="${RUSTFLAGS} -C target-cpu=generic-rv64"
+	fi
+
+	cargo_src_compile
+}
+
+src_install() {
+	# The workspace root Cargo.toml is a virtual manifest (no [package]
+	# section) -- cargo_src_install defaults to `cargo install --path ./`,
+	# which dies with "found a virtual manifest ... instead of a package
+	# manifest" (CI job 10067, run 116). The real installable binary lives
+	# in the crates/patronus-cli member crate (the one carrying the web/
+	# cli/api/dhcp/dns/wireguard/multiwan/monitoring/... features this
+	# ebuild forwards via myfeatures in src_configure) -- point cargo at it
+	# explicitly instead of the workspace root.
+	#
+	# NOTE (2026-09-30, CI job 10120/run 117): a prior fix here set an
+	# ad-hoc CARGO_INSTALL_PATH env var before calling cargo_src_install,
+	# but cargo.eclass's cargo_src_install() has no such variable -- it
+	# only special-cases an explicit "--path" *argument*
+	# (`$(has --path ${@} || echo --path ./)`). The env var was silently
+	# ignored, cargo_src_install still defaulted to `--path ./` (the
+	# workspace root), and the build kept failing with the exact same
+	# "found a virtual manifest ... instead of a package manifest" error.
+	# Fix: pass `--path ./crates/patronus-cli` directly as an argument to
+	# cargo_src_install, which is the real, eclass-documented way to
+	# override the install path in a workspace.
+	cargo_src_install --path ./crates/patronus-cli
+	# The binary is named patronus-cli, but every init script/unit, the docs
+	# and the elog text call it `patronus` -- which was never installed, so
+	# patronus-firewall (and the old patronus-web unit) could not start.
+	dosym patronus-cli /usr/bin/patronus
+
+	# patronus-web is a SEPARATE member crate with its own [[bin]] (not a
+	# patronus-cli feature) -- the above cargo_src_install call only ever
+	# installs patronus-cli, so /usr/bin/patronus-web was never produced at
+	# all despite the web USE flag existing and the systemd unit/doc/elog
+	# text below all assuming it exists (caught 2026-10-01: the runtime
+	# Docker stage's `COPY --from=builder /usr/bin/patronus-web ...` failed
+	# outright since the file was simply never there).
+	#
+	# NOTE (2026-10-01, CI run 135/job 10731): calling
+	# `cargo_src_install --path ./crates/patronus-web` still fails,
+	# because cargo_src_install() (cargo.eclass) unconditionally appends
+	# the readonly ${ECARGO_ARGS[@]} array -- the --features web/cli/api/
+	# dhcp-server/... flags set up in src_configure's myfeatures for
+	# patronus-cli. patronus-web's own Cargo.toml defines none of those
+	# features (`default = []`, no [features] table entries), so cargo
+	# dies with "the package 'patronus-web' does not contain these
+	# features: api, backup, captive-portal, cli, dhcp-server, ...".
+	# There is no cargo CLI flag to negate features already passed on the
+	# command line, and ECARGO_ARGS is `readonly` (set once in
+	# cargo_src_configure), so we cannot call cargo_src_install() for this
+	# crate at all. Replicate its cargo invocation by hand instead,
+	# deliberately omitting ${ECARGO_ARGS[@]}, so patronus-web builds with
+	# its own (empty) default feature set.
+	if use web; then
+		# patronus-web's own features (not patronus-cli's): the same USE
+		# flags, so the UI only offers what is compiled in -- lane C
+		# interfaces (vlan/pppoe/dhcpcd) and the lane D LAN service pages
+		# (dhcp, dns/unbound/dnsmasq, ntp).
+		local webfeatures=(
+			$(usex vlan "vlan" "")
+			$(usex pppoe "pppoe" "")
+			$(usex dhcpcd "dhcpcd" "")
+		)
+		# (not `usex`: ci/use-flag-feature-check.sh reads `usex` lines as
+		# patronus-cli features, and these are patronus-web's own names)
+		use dhcp && webfeatures+=( dhcp )
+		use dns && webfeatures+=( dns )
+		use ntp && webfeatures+=( ntp )
+		use multiwan && webfeatures+=( multiwan )
+		# lane F VPN forms (WireGuard / IPsec), lane H TOTP 2FA
+		use wireguard && webfeatures+=( wireguard )
+		use ipsec && webfeatures+=( ipsec )
+		use totp && webfeatures+=( totp )
+		use ldap && webfeatures+=( ldap )
+		use plugins && webfeatures+=( plugins )
+		use segmentation && webfeatures+=( segmentation )
+		use wifi-ap && webfeatures+=( wifi-ap )
+		use syslog && webfeatures+=( syslog )
+		use netflow && webfeatures+=( netflow )
+		use igmp && webfeatures+=( igmp )
+		use nat64 && webfeatures+=( nat64 )
+		use l2tp && webfeatures+=( l2tp )
+		use upnp && webfeatures+=( upnp )
+		use vrf && webfeatures+=( vrf )
+		use openvpn && webfeatures+=( openvpn )
+		use web-proxy && webfeatures+=( web-proxy )
+		use intrusion-detection && webfeatures+=( intrusion-detection )
+		use dynamic-routing && webfeatures+=( dynamic-routing )
+		use sdwan && webfeatures+=( sdwan-edge )
+		set -- "${CARGO}" install --path ./crates/patronus-web \
+			--root "${ED}/usr" \
+			${GIT_CRATES[@]:+--frozen} \
+			--no-default-features \
+			--features "${webfeatures[*]}" \
+			$(usex debug --debug "")
+		einfo "${@}"
+		cargo_env "${@}" || die "cargo install (patronus-web) failed"
+		rm -f "${ED}/usr/.crates.toml" || die
+		rm -f "${ED}/usr/.crates2.json" || die
+	fi
+
+	# USE=dashboard: the multi-site SD-WAN enterprise dashboard
+	# (crates/patronus-dashboard, used by docker-compose.ha.yml's 3-node HA
+	# stack). Like patronus-web it is a feature-less sibling crate, so it must
+	# NOT go through cargo_src_install (which would append ECARGO_ARGS'
+	# --features list and die with "does not contain these features") --
+	# call cargo via cargo_env directly.
+	if use dashboard; then
+		set -- "${CARGO}" install --path ./crates/patronus-dashboard \
+			--root "${ED}/usr" \
+			${GIT_CRATES[@]:+--frozen} \
+			$(usex debug --debug "")
+		einfo "${@}"
+		cargo_env "${@}" || die "cargo install (patronus-dashboard) failed"
+		rm -f "${ED}/usr/.crates.toml" || die
+		rm -f "${ED}/usr/.crates2.json" || die
+		keepdir /var/lib/patronus/dashboard
+		fowners patronus:patronus /var/lib/patronus/dashboard
+		fperms 0750 /var/lib/patronus/dashboard
+	fi
+
+	# Install init scripts based on USE flags
+	if use systemd; then
+		systemd_dounit "${FILESDIR}/patronus-web.service"
+		systemd_dounit "${FILESDIR}/patronus-firewall.service"
+		# root apply broker (lanes C, D) + per-interface DHCP client / pppd
+		systemd_dounit "${FILESDIR}/patronus-applyd.service"
+		use gitops && systemd_dounit "${FILESDIR}/patronus-gitops.service"
+		systemd_dounit "${FILESDIR}/patronus-ztp.service"
+		systemd_dounit "${FILESDIR}/patronus-dhcpc@.service"
+		systemd_dounit "${FILESDIR}/patronus-daemon@.service"
+		use pppoe && systemd_dounit "${FILESDIR}/patronus-pppoe@.service"
+		if use wifi-ap; then
+			systemd_dounit "${FILESDIR}/patronus-hostapd@.service"
+			systemd_dounit "${FILESDIR}/patronus-wifi-events@.service"
+		fi
+		use dashboard && systemd_dounit "${FILESDIR}/patronus-dashboard.service"
+	fi
+
+	if use openrc; then
+		newinitd "${FILESDIR}/patronus-web.initd" patronus-web
+		newinitd "${FILESDIR}/patronus-firewall.initd" patronus-firewall
+		newinitd "${FILESDIR}/patronus-applyd.initd" patronus-applyd
+		use gitops && newinitd "${FILESDIR}/patronus-gitops.initd" patronus-gitops
+		newinitd "${FILESDIR}/patronus-ztp.initd" patronus-ztp
+		newinitd "${FILESDIR}/patronus-dhcpc.initd" patronus-dhcpc
+		newinitd "${FILESDIR}/patronus-daemon.initd" patronus-daemon
+		use pppoe && newinitd "${FILESDIR}/patronus-pppoe.initd" patronus-pppoe
+		if use wifi-ap; then
+			newinitd "${FILESDIR}/patronus-hostapd.initd" patronus-hostapd
+			newinitd "${FILESDIR}/patronus-wifi-events.initd" patronus-wifi-events
+		fi
+		newconfd "${FILESDIR}/patronus.confd" patronus
+		if use dashboard; then
+			newinitd "${FILESDIR}/patronus-dashboard.initd" patronus-dashboard
+			newconfd "${FILESDIR}/patronus-dashboard.confd" patronus-dashboard
+		fi
+	fi
+
+	# USE=insight: monthly refresh of the DB-IP country + ASN databases
+	# (patronus ipdb update) behind the traffic insight page.
+	if use insight; then
+		keepdir /var/lib/patronus/feeds
+		fowners patronus:patronus /var/lib/patronus/feeds
+		if use systemd; then
+			systemd_dounit "${FILESDIR}/patronus-ipdb.service"
+			systemd_dounit "${FILESDIR}/patronus-ipdb.timer"
+		fi
+		if use openrc; then
+			exeinto /etc/cron.monthly
+			newexe "${FILESDIR}/patronus-ipdb.cron" patronus-ipdb
+		fi
+	fi
+
+	# Install configuration files
+	insinto /etc/patronus
+	doins "${FILESDIR}/patronus.toml"
+
+	# Create necessary directories
+	keepdir /var/lib/patronus
+	keepdir /var/log/patronus
+	keepdir /etc/patronus/rules.d
+	keepdir /etc/patronus/openvpn
+	keepdir /etc/patronus/ipsec
+	keepdir /etc/patronus/unbound
+	keepdir /etc/patronus/certificates
+	# patronus-web generates its self-signed TLS cert here on first start
+	keepdir /etc/patronus/tls
+
+	# Install web assets if web USE flag is enabled
+	if use web; then
+		insinto /usr/share/patronus/web
+		doins -r "${S}/crates/patronus-web/static" 2>/dev/null || true
+	fi
+
+	# Documentation
+	dodoc README.md
+	dodoc QUICKSTART.md
+	dodoc GENTOO-INTEGRATION-COMPLETE.md
+	dodoc COMPETITIVE-ANALYSIS.md
+	dodoc INNOVATION-ROADMAP.md
+	dodoc -r docs/ 2>/dev/null || true
+
+	# Set permissions
+	fowners patronus:patronus /var/lib/patronus
+	fowners patronus:patronus /var/log/patronus
+	fowners patronus:patronus /etc/patronus/openvpn
+	fowners patronus:patronus /etc/patronus/ipsec
+	fowners patronus:patronus /etc/patronus/unbound
+	fowners patronus:patronus /etc/patronus/certificates
+	# group patronus so the service user can reach /etc/patronus/tls
+	fowners root:patronus /etc/patronus
+	fperms 0750 /etc/patronus
+	fperms 0750 /etc/patronus/openvpn
+	fperms 0750 /etc/patronus/ipsec
+	fperms 0700 /etc/patronus/certificates
+	fowners patronus:patronus /etc/patronus/tls
+	fperms 0700 /etc/patronus/tls
+}
+
+pkg_postinst() {
+	elog "Patronus firewall has been installed."
+	elog ""
+	if use systemd; then
+		elog "To start the web interface (systemd):"
+		elog "  systemctl start patronus-web"
+		elog "  systemctl enable --now patronus-applyd  # lets the web UI start DHCP clients / PPPoE and apply DHCP/DNS/NTP"
+		use gitops && elog "  systemctl enable --now patronus-gitops  # GitOps: set [gitops] repo_url in /etc/patronus/patronus.toml first"
+		elog "  systemctl enable patronus-web"
+		elog ""
+		use insight && elog "  systemctl enable --now patronus-ipdb.timer  # monthly DB-IP country/ASN database update (traffic insight)"
+		elog "Boot-time apply of the stored config (sysctl, interfaces, routes,"
+		elog "firewall/NAT, services; seeds a safe default ruleset on first boot):"
+		elog "  systemctl enable --now patronus-firewall   # runs 'patronus apply'"
+	fi
+	if use openrc; then
+		elog "To start the web interface (OpenRC):"
+		elog "  rc-service patronus-web start"
+		elog "  rc-update add patronus-web default"
+		elog "  rc-update add patronus-applyd default  # lets the web UI start DHCP clients / PPPoE and apply DHCP/DNS/NTP"
+		use gitops && elog "  rc-update add patronus-gitops default  # GitOps: set [gitops] repo_url in /etc/patronus/patronus.toml first"
+		elog ""
+		elog "Boot-time apply of the stored config (OpenRC; runs 'patronus apply'):"
+		elog "  rc-update add patronus-firewall boot && rc-service patronus-firewall start"
+	fi
+	elog ""
+	elog "Default web interface: http://localhost:8080"
+	elog "Interface roles for the first-boot defaults: [network] in /etc/patronus/patronus.toml"
+	elog "Config store: /var/lib/patronus/config.db  ('patronus apply --dry-run' shows what boot applies)"
+	elog ""
+	elog "Features enabled:"
+	use web && elog "  ✓ Web interface"
+	use cli && elog "  ✓ CLI tool"
+	use dashboard && elog "  ✓ SD-WAN enterprise dashboard (patronus-dashboard, :8443)"
+	use api && elog "  ✓ REST API"
+	use vpn && use wireguard && elog "  ✓ WireGuard VPN"
+	use vpn && use openvpn && elog "  ✓ OpenVPN"
+	use vpn && use ipsec && elog "  ✓ IPsec VPN"
+	use dns && elog "  ✓ DNS Resolver (Unbound)"
+	use dhcp && elog "  ✓ DHCP Server"
+	use multiwan && elog "  ✓ Multi-WAN with failover"
+	use ha && elog "  ✓ High Availability"
+	use intrusion-detection && elog "  ✓ IDS/IPS (Suricata)"
+	use qos && elog "  ✓ Traffic Shaping/QoS"
+	use certificates && use acme && elog "  ✓ ACME/Let's Encrypt"
+	use geoip && elog "  ✓ GeoIP blocking"
+	use insight && elog "  ✓ Traffic insight history (country/ASN by DB-IP, CC BY 4.0; monthly update job)"
+	elog ""
+	elog "See documentation in /usr/share/doc/${PF}/"
+	elog ""
+	elog "Quick start guide: /usr/share/doc/${PF}/QUICKSTART.md"
+	elog "Gentoo integration: /usr/share/doc/${PF}/GENTOO-INTEGRATION-COMPLETE.md"
+}

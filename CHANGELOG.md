@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-30
+
+### Device segmentation
+
+Everything below is **opt-in**. A router upgraded from the previous release keeps behaving exactly as it did: isolation is off until you switch a segment on, DNS rebinding protection stays off on an existing store (it is on for new installs), and there are no policies, Wi-Fi networks or time limits until you create them. The five new migrations (1300, 1310, 1320, 1330/1331, 1340) are applied on first boot; `upgrade-store.sh` proves an upgrade from the previous release's store and from the v0.1.0 layout.
+
+#### What is new
+
+- **Device segmentation and isolation (opt-in per segment).** Devices have an identity (MAC bound to an address), belong to groups (`home`, `quarantine`, your own) and are default-deny between each other. Links between groups and one-way service rules (e.g. NAS -> camera on tcp 554) open exactly what you list. Unknown devices land in quarantine (DHCP, DNS and ping only, never the admin UI). Own nft table `inet patronus_seg`, same atomic apply as the main ruleset; revoking a device cuts its live connections. Page: Segmentation, API: `/api/segmentation`.
+- **Per-device Wi-Fi credentials (`USE=wifi-ap`).** One passphrase per device on one SSID (hostapd per-MAC PSK). **WPA2: live**, add / rotate / revoke without restarting the access point. **WPA3 (SAE): needs an AP restart** whenever a password changes, because stock hostapd reads SAE passwords only at start; the UI says so and every station reconnects for a few seconds. A device created without a MAC is enrolled by its first join. Show-passphrase / QR for phones.
+- **DNS rebinding protection.** Unbound `private-address` / dnsmasq `stop-dns-rebind`, with per-domain exceptions for your split-horizon names. On for new installs, off for upgraded stores.
+- **Per-device and per-group DNS policy and query logs.** Block lists, allow/block/override rules, family preset (adult + malware lists, safe search), DNS-over-TLS refused for devices under a policy, optional per-policy query log with search and CSV export (needs DNS resolver mode / Unbound).
+- **Parental time limits.** Allowed windows plus a daily quota of *active* minutes per device or group, a warning before the cut, a "time's up" page on plain HTTP, DNS and DHCP kept alive while blocked, +N minutes / pause / resume for parents. Own nft table `inet patronus_time`; the block survives a reboot.
+- **Traffic insight history with country and ASN (`USE=insight`).** Hourly per-device totals by country and ASN from DB-IP Lite databases (`patronus ipdb update`, monthly timer), retention and a "do not record" list for privacy. Insights page: Live, Countries, ASNs, Devices, Uplinks, Settings.
+- **Uplink health and SLA alerts.** Per-gateway round-trip time, loss and availability history, extra DNS / TCP / HTTP probes sent through each gateway's own interface (an ISP that pings but has dead DNS shows as degraded), outage list, SLA target with alerts in the event log and webhooks.
+
+#### Documented limits (please read)
+
+- **Unmanaged switches:** wired devices behind an unmanaged switch share one switch port, so the switch forwards between them without the router; they cannot be isolated from each other (put them in one group, or use a managed switch with port isolation).
+- **IPv6 binding is next:** IPv6 between devices of an isolated segment is denied and an unknown MAC forwards no IPv6, but per-address IPv6 identity binding (SLAAC / privacy addresses) is not done yet.
+- **Simulated radios only:** the Wi-Fi code is proven on `mac80211_hwsim` with stock hostapd 2.10 (26/26 checks, nightly CI job). It has not been run on real Wi-Fi hardware yet. DNS-over-HTTPS cannot be blocked reliably.
+
+#### Proof
+
+CI on the release commit: Format + Clippy (whole workspace, `-D warnings`) + Test, privileged netfilter tests, netlab (journeys, failure/recovery, upgrade), netlab-features (every `lane-s-*` scenario: segmentation 67 checks, DNS rebinding, time limits, insight, uplink), Gentoo OpenRC and systemd builds, feature matrix. Nightly: Wi-Fi on mac80211_hwsim, previous-release upgrade with 30 power cuts, mutation floors (new floor for `seg_rules.rs`: 63 of 63 mutants caught).
+
 ### Added
 - Complete web UI implementation with progressive disclosure pattern
 - Dashboard with real-time metrics
