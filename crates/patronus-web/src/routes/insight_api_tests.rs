@@ -582,6 +582,11 @@ async fn the_gateway_status_endpoint_reads_the_live_monitor() {
         json!([]),
         "no gateway configured: empty list, no fixture rows"
     );
+    if std::process::Command::new("ip").arg("-V").output().is_err() {
+        // resolving gateways reads the kernel's routes with `ip`
+        eprintln!("no ip(8) here: the gateway half of this test needs iproute2");
+        return;
+    }
     add_gateways(&a).await;
     let (s, v) = a.get("/api/uplinks/status").await;
     assert_eq!(s, StatusCode::OK, "{v}");
