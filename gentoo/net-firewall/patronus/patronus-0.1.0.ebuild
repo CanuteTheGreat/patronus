@@ -425,6 +425,10 @@ src_install() {
 		systemd_dounit "${FILESDIR}/patronus-dhcpc@.service"
 		systemd_dounit "${FILESDIR}/patronus-daemon@.service"
 		use pppoe && systemd_dounit "${FILESDIR}/patronus-pppoe@.service"
+		if use wifi-ap; then
+			systemd_dounit "${FILESDIR}/patronus-hostapd@.service"
+			systemd_dounit "${FILESDIR}/patronus-wifi-events@.service"
+		fi
 		use dashboard && systemd_dounit "${FILESDIR}/patronus-dashboard.service"
 	fi
 
@@ -437,6 +441,10 @@ src_install() {
 		newinitd "${FILESDIR}/patronus-dhcpc.initd" patronus-dhcpc
 		newinitd "${FILESDIR}/patronus-daemon.initd" patronus-daemon
 		use pppoe && newinitd "${FILESDIR}/patronus-pppoe.initd" patronus-pppoe
+		if use wifi-ap; then
+			newinitd "${FILESDIR}/patronus-hostapd.initd" patronus-hostapd
+			newinitd "${FILESDIR}/patronus-wifi-events.initd" patronus-wifi-events
+		fi
 		newconfd "${FILESDIR}/patronus.confd" patronus
 		if use dashboard; then
 			newinitd "${FILESDIR}/patronus-dashboard.initd" patronus-dashboard

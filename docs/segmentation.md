@@ -85,7 +85,58 @@ Other limits:
 - A phone that rotates its MAC on every connection cannot be bound.
 - Service-rule schedules are not enforced yet (the field is refused).
 
+## Per-device Wi-Fi credentials (USE=wifi-ap)
+
+When Patronus runs the access point (hostapd), every Wi-Fi device gets its own
+passphrase, bound to its MAC. The **Wi-Fi** tab (`/segmentation#wifi`) manages
+networks (radio, SSID, band/channel, security, the bridge it joins) and the
+devices on them. One hostapd runs per enabled network (supervised like the
+other daemons: OpenRC `patronus-hostapd.<network>`, systemd
+`patronus-hostapd@<network>.service`, or directly in a container).
+
+| | WPA2 (default) | WPA3-SAE (`wpa3`, or `wpa2_wpa3`) |
+|---|---|---|
+| device credential | `keyid=dev-<id> <mac> <passphrase>` in hostapd's `wpa_psk_file` | `sae_password=<pw>\|mac=<mac>` in `hostapd.conf` |
+| add / revoke / rotate | **live**: `reload_wpa_psk`, a revoked station is deauthenticated, hostapd is not restarted | **restarts hostapd** (stock hostapd reads SAE passwords only at start): every station reconnects for a few seconds; restarts are debounced to one per 5 s |
+| device without a MAC (pending) | supported | not supported on `wpa3` (SAE is bound to a MAC); a `wpa2_wpa3` pending device joins with WPA2 first |
+
+Measured on `mac80211_hwsim` with stock hostapd 2.10 (`ci/netlab/lane-s-wifi-hwsim.sh`,
+evidence in `docs/evidence/segmentation/`): a device associates with its own
+passphrase; another MAC with that passphrase, and the device with another
+device's passphrase, are refused; revoking one device leaves the others
+connected without a hostapd restart; rotation cuts the old passphrase at once;
+a SAE per-device password works without an identifier (the MAC selects it).
+
+- **Passphrases** are generated (20 symbols, 100 bits, `xxxxx-xxxxx-xxxxx-xxxxx`),
+  shown once with a `WIFI:T:WPA;S:..;P:..;;` QR code, never listed by the API,
+  and stored like WireGuard keys and IPsec PSKs (the 0600 store; `export` is a
+  full backup and contains them). Showing one again needs an administrator
+  and writes an audit-log row.
+- **Enrolment of a device without a MAC**: create it without a MAC; its
+  passphrase works from any MAC (wildcard entry) until the first join. hostapd
+  reports `AP-STA-CONNECTED <mac> keyid=dev-<id>`; `hostapd_cli -a` hands that
+  to `patronus wifi-event`, which stores the MAC, reserves its address (its
+  current DHCP lease when there is one), and the entry becomes MAC-bound,
+  live. Unused pending passphrases expire after 24 hours.
+- **Unknown devices** (`unknown_policy`): `reject` (default) = not in the list
+  cannot associate. `enrol` = a shared secret that grants nothing: such a
+  station gets an address but no binding, so it is quarantined (DHCP, DNS and
+  ping only; never the admin UI). It shows up under *Discovered*; **Approve
+  on Wi-Fi** creates its device and personal passphrase.
+- **Revocation**: revoking a device cuts it in the firewall first (established
+  connections included), then removes its passphrase (WPA2: reload +
+  deauthenticate). Re-enrolling a revoked device's MAC creates a new device.
+- **Rotation** gives a new passphrase; with a grace period the old one keeps
+  working for that long (no-downtime rotation).
+- A phone set to use a *new random MAC on every connection* cannot be bound
+  to a MAC: use "fixed" or "private per network" in its Wi-Fi settings.
+- `ap_isolate=1` keeps stations from talking to each other directly, so every
+  device-to-device packet passes through the isolation rules above.
+- Not covered: real radios (roaming, 802.11r, 6 GHz, client quirks with SAE),
+  one SSID per radio interface (no multi-SSID `bss=` blocks yet), 6 GHz.
+
 ## API
+
 
 | Method and path | |
 |---|---|
@@ -98,6 +149,12 @@ Other limits:
 | `GET/POST /api/segmentation/links`, `DELETE .../links/<id>` | group links |
 | `GET/POST /api/segmentation/services`, `DELETE .../services/<id>` | one-way rules |
 | `POST /api/segmentation/preview` | the nft table, not applied |
+| `GET /api/segmentation/wifi` | Wi-Fi networks, credential state (no secrets), radios, live status |
+| `POST /api/segmentation/wifi/networks`, `PUT/DELETE .../networks/<id>` | networks |
+| `POST /api/segmentation/wifi/devices` `{name, network, group?, mac?}` | a device with its own passphrase; the secret is in the answer once |
+| `POST .../wifi/devices/<id>/rotate` `{grace_minutes}`, `POST .../wifi/credentials/<id>/revoke` | rotate / revoke |
+| `POST .../wifi/credentials/<id>/reveal`, `.../networks/<id>/enrol-secret/reveal` | admin only, audited |
+| `GET /api/segmentation/wifi/stations` | live stations (from `hostapd_cli all_sta`) |
 
 Every change is validate -> snapshot -> write -> apply (segmentation, dhcp,
 firewall) -> restore on failure. RBAC area: `segmentation`.

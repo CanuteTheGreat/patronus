@@ -1,0 +1,33 @@
+#!/sbin/openrc-run
+# Copyright 2026 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v3
+
+# Multiplexed: /etc/init.d/patronus-hostapd.<network> -> patronus-hostapd.
+# `patronus apply` creates the symlink and starts/stops the instance for every
+# enabled Wi-Fi network (USE=wifi-ap); the command line and its config are
+# generated from the config store into /var/lib/patronus/net. Do not add it to
+# a runlevel by hand.
+
+NET="${RC_SVCNAME#*.}"
+ENVFILE="/var/lib/patronus/net/svc/patronus-hostapd.${NET}.env"
+description="Patronus hostapd (per-device Wi-Fi credentials) for the Patronus Wi-Fi network ${NET}"
+supervisor=supervise-daemon
+respawn_delay=3
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+	need localmount
+}
+
+start_pre() {
+	if [ "${NET}" = "${RC_SVCNAME}" ]; then
+		eerror "Use the per-network instance (patronus-hostapd.<network>)"
+		return 1
+	fi
+	[ -r "${ENVFILE}" ] || { eerror "${ENVFILE} is missing (run 'patronus apply')"; return 1; }
+	. "${ENVFILE}"
+	set -- ${PATRONUS_CMD}
+	command="$1"
+	shift
+	command_args="$*"
+}

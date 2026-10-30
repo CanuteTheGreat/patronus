@@ -25,6 +25,8 @@ pub mod network;
 pub mod routing;
 #[cfg(feature = "segmentation")]
 pub mod segmentation;
+#[cfg(feature = "wifi-ap")]
+pub mod segmentation_wifi;
 pub mod system;
 pub mod telemetry;
 pub mod tunnels;

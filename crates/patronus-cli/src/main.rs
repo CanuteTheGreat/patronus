@@ -54,6 +54,19 @@ enum Commands {
         dry_run: bool,
     },
 
+    /// Called by hostapd (through `hostapd_cli -a`) when a station joins with
+    /// a Patronus key id: a pending Wi-Fi device learns its MAC (USE=wifi-ap)
+    #[cfg(feature = "wifi-ap")]
+    #[command(name = "wifi-event", hide = true)]
+    WifiEvent {
+        /// hostapd interface
+        iface: String,
+        /// station MAC
+        mac: String,
+        /// `dev-<id>`
+        keyid: String,
+    },
+
     /// Root apply broker for patronus-web (runs one named applier on
     /// request over a unix socket; see patronus_network::applyd) and the
     /// periodic dynamic DNS refresh
@@ -587,6 +600,11 @@ async fn main() -> anyhow::Result<()> {
             UsersCommands::Reset2fa { name } => users::reset_2fa(cli.db.as_deref(), &name).await?,
             UsersCommands::HashPassword => users::hash_password()?,
         },
+
+        #[cfg(feature = "wifi-ap")]
+        Commands::WifiEvent { iface, mac, keyid } => {
+            commands::wifi::event(cli.db, iface, mac, keyid).await?;
+        }
 
         Commands::Ztp { bootstrap, force } => {
             commands::ztp::run(cli.db, bootstrap, force).await?;

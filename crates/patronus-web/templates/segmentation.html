@@ -321,6 +321,7 @@
                 for (const g of (SEG ? SEG.groups : []).filter(g => !g.quarantine)) { const o = document.createElement('option'); o.value = g.name; o.textContent = g.name; sel.appendChild(o); }
                 ac.appendChild(sel);
                 ac.appendChild(btn('Adopt', 'primary', () => segCall('POST', '/api/segmentation/discovered/' + encodeURIComponent(h.mac) + '/adopt', {group: sel.value, segment: h.segment})));
+                if (HAS_WIFI) ac.appendChild(btn('Approve on Wi-Fi', '', () => wifiApprove(h.mac, h.hostname)));
             }
             tr.appendChild(ac); tb.appendChild(tr);
         }

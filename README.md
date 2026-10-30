@@ -154,6 +154,13 @@ that are not finished are listed separately under
   exception list; it is on for a new install and stays off for a store that
   predates it. [C63]
 
+- With USE=wifi-ap Patronus runs the access point (hostapd) with a passphrase
+  per device, bound to the device's MAC: add, revoke and rotate are live on
+  WPA2 (WPA3-SAE changes restart the access point), a device without a MAC is
+  enrolled by its first join, and unknown devices can be held in quarantine
+  until approved. Proven with real 802.11 associations on the simulated
+  radios of mac80211_hwsim, not on real radio hardware. [C64]
+
 ### Configuration you can trust
 
 - The configuration survives restarts and reboots: it lives in one SQLite

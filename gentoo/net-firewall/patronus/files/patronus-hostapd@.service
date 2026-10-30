@@ -1,0 +1,15 @@
+[Unit]
+# hostapd (per-device Wi-Fi credentials) for the Patronus Wi-Fi network %i (USE=wifi-ap).
+# The command line and its generated config (mode 0600) come from the Patronus
+# config store; `patronus apply` writes /var/lib/patronus/net/svc/patronus-hostapd.%i.env
+# and starts or stops this unit. Do not enable it by hand.
+Description=Patronus hostapd (per-device Wi-Fi credentials) for the Patronus Wi-Fi network %i
+After=patronus-firewall.service
+
+[Service]
+Type=simple
+EnvironmentFile=/var/lib/patronus/net/svc/patronus-hostapd.%i.env
+# $$ = let the shell (not systemd) expand and word-split the command
+ExecStart=/bin/sh -c 'exec $$PATRONUS_CMD'
+Restart=always
+RestartSec=3

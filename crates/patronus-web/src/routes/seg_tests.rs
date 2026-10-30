@@ -104,6 +104,7 @@ async fn setup() -> T {
         vec![
             mk("segmentation", Phase::Interfaces),
             mk("dhcp", Phase::Services),
+            mk("wifi", Phase::Services),
             mk("firewall", Phase::Firewall),
         ],
     ));
@@ -239,11 +240,11 @@ async fn enabling_adopts_then_devices_are_managed_and_revocation_reaches_the_rul
             .unwrap()
             .iter()
             .rev()
-            .take(3)
+            .take(4)
             .cloned()
             .collect::<Vec<_>>(),
-        vec!["firewall", "dhcp", "segmentation"], // most recent first
-        "L2 first, then DHCP reservations, then the firewall"
+        vec!["wifi", "firewall", "dhcp", "segmentation"], // most recent first
+        "L2 first, then DHCP reservations, then the firewall (a revoked device is cut there), then the access point"
     );
 
     // groups, a device, a link, a service
@@ -491,4 +492,237 @@ fn segmentation_is_an_rbac_area() {
         Some("segmentation")
     );
     assert!(patronus_config::accounts::AREAS.contains(&"segmentation"));
+}
+
+// ---- per-device Wi-Fi credentials (USE=wifi-ap) -----------------------------------
+
+#[cfg(feature = "wifi-ap")]
+mod wifi {
+    use super::*;
+
+    async fn net(t: &T, c: &str, security: &str) -> i64 {
+        let (s, b) = t
+            .call(
+                c,
+                Method::POST,
+                "/api/segmentation/wifi/networks",
+                Some(json!({"name": "home", "ssid": "HomeNet", "ifname": "wlan0", "security": security, "segment": "@lan"})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+        b["id"].as_i64().unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_device_gets_its_own_passphrase_once_and_no_listing_carries_it() {
+        let t = setup().await;
+        let c = t.login("admin", ADMIN_PW).await;
+        net(&t, &c, "wpa2").await;
+        let (s, d) = t
+            .call(
+                &c,
+                Method::POST,
+                "/api/segmentation/wifi/devices",
+                Some(json!({"name": "phone", "network": "home"})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::CREATED, "{d}");
+        let secret = d["secret"].as_str().unwrap().to_string();
+        assert_eq!(secret.len(), 23);
+        assert_eq!(d["device"]["state"], "pending");
+        assert!(d["qr"]
+            .as_str()
+            .unwrap()
+            .starts_with("WIFI:T:WPA;S:HomeNet;P:"));
+        assert!(d["qr_svg"].as_str().unwrap().contains("<svg"));
+        // nothing that lists things shows the secret
+        for url in [
+            "/api/segmentation/wifi",
+            "/api/segmentation",
+            "/api/segmentation/devices",
+            "/api/segmentation/wifi/stations",
+        ] {
+            let (_, body, _) = t.raw(Method::GET, url, Some(&c), None).await;
+            assert!(!body.contains(&secret), "{url} leaked a passphrase");
+        }
+        // the hostapd side would be applied
+        assert!(t.fw.runs.lock().unwrap().contains(&"wifi"));
+        // revealing needs an administrator and leaves an audit row
+        let cid = d["credential_id"].as_i64().unwrap();
+        let (s, r) = t
+            .call(
+                &c,
+                Method::POST,
+                &format!("/api/segmentation/wifi/credentials/{cid}/reveal"),
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::OK, "{r}");
+        assert_eq!(r["secret"], secret.as_str());
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log WHERE action = 'reveal' AND entity_type = 'wifi_credential'")
+            .fetch_one(t.state.config_store.pool().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(n, 1, "an audited reveal");
+        // an operator (not an admin) cannot
+        t.state
+            .auth
+            .user_store
+            .create_user(
+                "op".into(),
+                "Operator-Passw0rd-1",
+                crate::auth::UserRole::Operator,
+            )
+            .await
+            .unwrap();
+        let o = t.login("op", "Operator-Passw0rd-1").await;
+        let (s, _) = t
+            .call(
+                &o,
+                Method::POST,
+                &format!("/api/segmentation/wifi/credentials/{cid}/reveal"),
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn revoke_and_rotate_reach_the_applier_and_enrolment_secret_is_admin_only() {
+        let t = setup().await;
+        let c = t.login("admin", ADMIN_PW).await;
+        net(&t, &c, "wpa2").await;
+        let (_, d) = t
+            .call(
+                &c,
+                Method::POST,
+                "/api/segmentation/wifi/devices",
+                Some(json!({"name": "laptop", "network": "home", "mac": "02:AA:00:00:00:11"})),
+            )
+            .await;
+        assert_eq!(d["device"]["state"], "active");
+        let did = d["device"]["id"].as_i64().unwrap();
+        let old = d["secret"].as_str().unwrap().to_string();
+        let (s, r) = t
+            .call(
+                &c,
+                Method::POST,
+                &format!("/api/segmentation/wifi/devices/{did}/rotate"),
+                Some(json!({"grace_minutes": 0})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::OK, "{r}");
+        assert_ne!(r["secret"], old.as_str());
+        let (_, w) = t
+            .call(&c, Method::GET, "/api/segmentation/wifi", None)
+            .await;
+        let creds = w["credentials"].as_array().unwrap();
+        assert_eq!(creds.iter().filter(|c| c["state"] == "active").count(), 1);
+        assert_eq!(
+            creds.iter().filter(|c| c["state"] == "revoked").count(),
+            1,
+            "the old passphrase is revoked"
+        );
+        let cid = creds.iter().find(|c| c["state"] == "active").unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        let (s, _) = t
+            .call(
+                &c,
+                Method::POST,
+                &format!("/api/segmentation/wifi/credentials/{cid}/revoke"),
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::OK);
+        let (s, _) = t
+            .call(
+                &c,
+                Method::POST,
+                &format!("/api/segmentation/wifi/credentials/{cid}/revoke"),
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "already revoked");
+        // enrolment network: the shared secret is shown only through the audited admin reveal
+        let (s, b) = t
+            .call(&c, Method::POST, "/api/segmentation/wifi/networks", Some(json!({"name": "guests", "ssid": "Guests", "ifname": "wlan1", "unknown_policy": "enrol"})))
+            .await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+        let nid = b["id"].as_i64().unwrap();
+        let (_, w) = t
+            .call(&c, Method::GET, "/api/segmentation/wifi", None)
+            .await;
+        let guests = w["networks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["name"] == "guests")
+            .unwrap()
+            .clone();
+        assert_eq!(guests["has_enrol_secret"], true);
+        assert!(guests.get("enrol_secret").is_none());
+        let (s, r) = t
+            .call(
+                &c,
+                Method::POST,
+                &format!("/api/segmentation/wifi/networks/{nid}/enrol-secret/reveal"),
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::OK, "{r}");
+        assert_eq!(r["secret"].as_str().unwrap().len(), 23);
+    }
+
+    #[tokio::test]
+    async fn bad_wifi_input_is_a_400_and_a_failed_apply_undoes_it() {
+        let t = setup().await;
+        let c = t.login("admin", ADMIN_PW).await;
+        for body in [
+            json!({"name": "x", "ssid": "bad\nssid", "ifname": "wlan0"}),
+            json!({"name": "x", "ssid": "ok", "ifname": "wlan0; reboot"}),
+            json!({"name": "x", "ssid": "ok", "ifname": "wlan0", "channel": 99}),
+            json!({"name": "x", "ssid": "ok", "ifname": "wlan0", "security": "open"}),
+            json!({"name": "x", "ssid": "ok", "ifname": "wlan0", "country": "usa"}),
+        ] {
+            let (s, b) = t
+                .call(
+                    &c,
+                    Method::POST,
+                    "/api/segmentation/wifi/networks",
+                    Some(body.clone()),
+                )
+                .await;
+            assert_eq!(s, StatusCode::BAD_REQUEST, "{body}: {b}");
+        }
+        net(&t, &c, "wpa3").await;
+        let (s, _) = t
+            .call(
+                &c,
+                Method::POST,
+                "/api/segmentation/wifi/devices",
+                Some(json!({"name": "phone", "network": "home"})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "WPA3-only needs a MAC");
+        t.fw.fail.store(true, Ordering::SeqCst);
+        let (s, _) = t
+            .call(
+                &c,
+                Method::POST,
+                "/api/segmentation/wifi/devices",
+                Some(json!({"name": "phone", "network": "home", "mac": "02:aa:00:00:00:21"})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::INTERNAL_SERVER_ERROR);
+        t.fw.fail.store(false, Ordering::SeqCst);
+        let (_, w) = t
+            .call(&c, Method::GET, "/api/segmentation/wifi", None)
+            .await;
+        assert_eq!(w["credentials"], json!([]), "rolled back");
+        let (_, d) = t
+            .call(&c, Method::GET, "/api/segmentation/devices", None)
+            .await;
+        assert_eq!(d, json!([]));
+    }
 }

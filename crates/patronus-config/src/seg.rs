@@ -22,16 +22,16 @@ use std::net::Ipv4Addr;
 pub const GROUP_HOME: &str = "home";
 pub const GROUP_QUARANTINE: &str = "quarantine";
 
-fn invalid(m: impl std::fmt::Display) -> Error {
+pub(crate) fn invalid(m: impl std::fmt::Display) -> Error {
     Error::Config(format!("Invalid {m}"))
 }
-fn db(what: &'static str) -> impl Fn(sqlx::Error) -> Error {
+pub(crate) fn db(what: &'static str) -> impl Fn(sqlx::Error) -> Error {
     move |e| Error::Config(format!("{what}: {e}"))
 }
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
-fn unique(e: sqlx::Error, what: &str) -> Error {
+pub(crate) fn unique(e: sqlx::Error, what: &str) -> Error {
     if e.to_string().contains("UNIQUE") {
         invalid(format!("request: {what} already exists"))
     } else {
@@ -95,7 +95,7 @@ pub fn check_segment(s: &str) -> Result<String> {
     })
 }
 
-fn check_v4(what: &str, s: &str) -> Result<Ipv4Addr> {
+pub(crate) fn check_v4(what: &str, s: &str) -> Result<Ipv4Addr> {
     let ip: Ipv4Addr = s
         .trim()
         .parse()
@@ -778,6 +778,18 @@ pub async fn create_device(store: &ConfigStore, i: &DeviceInput) -> Result<Devic
         .filter(|m| !m.trim().is_empty())
         .map(norm_mac)
         .transpose()?;
+    // re-enrolling a device whose old record was revoked: the MAC moves to the new record
+    if let Some(m) = &mac {
+        if let Some(old) = device_by_mac(store, m).await? {
+            if old.state == "revoked" {
+                sqlx::query("UPDATE seg_devices SET mac = NULL, ip4 = NULL WHERE id = ?")
+                    .bind(old.id)
+                    .execute(store.pool()?)
+                    .await
+                    .map_err(db("release the MAC of a revoked device"))?;
+            }
+        }
+    }
     let (state, ip, mapping) = match &mac {
         None => {
             if kind != "wifi" {
@@ -890,8 +902,17 @@ pub async fn revoke_device(store: &ConfigStore, id: i64) -> Result<Device> {
             .await
             .map_err(db("drop reservation"))?;
     }
+    // its Wi-Fi passphrases go with it (WPA2 entries leave the PSK file at the next apply)
     sqlx::query(
-        "UPDATE seg_devices SET state='revoked', revoked_at=?, dhcp_mapping_id=NULL WHERE id=?",
+        "UPDATE seg_wifi_creds SET state='revoked', revoked_at=? WHERE device_id=? AND state != 'revoked'",
+    )
+    .bind(now())
+    .bind(id)
+    .execute(store.pool()?)
+    .await
+    .map_err(db("revoke Wi-Fi credentials"))?;
+    sqlx::query(
+        "UPDATE seg_devices SET state='revoked', revoked_at=?, dhcp_mapping_id=NULL, last_ip=COALESCE(ip4, last_ip), ip4=NULL WHERE id=?",
     )
     .bind(now())
     .bind(id)
@@ -1337,6 +1358,63 @@ pub async fn adopt_host(
     }
 }
 
+/// A pending (Wi-Fi) device joined: learn its MAC and bind it. The address is
+/// `ip_hint` (its current DHCP lease) when that is free and inside the
+/// segment, else a fresh one outside the DHCP range; a reservation keeps it.
+/// Idempotent for the same MAC.
+pub async fn activate_pending(
+    store: &ConfigStore,
+    id: i64,
+    mac: &str,
+    ip_hint: Option<Ipv4Addr>,
+) -> Result<Device> {
+    let mac = norm_mac(mac)?;
+    let d = get_device(store, id)
+        .await?
+        .ok_or_else(|| Error::Config(format!("no device {id}")))?;
+    if d.state == "active" && d.mac.as_deref() == Some(mac.as_str()) {
+        return Ok(d);
+    }
+    if d.state != "pending" {
+        return Err(invalid(format!(
+            "device {}: it is {}, not pending",
+            d.name, d.state
+        )));
+    }
+    if let Some(o) = device_by_mac(store, &mac).await? {
+        return Err(invalid(format!("MAC {mac}: already the device {}", o.name)));
+    }
+    let (nets, own) = segment_v4(store, &d.segment).await?;
+    let taken = taken_ips(store).await?;
+    let ip = match ip_hint {
+        Some(h)
+            if nets
+                .iter()
+                .any(|n| n.contains(h) && n.net != h && n.broadcast() != h)
+                && !own.contains(&h)
+                && !taken.contains(&h) =>
+        {
+            h
+        }
+        _ => allocate_ip(store, &d.segment).await?,
+    };
+    let mapping = reserve(store, &d.segment, &d.name, &mac, ip).await?;
+    sqlx::query(
+        "UPDATE seg_devices SET mac=?, ip4=?, state='active', dhcp_mapping_id=?, activated_at=? WHERE id=?",
+    )
+    .bind(&mac)
+    .bind(ip.to_string())
+    .bind(mapping)
+    .bind(now())
+    .bind(id)
+    .execute(store.pool()?)
+    .await
+    .map_err(|e| unique(e, &format!("MAC or address of {}", d.name)))?;
+    get_device(store, id)
+        .await?
+        .ok_or_else(|| Error::Config("device vanished".into()))
+}
+
 /// Record that a device was seen (called by the discovery code).
 pub async fn touch(store: &ConfigStore, mac: &str, ip: &str) -> Result<()> {
     sqlx::query("UPDATE seg_devices SET last_seen = ?, last_ip = ? WHERE mac = ?")
@@ -1525,6 +1603,40 @@ mod tests {
             .is_err());
         delete_device(&s, d.id).await.unwrap();
         assert!(list_devices(&s).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_revoked_device_frees_its_mac_and_address_for_a_new_enrolment() {
+        let s = lab().await;
+        let old = create_device(&s, &dev("old-phone", "02:aa:00:00:00:61"))
+            .await
+            .unwrap();
+        let ip = old.ip4.clone().unwrap();
+        let r = revoke_device(&s, old.id).await.unwrap();
+        assert_eq!(
+            (r.ip4.clone(), r.last_ip.clone()),
+            (None, Some(ip.clone())),
+            "the address is released, the last one remembered"
+        );
+        let again = create_device(&s, &dev("new-phone", "02:AA:00:00:00:61"))
+            .await
+            .unwrap();
+        assert_eq!(again.state, "active");
+        assert_eq!(
+            again.ip4.as_deref(),
+            Some(ip.as_str()),
+            "the freed address is reusable"
+        );
+        let old = get_device(&s, old.id).await.unwrap().unwrap();
+        assert_eq!(
+            (old.state.as_str(), old.mac),
+            ("revoked", None),
+            "history kept, MAC moved"
+        );
+        // an ACTIVE device's MAC cannot be taken
+        assert!(create_device(&s, &dev("thief", "02:aa:00:00:00:61"))
+            .await
+            .is_err());
     }
 
     #[tokio::test]

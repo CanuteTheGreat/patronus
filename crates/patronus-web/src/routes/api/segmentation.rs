@@ -48,6 +48,7 @@ mod built {
         pub page: &'static str,
         pub can_modify: bool,
         pub wifi: bool,
+        pub is_admin: bool,
     }
 
     pub async fn page(me: crate::auth::AuthUser) -> Response {
@@ -55,6 +56,7 @@ mod built {
             page: "segmentation",
             can_modify: me.session.role.can_modify(),
             wifi: cfg!(feature = "wifi-ap"),
+            is_admin: me.session.role.is_admin(),
         };
         match t.render() {
             Ok(h) => Html(h).into_response(),
@@ -230,6 +232,157 @@ mod built {
         }
     }
 
+    #[cfg(feature = "wifi-ap")]
+    pub use wifi::wifi_router;
+    #[cfg(not(feature = "wifi-ap"))]
+    pub fn wifi_router() -> axum::Router<AppState> {
+        axum::Router::new()
+    }
+
+    /// Per-device Wi-Fi credentials (USE=wifi-ap).
+    #[cfg(feature = "wifi-ap")]
+    mod wifi {
+        use super::*;
+        use crate::auth::{AdminUser, AuthUser};
+        use patronus_config::seg_wifi::NetworkInput;
+
+        async fn overview(State(st): State<AppState>) -> Response {
+            match st.lan.wifi_overview().await {
+                Ok(v) => Json(v).into_response(),
+                Err(e) => err(e),
+            }
+        }
+        async fn add_network(State(st): State<AppState>, Json(i): Json<NetworkInput>) -> Response {
+            match st.lan.wifi_network_save(None, i).await {
+                Ok(id) => (StatusCode::CREATED, Json(json!({"id": id}))).into_response(),
+                Err(e) => err(e),
+            }
+        }
+        async fn put_network(
+            State(st): State<AppState>,
+            Path(id): Path<i64>,
+            Json(i): Json<NetworkInput>,
+        ) -> Response {
+            match st.lan.wifi_network_save(Some(id), i).await {
+                Ok(_) => Json(json!({"ok": true})).into_response(),
+                Err(e) => err(e),
+            }
+        }
+        async fn del_network(State(st): State<AppState>, Path(id): Path<i64>) -> Response {
+            match st.lan.wifi_network_delete(id).await {
+                Ok(()) => Json(json!({"ok": true})).into_response(),
+                Err(e) => err(e),
+            }
+        }
+        async fn rotate_enrol(State(st): State<AppState>, Path(id): Path<i64>) -> Response {
+            match st.lan.wifi_enrol_rotate(id).await {
+                Ok(v) => Json(v).into_response(),
+                Err(e) => err(e),
+            }
+        }
+        async fn reveal_enrol(
+            State(st): State<AppState>,
+            me: AdminUser,
+            Path(id): Path<i64>,
+        ) -> Response {
+            match st.lan.wifi_enrol_reveal(id, &me.session.username).await {
+                Ok(v) => Json(v).into_response(),
+                Err(e) => err(e),
+            }
+        }
+        #[derive(Deserialize)]
+        pub struct WifiDevice {
+            name: String,
+            network: String,
+            #[serde(default)]
+            mac: Option<String>,
+            #[serde(default)]
+            group: Option<String>,
+            #[serde(default)]
+            note: Option<String>,
+            #[serde(default)]
+            ip4: Option<String>,
+        }
+        async fn add_device(State(st): State<AppState>, Json(b): Json<WifiDevice>) -> Response {
+            let i = seg::DeviceInput {
+                name: b.name,
+                mac: b.mac,
+                group: b.group,
+                kind: Some("wifi".into()),
+                segment: None,
+                ip4: b.ip4,
+                note: b.note,
+            };
+            match st.lan.wifi_device_create(i, &b.network).await {
+                Ok(v) => (StatusCode::CREATED, Json(v)).into_response(),
+                Err(e) => err(e),
+            }
+        }
+        #[derive(Deserialize, Default)]
+        pub struct Rotate {
+            #[serde(default)]
+            grace_minutes: i64,
+        }
+        async fn rotate(
+            State(st): State<AppState>,
+            Path(id): Path<i64>,
+            body: Option<Json<Rotate>>,
+        ) -> Response {
+            let g = body.map(|b| b.0).unwrap_or_default().grace_minutes;
+            match st.lan.wifi_rotate(id, g.saturating_mul(60)).await {
+                Ok(v) => Json(v).into_response(),
+                Err(e) => err(e),
+            }
+        }
+        async fn revoke_cred(State(st): State<AppState>, Path(id): Path<i64>) -> Response {
+            match st.lan.wifi_revoke_credential(id).await {
+                Ok(()) => Json(json!({"ok": true})).into_response(),
+                Err(e) => err(e),
+            }
+        }
+        async fn reveal(
+            State(st): State<AppState>,
+            me: AdminUser,
+            Path(id): Path<i64>,
+        ) -> Response {
+            match st.lan.wifi_reveal(id, &me.session.username).await {
+                Ok(v) => Json(v).into_response(),
+                Err(e) => err(e),
+            }
+        }
+        async fn stations(State(st): State<AppState>, _me: AuthUser) -> Response {
+            match st.lan.wifi_stations().await {
+                Ok(v) => Json(v).into_response(),
+                Err(e) => err(e),
+            }
+        }
+        pub fn wifi_router() -> axum::Router<AppState> {
+            axum::Router::new()
+                .route("/segmentation/wifi", get(overview))
+                .route("/segmentation/wifi/networks", post(add_network))
+                .route(
+                    "/segmentation/wifi/networks/:id",
+                    put(put_network).delete(del_network),
+                )
+                .route(
+                    "/segmentation/wifi/networks/:id/enrol-secret/rotate",
+                    post(rotate_enrol),
+                )
+                .route(
+                    "/segmentation/wifi/networks/:id/enrol-secret/reveal",
+                    post(reveal_enrol),
+                )
+                .route("/segmentation/wifi/devices", post(add_device))
+                .route("/segmentation/wifi/devices/:id/rotate", post(rotate))
+                .route(
+                    "/segmentation/wifi/credentials/:id/revoke",
+                    post(revoke_cred),
+                )
+                .route("/segmentation/wifi/credentials/:id/reveal", post(reveal))
+                .route("/segmentation/wifi/stations", get(stations))
+        }
+    }
+
     pub fn router() -> axum::Router<AppState> {
         axum::Router::new()
             .route("/segmentation", get(overview))
@@ -261,7 +414,7 @@ mod built {
 
 #[cfg(feature = "segmentation")]
 pub fn router() -> axum::Router<AppState> {
-    built::router()
+    built::router().merge(built::wifi_router())
 }
 #[cfg(not(feature = "segmentation"))]
 pub fn router() -> axum::Router<AppState> {

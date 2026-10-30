@@ -21,4 +21,6 @@ pub mod tunnel;
 pub mod users;
 pub mod validate;
 pub mod web;
+#[cfg(feature = "wifi-ap")]
+pub mod wifi;
 pub mod ztp;

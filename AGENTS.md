@@ -121,6 +121,13 @@ config file that only one process knows about.
   `LanManager` (`state/segmentation.rs`: snapshot -> write -> apply segmentation, dhcp,
   firewall -> undo on failure); the `seg_*` tables are in `LAN_TABLES`. Wired devices behind
   an unmanaged switch cannot be isolated from each other (document, group them).
+- **Wi-Fi credentials (lane S, USE=wifi-ap):** `seg_wifi_networks` / `seg_wifi_creds` (migration 1310),
+  `patronus_config::seg_wifi` (store, enrolment binding), `patronus_network::wireless` (replaces the old
+  never-compiled generic AP manager; pure hostapd.conf / `wpa_psk_file` renderers + `WifiApplier`, one
+  supervised hostapd per network: WPA2 entries reload live, SAE entries restart it). First join of a
+  MAC-less device = `hostapd_cli -a` script -> `patronus wifi-event` (hidden CLI subcommand) -> bind MAC.
+  hwsim proof: `ci/netlab/wifi-hwsim.sh` (host-side: loads the host-global module, moves phys into the
+  container, runs `lane-s-wifi-hwsim.sh`; rw-man-02/03 only, one run at a time).
 - **Policy routing contract (B <-> E):** `firewall_rules.gateway` names a
   gateway or gateway group; lane E resolves it to an fwmark, lane B renders
   `meta mark set`.

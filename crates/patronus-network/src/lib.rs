@@ -109,6 +109,8 @@ pub mod seg;
 pub mod upnp;
 #[cfg(feature = "vrf")]
 pub mod vrf;
+#[cfg(feature = "wifi-ap")]
+pub mod wireless;
 
 #[cfg(feature = "intrusion-detection")]
 pub mod ids;

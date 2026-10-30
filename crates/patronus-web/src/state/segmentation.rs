@@ -18,8 +18,11 @@ fn e(e: patronus_core::Error) -> anyhow::Error {
 }
 
 /// Appliers a segmentation change must run, in order: L2 settings, DHCP
-/// reservations, then the firewall (which renders the nft table).
-const APPLIERS: &[&str] = &["segmentation", "dhcp", "firewall"];
+/// reservations, the firewall (which renders the nft table: a revoked device
+/// is cut here first, established connections included), then the Wi-Fi
+/// access point (PSK entries leave / join live; a revoked station is
+/// deauthenticated). Appliers a build does not have are skipped.
+pub(super) const APPLIERS: &[&str] = &["segmentation", "dhcp", "firewall", "wifi"];
 
 /// `ip -4 neigh show` lines -> (ip, device, mac) of entries that resolved.
 pub fn parse_neigh(text: &str) -> Vec<(String, String, String)> {

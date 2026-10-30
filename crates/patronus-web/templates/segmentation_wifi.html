@@ -1,1 +1,156 @@
-<script>/* Wi-Fi tab: filled in by the wifi-ap lane */</script>
+<script>
+    // ---- Wi-Fi tab: networks, devices with their own passphrase -------------------
+    let WIFI = null;
+    const IS_ADMIN = {% if is_admin %}true{% else %}false{% endif %};
+
+    function wifiCard(html) { const d = document.createElement('div'); d.innerHTML = html; return d; }
+    async function wifiLoad() {
+        const d = await api('GET', '/api/segmentation/wifi'); if (!d) return;
+        WIFI = d; wifiRender();
+    }
+    function wifiEl() { return document.getElementById('seg-wifi'); }
+    function mk(tag, props, ...kids) {
+        const e = document.createElement(tag);
+        for (const k in (props || {})) { if (k === 'text') e.textContent = props[k]; else if (k === 'onclick') e.onclick = props[k]; else if (k === 'class') e.className = props[k]; else e.setAttribute(k, props[k]); }
+        for (const c of kids) if (c) e.appendChild(c);
+        return e;
+    }
+    function field(label, input) { const l = document.createElement('label'); l.textContent = label; l.appendChild(input); return l; }
+    function sel(name, values, cur) { const s = document.createElement('select'); s.name = name; for (const v of values) { const o = document.createElement('option'); o.value = v; o.textContent = v; s.appendChild(o); } if (cur) s.value = cur; return s; }
+    function inp(name, ph, val, req) { const i = document.createElement('input'); i.name = name; if (ph) i.placeholder = ph; if (val !== undefined) i.value = val; if (req) i.required = true; return i; }
+
+    function wifiRender() {
+        const root = wifiEl(); root.innerHTML = '';
+        const d = WIFI, st = d.status || {};
+        if (st.hostapd_installed === false) root.appendChild(mk('div', {class: 'seg-note warn', text: 'hostapd is not installed on this router (emerge net-wireless/hostapd). Networks can be configured but the access point will not start.'}));
+        root.appendChild(mk('div', {class: 'seg-note', text: d.notes.wpa2 + ' ' + d.notes.pending}));
+        root.appendChild(mk('div', {class: 'seg-note warn', text: d.notes.wpa3 + ' ' + d.notes.random_mac}));
+
+        // issued secret (shown once)
+        root.appendChild(mk('div', {id: 'wifi-issued'}));
+
+        root.appendChild(mk('h3', {text: 'Networks'}));
+        const nt = mk('table', {class: 'lan'});
+        nt.appendChild(mk('thead', {}, (() => { const tr = document.createElement('tr'); for (const h of ['Name', 'SSID', 'Radio', 'Band / channel', 'Security', 'Unknown devices', 'State', '']) tr.appendChild(mk('th', {text: h})); return tr; })()));
+        const nb = document.createElement('tbody');
+        const radios = (st.radios || []);
+        for (const n of d.networks) {
+            const run = (st.networks || []).find(x => x.network === n.name);
+            const tr = document.createElement('tr');
+            for (const v of [n.name, n.ssid, n.ifname, n.band + ' / ' + n.channel, n.security + (n.restart_on_credential_change ? ' (credential changes restart the Wi-Fi)' : ''), n.unknown_policy]) tr.appendChild(mk('td', {text: v}));
+            const sc = document.createElement('td');
+            sc.appendChild(badge(!n.enabled ? 'disabled' : (run && run.running ? 'running' : 'stopped'), run && run.running ? 'on' : 'off'));
+            if (run && run.stations) sc.appendChild(document.createTextNode(' ' + run.stations.filter(x => x.authorized).length + ' station(s)'));
+            tr.appendChild(sc);
+            const ac = document.createElement('td');
+            if (CAN_MODIFY) {
+                if (n.unknown_policy === 'enrol') {
+                    ac.appendChild(btn('New enrolment secret', '', () => wifiAct('POST', '/api/segmentation/wifi/networks/' + n.id + '/enrol-secret/rotate', null, 'Enrolment secret')));
+                    if (IS_ADMIN) ac.appendChild(btn('Show enrolment secret', '', () => wifiAct('POST', '/api/segmentation/wifi/networks/' + n.id + '/enrol-secret/reveal', null, 'Enrolment secret')));
+                }
+                ac.appendChild(btn('Delete', 'danger', () => { if (confirm('Delete the network ' + n.name + '? Its devices lose their Wi-Fi credentials.')) segCall('DELETE', '/api/segmentation/wifi/networks/' + n.id).then(wifiLoad); }));
+            }
+            tr.appendChild(ac); nb.appendChild(tr);
+        }
+        nt.appendChild(nb);
+        const nw = mk('div', {class: 'seg-wrap'}, nt); root.appendChild(nw);
+        if (!d.networks.length) root.appendChild(mk('p', {class: 'empty', text: 'No Wi-Fi network yet. Add one below (a radio that supports AP mode and a bridge to join).'}));
+        if (CAN_MODIFY) {
+            const f = document.createElement('form'); f.className = 'lan-form';
+            const radioNames = []; for (const r of radios) for (const i of r.ifaces) radioNames.push(i);
+            const ifIn = inp('ifname', radioNames[0] || 'wlan0', radioNames[0] || '', true);
+            if (radioNames.length) ifIn.setAttribute('list', 'seg-radios');
+            const dl = document.createElement('datalist'); dl.id = 'seg-radios'; for (const r of radioNames) { const o = document.createElement('option'); o.value = r; dl.appendChild(o); }
+            f.appendChild(field('Name', inp('name', 'home', undefined, true)));
+            f.appendChild(field('SSID', inp('ssid', 'HomeNet', undefined, true)));
+            f.appendChild(field('Radio interface', ifIn)); f.appendChild(dl);
+            f.appendChild(field('Band', sel('band', ['2g', '5g'], '2g')));
+            f.appendChild(field('Channel', inp('channel', '6', '6')));
+            f.appendChild(field('Country', inp('country', 'US', 'US')));
+            f.appendChild(field('Security', sel('security', ['wpa2', 'wpa2_wpa3', 'wpa3'], 'wpa2')));
+            const segSel = document.createElement('select'); segSel.name = 'segment'; for (const s of (SEG ? SEG.segments : [])) { const o = document.createElement('option'); o.value = s.segment; o.textContent = s.segment; segSel.appendChild(o); }
+            f.appendChild(field('Joins segment (bridge)', segSel));
+            f.appendChild(field('Unknown devices', sel('unknown_policy', ['reject', 'enrol'], 'reject')));
+            f.appendChild(mk('button', {class: 'btn btn-primary', type: 'submit', text: 'Add network'}));
+            f.onsubmit = async (ev) => { ev.preventDefault(); const b = formBody(f); if (b.channel) b.channel = Number(b.channel); const r = await segCall('POST', '/api/segmentation/wifi/networks', b); if (r) wifiLoad(); return false; };
+            root.appendChild(f);
+        }
+
+        // devices with a Wi-Fi credential
+        root.appendChild(mk('h3', {text: 'Devices and passphrases'}));
+        const ct = mk('table', {class: 'lan'});
+        ct.appendChild(mk('thead', {}, (() => { const tr = document.createElement('tr'); for (const h of ['Device', 'Network', 'Kind', 'State', 'Expires', '']) tr.appendChild(mk('th', {text: h})); return tr; })()));
+        const cb = document.createElement('tbody');
+        for (const c of d.credentials) {
+            const tr = document.createElement('tr');
+            tr.appendChild(mk('td', {text: c.device})); tr.appendChild(mk('td', {text: c.network})); tr.appendChild(mk('td', {text: c.kind}));
+            const sc = document.createElement('td'); sc.appendChild(badge(c.state === 'pending' ? 'waiting for first join' : c.state, c.state === 'active' ? 'on' : c.state));
+            tr.appendChild(sc);
+            tr.appendChild(mk('td', {text: c.expires_at ? new Date(c.expires_at * 1000).toLocaleString() : ''}));
+            const ac = document.createElement('td');
+            if (c.state !== 'revoked') {
+                if (IS_ADMIN) ac.appendChild(btn('Show passphrase / QR', '', () => wifiAct('POST', '/api/segmentation/wifi/credentials/' + c.id + '/reveal', null, c.device)));
+                if (CAN_MODIFY) {
+                    ac.appendChild(btn('Rotate', '', () => { if (confirm('Give ' + c.device + ' a new passphrase? The old one stops working at once.')) wifiAct('POST', '/api/segmentation/wifi/devices/' + c.device_id + '/rotate', {grace_minutes: 0}, c.device); }));
+                    ac.appendChild(btn('Revoke', 'danger', () => { if (confirm('Revoke the passphrase of ' + c.device + '? It is disconnected from the Wi-Fi.')) segCall('POST', '/api/segmentation/wifi/credentials/' + c.id + '/revoke').then(wifiLoad); }));
+                }
+            }
+            tr.appendChild(ac); cb.appendChild(tr);
+        }
+        ct.appendChild(cb); root.appendChild(mk('div', {class: 'seg-wrap'}, ct));
+        if (!d.credentials.length) root.appendChild(mk('p', {class: 'empty', text: 'No device has a Wi-Fi passphrase yet.'}));
+        if (CAN_MODIFY && d.networks.length) {
+            const f = document.createElement('form'); f.className = 'lan-form';
+            f.appendChild(field('Device name', inp('name', 'kitchen-tablet', undefined, true)));
+            f.appendChild(field('Network', sel('network', d.networks.map(n => n.name))));
+            const gs = document.createElement('select'); gs.name = 'group'; for (const g of (SEG ? SEG.groups : []).filter(g => !g.quarantine)) { const o = document.createElement('option'); o.value = g.name; o.textContent = g.name; gs.appendChild(o); }
+            f.appendChild(field('Group', gs));
+            f.appendChild(field('MAC (optional: learned at the first join)', inp('mac', 'aa:bb:cc:dd:ee:ff')));
+            f.appendChild(mk('button', {class: 'btn btn-primary', type: 'submit', text: 'Create device and passphrase'}));
+            f.onsubmit = async (ev) => { ev.preventDefault(); await wifiAct('POST', '/api/segmentation/wifi/devices', formBody(f), 'New device'); f.reset(); return false; };
+            root.appendChild(f);
+        }
+        root.appendChild(mk('h3', {text: 'Connected stations'}));
+        root.appendChild(mk('div', {id: 'wifi-stations', class: 'seg-wrap'}));
+        wifiStations();
+    }
+
+    async function wifiStations() {
+        const s = await api('GET', '/api/segmentation/wifi/stations'); if (!s) return;
+        const el = document.getElementById('wifi-stations'); if (!el) return; el.innerHTML = '';
+        if (!s.length) { el.appendChild(mk('p', {class: 'empty', text: 'No station is connected (or the access point is not running).'})); return; }
+        const t = mk('table', {class: 'lan'});
+        t.appendChild(mk('thead', {}, (() => { const tr = document.createElement('tr'); for (const h of ['MAC', 'Network', 'Device', 'Group', 'Authorized']) tr.appendChild(mk('th', {text: h})); return tr; })()));
+        const b = document.createElement('tbody');
+        for (const x of s) { const tr = document.createElement('tr'); tr.appendChild(mk('td', {class: 'mono', text: x.mac})); tr.appendChild(mk('td', {text: x.network})); tr.appendChild(mk('td', {text: x.device || '(unknown: quarantine)'})); tr.appendChild(mk('td', {text: x.group || ''})); tr.appendChild(mk('td', {text: x.authorized ? 'yes' : 'no'})); b.appendChild(tr); }
+        t.appendChild(b); el.appendChild(t);
+    }
+
+    // POST something that answers with a secret: show it once, in the page, never in a URL
+    async function wifiAct(method, url, body, title) {
+        const r = await api(method, url, body === null ? {} : body); if (!r) return;
+        const box = document.getElementById('wifi-issued'); if (!box) { await wifiLoad(); return; }
+        box.innerHTML = '';
+        const card = mk('div', {class: 'seg-note'});
+        card.appendChild(mk('strong', {text: (title || 'Passphrase') + (r.ssid ? ' - join "' + r.ssid + '" with:' : ':')}));
+        card.appendChild(mk('pre', {class: 'seg-pre', text: r.secret}));
+        if (r.qr_svg) { const q = document.createElement('div'); q.style.maxWidth = '200px'; q.innerHTML = r.qr_svg; card.appendChild(q); }
+        if (r.note) card.appendChild(mk('div', {text: r.note}));
+        card.appendChild(btn('Hide', '', () => { box.innerHTML = ''; }));
+        box.appendChild(card);
+        await segLoad(); const keep = box.firstChild; await wifiLoadKeep(keep);
+    }
+    async function wifiLoadKeep(card) {
+        const d = await api('GET', '/api/segmentation/wifi'); if (!d) return;
+        WIFI = d; wifiRender(); const box = document.getElementById('wifi-issued'); if (box && card) box.appendChild(card);
+    }
+    // from the Discovered tab: approve an unknown station that joined with the enrolment secret
+    async function wifiApprove(mac, hostname) {
+        if (!WIFI) await wifiLoad();
+        const nets = (WIFI && WIFI.networks) || [];
+        if (!nets.length) { showError('Add a Wi-Fi network first.'); return; }
+        const name = prompt('Name for this device:', (hostname || '').toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 24) || 'new-device'); if (!name) return;
+        segTab('wifi');
+        await wifiAct('POST', '/api/segmentation/wifi/devices', {name, mac, network: (nets.find(n => n.unknown_policy === 'enrol') || nets[0]).name}, 'Personal passphrase for ' + name);
+    }
+</script>

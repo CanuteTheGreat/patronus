@@ -76,6 +76,9 @@ pub const LAN_TABLES: &[&str] = &[
     "seg_links",
     "seg_services",
     "seg_segments",
+    // per-device Wi-Fi credentials (USE=wifi-ap)
+    "seg_wifi_networks",
+    "seg_wifi_creds",
 ];
 
 pub(crate) fn db_err(what: &'static str) -> impl Fn(sqlx::Error) -> Error {
@@ -943,6 +946,8 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::vrf::VrfApplier));
     #[cfg(feature = "segmentation")]
     v.push(Arc::new(crate::seg::SegApplier::default()));
+    #[cfg(feature = "wifi-ap")]
+    v.push(Arc::new(crate::wireless::WifiApplier::default()));
     #[cfg(feature = "openvpn")]
     v.push(Arc::new(crate::openvpn_server::OpenVpnApplier::default()));
     #[cfg(feature = "web-proxy")]

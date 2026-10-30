@@ -1,0 +1,41 @@
+--- 6 radios (phy90 phy91 phy92 phy93 phy94 phy95) moved into seg-l1-build
+ok - booted: router LAN = br0, AP radios wlan0 / wlan1, stations sta1 sta2 sta3 sta4 (hwsim)
+ok - radio discovery: hwsim radios support AP mode on 2.4 GHz
+ok - hostapd started by Patronus on wlan0 (state=ENABLED), joined to br0
+ok - ap_isolate=1; hostapd.conf and the PSK file are 0600
+ok - each device has its own passphrase (23 chars each); listings never carry one
+ok - laptop with its own passphrase (associated)
+ok - phone with its own passphrase (associated)
+ok - stranger MAC with the laptop's passphrase (refused, state SCANNING)
+ok - phone with the LAPTOP's passphrase (refused, state SCANNING)
+ok - phone back with its own passphrase (associated)
+ok - revoked phone is no longer AUTHORIZED on the AP
+ok - revoked phone cannot come back with its old passphrase (state SCANNING)
+ok - the laptop is unaffected
+ok - hostapd was NOT restarted (same pid 70165): reload_wpa_psk + deauthenticate only
+ok - rotation cut the laptop that used the old passphrase
+ok - laptop with its NEW passphrase (associated)
+ok - the OLD laptop passphrase from another MAC (refused, state SCANNING)
+ok - pending device created: wildcard PSK entry keyid=dev-3
+ok - pending camera joins with its own passphrase (associated)
+ok - first join enrolled the device: MAC 02:00:00:00:05:00 learned from AP-STA-CONNECTED keyid=dev-3
+ok - the PSK entry is now bound to that MAC
+ok - the camera kept its link through the rewrite + live reload
+ok - another MAC with the camera's now-bound passphrase (refused, state SCANNING)
+ok - unknown device joins with the shared enrolment secret (associated)
+ok - unknown Wi-Fi station: associated, address on the LAN, can ping the router
+ok - unknown Wi-Fi station cannot reach the admin UI (8443) or SSH (22): quarantine input chain
+ok - unknown Wi-Fi station cannot reach another device
+ok - approved device joins with its personal passphrase (associated)
+ok - approved device is bound (192.168.50.4) and out of quarantine
+ok - WPA3-only network refuses a MAC-less device (SAE passwords are bound to a MAC)
+ok - a revoked device's MAC can be enrolled again as a new device
+ok - tablet with its own SAE password (no identifier needed) (associated)
+ok - another MAC with the tablet's SAE password (refused, state SCANNING)
+ok - adding an SAE device restarted hostapd (new pid): the documented WPA3 limitation, measured through the product
+ok - revoked tablet with its old SAE password (refused, state SCANNING)
+ok - the WPA2 network was not touched by the SAE restart
+=== reboot
+ok - after reboot: laptop joins with its (stored) passphrase (associated)
+ok - after reboot: the revoked phone stays revoked (refused, state SCANNING)
+PASS lane-s-wifi-hwsim

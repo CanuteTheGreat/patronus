@@ -1,704 +1,1268 @@
-//! Wireless/WiFi Management
+//! Wi-Fi access point with per-device credentials (USE=wifi-ap):
+//! hostapd configuration generated from the config store, one hostapd per
+//! enabled Wi-Fi network, plus the enrolment watcher.
 //!
-//! Provides enterprise WiFi access point functionality with support for
-//! multiple backends (hostapd, iwd) following the Gentoo philosophy of choice.
+//! This replaces an earlier, never-compiled generic access-point manager that
+//! wrote ONE shared passphrase for the whole AP. Here every device has its own
+//! passphrase bound to its MAC (docs/design/device-segmentation.md, section 5).
+//!
+//! What was measured on mac80211_hwsim with stock hostapd 2.10 and shapes this
+//! module:
+//! - WPA2 per-MAC entries of `wpa_psk_file` (`keyid=.. <mac> <passphrase>`)
+//!   reload live with `hostapd_cli reload_wpa_psk`; a revoked station is
+//!   removed with `deauthenticate <mac>`: no restart;
+//! - `sae_password=pw|mac=..|id=..` lines in hostapd.conf are read at start
+//!   only, so a change to the SAE entries restarts hostapd (debounced, all
+//!   stations reconnect);
+//! - a wildcard entry (`00:00:00:00:00:00`) lets a *pending* device join with
+//!   its own passphrase and hostapd reports `AP-STA-CONNECTED <mac>
+//!   keyid=dev-<id>`: `hostapd_cli -a <script>` hands that to
+//!   `patronus wifi-event`, which binds the MAC and rewrites the entry.
+//!
+//! The renderers are pure and validate everything they write (a passphrase
+//! with `|` would inject SAE options, a newline would add a config line).
 
-use patronus_core::{Result, Error};
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use tokio::process::Command;
-use std::net::IpAddr;
+use crate::supervise::{write_atomic, DaemonSpec, Supervisor};
+use async_trait::async_trait;
+use patronus_config::applier::{Applier, ApplyReport, Phase};
+use patronus_config::seg::{self, is_ifname, norm_mac};
+use patronus_config::seg_wifi::{self, check_psk, check_sae, ApCred, ApNet};
+use patronus_config::store::ConfigStore;
+use patronus_core::{Error, Result};
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Arc;
+use std::time::Duration;
 
-/// WiFi backend selection
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WirelessBackend {
-    /// hostapd - Full-featured, industry standard
-    Hostapd,
-    /// iwd - Modern, lightweight Intel implementation
-    Iwd,
+/// `supervise` service names (units/init scripts shipped in gentoo/.../files).
+pub const SVC_HOSTAPD: &str = "patronus-hostapd";
+pub const SVC_EVENTS: &str = "patronus-wifi-events";
+pub const DEFAULT_CTRL_DIR: &str = "/run/hostapd";
+/// Minimum time between two hostapd restarts caused by SAE changes.
+pub const RESTART_DEBOUNCE: Duration = Duration::from_secs(5);
+/// A MAC no station can have (multicast bit set): the placeholder entry that
+/// keeps hostapd's PSK / SAE configuration non-empty before the first device.
+const NOBODY: &str = "01:00:5e:7f:ff:fe";
+
+fn err(m: impl std::fmt::Display) -> Error {
+    Error::Network(format!("Wi-Fi: {m}"))
 }
 
-/// WiFi security mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SecurityMode {
-    Open,
-    WEP,
-    WPA,
-    WPA2,
-    WPA3,
-    WPA2WPA3Mixed,  // Transition mode
-    Enterprise,      // WPA2/WPA3-Enterprise (802.1X)
+// ---------------------------------------------------------------------------
+// rendering
+// ---------------------------------------------------------------------------
+
+fn check_key(c: &ApCred) -> Result<()> {
+    seg_wifi::parse_keyid(&c.keyid)
+        .map(|_| ())
+        .ok_or_else(|| err(format!("bad key id {:?}", c.keyid)))
 }
 
-/// WiFi frequency band
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FrequencyBand {
-    Band2_4GHz,
-    Band5GHz,
-    Band6GHz,  // WiFi 6E
-    Dual,      // Dual-band
+fn placeholder_secret(net: &ApNet) -> String {
+    // stable (no churn at every apply) and useless: the MAC it is bound to cannot exist
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    ("patronus-no-device", &net.network.ifname, &net.network.ssid).hash(&mut h);
+    format!("unused-{:016x}", h.finish())
 }
 
-/// WiFi channel width
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ChannelWidth {
-    Width20MHz,
-    Width40MHz,
-    Width80MHz,
-    Width160MHz,
-}
-
-/// WiFi country code for regulatory compliance
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CountryCode {
-    US,  // United States
-    GB,  // United Kingdom
-    DE,  // Germany
-    FR,  // France
-    JP,  // Japan
-    CN,  // China
-    AU,  // Australia
-    CA,  // Canada
-}
-
-/// Access Point configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AccessPointConfig {
-    pub enabled: bool,
-    pub backend: WirelessBackend,
-    pub interface: String,  // wlan0, etc.
-    pub bridge: Option<String>,  // br0 for bridged mode
-
-    // Basic settings
-    pub ssid: String,
-    pub hidden_ssid: bool,
-    pub security: SecurityMode,
-    pub passphrase: Option<String>,  // For WPA/WPA2/WPA3
-
-    // Radio settings
-    pub band: FrequencyBand,
-    pub channel: u8,  // 0 for auto
-    pub channel_width: ChannelWidth,
-    pub country_code: CountryCode,
-    pub tx_power: u8,  // dBm, 0 for max
-
-    // Advanced WiFi settings
-    pub ieee80211n: bool,  // WiFi 4 (N)
-    pub ieee80211ac: bool,  // WiFi 5 (AC)
-    pub ieee80211ax: bool,  // WiFi 6 (AX)
-    pub wmm_enabled: bool,  // QoS
-    pub require_ht: bool,   // Require HT (N) capabilities
-    pub require_vht: bool,  // Require VHT (AC) capabilities
-
-    // Client management
-    pub max_clients: u32,
-    pub client_isolation: bool,  // Prevent client-to-client communication
-    pub disassoc_low_ack: bool,  // Remove clients with poor signal
-
-    // Security features
-    pub macaddr_acl: MacAddrAcl,
-    pub mac_allow_list: Vec<String>,
-    pub mac_deny_list: Vec<String>,
-
-    // Advanced
-    pub dtim_period: u8,  // Delivery Traffic Indication Message
-    pub beacon_interval: u16,  // milliseconds
-    pub rts_threshold: u16,
-    pub fragm_threshold: u16,
-}
-
-/// Multiple SSID configuration (VLAN support)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MultiSsidConfig {
-    pub enabled: bool,
-    pub ssids: Vec<SsidConfig>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SsidConfig {
-    pub ssid: String,
-    pub vlan_id: Option<u16>,
-    pub security: SecurityMode,
-    pub passphrase: Option<String>,
-    pub hidden: bool,
-    pub max_clients: u32,
-    pub client_isolation: bool,
-}
-
-/// MAC address access control
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MacAddrAcl {
-    Disabled,
-    AllowList,  // Only listed MACs allowed
-    DenyList,   // Listed MACs denied
-}
-
-/// WPA Enterprise (802.1X) configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnterpriseConfig {
-    pub enabled: bool,
-    pub radius_server: IpAddr,
-    pub radius_port: u16,
-    pub radius_secret: String,
-    pub radius_auth_server: Option<IpAddr>,  // Backup
-    pub radius_acct_server: Option<IpAddr>,  // Accounting
-    pub eap_methods: Vec<EapMethod>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EapMethod {
-    PEAP,
-    TTLS,
-    TLS,
-    FAST,
-}
-
-/// WiFi client (station) information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WirelessClient {
-    pub mac_address: String,
-    pub ip_address: Option<IpAddr>,
-    pub hostname: Option<String>,
-    pub connected_at: chrono::DateTime<chrono::Utc>,
-    pub signal_strength: i8,  // dBm
-    pub tx_rate: u32,  // Mbps
-    pub rx_rate: u32,  // Mbps
-    pub tx_bytes: u64,
-    pub rx_bytes: u64,
-    pub tx_packets: u64,
-    pub rx_packets: u64,
-}
-
-/// Wireless statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WirelessStats {
-    pub interface: String,
-    pub ssid: String,
-    pub channel: u8,
-    pub frequency: u32,  // MHz
-    pub tx_power: u8,    // dBm
-    pub clients_connected: u32,
-    pub total_tx_bytes: u64,
-    pub total_rx_bytes: u64,
-    pub noise_floor: i8,  // dBm
-    pub channel_utilization: f32,  // Percentage
-}
-
-pub struct WirelessManager {
-    config: AccessPointConfig,
-    backend: WirelessBackend,
-}
-
-impl WirelessManager {
-    pub fn new(config: AccessPointConfig) -> Self {
-        Self {
-            backend: config.backend,
-            config,
+/// `wpa_psk_file` content: WPA2 entries only. Revoked credentials are not in
+/// [`ApNet::creds`], so their absence IS the revocation.
+pub fn render_psk_file(net: &ApNet) -> Result<String> {
+    let mut o = String::from("# generated by Patronus - do not edit\n");
+    let mut n = 0;
+    for c in &net.creds {
+        if !c.kind.contains("psk") {
+            continue;
         }
+        check_key(c)?;
+        check_psk(&c.secret).map_err(err)?;
+        let mac = match &c.mac {
+            Some(m) => norm_mac(m).map_err(err)?,
+            None => "00:00:00:00:00:00".to_string(),
+        };
+        o.push_str(&format!("keyid={} {} {}\n", c.keyid, mac, c.secret));
+        n += 1;
     }
+    if let Some(e) = &net.enrol_secret {
+        check_psk(e).map_err(err)?;
+        o.push_str(&format!("keyid=enrol 00:00:00:00:00:00 {e}\n"));
+        n += 1;
+    }
+    if n == 0 {
+        o.push_str(&format!(
+            "keyid=none {NOBODY} {}\n",
+            placeholder_secret(net)
+        ));
+    }
+    Ok(o)
+}
 
-    /// Configure wireless access point
-    pub async fn configure(&self) -> Result<()> {
-        match self.backend {
-            WirelessBackend::Hostapd => self.configure_hostapd().await,
-            WirelessBackend::Iwd => self.configure_iwd().await,
+/// The SAE password lines (they live in hostapd.conf and need a restart).
+fn render_sae_lines(net: &ApNet) -> Result<String> {
+    let mut o = String::new();
+    let mut n = 0;
+    for c in &net.creds {
+        if !c.kind.contains("sae") {
+            continue;
         }
+        check_key(c)?;
+        check_sae(&c.secret).map_err(err)?;
+        // SAE passwords are bound to a MAC: a pending device (no MAC) has none yet
+        let Some(mac) = &c.mac else { continue };
+        let mac = norm_mac(mac).map_err(err)?;
+        // no `id=`: the MAC selects the password, so phones without SAE
+        // password identifier support can join too
+        o.push_str(&format!("sae_password={}|mac={mac}\n", c.secret));
+        n += 1;
     }
-
-    /// Configure using hostapd backend
-    async fn configure_hostapd(&self) -> Result<()> {
-        tracing::info!("Configuring hostapd for {}", self.config.interface);
-
-        let config = self.generate_hostapd_config();
-        tokio::fs::write("/etc/hostapd/hostapd.conf", config).await?;
-
-        // Create systemd service
-        let service = r#"[Unit]
-Description=Hostapd IEEE 802.11 AP
-After=network.target
-
-[Service]
-Type=forking
-ExecStart=/usr/sbin/hostapd -B /etc/hostapd/hostapd.conf
-ExecReload=/bin/kill -HUP $MAINPID
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-"#;
-
-        tokio::fs::write("/etc/systemd/system/hostapd.service", service).await?;
-
-        // OpenRC init script
-        let initd = r#"#!/sbin/openrc-run
-
-description="Hostapd IEEE 802.11 AP"
-
-depend() {
-    need net
-    before firewall
+    if let Some(e) = &net.enrol_secret {
+        check_sae(e).map_err(err)?;
+        o.push_str(&format!("sae_password={e}|mac=ff:ff:ff:ff:ff:ff\n"));
+        n += 1;
+    }
+    if n == 0 {
+        o.push_str(&format!(
+            "sae_password={}|mac={NOBODY}\n",
+            placeholder_secret(net)
+        ));
+    }
+    Ok(o)
 }
 
-start() {
-    ebegin "Starting hostapd"
-    /usr/sbin/hostapd -B /etc/hostapd/hostapd.conf
-    eend $?
-}
-
-stop() {
-    ebegin "Stopping hostapd"
-    killall hostapd
-    eend $?
-}
-"#;
-
-        tokio::fs::write("/etc/init.d/hostapd", initd).await?;
-
-        #[cfg(unix)]
+/// `hostapd.conf` for one network. `bridge` is the resolved bridge interface
+/// the AP joins; `psk_path` the `wpa_psk_file`.
+pub fn render_hostapd(
+    net: &ApNet,
+    bridge: &str,
+    psk_path: &Path,
+    ctrl_dir: &Path,
+) -> Result<String> {
+    let n = &net.network;
+    if !is_ifname(&n.ifname) || !is_ifname(bridge) {
+        return Err(err("bad interface name"));
+    }
+    if n.ssid.is_empty()
+        || n.ssid.len() > 32
+        || !n.ssid.bytes().all(|b| b.is_ascii_graphic() || b == b' ')
+    {
+        return Err(err("bad SSID"));
+    }
+    for p in [psk_path, ctrl_dir] {
+        let s = p.to_string_lossy();
+        if s.bytes()
+            .any(|b| b.is_ascii_control() || b == b' ' || b == b'"')
         {
-            use std::os::unix::fs::PermissionsExt;
-            let metadata = tokio::fs::metadata("/etc/init.d/hostapd").await?;
-            let mut perms = metadata.permissions();
-            perms.set_mode(0o755);
-            tokio::fs::set_permissions("/etc/init.d/hostapd", perms).await?;
+            return Err(err(format!("unsafe path {s:?}")));
         }
-
-        Ok(())
     }
-
-    fn generate_hostapd_config(&self) -> String {
-        let mut config = format!(r#"# Hostapd Configuration
-# Generated by Patronus
-
-# Interface
-interface={}
-"#, self.config.interface);
-
-        // Bridge mode
-        if let Some(bridge) = &self.config.bridge {
-            config.push_str(&format!("bridge={}\n", bridge));
-        }
-
-        // Driver
-        config.push_str("driver=nl80211\n");
-
-        // SSID
-        config.push_str(&format!("ssid={}\n", self.config.ssid));
-        if self.config.hidden_ssid {
-            config.push_str("ignore_broadcast_ssid=1\n");
-        }
-
-        // Country code
-        config.push_str(&format!("country_code={:?}\n", self.config.country_code));
-
-        // Band and channel
-        match self.config.band {
-            FrequencyBand::Band2_4GHz => {
-                config.push_str("hw_mode=g\n");
-                config.push_str(&format!("channel={}\n", self.config.channel));
-            }
-            FrequencyBand::Band5GHz => {
-                config.push_str("hw_mode=a\n");
-                config.push_str(&format!("channel={}\n", if self.config.channel == 0 { 36 } else { self.config.channel }));
-            }
-            FrequencyBand::Band6GHz => {
-                config.push_str("hw_mode=a\n");
-                config.push_str("op_class=131\n");
-                config.push_str(&format!("channel={}\n", if self.config.channel == 0 { 5 } else { self.config.channel }));
-            }
-            FrequencyBand::Dual => {
-                config.push_str("hw_mode=g\n");
-                config.push_str(&format!("channel={}\n", self.config.channel));
-            }
-        }
-
-        // WiFi standards
-        if self.config.ieee80211n {
-            config.push_str("ieee80211n=1\n");
-            config.push_str(&format!("ht_capab=[{}]\n",
-                if self.config.channel_width == ChannelWidth::Width40MHz { "HT40+" } else { "HT20" }));
-        }
-
-        if self.config.ieee80211ac && self.config.band != FrequencyBand::Band2_4GHz {
-            config.push_str("ieee80211ac=1\n");
-            match self.config.channel_width {
-                ChannelWidth::Width80MHz => config.push_str("vht_oper_chwidth=1\n"),
-                ChannelWidth::Width160MHz => config.push_str("vht_oper_chwidth=2\n"),
-                _ => {}
-            }
-        }
-
-        if self.config.ieee80211ax {
-            config.push_str("ieee80211ax=1\n");
-        }
-
-        // WMM (QoS)
-        if self.config.wmm_enabled {
-            config.push_str("wmm_enabled=1\n");
-        }
-
-        // Security
-        match self.config.security {
-            SecurityMode::Open => {
-                // No security config needed
-            }
-            SecurityMode::WEP => {
-                config.push_str("auth_algs=1\n");
-                config.push_str("wep_default_key=0\n");
-                if let Some(pass) = &self.config.passphrase {
-                    config.push_str(&format!("wep_key0={}\n", pass));
-                }
-            }
-            SecurityMode::WPA => {
-                config.push_str("wpa=1\n");
-                config.push_str("wpa_key_mgmt=WPA-PSK\n");
-                config.push_str("wpa_pairwise=TKIP\n");
-                if let Some(pass) = &self.config.passphrase {
-                    config.push_str(&format!("wpa_passphrase={}\n", pass));
-                }
-            }
-            SecurityMode::WPA2 => {
-                config.push_str("wpa=2\n");
-                config.push_str("wpa_key_mgmt=WPA-PSK\n");
-                config.push_str("rsn_pairwise=CCMP\n");
-                if let Some(pass) = &self.config.passphrase {
-                    config.push_str(&format!("wpa_passphrase={}\n", pass));
-                }
-            }
-            SecurityMode::WPA3 => {
-                config.push_str("wpa=2\n");
-                config.push_str("wpa_key_mgmt=SAE\n");
-                config.push_str("rsn_pairwise=CCMP\n");
-                config.push_str("ieee80211w=2\n");  // Required for WPA3
-                if let Some(pass) = &self.config.passphrase {
-                    config.push_str(&format!("sae_password={}\n", pass));
-                }
-            }
-            SecurityMode::WPA2WPA3Mixed => {
-                config.push_str("wpa=2\n");
-                config.push_str("wpa_key_mgmt=WPA-PSK SAE\n");
-                config.push_str("rsn_pairwise=CCMP\n");
-                config.push_str("ieee80211w=1\n");  // Optional for transition
-                if let Some(pass) = &self.config.passphrase {
-                    config.push_str(&format!("wpa_passphrase={}\n", pass));
-                    config.push_str(&format!("sae_password={}\n", pass));
-                }
-            }
-            SecurityMode::Enterprise => {
-                config.push_str("wpa=2\n");
-                config.push_str("wpa_key_mgmt=WPA-EAP\n");
-                config.push_str("rsn_pairwise=CCMP\n");
-                config.push_str("ieee8021x=1\n");
-                // RADIUS config would go here
-            }
-        }
-
-        // MAC filtering
-        match self.config.macaddr_acl {
-            MacAddrAcl::Disabled => {}
-            MacAddrAcl::AllowList => {
-                config.push_str("macaddr_acl=1\n");
-                config.push_str("accept_mac_file=/etc/hostapd/accept_mac\n");
-            }
-            MacAddrAcl::DenyList => {
-                config.push_str("macaddr_acl=0\n");
-                config.push_str("deny_mac_file=/etc/hostapd/deny_mac\n");
-            }
-        }
-
-        // Client limits
-        config.push_str(&format!("max_num_sta={}\n", self.config.max_clients));
-
-        // Client isolation
-        if self.config.client_isolation {
-            config.push_str("ap_isolate=1\n");
-        }
-
-        // Advanced settings
-        config.push_str(&format!("dtim_period={}\n", self.config.dtim_period));
-        config.push_str(&format!("beacon_int={}\n", self.config.beacon_interval));
-        config.push_str(&format!("rts_threshold={}\n", self.config.rts_threshold));
-        config.push_str(&format!("fragm_threshold={}\n", self.config.fragm_threshold));
-
-        // Logging
-        config.push_str("logger_syslog=-1\n");
-        config.push_str("logger_syslog_level=2\n");
-
-        config
+    let hw_mode = match n.band.as_str() {
+        "2g" => "g",
+        "5g" => "a",
+        b => return Err(err(format!("band {b:?} is not supported"))),
+    };
+    let (psk, sae) = match n.security.as_str() {
+        "wpa2" => (true, false),
+        "wpa2_wpa3" => (true, true),
+        "wpa3" => (false, true),
+        s => return Err(err(format!("security {s:?}"))),
+    };
+    if n.country.len() != 2 || !n.country.bytes().all(|b| b.is_ascii_uppercase()) {
+        return Err(err("bad country code"));
     }
-
-    /// Configure using iwd backend
-    async fn configure_iwd(&self) -> Result<()> {
-        tracing::info!("Configuring iwd for {}", self.config.interface);
-
-        // iwd uses a simpler configuration format
-        let config = format!(r#"[General]
-EnableNetworkConfiguration=true
-
-[Security]
-{}
-
-[IPv4]
-{}
-"#,
-            self.generate_iwd_security(),
-            if self.config.bridge.is_some() { "Method=shared" } else { "Method=static" }
-        );
-
-        tokio::fs::create_dir_all("/etc/iwd").await?;
-        tokio::fs::write("/etc/iwd/main.conf", config).await?;
-
-        // Create AP network file
-        let ap_config = self.generate_iwd_ap_config();
-        let ap_file = format!("/var/lib/iwd/{}.ap", self.config.interface);
-        tokio::fs::write(&ap_file, ap_config).await?;
-
-        Ok(())
+    let mut km = Vec::new();
+    if psk {
+        km.push("WPA-PSK");
     }
+    if sae {
+        km.push("SAE");
+    }
+    let mut o = String::from("# generated by Patronus - do not edit\n");
+    o.push_str(&format!(
+        "interface={}\ndriver=nl80211\nbridge={bridge}\nssid={}\nctrl_interface={}\nctrl_interface_group=0\n",
+        n.ifname,
+        n.ssid,
+        ctrl_dir.display()
+    ));
+    o.push_str(&format!(
+        "country_code={}\nieee80211d=1\nhw_mode={hw_mode}\nchannel={}\nieee80211n=1\n",
+        n.country, n.channel
+    ));
+    o.push_str(&format!(
+        "auth_algs=1\nwpa=2\nrsn_pairwise=CCMP\nwpa_key_mgmt={}\n",
+        km.join(" ")
+    ));
+    o.push_str(if sae && !psk {
+        "ieee80211w=2\n"
+    } else {
+        "ieee80211w=1\n"
+    });
+    if sae {
+        o.push_str("sae_pwe=2\n");
+    }
+    o.push_str("# stations may only talk through the router\n");
+    o.push_str(
+        "ap_isolate=1\nmulticast_to_unicast=1\ntdls_prohibit=1\nwpa_disable_eapol_key_retries=1\n",
+    );
+    if psk {
+        o.push_str(&format!("wpa_psk_file={}\n", psk_path.display()));
+    }
+    if sae {
+        o.push_str(&render_sae_lines(net)?);
+    }
+    Ok(o)
+}
 
-    fn generate_iwd_security(&self) -> String {
-        match self.config.security {
-            SecurityMode::WPA2 | SecurityMode::WPA3 => {
-                if let Some(pass) = &self.config.passphrase {
-                    format!("Passphrase={}", pass)
+/// The script `hostapd_cli -a` runs for every event: only a station joining
+/// with a Patronus key id is handed on.
+pub fn render_event_script(patronus: &Path, db: &Path) -> Result<String> {
+    for p in [patronus, db] {
+        let s = p.to_string_lossy();
+        if s.bytes()
+            .any(|b| b.is_ascii_control() || matches!(b, b' ' | b'\'' | b'"' | b'\\' | b'$' | b'`'))
+        {
+            return Err(err(format!("unsafe path {s:?}")));
+        }
+    }
+    Ok(format!(
+        "#!/bin/sh\n# generated by Patronus (Wi-Fi applier): enrolment events from hostapd\n\
+         [ \"$2\" = \"AP-STA-CONNECTED\" ] || exit 0\n\
+         mac=\"$3\"; keyid=\"\"\n\
+         for a in \"$@\"; do case \"$a\" in keyid=*) keyid=\"${{a#keyid=}}\" ;; esac; done\n\
+         [ -n \"$keyid\" ] || exit 0\n\
+         exec '{}' --db '{}' wifi-event \"$1\" \"$mac\" \"$keyid\"\n",
+        patronus.display(),
+        db.display()
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// radios
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+pub struct Radio {
+    pub phy: String,
+    pub ifaces: Vec<String>,
+    /// supports AP mode
+    pub ap: bool,
+    /// `2g` / `5g`
+    pub bands: Vec<String>,
+}
+
+/// `iw phy <phy> info` -> (AP mode supported, bands).
+pub fn parse_iw_phy(text: &str) -> (bool, Vec<String>) {
+    let mut ap = false;
+    let mut in_modes = false;
+    let mut bands = Vec::new();
+    for l in text.lines() {
+        let t = l.trim();
+        if t.starts_with("Supported interface modes") {
+            in_modes = true;
+            continue;
+        }
+        if in_modes {
+            if let Some(m) = t.strip_prefix("* ") {
+                if m.trim() == "AP" {
+                    ap = true;
+                }
+                continue;
+            }
+            in_modes = false;
+        }
+        // "* 2412.0 MHz [1] (20.0 dBm)" inside the Frequencies list
+        if let Some(f) = t.strip_prefix("* ") {
+            if let Some(mhz) = f
+                .split_whitespace()
+                .next()
+                .and_then(|v| v.parse::<f64>().ok())
+            {
+                let b = if (2400.0..2500.0).contains(&mhz) {
+                    "2g"
+                } else if (5000.0..5900.0).contains(&mhz) {
+                    "5g"
                 } else {
-                    String::new()
-                }
-            }
-            _ => String::new(),
-        }
-    }
-
-    fn generate_iwd_ap_config(&self) -> String {
-        format!(r#"[Security]
-{}
-
-[Settings]
-SSID={}
-Channel={}
-"#,
-            self.generate_iwd_security(),
-            self.config.ssid,
-            self.config.channel
-        )
-    }
-
-    /// Start wireless access point
-    pub async fn start(&self) -> Result<()> {
-        match self.backend {
-            WirelessBackend::Hostapd => {
-                let status = Command::new("hostapd")
-                    .args(&["-B", "/etc/hostapd/hostapd.conf"])
-                    .status()
-                    .await?;
-
-                if !status.success() {
-                    return Err(Error::Network("Failed to start hostapd".to_string()));
-                }
-            }
-            WirelessBackend::Iwd => {
-                let status = Command::new("iwctl")
-                    .args(&["ap", &self.config.interface, "start", &self.config.ssid])
-                    .status()
-                    .await?;
-
-                if !status.success() {
-                    return Err(Error::Network("Failed to start iwd AP".to_string()));
+                    continue;
+                };
+                if !bands.contains(&b.to_string()) {
+                    bands.push(b.to_string());
                 }
             }
         }
-
-        Ok(())
     }
+    (ap, bands)
+}
 
-    /// Stop wireless access point
-    pub async fn stop(&self) -> Result<()> {
-        match self.backend {
-            WirelessBackend::Hostapd => {
-                Command::new("killall")
-                    .arg("hostapd")
-                    .status()
-                    .await?;
-            }
-            WirelessBackend::Iwd => {
-                Command::new("iwctl")
-                    .args(&["ap", &self.config.interface, "stop"])
-                    .status()
-                    .await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Get connected clients
-    pub async fn get_clients(&self) -> Result<Vec<WirelessClient>> {
-        match self.backend {
-            WirelessBackend::Hostapd => self.get_hostapd_clients().await,
-            WirelessBackend::Iwd => self.get_iwd_clients().await,
-        }
-    }
-
-    async fn get_hostapd_clients(&self) -> Result<Vec<WirelessClient>> {
-        // Query hostapd_cli for station list
-        let output = Command::new("hostapd_cli")
-            .args(&["-i", &self.config.interface, "all_sta"])
-            .output()
-            .await?;
-
-        let output_str = String::from_utf8_lossy(&output.stdout);
-
-        // Parse output (simplified - production would be more robust)
-        let mut clients = Vec::new();
-
-        for line in output_str.lines() {
-            if line.len() == 17 && line.contains(':') {
-                // Looks like a MAC address
-                clients.push(WirelessClient {
-                    mac_address: line.to_string(),
-                    ip_address: None,
-                    hostname: None,
-                    connected_at: chrono::Utc::now(),
-                    signal_strength: -50,
-                    tx_rate: 0,
-                    rx_rate: 0,
-                    tx_bytes: 0,
-                    rx_bytes: 0,
-                    tx_packets: 0,
-                    rx_packets: 0,
-                });
+/// Wi-Fi radios of this machine (empty where there is no `/sys/class/ieee80211`).
+pub fn radios() -> Vec<Radio> {
+    let Ok(rd) = std::fs::read_dir("/sys/class/ieee80211") else {
+        return Vec::new();
+    };
+    let mut phys: Vec<String> = rd
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    phys.sort_by_key(|p| {
+        p.trim_start_matches("phy")
+            .parse::<u32>()
+            .unwrap_or(u32::MAX)
+    });
+    let mut out = Vec::new();
+    for phy in phys {
+        let mut ifaces: Vec<String> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir("/sys/class/net") {
+            for e in rd.flatten() {
+                let n = e.file_name().to_string_lossy().to_string();
+                let on_phy = std::fs::read_link(e.path().join("phy80211"))
+                    .ok()
+                    .and_then(|p| p.file_name().map(|f| f.to_string_lossy() == phy.as_str()))
+                    .unwrap_or(false);
+                if on_phy {
+                    ifaces.push(n);
+                }
             }
         }
-
-        Ok(clients)
-    }
-
-    async fn get_iwd_clients(&self) -> Result<Vec<WirelessClient>> {
-        // Query iwd for connected stations
-        let output = Command::new("iwctl")
-            .args(&["ap", &self.config.interface, "show"])
+        ifaces.sort();
+        let (ap, bands) = Command::new("iw")
+            .args(["phy", &phy, "info"])
             .output()
-            .await?;
-
-        let output_str = String::from_utf8_lossy(&output.stdout);
-
-        // Parse output
-        let clients = Vec::new();
-        // Would parse iwd output here
-
-        Ok(clients)
+            .map(|o| parse_iw_phy(&String::from_utf8_lossy(&o.stdout)))
+            .unwrap_or((false, Vec::new()));
+        out.push(Radio {
+            phy,
+            ifaces,
+            ap,
+            bands,
+        });
     }
+    out
+}
 
-    /// Get wireless statistics
-    pub async fn get_stats(&self) -> Result<WirelessStats> {
-        let output = Command::new("iw")
-            .args(&["dev", &self.config.interface, "info"])
+// ---------------------------------------------------------------------------
+// hostapd control
+// ---------------------------------------------------------------------------
+
+/// `hostapd_cli` (a fake in tests).
+pub trait HostapdCtl: Send + Sync {
+    fn cmd(&self, ctrl_dir: &Path, ifname: &str, args: &[&str]) -> Result<String>;
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemCtl;
+
+impl HostapdCtl for SystemCtl {
+    fn cmd(&self, ctrl_dir: &Path, ifname: &str, args: &[&str]) -> Result<String> {
+        if !is_ifname(ifname) || args.iter().any(|a| a.bytes().any(|b| b.is_ascii_control())) {
+            return Err(err("bad hostapd_cli arguments"));
+        }
+        let o = Command::new("hostapd_cli")
+            .arg("-p")
+            .arg(ctrl_dir)
+            .args(["-i", ifname])
+            .args(args)
             .output()
-            .await?;
+            .map_err(|e| err(format!("hostapd_cli: {e}")))?;
+        let out = String::from_utf8_lossy(&o.stdout).to_string();
+        if o.status.success() && !out.contains("FAIL") {
+            Ok(out)
+        } else {
+            Err(err(format!(
+                "hostapd_cli {}: {}{}",
+                args.join(" "),
+                out.trim(),
+                String::from_utf8_lossy(&o.stderr).trim()
+            )))
+        }
+    }
+}
 
-        let output_str = String::from_utf8_lossy(&output.stdout);
+/// `hostapd_cli all_sta` -> (MAC, authorized).
+pub fn parse_all_sta(text: &str) -> Vec<(String, bool)> {
+    let mut out: Vec<(String, bool)> = Vec::new();
+    for l in text.lines() {
+        let t = l.trim();
+        if t.len() == 17 && t.bytes().filter(|b| *b == b':').count() == 5 && !t.contains('=') {
+            out.push((t.to_ascii_lowercase(), false));
+        } else if let (Some(f), Some(last)) = (t.strip_prefix("flags="), out.last_mut()) {
+            last.1 = f.contains("[AUTHORIZED]");
+        }
+    }
+    out
+}
 
-        // Parse channel, frequency, etc.
-        Ok(WirelessStats {
-            interface: self.config.interface.clone(),
-            ssid: self.config.ssid.clone(),
-            channel: self.config.channel,
-            frequency: 2437,  // Would parse from output
-            tx_power: self.config.tx_power,
-            clients_connected: 0,
-            total_tx_bytes: 0,
-            total_rx_bytes: 0,
-            noise_floor: -95,
-            channel_utilization: 0.0,
+/// mac -> passphrase of the entries bound to a real MAC.
+fn macs_of(psk: &str) -> BTreeMap<String, String> {
+    psk.lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            (f.len() == 3 && f[0].starts_with("keyid=") && f[1] != "00:00:00:00:00:00")
+                .then(|| (f[1].to_string(), f[2].to_string()))
         })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// applier
+// ---------------------------------------------------------------------------
+
+/// Applier of the `wifi` subsystem (boot phase `services`).
+#[derive(Clone)]
+pub struct WifiApplier {
+    sup: Supervisor,
+    ctl: Arc<dyn HostapdCtl>,
+    /// generated configs and PSK files
+    dir: PathBuf,
+    ctrl_dir: PathBuf,
+    hostapd: Option<PathBuf>,
+    hostapd_cli: Option<PathBuf>,
+    patronus: Option<PathBuf>,
+    debounce: Duration,
+}
+
+impl Default for WifiApplier {
+    fn default() -> Self {
+        let sup = Supervisor::detect();
+        let dir = sup.paths.state_dir.join("hostapd");
+        Self {
+            sup,
+            ctl: Arc::new(SystemCtl),
+            dir,
+            ctrl_dir: PathBuf::from(
+                std::env::var("PATRONUS_HOSTAPD_CTRL").unwrap_or_else(|_| DEFAULT_CTRL_DIR.into()),
+            ),
+            hostapd: None,
+            hostapd_cli: None,
+            patronus: None,
+            debounce: RESTART_DEBOUNCE,
+        }
+    }
+}
+
+impl WifiApplier {
+    pub fn with_parts(
+        sup: Supervisor,
+        ctl: Arc<dyn HostapdCtl>,
+        dir: PathBuf,
+        ctrl_dir: PathBuf,
+    ) -> Self {
+        Self {
+            sup,
+            ctl,
+            dir,
+            ctrl_dir,
+            hostapd: None,
+            hostapd_cli: None,
+            patronus: None,
+            debounce: RESTART_DEBOUNCE,
+        }
+    }
+    pub fn binaries(mut self, hostapd: PathBuf, cli: PathBuf, patronus: PathBuf) -> Self {
+        self.hostapd = Some(hostapd);
+        self.hostapd_cli = Some(cli);
+        self.patronus = Some(patronus);
+        self
+    }
+    pub fn debounce(mut self, d: Duration) -> Self {
+        self.debounce = d;
+        self
     }
 
-    /// Scan for available channels (site survey)
-    pub async fn scan_channels(&self) -> Result<Vec<ChannelInfo>> {
-        let output = Command::new("iw")
-            .args(&["dev", &self.config.interface, "scan"])
-            .output()
-            .await?;
-
-        let output_str = String::from_utf8_lossy(&output.stdout);
-
-        // Parse scan results
-        Ok(vec![])  // Would parse channel usage data
+    fn hostapd_bin(&self) -> Option<PathBuf> {
+        self.hostapd
+            .clone()
+            .or_else(|| crate::supervise::which("hostapd"))
+    }
+    fn cli_bin(&self) -> Option<PathBuf> {
+        self.hostapd_cli
+            .clone()
+            .or_else(|| crate::supervise::which("hostapd_cli"))
+    }
+    fn patronus_bin(&self) -> PathBuf {
+        self.patronus
+            .clone()
+            .or_else(|| std::env::var_os("PATRONUS_BIN").map(PathBuf::from))
+            .or_else(|| crate::supervise::which("patronus"))
+            .unwrap_or_else(|| PathBuf::from("/usr/bin/patronus"))
     }
 
-    /// Configure multiple SSIDs (requires backend support)
-    pub async fn configure_multi_ssid(&self, multi_config: &MultiSsidConfig) -> Result<()> {
-        if self.backend != WirelessBackend::Hostapd {
-            return Err(Error::Config("Multi-SSID requires hostapd backend".to_string()));
+    /// (conf, psk, event script, restart stamp)
+    fn files(&self, name: &str) -> [PathBuf; 4] {
+        [
+            self.dir.join(format!("{name}.conf")),
+            self.dir.join(format!("{name}.psk")),
+            self.dir.join(format!("{name}.events.sh")),
+            self.dir.join(format!("{name}.restarted")),
+        ]
+    }
+
+    async fn bridge_of(&self, store: &ConfigStore, segment: &str) -> Option<String> {
+        let ifs = seg::resolve_segment(store, segment).await.ok()?;
+        ifs.into_iter()
+            .find(|i| Path::new("/sys/class/net").join(i).join("bridge").exists() || cfg!(test))
+    }
+
+    fn debounce_wait(&self, stamp: &Path) {
+        let last = std::fs::read_to_string(stamp)
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let wait = (last + self.debounce.as_secs()).saturating_sub(now);
+        if wait > 0 {
+            std::thread::sleep(Duration::from_secs(wait.min(self.debounce.as_secs())));
         }
+    }
+}
 
-        // Generate hostapd config with multiple BSS sections
-        let mut config = self.generate_hostapd_config();
+#[async_trait]
+impl Applier for WifiApplier {
+    fn name(&self) -> &'static str {
+        "wifi"
+    }
+    fn phase(&self) -> Phase {
+        Phase::Services
+    }
 
-        for (idx, ssid_config) in multi_config.ssids.iter().enumerate() {
-            config.push_str(&format!("\n# SSID {}\n", idx + 1));
-            config.push_str(&format!("bss={}.{}\n", self.config.interface, idx + 1));
-            config.push_str(&format!("ssid={}\n", ssid_config.ssid));
-
-            if let Some(vlan) = ssid_config.vlan_id {
-                config.push_str(&format!("vlan_id={}\n", vlan));
-            }
-
-            if ssid_config.client_isolation {
-                config.push_str("ap_isolate=1\n");
-            }
-
-            config.push_str(&format!("max_num_sta={}\n", ssid_config.max_clients));
+    async fn apply(&self, store: &ConfigStore) -> Result<ApplyReport> {
+        let mut rep = ApplyReport::default();
+        let at = chrono::Utc::now().timestamp();
+        // pending devices that never joined stop being usable (and are revoked)
+        let expired = seg_wifi::expire_pending(store, at).await?;
+        if expired > 0 {
+            rep.applied(format!(
+                "{expired} unused pending Wi-Fi credential(s) expired"
+            ));
         }
+        let nets = seg_wifi::ap_config(store, at).await?;
+        let wanted: Vec<String> = nets.iter().map(|n| n.network.name.clone()).collect();
+        // a network that was switched off or deleted: stop it, forget its files
+        for inst in self.sup.instances(SVC_HOSTAPD) {
+            if !wanted.contains(&inst) {
+                self.sup.stop(SVC_HOSTAPD, &inst).await?;
+                self.sup.stop(SVC_EVENTS, &inst).await?;
+                for f in self.files(&inst) {
+                    let _ = std::fs::remove_file(f);
+                }
+                rep.applied(format!("Wi-Fi network {inst} stopped"));
+            }
+        }
+        if nets.is_empty() {
+            if rep.applied.is_empty() {
+                rep.applied("no Wi-Fi networks configured (hostapd untouched)".to_string());
+            }
+            return Ok(rep);
+        }
+        let Some(hostapd) = self.hostapd_bin() else {
+            return Err(err(
+                "hostapd is not installed (emerge net-wireless/hostapd, USE=wifi-ap)",
+            ));
+        };
+        let cli = self.cli_bin();
+        for net in &nets {
+            let n = &net.network;
+            let Some(bridge) = self.bridge_of(store, &n.segment).await else {
+                rep.warn(format!(
+                    "Wi-Fi network {}: its segment {} has no bridge interface, not started",
+                    n.name, n.segment
+                ));
+                continue;
+            };
+            let [conf_path, psk_path, script_path, stamp] = self.files(&n.name);
+            let conf = render_hostapd(net, &bridge, &psk_path, &self.ctrl_dir)?;
+            let psk = render_psk_file(net)?;
+            let old_psk = std::fs::read_to_string(&psk_path).unwrap_or_default();
+            let psk_changed = old_psk != psk;
+            let spec = DaemonSpec {
+                service: SVC_HOSTAPD,
+                instance: n.name.clone(),
+                argv: vec![
+                    hostapd.to_string_lossy().into(),
+                    conf_path.to_string_lossy().into(),
+                ],
+                files: vec![(conf_path.clone(), conf, 0o600)],
+            };
+            // the PSK file first: a (re)started hostapd must read the new one
+            write_atomic(&psk_path, &psk, 0o600)?;
+            let was_running = self.sup.is_running(SVC_HOSTAPD, &n.name);
+            if was_running && !self.sup.up_to_date(&spec) {
+                self.debounce_wait(&stamp);
+            }
+            let restarted = self.sup.ensure(&spec).await?;
+            if restarted {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let _ = write_atomic(&stamp, &now.to_string(), 0o600);
+                rep.applied(format!(
+                    "Wi-Fi {}: hostapd {} on {} (SSID {:?}, {} device credential(s))",
+                    n.name,
+                    if was_running {
+                        "restarted (SAE entries changed)"
+                    } else {
+                        "started"
+                    },
+                    n.ifname,
+                    n.ssid,
+                    net.creds.len()
+                ));
+            } else if psk_changed {
+                // live: re-read the PSK file, cut whoever lost their entry or passphrase
+                let new = macs_of(&psk);
+                let old = macs_of(&old_psk);
+                match self.ctl.cmd(&self.ctrl_dir, &n.ifname, &["reload_wpa_psk"]) {
+                    Ok(_) => {
+                        for (mac, secret) in &old {
+                            if new.get(mac) != Some(secret) {
+                                if let Err(e) = self.ctl.cmd(
+                                    &self.ctrl_dir,
+                                    &n.ifname,
+                                    &["deauthenticate", mac],
+                                ) {
+                                    rep.warn(format!(
+                                        "Wi-Fi {}: deauthenticate {mac}: {e}",
+                                        n.name
+                                    ));
+                                }
+                            }
+                        }
+                        rep.applied(format!(
+                            "Wi-Fi {}: PSK file reloaded live ({} MAC-bound entr{}, no restart)",
+                            n.name,
+                            new.len(),
+                            if new.len() == 1 { "y" } else { "ies" }
+                        ));
+                    }
+                    Err(e) => rep.warn(format!(
+                        "Wi-Fi {}: could not reload the PSK file: {e}",
+                        n.name
+                    )),
+                }
+            } else {
+                rep.applied(format!("Wi-Fi {}: unchanged", n.name));
+            }
+            // the enrolment watcher (hostapd_cli -a) follows the daemon
+            if let Some(cli) = &cli {
+                let script = render_event_script(&self.patronus_bin(), store.path())?;
+                let ev = DaemonSpec {
+                    service: SVC_EVENTS,
+                    instance: n.name.clone(),
+                    argv: vec![
+                        cli.to_string_lossy().into(),
+                        "-p".into(),
+                        self.ctrl_dir.to_string_lossy().into(),
+                        "-i".into(),
+                        n.ifname.clone(),
+                        "-a".into(),
+                        script_path.to_string_lossy().into(),
+                    ],
+                    files: vec![(script_path.clone(), script, 0o700)],
+                };
+                self.sup.ensure(&ev).await?;
+            } else {
+                rep.warn(format!(
+                    "Wi-Fi {}: hostapd_cli not found, first-join enrolment is not watched",
+                    n.name
+                ));
+            }
+        }
+        Ok(rep)
+    }
 
-        tokio::fs::write("/etc/hostapd/hostapd.conf", config).await?;
+    async fn render(&self, store: &ConfigStore) -> Result<String> {
+        let at = chrono::Utc::now().timestamp();
+        let mut o = String::new();
+        for net in seg_wifi::ap_config(store, at).await? {
+            let name = net.network.name.clone();
+            let [conf, psk, _, _] = self.files(&name);
+            let bridge = self
+                .bridge_of(store, &net.network.segment)
+                .await
+                .unwrap_or_else(|| "br0".into());
+            // the secrets are what a dry run must not print
+            let redacted = |t: String| -> String {
+                let mut out = String::new();
+                for l in t.lines() {
+                    let l = if let Some(rest) = l.strip_prefix("sae_password=") {
+                        let tail = rest.split_once('|').map(|(_, t)| t).unwrap_or("");
+                        format!("sae_password=<redacted>|{tail}")
+                    } else if l.starts_with("keyid=") {
+                        let f: Vec<&str> = l.split_whitespace().collect();
+                        if f.len() == 3 {
+                            format!("{} {} <redacted>", f[0], f[1])
+                        } else {
+                            l.to_string()
+                        }
+                    } else {
+                        l.to_string()
+                    };
+                    out.push_str(&l);
+                    out.push('\n');
+                }
+                out
+            };
+            o.push_str(&format!("## {} ({})\n", conf.display(), name));
+            o.push_str(&redacted(render_hostapd(
+                &net,
+                &bridge,
+                &psk,
+                &self.ctrl_dir,
+            )?));
+            o.push_str(&format!("## {}\n", psk.display()));
+            o.push_str(&redacted(render_psk_file(&net)?));
+        }
+        if o.is_empty() {
+            o.push_str("# no Wi-Fi networks configured\n");
+        }
+        Ok(o)
+    }
 
+    async fn status(&self, store: &ConfigStore) -> Result<Value> {
+        let mut nets = Vec::new();
+        for n in seg_wifi::list_networks(store).await? {
+            let running = self.sup.is_running(SVC_HOSTAPD, &n.name);
+            let stations: Vec<Value> = if running {
+                self.ctl
+                    .cmd(&self.ctrl_dir, &n.ifname, &["all_sta"])
+                    .map(|t| {
+                        parse_all_sta(&t)
+                            .into_iter()
+                            .map(|(m, a)| json!({"mac": m, "authorized": a}))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            nets.push(json!({
+                "network": n.name, "ifname": n.ifname, "running": running,
+                "enabled": n.enabled, "stations": stations,
+            }));
+        }
+        Ok(json!({
+            "hostapd_installed": self.hostapd_bin().is_some(),
+            "networks": nets,
+            "radios": radios(),
+        }))
+    }
+
+    async fn teardown(&self) -> Result<()> {
+        for inst in self.sup.instances(SVC_HOSTAPD) {
+            self.sup.stop(SVC_HOSTAPD, &inst).await?;
+            self.sup.stop(SVC_EVENTS, &inst).await?;
+        }
         Ok(())
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelInfo {
-    pub channel: u8,
-    pub frequency: u32,
-    pub utilization: f32,
-    pub nearby_aps: u32,
-    pub max_power: u8,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::supervise::{InitMode, NetPaths};
+    use patronus_config::seg::DeviceInput;
+    use patronus_config::seg_wifi::{create_network, create_wifi_device, NetworkInput};
+    use std::sync::Mutex;
 
-impl Default for AccessPointConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            backend: WirelessBackend::Hostapd,
-            interface: "wlan0".to_string(),
-            bridge: None,
-            ssid: "Patronus-WiFi".to_string(),
-            hidden_ssid: false,
-            security: SecurityMode::WPA2,
-            passphrase: Some("changeme123".to_string()),
-            band: FrequencyBand::Band2_4GHz,
-            channel: 6,
-            channel_width: ChannelWidth::Width20MHz,
-            country_code: CountryCode::US,
-            tx_power: 0,  // Max
-            ieee80211n: true,
-            ieee80211ac: false,
-            ieee80211ax: false,
-            wmm_enabled: true,
-            require_ht: false,
-            require_vht: false,
-            max_clients: 50,
-            client_isolation: false,
-            disassoc_low_ack: true,
-            macaddr_acl: MacAddrAcl::Disabled,
-            mac_allow_list: vec![],
-            mac_deny_list: vec![],
-            dtim_period: 2,
-            beacon_interval: 100,
-            rts_threshold: 2347,
-            fragm_threshold: 2346,
+    fn apnet(security: &str, creds: Vec<ApCred>, enrol: Option<&str>) -> ApNet {
+        ApNet {
+            network: seg_wifi::Network {
+                id: 1,
+                name: "home".into(),
+                ifname: "wlan0".into(),
+                ssid: "HomeNet".into(),
+                band: "2g".into(),
+                channel: 6,
+                country: "US".into(),
+                security: security.into(),
+                segment: "@lan".into(),
+                unknown_policy: if enrol.is_some() { "enrol" } else { "reject" }.into(),
+                has_enrol_secret: enrol.is_some(),
+                enabled: true,
+                restart_on_credential_change: security != "wpa2",
+            },
+            enrol_secret: enrol.map(str::to_string),
+            creds,
         }
+    }
+    fn cred(id: i64, mac: Option<&str>, kind: &str, secret: &str) -> ApCred {
+        ApCred {
+            keyid: format!("dev-{id}"),
+            mac: mac.map(str::to_string),
+            kind: kind.into(),
+            secret: secret.into(),
+        }
+    }
+
+    #[test]
+    fn psk_file_has_one_entry_per_mac_and_a_wildcard_for_pending_devices() {
+        let n = apnet(
+            "wpa2",
+            vec![
+                cred(1, Some("02:aa:00:00:00:11"), "psk", "laptop-psk-4f9c2e71"),
+                cred(2, None, "psk", "pending-psk-71be09d3"),
+            ],
+            Some("enrol-secret-123"),
+        );
+        let p = render_psk_file(&n).unwrap();
+        assert!(
+            p.contains("keyid=dev-1 02:aa:00:00:00:11 laptop-psk-4f9c2e71\n"),
+            "{p}"
+        );
+        assert!(p.contains("keyid=dev-2 00:00:00:00:00:00 pending-psk-71be09d3\n"));
+        assert!(p.contains("keyid=enrol 00:00:00:00:00:00 enrol-secret-123\n"));
+    }
+
+    #[test]
+    fn an_empty_network_gets_an_unusable_placeholder_so_hostapd_still_starts() {
+        let p = render_psk_file(&apnet("wpa2", vec![], None)).unwrap();
+        assert!(p.contains("keyid=none 01:00:5e:7f:ff:fe unused-"), "{p}");
+        assert_eq!(
+            p,
+            render_psk_file(&apnet("wpa2", vec![], None)).unwrap(),
+            "stable: no reload churn"
+        );
+        let c = render_hostapd(
+            &apnet("wpa3", vec![], None),
+            "br0",
+            Path::new("/x/p.psk"),
+            Path::new("/run/hostapd"),
+        )
+        .unwrap();
+        assert!(
+            c.contains("sae_password=unused-") && c.contains("|mac=01:00:5e:7f:ff:fe\n"),
+            "{c}"
+        );
+    }
+
+    #[test]
+    fn hostapd_conf_per_security_mode() {
+        let creds = vec![cred(
+            1,
+            Some("02:aa:00:00:00:11"),
+            "psk+sae",
+            "laptop-both-8d31b0aa",
+        )];
+        let psk = Path::new("/var/lib/patronus/net/hostapd/home.psk");
+        let ctrl = Path::new("/run/hostapd");
+        let w2 = render_hostapd(&apnet("wpa2", creds.clone(), None), "br0", psk, ctrl).unwrap();
+        assert!(
+            w2.contains("wpa_key_mgmt=WPA-PSK\n") && w2.contains("ieee80211w=1\n"),
+            "{w2}"
+        );
+        assert!(
+            w2.contains("wpa_psk_file=/var/lib/patronus/net/hostapd/home.psk")
+                && !w2.contains("sae_password")
+                && !w2.contains("sae_pwe")
+        );
+        assert!(
+            w2.contains("bridge=br0")
+                && w2.contains("ap_isolate=1")
+                && w2.contains("ctrl_interface=/run/hostapd")
+        );
+        assert!(w2.contains("hw_mode=g\nchannel=6\n") && w2.contains("country_code=US"));
+        let mix =
+            render_hostapd(&apnet("wpa2_wpa3", creds.clone(), None), "br0", psk, ctrl).unwrap();
+        assert!(
+            mix.contains("wpa_key_mgmt=WPA-PSK SAE\n")
+                && mix.contains("sae_pwe=2")
+                && mix.contains("ieee80211w=1\n"),
+            "{mix}"
+        );
+        assert!(mix.contains("sae_password=laptop-both-8d31b0aa|mac=02:aa:00:00:00:11\n"));
+        let w3 = render_hostapd(&apnet("wpa3", creds, None), "br0", psk, ctrl).unwrap();
+        assert!(
+            w3.contains("wpa_key_mgmt=SAE\n")
+                && w3.contains("ieee80211w=2\n")
+                && !w3.contains("wpa_psk_file"),
+            "{w3}"
+        );
+        // a psk-only credential never appears as an SAE line
+        let only = render_hostapd(
+            &apnet(
+                "wpa2_wpa3",
+                vec![cred(
+                    1,
+                    Some("02:aa:00:00:00:11"),
+                    "psk",
+                    "laptop-psk-4f9c2e71",
+                )],
+                None,
+            ),
+            "br0",
+            psk,
+            ctrl,
+        )
+        .unwrap();
+        assert!(!only.contains("sae_password=laptop"), "{only}");
+        // a pending transition device has a PSK entry but no SAE one (SAE is bound to a MAC)
+        let pend = apnet(
+            "wpa2_wpa3",
+            vec![cred(2, None, "psk+sae", "pending-both-71be09d3")],
+            None,
+        );
+        assert!(render_psk_file(&pend)
+            .unwrap()
+            .contains("keyid=dev-2 00:00:00:00:00:00 pending-both-71be09d3"));
+        assert!(!render_hostapd(&pend, "br0", psk, ctrl)
+            .unwrap()
+            .contains("sae_password=pending"));
+    }
+
+    #[test]
+    fn hostile_input_cannot_inject_config_lines() {
+        let psk = Path::new("/p.psk");
+        let ctrl = Path::new("/run/hostapd");
+        let long = "x".repeat(81);
+        for bad in [
+            "abc|mac=00:00:00:00:00:00",
+            "short",
+            "has space 1234",
+            "new\nline12345",
+            long.as_str(),
+        ] {
+            let n = apnet(
+                "wpa3",
+                vec![cred(1, Some("02:aa:00:00:00:11"), "sae", bad)],
+                None,
+            );
+            assert!(render_hostapd(&n, "br0", psk, ctrl).is_err(), "{bad:?}");
+        }
+        let n = apnet(
+            "wpa2",
+            vec![cred(1, Some("02:aa:00:00:00:11"), "psk", "bad passphrase")],
+            None,
+        );
+        assert!(render_psk_file(&n).is_err());
+        let mut n = apnet("wpa2", vec![], None);
+        n.network.ssid = "x\nwpa=0".into();
+        assert!(render_hostapd(&n, "br0", psk, ctrl).is_err());
+        let mut n = apnet("wpa2", vec![], None);
+        n.network.ifname = "wlan0\nbridge=x".into();
+        assert!(render_hostapd(&n, "br0", psk, ctrl).is_err());
+        assert!(render_hostapd(&apnet("wpa2", vec![], None), "br0\nx", psk, ctrl).is_err());
+        assert!(render_hostapd(
+            &apnet("wpa2", vec![], None),
+            "br0",
+            Path::new("/a b/p"),
+            ctrl
+        )
+        .is_err());
+        let n = apnet(
+            "wpa2",
+            vec![cred(
+                1,
+                Some("zz:aa:00:00:00:11"),
+                "psk",
+                "laptop-psk-4f9c2e71",
+            )],
+            None,
+        );
+        assert!(render_psk_file(&n).is_err(), "bad MAC");
+        let mut c = cred(1, Some("02:aa:00:00:00:11"), "psk", "laptop-psk-4f9c2e71");
+        c.keyid = "laptop".into();
+        assert!(
+            render_psk_file(&apnet("wpa2", vec![c], None)).is_err(),
+            "only dev-<id> key ids"
+        );
+        let mut n = apnet("wpa2", vec![], None);
+        n.network.band = "6g".into();
+        assert!(render_hostapd(&n, "br0", psk, ctrl).is_err());
+        assert!(render_event_script(
+            Path::new("/usr/bin/patronus"),
+            Path::new("/x'; rm -rf /; '/db")
+        )
+        .is_err());
+        let s = render_event_script(
+            Path::new("/usr/bin/patronus"),
+            Path::new("/var/lib/patronus/config.db"),
+        )
+        .unwrap();
+        assert!(
+            s.contains("AP-STA-CONNECTED")
+                && s.contains("wifi-event")
+                && s.starts_with("#!/bin/sh")
+        );
+    }
+
+    #[test]
+    fn parses_iw_and_all_sta_output() {
+        let iw = "Wiphy phy1\n\tSupported interface modes:\n\t\t * IBSS\n\t\t * managed\n\t\t * AP\n\t\t * AP/VLAN\n\tBand 1:\n\t\tFrequencies:\n\t\t\t* 2412.0 MHz [1] (20.0 dBm)\n\t\t\t* 2417.0 MHz [2] (20.0 dBm)\n\tBand 2:\n\t\tFrequencies:\n\t\t\t* 5180.0 MHz [36] (20.0 dBm)\n\tSupported commands:\n\t\t * new_interface\n";
+        assert_eq!(
+            parse_iw_phy(iw),
+            (true, vec!["2g".to_string(), "5g".to_string()])
+        );
+        assert_eq!(
+            parse_iw_phy("Supported interface modes:\n * managed\n"),
+            (false, vec![])
+        );
+        let sta = "02:00:00:00:01:00\nflags=[AUTH][ASSOC][AUTHORIZED]\nrx_packets=1\n02:00:00:00:02:00\nflags=[AUTH][ASSOC]\n";
+        assert_eq!(
+            parse_all_sta(sta),
+            vec![
+                ("02:00:00:00:01:00".to_string(), true),
+                ("02:00:00:00:02:00".to_string(), false)
+            ]
+        );
+    }
+
+    // ---- the applier against a fake hostapd ---------------------------------
+
+    #[derive(Default)]
+    struct FakeCtl {
+        log: Mutex<Vec<String>>,
+    }
+    impl HostapdCtl for FakeCtl {
+        fn cmd(&self, _c: &Path, i: &str, a: &[&str]) -> Result<String> {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("{i} {}", a.join(" ")));
+            Ok("OK\n".into())
+        }
+    }
+
+    struct Lab {
+        _d: tempfile::TempDir,
+        apply: WifiApplier,
+        ctl: Arc<FakeCtl>,
+        dir: PathBuf,
+        store: ConfigStore,
+    }
+
+    fn fake_bin(p: &Path) {
+        // no `exec`: the process keeps the script's name, which the supervisor checks
+        std::fs::write(p, "#!/bin/sh\nsleep 300\n").unwrap();
+        std::fs::set_permissions(p, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    }
+
+    async fn lab() -> Lab {
+        let d = tempfile::tempdir().unwrap();
+        let fake = d.path().join("hostapd");
+        fake_bin(&fake);
+        let cli = d.path().join("hostapd_cli");
+        fake_bin(&cli);
+        let ctl = Arc::new(FakeCtl::default());
+        let paths = NetPaths::under(d.path());
+        let dir = d.path().join("hostapd-files");
+        let apply = WifiApplier::with_parts(
+            Supervisor::new(InitMode::Direct, paths),
+            ctl.clone(),
+            dir.clone(),
+            d.path().join("ctrl"),
+        )
+        .binaries(fake, cli, PathBuf::from("/usr/bin/patronus"))
+        .debounce(Duration::from_secs(0));
+        let store = ConfigStore::open_in_memory().await.unwrap();
+        sqlx::query(
+            "INSERT INTO interfaces (name, enabled, role, updated_at) VALUES ('br0',1,'lan',0)",
+        )
+        .execute(store.pool().unwrap())
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO interface_addresses (interface_name, address, prefix_len, family) VALUES ('br0','192.168.50.1',24,'ipv4')")
+            .execute(store.pool().unwrap())
+            .await
+            .unwrap();
+        Lab {
+            _d: d,
+            apply,
+            ctl,
+            dir,
+            store,
+        }
+    }
+
+    fn net_in(security: &str) -> NetworkInput {
+        NetworkInput {
+            name: "home".into(),
+            ifname: "wlan0".into(),
+            ssid: "HomeNet".into(),
+            security: Some(security.into()),
+            ..Default::default()
+        }
+    }
+    fn dev(name: &str, mac: &str) -> DeviceInput {
+        DeviceInput {
+            name: name.into(),
+            mac: Some(mac.into()),
+            ..Default::default()
+        }
+    }
+    fn pid(l: &Lab) -> String {
+        std::fs::read_to_string(l.apply.sup.paths.run_dir.join("patronus-hostapd.home.pid"))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn no_networks_touches_nothing_and_needs_no_hostapd() {
+        let l = lab().await;
+        let r = l.apply.apply(&l.store).await.unwrap();
+        assert!(r.applied[0].contains("no Wi-Fi networks"), "{r:?}");
+        assert!(!l.dir.exists());
+    }
+
+    #[tokio::test]
+    async fn wpa2_credential_changes_reload_the_psk_file_and_never_restart_hostapd() {
+        let l = lab().await;
+        create_network(&l.store, &net_in("wpa2")).await.unwrap();
+        let a = create_wifi_device(&l.store, &dev("laptop", "02:aa:00:00:00:11"), "home")
+            .await
+            .unwrap();
+        let r = l.apply.apply(&l.store).await.unwrap();
+        assert!(r.applied.iter().any(|x| x.contains("started")), "{r:?}");
+        let pid1 = pid(&l);
+        let psk = std::fs::read_to_string(l.dir.join("home.psk")).unwrap();
+        assert!(
+            psk.contains(&format!(
+                "keyid=dev-{} 02:aa:00:00:00:11 {}",
+                a.device.id, a.secret
+            )),
+            "{psk}"
+        );
+        let mode = std::fs::metadata(l.dir.join("home.conf"))
+            .unwrap()
+            .permissions();
+        assert_eq!(
+            std::os::unix::fs::PermissionsExt::mode(&mode) & 0o777,
+            0o600
+        );
+        // no change: nothing
+        l.ctl.log.lock().unwrap().clear();
+        let r = l.apply.apply(&l.store).await.unwrap();
+        assert!(r.applied.iter().any(|x| x.contains("unchanged")), "{r:?}");
+        assert!(l.ctl.log.lock().unwrap().is_empty());
+        // a second device joins the list: live reload, same process
+        let b = create_wifi_device(&l.store, &dev("phone", "02:aa:00:00:00:12"), "home")
+            .await
+            .unwrap();
+        let r = l.apply.apply(&l.store).await.unwrap();
+        assert!(
+            r.applied.iter().any(|x| x.contains("reloaded live")),
+            "{r:?}"
+        );
+        assert_eq!(
+            l.ctl.log.lock().unwrap().clone(),
+            vec!["wlan0 reload_wpa_psk".to_string()]
+        );
+        assert_eq!(pid(&l), pid1, "no restart");
+        // revoke the phone: reload + deauthenticate exactly that MAC, still no restart
+        l.ctl.log.lock().unwrap().clear();
+        seg::revoke_device(&l.store, b.device.id).await.unwrap();
+        l.apply.apply(&l.store).await.unwrap();
+        assert_eq!(
+            l.ctl.log.lock().unwrap().clone(),
+            vec![
+                "wlan0 reload_wpa_psk".to_string(),
+                "wlan0 deauthenticate 02:aa:00:00:00:12".to_string()
+            ]
+        );
+        assert!(!std::fs::read_to_string(l.dir.join("home.psk"))
+            .unwrap()
+            .contains("02:aa:00:00:00:12"));
+        assert_eq!(pid(&l), pid1);
+        // rotation with an immediate revoke cuts the station that used the old passphrase
+        l.ctl.log.lock().unwrap().clear();
+        seg_wifi::rotate(&l.store, a.device.id, 0).await.unwrap();
+        l.apply.apply(&l.store).await.unwrap();
+        let log = l.ctl.log.lock().unwrap().clone();
+        assert!(
+            log.contains(&"wlan0 deauthenticate 02:aa:00:00:00:11".to_string()),
+            "{log:?}"
+        );
+        // teardown stops it
+        l.apply.teardown().await.unwrap();
+        assert!(!l.apply.sup.is_running(SVC_HOSTAPD, "home"));
+    }
+
+    #[tokio::test]
+    async fn sae_changes_restart_hostapd() {
+        let l = lab().await;
+        create_network(&l.store, &net_in("wpa2_wpa3"))
+            .await
+            .unwrap();
+        create_wifi_device(&l.store, &dev("laptop", "02:aa:00:00:00:11"), "home")
+            .await
+            .unwrap();
+        l.apply.apply(&l.store).await.unwrap();
+        let pid1 = pid(&l);
+        let conf = std::fs::read_to_string(l.dir.join("home.conf")).unwrap();
+        assert!(
+            conf.contains("|mac=02:aa:00:00:00:11\n") && !conf.contains("|id="),
+            "{conf}"
+        );
+        // a new device with an SAE credential changes hostapd.conf: restart
+        create_wifi_device(&l.store, &dev("phone", "02:aa:00:00:00:12"), "home")
+            .await
+            .unwrap();
+        let r = l.apply.apply(&l.store).await.unwrap();
+        assert!(
+            r.applied
+                .iter()
+                .any(|x| x.contains("restarted (SAE entries changed)")),
+            "{r:?}"
+        );
+        assert_ne!(pid(&l), pid1, "new process");
+        l.apply.teardown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_segment_without_a_bridge_is_a_warning_not_a_start() {
+        let l = lab().await;
+        create_network(
+            &l.store,
+            &NetworkInput {
+                segment: Some("@opt7".into()),
+                ..net_in("wpa2")
+            },
+        )
+        .await
+        .unwrap();
+        let r = l.apply.apply(&l.store).await.unwrap();
+        assert!(
+            r.warnings.iter().any(|w| w.contains("no bridge interface")),
+            "{r:?}"
+        );
+        assert!(!l.apply.sup.is_running(SVC_HOSTAPD, "home"));
+    }
+
+    #[tokio::test]
+    async fn dry_run_never_prints_a_secret() {
+        let l = lab().await;
+        create_network(&l.store, &net_in("wpa2_wpa3"))
+            .await
+            .unwrap();
+        let a = create_wifi_device(&l.store, &dev("laptop", "02:aa:00:00:00:11"), "home")
+            .await
+            .unwrap();
+        let t = l.apply.render(&l.store).await.unwrap();
+        assert!(
+            t.contains("keyid=dev-1 02:aa:00:00:00:11 <redacted>")
+                && t.contains("sae_password=<redacted>|mac=02:aa:00:00:00:11"),
+            "{t}"
+        );
+        assert!(!t.contains(&a.secret));
+    }
+
+    #[tokio::test]
+    async fn a_disabled_network_is_stopped_and_its_files_removed() {
+        let l = lab().await;
+        let id = create_network(&l.store, &net_in("wpa2")).await.unwrap();
+        create_wifi_device(&l.store, &dev("laptop", "02:aa:00:00:00:11"), "home")
+            .await
+            .unwrap();
+        l.apply.apply(&l.store).await.unwrap();
+        assert!(l.apply.sup.is_running(SVC_HOSTAPD, "home"));
+        let mut up = net_in("wpa2");
+        up.enabled = Some(false);
+        seg_wifi::update_network(&l.store, id, &up).await.unwrap();
+        let r = l.apply.apply(&l.store).await.unwrap();
+        assert!(r.applied.iter().any(|x| x.contains("stopped")), "{r:?}");
+        assert!(!l.apply.sup.is_running(SVC_HOSTAPD, "home") && !l.dir.join("home.psk").exists());
     }
 }

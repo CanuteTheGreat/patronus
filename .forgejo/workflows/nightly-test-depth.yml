@@ -20,7 +20,7 @@ on:
         required: false
         default: 'auto'
       only:
-        description: 'run just one job (mutants or netlab-deep) to re-check it; empty = both'
+        description: 'run just one job (mutants, netlab-deep or wifi-hwsim) to re-check it; empty = all'
         required: false
         default: ''
   schedule:
@@ -43,7 +43,7 @@ defaults:
 jobs:
   mutants:
     name: Mutation testing (core modules, score floors)
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.only != 'netlab-deep'
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.only == '' || github.event.inputs.only == 'mutants'
     # shared mutation/chaos lane (x86 slots on rw-man-01..05 since 2026-10-18,
     # ctg-infrastructure ci-runners/README.md); jobs that must stay on colo set CI_COLO_ONLY=1.
     runs-on: mutation-x86_64
@@ -102,7 +102,7 @@ jobs:
 
   netlab-deep:
     name: Deep netlab (previous-release upgrade, 30 power cuts)
-    if: github.event_name != 'workflow_dispatch' || github.event.inputs.only != 'mutants'
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.only == '' || github.event.inputs.only == 'netlab-deep'
     # shared mutation/chaos lane (x86 slots on rw-man-01..05 since 2026-10-18,
     # ctg-infrastructure ci-runners/README.md); jobs that must stay on colo set CI_COLO_ONLY=1.
     runs-on: mutation-x86_64
@@ -153,3 +153,44 @@ jobs:
           PATRONUS_OLD_DIR: /tmp/prev-bin
           NETLAB_POWER_CUTS: 30
         run: ci/netlab/run.sh ci/netlab/upgrade-store.sh ci/netlab/failure-power-cut.sh ci/netlab/journey-first-boot.sh
+
+  wifi-hwsim:
+    name: Wi-Fi per-device credentials (mac80211_hwsim, stock hostapd)
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.only == '' || github.event.inputs.only == 'wifi-hwsim'
+    # mac80211_hwsim is host-global: the script takes a lock, loads it, unloads it afterwards
+    # and skips (exit 0) on a host whose kernel has no such module (rw-man-01, kernel 6.8)
+    runs-on: mutation-x86_64
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 4
+      CARGO_PROFILE_DEV_DEBUG: 0
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 6g --memory-swap 6g --cpus 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler libdbus-1-dev
+      - name: Cache cargo
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-netlab-deep-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-netlab-
+      - name: Build HEAD
+        run: cargo build -p patronus-cli -p patronus-web --bins
+      - name: Per-device Wi-Fi credentials on simulated radios
+        env:
+          NETLAB_BIN_DIR: target/debug
+          NETLAB_IMAGE: ubuntu:24.04
+        run: ci/netlab/wifi-hwsim.sh
