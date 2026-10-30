@@ -18,6 +18,9 @@
 //! - `GET|POST /api/uplinks/probes`, `PUT|DELETE /api/uplinks/probes/{id}`
 //! - `GET|PUT /api/uplinks/settings`
 
+// helpers answer with the ready-made error Response (as the other API modules do)
+#![allow(clippy::result_large_err)]
+
 use crate::state::{insight, uplink, AppState};
 use axum::{
     extract::{Path, Query, State},

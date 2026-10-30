@@ -97,9 +97,9 @@ nl_ok "ipdb status names the licence/attribution"
 nl_web_start "$DB"; nl_login
 nl_web GET /insights
 [ "$NL_CODE" = 200 ] && grep -q 'tab-countries' "$NL_OUT" && grep -q 'DB-IP.com' "$NL_OUT" || fail "insights page: $NL_CODE"
-must 200 GET /insights/countries
-[ "$(jget 'd["rows"]')" = "[]" ] || fail "a router that saw no traffic yet must not invent rows: $(cat "$NL_OUT")"
-nl_ok "before any traffic: empty history, no invented rows; page renders with attribution"
+must 200 GET "/insights/countries?device=$NL_CLIENT"
+[ "$(jget 'd["rows"]')" = "[]" ] || fail "a client that sent nothing yet must not have invented rows: $(cat "$NL_OUT")"
+nl_ok "before any traffic: the client has no history, no invented rows; page renders with attribution"
 
 # --- 2. real traffic -> hourly rows ---------------------------------------
 dl() { C curl -s -m 30 -o /dev/null -w '%{size_download}' "http://$1:8081/big.bin"; }
@@ -138,6 +138,19 @@ must 200 GET "/insights/devices/$NL_CLIENT?window=24h"
 must 404 GET "/insights/devices/no-such-device"
 nl_ok "per-device views: the client's address has the traffic, another address none, drill-down timeline matches"
 
+# --- 3b. device segmentation: the same history by device name and group -----
+sql "INSERT INTO seg_devices (name, group_id, segment, ip4, state, created_at, kind) VALUES ('laptop',(SELECT id FROM seg_groups WHERE name='home'),'@lan','$NL_CLIENT','active',$now,'wired')"
+must 200 GET "/insights/devices?window=1h"
+[ "$(jget 'd["segmentation"]')" = True ] && [ "$(jget 'd["rows"][0]["device"]')" = laptop ] && [ "$(jget 'd["rows"][0]["group"]')" = home ] \
+  || fail "device list with the segmentation model: $(cat "$NL_OUT")"
+must 200 GET "/insights/countries?window=1h&device=laptop"
+[ "$(jget 'd["rows"][0]["country"]')" = AU ] && [ "$(jget 'd["device"]["name"]')" = laptop ] || fail "by device name: $(cat "$NL_OUT")"
+must 200 GET "/insights/asns?window=1h&device=laptop"
+[ "$(jget 'd["rows"][0]["asn"]')" = 64500 ] || fail "asns by device name: $(cat "$NL_OUT")"
+must 200 GET "/insights/devices/laptop?window=1h"
+[ "$(jget 'd["device"]["group"]')" = home ] && [ "$(jget 'd["ips"]')" = "['$NL_CLIENT']" ] || fail "drill-down by name: $(cat "$NL_OUT")"
+nl_ok "with device segmentation: the client's history is listed and filtered by device name 'laptop' (group home)"
+
 # --- 4. database replaced while the web service runs -----------------------
 cp "$T/pub/asn-v2.csv.gz" "$T/asn-v2.csv.gz"; gzip -dc "$T/asn-v2.csv.gz" > "$T/feeds/.new"; mv "$T/feeds/.new" "$T/feeds/dbip-asn-lite.csv"
 dl $NL_WWW >/dev/null
@@ -149,17 +162,28 @@ nl_ok "an ASN database replaced under the running web service is re-read (organi
 must 400 POST /insights/exclusions '{"kind":"ip","ref":"not an address"}'
 must 201 POST /insights/exclusions "{\"kind\":\"ip\",\"ref\":\"$NL_CLIENT\"}"
 [ "$(jget 'd["forgotten_rows"] > 0')" = True ] || fail "excluding must delete what was recorded: $(cat "$NL_OUT")"
-must 200 GET "/insights/countries?window=24h"
+must 200 GET "/insights/countries?window=24h&device=$NL_CLIENT"
 [ "$(jget 'd["rows"]')" = "[]" ] || fail "history of the excluded address remains: $(cat "$NL_OUT")"
 dl $NL_WWW >/dev/null; dl $NL_BLOCKED >/dev/null; sleep 6
-must 200 GET "/insights/countries?window=24h"
+must 200 GET "/insights/countries?window=24h&device=$NL_CLIENT"
 [ "$(jget 'd["rows"]')" = "[]" ] || fail "traffic of an excluded address was recorded: $(cat "$NL_OUT")"
 nl_ok "excluded address: history deleted, new traffic not recorded"
 nl_api DELETE "/insights/exclusions?kind=ip&ref=$NL_CLIENT"; [ "$NL_CODE" = 200 ] || fail "remove exclusion: $NL_CODE"
 dl $NL_WWW >/dev/null
-back() { nl_api GET "/insights/countries?window=1h" && [ "$(jget 'len(d["rows"])')" -ge 1 ]; }
+back() { nl_api GET "/insights/countries?window=1h&device=$NL_CLIENT" && [ "$(jget 'len(d["rows"])')" -ge 1 ]; }
 nl_wait 30 back || fail "traffic is not recorded again after the exclusion was removed"
 nl_ok "exclusion removed: recording resumes"
+# the same by group: every device of the group `home` is not recorded
+must 201 POST /insights/exclusions '{"kind":"group","ref":"home"}'
+[ "$(jget 'd["forgotten_rows"] > 0')" = True ] || fail "excluding a group must delete its devices' history: $(cat "$NL_OUT")"
+must 400 POST /insights/exclusions '{"kind":"group","ref":"no-such-group"}'
+dl $NL_WWW >/dev/null; sleep 6
+must 200 GET "/insights/countries?window=24h&device=$NL_CLIENT"
+[ "$(jget 'd["rows"]')" = "[]" ] || fail "traffic of a device in an excluded group was recorded: $(cat "$NL_OUT")"
+nl_api DELETE "/insights/exclusions?kind=group&ref=home"; [ "$NL_CODE" = 200 ] || fail "remove group exclusion: $NL_CODE"
+dl $NL_WWW >/dev/null
+nl_wait 30 back || fail "recording did not resume after the group exclusion was removed"
+nl_ok "excluded group 'home': its devices' history deleted and not recorded; recording resumes when removed"
 must 200 PUT /insights/settings '{"enabled":false}'
 sleep 3; n0=$(sqlq "SELECT COALESCE(SUM(bytes),0) FROM ins_usage")
 dl $NL_WWW >/dev/null; sleep 6

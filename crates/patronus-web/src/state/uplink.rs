@@ -512,7 +512,10 @@ pub async fn health(
     max_points: i64,
 ) -> anyhow::Result<Vec<Value>> {
     let span = (now - since).max(60);
-    let step = ((span / max_points.max(1) + 59) / 60 * 60).max(60);
+    // bucket width: the smallest that fits `max_points`, in whole minutes once
+    // it is a minute or more (samples come once a minute by default)
+    let raw = ((span + max_points.max(1) - 1) / max_points.max(1)).max(1);
+    let step = if raw <= 60 { raw } else { (raw + 59) / 60 * 60 };
     let mut sql =
         "SELECT ts, gateway, state, rtt_ms, loss_pct, icmp_ok, tcp_ok, dns_ok, http_ok, degraded \
                    FROM ins_uplink_samples WHERE ts >= ? AND ts <= ?"
@@ -887,7 +890,7 @@ mod tests {
     #[tokio::test]
     async fn one_sample_per_minute_and_rollup_per_hour() {
         let s = store().await;
-        let t = 1_800_000_000 - (1_800_000_000 % 3600) + 120;
+        let t = 1_800_000_000 + 120;
         let probes = vec![
             probe(1, ProbeKind::Dns, false, false),
             probe(2, ProbeKind::Tcp, true, false),
@@ -978,7 +981,7 @@ mod tests {
     #[tokio::test]
     async fn sla_window_excludes_older_hours() {
         let s = store().await;
-        let t0 = 1_800_000_000 - (1_800_000_000 % 3600);
+        let t0 = 1_800_000_000;
         record(&s, t0, &[gw("A", "down", None, None, vec![])])
             .await
             .unwrap();
@@ -1036,7 +1039,7 @@ mod tests {
     #[tokio::test]
     async fn health_series_is_thinned_and_shows_the_worst_state() {
         let s = store().await;
-        let t0 = 1_800_000_000 - (1_800_000_000 % 3600);
+        let t0 = 1_800_000_000;
         for i in 0..120 {
             let (st, rtt) = if i == 50 {
                 ("down", None)

@@ -677,6 +677,14 @@ alerting that exists for other events applies, (4) retention 7 days of samples.
   lookups); uplink test with a gateway namespace taken down (the Monitor part exists in
   `lane-e-routing.sh`).
 
+**Status: implemented** (lane s part d, 2026-10-29): see `docs/INSIGHT-UPLINK.md`.
+Deviations from the sketch above: `ins_usage` is keyed by the internal IP (the
+device join happens at query time, so the history also works without
+`seg_devices`); `ins_exclude` holds the privacy exclusions (ip/CIDR, device
+name, group name); the uplink tables add an hourly rollup (`ins_uplink_hourly`,
+90 days) next to the 7 days of raw samples; probes are `ins_uplink_probes`
+(tcp/http/dns, optional `critical` = counts as loss for failover).
+
 ## 8. (e) Parental time limits
 
 ### 8.1 Model

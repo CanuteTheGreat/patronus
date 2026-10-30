@@ -256,6 +256,8 @@ pub struct Collector {
     primed: bool,
     pub enrich: Enricher,
     pub exclude: Exclusions,
+    /// Addresses of the router itself: its own traffic is not a device's.
+    pub router_ips: HashSet<IpAddr>,
     acc: BTreeMap<RowKey, (String, Agg)>,
 }
 
@@ -266,6 +268,7 @@ impl Collector {
             primed: false,
             enrich,
             exclude: Exclusions::default(),
+            router_ips: HashSet::new(),
             acc: BTreeMap::new(),
         }
     }
@@ -310,7 +313,7 @@ impl Collector {
             let Some(a) = attribute(f, d.0, d.1, d.2, d.3) else {
                 continue;
             };
-            if self.exclude.matches(a.local) {
+            if self.exclude.matches(a.local) || self.router_ips.contains(&a.local) {
                 continue;
             }
             let (cc, asn, org) = self.enrich.lookup(a.remote);
@@ -555,7 +558,7 @@ pub async fn devices(store: &ConfigStore) -> Vec<DeviceRef> {
     }
     let has = |c: &str| cols.iter().any(|x| x == c);
     let sel = format!(
-        "SELECT d.id, d.name, {}, {}, {} FROM seg_devices d {}",
+        "SELECT d.id, d.name, {}, {}, {} FROM seg_devices d {} ORDER BY d.id",
         if has("ip4") { "d.ip4" } else { "NULL" },
         if has("last_ip") { "d.last_ip" } else { "NULL" },
         if has("group_id") {
@@ -870,7 +873,15 @@ pub async fn device_totals(
         let ip: String = r.get(0);
         let (up, down): (i64, i64) = (r.get(1), r.get(2));
         let d = devs.iter().find(|d| d.ips.contains(&ip));
-        let top_cc = top(store, By::Country, now, window_secs, Some(&[ip.clone()]), 1).await?;
+        let top_cc = top(
+            store,
+            By::Country,
+            now,
+            window_secs,
+            Some(std::slice::from_ref(&ip)),
+            1,
+        )
+        .await?;
         out.push(json!({
             "ip": ip,
             "device_id": d.map(|d| d.id),
@@ -912,6 +923,28 @@ fn read_conntrack_text() -> Option<String> {
         .then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
+/// The addresses configured on this host's interfaces (`ip -o addr`).
+pub fn local_addresses() -> HashSet<IpAddr> {
+    let Ok(o) = std::process::Command::new("ip")
+        .args(["-o", "addr", "show"])
+        .output()
+    else {
+        return HashSet::new();
+    };
+    parse_ip_o_addr(&String::from_utf8_lossy(&o.stdout))
+}
+
+/// Addresses of `ip -o addr show` text (`2: eth0    inet 10.0.0.1/24 brd ...`).
+pub fn parse_ip_o_addr(text: &str) -> HashSet<IpAddr> {
+    text.lines()
+        .filter_map(|l| {
+            let mut w = l.split_whitespace();
+            w.find(|x| *x == "inet" || *x == "inet6")?;
+            w.next()?.split('/').next()?.parse().ok()
+        })
+        .collect()
+}
+
 /// One collector round (also used by tests): read conntrack, ingest, and every
 /// `flush_every`-th round write the buckets, fold and prune.
 pub async fn tick(
@@ -930,6 +963,11 @@ pub async fn tick(
     }
     c.enrich.reload_if_changed();
     c.exclude = load_exclusions(store).await;
+    if flush_now || c.router_ips.is_empty() {
+        c.router_ips = tokio::task::spawn_blocking(local_addresses)
+            .await
+            .unwrap_or_default();
+    }
     if let Some(t) = text {
         c.ingest(&parse_dir_flows(t), now);
     }
@@ -973,7 +1011,15 @@ pub fn spawn_collector(store: std::sync::Arc<ConfigStore>) {
                 .ok()
                 .flatten();
             let now = chrono::Utc::now().timestamp();
-            if let Err(e) = tick(&mut c, &store, now, text.as_deref(), n % per_flush == 0).await {
+            if let Err(e) = tick(
+                &mut c,
+                &store,
+                now,
+                text.as_deref(),
+                n.is_multiple_of(per_flush),
+            )
+            .await
+            {
                 tracing::warn!("insight collector: {e}");
             }
         }
@@ -1262,6 +1308,27 @@ mod tests {
     }
 
     #[test]
+    fn the_routers_own_traffic_is_not_a_devices() {
+        let mut c = Collector::new(enricher());
+        c.router_ips = parse_ip_o_addr(
+            "1: lo    inet 127.0.0.1/8 scope host lo\n2: wan    inet 203.0.113.2/24 brd 203.0.113.255 scope global wan\n3: lan    inet 192.168.50.1/24 scope global lan\n3: lan    inet6 fd00::1/64 scope global\n",
+        );
+        assert_eq!(c.router_ips.len(), 4);
+        let t0 = 1_800_000_000;
+        c.ingest(&[], t0);
+        let text = format!(
+            "{}\n{}\n",
+            line("udp", "203.0.113.2", "198.51.100.53", 53, 70, 120),
+            line("tcp", "192.168.50.10", "198.51.100.10", 443, 1000, 2000)
+        );
+        c.ingest(&parse_dir_flows(&text), t0 + 15);
+        let rows = c.take();
+        assert!(rows.iter().all(|r| r.key.1 == "192.168.50.10"), "{rows:?}");
+        assert_eq!(rows.len(), 2);
+        assert!(parse_ip_o_addr("garbage\n\n").is_empty());
+    }
+
+    #[test]
     fn net_matching_and_parsing() {
         let ip = |s: &str| s.parse::<IpAddr>().unwrap();
         assert!(in_net(ip("10.1.2.3"), ip("10.0.0.0"), 8));
@@ -1532,14 +1599,16 @@ mod tests {
         );
     }
 
+    /// Devices in the real segmentation tables (migration 1300): home is a
+    /// built-in group, iot is added here.
     async fn with_device_model(s: &ConfigStore) {
         sqlx::raw_sql(
-            "CREATE TABLE seg_groups (id INTEGER PRIMARY KEY, name TEXT);
-             CREATE TABLE seg_devices (id INTEGER PRIMARY KEY, name TEXT, group_id INTEGER, ip4 TEXT, last_ip TEXT, state TEXT);
-             INSERT INTO seg_groups VALUES (1,'home'),(2,'iot');
-             INSERT INTO seg_devices VALUES (1,'laptop',1,'192.168.50.10',NULL,'active'),
-                (2,'cam',2,'192.168.50.20','192.168.50.99','active'),
-                (3,'old-tv',2,'192.168.50.30',NULL,'revoked');",
+            "INSERT INTO seg_groups (name) VALUES ('iot');
+             INSERT INTO seg_devices (name, group_id, segment, ip4, last_ip, state, created_at, kind)
+               VALUES ('laptop', (SELECT id FROM seg_groups WHERE name='home'), '@lan', '192.168.50.10', NULL, 'active', 0, 'wired'),
+                      ('cam', (SELECT id FROM seg_groups WHERE name='iot'), '@lan', '192.168.50.20', '192.168.50.99', 'active', 0, 'wired'),
+                      ('old-tv', (SELECT id FROM seg_groups WHERE name='iot'), '@lan', '192.168.50.30', NULL, 'revoked', 0, 'wired'),
+                      ('new-phone', (SELECT id FROM seg_groups WHERE name='iot'), '@lan', NULL, NULL, 'pending', 0, 'wifi');",
         )
         .execute(s.pool().unwrap())
         .await
@@ -1561,7 +1630,13 @@ mod tests {
         );
         with_device_model(&s).await;
         let d = devices(&s).await;
-        assert_eq!(d.len(), 2, "revoked devices are not listed");
+        assert_eq!(
+            d.len(),
+            3,
+            "revoked devices are not listed, a pending one has no address yet"
+        );
+        assert!(d.iter().any(|x| x.name == "new-phone" && x.ips.is_empty()));
+        let d: Vec<DeviceRef> = d.into_iter().filter(|x| !x.ips.is_empty()).collect();
         assert_eq!(d[1].ips, ["192.168.50.20", "192.168.50.99"]);
         assert_eq!(d[1].group.as_deref(), Some("iot"));
         let (ips, dev) = resolve_device(&s, "cam").await.unwrap();

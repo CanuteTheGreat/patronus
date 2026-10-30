@@ -508,7 +508,7 @@ mod tests {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = l.local_addr().unwrap();
         let rtt = tcp_connect("", addr).await.unwrap();
-        assert!(rtt >= 0.0 && rtt < 3000.0);
+        assert!((0.0..3000.0).contains(&rtt));
         drop(l);
         assert!(tcp_connect("", addr).await.unwrap_err().contains("connect"));
     }

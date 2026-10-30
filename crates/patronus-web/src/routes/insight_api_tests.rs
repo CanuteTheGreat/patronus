@@ -312,7 +312,7 @@ async fn recorded_traffic_is_ranked_per_country_asn_and_device() {
         9000
     );
     let (_, v) = a.get("/api/insights/timeline?window=1h").await;
-    assert!(v["points"].as_array().unwrap().len() >= 1);
+    assert!(!v["points"].as_array().unwrap().is_empty());
     // a window that excludes the data
     let b = insight::bucket_of(now()) - 3 * 86_400;
     sqlx::query("UPDATE ins_usage SET bucket = ?")
