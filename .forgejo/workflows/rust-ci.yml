@@ -304,7 +304,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-netlabf-
       - name: Lane J + K scenarios in a capped NET_ADMIN/SYS_ADMIN container
-        run: ci/netlab/run.sh ci/netlab/lane-j-*.sh ci/netlab/lane-k-*.sh ci/netlab/lane-n-*.sh
+        run: ci/netlab/run.sh ci/netlab/lane-j-*.sh ci/netlab/lane-k-*.sh ci/netlab/lane-n-*.sh ci/netlab/lane-s-*.sh
 
   feature-matrix:
     # `cargo test --workspace` only ever compiles default features, so every

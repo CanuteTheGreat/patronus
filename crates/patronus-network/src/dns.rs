@@ -56,6 +56,17 @@ pub struct DnsSettings {
     /// NAT64 prefix to synthesize AAAA records for (USE=nat64 with DNS64 on).
     #[serde(default)]
     pub dns64_prefix: Option<String>,
+    /// DNS rebinding protection: answers from the Internet that contain a
+    /// private address are stripped (unbound `private-address`, dnsmasq
+    /// `stop-dns-rebind`). Off on stores that predate the setting (a split-
+    /// horizon setup that resolves a public name to a private address would
+    /// break silently), on for new installs.
+    #[serde(default)]
+    pub rebind_protection: bool,
+    /// Domains that may resolve to private addresses (unbound `private-domain`,
+    /// dnsmasq `rebind-domain-ok`).
+    #[serde(default)]
+    pub rebind_exceptions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -72,7 +83,23 @@ pub struct DnsSettingsInput {
     pub blocklist_urls: Option<String>,
     #[serde(default)]
     pub block_mode: Option<String>,
+    #[serde(default)]
+    pub rebind_protection: Option<bool>,
+    #[serde(default)]
+    pub rebind_exceptions: Option<String>,
 }
+
+/// Private and local ranges unbound strips from public answers.
+pub const REBIND_PRIVATE_RANGES: &[&str] = &[
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "169.254.0.0/16",
+    "127.0.0.0/8",
+    "fd00::/8",
+    "fe80::/10",
+    "::1/128",
+];
 
 fn split_list(s: &str) -> Vec<String> {
     s.split([',', ' ', '\n'])
@@ -129,6 +156,8 @@ pub async fn settings(store: &ConfigStore) -> Result<DnsSettings> {
         interfaces: split_list(&g("dns.interfaces", "@lan")),
         blocklist_urls: split_list(&g("dns.blocklist_urls", "")),
         block_mode: g("dns.block_mode", "nxdomain"),
+        rebind_protection: lan::flag(&g("dns.rebind_protection", "0")),
+        rebind_exceptions: split_list(&g("dns.rebind_exceptions", "")),
         dns64_prefix: {
             let n = lan::settings_with_prefix(store, "nat64.").await?;
             let on = n.get("nat64.enabled").is_some_and(|v| lan::flag(v))
@@ -182,6 +211,16 @@ pub async fn save_settings(store: &ConfigStore, i: &DnsSettingsInput) -> Result<
             return Err(invalid("block mode (nxdomain or null)"));
         }
         kv.push(("dns.block_mode", b));
+    }
+    if let Some(r) = i.rebind_protection {
+        kv.push(("dns.rebind_protection", if r { "1" } else { "0" }.into()));
+    }
+    if let Some(s) = &i.rebind_exceptions {
+        let v = split_list(s)
+            .iter()
+            .map(|x| lan::check_dns_name("rebind exception domain", x))
+            .collect::<Result<Vec<_>>>()?;
+        kv.push(("dns.rebind_exceptions", v.join(",")));
     }
     let after = {
         let mut s = settings(store).await?;
@@ -609,6 +648,23 @@ pub fn render_unbound(
         c.push_str("    do-not-query-localhost: no\n");
     }
     c.push_str("    qname-minimisation: yes\n    harden-glue: yes\n");
+    // DNS rebinding protection: a public name must not resolve into the LAN.
+    // private-domain lifts it for the names that legitimately do (domain
+    // overrides below, host-override domains, the operator's exceptions).
+    if s.rebind_protection {
+        for r in REBIND_PRIVATE_RANGES {
+            c.push_str(&format!("    private-address: {r}\n"));
+        }
+        let mut ok: BTreeSet<&str> = BTreeSet::new();
+        ok.extend(s.rebind_exceptions.iter().map(String::as_str));
+        ok.extend(hosts.iter().map(|h| h.domain.as_str()));
+        for d in domains {
+            ok.remove(d.domain.as_str()); // emitted with the override below
+        }
+        for d in ok {
+            c.push_str(&format!("    private-domain: \"{d}.\"\n"));
+        }
+    }
     if dnssec {
         c.push_str(&format!(
             "    auto-trust-anchor-file: \"{UNBOUND_ANCHOR}\"\n"
@@ -712,6 +768,16 @@ pub async fn dnsmasq_part(
         "bogus-priv".to_string(),
         "cache-size=10000".to_string(),
     ];
+    if s.rebind_protection {
+        lines.push("stop-dns-rebind".into());
+        lines.push("rebind-localhost-ok".into());
+        let mut ok: BTreeSet<String> = s.rebind_exceptions.iter().cloned().collect();
+        ok.extend(list_hosts(store).await?.into_iter().map(|h| h.domain));
+        ok.extend(list_domains(store).await?.into_iter().map(|d| d.domain));
+        for d in ok {
+            lines.push(format!("rebind-domain-ok=/{d}/"));
+        }
+    }
     if !s.upstreams.is_empty() {
         lines.push("no-resolv".into());
         for u in &s.upstreams {
@@ -1040,6 +1106,127 @@ mod tests {
             assert!(c.contains(want), "missing {want:?} in\n{c}");
         }
         assert!(!c.contains("port=0"));
+    }
+
+    #[tokio::test]
+    async fn rebinding_protection_is_off_for_an_upgraded_store_and_renders_when_on() {
+        let t = testutil::env(&[UNBOUND_BIN, lan::DNSMASQ_BIN]);
+        std::fs::create_dir_all(t.env.path("/var/lib/unbound")).unwrap();
+        std::fs::write(t.env.path(UNBOUND_ANCHOR), "x").unwrap();
+        let s = testutil::store().await;
+        seed(&s).await;
+        // a store that predates the setting: off, nothing rendered
+        assert!(!settings(&s).await.unwrap().rebind_protection);
+        let a = DnsApplier::new(t.env.clone());
+        a.apply(&s).await.unwrap();
+        let c = read(&t, UNBOUND_CONF);
+        assert!(
+            !c.contains("private-address"),
+            "split-horizon setups must keep working:\n{c}"
+        );
+        // switch on, with an exception
+        save_settings(
+            &s,
+            &DnsSettingsInput {
+                rebind_protection: Some(true),
+                rebind_exceptions: Some("plex.direct, media.example".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        a.apply(&s).await.unwrap();
+        let c = read(&t, UNBOUND_CONF);
+        for want in [
+            "private-address: 10.0.0.0/8",
+            "private-address: 172.16.0.0/12",
+            "private-address: 192.168.0.0/16",
+            "private-address: 169.254.0.0/16",
+            "private-address: 127.0.0.0/8",
+            "private-address: fd00::/8",
+            "private-address: fe80::/10",
+            "private-address: ::1/128",
+            "private-domain: \"plex.direct.\"",
+            "private-domain: \"media.example.\"",
+            // host override domain and domain override: the LAN's own names still resolve
+            "private-domain: \"home.example.\"",
+            "private-domain: \"corp.example.\"",
+        ] {
+            assert!(c.contains(want), "missing {want:?} in\n{c}");
+        }
+        let mut pd: Vec<&str> = c
+            .lines()
+            .filter(|l| l.contains("private-domain:"))
+            .collect();
+        let n = pd.len();
+        pd.sort();
+        pd.dedup();
+        assert_eq!(n, pd.len(), "no duplicate private-domain lines:\n{c}");
+        // and off again
+        save_settings(
+            &s,
+            &DnsSettingsInput {
+                rebind_protection: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        a.apply(&s).await.unwrap();
+        assert!(!read(&t, UNBOUND_CONF).contains("private-address"));
+    }
+
+    #[tokio::test]
+    async fn rebinding_protection_reaches_the_dnsmasq_forwarder_too() {
+        let t = testutil::env(&[UNBOUND_BIN, lan::DNSMASQ_BIN]);
+        let s = testutil::store().await;
+        seed(&s).await;
+        save_settings(
+            &s,
+            &DnsSettingsInput {
+                mode: Some("forwarder".into()),
+                upstreams: Some("9.9.9.9".into()),
+                rebind_protection: Some(true),
+                rebind_exceptions: Some("plex.direct".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        DnsApplier::new(t.env.clone()).apply(&s).await.unwrap();
+        let c = read(&t, lan::DNSMASQ_CONF);
+        for want in [
+            "stop-dns-rebind",
+            "rebind-localhost-ok",
+            "rebind-domain-ok=/plex.direct/",
+            "rebind-domain-ok=/home.example/",
+            "rebind-domain-ok=/corp.example/",
+        ] {
+            assert!(c.contains(want), "missing {want:?} in\n{c}");
+        }
+    }
+
+    #[tokio::test]
+    async fn rebind_exceptions_are_validated() {
+        let s = testutil::store().await;
+        for bad in [
+            "evil\"; private-address: 0.0.0.0/0",
+            "x.example;y",
+            "x.example\nserver:",
+            "x$(id).example",
+            "x.example\"",
+        ] {
+            let r = save_settings(
+                &s,
+                &DnsSettingsInput {
+                    rebind_exceptions: Some(bad.into()),
+                    ..Default::default()
+                },
+            )
+            .await;
+            assert!(r.is_err(), "{bad:?} must be refused");
+        }
+        assert!(settings(&s).await.unwrap().rebind_exceptions.is_empty());
     }
 
     #[test]

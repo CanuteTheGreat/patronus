@@ -22,7 +22,7 @@ DB=/t/lane-s-seg.db
 X() { ip netns exec "$@"; }
 SEGNS="nl-cam nl-tv nl-unk"
 seg_clean() { for n in $SEGNS; do ip netns del "$n" 2>/dev/null || true; done; }
-trap seg_clean EXIT
+trap '[ -n "${SEG_KEEP:-}" ] || seg_clean' EXIT
 
 # A keep-alive HTTP server: one connection serves many requests, so a flow can
 # be established BEFORE a revocation and tried again after it.
@@ -106,8 +106,12 @@ seg_boot() {
   seg_topo
   seg_servers
   printf '[network]\nwan_interfaces = ["%s"]\nlan_interfaces = ["br0"]\n' "$NL_WAN_IF" > "$NL_TOML"
-  nl_apply "$DB" || { cat "$NL_OUT"; nl_fail "patronus apply failed"; }
+  # this scenario is about the forwarding path: keep the resolver out of it
+  # (seed the store first, then switch DNS off, then the full boot apply)
+  nl_apply "$DB" --phase sysctl || { cat "$NL_OUT"; nl_fail "patronus apply (seed) failed"; }
+  sqlite3 "$DB" "INSERT OR REPLACE INTO lan_settings (key, value, updated_at) VALUES ('dns.mode','disabled',0)"
   seg_store_addr
+  nl_apply "$DB" || { cat "$NL_OUT"; nl_fail "patronus apply failed"; }
 }
 
 rm -f "$DB" "$NL_T/nl-jar"
@@ -132,8 +136,12 @@ nl_api POST /segmentation/segments '{"segment":"@lan","enabled":true}'
 [ "$NL_CODE" = 200 ] || nl_fail "enable: $NL_CODE $(cat "$NL_OUT")"
 nl_ok "enabled; adoption: $(jget 'len(d["adoption"]["adopted"])') device(s) adopted"
 [ "$(jget 'len(d["adoption"]["adopted"])')" -ge 3 ] || nl_fail "adoption missed the devices on the segment: $(cat "$NL_OUT")"
-nl_assert_nft_has "table inet patronus_seg" "priority -10" "unbound or revoked destination"
-R bridge -d link show | grep -E 'p12|p13' | grep -q 'isolated on' || { R bridge -d link show; nl_fail "bridge ports are not isolated"; }
+nl_assert_nft_has "table inet patronus_seg" "unbound or revoked destination"
+seg_prio() { R nft list table inet patronus_seg | grep -qE 'hook (forward|input) priority (filter - 10|-10)'; }
+seg_prio || { R nft list table inet patronus_seg; nl_fail "the segmentation hooks are not at priority -10"; }
+nl_ok "forward and input hooks at priority -10 (before the main table)"
+port_iso() { R bridge -d link show dev "$1" | grep -q "isolated $2"; }
+port_iso p12 on && port_iso p13 on && port_iso rtr-lan on || { R bridge -d link show; nl_fail "bridge ports are not isolated"; }
 [ "$(R cat /proc/sys/net/ipv4/conf/br0/proxy_arp_pvlan)" = 1 ] || nl_fail "proxy_arp_pvlan is off"
 nl_ok "bridge ports isolated, proxy ARP on"
 # the laptop (admin) can still manage the box and everything still talks, now THROUGH the router
@@ -244,23 +252,30 @@ nl_api POST /segmentation/groups '{"name":"x\"; flush ruleset; \"","internet":"a
 [ "$(nl_ruleset_fingerprint)" = "$FP" ] || nl_fail "a refused change altered the ruleset"
 nl_ok "refused changes (unknown endpoint, hostile name) left the ruleset byte-identical"
 
+# the guest goes into quarantine: it must STILL be there after the reboot
+nl_api PUT /segmentation/devices/$ID_GUEST '{"group":"quarantine"}'; [ "$NL_CODE" = 200 ] || nl_fail "quarantine guest: $NL_CODE $(cat "$NL_OUT")"
+want_deny "guest in quarantine -> router SSH" X nl-unk python3 "$NL_T/nl-conn.py" 192.168.50.1 22
+
 # --- 8. reboot: isolation comes back from the store -------------------------------------------
 echo "=== reboot"
 nl_web_stop
 seg_boot
 R nft list table inet patronus_seg >/dev/null 2>&1 || nl_fail "segmentation table missing after reboot"
-nl_assert_nft_has "table inet patronus_seg" "priority -10"
-R bridge -d link show | grep p13 | grep -q 'isolated on' || nl_fail "ports not isolated after reboot"
+nl_assert_nft_has "table inet patronus_seg"
+seg_prio || nl_fail "priority after reboot"
+port_iso p13 on || nl_fail "ports not isolated after reboot"
 want_deny "after reboot: laptop -> tv tcp 8080 still denied" C curl -s -m 3 -o /dev/null http://192.168.50.13:8080/
 want_deny "after reboot: revoked cam stays revoked (cam -> tv)" http_ok nl-cam 192.168.50.13 8080
-want_deny "after reboot: unknown quarantine -> SSH" X nl-unk python3 "$NL_T/nl-conn.py" 192.168.50.1 22
-want_ok "after reboot: guest (home) -> laptop" http_ok nl-unk 192.168.50.10 7000
+want_deny "after reboot: quarantined guest -> router SSH" X nl-unk python3 "$NL_T/nl-conn.py" 192.168.50.1 22
+want_deny "after reboot: quarantined guest -> admin UI" X nl-unk curl -sk -m 3 -o /dev/null https://192.168.50.1:8443/login
+want_deny "after reboot: quarantined guest -> laptop" http_ok nl-unk 192.168.50.10 7000
 nl_assert_store_ok "$DB"
 
 # --- 9. switching it off restores the open network ---------------------------------------------
 nl_web_start "$DB"; nl_login
+nl_ok "after reboot: the adopted laptop still logs in to the admin UI (8443)"
 nl_api POST /segmentation/segments '{"segment":"@lan","enabled":false}'; [ "$NL_CODE" = 200 ] || nl_fail "disable: $NL_CODE $(cat "$NL_OUT")"
 R nft list table inet patronus_seg >/dev/null 2>&1 && nl_fail "segmentation table still loaded after switching off"
-R bridge -d link show | grep p13 | grep -q 'isolated off' || nl_fail "ports still isolated after switching off"
+port_iso p13 off || nl_fail "ports still isolated after switching off"
 nl_ok "off: table deleted, ports no longer isolated"
 echo "PASS lane-s-segmentation"

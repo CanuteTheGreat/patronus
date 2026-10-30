@@ -1,0 +1,24 @@
+exit=0
+=== fresh install: protection is seeded ON
+ok - boot: patronus apply (27 appliers ok)
+ok - pub.example.org -> rcode=0 answers=198.51.100.77
+ok - rebind.example.org -> rcode=0 answers=none
+ok - loop.example.org -> rcode=0 answers=none
+ok - mixed.example.org -> rcode=0 answers=198.51.100.99
+ok - mixed.example.org -> rcode=0 answers=198.51.100.99 (no 192.168.77.8)
+ok - on: a public name pointing into the LAN is stripped, a mixed answer keeps only its public record
+=== exception
+ok - private-domain exception: lan.corp.example.org -> 192.168.77.9
+ok - rebind.example.org -> rcode=0 answers=none
+ok - hostile exception refused (400)
+=== off
+ok - off: rebind.example.org -> 192.168.77.7 again
+=== reboot keeps it on
+ok - boot: patronus apply (27 appliers ok)
+ok - rebind.example.org -> rcode=0 answers=none
+ok - after reboot: still protected
+=== a store that predates the setting stays OFF through an upgrade
+ok - boot: patronus apply (27 appliers ok)
+ok - rebind.example.org -> rcode=0 answers=192.168.77.7
+ok - upgrade: split-horizon answers keep working (setting absent = off)
+PASS lane-s-dns-rebind

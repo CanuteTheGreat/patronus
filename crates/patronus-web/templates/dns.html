@@ -39,6 +39,9 @@
                 <option value="nxdomain" {% if block_mode == "nxdomain" %}selected{% endif %}>NXDOMAIN</option>
                 <option value="null" {% if block_mode == "null" %}selected{% endif %}>0.0.0.0 / ::</option>
             </select></label>
+        <label title="Answers for public names that contain a private address (10/8, 172.16/12, 192.168/16, link-local, loopback, ULA) are dropped, so a web page cannot point a name at your LAN. Host and domain overrides are exempt.">Rebinding protection <input type="checkbox" name="rebind_protection" {% if rebind_protection %}checked{% endif %}></label>
+        <label>Rebinding exceptions (domains that may resolve to private addresses)
+            <input name="rebind_exceptions" value="{{ rebind_exceptions }}" data-keep-empty="1" placeholder="plex.direct, home.example"></label>
         <label>Block list URLs (hosts or domain lists, one per line)
             <textarea name="blocklist_urls" rows="2" cols="50" data-keep-empty="1">{{ blocklist_urls }}</textarea></label>
         <button class="btn btn-primary btn-sm" type="submit">Save</button>

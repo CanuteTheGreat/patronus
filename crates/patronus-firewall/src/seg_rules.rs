@@ -774,10 +774,18 @@ mod tests {
             eprintln!("skip: no nft binary");
             return;
         };
-        probe.stdin.take().unwrap().write_all(b"add table inet seg_probe\n").unwrap();
+        probe
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"add table inet seg_probe\n")
+            .unwrap();
         let o = probe.wait_with_output().unwrap();
         if !o.status.success() {
-            eprintln!("skip: nft cannot run here: {}", String::from_utf8_lossy(&o.stderr));
+            eprintln!(
+                "skip: nft cannot run here: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
             return;
         }
         for c in [cfg(), SegConfig::default(), {
@@ -795,7 +803,11 @@ mod tests {
                 .stderr(std::process::Stdio::piped())
                 .spawn()
                 .unwrap();
-            ch.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+            ch.stdin
+                .take()
+                .unwrap()
+                .write_all(script.as_bytes())
+                .unwrap();
             let o = ch.wait_with_output().unwrap();
             assert!(
                 o.status.success(),

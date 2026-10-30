@@ -139,6 +139,21 @@ that are not finished are listed separately under
   the configs and starts the daemons), and service files are never
   written from unvalidated input. [C27]
 
+### Device segmentation
+
+- Isolation between the devices of a LAN is opt-in per interface: turning it
+  on adopts what is on the network into an allow-all group (nothing changes),
+  then per-group default deny, group links and one-way service rules are
+  enforced by their own nftables table that runs before the main ruleset.
+  Unknown, spoofed or revoked devices forward nothing and never reach SSH or
+  the admin UI, revoking a device cuts its running connections, and the
+  state survives a reboot. Wired devices behind an unmanaged switch cannot be
+  isolated from each other (docs/segmentation.md). [C62]
+- DNS rebinding protection (Unbound `private-address`, dnsmasq
+  `stop-dns-rebind`) strips private addresses from public answers, with an
+  exception list; it is on for a new install and stays off for a store that
+  predates it. [C63]
+
 ### Configuration you can trust
 
 - The configuration survives restarts and reboots: it lives in one SQLite

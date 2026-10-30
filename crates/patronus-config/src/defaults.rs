@@ -167,6 +167,15 @@ pub async fn ensure_defaults(
         .is_none()
     {
         seed_default_rules(store).await?;
+        // DNS rebinding protection is on for a new install; a store that
+        // predates the setting keeps it off (split-horizon names would break)
+        sqlx::query(
+            "INSERT OR IGNORE INTO lan_settings (key, value, updated_at) VALUES ('dns.rebind_protection', '1', ?)",
+        )
+        .bind(chrono::Utc::now().timestamp())
+        .execute(store.pool()?)
+        .await
+        .map_err(|e| patronus_core::Error::Config(format!("seed DNS rebind protection: {e}")))?;
         store
             .save_system_config(DEFAULTS_SEEDED_KEY, &chrono::Utc::now().to_rfc3339())
             .await?;
@@ -331,6 +340,41 @@ mod tests {
 
     /// A power cut after the default rows were written but before the
     /// "seeded" marker was: the next boot must not add a second copy.
+    #[tokio::test]
+    async fn new_installs_get_dns_rebind_protection_but_upgraded_stores_do_not() {
+        let key = "SELECT value FROM lan_settings WHERE key = 'dns.rebind_protection'";
+        // new install: seeded on
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        ensure_defaults(&s, None, &[]).await.unwrap();
+        let v: Option<String> = sqlx::query_scalar(key)
+            .fetch_optional(s.pool().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(v.as_deref(), Some("1"));
+        // an upgraded store already carries the seeded marker: its DNS stays as it was
+        let up = ConfigStore::open_in_memory().await.unwrap();
+        up.save_system_config(DEFAULTS_SEEDED_KEY, "2026-01-01T00:00:00Z")
+            .await
+            .unwrap();
+        ensure_defaults(&up, None, &[]).await.unwrap();
+        let v: Option<String> = sqlx::query_scalar(key)
+            .fetch_optional(up.pool().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(v, None, "no behaviour change on upgrade");
+        // a user who switched it off keeps it off (seeding never repeats)
+        sqlx::query("UPDATE lan_settings SET value = '0' WHERE key = 'dns.rebind_protection'")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        ensure_defaults(&s, None, &[]).await.unwrap();
+        let v: Option<String> = sqlx::query_scalar(key)
+            .fetch_optional(s.pool().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(v.as_deref(), Some("0"));
+    }
+
     #[tokio::test]
     async fn interrupted_seeding_does_not_duplicate_defaults() {
         let s = ConfigStore::open_in_memory().await.unwrap();

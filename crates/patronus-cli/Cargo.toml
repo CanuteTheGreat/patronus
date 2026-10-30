@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation"]
 
 # Core features
 web = ["patronus-web", "dep:axum"]
@@ -61,6 +61,8 @@ l2tp = ["patronus-network/l2tp", "patronus-web?/l2tp"]
 upnp = ["patronus-network/upnp", "patronus-web?/upnp"]
 ldap = ["patronus-web?/ldap"]
 plugins = ["patronus-network/plugins", "patronus-web?/plugins"]
+segmentation = ["patronus-network/segmentation", "patronus-web?/segmentation"]
+wifi-ap = ["patronus-network/wifi-ap", "patronus-web?/wifi-ap", "segmentation"]
 vrf = ["patronus-network/vrf", "patronus-web?/vrf"]
 web-proxy = ["patronus-network/web-proxy", "patronus-web?/web-proxy"]
 intrusion-detection = ["patronus-network/intrusion-detection", "patronus-web?/intrusion-detection"]

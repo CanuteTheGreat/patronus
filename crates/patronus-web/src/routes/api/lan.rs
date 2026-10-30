@@ -533,6 +533,8 @@ mod dns_routes {
         pub interfaces: String,
         pub blocklist_urls: String,
         pub block_mode: String,
+        pub rebind_protection: bool,
+        pub rebind_exceptions: String,
         pub services: Vec<(String, bool)>,
         pub hosts: Vec<HostView>,
         pub domains: Vec<DomainView>,
@@ -571,6 +573,8 @@ mod dns_routes {
             interfaces: set.interfaces.join(", "),
             blocklist_urls: set.blocklist_urls.join("\n"),
             block_mode: set.block_mode.clone(),
+            rebind_protection: set.rebind_protection,
+            rebind_exceptions: set.rebind_exceptions.join(", "),
             services,
             hosts: dns::list_hosts(s)
                 .await
