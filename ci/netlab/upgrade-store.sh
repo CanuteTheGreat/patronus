@@ -22,7 +22,7 @@ migrations() { sqlite3 "$1" 'SELECT group_concat(version) FROM schema_migrations
 seg_upgrade_checks() { # DB LABEL
   local db=$1 have v
   have=$(sqlite3 "$db" 'SELECT group_concat(version) FROM schema_migrations')
-  for v in 1300 1310 1320 1340; do
+  for v in 1300 1310 1320 1330 1331 1340; do
     case ",$have," in *",$v,"*) ;; *) nl_fail "$2: migration $v missing after the upgrade (have: $have)" ;; esac
   done
   [ "$(sqlite3 "$db" "SELECT count(*) FROM seg_segments WHERE enabled <> 0")" = 0 ] \
@@ -41,7 +41,7 @@ seg_upgrade_checks() { # DB LABEL
     nl_fail "$2: a time-limit/DNS-policy table exists although no policy does"
   fi
   [ -z "$(R pgrep -x hostapd || true)" ] || nl_fail "$2: hostapd running on an upgraded store with no Wi-Fi network"
-  nl_ok "$2: segmentation migrations 1300/1310/1320/1340 present, isolation off, no segmentation kernel state"
+  nl_ok "$2: segmentation migrations 1300/1310/1320/1330/1331/1340 present, isolation off, no segmentation kernel state"
 }
 
 echo "=== 1. v0.1.0 store layout -> HEAD"

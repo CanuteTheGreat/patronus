@@ -18,6 +18,7 @@ pub mod firewall;
 pub mod fwfeeds;
 pub mod fwlog;
 pub mod host;
+pub mod insight;
 pub mod interfaces;
 pub mod lan;
 pub mod monitoring;
@@ -32,6 +33,7 @@ pub mod segmentation_wifi;
 pub mod system;
 pub mod telemetry;
 pub mod tunnels;
+pub mod uplink;
 pub mod vpn;
 
 pub use firewall::FirewallManager;
@@ -228,5 +230,9 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
     }
     // gateway / tunnel / HA / configuration events for the event log and webhooks
     telemetry::spawn_watcher(state.clone());
+    // traffic insight history (conntrack deltas by country/ASN) and uplink health history
+    insight::spawn_collector(state.config_store.clone());
+    insight::spawn_db_refresh(state.config_store.clone());
+    uplink::spawn_recorder(state.clone());
     Ok(state)
 }

@@ -30,6 +30,9 @@
 
 use crate::lan::{check_description, check_iface_spec, db_err, invalid, now, resolve_iface};
 use crate::linkstate::{argv, Cmd, KernelState, SystemCmd};
+use crate::uplink_probe::{
+    next_result, ExtraProber, ProbeKind, ProbeResult, ProbeSpec, SysExtraProber,
+};
 use async_trait::async_trait;
 use ipnetwork::IpNetwork;
 use patronus_config::applier::{Applier, ApplyReport, Phase};
@@ -212,6 +215,9 @@ pub struct RoutingConfig {
     pub default6: Option<String>,
     /// Firewall mark (= routing table) per gateway / group name.
     pub marks: BTreeMap<String, u32>,
+    /// `(gateway, address)` of every enabled extra probe (tcp/dns target, or
+    /// an http URL with an IP literal): pinned to its gateway like a monitor IP.
+    pub probe_targets: Vec<(String, IpAddr)>,
 }
 
 impl RoutingConfig {
@@ -341,6 +347,12 @@ pub async fn load(store: &ConfigStore) -> Result<RoutingConfig> {
             enabled: r.get::<i64, _>(7) != 0,
         });
     }
+    c.probe_targets = load_probes(store)
+        .await
+        .into_iter()
+        .filter(|p| p.enabled)
+        .filter_map(|p| Some((p.gateway.clone(), probe_address(&p)?)))
+        .collect();
     c.marks = patronus_config::policy::policy_marks(store).await?;
     let setting = |v: Option<String>| v.filter(|s| !s.trim().is_empty());
     c.default4 = setting(store.load_system_config(DEFAULT_GW4_KEY).await?);
@@ -1198,6 +1210,9 @@ pub struct GwStatus {
     pub detail: Option<String>,
     /// Unix time the state last changed.
     pub since: i64,
+    /// Latest results of the gateway's extra probes (tcp/http/dns).
+    #[serde(default)]
+    pub probes: Vec<ProbeResult>,
 }
 
 /// Whether a member in `state` carries traffic for a group with `trigger`.
@@ -1207,6 +1222,65 @@ pub fn usable(state: GwState, trigger: Trigger) -> bool {
         GwState::Down => false,
         GwState::Loss => !matches!(trigger, Trigger::Loss | Trigger::LossLatency),
         GwState::Latency => !matches!(trigger, Trigger::Latency | Trigger::LossLatency),
+    }
+}
+
+/// A round of extra probes every this many one-second ticks.
+const EXTRA_EVERY_TICKS: u64 = crate::uplink_probe::EVERY_SECS;
+
+/// The probes configured in `ins_uplink_probes` (empty when the table is
+/// unreadable: probes are optional).
+pub async fn load_probes(store: &ConfigStore) -> Vec<ProbeSpec> {
+    let Ok(pool) = store.pool() else {
+        return Vec::new();
+    };
+    let rows = sqlx::query(
+        "SELECT id, gateway, kind, target, port, name, critical, enabled \
+         FROM ins_uplink_probes ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    rows.into_iter()
+        .filter_map(|r| {
+            Some(ProbeSpec {
+                id: r.get(0),
+                gateway: r.get(1),
+                kind: ProbeKind::parse(&r.get::<String, _>(2)).ok()?,
+                target: r.get(3),
+                port: r.get::<Option<i64>, _>(4).map(|p| p as u16),
+                name: r.get(5),
+                critical: r.get::<i64, _>(6) != 0,
+                enabled: r.get::<i64, _>(7) != 0,
+            })
+        })
+        .collect()
+}
+
+/// The address a probe sends to, when it is an IP literal.
+pub fn probe_address(p: &ProbeSpec) -> Option<IpAddr> {
+    match p.kind {
+        ProbeKind::Tcp | ProbeKind::Dns => p.target.parse().ok(),
+        ProbeKind::Http => {
+            let rest = p
+                .target
+                .strip_prefix("http://")
+                .or_else(|| p.target.strip_prefix("https://"))?;
+            let host = rest.split(['/', '?', '#']).next()?;
+            if let Some(v6) = host.strip_prefix('[') {
+                return v6.split(']').next()?.parse().ok();
+            }
+            host.rsplit_once(':')
+                .map_or(host, |(h, port)| {
+                    if port.bytes().all(|b| b.is_ascii_digit()) {
+                        h
+                    } else {
+                        host
+                    }
+                })
+                .parse()
+                .ok()
+        }
     }
 }
 
@@ -1652,6 +1726,45 @@ pub fn desired(
         d.routes.push(KRoute {
             v6: g.family.v6(),
             dst: host_net(&mon),
+            metric: 0,
+            proto: MONITOR_PROTO.into(),
+            table: MAIN_TABLE,
+            hops: vec![Hop {
+                via: r.address.map(|a| a.to_string()),
+                dev: r.dev.clone(),
+                weight: 1,
+            }],
+        });
+    }
+    // extra-probe targets: like a monitor IP, a probe for a tcp/dns/http target
+    // leaves via its own gateway even while another one carries the default
+    let mut pinned: BTreeMap<IpAddr, String> = BTreeMap::new();
+    for g in &cfg.gateways {
+        if let Some(m) = g.monitor_ip {
+            pinned.insert(m, g.name.clone());
+        }
+    }
+    for (gw, ip) in &cfg.probe_targets {
+        let (Some(g), Some(r)) = (cfg.gateway(gw), resolved.get(gw)) else {
+            continue;
+        };
+        if !r.routable() || Some(*ip) == r.address || ip.is_ipv6() != g.family.v6() {
+            continue;
+        }
+        match pinned.get(ip) {
+            Some(other) if other == gw => continue,
+            Some(other) => {
+                d.warnings.push(format!(
+                    "probe target {ip} of gateway {gw} is already pinned to {other}: it can only be probed through {other}"
+                ));
+                continue;
+            }
+            None => {}
+        }
+        pinned.insert(*ip, gw.clone());
+        d.routes.push(KRoute {
+            v6: g.family.v6(),
+            dst: host_net(ip),
             metric: 0,
             proto: MONITOR_PROTO.into(),
             table: MAIN_TABLE,
@@ -2223,6 +2336,7 @@ impl Applier for RoutesApplier {
                     "rtt_ms": s.and_then(|s| s.rtt_ms),
                     "since": s.map(|s| s.since),
                     "detail": s.and_then(|s| s.detail.clone()),
+                    "probes": s.map(|s| s.probes.clone()).unwrap_or_default(),
                 })
             })
             .collect();
@@ -2389,6 +2503,10 @@ pub struct Monitor {
     applier: Arc<dyn Applier>,
     cmd: Arc<dyn Cmd>,
     prober: Arc<dyn Prober>,
+    /// Extra probes (`ins_uplink_probes`): off unless [`Monitor::with_extra`].
+    extra: Option<Arc<dyn ExtraProber>>,
+    extra_results: Arc<StdMutex<BTreeMap<String, Vec<ProbeResult>>>>,
+    extra_busy: Arc<std::sync::atomic::AtomicBool>,
     windows: BTreeMap<String, ProbeWindow>,
     states: BTreeMap<String, GwStatus>,
     last_sig: Option<String>,
@@ -2401,6 +2519,9 @@ impl Monitor {
             applier,
             cmd,
             prober,
+            extra: None,
+            extra_results: Arc::new(StdMutex::new(BTreeMap::new())),
+            extra_busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             windows: BTreeMap::new(),
             states: BTreeMap::new(),
             last_sig: None,
@@ -2408,9 +2529,73 @@ impl Monitor {
         }
     }
 
-    /// The real monitor (ping + ip).
+    /// The real monitor (ping + ip + the extra probes).
     pub fn system(applier: Arc<dyn Applier>) -> Self {
         Self::new(applier, Arc::new(SystemCmd), Arc::new(PingProber))
+            .with_extra(Arc::new(SysExtraProber))
+    }
+
+    /// Also run the extra tcp/http/dns probes stored for each gateway.
+    pub fn with_extra(mut self, p: Arc<dyn ExtraProber>) -> Self {
+        self.extra = Some(p);
+        self
+    }
+
+    /// Start a round of extra probes in the background (never blocks the
+    /// one-second ICMP tick); results land in `extra_results`.
+    async fn kick_extra(
+        &self,
+        store: &ConfigStore,
+        cfg: &RoutingConfig,
+        resolved: &BTreeMap<String, Resolved>,
+    ) {
+        let Some(prober) = self.extra.clone() else {
+            return;
+        };
+        if self
+            .extra_busy
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        let specs = load_probes(store).await;
+        let jobs: Vec<(String, String, ProbeSpec)> = specs
+            .into_iter()
+            .filter(|s| s.enabled)
+            .filter_map(|s| {
+                cfg.gateway(&s.gateway)?;
+                let r = resolved.get(&s.gateway)?;
+                (r.routable() && r.link_up)
+                    .then(|| (s.gateway.clone(), r.dev.clone().unwrap_or_default(), s))
+            })
+            .collect();
+        let shared = self.extra_results.clone();
+        let busy = self.extra_busy.clone();
+        if jobs.is_empty() {
+            shared.lock().unwrap_or_else(|e| e.into_inner()).clear();
+            busy.store(false, std::sync::atomic::Ordering::SeqCst);
+            return;
+        }
+        tokio::spawn(async move {
+            let runs = jobs.into_iter().map(|(gw, dev, spec)| {
+                let p = prober.clone();
+                async move {
+                    let r = p.run(&dev, &spec).await;
+                    (gw, spec, r)
+                }
+            });
+            let done = futures::future::join_all(runs).await;
+            let mut g = shared.lock().unwrap_or_else(|e| e.into_inner());
+            let prev = std::mem::take(&mut *g);
+            for (gw, spec, r) in done {
+                let before = prev
+                    .get(&gw)
+                    .and_then(|v| v.iter().find(|x| x.id == spec.id));
+                g.entry(gw).or_default().push(next_result(&spec, before, r));
+            }
+            drop(g);
+            busy.store(false, std::sync::atomic::Ordering::SeqCst);
+        });
     }
 
     pub fn states(&self) -> &BTreeMap<String, GwStatus> {
@@ -2432,6 +2617,14 @@ impl Monitor {
         }
         let k = KernelState::read(self.cmd.as_ref()).await?;
         let resolved = resolve_all(store, &cfg, &k).await?;
+        if self.extra.is_some() && (self.ticks - 1).is_multiple_of(EXTRA_EVERY_TICKS) {
+            self.kick_extra(store, &cfg, &resolved).await;
+        }
+        let extra_now = self
+            .extra_results
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let probes = cfg.gateways.iter().map(|g| {
             let r = resolved.get(&g.name).cloned().unwrap_or_default();
             let target = g.monitor_ip.or(r.address);
@@ -2465,14 +2658,27 @@ impl Monitor {
                 // new device or address: old samples say nothing about it
                 *entry = (ident.clone(), VecDeque::new());
             }
+            let gw_extra = extra_now.get(&g.name).cloned().unwrap_or_default();
+            // a failing critical probe makes the sample a lost one: the
+            // gateway group's loss/down triggers then fail over as for ICMP
+            let crit = gw_extra.iter().find(|p| p.critical && !p.ok);
             let (state, loss, rtt, detail) = match results.get(&g.name).cloned().flatten() {
                 Some(sample) => {
+                    let sample = if crit.is_some() { None } else { sample };
                     entry.1.push_back(sample);
                     while entry.1.len() > WINDOW {
                         entry.1.pop_front();
                     }
                     let (s, l, rt) = evaluate(&entry.1, g);
-                    (s, l, rt, None)
+                    let why = crit.map(|p| {
+                        format!(
+                            "critical {} probe {} failed: {}",
+                            p.kind.as_str(),
+                            p.target,
+                            p.error.as_deref().unwrap_or("no answer")
+                        )
+                    });
+                    (s, l, rt, why)
                 }
                 None => {
                     entry.1.clear();
@@ -2521,6 +2727,7 @@ impl Monitor {
                     samples: entry.1.len() as u32,
                     detail,
                     since,
+                    probes: gw_extra,
                 },
             );
         }

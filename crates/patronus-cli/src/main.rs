@@ -92,6 +92,13 @@ enum Commands {
         group: String,
     },
 
+    /// DB-IP lite country + ASN databases for the traffic insight (the
+    /// monthly update job runs `patronus ipdb update`)
+    Ipdb {
+        #[command(subcommand)]
+        action: IpdbCommands,
+    },
+
     /// Configuration history
     Config {
         #[command(subcommand)]
@@ -447,6 +454,18 @@ enum GitopsCommands {
 }
 
 #[derive(Subcommand)]
+enum IpdbCommands {
+    /// Download the country and ASN databases when they are due
+    Update {
+        /// Download even if the current files are fresh
+        #[arg(long)]
+        force: bool,
+    },
+    /// Show the files, their age and the last result
+    Status,
+}
+
+#[derive(Subcommand)]
 enum ConfigCommands {
     /// List stored configuration revisions (newest first)
     Revisions,
@@ -694,6 +713,11 @@ async fn main() -> anyhow::Result<()> {
                 })
                 .await?
             }
+        },
+
+        Commands::Ipdb { action } => match action {
+            IpdbCommands::Update { force } => commands::ipdb::update(cli.db, force).await?,
+            IpdbCommands::Status => commands::ipdb::status(cli.db).await?,
         },
 
         Commands::CaptivePortal { action } => match action {

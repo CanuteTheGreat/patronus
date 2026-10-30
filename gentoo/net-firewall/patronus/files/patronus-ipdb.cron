@@ -1,0 +1,7 @@
+#!/bin/sh
+# Monthly refresh of the DB-IP lite country + ASN databases behind the traffic
+# insight (installed to /etc/cron.monthly by the OpenRC half of the ebuild;
+# systemd installs patronus-ipdb.timer instead). Idempotent; as the patronus
+# user so the web service can read what it writes.
+[ -x /usr/bin/patronus ] || exit 0
+su -s /bin/sh patronus -c '/usr/bin/patronus ipdb update' 2>&1 | logger -t patronus-ipdb

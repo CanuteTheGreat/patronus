@@ -181,6 +181,12 @@ config file that only one process knows about.
 - History: `ConfigStore::snapshot()` before a change set,
   `restore_revision()` to roll back (`patronus config revisions|rollback`).
   `export_json()`/`import_json()` cover every lane's tables automatically.
+- **Measured history is not configuration.** Tables that fill themselves with
+  measurements (`ins_usage`, `ins_uplink_samples`, `ins_uplink_hourly`: traffic
+  insight and uplink health, `docs/INSIGHT-UPLINK.md`) are listed in
+  `NON_CONFIG_TABLES` in `store.rs`, so export/import, revisions and rollback
+  neither carry nor wipe them. A new history table must be added there, and
+  needs retention (an unbounded table fills the box).
 
 ### Appliers (`patronus_config::Applier`)
 

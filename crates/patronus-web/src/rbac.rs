@@ -42,7 +42,7 @@ pub fn area_for_path(path: &str) -> Option<&'static str> {
         | "simple" => "dashboard",
         "firewall" => "firewall",
         "interfaces" | "network" => "interfaces",
-        "routing" => "routing",
+        "routing" | "uplinks" => "routing",
         "vpn" => "vpn",
         "dhcp" | "dns" | "ntp" | "svc" | "lan" => "services",
         "qos" => "qos",

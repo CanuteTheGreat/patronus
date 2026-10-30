@@ -208,6 +208,21 @@ that are not finished are listed separately under
   report gateways, tunnels, conntrack, DHCP leases and services; gateway
   up/down, failover and tunnel changes are logged at `GET /api/events` and
   POSTed to signed webhooks. [C40]
+- Traffic insight history (`/insights`, USE=insight for the monthly database
+  job): the router adds up the kernel's per-flow byte counters by hour, per
+  device and per direction, and names where the traffic went by country and
+  ASN from the DB-IP lite databases (CC BY 4.0, refreshed monthly by
+  `patronus ipdb update`). Per-device views (by address, or by device name
+  once device segmentation knows it), a retention period, a top-N cap, and
+  "do not record" for addresses, devices or groups (which also deletes what
+  was recorded); the history survives restarts and reboots. [C70]
+- Uplink health: every gateway's state, round trip and loss are recorded each
+  minute with SLA numbers (availability, quality, outages, hourly bars for
+  90 days). Extra TCP, HTTP and DNS probes run through the gateway's own
+  interface, so an ISP that answers ping but has dead DNS shows as degraded;
+  a probe marked critical counts as packet loss and fails the gateway group
+  over. Probe failures, recoveries and SLA breaches go to the event log and
+  the signed webhooks. [C71]
 - High availability (USE=ha): virtual IPs that fail over between two firewalls
   with VRRP (keepalived), preemption and a maintenance mode, connection-state
   sync (conntrackd) so a failover keeps established connections, and alias
