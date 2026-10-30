@@ -1,0 +1,18 @@
+{
+  "segment_ifaces": ["br0"],
+  "segment_v4_subnets": ["172.31.77.0/24"],
+  "segment_v6_prefixes": ["fd77:31::/64"],
+  "groups": [ {"name": "trusted"}, {"name": "iot"}, {"name": "quarantine", "intra": false} ],
+  "devices": [
+    {"name": "laptop", "mac": "02:aa:00:00:00:11", "ip": "172.31.77.11", "iface": "br0", "group": "trusted",
+     "wifi": {"psk": "laptop-psk-4f9c2e71", "sae_password": "laptop-sae-8d31b0aa", "sae_id": "laptop"}},
+    {"name": "cam",    "mac": "02:aa:00:00:00:12", "ip": "172.31.77.12", "iface": "br0", "group": "iot",
+     "wifi": {"psk": "cam-psk-71be09d3", "sae_password": "cam-sae-c2a7716e", "sae_id": "cam"}},
+    {"name": "tv",     "mac": "02:aa:00:00:00:13", "ip": "172.31.77.13", "iface": "br0", "group": "iot",
+     "wifi": {"psk": "tv-psk-0b5e88f1", "sae_password": "tv-sae-93d4e5c0", "sae_id": "tv"}}
+  ],
+  "services": [
+    {"name": "laptop-to-cam-web", "from": "laptop", "to": "cam", "proto": "tcp", "ports": [8080]}
+  ],
+  "wifi": {"interface": "wlan0", "ssid": "patronus-seg-lab", "channel": 6}
+}

@@ -1,0 +1,47 @@
+{
+  "segment_ifaces": [
+    "br0"
+  ],
+  "segment_v4_subnets": [
+    "172.31.77.0/24"
+  ],
+  "groups": [
+    {
+      "name": "trusted"
+    },
+    {
+      "name": "iot"
+    }
+  ],
+  "devices": [
+    {
+      "name": "laptop",
+      "mac": "02:00:00:00:01:00",
+      "ip": "172.31.77.11",
+      "iface": "br0",
+      "group": "trusted",
+      "wifi": {
+        "psk": "laptop-psk-4f9c2e71",
+        "sae_password": "laptop-sae-8d31b0aa",
+        "sae_id": "laptop"
+      }
+    },
+    {
+      "name": "phone",
+      "mac": "02:00:00:00:02:00",
+      "ip": "172.31.77.12",
+      "iface": "br0",
+      "group": "iot",
+      "wifi": {
+        "psk": "phone-psk-71be09d3",
+        "sae_password": "phone-sae-c2a7716e",
+        "sae_id": "phone"
+      }
+    }
+  ],
+  "wifi": {
+    "interface": "wlan0",
+    "ssid": "patronus-seg-lab",
+    "channel": 6
+  }
+}

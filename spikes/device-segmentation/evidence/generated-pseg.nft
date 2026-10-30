@@ -1,0 +1,39 @@
+add table inet pseg
+delete table inet pseg
+table inet pseg {
+  set seg_ifaces { type ifname; elements = { "br0" } }
+  set bound_v4 { type ifname . ether_addr . ipv4_addr; elements = {
+    "br0" . 02:aa:00:00:00:11 . 172.31.77.11 comment "laptop",
+    "br0" . 02:aa:00:00:00:12 . 172.31.77.12 comment "cam",
+    "br0" . 02:aa:00:00:00:13 . 172.31.77.13 comment "tv"
+  } }
+  set seg_v4 { type ipv4_addr; elements = { 172.31.77.11, 172.31.77.12, 172.31.77.13 } }
+  set grp_iot_v4 { type ipv4_addr; elements = { 172.31.77.12, 172.31.77.13 } }
+  set grp_quarantine_v4 { type ipv4_addr; }
+  set grp_trusted_v4 { type ipv4_addr; elements = { 172.31.77.11 } }
+  set svc_v4 { type ipv4_addr . ipv4_addr . inet_proto . inet_service; elements = { 172.31.77.11 . 172.31.77.12 . tcp . 8080 }; }
+  set seg_net_v4 { type ipv4_addr; flags interval; elements = { 172.31.77.0/24 } }
+  set seg_v6 { type ipv6_addr; flags interval; elements = { fd77:31::/64 } }
+  chain seg_forward {
+    # an address of the segment that is not an enrolled device (revoked, unknown) receives nothing,
+    # not even established flows: revocation cuts live connections without a conntrack flush
+    ip daddr @seg_net_v4 ip daddr != @seg_v4 counter drop comment "unbound or revoked destination"
+    iifname != @seg_ifaces return
+    ip6 saddr @seg_v6 ip6 daddr @seg_v6 counter drop comment "IPv6 between devices: denied"
+    # quarantine / spoof / revoked: unknown (iface, MAC, IP) forwards nothing
+    iifname . ether saddr . ip saddr != @bound_v4 limit rate 10/second log prefix "seg-unbound " group 7 counter drop
+    iifname . ether saddr . ip saddr != @bound_v4 drop
+    ct state established,related accept
+    ct state invalid drop
+    # traffic that is not device-to-device is the ordinary firewall's business
+    ip daddr != @seg_v4 return
+    ip saddr . ip daddr . meta l4proto . th dport @svc_v4 counter accept comment "service rule"
+    ip saddr @grp_trusted_v4 ip daddr @grp_trusted_v4 counter accept comment "group trusted"
+    ip saddr @grp_iot_v4 ip daddr @grp_iot_v4 counter accept comment "group iot"
+    limit rate 10/second log prefix "seg-deny " group 7
+    counter drop comment "default deny between devices"
+  }
+  chain forward { type filter hook forward priority -10; policy accept;
+    jump seg_forward
+  }
+}

@@ -1,0 +1,19 @@
+Version 1.26.2
+unbound-checkconf: no errors in /w/main.conf
+  PASS  unbound-checkconf accepts the views/private-address config
+== per-device policy (same name, two source addresses)
+  PASS  default device resolves games.example -> 198.51.100.7 
+  PASS  'kid' device: games.example -> NXDOMAIN (view_kid block)
+  PASS  'kid' device: other names still resolve (view-first falls back to global policy)
+== rebinding protection
+   evil.rebind.example (-> 192.168.1.10):  status=NOERROR answer=[]
+  PASS  private address stripped from a public name's answer
+   mixed.rebind.example (private + public):   answer=[93.184.216.35 ]
+  PASS  only the private record of a mixed answer is removed
+  PASS  private-domain home.example may resolve to private addresses (LAN names keep working)
+== per-device query log
+   [1793338064] unbound[691:0] query: 127.0.0.2 games.example. A IN
+  PASS  log lines carry the client address, so rows map to device names via the lease/enrolment table
+   [1793338064] unbound[691:0] reply: 127.0.0.2 games.example. A IN NXDOMAIN 0.000000 1 42
+
+RESULT: 8 passed, 0 failed

@@ -1,0 +1,41 @@
+== 0. baseline: no segmentation rules; the bridge only isolates at layer 2, the router forwards everything
+  PASS  laptop -> cam icmp (ok)
+  PASS  cam -> laptop tcp 7000 (ok)
+  PASS  laptop -> cam ipv6 icmp (ok)
+  PASS  unknown -> cam tcp 8081 (ok)
+== 1. generate + load rules from lab.json
+  nft -c (syntax check) OK
+== 2. default deny between devices (laptop=trusted, cam/tv=iot)
+  PASS  laptop -> cam icmp (deny)
+  PASS  cam -> laptop icmp (deny)
+  PASS  cam -> laptop tcp 7000 (deny)
+  PASS  laptop -> cam ipv6 icmp (deny)
+  PASS  laptop -> tv tcp 8080 (service rule names cam only) (deny)
+== 3. group = bidirectional (cam and tv both in iot)
+  PASS  cam -> tv tcp 8080 (ok)
+  PASS  tv -> cam tcp 8081 (ok)
+== 4. one-way service rule laptop -> cam tcp/8080
+  PASS  laptop -> cam tcp 8080 (request and reply) (ok)
+  PASS  laptop -> cam tcp 8081 (other port) (deny)
+  PASS  cam -> laptop tcp 7000 (reverse direction is not allowed) (deny)
+== 5. identity: unknown MAC, spoofed IP, spoofed MAC
+  PASS  unknown device -> cam tcp 8081 (deny)
+  PASS  unknown device -> laptop icmp (deny)
+  PASS  unknown device with the LAPTOP's IP -> cam tcp 8080 (deny)
+  PASS  unknown device with the LAPTOP's MAC (own IP) -> cam tcp 8080 (deny)
+== 6. revocation: re-render with cam revoked, reload atomically
+  reloaded without cam
+    request 1 (before revoke): answered
+    request 2 (before revoke, same connection): answered
+    request 3 (after revoke, same connection): no answer, TimeoutError
+  PASS  keep-alive flow worked before the revoke and is cut after it
+  PASS  laptop -> cam tcp 8080 after revoke (deny)
+  PASS  tv -> cam tcp 8081 after revoke (group peer) (deny)
+  PASS  revoked cam -> tv tcp 8080 (deny)
+  PASS  laptop -> tv tcp 8080 still denied (deny)
+== counters
+		ip daddr @seg_net_v4 ip daddr != @seg_v4 counter packets 11 bytes 961 drop comment "unbound or revoked destination"
+		iifname . ether saddr . ip saddr != @bound_v4 limit rate 10/second burst 5 packets log prefix "seg-unbound " group 7 counter packets 2 bytes 120 drop
+		counter packets 2 bytes 120 drop comment "default deny between devices"
+
+RESULT: 23 passed, 0 failed
