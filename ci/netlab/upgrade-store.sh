@@ -15,6 +15,35 @@ nl_write_installer_toml
 
 migrations() { sqlite3 "$1" 'SELECT group_concat(version) FROM schema_migrations ORDER BY version'; }
 
+# Device segmentation (lane s) ships migrations 1300 (groups/devices/segments), 1310 (Wi-Fi),
+# 1320 (DNS policy + logs), 1330/1331 (insight, uplink history) and 1340 (time limits). An upgraded
+# store must carry all of them, must NOT have isolation switched on (it is opt-in per segment), must
+# not have rebinding protection forced on, and must leave no segmentation table in the kernel.
+seg_upgrade_checks() { # DB LABEL
+  local db=$1 have v
+  have=$(sqlite3 "$db" 'SELECT group_concat(version) FROM schema_migrations')
+  for v in 1300 1310 1320 1330 1331 1340; do
+    case ",$have," in *",$v,"*) ;; *) nl_fail "$2: migration $v missing after the upgrade (have: $have)" ;; esac
+  done
+  [ "$(sqlite3 "$db" "SELECT count(*) FROM seg_segments WHERE enabled <> 0")" = 0 ] \
+    || nl_fail "$2: isolation is on for a segment nobody opted in: $(sqlite3 "$db" 'SELECT segment,enabled FROM seg_segments')"
+  [ "$(sqlite3 "$db" "SELECT count(*) FROM seg_devices")" = 0 ] || nl_fail "$2: the upgrade invented segmentation devices"
+  [ "$(sqlite3 "$db" "SELECT count(*) FROM seg_groups WHERE name IN ('home','quarantine') AND builtin=1")" = 2 ] \
+    || nl_fail "$2: built-in groups (home, quarantine) not seeded"
+  [ "$(sqlite3 "$db" "SELECT count(*) FROM seg_time_policies") $(sqlite3 "$db" "SELECT count(*) FROM seg_dns_policies") $(sqlite3 "$db" "SELECT count(*) FROM seg_wifi_networks")" = "0 0 0" ] \
+    || nl_fail "$2: policies/networks appeared out of nowhere"
+  [ -z "$(sqlite3 "$db" "SELECT value FROM lan_settings WHERE key='dns.rebind_protection'")" ] \
+    || nl_fail "$2: rebinding protection was forced onto an existing store (only new installs get it on)"
+  if R nft list table inet patronus_seg >/dev/null 2>&1; then
+    R nft list table inet patronus_seg; nl_fail "$2: a segmentation table exists although nothing opted in"
+  fi
+  if R nft list table inet patronus_time >/dev/null 2>&1 || R nft list table inet patronus_dnspol >/dev/null 2>&1; then
+    nl_fail "$2: a time-limit/DNS-policy table exists although no policy does"
+  fi
+  [ -z "$(R pgrep -x hostapd || true)" ] || nl_fail "$2: hostapd running on an upgraded store with no Wi-Fi network"
+  nl_ok "$2: segmentation migrations 1300/1310/1320/1330/1331/1340 present, isolation off, no segmentation kernel state"
+}
+
 echo "=== 1. v0.1.0 store layout -> HEAD"
 DB=/t/legacy.db
 rm -f "$DB"
@@ -31,6 +60,7 @@ rm -f /t/ref.db; R "$P" --db /t/ref.db config revisions >/dev/null   # a brand-n
   || nl_fail "legacy store migrated to $(migrations "$DB"), a new store has $(migrations /t/ref.db)"
 nl_ok "legacy store migrated to versions $(migrations "$DB")"
 nl_assert_store_ok "$DB"
+seg_upgrade_checks "$DB" "legacy store"
 [ "$(sqlite3 "$DB" "SELECT value FROM system_config WHERE key='hostname'")" = legacy-box ] || nl_fail "system_config lost"
 [ "$(sqlite3 "$DB" "SELECT count(*) FROM firewall_rules WHERE name LIKE 'legacy-%' AND origin='user'")" = 2 ] || nl_fail "legacy rules lost or re-owned"
 nl_ok "legacy rows kept (origin user), system_config kept"
@@ -71,6 +101,7 @@ echo "--- upgrade: reboot into HEAD"
 nl_boot "$DB"
 nl_ok "HEAD booted the previous release's store (migrations $old_migs -> $(migrations "$DB"))"
 nl_assert_store_ok "$DB"
+seg_upgrade_checks "$DB" "previous-release store"
 [ "$(sqlite3 "$DB" "SELECT name||'|'||chain||'|'||action||'|'||coalesce(dport,'') FROM firewall_rules ORDER BY name")" = "$old_rules" ] \
   || nl_fail "rules changed by the upgrade"
 nl_ok "every rule row intact"

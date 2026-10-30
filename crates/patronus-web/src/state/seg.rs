@@ -222,6 +222,25 @@ fn read_conntrack() -> String {
         .unwrap_or_default()
 }
 
+/// Test handshake for the injectable clock: with `PATRONUS_FAKE_TIME_FILE`
+/// set, the ticker publishes the number of COMPLETED ticks in
+/// `<that file>.ack` (atomically). A scenario that moves the clock or
+/// generates traffic waits until the counter has advanced by two (the tick in
+/// flight may have read conntrack before the traffic, the next one cannot
+/// have), so it never has to guess with a sleep. No effect without the
+/// fake clock.
+fn publish_tick_ack(seq: u64) {
+    if let Some(f) = std::env::var_os(patronus_firewall::schedule::FAKE_TIME_ENV) {
+        let mut ack = f;
+        ack.push(".ack");
+        let ack = std::path::PathBuf::from(ack);
+        let tmp = ack.with_extension("ack.tmp");
+        if std::fs::write(&tmp, seq.to_string()).is_ok() {
+            let _ = std::fs::rename(&tmp, &ack);
+        }
+    }
+}
+
 /// Minute ticker: account active time from conntrack, decide, move device
 /// addresses in and out of the nft sets (`patronus_firewall::seg_time`).
 pub fn spawn_time_ticker(store: Arc<ConfigStore>) {
@@ -235,6 +254,7 @@ pub fn spawn_time_ticker(store: Arc<ConfigStore>) {
         let mut ticker = patronus_firewall::seg_time::TimeTicker::new();
         let mut last_err = String::new();
         let mut last_prune = 0i64;
+        let mut seq = 0u64;
         loop {
             t.tick().await;
             let ct = tokio::task::spawn_blocking(read_conntrack)
@@ -255,6 +275,8 @@ pub fn spawn_time_ticker(store: Arc<ConfigStore>) {
                 last_prune = now;
                 let _ = patronus_firewall::seg_time::prune_usage(&store, at, 60).await;
             }
+            seq += 1;
+            publish_tick_ack(seq);
         }
     });
 }

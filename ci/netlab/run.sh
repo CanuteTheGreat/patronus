@@ -6,6 +6,9 @@
 # /proc/sys needs systempaths=unconfined; the container is still capped and
 # not --privileged).
 #
+# Every selected scenario runs even if an earlier one failed; the summary at
+# the end lists all failures and the exit code is 1 if there was any.
+#
 # Usage: ci/netlab/run.sh [scenario ...]
 #   default: every lane-*.sh, journey-*.sh, failure-*.sh and upgrade-*.sh.
 #   Scenarios source ci/netlab/lib.sh (topology + traffic/kernel assertions).
@@ -94,7 +97,22 @@ cd /t
 # scenarios share this container: leave nothing of the previous one behind
 # (lanes J/K stop their own daemons but not the lib.sh DNS/HTTP helpers)
 scrub() { pkill -f 'nl-dnsmasq.pid' 2>/dev/null || true; pkill -f '/t/(nl|lb)-[a-z0-9]+[.]py' 2>/dev/null || true; pkill -x 'suricata|bgpd|ospfd|zebra|staticd|mgmtd|xl2tpd|softflowd|igmpproxy|tayga|unbound|rsyslogd|patronus-web|patronus-dashboard|charon-systemd' 2>/dev/null || true; rm -f /tmp/charon-rtr.pid /run/charon.vici /run/charon-client.vici; for n in \$(ip netns list | cut -d' ' -f1); do ip netns del "\$n" 2>/dev/null || true; done; sleep 1; }
-for s in $names; do scrub; echo "##### \$s"; start=\$(date +%s); bash "/t/\$s"; echo "##### \$s passed in \$((\$(date +%s) - start)) s"; done
+# Run EVERY scenario even when one fails (one failing scenario used to hide
+# all the ones after it) and fail the job at the end listing each failure.
+failed=""; passed=0
+for s in $names; do
+  scrub; echo "##### \$s"; start=\$(date +%s)
+  if bash "/t/\$s"; then
+    passed=\$((passed + 1)); echo "##### \$s passed in \$((\$(date +%s) - start)) s"
+  else
+    rc=\$?; failed="\$failed \$s"; echo "##### \$s FAILED (exit \$rc) after \$((\$(date +%s) - start)) s"
+  fi
+done
+echo "##### netlab summary: \$passed passed, \$(echo \$failed | wc -w) failed"
+if [ -n "\$failed" ]; then
+  for f in \$failed; do echo "##### FAILED: \$f"; done
+  exit 1
+fi
 INNER
 
 case "$(uname -m)" in
