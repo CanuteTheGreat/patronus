@@ -310,6 +310,14 @@ impl Collector {
             if d == (0, 0, 0, 0) && !is_new {
                 continue;
             }
+            // the router's own traffic (it opened the flow, or it ends at the router
+            // itself) is not a device's: a port forward (orig destination = the router,
+            // reply source = the LAN server) is
+            if self.router_ips.contains(&f.osrc)
+                || (f.rsrc == f.odst && self.router_ips.contains(&f.odst))
+            {
+                continue;
+            }
             let Some(a) = attribute(f, d.0, d.1, d.2, d.3) else {
                 continue;
             };
@@ -1326,6 +1334,28 @@ mod tests {
         assert!(rows.iter().all(|r| r.key.1 == "192.168.50.10"), "{rows:?}");
         assert_eq!(rows.len(), 2);
         assert!(parse_ip_o_addr("garbage\n\n").is_empty());
+        // the router asking a resolver on a private address is not that resolver's traffic
+        let mut c = Collector::new(enricher());
+        c.router_ips = parse_ip_o_addr("2: wan    inet 203.0.113.2/24 scope global wan\n");
+        c.ingest(&[], t0);
+        let resolver = line("udp", "203.0.113.2", "10.1.10.97", 53, 70, 120);
+        let to_router = "ipv4 2 tcp 6 100 ESTABLISHED src=198.51.100.7 dst=203.0.113.2 sport=5555 dport=22 packets=4 bytes=400 src=203.0.113.2 dst=198.51.100.7 sport=22 dport=5555 packets=3 bytes=300 use=1";
+        // a port forward: orig destination is the router's WAN address, the reply comes from the LAN server
+        let forward = "ipv4 2 tcp 6 100 ESTABLISHED src=198.51.100.7 dst=203.0.113.2 sport=5556 dport=443 packets=4 bytes=400 src=192.168.50.20 dst=198.51.100.7 sport=443 dport=5556 packets=3 bytes=3000 use=1";
+        c.ingest(
+            &parse_dir_flows(&format!("{resolver}\n{to_router}\n{forward}\n")),
+            t0 + 15,
+        );
+        let rows = c.take();
+        assert!(
+            rows.iter().all(|r| r.key.1 == "192.168.50.20"),
+            "only the port-forwarded server is a device here: {rows:?}"
+        );
+        assert_eq!(
+            rows.iter().find(|r| r.key.2 == "up").unwrap().agg.bytes,
+            3000,
+            "the server's replies are its upload"
+        );
     }
 
     #[test]
