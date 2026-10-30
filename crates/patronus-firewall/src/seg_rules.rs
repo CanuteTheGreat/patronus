@@ -817,6 +817,128 @@ mod tests {
         }
     }
 
+    // --- mutation floor: every validation branch and every set is asserted -----
+
+    #[test]
+    fn a_device_must_sit_on_an_enabled_segment() {
+        let mut c = cfg();
+        c.devices[0].ifaces = vec![];
+        assert!(
+            render_nft(&c)
+                .unwrap_err()
+                .to_string()
+                .contains("not on an enabled segment"),
+            "no interface at all"
+        );
+        let mut c = cfg();
+        c.devices[0].ifaces = vec!["br9".into()];
+        assert!(
+            render_nft(&c)
+                .unwrap_err()
+                .to_string()
+                .contains("not on an enabled segment"),
+            "an interface that is not enabled"
+        );
+        let mut c = cfg();
+        c.devices[0].ifaces = vec!["br0".into(), "br9".into()];
+        assert!(render_nft(&c).is_err(), "every interface must be enabled");
+    }
+
+    #[test]
+    fn group_sets_hold_exactly_their_own_members() {
+        let n = render_nft(&cfg()).unwrap();
+        assert!(
+            n.contains("set grp_1_v4 { type ipv4_addr; elements = { 172.31.77.11 } }"),
+            "{n}"
+        );
+        assert!(
+            n.contains(
+                "set grp_2_v4 { type ipv4_addr; elements = { 172.31.77.12, 172.31.77.13 } }"
+            ),
+            "{n}"
+        );
+    }
+
+    #[test]
+    fn a_service_endpoint_must_be_a_device_or_a_group() {
+        for (src, dst) in [("host", "device"), ("device", "host"), ("host", "host")] {
+            let mut c = cfg();
+            c.services[0].src.0 = src.into();
+            c.services[0].dst.0 = dst.into();
+            assert!(
+                render_nft(&c)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("bad endpoint"),
+                "{src} -> {dst}"
+            );
+        }
+        let mut c = cfg();
+        c.services[0].src.0 = "group".into();
+        c.services[0].dst.0 = "group".into();
+        c.services[0].src.1 = 1;
+        c.services[0].dst.1 = 2;
+        assert!(render_nft(&c).is_ok(), "group -> group is fine");
+    }
+
+    #[test]
+    fn only_groups_that_may_talk_internally_get_an_intra_accept() {
+        let mut c = cfg();
+        c.groups.push(SegGroup {
+            id: 4,
+            intra: false,
+            internet_deny: false,
+            quarantine: false,
+        });
+        c.devices
+            .push(dev(5, "lonely", "02:aa:00:00:00:15", "172.31.77.15", 4));
+        let n = render_nft(&c).unwrap();
+        assert!(n.contains("set grp_4_v4"), "{n}");
+        assert!(
+            !n.contains("ip saddr @grp_4_v4 ip daddr @grp_4_v4"),
+            "a group with intra=no must not talk to itself: {n}"
+        );
+        assert!(
+            !n.contains("ip saddr @grp_3_v4 ip daddr @grp_3_v4"),
+            "quarantine never talks to itself: {n}"
+        );
+        assert!(n.contains("ip saddr @grp_1_v4 ip daddr @grp_1_v4"));
+    }
+
+    #[test]
+    fn a_link_must_join_two_different_known_non_quarantine_groups() {
+        for links in [
+            vec![(99, 1)],
+            vec![(1, 99)],
+            vec![(3, 1)],
+            vec![(1, 3)],
+            vec![(1, 1)],
+        ] {
+            let mut c = cfg();
+            c.links = links.clone();
+            assert!(
+                render_nft(&c)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("unknown, quarantine or identical"),
+                "{links:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_single_link_renders_both_directions() {
+        let mut c = cfg();
+        c.links = vec![(1, 2)];
+        let n = render_nft(&c).unwrap();
+        assert!(n.contains("link 1->2") && n.contains("link 2->1"), "{n}");
+        // listed in the other order, or twice, it is still exactly one pair
+        c.links = vec![(2, 1), (1, 2), (2, 1)];
+        let n = render_nft(&c).unwrap();
+        assert_eq!(n.matches("link 1->2").count(), 1, "{n}");
+        assert_eq!(n.matches("link 2->1").count(), 1, "{n}");
+    }
+
     // --- against the store ---------------------------------------------------
 
     async fn lab_store() -> ConfigStore {
@@ -944,6 +1066,75 @@ mod tests {
         assert!(
             !r.active && r.warnings.iter().any(|w| w.contains("no IPv4 address")),
             "{r:?}"
+        );
+    }
+    #[tokio::test]
+    async fn only_global_ipv6_prefixes_of_a_sane_length_are_segment_prefixes() {
+        let s = lab_store().await;
+        sqlx::query("INSERT INTO interface_addresses (interface_name, address, prefix_len, family) VALUES ('br0','::1',128,'ipv6'), ('br0','fd77:99::1',8,'ipv6'), ('br0','fd77:98::1',129,'ipv6'), ('br0','fd77:97::1',16,'ipv6')")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        let v6 = segment_v6(&s, &["br0".to_string()]).await;
+        assert!(v6.contains(&"fd77:31::/64".to_string()), "{v6:?}");
+        assert!(
+            v6.contains(&"fd77::/16".to_string()),
+            "/16 is the shortest accepted: {v6:?}"
+        );
+        assert!(
+            !v6.iter()
+                .any(|p| p.starts_with("::1") || p.starts_with("fe80")),
+            "loopback and link-local are never a segment prefix: {v6:?}"
+        );
+        assert!(
+            !v6.contains(&"fd00::/8".to_string()) && !v6.iter().any(|p| p.ends_with("/129")),
+            "prefix lengths outside 16..=128 are ignored: {v6:?}"
+        );
+        assert_eq!(v6.len(), 2, "{v6:?}");
+    }
+
+    #[tokio::test]
+    async fn a_group_without_internet_lands_in_the_noinet_set() {
+        let s = lab_store().await;
+        seg::create_group(
+            &s,
+            &seg::GroupInput {
+                name: "iot".into(),
+                internet: "deny".into(),
+                intra: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        seg::create_device(&s, &input("laptop", "02:aa:00:00:00:11", None))
+            .await
+            .unwrap();
+        seg::create_device(&s, &input("cam", "02:aa:00:00:00:12", Some("iot")))
+            .await
+            .unwrap();
+        seg::set_segment_enabled(&s, "@lan", true).await.unwrap();
+        let r = seg_rules(&s).await.unwrap();
+        let line = r
+            .script
+            .lines()
+            .find(|l| l.contains("set noinet_v4"))
+            .unwrap()
+            .to_string();
+        let cam_ip =
+            sqlx::query_scalar::<_, String>("SELECT ip4 FROM seg_devices WHERE name='cam'")
+                .fetch_one(s.pool().unwrap())
+                .await
+                .unwrap();
+        let laptop_ip =
+            sqlx::query_scalar::<_, String>("SELECT ip4 FROM seg_devices WHERE name='laptop'")
+                .fetch_one(s.pool().unwrap())
+                .await
+                .unwrap();
+        assert!(line.contains(&cam_ip), "{line}");
+        assert!(
+            !line.contains(&laptop_ip),
+            "the home group keeps the internet: {line}"
         );
     }
 }

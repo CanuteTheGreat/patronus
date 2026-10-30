@@ -11,3 +11,6 @@ patronus-config crates/patronus-config/src/defaults.rs 95
 patronus-config crates/patronus-config/src/migrate.rs 100
 patronus-firewall crates/patronus-firewall/src/applier.rs 95
 patronus-firewall crates/patronus-firewall/src/nftables.rs 97
+# seg_rules.rs (device segmentation renderer, 2026-10-30): 54/63 caught (85%) before the tests of
+# every validation branch and set were added, 63/63 (100%) after; floor leaves ~3 points for new code.
+patronus-firewall crates/patronus-firewall/src/seg_rules.rs 97
