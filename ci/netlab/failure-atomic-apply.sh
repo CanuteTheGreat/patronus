@@ -29,7 +29,7 @@ cat > /t/faultnft/nft <<EOF
 #!/bin/sh
 if [ "\$1" = -f ]; then
   script=\$(cat)
-  if printf '%s' "\$script" | grep -q kernel-rejects-me; then
+  if printf '%s' "\$script" | grep kernel-rejects-me >/dev/null; then
     echo "Error: Could not process rule: Operation not supported (injected)" >&2; exit 1
   fi
   printf '%s\n' "\$script" | $REAL_NFT "\$@"

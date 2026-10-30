@@ -49,18 +49,18 @@ EOF
   CLIENT_PID=$!
 }
 # the server's side of a session: its ppp interface with the tunnel address
-srv_ppp() { R ip -o addr show 2>/dev/null | grep -q 'ppp[0-9]* .*10.88.0.1'; }
+srv_ppp() { R ip -o addr show 2>/dev/null | grep 'ppp[0-9]* .*10.88.0.1' >/dev/null; }
 client_down() {
   kill "${CLIENT_PID:-0}" 2>/dev/null || true; pkill -f "l2tp-client.conf" 2>/dev/null || true; ISP pkill -x pppd 2>/dev/null || true; sleep 1
   # a client that dials again while the server still holds the old tunnel
   # (the server notices a dead peer only after its timeouts) can wait for its
   # redial for a long time: let the server drop the session first
   if srv_ppp; then
-    nl_wait 30 sh -c '! ip netns exec nl-rtr ip -o addr show | grep -q "ppp[0-9]* .*10.88.0.1"' \
+    nl_wait 30 sh -c '! ip netns exec nl-rtr ip -o addr show | grep "ppp[0-9]* .*10.88.0.1" >/dev/null' \
       || echo "note: the server still holds the old PPP session after 30 s"
   fi
 }
-isp_ppp() { ISP ip -o addr show 2>/dev/null | grep -q 'ppp[0-9]* .*inet 10.88.0.'; }
+isp_ppp() { ISP ip -o addr show 2>/dev/null | grep 'ppp[0-9]* .*inet 10.88.0.' >/dev/null; }
 # dial and wait; a client whose first attempt got lost is started once more
 connect() { # USER
   client_up "$1"
@@ -103,7 +103,7 @@ connect alice || { cat /tmp/l2tp-client.log | tail -20; tail -20 /run/patronus/p
 nl_ok "client got a PPP address: $(ISP ip -o addr show | grep -o 'inet 10.88.0.[0-9]*' | head -1)"
 ISP ping -c 3 -W 2 10.88.0.1 >/dev/null || nl_fail "client cannot ping the server's tunnel address through PPP"
 nl_ok "client pings the server's tunnel address 10.88.0.1 through the L2TP/PPP link"
-R ip -o addr show | grep -q 'ppp[0-9]* .*10.88.0.1' || nl_fail "the router has no ppp interface with 10.88.0.1"
+R ip -o addr show | grep 'ppp[0-9]* .*10.88.0.1' >/dev/null || nl_fail "the router has no ppp interface with 10.88.0.1"
 nl_api GET /svc/l2tp
 python3 - "$NL_OUT" <<'PY' || nl_fail "status does not show the session"
 import json, sys

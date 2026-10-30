@@ -31,13 +31,13 @@ nl_ok "an incomplete DHCP pool is refused"
 
 nl_api GET /setup/status
 [ "$(jget 'd["completed"]')" = True ] || nl_fail "not marked completed"
-R ip -4 addr show rtr-lan | grep -q 'inet 192.168.50.1/24' || nl_fail "LAN address missing"
-R ip -4 addr show rtr-wan | grep -q 'inet 203.0.113.2/24' || nl_fail "WAN address missing"
+R ip -4 addr show rtr-lan | grep 'inet 192.168.50.1/24' >/dev/null || nl_fail "LAN address missing"
+R ip -4 addr show rtr-wan | grep 'inet 203.0.113.2/24' >/dev/null || nl_fail "WAN address missing"
 nl_ok "addresses on the kernel, completed flag in the store (the DHCP pool goes through the DHCP page's manager, proven by lan-services)"
 
 echo "=== reboot: everything comes back from the store"
 nl_web_stop
 nl_boot "$DB"
-R ip -4 addr show rtr-lan | grep -q 'inet 192.168.50.1/24' || nl_fail "LAN address lost after reboot"
+R ip -4 addr show rtr-lan | grep 'inet 192.168.50.1/24' >/dev/null || nl_fail "LAN address lost after reboot"
 nl_expect_ping $NL_WWW
 echo "PASS lane-n-wizard"

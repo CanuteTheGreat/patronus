@@ -15,7 +15,7 @@ mapfile -t FEATURES < <(grep -oE 'usex [a-z0-9-]+ "[a-z0-9-]+"' "$EBUILD" | awk 
 
 CLI_FEATURES=$(awk '/^\[features\]/{f=1;next} /^\[/{f=0} f && /=/{print $1}' crates/patronus-cli/Cargo.toml)
 for f in "${FEATURES[@]}"; do
-  echo "$CLI_FEATURES" | grep -qx "$f" || { echo "::error::ebuild maps a USE flag to cargo feature '$f' that patronus-cli does not define"; exit 1; }
+  echo "$CLI_FEATURES" | grep -x "$f" >/dev/null || { echo "::error::ebuild maps a USE flag to cargo feature '$f' that patronus-cli does not define"; exit 1; }
 done
 
 echo "USE-mapped features: ${FEATURES[*]}"

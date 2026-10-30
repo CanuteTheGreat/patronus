@@ -55,7 +55,7 @@ fi
 wifi_release() { # NS...
   local ns p
   for ns in "$@"; do
-    ip netns list | grep -qw "$ns" || continue
+    ip netns list | grep -w "$ns" >/dev/null || continue
     for p in $(ip netns exec "$ns" iw phy 2>/dev/null | awk '/^Wiphy/ {print $2}'); do
       ip netns exec "$ns" iw phy "$p" set netns 1 2>/dev/null || true
     done

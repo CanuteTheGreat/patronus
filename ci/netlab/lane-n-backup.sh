@@ -40,7 +40,7 @@ nl_api POST /system/backup-targets/$TID/run
 [ "$NL_CODE" = 200 ] || nl_fail "run: $NL_CODE $(cat "$NL_OUT")"; F=$(jget 'd["file"]')
 case "$F" in *.json.enc) ;; *) nl_fail "file name $F";; esac
 [ -s "$DAV/$F" ] || nl_fail "nothing arrived on the server"
-head -c4 "$DAV/$F" | grep -q PBK1 || nl_fail "not an encrypted backup"
+head -c4 "$DAV/$F" | grep PBK1 >/dev/null || nl_fail "not an encrypted backup"
 ! grep -aq 'web_users\|tables' "$DAV/$F" || nl_fail "readable configuration on the remote server"
 nl_ok "encrypted backup $F arrived on the remote server and holds no readable configuration"
 nl_api GET /system/backup-targets

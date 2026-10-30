@@ -88,7 +88,7 @@ nl_api POST "/system/backups/$BK/restore"
 nl_assert_nft_lacks after-backup
 nl_expect_http "after restoring $BK: blocked.example.test reachable again" http://blocked.example.test/ "sees"
 [ -z "$(sqlite3 "$DB" "SELECT 1 FROM web_users WHERE username='temp'")" ] || nl_fail "restore kept the later account"
-sqlite3 "$DB" "SELECT summary FROM config_revisions" | grep -q "before restore of $BK" || nl_fail "no revision before the restore"
+sqlite3 "$DB" "SELECT summary FROM config_revisions" | grep "before restore of $BK" >/dev/null || nl_fail "no revision before the restore"
 nl_ok "stored backup restored: rule gone from nftables, later account gone, previous config kept as a revision"
 
 # break it again, then restore by uploading the downloaded file

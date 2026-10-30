@@ -17,7 +17,7 @@ hits=$(git ls-files -z -- '.cargo' 'Dockerfile*' '*/Dockerfile*' '*.sh' '.forgej
   | grep -vE '^[^:]+:[0-9]+:\s*#' \
   | grep -vE '^[^:]+:[0-9]+:[^#]*#.*target-cpu=native' || true)
 # the ebuild may use it ONLY behind `use arch-native` / PATRONUS_TARGET_CPU (checked by eye in review; grep for a bare default)
-if grep -nE 'target-cpu=native' gentoo/net-firewall/patronus/*.ebuild | grep -vE 'arch-native|PATRONUS_TARGET_CPU|^[^:]+:[0-9]+:\s*#' | grep -q .; then
+if grep -nE 'target-cpu=native' gentoo/net-firewall/patronus/*.ebuild | grep -vE 'arch-native|PATRONUS_TARGET_CPU|^[^:]+:[0-9]+:\s*#' | grep . >/dev/null; then
   hits="$hits
 gentoo ebuild: bare target-cpu=native outside the arch-native opt-in"
 fi

@@ -82,7 +82,7 @@ wait_for() { # DESC SECONDS CMD...
   fail "timed out after ${n}s waiting for: $d"
 }
 default_via() { R ip -4 route show table 4250 proto 253; }
-via_is() { default_via | grep -q "$1"; }
+via_is() { default_via | grep "$1" >/dev/null; }
 # status helpers (GET /api/uplinks/status)
 gw() { # NAME EXPR -> evaluates EXPR with g = that gateway of /api/uplinks/status
   nl_api GET /uplinks/status >/dev/null
@@ -193,7 +193,7 @@ nl_api POST /uplinks/probes '{"gateway":"WAN1","kind":"dns","target":"198.51.100
 PID=$(jget 'd["id"]')
 must 400 POST /uplinks/probes '{"gateway":"WAN1","kind":"dns","target":"198.51.100.53","name":"www.example.test"}'
 must 400 POST /uplinks/probes '{"gateway":"NOPE","kind":"tcp","target":"198.51.100.10","port":80}'
-R ip -4 route show proto 252 | grep -q '198.51.100.53 via 203.0.113.1 dev rtr-wan' || fail "probe target not pinned to WAN1: $(R ip -4 route show proto 252)"
+R ip -4 route show proto 252 | grep '198.51.100.53 via 203.0.113.1 dev rtr-wan' >/dev/null || fail "probe target not pinned to WAN1: $(R ip -4 route show proto 252)"
 nl_ok "DNS probe added; its target 198.51.100.53 is pinned to WAN1 (host route, proto 252), bad probes refused (400)"
 wait_for "the DNS probe answers through WAN1" 40 probe_ok
 nl_ok "DNS probe through rtr-wan: ok, $(gw WAN1 'g["probes"][0]["rtt_ms"]') ms"
@@ -230,7 +230,7 @@ must 200 PUT "/uplinks/probes/$PID" '{"gateway":"WAN1","kind":"dns","target":"19
 INET nft add table inet nlb; INET nft "add chain inet nlb in { type filter hook input priority 0; }"; INET nft "add rule inet nlb in udp dport 53 drop"
 wait_for "WAN1 down because of the critical probe" 90 gw_is WAN1 down
 R ping -c1 -W2 -I rtr-wan 203.0.113.1 >/dev/null || fail "the ISP router must still answer ping (that is the point)"
-gw WAN1 'g["detail"]' | grep -q 'critical dns probe' || fail "detail: $(gw WAN1 'g["detail"]')"
+gw WAN1 'g["detail"]' | grep 'critical dns probe' >/dev/null || fail "detail: $(gw WAN1 'g["detail"]')"
 wait_for "default on WAN2" 20 via_is 'via 100.64.0.1 dev rtr-wan2'
 [ "$(who)" = 100.64.0.2 ] || fail "the LAN client should have failed over to WAN2"
 nl_ok "critical DNS probe failing while ping answers: WAN1 down ('$(gw WAN1 'g["detail"]')'), default and LAN client moved to WAN2"
@@ -256,7 +256,7 @@ nl_web_stop; applyd_stop
 rm -f "$PATRONUS_GATEWAY_STATUS"
 nl_up; second_wan
 nl_apply "$DB" || { cat "$NL_OUT"; fail "reboot apply"; }
-R ip -4 route show proto 252 | grep -q '198.51.100.53 via 203.0.113.1 dev rtr-wan' || fail "boot apply did not pin the probe target: $(R ip -4 route show proto 252)"
+R ip -4 route show proto 252 | grep '198.51.100.53 via 203.0.113.1 dev rtr-wan' >/dev/null || fail "boot apply did not pin the probe target: $(R ip -4 route show proto 252)"
 applyd_start
 nl_web_start "$DB"; nl_login
 must 200 GET /uplinks/probes

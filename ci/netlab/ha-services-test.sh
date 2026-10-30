@@ -91,9 +91,9 @@ wait_for() { # DESC SECONDS cmd...: poll until the command succeeds
   for i in $(seq 1 $((s * 2))); do "$@" >/dev/null 2>&1 && return 0; sleep 0.5; done
   fail "timed out waiting for: $d"
 }
-a_has_vip() { ip -4 -br addr show dev rtr-lan | grep -q ' 192.168.50.254/24'; }
+a_has_vip() { ip -4 -br addr show dev rtr-lan | grep ' 192.168.50.254/24' >/dev/null; }
 a_no_vip() { ! a_has_vip; }
-b_has_vip() { N hb ip -4 -br addr show dev hb0 | grep -q ' 192.168.50.254/24'; }
+b_has_vip() { N hb ip -4 -br addr show dev hb0 | grep ' 192.168.50.254/24' >/dev/null; }
 b_no_vip() { ! b_has_vip; }
 ha_state() { # state as the API reports it
   api GET /api/ha >/dev/null; python3 -c 'import json; print(json.load(open("/tmp/api.out"))["status"]["state"])'
@@ -286,7 +286,7 @@ has "$KA" "unicast_peer" "peer not configured"
 has "$KA" "track_interface" "no tracked links"
 has "$(cat /etc/patronus/ha-notify.sh)" "conntrackd" "notify script missing"
 [ -x /etc/patronus/ha-notify.sh ] || fail "notify script not executable"
-nft list ruleset | grep -Eq 'l4proto (112|vrrp|carp) accept comment "HA VRRP"' || { nft list chain inet patronus input; fail "firewall does not accept VRRP"; }
+nft list ruleset | grep -E 'l4proto (112|vrrp|carp) accept comment "HA VRRP"' >/dev/null || { nft list chain inet patronus input; fail "firewall does not accept VRRP"; }
 ok "keepalived.conf + notify script written, VRRP opened in nftables"
 wait_for "A's keepalived is running (via $INIT)" 20 a_running keepalived
 wait_for "A reports BACKUP (B is the master)" 20 state_is BACKUP
@@ -344,15 +344,15 @@ state_is MASTER || fail "A lost MASTER to a lower-priority B"
 # a long-lived flow through A
 N lan python3 /t/hold.py client 203.0.113.9 9000 40 >/t/flow.out 2>&1 &
 FLOW=$!
-wait_for "the flow is in A's conntrack table" 10 sh -c "conntrack -L 2>/dev/null | grep -q 'dst=203.0.113.9.*dport=9000'"
-wait_for "B's external cache has the flow (state sync over UDP 3780)" 20 sh -c "conntrackd -C /t/hb/ct.conf -e 2>/dev/null | grep -q 'dst=203.0.113.9'"
+wait_for "the flow is in A's conntrack table" 10 sh -c "conntrack -L 2>/dev/null | grep 'dst=203.0.113.9.*dport=9000' >/dev/null"
+wait_for "B's external cache has the flow (state sync over UDP 3780)" 20 sh -c "conntrackd -C /t/hb/ct.conf -e 2>/dev/null | grep 'dst=203.0.113.9' >/dev/null"
 ok "the flow client -> 203.0.113.9:9000 (through A) appears in B's conntrackd external cache"
 echo "=== 9. maintenance mode on A: B takes over and commits the synced flow into its kernel table"
 want 200 POST /api/ha/maintenance '{"enabled":true}'
 wait_for "B becomes MASTER" 15 b_has_vip
 wait_for "A is BACKUP" 15 state_is BACKUP
 has "$(cat /etc/keepalived/keepalived.conf)" "priority 1" "maintenance priority missing"
-wait_for "B's kernel table has the flow (notify -> conntrackd -c)" 15 sh -c "ip netns exec hb conntrack -L 2>/dev/null | grep -q 'dst=203.0.113.9.*dport=9000'"
+wait_for "B's kernel table has the flow (notify -> conntrackd -c)" 15 sh -c "ip netns exec hb conntrack -L 2>/dev/null | grep 'dst=203.0.113.9.*dport=9000' >/dev/null"
 ok "B (new master) committed the replicated connection into its own conntrack table"
 want 200 POST /api/ha/maintenance '{"enabled":false}'
 wait_for "A preempts again" 15 a_has_vip
@@ -362,15 +362,15 @@ kill "$FLOW" 2>/dev/null || true
 
 echo "=== 10. alias virtual IPs are plain extra addresses and survive 'patronus apply'"
 want 201 POST /api/ha/vips '{"name":"mgmt-alias","interface":"@lan","address":"192.168.50.77/24","mode":"alias"}'
-ip -4 -br addr show dev rtr-lan | grep -q ' 192.168.50.77/24' || fail "alias address not on rtr-lan"
+ip -4 -br addr show dev rtr-lan | grep ' 192.168.50.77/24' >/dev/null || fail "alias address not on rtr-lan"
 APPLY=$(patronus apply 2>&1) || { echo "$APPLY"; fail "patronus apply: $APPLY"; }
-ip -4 -br addr show dev rtr-lan | grep -q ' 192.168.50.77/24' || fail "patronus apply removed the alias"
-ip -4 -br addr show dev rtr-lan | grep -q ' 192.168.50.254/24' || fail "patronus apply removed the CARP VIP"
+ip -4 -br addr show dev rtr-lan | grep ' 192.168.50.77/24' >/dev/null || fail "patronus apply removed the alias"
+ip -4 -br addr show dev rtr-lan | grep ' 192.168.50.254/24' >/dev/null || fail "patronus apply removed the CARP VIP"
 ok "alias 192.168.50.77 is on rtr-lan and untouched by an interfaces apply"
 api GET /api/ha >/dev/null
 ALIAS_ID=$(python3 -c 'import json; print([v["id"] for v in json.load(open("/tmp/api.out"))["vips"] if v["name"]=="mgmt-alias"][0])')
 want 200 DELETE "/api/ha/vips/$ALIAS_ID"
-ip -4 -br addr show dev rtr-lan | grep -q ' 192.168.50.77/24' && fail "deleted alias still on rtr-lan"
+ip -4 -br addr show dev rtr-lan | grep ' 192.168.50.77/24' >/dev/null && fail "deleted alias still on rtr-lan"
 ok "deleting the alias removes the address"
 
 echo "=== 11. reboot: daemons stopped, configs gone, 'patronus apply' brings HA back"
@@ -396,7 +396,7 @@ a_no_vip || fail "the VIP is still on rtr-lan after HA was turned off"
 has "$(cat /etc/keepalived/keepalived.conf)" "Managed by Patronus" "idle file lost the marker"
 if grep -q 192.168.50.254 /etc/keepalived/keepalived.conf; then fail "idle keepalived.conf still lists the VIP"; fi
 has "$(nft list ruleset)" 'input' "ruleset gone?"
-if nft list ruleset | grep -q 'HA VRRP'; then fail "VRRP is still open with HA off"; fi
+if nft list ruleset | grep 'HA VRRP' >/dev/null; then fail "VRRP is still open with HA off"; fi
 ok "HA off: keepalived + conntrackd stopped, VIP removed, configs idle, VRRP/sync ports closed again"
 
 kill "$HOLD" 2>/dev/null || true

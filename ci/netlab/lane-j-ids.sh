@@ -52,7 +52,7 @@ plain || nl_fail "ordinary request failed"
 N0=$(alerts)
 for i in 1 2 3; do evil || nl_fail "request with the pattern failed in IDS mode (it must only alert)"; done
 nl_wait 30 sh -c "[ \$(grep -c '\"event_type\":\"alert\"' $EVE) -gt $N0 ]" || { tail -5 "$EVE"; nl_fail "no alert for the request carrying the pattern"; }
-grep '"event_type":"alert"' "$EVE" | grep -q 'Netlab evil pattern' || nl_fail "alert lacks the rule message"
+grep '"event_type":"alert"' "$EVE" | grep 'Netlab evil pattern' >/dev/null || nl_fail "alert lacks the rule message"
 nl_ok "alert in eve.json: $(grep '"event_type":"alert"' "$EVE" | tail -1 | cut -c1-160)"
 N1=$(alerts)
 for i in 1 2 3; do plain; done
@@ -87,7 +87,7 @@ nl_api_ok "recover" PUT /svc/ids '{"distro_rules":false}'
 echo "=== inline IPS: a drop rule really drops"
 nl_api_ok "rule -> drop" PUT "/svc/ids/rules/$RID" '{"action":"drop"}'
 nl_api_ok "mode -> ips" PUT /svc/ids '{"mode":"ips"}'
-suri_q3() { pgrep -af '^/usr/bin/suricata -c' | grep -q -- '-q 3'; }
+suri_q3() { pgrep -af '^/usr/bin/suricata -c' | grep -- '-q 3' >/dev/null; }
 nl_wait 60 suri_q3 || nl_fail "suricata was not restarted in NFQUEUE mode"
 ids_chain=$(R nft list chain inet patronus ids_ips 2>&1 || true)
 grep -q 'queue' <<<"$ids_chain" || { echo "$ids_chain"; R nft list ruleset | tail -30; nl_fail "no queue rule in the ids_ips chain"; }
@@ -103,7 +103,7 @@ nl_web_stop
 suri_kill
 nl_boot "$DB"
 nl_wait 60 suri_up || nl_fail "suricata not started by the boot apply"
-# capture first: `nft | grep -q` under pipefail dies of SIGPIPE when grep exits early
+# capture first: a pipe into grep -q under pipefail dies of SIGPIPE when grep exits early
 ids_chain=$(R nft list chain inet patronus ids_ips 2>&1 || true)
 grep -q queue <<<"$ids_chain" || { echo "$ids_chain"; R nft list ruleset | tail -30; nl_fail "queue rule missing after the boot apply"; }
 sleep 10

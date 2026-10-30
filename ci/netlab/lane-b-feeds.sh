@@ -114,7 +114,7 @@ echo "--- URL table of ports"
 printf '9000\n9001-9003\n' > "$FEEDS/ports.txt"
 api_ok POST /firewall/aliases "{\"name\":\"urlports\",\"type\":\"urltable_ports\",\"entries\":[],\"source\":{\"kind\":\"url\",\"url\":\"$FEED_URL/ports.txt\",\"refresh_secs\":300}}"
 wait_status urlports "ok: 2 ports"
-ports_set=$(R nft list set inet patronus alias_urlports_ports)   # (capture first: `| grep -q` makes nft die of SIGPIPE under pipefail)
+ports_set=$(R nft list set inet patronus alias_urlports_ports)   # (capture first: piping into grep -q makes nft die of SIGPIPE under pipefail)
 grep -q '9000-9003' <<<"$ports_set" || { setdump alias_urlports_ports; nl_fail "port set not filled"; }
 nl_ok "URL table (ports) filled: $(setdump alias_urlports_ports | tr -d '\n\t' | grep -o 'elements.*')"
 

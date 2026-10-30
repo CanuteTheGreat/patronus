@@ -74,8 +74,8 @@ nl_api_ok "enable" PUT /svc/nat64 '{"enabled":true,"prefix":"2001:db8:64::/96","
 nl_wait 10 pgrep -x tayga || nl_fail "tayga did not start"
 nl_ok "tayga running: $(pgrep -ax tayga | head -1 | cut -c1-120)"
 R ip link show nat64 >/dev/null || nl_fail "no nat64 device"
-R ip -6 route show | grep -q '2001:db8:64::/96 dev nat64' || { R ip -6 route show; nl_fail "the NAT64 prefix is not routed into nat64"; }
-R ip route show | grep -q '192.168.255.0/24 dev nat64' || nl_fail "the translation pool is not routed into nat64"
+R ip -6 route show | grep '2001:db8:64::/96 dev nat64' >/dev/null || { R ip -6 route show; nl_fail "the NAT64 prefix is not routed into nat64"; }
+R ip route show | grep '192.168.255.0/24 dev nat64' >/dev/null || nl_fail "the translation pool is not routed into nat64"
 nl_ok "kernel: nat64 device up, 2001:db8:64::/96 and 192.168.255.0/24 routed into it"
 nl_assert_sysctl net.ipv6.conf.all.forwarding 1
 nl_assert_nft_has "oifname \"nat64\" ip6 daddr 2001:db8:64::/96 accept" "ip saddr 192.168.255.0/24 oifname \"$NL_WAN_IF\" masquerade"

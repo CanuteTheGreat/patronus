@@ -94,7 +94,7 @@ gw_state() { # NAME -> state from GET /api/routing
   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print([g["state"] for g in d["gateways"] if g["name"]==sys.argv[2]][0])' "$NL_OUT" "$1"
 }
 state_is() { [ "$(gw_state "$1")" = "$2" ]; }
-via_is() { default_via | grep -q "$1"; }
+via_is() { default_via | grep "$1" >/dev/null; }
 
 # --- 1. boot with one WAN, then a second uplink on OPT1 -------------------
 nl_up; second_wan
@@ -116,10 +116,10 @@ nl_ok "an OPT interface with a gateway gets automatic outbound NAT"
 # the monitor installs the pinned host route on its next tick (1 s): poll,
 # a loaded CI host can be late
 for _ in $(seq 1 30); do
-  R ip -4 route show proto 252 | grep -q '192.0.2.10 via 100.64.0.1 dev rtr-wan2' && break
+  R ip -4 route show proto 252 | grep '192.0.2.10 via 100.64.0.1 dev rtr-wan2' >/dev/null && break
   sleep 0.5
 done
-R ip -4 route show proto 252 | grep -q '192.0.2.10 via 100.64.0.1 dev rtr-wan2' \
+R ip -4 route show proto 252 | grep '192.0.2.10 via 100.64.0.1 dev rtr-wan2' >/dev/null \
   || fail "monitor IP host route missing: $(R ip -4 route show proto 252)"
 nl_ok "monitor IP 192.0.2.10 is pinned to WAN2 (proto 252)"
 wait_for "WAN1 online" 15 state_is WAN1 online
@@ -166,7 +166,7 @@ nl_ok "WAN1 answers again -> traffic returns to WAN1"
 
 # --- 4. load balancing ----------------------------------------------------
 must 200 PUT /routing/groups/FAILOVER '{"name":"FAILOVER","members":"WAN1:1, WAN2:1:1","trigger":"down"}'
-default_via | grep -q nexthop || fail "no multipath default: $(default_via)"
+default_via | grep nexthop >/dev/null || fail "no multipath default: $(default_via)"
 nl_assert_sysctl net.ipv4.fib_multipath_hash_policy 1
 seen=$(for _ in $(seq 1 40); do who; done | sort | uniq -c)
 echo "$seen"
@@ -182,7 +182,7 @@ must 201 POST /firewall/rules '{"name":"pbr-8080","chain":"forward","action":"ac
 PBR_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$NL_OUT")
 pol=$(R nft list chain inet patronus pbr 2>&1)
 grep -qE 'meta mark set 0x0*10002' <<<"$pol" || fail "pbr chain: $pol"
-R ip -4 rule show | grep -q 'fwmark 0x10002 lookup 65538' || fail "no fwmark rule for WAN2: $(R ip -4 rule show)"
+R ip -4 rule show | grep 'fwmark 0x10002 lookup 65538' >/dev/null || fail "no fwmark rule for WAN2: $(R ip -4 rule show)"
 got=$(who8080)
 [ "$got" = 100.64.0.2 ] || fail "policy rule: :8080 should leave via WAN2, got '$got'"
 [ "$(who)" = "$NL_RTR_WAN" ] || fail "policy rule: :80 should still leave via WAN1"
@@ -195,8 +195,8 @@ nl_ok "a policy rule naming no gateway, or a drop rule with a gateway, is refuse
 C ip addr add 10.77.0.1/32 dev lo
 must 201 POST /routing/routes '{"destination":"10.77.0.0/24","gateway":"192.168.50.10","description":"lab behind client"}'
 must 201 POST /routing/routes '{"destination":"198.18.0.0/15","gateway":"WAN2"}'
-R ip -4 route show proto 251 | grep -q '10.77.0.0/24 via 192.168.50.10 dev rtr-lan' || fail "static route: $(R ip -4 route show proto 251)"
-R ip -4 route show proto 251 | grep -q '198.18.0.0/15 via 100.64.0.1 dev rtr-wan2' || fail "static via gateway name: $(R ip -4 route show proto 251)"
+R ip -4 route show proto 251 | grep '10.77.0.0/24 via 192.168.50.10 dev rtr-lan' >/dev/null || fail "static route: $(R ip -4 route show proto 251)"
+R ip -4 route show proto 251 | grep '198.18.0.0/15 via 100.64.0.1 dev rtr-wan2' >/dev/null || fail "static via gateway name: $(R ip -4 route show proto 251)"
 R ping -c1 -W2 10.77.0.1 >/dev/null || fail "router cannot reach 10.77.0.1 through the static route"
 nl_ok "static routes via an IP and via gateway WAN2 are in the kernel; 10.77.0.1 answers"
 must 400 POST /routing/routes '{"destination":"10.88.0.0/16","gateway":"NOPE"}'
@@ -212,10 +212,10 @@ nl_up; second_wan
 C ip addr add 10.77.0.1/32 dev lo
 nl_apply "$DB" || { cat "$NL_OUT"; fail "reboot apply"; }
 grep -q 'routes' "$NL_OUT" || { cat "$NL_OUT"; fail "boot apply did not run the routes phase"; }
-R ip -4 addr show rtr-wan2 | grep -q 100.64.0.2/24 || fail "WAN2 address not rebuilt"
+R ip -4 addr show rtr-wan2 | grep 100.64.0.2/24 >/dev/null || fail "WAN2 address not rebuilt"
 via_is 'via 203.0.113.1 dev rtr-wan' || fail "default after reboot: $(default_via)"
-R ip -4 route show proto 251 | grep -q '10.77.0.0/24 via 192.168.50.10' || fail "static route lost on reboot"
-R ip -4 route show proto 252 | grep -q '192.0.2.10 via 100.64.0.1' || fail "monitor route lost on reboot"
+R ip -4 route show proto 251 | grep '10.77.0.0/24 via 192.168.50.10' >/dev/null || fail "static route lost on reboot"
+R ip -4 route show proto 252 | grep '192.0.2.10 via 100.64.0.1' >/dev/null || fail "monitor route lost on reboot"
 [ "$(who)" = "$NL_RTR_WAN" ] || fail "after reboot the LAN should leave via WAN1"
 [ "$(who8080)" = 100.64.0.2 ] || fail "after reboot the policy rule should still send :8080 via WAN2"
 nl_ok "reboot: patronus apply rebuilt the default gateway group, policy routing, static and monitor routes"

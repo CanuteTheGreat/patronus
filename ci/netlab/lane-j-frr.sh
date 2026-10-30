@@ -88,9 +88,9 @@ grep -q 'router bgp 65001' /etc/frr/frr.conf && grep -q 'neighbor 203.0.113.1 re
 grep -q '^bgpd=yes' /etc/frr/daemons || nl_fail "bgpd not enabled in /etc/frr/daemons"
 nl_ok "wrote /etc/frr/frr.conf and daemons (bgpd=yes); the previous frr.conf is kept as frr.conf.pre-patronus"
 nl_wait 30 pgrep -x bgpd || nl_fail "FRR (bgpd) did not start in the router namespace"
-nl_wait 90 bash -c "R ip route show proto bgp | grep -q '198.18.0.0/24'" || { R vtysh -c 'show bgp summary' || true; tail -20 /var/log/frr/*.log 2>/dev/null; nl_fail "the router never learned 198.18.0.0/24 over BGP"; }
+nl_wait 90 bash -c "R ip route show proto bgp | grep '198.18.0.0/24' >/dev/null" || { R vtysh -c 'show bgp summary' || true; tail -20 /var/log/frr/*.log 2>/dev/null; nl_fail "the router never learned 198.18.0.0/24 over BGP"; }
 nl_ok "router kernel learned over BGP: $(router_bgp_routes | head -1)"
-nl_wait 60 bash -c "ISP ip route show proto bgp | grep -q '192.168.50.0/24'" || { ISP vtysh -N peer -c 'show bgp summary' || true; nl_fail "the ISP never learned the LAN prefix"; }
+nl_wait 60 bash -c "ISP ip route show proto bgp | grep '192.168.50.0/24' >/dev/null" || { ISP vtysh -N peer -c 'show bgp summary' || true; nl_fail "the ISP never learned the LAN prefix"; }
 nl_ok "ISP kernel learned the announced LAN prefix: $(peer_routes | head -1)"
 nl_assert_nft_has "ip saddr 203.0.113.1 tcp dport 179 accept"
 C ping -c 3 -W 2 198.18.0.1 >/dev/null || nl_fail "the LAN client cannot reach the ISP prefix through the BGP-learned route"
@@ -111,17 +111,17 @@ nl_api GET /svc/frr; grep -q 'md5' "$NL_OUT" && nl_fail "secret leaked"
 
 echo "=== withdrawing the network removes it from the ISP"
 nl_api_ok "delete network" DELETE "/svc/frr/bgp_networks/$GID"
-nl_wait 60 bash -c "! ISP ip route show proto bgp | grep -q '192.168.50.0/24'" || nl_fail "the ISP still has the withdrawn prefix"
+nl_wait 60 bash -c "! ISP ip route show proto bgp | grep '192.168.50.0/24' >/dev/null" || nl_fail "the ISP still has the withdrawn prefix"
 nl_ok "after deleting the network the ISP no longer has 192.168.50.0/24"
 
 echo "=== OSPF on the WAN interface (the ISP side runs ospfd)"
 nl_api_ok "ospf interface" POST /svc/frr/ospf_interfaces '{"iface":"@wan","area":"0.0.0.0"}'
 nl_api_ok "enable ospf" PUT /svc/frr '{"ospf_enabled":true}'
 grep -q '^ospfd=yes' /etc/frr/daemons && grep -q 'ip ospf area 0.0.0.0' /etc/frr/frr.conf || nl_fail "OSPF not in the generated config"
-nl_wait 90 bash -c "R vtysh -c 'show ip ospf neighbor' | grep -q Full" || { R vtysh -c 'show ip ospf neighbor' || true; ISP vtysh -N peer -c 'show ip ospf neighbor' || true; nl_fail "no Full OSPF adjacency with the ISP"; }
+nl_wait 90 bash -c "R vtysh -c 'show ip ospf neighbor' | grep Full >/dev/null" || { R vtysh -c 'show ip ospf neighbor' || true; ISP vtysh -N peer -c 'show ip ospf neighbor' || true; nl_fail "no Full OSPF adjacency with the ISP"; }
 nl_ok "OSPF adjacency Full with the ISP router"
 # (the prefix also arrives over BGP, which wins in the kernel with its lower distance: ask OSPF's own table)
-nl_wait 60 bash -c "R vtysh -c 'show ip ospf route' | grep -q '198\.18\.0\.'" || { R vtysh -c 'show ip ospf route' || true; nl_fail "the router did not learn the ISP prefix over OSPF"; }
+nl_wait 60 bash -c "R vtysh -c 'show ip ospf route' | grep '198\.18\.0\.' >/dev/null" || { R vtysh -c 'show ip ospf route' || true; nl_fail "the router did not learn the ISP prefix over OSPF"; }
 nl_ok "OSPF learned the ISP loopback network (198.18.0.x): $(R vtysh -c 'show ip ospf route' | grep '198\.18\.0\.' | head -1)"
 
 echo "=== reboot: patronus apply restarts FRR with the same config"
@@ -130,14 +130,14 @@ frr_kill
 nl_boot "$DB"
 peer_up
 nl_wait 30 pgrep -x bgpd || nl_fail "FRR not started by the boot apply"
-nl_wait 90 bash -c "R ip route show proto bgp | grep -q '198.18.0.0/24'" || nl_fail "BGP route not relearned after the reboot"
+nl_wait 90 bash -c "R ip route show proto bgp | grep '198.18.0.0/24' >/dev/null" || nl_fail "BGP route not relearned after the reboot"
 nl_ok "after reboot: BGP session back, route relearned"
 
 echo "=== disable"
 nl_web_start "$DB"; nl_login
 nl_api_ok "disable ospf" PUT /svc/frr '{"ospf_enabled":false}'
 nl_api_ok "disable bgp" PUT /svc/frr '{"bgp_enabled":false}'
-nl_wait 30 bash -c "! R ip route show proto bgp | grep -q ." || nl_fail "BGP routes still in the router kernel"
+nl_wait 30 bash -c "! R ip route show proto bgp | grep . >/dev/null" || nl_fail "BGP routes still in the router kernel"
 grep -q 'router bgp' /etc/frr/frr.conf && nl_fail "router bgp still in frr.conf"
 nl_ok "disabled: the BGP/OSPF routes left the router kernel, frr.conf has no routing protocol"
 nl_web_stop

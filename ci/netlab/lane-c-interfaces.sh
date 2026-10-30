@@ -26,7 +26,7 @@
 #  - unprivileged patronus-web applies through the root `patronus applyd`
 #  - a second apply is a no-op; everything survives a fresh-netns apply
 #
-# No pipefail on purpose: `cmd | grep -q` would fail whenever grep exits
+# No pipefail on purpose: piping into grep -q would fail whenever grep exits
 # early and cmd gets EPIPE.
 set -eu
 
@@ -142,7 +142,7 @@ wait_for() { # description seconds command...
   for i in $(seq 1 $((s * 2))); do "$@" >/dev/null 2>&1 && return 0; sleep 0.5; done
   fail "timed out: $d"
 }
-has_addr() { R ip -o addr show dev "$1" | grep -q "inet6\? $2"; }
+has_addr() { R ip -o addr show dev "$1" | grep "inet6\? $2" >/dev/null; }
 ping_ok() { ip netns exec "$1" ping -c 2 -W 2 -i 0.3 "$2" >/dev/null || fail "ping $1 -> $2"; }
 
 topology_up
@@ -199,7 +199,7 @@ must 409 PUT /interfaces/rtr-lan '{"role":"lan","ipv4_mode":"static","ipv4":["19
 must 409 POST /interfaces/rtr-lan/down '{}'
 must 400 POST /interfaces/bridges '{"name":"br1","members":["rtr-lan"]}'
 has_addr rtr-lan 192.168.50.1/24 || fail "refused change still touched rtr-lan"
-R nft list ruleset | grep -q 'iifname "rtr-lan" tcp dport { 22, 8443 } accept' || fail "anti-lockout rule moved"
+R nft list ruleset | grep 'iifname "rtr-lan" tcp dport { 22, 8443 } accept' >/dev/null || fail "anti-lockout rule moved"
 ok "invalid input -> 400 (incl. enslaving the LAN); role move / address change / disable of the admin's interface -> 409, kernel untouched"
 
 assert_kernel() { # $1 = label
@@ -211,13 +211,13 @@ assert_kernel() { # $1 = label
   python3 -c 'import json,sys; l=json.loads(sys.argv[1])[0]; assert l["mtu"]==1600 and l["address"]=="02:00:00:00:c0:01", l' "$tj" || fail "$lbl: MTU/MAC"
   ok "$lbl: static IPv4+IPv6 on rtr-lan, MTU 1600 + MAC 02:00:00:00:c0:01 on rtr-trunk"
   # DHCP WAN
-  wait_for "$lbl: DHCP lease on rtr-wan" 30 sh -c "ip netns exec rtr ip -4 -o addr show dev rtr-wan | grep -q 'inet 203.0.113.1[0-5][0-9]/24.*dynamic'"
-  R ip -4 route show default | grep -q 'default via 203.0.113.1 dev rtr-wan proto dhcp' || { R ip route; fail "$lbl: no DHCP default route"; }
+  wait_for "$lbl: DHCP lease on rtr-wan" 30 sh -c "ip netns exec rtr ip -4 -o addr show dev rtr-wan | grep 'inet 203.0.113.1[0-5][0-9]/24.*dynamic' >/dev/null"
+  R ip -4 route show default | grep 'default via 203.0.113.1 dev rtr-wan proto dhcp' >/dev/null || { R ip route; fail "$lbl: no DHCP default route"; }
   ok "$lbl: rtr-wan leased $(R ip -4 -o addr show dev rtr-wan | awk '{print $4}') from dnsmasq, default via 203.0.113.1"
   L ping -c 2 -W 2 203.0.113.1 >/dev/null || fail "$lbl: LAN -> WAN through NAT"
   ok "$lbl: LAN host reaches the WAN through the DHCP-addressed uplink"
   # VLAN with the tag on the wire
-  R ip -d link show rtr-trunk.100 | grep -q 'vlan protocol 802.1Q id 100' || fail "$lbl: VLAN device"
+  R ip -d link show rtr-trunk.100 | grep 'vlan protocol 802.1Q id 100' >/dev/null || fail "$lbl: VLAN device"
   ip netns exec sw timeout 8 tcpdump -nn -e -c 2 -i trunk0 'vlan 100 and icmp' >$C/tcpdump.out 2>&1 &
   local td=$!; sleep 1
   ping_ok sw 10.100.0.1
@@ -225,7 +225,7 @@ assert_kernel() { # $1 = label
   grep -q 'vlan 100' $C/tcpdump.out || { cat $C/tcpdump.out; fail "$lbl: no 802.1Q tag 100 on the wire"; }
   has_addr rtr-trunk.100 fd00:100::1/64 || fail "$lbl: VLAN IPv6"
   ok "$lbl: VLAN 100 carries tagged traffic (tcpdump on the trunk: $(grep -m1 -o 'vlan 100, p 0' $C/tcpdump.out || echo 'vlan 100'))"
-  R ip -d link show svlan200 | grep -q 'vlan protocol 802.1ad id 200' || fail "$lbl: 802.1ad S-VLAN"
+  R ip -d link show svlan200 | grep 'vlan protocol 802.1ad id 200' >/dev/null || fail "$lbl: 802.1ad S-VLAN"
   ping_ok sw 10.220.0.1
   ok "$lbl: QinQ 802.1ad 200 / 802.1Q 20 passes traffic"
   # bond + failover
@@ -238,13 +238,13 @@ assert_kernel() { # $1 = label
   ip -n sw link set sw-b1 up
   ok "$lbl: active-backup bond failed over to rtr-b2 when rtr-b1's peer went down; traffic kept flowing"
   # bridge
-  R ip -d link show rtr-p1 | grep -q 'master br0' || fail "$lbl: rtr-p1 not in br0"
+  R ip -d link show rtr-p1 | grep 'master br0' >/dev/null || fail "$lbl: rtr-p1 not in br0"
   ping_ok h1 10.40.0.12
   ping_ok h1 10.40.0.1
   ok "$lbl: br0 bridges h1 <-> h2 and answers on 10.40.0.1"
   # PPPoE
   if [ -c /dev/ppp ]; then
-    wait_for "$lbl: pppoe0 up with an address from the access concentrator" 40 sh -c "ip netns exec rtr ip -4 -o addr show dev pppoe0 | grep -q 'peer 198.51.100.1'"
+    wait_for "$lbl: pppoe0 up with an address from the access concentrator" 40 sh -c "ip netns exec rtr ip -4 -o addr show dev pppoe0 | grep 'peer 198.51.100.1' >/dev/null"
     R ping -c 2 -W 2 198.51.100.1 >/dev/null || fail "$lbl: ping over PPPoE"
     ok "$lbl: PPPoE: $(R ip -4 -o addr show dev pppoe0 | awk '{print $4, $5, $6}') via pppoe-server in the isp netns"
   else
@@ -266,7 +266,7 @@ if [ "$HAVE_DHCPCD" = 1 ]; then
   must 200 PUT /interfaces/dhcp-client '{"client":"dhcpcd"}'
   wait_for "dhcpcd runs for rtr-wan" 10 pgrep -x dhcpcd
   pgrep -f 'udhcpc -f -i rtr-wan' >/dev/null && fail "udhcpc still running after the switch"
-  wait_for "dhcpcd lease on rtr-wan" 40 sh -c "ip netns exec rtr ip -4 -o addr show dev rtr-wan | grep -q 'inet 203.0.113.1[0-5][0-9]/24'"
+  wait_for "dhcpcd lease on rtr-wan" 40 sh -c "ip netns exec rtr ip -4 -o addr show dev rtr-wan | grep 'inet 203.0.113.1[0-5][0-9]/24' >/dev/null"
   ok "dhcpcd took over rtr-wan and holds $(R ip -4 -o addr show dev rtr-wan | awk '{print $4}')"
   must 200 PUT /interfaces/dhcp-client '{"client":"udhcpc"}'
 fi
@@ -282,7 +282,7 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert {v["name"] f
   || fail "config not listed after restart (or PPPoE password exposed)"
 ok "after a patronus-web restart the API lists the stored VLANs/bonds/bridges/PPPoE (password redacted)"
 must 200 POST /interfaces/vlans '{"parent":"rtr-trunk","vlan_id":300,"description":"via broker"}'
-R ip -d link show rtr-trunk.300 | grep -q 'id 300' || fail "VLAN 300 not created through the broker"
+R ip -d link show rtr-trunk.300 | grep 'id 300' >/dev/null || fail "VLAN 300 not created through the broker"
 grep -q 'through the root broker' /t/lanec-web.log || fail "web did not use the broker"
 grep -q 'applyd: applying interfaces' /t/lanec-applyd.log || fail "broker log"
 must 200 DELETE /interfaces/vlans/rtr-trunk.300
@@ -294,10 +294,10 @@ echo "=== 4. reboot: fresh namespaces, only 'patronus apply'"
 topology_up
 OUT=$(R "$P" --db $DB apply --bootstrap "$TOML" 2>&1); echo "$OUT"
 grep -q 'interfaces ' <<<"$OUT" && ! grep -q '✗' <<<"$OUT" || fail "boot apply: a phase failed"
-R ip -d link show bond0 | grep -q 'bond mode active-backup' || fail "bond not rebuilt"
+R ip -d link show bond0 | grep 'bond mode active-backup' >/dev/null || fail "bond not rebuilt"
 assert_kernel "after reboot"
-R nft list ruleset | grep -q 'iifname "rtr-lan" tcp dport { 22, 8443 } accept' || fail "anti-lockout after reboot"
-R nft list ruleset | grep -q 'oifname "rtr-wan" masquerade' || fail "WAN masquerade after reboot"
+R nft list ruleset | grep 'iifname "rtr-lan" tcp dport { 22, 8443 } accept' >/dev/null || fail "anti-lockout after reboot"
+R nft list ruleset | grep 'oifname "rtr-wan" masquerade' >/dev/null || fail "WAN masquerade after reboot"
 ok "boot apply rebuilt VLAN/QinQ/bond/bridge/PPPoE/DHCP/static config and the role-based firewall"
 
 echo "=== 5. un-assign + delete removes devices; stale daemons stop"
@@ -305,13 +305,13 @@ start_web
 must 200 PUT /interfaces/br0 '{}'
 must 200 DELETE /interfaces/bridges/br0
 R ip link show br0 >/dev/null 2>&1 && fail "br0 still exists"
-R ip -d link show rtr-p1 | grep -q master && fail "rtr-p1 still enslaved"
+R ip -d link show rtr-p1 | grep master >/dev/null && fail "rtr-p1 still enslaved"
 must 200 DELETE /interfaces/pppoe/pppoe0
 # [p]/[u]: the pattern must not match this 'sh -c' wrapper's own cmdline
 wait_for "pppd stopped" 10 sh -c "! pgrep -f '[p]ppd file $C/net/ppp/pppoe0.options'"
 must 200 PUT /interfaces/rtr-wan '{"role":"wan","ipv4_mode":"none"}'
 wait_for "udhcpc stopped" 10 sh -c '! pgrep -f "[u]dhcpc -f -i rtr-wan"'
-R ip -4 -o addr show dev rtr-wan | grep -q inet && fail "rtr-wan kept an IPv4 address in mode none"
+R ip -4 -o addr show dev rtr-wan | grep inet >/dev/null && fail "rtr-wan kept an IPv4 address in mode none"
 ok "deleting br0/pppoe0 removed them from the kernel; WAN mode none stopped the DHCP client and cleared the lease"
 stop_web
 topology_down

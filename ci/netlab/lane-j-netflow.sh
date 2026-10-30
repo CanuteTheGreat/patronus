@@ -63,7 +63,7 @@ echo "=== export the WAN interface as NetFlow v9"
 nl_api_ok "enable" PUT /svc/netflow "{\"enabled\":true,\"interface\":\"@wan\",\"collector\":\"$NL_WWW\",\"port\":2055,\"version\":\"9\"}"
 nl_wait 10 pgrep -x softflowd || nl_fail "softflowd did not start"
 nl_ok "softflowd running: $(pgrep -ax softflowd | head -1 | cut -c1-150)"
-pgrep -ax softflowd | grep -q -- "-i $NL_WAN_IF .*-n $NL_WWW:2055 .*-v 9" || nl_fail "softflowd command line does not match the settings"
+pgrep -ax softflowd | grep -- "-i $NL_WAN_IF .*-n $NL_WWW:2055 .*-v 9" >/dev/null || nl_fail "softflowd command line does not match the settings"
 # generate flows: LAN -> internet through the router, then let them expire
 bulk
 # flows are exported when they end or expire: ask softflowd to expire them now
@@ -83,7 +83,7 @@ echo "=== switch to IPFIX"
 : > /tmp/nf-rx
 nl_api_ok "ipfix" PUT /svc/netflow '{"version":"10"}'
 nl_wait 10 pgrep -x softflowd
-pgrep -ax softflowd | grep -q -- "-v 10" || nl_fail "softflowd was not restarted with -v 10"
+pgrep -ax softflowd | grep -- "-v 10" >/dev/null || nl_fail "softflowd was not restarted with -v 10"
 sleep 1
 bulk
 softflowctl -c /run/patronus/softflowd-$NL_WAN_IF.ctl expire-all >/dev/null 2>&1 || true

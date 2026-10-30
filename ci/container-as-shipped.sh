@@ -87,29 +87,29 @@ must 201 POST /routing/gateways "{\"name\":\"ALT_GW\",\"interface\":\"$DEV\",\"a
 ok "gateways added (non-root, ip(8) via its file capability)"
 must 201 POST /routing/groups '{"name":"LB","members":"WAN_GW:1, ALT_GW:1","trigger":"down"}'
 must 200 PUT /routing/default '{"ipv4":"LB"}'
-X ip -4 route show table 4250 | grep -q "via $GW" || fail "table 4250: $(X ip -4 route show table 4250)"
-X ip -4 rule | grep -q '^31000:' || fail "ip rule 31000 missing: $(X ip -4 rule)"
-X ip -4 rule | grep -q '^31900:' || fail "ip rule 31900 missing: $(X ip -4 rule)"
+X ip -4 route show table 4250 | grep "via $GW" >/dev/null || fail "table 4250: $(X ip -4 route show table 4250)"
+X ip -4 rule | grep '^31000:' >/dev/null || fail "ip rule 31000 missing: $(X ip -4 rule)"
+X ip -4 rule | grep '^31900:' >/dev/null || fail "ip rule 31900 missing: $(X ip -4 rule)"
 ok "default gateway group installed: table 4250 + rules 31000/31900"
 # compose sets the hash policy (/proc/sys is read-only in here): no warning
 [ "$(X cat /proc/sys/net/ipv4/fib_multipath_hash_policy)" = 1 ] || fail "compose sysctl not in effect"
 api GET /routing
-echo "$OUT" | grep -q fib_multipath_hash_policy && fail "hash policy is 1 but GET /api/routing warns: $OUT"
+echo "$OUT" | grep fib_multipath_hash_policy >/dev/null && fail "hash policy is 1 but GET /api/routing warns: $OUT"
 ok "load balancing hashes by ports (compose sysctl), no warning"
 must 200 PUT /routing/default '{"ipv4":""}'
 must 200 DELETE /routing/groups/LB
 must 200 DELETE /routing/gateways/ALT_GW
 must 200 DELETE /routing/gateways/WAN_GW
-X ip -4 rule | grep -q '^31900:' && fail "rule 31900 left behind after the default was cleared"
+X ip -4 rule | grep '^31900:' >/dev/null && fail "rule 31900 left behind after the default was cleared"
 ok "routing config removed again"
 
 # --- WireGuard -------------------------------------------------------------
 must 201 POST /vpn/wireguard/tunnels '{"addresses":"10.99.0.1/24","endpoint":"192.0.2.1","description":"as-shipped"}'
 must 201 POST /vpn/wireguard/peers '{"interface":"wg0","name":"phone"}'
-X ip -d link show wg0 | grep -q wireguard || fail "wg0 is not a wireguard link"
-X ip -4 addr show wg0 | grep -q 10.99.0.1/24 || fail "wg0 has no 10.99.0.1/24"
-X wg show wg0 peers | grep -q . || fail "wg show wg0 lists no peer"
-X wg show wg0 listen-port | grep -q 51820 || fail "wg0 does not listen on 51820"
+X ip -d link show wg0 | grep wireguard >/dev/null || fail "wg0 is not a wireguard link"
+X ip -4 addr show wg0 | grep 10.99.0.1/24 >/dev/null || fail "wg0 has no 10.99.0.1/24"
+X wg show wg0 peers | grep . >/dev/null || fail "wg show wg0 lists no peer"
+X wg show wg0 listen-port | grep 51820 >/dev/null || fail "wg0 does not listen on 51820"
 must 200 GET /vpn/wireguard/peers
 ok "WireGuard tunnel wg0 + peer created and listed live"
 must 200 DELETE /vpn/wireguard/tunnels/wg0
@@ -120,9 +120,9 @@ ok "WireGuard tunnel deleted"
 api GET /vpn
 if echo "$OUT" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin)["features"].get("ipsec") else 1)'; then
   must 501 POST /vpn/ipsec/connections '{"name":"site-b","remote_address":"192.0.2.9","local_ts":"10.0.0.0/24","remote_ts":"10.1.0.0/24"}'
-  echo "$OUT" | grep -q 'applyd' || fail "IPsec refusal does not say what is missing: $OUT"
+  echo "$OUT" | grep 'applyd' >/dev/null || fail "IPsec refusal does not say what is missing: $OUT"
   api GET /vpn
-  echo "$OUT" | grep -q 'site-b' && fail "refused IPsec tunnel was stored: $OUT"
+  echo "$OUT" | grep 'site-b' >/dev/null && fail "refused IPsec tunnel was stored: $OUT"
   ok "IPsec refused with 501 ($OUT), nothing stored"
 fi
 

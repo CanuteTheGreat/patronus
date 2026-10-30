@@ -69,7 +69,7 @@ grep -q "phyint $NL_WAN_IF upstream" /var/lib/patronus/net/igmpproxy.conf && gre
   || { cat /var/lib/patronus/net/igmpproxy.conf; nl_fail "igmpproxy.conf does not name the WAN as upstream and the LAN as downstream"; }
 nl_ok "igmpproxy.conf: $NL_WAN_IF upstream, $NL_LAN_IF downstream"
 nl_wait 10 grep -q "$NL_LAN_IF" /proc/net/ip_mr_vif || true
-R cat /proc/net/ip_mr_vif | grep -q "$NL_WAN_IF" && R cat /proc/net/ip_mr_vif | grep -q "$NL_LAN_IF" \
+R cat /proc/net/ip_mr_vif | grep "$NL_WAN_IF" >/dev/null && R cat /proc/net/ip_mr_vif | grep "$NL_LAN_IF" >/dev/null \
   || { R cat /proc/net/ip_mr_vif; nl_fail "the kernel multicast router does not hold both interfaces"; }
 nl_ok "kernel multicast router (ip_mr_vif) holds $NL_WAN_IF and $NL_LAN_IF"
 nl_assert_nft_has "iifname \"$NL_WAN_IF\" oifname \"$NL_LAN_IF\" ip daddr 224.0.0.0/4 accept" "ip protocol igmp accept"

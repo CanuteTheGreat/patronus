@@ -88,7 +88,7 @@ echo "=== threat-feed hits are attributed to the feed"
 printf '%s ; SBL1\n' $NL_BLOCKED > "$FEEDS/drop.txt"
 for _ in $(seq 1 30); do INET curl -s -m 2 -o /dev/null "http://$NL_WWW:8099/" && break; sleep 0.2; done
 api_ok PUT /firewall/threatintel/labfeed "{\"enabled\":true,\"url\":\"http://$NL_WWW:8099/drop.txt\",\"direction\":\"out\"}"
-nl_wait 40 bash -c "R nft list chain inet patronus ti_check 2>/dev/null | grep -q labfeed" || nl_fail "the feed rules never appeared"
+nl_wait 40 bash -c "R nft list chain inet patronus ti_check 2>/dev/null | grep labfeed >/dev/null" || nl_fail "the feed rules never appeared"
 # the user's accept rule for the same host comes later: the feed wins and is the line's rule
 nl_expect_no_tcp "LAN -> $NL_BLOCKED:9000 dropped by the feed" C $NL_BLOCKED 9000
 logs "rule=feed:labfeed" 1

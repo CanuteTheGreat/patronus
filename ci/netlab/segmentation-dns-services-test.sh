@@ -107,7 +107,7 @@ d() { # ns name [type] [server]  -> prints the whole answer
 }
 a() { N "$1" dig +short +time=3 +tries=1 "@${4:-192.168.50.1}" "$2" "${3:-A}"; }
 expect_a() { local r; r=$(a "$1" "$2" A | tail -1); [ "$r" = "$3" ] || fail "$1: $2 -> '$r' (want $3)"; ok "$1 resolves $2 -> $3"; }
-expect_nx() { d "$1" "$2" | grep -q 'status: NXDOMAIN' || { d "$1" "$2"; fail "$1: $2 should be NXDOMAIN"; }; ok "$1: $2 -> NXDOMAIN"; }
+expect_nx() { d "$1" "$2" | grep 'status: NXDOMAIN' >/dev/null || { d "$1" "$2"; fail "$1: $2 should be NXDOMAIN"; }; ok "$1: $2 -> NXDOMAIN"; }
 for ns in kid kid2 teen parent guest; do expect_a $ns ok.example 198.51.100.9; done
 expect_a parent games.example 198.51.100.7
 expect_nx guest ads.example
@@ -171,7 +171,7 @@ expect_a parent games.example 198.51.100.7
 expect_a parent social.example 198.51.100.12
 expect_a guest games.example 198.51.100.7
 expect_a guest www.google.com 142.250.0.1
-if a parent printer.lan | grep -q 10.0.0.9; then fail "override leaked to a device without the policy"; fi
+if a parent printer.lan | grep 10.0.0.9 >/dev/null; then fail "override leaked to a device without the policy"; fi
 ok "parent/guest: global policy only (ads blocked, no overrides, no safe search)"
 
 echo "=== 6. bypass: hard-coded resolver is redirected, DNS-over-TLS refused"
@@ -216,7 +216,7 @@ want 200 GET "/api/segmentation/dns/log?blocked=true"
 [ "$(jget 'all(r["blocked"] for r in d["rows"]) and len(d["rows"]) >= 2')" = True ] || fail "blocked filter: $(cat /tmp/api.out)"
 ok "search by name and 'blocked only' filter work"
 N adm curl -sk -b /t/jar -o /tmp/log.csv -D /tmp/log.hdr "https://192.168.50.1:8443/api/segmentation/dns/log.csv"
-grep -qi 'text/csv' /tmp/log.hdr && head -1 /tmp/log.csv | grep -q '^time,device,client,name' && grep -q 'games.example' /tmp/log.csv || { cat /tmp/log.hdr /tmp/log.csv; fail "CSV export"; }
+grep -qi 'text/csv' /tmp/log.hdr && head -1 /tmp/log.csv | grep '^time,device,client,name' >/dev/null && grep -q 'games.example' /tmp/log.csv || { cat /tmp/log.hdr /tmp/log.csv; fail "CSV export"; }
 ok "CSV export works"
 code=$(api GET /segmentation/dns); [ "$code" = 200 ] && grep -q "DNS policy" /tmp/api.out || fail "/segmentation/dns page: $code"
 ok "page /segmentation/dns renders"

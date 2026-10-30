@@ -141,7 +141,7 @@ for _ in $(seq 1 30); do
 done
 [ "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' "$TAG-hap")" = "true 0" ] || fail "haproxy is not running"
 [ "${code:-}" = 200 ] || fail "haproxy did not serve https://haproxy/health (last: ${code:-none})"
-hc -k https://haproxy/ | grep -qi "<html" || fail "haproxy did not serve the dashboard UI"
+hc -k https://haproxy/ | grep -i "<html" >/dev/null || fail "haproxy did not serve the dashboard UI"
 [ "$(hc -o /dev/null -w '%{http_code}' http://haproxy:8404/stats)" = 401 ] || fail "stats page must need auth"
 [ "$(hc -u "admin:$STATS_PW" -o /dev/null -w '%{http_code}' http://haproxy:8404/stats)" = 200 ] || fail "stats auth"
 log "haproxy up with generated cert (TLS OK, stats protected)"
@@ -159,16 +159,16 @@ gql_site() { # url name
 }
 sites_on() { hc -f -H "authorization: Bearer $TOKEN" "http://$1:8443/api/v1/sites" | json "' '.join(sorted(s['id']+':'+s['name'] for s in d))"; }
 
-out=$(gql_site https://haproxy e2e-hq); echo "$out" | grep -q '"e2e-hq"' || fail "createSite via haproxy: $out"
+out=$(gql_site https://haproxy e2e-hq); echo "$out" | grep '"e2e-hq"' >/dev/null || fail "createSite via haproxy: $out"
 FOLLOWER=dashboard1; [ "$LEADER" = dashboard1 ] && FOLLOWER=dashboard2
-out=$(gql_site "http://$FOLLOWER:8443" e2e-branch); echo "$out" | grep -q '"e2e-branch"' || fail "createSite on follower $FOLLOWER: $out"
+out=$(gql_site "http://$FOLLOWER:8443" e2e-branch); echo "$out" | grep '"e2e-branch"' >/dev/null || fail "createSite on follower $FOLLOWER: $out"
 log "two sites created (haproxy + follower $FOLLOWER)"
 
 for i in 1 2 3; do
   login "http://dashboard$i:8443" >/dev/null || fail "admin cannot log in on dashboard$i (user not replicated?)"
 done
 S1=$(sites_on dashboard1); S2=$(sites_on dashboard2); S3=$(sites_on dashboard3)
-echo "$S1" | grep -q e2e-hq && echo "$S1" | grep -q e2e-branch || fail "dashboard1 sites: $S1"
+echo "$S1" | grep e2e-hq >/dev/null && echo "$S1" | grep e2e-branch >/dev/null || fail "dashboard1 sites: $S1"
 [ "$S1" = "$S2" ] && [ "$S2" = "$S3" ] || fail "nodes disagree: d1=[$S1] d2=[$S2] d3=[$S3]"
 log "all three nodes hold identical site lists: $S1"
 
@@ -187,19 +187,19 @@ NEW=$(wait_leader --not "$LEADER" $SURV)
 [ "$NEW" != "$LEADER" ] || fail "leader did not change"
 log "new leader: $NEW"
 SN=$(sites_on "$NEW")
-echo "$SN" | grep -q e2e-hq && echo "$SN" | grep -q e2e-branch || fail "new leader lost data: [$SN]"
+echo "$SN" | grep e2e-hq >/dev/null && echo "$SN" | grep e2e-branch >/dev/null || fail "new leader lost data: [$SN]"
 
 ok=""
 for _ in $(seq 1 30); do
   out=$(gql_site https://haproxy e2e-after-failover 2>/dev/null || true)
-  if echo "$out" | grep -q '"e2e-after-failover"'; then ok=1; break; fi
+  if echo "$out" | grep '"e2e-after-failover"' >/dev/null; then ok=1; break; fi
   sleep 2
 done
 [ -n "$ok" ] || fail "write via haproxy after failover never succeeded: $out"
 set -- $SURV
 A=$(sites_on "$1"); B=$(sites_on "$2")
 [ "$A" = "$B" ] || fail "survivors disagree after failover: [$A] vs [$B]"
-echo "$A" | grep -q e2e-after-failover || fail "post-failover write missing: [$A]"
+echo "$A" | grep e2e-after-failover >/dev/null || fail "post-failover write missing: [$A]"
 log "survivors identical after failover: $A"
 
 # --- 5. killed node rejoins and catches up --------------------------------

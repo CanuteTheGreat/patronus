@@ -159,7 +159,7 @@ nl_assert_nft_has 'udp dport { 500, 4500 } accept' 'meta ipsec exists ip saddr 1
 has_conn patronus-rw-eap || nl_fail "charon has no patronus-rw-eap connection"
 nl_ok "charon loaded the connection; firewall: IKE/ESP, pool -> LAN forwarding, no NAT for answers"
 nl_api GET /vpn/ipsec/roadwarrior/ca
-head -1 "$NL_OUT" | grep -q 'BEGIN CERTIFICATE' || nl_fail "CA download: $(head -c 100 "$NL_OUT")"
+head -1 "$NL_OUT" | grep 'BEGIN CERTIFICATE' >/dev/null || nl_fail "CA download: $(head -c 100 "$NL_OUT")"
 cp "$NL_OUT" "$RWD/swanctl/x509ca/patronus-ca.pem"
 openssl verify -CAfile "$RWD/swanctl/x509ca/patronus-ca.pem" /etc/swanctl/x509/patronus-rw-eap.pem >/dev/null || nl_fail "server certificate does not verify against the CA"
 nl_ok "the CA downloads and the server certificate verifies against it"
@@ -185,7 +185,7 @@ nl_ok "the road warrior reaches the LAN host through the tunnel; the host sees $
 RW ping -c1 -W3 $NL_CLIENT >/dev/null || nl_fail "ping through the tunnel"
 nl_ok "ping through the tunnel works"
 # `swanctl --list-pools`: name, base, "online / offline / size"
-POOLS=$(swanctl --list-pools 2>/dev/null || true); grep patronus-rw-eap <<<"$POOLS" | grep -qE ' 1 / 0 / ' || { swanctl --list-pools; nl_fail "router shows no online lease"; }
+POOLS=$(swanctl --list-pools 2>/dev/null || true); grep patronus-rw-eap <<<"$POOLS" | grep -E ' 1 / 0 / ' >/dev/null || { swanctl --list-pools; nl_fail "router shows no online lease"; }
 nl_ok "the router's pool shows the lease: $(swanctl --list-pools 2>/dev/null | grep patronus-rw-eap | tr -s ' ')"
 RW python3 "$NL_T/nl-conn.py" $NL_WWW 80 >/dev/null 2>&1 && nl_fail "a profile limited to the LAN let the client reach the internet host" || true
 nl_ok "traffic outside the profile's networks does not go through the tunnel"

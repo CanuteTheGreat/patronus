@@ -32,7 +32,7 @@ nl_api POST /svc/proxy/blocked '{"domain":"blocked.example.test"}'
 [ "$NL_CODE" = 200 ] || [ "$NL_CODE" = 201 ] || nl_fail "block domain: $NL_CODE $(cat "$NL_OUT")"
 nl_api PUT /svc/proxy '{"enabled":true,"transparent":true,"port":"3128"}'
 [ "$NL_CODE" = 200 ] || nl_fail "enable proxy: $NL_CODE $(cat "$NL_OUT")"
-nl_wait 30 R sh -c "ss -ltn | grep -q ':3128 '" || { R ss -ltnp || true; nl_fail "squid is not listening on 3128"; }
+nl_wait 30 R sh -c "ss -ltn | grep ':3128 ' >/dev/null" || { R ss -ltnp || true; nl_fail "squid is not listening on 3128"; }
 nl_ok "squid listening on the LAN address"
 
 out=$(C curl -s --max-time 40 -x http://$NL_RTR_LAN:3128 http://$NL_WWW/) || { C curl -sv --max-time 40 -x http://$NL_RTR_LAN:3128 http://$NL_WWW/ 2>&1 | tail -15; R ss -ltnp; nl_fail "fetch through the proxy failed"; }

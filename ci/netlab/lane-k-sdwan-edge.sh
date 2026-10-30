@@ -85,7 +85,7 @@ table ip lab {
 NFT
 counter() { NS isp nft list chain ip lab counted | grep "comment \"$1\"" | grep -o 'packets [0-9]*' | head -1 | cut -d' ' -f2; }
 # helpers the polling loops call (functions, so no sh -c)
-a_ep() { NS sa wg show sdwan0 | grep -q "endpoint: $1"; }
+a_ep() { NS sa wg show sdwan0 | grep "endpoint: $1" >/dev/null; }
 ping_ab() { NS ca ping -c 1 -W 2 192.168.60.10; }
 isp_cut_b1() { NS isp nft flush chain ip lab counted; NS isp nft add rule ip lab counted ip daddr 203.0.114.2 udp dport 51820 drop; NS isp nft add rule ip lab counted udp dport 51820 counter comment "wg"; }
 isp_open() { NS isp nft flush chain ip lab counted; NS isp nft add rule ip lab counted udp dport 51820 counter comment "wg"; }
@@ -168,7 +168,7 @@ nl_ok "a bad dashboard URL, a non-IP endpoint and an IPv6 subnet are refused (40
 
 echo "=== site A joins"
 configure a site-a "$TOKEN_A" '[{"address":"203.0.113.2:51820","interface_type":"fiber","cost_per_gb":0}]' 192.168.50.0/24
-a_tunnel_up() { NS sa wg show sdwan0 >/dev/null 2>&1 && NS sa ip -o addr show sdwan0 | grep -q 'inet 10.99.0.1/16'; }
+a_tunnel_up() { NS sa wg show sdwan0 >/dev/null 2>&1 && NS sa ip -o addr show sdwan0 | grep 'inet 10.99.0.1/16' >/dev/null; }
 nl_wait 60 a_tunnel_up || { cat /t/web-a.log | tail -20; nl_fail "site A has no tunnel sdwan0 with its overlay address"; }
 nl_ok "site A enrolled: tunnel sdwan0 up with overlay address $(NS sa ip -o -4 addr show sdwan0 | awk '{print $4}')"
 web a GET /api/svc/edge
@@ -185,7 +185,7 @@ nl_ok "a used token is refused (401)"
 
 echo "=== site B joins with two endpoints (the first is preferred)"
 configure b site-b "$TOKEN_B" '[{"address":"203.0.114.2:51820","interface_type":"fiber","cost_per_gb":0},{"address":"203.0.115.2:51820","interface_type":"lte","cost_per_gb":5}]' 192.168.60.0/24
-b_overlay() { NS sb ip -o addr show sdwan0 | grep -q 'inet 10.99.0.2/16'; }
+b_overlay() { NS sb ip -o addr show sdwan0 | grep 'inet 10.99.0.2/16' >/dev/null; }
 nl_wait 90 b_overlay || { tail -20 /t/web-b.log; nl_fail "site B has no overlay address"; }
 nl_ok "site B enrolled: overlay address 10.99.0.2/16"
 
@@ -196,13 +196,13 @@ nl_wait 120 ping_ab || {
 NS ca ping -c 3 -W 2 192.168.60.10 >/dev/null || nl_fail "ping A -> B"
 NS cb ping -c 3 -W 2 192.168.50.10 >/dev/null || nl_fail "ping B -> A"
 nl_ok "client A <-> client B (192.168.50.10 <-> 192.168.60.10) through the SD-WAN tunnel"
-NS sa ip route get 192.168.60.10 | grep -q 'dev sdwan0' || nl_fail "site A does not route the remote LAN through sdwan0"
+NS sa ip route get 192.168.60.10 | grep 'dev sdwan0' >/dev/null || nl_fail "site A does not route the remote LAN through sdwan0"
 nl_ok "site A routes 192.168.60.0/24 via sdwan0: $(NS sa ip route get 192.168.60.10 | head -1)"
 [ "$(counter clear_a)" = 0 ] && [ "$(counter clear_b)" = 0 ] || nl_fail "the ISP saw clear-text LAN traffic"
 [ "$(counter wg)" -gt 0 ] || nl_fail "no WireGuard packets crossed the ISP"
 nl_ok "the ISP carried $(counter wg) WireGuard packets and 0 clear-text LAN packets"
-NS sa wg show sdwan0 | grep -q 'latest handshake' || nl_fail "no handshake on site A"
-NS sa wg show sdwan0 | grep -q 'endpoint: 203.0.114.2:51820' || nl_fail "site A is not using site B's preferred endpoint"
+NS sa wg show sdwan0 | grep 'latest handshake' >/dev/null || nl_fail "no handshake on site A"
+NS sa wg show sdwan0 | grep 'endpoint: 203.0.114.2:51820' >/dev/null || nl_fail "site A is not using site B's preferred endpoint"
 nl_ok "site A's peer for site B uses the preferred endpoint 203.0.114.2:51820"
 
 echo "=== the dashboard shows both sites and the measured paths"
@@ -252,7 +252,7 @@ nl_ok "site A is back on the preferred endpoint 203.0.114.2:51820 and traffic fl
 echo "=== patronus apply rebuilds the overlay from the store (a reboot)"
 NS sa ip link del sdwan0
 NS sa env PATRONUS_NET_DIR=/t/net-a PATRONUS_RUN_DIR=/t/run-a "$NL_T/patronus" --db /t/site-a.db apply >"/tmp/apply-a2.out" 2>&1 || { cat /tmp/apply-a2.out; nl_fail "apply after losing the tunnel"; }
-NS sa wg show sdwan0 | grep -q 'peer:' || nl_fail "the tunnel was not rebuilt with its peer"
+NS sa wg show sdwan0 | grep 'peer:' >/dev/null || nl_fail "the tunnel was not rebuilt with its peer"
 nl_wait 60 ping_ab || nl_fail "no traffic after the rebuild"
 nl_ok "tunnel and peer rebuilt by patronus apply, traffic flows"
 
@@ -260,7 +260,7 @@ echo "=== revoking an edge removes it from its peers"
 dash GET /api/v1/edge/edges '' "$JWT"
 SID_B=$(python3 -c 'import json,sys; print([e["site_id"] for e in json.load(open(sys.argv[1])) if e["name"]=="site-b"][0])' /tmp/dash.out)
 dash DELETE "/api/v1/edge/edges/$SID_B" '' "$JWT"; [ "$DCODE" = 200 ] || nl_fail "revoke: $DCODE $(cat /tmp/dash.out)"
-a_no_peer() { ! NS sa wg show sdwan0 | grep -q 'peer:'; }
+a_no_peer() { ! NS sa wg show sdwan0 | grep 'peer:' >/dev/null; }
 nl_wait 90 a_no_peer || { NS sa wg show; nl_fail "site A still has the revoked site as a peer"; }
 nl_ok "after the revoke site A's agent removed the peer"
 b_unenrolled() { web b GET /api/svc/edge; python3 -c 'import json; d=json.load(open("/tmp/web.out")); assert not d["status"]["enrolled"]'; }
@@ -272,6 +272,6 @@ web a PUT /api/svc/edge '{"enabled":false}'; [ "$WCODE" = 200 ] || nl_fail "disa
 NS sa ip link show sdwan0 >/dev/null 2>&1 && nl_fail "tunnel still present after leaving the overlay"
 a_agent_gone() { ! pgrep -f "patronus --db /t/site-a.db edge run"; }
 nl_wait 20 a_agent_gone || nl_fail "site A's agent is still running"
-NS sa nft list ruleset | grep -q sdwan0 && nl_fail "SD-WAN firewall rules still present"
+NS sa nft list ruleset | grep sdwan0 >/dev/null && nl_fail "SD-WAN firewall rules still present"
 nl_ok "disabled: tunnel removed, agent stopped, firewall rules gone"
 echo "ALL SD-WAN EDGE CHECKS PASSED"

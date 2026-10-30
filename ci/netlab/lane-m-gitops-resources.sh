@@ -162,7 +162,7 @@ echo "--- WireGuard"
 WG=$(R wg show wgtest 2>&1) || { echo "$WG"; nl_fail "no WireGuard interface wgtest"; }
 grep -q "listening port: 51899" <<<"$WG" && grep -q "$WGPUB" <<<"$WG" || { echo "$WG"; nl_fail "wg show lacks the port or the declared peer"; }
 [ "$(grep -c '^peer:' <<<"$WG")" = 2 ] || { echo "$WG"; nl_fail "expected 2 peers"; }
-R ip -4 addr show dev wgtest | grep -q 10.77.0.1/24 || nl_fail "no tunnel address"
+R ip -4 addr show dev wgtest | grep 10.77.0.1/24 >/dev/null || nl_fail "no tunnel address"
 nl_assert_nft_has "udp dport 51899 accept"
 LAPTOPKEY=$(sql "SELECT public_key FROM wg_peers WHERE name='laptop'")
 [ -n "$LAPTOPKEY" ] && [ "$(sql "SELECT count(*) FROM wg_peers WHERE private_key IS NOT NULL")" = 1 ] || nl_fail "the road-warrior peer has no generated key pair"
@@ -205,7 +205,7 @@ WG=$(R wg show wgtest 2>&1)
 [ "$(grep -c '^peer:' <<<"$WG")" = 1 ] && ! grep -q "$WGPUB" <<<"$WG" || { echo "$WG"; nl_fail "the removed peer is still in the kernel"; }
 nl_ok "the peer removed from git is gone from wg show"
 setdump() { R nft list set inet patronus "$1"; }
-setdump alias_office_v4 | grep -q 192.0.2.77 || nl_fail "alias change not in the set"
+setdump alias_office_v4 | grep 192.0.2.77 >/dev/null || nl_fail "alias change not in the set"
 grep -q 'id = carol' /etc/swanctl/conf.d/patronus.conf && ! grep -q 'id = alice' /etc/swanctl/conf.d/patronus.conf || nl_fail "road-warrior users not reconciled"
 [ "$(sql "SELECT count(*) FROM web_users WHERE username='viewer'")" = 1 ] || nl_fail "new user not created"
 grep -q '"vpn":"read"' <(sql "SELECT privileges FROM rbac_groups WHERE name='vpn-admins'") || nl_fail "group privileges not updated"

@@ -67,12 +67,12 @@ nl_api PUT /interfaces/$NL_WAN_IF "{\"role\":\"wan\",\"ipv4_mode\":\"static\",\"
 nl_ok "WAN set to DHCPv6 with prefix delegation to $NL_LAN_IF"
 
 lan_pd() { R ip -6 -o addr show dev "$NL_LAN_IF" scope global | grep -o '2001:db8:10[0-9a-f]*:[0-9a-f:]*/64' | head -1; }
-nl_wait 90 sh -c 'ip netns exec nl-rtr ip -6 -o addr show dev rtr-lan scope global | grep -q "2001:db8:10"' \
+nl_wait 90 sh -c 'ip netns exec nl-rtr ip -6 -o addr show dev rtr-lan scope global | grep "2001:db8:10" >/dev/null' \
   || { R ip -6 addr; nl_fail "no delegated prefix address on the LAN port after 90 s"; }
 PD=$(lan_pd)
 nl_ok "the router carved $PD out of the delegated /56 for the LAN"
 
-nl_wait 60 sh -c 'ip netns exec nl-client ip -6 -o addr show dev lan0 scope global | grep -q "2001:db8:10"' \
+nl_wait 60 sh -c 'ip netns exec nl-client ip -6 -o addr show dev lan0 scope global | grep "2001:db8:10" >/dev/null' \
   || { C ip -6 addr; R sh -c 'cat /etc/radvd.conf; pgrep -a radvd' || true; nl_fail "the LAN client got no address from the delegated prefix"; }
 nl_ok "LAN client configured $(C ip -6 -o addr show dev lan0 scope global | grep -o '2001:db8:10[0-9a-f:]*/64' | head -1) from the router's advertisement"
 [ "$(sqlite3 "$DB" "SELECT pd_downstream FROM interfaces WHERE name='$NL_WAN_IF'")" = "$NL_LAN_IF" ] || nl_fail "prefix delegation not in the store"
