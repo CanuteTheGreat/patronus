@@ -88,7 +88,7 @@ echo "=== exception"
 nl_api_ok "exception" PUT /dns/settings '{"rebind_exceptions":"corp.example.org"}'
 nl_wait 10 grep -q 'private-domain: "corp.example.org."' /etc/unbound/unbound.conf || nl_fail "exception not rendered"
 # NB: not `sh -c "C ..."` -- C is a bash function from lib.sh, invisible to a child sh (always rc 127)
-excepted_resolves() { ask lan.corp.example.org | grep -q 192.168.77.9; }
+excepted_resolves() { ask lan.corp.example.org | grep 192.168.77.9 >/dev/null; }
 if ! nl_wait 20 excepted_resolves; then
   echo "--- diagnostics"; ps -eo stat,pid,lstart,args | grep -E "[u]nbound"; grep -nE "private|^server|interface" /etc/unbound/unbound.conf | head -30
   unbound-checkconf /etc/unbound/unbound.conf 2>&1 | tail -3
@@ -105,7 +105,9 @@ nl_ok "hostile exception refused (400)"
 echo "=== off"
 nl_api_ok "off" PUT /dns/settings '{"rebind_protection":false}'
 nl_wait 10 sh -c "! grep -q private-address /etc/unbound/unbound.conf" || nl_fail "private-address still rendered"
-nl_wait 15 sh -c "C python3 $NL_T/seg-a.py rebind.example.org 192.168.50.1 | grep -q 192.168.77.7" || nl_fail "off: the private record did not come back"
+# a function, not `sh -c "C ..."`: C is an exported *bash* function and the act image's sh is dash
+private_back() { ask rebind.example.org | grep 192.168.77.7 >/dev/null; }
+nl_wait 15 private_back || nl_fail "off: the private record did not come back"
 nl_ok "off: rebind.example.org -> 192.168.77.7 again"
 nl_api_ok "on again" PUT /dns/settings '{"rebind_protection":true}'
 nl_web_stop

@@ -86,8 +86,8 @@ printf '%s\n' $NL_WWW > "$FEEDS/list.txt"
 R nft add chain inet patronus nl_marker_chain
 api_ok POST /firewall/aliases/refresh '{"names":["urlbad"]}'
 wait_status urlbad "ok: 1 entries"
-setdump alias_urlbad_v4 | grep -q "$NL_WWW" || nl_fail "the set lacks the new entry"
-if setdump alias_urlbad_v4 | grep -q "$NL_BLOCKED"; then nl_fail "the set still has the removed entry"; fi
+setdump alias_urlbad_v4 | grep "$NL_WWW" >/dev/null || nl_fail "the set lacks the new entry"
+if setdump alias_urlbad_v4 | grep "$NL_BLOCKED" >/dev/null; then nl_fail "the set still has the removed entry"; fi
 R nft list chain inet patronus nl_marker_chain >/dev/null || nl_fail "the refresh reloaded the whole ruleset"
 reach "$NL_BLOCKED is no longer listed -> reachable" $NL_BLOCKED
 blocked "$NL_WWW is listed now -> blocked" $NL_WWW
@@ -99,7 +99,7 @@ api_ok POST /firewall/aliases/refresh '{"names":["urlbad"]}'
 grep -q '"ok":false' "$NL_OUT" || nl_fail "refresh of a dead feed claimed success: $(cat "$NL_OUT")"
 wait_status urlbad "error"
 ST=$(jget 'd["source"]["last_status"]')
-setdump alias_urlbad_v4 | grep -q "$NL_WWW" || nl_fail "the failed refresh emptied the set"
+setdump alias_urlbad_v4 | grep "$NL_WWW" >/dev/null || nl_fail "the failed refresh emptied the set"
 blocked "still enforced with the feed down" $NL_WWW
 nl_ok "failed refresh: $ST; entries kept"
 start_feed_server
@@ -107,14 +107,15 @@ start_feed_server
 echo "--- the periodic task refreshes a due alias by itself"
 printf '%s\n%s\n' $NL_WWW 192.0.2.77 > "$FEEDS/list.txt"
 sqlite3 "$DB" "UPDATE firewall_alias_sources SET refresh_secs=3, last_attempt=0 WHERE alias='urlbad'"
-nl_wait 30 bash -c "R nft list set inet patronus alias_urlbad_v4 | grep -q 192.0.2.77" || { tail -20 "$NL_T/nl-web.log"; nl_fail "the periodic task did not refresh the due alias"; }
+nl_wait 30 bash -c "R nft list set inet patronus alias_urlbad_v4 | grep 192.0.2.77 >/dev/null" || { tail -20 "$NL_T/nl-web.log"; nl_fail "the periodic task did not refresh the due alias"; }
 nl_ok "the periodic task picked up the change by itself"
 
 echo "--- URL table of ports"
 printf '9000\n9001-9003\n' > "$FEEDS/ports.txt"
 api_ok POST /firewall/aliases "{\"name\":\"urlports\",\"type\":\"urltable_ports\",\"entries\":[],\"source\":{\"kind\":\"url\",\"url\":\"$FEED_URL/ports.txt\",\"refresh_secs\":300}}"
 wait_status urlports "ok: 2 ports"
-R nft list set inet patronus alias_urlports_ports | grep -q '9000-9003' || { setdump alias_urlports_ports; nl_fail "port set not filled"; }
+ports_set=$(R nft list set inet patronus alias_urlports_ports)   # (capture first: `| grep -q` makes nft die of SIGPIPE under pipefail)
+grep -q '9000-9003' <<<"$ports_set" || { setdump alias_urlports_ports; nl_fail "port set not filled"; }
 nl_ok "URL table (ports) filled: $(setdump alias_urlports_ports | tr -d '\n\t' | grep -o 'elements.*')"
 
 echo "--- bad sources are refused"
@@ -161,8 +162,8 @@ api_ok PUT /firewall/geoip "{\"db_url\":\"$FEED_URL/dbip.csv\",\"refresh_days\":
 api_ok POST /firewall/aliases '{"name":"cn","type":"geoip","entries":["cn"],"source":{"kind":"geoip","countries":["CN"],"max_entries":1000}}'
 wait_status cn "ok: 3 ranges" 60
 nl_ok "the country set was built from the database: $(jget 'd["source"]["last_status"]')"
-setdump alias_cn_v4 | grep -q '198.51.100.16/28' || { setdump alias_cn_v4; nl_fail "CN range missing from the set"; }
-setdump alias_cn_v6 | grep -q '2001:db8:100::/112' || nl_fail "CN IPv6 range missing"
+setdump alias_cn_v4 | grep '198.51.100.16/28' >/dev/null || { setdump alias_cn_v4; nl_fail "CN range missing from the set"; }
+setdump alias_cn_v6 | grep '2001:db8:100::/112' >/dev/null || nl_fail "CN IPv6 range missing"
 nl_api GET "/firewall/geoip/lookup?ip=$NL_BLOCKED"
 [ "$(jget 'd["country"]')" = CN ] || nl_fail "lookup of $NL_BLOCKED: $(cat "$NL_OUT")"
 nl_api GET "/firewall/geoip/lookup?ip=$NL_WWW"
@@ -184,7 +185,7 @@ blocked "back to CN: blocked" $NL_BLOCKED
 echo "--- a DB-IP update rebuilds the sets (forced download)"
 sed -i 's/^"198.51.100.16","198.51.100.31","CN"/"198.51.100.16","198.51.100.23","CN"/; s/^"198.51.100.32","198.51.100.255","DE"/"198.51.100.24","198.51.100.255","DE"/' "$FEEDS/dbip.csv"
 api_ok POST /firewall/geoip/refresh '{}'
-setdump alias_cn_v4 | grep -q '198.51.100.16/29' || { setdump alias_cn_v4; nl_fail "set not rebuilt after the database changed"; }
+setdump alias_cn_v4 | grep '198.51.100.16/29' >/dev/null || { setdump alias_cn_v4; nl_fail "set not rebuilt after the database changed"; }
 nl_api GET "/firewall/geoip/lookup?ip=198.51.100.28"
 [ "$(jget 'd["country"]')" = DE ] || nl_fail "lookup after the update: $(cat "$NL_OUT")"
 nl_ok "database refresh rebuilt the country set (198.51.100.16/29) and the lookup follows"
@@ -224,8 +225,8 @@ api_ok PUT /firewall/threatintel/labdrop "{\"enabled\":true,\"url\":\"$FEED_URL/
 for _ in $(seq 1 40); do nl_api GET /firewall/threatintel; [ "$(jget '[f["count"] for f in d["feeds"] if f["id"]=="labdrop"][0]')" != 0 ] && break; sleep 0.5; done
 [ "$(jget '[f["count"] for f in d["feeds"] if f["id"]=="labdrop"][0]')" = 2 ] || nl_fail "labdrop should hold 2 entries (private ranges and /0 removed): $(cat "$NL_OUT")"
 nl_ok "feed labdrop: 2 entries ($(jget '[f["status"] for f in d["feeds"] if f["id"]=="labdrop"][0]')); 10/8, our LAN and 0/0 were not taken over"
-setdump alias_ti_labdrop_v4 | grep -q "$NL_BLOCKED" || nl_fail "feed set lacks $NL_BLOCKED"
-if setdump alias_ti_labdrop_v4 | grep -qE '10\.0\.0\.0|192\.168\.50|0\.0\.0\.0/0'; then setdump alias_ti_labdrop_v4; nl_fail "a private range / 0.0.0.0/0 got into the feed set"; fi
+setdump alias_ti_labdrop_v4 | grep "$NL_BLOCKED" >/dev/null || nl_fail "feed set lacks $NL_BLOCKED"
+if setdump alias_ti_labdrop_v4 | grep -E '10\.0\.0\.0|192\.168\.50|0\.0\.0\.0/0' >/dev/null; then setdump alias_ti_labdrop_v4; nl_fail "a private range / 0.0.0.0/0 got into the feed set"; fi
 nl_assert_nft_has "jump ti_check" "ip daddr @alias_ti_labdrop_v4 counter" "patronus[ti:labdrop] drop"
 blocked "LAN -> $NL_BLOCKED:9000 dropped by the threat feed (no user rule involved)" $NL_BLOCKED
 reach "LAN -> $NL_WWW:9000 unaffected" $NL_WWW

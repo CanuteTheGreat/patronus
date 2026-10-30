@@ -6,7 +6,9 @@
 # DNS and the "time's up" page reachable while blocked (never SSH / the admin
 # UI), and still blocks after a reboot (`patronus apply` recomputes the sets
 # before the first forwarded packet). Time is moved with
-# PATRONUS_FAKE_TIME_FILE; the ticker runs every second.
+# PATRONUS_FAKE_TIME_FILE; the ticker runs every second and publishes its
+# count of completed ticks in $PATRONUS_FAKE_TIME_FILE.ack, which `sync_tick`
+# waits on -- accounting never depends on how long a tick took (no sleeps).
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 
@@ -24,6 +26,7 @@ nl_web() {
     -X "$1" -H 'content-type: application/json' "${data[@]}" "$NL_UI$2")
 }
 web_start() { # DB
+  rm -f "$FAKE.ack"   # the tick counter restarts with the process
   env PATRONUS_DB="$1" PATRONUS_BOOTSTRAP="$NL_TOML" PATRONUS_ADMIN_PASSWORD="$NL_PASS" \
       PATRONUS_ADMIN_PASSWORD_FILE=$NL_T/nl-pw PATRONUS_TLS_DIR=$NL_T/nl-tls RUST_LOG=info \
       ip netns exec nl-rtr "$WEB" >>"$NL_T/nl-web.log" 2>&1 &
@@ -33,15 +36,20 @@ web_start() { # DB
 }
 tcp_open() { C python3 -c "import socket,sys; socket.create_connection((sys.argv[1], int(sys.argv[2])), 2)" "$1" "$2" 2>/dev/null; }
 clock() { echo "$1" > "$FAKE"; }
+ack() { cat "$FAKE.ack" 2>/dev/null || echo 0; }
+# sync_tick: wait for TWO completed ticks. The one in flight may have read
+# conntrack / the clock before whatever the scenario just did; the next one
+# started after it, so it saw everything.
+sync_tick() {
+  local want=$(( $(ack) + 2 ))
+  for _ in $(seq 1 240); do [ "$(ack)" -ge "$want" ] && return 0; sleep 0.25; done
+  nl_fail "the ticker did not complete two ticks (tick counter $(ack), wanted $want; web log: $(tail -5 "$NL_T/nl-web.log" | tr '\n' ' '))"
+}
 clock "2026-10-12 15:00"   # a Monday
 nl_write_installer_toml
 nl_boot "$DB"
 
 MAC=$(ip -n nl-client -br link show lan0 | awk '{print $3}')
-# stand-ins on the router: a DNS server on :53 and the admin ports (22 exists)
-nl_bg R dnsmasq --no-daemon --no-resolv --no-hosts --user=root --bind-interfaces \
-  --listen-address=$NL_RTR_LAN --pid-file=/tmp/nl-rtr-dns.pid --address=/foo.test/10.9.9.9
-sleep 0.5
 dns_to_router() {
   C python3 - <<'EOF'
 import socket
@@ -52,6 +60,18 @@ EOF
 }
 
 web_start "$DB"; nl_login
+# Stand-in DNS server on the router's :53. With DNS mode `auto` Patronus starts its OWN resolver there
+# when Unbound is installed (the CI netlab image installs it for lane J; a bare lab does not), which
+# held the port and made the stand-in die silently -- the old "CI-only" failure. Pin the mode to
+# `disabled` first so the scenario no longer depends on which packages the image happens to have.
+nl_api_ok "DNS mode pinned to disabled (the stand-in owns :53)" PUT /dns/settings '{"mode":"disabled"}'
+listening() { R ss -lun 2>/dev/null | grep -F "$NL_RTR_LAN:53" >/dev/null; }
+for _ in $(seq 1 40); do listening || break; sleep 0.25; done
+if listening; then R ss -lunp | head; nl_fail "something still listens on $NL_RTR_LAN:53 although DNS is disabled"; fi
+nl_bg R dnsmasq --no-daemon --no-resolv --no-hosts --user=root --bind-interfaces \
+  --listen-address=$NL_RTR_LAN --pid-file=/tmp/nl-rtr-dns.pid --address=/foo.test/10.9.9.9
+for _ in $(seq 1 40); do listening && break; sleep 0.25; done
+listening || nl_fail "the DNS stand-in did not bind $NL_RTR_LAN:53"
 # group + device through the foundation's API (what the Segmentation page sends)
 nl_api_ok "create group kids" POST /segmentation/groups '{"name":"kids"}'
 nl_api_ok "enrol the tablet" POST /segmentation/devices "{\"name\":\"tablet\",\"mac\":\"$MAC\",\"group\":\"kids\",\"kind\":\"wifi\",\"segment\":\"@lan\",\"ip4\":\"$NL_CLIENT\"}"
@@ -87,7 +107,7 @@ wait_state() { # WANT (state): the API says so AND the ticker has moved the kern
 used() { tablet | cut -d/ -f3; }
 page() { C curl -s -m 5 "http://$NL_WWW/"; }   # port 80: redirected to the page while limited
 wait_page() { # PATTERN: the redirected page shows PATTERN within 10 s (the ticker has to add the element)
-  for _ in $(seq 1 20); do page | grep -q "$1" && return 0; sleep 0.5; done
+  for _ in $(seq 1 20); do page | grep "$1" >/dev/null && return 0; sleep 0.5; done
   nl_fail "page never showed '$1': $(page)"
 }
 blocked_traffic() { nl_expect_no_tcp "$1" C $NL_WWW 9000; nl_expect_http_blocked "$1 (http 8080)" "http://$NL_WWW:8080/"; }
@@ -99,7 +119,22 @@ blocked_traffic "15:00 outside the window"
 nl_assert_nft_has "table inet patronus_time" "ip saddr @blocked_v4"
 blocked_in_kernel || nl_fail "client not in blocked_v4: $(R nft list set inet patronus_time blocked_v4)"
 nl_ok "client address is an element of inet patronus_time blocked_v4"
-[ "$(dns_to_router)" = 10.9.9.9 ] || nl_fail "DNS to the router must keep working while blocked"
+if [ "$(dns_to_router 2>&1)" != 10.9.9.9 ]; then
+  echo "--- diagnostics: DNS to the router while blocked"
+  echo "answer: $(dns_to_router 2>&1 | tail -3)"
+  echo "stand-in dnsmasq: $(ps -eo stat,pid,args | grep '[d]nsmasq' | tr '\n' ';')"
+  echo "listeners:"; R ss -lunp 2>&1 | head -10
+  R nft list table inet patronus_time 2>&1 | head -60
+  R nft list table inet patronus_dnspol 2>&1 | head -30
+  echo "direct (not blocked) from the router: $(R python3 - <<'PYX' 2>&1 | tail -2
+import socket
+q = b'\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x03foo\x04test\x00\x00\x01\x00\x01'
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(2)
+s.sendto(q, ('192.168.50.1', 53)); d = s.recv(512); print(d.hex())
+PYX
+)"
+  nl_fail "DNS to the router must keep working while blocked"
+fi
 nl_ok "DNS (router :53) still answers while blocked"
 nl_expect_no_tcp "blocked device -> router SSH (admin ports stay shut)" C $NL_RTR_LAN 22
 if tcp_open $NL_RTR_LAN 8443; then nl_fail "blocked device reaches the admin UI on 8443"; fi
@@ -124,16 +159,16 @@ tcp_open $NL_RTR_LAN 8443 || nl_fail "restored device cannot reach the admin UI 
 nl_ok "client address removed from blocked_v4 (no firewall reload: ruleset table patronus untouched)"
 
 # --- 3. quota: 3 active minutes (>100 B/min) at 16:00 .. 16:02, idle minute does not count
-active_minute() { # HH:MM
-  clock "2026-10-12 $1"; sleep 1.6
+active_minute() { # HH:MM: the clock moves, the ticker closes the previous minute, then this minute's traffic is polled
+  clock "2026-10-12 $1"; sync_tick
   for _ in 1 2 3; do C curl -s -m 3 -o /dev/null "http://$NL_WWW:8080/" || true; done
-  sleep 1.6   # let the ticker poll the counters before the minute ends
+  sync_tick
 }
-active_minute 16:01
-sleep 1.6   # 16:00's traffic (the restore check above) is polled
-clock "2026-10-12 16:02"; sleep 1.6   # closes 16:01 (traffic): 16:00 and 16:01 were active
+sync_tick   # 16:00's traffic (the restore check above) is polled while the clock still says 16:00
+active_minute 16:01   # closes 16:00 (it had traffic)
+clock "2026-10-12 16:02"; sync_tick   # closes 16:01 (traffic): 16:00 and 16:01 were active
 [ "$(used)" = 2 ] || nl_fail "expected 2 active minutes so far, got $(used)"
-clock "2026-10-12 16:03"; sleep 1.6   # 16:02 had no traffic: closed, not counted
+clock "2026-10-12 16:03"; sync_tick   # 16:02 had no traffic: closed, not counted
 [ "$(used)" = 2 ] || nl_fail "an idle minute was counted: $(used)"
 nl_ok "two active minutes counted (16:00, 16:01); the idle minute 16:02 was not"
 

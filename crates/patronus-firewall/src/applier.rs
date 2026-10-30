@@ -1537,6 +1537,23 @@ mod tests {
         assert!(!l.script.contains("masquerade") && !l.script.contains("10.9.9.9"));
     }
 
+    /// Device segmentation rides in the same atomic transaction as the main
+    /// table, but never in lockdown (which keeps only anti-lockout access):
+    /// an upgraded store with the feature off still renders the teardown of
+    /// its own table, so a stale `patronus_seg` table cannot outlive a re-apply.
+    #[tokio::test]
+    async fn segmentation_table_is_in_the_normal_script_and_never_in_lockdown() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(
+            r.script.contains("delete table inet patronus_seg"),
+            "{}",
+            r.script
+        );
+        let l = FirewallApplier.render_script(&s, true).await.unwrap();
+        assert!(!l.script.contains("patronus_seg"), "{}", l.script);
+    }
+
     #[tokio::test]
     async fn unrenderable_drop_rule_aborts_but_bad_accept_is_skipped() {
         let s = seeded(&["eth0"], &["eth1"]).await;

@@ -166,16 +166,23 @@ pub async fn ensure_defaults(
         .await?
         .is_none()
     {
+        // A store that carries rules somebody wrote is an upgrade, even when it is so old that
+        // it has no "seeded" marker (the v0.1.0 layout): it must not get new behaviour.
+        let upgraded = has_user_rules(store).await?;
         seed_default_rules(store).await?;
         // DNS rebinding protection is on for a new install; a store that
         // predates the setting keeps it off (split-horizon names would break)
-        sqlx::query(
-            "INSERT OR IGNORE INTO lan_settings (key, value, updated_at) VALUES ('dns.rebind_protection', '1', ?)",
-        )
-        .bind(chrono::Utc::now().timestamp())
-        .execute(store.pool()?)
-        .await
-        .map_err(|e| patronus_core::Error::Config(format!("seed DNS rebind protection: {e}")))?;
+        if !upgraded {
+            sqlx::query(
+                "INSERT OR IGNORE INTO lan_settings (key, value, updated_at) VALUES ('dns.rebind_protection', '1', ?)",
+            )
+            .bind(chrono::Utc::now().timestamp())
+            .execute(store.pool()?)
+            .await
+            .map_err(|e| {
+                patronus_core::Error::Config(format!("seed DNS rebind protection: {e}"))
+            })?;
+        }
         store
             .save_system_config(DEFAULTS_SEEDED_KEY, &chrono::Utc::now().to_rfc3339())
             .await?;
@@ -245,6 +252,15 @@ pub const DEFAULT_SYSCTLS: &[(&str, &str)] = &[
 /// Idempotent: a row that is already there (same name and origin) is not
 /// inserted again, so a power cut between seeding and recording
 /// [`DEFAULTS_SEEDED_KEY`] does not duplicate the defaults on the next boot.
+/// Does the store already hold a rule an operator (or an older release's user) created?
+async fn has_user_rules(store: &ConfigStore) -> Result<bool> {
+    Ok(store
+        .load_firewall_rules_with_origin()
+        .await?
+        .iter()
+        .any(|(_, o)| *o == RuleOrigin::User))
+}
+
 async fn seed_default_rules(store: &ConfigStore) -> Result<()> {
     let have: Vec<(String, RuleOrigin)> = store
         .load_firewall_rules_with_origin()
@@ -362,6 +378,24 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(v, None, "no behaviour change on upgrade");
+        // a pre-marker store (the v0.1.0 layout) that already holds a user's rule is an upgrade too
+        let old = ConfigStore::open_in_memory().await.unwrap();
+        old.save_firewall_rule(&FirewallRule::new(
+            "legacy-block".into(),
+            ChainType::Forward,
+            FirewallAction::Drop,
+        ))
+        .await
+        .unwrap();
+        ensure_defaults(&old, None, &[]).await.unwrap();
+        let v: Option<String> = sqlx::query_scalar(key)
+            .fetch_optional(old.pool().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            v, None,
+            "a store with user rules is an upgrade even without the marker"
+        );
         // a user who switched it off keeps it off (seeding never repeats)
         sqlx::query("UPDATE lan_settings SET value = '0' WHERE key = 'dns.rebind_protection'")
             .execute(s.pool().unwrap())
