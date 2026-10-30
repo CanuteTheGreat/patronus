@@ -215,6 +215,9 @@ pub struct RoutingConfig {
     pub default6: Option<String>,
     /// Firewall mark (= routing table) per gateway / group name.
     pub marks: BTreeMap<String, u32>,
+    /// `(gateway, address)` of every enabled extra probe (tcp/dns target, or
+    /// an http URL with an IP literal): pinned to its gateway like a monitor IP.
+    pub probe_targets: Vec<(String, IpAddr)>,
 }
 
 impl RoutingConfig {
@@ -344,6 +347,12 @@ pub async fn load(store: &ConfigStore) -> Result<RoutingConfig> {
             enabled: r.get::<i64, _>(7) != 0,
         });
     }
+    c.probe_targets = load_probes(store)
+        .await
+        .into_iter()
+        .filter(|p| p.enabled)
+        .filter_map(|p| Some((p.gateway.clone(), probe_address(&p)?)))
+        .collect();
     c.marks = patronus_config::policy::policy_marks(store).await?;
     let setting = |v: Option<String>| v.filter(|s| !s.trim().is_empty());
     c.default4 = setting(store.load_system_config(DEFAULT_GW4_KEY).await?);
@@ -1248,6 +1257,33 @@ pub async fn load_probes(store: &ConfigStore) -> Vec<ProbeSpec> {
         .collect()
 }
 
+/// The address a probe sends to, when it is an IP literal.
+pub fn probe_address(p: &ProbeSpec) -> Option<IpAddr> {
+    match p.kind {
+        ProbeKind::Tcp | ProbeKind::Dns => p.target.parse().ok(),
+        ProbeKind::Http => {
+            let rest = p
+                .target
+                .strip_prefix("http://")
+                .or_else(|| p.target.strip_prefix("https://"))?;
+            let host = rest.split(['/', '?', '#']).next()?;
+            if let Some(v6) = host.strip_prefix('[') {
+                return v6.split(']').next()?.parse().ok();
+            }
+            host.rsplit_once(':')
+                .map_or(host, |(h, port)| {
+                    if port.bytes().all(|b| b.is_ascii_digit()) {
+                        h
+                    } else {
+                        host
+                    }
+                })
+                .parse()
+                .ok()
+        }
+    }
+}
+
 /// Probe window per gateway (one sample a second).
 pub const WINDOW: usize = 10;
 /// Consecutive lost probes that make a gateway down.
@@ -1690,6 +1726,45 @@ pub fn desired(
         d.routes.push(KRoute {
             v6: g.family.v6(),
             dst: host_net(&mon),
+            metric: 0,
+            proto: MONITOR_PROTO.into(),
+            table: MAIN_TABLE,
+            hops: vec![Hop {
+                via: r.address.map(|a| a.to_string()),
+                dev: r.dev.clone(),
+                weight: 1,
+            }],
+        });
+    }
+    // extra-probe targets: like a monitor IP, a probe for a tcp/dns/http target
+    // leaves via its own gateway even while another one carries the default
+    let mut pinned: BTreeMap<IpAddr, String> = BTreeMap::new();
+    for g in &cfg.gateways {
+        if let Some(m) = g.monitor_ip {
+            pinned.insert(m, g.name.clone());
+        }
+    }
+    for (gw, ip) in &cfg.probe_targets {
+        let (Some(g), Some(r)) = (cfg.gateway(gw), resolved.get(gw)) else {
+            continue;
+        };
+        if !r.routable() || Some(*ip) == r.address || ip.is_ipv6() != g.family.v6() {
+            continue;
+        }
+        match pinned.get(ip) {
+            Some(other) if other == gw => continue,
+            Some(other) => {
+                d.warnings.push(format!(
+                    "probe target {ip} of gateway {gw} is already pinned to {other}: it can only be probed through {other}"
+                ));
+                continue;
+            }
+            None => {}
+        }
+        pinned.insert(*ip, gw.clone());
+        d.routes.push(KRoute {
+            v6: g.family.v6(),
+            dst: host_net(ip),
             metric: 0,
             proto: MONITOR_PROTO.into(),
             table: MAIN_TABLE,

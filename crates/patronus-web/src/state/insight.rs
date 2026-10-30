@@ -943,15 +943,20 @@ pub async fn tick(
 }
 
 /// Start the collector: a conntrack look every [`POLL_SECS`], a database
-/// write every minute. `PATRONUS_INSIGHT_TICK_SECS` overrides the poll
-/// interval (tests).
+/// write every minute. `PATRONUS_INSIGHT_TICK_SECS` / `PATRONUS_INSIGHT_FLUSH_SECS`
+/// override the intervals (tests).
 pub fn spawn_collector(store: std::sync::Arc<ConfigStore>) {
     let secs = std::env::var("PATRONUS_INSIGHT_TICK_SECS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .filter(|s| *s > 0)
         .unwrap_or(POLL_SECS);
-    let per_flush = (60 / secs).max(1);
+    let flush_secs = std::env::var("PATRONUS_INSIGHT_FLUSH_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|s| *s > 0)
+        .unwrap_or(60);
+    let per_flush = (flush_secs / secs).max(1);
     tokio::spawn(async move {
         let enrich = tokio::task::spawn_blocking(Enricher::load)
             .await

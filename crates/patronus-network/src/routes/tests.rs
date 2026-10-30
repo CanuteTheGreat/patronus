@@ -1410,3 +1410,81 @@ async fn disabled_probes_are_skipped_and_a_deleted_gateway_takes_its_probes_alon
         .unwrap();
     assert!(load_probes(&s).await.is_empty());
 }
+
+#[test]
+fn probe_targets_are_pinned_to_their_gateway_like_a_monitor_ip() {
+    let (mut cfg, res) = two_wan_cfg();
+    cfg.groups.clear();
+    cfg.default4 = Some("WAN2".into());
+    cfg.gateways[0].monitor_ip = Some("9.9.9.9".parse().unwrap());
+    cfg.probe_targets = vec![
+        ("WAN1".into(), "1.1.1.1".parse().unwrap()),
+        ("WAN1".into(), "1.1.1.1".parse().unwrap()), // two probes, one target: one route
+        ("WAN1".into(), "9.9.9.9".parse().unwrap()), // already the monitor IP
+        ("WAN2".into(), "9.9.9.9".parse().unwrap()), // another gateway's monitor IP: refused
+        ("WAN2".into(), "8.8.8.8".parse().unwrap()),
+        ("WAN2".into(), "203.0.113.1".parse().unwrap()), // the gateway itself: on-link already
+        ("NOPE".into(), "7.7.7.7".parse().unwrap()),
+        ("WAN2".into(), "2001:db8::53".parse().unwrap()), // IPv6 target on an IPv4 gateway
+    ];
+    let d = desired(&cfg, &res, &BTreeMap::new(), &BTreeMap::new());
+    let lines: Vec<String> = d
+        .routes
+        .iter()
+        .map(|r| r.replace_args().join(" "))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "-4 route replace default table 4250 metric 1 proto 253 via 203.0.113.1 dev wan2",
+            "-4 route replace 9.9.9.9/32 metric 0 proto 252 via 198.51.100.1 dev wan1",
+            "-4 route replace 1.1.1.1/32 metric 0 proto 252 via 198.51.100.1 dev wan1",
+            "-4 route replace 8.8.8.8/32 metric 0 proto 252 via 203.0.113.1 dev wan2",
+        ]
+    );
+    assert!(
+        d.warnings
+            .iter()
+            .any(|w| w.contains("9.9.9.9 of gateway WAN2 is already pinned to WAN1")),
+        "{:?}",
+        d.warnings
+    );
+}
+
+#[test]
+fn probe_addresses_come_from_ip_literals_only() {
+    let p = |kind, target: &str| ProbeSpec {
+        id: 1,
+        gateway: "G".into(),
+        kind,
+        target: target.into(),
+        port: Some(443),
+        name: String::new(),
+        critical: false,
+        enabled: true,
+    };
+    let ip = |s: &str| Some(s.parse::<IpAddr>().unwrap());
+    assert_eq!(probe_address(&p(ProbeKind::Tcp, "1.1.1.1")), ip("1.1.1.1"));
+    assert_eq!(
+        probe_address(&p(ProbeKind::Dns, "2001:db8::1")),
+        ip("2001:db8::1")
+    );
+    assert_eq!(
+        probe_address(&p(ProbeKind::Http, "http://192.0.2.7/health")),
+        ip("192.0.2.7")
+    );
+    assert_eq!(
+        probe_address(&p(ProbeKind::Http, "https://192.0.2.7:8443/x?y=1")),
+        ip("192.0.2.7")
+    );
+    assert_eq!(
+        probe_address(&p(ProbeKind::Http, "http://[2001:db8::7]:8080/")),
+        ip("2001:db8::7")
+    );
+    assert_eq!(
+        probe_address(&p(ProbeKind::Http, "https://example.com/")),
+        None,
+        "a name cannot be pinned"
+    );
+    assert_eq!(probe_address(&p(ProbeKind::Tcp, "example.com")), None);
+}

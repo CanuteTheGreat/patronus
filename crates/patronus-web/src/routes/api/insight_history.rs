@@ -509,6 +509,8 @@ async fn probe_save(s: AppState, id: Option<i64>, p: ProbeInput) -> Response {
     .await
     {
         Ok(id) => {
+            // pin the probe's target to its gateway (host route) right away
+            let _ = s.routing.apply().await;
             let _ = s.config_store.audit("web", if created { "create" } else { "update" }, "uplink_probe", Some(&id.to_string()), &json!({"gateway": p.gateway, "kind": p.kind, "target": p.target, "critical": p.critical})).await;
             (if created { StatusCode::CREATED } else { StatusCode::OK }, Json(json!({"ok": true, "id": id, "note": "picked up by the gateway monitor within a few seconds"}))).into_response()
         }
@@ -531,6 +533,7 @@ async fn probe_put(
 async fn probe_del(State(s): State<AppState>, Path(id): Path<i64>) -> Response {
     match uplink::delete_probe(&s.config_store, id).await {
         Ok(()) => {
+            let _ = s.routing.apply().await;
             let _ = s
                 .config_store
                 .audit(

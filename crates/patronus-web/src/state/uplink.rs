@@ -111,11 +111,23 @@ fn kind_ok(g: &GwView, k: ProbeKind) -> Option<i64> {
 // recording
 // ---------------------------------------------------------------------------
 
-/// Write the minute's sample of every measured gateway and update the hourly
+/// Write the current interval's sample of every measured gateway and update the hourly
 /// rollup. A second call within the same minute adds nothing. Returns the
 /// number of samples written.
 pub async fn record(store: &ConfigStore, now: i64, gws: &[GwView]) -> anyhow::Result<usize> {
-    let ts = now - now.rem_euclid(60);
+    record_at(store, now, 60, gws).await
+}
+
+/// [`record`] with another sample interval (seconds; `PATRONUS_UPLINK_SAMPLE_SECS`
+/// makes netlab scenarios collect in seconds instead of minutes).
+pub async fn record_at(
+    store: &ConfigStore,
+    now: i64,
+    step: i64,
+    gws: &[GwView],
+) -> anyhow::Result<usize> {
+    let step = step.max(1);
+    let ts = now - now.rem_euclid(step);
     let hour = now - now.rem_euclid(3600);
     let p = pool(store)?;
     let mut n = 0;
@@ -720,6 +732,11 @@ pub fn spawn_recorder(state: super::AppState) {
         .and_then(|s| s.parse::<u64>().ok())
         .filter(|s| *s > 0)
         .unwrap_or(RECORD_SECS);
+    let step = std::env::var("PATRONUS_UPLINK_SAMPLE_SECS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|s| (1..=3600).contains(s))
+        .unwrap_or(60);
     tokio::spawn(async move {
         let mut failing: HashSet<(String, i64)> = HashSet::new();
         let mut breached: HashSet<String> = HashSet::new();
@@ -734,7 +751,7 @@ pub fn spawn_recorder(state: super::AppState) {
                 continue;
             };
             let gws = gateways_of(&status);
-            if let Err(e) = record(&store, now, &gws).await {
+            if let Err(e) = record_at(&store, now, step, &gws).await {
                 tracing::warn!("uplink recorder: {e}");
             }
             let mut events = probe_events(&mut failing, &gws, now);
