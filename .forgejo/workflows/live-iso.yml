@@ -56,7 +56,7 @@ jobs:
             alias: aarch64
     runs-on: ${{ matrix.runner }}
     container: catthehacker/ubuntu:act-latest
-    timeout-minutes: 170   # the runners kill a job at 3 h anyway (x86_64 takes ~2h45): fail cleanly and free the single kvm slot
+    timeout-minutes: 178   # runners kill at 3 h (180); aarch64 TCG legitimately takes 170-178 min (170 cancelled run 690 at 170 min), x86_64 ~140
     steps:
       - name: Checkout
         if: ${{ github.event.inputs.only == '' || github.event.inputs.only == matrix.id || github.event.inputs.only == matrix.alias }}
