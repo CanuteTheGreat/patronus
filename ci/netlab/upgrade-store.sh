@@ -32,8 +32,11 @@ seg_upgrade_checks() { # DB LABEL
     || nl_fail "$2: built-in groups (home, quarantine) not seeded"
   [ "$(sqlite3 "$db" "SELECT count(*) FROM seg_time_policies") $(sqlite3 "$db" "SELECT count(*) FROM seg_dns_policies") $(sqlite3 "$db" "SELECT count(*) FROM seg_wifi_networks")" = "0 0 0" ] \
     || nl_fail "$2: policies/networks appeared out of nowhere"
-  [ -z "$(sqlite3 "$db" "SELECT value FROM lan_settings WHERE key='dns.rebind_protection'")" ] \
-    || nl_fail "$2: rebinding protection was forced onto an existing store (only new installs get it on)"
+  # The upgrade must leave the setting exactly as the store had it: absent for a store that predates
+  # the feature (v0.1.0 layout), and whatever the previous release itself seeded or the user chose
+  # when that release already had it (a fresh install of the previous release gets it on).
+  [ "$(sqlite3 "$db" "SELECT coalesce(value,'') FROM lan_settings WHERE key='dns.rebind_protection'")" = "${REBIND_BASELINE:-}" ] \
+    || nl_fail "$2: rebinding protection changed by the upgrade (was '${REBIND_BASELINE:-}', now '$(sqlite3 "$db" "SELECT value FROM lan_settings WHERE key='dns.rebind_protection'")'; only new installs get it on)"
   if R nft list table inet patronus_seg >/dev/null 2>&1; then
     R nft list table inet patronus_seg; nl_fail "$2: a segmentation table exists although nothing opted in"
   fi
@@ -96,6 +99,7 @@ nl_expect_http_blocked "old release enforces prev-block" http://blocked.example.
 nl_web_stop
 old_rules=$(sqlite3 "$DB" "SELECT name||'|'||chain||'|'||action||'|'||coalesce(dport,'') FROM firewall_rules ORDER BY name")
 old_migs=$(migrations "$DB")
+REBIND_BASELINE=$(sqlite3 "$DB" "SELECT coalesce(value,'') FROM lan_settings WHERE key='dns.rebind_protection'" 2>/dev/null || true)
 
 echo "--- upgrade: reboot into HEAD"
 nl_boot "$DB"
