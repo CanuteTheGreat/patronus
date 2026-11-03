@@ -26,4 +26,4 @@ grep -qw dist-kernel /var/db/pkg/sys-fs/zfs-kmod-*/USE || { echo "zfs-kmod witho
 # TPM unlock: tools the installer seals with and the initramfs module unseals with
 for t in tpm2_createprimary tpm2_create tpm2_load tpm2_unseal tpm2_createpolicy tpm2_pcrread; do command -v $t >/dev/null || { echo "tpm2-tools: $t missing"; exit 1; }; done
 [ -d /usr/lib/dracut/modules.d/92tpm-unlock ] || { echo "dracut tpm-unlock module missing"; exit 1; }
-ls /usr/lib64/libtss2-tcti-device.so* /usr/lib/libtss2-tcti-device.so* >/dev/null 2>&1 || { echo "libtss2-tcti-device missing"; exit 1; }
+[ -e /usr/lib64/libtss2-tcti-device.so.0 ] || [ -e /usr/lib/libtss2-tcti-device.so.0 ] || { echo "libtss2-tcti-device missing; tss libs: $(find / -xdev -name 'libtss2*' 2>/dev/null | grep -E 'device|tctildr' | head -20 | tr '\n' ' ')"; exit 1; }
