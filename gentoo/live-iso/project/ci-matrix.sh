@@ -15,8 +15,10 @@ if [ "$ARCH" = x86_64 ]; then
     "bios-cdrom-auto-ext4-manual|--mode bios --media cdrom --flow auto --fs ext4"
   )
 else
-  MATRIX+=(
-    "uefi-usb-auto-zfs-default-notpm|--mode uefi --media usb --flow auto --mem 8192"
-    "uefi-cdrom-auto-xfs-fallback-lowram|--mode uefi --media cdrom --flow auto --mem 4096"
-  )
+  # aarch64 (QEMU TCG, no KVM): the job is already at its 178-minute limit (run 8653 hit it with every test passed), so NO run is added: the
+  # first shared entry becomes the ZFS-default run (>= 8 GB) and the serial-TUI cdrom run stays the < 8 GB XFS fallback (default mem 4096).
+  # The TPM-unlock path is gated on x86_64 only (edk2-aarch64 + swtpm under TCG would not fit the budget).
+  # ... and the open-console run (identical code path, proven on x86_64) is dropped to give the ZFS install ~19 min of room.
+  _m=(); for _e in "${MATRIX[@]}"; do case "$_e" in uefi-cdrom-auto-openconsole\|*) ;; *) _m+=("$_e");; esac; done; MATRIX=("${_m[@]}")
+  MATRIX[0]="uefi-usb-auto-zfs-default-notpm|--mode uefi --media usb --flow auto --mem 8192 --ssh-password-opt-in"
 fi
