@@ -51,9 +51,8 @@ def apply(inst):
         raise InstallError("desktop profile needs a password for " + name)
     have = set(l.split(":")[0] for l in open(f"{T}/etc/group"))
     groups = ",".join(g for g in GROUPS if g in have)
-    # the home dataset must be mounted BEFORE useradd -m: a home created in the root dataset is hidden
-    # (empty home, no session) once rpool/home is mounted over it
-    inst.run(["zfs", "mount", "-a"], check=False)
+    # the home dataset is mounted above the root BE by zfsroot.mount()/mount_rest() (they fail the install
+    # otherwise): a home created in the BE's own /home would be hidden by the empty home dataset at boot
     inst.run(["useradd", "-m", "-G", groups, "-s", "/bin/bash", "-c", c.get("user_fullname", name), name], chroot=True)
     if c.get("user_hash"):
         inst.run(["chpasswd", "-e"], chroot=True, input_=f"{name}:{c['user_hash']}\n")
@@ -80,4 +79,13 @@ def apply(inst):
         inst.write("/etc/gdm/custom.conf", f"[daemon]\nAutomaticLoginEnable=True\nAutomaticLogin={name}\nWaylandEnable=true\n")
     else:
         inst.write("/etc/gdm/custom.conf", "[daemon]\nWaylandEnable=true\n")
+    # the GNOME defaults package (AppIndicator tray icons enabled system-wide) belongs to @world of every GNOME install, so later `emerge -uDN @world` keeps it
+    # (also net-misc/horcrux-chrony-nm, the NetworkManager hook that gives chrony its sources when Wi-Fi comes up: a dependency of the defaults
+    # package, listed explicitly so a depclean or a world edit can never drop it)
+    w = f"{T}/var/lib/portage/world"
+    for cat, pkg in (("gnome-extra", "horcrux-gnome-defaults"), ("net-misc", "horcrux-chrony-nm")):
+        pk = f"{T}/var/db/pkg/{cat}"
+        if os.path.isdir(pk) and any(d.startswith(pkg + "-") for d in os.listdir(pk)):
+            if f"{cat}/{pkg}" not in (open(w).read().split() if os.path.exists(w) else []):
+                inst.write("/var/lib/portage/world", f"{cat}/{pkg}\n", append=True)
     inst.log(f"desktop profile: user {name}, GNOME/GDM on Wayland")

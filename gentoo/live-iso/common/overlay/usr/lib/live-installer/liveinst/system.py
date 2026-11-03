@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import time
 
-from . import arch, hwprofile, luksroot, portableswap, zfsswap
+from . import arch, hwprofile, luksroot, portableswap, tpmunlock, zfsswap
 
 LOG = "/var/log/live-installer.log"
 
@@ -308,6 +308,36 @@ def write_wifi_profile(root, ssid, psk):
     return path
 
 
+def write_nm_wifi_profile(root, ssid, psk):
+    """NetworkManager keyfile for the installed system. No `interface-name`: the installed system names the NIC differently
+    from the live stick (a pinned name left the profile dead on hogshead). Mode 0600 or NM ignores the file."""
+    import uuid
+    d = os.path.join(root, "etc/NetworkManager/system-connections")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, re.sub(r"[^A-Za-z0-9._-]", "_", ssid) + ".nmconnection")
+    txt = ("[connection]\nid=%s\nuuid=%s\ntype=wifi\nautoconnect=true\n\n[wifi]\nmode=infrastructure\nssid=%s\n\n" % (ssid, uuid.uuid4(), ssid)
+           + ("[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n" % psk if psk else "")
+           + "[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(txt)
+    return path
+
+
+def strip_pinned_interfaces(root):
+    """drop `interface-name=` lines from every NM profile under root (carried-over profiles)"""
+    d = os.path.join(root, "etc/NetworkManager/system-connections")
+    n = 0
+    for f in (os.listdir(d) if os.path.isdir(d) else []):
+        p = os.path.join(d, f)
+        t = open(p).read()
+        t2 = re.sub(r"(?m)^interface-name=.*\n", "", t)
+        if t2 != t:
+            open(p, "w").write(t2)
+            n += 1
+    return n
+
+
 def nm_wifi_networks(directory):
     """(ssid, psk) of every Wi-Fi profile in a NetworkManager system-connections directory (psk '' = open network).
     802.1x/enterprise profiles and anything without a readable SSID are skipped."""
@@ -482,6 +512,29 @@ def _default_fs(profile):
 
 def default_config(profile):
     fs, fs_why = _default_fs(profile)
+    c = _default_config(profile, fs, fs_why)
+    apply_encryption_policy(profile, c)
+    return c
+
+
+def apply_encryption_policy(profile, c, tpm_ok=None):
+    """profile encryption = \"tpm-or-none\" (appliances): ZFS is encrypted only when a working TPM 2.0 can unlock it unattended, otherwise NOT
+    encrypted. No passphrase prompt at boot, ever. Sets zfs_encrypt / zfs_keymode / enc_why (shown on the disk page)."""
+    if profile.get("encryption") != "tpm-or-none":
+        return
+    c["zfs_keymode"], c["zfs_passphrase"] = "tpm", ""
+    if c.get("fs") != "zfs":
+        c["zfs_encrypt"], c["enc_why"] = False, "NOT encrypted: encryption needs the ZFS file system with a TPM (XFS here would need a passphrase at every boot)"
+        return
+    want = c.get("enc_request", "auto")
+    if want == "none":
+        c["zfs_encrypt"], c["enc_why"] = False, "NOT encrypted: switched off in the answer file"
+        return
+    ok, why = tpmunlock.decide(profile, tpm_ok)
+    c["zfs_encrypt"], c["enc_why"] = ok, why
+
+
+def _default_config(profile, fs, fs_why):
     return {
         "locale": "en_US.UTF-8", "keymap": "us", "timezone": "UTC",
         "disks": [], "fs": fs, "fs_why": fs_why, "zfs_raid": "single", "luks_passphrase": "",
@@ -496,7 +549,7 @@ def default_config(profile):
         "ssh_keys": [], "ssh_password_auth": False, "email": "",
         "console_open": False,
         # ZFS root with native encryption (the passphrase is typed by the user; only held in memory)
-        "zfs_encrypt": False, "zfs_passphrase": "",
+        "zfs_encrypt": False, "zfs_passphrase": "", "zfs_keymode": "passphrase", "enc_why": "",
         # Apple T2 Mac support: auto = detect PCI 106b:1801; firmware = auto | none | path to a firmware.tar / brcm dir
         "t2": "auto", "t2_firmware": "auto",
         # install profile: server | desktop (desktop needs the desktop image variant)
@@ -551,8 +604,16 @@ def config_from_answers(profile, path):
         c["desktop"].update({k: de[k] for k in ("enable", "user", "password", "password_hash", "autologin") if k in de})
     c["hw"] = a.get("hardware", {}).get("profile", "auto")
     c["zfs_raid"] = d.get("zfs_raid", "single")
-    c["zfs_encrypt"] = bool(d.get("encryption", d.get("encrypt", False)))
-    c["zfs_passphrase"] = d.get("passphrase", "")
+    enc = d.get("encryption", d.get("encrypt", False))
+    if profile.get("encryption") == "tpm-or-none":
+        # appliance: encryption is decided by the machine (TPM present and working -> encrypted + unattended, else none); "auto" | "none" only
+        c["enc_request"] = enc if enc in ("auto", "none") else ("none" if enc is False and "encryption" in d else "auto")
+        if d.get("passphrase"):
+            c["enc_passphrase_given"] = True
+        apply_encryption_policy(profile, c)
+    else:
+        c["zfs_encrypt"] = bool(enc)
+        c["zfs_passphrase"] = d.get("passphrase", "")
     c["t2"] = str(g.get("t2", "auto"))
     c["t2_firmware"] = str(g.get("t2_firmware", "auto"))
     c["install_type"] = str(g.get("install_type", "server"))
@@ -604,7 +665,12 @@ def validate_config(profile, c, unattended=False, require_secret=True):
                 errs.append("user password hash: " + crypt_hash_problem(c["user_hash"]))
         elif not c.get("user_password"):
             errs.append("user: no password")
-    if c.get("zfs_encrypt"):
+    if profile.get("encryption") == "tpm-or-none" and c.get("enc_passphrase_given"):
+        errs.append("this product never asks for a disk passphrase at boot: remove 'passphrase' from the answer file (encryption is automatic with a working TPM 2.0, otherwise off)")
+    if c.get("zfs_encrypt") and c.get("zfs_keymode") == "tpm":
+        if c["fs"] != "zfs":
+            errs.append("TPM disk encryption is ZFS native encryption: choose the ZFS file system")
+    elif c.get("zfs_encrypt"):
         if c["fs"] != "zfs":
             errs.append("disk encryption is ZFS native encryption: choose the ZFS file system")
         else:
@@ -738,6 +804,8 @@ class Installer:
         from . import stages
         c, p = self.c, self.p
         self.log(f"== live-installer: {p['title']} ({c['install_type']}) on {', '.join(c['disks'])} ({'UEFI' if self.efi else 'BIOS'}), fs={c['fs']}")
+        if p.get("encryption") == "tpm-or-none":
+            self.log("Disk encryption: " + (c.get("enc_why") or "none"))
         if self.t2:
             from . import t2
             t2.preflight(self)
@@ -1135,10 +1203,17 @@ class Installer:
             dh += ["", "# Wi-Fi is configured by iwd (EnableNetworkConfiguration)", "denyinterfaces wlan* wlp*"]
         self.write("/etc/dhcpcd.conf", open(f"{self.target}/etc/dhcpcd.conf").read() + "\n".join(dh) + "\n") \
             if os.path.exists(f"{self.target}/etc/dhcpcd.conf") else self.write("/etc/dhcpcd.conf", "\n".join(dh) + "\n")
-        if wifi:
+        if wifi and os.path.exists(f"{self.target}/etc/init.d/NetworkManager") and not os.path.exists(f"{self.target}/etc/init.d/iwd"):
+            # NetworkManager machine (Surface profile): carry the Wi-Fi over as an NM keyfile that is NOT pinned to the live
+            # system's interface name (wlan0 vs wlp1s0 differs on the installed system), mode 600, autoconnect
+            write_nm_wifi_profile(self.target, wifi["ssid"], wifi.get("psk", ""))
+        elif wifi:
             write_wifi_profile(self.target, wifi["ssid"], wifi.get("psk", ""))
             self.write("/etc/iwd/main.conf", "[General]\nEnableNetworkConfiguration=true\n")
             self.run(["rc-update", "add", "iwd", "default"], chroot=True, check=False)
+        n_pinned = strip_pinned_interfaces(self.target)
+        if n_pinned:
+            self.log(f"removed the pinned interface-name from {n_pinned} NetworkManager profile(s)")
         if p["network_mode"] == "wan-lan":
             self.write_roles()
 
@@ -1165,7 +1240,7 @@ class Installer:
                                      portableswap.kernel_args(self) if not self.luks() else "") if x)
         self.write("/etc/default/grub", "\n".join([
             f'GRUB_DISTRIBUTOR="{p["title"]}"', 'GRUB_TIMEOUT=3', f'GRUB_CMDLINE_LINUX="{extra}"',
-            'GRUB_DISABLE_OS_PROBER=true',
+            'GRUB_DISABLE_OS_PROBER=true', 'GRUB_GFXPAYLOAD_LINUX=keep',
         ] + (['GRUB_TERMINAL="console serial"', f'GRUB_SERIAL_COMMAND="{arch.grub_serial_lines()}"'] if arch.grub_serial_lines() and serial_ok else [])) + "\n")
         for dev in L.values():
             self.run(f"blkid -s UUID -o value {dev}", check=False)
@@ -1227,6 +1302,12 @@ menuentry "{self.p['title']} (ZFS root)" {{
 
     def finish(self):
         T = self.target
+        # the installed system must not boot with a months-off hardware clock (chrony has no sources before the network is up)
+        try:
+            from . import rtc
+            rtc.sync(self.log)
+        except Exception as e:  # never fail an install over the clock
+            self.log(f"rtc: skipped ({e})")
         self.run("sync", check=False)
         for d in ("dev", "proc", "sys"):
             self.run(["umount", "-R", "-l", f"{T}/{d}"], check=False)

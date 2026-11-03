@@ -2,7 +2,11 @@
 name = "patronus"
 title = "Patronus"
 network_mode = "wan-lan"             # OPNsense-style WAN/LAN assignment
-filesystems = ["xfs", "ext4"]         # no ZFS in the firewall image: XFS is the fallback (ext4 = manual choice only)
+filesystems = ["zfs", "xfs", "ext4"]  # ZFS default (single disk or mirror); XFS = automatic fallback (RAM < 8 GB, no ZFS module for the kernel/arch); ext4 = manual Advanced choice, never preselected
+# Disk encryption (owner decision 2026-11-03): a firewall must boot with nobody at the console. ZFS is natively encrypted ONLY when a working
+# TPM 2.0 can unseal the key unattended (the installer self-tests seal+unseal); otherwise the disk is NOT encrypted and nothing is ever asked at boot.
+# The passphrase / xfs-luks variants are therefore not offered for this product.
+encryption = "tpm-or-none"
 swap_mb = 0
 portable_swap = false              # firewall appliance: never an on-disk swap (zram only), even on a laptop-class box under auto
 web_scheme = "https"

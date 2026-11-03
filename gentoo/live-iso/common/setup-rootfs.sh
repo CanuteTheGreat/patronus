@@ -58,6 +58,16 @@ grep -q '^denyinterfaces' /etc/dhcpcd.conf 2>/dev/null || printf '\ndenyinterfac
 # --- kernel + live initramfs ------------------------------------------------------
 kver=$(ls /lib/modules | sort -V | tail -1)
 echo "kernel: $kver"
+# diagnostics + self-heal (daily failed 2026-11-03: a cached layer had built zfs-kmod for the previous kernel while a newer gentoo-kernel-bin was installed on top,
+# `dracut: Failed to find module zfs`): every kernel in /lib/modules that will be booted must have its zfs module, else rebuild zfs-kmod for the newest one
+echo "== kernels: $(ls /lib/modules | tr '\n' ' ') | zfs.ko: $(find /lib/modules -name zfs.ko | tr '\n' ' ') | /usr/src: $(ls /usr/src | tr '\n' ' ')"
+qlist -Iv sys-kernel/gentoo-kernel-bin sys-fs/zfs-kmod sys-fs/zfs sys-kernel/linux-headers || true
+if [ -d /usr/lib/dracut/modules.d/90zfs ] && [ ! -f "/lib/modules/$kver/extra/zfs.ko" ] && [ -z "$(find "/lib/modules/$kver" -name zfs.ko)" ]; then
+  echo "== zfs module missing for $kver: rebuilding sys-fs/zfs-kmod against it"
+  ln -sfn "/usr/src/linux-$kver" /usr/src/linux
+  FEATURES="-ccache" emerge --oneshot --usepkg=n --getbinpkg=n sys-fs/zfs-kmod
+  find "/lib/modules/$kver" -name zfs.ko | grep -q .
+fi
 mkdir -p /etc/dracut.conf.d
 cat > /etc/dracut.conf.d/live.conf <<DR
 hostonly="no"
@@ -81,5 +91,8 @@ rm -rf /var/db/repos/live-local /etc/portage/repos.conf/live-local.conf
 # --- slim the image -----------------------------------------------------------------
 emerge --quiet --unmerge dev-util/ccache >/dev/null 2>&1 || true
 rm -rf /var/db/repos/gentoo/* /var/cache/distfiles/* /var/cache/binhost \
-       /usr/share/doc /usr/share/gtk-doc /var/tmp/portage /var/log/emerge* /usr/src/linux* 2>/dev/null || true
+       /usr/share/doc /usr/share/gtk-doc /var/tmp/portage /var/log/emerge* 2>/dev/null || true   # /usr/src/linux-<ver> stays: it is the kernel build tree zfs-kmod (and every module) is built against, ~170 MB
 find / -xdev -name '*.pyc' -path '*/__pycache__/*' -delete 2>/dev/null || true
+# Portage's records must match the image: the strip above removed docs/pyc on purpose, so drop exactly those CONTENTS entries (reviewed list in
+# vdb-prune.py, group `core`); every other missing file stays visible and fails the `package-contents-complete` QEMU gate
+python3 /tmp/vdb-prune.py --groups core

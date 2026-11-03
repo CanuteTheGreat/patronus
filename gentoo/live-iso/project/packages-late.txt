@@ -1,1 +1,5 @@
-# nothing to build after the kernel for Patronus
+# merged AFTER the kernel: kernel modules are built against the installed gentoo-kernel-bin tree.
+# Root on ZFS is the Patronus default (owner rule 2026-10-29); common/portage/package.use/00-zfs gives both USE=dist-kernel,
+# so every kernel update rebuilds the module in the same transaction, before the new initramfs.
+sys-fs/zfs-kmod
+sys-fs/zfs

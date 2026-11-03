@@ -12,3 +12,6 @@ net-analyzer/tcpdump
 net-analyzer/mtr
 dev-libs/elfutils
 dev-db/sqlite
+# unattended disk encryption: the ZFS key is sealed to the TPM 2.0 (installer + initramfs unlock)
+app-crypt/tpm2-tools
+app-crypt/tpm2-tss
