@@ -162,7 +162,7 @@ answer.toml` prints the plan of an answer file.
 |---|---|
 | `keymap` | install type (**Server**, default; *Workstation* is reserved for a later desktop profile), language, keyboard layout, time zone |
 | `hostname` | host name (FQDN) |
-| `disk` | file system, disk(s), partition layout (ext4, XFS, ZFS single/mirror) |
+| `disk` | file system, disk(s), partition layout (**ZFS** single/mirror by default, XFS fallback, ext4 manual) - see *File system and disk encryption* |
 | `extract` | copy the system image to the new root |
 | `rootpass` | administrator password (web `admin` + console `root`), e-mail, optional SSH key |
 | `netconfig` | interfaces and addressing (link state live; Wi-Fi) |
@@ -226,7 +226,9 @@ ssh_keys = ["ssh-ed25519 AAAA... admin@laptop"]
 ssh_password_auth = false                 # default false: key-only root SSH
 
 [disk]
-filesystem = "ext4"                       # ext4
+# filesystem = "zfs"                      # omit it: the installer picks ZFS (>= 8 GB RAM, ZFS module available) or XFS; "ext4" is a manual choice only
+# zfs_raid = "mirror"                     # with filesystem = "zfs" and two disks: disks = ["/dev/sda", "/dev/sdb"]
+# encryption = "none"                     # default "auto": encrypted only with a working TPM 2.0 (never a passphrase), see below
 disks = ["first"]                         # or ["/dev/nvme0n1"]; "first" = first internal non-USB disk >= 8 GB
 
 [network.wan]
@@ -242,6 +244,46 @@ The installed system's web-UI `admin` password is generated on first start into
 `/var/lib/patronus/initial-admin-password` (root-readable) - read it over SSH or the console, and change it.
 The installer powers the machine off when it is done (`AUTOINSTALL-OK` on the console and in
 `/var/log/autoinstall.log`). Invalid answer files stop with `ANSWER-FILE-ERROR ...` lines and start the guided installer instead.
+
+## File system and disk encryption
+
+Owner rule for Patronus and Horcrux installers: **ZFS is the default root file system, XFS the automatic fallback, ext4 only a manual choice.**
+
+| situation | what the installer proposes |
+|---|---|
+| >= 8 GB RAM and a ZFS module exists for the image's kernel/architecture | **ZFS** pool `rpool` (single disk, or **mirror** with two disks: Advanced options -> *ZFS layout*) |
+| < 8 GB RAM | **XFS** (plain) |
+| no ZFS module for this kernel/architecture (for example riscv64, or a kernel newer than the ZFS release supports) | **XFS** (plain) |
+| you pick it by hand (disk page, or `filesystem = "ext4"` in the answer file) | ext4 - listed last, never preselected, never the default anywhere |
+
+The disk page shows *why* it proposed its choice ("XFS instead of ZFS: only 4.0 GB RAM (ZFS wants 8 GB or more)"). A firewall gets **no on-disk swap**
+(no swap partition, no swap file, no swap zvol): compressed RAM (zram) is the only swap, on every file system.
+
+**ZFS layout.** ESP/BIOS-boot + `/boot` (ext4, GRUB reads it; ZFS cannot be read by GRUB when encrypted) + the pool. Datasets are
+boot-environment friendly: `rpool/ROOT/horcrux` is the root boot environment (the dataset and tool keep the shared installer's name; `patronus-be` is an alias of
+`horcrux-be`), `home`, `var/log`, `var/lib/*` are shared datasets. `horcrux-be snapshot|create|rollback|activate` manages boot environments; every
+`emerge` run first takes an automatic snapshot, and kernels are kept per boot environment in `/boot/be/<name>/` with a static `grub.cfg`.
+ZFS uses lz4/zstd compression, `ashift=12`, autotrim.
+
+**Kernel updates and ZFS.** `sys-fs/zfs` and `sys-fs/zfs-kmod` are built with `USE=dist-kernel` (written to `/etc/portage/package.use/00-zfs`), so a
+`gentoo-kernel-bin` update rebuilds the module in the same Portage transaction and before the new initramfs is generated. The kernel build tree
+(`/usr/src/linux-<version>`, `/lib/modules/<version>/build`), headers and the compiler toolchain are kept on the installed system for that rebuild.
+
+**Disk encryption: never a passphrase at boot.** A firewall must come up with nobody at the console, so Patronus decides by itself:
+
+* a **working TPM 2.0** (the installer seals and unseals a throw-away value as a self-test, so a TPM that is present but broken does not count) and ZFS ->
+  the pool is **natively encrypted** (AES-256-GCM); its random 256-bit key is **sealed to the TPM** (policy: PCR 7 = Secure Boot state; the blobs
+  are `/etc/tpm-unlock/key.{pub,priv}` and are also inside the initramfs). The initramfs (dracut module `tpm-unlock`) unseals it and loads it:
+  the system boots unattended. The installer prints a **recovery key** (the same key as 64 hex digits) once on the last page and in the
+  installer log; it is stored nowhere. If the TPM ever refuses (board replaced, firmware change that alters PCR 7, disk moved to another machine) the
+  boot stops at the standard ZFS key prompt on the console and accepts the recovery key.
+* **no TPM, a broken TPM, or the XFS fallback** -> the disk is **not encrypted** and nothing is asked at boot. The installer says so on the disk page,
+  in the plan and in its log (`Disk encryption: NOT encrypted: <reason>`).
+* Not offered for Patronus: passphrase-encrypted ZFS and XFS-in-LUKS (both need a typed passphrase at every boot). An answer file with a `passphrase` is rejected.
+  `encryption = "none"` in the answer file turns the TPM encryption off.
+
+Caveat: PCR 7 changes when Secure Boot is switched on/off or its keys change; the sealed key then no longer unseals and the recovery key is needed at the console. Re-sealing an installed system to a new TPM state is not automated yet (a reinstall, or `zfs change-key` + re-running the seal by hand, is the way); Secure Boot is unsupported here anyway (see below).
+The TPM unlock path is tested on x86_64 (UEFI + BIOS, software TPM); on aarch64 the encryption decision logic is unit-tested, the QEMU run is the unencrypted ZFS install.
 
 ## Security defaults
 
@@ -364,7 +406,7 @@ stale copy are caught.
 * **Real hardware**: only QEMU/KVM (OVMF + SeaBIOS, USB-storage and CD boot) is tested automatically. The ThinkPad and Surface Pro notes above are expectations, not results. In particular untested: Wi-Fi scan/connect (needs a real adapter; the code path is exercised only by unit logic), the *Auto-detect (replug the cable)* link detection (real PHYs only), NVMe/eMMC device naming (`part_path` is unit-tested), the large console font on high-DPI panels (`setfont ter-v32n` when the framebuffer is >= 1600 px wide), touch/Type Cover input.
 * The installer is text mode (curses). A graphical installer is not provided.
 * Installer language: only the *installed system's* locale/keymap are selectable; the wizard text is English.
-* No ZFS install for Patronus yet (XFS by default, ext4 as a manual choice); no LVM/RAID layout.
+* ZFS single-disk/mirror is the default; XFS has no RAID/LVM layout (use the ZFS mirror for two disks). Encrypted XFS is not offered (it would need a passphrase at boot). TPM unlock on aarch64 and on machines whose firmware does not expose a TPM 2.0 character device falls back to *not encrypted*; remote (network) unlock is not implemented.
 * The notification e-mail is recorded in `/etc/patronus/notify-email`; the product does not read it yet.
 * The live image has no desktop; the Portage tree is stripped from the image, so run `emerge-webrsync` before using `emerge` on a live/installed system.
 

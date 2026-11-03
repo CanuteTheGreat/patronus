@@ -138,9 +138,12 @@ This document provides a detailed comparison of Patronus against pfSense and OPN
 
 | Feature | pfSense | OPNsense | Patronus |
 |---------|---------|----------|----------|
-| **Live CD** | ✓ | ✓ | Planned |
-| **USB Install** | ✓ | ✓ | Planned |
-| **ZFS Support** | ✓ | ✓ | ✓ (planned) |
+| **Live CD** | ✓ | ✓ | ✓ (guided graphical + text installer, answer-file install) |
+| **USB Install** | ✓ | ✓ | ✓ |
+| **ZFS Support** | ✓ | ✓ | ✓ installer default (single disk or mirror, boot environments); XFS fallback below 8 GB RAM or without a ZFS module; ext4 manual only |
+| **Encrypted root** | ✓ (passphrase / ZFS) | ✓ (GELI/ZFS passphrase) | ✓ ZFS native encryption sealed to the TPM 2.0, unattended boot; no TPM = not encrypted, never a boot prompt |
+| **Boot environments** | ✓ (ZFS BE) | ✓ (ZFS BE) | ✓ `patronus-be` (automatic snapshot before each `emerge`) |
+| **On-disk swap** | ✓ | ✓ | none (zram only) |
 | **Auto Updates** | ✓ | ✓ | Portage sync |
 | **Config Backup** | ✓ | ✓ | USE flag |
 | **Cloud Deploy** | ✓ | ✓ | Planned |

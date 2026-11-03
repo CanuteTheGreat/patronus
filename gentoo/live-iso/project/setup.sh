@@ -16,6 +16,7 @@ chgrp patronus /etc/patronus/patronus.toml && chmod 0640 /etc/patronus/patronus.
 bad=0; for b in /usr/bin/patronus-cli /usr/bin/patronus-web /usr/bin/patronus-install; do
   if ldd $b | grep -q 'not found'; then echo "MISSING LIBS for $b:"; ldd $b | grep 'not found'; bad=1; fi; done
 [ $bad = 0 ]
+if [ "$(uname -m)" = riscv64 ]; then echo 'riscv64: no ZFS in the image (XFS fallback)'; exit 0; fi
 # ZFS (default root file system + mirror installs): module + tools + dracut hook + a kernel build tree must be in the image
 find /lib/modules -name 'zfs.ko*' | grep -q . || { echo "zfs.ko missing for the installed kernel"; exit 1; }
 command -v zpool >/dev/null && command -v zgenhostid >/dev/null || { echo "zfs userland missing"; exit 1; }
