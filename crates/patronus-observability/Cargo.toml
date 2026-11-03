@@ -14,5 +14,4 @@ anyhow.workspace = true
 tracing.workspace = true
 prometheus = "0.13"
 opentelemetry = "0.21"
-opentelemetry-jaeger = "0.20"
 opentelemetry-prometheus = "0.14"
