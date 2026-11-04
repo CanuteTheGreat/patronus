@@ -16,6 +16,8 @@ key-only unless you opt in.
 
 Always verify: `sha256sum -c patronus-server-openrc-daily-x86_64.iso.sha256` (run it next to the downloaded files).
 
+> **Headless first:** Patronus is an appliance. Console (serial or VGA) + SSH + web UI + the unattended answer-file install are the supported way in on every architecture; there is no desktop. What is in the image, what is live-only, what is gated: [HEADLESS.md](HEADLESS.md).
+
 ### Image names
 
 `<product>-<desktop-env or "server">-<init>-<channel>-<arch>.iso` (one scheme for Horcrux and Patronus, defined in `gentoo/live-iso/common/image-name.sh`): Patronus ships `server` images (no desktop, a firewall appliance) with `openrc`, channel `daily` or a release tag, arch `x86_64` or `aarch64`.

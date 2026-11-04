@@ -22,3 +22,17 @@ else
   _m=(); for _e in "${MATRIX[@]}"; do case "$_e" in uefi-cdrom-auto-openconsole\|*) ;; *) _m+=("$_e");; esac; done; MATRIX=("${_m[@]}")
   MATRIX[0]="uefi-usb-auto-zfs-default-notpm|--mode uefi --media usb --flow auto --mem 8192 --ssh-password-opt-in"
 fi
+
+# HEADLESS-FIRST gates (owner 2026-11-03: Patronus is a headless appliance first; console + SSH + web UI; no desktop). `--headless-gates` adds to a run, with
+# no extra boot: every boot starts with an RTC 120 days off, the installed system boots with its NIC links DOWN until the login prompt, then they come
+# up (late network); gated: boot never waits for the network, chrony steps the clock, WAN DHCP lease follows, web UI answers, no GUI package/process/
+# service in the Portage database, no empty password / console autologin, the web admin password is not root's. Put on the first answer-file runs of
+# every architecture (aarch64 = TCG with a full time budget: only its first run, the extra time is the late-link wait inside the existing boot).
+_m=()
+for _e in "${MATRIX[@]}"; do
+  case "$_e" in
+    bios-cdrom-auto-sshpw\|*|uefi-usb-auto-zfs-default-tpm\|*|bios-cdrom-auto-zfs-default-notpm\|*|uefi-usb-auto-zfs-default-notpm\|*) _m+=("$_e --headless-gates") ;;
+    *) _m+=("$_e") ;;
+  esac
+done
+MATRIX=("${_m[@]}")
