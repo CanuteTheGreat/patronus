@@ -1,0 +1,4 @@
+export PATRONUS_DB=/tmp/p.db PATH=$PATH:/usr/sbin:/sbin
+patronus-cli apply > /tmp/apply.log 2>&1; echo apply-rc=$?
+grep -v migrat /tmp/apply.log | tail -c 1500
+echo done-marker
