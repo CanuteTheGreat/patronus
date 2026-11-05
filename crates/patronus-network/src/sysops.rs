@@ -191,11 +191,11 @@ fn spawn_job(dir: &Path, kind: &str, scope: &str, script: &str) -> Result<Value>
             cur["kind"].as_str().unwrap_or("?")
         )));
     }
-    // unique even for two jobs in the same second
-    static SEQ: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+    // unique even for two jobs in the same second (32-bit: MIPS32 has no 64-bit atomics)
+    static SEQ: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
     let id = format!(
         "{}",
-        now() * 1000 + SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 1000
+        now() * 1000 + SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as i64 % 1000
     );
     let log = dir.join(format!("{kind}-{id}.log"));
     let exit_file = dir.join(format!("exit-{id}"));
