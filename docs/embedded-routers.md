@@ -1,6 +1,6 @@
 # Patronus on embedded routers (GL-AR750S "Slate" first)
 
-Status: plan + feasibility spike, 2026-11-05. Nothing here has touched the real Slate.
+Status: plan + feasibility spike, 2026-11-05; local web UI proven in QEMU 2026-11-06. Nothing here has touched the real Slate.
 Spike scripts: `ci/embedded-mips/` (numbered in run order). Measured numbers are marked **[measured]**,
 numbers taken from other repos' docs **[documented]**, guesses **[estimate]**.
 
@@ -9,7 +9,9 @@ Patronus has to be "smart" enough to fit on the Slate.
 
 ## 1. Verdict
 
-**GO for a CLI-only embedded tier on the Slate; NO-GO for the full default Patronus (web UI, eBPF, glibc) on it.**
+**GO for an embedded tier on the Slate with the real local web UI (LuCI equivalent: the same `patronus-web`, same look); NO-GO for the full default Patronus (eBPF, VPN/HA/QoS pages, glibc) on it.**
+
+The first version of this document called the web UI "out" (build effort, axum + sqlx + rustls). That was a guess. The measurements below replace it: `patronus-web` cross-builds for MIPS musl with a few small source changes, fits the rootfs slot and stays under 25 MB RSS in the malta twin. A separate `web-lite` was **not needed** and was not written.
 
 | Question | Result |
 |---|---|
@@ -17,8 +19,9 @@ Patronus has to be "smart" enough to fit on the Slate.
 | Cross-compile Patronus core (`patronus-cli`: store, appliers, `apply`, `applyd`) | works, **after two small source fixes** (section 8) |
 | Boot it in QEMU malta (MIPS 24Kc BE) | boots, `patronus-cli apply` seeds the store and installs the nftables ruleset (`inet patronus`, 30 lines), `applyd` runs |
 | ath79 GL-AR750S kernel from OpenWrt's patch set | builds: 520/520 patches apply on 6.12.113, DTS `qca9563_glinet_gl-ar750s-nor-nand.dtb`, uImage 2.28 MiB. **Not booted** (QEMU has no QCA9563 machine) |
-| Fits flash | yes: kernel+rootfs 8.38 MiB vs the stock OpenWrt 25.12.6 sysupgrade 7.49 MiB (7,854,387 B); 128 MB NAND, A/B slots use about 40 MiB of reservation |
-| Fits RAM | yes: 10.9 MB used after `apply` + 7.0 MB `applyd`; agents add about 20 MB **[documented budget]**; 118 MB usable |
+| Fits flash | yes: rootfs with CLI **and web UI** is 9.99 MiB (10,477,568 B) in a 16 MiB slot; kernel 2.28 MiB + modules 0.8 MiB on top; stock OpenWrt 25.12.6 sysupgrade is 7.49 MiB. Adding ETPhoneHome and the Rustinion agent needs 24 MiB slots (section 6) |
+| Fits RAM | yes: whole router incl. web UI uses 17.4 MB (`free`) idle and 24-26 MB after login + 14 pages; `patronus-web` RSS 16.4 MB idle, **peak 24.8 MB**; agents add about 20 MB **[documented budget]**; 118 MB usable |
+| Local web UI | **works in QEMU malta**: HTTPS (self-signed) + HTTP->HTTPS redirect, first-run password page (no shipped password), login, 14 pages, firewall rule change -> `nft` changed, backup/restore, reboot from the UI, everything persists (section 6a) |
 
 ## 2. The Slate (what we have to fit)
 
@@ -38,21 +41,19 @@ NAND: one `ubi` MTD (128 MB). OpenWrt picks NOR or NAND with the U-Boot env `boo
 One input, `profiles/hw/<name>.toml`, selects the Portage profile, the USE set, the Cargo features, the init and the memory caps.
 The same repo builds the 64-bit appliance and the Slate.
 
+The profile is `profiles/hw/ath79-gl-ar750s.toml` (this branch; the loader/CI that consumes it is still work item 1). Core of it:
+
 ```toml
-# profiles/hw/ath79-gl-ar750s.toml   (new; none of this exists yet)
-tier        = "embedded"             # embedded | standard | full
+tier        = "embedded"
 arch        = "mips"                 # big-endian, soft-float, mips32r2
 libc        = "musl"
-chost       = "mips-unknown-linux-musl"
-ram_mb      = 128
-flash_mb    = 128                    # NAND (kernel 4 MiB slots on NOR/UBI)
-init        = "busybox"              # busybox init | openrc | systemd (tier default)
+init        = "busybox"
 rootfs      = "squashfs-xz+overlayfs"
-cargo       = { features = ["nftables", "cli"], no_default_features = true,
-                profile = "release-small", target = "mips-unknown-linux-musl", toolchain = "nightly + build-std" }
-use         = ["-ebpf", "-pam", "-nls", "-doc", "-python", "-ipv6?", "nftables", "wireguard", "hostapd", "dnsmasq"]
-caps        = { applyd_rss_mb = 10, web = "off", logs_in_ram_kb = 512, conntrack_max = 4096 }
-kernel      = { source = "openwrt-patches", version = "6.12.x", dts = "qca9563_glinet_gl-ar750s-nor-nand" }
+[cargo.cli] package = "patronus-cli"; features = ["nftables", "cli", "dhcp-server", "dns-server"]
+[cargo.web] package = "patronus-web"; features = ["dhcp", "dns", "tls-openssl"]   # no eBPF, no VPN/HA/QoS, no threat feeds
+[web]  mode = "on"; https_port = 443; http_redirect = 80; lan_ip = "192.168.1.1/24"; password = "first-run"
+       argon2_mem_kib = 8192; rss_mb_idle = 20; rss_mb_peak = 30; cloud_dependency = "none"
+[caps] applyd_rss_mb = 10; logs_in_ram_kb = 512; conntrack_max = 4096
 ```
 
 Tiers:
@@ -60,14 +61,14 @@ Tiers:
 | | embedded (Slate) | standard (small x86/arm64 boxes) | full (today) |
 |---|---|---|---|
 | libc / init | musl, busybox init (OpenRC once its cross-emerge works) | glibc, OpenRC | glibc, systemd or OpenRC |
-| Binaries | `patronus-cli` only; `apply` at boot, `applyd` root broker | + `patronus-web` | everything incl. eBPF/XDP, IDS, HA, SD-WAN |
+| Binaries | `patronus-cli` (`apply` at boot, `applyd` root broker) **+ `patronus-web`** with the router feature set (section 6a) | same, more features | everything incl. eBPF/XDP, IDS, HA, SD-WAN |
 | Firewall | nftables via libnftnl, no eBPF | nftables + eBPF where the kernel has it | same |
 | DHCP/DNS | dnsmasq (or Patronus' own) | Patronus appliers + unbound/kea | same |
 | Wi-Fi | hostapd, wpa_supplicant (repeater) | hostapd | hostapd |
 | Storage | squashfs + overlay (UBIFS) | ZFS/XFS per the installer rules | ZFS/XFS |
 
 Graceful degradation (all driven by the profile, not by runtime guessing):
-- A feature the tier does not ship answers **501 "not available on this hardware"** in the CLI/API and is hidden in the UI. It never fakes success (same honesty rule as the web crate's `honesty_tests`).
+- A feature the tier does not ship answers **501 "not available on this hardware"** in the CLI/API and is hidden in the UI (done for the web UI: unbuilt pages and `/api/system/updates/*` answer 501, `GET /api/features` lists what is built and the sidebar hides the rest; proven in QEMU). It never fakes success (same honesty rule as the web crate's `honesty_tests`).
 - Each applier checks the kernel capability it needs at apply time (`nf_tables` inet family, conntrack, wireguard, vrf) and reports `unsupported` instead of failing the whole `apply`. The spike showed why: with `CONFIG_NF_TABLES_INET` off, `apply` failed with "Could not process rule" on every `ct state` line.
 - Memory caps are enforced, not hoped for: cgroup `memory.max` per daemon from `caps`, bounded in-RAM log ring, conntrack cap, SQLite `cache_size`/`journal_mode` set small, no whole-file downloads in memory (the Rustinion self-update OOM on this unit was exactly that).
 - eBPF is a Cargo/USE feature that is off by default for `tier != full`.
@@ -104,13 +105,14 @@ Flash **[measured]** (squashfs xz):
 |---|---|
 | kernel uImage (ath79, DTB included) | 2.28 MiB |
 | rootfs base: musl, busybox 1.36, nft 1.1.7, dnsmasq 2.93, hostapd 2.11, wireguard-tools, iproute bits, libnftnl/libmnl | 3.2 MiB (3,358,720 B) |
-| + `patronus-cli` (mips-musl, `-Oz`, fat LTO, panic=abort, stripped; 5,061,704 B raw) | rootfs 6.1 MiB (6,119,424 B) |
+| + `patronus-cli` (mips-musl, `-Oz`, fat LTO, panic=abort, stripped; 5,061,704 B raw, 5,323,884 B with the dhcp/dns features) | rootfs 6.1 MiB (6,119,424 B); with dhcp/dns features and the init glue 6.2 MiB (6,225,920 B) |
+| + **`patronus-web`** (12,700,016 B stripped, 3.8 MB as xz; static OpenSSL; 69 KB `libatomic.so.1`) | **rootfs 9.99 MiB (10,477,568 B): +4.05 MiB (4,251,648 B)** |
 | kernel modules (xz) | 0.8 MiB |
-| **Patronus core total (kernel + rootfs + modules)** | **about 9.2 MiB**; stock OpenWrt 25.12.6 sysupgrade = 7.49 MiB (kernel 2.91 + root 4.58) |
+| **Patronus total with web UI (kernel + rootfs + modules)** | **about 13.1 MiB** (2.28 + 9.99 + 0.8); CLI-only was about 9.2 MiB; stock OpenWrt 25.12.6 sysupgrade = 7.49 MiB (kernel 2.91 + root 4.58) |
 | ETPhoneHome mips client **[documented]** | about 2.4-3.1 MB binary (4.0 MiB installed package seen on this unit) |
 | Rustinion agent (router build, `--no-default-features`) **[estimate]** | 4-6 MB, to be measured from the signed `mips` release |
 | ath10k-ct firmware **[estimate]** | under 1 MB |
-| **Total in `rootfs_a`** | about 17-20 MiB, in a 16 MiB slot **too small: make the slots 24 MiB** (still 2 x 28 MiB incl. kernel = 56 of 128 MiB) |
+| **Total in `rootfs_a`** (Patronus + web + the two agents + firmware) | about 17.5-20 MiB **[estimate for the agents]**: Patronus alone (9.99 MiB) fits a 16 MiB slot, with the agents it does not: **make the slots 24 MiB** (2 x 28 MiB incl. kernel = 56 of 128 MiB) |
 
 RAM, QEMU malta BE, 128 MB machine, 6.12.113 **[measured]**:
 
@@ -118,14 +120,59 @@ RAM, QEMU malta BE, 128 MB machine, 6.12.113 **[measured]**:
 |---|---|
 | booted, busybox only | 8.8 MB |
 | after `patronus-cli apply` (store created, 776 KB SQLite file, ruleset installed) | 10.9 MB (+2.1) |
-| `patronus-cli applyd` resident | RSS **6.99 MB** (HWM 6.99) |
-| dnsmasq idle | about +0.4 MB |
+| `patronus-cli applyd` resident | RSS **6.99 MB** (HWM 6.99); 7.8 MB with the dhcp/dns features |
+| dnsmasq idle | about +0.4 MB (RSS 1.0 MB) |
+| **`patronus-web` idle after boot** (store open, TLS up, first-run page) | RSS **16.4 MB** |
+| `patronus-web` after login + 14 pages + 4 parallel logins + 96 page loads (8 parallel) | HWM **25.0 MB**, RSS back to 17.7 MB |
+| whole box (`free` used) idle with web + applyd + dnsmasq | **17.4 MB**; 24-26 MB after the page run |
 | ETPhoneHome RSS **[documented]** | about 3 MB (needs 8 MB free) |
 | Rustinion agent peak anon RSS **[documented gate]** | <= 12 MiB |
-| **Sum** | about 10.9 + 7 + 3 + 12 + 1 = **about 34 MB of 118 MB** |
+| **Sum** (box 26 + ETPhoneHome 3 + Rustinion 12) | **about 41 MB of 118 MB**; RSS counts shared mapped binary pages, so `free` is the lower, real number |
 
 Honest caveats: the QEMU kernel is the malta config, not the ath79 one (the real kernel plus ath9k/ath10k buffers and DMA pools costs more, not measured; leave 2x headroom: plan for under 70 MB of 118 MB and measure `free` on the real Slate in step B); QEMU says nothing about speed (775 MHz 24Kc; Rust fat-LTO binaries are fine, SQLite writes to NAND are the thing to watch).
-`patronus-web` is **not in the embedded tier**: it is not built for mips yet and the axum + sqlx + rustls stack will not be cheap. A `web-lite` measurement is phase-1 work; until then the Slate is managed by CLI, gitops and the importer.
+Speed is not measured: QEMU TCG on a fast host answered 96 page loads in 5 s; the real 775 MHz 24Kc will be slower, and the first TLS handshake/login (ECDSA signature, argon2 with 8 MiB x 4 passes) has to be timed on the real board.
+
+## 6a. Local web UI (the LuCI equivalent)
+
+**Yes: the Slate keeps a local web UI, and it is the real Patronus UI**, not a lite copy. Decision rule that was applied: try the straight port first; fall back to a `web-lite` only if it missed the 16 MiB slot or a 25-30 MB RSS cap. It met both, so no second UI exists to maintain.
+
+What the router build contains (`patronus-web --no-default-features --features dhcp,dns,tls-openssl`): Dashboard, Firewall (rules, NAT, aliases, logs), Interfaces (WAN/LAN roles, static/DHCP, VLAN pages are present but VLAN/PPPoE features are off), Network, Routing (static), DHCP, DNS, Monitoring, Insights, Setup wizard, System (users, backups/restore, services, reboot/shutdown), API keys, first-run page. **Hidden and 501** on this tier: VPN, HA, QoS, segmentation/time limits/DNS policy, packages (plugins), NTP page, `svc/*` pages, Portage updates. Wi-Fi AP pages need the `wifi-ap` feature (needs `segmentation`): **not built yet**, so Wi-Fi is not in the router UI today (open item).
+**Not there at all yet:** firmware update/rollback from the UI (the Updates page is Portage-only and answers 501; an A/B image upload + `sysupgrade` + bootcount rollback page is open item 7), and `clients` (a connected-devices page; the DHCP page shows leases).
+
+### Source changes this needed (all behind features; the default build is unchanged)
+
+| Problem | Fix |
+|---|---|
+| `rcgen 0.11` -> `ring 0.16` and `aws-lc-rs` (axum-server `tls-rustls`) have **no MIPS support** | new web feature `tls-openssl` (axum-server `tls-openssl`, `openssl` crate, self-signed ECDSA cert via the same library); `tls-rustls` stays default; patronus-cli's `web` feature now names `patronus-web/tls-rustls` |
+| OpenSSL for the target | Gentoo's `dev-libs/openssl` ebuild picks `-m64` for this crossdev target; the spike builds OpenSSL 3.6.5 itself (`ci/embedded-mips/09a-openssl-static.sh`: `linux-generic32 no-shared no-asm`, minimal ciphers) and links it statically (no `libssl.so` on the rootfs) |
+| `patronus-ai` (reqwest 0.11 -> native-tls) and `patronus-monitoring` (prometheus, reqwest) pulled OpenSSL-sys + a hourly threat-feed fetcher into the web crate | new features `threat-feeds`, `journal` (default on); off on the router: threat widget honestly empty, logs read from `$PATRONUS_SYSLOG` (default `/var/log/messages`) |
+| 64-bit atomics on mips32 | `libatomic.so.1` (69 KB) in the rootfs, `-C link-arg=-lgcc` |
+| login hashing needed 19 MiB (argon2 default) | `PATRONUS_ARGON2_MEM_KIB=8192` (4 passes) for new hashes; verification uses each hash's own parameters, so existing hashes keep working. Without it the login peak was **37.9 MB** instead of 24.8 MB |
+| anti-lockout only opened 22 + 8443 | `PATRONUS_ANTI_LOCKOUT_PORTS=22,80,443` at first-boot seeding |
+| Gentoo init scripts are `openrc-run` | the router rootfs ships two 10-line sysv scripts (dnsmasq, hostapd) until OpenRC cross-emerges |
+
+### First boot (OpenWrt-like, no cloud)
+
+1. **Default LAN IP `192.168.1.1/24`** with DHCP `.100-.249`, WAN port as DHCP client: `[firstboot]` in `/etc/patronus/patronus.toml` is applied once by `patronus-cli apply` (store key `firstboot.lan_seeded`), after which the Interfaces/DHCP pages own the settings.
+2. **HTTPS on 443 with a self-signed certificate** generated on the box at first start (ECDSA P-256, valid 10 years, back-dated so a 1970 router clock does not matter; SANs `patronus`, `patronus.local`, the LAN IP). **HTTP on 80 only answers `308` to the https URL** (no page, no login, no cookie). Browsers warn once; there is no ACME/cloud step.
+3. **No shipped password.** With `PATRONUS_FIRST_RUN_SETUP=1` and no `admin` account, every page redirects to `/first-run` and every API answers 403 until the owner chooses a password (12+ characters, known defaults refused, entered twice). Then `/first-run` redirects to the login. `admin/admin` is refused before and after (tested). Until it is set the UI is reachable only from the LAN side (input policy drop on the WAN); the password is chosen over TLS and never leaves the box. Recovery of a lost password: set `PATRONUS_ADMIN_PASSWORD` in the init script (re-applied at every web start while set), as on every other tier; removing the store from the console starts over with the first-run page (not tested).
+4. No outbound connection is needed to use the UI: no CDN assets (static files are compiled in), no update check, no threat feed.
+
+### Relation to central management (decision)
+
+The local UI is **always on and always sufficient**; central management is additive and can never be the only way in.
+- Source of truth: the router's own config store. The UI, the REST API and `patronus gitops` all write that same store through the same appliers; the audit log records which one changed what.
+- Central **pull** (preferred; needs no inbound path to the Slate, which lives in a bag behind someone else's NAT): `patronus gitops watch` against the main Patronus' repo. Resources it manages are re-applied at the next sync, so a local edit of a gitops-managed resource is overwritten; everything else the owner sets locally stays. A local "pause gitops" switch is part of the contract.
+- Central **push** (from the main Patronus UI): its API client talks to the router's REST API with a per-router **API key** (role-limited; keys cannot manage accounts, keys, factory reset or backup targets by design) over the LAN or a WireGuard management tunnel; port 443 is never opened to the WAN.
+- Status: the pieces (store, API keys, gitops engine) exist and are proven on x86; **on the MIPS build `gitops` is not compiled in yet and no main-UI fleet page exists**. This paragraph is the contract to build against, not a proven feature.
+
+### QEMU end-to-end proof (`ci/embedded-mips/t_e2e.py`, kernel 6.12.113 malta BE, 128 MB, squashfs + ext4 overlay)
+
+All of these passed in one run, then again after a reboot **triggered from the web UI** (`POST /api/system/reboot`): default LAN IP up; `/` -> 303 `/first-run`; API 403 before a password; `admin/admin` refused; weak and mismatched passwords refused; password set; second set refused (409); login; 14 pages (200 or 501 for unbuilt); firewall rule added through the API, `apply`, `nft list chain inet patronus input` shows `tcp dport 8080 accept`; backup created, rule deleted (nft: gone), backup restored (nft: back); `/qos` and `/api/system/updates/check` answer 501; `GET /api/features` = `dhcp,dns`; after the reboot: rule still in nftables, login with the same password, no first-run page, LAN IP and DHCP pool intact, backup file present. Load check (`t_load.py`): 4 parallel logins + 96 page loads at 8 parallel, 96 x 200, web HWM 25.0 MB.
+
+### Not proven
+
+The real QCA9563 board (speed of TLS/argon2 on the 24Kc, ath79 kernel boot, UBIFS overlay instead of the ext4 stand-in), Wi-Fi pages, a real browser session (the proof used `curl` against the real HTML/JS; the page JS runs in the browser only), `gitops`/central management on MIPS, firmware update/rollback from the UI, long-run memory (hours, many sessions), and the 24 MiB slot layout with both agents installed.
 
 ## 7. OpenWrt config importer (carry over the Slate's setup)
 
@@ -153,10 +200,11 @@ Setup: one capped container each (`--cpus 3 --memory 6-8g`), Gentoo stage3 amd64
    - cross `pkg-config` must use the target-suffixed variables (`PKG_CONFIG_SYSROOT_DIR_mips_unknown_linux_musl`, `..._LIBDIR_...`); the unsuffixed ones also hit host build scripts (`nftnl-sys` is a build-dependency), plus the host needs native libnftnl/libmnl.
    - rustflags with the target sysroot's `-L` must be `CARGO_TARGET_<T>_RUSTFLAGS` only (a global `RUSTFLAGS` broke host build scripts: "libc.so is incompatible with elf_x86_64").
    Result: `cargo build --release --target mips-unknown-linux-musl -Zbuild-std -p patronus-cli --no-default-features --features nftables,cli` = ELF 32-bit MSB, mips32r2, o32, links only `libc.so`. Build time 34 s for the last step after deps, with `CARGO_PROFILE_RELEASE_{OPT_LEVEL=z,LTO=fat,CODEGEN_UNITS=1,PANIC=abort,STRIP=true}`.
-   Not yet built for mips: `patronus-web`, any default-feature set (eBPF/libbpf, `ring`/`aws-lc-rs` TLS, libelf), the `gitops`, `wifi-ap`, `vpn-wireguard` and `dhcp/dns-server` features (each needs its own cross check).
+   Built for mips since the web spike (2026-11-06): `patronus-cli` with `dhcp-server,dns-server` (5.3 MB) and `patronus-web` with `dhcp,dns,tls-openssl` (section 6a). Still not built for mips: any default-feature set (eBPF/libbpf, libelf), `ring`/`aws-lc-rs` TLS (cannot: no MIPS support), and the `gitops`, `wifi-ap`, `vpn-wireguard` features (each needs its own cross check).
 3. **Kernel (malta):** the first malta config lacked `NF_TABLES_INET`: `patronus-cli apply` exited 1 (`apply failed for: firewall`, "Could not process rule: No such file or directory" at each `ct state`). After enabling `NF_TABLES_INET/IPV4/IPV6`, `NFT_NAT`, `NFT_FIB_INET`, `apply` succeeded and nft shows the full `inet patronus` table (input/forward/output, prerouting/postrouting NAT). The ath79 config already had `NF_TABLES_INET=y`. Lesson: the embedded kernel config is part of the profile and is gated in CI by running `patronus apply` in QEMU.
 4. **ath79 kernel:** With OpenWrt's config the build failed in `fs/jffs2/compr_lzma.o` (`stddef.h` not found by the cross compiler for the bundled LZMA); set `CONFIG_JFFS2_LZMA=n` (we do not use JFFS2). The DTS Makefile needs one added line for the GL-AR750S dtb.
-5. **Not proven:** the ath79 kernel booting on QCA9563 (no QEMU machine; real-board proof = the initramfs serial test in section 9, step B), Wi-Fi radios, NAND/UBI attach, the sysupgrade path, `patronus-web`, OpenRC.
+5. **Not proven:** the ath79 kernel booting on QCA9563 (no QEMU machine; real-board proof = the initramfs serial test in section 9, step B), Wi-Fi radios, NAND/UBI attach, the sysupgrade path, OpenRC. (`patronus-web` is proven in QEMU: section 6a.)
+6. **Web spike notes (2026-11-06):** QEMU malta needed `-device pcnet,romfile=` (the Debian image lacks the option ROMs) and the data disk on `if=ide` (a third virtio PCI device failed to probe, `-28`); busybox `ip` has no `-br`; `/etc` and `/var/lib` must be overlays or the dnsmasq/lease/DB writes hit the read-only squashfs. A fat-LTO web build takes about 1 min after the dependencies, a cold one 2-3 min on 16 cores.
 
 ## 9. Rollout and exact owner steps
 
@@ -194,4 +242,10 @@ What ETPhoneHome QA uses meanwhile: the Slate unchanged on OpenWrt 25.12 (router
 3. Cross-emerge OpenRC and wpa_supplicant; produce the real sysupgrade-tar with fwtool metadata.
 4. Measure the signed Rustinion `mips` agent and ETPhoneHome RSS together with Patronus on the malta twin.
 5. Write `patronus import-uci`; replay `router-slate.tar.gz` offline.
-6. `patronus-web` mips build + memory cap, or a deliberate "CLI-only" decision for the embedded tier.
+6. ~~`patronus-web` mips build + memory cap, or a deliberate CLI-only decision~~ **Done 2026-11-06: the web UI ships on the router tier** (section 6a, measured: +4.05 MiB squashfs, 16.4 MB idle / 25.0 MB peak RSS, e2e green in QEMU). Remaining web items:
+7. Firmware update + rollback page: upload the sysupgrade-tar, verify (fwtool metadata + signature), write the inactive slot, flip `bootcount`, arm the on-device 5-minute rollback; honest 501 until then.
+8. Wi-Fi in the router UI: cross-build `wifi-ap` (+ `segmentation`) and `wpa_supplicant` (repeater mode), add the radios to the QEMU twin or test on the real board in step B.
+9. Connected-clients page (DHCP leases + ARP/neighbour table + Wi-Fi stations) and a syslog ring (`logread` equivalent: busybox `syslogd -C` feeding `$PATRONUS_SYSLOG`).
+10. Central management: `gitops` feature on MIPS, a per-router API-key client + fleet page in the main Patronus UI, the "pause gitops" switch; then prove push and pull against the malta twin.
+11. CI: run `ci/embedded-mips/t_e2e.py` on every push (QEMU TCG, about 8 min) with RSS ceilings (web idle <= 20 MB, peak <= 30 MB, rootfs <= 16 MiB without agents); real-board timing of the first login and TLS handshake in step B.
+12. Merge the web changes back into the default build's gates (`cargo test -p patronus-web` with default features and with `--no-default-features --features dhcp,dns,tls-openssl`): the spike compiled and exercised the router build, it did not re-run the full x86 unit-test suites.

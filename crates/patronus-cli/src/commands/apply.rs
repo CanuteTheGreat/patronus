@@ -113,6 +113,9 @@ pub async fn seed(store: &ConfigStore, bootstrap: Option<&Path>) -> anyhow::Resu
     for w in &rep.warnings {
         println!("{} {w}", "!".yellow());
     }
+    if let Some(line) = super::firstboot::seed_lan(store, &path, b.as_ref()).await? {
+        println!("{} first boot: {line}", "•".cyan());
+    }
     Ok(())
 }
 

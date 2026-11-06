@@ -379,6 +379,9 @@ src_install() {
 		use intrusion-detection && webfeatures+=( intrusion-detection )
 		use dynamic-routing && webfeatures+=( dynamic-routing )
 		use sdwan && webfeatures+=( sdwan-edge )
+		# TLS backend and the live threat-feed / journald readers are optional web features now (the router tier
+		# builds without them); the Gentoo build keeps all three
+		webfeatures+=( tls-rustls threat-feeds journal )
 		set -- "${CARGO}" install --path ./crates/patronus-web \
 			--root "${ED}/usr" \
 			${GIT_CRATES[@]:+--frozen} \

@@ -1,0 +1,11 @@
+#!/bin/sh
+PID=/run/hostapd.pid
+alive() { [ -f $PID ] && kill -0 "$(cat $PID)" 2>/dev/null; }
+case "$1" in
+  start)   alive || hostapd -B -P $PID /etc/hostapd/hostapd.conf ;;
+  stop)    alive && kill "$(cat $PID)"; rm -f $PID ;;
+  restart) $0 stop; sleep 1; $0 start ;;
+  reload)  alive && kill -HUP "$(cat $PID)" ;;
+  status)  alive ;;
+  *) exit 2 ;;
+esac

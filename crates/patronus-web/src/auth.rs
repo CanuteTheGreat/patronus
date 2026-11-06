@@ -135,6 +135,16 @@ pub struct UserStore {
     store: Arc<ConfigStore>,
 }
 
+/// Set while a router that shipped without any password waits for its owner to
+/// choose one (`PATRONUS_FIRST_RUN_SETUP=1` and no `admin` account yet): every
+/// page and API except `/first-run` answers "set a password first".
+pub static FIRST_RUN_PENDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub fn first_run_pending() -> bool {
+    FIRST_RUN_PENDING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Env var holding the admin password (takes precedence over the file).
 pub const ADMIN_PASSWORD_ENV: &str = "PATRONUS_ADMIN_PASSWORD";
 /// Env var overriding where the generated admin password is persisted.
@@ -364,6 +374,19 @@ impl UserStore {
             }
         }
         Ok(source)
+    }
+
+    /// First-run setup: create the `admin` account with the password the owner
+    /// chose. Refused once any admin exists (the UNIQUE username is the lock, so
+    /// two simultaneous submissions cannot both win) and for weak passwords.
+    pub async fn create_first_admin(&self, password: &str) -> anyhow::Result<()> {
+        check_admin_password(password).map_err(|e| anyhow::anyhow!("Invalid {e}"))?;
+        if self.get_user("admin").await.is_some() {
+            anyhow::bail!("an administrator password is already set");
+        }
+        self.insert("admin", password, UserRole::Admin).await?;
+        FIRST_RUN_PENDING.store(false, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
     }
 
     async fn insert(&self, username: &str, password: &str, role: UserRole) -> anyhow::Result<u32> {

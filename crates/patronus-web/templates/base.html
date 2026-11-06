@@ -978,6 +978,24 @@
             .catch(() => {});
     </script>
 
+    <script>
+    // Hide navigation entries for features this build does not contain (router tier).
+    fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(d => {
+        if (!d) return;
+        const have = new Set(d.features);
+        const need = {'/vpn': ['wireguard', 'ipsec', 'openvpn', 'l2tp'], '/dhcp': ['dhcp'], '/dns': ['dns'], '/ntp': ['ntp'], '/ha': ['ha'], '/qos': ['qos'],
+            '/segmentation': ['segmentation'], '/segmentation/time': ['segmentation'], '/segmentation/dns': ['dns'], '/packages': ['plugins'],
+            '/svc/syslog': ['syslog'], '/svc/netflow': ['netflow'], '/svc/igmp': ['igmp'], '/svc/nat64': ['nat64'], '/svc/l2tp': ['l2tp'],
+            '/svc/ids': ['intrusion-detection'], '/svc/frr': ['dynamic-routing']};
+        document.querySelectorAll('.sidebar-nav a.nav-item').forEach(a => {
+            const f = need[a.getAttribute('href')];
+            if (f && !f.some(x => have.has(x))) a.style.display = 'none';
+        });
+        document.querySelectorAll('.nav-section').forEach(s => {
+            if (![...s.querySelectorAll('a.nav-item')].some(a => a.style.display !== 'none')) s.style.display = 'none';
+        });
+    }).catch(() => {});
+    </script>
     <script>if (location.pathname !== '/setup') fetch('/api/setup/status', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(d => { if (d && !d.completed) document.getElementById('setup-banner').style.display = ''; }).catch(() => {});</script>
     {% block extra_scripts %}{% endblock %}
 </body>
