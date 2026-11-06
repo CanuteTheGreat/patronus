@@ -20,7 +20,10 @@ else
   # The TPM-unlock path is gated on x86_64 only (edk2-aarch64 + swtpm under TCG would not fit the budget).
   # ... and the open-console run (identical code path, proven on x86_64) is dropped to give the ZFS install ~19 min of room.
   _m=(); for _e in "${MATRIX[@]}"; do case "$_e" in uefi-cdrom-auto-openconsole\|*) ;; *) _m+=("$_e");; esac; done; MATRIX=("${_m[@]}")
-  MATRIX[0]="uefi-usb-auto-zfs-default-notpm|--mode uefi --media usb --flow auto --mem 8192 --ssh-password-opt-in"
+  # 2026-11-06: 4096 MB guest + explicit single-disk ZFS, not --mem 8192: nightly-arm64 jobs run in a 6 GiB cgroup (no swap), qemu with an 8 GB guest
+# sat at the cap, the guest got soft lockups (migration/N, spl_delay_taskq) and unsquashfs onto ZFS was at 41% after 85 min (runs 726, 747). The
+# "ZFS is the installer's default from 8 GB" decision is asserted by the x86_64 default runs (same installer code); this run proves the ZFS install on aarch64.
+MATRIX[0]="uefi-usb-auto-zfs-default-notpm|--mode uefi --media usb --flow auto --fs zfs --zfs-raid single --ssh-password-opt-in"
 fi
 
 # HEADLESS-FIRST gates (owner 2026-11-03: Patronus is a headless appliance first; console + SSH + web UI; no desktop). `--headless-gates` adds to a run, with
