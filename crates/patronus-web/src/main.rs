@@ -40,8 +40,36 @@ async fn main() -> Result<()> {
         state.auth.syslogin.cfg.admin_groups
     );
 
-    // Bind to address
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8443));
+    // Router images ship with no account at all: PATRONUS_FIRST_RUN_SETUP=1
+    // makes the UI serve only /first-run (create the first administrator, a
+    // system user in the first admin group) until such a user exists.
+    if std::env::var("PATRONUS_FIRST_RUN_SETUP").is_ok_and(|v| v == "1")
+        && !state.auth.syslogin.admin_account_exists()
+    {
+        patronus_web::auth::FIRST_RUN_PENDING.store(true, std::sync::atomic::Ordering::SeqCst);
+        info!("no administrator account yet: the UI serves /first-run until the owner creates one");
+    }
+
+    // PATRONUS_HTTPS_PORT (default 8443; the embedded router image uses 443) and
+    // PATRONUS_HTTP_REDIRECT_PORT (unset = no plain-HTTP listener; 80 on the router).
+    let https_port: u16 = std::env::var("PATRONUS_HTTPS_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8443);
+    if let Some(p) = std::env::var("PATRONUS_HTTP_REDIRECT_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+    {
+        tokio::spawn(async move {
+            if let Err(e) =
+                patronus_web::serve_http_redirect(SocketAddr::from(([0, 0, 0, 0], p)), https_port)
+                    .await
+            {
+                error!("HTTP redirect listener: {}", e);
+            }
+        });
+    }
+    let addr = SocketAddr::from(([0, 0, 0, 0], https_port));
     let tls_dir = patronus_web::tls::default_tls_dir();
     info!(
         "Web interface listening on https://{} (self-signed TLS, cert dir: {})",

@@ -55,13 +55,16 @@ fn render<T: askama::Template>(t: T) -> Response {
 
 #[cfg(not(all(feature = "dhcp", feature = "dns", feature = "ntp")))]
 fn not_built(what: &str, flag: &str) -> Response {
-    Html(format!(
-        "<!DOCTYPE html><html><head><title>{what} - Patronus</title></head><body>\
+    (
+        axum::http::StatusCode::NOT_IMPLEMENTED,
+        Html(format!(
+            "<!DOCTYPE html><html><head><title>{what} - Patronus</title></head><body>\
          <h1>{what}</h1><p>This Patronus build does not include the {what} service. \
          Rebuild with <code>USE={flag}</code> (emerge net-firewall/patronus).</p>\
          <p><a href=\"/\">Back to the dashboard</a></p></body></html>"
-    ))
-    .into_response()
+        )),
+    )
+        .into_response()
 }
 
 fn fmt_time(ts: i64) -> String {

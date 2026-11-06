@@ -12,7 +12,7 @@ path = "src/main.rs"
 default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap"]
 
 # Core features
-web = ["patronus-web", "dep:axum"]
+web = ["patronus-web", "patronus-web/tls-rustls", "patronus-web/threat-feeds", "patronus-web/journal", "dep:axum"]
 # The `patronus` binary IS the CLI: it always parses arguments with clap,
 # so clap is not optional (USE=-cli used to make the emerge fail to compile).
 cli = []

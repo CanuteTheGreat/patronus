@@ -126,6 +126,7 @@ pub async fn serve_tls(
     tls_dir: &std::path::Path,
 ) -> anyhow::Result<()> {
     // Pick the crypto provider explicitly (Err = one is already installed).
+    #[cfg(feature = "tls-rustls")]
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let app = with_secure_cookies(prepare_app(state));
@@ -134,10 +135,52 @@ pub async fn serve_tls(
 
     tracing::info!("Starting web server on https://{}", addr);
 
+    #[cfg(feature = "tls-rustls")]
     axum_server::bind_rustls(addr, tls_config)
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .await?;
+    #[cfg(all(feature = "tls-openssl", not(feature = "tls-rustls")))]
+    axum_server::bind_openssl(addr, tls_config)
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        .await?;
 
+    Ok(())
+}
+
+/// Plain-HTTP listener that only answers `308` to the HTTPS URL (OpenWrt-style
+/// "http://192.168.1.1 -> https://192.168.1.1"). It serves nothing else: no
+/// pages, no login, no cookies. `https_port` 443 is omitted from the Location.
+pub async fn serve_http_redirect(addr: SocketAddr, https_port: u16) -> anyhow::Result<()> {
+    use axum::http::{header, HeaderMap, StatusCode, Uri};
+    let app = axum::Router::new().fallback(move |headers: HeaderMap, uri: Uri| async move {
+        let host = headers
+            .get(header::HOST)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("")
+            .split(':')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let host = if host.is_empty() {
+            "patronus".into()
+        } else {
+            host
+        };
+        let pq = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
+        let loc = if https_port == 443 {
+            format!("https://{host}{pq}")
+        } else {
+            format!("https://{host}:{https_port}{pq}")
+        };
+        (StatusCode::PERMANENT_REDIRECT, [(header::LOCATION, loc)])
+    });
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    tracing::info!(
+        "HTTP redirect on http://{} -> https port {}",
+        addr,
+        https_port
+    );
+    axum::serve(listener, app).await?;
     Ok(())
 }
 

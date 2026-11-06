@@ -5,6 +5,7 @@
 //! - api: REST API endpoints (returns JSON)
 
 pub mod api;
+pub mod first_run;
 pub mod pages;
 
 use axum::{
@@ -26,6 +27,11 @@ pub fn build_router(
     Router::new()
         // Public routes
         .route("/login", get(pages::login_page))
+        .route("/first-run", get(first_run::page))
+        .route(
+            "/api/first-run",
+            axum::routing::post(first_run::set_password),
+        )
         // WebSocket routes (temporarily disabled due to handler issues)
         // .route("/ws/metrics", get(crate::websocket::ws_metrics_handler))
         // .route("/ws/logs", get(crate::websocket::ws_logs_handler))
@@ -165,6 +171,8 @@ async fn brand_asset(
 fn is_public(method: &axum::http::Method, path: &str) -> bool {
     use axum::http::Method;
     path == "/login"
+        || path == "/first-run"
+        || (method == Method::POST && path == "/api/first-run")
         || path == "/favicon.ico"
         || path == "/favicon-32.png"
         || path == "/apple-touch-icon.png"
@@ -194,6 +202,18 @@ async fn require_session(
     let path = req.uri().path().to_string();
     if is_public(req.method(), &path) {
         return next.run(req).await;
+    }
+    // A router that has no password yet only offers the set-a-password page.
+    if crate::auth::first_run_pending() {
+        return if path.starts_with("/api/") || path == "/metrics" {
+            (
+                StatusCode::FORBIDDEN,
+                axum::Json(serde_json::json!({"error": "first-run setup required: create the administrator account at /first-run"})),
+            )
+                .into_response()
+        } else {
+            axum::response::Redirect::to("/first-run").into_response()
+        };
     }
 
     let (mut parts, body) = req.into_parts();
@@ -341,8 +361,48 @@ fn seg_dns_router() -> Router<AppState> {
 /// Convention: each subsystem's endpoints live in `routes/api/<subsystem>.rs`
 /// and are registered there in its own `router()`; this function only
 /// merges them, one line per lane, so lanes never edit each other's routes.
+/// GET /api/features: the optional features this build contains. The UI hides
+/// navigation entries for the rest (a router build has no VPN, HA, QoS ...), and
+/// their APIs answer "not built" instead of pretending.
+async fn features() -> axum::Json<serde_json::Value> {
+    macro_rules! built {
+        ($($f:literal),*) => { { let mut v: Vec<&str> = Vec::new(); $( if cfg!(feature = $f) { v.push($f); } )* v } };
+    }
+    let list = built![
+        "vlan",
+        "pppoe",
+        "dhcp",
+        "dns",
+        "ntp",
+        "multiwan",
+        "wireguard",
+        "ipsec",
+        "openvpn",
+        "l2tp",
+        "totp",
+        "ha",
+        "qos",
+        "syslog",
+        "netflow",
+        "igmp",
+        "nat64",
+        "upnp",
+        "vrf",
+        "web-proxy",
+        "intrusion-detection",
+        "dynamic-routing",
+        "sdwan-edge",
+        "ldap",
+        "plugins",
+        "segmentation",
+        "wifi-ap"
+    ];
+    axum::Json(serde_json::json!({ "features": list }))
+}
+
 fn api_routes() -> Router<AppState> {
     Router::new()
+        .route("/features", get(features))
         .route("/auth/login", post(crate::auth::login))
         .route("/auth/logout", post(crate::auth::logout))
         .route("/auth/me", get(crate::auth::current_user))

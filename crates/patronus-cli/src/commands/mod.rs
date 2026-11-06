@@ -8,6 +8,7 @@ pub mod daemon;
 pub mod deploy;
 pub mod edge;
 pub mod firewall;
+pub mod firstboot;
 #[cfg(feature = "gitops")]
 pub mod gitops;
 pub mod init;

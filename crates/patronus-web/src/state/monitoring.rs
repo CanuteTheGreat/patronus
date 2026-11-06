@@ -6,6 +6,7 @@
 //! invented "top connections" and two alerts from January 2024. Alerts have
 //! no producer yet (lane I), so the list is honestly empty.
 
+#[cfg(feature = "threat-feeds")]
 use std::sync::Arc;
 
 /// Monitoring operations
@@ -14,6 +15,7 @@ pub struct MonitoringManager {
     /// (EmergingThreats compromised-IP list, and AbuseIPDB if an API key is
     /// configured). This backs the threat-feed widget -- see
     /// `get_ai_threats`.
+    #[cfg(feature = "threat-feeds")]
     threat_intel_db: Arc<patronus_ai::ThreatIntelDB>,
 }
 
@@ -24,6 +26,12 @@ impl Default for MonitoringManager {
 }
 
 impl MonitoringManager {
+    #[cfg(not(feature = "threat-feeds"))]
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    #[cfg(feature = "threat-feeds")]
     pub fn new() -> Self {
         let threat_intel_db = Arc::new(patronus_ai::ThreatIntelDB::new());
 
@@ -132,6 +140,16 @@ impl MonitoringManager {
     /// feed data, not a local ML classifier: nothing feeds live flows into
     /// `ThreatDetectionEngine` yet, so detection_method/ml_model say
     /// "external feed" and `blocked` is false (no automatic blocking).
+    #[cfg(not(feature = "threat-feeds"))]
+    pub async fn get_ai_threats(
+        &self,
+        _limit: usize,
+    ) -> anyhow::Result<Vec<crate::templates::AiThreat>> {
+        // Built without live threat feeds (embedded tier): honestly empty.
+        Ok(Vec::new())
+    }
+
+    #[cfg(feature = "threat-feeds")]
     pub async fn get_ai_threats(
         &self,
         limit: usize,
@@ -192,6 +210,15 @@ impl MonitoringManager {
     /// shells out to `journalctl --output=json`. On Gentoo hosts running
     /// OpenRC without the `systemd` USE flag there is no journald, so this
     /// returns an empty list in that case rather than fabricating lines.
+    #[cfg(not(feature = "journal"))]
+    pub async fn get_live_logs(
+        &self,
+        limit: u32,
+    ) -> anyhow::Result<Vec<crate::templates::LogEntry>> {
+        Ok(read_syslog_file(limit as usize))
+    }
+
+    #[cfg(feature = "journal")]
     pub async fn get_live_logs(
         &self,
         limit: u32,
@@ -236,6 +263,7 @@ impl MonitoringManager {
     }
 }
 
+#[cfg(feature = "threat-feeds")]
 fn severity(confidence: f64) -> String {
     if confidence >= 0.9 {
         "critical"
@@ -352,4 +380,37 @@ ipv4     2 icmp     1 29 src=192.168.50.10 dst=198.51.100.10 type=8 code=0 id=7 
         assert_eq!(metrics.network_rx_rate, 0);
         assert_eq!(metrics.network_tx_rate, 0);
     }
+}
+
+/// Embedded tier (no journald): the last `limit` lines of the syslog file
+/// (`$PATRONUS_SYSLOG` or /var/log/messages). Empty when the file is absent.
+#[cfg(not(feature = "journal"))]
+fn read_syslog_file(limit: usize) -> Vec<crate::templates::LogEntry> {
+    let path = std::env::var("PATRONUS_SYSLOG").unwrap_or_else(|_| "/var/log/messages".into());
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(limit);
+    lines[start..]
+        .iter()
+        .rev()
+        .map(|l| {
+            let low = l.to_ascii_lowercase();
+            let (level, color) = if low.contains("error") || low.contains("fail") {
+                ("error", "#ff4444")
+            } else if low.contains("warn") {
+                ("warning", "#ffaa00")
+            } else {
+                ("info", "#00aaff")
+            };
+            crate::templates::LogEntry {
+                timestamp: l.chars().take(15).collect(),
+                level: level.to_string(),
+                component: "syslog".to_string(),
+                message: l.chars().skip(16).collect(),
+                level_color: color.to_string(),
+            }
+        })
+        .collect()
 }

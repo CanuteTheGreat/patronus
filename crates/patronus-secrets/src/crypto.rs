@@ -115,9 +115,26 @@ pub fn open_with_passphrase(bytes: &[u8], passphrase: &str) -> Result<Vec<u8>> {
 }
 
 /// Hash a password for storage using Argon2id
+/// Argon2id used for NEW hashes. Default = the crate defaults (19 MiB, t=2). A small
+/// router sets `PATRONUS_ARGON2_MEM_KIB` (4096..=19456) to cap the memory a login
+/// needs (then t=4, OWASP's equivalent-strength row for ~8-9 MiB). Verification
+/// always uses the parameters stored in each hash, so old hashes keep working.
+fn hasher() -> Argon2<'static> {
+    if let Some(m) = std::env::var("PATRONUS_ARGON2_MEM_KIB")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .map(|m| m.clamp(4096, 19456))
+    {
+        if let Ok(p) = argon2::Params::new(m, 4, 1, None) {
+            return Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, p);
+        }
+    }
+    Argon2::default()
+}
+
 pub fn hash_password(password: &str) -> Result<String> {
     let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
+    let argon2 = hasher();
 
     let password_hash = argon2
         .hash_password(password.as_bytes(), &salt)

@@ -38,6 +38,21 @@ pub const DEFAULTS_SEEDED_KEY: &str = "defaults_seeded_at";
 /// Ports the anti-lockout rule keeps open: SSH and the web UI.
 pub const ANTI_LOCKOUT_PORTS: &[u16] = &[22, 8443];
 
+/// Ports the anti-lockout rule opens at first-boot seeding: [`ANTI_LOCKOUT_PORTS`],
+/// or `$PATRONUS_ANTI_LOCKOUT_PORTS` (comma list) when set. The router image sets
+/// it to `22,80,443` because its web UI listens on 443 (+ the 80 redirect).
+pub fn anti_lockout_ports() -> Vec<u16> {
+    std::env::var("PATRONUS_ANTI_LOCKOUT_PORTS")
+        .ok()
+        .map(|v| {
+            v.split(',')
+                .filter_map(|p| p.trim().parse::<u16>().ok())
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| ANTI_LOCKOUT_PORTS.to_vec())
+}
+
 /// The bootstrap file path: `$PATRONUS_BOOTSTRAP` or the default.
 pub fn default_bootstrap_path() -> PathBuf {
     std::env::var_os("PATRONUS_BOOTSTRAP")
@@ -209,7 +224,7 @@ pub fn default_filter_rules() -> Vec<(FirewallRule, RuleOrigin)> {
     );
     anti.interface_in = Some("@mgmt".into());
     anti.protocol = Some(Protocol::Tcp);
-    anti.dport = Some(PortSpec::Multiple(ANTI_LOCKOUT_PORTS.to_vec()));
+    anti.dport = Some(PortSpec::Multiple(anti_lockout_ports()));
     anti.comment = Some("Anti-lockout: SSH and web UI from LAN (system rule)".into());
 
     let mut lan_fw = FirewallRule::new(

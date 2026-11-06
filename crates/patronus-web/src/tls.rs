@@ -15,6 +15,9 @@
 //! own cert.pem/key.pem in that directory before starting the container.
 
 use anyhow::{Context, Result};
+#[cfg(all(feature = "tls-openssl", not(feature = "tls-rustls")))]
+use axum_server::tls_openssl::OpenSSLConfig as RustlsConfig;
+#[cfg(feature = "tls-rustls")]
 use axum_server::tls_rustls::RustlsConfig;
 use std::path::{Path, PathBuf};
 
@@ -45,9 +48,69 @@ pub async fn ensure_self_signed_cert(dir: &Path) -> Result<RustlsConfig> {
         tracing::info!("Using existing TLS material at {}", dir.display());
     }
 
-    RustlsConfig::from_pem_file(&cert_path, &key_path)
+    load_config(&cert_path, &key_path)
         .await
         .with_context(|| format!("failed to load TLS material from {}", dir.display()))
+}
+
+#[cfg(feature = "tls-rustls")]
+async fn load_config(cert: &Path, key: &Path) -> Result<RustlsConfig> {
+    Ok(RustlsConfig::from_pem_file(cert, key).await?)
+}
+
+#[cfg(all(feature = "tls-openssl", not(feature = "tls-rustls")))]
+async fn load_config(cert: &Path, key: &Path) -> Result<RustlsConfig> {
+    Ok(RustlsConfig::from_pem_file(cert, key)?)
+}
+
+/// Self-signed certificate (ECDSA P-256, 10 years, SANs = hostname, patronus,
+/// patronus.local plus the LAN IP from `PATRONUS_TLS_IP`) via OpenSSL.
+#[cfg(all(feature = "tls-openssl", not(feature = "tls-rustls")))]
+fn make_cert(sans: &[String]) -> Result<(String, String)> {
+    use openssl::asn1::Asn1Time;
+    use openssl::bn::{BigNum, MsbOption};
+    use openssl::ec::{EcGroup, EcKey};
+    use openssl::hash::MessageDigest;
+    use openssl::nid::Nid;
+    use openssl::pkey::PKey;
+    use openssl::x509::extension::SubjectAlternativeName;
+    use openssl::x509::{X509NameBuilder, X509};
+    let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
+    let key = PKey::from_ec_key(EcKey::generate(&group)?)?;
+    let mut name = X509NameBuilder::new()?;
+    name.append_entry_by_nid(Nid::COMMONNAME, &sans[0])?;
+    name.append_entry_by_nid(Nid::ORGANIZATIONNAME, "Patronus")?;
+    let name = name.build();
+    let mut b = X509::builder()?;
+    b.set_version(2)?;
+    let mut serial = BigNum::new()?;
+    serial.rand(64, MsbOption::MAYBE_ZERO, false)?;
+    let serial = serial.to_asn1_integer()?;
+    b.set_serial_number(&serial)?;
+    b.set_subject_name(&name)?;
+    b.set_issuer_name(&name)?;
+    b.set_pubkey(&key)?;
+    // A router often boots with the clock at 1970: back-date the start.
+    let nb = Asn1Time::from_unix(1_600_000_000)?;
+    let na = Asn1Time::days_from_now(3650)?;
+    b.set_not_before(&nb)?;
+    b.set_not_after(&na)?;
+    let mut san = SubjectAlternativeName::new();
+    for s in sans {
+        if s.parse::<std::net::IpAddr>().is_ok() {
+            san.ip(s);
+        } else {
+            san.dns(s);
+        }
+    }
+    let ext = san.build(&b.x509v3_context(None, None))?;
+    b.append_extension(ext)?;
+    b.sign(&key, MessageDigest::sha256())?;
+    let cert = b.build();
+    Ok((
+        String::from_utf8(cert.to_pem()?)?,
+        String::from_utf8(key.private_key_to_pem_pkcs8()?)?,
+    ))
 }
 
 fn generate_self_signed(cert_path: &Path, key_path: &Path) -> Result<()> {
@@ -57,18 +120,28 @@ fn generate_self_signed(cert_path: &Path, key_path: &Path) -> Result<()> {
     }
 
     let hostname = std::env::var("PATRONUS_TLS_HOSTNAME").unwrap_or_else(|_| "localhost".into());
-    let subject_alt_names = vec![
+    let mut subject_alt_names = vec![
         hostname,
         "patronus".to_string(),
         "patronus.local".to_string(),
     ];
+    if let Ok(ip) = std::env::var("PATRONUS_TLS_IP") {
+        subject_alt_names.extend(ip.split(',').map(|s| s.trim().to_string()));
+    }
 
-    let cert = rcgen::generate_simple_self_signed(subject_alt_names)
-        .context("failed to generate self-signed certificate")?;
-    let cert_pem = cert
-        .serialize_pem()
-        .context("failed to serialize certificate")?;
-    let key_pem = cert.serialize_private_key_pem();
+    #[cfg(feature = "tls-rustls")]
+    let (cert_pem, key_pem) = {
+        let cert = rcgen::generate_simple_self_signed(subject_alt_names)
+            .context("failed to generate self-signed certificate")?;
+        (
+            cert.serialize_pem()
+                .context("failed to serialize certificate")?,
+            cert.serialize_private_key_pem(),
+        )
+    };
+    #[cfg(all(feature = "tls-openssl", not(feature = "tls-rustls")))]
+    let (cert_pem, key_pem) =
+        make_cert(&subject_alt_names).context("failed to generate self-signed certificate")?;
 
     std::fs::write(cert_path, cert_pem)
         .with_context(|| format!("failed to write {}", cert_path.display()))?;

@@ -1,0 +1,3 @@
+#!/bin/sh
+# run in the q2 container: gx '<cmd>' [timeout]
+exec python3 /out/ci-emb/embedded-mips/guestd.py x "$@"

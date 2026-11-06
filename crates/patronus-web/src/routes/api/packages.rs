@@ -194,13 +194,16 @@ pub fn pages() -> axum::Router<AppState> {
     let h = get(built::page);
     #[cfg(not(feature = "plugins"))]
     let h = get(|| async {
-        Html(
-            "<!DOCTYPE html><html><head><title>Packages - Patronus</title></head><body>\
+        (
+            axum::http::StatusCode::NOT_IMPLEMENTED,
+            Html(
+                "<!DOCTYPE html><html><head><title>Packages - Patronus</title></head><body>\
              <h1>Packages</h1><p>This Patronus build does not include plugins and package \
              management. Rebuild with <code>USE=plugins</code> (emerge net-firewall/patronus).</p>\
              <p><a href=\"/\">Back to the dashboard</a></p></body></html>",
+            ),
         )
-        .into_response()
+            .into_response()
     });
     axum::Router::new().route("/packages", h)
 }

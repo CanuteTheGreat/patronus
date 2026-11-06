@@ -17,7 +17,7 @@ path = "src/lib.rs"
 # builds patronus-web with --no-default-features and the USE-selected list):
 # lane C interfaces (vlan, pppoe, dhcpcd) and the lane D LAN-service pages
 # (dhcp, dns, ntp).
-default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap"]
+default = ["vlan", "pppoe", "dhcpcd", "dhcp", "dns", "ntp", "multiwan", "wireguard", "ipsec", "totp", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "upnp", "vrf", "openvpn", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "threat-feeds", "journal", "tls-rustls"]
 vlan = ["patronus-network/vlan"]
 pppoe = ["patronus-network/pppoe"]
 dhcpcd = ["patronus-network/dhcpcd"]
@@ -55,6 +55,15 @@ plugins = ["patronus-network/plugins"]
 # device groups, per-device isolation and Wi-Fi credentials (page + API)
 segmentation = ["patronus-network/segmentation", "dep:patronus-captiveportal"]
 wifi-ap = ["patronus-network/wifi-ap", "segmentation"]
+# Live threat-intel feeds (patronus-ai, reqwest/OpenSSL) and journald log reading
+# (patronus-monitoring, prometheus). Both are off in the embedded router build.
+threat-feeds = ["dep:patronus-ai"]
+journal = ["dep:patronus-monitoring"]
+# TLS backend. `tls-rustls` (default; aws-lc-rs + rcgen) does not build for MIPS
+# (neither aws-lc nor ring supports it); the embedded tier uses `tls-openssl`
+# (system OpenSSL, certificate generation through the same library).
+tls-rustls = ["axum-server/tls-rustls", "dep:rustls", "dep:rcgen"]
+tls-openssl = ["axum-server/tls-openssl", "dep:openssl"]
 
 [dependencies]
 patronus-core = { path = "../patronus-core" }
@@ -63,8 +72,8 @@ patronus-captiveportal = { path = "../patronus-captiveportal", optional = true }
 patronus-network = { path = "../patronus-network" }
 patronus-config = { path = "../patronus-config" }
 patronus-secrets = { path = "../patronus-secrets" }
-patronus-ai = { path = "../patronus-ai" }
-patronus-monitoring = { path = "../patronus-monitoring" }
+patronus-ai = { path = "../patronus-ai", optional = true }
+patronus-monitoring = { path = "../patronus-monitoring", optional = true }
 
 tokio.workspace = true
 async-trait.workspace = true
@@ -80,19 +89,20 @@ askama.workspace = true
 askama_axum.workspace = true
 
 # TLS for the dashboard (self-signed cert on first run; see src/tls.rs)
-axum-server = { version = "0.7", features = ["tls-rustls"] }
+axum-server = { version = "0.7" }
 # Explicit process-wide crypto provider: when another crate in the same
 # binary (e.g. patronus-cli's `patronus web`) also enables rustls' `ring`,
 # rustls can no longer pick one and panics on the first TLS handshake setup.
-rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
-rcgen = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"], optional = true }
+rcgen = { version = "0.11", optional = true }
+openssl = { version = "0.10", optional = true }
 
 # Additional web dependencies
 hyper = "1.4"
 uuid = { version = "1.11", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-qrcode = "0.14"
-image = "0.25"
+qrcode = { version = "0.14", default-features = false, features = ["image", "svg"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 futures = "0.3"
 rand = "0.8"
 sysinfo = "0.31"

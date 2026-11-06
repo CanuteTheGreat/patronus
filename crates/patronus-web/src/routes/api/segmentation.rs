@@ -433,7 +433,7 @@ pub fn pages() -> axum::Router<AppState> {
 #[cfg(not(feature = "segmentation"))]
 async fn not_built() -> impl IntoResponse {
     (
-        axum::http::StatusCode::NOT_FOUND,
+        axum::http::StatusCode::NOT_IMPLEMENTED,
         Html(
             "<!DOCTYPE html><html><head><title>Not built - Patronus</title></head><body>\
              <h1>Not part of this build</h1><p>This Patronus build does not include device \
