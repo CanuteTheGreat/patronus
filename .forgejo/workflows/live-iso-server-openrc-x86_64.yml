@@ -24,7 +24,7 @@ name: Live ISO (server-openrc-x86_64)
 
 on:
   schedule:
-    - cron: '0 13 * * *'   # ~06:00 America/Los_Angeles: after the Horcrux ISO job, off the 09:00-10:30 UTC nightlies
+    - cron: '30 23 * * *'   # 15:30 PST; moved 2026-11-06 off the 00:00-03:00 PST pile-up (measured busiest), see ctg ci-wait-and-queue reference
   push:
     tags:
       - 'v*'

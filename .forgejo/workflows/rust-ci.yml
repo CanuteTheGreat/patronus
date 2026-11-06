@@ -10,7 +10,7 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    - cron: '30 8 * * *'
+    - cron: '30 22 * * *'   # 14:30 PST; moved 2026-11-06 off the 00:00-03:00 PST pile-up (measured busiest), see ctg ci-wait-and-queue reference
   workflow_dispatch: {}
 
 env:
