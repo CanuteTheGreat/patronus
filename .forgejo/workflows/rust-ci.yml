@@ -57,7 +57,7 @@ jobs:
                 heavy=true
                 if [ -n "$base" ] && [ "${base#0000000}" = "$base" ] && git fetch --no-tags --depth=1 origin "$base" 2>/dev/null; then
                   files=$(git diff --name-only "$base" HEAD 2>/dev/null) && {
-                    if echo "$files" | grep -qE '^(gentoo/|Dockerfile|\.dockerignore|operator/|Cargo\.toml$|Cargo\.lock$|\.forgejo/workflows/rust-ci\.yml$)'; then heavy=true; else heavy=false; fi
+                    if grep -qE '^(gentoo/|Dockerfile|\.dockerignore|operator/|Cargo\.toml$|Cargo\.lock$|\.forgejo/workflows/rust-ci\.yml$)' <<<"$files"; then heavy=true; else heavy=false; fi
                   }
                 fi
               ;; esac
