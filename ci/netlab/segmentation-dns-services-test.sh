@@ -197,9 +197,11 @@ a teen social.example >/dev/null; a parent ok.example >/dev/null; a kid2 ok.exam
 ok "unbound logs replies to /var/log/unbound/unbound.log ($(wc -l < /var/log/unbound/unbound.log) lines)"
 KIDID=$(python3 -c "import sqlite3;print(sqlite3.connect('$DB').execute(\"SELECT id FROM seg_devices WHERE name='kid'\").fetchone()[0])")
 got=
-for i in $(seq 1 30); do
+for i in $(seq 1 60); do
   code=$(api GET "/api/segmentation/dns/log?device=$KIDID")
-  [ "$code" = 200 ] && [ "$(jget 'len(d["rows"])')" -ge 3 ] && { got=1; break; }
+  # wait for this section's three queries, not just any 3 rows: patronus-web ingests the unbound log in periodic batches and
+  # an earlier batch can already hold 3+ blocked rows before ok.example from this section is ingested
+  [ "$code" = 200 ] && [ "$(jget 'len(d["rows"])')" -ge 3 ] && [ "$(jget 'len({r["qname"] for r in d["rows"]} & {"games.example","ok.example","adult.example"}) == 3')" = True ] && { got=1; break; }
   sleep 1
 done
 [ -n "$got" ] || fail "kid's queries never reached the log API: $(cat /tmp/api.out)"
