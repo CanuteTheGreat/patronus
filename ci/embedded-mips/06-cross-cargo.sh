@@ -16,7 +16,7 @@ export CARGO_TARGET_DIR=/out/target-g CARGO_BUILD_JOBS=3
 export PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_SYSROOT_DIR_mips_unknown_linux_musl=$SYS PKG_CONFIG_LIBDIR_mips_unknown_linux_musl=$SYS/usr/lib/pkgconfig:$SYS/usr/share/pkgconfig
 export CC_mips_unknown_linux_musl=$T-gcc CFLAGS_mips_unknown_linux_musl="-Os -march=mips32r2 -msoft-float"
 export CARGO_TARGET_MIPS_UNKNOWN_LINUX_MUSL_LINKER=$T-gcc
-export CARGO_TARGET_MIPS_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-L native=/tmp/static-unwind -C force-unwind-tables=no"
+export CARGO_TARGET_MIPS_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-L native=/tmp/static-unwind -C force-unwind-tables=no -C link-arg=-lgcc"
 export CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_PANIC=abort CARGO_PROFILE_RELEASE_STRIP=true
 echo "== $(date) cargo $*"
 cargo +nightly-2026-10-18 "$@"
