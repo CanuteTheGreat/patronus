@@ -30,7 +30,21 @@ jobs:
       - name: Log in to this repo's own Forgejo container registry
         run: echo "${{ secrets.REGISTRY_PUSH_TOKEN }}" | docker login git.canutethegreat.com -u CanuteTheGreat --password-stdin
       - name: Build CI base image
-        run: docker build -f Dockerfile.ci-base -t git.canutethegreat.com/canutethegreat/patronus-ci-base:latest .
+        # A RUN step can die with the docker daemon's "failed to create endpoint ... on network bridge"
+        # (run 759: the runner host's bridge network was briefly unusable while sibling jobs created and
+        # removed theirs). That is a host flake, not a Dockerfile error: retry the build 3 times, BuildKit
+        # reuses the finished layers.
+        run: |
+          attempt=1
+          until docker build -f Dockerfile.ci-base -t git.canutethegreat.com/canutethegreat/patronus-ci-base:latest .; do
+            if [ "$attempt" -ge 3 ]; then
+              echo "::error::docker build failed after 3 attempts"
+              exit 1
+            fi
+            echo "::warning::docker build attempt ${attempt} failed (likely a transient docker network error), retrying..."
+            attempt=$((attempt + 1))
+            sleep $((attempt * 15))
+          done
       - name: Push CI base image
         # Multi-layer image pushes to this registry have been observed to
         # fail intermittently with "net/http: timeout awaiting response

@@ -662,7 +662,11 @@ jobs:
           # myfeatures) plus dashboard, so the real emerge compiles and
           # installs all of them, not just the Dockerfile's default subset.
           USE_ALL="web cli api dashboard nftables dhcp dns unbound vpn wireguard openvpn ipsec multiwan monitoring prometheus captive-portal vlan qos backup systemd"
-          until docker build --build-arg CI_BASE_IMAGE="${BASE_IMAGE}" --build-arg PATRONUS_USE="${USE_ALL}" -t patronus/web:${{ github.sha }} .; do
+          until docker build --build-arg CI_BASE_IMAGE="${BASE_IMAGE}" --build-arg PATRONUS_USE="${USE_ALL}" -t patronus/web:${{ github.sha }} . \
+                && docker image inspect patronus/web:${{ github.sha }} >/dev/null; do
+            # The inspect also retries a build whose image vanished from the host's image store
+            # right after export (run 772: "Unable to find image ... locally" on a host at 96 %
+            # disk under the runner disk guard); BuildKit's cache makes the retry cheap.
             if [ "$attempt" -ge "$max_attempts" ]; then
               echo "::error::docker build failed after ${max_attempts} attempts"
               exit 1

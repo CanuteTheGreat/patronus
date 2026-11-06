@@ -412,7 +412,10 @@ mod tests {
         let result = prober.probe(target).await.expect("Probe failed");
 
         assert!(result.success);
-        assert!(result.latency_ms < 10.0); // Should be very fast for localhost
+        // A loopback echo is far below a millisecond on an idle host, but CI runners are shared
+        // and busy (run 772: > 10 ms on a loaded runner). The test proves the probe measures a
+        // real round trip, not a latency SLO, so bound it generously.
+        assert!(result.latency_ms >= 0.0 && result.latency_ms < 500.0);
         assert!(result.error.is_none());
     }
 

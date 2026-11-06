@@ -39,6 +39,17 @@ pub const LANE_RANGES: &[(&str, u32, u32)] = &[
     ("s", 1300, 1399), // device segmentation: groups, devices, isolation, Wi-Fi credentials, DNS/time policy
 ];
 
+/// Whether `version` is recorded in `schema_migrations`, read inside the caller's transaction.
+async fn is_applied(conn: &mut sqlx::SqliteConnection, version: u32) -> Result<bool> {
+    let count: i64 = sqlx::query("SELECT count(*) FROM schema_migrations WHERE version = ?")
+        .bind(version as i64)
+        .fetch_one(conn)
+        .await
+        .map_err(|e| Error::Config(format!("recheck migration {version}: {e}")))?
+        .get(0);
+    Ok(count > 0)
+}
+
 /// Apply every migration that has not been applied yet. Returns the
 /// versions applied by this call.
 pub async fn run(pool: &SqlitePool) -> Result<Vec<u32>> {
@@ -74,13 +85,7 @@ pub async fn run(pool: &SqlitePool) -> Result<Vec<u32>> {
             .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(|e| Error::Config(format!("begin migration {}: {e}", m.version)))?;
-        let already: i64 = sqlx::query("SELECT count(*) FROM schema_migrations WHERE version = ?")
-            .bind(m.version as i64)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| Error::Config(format!("recheck migration {}: {e}", m.version)))?
-            .get(0);
-        if already > 0 {
+        if is_applied(&mut tx, m.version).await? {
             // another process applied it while we waited for the lock
             continue;
         }
@@ -158,6 +163,33 @@ mod tests {
             "each migration applied exactly once"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The re-check under the write lock is what stops a process that waited for the lock from
+    /// applying a migration another process already recorded (the race test above only hits it by
+    /// timing), so pin both answers deterministically.
+    #[tokio::test]
+    async fn is_applied_reflects_schema_migrations() {
+        use sqlx::sqlite::SqlitePoolOptions;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        assert!(!is_applied(&mut conn, 7).await.unwrap());
+        sqlx::query("INSERT INTO schema_migrations VALUES (7, 'x', 0)")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        assert!(is_applied(&mut conn, 7).await.unwrap());
+        assert!(!is_applied(&mut conn, 8).await.unwrap());
     }
 
     #[test]
