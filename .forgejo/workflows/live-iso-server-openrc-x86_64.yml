@@ -23,11 +23,19 @@
 name: Live ISO (server-openrc-x86_64)
 
 on:
-  schedule:
-    - cron: '30 23 * * *'   # 15:30 PST; moved 2026-11-06 off the 00:00-03:00 PST pile-up (measured busiest), see ctg ci-wait-and-queue reference
+  # Event-driven (2026-11-06): build + test + publish the daily when main changes anything the image is built from
+  # (app source, gentoo/); docs/site-only pushes do not build. v* tags still build the stable ISO.
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'crates/**'
+      - 'frontend/**'
+      - 'operator/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'gentoo/**'
+      - '.forgejo/workflows/live-iso-server-openrc-x86_64.yml'
   workflow_dispatch:
     inputs:
       mode:
@@ -35,8 +43,11 @@ on:
         required: false
         default: 'dry'
 
+# Per variant + event + mode + ref. A burst of main pushes = ONE build: the sweeper (replace: group) keeps started runs and only the NEWEST
+# unstarted one. A started build is never cancelled by a push (starvation under constant pushes); the next queued build then starts at once.
+# A newer dispatch of the same variant still cancels the older dispatch.
 concurrency:
-  group: "live-iso-server-openrc-x86_64-${{ github.event_name }}-${{ github.event.inputs.mode }}-${{ github.ref }}"
+  group: "replace:live-iso-server-openrc-x86_64-${{ github.event_name }}-${{ github.event.inputs.mode }}-${{ github.ref }}"
   cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 jobs:

@@ -9,8 +9,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # ONLY periodic trigger of this repo: weekly safety net. Heavy jobs run on every push that touches their inputs (plan job); this run exists
+  # solely for drift of the moving Portage tree / stage3 / base images, which has no change signal.
   schedule:
-    - cron: '30 22 * * *'   # 14:30 PST; moved 2026-11-06 off the 00:00-03:00 PST pile-up (measured busiest), see ctg ci-wait-and-queue reference
+    - cron: '30 22 * * 1'
   workflow_dispatch: {}
 
 env:

@@ -13,6 +13,18 @@ name: Nightly test depth (mutation baseline, deep netlab, upgrade)
 # ci/mutation-incremental.py - canonical copy in ctg-infrastructure ci-runners/mutation-incremental),
 # failing on any new surviving mutant there; with no change it finishes in about a minute.
 on:
+  # Event-driven (2026-11-06; file name kept for the sweeper's low-priority rule): push to main when product code changed. Mutants
+  # job runs incremental on changed lines (full on Wednesdays). Replace: group below coalesces bursts. No cron.
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'frontend/**'
+      - 'operator/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'ci/mutants-floors.txt'
+      - '.forgejo/workflows/nightly-test-depth.yml'
   workflow_dispatch:
     inputs:
       mode:
@@ -23,9 +35,6 @@ on:
         description: 'run just one job (mutants, netlab-deep or wifi-hwsim) to re-check it; empty = all'
         required: false
         default: ''
-  schedule:
-    # 08:10 UTC, staggered across the colo lane's day (ctg-infrastructure ci-runners/rw-man-colo)
-    - cron: '10 15 * * *'   # 07:10 PST; moved 2026-11-06 off the 00:00-03:00 PST pile-up (measured busiest), see ctg ci-wait-and-queue reference
 
 # A newer queued run replaces an older one that has not started (ci-supersede-sweeper,
 # replace: groups); a started run is never cancelled.
