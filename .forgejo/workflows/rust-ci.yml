@@ -1,10 +1,17 @@
 name: Rust CI
 
+# Trigger policy (2026-11-06, CI capacity; same scheme as horcrux ci.yml): the `plan` job skips the
+# x86 jobs when a push is a PR merge whose tree equals the PR head's tree and that PR's netlab job
+# already passed (`dup`), and runs the heavy ones (Gentoo image, k3s operator) only when gentoo/,
+# Dockerfile*, operator/, Cargo.toml/lock or this file changed, on the nightly schedule or on dispatch.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '30 8 * * *'
+  workflow_dispatch: {}
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,6 +29,50 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  plan:
+    name: Plan (what needs to run)
+    runs-on: linux-any
+    outputs:
+      heavy: ${{ steps.p.outputs.heavy }}
+      dup: ${{ steps.p.outputs.dup }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: p
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+          TOKEN: ${{ github.token }}
+        run: |
+          heavy=true; dup=false
+          case "$EVENT" in
+            schedule|workflow_dispatch) ;;
+            push|pull_request)
+              case "$REF" in refs/tags/*) ;; *)
+                base="$BEFORE"; [ "$EVENT" = pull_request ] && base="$PR_BASE"
+                heavy=true
+                if [ -n "$base" ] && [ "${base#0000000}" = "$base" ] && git fetch --no-tags --depth=1 origin "$base" 2>/dev/null; then
+                  files=$(git diff --name-only "$base" HEAD 2>/dev/null) && {
+                    if grep -qE '^(gentoo/|Dockerfile|\.dockerignore|operator/|Cargo\.toml$|Cargo\.lock$|\.forgejo/workflows/rust-ci\.yml$)' <<<"$files"; then heavy=true; else heavy=false; fi
+                  }
+                fi
+              ;; esac
+              if [ "$EVENT" = push ] && [ "$(git rev-list --parents -n1 HEAD | wc -w)" = 3 ]; then
+                p2=$(git rev-parse HEAD^2)
+                if [ "$(git rev-parse 'HEAD^{tree}')" = "$(git rev-parse "$p2^{tree}")" ]; then
+                  st=$(curl -fsS -H "Authorization: token $TOKEN" "$API/commits/$p2/status" 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(x.get("context","").startswith("Rust CI / Netlab (network namespaces)") and x.get("context","").rsplit("(",1)[-1].startswith("pull_request") and x.get("status")=="success" for x in d.get("statuses",[])))' 2>/dev/null || echo False)
+                  [ "$st" = True ] && dup=true
+                fi
+              fi ;;
+          esac
+          echo "event=$EVENT heavy=$heavy dup=$dup"
+          echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
+          echo "dup=$dup" >> "$GITHUB_OUTPUT"
+
   # fmt/clippy/security-audit/test used to be 4 separate jobs. The only
   # forgejo-runner currently registered for the `x86_64` label (beauxbatons,
   # see .forgejo/workflows/rust-ci.yml history around 2026-10-08) has
@@ -133,6 +184,8 @@ jobs:
     # nftables, and the SD-WAN ICMP/UDP health probes.
     name: Privileged netfilter + raw-socket tests (NET_ADMIN)
     runs-on: linux-cross-x86_64
+    needs: plan
+    if: needs.plan.outputs.dup != 'true'
     timeout-minutes: 40
     container:
       image: catthehacker/ubuntu:act-latest
@@ -183,6 +236,8 @@ jobs:
     # upgrade-store (v0.1.0 store layout; previous release nightly).
     name: Netlab (network namespaces) - journeys, failure/recovery, upgrade, LAN services
     runs-on: linux-cross-x86_64
+    needs: plan
+    if: needs.plan.outputs.dup != 'true'
     timeout-minutes: 100
     env:
       CARGO_BUILD_JOBS: 4
@@ -288,6 +343,8 @@ jobs:
     # in network namespaces with the real daemons (claims C46-C54).
     name: Netlab features (lane J feature pages + lane K SD-WAN edge)
     runs-on: linux-cross-x86_64
+    needs: plan
+    if: needs.plan.outputs.dup != 'true'
     timeout-minutes: 100
     env:
       CARGO_BUILD_JOBS: 4
@@ -397,6 +454,8 @@ jobs:
     # crdgen, the real operator binary, then `cargo test -- --ignored`.
     name: Operator tests against a real k3s cluster
     runs-on: linux-cross-x86_64
+    needs: plan
+    if: needs.plan.outputs.heavy == 'true' && needs.plan.outputs.dup != 'true'
     timeout-minutes: 45
     container:
       image: catthehacker/ubuntu:act-latest
@@ -435,6 +494,8 @@ jobs:
   check-ebpf:
     name: Check eBPF crate (compile only, no run)
     runs-on: linux-cross-x86_64
+    needs: plan
+    if: needs.plan.outputs.dup != 'true'
     timeout-minutes: 15
     container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
     steps:
@@ -501,7 +562,8 @@ jobs:
     name: Gentoo Docker Build
     runs-on: linux-cross-x86_64
     container: catthehacker/ubuntu:act-latest  # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
-    needs: lint-test-audit
+    needs: [lint-test-audit, plan]
+    if: needs.plan.outputs.heavy == 'true' && needs.plan.outputs.dup != 'true'
     # Uses the prebuilt patronus-ci-base image (Portage tree pre-synced,
     # runtime deps pre-installed, Rust toolchain warm -- see
     # .forgejo/workflows/build-ci-base.yml and Dockerfile.ci-base) so this
