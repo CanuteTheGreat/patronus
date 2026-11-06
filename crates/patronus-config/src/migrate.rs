@@ -66,10 +66,24 @@ pub async fn run(pool: &SqlitePool) -> Result<Vec<u32>> {
         if applied.contains(&m.version) {
             continue;
         }
+        // BEGIN IMMEDIATE takes the write lock up front, so a second process
+        // opening the same fresh store (web + applyd + CLI after a factory
+        // reset) waits here instead of racing to INSERT the same version
+        // ("UNIQUE constraint failed: schema_migrations.version").
         let mut tx = pool
-            .begin()
+            .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(|e| Error::Config(format!("begin migration {}: {e}", m.version)))?;
+        let already: i64 = sqlx::query("SELECT count(*) FROM schema_migrations WHERE version = ?")
+            .bind(m.version as i64)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| Error::Config(format!("recheck migration {}: {e}", m.version)))?
+            .get(0);
+        if already > 0 {
+            // another process applied it while we waited for the lock
+            continue;
+        }
         sqlx::raw_sql(m.sql).execute(&mut *tx).await.map_err(|e| {
             Error::Config(format!("migration {:04}_{} failed: {e}", m.version, m.name))
         })?;
@@ -92,6 +106,59 @@ pub async fn run(pool: &SqlitePool) -> Result<Vec<u32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two processes opening one fresh store at once must both succeed (web
+    /// and applyd after a console-menu factory reset used to crash with a
+    /// UNIQUE constraint failure on schema_migrations.version).
+    #[test]
+    fn concurrent_first_open_does_not_race() {
+        use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+        use std::time::Duration;
+        let dir = std::env::temp_dir().join(format!("pat-mig-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("config.db");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(6));
+        let mut threads = Vec::new();
+        for _ in 0..6 {
+            let db = db.clone();
+            let barrier = barrier.clone();
+            threads.push(std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                rt.block_on(async {
+                    let opts = SqliteConnectOptions::new()
+                        .filename(&db)
+                        .create_if_missing(true)
+                        .journal_mode(SqliteJournalMode::Delete)
+                        .busy_timeout(Duration::from_secs(30));
+                    let pool = SqlitePoolOptions::new()
+                        .max_connections(1)
+                        .connect_with(opts)
+                        .await
+                        .unwrap();
+                    barrier.wait();
+                    run(&pool).await
+                })
+            }));
+        }
+        let mut applied = 0;
+        for t in threads {
+            applied += t
+                .join()
+                .unwrap()
+                .expect("migration run must not fail")
+                .len();
+        }
+        assert_eq!(
+            applied,
+            MIGRATIONS.len(),
+            "each migration applied exactly once"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn lane_ranges_are_respected() {
