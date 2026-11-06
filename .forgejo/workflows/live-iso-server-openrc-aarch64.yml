@@ -44,7 +44,7 @@ jobs:
     name: Build + test + publish live ISO (server-openrc-aarch64)
     runs-on: nightly-arm64   # heavy on-demand lane: 8 h runner timeout (TCG matrix 4+ h; per-push arm64 runners cancel at 3 h)
     container: catthehacker/ubuntu:act-latest
-    timeout-minutes: 178   # runners kill at 3 h (180); aarch64 TCG legitimately takes 170-178 min (170 cancelled run 690 at 170 min), x86_64 ~140
+    timeout-minutes: 420   # was 178 (the old 3 h arm64 runner cap): on nightly-arm64 (8 h runner timeout) the TCG matrix incl. the ZFS-default install (installer-finished waits up to 5100 s) needs ~4-5 h; at 178 the job was cancelled with 'context deadline exceeded' copying SUMMARY.md (runs 8653, 9060). Stays under the 8 h runner limit.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
