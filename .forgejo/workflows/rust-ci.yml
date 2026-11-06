@@ -578,7 +578,10 @@ jobs:
     # as a safety net in case the base image is ever stale/missing and it
     # falls back to a from-scratch build, but the expected path now is a
     # normal-length build.
-    timeout-minutes: 90
+    # 150 (was 90): run 781 was killed at exactly 90 min ('context deadline exceeded' copying SUMMARY.md) while
+    # the emerge was still compiling at crate 625/866: rw-man-02 ran at load 15-28 on 8 cores, so the build that
+    # takes 20-40 min on an idle host (runs 753-757) took >70 min. Not a hang or a regression.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
 
