@@ -322,7 +322,7 @@ Patronus specifics: it is a firewall/router appliance. A laptop with one wired N
 
 ## What is tested automatically
 
-`.forgejo/workflows/live-iso.yml` (daily, and on every `v*` tag) builds the ISO on a rw-man host and runs
+`.forgejo/workflows/live-iso-<variant>.yml (one workflow per image since 2026-11-06)` (daily, and on every `v*` tag) builds the ISO on a rw-man host and runs
 `gentoo/live-iso/common/qemu-test.py` under QEMU/KVM. Five QEMU runs per build (four full installs plus the no-answer-file check):
 
 | run | firmware / media | installer | WAN / LAN | SSH |

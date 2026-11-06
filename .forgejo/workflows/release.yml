@@ -3,7 +3,7 @@ name: Release
 # A pushed v* tag builds the two shipped binaries (patronus-web, patronus-cli) natively for the
 # architectures Patronus ships on and attaches the archives + .sha256 to the Forgejo release of that tag
 # (created here if it does not exist yet; the body is the CHANGELOG section of the version).
-# The stable live ISO is attached to the same release by live-iso.yml (docs/ISO-INSTALL.md "Stable ISO criteria").
+# The stable live ISO is attached to the same release by live-iso-<variant>.yml (docs/ISO-INSTALL.md "Stable ISO criteria").
 #
 # History: this workflow used to build x86_64/aarch64 gnu+musl and riscv64 with `cross` and upload through
 # GitHub-only actions. It had never produced a release: patronus-network links libmnl/libnftnl (nftables),
