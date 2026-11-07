@@ -21,12 +21,8 @@ on:
   # Burst of pushes = ONE run (replace: group). No cron.
   push:
     branches: [main]
+    tags: ['v*']
     paths:
-      - 'crates/**'
-      - 'frontend/**'
-      - 'operator/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
       - 'ci/nightly-installer-test/**'
       - 'gentoo/live-iso/**'
       - '.forgejo/workflows/nightly-realistic-installer-test.yml'

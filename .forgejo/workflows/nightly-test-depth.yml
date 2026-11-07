@@ -17,13 +17,10 @@ on:
   # job runs incremental on changed lines (full on Wednesdays). Replace: group below coalesces bursts. No cron.
   push:
     branches: [main]
+    tags: ['v*']
     paths:
-      - 'crates/**'
-      - 'frontend/**'
-      - 'operator/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
       - 'ci/mutants-floors.txt'
+      - 'ci/mutation-incremental.py'
       - '.forgejo/workflows/nightly-test-depth.yml'
   workflow_dispatch:
     inputs:

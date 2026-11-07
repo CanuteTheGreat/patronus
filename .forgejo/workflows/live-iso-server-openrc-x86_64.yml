@@ -29,11 +29,6 @@ on:
     branches: [main]
     tags: ['v*']
     paths:
-      - 'crates/**'
-      - 'frontend/**'
-      - 'operator/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
       - 'gentoo/**'
       - '.forgejo/workflows/live-iso-server-openrc-x86_64.yml'
   workflow_dispatch:

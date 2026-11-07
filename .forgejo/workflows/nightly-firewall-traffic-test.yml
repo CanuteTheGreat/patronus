@@ -38,12 +38,8 @@ on:
   # Burst of pushes = ONE run (replace: group). No cron.
   push:
     branches: [main]
+    tags: ['v*']
     paths:
-      - 'crates/**'
-      - 'frontend/**'
-      - 'operator/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
       - 'ci/**'
       - '.forgejo/workflows/nightly-firewall-traffic-test.yml'
   workflow_dispatch: {}
