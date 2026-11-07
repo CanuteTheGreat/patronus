@@ -112,6 +112,12 @@ jobs:
     # still compiling: clippy 13m40s, then `cargo install cargo-audit`
     # (release build, no cache hit) 10m47s, leaving ~5 min for the tests.
     timeout-minutes: 50
+    # 2026-11-07: run 803 (3d6ead3, arm64 runner): clippy's rustc for
+    # patronus-web was SIGKILLed (signal: 9) ~6 min after the last other crate
+    # finished = cgroup OOM at the 6g cap, not a code error. Cap cargo to 2
+    # parallel rustc and raise the cap to 8g.
+    env:
+      CARGO_BUILD_JOBS: 2
     # Build memory (2026-10-17, ~/.hermes/state/build-slimming/patronus.md):
     # debug = "line-tables-only" in .cargo/config.toml, mold, no incremental:
     # the workspace test build went from 20 GB of target/ (cgroup filled to
@@ -120,7 +126,7 @@ jobs:
     container:
       # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
       image: catthehacker/ubuntu:act-latest
-      options: --memory 6g --memory-swap 6g --cpus 4
+      options: --memory 8g --memory-swap 8g --cpus 4
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
