@@ -61,6 +61,11 @@ class RealSshd(unittest.TestCase):
 
     def test_login_with_the_key_only(self):
         sshd = shutil.which("sshd") or "/usr/sbin/sshd"
+        # sshd refuses to start without its privilege separation directory (absent in minimal CI containers)
+        try:
+            os.makedirs("/run/sshd", mode=0o755, exist_ok=True)
+        except OSError:
+            pass
         d = tempfile.mkdtemp()
         try:
             kp = os.path.join(d, "k")
