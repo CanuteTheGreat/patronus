@@ -61,7 +61,11 @@ docker exec -i "$TAG" kubectl apply -f - < "$WORK/crds.yaml"
 docker exec "$TAG" kubectl wait --for=condition=Established --timeout=60s crd --all
 
 # Real operator process (health on :8081 as the health tests expect).
-HEALTH_PORT=8081 METRICS_PORT=18080 RUST_LOG=info \
+# PATRONUS_API_URL points at a closed local port, not the default http://patronus-api:8081: that name does not exist here, so every
+# reconcile went to the runner's real DNS resolver and, when it was slow (run 798: 30 s+ per lookup), no Site got its first status
+# write inside the test's 30 s window ('operator never wrote a status'). A refused connection fails at once and the operator
+# writes its Failed status, which is all these tests need (they test the operator's status handling, not the Patronus API).
+PATRONUS_API_URL=http://127.0.0.1:9 HEALTH_PORT=8081 METRICS_PORT=18080 RUST_LOG=info \
   target/debug/patronus-operator > "$WORK/operator.log" 2>&1 &
 OP_PID=$!
 for _ in $(seq 1 60); do
