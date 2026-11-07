@@ -96,6 +96,9 @@ seg_servers() {
   ip netns exec nl-tv python3 "$NL_T/seg-ka.py" 8080 >/dev/null 2>&1 & NL_PIDS+=($!)
   sleep 1
 }
+# the daemon writes this DB while the script reads it: wait for its lock instead of
+# getting 'database is locked' and an empty result (run 782: empty device name)
+sqlite3() { command sqlite3 -cmd '.timeout 15000' "$@"; }
 # the LAN address lives in the store like on a real install
 seg_store_addr() {
   sqlite3 "$DB" "INSERT OR IGNORE INTO interface_addresses (interface_name, address, prefix_len, family) VALUES ('br0','192.168.50.1',24,'ipv4');

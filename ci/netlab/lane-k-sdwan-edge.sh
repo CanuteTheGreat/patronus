@@ -208,6 +208,10 @@ nl_ok "site A's peer for site B uses the preferred endpoint 203.0.114.2:51820"
 echo "=== the dashboard shows both sites and the measured paths"
 paths_ok() { dash GET /api/v1/paths '' "$JWT"; python3 -c 'import json; d=json.load(open("/tmp/dash.out")); assert len(d)>=2'; }
 nl_wait 60 paths_ok || { cat /tmp/dash.out; nl_fail "the dashboard has no paths"; }
+# a site reports Degraded for a moment while its second endpoint is first probed (run 782):
+# wait for both to settle to Active; the assertion below is unchanged
+sites_active() { dash GET /api/v1/sites '' "$JWT"; python3 -c 'import json; d=json.load(open("/tmp/dash.out")); assert len(d)==2 and all(s["status"].lower()=="active" for s in d)'; }
+nl_wait 60 sites_active || true
 dash GET /api/v1/sites '' "$JWT"
 python3 - /tmp/dash.out <<'PY' || nl_fail "dashboard sites"
 import json, sys
