@@ -324,6 +324,13 @@ pk_wait() { # up to 900 s for the newest job to leave 'running'
 # The emerge fetches from the real Gentoo binhost/mirrors; the CI host's upstream resolver now and then
 # answers SERVFAIL ("Name or service not known", DNSSEC no-signature) for a few minutes (run 782). Retry
 # the install JOB (3 attempts, growing pause); the assertion that it ends ok and installs igmpproxy stays.
+# The box's own systemd-resolved validates DNSSEC (allow-downgrade) and marks names whose upstream path drops
+# RRSIGs as "no-signature" failures (run 815: 3 attempts in a row, host resolver fine at the same minute). This
+# step tests the Portage install job, not DNSSEC, so turn validation off for the box's own resolver only.
+mkdir -p /etc/systemd/resolved.conf.d
+printf '[Resolve]\nDNSSEC=no\n' > /etc/systemd/resolved.conf.d/10-netlab-no-dnssec.conf
+systemctl restart systemd-resolved >/dev/null 2>&1 || true
+for i in $(seq 1 15); do getent hosts distfiles.gentoo.org >/dev/null 2>&1 && break; sleep 2; done
 for attempt in 1 2 3; do
   want 202 POST /api/packages/components/igmpproxy/install
   pk_wait
