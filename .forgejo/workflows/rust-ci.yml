@@ -874,6 +874,10 @@ jobs:
       options: --memory 4g --memory-swap 4g --cpus 2
     steps:
       - uses: actions/checkout@v4
+      - name: Shared build cache (rw-build-cache npm mirror)
+        continue-on-error: true
+        run: |
+          curl -fsS -m 5 http://10.1.10.103:8088/ci/env.sh -o /tmp/rw-cache-env.sh && RW_CACHE_WANT=npm RW_CACHE_EXPORT=1 . /tmp/rw-cache-env.sh || true
       - name: npm ci + tsc + vite build
         working-directory: frontend
         run: |
