@@ -107,7 +107,11 @@ jobs:
     # stall on the host is the leading theory, not a code bug). Adding an
     # explicit timeout here so a repeat produces a clear 'cancelled: timeout'
     # instead of a silent unexplained failure with a dead log stream.
-    timeout-minutes: 30
+    # 2026-11-07: raised 30 -> 50. Runs 38906 (81a6494) and 39107 (6d2a039)
+    # were killed at exactly the old limit while the job was healthy and
+    # still compiling: clippy 13m40s, then `cargo install cargo-audit`
+    # (release build, no cache hit) 10m47s, leaving ~5 min for the tests.
+    timeout-minutes: 50
     # Build memory (2026-10-17, ~/.hermes/state/build-slimming/patronus.md):
     # debug = "line-tables-only" in .cargo/config.toml, mold, no incremental:
     # the workspace test build went from 20 GB of target/ (cgroup filled to
