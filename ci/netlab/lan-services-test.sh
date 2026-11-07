@@ -311,7 +311,6 @@ echo "=== 10b. optional component through Portage: web (user patronus) -> applyd
 want 200 GET /api/packages
 command -v igmpproxy >/dev/null && fail "igmpproxy is installed before the test"
 [ "$(python3 -c 'import json; d=json.load(open("/tmp/api.out")); print(d["portage"])')" = True ] || fail "the Packages page does not see Portage"
-want 202 POST /api/packages/components/igmpproxy/install
 pk_wait() { # up to 900 s for the newest job to leave 'running'
   local i
   for i in $(seq 1 450); do
@@ -322,7 +321,16 @@ pk_wait() { # up to 900 s for the newest job to leave 'running'
   done
   fail "package job still running after 15 minutes"
 }
-pk_wait
+# The emerge fetches from the real Gentoo binhost/mirrors; the CI host's upstream resolver now and then
+# answers SERVFAIL ("Name or service not known", DNSSEC no-signature) for a few minutes (run 782). Retry
+# the install JOB (3 attempts, growing pause); the assertion that it ends ok and installs igmpproxy stays.
+for attempt in 1 2 3; do
+  want 202 POST /api/packages/components/igmpproxy/install
+  pk_wait
+  [ "$st" = ok ] && break
+  echo "install job attempt $attempt ended $st (network to the Gentoo mirrors?)"
+  [ "$attempt" = 3 ] || sleep $((attempt * 20))
+done
 [ "$st" = ok ] || { api GET /api/packages/jobs/1/log; cat /tmp/api.out; fail "install job ended $st"; }
 command -v igmpproxy >/dev/null || fail "the job succeeded but igmpproxy is not installed"
 JOB=$(python3 -c 'import json; d=json.load(open("/tmp/api.out")); print(d["jobs"][0]["id"])' < /dev/null 2>/dev/null || echo 1)
