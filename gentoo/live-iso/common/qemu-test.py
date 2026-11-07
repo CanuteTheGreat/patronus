@@ -36,9 +36,43 @@ PROJECTS = {
                      dbfiles=["/var/lib/patronus/config.db"], dbuser="patronus", logdirs=["/var/log/patronus"]),
 }
 PW = "Kx9!mQv2-tle-77Zp"          # >= 12 chars, mixed: passes the installer's strength rules
+PW_DISK = "Dq4#sB8-luks-63Nw"       # the disk passphrase (xfs-luks): the installer refuses any account password equal to it (secretcheck), so it is its own secret
 PW2, PW3 = "Rv7#nQ4-zeta-91Lk", "Tb3$wH8-omega-52Ud"   # console-menu password reset / factory reset
-FWD_WEB, FWD_SSH, FWD_WAN = 18443, 12222, 18444
 FWD_BIND = os.environ.get("QT_FWD_BIND", "127.0.0.1")     # 0.0.0.0 inside a container whose ports are published (screenshots of the web UI from outside)
+
+
+def _port_free(port, bind=None):
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        s.bind((bind or FWD_BIND, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def pick_fwd_ports():
+    """Host-side hostfwd ports for this process. Fixed 1822x/1244x numbers collided
+    when several QEMU guests ran on one host ('Could not set up host forwarding rule'),
+    so every process takes a free random block; QT_FWD_WEB/SSH/WAN override it."""
+    import random
+    env = [os.environ.get(k) for k in ("QT_FWD_WEB", "QT_FWD_SSH", "QT_FWD_WAN")]
+    if all(env):
+        return tuple(int(x or 0) for x in env)
+    rnd = random.SystemRandom()
+    for _ in range(200):
+        base = rnd.randrange(20000, 60000 - 8)
+        web, ssh, ssh2, wan = base, base + 1, base + 2, base + 3   # ssh2 = ssh+1 (WAN sshd forward), wan = FWD_WAN
+        cand = (web, ssh, ssh2, wan)
+        if all(_port_free(p) for p in cand):
+            return web, ssh, wan
+    raise RuntimeError("no free host ports for QEMU hostfwd")
+
+
+FWD_WEB, FWD_SSH, FWD_WAN = pick_fwd_ports()
 
 # ----------------------------------------------------------------------------- architectures
 import platform as _platform
@@ -659,7 +693,7 @@ def answer_toml(a, pubkey, pwhash):
              f'root_password_hash = "{pwhash}"', f'ssh_keys = ["{pubkey}"]', f"ssh_password_auth = {'true' if a.ssh_password_opt_in else 'false'}", f"console_menu_open = {'true' if a.console_open else 'false'}",
              "", "[disk]"] + ([] if a.fs_default else [f'filesystem = "{a.fs}"'])     # default run: no filesystem key = the installer's own default
     if a.fs == "xfs-luks":
-        lines += [f'luks_passphrase = "{PW}"']
+        lines += [f'luks_passphrase = "{PW_DISK}"']
     if a.fs == "zfs":
         lines += [f'zfs_raid = "{a.zfs_raid}"', 'disks = ["/dev/vda", "/dev/vdb"]' if a.zfs_raid == "mirror" else 'disks = ["/dev/vda"]']
     else:
@@ -992,7 +1026,7 @@ class Runner:
                     kb.key("TAB")                          # -> 'TEST MACHINE: NO disk encryption' (advanced row added by b9d3838; the VGA zfs-mirror run pressed ENTER on 'Show advanced options' and sat on the disk screen for 1700 s)
             kb.key("TAB")                                  # -> 'Show advanced options' (zfs single: next stop = buttons)
         elif a.fs == "xfs-luks":
-            kb.key("TAB"); kb.text(PW); kb.key("TAB"); kb.text(PW)        # disk passphrase + confirmation
+            kb.key("TAB"); kb.text(PW_DISK); kb.key("TAB"); kb.text(PW_DISK)        # disk passphrase + confirmation
             shot("03b-filesystem-xfs-luks-passphrase")
             kb.key("TAB")                                  # -> 'Show advanced options'
         else:
@@ -1249,9 +1283,9 @@ class Runner:
                 time.sleep(1)
             if a.fs == "xfs-luks":
                 ok = self.gfocus(vm, "Disk passphrase")
-                self.gtype(vm, PW)
+                self.gtype(vm, PW_DISK)
                 ok = self.gfocus(vm, "Confirm passphrase") and ok
-                self.gtype(vm, PW)
+                self.gtype(vm, PW_DISK)
                 self.step("gui-luks-passphrase-typed", ok, "disk passphrase + confirmation typed with the keyboard")
             if a.fs == "zfs" and (a.project == "horcrux" or mirror):
                 self.gexpand(vm)
