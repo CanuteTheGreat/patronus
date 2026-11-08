@@ -60,7 +60,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | Zero-touch provisioning (export/import, sealed) | `ci/netlab/lane-n-ztp.sh` | netlab | PASS 57 s |
 | DNS rebinding protection | `ci/netlab/lane-s-dns-rebind.sh` | netlab | PASS 24 s |
 | Traffic insight history by country/ASN/device | `ci/netlab/lane-s-insight.sh` | netlab | PASS 49 s |
-| SD-WAN dashboard HA cluster: election, token-gated RPC, replicated writes, leader SIGKILL failover, rejoin catch-up, no-quorum refusal (3 real dashboards) | `ci/netlab/lane-k-dashboard-ha.sh` | netlab | PASS 2026-11-08, Rust CI run 864 job 77320 (19 s, first CI run); haproxy front end still untested |
+| SD-WAN dashboard HA cluster: election, token-gated RPC, replicated writes, leader SIGKILL failover, rejoin catch-up, no-quorum refusal (3 real dashboards) | `ci/netlab/lane-k-dashboard-ha.sh` | netlab | PASS 2026-11-08, Rust CI run 864 job 77320 (19 s, first CI run) |
 | Device segmentation, default-deny isolation | `ci/netlab/lane-s-segmentation.sh` | netlab | PASS 112 s |
 | Parental time limits | `ci/netlab/lane-s-time.sh` | netlab | PASS 42 s |
 | Uplink health history, multi-probe, SLA | `ci/netlab/lane-s-uplink.sh` | netlab | PASS 143 s |
@@ -73,6 +73,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | IPsec site-to-site + service control + WireGuard from the unprivileged UI (OpenRC + systemd) | `ci/netlab/vpn-services-test.sh` | Gentoo stage3 container | PASS (both init paths; step success in job 76603) |
 | High availability: VIP failover, preempt, conntrack state sync (OpenRC + systemd) | `ci/netlab/ha-services-test.sh` | Gentoo stage3 container | PASS (both init paths; step success in job 76603) |
 | Per-device/group DNS policy + query logs (OpenRC + systemd) | `ci/netlab/segmentation-dns-services-test.sh` | Gentoo stage3 container | PASS (both init paths; step success in job 76603) |
+| Dashboard HA stack behind haproxy: generated TLS cert loads, stats page protected, writes through haproxy and directly on a follower replicate, 3-node election/failover (real emerge-built image + haproxy:2.8) | `ci/ha-e2e.sh` | Gentoo-built image + docker | PASS 2026-11-08, Rust CI run 875 (11982) job 77761 on ec272a5b: `[ha-e2e] haproxy up with generated cert (TLS OK, stats protected)`, `two sites created (haproxy + follower dashboard2)`, `[ha-e2e] PASS` (it runs in the Gentoo Docker Build job, so it was already gated on every push; it was missing from this matrix) |
 
 ## Not in the per-push run
 
@@ -85,6 +86,6 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 ## Gaps (no end-to-end scenario found; each is a feature to test next)
 
 Checked against `ci/netlab/*.sh` (grep, 2026-11-07): `lane-k-sdwan-edge.sh` runs one patronus-dashboard
-as the SD-WAN controller, but nothing exercised the HA dashboard stack until `lane-k-dashboard-ha.sh` (three dashboards, no haproxy; the haproxy front end is still untested), the eBPF/XDP data plane
+as the SD-WAN controller, but nothing exercised the HA dashboard stack until `lane-k-dashboard-ha.sh` (three dashboards; the haproxy front end is covered by `ci/ha-e2e.sh`, see its row), the eBPF/XDP data plane
 (compile-only check in CI), or the web UI's phone layout (checked by hand with Playwright, no gate).
 Add a row when a scenario lands.
