@@ -10,8 +10,11 @@ if [ "$ARCH" = x86_64 ]; then
     "uefi-usb-auto-zfs-default-tpm|--mode uefi --media usb --flow auto --fs zfs --zfs-raid single --mem 5120 --tpm swtpm --tpm-negative --restarts 2"
     # >= 8 GB, no TPM: default = ZFS, NOT encrypted, boots unattended
     "bios-cdrom-auto-zfs-default-notpm|--mode bios --media cdrom --flow auto --fs zfs --zfs-raid single --mem 5120 --restarts 1"
-    # < 8 GB with a TPM: XFS fallback (plain XFS: LUKS would need a prompt), boots unattended
-    "uefi-usb-auto-xfs-fallback-lowram-tpm|--mode uefi --media usb --flow auto --mem 4096 --tpm swtpm --restarts 1"
+    # < 8 GB with a TPM: XFS fallback (plain XFS: LUKS would need a prompt), boots unattended.
+    # NAME LENGTH MATTERS: the harness puts QEMU unix sockets at <out>/<name>/2-installed.serial and AF_UNIX paths are capped at 107 bytes; in the job
+    # (/workspace/CanuteTheGreat/patronus/iso-out/evidence/) the old name 'uefi-usb-auto-xfs-fallback-lowram-tpm' made that path 108 bytes, so the installed
+    # boot never got a serial socket (runs 851, 855: "QEMU never created its serial socket in 3 tries"). Keep entry names <= 36 characters.
+    "uefi-usb-auto-xfs-lowram-tpm|--mode uefi --media usb --flow auto --mem 4096 --tpm swtpm --restarts 1"
     # ZFS mirror, two disks, guided installer on the serial line
     "uefi-usb-auto-zfs-mirror|--mode uefi --media usb --flow auto --fs zfs --zfs-raid mirror --mem 5120 --tpm swtpm"
     # ext4 stays reachable as a manual choice, never the default

@@ -50,7 +50,7 @@ jobs:
     name: Build + test + publish live ISO (server-openrc-x86_64)
     runs-on: kvm-x86_64
     container: catthehacker/ubuntu:act-latest
-    timeout-minutes: 178   # runners kill at 3 h (180); aarch64 TCG legitimately takes 170-178 min (170 cancelled run 690 at 170 min), x86_64 ~140
+    timeout-minutes: 330   # kvm-x86_64 runner cap is 6 h (rw-man-01 forgejo-runner-kvm config timeout: 6h, not the old 3 h). Build ~50 min + 13 QEMU installs/boots ~2.2 h + boot-modes uefi/bios (3000 s deadline each) did not fit 178: runs 851 and 855 were cancelled at exactly 178 min inside boot-modes-uefi ('context deadline exceeded')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
