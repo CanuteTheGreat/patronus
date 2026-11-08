@@ -60,6 +60,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | Zero-touch provisioning (export/import, sealed) | `ci/netlab/lane-n-ztp.sh` | netlab | PASS 57 s |
 | DNS rebinding protection | `ci/netlab/lane-s-dns-rebind.sh` | netlab | PASS 24 s |
 | Traffic insight history by country/ASN/device | `ci/netlab/lane-s-insight.sh` | netlab | PASS 49 s |
+| SD-WAN dashboard HA cluster: election, token-gated RPC, replicated writes, leader SIGKILL failover, rejoin catch-up, no-quorum refusal (3 real dashboards) | `ci/netlab/lane-k-dashboard-ha.sh` | netlab | NEW 2026-11-08, first CI run pending |
 | Device segmentation, default-deny isolation | `ci/netlab/lane-s-segmentation.sh` | netlab | PASS 112 s |
 | Parental time limits | `ci/netlab/lane-s-time.sh` | netlab | PASS 42 s |
 | Uplink health history, multi-probe, SLA | `ci/netlab/lane-s-uplink.sh` | netlab | PASS 143 s |
@@ -77,14 +78,13 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 
 | Feature | Test | Status |
 |---|---|---|
-| Per-device Wi-Fi credentials (WPA2/WPA3, revoke, rotate, enrol, quarantine) | `ci/netlab/lane-s-wifi-hwsim.sh` | SKIPS in the per-push netlab job (no hostapd/iw in that image, needs mac80211_hwsim); runs for real in the `wifi-hwsim` job of nightly-test-depth.yml. The "passed in 0 s" line in rust-ci is the skip, not a pass. |
+| Per-device Wi-Fi credentials (WPA2/WPA3, revoke, rotate, enrol, quarantine) | `ci/netlab/lane-s-wifi-hwsim.sh` | SKIPS in the per-push netlab job (no hostapd/iw in that image, needs mac80211_hwsim); runs for real in the `wifi-hwsim` job of nightly-test-depth.yml (verified: run 827, job 74523 on the nightly runner, 6 hwsim radios, 22 `ok` lines incl. WPA3/SAE, `PASS lane-s-wifi-hwsim`, 2026-11-07 21:16 UTC). The "passed in 0 s" line in rust-ci is the skip, not a pass. |
 | Mutation score, 30 power cuts (`netlab-deep`) | nightly-test-depth.yml | nightly, see its run |
 | k3s CNI operator | rust-ci "Operator tests against a real k3s cluster" | green in 11704 |
 
 ## Gaps (no end-to-end scenario found; each is a feature to test next)
 
 Checked against `ci/netlab/*.sh` (grep, 2026-11-07): `lane-k-sdwan-edge.sh` runs one patronus-dashboard
-as the SD-WAN controller, but nothing exercises the HA dashboard stack (three dashboards + haproxy from
-docker-compose.ha.yml, `crates/patronus-dashboard/src/ha/` state sync/failover), the eBPF/XDP data plane
+as the SD-WAN controller, but nothing exercised the HA dashboard stack until `lane-k-dashboard-ha.sh` (three dashboards, no haproxy; the haproxy front end is still untested), the eBPF/XDP data plane
 (compile-only check in CI), or the web UI's phone layout (checked by hand with Playwright, no gate).
 Add a row when a scenario lands.
