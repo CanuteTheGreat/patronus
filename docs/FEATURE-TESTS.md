@@ -60,7 +60,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | Zero-touch provisioning (export/import, sealed) | `ci/netlab/lane-n-ztp.sh` | netlab | PASS 57 s |
 | DNS rebinding protection | `ci/netlab/lane-s-dns-rebind.sh` | netlab | PASS 24 s |
 | Traffic insight history by country/ASN/device | `ci/netlab/lane-s-insight.sh` | netlab | PASS 49 s |
-| SD-WAN dashboard HA cluster: election, token-gated RPC, replicated writes, leader SIGKILL failover, rejoin catch-up, no-quorum refusal (3 real dashboards) | `ci/netlab/lane-k-dashboard-ha.sh` | netlab | NEW 2026-11-08, first CI run pending |
+| SD-WAN dashboard HA cluster: election, token-gated RPC, replicated writes, leader SIGKILL failover, rejoin catch-up, no-quorum refusal (3 real dashboards) | `ci/netlab/lane-k-dashboard-ha.sh` | netlab | PASS 2026-11-08, Rust CI run 864 job 77320 (19 s, first CI run); haproxy front end still untested |
 | Device segmentation, default-deny isolation | `ci/netlab/lane-s-segmentation.sh` | netlab | PASS 112 s |
 | Parental time limits | `ci/netlab/lane-s-time.sh` | netlab | PASS 42 s |
 | Uplink health history, multi-probe, SLA | `ci/netlab/lane-s-uplink.sh` | netlab | PASS 143 s |
