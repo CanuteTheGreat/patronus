@@ -200,7 +200,7 @@ jobs:
     # (6501ee75/7bdac073), the seeded default rules really being in
     # nftables, and the SD-WAN ICMP/UDP health probes.
     name: Privileged netfilter + raw-socket tests (NET_ADMIN)
-    runs-on: linux-cross-x86_64
+    runs-on: linux-any   # arch-neutral; verified on the arm64 runner 2026-11-08 (x86 slots or Graviton, whichever frees first)
     needs: plan
     if: needs.plan.outputs.dup != 'true'
     timeout-minutes: 40
@@ -514,7 +514,7 @@ jobs:
 
   check-ebpf:
     name: Check eBPF crate (compile only, no run)
-    runs-on: linux-cross-x86_64
+    runs-on: linux-any   # arch-neutral; verified on the arm64 runner 2026-11-08 (x86 slots or Graviton, whichever frees first)
     needs: plan
     if: needs.plan.outputs.dup != 'true'
     timeout-minutes: 15
