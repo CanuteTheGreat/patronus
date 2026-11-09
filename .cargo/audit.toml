@@ -24,6 +24,12 @@ ignore = [
     "RUSTSEC-2026-0098", # rustls-webpki 0.101.7 - transitive via old rustls/tonic chain
     "RUSTSEC-2026-0104", # rustls-webpki 0.101.7 - transitive via old rustls/tonic chain
     "RUSTSEC-2026-0099", # rustls-webpki 0.101.7 - transitive via old rustls/tonic chain
+    "RUSTSEC-2026-0459", # libsqlite3-sys 0.30.1 (bundled C SQLite CVE-2026-119375, published
+                         # 2026-10-30) - pulled in by sqlx 0.8 (sqlite feature) across the
+                         # workspace. The fixed libsqlite3-sys >=0.39 is only reachable via
+                         # sqlx 0.9, a breaking upgrade deferred to a dedicated pass (cannot
+                         # be build-verified in a CI-fix commit). Databases are local files
+                         # written by patronus itself, not attacker-supplied SQLite files.
 ]
 
 # Unmaintained-crate warnings (not vulnerabilities) for transitive deps we
