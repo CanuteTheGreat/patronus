@@ -892,6 +892,7 @@ jobs:
       - name: Phone layout gate (390 and 360 px, every page, real Chromium)
         working-directory: frontend
         run: |
-          python3 -m pip install --user --quiet playwright
-          python3 -m playwright install --with-deps chromium
-          python3 scripts/phone-layout-gate.py /tmp/phone-layout
+          python3 -m venv /tmp/pw-venv || { sudo apt-get update -qq && sudo apt-get install -y python3-venv && python3 -m venv /tmp/pw-venv; }
+          /tmp/pw-venv/bin/pip install --quiet playwright
+          /tmp/pw-venv/bin/python -m playwright install --with-deps chromium
+          /tmp/pw-venv/bin/python scripts/phone-layout-gate.py /tmp/phone-layout
