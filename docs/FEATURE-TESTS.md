@@ -64,6 +64,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | Device segmentation, default-deny isolation | `ci/netlab/lane-s-segmentation.sh` | netlab | PASS 112 s |
 | Parental time limits | `ci/netlab/lane-s-time.sh` | netlab | PASS 42 s |
 | Uplink health history, multi-probe, SLA | `ci/netlab/lane-s-uplink.sh` | netlab | PASS 143 s |
+| Dashboard HTTPS: self-signed cert generated on first start (key 0600, SANs), served to the LAN, name verified, untrusted/wrong-name refused, plain HTTP refused, Secure cookie, TLS 1.2/1.3, same cert after restart, operator-supplied cert wins | `ci/netlab/lane-n-tls.sh` | netlab | PENDING first CI run (added 2026-11-09) |
 
 ## Features (real Gentoo image, OpenRC and systemd)
 
@@ -79,7 +80,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 
 | Feature | Test | Status |
 |---|---|---|
-| Dashboard UI phone layout: login + 8 pages at 390 and 360 px, no sideways scroll, nothing sticking out, navigation reachable (real Chromium, mocked APIs) | `frontend/scripts/phone-layout-gate.py` (rust-ci "Dashboard UI" job) | FAIL on first run (run 889 job 78282): topology legend stuck out at 360 px; fixed (legend wraps), re-run pending |
+| Dashboard UI phone layout: login + 8 pages at 390 and 360 px, no sideways scroll, nothing sticking out, navigation reachable (real Chromium, mocked APIs) | `frontend/scripts/phone-layout-gate.py` (rust-ci "Dashboard UI" job) | PASS 2026-11-09, run on 5f578ac9, task 42538 (first run 889 failed on the topology legend at 360 px; fixed in 5f578ac9) |
 | Per-device Wi-Fi credentials (WPA2/WPA3, revoke, rotate, enrol, quarantine) | `ci/netlab/lane-s-wifi-hwsim.sh` | SKIPS in the per-push netlab job (no hostapd/iw in that image, needs mac80211_hwsim); runs for real in the `wifi-hwsim` job of nightly-test-depth.yml (verified: run 827, job 74523 on the nightly runner, 6 hwsim radios, 22 `ok` lines incl. WPA3/SAE, `PASS lane-s-wifi-hwsim`, 2026-11-07 21:16 UTC). The "passed in 0 s" line in rust-ci is the skip, not a pass. |
 | Mutation score, 30 power cuts (`netlab-deep`) | nightly-test-depth.yml | nightly, see its run |
 | k3s CNI operator | rust-ci "Operator tests against a real k3s cluster" | green in 11704 |
