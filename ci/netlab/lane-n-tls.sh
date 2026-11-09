@@ -52,6 +52,8 @@ rc=0; C curl -s -m 10 -o /dev/null "$NL_UI/login" || rc=$?
 nl_ok "a client that does not trust the self-signed certificate is refused (curl exit 60)"
 
 echo "=== plain HTTP on the HTTPS port, protocol versions, Secure cookie"
+# curl leaves -o untouched when nothing answers, so clear the file the earlier checks filled
+: > "$NL_OUT"
 code=$(C curl -s -m 5 -o "$NL_OUT" -w '%{http_code}' "http://$NL_RTR_LAN:8443/login" || true)
 if [ "$code" = 200 ] || grep -qF 'login-form' "$NL_OUT" 2>/dev/null; then nl_fail "plain HTTP on 8443 served the dashboard ($code)"; fi
 nl_ok "plain HTTP on the HTTPS port does not serve the dashboard (answer '$code')"

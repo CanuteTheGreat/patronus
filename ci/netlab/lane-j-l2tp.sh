@@ -65,11 +65,19 @@ isp_ppp() { ISP ip -o addr show 2>/dev/null | grep 'ppp[0-9]* .*inet 10.88.0.' >
 connect() { # USER
   client_up "$1"
   nl_wait 25 isp_ppp && return 0
-  echo "note: no PPP address after 25 s; starting the client again"
-  tail -5 /tmp/l2tp-client.log || true
-  client_down
-  client_up "$1"
-  nl_wait 40 isp_ppp
+  # a tunnel the server still holds for the dead client makes the next SCCRQ
+  # fail with "out of order control packet" until the server's hello timeout
+  # drops it (run 896 job 78937: both the 2nd and the 3rd start wedged right
+  # after the reboot): start again up to twice more, pausing between tries
+  for try in 2 3; do
+    echo "note: no PPP address; starting the client again (try $try of 3)"
+    tail -5 /tmp/l2tp-client.log || true
+    client_down
+    sleep 20
+    client_up "$1"
+    nl_wait 40 isp_ppp && return 0
+  done
+  return 1
 }
 
 nl_boot "$DB"
