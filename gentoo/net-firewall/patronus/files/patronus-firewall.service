@@ -7,14 +7,26 @@
 # then applies every subsystem in dependency order:
 #   sysctl -> interfaces/VLANs -> routes/gateways -> firewall/NAT -> services
 Description=Patronus boot apply (sysctl, interfaces, routes, firewall/NAT, services)
-After=network-pre.target
+After=network-pre.target local-fs.target systemd-udev-trigger.service
 Before=network.target
 Wants=network-pre.target
+RequiresMountsFor=/var/lib/patronus
+# Never give up: a failed boot apply leaves NO forwarding, and the health check
+# of the router that steers traffic here only proves ping + HTTPS. After an
+# unclean power-off (qm stop/start) this unit stayed failed/stopped while
+# patronus-web was up, black-holing the clients until someone restarted it.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# Hand a store that root recreated or recovered after a crash back to the
+# unprivileged patronus-web user (the leading '-' keeps a missing file fatal-free).
+ExecStartPre=-/usr/bin/chown patronus:patronus /var/lib/patronus/config.db /var/lib/patronus/config.db-wal /var/lib/patronus/config.db-shm /var/lib/patronus/config.db-journal
 ExecStart=/usr/bin/patronus apply
+# Retry a failed apply (NIC not renamed yet, store still recovering, ...).
+Restart=on-failure
+RestartSec=3
 ExecReload=/usr/bin/patronus apply
 ExecStop=/usr/bin/patronus firewall flush
 

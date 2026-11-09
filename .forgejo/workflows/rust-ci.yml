@@ -464,6 +464,8 @@ jobs:
             cargo test -p "$c" --all-features
             echo "::endgroup::"
           done
+      - name: Boot apply survives a transient failure (systemd Restart, OpenRC retry)
+        run: ci/check-boot-apply-resilience.sh
       - name: Build patronus-cli once per ebuild USE-flag feature
         run: ci/use-flag-feature-check.sh
 

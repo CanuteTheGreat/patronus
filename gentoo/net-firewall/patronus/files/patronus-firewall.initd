@@ -14,6 +14,7 @@ extra_started_commands="reload"
 
 depend() {
 	need localmount
+	use dev udev
 	before net
 	provide firewall
 }
@@ -43,9 +44,15 @@ start() {
 	# ip_forward=0 until someone re-applied by hand. Forwarding is switched
 	# on by the apply itself (sysctl stage) from the stored config, after the
 	# ruleset is in place, so a failed apply stays fail-closed.
-	PATRONUS_DEFER_SERVICES=1 /usr/bin/patronus apply \
-		|| { sleep 2; PATRONUS_DEFER_SERVICES=1 /usr/bin/patronus apply; }
-	local rc=$?
+	# Up to 5 tries, 3 s apart (NIC not up yet, store recovering after a
+	# power-off): a service left stopped means no forwarding at all.
+	local rc=1 try=0
+	while [ "$try" -lt 5 ]; do
+		PATRONUS_DEFER_SERVICES=1 /usr/bin/patronus apply && { rc=0; break; }
+		rc=$?
+		try=$((try + 1))
+		[ "$try" -lt 5 ] && sleep 3
+	done
 	fix_store_perms
 	eend $rc
 }
