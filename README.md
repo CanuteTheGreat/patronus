@@ -9,6 +9,8 @@
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Platform: Gentoo](https://img.shields.io/badge/Platform-Gentoo-purple.svg)](https://www.gentoo.org/)
 
+**Website and docs: [patronus.errant.solutions](https://patronus.errant.solutions)**
+
 Patronus is built for Gentoo first: it ships as an ebuild in this
 repository's own overlay (`gentoo/net-firewall/patronus/`), with USE flags
 selecting what is compiled in (see [AGENTS.md](AGENTS.md)). It is written in
