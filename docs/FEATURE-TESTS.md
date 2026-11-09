@@ -37,7 +37,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | Dynamic routing BGP/OSPF (FRR) | `ci/netlab/lane-j-frr.sh` | netlab | PASS 82 s |
 | Intrusion detection / prevention | `ci/netlab/lane-j-ids.sh` | netlab | PASS 59 s |
 | IGMP proxy (multicast) | `ci/netlab/lane-j-igmp.sh` | netlab | PASS 34 s |
-| L2TP server (real client) | `ci/netlab/lane-j-l2tp.sh` | netlab | PASS 46 s |
+| L2TP server (real client) | `ci/netlab/lane-j-l2tp.sh` | netlab | PASS 38 s, 2026-11-09 run 898 job 79308 (after post-reboot dial retry) |
 | NAT64 / DNS64 | `ci/netlab/lane-j-nat64.sh` | netlab | PASS 19 s |
 | NetFlow / IPFIX export | `ci/netlab/lane-j-netflow.sh` | netlab | PASS 17 s |
 | Remote syslog forwarding | `ci/netlab/lane-j-syslog.sh` | netlab | PASS 28 s |
@@ -64,7 +64,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | Device segmentation, default-deny isolation | `ci/netlab/lane-s-segmentation.sh` | netlab | PASS 112 s |
 | Parental time limits | `ci/netlab/lane-s-time.sh` | netlab | PASS 42 s |
 | Uplink health history, multi-probe, SLA | `ci/netlab/lane-s-uplink.sh` | netlab | PASS 143 s |
-| Dashboard HTTPS: self-signed cert generated on first start (key 0600, SANs), served to the LAN, name verified, untrusted/wrong-name refused, plain HTTP refused, Secure cookie, TLS 1.2/1.3, same cert after restart, operator-supplied cert wins | `ci/netlab/lane-n-tls.sh` | netlab | PENDING first CI run (added 2026-11-09) |
+| Dashboard HTTPS: self-signed cert generated on first start (key 0600, SANs), served to the LAN, name verified, untrusted/wrong-name refused, plain HTTP refused, Secure cookie, TLS 1.2/1.3, same cert after restart, operator-supplied cert wins | `ci/netlab/lane-n-tls.sh` | netlab | PASS 2026-11-09, Rust CI run 898 Netlab features job 79308 (9 s) |
 
 ## Features (real Gentoo image, OpenRC and systemd)
 
