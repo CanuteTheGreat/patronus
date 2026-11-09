@@ -868,7 +868,7 @@ jobs:
     # linux-any: arch-independent, served by the arm64 hosts and the x86 linux-cross slots
     # (ctg-infrastructure ci-runners); ci-rust-env.sh pins mold/sccache for both arches.
     runs-on: linux-any
-    timeout-minutes: 15
+    timeout-minutes: 30
     container:
       image: catthehacker/ubuntu:act-latest
       options: --memory 4g --memory-swap 4g --cpus 2
@@ -889,3 +889,9 @@ jobs:
           npm run check:theme
           test -f ../static/index.html
           grep -l "ha/cluster" ../static/assets/*.js
+      - name: Phone layout gate (390 and 360 px, every page, real Chromium)
+        working-directory: frontend
+        run: |
+          python3 -m pip install --user --quiet playwright
+          python3 -m playwright install --with-deps chromium
+          python3 scripts/phone-layout-gate.py /tmp/phone-layout
