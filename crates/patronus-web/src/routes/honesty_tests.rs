@@ -194,6 +194,10 @@ async fn backups_are_real_files_and_create_writes_one() {
 
     let (_, page) = a.call(Method::GET, "/system", None).await;
     assert!(page.contains(&name), "the System page lists the real file");
+    assert!(
+        page.contains("id=\"capture-card\"") && page.contains("/api/system/capture"),
+        "the System page offers the packet capture form"
+    );
 
     let (s, _) = a
         .call(Method::DELETE, &format!("/api/system/backups/{name}"), None)

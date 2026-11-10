@@ -100,6 +100,7 @@ RDEPEND="
 	ha? ( sys-cluster/keepalived net-firewall/conntrack-tools )
 	syslog? ( app-admin/rsyslog )
 	igmp? ( net-misc/igmpproxy )
+	net-analyzer/tcpdump
 	nat64? ( net-proxy/tayga )
 	l2tp? ( net-dialup/xl2tpd net-dialup/ppp )
 	upnp? ( net-misc/miniupnpd[nftables] )

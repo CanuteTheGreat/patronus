@@ -332,6 +332,24 @@
 </div>
 {% endif %}
 
+{% if is_admin %}
+<div class="card" id="capture-card">
+    <div class="card-header"><h2 class="card-title">Packet capture</h2></div>
+    <p class="text-sm text-muted">Runs tcpdump on one interface and shows the decoded packets (at most 500 packets or 30 seconds). Leave a field empty to match everything.</p>
+    <form class="lan-form" id="capture-form" onsubmit="return runCapture(event)">
+        <label>Interface <input name="interface" required placeholder="eth1" maxlength="15"></label>
+        <label>Protocol <select name="proto"><option value="">any</option><option>tcp</option><option>udp</option><option>icmp</option><option>icmp6</option><option>arp</option></select></label>
+        <label>Host (IP) <input name="host" placeholder="192.168.1.10"></label>
+        <label>Port <input name="port" type="number" min="1" max="65535"></label>
+        <label>Packets <input name="count" type="number" min="1" max="500" value="50"></label>
+        <label>Seconds <input name="seconds" type="number" min="1" max="30" value="10"></label>
+        <button class="btn btn-primary btn-sm" id="capture-btn" type="submit">Capture</button>
+    </form>
+    <p class="text-sm" id="capture-status"></p>
+    <pre class="mono text-sm" id="capture-out" style="max-height:24em;overflow:auto;white-space:pre-wrap"></pre>
+</div>
+{% endif %}
+
 <div class="card" id="events-card">
     <div class="card-header"><h2 class="card-title">Events and webhooks</h2></div>
     <p class="text-sm text-muted">Gateway up/down, gateway-group failover, tunnel up/down, HA state changes and configuration
@@ -589,6 +607,22 @@
     function setPassword(id, name) {
         const pw = prompt('New password for ' + name + ' (12+ characters):');
         if (pw) call('PUT', '/api/system/users/' + id, {password: pw});
+    }
+    async function runCapture(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements, st = document.getElementById('capture-status'), out = document.getElementById('capture-out');
+        const body = {interface: f['interface'].value.trim()};
+        if (f['proto'].value) body.proto = f['proto'].value;
+        if (f['host'].value.trim()) body.host = f['host'].value.trim();
+        for (const k of ['port', 'count', 'seconds']) if (f[k].value) body[k] = parseInt(f[k].value, 10);
+        const btn = document.getElementById('capture-btn');
+        btn.disabled = true; out.textContent = ''; st.textContent = 'Capturing for up to ' + (body.seconds || 10) + ' s...';
+        const j = await post('/api/system/capture', body);
+        btn.disabled = false;
+        if (!j) { st.textContent = 'Capture failed.'; return false; }
+        st.textContent = j.count + ' packet(s) on ' + j.interface + (j.filter ? ' (filter: ' + j.filter + ')' : '') + (j.truncated ? ', stopped at the packet limit' : '');
+        out.textContent = j.packets.join('\n');
+        return false;
     }
     async function post(url, body, raw, method) {
         const r = await fetch(url, {
