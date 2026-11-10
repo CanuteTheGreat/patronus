@@ -101,6 +101,9 @@ old_rules=$(sqlite3 "$DB" "SELECT name||'|'||chain||'|'||action||'|'||coalesce(d
 old_migs=$(migrations "$DB")
 REBIND_BASELINE=$(sqlite3 "$DB" "SELECT coalesce(value,'') FROM lan_settings WHERE key='dns.rebind_protection'" 2>/dev/null || true)
 
+# Snapshot of the store as the previous release left it: what an operator copies aside before upgrading.
+sqlite3 "$DB" ".backup /t/prev-preupgrade.db"
+
 echo "--- upgrade: reboot into HEAD"
 nl_boot "$DB"
 nl_ok "HEAD booted the previous release's store (migrations $old_migs -> $(migrations "$DB"))"
@@ -121,6 +124,47 @@ nl_api POST /firewall/rules '{"name":"head-rule","chain":"forward","action":"dro
 nl_expect_http_blocked "HEAD edit on the upgraded store enforced" http://blocked.example.test:8080/
 nl_web_stop
 nl_ok "upgraded store is editable from HEAD's web UI"
+
+# Roadmap criterion 2, rollback half: put the previous release back after the upgrade.
+rb_boot() { # LABEL: reboot with the PREVIOUS release's binary on $DB
+  nl_up
+  R "$PATRONUS_OLD_BIN" --db "$DB" apply --bootstrap "$NL_TOML" >"$NL_OUT" 2>&1 \
+    || { cat "$NL_OUT"; nl_fail "$1: previous release could not boot the store"; }
+  nl_ok "$1: previous release booted the store"
+}
+rb_assert() { # LABEL: the pre-upgrade rules are enforced again, config + services intact
+  nl_assert_nft_has prev-block prev-snat
+  nl_expect_http_blocked "$1: prev-block enforced" http://blocked.example.test/
+  nl_expect_online
+  nl_expect_wan_closed
+  [ "$(sqlite3 "$DB" "SELECT name||'|'||chain||'|'||action||'|'||coalesce(dport,'') FROM firewall_rules WHERE name='prev-block'")" \
+     = "$(grep '^prev-block|' <<<"$old_rules")" ] || nl_fail "$1: prev-block row changed"
+  WEB=$PATRONUS_OLD_WEB nl_web_start "$DB"; nl_login
+  nl_api GET /firewall/rules; grep -q prev-block "$NL_OUT" || nl_fail "$1: previous release's web lost prev-block"
+  nl_web_stop
+  nl_ok "$1: previous release's web UI serves the rules"
+}
+
+echo "=== 3. rollback: previous release on the store HEAD already migrated and edited"
+nl_web_stop 2>/dev/null || true
+rb_boot "downgrade in place"
+rb_assert "downgrade in place"
+nl_assert_nft_has head-rule   # a rule created after the upgrade survives the rollback (additive migrations)
+[ "$(sqlite3 "$DB" "SELECT count(*) FROM firewall_rules WHERE name='head-rule'")" = 1 ] || nl_fail "downgrade lost head-rule"
+nl_ok "downgrade in place keeps the rule made after the upgrade"
+
+echo "=== 4. rollback: restore the pre-upgrade snapshot, then upgrade again"
+cp /t/prev-preupgrade.db "$DB"; rm -f "$DB-wal" "$DB-shm"
+[ "$(migrations "$DB")" = "$old_migs" ] || nl_fail "snapshot does not carry the old migrations"
+rb_boot "snapshot restore"
+rb_assert "snapshot restore"
+[ "$(sqlite3 "$DB" "SELECT count(*) FROM firewall_rules WHERE name='head-rule'")" = 0 ] || nl_fail "snapshot restore kept head-rule"
+nl_assert_nft_lacks head-rule
+nl_boot "$DB"   # HEAD again on the rolled-back store
+nl_assert_store_ok "$DB"
+nl_assert_nft_has prev-block prev-snat
+nl_expect_http_blocked "re-upgrade after rollback: prev-block enforced" http://blocked.example.test/
+nl_ok "re-upgrade after a rollback works"
 
 nl_down
 echo "UPGRADE: ALL CHECKS PASSED"
