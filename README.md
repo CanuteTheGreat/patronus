@@ -260,6 +260,9 @@ that are not finished are listed separately under
   session state is shown live. [C52]
 - Wake-on-LAN: saved hosts (MAC + interface) are woken with a magic packet
   broadcast on their network. [C53]
+- Packet capture (admin API `POST /api/system/capture`): captures packets on one
+  interface with tcpdump, filtered by protocol, host and port (at most 500
+  packets or 30 seconds), and returns the decoded lines. [C72]
 - SD-WAN edge (USE=sdwan): the edge agent enrolls this firewall with a
   Patronus SD-WAN dashboard using a one-time token, builds an encrypted
   WireGuard mesh to the other sites with their subnets routed through it,

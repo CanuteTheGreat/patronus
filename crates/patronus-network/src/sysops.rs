@@ -326,6 +326,136 @@ fn power(action: &str) -> Result<Value> {
 }
 
 // ---------------------------------------------------------------------------
+// packet capture (diagnostics)
+// ---------------------------------------------------------------------------
+
+/// Validated parameters of one capture.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CaptureSpec {
+    pub iface: String,
+    pub count: u32,
+    pub seconds: u32,
+    /// libpcap filter built from the structured fields (never from free text)
+    pub filter: String,
+}
+
+fn invalid(m: impl Into<String>) -> Error {
+    Error::Config(format!("Invalid capture request: {}", m.into()))
+}
+
+/// Check the request and build the pcap filter from its structured fields
+/// (`proto`, `host`, `port`): no field is ever passed to tcpdump as free text.
+pub fn capture_spec(params: &Value) -> Result<CaptureSpec> {
+    let iface = params
+        .get("interface")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if iface.is_empty()
+        || iface.len() > 15
+        || !iface
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+        || iface.starts_with('-')
+    {
+        return Err(invalid(
+            "interface must be a device name (letters, digits . _ -)",
+        ));
+    }
+    let num = |key: &str, def: u64, max: u64| -> Result<u32> {
+        match params.get(key) {
+            None | Some(Value::Null) => Ok(def as u32),
+            Some(v) => match v.as_u64() {
+                Some(n) if (1..=max).contains(&n) => Ok(n as u32),
+                _ => Err(invalid(format!("{key} must be a number from 1 to {max}"))),
+            },
+        }
+    };
+    let count = num("count", 50, 500)?;
+    let seconds = num("seconds", 10, 30)?;
+    let mut parts: Vec<String> = Vec::new();
+    let proto = match params.get("proto") {
+        None | Some(Value::Null) => None,
+        Some(v) => match v.as_str() {
+            Some("") | Some("any") => None,
+            Some(p @ ("tcp" | "udp" | "icmp" | "icmp6" | "arp")) => Some(p),
+            _ => return Err(invalid("proto must be tcp, udp, icmp, icmp6, arp or any")),
+        },
+    };
+    if let Some(p) = proto {
+        parts.push(p.to_string());
+    }
+    match params.get("host") {
+        None | Some(Value::Null) => {}
+        Some(v) => match v.as_str() {
+            Some("") => {}
+            Some(h) => {
+                let ip: std::net::IpAddr = h
+                    .parse()
+                    .map_err(|_| invalid("host must be an IPv4 or IPv6 address"))?;
+                parts.push(format!("host {ip}"));
+            }
+            None => return Err(invalid("host must be an IPv4 or IPv6 address")),
+        },
+    }
+    match params.get("port") {
+        None | Some(Value::Null) => {}
+        Some(v) => {
+            let port = v
+                .as_u64()
+                .filter(|p| (1..=65535).contains(p))
+                .ok_or_else(|| invalid("port must be a number from 1 to 65535"))?;
+            if !matches!(proto, None | Some("tcp") | Some("udp")) {
+                return Err(invalid("a port needs proto tcp, udp or any"));
+            }
+            parts.push(format!("port {port}"));
+        }
+    }
+    Ok(CaptureSpec {
+        iface: iface.to_string(),
+        count,
+        seconds,
+        filter: parts.join(" and "),
+    })
+}
+
+/// Run tcpdump on one interface (root) until `count` packets or `seconds`
+/// pass, and return the decoded one-line summaries.
+fn capture(params: &Value) -> Result<Value> {
+    let spec = capture_spec(params)?;
+    let tcpdump = which("tcpdump")
+        .ok_or_else(|| Error::Service("tcpdump is not installed on this system".into()))?;
+    let mut cmd = std::process::Command::new("timeout");
+    cmd.args(["-s", "INT", &spec.seconds.to_string()])
+        .arg(tcpdump)
+        .args(["-nn", "-l", "-s", "128", "-c", &spec.count.to_string()])
+        .args(["-i", &spec.iface])
+        .args(spec.filter.split_whitespace());
+    let out = cmd
+        .output()
+        .map_err(|e| Error::Service(format!("capture: cannot run tcpdump: {e}")))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let packets: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let code = out.status.code().unwrap_or(-1);
+    // 0 = reached -c, 124 = the time limit (tcpdump stops on SIGINT)
+    if code != 0 && code != 124 && packets.is_empty() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let first = err.lines().next().unwrap_or("tcpdump failed").to_string();
+        return Err(Error::Service(format!(
+            "capture on {}: {first}",
+            spec.iface
+        )));
+    }
+    Ok(json!({
+        "interface": spec.iface,
+        "filter": spec.filter,
+        "seconds": spec.seconds,
+        "count": packets.len(),
+        "truncated": packets.len() as u32 >= spec.count,
+        "packets": packets,
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // entry point
 // ---------------------------------------------------------------------------
 
@@ -338,6 +468,7 @@ pub fn handle(action: &str, params: &Value) -> Result<Value> {
 pub fn handle_in(dir: &Path, action: &str, params: &Value) -> Result<Value> {
     match action {
         "reboot" | "shutdown" => power(action),
+        "capture" => capture(params),
         #[cfg(feature = "plugins")]
         "package_job" => {
             let job = params.get("job").and_then(Value::as_i64).unwrap_or(0);
@@ -395,6 +526,42 @@ Calculating dependencies... done!\n\
 [ebuild   R    ] sys-apps/bar-1.0:0::gentoo  0 KiB\n\
 [ebuild     UD ] sys-kernel/gentoo-sources-6.6.1:6.6.1::gentoo [6.7.0:6.7.0::gentoo] 0 KiB\n\
 Total: 4 packages (1 upgrade, 1 new, 1 reinstall), Size of downloads: 120 KiB\n";
+
+    #[test]
+    fn capture_filter_is_built_from_validated_fields_only() {
+        use serde_json::json;
+        let s = capture_spec(&json!({"interface":"rtr-lan"})).unwrap();
+        assert_eq!((s.count, s.seconds, s.filter.as_str()), (50, 10, ""));
+        let s = capture_spec(
+            &json!({"interface":"eth0","proto":"tcp","host":"192.168.50.10","port":443,"count":5,"seconds":3}),
+        )
+        .unwrap();
+        assert_eq!(s.filter, "tcp and host 192.168.50.10 and port 443");
+        assert_eq!((s.count, s.seconds), (5, 3));
+        assert_eq!(
+            capture_spec(&json!({"interface":"any","host":"fe80::1","proto":"icmp6"}))
+                .unwrap()
+                .filter,
+            "icmp6 and host fe80::1"
+        );
+        for bad in [
+            json!({}),
+            json!({"interface":"-w /etc/passwd"}),
+            json!({"interface":"eth0; id"}),
+            json!({"interface":"-i"}),
+            json!({"interface":"eth0","host":"1.2.3.4 or port 22"}),
+            json!({"interface":"eth0","proto":"tcp or udp"}),
+            json!({"interface":"eth0","port":0}),
+            json!({"interface":"eth0","port":70000}),
+            json!({"interface":"eth0","proto":"icmp","port":80}),
+            json!({"interface":"eth0","count":0}),
+            json!({"interface":"eth0","count":501}),
+            json!({"interface":"eth0","seconds":31}),
+        ] {
+            let e = capture_spec(&bad).unwrap_err().to_string();
+            assert!(e.contains("Invalid"), "{bad}: {e}");
+        }
+    }
 
     #[test]
     fn emerge_pretend_output_is_parsed() {

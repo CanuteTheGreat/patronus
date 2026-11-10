@@ -554,6 +554,31 @@ pub async fn factory_reset(
 
 /// This lane's API routes, mounted under `/api` by `routes::api_routes`
 /// with one `.merge(system::router())` line.
+/// POST /api/system/capture -- packet capture for diagnostics (admins).
+/// Body: `{"interface":"rtr-lan","host":"192.168.50.10","proto":"tcp",
+/// "port":443,"count":50,"seconds":10}` (only `interface` is required; at
+/// most 500 packets / 30 s). Answers the decoded one-line packet summaries.
+async fn capture(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    match state.system.system_op("capture", req).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => {
+            let m = e.to_string();
+            let code = if m.contains("Invalid") {
+                StatusCode::BAD_REQUEST
+            } else if m.contains("not installed") {
+                StatusCode::NOT_IMPLEMENTED
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            error(code, m)
+        }
+    }
+}
+
 pub fn router() -> axum::Router<AppState> {
     use axum::routing::{get, post, put};
     axum::Router::new()
@@ -574,6 +599,7 @@ pub fn router() -> axum::Router<AppState> {
         .route("/system/updates/check", post(check_updates))
         .route("/system/updates/apply", post(apply_updates))
         .route("/system/factory-reset", post(factory_reset))
+        .route("/system/capture", post(capture))
         .route("/system/reboot", post(reboot))
         .route("/system/shutdown", post(shutdown))
         .route("/system/services", get(list_services))
