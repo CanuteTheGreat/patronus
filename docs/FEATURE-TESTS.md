@@ -42,7 +42,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | NetFlow / IPFIX export | `ci/netlab/lane-j-netflow.sh` | netlab | PASS 18 s|
 | Remote syslog forwarding | `ci/netlab/lane-j-syslog.sh` | netlab | PASS 29 s|
 | Wake-on-LAN | `ci/netlab/lane-j-wol.sh` | netlab | PASS 14 s|
-| Packet capture (tcpdump through the root broker, filtered, limited) | `ci/netlab/lane-j-capture.sh` | netlab | new, first CI run pending |
+| Packet capture (tcpdump through the root broker, filtered, limited) | `ci/netlab/lane-j-capture.sh` | netlab | PASS, Rust CI run 916 (00099c44), job 45200 (Netlab features) |
 | SD-WAN edge agent + dashboard (3 parties) | `ci/netlab/lane-k-sdwan-edge.sh` | netlab | PASS 118 s|
 | GitOps: firewall rules from git (sync/watch) | `ci/netlab/lane-m-gitops.sh` | netlab | PASS 28 s|
 | GitOps: non-firewall resources | `ci/netlab/lane-m-gitops-resources.sh` | netlab | PASS 37 s|
