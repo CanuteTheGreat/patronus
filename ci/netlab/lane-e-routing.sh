@@ -172,6 +172,17 @@ seen=$(for _ in $(seq 1 40); do who; done | sort | uniq -c)
 echo "$seen"
 grep -q "$NL_RTR_WAN" <<<"$seen" && grep -q 100.64.0.2 <<<"$seen" || fail "flows did not spread: $seen"
 nl_ok "load balancing: 40 connections from one client used both uplinks"
+# weighted ECMP: WAN1 weight 1, WAN2 weight 3 -> the kernel nexthops carry the
+# weights and WAN2 carries clearly more of the flows (expected 3:1 of 80)
+must 200 PUT /routing/groups/FAILOVER '{"name":"FAILOVER","members":"WAN1:1:1, WAN2:1:3","trigger":"down"}'
+dv=$(default_via)
+case "$dv" in *"weight 3"*) ;; *) fail "weight 3 not on the multipath default: $dv" ;; esac
+w1=0; w2=0
+for _ in $(seq 1 80); do
+  case "$(who)" in 100.64.0.2) w2=$((w2 + 1)) ;; "$NL_RTR_WAN") w1=$((w1 + 1)) ;; esac
+done
+[ "$w2" -gt $((w1 * 2)) ] || fail "weights 1:3 should send about 3x more flows via WAN2 (WAN1 $w1, WAN2 $w2)"
+nl_ok "weighted ECMP 1:3: kernel nexthop weight 3, 80 connections split WAN1 $w1 / WAN2 $w2"
 must 200 PUT /routing/groups/FAILOVER '{"name":"FAILOVER","members":"WAN1:1, WAN2:2","trigger":"down"}'
 via_is 'via 203.0.113.1 dev rtr-wan' || fail "back to failover: $(default_via)"
 

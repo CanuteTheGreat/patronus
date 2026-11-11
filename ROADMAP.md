@@ -67,7 +67,7 @@ This document outlines the planned features and enhancements for Patronus SD-WAN
   - Application signatures
   - Dynamic policy mapping
 
-- [ ] ECMP (Equal-Cost Multi-Path) support
+- [x] ECMP (Equal-Cost Multi-Path) support
   - Per-flow load balancing
   - Per-packet load balancing option
   - Weighted distribution
