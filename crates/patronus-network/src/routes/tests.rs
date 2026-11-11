@@ -101,6 +101,7 @@ fn gw(name: &str, iface: &str, addr: Option<&str>) -> Gateway {
         monitor_enabled: true,
         loss_threshold: 20,
         latency_threshold: 500,
+        failback_delay: 0,
         description: None,
     }
 }
@@ -1487,4 +1488,76 @@ fn probe_addresses_come_from_ip_literals_only() {
         "a name cannot be pinned"
     );
     assert_eq!(probe_address(&p(ProbeKind::Tcp, "example.com")), None);
+}
+
+#[test]
+fn failback_gate_holds_a_recovered_gateway_for_its_delay() {
+    use GwState::*;
+    // no delay: back at once
+    assert_eq!(failback_gate(Down, Online, None, 100, 0), (Online, None));
+    // healthy gateway is never held
+    assert_eq!(failback_gate(Online, Online, None, 100, 30), (Online, None));
+    // down -> first healthy sample starts the hold-down and stays down
+    assert_eq!(
+        failback_gate(Down, Online, None, 100, 30),
+        (Down, Some(100))
+    );
+    assert_eq!(
+        failback_gate(Down, Pending, Some(100), 110, 30),
+        (Down, Some(100))
+    );
+    assert_eq!(
+        failback_gate(Loss, Online, Some(100), 129, 30),
+        (Loss, Some(100))
+    );
+    // delay served
+    assert_eq!(
+        failback_gate(Latency, Online, Some(100), 130, 30),
+        (Online, None)
+    );
+    // a bad sample during the hold-down restarts the run
+    assert_eq!(failback_gate(Down, Down, Some(100), 115, 30), (Down, None));
+    assert_eq!(failback_gate(Down, Loss, Some(100), 115, 30), (Loss, None));
+    // unmonitored is not a recovery
+    assert_eq!(
+        failback_gate(Down, Unmonitored, None, 100, 30),
+        (Unmonitored, None)
+    );
+}
+
+#[tokio::test]
+async fn failback_delay_is_validated_and_stored() {
+    let s = store().await;
+    let mut i = gi("WAN1", "@wan");
+    i.failback_delay = Some(MAX_FAILBACK_SECS + 1);
+    assert!(i
+        .validated()
+        .unwrap_err()
+        .to_string()
+        .contains("failback delay"));
+    i.failback_delay = Some(45);
+    save_gateway(&s, None, &i.validated().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        load(&s)
+            .await
+            .unwrap()
+            .gateway("WAN1")
+            .unwrap()
+            .failback_delay,
+        45
+    );
+    save_gateway(&s, None, &gi("WAN2", "@opt1").validated().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        load(&s)
+            .await
+            .unwrap()
+            .gateway("WAN2")
+            .unwrap()
+            .failback_delay,
+        0
+    );
 }

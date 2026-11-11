@@ -142,6 +142,9 @@ pub struct Gateway {
     pub monitor_enabled: bool,
     pub loss_threshold: u32,
     pub latency_threshold: u32,
+    /// Seconds a recovered gateway must stay healthy before it carries
+    /// traffic again (0 = at once).
+    pub failback_delay: u32,
     pub description: Option<String>,
 }
 
@@ -255,7 +258,7 @@ pub async fn load(store: &ConfigStore) -> Result<RoutingConfig> {
     let mut c = RoutingConfig::default();
     for r in sqlx::query(
         "SELECT name, interface, family, address, monitor_ip, monitor_enabled,
-                loss_threshold, latency_threshold, description
+                loss_threshold, latency_threshold, description, failback_delay
          FROM route_gateways ORDER BY name",
     )
     .fetch_all(pool)
@@ -272,6 +275,7 @@ pub async fn load(store: &ConfigStore) -> Result<RoutingConfig> {
             monitor_enabled: r.get::<i64, _>(5) != 0,
             loss_threshold: r.get::<i64, _>(6).clamp(1, 100) as u32,
             latency_threshold: r.get::<i64, _>(7).max(1) as u32,
+            failback_delay: r.get::<i64, _>(9).clamp(0, MAX_FAILBACK_SECS as i64) as u32,
             description: r.get(8),
             name,
         });
@@ -407,6 +411,8 @@ pub struct GatewayInput {
     #[serde(default)]
     pub latency_threshold: Option<u32>,
     #[serde(default)]
+    pub failback_delay: Option<u32>,
+    #[serde(default)]
     pub description: Option<String>,
 }
 
@@ -440,6 +446,12 @@ impl GatewayInput {
         if !(1..=60_000).contains(&latency_threshold) {
             return Err(invalid("latency threshold (1-60000 ms)"));
         }
+        let failback_delay = self.failback_delay.unwrap_or(0);
+        if failback_delay > MAX_FAILBACK_SECS {
+            return Err(invalid(format!(
+                "failback delay (0-{MAX_FAILBACK_SECS} seconds)"
+            )));
+        }
         Ok(Gateway {
             name: check_name("gateway", &self.name)?,
             interface: check_iface_spec(&self.interface)?,
@@ -449,6 +461,7 @@ impl GatewayInput {
             monitor_enabled: self.monitor_enabled.unwrap_or(true),
             loss_threshold,
             latency_threshold,
+            failback_delay,
             description: check_description(self.description.as_deref())?,
         })
     }
@@ -516,14 +529,16 @@ pub async fn save_gateway(store: &ConfigStore, existing: Option<&str>, g: &Gatew
     }
     sqlx::query(
         "INSERT INTO route_gateways (name, interface, family, address, monitor_ip,
-            monitor_enabled, loss_threshold, latency_threshold, description, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            monitor_enabled, loss_threshold, latency_threshold, description, updated_at,
+            failback_delay)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET interface = excluded.interface,
             family = excluded.family, address = excluded.address,
             monitor_ip = excluded.monitor_ip, monitor_enabled = excluded.monitor_enabled,
             loss_threshold = excluded.loss_threshold,
             latency_threshold = excluded.latency_threshold,
-            description = excluded.description, updated_at = excluded.updated_at",
+            description = excluded.description, updated_at = excluded.updated_at,
+            failback_delay = excluded.failback_delay",
     )
     .bind(&g.name)
     .bind(&g.interface)
@@ -535,6 +550,7 @@ pub async fn save_gateway(store: &ConfigStore, existing: Option<&str>, g: &Gatew
     .bind(g.latency_threshold as i64)
     .bind(&g.description)
     .bind(now())
+    .bind(g.failback_delay as i64)
     .execute(pool)
     .await
     .map_err(db_err("write gateway"))?;
@@ -1281,6 +1297,35 @@ pub fn probe_address(p: &ProbeSpec) -> Option<IpAddr> {
                 .parse()
                 .ok()
         }
+    }
+}
+
+/// Longest failback hold-down a gateway can be given.
+pub const MAX_FAILBACK_SECS: u32 = 3600;
+
+/// Failback hold-down: a gateway that was unhealthy (`prev` is down, loss or
+/// latency) and now probes healthy (`fresh` online or still collecting
+/// samples) keeps its old state until it has been healthy for `delay`
+/// seconds, so a flapping uplink does not drag traffic back and forth.
+/// `held_since` is when the current healthy run began. Returns the state to
+/// publish and the new `held_since`; any unhealthy sample restarts the run.
+pub fn failback_gate(
+    prev: GwState,
+    fresh: GwState,
+    held_since: Option<i64>,
+    now: i64,
+    delay: u32,
+) -> (GwState, Option<i64>) {
+    let was_bad = matches!(prev, GwState::Down | GwState::Loss | GwState::Latency);
+    let healthy = matches!(fresh, GwState::Online | GwState::Pending);
+    if delay == 0 || !was_bad || !healthy {
+        return (fresh, None);
+    }
+    let start = held_since.unwrap_or(now);
+    if now - start >= i64::from(delay) {
+        (fresh, None)
+    } else {
+        (prev, Some(start))
     }
 }
 
@@ -2325,6 +2370,7 @@ impl Applier for RoutesApplier {
                     "monitor_enabled": g.monitor_enabled,
                     "loss_threshold": g.loss_threshold,
                     "latency_threshold": g.latency_threshold,
+                    "failback_delay": g.failback_delay,
                     "description": g.description,
                     "dev": r.dev,
                     "resolved_address": r.address.map(|a| a.to_string()),
@@ -2508,6 +2554,8 @@ pub struct Monitor {
     extra_results: Arc<StdMutex<BTreeMap<String, Vec<ProbeResult>>>>,
     extra_busy: Arc<std::sync::atomic::AtomicBool>,
     windows: BTreeMap<String, ProbeWindow>,
+    /// Per gateway: when its current healthy run began (failback hold-down).
+    failback: BTreeMap<String, i64>,
     states: BTreeMap<String, GwStatus>,
     last_sig: Option<String>,
     ticks: u64,
@@ -2523,6 +2571,7 @@ impl Monitor {
             extra_results: Arc::new(StdMutex::new(BTreeMap::new())),
             extra_busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             windows: BTreeMap::new(),
+            failback: BTreeMap::new(),
             states: BTreeMap::new(),
             last_sig: None,
             ticks: 0,
@@ -2706,6 +2755,28 @@ impl Monitor {
                     }
                 }
             };
+            let mut detail = detail;
+            let mut state = state;
+            if let Some(prev) = self.states.get(&g.name).map(|p| p.state) {
+                let (gated, held) = failback_gate(
+                    prev,
+                    state,
+                    self.failback.get(&g.name).copied(),
+                    t,
+                    g.failback_delay,
+                );
+                match held {
+                    Some(start) => {
+                        self.failback.insert(g.name.clone(), start);
+                        let left = (start + i64::from(g.failback_delay) - t).max(0);
+                        detail = Some(format!("recovered, failback hold-down: {left} s left"));
+                    }
+                    None => {
+                        self.failback.remove(&g.name);
+                    }
+                }
+                state = gated;
+            }
             let since = match self.states.get(&g.name) {
                 Some(prev) if prev.state == state => prev.since,
                 _ => t,
@@ -2732,6 +2803,7 @@ impl Monitor {
             );
         }
         self.windows.retain(|n, _| next.contains_key(n));
+        self.failback.retain(|n, _| next.contains_key(n));
         self.states = next;
         publish(&self.states);
         let sig = format!(

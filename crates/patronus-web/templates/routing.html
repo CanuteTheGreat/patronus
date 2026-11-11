@@ -38,7 +38,7 @@
             <td><button class="btn btn-secondary btn-sm" onclick="editGateway(this)"
                     data-name="{{ g.name }}" data-interface="{{ g.interface }}" data-family="{{ g.family }}"
                     data-address="{{ g.address }}" data-monitor="{{ g.monitor_ip }}" data-monitor-enabled="{{ g.monitor_enabled }}"
-                    data-loss="{{ g.loss_threshold }}" data-latency="{{ g.latency_threshold }}" data-description="{{ g.description }}">Edit</button>
+                    data-loss="{{ g.loss_threshold }}" data-latency="{{ g.latency_threshold }}" data-failback="{{ g.failback_delay }}" data-description="{{ g.description }}">Edit</button>
                 <button class="btn btn-danger btn-sm" onclick="del('/api/routing/gateways/{{ g.name }}', 'Delete gateway {{ g.name }}?')">Delete</button></td>
         </tr>
         {% endfor %}
@@ -54,6 +54,7 @@
         <label>Monitor <input type="checkbox" name="monitor_enabled" checked></label>
         <label>Loss threshold % <input type="number" name="loss_threshold" value="20" min="1" max="100"></label>
         <label>Latency threshold ms <input type="number" name="latency_threshold" value="500" min="1"></label>
+        <label>Failback delay s (0 = at once) <input type="number" name="failback_delay" value="0" min="0" max="3600"></label>
         <label>Description <input name="description"></label>
         <button class="btn btn-primary btn-sm" type="submit" id="gateway-submit">Add gateway</button>
     </form>
@@ -193,6 +194,7 @@
         f.elements['family'].value = d.family; f.elements['address'].value = d.address;
         f.elements['monitor_ip'].value = d.monitor; f.elements['monitor_enabled'].checked = d.monitorEnabled === 'true';
         f.elements['loss_threshold'].value = d.loss; f.elements['latency_threshold'].value = d.latency;
+        f.elements['failback_delay'].value = d.failback || 0;
         f.elements['description'].value = d.description;
         editing(f, d.name, 'gateway-submit', 'Save gateway ' + d.name);
     }
