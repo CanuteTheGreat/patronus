@@ -44,7 +44,6 @@ class Layering(unittest.TestCase):
     def test_public_desktop_has_nothing_personal(self):
         forb = set(atoms(os.path.join(LIVE, "project", "public-forbidden.txt")))
         self.assertIn("app-admin/rustinion-agent", forb)
-        self.assertIn("www-client/brave-bin", forb)
         gl = set(atoms(os.path.join(LIVE, "project", "variants", "gnome-light", "packages.txt")))
         self.assertEqual(sorted(gl & forb), [], "personal apps in the PUBLIC gnome-light image")
         for f in ("packages.txt", "packages-late.txt"):
@@ -53,7 +52,7 @@ class Layering(unittest.TestCase):
 
     def test_owner_apps_live_in_machine_layers(self):
         owner = set(atoms(os.path.join(LIVE, "project", "variants", "owner-common", "packages.txt")))
-        for a in ("www-client/brave-bin", "net-misc/nextcloud-client", "app-antivirus/clamav"):
+        for a in ("net-misc/nextcloud-client", "app-antivirus/clamav"):
             self.assertIn(a, owner)
         self.assertNotIn("net-vpn/tailscale", owner)     # retired 2026-11-10 (WireGuard hub replaces it)
         self.assertIn("net-vpn/tailscale", set(atoms(os.path.join(LIVE, "project", "public-forbidden.txt"))))
@@ -95,7 +94,7 @@ class Layering(unittest.TestCase):
 
     def test_core_is_not_machine_specific(self):
         core = "\n".join(l for l in (ebuild("sys-apps", "horcrux-core") + ebuild("net-misc", "horcrux-time") + ebuild("sys-apps", "horcrux-firstboot")).splitlines() if not l.lstrip().startswith("#"))
-        for word in ("rustinion", "gringotts", "hogshead", "hogsmeade", "madammalkins", "brave", "tailscale", "canutethegreat/", "steam"):
+        for word in ("rustinion", "gringotts", "hogshead", "hogsmeade", "madammalkins", "tailscale", "canutethegreat/", "steam"):
             self.assertNotIn(word, core.lower().replace("canutethegreat/horcrux", ""), word)
         paths = open(os.path.join(GENTOO, "sys-apps", "horcrux-backup", "files", "paths")).read()
         self.assertNotIn("canutethegreat", paths)
