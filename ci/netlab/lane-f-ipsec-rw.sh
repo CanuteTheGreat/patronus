@@ -116,7 +116,10 @@ rw_down() { RWS --terminate --ike "$1" >/dev/null 2>&1 || true; sleep 0.5; }
 # EAP *connection* steps need it (Debian/Gentoo have it); everything else
 # (config, firewall, exports, certificate profile) is proven either way.
 MSCHAP=0
-ls /usr/lib/ipsec/plugins/libstrongswan-eap-mschapv2.so /usr/lib/*/ipsec/plugins/libstrongswan-eap-mschapv2.so >/dev/null 2>&1 && MSCHAP=1
+# (`ls a b` exits non-zero when EITHER path is missing, which skipped these steps
+# even with the plugin installed: search instead)
+find /usr/lib /usr/lib64 /usr/libexec -name 'libstrongswan-eap-mschapv2.so' 2>/dev/null | grep -q . && MSCHAP=1
+echo "eap-mschapv2 plugin: $(find /usr/lib /usr/lib64 /usr/libexec -name 'libstrongswan-eap-mschapv2.so' -o -name 'libstrongswan-md4.so' 2>/dev/null | tr '\n' ' ')"
 [ "$MSCHAP" = 1 ] || echo "NOTE: no eap-mschapv2 plugin in this strongSwan: live EAP connection steps are skipped"
 
 boot
