@@ -30,7 +30,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | Interfaces, VLAN, bridge, bond | `ci/netlab/lane-c-interfaces.sh` | netlab | PASS 35 s|
 | Traffic shaping (QoS) | `ci/netlab/lane-c-shaping.sh` | netlab | PASS 19 s|
 | WAN + routing, multi-uplink failover, policy routing | `ci/netlab/lane-e-routing.sh` | netlab | PASS 33 s|
-| IPsec road warriors (IKEv2, real strongSwan client) | `ci/netlab/lane-f-ipsec-rw.sh` | netlab | PASS 25 s|
+| IPsec road warriors (IKEv2, real strongSwan client) | `ci/netlab/lane-f-ipsec-rw.sh` | netlab | PASS 32 s, live EAP-MSCHAPv2 + certificate connections, mobileconfig/sswan/PS1 export, reboot, revoke (run 933 job 86298)|
 | WireGuard tunnels + road warrior | `ci/netlab/lane-f-wireguard.sh` | netlab | PASS 15 s|
 | API keys + monitoring hooks | `ci/netlab/lane-h-apikeys.sh` | netlab | PASS 48 s|
 | Web accounts, 2FA login, backup/restore API | `ci/netlab/lane-h-system.sh` | netlab | PASS 36 s|
