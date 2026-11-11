@@ -112,7 +112,7 @@ established() { local o; o=$(RWS --list-sas 2>/dev/null || true); grep -q ESTABL
 has_conn() { local o; o=$(swanctl --list-conns 2>/dev/null || true); grep -q "$1" <<<"$o"; }
 rw_down() { RWS --terminate --ike "$1" >/dev/null 2>&1 || true; sleep 0.5; }
 
-# Ubuntu 24.04 (the act image) ships strongSwan without eap-mschapv2/md4: the
+# eap-mschapv2 lives in libcharon-extauth-plugins (run.sh installs it): the
 # EAP *connection* steps need it (Debian/Gentoo have it); everything else
 # (config, firewall, exports, certificate profile) is proven either way.
 MSCHAP=0
