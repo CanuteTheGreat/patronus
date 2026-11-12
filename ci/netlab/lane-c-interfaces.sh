@@ -218,8 +218,11 @@ assert_kernel() { # $1 = label
   ok "$lbl: LAN host reaches the WAN through the DHCP-addressed uplink"
   # VLAN with the tag on the wire
   R ip -d link show rtr-trunk.100 | grep 'vlan protocol 802.1Q id 100' >/dev/null || fail "$lbl: VLAN device"
-  ip netns exec sw timeout 8 tcpdump -nn -e -c 2 -i trunk0 'vlan 100 and icmp' >$C/tcpdump.out 2>&1 &
-  local td=$!; sleep 1
+  ip netns exec sw timeout 8 tcpdump -nn -e -l -U --immediate-mode -c 2 -i trunk0 'vlan 100 and icmp' >$C/tcpdump.out 2>&1 &
+  local td=$!
+  # tcpdump must be live before the ping: wait for its 'listening on' banner (run 970: the capture
+  # started late/buffered, the kernel counted 4 matching packets but tcpdump delivered 0 before the timeout)
+  for _ in $(seq 1 20); do grep 'listening on' $C/tcpdump.out >/dev/null 2>&1 && break; sleep 0.25; done; sleep 0.5
   ping_ok sw 10.100.0.1
   wait $td || true
   grep -q 'vlan 100' $C/tcpdump.out || { cat $C/tcpdump.out; fail "$lbl: no 802.1Q tag 100 on the wire"; }
