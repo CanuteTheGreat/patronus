@@ -196,7 +196,9 @@ wait_for "default on WAN2" 20 via_is 'via 100.64.0.1 dev rtr-wan2'
 ISP tc qdisc del dev up0 root
 holding() { gw WAN1 'g["detail"] or ""' | grep 'failback hold-down' >/dev/null; }
 wait_for "WAN1 probing healthy but held down" 60 holding
-gw_is WAN1 down || fail "a held uplink keeps its old state, is $(gw WAN1 'g["state"]')"
+# a held uplink keeps its previous unhealthy state: "down", or "loss" when the last
+# transition before the hold-down was the lossy probe window
+case "$(gw WAN1 'g["state"]')" in down|loss) ;; *) fail "a held uplink must stay unhealthy, is $(gw WAN1 'g["state"]')" ;; esac
 via_is 'via 100.64.0.1 dev rtr-wan2' || fail "traffic must stay on WAN2 during the hold-down: $(default_via)"
 [ "$(who)" = 100.64.0.2 ] || fail "the LAN client must stay on WAN2 during the hold-down"
 nl_ok "failback delay 30 s: WAN1 answers again but is held ('$(gw WAN1 'g["detail"]')'), traffic stays on WAN2"
