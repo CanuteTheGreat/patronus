@@ -15,6 +15,7 @@
 #    removing the delay brings it back
 #  - loss: 100 % packet loss turns WAN1 `down`: gateway_down event, an outage
 #    in the outage list, availability < 100 %, traffic moves to WAN2
+#  - failback delay: a recovered uplink is held down for N s before it carries traffic again
 #  - multi-probe: a DNS probe through WAN1 (its target pinned to WAN1 with a
 #    host route even while WAN2 carries the default) works; when the ISP's DNS
 #    dies while ping still works the uplink is `degraded` (not down), an
@@ -186,6 +187,24 @@ nl_api GET "/uplinks/sla?window=1h&gateway=WAN1&series=1"
 nl_api GET "/uplinks/outages?window=1h&gateway=WAN1"
 [ "$(jget 'len(d["outages"]) >= 1 and not d["outages"][-1]["ongoing"]')" = True ] || fail "the outage should have ended: $(cat "$NL_OUT")"
 nl_ok "after recovery: availability < 100 %, down samples in the hourly series, the outage is closed"
+
+# --- 4b. failback hold-down ------------------------------------------------------
+must 200 PUT /routing/gateways/WAN1 '{"name":"WAN1","interface":"@wan","latency_threshold":100,"failback_delay":30}'
+ISP tc qdisc add dev up0 root netem loss 100%
+wait_for "WAN1 down" 40 gw_is WAN1 down
+wait_for "default on WAN2" 20 via_is 'via 100.64.0.1 dev rtr-wan2'
+ISP tc qdisc del dev up0 root
+holding() { gw WAN1 'g["detail"] or ""' | grep 'failback hold-down' >/dev/null; }
+wait_for "WAN1 probing healthy but held down" 60 holding
+gw_is WAN1 down || fail "a held uplink keeps its old state, is $(gw WAN1 'g["state"]')"
+via_is 'via 100.64.0.1 dev rtr-wan2' || fail "traffic must stay on WAN2 during the hold-down: $(default_via)"
+[ "$(who)" = 100.64.0.2 ] || fail "the LAN client must stay on WAN2 during the hold-down"
+nl_ok "failback delay 30 s: WAN1 answers again but is held ('$(gw WAN1 'g["detail"]')'), traffic stays on WAN2"
+wait_for "WAN1 online after the hold-down" 90 gw_is WAN1 online
+wait_for "default back on WAN1" 20 via_is 'via 203.0.113.1 dev rtr-wan'
+[ "$(who)" = "$NL_RTR_WAN" ] || fail "LAN should be back on WAN1 after the hold-down"
+must 200 PUT /routing/gateways/WAN1 '{"name":"WAN1","interface":"@wan","latency_threshold":100,"failback_delay":0}'
+nl_ok "hold-down elapsed: WAN1 online, default and LAN client back on WAN1"
 
 # --- 5. multi-probe: DNS through WAN1 -------------------------------------------
 nl_api POST /uplinks/probes '{"gateway":"WAN1","kind":"dns","target":"198.51.100.53","name":"www.example.test"}'
