@@ -96,7 +96,7 @@ ip netns add probe && ip netns del probe && echo "network namespaces: ok"
 cd /t
 # scenarios share this container: leave nothing of the previous one behind
 # (lanes J/K stop their own daemons but not the lib.sh DNS/HTTP helpers)
-scrub() { pkill -f 'nl-dnsmasq.pid' 2>/dev/null || true; pkill -f '/t/(nl|lb)-[a-z0-9]+[.]py' 2>/dev/null || true; pkill -x 'suricata|bgpd|ospfd|zebra|staticd|mgmtd|xl2tpd|softflowd|igmpproxy|tayga|unbound|rsyslogd|patronus-web|patronus-dashboard|charon-systemd' 2>/dev/null || true; rm -f /tmp/charon-rtr.pid /run/charon.vici /run/charon-client.vici; for n in \$(ip netns list | cut -d' ' -f1); do ip netns del "\$n" 2>/dev/null || true; done; sleep 1; }
+scrub() { pkill -f 'nl-dnsmasq.pid' 2>/dev/null || true; pkill -f '/t/(nl|lb)-[a-z0-9]+[.]py' 2>/dev/null || true; pkill -x 'suricata|watchfrr|bgpd|ospfd|zebra|staticd|mgmtd|xl2tpd|softflowd|igmpproxy|tayga|unbound|rsyslogd|patronus-web|patronus-dashboard|charon-systemd' 2>/dev/null || true; rm -f /tmp/charon-rtr.pid /run/charon.vici /run/charon-client.vici; for n in \$(ip netns list | cut -d' ' -f1); do ip netns del "\$n" 2>/dev/null || true; done; sleep 1; }
 # Run EVERY scenario even when one fails (one failing scenario used to hide
 # all the ones after it) and fail the job at the end listing each failure.
 failed=""; passed=0

@@ -16,6 +16,7 @@ nl_write_installer_toml
 
 frr_kill() { for n in watchfrr zebra bgpd ospfd staticd; do pkill -x "$n" 2>/dev/null || true; done; sleep 1; rm -rf /run/frr/peer /run/frr/*.pid /run/frr/*.vty /run/frr/zserv.api /var/run/frr/*.pid 2>/dev/null || true; }
 frr_kill
+trap frr_kill EXIT   # a failed step must not leave watchfrr running for the next lanes (run 964: lane-j-ids hung on it)
 nl_kill_daemons nothing
 rm -f /etc/frr/frr.conf.pre-patronus
 getent passwd frr >/dev/null || nl_fail "the frr package did not create the frr user"
