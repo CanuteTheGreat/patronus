@@ -291,7 +291,7 @@ This document outlines the planned features and enhancements for Patronus SD-WAN
 - Perfect forward secrecy
 
 **Planned Enhancements:**
-- [ ] IPsec/IKEv2 Support
+- [x] IPsec/IKEv2 Support: remote-access road warriors shipped (EAP-MSCHAPv2 or client certificates, own CA, iOS/macOS .mobileconfig, Android .sswan, Windows PowerShell/.p12 export); see docs/IPSEC-ROADWARRIORS.md, tested by ci/netlab/lane-f-ipsec-rw.sh with a real strongSwan client. Still planned: Suite-B profiles
   - IKEv2 key exchange (RFC 7296)
   - ESP encryption (AES-GCM, ChaCha20-Poly1305)
   - Suite-B cryptography for government compliance
