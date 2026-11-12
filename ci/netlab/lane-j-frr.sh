@@ -22,8 +22,20 @@ getent passwd frr >/dev/null || nl_fail "the frr package did not create the frr 
 mkdir -p /etc/frr /run/frr /var/log/frr
 # Newer Debian/Ubuntu frr packages (Ubuntu 26.04: 10.5.1-1ubuntu4.1) ship no /etc/init.d/frr, only the
 # systemd unit; Patronus' SysV path execs /etc/init.d/frr (ENOENT = "Failed to restart service: No such
-# file or directory", run 962). Link the package's own init wrapper, exactly what older packages shipped.
-[ -e /etc/init.d/frr ] || { mkdir -p /etc/init.d; ln -s /usr/lib/frr/frrinit.sh /etc/init.d/frr; }
+# file or directory", run 962). Give the container a thin init script around the package's own frrinit.sh.
+# watchfrr daemonizes holding the caller's stdout/stderr pipes, and Patronus waits for those to close
+# (Command::output), so start/restart must not hand them on (a plain symlink hung the API call, run 964).
+if [ ! -e /etc/init.d/frr ]; then
+  mkdir -p /etc/init.d
+  cat > /etc/init.d/frr <<'EOF'
+#!/bin/sh
+case "$1" in
+  start|restart|stop|reload|force-reload) /usr/lib/frr/frrinit.sh "$@" </dev/null >>/var/log/frr/initscript.log 2>&1 ;;
+  *) /usr/lib/frr/frrinit.sh "$@" </dev/null ;;
+esac
+EOF
+  chmod 755 /etc/init.d/frr
+fi
 chown frr:frr /run/frr /var/log/frr
 [ -f /etc/frr/frr.conf ] || { echo 'hostname stock' > /etc/frr/frr.conf; chown frr:frr /etc/frr/frr.conf; }
 [ -f /etc/frr/vtysh.conf ] || { echo 'service integrated-vtysh-config' > /etc/frr/vtysh.conf; chown frr:frrvty /etc/frr/vtysh.conf 2>/dev/null || true; }
