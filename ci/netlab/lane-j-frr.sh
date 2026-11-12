@@ -20,6 +20,10 @@ nl_kill_daemons nothing
 rm -f /etc/frr/frr.conf.pre-patronus
 getent passwd frr >/dev/null || nl_fail "the frr package did not create the frr user"
 mkdir -p /etc/frr /run/frr /var/log/frr
+# Newer Debian/Ubuntu frr packages (Ubuntu 26.04: 10.5.1-1ubuntu4.1) ship no /etc/init.d/frr, only the
+# systemd unit; Patronus' SysV path execs /etc/init.d/frr (ENOENT = "Failed to restart service: No such
+# file or directory", run 962). Link the package's own init wrapper, exactly what older packages shipped.
+[ -e /etc/init.d/frr ] || { mkdir -p /etc/init.d; ln -s /usr/lib/frr/frrinit.sh /etc/init.d/frr; }
 chown frr:frr /run/frr /var/log/frr
 [ -f /etc/frr/frr.conf ] || { echo 'hostname stock' > /etc/frr/frr.conf; chown frr:frr /etc/frr/frr.conf; }
 [ -f /etc/frr/vtysh.conf ] || { echo 'service integrated-vtysh-config' > /etc/frr/vtysh.conf; chown frr:frrvty /etc/frr/vtysh.conf 2>/dev/null || true; }
