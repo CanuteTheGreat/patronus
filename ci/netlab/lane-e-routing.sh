@@ -177,9 +177,16 @@ nl_ok "load balancing: 40 connections from one client used both uplinks"
 must 200 PUT /routing/groups/FAILOVER '{"name":"FAILOVER","members":"WAN1:1:1, WAN2:1:3","trigger":"down"}'
 dv=$(default_via)
 case "$dv" in *"weight 3"*) ;; *) fail "weight 3 not on the multipath default: $dv" ;; esac
-w1=0; w2=0
-for _ in $(seq 1 80); do
-  case "$(who)" in 100.64.0.2) w2=$((w2 + 1)) ;; "$NL_RTR_WAN") w1=$((w1 + 1)) ;; esac
+# The split is a random sample (source ports hash the flows): 80 flows at p=0.75 miss the
+# unchanged "> 2x" bar about 4% of the time on a correct kernel (run 972: 27/53). Re-sample up
+# to 3 times; a real weighting bug fails every round, a bad draw does not (p ~ 1e-4 for all 3).
+for round in 1 2 3; do
+  w1=0; w2=0
+  for _ in $(seq 1 80); do
+    case "$(who)" in 100.64.0.2) w2=$((w2 + 1)) ;; "$NL_RTR_WAN") w1=$((w1 + 1)) ;; esac
+  done
+  [ "$w2" -gt $((w1 * 2)) ] && break
+  echo "weighted ECMP sample $round: WAN1 $w1, WAN2 $w2 (not > 2x), re-sampling"
 done
 [ "$w2" -gt $((w1 * 2)) ] || fail "weights 1:3 should send about 3x more flows via WAN2 (WAN1 $w1, WAN2 $w2)"
 nl_ok "weighted ECMP 1:3: kernel nexthop weight 3, 80 connections split WAN1 $w1 / WAN2 $w2"
