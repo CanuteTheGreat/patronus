@@ -54,6 +54,8 @@ cp "$BIN/patronus-web" "$OUT/patronus-web"
 for s in "$@"; do cp "$s" "$OUT/"; done
 cp ci/netlab/lib.sh "$OUT/"
 cp -r ci/netlab/fixtures "$OUT/"
+# lane J XDP data plane: the shipped BPF program source
+cp crates/patronus-ebpf/src/xdp_firewall.bpf.c "$OUT/"
 OLD_ENV=
 if [ -n "${PATRONUS_OLD_DIR:-}" ]; then
   mkdir -p "$OUT/old"
@@ -88,6 +90,8 @@ apt-get install -y -qq dhcpcd-base >/dev/null 2>&1 || apt-get install -y -qq dhc
 apt-get install -y -qq --no-install-recommends wireguard-tools >/dev/null
 # lane F IPsec road warriors (lane-f-ipsec-rw.sh): strongSwan server + a second charon as the client
 apt-get install -y -qq --no-install-recommends strongswan-swanctl charon-systemd libcharon-extra-plugins libcharon-extauth-plugins libstrongswan-extra-plugins libstrongswan-standard-plugins openssl >/dev/null
+# lane J XDP data plane (lane-j-xdp.sh): clang (BPF target), libbpf, headers
+apt-get install -y -qq --no-install-recommends clang gcc libc6-dev libbpf-dev linux-libc-dev libelf-dev zlib1g-dev >/dev/null
 export NETLAB_POWER_CUTS=${NETLAB_POWER_CUTS:-4}
 $OLD_ENV
 echo "--- netlab container: \$(uname -m), kernel \$(uname -r)"
