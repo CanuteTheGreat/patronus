@@ -90,6 +90,6 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 ## Gaps (no end-to-end scenario found; each is a feature to test next)
 
 Checked against `ci/netlab/*.sh` (grep, 2026-11-07): `lane-k-sdwan-edge.sh` runs one patronus-dashboard
-as the SD-WAN controller, but nothing exercised the HA dashboard stack until `lane-k-dashboard-ha.sh` (three dashboards; the haproxy front end is covered by `ci/ha-e2e.sh`, see its row), the eBPF/XDP data plane
-(compile-only check in CI), or the web UI's phone layout (checked by hand with Playwright, no gate).
+as the SD-WAN controller, but nothing exercised the HA dashboard stack until `lane-k-dashboard-ha.sh` (three dashboards; the haproxy front end is covered by `ci/ha-e2e.sh`, see its row), and the eBPF/XDP data plane
+(compile-only check in CI; no scenario loads the program into a kernel and passes traffic). The web UI's phone layout is gated (row above).
 Add a row when a scenario lands.
