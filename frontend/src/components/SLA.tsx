@@ -91,7 +91,7 @@ export default function SLA() {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4 mb-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4 mb-4">
               {/* Latency */}
               <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-2">
