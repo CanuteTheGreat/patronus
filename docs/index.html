@@ -501,9 +501,9 @@ emerge net-firewall/patronus
 rc-update add patronus default
 rc-service patronus start
 
-# Access web UI at https://localhost:8443 as user 'admin'
-# Password: generated per install in /var/lib/patronus/initial-admin-password
-# (or set PATRONUS_ADMIN_PASSWORD); there are no default credentials
+# Access web UI at https://localhost:8443 with a system user in group patronus-admin
+# (groupadd -r patronus-admin; usermod -aG patronus-admin <user>);
+# there is no built-in admin and there are no default credentials
             </div>
 
             <h3 style="margin-top: 2rem;">From Source</h3>

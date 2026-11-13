@@ -78,12 +78,16 @@ expect_running unbound
 svc start patronus-applyd; svc start patronus-web
 for i in $(seq 1 60); do N adm curl -sk -o /dev/null https://192.168.50.1:8443/login && break; sleep 0.5; done
 N adm curl -sk -o /dev/null https://192.168.50.1:8443/login || fail "web UI not reachable"
-PASS=$(tr -d '\n' < /var/lib/patronus/initial-admin-password)
+# web login = system users: a real group + user in the container, password in shadow (sha512; applyd checks it)
+getent group patronus-admin >/dev/null || groupadd -r patronus-admin
+id nladmin >/dev/null 2>&1 || useradd -m -G patronus-admin -s /bin/sh nladmin
+PASS="Nl-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')-Pw1"
+echo "nladmin:$PASS" | chpasswd -c SHA512
 api() { local data=(); [ $# -ge 3 ] && data=(-d "$3")
   N adm curl -sk -b /t/jar -c /t/jar -o /tmp/api.out -w '%{http_code}' -X "$1" -H 'content-type: application/json' "${data[@]}" "https://192.168.50.1:8443$2"; }
 want() { local w=$1; shift; local code; code=$(api "$@"); [ "$code" = "$w" ] || fail "$1 $2 -> $code (want $w): $(cat /tmp/api.out)"; }
 jget() { python3 -c 'import json,sys; d=json.load(open("/tmp/api.out")); print(eval(sys.argv[1]))' "$1"; }
-want 200 POST /api/auth/login "{\"username\":\"admin\",\"password\":\"$PASS\"}"
+want 200 POST /api/auth/login "{\"username\":\"nladmin\",\"password\":\"$PASS\"}"
 
 echo "=== 3. groups and devices (foundation API), DNS upstream and the global block list"
 mac() { ip -n "$1" -br link show "$1-eth" | awk '{print $3}'; }

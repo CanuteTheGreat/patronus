@@ -75,5 +75,5 @@ wait for the login prompt, which already existed.
 
 * Console: serial or VGA, login prompt (or the opt-in open console menu), `console-menu` for the web-UI password, network roles, reset.
 * SSH: key-only root by default, `ssh_password_auth = true` is an explicit opt-in.
-* Web UI: `https://<LAN IP>:8443`; the first-boot admin password is in `/var/lib/patronus/initial-admin-password` until the service is up.
+* Web UI: `https://<LAN IP>:8443`; sign in with a system user of the `patronus-admin` group (the installer creates the first one; see `docs/WEB-LOGIN.md`). There is no built-in `admin` and no generated password file.
 * Configuration as code: `patronus gitops` (a private repo per site).

@@ -154,7 +154,11 @@ WEBUSER=$(ps -o user= -C patronus-web | head -1)
 [ -S /run/patronus/applyd.sock ] || fail "no applyd socket"
 [ "$(stat -c '%U:%G %a' /run/patronus/applyd.sock)" = "root:patronus 660" ] || fail "applyd socket perms $(stat -c '%U:%G %a' /run/patronus/applyd.sock)"
 ok "web UI up as user patronus; applyd socket root:patronus 0660"
-PASS=$(tr -d '\n' < /var/lib/patronus/initial-admin-password)
+# web login = system users: a real group + user in the container, password in shadow (sha512; applyd checks it)
+getent group patronus-admin >/dev/null || groupadd -r patronus-admin
+id nladmin >/dev/null 2>&1 || useradd -m -G patronus-admin -s /bin/sh nladmin
+PASS="Nl-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')-Pw1"
+echo "nladmin:$PASS" | chpasswd -c SHA512
 api() { # method path [json] -> prints code, body in /tmp/api.out
   local data=()
   [ $# -ge 3 ] && data=(-d "$3")
@@ -166,7 +170,7 @@ want() { # code method path [json]
   local code; code=$(api "$@")
   [ "$code" = "$w" ] || fail "$1 $2 -> $code (want $w): $(cat /tmp/api.out)"
 }
-want 200 POST /api/auth/login "{\"username\":\"admin\",\"password\":\"$PASS\"}"
+want 200 POST /api/auth/login "{\"username\":\"nladmin\",\"password\":\"$PASS\"}"
 
 echo "=== 4. configure everything through the API (what the UI forms send)"
 want 201 POST /api/dhcp/pools '{"interface":"@lan","range_start":"192.168.50.100","range_end":"192.168.50.150","lease_time":600,"domain":"lan.test"}'

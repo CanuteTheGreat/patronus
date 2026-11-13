@@ -242,8 +242,7 @@ iface = "auto"                            # auto = the next wired NIC
 address = "192.168.1.1/24"
 ```
 
-The installed system's web-UI `admin` password is generated on first start into
-`/var/lib/patronus/initial-admin-password` (root-readable) - read it over SSH or the console, and change it.
+The installed system has no built-in web `admin`: sign in to the web UI with the system user the installer created (group `patronus-admin`, PAM; see `docs/WEB-LOGIN.md`). Change its password with `passwd`.
 The installer powers the machine off when it is done (`AUTOINSTALL-OK` on the console and in
 `/var/log/autoinstall.log`). Invalid answer files stop with `ANSWER-FILE-ERROR ...` lines and start the guided installer instead.
 
@@ -291,7 +290,7 @@ The TPM unlock path is tested on x86_64 (UEFI + BIOS, software TPM); on aarch64 
 
 * **No default password.** The live image has root locked (the consoles auto-login for physical access; **sshd is off**). The guided installer requires a password (>= 12 characters); the answer file requires a hash and/or an SSH key.
 * **Installed system:** `PermitRootLogin prohibit-password` and `PasswordAuthentication no` - root can log in over SSH only with the key you gave. If you tick *Allow SSH password login* (or set `ssh_password_auth = true`) the installer sets `PermitRootLogin yes` + `PasswordAuthentication yes` and warns you.
-* The web-UI admin password you type is stored only as a first-boot file that is deleted once the service is up.
+* The installer creates the first web-UI administrator as a system user (PAM); no web password is stored in a first-boot file.
 
 ## Secure Boot
 
