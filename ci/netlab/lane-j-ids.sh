@@ -54,10 +54,20 @@ for i in 1 2 3; do evil || nl_fail "request with the pattern failed in IDS mode 
 nl_wait 30 sh -c "[ \$(grep -c '\"event_type\":\"alert\"' $EVE) -gt $N0 ]" || { tail -5 "$EVE"; nl_fail "no alert for the request carrying the pattern"; }
 grep '"event_type":"alert"' "$EVE" | grep 'Netlab evil pattern' >/dev/null || nl_fail "alert lacks the rule message"
 nl_ok "alert in eve.json: $(grep '"event_type":"alert"' "$EVE" | tail -1 | cut -c1-160)"
+# eve.json is written asynchronously: the first alert shows up before the other two requests'
+# alerts do, and counting then made the late ones look like alerts from the ordinary requests
+# (lane-j-ids failed on main in runs 1021 and 1038). Wait until the count stops moving.
+prev=-1; stable=0
+for _ in $(seq 1 30); do
+  cur=$(alerts)
+  if [ "$cur" = "$prev" ]; then stable=$((stable + 1)); else stable=0; fi
+  [ "$stable" -ge 3 ] && break
+  prev=$cur; sleep 1
+done
 N1=$(alerts)
 for i in 1 2 3; do plain; done
 sleep 3
-[ "$(alerts)" = "$N1" ] || nl_fail "an ordinary request raised an alert"
+[ "$(alerts)" = "$N1" ] || { grep '"event_type":"alert"' "$EVE" | tail -n +$((N1 + 1)) | cut -c1-300; nl_fail "an ordinary request raised an alert ($N1 -> $(alerts))"; }
 nl_ok "ordinary requests raise no alert"
 nl_api GET /svc/ids
 python3 - "$NL_OUT" <<'PY' || nl_fail "status does not list the alert"
