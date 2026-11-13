@@ -1,4 +1,5 @@
-import { useState, FormEvent } from 'react'
+import { useEffect, useRef, useState, FormEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { useMutation, useQuery, gql } from '@apollo/client'
 import { MapPin, Activity, AlertCircle, Plus, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
@@ -79,9 +80,14 @@ export default function Sites() {
     refetch()
   }
 
-  async function onDelete(site: Site) {
-    if (!window.confirm(`Delete site "${site.name}"? Its paths are removed too.`)) return
+  // Delete is two steps: the row button only opens a dialog; nothing is sent
+  // until the site's name is typed and the dialog's Delete is pressed.
+  const [pendingDelete, setPendingDelete] = useState<Site | null>(null)
+
+  async function confirmDelete(site: Site, typed: string) {
+    if (typed.trim() !== site.name) return
     await deleteSite({ variables: { id: site.id } })
+    setPendingDelete(null)
     refetch()
   }
 
@@ -162,8 +168,8 @@ export default function Sites() {
                 Updated: {new Date(site.updatedAt).toLocaleString()}
               </p>
               {canDelete && (
-                <button type="button" onClick={() => onDelete(site)}
-                  className="inline-flex items-center gap-1 text-sm text-red-700 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200"
+                <button type="button" onClick={() => setPendingDelete(site)}
+                  className="inline-flex items-center gap-1 rounded border border-gray-300 dark:border-gray-600 px-3 py-1 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
                   aria-label={`Delete site ${site.name}`}>
                   <Trash2 className="h-4 w-4" /> Delete
                 </button>
@@ -172,6 +178,72 @@ export default function Sites() {
           </div>
         ))}
       </div>
+
+      {pendingDelete && (
+        <ConfirmDelete
+          site={pendingDelete}
+          busy={deleteState.loading}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={(typed) => confirmDelete(pendingDelete, typed)}
+        />
+      )}
     </div>
+  )
+}
+
+function ConfirmDelete({ site, busy, onCancel, onConfirm }: {
+  site: Site
+  busy: boolean
+  onCancel: () => void
+  onConfirm: (typed: string) => void
+}) {
+  const [typed, setTyped] = useState('')
+  const input = useRef<HTMLInputElement>(null)
+  const matches = typed.trim() === site.name
+
+  useEffect(() => {
+    input.current?.focus()
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onCancel])
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onCancel}>
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-site-title"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={(e) => { e.preventDefault(); if (matches) onConfirm(typed) }}
+        className="w-full max-w-md space-y-4 rounded-lg bg-white dark:bg-gray-800 p-6 shadow-xl"
+      >
+        <h2 id="delete-site-title" className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          Delete site "{site.name}"?
+        </h2>
+        <p className="text-sm text-gray-700 dark:text-gray-300">
+          This removes the site and its paths and cannot be undone. Type <strong>{site.name}</strong> to confirm.
+        </p>
+        <input
+          ref={input}
+          aria-label="Type the site name to confirm"
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          autoComplete="off"
+          className="w-full rounded border border-gray-300 dark:border-gray-600 px-3 py-2"
+        />
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onCancel}
+            className="rounded border border-gray-300 dark:border-gray-600 px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+            Cancel
+          </button>
+          <button type="submit" disabled={!matches || busy}
+            className="rounded bg-red-700 px-4 py-2 text-white hover:bg-red-800 disabled:opacity-40 disabled:cursor-not-allowed">
+            Delete site
+          </button>
+        </div>
+      </form>
+    </div>,
+    document.body,
   )
 }

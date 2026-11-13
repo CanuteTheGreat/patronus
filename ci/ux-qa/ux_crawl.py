@@ -14,6 +14,8 @@ One deterministic, no-LLM check for the classes of defect the owner kept finding
   canvas-overlay    a visible positioned element covers a canvas/iframe/video (VNC console buttons over the guest)
   unlinked-summary  a stat/summary card that is not a link and has no link inside (dead dashboard counts)
   empty-no-action   an empty state ("No X found") with no button or link to do something about it  (warn)
+  nav-offscreen     phone: a nav item sits off-screen / clipped, or the nav strip scrolls sideways (the menu must open to a list
+                    with every item reachable; a button with data-nav-toggle or aria-expanded+aria-controls is opened first)
   same-title        document.title does not identify the page on >= 5 routes                     (warn)
 
 Usage:
@@ -86,6 +88,27 @@ FACTS_JS = r"""() => {
     h1: ((document.querySelector('main h1, h1, main h2, h2') || {}).innerText || '').trim().slice(0, 60),
   };
 }"""
+
+# Phone nav: after the menu (if any) is opened, no primary-nav link may be off-screen or inside a sideways-scrolling strip.
+NAV_JS = r"""() => {
+  const vw = document.documentElement.clientWidth, vh = window.innerHeight, bad = [];
+  const vis = el => { const cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+                      const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const links = [...document.querySelectorAll('nav a[href], aside a[href], [role=navigation] a[href]')].filter(vis);
+  for (const a of links) {
+    const r = a.getBoundingClientRect(), t = (a.innerText || a.getAttribute('href')).trim().slice(0, 24);
+    if (r.right > vw + 1 || r.left < -1) bad.push(t + ' is off-screen (x ' + Math.round(r.left) + '..' + Math.round(r.right) + ' of ' + vw + ')');
+    for (let p = a.parentElement; p && p !== document.body; p = p.parentElement) {
+      const o = getComputedStyle(p).overflowX;
+      if ((o === 'auto' || o === 'scroll') && p.scrollWidth > p.clientWidth + 1) { bad.push(t + ' is in a nav that scrolls sideways'); break; }
+    }
+  }
+  return { count: links.length, bad: [...new Set(bad)].slice(0, 6) };
+}"""
+
+NAV_OPEN_JS = r"""() => { const b = document.querySelector('[data-nav-toggle], button[aria-expanded=false][aria-controls]');
+  if (!b) return false; b.click(); return true; }"""
+NAV_CLOSE_JS = r"""() => { const b = document.querySelector('[data-nav-toggle][aria-expanded=true], button[aria-expanded=true][aria-controls]'); if (b) b.click(); }"""
 
 LINKS_JS = r"""() => [...document.querySelectorAll('a[href]')].map(a => [a.getAttribute('href'), (a.innerText || '').trim().slice(0, 40), !!a.closest('nav, aside, .sidebar')])"""
 
@@ -254,6 +277,24 @@ def main():
                         m = rx.search(f["text"])
                         if m:
                             add("internal-name", "fail", route, vp, scheme, f"internal name '{m.group(0)}' visible")
+                    if vp == "phone":
+                        opened = page.evaluate(NAV_OPEN_JS)
+                        if opened:
+                            page.wait_for_timeout(250)
+                        nav = page.evaluate(NAV_JS)
+                        if nav["count"] == 0:
+                            add("nav-offscreen", "fail", route, vp, scheme, "no navigation link is reachable at phone width")
+                        for n in nav["bad"]:
+                            add("nav-offscreen", "fail", route, vp, scheme, n)
+                        if a.shots and opened:
+                            d = os.path.join(a.shots, f"{scheme}-{vp}")
+                            os.makedirs(d, exist_ok=True)
+                            try:
+                                page.screenshot(path=os.path.join(d, slug(route) + "-menu.png"), timeout=20000)
+                            except Exception:  # noqa: BLE001
+                                pass
+                        if opened:
+                            page.evaluate(NAV_CLOSE_JS)
                     if f["overflowX"] > 1:
                         add("overflow", "fail" if vp == "phone" else "warn", route, vp, scheme, f"scrolls sideways by {f['overflowX']}px")
                     for o in f["overlays"]:

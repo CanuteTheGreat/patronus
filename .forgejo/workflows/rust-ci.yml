@@ -902,6 +902,10 @@ jobs:
           /tmp/pw-venv/bin/pip install --quiet playwright
           /tmp/pw-venv/bin/python -m playwright install --with-deps chromium
           /tmp/pw-venv/bin/python scripts/phone-layout-gate.py /tmp/phone-layout
+      - name: Sites delete gate (delete without confirmation removes nothing; row button not red)
+        working-directory: frontend
+        run: |
+          BROWSER=chromium /tmp/pw-venv/bin/python scripts/sites-delete-gate.py ../static
       - name: UX crawl (every page, desktop + phone, light + dark, real Firefox; no JS errors, overlays, dead stat cards, private text)
         # ci/ux-qa/ux_crawl.py with the proofmock API stubs. Owner rule 2026-11-04: what he finds by hand gets a check for its class
         # (docs/qa/owner-findings.md). Known tracked failures: ci/ux-qa/ux-crawl-baseline.json.
