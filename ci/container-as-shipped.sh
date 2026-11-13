@@ -76,7 +76,25 @@ must() { # CODE METHOD PATH [JSON]
   [ "$CODE" = "$want" ] || fail "$1 $2 -> $CODE (want $want): $OUT"
 }
 must 200 POST /auth/login "{\"username\":\"admin\",\"password\":\"$PW\"}"
-ok "logged in as a system-style account (shadow files, no built-in admin)"
+ok "logged in as the account seeded by PATRONUS_ADMIN_PASSWORD (shadow files, no built-in admin)"
+
+# System-user login model (8932cd7e): there is no first-boot password file, no generated password and no built-in admin.
+for f in /var/lib/patronus/initial-admin-password /var/lib/horcrux/initial-admin-password; do
+  X test ! -e "$f" || fail "$f exists: the image must not generate a first-boot admin password"
+done
+ok "no generated admin password file exists"
+# a second system-style account made the documented way (`patronus users add-local-account`, password on stdin) signs in too
+PW2="Local-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')-Pw2"
+printf '%s\n' "$PW2" | docker exec -i "$C" patronus users add-local-account alice --dir /var/lib/patronus/auth >/dev/null \
+  || fail "patronus users add-local-account failed"
+must 200 POST /auth/login "{\"username\":\"alice\",\"password\":\"$PW2\"}"
+ok "an account added with add-local-account signs in"
+api POST /auth/login "{\"username\":\"alice\",\"password\":\"wrong-$PW2\"}"
+[ "$CODE" = 401 ] || fail "wrong password for alice -> $CODE (want 401)"
+api POST /auth/login "{\"username\":\"root\",\"password\":\"$PW\"}"
+[ "$CODE" = 401 ] || fail "root login -> $CODE (want 401)"
+ok "wrong password and root are refused (401)"
+must 200 POST /auth/login "{\"username\":\"admin\",\"password\":\"$PW\"}"
 
 # --- routing ---------------------------------------------------------------
 GW=$(X ip -4 route show default | awk '{print $3; exit}')
