@@ -1739,6 +1739,15 @@ class Runner:
                 sc, code, _ = http(FWD_WAN, "/login", timeout=6)
                 self.step("patronus-wan-web-blocked", code == 0, f"WAN 10.0.2.15:8443 -> {code or 'no answer (dropped/refused)'}")
             vm.shot("installed-running")
+            # the INSTALLED system's os-release: package-owned, a version + build + variant, and no "live"/"installer" anywhere in the pretty name
+            rc, o = ssh(FWD_SSH, self.key, "cat /etc/os-release; qfile -q /usr/lib/os-release", timeout=30)
+            o = o if isinstance(o, str) else str(o)
+            kv = dict(re.findall(r'^([A-Z_]+)="?([^"\n]*)"?$', o, re.M))
+            if a.project == "horcrux":
+                good = bool(kv.get("VERSION_ID") and kv.get("BUILD_ID") and kv.get("VARIANT_ID")) and kv.get("ID_LIKE") == "gentoo" \
+                    and not re.search(r"live|installer", kv.get("PRETTY_NAME", ""), re.I) and "git.canutethegreat.com" not in o \
+                    and "sys-apps/horcrux-release" in o
+                self.step("installed-os-release-is-versioned-and-package-owned", good, kv.get("PRETTY_NAME", "?") + " | VARIANT_ID=" + kv.get("VARIANT_ID", "?") + " BUILD_ID=" + kv.get("BUILD_ID", "?"))
             if a.flow == "gui":
                 self.gui_first_boot_shots(vm)
                 if a.hold_file:
@@ -2115,6 +2124,7 @@ class Runner:
         flat = out.strip().replace("\n", " | ")[:220]
         self.step("ssh-key-login-accepted", rc == 0 and "KEYLOGIN-OK" in out, flat)
         HG.admin_tools_gate(lambda cmd, timeout=60: ssh(FWD_SSH, self.key, cmd, timeout=int(T(timeout))), self.step)
+        HG.docker_forward_gate(lambda cmd, timeout=60: ssh(FWD_SSH, self.key, cmd, timeout=int(T(timeout))), self.step)
         low = out.lower()
         # OpenSSH prints prohibit-password as either that or the old alias without-password
         rootlogin = re.search(r"permitrootlogin (\S+)", low)
