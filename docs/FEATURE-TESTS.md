@@ -84,12 +84,12 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 |---|---|---|
 | Dashboard UI phone layout: login + 8 pages at 390 and 360 px, no sideways scroll, nothing sticking out, navigation reachable (real Chromium, mocked APIs) | `frontend/scripts/phone-layout-gate.py` (rust-ci "Dashboard UI" job) | PASS 2026-11-09, run on 5f578ac9, task 42538 (first run 889 failed on the topology legend at 360 px; fixed in 5f578ac9) |
 | Per-device Wi-Fi credentials (WPA2/WPA3, revoke, rotate, enrol, quarantine) | `ci/netlab/lane-s-wifi-hwsim.sh` | SKIPS in the per-push netlab job (no hostapd/iw in that image, needs mac80211_hwsim); runs for real in the `wifi-hwsim` job of nightly-test-depth.yml (verified: run 827, job 74523 on the nightly runner, 6 hwsim radios, 22 `ok` lines incl. WPA3/SAE, `PASS lane-s-wifi-hwsim`, 2026-11-07 21:16 UTC). The "passed in 0 s" line in rust-ci is the skip, not a pass. |
+| eBPF/XDP data plane (load, pass, count, blocklist drop, unblock) | `ci/netlab/lane-j-xdp.sh` (rust-ci "Netlab features") | PASS 2026-11-13, run 1019 on ff9fd923, job 94580: the shipped xdp_firewall.bpf.c compiles, the kernel verifier loads it and it attaches (xdpgeneric) to rtr-lan; ping+TCP pass and are counted (packets=7, dropped=0); a blocklisted source is dead and the dropped counter goes 0 -> 5; unblock restores traffic; ARP and other sources are untouched. First green after e0a138ad. |
 | Mutation score, 30 power cuts (`netlab-deep`) | nightly-test-depth.yml | nightly, see its run |
 | k3s CNI operator | rust-ci "Operator tests against a real k3s cluster" | green in 11704 |
 
 ## Gaps (no end-to-end scenario found; each is a feature to test next)
 
 Checked against `ci/netlab/*.sh` (grep, 2026-11-07): `lane-k-sdwan-edge.sh` runs one patronus-dashboard
-as the SD-WAN controller, but nothing exercised the HA dashboard stack until `lane-k-dashboard-ha.sh` (three dashboards; the haproxy front end is covered by `ci/ha-e2e.sh`, see its row), and the eBPF/XDP data plane
-(compile-only check in CI; no scenario loads the program into a kernel and passes traffic). The web UI's phone layout is gated (row above).
-Add a row when a scenario lands.
+as the SD-WAN controller, but nothing exercised the HA dashboard stack until `lane-k-dashboard-ha.sh` (three dashboards; the haproxy front end is covered by `ci/ha-e2e.sh`, see its row), and the eBPF/XDP data plane is covered by `lane-j-xdp.sh` (row above). The web UI's phone layout is gated (row above).
+No known gaps left; add a row when a scenario lands.
