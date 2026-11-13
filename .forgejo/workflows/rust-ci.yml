@@ -127,7 +127,10 @@ jobs:
     container:
       # pin multi-arch manifest-list image to avoid a known dual-runner platform-mismatch race (one registered x86_64-labeled runner enforces linux/arm64 for its default single-platform digest image, causing instant 'docker create' failures)
       image: catthehacker/ubuntu:act-latest
-      options: --memory 6g --memory-swap 6g --cpus 4
+      # apparmor=unconfined: on the aws 7.x kernel hosts the docker-default profile denies kill(2) of the job's
+      # own children (EPERM even as root), so the supervisor/daemon tests that stop what they started
+      # fail there and pass elsewhere; the netlab sibling containers already run unconfined
+      options: --memory 6g --memory-swap 6g --cpus 4 --security-opt apparmor=unconfined
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -422,7 +425,8 @@ jobs:
       CARGO_BUILD_JOBS: 4
     container:
       image: catthehacker/ubuntu:act-latest
-      options: --memory 6g --memory-swap 6g --cpus 4
+      # apparmor=unconfined: see the Test job (docker-default denies kill(2) of own children on 7.x kernel hosts)
+      options: --memory 6g --memory-swap 6g --cpus 4 --security-opt apparmor=unconfined
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust

@@ -234,10 +234,18 @@ done
 [ "$(sql "SELECT count(*) FROM firewall_rules WHERE origin='gitops'")" = 0 ] || nl_fail "gitops rules left"
 [ "$(sql "SELECT count(*) FROM web_users WHERE username IN ('opsuser','viewer')")" = 0 ] || nl_fail "declared users left"
 [ "$(sql "SELECT count(*) FROM rbac_groups")" = 0 ] || nl_fail "group left"
-[ "$(sql "SELECT count(*) FROM web_users WHERE username='admin'")" = 1 ] || nl_fail "the admin account was touched"
+# web login = system users: there is no built-in admin row. GitOps must not have created or
+# removed any web account, and the CI-seeded system account (shadow files, not web_users)
+# must still sign in after every declared User/Group is gone.
+[ "$(sql "SELECT count(*) FROM web_users")" = 0 ] || nl_fail "web_users has rows after the delete: $(sql "SELECT username FROM web_users")"
+nl_web_start "$DB"
+nl_api POST /auth/login "{\"username\":\"admin\",\"password\":\"$NL_PASS\"}"
+[ "$NL_CODE" = 200 ] || nl_fail "the system admin account no longer signs in: $NL_CODE $(cat "$NL_OUT")"
+nl_web_stop
+rm -f "$NL_T/nl-jar"
 nl_assert_nft_lacks "alias_office" "udp dport 51899"
 nl_expect_http "LAN -> www:80 works again" "http://$NL_WWW/" "sees $NL_RTR_WAN"
-nl_ok "deleting the file removed the tunnel, interface, aliases, rules, profiles, users and group; the admin account is untouched"
+nl_ok "deleting the file removed the tunnel, interface, aliases, rules, profiles, users and group; the system admin account still signs in"
 
 echo "=== a broken resource is refused and changes nothing"
 cat >"$UP/config/bad.yaml" <<EOF

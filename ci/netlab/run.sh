@@ -130,6 +130,24 @@ esac
 # for them inside this (job) container: a runner job container usually has no
 # /dev/ppp even though the host does (create falls back below if it lacks it)
 DEVS=(--device /dev/ppp --device /dev/net/tun)
+# `docker create` accepts --device for a node that does not exist; the daemon only fails at
+# `docker start` ("error gathering device information while adding custom device /dev/ppp"),
+# which `docker start -a || true` hid behind exit 128 (run 1002, job on a runner whose host had
+# not loaded ppp_generic). Probe the devices the way the real container will use them; if a node
+# is missing, load the driver and create the node on the HOST from a throwaway privileged
+# container (same nsenter trick as the Docker Desktop fstrim step), and probe again.
+devs_ok() {
+  docker run --rm ${DEVS[@]+"${DEVS[@]}"} --entrypoint true "$IMAGE" >/dev/null 2>&1
+}
+ensure_devices() {
+  devs_ok && return 0
+  echo "netlab: the host lacks /dev/ppp or /dev/net/tun for the container; loading the drivers on the host"
+  docker run --rm --privileged --pid=host --entrypoint sh "$IMAGE" -c \
+    'nsenter --target 1 --mount --uts --ipc --net -- sh -c "modprobe ppp_generic; modprobe pppoe; modprobe tun; [ -c /dev/ppp ] || mknod /dev/ppp c 108 0; [ -c /dev/net/tun ] || { mkdir -p /dev/net; mknod /dev/net/tun c 10 200; }"' 2>&1 || true
+  if devs_ok; then echo "netlab: /dev/ppp and /dev/net/tun are available now"; return 0; fi
+  echo "netlab: /dev/ppp or /dev/net/tun still missing on this runner host (no ppp/tun driver for its kernel): the scenarios that need them will fail"
+  DEVS=()
+}
 create() {
   docker create --name "$C" --platform "$PLATFORM" \
     --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN ${DEVS[@]+"${DEVS[@]}"} "$@" \
@@ -151,6 +169,7 @@ run_container() {
   docker start -a "$C" || true
   rc=$(docker inspect -f '{{.State.ExitCode}}' "$C")
 }
+ensure_devices
 run_container
 # Exit 137 = SIGKILL. When it was the kernel's OOM killer (the 2g cap) that is
 # a real problem and says so; when something outside killed the container (a
