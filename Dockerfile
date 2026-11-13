@@ -75,11 +75,14 @@ RUN emerge --verbose --autounmask-write --onlydeps net-firewall/patronus && \
 COPY . /usr/src/patronus
 RUN cd /usr/src/patronus && cargo vendor /var/cache/distfiles/patronus-vendor 2>&1 | tail -5 || true
 
-# git-r3 would otherwise re-clone from the remote (EGIT_REPO_URI) even though
-# we just vendored the local checkout above, silently ignoring uncommitted
-# local changes. EGIT_OVERRIDE_REPO_<PN> is git-r3's documented mechanism to
-# point it at a local path instead.
-ENV EGIT_OVERRIDE_REPO_PATRONUS=/usr/src/patronus
+# The live (9999) ebuild is git-r3: it clones EGIT_REPO_URI, so without an override this image builds
+# whatever the remote's default branch HEAD is, NOT the commit under test. (The earlier
+# EGIT_OVERRIDE_REPO_PATRONUS never matched: git-r3 names the override after the repository id,
+# CANUTETHEGREAT_PATRONUS, and a local override would need a .git/, which .dockerignore strips.) CI passes
+# the commit under test; it is on the remote because the branch is pushed. Empty = track the default
+# branch HEAD (local `docker build .`).
+ARG PATRONUS_COMMIT=""
+ENV EGIT_OVERRIDE_COMMIT_CANUTETHEGREAT_PATRONUS=${PATRONUS_COMMIT}
 
 # Dependencies are already merged above, so this now only builds and links
 # patronus itself -- the part that's actually supposed to run on every commit.
