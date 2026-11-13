@@ -23,7 +23,8 @@ mkfifo /tmp/xdp.ctl
 ip netns exec nl-rtr "$NL_T/xdp-loader" "$NL_T/xdp_firewall.o" "$NL_LAN_IF" <>/tmp/xdp.ctl >/tmp/xdp.out 2>/tmp/xdp.err &
 NL_PIDS+=($!)
 nl_wait 20 grep -q "attached $NL_LAN_IF" /tmp/xdp.out || { cat /tmp/xdp.err /tmp/xdp.out; nl_fail "the kernel did not load/attach the XDP program"; }
-R ip -d link show "$NL_LAN_IF" | grep -q 'xdpgeneric' || { R ip -d link show "$NL_LAN_IF"; nl_fail "rtr-lan has no XDP program attached"; }
+XDP_LINK=$(R ip -d link show "$NL_LAN_IF")
+grep -q 'xdpgeneric' <<<"$XDP_LINK" || { echo "$XDP_LINK"; nl_fail "rtr-lan has no XDP program attached"; }
 nl_ok "program loaded by the kernel verifier and attached (xdpgeneric) to $NL_LAN_IF"
 
 xdp() { # CMD [ARG]: one loader command; the answer is its last output line
