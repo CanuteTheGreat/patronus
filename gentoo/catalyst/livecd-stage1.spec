@@ -73,5 +73,6 @@ livecd/packages:
     net-analyzer/tcpdump
     net-analyzer/traceroute
     net-analyzer/nmap
+    net-analyzer/rustscan
     net-misc/curl
     net-misc/wget
