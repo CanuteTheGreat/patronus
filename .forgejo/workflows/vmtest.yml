@@ -1,0 +1,52 @@
+name: vmtest (multi-VM netlab lane)
+
+# Vendored nixosTest-style framework (tools/vmtest, synced from horcrux tools/vmtest/sync-to.sh; design: horcrux docs/design/vmtest.md).
+# Gates: unit tests, 3-node OpenRC selftest, and the 2-node Patronus lane (netlab_lan_client.py): the daily ISO is installed unattended,
+# a LAN client VM talks to it over a virtual switch, then partition / cable pull / loss / power cut are injected.
+on:
+  push:
+    branches: [main, 'feat/vmtest*']
+    paths:
+      - 'tools/vmtest/**'
+      - '.forgejo/workflows/vmtest.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: "replace:${{ github.workflow }}@${{ github.ref }}"
+  cancel-in-progress: false
+
+jobs:
+  vmtest:
+    name: vmtest selftest + Patronus LAN-client lane (KVM)
+    runs-on: kvm-x86_64
+    container: catthehacker/ubuntu:act-latest
+    timeout-minutes: 90
+    env:
+      VMTEST_CACHE: /tmp/vmtest-cache
+      OUT: /tmp/vmtest-out
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host deps
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils ovmf python3 curl ca-certificates openssh-client e2fsprogs openssl netcat-openbsd >/dev/null
+          ls -l /dev/kvm || echo "no /dev/kvm: guests run under TCG (x4 timeouts)"
+
+      - name: Unit tests (no QEMU)
+        run: python3 -m unittest discover -s tools/vmtest/tests -v
+
+      - name: Selftest - 3 OpenRC guests on a hub
+        run: cd tools/vmtest && python3 -u -m vmtest run scenarios/selftest_alpine.py --out $OUT/selftest
+
+      - name: Patronus 2-node lane (installed firewall + LAN client)
+        run: |
+          curl -fsSL --retry 3 -o /tmp/patronus.iso https://github.com/CanuteTheGreat/patronus/releases/download/daily/patronus-server-openrc-daily-x86_64.iso
+          cd tools/vmtest && python3 -u -m vmtest run scenarios/netlab_lan_client.py --arg iso=/tmp/patronus.iso --out $OUT/lan-client
+
+      - name: Evidence (always)
+        if: always()
+        run: |
+          for d in $OUT/*/; do echo "== $d"; head -c 3000 $d/result.json 2>/dev/null; done
+          for f in $OUT/*/*/*-serial.log; do [ -f "$f" ] && { echo "== tail $f"; tail -c 1500 "$f" | tr -d '\r'; }; done 2>/dev/null | head -150 || true
