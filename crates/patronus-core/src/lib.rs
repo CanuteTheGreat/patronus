@@ -14,7 +14,7 @@ pub mod backup;
 
 pub use backup::{BackupConfig, BackupManager};
 pub use error::{Error, Result};
-pub use service::{InitSystem, ServiceManager, ServiceState};
+pub use service::{InitSystem, ServiceAction, ServiceManager, ServiceState};
 pub use validation::*;
 
 #[cfg(feature = "certificates")]

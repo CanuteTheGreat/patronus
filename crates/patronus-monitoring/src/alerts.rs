@@ -229,15 +229,9 @@ impl AlertManager {
                 false
             }
             AlertCondition::ServiceDown { service } => {
-                // Check systemd service status
-                let output = std::process::Command::new("systemctl")
-                    .args(["is-active", service])
-                    .output();
-                match output {
-                    Ok(out) => {
-                        let status = String::from_utf8_lossy(&out.stdout);
-                        status.trim() != "active"
-                    }
+                // OpenRC or systemd, through the one init abstraction
+                match patronus_core::ServiceManager::new().status(service) {
+                    Ok(state) => state != patronus_core::ServiceState::Running,
                     Err(_) => false, // Can't determine status
                 }
             }

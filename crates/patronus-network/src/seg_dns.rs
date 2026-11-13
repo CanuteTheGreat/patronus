@@ -1217,9 +1217,7 @@ pub fn systemd_querylog_dropin(on: bool, rep: &mut ApplyReport) {
         false
     };
     if changed {
-        let _ = std::process::Command::new("systemctl")
-            .arg("daemon-reload")
-            .output();
+        let _ = patronus_core::ServiceManager::new().reload_definitions();
         rep.applied(format!(
             "unbound query log via systemd: drop-in {}",
             if on { "installed" } else { "removed" }

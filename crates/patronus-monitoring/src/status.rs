@@ -392,10 +392,10 @@ impl StatusPageManager {
             ("unbound", "DNS Resolver"),
             ("dhcpd", "DHCP Server"),
             ("openvpn", "OpenVPN"),
-            ("strongswan", "IPsec"),
+            ("ipsec", "IPsec"),
             ("suricata", "IDS/IPS"),
             ("haproxy", "Load Balancer"),
-            ("chrony", "NTP Server"),
+            ("chronyd", "NTP Server"),
             ("snmpd", "SNMP Agent"),
         ];
 
@@ -409,36 +409,17 @@ impl StatusPageManager {
     }
 
     async fn get_service_status(name: &str, description: &str) -> Result<ServiceStatus> {
-        // Check systemd service status
-        let output = Command::new("systemctl")
-            .args(["status", name])
-            .output()
-            .await?;
-
-        let is_running = output.status.success();
-
-        // Check if enabled
-        let enabled_output = Command::new("systemctl")
-            .args(["is-enabled", name])
-            .output()
-            .await?;
-
-        let is_enabled = enabled_output.status.success();
-
-        // Get PID if running
-        let pid = if is_running {
-            let show_output = Command::new("systemctl")
-                .args(["show", "-p", "MainPID", name])
-                .output()
-                .await?;
-
-            String::from_utf8_lossy(&show_output.stdout)
-                .split('=')
-                .nth(1)
-                .and_then(|s| s.trim().parse().ok())
-        } else {
-            None
-        };
+        // OpenRC or systemd, through the one init abstraction
+        let n = name.to_string();
+        let (is_running, is_enabled, pid) = tokio::task::spawn_blocking(move || {
+            let m = patronus_core::ServiceManager::new();
+            let running = m.is_running(&n).unwrap_or(false);
+            let enabled = m.is_enabled(&n).unwrap_or(false);
+            let pid = if running { m.main_pid(&n) } else { None };
+            (running, enabled, pid)
+        })
+        .await
+        .map_err(|e| patronus_core::Error::Service(format!("service probe: {e}")))?;
 
         Ok(ServiceStatus {
             name: name.to_string(),

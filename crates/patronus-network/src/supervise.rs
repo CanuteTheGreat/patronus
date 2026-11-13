@@ -235,17 +235,13 @@ impl Supervisor {
     /// Is the instance running?
     pub fn is_running(&self, service: &str, inst: &str) -> bool {
         match self.mode {
-            InitMode::Systemd => std::process::Command::new("systemctl")
-                .args(["is-active", "--quiet", &Self::unit(service, inst)])
-                .status()
-                .map(|s| s.success())
+            InitMode::Systemd => self
+                .sm()
+                .is_running(&Self::unit(service, inst))
                 .unwrap_or(false),
-            InitMode::OpenRc => std::process::Command::new("rc-service")
-                .args([&Self::rc_name(service, inst), "status"])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|s| s.success())
+            InitMode::OpenRc => self
+                .sm()
+                .is_running(&Self::rc_name(service, inst))
                 .unwrap_or(false),
             InitMode::Direct => {
                 let argv0 = self.recorded_argv0(service, inst);

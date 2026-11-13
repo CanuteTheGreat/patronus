@@ -3,6 +3,7 @@
 //! Provides L2TP/IPsec VPN server for road warrior clients.
 //! Often used by mobile devices and legacy systems.
 
+use patronus_core::service::{act_blocking, ServiceAction};
 use patronus_core::{Result, Error};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
@@ -297,45 +298,26 @@ WantedBy=multi-user.target
         Ok(())
     }
 
-    /// Start L2TP server
+    /// Start L2TP server (logical `ipsec` is `ipsec` under OpenRC and
+    /// `strongswan` under systemd: patronus_core::service::native_name)
     pub async fn start(&self) -> Result<()> {
         tracing::info!("Starting L2TP/IPsec VPN server");
 
         // Start IPsec first
-        let ipsec_status = Command::new("systemctl")
-            .args(&["start", "ipsec"])
-            .status()
-            .await?;
-
-        if !ipsec_status.success() {
-            return Err(Error::Network("Failed to start IPsec".to_string()));
-        }
+        act_blocking(ServiceAction::Start, "ipsec")
+            .await
+            .map_err(|e| Error::Network(format!("Failed to start IPsec: {e}")))?;
 
         // Then start xl2tpd
-        let xl2tpd_status = Command::new("systemctl")
-            .args(&["start", "xl2tpd"])
-            .status()
-            .await?;
-
-        if !xl2tpd_status.success() {
-            return Err(Error::Network("Failed to start xl2tpd".to_string()));
-        }
-
-        Ok(())
+        act_blocking(ServiceAction::Start, "xl2tpd")
+            .await
+            .map_err(|e| Error::Network(format!("Failed to start xl2tpd: {e}")))
     }
 
     /// Stop L2TP server
     pub async fn stop(&self) -> Result<()> {
-        Command::new("systemctl")
-            .args(&["stop", "xl2tpd"])
-            .status()
-            .await?;
-
-        Command::new("systemctl")
-            .args(&["stop", "ipsec"])
-            .status()
-            .await?;
-
+        let _ = act_blocking(ServiceAction::Stop, "xl2tpd").await;
+        let _ = act_blocking(ServiceAction::Stop, "ipsec").await;
         Ok(())
     }
 

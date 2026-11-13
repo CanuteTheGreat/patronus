@@ -3,6 +3,7 @@
 //! Provides enterprise-grade load balancing, reverse proxy, SSL offloading,
 //! and high availability for web services.
 
+use patronus_core::service::{act_blocking, ServiceAction};
 use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
@@ -593,29 +594,17 @@ WantedBy=multi-user.target
         Ok(())
     }
 
-    /// Start HAProxy
+    /// Start HAProxy (OpenRC or systemd, whichever runs the box)
     pub async fn start(&self) -> Result<()> {
         tracing::info!("Starting HAProxy");
-
-        let status = Command::new("systemctl")
-            .args(["start", "haproxy"])
-            .status()
-            .await?;
-
-        if !status.success() {
-            return Err(Error::Network("Failed to start HAProxy".to_string()));
-        }
-
-        Ok(())
+        act_blocking(ServiceAction::Start, "haproxy")
+            .await
+            .map_err(|e| Error::Network(format!("Failed to start HAProxy: {e}")))
     }
 
     /// Stop HAProxy
     pub async fn stop(&self) -> Result<()> {
-        Command::new("systemctl")
-            .args(["stop", "haproxy"])
-            .status()
-            .await?;
-
+        let _ = act_blocking(ServiceAction::Stop, "haproxy").await;
         Ok(())
     }
 
@@ -624,17 +613,9 @@ WantedBy=multi-user.target
         // Validate first
         self.validate_config().await?;
 
-        // Reload
-        let status = Command::new("systemctl")
-            .args(["reload", "haproxy"])
-            .status()
-            .await?;
-
-        if !status.success() {
-            return Err(Error::Network("Failed to reload HAProxy".to_string()));
-        }
-
-        Ok(())
+        act_blocking(ServiceAction::Reload, "haproxy")
+            .await
+            .map_err(|e| Error::Network(format!("Failed to reload HAProxy: {e}")))
     }
 
     /// Get HAProxy statistics

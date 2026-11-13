@@ -165,7 +165,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-lint-test-
       - name: README claims ledger (every claim mapped to a CI-run test)
-        run: ci/claims-check.sh && ci/shipped-crates-check.sh && ci/check-no-native-cpu.sh && ci/lint-no-pipe-grep-q.sh && python3 ci/check-web-theme.py
+        run: ci/claims-check.sh && ci/shipped-crates-check.sh && ci/check-no-native-cpu.sh && ci/check-init-parity.sh && ci/lint-no-pipe-grep-q.sh && python3 ci/check-web-theme.py
       - name: Live installer - vendored common/ in sync, fs/encryption policy (ZFS default, XFS fallback, TPM-or-none)
         run: gentoo/live-iso/sync-common.sh --check && (cd gentoo/live-iso/common && python3 -m unittest discover -s tests) && (cd gentoo/live-iso/project/tests && python3 -m unittest discover -p 'test_*.py')
       - name: Headless-first image (no desktop/personal package in the image inputs, headless gates on every architecture)
@@ -777,6 +777,13 @@ jobs:
         # setup (USER patronus, cap_add NET_ADMIN/NET_RAW, no applyd) where
         # gateway and WireGuard adds used to fail with EPERM.
         run: ci/container-as-shipped.sh patronus/web:${{ github.sha }}
+
+      - name: Run the image as shipped under systemd as PID 1 - units, applyd, web, UI service control
+        # Init parity (docs/design/init-parity.md): the same emerge-built image
+        # booted with systemd, patronus-web started by `systemctl`, service
+        # control from the UI going through the systemd backend of
+        # patronus_core::service::ServiceManager.
+        run: ci/container-as-shipped-systemd.sh patronus/web:${{ github.sha }}
 
       - name: Verify the ebuild install (binaries, USE flags, service files)
         run: |

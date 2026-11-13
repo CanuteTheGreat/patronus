@@ -91,6 +91,9 @@ pub fn control(name: &str, action: &str) -> Result<()> {
     match action {
         "start" => mgr.start(name),
         "stop" => mgr.stop(name),
+        // The broker restarting itself would die before it answers (the web UI
+        // got EOF -> 500 although the restart worked): queue it, reply first.
+        "restart" if name == "patronus-applyd" => mgr.restart_queued(name),
         _ => mgr.restart(name),
     }
 }

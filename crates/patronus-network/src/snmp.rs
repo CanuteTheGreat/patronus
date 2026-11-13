@@ -3,6 +3,7 @@
 //! Provides SNMP v2c and v3 agent functionality for network monitoring integration.
 //! Allows monitoring systems (Zabbix, Nagios, PRTG, etc.) to query firewall status.
 
+use patronus_core::service::{act_blocking, ServiceAction};
 use patronus_core::{Result, Error};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
@@ -303,44 +304,25 @@ WantedBy=multi-user.target
         Ok(())
     }
 
-    /// Start SNMP agent
+    /// Start SNMP agent (OpenRC or systemd, whichever runs the box)
     pub async fn start(&self) -> Result<()> {
         tracing::info!("Starting SNMP agent");
-
-        let status = Command::new("systemctl")
-            .args(&["start", "snmpd"])
-            .status()
-            .await?;
-
-        if !status.success() {
-            return Err(Error::Network("Failed to start SNMP agent".to_string()));
-        }
-
-        Ok(())
+        act_blocking(ServiceAction::Start, "snmpd")
+            .await
+            .map_err(|e| Error::Network(format!("Failed to start SNMP agent: {e}")))
     }
 
     /// Stop SNMP agent
     pub async fn stop(&self) -> Result<()> {
-        Command::new("systemctl")
-            .args(&["stop", "snmpd"])
-            .status()
-            .await?;
-
+        let _ = act_blocking(ServiceAction::Stop, "snmpd").await;
         Ok(())
     }
 
     /// Restart SNMP agent
     pub async fn restart(&self) -> Result<()> {
-        let status = Command::new("systemctl")
-            .args(&["restart", "snmpd"])
-            .status()
-            .await?;
-
-        if !status.success() {
-            return Err(Error::Network("Failed to restart SNMP agent".to_string()));
-        }
-
-        Ok(())
+        act_blocking(ServiceAction::Restart, "snmpd")
+            .await
+            .map_err(|e| Error::Network(format!("Failed to restart SNMP agent: {e}")))
     }
 
     /// Get SNMP statistics

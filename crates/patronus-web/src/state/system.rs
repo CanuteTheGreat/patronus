@@ -466,9 +466,7 @@ fn probe_service(
         Ok(ServiceState::Unknown) => ("Unknown".to_string(), false),
         Err(e) => (format!("Unknown ({e})"), false),
     };
-    let pid = is_running
-        .then(|| main_pid(mgr.init_system(), name))
-        .flatten();
+    let pid = is_running.then(|| mgr.main_pid(name)).flatten();
     let uptime = pid.and_then(process_age_secs);
     let rss = pid.and_then(process_rss_bytes);
     crate::templates::Service {
@@ -484,27 +482,6 @@ fn probe_service(
             .map(super::vpn::format_bytes)
             .unwrap_or_else(|| "—".to_string()),
     }
-}
-
-fn main_pid(init: InitSystem, name: &str) -> Option<u32> {
-    let pid = match init {
-        InitSystem::Systemd => {
-            let o = std::process::Command::new("systemctl")
-                .args(["show", "-p", "MainPID", "--value", name])
-                .output()
-                .ok()?;
-            String::from_utf8_lossy(&o.stdout).trim().parse().ok()?
-        }
-        _ => ["/run", "/var/run"]
-            .iter()
-            .find_map(|d| std::fs::read_to_string(format!("{d}/{name}.pid")).ok())?
-            .lines()
-            .next()?
-            .trim()
-            .parse()
-            .ok()?,
-    };
-    (pid > 0).then_some(pid)
 }
 
 /// Seconds a process has been running (start time from /proc/PID/stat).

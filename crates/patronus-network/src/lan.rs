@@ -20,7 +20,7 @@
 
 use patronus_config::store::ConfigStore;
 use patronus_config::ApplyReport;
-use patronus_core::service::{InitSystem, ServiceManager};
+use patronus_core::service::ServiceManager;
 use patronus_core::{Error, Result};
 use serde::Serialize;
 use serde_json::Value;
@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::Arc;
 
 /// First-line marker of every config file Patronus owns.
@@ -408,13 +408,7 @@ impl SystemServices {
         if std::env::var("PATRONUS_DEFER_SERVICES").is_ok_and(|v| flag(&v)) {
             return true;
         }
-        if ServiceManager::detect_init_system() == InitSystem::Systemd {
-            if let Ok(o) = Command::new("systemctl").arg("is-system-running").output() {
-                let s = String::from_utf8_lossy(&o.stdout);
-                return matches!(s.trim(), "initializing" | "starting");
-            }
-        }
-        false
+        Self::manager().is_booting()
     }
 }
 
@@ -426,24 +420,7 @@ impl ServiceControl for SystemServices {
     fn restart(&self, svc: &str) -> Result<()> {
         let m = Self::manager();
         if Self::defer() {
-            let mut c = match m.init_system() {
-                InitSystem::Systemd => {
-                    let mut c = Command::new("systemctl");
-                    c.args(["--no-block", "restart", svc]);
-                    c
-                }
-                _ => {
-                    let mut c = Command::new("rc-service");
-                    c.args([svc, "restart"]);
-                    c
-                }
-            };
-            c.stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .map_err(|e| Error::Service(format!("queue start of {svc}: {e}")))?;
-            return Ok(());
+            return m.restart_queued(svc);
         }
         m.restart(svc)?;
         // Type=simple units report "active" at once even if the daemon dies
@@ -454,10 +431,7 @@ impl ServiceControl for SystemServices {
                 return Ok(());
             }
         }
-        let hint = match m.init_system() {
-            InitSystem::Systemd => format!("see `journalctl -u {svc}`"),
-            _ => format!("see `rc-service {svc} status` and the system log"),
-        };
+        let hint = m.log_hint(svc);
         Err(Error::Service(format!(
             "{svc} did not stay running ({hint})"
         )))
