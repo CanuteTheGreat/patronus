@@ -498,10 +498,7 @@ pub async fn factory_reset(
             "Invalid request: type RESET to confirm",
         );
     }
-    if state
-        .auth
-        .user_store
-        .verify_credentials(&admin.session.username, &req.password)
+    if crate::auth::confirm_password(&state, &admin.session.username, &req.password)
         .await
         .is_none()
     {

@@ -169,6 +169,9 @@ RUN emerge --verbose sys-libs/libcap && \
     getcap "$(command -v nft)" "$(command -v wg)"
 
 
+# no root broker in the image: web login accounts are passwd/group/shadow
+# files the patronus user owns (patronus users add-local-account)
+ENV PATRONUS_AUTH_ETC=/var/lib/patronus/auth
 USER patronus
 WORKDIR /home/patronus
 EXPOSE 8443 51820/udp

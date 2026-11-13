@@ -37,12 +37,13 @@ pub async fn handle_web_command(
         // Same startup as the patronus-web binary: open the config store
         // (--db / $PATRONUS_DB / /var/lib/patronus/config.db), seed
         // first-boot defaults, load the stored firewall into nftables.
-        let state = patronus_web::state::startup(db).await?;
-        // No default credentials: same per-install admin password as the
-        // patronus-web binary (PATRONUS_ADMIN_PASSWORD or the generated
-        // /var/lib/patronus/initial-admin-password).
-        let source = state.auth.user_store.provision_admin_from_env().await?;
-        println!("  Admin password source: {:?}", source);
+        let mut state = patronus_web::state::startup(db).await?;
+        state.auth.syslogin.seed_from_env()?;
+        // No built-in account: system users sign in by group (PAM / shadow).
+        println!(
+            "  Web login: system users in {:?} (admin)",
+            state.auth.syslogin.cfg.admin_groups
+        );
 
         patronus_web::serve(socket_addr, state).await?;
         Ok(())

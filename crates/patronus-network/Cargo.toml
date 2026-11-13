@@ -63,6 +63,8 @@ thiserror.workspace = true
 tracing.workspace = true
 nix = { workspace = true, features = ["signal", "process", "user", "fs"] }
 libc = "0.2"
+# system-account logins without PAM (embedded tier): md5/sha256/sha512-crypt + bcrypt, pure Rust
+pwhash = "1"
 sqlx.workspace = true
 serde_json.workspace = true
 chrono.workspace = true

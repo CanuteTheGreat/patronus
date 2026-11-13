@@ -20,6 +20,12 @@
 //!      start/stop/restart one of the installed services the web UI lists
 //!      (`crate::services::KNOWN_SERVICES`; the web UI's own service and
 //!      this broker can only be restarted). Nothing else can be named.
+//!   -> {"op":"auth","user":"alice","password":"..."}   (web login of a system user)
+//!   <- {"ok":true,"uid":1000,"groups":["wheel",...]} | {"ok":false}
+//!      the password is checked as root by `crate::sysauth` (PAM, or the
+//!      shadow files on the embedded tier); it is never logged. `ok:false`
+//!      is the same answer for a wrong password, an unknown or locked
+//!      account; an `error` field means the mechanism itself is unavailable.
 
 use async_trait::async_trait;
 use patronus_config::applier::{Applier, ApplierRegistry, ApplyReport, Phase};
@@ -31,6 +37,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+
+use crate::sysauth;
 
 pub const DEFAULT_SOCKET: &str = "/run/patronus/applyd.sock";
 
@@ -119,6 +127,34 @@ pub async fn serve(
                 let out = match r {
                     Ok(()) => json!({"ok": true}),
                     Err(e) => json!({"ok": false, "error": e}),
+                };
+                let _ = wr.write_all(format!("{out}\n").as_bytes()).await;
+                return;
+            }
+            if op == "auth" {
+                let user = req
+                    .get("user")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let pw = req
+                    .get("password")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let r = tokio::task::spawn_blocking(move || {
+                    sysauth::check(&sysauth::auto_backend(), &user, &pw)
+                })
+                .await
+                .map_err(|e| e.to_string())
+                .and_then(|r| r);
+                let out = match r {
+                    Ok(Some(i)) => json!({"ok": true, "uid": i.uid, "groups": i.groups}),
+                    Ok(None) => json!({"ok": false}),
+                    Err(e) => {
+                        tracing::warn!("applyd: auth mechanism unavailable: {e}");
+                        json!({"ok": false, "error": e})
+                    }
                 };
                 let _ = wr.write_all(format!("{out}\n").as_bytes()).await;
                 return;
@@ -233,6 +269,41 @@ pub async fn request_system(socket: &Path, action: &str, params: Value) -> Resul
         Ok(v.get("result").cloned().unwrap_or(Value::Null))
     } else {
         Err(broker_error(&v))
+    }
+}
+
+/// Ask the broker (root) to check a system user's password. `Ok(None)`: not
+/// signed in (wrong password, unknown/locked account); `Err`: no broker or
+/// no usable PAM/shadow mechanism behind it.
+pub async fn request_auth(
+    socket: &Path,
+    user: &str,
+    password: &str,
+) -> Result<Option<sysauth::Identity>> {
+    let v = call(
+        socket,
+        json!({ "op": "auth", "user": user, "password": password }),
+    )
+    .await?;
+    if v.get("ok").and_then(|o| o.as_bool()) == Some(true) {
+        let uid = v
+            .get("uid")
+            .and_then(|u| u.as_u64())
+            .unwrap_or(u32::MAX as u64) as u32;
+        let groups = v
+            .get("groups")
+            .and_then(|g| g.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        return Ok(Some(sysauth::Identity { uid, groups }));
+    }
+    match v.get("error").and_then(|e| e.as_str()) {
+        Some(e) => Err(Error::Network(format!("auth broker: {e}"))),
+        None => Ok(None),
     }
 }
 

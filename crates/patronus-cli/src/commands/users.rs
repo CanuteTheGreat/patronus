@@ -1,8 +1,7 @@
 //! `patronus users`: the web UI accounts in the config store (lane H).
 //! Mainly the way back in when an admin lost the phone with the second
 //! factor: `patronus users reset-2fa admin` on the box (as root). A lost
-//! admin password is reset with `PATRONUS_ADMIN_PASSWORD` (re-applied at
-//! every patronus-web start while set).
+//! web login is a system user (PAM / shadow): reset it with `passwd`.
 
 use super::apply::open_store;
 use sqlx::Row;
@@ -16,7 +15,9 @@ pub async fn list(db: Option<&Path>) -> anyhow::Result<()> {
     .fetch_all(store.pool().map_err(|e| anyhow::anyhow!("{e}"))?)
     .await?;
     if rows.is_empty() {
-        println!("no web accounts yet (patronus-web creates admin at its first start)");
+        println!(
+            "no web accounts yet (a system user in patronus-admin/wheel signs in and appears here)"
+        );
     }
     for r in rows {
         println!(
@@ -45,6 +46,31 @@ pub fn hash_password() -> anyhow::Result<()> {
         anyhow::bail!("the password must have at least 8 characters");
     }
     println!("{}", patronus_secrets::crypto::hash_password(pw)?);
+    Ok(())
+}
+
+/// Container image: a web login account in the passwd/group/shadow files of
+/// `$PATRONUS_AUTH_ETC` (the unprivileged web user owns them).
+pub fn add_local_account(
+    name: &str,
+    groups: &str,
+    dir: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
+    let dir = dir
+        .or_else(|| std::env::var_os("PATRONUS_AUTH_ETC").map(Into::into))
+        .ok_or_else(|| anyhow::anyhow!("no directory: pass --dir or set PATRONUS_AUTH_ETC"))?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    let pw = line.trim_end_matches(['\n', '\r']);
+    let groups: Vec<String> = groups
+        .split(',')
+        .map(str::trim)
+        .filter(|g| !g.is_empty())
+        .map(String::from)
+        .collect();
+    patronus_network::sysauth::add_account(&dir, name, pw, &groups)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    println!("account {name} written to {}", dir.display());
     Ok(())
 }
 

@@ -15,6 +15,7 @@ pub mod radius;
 pub mod rbac;
 pub mod routes;
 pub mod state;
+pub mod syslogin;
 pub mod templates;
 pub mod tls;
 #[cfg(feature = "totp")]

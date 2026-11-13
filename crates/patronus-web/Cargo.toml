@@ -109,3 +109,8 @@ sha1 = { version = "0.10", optional = true }
 # statvfs (real disk usage), hostname, CLK_TCK (service uptimes)
 nix = { workspace = true, features = ["fs", "hostname", "feature"] }
 libc = "0.2"
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3.10"
+pwhash = "1"

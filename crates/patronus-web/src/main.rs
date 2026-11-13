@@ -28,27 +28,17 @@ async fn main() -> Result<()> {
     // unit hasn't, and load the stored firewall into nftables. (This used
     // to keep every rule in memory, with the store pointed at /tmp and
     // never used, so all rules vanished on restart.)
-    let state = patronus_web::state::startup(None).await?;
-
-    // Per-install admin password: PATRONUS_ADMIN_PASSWORD, or generated on
-    // first start into /var/lib/patronus/initial-admin-password (0600).
-    // Refuses to start with a known/weak password; there are no default
-    // credentials.
-    match state.auth.user_store.provision_admin_from_env().await? {
-        patronus_web::auth::AdminPasswordSource::Env => {
-            info!("admin password taken from PATRONUS_ADMIN_PASSWORD")
-        }
-        patronus_web::auth::AdminPasswordSource::ExistingFile(p) => {
-            info!("admin password loaded from {}", p.display())
-        }
-        patronus_web::auth::AdminPasswordSource::Stored => {
-            info!("admin account loaded from the config store")
-        }
-        patronus_web::auth::AdminPasswordSource::GeneratedFile(p) => info!(
-            "generated a per-install admin password; log in as 'admin' with the contents of {}",
-            p.display()
-        ),
+    let mut state = patronus_web::state::startup(None).await?;
+    if state.auth.syslogin.seed_from_env()? {
+        info!("web login: account seeded from PATRONUS_ADMIN_PASSWORD (headless/CI)");
     }
+
+    // No built-in account: the web UI signs in system users (PAM, or the
+    // shadow files on the embedded tier) by group, see patronus_web::syslogin.
+    info!(
+        "web login: system users in {:?} (admin); no built-in admin account",
+        state.auth.syslogin.cfg.admin_groups
+    );
 
     // Bind to address
     let addr = SocketAddr::from(([0, 0, 0, 0], 8443));

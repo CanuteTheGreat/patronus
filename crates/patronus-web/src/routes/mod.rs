@@ -552,6 +552,121 @@ mod auth_gate_tests {
         assert_eq!(r.headers()[header::X_FRAME_OPTIONS], "DENY");
     }
 
+    /// System-account login end to end (shadow backend over a temp etc):
+    /// groups decide the role, everything else is the same generic 401,
+    /// the old built-in admin is read-only and then retired by the first
+    /// system administrator, and a system account's password is the
+    /// system's.
+    #[tokio::test]
+    async fn web_login_is_system_users_by_group_and_legacy_accounts_are_read_only() {
+        use crate::syslogin::{Mode, SysLogin, WebAuthConfig};
+        use patronus_network::sysauth::Backend;
+        let dir = std::env::temp_dir().join(format!("patronus-web-sys-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pw = "Sys-Passw0rd-Ok-1";
+        let h = pwhash::sha512_crypt::hash(pw).unwrap();
+        std::fs::write(dir.join("passwd"), "root:x:0:0::/r:/bin/sh\nboss:x:1000:1000::/h:/bin/sh\nviewer:x:1001:1001::/h:/bin/sh\nplain:x:1002:1002::/h:/bin/sh\n").unwrap();
+        std::fs::write(dir.join("group"), "root:x:0:\nwheel:x:10:boss,root\nboss:x:1000:\nviewer:x:1001:\nplain:x:1002:\nauditors:x:2000:viewer\n").unwrap();
+        std::fs::write(
+            dir.join("shadow"),
+            format!("root:{h}:1::::::\nboss:{h}:1::::::\nviewer:{h}:1::::::\nplain:{h}:1::::::\n"),
+        )
+        .unwrap();
+        let config_store = std::sync::Arc::new(
+            patronus_config::ConfigStore::open(dir.join("config.db"))
+                .await
+                .unwrap(),
+        );
+        let mut state = crate::AppState::new(
+            config_store,
+            std::sync::Arc::new(crate::state::firewall::NoopApplier),
+        )
+        .await
+        .unwrap();
+        let mut sys = SysLogin::new(
+            WebAuthConfig {
+                readonly_groups: vec!["auditors".into()],
+                ..Default::default()
+            },
+            Mode::Direct(Backend::Shadow(dir.clone())),
+        );
+        sys.legacy_clamp = true;
+        state.auth.syslogin = sys;
+        // a pre-PAM account set: the built-in admin (an admin by role)
+        state
+            .auth
+            .user_store
+            .provision_admin(Some("Legacy-Passw0rd-1".into()), &dir.join("pw"))
+            .await
+            .unwrap();
+        let app = super::build_router(state, std::sync::Arc::new(crate::WsBroadcaster::new()));
+        let login = |u: &str, p: &str| {
+            let app = app.clone();
+            let body = format!(r#"{{"username":"{u}","password":"{p}"}}"#);
+            async move {
+                let r = app
+                    .oneshot(req(Method::POST, "/api/auth/login", None, Some(&body)))
+                    .await
+                    .unwrap();
+                let st = r.status();
+                let cookie = r
+                    .headers()
+                    .get(header::SET_COOKIE)
+                    .map(|c| c.to_str().unwrap().split(';').next().unwrap().to_string());
+                let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+                (st, cookie, String::from_utf8_lossy(&b).to_string())
+            }
+        };
+        // legacy admin: signs in, but read-only
+        let (st, _, b) = login("admin", "Legacy-Passw0rd-1").await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        assert!(
+            b.contains("ReadOnly"),
+            "legacy account must be read-only: {b}"
+        );
+        // generic refusals: wrong password, unknown, no group, root, bad name
+        let mut bodies = Vec::new();
+        for (u, p) in [
+            ("boss", "wrong"),
+            ("ghost", pw),
+            ("plain", pw),
+            ("root", pw),
+        ] {
+            let (st, cookie, b) = login(u, p).await;
+            assert_eq!(st, StatusCode::UNAUTHORIZED, "{u}");
+            assert!(cookie.is_none(), "{u}");
+            bodies.push(b);
+        }
+        assert!(bodies.windows(2).all(|w| w[0] == w[1]), "{bodies:?}");
+        // system users by group
+        let (st, cookie, b) = login("viewer", pw).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        assert!(b.contains("ReadOnly"), "{b}");
+        let (st, cookie_boss, b) = login("boss", pw).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        assert!(b.contains("Admin"), "{b}");
+        let _ = cookie;
+        // the first system administrator retired the built-in admin
+        let (st, _, _) = login("admin", "Legacy-Passw0rd-1").await;
+        assert_eq!(st, StatusCode::UNAUTHORIZED);
+        // a system account cannot set a password here
+        let r = app
+            .clone()
+            .oneshot(req(
+                Method::POST,
+                "/api/auth/password",
+                cookie_boss.as_deref(),
+                Some(&format!(
+                    r#"{{"current_password":"{pw}","new_password":"Brand-New-Passw0rd-9"}}"#
+                )),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        let (st, _, _) = login("boss", pw).await;
+        assert_eq!(st, StatusCode::OK, "the system password is unchanged");
+    }
+
     #[tokio::test]
     async fn logged_in_admin_reaches_the_api() {
         let (app, pw) = app().await;

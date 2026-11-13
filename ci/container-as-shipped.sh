@@ -47,7 +47,8 @@ docker run --rm --privileged --user 0 --network none --memory 128m --entrypoint 
   || fail "the runner kernel has no WireGuard support"
 
 # Exactly docker-compose.yml's privileges and sysctl (no --user, no --privileged).
-docker run -d --name "$C" --cap-add NET_ADMIN --cap-add NET_RAW \
+PW="Ship-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')-Pw1"
+docker run -d --name "$C" -e PATRONUS_ADMIN_PASSWORD="$PW" --cap-add NET_ADMIN --cap-add NET_RAW \
   --sysctl net.ipv4.fib_multipath_hash_policy=1 \
   --memory 1g --memory-swap 1g --cpus 1 -e RUST_LOG=info "$IMAGE" >/dev/null
 [ "$(docker exec "$C" id -un)" = patronus ] || fail "image does not run as user patronus"
@@ -58,7 +59,6 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 X curl -ksf -o /dev/null https://localhost:8443/login || fail "patronus-web did not come up"
-PW=$(X cat /var/lib/patronus/initial-admin-password) || fail "no generated admin password"
 
 OUT=
 CODE=
@@ -76,7 +76,7 @@ must() { # CODE METHOD PATH [JSON]
   [ "$CODE" = "$want" ] || fail "$1 $2 -> $CODE (want $want): $OUT"
 }
 must 200 POST /auth/login "{\"username\":\"admin\",\"password\":\"$PW\"}"
-ok "logged in with the generated admin password"
+ok "logged in as a system-style account (shadow files, no built-in admin)"
 
 # --- routing ---------------------------------------------------------------
 GW=$(X ip -4 route show default | awk '{print $3; exit}')

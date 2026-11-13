@@ -394,6 +394,20 @@ enum UsersCommands {
     /// GitOps `User` resource's `password_hash`
     #[command(name = "hash-password")]
     HashPassword,
+    /// Container image: add a web login account to the passwd/group/shadow
+    /// files in $PATRONUS_AUTH_ETC (password: one line on stdin). On a
+    /// system install use useradd / passwd instead.
+    #[command(name = "add-local-account")]
+    AddLocalAccount {
+        /// Account name
+        name: String,
+        /// Groups (patronus-admin = administrator), comma separated
+        #[arg(long, default_value = "patronus-admin")]
+        groups: String,
+        /// Directory with passwd/group/shadow [default: $PATRONUS_AUTH_ETC]
+        #[arg(long)]
+        dir: Option<std::path::PathBuf>,
+    },
 }
 
 #[cfg(feature = "plugins")]
@@ -618,6 +632,9 @@ async fn main() -> anyhow::Result<()> {
             UsersCommands::List => users::list(cli.db.as_deref()).await?,
             UsersCommands::Reset2fa { name } => users::reset_2fa(cli.db.as_deref(), &name).await?,
             UsersCommands::HashPassword => users::hash_password()?,
+            UsersCommands::AddLocalAccount { name, groups, dir } => {
+                users::add_local_account(&name, &groups, dir)?
+            }
         },
 
         #[cfg(feature = "wifi-ap")]

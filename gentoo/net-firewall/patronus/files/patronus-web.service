@@ -11,8 +11,9 @@ User=patronus
 Group=patronus
 # Same binary and port as the container image: self-signed HTTPS on :8443
 # (cert generated into /etc/patronus/tls on first start). The admin
-# password is generated on first start into
-# /var/lib/patronus/initial-admin-password, or set PATRONUS_ADMIN_PASSWORD.
+# login is a SYSTEM user in the patronus-admin or wheel group
+# (PAM service "patronus", checked by the root patronus-applyd broker);
+# there is no built-in admin account and no generated password.
 # This used to run `/usr/bin/patronus web --addr 0.0.0.0:8080`, a binary
 # that was never installed (and plain HTTP).
 ExecStart=/usr/bin/patronus-web

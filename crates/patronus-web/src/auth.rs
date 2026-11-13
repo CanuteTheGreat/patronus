@@ -49,6 +49,9 @@ fn hash_to_check(user: Option<&User>) -> &str {
 /// `web_users.password_hash` of an account whose password lives on an
 /// external server: not a PHC string, so no local password ever verifies.
 pub const EXTERNAL_PREFIX: &str = "!external:";
+/// Marks the row of a system (PAM/shadow) user: it has no password here, the
+/// system's password is the only one.
+pub const SYSTEM_PREFIX: &str = "!system:";
 
 /// Session data stored in memory
 #[derive(Debug, Clone)]
@@ -435,6 +438,74 @@ impl UserStore {
         u.password_hash.starts_with(EXTERNAL_PREFIX)
     }
 
+    /// Is this the row of a system user (signed in through PAM/shadow)?
+    pub fn is_system(u: &User) -> bool {
+        u.password_hash.starts_with(SYSTEM_PREFIX)
+    }
+
+    /// The account of a system user who just proved the password: created on
+    /// first login, and its role follows the system groups on every login.
+    /// A legacy local-password or directory row of the same name becomes the
+    /// system user's row (the system password just proved who it is). A
+    /// disabled row stays refused.
+    pub async fn system_user(
+        &self,
+        username: &str,
+        role: UserRole,
+    ) -> anyhow::Result<Option<User>> {
+        let name = check_username(username)?;
+        let hash = format!("{SYSTEM_PREFIX}pam");
+        match self.get_user(&name).await {
+            Some(u) if !u.enabled => Ok(None),
+            Some(u) => {
+                sqlx::query(
+                    "UPDATE web_users SET password_hash = ?, role = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(&hash)
+                .bind(role.as_str())
+                .bind(now_ts())
+                .bind(u.id as i64)
+                .execute(self.pool()?)
+                .await?;
+                Ok(self.get_user(&name).await)
+            }
+            None => {
+                let r = sqlx::query(
+                    "INSERT INTO web_users (username, password_hash, role, enabled, created_at, updated_at)
+                     VALUES (?, ?, ?, 1, ?, ?)",
+                )
+                .bind(&name)
+                .bind(&hash)
+                .bind(role.as_str())
+                .bind(now_ts())
+                .bind(now_ts())
+                .execute(self.pool()?)
+                .await;
+                if r.is_err() {
+                    // created by a parallel login
+                    return Ok(self.get_user(&name).await.filter(|u| u.enabled));
+                }
+                Ok(self.get_user(&name).await)
+            }
+        }
+    }
+
+    /// Migration: the first time a system administrator signs in, the old
+    /// built-in `admin` (a Patronus-only password account) is disabled.
+    /// Returns whether one was disabled.
+    pub async fn retire_legacy_admin(&self) -> bool {
+        let Ok(pool) = self.pool() else { return false };
+        sqlx::query(
+            "UPDATE web_users SET enabled = 0, updated_at = ?
+             WHERE username = 'admin' AND enabled = 1 AND password_hash NOT LIKE '!%'",
+        )
+        .bind(now_ts())
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected() > 0)
+        .unwrap_or(false)
+    }
+
     /// The account of a person authenticated by an external server: the
     /// existing one (kept as an admin left it: role, enabled), or a new
     /// password-less account with `role`.
@@ -491,6 +562,13 @@ impl UserStore {
 
     /// Update a user's password (no policy check: callers check).
     pub async fn update_password(&self, username: &str, new_password: &str) -> anyhow::Result<()> {
+        if self
+            .get_user(username)
+            .await
+            .is_some_and(|u| Self::is_system(&u))
+        {
+            anyhow::bail!("a system account's password is changed on the system (passwd)");
+        }
         let hash = hash_password(new_password)?;
         let r = sqlx::query(
             "UPDATE web_users SET password_hash = ?, updated_at = ? WHERE username = ?",
@@ -1192,6 +1270,8 @@ pub struct AuthState {
     /// API keys for automation (bearer tokens), see `crate::apikeys`.
     pub api_keys: crate::apikeys::ApiKeyStore,
     pub rbac: crate::rbac::RbacStore,
+    /// System-account login (PAM / shadow), see `crate::syslogin`.
+    pub syslogin: crate::syslogin::SysLogin,
 }
 
 impl AuthState {
@@ -1202,6 +1282,7 @@ impl AuthState {
             login_throttle: LoginThrottle::new(),
             api_keys: crate::apikeys::ApiKeyStore::new(store.clone()),
             rbac: crate::rbac::RbacStore::new(store),
+            syslogin: crate::syslogin::SysLogin::from_env(),
         }
     }
 }
@@ -1215,6 +1296,27 @@ fn client_ip(
     connect_info
         .map(|axum::extract::ConnectInfo(addr)| addr.ip())
         .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
+}
+
+/// The signed-in account if `password` is its password: the system's for a
+/// system user, the stored one for a legacy local account.
+pub async fn confirm_password(
+    app_state: &crate::state::AppState,
+    username: &str,
+    password: &str,
+) -> Option<User> {
+    let us = &app_state.auth.user_store;
+    let u = us.get_user(&username.trim().to_ascii_lowercase()).await;
+    match u {
+        Some(u) if UserStore::is_system(&u) => app_state
+            .auth
+            .syslogin
+            .confirm(&u.username, password)
+            .await
+            .then_some(u)
+            .filter(|u| u.enabled),
+        _ => us.verify_credentials(username, password).await,
+    }
 }
 
 /// Re-check the session owner's password before an own-account change
@@ -1237,12 +1339,7 @@ async fn reauth(
     if let Some(retry_after) = throttle.check(client) {
         return Err(AuthError::TooManyAttempts(retry_after));
     }
-    match app_state
-        .auth
-        .user_store
-        .verify_credentials(username, password)
-        .await
-    {
+    match confirm_password(app_state, username, password).await {
         Some(user) => Ok(user),
         None => {
             throttle.record_failure(client);
@@ -1268,20 +1365,67 @@ pub async fn login(
         return Err(AuthError::TooManyAttempts(retry_after));
     }
 
-    // Verify credentials: the local account, else (for names that are not a
-    // local-password account) the RADIUS servers
-    let local = app_state
-        .auth
-        .user_store
-        .verify_credentials(&req.username, &req.password)
-        .await;
-    let user = match local {
-        Some(u) => Some(u),
-        None => external_login(&app_state, &req.username, &req.password).await,
-    };
+    // Verify credentials, in order: the system account (PAM / shadow, role
+    // from its groups); a legacy Patronus-only account (read-only, one
+    // release); for other names the RADIUS / LDAP servers. Every failure is
+    // the same generic 401 after the same minimum time; the reason only goes
+    // to the audit log.
+    let started = std::time::Instant::now();
+    let sys = app_state.auth.syslogin.clone();
+    let name = req.username.trim().to_string();
+    let mut reason = None;
+    let mut user;
+    match sys.verify(&name, &req.password).await {
+        Ok(role) => {
+            user = app_state
+                .auth
+                .user_store
+                .system_user(&name, role)
+                .await
+                .ok()
+                .flatten();
+            if user.is_none() {
+                reason = Some("account disabled or unusable");
+            } else if role == UserRole::Admin
+                && app_state.auth.user_store.retire_legacy_admin().await
+            {
+                tracing::warn!(
+                    target: "patronus::audit",
+                    "legacy built-in admin account disabled: system administrator {name:?} signed in"
+                );
+            }
+        }
+        Err(why) => {
+            reason = Some(why.reason());
+            // the per-name back-off protects system passwords; the legacy and
+            // directory accounts have the per-address throttle above
+            user = legacy_login(&app_state, &sys, &name, &req.password).await;
+            if user.is_none() {
+                user = external_login(&app_state, &name, &req.password).await;
+            }
+        }
+    }
     let Some(user) = user else {
         throttle.record_failure(client);
-        tracing::warn!("failed login for {:?} from {}", req.username, client);
+        let why = reason.unwrap_or("bad credentials");
+        tracing::warn!(
+            target: "patronus::audit",
+            "login failed user={:?} from={} reason={}",
+            name,
+            client,
+            why
+        );
+        let _ = app_state
+            .config_store
+            .audit(
+                &name,
+                "login_failed",
+                "user",
+                Some(&name),
+                &serde_json::json!({"from": client.to_string(), "reason": why}),
+            )
+            .await;
+        tokio::time::sleep(sys.fail_floor.saturating_sub(started.elapsed())).await;
         return Err(AuthError::InvalidCredentials);
     };
 
@@ -1310,6 +1454,16 @@ pub async fn login(
         }
     }
     throttle.record_success(client);
+    let _ = app_state
+        .config_store
+        .audit(
+            &user.username,
+            "login",
+            "user",
+            Some(&user.username),
+            &serde_json::json!({"from": client.to_string(), "role": user.role.as_str()}),
+        )
+        .await;
 
     // Update last login time
     app_state
@@ -1338,6 +1492,36 @@ pub async fn login(
     });
 
     Ok(([(header::SET_COOKIE, cookie)], response).into_response())
+}
+
+/// A pre-PAM Patronus-only account with its own password. For one release
+/// these still sign in, but read-only (`legacy_local_login = false` in
+/// web-auth.toml ends it now): the way in is a system account. System and
+/// directory rows never match here (their hashes are not passwords).
+async fn legacy_login(
+    app_state: &crate::state::AppState,
+    sys: &crate::syslogin::SysLogin,
+    name: &str,
+    password: &str,
+) -> Option<User> {
+    if !sys.cfg.legacy_local_login {
+        return None;
+    }
+    let mut u = app_state
+        .auth
+        .user_store
+        .verify_credentials(name, password)
+        .await?;
+    if sys.legacy_clamp && u.role != UserRole::ReadOnly {
+        tracing::warn!(
+            target: "patronus::audit",
+            "legacy local account {:?} signed in read-only (was {}); sign in as a system user in patronus-admin/wheel",
+            u.username,
+            u.role.as_str()
+        );
+        u.role = UserRole::ReadOnly;
+    }
+    Some(u)
 }
 
 /// A login the local store did not accept, offered to the RADIUS servers.
@@ -1470,6 +1654,11 @@ pub async fn change_password(
         Ok(u) => u,
         Err(e) => return e.into_response(),
     };
+    if UserStore::is_system(&user) {
+        return bad_request(
+            "This is a system account: change its password on the system (passwd), not here",
+        );
+    }
     if let Err(e) = check_password(&req.new_password) {
         return bad_request(e.to_string());
     }

@@ -5,7 +5,7 @@ EAPI=8
 
 CRATES=""
 
-inherit cargo git-r3 systemd
+inherit cargo git-r3 pam systemd
 
 DESCRIPTION="Modern firewall and network security platform built with Rust"
 HOMEPAGE="https://git.canutethegreat.com/CanuteTheGreat/patronus"
@@ -76,6 +76,8 @@ REQUIRED_USE="
 # (No comments inside RDEPEND: Portage would parse '#' as an atom.)
 RDEPEND="
 	acct-user/patronus
+	sys-auth/pambase
+	sys-libs/pam
 	acct-group/patronus
 	gitops? ( dev-libs/openssl:0= sys-libs/zlib:= )
 	nftables? ( net-firewall/nftables )
@@ -468,6 +470,9 @@ src_install() {
 	# Install configuration files
 	insinto /etc/patronus
 	doins "${FILESDIR}/patronus.toml"
+	doins "${FILESDIR}/web-auth.toml"
+	# web login = system users: the "patronus" PAM service mirrors the system login
+	pamd_mimic_system patronus auth account
 
 	# Create necessary directories
 	keepdir /var/lib/patronus
@@ -512,6 +517,9 @@ src_install() {
 }
 
 pkg_postinst() {
+	elog "Web UI login: sign in with a SYSTEM user (PAM service /etc/pam.d/patronus) in the patronus-admin or wheel group; there is no built-in admin account and no default password."
+	elog "Create the group once:  groupadd -r patronus-admin;  usermod -aG patronus-admin <user>"
+	elog "Roles/groups: /etc/patronus/web-auth.toml. Accounts from before this release stay read-only for one release; the first system administrator login retires the old admin."
 	elog "Patronus firewall has been installed."
 	elog ""
 	if use systemd; then

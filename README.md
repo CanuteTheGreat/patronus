@@ -350,7 +350,8 @@ Then enable the services (systemd shown; OpenRC scripts are installed too):
 ```bash
 systemctl enable --now patronus-firewall   # runs `patronus apply` at boot
 systemctl enable --now patronus-web        # https://<LAN address>:8443
-cat /var/lib/patronus/initial-admin-password
+# sign in with a SYSTEM user in group patronus-admin or wheel (PAM); no built-in admin, no default password
+groupadd -r patronus-admin && usermod -aG patronus-admin <you>
 ```
 
 ### Everyday commands
