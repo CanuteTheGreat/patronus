@@ -1,5 +1,6 @@
 import { useQuery, gql } from '@apollo/client'
 import { Activity, AlertTriangle, CheckCircle, Clock } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import MetricsChart from './MetricsChart'
 import TopologyPreview from './TopologyPreview'
 
@@ -69,6 +70,7 @@ export default function Dashboard() {
   const stats = [
     {
       name: 'Active Sites',
+      to: '/sites',
       value: `${overview.activeSites}/${overview.totalSites}`,
       icon: Activity,
       color: 'text-green-600',
@@ -76,6 +78,7 @@ export default function Dashboard() {
     },
     {
       name: 'Healthy Links',
+      to: '/topology',
       value: `${overview.healthyLinks}/${overview.totalLinks}`,
       icon: CheckCircle,
       color: 'text-blue-600',
@@ -83,6 +86,7 @@ export default function Dashboard() {
     },
     {
       name: 'Avg Latency',
+      to: '/sla',
       value: `${overview.avgLatency.toFixed(1)}ms`,
       icon: Clock,
       color: 'text-yellow-600',
@@ -90,6 +94,7 @@ export default function Dashboard() {
     },
     {
       name: 'Packet Loss',
+      to: '/sla',
       value: `${(overview.packetLoss * 100).toFixed(2)}%`,
       icon: AlertTriangle,
       color: overview.packetLoss > 0.01 ? 'text-red-600' : 'text-green-600',
@@ -104,7 +109,11 @@ export default function Dashboard() {
       {/* Stats Grid */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((stat) => (
-          <div key={stat.name} className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <Link
+            key={stat.name}
+            to={stat.to}
+            className="stat-card block bg-white dark:bg-gray-800 rounded-lg shadow p-6 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          >
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600 dark:text-gray-300">{stat.name}</p>
@@ -116,7 +125,7 @@ export default function Dashboard() {
                 <stat.icon className={`h-6 w-6 ${stat.color}`} />
               </div>
             </div>
-          </div>
+          </Link>
         ))}
       </div>
 

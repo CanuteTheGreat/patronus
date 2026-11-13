@@ -86,7 +86,7 @@ export default function Security() {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <a href="#threat-details" className="stat-card block bg-white dark:bg-gray-800 rounded-lg shadow p-6 hover:shadow-md">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Total Threats</p>
@@ -98,9 +98,9 @@ export default function Security() {
               <Shield className="h-6 w-6 text-gray-600 dark:text-gray-300" />
             </div>
           </div>
-        </div>
+        </a>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <a href="#threat-details" className="stat-card block bg-white dark:bg-gray-800 rounded-lg shadow p-6 hover:shadow-md">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Blocked</p>
@@ -112,9 +112,9 @@ export default function Security() {
               <CheckCircle className="h-6 w-6 text-green-700 dark:text-green-400" />
             </div>
           </div>
-        </div>
+        </a>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <a href="#threat-details" className="stat-card block bg-white dark:bg-gray-800 rounded-lg shadow p-6 hover:shadow-md">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Block Rate</p>
@@ -126,7 +126,7 @@ export default function Security() {
               <Shield className="h-6 w-6 text-primary-700 dark:text-primary-400" />
             </div>
           </div>
-        </div>
+        </a>
       </div>
 
       {/* Threat Types */}
@@ -149,7 +149,7 @@ export default function Security() {
       {/* Security Events */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
         <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Recent Events</h2>
+          <h2 id="threat-details" className="text-lg font-semibold text-gray-900 dark:text-gray-100">Recent Events</h2>
         </div>
         <div className="divide-y divide-gray-200 dark:divide-gray-700">
           {data.securityEvents.length === 0 ? (
