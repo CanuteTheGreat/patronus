@@ -23,7 +23,7 @@ Patronus is now a **fully functional firewall system** with:
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Build Patronus
-cd /home/canutethegreat/patronus
+cd patronus
 cargo build --release
 
 # Or build with specific features

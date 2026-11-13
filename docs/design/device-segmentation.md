@@ -270,11 +270,11 @@ addresses) is out of scope for v1.
 
 ### 4.5 Spike evidence (b)
 
-Run in the Patronus lab VM 107 (`ssh -i ~/.ssh/id_ed25519_patronus-lab root@10.66.69.30`,
+Run in the Patronus lab VM 107 (over ssh as root,
 kernel 6.18.57, nftables 1.1.7) inside five throw-away network namespaces (router +
 laptop, cam, tv, unknown). The VM's own `inet patronus` table was not touched
 (`nft list tables` before/after identical; namespaces and processes removed afterwards).
-Generator: `seg-spike nft lab.json` (Rust, built on rw-man-03). Script:
+Generator: `seg-spike nft lab.json` (Rust, built on a CI build host). Script:
 `spikes/device-segmentation/lab/netns-isolation.sh`; full output:
 `spikes/device-segmentation/evidence/netns-isolation-run.txt`.
 

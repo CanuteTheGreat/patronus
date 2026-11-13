@@ -1,0 +1,15 @@
+{
+  "product": "patronus",
+  "login_path": "/login",
+  "user_sel": "#email",
+  "pass_sel": "#password",
+  "submit_sel": "button[type=submit]",
+  "username": "admin@example.com",
+  "password": "x",
+  "hook": "../../frontend/scripts/ux_mock.py",
+  "max_routes": 60,
+  "baseline": "ux-crawl-baseline.json",
+  "private_fail": ["git\\.canutethegreat\\.com", "canutethegreat\\.com", "redweek\\.(internal|com)", "\\b10\\.(66|1)\\.\\d+\\.\\d+\\b", "/home/canutethegreat"],
+  "private_warn": ["\\b(gringotts|hogshead|hogsmeade|madammalkins|crystalcave|ollivanders|azkaban|beauxbatons|rw-man-\\d+)\\b"],
+  "forbidden_names": ["\\bgnome[- ]light\\b", "\\blive[- ]?(installer|iso)\\b", "\\bforgejo\\b"]
+}

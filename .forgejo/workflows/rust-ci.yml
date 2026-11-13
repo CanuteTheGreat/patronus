@@ -898,3 +898,14 @@ jobs:
           /tmp/pw-venv/bin/pip install --quiet playwright
           /tmp/pw-venv/bin/python -m playwright install --with-deps chromium
           /tmp/pw-venv/bin/python scripts/phone-layout-gate.py /tmp/phone-layout
+      - name: UX crawl (every page, desktop + phone, light + dark, real Firefox; no JS errors, overlays, dead stat cards, private text)
+        # ci/ux-qa/ux_crawl.py with the proofmock API stubs. Owner rule 2026-11-04: what he finds by hand gets a check for its class
+        # (docs/qa/owner-findings.md). Known tracked failures: ci/ux-qa/ux-crawl-baseline.json.
+        run: |
+          /tmp/pw-venv/bin/python -m playwright install --with-deps firefox
+          /tmp/pw-venv/bin/python ci/ux-qa/ux_crawl.py --static static --report /tmp/ux-crawl.json --shots /tmp/ux-shots
+      - name: UX QA static checkers (self-tests, os-release of the installed system, public text, owner-findings table)
+        run: |
+          python3 -m unittest discover -s ci/ux-qa -p 'test_*.py'
+          python3 ci/ux-qa/check_owner_findings.py
+          python3 ci/ux-qa/check_public_text.py docs README.md --baseline ci/ux-qa/public-text-baseline.json
