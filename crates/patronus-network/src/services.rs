@@ -91,9 +91,17 @@ pub fn control(name: &str, action: &str) -> Result<()> {
     match action {
         "start" => mgr.start(name),
         "stop" => mgr.stop(name),
-        // The broker restarting itself would die before it answers (the web UI
-        // got EOF -> 500 although the restart worked): queue it, reply first.
-        "restart" if name == "patronus-applyd" => mgr.restart_queued(name),
+        // The broker restarting itself dies before it answers (the web UI got
+        // EOF -> 500 although the restart worked), even with `--no-block`:
+        // answer first, restart a moment later from a detached thread.
+        "restart" if name == "patronus-applyd" => {
+            let n = name.to_string();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                let _ = ServiceManager::new().restart_queued(&n);
+            });
+            Ok(())
+        }
         _ => mgr.restart(name),
     }
 }
