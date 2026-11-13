@@ -27,10 +27,12 @@ XDP_LINK=$(R ip -d link show "$NL_LAN_IF")
 grep -q 'xdpgeneric' <<<"$XDP_LINK" || { echo "$XDP_LINK"; nl_fail "rtr-lan has no XDP program attached"; }
 nl_ok "program loaded by the kernel verifier and attached (xdpgeneric) to $NL_LAN_IF"
 
+xdp_lines() { wc -l < /tmp/xdp.out; }
+xdp_answered() { [ "$(xdp_lines)" -gt "$1" ]; }  # evaluated on every poll (a $(..) in the nl_wait args would be expanded once, before the loader answers)
 xdp() { # CMD [ARG]: one loader command; the answer is its last output line
   local n; n=$(wc -l < /tmp/xdp.out)
   echo "$*" > /tmp/xdp.ctl
-  nl_wait 5 test "$(wc -l < /tmp/xdp.out)" -gt "$n" || nl_fail "loader did not answer '$*'"
+  nl_wait 5 xdp_answered "$n" || nl_fail "loader did not answer '$*'"
   tail -1 /tmp/xdp.out
 }
 field() { echo "$1" | tr ' ' '\n' | sed -n "s/^$2=//p"; }
