@@ -82,7 +82,9 @@ RUN cd /usr/src/patronus && cargo vendor /var/cache/distfiles/patronus-vendor 2>
 # the commit under test; it is on the remote because the branch is pushed. Empty = track the default
 # branch HEAD (local `docker build .`).
 ARG PATRONUS_COMMIT=""
-ENV EGIT_OVERRIDE_COMMIT_CANUTETHEGREAT_PATRONUS=${PATRONUS_COMMIT}
+ARG PATRONUS_BRANCH=""
+# git-r3 only fetches HEAD (+tags) unless a branch is named, and a commit that is not on it cannot be referenced: name the branch too.
+ENV EGIT_OVERRIDE_COMMIT_CANUTETHEGREAT_PATRONUS=${PATRONUS_COMMIT} EGIT_OVERRIDE_BRANCH_CANUTETHEGREAT_PATRONUS=${PATRONUS_BRANCH}
 
 # Dependencies are already merged above, so this now only builds and links
 # patronus itself -- the part that's actually supposed to run on every commit.
