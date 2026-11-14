@@ -209,6 +209,28 @@ wait_for "default back on WAN1" 20 via_is 'via 203.0.113.1 dev rtr-wan'
 must 200 PUT /routing/gateways/WAN1 '{"name":"WAN1","interface":"@wan","latency_threshold":100,"failback_delay":0}'
 nl_ok "hold-down elapsed: WAN1 online, default and LAN client back on WAN1"
 
+# --- 4c. loss hysteresis ---------------------------------------------------------
+# The ISP answers 3 of every 4 pings (deterministic: nft numgen, no randomness), so
+# the 10-probe window holds 20-30 % loss. With the loss threshold at 25 the raw
+# window value alternates around it; a gateway that entered the loss state must stay
+# there (it leaves only below 12.5 %) instead of flapping Loss/Online.
+must 200 PUT /routing/gateways/WAN1 '{"name":"WAN1","interface":"@wan","latency_threshold":100,"failback_delay":0,"loss_threshold":25}'
+ISP nft add table ip nlloss
+ISP nft "add chain ip nlloss in { type filter hook input priority 0; }"
+ISP nft "add rule ip nlloss in icmp type echo-request numgen inc mod 4 0 drop" || fail "nft numgen is not available in this kernel"
+wait_for "WAN1 in the loss state at 25 % periodic loss" 60 gw_is WAN1 loss
+for _ in $(seq 1 30); do
+  gw_is WAN1 loss || fail "loss state flapped at the threshold: WAN1 is $(gw WAN1 'g["state"]') at $(gw WAN1 'g["loss_pct"]') % loss"
+  sleep 1
+done
+wait_for "default on WAN2 while WAN1 is lossy" 20 via_is 'via 100.64.0.1 dev rtr-wan2'
+nl_ok "25 % periodic loss around a 25 % threshold: WAN1 stays 'loss' for 30 s (no Loss/Online flapping), traffic stays on WAN2"
+ISP nft delete table ip nlloss
+wait_for "WAN1 online once the loss is gone" 60 gw_is WAN1 online
+wait_for "default back on WAN1" 20 via_is 'via 203.0.113.1 dev rtr-wan'
+must 200 PUT /routing/gateways/WAN1 '{"name":"WAN1","interface":"@wan","latency_threshold":100,"failback_delay":0,"loss_threshold":20}'
+nl_ok "loss gone: WAN1 leaves the loss state and carries the traffic again"
+
 # --- 5. multi-probe: DNS through WAN1 -------------------------------------------
 nl_api POST /uplinks/probes '{"gateway":"WAN1","kind":"dns","target":"198.51.100.53","name":"www.example.test"}'
 [ "$NL_CODE" = 201 ] || fail "add probe: $NL_CODE $(cat "$NL_OUT")"

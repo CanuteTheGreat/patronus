@@ -67,6 +67,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | Parental time limits | `ci/netlab/lane-s-time.sh` | netlab | PASS 41 s|
 | Uplink health history, multi-probe, SLA | `ci/netlab/lane-s-uplink.sh` | netlab | PASS 131 s|
 | Gateway failback delay (hold-down before a recovered uplink carries traffic again; recovered WAN1 reports "failback hold-down", traffic stays on WAN2, then returns) | `ci/netlab/lane-s-uplink.sh` step 4b; unit: `failback_gate_holds_a_recovered_gateway_for_its_delay`, `failback_delay_is_validated_and_stored` | netlab | PASS 172 s, Rust CI run 975 job 91935 (d0835133) |
+| Gateway loss hysteresis (a gateway in the loss state leaves it only below half its loss threshold; deterministic 25 % periodic loss at a 25 % threshold must not flap) | `ci/netlab/lane-s-uplink.sh` step 4c; unit: `loss_state_has_hysteresis` | netlab | pending first CI run |
 | Dashboard HTTPS: self-signed cert generated on first start (key 0600, SANs), served to the LAN, name verified, untrusted/wrong-name refused, plain HTTP refused, Secure cookie, TLS 1.2/1.3, same cert after restart, operator-supplied cert wins | `ci/netlab/lane-n-tls.sh` | netlab | PASS 2026-11-09, Rust CI run 898 Netlab features job 79308 (9 s); re-run PASS 8 s in run 901 (2026-11-09) |
 
 ## Features (real Gentoo image, OpenRC and systemd)
