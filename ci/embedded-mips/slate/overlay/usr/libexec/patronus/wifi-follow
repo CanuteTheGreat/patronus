@@ -32,6 +32,15 @@ STATIC_AFTER=${STATIC_AFTER:-60}
 MIN_RESTART=${MIN_RESTART:-15}
 NOW=${NOW_CMD:-}
 FOLLOW=${FOLLOW:-}
+# uplink health check (only for the client(s) in HEALTH_STA, default: the 5 GHz one; the 2.4 GHz client is the last resort)
+HEALTH_STA=${HEALTH_STA-${WAN5_IF:-}}
+HEALTH_GRACE=${HEALTH_GRACE:-45}   # s after (re)association before the gateway must answer (ARP is flaky for ~20 s on ath10k after a join)
+HEALTH_FAILS=${HEALTH_FAILS:-3}    # consecutive failed gateway probes before the BSS is blacklisted
+ARPING=${ARPING:-arping}
+IPCMD=${IPCMD:-ip}
+WPA_CLI=${WPA_CLI:-wpa_cli}
+PKILL=${PKILL:-pkill}
+WPA_CTRL=${WPA_CTRL:-/run/wpa_supplicant}
 
 now() { if [ -n "$NOW" ]; then $NOW; else cut -d. -f1 /proc/uptime; fi; }
 log() { echo "wifi-follow: $*"; logger -t wifi-follow "$*" 2>/dev/null; }
@@ -200,7 +209,45 @@ follow_one() {
   fi
 }
 
-pass() { for p in $FOLLOW; do follow_one "${p%%:*}" "$(echo "$p" | cut -d: -f2)" "${p##*:}"; done; }
+# An associated 5 GHz client is not a working uplink: a weak or broken BSS can accept the association and DHCP and then drop
+# every frame to the gateway, and the client's metric-100 default route would black-hole the whole LAN. Probe the gateway with a
+# BROADCAST ARP (a unicast probe uses the neighbour entry, which can be stale); after $HEALTH_FAILS misses blacklist that BSS and
+# reassociate so the supplicant picks another one (the 2.4 GHz uplink carries the traffic meanwhile). A new association also starts
+# with a flushed neighbour table and a DHCP renewal: entries created while the link was down stay FAILED and make connect() say "Host is unreachable".
+health_one() {
+  sta=$1
+  bssid=$($IW dev "$sta" link 2>/dev/null | sed -n 's/^Connected to \([0-9a-fA-F:]*\).*/\1/p' | head -n 1)
+  if [ -z "$bssid" ]; then rm -f "$RUN/$sta.assoc" "$RUN/$sta.fails"; return 0; fi
+  mkdir -p "$RUN"; t=$(now)
+  # association start = now - the station's "connected time", so a reassociation to the SAME BSS is a new association too
+  ct=$($IW dev "$sta" station dump 2>/dev/null | sed -n 's/.*connected time:[[:space:]]*\([0-9]*\).*/\1/p' | head -n 1)
+  [ -n "$ct" ] && since=$(( t - ct )) || since=$t
+  rb=$(cut -d' ' -f1 "$RUN/$sta.assoc" 2>/dev/null); rs=$(cut -d' ' -f2 "$RUN/$sta.assoc" 2>/dev/null)
+  d=$(( since - ${rs:-0} )); [ "$d" -lt 0 ] && d=$(( -d ))
+  if [ "$rb" != "$bssid" ] || { [ -n "$ct" ] && [ "$d" -gt 5 ]; }; then
+    echo "$bssid $since" > "$RUN/$sta.assoc"; echo 0 > "$RUN/$sta.fails"; $IPCMD neigh flush dev "$sta" 2>/dev/null
+    # udhcpc does not watch the link: after a disassociation its default route is gone until the next lease renewal, so
+    # tell it to renew now (USR1) and the metric-100 route is back within a second
+    $PKILL -USR1 -f "[u]dhcpc -f -i $sta" 2>/dev/null
+    return 0
+  fi
+  [ $(( t - rs )) -ge "$HEALTH_GRACE" ] || return 0
+  gw=$($IPCMD route show default dev "$sta" 2>/dev/null | sed -n 's/.* via \([0-9.]*\).*/\1/p' | head -n 1)
+  # no default route this long after association: the lease never arrived, which is just as dead
+  if [ -z "$gw" ]; then ok=1; else $ARPING -b -q -c 2 -w 2 -I "$sta" "$gw" >/dev/null 2>&1 && ok=0 || ok=1; fi
+  if [ "$ok" = 0 ]; then echo 0 > "$RUN/$sta.fails"; return 0; fi
+  n=$(( $(cat "$RUN/$sta.fails" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$RUN/$sta.fails"
+  [ "$n" -ge "$HEALTH_FAILS" ] || return 0
+  log "$sta: $bssid associated but the gateway ${gw:-(no lease)} does not answer ($n probes): blacklisting it and reassociating"
+  $WPA_CLI -p "$WPA_CTRL" -i "$sta" blacklist "$bssid" >/dev/null 2>&1
+  $WPA_CLI -p "$WPA_CTRL" -i "$sta" reassociate >/dev/null 2>&1
+  rm -f "$RUN/$sta.assoc" "$RUN/$sta.fails"
+}
+
+pass() {
+  for h in $HEALTH_STA; do health_one "$h"; done
+  for p in $FOLLOW; do follow_one "${p%%:*}" "$(echo "$p" | cut -d: -f2)" "${p##*:}"; done
+}
 
 status() {
   for p in $FOLLOW; do

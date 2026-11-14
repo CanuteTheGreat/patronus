@@ -137,4 +137,46 @@ chk "no uplink, before STATIC_AFTER: nothing started" test "$(starts)" = 0
 now 1061; sh "$WF" once
 chk "no uplink after STATIC_AFTER: 5 GHz AP on the template's channel 36, 2.4 GHz AP on its default" sh -c "[ $(starts) = 2 ] && grep -q '^channel=36$' $W/run/wf/ap5.conf && grep -q '^channel=6$' $W/run/wf/ap24.conf && grep -q '^hw_mode=g$' $W/run/wf/ap24.conf"
 
+# ---- uplink health: an associated 5 GHz client whose gateway never answers is blacklisted
+cat > "$W/bin/ip" <<'X'
+#!/bin/sh
+# ip route show default dev <if> -> fixture; ip neigh flush dev <if> -> recorded
+case "$1" in route) cat "$FX/route.$5" 2>/dev/null;; neigh) echo "$*" >> "$FX/neigh.flush";; esac; exit 0
+X
+cat > "$W/bin/arping" <<'X'
+#!/bin/sh
+echo "$*" >> "$FX/arping.calls"; [ -f "$FX/gw.up" ]
+X
+cat > "$W/bin/wpa_cli" <<'X'
+#!/bin/sh
+echo "$*" >> "$FX/wpa_cli.calls"; exit 0
+X
+cat > "$W/bin/pkill" <<'X'
+#!/bin/sh
+echo "$*" >> "$FX/pkill.calls"; exit 0
+X
+chmod +x "$W/bin/ip" "$W/bin/arping" "$W/bin/wpa_cli" "$W/bin/pkill"
+export PKILL=$W/bin/pkill IPCMD=$W/bin/ip ARPING=$W/bin/arping WPA_CLI=$W/bin/wpa_cli HEALTH_STA=wl5-sta HEALTH_GRACE=25 HEALTH_FAILS=3
+rm -f "$FX"/arping.calls "$FX"/wpa_cli.calls "$FX"/neigh.flush "$FX/gw.up"; rm -rf "$W/run/wf"
+echo "default via 10.1.1.1 dev wl5-sta proto dhcp metric 100" > "$FX/route.wl5-sta"
+sta wl5-sta 5220 80 5210; nosta wl24-sta
+now 2000; sh "$WF" once
+chk "new association: neighbour table flushed, udhcpc told to renew, no probe inside the grace period" sh -c "grep -q 'flush dev wl5-sta' $FX/neigh.flush && grep -q -- '-USR1 .*dhcpc -f -i wl5-sta' $FX/pkill.calls && [ ! -f $FX/arping.calls ]"
+now 2030; sh "$WF" once; now 2033; sh "$WF" once
+chk "dead gateway: probed with a broadcast ARP on the client, not yet blacklisted after 2 misses" sh -c "grep -q -- '-b .*-I wl5-sta 10.1.1.1' $FX/arping.calls && [ ! -f $FX/wpa_cli.calls ]"
+now 2036; sh "$WF" once
+chk "third miss: BSS blacklisted and the client reassociates" sh -c "grep -q 'blacklist aa:bb:cc:dd:ee:ff' $FX/wpa_cli.calls && grep -q 'reassociate' $FX/wpa_cli.calls"
+rm -f "$FX/wpa_cli.calls"; touch "$FX/gw.up"; now 2100; sh "$WF" once; now 2130; sh "$WF" once; now 2133; sh "$WF" once; now 2136; sh "$WF" once
+chk "answering gateway: never blacklisted" test ! -f "$FX/wpa_cli.calls"
+# reassociation to the same BSS (connected time restarts): treated as a new association, grace period restarts
+printf 'Station aa:bb:cc:dd:ee:ff (on wl5-sta)\n\tconnected time:\t2 seconds\n' > "$FX/wl5-sta.station"; rm -f "$FX/pkill.calls"; now 2200; sh "$WF" once
+printf 'Station aa:bb:cc:dd:ee:ff (on wl5-sta)\n\tconnected time:\t90 seconds\n' > "$FX/wl5-sta.station"; now 2290; sh "$WF" once
+printf 'Station aa:bb:cc:dd:ee:ff (on wl5-sta)\n\tconnected time:\t3 seconds\n' > "$FX/wl5-sta.station"; now 2293; sh "$WF" once
+chk "same-BSS reassociation (connected time reset): udhcpc renew again" test "$(wc -l < "$FX/pkill.calls")" = 2
+rm -f "$FX/wl5-sta.station"
+rm -f "$FX/gw.up" "$FX/route.wl5-sta"; sta wl5-sta 5220 80 5210; rm -rf "$W/run/wf"
+now 3000; sh "$WF" once; now 3030; sh "$WF" once; now 3033; sh "$WF" once; now 3036; sh "$WF" once
+chk "associated but no lease/default route: counts as dead too" grep -q 'blacklist' "$FX/wpa_cli.calls"
+chk "gen_wpa5 (board-network) drops disabled= and priority=, pins the 5 GHz channels" sh -c "awk -v fl=1 '/^[ \\t]*(priority|disabled)=/ {next} {print} /^[ \\t]*ssid=/ {print \"\\tfreq_list=\" fl}' $W/wpa/wpa_supplicant.conf | grep -vE 'priority|disabled' | grep -c freq_list | grep -qx 2; grep -q '(priority|disabled)' $D/overlay/usr/libexec/patronus/board-network"
+
 [ "$fails" = 0 ] && echo "wifi-follow: all checks passed" || { echo "wifi-follow: $fails failed"; exit 1; }
