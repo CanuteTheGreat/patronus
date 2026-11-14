@@ -149,9 +149,12 @@ ensure_devices() {
   DEVS=()
 }
 create() {
+  # nofile=1073741816 = what docker gives containers on a systemd host with LimitNOFILE=infinity (lab CI guests):
+  # every runner now tests that case, lib.sh lowers the limit for the daemons it starts
   docker create --name "$C" --platform "$PLATFORM" \
     --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN ${DEVS[@]+"${DEVS[@]}"} "$@" \
     --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+    --ulimit nofile=1073741816:1073741816 \
     --memory 2g --memory-swap 2g --cpus 2 -w /t "$IMAGE" bash /t/inner.sh >/dev/null
 }
 run_container() {

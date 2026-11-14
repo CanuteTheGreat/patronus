@@ -22,6 +22,12 @@
 # Helpers fail the scenario with a message (`nl_fail`); every assertion
 # prints an `ok - ...` line so CI logs show what was proven.
 
+# Open-file limit. Docker on a systemd host with LimitNOFILE=infinity (the lab's Debian trixie CI guests) hands
+# containers nofile=1073741816, and squid and slapd then die or never answer (lane-n-proxy "Terminated abnormally",
+# lane-n-ldap "slapd did not answer"; runs 15982/15984/16031 on lab runners, green on rw-man-0x with 524288).
+# Every daemon the scenarios start inherits this.
+ulimit -n 65536 2>/dev/null || true
+
 NL_T=${NL_T:-/t}
 P=${PATRONUS_BIN:-$NL_T/patronus}
 WEB=${PATRONUS_WEB_BIN:-$NL_T/patronus-web}
