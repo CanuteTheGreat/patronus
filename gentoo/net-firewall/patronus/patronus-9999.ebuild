@@ -430,7 +430,7 @@ src_install() {
 			systemd_dounit "${FILESDIR}/patronus-wifi-events@.service"
 		fi
 		use dashboard && systemd_dounit "${FILESDIR}/patronus-dashboard.service"
-		# unbound's vendor unit (ProtectSystem=strict) must let unbound create the control socket and query log Patronus configures
+		# unbound keeps /var/lib/unbound (root:unbound 0775): the vendor unit would chown it to root and DNSSEC autotrust fails
 		use unbound && systemd_install_dropin unbound.service "${FILESDIR}/unbound-patronus.conf"
 	fi
 
