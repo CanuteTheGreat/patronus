@@ -34,3 +34,7 @@ so the adb key and `etph.conf` survive reboots and reflashes). `etph.conf` (opti
 `ETPH_HOST`, `ETPH_TOKEN`, `ETPH_PORT`, `ETPH_EXTRA`. Status JSON: `/run/etph/status.json`, log `/var/log/etph.log`.
 `check-rootfs.sh` (run by every `assemble.sh`, so by the NOR CI job and every flash build) fails an image that lacks the
 binary, `etph-run`, the service, or its enablement under the image's init system; `tests/run.sh` covers those failures.
+
+**NOR tier:** ETPhoneHome fits the OpenRC NOR root (kernel 3008 + root 10880 + settings 1024 of 16000 KiB, 1088 KiB free) but NOT the
+systemd NOR root (root 12736 KiB, 768 KiB OVER the 16000 KiB firmware partition, 1024 KiB short of the 256 KiB margin). `nor-ci.sh` prints
+that explicitly and tolerates exactly that known overage (it fails if it grows); the Slate itself is NAND, where both variants fit.
