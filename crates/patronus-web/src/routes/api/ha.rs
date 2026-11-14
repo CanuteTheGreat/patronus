@@ -7,11 +7,11 @@
 //! applier refuses it. Compiled with `USE=ha`; without it the page says so.
 
 use crate::state::AppState;
-use axum::{
-    http::StatusCode,
-    response::{Html, IntoResponse, Response},
-    Json,
-};
+use axum::response::{Html, IntoResponse};
+// only the feature-gated module uses these (the router image builds without `ha`)
+#[cfg(feature = "ha")]
+use axum::{http::StatusCode, response::Response, Json};
+#[cfg(feature = "ha")]
 use serde_json::json;
 
 #[cfg(feature = "ha")]

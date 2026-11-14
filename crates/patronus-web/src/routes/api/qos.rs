@@ -3,11 +3,11 @@
 //! with `tc` through `patronus applyd` and re-applied at boot.
 
 use crate::state::AppState;
-use axum::{
-    http::StatusCode,
-    response::{Html, IntoResponse, Response},
-    Json,
-};
+use axum::response::{Html, IntoResponse};
+// only the feature-gated module uses these (the router image builds without `qos`)
+#[cfg(feature = "qos")]
+use axum::{http::StatusCode, response::Response, Json};
+#[cfg(feature = "qos")]
 use serde_json::json;
 
 #[cfg(feature = "qos")]

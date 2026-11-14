@@ -368,3 +368,6 @@ xzcat
 yes
 zcat
 zcip
+syslogd
+klogd
+logger

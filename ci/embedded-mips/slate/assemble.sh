@@ -33,6 +33,7 @@ chmod -R u+rwX "$R"
 rm -f "$R"/etc/hostapd/hostapd.* "$R"/etc/wpa_supplicant/*.conf
 rm -rf "$R"/usr/include "$R"/usr/share/{man,doc,info,gtk-doc,locale} "$R"/var/db/pkg "$R"/var/cache "$R"/usr/lib/pkgconfig "$R"/etc/portage
 find "$R" -name '*.a' -delete
+rm -f "$R"/etc/init.d/busybox-* "$R"/etc/conf.d/busybox-*   # USE=syslog's scripts: the image runs patronus-syslogd/-klogd
 rm -f "$R"/usr/lib/libgmpxx.so* "$R"/usr/lib/*.o
 # util-linux/iproute2 tools the router never runs (busybox covers mount/umount/unshare/nsenter)
 while read -r f; do [ -n "$f" ] && rm -rf "$R"/$f; done < "$HERE/prune.txt"
@@ -107,7 +108,7 @@ else
   # them on OpenRC (patronus-dhcpc.wl24-sta etc.), the same set as the systemd variant's template units
   for t in "$GENTOO_FILES"/*@.service; do n=$(basename "$t" @.service); [ -f "$GENTOO_FILES/$n.initd" ] && install -m755 "$GENTOO_FILES/$n.initd" "$R/etc/init.d/$n"; done
   mkdir -p "$R"/etc/runlevels/{sysinit,boot,default,shutdown}
-  for s in patronus-board dropbear patronus-ntpd patronus-apply patronus-applyd patronus-web; do
+  for s in patronus-syslogd patronus-klogd patronus-board dropbear patronus-ntpd patronus-apply patronus-applyd patronus-web; do
     [ -x "$R/etc/init.d/$s" ] || { echo "missing OpenRC service $s"; exit 1; }; ln -sf /etc/init.d/$s "$R/etc/runlevels/default/$s"; done
   : > "$R/etc/fstab"
   echo "INIT=openrc" > "$R/etc/patronus-init"

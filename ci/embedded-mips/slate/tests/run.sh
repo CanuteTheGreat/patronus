@@ -20,7 +20,7 @@ done
 # OpenRC scripts: openrc-run syntax is sh plus depend/start functions
 for f in "$D"/overlay-openrc/etc/init.d/*; do t "sh -n ${f#$D/}" sh -n "$f"; t "openrc-run shebang ${f#$D/}" grep -q '^#!/sbin/openrc-run' "$f"; done
 # parity: every service of one variant exists in the other (OpenRC script <-> systemd unit)
-for p in "patronus-board:patronus-network" "patronus-apply:patronus-apply" "patronus-applyd:patronus-applyd" "patronus-web:patronus-web" "dropbear:patronus-dropbear" "patronus-ntpd:patronus-ntpd"; do
+for p in "patronus-board:patronus-network" "patronus-apply:patronus-apply" "patronus-applyd:patronus-applyd" "patronus-web:patronus-web" "dropbear:patronus-dropbear" "patronus-ntpd:patronus-ntpd" "patronus-syslogd:patronus-syslogd" "patronus-klogd:patronus-klogd"; do
   t "parity ${p%%:*} (OpenRC) = ${p#*:}.service (systemd)" sh -c "[ -x '$D/overlay-openrc/etc/init.d/${p%%:*}' ] && [ -L '$D/overlay-systemd/etc/systemd/system/multi-user.target.wants/${p#*:}.service' ]"
 done
 t "py_compile t_slate.py" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$D/t_slate.py"

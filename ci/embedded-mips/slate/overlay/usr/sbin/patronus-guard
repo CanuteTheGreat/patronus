@@ -27,7 +27,7 @@ arm)
   logger -t patronus-guard "boot not confirmed within ${GRACE}s: reverting to stock OpenWrt" 2>/dev/null
   echo "REVERTING" >> $RUN/patronus-guard.state
   mkdir -p $DATA/guard-log 2>/dev/null; cp $RUN/boot-times $RUN/patronus-guard.state $RUN/wpa-start.txt $RUN/insmod.log $DATA/guard-log/ 2>/dev/null
-  logread > $DATA/guard-log/syslog.txt 2>/dev/null; dmesg > $DATA/guard-log/dmesg.txt 2>/dev/null; sync
+  cat /var/log/messages.0 /var/log/messages > $DATA/guard-log/syslog.txt 2>/dev/null; dmesg > $DATA/guard-log/dmesg.txt 2>/dev/null; sync
   $FLASH openwrt > $DATA/guard-log/flash.txt 2>&1 && { sync; sleep 2; restart_now; }
   ;;
 ok) rm -f $DATA/.init-boot-attempts; touch $RUN/patronus-good; echo "ok $(date +%s)" >> $RUN/patronus-guard.state; echo confirmed ;;

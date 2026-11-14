@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+# System log: busybox syslogd on /dev/log -> /var/log/messages (tmpfs; 256 KiB + one rotated file). The web UI's log
+# viewer reads it (PATRONUS_SYSLOG default) and patronus-guard saves it on a revert. Kernel messages: patronus-klogd.
+description="System log (busybox syslogd -> /var/log/messages)"
+command=/bin/syslogd
+command_args="-n -O /var/log/messages -s 256 -b 1"
+supervisor=supervise-daemon
+respawn_delay=2
+depend() {
+	provide logger
+	before patronus-board dropbear patronus-ntpd patronus-apply patronus-applyd patronus-web dnsmasq hostapd
+}

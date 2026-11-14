@@ -29,7 +29,7 @@ if [ ! -f /out/stage-rootfs.ok ]; then
   mkdir -p $SYS/etc/portage/package.use $SYS/etc/portage/package.accept_keywords $SYS/etc/portage/package.env $SYS/etc/portage/env $SYS/etc/portage/package.mask
   cat > $SYS/etc/portage/package.use/embedded <<'EOF'
 */* -pam -nls -doc -man -selinux -audit -python -test -static-libs -tests -caps
-sys-apps/busybox -pam -static mdev -syslog -make-symlinks
+sys-apps/busybox -pam -static mdev syslog -make-symlinks
 virtual/tmpfiles -systemd
 net-firewall/nftables -python -json -xtables -readline -libedit -gmp -doc
 net-dns/dnsmasq -dbus -idn -conntrack -nls -dhcp-tools -script -ipset -nettlehash -dnssec -tftp -lua -auth-dns
