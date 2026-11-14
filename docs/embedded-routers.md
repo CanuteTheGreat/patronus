@@ -194,7 +194,7 @@ busybox init is no longer an image variant; busybox only provides the applets. B
 `/usr/sbin/patronus-init` (`/usr/libexec/patronus/early`: mounts, mdev, kmods, the data volume and the overlays, the
 factory-reset marker), then exec `openrc-init` or systemd (`/etc/patronus-init` names which); from the third unconfirmed boot the
 wrapper rolls back to the previous root. Every Patronus service has an OpenRC script and a systemd unit (the tooling tests
-check the pairs): patronus-board, patronus-apply, patronus-applyd, patronus-web, dropbear, patronus-ntpd, plus the ebuild's
+check the pairs): patronus-board, patronus-apply, patronus-applyd, patronus-web, dropbear, patronus-ntpd, patronus-syslogd, patronus-klogd, plus the ebuild's
 multiplexed per-interface scripts (patronus-dhcpc, -pppoe, -hostapd). Both carry linux-pam (`pam_unix`) for the web login,
 dhcpcd 10.5.2 for DHCPv6/PD (built without OpenSSL: 332 KB) and one multi-call `patronus-cli` (`patronus-web` is a link).
 
@@ -202,19 +202,30 @@ Web login on the router tier = system users through PAM: there is no built-in ad
 `PATRONUS_FIRST_RUN_SETUP=1` and no account in the admin group exists) creates the first administrator as a system user
 (sha512 in `/etc/shadow`, group `patronus-admin`) and then logs in through PAM like any other account.
 
-Real GL-AR750S, same build of everything else (o5 = OpenRC, sd8 = systemd; p7 = the old busybox-init image, older binaries):
+Real GL-AR750S, same build of everything else (o6 = OpenRC, sd9 = systemd, both with the per-instance supervisor lock and
+the system log; o4/o5/sd8 = the same images before those two changes; p7 = the old busybox-init image, older binaries):
 
-| | busybox init (p7) | OpenRC (o4/o5) | systemd (sd8) |
+| | busybox init (p7) | OpenRC (o6; o4/o5) | systemd (sd9; sd8) |
 |---|---|---|---|
-| `t_slate.py` after a factory reset (first-run creates a system user, PAM login) | PASS (19) | PASS (20) | PASS (7, "again" run) |
-| LAN client (test phone on the 5 GHz AP), 17 checks | 17/17 | 17/17 (o4, o5) | 17/17 |
-| A/B: o4 -> `patronus-flash root` sd8 -> `rollback` -> o4, `/data` and the store kept | | PASS | PASS |
-| Factory reset -> `/first-run`, guard confirms | PASS | PASS (o4, o5) | |
-| UCI import incl. `wan6` (dhcp6): dhcpcd runs under the init system (`dhcpcd: eth0.2 [ip4] [ip6]`) | warned (no dhcpcd) | PASS | same code path |
-| root squashfs, NAND image (incl. 4.6 MiB stock recovery root) | 17.01 MiB | **14.54 MiB** | 16.44 MiB |
-| 16 MiB NOR budget (kernel 2.94 MiB + root + 1 MiB settings, 16000 KiB) | | root 9.38 MiB, **2.25 MiB free** | root 11.20 MiB, **448 KiB free** |
-| RAM used / available, idle | 40.0 / 75.1 MB | 44.7 / 69.8 MB | 46.8 / 66.8 MB |
-| boot: `patronus-started` marker | 37.9 s | 44.5 s (45.5 s after a factory reset) | 50.2 s |
+| `t_slate.py` "first" after a factory reset (first-run creates a system user, PAM login, rules, backup/restore, syslog, load) | PASS (19) | PASS (22) | PASS (23) |
+| `t_slate.py` "again" with the other variant's settings (sd9 -> o6, `/data` kept) | | PASS (9) | PASS (7, sd8) |
+| LAN client (test phone on the 5 GHz AP), 17 checks | 17/17 | 17/17 | 17/17 |
+| A/B: `patronus-flash root` across the variants and `rollback`, `/data` and the store kept | | PASS | PASS |
+| boot-loop stop: 3 unconfirmed boots -> previous root (seen on the unit: o6 -> sd9) | | PASS | |
+| system log: syslogd + klogd -> `/var/log/messages` (kernel, daemon, `logger` lines), shown on `/monitoring` | none | PASS | PASS (+ journald forwarding) |
+| UCI import incl. `wan6` (dhcp6): dhcpcd runs under the init system (`dhcpcd: eth0.2 [ip4] [ip6]`) | warned (no dhcpcd) | PASS (o5) | same code path |
+| root squashfs, NAND image (incl. 4.6 MiB stock recovery root) | 17.01 MiB | **14.55 MiB** | 16.45 MiB |
+| 16 MiB NOR budget (kernel 2.94 MiB + root + 1 MiB settings, 16000 KiB) | | root 9.44 MiB, **2.25 MiB free** | root 11.25 MiB, **448 KiB free** |
+| NOR-profile root booted in QEMU malta BE (OpenWrt 25.12.6 malta kernel 6.12.112) | | all services started | multi-user.target, all units started |
+| RAM used / available, idle | 40.0 / 75.1 MB | 46.0 / 68.3 MB | 45.2 / 68.3 MB |
+| boot: `patronus-started` marker | 37.9 s | 43.4 s (44.7 s after a factory reset) | 54.9 s (51.7 s after a factory reset) |
+
+System log (both variants): busybox (USE=syslog) `syslogd -n -O /var/log/messages -s 256 -b 1` on the tmpfs `/var/log` plus
+`klogd -n`, as `patronus-syslogd`/`patronus-klogd` (OpenRC scripts and systemd units). On systemd, `systemd-journald-dev-log.socket`
+is masked so busybox owns `/dev/log`; journald keeps a 1 MiB volatile journal and forwards unit output and systemd's own messages
+(`ForwardToSyslog=yes`) to `/run/systemd/journal/syslog`, a link to `/dev/log`, so both variants fill the same file. journald does
+not forward kernel messages, so klogd runs on both. The web UI's log viewer (`/monitoring`, `$PATRONUS_SYSLOG`) and
+patronus-guard's revert log read that file. Cost: a few KiB of squashfs (o5 -> o6: +4 KiB); the NOR free space is unchanged (2304 / 448 KiB).
 
 OpenRC itself costs about 0.37 MiB xz (openrc-init, supervise-daemon, librc/libeinfo, libcap) and no resident memory beyond the
 `supervise-daemon` per service (about 1 MB each, mostly shared); the rest of the RAM difference to p7 is the newer, larger binary
