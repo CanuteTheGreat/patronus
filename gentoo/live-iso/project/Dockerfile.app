@@ -25,5 +25,7 @@ COPY gentoo/net-firewall/patronus/files/patronus.confd /out/etc/conf.d/patronus
 COPY gentoo/net-firewall/patronus/files/web-auth.toml /out/etc/patronus/web-auth.toml
 # systemd twins of the three services (the systemd ISO uses them; on an OpenRC image they are inert files, as in the ebuild which installs both)
 COPY gentoo/net-firewall/patronus/files/patronus-web.service gentoo/net-firewall/patronus/files/patronus-applyd.service gentoo/net-firewall/patronus/files/patronus-firewall.service /out/usr/lib/systemd/system/
+# same drop-in the ebuild installs (systemd_install_dropin -> 00gentoo.conf): unbound may create the control socket/query log Patronus configures
+COPY gentoo/net-firewall/patronus/files/unbound-patronus.conf /out/usr/lib/systemd/system/unbound.service.d/00gentoo.conf
 FROM scratch
 COPY --from=app /out/ /out/
