@@ -21,5 +21,7 @@ COPY gentoo/net-firewall/patronus/files/patronus-web.initd /out/etc/init.d/patro
 COPY gentoo/net-firewall/patronus/files/patronus-applyd.initd /out/etc/init.d/patronus-applyd
 COPY gentoo/net-firewall/patronus/files/patronus-firewall.initd /out/etc/init.d/patronus-firewall
 COPY gentoo/net-firewall/patronus/files/patronus.confd /out/etc/conf.d/patronus
+# web UI login roles (system groups): the same file the ebuild installs, one source (no overlay copy to drift)
+COPY gentoo/net-firewall/patronus/files/web-auth.toml /out/etc/patronus/web-auth.toml
 FROM scratch
 COPY --from=app /out/ /out/
