@@ -227,6 +227,8 @@ for _ in $(seq 1 40); do nl_api GET /firewall/threatintel; [ "$(jget '[f["count"
 nl_ok "feed labdrop: 2 entries ($(jget '[f["status"] for f in d["feeds"] if f["id"]=="labdrop"][0]')); 10/8, our LAN and 0/0 were not taken over"
 setdump alias_ti_labdrop_v4 | grep "$NL_BLOCKED" >/dev/null || nl_fail "feed set lacks $NL_BLOCKED"
 if setdump alias_ti_labdrop_v4 | grep -E '10\.0\.0\.0|192\.168\.50|0\.0\.0\.0/0' >/dev/null; then setdump alias_ti_labdrop_v4; nl_fail "a private range / 0.0.0.0/0 got into the feed set"; fi
+# the entry count turns non-zero when the set is filled; the ruleset with the jump follows a moment later
+nl_wait 40 bash -c "R nft list ruleset 2>/dev/null | grep 'jump ti_check' >/dev/null" || true
 nl_assert_nft_has "jump ti_check" "ip daddr @alias_ti_labdrop_v4 counter" "patronus[ti:labdrop] drop"
 blocked "LAN -> $NL_BLOCKED:9000 dropped by the threat feed (no user rule involved)" $NL_BLOCKED
 reach "LAN -> $NL_WWW:9000 unaffected" $NL_WWW
