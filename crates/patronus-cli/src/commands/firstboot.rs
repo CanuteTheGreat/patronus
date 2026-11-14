@@ -9,6 +9,7 @@
 //! wan_dhcp    = true               # the WAN port is a DHCP client
 //! dhcp_start  = "192.168.1.100"    # optional pool (needs the dhcp feature)
 //! dhcp_end    = "192.168.1.249"
+//! dns_mode    = "forwarder"        # optional: dnsmasq answers DNS (no Unbound on the image)
 //! ```
 //!
 //! Applied once: the `firstboot.lan_seeded` setting records it, after which the
@@ -35,6 +36,22 @@ struct Section {
     wan_dhcp: Option<bool>,
     dhcp_start: Option<String>,
     dhcp_end: Option<String>,
+    /// `dns.mode` to start with (auto, resolver, forwarder, disabled). Router
+    /// images without Unbound set `forwarder`: `auto` would resolve to
+    /// `disabled` there, while the first-boot DHCP pool hands out the
+    /// router's own address as the clients' DNS server.
+    dns_mode: Option<String>,
+}
+
+const DNS_MODES: &[&str] = &["auto", "resolver", "forwarder", "disabled"];
+
+/// The validated `[firstboot] dns_mode`, if any.
+fn dns_mode(s: &Section) -> anyhow::Result<Option<String>> {
+    match s.dns_mode.as_deref().map(|m| m.trim().to_ascii_lowercase()) {
+        None => Ok(None),
+        Some(m) if DNS_MODES.contains(&m.as_str()) => Ok(Some(m)),
+        Some(m) => anyhow::bail!("[firstboot] dns_mode {m:?} (auto, resolver, forwarder or disabled)"),
+    }
 }
 
 /// Returns a one-line report when something was seeded.
@@ -56,6 +73,8 @@ pub async fn seed_lan(
     let net: patronus_network::ipnetwork::IpNetwork = addr
         .parse()
         .map_err(|e| anyhow::anyhow!("[firstboot] lan_address {addr:?}: {e}"))?;
+    // validate everything before the first write
+    let dns = dns_mode(&f.firstboot)?;
     let mut cfg = NetConfig::load(store)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -99,8 +118,34 @@ pub async fn seed_lan(
     }
     #[cfg(not(feature = "dhcp-server"))]
     let _ = (&f.firstboot.dhcp_start, &f.firstboot.dhcp_end);
+    if let Some(m) = dns {
+        set_setting(store, "dns.mode", &m)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        msg.push_str(&format!(", DNS {m}"));
+    }
     set_setting(store, SEEDED, "1")
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(Some(msg))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(t: &str) -> Section {
+        toml::from_str::<File>(t).unwrap().firstboot
+    }
+
+    #[test]
+    fn dns_mode_is_validated() {
+        assert_eq!(dns_mode(&parse("")).unwrap(), None);
+        assert_eq!(
+            dns_mode(&parse("[firstboot]\ndns_mode = \" Forwarder \"\n")).unwrap(),
+            Some("forwarder".into())
+        );
+        let e = dns_mode(&parse("[firstboot]\ndns_mode = \"unbound\"\n")).unwrap_err();
+        assert!(e.to_string().contains("dns_mode"), "{e}");
+    }
 }
