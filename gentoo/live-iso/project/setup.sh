@@ -16,6 +16,11 @@ chgrp patronus /etc/patronus/patronus.toml && chmod 0640 /etc/patronus/patronus.
 bad=0; for b in /usr/bin/patronus-cli /usr/bin/patronus-web /usr/bin/patronus-install; do
   if ldd $b | grep -q 'not found'; then echo "MISSING LIBS for $b:"; ldd $b | grep 'not found'; bad=1; fi; done
 [ $bad = 0 ]
+# the web UI login runs through PAM service 'patronus' (sysauth auto backend); a missing service file silently selects the shadow-file
+# backend, which fails closed on yescrypt hashes (chpasswd / the console menu password reset): fail the build instead
+[ -s /etc/pam.d/patronus ] && [ -e /etc/pam.d/system-auth ] || { echo "/etc/pam.d/patronus or system-auth missing: web login would fall back to the shadow backend"; exit 1; }
+[ -e /etc/patronus/web-auth.toml ] || { echo "/etc/patronus/web-auth.toml missing"; exit 1; }
+find /lib64 /usr/lib64 /lib /usr/lib -maxdepth 2 -name 'libpam.so.0' 2>/dev/null | grep -q . || { echo "libpam.so.0 missing"; exit 1; }
 if [ "$(uname -m)" = riscv64 ]; then echo 'riscv64: no ZFS in the image (XFS fallback)'; exit 0; fi
 # ZFS (default root file system + mirror installs): module + tools + dracut hook + a kernel build tree must be in the image
 find /lib/modules -name 'zfs.ko*' | grep -q . || { echo "zfs.ko missing for the installed kernel"; exit 1; }

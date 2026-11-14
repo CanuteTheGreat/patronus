@@ -1,0 +1,5 @@
+# PAM service of the Patronus web UI login (what pamd_mimic_system patronus auth account writes in the ebuild):
+# the web UI signs in SYSTEM users with the same stack as the console login. Without this file sysauth falls back to its
+# shadow-file backend, which cannot verify yescrypt hashes (what chpasswd writes), so every plainly-set password got a 401.
+auth		include		system-auth
+account		include		system-auth
