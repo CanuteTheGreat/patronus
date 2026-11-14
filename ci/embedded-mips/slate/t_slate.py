@@ -65,6 +65,18 @@ for p in '/,/firewall,/interfaces,/network,/system,/monitoring,/dhcp,/dns,/routi
     res['pages'][p] = f'{out} {time.time()-t:.2f}s'; log(f'  {p:14s} {res["pages"][p]}')
 check('all built pages answer 200, unbuilt 501', all(v.split()[0] in ('200', '501') for v in res['pages'].values()))
 code, txt = api('GET', '/api/features'); res['features'] = txt[:200]; log('features', code, txt[:200])
+# system log on both init systems: busybox syslogd -> /var/log/messages (+ klogd; on systemd journald forwards to it),
+# shown by the web UI's log viewer on /monitoring
+tag = f'slate-e2e-{int(time.time())}'
+o = ssh(f"logger -t {tag} syslog-probe; sleep 2; M=/var/log/messages; for p in syslogd klogd; do pidof $p >/dev/null && echo run-$p; done; "
+        f"grep -q ' kernel: ' $M && echo has-kernel; grep -qE 'dnsmasq|hostapd|wpa_supplicant|udhcpc|dhcpcd|ntpd' $M && echo has-daemon; "
+        f"grep -q 'systemd\\[1\\]:' $M && echo has-systemd; grep -q {tag} $M && echo has-probe; cat /etc/patronus-init")
+res['syslog'] = ' '.join(o.split()); log('  syslog state:', res['syslog'])
+check('syslogd + klogd run; /var/log/messages has kernel, daemon and logger lines',
+      all(k in o for k in ('run-syslogd', 'run-klogd', 'has-kernel', 'has-daemon', 'has-probe')), res['syslog'])
+if 'INIT=systemd' in o: check('systemd: journald forwards to syslogd (systemd[1] lines in /var/log/messages)', 'has-systemd' in o)
+page = curl(['-b', JAR, BASE + '/monitoring'], 120)
+check('web UI log viewer (/monitoring) shows /var/log/messages', '[syslog]' in page and tag in page and 'No journal entries' not in page)
 rss('after_pages')
 if PH == 'first':
     for port in ('443', '22', '80'):   # 443 first: the first Patronus apply replaces the image's boot-time WAN mgmt rule (session runs over WAN)

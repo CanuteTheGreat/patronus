@@ -30,11 +30,11 @@ case "${INIT:-}" in
   *) fail "/etc/patronus-init must say INIT=openrc or INIT=systemd (got '${INIT:-}')" ;;
 esac
 [ "$(readlink "$R/sbin/init")" = /usr/sbin/patronus-init ] || fail "/sbin/init must be /usr/sbin/patronus-init"
-[ -e "$R/usr/share/patronus-recovery/openwrt-root.squashfs" ] && ! head -c4 "$R/usr/share/patronus-recovery/openwrt-root.squashfs" | grep -q hsqs && fail "recovery root is not a squashfs"
+[ -e "$R/usr/share/patronus-recovery/openwrt-root.squashfs" ] && ! head -c4 "$R/usr/share/patronus-recovery/openwrt-root.squashfs" | grep hsqs >/dev/null && fail "recovery root is not a squashfs"
 # every shared library an ELF in the image needs must be in it (o3: supervise-daemon needed libcap.so.2, so no
 # supervised service started). Needs readelf (binutils); skipped without it.
 if command -v readelf >/dev/null 2>&1; then
-  miss=$(cd "$R" && find . -type f \( -perm -u+x -o -name '*.so*' \) -exec sh -c 'head -c4 "$1" | grep -q ELF && readelf -d "$1" 2>/dev/null' _ {} \; \
+  miss=$(cd "$R" && find . -type f \( -perm -u+x -o -name '*.so*' \) -exec sh -c 'head -c4 "$1" | grep ELF >/dev/null && readelf -d "$1" 2>/dev/null' _ {} \; \
          | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p' | sort -u | while read -r l; do
            [ -e "$R/usr/lib/$l" ] || [ -e "$R/lib/$l" ] || [ -e "$R/usr/lib/openwrt/$l" ] || [ -e "$R/usr/lib/systemd/$l" ] || echo "$l"; done)
   [ -z "$miss" ] || fail "shared libraries needed but not in the image: $(echo $miss)"

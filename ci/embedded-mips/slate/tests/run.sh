@@ -111,7 +111,7 @@ t "guard: unattended mode without a gateway configured reverts" sh -c "FAKE_PING
 
 # 5. fwtool metadata (sysupgrade -T refuses an image without it)
 mkdir -p "$W/fw/sysupgrade-x"; echo k > "$W/fw/sysupgrade-x/kernel"; tar cf "$W/fw.tar" -C "$W/fw" sysupgrade-x
-t "fwmeta: add + read back (supported_devices = board)" sh -c "python3 '$D/fwmeta.py' add '$W/fw.tar' glinet,gl-ar750s-nor-nand --version t1 && python3 '$D/fwmeta.py' show '$W/fw.tar' | grep -q '\"supported_devices\": \[\"glinet,gl-ar750s-nor-nand\"\]'"
+t "fwmeta: add + read back (supported_devices = board)" sh -c "python3 '$D/fwmeta.py' add '$W/fw.tar' glinet,gl-ar750s-nor-nand --version t1 && python3 '$D/fwmeta.py' show '$W/fw.tar' | grep '\"supported_devices\": \[\"glinet,gl-ar750s-nor-nand\"\]' >/dev/null"
 tn "fwmeta: refuses to add twice" python3 "$D/fwmeta.py" add "$W/fw.tar" glinet,gl-ar750s-nor-nand
 t "fwmeta: the tar is still a valid tar" tar tf "$W/fw.tar"
 printf 'X' | dd of="$W/fw.tar" bs=1 seek=10 conv=notrunc 2>/dev/null

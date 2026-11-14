@@ -7,7 +7,7 @@ cd /rootfs; for f in $(find . -type f -perm -u+x); do $T-readelf -d $f 2>/dev/nu
 for l in $(cat $O/needed.txt); do [ -e usr/lib/$l ] || [ -e lib/$l ] || echo "MISSING $l"; done
 # dhcpcd/OpenRC from the sysroot emerge keep their symbol tables
 for f in /rootfs/sbin/dhcpcd /rootfs-openrc/sbin/* /rootfs-openrc/bin/* /rootfs-openrc/usr/libexec/rc/bin/* /rootfs-openrc/usr/libexec/rc/sbin/* /rootfs-openrc/lib/*.so* /rootfs-openrc/usr/lib/*.so*; do
-  [ -f "$f" ] && [ ! -L "$f" ] && head -c4 "$f" | grep -q ELF && $T-strip --strip-unneeded "$f" 2>/dev/null; done
+  [ -f "$f" ] && [ ! -L "$f" ] && head -c4 "$f" | grep ELF >/dev/null && $T-strip --strip-unneeded "$f" 2>/dev/null; done
 tar cf $O/rootfs.tar -C /rootfs --exclude=./usr/include --exclude=./usr/share/man --exclude=./usr/share/doc --exclude=./var/db/pkg .
 ls -l $O
 # the OpenRC variant's init system (stage-openrc.sh): assemble.sh OPENRC_TREE=
