@@ -109,7 +109,7 @@ This document outlines the planned features and enhancements for Patronus SD-WAN
   - Zero packet loss during switchover
 
 - [ ] Intelligent failback (per-gateway failback delay shipped in Routing > Gateways; gradual migration and quality verification still open)
-  - Hysteresis to prevent flapping
+  - Hysteresis to prevent flapping (shipped: failback hold-down; a gateway in the loss state leaves it only below half its loss threshold)
   - Gradual traffic migration
   - Quality verification before failback
   - Configurable failback delays
