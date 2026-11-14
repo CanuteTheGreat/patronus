@@ -178,7 +178,7 @@ def main():
 <p>The measurable exit criteria for 1.0, and how far each one is, are on the <a href="{rel('', 'roadmap/')}">roadmap checklist</a>.</p></section>
 <section class="wrap" id="download"><h2>Download</h2>
 <p>Daily builds are test builds of the <code>main</code> branch, replaced in place. A build is published only after QEMU boot, install, reboot and web probe tests passed. They are not releases: use test hardware or a VM. There is no stable release yet. Secure Boot must be off.</p>
-<p><strong>OpenRC or systemd:</strong> the same edition built on either init system. The installed system uses the init of the image you download; the installer does not switch it. Pick systemd if you want upstream GNOME session and systemd tooling, OpenRC for the classic Gentoo init.</p>
+<p><strong>OpenRC or systemd:</strong> the same edition built on either init system. The installed system uses the init of the image you download; the installer does not switch it. Pick systemd if you want systemd tooling (journald, systemctl, units), OpenRC for the classic Gentoo init; the appliance and its web UI are the same on both.</p>
 <div class="tw"><table class="dl"><thead><tr><th>Image: desktop &middot; architecture</th><th>OpenRC</th><th>systemd</th></tr></thead><tbody>{dl_rows}</tbody></table></div>
 <p>{CFG['dl_note']} Verify with <code>sha256sum -c</code>, write to a USB stick with <code>dd</code> (see the <a href="{rel('', 'docs/iso-install/')}">install guide</a>), or boot it in a VM. The test evidence (serial logs and screenshots) is attached to every build.</p>
 <h3>How the image names work</h3>
