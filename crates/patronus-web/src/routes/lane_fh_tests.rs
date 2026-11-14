@@ -831,6 +831,97 @@ async fn an_admin_cannot_set_their_own_password_without_the_current_one() {
 }
 
 #[tokio::test]
+async fn configuration_history_lists_revisions_and_restores_one() {
+    let t = setup().await;
+    let c = t.admin().await;
+    // two recorded changes; the first one's state is what we go back to
+    t.state
+        .config_store
+        .save_system_config("test.marker", "one")
+        .await
+        .unwrap();
+    let first = t
+        .state
+        .config_store
+        .snapshot("web", "marker is one")
+        .await
+        .unwrap();
+    t.state
+        .config_store
+        .save_system_config("test.marker", "two")
+        .await
+        .unwrap();
+    t.state
+        .config_store
+        .snapshot("web", "marker is two")
+        .await
+        .unwrap();
+    let marker = || async {
+        t.state
+            .config_store
+            .load_system_config("test.marker")
+            .await
+            .unwrap()
+    };
+
+    let (s, list) = t.call(&c, Method::GET, "/api/system/history", None).await;
+    assert_eq!(s, StatusCode::OK, "{list}");
+    let rows = list.as_array().unwrap();
+    assert!(rows.len() >= 2);
+    assert_eq!(rows[0]["summary"], "marker is two", "newest first");
+    assert!(rows[0]["when"].as_str().unwrap().ends_with("UTC"));
+    assert!(rows.iter().any(|r| r["id"] == first));
+
+    // the page carries the card
+    let (s, page, _) = t.raw(Method::GET, "/system", Some(&c), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(page.contains("id=\"history-table\""));
+
+    // restore revision `first`: config back, applied, previous state kept
+    let applies = t.restore_fake.applies.load(Ordering::SeqCst);
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            &format!("/api/system/history/{first}/restore"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(t.restore_fake.applies.load(Ordering::SeqCst) > applies);
+    assert_eq!(marker().await.as_deref(), Some("one"));
+    let revs = t.state.config_store.list_revisions().await.unwrap();
+    assert!(revs
+        .iter()
+        .any(|r| r.3.contains(&format!("before restore of revision {first}"))));
+
+    // a subsystem refusing it: undone, 409, store unchanged
+    t.state
+        .config_store
+        .save_system_config("test.marker", "kept")
+        .await
+        .unwrap();
+    t.restore_fake.fail.store(true, Ordering::SeqCst);
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            &format!("/api/system/history/{first}/restore"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::CONFLICT, "{b}");
+    assert_eq!(marker().await.as_deref(), Some("kept"));
+    t.restore_fake.fail.store(false, Ordering::SeqCst);
+
+    // an unknown revision is a 404
+    let (s, _) = t
+        .call(&c, Method::POST, "/api/system/history/999999/restore", None)
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn backups_restore_from_the_list_and_from_an_upload() {
     let t = setup().await;
     let c = t.admin().await;

@@ -238,6 +238,16 @@
     {% endif %}
 </div>
 
+<div class="card" id="history-card">
+    <div class="card-header"><h2 class="card-title">Configuration history</h2></div>
+    <p class="text-sm">Every configuration change is kept as a revision (the last few hundred). Restoring one puts that
+        configuration back and applies it to the whole system; the configuration it replaces becomes a new revision, so a
+        restore can be undone the same way, and if any part cannot be applied the restore is undone. On the box:
+        <span class="mono">patronus config history</span> and <span class="mono">patronus config rollback &lt;id&gt;</span>.</p>
+    <p class="empty" id="history-empty" style="display:none">No revisions yet.</p>
+    <table class="lan" id="history-table" style="display:none"><thead><tr><th>#</th><th>When</th><th>Who</th><th>Change</th><th></th></tr></thead><tbody></tbody></table>
+</div>
+
 <div class="card">
     <div class="card-header"><h2 class="card-title">Services</h2></div>
     {% if services.is_empty() %}
@@ -654,6 +664,35 @@
         document.getElementById('totp-recovery').style.display = 'block';
         return false;
     }
+    async function loadHistory() {
+        const r = await fetch('/api/system/history', {credentials: 'same-origin'});
+        if (!r.ok) return;
+        const list = await r.json();
+        const isAdmin = {% if is_admin %}true{% else %}false{% endif %};
+        const tb = document.querySelector('#history-table tbody'); tb.textContent = '';
+        document.getElementById('history-empty').style.display = list.length ? 'none' : '';
+        document.getElementById('history-table').style.display = list.length ? '' : 'none';
+        list.slice(0, 50).forEach(h => {
+            const tr = document.createElement('tr');
+            [h.id, h.when, h.user, h.summary].forEach((v, i) => {
+                const td = document.createElement('td'); td.textContent = v; if (i === 3) td.className = 'history-summary'; tr.appendChild(td);
+            });
+            const act = document.createElement('td');
+            if (isAdmin) {
+                const b = document.createElement('button');
+                b.className = 'btn btn-sm btn-danger'; b.textContent = 'Restore'; b.dataset.revision = h.id;
+                b.onclick = () => restoreRevision(h.id);
+                act.appendChild(b);
+            }
+            tr.appendChild(act); tb.appendChild(tr);
+        });
+    }
+    async function restoreRevision(id) {
+        if (!confirm('Put the configuration of revision ' + id + ' back and apply it now? The current configuration is kept as a new revision.')) return;
+        const j = await post('/api/system/history/' + id + '/restore', {});
+        if (j) { alert('Restored revision ' + j.restored + '.'); location.reload(); }
+    }
+    document.addEventListener('DOMContentLoaded', loadHistory);
     async function restoreStored(name) {
         if (!confirm('Replace the whole configuration with ' + name + ' and apply it now?')) return;
         const j = await post('/api/system/backups/' + encodeURIComponent(name) + '/restore', {});

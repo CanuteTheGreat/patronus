@@ -1525,6 +1525,29 @@ fn failback_gate_holds_a_recovered_gateway_for_its_delay() {
     );
 }
 
+#[test]
+fn loss_state_has_hysteresis() {
+    use GwState::*;
+    // entering Loss is unchanged: evaluate() decides at the threshold
+    assert_eq!(loss_hysteresis(Some(Online), Online, 10, 20), Online);
+    assert_eq!(loss_hysteresis(None, Online, 10, 20), Online);
+    // in Loss at a 20 % threshold: 10 % (half) or more keeps it in Loss
+    assert_eq!(loss_hysteresis(Some(Loss), Online, 19, 20), Loss);
+    assert_eq!(loss_hysteresis(Some(Loss), Online, 10, 20), Loss);
+    assert_eq!(loss_hysteresis(Some(Loss), Latency, 10, 20), Loss);
+    // below half it recovers
+    assert_eq!(loss_hysteresis(Some(Loss), Online, 9, 20), Online);
+    assert_eq!(loss_hysteresis(Some(Loss), Online, 0, 20), Online);
+    // other fresh states are never overridden
+    assert_eq!(loss_hysteresis(Some(Loss), Down, 100, 20), Down);
+    assert_eq!(loss_hysteresis(Some(Loss), Pending, 0, 20), Pending);
+    // a gateway that was Down or Latency is not held by this rule
+    assert_eq!(loss_hysteresis(Some(Down), Online, 15, 20), Online);
+    assert_eq!(loss_hysteresis(Some(Latency), Online, 15, 20), Online);
+    // threshold 0 is not a hysteresis band
+    assert_eq!(loss_hysteresis(Some(Loss), Online, 0, 0), Online);
+}
+
 #[tokio::test]
 async fn failback_delay_is_validated_and_stored() {
     let s = store().await;

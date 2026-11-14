@@ -1329,6 +1329,24 @@ pub fn failback_gate(
     }
 }
 
+/// Loss hysteresis: a gateway in the loss state leaves it only once the
+/// window's loss is below half of its threshold. Without this a link whose
+/// loss hovers around the threshold flips Loss/Online on every sample and the
+/// routes (and the failover group) follow it back and forth.
+pub fn loss_hysteresis(
+    prev: Option<GwState>,
+    fresh: GwState,
+    loss: u32,
+    threshold: u32,
+) -> GwState {
+    let leaving = matches!(fresh, GwState::Online | GwState::Latency);
+    if matches!(prev, Some(GwState::Loss)) && leaving && threshold > 0 && loss * 2 >= threshold {
+        GwState::Loss
+    } else {
+        fresh
+    }
+}
+
 /// Probe window per gateway (one sample a second).
 pub const WINDOW: usize = 10;
 /// Consecutive lost probes that make a gateway down.
@@ -2719,6 +2737,12 @@ impl Monitor {
                         entry.1.pop_front();
                     }
                     let (s, l, rt) = evaluate(&entry.1, g);
+                    let s = loss_hysteresis(
+                        self.states.get(&g.name).map(|p| p.state),
+                        s,
+                        l,
+                        g.loss_threshold,
+                    );
                     let why = crit.map(|p| {
                         format!(
                             "critical {} probe {} failed: {}",
