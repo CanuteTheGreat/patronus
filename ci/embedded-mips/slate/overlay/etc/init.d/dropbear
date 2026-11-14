@@ -1,2 +1,0 @@
-#!/bin/sh
-case "$1" in start) mkdir -p /etc/dropbear; dropbear -R -p 22 -P /run/dropbear.pid -K 300 ;; stop) kill $(cat /run/dropbear.pid) ;; esac

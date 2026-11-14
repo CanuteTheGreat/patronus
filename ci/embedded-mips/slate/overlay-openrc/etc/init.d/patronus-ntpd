@@ -1,0 +1,8 @@
+#!/sbin/openrc-run
+# the board has no RTC: busybox ntpd against the pool
+description="Clock from the NTP pool (busybox ntpd)"
+command=/bin/ntpd
+command_args="-n -p 0.pool.ntp.org -p 1.pool.ntp.org -p 2.pool.ntp.org"
+supervisor=supervise-daemon
+respawn_delay=30
+depend() { need net; }

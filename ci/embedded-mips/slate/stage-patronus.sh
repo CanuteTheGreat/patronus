@@ -16,10 +16,13 @@ export CARGO_TARGET_MIPS_UNKNOWN_LINUX_MUSL_LINKER=$T-gcc
 export CARGO_TARGET_MIPS_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-L native=/tmp/static-unwind -C force-unwind-tables=no -C link-arg=-lgcc -C target-feature=-crt-static"
 export CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_PANIC=abort CARGO_PROFILE_RELEASE_STRIP=true
 export OPENSSL_DIR=$SYS/usr OPENSSL_STATIC=1 OPENSSL_LIB_DIR=$SYS/usr/lib OPENSSL_INCLUDE_DIR=$SYS/usr/include
-for spec in "patronus-cli:${CLI_FEATURES:-nftables,cli,dhcp-server,dns-server}" "patronus-web:${WEB_FEATURES:-dhcp,dns,tls-openssl}"; do
+# Default: ONE multi-call binary (patronus-cli with web-multicall; /usr/bin/patronus-web is a link to it), 1.4 MiB xz
+# smaller than separate patronus-cli + patronus-web (docs/embedded-routers.md 6c). SPECS overrides (e.g. the old pair:
+# SPECS="patronus-cli:nftables,cli,dhcp-server,dns-server,uci-import patronus-web:dhcp,dns,tls-openssl").
+for spec in ${SPECS:-"patronus-cli:${CLI_FEATURES:-nftables,cli,dhcp-server,dns-server,uci-import,web-multicall}"}; do
   pkg=${spec%%:*}; feat=${spec#*:}
   echo "== $(date -u +%T) cargo build $pkg ($feat)"
   cargo +nightly-2026-10-18 build --release --target $T -Z build-std=std,panic_abort -p $pkg --no-default-features --features $feat > /out/build-$pkg.log 2>&1
   echo "rc=$? $(date -u +%T)"; tail -5 /out/build-$pkg.log
 done
-ls -l /out/target-g/$T/release/patronus-cli /out/target-g/$T/release/patronus-web && touch /out/stage-patronus.ok
+ls -l /out/target-g/$T/release/patronus-cli && touch /out/stage-patronus.ok

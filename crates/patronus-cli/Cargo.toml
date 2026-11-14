@@ -16,6 +16,11 @@ default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "
 uci-import = []
 
 # Core features
+# Embedded tier: `patronus-web` is a link to this binary (multi-call; one copy
+# of std/tokio/SQLite/appliers on a 16 MiB NOR router). TLS via OpenSSL (MIPS
+# has no ring/aws-lc); no threat feeds / journald reader, like the router's
+# standalone patronus-web build.
+web-multicall = ["patronus-web", "patronus-web/tls-openssl"]
 web = ["patronus-web", "patronus-web/tls-rustls", "patronus-web/threat-feeds", "patronus-web/journal", "dep:axum"]
 # The `patronus` binary IS the CLI: it always parses arguments with clap,
 # so clap is not optional (USE=-cli used to make the emerge fail to compile).

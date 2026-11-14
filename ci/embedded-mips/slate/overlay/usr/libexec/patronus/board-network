@@ -1,4 +1,5 @@
 #!/bin/sh
+# Board network (both init systems: OpenRC patronus-board, systemd patronus-network.service).
 # switch VLANs (OpenWrt's: vlan1 = CPU tagged + LAN ports 2 3, vlan2 = CPU tagged + WAN port 1), br-lan, Wi-Fi client + AP
 . /etc/patronus/board.sh
 sw() { LD_LIBRARY_PATH=$OWLIB $OWLIB/swconfig dev switch0 "$@"; }
@@ -14,7 +15,7 @@ start)
   wpa_supplicant -B -i $WAN_IF -D nl80211 -c /etc/wpa_supplicant/wpa_supplicant.conf -P /run/wpa_supplicant.pid > /tmp/wpa-start.txt 2>&1 \
     || { echo "wpa_supplicant failed to start" >> /tmp/boot-times; cat /tmp/wpa-start.txt >&2; }
   iw phy $PHY5 interface add wl5-ap type __ap && { [ -z "$AP5_MAC" ] || ip link set wl5-ap address $AP5_MAC; }
-  /etc/init.d/hostapd start
+  /usr/libexec/patronus/ap start
   for i in $(seq 30); do iw dev $WAN_IF link | grep -q Connected && break; sleep 1; done
   iw dev $WAN_IF link | head -3
   ;;

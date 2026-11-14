@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+# Apply the stored Patronus config (interfaces, firewall, DHCP/DNS, Wi-Fi) once per boot.
+description="Patronus: apply the stored config"
+depend() {
+	need net
+	before patronus-applyd patronus-web
+}
+start() {
+	ebegin "Applying the Patronus config"
+	/usr/libexec/patronus/apply start
+	eend $?
+}

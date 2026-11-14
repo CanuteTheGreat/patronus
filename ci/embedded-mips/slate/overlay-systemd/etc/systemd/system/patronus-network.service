@@ -9,7 +9,7 @@ Wants=network.target
 Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/etc/init.d/network start
+ExecStart=/usr/libexec/patronus/board-network start
 ExecStartPost=/bin/sh -c 'echo "$(cut -d" " -f1 /proc/uptime) network-up" >> /tmp/boot-times'
 
 [Install]

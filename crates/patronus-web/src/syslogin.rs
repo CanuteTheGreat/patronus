@@ -310,7 +310,9 @@ impl SysLogin {
             return Err("an administrator account already exists".into());
         }
         if !sysauth::valid_name(name) || name == "root" {
-            return Err("Invalid user name: use letters, digits, '.', '_' or '-' (not root)".into());
+            return Err(
+                "Invalid user name: use letters, digits, '.', '_' or '-' (not root)".into(),
+            );
         }
         if sysauth::lookup(&Backend::Shadow(etc.clone()), name).is_some() {
             return Err(format!("Invalid user name: {name} already exists"));

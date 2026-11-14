@@ -2,12 +2,14 @@
 """Real-Slate web UI / firewall / backup test (adapted from ci/embedded-mips/t_e2e.py; no QEMU).
 usage: t_slate.py <phase>   phase = first (first-run + login + pages + WAN mgmt rules + 8080 rule + backup/restore)
                                     | again (after a reboot/upgrade: login, rules still there, no first-run)
-Env: SLATE_IP, SLATE_SSH (ssh wrapper), SLATE_MGMT_NET, SLATE_ADMIN_PW_FILE (created on first use, 0600), SLATE_RESULTS."""
+Env: SLATE_IP, SLATE_SSH (ssh wrapper), SLATE_MGMT_NET, SLATE_ADMIN_PW_FILE (created on first use, 0600), SLATE_ADMIN_USER (the system user first-run creates,
+     default netadmin: there is no built-in admin), SLATE_RESULTS."""
 import sys, time, subprocess, json, os, secrets
 PH = sys.argv[1] if len(sys.argv) > 1 else 'first'
 IP = os.environ['SLATE_IP']; BASE = f'https://{IP}'   # the router's address on the upstream LAN
 MGMT = os.environ.get('SLATE_MGMT_NET', '192.0.2.0/24')   # = MGMT_NET in its unit.conf
 PWF = os.path.expanduser(os.environ.get('SLATE_ADMIN_PW_FILE', '~/.config/patronus-slate/web-admin.txt'))
+USER = os.environ.get('SLATE_ADMIN_USER', 'netadmin')
 if not os.path.exists(PWF):
     os.umask(0o077); open(PWF, 'w').write('Slate-' + secrets.token_urlsafe(12) + '-9\n')
 PW = open(PWF).read().strip()
@@ -32,7 +34,7 @@ def rss(tag):
     res['rss_' + tag] = o.strip(); log(f'[rss {tag}]\n{o.strip()}')
 def login():
     t = time.time()
-    out = curl(['-c', JAR, '-H', 'content-type: application/json', '-d', json.dumps({'username': 'admin', 'password': PW}), '-w', '\n%{http_code}', BASE + '/api/auth/login'], 200)
+    out = curl(['-c', JAR, '-H', 'content-type: application/json', '-d', json.dumps({'username': USER, 'password': PW}), '-w', '\n%{http_code}', BASE + '/api/auth/login'], 200)
     res[f'login_s_{PH}'] = round(time.time() - t, 2); return out.strip().endswith('200')
 # TLS handshake + redirect timing
 t = time.time(); r = curl(['-o', '/dev/null', '-w', '%{http_code} %{time_appconnect} %{time_total}', BASE + '/'], 60); res['tls_first'] = r
@@ -44,11 +46,18 @@ if PH == 'first':
     check('GET / before password -> 303 /first-run', r.startswith('303') and r.endswith('/first-run'), r)
     code, txt = api('GET', '/api/firewall/rules', auth=False); check('API locked before password (403)', code == 403, str(code))
     code, txt = api('POST', '/api/auth/login', {'username': 'admin', 'password': 'admin'}, auth=False); check('admin/admin refused', code in (400, 401, 403), str(code))
-    code, txt = api('POST', '/api/first-run', {'password': 'short', 'confirm': 'short'}, auth=False); check('weak password rejected', code == 400, txt[:60])
-    t = time.time(); code, txt = api('POST', '/api/first-run', {'password': PW, 'confirm': PW}, auth=False, t=200)
-    res['first_run_s'] = round(time.time() - t, 2); check('password set on the first-run page', code == 200, f'{code} {res["first_run_s"]}s')
-    code, txt = api('POST', '/api/first-run', {'password': PW + 'z', 'confirm': PW + 'z'}, auth=False); check('second first-run refused (409)', code == 409, str(code))
+    code, txt = api('POST', '/api/first-run', {'username': USER, 'password': 'short', 'confirm': 'short'}, auth=False); check('weak password rejected', code == 400, txt[:60])
+    t = time.time(); code, txt = api('POST', '/api/first-run', {'username': USER, 'password': PW, 'confirm': PW}, auth=False, t=200)
+    res['first_run_s'] = round(time.time() - t, 2); check('administrator (system user) created on the first-run page', code == 200, f'{code} {res["first_run_s"]}s')
+    code, txt = api('POST', '/api/first-run', {'username': USER + '2', 'password': PW + 'z', 'confirm': PW + 'z'}, auth=False); check('second first-run refused (409)', code == 409, str(code))
 check('login', login(), f"{res.get(f'login_s_{PH}')}s")
+# the web login is a system user checked through PAM: no built-in admin, the first-run account is in /etc/shadow
+o = ssh(f"cat /etc/patronus-init; grep -c '^{USER}:\\$6\\$' /etc/shadow; grep -c '^patronus-admin:.*{USER}' /etc/group; ls /etc/pam.d/patronus /lib/security/pam_unix.so; grep -c '^admin:' /etc/passwd")
+log('  system-login state:', ' '.join(o.split()))
+res['init'] = o.split()[0] if o.split() else ''
+lines = o.split()
+check('first-run account is a system user (shadow sha512, patronus-admin) checked by PAM; no built-in admin',
+      len(lines) >= 6 and lines[1] == '1' and lines[2] == '1' and '/etc/pam.d/patronus' in o and lines[-1] == '0', o.strip()[:200])
 rss('after_login')
 res['pages'] = {}
 for p in '/,/firewall,/interfaces,/network,/system,/monitoring,/dhcp,/dns,/routing,/setup,/insights,/vpn,/qos'.split(','):

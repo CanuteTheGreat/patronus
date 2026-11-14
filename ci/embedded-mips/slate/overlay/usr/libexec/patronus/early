@@ -1,13 +1,11 @@
 #!/bin/sh
-# Patronus embedded tier on the GL-AR750S (stock OpenWrt 6.12.112 kernel + Patronus musl rootfs).
-#   rcS          busybox init (the default image): early + services
-#   rcS early    the systemd variant's /sbin/init wrapper runs only this, then execs systemd, whose units
-#                (/etc/systemd/system/patronus-*.service) start the same services as `services` below
+# Early boot of the Patronus embedded tier on the GL-AR750S (stock OpenWrt 6.12.112 kernel + Patronus musl root),
+# shared by both init systems: /usr/sbin/patronus-init runs this as PID 1, then execs OpenRC (openrc-init) or systemd.
+#   /dev (tmpfs + mdev: the OpenWrt kernel has no devtmpfs), /tmp, /run, the data volume and the /etc, /var/lib,
+#   /root overlays on it, the factory-reset marker, OpenWrt's kmods for this kernel, and patronus-guard armed.
 # Boot markers go to /tmp/boot-times (uptime seconds) for the measurements.
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 mark() { echo "$(cut -d' ' -f1 /proc/uptime) $*" >> /tmp/boot-times; }
-
-early() {
 mount -t proc proc /proc; mount -t sysfs sys /sys
 # the OpenWrt kernel has no devtmpfs: tmpfs + mdev (systemd keeps an already mounted /dev)
 mount -t tmpfs -o size=512k,mode=0755 dev /dev; mkdir -p /dev/pts /dev/shm; mount -t devpts devpts /dev/pts
@@ -15,7 +13,7 @@ mdev -s; echo /sbin/mdev > /proc/sys/kernel/hotplug
 mount -t tmpfs -o size=16m tmpfs /tmp; mount -t tmpfs -o size=4m,mode=0755 tmpfs /run; mkdir -p /var/log /var/run /run/lock
 mount -t tmpfs -o size=2m tmpfs /var/log
 mount -t cgroup2 cgroup2 /sys/fs/cgroup 2>/dev/null
-mark rcS-start
+mark early-start
 hostname slate
 
 # 0. the safety net: revert to OpenWrt unless somebody marks this boot good (see patronus-guard)
@@ -46,22 +44,3 @@ for f in /etc/modules.d/*; do while read -r m args; do
 done < "$f"; done
 mark modules-loaded
 ip link set lo up
-}
-
-services() {
-syslogd -C512 2>/dev/null; klogd 2>/dev/null
-. /etc/patronus/board.sh
-/etc/init.d/network start
-mark network-up
-/etc/init.d/dropbear start
-mark dropbear-up
-/etc/init.d/patronus start
-# clock: no RTC on the board; busybox ntpd against the pool (the store's NTP settings are not built for this tier yet)
-ntpd -p 0.pool.ntp.org -p 1.pool.ntp.org -p 2.pool.ntp.org 2>/dev/null
-mark patronus-started
-}
-
-case "$1" in
-early) early ;;
-*) early; services ;;
-esac

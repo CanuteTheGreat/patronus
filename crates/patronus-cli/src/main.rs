@@ -584,6 +584,22 @@ fn restore_default_sigpipe() {}
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     restore_default_sigpipe();
+    // Multi-call (embedded tier, feature `web-multicall`): invoked as
+    // `patronus-web` (a link to this binary) it is the web UI server, so the
+    // router image carries std, tokio, SQLite and the appliers once.
+    #[cfg(feature = "web-multicall")]
+    if std::env::args_os()
+        .next()
+        .and_then(|a| {
+            std::path::Path::new(&a)
+                .file_name()
+                .map(|n| n == "patronus-web")
+        })
+        .unwrap_or(false)
+    {
+        patronus_web::server::init_tracing();
+        return patronus_web::server::run().await;
+    }
     let cli = Cli::parse();
 
     // Initialize logging

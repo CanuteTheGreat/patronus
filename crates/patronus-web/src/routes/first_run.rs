@@ -60,7 +60,9 @@ pub async fn set_password(State(state): State<AppState>, Json(b): Json<Body>) ->
     let (user, pw) = (b.username.trim().to_string(), b.password);
     let r = tokio::task::spawn_blocking(move || login.create_first_account(&user, &pw)).await;
     match r {
-        Ok(Ok(())) => Json(json!({"message": "administrator created", "next": "/login"})).into_response(),
+        Ok(Ok(())) => {
+            Json(json!({"message": "administrator created", "next": "/login"})).into_response()
+        }
         Ok(Err(m)) => {
             let code = if m.contains("already exists") && m.starts_with("an administrator") {
                 StatusCode::CONFLICT
@@ -95,12 +97,22 @@ mod tests {
             WebAuthConfig::default(),
             Mode::Direct(Backend::Shadow(d.path().into())),
         );
-        assert!(!s.admin_account_exists(), "root in wheel is not an administrator");
+        assert!(
+            !s.admin_account_exists(),
+            "root in wheel is not an administrator"
+        );
         FIRST_RUN_PENDING.store(true, Ordering::SeqCst);
         assert!(s.create_first_account("netadmin", "short-pw").is_err());
-        assert!(s.create_first_account("root", "Correct-Horse-Battery-9").is_err());
-        assert!(s.create_first_account("a;b", "Correct-Horse-Battery-9").is_err());
-        assert!(first_run_pending(), "a refused submission must not end setup");
+        assert!(s
+            .create_first_account("root", "Correct-Horse-Battery-9")
+            .is_err());
+        assert!(s
+            .create_first_account("a;b", "Correct-Horse-Battery-9")
+            .is_err());
+        assert!(
+            first_run_pending(),
+            "a refused submission must not end setup"
+        );
         s.create_first_account("netadmin", "Correct-Horse-Battery-9")
             .unwrap();
         assert!(!first_run_pending());

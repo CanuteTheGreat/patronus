@@ -14,17 +14,26 @@ t() { name=$1; shift; if "$@" >"$W/out" 2>&1; then ok "$name"; else no "$name"; 
 tn() { name=$1; shift; if "$@" >"$W/out" 2>&1; then no "$name (expected failure)"; sed 's/^/    /' "$W/out"; else ok "$name"; fi; }
 
 # 1. syntax
-for f in "$D"/*.sh "$D"/overlay/etc/init.d/* "$D"/overlay/usr/sbin/* "$D"/overlay/etc/patronus/board.sh "$D"/tests/fake-ubi/*; do
+for f in "$D"/*.sh "$D"/overlay/usr/libexec/patronus/* "$D"/overlay/usr/sbin/* "$D"/overlay/etc/patronus/board.sh "$D"/tests/fake-ubi/*; do
   case "$(head -1 "$f")" in *bash*) t "bash -n ${f#$D/}" bash -n "$f";; *) t "sh -n ${f#$D/}" sh -n "$f";; esac
+done
+# OpenRC scripts: openrc-run syntax is sh plus depend/start functions
+for f in "$D"/overlay-openrc/etc/init.d/*; do t "sh -n ${f#$D/}" sh -n "$f"; t "openrc-run shebang ${f#$D/}" grep -q '^#!/sbin/openrc-run' "$f"; done
+# parity: every service of one variant exists in the other (OpenRC script <-> systemd unit)
+for p in "patronus-board:patronus-network" "patronus-apply:patronus-apply" "patronus-applyd:patronus-applyd" "patronus-web:patronus-web" "dropbear:patronus-dropbear" "patronus-ntpd:patronus-ntpd"; do
+  t "parity ${p%%:*} (OpenRC) = ${p#*:}.service (systemd)" sh -c "[ -x '$D/overlay-openrc/etc/init.d/${p%%:*}' ] && [ -L '$D/overlay-systemd/etc/systemd/system/multi-user.target.wants/${p#*:}.service' ]"
 done
 t "py_compile t_slate.py" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$D/t_slate.py"
 
 # 2. check-rootfs.sh
-mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/etc/wpa_supplicant" "$r/bin" "$r/root/.ssh" "$r/var/lib/misc" "$r/usr/sbin" "$r/usr/share/patronus-recovery" "$r/etc/init.d"
+mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/etc/wpa_supplicant" "$r/bin" "$r/sbin" "$r/root/.ssh" "$r/var/lib/misc" "$r/usr/sbin" "$r/usr/share/patronus-recovery" "$r/etc/init.d" "$r/usr/libexec/patronus" "$r/etc/pam.d" "$r/lib/security"
   printf 'network={\n ssid="x"\n psk="y"\n}\n' > "$r/etc/wpa_supplicant/wpa_supplicant.conf"
   printf 'root:x:0:0:root:/root:/bin/sh\nnobody:x:65534:65534:nobody:/:/bin/false\n' > "$r/etc/passwd"
   echo 'root:$6$salt$hash:1::::::' > "$r/etc/shadow"; ln -s busybox "$r/bin/sh"; : > "$r/bin/busybox"; chmod +x "$r/bin/busybox"
-  : > "$r/usr/sbin/patronus-guard"; : > "$r/usr/sbin/patronus-flash"; : > "$r/etc/init.d/rcS"
+  : > "$r/usr/sbin/patronus-guard"; : > "$r/usr/sbin/patronus-flash"; : > "$r/usr/sbin/patronus-init"; : > "$r/usr/libexec/patronus/early"
+  : > "$r/etc/pam.d/patronus"; : > "$r/lib/security/pam_unix.so"; ln -s /usr/sbin/patronus-init "$r/sbin/init"; echo INIT=openrc > "$r/etc/patronus-init"
+  for b in openrc-init openrc-run supervise-daemon; do : > "$r/sbin/$b"; chmod +x "$r/sbin/$b"; done; printf '#!/bin/sh\nexec /sbin/openrc-shutdown -r now\n' > "$r/sbin/reboot"; chmod +x "$r/sbin/reboot"
+  for s in patronus-board patronus-apply patronus-applyd patronus-web dropbear dnsmasq patronus-dhcpc; do : > "$r/etc/init.d/$s"; chmod +x "$r/etc/init.d/$s"; done
   echo "http 80/tcp" > "$r/etc/services"
   printf 'hsqs....' > "$r/usr/share/patronus-recovery/openwrt-root.squashfs"; echo "$r"; }
 t "check-rootfs: good root" "$D/check-rootfs.sh" "$(mkroot good)"
@@ -36,6 +45,12 @@ r=$(mkroot noguard); rm "$r/usr/sbin/patronus-guard"
 tn "check-rootfs: rejects an image without the guard" "$D/check-rootfs.sh" "$r"
 r=$(mkroot rec); printf 'XXXX' > "$r/usr/share/patronus-recovery/openwrt-root.squashfs"
 tn "check-rootfs: rejects a recovery root that is not a squashfs" "$D/check-rootfs.sh" "$r"
+r=$(mkroot bbinit); echo INIT=busybox > "$r/etc/patronus-init"
+tn "check-rootfs: rejects busybox init (not a variant: OpenRC or systemd)" "$D/check-rootfs.sh" "$r"
+r=$(mkroot bbreboot); ln -sf /bin/busybox "$r/sbin/reboot"
+tn "check-rootfs: rejects busybox reboot on OpenRC (SIGTERM = openrc-init halts)" "$D/check-rootfs.sh" "$r"
+r=$(mkroot nodhcpc); rm "$r/etc/init.d/patronus-dhcpc"
+tn "check-rootfs: rejects an OpenRC image without patronus-dhcpc (the WAN lease)" "$D/check-rootfs.sh" "$r"
 
 # 3. patronus-flash on a fake UBI
 export FAKE_UBI=$W/ubi; mkdir -p "$FAKE_UBI" "$W/bin" "$W/data" "$W/rec"
@@ -67,8 +82,8 @@ echo 2 > "$FAKE_UBI/max-vols"; printf 'hsqs-KEEP' > "$FAKE_UBI/by-name/rootfs"
 tn "flash root with no room at all fails" "$F" root "$W/b.sq"
 t "...and leaves the running root alone" test "$(vol rootfs)" = hsqs-KEEP
 rm -f "$FAKE_UBI/max-vols"
-t "flash factory-reset: marker for rcS" sh -c "'$F' factory-reset && [ -f $W/data/.factory-reset ]"
-t "rcS wipes settings on the factory-reset marker" grep -q '\.factory-reset.*rm -rf /data/overlay /data/tls' "$D/overlay/etc/init.d/rcS"
+t "flash factory-reset: marker for the early boot" sh -c "'$F' factory-reset && [ -f $W/data/.factory-reset ]"
+t "early boot wipes settings on the factory-reset marker" grep -q '\.factory-reset.*rm -rf /data/overlay /data/tls' "$D/overlay/usr/libexec/patronus/early"
 
 # 4. patronus-guard
 G=$D/overlay/usr/sbin/patronus-guard

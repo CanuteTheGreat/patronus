@@ -4,6 +4,6 @@ case "$1" in
 start)   for c in /etc/hostapd/*.conf; do n=$(basename $c .conf); [ -f /run/hostapd-$n.pid ] && kill -0 $(cat /run/hostapd-$n.pid) 2>/dev/null && continue
            hostapd -B -P /run/hostapd-$n.pid $c; done ;;
 stop)    for p in /run/hostapd-*.pid; do [ -f $p ] && kill $(cat $p); rm -f $p; done ;;
-restart) $0 stop; sleep 1; $0 start ;;
+restart) "$0" stop; sleep 1; "$0" start ;;
 *) exit 2 ;;
 esac
