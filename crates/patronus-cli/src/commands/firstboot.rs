@@ -43,6 +43,12 @@ struct Section {
     dns_mode: Option<String>,
 }
 
+/// Route metric of the `rank`-th (0 = first) `wan_interfaces` entry: the first keeps the role's default
+/// (100), each later one is 50 worse, so the list order is the failover order.
+fn wan_metric(rank: usize) -> Option<u32> {
+    (rank > 0).then(|| 100 + 50 * rank.min(100) as u32)
+}
+
 const DNS_MODES: &[&str] = &["auto", "resolver", "forwarder", "disabled"];
 
 /// The validated `[firstboot] dns_mode`, if any.
@@ -87,10 +93,13 @@ pub async fn seed_lan(
         i.ipv4 = vec![net];
     }
     if f.firstboot.wan_dhcp == Some(true) {
-        if let Some(wan) = b.wan.first() {
+        // every `wan_interfaces` entry is a DHCP uplink; the list is in preference order
+        // (a Wi-Fi router lists its 5 GHz client first and the 2.4 GHz one as the fallback)
+        for (rank, wan) in b.wan.iter().enumerate() {
             let i = cfg.iface_mut(wan);
             i.role = Some("wan".into());
             i.ipv4_mode = V4Mode::Dhcp;
+            i.metric = wan_metric(rank);
         }
     }
     cfg.save(store).await.map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -138,6 +147,13 @@ mod tests {
 
     fn parse(t: &str) -> Section {
         toml::from_str::<File>(t).unwrap().firstboot
+    }
+
+    #[test]
+    fn wan_list_order_is_the_failover_order() {
+        assert_eq!(wan_metric(0), None);
+        assert_eq!(wan_metric(1), Some(150));
+        assert_eq!(wan_metric(2), Some(200));
     }
 
     #[test]

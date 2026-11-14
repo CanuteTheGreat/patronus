@@ -1,0 +1,14 @@
+[Unit]
+Description=AP follows the Wi-Fi uplink channel (wifi-follow; single-channel radios)
+After=patronus-network.service
+
+[Service]
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/libexec/patronus/wifi-follow
+Restart=always
+RestartSec=3
+# hostapd daemonizes itself (-B): leave the APs running across a restart of this unit, the daemon re-adopts them
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

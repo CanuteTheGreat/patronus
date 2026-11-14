@@ -1,0 +1,219 @@
+#!/bin/sh
+# wifi-follow: keep every AP on the channel of the Wi-Fi uplink (client) that shares its radio.
+#
+# The GL-AR750S radios (ath9k 2.4 GHz, ath10k 5 GHz) run an AP and a client on ONE channel at a time
+# (`#channels <= 1`). The client must join the home network wherever that is, so the AP follows it:
+#   - client associated  -> AP runs on the client's channel and width (restart hostapd when they differ)
+#   - client not associated for $SCAN_AFTER s -> look at the client's scan results: when a known SSID is on
+#     another channel, move the AP there (otherwise mac80211 refuses the client's join on that channel)
+#   - no client and no scan hit for $STATIC_AFTER s after boot -> AP on the template's own channel, so the
+#     LAN keeps its Wi-Fi without an uplink
+# The AP template is /etc/hostapd/<name>.conf (SSID, security, bridge); the running config is rendered from it
+# into $RUN with the channel lines replaced, so the template stays the single source of truth.
+#
+#   wifi-follow           daemon (OpenRC patronus-board / systemd patronus-network start it)
+#   wifi-follow once      one pass (tests, `rc-service`-less debugging)
+#   wifi-follow render <template> <ap_if> <freq_mhz> <width_mhz> <center1_mhz>   print the rendered hostapd.conf
+#   wifi-follow status
+#
+# Pairs: FOLLOW="sta_if:ap_if:name ..." from board.sh (e.g. wl5-sta:wl5-ap:ap5 wl24-sta:wl24-ap:ap24).
+# `ap24` has no template of its own: it is rendered from ap5.conf (same SSID/keys, other band).
+
+[ -f /etc/patronus/board.sh ] && . /etc/patronus/board.sh
+IW=${IW:-iw}
+HOSTAPD=${HOSTAPD:-hostapd}
+HOSTAPD_DIR=${HOSTAPD_DIR:-/etc/hostapd}
+WPA_CONF_DIR=${WPA_CONF_DIR:-/etc/wpa_supplicant}
+RUN=${RUN:-/run/wifi-follow}
+PIDDIR=${PIDDIR:-/run}
+POLL=${POLL:-3}
+SCAN_AFTER=${SCAN_AFTER:-20}
+STATIC_AFTER=${STATIC_AFTER:-60}
+MIN_RESTART=${MIN_RESTART:-15}
+NOW=${NOW_CMD:-}
+FOLLOW=${FOLLOW:-}
+
+now() { if [ -n "$NOW" ]; then $NOW; else cut -d. -f1 /proc/uptime; fi; }
+log() { echo "wifi-follow: $*"; logger -t wifi-follow "$*" 2>/dev/null; }
+
+freq_to_chan() { # MHz -> channel number
+  f=${1%%.*}
+  if [ "$f" -lt 3000 ]; then if [ "$f" -eq 2484 ]; then echo 14; else echo $(( (f - 2407) / 5 )); fi
+  else echo $(( (f - 5000) / 5 )); fi
+}
+
+vht80_center() { # primary channel -> 80 MHz block centre channel (empty: none)
+  case $1 in
+    36|40|44|48) echo 42;; 52|56|60|64) echo 58;; 100|104|108|112) echo 106;;
+    116|120|124|128) echo 122;; 132|136|140|144) echo 138;; 149|153|157|161) echo 155;;
+  esac
+}
+
+is_dfs() { [ "$1" -ge 52 ] && [ "$1" -le 144 ]; }
+
+# HT40 secondary channel of primary channel $1: + (secondary above) or -
+ht40_sign() {
+  c=$1; if [ "$c" -ge 149 ]; then b=149; else b=36; fi
+  if [ $(( (c - b) / 4 % 2 )) -eq 0 ]; then echo +; else echo -; fi
+}
+
+# render <template> <ap_if> <freq> <width> <center1>
+render() {
+  tpl=$1; apif=$2; freq=${3%%.*}; width=${4%%.*}; center=${5%%.*}
+  chan=$(freq_to_chan "$freq")
+  if [ "$freq" -lt 3000 ]; then hw=g; else hw=a; fi
+  grep -Ev '^[[:space:]]*(interface|hw_mode|channel|ieee80211n|ieee80211ac|ieee80211ax|ieee80211d|ieee80211h|ht_capab|vht_capab|vht_oper_chwidth|vht_oper_centr_freq_seg[01]_idx|country3)=' "$tpl"
+  echo "interface=$apif"
+  echo "hw_mode=$hw"
+  echo "channel=$chan"
+  echo "ieee80211n=1"
+  case $width in
+    80)
+      sg=$(ht40_sign "$chan")
+      echo "ht_capab=[HT40$sg]"
+      echo "ieee80211ac=1"
+      echo "vht_oper_chwidth=1"
+      echo "vht_oper_centr_freq_seg0_idx=$(vht80_center "$chan")"
+      ;;
+    40)
+      if [ -n "$center" ] && [ "$center" -gt "$freq" ]; then sg=+; elif [ -n "$center" ]; then sg=-; else sg=$(ht40_sign "$chan"); fi
+      echo "ht_capab=[HT40$sg]"
+      [ "$hw" = a ] && { echo "ieee80211ac=1"; echo "vht_oper_chwidth=0"; }
+      ;;
+    *)
+      [ "$hw" = a ] && { echo "ieee80211ac=1"; echo "vht_oper_chwidth=0"; }
+      ;;
+  esac
+  if [ "$hw" = a ] && is_dfs "$chan"; then echo "ieee80211d=1"; echo "ieee80211h=1"; fi
+}
+
+# the client's channel: "freq width center1" when associated, nothing otherwise
+sta_channel() {
+  $IW dev "$1" link 2>/dev/null | grep -q '^Connected' || return 0
+  $IW dev "$1" info 2>/dev/null | sed -n 's/.*channel [0-9]* (\([0-9]*\) MHz), width: \([0-9]*\) MHz, center1: \([0-9]*\) MHz.*/\1 \2 \3/p' | head -n 1
+}
+
+# the AP's running channel: "freq width center1", nothing when it is not up
+ap_channel() { $IW dev "$1" info 2>/dev/null | sed -n 's/.*channel [0-9]* (\([0-9]*\) MHz), width: \([0-9]*\) MHz, center1: \([0-9]*\) MHz.*/\1 \2 \3/p' | head -n 1; }
+
+# strongest known-SSID BSS in the client's scan results: "freq width center1"
+scan_target() {
+  sta=$1
+  conf=$WPA_CONF_DIR/wpa_supplicant.conf   # the 5 GHz client's config is derived from it: same SSIDs
+  ssids=$(sed -n 's/^[[:space:]]*ssid="\(.*\)"[[:space:]]*$/\1/p' "$conf" 2>/dev/null)
+  [ -n "$ssids" ] || return 0
+  $IW dev "$sta" scan dump 2>/dev/null | WANT="$ssids" awk '
+    BEGIN { n = split(ENVIRON["WANT"], w, "\n"); for (i = 1; i <= n; i++) known[w[i]] = 1 }
+    function flush() {
+      if (bss != "" && (ssid in known) && freq != "" && (best == "" || sig > bsig)) {
+        best = freq; bsig = sig
+        if (vw == 1) { bw = 80; ctr = 5000 + 5 * vc } else if (sec == "above") { bw = 40; ctr = freq + 10 } else if (sec == "below") { bw = 40; ctr = freq - 10 } else { bw = 20; ctr = freq }
+        out = freq " " bw " " ctr
+      }
+      bss = ""; ssid = ""; freq = ""; sig = -999; vw = 0; vc = 0; sec = ""
+    }
+    /^BSS / { flush(); bss = $2; sig = -999 }
+    /^[ \t]*freq:/ { freq = int($2) }
+    /^[ \t]*signal:/ { sig = $2 + 0 }
+    /^[ \t]*SSID:/ { sub(/^[ \t]*SSID: /, ""); ssid = $0 }
+    /secondary channel offset:/ { if ($0 ~ /above/) sec = "above"; else if ($0 ~ /below/) sec = "below" }
+    /channel width: 1 \(80 MHz\)/ { vw = 1 }
+    /center freq segment 1:/ { vc = $NF + 0 }
+    END { flush(); if (out != "") print out }'
+}
+
+ap_running() { [ -f "$PIDDIR/hostapd-$1.pid" ] && kill -0 "$(cat "$PIDDIR/hostapd-$1.pid")" 2>/dev/null; }
+
+ap_stop() {
+  ap_running "$1" || { rm -f "$PIDDIR/hostapd-$1.pid"; return 0; }
+  p=$(cat "$PIDDIR/hostapd-$1.pid"); kill "$p" 2>/dev/null
+  for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$p" 2>/dev/null || break; sleep 1; done
+  rm -f "$PIDDIR/hostapd-$1.pid"
+}
+
+template_of() { # <name> -> template path (ap24 falls back to ap5)
+  if [ -f "$HOSTAPD_DIR/$1.conf" ]; then echo "$HOSTAPD_DIR/$1.conf"
+  elif [ "$1" = ap24 ] && [ -f "$HOSTAPD_DIR/ap5.conf" ]; then echo "$HOSTAPD_DIR/ap5.conf"; fi
+}
+
+# ap_start <name> <ap_if> <freq> <width> <center1>
+ap_start() {
+  name=$1; apif=$2
+  tpl=$(template_of "$name") || return 1
+  [ -n "$tpl" ] || return 1
+  mkdir -p "$RUN"; chmod 700 "$RUN"
+  render "$tpl" "$apif" "$3" "$4" "$5" > "$RUN/$name.conf.new" && chmod 600 "$RUN/$name.conf.new" && mv "$RUN/$name.conf.new" "$RUN/$name.conf"
+  ap_stop "$name"
+  if $HOSTAPD -B -P "$PIDDIR/hostapd-$name.pid" "$RUN/$name.conf" >"$RUN/$name.log" 2>&1; then
+    echo "$3 $4 $5" > "$RUN/$name.target"; echo "$(now)" > "$RUN/$name.started"
+    log "$name ($apif) on $3 MHz, width $4"
+    return 0
+  fi
+  log "$name: hostapd failed to start on $3 MHz: $(tail -n 2 "$RUN/$name.log" | tr '\n' ' ')"
+  echo "$(now)" > "$RUN/$name.started"
+  return 1
+}
+
+# one pass for one pair
+follow_one() {
+  sta=$1; apif=$2; name=$3
+  [ -n "$(template_of "$name")" ] || return 0
+  mkdir -p "$RUN"
+  t=$(now)
+  [ -f "$RUN/$name.boot" ] || echo "$t" > "$RUN/$name.boot"
+  last=$(cat "$RUN/$name.started" 2>/dev/null || echo -1000000)
+  cur=$(ap_channel "$apif")
+  ap_running "$name" || cur=""
+  want=$(sta_channel "$sta")
+  if [ -n "$want" ]; then
+    rm -f "$RUN/$name.down" "$RUN/$name.pending"
+  else
+    [ -f "$RUN/$name.down" ] || echo "$t" > "$RUN/$name.down"
+    down=$(( t - $(cat "$RUN/$name.down") ))
+    if [ "$down" -ge "$SCAN_AFTER" ]; then
+      want=$(scan_target "$sta")
+      # a scan hit that differs from the AP must repeat once before the AP moves (one flaky scan must not bounce clients)
+      if [ -n "$want" ] && [ -n "$cur" ] && [ "${want%% *}" != "${cur%% *}" ]; then
+        if [ "$(cat "$RUN/$name.pending" 2>/dev/null)" != "$want" ]; then echo "$want" > "$RUN/$name.pending"; want=""; fi
+      fi
+    fi
+  fi
+  if [ -z "$want" ]; then
+    # nothing to follow: serve on the template's own channel once the uplink has had $STATIC_AFTER s
+    if [ -z "$cur" ] && [ $(( t - $(cat "$RUN/$name.boot") )) -ge "$STATIC_AFTER" ] && [ $(( t - last )) -ge "$MIN_RESTART" ]; then
+      tpl=$(template_of "$name")
+      c=$(sed -n 's/^channel=\([0-9]*\).*/\1/p' "$tpl" | head -n 1)
+      # ap24 rendered from the 5 GHz template has no 2.4 GHz channel of its own: ch 6
+      [ "$name" = ap24 ] && [ ! -f "$HOSTAPD_DIR/ap24.conf" ] && c=6
+      if [ -n "$c" ]; then
+        if [ "$c" -le 14 ]; then f=$(( 2407 + 5 * c )); w=20; else f=$(( 5000 + 5 * c )); w=80; fi
+        [ "$(freq_to_chan "$f")" -lt 36 ] && w=20
+        ap_start "$name" "$apif" "$f" "$w" "$f"
+      fi
+    fi
+    return 0
+  fi
+  if [ -z "$cur" ] || [ "${cur%% *}" != "${want%% *}" ] || [ "$(echo "$cur" | cut -d' ' -f2)" != "$(echo "$want" | cut -d' ' -f2)" ]; then
+    [ $(( t - last )) -ge "$MIN_RESTART" ] || return 0
+    # shellcheck disable=SC2086
+    ap_start "$name" "$apif" $want
+  fi
+}
+
+pass() { for p in $FOLLOW; do follow_one "${p%%:*}" "$(echo "$p" | cut -d: -f2)" "${p##*:}"; done; }
+
+status() {
+  for p in $FOLLOW; do
+    sta=${p%%:*}; apif=$(echo "$p" | cut -d: -f2); name=${p##*:}
+    echo "$name: client $sta [$(sta_channel "$sta")] ap $apif [$(ap_channel "$apif")] running=$(ap_running "$name" && echo yes || echo no)"
+  done
+}
+
+case "${1:-}" in
+  render) shift; render "$@" ;;
+  once)   pass ;;
+  status) status ;;
+  "")     [ -n "$FOLLOW" ] || { echo "wifi-follow: FOLLOW is empty (board.sh)"; exit 0; }
+          while :; do pass; sleep "$POLL"; done ;;
+  *)      echo "usage: wifi-follow [once|status|render ...]" >&2; exit 2 ;;
+esac

@@ -20,10 +20,13 @@ done
 # OpenRC scripts: openrc-run syntax is sh plus depend/start functions
 for f in "$D"/overlay-openrc/etc/init.d/*; do t "sh -n ${f#$D/}" sh -n "$f"; t "openrc-run shebang ${f#$D/}" grep -q '^#!/sbin/openrc-run' "$f"; done
 # parity: every service of one variant exists in the other (OpenRC script <-> systemd unit)
-for p in "patronus-board:patronus-network" "patronus-etph:patronus-etph" "patronus-apply:patronus-apply" "patronus-applyd:patronus-applyd" "patronus-web:patronus-web" "dropbear:patronus-dropbear" "patronus-ntpd:patronus-ntpd" "patronus-syslogd:patronus-syslogd" "patronus-klogd:patronus-klogd"; do
+for p in "patronus-board:patronus-network" "patronus-etph:patronus-etph" "patronus-wifi-follow:patronus-wifi-follow" "patronus-apply:patronus-apply" "patronus-applyd:patronus-applyd" "patronus-web:patronus-web" "dropbear:patronus-dropbear" "patronus-ntpd:patronus-ntpd" "patronus-syslogd:patronus-syslogd" "patronus-klogd:patronus-klogd"; do
   t "parity ${p%%:*} (OpenRC) = ${p#*:}.service (systemd)" sh -c "[ -x '$D/overlay-openrc/etc/init.d/${p%%:*}' ] && [ -L '$D/overlay-systemd/etc/systemd/system/multi-user.target.wants/${p#*:}.service' ]"
 done
 t "py_compile t_slate.py" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$D/t_slate.py"
+
+# 1b. wifi-follow: the AP follows the uplink client's channel (stub iw/hostapd)
+t "wifi-follow (AP follows the uplink channel)" sh "$D/tests/wifi-follow-test.sh"
 
 # 2. check-rootfs.sh
 mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/etc/wpa_supplicant" "$r/bin" "$r/sbin" "$r/root/.ssh" "$r/var/lib/misc" "$r/usr/sbin" "$r/usr/share/patronus-recovery" "$r/etc/init.d" "$r/usr/libexec/patronus" "$r/etc/pam.d" "$r/lib/security"
@@ -138,7 +141,7 @@ printf 'X' | dd of="$W/fw.tar" bs=1 seek=10 conv=notrunc 2>/dev/null
 tn "fwmeta: a corrupted image fails the CRC" python3 "$D/fwmeta.py" show "$W/fw.tar"
 
 # 6. nothing per-unit in the repo copy
-t "no unit secrets/addresses in the tooling" sh -c "! grep -rIlE 'wpa_passphrase=[^c]|psk=\"|^STA_MAC=[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}' '$D' --exclude=run.sh --exclude='*.example'"
+t "no unit secrets/addresses in the tooling" sh -c "! grep -rIlE 'wpa_passphrase=[^c]|psk=\"|^STA_MAC=[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}' '$D' --exclude=run.sh --exclude=wifi-follow-test.sh --exclude='*.example'"
 
 echo "slate tooling tests: $pass passed, $failn failed"
 [ $failn -eq 0 ]

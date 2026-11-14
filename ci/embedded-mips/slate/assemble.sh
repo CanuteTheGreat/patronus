@@ -117,7 +117,7 @@ else
   # them on OpenRC (patronus-dhcpc.wl24-sta etc.), the same set as the systemd variant's template units
   for t in "$GENTOO_FILES"/*@.service; do n=$(basename "$t" @.service); [ -f "$GENTOO_FILES/$n.initd" ] && install -m755 "$GENTOO_FILES/$n.initd" "$R/etc/init.d/$n"; done
   mkdir -p "$R"/etc/runlevels/{sysinit,boot,default,shutdown}
-  for s in patronus-syslogd patronus-klogd patronus-board patronus-etph dropbear patronus-ntpd patronus-apply patronus-applyd patronus-web; do
+  for s in patronus-syslogd patronus-klogd patronus-board patronus-etph patronus-wifi-follow dropbear patronus-ntpd patronus-apply patronus-applyd patronus-web; do
     [ -x "$R/etc/init.d/$s" ] || { echo "missing OpenRC service $s"; exit 1; }; ln -sf /etc/init.d/$s "$R/etc/runlevels/default/$s"; done
   : > "$R/etc/fstab"
   echo "INIT=openrc" > "$R/etc/patronus-init"

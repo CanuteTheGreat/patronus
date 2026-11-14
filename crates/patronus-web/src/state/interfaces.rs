@@ -47,6 +47,8 @@ pub struct InterfaceUpdate {
     pub mtu: Option<u32>,
     pub mac: Option<String>,
     pub description: Option<String>,
+    /// Route metric of the DHCP default route (lower = preferred uplink); null = the role's default.
+    pub metric: Option<u32>,
     /// Apply even if it may cut off the current management session.
     pub force: bool,
 }
@@ -616,6 +618,7 @@ impl InterfacesManager {
                 Vec::new()
             };
             i.mtu = u.mtu.filter(|m| *m > 0);
+            i.metric = u.metric.filter(|m| *m > 0);
             i.mac = mac;
             i.description = opt(&u.description);
             Ok(())

@@ -589,7 +589,7 @@ impl<'a> Planner<'a> {
 
     fn address(&mut self, i: &IfaceConfig, is_ppp: bool) {
         let dev = i.name.as_str();
-        let metric = dhcp_client::metric_for_role(i.role.as_deref());
+        let metric = dhcp_client::metric_for(i.role.as_deref(), i.metric);
         let dhcp_running = self
             .inp
             .running
@@ -667,6 +667,7 @@ impl<'a> Planner<'a> {
                         v4,
                         v6,
                         i.role.as_deref(),
+                        i.metric,
                         *client,
                         prefix,
                         self.inp.paths,

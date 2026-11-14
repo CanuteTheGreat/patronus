@@ -1,0 +1,10 @@
+#!/sbin/openrc-run
+# keeps each Wi-Fi AP on the channel of the uplink client that shares its radio (single-channel radios)
+description="AP follows the Wi-Fi uplink channel (wifi-follow)"
+command=/usr/libexec/patronus/wifi-follow
+supervisor=supervise-daemon
+respawn_delay=3
+output_log=/var/log/wifi-follow.log
+error_log=/var/log/wifi-follow.log
+depend() { need net; }
+# hostapd daemonizes itself: stopping the follower leaves the APs up, the next start re-adopts them via /run/hostapd-*.pid

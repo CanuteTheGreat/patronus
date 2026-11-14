@@ -111,6 +111,12 @@ pub fn metric_for_role(role: Option<&str>) -> u32 {
     }
 }
 
+/// The metric of `dev`'s DHCP default route: the interface's own `metric` when
+/// set, else the role's default.
+pub fn metric_for(role: Option<&str>, own: Option<u32>) -> u32 {
+    own.unwrap_or_else(|| metric_for_role(role))
+}
+
 /// busybox udhcpc event script for one interface.
 ///
 /// `system_resolv` (the WAN lease): the lease's DNS servers also become the
@@ -226,12 +232,13 @@ pub fn spec(
     v4: bool,
     v6: bool,
     role: Option<&str>,
+    own_metric: Option<u32>,
     client: Client,
     argv_prefix: &[String],
     paths: &NetPaths,
     pd: &[String],
 ) -> Result<DaemonSpec> {
-    let metric = metric_for_role(role);
+    let metric = metric_for(role, own_metric);
     let dir = paths.state_dir.join("dhcp");
     let mut argv: Vec<String> = argv_prefix.to_vec();
     let mut files = Vec::new();
@@ -305,6 +312,7 @@ mod tests {
             true,
             false,
             Some("wan"),
+            None,
             Client::Udhcpc,
             &["udhcpc".into()],
             &p,
@@ -330,6 +338,7 @@ mod tests {
             true,
             false,
             Some("lan"),
+            None,
             Client::Udhcpc,
             &["udhcpc".into()],
             &p,
@@ -343,6 +352,7 @@ mod tests {
             true,
             true,
             None,
+            None,
             Client::Udhcpc,
             &["udhcpc".into()],
             &p,
@@ -354,6 +364,7 @@ mod tests {
             false,
             true,
             Some("opt2"),
+            None,
             Client::Dhcpcd,
             &["dhcpcd".into()],
             &p,
@@ -364,6 +375,23 @@ mod tests {
         assert_eq!(d.argv.last().unwrap(), "eth0");
         assert!(d.files[0].1.contains("ipv6only\nipv6rs\nia_na"));
         assert!(d.files[0].1.contains("metric 202"));
+        // an interface's own metric beats the role's default (5 GHz uplink ahead of the 2.4 GHz one)
+        let own = spec(
+            "wl24-sta",
+            true,
+            false,
+            Some("wan"),
+            Some(150),
+            Client::Udhcpc,
+            &["udhcpc".into()],
+            &p,
+            &[],
+        )
+        .unwrap();
+        assert!(own.files[0].1.contains("metric 150 proto dhcp"));
+        assert!(!own.files[0].1.contains("metric 100"));
+        assert_eq!(metric_for(Some("wan"), None), 100);
+        assert_eq!(metric_for(Some("wan"), Some(7)), 7);
         assert!(choose(Some("bogus"), false)
             .unwrap_err()
             .to_string()

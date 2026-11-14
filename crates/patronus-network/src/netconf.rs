@@ -120,6 +120,13 @@ pub struct IfaceConfig {
     /// of what the ISP delegates (empty = no prefix delegation).
     #[serde(default)]
     pub pd_downstream: Vec<String>,
+    /// Route metric of the default route this interface's DHCP lease installs
+    /// (lower wins). `None` = the role's default (`wan` 100, `optN` 200+N, ...).
+    /// Several WANs share the `wan` role: the one with the lowest metric is the
+    /// primary uplink, the others are fallbacks (a Wi-Fi router's 5 GHz client
+    /// ahead of its 2.4 GHz one).
+    #[serde(default)]
+    pub metric: Option<u32>,
 }
 
 impl IfaceConfig {
@@ -549,6 +556,14 @@ impl NetConfig {
                 // `wan_interfaces = [...]`); the firewall renders one rule
                 // per device.
                 let _ = r;
+            }
+            if let Some(m) = i.metric {
+                if !(1..=9999).contains(&m) {
+                    return Err(invalid(format!(
+                        "interface {} metric {m} (1-9999)",
+                        i.name
+                    )));
+                }
             }
             if let Some(m) = member_of.get(&i.name) {
                 let addressed = matches!(i.ipv4_mode, V4Mode::Static | V4Mode::Dhcp)

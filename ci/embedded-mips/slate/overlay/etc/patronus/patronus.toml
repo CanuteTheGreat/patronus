@@ -1,7 +1,8 @@
-# GL-AR750S "Slate": LAN = br-lan (switch LAN ports + 5 GHz AP), WAN = the 2.4 GHz Wi-Fi client (repeater uplink)
+# GL-AR750S "Slate": LAN = br-lan (switch LAN ports + 5 GHz AP), WAN = the Wi-Fi client uplinks (5 GHz preferred, 2.4 GHz fallback)
 [network]
 lan_interface = "br-lan"
-wan_interface = "wl24-sta"
+# uplinks in preference order: the 5 GHz client first (metric 100), the 2.4 GHz one as the fallback (metric 150)
+wan_interfaces = ["wl5-sta", "wl24-sta"]
 
 # Applied once on first boot (then the Interfaces/DHCP pages own it): the Slate's OpenWrt LAN, carried over by hand
 [firstboot]
