@@ -1,6 +1,6 @@
 #!/bin/bash
 # on the build host: cross-build patronus-cli + patronus-web for the router tier in container pembed-g4
-CLI_FEAT=${CLI_FEATURES:-nftables,cli,dhcp-server,dns-server}
+CLI_FEAT=${CLI_FEATURES:-nftables,cli,dhcp-server,dns-server,uci-import}
 WEB_FEAT=${WEB_FEATURES:-dhcp,dns,tls-openssl}
 for spec in "patronus-cli:$CLI_FEAT" "patronus-web:$WEB_FEAT"; do
   pkg=${spec%%:*}; feat=${spec#*:}

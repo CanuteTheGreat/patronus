@@ -187,7 +187,7 @@ The real QCA9563 board (speed of TLS/argon2 on the 24Kc, ath79 kernel boot, UBIF
 | `network` `proto wireguard` + `wireguard_*` | WireGuard tunnels/peers |
 | `system` | hostname, timezone, ntp |
 
-Rules: unknown sections are listed in an `unmapped` report (never dropped silently); secrets are copied into the store's secret table, not into logs; `--dry-run` prints the `patronus apply` diff. Proof order: (1) run it on `router-slate.tar.gz` offline, (2) apply in the malta QEMU twin, (3) only then on the device. Status: **not written** (this PR is plan + spike).
+Rules: unknown sections are listed in an `unmapped` report (never dropped silently); secrets are copied into the store's secret table, not into logs; `--dry-run` prints the `patronus apply` diff. Proof order: (1) run it on `router-slate.tar.gz` offline, (2) apply in the malta QEMU twin, (3) only then on the device. Status: **written** for `network` interfaces (static/dhcp/dhcpv6), `dhcp` pools + static hosts, `firewall` zones/ACCEPT rules/redirects (stock OpenWrt rules are reported as covered by default) and `wireless` (AP -> Wi-Fi network with `wifi-ap`; STA entries parked in order with their `disabled` flag). Usage: `patronus import-uci <tarball|dir> [--dry-run] --map lan=br-lan --map wwan=wl24-sta` (UCI device names differ from Patronus ones, hence `--map`). Not yet imported, listed in the `unmapped` report: bridges/switch/VLAN/routes, pppoe, WireGuard, dnsmasq options, hostname/timezone/ntp (no store settings), custom zones, DROP/REJECT rules.
 
 ## 8. Spike results and blockers (real runs on rw-man-03)
 

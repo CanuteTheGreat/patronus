@@ -11,6 +11,8 @@ pub mod firewall;
 pub mod firstboot;
 #[cfg(feature = "gitops")]
 pub mod gitops;
+#[cfg(feature = "uci-import")]
+pub mod import_uci;
 pub mod init;
 pub mod ipdb;
 pub mod metrics;

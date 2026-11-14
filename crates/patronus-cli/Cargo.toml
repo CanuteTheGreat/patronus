@@ -9,7 +9,11 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "uci-import"]
+
+# `patronus import-uci`: OpenWrt UCI config importer (no extra dependencies;
+# its wifi-ap / dhcp-server parts are cfg-gated inside it)
+uci-import = []
 
 # Core features
 web = ["patronus-web", "patronus-web/tls-rustls", "patronus-web/threat-feeds", "patronus-web/journal", "dep:axum"]

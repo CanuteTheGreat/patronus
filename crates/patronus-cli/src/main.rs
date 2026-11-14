@@ -54,6 +54,23 @@ enum Commands {
         dry_run: bool,
     },
 
+    /// Import an OpenWrt UCI config (a `sysupgrade -b` tarball or a directory
+    /// with etc/config/*) into the config store. Review with `patronus apply
+    /// --dry-run`.
+    #[cfg(feature = "uci-import")]
+    #[command(name = "import-uci")]
+    ImportUci {
+        /// Tarball (.tar.gz) or directory
+        input: PathBuf,
+        /// Print what would be written and write nothing
+        #[arg(long)]
+        dry_run: bool,
+        /// UCI interface (or wifi-iface section) -> Patronus device, repeatable
+        /// (`--map lan=br-lan --map wwan=wl24-sta`)
+        #[arg(long = "map", value_name = "UCI=DEVICE")]
+        map: Vec<String>,
+    },
+
     /// Called by hostapd (through `hostapd_cli -a`) when a station joins with
     /// a Patronus key id: a pending Wi-Fi device learns its MAC (USE=wifi-ap)
     #[cfg(feature = "wifi-ap")]
@@ -640,6 +657,15 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "wifi-ap")]
         Commands::WifiEvent { iface, mac, keyid } => {
             commands::wifi::event(cli.db, iface, mac, keyid).await?;
+        }
+
+        #[cfg(feature = "uci-import")]
+        Commands::ImportUci {
+            input,
+            dry_run,
+            map,
+        } => {
+            commands::import_uci::run(cli.db, input, dry_run, map).await?;
         }
 
         Commands::Ztp { bootstrap, force } => {
