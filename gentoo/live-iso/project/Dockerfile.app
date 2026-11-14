@@ -23,5 +23,7 @@ COPY gentoo/net-firewall/patronus/files/patronus-firewall.initd /out/etc/init.d/
 COPY gentoo/net-firewall/patronus/files/patronus.confd /out/etc/conf.d/patronus
 # web UI login roles (system groups): the same file the ebuild installs, one source (no overlay copy to drift)
 COPY gentoo/net-firewall/patronus/files/web-auth.toml /out/etc/patronus/web-auth.toml
+# systemd twins of the three services (the systemd ISO uses them; on an OpenRC image they are inert files, as in the ebuild which installs both)
+COPY gentoo/net-firewall/patronus/files/patronus-web.service gentoo/net-firewall/patronus/files/patronus-applyd.service gentoo/net-firewall/patronus/files/patronus-firewall.service /out/usr/lib/systemd/system/
 FROM scratch
 COPY --from=app /out/ /out/

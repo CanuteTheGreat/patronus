@@ -165,7 +165,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-lint-test-
       - name: README claims ledger (every claim mapped to a CI-run test)
-        run: ci/claims-check.sh && ci/shipped-crates-check.sh && ci/check-no-native-cpu.sh && ci/check-init-parity.sh && ci/lint-no-pipe-grep-q.sh && python3 ci/check-web-theme.py
+        run: ci/claims-check.sh && ci/shipped-crates-check.sh && ci/check-no-native-cpu.sh && ci/check-init-parity.sh && python3 ci/gen-systemd-workflows.py --check && ci/lint-no-pipe-grep-q.sh && python3 ci/check-web-theme.py
       - name: Live installer - vendored common/ in sync, fs/encryption policy (ZFS default, XFS fallback, TPM-or-none)
         run: gentoo/live-iso/sync-common.sh --check && (cd gentoo/live-iso/common && python3 -m unittest discover -s tests) && (cd gentoo/live-iso/project/tests && python3 -m unittest discover -p 'test_*.py')
       - name: Headless-first image (no desktop/personal package in the image inputs, headless gates on every architecture)
