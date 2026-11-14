@@ -105,6 +105,27 @@ NL_CODE=$(C curl -sk -b "$NL_T/nl-jar" -o "$NL_OUT" -w '%{http_code}' -X POST \
   -H 'content-type: application/json' --data-binary '{"tables":{"no_such_table":[]}}' "$NL_UI/api/system/restore")
 [ "$NL_CODE" = 400 ] || nl_fail "junk upload: $NL_CODE"
 nl_ok "uploaded backup restored (kept as $UP); junk refused with 400"
+
+# configuration history: restore an earlier revision through the web API
+for n in a b; do
+  nl_api POST /firewall/rules "{\"name\":\"hist-$n\",\"chain\":\"forward\",\"action\":\"drop\",\"interface\":\"@lan\",\"protocol\":\"tcp\",\"source\":\"any\",\"destination\":\"198.51.100.2$([ $n = a ] && echo 1 || echo 2)\",\"port\":\"80\",\"description\":\"hist-$n\",\"enabled\":true}"
+  [ "$NL_CODE" = 200 ] || [ "$NL_CODE" = 201 ] || nl_fail "add hist-$n: $NL_CODE $(cat "$NL_OUT")"
+done
+nl_assert_nft_has hist-a
+nl_assert_nft_has hist-b
+REV=$(sqlite3 "$DB" "SELECT id FROM config_revisions WHERE config_json LIKE '%hist-a%' AND config_json NOT LIKE '%hist-b%' ORDER BY id DESC LIMIT 1")
+[ -n "$REV" ] || nl_fail "no revision holds hist-a without hist-b"
+nl_api GET /system/history
+[ "$NL_CODE" = 200 ] || nl_fail "history list: $NL_CODE"
+[ "$(json "any(r['id']==$REV for r in d)")" = True ] || nl_fail "revision $REV not in /api/system/history"
+nl_api POST /system/history/999999/restore
+[ "$NL_CODE" = 404 ] || nl_fail "unknown revision: $NL_CODE"
+nl_api POST "/system/history/$REV/restore"
+[ "$NL_CODE" = 200 ] || nl_fail "restore revision $REV: $NL_CODE $(cat "$NL_OUT")"
+nl_assert_nft_has hist-a
+nl_assert_nft_lacks hist-b
+sqlite3 "$DB" "SELECT summary FROM config_revisions" | grep "before restore of revision $REV" >/dev/null || nl_fail "no revision before the history restore"
+nl_ok "configuration history: revision $REV restored through the web (hist-b gone from nftables, hist-a kept, previous config kept as a revision)"
 nl_web_stop
 nl_boot "$DB"
 nl_assert_nft_lacks after-backup

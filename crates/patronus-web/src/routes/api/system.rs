@@ -296,6 +296,57 @@ pub async fn restore_backup(
     }
 }
 
+/// GET /api/system/history -- the configuration revisions the store keeps
+/// (every change is one), newest first: id, time, who, what.
+pub async fn list_history(State(state): State<AppState>) -> Response {
+    match state.config_store.list_revisions().await {
+        Ok(revs) => Json(
+            revs.into_iter()
+                .map(|(id, at, user, summary)| {
+                    json!({
+                        "id": id,
+                        "created_at": at,
+                        "when": chrono::DateTime::from_timestamp(at, 0)
+                            .map(|t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                            .unwrap_or_default(),
+                        "user": user,
+                        "summary": summary,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .into_response(),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// POST /api/system/history/:id/restore -- put the configuration of one
+/// revision back and apply it to the whole system (admins). The state it
+/// replaces is kept as a new revision, so this can be undone the same way;
+/// if any subsystem refuses the old configuration the restore is undone.
+pub async fn restore_history(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(id): Path<i64>,
+) -> Response {
+    let doc = match state.config_store.revision_json(id).await {
+        Ok(Some(d)) => d,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "no such revision"),
+        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+    match state
+        .system
+        .restore(&state.config_store, &doc, &format!("revision {id}"))
+        .await
+    {
+        Ok(lines) => {
+            end_sessions_after_restore(&state, &admin, &doc).await;
+            Json(json!({ "ok": true, "restored": id, "applied": lines })).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
 /// POST /api/system/restore -- upload an exported configuration (the
 /// file's bytes as the body), keep it as a backup file and restore it.
 pub async fn upload_restore(
@@ -592,6 +643,8 @@ pub fn router() -> axum::Router<AppState> {
             "/system/restore",
             post(upload_restore).layer(axum::extract::DefaultBodyLimit::max(MAX_UPLOAD)),
         )
+        .route("/system/history", get(list_history))
+        .route("/system/history/:id/restore", post(restore_history))
         .route("/system/updates", get(list_updates))
         .route("/system/updates/check", post(check_updates))
         .route("/system/updates/apply", post(apply_updates))

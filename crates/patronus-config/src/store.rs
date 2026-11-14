@@ -1036,6 +1036,18 @@ impl ConfigStore {
             .collect())
     }
 
+    /// The full configuration document stored in revision `id`, `None` when
+    /// there is no such revision (it may have been pruned).
+    pub async fn revision_json(&self, id: i64) -> Result<Option<Value>> {
+        let row = sqlx::query("SELECT config_json FROM config_revisions WHERE id = ?")
+            .bind(id)
+            .fetch_optional(self.pool()?)
+            .await
+            .map_err(db_err("Failed to load revision"))?;
+        row.map(|r| serde_json::from_str(&r.get::<String, _>(0)).map_err(Into::into))
+            .transpose()
+    }
+
     /// Restore the configuration of revision `id` into the store (the
     /// caller then runs the appliers). The current state is snapshotted
     /// first, so a restore can itself be undone.

@@ -19,6 +19,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | Boot, apply, core store | `ci/netlab/lane-a-foundation.sh` | netlab | PASS 33 s|
 | First boot -> NAT online -> UI block rule enforced | `ci/netlab/journey-first-boot.sh` | netlab | PASS 33 s|
 | UI shows real state, never fixtures | `ci/netlab/journey-honest-state.sh` | netlab | PASS 13 s|
+| Configuration history: list revisions and restore one from the System page / API (applied to the system, undoable) | `ci/netlab/lane-h-system.sh` + `lane_fh_tests::configuration_history_lists_revisions_and_restores_one` | netlab + unit | pending first CI run (2026-11-14) |
 | Backup then restore on a replacement box / same box | `ci/netlab/journey-backup-restore.sh` | netlab | PASS 47 s|
 | Failed apply never opens the box or locks the admin out | `ci/netlab/failure-atomic-apply.sh` | netlab | PASS 69 s|
 | Power cut (SIGKILL) mid-write keeps the store consistent | `ci/netlab/failure-power-cut.sh` | netlab | PASS 54 s|
