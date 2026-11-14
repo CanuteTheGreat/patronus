@@ -23,7 +23,8 @@ tar xf "$STOCK_SU" -C "$W/kern" --wildcards '*/kernel' '*/root'
 unsquashfs -q -d "$W/stock/root" "$W"/kern/*/root >/dev/null
 # 2. throwaway unit files (assemble.sh wants the per-unit inputs; sizes are what matter)
 U=$W/unit
-echo 'root:*:1::::::' > "$U/shadow-root"; : > "$U/authorized_keys"
+echo 'root:*:1::::::' > "$U/shadow-root"; # a throwaway public key (check-rootfs wants a way in: a password or a key)
+python3 -c 'import base64,os,struct; t=b"ssh-ed25519"; k=os.urandom(32); print("ssh-ed25519", base64.b64encode(struct.pack(">I",len(t))+t+struct.pack(">I",32)+k).decode(), "nor-ci")' > "$U/authorized_keys"
 for k in rsa ecdsa ed25519; do head -c 400 /dev/urandom > "$U/dropbear_${k}_host_key"; done
 { echo 'network={'; echo ' ssid="ci"'; printf ' %s="%s"\n' psk "$(od -An -tx1 -N8 /dev/urandom | tr -d ' \n')"; echo '}'; } > "$U/wpa_supplicant.conf"
 rc=0

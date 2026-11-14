@@ -60,6 +60,25 @@ impl NetPaths {
     fn logfile(&self, service: &str, inst: &str) -> PathBuf {
         self.run_dir.join(format!("{service}.{inst}.log"))
     }
+
+    /// Serialize start/stop of one instance across processes. The CLI
+    /// (`patronus apply`), the apply broker and the boot apply each run the
+    /// interfaces applier; two of them stopping the same instance at once
+    /// made OpenRC fail the second `rc-service stop` ("Call to flock
+    /// failed") and the whole interfaces apply with it. Holding this lock,
+    /// the second caller sees the first one's result and has nothing to do.
+    /// Best effort: no lock (read-only run dir) means the old behaviour.
+    fn instance_lock(&self, service: &str, inst: &str) -> Option<std::fs::File> {
+        let _ = std::fs::create_dir_all(&self.run_dir);
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(self.run_dir.join(format!("{service}.{inst}.lock")))
+            .ok()?;
+        f.lock().ok()?;
+        Some(f)
+    }
 }
 
 /// How daemons are run.
@@ -295,6 +314,7 @@ impl Supervisor {
     /// Make sure `spec` runs with exactly this command line + config.
     /// Returns true if it was (re)started.
     pub async fn ensure(&self, spec: &DaemonSpec) -> Result<bool> {
+        let _lock = self.paths.instance_lock(spec.service, &spec.instance);
         if self.up_to_date(spec) {
             return Ok(false);
         }
@@ -391,6 +411,7 @@ impl Supervisor {
 
     /// Stop an instance and forget it. Returns true if it was running.
     pub async fn stop(&self, service: &str, inst: &str) -> Result<bool> {
+        let _lock = self.paths.instance_lock(service, inst);
         let was = self.is_running(service, inst);
         match self.mode {
             InitMode::Systemd => {
@@ -433,6 +454,26 @@ pub fn which(prog: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn instance_lock_is_exclusive_per_instance() {
+        let d = tempfile::tempdir().unwrap();
+        let p = NetPaths::under(d.path());
+        let held = p.instance_lock("patronus-dhcpc", "eth0").expect("lock");
+        // another open file description (= another process) must wait
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(p.run_dir.join("patronus-dhcpc.eth0.lock"))
+            .unwrap();
+        assert!(matches!(
+            f.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        // other instances are independent
+        assert!(p.instance_lock("patronus-dhcpc", "eth1").is_some());
+        drop(held);
+        assert!(f.try_lock().is_ok());
+    }
 
     #[tokio::test]
     async fn direct_mode_starts_restarts_on_change_and_stops() {

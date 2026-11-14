@@ -71,14 +71,18 @@ jobs:
 
   nor-budget:
     name: NOR tier size budget (16 MiB NOR-only routers, OpenRC and systemd variants)
-    # The embedded builder image (crossdev mips-unknown-linux-musl, router rootfs, OpenRC, cross-built systemd, stock
-    # OpenWrt image) lives on the arm64 build host only; nightly-arm64 is that host's label. Builds the multi-call
-    # binary from this commit, assembles the NOR-profile root for both init systems and checks the flash budget.
-    runs-on: nightly-arm64
+    # embedded-mips-arm64 = the burst runner on the arm64 build host, whose label maps to the local builder image
+    # pembed-slate-img:ci (crossdev mips-unknown-linux-musl, router rootfs, OpenRC, cross-built systemd, stock OpenWrt
+    # image; no node, so the checkout is plain git). Builds the multi-call binary from this commit, assembles the
+    # NOR-profile root for both init systems and checks the flash budget (ci/embedded-mips/slate/nor-budget.sh).
+    runs-on: embedded-mips-arm64
     timeout-minutes: 90
-    container:
-      image: pembed-slate-img:ci
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (git, the builder image has no node)
+        run: |
+          rm -rf /tmp/src && mkdir -p /tmp/src && cd /tmp/src
+          git init -q . && git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+          git -c http.extraheader="Authorization: token ${{ github.token }}" fetch -q --depth 1 origin "${{ github.sha }}"
+          git checkout -q FETCH_HEAD
       - name: Build, assemble (OpenRC + systemd, NOR profile) and check the budget
-        run: bash ci/embedded-mips/slate/nor-ci.sh
+        run: bash /tmp/src/ci/embedded-mips/slate/nor-ci.sh

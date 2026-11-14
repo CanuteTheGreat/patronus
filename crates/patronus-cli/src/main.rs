@@ -84,9 +84,6 @@ enum Commands {
         keyid: String,
     },
 
-    /// Root apply broker for patronus-web (runs one named applier on
-    /// request over a unix socket; see patronus_network::applyd) and the
-    /// periodic dynamic DNS refresh
     /// Zero-touch provisioning: fetch the configuration named in the
     /// [provisioning] section of patronus.toml (url, optional
     /// passphrase_file for an encrypted bundle), import it and apply it.
@@ -100,6 +97,9 @@ enum Commands {
         force: bool,
     },
 
+    /// Root apply broker for patronus-web (runs one named applier on
+    /// request over a unix socket; see patronus_network::applyd) and the
+    /// periodic dynamic DNS refresh
     Applyd {
         /// Socket path [default: $PATRONUS_APPLYD_SOCKET or /run/patronus/applyd.sock]
         #[arg(long)]

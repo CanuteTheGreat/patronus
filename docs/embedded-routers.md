@@ -60,7 +60,7 @@ Tiers:
 
 | | embedded (Slate) | standard (small x86/arm64 boxes) | full (today) |
 |---|---|---|---|
-| libc / init | musl, busybox init (OpenRC once its cross-emerge works) | glibc, OpenRC | glibc, systemd or OpenRC |
+| libc / init | musl, OpenRC or systemd (busybox = applets only) | glibc, OpenRC | glibc, systemd or OpenRC |
 | Binaries | `patronus-cli` (`apply` at boot, `applyd` root broker) **+ `patronus-web`** with the router feature set (section 6a) | same, more features | everything incl. eBPF/XDP, IDS, HA, SD-WAN |
 | Firewall | nftables via libnftnl, no eBPF | nftables + eBPF where the kernel has it | same |
 | DHCP/DNS | dnsmasq (or Patronus' own) | Patronus appliers + unbound/kea | same |
@@ -166,7 +166,8 @@ It does **not** fit a 16 MiB NOR-only router: kernel 2.3 MiB + Patronus 15.4 MiB
 What would make systemd fit 16 MiB NOR: keep the OpenWrt recovery root out of the root image (own volume / NOR partition, it is already not
 counted above), drop udevadm + libudev (0.25 MiB xz; no udev on this kernel anyway), libsystemd.so.0 (0.37 MiB; no client links it),
 the non-essential tools (systemd-run, busctl, analyze, ...: 0.5 MiB xz) and journald with Storage=none (0.06 MiB): about 1.2 MiB, still
-about 0.5 MiB short, so a NOR-only systemd build would also need `patronus-web` slimmed (it is 3.8 MiB xz). OpenRC/busybox parity stays.
+about 0.5 MiB short, so a NOR-only systemd build would also need `patronus-web` slimmed (it is 3.8 MiB xz). **Done 2026-11-14: both
+variants fit 16 MiB NOR, and OpenRC replaced busybox init (section 6c).**
 
 Gotchas found on the real unit (all fixed in the tree):
 - busybox ash `FEATURE_PREFER_APPLETS` ran busybox's `ip` in the DHCP hook, which rejects `proto dhcp`: no default route. busybox is
@@ -185,7 +186,43 @@ Gotchas found on the real unit (all fixed in the tree):
 UCI import (stock backup of this unit): wrote 3 interfaces (lan static 10.0.66.1/24, wwan/wan DHCP), the LAN pool, the custom
 "Allow SSH" rule (as two nft rules, one per WAN interface); 10 stock rules reported as covered by defaults; open (no-encryption) APs
 and Wi-Fi client networks are reported/parked, not applied; 27 items listed as not imported. Second run: "already present".
-Open: an imported `wan6` (dhcp6) needs dhcpcd, which the router tier does not ship (apply warns, nothing breaks).
+An imported `wan6` (dhcp6) now applies: both variants ship dhcpcd (section 6c).
+
+### 6c. OpenRC + systemd as the two router variants (2026-11-14)
+
+busybox init is no longer an image variant; busybox only provides the applets. Both variants boot through the same
+`/usr/sbin/patronus-init` (`/usr/libexec/patronus/early`: mounts, mdev, kmods, the data volume and the overlays, the
+factory-reset marker), then exec `openrc-init` or systemd (`/etc/patronus-init` names which); from the third unconfirmed boot the
+wrapper rolls back to the previous root. Every Patronus service has an OpenRC script and a systemd unit (the tooling tests
+check the pairs): patronus-board, patronus-apply, patronus-applyd, patronus-web, dropbear, patronus-ntpd, plus the ebuild's
+multiplexed per-interface scripts (patronus-dhcpc, -pppoe, -hostapd). Both carry linux-pam (`pam_unix`) for the web login,
+dhcpcd 10.5.2 for DHCPv6/PD (built without OpenSSL: 332 KB) and one multi-call `patronus-cli` (`patronus-web` is a link).
+
+Web login on the router tier = system users through PAM: there is no built-in admin. The first run (`/first-run`, while
+`PATRONUS_FIRST_RUN_SETUP=1` and no account in the admin group exists) creates the first administrator as a system user
+(sha512 in `/etc/shadow`, group `patronus-admin`) and then logs in through PAM like any other account.
+
+Real GL-AR750S, same build of everything else (o5 = OpenRC, sd8 = systemd; p7 = the old busybox-init image, older binaries):
+
+| | busybox init (p7) | OpenRC (o4/o5) | systemd (sd8) |
+|---|---|---|---|
+| `t_slate.py` after a factory reset (first-run creates a system user, PAM login) | PASS (19) | PASS (20) | PASS (7, "again" run) |
+| LAN client (test phone on the 5 GHz AP), 17 checks | 17/17 | 17/17 (o4, o5) | 17/17 |
+| A/B: o4 -> `patronus-flash root` sd8 -> `rollback` -> o4, `/data` and the store kept | | PASS | PASS |
+| Factory reset -> `/first-run`, guard confirms | PASS | PASS (o4, o5) | |
+| UCI import incl. `wan6` (dhcp6): dhcpcd runs under the init system (`dhcpcd: eth0.2 [ip4] [ip6]`) | warned (no dhcpcd) | PASS | same code path |
+| root squashfs, NAND image (incl. 4.6 MiB stock recovery root) | 17.01 MiB | **14.54 MiB** | 16.44 MiB |
+| 16 MiB NOR budget (kernel 2.94 MiB + root + 1 MiB settings, 16000 KiB) | | root 9.38 MiB, **2.25 MiB free** | root 11.20 MiB, **448 KiB free** |
+| RAM used / available, idle | 40.0 / 75.1 MB | 44.7 / 69.8 MB | 46.8 / 66.8 MB |
+| boot: `patronus-started` marker | 37.9 s | 44.5 s (45.5 s after a factory reset) | 50.2 s |
+
+OpenRC itself costs about 0.37 MiB xz (openrc-init, supervise-daemon, librc/libeinfo, libcap) and no resident memory beyond the
+`supervise-daemon` per service (about 1 MB each, mostly shared); the rest of the RAM difference to p7 is the newer, larger binary
+(PAM, multi-call). What closed the NOR gap: no embedded recovery root on NOR, 1 MiB xz blocks for the NOR root (-5.5 %), the
+multi-call binary (-1.4 MiB xz), std built for size with `location-detail=none`, the login logo as WebP (388 KB PNG -> 58 KB),
+the systemd tools nobody calls (udevadm, libudev, libsystemd, busctl, analyze, run0, ...), the mtd-utils test suite, libgmp and tc.
+CI checks the budget for both variants on every change (`nor-ci.sh`, job "NOR tier size budget"); the per-unit Slate tests stay
+manual (`t_slate.py`, `slate-lan-client.sh`).
 
 Failsafe path C (GL U-Boot web recovery, reset button held at power-on) is **documented, not exercised**: it needs a person at the
 unit. The stock GL 4.3.25 and OpenWrt 25.12.6 images are staged with verified sha256 next to the unit's mtd backups.
@@ -251,7 +288,7 @@ Rules: unknown sections are listed in an `unmapped` report (never dropped silent
 
 Setup: one capped container each (`--cpus 3 --memory 6-8g`), Gentoo stage3 amd64 + crossdev, Debian 12 + qemu-system-mips 7.2.
 
-1. **Toolchain/rootfs:** crossdev `mips-unknown-linux-musl` with `--with-float=soft --with-arch=mips32r2`, then `ROOT=/rootfs mips-unknown-linux-musl-emerge` of busybox, nftables, dnsmasq, iproute2, wireguard-tools, hostapd (all OK). **Blocker (open): `sys-apps/openrc` does not cross-emerge** (needs `virtual/tmpfiles` + python for the build ROOT); `wpa_supplicant` was not part of the emerge set. The spike used busybox init. Fix: keyword/USE the python deps in the cross profile, or ship OpenRC prebuilt from a Gentoo musl binhost.
+1. **Toolchain/rootfs:** crossdev `mips-unknown-linux-musl` with `--with-float=soft --with-arch=mips32r2`, then `ROOT=/rootfs mips-unknown-linux-musl-emerge` of busybox, nftables, dnsmasq, iproute2, wireguard-tools, hostapd (all OK). OpenRC 0.64.1 + libcap cross-emerge into their own ROOT (`stage-openrc.sh`, `--nodeps`), linux-pam 1.7.3 into the router root (needs a `shadow` group for unix_chkpwd), dhcpcd from its release tarball (`dhcpcd-build.sh`).
 2. **Rust on MIPS32 BE:** tier-3 target, so nightly + `-Zbuild-std`. Four real blockers, all fixed or understood:
    - `patronus-cli` has an **unused** dependency on `patronus-dashboard` (nothing in `patronus-cli/src` uses it) which drags in `opentelemetry_sdk`, which needs `AtomicU64`: MIPS32 has none. Fix in this branch: drop the dependency line.
    - `patronus-network/src/sysops.rs` used an `AtomicI64` job counter. Fix in this branch: `AtomicI32`.
