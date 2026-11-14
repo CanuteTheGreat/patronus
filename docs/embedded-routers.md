@@ -132,6 +132,64 @@ RAM, QEMU malta BE, 128 MB machine, 6.12.113 **[measured]**:
 Honest caveats: the QEMU kernel is the malta config, not the ath79 one (the real kernel plus ath9k/ath10k buffers and DMA pools costs more, not measured; leave 2x headroom: plan for under 70 MB of 118 MB and measure `free` on the real Slate in step B); QEMU says nothing about speed (775 MHz 24Kc; Rust fat-LTO binaries are fine, SQLite writes to NAND are the thing to watch).
 Speed is not measured: QEMU TCG on a fast host answered 96 page loads in 5 s; the real 775 MHz 24Kc will be slower, and the first TLS handshake/login (ECDSA signature, argon2 with 8 MiB x 4 passes) has to be timed on the real board.
 
+## 6b. Real GL-AR750S results (2026-11-13, tooling in `ci/embedded-mips/slate/`)
+
+Layout on the real unit: the stock OpenWrt 25.12.6 kernel (6.12.112, NOR) is untouched; the Patronus root is a squashfs in the
+UBI volume `rootfs` on the NAND, settings in its own volume `patronus_data`, the previous root in `rootfs_prev`. First install
+goes through `sysupgrade` (the tar carries OpenWrt fwtool metadata, `fwmeta.py`), later upgrades through `patronus-flash root`.
+`patronus-guard` reverts to stock OpenWrt (its root and config are inside the image) when a boot is not confirmed within 600 s;
+it fired once for real (a systemd build that froze as PID 1) and brought the unit back with no human.
+
+| Test | busybox init (p7) | systemd v262 (sd5) |
+|---|---|---|
+| Web/API suite (`t_slate.py`), after a factory reset (first-run flow) and again | PASS (19 / 6 checks) | PASS (6 checks) |
+| LAN client (test phone on the 5 GHz AP): lease, gateway, DNS via the router, ping/DNS/HTTP through NAT, masquerade, API drop rule enforced and removed, WAN-side closed ports | PASS 17/17 | PASS 17/17 |
+| Wi-Fi WAN lease installs `default via ... proto dhcp` + resolver | PASS | PASS |
+| UCI import of the unit's stock backup (network, dhcp, firewall, wireless), apply, idempotent re-run, restore the web backup | PASS (see below) | not repeated |
+| A/B: `patronus-flash root` keeps settings; `rollback` p7 -> sd5 -> p7 kept `/data` and the store | PASS | PASS |
+| Factory reset: settings overlay + TLS wiped, `/first-run` served again, guard confirms | PASS | not repeated |
+
+Measured (squashfs xz; RAM = `free` / MemAvailable of 118 MB, 3 min after boot, idle with web + applyd + dnsmasq + hostapd + wpa_supplicant):
+
+| | busybox init | systemd | delta |
+|---|---|---|---|
+| root squashfs | 17,839,772 B (17.01 MiB) | 20,956,296 B (19.99 MiB) | **+2.97 MiB** |
+| of which the stock OpenWrt recovery root | 4.60 MiB | 4.60 MiB | |
+| Patronus proper | 12.4 MiB | 15.4 MiB | |
+| RAM used / available | 40.0 / 75.1 MB | 41.6 / 72.6 MB | **+1.6 MB used, -2.5 MB available** (PID 1 RSS 8.3 MB, journald 4.9 MB, mostly shared pages) |
+| boot: kernel + rcS early (kmods loaded) | 25.6 s | 25.6 s | |
+| boot: services up (`patronus-started` marker) | 37.9 s | 48.9 s | **+11 s** |
+| restart request -> HTTPS answering | 57 s | 67 s | +10 s |
+
+**systemd verdict: fits and works on the Slate** (128 MiB NAND, 118 MB RAM): both init systems pass the same tests, and both are offered.
+It does **not** fit a 16 MiB NOR-only router: kernel 2.3 MiB + Patronus 15.4 MiB = 17.7 MiB, **1.7 MiB over** (busybox: 14.7 MiB, fits).
+What would make systemd fit 16 MiB NOR: keep the OpenWrt recovery root out of the root image (own volume / NOR partition, it is already not
+counted above), drop udevadm + libudev (0.25 MiB xz; no udev on this kernel anyway), libsystemd.so.0 (0.37 MiB; no client links it),
+the non-essential tools (systemd-run, busctl, analyze, ...: 0.5 MiB xz) and journald with Storage=none (0.06 MiB): about 1.2 MiB, still
+about 0.5 MiB short, so a NOR-only systemd build would also need `patronus-web` slimmed (it is 3.8 MiB xz). OpenRC/busybox parity stays.
+
+Gotchas found on the real unit (all fixed in the tree):
+- busybox ash `FEATURE_PREFER_APPLETS` ran busybox's `ip` in the DHCP hook, which rejects `proto dhcp`: no default route. busybox is
+  built without PREFER_APPLETS/SH_STANDALONE/SH_NOFORK (`busybox.portage-env`); the hook also retries without `proto`.
+- The WAN lease wrote `<dev>.resolv` that nothing read, and `dns.mode auto` without Unbound = disabled: the WAN hook now sets the
+  system resolver and router images start with `[firstboot] dns_mode = "forwarder"`.
+- `sysupgrade -T` wants fwtool metadata (`fwmeta.py`); `/tmp` is small (remount 40 MiB before copying a root); busybox wget needs
+  `/etc/services`; no RTC (ntpd at boot).
+- After an OpenWrt sysupgrade `rootfs_data` holds all free UBI space: `patronus-flash root` drops it first (it used to delete the
+  rollback root and then fail with ENOSPC).
+- systemd on this kernel: no devtmpfs (tmpfs + mdev before exec), libmount must be built in (else PID 1 freezes on `mode=01777`),
+  the rootfs is not merged-usr (DefaultEnvironment PATH), Patronus' template units (`patronus-dhcpc@` ...) must be installed,
+  `/var/run -> ../run`, no hotplug helper creates `/dev/ubi0_N` (patronus-flash mknods it from sysfs), `/usr/sbin/reboot` is systemctl.
+- The kernel reboots 1 s after a panic, so a broken init loops: the systemd wrapper counts unconfirmed boots and rolls back on the third.
+
+UCI import (stock backup of this unit): wrote 3 interfaces (lan static 10.0.66.1/24, wwan/wan DHCP), the LAN pool, the custom
+"Allow SSH" rule (as two nft rules, one per WAN interface); 10 stock rules reported as covered by defaults; open (no-encryption) APs
+and Wi-Fi client networks are reported/parked, not applied; 27 items listed as not imported. Second run: "already present".
+Open: an imported `wan6` (dhcp6) needs dhcpcd, which the router tier does not ship (apply warns, nothing breaks).
+
+Failsafe path C (GL U-Boot web recovery, reset button held at power-on) is **documented, not exercised**: it needs a person at the
+unit. The stock GL 4.3.25 and OpenWrt 25.12.6 images are staged with verified sha256 next to the unit's mtd backups.
+
 ## 6a. Local web UI (the LuCI equivalent)
 
 **Yes: the Slate keeps a local web UI, and it is the real Patronus UI**, not a lite copy. Decision rule that was applied: try the straight port first; fall back to a `web-lite` only if it missed the 16 MiB slot or a 25-30 MB RSS cap. It met both, so no second UI exists to maintain.
