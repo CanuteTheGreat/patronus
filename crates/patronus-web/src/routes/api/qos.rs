@@ -3,11 +3,11 @@
 //! with `tc` through `patronus applyd` and re-applied at boot.
 
 use crate::state::AppState;
-use axum::{
-    http::StatusCode,
-    response::{Html, IntoResponse, Response},
-    Json,
-};
+use axum::response::{Html, IntoResponse};
+// only the feature-gated module uses these (the router image builds without `qos`)
+#[cfg(feature = "qos")]
+use axum::{http::StatusCode, response::Response, Json};
+#[cfg(feature = "qos")]
 use serde_json::json;
 
 #[cfg(feature = "qos")]
@@ -111,13 +111,16 @@ pub fn pages() -> axum::Router<AppState> {
     let h = get(built::page);
     #[cfg(not(feature = "qos"))]
     let h = get(|| async {
-        Html(
-            "<!DOCTYPE html><html><head><title>Traffic shaping - Patronus</title></head><body>\
+        (
+            axum::http::StatusCode::NOT_IMPLEMENTED,
+            Html(
+                "<!DOCTYPE html><html><head><title>Traffic shaping - Patronus</title></head><body>\
              <h1>Traffic shaping</h1><p>This Patronus build does not include traffic shaping. \
              Rebuild with <code>USE=qos</code> (emerge net-firewall/patronus).</p>\
              <p><a href=\"/\">Back to the dashboard</a></p></body></html>",
+            ),
         )
-        .into_response()
+            .into_response()
     });
     axum::Router::new().route("/qos", h)
 }

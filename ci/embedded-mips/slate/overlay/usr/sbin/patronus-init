@@ -1,0 +1,26 @@
+#!/bin/sh
+# /sbin/init of both embedded variants: the shared early boot (/usr/libexec/patronus/early: /dev, data volume,
+# overlays, kmods, patronus-guard armed in the background), then exec the image's init system as PID 1:
+# OpenRC (openrc-init) or systemd, as recorded in /etc/patronus-init at image build.
+# Boot-loop stop: the OpenWrt kernel restarts 1 s after a panic (panic=1), so an init that dies as PID 1 would
+# loop forever. Every attempt is counted on the data volume; `patronus-guard ok|auto` clears the count. From the
+# third unconfirmed attempt on, the previous root (rootfs_prev) is put back.
+/usr/libexec/patronus/early
+. /etc/patronus-init
+case "$INIT" in
+  openrc)  INIT_BIN=/sbin/openrc-init ;;
+  systemd) INIT_BIN=/usr/lib/systemd/systemd ;;
+esac
+t() { cut -d' ' -f1 /proc/uptime; }
+n=$(cat /data/.init-boot-attempts 2>/dev/null || echo 0); n=$((n + 1)); echo $n > /data/.init-boot-attempts; sync
+echo "$(t) $INIT-attempt-$n" >> /tmp/boot-times
+if [ "$n" -gt 2 ]; then
+  echo "$(t) too many unconfirmed $INIT boots: rollback" >> /tmp/boot-times
+  rm -f /data/.init-boot-attempts; cp /tmp/boot-times /data/init-rollback-boot-times 2>/dev/null
+  /usr/sbin/patronus-flash rollback > /data/init-rollback.txt 2>&1; sync; /bin/busybox reboot -f   # no init manager yet
+fi
+echo "$(t) exec-$INIT" >> /tmp/boot-times
+exec $INIT_BIN
+# only if the exec itself failed: a shell on the console, the guard still reverts in 600 s
+echo "$(t) exec-$INIT-FAILED" >> /tmp/boot-times
+exec /bin/sh

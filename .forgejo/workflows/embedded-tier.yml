@@ -1,0 +1,88 @@
+name: Embedded tier (router image tooling + router feature set)
+
+# The GL-AR750S image tooling (ci/embedded-mips/slate) and the code paths only the router build uses
+# (udhcpc WAN client, [firstboot], import-uci, all with --no-default-features). The main Rust CI
+# builds the default feature set on main only; this one also runs on branch pushes that touch the tier.
+on:
+  push:
+    paths:
+      - 'ci/embedded-mips/**'
+      - 'crates/patronus-cli/**'
+      - 'crates/patronus-web/**'
+      - 'crates/patronus-network/src/sysauth.rs'
+      - 'crates/patronus-network/src/dhcp_client.rs'
+      - '.forgejo/workflows/embedded-tier.yml'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+concurrency:
+  group: "latest:${{ github.workflow }}@${{ github.ref }}"
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  slate-tooling:
+    name: Slate image tooling (check-rootfs, patronus-flash on a fake UBI, patronus-guard, fwtool metadata)
+    runs-on: linux-any
+    timeout-minutes: 10
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 1g --memory-swap 1g --cpus 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tooling tests
+        run: sh ci/embedded-mips/slate/tests/run.sh
+
+  router-features:
+    name: Router feature set (patronus-cli nftables,cli,dhcp-server,dns-server,uci-import)
+    runs-on: linux-any
+    timeout-minutes: 40
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 6g --memory-swap 6g --cpus 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
+          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler
+      - name: Build env (mold linker, no incremental)
+        run: CI_NO_SCCACHE=1 CI_RUST_ENV_EXPORT=1 . ci/ci-rust-env.sh
+      - name: Format (the files this tier owns)
+        run: rustfmt --edition 2021 --check crates/patronus-cli/src/commands/import_uci.rs crates/patronus-cli/src/commands/firstboot.rs crates/patronus-network/src/dhcp_client.rs
+      - name: Clippy (router feature set)
+        run: |
+          cargo clippy -p patronus-cli --no-default-features --features nftables,cli,dhcp-server,dns-server,uci-import -- -D warnings
+          # the router image's multi-call binary (patronus-web = link to patronus-cli, OpenSSL TLS)
+          cargo clippy -p patronus-cli --no-default-features --features nftables,cli,dhcp-server,dns-server,uci-import,web-multicall -- -D warnings
+      - name: Tests (router feature set + udhcpc script)
+        run: |
+          cargo test -p patronus-cli --no-default-features --features nftables,cli,dhcp-server,dns-server,uci-import
+          cargo test -p patronus-network --lib dhcp_client
+          # system-account login backends (PAM / shadow files) the router's first-run account uses
+          cargo test -p patronus-network --lib sysauth
+
+  nor-budget:
+    name: NOR tier size budget (16 MiB NOR-only routers, OpenRC and systemd variants)
+    # embedded-mips-arm64 = the burst runner on the arm64 build host, whose label maps to the local builder image
+    # pembed-slate-img:ci (crossdev mips-unknown-linux-musl, router rootfs, OpenRC, cross-built systemd, stock OpenWrt
+    # image; no node, so the checkout is plain git). Builds the multi-call binary from this commit, assembles the
+    # NOR-profile root for both init systems and checks the flash budget (ci/embedded-mips/slate/nor-budget.sh).
+    runs-on: embedded-mips-arm64
+    timeout-minutes: 90
+    steps:
+      - name: Checkout (git, the builder image has no node)
+        run: |
+          rm -rf /tmp/src && mkdir -p /tmp/src && cd /tmp/src
+          git init -q . && git remote add origin "${{ github.server_url }}/${{ github.repository }}.git"
+          git -c http.extraheader="Authorization: token ${{ github.token }}" fetch -q --depth 1 origin "${{ github.sha }}"
+          git checkout -q FETCH_HEAD
+      - name: Build, assemble (OpenRC + systemd, NOR profile) and check the budget
+        run: bash /tmp/src/ci/embedded-mips/slate/nor-ci.sh

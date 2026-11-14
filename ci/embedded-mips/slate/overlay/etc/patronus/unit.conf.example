@@ -1,0 +1,6 @@
+# /etc/patronus/unit.conf for one GL-AR750S (assemble.sh copies <secrets>/unit.conf; keep it out of the repo)
+STA_MAC=02:00:00:00:00:01      # Wi-Fi client MAC (OpenWrt's phy1-sta1), so the upstream DHCP reservation still matches
+AP5_MAC=02:00:00:00:00:02      # 5 GHz AP BSSID (OpenWrt's phy0-ap0)
+AP24_MAC=02:00:00:00:00:03
+MGMT_NET=192.0.2.0/24          # upstream LAN allowed to reach SSH/web over the Wi-Fi WAN (empty = none)
+GUARD_GW=192.0.2.1             # patronus-guard's unattended check pings this gateway

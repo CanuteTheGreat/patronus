@@ -1,0 +1,11 @@
+#!/bin/sh
+# busybox udhcpc event script (fallback client only; Patronus normally runs its own)
+case "$1" in
+deconfig) ip -4 addr flush dev "$interface"; ip link set "$interface" up ;;
+bound|renew)
+  ip -4 addr flush dev "$interface"; ip addr add "$ip/${mask:-24}" dev "$interface"
+  [ -n "$router" ] && { ip route del default dev "$interface" 2>/dev/null; ip route add default via ${router%% *} dev "$interface"; }
+  [ -n "$dns" ] && { : > /tmp/resolv.conf.auto; for d in $dns; do echo "nameserver $d" >> /tmp/resolv.conf.auto; done; }
+  ;;
+esac
+exit 0

@@ -54,6 +54,23 @@ enum Commands {
         dry_run: bool,
     },
 
+    /// Import an OpenWrt UCI config (a `sysupgrade -b` tarball or a directory
+    /// with etc/config/*) into the config store. Review with `patronus apply
+    /// --dry-run`.
+    #[cfg(feature = "uci-import")]
+    #[command(name = "import-uci")]
+    ImportUci {
+        /// Tarball (.tar.gz) or directory
+        input: PathBuf,
+        /// Print what would be written and write nothing
+        #[arg(long)]
+        dry_run: bool,
+        /// UCI interface (or wifi-iface section) -> Patronus device, repeatable
+        /// (`--map lan=br-lan --map wwan=wl24-sta`)
+        #[arg(long = "map", value_name = "UCI=DEVICE")]
+        map: Vec<String>,
+    },
+
     /// Called by hostapd (through `hostapd_cli -a`) when a station joins with
     /// a Patronus key id: a pending Wi-Fi device learns its MAC (USE=wifi-ap)
     #[cfg(feature = "wifi-ap")]
@@ -67,9 +84,6 @@ enum Commands {
         keyid: String,
     },
 
-    /// Root apply broker for patronus-web (runs one named applier on
-    /// request over a unix socket; see patronus_network::applyd) and the
-    /// periodic dynamic DNS refresh
     /// Zero-touch provisioning: fetch the configuration named in the
     /// [provisioning] section of patronus.toml (url, optional
     /// passphrase_file for an encrypted bundle), import it and apply it.
@@ -83,6 +97,9 @@ enum Commands {
         force: bool,
     },
 
+    /// Root apply broker for patronus-web (runs one named applier on
+    /// request over a unix socket; see patronus_network::applyd) and the
+    /// periodic dynamic DNS refresh
     Applyd {
         /// Socket path [default: $PATRONUS_APPLYD_SOCKET or /run/patronus/applyd.sock]
         #[arg(long)]
@@ -567,6 +584,22 @@ fn restore_default_sigpipe() {}
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     restore_default_sigpipe();
+    // Multi-call (embedded tier, feature `web-multicall`): invoked as
+    // `patronus-web` (a link to this binary) it is the web UI server, so the
+    // router image carries std, tokio, SQLite and the appliers once.
+    #[cfg(feature = "web-multicall")]
+    if std::env::args_os()
+        .next()
+        .and_then(|a| {
+            std::path::Path::new(&a)
+                .file_name()
+                .map(|n| n == "patronus-web")
+        })
+        .unwrap_or(false)
+    {
+        patronus_web::server::init_tracing();
+        return patronus_web::server::run().await;
+    }
     let cli = Cli::parse();
 
     // Initialize logging
@@ -640,6 +673,15 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "wifi-ap")]
         Commands::WifiEvent { iface, mac, keyid } => {
             commands::wifi::event(cli.db, iface, mac, keyid).await?;
+        }
+
+        #[cfg(feature = "uci-import")]
+        Commands::ImportUci {
+            input,
+            dry_run,
+            map,
+        } => {
+            commands::import_uci::run(cli.db, input, dry_run, map).await?;
         }
 
         Commands::Ztp { bootstrap, force } => {

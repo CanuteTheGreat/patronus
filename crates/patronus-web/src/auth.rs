@@ -138,6 +138,18 @@ pub struct UserStore {
     store: Arc<ConfigStore>,
 }
 
+/// Set while a router that shipped without any account waits for its owner to
+/// create the first administrator, a system user (`PATRONUS_FIRST_RUN_SETUP=1`
+/// and no non-root member of an admin group yet, see
+/// `SysLogin::admin_account_exists`): every page and API except `/first-run`
+/// answers "create the administrator first".
+pub static FIRST_RUN_PENDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub fn first_run_pending() -> bool {
+    FIRST_RUN_PENDING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Env var holding the admin password (takes precedence over the file).
 pub const ADMIN_PASSWORD_ENV: &str = "PATRONUS_ADMIN_PASSWORD";
 /// Env var overriding where the generated admin password is persisted.

@@ -1,0 +1,9 @@
+# The router image ships its own applet links and real iproute2/util-linux tools: ash must run what PATH finds,
+# not its built-in applet (FEATURE_PREFER_APPLETS made `ip route ... proto dhcp` hit busybox ip and fail).
+post_src_configure() {
+	sed -i -e 's/^CONFIG_FEATURE_PREFER_APPLETS=y/# CONFIG_FEATURE_PREFER_APPLETS is not set/' \
+	       -e 's/^CONFIG_FEATURE_SH_STANDALONE=y/# CONFIG_FEATURE_SH_STANDALONE is not set/' \
+	       -e 's/^CONFIG_FEATURE_SH_NOFORK=y/# CONFIG_FEATURE_SH_NOFORK is not set/' .config
+	yes "" | emake -j1 oldconfig >/dev/null
+	grep -E 'PREFER_APPLETS|SH_STANDALONE|SH_NOFORK' .config
+}

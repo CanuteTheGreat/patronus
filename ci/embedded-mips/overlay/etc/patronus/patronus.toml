@@ -1,0 +1,11 @@
+# GL-AR750S router tier (QEMU malta stand-in: eth0 = LAN port, eth1 = WAN port).
+[network]
+lan_interface = "eth0"
+wan_interface = "eth1"
+
+# Applied once on first boot (then the Interfaces/DHCP pages own it): OpenWrt-style default LAN.
+[firstboot]
+lan_address = "192.168.1.1/24"
+wan_dhcp    = true
+dhcp_start  = "192.168.1.100"
+dhcp_end    = "192.168.1.249"

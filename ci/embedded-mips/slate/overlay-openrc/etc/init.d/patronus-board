@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+# GL-AR750S board network: switch VLANs, br-lan, Wi-Fi client uplink (wpa_supplicant) and the AP (hostapd).
+# Local filesystems (data volume + overlays) are already mounted by /usr/libexec/patronus/early before OpenRC starts.
+description="Patronus board network (switch VLANs, br-lan, Wi-Fi client + AP)"
+depend() {
+	provide net localmount
+}
+start() {
+	ebegin "Bringing up the board network"
+	/usr/libexec/patronus/board-network start
+	echo "$(cut -d' ' -f1 /proc/uptime) network-up" >> /tmp/boot-times
+	eend 0
+}

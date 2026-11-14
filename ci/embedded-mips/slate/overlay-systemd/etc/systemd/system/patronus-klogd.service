@@ -1,0 +1,15 @@
+[Unit]
+Description=Kernel log to syslog (busybox klogd -> /var/log/messages; journald does not forward kernel messages)
+DefaultDependencies=no
+Requires=patronus-syslogd.service
+After=patronus-syslogd.service
+Before=shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+ExecStart=/bin/klogd -n
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

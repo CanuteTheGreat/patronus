@@ -238,6 +238,44 @@ pub fn add_account(
     write("group", group, 0o644)
 }
 
+/// Non-root accounts in `etc`'s passwd/group files that belong to one of
+/// `groups` (as a listed member or by primary gid). The embedded first-run
+/// flow asks this to decide whether an administrator exists yet.
+pub fn group_members(etc: &Path, groups: &[String]) -> Vec<String> {
+    let pw_db = std::fs::read_to_string(etc.join("passwd")).unwrap_or_default();
+    let group = std::fs::read_to_string(etc.join("group")).unwrap_or_default();
+    let mut gids = Vec::new();
+    let mut out: Vec<String> = Vec::new();
+    for l in group.lines() {
+        let f: Vec<&str> = l.split(':').collect();
+        if f.len() < 3 || !groups.iter().any(|g| !g.is_empty() && g == f[0]) {
+            continue;
+        }
+        gids.push(f[2].to_string());
+        for m in f.get(3).copied().unwrap_or("").split(',') {
+            if !m.is_empty() && !out.iter().any(|o| o == m) {
+                out.push(m.to_string());
+            }
+        }
+    }
+    for l in pw_db.lines() {
+        let f: Vec<&str> = l.split(':').collect();
+        if f.len() >= 4 && gids.iter().any(|g| g == f[3]) && !out.iter().any(|o| o == f[0]) {
+            out.push(f[0].to_string());
+        }
+    }
+    // root never signs in to the web UI by default, and names that are not in
+    // passwd are stale group entries
+    out.retain(|n| {
+        n != "root"
+            && pw_db.lines().any(|l| {
+                let f: Vec<&str> = l.split(':').collect();
+                f.len() >= 3 && f[0] == n && f[2] != "0"
+            })
+    });
+    out
+}
+
 fn decoy_hash() -> &'static str {
     static D: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     D.get_or_init(|| pwhash::sha512_crypt::hash("decoy-never-matches").unwrap_or_default())

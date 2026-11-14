@@ -1,0 +1,8 @@
+#!/sbin/openrc-run
+# Kernel messages into the system log (busybox klogd -> syslogd -> /var/log/messages)
+description="Kernel log to syslog (busybox klogd)"
+command=/bin/klogd
+command_args="-n"
+supervisor=supervise-daemon
+respawn_delay=2
+depend() { need patronus-syslogd; }

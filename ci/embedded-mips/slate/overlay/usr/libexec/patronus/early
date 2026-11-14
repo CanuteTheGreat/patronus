@@ -1,0 +1,46 @@
+#!/bin/sh
+# Early boot of the Patronus embedded tier on the GL-AR750S (stock OpenWrt 6.12.112 kernel + Patronus musl root),
+# shared by both init systems: /usr/sbin/patronus-init runs this as PID 1, then execs OpenRC (openrc-init) or systemd.
+#   /dev (tmpfs + mdev: the OpenWrt kernel has no devtmpfs), /tmp, /run, the data volume and the /etc, /var/lib,
+#   /root overlays on it, the factory-reset marker, OpenWrt's kmods for this kernel, and patronus-guard armed.
+# Boot markers go to /tmp/boot-times (uptime seconds) for the measurements.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+mark() { echo "$(cut -d' ' -f1 /proc/uptime) $*" >> /tmp/boot-times; }
+mount -t proc proc /proc; mount -t sysfs sys /sys
+# the OpenWrt kernel has no devtmpfs: tmpfs + mdev (systemd keeps an already mounted /dev)
+mount -t tmpfs -o size=512k,mode=0755 dev /dev; mkdir -p /dev/pts /dev/shm; mount -t devpts devpts /dev/pts
+mdev -s; echo /sbin/mdev > /proc/sys/kernel/hotplug
+mount -t tmpfs -o size=16m tmpfs /tmp; mount -t tmpfs -o size=4m,mode=0755 tmpfs /run; mkdir -p /var/log /var/run /run/lock
+mount -t tmpfs -o size=2m tmpfs /var/log
+mount -t cgroup2 cgroup2 /sys/fs/cgroup 2>/dev/null
+mark early-start
+hostname slate
+
+# 0. the safety net: revert to OpenWrt unless somebody marks this boot good (see patronus-guard)
+setsid /usr/sbin/patronus-guard arm >/dev/null 2>&1 </dev/null &
+
+# 1. persistent data: own UBI volume patronus_data (OpenWrt's rootfs_data is left alone)
+UBI=/dev/ubi0
+ubinfo $UBI -N patronus_data >/dev/null 2>&1 || { ubinfo $UBI -N rootfs_data >/dev/null 2>&1 && ubirmvol $UBI -N rootfs_data; ubimkvol $UBI -N patronus_data -s 24MiB >/tmp/ubimkvol.log 2>&1; mark created-patronus_data; }
+mkdir -p /data
+mount -t ubifs ubi0:patronus_data /data || { mark NO-DATA; mount -t tmpfs -o size=8m tmpfs /data; }
+[ -f /data/.factory-reset ] && { rm -rf /data/overlay /data/tls /data/.factory-reset; mark factory-reset-done; }
+for d in etc var/lib root; do n=$(echo $d | tr / -); mkdir -p /data/overlay/$n /data/overlay/.work-$n
+  mount -t overlay overlay -o lowerdir=/$d,upperdir=/data/overlay/$n,workdir=/data/overlay/.work-$n /$d || mark "NO-OVERLAY $d"; done
+mkdir -p /var/lib/patronus /var/lib/misc /data/tls
+mark data-mounted
+
+# 2. kernel modules (OpenWrt's kmods for this exact kernel), in OpenWrt's /etc/modules.d order;
+#    dependencies from modules.dep (generated at image build with depmod), loaded deepest first
+KM=/lib/modules/$(uname -r)
+loaded() { grep -q "^$(echo ${1%.ko} | tr - _) " /proc/modules; }
+load() { # module-file [args]
+  local m=$1; shift; loaded "$m" && return 0
+  for d in $(sed -n "s#^${m}: ##p" $KM/modules.dep | tr ' ' '\n' | sed '1!G;h;$!d'); do loaded "$d" || insmod $KM/$d 2>>/tmp/insmod.log; done
+  insmod $KM/$m "$@" 2>>/tmp/insmod.log
+}
+for f in /etc/modules.d/*; do while read -r m args; do
+  case "$m" in ''|\#*) continue;; esac; [ -f $KM/$m.ko ] && load $m.ko $args
+done < "$f"; done
+mark modules-loaded
+ip link set lo up

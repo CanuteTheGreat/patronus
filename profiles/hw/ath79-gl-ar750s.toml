@@ -1,0 +1,45 @@
+# Hardware profile: GL.iNet GL-AR750S "Slate" (QCA9563, MIPS 24Kc big-endian soft-float, 128 MB RAM, 128 MB NAND + 16 MB NOR)
+# See docs/embedded-routers.md. This file is the single input that picks the Portage profile, USE, Cargo features, init and caps.
+# Proven so far: cross build + QEMU malta (ci/embedded-mips/); the ath79 kernel is built but NOT booted on the real board.
+tier        = "embedded"             # embedded | standard | full
+arch        = "mips"                 # big-endian, soft-float, mips32r2
+libc        = "musl"
+chost       = "mips-unknown-linux-musl"
+ram_mb      = 128
+flash_mb    = 128                    # NAND; kernel A/B on NAND (4 MiB), rootfs A/B (see docs section 5)
+init        = "busybox"              # busybox init + small sysv scripts (no OpenRC yet)
+rootfs      = "squashfs-xz+overlayfs"   # /etc and /var/lib are overlays on the persistent partition, like OpenWrt
+
+# Two binaries, each built --no-default-features with exactly these features.
+[cargo.cli]
+package  = "patronus-cli"
+features = ["nftables", "cli", "dhcp-server", "dns-server"]
+[cargo.web]
+package  = "patronus-web"
+# tls-openssl: static OpenSSL 3.6 (ring and aws-lc-rs have no MIPS support). Everything else (VPN, HA, QoS, segmentation,
+# eBPF, threat feeds, journald, LDAP, plugins) is off: those pages are hidden in the UI and answer 501.
+features = ["dhcp", "dns", "tls-openssl"]
+profile  = "release-small"           # opt-level z, fat LTO, codegen-units 1, panic abort, strip
+target   = "mips-unknown-linux-musl"
+toolchain = "nightly + build-std"
+
+use         = ["-ebpf", "-pam", "-nls", "-doc", "-python", "nftables", "hostapd", "dnsmasq"]
+kernel      = { source = "openwrt-patches", version = "6.12.x", dts = "qca9563_glinet_gl-ar750s-nor-nand" }
+
+# Local web UI (LuCI equivalent): the same patronus-web as the other tiers, not a rewrite ("web = lite" was not needed).
+[web]
+mode            = "on"               # on | off  (lite was the fallback; the straight port fits, see docs section 6a)
+https_port      = 443
+http_redirect   = 80                 # 308 -> https, serves nothing else
+lan_ip          = "192.168.1.1/24"   # first-boot default (firstboot.lan_address), DHCP .100-.249
+password        = "first-run"        # NO shipped password: /first-run page until the owner sets one
+tls             = "self-signed"      # ECDSA P-256, 10 years, SANs patronus / patronus.local / LAN IP, generated on the box
+argon2_mem_kib  = 8192               # login hashing memory (default 19456 would add 11 MiB to the peak)
+rss_mb_idle     = 20                 # budget; measured 16.4 MB
+rss_mb_peak     = 30                 # budget; measured 24.8 MB (login + 14 pages), see docs
+cloud_dependency = "none"
+
+[caps]
+applyd_rss_mb   = 10                 # measured 7.8 MB
+logs_in_ram_kb  = 512
+conntrack_max   = 4096

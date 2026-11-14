@@ -1,0 +1,37 @@
+#!/bin/sh
+# patronus-guard: automatic way back to stock OpenWrt if a Patronus boot is not confirmed.
+#   arm   (rcS, every boot) wait GRACE seconds; then:
+#         - $RUN/patronus-good exists (an operator ran `patronus-guard ok`): stay
+#         - $DATA/.guard-auto exists (this unit was proven reachable before) AND the uplink gateway answers
+#           AND sshd listens: stay
+#         - otherwise: patronus-flash openwrt (stock root + config backup) and reboot -> the box is OpenWrt again
+#   ok    mark this boot good;  auto  switch to the unattended (gateway ping) check for later boots;  status
+# Test hooks (ci/embedded-mips/slate/tests): PATRONUS_GUARD_RUN, PATRONUS_GUARD_DATA, PATRONUS_FLASH, PATRONUS_REBOOT.
+BOARD=${PATRONUS_BOARD:-/etc/patronus/board.sh}; [ -f "$BOARD" ] && . "$BOARD"
+GRACE=${PATRONUS_GUARD_GRACE:-600}
+GW=${PATRONUS_GUARD_GW:-$GUARD_GW}
+RUN=${PATRONUS_GUARD_RUN:-/tmp}
+DATA=${PATRONUS_GUARD_DATA:-/data}
+FLASH=${PATRONUS_FLASH:-/usr/sbin/patronus-flash}
+REBOOT=${PATRONUS_REBOOT:-}
+restart_now() { # the systemd variant's /usr/sbin/reboot is systemctl, which only works under systemd
+  if [ -n "$REBOOT" ]; then $REBOOT; elif [ -d /run/systemd/system ]; then systemctl reboot -f; else /bin/busybox reboot -f; fi; }
+case "$1" in
+arm)
+  echo "$(date +%s) armed grace=${GRACE}s" > $RUN/patronus-guard.state
+  sleep "$GRACE"
+  [ -f $RUN/patronus-good ] && { echo "boot confirmed by operator" >> $RUN/patronus-guard.state; exit 0; }
+  if [ -f $DATA/.guard-auto ] && [ -n "$GW" ] && ping -c3 -W3 "$GW" >/dev/null 2>&1 && netstat -ltn 2>/dev/null | grep -q ':22 '; then
+    echo "auto: gateway + sshd ok" >> $RUN/patronus-guard.state; rm -f $DATA/.init-boot-attempts; touch $RUN/patronus-good; exit 0
+  fi
+  logger -t patronus-guard "boot not confirmed within ${GRACE}s: reverting to stock OpenWrt" 2>/dev/null
+  echo "REVERTING" >> $RUN/patronus-guard.state
+  mkdir -p $DATA/guard-log 2>/dev/null; cp $RUN/boot-times $RUN/patronus-guard.state $RUN/wpa-start.txt $RUN/insmod.log $DATA/guard-log/ 2>/dev/null
+  cat /var/log/messages.0 /var/log/messages > $DATA/guard-log/syslog.txt 2>/dev/null; dmesg > $DATA/guard-log/dmesg.txt 2>/dev/null; sync
+  $FLASH openwrt > $DATA/guard-log/flash.txt 2>&1 && { sync; sleep 2; restart_now; }
+  ;;
+ok) rm -f $DATA/.init-boot-attempts; touch $RUN/patronus-good; echo "ok $(date +%s)" >> $RUN/patronus-guard.state; echo confirmed ;;
+auto) rm -f $DATA/.init-boot-attempts; touch $DATA/.guard-auto $RUN/patronus-good; sync; echo "unattended check enabled" ;;
+status) cat $RUN/patronus-guard.state 2>/dev/null; ls -l $RUN/patronus-good $DATA/.guard-auto 2>/dev/null ;;
+*) sed -n '2,9p' "$0"; exit 2 ;;
+esac

@@ -1,0 +1,19 @@
+[Unit]
+Description=System log (busybox syslogd -> /var/log/messages; journald forwards to it)
+# The same /var/log/messages as the OpenRC variant (web UI log viewer, patronus-guard): busybox syslogd owns /dev/log
+# (systemd-journald-dev-log.socket is masked), and journald forwards what it collects itself (unit stdout/stderr,
+# systemd's own messages; ForwardToSyslog=yes in journald.conf.d) to /run/systemd/journal/syslog, the standard
+# syslog-daemon socket, which points at /dev/log.
+DefaultDependencies=no
+After=systemd-journald.service
+Before=patronus-network.service patronus-apply.service patronus-applyd.service patronus-web.service patronus-dropbear.service patronus-ntpd.service shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+ExecStartPre=/bin/sh -c 'mkdir -p /run/systemd/journal && ln -sfn /dev/log /run/systemd/journal/syslog'
+ExecStart=/bin/syslogd -n -O /var/log/messages -s 256 -b 1
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

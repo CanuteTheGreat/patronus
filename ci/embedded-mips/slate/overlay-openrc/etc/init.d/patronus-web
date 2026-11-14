@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+# Patronus local web UI (HTTPS 443, HTTP 80 redirect; first run creates the administrator, a system user)
+description="Patronus web UI"
+command=/usr/libexec/patronus/run
+command_args="/usr/bin/patronus-web"
+supervisor=supervise-daemon
+respawn_delay=2
+output_log=/var/log/web.log
+error_log=/var/log/web.log
+depend() { need patronus-applyd; }
+start_post() { echo "$(cut -d' ' -f1 /proc/uptime) patronus-started" >> /tmp/boot-times; }

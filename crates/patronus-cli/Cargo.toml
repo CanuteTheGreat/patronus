@@ -9,10 +9,19 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "uci-import"]
+
+# `patronus import-uci`: OpenWrt UCI config importer (no extra dependencies;
+# its wifi-ap / dhcp-server parts are cfg-gated inside it)
+uci-import = []
 
 # Core features
-web = ["patronus-web", "dep:axum"]
+# Embedded tier: `patronus-web` is a link to this binary (multi-call; one copy
+# of std/tokio/SQLite/appliers on a 16 MiB NOR router). TLS via OpenSSL (MIPS
+# has no ring/aws-lc); no threat feeds / journald reader, like the router's
+# standalone patronus-web build.
+web-multicall = ["patronus-web", "patronus-web/tls-openssl"]
+web = ["patronus-web", "patronus-web/tls-rustls", "patronus-web/threat-feeds", "patronus-web/journal", "dep:axum"]
 # The `patronus` binary IS the CLI: it always parses arguments with clap,
 # so clap is not optional (USE=-cli used to make the emerge fail to compile).
 cli = []
@@ -91,7 +100,6 @@ patronus-sdwan = { path = "../patronus-sdwan" }
 patronus-mpls = { path = "../patronus-mpls" }
 patronus-geodns = { path = "../patronus-geodns" }
 patronus-saas = { path = "../patronus-saas" }
-patronus-dashboard = { path = "../patronus-dashboard" }
 patronus-captiveportal = { path = "../patronus-captiveportal" }
 
 tokio.workspace = true

@@ -271,6 +271,65 @@ impl SysLogin {
         Ok(true)
     }
 
+    /// The passwd/group/shadow directory this login reads directly (the
+    /// shadow backend's, else `$PATRONUS_AUTH_ETC` or /etc for PAM, whose
+    /// pam_unix reads the same files). None behind the broker.
+    fn local_etc(&self) -> Option<PathBuf> {
+        match &self.mode {
+            Mode::Direct(Backend::Shadow(etc)) => Some(etc.clone()),
+            Mode::Direct(Backend::Pam) => Some(
+                std::env::var_os(AUTH_ETC_ENV)
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("/etc")),
+            ),
+            Mode::Broker(_) => None,
+        }
+    }
+
+    /// Embedded first run: does a non-root system user in an admin group
+    /// exist? Behind the broker (full tier, accounts come from the installer)
+    /// this is always true: the first-run page is a router-image feature.
+    pub fn admin_account_exists(&self) -> bool {
+        match self.local_etc() {
+            Some(etc) => !sysauth::group_members(&etc, &self.cfg.admin_groups).is_empty(),
+            None => true,
+        }
+    }
+
+    /// Embedded first run: create the first administrator as a system user
+    /// (passwd/group/shadow, sha512-crypt, member of the first admin group),
+    /// who then signs in through PAM (or the shadow backend) like any other
+    /// account. Refused once any administrator exists and for weak passwords.
+    pub fn create_first_account(&self, name: &str, password: &str) -> Result<(), String> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let etc = self
+            .local_etc()
+            .ok_or("first-run setup needs the web UI to manage the accounts itself (root)")?;
+        if !sysauth::group_members(&etc, &self.cfg.admin_groups).is_empty() {
+            return Err("an administrator account already exists".into());
+        }
+        if !sysauth::valid_name(name) || name == "root" {
+            return Err(
+                "Invalid user name: use letters, digits, '.', '_' or '-' (not root)".into(),
+            );
+        }
+        if sysauth::lookup(&Backend::Shadow(etc.clone()), name).is_some() {
+            return Err(format!("Invalid user name: {name} already exists"));
+        }
+        crate::auth::check_admin_password(password).map_err(|e| format!("Invalid {e}"))?;
+        let group = self
+            .cfg
+            .admin_groups
+            .iter()
+            .find(|g| !g.is_empty())
+            .cloned()
+            .unwrap_or_else(|| "patronus-admin".into());
+        sysauth::add_account(&etc, name, password, &[group])?;
+        crate::auth::FIRST_RUN_PENDING.store(false, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
     /// Is `password` this system user's password (own-account re-entry:
     /// groups are not looked at again)?
     pub async fn confirm(&self, name: &str, password: &str) -> bool {

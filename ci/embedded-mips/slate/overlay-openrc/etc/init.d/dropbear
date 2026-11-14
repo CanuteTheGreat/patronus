@@ -1,0 +1,9 @@
+#!/sbin/openrc-run
+description="Dropbear SSH server"
+command=/usr/sbin/dropbear
+command_args="-F -R -p 22 -K 300"
+supervisor=supervise-daemon
+respawn_delay=2
+depend() { need net; }
+start_pre() { checkpath -d -m 0700 /etc/dropbear; }
+start_post() { echo "$(cut -d' ' -f1 /proc/uptime) dropbear-up" >> /tmp/boot-times; }
