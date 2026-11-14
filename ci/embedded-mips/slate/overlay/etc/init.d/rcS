@@ -1,0 +1,53 @@
+#!/bin/sh
+# Patronus embedded tier on the GL-AR750S (stock OpenWrt 6.12.112 kernel + Patronus musl rootfs).
+# busybox init runs this once. Boot markers go to /tmp/boot-times (uptime seconds) for the measurements.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+mark() { echo "$(cut -d' ' -f1 /proc/uptime) $*" >> /tmp/boot-times; }
+mount -t proc proc /proc; mount -t sysfs sys /sys
+mount -t tmpfs -o size=512k,mode=0755 dev /dev; mkdir -p /dev/pts /dev/shm; mount -t devpts devpts /dev/pts
+mdev -s; echo /sbin/mdev > /proc/sys/kernel/hotplug
+mount -t tmpfs -o size=16m tmpfs /tmp; mount -t tmpfs -o size=4m tmpfs /run; mkdir -p /var/log /var/run /run/lock
+mount -t tmpfs -o size=2m tmpfs /var/log
+mount -t cgroup2 cgroup2 /sys/fs/cgroup 2>/dev/null
+mark rcS-start
+hostname slate
+syslogd -C512 2>/dev/null; klogd 2>/dev/null
+
+# 0. the safety net: revert to OpenWrt unless somebody marks this boot good (see patronus-guard)
+/usr/sbin/patronus-guard arm >/dev/null 2>&1 </dev/null &
+
+# 1. persistent data: own UBI volume patronus_data (OpenWrt's rootfs_data is left alone)
+UBI=/dev/ubi0
+ubinfo $UBI -N patronus_data >/dev/null 2>&1 || { ubinfo $UBI -N rootfs_data >/dev/null 2>&1 && ubirmvol $UBI -N rootfs_data; ubimkvol $UBI -N patronus_data -s 24MiB >/tmp/ubimkvol.log 2>&1; mark created-patronus_data; }
+mkdir -p /data
+mount -t ubifs ubi0:patronus_data /data || { mark NO-DATA; mount -t tmpfs -o size=8m tmpfs /data; }
+[ -f /data/.factory-reset ] && { rm -rf /data/overlay /data/tls /data/.factory-reset; mark factory-reset-done; }
+for d in etc var/lib root; do n=$(echo $d | tr / -); mkdir -p /data/overlay/$n /data/overlay/.work-$n
+  mount -t overlay overlay -o lowerdir=/$d,upperdir=/data/overlay/$n,workdir=/data/overlay/.work-$n /$d || mark "NO-OVERLAY $d"; done
+mkdir -p /var/lib/patronus /var/lib/misc /data/tls
+mark data-mounted
+
+# 2. kernel modules (OpenWrt's kmods for this exact kernel), in OpenWrt's /etc/modules.d order;
+#    dependencies from modules.dep (generated at image build with depmod), loaded deepest first
+KM=/lib/modules/$(uname -r)
+loaded() { grep -q "^$(echo ${1%.ko} | tr - _) " /proc/modules; }
+load() { # module-file [args]
+  local m=$1; shift; loaded "$m" && return 0
+  for d in $(sed -n "s#^${m}: ##p" $KM/modules.dep | tr ' ' '\n' | sed '1!G;h;$!d'); do loaded "$d" || insmod $KM/$d 2>>/tmp/insmod.log; done
+  insmod $KM/$m "$@" 2>>/tmp/insmod.log
+}
+for f in /etc/modules.d/*; do while read -r m args; do
+  case "$m" in ''|\#*) continue;; esac; [ -f $KM/$m.ko ] && load $m.ko $args
+done < "$f"; done
+mark modules-loaded
+
+ip link set lo up
+. /etc/patronus/board.sh
+/etc/init.d/network start
+mark network-up
+/etc/init.d/dropbear start
+mark dropbear-up
+/etc/init.d/patronus start
+# clock: no RTC on the board; busybox ntpd against the pool (the store's NTP settings are not built for this tier yet)
+ntpd -p 0.pool.ntp.org -p 1.pool.ntp.org -p 2.pool.ntp.org 2>/dev/null
+mark patronus-started

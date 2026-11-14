@@ -50,7 +50,9 @@ fn dns_mode(s: &Section) -> anyhow::Result<Option<String>> {
     match s.dns_mode.as_deref().map(|m| m.trim().to_ascii_lowercase()) {
         None => Ok(None),
         Some(m) if DNS_MODES.contains(&m.as_str()) => Ok(Some(m)),
-        Some(m) => anyhow::bail!("[firstboot] dns_mode {m:?} (auto, resolver, forwarder or disabled)"),
+        Some(m) => {
+            anyhow::bail!("[firstboot] dns_mode {m:?} (auto, resolver, forwarder or disabled)")
+        }
     }
 }
 

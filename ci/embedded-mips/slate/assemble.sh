@@ -1,0 +1,86 @@
+#!/bin/bash
+# Assemble the Patronus root squashfs + an OpenWrt-format sysupgrade tar for the GL-AR750S (packaging only, no compiling).
+# usage: assemble.sh <pack-dir> <tag>
+#   <pack-dir> = pack.sh output: rootfs.tar, patronus-cli, patronus-web, libatomic.so.1
+# Inputs (environment; everything per-unit or secret stays outside the repo):
+#   STOCK_ROOT        unpacked root of the stock OpenWrt 25.12.6 ath79/nand image (kmods for 6.12.112, Wi-Fi firmware, swconfig)
+#   STOCK_SYSUPGRADE  openwrt-25.12.6-ath79-nand-glinet_gl-ar750s-nor-nand-squashfs-sysupgrade.bin (its kernel + CONTROL are reused)
+#   RECOVERY_ROOT     stock root squashfs embedded as the guard's way back (usually the unit's own ubi0_0 dump)
+#   RECOVERY_CFG      optional: OpenWrt sysupgrade -b tarball restored when the guard reverts
+#   UNIT_DIR          per-unit private files: shadow-root, authorized_keys, dropbear_*_host_key, wpa_supplicant.conf,
+#                     unit.conf (see overlay/etc/patronus/unit.conf.example), hostapd/*.conf (see ap5.conf.example)
+#   OUT_DIR           where <tag>/root.squashfs and the sysupgrade tar go
+#   SOURCE_REV        optional: recorded in /etc/patronus-release
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+B=$(readlink -f "$1"); TAG=$2
+for v in STOCK_ROOT STOCK_SYSUPGRADE RECOVERY_ROOT UNIT_DIR OUT_DIR; do [ -n "${!v:-}" ] || { echo "assemble.sh: $v is not set"; exit 2; }; done
+OUTD=$OUT_DIR/$TAG; mkdir -p "$OUTD"; chmod 700 "$OUTD"
+R=$(mktemp -d "${TMPDIR:-/tmp}/slate-rootfs.XXXX"); trap 'chmod -R u+w "$R"; rm -rf "$R"' EXIT
+tar xf "$B/rootfs.tar" -C "$R" --exclude='./dev/*' 2>/dev/null || tar xf "$B/rootfs.tar" -C "$R"
+chmod -R u+rwX "$R"
+# drop build-only junk
+rm -f "$R"/etc/hostapd/hostapd.* "$R"/etc/wpa_supplicant/*.conf
+rm -rf "$R"/usr/include "$R"/usr/share/{man,doc,info,gtk-doc,locale} "$R"/var/db/pkg "$R"/var/cache "$R"/usr/lib/pkgconfig "$R"/etc/portage
+find "$R" -name '*.a' -delete
+rm -f "$R"/usr/lib/libgmpxx.so* "$R"/usr/lib/*.o
+# util-linux/iproute2 tools the router never runs (busybox covers mount/umount/unshare/nsenter)
+while read -r f; do [ -n "$f" ] && rm -f "$R"/$f; done < "$HERE/prune.txt"
+# musl loader where every binary expects it
+[ -e "$R/lib/ld-musl-mips-sf.so.1" ] || ln -sf ../usr/lib/libc.so "$R/lib/ld-musl-mips-sf.so.1"
+mkdir -p "$R"/{proc,sys,dev,tmp,run,data,mnt,root/.ssh,var/log,var/lib/patronus,var/lib/misc,etc/dropbear,usr/lib/openwrt,usr/share/patronus-recovery,etc/patronus/tls,etc/hostapd,etc/wpa_supplicant}
+install -m755 "$B/patronus-cli" "$R/usr/bin/patronus-cli"; install -m755 "$B/patronus-web" "$R/usr/bin/patronus-web"
+install -m644 "$B/libatomic.so.1" "$R/usr/lib/libatomic.so.1"
+# OpenWrt pieces for this exact kernel: kmods, their load order, Wi-Fi firmware + regdb, swconfig (+libs)
+S=$STOCK_ROOT; KV=$(ls "$S/lib/modules")
+cp -a "$S/lib/modules" "$R/lib/"; mkdir -p "$R/etc/modules.d"; cp -a "$S"/etc/modules.d/. "$R/etc/modules.d/"
+cp -a "$S/lib/firmware" "$R/lib/"
+{ /sbin/depmod -b "$R" "$KV" || depmod -b "$R" "$KV"; } 2>/dev/null || true
+[ -s "$R/lib/modules/$KV/modules.dep" ] || { echo "depmod failed"; exit 1; }
+for f in services protocols; do [ -e "$R/etc/$f" ] || cp "$S/etc/$f" "$R/etc/$f"; done   # busybox wget/nc resolve service names (p4: wget: bad port 'http')
+cp -a "$S/sbin/swconfig" "$S/usr/lib/libnl-tiny.so.1" "$S"/lib/libuci.so.* "$S"/lib/libubox.so.* "$S/lib/libgcc_s.so.1" "$R/usr/lib/openwrt/"
+# the safety net's payload: stock OpenWrt root + the unit's config backup
+cp "$RECOVERY_ROOT" "$R/usr/share/patronus-recovery/openwrt-root.squashfs"
+if [ -n "${RECOVERY_CFG:-}" ]; then cp "$RECOVERY_CFG" "$R/usr/share/patronus-recovery/sysupgrade.tgz"; fi
+# overlay (init, board glue, guard, flash tool, Patronus config); examples stay out of the image
+cp -a "$HERE"/overlay/. "$R/"; rm -f "$R"/etc/patronus/*.example
+# busybox applet links for every applet the image has no real tool for (ash runs what PATH finds:
+# the busybox build has FEATURE_PREFER_APPLETS off, see busybox.portage-env)
+[ -e "$R/sbin/init" ] || ln -sf ../bin/busybox "$R/sbin/init"
+while read -r a; do
+  [ -n "$a" ] || continue
+  for d in bin sbin usr/bin usr/sbin; do if [ -e "$R/$d/$a" ] || [ -L "$R/$d/$a" ]; then continue 2; fi; done
+  ln -sf /bin/busybox "$R/bin/$a"; done < "$HERE/busybox-applets.txt"
+# accounts + per-unit secrets
+grep -q '^root:' "$R/etc/passwd" 2>/dev/null || echo 'root:x:0:0:root:/root:/bin/sh' >> "$R/etc/passwd"
+sed -i 's#^root:[^:]*:0:0:.*#root:x:0:0:root:/root:/bin/sh#' "$R/etc/passwd"   # Gentoo ships root:!:...:/bin/bash; dropbear rejects a missing shell
+for u in 'nobody:x:65534:65534:nobody:/:/bin/false' 'dnsmasq:x:453:453:dnsmasq:/:/bin/false'; do grep -q "^${u%%:*}:" "$R/etc/passwd" || echo "$u" >> "$R/etc/passwd"; done
+for g in 'root:x:0:' 'nobody:x:65534:' 'dnsmasq:x:453:' 'patronus:x:900:'; do grep -q "^${g%%:*}:" "$R/etc/group" 2>/dev/null || echo "$g" >> "$R/etc/group"; done
+U=$UNIT_DIR
+{ cat "$U/shadow-root"; grep -v '^root:' "$R/etc/shadow" 2>/dev/null || true; } > "$R/etc/shadow.new"; mv "$R/etc/shadow.new" "$R/etc/shadow"; chmod 600 "$R/etc/shadow"
+install -m600 "$U/authorized_keys" "$R/root/.ssh/authorized_keys"; chmod 700 "$R/root/.ssh"
+install -m600 "$U"/dropbear_*_host_key "$R/etc/dropbear/"
+install -m600 "$U/wpa_supplicant.conf" "$R/etc/wpa_supplicant/wpa_supplicant.conf"
+if [ -f "$U/unit.conf" ]; then install -m644 "$U/unit.conf" "$R/etc/patronus/unit.conf"; fi
+for c in "$U"/hostapd/*.conf; do if [ -f "$c" ]; then install -m600 "$c" "$R/etc/hostapd/"; fi; done
+echo "slate" > "$R/etc/hostname"; printf '127.0.0.1 localhost\n' > "$R/etc/hosts"
+ln -sf /tmp/resolv.conf.auto "$R/etc/resolv.conf"
+cat > "$R/etc/patronus-release" <<EOF
+PATRONUS_TIER=embedded
+BOARD=glinet,gl-ar750s-nor-nand
+BUILD=$TAG
+SOURCE=patronus ${SOURCE_REV:-unknown}
+KERNEL=OpenWrt 25.12.6 ath79/nand $KV (stock, unchanged)
+EOF
+chmod 755 "$R"; chmod 1777 "$R/tmp"
+"$HERE/check-rootfs.sh" "$R"
+P=(-p "/dev/console c 600 0 0 5 1" -p "/dev/null c 666 0 0 1 3" -p "/dev/ttyS0 c 600 0 0 4 64")
+mksquashfs "$R" "$OUTD/root.squashfs" -comp xz -b 256K -noappend -no-xattrs -all-root -quiet "${P[@]}"
+# OpenWrt sysupgrade-tar: stock kernel (identical bytes to what is in NOR) + our root, then fwtool metadata
+W=$(mktemp -d); D=$W/sysupgrade-glinet_gl-ar750s-nor-nand; mkdir -p "$D"
+tar xf "$STOCK_SYSUPGRADE" -C "$W" --wildcards '*/kernel' '*/CONTROL'
+cp "$OUTD/root.squashfs" "$D/root"
+(cd "$W" && tar cf "$OUTD/patronus-$TAG-glinet_gl-ar750s-nor-nand-sysupgrade.tar" --owner=0 --group=0 --sort=name sysupgrade-glinet_gl-ar750s-nor-nand)
+"$HERE/fwmeta.py" add "$OUTD/patronus-$TAG-glinet_gl-ar750s-nor-nand-sysupgrade.tar" glinet,gl-ar750s-nor-nand --version "$TAG"   # sysupgrade -T needs it
+rm -rf "$W"
+ls -l "$OUTD"; unsquashfs -s "$OUTD/root.squashfs" | grep -E 'Filesystem size|Compression|Block size'

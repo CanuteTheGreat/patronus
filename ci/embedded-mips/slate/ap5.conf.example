@@ -1,0 +1,18 @@
+# <secrets>/hostapd/ap5.conf -> /etc/hostapd/ap5.conf: the 5 GHz AP (OpenWrt wireless.default_radio0), bridged to the LAN
+interface=wl5-ap
+bridge=br-lan
+driver=nl80211
+ssid=ExampleNet
+country_code=US
+hw_mode=a
+channel=36
+ieee80211n=1
+ieee80211ac=1
+ht_capab=[HT40+]
+vht_oper_chwidth=1
+vht_oper_centr_freq_seg0_idx=42
+wmm_enabled=1
+wpa=2
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+wpa_passphrase=change-me-please

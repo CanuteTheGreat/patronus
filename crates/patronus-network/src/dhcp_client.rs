@@ -317,7 +317,10 @@ mod tests {
         // the WAN lease feeds the router's own resolver, and a busybox ip that
         // rejects `proto dhcp` still gets the default route
         let w = &s.files[0].1;
-        assert!(w.contains("cat \"/x/net/dhcp/eth0.resolv\" > /etc/resolv.conf"), "{w}");
+        assert!(
+            w.contains("cat \"/x/net/dhcp/eth0.resolv\" > /etc/resolv.conf"),
+            "{w}"
+        );
         assert!(w.contains("resolvconf -a \"$dev.udhcpc\""));
         assert!(w.contains(
             "proto dhcp 2>/dev/null \\\n        || ip route replace default via \"$1\" dev \"$dev\" metric 100\n"

@@ -1,0 +1,54 @@
+#!/bin/sh
+# patronus-flash: write root images on the Slate's UBI (the NOR kernel is OpenWrt's and is never touched here).
+#   patronus-flash root <rootfs.squashfs>      install a new Patronus root, keep /data (settings): A/B, old root kept as rootfs_prev
+#   patronus-flash openwrt [root.squashfs|sysupgrade.bin] [config.tgz]
+#                                              back to stock OpenWrt (+ its config backup restored at first boot)
+#   patronus-flash rollback                    swap rootfs and rootfs_prev (boot the previous root again)
+#   patronus-flash factory-reset               wipe the settings (patronus_data) at the next boot: first-run flow again
+# All steps keep the running root mounted: UBI renames work on a mounted volume (UBI_METAONLY open).
+# Test hooks: PATRONUS_UBI (UBI device), PATRONUS_FLASH_TMP, PATRONUS_RECOVERY, PATRONUS_DATA.
+set -e
+UBI=${PATRONUS_UBI:-/dev/ubi0}
+REC=${PATRONUS_RECOVERY:-/usr/share/patronus-recovery}
+T=${PATRONUS_FLASH_TMP:-/tmp}/pf
+DATA=${PATRONUS_DATA:-/data}
+log() { echo "patronus-flash: $*"; logger -t patronus-flash "$*" 2>/dev/null || true; }
+volid() { ubinfo $UBI -N "$1" 2>/dev/null | sed -n 's/^Volume ID: *\([0-9]*\).*/\1/p'; }
+rmvol() { [ -n "$(volid "$1")" ] && ubirmvol $UBI -N "$1"; true; }
+write_vol() { # name file
+  rmvol "$1"; sz=$(wc -c < "$2"); ubimkvol $UBI -N "$1" -s "$sz" >/dev/null
+  ubiupdatevol ${UBI}_$(volid "$1") "$2"; log "wrote $2 ($sz B) to volume $1"
+}
+swap_in() { # make volume rootfs_new the boot root, keep the current one as rootfs_prev
+  rmvol rootfs_prev
+  ubirename $UBI rootfs rootfs_prev rootfs_new rootfs
+  log "rootfs_new is now rootfs (previous root kept as rootfs_prev)"
+}
+case "$1" in
+root)
+  [ -f "$2" ] || { echo "usage: $0 root <squashfs>"; exit 2; }
+  head -c4 "$2" | grep -q hsqs || { echo "not a squashfs"; exit 2; }
+  rmvol rootfs_prev; write_vol rootfs_new "$2"; swap_in; sync ;;
+openwrt)
+  SRC=${2:-$REC/openwrt-root.squashfs}; CFG=${3-$REC/sysupgrade.tgz}
+  rm -rf $T; mkdir -p $T
+  if tar tf "$SRC" >/dev/null 2>&1; then tar xf "$SRC" -C $T; SRC=$(ls $T/sysupgrade-*/root); fi
+  head -c4 "$SRC" | grep -q hsqs || { echo "no OpenWrt root squashfs in $SRC"; exit 2; }
+  rmvol rootfs_prev; rmvol rootfs_data
+  write_vol rootfs_new "$SRC"
+  ubimkvol $UBI -N rootfs_data -m >/dev/null
+  if [ -n "$CFG" ] && [ -f "$CFG" ]; then
+    mkdir -p $T/rd; mount -t ubifs ubi0:rootfs_data $T/rd; cp "$CFG" $T/rd/sysupgrade.tgz; sync; umount $T/rd
+    log "OpenWrt config backup placed for restore at first boot"
+  fi
+  swap_in; sync ;;
+rollback)
+  [ -n "$(volid rootfs_prev)" ] || { echo "no rootfs_prev"; exit 2; }
+  ubirename $UBI rootfs rootfs_new rootfs_prev rootfs
+  ubirename $UBI rootfs_new rootfs_prev; log "rolled back to the previous root"; sync ;;
+factory-reset)
+  # rcS sees the marker before mounting the overlays and wipes the stored settings, TLS key and overlays
+  touch $DATA/.factory-reset; sync; log "factory reset scheduled for the next boot" ;;
+*) sed -n '2,9p' "$0"; exit 2 ;;
+esac
+echo "done: reboot to use it"

@@ -1,0 +1,26 @@
+#!/bin/sh
+# Fake mtd-utils UBI tools (+ mount/umount/logger no-ops) over $FAKE_UBI: by-name/<vol> = contents, ids/<n> = name.
+# Called through symlinks named after the tool.
+set -e
+B=${FAKE_UBI:?}; mkdir -p "$B/by-name" "$B/ids"
+id_of() { for f in "$B"/ids/*; do [ -e "$f" ] && [ "$(cat "$f")" = "$1" ] && { basename "$f"; return 0; }; done; return 1; }
+case "$(basename "$0")" in
+ubinfo) # ubinfo DEV -N name
+  [ -e "$B/by-name/$3" ] || { echo "ubinfo: no volume $3" >&2; exit 1; }
+  echo "Volume ID:   $(id_of "$3") (on ubi0)"; echo "Name:        $3" ;;
+ubimkvol) # ubimkvol DEV -N name (-s size | -m)
+  [ -e "$B/by-name/$3" ] && { echo "ubimkvol: $3 exists" >&2; exit 1; }
+  n=0; while [ -e "$B/ids/$n" ]; do n=$((n+1)); done
+  echo "$3" > "$B/ids/$n"; : > "$B/by-name/$3"; echo "Volume ID $n, name \"$3\"" ;;
+ubirmvol) # ubirmvol DEV -N name
+  i=$(id_of "$3") || { echo "ubirmvol: no $3" >&2; exit 1; }; rm -f "$B/ids/$i" "$B/by-name/$3" ;;
+ubirename) # ubirename DEV old new [old new ...]: all renames at once, like the kernel's atomic rename
+  shift; mkdir -p "$B/tmp"; set -- "$@"; args="$*"
+  while [ $# -ge 2 ]; do i=$(id_of "$1") || { echo "ubirename: no $1" >&2; exit 1; }; mv "$B/by-name/$1" "$B/tmp/$i"; shift 2; done
+  set -- $args
+  while [ $# -ge 2 ]; do i=$(id_of "$1"); echo "$2" > "$B/ids/$i"; mv "$B/tmp/$i" "$B/by-name/$2"; shift 2; done ;;
+ubiupdatevol) # ubiupdatevol <dev>_<id> file
+  i=${1##*_}; n=$(cat "$B/ids/$i"); cp "$2" "$B/by-name/$n" ;;
+mount|umount|logger|sync) : ;;
+*) echo "fake-ubi: unknown tool $(basename "$0")" >&2; exit 2 ;;
+esac

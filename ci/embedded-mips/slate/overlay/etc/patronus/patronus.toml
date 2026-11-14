@@ -1,0 +1,13 @@
+# GL-AR750S "Slate": LAN = br-lan (switch LAN ports + 5 GHz AP), WAN = the 2.4 GHz Wi-Fi client (repeater uplink)
+[network]
+lan_interface = "br-lan"
+wan_interface = "wl24-sta"
+
+# Applied once on first boot (then the Interfaces/DHCP pages own it): the Slate's OpenWrt LAN, carried over by hand
+[firstboot]
+lan_address = "10.0.66.1/24"
+wan_dhcp    = true
+dhcp_start  = "10.0.66.100"
+dhcp_end    = "10.0.66.249"
+# no Unbound on the router tier: dnsmasq answers DNS for the LAN (DHCP hands out 10.0.66.1 as DNS server)
+dns_mode    = "forwarder"

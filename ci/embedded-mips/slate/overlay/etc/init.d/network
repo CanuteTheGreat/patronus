@@ -1,0 +1,21 @@
+#!/bin/sh
+# switch VLANs (OpenWrt's: vlan1 = CPU tagged + LAN ports 2 3, vlan2 = CPU tagged + WAN port 1), br-lan, Wi-Fi client + AP
+. /etc/patronus/board.sh
+sw() { LD_LIBRARY_PATH=$OWLIB $OWLIB/swconfig dev switch0 "$@"; }
+case "$1" in
+start)
+  ip link set eth0 up
+  if [ -x $OWLIB/swconfig ]; then sw set reset 1; sw set enable_vlan 1; sw vlan 1 set ports "0t 2 3"; sw vlan 2 set ports "0t 1"; sw set apply 1; fi
+  ip link add link eth0 name eth0.1 type vlan id 1 2>/dev/null; ip link add link eth0 name eth0.2 type vlan id 2 2>/dev/null
+  ip link add br-lan type bridge 2>/dev/null; ip link set eth0.1 master br-lan; ip link set eth0.1 up; ip link set eth0.2 up; ip link set br-lan up
+  # Wi-Fi: drop the kernel's default netdevs, create named ones
+  for d in /sys/class/net/*; do [ -d $d/phy80211 ] && iw dev $(basename $d) del; done
+  iw phy $PHY24 interface add $WAN_IF type managed && { [ -z "$STA_MAC" ] || ip link set $WAN_IF address $STA_MAC; }
+  wpa_supplicant -B -i $WAN_IF -D nl80211 -c /etc/wpa_supplicant/wpa_supplicant.conf -P /run/wpa_supplicant.pid > /tmp/wpa-start.txt 2>&1 \
+    || { echo "wpa_supplicant failed to start" >> /tmp/boot-times; cat /tmp/wpa-start.txt >&2; }
+  iw phy $PHY5 interface add wl5-ap type __ap && { [ -z "$AP5_MAC" ] || ip link set wl5-ap address $AP5_MAC; }
+  /etc/init.d/hostapd start
+  for i in $(seq 30); do iw dev $WAN_IF link | grep -q Connected && break; sleep 1; done
+  iw dev $WAN_IF link | head -3
+  ;;
+esac
