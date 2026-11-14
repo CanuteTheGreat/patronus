@@ -559,10 +559,7 @@ impl NetConfig {
             }
             if let Some(m) = i.metric {
                 if !(1..=9999).contains(&m) {
-                    return Err(invalid(format!(
-                        "interface {} metric {m} (1-9999)",
-                        i.name
-                    )));
+                    return Err(invalid(format!("interface {} metric {m} (1-9999)", i.name)));
                 }
             }
             if let Some(m) = member_of.get(&i.name) {
