@@ -15,9 +15,12 @@ DATA=${PATRONUS_DATA:-/data}
 log() { echo "patronus-flash: $*"; logger -t patronus-flash "$*" 2>/dev/null || true; }
 volid() { ubinfo $UBI -N "$1" 2>/dev/null | sed -n 's/^Volume ID: *\([0-9]*\).*/\1/p'; }
 rmvol() { [ -n "$(volid "$1")" ] && ubirmvol $UBI -N "$1"; true; }
+node() { # the volume's device node: ubimkvol's uevent only creates it when a hotplug helper runs (not under
+  # systemd on this kernel: /dev/ubi0_3 was missing on the real unit), so make it from sysfs when absent
+  n=${UBI}_$1; [ -c "$n" ] || { d=$(cat /sys/class/ubi/$(basename "$UBI")_$1/dev 2>/dev/null) && mknod "$n" c "${d%:*}" "${d#*:}"; } 2>/dev/null; echo "$n"; }
 write_vol() { # name file  (explicit returns: also correct when called as an `if` condition, where set -e is off)
   rmvol "$1"; sz=$(wc -c < "$2"); ubimkvol $UBI -N "$1" -s "$sz" >/dev/null || return 1
-  ubiupdatevol ${UBI}_$(volid "$1") "$2" || return 1; log "wrote $2 ($sz B) to volume $1"
+  ubiupdatevol "$(node "$(volid "$1")")" "$2" || return 1; log "wrote $2 ($sz B) to volume $1"
 }
 swap_in() { # make volume rootfs_new the boot root, keep the current one as rootfs_prev
   rmvol rootfs_prev
@@ -32,7 +35,7 @@ root)
   # holds all free space: drop it first. rootfs_prev (the rollback target) goes only if the space is still short.
   rmvol rootfs_data; rmvol rootfs_new
   if ! write_vol rootfs_new "$2"; then
-    log "no room next to rootfs_prev: dropping it (no rollback to the old previous root after this)"
+    log "could not write next to rootfs_prev (no room?): dropping it and retrying (no rollback to the old previous root after this)"
     rmvol rootfs_new; rmvol rootfs_prev; write_vol rootfs_new "$2"
   fi
   swap_in; sync ;;

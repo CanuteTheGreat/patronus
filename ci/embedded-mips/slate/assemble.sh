@@ -56,13 +56,17 @@ if [ -n "${SYSTEMD_TREE:-}" ]; then
   for l in ${SYSTEMD_LIBS:-}; do install -m755 "$l" "$R/usr/lib/"; done
   cp -a "$HERE"/overlay-systemd/. "$R/"
   ln -sf /usr/sbin/patronus-init-systemd "$R/sbin/init"
+  # Patronus' own template units (the Gentoo ebuild's): `patronus apply` starts per-instance daemons through them on
+  # systemd (patronus-dhcpc@wl24-sta etc.); without them the WAN DHCP client never started (sd3 on the real unit)
+  install -m644 "$HERE"/../../../gentoo/net-firewall/patronus/files/*@.service "$R/usr/lib/systemd/system/"
+  for t in mount umount; do [ -e "$R/usr/bin/$t" ] || ln -sf /bin/$t "$R/usr/bin/$t"; done   # systemd runs /usr/bin/mount for .mount units
   echo "INIT=systemd" > "$R/etc/patronus-init"
 else
   echo "INIT=busybox" > "$R/etc/patronus-init"
 fi
 # busybox applet links for every applet the image has no real tool for (ash runs what PATH finds:
 # the busybox build has FEATURE_PREFER_APPLETS off, see busybox.portage-env)
-[ -e "$R/sbin/init" ] || ln -sf ../bin/busybox "$R/sbin/init"
+[ -e "$R/sbin/init" ] || [ -L "$R/sbin/init" ] || ln -sf ../bin/busybox "$R/sbin/init"   # -L: the systemd variant's absolute link dangles on the build host
 while read -r a; do
   [ -n "$a" ] || continue
   for d in bin sbin usr/bin usr/sbin; do if [ -e "$R/$d/$a" ] || [ -L "$R/$d/$a" ]; then continue 2; fi; done
@@ -82,6 +86,7 @@ for c in "$U"/hostapd/*.conf; do if [ -f "$c" ]; then install -m600 "$c" "$R/etc
 echo "slate" > "$R/etc/hostname"; printf '127.0.0.1 localhost\n' > "$R/etc/hosts"
 ln -sf /tmp/resolv.conf.auto "$R/etc/resolv.conf"
 ln -sf /proc/self/mounts "$R/etc/mtab"   # df/mount -o remount need it
+rm -rf "$R/var/run"; ln -s ../run "$R/var/run"   # FHS; the systemd variant's dnsmasq.service writes /var/run/dnsmasq.pid
 cat > "$R/etc/patronus-release" <<EOF
 PATRONUS_TIER=embedded
 BOARD=glinet,gl-ar750s-nor-nand

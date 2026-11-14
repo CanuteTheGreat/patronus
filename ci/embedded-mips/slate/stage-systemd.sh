@@ -37,8 +37,10 @@ cpu = 'mips32r2'
 endian = 'big'
 EOF
 export PKG_CONFIG_SYSROOT_DIR=$SYS PKG_CONFIG_LIBDIR=$SYS/usr/lib/pkgconfig:$SYS/usr/share/pkgconfig
+# libmount is required: without it PID 1 cannot mangle mount options ("Failed to mangle mount options mode=01777:
+# Not supported", then "Freezing execution" on the real GL-AR750S, 2026-11-13)
 OFF="resolve networkd timesyncd logind hostnamed localed machined portabled sysext mountfsd userdb timedated nsresourced coredump pstore oomd efi tpm environment-d binfmt sysinstall hibernate backlight vconsole quotacheck storagetm hwdb rfkill xdg-autostart firstboot kernel-install analyze translations ldconfig utmp gshadow nss-myhostname nss-systemd fuzz-tests urlify vcs-tag compat-sysv-interfaces"
-ARGS="-Dlibc=musl -Dmode=release -Dauto_features=disabled -Dtests=false -Dman=disabled -Dhtml=disabled -Dsystemd-multicall-binary=true -Dsplit-bin=true -Drootprefix=/usr -Dsysvinit-path= -Dsysvrcnd-path= -Ddefault-network=false"
+ARGS="-Dlibc=musl -Dmode=release -Dauto_features=disabled -Dlibmount=enabled -Dtests=false -Dman=disabled -Dhtml=disabled -Dsystemd-multicall-binary=true -Dsplit-bin=true -Drootprefix=/usr -Dsysvinit-path= -Dsysvrcnd-path= -Ddefault-network=false"
 for o in $OFF; do ARGS="$ARGS -D$o=false"; done
 step "meson setup"
 rm -rf build; meson setup build --cross-file /tmp/sd/cross.ini --prefix=/usr $ARGS > /out/systemd-meson.log 2>&1; rc=$?

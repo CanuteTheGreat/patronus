@@ -13,7 +13,9 @@ GW=${PATRONUS_GUARD_GW:-$GUARD_GW}
 RUN=${PATRONUS_GUARD_RUN:-/tmp}
 DATA=${PATRONUS_GUARD_DATA:-/data}
 FLASH=${PATRONUS_FLASH:-/usr/sbin/patronus-flash}
-REBOOT=${PATRONUS_REBOOT:-reboot -f}
+REBOOT=${PATRONUS_REBOOT:-}
+restart_now() { # the systemd variant's /usr/sbin/reboot is systemctl, which only works under systemd
+  if [ -n "$REBOOT" ]; then $REBOOT; elif [ -d /run/systemd/system ]; then systemctl reboot -f; else /bin/busybox reboot -f; fi; }
 case "$1" in
 arm)
   echo "$(date +%s) armed grace=${GRACE}s" > $RUN/patronus-guard.state
@@ -26,7 +28,7 @@ arm)
   echo "REVERTING" >> $RUN/patronus-guard.state
   mkdir -p $DATA/guard-log 2>/dev/null; cp $RUN/boot-times $RUN/patronus-guard.state $RUN/wpa-start.txt $RUN/insmod.log $DATA/guard-log/ 2>/dev/null
   logread > $DATA/guard-log/syslog.txt 2>/dev/null; dmesg > $DATA/guard-log/dmesg.txt 2>/dev/null; sync
-  $FLASH openwrt > $DATA/guard-log/flash.txt 2>&1 && { sync; sleep 2; $REBOOT; }
+  $FLASH openwrt > $DATA/guard-log/flash.txt 2>&1 && { sync; sleep 2; restart_now; }
   ;;
 ok) rm -f $DATA/.sd-boot-attempts; touch $RUN/patronus-good; echo "ok $(date +%s)" >> $RUN/patronus-guard.state; echo confirmed ;;
 auto) rm -f $DATA/.sd-boot-attempts; touch $DATA/.guard-auto $RUN/patronus-good; sync; echo "unattended check enabled" ;;
