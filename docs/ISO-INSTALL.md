@@ -20,7 +20,7 @@ Always verify: `sha256sum -c patronus-server-openrc-daily-x86_64.iso.sha256` (ru
 
 ### Image names
 
-`<product>-<desktop-env or "server">-<init>-<channel>-<arch>.iso` (one scheme for Horcrux and Patronus, defined in `gentoo/live-iso/common/image-name.sh`): Patronus ships `server` images (no desktop, a firewall appliance) with `openrc`, channel `daily` or a release tag, arch `x86_64` or `aarch64`.
+`<product>-<desktop-env or "server">-<init>-<channel>-<arch>.iso` (one scheme for Horcrux and Patronus, defined in `gentoo/live-iso/common/image-name.sh`): Patronus ships `server` images (no desktop, a firewall appliance) with `openrc` or `systemd`, channel `daily` or a release tag, arch `x86_64` or `aarch64`.
 Old names keep working: the product-domain URL of `patronus-daily-<arch>.iso` (and its `.sha256` / `-test-evidence.tgz`) and of `patronus-<tag>-<arch>.iso` answers **301** to the new name.
 
 | old name | new name |
@@ -30,6 +30,12 @@ Old names keep working: the product-domain URL of `patronus-daily-<arch>.iso` (a
 | `patronus-<tag>-<arch>.iso` (stable) | `patronus-server-openrc-<tag>-<arch>.iso` |
 
 The workflow's `only=` input and the status marker use `<desktop env>-<init>-<arch>`: `only=server-openrc-x86_64`, marker `daily-status-server-openrc-x86_64` (old: `daily-status`, `daily-status-aarch64`). The `.sha256` file names the NEW file name.
+
+## OpenRC or systemd
+
+Every edition and architecture is built on both init systems. The two images are the same product with the same installer; the file names differ only in the `<init>` token (`patronus-server-openrc-daily-x86_64.iso` and `patronus-server-systemd-daily-x86_64.iso`). The installed system keeps the init system of the ISO you booted: the installer has no switch for it. The systemd images use the same script-based initramfs and the same services, shipped as systemd units instead of OpenRC scripts.
+
+A systemd download is listed on the download page only after its image was published, and images are published only after the QEMU tests passed, so a systemd image that is not listed yet has not passed.
 
 ## Architectures
 
