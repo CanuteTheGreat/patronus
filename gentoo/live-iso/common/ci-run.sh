@@ -159,7 +159,7 @@ if [ "$result" = pass ]; then
     # patronus runs 726/747): longer hard deadline for those entries (qemu-test.py scales the installer wait to match)
     dl=$DL_QEMU
     if [ "$DL_QEMU" = 5400 ]; then case "$args" in *"--fs zfs"*|*"--mem 8192"*) dl=12600 ;; esac; fi
-    with_deadline $dl python3 -u "$HERE/qemu-test.py" --iso "$ISO" --project "$PROJECT" --arch "$ARCH" $args --out "$EVI/$name" 2>&1 | tee "$EVI/test-$name.log" | tail -40
+    with_deadline $dl python3 -u "$HERE/qemu-test.py" --iso "$ISO" --project "$PROJECT" --arch "$ARCH" --init "$INIT" $args --out "$EVI/$name" 2>&1 | tee "$EVI/test-$name.log" | tail -40
     rc=${PIPESTATUS[0]}
     echo "::endgroup::"
     rm -f "$EVI/$name"/target*.qcow2 "$EVI/$name"/answers.img
@@ -195,7 +195,7 @@ if [ "$result" = pass ]; then
       [ $fw = bios ] && [ "${HAS_BIOS:-1}" = 0 ] && continue
       name=boot-modes-$fw; media=usb; [ $fw = bios ] && media=cdrom
       echo "::group::QEMU test $name"
-      with_deadline $DL_MODES python3 -u "$HERE/boot-modes-test.py" --iso "$ISO" --project "$PROJECT" --arch "$ARCH" --mode $fw --media $media ${NO_MEMTEST:+--no-memtest} --out "$EVI/$name" 2>&1 | tee "$EVI/test-$name.log" | tail -40
+      with_deadline $DL_MODES python3 -u "$HERE/boot-modes-test.py" --iso "$ISO" --project "$PROJECT" --arch "$ARCH" --init "$INIT" --mode $fw --media $media ${NO_MEMTEST:+--no-memtest} --out "$EVI/$name" 2>&1 | tee "$EVI/test-$name.log" | tail -40
       rc=${PIPESTATUS[0]}
       echo "::endgroup::"
       rm -f "$EVI/$name"/*.raw "$EVI/$name"/*.qcow2 "$EVI/$name"/install/target*.qcow2 "$EVI/$name"/install/answers.img
