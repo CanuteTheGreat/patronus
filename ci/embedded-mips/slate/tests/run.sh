@@ -54,6 +54,19 @@ t "flash openwrt: stock root + rootfs_data + config placed" sh -c "'$F' openwrt 
 t "flash openwrt: patronus root kept as rootfs_prev" test "$(vol rootfs_prev)" = hsqs-B
 mkdir -p "$W/sut/sysupgrade-x"; printf 'hsqs-TAR' > "$W/sut/sysupgrade-x/root"; tar cf "$W/su.tar" -C "$W/sut" sysupgrade-x
 t "flash openwrt: from a sysupgrade tar" sh -c "'$F' openwrt '$W/su.tar' '' && [ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-TAR ]"
+# after an OpenWrt sysupgrade, rootfs_data holds all free space (p4 -> sd1 on the real unit: ENOSPC, and the old
+# flash had already deleted rootfs_prev). Now: rootfs_data goes first and the rollback target survives.
+rm -rf "$FAKE_UBI"; mkdir -p "$FAKE_UBI"
+for v in rootfs rootfs_prev patronus_data rootfs_data; do ubimkvol "$PATRONUS_UBI" -N $v -s 1 >/dev/null; done
+printf 'hsqs-CUR' > "$FAKE_UBI/by-name/rootfs"; printf 'hsqs-PREV' > "$FAKE_UBI/by-name/rootfs_prev"; echo 4 > "$FAKE_UBI/max-vols"
+t "flash root on a full UBI: drops rootfs_data, new root in" sh -c "'$F' root '$W/b.sq' && [ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-B ] && [ ! -e $FAKE_UBI/by-name/rootfs_data ]"
+t "flash root on a full UBI: the running root became rootfs_prev" test "$(vol rootfs_prev)" = hsqs-CUR
+echo 3 > "$FAKE_UBI/max-vols"
+t "flash root with room for only one root: drops rootfs_prev and still installs" sh -c "'$F' root '$W/b.sq' && [ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-B ]"
+echo 2 > "$FAKE_UBI/max-vols"; printf 'hsqs-KEEP' > "$FAKE_UBI/by-name/rootfs"
+tn "flash root with no room at all fails" "$F" root "$W/b.sq"
+t "...and leaves the running root alone" test "$(vol rootfs)" = hsqs-KEEP
+rm -f "$FAKE_UBI/max-vols"
 t "flash factory-reset: marker for rcS" sh -c "'$F' factory-reset && [ -f $W/data/.factory-reset ]"
 t "rcS wipes settings on the factory-reset marker" grep -q '\.factory-reset.*rm -rf /data/overlay /data/tls' "$D/overlay/etc/init.d/rcS"
 

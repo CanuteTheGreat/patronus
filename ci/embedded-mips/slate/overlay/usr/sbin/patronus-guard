@@ -20,7 +20,7 @@ arm)
   sleep "$GRACE"
   [ -f $RUN/patronus-good ] && { echo "boot confirmed by operator" >> $RUN/patronus-guard.state; exit 0; }
   if [ -f $DATA/.guard-auto ] && [ -n "$GW" ] && ping -c3 -W3 "$GW" >/dev/null 2>&1 && netstat -ltn 2>/dev/null | grep -q ':22 '; then
-    echo "auto: gateway + sshd ok" >> $RUN/patronus-guard.state; touch $RUN/patronus-good; exit 0
+    echo "auto: gateway + sshd ok" >> $RUN/patronus-guard.state; rm -f $DATA/.sd-boot-attempts; touch $RUN/patronus-good; exit 0
   fi
   logger -t patronus-guard "boot not confirmed within ${GRACE}s: reverting to stock OpenWrt" 2>/dev/null
   echo "REVERTING" >> $RUN/patronus-guard.state
@@ -28,8 +28,8 @@ arm)
   logread > $DATA/guard-log/syslog.txt 2>/dev/null; dmesg > $DATA/guard-log/dmesg.txt 2>/dev/null; sync
   $FLASH openwrt > $DATA/guard-log/flash.txt 2>&1 && { sync; sleep 2; $REBOOT; }
   ;;
-ok) touch $RUN/patronus-good; echo "ok $(date +%s)" >> $RUN/patronus-guard.state; echo confirmed ;;
-auto) touch $DATA/.guard-auto $RUN/patronus-good; sync; echo "unattended check enabled" ;;
+ok) rm -f $DATA/.sd-boot-attempts; touch $RUN/patronus-good; echo "ok $(date +%s)" >> $RUN/patronus-guard.state; echo confirmed ;;
+auto) rm -f $DATA/.sd-boot-attempts; touch $DATA/.guard-auto $RUN/patronus-good; sync; echo "unattended check enabled" ;;
 status) cat $RUN/patronus-guard.state 2>/dev/null; ls -l $RUN/patronus-good $DATA/.guard-auto 2>/dev/null ;;
 *) sed -n '2,9p' "$0"; exit 2 ;;
 esac

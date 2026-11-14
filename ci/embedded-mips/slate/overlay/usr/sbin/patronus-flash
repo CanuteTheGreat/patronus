@@ -15,9 +15,9 @@ DATA=${PATRONUS_DATA:-/data}
 log() { echo "patronus-flash: $*"; logger -t patronus-flash "$*" 2>/dev/null || true; }
 volid() { ubinfo $UBI -N "$1" 2>/dev/null | sed -n 's/^Volume ID: *\([0-9]*\).*/\1/p'; }
 rmvol() { [ -n "$(volid "$1")" ] && ubirmvol $UBI -N "$1"; true; }
-write_vol() { # name file
-  rmvol "$1"; sz=$(wc -c < "$2"); ubimkvol $UBI -N "$1" -s "$sz" >/dev/null
-  ubiupdatevol ${UBI}_$(volid "$1") "$2"; log "wrote $2 ($sz B) to volume $1"
+write_vol() { # name file  (explicit returns: also correct when called as an `if` condition, where set -e is off)
+  rmvol "$1"; sz=$(wc -c < "$2"); ubimkvol $UBI -N "$1" -s "$sz" >/dev/null || return 1
+  ubiupdatevol ${UBI}_$(volid "$1") "$2" || return 1; log "wrote $2 ($sz B) to volume $1"
 }
 swap_in() { # make volume rootfs_new the boot root, keep the current one as rootfs_prev
   rmvol rootfs_prev
@@ -28,7 +28,14 @@ case "$1" in
 root)
   [ -f "$2" ] || { echo "usage: $0 root <squashfs>"; exit 2; }
   head -c4 "$2" | grep -q hsqs || { echo "not a squashfs"; exit 2; }
-  rmvol rootfs_prev; write_vol rootfs_new "$2"; swap_in; sync ;;
+  # rootfs_data is OpenWrt's overlay (unused by Patronus; `openwrt` recreates it) and after an OpenWrt sysupgrade it
+  # holds all free space: drop it first. rootfs_prev (the rollback target) goes only if the space is still short.
+  rmvol rootfs_data; rmvol rootfs_new
+  if ! write_vol rootfs_new "$2"; then
+    log "no room next to rootfs_prev: dropping it (no rollback to the old previous root after this)"
+    rmvol rootfs_new; rmvol rootfs_prev; write_vol rootfs_new "$2"
+  fi
+  swap_in; sync ;;
 openwrt)
   SRC=${2:-$REC/openwrt-root.squashfs}; CFG=${3-$REC/sysupgrade.tgz}
   rm -rf $T; mkdir -p $T

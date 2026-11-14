@@ -11,6 +11,9 @@
 #                     unit.conf (see overlay/etc/patronus/unit.conf.example), hostapd/*.conf (see ap5.conf.example)
 #   OUT_DIR           where <tag>/root.squashfs and the sysupgrade tar go
 #   SOURCE_REV        optional: recorded in /etc/patronus-release
+#   SYSTEMD_TREE      optional: tar of the cross-built systemd install (stage-systemd.sh + sdsize.sh) -> the systemd
+#                     variant: overlay-systemd/ on top, /sbin/init = patronus-init-systemd (rcS early, then systemd)
+#   SYSTEMD_LIBS      with SYSTEMD_TREE: extra runtime libraries it needs (libucontext.so.1)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 B=$(readlink -f "$1"); TAG=$2
@@ -44,6 +47,19 @@ cp "$RECOVERY_ROOT" "$R/usr/share/patronus-recovery/openwrt-root.squashfs"
 if [ -n "${RECOVERY_CFG:-}" ]; then cp "$RECOVERY_CFG" "$R/usr/share/patronus-recovery/sysupgrade.tgz"; fi
 # overlay (init, board glue, guard, flash tool, Patronus config); examples stay out of the image
 cp -a "$HERE"/overlay/. "$R/"; rm -f "$R"/etc/patronus/*.example
+if [ -n "${SYSTEMD_TREE:-}" ]; then
+  # udev (no devtmpfs in this kernel; mdev does /dev), the journal message catalog, networkd/resolved leftovers,
+  # headers and docs are not used by the router: kept out of the image (measured in docs/embedded-routers.md 6b)
+  tar xf "$SYSTEMD_TREE" -C "$R" --exclude='./usr/lib/udev' --exclude='./usr/lib/systemd/catalog' --exclude='./usr/include' \
+      --exclude='./usr/share/man' --exclude='./usr/share/doc' --exclude='./usr/share/locale' --exclude='./usr/lib/pkgconfig' \
+      --exclude='./usr/share/pkgconfig' --exclude='./usr/lib/systemd/network' --exclude='./usr/share/zsh' --exclude='./usr/share/bash-completion' --exclude='./etc/X11' --exclude='./etc/xdg' --exclude='./etc/ssh' --exclude='./usr/sbin/init' --exclude='./'
+  for l in ${SYSTEMD_LIBS:-}; do install -m755 "$l" "$R/usr/lib/"; done
+  cp -a "$HERE"/overlay-systemd/. "$R/"
+  ln -sf /usr/sbin/patronus-init-systemd "$R/sbin/init"
+  echo "INIT=systemd" > "$R/etc/patronus-init"
+else
+  echo "INIT=busybox" > "$R/etc/patronus-init"
+fi
 # busybox applet links for every applet the image has no real tool for (ash runs what PATH finds:
 # the busybox build has FEATURE_PREFER_APPLETS off, see busybox.portage-env)
 [ -e "$R/sbin/init" ] || ln -sf ../bin/busybox "$R/sbin/init"
@@ -65,6 +81,7 @@ if [ -f "$U/unit.conf" ]; then install -m644 "$U/unit.conf" "$R/etc/patronus/uni
 for c in "$U"/hostapd/*.conf; do if [ -f "$c" ]; then install -m600 "$c" "$R/etc/hostapd/"; fi; done
 echo "slate" > "$R/etc/hostname"; printf '127.0.0.1 localhost\n' > "$R/etc/hosts"
 ln -sf /tmp/resolv.conf.auto "$R/etc/resolv.conf"
+ln -sf /proc/self/mounts "$R/etc/mtab"   # df/mount -o remount need it
 cat > "$R/etc/patronus-release" <<EOF
 PATRONUS_TIER=embedded
 BOARD=glinet,gl-ar750s-nor-nand

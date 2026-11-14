@@ -10,6 +10,7 @@ ubinfo) # ubinfo DEV -N name
   echo "Volume ID:   $(id_of "$3") (on ubi0)"; echo "Name:        $3" ;;
 ubimkvol) # ubimkvol DEV -N name (-s size | -m)
   [ -e "$B/by-name/$3" ] && { echo "ubimkvol: $3 exists" >&2; exit 1; }
+  if [ -f "$B/max-vols" ] && [ "$(ls "$B/by-name" | wc -l)" -ge "$(cat "$B/max-vols")" ]; then echo "ubimkvol: error 28 (No space left on device)" >&2; exit 1; fi
   n=0; while [ -e "$B/ids/$n" ]; do n=$((n+1)); done
   echo "$3" > "$B/ids/$n"; : > "$B/by-name/$3"; echo "Volume ID $n, name \"$3\"" ;;
 ubirmvol) # ubirmvol DEV -N name
