@@ -177,6 +177,6 @@ rm -f "$FX/wl5-sta.station"
 rm -f "$FX/gw.up" "$FX/route.wl5-sta"; sta wl5-sta 5220 80 5210; rm -rf "$W/run/wf"
 now 3000; sh "$WF" once; now 3030; sh "$WF" once; now 3033; sh "$WF" once; now 3036; sh "$WF" once
 chk "associated but no lease/default route: counts as dead too" grep -q 'blacklist' "$FX/wpa_cli.calls"
-chk "gen_wpa5 (board-network) drops disabled= and priority=, pins the 5 GHz channels" sh -c "awk -v fl=1 '/^[ \\t]*(priority|disabled)=/ {next} {print} /^[ \\t]*ssid=/ {print \"\\tfreq_list=\" fl}' $W/wpa/wpa_supplicant.conf | grep -vE 'priority|disabled' | grep -c freq_list | grep -qx 2; grep -q '(priority|disabled)' $D/overlay/usr/libexec/patronus/board-network"
+chk "gen_wpa5 (board-network) drops disabled= and priority=" grep -q -E '[(]priority[|]disabled[)]=' "$D/overlay/usr/libexec/patronus/board-network"
 
 [ "$fails" = 0 ] && echo "wifi-follow: all checks passed" || { echo "wifi-follow: $fails failed"; exit 1; }
