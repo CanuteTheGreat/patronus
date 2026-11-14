@@ -38,6 +38,11 @@ nl_ok "squid listening on the LAN address"
 out=$(C curl -s --max-time 40 -x http://$NL_RTR_LAN:3128 http://$NL_WWW/) || { C curl -sv --max-time 40 -x http://$NL_RTR_LAN:3128 http://$NL_WWW/ 2>&1 | tail -15; R ss -ltnp; nl_fail "fetch through the proxy failed"; }
 grep -q "sees $NL_RTR_WAN" <<<"$out" || nl_fail "origin did not see the router's WAN address: $out"
 nl_ok "LAN client fetched through the proxy: $out"
+# a test must never starve its host: squid sizes its tables from the open-file limit and once grew to 15-21 GB RSS (OOM on rw-man-06);
+# the shipped config pins max_filedescriptors and cache_mem, so a small RSS proves both took effect
+rss=$(for p in $(pgrep -x squid); do awk '/^VmRSS/{print $2}' /proc/$p/status; done | sort -n | tail -1)
+[ "${rss:-0}" -gt 0 ] && [ "${rss:-0}" -lt 524288 ] || nl_fail "squid RSS ${rss:-unknown} kB, want < 512 MB"
+nl_ok "squid memory is bounded (RSS ${rss} kB)"
 code=$(C curl -s -o /dev/null -w '%{http_code}' --max-time 40 -x http://$NL_RTR_LAN:3128 http://blocked.example.test/ || true)
 [ "$code" = 403 ] || nl_fail "blocked domain answered $code, want 403"
 nl_ok "blocked domain -> 403"

@@ -112,7 +112,7 @@ pub fn render_conf(
     }
     c.push_str("http_access deny all\n");
     c.push_str(&format!(
-        "cache_mem {} MB\ncache deny all\npid_filename none\naccess_log none\ncache_log stderr\n\
+        "cache_mem {} MB\nmax_filedescriptors 16384\ncache deny all\npid_filename none\naccess_log none\ncache_log stderr\n\
          coredump_dir {dir}\nvisible_hostname patronus\nvia off\nforwarded_for delete\nshutdown_lifetime 2 seconds\n",
         s.n("cache_mb")
     ));
@@ -277,6 +277,8 @@ mod tests {
         assert!(deny < allow, "blocks come before the allow");
         assert!(c.trim_end().contains("http_access deny all"));
         assert!(c.contains("cache_mem 32 MB"));
+        // squid sizes its descriptor tables from the inherited open-file limit: at docker's nofile=1073741816 it grew to 15-21 GB RSS
+        assert!(c.contains("max_filedescriptors 16384\n"));
         assert!(!safe_domain("a b") && !safe_domain(".x") && safe_domain("a-b.example.org"));
     }
 }
