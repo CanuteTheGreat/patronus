@@ -8,6 +8,8 @@ on:
     paths:
       - 'ci/embedded-mips/**'
       - 'crates/patronus-cli/**'
+      - 'crates/patronus-web/**'
+      - 'crates/patronus-network/src/sysauth.rs'
       - 'crates/patronus-network/src/dhcp_client.rs'
       - '.forgejo/workflows/embedded-tier.yml'
   workflow_dispatch:
@@ -56,8 +58,27 @@ jobs:
       - name: Format (the files this tier owns)
         run: rustfmt --edition 2021 --check crates/patronus-cli/src/commands/import_uci.rs crates/patronus-cli/src/commands/firstboot.rs crates/patronus-network/src/dhcp_client.rs
       - name: Clippy (router feature set)
-        run: cargo clippy -p patronus-cli --no-default-features --features nftables,cli,dhcp-server,dns-server,uci-import -- -D warnings
+        run: |
+          cargo clippy -p patronus-cli --no-default-features --features nftables,cli,dhcp-server,dns-server,uci-import -- -D warnings
+          # the router image's multi-call binary (patronus-web = link to patronus-cli, OpenSSL TLS)
+          cargo clippy -p patronus-cli --no-default-features --features nftables,cli,dhcp-server,dns-server,uci-import,web-multicall -- -D warnings
       - name: Tests (router feature set + udhcpc script)
         run: |
           cargo test -p patronus-cli --no-default-features --features nftables,cli,dhcp-server,dns-server,uci-import
           cargo test -p patronus-network --lib dhcp_client
+          # system-account login backends (PAM / shadow files) the router's first-run account uses
+          cargo test -p patronus-network --lib sysauth
+
+  nor-budget:
+    name: NOR tier size budget (16 MiB NOR-only routers, OpenRC and systemd variants)
+    # The embedded builder image (crossdev mips-unknown-linux-musl, router rootfs, OpenRC, cross-built systemd, stock
+    # OpenWrt image) lives on the arm64 build host only; nightly-arm64 is that host's label. Builds the multi-call
+    # binary from this commit, assembles the NOR-profile root for both init systems and checks the flash budget.
+    runs-on: nightly-arm64
+    timeout-minutes: 90
+    container:
+      image: pembed-slate-img:ci
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, assemble (OpenRC + systemd, NOR profile) and check the budget
+        run: bash ci/embedded-mips/slate/nor-ci.sh

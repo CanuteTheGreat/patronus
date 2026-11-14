@@ -71,6 +71,13 @@ if PH == 'first':
         rule = {'name': f'home LAN mgmt {port}', 'enabled': True, 'chain': 'input', 'action': 'accept', 'protocol': 'tcp', 'port': port,
                 'interface': 'wl24-sta', 'source': MGMT, 'destination': 'any', 'description': 'SSH/web from the home LAN the Slate repeats'}
         code, txt = api('POST', '/api/firewall/rules', rule); check(f'WAN mgmt rule tcp/{port} added via the UI API', code == 201, f'{code} {txt[:80]}')
+    # a unit that was not factory-reset may still carry this test's rule from an earlier run (restored by the backup
+    # test): remove those first, or the "deleted -> gone from nft" check sees the old copy
+    code, txt = api('GET', '/api/firewall/rules')
+    if code == 200:
+        rl = json.loads(txt); rl = rl if isinstance(rl, list) else rl.get('rules', [])
+        for x in rl:
+            if x.get('name') == 'slate e2e allow 8080': api('DELETE', f"/api/firewall/rules/{x.get('id')}")
     rule = {'name': 'slate e2e allow 8080', 'enabled': True, 'chain': 'input', 'action': 'accept', 'protocol': 'tcp', 'port': '8080',
             'interface': 'any', 'source': 'any', 'destination': 'any', 'description': 'e2e rule'}
     code, txt = api('POST', '/api/firewall/rules', rule); check('add 8080 rule via the UI API', code == 201, f'{code} {txt[:80]}')

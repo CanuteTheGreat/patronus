@@ -52,6 +52,12 @@ tn "check-rootfs: rejects busybox reboot on OpenRC (SIGTERM = openrc-init halts)
 r=$(mkroot nodhcpc); rm "$r/etc/init.d/patronus-dhcpc"
 tn "check-rootfs: rejects an OpenRC image without patronus-dhcpc (the WAN lease)" "$D/check-rootfs.sh" "$r"
 
+# 2b. NOR budget arithmetic (16000 KiB firmware: kernel + root + 1024 KiB settings + 256 KiB margin, 64 KiB blocks)
+truncate -s $((3008 * 1024)) "$W/kern"; truncate -s $((11520 * 1024 - 5)) "$W/root-fit"; truncate -s $((11776 * 1024 + 1)) "$W/root-over"
+t "nor-budget: kernel 3008 + root 11520 KiB fits (448 KiB free)" sh "$D/nor-budget.sh" "$W/root-fit" "$W/kern"
+tn "nor-budget: root 11840 KiB (rounded up to the erase block) is over" sh "$D/nor-budget.sh" "$W/root-over" "$W/kern"
+tn "nor-budget: usage error without files" sh "$D/nor-budget.sh"
+
 # 3. patronus-flash on a fake UBI
 export FAKE_UBI=$W/ubi; mkdir -p "$FAKE_UBI" "$W/bin" "$W/data" "$W/rec"
 for n in ubinfo ubimkvol ubirmvol ubirename ubiupdatevol mount umount logger; do ln -sf "$D/tests/fake-ubi/ubi" "$W/bin/$n"; done

@@ -87,8 +87,8 @@ pub fn build_router(
             get(|| brand_asset(BRAND_WORDMARK, "image/png")),
         )
         .route(
-            "/brand/full.png",
-            get(|| brand_asset(BRAND_FULL, "image/png")),
+            "/brand/full.webp",
+            get(|| brand_asset(BRAND_FULL, "image/webp")),
         )
         // Prometheus/OpenMetrics text for collectors (session or API key)
         .route("/metrics", get(api::telemetry::metrics))
@@ -151,7 +151,7 @@ const BRAND_FAVICON_32: &[u8] = include_bytes!("../../static/brand/favicon-32.pn
 const BRAND_APPLE_TOUCH: &[u8] = include_bytes!("../../static/brand/apple-touch-icon.png");
 const BRAND_MARK: &[u8] = include_bytes!("../../static/brand/mark.png");
 const BRAND_WORDMARK: &[u8] = include_bytes!("../../static/brand/wordmark.png");
-const BRAND_FULL: &[u8] = include_bytes!("../../static/brand/full.png");
+const BRAND_FULL: &[u8] = include_bytes!("../../static/brand/full.webp");
 
 async fn brand_asset(
     bytes: &'static [u8],

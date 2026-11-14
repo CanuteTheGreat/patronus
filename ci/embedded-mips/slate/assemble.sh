@@ -24,7 +24,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 B=$(readlink -f "$1"); TAG=$2
 if [ -n "${OPENRC_TREE:-}" ] && [ -n "${SYSTEMD_TREE:-}" ]; then echo "assemble.sh: set OPENRC_TREE or SYSTEMD_TREE, not both"; exit 2; fi
 if [ -z "${OPENRC_TREE:-}${SYSTEMD_TREE:-}" ]; then echo "assemble.sh: set OPENRC_TREE (OpenRC variant) or SYSTEMD_TREE (systemd variant)"; exit 2; fi
-for v in STOCK_ROOT STOCK_SYSUPGRADE RECOVERY_ROOT UNIT_DIR OUT_DIR; do [ -n "${!v:-}" ] || { echo "assemble.sh: $v is not set"; exit 2; }; done
+for v in STOCK_ROOT STOCK_SYSUPGRADE UNIT_DIR OUT_DIR ${NOR_PROFILE:+} $([ -n "${NOR_PROFILE:-}" ] || echo RECOVERY_ROOT); do [ -n "${!v:-}" ] || { echo "assemble.sh: $v is not set"; exit 2; }; done
 OUTD=$OUT_DIR/$TAG; mkdir -p "$OUTD"; chmod 700 "$OUTD"
 R=$(mktemp -d "${TMPDIR:-/tmp}/slate-rootfs.XXXX"); trap 'chmod -R u+w "$R"; rm -rf "$R"' EXIT
 tar xf "$B/rootfs.tar" -C "$R" --exclude='./dev/*' 2>/dev/null || tar xf "$B/rootfs.tar" -C "$R"
@@ -35,7 +35,7 @@ rm -rf "$R"/usr/include "$R"/usr/share/{man,doc,info,gtk-doc,locale} "$R"/var/db
 find "$R" -name '*.a' -delete
 rm -f "$R"/usr/lib/libgmpxx.so* "$R"/usr/lib/*.o
 # util-linux/iproute2 tools the router never runs (busybox covers mount/umount/unshare/nsenter)
-while read -r f; do [ -n "$f" ] && rm -f "$R"/$f; done < "$HERE/prune.txt"
+while read -r f; do [ -n "$f" ] && rm -rf "$R"/$f; done < "$HERE/prune.txt"
 # musl loader where every binary expects it
 [ -e "$R/lib/ld-musl-mips-sf.so.1" ] || ln -sf ../usr/lib/libc.so "$R/lib/ld-musl-mips-sf.so.1"
 mkdir -p "$R"/{proc,sys,dev,tmp,run,data,mnt,root/.ssh,var/log,var/lib/patronus,var/lib/misc,etc/dropbear,usr/lib/openwrt,usr/share/patronus-recovery,etc/patronus/tls,etc/hostapd,etc/wpa_supplicant}
@@ -84,7 +84,8 @@ if [ -n "${SYSTEMD_TREE:-}" ]; then
            usr/lib/systemd/systemd-network-generator usr/lib/systemd/systemd-sleep usr/lib/systemd/systemd-report \
            usr/lib/systemd/systemd-udevd usr/lib/systemd/systemd-bsod usr/lib/systemd/systemd-pcrextend usr/lib/systemd/systemd-pcrlock \
            usr/bin/run0 usr/bin/systemd-ac-power usr/bin/systemd-mute-console usr/lib/systemd/systemd-report-* usr/lib/systemd/systemd-battery-check \
-           usr/lib/systemd/systemd-clonesetup usr/lib/systemd/systemd-ssh-proxy usr/lib/systemd/systemd-growfs usr/lib/systemd/systemd-makefs; do
+           usr/lib/systemd/systemd-clonesetup usr/lib/systemd/systemd-ssh-proxy usr/lib/systemd/systemd-growfs usr/lib/systemd/systemd-makefs \
+           usr/sbin/mount.mstack usr/sbin/mount.storage; do
     rm -f "$R"/$f; done
   for l in ${SYSTEMD_LIBS:-}; do install -m755 "$l" "$R/usr/lib/"; done
   cp -a "$HERE"/overlay-systemd/. "$R/"
@@ -143,7 +144,10 @@ EOF
 chmod 755 "$R"; chmod 1777 "$R/tmp"
 "$HERE/check-rootfs.sh" "$R"
 P=(-p "/dev/console c 600 0 0 5 1" -p "/dev/null c 666 0 0 1 3" -p "/dev/ttyS0 c 600 0 0 4 64")
-mksquashfs "$R" "$OUTD/root.squashfs" -comp xz -b 256K -noappend -no-xattrs -all-root -quiet "${P[@]}"
+# NOR tier: 1 MiB xz blocks (5.5 % smaller than 256 KiB, measured: what makes the systemd variant fit 16 MiB NOR; a few MB
+# more page-cache decompression buffers); NAND tier: 256 KiB like OpenWrt
+SQ_BLOCK=${SQ_BLOCK:-$([ -n "${NOR_PROFILE:-}" ] && echo 1M || echo 256K)}
+mksquashfs "$R" "$OUTD/root.squashfs" -comp xz -b $SQ_BLOCK -noappend -no-xattrs -all-root -quiet "${P[@]}"
 # OpenWrt sysupgrade-tar: stock kernel (identical bytes to what is in NOR) + our root, then fwtool metadata
 W=$(mktemp -d); D=$W/sysupgrade-glinet_gl-ar750s-nor-nand; mkdir -p "$D"
 tar xf "$STOCK_SYSUPGRADE" -C "$W" --wildcards '*/kernel' '*/CONTROL'

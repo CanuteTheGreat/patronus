@@ -477,7 +477,7 @@ async fn page_assets_and_the_favicon_are_served() {
         ("/favicon-32.png", "image/png"),
         ("/apple-touch-icon.png", "image/png"),
         ("/brand/mark.png", "image/png"),
-        ("/brand/full.png", "image/png"),
+        ("/brand/full.webp", "image/webp"),
     ] {
         let r = a
             .app

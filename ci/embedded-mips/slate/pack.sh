@@ -1,6 +1,6 @@
 T=mips-unknown-linux-musl; O=/out/pack; rm -rf $O; mkdir -p $O
-cp /out/target-g/$T/release/patronus-cli $O/   # multi-call: patronus-web is a link (assemble.sh)
-[ -n "${WEB_SEPARATE:-}" ] && cp /out/target-g/$T/release/patronus-web $O/
+cp ${CARGO_TARGET_DIR:-/out/target-s}/$T/release/patronus-cli $O/   # multi-call: patronus-web is a link (assemble.sh)
+[ -n "${WEB_SEPARATE:-}" ] && cp ${CARGO_TARGET_DIR:-/out/target-s}/$T/release/patronus-web $O/
 LA=$($T-gcc -print-file-name=libatomic.so.1); cp -L $LA $O/libatomic.so.1; $T-strip --strip-unneeded $O/libatomic.so.1
 # missing-library check for every ELF in the rootfs
 cd /rootfs; for f in $(find . -type f -perm -u+x); do $T-readelf -d $f 2>/dev/null | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p'; done | sort -u > $O/needed.txt

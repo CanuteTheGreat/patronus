@@ -10,7 +10,8 @@ rounded background tile only (no AI upscaling, no redrawing); regenerate with `b
 | `patronus-mark-{512,256,180,128,64}.png` | emblem (phoenix + gear + sword), no wordmark, dark rounded tile | web sidebar/top bar, apple-touch-icon (180), installer, boot menu |
 | `patronus-mark-{48,32,16}.png`, `favicon.ico` | tight phoenix head/wing crop (the full emblem turns to mush below ~48 px) | favicon, tab icons |
 | `patronus-wordmark.png` | the fiery `PATRONUS` text only | wide headers |
-| `patronus-full-half.png` | the whole logo at 512x768 | login page, boot splash, installer welcome |
+| `patronus-full-half.png` | the whole logo at 512x768 | boot splash, installer welcome |
+| `patronus-full-half.webp` | the same, WebP q90 (58 KB) | web UI login / first-run page (`crates/patronus-web/static/brand/full.webp`) |
 
 The web UI embeds the web-sized subset from `crates/patronus-web/static/brand/` (copies of these files).
 The live ISO / installer / GRUB theme read `branding/` (see `gentoo/live-iso/`).

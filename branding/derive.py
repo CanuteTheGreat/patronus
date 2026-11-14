@@ -42,7 +42,10 @@ w = crop(box(wb))
 w.save(f"{out}/{name}-wordmark.png", optimize=True)
 w.resize((w.size[0] // 2, w.size[1] // 2), Image.LANCZOS).save(f"{out}/{name}-wordmark-half.png", optimize=True)
 full = im
-full.resize((im.size[0] // 2, im.size[1] // 2), Image.LANCZOS).save(f"{out}/{name}-full-half.png", optimize=True)
+half = full.resize((im.size[0] // 2, im.size[1] // 2), Image.LANCZOS)
+half.save(f"{out}/{name}-full-half.png", optimize=True)
+# the web UI login/first-run logo: WebP q90 (58 KB instead of 388 KB of PNG inside the binary; matters on 16 MiB NOR routers)
+half.save(f"{out}/{name}-full-half.webp", "WEBP", quality=90, method=6)
 # contact sheet for review
 sheet = Image.new("RGB", (1500, 640), (255, 255, 255))
 x = 10
