@@ -684,7 +684,7 @@ impl NetConfig {
         let mut cfg = NetConfig::default();
         let rows = sqlx::query(
             "SELECT name, role, enabled, ipv4_mode, ipv6_mode, gateway4, gateway6, mtu, mac,
-                    description, dhcp, pd_downstream
+                    description, dhcp, pd_downstream, metric
              FROM interfaces ORDER BY name",
         )
         .fetch_all(pool)
@@ -713,6 +713,7 @@ impl NetConfig {
                 .filter(|d| !d.is_empty())
                 .map(String::from)
                 .collect();
+            i.metric = r.get::<Option<i64>, _>(12).map(|m| m as u32);
             cfg.interfaces.push(i);
         }
         let addrs = sqlx::query(
@@ -901,15 +902,16 @@ impl NetConfig {
         for i in &self.interfaces {
             sqlx::query(
                 "INSERT INTO interfaces (name, role, enabled, dhcp, ipv4_mode, ipv6_mode,
-                     gateway4, gateway6, mtu, mac, description, pd_downstream, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     gateway4, gateway6, mtu, mac, description, pd_downstream, metric, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(name) DO UPDATE SET role = excluded.role,
                      enabled = excluded.enabled, dhcp = excluded.dhcp,
                      ipv4_mode = excluded.ipv4_mode, ipv6_mode = excluded.ipv6_mode,
                      gateway4 = excluded.gateway4, gateway6 = excluded.gateway6,
                      mtu = excluded.mtu, mac = excluded.mac,
                      description = excluded.description,
-                     pd_downstream = excluded.pd_downstream, updated_at = excluded.updated_at",
+                     pd_downstream = excluded.pd_downstream, metric = excluded.metric,
+                     updated_at = excluded.updated_at",
             )
             .bind(&i.name)
             .bind(&i.role)
@@ -923,6 +925,7 @@ impl NetConfig {
             .bind(&i.mac)
             .bind(&i.description)
             .bind(i.pd_downstream.join(","))
+            .bind(i.metric.map(|m| m as i64))
             .bind(now)
             .execute(&mut *tx)
             .await
