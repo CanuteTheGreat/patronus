@@ -60,6 +60,15 @@ fi
 # overlay (early boot, board glue, guard, flash tool, Patronus config); examples stay out of the image
 cp -a "$HERE"/overlay/. "$R/"; rm -f "$R"/etc/patronus/*.example
 ln -sf /usr/sbin/patronus-init "$R/sbin/init"
+# ETPhoneHome router client (every variant, NAND and NOR): the pinned release package (etph.pin), sha256-verified, only the
+# client binary is taken (the OpenWrt netifd/uci/hotplug glue of the .ipk does not apply here: patronus-etph + etph-run replace it).
+# Config/enrolment: /etc/etph on the patronus_data overlay. ETPH_IPK= overrides the download (offline builds; still verified).
+. "$HERE/etph.pin"
+E=${ETPH_IPK_FILE:-$(sh "$HERE/fetch-etph.sh" "${ETPH_CACHE:-$OUT_DIR/.etph-cache}")}
+echo "$ETPH_SHA256  $E" | sha256sum -c - >/dev/null || { echo "assemble.sh: $E is not the pinned ETPhoneHome $ETPH_VERSION"; exit 1; }
+EX=$(mktemp -d "${TMPDIR:-/tmp}/etph-ipk.XXXX"); tar xzf "$E" -C "$EX" ./data.tar.gz 2>/dev/null || tar xzf "$E" -C "$EX" data.tar.gz
+tar xzf "$EX/data.tar.gz" -C "$R" ./usr/sbin/etphonehome 2>/dev/null || tar xzf "$EX/data.tar.gz" -C "$R" usr/sbin/etphonehome; rm -rf "$EX"
+chmod 755 "$R/usr/sbin/etphonehome"; mkdir -p "$R/etc/etph"; chmod 700 "$R/etc/etph"
 # web login of system users through PAM (service patronus): local accounts only, pam_unix against /etc/shadow
 mkdir -p "$R/etc/pam.d"
 printf '#%%PAM-1.0\n# Patronus web UI login (embedded tier): system users in /etc/passwd + /etc/shadow\nauth     required pam_unix.so\naccount  required pam_unix.so\n' > "$R/etc/pam.d/patronus"
@@ -108,7 +117,7 @@ else
   # them on OpenRC (patronus-dhcpc.wl24-sta etc.), the same set as the systemd variant's template units
   for t in "$GENTOO_FILES"/*@.service; do n=$(basename "$t" @.service); [ -f "$GENTOO_FILES/$n.initd" ] && install -m755 "$GENTOO_FILES/$n.initd" "$R/etc/init.d/$n"; done
   mkdir -p "$R"/etc/runlevels/{sysinit,boot,default,shutdown}
-  for s in patronus-syslogd patronus-klogd patronus-board dropbear patronus-ntpd patronus-apply patronus-applyd patronus-web; do
+  for s in patronus-syslogd patronus-klogd patronus-board patronus-etph dropbear patronus-ntpd patronus-apply patronus-applyd patronus-web; do
     [ -x "$R/etc/init.d/$s" ] || { echo "missing OpenRC service $s"; exit 1; }; ln -sf /etc/init.d/$s "$R/etc/runlevels/default/$s"; done
   : > "$R/etc/fstab"
   echo "INIT=openrc" > "$R/etc/patronus-init"
@@ -137,6 +146,7 @@ ln -sf /proc/self/mounts "$R/etc/mtab"   # df/mount -o remount need it
 rm -rf "$R/var/run"; ln -s ../run "$R/var/run"   # FHS; the systemd variant's dnsmasq.service writes /var/run/dnsmasq.pid
 cat > "$R/etc/patronus-release" <<EOF
 PATRONUS_TIER=embedded
+ETPH=$ETPH_VERSION
 BOARD=glinet,gl-ar750s-nor-nand
 BUILD=$TAG
 SOURCE=patronus ${SOURCE_REV:-unknown}

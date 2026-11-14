@@ -1,0 +1,7 @@
+# ETPhoneHome router client baked into every Slate image (OpenRC + systemd, NAND + NOR).
+# Source: Forgejo CanuteTheGreat/etphonehome release; the OpenWrt package for the Slate's mips_24kc.
+# Bump = change these three lines (fetch-etph.sh verifies the sha256 of the .ipk, assemble.sh refuses anything else).
+ETPH_VERSION=0.9.2
+ETPH_IPK=etph_0.9.2-r1_mips_24kc.ipk
+ETPH_URL=https://git.canutethegreat.com/CanuteTheGreat/etphonehome/releases/download/v0.9.2/etph_0.9.2-r1_mips_24kc.ipk
+ETPH_SHA256=29e350553931324a047fa78d23cfc27140e3ccd1c4250ddebfdd770bdcb45a45

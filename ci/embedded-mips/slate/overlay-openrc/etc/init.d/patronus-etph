@@ -1,0 +1,9 @@
+#!/sbin/openrc-run
+# ETPhoneHome router client (phone as WAN over USB / Wi-Fi); config + enrolment in /etc/etph (patronus_data volume)
+description="ETPhoneHome router client"
+command=/usr/libexec/patronus/etph-run
+supervisor=supervise-daemon
+respawn_delay=5
+output_log=/var/log/etph.log
+error_log=/var/log/etph.log
+depend() { need net; }

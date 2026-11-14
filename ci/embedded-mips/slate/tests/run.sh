@@ -20,7 +20,7 @@ done
 # OpenRC scripts: openrc-run syntax is sh plus depend/start functions
 for f in "$D"/overlay-openrc/etc/init.d/*; do t "sh -n ${f#$D/}" sh -n "$f"; t "openrc-run shebang ${f#$D/}" grep -q '^#!/sbin/openrc-run' "$f"; done
 # parity: every service of one variant exists in the other (OpenRC script <-> systemd unit)
-for p in "patronus-board:patronus-network" "patronus-apply:patronus-apply" "patronus-applyd:patronus-applyd" "patronus-web:patronus-web" "dropbear:patronus-dropbear" "patronus-ntpd:patronus-ntpd" "patronus-syslogd:patronus-syslogd" "patronus-klogd:patronus-klogd"; do
+for p in "patronus-board:patronus-network" "patronus-etph:patronus-etph" "patronus-apply:patronus-apply" "patronus-applyd:patronus-applyd" "patronus-web:patronus-web" "dropbear:patronus-dropbear" "patronus-ntpd:patronus-ntpd" "patronus-syslogd:patronus-syslogd" "patronus-klogd:patronus-klogd"; do
   t "parity ${p%%:*} (OpenRC) = ${p#*:}.service (systemd)" sh -c "[ -x '$D/overlay-openrc/etc/init.d/${p%%:*}' ] && [ -L '$D/overlay-systemd/etc/systemd/system/multi-user.target.wants/${p#*:}.service' ]"
 done
 t "py_compile t_slate.py" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$D/t_slate.py"
@@ -35,6 +35,9 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/etc/wpa_supplicant" "$r/bin" 
   for b in openrc-init openrc-run supervise-daemon; do : > "$r/sbin/$b"; chmod +x "$r/sbin/$b"; done; printf '#!/bin/sh\nexec /sbin/openrc-shutdown -r now\n' > "$r/sbin/reboot"; chmod +x "$r/sbin/reboot"
   for s in patronus-board patronus-apply patronus-applyd patronus-web dropbear dnsmasq patronus-dhcpc; do : > "$r/etc/init.d/$s"; chmod +x "$r/etc/init.d/$s"; done
   echo "http 80/tcp" > "$r/etc/services"
+  # ETPhoneHome (baked into every image): ELF binary + runner + the OpenRC service enabled in the default runlevel
+  printf '\177ELF' > "$r/usr/sbin/etphonehome"; chmod +x "$r/usr/sbin/etphonehome"; : > "$r/usr/libexec/patronus/etph-run"; chmod +x "$r/usr/libexec/patronus/etph-run"
+  : > "$r/etc/init.d/patronus-etph"; chmod +x "$r/etc/init.d/patronus-etph"; mkdir -p "$r/etc/runlevels/default"; ln -s /etc/init.d/patronus-etph "$r/etc/runlevels/default/patronus-etph"
   printf 'hsqs....' > "$r/usr/share/patronus-recovery/openwrt-root.squashfs"; echo "$r"; }
 t "check-rootfs: good root" "$D/check-rootfs.sh" "$(mkroot good)"
 r=$(mkroot upd); sed -i '1i update_config=1' "$r/etc/wpa_supplicant/wpa_supplicant.conf"
@@ -51,6 +54,23 @@ r=$(mkroot bbreboot); ln -sf /bin/busybox "$r/sbin/reboot"
 tn "check-rootfs: rejects busybox reboot on OpenRC (SIGTERM = openrc-init halts)" "$D/check-rootfs.sh" "$r"
 r=$(mkroot nodhcpc); rm "$r/etc/init.d/patronus-dhcpc"
 tn "check-rootfs: rejects an OpenRC image without patronus-dhcpc (the WAN lease)" "$D/check-rootfs.sh" "$r"
+r=$(mkroot noetph); rm "$r/usr/sbin/etphonehome"
+tn "check-rootfs: rejects an image without the ETPhoneHome binary" "$D/check-rootfs.sh" "$r"
+r=$(mkroot etphtext); printf '#!/bin/sh\n' > "$r/usr/sbin/etphonehome"
+tn "check-rootfs: rejects an ETPhoneHome that is not an ELF" "$D/check-rootfs.sh" "$r"
+r=$(mkroot noetphsvc); rm "$r/etc/init.d/patronus-etph"
+tn "check-rootfs: rejects an OpenRC image without the ETPhoneHome service" "$D/check-rootfs.sh" "$r"
+r=$(mkroot etphoff); rm "$r/etc/runlevels/default/patronus-etph"
+tn "check-rootfs: rejects an OpenRC image where ETPhoneHome is not enabled on boot" "$D/check-rootfs.sh" "$r"
+r=$(mkroot etphsd); rm -rf "$r/etc/runlevels"; echo INIT=systemd > "$r/etc/patronus-init"; mkdir -p "$r/usr/lib/systemd" "$r/etc/systemd/system/multi-user.target.wants"
+: > "$r/usr/lib/systemd/systemd"; chmod +x "$r/usr/lib/systemd/systemd"; for u in patronus-network patronus-apply patronus-applyd patronus-web patronus-dropbear patronus-etph; do : > "$r/etc/systemd/system/$u.service"; done
+ln -s ../patronus-etph.service "$r/etc/systemd/system/multi-user.target.wants/patronus-etph.service"
+t "check-rootfs: systemd root with ETPhoneHome enabled (wants link)" "$D/check-rootfs.sh" "$r"
+rm "$r/etc/systemd/system/multi-user.target.wants/patronus-etph.service"
+tn "check-rootfs: rejects a systemd image where ETPhoneHome is not enabled" "$D/check-rootfs.sh" "$r"
+t "etph.pin names the .ipk, a sha256 and a matching URL" sh -c ". '$D/etph.pin'; [ \${#ETPH_SHA256} = 64 ] && case \$ETPH_URL in */\$ETPH_IPK) true;; *) false;; esac && grep -q \$ETPH_VERSION-r1 /dev/stdin <<X
+\$ETPH_IPK
+X"
 
 # 2b. NOR budget arithmetic (16000 KiB firmware: kernel + root + 1024 KiB settings + 256 KiB margin, 64 KiB blocks)
 truncate -s $((3008 * 1024)) "$W/kern"; truncate -s $((11520 * 1024 - 5)) "$W/root-fit"; truncate -s $((11776 * 1024 + 1)) "$W/root-over"

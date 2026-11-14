@@ -31,6 +31,13 @@ case "${INIT:-}" in
 esac
 [ "$(readlink "$R/sbin/init")" = /usr/sbin/patronus-init ] || fail "/sbin/init must be /usr/sbin/patronus-init"
 [ -e "$R/usr/share/patronus-recovery/openwrt-root.squashfs" ] && ! head -c4 "$R/usr/share/patronus-recovery/openwrt-root.squashfs" | grep hsqs >/dev/null && fail "recovery root is not a squashfs"
+# ETPhoneHome router client: baked into every variant (owner standing rule). Binary + service + enablement under both inits.
+[ -x "$R/usr/sbin/etphonehome" ] && head -c4 "$R/usr/sbin/etphonehome" | grep ELF >/dev/null || fail "ETPhoneHome: no /usr/sbin/etphonehome ELF binary"
+[ -x "$R/usr/libexec/patronus/etph-run" ] || fail "ETPhoneHome: no /usr/libexec/patronus/etph-run"
+case "${INIT:-}" in
+  openrc)  [ -x "$R/etc/init.d/patronus-etph" ] && [ -L "$R/etc/runlevels/default/patronus-etph" ] || fail "ETPhoneHome: OpenRC service patronus-etph missing or not in the default runlevel" ;;
+  systemd) [ -f "$R/etc/systemd/system/patronus-etph.service" ] && [ -L "$R/etc/systemd/system/multi-user.target.wants/patronus-etph.service" ] || fail "ETPhoneHome: patronus-etph.service missing or not enabled" ;;
+esac
 # every shared library an ELF in the image needs must be in it (o3: supervise-daemon needed libcap.so.2, so no
 # supervised service started). Needs readelf (binutils); skipped without it.
 if command -v readelf >/dev/null 2>&1; then

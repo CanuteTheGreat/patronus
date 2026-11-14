@@ -1,0 +1,18 @@
+#!/bin/sh
+# ETPhoneHome router client service body (OpenRC patronus-etph / systemd patronus-etph.service).
+# State + enrolment live in /etc/etph (the /etc overlay on the patronus_data volume: survives reboots and reflashes):
+#   .android/adbkey(.pub)  the router's adb identity (USB phones: "Always allow" on the phone remembers it)
+#   etph.conf              optional, sourced: ETPH_TRANSPORT=usb|auto|wifi  ETPH_HOST=  ETPH_TOKEN=  ETPH_PORT=  ETPH_EXTRA=
+export HOME=/etc/etph RUST_LOG=${RUST_LOG:-info}
+mkdir -p /etc/etph/.android /run/etph; chmod 700 /etc/etph /etc/etph/.android
+ETPH_TRANSPORT=usb; ETPH_HOST=; ETPH_TOKEN=; ETPH_PORT=; ETPH_EXTRA=
+[ -f /etc/etph/etph.conf ] && . /etc/etph/etph.conf
+# adb key: RSA generation takes minutes on a MIPS 24Kc, so it never blocks the client
+[ -s /etc/etph/.android/adbkey ] || ( nice -n 10 /usr/sbin/etphonehome adb-keygen >/run/etph/keygen.log 2>&1 & )
+set -- /usr/sbin/etphonehome --router
+case "$ETPH_TRANSPORT" in
+  wifi) set -- "$@" wifi --host "$ETPH_HOST"; [ -n "$ETPH_PORT" ] && set -- "$@" --port "$ETPH_PORT"; export ETPH_TOKEN;;
+  auto) set -- "$@" auto; [ -n "$ETPH_HOST" ] && { set -- "$@" --host "$ETPH_HOST"; export ETPH_TOKEN; }; [ -n "$ETPH_PORT" ] && set -- "$@" --port "$ETPH_PORT";;
+  *)    set -- "$@" usb --native; [ -n "$ETPH_PORT" ] && set -- "$@" --port "$ETPH_PORT";;
+esac
+exec "$@" --interface etph0 --reconnect --max-retries 0 --status-file /run/etph/status.json $ETPH_EXTRA

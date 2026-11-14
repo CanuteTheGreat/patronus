@@ -22,3 +22,15 @@ Host tests (CI job "Slate image tooling" in `.forgejo/workflows/embedded-tier.ym
 First install from stock OpenWrt: `sysupgrade -n patronus-<tag>-glinet_gl-ar750s-nor-nand-sysupgrade.tar`.
 Later updates from Patronus: extract `root` from the tar and `patronus-flash root <root>` (keeps settings; the
 previous root stays as `rootfs_prev` for `patronus-flash rollback`).
+
+## ETPhoneHome (always in the image)
+
+Every Slate image, OpenRC and systemd, NAND and NOR, carries the ETPhoneHome router client (`/usr/sbin/etphonehome`, static
+MIPS binary, ~4.3 MB installed / ~1.8 MB as the release package). The version is pinned in `etph.pin` (release package +
+sha256); `fetch-etph.sh` downloads and verifies it, `assemble.sh` installs only the client and refuses any other file.
+The service is `patronus-etph` (OpenRC, default runlevel) / `patronus-etph.service` (systemd, multi-user.target); both run
+`/usr/libexec/patronus/etph-run`, which keeps all state in `/etc/etph` (the `/etc` overlay on the `patronus_data` volume,
+so the adb key and `etph.conf` survive reboots and reflashes). `etph.conf` (optional, sourced): `ETPH_TRANSPORT=usb|auto|wifi`,
+`ETPH_HOST`, `ETPH_TOKEN`, `ETPH_PORT`, `ETPH_EXTRA`. Status JSON: `/run/etph/status.json`, log `/var/log/etph.log`.
+`check-rootfs.sh` (run by every `assemble.sh`, so by the NOR CI job and every flash build) fails an image that lacks the
+binary, `etph-run`, the service, or its enablement under the image's init system; `tests/run.sh` covers those failures.
