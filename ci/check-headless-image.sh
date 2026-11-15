@@ -19,7 +19,7 @@ for f in $L/common/packages.txt $L/common/packages-extra.txt $L/project/packages
 done
 # project/portage and the overlay: no personal literal, no key material
 if [ -d $L/project/portage ] || [ -d $L/project/overlay ]; then
-  hit=$(grep -rIlEi 'tailscale|tskey-|nextcloud|rustinion|hogshead|gringotts|hogsmeade|ssh-(ed25519|rsa|ecdsa) AAAA|BEGIN [A-Z ]*PRIVATE KEY|authorized_keys' $L/project/portage $L/project/overlay 2>/dev/null | grep -v '\.gitkeep' || true)
+  hit=$(grep -rIlEi 'tailscale|tskey-|nextcloud|rustinion|hogshead|gringotts|owner-ws|ssh-(ed25519|rsa|ecdsa) AAAA|BEGIN [A-Z ]*PRIVATE KEY|authorized_keys' $L/project/portage $L/project/overlay 2>/dev/null | grep -v '\.gitkeep' || true)
   [ -z "$hit" ] || bad "personal or key material in the image inputs: $hit"
 fi
 # the Gentoo ebuild: no GUI USE flag / dependency (RDEPEND is installed on every box)

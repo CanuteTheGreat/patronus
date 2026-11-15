@@ -30,7 +30,7 @@ name: Nightly Firewall / SD-WAN Live Traffic Test
 # nightly-realistic-installer-test.yml works around both a broken
 # Forgejo artifact-upload backend (HTTP 500 on finalize) and a
 # same-host assumption via host bind-mounts; since runs-on: linux-cross-x86_64 can
-# resolve to different runner hosts (the shared AWS fleet or beauxbatons),
+# resolve to different runner hosts (the shared AWS fleet or the emulated runner host),
 # avoiding any cross-job hand-off entirely is simpler and more robust than
 # replicating that same-host assumption here.
 on:
@@ -84,7 +84,7 @@ jobs:
       - name: Ensure Node.js is present (self-heal)
         # Same root cause as horcrux's fb065bd and this repo's own
         # nightly-realistic-installer-test.yml: catthehacker/ubuntu:act-latest
-        # job containers on the beauxbatons runner are reused across runs
+        # job containers on the the emulated runner host runner are reused across runs
         # instead of recreated per-job, and node has been observed vanishing
         # mid-job after an apt-get install of unrelated packages, breaking
         # every JS action (actions/cache, actions/checkout's post step) for
@@ -244,7 +244,7 @@ jobs:
       - name: Ensure Node.js is present (self-heal)
         # Same root cause as horcrux's fb065bd and this workflow's own
         # firewall-live-traffic job: catthehacker/ubuntu:act-latest job
-        # containers on the beauxbatons runner are reused across runs
+        # containers on the the emulated runner host runner are reused across runs
         # instead of recreated per-job, and node has been observed
         # vanishing mid-job after an apt-get install of unrelated packages,
         # breaking every JS action (actions/cache, actions/checkout's post

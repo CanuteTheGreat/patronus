@@ -3,8 +3,8 @@
 # switch VLANs (OpenWrt's: vlan1 = CPU tagged + LAN ports 2 3, vlan2 = CPU tagged + WAN port 1), br-lan, Wi-Fi client + AP
 . /etc/patronus/board.sh
 # 5 GHz copy of a wpa_supplicant.conf: every network pinned to the 5 GHz channels, priorities dropped. `disabled=1` is dropped too:
-# it parks the networks the 2.4 GHz client must not use (the stock config's "Hogsmead Station" entry, which was disabled over a
-# wrong key and is the strong, close 5 GHz AP: -26 dBm, 100+ Mbit/s, where "Platform 9 3/4" is -64 dBm on 5 GHz and drops the
+# it parks the networks the 2.4 GHz client must not use (the stock config's "Example Station" entry, which was disabled over a
+# wrong key and is the strong, close 5 GHz AP: -26 dBm, 100+ Mbit/s, where "Other Network" is -64 dBm on 5 GHz and drops the
 # client's frames). The supplicant then takes the strongest BSS; wifi-follow's health check drops one that does not carry traffic.
 gen_wpa5() {
   awk -v fl="$FREQ5" '/^[ \t]*(priority|disabled)=/ {next} {print} /^[ \t]*ssid=/ {print "\tfreq_list=" fl}' "$1"

@@ -320,7 +320,7 @@ Principle: the Slate stays on OpenWrt for ETPhoneHome QA until step D passes. Pa
 
 A. **Back up (owner, 10 minutes, Slate on the home Wi-Fi):**
  1. `ssh root@<slate> 'sysupgrade -b -' > slate-config-$(date +%F).tgz` (and compare with the staged one).
- 2. Full flash dumps, especially ART and U-Boot env: `ssh root@<slate> 'cat /proc/mtd'`, then for each NOR partition `ssh root@<slate> 'cat /dev/mtdblockN' > mtdN-<label>.bin` (u-boot, u-boot-env, art, kernel). ART is the Wi-Fi calibration; without it the radios are lost. Keep copies on crystalcave and B2.
+ 2. Full flash dumps, especially ART and U-Boot env: `ssh root@<slate> 'cat /proc/mtd'`, then for each NOR partition `ssh root@<slate> 'cat /dev/mtdblockN' > mtdN-<label>.bin` (u-boot, u-boot-env, art, kernel). ART is the Wi-Fi calibration; without it the radios are lost. Keep copies on the control host and B2.
  3. `ssh root@<slate> 'fw_printenv' > uboot-env.txt`.
 B. **Boot-test without flashing (one reboot, nothing written):** from the U-Boot console (serial, 115200 8N1, 3.3 V, hold any key at boot) `tftpboot 0x81000000 patronus-initramfs.bin; bootm 0x81000000` against a TFTP server on the LAN port. Proves the kernel/DTS/Wi-Fi/NAND attach with the OpenWrt install untouched; a power cycle returns to OpenWrt.
 C. **Flash Patronus (only after B passes and a QA sign-off):** `scp` the sysupgrade image to `/tmp`, `sysupgrade -T` (test), then `sysupgrade -n /tmp/patronus-...sysupgrade.bin` (`-n`: do not keep OpenWrt's config; Patronus imports it from the saved tarball). Arm the rollback first: an on-device timer that reflashes nothing but reverts the slot (`bootcount`) if the new slot is not marked good in 5 minutes.

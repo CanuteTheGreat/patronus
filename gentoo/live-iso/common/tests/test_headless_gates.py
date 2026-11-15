@@ -123,7 +123,7 @@ class WiredIntoTheHarness(unittest.TestCase):
 
 
 class DockerForwardGate(unittest.TestCase):
-    """Docker's FORWARD DROP killed libvirt NAT VMs (HOGSMEADE 2026-11-12): horcrux-core ships daemon.json ip-forward-no-drop, the gate proves it"""
+    """Docker's FORWARD DROP killed libvirt NAT VMs (owner-ws 2026-11-12): horcrux-core ships daemon.json ip-forward-no-drop, the gate proves it"""
 
     def run_gate(self, out):
         steps = []
@@ -147,6 +147,11 @@ class DockerForwardGate(unittest.TestCase):
         HG.docker_forward_gate(lambda cmd, timeout=60: (cmds.append(cmd), (0, "CFG 1\nFWD-DONE\n"))[1], lambda n, ok, i="": None, slow=3.0)
         self.assertTrue(cmds[0].startswith("HXW=180; export HXW; "))
         self.assertEqual(HG.DOCKER_FWD_CHECK.count("${HXW:-60}"), 2)
+
+    def test_outer_budget_covers_two_full_docker_waits_plus_restart(self):
+        seen = []
+        HG.docker_forward_gate(lambda cmd, timeout=60: (seen.append(timeout), (0, "CFG 1\nFWD-DONE\n"))[1], lambda n, ok, i="": None)
+        self.assertGreaterEqual(seen[0], 2 * 60 + 120)
 
     def test_script_is_valid_shell_and_core_ships_the_option(self):
         subprocess.run(["sh", "-n"], input=HG.DOCKER_FWD_CHECK, text=True, check=True)

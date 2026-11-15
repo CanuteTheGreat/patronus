@@ -31,6 +31,19 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  public-leak-guard:
+    name: Public leak guard
+    # Public repo: no owner-identifying hostnames/addresses/presence language in files or PR commit messages. Owner-specific
+    # content belongs in the private overlay (ctg-private-overlay). See ci/check-public-leaks.py.
+    runs-on: linux-any
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: python3 ci/check-public-leaks.py
+      - if: github.event_name == 'pull_request'
+        run: python3 ci/check-public-leaks.py --commits "origin/${{ github.base_ref }}..HEAD"
+
   plan:
     name: Plan (what needs to run)
     runs-on: linux-any
@@ -76,7 +89,7 @@ jobs:
           echo "dup=$dup" >> "$GITHUB_OUTPUT"
 
   # fmt/clippy/security-audit/test used to be 4 separate jobs. The only
-  # forgejo-runner currently registered for the `x86_64` label (beauxbatons,
+  # forgejo-runner currently registered for the `x86_64` label (the emulated runner host,
   # see .forgejo/workflows/rust-ci.yml history around 2026-10-08) has
   # capacity: 1 -- it can only execute one job at a time, full stop. With 4+
   # independent jobs all competing for that single slot, later jobs in the
@@ -102,7 +115,7 @@ jobs:
     # patronus-sdwan") with no panic/OOM/cancellation message, while the
     # sibling check-full-workspace job (same runner, same deps, 'cargo
     # check' instead of clippy) finished clean in 4m18s right after. Root
-    # cause couldn't be confirmed after the fact (beauxbatons is a shared
+    # cause couldn't be confirmed after the fact (the emulated runner host is a shared
     # macOS dev box, runner has capacity 1, no swap -- a transient resource
     # stall on the host is the leading theory, not a code bug). Adding an
     # explicit timeout here so a repeat produces a clear 'cancelled: timeout'
@@ -154,7 +167,7 @@ jobs:
         run: CI_NO_SCCACHE=1 CI_RUST_ENV_EXPORT=1 . ci/ci-rust-env.sh
       - name: Cache cargo
         uses: actions/cache@v4
-        continue-on-error: true  # runner-side cache action is flaky on beauxbatons (artifactcache timeouts / module-not-found under parallel job races) -- caching is an optimization, never worth failing the job over
+        continue-on-error: true  # runner-side cache action is flaky on the emulated runner host (artifactcache timeouts / module-not-found under parallel job races) -- caching is an optimization, never worth failing the job over
         with:
           path: |
             ~/.cargo/registry
@@ -539,7 +552,7 @@ jobs:
           sudo apt-get install -y build-essential libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev libssl-dev pkg-config
       - name: Cache cargo
         uses: actions/cache@v4
-        continue-on-error: true  # runner-side cache action is flaky on beauxbatons (artifactcache timeouts / module-not-found under parallel job races) -- caching is an optimization, never worth failing the job over
+        continue-on-error: true  # runner-side cache action is flaky on the emulated runner host (artifactcache timeouts / module-not-found under parallel job races) -- caching is an optimization, never worth failing the job over
         with:
           path: |
             ~/.cargo/registry
@@ -577,7 +590,7 @@ jobs:
           sudo apt-get install -y build-essential libbpf-dev linux-headers-generic libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler
       - name: Cache cargo
         uses: actions/cache@v4
-        continue-on-error: true  # runner-side cache action is flaky on beauxbatons (artifactcache timeouts / module-not-found under parallel job races) -- caching is an optimization, never worth failing the job over
+        continue-on-error: true  # runner-side cache action is flaky on the emulated runner host (artifactcache timeouts / module-not-found under parallel job races) -- caching is an optimization, never worth failing the job over
         with:
           path: |
             ~/.cargo/registry
@@ -628,7 +641,7 @@ jobs:
         # failures right before it) in this job: NOT a Dockerfile mount/cache
         # misconfiguration (there are no --mount=type=cache or VOLUME
         # directives in Dockerfile/Dockerfile.ci-base at all). The real cause
-        # is host-level disk exhaustion on the beauxbatons runner: Docker
+        # is host-level disk exhaustion on the the emulated runner host runner: Docker
         # Desktop's VM disk is a thin-provisioned sparse file on the macOS
         # host's boot volume, and unpruned images/volumes/build cache had
         # grown to consume effectively all of the host's real free space

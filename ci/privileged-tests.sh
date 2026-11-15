@@ -62,7 +62,7 @@ EOF
 
 # The sibling must run the same architecture the test binaries were built
 # for. Without --platform, docker picks the *daemon's* native arch: on
-# beauxbatons (Apple silicon, label linux-cross-x86_64) this job container is
+# the emulated runner host (Apple silicon, label linux-cross-x86_64) this job container is
 # linux/amd64 under Rosetta but the sibling came up arm64, so the x86_64
 # binaries died with "rosetta error: failed to open elf at
 # /lib64/ld-linux-x86-64.so.2" (run 394, exit 133).

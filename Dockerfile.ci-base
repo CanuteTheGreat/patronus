@@ -21,7 +21,7 @@ ARG PATRONUS_USE="web cli api dashboard nftables dhcp dns unbound vpn wireguard 
 #
 # Also disable the base ptrace-based sandbox (FEATURES=sandbox/usersandbox):
 # it misreads process personality bits under binfmt_misc/QEMU (ARM64 hosts
-# emulating x86_64, e.g. beauxbatons), aborting any package with a Rust/Go
+# emulating x86_64, e.g. the emulated runner host), aborting any package with a Rust/Go
 # build-script subprocess (e.g. dev-lang/go) with "unknown x86_64 (CS)
 # personality" / SIGABRT -- confirmed live in run #152 (task 6120,
 # dev-lang/go-1.26.7 compile phase) on the exact same `onlydeps` step the
