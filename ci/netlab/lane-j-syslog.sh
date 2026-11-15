@@ -76,15 +76,18 @@ nl_ok "the collector on the internet side received: $MSG"
 
 echo "=== severity filter"
 logger -t lane-j -p user.info "marker-info-$$"
-logger -t lane-j -p user.err "marker-err-$$"
-nl_wait 15 grep -qF -- "marker-err-$$" /tmp/syslog-rx || nl_fail "err message not forwarded"
+# rsyslog can still be settling right after the drop-in reload (flaked 2 of 6
+# runs on 11-15 with the first logger line lost): resend the err marker once a
+# second instead of betting on a single datagram.
+sent_err() { logger -t lane-j -p user.err "marker-err-$$"; sleep 1; grep -qF -- "marker-err-$$" /tmp/syslog-rx; }
+nl_wait 15 sent_err || { ps -ef | grep '[r]syslogd'; cat /etc/rsyslog.d/50-patronus.conf; cat /tmp/syslog-rx; nl_fail "err message not forwarded"; }
 [ "$(rx "marker-info-$$")" = 0 ] || nl_fail "an info message passed the >= notice filter"
 nl_ok "err forwarded, info (below the notice filter) not"
 nl_api_ok "lower the filter" PUT "/svc/syslog/targets/$ID" '{"severity":"info"}'
 nl_wait 10 pgrep -x rsyslogd
 sleep 1
-logger -t lane-j -p user.info "marker-info2-$$"
-nl_wait 15 grep -qF -- "marker-info2-$$" /tmp/syslog-rx || nl_fail "info not forwarded after lowering the filter"
+sent_info2() { logger -t lane-j -p user.info "marker-info2-$$"; sleep 1; grep -qF -- "marker-info2-$$" /tmp/syslog-rx; }
+nl_wait 15 sent_info2 || nl_fail "info not forwarded after lowering the filter"
 nl_ok "after editing the severity to info, info messages are forwarded too"
 
 echo "=== local log in the status"
