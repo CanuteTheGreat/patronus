@@ -21,8 +21,16 @@ PIDF=/run/rsyslogd.pid
 alive() { [ -f $PIDF ] && kill -0 "$(cat $PIDF)" 2>/dev/null; }
 case "$1" in
   start) alive || rsyslogd -i $PIDF ;;
-  stop) alive && kill "$(cat $PIDF)"; rm -f $PIDF ;;
-  restart) $0 stop; sleep 0.5; $0 start ;;
+  stop)
+    if alive; then
+      P=$(cat $PIDF); kill "$P"
+      # wait for the old daemon to be gone: on exit imuxsock unlinks /dev/log, and
+      # a slow old rsyslogd doing that after the new one bound it leaves logger with
+      # no socket (marker lines never forwarded, 11-15 run 1250)
+      i=0; while kill -0 "$P" 2>/dev/null && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
+    fi
+    rm -f $PIDF ;;
+  restart) $0 stop; $0 start; i=0; while [ ! -S /dev/log ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done ;;
   status) alive && echo "rsyslogd is running" || { echo "rsyslogd is not running"; exit 3; } ;;
 esac
 exit 0
@@ -80,7 +88,7 @@ logger -t lane-j -p user.info "marker-info-$$"
 # runs on 11-15 with the first logger line lost): resend the err marker once a
 # second instead of betting on a single datagram.
 sent_err() { logger -t lane-j -p user.err "marker-err-$$"; sleep 1; grep -qF -- "marker-err-$$" /tmp/syslog-rx; }
-nl_wait 15 sent_err || { ps -ef | grep '[r]syslogd'; cat /etc/rsyslog.d/50-patronus.conf; cat /tmp/syslog-rx; nl_fail "err message not forwarded"; }
+nl_wait 15 sent_err || { ps -ef | grep '[r]syslogd'; ls -l /dev/log || true; cat /etc/rsyslog.d/50-patronus.conf; cat /tmp/syslog-rx; nl_fail "err message not forwarded"; }
 [ "$(rx "marker-info-$$")" = 0 ] || nl_fail "an info message passed the >= notice filter"
 nl_ok "err forwarded, info (below the notice filter) not"
 nl_api_ok "lower the filter" PUT "/svc/syslog/targets/$ID" '{"severity":"info"}'
