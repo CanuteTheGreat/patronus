@@ -1,0 +1,8 @@
+# nvchecker sources for third-party ebuilds in the Patronus tree (first-party ones: excluded.txt).
+
+["gui-wm/cage"]
+source = "github"
+github = "cage-kiosk/cage"
+use_max_tag = true
+include_regex = '^v\d+\.\d+\.\d+$'
+prefix = "v"

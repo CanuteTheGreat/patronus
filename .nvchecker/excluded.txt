@@ -1,0 +1,2 @@
+acct-*/*          # account packages
+net-firewall/patronus*  # first-party Patronus packages, released by this repo's CI
