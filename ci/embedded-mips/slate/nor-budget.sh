@@ -9,7 +9,10 @@
 # embedded OpenWrt recovery root: on NOR the stock firmware is not carried inside the root image).
 R=${1:-}; K=${2:-}
 [ -f "$R" ] && [ -f "$K" ] || { echo "usage: nor-budget.sh <root.squashfs> <kernel>"; exit 2; }
-FIRMWARE_KIB=${NOR_FIRMWARE_KIB:-16000}; DATA=${NOR_DATA_MIN:-1024}; MARGIN=${NOR_MARGIN:-256}
+# the layout numbers come from the device profile ([nor] firmware_kib / data_min_kib / margin_kib); env still overrides
+HERE=$(cd "$(dirname "$0")" && pwd)
+eval "$(python3 "$HERE/../../hw-profile/hwprofile.py" env "${HW_PROFILE:-$HERE/../../../profiles/hw/ath79-gl-ar750s.toml}")" || exit 2
+FIRMWARE_KIB=${NOR_FIRMWARE_KIB:-$HW_NOR_FIRMWARE_KIB}; DATA=${NOR_DATA_MIN:-$HW_NOR_DATA_MIN_KIB}; MARGIN=${NOR_MARGIN:-$HW_NOR_MARGIN_KIB}
 eb() { echo $(( ($(wc -c < "$1") + 65535) / 65536 * 64 )); }   # KiB, rounded up to 64 KiB erase blocks
 k=$(eb "$K"); r=$(eb "$R"); used=$((k + r + DATA)); free=$((FIRMWARE_KIB - used))
 printf 'NOR budget: kernel %d KiB + root %d KiB + settings %d KiB = %d of %d KiB; free %d KiB (margin wanted %d KiB)\n' \

@@ -4,7 +4,8 @@
 #   <pack-dir> = pack.sh output: rootfs.tar, patronus-cli (multi-call: also the web UI), libatomic.so.1, openrc.tar
 # Inputs (environment; everything per-unit or secret stays outside the repo):
 #   STOCK_ROOT        unpacked root of the stock OpenWrt 25.12.6 ath79/nand image (kmods for 6.12.112, Wi-Fi firmware, swconfig)
-#   STOCK_SYSUPGRADE  openwrt-25.12.6-ath79-nand-glinet_gl-ar750s-nor-nand-squashfs-sysupgrade.bin (its kernel + CONTROL are reused)
+#   STOCK_SYSUPGRADE  the stock OpenWrt sysupgrade image of the profile ($HW_STOCK_SYSUPGRADE; its kernel + CONTROL are reused)
+#   HW_PROFILE        optional: another device profile (profiles/hw/*.toml, docs/hardware-support.md); default the GL-AR750S
 #   RECOVERY_ROOT     stock root squashfs embedded as the guard's way back (usually the unit's own ubi0_0 dump)
 #   RECOVERY_CFG      optional: OpenWrt sysupgrade -b tarball restored when the guard reverts
 #   UNIT_DIR          per-unit private files: shadow-root, authorized_keys, dropbear_*_host_key, wpa_supplicant.conf,
@@ -21,6 +22,8 @@
 #                     out of the root image) and no NAND-only pieces; see nor-budget.sh
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+PROFILE=${HW_PROFILE:-$HERE/../../../profiles/hw/ath79-gl-ar750s.toml}   # every device-specific value comes from the profile
+eval "$(python3 "$HERE/../../hw-profile/hwprofile.py" env "$PROFILE")" || { echo "assemble.sh: cannot read profile $PROFILE"; exit 2; }
 B=$(readlink -f "$1"); TAG=$2
 if [ -n "${OPENRC_TREE:-}" ] && [ -n "${SYSTEMD_TREE:-}" ]; then echo "assemble.sh: set OPENRC_TREE or SYSTEMD_TREE, not both"; exit 2; fi
 if [ -z "${OPENRC_TREE:-}${SYSTEMD_TREE:-}" ]; then echo "assemble.sh: set OPENRC_TREE (OpenRC variant) or SYSTEMD_TREE (systemd variant)"; exit 2; fi
@@ -38,7 +41,7 @@ rm -f "$R"/usr/lib/libgmpxx.so* "$R"/usr/lib/*.o
 # util-linux/iproute2 tools the router never runs (busybox covers mount/umount/unshare/nsenter)
 while read -r f; do [ -n "$f" ] && rm -rf "$R"/$f; done < "$HERE/prune.txt"
 # musl loader where every binary expects it
-[ -e "$R/lib/ld-musl-mips-sf.so.1" ] || ln -sf ../usr/lib/libc.so "$R/lib/ld-musl-mips-sf.so.1"
+[ -e "$R/lib/$HW_ARCH_MUSL_LDSO" ] || ln -sf ../usr/lib/libc.so "$R/lib/$HW_ARCH_MUSL_LDSO"
 mkdir -p "$R"/{proc,sys,dev,tmp,run,data,mnt,root/.ssh,var/log,var/lib/patronus,var/lib/misc,etc/dropbear,usr/lib/openwrt,usr/share/patronus-recovery,etc/patronus/tls,etc/hostapd,etc/wpa_supplicant}
 install -m755 "$B/patronus-cli" "$R/usr/bin/patronus-cli"
 # multi-call build (default): patronus-web is the same binary under another name; a separate build is still accepted
@@ -140,17 +143,17 @@ install -m600 "$U"/dropbear_*_host_key "$R/etc/dropbear/"
 install -m600 "$U/wpa_supplicant.conf" "$R/etc/wpa_supplicant/wpa_supplicant.conf"
 if [ -f "$U/unit.conf" ]; then install -m644 "$U/unit.conf" "$R/etc/patronus/unit.conf"; fi
 for c in "$U"/hostapd/*.conf; do if [ -f "$c" ]; then install -m600 "$c" "$R/etc/hostapd/"; fi; done
-echo "slate" > "$R/etc/hostname"; printf '127.0.0.1 localhost\n' > "$R/etc/hosts"
+echo "$HW_DEVICE_HOSTNAME" > "$R/etc/hostname"; printf '127.0.0.1 localhost\n' > "$R/etc/hosts"
 ln -sf /tmp/resolv.conf.auto "$R/etc/resolv.conf"
 ln -sf /proc/self/mounts "$R/etc/mtab"   # df/mount -o remount need it
 rm -rf "$R/var/run"; ln -s ../run "$R/var/run"   # FHS; the systemd variant's dnsmasq.service writes /var/run/dnsmasq.pid
 cat > "$R/etc/patronus-release" <<EOF
 PATRONUS_TIER=embedded
 ETPH=$ETPH_VERSION
-BOARD=glinet,gl-ar750s-nor-nand
+BOARD=$HW_DEVICE_OPENWRT_BOARD
 BUILD=$TAG
 SOURCE=patronus ${SOURCE_REV:-unknown}
-KERNEL=OpenWrt 25.12.6 ath79/nand $KV (stock, unchanged)
+KERNEL=$HW_KERNEL_LABEL $KV (stock, unchanged)
 EOF
 chmod 755 "$R"; chmod 1777 "$R/tmp"
 "$HERE/check-rootfs.sh" "$R"
@@ -160,10 +163,10 @@ P=(-p "/dev/console c 600 0 0 5 1" -p "/dev/null c 666 0 0 1 3" -p "/dev/ttyS0 c
 SQ_BLOCK=${SQ_BLOCK:-$([ -n "${NOR_PROFILE:-}" ] && echo 1M || echo 256K)}
 mksquashfs "$R" "$OUTD/root.squashfs" -comp xz -b $SQ_BLOCK -noappend -no-xattrs -all-root -quiet "${P[@]}"
 # OpenWrt sysupgrade-tar: stock kernel (identical bytes to what is in NOR) + our root, then fwtool metadata
-W=$(mktemp -d); D=$W/sysupgrade-glinet_gl-ar750s-nor-nand; mkdir -p "$D"
+W=$(mktemp -d); D=$W/$HW_SYSUPGRADE_DIR; mkdir -p "$D"
 tar xf "$STOCK_SYSUPGRADE" -C "$W" --wildcards '*/kernel' '*/CONTROL'
 cp "$OUTD/root.squashfs" "$D/root"
-(cd "$W" && tar cf "$OUTD/patronus-$TAG-glinet_gl-ar750s-nor-nand-sysupgrade.tar" --owner=0 --group=0 --sort=name sysupgrade-glinet_gl-ar750s-nor-nand)
-"$HERE/fwmeta.py" add "$OUTD/patronus-$TAG-glinet_gl-ar750s-nor-nand-sysupgrade.tar" glinet,gl-ar750s-nor-nand --version "$TAG"   # sysupgrade -T needs it
+(cd "$W" && tar cf "$OUTD/patronus-$TAG-$HW_BOARD_ID-sysupgrade.tar" --owner=0 --group=0 --sort=name "$HW_SYSUPGRADE_DIR")
+"$HERE/fwmeta.py" add "$OUTD/patronus-$TAG-$HW_BOARD_ID-sysupgrade.tar" "$HW_DEVICE_OPENWRT_BOARD" --version "$TAG"   # sysupgrade -T needs it
 rm -rf "$W"
 ls -l "$OUTD"; unsquashfs -s "$OUTD/root.squashfs" | grep -E 'Filesystem size|Compression|Block size'

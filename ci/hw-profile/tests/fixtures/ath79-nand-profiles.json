@@ -1,0 +1,95 @@
+{
+ "arch_packages": "mips_24kc",
+ "default_packages": [],
+ "linux_kernel": {
+  "release": "1",
+  "vermagic": "59cfbc0272b0b8cdf438481b60598656",
+  "version": "6.12.112"
+ },
+ "metadata_version": 1,
+ "profiles": {
+  "8dev_rambutan": {
+   "device_packages": [],
+   "file_size_limits": {
+    "kernel": 4194304
+   },
+   "image_prefix": "openwrt-25.12.6-ath79-nand-8dev_rambutan",
+   "images": [
+    {
+     "filesystem": "squashfs",
+     "name": "openwrt-25.12.6-ath79-nand-8dev_rambutan-squashfs-sysupgrade.tar",
+     "sha256": "15f5a1b87b13b86e9ae228a0e7462e10789b932820c7b91fb17f4386bea5510a",
+     "sha256_unsigned": "15f5a1b87b13b86e9ae228a0e7462e10789b932820c7b91fb17f4386bea5510a",
+     "size": 7352580,
+     "type": "sysupgrade"
+    },
+    {
+     "filesystem": "squashfs",
+     "name": "openwrt-25.12.6-ath79-nand-8dev_rambutan-squashfs-factory.bin",
+     "sha256": "2f068ad8ca845bd64332d9a9d63f3430c47e36703e49f98bf3a61b0bb5c75405",
+     "sha256_unsigned": "2f068ad8ca845bd64332d9a9d63f3430c47e36703e49f98bf3a61b0bb5c75405",
+     "size": 7864320,
+     "type": "factory"
+    },
+    {
+     "filesystem": "initramfs",
+     "name": "openwrt-25.12.6-ath79-nand-8dev_rambutan-initramfs-kernel.bin",
+     "sha256": "985c28be84490f8ad0c58903502febb26737da40cebd48e1421dd6ee76b01a4c",
+     "sha256_unsigned": "985c28be84490f8ad0c58903502febb26737da40cebd48e1421dd6ee76b01a4c",
+     "size": 7000737,
+     "type": "kernel"
+    }
+   ],
+   "supported_devices": [
+    "8dev,rambutan"
+   ],
+   "titles": [
+    {
+     "model": "Rambutan",
+     "vendor": "8devices"
+    }
+   ]
+  },
+  "glinet_gl-ar750s-nor-nand": {
+   "device_packages": [],
+   "file_size_limits": {
+    "image": 16384000,
+    "kernel": 4194304
+   },
+   "image_prefix": "openwrt-25.12.6-ath79-nand-glinet_gl-ar750s-nor-nand",
+   "images": [
+    {
+     "filesystem": "squashfs",
+     "name": "openwrt-25.12.6-ath79-nand-glinet_gl-ar750s-nor-nand-squashfs-sysupgrade.bin",
+     "sha256": "3d58b599daca2a239f745cf5d739d624d6262302000df1615295ca03c594ed03",
+     "sha256_unsigned": "3d58b599daca2a239f745cf5d739d624d6262302000df1615295ca03c594ed03",
+     "size": 7854387,
+     "type": "sysupgrade"
+    },
+    {
+     "filesystem": "initramfs",
+     "name": "openwrt-25.12.6-ath79-nand-glinet_gl-ar750s-nor-nand-initramfs-kernel.bin",
+     "sha256": "179119b580ee7a97c33ae72db129fb04708165c28d7f5bd594ba7cf26dc19d87",
+     "sha256_unsigned": "179119b580ee7a97c33ae72db129fb04708165c28d7f5bd594ba7cf26dc19d87",
+     "size": 7471868,
+     "type": "kernel"
+    }
+   ],
+   "supported_devices": [
+    "glinet,gl-ar750s-nor-nand",
+    "glinet,gl-ar750s-nor"
+   ],
+   "titles": [
+    {
+     "model": "GL-AR750S",
+     "variant": "NOR/NAND",
+     "vendor": "GL.iNet"
+    }
+   ]
+  }
+ },
+ "source_date_epoch": 1792273538,
+ "target": "ath79/nand",
+ "version_code": "r33311-981c978eff",
+ "version_number": "25.12.6"
+}

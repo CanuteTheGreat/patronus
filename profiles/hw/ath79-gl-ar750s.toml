@@ -1,13 +1,16 @@
 # Hardware profile: GL.iNet GL-AR750S "Slate" (QCA9563, MIPS 24Kc big-endian soft-float, 128 MB RAM, 128 MB NAND + 16 MB NOR)
 # See docs/embedded-routers.md. This file is the single input that picks the Portage profile, USE, Cargo features, init and caps.
-# Proven so far: cross build + QEMU malta (ci/embedded-mips/); the ath79 kernel is built but NOT booted on the real board.
+# Proven: cross build, QEMU malta gate (ci/embedded-mips/) and the real board (OpenRC + systemd, NAND; NOR-only budget gate).
+# Format: docs/hardware-support.md (schema 1). Read by ci/hw-profile/hwprofile.py; assemble.sh and the NOR gate take every
+# device-specific value (board id, hostname, stock image, NOR layout, musl loader) from here, none is hard-coded.
+schema      = 1
 tier        = "embedded"             # embedded | standard | full
 arch        = "mips"                 # big-endian, soft-float, mips32r2
 libc        = "musl"
 chost       = "mips-unknown-linux-musl"
 ram_mb      = 128
 flash_mb    = 128                    # NAND; kernel A/B on NAND (4 MiB), rootfs A/B (see docs section 5)
-init        = "busybox"              # busybox init + small sysv scripts (no OpenRC yet)
+init        = ["openrc", "systemd"]  # both variants are first-class; busybox only provides applets (patronus-init is the shared early boot)
 rootfs      = "squashfs-xz+overlayfs"   # /etc and /var/lib are overlays on the persistent partition, like OpenWrt
 
 # Two binaries, each built --no-default-features with exactly these features.
@@ -43,3 +46,33 @@ cloud_dependency = "none"
 applyd_rss_mb   = 10                 # measured 7.8 MB
 logs_in_ram_kb  = 512
 conntrack_max   = 4096
+
+# ---- schema 1: everything below is read by the image tooling (ci/embedded-mips/slate/*.sh) ----
+[device]
+id             = "glinet-gl-ar750s-nor-nand"
+vendor         = "GL.iNet"
+model          = "GL-AR750S"
+variant        = "NOR+NAND"
+openwrt_board  = "glinet,gl-ar750s-nor-nand"   # the sysupgrade/fwtool board id (device_tree compatible)
+hostname       = "slate"
+
+[openwrt]
+release        = "25.12.6"
+target         = "ath79"
+subtarget      = "nand"
+arch_packages  = "mips_24kc"
+kernel         = "6.12.112"
+# sha256 of the stock sysupgrade image (its kernel and CONTROL are reused unchanged); from OpenWrt's profiles.json
+stock_sha256   = "3d58b599daca2a239f745cf5d739d624d6262302000df1615295ca03c594ed03"
+
+# 16 MiB NOR-only tier budget (ci/embedded-mips/slate/nor-budget.sh), OpenWrt ath79 16 MiB NOR layout
+[nor]
+firmware_kib   = 16000   # == OpenWrt file_size_limits.image (16384000 bytes)
+data_min_kib   = 1024    # settings partition: jffs2 needs ~5 spare erase blocks for GC
+margin_kib     = 256     # must stay free for growth between releases
+# the ETPhoneHome rule makes the systemd NOR root not fit: the recorded overage (free KiB) the CI gate tolerates, no worse
+systemd_known_free_kib = -832
+
+[status]
+level          = "tested"
+evidence       = "Real board, OpenRC and systemd variants on NAND: t_slate LAN 17/17, guard rollback proven; NOR-root QEMU boot; NOR size gate in CI"

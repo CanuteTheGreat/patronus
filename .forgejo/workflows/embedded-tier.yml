@@ -1,12 +1,14 @@
 name: Embedded tier (router image tooling + router feature set)
 
-# The GL-AR750S image tooling (ci/embedded-mips/slate) and the code paths only the router build uses
+# The device-profile tooling (profiles/hw/*.toml, ci/hw-profile) and the GL-AR750S image tooling (ci/embedded-mips/slate) and the code paths only the router build uses
 # (udhcpc WAN client, [firstboot], import-uci, all with --no-default-features). The main Rust CI
 # builds the default feature set on main only; this one also runs on branch pushes that touch the tier.
 on:
   push:
     paths:
       - 'ci/embedded-mips/**'
+      - 'ci/hw-profile/**'
+      - 'profiles/**'
       - 'crates/patronus-cli/**'
       - 'crates/patronus-web/**'
       - 'crates/patronus-network/src/sysauth.rs'
@@ -34,6 +36,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Tooling tests
         run: sh ci/embedded-mips/slate/tests/run.sh
+      - name: Device-profile tooling (schema, tier minimums, Slate golden values, TOML fallback parser)
+        run: sh ci/hw-profile/tests/run.sh
 
   router-features:
     name: Router feature set (patronus-cli nftables,cli,dhcp-server,dns-server,uci-import)

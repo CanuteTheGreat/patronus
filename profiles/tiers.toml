@@ -1,0 +1,29 @@
+# Patronus hardware tier minimums: the single source for `hwprofile.py validate` and docs/hardware-support.md.
+# Measured = proven on the Slate (docs/embedded-routers.md 6b/6c); the others are design targets until a device of that
+# tier has been measured, and are tightened or relaxed from measurements.
+[tier.embedded]
+min_ram_mb   = 128          # measured: Slate OpenRC 46 MB used / 68 MB free of 128 MB with web UI + ETPhoneHome
+min_flash_mb = 16           # measured: 16 MiB NOR fits the OpenRC root (9.4 MiB) with margin; systemd does not with ETPhoneHome
+arch         = ["mips", "mipsel", "arm", "arm64", "x86_64"]
+libc         = "musl"
+userland     = "musl-multicall"   # one patronus-cli multi-call binary, no eBPF/VPN/HA features (docs/embedded-routers.md)
+rootfs       = "squashfs-xz+overlay"
+update       = "sysupgrade"
+
+[tier.standard]
+min_ram_mb   = 512          # target: full web UI, nftables, dnsmasq/unbound, WireGuard, one VM-less appliance
+min_flash_mb = 4096         # target: eMMC/SD/disk; ext4 or XFS (ZFS only at >= 8 GB RAM, installer storage rules)
+arch         = ["arm", "arm64", "x86_64"]
+libc         = "glibc"
+userland     = "gentoo-binhost"
+rootfs       = "disk"
+update       = "emerge"
+
+[tier.full]
+min_ram_mb   = 4096         # target: everything incl. eBPF, HA, VPN, containers, ZFS-capable at 8 GB
+min_flash_mb = 32768
+arch         = ["arm64", "x86_64"]
+libc         = "glibc"
+userland     = "gentoo-binhost"
+rootfs       = "disk"
+update       = "emerge"

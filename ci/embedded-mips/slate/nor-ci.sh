@@ -9,9 +9,10 @@
 #   3. nor-budget.sh: kernel + root + settings must leave the margin free in the 16000 KiB firmware partition
 set -euo pipefail
 SRC=$(cd "$(dirname "$0")/../../.." && pwd); HERE=$SRC/ci/embedded-mips/slate
-P=/opt/pembed; T=mips-unknown-linux-musl
-STOCK_SU=$P/openwrt-25.12.6-ath79-nand-glinet_gl-ar750s-nor-nand-squashfs-sysupgrade.bin
-echo "3d58b599daca2a239f745cf5d739d624d6262302000df1615295ca03c594ed03  $STOCK_SU" | sha256sum -c -
+P=/opt/pembed
+eval "$(python3 "$SRC/ci/hw-profile/hwprofile.py" env "${HW_PROFILE:-$SRC/profiles/hw/ath79-gl-ar750s.toml}")"   # stock image name + sha256, NOR layout, all from the device profile
+STOCK_SU=$P/$HW_STOCK_SYSUPGRADE
+echo "$HW_OPENWRT_STOCK_SHA256  $STOCK_SU" | sha256sum -c -
 W=${NOR_CI_DIR:-/tmp/nor-ci}; rm -rf "$W"; mkdir -p "$W"/{unit/hostapd,out,stock,kern}
 # 1. binaries (stage-patronus.sh copies /w/src; the builder image's scripts expect /w and /out)
 mkdir -p /w /out; rm -rf /w/src; mkdir -p /w/src; tar cf - -C "$SRC" --exclude=./target --exclude=./.git . | tar xf - -C /w/src
@@ -42,7 +43,7 @@ for v in openrc systemd; do
     # free -768 KiB vs the 256 KiB margin wanted (root 12736 KiB, kernel 3008, settings 1024 of 16000). The Slate is NAND,
     # which the rule targets; the NOR systemd tier ships the OpenRC variant (fits, 1088 KiB free). This stays red-by-design
     # only for that one variant: it fails again if the overage GROWS past the recorded one (NOR_SYSTEMD_KNOWN_FREE_KIB).
-    if [ $v = systemd ] && [ -n "$free" ] && [ "$free" -ge "${NOR_SYSTEMD_KNOWN_FREE_KIB:--832}" ]; then
+    if [ $v = systemd ] && [ -n "$free" ] && [ "$free" -ge "${NOR_SYSTEMD_KNOWN_FREE_KIB:-$HW_NOR_SYSTEMD_KNOWN_FREE_KIB}" ]; then
       echo "NOR systemd + ETPhoneHome: DOES NOT FIT the 16 MiB NOR (free $free KiB, need 256): known limit, NAND is the ETPhoneHome tier; use the OpenRC NOR variant"
     else rc=1; fi
   fi

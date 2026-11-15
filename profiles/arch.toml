@@ -1,0 +1,57 @@
+# One row per OpenWrt `arch_packages` value (the ABI group OpenWrt shares one package feed and one musl userland across).
+# A Patronus musl userland is built ONCE per row and reused by every device of that group. `hwprofile.py gen` refuses
+# a device whose arch_packages is not listed here: add the row first (musl ld.so name, rust target, soft/hard float).
+# `verified` = built and run (QEMU or real board); `planned` = values from musl/rustc conventions, not yet built.
+[arch.mips_24kc]
+patronus_arch = "mips"            # big-endian, soft-float, mips32r2
+chost         = "mips-unknown-linux-musl"
+rust_target   = "mips-unknown-linux-musl"
+musl_ldso     = "ld-musl-mips-sf.so.1"
+default_tier  = "embedded"
+openwrt_targets = ["ath79", "lantiq/xrx200", "realtek/rtl838x"]
+verified      = true
+
+[arch.mipsel_24kc]
+patronus_arch = "mipsel"
+chost         = "mipsel-unknown-linux-musl"
+rust_target   = "mipsel-unknown-linux-musl"
+musl_ldso     = "ld-musl-mipsel-sf.so.1"
+default_tier  = "embedded"
+openwrt_targets = ["ramips/mt7621", "ramips/mt7620", "ramips/mt76x8"]
+verified      = false
+
+[arch.arm_cortex-a7_neon-vfpv4]
+patronus_arch = "arm"
+chost         = "armv7a-unknown-linux-musleabihf"
+rust_target   = "armv7-unknown-linux-musleabihf"
+musl_ldso     = "ld-musl-armhf.so.1"
+default_tier  = "embedded"
+openwrt_targets = ["ipq40xx/generic", "ipq40xx/chromium", "mediatek/mt7623"]
+verified      = false
+
+[arch.aarch64_cortex-a53]
+patronus_arch = "arm64"
+chost         = "aarch64-unknown-linux-musl"
+rust_target   = "aarch64-unknown-linux-musl"
+musl_ldso     = "ld-musl-aarch64.so.1"
+default_tier  = "embedded"
+openwrt_targets = ["mediatek/filogic", "qualcommax/ipq60xx", "qualcommax/ipq807x", "bcm27xx/bcm2710", "rockchip/armv8"]
+verified      = false
+
+[arch.aarch64_cortex-a72]
+patronus_arch = "arm64"
+chost         = "aarch64-unknown-linux-musl"
+rust_target   = "aarch64-unknown-linux-musl"
+musl_ldso     = "ld-musl-aarch64.so.1"
+default_tier  = "standard"
+openwrt_targets = ["bcm27xx/bcm2711", "mvebu/cortexa72"]
+verified      = false
+
+[arch.x86_64]
+patronus_arch = "x86_64"
+chost         = "x86_64-unknown-linux-musl"
+rust_target   = "x86_64-unknown-linux-musl"
+musl_ldso     = "ld-musl-x86_64.so.1"
+default_tier  = "standard"
+openwrt_targets = ["x86/64"]
+verified      = false
