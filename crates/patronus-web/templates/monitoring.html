@@ -104,7 +104,7 @@
 <div class="card">
     <div class="card-header"><h2 class="card-title">Threat intelligence feed</h2></div>
     <p class="text-sm text-muted">Addresses reported by external feeds (EmergingThreats compromised hosts).
-        This is feed data, not local detection, and nothing is blocked automatically.</p>
+        This is feed data, not local detection. To drop these addresses, turn on "Emerging Threats compromised IPs" under Firewall &rarr; Threat Intel (enforced in an nft set ahead of your rules).</p>
     {% if ai_threats.is_empty() %}
     <p class="empty">The feed has not delivered any entries yet (it is fetched hourly and needs internet access).</p>
     {% else %}

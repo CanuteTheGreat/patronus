@@ -96,6 +96,12 @@ pub const CATALOG: &[CatalogFeed] = &[
         url: "https://sslbl.abuse.ch/blacklist/sslipblacklist.txt",
         description: "IPs of botnet C&C servers using malicious SSL certificates",
     },
+    CatalogFeed {
+        id: "et_compromised",
+        name: "Emerging Threats compromised IPs",
+        url: "https://rules.emergingthreats.net/blockrules/compromised-ips.txt",
+        description: "Known-compromised hosts; the same list the Monitoring page's threat feed shows",
+    },
 ];
 
 /// Alias name of a threat feed id (`ti_<id>`).
@@ -1583,6 +1589,22 @@ mod tests {
         10.0.0.0/8 ; evil private\n\
         0.0.0.0/0 ; everything\n\
         2a02:4500::/32 ; SBL2\n";
+
+    #[test]
+    fn et_compromised_ips_is_an_enforceable_catalog_feed() {
+        let c = catalog_feed("et_compromised").expect("in the catalog");
+        assert!(c.url.starts_with("https://rules.emergingthreats.net/"));
+        // the list is plain addresses with # comments; private ones never block
+        let p = parse_host_list("# ET compromised\n45.9.148.1\n192.168.1.5\n\n103.1.2.3\n");
+        assert_eq!(p.skipped, 0);
+        let r = p.ranges.without_reserved().render();
+        assert!(r.iter().any(|x| x.contains("45.9.148.1")), "{:?}", r);
+        assert!(!r.iter().any(|x| x.contains("192.168.1.5")), "{:?}", r);
+        let mut ids: Vec<_> = CATALOG.iter().map(|c| c.id).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), CATALOG.len());
+    }
 
     #[test]
     fn parses_spamhaus_style_lists_and_rejects_dangerous_prefixes() {

@@ -217,7 +217,8 @@ with open(sys.argv[1], "w") as f:
 PY
 nl_api GET /firewall/threatintel
 [ "$(jget '[f["id"] for f in d["feeds"] if f["id"]=="spamhaus_drop"][0]')" = spamhaus_drop ] || nl_fail "catalog lacks spamhaus_drop: $(cat "$NL_OUT")"
-[ "$(jget 'len([f for f in d["feeds"] if not f["custom"]])')" -ge 5 ] || nl_fail "catalog too small"
+[ "$(jget '[f["id"] for f in d["feeds"] if f["id"]=="et_compromised"][0]')" = et_compromised ] || nl_fail "catalog lacks et_compromised (the Monitoring threat feed list): $(cat "$NL_OUT")"
+[ "$(jget 'len([f for f in d["feeds"] if not f["custom"]])')" -ge 7 ] || nl_fail "catalog too small"
 nl_ok "catalog: $(jget '", ".join(f["name"] for f in d["feeds"] if not f["custom"])')"
 nl_api PUT /firewall/threatintel/allow '{"url":"http://x.test/a"}'
 [ "$NL_CODE" = 400 ] || nl_fail "feed id 'allow' accepted"
