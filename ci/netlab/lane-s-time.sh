@@ -203,7 +203,7 @@ nl_api_code "bonus 0 rejected" 400 POST /segmentation/devices/$DEV/time/bonus '{
 nl_api_ok "pause internet now" POST /segmentation/devices/$DEV/time/pause '{}'
 wait_state blocked
 blocked_traffic "paused by a parent"
-grep -q "paused" <(page) || nl_fail "page does not say paused"
+wait_page "paused"    # the page reason comes from the ticker state: a single fetch right after wait_state raced it (runs 16904, 16983)
 nl_api_ok "resume" POST /segmentation/devices/$DEV/time/resume '{}'
 wait_state ok
 nl_expect_http "resume restores access" "http://$NL_WWW:8080/" "sees $NL_RTR_WAN"
