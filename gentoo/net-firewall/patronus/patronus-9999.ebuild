@@ -172,9 +172,17 @@ QA_FLAGS_IGNORED="usr/bin/patronus.*"
 # so cargo_gen_config() never runs and any later cargo_env/cargo_src_compile
 # call dies with: "FATAL: please call cargo_gen_config before using cargo_env"
 # Define src_unpack explicitly to run both (live ebuild: use cargo_live_src_unpack).
+#
+# cargo_live_src_unpack stopped doing `cd "${S}"` itself (::gentoo 2026-11-04,
+# "cargo.eclass: cargo_live_src_unpack don't cd to ${S}"), so its `cargo fetch`
+# ran in ${WORKDIR} and died with "could not find Cargo.toml" on any image whose
+# Portage snapshot is newer than that (CI base image rebuilt 2026-11-14).
+# Run it from ${S}; harmless with the older eclass that cd'd there itself.
 src_unpack() {
 	git-r3_src_unpack
+	pushd "${S}" >/dev/null || die
 	cargo_live_src_unpack
+	popd >/dev/null || die
 }
 
 src_configure() {
