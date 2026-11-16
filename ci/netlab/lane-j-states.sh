@@ -86,7 +86,8 @@ nl_api_ok "kill nothing" DELETE "/firewall/states?src=192.168.50.10&dport=9100&p
 nl_ok "kill by address removes the rest; a repeat kills 0 without error"
 
 echo "=== traffic still works"
-C python3 "$NL_T/nl-conn.py" $NL_WWW 9100 >"$NL_OUT" 2>&1 || nl_fail "a new connection fails after the kills"
+# the hold-open server never sends data, so connect only (nl-conn.py waits for a banner)
+C python3 -c 'import socket,sys; socket.create_connection((sys.argv[1], 9100), timeout=3).close()' $NL_WWW >"$NL_OUT" 2>&1 || { cat "$NL_OUT"; nl_fail "a new connection fails after the kills"; }
 nl_ok "new connections are accepted again"
 nl_web GET /firewall
 [ "$NL_CODE" = 200 ] && grep -q 'id="tab-states"' "$NL_OUT" || nl_fail "the Firewall page has no States tab ($NL_CODE)"

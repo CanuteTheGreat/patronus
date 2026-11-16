@@ -125,8 +125,20 @@ pub async fn list_states(State(_s): State<AppState>, Query(q): Query<ListQuery>)
     let table = tokio::task::spawn_blocking(read_table).await;
     let text = match table {
         Ok(Ok(t)) => t,
-        Ok(Err(e)) => return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": e}))).into_response(),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        Ok(Err(e)) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e})),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
     };
     let all = parse_states(&text);
     let total = all.len();
@@ -164,7 +176,11 @@ pub fn kill_args(q: &KillQuery) -> Result<Vec<String>, String> {
     let mut filters = 0;
     if let Some(p) = q.proto.as_deref().filter(|p| !p.is_empty()) {
         let p = p.to_ascii_lowercase();
-        if !["tcp", "udp", "icmp", "icmpv6", "sctp", "dccp", "gre", "udplite"].contains(&p.as_str()) {
+        if ![
+            "tcp", "udp", "icmp", "icmpv6", "sctp", "dccp", "gre", "udplite",
+        ]
+        .contains(&p.as_str())
+        {
             return Err(format!("Invalid protocol {p:?}"));
         }
         a.extend(["-p".into(), p]);
@@ -216,10 +232,7 @@ pub fn deleted_count(stderr: &str) -> u64 {
     stderr
         .lines()
         .find(|l| l.contains("flow entries have been deleted"))
-        .and_then(|l| {
-            l.split_whitespace()
-                .find_map(|w| w.parse::<u64>().ok())
-        })
+        .and_then(|l| l.split_whitespace().find_map(|w| w.parse::<u64>().ok()))
         .unwrap_or(0)
 }
 
@@ -227,7 +240,13 @@ pub fn deleted_count(stderr: &str) -> u64 {
 pub async fn kill_states(State(_s): State<AppState>, Query(q): Query<KillQuery>) -> Response {
     let args = match kill_args(&q) {
         Ok(a) => a,
-        Err(e) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e}))).into_response(),
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e})),
+            )
+                .into_response()
+        }
     };
     let run = tokio::task::spawn_blocking(move || {
         std::process::Command::new("conntrack").args(&args).output()
@@ -245,8 +264,16 @@ pub async fn kill_states(State(_s): State<AppState>, Query(q): Query<KillQuery>)
                 (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("conntrack -D failed: {}", err.trim())}))).into_response()
             }
         }
-        Ok(Err(e)) => (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": format!("conntrack is not available: {e}")}))).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        Ok(Err(e)) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": format!("conntrack is not available: {e}")})),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -293,24 +320,54 @@ ipv6     10 icmpv6   58 29 src=fd00:50::10 dst=2001:db8:100::10 type=128 code=0 
     #[test]
     fn kill_needs_an_address_or_port_and_types_them() {
         assert!(kill_args(&KillQuery::default()).is_err());
-        let proto_only = KillQuery { proto: Some("tcp".into()), ..Default::default() };
+        let proto_only = KillQuery {
+            proto: Some("tcp".into()),
+            ..Default::default()
+        };
         assert!(kill_args(&proto_only).is_err());
-        let bad = KillQuery { src: Some("1.2.3.4; reboot".into()), ..Default::default() };
+        let bad = KillQuery {
+            src: Some("1.2.3.4; reboot".into()),
+            ..Default::default()
+        };
         assert!(kill_args(&bad).unwrap_err().starts_with("Invalid address"));
-        let ok = KillQuery { src: Some("192.168.50.10".into()), dport: Some(443), proto: Some("TCP".into()), ..Default::default() };
+        let ok = KillQuery {
+            src: Some("192.168.50.10".into()),
+            dport: Some(443),
+            proto: Some("TCP".into()),
+            ..Default::default()
+        };
         assert_eq!(
             kill_args(&ok).unwrap(),
             vec!["-D", "-p", "tcp", "-s", "192.168.50.10", "--dport", "443"]
         );
-        let no_proto = KillQuery { src: Some("10.0.0.1".into()), dport: Some(80), ..Default::default() };
-        assert!(kill_args(&no_proto).unwrap_err().contains("needs a protocol"));
-        let v6 = KillQuery { dst: Some("fd00:50::10".into()), ..Default::default() };
-        assert!(kill_args(&v6).unwrap().ends_with(&["-f".to_string(), "ipv6".to_string()]));
+        let no_proto = KillQuery {
+            src: Some("10.0.0.1".into()),
+            dport: Some(80),
+            ..Default::default()
+        };
+        assert!(kill_args(&no_proto)
+            .unwrap_err()
+            .contains("needs a protocol"));
+        let v6 = KillQuery {
+            dst: Some("fd00:50::10".into()),
+            ..Default::default()
+        };
+        assert!(kill_args(&v6)
+            .unwrap()
+            .ends_with(&["-f".to_string(), "ipv6".to_string()]));
     }
 
     #[test]
     fn counts_deleted() {
-        assert_eq!(deleted_count("conntrack v1.4.8: 3 flow entries have been deleted.\n"), 3);
-        assert_eq!(deleted_count("conntrack v1.4.8 (conntrack-tools): 0 flow entries have been deleted.\n"), 0);
+        assert_eq!(
+            deleted_count("conntrack v1.4.8: 3 flow entries have been deleted.\n"),
+            3
+        );
+        assert_eq!(
+            deleted_count(
+                "conntrack v1.4.8 (conntrack-tools): 0 flow entries have been deleted.\n"
+            ),
+            0
+        );
     }
 }
