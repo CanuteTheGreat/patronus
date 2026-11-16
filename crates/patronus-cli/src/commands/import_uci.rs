@@ -357,6 +357,12 @@ pub struct WifiPlan {
     pub band: Option<String>,
     pub channel: Option<i64>,
     pub country: Option<String>,
+    /// Radio `htmode` (`HE80`, `VHT80`, ...): kept for the report, the AP renderer picks its own.
+    pub htmode: Option<String>,
+    /// The section asked for 802.11r fast transition (`ieee80211r '1'`). Never imported: on the
+    /// GL-AX1800 (ath11k, IPQ6018) FT is the trigger of the Wi-Fi firmware crash, so Patronus APs
+    /// stay FT-off until an operator turns it on.
+    pub fast_transition: bool,
     /// Patronus device (`--map <section>=<device>`), needed for an AP.
     pub device: Option<String>,
 }
@@ -1094,7 +1100,20 @@ fn wireless_plan(plan: &mut Plan, files: &Files, maps: &BTreeMap<String, String>
         .map(|d| (d.label(), d))
         .collect();
     for d in radios.values() {
-        unmapped_opts(plan, "wireless", d, &["band", "channel", "country"]);
+        // `path`/`type` are hardware ids, `htmode` is kept in the plan (`cell_density`, `txpower`, ... are reported)
+        unmapped_opts(
+            plan,
+            "wireless",
+            d,
+            &["band", "channel", "country", "htmode", "path", "type"],
+        );
+        if d.get("path").is_some_and(|p| p.contains("c000000.wifi")) {
+            plan.notes.push(format!(
+                "wireless: radio '{}' is the IPQ6018 ath11k Wi-Fi (GL-AX1800 class): the per-AP \
+                 device names come from the board's patronus-ap profile, pass them with --map <section>=<device>",
+                d.label()
+            ));
+        }
     }
     for s in sections(files, "wireless", "wifi-iface") {
         let section = s.label();
@@ -1115,8 +1134,16 @@ fn wireless_plan(plan: &mut Plan, files: &Files, maps: &BTreeMap<String, String>
                 .and_then(|d| d.get("channel"))
                 .and_then(|c| c.parse().ok()),
             country: dev.and_then(|d| d.get("country")).map(str::to_string),
+            htmode: dev.and_then(|d| d.get("htmode")).map(str::to_string),
+            fast_transition: s.flag("ieee80211r").unwrap_or(false),
             device: maps.get(&section).cloned(),
         });
+        if s.flag("ieee80211r").unwrap_or(false) {
+            plan.notes.push(format!(
+                "wireless: '{section}' had 802.11r on (mobility_domain/ft_over_ds): NOT imported, the AP comes up with fast \
+                 transition off (it triggers the ath11k firmware crash on IPQ60xx); roaming falls back to plain re-association"
+            ));
+        }
         unmapped_opts(
             plan,
             "wireless",
@@ -1129,6 +1156,13 @@ fn wireless_plan(plan: &mut Plan, files: &Files, maps: &BTreeMap<String, String>
                 "key",
                 "disabled",
                 "network",
+                // 802.11r settings: reported above, never imported
+                "ieee80211r",
+                "mobility_domain",
+                "ft_over_ds",
+                "ft_psk_generate_local",
+                "r1_key_holder",
+                "pmk_r1_push",
             ],
         );
     }
@@ -2046,5 +2080,85 @@ mod tests {
         let from_dir = load_dir(&fixture_dir()).unwrap();
         assert_eq!(files, from_dir);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+    // ---- GL-AX1800 (IPQ6018 ath11k) dumb-AP config, OpenWrt 25.12 layout
+
+    fn ax1800_plan() -> Plan {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/uci-ax1800");
+        let maps = parse_maps(&[
+            "default_radio0=wl24-ap".into(),
+            "iot_radio0=wl24-iot".into(),
+            "default_radio1=wl5-ap".into(),
+            "iot_radio1=wl5-iot".into(),
+        ])
+        .unwrap();
+        build_plan(&load_dir(&dir).unwrap(), &maps)
+    }
+
+    #[test]
+    fn ax1800_two_ssids_per_band_in_order() {
+        let p = ax1800_plan();
+        let got: Vec<_> = p
+            .wifi
+            .iter()
+            .map(|w| {
+                (
+                    w.section.as_str(),
+                    w.band.as_deref(),
+                    w.ssid.as_str(),
+                    w.disabled,
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("default_radio0", Some("2g"), "Example-Main", false),
+                ("iot_radio0", Some("2g"), "Example-IoT", false),
+                ("default_radio1", Some("5g"), "Example-Main", false),
+                ("iot_radio1", Some("5g"), "Example-IoT", true),
+            ]
+        );
+        assert_eq!(p.wifi[2].htmode.as_deref(), Some("HE80"));
+        assert_eq!(wifi_security(&p.wifi[0].encryption), Some("wpa2_wpa3"));
+        assert_eq!(wifi_security(&p.wifi[1].encryption), Some("wpa2"));
+    }
+
+    #[test]
+    fn ax1800_80211r_is_reported_and_not_imported() {
+        let p = ax1800_plan();
+        assert!(p.wifi[0].fast_transition && p.wifi[2].fast_transition);
+        assert!(!p.wifi[1].fast_transition && !p.wifi[3].fast_transition);
+        let r: Vec<_> = p.notes.iter().filter(|n| n.contains("802.11r")).collect();
+        assert_eq!(r.len(), 2, "{:?}", p.notes);
+        assert!(r.iter().all(|n| n.contains("NOT imported")));
+        // the FT options are known options: they are not also listed as "not imported" leftovers
+        assert!(!p
+            .unmapped
+            .iter()
+            .any(|u| u.contains("mobility_domain") || u.contains("ft_over_ds")));
+        // radio hardware ids and htmode are not noise either; cell_density is
+        assert!(p.unmapped.iter().any(|u| u.contains("radio0")
+            && u.contains("cell_density")
+            && !u.contains("htmode")
+            && !u.contains("path")));
+    }
+
+    #[test]
+    fn ax1800_radio_is_recognised_and_dumb_ap_dhcp_is_ignored() {
+        let p = ax1800_plan();
+        assert!(p
+            .notes
+            .iter()
+            .any(|n| n.contains("IPQ6018 ath11k") && n.contains("radio0")));
+        assert!(p.notes.iter().any(|n| n.contains("ignore '1'")));
+        assert!(p.pools.is_empty(), "a dumb AP must not get a DHCP pool");
+    }
+
+    #[test]
+    fn ax1800_report_never_prints_a_key() {
+        let r = render(&ax1800_plan(), true);
+        assert!(!r.contains("example-passphrase"), "{r}");
+        assert!(r.contains("Example-Main"));
     }
 }
