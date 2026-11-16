@@ -1,0 +1,14 @@
+[Unit]
+Description=Patronus: apply the stored config
+After=patronus-network.service
+Wants=patronus-network.service
+Before=patronus-applyd.service patronus-web.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/patronus/embedded.env
+ExecStart=/usr/libexec/patronus/apply start
+
+[Install]
+WantedBy=multi-user.target

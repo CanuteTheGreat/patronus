@@ -1,0 +1,15 @@
+[Unit]
+Description=Patronus apply broker (root)
+After=patronus-apply.service
+Requires=patronus-apply.service
+
+[Service]
+EnvironmentFile=/etc/patronus/embedded.env
+ExecStart=/usr/bin/patronus-cli applyd
+StandardOutput=append:/var/log/applyd.log
+StandardError=append:/var/log/applyd.log
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

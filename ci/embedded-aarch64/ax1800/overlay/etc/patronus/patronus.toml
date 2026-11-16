@@ -1,0 +1,4 @@
+# GL-AX1800 as a wired access point: everything bridged in br-lan, no uplink interface, no first-boot LAN/DHCP/DNS
+# setup (the router tier's [firstboot] block would create a DHCP pool: a dumb AP must not have one).
+[network]
+lan_interface = "br-lan"

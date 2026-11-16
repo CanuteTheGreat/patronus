@@ -1,0 +1,12 @@
+[Unit]
+Description=Clock from the NTP pool (busybox ntpd; the board has no RTC)
+After=patronus-network.service
+
+[Service]
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/bin/ntpd -n -p 0.pool.ntp.org -p 1.pool.ntp.org -p 2.pool.ntp.org
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+# GL-AX1800 board network: br-lan over all Ethernet ports, DHCP client or static address, the access points (hostapd).
+# Local filesystems (data volume + overlays) are already mounted by /usr/libexec/patronus/early before OpenRC starts.
+description="Patronus board network (br-lan, address, Wi-Fi APs)"
+depend() {
+	provide net localmount
+}
+start() {
+	ebegin "Bringing up the board network"
+	/usr/libexec/patronus/board-network start
+	echo "$(cut -d' ' -f1 /proc/uptime) network-up" >> /tmp/boot-times
+	eend 0
+}

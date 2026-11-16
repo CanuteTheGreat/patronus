@@ -1,0 +1,15 @@
+#!/bin/sh
+# busybox udhcpc script: address + default route + resolv.conf for the AP's br-lan
+RESOLV=/tmp/resolv.conf.auto
+case "$1" in
+bound|renew)
+  ip addr flush dev "$interface" scope global 2>/dev/null
+  ip addr add "$ip/${mask:-24}" ${broadcast:+broadcast $broadcast} dev "$interface"
+  ip route del default dev "$interface" 2>/dev/null
+  [ -n "$router" ] && for r in $router; do ip route add default via "$r" dev "$interface" metric ${metric:-10}; break; done
+  : > $RESOLV; [ -n "$domain" ] && echo "search $domain" >> $RESOLV; for d in $dns; do echo "nameserver $d" >> $RESOLV; done
+  echo "$(cut -d' ' -f1 /proc/uptime) lease-$ip" >> /tmp/boot-times
+  ;;
+deconfig) ip addr flush dev "$interface" scope global 2>/dev/null ;;
+esac
+exit 0

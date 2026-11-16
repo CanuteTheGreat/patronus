@@ -1,0 +1,10 @@
+#!/sbin/openrc-run
+# Patronus root broker: applies changes the web UI stores, runs the system login check (PAM).
+description="Patronus apply broker (root)"
+command=/usr/libexec/patronus/run
+command_args="/usr/bin/patronus-cli applyd"
+supervisor=supervise-daemon
+respawn_delay=2
+output_log=/var/log/applyd.log
+error_log=/var/log/applyd.log
+depend() { need patronus-apply; }

@@ -1,0 +1,15 @@
+# OpenWrt 25.12.6 qualcommax/ipq60xx artefacts the image reuses unchanged (fetch-stock.sh verifies the sha256 of both).
+#  - the GL-AX1800 sysupgrade tar: its FIT kernel (6.12.112 + the board's DTB) goes into the Patronus sysupgrade tar byte for byte,
+#    its squashfs root is the source of the kernel modules (for exactly that kernel), the IPQ6018 firmware and the ath11k board data.
+#  - the armsr/armv8 kernel (same 6.12.112): boots the rootfs in QEMU virt for the CI gate (IPQ6018 itself cannot be emulated).
+OWRT_REL=25.12.6
+OWRT_SYSUPGRADE=openwrt-25.12.6-qualcommax-ipq60xx-glinet_gl-ax1800-squashfs-sysupgrade.bin
+OWRT_SYSUPGRADE_URL=https://downloads.openwrt.org/releases/25.12.6/targets/qualcommax/ipq60xx/openwrt-25.12.6-qualcommax-ipq60xx-glinet_gl-ax1800-squashfs-sysupgrade.bin
+OWRT_SYSUPGRADE_SHA256=95a4d234995ef56dd13603e8ba029fc373379d53fa15428fc30a0ce596040df6
+OWRT_VIRT_KERNEL=openwrt-25.12.6-armsr-armv8-generic-kernel.bin
+OWRT_VIRT_KERNEL_URL=https://downloads.openwrt.org/releases/25.12.6/targets/armsr/armv8/openwrt-25.12.6-armsr-armv8-generic-kernel.bin
+OWRT_VIRT_KERNEL_SHA256=2b9ce48df5536e993ee691339057828488e4a31be9c2bb5d3f6120f1135fcbb0
+# OpenWrt's own factory.ubi for the board: only read, as the reference the UBI layout check (ubi-layout.py) must accept.
+OWRT_FACTORY_UBI=openwrt-25.12.6-qualcommax-ipq60xx-glinet_gl-ax1800-squashfs-factory.ubi
+OWRT_FACTORY_UBI_URL=https://downloads.openwrt.org/releases/25.12.6/targets/qualcommax/ipq60xx/openwrt-25.12.6-qualcommax-ipq60xx-glinet_gl-ax1800-squashfs-factory.ubi
+OWRT_FACTORY_UBI_SHA256=7763ce92cb8bb2856621e81b77ccf6c8fbe4b042ca98955b5b66c415f5c6a22d

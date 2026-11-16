@@ -1,0 +1,25 @@
+#!/bin/sh
+# Board network (both init systems: OpenRC patronus-board, systemd patronus-network.service): a wired dumb AP.
+#   br-lan = every Ethernet port; address by DHCP (busybox udhcpc) or AP_ADDR; then the access points (ap start).
+#   No DHCP server, no DNS server, no routing, no NAT.
+. /etc/patronus/board.sh
+case "$1" in
+start)
+  ip link add br-lan type bridge 2>/dev/null
+  # one MAC for the bridge: the first port's (stable), so the DHCP reservation keeps matching
+  first=; for p in $PORTS; do [ -d /sys/class/net/$p ] && { first=${first:-$p}; }; done
+  [ -n "$first" ] && ip link set br-lan address "$(cat /sys/class/net/$first/address)"
+  for p in $PORTS; do [ -d /sys/class/net/$p ] && { ip link set $p up; ip link set $p master br-lan; }; done
+  # no physical ports (QEMU gate: virtio eth0): bridge what exists
+  [ -n "$first" ] || for p in eth0; do [ -d /sys/class/net/$p ] && { ip link set $p up; ip link set $p master br-lan; }; done
+  ip link set br-lan up
+  if [ -n "$AP_ADDR" ]; then
+    ip addr add "$AP_ADDR" dev br-lan; [ -n "$AP_GW" ] && ip route add default via "$AP_GW" dev br-lan
+    : > /tmp/resolv.conf.auto; for d in $AP_DNS; do echo "nameserver $d" >> /tmp/resolv.conf.auto; done
+    echo "$(cut -d' ' -f1 /proc/uptime) static-$AP_ADDR" >> /tmp/boot-times
+  else
+    udhcpc -b -i br-lan -s /usr/share/udhcpc/default.script -p /run/udhcpc-br-lan.pid -S >/tmp/udhcpc.log 2>&1
+  fi
+  /usr/libexec/patronus/ap start
+  ;;
+esac

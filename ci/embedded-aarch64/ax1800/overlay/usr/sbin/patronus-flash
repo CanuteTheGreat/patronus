@@ -1,0 +1,48 @@
+#!/bin/sh
+# patronus-flash: firmware maintenance on the GL-AX1800 (Patronus embedded tier). Nothing is written to flash here:
+#   patronus-flash check <image.tar>        validate a Patronus sysupgrade image for this box, print what would change
+#   patronus-flash sysupgrade <image.tar> [--now]
+#                                           validate, then stage it on the settings volume; the next boot installs it
+#                                           from a RAM root before any service starts (upgrade-install), keeping the
+#                                           settings. --now restarts right away.
+#   patronus-flash cancel                   drop a staged upgrade
+#   patronus-flash factory-reset            wipe the settings (patronus_data) at the next boot: first-run flow again
+#   patronus-flash status                   UBI volumes, staged/last upgrade
+# Every write path validates first and fails closed (fwcheck.sh): the board must be a GL-AX1800, the image must carry
+# Patronus fwtool metadata for this board, kernel/root sha256 must match, the root image must name this board, and the
+# parts must fit the UBI volumes. Raw kernel or squashfs files are refused: only the sysupgrade tar carries the metadata.
+# OpenWrt images are not installed from Patronus: use U-Boot web recovery with OpenWrt's factory.ubi (docs section 7).
+# Test hooks: PATRONUS_DATA, PATRONUS_UBI, PATRONUS_DT_COMPAT, FW_UBINFO.
+set -u
+DATA=${PATRONUS_DATA:-/data}
+LIB=${PATRONUS_LIB:-/usr/libexec/patronus}
+. "$LIB/fwcheck.sh"
+log() { echo "patronus-flash: $*"; logger -t patronus-flash "$*" 2>/dev/null || true; }
+usage() { sed -n '2,17p' "$0"; exit 2; }
+case "${1:-}" in
+check)
+  [ $# -ge 2 ] || usage
+  W=$(mktemp -d "$DATA/.fwcheck.XXXXXX") || exit 1
+  if fw_check_tar "$2" "$W"; then log "OK: $(sed -n 's/^BUILD=//p' "$W/patronus-release") ($(cat "$W/patronus-release" | sed -n 's/^INIT=//p'))"; rc=0; else rc=1; fi
+  rm -rf "$W"; exit $rc ;;
+sysupgrade)
+  [ $# -ge 2 ] || usage
+  [ -e "$DATA/.upgrade/ready" ] && { echo "an upgrade is already staged (patronus-flash cancel to drop it)"; exit 1; }
+  rm -rf "$DATA/.upgrade.new"
+  if ! fw_check_tar "$2" "$DATA/.upgrade.new"; then rm -rf "$DATA/.upgrade.new"; exit 1; fi
+  ( cd "$DATA/.upgrade.new" && sha256sum kernel root > patronus.sha256.staged && cmp -s patronus.sha256 patronus.sha256.staged ) || {
+    rm -rf "$DATA/.upgrade.new"; fw_err "the staged copy does not match (flash full?)"; exit 1; }
+  rm -f "$DATA/.upgrade.new/patronus.sha256.staged"; sync
+  mv "$DATA/.upgrade.new" "$DATA/.upgrade" && date > "$DATA/.upgrade/ready" && sync
+  log "staged $(sed -n 's/^BUILD=//p' "$DATA/.upgrade/patronus-release"): it is installed at the next boot (settings kept)"
+  if [ "${3:-}" = --now ]; then log "restarting to install"; exec reboot; fi
+  exit 0 ;;
+cancel) rm -rf "$DATA/.upgrade" "$DATA/.upgrade.new"; sync; log "staged upgrade dropped" ;;
+factory-reset) touch "$DATA/.factory-reset"; sync; log "factory reset scheduled for the next boot" ;;
+status)
+  ${FW_UBINFO:-ubinfo} -a "${PATRONUS_UBI:-/dev/ubi0}" 2>/dev/null | grep -E '^(Volume ID|Name|Size)'
+  [ -f "$DATA/.upgrade/ready" ] && echo "staged: $(sed -n 's/^BUILD=//p' "$DATA/.upgrade/patronus-release")"
+  for r in done failed rejected; do [ -d "$DATA/.upgrade-$r" ] && echo "last upgrade $r: $(sed -n 's/^BUILD=//p' "$DATA/.upgrade-$r/patronus-release" 2>/dev/null)"; done
+  tail -5 "$DATA/upgrade.log" 2>/dev/null; exit 0 ;;
+*) usage ;;
+esac

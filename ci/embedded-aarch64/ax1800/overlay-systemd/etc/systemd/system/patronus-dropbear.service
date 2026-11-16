@@ -1,0 +1,13 @@
+[Unit]
+Description=Dropbear SSH server
+After=patronus-network.service
+
+[Service]
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+ExecStartPre=/bin/mkdir -p /etc/dropbear
+ExecStart=/usr/sbin/dropbear -F -R -p 22 -K 300
+ExecStartPost=/bin/sh -c 'echo "$(cut -d" " -f1 /proc/uptime) dropbear-up" >> /tmp/boot-times'
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

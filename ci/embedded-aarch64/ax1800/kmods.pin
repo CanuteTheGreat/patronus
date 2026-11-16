@@ -1,0 +1,43 @@
+# OpenWrt 25.12.6 kernel module packages (apk v3) the image takes for the firewall (nftables) and its NFLOG log viewer.
+# board = qualcommax/ipq60xx (installed into the GL-AX1800 image: the stock root lacks nfnetlink_log, which the
+#         firewall's `log group` rules need, so the whole netfilter set comes from these pinned packages);
+# virt  = armsr/armv8 (same 6.12.112 kernel release, only for the QEMU gate's test copy of the root).
+# The set is the dependency closure of kmod-nft-core kmod-nft-nat kmod-nft-fib kmod-nft-offload kmod-nfnetlink-log
+# (apk adbdump depends). Bump = new kmods dir + sha256 lines; fetch-kmods.sh refuses anything else.
+KMOD_URL_board=https://downloads.openwrt.org/releases/25.12.6/targets/qualcommax/ipq60xx/kmods/6.12.112-1-b5fefb5a894e3008353ac9f988245f52
+KMOD_URL_virt=https://downloads.openwrt.org/releases/25.12.6/targets/armsr/armv8/kmods/6.12.112-1-67e205f26d0458c4d12f1fd315216398
+KMOD_VERSION=6.12.112-r1
+board kmod-nft-core 266fe35e273f67fbfb6db64e46c3f59287bad96c9c77d949cc6926e82e9efeb2
+board kmod-nft-nat 681539e49f2ea4ead838016f0b33a7a8388666c70e8b879ad4433aabbf0cb45d
+board kmod-nft-fib 2ac1e52ad459d62bcd98a30c638b5b22658a675200941fa507594fa90db0f5b5
+board kmod-nfnetlink-log 6dcce0b672d0808048ff6f913d6229250357d652f1c4cbeed9b2b97265142553
+board kmod-nft-offload 39c117d1ebe380605ff8d3161c52c3535abf99185196f532d79226ef55e0e4d2
+board kmod-nf-flow 5ae85b5fb841341c2dd401439a4b1781c6efc19dac5936cfac3ee042ac2d9767
+board kmod-lib-crc32c 79f281cbb8caf42fd3a1a8b4ab31245df6a3a5915e4985787cd69a4dd9ad95f1
+board kmod-nf-conntrack6 12283e3c1ac5bfa2cc1d31de079a738857cfe757ebcf181a867290f26dcc8808
+board kmod-nf-log 69151acac87613f3a7f4e4ececd460b2112babd67763ecd71dfd751a79ec31c8
+board kmod-nf-log6 1c830314530e207bfc3da803ed0918f293a9b6a1d7ed6e135e8966e873f5b808
+board kmod-nf-nat 28161bd7dba8468476134e340098e55b37a08c62c56b93d026cc593e9d40b153
+board kmod-nf-reject d01ad8b2f5fb782e380b53aae03fee5b6539b3bd745e5fe2494b55caa84254a4
+board kmod-nf-reject6 316e4ca1e8cffe5b86177c4444ee1f011393f2263e43084a19c895f8d5e611bc
+board kmod-nfnetlink fa13f5fa24b9b287875581ae3019942ed232159546ed52f0b57046784134d57f
+board kmod-nf-conntrack 56efea9bf4c60d6ce0646707feaa7fb64601970551e071ed8b9b1229dab9b0dc
+board kmod-crypto-crc32c bb08d802cec9837c15046cb847115169209dc26d11747ee81018b3fa843c6dd9
+board kmod-crypto-hash 8d44997a6132018d2f119841049bb09cc43c70f8caf949090498d97eccf14f47
+virt kmod-nft-core 5ef5b3042439ad17098f0e4f0b98037c3aea51430eabb8b90f5deb6665b88d95
+virt kmod-nft-nat c795bf4c9b3d6ed671fea738d04aac26a2bc6829c1bd8dbce6fa81c91cd24457
+virt kmod-nft-fib 9f82e64dbd184d699e1a8dc5d7192b725a6f9a8f258078e5e3bf6b971cc25bd2
+virt kmod-nfnetlink-log 890e1d4b6bfb71f34780a5246c5aa90f847b9c7ea23c228307fd556f586857d0
+virt kmod-nft-offload 9640a00ff33286fe157d766ad611a38549124f01c092d4d9e8863e34895f3f9c
+virt kmod-nf-flow 6dbc4ca1ead8b7343df9c1200e1eff630336b04c8db4c9fd5ac8e009847e24a7
+virt kmod-lib-crc32c decf23e90f184c39edcee93594d35b4bff762073a6b9a2fae27c26f0460e9af7
+virt kmod-nf-conntrack6 280f4d3ca14cb2b917ca7fb6f8060685a7b6f431d735248361f92064f0558a4b
+virt kmod-nf-log 173d8e4aace46f19d01e6121f79e8c77449010b01a2d645eed8d11d726b602db
+virt kmod-nf-log6 38440a7f2b15efbe6ed1c028a712380a87eb8ea946d1c4322052f1f117f42a18
+virt kmod-nf-nat db42c92c1faaa962c2157914d3c3fd747ff1cf447a2ed3b3882d4b03c3b81920
+virt kmod-nf-reject bbd5e5d1a9c87d08226c9761cc530c0ce6991b5103136f09684429f001d3271e
+virt kmod-nf-reject6 cbf95c7f1359cedf7e92121bcd6eeaf8ce49e77d97885cf931eb5e0b62804a2e
+virt kmod-nfnetlink 95837dd32cf450cd8618bdcf2ffe2b9a59d2972610f24717be2d1d8b94e06c99
+virt kmod-nf-conntrack 7430bd9e167eefd580ba87f3a88b50cbda0f3b9c2b1eecd51d24ddf45a2548f9
+virt kmod-crypto-crc32c fb2b19021a7c9c1d08c481189351deb80b8f1b6d490f0f2dfc208623ad5b079f
+virt kmod-crypto-hash 9bdbe2152adce11d91676360a5af6fb41b07f1a7fe00626e6ce33f9aea31cd7e

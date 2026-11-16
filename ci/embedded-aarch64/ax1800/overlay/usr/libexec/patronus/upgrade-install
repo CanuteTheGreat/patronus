@@ -1,0 +1,101 @@
+#!/bin/sh
+# upgrade-install: installs an upgrade staged by `patronus-flash sysupgrade` (GL-AX1800, both init systems).
+# The kernel command line pins root=/dev/ubiblock0_1, so the root volume cannot be written while it is the running root.
+# The write therefore happens at the start of the next boot, before any service, from a RAM root:
+#   verify   (early boot, child of PID 1)  re-check the staged parts (fwcheck.sh: board, sha256, FIT/squashfs, the root's
+#                                         patronus-release, UBI room). Bad -> /data/.upgrade-rejected, normal boot goes on.
+#   install  (PID 1, from patronus-init)  copy the parts + busybox + the UBI tools to a tmpfs, unmount everything,
+#                                         pivot_root into it and exec stage2. Any failure before the pivot: nothing has been
+#                                         written, the staged upgrade is marked failed and the box restarts into the old system.
+#   stage2   (PID 1, RAM root)            release ubiblock0_1, write root then kernel (volumes 1 and 0 keep their IDs, grown
+#                                         with ubirsvol when needed), read both back and compare sha256, record the result
+#                                         on patronus_data, restart.
+#   ubi-write <kernel> <root>             the write + read-back step alone (used by stage2; tested against nandsim)
+# A power cut during stage2 leaves a half-written kernel or root: recover with U-Boot's web recovery and factory.ubi
+# (docs/embedded-routers.md section 7). Log: /data/upgrade.log (and the console).
+# Test hooks: PATRONUS_UBI (UBI device, default /dev/ubi0), UBI_LEB (bytes).
+set -u
+DATA=${PATRONUS_DATA:-/data}
+S=$DATA/.upgrade
+U=${PATRONUS_UBI:-/dev/ubi0}
+LEB=${UBI_LEB:-126976}
+log() { # console when running as PID 1 (install/stage2), stderr otherwise; plus $DATA/upgrade.log when it is mounted
+  if [ "$$" = 1 ]; then echo "upgrade: $*" >/dev/console 2>/dev/null; else echo "upgrade: $*" >&2; fi
+  [ -d "$DATA" ] && echo "$(cut -d' ' -f1 /proc/uptime) $*" >> "$DATA/upgrade.log" 2>/dev/null; return 0; }
+
+node() { # volume id -> its character device (made from sysfs when there is no hotplug helper)
+  n=${U}_$1
+  [ -c "$n" ] || { d=$(cat "/sys/class/ubi/$(basename "$U")_$1/dev" 2>/dev/null) && mknod "$n" c "${d%:*}" "${d#*:}"; }
+  echo "$n"
+}
+vol_lebs() { ubinfo "$U" -n "$1" | sed -n 's/^Size: *\([0-9]*\) LEBs.*/\1/p'; }
+
+# write_vol <id> <file>: grow the volume if needed, write it, read it back
+write_vol() {
+  id=$1; f=$2; size=$(wc -c < "$f"); need=$(( (size + LEB - 1) / LEB )); have=$(vol_lebs "$id")
+  [ -n "$have" ] || { log "volume $id not found"; return 1; }
+  if [ "$need" -gt "$have" ]; then ubirsvol "$U" -n "$id" -S "$need" || { log "cannot grow volume $id to $need LEBs"; return 1; }; fi
+  n=$(node "$id") || return 1
+  ubiupdatevol "$n" "$f" || { log "ubiupdatevol volume $id failed"; return 1; }
+  want=$(sha256sum < "$f" | cut -d' ' -f1); got=$(head -c "$size" "$n" | sha256sum | cut -d' ' -f1)
+  [ "$want" = "$got" ] || { log "volume $id read-back mismatch"; return 1; }
+  log "volume $id: $size bytes written and verified"
+}
+
+ubi_write() {
+  k=$1; r=$2
+  [ "$(ubinfo "$U" -n 0 | sed -n 's/^Name: *//p')" = kernel ] && [ "$(ubinfo "$U" -n 1 | sed -n 's/^Name: *//p')" = rootfs ] \
+    || { log "UBI volumes 0/1 are not kernel/rootfs: refusing to write"; return 1; }
+  # the root block device on volume 1 must be released first (nothing uses it once the old root is unmounted)
+  if [ -e /sys/class/ubi/"$(basename "$U")"_1 ] && ls /sys/block 2>/dev/null | grep -qx "ubiblock$(basename "$U" | tr -dc 0-9)_1"; then
+    i=0; until ubiblock -r "$(node 1)" 2>/dev/null; do i=$((i + 1)); [ $i -ge 10 ] && { log "ubiblock on the root volume is still busy"; return 1; }; sleep 1; done
+  fi
+  write_vol 1 "$r" && write_vol 0 "$k"
+}
+
+restart_now() { sync; busybox reboot -f; sleep 30; echo b > /proc/sysrq-trigger; }
+
+case "${1:-}" in
+verify)
+  [ -f "$S/ready" ] || exit 1
+  . "${PATRONUS_LIB:-/usr/libexec/patronus}/fwcheck.sh"
+  if fw_board_ok 2>>"$DATA/upgrade.log" && fw_check_parts "$S" 2>>"$DATA/upgrade.log"; then log "staged upgrade $(sed -n 's/^BUILD=//p' "$S/patronus-release") verified"; exit 0; fi
+  log "staged upgrade failed verification: not installed (see $DATA/upgrade.log)"; rm -rf "$DATA/.upgrade-rejected"; mv "$S" "$DATA/.upgrade-rejected"; exit 1 ;;
+
+install)
+  fail() { log "install aborted before writing anything: $*"; rm -rf /data/.upgrade-failed; mv "$S" /data/.upgrade-failed 2>/dev/null; umount /mnt 2>/dev/null; restart_now; }
+  export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+  mount -t tmpfs -o size=160m,mode=0755 upgrade-ram /mnt || fail "no tmpfs"
+  mkdir -p /mnt/img /mnt/bin /mnt/lib /mnt/proc /mnt/sys /mnt/dev /mnt/old /mnt/data || fail "mkdir"
+  cp "$S/kernel" "$S/root" "$S/patronus.sha256" /mnt/img/ || fail "copy to RAM (space?)"
+  (cd /mnt/img && sha256sum -c patronus.sha256 >/dev/null 2>&1) || fail "RAM copy does not match patronus.sha256"
+  for b in /bin/busybox /usr/sbin/ubinfo /usr/sbin/ubiupdatevol /usr/sbin/ubirsvol /usr/sbin/ubiblock; do
+    cp "$b" /mnt/bin/ || fail "copy $b"
+    # shared libraries (musl loader prints "name => path (addr)")
+    for l in $(/lib/ld-musl-*.so.1 --list "$b" 2>/dev/null | sed -n 's/.*=> \([^ ]*\) .*/\1/p'); do [ -e "/mnt/lib/${l##*/}" ] || cp -L "$l" /mnt/lib/; done
+  done
+  cp -L /lib/ld-musl-*.so.1 /mnt/lib/ || fail "musl loader"
+  for a in sh mount umount sync sleep cat echo mkdir mknod sed grep head cut ls tr basename sha256sum wc mv rm; do ln -sf busybox "/mnt/bin/$a"; done
+  cp /usr/libexec/patronus/upgrade-install /mnt/bin/upgrade-install || fail "copy installer"
+  mv "$S" /data/.upgrade-installing || fail "cannot mark the upgrade as in progress"
+  log "installing $(sed -n 's/^BUILD=//p' /data/.upgrade-installing/patronus-release 2>/dev/null) from RAM"
+  sync
+  for m in /data /sys/fs/cgroup /dev/pts /var/log /run /tmp; do umount "$m" 2>/dev/null || umount -l "$m" 2>/dev/null; done
+  mount --move /proc /mnt/proc && mount --move /sys /mnt/sys && mount --move /dev /mnt/dev || { mount -t ubifs ubi0:patronus_data /data; fail "mount --move"; }
+  cd /mnt && pivot_root . old || { mount -t ubifs ubi0:patronus_data /data 2>/dev/null; fail "pivot_root"; }
+  exec /bin/busybox sh /bin/upgrade-install stage2 ;;
+
+stage2)
+  export PATH=/bin
+  umount -l /old 2>/dev/null
+  if ubi_write /img/kernel /img/root; then r=done; else r=failed; fi
+  if mount -t ubifs ubi0:patronus_data /data 2>/dev/null; then
+    rm -rf "/data/.upgrade-$r.old"; [ -d "/data/.upgrade-$r" ] && mv "/data/.upgrade-$r" "/data/.upgrade-$r.old"
+    mv /data/.upgrade-installing "/data/.upgrade-$r"; rm -f "/data/.upgrade-$r/kernel" "/data/.upgrade-$r/root"
+    log "install $r"; umount /data
+  fi
+  log "install $r, restarting"; restart_now ;;
+
+ubi-write) ubi_write "$2" "$3" ;;
+*) sed -n '2,20p' "$0"; exit 2 ;;
+esac

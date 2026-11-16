@@ -1,0 +1,18 @@
+#!/bin/sh
+# Boot-time apply (both init systems: OpenRC patronus-apply, systemd patronus-apply.service).
+# ROLE=ap (this board's role): a dumb AP has no firewall, no routing and no DHCP/DNS, so the stored router config is NOT
+# applied at boot (the web UI and the broker stay up; an administrator applying a config from the UI is their call).
+set -a; . /etc/patronus/embedded.env; set +a
+. /etc/patronus/board.sh
+case "${1:-start}" in
+start)
+  s=$(cut -d' ' -f1 /proc/uptime)
+  if [ "$ROLE" = ap ]; then
+    echo "apply: ROLE=ap, nothing applied at boot" > /var/log/apply.log
+  else
+    patronus-cli apply > /var/log/apply.log 2>&1
+  fi
+  echo "apply rc=$? ${s}->$(cut -d' ' -f1 /proc/uptime)" >> /var/log/apply.log
+  ;;
+esac
+exit 0

@@ -1,0 +1,17 @@
+#!/bin/sh
+# ubi-data <ubi-device>: make sure the settings volume patronus_data exists on the GL-AX1800's UBI (early boot).
+# First boot after factory.ubi (U-Boot recovery) or an OpenWrt sysupgrade: OpenWrt's rootfs_data holds nothing Patronus
+# uses (after factory.ubi it has autoresized over the whole flash). It is replaced by patronus_data, sized to leave
+# HEADROOM_LEB (32 MiB) free so a later upgrade can grow the kernel/root volumes in place without touching the settings;
+# never smaller than 132 LEBs (16 MiB). Prints the volume id. Exit 1 if there is no settings volume afterwards.
+U=${1:-/dev/ubi0}; HEADROOM_LEB=${HEADROOM_LEB:-264}; MIN_LEB=132
+vid() { ubinfo "$U" -N "$1" 2>/dev/null | sed -n 's/^Volume ID: *\([0-9]*\).*/\1/p'; }
+if [ -z "$(vid patronus_data)" ]; then
+  [ -n "$(vid rootfs_data)" ] && ubirmvol "$U" -N rootfs_data >&2
+  avail=$(ubinfo "$U" | sed -n 's/^Amount of available logical eraseblocks: *\([0-9]*\).*/\1/p')
+  lebs=$(( ${avail:-0} - HEADROOM_LEB )); [ "$lebs" -lt "$MIN_LEB" ] && lebs=${avail:-0}
+  ubimkvol "$U" -N patronus_data -S "$lebs" >&2 || ubimkvol "$U" -N patronus_data -m >&2
+  echo "ubi-data: created patronus_data ($lebs LEBs of ${avail:-?} free)" >&2
+fi
+id=$(vid patronus_data); [ -n "$id" ] || exit 1
+echo "$id"

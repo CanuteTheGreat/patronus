@@ -55,7 +55,17 @@ tn "gen: refuses to overwrite" $H gen "$FX" "$other" --out "$W/gen"
 
 # list / matrix
 t "list --json parses" sh -c "$H list --json | python3 -c 'import json,sys; json.load(sys.stdin)'"
-eq "matrix: slate x (openrc, systemd)" "$($H matrix | python3 -c 'import json,sys; print(",".join(sorted(e["init"] for e in json.load(sys.stdin)["include"])))')" "openrc,systemd"
+eq "matrix: slate x (openrc, systemd)" "$($H matrix | python3 -c 'import json,sys; print(",".join(sorted(e["init"] for e in json.load(sys.stdin)["include"] if e["device"] == "glinet-gl-ar750s-nor-nand")))')" "openrc,systemd"
+eq "matrix: gl-ax1800 x (openrc, systemd), aarch64 musl" "$($H matrix | python3 -c 'import json,sys; print(",".join(sorted(e["init"] + ":" + e["rust_target"] for e in json.load(sys.stdin)["include"] if e["device"] == "glinet-gl-ax1800")))')" "openrc:aarch64-unknown-linux-musl,systemd:aarch64-unknown-linux-musl"
+
+# GL-AX1800 profile: the values its image scripts read (ci/embedded-aarch64/ax1800)
+AX=$ROOT/profiles/hw/qualcommax-gl-ax1800.toml
+eval "$($H env "$AX")"
+eq "ax1800 board id"         "$HW_DEVICE_OPENWRT_BOARD" "glinet,gl-ax1800"
+eq "ax1800 sysupgrade dir"   "$HW_SYSUPGRADE_DIR" "sysupgrade-glinet_gl-ax1800"
+eq "ax1800 musl loader"      "$HW_ARCH_MUSL_LDSO" "ld-musl-aarch64.so.1"
+eq "ax1800 NAND geometry"    "$HW_NAND_UBI_MTD_BYTES/$HW_NAND_PEB_BYTES/$HW_NAND_LEB_BYTES/$HW_NAND_RESERVED_PEBS" "120586240/131072/126976/24"
+eq "ax1800 init variants"    "$HW_INIT" "openrc systemd"
 
 # the consumers hold no device constants any more
 for f in assemble.sh nor-budget.sh nor-ci.sh; do

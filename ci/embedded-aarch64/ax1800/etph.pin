@@ -1,0 +1,7 @@
+# ETPhoneHome router client baked into every GL-AX1800 image (OpenRC + systemd).
+# Source: Forgejo CanuteTheGreat/etphonehome release; the OpenWrt package for aarch64_cortex-a53 (IPQ6018 = 4x Cortex-A53).
+# Bump = change these lines (fetch-etph.sh verifies the sha256 of the .ipk, assemble.sh refuses anything else).
+ETPH_VERSION=0.9.2
+ETPH_IPK=etph_0.9.2-r1_aarch64_cortex-a53.ipk
+ETPH_URL=https://git.canutethegreat.com/CanuteTheGreat/etphonehome/releases/download/v0.9.2/etph_0.9.2-r1_aarch64_cortex-a53.ipk
+ETPH_SHA256=e737495308e7dcaa55ea4561ad605ef45fb1f21edd0cc75d427d978c5a52e6a8

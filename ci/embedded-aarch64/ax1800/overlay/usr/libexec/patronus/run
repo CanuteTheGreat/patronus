@@ -1,0 +1,5 @@
+#!/bin/sh
+# run <program> [args]: exec a Patronus daemon with /etc/patronus/embedded.env (the OpenRC supervise-daemon
+# services use it so the environment does not depend on what openrc-run passes through)
+set -a; . /etc/patronus/embedded.env; set +a
+exec "$@"

@@ -1,0 +1,13 @@
+[Unit]
+Description=ETPhoneHome router client (phone as WAN over USB/Wi-Fi)
+After=patronus-network.service
+
+[Service]
+ExecStart=/usr/libexec/patronus/etph-run
+StandardOutput=append:/var/log/etph.log
+StandardError=append:/var/log/etph.log
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

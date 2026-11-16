@@ -1,0 +1,65 @@
+#!/bin/sh
+# ap render|start|stop: hostapd for the GL-AX1800's two radios from /etc/patronus/ap.env (board.sh sources it).
+#   one hostapd per radio (phy), one BSS per entry of AP_SSIDS, all bridged into br-lan:
+#   2 SSIDs -> 2 BSS on 2.4 GHz + 2 BSS on 5 GHz. Config files: /run/hostapd/<band>.conf (0600, they hold the keys).
+# 802.11r (fast transition) is NEVER written unless ap.env sets AP_FT=1: on this board's ath11k stock-firmware lineage it
+# is what crashes the Wi-Fi firmware (and then the kernel in ath11k_core_ssr_notifier_cb).
+# Test hooks: AP_RENDER_OUT (directory), AP_PHY24 / AP_PHY5 (phy names), AP_BOARD (board.sh path).
+. ${AP_BOARD:-/etc/patronus/board.sh}
+OUTD=${AP_RENDER_OUT:-/run/hostapd}
+phy_band() { # phy 2|5: does the phy offer that band? (5 GHz = a 5xxx MHz frequency)
+  iw phy "$1" info 2>/dev/null | grep -qE "^\s+\* $2[0-9]{3}(\.[0-9])? MHz" ; }
+find_phys() {
+  P24=${AP_PHY24:-}; P5=${AP_PHY5:-}
+  for p in $(ls /sys/class/ieee80211 2>/dev/null); do
+    [ -z "$P5" ] && phy_band $p 5 && P5=$p
+    [ -z "$P24" ] && phy_band $p 2 && ! phy_band $p 5 && P24=$p
+  done
+}
+sec_lines() { # SEC KEY
+  case "$1" in
+    wpa3)   echo "wpa=2"; echo "wpa_key_mgmt=SAE"; echo "ieee80211w=2"; echo "sae_password=$2"; echo "sae_require_mfp=1" ;;
+    wpa2+3) echo "wpa=2"; echo "wpa_key_mgmt=WPA-PSK SAE"; echo "ieee80211w=1"; echo "wpa_passphrase=$2"; echo "sae_password=$2" ;;
+    *)      echo "wpa=2"; echo "wpa_key_mgmt=WPA-PSK"; echo "ieee80211w=0"; echo "wpa_passphrase=$2" ;;
+  esac
+  echo "rsn_pairwise=CCMP"; }
+render_band() { # 24|5 phy
+  b=$1; phy=$2; f=$OUTD/ap$b.conf; first=1; n=0
+  if [ $b = 24 ]; then ch=$AP_CHAN24; hw=g; [ "$ch" = auto ] && ch=0; pre=wl24; else ch=$AP_CHAN5; hw=a; [ "$ch" = auto ] && ch=0; pre=wl5; fi
+  for s in $AP_SSIDS; do
+    eval "ssid=\$SSID_$s key=\$KEY_$s sec=\${SEC_$s:-wpa2} hide=\${HIDE_$s:-0} only=\${BANDS_$s:-both}"
+    [ "$only" = both ] || [ "$only" = $b ] || continue
+    [ -n "$ssid" ] && [ -n "$key" ] || { echo "ap: SSID_$s / KEY_$s missing" >&2; continue; }
+    n=$((n + 1)); ifn=$pre-$s
+    if [ $first = 1 ]; then
+      first=0; : > $f; chmod 600 $f
+      { echo "driver=nl80211"; echo "country_code=$AP_COUNTRY"; echo "ieee80211d=1"; echo "ieee80211h=$([ $b = 5 ] && echo 1 || echo 0)"
+        echo "hw_mode=$hw"; echo "channel=$ch"; echo "wmm_enabled=1"; echo "ieee80211n=1"; echo "ieee80211ax=1"
+        [ $b = 5 ] && { echo "ieee80211ac=1"; case "$AP_HT5" in 80) echo "ht_capab=[HT40+]"; echo "vht_oper_chwidth=1"; echo "he_oper_chwidth=1";; 40) echo "ht_capab=[HT40+]";; esac; }
+        [ "$ch" = 0 ] && echo "acs_num_scans=1"
+        echo "interface=$ifn"; echo "bridge=br-lan"; echo "ctrl_interface=/run/hostapd"; } >> $f
+    else
+      echo "bss=$ifn" >> $f; echo "bridge=br-lan" >> $f
+    fi
+    { echo "ssid=$ssid"; echo "ignore_broadcast_ssid=$hide"; echo "ap_isolate=0"; sec_lines "$sec" "$key"
+      if [ "${AP_FT:-0}" = 1 ]; then echo "ieee80211r=1"; echo "mobility_domain=${AP_MDID:-4f57}"; echo "ft_psk_generate_local=1"; echo "nas_identifier=ax1800-$b"; fi
+    } >> $f
+  done
+  [ $n -gt 0 ] && echo "$f $phy $n"; }
+case "$1" in
+render) mkdir -p $OUTD; find_phys
+  [ -n "$P24" ] && render_band 24 $P24
+  [ -n "$P5" ] && render_band 5 $P5
+  true ;;
+start)
+  mkdir -p $OUTD; chmod 700 $OUTD; find_phys
+  [ -n "$P24$P5" ] || { echo "ap: no Wi-Fi phy found (ath11k not loaded? see /tmp/insmod.log, /tmp/caldata.log)"; exit 0; }
+  [ -n "$AP_SSIDS" ] || { echo "ap: no AP_SSIDS configured (/etc/patronus/ap.env): Wi-Fi stays off"; exit 0; }
+  /usr/libexec/patronus/ap render | while read -r f phy n; do
+    b=$(basename $f .conf)
+    # the first BSS' netdev is created on its phy here (hostapd then adds the `bss=` ones itself)
+    iw phy $phy interface add $(sed -n 's/^interface=//p' $f) type __ap 2>/dev/null
+    hostapd -B -P /run/hostapd-$b.pid $f > /tmp/hostapd-$b.log 2>&1 || { echo "hostapd $b failed"; cat /tmp/hostapd-$b.log; }
+  done ;;
+stop) for p in /run/hostapd-*.pid; do [ -f "$p" ] && kill $(cat $p) 2>/dev/null; done; true ;;
+esac

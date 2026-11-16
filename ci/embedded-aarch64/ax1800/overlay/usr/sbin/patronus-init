@@ -1,0 +1,19 @@
+#!/bin/sh
+# /sbin/init of both embedded variants: the shared early boot (/usr/libexec/patronus/early: /dev, data volume,
+# overlays, kmods, ath11k calibration), then exec the image's init system as PID 1: OpenRC (openrc-init) or systemd,
+# as recorded in /etc/patronus-init at image build.
+# There is no automatic way back to OpenWrt on this board: a box that does not come up is recovered with U-Boot's web
+# recovery (reset held at power-on, http://192.168.1.1) and a factory.ubi (Patronus or OpenWrt); a factory.bin uploaded
+# there does NOT work (docs/embedded-routers.md section 7).
+/usr/libexec/patronus/early
+# a verified staged upgrade: PID 1 goes to the installer (RAM root, writes kernel + root, restarts)
+[ -f /tmp/upgrade-pending ] && exec /usr/libexec/patronus/upgrade-install install
+. /etc/patronus-init
+case "$INIT" in
+  openrc)  INIT_BIN=/sbin/openrc-init ;;
+  systemd) INIT_BIN=/usr/lib/systemd/systemd ;;
+esac
+echo "$(cut -d' ' -f1 /proc/uptime) exec-$INIT" >> /tmp/boot-times
+exec $INIT_BIN
+echo "$(cut -d' ' -f1 /proc/uptime) exec-$INIT-FAILED" >> /tmp/boot-times
+exec /bin/sh
