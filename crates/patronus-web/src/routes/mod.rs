@@ -412,6 +412,7 @@ fn api_routes() -> Router<AppState> {
         .route("/auth/2fa/disable", post(crate::auth::totp_disable))
         .merge(api::status::router())
         .merge(api::firewall::router())
+        .merge(api::states::router())
         .merge(api::lan::router())
         .merge(api::ha::router())
         .merge(api::qos::router())

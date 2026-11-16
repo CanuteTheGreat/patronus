@@ -6,6 +6,7 @@ pub mod apikeys;
 pub mod authservers;
 pub mod backup_targets;
 pub mod firewall;
+pub mod states;
 pub mod groups;
 pub mod ha;
 pub mod insight_history;

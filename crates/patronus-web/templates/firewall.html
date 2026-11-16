@@ -65,6 +65,7 @@
         <button class="tab-btn" data-tab="tab-geoip">GeoIP</button>
         <button class="tab-btn" data-tab="tab-threat">Threat Intel</button>
         <button class="tab-btn" data-tab="tab-logs">Logs</button>
+        <button class="tab-btn" data-tab="tab-states">States</button>
     </div>
 
     <!-- ============================ RULES ============================ -->
@@ -540,6 +541,20 @@
         <p id="log-empty" class="empty" style="display:none">No log lines match.</p>
     </div>
 
+    <div class="tab" id="tab-states">
+        <p class="hint">The kernel's connection-tracking table: every connection the firewall currently
+            remembers. <b>Kill</b> removes one connection (the next packet is evaluated against the rules
+            again, so a connection a new block rule would stop dies for good); <b>Kill all of this source</b>
+            removes every state from that address.</p>
+        <form id="states-filter" onsubmit="return loadStates(event)">
+            <label>Filter <input name="q" size="24" placeholder="192.168.50.10 443 ESTABLISHED"></label>
+            <label>Proto <select name="proto"><option value="">any</option><option>tcp</option><option>udp</option><option>icmp</option><option>icmpv6</option></select></label>
+            <button class="btn btn-primary" type="submit">Show states</button>
+        </form>
+        <div id="states-summary" class="hint">loading...</div>
+        <table id="states-table"><thead><tr><th>Proto</th><th>Source</th><th>Destination</th><th>State</th><th>Expires (s)</th><th>Bytes</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+
 <script>
 const TAB_KEY = 'patronus-fw-tab';
 function showTab(id) {
@@ -899,7 +914,38 @@ function logLive() {
 function setDefaultDeny() { api('PUT', '/firewall/logs/default-deny', { enabled: document.getElementById('log-default-deny').checked }).then(() => flash('Default-deny logging updated.', true)).catch(e => flash(e.message, false)); }
 function clearLog() { if (confirm('Delete the stored firewall log?')) api('DELETE', '/firewall/logs').then(() => logSearch()).catch(e => flash(e.message, false)); }
 
-loadGeo(); loadThreat(); logSearch(); aliasTypeChanged();
+// ---- state table ----
+async function loadStates(ev) {
+    if (ev) ev.preventDefault();
+    try {
+        const f = document.getElementById('states-filter').elements;
+        const qs = new URLSearchParams({ q: f['q'].value, proto: f['proto'].value, limit: '500' });
+        const r = await api('GET', '/firewall/states?' + qs.toString());
+        document.getElementById('states-summary').textContent = r.matched + ' of ' + r.total + ' states match' + (r.shown < r.matched ? ' (first ' + r.shown + ' shown)' : '');
+        const tb = document.querySelector('#states-table tbody'); tb.innerHTML = '';
+        r.states.forEach(x => {
+            const tr = tb.insertRow();
+            [x.proto, x.src + ':' + x.sport, x.dst + ':' + x.dport, x.state, x.timeout, x.bytes].forEach(v => { tr.insertCell().textContent = v; });
+            const c = tr.insertCell();
+            const k = document.createElement('button'); k.className = 'btn btn-danger btn-sm'; k.textContent = 'Kill';
+            k.onclick = () => killStates({ proto: x.proto, src: x.src, dst: x.dst, sport: x.sport, dport: x.dport }, 'Kill this connection?');
+            c.appendChild(k); c.appendChild(document.createTextNode(' '));
+            const a = document.createElement('button'); a.className = 'btn btn-secondary btn-sm'; a.textContent = 'Kill all of this source';
+            a.onclick = () => killStates({ src: x.src }, 'Kill every state from ' + x.src + '?');
+            c.appendChild(a);
+        });
+    } catch (e) { document.getElementById('states-summary').textContent = e.message; }
+    return false;
+}
+async function killStates(p, ask) {
+    if (!confirm(ask)) return;
+    const qs = new URLSearchParams();
+    Object.entries(p).forEach(([k, v]) => { if (v !== undefined && v !== '' && !(k === 'sport' || k === 'dport') || (v && (k === 'sport' || k === 'dport'))) qs.set(k, v); });
+    try { const r = await api('DELETE', '/firewall/states?' + qs.toString()); flash(r.deleted + ' state(s) killed.', true); loadStates(); }
+    catch (e) { flash(e.message, false); }
+}
+
+loadGeo(); loadThreat(); logSearch(); aliasTypeChanged(); loadStates();
 </script>
 </body>
 </html>
