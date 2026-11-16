@@ -409,17 +409,29 @@ Settings live on the UBIFS volume `patronus_data` (`/etc`, `/var/lib`, `/root` o
 OpenWrt's `rootfs_data` (which after factory.ubi has autoresized over the whole flash) with `patronus_data` sized to leave
 32 MiB free, so later upgrades can grow the kernel/root volumes in place without touching the settings.
 
-### 12.3 Installing and recovering (facts learned on a unit with OpenWrt, 2026-11-15)
+### 12.3 Installing and recovering (tested on a real unit with GL.iNet 4.8.3 and U-Boot "uboot2.0 21.08.31", 2026-11-15)
 
-- **From the GL.iNet stock firmware:** web UI, firmware upgrade, upload `factory.bin`, with "keep settings" OFF.
-- **GL U-Boot web recovery** (hold reset while powering on, release after about 5 LED flashes, browse to
-  http://192.168.1.1 from a PC with a static 192.168.1.x address) accepts ONLY a `factory.ubi` or GL.iNet's own `.img`.
-  A `factory.bin` uploaded there soft-bricks the unit (recover by repeating the U-Boot procedure with a factory.ubi).
-  This is why every Patronus build ships a `factory.ubi`: it is the image for U-Boot installs and for recovery.
+- **From the GL.iNet stock firmware (4.x, QSDK):** the stock web upgrade does NOT work for third-party images. Stock
+  `platform_check_image` accepts only a sysupgrade tar, and stock `platform_do_upgrade` always runs `nand_upgrade_tar`,
+  which writes kernel and root into GL.iNet's own UBI volumes (`kernel`, `ubi_rootfs`, `rootfs_data`). An OpenWrt or
+  Patronus image written that way does not boot (solid LED, no network). The method that works, over SSH on the stock
+  firmware:
+  1. `cp /lib/upgrade/platform.sh /tmp/` and change the `glinet,ax1800` case in `platform_do_upgrade` to
+     `nand_do_upgrade "$1"` (it detects the UBI magic and runs `nand_upgrade_ubinized`, i.e. `ubiformat` of the `rootfs`
+     MTD with the image's own layout);
+  2. `mount --bind /tmp/platform.sh /lib/upgrade/platform.sh`;
+  3. `sysupgrade -F -n <factory.ubi>`.
+  The result is the same flash layout a U-Boot factory.ubi install produces. Verified with OpenWrt 25.12.6's factory.ubi.
+- **GL U-Boot web recovery** (hold reset while powering on, release after about 5 LED flashes, http://192.168.1.1 from a
+  PC with a static 192.168.1.x address): on this U-Boot version it accepts ONLY GL.iNet's own U-Boot `.img`. An OpenWrt
+  `factory.ubi` is rejected ("update failed"), and a `factory.bin` soft-bricks the unit. (Newer GL U-Boot builds are reported
+  to accept factory.ubi; not verified.) Recovery is therefore: GL `.img` via U-Boot, then the SSH method above.
 - **Afterwards:** upgrade with the sysupgrade image: from OpenWrt with `sysupgrade -n <patronus…-sysupgrade.tar>` (OpenWrt
   checks the fwtool metadata), from Patronus with `patronus-flash sysupgrade` (12.4).
+- A fresh OpenWrt or GL image runs a DHCP server on its LAN ports even when another DHCP server is present. On an existing
+  network, connect it only to the WAN port or set `dhcp.lan.ignore=1` right after first boot.
 - There is no automatic rollback on this board: the kernel command line pins volume 1 as the root, so there is no A/B root
-  as on the Slate. A box that does not come up is recovered with U-Boot web recovery and a factory.ubi (Patronus or OpenWrt).
+  as on the Slate. A box that does not come up is recovered as above.
 
 ### 12.4 Upgrades from Patronus: `patronus-flash`, guarded and fail-closed
 
