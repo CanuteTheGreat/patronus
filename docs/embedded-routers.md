@@ -517,10 +517,32 @@ path, and `check-rootfs.sh` refuses calibration on the read-only root or an earl
 **Never unload `ath11k_ahb` on this board** (`rmmod`, or a "reload the driver" step in a script): on a live unit it
 crashed the Wi-Fi firmware and the box restarted. The early boot no longer has the old unload/reload fallback.
 
+### 12.6b Wi-Fi clients on the real unit, and a stock GL.iNet AP on the same LAN (2026-11-16)
+
+Measured with a real client (an Intel AX211 laptop radio in its own network namespace, wpa_supplicant + udhcpc) against
+the unit running the image with real radio MACs (label + 3 / + 2 = the 5 GHz / 2.4 GHz BSSIDs of the first SSID, their
+locally administered variants for the second): on all four BSSes (two SSIDs x two bands) association took 0.6 s, the DHCP lease from the
+LAN's DHCP server 0.3-2.4 s, ping to the gateway and to the Internet and a DNS lookup passed, and 10-20 s of pings
+afterwards lost nothing; the same after a restart of the unit (Wi-Fi up 26 s after boot with no manual step), and with
+the client in power-save mode. The first one or two packets after association are often late or lost (the client logs
+retries while its uplink rate settles), so a first DNS query can need the resolver's 5 s retry.
+
+The unit itself was not what cut clients off. The site had a second AP on the same LAN running GL.iNet stock firmware
+4.8.3 with the same SSIDs, and that AP does not deliver downstream unicast to a station that roams to it from another
+AP for 2.3-4.4 minutes (reproduced seven times with the test client: associate to this unit, leave, associate to the
+stock AP: DHCP offers were sent by the server and never arrived at the client; the frames do not come back to this unit
+either; a control with no visit to this unit for 5 minutes got its lease at once). Any frame the stock AP sees from the
+station on its Ethernet side starts it: the 802.2 L2 update frame alone (sent when a station associates here) and, with
+that frame filtered out, the station's own broadcasts alone both did. Moving the other way (stock AP -> this unit) works
+at once, because the Linux bridge here relearns the station on the first frame. So in a mixed deployment every roam
+toward the stock AP, and every hostapd restart here (all stations move at once), costs the affected clients a few
+minutes without network. Nothing sent from this side can clear the other AP's state; run the same firmware family on
+both APs.
+
 ### 12.7 Not proven yet
 
 Proven on a real unit (OpenRC, 2026-11-16): the NSS Ethernet ports, install from OpenWrt with `sysupgrade -n`, ath11k
-calibration from the ART partition, hostapd on both radios with two SSIDs each. Not yet: the systemd variant on the board,
+calibration from the ART partition, hostapd on both radios with two SSIDs each, real clients on all four BSSes (12.6b). Not yet: the systemd variant on the board,
 the U-Boot recovery and stock-UI installs of a Patronus image, RAM and boot time on the IPQ6018 beyond the first unit, and
 the early-boot upgrade installer end to end (its UBI write step is proven on nandsim; the first real run is the
 `patronus-flash sysupgrade` from the fixed image).
