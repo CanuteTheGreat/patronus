@@ -94,7 +94,7 @@ jobs:
               fi
               # fast-forward of main to a branch tip that already passed (no PR): same sha, so same bytes
               if [ "$EVENT" = push ] && [ "$REF" = refs/heads/main ]; then
-                st=$(curl -fsS -H "Authorization: token ${TOKEN}" "$API/commits/${GITHUB_SHA}/statuses?limit=100" 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(x.get("context","").startswith("Rust CI / Netlab (network namespaces) (push") and x.get("status")=="success" for x in d))' 2>/dev/null || echo False)
+                st=$(curl -fsS -H "Authorization: token ${TOKEN}" "$API/commits/${GITHUB_SHA}/statuses?limit=100" 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(x.get("context","").startswith("Rust CI / Netlab (network namespaces)") and x.get("context","").endswith("(push)") and x.get("status")=="success" for x in d))' 2>/dev/null || echo False)
                 [ "$st" = True ] && dup=true
               fi ;;
           esac
