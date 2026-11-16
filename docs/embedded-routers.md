@@ -452,7 +452,7 @@ OpenWrt's `rootfs_data` (which after factory.ubi has autoresized over the whole 
   writes root then kernel (volumes keep their IDs, grown with `ubirsvol` when needed), reads both back, records the result
   on `patronus_data` and restarts (`upgrade-install`). Any failure before the write leaves the old system untouched; a power
   cut during the write needs U-Boot recovery. Same code path for both init systems (it runs before either starts).
-- Proof **[measured]**: host tests (`tests/run.sh`, 163 checks: every guard against synthetic images and a fake UBI);
+- Proof **[measured]**: host tests (`tests/run.sh`, 167 checks: every guard against synthetic images and a fake UBI);
   the QEMU gate runs the real guards on the real image (busybox, loop mount); `nandsim-proof.sh` ran the UBI paths against
   the Linux UBI driver on a simulated 128 MiB NAND with the board's geometry and an exact 0x7300000 partition: ubiformat with
   our OpenRC factory.ubi (the U-Boot path), attach, first-boot `patronus_data` creation (455 LEBs, 264 left free), settings
@@ -494,6 +494,12 @@ The first real boot had wired networking but no Wi-Fi. Three bugs, each reproduc
    registered. Now the early boot points `firmware_class.path` at a tmpfs (`/run/firmware`), generates the calibration
    there BEFORE loading the kmods, lowers the fallback timeout to 3 s, and logs any failure to `/tmp/caldata.log`
    (boot mark `caldata-ok` / `caldata-FAILED`). `ap start` waits in the background for both radios to register.
+   Running before the kmods has one more consequence, found on the first boot of the fixed image: the label MAC (the
+   radios get label + 3 and label + 2) is not yet in the device tree, because OpenWrt's kernel adds the label device's
+   `mac-address` property only when the Ethernet driver probes, and `local-mac-address` is an all-zero placeholder. That
+   boot patched zeros in and the radios came up as 00:00:00:00:00:02/03. `ath11k-caldata` now reads the MAC from the
+   label device's nvmem cell itself (phandle -> fixed-layout cell -> its mtd partition, here the ART at offset 0), and it
+   refuses an all-zero or multicast label.
 2. **5 GHz hostapd refused two SSIDs** ("Invalid BSSID mask ff:ff:ff:ff:ff:fe for start address ..."): the 5 GHz radio's
    MAC is odd and hostapd's automatic addressing needs an aligned start address; its automatic address for a second
    2.4 GHz BSS (radio MAC + 1) was the 5 GHz radio's own MAC. The renderer now writes an explicit `bssid=` for every BSS:

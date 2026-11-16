@@ -21,14 +21,41 @@ mkdir -p "$(dirname "$OUT")" || { echo "caldata: cannot create $(dirname "$OUT")
 dd if="$ART" of="$OUT" bs=4096 skip=1 count=16 2>/dev/null || { echo "caldata: reading $ART failed" >&2; rm -f "$OUT"; exit 1; }
 [ "$(wc -c < "$OUT")" = 65536 ] || { echo "caldata: short read from $ART" >&2; rm -f "$OUT"; exit 1; }
 DT=${CALDATA_DT:-/proc/device-tree}
-LABEL=$CALDATA_LABEL
+# The label MAC. This runs in the early boot BEFORE the kmods load: the Ethernet driver has not probed yet, so the
+# label device's `mac-address` property (which OpenWrt's kernel only adds once the driver has read the MAC from its
+# nvmem cell) does not exist yet, and `local-mac-address` is a zero placeholder. So the nvmem cell is read directly:
+# the label device's nvmem-cells phandle -> the fixed-layout cell node (reg = offset) -> its partition (by label in
+# /proc/mtd). An all-zero or multicast address is never used.
+# Test hook: CALDATA_PARTS (directory of files named like the partition labels, instead of /dev/mtdN).
+valid_mac() { case "$1" in ??:??:??:??:??:??) ;; *) return 1;; esac
+  [ "$1" != 00:00:00:00:00:00 ] && [ $(( 0x${1%%:*} & 1 )) = 0 ]; }
+hexmac() { od -An -tx1 | tr -s ' \n' '  ' | sed 's/^ //;s/ $//;s/ /:/g'; }
+prop_mac() { [ -r "$1" ] && hexmac < "$1" | cut -c1-17; }
+part_dev() { # partition label -> readable device (or test file)
+  if [ -n "${CALDATA_PARTS:-}" ]; then echo "$CALDATA_PARTS/$1"; return 0; fi
+  i=$(sed -n "s/^mtd\([0-9]*\): [0-9a-f]* [0-9a-f]* \"$1\"\$/\1/p" /proc/mtd); [ -n "$i" ] && echo /dev/mtd$i; }
+nvmem_mac() { # device node dir -> MAC from its first nvmem cell (a fixed-layout cell inside an mtd partition)
+  [ -r "$1/nvmem-cells" ] || return 1
+  ph=$(od -An -tx1 -N4 "$1/nvmem-cells" | tr -d ' \n'); cell=
+  for f in $(find "$DT/" -name phandle 2>/dev/null); do
+    [ "$(od -An -tx1 "$f" | tr -d ' \n')" = "$ph" ] && { cell=${f%/phandle}; break; }; done
+  [ -n "$cell" ] && [ -r "$cell/reg" ] || return 1
+  off=$((0x$(od -An -tx1 -N4 "$cell/reg" | tr -d ' \n')))
+  part=${cell%/*}; [ -r "$part/label" ] || part=${part%/*}     # cell -> nvmem-layout -> partition (or cell -> partition)
+  [ -r "$part/label" ] || return 1
+  d=$(part_dev "$(tr -d '\0' < "$part/label")"); [ -n "$d" ] && [ -r "$d" ] || return 1
+  dd if="$d" bs=1 skip=$off count=6 2>/dev/null | hexmac; }
+LABEL=${CALDATA_LABEL:-}
 if [ -z "$LABEL" ]; then
   dev=$(tr -d '\0' < $DT/aliases/label-mac-device 2>/dev/null) || dev=
-  for p in mac-address local-mac-address; do
-    [ -n "$dev" ] && [ -r "$DT/$dev/$p" ] && LABEL=$(od -An -tx1 -N6 "$DT/$dev/$p" | tr -s ' ' | sed 's/^ //;s/ /:/g') && break
-  done
+  if [ -n "$dev" ]; then
+    for how in mac-address nvmem local-mac-address; do
+      case $how in nvmem) m=$(nvmem_mac "$DT$dev") || m=;; *) m=$(prop_mac "$DT$dev/$how") || m=;; esac
+      valid_mac "$m" && { LABEL=$m; echo "caldata: label MAC from $how"; break; }
+    done
+  fi
 fi
-case "$LABEL" in ??:??:??:??:??:??) ;; *) echo "caldata: no label MAC: calibration left unpatched"; exit 0;; esac
+valid_mac "$LABEL" || { echo "caldata: no valid label MAC (got '${LABEL:-none}'): calibration left unpatched (the radios keep the ART's default MACs)" >&2; exit 2; }
 mac_add() { # MAC N -> MAC + N (only the NIC half, like OpenWrt's macaddr_add)
   oui=${1%:*:*:*}; nic=$(echo ${1#*:*:*:} | tr -d :)
   nic=$(printf '%06x' $(( (0x$nic + $2) & 0xffffff )))

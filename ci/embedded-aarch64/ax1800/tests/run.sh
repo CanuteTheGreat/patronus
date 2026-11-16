@@ -148,6 +148,25 @@ if CALDATA_ART=$CD/art CALDATA_LABEL=94:00:5e:10:20:d4 CALDATA_OUT=$CD/w/ath11k/
    && [ "$(wc -c < "$CD/w/ath11k/IPQ6018/hw1.0/cal.bin")" = 65536 ]; then ok "caldata: writes 64 KiB to a writable path (directories created)"; else no "caldata: write to a writable path failed"; cat "$CD/out"; fi
 m0=$(od -An -tx1 -j14 -N6 "$CD/w/ath11k/IPQ6018/hw1.0/cal.bin" 2>/dev/null | tr -d ' \n')
 [ "$m0" = 94005e1020d7 ] && ok "caldata: radio 0 MAC = label + 3 patched in" || no "caldata: radio 0 MAC is $m0"
+# label MAC as in the early boot (before the Ethernet kmod probes): no mac-address property yet, a zero
+# local-mac-address placeholder, the real MAC only in the ART nvmem cell (phandle -> fixed-layout cell -> partition)
+FDT=$CD/dt; mkdir -p "$FDT/aliases" "$FDT/soc@0/dp1" "$FDT/soc@0/nand/partitions/partition@980000/nvmem-layout/macaddr@0" "$FDT/soc@0/nand/partitions/partition@980000/nvmem-layout/macaddr@6" "$CD/parts"
+printf '/soc@0/dp1\0' > "$FDT/aliases/label-mac-device"; printf '\0\0\0\0\0\0' > "$FDT/soc@0/dp1/local-mac-address"; printf '\0\0\0\042' > "$FDT/soc@0/dp1/nvmem-cells"
+L6=$FDT/soc@0/nand/partitions/partition@980000; printf '0:art\0' > "$L6/label"
+printf '\0\0\0\042' > "$L6/nvmem-layout/macaddr@0/phandle"; printf '\0\0\0\0\0\0\0\006' > "$L6/nvmem-layout/macaddr@0/reg"
+printf '\0\0\0\043' > "$L6/nvmem-layout/macaddr@6/phandle"; printf '\0\0\0\006\0\0\0\006' > "$L6/nvmem-layout/macaddr@6/reg"
+printf '\224\000\136\020\040\324\224\000\136\020\040\325' > "$CD/parts/0:art"; head -c 4084 /dev/zero >> "$CD/parts/0:art"; tail -c +4097 "$CD/art" >> "$CD/parts/0:art"
+CAL() { env CALDATA_ART="$CD/parts/0:art" CALDATA_DT="$FDT" CALDATA_PARTS="$CD/parts" CALDATA_OUT="$CD/$1.bin" sh "$O/usr/libexec/patronus/ath11k-caldata"; }
+if CAL nv > "$CD/out" 2>&1 && grep -q 'label MAC from nvmem' "$CD/out"; then ok "caldata: label MAC read from the nvmem cell before the Ethernet driver probes"; else no "caldata: nvmem label MAC"; cat "$CD/out"; fi
+m0=$(od -An -tx1 -j14 -N6 "$CD/nv.bin" 2>/dev/null | tr -d ' \n'); m1=$(od -An -tx1 -j20 -N6 "$CD/nv.bin" 2>/dev/null | tr -d ' \n')
+[ "$m0" = 94005e1020d7 ] && [ "$m1" = 94005e1020d6 ] && ok "caldata: radio MACs = nvmem label + 3 / + 2" || no "caldata: radio MACs from nvmem label are $m0 / $m1"
+printf '\224\000\136\020\040\330' > "$FDT/soc@0/dp1/mac-address"
+CAL prop > "$CD/out" 2>&1; m0=$(od -An -tx1 -j14 -N6 "$CD/prop.bin" 2>/dev/null | tr -d ' \n')
+grep -q 'label MAC from mac-address' "$CD/out" && [ "$m0" = 94005e1020db ] && ok "caldata: a mac-address property (driver already probed) wins" || { no "caldata: mac-address property not used ($m0)"; cat "$CD/out"; }
+rm "$FDT/soc@0/dp1/mac-address" "$FDT/soc@0/dp1/nvmem-cells"
+if CAL zero > "$CD/out" 2>&1; then no "caldata: accepted the zero local-mac-address placeholder"; else
+  m0=$(od -An -tx1 -j14 -N6 "$CD/zero.bin" 2>/dev/null | tr -d ' \n')
+  grep -q 'no valid label MAC' "$CD/out" && [ "$m0" != 000000000003 ] && ok "caldata: an all-zero label MAC is refused (non-zero exit, nothing patched)" || { no "caldata: zero label handling ($m0)"; cat "$CD/out"; }; fi
 chmod 555 "$CD/ro"
 if [ "$(id -u)" != 0 ]; then
   if CALDATA_ART=$CD/art CALDATA_LABEL=94:00:5e:10:20:d4 CALDATA_OUT=$CD/ro/cal.bin sh "$O/usr/libexec/patronus/ath11k-caldata" > "$CD/out" 2>&1; then no "caldata: exit 0 on a read-only path"
