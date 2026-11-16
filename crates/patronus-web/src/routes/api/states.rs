@@ -180,6 +180,10 @@ pub fn kill_args(q: &KillQuery) -> Result<Vec<String>, String> {
             filters += 1;
         }
     }
+    // conntrack only accepts --sport/--dport together with -p.
+    if (q.sport.is_some() || q.dport.is_some()) && !a.iter().any(|x| x == "-p") {
+        return Err("Invalid request: a port filter needs a protocol (tcp, udp, ...)".into());
+    }
     for (flag, v) in [("--sport", q.sport), ("--dport", q.dport)] {
         if let Some(p) = v {
             a.extend([flag.into(), p.to_string()]);
@@ -298,6 +302,8 @@ ipv6     10 icmpv6   58 29 src=fd00:50::10 dst=2001:db8:100::10 type=128 code=0 
             kill_args(&ok).unwrap(),
             vec!["-D", "-p", "tcp", "-s", "192.168.50.10", "--dport", "443"]
         );
+        let no_proto = KillQuery { src: Some("10.0.0.1".into()), dport: Some(80), ..Default::default() };
+        assert!(kill_args(&no_proto).unwrap_err().contains("needs a protocol"));
         let v6 = KillQuery { dst: Some("fd00:50::10".into()), ..Default::default() };
         assert!(kill_args(&v6).unwrap().ends_with(&["-f".to_string(), "ipv6".to_string()]));
     }

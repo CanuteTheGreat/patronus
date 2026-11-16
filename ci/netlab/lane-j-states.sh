@@ -61,6 +61,7 @@ echo "=== refused kills"
 nl_api_code "no filter" 400 DELETE /firewall/states
 nl_api_code "protocol only" 400 DELETE "/firewall/states?proto=tcp"
 nl_api_code "bad address" 400 DELETE "/firewall/states?src=1.2.3.4;reboot"
+nl_api_code "port without protocol" 400 DELETE "/firewall/states?src=192.168.50.10&dport=9100"
 nl_api_code "bad protocol" 400 DELETE "/firewall/states?src=192.168.50.10&proto=nope"
 ct_has $PA || nl_fail "a refused kill removed a state"
 ct_has $PB || nl_fail "a refused kill removed a state"
@@ -77,10 +78,10 @@ nl_api_ok "list after kill" GET "/firewall/states?q=9100"
 nl_ok "port $PA gone from conntrack and the API, port $PB untouched"
 
 echo "=== kill by source address"
-nl_api_ok "kill source" DELETE "/firewall/states?src=192.168.50.10&dport=9100"
+nl_api_ok "kill source" DELETE "/firewall/states?src=192.168.50.10&dport=9100&proto=tcp"
 [ "$(nl_json "$NL_OUT" 'd["deleted"]')" -ge 1 ] || nl_fail "nothing deleted by source"
 if ct_has $PB; then nl_fail "state of port $PB survived a kill by source"; fi
-nl_api_ok "kill nothing" DELETE "/firewall/states?src=192.168.50.10&dport=9100"
+nl_api_ok "kill nothing" DELETE "/firewall/states?src=192.168.50.10&dport=9100&proto=tcp"
 [ "$(nl_json "$NL_OUT" 'd["deleted"]')" = 0 ] || nl_fail "a second kill still deleted states"
 nl_ok "kill by address removes the rest; a repeat kills 0 without error"
 
