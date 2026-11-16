@@ -1496,7 +1496,10 @@ fn failback_gate_holds_a_recovered_gateway_for_its_delay() {
     // no delay: back at once
     assert_eq!(failback_gate(Down, Online, 0, None, 100, 0), (Online, None));
     // healthy gateway is never held
-    assert_eq!(failback_gate(Online, Online, 0, None, 100, 30), (Online, None));
+    assert_eq!(
+        failback_gate(Online, Online, 0, None, 100, 30),
+        (Online, None)
+    );
     // down -> first healthy sample starts the hold-down and stays down
     assert_eq!(
         failback_gate(Down, Online, 0, None, 100, 30),
@@ -1516,8 +1519,14 @@ fn failback_gate_holds_a_recovered_gateway_for_its_delay() {
         (Online, None)
     );
     // a bad sample during the hold-down restarts the run
-    assert_eq!(failback_gate(Down, Down, 0, Some(100), 115, 30), (Down, None));
-    assert_eq!(failback_gate(Down, Loss, 0, Some(100), 115, 30), (Loss, None));
+    assert_eq!(
+        failback_gate(Down, Down, 0, Some(100), 115, 30),
+        (Down, None)
+    );
+    assert_eq!(
+        failback_gate(Down, Loss, 0, Some(100), 115, 30),
+        (Loss, None)
+    );
     // unmonitored is not a recovery
     assert_eq!(
         failback_gate(Down, Unmonitored, 0, None, 100, 30),
@@ -1531,7 +1540,10 @@ fn failback_gate_holds_a_recovered_gateway_for_its_delay() {
         (Loss, None)
     );
     // with no delay configured the old behaviour stays
-    assert_eq!(failback_gate(Down, Online, 10, None, 100, 0), (Online, None));
+    assert_eq!(
+        failback_gate(Down, Online, 10, None, 100, 0),
+        (Online, None)
+    );
 }
 
 #[test]
