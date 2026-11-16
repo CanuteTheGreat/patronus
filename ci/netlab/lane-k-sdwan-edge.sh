@@ -240,7 +240,16 @@ echo "=== endpoint failover: cut site B's preferred endpoint"
 isp_cut_b1
 nl_wait 200 a_ep 203.0.115.2:51820 || { NS sa wg show; tail -15 /t/net-a/edge-state.json 2>/dev/null; nl_fail "site A did not move to site B's second endpoint"; }
 nl_ok "site A switched its peer for site B to the second endpoint 203.0.115.2:51820"
-nl_wait 60 ping_ab || nl_fail "client A cannot reach client B on the second endpoint"
+nl_wait 60 ping_ab || {
+  # run 1266 (11-15): A moved to 203.0.115.2, then no traffic for 60 s and the agent rotated back
+  # to the cut endpoint; keep what is needed to tell a dead return path from a missing handshake
+  echo "--- site A"; NS sa wg show sdwan0; NS sa ip -s route get 203.0.115.2 || true
+  echo "--- site B"; NS sb wg show sdwan0; NS sb ip route get 203.0.113.2 from 203.0.115.2 || true
+  NS sb ip -br addr || true; NS sb sh -c 'sysctl net.ipv4.conf.all.rp_filter; ip rule' || true
+  echo "--- isp"; NS isp nft list chain ip lab counted || true
+  NS isp sh -c 'sysctl net.ipv4.conf.all.rp_filter; conntrack -L -p udp 2>/dev/null | grep 51820' || true
+  tail -8 /t/net-a/edge-state.json 2>/dev/null || true
+  nl_fail "client A cannot reach client B on the second endpoint"; }
 nl_ok "traffic flows again through the second uplink"
 echo "=== failback when the preferred endpoint works again"
 isp_open
