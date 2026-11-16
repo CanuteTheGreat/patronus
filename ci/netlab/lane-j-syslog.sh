@@ -50,6 +50,7 @@ while True:
     open(sys.argv[3], "ab").write(d + b"\n")
 PY
 : > /tmp/syslog-rx
+: > /tmp/syslog-logger-err
 
 nl_boot "$DB"
 nl_bg INET python3 "$NL_T/nl-syslog-rx.py" 0.0.0.0 514 /tmp/syslog-rx
@@ -87,8 +88,17 @@ logger -t lane-j -p user.info "marker-info-$$"
 # rsyslog can still be settling right after the drop-in reload (flaked 2 of 6
 # runs on 11-15 with the first logger line lost): resend the err marker once a
 # second instead of betting on a single datagram.
-sent_err() { logger -t lane-j -p user.err "marker-err-$$"; sleep 1; grep -qF -- "marker-err-$$" /tmp/syslog-rx; }
-nl_wait 15 sent_err || { ps -ef | grep '[r]syslogd'; ls -l /dev/log || true; cat /etc/rsyslog.d/50-patronus.conf; cat /tmp/syslog-rx; nl_fail "err message not forwarded"; }
+sent_err() { logger --socket-errors=on -t lane-j -p user.err "marker-err-$$" 2>>/tmp/syslog-logger-err; sleep 1; grep -qF -- "marker-err-$$" /tmp/syslog-rx; }
+syslog_diag() {
+  echo "--- diag: every rsyslogd (incl. zombies) and who owns /dev/log"; ps -eo pid,ppid,stat,lstart,args | grep '[r]syslogd' || true
+  ls -l --time-style=full-iso /dev/log 2>&1 || true; stat -c 'dev/log inode=%i mtime=%y' /dev/log 2>&1 || true
+  ss -xlpn 2>&1 | grep -E '/dev/log|rsyslog' || echo "(no unix listener for /dev/log)"
+  for p in $(pgrep -x rsyslogd); do echo "rsyslogd $p netns=$(readlink /proc/$p/ns/net) mntns=$(readlink /proc/$p/ns/mnt) me-net=$(readlink /proc/$$/ns/net) me-mnt=$(readlink /proc/$$/ns/mnt)"; done
+  echo "--- logger errors:"; cat /tmp/syslog-logger-err 2>/dev/null || true
+  echo "--- udp sockets / counters"; ss -uanp 2>&1 | grep -E 'rsyslog|:514' || true; nstat -az UdpOutDatagrams UdpSndbufErrors IpOutNoRoutes 2>&1 || true
+  echo "--- rsyslog log lines:"; grep -h rsyslog /var/log/syslog 2>/dev/null | tail -20 || true
+}
+nl_wait 15 sent_err || { syslog_diag; cat /etc/rsyslog.d/50-patronus.conf; cat /tmp/syslog-rx; nl_fail "err message not forwarded"; }
 [ "$(rx "marker-info-$$")" = 0 ] || nl_fail "an info message passed the >= notice filter"
 nl_ok "err forwarded, info (below the notice filter) not"
 nl_api_ok "lower the filter" PUT "/svc/syslog/targets/$ID" '{"severity":"info"}'
