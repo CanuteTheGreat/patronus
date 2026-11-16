@@ -29,6 +29,10 @@ s = socket.create_connection((sys.argv[1], 9100), timeout=5)
 open(sys.argv[2], "w").write(str(s.getsockname()[1]))
 time.sleep(300)
 PY
+ct_has() { # PORT: a tracked flow from that source port to :9100 is in the router's conntrack
+  local ct; ct=$(R conntrack -L 2>/dev/null || true)
+  grep -q "sport=$1 .*dport=9100" <<<"$ct"
+}
 nl_boot "$DB"
 nl_bg INET python3 "$NL_T/nl-st-server.py"
 for _ in $(seq 1 30); do INET python3 "$NL_T/nl-conn.py" $NL_WWW 9100 >/dev/null 2>&1 && break; sleep 0.1; done
@@ -58,15 +62,15 @@ nl_api_code "no filter" 400 DELETE /firewall/states
 nl_api_code "protocol only" 400 DELETE "/firewall/states?proto=tcp"
 nl_api_code "bad address" 400 DELETE "/firewall/states?src=1.2.3.4;reboot"
 nl_api_code "bad protocol" 400 DELETE "/firewall/states?src=192.168.50.10&proto=nope"
-R conntrack -L 2>/dev/null | grep -q "sport=$PA .*dport=9100" || nl_fail "a refused kill removed a state"
-R conntrack -L 2>/dev/null | grep -q "sport=$PB .*dport=9100" || nl_fail "a refused kill removed a state"
+ct_has $PA || nl_fail "a refused kill removed a state"
+ct_has $PB || nl_fail "a refused kill removed a state"
 nl_ok "empty, protocol-only, malformed address and unknown protocol are 400 and kill nothing"
 
 echo "=== kill one connection"
 nl_api_ok "kill A" DELETE "/firewall/states?src=192.168.50.10&sport=$PA&dport=9100&proto=tcp"
 [ "$(nl_json "$NL_OUT" 'd["deleted"]')" = 1 ] || { cat "$NL_OUT"; nl_fail "expected exactly 1 state deleted"; }
-if R conntrack -L 2>/dev/null | grep -q "sport=$PA .*dport=9100"; then nl_fail "state of port $PA still in conntrack"; fi
-R conntrack -L 2>/dev/null | grep -q "sport=$PB .*dport=9100" || nl_fail "killing port $PA also removed port $PB"
+if ct_has $PA; then nl_fail "state of port $PA still in conntrack"; fi
+ct_has $PB || nl_fail "killing port $PA also removed port $PB"
 nl_api_ok "list after kill" GET "/firewall/states?q=9100"
 [ "$(nl_json "$NL_OUT" "len([x for x in d['states'] if x['sport']==$PA])")" = 0 ] || nl_fail "the API still lists port $PA"
 [ "$(nl_json "$NL_OUT" "len([x for x in d['states'] if x['sport']==$PB])")" = 1 ] || nl_fail "the API lost port $PB"
@@ -75,7 +79,7 @@ nl_ok "port $PA gone from conntrack and the API, port $PB untouched"
 echo "=== kill by source address"
 nl_api_ok "kill source" DELETE "/firewall/states?src=192.168.50.10&dport=9100"
 [ "$(nl_json "$NL_OUT" 'd["deleted"]')" -ge 1 ] || nl_fail "nothing deleted by source"
-if R conntrack -L 2>/dev/null | grep -q "sport=$PB .*dport=9100"; then nl_fail "state of port $PB survived a kill by source"; fi
+if ct_has $PB; then nl_fail "state of port $PB survived a kill by source"; fi
 nl_api_ok "kill nothing" DELETE "/firewall/states?src=192.168.50.10&dport=9100"
 [ "$(nl_json "$NL_OUT" 'd["deleted"]')" = 0 ] || nl_fail "a second kill still deleted states"
 nl_ok "kill by address removes the rest; a repeat kills 0 without error"
