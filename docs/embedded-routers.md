@@ -355,3 +355,120 @@ What ETPhoneHome QA uses meanwhile: the Slate unchanged on OpenWrt 25.12 (router
 10. Central management: `gitops` feature on MIPS, a per-router API-key client + fleet page in the main Patronus UI, the "pause gitops" switch; then prove push and pull against the malta twin.
 11. CI: run `ci/embedded-mips/t_e2e.py` on every push (QEMU TCG, about 8 min) with RSS ceilings (web idle <= 20 MB, peak <= 30 MB, rootfs <= 16 MiB without agents); real-board timing of the first login and TLS handshake in step B.
 12. Merge the web changes back into the default build's gates (`cargo test -p patronus-web` with default features and with `--no-default-features --features dhcp,dns,tls-openssl`): the spike compiled and exercised the router build, it did not re-run the full x86 unit-test suites.
+
+## 12. GL.iNet GL-AX1800 "Flint" (IPQ6018, aarch64): the second embedded target (2026-11-15)
+
+Profile `profiles/hw/qualcommax-gl-ax1800.toml` (status `builds`), tooling `ci/embedded-aarch64/ax1800/`, CI
+`.forgejo/workflows/embedded-aarch64.yml`. Role: wired access point (every Ethernet port bridged into `br-lan`, address by
+DHCP, no DHCP/DNS server, no routing), Wi-Fi from a per-unit `ap.env`. Both init systems, ETPhoneHome baked in and enabled
+on both. Nothing in this section has been flashed to a real unit yet; the install facts in 12.3 were learned with OpenWrt.
+
+### 12.1 Build
+
+- Native aarch64 musl, no cross toolchain: an Alpine 3.24 builder (`Dockerfile.builder`) on the arm64 runners. The userland
+  comes from Alpine packages (`stage-rootfs.sh`: busybox, hostapd, iw, iproute2, dropbear, mtd-utils UBI tools, nftables, PAM,
+  wireless-regdb, libucontext and libmount for systemd); `patronus-cli` is one multi-call binary (`patronus-web` is a link)
+  built with the stable toolchain for `aarch64-unknown-linux-musl` (14 MB stripped, features
+  `nftables,cli,dhcp-server,dns-server,uci-import,wifi-ap,web-multicall`).
+- OpenRC is built from source (`stage-openrc.sh`, 0.63.2, sha256-pinned): Alpine's package is built for busybox init and has
+  no `openrc-init`/`openrc-shutdown`, so it cannot be PID 1. systemd 262.2 is built as for the Slate (`stage-systemd.sh`).
+  systemd `dlopen()`s libmount to mount the API filesystems: without `libmount.so.1` PID 1 freezes with "Failed to mangle
+  mount options ... Not supported" (found by the QEMU gate; `check-rootfs.sh` now refuses such an image). glibc's
+  `ldconfig.service` and the udev units are removed from the systemd variant (devtmpfs board, musl).
+- Kernel: the stock OpenWrt 25.12.6 FIT (kernel 6.12.112 + the board's device tree, `root=/dev/ubiblock0_1` in its
+  `bootargs-append`) byte for byte, its kmods, the IPQ6018 firmware and the ath11k board data (`stock.pin`). The netfilter
+  kmods come from the pinned OpenWrt packages of the same kernel build (`kmods.pin`, `fetch-kmods.sh`): the stock root has
+  no `nfnetlink_log`, which the firewall's NFLOG `log group` rules need, so without it the firewall would not apply and the
+  web UI (fail-closed on the firewall) would not start.
+- Outputs per variant (`assemble.sh`): `root.squashfs`; `…-sysupgrade.tar` (OpenWrt layout + `patronus-release` +
+  `patronus.sha256`, fwtool metadata); `…-factory.ubi` (ubinize, the board's layout, for U-Boot recovery); `…-factory.bin`
+  (= factory.ubi + fwtool metadata, for the GL stock web UI, the same construction as OpenWrt's); `sha256sums`, `sizes.txt`.
+
+Sizes **[measured]**, CI-unit images of 2026-11-15:
+
+| | OpenRC | systemd |
+|---|---|---|
+| root.squashfs (xz, 256 KiB blocks) | 16.00 MiB (133 LEBs) | 18.68 MiB (155 LEBs) |
+| sysupgrade tar | 21.07 MiB | 23.75 MiB |
+| factory.ubi / factory.bin | 22.12 MiB | 24.88 MiB |
+| unpacked root | 51.3 MiB | 61.3 MiB |
+| NAND left after kernel + root + 16 MiB settings | 71.2 MiB | 68.5 MiB |
+
+### 12.2 NAND/UBI layout (checked against OpenWrt's own factory.ubi)
+
+`ubi-layout.py` reads a UBI image (EC/VID headers, volume table) without external tools. OpenWrt 25.12.4 and 25.12.6
+`factory.ubi` for this board: PEB 128 KiB, LEB 126976 B (VID header at 2048, data at 4096: SPI-NAND without sub-pages),
+volumes `kernel`=0, `rootfs`=1, `rootfs_data`=2 (autoresize, 1 MiB). The sysupgrade kernel and root are byte prefixes of
+the factory volumes, and `ceil(bytes / LEB)` gives exactly the factory image's `reserved_pebs` (25.12.6: kernel 5305856 B =
+42, root 7344128 B = 58). The mtd `rootfs` partition is 0x7300000 = 920 PEBs; UBI keeps 24 back (layout 2, wear-levelling
+1, atomic LEB change 1, bad-block reserve 20 per 1024 PEBs of the 128 MiB chip). `nand-budget.sh` takes these numbers from
+the profile, checks our factory.ubi with the same layout check, and demands 16 MiB of settings + 8 MiB margin. CI also runs
+the layout check on OpenWrt's 25.12.6 factory.ubi (`stock.pin`) so a wrong assumption fails on the reference image first.
+
+Settings live on the UBIFS volume `patronus_data` (`/etc`, `/var/lib`, `/root` overlays). On first boot `ubi-data` replaces
+OpenWrt's `rootfs_data` (which after factory.ubi has autoresized over the whole flash) with `patronus_data` sized to leave
+32 MiB free, so later upgrades can grow the kernel/root volumes in place without touching the settings.
+
+### 12.3 Installing and recovering (facts learned on a unit with OpenWrt, 2026-11-15)
+
+- **From the GL.iNet stock firmware:** web UI, firmware upgrade, upload `factory.bin`, with "keep settings" OFF.
+- **GL U-Boot web recovery** (hold reset while powering on, release after about 5 LED flashes, browse to
+  http://192.168.1.1 from a PC with a static 192.168.1.x address) accepts ONLY a `factory.ubi` or GL.iNet's own `.img`.
+  A `factory.bin` uploaded there soft-bricks the unit (recover by repeating the U-Boot procedure with a factory.ubi).
+  This is why every Patronus build ships a `factory.ubi`: it is the image for U-Boot installs and for recovery.
+- **Afterwards:** upgrade with the sysupgrade image: from OpenWrt with `sysupgrade -n <patronus…-sysupgrade.tar>` (OpenWrt
+  checks the fwtool metadata), from Patronus with `patronus-flash sysupgrade` (12.4).
+- There is no automatic rollback on this board: the kernel command line pins volume 1 as the root, so there is no A/B root
+  as on the Slate. A box that does not come up is recovered with U-Boot web recovery and a factory.ubi (Patronus or OpenWrt).
+
+### 12.4 Upgrades from Patronus: `patronus-flash`, guarded and fail-closed
+
+- `patronus-flash check|sysupgrade <image.tar> [--now]`, `cancel`, `factory-reset`, `status`. Raw kernels or squashfs files
+  are refused; only the sysupgrade tar carries the metadata. Guards (`fwcheck.sh`, each fails closed): the box is a GL-AX1800
+  (device tree compatible); fwtool metadata present, lists this board, dist Patronus (OpenWrt images are refused: use U-Boot
+  recovery); only the board's tar members; kernel/root sha256 match `patronus.sha256`; kernel is a FIT; root is a squashfs
+  whose own `/etc/patronus-release` names this board and matches the tar's, with OpenRC or systemd recorded and
+  `patronus-init`, `patronus-flash` and ETPhoneHome inside (loop-mounted on the box); kernel + root fit the UBI device and
+  volumes 0/1 really are `kernel`/`rootfs`.
+- The running root (ubiblock on volume 1) cannot be rewritten in place, so `sysupgrade` only stages the verified parts on
+  `patronus_data`. The next boot re-verifies them in the early boot (bad -> moved to `.upgrade-rejected`, normal boot goes
+  on), then PID 1 copies the parts, busybox and the UBI tools to a tmpfs, unmounts everything, `pivot_root`s into RAM and
+  writes root then kernel (volumes keep their IDs, grown with `ubirsvol` when needed), reads both back, records the result
+  on `patronus_data` and restarts (`upgrade-install`). Any failure before the write leaves the old system untouched; a power
+  cut during the write needs U-Boot recovery. Same code path for both init systems (it runs before either starts).
+- Proof **[measured]**: host tests (`tests/run.sh`, 126 checks: every guard against synthetic images and a fake UBI);
+  the QEMU gate runs the real guards on the real image (busybox, loop mount); `nandsim-proof.sh` ran the UBI paths against
+  the Linux UBI driver on a simulated 128 MiB NAND with the board's geometry and an exact 0x7300000 partition: ubiformat with
+  our OpenRC factory.ubi (the U-Boot path), attach, first-boot `patronus_data` creation (455 LEBs, 264 left free), settings
+  written, then `check` + `sysupgrade` + `verify` + `ubi-write` of the systemd image (rootfs grown 133 -> 155 LEBs, ubiblock
+  released, both volumes read back equal), settings file intact: all passed. Not run in CI (loading nandsim is a host change).
+
+### 12.5 QEMU aarch64 gate (`qemu-gate.sh`, both init systems, every push)
+
+OpenWrt's armsr/armv8 kernel of the same release (pinned) boots the Patronus root on QEMU `virt` (Cortex-A53, 512 MB,
+TCG on the arm64 runners). The test copy of the root only swaps the board's kmods for the same pinned netfilter packages
+built for the virt kernel (`kmods.pin` "virt") and sets `/etc/patronus/qemu-kmods`; everything else is the shipped image.
+Checks over ssh (throwaway CI key) and HTTPS: PID 1 is `openrc-init` / systemd; every service up (no failed systemd unit);
+ETPhoneHome running; web UI and first-run page; system log; netfilter kmods loaded and the firewall applied by patronus-web;
+board/init in `patronus-release`; no DHCP/DNS server; no 802.11r anywhere; the flash guards (refused on a non-GL-AX1800
+board, the real image passes with the board identity, a corrupt image is refused, staging + early-boot verify); then a
+power cut and a second boot from the same settings disk: the staged upgrade is rejected at boot (wrong board) without
+stopping the boot, settings persisted, everything up again. Local results 2026-11-15 (TCG on an arm64 build host): both
+variants `FAILED: none` (24 checks each); patronus-web up 22.5 s (OpenRC) / 24.3 s (systemd) after power-on under TCG;
+RAM used after boot 32.2 MiB (OpenRC) / 34.8 MiB (systemd) of 482 MiB.
+The board drivers (NSS Ethernet, ath11k, caldata) cannot be emulated and are not covered.
+
+### 12.6 Wi-Fi: 802.11r is never enabled or imported
+
+On this SoC's ath11k firmware lineage, 802.11r fast transition is what crashes the Wi-Fi firmware (and then the kernel in
+`ath11k_core_ssr_notifier_cb`), observed with OpenWrt on a unit. Patronus therefore never writes `ieee80211r` unless the
+unit's `ap.env` sets `AP_FT=1` (testing only), `check-rootfs.sh` refuses an image whose shipped config enables it, and
+`patronus import-uci` reports an OpenWrt wifi-iface with `ieee80211r '1'` (and its `mobility_domain`, `ft_over_ds`, ...)
+as NOT imported: the AP comes up with fast transition off and roaming falls back to plain re-association. The importer
+also recognises the IPQ6018 radio (`c000000.wifi`) and keeps `htmode` in its plan (fixture `tests/fixtures/uci-ax1800`).
+
+### 12.7 Not proven yet
+
+The real board: NSS Ethernet port names, ath11k calibration from the ART partition, hostapd on both radios, the U-Boot
+recovery and stock-UI installs of a Patronus image, the early-boot upgrade installer end to end (its UBI write step is
+proven on nandsim, the pivot into RAM only on paper), RAM and boot time on the IPQ6018.

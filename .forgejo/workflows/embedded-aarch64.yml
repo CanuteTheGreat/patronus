@@ -1,0 +1,69 @@
+name: Embedded tier aarch64 (GL-AX1800 router images)
+
+# GL.iNet GL-AX1800 (IPQ6018, aarch64 musl) Patronus images, both init systems (docs/embedded-routers.md section 7):
+#   tooling   host tests of the image scripts (check-rootfs, patronus-flash guards, UBI layout, NAND budget), profiles
+#   image     per init system: patronus-cli + userland (+ systemd) built natively on arm64, assemble.sh (sysupgrade tar,
+#             factory.ubi, factory.bin), NAND budget against the board's UBI layout, then the QEMU aarch64 gate (OpenWrt's
+#             armsr kernel + the Patronus root: services, ETPhoneHome, web UI, persistence, flash guards).
+# The image jobs run on arm64 runners whose job containers get the host docker socket: the builder image
+# (ci/embedded-aarch64/ax1800/Dockerfile.builder) and a cache volume stay on the host (ci-docker.sh).
+on:
+  push:
+    paths:
+      - 'ci/embedded-aarch64/**'
+      - 'ci/hw-profile/**'
+      - 'profiles/**'
+      - 'crates/patronus-cli/**'
+      - 'crates/patronus-web/**'
+      - 'gentoo/net-firewall/patronus/files/**'
+      - '.forgejo/workflows/embedded-aarch64.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: "latest:${{ github.workflow }}@${{ github.ref }}"
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  tooling:
+    name: GL-AX1800 image tooling (check-rootfs, flash guards, UBI layout, NAND budget, profiles)
+    runs-on: linux-any
+    timeout-minutes: 15
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 1g --memory-swap 1g --cpus 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install squashfs-tools and mtd-utils (ubinize)
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
+          sudo apt-get install -y squashfs-tools mtd-utils
+      - name: Image tooling tests
+        run: sh ci/embedded-aarch64/ax1800/tests/run.sh
+      - name: Device profiles
+        run: sh ci/hw-profile/tests/run.sh
+
+  image:
+    name: GL-AX1800 ${{ matrix.init }} image (build, NAND budget, QEMU gate)
+    runs-on: arm64
+    timeout-minutes: 170
+    container:
+      image: catthehacker/ubuntu:act-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        init: [openrc, systemd]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Builder container (image cached on the host)
+        run: bash ci/embedded-aarch64/ax1800/ci-docker.sh up ${{ matrix.init }}
+      - name: Build ${{ matrix.init }} image + NAND budget
+        run: bash ci/embedded-aarch64/ax1800/ci-docker.sh build ${{ matrix.init }}
+      - name: QEMU aarch64 gate (${{ matrix.init }})
+        run: bash ci/embedded-aarch64/ax1800/ci-docker.sh qemu ${{ matrix.init }}
+      - name: Results (sizes, NAND budget, QEMU checks)
+        if: always()
+        run: |
+          bash ci/embedded-aarch64/ax1800/ci-docker.sh down ${{ matrix.init }}
+          cat ci-out/summary.txt 2>/dev/null || true
+          cat ci-out/qemu-*/results.txt 2>/dev/null || true

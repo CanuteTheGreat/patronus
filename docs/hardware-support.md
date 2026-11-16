@@ -142,7 +142,7 @@ most devices per architecture, ordered by how much of the previous work they reu
 
 | # | Target | Why | Reuses | New work |
 |---|---|---|---|---|
-| 0 | `qualcommax/ipq60xx` (GL-AX1800 class) | maintainer hardware; in progress | aarch64 userland starts here | arm64 userland, UBI-NAND packager for arm64 |
+| 0 | `qualcommax/ipq60xx` (GL-AX1800 class) | maintainer hardware; images build in CI (OpenRC + systemd, QEMU gate), not yet on a unit: docs/embedded-routers.md section 12 | aarch64 userland starts here | arm64 userland, UBI-NAND packager for arm64 (done) |
 | 1 | `x86/64` | maintainer hardware (VMs, test machines, appliance boxes); tier already exists | the standard-tier build | profile + QEMU gate + `tiers` measurement |
 | 2 | `bcm27xx` (Raspberry Pi 3/4/5) | maintainer hardware; most common hobbyist board | arm64 userland (#0) | SD/disk packager, `virt` aarch64 gate |
 | 3 | `ath79/*` siblings (Archer C7, GL-AR300M) | cheapest: same musl userland and packager as the reference router | everything | profiles + per-board flash-layout check |
