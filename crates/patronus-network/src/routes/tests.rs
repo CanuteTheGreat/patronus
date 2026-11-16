@@ -1494,35 +1494,44 @@ fn probe_addresses_come_from_ip_literals_only() {
 fn failback_gate_holds_a_recovered_gateway_for_its_delay() {
     use GwState::*;
     // no delay: back at once
-    assert_eq!(failback_gate(Down, Online, None, 100, 0), (Online, None));
+    assert_eq!(failback_gate(Down, Online, 0, None, 100, 0), (Online, None));
     // healthy gateway is never held
-    assert_eq!(failback_gate(Online, Online, None, 100, 30), (Online, None));
+    assert_eq!(failback_gate(Online, Online, 0, None, 100, 30), (Online, None));
     // down -> first healthy sample starts the hold-down and stays down
     assert_eq!(
-        failback_gate(Down, Online, None, 100, 30),
+        failback_gate(Down, Online, 0, None, 100, 30),
         (Down, Some(100))
     );
     assert_eq!(
-        failback_gate(Down, Pending, Some(100), 110, 30),
+        failback_gate(Down, Pending, 0, Some(100), 110, 30),
         (Down, Some(100))
     );
     assert_eq!(
-        failback_gate(Loss, Online, Some(100), 129, 30),
+        failback_gate(Loss, Online, 0, Some(100), 129, 30),
         (Loss, Some(100))
     );
     // delay served
     assert_eq!(
-        failback_gate(Latency, Online, Some(100), 130, 30),
+        failback_gate(Latency, Online, 0, Some(100), 130, 30),
         (Online, None)
     );
     // a bad sample during the hold-down restarts the run
-    assert_eq!(failback_gate(Down, Down, Some(100), 115, 30), (Down, None));
-    assert_eq!(failback_gate(Down, Loss, Some(100), 115, 30), (Loss, None));
+    assert_eq!(failback_gate(Down, Down, 0, Some(100), 115, 30), (Down, None));
+    assert_eq!(failback_gate(Down, Loss, 0, Some(100), 115, 30), (Loss, None));
     // unmonitored is not a recovery
     assert_eq!(
-        failback_gate(Down, Unmonitored, None, 100, 30),
+        failback_gate(Down, Unmonitored, 0, None, 100, 30),
         (Unmonitored, None)
     );
+    // quality verification: a window that still holds lost probes is not a
+    // recovery, the hold-down run does not start and an open run restarts
+    assert_eq!(failback_gate(Down, Online, 10, None, 100, 30), (Down, None));
+    assert_eq!(
+        failback_gate(Loss, Online, 10, Some(100), 140, 30),
+        (Loss, None)
+    );
+    // with no delay configured the old behaviour stays
+    assert_eq!(failback_gate(Down, Online, 10, None, 100, 0), (Online, None));
 }
 
 #[test]

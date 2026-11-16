@@ -108,10 +108,10 @@ This document outlines the planned features and enhancements for Patronus SD-WAN
   - UDP flow continuity
   - Zero packet loss during switchover
 
-- [ ] Intelligent failback (per-gateway failback delay shipped in Routing > Gateways; gradual migration and quality verification still open)
+- [ ] Intelligent failback (per-gateway failback delay shipped in Routing > Gateways; quality verification shipped: a recovered gateway must show a loss-free probe window before its hold-down starts; gradual migration still open)
   - Hysteresis to prevent flapping (shipped: failback hold-down; a gateway in the loss state leaves it only below half its loss threshold)
   - Gradual traffic migration
-  - Quality verification before failback
+  - Quality verification before failback (shipped)
   - Configurable failback delays
 
 - [ ] Path recovery detection

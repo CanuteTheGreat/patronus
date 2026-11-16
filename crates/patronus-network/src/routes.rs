@@ -1309,9 +1309,13 @@ pub const MAX_FAILBACK_SECS: u32 = 3600;
 /// seconds, so a flapping uplink does not drag traffic back and forth.
 /// `held_since` is when the current healthy run began. Returns the state to
 /// publish and the new `held_since`; any unhealthy sample restarts the run.
+/// Quality verification: with a delay set, a sample whose probe window still
+/// holds any lost probe (`loss` > 0) is not a recovery yet, so the run only
+/// starts once the window is clean and a link that recovers lossy stays put.
 pub fn failback_gate(
     prev: GwState,
     fresh: GwState,
+    loss: u32,
     held_since: Option<i64>,
     now: i64,
     delay: u32,
@@ -1320,6 +1324,9 @@ pub fn failback_gate(
     let healthy = matches!(fresh, GwState::Online | GwState::Pending);
     if delay == 0 || !was_bad || !healthy {
         return (fresh, None);
+    }
+    if loss > 0 {
+        return (prev, None);
     }
     let start = held_since.unwrap_or(now);
     if now - start >= i64::from(delay) {
@@ -2785,6 +2792,7 @@ impl Monitor {
                 let (gated, held) = failback_gate(
                     prev,
                     state,
+                    loss,
                     self.failback.get(&g.name).copied(),
                     t,
                     g.failback_delay,
