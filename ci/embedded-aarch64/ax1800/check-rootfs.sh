@@ -5,6 +5,7 @@
 #  - the init system recorded for patronus-init is OpenRC or systemd (busybox init is not a variant), with its units
 #  - ETPhoneHome is baked in and enabled under both inits (owner rule)
 #  - the AP role: no DHCP/DNS server is enabled, 802.11r is not in any shipped config
+#  - Wi-Fi bring-up: calibration written to /run before the kmods, ath11k never unloaded
 R=${1:?usage: check-rootfs.sh <root>}; bad=0
 fail() { echo "check-rootfs: $*" >&2; bad=1; }
 r=$(grep '^root:' "$R/etc/passwd" 2>/dev/null)
@@ -14,7 +15,7 @@ sh=${r##*:}
 grep -q '^root:[^:!*]' "$R/etc/shadow" 2>/dev/null || [ -s "$R/root/.ssh/authorized_keys" ] || fail "root has neither a password nor an authorized key"
 grep -q '^nobody:' "$R/etc/passwd" || fail "no nobody user"
 [ -s "$R/etc/services" ] || fail "no /etc/services (busybox wget/nc: bad port 'http')"
-for f in usr/sbin/patronus-flash usr/libexec/patronus/fwcheck.sh usr/libexec/patronus/upgrade-install usr/libexec/patronus/ubi-data usr/sbin/patronus-init usr/libexec/patronus/early usr/libexec/patronus/ath11k-caldata usr/libexec/patronus/ap \
+for f in usr/sbin/patronus-flash usr/libexec/patronus/fwcheck.sh usr/libexec/patronus/upgrade-install usr/libexec/patronus/ubi-data usr/sbin/patronus-init usr/libexec/patronus/early usr/libexec/patronus/ath11k-caldata usr/libexec/patronus/ap usr/libexec/patronus/ntp-sync \
          usr/libexec/patronus/board-network etc/patronus/board.sh etc/patronus-init etc/pam.d/patronus \
          usr/sbin/hostapd usr/sbin/dropbear usr/bin/patronus-cli usr/bin/patronus-web \
          lib/firmware/ath11k/IPQ6018/hw1.0/board-2.bin lib/firmware/IPQ6018/q6_fw.mdt lib/firmware/IPQ6018/m3_fw.mdt lib/firmware/regulatory.db; do
@@ -37,6 +38,10 @@ case "${INIT:-}" in
   *) fail "/etc/patronus-init must say INIT=openrc or INIT=systemd (got '${INIT:-}')" ;;
 esac
 [ "$(readlink "$R/sbin/init")" = /usr/sbin/patronus-init ] || fail "/sbin/init must be /usr/sbin/patronus-init"
+# Wi-Fi bring-up: calibration goes to a writable tmpfs before the kmods load; never unload ath11k (it crashes the board)
+grep -q 'CALDATA_OUT:-/run/' "$R/usr/libexec/patronus/ath11k-caldata" 2>/dev/null || fail "ath11k-caldata must write to /run (the root is read-only)"
+grep -q 'firmware_class/parameters/path' "$R/usr/libexec/patronus/early" 2>/dev/null || fail "early boot does not point firmware_class.path at the calibration dir"
+grep -qE '^[^#]*rmmod[^#]*ath11k' "$R/usr/libexec/patronus/early" 2>/dev/null && fail "early boot unloads ath11k (crashes the board)"
 # ETPhoneHome
 [ -x "$R/usr/sbin/etphonehome" ] && head -c4 "$R/usr/sbin/etphonehome" | grep ELF >/dev/null || fail "ETPhoneHome: no /usr/sbin/etphonehome ELF binary"
 [ -x "$R/usr/libexec/patronus/etph-run" ] || fail "ETPhoneHome: no /usr/libexec/patronus/etph-run"

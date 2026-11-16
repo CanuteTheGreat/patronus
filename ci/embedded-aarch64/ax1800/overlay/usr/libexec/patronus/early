@@ -43,6 +43,10 @@ for d in etc var/lib root; do n=$(echo $d | tr / -); mkdir -p /data/patronus/$n 
   mount -t overlay overlay -o lowerdir=/$d,upperdir=/data/patronus/$n,workdir=/data/patronus/.work-$n /$d || mark "NO-OVERLAY $d"; done
 mkdir -p /var/lib/patronus /var/lib/misc /data/tls
 mark data-mounted
+# no RTC: until ntpd syncs, start the clock at the last time this box knew (ntp-sync saves it on /data) or at the image's
+# build time, never at 1970 (service start times, logs and TLS checks would otherwise be decades off)
+t=0; for f in /data/.clock /etc/patronus-release; do m=$(date -r $f +%s 2>/dev/null) && [ "${m:-0}" -gt $t ] && t=$m; done
+[ $t -gt "$(date +%s)" ] && date -s "@$t" >/dev/null 2>&1 && mark clock-set
 
 # The board's kmods and calibration only apply on the board itself: under the QEMU gate (armsr kernel, virtio devices,
 # all drivers built in) they are skipped.
@@ -50,7 +54,19 @@ ON_BOARD=; tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | grep -qx 'g
 [ -n "$ON_BOARD" ] || mark not-on-board
 # the QEMU gate's test copy of the root carries the virt kernel's netfilter kmods instead (and this marker)
 LOAD_KMODS=$ON_BOARD; [ -f /etc/patronus/qemu-kmods ] && LOAD_KMODS=1
-# 2. kernel modules (OpenWrt's kmods for this exact kernel), in OpenWrt's /etc/modules.d order;
+# 2. ath11k calibration BEFORE the kmods: ath11k_ahb asks for cal-ahb-c000000.wifi.bin while it probes. The root is a
+#    read-only squashfs, so the file is generated into a tmpfs that the firmware loader searches first
+#    (firmware_class.path). The stock kernel has the user-mode helper fallback and nothing answers it here, so a missing
+#    file used to stall each request for the full fallback timeout (60 s) and the radios never came up; the timeout is
+#    lowered so an optional file that really is absent costs seconds, not minutes.
+if [ -n "$ON_BOARD" ]; then
+  FWD=/run/firmware; mkdir -p $FWD
+  [ -w /sys/module/firmware_class/parameters/path ] && printf '%s' $FWD > /sys/module/firmware_class/parameters/path
+  [ -w /sys/class/firmware/timeout ] && echo 3 > /sys/class/firmware/timeout
+  CALDATA_OUT=$FWD/ath11k/IPQ6018/hw1.0/cal-ahb-c000000.wifi.bin /usr/libexec/patronus/ath11k-caldata >> /tmp/caldata.log 2>&1 \
+    && mark caldata-ok || mark caldata-FAILED
+fi
+# 3. kernel modules (OpenWrt's kmods for this exact kernel), in OpenWrt's /etc/modules.d order;
 #    dependencies from modules.dep (generated at image build with depmod), loaded deepest first
 KM=/lib/modules/$(uname -r)
 loaded() { grep -q "^$(echo ${1%.ko} | tr - _) " /proc/modules; }
@@ -64,10 +80,3 @@ load() { # module-file [args]
 done < "$f"; done 2>/dev/null
 mark modules-loaded
 ip link set lo up
-
-# 3. ath11k: calibration data from the ART partition (+ this unit's MACs) must exist before ath11k_ahb probes, so a
-#    present-but-late driver is reloaded once after the file is written (OpenWrt does the same from a firmware hotplug)
-if [ -n "$ON_BOARD" ]; then /usr/libexec/patronus/ath11k-caldata >> /tmp/caldata.log 2>&1 && mark caldata-ok || mark "caldata-skipped"; fi
-if [ -n "$ON_BOARD" ] && [ -d /sys/bus/platform/drivers/ath11k_ahb ] && [ -f /lib/firmware/ath11k/IPQ6018/hw1.0/cal-ahb-c000000.wifi.bin ] && [ -z "$(ls /sys/class/ieee80211 2>/dev/null)" ]; then
-  rmmod ath11k_ahb 2>/dev/null; modprobe ath11k_ahb 2>/dev/null || insmod $KM/ath11k_ahb.ko 2>>/tmp/insmod.log; mark ath11k-reloaded
-fi

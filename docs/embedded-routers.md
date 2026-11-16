@@ -361,7 +361,7 @@ What ETPhoneHome QA uses meanwhile: the Slate unchanged on OpenWrt 25.12 (router
 Profile `profiles/hw/qualcommax-gl-ax1800.toml` (status `builds`), tooling `ci/embedded-aarch64/ax1800/`, CI
 `.forgejo/workflows/embedded-aarch64.yml`. Role: wired access point (every Ethernet port bridged into `br-lan`, address by
 DHCP, no DHCP/DNS server, no routing), Wi-Fi from a per-unit `ap.env`. Both init systems, ETPhoneHome baked in and enabled
-on both. Nothing in this section has been flashed to a real unit yet; the install facts in 12.3 were learned with OpenWrt.
+on both. First real-unit install 2026-11-16 (OpenRC, from OpenWrt 25.12.6, as a home access point): see 12.3 and 12.6a.
 
 ### 12.1 Build
 
@@ -428,6 +428,10 @@ OpenWrt's `rootfs_data` (which after factory.ubi has autoresized over the whole 
   to accept factory.ubi; not verified.) Recovery is therefore: GL `.img` via U-Boot, then the SSH method above.
 - **Afterwards:** upgrade with the sysupgrade image: from OpenWrt with `sysupgrade -n <patronus…-sysupgrade.tar>` (OpenWrt
   checks the fwtool metadata), from Patronus with `patronus-flash sysupgrade` (12.4).
+- **First real-unit install (2026-11-16):** a unit running OpenWrt 25.12.6 took the Patronus OpenRC sysupgrade tar with
+  `sysupgrade -n` (fwtool metadata accepted) and booted it: NSS Ethernet ports, br-lan with a DHCP lease, ssh, the web UI,
+  ETPhoneHome and no DHCP/DNS server worked on the first boot. Wi-Fi did not (three bugs, fixed in 12.6a); later images
+  are installed from Patronus itself with `patronus-flash sysupgrade` (12.4).
 - A fresh OpenWrt or GL image runs a DHCP server on its LAN ports even when another DHCP server is present. On an existing
   network, connect it only to the WAN port or set `dhcp.lan.ignore=1` right after first boot.
 - There is no automatic rollback on this board: the kernel command line pins volume 1 as the root, so there is no A/B root
@@ -448,7 +452,7 @@ OpenWrt's `rootfs_data` (which after factory.ubi has autoresized over the whole 
   writes root then kernel (volumes keep their IDs, grown with `ubirsvol` when needed), reads both back, records the result
   on `patronus_data` and restarts (`upgrade-install`). Any failure before the write leaves the old system untouched; a power
   cut during the write needs U-Boot recovery. Same code path for both init systems (it runs before either starts).
-- Proof **[measured]**: host tests (`tests/run.sh`, 126 checks: every guard against synthetic images and a fake UBI);
+- Proof **[measured]**: host tests (`tests/run.sh`, 163 checks: every guard against synthetic images and a fake UBI);
   the QEMU gate runs the real guards on the real image (busybox, loop mount); `nandsim-proof.sh` ran the UBI paths against
   the Linux UBI driver on a simulated 128 MiB NAND with the board's geometry and an exact 0x7300000 partition: ubiformat with
   our OpenRC factory.ubi (the U-Boot path), attach, first-boot `patronus_data` creation (455 LEBs, 264 left free), settings
@@ -479,8 +483,38 @@ unit's `ap.env` sets `AP_FT=1` (testing only), `check-rootfs.sh` refuses an imag
 as NOT imported: the AP comes up with fast transition off and roaming falls back to plain re-association. The importer
 also recognises the IPQ6018 radio (`c000000.wifi`) and keeps `htmode` in its plan (fixture `tests/fixtures/uci-ax1800`).
 
+### 12.6a Wi-Fi bring-up on the real unit (found on the first install, 2026-11-16)
+
+The first real boot had wired networking but no Wi-Fi. Three bugs, each reproduced on the unit and fixed in the image:
+
+1. **Calibration never loaded.** `ath11k-caldata` wrote `cal-ahb-c000000.wifi.bin` into `/lib/firmware`, which is the
+   read-only squashfs root, so it exited (silently, under `set -e`). It also ran after the kmods: the OpenWrt kernel has the
+   firmware user-helper fallback and nothing answers it on this root, so every missing firmware file stalled the boot for
+   the 60 s fallback timeout (modules loaded after about 71 s, the Q6 remoteproc after about 131 s) and the radios never
+   registered. Now the early boot points `firmware_class.path` at a tmpfs (`/run/firmware`), generates the calibration
+   there BEFORE loading the kmods, lowers the fallback timeout to 3 s, and logs any failure to `/tmp/caldata.log`
+   (boot mark `caldata-ok` / `caldata-FAILED`). `ap start` waits in the background for both radios to register.
+2. **5 GHz hostapd refused two SSIDs** ("Invalid BSSID mask ff:ff:ff:ff:ff:fe for start address ..."): the 5 GHz radio's
+   MAC is odd and hostapd's automatic addressing needs an aligned start address; its automatic address for a second
+   2.4 GHz BSS (radio MAC + 1) was the 5 GHz radio's own MAC. The renderer now writes an explicit `bssid=` for every BSS:
+   the radio's MAC for the first, locally administered variants for the rest, unique across both radios (as OpenWrt does).
+3. **5 GHz at 80 MHz failed to start** ("DFS chan_idx seems wrong", interface initialization failed): no
+   `vht_oper_centr_freq_seg0_idx`. For a fixed channel the renderer now writes the HT40 direction and the VHT/HE centre
+   channel (80 MHz: 42, 58, 106, 122, 138, 155, 171 by channel block; 40 MHz: the pair's centre); channel `auto` (ACS)
+   leaves them to hostapd.
+
+Also: the box has no RTC, so OpenRC recorded service start times at 1970 until ntpd synced ("20773 day(s)"). The early boot
+now starts the clock at the last synced time saved on the data volume (`ntp-sync`, busybox ntpd's `-S` hook, at most
+hourly) or the image's build time. Host tests cover the BSSIDs (fake odd radio MAC), the centre channels, the calibration
+path, and `check-rootfs.sh` refuses calibration on the read-only root or an early boot that unloads ath11k.
+
+**Never unload `ath11k_ahb` on this board** (`rmmod`, or a "reload the driver" step in a script): on a live unit it
+crashed the Wi-Fi firmware and the box restarted. The early boot no longer has the old unload/reload fallback.
+
 ### 12.7 Not proven yet
 
-The real board: NSS Ethernet port names, ath11k calibration from the ART partition, hostapd on both radios, the U-Boot
-recovery and stock-UI installs of a Patronus image, the early-boot upgrade installer end to end (its UBI write step is
-proven on nandsim, the pivot into RAM only on paper), RAM and boot time on the IPQ6018.
+Proven on a real unit (OpenRC, 2026-11-16): the NSS Ethernet ports, install from OpenWrt with `sysupgrade -n`, ath11k
+calibration from the ART partition, hostapd on both radios with two SSIDs each. Not yet: the systemd variant on the board,
+the U-Boot recovery and stock-UI installs of a Patronus image, RAM and boot time on the IPQ6018 beyond the first unit, and
+the early-boot upgrade installer end to end (its UBI write step is proven on nandsim; the first real run is the
+`patronus-flash sysupgrade` from the fixed image).

@@ -3,19 +3,23 @@
 #   cal-ahb-c000000.wifi.bin = 0x10000 bytes of mtd "0:art" at 0x1000, with the radio MACs patched in:
 #   mac id 0 = label MAC + 3, mac id 1 = label MAC + 2 (the board's two radios), macflag set, header checksum fixed up.
 # The label MAC is the one U-Boot puts into the device tree (aliases/label-mac-device). No ART partition (QEMU): exit 1.
+# The output goes to a tmpfs (/run/firmware, which the early boot puts first in firmware_class.path): the root is a
+# read-only squashfs. Every failure says why on stderr (the early boot logs it to /tmp/caldata.log) and exits non-zero.
 # Test hooks: CALDATA_ART (file instead of the mtd char device), CALDATA_OUT, CALDATA_LABEL (MAC), CALDATA_DT.
 set -e
-OUT=${CALDATA_OUT:-/lib/firmware/ath11k/IPQ6018/hw1.0/cal-ahb-c000000.wifi.bin}
+OUT=${CALDATA_OUT:-/run/firmware/ath11k/IPQ6018/hw1.0/cal-ahb-c000000.wifi.bin}
+trap 'rc=$?; [ $rc = 0 ] || echo "caldata: FAILED (exit $rc) writing $OUT" >&2' EXIT
 [ -s "$OUT" ] && [ -z "$CALDATA_ART" ] && { echo "caldata: $OUT exists"; exit 0; }
 ART=${CALDATA_ART:-}
 if [ -z "$ART" ]; then
   i=$(sed -n 's/^mtd\([0-9]*\): [0-9a-f]* [0-9a-f]* "0:art"$/\1/p' /proc/mtd)
-  [ -n "$i" ] || { echo "caldata: no 0:art partition"; exit 1; }
+  [ -n "$i" ] || { echo "caldata: no 0:art partition" >&2; exit 1; }
   ART=/dev/mtd$i
 fi
-mkdir -p "$(dirname "$OUT")"
-dd if="$ART" of="$OUT" bs=4096 skip=1 count=16 2>/dev/null
-[ "$(wc -c < "$OUT")" = 65536 ] || { echo "caldata: short read from $ART"; rm -f "$OUT"; exit 1; }
+mkdir -p "$(dirname "$OUT")" || { echo "caldata: cannot create $(dirname "$OUT")" >&2; exit 1; }
+{ true > "$OUT"; } 2>/dev/null || { echo "caldata: $OUT is not writable" >&2; exit 1; }
+dd if="$ART" of="$OUT" bs=4096 skip=1 count=16 2>/dev/null || { echo "caldata: reading $ART failed" >&2; rm -f "$OUT"; exit 1; }
+[ "$(wc -c < "$OUT")" = 65536 ] || { echo "caldata: short read from $ART" >&2; rm -f "$OUT"; exit 1; }
 DT=${CALDATA_DT:-/proc/device-tree}
 LABEL=$CALDATA_LABEL
 if [ -z "$LABEL" ]; then

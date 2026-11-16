@@ -4,14 +4,22 @@
 #   2 SSIDs -> 2 BSS on 2.4 GHz + 2 BSS on 5 GHz. Config files: /run/hostapd/<band>.conf (0600, they hold the keys).
 # 802.11r (fast transition) is NEVER written unless ap.env sets AP_FT=1: on this board's ath11k stock-firmware lineage it
 # is what crashes the Wi-Fi firmware (and then the kernel in ath11k_core_ssr_notifier_cb).
-# Test hooks: AP_RENDER_OUT (directory), AP_PHY24 / AP_PHY5 (phy names), AP_BOARD (board.sh path).
+# BSSIDs are always explicit (as OpenWrt writes them): the first BSS of a radio uses the radio's own MAC, every further
+# BSS a locally administered variant of it, unique across both radios. hostapd's automatic addressing fails here: it
+# needs an even start address (this board's 5 GHz phy MAC is odd: "Invalid BSSID mask"), and its +1 address for a second
+# 2.4 GHz BSS is the 5 GHz radio's own MAC.
+# A fixed 5 GHz channel at 40/80 MHz gets its HT40 direction and VHT/HE centre channel (hostapd refuses 80 MHz without
+# vht_oper_centr_freq_seg0_idx); channel auto (ACS) leaves them to hostapd.
+# Test hooks: AP_RENDER_OUT (directory), AP_PHY24 / AP_PHY5 (phy names), AP_BOARD (board.sh path),
+#             AP_SYSFS (instead of /sys/class/ieee80211: <phy>/macaddress), AP_PHY_WAIT (seconds to wait for the phys).
 . ${AP_BOARD:-/etc/patronus/board.sh}
 OUTD=${AP_RENDER_OUT:-/run/hostapd}
+SYSFS=${AP_SYSFS:-/sys/class/ieee80211}
 phy_band() { # phy 2|5: does the phy offer that band? (5 GHz = a 5xxx MHz frequency)
   iw phy "$1" info 2>/dev/null | grep -qE "^\s+\* $2[0-9]{3}(\.[0-9])? MHz" ; }
 find_phys() {
   P24=${AP_PHY24:-}; P5=${AP_PHY5:-}
-  for p in $(ls /sys/class/ieee80211 2>/dev/null); do
+  for p in $(ls $SYSFS 2>/dev/null); do
     [ -z "$P5" ] && phy_band $p 5 && P5=$p
     [ -z "$P24" ] && phy_band $p 2 && ! phy_band $p 5 && P24=$p
   done
@@ -23,43 +31,91 @@ sec_lines() { # SEC KEY
     *)      echo "wpa=2"; echo "wpa_key_mgmt=WPA-PSK"; echo "ieee80211w=0"; echo "wpa_passphrase=$2" ;;
   esac
   echo "rsn_pairwise=CCMP"; }
+# every BSSID handed out so far, plus both radios' own MACs (a variant must never equal another radio's MAC)
+USED=" "
+next_bssid() { # PHY-MAC N: BSSID of the radio's N-th BSS (0 = the MAC itself), never one already in $USED
+  mac=$1; b1=$((0x${mac%%:*})); rest=${mac#*:}; s=0
+  if [ "$2" = 0 ]; then a=$mac
+  else
+    # locally administered variants (bit 1 of the first octet set), stepping bits 2..7 like OpenWrt's macaddr generator
+    while :; do a=$(printf '%02x' $(( ((b1 | 2) ^ (s << 2)) & 0xff ))):$rest; s=$((s + 1))
+      [ "$a" != "$mac" ] && case "$USED" in *" $a "*) ;; *) break;; esac
+      [ $s -gt 63 ] && { echo "ap: no free BSSID for $mac" >&2; return 1; }; done
+  fi
+  echo "$a"; }
+chan5_lines() { # CHANNEL WIDTH(20|40|80): HT40 direction + VHT/HE width and centre channel for a fixed 5 GHz channel
+  c=$1; w=$2
+  if [ "$c" = 0 ]; then   # ACS: hostapd picks the channel and computes the centre itself
+    case "$w" in 80) echo "ht_capab=[HT40+]"; echo "vht_oper_chwidth=1"; echo "he_oper_chwidth=1";; 40) echo "ht_capab=[HT40+]";; esac; return 0; fi
+  [ "$w" = 20 ] && { echo "vht_oper_chwidth=0"; echo "he_oper_chwidth=0"; return 0; }
+  if [ "$c" -ge 149 ]; then base=149; else base=36; fi
+  i=$(( (c - base) / 4 ))
+  if [ $((i % 2)) = 0 ]; then echo "ht_capab=[HT40+]"; c40=$((c + 2)); else echo "ht_capab=[HT40-]"; c40=$((c - 2)); fi
+  if [ "$w" = 80 ]; then
+    c80=$(( base + (i / 4) * 16 + 6 ))
+    echo "vht_oper_chwidth=1"; echo "vht_oper_centr_freq_seg0_idx=$c80"; echo "he_oper_chwidth=1"; echo "he_oper_centr_freq_seg0_idx=$c80"
+  else
+    echo "vht_oper_chwidth=0"; echo "vht_oper_centr_freq_seg0_idx=$c40"; echo "he_oper_chwidth=0"; echo "he_oper_centr_freq_seg0_idx=$c40"
+  fi; }
+valid5() { # a 5 GHz channel number on the 20 MHz raster (36..144 from 36, 149..177 from 149)
+  case "$1" in ''|*[!0-9]*) return 1;; esac
+  { [ "$1" -ge 36 ] && [ "$1" -le 144 ] && [ $(( ($1 - 36) % 4 )) = 0 ]; } || { [ "$1" -ge 149 ] && [ "$1" -le 177 ] && [ $(( ($1 - 149) % 4 )) = 0 ]; }; }
+phy_mac() { m=$(tr 'A-F' 'a-f' < $SYSFS/$1/macaddress 2>/dev/null)
+  case "$m" in ??:??:??:??:??:??) echo "$m";; *) echo "ap: no MAC for $1 ($SYSFS/$1/macaddress)" >&2; return 1;; esac; }
 render_band() { # 24|5 phy
   b=$1; phy=$2; f=$OUTD/ap$b.conf; first=1; n=0
-  if [ $b = 24 ]; then ch=$AP_CHAN24; hw=g; [ "$ch" = auto ] && ch=0; pre=wl24; else ch=$AP_CHAN5; hw=a; [ "$ch" = auto ] && ch=0; pre=wl5; fi
+  pmac=$(phy_mac $phy) || return 1
+  if [ $b = 24 ]; then ch=$AP_CHAN24; hw=g; [ "$ch" = auto ] && ch=0; pre=wl24
+  else ch=$AP_CHAN5; hw=a; [ "$ch" = auto ] && ch=0; pre=wl5
+    [ "$ch" = 0 ] || valid5 "$ch" || { echo "ap: AP_CHAN5=$ch is not a 5 GHz channel: using auto" >&2; ch=0; }
+  fi
   for s in $AP_SSIDS; do
     eval "ssid=\$SSID_$s key=\$KEY_$s sec=\${SEC_$s:-wpa2} hide=\${HIDE_$s:-0} only=\${BANDS_$s:-both}"
     [ "$only" = both ] || [ "$only" = $b ] || continue
     [ -n "$ssid" ] && [ -n "$key" ] || { echo "ap: SSID_$s / KEY_$s missing" >&2; continue; }
-    n=$((n + 1)); ifn=$pre-$s
+    ifn=$pre-$s; bssid=$(next_bssid "$pmac" $n) || return 1; USED="$USED$bssid "; n=$((n + 1))
     if [ $first = 1 ]; then
       first=0; : > $f; chmod 600 $f
       { echo "driver=nl80211"; echo "country_code=$AP_COUNTRY"; echo "ieee80211d=1"; echo "ieee80211h=$([ $b = 5 ] && echo 1 || echo 0)"
         echo "hw_mode=$hw"; echo "channel=$ch"; echo "wmm_enabled=1"; echo "ieee80211n=1"; echo "ieee80211ax=1"
-        [ $b = 5 ] && { echo "ieee80211ac=1"; case "$AP_HT5" in 80) echo "ht_capab=[HT40+]"; echo "vht_oper_chwidth=1"; echo "he_oper_chwidth=1";; 40) echo "ht_capab=[HT40+]";; esac; }
+        [ $b = 5 ] && { echo "ieee80211ac=1"; chan5_lines "$ch" "${AP_HT5:-80}"; }
         [ "$ch" = 0 ] && echo "acs_num_scans=1"
-        echo "interface=$ifn"; echo "bridge=br-lan"; echo "ctrl_interface=/run/hostapd"; } >> $f
+        echo "interface=$ifn"; echo "bssid=$bssid"; echo "bridge=br-lan"; echo "ctrl_interface=/run/hostapd"; } >> $f
     else
-      echo "bss=$ifn" >> $f; echo "bridge=br-lan" >> $f
+      { echo "bss=$ifn"; echo "bssid=$bssid"; echo "bridge=br-lan"; } >> $f
     fi
     { echo "ssid=$ssid"; echo "ignore_broadcast_ssid=$hide"; echo "ap_isolate=0"; sec_lines "$sec" "$key"
       if [ "${AP_FT:-0}" = 1 ]; then echo "ieee80211r=1"; echo "mobility_domain=${AP_MDID:-4f57}"; echo "ft_psk_generate_local=1"; echo "nas_identifier=ax1800-$b"; fi
     } >> $f
   done
   [ $n -gt 0 ] && echo "$f $phy $n"; }
-case "$1" in
-render) mkdir -p $OUTD; find_phys
-  [ -n "$P24" ] && render_band 24 $P24
-  [ -n "$P5" ] && render_band 5 $P5
-  true ;;
-start)
-  mkdir -p $OUTD; chmod 700 $OUTD; find_phys
-  [ -n "$P24$P5" ] || { echo "ap: no Wi-Fi phy found (ath11k not loaded? see /tmp/insmod.log, /tmp/caldata.log)"; exit 0; }
-  [ -n "$AP_SSIDS" ] || { echo "ap: no AP_SSIDS configured (/etc/patronus/ap.env): Wi-Fi stays off"; exit 0; }
+start_all() {
   /usr/libexec/patronus/ap render | while read -r f phy n; do
     b=$(basename $f .conf)
     # the first BSS' netdev is created on its phy here (hostapd then adds the `bss=` ones itself)
     iw phy $phy interface add $(sed -n 's/^interface=//p' $f) type __ap 2>/dev/null
-    hostapd -B -P /run/hostapd-$b.pid $f > /tmp/hostapd-$b.log 2>&1 || { echo "hostapd $b failed"; cat /tmp/hostapd-$b.log; }
-  done ;;
+    if hostapd -B -P /run/hostapd-$b.pid $f > /tmp/hostapd-$b.log 2>&1; then echo "$(cut -d' ' -f1 /proc/uptime) hostapd-$b" >> /tmp/boot-times
+    else echo "hostapd $b failed"; cat /tmp/hostapd-$b.log; fi
+  done; }
+case "$1" in
+render) mkdir -p $OUTD; find_phys
+  # both radios' own MACs are reserved first, so no variant of one radio can take the other's address
+  for p in $P5 $P24; do m=$(phy_mac $p 2>/dev/null) && USED="$USED$m "; done
+  [ -n "$P5" ] && render_band 5 $P5
+  [ -n "$P24" ] && render_band 24 $P24
+  true ;;
+start)
+  mkdir -p $OUTD; chmod 700 $OUTD
+  [ -n "$AP_SSIDS" ] || { echo "ap: no AP_SSIDS configured (/etc/patronus/ap.env): Wi-Fi stays off"; exit 0; }
+  find_phys
+  if [ -n "$P24" ] && [ -n "$P5" ]; then start_all; exit 0; fi
+  if [ ! -d /sys/module/ath11k_ahb ] && [ -z "$P24$P5" ]; then
+    echo "ap: no Wi-Fi phy found (ath11k not loaded? see /tmp/insmod.log, /tmp/caldata.log)"; exit 0; fi
+  # ath11k registers the radios only once the Q6 firmware is up (seconds after the module loads): wait in the
+  # background so the rest of the boot (address, ssh, web UI) does not wait for Wi-Fi
+  ( i=0; while [ $i -lt ${AP_PHY_WAIT:-90} ]; do find_phys; [ -n "$P24" ] && [ -n "$P5" ] && break; sleep 1; i=$((i + 1)); done
+    [ -n "$P24$P5" ] || { echo "ap: no Wi-Fi phy after ${AP_PHY_WAIT:-90} s (see /tmp/caldata.log, dmesg)"; exit 0; }
+    echo "$(cut -d' ' -f1 /proc/uptime) wifi-phys" >> /tmp/boot-times; start_all ) > /tmp/ap.log 2>&1 < /dev/null &
+  ;;
 stop) for p in /run/hostapd-*.pid; do [ -f "$p" ] && kill $(cat $p) 2>/dev/null; done; true ;;
 esac
