@@ -101,7 +101,7 @@ $b24"
 la=1; for x in $(echo "$b5" | sed 1d) $(echo "$b24" | sed 1d); do [ $(( 0x${x%%:*} & 2 )) = 2 ] || la=0; [ "${x#*:}" = 00:5e:10:20:d7 ] || [ "${x#*:}" = 00:5e:10:20:d6 ] || la=0; done
 [ $la = 1 ] && ok "ap: further BSSIDs are locally administered variants of their radio's MAC" || no "ap: further BSSIDs not LA variants: $(echo $all)"
 # hostapd's own rule for the old (automatic) case must no longer apply: no BSS may sit on the other radio's MAC
-echo "$b24" | grep -qx 94:00:5e:10:20:d7 && no "ap: a 2.4 GHz BSS uses the 5 GHz radio's MAC" || ok "ap: no 2.4 GHz BSS on the 5 GHz radio's MAC"
+case " $(echo $b24) " in *" 94:00:5e:10:20:d7 "*) no "ap: a 2.4 GHz BSS uses the 5 GHz radio's MAC";; *) ok "ap: no 2.4 GHz BSS on the 5 GHz radio's MAC";; esac
 # three SSIDs: still unique
 aprender three "AP_SSIDS=\"a b c\"
 SSID_a=A KEY_a=aaaaaaaa
