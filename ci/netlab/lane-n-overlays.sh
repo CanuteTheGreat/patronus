@@ -46,8 +46,9 @@ nl_api_ok "add GRE" POST /interfaces/overlays '{"name":"gre-t0","kind":"gre","lo
 nl_api_ok "add VXLAN" POST /interfaces/overlays '{"name":"vx-t0","kind":"vxlan","local":"192.168.50.1","remote":"192.168.50.10","key":100}'
 nl_api_ok "address GRE" PUT /interfaces/gre-t0 '{"ipv4_mode":"static","ipv4":["10.99.0.1/30"]}'
 nl_api_ok "address VXLAN" PUT /interfaces/vx-t0 '{"ipv4_mode":"static","ipv4":["10.98.0.1/30"]}'
-R ip -d link show gre-t0 | grep -q 'gre remote 192.168.50.10 local 192.168.50.1' || { R ip -d link show gre-t0 || true; nl_fail "no GRE device with those endpoints in the kernel"; }
-R ip -d link show vx-t0 | grep -q 'vxlan.* id 100' || { R ip -d link show vx-t0 || true; nl_fail "no VXLAN device with VNI 100 in the kernel"; }
+GRE_D=$(R ip -d link show gre-t0); VX_D=$(R ip -d link show vx-t0)
+grep -q 'gre remote 192.168.50.10 local 192.168.50.1' <<<"$GRE_D" || { echo "$GRE_D"; nl_fail "no GRE device with those endpoints in the kernel"; }
+grep -q 'vxlan.* id 100' <<<"$VX_D" || { echo "$VX_D"; nl_fail "no VXLAN device with VNI 100 in the kernel"; }
 R ping -c3 -W2 10.99.0.2 >/dev/null 2>&1 || { R ip -d addr show gre-t0 || true; nl_fail "no reply across the GRE tunnel"; }
 R ping -c3 -W2 10.98.0.2 >/dev/null 2>&1 || { R ip -d addr show vx-t0 || true; nl_fail "no reply across the VXLAN tunnel"; }
 nl_ok "ping crosses the GRE tunnel (key 7) and the VXLAN overlay (VNI 100)"
@@ -59,7 +60,8 @@ nl_ok "the overlays are listed by the API and the Interfaces page has the form"
 
 echo "=== changing the key recreates the tunnel"
 nl_api_ok "new GRE key" POST /interfaces/overlays '{"name":"gre-t0","kind":"gre","local":"192.168.50.1","remote":"192.168.50.10","key":8,"ttl":64}'
-R ip -d link show gre-t0 | grep -Eq 'key (8|0\.0\.0\.8)' || { R ip -d link show gre-t0 || true; nl_fail "the kernel GRE device kept the old key"; }
+GRE_D=$(R ip -d link show gre-t0)
+grep -Eq 'key (8|0\.0\.0\.8)' <<<"$GRE_D" || { echo "$GRE_D"; nl_fail "the kernel GRE device kept the old key"; }
 if R ping -c2 -W1 10.99.0.2 >/dev/null 2>&1; then nl_fail "ping still works with mismatched GRE keys"; fi
 C ip link set gre-peer type gre key 8 2>/dev/null || { C ip link del gre-peer; C ip link add gre-peer type gre local $NL_CLIENT remote $NL_RTR_LAN key 8; C ip addr add 10.99.0.2/30 dev gre-peer; C ip link set gre-peer up; }
 R ping -c3 -W2 10.99.0.2 >/dev/null 2>&1 || nl_fail "no reply after the peer took the new key"
