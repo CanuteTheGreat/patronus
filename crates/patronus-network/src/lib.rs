@@ -9,6 +9,7 @@ pub use ipnetwork;
 pub mod applyd;
 pub mod bond;
 pub mod bridge;
+pub mod overlay;
 pub mod dhcp_client;
 pub mod interfaces;
 pub mod lan;

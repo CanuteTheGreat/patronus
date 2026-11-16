@@ -184,6 +184,24 @@ pub struct BridgeConfig {
     pub description: Option<String>,
 }
 
+/// GRE / GRE-TAP / VXLAN overlay link (see `overlay.rs`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OverlayConfig {
+    pub name: String,
+    /// `gre`, `gretap` or `vxlan`.
+    pub kind: String,
+    /// Local tunnel endpoint (None = let the kernel route decide).
+    pub local: Option<String>,
+    pub remote: String,
+    /// GRE key, or the VXLAN VNI (required for vxlan).
+    pub key: Option<u32>,
+    /// VXLAN UDP destination port (default 4789).
+    pub port: Option<u16>,
+    pub ttl: Option<u8>,
+    pub enabled: bool,
+    pub description: Option<String>,
+}
+
 /// PPPoE client link (pppd + the kernel PPPoE plugin).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PppoeConfig {
@@ -269,6 +287,8 @@ pub struct NetConfig {
     pub bonds: Vec<BondConfig>,
     pub bridges: Vec<BridgeConfig>,
     pub pppoe: Vec<PppoeConfig>,
+    #[serde(default)]
+    pub overlays: Vec<OverlayConfig>,
     /// Addresses other appliers own on these devices (lane G: HA virtual
     /// IPs, which keepalived adds on the master only, and alias
     /// addresses): never removed by an interfaces apply.
@@ -286,6 +306,7 @@ pub const TABLES: &[&str] = &[
     "l2_bridges",
     "l2_bridge_members",
     "pppoe_links",
+    "overlay_links",
 ];
 
 impl NetConfig {
@@ -308,6 +329,7 @@ impl NetConfig {
         s.extend(self.bonds.iter().map(|b| b.name.clone()));
         s.extend(self.bridges.iter().map(|b| b.name.clone()));
         s.extend(self.pppoe.iter().map(|p| p.name.clone()));
+        s.extend(self.overlays.iter().map(|o| o.name.clone()));
         s
     }
 
@@ -364,6 +386,7 @@ impl NetConfig {
         names.extend(self.bonds.iter().map(|v| v.name.as_str()));
         names.extend(self.bridges.iter().map(|v| v.name.as_str()));
         names.extend(self.pppoe.iter().map(|v| v.name.as_str()));
+        names.extend(self.overlays.iter().map(|v| v.name.as_str()));
         for n in names {
             if !is_valid_ifname(n) {
                 return Err(invalid(format!("interface name {n:?}")));
@@ -539,6 +562,63 @@ impl NetConfig {
                     "PPPoE {}: MTU {} (576-1500)",
                     p.name, p.mtu
                 )));
+            }
+        }
+
+        for o in &self.overlays {
+            if !crate::overlay::KINDS.contains(&o.kind.as_str()) {
+                return Err(invalid(format!(
+                    "overlay {}: type {:?} (gre, gretap or vxlan)",
+                    o.name, o.kind
+                )));
+            }
+            let remote: std::net::IpAddr = o.remote.trim().parse().map_err(|_| {
+                invalid(format!("overlay {}: remote {:?} is not an IP address", o.name, o.remote))
+            })?;
+            if remote.is_unspecified() || remote.is_multicast() {
+                return Err(invalid(format!(
+                    "overlay {}: remote {} must be a unicast address",
+                    o.name, o.remote
+                )));
+            }
+            if remote.is_ipv6() && o.kind != "vxlan" {
+                return Err(invalid(format!(
+                    "overlay {}: GRE over IPv6 is not supported yet (use an IPv4 remote)",
+                    o.name
+                )));
+            }
+            if let Some(l) = o.local.as_ref().filter(|l| !l.is_empty()) {
+                let local: std::net::IpAddr = l.trim().parse().map_err(|_| {
+                    invalid(format!("overlay {}: local {l:?} is not an IP address", o.name))
+                })?;
+                if local.is_ipv4() != remote.is_ipv4() {
+                    return Err(invalid(format!(
+                        "overlay {}: local and remote must be the same address family",
+                        o.name
+                    )));
+                }
+            }
+            if o.kind == "vxlan" {
+                match o.key {
+                    Some(v) if (1..=16_777_215).contains(&v) => {}
+                    _ => {
+                        return Err(invalid(format!(
+                            "overlay {}: VXLAN VNI is required (1-16777215)",
+                            o.name
+                        )))
+                    }
+                }
+                if o.port == Some(0) {
+                    return Err(invalid(format!("overlay {}: UDP port 0", o.name)));
+                }
+            } else if o.port.is_some() {
+                return Err(invalid(format!(
+                    "overlay {}: a UDP port only applies to VXLAN",
+                    o.name
+                )));
+            }
+            if o.ttl == Some(0) {
+                return Err(invalid(format!("overlay {}: TTL 0", o.name)));
             }
         }
 
@@ -751,6 +831,26 @@ impl NetConfig {
                 description: r.get(5),
             });
         }
+        for r in sqlx::query(
+            "SELECT name, kind, local_addr, remote_addr, key, port, ttl, enabled, description
+             FROM overlay_links ORDER BY name",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(db("load overlay links"))?
+        {
+            cfg.overlays.push(OverlayConfig {
+                name: r.get(0),
+                kind: r.get(1),
+                local: r.get(2),
+                remote: r.get(3),
+                key: r.get::<Option<i64>, _>(4).map(|v| v as u32),
+                port: r.get::<Option<i64>, _>(5).map(|v| v as u16),
+                ttl: r.get::<Option<i64>, _>(6).map(|v| v as u8),
+                enabled: r.get::<i64, _>(7) != 0,
+                description: r.get(8),
+            });
+        }
         let members = |table: &'static str, col: &'static str| {
             let pool = pool.clone();
             async move {
@@ -873,6 +973,7 @@ impl NetConfig {
             "l2_bridges",
             "vlans",
             "pppoe_links",
+            "overlay_links",
         ] {
             sqlx::query(&format!("DELETE FROM {t}"))
                 .execute(&mut *tx)
@@ -1028,6 +1129,25 @@ impl NetConfig {
             .execute(&mut *tx)
             .await
             .map_err(db("save pppoe link"))?;
+        }
+        for o in &self.overlays {
+            sqlx::query(
+                "INSERT INTO overlay_links (name, kind, local_addr, remote_addr, key, port, ttl,
+                     enabled, description, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&o.name)
+            .bind(&o.kind)
+            .bind(&o.local)
+            .bind(&o.remote)
+            .bind(o.key.map(|v| v as i64))
+            .bind(o.port.map(|v| v as i64))
+            .bind(o.ttl.map(|v| v as i64))
+            .bind(o.enabled as i64)
+            .bind(&o.description)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(db("save overlay link"))?;
         }
         tx.commit().await.map_err(db("commit"))?;
         Ok(())

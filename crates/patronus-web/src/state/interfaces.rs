@@ -16,7 +16,8 @@
 use patronus_config::{Applier, ApplyReport, ConfigStore};
 use patronus_network::linkstate::{Cmd, KernelState, SystemCmd};
 use patronus_network::netconf::{
-    self, BondConfig, BridgeConfig, IfaceConfig, NetConfig, PppoeConfig, V4Mode, V6Mode, VlanConfig,
+    self, BondConfig, BridgeConfig, IfaceConfig, NetConfig, OverlayConfig, PppoeConfig, V4Mode,
+    V6Mode, VlanConfig,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -61,6 +62,24 @@ pub struct VlanBody {
     pub parent: String,
     pub vlan_id: u16,
     pub protocol: Option<String>,
+    pub enabled: Option<bool>,
+    pub description: Option<String>,
+    pub force: bool,
+}
+
+/// Body for a GRE / GRE-TAP / VXLAN overlay link.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct OverlayBody {
+    pub name: String,
+    /// `gre`, `gretap` or `vxlan`.
+    pub kind: String,
+    pub local: Option<String>,
+    pub remote: String,
+    /// GRE key, or the VXLAN VNI (required for vxlan).
+    pub key: Option<u32>,
+    pub port: Option<u16>,
+    pub ttl: Option<u8>,
     pub enabled: Option<bool>,
     pub description: Option<String>,
     pub force: bool,
@@ -496,6 +515,7 @@ impl InterfacesManager {
             "vlans": cfg.vlans,
             "bonds": cfg.bonds,
             "bridges": cfg.bridges,
+            "overlays": cfg.overlays,
             "pppoe": cfg.pppoe.iter().map(PppoeConfig::redacted).collect::<Vec<_>>(),
             "daemons": daemons,
         }))
@@ -683,6 +703,34 @@ impl InterfacesManager {
         .await
     }
 
+    pub async fn upsert_overlay(
+        &self,
+        b: OverlayBody,
+        client: Option<IpAddr>,
+    ) -> anyhow::Result<ApplyReport> {
+        let name = b.name.trim().to_string();
+        if name.is_empty() {
+            anyhow::bail!("Invalid request: overlay name is required");
+        }
+        let o = OverlayConfig {
+            name: name.clone(),
+            kind: b.kind.trim().to_ascii_lowercase(),
+            local: opt(&b.local),
+            remote: b.remote.trim().to_string(),
+            key: b.key,
+            port: b.port,
+            ttl: b.ttl,
+            enabled: b.enabled.unwrap_or(true),
+            description: opt(&b.description),
+        };
+        self.mutate(format!("overlay {name}"), client, b.force, move |c| {
+            c.overlays.retain(|x| x.name != o.name);
+            c.overlays.push(o);
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn upsert_bond(
         &self,
         b: BondBody,
@@ -798,6 +846,7 @@ impl InterfacesManager {
                 "bonds" => c.bonds.iter().any(|x| x.name == name),
                 "bridges" => c.bridges.iter().any(|x| x.name == name),
                 "pppoe" => c.pppoe.iter().any(|x| x.name == name),
+                "overlays" => c.overlays.iter().any(|x| x.name == name),
                 _ => false,
             };
             if !found {
@@ -824,6 +873,7 @@ impl InterfacesManager {
                 "vlans" => c.vlans.retain(|x| x.name != name),
                 "bonds" => c.bonds.retain(|x| x.name != name),
                 "bridges" => c.bridges.retain(|x| x.name != name),
+                "overlays" => c.overlays.retain(|x| x.name != name),
                 _ => c.pppoe.retain(|x| x.name != name),
             }
             c.interfaces.retain(|i| i.name != name);

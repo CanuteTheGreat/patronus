@@ -7,7 +7,7 @@
 //! has been restored and re-applied by then).
 
 use crate::state::interfaces::{
-    BondBody, BridgeBody, InterfaceUpdate, PppoeBody, VlanBody, LOCKOUT,
+    BondBody, BridgeBody, InterfaceUpdate, OverlayBody, PppoeBody, VlanBody, LOCKOUT,
 };
 use crate::state::AppState;
 use axum::{
@@ -148,6 +148,15 @@ pub async fn add_bridge(
     result(state.interfaces.upsert_bridge(b, client(ci)).await)
 }
 
+/// POST /api/interfaces/overlays
+pub async fn add_overlay(
+    State(state): State<AppState>,
+    ci: Option<ConnectInfo<SocketAddr>>,
+    Json(b): Json<OverlayBody>,
+) -> Response {
+    result(state.interfaces.upsert_overlay(b, client(ci)).await)
+}
+
 /// POST /api/interfaces/pppoe
 pub async fn add_pppoe(
     State(state): State<AppState>,
@@ -190,6 +199,7 @@ delete_handler!(delete_vlan, "vlans");
 delete_handler!(delete_bond, "bonds");
 delete_handler!(delete_bridge, "bridges");
 delete_handler!(delete_pppoe, "pppoe");
+delete_handler!(delete_overlay, "overlays");
 
 /// POST /api/interfaces/apply  (re-apply the stored configuration)
 pub async fn apply(State(state): State<AppState>) -> Response {
@@ -246,6 +256,8 @@ pub fn router() -> axum::Router<AppState> {
         .route("/interfaces/bonds/:name", delete(delete_bond))
         .route("/interfaces/bridges", post(add_bridge))
         .route("/interfaces/bridges/:name", delete(delete_bridge))
+        .route("/interfaces/overlays", post(add_overlay))
+        .route("/interfaces/overlays/:name", delete(delete_overlay))
         .route("/interfaces/pppoe", post(add_pppoe))
         .route("/interfaces/pppoe/:name", delete(delete_pppoe))
         .route("/interfaces/:name", put(update))

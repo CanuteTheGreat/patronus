@@ -707,6 +707,7 @@ impl<'a> Planner<'a> {
         cfg.bonds.retain(|v| v.enabled);
         cfg.bridges.retain(|v| v.enabled);
         cfg.pppoe.retain(|v| v.enabled);
+        cfg.overlays.retain(|v| v.enabled);
         for i in &cfg.interfaces {
             if !i.enabled {
                 self.disabled.insert(i.name.clone());
@@ -772,6 +773,10 @@ impl<'a> Planner<'a> {
                     .iter()
                     .any(|b| b.name == k.name && !crate::bond::needs_recreate(b, k)),
                 Some("bridge") => cfg.bridges.iter().any(|b| b.name == k.name),
+                Some("gre") | Some("gretap") | Some("vxlan") => cfg
+                    .overlays
+                    .iter()
+                    .any(|o| o.name == k.name && !crate::overlay::needs_recreate(o, k)),
                 _ => true,
             };
             if !keep {
@@ -819,6 +824,15 @@ impl<'a> Planner<'a> {
             self.create(vlan_create_args(v), &v.name);
         }
 
+        // 4b. GRE / GRE-TAP / VXLAN overlays (before bridges: a gretap or
+        // vxlan device can be a bridge member)
+        for o in cfg.overlays.clone() {
+            if self.skip.contains(&o.name) || self.present(&o.name) {
+                continue;
+            }
+            self.create(crate::overlay::create_args(&o), &o.name);
+        }
+
         // 5. bridges
         for b in cfg.bridges.clone() {
             if self.skip.contains(&b.name) {
@@ -846,6 +860,7 @@ impl<'a> Planner<'a> {
         order.extend(cfg.bonds.iter().map(|b| b.name.clone()));
         order.extend(ordered.iter().map(|v| v.name.clone()));
         order.extend(cfg.bridges.iter().map(|b| b.name.clone()));
+        order.extend(cfg.overlays.iter().map(|o| o.name.clone()));
         order.extend(cfg.pppoe.iter().map(|p| p.name.clone()));
         let mut seen = BTreeSet::new();
         for name in order {

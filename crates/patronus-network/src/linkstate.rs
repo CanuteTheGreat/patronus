@@ -41,6 +41,11 @@ pub struct KLink {
     pub bond_xmit_hash_policy: Option<String>,
     pub bond_primary: Option<String>,
     pub bridge_stp: Option<bool>,
+    /// GRE / GRE-TAP / VXLAN tunnel endpoints, key (GRE key or VNI) and UDP port.
+    pub tun_local: Option<String>,
+    pub tun_remote: Option<String>,
+    pub tun_key: Option<u32>,
+    pub tun_port: Option<u16>,
     pub mtu: u32,
     pub mac: Option<String>,
     /// Administratively up (IFF_UP).
@@ -162,6 +167,20 @@ impl KernelState {
                         .and_then(|d| d.get("stp_state"))
                         .and_then(|x| x.as_u64())
                         .map(|x| x != 0);
+                }
+                Some("gre") | Some("gretap") | Some("vxlan") => {
+                    k.tun_local = data.and_then(|d| s(d, "local"));
+                    k.tun_remote = data.and_then(|d| s(d, "remote"));
+                    k.tun_key = if kind.as_deref() == Some("vxlan") {
+                        data.and_then(|d| d.get("id")).and_then(crate::overlay::parse_key)
+                    } else {
+                        data.and_then(|d| d.get("ikey").or_else(|| d.get("key")))
+                            .and_then(crate::overlay::parse_key)
+                    };
+                    k.tun_port = data
+                        .and_then(|d| d.get("port"))
+                        .and_then(|x| x.as_u64())
+                        .map(|x| x as u16);
                 }
                 _ => {}
             }

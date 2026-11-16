@@ -85,6 +85,21 @@
         </form>
     </div>
 
+    <h2>Overlays <span class="muted">(GRE, GRE-TAP, VXLAN)</span></h2>
+    <table id="overlays"><thead><tr><th>Name</th><th>Type</th><th>Local</th><th>Remote</th><th>Key / VNI</th><th>State</th><th>Description</th><th></th></tr></thead><tbody></tbody></table>
+    <div id="overlays-empty" class="empty hidden">No overlay links configured.</div>
+    <form class="card" id="overlay-form" onsubmit="return addOverlay(event)">
+        <div class="grid">
+            <div><label>Name</label><input name="name" maxlength="15" required></div>
+            <div><label>Type</label><select name="kind"><option value="gre">GRE (L3)</option><option value="gretap">GRE-TAP (L2)</option><option value="vxlan">VXLAN</option></select></div>
+            <div><label>Local address (optional)</label><input name="local"></div>
+            <div><label>Remote address</label><input name="remote" required></div>
+            <div><label>GRE key / VXLAN VNI</label><input name="key" type="number" min="1"></div>
+            <div><label>Description</label><input name="description"></div>
+        </div>
+        <p><button class="btn btn-primary" type="submit">Save &amp; apply</button></p>
+    </form>
+
     <h2>VLANs <span class="muted">(802.1Q, QinQ via an 802.1ad parent)</span></h2>
     <div id="vlan-off" class="empty hidden">This build has no VLAN support (Gentoo USE=vlan).</div>
     <div id="vlan-on">
@@ -261,6 +276,7 @@ function render() {
     const del = n => '<button class="btn btn-danger" data-del="' + esc(n) + '">Delete</button>';
     D.features.vlan ? (show('vlan-on'), hide('vlan-off')) : (hide('vlan-on'), show('vlan-off'));
     fill('vlans', D.vlans, v => '<tr><td>' + esc(v.name) + '</td><td>' + esc(v.parent) + '</td><td>' + v.vlan_id + '</td><td>' + esc(v.protocol) + '</td><td>' + kstate(v.name) + '</td><td>' + esc(v.description) + '</td><td>' + del(v.name) + '</td></tr>');
+    fill('overlays', D.overlays, o => '<tr><td>' + esc(o.name) + '</td><td>' + esc(o.kind) + '</td><td>' + esc(o.local || '') + '</td><td>' + esc(o.remote) + '</td><td>' + (o.key == null ? '' : o.key) + '</td><td>' + kstate(o.name) + '</td><td>' + esc(o.description) + '</td><td>' + del(o.name) + '</td></tr>');
     fill('bonds', D.bonds, b => '<tr><td>' + esc(b.name) + '</td><td>' + esc(b.mode) + '</td><td>' + b.members.map(esc).join(', ') + '</td><td>' + esc(b.primary || '') + '</td><td>' + kstate(b.name) + '</td><td>' + del(b.name) + '</td></tr>');
     fill('bridges', D.bridges, b => '<tr><td>' + esc(b.name) + '</td><td>' + b.members.map(esc).join(', ') + '</td><td>' + (b.stp ? 'on' : 'off') + '</td><td>' + kstate(b.name) + '</td><td>' + del(b.name) + '</td></tr>');
     D.features.pppoe ? (show('pppoe-on'), hide('pppoe-off')) : (hide('pppoe-on'), show('pppoe-off'));
@@ -327,6 +343,12 @@ function addVlan(ev) {
     ev.preventDefault();
     const f = ev.target;
     call('POST', '/api/interfaces/vlans', {parent: f.parent.value, vlan_id: parseInt(f.vlan_id.value, 10), protocol: f.protocol.value, name: f.name.value || null, description: f.description.value || null});
+    return false;
+}
+function addOverlay(ev) {
+    ev.preventDefault();
+    const f = ev.target;
+    call('POST', '/api/interfaces/overlays', {name: f.name.value, kind: f.kind.value, local: f.local.value || null, remote: f.remote.value, key: f.key.value ? parseInt(f.key.value, 10) : null, description: f.description.value || null});
     return false;
 }
 function addBond(ev) {
