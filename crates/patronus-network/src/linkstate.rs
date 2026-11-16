@@ -172,7 +172,8 @@ impl KernelState {
                     k.tun_local = data.and_then(|d| s(d, "local"));
                     k.tun_remote = data.and_then(|d| s(d, "remote"));
                     k.tun_key = if kind.as_deref() == Some("vxlan") {
-                        data.and_then(|d| d.get("id")).and_then(crate::overlay::parse_key)
+                        data.and_then(|d| d.get("id"))
+                            .and_then(crate::overlay::parse_key)
                     } else {
                         data.and_then(|d| d.get("ikey").or_else(|| d.get("key")))
                             .and_then(crate::overlay::parse_key)

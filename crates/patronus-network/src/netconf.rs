@@ -573,7 +573,10 @@ impl NetConfig {
                 )));
             }
             let remote: std::net::IpAddr = o.remote.trim().parse().map_err(|_| {
-                invalid(format!("overlay {}: remote {:?} is not an IP address", o.name, o.remote))
+                invalid(format!(
+                    "overlay {}: remote {:?} is not an IP address",
+                    o.name, o.remote
+                ))
             })?;
             if remote.is_unspecified() || remote.is_multicast() {
                 return Err(invalid(format!(
@@ -589,7 +592,10 @@ impl NetConfig {
             }
             if let Some(l) = o.local.as_ref().filter(|l| !l.is_empty()) {
                 let local: std::net::IpAddr = l.trim().parse().map_err(|_| {
-                    invalid(format!("overlay {}: local {l:?} is not an IP address", o.name))
+                    invalid(format!(
+                        "overlay {}: local {l:?} is not an IP address",
+                        o.name
+                    ))
                 })?;
                 if local.is_ipv4() != remote.is_ipv4() {
                     return Err(invalid(format!(
