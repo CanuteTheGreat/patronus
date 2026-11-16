@@ -50,7 +50,7 @@ pub async fn run() -> Result<()> {
     if std::env::var("PATRONUS_FIRST_RUN_SETUP").is_ok_and(|v| v == "1")
         && !state.auth.syslogin.admin_account_exists()
     {
-        crate::auth::FIRST_RUN_PENDING.store(true, std::sync::atomic::Ordering::SeqCst);
+        state.auth.syslogin.set_first_run_pending(true);
         info!("no administrator account yet: the UI serves /first-run until the owner creates one");
     }
 

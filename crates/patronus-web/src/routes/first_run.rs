@@ -20,8 +20,8 @@ use serde_json::json;
 pub struct FirstRunTemplate;
 
 /// GET /first-run: the form while setup is pending, else on to the login page.
-pub async fn page() -> Response {
-    if !crate::auth::first_run_pending() {
+pub async fn page(State(state): State<AppState>) -> Response {
+    if !state.auth.syslogin.first_run_pending() {
         return Redirect::to("/login").into_response();
     }
     match FirstRunTemplate.render() {
@@ -42,7 +42,7 @@ pub struct Body {
 
 /// POST /api/first-run {username, password, confirm}
 pub async fn set_password(State(state): State<AppState>, Json(b): Json<Body>) -> Response {
-    if !crate::auth::first_run_pending() {
+    if !state.auth.syslogin.first_run_pending() {
         return (
             StatusCode::CONFLICT,
             Json(json!({"error": "an administrator account already exists"})),
@@ -81,12 +81,9 @@ pub async fn set_password(State(state): State<AppState>, Json(b): Json<Body>) ->
 
 #[cfg(test)]
 mod tests {
-    use crate::auth::{first_run_pending, FIRST_RUN_PENDING};
     use crate::syslogin::{Mode, SysLogin, WebAuthConfig};
     use patronus_network::sysauth::{self, Backend};
-    use std::sync::atomic::Ordering;
 
-    // FIRST_RUN_PENDING is process-global: keep every assertion about it in this one test.
     #[tokio::test]
     async fn first_run_creates_one_system_admin_and_never_ships_a_default() {
         let d = tempfile::tempdir().unwrap();
@@ -101,7 +98,7 @@ mod tests {
             !s.admin_account_exists(),
             "root in wheel is not an administrator"
         );
-        FIRST_RUN_PENDING.store(true, Ordering::SeqCst);
+        s.set_first_run_pending(true);
         assert!(s.create_first_account("netadmin", "short-pw").is_err());
         assert!(s
             .create_first_account("root", "Correct-Horse-Battery-9")
@@ -110,12 +107,12 @@ mod tests {
             .create_first_account("a;b", "Correct-Horse-Battery-9")
             .is_err());
         assert!(
-            first_run_pending(),
+            s.first_run_pending(),
             "a refused submission must not end setup"
         );
         s.create_first_account("netadmin", "Correct-Horse-Battery-9")
             .unwrap();
-        assert!(!first_run_pending());
+        assert!(!s.first_run_pending());
         assert!(s.admin_account_exists());
         // a system user in patronus-admin, signing in like any other account
         assert_eq!(

@@ -101,7 +101,10 @@ pub fn build_router(
         // Every page and API call except the login page/endpoint and static
         // assets requires a valid session (runs after session_middleware,
         // which is the outer layer and provides the SessionStore).
-        .layer(axum::middleware::from_fn(require_session))
+        .layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            require_session,
+        ))
         // Session middleware
         .layer(axum::middleware::from_fn_with_state(
             app_state,
@@ -192,6 +195,7 @@ fn is_public(method: &axum::http::Method, path: &str) -> bool {
 /// redirected to `/login`. State-changing API calls additionally need a
 /// role that may modify configuration.
 async fn require_session(
+    axum::extract::State(app_state): axum::extract::State<crate::AppState>,
     req: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
@@ -204,7 +208,7 @@ async fn require_session(
         return next.run(req).await;
     }
     // A router that has no password yet only offers the set-a-password page.
-    if crate::auth::first_run_pending() {
+    if app_state.auth.syslogin.first_run_pending() {
         return if path.starts_with("/api/") || path == "/metrics" {
             (
                 StatusCode::FORBIDDEN,

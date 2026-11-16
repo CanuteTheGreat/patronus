@@ -155,6 +155,9 @@ pub struct SysLogin {
     /// unit tests, where fixtures log in as seeded admins).
     pub legacy_clamp: bool,
     fails: Arc<Mutex<FailMap>>,
+    /// First-run setup is pending (see `first_run_pending`). Per instance, not a
+    /// process global: parallel unit tests each build their own SysLogin.
+    first_run: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// After this many failures for a name within [`BACKOFF_WINDOW`] it is not
@@ -178,7 +181,19 @@ impl SysLogin {
             },
             legacy_clamp: !cfg!(test),
             fails: Arc::default(),
+            first_run: Arc::default(),
         }
+    }
+
+    /// A router that shipped without any account waits for its owner to create the first
+    /// administrator: every page and API except `/first-run` answers "create the administrator first".
+    pub fn first_run_pending(&self) -> bool {
+        self.first_run.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn set_first_run_pending(&self, pending: bool) {
+        self.first_run
+            .store(pending, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn from_env() -> Self {
@@ -326,7 +341,7 @@ impl SysLogin {
             .cloned()
             .unwrap_or_else(|| "patronus-admin".into());
         sysauth::add_account(&etc, name, password, &[group])?;
-        crate::auth::FIRST_RUN_PENDING.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.set_first_run_pending(false);
         Ok(())
     }
 
