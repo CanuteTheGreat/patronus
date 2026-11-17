@@ -1696,7 +1696,12 @@ async fn failback_ramp_is_validated_and_stored() {
         .await
         .unwrap();
     assert_eq!(
-        load(&s).await.unwrap().gateway("WAN1").unwrap().failback_ramp,
+        load(&s)
+            .await
+            .unwrap()
+            .gateway("WAN1")
+            .unwrap()
+            .failback_ramp,
         60
     );
 }
