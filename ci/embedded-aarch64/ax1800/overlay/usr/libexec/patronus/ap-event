@@ -4,9 +4,10 @@
 # each radio has its own hostapd, so the old one keeps the station listed (and keeps buffering frames for it) until its
 # inactivity timeout. On AP-STA-CONNECTED we therefore drop that MAC from the BSSes of the other radio, without sending
 # a frame (tx=0): the client is already associated here and must not receive a deauthentication.
-# BSSes on the SAME radio are left alone: hostapd already disconnects a station from its other BSSes when it
-# authenticates (ap_sta_remove_in_other_bss), and an extra peer removal there only adds to the same-MAC peer churn on
-# one radio that makes the IPQ6018 firmware assert (ar_wal_peer.c "is_graceful_to_handle").
+# BSSes on the SAME radio are left alone: the image's hostapd (hostapd/APKBUILD, patronus-xbss.diff) removes a station
+# from its other BSSes of the radio, in the driver and synchronously, before it adds it on the new one. This script runs
+# only after the association, far too late for that: the IPQ6018 firmware asserts (ar_wal_peer.c "is_graceful_to_handle")
+# the moment one MAC is a peer on two BSSes of one radio (docs 12.6d).
 # Test hooks: AP_CTRL (control socket directory), AP_CLI (hostapd_cli command), AP_SYSNET (instead of /sys/class/net).
 CTRL=${AP_CTRL:-/run/hostapd}
 CLI=${AP_CLI:-hostapd_cli}

@@ -20,6 +20,9 @@
 # Test hooks: AP_RENDER_OUT (directory), AP_PHY24 / AP_PHY5 (phy names), AP_BOARD (board.sh path),
 #             AP_SYSFS (instead of /sys/class/ieee80211: <phy>/macaddress), AP_PHY_WAIT (seconds to wait for the phys).
 . ${AP_BOARD:-/etc/patronus/board.sh}
+# safe mode after repeated Wi-Fi firmware crashes (wifi-guard, docs 12.6d): only the first SSID of AP_SSIDS on each radio
+WG=${AP_GUARD:-/usr/libexec/patronus/wifi-guard}
+if [ -n "$AP_SSIDS" ] && [ -x "$WG" ] && "$WG" safe; then for s in $AP_SSIDS; do AP_SSIDS=$s; break; done; fi
 OUTD=${AP_RENDER_OUT:-/run/hostapd}
 SYSFS=${AP_SYSFS:-/sys/class/ieee80211}
 phy_band() { # phy 2|5: does the phy offer that band? (5 GHz = a 5xxx MHz frequency)
@@ -142,6 +145,11 @@ render) mkdir -p $OUTD; find_phys
   true ;;
 start)
   mkdir -p $OUTD; chmod 700 $OUTD
+  # firmware crash containment: count this boot (may switch safe mode on before hostapd starts), keep the guard running
+  if [ -x "$WG" ]; then "$WG" boot
+    p=$(cat /run/patronus-wifi-guard.pid 2>/dev/null); [ -n "$p" ] && kill -0 "$p" 2>/dev/null \
+      || setsid "$WG" run > /dev/null 2>&1 < /dev/null &
+  fi
   [ -n "$AP_SSIDS" ] || { echo "ap: no AP_SSIDS configured (/etc/patronus/ap.env): Wi-Fi stays off"; exit 0; }
   find_phys
   if [ -n "$P24" ] && [ -n "$P5" ]; then start_all; exit 0; fi

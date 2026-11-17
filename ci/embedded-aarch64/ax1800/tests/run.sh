@@ -55,6 +55,7 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/bin" "$r/sbin" "$r/usr/bin" "
   cp "$O/usr/libexec/patronus/early" "$O/usr/libexec/patronus/ath11k-caldata" "$r/usr/libexec/patronus/"
   for b in ubinfo ubimkvol ubirmvol ubirsvol ubiupdatevol ubiblock iw ip sha256sum pivot_root; do ln -s /bin/busybox "$r/usr/sbin/$b"; done
   echo x > "$r/lib/modules/6.12.112/modules.dep"; for m in ath11k_ahb qca-nss-dp qca-ssdk mac80211 cfg80211 nf_tables nfnetlink_log nft_reject_inet nf_conntrack; do : > "$r/lib/modules/6.12.112/$m.ko"; done
+  echo patronus-xbss > "$r/usr/sbin/hostapd"
   printf '\177ELF' > "$r/usr/sbin/etphonehome"; chmod +x "$r/usr/sbin/etphonehome"
   echo INIT=openrc > "$r/etc/patronus-init"; echo FEATURES=nftables,cli,web-multicall,vpn-wireguard,ntp-server,syslog > "$r/etc/patronus-release"
   : > "$r/lib/modules/6.12.112/wireguard.ko"; mkdir -p "$r/etc/modules.d" "$r/etc/chrony"; echo wireguard > "$r/etc/modules.d/wireguard"
@@ -86,6 +87,7 @@ r=$(mkroot nochronysvc); rm "$r/etc/init.d/chronyd"; tn_msg "check-rootfs: rejec
 r=$(mkroot nosyslogd); rm "$r/usr/libexec/patronus/syslogd"; tn_msg "check-rootfs: syslog build without the syslogd launcher is refused" 'no /usr/libexec/patronus/syslogd' $CR "$r"
 r=$(mkroot syslogbare); echo 'command=/bin/syslogd' > "$r/etc/init.d/patronus-syslogd"; tn_msg "check-rootfs: syslog build whose logger ignores the collectors is refused" 'does not run the launcher' $CR "$r"
 r=$(mkroot nomdev); rm "$r/etc/mdev.conf"; tn_msg "check-rootfs: rejects an image whose /dev/null and /dev/urandom would be root-only" 'mdev.conf' $CR "$r"
+r=$(mkroot stockhostapd); : > "$r/usr/sbin/hostapd"; tn_msg "check-rootfs: rejects stock hostapd (no synchronous cross-BSS removal)" 'not the Patronus build' $CR "$r"
 r=$(mkroot nofeat); : > "$r/etc/patronus-release"; tn_msg "check-rootfs: rejects an image that does not record its features" 'no FEATURES= line' $CR "$r"
 
 # 3. AP renderer (the real script, `ap render`, against a fake sysfs). The fake radios have the board's MAC shape: the
@@ -224,6 +226,64 @@ grep -q 'hostapd_cli -B .* -a /usr/libexec/patronus/ap-event' "$O/usr/libexec/pa
   && ok "ap: start runs ap-event for every BSS (executable)" || no "ap: ap-event not wired into start, or not executable"
 grep -q centr_freq "$A/two/ap24.conf" && no "ap: 2.4 GHz config got a 5 GHz centre channel" || ok "ap: 2.4 GHz config has no VHT/HE centre channel"
 [ "$(stat -c %a "$A/two/ap5.conf")" = 600 ] && ok "ap: config is 0600 (holds the keys)" || no "ap: config mode $(stat -c %a "$A/two/ap5.conf")"
+
+# 3a. Wi-Fi firmware crash containment (wifi-guard) and the Patronus hostapd package (docs 12.6d)
+G=$W/wg; WGS=$O/usr/libexec/patronus/wifi-guard; mkdir -p "$G/bin"
+printf '#!/bin/sh\necho "ap $*" >> %s/calls\n' "$G" > "$G/bin/ap"
+printf '#!/bin/sh\nshift 4; echo "state=$(cat %s/bss-state)"\n' "$G" > "$G/bin/cli"
+printf '#!/bin/sh\necho "logger $*" >> %s/calls\n' "$G" > "$G/bin/logger"; chmod +x "$G/bin/"*
+wgenv() { env WG_STATE="$G/st" WG_RUN="$G/run" WG_AP="$G/bin/ap" WG_CLI="$G/bin/cli" WG_CTRL="$G/ctrl" WG_UPTIME="$G/uptime" \
+  WG_LOGGER="$G/bin/logger" WG_KMSG="$G/kmsg" RECOVER_WAIT=0 "$@"; }
+wgreset() { rm -rf "$G/st" "$G/run" "$G/ctrl" "$G/calls"; mkdir -p "$G/st" "$G/ctrl"; : > "$G/calls"; echo "100.00 50.00" > "$G/uptime"; echo ENABLED > "$G/bss-state"; }
+wgreset; echo 5 > "$G/st/boot"; printf '4 31\n5 29\n' > "$G/st/crashes"
+wgenv sh "$WGS" boot >/dev/null 2>&1
+[ "$(cat "$G/st/boot")" = 6 ] && wgenv sh "$WGS" safe && grep -q 'PATRONUS-AP-SAFE-MODE on' "$G/calls" \
+  && ok "wifi-guard: a firmware crash in each of the last 2 boots (restart loop) -> safe mode before hostapd starts" \
+  || { no "wifi-guard: restart loop not detected"; cat "$G/calls"; }
+wgenv sh "$WGS" boot >/dev/null 2>&1
+[ "$(cat "$G/st/boot")" = 6 ] && ok "wifi-guard: a second ap start in the same boot is not a new boot" || no "wifi-guard: boot counted twice ($(cat "$G/st/boot"))"
+wgreset; echo 5 > "$G/st/boot"; printf '3 31\n5 29\n' > "$G/st/crashes"
+wgenv sh "$WGS" boot >/dev/null 2>&1
+wgenv sh "$WGS" safe && no "wifi-guard: safe mode after a crash in only one of the last 2 boots" || ok "wifi-guard: one crashed boot is not a loop (no safe mode)"
+if command -v python3 >/dev/null 2>&1; then
+  python3 -c "import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])" "$G/ctrl/wl24-m" 2>/dev/null
+  # kmsg: one record from before the guard started (ignored), then CRASH_MAX crashes
+  kmsg() { : > "$G/kmsg"; echo '3,10,20000000,-;remoteproc remoteproc0: crash detected in cd00000.remoteproc: type fatal error' >> "$G/kmsg"
+    i=0; while [ $i -lt "$1" ]; do echo "3,$((20 + 2 * i)),$((100000001 + i)),-;remoteproc remoteproc0: crash detected in cd00000.remoteproc: type fatal error" >> "$G/kmsg"
+      echo "6,$((21 + 2 * i)),$((100000002 + i)),-;remoteproc remoteproc0: remote processor cd00000.remoteproc is now up" >> "$G/kmsg"; i=$((i + 1)); done; }
+  wgreset; echo 7 > "$G/st/boot"; mkdir -p "$G/ctrl"; python3 -c "import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])" "$G/ctrl/wl24-m"
+  kmsg 1; wgenv timeout 20 sh "$WGS" run >/dev/null 2>&1
+  [ "$(grep -c '^7 ' "$G/st/crashes")" = 1 ] && grep -q 'PATRONUS-WIFI-CRASH' "$G/calls" && grep -q 'PATRONUS-WIFI-RECOVERED every BSS' "$G/calls" \
+    && ! grep -q '^ap ' "$G/calls" && ! wgenv sh "$WGS" safe \
+    && ok "wifi-guard: one crash is recorded (old kernel records ignored), BSSes back -> no restart, no safe mode" \
+    || { no "wifi-guard: single crash handling"; cat "$G/calls" "$G/st/crashes"; }
+  wgreset; echo 7 > "$G/st/boot"; python3 -c "import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])" "$G/ctrl/wl24-m"; echo DISABLED > "$G/bss-state"
+  kmsg 1; wgenv timeout 20 sh "$WGS" run >/dev/null 2>&1
+  grep -q 'ap stop' "$G/calls" && grep -q 'ap start' "$G/calls" && grep -q 'RECOVERED by restarting' "$G/calls" \
+    && ok "wifi-guard: a BSS that did not come back after the crash -> the APs are restarted (no driver unload)" \
+    || { no "wifi-guard: dead BSS not restarted"; cat "$G/calls"; }
+  wgreset; echo 7 > "$G/st/boot"; python3 -c "import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])" "$G/ctrl/wl24-m"
+  kmsg 3; wgenv CRASH_MAX=3 timeout 20 sh "$WGS" run >/dev/null 2>&1
+  wgenv sh "$WGS" safe && grep -q 'PATRONUS-AP-SAFE-MODE on' "$G/calls" && grep -q 'ap start' "$G/calls" \
+    && ok "wifi-guard: 3 crashes within 10 min -> safe mode + APs restarted with it" || { no "wifi-guard: crash burst not contained"; cat "$G/calls"; }
+  grep -q 'rmmod\|modprobe -r' "$WGS" && no "wifi-guard: unloads a driver (crashes this board)" || ok "wifi-guard: never unloads ath11k"
+else sk "wifi-guard run cases (no python3 to create the control sockets)"; fi
+printf '#!/bin/sh\nexit 0\n' > "$G/safe-on"; printf '#!/bin/sh\nexit 1\n' > "$G/safe-off"; chmod +x "$G/safe-on" "$G/safe-off"
+printf '. %s\n%s\n' "$O/etc/patronus/board.sh" "$TWO" > "$A/board-safe.sh"
+for m in on off; do rm -rf "$A/safe-$m"; AP_GUARD=$G/safe-$m AP_BOARD=$A/board-safe.sh AP_RENDER_OUT=$A/safe-$m AP_SYSFS=$A/sys AP_PHY5=phy0 AP_PHY24=phy1 \
+  sh "$O/usr/libexec/patronus/ap" render > "$A/safe-$m.out" 2>&1; done
+[ "$(grep -c '^ssid=' "$A/safe-on/ap24.conf")" = 1 ] && grep -qx 'ssid=Example' "$A/safe-on/ap24.conf" && [ "$(grep -c '^ssid=' "$A/safe-on/ap5.conf")" = 1 ] \
+  && [ "$(grep -c '^ssid=' "$A/safe-off/ap24.conf")" = 2 ] \
+  && ok "ap: safe mode renders only the first SSID on each radio; normal mode both" || { no "ap: safe-mode render"; grep -h '^ssid=' "$A"/safe-*/ap*.conf; cat "$A/safe-on.out"; }
+grep -q 'wifi-guard' "$O/usr/libexec/patronus/ap" && grep -q '"$WG" boot' "$O/usr/libexec/patronus/ap" && [ -x "$WGS" ] \
+  && ok "ap: start counts the boot and keeps wifi-guard running (executable)" || no "ap: wifi-guard not wired into start"
+HP=$D/hostapd; bad=
+for f in hostapd.initd hostapd.confd patronus-xbss.diff; do
+  want=$(awk -v f="$f" '$2 == f { print $1 }' "$HP/APKBUILD"); have=$(sha512sum "$HP/$f" | cut -d' ' -f1)
+  [ -n "$want" ] && [ "$want" = "$have" ] || bad="$bad $f"; done
+[ -z "$bad" ] && ok "hostapd/APKBUILD: sha512sums pin the local sources" || no "hostapd/APKBUILD: sha512sums out of date for:$bad"
+grep -q 'ap_sta_drop_in_other_bss(hapd, sta->addr);' "$HP/patronus-xbss.diff" && grep -q 'hostapd_drv_sta_remove(bss, addr);' "$HP/patronus-xbss.diff" \
+  && ok "hostapd patch: other-BSS removal goes to the driver synchronously before the new peer is added" || no "hostapd patch: synchronous removal missing"
 
 # 3b. ath11k-caldata: writes the calibration to a writable path (the root is read-only), fails loudly when it cannot
 CD=$W/cal; mkdir -p "$CD/ro"; head -c 131072 /dev/urandom > "$CD/art"

@@ -1,0 +1,202 @@
+diff --git a/src/ap/ieee802_11.c b/src/ap/ieee802_11.c
+index 6c516bc..c1f534d 100644
+--- a/src/ap/ieee802_11.c
++++ b/src/ap/ieee802_11.c
+@@ -3081,6 +3081,14 @@ static void handle_auth(struct hostapd_data *hapd,
+ 	if (res == HOSTAPD_ACL_PENDING)
+ 		return;
+ 
++	/* Patronus: a MAC hopping between the SSIDs of one radio */
++	if (auth_transaction == 1 &&
++	    !(auth_alg == WLAN_AUTH_SAE && from_queue) &&
++	    ap_sta_xbss_hop_refused(hapd, sa)) {
++		resp = WLAN_STATUS_AP_UNABLE_TO_HANDLE_NEW_STA;
++		goto fail;
++	}
++
+ #ifdef CONFIG_SAE
+ 	if (auth_alg == WLAN_AUTH_SAE && !from_queue &&
+ 	    (auth_transaction == 1 ||
+@@ -4798,6 +4806,9 @@ static int add_associated_sta(struct hostapd_data *hapd,
+ 				      sta->eht_capab_len);
+ #endif /* CONFIG_IEEE80211BE */
+ 
++	/* Patronus: never one MAC as a peer on two BSSes of one radio */
++	ap_sta_drop_in_other_bss(hapd, sta->addr);
++
+ 	/*
+ 	 * Add the station with forced WLAN_STA_ASSOC flag. The sta->flags
+ 	 * will be set when the ACK frame for the (Re)Association Response frame
+diff --git a/src/ap/sta_info.c b/src/ap/sta_info.c
+index 13613db..6f0ed83 100644
+--- a/src/ap/sta_info.c
++++ b/src/ap/sta_info.c
+@@ -884,30 +884,131 @@ static int ap_sta_remove(struct hostapd_data *hapd, struct sta_info *sta)
+ 
+ static void ap_sta_remove_in_other_bss(struct hostapd_data *hapd,
+ 				       struct sta_info *sta)
++{
++	ap_sta_drop_in_other_bss(hapd, sta->addr);
++}
++
++
++/*
++ * Patronus: remove a station from every OTHER BSS of this radio, from the
++ * hostapd table AND synchronously from the kernel driver, before the caller
++ * adds it to the driver on this BSS. Stock hostapd only schedules the removal
++ * (ap_sta_disconnect -> AP_MAX_INACTIVITY_AFTER_DEAUTH timer), so for up to a
++ * second the same MAC is a peer on two vdevs of one radio; the IPQ6018 ath11k
++ * firmware (WLAN.HK.2.5.0.1) asserts on that ("ar_wal_peer.c:2462 Assertion
++ * is_graceful_to_handle failed") and the SoC restarts. No frame is sent: the
++ * client has already left the old BSS. The driver removal is also issued when
++ * hostapd no longer lists the MAC there (a stale driver entry); mac80211
++ * answers ENOENT for an unknown station without calling the driver.
++ */
++void ap_sta_drop_in_other_bss(struct hostapd_data *hapd, const u8 *addr)
+ {
+ 	struct hostapd_iface *iface = hapd->iface;
+ 	size_t i;
+ 
+-	for (i = 0; i < iface->num_bss; i++) {
++	for (i = 0; iface && i < iface->num_bss; i++) {
+ 		struct hostapd_data *bss = iface->bss[i];
+ 		struct sta_info *sta2;
+-		/* bss should always be set during operation, but it may be
+-		 * NULL during reconfiguration. Assume the STA is not
+-		 * associated to another BSS in that case to avoid NULL pointer
+-		 * dereferences. */
+-		if (bss == hapd || bss == NULL)
+-			continue;
+-		sta2 = ap_get_sta(bss, sta->addr);
+-		if (!sta2)
++
++		/* bss may be NULL during reconfiguration */
++		if (bss == hapd || bss == NULL || !bss->started)
+ 			continue;
++		sta2 = ap_get_sta(bss, addr);
++		if (sta2) {
++			wpa_printf(MSG_INFO,
++				   "patronus-xbss: %s: STA " MACSTR
++				   " moves here from %s: removed there synchronously",
++				   hapd->conf->iface, MAC2STR(addr),
++				   bss->conf->iface);
++			hostapd_logger(bss, addr, HOSTAPD_MODULE_IEEE80211,
++				       HOSTAPD_LEVEL_INFO,
++				       "patronus-xbss: moved to %s, removed here",
++				       hapd->conf->iface);
++			hostapd_drv_sta_remove(bss, addr);
++			ap_free_sta(bss, sta2);
++		} else {
++			hostapd_drv_sta_remove(bss, addr);
++		}
++	}
++}
++
+ 
+-		wpa_printf(MSG_DEBUG, "%s: disconnect old STA " MACSTR
+-			   " association from another BSS %s",
+-			   hapd->conf->iface, MAC2STR(sta2->addr),
+-			   bss->conf->iface);
+-		ap_sta_disconnect(bss, sta2, sta2->addr,
+-				  WLAN_REASON_PREV_AUTH_NOT_VALID);
++/*
++ * Patronus: rate limit a MAC that hops between the BSSes of one radio. Each
++ * hop is a peer delete + create in the firmware; a client switching SSIDs
++ * every few seconds (two connection managers fighting over one radio) is
++ * refused on the NEW BSS for XBSS_HOLD seconds after more than XBSS_MAX hops
++ * within XBSS_WINDOW seconds, and stays where it is. Returns 1 to refuse.
++ */
++#define XBSS_SLOTS 32
++#define XBSS_MAX 6
++#define XBSS_WINDOW 60
++#define XBSS_HOLD 30
++static struct {
++	const void *iface;
++	u8 addr[ETH_ALEN];
++	struct os_reltime first;
++	struct os_reltime hold_until;
++	unsigned int hops;
++} xbss_track[XBSS_SLOTS];
++
++int ap_sta_xbss_hop_refused(struct hostapd_data *hapd, const u8 *addr)
++{
++	struct hostapd_iface *iface = hapd->iface;
++	struct os_reltime now;
++	size_t i;
++	int other = 0, slot = -1, oldest = 0;
++
++	for (i = 0; iface && i < iface->num_bss; i++) {
++		struct hostapd_data *bss = iface->bss[i];
++
++		if (bss && bss != hapd && ap_get_sta(bss, addr))
++			other = 1;
++	}
++	if (!other)
++		return 0; /* not a hop between BSSes of this radio */
++
++	os_get_reltime(&now);
++	for (i = 0; i < XBSS_SLOTS; i++) {
++		if (xbss_track[i].iface == iface &&
++		    os_memcmp(xbss_track[i].addr, addr, ETH_ALEN) == 0) {
++			slot = i;
++			break;
++		}
++		if (os_reltime_before(&xbss_track[i].first,
++				      &xbss_track[oldest].first))
++			oldest = i;
+ 	}
++	if (slot < 0) {
++		slot = oldest;
++		os_memset(&xbss_track[slot], 0, sizeof(xbss_track[slot]));
++		xbss_track[slot].iface = iface;
++		os_memcpy(xbss_track[slot].addr, addr, ETH_ALEN);
++		xbss_track[slot].first = now;
++	}
++	if (os_reltime_before(&now, &xbss_track[slot].hold_until)) {
++		wpa_printf(MSG_INFO, "patronus-xbss: %s: STA " MACSTR
++			   " still hopping between SSIDs: refused for now",
++			   hapd->conf->iface, MAC2STR(addr));
++		return 1;
++	}
++	if (os_reltime_expired(&now, &xbss_track[slot].first, XBSS_WINDOW)) {
++		xbss_track[slot].first = now;
++		xbss_track[slot].hops = 0;
++	}
++	if (++xbss_track[slot].hops > XBSS_MAX) {
++		xbss_track[slot].hold_until = now;
++		xbss_track[slot].hold_until.sec += XBSS_HOLD;
++		xbss_track[slot].first = now;
++		xbss_track[slot].hops = 0;
++		hostapd_logger(hapd, addr, HOSTAPD_MODULE_IEEE80211,
++			       HOSTAPD_LEVEL_NOTICE,
++			       "patronus-xbss: hopped between SSIDs more than %d times in %d s: refused on %s for %d s",
++			       XBSS_MAX, XBSS_WINDOW, hapd->conf->iface,
++			       XBSS_HOLD);
++		return 1;
++	}
++	return 0;
+ }
+ 
+ 
+@@ -1854,6 +1955,8 @@ int ap_sta_re_add(struct hostapd_data *hapd, struct sta_info *sta)
+ 	hostapd_drv_sta_remove(hapd, sta->addr);
+ 	sta->flags &= ~(WLAN_STA_ASSOC | WLAN_STA_AUTH | WLAN_STA_AUTHORIZED);
+ 
++	ap_sta_drop_in_other_bss(hapd, sta->addr);
++
+ 	if (hostapd_sta_add(hapd, sta->addr, 0, 0,
+ 			    sta->supported_rates,
+ 			    sta->supported_rates_len,
+diff --git a/src/ap/sta_info.h b/src/ap/sta_info.h
+index 8462935..2d6cf79 100644
+--- a/src/ap/sta_info.h
++++ b/src/ap/sta_info.h
+@@ -418,6 +418,8 @@ void ap_sta_delayed_1x_auth_fail_disconnect(struct hostapd_data *hapd,
+ int ap_sta_pending_delayed_1x_auth_fail_disconnect(struct hostapd_data *hapd,
+ 						   struct sta_info *sta);
+ int ap_sta_re_add(struct hostapd_data *hapd, struct sta_info *sta);
++void ap_sta_drop_in_other_bss(struct hostapd_data *hapd, const u8 *addr);
++int ap_sta_xbss_hop_refused(struct hostapd_data *hapd, const u8 *addr);
+ 
+ void ap_free_sta_pasn(struct hostapd_data *hapd, struct sta_info *sta);
+ 

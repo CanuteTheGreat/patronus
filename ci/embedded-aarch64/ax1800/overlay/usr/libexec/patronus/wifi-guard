@@ -1,0 +1,102 @@
+#!/bin/sh
+# wifi-guard run|boot|safe|status: contain IPQ6018 Wi-Fi firmware crashes (ath11k Q6 "fatal error" -> remoteproc
+# recovery). The firmware asserts on some peer sequences (docs/embedded-routers.md 12.6d); a crash must never leave the
+# AP without Wi-Fi and must never turn into a restart loop.
+#   run     daemon (started once by `ap start`, pid /run/patronus-wifi-guard.pid, never stopped by `ap stop`): follows
+#           the kernel log. Each firmware crash is logged as "PATRONUS-WIFI-CRASH" (daemon.err) and recorded on /data
+#           (synced at once: the unit may restart within a second). RECOVER_WAIT s later every BSS must be ENABLED again,
+#           otherwise the APs are restarted (`ap stop` + `ap start`, never a driver unload). CRASH_MAX crashes within
+#           CRASH_WINDOW s of one boot -> safe mode. In safe mode, SAFE_HOLD s without a crash -> safe mode ends.
+#   boot    once per boot, from `ap start`: counts the boot; a firmware crash recorded in each of the previous LOOP_BOOTS
+#           boots means the crash restarts the unit (a restart loop) -> safe mode before hostapd starts.
+#   safe    exit 0 when safe mode is on (`ap render` then keeps only the FIRST SSID of AP_SSIDS on each radio).
+#   status  one line for the web UI / checks.
+# Safe mode is logged as "PATRONUS-AP-SAFE-MODE on|off ..." and persists across restarts. Each new entry within a day
+# doubles the hold (1 h, 2 h, 4 h ... at most 24 h).
+# Test hooks: WG_STATE (state dir), WG_KMSG (kernel log source), WG_AP (ap script), WG_CLI (hostapd_cli), WG_CTRL,
+# WG_UPTIME (uptime file), WG_LOGGER (logger command), WG_RUN (instead of /run).
+STATE=${WG_STATE:-/var/lib/patronus/wifi-guard}
+KMSG=${WG_KMSG:-/dev/kmsg}
+AP=${WG_AP:-/usr/libexec/patronus/ap}
+CLI=${WG_CLI:-hostapd_cli}
+CTRL=${WG_CTRL:-/run/hostapd}
+UPF=${WG_UPTIME:-/proc/uptime}
+LOGGER=${WG_LOGGER:-logger}
+RUN=${WG_RUN:-/run}
+CRASH_MAX=${CRASH_MAX:-3} CRASH_WINDOW=${CRASH_WINDOW:-600} SAFE_HOLD=${SAFE_HOLD:-3600}
+LOOP_BOOTS=${LOOP_BOOTS:-2} RECOVER_WAIT=${RECOVER_WAIT:-20}
+up() { cut -d. -f1 "$UPF"; }
+log() { $LOGGER -p "daemon.$1" -t patronus-wifi "$2" 2>/dev/null; echo "$2"; }
+boot_no() { cat "$STATE/boot" 2>/dev/null || echo 0; }
+persist() { sync; }
+level() { cat "$STATE/safe-level" 2>/dev/null || echo 0; }
+hold() { l=$(level); h=$SAFE_HOLD; while [ "$l" -gt 1 ] && [ $h -lt 86400 ]; do h=$((h * 2)); l=$((l - 1)); done
+  [ $h -gt 86400 ] && h=86400; echo $h; }
+safe_on() { # REASON
+  [ -f "$STATE/safe" ] && return 0
+  echo $(( $(level) + 1 )) > "$STATE/safe-level"
+  echo "boot=$(boot_no) up=$(up) reason=$1" > "$STATE/safe"; persist
+  log err "PATRONUS-AP-SAFE-MODE on: $1; only the first SSID per radio for at least $(hold) s"; }
+safe_off() {
+  rm -f "$STATE/safe"; persist
+  log notice "PATRONUS-AP-SAFE-MODE off: no Wi-Fi firmware crash for $(hold) s; all SSIDs back"; }
+bss_ok() { # every BSS that has a control socket answers state=ENABLED
+  n=0; for s in "$CTRL"/*; do [ -S "$s" ] || continue; n=$((n + 1))
+    case "$($CLI -p "$CTRL" -i "${s##*/}" status 2>/dev/null)" in *state=ENABLED*) ;; *) return 1;; esac; done
+  [ $n -gt 0 ]; }
+restart_aps() { "$AP" stop; sleep 2; "$AP" start; }
+crashes_this_boot() { b=$(boot_no); awk -v b="$b" -v now="$(up)" -v w="$1" '$1 == b && now - $2 <= w' "$STATE/crashes" 2>/dev/null | wc -l; }
+
+on_crash() {
+  echo "$(boot_no) $(up)" >> "$STATE/crashes"; persist
+  n=$(crashes_this_boot 999999999)
+  log err "PATRONUS-WIFI-CRASH ath11k firmware crash #$n this boot (uptime $(up) s): $1"
+  if [ "$(crashes_this_boot "$CRASH_WINDOW")" -ge "$CRASH_MAX" ] && [ ! -f "$STATE/safe" ]; then
+    safe_on "$CRASH_MAX firmware crashes within $CRASH_WINDOW s"; restart_aps; return; fi
+  ( sleep "$RECOVER_WAIT"
+    if bss_ok; then log notice "PATRONUS-WIFI-RECOVERED every BSS is up again after the firmware crash"
+    else log err "PATRONUS-WIFI-RECOVERED by restarting the access points (a BSS did not come back)"; restart_aps; fi ) &
+}
+
+case "$1" in
+boot)
+  mkdir -p "$STATE"; [ -f "$RUN/patronus/wifi-guard.boot" ] && exit 0
+  mkdir -p "$RUN/patronus"; : > "$RUN/patronus/wifi-guard.boot"
+  b=$(( $(boot_no) + 1 )); echo $b > "$STATE/boot"
+  # keep the crash record short: the last 20 boots
+  [ -f "$STATE/crashes" ] && awk -v b=$b '$1 > b - 20' "$STATE/crashes" > "$STATE/crashes.new" && mv "$STATE/crashes.new" "$STATE/crashes"
+  persist
+  loop=1; i=1; while [ $i -le "$LOOP_BOOTS" ]; do
+    awk -v p=$((b - i)) '$1 == p { f = 1 } END { exit !f }' "$STATE/crashes" 2>/dev/null || loop=0; i=$((i + 1)); done
+  [ $loop = 1 ] && safe_on "a Wi-Fi firmware crash in each of the last $LOOP_BOOTS boots (restart loop)"
+  # a day without safe mode resets the doubling
+  [ -f "$STATE/safe" ] || { [ -f "$STATE/safe-level" ] && [ -n "$(find "$STATE/safe-level" -mmin +1440 2>/dev/null)" ] && rm -f "$STATE/safe-level"; }
+  exit 0 ;;
+safe) [ -f "$STATE/safe" ] ;;
+status) if [ -f "$STATE/safe" ]; then echo "safe-mode $(cat "$STATE/safe") hold=$(hold)"; else echo "normal"; fi
+  echo "crashes-this-boot=$(crashes_this_boot 999999999) boot=$(boot_no)" ;;
+run)
+  mkdir -p "$STATE"; echo $$ > "$RUN/patronus-wifi-guard.pid"
+  t0=$(awk '{ printf "%d", $1 * 1000000 }' "$UPF")
+  ( while :; do sleep 60
+      if [ -f "$STATE/safe" ] && [ "$(crashes_this_boot "$(hold)")" = 0 ] && [ "$(up)" -ge "$(hold)" ]; then
+        safe_off; restart_aps; fi
+    done ) &
+  w=$!
+  # /dev/kmsg records: "prio,seq,usec,flags;text". Only records newer than our start; a read error (EPIPE when the ring
+  # buffer overran us) reopens the log and skips what was already seen (by sequence number).
+  last=-1
+  while :; do
+    while IFS= read -r line; do
+      seq=${line#*,}; us=${seq#*,}; seq=${seq%%,*}; us=${us%%,*}; us=${us%%;*}
+      case "$seq$us" in ''|*[!0-9]*) continue;; esac
+      [ "$us" -ge "$t0" ] && [ "$seq" -gt "$last" ] || continue
+      last=$seq
+      case "$line" in *remoteproc*"crash detected"*) on_crash "${line#*;}";; esac
+    done < "$KMSG"
+    [ "$KMSG" = /dev/kmsg ] || break
+    sleep 1
+  done
+  kill $w 2>/dev/null; wait ;;
+*) echo "usage: wifi-guard run|boot|safe|status" >&2; exit 2 ;;
+esac

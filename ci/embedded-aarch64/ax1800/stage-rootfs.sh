@@ -10,13 +10,17 @@
 # WireGuard VPN (feature vpn-wireguard): `wg` (wireguard-tools-wg, the applier runs `wg syncconf`; the kernel module is a pinned
 # OpenWrt kmod, kmods.pin). Clock and NTP server: chrony (non-NTS build, no GnuTLS), the one NTP daemon of the image: it keeps
 # the clock and, with the NTP server page (feature ntp-server), serves the LAN.
+# hostapd is NOT Alpine's package: stage-hostapd.sh builds hostapd/APKBUILD (Alpine's 2.11 + patronus-xbss.diff, the
+# synchronous cross-BSS station removal the IPQ6018 firmware needs, docs 12.6d) and it is installed from that local file.
 set -euo pipefail
 R=/out/rootfs; rm -rf $R; mkdir -p $R
 COMMON="alpine-baselayout-data busybox busybox-binsh musl libgcc libcap2 linux-pam libmnl libnftnl ca-certificates-bundle \
-  hostapd iw iproute2-minimal dropbear dropbear-scp mtd-utils-ubi nftables wireless-regdb libnl3 libssl3 libcrypto3 zlib libucontext libmount \
+  iw iproute2-minimal dropbear dropbear-scp mtd-utils-ubi nftables wireless-regdb libnl3 libssl3 libcrypto3 zlib libucontext libmount \
   wireguard-tools-wg chrony"
 APK="apk --initdb --no-scripts --no-cache --keys-dir /etc/apk/keys --repositories-file /etc/apk/repositories"
-$APK --root $R add $COMMON
+HOSTAPD_APK=$(ls /out/hostapd/*/hostapd-2.11-r1[0-9][0-9].apk 2>/dev/null | head -1)
+[ -n "$HOSTAPD_APK" ] || { echo "stage-rootfs: no Patronus hostapd package in /out/hostapd (run stage-hostapd.sh first)"; exit 1; }
+$APK --root $R add --allow-untrusted $COMMON "$HOSTAPD_APK"
 rm -rf $R/lib/apk $R/var/cache/apk $R/etc/apk
 # Alpine puts the loader in /lib: keep, plus the name the aarch64 musl ELF interpreter expects
 [ -e $R/lib/ld-musl-aarch64.so.1 ] || ln -sf ../usr/lib/libc.musl-aarch64.so.1 $R/lib/ld-musl-aarch64.so.1

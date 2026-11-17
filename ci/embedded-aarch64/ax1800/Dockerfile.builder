@@ -3,7 +3,7 @@
 # Built on an arm64 runner (the CI job does `docker build`; the layer cache keeps it a one-time cost per host).
 FROM alpine:3.24
 RUN apk add --no-cache bash build-base git curl pkgconf perl cmake clang-dev linux-headers rustup \
-      openssl-dev openssl-libs-static libmnl-dev libnftnl-dev \
+      openssl-dev openssl-libs-static libmnl-dev libnftnl-dev abuild libnl3-dev \
       squashfs-tools xz tar coreutils findutils binutils file python3 mtd-utils-ubi \
       meson samurai gperf py3-jinja2 py3-elftools libcap-dev util-linux-dev libucontext-dev \
       qemu-system-aarch64 qemu-img cpio e2fsprogs kmod dropbear openssh-client

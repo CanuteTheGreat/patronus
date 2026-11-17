@@ -20,6 +20,9 @@ for f in usr/sbin/patronus-flash usr/libexec/patronus/fwcheck.sh usr/libexec/pat
          usr/sbin/hostapd usr/sbin/dropbear usr/bin/patronus-cli usr/bin/patronus-web \
          lib/firmware/ath11k/IPQ6018/hw1.0/board-2.bin lib/firmware/IPQ6018/q6_fw.mdt lib/firmware/IPQ6018/m3_fw.mdt lib/firmware/regulatory.db; do
   [ -e "$R/$f" ] || [ -L "$R/$f" ] || fail "missing /$f"; done
+# hostapd must be the Patronus build (synchronous cross-BSS station removal): Alpine's stock one lets one MAC be a peer
+# on two BSSes of a radio and the IPQ6018 firmware asserts and restarts the unit (docs 12.6d)
+grep -a 'patronus-xbss' "$R/usr/sbin/hostapd" >/dev/null 2>&1 || fail "hostapd is not the Patronus build (no patronus-xbss): stock hostapd crashes the IPQ6018 firmware when a client moves between SSIDs"
 [ -e "$R/usr/lib/security/pam_unix.so" ] || [ -e "$R/lib/security/pam_unix.so" ] || fail "missing pam_unix.so (web UI login)"
 for t in ubinfo ubimkvol ubirmvol ubirsvol ubiupdatevol ubiblock iw ip sha256sum pivot_root; do
   found=; for d in bin sbin usr/bin usr/sbin; do [ -e "$R/$d/$t" ] || [ -L "$R/$d/$t" ] && found=1; done

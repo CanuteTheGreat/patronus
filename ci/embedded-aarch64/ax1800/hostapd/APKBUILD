@@ -1,0 +1,105 @@
+# Patronus build of Alpine's hostapd (aports 3.24-stable main/hostapd, f6e4cdf0, 2.11-r4) plus one patch:
+# patronus-xbss.diff. Built by ../stage-hostapd.sh in the builder image and installed into the router root by
+# stage-rootfs.sh INSTEAD of Alpine's hostapd package (same files, same build configuration).
+#
+# Why: on the IPQ6018 (GL-AX1800) the ath11k firmware WLAN.HK.2.5.0.1 asserts ("ar_wal_peer.c:2462 Assertion
+# is_graceful_to_handle failed") when one MAC becomes a peer on a second BSS of the same radio while it is still a peer
+# on the first; the SoC then restarts. Stock hostapd adds the station to the driver on the new BSS at authentication and
+# removes it from the old BSS only after a timer. The patch removes it from every other BSS of the radio, in the driver,
+# synchronously, before the new peer is created, and holds back a MAC that hops between the SSIDs of one radio more than
+# 6 times a minute (refused on the new BSS for 30 s). docs/embedded-routers.md 12.6d.
+pkgname=hostapd
+pkgver=2.11
+pkgrel=104
+pkgdesc="daemon for wireless software access points (Patronus: synchronous cross-BSS station removal)"
+url="https://w1.fi/hostapd/"
+arch="all"
+license="BSD-3-Clause"
+makedepends="openssl-dev>3 libnl3-dev linux-headers"
+subpackages="$pkgname-doc $pkgname-openrc"
+source="https://w1.fi/releases/hostapd-$pkgver.tar.gz
+	$pkgname.initd
+	$pkgname.confd
+	patronus-xbss.diff
+	"
+options="!check" #no testsuite
+builddir="$srcdir"/$pkgname-$pkgver/hostapd
+
+prepare() {
+	default_prepare
+	# the patch is against the source root (src/ap/...), builddir is its hostapd/ subdirectory
+	patch -d "$srcdir"/$pkgname-$pkgver -p1 -i "$srcdir"/patronus-xbss.diff
+
+	sed -i -e "s:/etc/hostapd:/etc/hostapd/hostapd:g" \
+		hostapd.conf
+
+	# toolchain setup
+	{
+		sed \
+			-e '/^#CONFIG_RADIUS_SERVER=y/s/^#//' \
+			-e '/^#CONFIG_DRIVER_WIRED=y/s/^#//' \
+			-e '/^#CONFIG_DRIVER_NONE=y/s/^#//' \
+			-e '/^#CONFIG_IEEE80211N=y/s/^#//' \
+			-e '/^#CONFIG_WNM=y/s/^#//' \
+			-e '/^#CONFIG_IEEE80211R=y/s/^#//' \
+			-e '/^#CONFIG_IEEE80211AC=y/s/^#//' \
+			-e '/^#CONFIG_IEEE80211AX=y/s/^#//' \
+			-e '/^#CONFIG_IEEE80211BE=y/s/^#//' \
+			-e '/^#CONFIG_FULL_DYNAMIC_VLAN=y/s/^#//' \
+			-e '/^#CONFIG_LIBNL32=y/s/^#//' \
+			-e '/^#CONFIG_ACS=y/s/^#//' \
+			-e '/^#CONFIG_WEP=y/s/^#//' \
+			-e '/^#CONFIG_SAE=y/s/^#//' \
+			-e '/^#CONFIG_ELOOP_EPOLL=y/s/^#//' \
+			-e '/^#CONFIG_FST=y/s/^#//' \
+			-e '/^#CONFIG_FST_TEST=y/s/^#//' \
+			-e '/^#CONFIG_MBO=y/s/^#//' \
+			-e '/^#CONFIG_WPA_CLI_EDIT=y/s/^#//' \
+			-e '/^#CONFIG_AIRTIME_POLICY=y/s/^#//' \
+			-e '/^#CONFIG_OCV=y/s/^#//' \
+			defconfig
+
+		echo "CC ?= ${CC:-gcc}"
+		echo "CFLAGS += -I/usr/include/libnl3"
+		echo "LIBS += -L/usr/lib"
+	} >> .config
+}
+
+build() {
+	export CFLAGS="$CFLAGS -flto=auto"
+
+	make all nt_password_hash
+}
+
+package() {
+	install -D hostapd.conf \
+		hostapd.accept \
+		hostapd.deny \
+		hostapd.eap_user \
+		hostapd.radius_clients \
+		hostapd.sim_db \
+		hostapd.wpa_psk \
+		-t "$pkgdir"/etc/hostapd/
+
+	install -Dm755 hostapd \
+		-t "$pkgdir"/usr/sbin/
+	install -Dm755 hostapd_cli nt_password_hash \
+		-t "$pkgdir"/usr/bin/
+
+	install -Dm755 "$srcdir"/hostapd.initd \
+		"$pkgdir"/etc/init.d/hostapd
+	install -Dm644 "$srcdir"/hostapd.confd \
+		"$pkgdir"/etc/conf.d/hostapd
+
+	install -Dm644 hostapd.8 \
+		-t "$pkgdir"/usr/share/man/man8/
+	install -Dm644 hostapd_cli.1 \
+		-t "$pkgdir"/usr/share/man/man1/
+}
+
+sha512sums="
+1382af2a243e3a555507b55942f41d1233cc942826d26bc4f4dbe5e75560b3fe22e426948762fe162453e934685a69ef0c05723b7fecef71811fc1987e32b048  hostapd-2.11.tar.gz
+adeca34c6254ac6fccd84e6f08f8c394225e1b89e2c8771b46da5c85fe3fdabc568628530c39da3ab30b72e98891b07bbdb63f74217e79d6afb9796715d822f1  hostapd.initd
+250b072ae26892d5ba285d717d2742a29c12d52db59f021ff18a5eff709827f9987965539bf3f7b83c03fb8c103ea49604118a1d15056e6f1d8a7ae8043affbb  hostapd.confd
+be39658baba19b25ebc7226782dfa2ef19fa25731fcf4126cc5917b6f821181978e06f19d3bfb614f0fa531fc1b5c46ea77b85fb32e3b80b373ad56b4ad89764  patronus-xbss.diff
+"

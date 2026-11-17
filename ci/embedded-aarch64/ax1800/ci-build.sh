@@ -35,8 +35,8 @@ else
 fi ;;
 esac
 
-step "userland + OpenRC (Alpine packages), pack"
-bash "$H/stage-rootfs.sh"; bash "$H/stage-openrc.sh"; bash "$H/pack.sh"
+step "hostapd (Patronus package), userland + OpenRC (Alpine packages), pack"
+bash "$H/stage-hostapd.sh"; bash "$H/stage-rootfs.sh"; bash "$H/stage-openrc.sh"; bash "$H/pack.sh"
 
 step "OpenWrt parts (sha256-pinned)"
 eval "$(sh "$H/fetch-stock.sh" /cache/stock)"
