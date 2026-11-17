@@ -125,6 +125,27 @@
     </div>
 
     <script>
+        // What another firmware served at this address before Patronus may still live in the browser.
+        // Patronus registers no service worker and uses no Cache Storage, so any found here is foreign:
+        // remove it, or it could keep answering requests for this address instead of Patronus.
+        // (The server clears the HTTP cache and foreign cookies with this page's response.)
+        try {
+            if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+                navigator.serviceWorker.getRegistrations()
+                    .then(regs => regs.forEach(r => r.unregister()))
+                    .catch(() => {});
+            }
+            if (window.caches && caches.keys) {
+                caches.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(() => {});
+            }
+        } catch (e) {}
+
+        function showError(text) {
+            const errorMsg = document.getElementById('error-message');
+            errorMsg.textContent = text;
+            errorMsg.classList.add('show');
+        }
+
         document.getElementById('login-form').addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -135,32 +156,49 @@
             const password = document.getElementById('password').value;
             const totp_code = document.getElementById('totp_code').value.trim();
 
+            let response;
             try {
-                const response = await fetch('/api/auth/login', {
+                response = await fetch('/api/auth/login', {
                     method: 'POST',
+                    credentials: 'same-origin',
+                    cache: 'no-store',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify(totp_code ? { username, password, totp_code } : { username, password }),
                 });
-
-                if (response.ok) {
-                    // Redirect to dashboard on success
-                    window.location.href = '/';
-                } else {
-                    const error = await response.json();
-                    if (error.totp_required) {
-                        // password accepted: ask for the second factor
-                        document.getElementById('totp-group').style.display = 'block';
-                        document.getElementById('totp_code').focus();
-                    }
-                    errorMsg.textContent = error.error || 'Login failed';
-                    errorMsg.classList.add('show');
-                }
             } catch (err) {
-                errorMsg.textContent = 'Network error. Please try again.';
-                errorMsg.classList.add('show');
+                showError('Network error: the router did not answer. Please try again.');
+                return;
             }
+
+            if (response.ok) {
+                // The password was accepted. Make sure the browser now sends the session back before
+                // leaving this page: otherwise the dashboard would just bounce back here with no word why.
+                let me = null;
+                try {
+                    me = await fetch('/api/auth/me', { credentials: 'same-origin', cache: 'no-store' });
+                } catch (err) {}
+                if (me && me.ok) {
+                    window.location.href = '/';
+                    return;
+                }
+                showError('The password was accepted, but this browser did not send the sign-in back to the router. '
+                    + 'Data stored for this address by an older firmware may be in the way: clear the cookies and '
+                    + 'site data for this address in the browser, then sign in again.');
+                return;
+            }
+
+            let error = {};
+            try {
+                error = await response.json();
+            } catch (err) {}
+            if (error.totp_required) {
+                // password accepted: ask for the second factor
+                document.getElementById('totp-group').style.display = 'block';
+                document.getElementById('totp_code').focus();
+            }
+            showError(error.error || `Sign-in failed (HTTP ${response.status})`);
         });
     </script>
 </body>

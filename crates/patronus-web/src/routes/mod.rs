@@ -946,4 +946,222 @@ mod auth_gate_tests {
             .unwrap();
         assert_eq!(r.status(), StatusCode::OK, "password must be unchanged");
     }
+
+    async fn body_json(r: axum::response::Response) -> serde_json::Value {
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        serde_json::from_slice(&b).unwrap_or(serde_json::Value::Null)
+    }
+
+    fn set_cookies(r: &axum::response::Response) -> Vec<String> {
+        r.headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// Browsers on HTTP/2 send every cookie as its own `cookie` header field.
+    /// With any other cookie stored for the router's address (one an older
+    /// firmware left there), the session cookie came second and was ignored:
+    /// sign-in succeeded and every page bounced back to the login page.
+    #[tokio::test]
+    async fn session_cookie_in_a_later_cookie_field_is_honoured() {
+        let (app, pw) = app().await;
+        let login = format!(r#"{{"username":"admin","password":"{pw}"}}"#);
+        let r = app
+            .clone()
+            .oneshot(req(Method::POST, "/api/auth/login", None, Some(&login)))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+        let session = set_cookies(&r)[0].split(';').next().unwrap().to_string();
+        for (fields, what) in [
+            (
+                vec!["Admin-Token=0123456789abcdef", session.as_str()],
+                "foreign cookie first, own field",
+            ),
+            (
+                vec![session.as_str(), "Admin-Token=0123456789abcdef"],
+                "session first",
+            ),
+            (
+                vec!["lang=Espa\u{f1}ol", session.as_str()],
+                "non-ASCII cookie in its own field",
+            ),
+            (
+                vec!["session_id=stale-0000", session.as_str()],
+                "stale duplicate in front",
+            ),
+        ] {
+            for uri in ["/", "/system", "/api/auth/me"] {
+                let mut b = Request::builder().method(Method::GET).uri(uri);
+                for f in &fields {
+                    b = b.header(
+                        header::COOKIE,
+                        axum::http::HeaderValue::from_bytes(f.as_bytes()).unwrap(),
+                    );
+                }
+                let r = app
+                    .clone()
+                    .oneshot(b.body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                assert_eq!(r.status(), StatusCode::OK, "{what}: {uri}");
+            }
+        }
+        // the same pairs in ONE field (HTTP/1.1), with a non-ASCII neighbour
+        let one = format!("lang=Espa\u{f1}ol; {session}");
+        let r = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/system")
+                    .header(
+                        header::COOKIE,
+                        axum::http::HeaderValue::from_bytes(one.as_bytes()).unwrap(),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            r.status(),
+            StatusCode::OK,
+            "non-ASCII pair in the same field"
+        );
+    }
+
+    /// The login page and a successful sign-in remove cookies Patronus never
+    /// sets (left at the address by a previous firmware), keep the session
+    /// cookie, and the page clears the browser's HTTP cache for the address.
+    #[tokio::test]
+    async fn login_page_and_sign_in_clear_foreign_state() {
+        let (app, pw) = app().await;
+        let r = app
+            .clone()
+            .oneshot(req(
+                Method::GET,
+                "/login",
+                Some("Admin-Token=abc; session_id=whatever; sysauth_https=x"),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(r.headers()["clear-site-data"], "\"cache\"");
+        let sc = set_cookies(&r);
+        assert!(
+            sc.iter()
+                .any(|c| c.starts_with("Admin-Token=; Max-Age=0; Path=/")),
+            "{sc:?}"
+        );
+        assert!(
+            sc.iter()
+                .any(|c| c.starts_with("sysauth_https=; Max-Age=0; Path=/")),
+            "{sc:?}"
+        );
+        assert!(!sc.iter().any(|c| c.starts_with("session_id=")), "{sc:?}");
+        // no foreign cookies: nothing is set
+        let r = app
+            .clone()
+            .oneshot(req(Method::GET, "/login", None, None))
+            .await
+            .unwrap();
+        assert!(set_cookies(&r).is_empty());
+
+        let login = format!(r#"{{"username":"admin","password":"{pw}"}}"#);
+        let r = app
+            .clone()
+            .oneshot(req(
+                Method::POST,
+                "/api/auth/login",
+                Some("Admin-Token=abc"),
+                Some(&login),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::OK);
+        let sc = set_cookies(&r);
+        assert!(
+            sc[0].starts_with("session_id=") && !sc[0].starts_with("session_id=;"),
+            "{sc:?}"
+        );
+        assert!(
+            sc.iter()
+                .any(|c| c.starts_with("Admin-Token=; Max-Age=0; Path=/")),
+            "{sc:?}"
+        );
+    }
+
+    /// A refusal by the per-account back-off says so, with the wait, instead
+    /// of "Invalid username or password" (which sent people hunting for a
+    /// typo in a password that was right).
+    #[tokio::test]
+    async fn account_backoff_is_reported_as_such() {
+        let (app, _) = app().await;
+        let bad = r#"{"username":"ghost","password":"Wrong-Passw0rd!"}"#;
+        // failures from different addresses: the per-address lockout stays off
+        for i in 0..5 {
+            let r = app
+                .clone()
+                .oneshot(from_ip(
+                    req(Method::POST, "/api/auth/login", None, Some(bad)),
+                    &format!("198.51.100.{}", i + 1),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(body_json(r).await["error"], "Invalid username or password");
+        }
+        let r = app
+            .clone()
+            .oneshot(from_ip(
+                req(Method::POST, "/api/auth/login", None, Some(bad)),
+                "198.51.100.99",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(r.headers().contains_key(header::RETRY_AFTER));
+        let v = body_json(r).await;
+        let msg = v["error"].as_str().unwrap();
+        assert!(
+            msg.starts_with("Too many failed sign-in attempts for this account; try again in "),
+            "{msg}"
+        );
+        assert!(v["retry_after_secs"].as_u64().unwrap() >= 1);
+    }
+
+    /// The per-address lockout names the address and the wait.
+    #[tokio::test]
+    async fn address_lockout_message_names_the_wait() {
+        let (app, _) = app().await;
+        let bad = r#"{"username":"admin","password":"Wrong-Passw0rd!"}"#;
+        for _ in 0..crate::auth::MAX_LOGIN_FAILURES {
+            app.clone()
+                .oneshot(from_ip(
+                    req(Method::POST, "/api/auth/login", None, Some(bad)),
+                    "203.0.113.77",
+                ))
+                .await
+                .unwrap();
+        }
+        let r = app
+            .clone()
+            .oneshot(from_ip(
+                req(Method::POST, "/api/auth/login", None, Some(bad)),
+                "203.0.113.77",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+        let v = body_json(r).await;
+        let msg = v["error"].as_str().unwrap();
+        assert!(
+            msg.starts_with("Too many failed sign-in attempts from this address; try again in "),
+            "{msg}"
+        );
+        assert!(msg.ends_with("minutes."), "{msg}");
+    }
 }

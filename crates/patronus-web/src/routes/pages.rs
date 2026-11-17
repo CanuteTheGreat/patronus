@@ -31,9 +31,31 @@ pub(crate) fn render(t: &impl Template, what: &str) -> Response {
     }
 }
 
-/// Login page (public)
-pub async fn login_page() -> Response {
-    render(&LoginTemplate, "login")
+/// Login page (public).
+///
+/// The address of a router often served another firmware's admin page
+/// before Patronus (the vendor UI, LuCI). What that left in the browser must
+/// not break signing in, so the login page clears it: the browser's HTTP
+/// cache for this address (a cached old page for `/` would otherwise be
+/// shown instead of the dashboard), and every cookie Patronus does not set.
+/// It leaves the session cookie and site storage (the theme choice) alone;
+/// the page's script removes service workers and Cache Storage, which
+/// Patronus does not use.
+pub async fn login_page(headers: axum::http::HeaderMap) -> Response {
+    let mut r = render(&LoginTemplate, "login");
+    if r.status().is_success() {
+        let h = r.headers_mut();
+        h.insert(
+            axum::http::HeaderName::from_static("clear-site-data"),
+            axum::http::HeaderValue::from_static("\"cache\""),
+        );
+        for del in crate::auth::foreign_cookie_deletions(&headers) {
+            if let Ok(v) = axum::http::HeaderValue::from_str(&del) {
+                h.append(axum::http::header::SET_COOKIE, v);
+            }
+        }
+    }
+    r
 }
 
 /// Dashboard page (`/`).

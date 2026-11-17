@@ -812,6 +812,12 @@ jobs:
         # patronus_core::service::ServiceManager.
         run: ci/container-as-shipped-systemd.sh patronus/web:${{ github.sha }}
 
+      - name: Browser sign-in with an older firmware's cookies for the address (real Firefox + Chromium over HTTP/2)
+        # Each cookie is its own `cookie` header field over HTTP/2; reading only the first one bounced every
+        # page back to /login after a successful sign-in whenever another cookie was stored for the address.
+        # Also: the login page/sign-in remove the old cookies, refusals say why, and are in the web log.
+        run: ci/stale-origin-login-e2e.sh patronus/web:${{ github.sha }}
+
       - name: Verify the ebuild install (binaries, USE flags, service files)
         run: |
           set -e

@@ -954,8 +954,12 @@ pub enum AuthError {
     UserDisabled,
     Forbidden,
     InternalError,
-    /// Too many failed logins; retry after this many seconds.
+    /// Too many failed logins from this client; retry after this many seconds.
     TooManyAttempts(u64),
+    /// Too many failed logins for this account name (per-name back-off,
+    /// counted for every name, so it does not reveal which exist); retry
+    /// after this many seconds.
+    AccountBackoff(u64),
     /// Password right, the account has two-factor login: send `totp_code`.
     TotpRequired,
     /// The two-factor code was wrong (or already used).
@@ -967,12 +971,17 @@ pub enum AuthError {
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         match self {
-            AuthError::TooManyAttempts(secs) => {
+            AuthError::TooManyAttempts(secs) | AuthError::AccountBackoff(secs) => {
+                let what = if matches!(self, AuthError::AccountBackoff(_)) {
+                    "Too many failed sign-in attempts for this account"
+                } else {
+                    "Too many failed sign-in attempts from this address"
+                };
                 return (
                     StatusCode::TOO_MANY_REQUESTS,
                     [(header::RETRY_AFTER, secs.to_string())],
                     Json(serde_json::json!({
-                        "error": "Too many failed login attempts; try again later",
+                        "error": format!("{what}; try again in {}.", wait_text(secs)),
                         "retry_after_secs": secs,
                     })),
                 )
@@ -1019,20 +1028,91 @@ impl IntoResponse for AuthError {
     }
 }
 
-/// The `session_id` cookie of a request.
+/// "45 seconds", "1 minute", "15 minutes": how long a login refusal lasts.
+pub fn wait_text(secs: u64) -> String {
+    let secs = secs.max(1);
+    if secs < 60 {
+        format!("{secs} second{}", if secs == 1 { "" } else { "s" })
+    } else {
+        let m = secs.div_ceil(60);
+        format!("{m} minute{}", if m == 1 { "" } else { "s" })
+    }
+}
+
+/// Name of the web session cookie, the only cookie Patronus sets.
+pub const SESSION_COOKIE: &str = "session_id";
+
+/// Every `name=value` pair a request carries, in the order the browser sent
+/// them.
+///
+/// Over HTTP/2 (and HTTP/3) browsers send each cookie as its own `cookie`
+/// header field ("cookie crumbling", RFC 9113 section 8.2.3), so a request
+/// can carry several of them; all are read. A pair whose bytes are not
+/// printable ASCII (another application's cookie with a raw UTF-8 value) is
+/// skipped on its own instead of hiding the rest of the field.
+///
+/// Reading only the first field once made every page bounce back to the
+/// login page after a successful sign-in, as soon as the browser held any
+/// other cookie for the address (for example one left by the firmware that
+/// served the same address before): the session cookie arrived in the second
+/// field and was never seen.
+pub fn request_cookies(headers: &axum::http::HeaderMap) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for field in headers.get_all(header::COOKIE) {
+        for pair in field.as_bytes().split(|b| *b == b';') {
+            let Ok(pair) = std::str::from_utf8(pair) else {
+                continue;
+            };
+            let pair = pair.trim();
+            if pair.is_empty() || !pair.bytes().all(|b| (0x20..0x7f).contains(&b)) {
+                continue;
+            }
+            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+            out.push((name.trim().to_string(), value.trim().to_string()));
+        }
+    }
+    out
+}
+
+/// The `session_id` cookies of a request, most specific first (the browser
+/// orders cookies by path length). Usually one; a stale copy with a longer
+/// path can sit in front of the current one.
+pub fn session_cookies(headers: &axum::http::HeaderMap) -> Vec<String> {
+    request_cookies(headers)
+        .into_iter()
+        .filter(|(n, v)| n == SESSION_COOKIE && !v.is_empty())
+        .map(|(_, v)| v)
+        .collect()
+}
+
+/// The first `session_id` cookie of a request.
 pub fn session_cookie(headers: &axum::http::HeaderMap) -> Option<String> {
-    headers
-        .get(header::COOKIE)
-        .and_then(|cookie| cookie.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|cookie| {
-                let mut parts = cookie.trim().splitn(2, '=');
-                match (parts.next(), parts.next()) {
-                    (Some("session_id"), Some(id)) => Some(id.to_string()),
-                    _ => None,
-                }
-            })
+    session_cookies(headers).into_iter().next()
+}
+
+/// `Set-Cookie` values that delete the cookies a request carries which
+/// Patronus never sets, e.g. a previous firmware's admin token left at the
+/// same address. Only cookies the browser sent for this path are seen, and a
+/// deletion only matches a cookie with the same path, so `Path=/` (where
+/// such tokens live) is used. Patronus' own session cookie is never touched.
+pub fn foreign_cookie_deletions(headers: &axum::http::HeaderMap) -> Vec<String> {
+    let mut names: Vec<String> = request_cookies(headers)
+        .into_iter()
+        .map(|(n, _)| n)
+        .filter(|n| {
+            n != SESSION_COOKIE
+                && !n.is_empty()
+                && n.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.!#$%&'*+^`|~".contains(&b))
         })
+        .collect();
+    names.sort();
+    names.dedup();
+    names.truncate(32);
+    names
+        .into_iter()
+        .map(|n| format!("{n}=; Max-Age=0; Path=/"))
+        .collect()
 }
 
 /// Authenticated user extractor for protected routes
@@ -1064,7 +1144,10 @@ where
                 session_id: String::new(),
             });
         }
-        let session_id = session_cookie(&parts.headers).ok_or(AuthError::MissingSession)?;
+        let candidates = session_cookies(&parts.headers);
+        if candidates.is_empty() {
+            return Err(AuthError::MissingSession);
+        }
 
         // Get session store from extensions (set by middleware)
         let store = parts
@@ -1072,16 +1155,17 @@ where
             .get::<SessionStore>()
             .ok_or(AuthError::InternalError)?;
 
-        // Validate session
-        let session = store
-            .get_session(&session_id)
-            .await
-            .ok_or(AuthError::InvalidSession)?;
-
-        Ok(AuthUser {
-            session,
-            session_id,
-        })
+        // Validate session: the first cookie that names a live session wins,
+        // so a stale duplicate sent in front of it does not sign the user out.
+        for session_id in candidates {
+            if let Some(session) = store.get_session(&session_id).await {
+                return Ok(AuthUser {
+                    session,
+                    session_id,
+                });
+            }
+        }
+        Err(AuthError::InvalidSession)
     }
 }
 
@@ -1357,19 +1441,28 @@ async fn reauth(
 pub async fn login(
     State(app_state): State<crate::state::AppState>,
     connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> Result<Response, AuthError> {
     let client = client_ip(connect_info);
     let throttle = &app_state.auth.login_throttle;
     if let Some(retry_after) = throttle.check(client) {
+        tracing::warn!(
+            target: "patronus::audit",
+            "login refused user={:?} from={} reason=too many failed logins from this address (retry in {}s)",
+            req.username.trim(),
+            client,
+            retry_after
+        );
         return Err(AuthError::TooManyAttempts(retry_after));
     }
 
     // Verify credentials, in order: the system account (PAM / shadow, role
     // from its groups); a legacy Patronus-only account (read-only, one
     // release); for other names the RADIUS / LDAP servers. Every failure is
-    // the same generic 401 after the same minimum time; the reason only goes
-    // to the audit log.
+    // the same generic 401 after the same minimum time, except an active
+    // back-off, which says so (it applies to every name alike, so it reveals
+    // nothing); the reason goes to the audit log and the web log.
     let started = std::time::Instant::now();
     let sys = app_state.auth.syslogin.clone();
     let name = req.username.trim().to_string();
@@ -1406,7 +1499,14 @@ pub async fn login(
         }
     }
     let Some(user) = user else {
-        throttle.record_failure(client);
+        let backoff = (reason == Some(crate::syslogin::Fail::Backoff.reason()))
+            .then(|| sys.backoff_remaining(&name))
+            .flatten();
+        // a refusal during the back-off was not a password guess: it does not
+        // count towards the per-address lockout
+        if backoff.is_none() {
+            throttle.record_failure(client);
+        }
         let why = reason.unwrap_or("bad credentials");
         tracing::warn!(
             target: "patronus::audit",
@@ -1426,8 +1526,16 @@ pub async fn login(
             )
             .await;
         tokio::time::sleep(sys.fail_floor.saturating_sub(started.elapsed())).await;
-        return Err(AuthError::InvalidCredentials);
+        return Err(match backoff {
+            Some(secs) => AuthError::AccountBackoff(secs),
+            None => AuthError::InvalidCredentials,
+        });
     };
+    if reason.is_some() {
+        // signed in through a legacy or directory account: its password is
+        // right, so the system check's failure for this name is not one
+        sys.clear_failures(&name);
+    }
 
     // Second factor
     if user.two_factor() {
@@ -1485,13 +1593,31 @@ pub async fn login(
         session_id, SESSION_LIFETIME_SECS
     );
 
-    let response = Json(LoginResponse {
+    tracing::info!(
+        target: "patronus::audit",
+        "login user={:?} from={} role={}",
+        user.username,
+        client,
+        user.role.as_str()
+    );
+    let mut response = Json(LoginResponse {
         success: true,
         username: user.username,
         role: user.role,
-    });
-
-    Ok(([(header::SET_COOKIE, cookie)], response).into_response())
+    })
+    .into_response();
+    let h = response.headers_mut();
+    if let Ok(v) = axum::http::HeaderValue::from_str(&cookie) {
+        h.append(header::SET_COOKIE, v);
+    }
+    // cookies another firmware left at this address go now: they are sent
+    // with every request and only get in the way
+    for del in foreign_cookie_deletions(&headers) {
+        if let Ok(v) = axum::http::HeaderValue::from_str(&del) {
+            h.append(header::SET_COOKIE, v);
+        }
+    }
+    Ok(response)
 }
 
 /// A pre-PAM Patronus-only account with its own password. For one release
@@ -2333,5 +2459,70 @@ mod login_throttle_tests {
             t.record_failure(ip("::ffff:203.0.113.9"));
         }
         assert!(t.check(ip("203.0.113.9")).is_some());
+    }
+}
+
+#[cfg(test)]
+mod cookie_tests {
+    use super::*;
+    use axum::http::{HeaderMap, HeaderValue};
+
+    fn headers(fields: &[&[u8]]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for f in fields {
+            h.append(header::COOKIE, HeaderValue::from_bytes(f).unwrap());
+        }
+        h
+    }
+
+    #[test]
+    fn every_cookie_field_is_read() {
+        // HTTP/2 "cookie crumbling": one field per cookie
+        let h = headers(&[b"Admin-Token=abc", b"session_id=s1"]);
+        assert_eq!(session_cookie(&h).as_deref(), Some("s1"));
+        // HTTP/1.1: one field
+        let h = headers(&[b"Admin-Token=abc; session_id=s2"]);
+        assert_eq!(session_cookie(&h).as_deref(), Some("s2"));
+        // stale duplicate in front: both are candidates, in order
+        let h = headers(&[b"session_id=old; x=1", b"session_id=new"]);
+        assert_eq!(session_cookies(&h), vec!["old", "new"]);
+        assert_eq!(session_cookie(&headers(&[])), None);
+        assert_eq!(session_cookie(&headers(&[b"session_id="])), None);
+    }
+
+    #[test]
+    fn a_non_ascii_cookie_does_not_hide_the_session() {
+        let h = headers(&["lang=Espa\u{f1}ol; session_id=s3".as_bytes()]);
+        assert_eq!(session_cookie(&h).as_deref(), Some("s3"));
+        let h = headers(&[b"\xff\xfe=bad", b"session_id=s4"]);
+        assert_eq!(session_cookie(&h).as_deref(), Some("s4"));
+    }
+
+    #[test]
+    fn foreign_cookies_are_deleted_at_path_root_and_ours_kept() {
+        let h = headers(&[
+            b"Admin-Token=abc; session_id=s",
+            b"sysauth_https=z",
+            b"Admin-Token=dup",
+        ]);
+        assert_eq!(
+            foreign_cookie_deletions(&h),
+            vec![
+                "Admin-Token=; Max-Age=0; Path=/".to_string(),
+                "sysauth_https=; Max-Age=0; Path=/".to_string()
+            ]
+        );
+        assert!(foreign_cookie_deletions(&headers(&[b"session_id=s"])).is_empty());
+        // names that could break the header are left alone
+        assert!(foreign_cookie_deletions(&headers(&[b"a b=c"])).is_empty());
+    }
+
+    #[test]
+    fn waits_are_said_in_words() {
+        assert_eq!(wait_text(0), "1 second");
+        assert_eq!(wait_text(45), "45 seconds");
+        assert_eq!(wait_text(60), "1 minute");
+        assert_eq!(wait_text(61), "2 minutes");
+        assert_eq!(wait_text(15 * 60), "15 minutes");
     }
 }

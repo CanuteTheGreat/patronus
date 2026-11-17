@@ -224,9 +224,26 @@ impl SysLogin {
     }
 
     fn backoff_ok(&self, name: &str) -> bool {
+        self.backoff_remaining(name).is_none()
+    }
+
+    /// Forget `name`'s failures: its password was just proven by another
+    /// way in (a legacy or directory account of that name). Without this,
+    /// the system check that runs first, and fails for such accounts, kept
+    /// counting their successful logins as failures.
+    pub fn clear_failures(&self, name: &str) {
+        self.fails().remove(name);
+    }
+
+    /// Seconds until `name` is offered to the password check again, while
+    /// its per-name back-off is active.
+    pub fn backoff_remaining(&self, name: &str) -> Option<u64> {
         match self.fails().get(name) {
-            Some((n, at)) if *n >= BACKOFF_FAILS => at.elapsed() >= BACKOFF_PAUSE,
-            _ => true,
+            Some((n, at)) if *n >= BACKOFF_FAILS => {
+                let left = BACKOFF_PAUSE.saturating_sub(at.elapsed());
+                (!left.is_zero()).then(|| left.as_secs().max(1))
+            }
+            _ => None,
         }
     }
 
@@ -563,6 +580,10 @@ mod tests {
             assert_eq!(s.verify("adm", "wrong").await, Err(Fail::BadCredentials));
         }
         assert_eq!(s.verify("adm", "Correct-Horse-9").await, Err(Fail::Backoff));
+        // the refusal can say how long it lasts
+        let left = s.backoff_remaining("adm").expect("backing off");
+        assert!((1..=BACKOFF_PAUSE.as_secs()).contains(&left), "{left}");
+        assert_eq!(s.backoff_remaining("ops"), None);
         // other names are unaffected
         assert_eq!(
             s.verify("ops", "Correct-Horse-9").await,

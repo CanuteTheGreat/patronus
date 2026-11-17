@@ -8,15 +8,33 @@ use std::net::SocketAddr;
 use tracing::{error, info};
 
 /// The web UI's log setup (`RUST_LOG`, else verbose patronus_web/tower_http).
+/// Sign-in outcomes (target `patronus::audit`: who, from where, and why a
+/// login was refused) are always logged at info, whatever `RUST_LOG` says,
+/// so a refused login can be explained from the log on the box itself.
 pub fn init_tracing() {
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "patronus_web=debug,tower_http=debug,axum=trace".into()),
-        )
+        .with(audit_filter(std::env::var("RUST_LOG").ok().as_deref()))
         .with(tracing_subscriber::fmt::layer())
         .init();
+}
+
+/// `RUST_LOG` (or the default) plus `patronus::audit=info`, unless the
+/// setting names that target itself.
+pub fn audit_filter(rust_log: Option<&str>) -> tracing_subscriber::EnvFilter {
+    let base = rust_log
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("patronus_web=debug,tower_http=debug,axum=trace");
+    let f = tracing_subscriber::EnvFilter::try_new(base).unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new("patronus_web=debug,tower_http=debug,axum=trace")
+    });
+    if base.contains("patronus::audit") {
+        return f;
+    }
+    match "patronus::audit=info".parse() {
+        Ok(d) => f.add_directive(d),
+        Err(_) => f,
+    }
 }
 
 /// Open the store, set up the system login (and the embedded first run),
@@ -90,4 +108,23 @@ pub async fn run() -> Result<()> {
 
     info!("Server shutdown gracefully");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn audit_target_is_always_logged() {
+        for (rust_log, want) in [
+            (None, "patronus::audit=info"),
+            (
+                Some("patronus_web=info,tower_http=warn"),
+                "patronus::audit=info",
+            ),
+            (Some("warn"), "patronus::audit=info"),
+            (Some("patronus::audit=off"), "patronus::audit=off"),
+        ] {
+            let f = super::audit_filter(rust_log).to_string();
+            assert!(f.contains(want), "{rust_log:?} -> {f}");
+        }
+    }
 }
