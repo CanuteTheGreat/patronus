@@ -43,7 +43,7 @@ rm -f "$R"/usr/lib/libgmpxx.so* "$R"/usr/lib/*.o
 while read -r f; do [ -n "$f" ] && rm -rf "$R"/$f; done < "$HERE/prune.txt"
 # musl loader where every binary expects it
 [ -e "$R/lib/$HW_ARCH_MUSL_LDSO" ] || ln -sf ../usr/lib/libc.so "$R/lib/$HW_ARCH_MUSL_LDSO"
-mkdir -p "$R"/{proc,sys,dev,tmp,run,data,mnt,root/.ssh,var/log,var/lib/patronus,var/lib/misc,etc/dropbear,usr/lib/openwrt,usr/share/patronus-recovery,etc/patronus/tls,etc/hostapd,etc/wpa_supplicant}
+mkdir -p "$R"/{proc,sys,dev,tmp,run,data,mnt,root/.ssh,var/log,var/lib/patronus,var/lib/misc,var/lib/dhcpcd,etc/dropbear,usr/lib/openwrt,usr/share/patronus-recovery,etc/patronus/tls,etc/hostapd,etc/wpa_supplicant}
 install -m755 "$B/patronus-cli" "$R/usr/bin/patronus-cli"
 # multi-call build (default): patronus-web is the same binary under another name; a separate build is still accepted
 if [ -f "$B/patronus-web" ]; then install -m755 "$B/patronus-web" "$R/usr/bin/patronus-web"; else ln -sf patronus-cli "$R/usr/bin/patronus-web"; fi
