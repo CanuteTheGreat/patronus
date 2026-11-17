@@ -610,6 +610,71 @@ pub fn handle_in(dir: &Path, action: &str, params: &Value) -> Result<Value> {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
         )),
+        // device settings of the router tier (crate::apdev)
+        "leds_get" => Ok(crate::apdev::leds_get()),
+        "leds_set" => {
+            crate::apdev::leds_set(params.get("on").and_then(Value::as_bool).unwrap_or(true))
+        }
+        "restart_schedule_get" => crate::apdev::schedule_get(),
+        "restart_schedule_set" => crate::apdev::schedule_set(
+            params.get("mode").and_then(Value::as_str).unwrap_or(""),
+            params.get("time").and_then(Value::as_str),
+            params.get("day").and_then(Value::as_str),
+        ),
+        "ssh_keys_get" => Ok(crate::apdev::keys_get(&crate::apdev::EtcPaths::default())),
+        "ssh_keys_add" => crate::apdev::keys_add(
+            &crate::apdev::EtcPaths::default(),
+            params.get("user").and_then(Value::as_str).unwrap_or(""),
+            params.get("key").and_then(Value::as_str).unwrap_or(""),
+        ),
+        "ssh_keys_delete" => crate::apdev::keys_delete(
+            &crate::apdev::EtcPaths::default(),
+            params.get("user").and_then(Value::as_str).unwrap_or(""),
+            params
+                .get("fingerprint")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        ),
+        "accounts_export" => Ok(crate::apdev::accounts_export(
+            &crate::apdev::EtcPaths::default(),
+        )),
+        "accounts_restore" => {
+            crate::apdev::accounts_restore(&crate::apdev::EtcPaths::default(), params)
+                .map(|n| json!({ "notes": n }))
+        }
+        "ap_address_get" => Ok(crate::apdev::address_get(
+            &crate::apwifi::Paths::default().env,
+        )),
+        "ap_address_set" => crate::apdev::address_set(&crate::apwifi::Paths::default().env, params),
+        "ap_address_confirm" => {
+            crate::apdev::address_confirm(params.get("host").and_then(Value::as_str).unwrap_or(""))
+        }
+        "firmware_feed_get" => Ok(json!({ "feed": crate::apdev::feed_url() })),
+        "firmware_feed_set" => {
+            crate::apdev::feed_set(params.get("feed").and_then(Value::as_str).unwrap_or(""))
+        }
+        "firmware_feed_check" => crate::apdev::feed_check(
+            &crate::apdev::FeedPaths::default(),
+            &crate::apdev::feed_url(),
+        ),
+        "firmware_feed_download" => {
+            // the image lands where an upload would; then the same patronus-flash check as an upload (never staged)
+            let p = FwPaths::default();
+            let c = crate::apdev::feed_download(
+                &crate::apdev::FeedPaths::default(),
+                &crate::apdev::feed_url(),
+                &p.upload,
+            )?;
+            let mut st = match firmware_flash_in(&p, "check") {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = std::fs::remove_file(&p.upload);
+                    return Err(e);
+                }
+            };
+            st["feed"] = c;
+            Ok(st)
+        }
         // router-tier firmware images through patronus-flash (validate, stage; the box installs at the next start)
         "firmware_status" => Ok(firmware_status()),
         "firmware_check" => firmware_flash("check"),

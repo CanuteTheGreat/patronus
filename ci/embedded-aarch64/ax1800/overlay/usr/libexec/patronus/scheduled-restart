@@ -1,0 +1,6 @@
+#!/bin/sh
+# scheduled-restart: run by the scheduled restart (restart-schedule: busybox crond on OpenRC, patronus-restart.timer on
+# systemd). Logs why, then restarts the device through its init system.
+logger -p daemon.notice -t patronus-restart "PATRONUS-SCHEDULED-RESTART: restarting now (Device page schedule)" 2>/dev/null
+sync
+if [ -d /run/systemd/system ]; then exec systemctl reboot; else exec /sbin/reboot; fi

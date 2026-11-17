@@ -842,3 +842,37 @@ list, AP pages and 409s, Wi-Fi PUT -> file 0600 and the boot's own `board.sh` se
 channel 400, admin reveal, settings kept across a restart, systemd scope placement; `ci/wifi-page-e2e.py` (Firefox +
 Chromium, with `E2E_WRITE=1` add + remove a network through the page) run against a real unit: all checks passed, both
 radios restarted and verified twice in 12 s, the unit's Wi-Fi variables identical afterwards.
+
+### 12.12 Guest networks, block list, transmit power, client names, survey, Device page, online check (2026-11-17)
+
+The follow-up to 12.11 closes the remaining gaps of the router-tier table (docs/router-tier-ui.md section 5 has the
+details and the API):
+
+- **Wi-Fi page**: crash-protection state (`wifi-guard status`, 12.6d: normal, or safe mode with its reason); per
+  network "Guest" (`GUEST_<id>=1`: client isolation plus the `patronus_guest` nftables bridge table on `br-lan`, loaded
+  by `ap start` before any radio comes up; if it cannot load, guest networks are not started at all); block list per
+  network (`DENY_<id>`) or unit-wide (`AP_DENY`) as hostapd `deny_mac_file`s, reloaded live with `DENY_ACL` (`ap acl`);
+  transmit power per radio (`AP_TXPOWER24`/`AP_TXPOWER5`, `ap txpower`); client names from the DHCP requests seen on
+  the bridge (`patronus applyd` snoop, `/run/patronus/dhcp-names`) or the router's reverse DNS (`AP_NAMES`); channel
+  survey (`iw survey dump` + scan results, least crowded channel). Power, names and block lists never restart the
+  radios.
+- **Device page** (`/device`, router tier): SSH keys per login account (validated, audited, root's last key protected
+  while root has no password); lights on/off (`/usr/libexec/patronus/leds`, `LEDS=` in `/etc/patronus/device.env`);
+  scheduled restart, off by default (OpenRC `patronus-crond` + root crontab, systemd `patronus-restart.timer` +
+  `OnCalendar` drop-in, the unit state shown); on an access point its own address with `ap-addr`: the new address runs
+  next to the old one and is undone unless confirmed from the new address in time (also across a restart, the boot runs
+  `ap-addr boot` first).
+- **System > Firmware > Check for updates**: `latest.json` + `latest.json.sig` under `<feed>/<board>/<init>/`, verified
+  with `gpgv` against the release keyring in the image (fingerprint 5439354939B9C0552A68E9BBE323A6A3AC0A6506 required);
+  "Download and check" fetches the listed image into the upload slot, checks size and sha256 against the signed list and
+  runs `patronus-flash check`; installing stays a separate button. The image now carries `gpgv` and busybox
+  `ssl_client` (https for `wget`).
+- **Backups** carry the login accounts (`system_accounts`: passwd/shadow/group lines of every person's account,
+  `authorized_keys`, root's keys) and a restore puts them back.
+
+Proof: unit tests (`apwifi`, `apdev`, `apnames`, `apsurvey`), host tests `tests/run.sh` section 3c (deny files, guest
+render, live txpower/acl, LEDs, restart schedule both inits, address revert at boot), real-packet tests
+`tests/guest-netns.sh` (17) and `tests/addr-netns.sh` (9), the QEMU gate (both init systems: every item through the web
+API, including an unconfirmed address change reverting by itself and a lost login coming back from a backup) and the
+browser check `ci/device-page-e2e.py`. Real radios (block/guest with a phone, transmit power on air) are proven on the
+house access points separately.

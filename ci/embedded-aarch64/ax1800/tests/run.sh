@@ -51,7 +51,8 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/bin" "$r/sbin" "$r/usr/bin" "
   for f in usr/sbin/patronus-flash usr/libexec/patronus/fwcheck.sh usr/libexec/patronus/upgrade-install usr/libexec/patronus/ubi-data usr/sbin/patronus-init usr/libexec/patronus/early \
            usr/libexec/patronus/ath11k-caldata usr/libexec/patronus/ap usr/libexec/patronus/board-network etc/pam.d/patronus lib/security/pam_unix.so \
            usr/sbin/hostapd usr/sbin/dropbear usr/bin/patronus-cli lib/firmware/ath11k/IPQ6018/hw1.0/board-2.bin lib/firmware/IPQ6018/q6_fw.mdt \
-           lib/firmware/IPQ6018/m3_fw.mdt lib/firmware/regulatory.db usr/libexec/patronus/etph-run usr/libexec/patronus/accounts-sync; do : > "$r/$f"; chmod +x "$r/$f"; done
+           lib/firmware/IPQ6018/m3_fw.mdt lib/firmware/regulatory.db usr/libexec/patronus/etph-run usr/libexec/patronus/ap-guest usr/libexec/patronus/ap-addr \
+           usr/libexec/patronus/leds usr/libexec/patronus/restart-schedule usr/libexec/patronus/scheduled-restart usr/bin/gpgv usr/bin/ssl_client usr/libexec/patronus/accounts-sync; do : > "$r/$f"; chmod +x "$r/$f"; done
   ln -s patronus-cli "$r/usr/bin/patronus-web"; cp "$O/etc/patronus/board.sh" "$O/etc/patronus/embedded.env" "$r/etc/patronus/"
   cp "$O/usr/libexec/patronus/early" "$O/usr/libexec/patronus/ath11k-caldata" "$r/usr/libexec/patronus/"
   for b in ubinfo ubimkvol ubirmvol ubirsvol ubiupdatevol ubiblock iw ip sha256sum pivot_root; do ln -s /bin/busybox "$r/usr/sbin/$b"; done
@@ -64,7 +65,7 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/bin" "$r/sbin" "$r/usr/bin" "
   mkdir -p "$r/usr/share/openpgp-keys"; echo k > "$r/usr/share/openpgp-keys/errantsolutions.gpg"; : > "$r/usr/bin/gpgv"; chmod +x "$r/usr/bin/gpgv"
   for b in openrc-init openrc-run supervise-daemon; do : > "$r/sbin/$b"; chmod +x "$r/sbin/$b"; done
   printf '#!/bin/sh\nexec /sbin/openrc-shutdown -r now "$@"\n' > "$r/sbin/reboot"; chmod +x "$r/sbin/reboot"
-  for s in patronus-board patronus-apply patronus-applyd patronus-web dropbear patronus-etph chronyd; do : > "$r/etc/init.d/$s"; chmod +x "$r/etc/init.d/$s"; done
+  for s in patronus-board patronus-apply patronus-applyd patronus-web dropbear patronus-etph chronyd patronus-crond; do : > "$r/etc/init.d/$s"; chmod +x "$r/etc/init.d/$s"; done
   cp "$D/overlay-openrc/etc/init.d/patronus-syslogd" "$r/etc/init.d/"; cp "$O/etc/mdev.conf" "$r/etc/"
   ln -s /etc/init.d/patronus-etph "$r/etc/runlevels/default/patronus-etph"; echo "$r"; }
 CR="env PATH=/usr/bin:/bin:/usr/sbin:/sbin sh $D/check-rootfs.sh"   # readelf check runs only where binutils exist; fake roots have no ELFs
@@ -299,6 +300,75 @@ for f in hostapd.initd hostapd.confd patronus-xbss.diff; do
 [ -z "$bad" ] && ok "hostapd/APKBUILD: sha512sums pin the local sources" || no "hostapd/APKBUILD: sha512sums out of date for:$bad"
 grep -q 'ap_sta_drop_in_other_bss(hapd, sta->addr);' "$HP/patronus-xbss.diff" && grep -q 'hostapd_drv_sta_remove(bss, addr);' "$HP/patronus-xbss.diff" \
   && ok "hostapd patch: other-BSS removal goes to the driver synchronously before the new peer is added" || no "hostapd patch: synchronous removal missing"
+
+# 3c. router-tier device settings (docs/router-tier-ui.md): guest networks, block lists, transmit power, LEDs,
+#     scheduled restart, address trial. The real scripts against fakes (sysfs, nft, iw, hostapd_cli, rc-*, systemctl).
+aprender gst "AP_SSIDS=\"m g\"
+SSID_m=Main KEY_m=mainpass1 SSID_g=Guest KEY_g=guestpass1 GUEST_g=1 DENY_g='aa:bb:cc:dd:ee:01 junk'
+AP_DENY='AA:BB:CC:DD:EE:02'"
+g5=$(awk '/^bss=wl5-g$/,0' "$A/gst/ap5.conf" 2>/dev/null)
+case "$g5" in *ap_isolate=1*"deny_mac_file=$A/gst/deny-wl5-g"*) ok "ap: a guest network always isolates its clients and has a deny file";;
+  *) no "ap: guest BSS without ap_isolate/deny_mac_file"; cat "$A/gst.out"; sed 's/^/    /' "$A/gst/ap5.conf" 2>/dev/null;; esac
+grep -q '^ap_isolate=0' "$A/gst/ap5.conf" && grep -q "^deny_mac_file=$A/gst/deny-wl5-m" "$A/gst/ap5.conf" \
+  && ok "ap: a normal network is not isolated, every BSS gets its deny file" || no "ap: normal BSS rendering changed"
+[ "$(cat "$A/gst/deny-wl24-g" 2>/dev/null | tr '\n' ' ')" = "aa:bb:cc:dd:ee:01 aa:bb:cc:dd:ee:02 " ] && [ "$(cat "$A/gst/deny-wl24-m" 2>/dev/null)" = "aa:bb:cc:dd:ee:02" ] \
+  && [ "$(stat -c %a "$A/gst/deny-wl24-g" 2>/dev/null)" = 600 ] \
+  && ok "ap: deny files = unit list + the network's own, lower case, junk dropped, 0600" || no "ap: deny files wrong: $(cat "$A"/gst/deny-* 2>/dev/null | tr '\n' ' ')"
+# live: `ap txpower` / `ap acl` act on the running radios through iw / hostapd_cli (fakes record the calls)
+FB=$A/fakebin; mkdir -p "$FB"
+printf '#!/bin/sh\necho "iw $*" >> %s/calls\n' "$A" > "$FB/iw"; printf '#!/bin/sh\necho "hostapd_cli $*" >> %s/calls\n' "$A" > "$FB/hostapd_cli"; chmod +x "$FB"/*
+printf '. %s\nAP_SSIDS="m g"\nSSID_m=Main KEY_m=mainpass1 SSID_g=Guest KEY_g=guestpass1 GUEST_g=1\nAP_TXPOWER5=17 AP_DENY=aa:bb:cc:dd:ee:03\n' "$O/etc/patronus/board.sh" > "$A/board-live.sh"
+: > "$A/calls"; PATH=$FB:$PATH AP_BOARD=$A/board-live.sh AP_RENDER_OUT=$A/gst sh "$O/usr/libexec/patronus/ap" txpower > /dev/null 2>&1
+PATH=$FB:$PATH AP_BOARD=$A/board-live.sh AP_RENDER_OUT=$A/gst sh "$O/usr/libexec/patronus/ap" acl > /dev/null 2>&1
+c=$(cat "$A/calls")
+case "$c" in *"iw dev wl5-m set txpower fixed 1700"*"iw dev wl24-m set txpower auto"*) ok "ap txpower: 5 GHz fixed 17 dBm, 2.4 GHz auto, no restart";; *) no "ap txpower: $c";; esac
+case "$c" in *"-i wl5-g deny_acl CLEAR"*"-i wl5-g deny_acl ADD_MAC aa:bb:cc:dd:ee:03"*) ok "ap acl: deny lists pushed to the running hostapds (DENY_ACL)";; *) no "ap acl: $c";; esac
+# guest filter: nft bridge table from ap.env; none -> no table
+printf '. %s\nAP_SSIDS="m g i"\nGUEST_g=1 BANDS_g=24 GUEST_i=1\n' "$O/etc/patronus/board.sh" > "$A/board-g.sh"
+gr=$(AP_BOARD=$A/board-g.sh AP_GUEST_NETS4=192.0.2.0/24 AP_GUEST_NETS6=2001:db8:1:2::/64 AP_GUEST_GW=192.0.2.1 AP_GUEST_RESOLV=/dev/null \
+  sh "$O/usr/libexec/patronus/ap-guest" render 2>&1)
+case "$gr" in *'elements = { "wl24-g", "wl24-i", "wl5-i" }'*'192.0.2.0/24'*'2001:db8:1:2::/64'*'set ok4 { type ipv4_addr; elements = { 192.0.2.1 } }'*'iifname @ports ip daddr @lan4 drop'*'iifname @ports meta l4proto { tcp, udp } drop'*)
+  ok "ap-guest: guest ports, LAN networks, gateway exception and the no-access-to-this-unit rule";; *) no "ap-guest render: $gr";; esac
+command -v nft > /dev/null && { printf '%s\n' "$gr" > "$A/guest.nft"; nft -c -f "$A/guest.nft" > "$A/nft.out" 2>&1 \
+  && ok "ap-guest: nft accepts the rendered ruleset (nft -c)" || { grep -q 'Operation not permitted\|Permission' "$A/nft.out" && sk "nft -c needs CAP_NET_ADMIN" || { no "ap-guest: nft -c"; cat "$A/nft.out"; }; }; } || sk "ap-guest: no nft on this host"
+printf '. %s\nAP_SSIDS="m"\n' "$O/etc/patronus/board.sh" > "$A/board-ng.sh"
+AP_BOARD=$A/board-ng.sh sh "$O/usr/libexec/patronus/ap-guest" render > /dev/null 2>&1 && no "ap-guest: rendered a table without guest networks" || ok "ap-guest: no guest network, no filter"
+# LEDs: off = trigger none + brightness 0; on = the boot defaults back
+L=$A/leds; mkdir -p "$L/sys/green:status" "$L/sys/blue:wlan"; echo 'none [default-on] timer' > "$L/sys/green:status/trigger"; echo 1 > "$L/sys/green:status/brightness"
+echo '[none] timer' > "$L/sys/blue:wlan/trigger"; echo 255 > "$L/sys/blue:wlan/brightness"
+echo LEDS=off > "$L/env"; LEDS_SYSFS=$L/sys LEDS_ENV=$L/env LEDS_RUN=$L/run sh "$O/usr/libexec/patronus/leds" apply > /dev/null
+[ "$(cat "$L/sys/green:status/trigger")" = none ] && [ "$(cat "$L/sys/blue:wlan/brightness")" = 0 ] && ok "leds: off" || no "leds: off did not switch them off"
+echo LEDS=on > "$L/env"; LEDS_SYSFS=$L/sys LEDS_ENV=$L/env LEDS_RUN=$L/run sh "$O/usr/libexec/patronus/leds" apply > /dev/null
+[ "$(cat "$L/sys/green:status/trigger")" = default-on ] && [ "$(cat "$L/sys/blue:wlan/brightness")" = 255 ] && ok "leds: on restores the boot triggers/brightness" \
+  || no "leds: on: $(cat "$L/sys/green:status/trigger") $(cat "$L/sys/blue:wlan/brightness")"
+lo=$(LEDS_SYSFS=$L/none LEDS_ENV=$L/env LEDS_RUN=$L/run sh "$O/usr/libexec/patronus/leds" apply); case "$lo" in *"none in"*) true;; *) false;; esac && ok "leds: a device without LEDs is left alone" || no "leds: no-LED case"
+# scheduled restart: OFF by default; OpenRC = crontab line + patronus-crond in default; systemd = timer drop-in + enable
+S=$A/rs; mkdir -p "$S/bin" "$S/sd"
+for c in rc-update rc-service systemctl logger; do printf '#!/bin/sh\necho "%s $*" >> %s/calls\n' "$c" "$S" > "$S/bin/$c"; chmod +x "$S/bin/$c"; done
+printf 'RESTART=weekly RESTART_TIME=04:05 RESTART_DAY=mon\n' > "$S/env"
+PATH=$S/bin:$PATH RS_ENV=$S/env RS_CRONTAB=$S/crontab RS_INIT=openrc sh "$O/usr/libexec/patronus/restart-schedule" apply > "$S/out" 2>&1
+grep -qx '5 4 \* \* 1 /usr/libexec/patronus/scheduled-restart # patronus-restart' "$S/crontab" && grep -q 'rc-update add patronus-crond default' "$S/calls" \
+  && ok "restart-schedule (OpenRC): weekly crontab line, crond enabled" || { no "restart-schedule openrc"; cat "$S/crontab" "$S/calls" "$S/out"; }
+printf 'RESTART=off\n' > "$S/env"; PATH=$S/bin:$PATH RS_ENV=$S/env RS_CRONTAB=$S/crontab RS_INIT=openrc sh "$O/usr/libexec/patronus/restart-schedule" apply > /dev/null 2>&1
+! grep -q patronus-restart "$S/crontab" && grep -q 'rc-update del patronus-crond default' "$S/calls" && ok "restart-schedule (OpenRC): off removes the line and crond" || no "restart-schedule openrc off"
+printf 'RESTART=daily RESTART_TIME=23:30\n' > "$S/env"; : > "$S/calls"
+PATH=$S/bin:$PATH RS_ENV=$S/env RS_SYSTEMD_DIR=$S/sd RS_INIT=systemd sh "$O/usr/libexec/patronus/restart-schedule" apply > /dev/null 2>&1
+grep -qx 'OnCalendar=\*-\*-\* 23:30:00' "$S/sd/patronus-restart.timer.d/schedule.conf" 2>/dev/null && grep -q 'systemctl enable --now patronus-restart.timer' "$S/calls" \
+  && ok "restart-schedule (systemd): OnCalendar drop-in, timer enabled" || { no "restart-schedule systemd"; cat "$S/sd/patronus-restart.timer.d/schedule.conf" "$S/calls"; }
+[ -x "$D/overlay-openrc/etc/init.d/patronus-crond" ] && [ -f "$D/overlay-systemd/etc/systemd/system/patronus-restart.timer" ] \
+  && [ ! -e "$D/overlay-systemd/etc/systemd/system/timers.target.wants/patronus-restart.timer" ] \
+  && ok "parity: scheduled restart patronus-crond (OpenRC) = patronus-restart.timer (systemd), neither on by default" || no "scheduled restart parity"
+# address trial: a trial that was never confirmed before a restart is undone at boot (the unit cannot be stranded)
+R2=$A/addr; mkdir -p "$R2/run"; printf '#!/bin/sh\necho "ip $*" >> %s/calls\n' "$R2" > "$R2/ip"; printf '#!/bin/sh\n' > "$R2/udhcpc"; chmod +x "$R2/ip" "$R2/udhcpc"
+echo "AP_ADDR=198.51.100.7/24 AP_GW=198.51.100.1" > "$R2/ap.env"; echo "AP_ADDR=" > "$R2/ap.env.addr-prev"; echo 100 > "$R2/ap.env.addr-pending"
+PATH=$R2:$PATH AP_ENV=$R2/ap.env AP_ADDR_RUN=$R2/run AP_ADDR_TMP=$R2 AP_ADDR_IP=$R2/ip AP_ADDR_DHCP=$R2/udhcpc sh "$O/usr/libexec/patronus/ap-addr" boot > "$R2/out" 2>&1
+[ "$(cat "$R2/ap.env")" = "AP_ADDR=" ] && [ ! -e "$R2/ap.env.addr-pending" ] && ! grep -q 198.51.100.7 "$R2/calls" 2>/dev/null \
+  && ok "ap-addr: an unconfirmed address change is undone at the next boot" || { no "ap-addr boot revert"; cat "$R2/out" "$R2/calls" 2>/dev/null; }
+echo "AP_ADDR=192.0.2.9/24 AP_GW=192.0.2.1 AP_DNS='192.0.2.1 192.0.2.2'" > "$R2/ap.env"; : > "$R2/calls"
+PATH=$R2:$PATH AP_ENV=$R2/ap.env AP_ADDR_RUN=$R2/run AP_ADDR_TMP=$R2 AP_ADDR_IP=$R2/ip AP_ADDR_DHCP=$R2/udhcpc sh "$O/usr/libexec/patronus/ap-addr" boot > /dev/null 2>&1
+grep -q 'ip addr add 192.0.2.9/24 dev br-lan' "$R2/calls" && grep -q 'ip route replace default via 192.0.2.1 dev br-lan' "$R2/calls" \
+  && ok "ap-addr: static address + gateway at boot" || { no "ap-addr static boot"; cat "$R2/calls"; }
+PATH=$R2:$PATH AP_ENV=$R2/ap.env AP_ADDR_RUN=$R2/run AP_ADDR_TMP=$R2 sh "$O/usr/libexec/patronus/ap-addr" confirm > /dev/null 2>&1 && no "ap-addr: confirm without a trial succeeded" || ok "ap-addr: confirm refuses when nothing is pending"
 
 # 3b. ath11k-caldata: writes the calibration to a writable path (the root is read-only), fails loudly when it cannot
 CD=$W/cal; mkdir -p "$CD/ro"; head -c 131072 /dev/urandom > "$CD/art"

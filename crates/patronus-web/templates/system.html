@@ -68,6 +68,16 @@ fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() :
     <button class="btn btn-secondary" type="button" id="fw-upload" onclick="fwUpload()">Upload and check</button>
     <button class="btn btn-primary" type="button" id="fw-install" style="display:none" onclick="fwInstall()">Install and restart</button>
     <button class="btn btn-secondary" type="button" id="fw-discard" style="display:none" onclick="fwDiscard()">Discard</button>
+    <h3 class="text-sm" style="margin-top:14px">Online update check</h3>
+    <form class="lan-form" onsubmit="return false" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+        <label>Update feed <input id="fw-feed" size="40" placeholder="https://..."></label>
+        <button class="btn btn-secondary" type="button" onclick="fwFeedSave()">Save feed</button>
+        <button class="btn btn-secondary" type="button" id="fw-check" onclick="fwFeedCheck()">Check for updates</button>
+        <button class="btn btn-secondary" type="button" id="fw-fetch" style="display:none" onclick="fwFeedDownload()">Download and check</button>
+    </form>
+    <p class="text-sm">The feed's release list must carry a valid signature of the Errant Solutions release key
+        (<span class="mono">5439 3549 39B9 C055 2A68  E9BB E323 A6A3 AC0A 6506</span>); anything else is refused. Checking never
+        installs anything: a downloaded image is checked like an upload and waits for "Install and restart".</p>
     {% endif %}
     <pre class="text-sm" id="fw-out" style="white-space:pre-wrap"></pre>
 </div>
@@ -112,6 +122,30 @@ async function fwDiscard() {
     catch (e) { document.getElementById('fw-out').textContent = e.message; }
 }
 fwCall('GET', '/api/system/firmware').then(fwShow).catch(() => {});
+fwCall('GET', '/api/system/firmware/feed').then(d => { const f = document.getElementById('fw-feed'); if (f && d) f.value = d.feed || ''; }).catch(() => {});
+async function fwFeedSave() {
+    const out = document.getElementById('fw-out');
+    try { await fwCall('PUT', '/api/system/firmware/feed', JSON.stringify({feed: document.getElementById('fw-feed').value.trim()}), {'content-type': 'application/json'}); out.textContent = 'Feed saved.'; }
+    catch (e) { out.textContent = 'Feed not saved: ' + e.message; }
+}
+async function fwFeedCheck() {
+    const out = document.getElementById('fw-out'), dl = document.getElementById('fw-fetch');
+    out.textContent = 'Checking the update feed...'; dl.style.display = 'none';
+    try {
+        const c = await fwCall('POST', '/api/system/firmware/feed/check');
+        const l = c.latest || {};
+        out.textContent = c.update_available
+            ? 'Update available: ' + l.build + (l.version ? ' (' + l.version + ')' : '') + (l.date ? ', ' + l.date : '') + ' - running ' + c.current + '. Signed by the release key.' + (l.notes ? '\n' + l.notes : '')
+            : 'Up to date: running ' + c.current + ', the newest signed build.';
+        if (c.update_available) dl.style.display = '';
+    } catch (e) { out.textContent = 'Update check failed: ' + e.message; }
+}
+async function fwFeedDownload() {
+    const out = document.getElementById('fw-out');
+    out.textContent = 'Downloading the signed image and checking it...';
+    try { const s = await fwCall('POST', '/api/system/firmware/feed/download'); out.textContent = (s.output || 'Checked.') + '\nReady: press "Install and restart" to install it.'; fwShow(s); }
+    catch (e) { out.textContent = 'Not downloaded: ' + e.message; fwCall('GET', '/api/system/firmware').then(fwShow).catch(() => {}); }
+}
 </script>
 
 <div class="card">

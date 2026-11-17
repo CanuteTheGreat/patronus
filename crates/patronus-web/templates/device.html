@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+
+{% block title %}Device - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    .dev-note { color: var(--muted); font-size: .85em; margin: 4px 0 10px; }
+    .dev-warn { background: var(--warn-bg); color: var(--warn-fg); padding: 8px 10px; border-radius: 6px; margin: 8px 0; font-size: .9em; }
+    .dev-key { font-family: monospace; font-size: .85em; word-break: break-all; }
+    textarea.dev-key-in { width: 100%; min-height: 4em; box-sizing: border-box; font-family: monospace; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Device</h1>
+    <p class="page-subtitle">Settings of this {% if ap_mode %}access point{% else %}device{% endif %} itself: who may log in over SSH,
+        its address, its lights and a scheduled restart. Firmware updates are under <a href="/system">System</a>.</p>
+</div>
+<div id="dev-msg"></div>
+
+{% if ap_mode %}
+<div class="card" id="addr-card">
+    <div class="card-header"><h2 class="card-title">Address of this access point</h2></div>
+    <p class="text-sm" id="addr-now"></p>
+    <form class="lan-form" id="addr-form" onsubmit="return false">
+        <label>Addressing <select name="mode" onchange="addrMode()"><option value="dhcp">Automatic (DHCP from the router)</option><option value="static">Fixed address</option></select></label>
+        <label class="addr-st">Address / prefix <input name="address" placeholder="192.168.1.2/24" size="18"></label>
+        <label class="addr-st">Gateway (the router) <input name="gateway" placeholder="192.168.1.1" size="15"></label>
+        <label class="addr-st">DNS servers <input name="dns" placeholder="the gateway" size="22"></label>
+        <label>Undo unless confirmed within <select name="confirm_within"><option value="120">2 minutes</option><option value="300">5 minutes</option><option value="60">1 minute</option></select></label>
+    </form>
+    {% if can_modify %}<button class="btn btn-primary" type="button" id="addr-save" onclick="addrSave()">Try the new address</button>{% endif %}
+    <div id="addr-pending"></div>
+    <p class="dev-note">The new address runs next to the current one. Open this page at the new address and press Confirm
+        there; if nobody confirms in time (a wrong address, gateway or prefix), the previous settings come back by
+        themselves, also across a restart. This access point can therefore not lock itself out.</p>
+</div>
+{% endif %}
+
+<div class="card" id="keys-card">
+    <div class="card-header"><h2 class="card-title">SSH keys</h2></div>
+    <div id="keys"></div>
+    {% if can_modify %}
+    <form class="lan-form" id="key-form" onsubmit="return false">
+        <label>Account <select name="user"></select></label>
+        <label style="flex:1 1 100%">Public key (one line: ssh-ed25519 AAAA... comment)<textarea class="dev-key-in" name="key"></textarea></label>
+        <button class="btn btn-secondary" type="button" onclick="keyAdd()">Add key</button>
+    </form>
+    {% endif %}
+    <p class="dev-note">Keys let these accounts log in over SSH without a password. Only public keys are accepted
+        (ed25519, ECDSA, RSA of 2048 bits or more), without options. Root's last key cannot be removed while root has no
+        password, so nobody is locked out. Every change is in the audit log.</p>
+</div>
+
+<div class="card" id="leds-card">
+    <div class="card-header"><h2 class="card-title">Lights</h2></div>
+    <p class="text-sm" id="leds-state"></p>
+    {% if can_modify %}<div id="leds-buttons" style="display:none">
+        <button class="btn btn-secondary" type="button" id="leds-on" onclick="ledsSet(true)">Lights on</button>
+        <button class="btn btn-secondary" type="button" id="leds-off" onclick="ledsSet(false)">Lights off</button></div>{% endif %}
+    <p class="dev-note">"Off" darkens every light of the device, at once and after every start (handy in a bedroom). "On"
+        brings back the device's own status and activity lights.</p>
+</div>
+
+<div class="card" id="restart-card">
+    <div class="card-header"><h2 class="card-title">Scheduled restart</h2></div>
+    <form class="lan-form" id="rs-form" onsubmit="return false">
+        <label>Restart <select name="mode" onchange="rsMode()"><option value="off">Never (off)</option><option value="daily">Every day</option><option value="weekly">Every week</option></select></label>
+        <label class="rs-wk">On <select name="day"><option value="sun">Sunday</option><option value="mon">Monday</option><option value="tue">Tuesday</option><option value="wed">Wednesday</option><option value="thu">Thursday</option><option value="fri">Friday</option><option value="sat">Saturday</option></select></label>
+        <label class="rs-t">At <input name="time" type="time" value="04:30"></label>
+    </form>
+    {% if can_modify %}<button class="btn btn-primary" type="button" onclick="rsSave()">Save</button>{% endif %}
+    <p class="text-sm" id="rs-state"></p>
+    <p class="dev-note">Off unless you switch it on. A restart takes the device offline for about a minute; clients
+        reconnect by themselves. The time is the device's own clock (UTC unless a time zone is set under System).</p>
+</div>
+
+<script>
+const CAN_MODIFY = {% if can_modify %}true{% else %}false{% endif %};
+function el(tag, props, ...kids) {
+    const e = document.createElement(tag);
+    for (const k in (props || {})) {
+        if (k === 'text') e.textContent = props[k];
+        else if (k === 'class') e.className = props[k];
+        else if (k.startsWith('on')) e[k] = props[k];
+        else if (k === 'disabled') e[k] = !!props[k];
+        else e.setAttribute(k, props[k]);
+    }
+    for (const c of kids) if (c != null) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    return e;
+}
+function msg(text, bad) {
+    const m = document.getElementById('dev-msg'); m.innerHTML = '';
+    if (text) m.appendChild(el('div', {class: bad ? 'alert-error' : 'dev-warn', text}));
+}
+async function api(method, url, body) {
+    const r = await fetch(url, {method, credentials: 'same-origin',
+        headers: body ? {'content-type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+    let d = null; try { d = await r.json(); } catch (_) {}
+    if (!r.ok) throw new Error((d && d.error) || ('HTTP ' + r.status));
+    return d;
+}
+
+// ---- SSH keys
+async function loadKeys() {
+    const box = document.getElementById('keys'); box.innerHTML = '';
+    if (!CAN_MODIFY) { box.appendChild(el('p', {class: 'dev-note', text: 'Only administrators see the SSH keys.'})); return; }
+    let d; try { d = await api('GET', '/api/device/ssh-keys'); } catch (e) { box.appendChild(el('p', {class: 'alert-error', text: e.message})); return; }
+    const sel = document.querySelector('#key-form [name=user]'); if (sel) sel.innerHTML = '';
+    for (const u of d.users) {
+        if (sel) sel.appendChild(el('option', {value: u.user, text: u.user}));
+        box.appendChild(el('h3', {class: 'text-sm', text: u.user + (u.password_login ? '' : ' (no password: keys only)')}));
+        const t = el('table', {class: 'lan keys', 'data-user': u.user}, el('thead', {}, el('tr', {}, el('th', {text: 'Type'}), el('th', {text: 'Fingerprint'}), el('th', {text: 'Comment'}), el('th'))));
+        const tb = el('tbody'); t.appendChild(tb);
+        if (!u.keys.length) tb.appendChild(el('tr', {}, el('td', {colspan: '4', class: 'empty', text: 'No keys.'})));
+        for (const k of u.keys) tb.appendChild(el('tr', {class: 'key-row'}, el('td', {text: k.type}), el('td', {class: 'dev-key', text: k.fingerprint}), el('td', {text: k.comment}),
+            el('td', {}, k.fingerprint ? el('button', {class: 'btn btn-danger btn-sm', type: 'button', text: 'Remove', onclick: async () => {
+                if (!confirm('Remove this key from ' + u.user + '? It can no longer log in with it.')) return;
+                try { await api('DELETE', '/api/device/ssh-keys/' + encodeURIComponent(u.user) + '/' + encodeURIComponent(k.fingerprint)); msg('Key removed.', false); }
+                catch (e) { msg('Not removed: ' + e.message, true); }
+                loadKeys();
+            }}) : null)));
+        box.appendChild(t);
+    }
+}
+async function keyAdd() {
+    const f = document.getElementById('key-form');
+    try { const r = await api('POST', '/api/device/ssh-keys', {user: f.user.value, key: f.key.value.trim()}); msg('Key added for ' + r.user + ' (' + r.fingerprint + ').', false); f.key.value = ''; }
+    catch (e) { msg('Not added: ' + e.message, true); }
+    loadKeys();
+}
+
+// ---- LEDs
+async function loadLeds() {
+    const s = document.getElementById('leds-state');
+    let d; try { d = await api('GET', '/api/device/leds'); } catch (e) { s.textContent = e.message; return; }
+    if (!d.available) { s.textContent = 'Not available on this device: ' + d.reason + '.'; s.dataset.available = 'no'; return; }
+    s.dataset.available = 'yes'; s.dataset.setting = d.setting;
+    s.textContent = 'Lights are ' + d.setting + ' (' + d.leds.map(l => l.name).join(', ') + ').';
+    const b = document.getElementById('leds-buttons'); if (b) b.style.display = '';
+}
+async function ledsSet(on) {
+    try { await api('PUT', '/api/device/leds', {on}); msg('Lights ' + (on ? 'on.' : 'off.'), false); } catch (e) { msg(e.message, true); }
+    loadLeds();
+}
+
+// ---- scheduled restart
+function rsMode() {
+    const f = document.getElementById('rs-form');
+    for (const l of f.querySelectorAll('.rs-wk')) l.style.display = f.mode.value === 'weekly' ? '' : 'none';
+    for (const l of f.querySelectorAll('.rs-t')) l.style.display = f.mode.value === 'off' ? 'none' : '';
+}
+function rsShow(d) {
+    const f = document.getElementById('rs-form');
+    f.mode.value = d.mode; f.time.value = d.time; f.day.value = d.day; rsMode();
+    for (const i of f.elements) i.disabled = !CAN_MODIFY || !d.available;
+    const u = d.unit || {};
+    const s = document.getElementById('rs-state');
+    s.dataset.enabled = u.enabled || ''; s.dataset.active = u.active || '';
+    s.textContent = !d.available ? 'Not available in this firmware.' :
+        (d.mode === 'off' ? 'Off. ' : 'On: ' + (d.mode === 'weekly' ? 'every ' + d.day + ' ' : 'every day ') + 'at ' + d.time + '. ') +
+        'Unit ' + (u.unit || '?') + ': ' + (u.enabled || '?') + ', ' + (u.active || '?') + (u.calendar ? ', schedule "' + u.calendar + '"' : '') +
+        (u.next && u.next !== 'n/a' ? ', next ' + u.next : '') + ' (' + (u.init || '') + ').';
+}
+async function loadRs() { try { rsShow(await api('GET', '/api/device/restart-schedule')); } catch (e) { document.getElementById('rs-state').textContent = e.message; } }
+async function rsSave() {
+    const f = document.getElementById('rs-form');
+    try { rsShow(await api('PUT', '/api/device/restart-schedule', {mode: f.mode.value, time: f.time.value, day: f.day.value})); msg('Schedule saved.', false); }
+    catch (e) { msg('Not saved: ' + e.message, true); }
+}
+
+// ---- address (access point)
+function addrMode() {
+    const f = document.getElementById('addr-form'); if (!f) return;
+    for (const l of f.querySelectorAll('.addr-st')) l.style.display = f.mode.value === 'static' ? '' : 'none';
+}
+let ADDR_TIMER = null;
+function addrShow(d) {
+    const f = document.getElementById('addr-form'); if (!f) return;
+    f.mode.value = d.mode; f.address.value = d.address; f.gateway.value = d.gateway; f.dns.value = d.dns; addrMode();
+    for (const i of f.elements) i.disabled = !CAN_MODIFY || !d.available;
+    const p = d.pending || {};
+    document.getElementById('addr-now').textContent = 'Now: ' + (p.current || '?') + (p.dhcp === 'yes' ? ' (from DHCP)' : '') + ' - setting: ' +
+        (d.mode === 'dhcp' ? 'automatic (DHCP)' : d.address + ' via ' + d.gateway) + '.';
+    const box = document.getElementById('addr-pending'); box.innerHTML = '';
+    if (p.pending === 'yes') {
+        const news = (p.new || '').trim().split(/\s+/).filter(Boolean).map(a => a.split('/')[0]);
+        const here = location.hostname.replace(/^\[|\]$/g, '');
+        const onNew = news.includes(here);
+        box.appendChild(el('div', {class: 'dev-warn', id: 'addr-trial', text: 'Waiting for confirmation: ' + p.left + ' s left. New address: ' + (news.join(', ') || 'not up yet') + '. ' +
+            (onNew ? 'You are on the new address: confirm to keep it.' : 'Open this page at the new address and confirm there (https://' + (news[0] || '...') + '/device); otherwise the previous settings come back.')}));
+        if (onNew && CAN_MODIFY) box.appendChild(el('button', {class: 'btn btn-primary', type: 'button', id: 'addr-confirm', text: 'Confirm the new address', onclick: async () => {
+            try { await api('POST', '/api/device/address/confirm'); msg('New address kept.', false); } catch (e) { msg('Not confirmed: ' + e.message, true); }
+            loadAddr();
+        }}));
+        if (news.length && !onNew) box.appendChild(el('a', {class: 'btn btn-secondary', href: 'https://' + news[0] + '/device', text: 'Open the new address'}));
+        clearTimeout(ADDR_TIMER); ADDR_TIMER = setTimeout(loadAddr, 5000);
+    }
+}
+async function loadAddr() { if (!document.getElementById('addr-form')) return; try { addrShow(await api('GET', '/api/device/address')); } catch (e) { document.getElementById('addr-now').textContent = e.message; } }
+async function addrSave() {
+    const f = document.getElementById('addr-form');
+    const body = {mode: f.mode.value, address: f.address.value.trim(), gateway: f.gateway.value.trim(), dns: f.dns.value.trim(), confirm_within: Number(f.confirm_within.value)};
+    try { const r = await api('PUT', '/api/device/address', body); msg(r.changed === false ? 'Nothing changed.' : r.note, false); }
+    catch (e) { msg('Not changed: ' + e.message, true); }
+    setTimeout(loadAddr, 2500);
+}
+
+loadKeys(); loadLeds(); loadRs(); loadAddr();
+</script>
+{% endblock %}

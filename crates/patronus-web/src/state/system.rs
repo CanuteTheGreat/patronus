@@ -170,6 +170,7 @@ impl SystemManager {
                     .await;
                 notes.extend(lines);
                 notes.extend(self.restore_access_point(&doc).await);
+                notes.extend(self.restore_accounts(&doc).await);
                 Ok(notes)
             }
             Err(failed) => {
@@ -212,6 +213,28 @@ impl SystemManager {
         {
             Ok(_) => vec!["Wi-Fi: access-point settings restored, radios restarted".into()],
             Err(e) => vec![format!("Wi-Fi: access-point settings NOT restored: {e}")],
+        }
+    }
+
+    /// Put a backup's system login accounts back (router tier: human accounts with their password hashes, groups and
+    /// SSH keys, and root's SSH keys), so a restore after a reset brings the administrators' logins back.
+    async fn restore_accounts(&self, doc: &Value) -> Vec<String> {
+        let Some(a) = doc.get("system_accounts") else {
+            return Vec::new();
+        };
+        if !embedded_tier() {
+            return vec!["the backup has system login accounts; this system manages its accounts itself, skipped".into()];
+        }
+        match self.system_op("accounts_restore", a.clone()).await {
+            Ok(v) => v["notes"]
+                .as_array()
+                .map(|n| {
+                    n.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            Err(e) => vec![format!("system accounts NOT restored: {e}")],
         }
     }
 
@@ -300,6 +323,12 @@ impl SystemManager {
         if let Ok(v) = self.system_op("wifi_export", Value::Null).await {
             if let Some(t) = v.get("ap_env").and_then(Value::as_str) {
                 doc["access_point"] = serde_json::json!({ "ap_env": t });
+            }
+        }
+        // the router tier's own login accounts (its /etc is Patronus' own): restored by restore_accounts
+        if embedded_tier() {
+            if let Ok(v) = self.system_op("accounts_export", Value::Null).await {
+                doc["system_accounts"] = v;
             }
         }
         let text = serde_json::to_string_pretty(&doc)? + "\n";
@@ -588,6 +617,16 @@ fn timezone() -> String {
         }
         Err(_) => "UTC (no /etc/localtime)".to_string(),
     }
+}
+
+/// The router-tier image (`PATRONUS_TIER=embedded` in /etc/patronus-release), whose /etc Patronus owns.
+pub fn embedded_tier() -> bool {
+    std::fs::read_to_string(
+        std::env::var("PATRONUS_RELEASE_FILE").unwrap_or_else(|_| "/etc/patronus-release".into()),
+    )
+    .unwrap_or_default()
+    .lines()
+    .any(|l| l.trim() == "PATRONUS_TIER=embedded")
 }
 
 #[cfg(test)]

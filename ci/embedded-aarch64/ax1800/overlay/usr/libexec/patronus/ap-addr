@@ -1,0 +1,115 @@
+#!/bin/sh
+# ap-addr boot|trial SECS|confirm|status: the access point's own address on br-lan (AP_ADDR / AP_GW / AP_DNS in
+# /etc/patronus/ap.env; empty AP_ADDR = DHCP client).
+#   boot          at every start (board-network): a trial that was never confirmed is undone first (the previous file
+#                 comes back), then the address is configured.
+#   trial SECS    the web UI has written the new settings (the previous file is ap.env.addr-prev): the new address is
+#                 brought up NEXT TO the current one, so the browser that asked keeps its connection. Unless `confirm`
+#                 runs within SECS seconds, the previous settings come back by themselves. Detached (own systemd unit,
+#                 or setsid); returns at once. A restart during the trial also reverts (marker on /etc, kept on /data).
+#   confirm       keep the new settings; the old address is removed.
+#   status        key=value lines for the web UI (pending, new, old, left).
+# A wrong address, gateway or prefix can therefore never strand the unit: it is back on its old address within SECS s.
+# Test hooks: AP_ENV, AP_ADDR_RUN (instead of /run/patronus), AP_ADDR_IP (ip command), AP_ADDR_DHCP (udhcpc command),
+#             AP_ADDR_TMP (instead of /tmp: resolv.conf.auto, boot-times).
+ENV=${AP_ENV:-/etc/patronus/ap.env}
+PREV=$ENV.addr-prev
+PEND=$ENV.addr-pending
+RUN=${AP_ADDR_RUN:-/run/patronus}
+IP=${AP_ADDR_IP:-ip}
+DHCPC=${AP_ADDR_DHCP:-udhcpc}
+BR=br-lan
+KEEP=$RUN/ap-addr.keep
+T=${AP_ADDR_TMP:-/tmp}
+log() { logger -t patronus-ap-addr "$1" 2>/dev/null; echo "$1"; }
+up() { cut -d. -f1 /proc/uptime; }
+settings() { ( AP_ADDR=; AP_GW=; AP_DNS=; . "$1" > /dev/null 2>&1; echo "$AP_ADDR|$AP_GW|$AP_DNS" ); }
+addrs() { $IP -4 -o addr show dev $BR scope global 2>/dev/null | awk '{ print $4 }'; }
+dhcp_pid() { p=$(cat /run/udhcpc-$BR.pid 2>/dev/null); [ -n "$p" ] && kill -0 "$p" 2>/dev/null && echo "$p"; }
+resolv() { : > $T/resolv.conf.auto; for d in $1; do echo "nameserver $d" >> $T/resolv.conf.auto; done; }
+configure() { # "ADDR|GW|DNS": static, or DHCP when ADDR is empty
+  a=${1%%|*}; r=${1#*|}; g=${r%%|*}; d=${r#*|}
+  if [ -n "$a" ]; then
+    $IP addr add "$a" dev $BR 2>/dev/null; [ -n "$g" ] && $IP route replace default via "$g" dev $BR
+    resolv "$d"; echo "$a"
+  else
+    [ -n "$(dhcp_pid)" ] || $DHCPC -b -i $BR -s /usr/share/udhcpc/default.script -p /run/udhcpc-$BR.pid -S > $T/udhcpc.log 2>&1
+    echo dhcp
+  fi; }
+unconfigure() { # "ADDR|GW|DNS" that is going away (never an address in KEEP)
+  a=${1%%|*}
+  if [ -n "$a" ]; then grep -qx "$a" "$KEEP" 2>/dev/null || $IP addr del "$a" dev $BR 2>/dev/null
+  else p=$(dhcp_pid); [ -n "$p" ] && kill "$p"; rm -f /run/udhcpc-$BR.pid
+    for x in $(cat "$RUN/ap-addr.dhcp" 2>/dev/null); do grep -qx "$x" "$KEEP" 2>/dev/null || $IP addr del "$x" dev $BR 2>/dev/null; done
+  fi; }
+
+case "$1" in
+boot)
+  if [ -f "$PEND" ] && [ -f "$PREV" ]; then cp "$PREV" "$ENV" && chmod 600 "$ENV"; rm -f "$PEND" "$PREV"
+    log "PATRONUS-AP-ADDR reverted: the address change was not confirmed before the restart"; fi
+  r=$(configure "$(settings "$ENV")")
+  echo "$(up) addr-$r" >> $T/boot-times ;;
+trial)
+  secs=${2:-120}; case "$secs" in ''|*[!0-9]*) echo "ap-addr: trial SECS" >&2; exit 2;; esac
+  [ -f "$PREV" ] || { echo "ap-addr: no previous settings (ap.env.addr-prev)" >&2; exit 1; }
+  mkdir -p "$RUN"; echo $(( $(up) + secs )) > "$PEND"; sync
+  if [ -d /run/systemd/system ] && command -v systemd-run > /dev/null; then
+    systemd-run --quiet --collect --unit=patronus-ap-addr-trial "$0" _trial "$secs"
+  else setsid "$0" _trial "$secs" < /dev/null > /dev/null 2>&1 & fi
+  echo "trial started: confirm within $secs s" ;;
+_trial)
+  secs=$2; sleep 2   # the web request that started the trial is answered first
+  # two addresses of one subnet: removing the first (primary) would take the second with it unless it is promoted
+  echo 1 > /proc/sys/net/ipv4/conf/$BR/promote_secondaries 2>/dev/null
+  old=$(settings "$PREV"); new=$(settings "$ENV")
+  addrs > "$RUN/ap-addr.old"; cp "$RUN/ap-addr.old" "$KEEP"   # current addresses stay up during the trial (udhcpc's script re-adds KEEP)
+  [ -n "$(dhcp_pid)" ] && addrs > "$RUN/ap-addr.dhcp"
+  $IP -4 route show default dev $BR 2>/dev/null | head -1 > "$RUN/ap-addr.route"
+  cp $T/resolv.conf.auto "$RUN/ap-addr.resolv" 2>/dev/null
+  log "PATRONUS-AP-ADDR trial: ${new%%|*} (dhcp when empty) next to $(tr '\n' ' ' < "$KEEP"), confirm within $secs s"
+  configure "$new" > /dev/null
+  # the address(es) the new settings brought: static at once, DHCP once the lease is in
+  n=${new%%|*}; [ -n "$n" ] && echo "$n" >> "$KEEP"   # a static trial address also survives a DHCP renew meanwhile
+  if [ -z "$n" ]; then i=0; while [ $i -lt 20 ]; do n=$(addrs | grep -vxF -f "$KEEP"); [ -n "$n" ] && break; i=$((i + 1)); sleep 1; done; fi
+  echo "$n" > "$RUN/ap-addr.new"
+  [ -z "${new%%|*}" ] && echo "$n" > "$RUN/ap-addr.dhcp-new"
+  deadline=$(cat "$PEND" 2>/dev/null || echo 0)
+  while [ -f "$PEND" ] && [ "$(up)" -lt "$deadline" ]; do sleep 1; done
+  if [ -f "$PEND" ]; then
+    # not confirmed: everything the new settings brought goes, the previous file and settings come back
+    cp "$PREV" "$ENV" && chmod 600 "$ENV"
+    if [ -z "${new%%|*}" ] && [ -n "${old%%|*}" ]; then p=$(dhcp_pid); [ -n "$p" ] && kill "$p"; rm -f /run/udhcpc-$BR.pid; fi
+    for x in $(cat "$RUN/ap-addr.new" 2>/dev/null); do grep -qxF "$x" "$RUN/ap-addr.old" || $IP addr del "$x" dev $BR 2>/dev/null; done
+    rm -f "$KEEP"
+    configure "$old" > /dev/null
+    r=$(cat "$RUN/ap-addr.route" 2>/dev/null); [ -n "$r" ] && $IP route replace $r 2>/dev/null
+    [ -f "$RUN/ap-addr.resolv" ] && cp "$RUN/ap-addr.resolv" $T/resolv.conf.auto
+    rm -f "$PEND" "$PREV" "$RUN"/ap-addr.new "$RUN"/ap-addr.dhcp "$RUN"/ap-addr.dhcp-new "$RUN"/ap-addr.route "$RUN"/ap-addr.resolv "$RUN"/ap-addr.old; sync
+    log "PATRONUS-AP-ADDR reverted: not confirmed within $secs s, back on $(addrs | tr '\n' ' ')"
+  else
+    # confirmed: the old settings' address(es) go (unless the new settings use the same one)
+    keep_new=$(cat "$RUN/ap-addr.new" 2>/dev/null)
+    echo "$keep_new" > "$KEEP"
+    if [ "$old" != "$new" ]; then
+      oa=${old%%|*}
+      if [ -n "$oa" ]; then [ "$oa" = "${new%%|*}" ] || $IP addr del "$oa" dev $BR 2>/dev/null
+      elif [ -n "${new%%|*}" ]; then p=$(dhcp_pid); [ -n "$p" ] && kill "$p"; rm -f /run/udhcpc-$BR.pid
+        for x in $(cat "$RUN/ap-addr.dhcp" 2>/dev/null); do [ "$x" = "${new%%|*}" ] || $IP addr del "$x" dev $BR 2>/dev/null; done
+      fi
+    fi
+    rm -f "$KEEP" "$PREV" "$RUN"/ap-addr.new "$RUN"/ap-addr.dhcp "$RUN"/ap-addr.dhcp-new "$RUN"/ap-addr.route "$RUN"/ap-addr.resolv "$RUN"/ap-addr.old; sync
+    log "PATRONUS-AP-ADDR confirmed: $(addrs | tr '\n' ' ')"
+  fi ;;
+confirm)
+  [ -f "$PEND" ] || { echo "ap-addr: no address change is waiting" >&2; exit 1; }
+  rm -f "$PEND"; sync
+  i=0; while [ -f "$PREV" ] && [ $i -lt 10 ]; do sleep 1; i=$((i + 1)); done
+  echo "confirmed" ;;
+status)
+  if [ -f "$PEND" ]; then echo "pending=yes"; echo "left=$(( $(cat "$PEND") - $(up) ))"
+  else echo "pending=no"; fi
+  echo "new=$(tr '\n' ' ' < "$RUN/ap-addr.new" 2>/dev/null)"
+  echo "current=$(addrs | tr '\n' ' ')"
+  echo "dhcp=$([ -n "$(dhcp_pid)" ] && echo yes || echo no)" ;;
+*) echo "usage: ap-addr boot|trial SECS|confirm|status" >&2; exit 2 ;;
+esac

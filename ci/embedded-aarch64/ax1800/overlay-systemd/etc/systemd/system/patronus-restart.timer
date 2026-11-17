@@ -1,0 +1,11 @@
+[Unit]
+Description=Scheduled restart (Device page; the schedule is a drop-in written by restart-schedule)
+# Not enabled by default. restart-schedule writes patronus-restart.timer.d/schedule.conf (OnCalendar) and enables the
+# timer while a schedule is on (OpenRC: busybox crond, patronus-crond).
+
+[Timer]
+Persistent=false
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

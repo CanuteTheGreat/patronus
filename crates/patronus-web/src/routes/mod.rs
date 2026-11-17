@@ -56,6 +56,7 @@ pub fn build_router(
         .merge(seg_dns_pages())
         .merge(api::setup::pages())
         .merge(api::wifi::pages())
+        .merge(api::device::pages())
         // The old "simple" pages claimed services were operational and
         // listed invented "recent activity"; keep the URLs as redirects.
         .route("/simple", get(|| async { Redirect::to("/") }))
@@ -553,6 +554,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::authservers::router())
         .merge(api::telemetry::router())
         .merge(api::wifi::router())
+        .merge(api::device::router())
 }
 
 #[cfg(test)]

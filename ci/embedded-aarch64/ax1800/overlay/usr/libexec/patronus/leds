@@ -1,0 +1,38 @@
+#!/bin/sh
+# leds apply|status: the device's LEDs on or off (LEDS=on|off in /etc/patronus/device.env; the web UI's Device page).
+#   off: every LED in /sys/class/leds gets trigger "none" and brightness 0.
+#   on:  every LED gets back the trigger and brightness it had at boot (saved once per boot before the first change in
+#        /run/patronus/leds.default), so the board's own status/activity patterns return.
+# Devices without LEDs in /sys/class/leds: nothing to do (the page says so).
+# Test hooks: LEDS_SYSFS, LEDS_ENV, LEDS_RUN.
+SYS=${LEDS_SYSFS:-/sys/class/leds}
+ENVF=${LEDS_ENV:-/etc/patronus/device.env}
+RUN=${LEDS_RUN:-/run/patronus}
+SAVED=$RUN/leds.default
+LEDS=on
+[ -f "$ENVF" ] && . "$ENVF"
+save_defaults() {
+  [ -f "$SAVED" ] && return 0
+  mkdir -p "$RUN"; : > "$SAVED.new"
+  for d in "$SYS"/*; do [ -f "$d/brightness" ] || continue
+    t=$(sed -n 's/.*\[\(.*\)\].*/\1/p' "$d/trigger" 2>/dev/null)
+    echo "${d##*/} ${t:-none} $(cat "$d/brightness")" >> "$SAVED.new"; done
+  mv "$SAVED.new" "$SAVED"; }
+case "$1" in
+apply)
+  ls "$SYS"/*/brightness > /dev/null 2>&1 || { echo "leds: none in $SYS"; exit 0; }
+  save_defaults
+  if [ "$LEDS" = off ]; then
+    for d in "$SYS"/*; do [ -f "$d/brightness" ] || continue
+      echo none > "$d/trigger" 2>/dev/null; echo 0 > "$d/brightness" 2>/dev/null; done
+    echo "leds: off"
+  else
+    while read -r n t b; do d=$SYS/$n; [ -d "$d" ] || continue
+      echo "$t" > "$d/trigger" 2>/dev/null
+      # a trigger like default-on/netdev sets the brightness itself; "none" needs the saved value back
+      [ "$t" = none ] && echo "$b" > "$d/brightness" 2>/dev/null; done < "$SAVED"
+    echo "leds: on (boot defaults)"
+  fi ;;
+status) echo "setting=$LEDS"; n=0; for d in "$SYS"/*; do [ -f "$d/brightness" ] && n=$((n + 1)); done; echo "count=$n" ;;
+*) echo "usage: leds apply|status" >&2; exit 2 ;;
+esac

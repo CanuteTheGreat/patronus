@@ -1,0 +1,60 @@
+#!/bin/sh
+# restart-schedule apply|status: the device's scheduled restart (RESTART=off|daily|weekly, RESTART_TIME=HH:MM,
+# RESTART_DAY=sun..sat in /etc/patronus/device.env; the web UI's Device page). OFF unless switched on.
+#   OpenRC:  a line in root's crontab (/etc/crontabs/root, marked "# patronus-restart") and the patronus-crond service
+#            (busybox crond) in the default runlevel; both removed again when the schedule is off.
+#   systemd: patronus-restart.timer with the schedule in a drop-in (OnCalendar), enabled + started / disabled + stopped.
+# The restart itself is /usr/libexec/patronus/scheduled-restart (logs, then the init system's restart).
+# `status` prints key=value lines with the exact state of the unit: init, schedule, enabled, active, next.
+# Test hooks: RS_ENV, RS_CRONTAB, RS_SYSTEMD_DIR, RS_INIT (openrc|systemd).
+ENVF=${RS_ENV:-/etc/patronus/device.env}
+CRONTAB=${RS_CRONTAB:-/etc/crontabs/root}
+SDDIR=${RS_SYSTEMD_DIR:-/etc/systemd/system}
+INIT=${RS_INIT:-$([ -d /run/systemd/system ] && echo systemd || echo openrc)}
+MARK="# patronus-restart"
+RESTART=off RESTART_TIME=04:30 RESTART_DAY=sun
+[ -f "$ENVF" ] && . "$ENVF"
+dow() { i=0; for d in sun mon tue wed thu fri sat; do [ "$d" = "$1" ] && { echo $i; return; }; i=$((i + 1)); done; echo 0; }
+cron_line() { h=${RESTART_TIME%%:*}; m=${RESTART_TIME#*:}; h=${h#0}; m=${m#0}
+  case "$RESTART" in daily) echo "${m:-0} ${h:-0} * * * /usr/libexec/patronus/scheduled-restart $MARK";;
+    weekly) echo "${m:-0} ${h:-0} * * $(dow "$RESTART_DAY") /usr/libexec/patronus/scheduled-restart $MARK";; esac; }
+calendar() { D=$(echo "$RESTART_DAY" | awk '{ print toupper(substr($0,1,1)) substr($0,2) }')
+  case "$RESTART" in daily) echo "*-*-* $RESTART_TIME:00";; weekly) echo "$D *-*-* $RESTART_TIME:00";; esac; }
+case "$1" in
+apply)
+  case "$RESTART" in off|daily|weekly) ;; *) echo "restart-schedule: RESTART=$RESTART (off|daily|weekly)" >&2; exit 1;; esac
+  if [ "$INIT" = systemd ]; then
+    d=$SDDIR/patronus-restart.timer.d; mkdir -p "$d"
+    if [ "$RESTART" = off ]; then
+      systemctl disable --now patronus-restart.timer > /dev/null 2>&1; rm -f "$d/schedule.conf"; systemctl daemon-reload
+    else
+      printf '[Timer]\nOnCalendar=\nOnCalendar=%s\n' "$(calendar)" > "$d/schedule.conf"
+      systemctl daemon-reload && systemctl enable --now patronus-restart.timer > /dev/null 2>&1 && systemctl restart patronus-restart.timer
+    fi
+  else
+    mkdir -p "${CRONTAB%/*}"; { grep -vF "$MARK" "$CRONTAB" 2>/dev/null; cron_line; } > "$CRONTAB.new"; mv "$CRONTAB.new" "$CRONTAB"; chmod 600 "$CRONTAB"
+    if [ "$RESTART" = off ]; then
+      # crond only for this schedule: stop it when nothing else is in the crontab
+      if ! grep -q '^[^#]' "$CRONTAB" 2>/dev/null; then rc-service patronus-crond stop > /dev/null 2>&1; rc-update del patronus-crond default > /dev/null 2>&1; fi
+    else
+      rc-update add patronus-crond default > /dev/null 2>&1; rc-service patronus-crond restart > /dev/null 2>&1 || rc-service patronus-crond start > /dev/null 2>&1
+    fi
+  fi
+  logger -t patronus-restart "scheduled restart: $RESTART $([ "$RESTART" = off ] || echo "$RESTART_TIME $([ "$RESTART" = weekly ] && echo "$RESTART_DAY")")" 2>/dev/null
+  "$0" status ;;
+status)
+  echo "init=$INIT"; echo "schedule=$RESTART"
+  if [ "$INIT" = systemd ]; then
+    echo "unit=patronus-restart.timer"
+    echo "enabled=$(systemctl is-enabled patronus-restart.timer 2>/dev/null || true)"
+    echo "active=$(systemctl is-active patronus-restart.timer 2>/dev/null || true)"
+    echo "calendar=$(sed -n 's/^OnCalendar=\(..*\)/\1/p' "$SDDIR/patronus-restart.timer.d/schedule.conf" 2>/dev/null)"
+    echo "next=$(systemctl show -p NextElapseUSecRealtime --value patronus-restart.timer 2>/dev/null)"
+  else
+    echo "unit=patronus-crond (busybox crond) + $CRONTAB"
+    rl=$(rc-update show default 2>/dev/null); case "$rl" in *" patronus-crond "*) echo "enabled=enabled";; *) echo "enabled=disabled";; esac
+    st=$(rc-service patronus-crond status 2>/dev/null); case "$st" in *started*) echo "active=active";; *) echo "active=inactive";; esac
+    echo "calendar=$(grep -F "$MARK" "$CRONTAB" 2>/dev/null | cut -d' ' -f1-5)"
+  fi ;;
+*) echo "usage: restart-schedule apply|status" >&2; exit 2 ;;
+esac

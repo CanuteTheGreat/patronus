@@ -1,0 +1,6 @@
+[Unit]
+Description=Scheduled restart of the device (Device page)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/patronus/scheduled-restart

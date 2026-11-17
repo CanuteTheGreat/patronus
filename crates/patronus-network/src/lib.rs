@@ -6,6 +6,7 @@ use patronus_core::{types::Interface, Result};
 
 pub use ipnetwork;
 
+pub mod apdev;
 pub mod apnames;
 pub mod applyd;
 pub mod apsurvey;

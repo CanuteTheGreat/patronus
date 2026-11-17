@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+# Scheduled restart of the Device page (restart-schedule): busybox crond for root's crontab (/etc/crontabs/root).
+# Not in any runlevel by default; restart-schedule adds it while a schedule is on (systemd: patronus-restart.timer).
+description="Scheduled tasks (busybox crond; the Device page's scheduled restart)"
+command=/bin/busybox
+command_args="crond -f -c /etc/crontabs -L /dev/null"
+supervisor=supervise-daemon
+respawn_delay=5
+depend() {
+	need localmount
+	after patronus-syslogd chronyd
+}

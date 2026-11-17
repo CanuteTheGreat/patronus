@@ -15,7 +15,7 @@ K=${VIRT_KERNEL:?VIRT_KERNEL}; KEY=${UNIT_DIR:?UNIT_DIR}/ci_ed25519
 RES=${RESULTS:-/out/qemu-$INIT}; mkdir -p "$RES"; : > "$RES/results.txt"
 TMO=${BOOT_TIMEOUT:-1200}
 SQ=$(ls "$I"/root.squashfs); TAR=$(ls "$I"/patronus-*-sysupgrade.tar)
-QP=; SLP=; W=$(mktemp -d "${TMPDIR:-/tmp}/ax-qemu.XXXX"); trap 'kill $QP $SLP 2>/dev/null; rm -rf "$W"' EXIT
+QP=; SLP=; W=$(mktemp -d "${TMPDIR:-/tmp}/ax-qemu.XXXX"); trap 'kill $QP $SLP ${FEEDPID:-} 2>/dev/null; rm -rf "$W"' EXIT
 # test copy of the root: the board's kmods replaced by the same pinned netfilter packages built for the virt kernel
 # (kmods.pin "virt"), so the firewall applies for real; everything else is the shipped image byte for byte
 unsquashfs -q -d "$W/r" "$SQ" >/dev/null || { echo "unsquashfs failed"; exit 1; }
@@ -24,7 +24,14 @@ sh "$(dirname "$0")/fetch-kmods.sh" virt "$W/r" "${KMOD_CACHE:-/cache/kmods}" ||
 depmod -b "$W/r" "$KV"; : > "$W/r/etc/patronus/qemu-kmods"
 mksquashfs "$W/r" "$W/root.img" -comp xz -b 256K -noappend -no-xattrs -all-root -quiet >/dev/null; rm -rf "$W/r"
 truncate -s 256M "$W/data.img"; mkfs.ext4 -q -F -L patronus_data "$W/data.img"
-SSHP=2222; WEBP=8443; NTPP=11123; QP=
+SSHP=${GATE_SSHP:-2222}; WEBP=${GATE_WEBP:-8443}; NTPP=${GATE_NTPP:-11123}; FEEDP=${GATE_FEEDP:-18080}; QP=
+# GATE_BIND=0.0.0.0 publishes the web UI port beyond the container (browser e2e against the running unit);
+# GATE_HOLD=<s> keeps the unit running that long after the boot-2 checks (for those e2e runs)
+BIND=${GATE_BIND:-127.0.0.1}
+# an update feed that is NOT signed by the release key (the online check must refuse it), served to the guest at 10.0.2.2
+mkdir -p "$W/feed/glinet_gl-ax1800/$INIT"; printf '{"build":"ci-feed","image":"x-sysupgrade.tar","sha256":"%064d","size":1}' 0 > "$W/feed/glinet_gl-ax1800/$INIT/latest.json"
+printf 'not a signature' > "$W/feed/glinet_gl-ax1800/$INIT/latest.json.sig"
+(cd "$W/feed" && exec python3 -m http.server -b 127.0.0.1 $FEEDP >/dev/null 2>&1) & FEEDPID=$!
 fails=()
 pass() { echo "PASS: $*" | tee -a "$RES/results.txt"; }
 fail() { echo "FAIL: $*" | tee -a "$RES/results.txt"; fails+=("$1"); }
@@ -37,7 +44,7 @@ boot() { # n
   qemu-system-aarch64 -M virt -accel $ACCEL -cpu $([ $ACCEL = kvm ] && echo host || echo cortex-a53) -smp 2 -m 512 \
     -kernel "$K" -append "root=/dev/vda rootfstype=squashfs ro console=ttyAMA0 patronus.data=/dev/vdb panic=-1" \
     -drive file="$W/root.img",if=virtio,format=raw,readonly=on -drive file="$W/data.img",if=virtio,format=raw \
-    -netdev user,id=n0,hostfwd=tcp:127.0.0.1:$SSHP-:22,hostfwd=tcp:127.0.0.1:$WEBP-:443,hostfwd=udp:127.0.0.1:$NTPP-:123 -device virtio-net-pci,netdev=n0 \
+    -netdev user,id=n0,hostfwd=tcp:127.0.0.1:$SSHP-:22,hostfwd=tcp:$BIND:$WEBP-:443,hostfwd=udp:127.0.0.1:$NTPP-:123 -device virtio-net-pci,netdev=n0 \
     -display none -monitor none -serial file:"$RES/serial-boot$n.txt" -no-reboot &
   QP=$!
   until R true 2>/dev/null; do
@@ -232,6 +239,121 @@ fw_web() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/system/firmwa
     --data-binary @"$W/junk.tar" https://127.0.0.1:$WEBP/api/system/firmware); g=$(cat "$W/api.json")
   [ "$c" = 400 ] && has_all "$g" 'Invalid image' || { echo "junk upload: $c $g"; return 1; }
   R '! test -e /tmp/patronus-firmware.tar && ! test -e /data/.upgrade' || { echo "junk image left behind"; return 1; }; }
+# --- router-tier gaps (docs/router-tier-ui.md "Device settings"): each check drives the web API like the page does
+# Wi-Fi page: crash protection (wifi-guard) and the guest filter's availability are reported
+gap_state() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$g" '"guard":{' '"mode":"' '"guest_filter":{' || { echo "GET /api/wifi: $c $g"; return 1; }
+  o=$(R '/usr/libexec/patronus/ap-guest status') || return 1; case "$o" in *available=yes*) ;; *) echo "ap-guest status: $o"; return 1;; esac; }
+# guest network: GUEST_<id>=1 written, the nftables bridge filter loads in this kernel with the guest ports
+gap_guest() { c=$(wapi -X PUT -d '{"networks":[{"id":"cigatene","ssid":"CI Gate Net","enabled":true},{"id":"cigateio","ssid":"CI Gate IoT","bands":"24","isolate":true,"enabled":true},{"ssid":"CI Gate Guest","key":"ci-gate-guest-pass","guest":true,"enabled":true}]}' https://127.0.0.1:$WEBP/api/wifi)
+  [ "$c" = 200 ] || { echo "PUT guest: $c $(cat "$W/api.json")"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=$(cat "$W/api.json"); has_all "$g" '"guest":true' '"ssid":"CI Gate Guest"' || { echo "GET: $g"; return 1; }
+  o=$(R 'grep -E "^GUEST_cigategu=1" /etc/patronus/ap.env && /usr/libexec/patronus/ap-guest apply && nft list table bridge patronus_guest') || { echo "$o"; return 1; }
+  has_all "$o" '"wl24-cigategu"' '"wl5-cigategu"' 'ip daddr @lan4 drop' 'meta l4proto { tcp, udp } drop' || { echo "$o"; return 1; }
+  # and back: without a guest network the filter goes away
+  c=$(wapi -X PUT -d '{"networks":[{"id":"cigatene","ssid":"CI Gate Net","enabled":true},{"id":"cigateio","ssid":"CI Gate IoT","bands":"24","isolate":true,"enabled":true}]}' https://127.0.0.1:$WEBP/api/wifi)
+  [ "$c" = 200 ] || { echo "PUT without guest: $c"; return 1; }
+  R '/usr/libexec/patronus/ap-guest apply; ! nft list table bridge patronus_guest >/dev/null 2>&1' || { echo "filter left behind"; return 1; }; }
+# block list: per network and unit-wide, live (no restart), unblock removes it, bad MAC refused
+gap_block() { c=$(wapi -X POST -d '{"mac":"02:CI:00:00:00:01"}' https://127.0.0.1:$WEBP/api/wifi/block); [ "$c" = 400 ] || { echo "bad MAC: $c"; return 1; }
+  c=$(wapi -X POST -d '{"mac":"02:C1:00:00:00:01"}' https://127.0.0.1:$WEBP/api/wifi/block); [ "$c" = 200 ] || { echo "block: $c $(cat "$W/api.json")"; return 1; }
+  c=$(wapi -X POST -d '{"mac":"02:c1:00:00:00:02","network":"cigateio"}' https://127.0.0.1:$WEBP/api/wifi/block); [ "$c" = 200 ] || { echo "block net: $c $(cat "$W/api.json")"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=$(cat "$W/api.json")
+  has_all "$g" '"blocked":["02:c1:00:00:00:01"]' '"blocked":["02:c1:00:00:00:02"]' || { echo "GET: $g"; return 1; }
+  o=$(R 'grep -E "^(AP_DENY|DENY_cigateio)=" /etc/patronus/ap.env') || return 1; has_all "$o" 'AP_DENY=02:c1:00:00:00:01' 'DENY_cigateio=02:c1:00:00:00:02' || { echo "$o"; return 1; }
+  c=$(wapi -X POST -d '{"mac":"02:c1:00:00:00:01","block":false}' https://127.0.0.1:$WEBP/api/wifi/block); [ "$c" = 200 ] || { echo "unblock: $c"; return 1; }
+  R '! grep -q "^AP_DENY=" /etc/patronus/ap.env && grep -q "^DENY_cigateio=" /etc/patronus/ap.env' || { echo "unblock did not remove only the global entry"; return 1; }; }
+# transmit power: live setting (no radio restart), validated
+gap_txpower() { c=$(wapi -X PUT -d '{"txpower5":"17","txpower24":"auto"}' https://127.0.0.1:$WEBP/api/wifi); r=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$r" '"live":true' '"restarted":false' || { echo "PUT txpower: $c $r"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/api/wifi); has_all "$(cat "$W/api.json")" '"txpower5":"17"' '"txpower24":"auto"' || { echo "GET: $(cat "$W/api.json")"; return 1; }
+  c=$(wapi -X PUT -d '{"txpower5":"40"}' https://127.0.0.1:$WEBP/api/wifi); [ "$c" = 400 ] || { echo "40 dBm: $c"; return 1; }; }
+# channel survey: read-only, answers without radios (says why)
+gap_survey() { c=$(wapi "https://127.0.0.1:$WEBP/api/wifi/survey?fresh=true"); g=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$g" '"radios":[]' 'nothing to survey' || { echo "survey: $c $g"; return 1; }; }
+# client names: a DHCP client on the bridge (veth, the QEMU network's DHCP server answers) with a host name; the
+# snoop in patronus applyd records MAC, address and name
+gap_names() { o=$(R 'ip link add cin0 type veth peer name cin1 && ip link set cin1 master br-lan && ip link set cin1 up && ip link set cin0 address 02:c1:9a:7e:00:01 && ip link set cin0 up
+  udhcpc -i cin0 -q -n -t 4 -T 2 -x hostname:ci-gate-phone -s /bin/true >/dev/null 2>&1; sleep 3; cat /run/patronus/dhcp-names; ip link del cin0') || { echo "$o"; return 1; }
+  has_all "$o" '02:c1:9a:7e:00:01' 'ci-gate-phone' || { echo "names file: $o"; return 1; }; }
+# SSH keys: add/remove through the API (audited); root's last key is protected (root has no password)
+CIKEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMZCoQbywI87vj5xHCZCN3GeRyG77PKWc5YUW/XNmwrh ci-gate-extra'
+gap_keys() { c=$(wapi https://127.0.0.1:$WEBP/api/device/ssh-keys); g=$(cat "$W/api.json"); [ "$c" = 200 ] && has_all "$g" '"user":"root"' '"fingerprint":"SHA256:' || { echo "GET keys: $c $g"; return 1; }
+  rootfp=$(printf '%s' "$g" | python3 -c 'import json,sys; d=json.load(sys.stdin); print([u for u in d["users"] if u["user"]=="root"][0]["keys"][0]["fingerprint"])')
+  c=$(wapi -X POST -d '{"user":"root","key":"ssh-dss AAAA x"}' https://127.0.0.1:$WEBP/api/device/ssh-keys); [ "$c" = 400 ] || { echo "dss accepted: $c"; return 1; }
+  c=$(wapi -X POST -d "{\"user\":\"root\",\"key\":\"$CIKEY\"}" https://127.0.0.1:$WEBP/api/device/ssh-keys); r=$(cat "$W/api.json"); [ "$c" = 200 ] || { echo "add: $c $r"; return 1; }
+  fp=$(printf '%s' "$r" | python3 -c 'import json,sys; print(json.load(sys.stdin)["fingerprint"])')
+  R 'grep -q ci-gate-extra /root/.ssh/authorized_keys && [ "$(stat -c %a /root/.ssh/authorized_keys)" = 600 ]' || { echo "key not in authorized_keys (0600)"; return 1; }
+  e=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$fp")
+  c=$(wapi -X DELETE "https://127.0.0.1:$WEBP/api/device/ssh-keys/root/$e"); [ "$c" = 200 ] || { echo "delete: $c $(cat "$W/api.json")"; return 1; }
+  R '! grep -q ci-gate-extra /root/.ssh/authorized_keys' || { echo "still there"; return 1; }
+  # the gate's own key is root's last one and root has no password: refused, and ssh still works afterwards
+  e=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$rootfp")
+  c=$(wapi -X DELETE "https://127.0.0.1:$WEBP/api/device/ssh-keys/root/$e"); r=$(cat "$W/api.json")
+  [ "$c" = 400 ] && has_all "$r" 'lock' || { echo "last root key: $c $r"; return 1; }
+  R true || { echo "ssh lost"; return 1; }
+  sqlite3 -version >/dev/null 2>&1 || return 0
+  R 'cp /var/lib/patronus/config.db /tmp/a.db' && scp -O -q "${SSHO[@]}" -P $SSHP root@127.0.0.1:/tmp/a.db "$W/a.db" && R 'rm -f /tmp/a.db'
+  a=$(sqlite3 "$W/a.db" "select action||':'||object from audit_log where object='ssh_key'"); has_all "$a" 'add:ssh_key' 'delete:ssh_key' 'delete-refused:ssh_key' || { echo "audit: $a"; return 1; }; }
+# LEDs: QEMU has no /sys/class/leds: shown unavailable with the reason, a change is refused
+gap_leds() { c=$(wapi https://127.0.0.1:$WEBP/api/device/leds); g=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$g" '"available":false' '/sys/class/leds is empty' || { echo "leds: $c $g"; return 1; }
+  c=$(wapi -X PUT -d '{"on":false}' https://127.0.0.1:$WEBP/api/device/leds); [ "$c" = 400 ] || { echo "PUT leds: $c"; return 1; }; }
+# scheduled restart: off by default (unit disabled); weekly -> the init system's unit enabled with that schedule; off again
+gap_restart() { c=$(wapi https://127.0.0.1:$WEBP/api/device/restart-schedule); g=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$g" '"mode":"off"' '"enabled":"disabled"' || { echo "default: $c $g"; return 1; }
+  c=$(wapi -X PUT -d '{"mode":"weekly","day":"wed","time":"03:17"}' https://127.0.0.1:$WEBP/api/device/restart-schedule); g=$(cat "$W/api.json")
+  if [ "$INIT" = systemd ]; then has_all "$g" '"enabled":"enabled"' '"active":"active"' '"calendar":"Wed *-*-* 03:17:00"' || { echo "weekly: $c $g"; return 1; }
+    n=$(R 'systemctl show -p NextElapseUSecRealtime --value patronus-restart.timer'); case "$n" in Wed*03:17*) ;; *) echo "next: $n"; return 1;; esac
+  else has_all "$g" '"enabled":"enabled"' '"active":"active"' '"calendar":"17 3 * * 3"' || { echo "weekly: $c $g"; return 1; }
+    R 'pgrep -f "crond -f -c /etc/crontabs" >/dev/null' || { echo "crond not running"; return 1; }; fi
+  c=$(wapi -X PUT -d '{"mode":"hourly"}' https://127.0.0.1:$WEBP/api/device/restart-schedule); [ "$c" = 400 ] || { echo "hourly: $c"; return 1; }
+  c=$(wapi -X PUT -d '{"mode":"off"}' https://127.0.0.1:$WEBP/api/device/restart-schedule); g=$(cat "$W/api.json")
+  has_all "$g" '"mode":"off"' '"enabled":"disabled"' || { echo "off: $g"; return 1; }; }
+# address trial: an unconfirmed change reverts by itself; a confirmed one (from the new address) stays; back to DHCP
+addr_put() { wapi -X PUT -d "$1" https://127.0.0.1:$WEBP/api/device/address; }
+addr_wait_idle() { i=0; while [ $i -lt 30 ]; do o=$(R '/usr/libexec/patronus/ap-addr status'); case "$o" in *pending=no*) R 'test ! -e /etc/patronus/ap.env.addr-prev' && return 0;; esac; sleep 3; i=$((i + 1)); done; echo "$o"; return 1; }
+gap_address() { c=$(wapi https://127.0.0.1:$WEBP/api/device/address); g=$(cat "$W/api.json"); has_all "$g" '"mode":"dhcp"' '"available":true' || { echo "GET: $c $g"; return 1; }
+  c=$(addr_put '{"mode":"static","address":"10.0.2.77/24","gateway":"10.9.9.9"}'); [ "$c" = 400 ] || { echo "gateway outside: $c"; return 1; }
+  # 1) wrong gateway, nobody confirms: back to DHCP by itself, ssh never lost
+  c=$(addr_put '{"mode":"static","address":"10.0.2.77/24","gateway":"10.0.2.254","confirm_within":30}'); [ "$c" = 200 ] || { echo "PUT: $c $(cat "$W/api.json")"; return 1; }
+  sleep 8; o=$(R 'ip -4 -o addr show dev br-lan; /usr/libexec/patronus/ap-addr status'); has_all "$o" '10.0.2.77/24' '10.0.2.15/24' 'pending=yes' || { echo "trial: $o"; return 1; }
+  sleep 30; addr_wait_idle || return 1
+  o=$(R 'ip -4 -o addr show dev br-lan; grep -c "^AP_ADDR=." /etc/patronus/ap.env; ip route show default; grep -c "PATRONUS-AP-ADDR reverted" /var/log/messages')
+  case "$o" in *10.0.2.77*) echo "address left: $o"; return 1;; esac; has_all "$o" '10.0.2.15/24' 'default via 10.0.2.2' || { echo "after revert: $o"; return 1; }
+  # 2) right settings, confirmed over the new address: stays
+  c=$(addr_put '{"mode":"static","address":"10.0.2.78/24","gateway":"10.0.2.2","dns":"10.0.2.3","confirm_within":120}'); [ "$c" = 200 ] || { echo "PUT 2: $c"; return 1; }
+  sleep 8; R 'ping -c1 -W2 -I 10.0.2.78 10.0.2.2 >/dev/null' || { echo "new address does not reach the gateway"; return 1; }
+  c=$(wapi -X POST https://127.0.0.1:$WEBP/api/device/address/confirm); [ "$c" = 400 ] || { echo "confirm from the old address accepted: $c"; return 1; }
+  c=$(wapi -X POST -H 'Host: 10.0.2.78' https://127.0.0.1:$WEBP/api/device/address/confirm); [ "$c" = 200 ] || { echo "confirm: $c $(cat "$W/api.json")"; return 1; }
+  addr_wait_idle || return 1
+  o=$(R 'ip -4 -o addr show dev br-lan; grep "^AP_ADDR=" /etc/patronus/ap.env; cat /tmp/resolv.conf.auto'); has_all "$o" '10.0.2.78/24' 'AP_ADDR=10.0.2.78/24' 'nameserver 10.0.2.3' || { echo "confirmed: $o"; return 1; }
+  # 3) back to DHCP (confirmed from the DHCP address)
+  c=$(addr_put '{"mode":"dhcp","confirm_within":120}'); [ "$c" = 200 ] || { echo "PUT dhcp: $c"; return 1; }
+  sleep 12; c=$(wapi -X POST -H 'Host: 10.0.2.15' https://127.0.0.1:$WEBP/api/device/address/confirm); [ "$c" = 200 ] || { echo "confirm dhcp: $c $(cat "$W/api.json")"; return 1; }
+  addr_wait_idle || return 1
+  o=$(R 'ip -4 -o addr show dev br-lan; grep -c "^AP_ADDR=." /etc/patronus/ap.env'); case "$o" in *10.0.2.78*) echo "static left: $o"; return 1;; esac
+  has_all "$o" '10.0.2.15/24' || { echo "dhcp: $o"; return 1; }; }
+# online firmware check: a feed signed by another key is refused; nothing is downloaded or staged
+gap_feed() { c=$(wapi -X PUT -d '{"feed":"ftp://x"}' https://127.0.0.1:$WEBP/api/system/firmware/feed); [ "$c" = 400 ] || { echo "ftp feed: $c"; return 1; }
+  c=$(wapi -X PUT -d "{\"feed\":\"http://10.0.2.2:$FEEDP\"}" https://127.0.0.1:$WEBP/api/system/firmware/feed); [ "$c" = 200 ] || { echo "feed set: $c"; return 1; }
+  c=$(wapi -X POST https://127.0.0.1:$WEBP/api/system/firmware/feed/check); r=$(cat "$W/api.json")
+  [ "$c" = 400 ] || [ "$c" = 500 ] || { echo "foreign feed accepted: $c $r"; return 1; }
+  case "$r" in *"not by the release key"*|*"no release keyring"*|*"signature is missing or bad"*) ;; *) echo "check: $c $r"; return 1;; esac
+  c=$(wapi -X POST https://127.0.0.1:$WEBP/api/system/firmware/feed/download); [ "$c" != 200 ] || { echo "download of a foreign feed: 200"; return 1; }
+  R '! test -e /tmp/patronus-firmware.tar && ! test -e /data/.upgrade' || { echo "image left behind"; return 1; }; }
+# system accounts in backups: the web admin's passwd/shadow/group lines are in the backup; after losing them, a restore
+# brings the login back
+gap_accounts() { c=$(wapi -X POST https://127.0.0.1:$WEBP/api/system/backups); b=$(cat "$W/api.json")
+  n=$(printf '%s' "$b" | sed -n 's/.*"name":"\(patronus-config-[^"]*\.json\)".*/\1/p'); [ "$c" = 201 ] && [ -n "$n" ] || { echo "backup: $c $b"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/api/system/backups/$n); g=$(cat "$W/api.json")
+  has_all "$g" '"system_accounts"' '"name":"cigate"' 'cigate:$' 'patronus-admin:x:' || { echo "backup has no accounts: $c"; return 1; }
+  R "cp /etc/passwd /tmp/p.bak; sed -i '/^cigate:/d' /etc/passwd /etc/shadow; sed -i 's/,cigate//; s/:cigate\$/:/' /etc/group; ! grep -q '^cigate:' /etc/passwd" || return 1
+  # the restore runs through the web API with the session that is still open (sessions end after a restore)
+  c=$(wapi -X POST https://127.0.0.1:$WEBP/api/system/backups/$n/restore); r=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$r" 'system account cigate restored' || { echo "restore: $c $r"; return 1; }
+  login || { echo "login after restore failed"; return 1; }; }
+
 # systemd: the Wi-Fi page restarts hostapd through `systemd-run --scope`, so the radios live in a transient scope of
 # their own and not in the web UI's unit (a web UI restart would otherwise kill them); prove that placement works here
 wifi_scope() { [ "$INIT" = systemd ] || { echo "openrc: n/a"; return 0; }
@@ -301,6 +423,18 @@ check "Wi-Fi page API: networks + radios written to the access-point file (0600)
 check "Wi-Fi restart path: hostapd started into its own transient scope (systemd)" wifi_scope
 check "backup includes the access-point Wi-Fi file; restoring the backup puts it back" wifi_backup
 check "firmware page API: running build shown, a non-image upload refused by patronus-flash and not kept" fw_web
+check "Wi-Fi page: crash protection (wifi-guard) and guest-filter availability reported" gap_state
+check "guest network: GUEST_ flag written, nftables bridge filter loads with the guest ports, removed without guests" gap_guest
+check "block list: unit-wide + per network via the API, written to the access-point file, unblock, bad MAC 400" gap_block
+check "transmit power: per radio, applied live without a radio restart, out of range 400" gap_txpower
+check "channel survey: read-only API answers and says why when no radio is up" gap_survey
+check "client names: a DHCP client's host name on the bridge is recorded by the snoop (MAC, name)" gap_names
+check "SSH keys: add/remove through the API (0600, audited), DSS refused, root's last key protected" gap_keys
+check "LEDs: no LEDs in QEMU -> shown unavailable with the reason, change refused" gap_leds
+check "scheduled restart: off by default, weekly enables the $INIT unit with that schedule, off disables it" gap_restart
+check "address: an unconfirmed change reverts by itself, a confirmed one (from the new address) stays, back to DHCP" gap_address
+check "online firmware check: a feed not signed by the release key is refused, nothing downloaded or staged" gap_feed
+check "backup includes the system login accounts; a restore brings a lost login back" gap_accounts
 scp -O -q "${SSHO[@]}" -P $SSHP "$TAR" root@127.0.0.1:/data/up.tar || fail "scp image into the guest"
 refuse_board() { o=$(R 'patronus-flash check /data/up.tar' 2>&1) && { echo "accepted: $o"; return 1; }; case "$o" in *"image is for glinet,gl-ax1800"*) ;; *) echo "$o"; return 1;; esac; }
 check "flash guard: refuses on a non-GL-AX1800 board" refuse_board
@@ -355,6 +489,7 @@ check "boot 2: all services up" services_up
 check "boot 2: ETPhoneHome running" etph
 check "boot 2: web UI answers" web_claimed
 check "boot 2: Wi-Fi settings from the web UI persisted" wifi_persisted
+check "boot 2: transmit power and block list persisted, no address trial pending, address from DHCP" R 'grep -q "^AP_TXPOWER5=17" /etc/patronus/ap.env && grep -q "^DENY_cigateio=" /etc/patronus/ap.env && ! test -e /etc/patronus/ap.env.addr-pending && ip -4 -o addr show dev br-lan | grep 10.0.2.15/24 >/dev/null'
 check "boot 2: setup not recorded again (once only), no first-run code" R '! grep -q "setup recorded as complete" /var/log/web.log && ! test -e /run/patronus/first-run-code'
 check "boot 2: the image's system account (chrony) was added back to the persisted /etc/passwd" R 'grep -q "account-added passwd chrony" /tmp/boot-times && grep -q "^chrony:x:980:" /etc/passwd'
 check "boot 2: chronyd runs as user chrony" ntp_client
@@ -371,6 +506,8 @@ if has_feature syslog; then
   check "boot 2: collector list persisted, syslogd forwards from boot (a logger message arrives)" syslog_boot2
 fi
 sleep 60   # idle: let the boot's apply/ETPhoneHome settle before reading memory
+if [ -n "${GATE_HOLD:-}" ]; then echo "HOLD: unit up for ${GATE_HOLD}s (web on $BIND:$WEBP, user cigate)" | tee -a "$RES/results.txt"; touch "$RES/holding"
+  t=0; while [ $t -lt "$GATE_HOLD" ] && [ ! -e "$RES/release" ]; do sleep 5; t=$((t + 5)); done; rm -f "$RES/holding"; fi
 R 'free -k; cat /tmp/boot-times; ps -o rss,comm | sort -n | tail -8; df -k /data; for p in $(pidof patronus-web patronus-cli chronyd syslogd); do echo "rss $(sed -n "s/^Name:[[:space:]]*//p" /proc/$p/status) $(sed -n "s/^VmRSS:[[:space:]]*//p" /proc/$p/status)"; done' > "$RES/boot2-stats.txt" 2>&1
 { echo "init=$INIT accel=$ACCEL"; grep -E '^Mem:' "$RES/boot2-stats.txt"; grep -E 'exec-|patronus-started|network-up|^rss ' "$RES/boot2-stats.txt"; } >> "$RES/summary.txt"
 poweroff_vm
