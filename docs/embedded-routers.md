@@ -786,3 +786,7 @@ another name is refused. Host tests: `ci/embedded-common/tests/accounts-sync.sh`
 `check-rootfs.sh` refuses an image without the script, or with accounts that the early boot never applies. The CI image carries
 a test account (`tests/ci-accounts`, public test password) that the QEMU gate checks after boot. The same script and account
 directory serve the Slate (`ci/embedded-mips`), whose early boot runs it too.
+
+The Slate (`ci/embedded-mips/slate/README.md`, "Before a real flash") runs the same `accounts-sync` from its early boot. A real flash
+of a Slate image built in a builder without wpa_supplicant/dropbear/mtd-utils stranded the unit once (no ssh, no uplink, and the
+guard could not revert); the image checks, the sysfs volume lookup and the builder's explicit build steps listed there close that.

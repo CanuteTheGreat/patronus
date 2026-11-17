@@ -38,3 +38,17 @@ binary, `etph-run`, the service, or its enablement under the image's init system
 **NOR tier:** ETPhoneHome fits the OpenRC NOR root (kernel 3008 + root 10880 + settings 1024 of 16000 KiB, 1088 KiB free) but NOT the
 systemd NOR root (root 12736 KiB, 768 KiB OVER the 16000 KiB firmware partition, 1024 KiB short of the 256 KiB margin). `nor-ci.sh` prints
 that explicitly and tolerates exactly that known overage (it fails if it grows); the Slate itself is NAND, where both variants fit.
+
+## Before a real flash (what went wrong once)
+
+An image assembled in a builder that lacked wpa_supplicant, dropbear and mtd-utils (the reproducible CI image had dropped them
+silently: `stage-all.sh` emerges them with `--keep-going`, and wpa_supplicant's own build had a `CFLAGS` bug) booted on the unit
+with no ssh and no Wi-Fi uplink, and the guard's way back (`patronus-flash openwrt`) needed mtd-utils' `ubinfo`, so nothing
+reverted it. Since then:
+- `check-rootfs.sh` (run by every `assemble.sh`) refuses a root without wpa_supplicant, dropbear, hostapd, dnsmasq, nft and busybox;
+- `nor-image-inner.sh` builds wpa_supplicant/dropbear (`cbuild.sh`, `CFLAGS` through the environment) and mtd-utils (`-ssl`: the
+  Gentoo openssl ebuild does not build for this target) explicitly and fails the builder image if any is missing;
+- `patronus-flash` and the early boot find UBI volumes through sysfs when `ubinfo` is absent, so the revert and the boot-loop
+  rollback work with busybox's ubi applets alone (host tests run them with `ubinfo` removed).
+Also compare the new root's file list with the running one before flashing (`unsquashfs -ll`, then `comm -23 old new`): anything
+that disappeared must be explained.
