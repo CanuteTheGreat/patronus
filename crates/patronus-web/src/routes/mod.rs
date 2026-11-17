@@ -456,6 +456,7 @@ pub fn absent_features(
         ("vlan", "VLANs"),
         ("netflow", "NetFlow export"),
         ("igmp", "IGMP proxy"),
+        ("mdns", "mDNS repeater (device discovery across networks)"),
         ("nat64", "NAT64 / DNS64"),
         ("upnp", "UPnP / NAT-PMP"),
         ("vrf", "VRFs"),
