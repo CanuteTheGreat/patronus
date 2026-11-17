@@ -213,7 +213,6 @@ nologin
 nproc
 nsenter
 nslookup
-ntpd
 nuke
 od
 openvt

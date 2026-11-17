@@ -1,0 +1,15 @@
+#!/sbin/openrc-run
+# Clock and NTP server: chrony (the board has no RTC; -s starts the clock at the drift file's time). The NTP server
+# page writes /etc/chrony/chrony.conf and restarts this service by name (chronyd, as on Gentoo).
+description="Clock and NTP server (chrony)"
+command=/usr/sbin/chronyd
+command_args="-n -s -f /etc/chrony/chrony.conf"
+supervisor=supervise-daemon
+respawn_delay=30
+depend() {
+	need net
+	after patronus-syslogd
+}
+start_pre() {
+	mkdir -p /var/lib/chrony && chown chrony:chrony /var/lib/chrony
+}

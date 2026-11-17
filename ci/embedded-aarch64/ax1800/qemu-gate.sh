@@ -23,7 +23,7 @@ sh "$(dirname "$0")/fetch-kmods.sh" virt "$W/r" "${KMOD_CACHE:-/cache/kmods}" ||
 depmod -b "$W/r" "$KV"; : > "$W/r/etc/patronus/qemu-kmods"
 mksquashfs "$W/r" "$W/root.img" -comp xz -b 256K -noappend -no-xattrs -all-root -quiet >/dev/null; rm -rf "$W/r"
 truncate -s 256M "$W/data.img"; mkfs.ext4 -q -F -L patronus_data "$W/data.img"
-SSHP=2222; WEBP=8443; QP=
+SSHP=2222; WEBP=8443; NTPP=11123; QP=
 fails=()
 pass() { echo "PASS: $*" | tee -a "$RES/results.txt"; }
 fail() { echo "FAIL: $*" | tee -a "$RES/results.txt"; fails+=("$1"); }
@@ -36,7 +36,7 @@ boot() { # n
   qemu-system-aarch64 -M virt -accel $ACCEL -cpu $([ $ACCEL = kvm ] && echo host || echo cortex-a53) -smp 2 -m 512 \
     -kernel "$K" -append "root=/dev/vda rootfstype=squashfs ro console=ttyAMA0 patronus.data=/dev/vdb panic=-1" \
     -drive file="$W/root.img",if=virtio,format=raw,readonly=on -drive file="$W/data.img",if=virtio,format=raw \
-    -netdev user,id=n0,hostfwd=tcp:127.0.0.1:$SSHP-:22,hostfwd=tcp:127.0.0.1:$WEBP-:443 -device virtio-net-pci,netdev=n0 \
+    -netdev user,id=n0,hostfwd=tcp:127.0.0.1:$SSHP-:22,hostfwd=tcp:127.0.0.1:$WEBP-:443,hostfwd=udp:127.0.0.1:$NTPP-:123 -device virtio-net-pci,netdev=n0 \
     -display none -monitor none -serial file:"$RES/serial-boot$n.txt" -no-reboot &
   QP=$!
   until R true 2>/dev/null; do
@@ -51,8 +51,8 @@ boot() { # n
 }
 poweroff_vm() { R sync 2>/dev/null; sleep 2; kill $QP 2>/dev/null; wait $QP 2>/dev/null; QP=; }
 
-SERVICES_OPENRC="patronus-syslogd patronus-klogd patronus-board patronus-etph dropbear patronus-ntpd patronus-apply patronus-applyd patronus-web"
-SERVICES_SYSTEMD="patronus-syslogd patronus-klogd patronus-network patronus-etph patronus-dropbear patronus-ntpd patronus-apply patronus-applyd patronus-web"
+SERVICES_OPENRC="patronus-syslogd patronus-klogd patronus-board patronus-etph dropbear chronyd patronus-apply patronus-applyd patronus-web"
+SERVICES_SYSTEMD="patronus-syslogd patronus-klogd patronus-network patronus-etph patronus-dropbear chronyd patronus-apply patronus-applyd patronus-web"
 services_up() {
   if [ "$INIT" = openrc ]; then
     for s in $SERVICES_OPENRC; do st=$(R "rc-service $s status" 2>&1); case "$st" in *started*) ;; *) echo "$s: $st"; return 1;; esac; done
@@ -89,6 +89,70 @@ setup_ap() { R 'grep -q "setup recorded as complete (role ap)" /var/log/web.log'
   [ "$c" = 409 ] || { echo "wizard apply on an AP: HTTP $c"; return 1; }; }
 web_claimed() { c=$(curl -sk -o /dev/null -w '%{http_code} %{redirect_url}' -m 30 https://127.0.0.1:$WEBP/first-run); case "$c" in 30?*/login) ;; *) echo "first-run: $c"; return 1;; esac; }
 
+# the features this build has (FEATURES= in /etc/patronus-release): their checks run only when built in
+FEATURES=$(unsquashfs -cat "$SQ" etc/patronus-release 2>/dev/null | sed -n 's/^FEATURES=//p')
+has_feature() { case ",$FEATURES," in *",$1,"*) return 0;; esac; return 1; }
+login() { rm -f "$W/jar"; c=$(curl -sk -c "$W/jar" -o /dev/null -w '%{http_code}' -m 60 -H 'content-type: application/json' \
+    -d "{\"username\":\"cigate\",\"password\":\"$FRPW\"}" https://127.0.0.1:$WEBP/api/auth/login); [ "$c" = 200 ] || { echo "login HTTP $c"; return 1; }; }
+# api METHOD PATH [JSON]: the admin's session (login), body in $W/api.json, prints the HTTP code
+api() { curl -sk -b "$W/jar" -o "$W/api.json" -w '%{http_code}' -m 180 -X "$1" -H 'content-type: application/json' ${3:+-d "$3"} "https://127.0.0.1:$WEBP$2"; }
+jget() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1])); [v:=v[k] for k in sys.argv[2:]]; print(v)' "$W/api.json" "$@"; }
+# WireGuard (vpn-wireguard), all through the web API: a server tunnel wg0 (51820) and a client tunnel wg1 (51821) whose
+# peer is wg0 at 127.0.0.1:51820, so the kernel module, `wg syncconf`, the routes and the firewall's listen-port rules
+# are exercised by a real handshake; plus a road-warrior peer whose key pair Patronus generates (client config export)
+wg_create() { login || return 1
+  c=$(api POST /api/vpn/wireguard/tunnels '{"name":"wg0","listen_port":51820,"addresses":"10.99.0.1/24","endpoint":"203.0.113.10","description":"ci server"}')
+  [ "$c" = 201 ] || { echo "wg0: HTTP $c $(cat "$W/api.json")"; return 1; }; k0=$(jget public_key)
+  c=$(api POST /api/vpn/wireguard/tunnels '{"name":"wg1","listen_port":51821,"addresses":"10.98.0.1/24","description":"ci client"}')
+  [ "$c" = 201 ] || { echo "wg1: HTTP $c $(cat "$W/api.json")"; return 1; }; k1=$(jget public_key)
+  c=$(api POST /api/vpn/wireguard/peers "{\"interface\":\"wg0\",\"name\":\"ci-client\",\"public_key\":\"$k1\",\"allowed_ips\":\"10.98.0.1/32\"}")
+  [ "$c" = 201 ] || { echo "peer ci-client: HTTP $c $(cat "$W/api.json")"; return 1; }
+  c=$(api POST /api/vpn/wireguard/peers "{\"interface\":\"wg1\",\"name\":\"ci-server\",\"public_key\":\"$k0\",\"allowed_ips\":\"10.99.0.1/32\",\"endpoint\":\"127.0.0.1:51820\",\"persistent_keepalive\":5}")
+  [ "$c" = 201 ] || { echo "peer ci-server: HTTP $c $(cat "$W/api.json")"; return 1; }
+  c=$(api POST /api/vpn/wireguard/peers '{"interface":"wg0","name":"ci-roadwarrior","preshared_key":true}')
+  [ "$c" = 201 ] || { echo "peer ci-roadwarrior: HTTP $c $(cat "$W/api.json")"; return 1; }; id=$(jget id)
+  c=$(api GET "/api/vpn/wireguard/config/$id"); [ "$c" = 200 ] || { echo "client config: HTTP $c"; return 1; }
+  for w in '[Interface]' PrivateKey PresharedKey "PublicKey = $k0" 'Endpoint = 203.0.113.10:51820'; do
+    grep -F "$w" "$W/api.json" >/dev/null || { echo "client config lacks '$w'"; return 1; }; done; }
+wg_kernel() { o=$(R 'wg show wg0 listen-port; wg show wg0 peers | wc -l; wg show wg1 listen-port; wg show wg1 endpoints; ip -o -4 addr show dev wg0; ip link show wg0; ip route show proto 249') || { echo "$o"; return 1; }
+  echo "$o"; set -- $o
+  [ "$1" = 51820 ] && [ "$2" = 2 ] && [ "$3" = 51821 ] || { echo "listen ports / peer count wrong"; return 1; }
+  case "$o" in *127.0.0.1:51820*) ;; *) echo "wg1 has no endpoint 127.0.0.1:51820"; return 1;; esac
+  case "$o" in *10.99.0.1/24*) ;; *) echo "wg0 has no 10.99.0.1/24"; return 1;; esac
+  case "$o" in *patronus-wg*) ;; *) echo "wg0 not tagged patronus-wg"; return 1;; esac
+  case "$o" in *"10.98.0.1 dev wg0"*) ;; *) echo "no peer route 10.98.0.1 via wg0 (proto 249)"; return 1;; esac; }
+wg_handshake() { i=0; while [ $i -lt 24 ]; do
+    h=$(R 'wg show wg1 latest-handshakes' | awk '{print $2}'); [ "${h:-0}" -gt 0 ] 2>/dev/null && { R 'wg show wg0 | head -12'; return 0; }
+    i=$((i+1)); sleep 5; done; echo "no handshake wg1 -> wg0 in 120 s"; R 'wg show; nft list ruleset | grep -n 518' 2>&1 | tail -30; return 1; }
+wg_module() { R 'grep -q "^wireguard " /proc/modules && grep -qx wireguard /etc/modules.d/wireguard'; }
+# NTP: chrony keeps the clock (as user chrony), and the NTP server page makes it serve the LAN (here: QEMU's user net,
+# 10.0.2.0/24 on br-lan; the query arrives from 10.0.2.2 through the udp hostfwd)
+ntp_query() { python3 - "$NTPP" "${1:-12}" <<'PY'
+import socket, sys, time
+for _ in range(int(sys.argv[2])):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(5)
+    try:
+        s.sendto(b"\x23" + 47 * b"\0", ("127.0.0.1", int(sys.argv[1])))
+        d, _ = s.recvfrom(512)
+        if d[0] & 7 == 4 and 0 < d[1] < 16:
+            print("NTP reply: mode 4, stratum", d[1]); sys.exit(0)
+        print("reply mode", d[0] & 7, "stratum", d[1])
+    except OSError as e:
+        print("no reply:", e)
+    time.sleep(5)
+sys.exit(1)
+PY
+}
+ntp_client() { R 'p=$(pgrep -x chronyd) && ps -o user,comm | grep -E "^ *chrony +chronyd" >/dev/null && chronyc -n sources && test -d /var/lib/chrony' || { R 'ps; tail -20 /var/log/messages'; return 1; }; }
+ntp_quiet() { o=$(ntp_query 1) && { echo "answered before the NTP server was switched on: $o"; return 1; }; return 0; }
+ntp_enable() { login || return 1
+  c=$(api PUT /api/ntp '{"enabled":true,"servers":"pool.ntp.org","interfaces":"@lan"}'); [ "$c" = 200 ] || { echo "PUT /api/ntp: HTTP $c $(cat "$W/api.json")"; return 1; }
+  R 'cat /etc/chrony/chrony.conf' > "$W/chrony.conf"; cat "$W/chrony.conf"
+  grep -x 'allow 10.0.2.0/24' "$W/chrony.conf" >/dev/null && grep -x 'local stratum 10' "$W/chrony.conf" >/dev/null || { echo "chrony.conf does not serve the LAN"; return 1; }
+  i=0; while :; do c=$(api GET /api/ntp)
+    case "$(cat "$W/api.json")" in *'"enabled":true'*'"available":true'*'"running":true'*) return 0;; esac
+    i=$((i+1)); [ $i -ge 12 ] && { echo "status: $(cat "$W/api.json")"; return 1; }; sleep 5; done; }
+
 # fake UBI + board for the flash-guard checks (QEMU has no UBI and is not a GL-AX1800)
 FAKES='mkdir -p /tmp/fk && printf "glinet,gl-ax1800\0qcom,ipq6018\0" > /tmp/fk/compat && cat > /tmp/fk/ubinfo <<"EOF"
 #!/bin/sh
@@ -116,6 +180,18 @@ check "first run: setup code written root-only (/run/patronus/first-run-code)" f
 check "first run: refused without / with a wrong setup code (403)" fr_no_code
 check "first run: the setup code claims the unit, then the code file is gone" fr_claim
 check "AP role: setup recorded complete at first start, status completed/ap/no wizard, wizard apply refused (409)" setup_ap
+check "clock: chronyd (the one NTP daemon) runs as user chrony" ntp_client
+if has_feature vpn-wireguard; then
+  check "WireGuard: kernel module loaded at boot (/etc/modules.d)" wg_module
+  check "WireGuard: server + client tunnels and peers created through the web API, road-warrior config exported" wg_create
+  check "WireGuard: wg show has the listen ports and peers, address, ifalias, peer route (proto 249)" wg_kernel
+  check "WireGuard: the client tunnel completes a handshake with the server tunnel" wg_handshake
+else echo "SKIP: WireGuard (not in FEATURES=$FEATURES)" | tee -a "$RES/results.txt"; fi
+if has_feature ntp-server; then
+  check "NTP server off by default: no answer on the LAN" ntp_quiet
+  check "NTP server page: switched on through the web API, chrony.conf serves the LAN subnet, status running" ntp_enable
+  check "NTP server: answers an NTP query from the LAN" ntp_query
+else echo "SKIP: NTP server (not in FEATURES=$FEATURES)" | tee -a "$RES/results.txt"; fi
 scp -O -q "${SSHO[@]}" -P $SSHP "$TAR" root@127.0.0.1:/data/up.tar || fail "scp image into the guest"
 refuse_board() { o=$(R 'patronus-flash check /data/up.tar' 2>&1) && { echo "accepted: $o"; return 1; }; case "$o" in *"image is for glinet,gl-ax1800"*) ;; *) echo "$o"; return 1;; esac; }
 check "flash guard: refuses on a non-GL-AX1800 board" refuse_board
@@ -125,6 +201,8 @@ check "flash guard: a corrupt image is refused" R "cp /data/up.tar /tmp/bad.tar 
 check "flash sysupgrade: stages the image" R "$FENV patronus-flash sysupgrade /data/up.tar && test -f /data/.upgrade/ready"
 check "upgrade-install verify accepts it (with the board's identity)" R "$FENV /usr/libexec/patronus/upgrade-install verify"
 check "persistence marker written (/etc overlay, /root)" R 'echo ci-$$ > /etc/patronus/ci-marker && echo ok > /root/ci-marker && rm -f /data/up.tar && sync'
+# an older image's /etc/passwd in the overlay (no chrony user): the next boot must add the image's system account
+check "an account missing from the persisted /etc/passwd (as an older image left it)" R "sed -i '/^chrony:/d' /etc/passwd && ! grep -q '^chrony:' /etc/passwd && sync"
 R 'free -k; cat /tmp/boot-times; ps -o rss,comm | sort -n | tail -8' > "$RES/boot1-stats.txt" 2>&1
 poweroff_vm
 boot 2 || { echo "FAILED: ${fails[*]}"; exit 1; }
@@ -135,6 +213,16 @@ check "boot 2: all services up" services_up
 check "boot 2: ETPhoneHome running" etph
 check "boot 2: web UI answers" web_claimed
 check "boot 2: setup not recorded again (once only), no first-run code" R '! grep -q "setup recorded as complete" /var/log/web.log && ! test -e /run/patronus/first-run-code'
+check "boot 2: the image's system account (chrony) was added back to the persisted /etc/passwd" R 'grep -q "account-added passwd chrony" /tmp/boot-times && grep -q "^chrony:x:980:" /etc/passwd'
+check "boot 2: chronyd runs as user chrony" ntp_client
+if has_feature vpn-wireguard; then
+  check "boot 2: WireGuard module loaded" wg_module
+  check "boot 2: both tunnels re-created from the store at boot (listen ports, peers, address, route)" wg_kernel
+  check "boot 2: the client tunnel handshakes again" wg_handshake
+fi
+if has_feature ntp-server; then
+  check "boot 2: NTP server still on (chrony.conf persisted), answers on the LAN" ntp_query
+fi
 R 'free -k; cat /tmp/boot-times; ps -o rss,comm | sort -n | tail -8; df -k /data' > "$RES/boot2-stats.txt" 2>&1
 { echo "init=$INIT accel=$ACCEL"; grep -E '^Mem:' "$RES/boot2-stats.txt"; grep -E 'exec-|patronus-started|network-up' "$RES/boot2-stats.txt"; } >> "$RES/summary.txt"
 poweroff_vm

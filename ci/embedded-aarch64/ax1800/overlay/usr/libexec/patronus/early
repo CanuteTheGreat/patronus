@@ -39,13 +39,22 @@ if [ -f /data/.upgrade/ready ]; then
   if /usr/libexec/patronus/upgrade-install verify; then mark upgrade-pending; : > /tmp/upgrade-pending; exit 0; fi
   mark upgrade-rejected
 fi
+# system accounts of THIS image (a daemon user added by a newer image, e.g. chrony) must also reach a unit whose
+# /etc/passwd and /etc/group already live in the /etc overlay (written by an older image or an account change): keep the
+# image's copies before the overlay hides them and add the names the overlay lacks afterwards (existing lines untouched)
+cp /etc/passwd /run/.image-passwd 2>/dev/null; cp /etc/group /run/.image-group 2>/dev/null
 for d in etc var/lib root; do n=$(echo $d | tr / -); mkdir -p /data/patronus/$n /data/patronus/.work-$n
   mount -t overlay overlay -o lowerdir=/$d,upperdir=/data/patronus/$n,workdir=/data/patronus/.work-$n /$d || mark "NO-OVERLAY $d"; done
 mkdir -p /var/lib/patronus /var/lib/misc /data/tls
+for f in passwd group; do [ -s /run/.image-$f ] || continue
+  while IFS= read -r l; do case "$l" in ''|\#*) continue;; esac
+    grep -q "^${l%%:*}:" /etc/$f || { echo "$l" >> /etc/$f; mark "account-added $f ${l%%:*}"; }; done < /run/.image-$f
+  rm -f /run/.image-$f; done
 mark data-mounted
-# no RTC: until ntpd syncs, start the clock at the last time this box knew (ntp-sync saves it on /data) or at the image's
-# build time, never at 1970 (service start times, logs and TLS checks would otherwise be decades off)
-t=0; for f in /data/.clock /etc/patronus-release; do m=$(date -r $f +%s 2>/dev/null) && [ "${m:-0}" -gt $t ] && t=$m; done
+# no RTC: until chrony syncs, start the clock at the last time this box knew (chrony's drift file on the /var/lib overlay,
+# rewritten about hourly once synced; /data/.clock from images that ran busybox ntpd) or at the image's build time, never
+# at 1970 (service start times, logs and TLS checks would otherwise be decades off)
+t=0; for f in /var/lib/chrony/drift /data/.clock /etc/patronus-release; do m=$(date -r $f +%s 2>/dev/null) && [ "${m:-0}" -gt $t ] && t=$m; done
 [ $t -gt "$(date +%s)" ] && date -s "@$t" >/dev/null 2>&1 && mark clock-set
 
 # The board's kmods and calibration only apply on the board itself: under the QEMU gate (armsr kernel, virtio devices,

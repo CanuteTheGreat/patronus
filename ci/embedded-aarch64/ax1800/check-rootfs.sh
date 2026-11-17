@@ -15,7 +15,7 @@ sh=${r##*:}
 grep -q '^root:[^:!*]' "$R/etc/shadow" 2>/dev/null || [ -s "$R/root/.ssh/authorized_keys" ] || fail "root has neither a password nor an authorized key"
 grep -q '^nobody:' "$R/etc/passwd" || fail "no nobody user"
 [ -s "$R/etc/services" ] || fail "no /etc/services (busybox wget/nc: bad port 'http')"
-for f in usr/sbin/patronus-flash usr/libexec/patronus/fwcheck.sh usr/libexec/patronus/upgrade-install usr/libexec/patronus/ubi-data usr/sbin/patronus-init usr/libexec/patronus/early usr/libexec/patronus/ath11k-caldata usr/libexec/patronus/ap usr/libexec/patronus/ntp-sync \
+for f in usr/sbin/patronus-flash usr/libexec/patronus/fwcheck.sh usr/libexec/patronus/upgrade-install usr/libexec/patronus/ubi-data usr/sbin/patronus-init usr/libexec/patronus/early usr/libexec/patronus/ath11k-caldata usr/libexec/patronus/ap \
          usr/libexec/patronus/board-network etc/patronus/board.sh etc/patronus-init etc/pam.d/patronus \
          usr/sbin/hostapd usr/sbin/dropbear usr/bin/patronus-cli usr/bin/patronus-web \
          lib/firmware/ath11k/IPQ6018/hw1.0/board-2.bin lib/firmware/IPQ6018/q6_fw.mdt lib/firmware/IPQ6018/m3_fw.mdt lib/firmware/regulatory.db; do
@@ -27,14 +27,29 @@ for t in ubinfo ubimkvol ubirmvol ubirsvol ubiupdatevol ubiblock iw ip sha256sum
 KV=$(ls "$R/lib/modules" 2>/dev/null | head -1)
 [ -n "$KV" ] && [ -s "$R/lib/modules/$KV/modules.dep" ] || fail "no kernel modules / modules.dep"
 for m in ath11k_ahb qca-nss-dp qca-ssdk mac80211 cfg80211 nf_tables nfnetlink_log nft_reject_inet nf_conntrack; do [ -e "$R/lib/modules/$KV/$m.ko" ] || fail "kernel module $m.ko missing (no Ethernet/Wi-Fi/firewall without it)"; done
+# features of the patronus-cli build (FEATURES= in /etc/patronus-release, from stage-patronus.sh): each one's runtime pieces
+FEAT=$(sed -n 's/^FEATURES=//p' "$R/etc/patronus-release" 2>/dev/null)
+[ -n "$FEAT" ] || fail "/etc/patronus-release has no FEATURES= line (which pages the web UI has)"
+has_feature() { case ",$FEAT," in *",$1,"*) return 0;; esac; return 1; }
+if has_feature vpn-wireguard; then
+  [ -x "$R/usr/bin/wg" ] || fail "vpn-wireguard: no /usr/bin/wg (wireguard-tools-wg): every tunnel would fail at wg syncconf"
+  [ -e "$R/lib/modules/$KV/wireguard.ko" ] || fail "vpn-wireguard: kernel module wireguard.ko missing (kmods.pin)"
+  grep -qsx wireguard "$R"/etc/modules.d/* || fail "vpn-wireguard: wireguard.ko is not loaded at boot (no /etc/modules.d line)"
+fi
+# the clock (no RTC) and the NTP server page (ntp-server) are one daemon: chrony, run as its own user, service chronyd
+[ -x "$R/usr/sbin/chronyd" ] || fail "no /usr/sbin/chronyd (the box would never get the time)"
+grep -q '^chrony:' "$R/etc/passwd" && grep -q '^chrony:' "$R/etc/group" || fail "no chrony user/group (chronyd drops root to it)"
+[ -s "$R/etc/chrony/chrony.conf" ] || fail "no /etc/chrony/chrony.conf"
+grep -q 'driftfile /var/lib/chrony/drift' "$R/etc/chrony/chrony.conf" 2>/dev/null || fail "chrony.conf must keep its drift file in /var/lib/chrony (data volume): chronyd -s starts the clock from it"
+[ -e "$R/bin/ntpd" ] || [ -L "$R/bin/ntpd" ] && fail "busybox ntpd is linked: chrony is the one NTP daemon"
 . "$R/etc/patronus-init" 2>/dev/null
 case "${INIT:-}" in
   openrc)  [ -x "$R/sbin/openrc-init" ] && [ -x "$R/sbin/openrc-run" ] && [ -x "$R/sbin/supervise-daemon" ] || fail "OpenRC variant without openrc-init/openrc-run/supervise-daemon"
-           for s in patronus-board patronus-apply patronus-applyd patronus-web dropbear patronus-etph; do [ -x "$R/etc/init.d/$s" ] || fail "OpenRC variant: no /etc/init.d/$s"; done
+           for s in patronus-board patronus-apply patronus-applyd patronus-web dropbear patronus-etph chronyd; do [ -x "$R/etc/init.d/$s" ] || fail "OpenRC variant: no /etc/init.d/$s"; done
            [ -x "$R/sbin/reboot" ] && grep -q openrc-shutdown "$R/sbin/reboot" || fail "OpenRC variant: /sbin/reboot must be openrc's (busybox reboot signals openrc-init to HALT)" ;;
   systemd) [ -x "$R/usr/lib/systemd/systemd" ] || fail "systemd variant without /usr/lib/systemd/systemd"
            [ -e "$R/usr/lib/libmount.so.1" ] || [ -e "$R/lib/libmount.so.1" ] || fail "systemd variant without libmount.so.1 (dlopen()ed by PID 1: it freezes without it)"
-           for u in patronus-network patronus-apply patronus-applyd patronus-web patronus-dropbear patronus-etph; do [ -f "$R/etc/systemd/system/$u.service" ] || fail "systemd variant: no $u.service"; done ;;
+           for u in patronus-network patronus-apply patronus-applyd patronus-web patronus-dropbear patronus-etph chronyd; do [ -f "$R/etc/systemd/system/$u.service" ] || fail "systemd variant: no $u.service"; done ;;
   *) fail "/etc/patronus-init must say INIT=openrc or INIT=systemd (got '${INIT:-}')" ;;
 esac
 [ "$(readlink "$R/sbin/init")" = /usr/sbin/patronus-init ] || fail "/sbin/init must be /usr/sbin/patronus-init"

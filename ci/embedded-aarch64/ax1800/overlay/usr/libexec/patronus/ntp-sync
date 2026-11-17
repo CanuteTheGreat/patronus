@@ -1,7 +1,0 @@
-#!/bin/sh
-# busybox ntpd -S hook (step|stratum|unsync|periodic): remember the synced time on the data volume (at most hourly, to
-# spare the flash), so the next early boot starts the clock there instead of at the image's build time.
-case "$1" in step|stratum|periodic) ;; *) exit 0;; esac
-f=${NTP_CLOCK_FILE:-/data/.clock}
-[ -d "$(dirname "$f")" ] || exit 0
-[ -n "$(find "$f" -mmin -60 2>/dev/null)" ] || touch "$f"

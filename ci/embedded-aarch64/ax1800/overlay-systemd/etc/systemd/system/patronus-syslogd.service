@@ -6,7 +6,7 @@ Description=System log (busybox syslogd -> /var/log/messages; journald forwards 
 # syslog-daemon socket, which points at /dev/log.
 DefaultDependencies=no
 After=systemd-journald.service
-Before=patronus-network.service patronus-apply.service patronus-applyd.service patronus-web.service patronus-dropbear.service patronus-ntpd.service shutdown.target
+Before=patronus-network.service patronus-apply.service patronus-applyd.service patronus-web.service patronus-dropbear.service chronyd.service shutdown.target
 Conflicts=shutdown.target
 
 [Service]

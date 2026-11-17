@@ -88,7 +88,7 @@ else
   GENTOO_FILES="$HERE/../../../gentoo/net-firewall/patronus/files"
   for t in "$GENTOO_FILES"/*@.service; do n=$(basename "$t" @.service); [ -f "$GENTOO_FILES/$n.initd" ] && install -m755 "$GENTOO_FILES/$n.initd" "$R/etc/init.d/$n"; done
   mkdir -p "$R"/etc/runlevels/{sysinit,boot,default,shutdown}
-  for s in patronus-syslogd patronus-klogd patronus-board patronus-etph dropbear patronus-ntpd patronus-apply patronus-applyd patronus-web; do
+  for s in patronus-syslogd patronus-klogd patronus-board patronus-etph dropbear chronyd patronus-apply patronus-applyd patronus-web; do
     [ -x "$R/etc/init.d/$s" ] || { echo "missing OpenRC service $s"; exit 1; }; ln -sf /etc/init.d/$s "$R/etc/runlevels/default/$s"; done
   : > "$R/etc/fstab"
   # reboot/halt/poweroff go through openrc-shutdown (busybox's would signal openrc-init to HALT instead)
@@ -103,8 +103,8 @@ while read -r a; do
 # accounts + per-unit secrets
 grep -q '^root:' "$R/etc/passwd" 2>/dev/null || echo 'root:x:0:0:root:/root:/bin/sh' >> "$R/etc/passwd"
 sed -i 's#^root:[^:]*:0:0:.*#root:x:0:0:root:/root:/bin/sh#' "$R/etc/passwd"
-for u in 'nobody:x:65534:65534:nobody:/:/bin/false'; do grep -q "^${u%%:*}:" "$R/etc/passwd" || echo "$u" >> "$R/etc/passwd"; done
-for g in 'root:x:0:' 'nobody:x:65534:' 'patronus:x:900:' 'shadow:x:42:'; do grep -q "^${g%%:*}:" "$R/etc/group" 2>/dev/null || echo "$g" >> "$R/etc/group"; done
+for u in 'nobody:x:65534:65534:nobody:/:/bin/false' 'chrony:x:980:980:chrony:/var/lib/chrony:/bin/false'; do grep -q "^${u%%:*}:" "$R/etc/passwd" || echo "$u" >> "$R/etc/passwd"; done
+for g in 'root:x:0:' 'nobody:x:65534:' 'patronus:x:900:' 'shadow:x:42:' 'chrony:x:980:'; do grep -q "^${g%%:*}:" "$R/etc/group" 2>/dev/null || echo "$g" >> "$R/etc/group"; done
 U=$UNIT_DIR
 { cat "$U/shadow-root"; grep -v '^root:' "$R/etc/shadow" 2>/dev/null || true; } > "$R/etc/shadow.new"; mv "$R/etc/shadow.new" "$R/etc/shadow"; chmod 600 "$R/etc/shadow"
 install -m600 "$U/authorized_keys" "$R/root/.ssh/authorized_keys"; chmod 700 "$R/root/.ssh"
@@ -118,6 +118,7 @@ rm -rf "$R/var/run"; ln -s ../run "$R/var/run"
 cat > "$R/etc/patronus-release" <<EOT
 PATRONUS_TIER=embedded
 ETPH=$ETPH_VERSION
+FEATURES=$(cat "$B/features" 2>/dev/null || echo unknown)
 BOARD=$BOARD
 BUILD=$TAG
 INIT=$INIT

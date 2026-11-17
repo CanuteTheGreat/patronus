@@ -1,0 +1,13 @@
+[Unit]
+Description=Clock and NTP server (chrony; the board has no RTC)
+# the NTP server page writes /etc/chrony/chrony.conf and restarts chronyd.service (the name Gentoo's unit has)
+After=patronus-network.service patronus-syslogd.service
+
+[Service]
+ExecStartPre=/bin/sh -c 'mkdir -p /var/lib/chrony && chown chrony:chrony /var/lib/chrony'
+ExecStart=/usr/sbin/chronyd -n -s -f /etc/chrony/chrony.conf
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

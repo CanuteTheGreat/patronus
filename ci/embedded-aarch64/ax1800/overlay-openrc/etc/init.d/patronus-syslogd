@@ -8,5 +8,5 @@ supervisor=supervise-daemon
 respawn_delay=2
 depend() {
 	provide logger
-	before patronus-board dropbear patronus-ntpd patronus-apply patronus-applyd patronus-web dnsmasq hostapd
+	before patronus-board dropbear chronyd patronus-apply patronus-applyd patronus-web dnsmasq hostapd
 }
