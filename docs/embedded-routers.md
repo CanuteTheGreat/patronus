@@ -372,7 +372,7 @@ on both. First real-unit install 2026-11-16 (OpenRC, from OpenWrt 25.12.6, as a 
   comes from Alpine packages (`stage-rootfs.sh`: busybox, hostapd, iw, iproute2, dropbear, mtd-utils UBI tools, nftables, PAM,
   wireless-regdb, libucontext and libmount for systemd); `patronus-cli` is one multi-call binary (`patronus-web` is a link)
   built with the stable toolchain for `aarch64-unknown-linux-musl` (14 MB stripped, features
-  `nftables,cli,dhcp-server,dns-server,uci-import,wifi-ap,web-multicall`).
+  `nftables,cli,dhcp-server,dns-server,uci-import,wifi-ap,web-multicall,vpn-wireguard,ntp-server,syslog`; 12.10).
 - OpenRC is built from source (`stage-openrc.sh`, 0.63.2, sha256-pinned): Alpine's package is built for busybox init and has
   no `openrc-init`/`openrc-shutdown`, so it cannot be PID 1. systemd 262.2 is built as for the Slate (`stage-systemd.sh`).
   systemd `dlopen()`s libmount to mount the API filesystems: without `libmount.so.1` PID 1 freezes with "Failed to mangle
@@ -547,8 +547,8 @@ The first real boot had wired networking but no Wi-Fi. Three bugs, each reproduc
    leaves them to hostapd.
 
 Also: the box has no RTC, so OpenRC recorded service start times at 1970 until ntpd synced ("20773 day(s)"). The early boot
-now starts the clock at the last synced time saved on the data volume (`ntp-sync`, busybox ntpd's `-S` hook, at most
-hourly) or the image's build time. Host tests cover the BSSIDs (fake odd radio MAC), the centre channels, the calibration
+now starts the clock at the last synced time saved on the data volume (then `ntp-sync`, busybox ntpd's `-S` hook; since
+12.10 chrony's drift file, rewritten hourly) or the image's build time. Host tests cover the BSSIDs (fake odd radio MAC), the centre channels, the calibration
 path, and `check-rootfs.sh` refuses calibration on the read-only root or an early boot that unloads ath11k.
 
 **Never unload `ath11k_ahb` on this board** (`rmmod`, or a "reload the driver" step in a script): on a live unit it
@@ -657,3 +657,79 @@ lock the window and a restart opens a new one, expiry, root password as proof, l
 (both init systems): code file root-only, claim refused without and with a wrong code, claimed with the code and the file
 removed, web log line, status `completed/ap/no wizard`, wizard apply 409, and after a restart no second record and no code.
 The MIPS harnesses (`t_e2e.py`, `t_slate.py`) read the code over the console/ssh.
+
+### 12.10 Router-tier features: WireGuard, the NTP server and remote syslog (2026-11-17)
+
+The GL-AX1800 image builds `patronus-cli` with `nftables,cli,dhcp-server,dns-server,uci-import,wifi-ap,web-multicall,
+vpn-wireguard,ntp-server,syslog` (`stage-patronus.sh`; the list is recorded as `FEATURES=` in `/etc/patronus-release` and
+`check-rootfs.sh` requires each feature's runtime pieces). The web UI shows the VPN (WireGuard), NTP and Syslog pages
+because `/api/features` now lists `wireguard`, `ntp` and `syslog`.
+
+- **WireGuard (client and server).** The lane F applier (`wg_interfaces` / `wg_peers`, the VPN page) runs unchanged: the
+  kernel module is OpenWrt's `kmod-wireguard` of the same 6.12.112 kernel build with its dependency closure (`udptunnel4/6`,
+  `crypto-lib-chacha20poly1305`, `-curve25519`, `-chacha20`, `-poly1305`, `crypto-kpp`), sha256-pinned in `kmods.pin` for the
+  board and for the QEMU gate's armsr kernel, loaded at boot from its `/etc/modules.d` line; `wg` is Alpine's
+  `wireguard-tools-wg` (`wg syncconf` from the applier's 0600 files). `check-rootfs.sh` fails the build without `wg`, the
+  module or its modules.d line when the feature is on.
+- **NTP server: chrony is the one NTP daemon.** busybox ntpd is gone: chrony (Alpine `chrony`, the non-NTS build, so no
+  GnuTLS) keeps the clock and, when the NTP server page is switched on, serves the subnets of the chosen interfaces
+  (`allow`, `local stratum 10`). It is the service the applier controls, `chronyd`, on both init systems (OpenRC
+  `/etc/init.d/chronyd`, systemd `chronyd.service`), running as its own `chrony` user. The image ships a client-only
+  `/etc/chrony/chrony.conf` (pool, `driftfile /var/lib/chrony/drift`); the page replaces it with its own. The board has no
+  RTC: `chronyd -s` starts the clock at the drift file's time (chrony rewrites it hourly and at exit) and the early boot does
+  the same from that file, the old `/data/.clock` or the build time, whichever is newest. A busybox-backend applier was the
+  alternative; it was not taken because busybox ntpd has no `allow` lists and stops answering (stratum 16) whenever the
+  upstreams are unreachable, while chrony costs 64 KiB of binary and 0.3 MiB of root.
+- **Remote syslog: busybox syslogd is the backend.** rsyslog is 2.5 MiB installed (Alpine, before its libraries) and would have to
+  replace the size-capped `/var/log/messages` on tmpfs that busybox keeps, so the Syslog page's applier
+  (`patronus-network/src/syslog.rs`) now has a second backend: without `rsyslogd`, and with the image's launcher
+  `/usr/libexec/patronus/syslogd` present, it writes the enabled collectors to `/etc/patronus/syslogd-remote.conf` (one
+  `host:port` per line, managed file) and restarts `patronus-syslogd`; the launcher runs `syslogd ... -R host:port ... -L`
+  (UDP, the local log is kept). busybox forwards over UDP only, so a TCP collector is refused with a 400 ("forwards over UDP
+  only") instead of being sent over UDP, and it has no per-collector severity filter, so every severity is forwarded and the
+  apply report says so.
+- **System accounts on upgrade.** `/etc` is an overlay on the data volume, so a unit upgraded from an older image keeps the
+  old `/etc/passwd`; the early boot now adds the image's system accounts that the persisted files lack (here `chrony`,
+  logged as `account-added passwd chrony` in `/tmp/boot-times`), without touching existing lines.
+- **`/dev` modes.** The board's and the armsr kernels have no devtmpfs, so the early boot builds `/dev` with `mdev`; without a
+  config every node was `root:root 0660`, and no daemon that drops root could open `/dev/null` or `/dev/urandom` (found by
+  the gate: `chronyc` segfaulted after dropping to `chrony`). `/etc/mdev.conf` gives the standard nodes 0666;
+  `check-rootfs.sh` requires it.
+
+Sizes **[measured]**, CI-unit images built from the same tree with and without these changes (2026-11-17, rw-man-04):
+
+| | before (main 43797117) | with WireGuard + chrony + syslog | delta |
+|---|---|---|---|
+| `patronus-cli` stripped | 14,147,528 B | 14,540,840 B | +384 KiB |
+| root.squashfs, OpenRC | 16.04 MiB (133 LEBs) | 16.44 MiB (136 LEBs) | +412 KiB |
+| root.squashfs, systemd | 18.71 MiB (155 LEBs) | 19.11 MiB (158 LEBs) | +412 KiB |
+| NAND left after kernel + root + 16 MiB settings (OpenRC / systemd) | 71.2 / 68.5 MiB | 70.8 / 68.2 MiB | -3 LEBs |
+
+Per feature (`patronus-cli` alone, same builder, xz -9e of the binary in brackets as a guide to the squashfs cost):
+`vpn-wireguard` +320 KiB (+135 KiB), `ntp-server` +64 KiB (+8 KiB), `syslog` +64 KiB (+12 KiB); all three together +320 KiB
+(+142 KiB) on the main tree (segments are page-aligned, so small features can share a page). Packages: `wg` 67 KiB, chrony
+(`chronyd` 258 KiB + `chronyc` 130 KiB + libseccomp), the eight WireGuard kmods 204 KiB unpacked.
+Idle RAM on the QEMU gate (OpenRC, second boot, 60 s idle, VmRSS): patronus-web 20.4 -> 21.4 MiB (+1.0 MiB, the two VPN
+tunnels of the gate configured), applyd 11.7 -> 11.9 MiB, chronyd 1.0 MiB in place of busybox ntpd 0.8 MiB; RAM used by
+the whole box 34.7 -> 35.0 MiB of 482 MiB (systemd 37.2 MiB). The IPQ6018 units have 512 MiB.
+
+Proof: `qemu-gate.sh` (both init systems, TCG): `/dev` node modes; chronyd running as `chrony` and `chronyc sources`;
+WireGuard through the web API: server tunnel `wg0` (51820) and client tunnel `wg1` (51821) whose peer is `wg0` at
+127.0.0.1:51820, plus a road-warrior peer with a generated key pair and PSK whose client config is exported; `wg show` has the
+listen ports, two peers on `wg0`, the endpoint, the address, the `patronus-wg` ifalias and the peer route (protocol 249);
+the client completes a real handshake. NTP: no answer before the page is switched on; `PUT /api/ntp` writes `allow
+10.0.2.0/24` and `local stratum 10`, status running, and an NTP query from the LAN side (QEMU user net) gets a mode-4 reply.
+Syslog: a UDP collector added on the page restarts syslogd with `-R 10.0.2.2:5514 -L`, the page's test message arrives at a
+listener outside the VM, a TCP collector is refused. Second boot: the module is loaded, both tunnels are re-created from the
+store and handshake again, the NTP server still answers, a message logged after the restart reaches the collector, and the
+`chrony` account removed from the persisted `/etc/passwd` before the restart is back. Unit tests
+`syslog::tests::busybox_backend_writes_udp_collectors_and_refuses_tcp`, `rsyslog_wins_over_busybox_when_both_exist`; host
+tests (`tests/run.sh`) for every new `check-rootfs.sh` refusal.
+
+Left out of the router-tier image, and why: IPsec (strongSwan), OpenVPN, L2TP, HA, traffic shaping, multi-WAN, PPPoE,
+VLANs, NetFlow, IGMP proxy, NAT64, UPnP, VRFs, web proxy, IDS (Suricata), BGP/OSPF, SD-WAN, LDAP, TOTP and plugins. Each
+needs daemons or libraries the image does not carry, and on these units the role is an access point, where the routing
+features belong to the main router; the System page lists each missing feature with its reason. Flash is not the limit
+(about 70 MiB of NAND stays free after the 16 MiB settings reserve); RAM and what an upgrade has to write are, so further
+features are added one at a time with their measured cost, as here. The Slate (`ci/embedded-mips`, 16 MiB NOR) keeps its own
+smaller set and is unchanged.
