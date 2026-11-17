@@ -709,8 +709,8 @@ Per feature (`patronus-cli` alone, same builder, xz -9e of the binary in bracket
 `vpn-wireguard` +320 KiB (+135 KiB), `ntp-server` +64 KiB (+8 KiB), `syslog` +64 KiB (+12 KiB); all three together +320 KiB
 (+142 KiB) on the main tree (segments are page-aligned, so small features can share a page). Packages: `wg` 67 KiB, chrony
 (`chronyd` 258 KiB + `chronyc` 130 KiB + libseccomp), the eight WireGuard kmods 204 KiB unpacked.
-Idle RAM on the QEMU gate (OpenRC, second boot, 60 s idle, VmRSS): patronus-web 20.4 -> 21.4 MiB (+1.0 MiB, the two VPN
-tunnels of the gate configured), applyd 11.7 -> 11.9 MiB, chronyd 1.0 MiB in place of busybox ntpd 0.8 MiB; RAM used by
+Idle RAM on the QEMU gate (OpenRC, second boot, 60 s idle, VmRSS): patronus-web 20.4 -> 21.4 MiB (+1.0 MiB, with the gate's two
+WireGuard tunnels, NTP server and collector configured), applyd 11.7 -> 11.9 MiB, chronyd 1.0 MiB in place of busybox ntpd 0.8 MiB; RAM used by
 the whole box 34.7 -> 35.0 MiB of 482 MiB (systemd 37.2 MiB). The IPQ6018 units have 512 MiB.
 
 Proof: `qemu-gate.sh` (both init systems, TCG): `/dev` node modes; chronyd running as `chrony` and `chronyc sources`;
