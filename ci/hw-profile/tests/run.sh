@@ -26,7 +26,7 @@ eq "slate stock sha256"      "$HW_OPENWRT_STOCK_SHA256" "3d58b599daca2a239f745cf
 eq "slate musl loader"       "$HW_ARCH_MUSL_LDSO" "ld-musl-mips-sf.so.1"
 eq "slate hostname"          "$HW_DEVICE_HOSTNAME" "slate"
 eq "slate kernel label"      "$HW_KERNEL_LABEL" "OpenWrt 25.12.6 ath79/nand"
-eq "slate NOR layout"        "$HW_NOR_FIRMWARE_KIB/$HW_NOR_DATA_MIN_KIB/$HW_NOR_MARGIN_KIB/$HW_NOR_SYSTEMD_KNOWN_FREE_KIB" "16000/1024/256/-832"
+eq "slate NOR layout"        "$HW_NOR_FIRMWARE_KIB/$HW_NOR_DATA_MIN_KIB/$HW_NOR_MARGIN_KIB/$HW_NOR_SYSTEMD_KNOWN_FREE_KIB" "16000/1024/256/-896"
 eq "slate init variants"     "$HW_INIT" "openrc systemd"
 
 # the stdlib fallback parser (used on interpreters without tomllib) must agree with tomllib
