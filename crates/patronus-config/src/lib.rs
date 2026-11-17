@@ -43,7 +43,10 @@ impl Default for SystemConfig {
             hostname: "patronus".to_string(),
             domain: "local".to_string(),
             timezone: "UTC".to_string(),
-            dns_servers: vec!["8.8.8.8".to_string(), "8.8.4.4".to_string()],
+            dns_servers: settings::default_of("dns.fallback_servers")
+                .split(',')
+                .map(str::to_string)
+                .collect(),
         }
     }
 }

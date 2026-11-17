@@ -32,10 +32,18 @@ pub fn asn_db_path() -> PathBuf {
 /// file first, last month's as the fallback (a new month's file appears a
 /// day or so late).
 pub fn default_asn_urls(now: i64) -> Vec<String> {
-    feeds::default_geoip_urls(now)
-        .into_iter()
-        .map(|u| u.replace("dbip-country-lite-", "dbip-asn-lite-"))
-        .collect()
+    feeds::urls_from_template(
+        &patronus_config::settings::current("feeds.asn_db_template"),
+        now,
+    )
+}
+
+/// Same, reading the store (always the latest value).
+pub async fn asn_urls(store: &ConfigStore, now: i64) -> Result<Vec<String>> {
+    Ok(feeds::urls_from_template(
+        &patronus_config::settings::get(store, "feeds.asn_db_template").await?,
+        now,
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -313,7 +321,7 @@ pub async fn refresh_asn_db_to(
         return Ok(false);
     }
     let urls = if st.db_url.is_empty() {
-        default_asn_urls(now)
+        asn_urls(store, now).await?
     } else {
         vec![st.db_url.clone()]
     };

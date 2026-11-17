@@ -43,14 +43,9 @@ e43901c7123c36d1	crates/patronus-ai/src/engine.rs	timing	Duration::from_secs(60)
 9622ebc54623406f	crates/patronus-ai/src/threat_intel.rs	url	https://api.abuseipdb.com/api/v2/blacklist?confidenceMinimum	ai.url.https
 e336307558aef443	crates/patronus-ai/src/threat_intel.rs	url	https://rules.emergingthreats.net/blockrules/compromised-ips	ai.url.url
 82be22596c9c513d	crates/patronus-captiveportal/src/bandwidth.rs	interface	eth0	captiveportal.interface.interface
-32b4b19c97f9789c	crates/patronus-captiveportal/src/portal.rs	address	1.1.1.1	captiveportal.address.address
-f36d1008e867ac7e	crates/patronus-captiveportal/src/portal.rs	address	8.8.4.4	captiveportal.address.address
-95c9835ccb677aa2	crates/patronus-captiveportal/src/portal.rs	address	8.8.8.8	captiveportal.address.address
 97aa3736dc6c1b9c	crates/patronus-captiveportal/src/portal.rs	interface	wlan0	captiveportal.interface.interface
 49b7190bd66668c2	crates/patronus-captiveportal/src/portal.rs	timing	Duration::from_secs(60)	captiveportal.timing.interval
 0e786057a70629df	crates/patronus-captiveportal/src/portal.rs	url	http://portal.local	captiveportal.url.portal_url
-07d19c12bbfd195e	crates/patronus-captiveportal/src/portal.rs	url	http://www.google.com	captiveportal.url.http
-07d19c12bbfd195e#2	crates/patronus-captiveportal/src/portal.rs	url	http://www.google.com	captiveportal.url.http
 760bd255a5945cc8	crates/patronus-cli/src/commands/applyd.rs	timing	Duration::from_secs(300)	cli.timing.t
 9c39b4f4fbe14298	crates/patronus-cli/src/commands/daemon.rs	timing	Duration::from_secs(1)	cli.timing.tokio
 a77bf0dd5d920c72	crates/patronus-cli/src/commands/edge.rs	address	10.99.0.0/16	cli.address.address
@@ -68,8 +63,6 @@ d3880bf77df02c4a	crates/patronus-cli/src/main.rs	path	/etc/patronus/config.yaml	
 f1924a200c1ad04a	crates/patronus-config/src/defaults.rs	constant	ANTI_LOCKOUT_PORTS	config.anti_lockout_ports
 39266b6274995a24	crates/patronus-config/src/defaults.rs	constant	DEFAULT_BOOTSTRAP_PATH	config.default_bootstrap_path
 d3e6ca9cdbfcb1af	crates/patronus-config/src/defaults.rs	path	/etc/patronus/patronus.toml	config.default_bootstrap_path
-994a61088e45e5d6	crates/patronus-config/src/lib.rs	address	8.8.4.4	config.address.dns_servers
-ce6de2844fc57c38	crates/patronus-config/src/lib.rs	address	8.8.8.8	config.address.dns_servers
 5f8e791d863f5b10	crates/patronus-config/src/store.rs	constant	DEFAULT_DB_PATH	config.default_db_path
 dcc668f83321c87a	crates/patronus-config/src/store.rs	path	/var/lib/patronus/config.db	config.default_db_path
 620fdef9c01e3a08	crates/patronus-config/src/store.rs	timing	Duration::from_secs(10)	config.timing.duration
@@ -104,8 +97,6 @@ e2803590aa220eb1	crates/patronus-firewall/src/feeds.rs	constant	NFLOG_GROUP	fire
 e40eb00a037d6a3a	crates/patronus-firewall/src/feeds.rs	path	/var/lib/patronus/feeds	firewall.path.pathbuf
 8d0f07844b619726	crates/patronus-firewall/src/feeds.rs	size	256 * 1024 * 1024	firewall.max_db_bytes
 0d087cb61645d914	crates/patronus-firewall/src/feeds.rs	size	64 * 1024 * 1024	firewall.max_list_bytes
-5e9e9935eb547164	crates/patronus-firewall/src/feeds.rs	url	https://download.db-ip.com/free/dbip-country-lite-{py	firewall.url.https
-8068298ac3038ac7	crates/patronus-firewall/src/feeds.rs	url	https://download.db-ip.com/free/dbip-country-lite-{y	firewall.url.https
 f512cd352b68ed8b	crates/patronus-firewall/src/feeds.rs	url	https://feodotracker.abuse.ch/downloads/ipblocklist.txt	firewall.url.url
 aa4fc067ba2c7fa5	crates/patronus-firewall/src/feeds.rs	url	https://raw.githubusercontent.com/firehol/blocklist-ipsets/m	firewall.url.url
 8b3c58701ac1c31a	crates/patronus-firewall/src/feeds.rs	url	https://rules.emergingthreats.net/blockrules/compromised-ips	firewall.url.url
@@ -115,13 +106,8 @@ c51393b2aec2d8e2	crates/patronus-firewall/src/feeds.rs	url	https://www.spamhaus.
 76823c55a6c4b6bf	crates/patronus-firewall/src/feeds.rs	url	https://www.spamhaus.org/drop/edrop.txt	firewall.url.url
 2f433cc4d1a1cf3e	crates/patronus-firewall/src/geoip.rs	interface	eth1	firewall.interface.interfaces
 deffc22d5186510a	crates/patronus-firewall/src/geoip.rs	path	/etc/patronus/geoip/ipsets	firewall.path.ipsets_dir
-f9aa10ff6a61bcb0	crates/patronus-firewall/src/geoip.rs	url	https://www.ipdeny.com/ipblocks/data/aggregated/{	firewall.url.https
-a34031e38523da9f	crates/patronus-firewall/src/geoip.rs	url	https://www.ipdeny.com/ipblocks/data/countries/{	firewall.url.https
-57c3e610c9a5a5d2	crates/patronus-firewall/src/seg_time.rs	constant	PORTAL_PORT	firewall.portal_port
-93ce5ca046b02c0f	crates/patronus-firewall/src/svc_rules.rs	port	5000	firewall.port.port
 a5692cd2a21994e1	crates/patronus-gitops/src/watcher.rs	path	/var/lib/patronus/gitops/repo	gitops.path.local_path
 00f3cf0b79694329	crates/patronus-gitops/src/webhook.rs	port	127	gitops.port.listen_addr
-42b3ac468b8e2c91	crates/patronus-gitops/src/webhook.rs	port	9999	gitops.port.port
 d8f0370b20feefcf	crates/patronus-installer/src/config.rs	fixed-list	locale en_US.UTF-8	installer.fixed_list.fixed-list
 8023bca3e248ad9a	crates/patronus-installer/src/config.rs	path	/mnt/install	installer.path.pathbuf
 ad755292fbacbfec	crates/patronus-installer/src/disk/partition.rs	timing	Duration::from_secs(2)	installer.timing.tokio
@@ -184,10 +170,8 @@ b85e8ddaa4c17ff9	crates/patronus-network/src/openvpn.rs	address	10.8.0.0	network
 2a4435d9a1361cf0	crates/patronus-network/src/openvpn.rs	path	/etc/patronus/openvpn/server.crt	network.path.server_cert_path
 ca0f6ae96339586d	crates/patronus-network/src/openvpn.rs	path	/etc/patronus/openvpn/server.key	network.path.server_key_path
 e5ec1ac71acfc664	crates/patronus-network/src/openvpn.rs	path	/etc/patronus/openvpn/ta.key	network.path.tls_key_path
-cb651238f7e71bd7	crates/patronus-network/src/openvpn.rs	port	1194	network.port.port
 d6773c7302efadac	crates/patronus-network/src/openvpn_server.rs	address	10.8.0.0/24	network.address.field
 6839231c75736ce0	crates/patronus-network/src/openvpn_server.rs	address	10.8.0.0/24	network.address.openvpn
-7b6fb63f6e0b663e	crates/patronus-network/src/overlay.rs	constant	DEFAULT_VXLAN_PORT	network.default_vxlan_port
 f44f4116edaff7ff	crates/patronus-network/src/plugins.rs	constant	KEY_DIR	network.key_dir
 7da8f962aba0b28e	crates/patronus-network/src/plugins.rs	constant	MAX_BUNDLE_BYTES	network.max_bundle_bytes
 ea29dd1d26c4dd3e	crates/patronus-network/src/plugins.rs	path	/etc/patronus/plugin-keys.d	network.key_dir
@@ -205,8 +189,6 @@ e8daa9d11116d3da	crates/patronus-network/src/seg.rs	timing	Duration::from_secs(1
 97865353b420036a	crates/patronus-network/src/seg_dns.rs	constant	LIST_MAX_AGE	network.list_max_age
 55541cf4f5927ebf	crates/patronus-network/src/seg_dns.rs	path	/var/log/unbound/unbound.log	network.path.unbound_log
 2adb5b103f704ca9	crates/patronus-network/src/seg_dns.rs	size	8 * 1024 * 1024	network.size.max_read
-24f9ebf073ce48aa	crates/patronus-network/src/seg_dns.rs	url	https://malware-filter.gitlab.io/malware-filter/urlhaus-filt	network.url.https
-ecc95b8e70da87e0	crates/patronus-network/src/seg_dns.rs	url	https://raw.githubusercontent.com/StevenBlack/hosts/master/a	network.url.https
 5bc2b92a5ae3f327	crates/patronus-network/src/services.rs	timing	Duration::from_millis(800)	network.timing.std
 9419e280ba4c1930	crates/patronus-network/src/shaping.rs	constant	TRACK_FILE	network.track_file
 e8476c9c8412e6fd	crates/patronus-network/src/shaping.rs	path	/var/lib/patronus/qos-devices	network.track_file
@@ -225,8 +207,6 @@ d113b2920acfda7b	crates/patronus-network/src/sysops.rs	path	/var/lib/patronus/up
 9afbb0b3464e21f6	crates/patronus-network/src/uplink_probe.rs	constant	EVERY_SECS	network.every_secs
 ea5b8796749fa079	crates/patronus-network/src/uplink_probe.rs	timing	Duration::from_secs(3)	network.timing.timeout
 3e409ef4043ee1d5	crates/patronus-network/src/uplink_probe.rs	timing	Duration::from_secs(6)	network.timing.out
-6b76cde16072250c	crates/patronus-network/src/upnp.rs	port	5000	network.port.port
-dfeb36b93dea1e5c	crates/patronus-network/src/wireguard.rs	constant	DEFAULT_PORT	network.default_port
 ce9dc6da9aa0fd05	crates/patronus-network/src/wireless.rs	constant	DEFAULT_CTRL_DIR	network.default_ctrl_dir
 a24908cf3d6b074b	crates/patronus-network/src/wireless.rs	constant	SVC_HOSTAPD	network.svc_hostapd
 c35c7745c72c050c	crates/patronus-network/src/wireless.rs	timing	Duration::from_secs(5)	network.timing.restart_debounce
@@ -303,14 +283,8 @@ d63dbe4677d1f674	crates/patronus-web/src/state/speedtest.rs	constant	CFG_BYTES_D
 7f70e97cab957c74	crates/patronus-web/src/state/speedtest.rs	constant	CFG_DOWN_URL	web.cfg_down_url
 2935f2d3e5089567	crates/patronus-web/src/state/speedtest.rs	constant	CFG_INTERVAL_HOURS	web.cfg_interval_hours
 22e701e6db2775ce	crates/patronus-web/src/state/speedtest.rs	constant	CFG_UP_URL	web.cfg_up_url
-0e92f55a94789cc0	crates/patronus-web/src/state/speedtest.rs	constant	DEFAULT_BYTES_DOWN	web.default_bytes_down
-39e81c23c71cbc79	crates/patronus-web/src/state/speedtest.rs	constant	DEFAULT_BYTES_UP	web.default_bytes_up
-a7360efa7c3cfc3b	crates/patronus-web/src/state/speedtest.rs	constant	DEFAULT_DOWN_URL	web.default_down_url
-bdf72d4bf0e7fabc	crates/patronus-web/src/state/speedtest.rs	constant	DEFAULT_UP_URL	web.default_up_url
 2297313ddc406f76	crates/patronus-web/src/state/speedtest.rs	constant	MAX_SECS	web.max_secs
 c0ab9173e20c8ac4	crates/patronus-web/src/state/speedtest.rs	timing	Duration::from_secs(60)	web.timing.t
-a77534cb1d7d40b2	crates/patronus-web/src/state/speedtest.rs	url	https://speed.cloudflare.com/__down?bytes={bytes	web.default_down_url
-db76ae0a8799e9ad	crates/patronus-web/src/state/speedtest.rs	url	https://speed.cloudflare.com/__up	web.default_up_url
 17dce9f8def94c68	crates/patronus-web/src/state/stats.rs	constant	CFG_CAP_GB	web.cfg_cap_gb
 e2b6e91258fb4f3c	crates/patronus-web/src/state/stats.rs	constant	CFG_CAP_IFACE	web.cfg_cap_iface
 e4cf2b3de2604c7d	crates/patronus-web/src/state/stats.rs	constant	CFG_CAP_NOTIFIED	web.cfg_cap_notified

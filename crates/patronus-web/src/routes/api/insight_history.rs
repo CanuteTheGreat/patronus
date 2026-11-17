@@ -303,10 +303,15 @@ async fn clear_history(State(s): State<AppState>) -> Response {
 async fn database_status(State(s): State<AppState>) -> Response {
     let geo = feeds::geoip_status(&s.config_store).await;
     let asn = asn::asn_status(&s.config_store).await;
+    let default_asn_url = asn::asn_urls(&s.config_store, now())
+        .await
+        .ok()
+        .and_then(|mut v| (!v.is_empty()).then(|| v.remove(0)))
+        .unwrap_or_default();
     match (geo, asn) {
         (Ok(g), Ok(a)) => Json(json!({
             "country": g, "asn": a,
-            "default_asn_url": asn::default_asn_urls(now()).remove(0),
+            "default_asn_url": default_asn_url,
             "attribution": "IP geolocation by DB-IP.com (CC BY 4.0)",
         }))
         .into_response(),

@@ -159,6 +159,7 @@ impl CaptivePortal {
     /// Configure firewall rules for captive portal
     async fn setup_firewall_rules(&self) -> Result<(), Box<dyn std::error::Error>> {
         // Create nftables rules to redirect HTTP/HTTPS to portal
+        let pre_auth_dns = pre_auth_dns_elements();
         let nft_rules = format!(
             r#"
 table inet captive_portal {{
@@ -173,10 +174,8 @@ table inet captive_portal {{
     set whitelist_domains {{
         type ipv4_addr
         elements = {{
-            # DNS servers
-            8.8.8.8,
-            8.8.4.4,
-            1.1.1.1,
+            # DNS servers (setting portal.pre_auth_dns)
+            {pre_auth_dns}
         }}
     }}
 
@@ -250,6 +249,28 @@ table inet captive_portal {{
     }
 }
 
+/// Landing page when the original URL is unknown (setting `portal.default_redirect_url`).
+fn default_redirect_url() -> String {
+    patronus_config::settings::current("portal.default_redirect_url")
+}
+
+/// IPv4 members of the nft `whitelist_domains` set: the resolvers guests may use before signing
+/// in (setting `portal.pre_auth_dns`; the set is IPv4-only, so IPv6 entries are skipped).
+fn pre_auth_dns_elements() -> String {
+    let v4 = |list: &str| -> Vec<String> {
+        list.split(',')
+            .map(str::trim)
+            .filter(|a| a.parse::<std::net::Ipv4Addr>().is_ok())
+            .map(str::to_string)
+            .collect()
+    };
+    let mut a = v4(&patronus_config::settings::current("portal.pre_auth_dns"));
+    if a.is_empty() {
+        a = v4(patronus_config::settings::default_of("portal.pre_auth_dns"));
+    }
+    a.join(",\n            ")
+}
+
 // HTTP Handlers
 
 async fn portal_index(
@@ -259,7 +280,7 @@ async fn portal_index(
     let redirect_url = params
         .get("redirect")
         .cloned()
-        .unwrap_or_else(|| "http://www.google.com".to_string());
+        .unwrap_or_else(default_redirect_url);
 
     let html = format!(
         r#"
@@ -544,9 +565,7 @@ async fn handle_login(
         }
 
         // Redirect to original URL
-        let redirect_url = login
-            .redirect_url
-            .unwrap_or_else(|| "http://www.google.com".to_string());
+        let redirect_url = login.redirect_url.unwrap_or_else(default_redirect_url);
         Redirect::to(&redirect_url).into_response()
     } else {
         (StatusCode::UNAUTHORIZED, "Authentication failed").into_response()
@@ -855,5 +874,12 @@ mod qa_regression_tests {
             StatusCode::BAD_REQUEST,
             "a mac_address containing nft syntax must be rejected, not executed"
         );
+    }
+
+    #[test]
+    fn pre_auth_resolvers_and_landing_page_come_from_settings() {
+        let e = pre_auth_dns_elements();
+        assert!(e.contains("8.8.8.8") && e.contains("1.1.1.1"), "{e}");
+        assert!(default_redirect_url().starts_with("http"));
     }
 }

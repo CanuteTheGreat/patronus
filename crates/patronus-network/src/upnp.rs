@@ -24,7 +24,7 @@ static FIELDS: [Field; 9] = [
         .help("Off by default: any program on the LAN can open WAN ports while this is on"),
     Field::new("interface", "Serve clients on", Kind::Iface)
         .def("@lan")
-        .help("SSDP (UDP 1900), the control URL (TCP 5000) and NAT-PMP (UDP 5351) are opened on this interface only"),
+        .help("SSDP (UDP 1900), the control URL (TCP, port: Advanced settings > UPnP control port) and NAT-PMP (UDP 5351) are opened on this interface only"),
     Field::new("ext_interface", "WAN interface", Kind::Iface).def("@wan"),
     Field::new("upnp", "UPnP IGD", Kind::Bool).def("1"),
     Field::new("natpmp", "NAT-PMP / PCP", Kind::Bool).def("1"),
@@ -78,20 +78,21 @@ impl Svc for UpnpSvc {
 
 /// miniupnpd.conf. `lan_dev`/`wan_dev` are device names; `ext_ip` declares the WAN address
 /// when the WAN address is private (double NAT), where miniupnpd refuses to
-/// map unless told otherwise.
+/// map unless told otherwise. `control_port`: setting `upnp.control_port`.
 pub fn render_conf(
     s: &Settings,
     lan_devs: &[String],
     wan_dev: &str,
     ext_ip: Option<&str>,
     lease: &str,
+    control_port: i64,
 ) -> String {
     let mut c = lan::header("#", "miniupnpd");
     c.push_str(&format!("ext_ifname={wan_dev}\n"));
     for d in lan_devs {
         c.push_str(&format!("listening_ip={d}\n"));
     }
-    c.push_str("port=5000\nenable_natpmp=");
+    c.push_str(&format!("port={control_port}\nenable_natpmp="));
     c.push_str(if s.b("natpmp") { "yes\n" } else { "no\n" });
     c.push_str("enable_upnp=");
     c.push_str(if s.b("upnp") { "yes\n" } else { "no\n" });
@@ -239,6 +240,7 @@ impl Applier for UpnpApplier {
             wan,
             Some(s.s("ext_ip")).filter(|a| !a.is_empty()).as_deref(),
             &lease.to_string_lossy(),
+            patronus_config::settings::get_i64(store, "upnp.control_port").await?,
         );
         ensure_nft_table()?;
         let started = svc::ensure_daemon(
@@ -282,6 +284,7 @@ impl Applier for UpnpApplier {
             wan.first().map(String::as_str).unwrap_or("?"),
             None,
             "upnp.leases",
+            patronus_config::settings::get_i64(store, "upnp.control_port").await?,
         ))
     }
 
@@ -316,7 +319,14 @@ mod tests {
             ("port_min", "2000"),
             ("port_max", "3000"),
         ]);
-        let c = render_conf(&s, &["eth1".into()], "eth0", Some("10.0.0.2"), "/x/leases");
+        let c = render_conf(
+            &s,
+            &["eth1".into()],
+            "eth0",
+            Some("10.0.0.2"),
+            "/x/leases",
+            5000,
+        );
         assert!(c.contains("ext_ifname=eth0\nlistening_ip=eth1\n"));
         assert!(c.contains("enable_natpmp=yes\n") && c.contains("enable_upnp=no\n"));
         assert!(c.contains("secure_mode=yes\n") && c.contains("ext_ip=10.0.0.2\n"));
@@ -333,6 +343,6 @@ mod tests {
                 "{chain}"
             );
         }
-        assert!(!render_conf(&s, &["eth1".into()], "eth0", None, "l").contains("ext_ip"));
+        assert!(!render_conf(&s, &["eth1".into()], "eth0", None, "l", 5000).contains("ext_ip"));
     }
 }

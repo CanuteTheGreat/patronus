@@ -5,7 +5,7 @@
 //! accepts a body). Results go to `speedtests`; an optional interval runs it
 //! on a schedule. One test at a time.
 
-use patronus_config::ConfigStore;
+use patronus_config::{settings, ConfigStore};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::OnceLock;
@@ -17,10 +17,6 @@ pub const CFG_BYTES_DOWN: &str = "speedtest.bytes_down";
 pub const CFG_BYTES_UP: &str = "speedtest.bytes_up";
 pub const CFG_INTERVAL_HOURS: &str = "speedtest.interval_hours";
 
-pub const DEFAULT_DOWN_URL: &str = "https://speed.cloudflare.com/__down?bytes={bytes}";
-pub const DEFAULT_UP_URL: &str = "https://speed.cloudflare.com/__up";
-pub const DEFAULT_BYTES_DOWN: u64 = 25_000_000;
-pub const DEFAULT_BYTES_UP: u64 = 10_000_000;
 /// Results kept.
 pub const KEEP: i64 = 500;
 /// Per-direction time limit (seconds): a slow link still gets a rate from
@@ -99,17 +95,18 @@ pub async fn settings(store: &ConfigStore) -> anyhow::Result<Settings> {
             .map_err(|e| anyhow::anyhow!("{e}"))
     };
     Ok(Settings {
-        down_url: g(get(CFG_DOWN_URL).await?).unwrap_or_else(|| DEFAULT_DOWN_URL.into()),
+        down_url: g(get(CFG_DOWN_URL).await?)
+            .unwrap_or_else(|| settings::default_of(CFG_DOWN_URL).into()),
         // an explicit empty value turns the upload test off
         up_url: get(CFG_UP_URL)
             .await?
-            .unwrap_or_else(|| DEFAULT_UP_URL.into()),
+            .unwrap_or_else(|| settings::default_of(CFG_UP_URL).into()),
         bytes_down: g(get(CFG_BYTES_DOWN).await?)
             .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_BYTES_DOWN),
+            .unwrap_or_else(|| settings::default_of(CFG_BYTES_DOWN).parse().unwrap_or(0)),
         bytes_up: g(get(CFG_BYTES_UP).await?)
             .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_BYTES_UP),
+            .unwrap_or_else(|| settings::default_of(CFG_BYTES_UP).parse().unwrap_or(0)),
         interval_hours: g(get(CFG_INTERVAL_HOURS).await?)
             .and_then(|v| v.parse().ok())
             .unwrap_or(0),
@@ -424,8 +421,8 @@ mod tests {
             "speed.cloudflare.com"
         );
         let s = Settings {
-            down_url: DEFAULT_DOWN_URL.into(),
-            up_url: DEFAULT_UP_URL.into(),
+            down_url: settings::default_of(CFG_DOWN_URL).into(),
+            up_url: settings::default_of(CFG_UP_URL).into(),
             bytes_down: 1000,
             bytes_up: 10,
             interval_hours: 0,

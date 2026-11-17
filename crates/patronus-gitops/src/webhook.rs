@@ -111,7 +111,9 @@ impl Default for WebhookConfig {
     fn default() -> Self {
         Self {
             listen_addr: "127.0.0.1".to_string(),
-            port: 9999,
+            port: patronus_config::settings::current_i64("gitops.webhook_port")
+                .try_into()
+                .unwrap_or(0),
             secret: None,
             provider: WebhookProvider::Generic,
         }

@@ -278,7 +278,10 @@ impl FirewallManager {
         }
         Ok(GeoOverview {
             database: feeds::geoip_status(&self.store).await.map_err(Self::e)?,
-            default_url: feeds::default_geoip_urls(now()).remove(0),
+            default_url: feeds::geoip_urls(&self.store, now())
+                .await
+                .map_err(Self::e)?
+                .remove(0),
             countries: feeds::COUNTRIES
                 .iter()
                 .map(|(code, name)| GeoCountry { code, name })
@@ -348,7 +351,8 @@ impl FirewallManager {
             let a = all
                 .iter()
                 .find(|a| a.name == feeds::threat_alias_name(c.id));
-            feeds_out.push(row(c.id, c.name, c.description, c.url, false, a));
+            let url = feeds::catalog_url(&self.store, c).await.map_err(Self::e)?;
+            feeds_out.push(row(c.id, c.name, c.description, &url, false, a));
         }
         for a in &all {
             let is_threat = a
@@ -418,6 +422,10 @@ impl FirewallManager {
             .await
             .map_err(Self::e)?;
         let cat = feeds::catalog_feed(id);
+        let cat_url = match cat {
+            Some(c) => Some(feeds::catalog_url(&self.store, c).await.map_err(Self::e)?),
+            None => None,
+        };
         let mut src = old
             .as_ref()
             .and_then(|a| a.source.clone())
@@ -427,7 +435,7 @@ impl FirewallManager {
             src.url = Some(u.to_string());
         }
         if src.url.is_none() {
-            src.url = cat.map(|c| c.url.to_string());
+            src.url = cat_url;
         }
         if src.url.is_none() {
             anyhow::bail!("Invalid request: a custom feed needs a url");

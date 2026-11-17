@@ -39,8 +39,6 @@ use std::sync::Arc;
 pub const WG_ALIAS: &str = "patronus-wg";
 /// Route protocol of the peer routes Patronus installs.
 pub const WG_PROTO: &str = "249";
-/// Default listen port of the first tunnel.
-pub const DEFAULT_PORT: u16 = 51820;
 
 // ---------------------------------------------------------------------------
 // keys
@@ -326,13 +324,19 @@ pub async fn save_interface(
     {
         return Err(invalid(format!("tunnel: {name} already exists")));
     }
+    // setting `vpn.wireguard_port`: first port offered to a new tunnel
+    let default_port = patronus_config::settings::get_i64(store, "vpn.wireguard_port")
+        .await
+        .ok()
+        .and_then(|p| u16::try_from(p).ok())
+        .unwrap_or(0);
     let listen_port = match (i.listen_port, &cur) {
         (Some(0), _) => return Err(invalid("listen port: 1-65535")),
         (Some(p), _) => p,
         (None, Some(c)) => c.listen_port,
-        (None, None) => (DEFAULT_PORT..)
+        (None, None) => (default_port..)
             .find(|p| !all.iter().any(|x| x.listen_port == *p))
-            .unwrap_or(DEFAULT_PORT),
+            .unwrap_or(default_port),
     };
     if let Some(other) = all
         .iter()

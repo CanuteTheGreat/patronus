@@ -43,12 +43,6 @@ pub const ENFORCE_TABLE: &str = "patronus_dnspol";
 /// lists refreshed at most this often by policy applies
 pub const LIST_MAX_AGE: u64 = 6 * 3600;
 
-/// Family preset lists (`dns.family_lists` in `lan_settings` overrides them).
-pub const FAMILY_LISTS: &[&str] = &[
-    "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn-only/hosts",
-    "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts.txt",
-];
-
 /// Safe-search enforcement: `(name, CNAME target)`, from the providers' docs
 /// (Google forcesafesearch, YouTube strict mode, Bing strict, DuckDuckGo
 /// safe, Brave forcesafe).
@@ -637,12 +631,14 @@ pub fn render_enforce(clients: &[Ipv4Addr]) -> String {
 // ---------------------------------------------------------------------------
 
 async fn family_lists(store: &ConfigStore) -> Vec<String> {
-    let m = lan::settings_with_prefix(store, "dns.")
+    // the setting `dns.family_lists` (registry default = the two preset lists); empty = default
+    let v = patronus_config::settings::get(store, "dns.family_lists")
         .await
         .unwrap_or_default();
-    match m.get("dns.family_lists").filter(|v| !v.trim().is_empty()) {
-        Some(v) => split_urls(v),
-        None => FAMILY_LISTS.iter().map(|s| s.to_string()).collect(),
+    if v.trim().is_empty() {
+        split_urls(patronus_config::settings::default_of("dns.family_lists"))
+    } else {
+        split_urls(&v)
     }
 }
 

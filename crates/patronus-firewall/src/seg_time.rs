@@ -39,8 +39,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::Ipv4Addr;
 
 pub const TABLE_NAME: &str = "patronus_time";
-/// Plain-HTTP port of the "time's up" page (`patronus-captiveportal` timeup).
-pub const PORTAL_PORT: u16 = 8081;
 /// A one-shot grace warning redirects HTTP for this long.
 pub const WARN_SECONDS: u32 = 120;
 
@@ -987,17 +985,15 @@ pub fn sets_from(decisions: &[(Target, Usage, Decision)]) -> Sets {
 
 /// The time's-up page port (`seg.time_portal_port` in `lan_settings`).
 pub async fn portal_port(store: &ConfigStore) -> u16 {
-    let Ok(pool) = store.pool() else {
-        return PORTAL_PORT;
-    };
-    sqlx::query("SELECT value FROM lan_settings WHERE key = 'seg.time_portal_port'")
-        .fetch_optional(pool)
+    patronus_config::settings::get_i64(store, "seg.time_portal_port")
         .await
         .ok()
-        .flatten()
-        .and_then(|r| r.get::<String, _>(0).trim().parse::<u16>().ok())
-        .filter(|p| *p >= 1024)
-        .unwrap_or(PORTAL_PORT)
+        .and_then(|p| u16::try_from(p).ok())
+        .unwrap_or_else(|| {
+            patronus_config::settings::default_of("seg.time_portal_port")
+                .parse()
+                .unwrap_or(0)
+        })
 }
 
 async fn write_state(

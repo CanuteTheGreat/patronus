@@ -4,13 +4,20 @@
 //!
 //! * `gre`    - L3 tunnel (IP in GRE), optional key.
 //! * `gretap` - L2 tunnel (Ethernet in GRE), can be a bridge member.
-//! * `vxlan`  - L2 overlay over UDP (default port 4789), VNI required.
+//! * `vxlan`  - L2 overlay over UDP (default port: setting `network.vxlan_port`), VNI required.
 
 use crate::linkstate::KLink;
 use crate::netconf::OverlayConfig;
 
 pub const KINDS: &[&str] = &["gre", "gretap", "vxlan"];
-pub const DEFAULT_VXLAN_PORT: u16 = 4789;
+
+/// VXLAN destination port of an overlay that sets none: setting `network.vxlan_port`
+/// (cached; the CLI and the web server both fill the cache at start).
+fn default_vxlan_port() -> u16 {
+    patronus_config::settings::current_i64("network.vxlan_port")
+        .try_into()
+        .unwrap_or(0)
+}
 
 /// `ip link add` arguments for an overlay link.
 pub fn create_args(o: &OverlayConfig) -> Vec<String> {
@@ -24,7 +31,10 @@ pub fn create_args(o: &OverlayConfig) -> Vec<String> {
     };
     if o.kind == "vxlan" {
         add("id", o.key.unwrap_or(0).to_string());
-        add("dstport", o.port.unwrap_or(DEFAULT_VXLAN_PORT).to_string());
+        add(
+            "dstport",
+            o.port.unwrap_or_else(default_vxlan_port).to_string(),
+        );
     }
     add("remote", o.remote.clone());
     if let Some(l) = o.local.as_ref().filter(|l| !l.is_empty()) {
@@ -70,7 +80,9 @@ pub fn needs_recreate(o: &OverlayConfig, k: &KLink) -> bool {
         if k.tun_key != o.key {
             return true;
         }
-        if k.tun_port.unwrap_or(DEFAULT_VXLAN_PORT) != o.port.unwrap_or(DEFAULT_VXLAN_PORT) {
+        if k.tun_port.unwrap_or_else(default_vxlan_port)
+            != o.port.unwrap_or_else(default_vxlan_port)
+        {
             return true;
         }
     } else if k.tun_key.unwrap_or(0) != o.key.unwrap_or(0) {

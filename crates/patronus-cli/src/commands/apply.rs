@@ -64,6 +64,10 @@ pub async fn open_store(db: Option<&Path>) -> anyhow::Result<ConfigStore> {
         .await
         .map_err(|e| anyhow::anyhow!("config store {}: {e}", path.display()))?;
     hand_to_dir_owner(&path);
+    // synchronous readers (default ports, ...) see the stored settings in this process too
+    if let Err(e) = patronus_config::settings::load_cache(&s).await {
+        tracing::warn!("settings cache: {e}; using defaults");
+    }
     Ok(s)
 }
 

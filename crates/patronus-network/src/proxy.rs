@@ -263,6 +263,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_page_default_port_is_the_registered_one() {
+        let f = FIELDS.iter().find(|f| f.key == "port").unwrap();
+        assert_eq!(
+            f.default,
+            patronus_config::settings::default_of("proxy.port")
+        );
+    }
+
+    #[test]
     fn config_blocks_domains_and_only_serves_the_lan() {
         let mut m = serde_json::Map::new();
         for (k, v) in [("port", "3128"), ("transparent", "1"), ("cache_mb", "32")] {

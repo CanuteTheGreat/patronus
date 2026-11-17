@@ -206,10 +206,8 @@ impl GeoIpManager {
                 // https://www.ipdeny.com/ipblocks/data/aggregated/
                 // or extract from GeoIP2 database
 
-                let url = format!(
-                    "https://www.ipdeny.com/ipblocks/data/aggregated/{}-aggregated.zone",
-                    country.to_lowercase()
-                );
+                let url = patronus_config::settings::current("feeds.ipdeny_aggregated_template")
+                    .replace("{cc}", &country.to_lowercase());
 
                 println!("  Downloading IP blocks from ipdeny.com...");
                 let output = Command::new("curl")
@@ -233,10 +231,8 @@ impl GeoIpManager {
                 let ipset_file = self.ipsets_dir.join(format!("{}.txt", country));
 
                 // Download IP blocks
-                let url = format!(
-                    "https://www.ipdeny.com/ipblocks/data/countries/{}.zone",
-                    country.to_lowercase()
-                );
+                let url = patronus_config::settings::current("feeds.ipdeny_country_template")
+                    .replace("{cc}", &country.to_lowercase());
 
                 let output = Command::new("curl")
                     .arg("-s")

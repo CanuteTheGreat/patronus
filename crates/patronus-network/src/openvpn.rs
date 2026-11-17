@@ -101,7 +101,9 @@ impl Default for OpenVpnServerConfig {
             name: "server1".to_string(),
             enabled: true,
             protocol: OpenVpnProtocol::Udp,
-            port: 1194,
+            port: patronus_config::settings::current_i64("vpn.openvpn_port")
+                .try_into()
+                .unwrap_or(0),
             device: "tun".to_string(),
             local_ip: None,
             tunnel_network: "10.8.0.0".to_string(),

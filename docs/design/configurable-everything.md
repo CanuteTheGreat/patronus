@@ -55,6 +55,10 @@ example/placeholder text. A constant that only looks operational carries
   before the store is applied). Scripts source it and keep
   the registry default as their own fallback, so a missing file never stops a service.
   `check-rootfs.sh` refuses an image without `settings-env`.
+- `Kind::Addrs` is a comma-separated IP list (resolvers); `settings::default_of(key)` gives the
+  registered default to code that has no store (form pre-fills, `Default` impls). The CLI
+  fills the process cache when it opens the store (`open_store`), so a default port read by
+  synchronous code is the stored one in `patronus apply` too.
 - Synchronous code (session checks, login throttle) reads `settings::current()`, a process
   cache that patronus-web fills at start, after every API change and every 60 s (so a
   `patronus settings set` from a shell or a GitOps/restore change reaches it); async code
@@ -88,19 +92,19 @@ literal, then `python3 ci/hardcode-scan.py --update` (the baseline only shrinks)
 
 | category | must become config | legit constant | test fixture | total |
 |---|---|---|---|---|
-| address | 32 | 162 | 1423 | 1617 |
-| constant | 73 | 8 | 4 | 85 |
+| address | 27 | 167 | 1425 | 1619 |
+| constant | 66 | 8 | 4 | 78 |
 | fixed-list | 7 | 0 | 4 | 11 |
 | hostname | 2 | 0 | 0 | 2 |
-| interface | 21 | 16 | 438 | 475 |
+| interface | 21 | 16 | 440 | 477 |
 | path | 59 | 86 | 67 | 212 |
-| port | 10 | 22 | 59 | 91 |
+| port | 6 | 22 | 63 | 91 |
 | size | 10 | 0 | 0 | 10 |
 | timing | 133 | 5 | 67 | 205 |
 | uid/gid | 0 | 5 | 14 | 19 |
-| url | 43 | 21 | 33 | 97 |
+| url | 33 | 37 | 33 | 103 |
 | wifi | 7 | 6 | 10 | 23 |
-| **all** | 397 | 331 | 2119 | 2847 |
+| **all** | 371 | 352 | 2127 | 2850 |
 
 Full table with file:line and proposed key: [configurable-everything-inventory.md](configurable-everything-inventory.md).
 
@@ -124,6 +128,17 @@ Full table with file:line and proposed key: [configurable-everything-inventory.m
 | `AP_PHY_WAIT` 90 s radio wait (`ap`, GL-AX1800) | `wifi.radio_wait_secs` | 90 s (10 .. 600) | yes (next AP start) |
 | wifi-guard `RECOVER_WAIT=20` | `wifi.recover_wait_secs` | 20 s (5 .. 300) | yes (next crash) |
 | `upgrade-install` ubiblock wait (10 tries) | `upgrade.ubiblock_wait_secs` | 10 s (1 .. 120) | yes (next upgrade) |
+| 7 catalog feed URLs in `feeds.rs` `CATALOG` | `feeds.url_spamhaus_drop`, `_spamhaus_edrop`, `_spamhaus_dropv6`, `_firehol_level1`, `_abusech_feodo`, `_abusech_sslbl`, `_et_compromised` | the former URLs (the catalog entry is the default; a test keeps the two equal) | yes |
+| DB-IP GeoIP and ASN download addresses (`default_geoip_urls`, `default_asn_urls`) | `feeds.geoip_db_template`, `feeds.asn_db_template` (`{year}` `{month}`) | DB-IP lite, this month then last month | yes |
+| ipdeny.com zone addresses (`geoip.rs`) | `feeds.ipdeny_aggregated_template`, `feeds.ipdeny_country_template` (`{cc}`) | ipdeny.com | yes |
+| `FAMILY_LISTS` (patronus-network seg_dns) | `dns.family_lists` (`lan_settings`, already read before; the registry now owns the default) | the two preset lists | yes |
+| `DEFAULT_DOWN_URL`, `DEFAULT_UP_URL`, `DEFAULT_BYTES_*` (speedtest.rs) | `speedtest.down_url`, `speedtest.up_url`, `speedtest.bytes_down`, `speedtest.bytes_up`, `speedtest.interval_hours` (existing keys, now registered) | Cloudflare speed endpoints, 25 MB / 10 MB, off | yes |
+| `dns_servers: 8.8.8.8, 8.8.4.4` in `SystemConfig::default()` | `dns.fallback_servers` (new `Kind::Addrs`) | 8.8.8.8,8.8.4.4 | yes (new configurations) |
+| captive-portal landing page `http://www.google.com` and the pre-auth resolver set `8.8.8.8 8.8.4.4 1.1.1.1` | `portal.default_redirect_url`, `portal.pre_auth_dns` | same values | yes |
+| `PORTAL_PORT = 8081` (seg_time.rs; the key existed, unregistered) | `seg.time_portal_port` (`lan_settings`) | 8081 (1024 .. 65535) | yes |
+| UPnP control port `5000` (miniupnpd.conf and the firewall rule) | `upnp.control_port` (`lan_settings`) | 5000 | yes |
+| proxy port `3128` (`unwrap_or(3128)` in svc_rules next to the page's own `.def("3128")`) | `proxy.port` (`lan_settings`, the page's own key; a test keeps the page default and the registry equal) | 3128 | yes |
+| `DEFAULT_VXLAN_PORT`, WireGuard `DEFAULT_PORT`, OpenVPN `1194`, GitOps webhook `9999` | `network.vxlan_port`, `vpn.wireguard_port`, `vpn.openvpn_port`, `gitops.webhook_port` | 4789 / 51820 / 1194 / 9999 | yes |
 | fixed 13-entry language list (shared live installer; changed in the Horcrux master copy, reaches `gentoo/live-iso/common` with the next `sync-common.sh --from`) | the image's glibc `SUPPORTED` list | shortlist first, fallback only without glibc data | installer |
 
 ## Remaining, in priority order
@@ -146,10 +161,11 @@ This sweep, next batches (P1 = owner-visible or security, P2 = operator tuning, 
    `settings-env refresh`, hook path `PATRONUS_SETTINGS_HOOK`). `settings-env` also keeps a
    copy on the data volume (`/data/.settings.env`) because the earliest boot steps
    (`patronus-init`, `patronus-guard`) run before the store is applied.
-2. **P1 feed and update URLs** (`patronus-firewall` feeds.rs/geoip.rs catalog, seg_dns
-   blocklists, `CFG_ASN_URL`/`CFG_GEO_URL` defaults, speedtest defaults, captive-portal
-   probe URL and DNS servers `8.8.8.8/8.8.4.4/1.1.1.1`): catalog entries become data rows
-   with an editable URL; resolver defaults become `dns.fallback_servers`.
+2. ~~**P1 feed and update URLs**~~ done (batch 4): catalog feeds, GeoIP/ASN/ipdeny
+   templates, DNS family lists, speedtest, captive portal and `dns.fallback_servers` are
+   registry keys. Left: provider API endpoints of DDNS/alert integrations
+   (Cloudflare, DuckDNS, Telegram, PagerDuty: protocol endpoints of a named third party,
+   kept as constants), the threat-intel URLs of the legacy `patronus-ai` crate.
 3. **P1 service ports**: VXLAN `DEFAULT_VXLAN_PORT`, WireGuard/OpenVPN form defaults
    (`DEFAULT_PORT`, 1194), gitops webhook 9999, UPnP 5000 (`svc_rules.rs`), and the
    duplicated default proxy port (`unwrap_or(3128)` in `svc_rules.rs`, also `.def("3128")` on

@@ -725,18 +725,44 @@ pub const CFG_THREAT_TOTAL: &str = "firewall.threatintel.max_total";
 /// `1` = log what the default policy drops (NFLOG, rate limited).
 pub const CFG_LOG_DEFAULT_DENY: &str = "firewall.log_default_deny";
 
-/// DB-IP publishes `dbip-country-lite-YYYY-MM.csv.gz` once a month.
-pub fn default_geoip_urls(now: i64) -> Vec<String> {
+/// The monthly database address for `now` from a template: `{year}` and `{month}` (two digits)
+/// are replaced; this month's file first, last month's as the fallback (a new month's file
+/// appears a day or so late).
+pub fn urls_from_template(template: &str, now: i64) -> Vec<String> {
     let d = chrono::DateTime::<chrono::Utc>::from_timestamp(now, 0).unwrap_or_default();
     let (y, m) = (
-        d.format("%Y").to_string().parse::<i32>().unwrap_or(2026),
+        d.format("%Y").to_string().parse::<i32>().unwrap_or(1970),
         d.format("%m").to_string().parse::<u32>().unwrap_or(1),
     );
     let (py, pm) = if m == 1 { (y - 1, 12) } else { (y, m - 1) };
-    vec![
-        format!("https://download.db-ip.com/free/dbip-country-lite-{y}-{m:02}.csv.gz"),
-        format!("https://download.db-ip.com/free/dbip-country-lite-{py}-{pm:02}.csv.gz"),
-    ]
+    let fill = |y: i32, m: u32| {
+        template
+            .replace("{year}", &y.to_string())
+            .replace("{month}", &format!("{m:02}"))
+    };
+    vec![fill(y, m), fill(py, pm)]
+}
+
+/// Country database addresses from the cached setting `feeds.geoip_db_template`.
+pub fn default_geoip_urls(now: i64) -> Vec<String> {
+    urls_from_template(
+        &patronus_config::settings::current("feeds.geoip_db_template"),
+        now,
+    )
+}
+
+/// Same, reading the store (always the latest value).
+pub async fn geoip_urls(store: &ConfigStore, now: i64) -> Result<Vec<String>> {
+    Ok(urls_from_template(
+        &patronus_config::settings::get(store, "feeds.geoip_db_template").await?,
+        now,
+    ))
+}
+
+/// Address of a catalog feed (the setting `feeds.url_<id>`; the catalog's own value is the
+/// registered default).
+pub async fn catalog_url(store: &ConfigStore, c: &CatalogFeed) -> Result<String> {
+    patronus_config::settings::get(store, &format!("feeds.url_{}", c.id)).await
 }
 
 /// GeoIP database settings and state.
@@ -983,7 +1009,7 @@ pub async fn refresh_geoip_db(
         return Ok(false);
     }
     let urls = if st.db_url.is_empty() {
-        default_geoip_urls(now)
+        geoip_urls(store, now).await?
     } else {
         vec![st.db_url.clone()]
     };
@@ -1884,6 +1910,63 @@ mod tests {
         assert_eq!(
             u[1],
             "https://download.db-ip.com/free/dbip-country-lite-2025-12.csv.gz"
+        );
+    }
+
+    #[test]
+    fn every_catalog_feed_url_is_a_registered_setting() {
+        for c in CATALOG {
+            let key = format!("feeds.url_{}", c.id);
+            let s = patronus_config::settings::find(&key)
+                .unwrap_or_else(|| panic!("catalog feed {} has no setting {key}", c.id));
+            assert_eq!(
+                s.default, c.url,
+                "{key}: the registered default is the catalog URL"
+            );
+        }
+    }
+
+    #[test]
+    fn database_templates_follow_the_setting() {
+        let u = urls_from_template("https://mirror.test/{year}/c-{month}.gz", 1_768_435_200);
+        assert_eq!(
+            u,
+            [
+                "https://mirror.test/2026/c-01.gz",
+                "https://mirror.test/2025/c-12.gz"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_changed_catalog_url_is_used() {
+        let d = tempfile::tempdir().unwrap();
+        let store = ConfigStore::open(d.path().join("c.db").to_str().unwrap())
+            .await
+            .unwrap();
+        let c = catalog_feed("spamhaus_drop").unwrap();
+        assert_eq!(catalog_url(&store, c).await.unwrap(), c.url);
+        patronus_config::settings::set(
+            &store,
+            "feeds.url_spamhaus_drop",
+            "https://mirror.test/drop.txt",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            catalog_url(&store, c).await.unwrap(),
+            "https://mirror.test/drop.txt"
+        );
+        patronus_config::settings::set(
+            &store,
+            "feeds.geoip_db_template",
+            "https://mirror.test/g-{year}-{month}.gz",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            geoip_urls(&store, 1_768_435_200).await.unwrap()[0],
+            "https://mirror.test/g-2026-01.gz"
         );
     }
 }

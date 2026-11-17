@@ -91,7 +91,10 @@ async fn tunnels_and_peers_validate_and_pick_free_addresses() {
     let (s, n) = store_with_tunnel().await;
     assert_eq!(n, "wg0");
     let t = &list_interfaces(&s).await.unwrap()[0];
-    assert_eq!(t.listen_port, DEFAULT_PORT);
+    assert_eq!(
+        t.listen_port.to_string(),
+        patronus_config::settings::default_of("vpn.wireguard_port")
+    );
     assert_eq!(public_key(&t.private_key).unwrap(), t.public_key);
     // a second tunnel gets the next name and port
     let n2 = save_interface(&s, None, &InterfaceInput::default())

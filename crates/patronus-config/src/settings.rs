@@ -43,6 +43,10 @@ pub enum Kind {
     Url {
         optional: bool,
     },
+    /// Comma-separated IPv4/IPv6 addresses (a resolver list); empty allowed only when `optional`.
+    Addrs {
+        optional: bool,
+    },
     /// One of a fixed set of words.
     Choice {
         options: &'static [&'static str],
@@ -300,7 +304,316 @@ pub static REGISTRY: &[Setting] = &[
         effect: "next firmware upgrade",
         table: Table::System,
     },
+    Setting {
+        key: "feeds.url_spamhaus_drop",
+        section: "Blocklist feeds",
+        label: "Spamhaus DROP URL",
+        doc: "Where the Spamhaus DROP list (IPv4 netblocks of spammers and cyber-criminals) is downloaded from when you enable that feed.",
+        kind: Kind::Url { optional: false },
+        default: "https://www.spamhaus.org/drop/drop.txt",
+        unit: "URL",
+        effect: "when the feed is next enabled",
+        table: Table::System,
+    },
+    Setting {
+        key: "feeds.url_spamhaus_edrop",
+        section: "Blocklist feeds",
+        label: "Spamhaus EDROP URL",
+        doc: "Where the Spamhaus EDROP list is downloaded from when you enable that feed.",
+        kind: Kind::Url { optional: false },
+        default: "https://www.spamhaus.org/drop/edrop.txt",
+        unit: "URL",
+        effect: "when the feed is next enabled",
+        table: Table::System,
+    },
+    Setting {
+        key: "feeds.url_spamhaus_dropv6",
+        section: "Blocklist feeds",
+        label: "Spamhaus DROPv6 URL",
+        doc: "Where the Spamhaus DROP list for IPv6 is downloaded from when you enable that feed.",
+        kind: Kind::Url { optional: false },
+        default: "https://www.spamhaus.org/drop/dropv6.txt",
+        unit: "URL",
+        effect: "when the feed is next enabled",
+        table: Table::System,
+    },
+    Setting {
+        key: "feeds.url_firehol_level1",
+        section: "Blocklist feeds",
+        label: "FireHOL level 1 URL",
+        doc: "Where the FireHOL level 1 netset is downloaded from when you enable that feed.",
+        kind: Kind::Url { optional: false },
+        default: "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset",
+        unit: "URL",
+        effect: "when the feed is next enabled",
+        table: Table::System,
+    },
+    Setting {
+        key: "feeds.url_abusech_feodo",
+        section: "Blocklist feeds",
+        label: "abuse.ch Feodo Tracker URL",
+        doc: "Where the abuse.ch Feodo Tracker botnet list is downloaded from when you enable that feed.",
+        kind: Kind::Url { optional: false },
+        default: "https://feodotracker.abuse.ch/downloads/ipblocklist.txt",
+        unit: "URL",
+        effect: "when the feed is next enabled",
+        table: Table::System,
+    },
+    Setting {
+        key: "feeds.url_abusech_sslbl",
+        section: "Blocklist feeds",
+        label: "abuse.ch SSLBL URL",
+        doc: "Where the abuse.ch SSL blacklist of botnet C&C addresses is downloaded from when you enable that feed.",
+        kind: Kind::Url { optional: false },
+        default: "https://sslbl.abuse.ch/blacklist/sslipblacklist.txt",
+        unit: "URL",
+        effect: "when the feed is next enabled",
+        table: Table::System,
+    },
+    Setting {
+        key: "feeds.url_et_compromised",
+        section: "Blocklist feeds",
+        label: "Emerging Threats compromised IPs URL",
+        doc: "Where the Emerging Threats list of compromised hosts is downloaded from when you enable that feed.",
+        kind: Kind::Url { optional: false },
+        default: "https://rules.emergingthreats.net/blockrules/compromised-ips.txt",
+        unit: "URL",
+        effect: "when the feed is next enabled",
+        table: Table::System,
+    },
+    Setting {
+        key: "feeds.geoip_db_template",
+        section: "Blocklist feeds",
+        label: "GeoIP database download template",
+        doc: "Address of the monthly country database; {year} and {month} (two digits) are replaced, the current month is tried first and last month's file is the fallback. A custom address on the Firewall page's GeoIP box wins over this.",
+        kind: Kind::Text { max_len: 512 },
+        default: "https://download.db-ip.com/free/dbip-country-lite-{year}-{month}.csv.gz",
+        unit: "URL template",
+        effect: "next GeoIP database refresh",
+        table: Table::System,
+    },
+    Setting {
+        key: "feeds.asn_db_template",
+        section: "Blocklist feeds",
+        label: "ASN database download template",
+        doc: "Address of the monthly ASN database used by traffic insight; {year} and {month} (two digits) are replaced, last month's file is the fallback. A custom address on the Insight page wins over this.",
+        kind: Kind::Text { max_len: 512 },
+        default: "https://download.db-ip.com/free/dbip-asn-lite-{year}-{month}.csv.gz",
+        unit: "URL template",
+        effect: "next ASN database refresh",
+        table: Table::System,
+    },
+    Setting {
+        key: "dns.family_lists",
+        section: "DNS filtering",
+        label: "Family filter blocklists",
+        doc: "Hosts-format blocklists that the 'family' DNS policy preset downloads and enforces.",
+        kind: Kind::Text { max_len: 2000 },
+        default: "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn-only/hosts,https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts.txt",
+        unit: "URLs, comma separated",
+        effect: "next DNS policy apply",
+        table: Table::Lan,
+    },
+    Setting {
+        key: "dns.fallback_servers",
+        section: "DNS",
+        label: "Fallback resolvers",
+        doc: "Upstream resolvers a fresh configuration forwards to until the administrator picks their own (an existing configuration keeps its servers).",
+        kind: Kind::Addrs { optional: false },
+        default: "8.8.8.8,8.8.4.4",
+        unit: "IP addresses, comma separated",
+        effect: "new configurations (first boot, reset)",
+        table: Table::System,
+    },
+    Setting {
+        key: "portal.default_redirect_url",
+        section: "Captive portal",
+        label: "Default landing page",
+        doc: "Where a guest is sent after signing in when the original page they asked for is unknown.",
+        kind: Kind::Url { optional: false },
+        default: "http://www.google.com",
+        unit: "URL",
+        effect: "at once",
+        table: Table::System,
+    },
+    Setting {
+        key: "portal.pre_auth_dns",
+        section: "Captive portal",
+        label: "Resolvers reachable before sign-in",
+        doc: "DNS servers that guests can reach before they have signed in (so the portal page can be found).",
+        kind: Kind::Addrs { optional: false },
+        default: "8.8.8.8,8.8.4.4,1.1.1.1",
+        unit: "IP addresses, comma separated",
+        effect: "next captive-portal start",
+        table: Table::System,
+    },
+    Setting {
+        key: "speedtest.down_url",
+        section: "Speed test",
+        label: "Download test URL",
+        doc: "Address the download speed test fetches; {bytes} is replaced by the test size.",
+        kind: Kind::Url { optional: false },
+        default: "https://speed.cloudflare.com/__down?bytes={bytes}",
+        unit: "URL",
+        effect: "next speed test",
+        table: Table::System,
+    },
+    Setting {
+        key: "speedtest.up_url",
+        section: "Speed test",
+        label: "Upload test URL",
+        doc: "Address the upload speed test posts to. Empty turns the upload test off.",
+        kind: Kind::Url { optional: true },
+        default: "https://speed.cloudflare.com/__up",
+        unit: "URL (empty = no upload test)",
+        effect: "next speed test",
+        table: Table::System,
+    },
+    Setting {
+        key: "speedtest.bytes_down",
+        section: "Speed test",
+        label: "Download test size",
+        doc: "How much data the download speed test fetches.",
+        kind: Kind::Int { min: 100_000, max: 1_000_000_000 },
+        default: "25000000",
+        unit: "bytes",
+        effect: "next speed test",
+        table: Table::System,
+    },
+    Setting {
+        key: "speedtest.bytes_up",
+        section: "Speed test",
+        label: "Upload test size",
+        doc: "How much data the upload speed test sends.",
+        kind: Kind::Int { min: 100_000, max: 1_000_000_000 },
+        default: "10000000",
+        unit: "bytes",
+        effect: "next speed test",
+        table: Table::System,
+    },
+    Setting {
+        key: "speedtest.interval_hours",
+        section: "Speed test",
+        label: "Scheduled test interval",
+        doc: "How often a speed test runs by itself; 0 runs tests only on demand.",
+        kind: Kind::Int { min: 0, max: 168 },
+        default: "0",
+        unit: "hours (0 = off)",
+        effect: "next scheduler tick",
+        table: Table::System,
+    },
+    Setting {
+        key: "feeds.ipdeny_aggregated_template",
+        section: "Blocklist feeds",
+        label: "Country block list (aggregated) template",
+        doc: "Where the country IP list generator downloads aggregated per-country zones from; {cc} is the lower-case country code.",
+        kind: Kind::Text { max_len: 512 },
+        default: "https://www.ipdeny.com/ipblocks/data/aggregated/{cc}-aggregated.zone",
+        unit: "URL template",
+        effect: "next country list download",
+        table: Table::System,
+    },
+    Setting {
+        key: "feeds.ipdeny_country_template",
+        section: "Blocklist feeds",
+        label: "Country block list template",
+        doc: "Where the legacy country IP list generator downloads per-country zones from; {cc} is the lower-case country code.",
+        kind: Kind::Text { max_len: 512 },
+        default: "https://www.ipdeny.com/ipblocks/data/countries/{cc}.zone",
+        unit: "URL template",
+        effect: "next country list download",
+        table: Table::System,
+    },
+    Setting {
+        key: "seg.time_portal_port",
+        section: "Device segmentation",
+        label: "Time's-up page port",
+        doc: "Plain-HTTP port of the page a device sees when its daily time limit is used up (the firewall redirects HTTP to it).",
+        kind: Kind::Int { min: 1024, max: 65_535 },
+        default: "8081",
+        unit: "TCP port",
+        effect: "next time-limit apply",
+        table: Table::Lan,
+    },
+    Setting {
+        key: "upnp.control_port",
+        section: "UPnP / NAT-PMP",
+        label: "UPnP control port",
+        doc: "TCP port of miniupnpd's control URL on the LAN side (opened on the served interface only).",
+        kind: Kind::Int { min: 1024, max: 65_535 },
+        default: "5000",
+        unit: "TCP port",
+        effect: "next UPnP apply",
+        table: Table::Lan,
+    },
+    Setting {
+        key: "proxy.port",
+        section: "Web proxy",
+        label: "Proxy port",
+        doc: "Port Squid listens on for proxy clients (the Web proxy page edits the same value).",
+        kind: Kind::Int { min: 1025, max: 65_535 },
+        default: "3128",
+        unit: "TCP port",
+        effect: "next web proxy apply",
+        table: Table::Lan,
+    },
+    Setting {
+        key: "network.vxlan_port",
+        section: "VPN and overlay",
+        label: "Default VXLAN port",
+        doc: "UDP destination port of a VXLAN overlay that does not set its own.",
+        kind: Kind::Port,
+        default: "4789",
+        unit: "UDP port",
+        effect: "next overlay apply",
+        table: Table::System,
+    },
+    Setting {
+        key: "vpn.wireguard_port",
+        section: "VPN and overlay",
+        label: "Default WireGuard port",
+        doc: "First listen port offered to a new WireGuard tunnel (the next free port from here is used).",
+        kind: Kind::Port,
+        default: "51820",
+        unit: "UDP port",
+        effect: "new WireGuard tunnels",
+        table: Table::System,
+    },
+    Setting {
+        key: "vpn.openvpn_port",
+        section: "VPN and overlay",
+        label: "Default OpenVPN port",
+        doc: "Listen port a new OpenVPN server starts with.",
+        kind: Kind::Port,
+        default: "1194",
+        unit: "port",
+        effect: "new OpenVPN servers",
+        table: Table::System,
+    },
+    Setting {
+        key: "gitops.webhook_port",
+        section: "GitOps",
+        label: "Webhook listen port",
+        doc: "Port the GitOps webhook receiver listens on (bound to the webhook's listen address).",
+        kind: Kind::Port,
+        default: "9999",
+        unit: "TCP port",
+        effect: "next GitOps watch start",
+        table: Table::System,
+    },
 ];
+
+/// Registered default of `key` (for code that has no store at hand, such as a form's pre-filled
+/// value or a CLI fallback). Panics in debug builds on an unregistered key.
+pub fn default_of(key: &str) -> &'static str {
+    match find(key) {
+        Some(s) => s.default,
+        None => {
+            debug_assert!(false, "unregistered setting {key}");
+            ""
+        }
+    }
+}
 
 /// Registry entry for `key`.
 pub fn find(key: &str) -> Option<&'static Setting> {
@@ -363,6 +676,26 @@ pub fn validate(s: &Setting, value: &str) -> Result<String> {
                     s.key
                 )))
             }
+        }
+        Kind::Addrs { optional } => {
+            let parts: Vec<&str> = v
+                .split(',')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .collect();
+            if parts.is_empty() && optional {
+                return Ok(String::new());
+            }
+            if parts.is_empty()
+                || parts.len() > 16
+                || parts.iter().any(|p| p.parse::<std::net::IpAddr>().is_err())
+            {
+                return Err(invalid(format!(
+                    "{}: {value:?} is not a comma-separated list of IP addresses (1-16)",
+                    s.key
+                )));
+            }
+            Ok(parts.join(","))
         }
         Kind::Choice { options } => {
             if options.contains(&v) {
@@ -469,7 +802,8 @@ pub const DEFAULT_CHANGE_HOOK: &str = "/usr/libexec/patronus/settings-env";
 /// After a stored change: let the boot/helper scripts see it without waiting for the next boot
 /// (`settings-env refresh`). Fire and forget: a failing hook never fails the change.
 pub fn notify_changed() {
-    let hook = std::env::var("PATRONUS_SETTINGS_HOOK").unwrap_or_else(|_| DEFAULT_CHANGE_HOOK.into());
+    let hook =
+        std::env::var("PATRONUS_SETTINGS_HOOK").unwrap_or_else(|_| DEFAULT_CHANGE_HOOK.into());
     if hook.is_empty() || !std::path::Path::new(&hook).exists() {
         return;
     }
@@ -699,6 +1033,7 @@ mod tests {
                 Kind::Port => if k.default == "1024" { "1025" } else { "1024" }.to_string(),
                 Kind::Text { .. } => format!("v{i}"),
                 Kind::Url { .. } => format!("https://example.test/{i}"),
+                Kind::Addrs { .. } => format!("192.0.2.{}", i % 250 + 1),
                 Kind::Choice { options } => options
                     .iter()
                     .find(|o| **o != k.default)
@@ -739,7 +1074,11 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let hook = d.path().join("hook.sh");
         let out = d.path().join("out");
-        std::fs::write(&hook, format!("#!/bin/sh\necho \"$1\" >> {}\n", out.display())).unwrap();
+        std::fs::write(
+            &hook,
+            format!("#!/bin/sh\necho \"$1\" >> {}\n", out.display()),
+        )
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -751,14 +1090,20 @@ mod tests {
         reset(&s, "web.login_max_failures").await.unwrap();
         std::env::remove_var("PATRONUS_SETTINGS_HOOK");
         for _ in 0..50 {
-            if std::fs::read_to_string(&out).map(|t| t.lines().count() >= 2).unwrap_or(false) {
+            if std::fs::read_to_string(&out)
+                .map(|t| t.lines().count() >= 2)
+                .unwrap_or(false)
+            {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
         // other tests set values at the same time and may trigger it too: at least our two
         let t = std::fs::read_to_string(&out).unwrap();
-        assert!(t.lines().count() >= 2 && t.lines().all(|l| l == "refresh"), "{t:?}");
+        assert!(
+            t.lines().count() >= 2 && t.lines().all(|l| l == "refresh"),
+            "{t:?}"
+        );
     }
 
     #[tokio::test]

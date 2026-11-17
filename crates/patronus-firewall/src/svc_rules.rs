@@ -272,12 +272,14 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
             u.get("ext_interface").map(String::as_str).unwrap_or("@wan"),
         )
         .await;
+        // setting `upnp.control_port` (the port miniupnpd is rendered with)
+        let control = patronus_config::settings::get_i64(store, "upnp.control_port").await?;
         for d in &lan_devs {
             out.filter.push(format!(
                 "add rule {t} input iifname \"{d}\" udp dport {{ 1900, 5351 }} accept comment \"UPnP/NAT-PMP\""
             ));
             out.filter.push(format!(
-                "add rule {t} input iifname \"{d}\" tcp dport 5000 accept comment \"UPnP control\""
+                "add rule {t} input iifname \"{d}\" tcp dport {control} accept comment \"UPnP control\""
             ));
             for w in &wan_devs {
                 out.filter.push(format!(
@@ -369,7 +371,8 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
     // --- web proxy: the proxy ports on the LAN side; optional interception
     let px = settings(store, "proxy").await?;
     if on(&px, "enabled") {
-        let port: u16 = px.get("port").and_then(|p| p.parse().ok()).unwrap_or(3128);
+        // setting `proxy.port` (the Web proxy page stores the same key; unset = registered default)
+        let port = patronus_config::settings::get_i64(store, "proxy.port").await?;
         let icpt = on(&px, "transparent");
         // setting `proxy.intercept_port` (the port squid is rendered with)
         let intercept = patronus_config::settings::get_i64(store, "proxy.intercept_port").await?;
@@ -523,6 +526,38 @@ mod tests {
         );
         assert!(
             r.filter.iter().any(|l| l.contains("tcp dport 8129 accept")),
+            "{r:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn service_ports_follow_their_settings() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        s.set_interface_role("eth0", Some("wan")).await.unwrap();
+        put(&s, "upnp.enabled", "1").await;
+        put(&s, "proxy.enabled", "1").await;
+        let r = svc_rules(&s).await.unwrap();
+        assert!(
+            r.filter.iter().any(|l| l.contains("tcp dport 5000 accept")),
+            "{r:?}"
+        );
+        assert!(
+            r.filter.iter().any(|l| l.contains("tcp dport 3128 accept")),
+            "{r:?}"
+        );
+        patronus_config::settings::set(&s, "upnp.control_port", "5555")
+            .await
+            .unwrap();
+        // the Web proxy page and the registry share one key
+        put(&s, "proxy.port", "3999").await;
+        let r = svc_rules(&s).await.unwrap();
+        assert!(
+            r.filter.iter().any(|l| l.contains("tcp dport 5555 accept")),
+            "{r:?}"
+        );
+        assert!(
+            r.filter.iter().any(|l| l.contains("tcp dport 3999 accept")),
             "{r:?}"
         );
     }
