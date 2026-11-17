@@ -9,6 +9,15 @@
 //! restarted only when the file changed. The main `rsyslog.conf` must include
 //! `/etc/rsyslog.d`; if it does not, apply fails with that message rather
 //! than pretending to forward.
+//!
+//! Without rsyslog, the embedded tier's busybox syslogd is the backend
+//! (its launcher `/usr/libexec/patronus/syslogd` is the contract): Patronus
+//! owns `/etc/patronus/syslogd-remote.conf`, one `host:port` per line, which
+//! the launcher turns into `syslogd -L -R host:port ...`, and restarts the
+//! `patronus-syslogd` service when it changes. busybox forwards over UDP
+//! only (a TCP collector is refused, never silently sent over UDP) and has
+//! no per-destination severity filter (every severity is forwarded; the
+//! apply report says so).
 
 use crate::lan::{self, LanEnv, ManagedFile};
 use crate::svc::{self, Coll, Field, Kind, Spec, Svc};
@@ -21,6 +30,30 @@ use serde_json::{json, Value};
 pub const CONF: &str = "/etc/rsyslog.d/50-patronus.conf";
 pub const BIN: &str = "/usr/sbin/rsyslogd";
 pub const SERVICE: &str = "rsyslog";
+
+/// busybox syslogd backend (embedded tier): the image's launcher, the file it
+/// reads the remote collectors from, and the service that runs it.
+pub const BB_LAUNCHER: &str = "/usr/libexec/patronus/syslogd";
+pub const BB_CONF: &str = "/etc/patronus/syslogd-remote.conf";
+pub const BB_SERVICE: &str = "patronus-syslogd";
+
+/// Which system logger forwards: rsyslog when installed, else the embedded
+/// tier's busybox syslogd (when its launcher exists).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend {
+    Rsyslog,
+    Busybox,
+}
+
+pub fn backend(env: &LanEnv) -> Option<Backend> {
+    if env.has_binary(BIN) {
+        Some(Backend::Rsyslog)
+    } else if env.has_binary(BB_LAUNCHER) {
+        Some(Backend::Busybox)
+    } else {
+        None
+    }
+}
 
 const SEVERITIES: &[&str] = &[
     "debug", "info", "notice", "warning", "err", "crit", "alert", "emerg",
@@ -46,9 +79,10 @@ static TARGET_FIELDS: [Field; 6] = [
 static SPEC: Spec = Spec {
     slug: "syslog",
     title: "Syslog",
-    blurb: "Forward the system log to remote syslog collectors (rsyslog) and read the local log. \
-            Targets are written to /etc/rsyslog.d/50-patronus.conf and rsyslog is restarted when \
-            they change.",
+    blurb: "Forward the system log to remote syslog collectors and read the local log. With \
+            rsyslog, targets are written to /etc/rsyslog.d/50-patronus.conf and rsyslog is \
+            restarted when they change; on the embedded tier busybox syslogd forwards them over \
+            UDP (every severity).",
     applier: "syslog",
     fields: &[],
     colls: &[Coll {
@@ -136,6 +170,47 @@ pub fn render(t: &[Target]) -> String {
     c
 }
 
+/// The busybox syslogd collector list (`BB_CONF`): one `host:port` per
+/// line (`[v6]:port` for IPv6), read by the launcher as `-R` arguments.
+pub fn render_busybox(t: &[Target]) -> String {
+    let mut c = lan::header("#", "busybox syslogd: remote collectors, UDP");
+    if t.is_empty() {
+        c.push_str("# no remote collectors configured\n");
+    }
+    for x in t {
+        if x.host.contains(':') {
+            c.push_str(&format!("[{}]:{}\n", x.host, x.port));
+        } else {
+            c.push_str(&format!("{}:{}\n", x.host, x.port));
+        }
+    }
+    c
+}
+
+/// Targets busybox syslogd cannot honour: TCP is refused (busybox sends UDP
+/// only), a severity filter is a warning (busybox forwards every severity).
+pub fn busybox_limits(t: &[Target]) -> Result<Vec<String>> {
+    if let Some(x) = t.iter().find(|x| x.proto != "udp") {
+        return Err(Error::Config(format!(
+            "Invalid request: collector {}:{} is set to {}, but this device's system logger \
+             (busybox syslogd) forwards over UDP only; choose udp",
+            x.host,
+            x.port,
+            x.proto.to_uppercase()
+        )));
+    }
+    Ok(t.iter()
+        .filter(|x| x.severity != "debug")
+        .map(|x| {
+            format!(
+                "collector {}:{}: busybox syslogd has no per-collector severity filter, so every \
+                 severity is forwarded (not only {} and above)",
+                x.host, x.port, x.severity
+            )
+        })
+        .collect())
+}
+
 /// Does the main rsyslog config read `/etc/rsyslog.d`?
 pub fn includes_dropins(main_conf: &str) -> bool {
     main_conf
@@ -181,6 +256,41 @@ impl SyslogApplier {
     pub fn new(env: LanEnv) -> Self {
         Self { env }
     }
+
+    /// busybox syslogd: write the collector list, restart the logger when it
+    /// changed (or is not running while collectors are configured).
+    fn apply_busybox(&self, t: &[Target], mut rep: ApplyReport) -> Result<ApplyReport> {
+        let managed = lan::is_managed(&self.env, BB_CONF);
+        if t.is_empty() && !managed {
+            rep.applied("no syslog forwarding configured (busybox syslogd untouched)");
+            return Ok(rep);
+        }
+        for w in busybox_limits(t)? {
+            rep.warn(w);
+        }
+        let changed = lan::install(
+            &self.env,
+            &ManagedFile {
+                path: BB_CONF,
+                content: render_busybox(t),
+                mode: 0o644,
+                group: None,
+                check: None,
+            },
+        )?;
+        if changed {
+            rep.applied(format!("wrote {BB_CONF}"));
+        }
+        if changed || (!t.is_empty() && !self.env.services.is_running(BB_SERVICE)) {
+            self.env.services.restart(BB_SERVICE)?;
+            rep.applied(format!("{BB_SERVICE} restarted"));
+        }
+        rep.applied(format!(
+            "{} remote syslog target(s) (busybox syslogd, UDP)",
+            t.len()
+        ));
+        Ok(rep)
+    }
 }
 
 #[async_trait]
@@ -196,6 +306,9 @@ impl Applier for SyslogApplier {
     async fn apply(&self, store: &ConfigStore) -> Result<ApplyReport> {
         let mut rep = ApplyReport::default();
         let t = targets(store).await?;
+        if backend(&self.env) == Some(Backend::Busybox) {
+            return self.apply_busybox(&t, rep);
+        }
         let managed = lan::is_managed(&self.env, CONF);
         if t.is_empty() && !managed {
             rep.applied("no syslog forwarding configured (rsyslog untouched)");
@@ -240,16 +353,30 @@ impl Applier for SyslogApplier {
     }
 
     async fn render(&self, store: &ConfigStore) -> Result<String> {
-        Ok(format!("## {CONF}\n{}", render(&targets(store).await?)))
+        let t = targets(store).await?;
+        if backend(&self.env) == Some(Backend::Busybox) {
+            return Ok(format!("## {BB_CONF} (busybox syslogd)\n{}", render_busybox(&t)));
+        }
+        Ok(format!("## {CONF}\n{}", render(&t)))
     }
 
     async fn status(&self, store: &ConfigStore) -> Result<Value> {
         let t = targets(store).await?;
+        let b = backend(&self.env);
+        let (service, conf) = match b {
+            Some(Backend::Busybox) => (BB_SERVICE, BB_CONF),
+            _ => (SERVICE, CONF),
+        };
         Ok(json!({
-            "installed": self.env.has_binary(BIN),
-            "running": self.env.services.is_running(SERVICE),
-            "managed_file": lan::is_managed(&self.env, CONF),
-            "forwarding_to": t.iter().map(|x| format!("{}:{}/{} (>= {})", x.host, x.port, x.proto, x.severity)).collect::<Vec<_>>(),
+            "backend": match b { Some(Backend::Rsyslog) => "rsyslog", Some(Backend::Busybox) => "busybox", None => "none" },
+            "installed": b.is_some(),
+            "running": self.env.services.is_running(service),
+            "managed_file": lan::is_managed(&self.env, conf),
+            "forwarding_to": t.iter().map(|x| if b == Some(Backend::Busybox) {
+                format!("{}:{}/udp (all severities)", x.host, x.port)
+            } else {
+                format!("{}:{}/{} (>= {})", x.host, x.port, x.proto, x.severity)
+            }).collect::<Vec<_>>(),
             "recent_log": recent_log(&self.env, 40),
         }))
     }
@@ -341,6 +468,77 @@ mod tests {
             t.services.log.lock().unwrap().len() > before,
             "removal restarts rsyslog"
         );
+    }
+
+    #[tokio::test]
+    async fn busybox_backend_writes_udp_collectors_and_refuses_tcp() {
+        let t = testutil::env(&[BB_LAUNCHER]);
+        let s = testutil::store().await;
+        std::fs::create_dir_all(t.env.path("/etc/patronus")).unwrap();
+        assert_eq!(backend(&t.env), Some(Backend::Busybox));
+        let a = SyslogApplier::new(t.env.clone());
+        // nothing configured: no file, no restart
+        a.apply(&s).await.unwrap();
+        assert!(!t.env.has_binary(BB_CONF));
+        assert!(t.services.log.lock().unwrap().is_empty());
+        let id = add(
+            &s,
+            json!({"host": "192.0.2.9", "port": 5140, "severity": "warning"}),
+        )
+        .await
+        .unwrap();
+        add(&s, json!({"host": "2001:db8::7", "severity": "debug"}))
+            .await
+            .unwrap();
+        let rep = a.apply(&s).await.unwrap();
+        let c = read(&t, BB_CONF);
+        assert!(lan::is_managed(&t.env, BB_CONF));
+        assert!(c.contains("\n192.0.2.9:5140\n"), "{c}");
+        assert!(c.contains("\n[2001:db8::7]:514\n"), "{c}");
+        assert!(!c.contains("omfwd"));
+        assert!(t.services.is_running(BB_SERVICE));
+        assert!(!t.services.is_running(SERVICE), "rsyslog is not the backend");
+        // the severity filter busybox cannot honour is reported, not hidden
+        assert_eq!(rep.warnings.len(), 1, "{:?}", rep.warnings);
+        assert!(rep.warnings[0].contains("every severity"));
+        let before = t.services.log.lock().unwrap().len();
+        a.apply(&s).await.unwrap();
+        assert_eq!(
+            t.services.log.lock().unwrap().len(),
+            before,
+            "unchanged apply must not restart"
+        );
+        // TCP cannot be honoured by busybox: refused, the file keeps the UDP list
+        let tcp = add(&s, json!({"host": "198.51.100.4", "proto": "tcp"}))
+            .await
+            .unwrap();
+        let e = a.apply(&s).await.unwrap_err();
+        assert!(
+            e.to_string().contains("UDP only") && e.to_string().starts_with("Invalid"),
+            "{e}"
+        );
+        assert!(!read(&t, BB_CONF).contains("198.51.100.4"));
+        svc::delete_row(&s, &SPEC.colls[0], tcp).await.unwrap();
+        // removing every collector empties the list and restarts the logger
+        svc::delete_row(&s, &SPEC.colls[0], id).await.unwrap();
+        a.apply(&s).await.unwrap();
+        let c = read(&t, BB_CONF);
+        assert!(!c.contains("192.0.2.9") && c.contains("[2001:db8::7]:514"));
+        assert!(t.services.log.lock().unwrap().len() > before);
+        let st = a.status(&s).await.unwrap();
+        assert_eq!(st["backend"], "busybox");
+        assert_eq!(st["installed"], true);
+        assert_eq!(st["running"], true);
+    }
+
+    #[test]
+    fn rsyslog_wins_over_busybox_when_both_exist() {
+        let t = testutil::env(&[BIN, BB_LAUNCHER]);
+        assert_eq!(backend(&t.env), Some(Backend::Rsyslog));
+        let t = testutil::env(&[]);
+        assert_eq!(backend(&t.env), None);
+        let r = render_busybox(&[]);
+        assert!(r.contains(lan::MARKER) && r.contains("no remote collectors"));
     }
 
     #[tokio::test]

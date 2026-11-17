@@ -14,7 +14,7 @@ K=${VIRT_KERNEL:?VIRT_KERNEL}; KEY=${UNIT_DIR:?UNIT_DIR}/ci_ed25519
 RES=${RESULTS:-/out/qemu-$INIT}; mkdir -p "$RES"; : > "$RES/results.txt"
 TMO=${BOOT_TIMEOUT:-1200}
 SQ=$(ls "$I"/root.squashfs); TAR=$(ls "$I"/patronus-*-sysupgrade.tar)
-QP=; W=$(mktemp -d "${TMPDIR:-/tmp}/ax-qemu.XXXX"); trap 'kill $QP 2>/dev/null; rm -rf "$W"' EXIT
+QP=; SLP=; W=$(mktemp -d "${TMPDIR:-/tmp}/ax-qemu.XXXX"); trap 'kill $QP $SLP 2>/dev/null; rm -rf "$W"' EXIT
 # test copy of the root: the board's kmods replaced by the same pinned netfilter packages built for the virt kernel
 # (kmods.pin "virt"), so the firewall applies for real; everything else is the shipped image byte for byte
 unsquashfs -q -d "$W/r" "$SQ" >/dev/null || { echo "unsquashfs failed"; exit 1; }
@@ -152,6 +152,37 @@ ntp_enable() { login || return 1
   i=0; while :; do c=$(api GET /api/ntp)
     case "$(cat "$W/api.json")" in *'"enabled":true'*'"available":true'*'"running":true'*) return 0;; esac
     i=$((i+1)); [ $i -ge 12 ] && { echo "status: $(cat "$W/api.json")"; return 1; }; sleep 5; done; }
+# Syslog (feature syslog, busybox backend): a UDP collector added on the Syslog page (10.0.2.2 = this container through
+# QEMU's user net, a listener on 127.0.0.1:5514), the page's test message must arrive there; TCP is refused (UDP only)
+SYSLP=5514
+syslog_listen() { rm -f "$W/syslog-rx.txt"; python3 - "$SYSLP" "$W/syslog-rx.txt" "${1:-120}" <<'PY' &
+import socket, sys, time
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("127.0.0.1", int(sys.argv[1]))); s.settimeout(2)
+end = time.time() + int(sys.argv[3])
+with open(sys.argv[2], "ab", buffering=0) as f:
+    while time.time() < end:
+        try:
+            f.write(s.recv(4096) + b"\n")
+        except OSError:
+            pass
+PY
+  SLP=$!; sleep 1; }
+syslog_wait() { # pattern: up to 60 s for it to arrive at the listener
+  i=0; while [ $i -lt 30 ]; do grep -a "$1" "$W/syslog-rx.txt" 2>/dev/null && return 0; i=$((i+1)); sleep 2; done
+  echo "nothing matching '$1' arrived at 127.0.0.1:$SYSLP"; R 'cat /etc/patronus/syslogd-remote.conf; ps | grep [s]yslogd; tail -5 /var/log/messages'; return 1; }
+syslog_enable() { login || return 1
+  c=$(api POST /api/svc/syslog/targets "{\"host\":\"10.0.2.2\",\"port\":$SYSLP,\"proto\":\"udp\",\"severity\":\"info\",\"description\":\"ci collector\"}")
+  case "$c" in 200|201) ;; *) echo "add collector: HTTP $c $(cat "$W/api.json")"; return 1;; esac
+  i=0; while :; do o=$(R "cat /etc/patronus/syslogd-remote.conf; cat /proc/\$(pgrep -x syslogd)/cmdline | tr '\\0' ' '" 2>&1)
+    case "$o" in *"-R 10.0.2.2:$SYSLP"*"-L"*) break;; esac
+    i=$((i+1)); [ $i -ge 10 ] && { echo "$o"; echo "syslogd does not forward to 10.0.2.2:$SYSLP"; return 1; }; sleep 3; done; echo "$o"
+  c=$(api GET /api/svc/syslog); case "$(cat "$W/api.json")" in *'"backend":"busybox"'*) ;; *) echo "status: $(cat "$W/api.json" | head -c 600)"; return 1;; esac; }
+syslog_test_msg() { c=$(api POST /api/svc/syslog/action/test '{}'); [ "$c" = 200 ] || { echo "test action: HTTP $c $(cat "$W/api.json")"; return 1; }
+  syslog_wait 'Patronus syslog test message'; }
+syslog_boot2() { R "logger -t ci-gate forwarded-after-restart-$INIT" && syslog_wait "forwarded-after-restart-$INIT"; }
+syslog_tcp_refused() { c=$(api POST /api/svc/syslog/targets '{"host":"10.0.2.2","port":6514,"proto":"tcp"}')
+  [ "$c" = 400 ] && grep -F 'UDP only' "$W/api.json" >/dev/null || { echo "TCP collector: HTTP $c $(cat "$W/api.json")"; return 1; }
+  R '! grep -q 6514 /etc/patronus/syslogd-remote.conf'; }
 
 # fake UBI + board for the flash-guard checks (QEMU has no UBI and is not a GL-AX1800)
 FAKES='mkdir -p /tmp/fk && printf "glinet,gl-ax1800\0qcom,ipq6018\0" > /tmp/fk/compat && cat > /tmp/fk/ubinfo <<"EOF"
@@ -192,6 +223,12 @@ if has_feature ntp-server; then
   check "NTP server page: switched on through the web API, chrony.conf serves the LAN subnet, status running" ntp_enable
   check "NTP server: answers an NTP query from the LAN" ntp_query
 else echo "SKIP: NTP server (not in FEATURES=$FEATURES)" | tee -a "$RES/results.txt"; fi
+if has_feature syslog; then
+  syslog_listen 900
+  check "Syslog page: a UDP collector added through the web API, busybox syslogd restarted with -R ... -L" syslog_enable
+  check "Syslog page: the test message arrives at the collector" syslog_test_msg
+  check "Syslog page: a TCP collector is refused (busybox forwards over UDP only), nothing written" syslog_tcp_refused
+else echo "SKIP: Syslog (not in FEATURES=$FEATURES)" | tee -a "$RES/results.txt"; fi
 scp -O -q "${SSHO[@]}" -P $SSHP "$TAR" root@127.0.0.1:/data/up.tar || fail "scp image into the guest"
 refuse_board() { o=$(R 'patronus-flash check /data/up.tar' 2>&1) && { echo "accepted: $o"; return 1; }; case "$o" in *"image is for glinet,gl-ax1800"*) ;; *) echo "$o"; return 1;; esac; }
 check "flash guard: refuses on a non-GL-AX1800 board" refuse_board
@@ -222,6 +259,10 @@ if has_feature vpn-wireguard; then
 fi
 if has_feature ntp-server; then
   check "boot 2: NTP server still on (chrony.conf persisted), answers on the LAN" ntp_query
+fi
+if has_feature syslog; then
+  kill $SLP 2>/dev/null; syslog_listen 300
+  check "boot 2: collector list persisted, syslogd forwards from boot (a logger message arrives)" syslog_boot2
 fi
 R 'free -k; cat /tmp/boot-times; ps -o rss,comm | sort -n | tail -8; df -k /data' > "$RES/boot2-stats.txt" 2>&1
 { echo "init=$INIT accel=$ACCEL"; grep -E '^Mem:' "$RES/boot2-stats.txt"; grep -E 'exec-|patronus-started|network-up' "$RES/boot2-stats.txt"; } >> "$RES/summary.txt"

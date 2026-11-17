@@ -1,9 +1,8 @@
 #!/sbin/openrc-run
 # System log: busybox syslogd on /dev/log -> /var/log/messages (tmpfs; 256 KiB + one rotated file). The web UI's log
 # viewer reads it (PATRONUS_SYSLOG default). Kernel messages: patronus-klogd.
-description="System log (busybox syslogd -> /var/log/messages)"
-command=/bin/syslogd
-command_args="-n -O /var/log/messages -s 256 -b 1"
+description="System log (busybox syslogd -> /var/log/messages, remote collectors of the Syslog page)"
+command=/usr/libexec/patronus/syslogd
 supervisor=supervise-daemon
 respawn_delay=2
 depend() {

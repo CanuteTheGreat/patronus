@@ -10,7 +10,7 @@ export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-/out/target}
 export RUSTFLAGS="-C target-feature=-crt-static"
 export CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_PANIC=abort CARGO_PROFILE_RELEASE_STRIP=true
 export OPENSSL_STATIC=1 OPENSSL_DIR=/usr CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-4}
-FEATURES=${CLI_FEATURES:-nftables,cli,dhcp-server,dns-server,uci-import,wifi-ap,web-multicall,vpn-wireguard,ntp-server}
+FEATURES=${CLI_FEATURES:-nftables,cli,dhcp-server,dns-server,uci-import,wifi-ap,web-multicall,vpn-wireguard,ntp-server,syslog}
 cd /w/src
 echo "== $(date -u +%T) cargo build patronus-cli ($FEATURES)"
 cargo build --release --target $T -p patronus-cli --no-default-features --features "$FEATURES" > /out/build-patronus-cli.log 2>&1

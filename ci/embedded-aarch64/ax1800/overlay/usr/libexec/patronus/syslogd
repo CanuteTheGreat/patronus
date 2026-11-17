@@ -1,0 +1,15 @@
+#!/bin/sh
+# System log of both init systems (OpenRC patronus-syslogd, systemd patronus-syslogd.service): busybox syslogd on /dev/log
+# -> /var/log/messages (tmpfs; 256 KiB + one rotated file; the web UI's log viewer reads it). The Syslog page's remote
+# collectors (patronus-network syslog.rs, busybox backend) are one host:port per line in /etc/patronus/syslogd-remote.conf:
+# each becomes -R host:port (UDP), and -L keeps the local copy. The page restarts the service after changing the file.
+set -- -n -O /var/log/messages -s 256 -b 1
+n=0
+if [ -f /etc/patronus/syslogd-remote.conf ]; then
+  while read -r t _; do
+    case "$t" in ''|\#*) continue;; esac
+    set -- "$@" -R "$t"; n=$((n+1))
+  done < /etc/patronus/syslogd-remote.conf
+fi
+[ $n -gt 0 ] && set -- "$@" -L
+exec /bin/syslogd "$@"

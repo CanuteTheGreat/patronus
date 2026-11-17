@@ -36,6 +36,10 @@ if has_feature vpn-wireguard; then
   [ -e "$R/lib/modules/$KV/wireguard.ko" ] || fail "vpn-wireguard: kernel module wireguard.ko missing (kmods.pin)"
   grep -qsx wireguard "$R"/etc/modules.d/* || fail "vpn-wireguard: wireguard.ko is not loaded at boot (no /etc/modules.d line)"
 fi
+if has_feature syslog; then
+  [ -x "$R/usr/libexec/patronus/syslogd" ] || fail "syslog: no /usr/libexec/patronus/syslogd (the Syslog page's busybox backend: remote collectors -> syslogd -R)"
+  grep -q /usr/libexec/patronus/syslogd "$R/etc/init.d/patronus-syslogd" "$R/etc/systemd/system/patronus-syslogd.service" 2>/dev/null || fail "syslog: patronus-syslogd does not run the launcher (remote collectors would be ignored)"
+fi
 # the clock (no RTC) and the NTP server page (ntp-server) are one daemon: chrony, run as its own user, service chronyd
 [ -x "$R/usr/sbin/chronyd" ] || fail "no /usr/sbin/chronyd (the box would never get the time)"
 grep -q '^chrony:' "$R/etc/passwd" && grep -q '^chrony:' "$R/etc/group" || fail "no chrony user/group (chronyd drops root to it)"
