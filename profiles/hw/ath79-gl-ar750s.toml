@@ -71,7 +71,8 @@ firmware_kib   = 16000   # == OpenWrt file_size_limits.image (16384000 bytes)
 data_min_kib   = 1024    # settings partition: jffs2 needs ~5 spare erase blocks for GC
 margin_kib     = 256     # must stay free for growth between releases
 # the ETPhoneHome rule makes the systemd NOR root not fit: the recorded overage (free KiB) the CI gate tolerates, no worse
-systemd_known_free_kib = -832
+# measured -896 on 2026-11-17 in a builder that really has wpa_supplicant, dropbear and mtd-utils (earlier numbers came from a CI image missing them)
+systemd_known_free_kib = -896
 
 [status]
 level          = "tested"
