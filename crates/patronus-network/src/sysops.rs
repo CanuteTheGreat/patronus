@@ -469,6 +469,7 @@ pub fn handle_in(dir: &Path, action: &str, params: &Value) -> Result<Value> {
     match action {
         "reboot" | "shutdown" => power(action),
         "capture" => capture(params),
+        "diag" => crate::diag::handle(params),
         #[cfg(feature = "plugins")]
         "package_job" => {
             let job = params.get("job").and_then(Value::as_i64).unwrap_or(0);

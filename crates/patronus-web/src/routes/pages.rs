@@ -176,6 +176,21 @@ pub async fn monitoring(State(state): State<AppState>) -> Response {
 }
 
 /// System page: host facts, users, backups, services.
+/// Diagnostics page (static shell; the tools run through `/api/system/diag`).
+pub async fn diagnostics(me: crate::auth::AuthUser) -> Response {
+    let t = crate::templates::DiagnosticsTemplate {
+        page: "diagnostics",
+        is_admin: me.session.role.is_admin(),
+    };
+    match t.render() {
+        Ok(h) => Html(h).into_response(),
+        Err(e) => {
+            tracing::error!("render diagnostics page: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
+        }
+    }
+}
+
 pub async fn system(State(state): State<AppState>, me: crate::auth::AuthUser) -> Response {
     let users = crate::routes::api::system::users(&state).await;
     let me_two_factor = users

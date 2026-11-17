@@ -411,6 +411,7 @@ async fn routes_services_updates_and_pages_are_live_or_honest() {
         "/network",
         "/vpn",
         "/routing",
+        "/diagnostics",
     ] {
         let (s, page) = a.call(Method::GET, uri, None).await;
         assert_eq!(s, StatusCode::OK, "{uri}");
@@ -499,6 +500,7 @@ async fn page_assets_and_the_favicon_are_served() {
         "/routing",
         "/monitoring",
         "/system",
+        "/diagnostics",
         "/login",
     ];
     for page in pages {

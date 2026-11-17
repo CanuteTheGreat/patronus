@@ -34,6 +34,13 @@ pub const CATALOG: &[Component] = &[
         binary: "igmpproxy",
     },
     Component {
+        id: "avahi",
+        feature: "mdns",
+        title: "mDNS repeater (Avahi)",
+        atom: "net-dns/avahi",
+        binary: "avahi-daemon",
+    },
+    Component {
         id: "miniupnpd",
         feature: "upnp",
         title: "UPnP / NAT-PMP daemon",

@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}Diagnostics - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Diagnostics</h1>
+    <p class="page-subtitle">Ping, traceroute and DNS lookups from the router itself, and its neighbour,
+        routing and socket tables. Packet capture is on the <a href="/system#capture-card">System</a> page.</p>
+</div>
+
+{% if !is_admin %}
+<div class="alert-error">Diagnostics need an administrator account.</div>
+{% else %}
+<div class="card" id="ping-card">
+    <div class="card-header"><h2 class="card-title">Ping</h2></div>
+    <form class="lan-form" onsubmit="return runDiag(event, 'ping')">
+        <label>Host or address <input name="target" required placeholder="example.com or 192.0.2.1" maxlength="253"></label>
+        <label>Count <input name="count" type="number" min="1" max="10" value="3"></label>
+        <label>IP version <select name="family"><option value="auto">automatic</option><option value="4">IPv4</option><option value="6">IPv6</option></select></label>
+        <label>Source interface <input name="interface" placeholder="(routing decides)" maxlength="15"></label>
+        <label>Payload bytes <input name="size" type="number" min="1" max="1472" value="56"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Ping</button>
+    </form>
+    <p class="text-sm" id="ping-status"></p>
+    <pre class="mono text-sm" id="ping-out" style="max-height:20em;overflow:auto;white-space:pre-wrap"></pre>
+</div>
+
+<div class="card" id="traceroute-card">
+    <div class="card-header"><h2 class="card-title">Traceroute</h2></div>
+    <form class="lan-form" onsubmit="return runDiag(event, 'traceroute')">
+        <label>Host or address <input name="target" required placeholder="example.com" maxlength="253"></label>
+        <label>Max hops <input name="max_hops" type="number" min="1" max="30" value="15"></label>
+        <label>IP version <select name="family"><option value="auto">automatic</option><option value="4">IPv4</option><option value="6">IPv6</option></select></label>
+        <label>Source interface <input name="interface" placeholder="(routing decides)" maxlength="15"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Trace</button>
+    </form>
+    <p class="text-sm" id="traceroute-status"></p>
+    <pre class="mono text-sm" id="traceroute-out" style="max-height:20em;overflow:auto;white-space:pre-wrap"></pre>
+</div>
+
+<div class="card" id="dns-card">
+    <div class="card-header"><h2 class="card-title">DNS lookup</h2></div>
+    <form class="lan-form" onsubmit="return runDiag(event, 'dns')">
+        <label>Name (or an address for a reverse lookup) <input name="name" required placeholder="example.com" maxlength="253"></label>
+        <label>Record type <select name="type">
+            <option>A</option><option>AAAA</option><option>CNAME</option><option>MX</option><option>TXT</option>
+            <option>NS</option><option>SOA</option><option>SRV</option><option>CAA</option><option>PTR</option></select></label>
+        <label>Server <input name="server" placeholder="(the router's resolver)"></label>
+        <button class="btn btn-primary btn-sm" type="submit">Look up</button>
+    </form>
+    <p class="text-sm" id="dns-status"></p>
+    <table class="table" id="dns-table" style="display:none"><thead><tr><th>Name</th><th>Type</th><th>TTL</th><th>Data</th></tr></thead><tbody></tbody></table>
+</div>
+
+<div class="card" id="neighbors-card">
+    <div class="card-header"><h2 class="card-title">ARP / NDP table</h2>
+        <button class="btn btn-sm" onclick="loadTable('neighbors')">Refresh</button></div>
+    <table class="table" id="neighbors-table"><thead><tr><th>Address</th><th>MAC</th><th>Interface</th><th>State</th></tr></thead><tbody><tr><td colspan="4" class="text-muted">Loading...</td></tr></tbody></table>
+</div>
+
+<div class="card" id="routes-card">
+    <div class="card-header"><h2 class="card-title">Routing tables</h2>
+        <button class="btn btn-sm" onclick="loadTable('routes')">Refresh</button></div>
+    <p class="text-sm text-muted">All tables except the kernel's local table, then the policy rules.</p>
+    <pre class="mono text-sm" id="routes-out" style="max-height:24em;overflow:auto;white-space:pre"></pre>
+</div>
+
+<div class="card" id="sockets-card">
+    <div class="card-header"><h2 class="card-title">Listening sockets</h2>
+        <button class="btn btn-sm" onclick="loadTable('sockets')">Refresh</button></div>
+    <pre class="mono text-sm" id="sockets-out" style="max-height:24em;overflow:auto;white-space:pre"></pre>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    async function diag(body) {
+        const r = await fetch('/api/system/diag', {
+            method: 'POST', credentials: 'same-origin',
+            headers: {'content-type': 'application/json'}, body: JSON.stringify(body),
+        });
+        let j = {};
+        try { j = await r.json(); } catch (_) {}
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        return j;
+    }
+    function el(id) { return document.getElementById(id); }
+    function td(text) { const c = document.createElement('td'); c.textContent = text; return c; }
+    async function runDiag(ev, tool) {
+        ev.preventDefault();
+        const f = ev.target, body = {tool};
+        for (const e of f.elements) if (e.name && e.value.trim() !== '') body[e.name] = e.type === 'number' ? Number(e.value) : e.value.trim();
+        const btn = f.querySelector('button'), st = el(tool + '-status');
+        btn.disabled = true; st.textContent = 'Running...';
+        try {
+            const j = await diag(body);
+            if (tool === 'dns') {
+                st.textContent = j.rcode + ' from ' + j.server + ' in ' + j.ms + ' ms' + (j.authenticated_data ? ' (DNSSEC validated)' : '') + (j.truncated ? ' (truncated)' : '');
+                const t = el('dns-table'), tb = t.querySelector('tbody');
+                tb.innerHTML = '';
+                for (const a of j.answers.concat(j.authority)) {
+                    const tr = document.createElement('tr');
+                    for (const k of ['name', 'type', 'ttl', 'data']) tr.appendChild(td(String(a[k])));
+                    tb.appendChild(tr);
+                }
+                t.style.display = (j.answers.length + j.authority.length) ? '' : 'none';
+            } else {
+                st.textContent = j.command + (j.received !== undefined ? ' - ' + j.received + ' of ' + j.transmitted + ' replies' : '') + (j.timed_out ? ' (time limit reached)' : '');
+                el(tool + '-out').textContent = j.output.join('\n');
+            }
+        } catch (e) { st.textContent = 'Failed: ' + e.message; }
+        btn.disabled = false;
+        return false;
+    }
+    async function loadTable(tool) {
+        try {
+            const j = await diag({tool});
+            if (tool === 'neighbors') {
+                const tb = el('neighbors-table').querySelector('tbody');
+                tb.innerHTML = '';
+                if (!j.neighbors.length) { const tr = document.createElement('tr'); const c = td('No neighbours.'); c.colSpan = 4; tr.appendChild(c); tb.appendChild(tr); }
+                for (const n of j.neighbors) {
+                    const tr = document.createElement('tr');
+                    for (const v of [n.address + (n.router ? ' (router)' : ''), n.mac || '-', n.device, n.state]) tr.appendChild(td(v));
+                    tb.appendChild(tr);
+                }
+            } else if (tool === 'routes') {
+                el('routes-out').textContent = ['# IPv4'].concat(j.ipv4, ['', '# IPv6'], j.ipv6, ['', '# IPv4 rules'], j.rules4, ['', '# IPv6 rules'], j.rules6).join('\n');
+            } else {
+                el('sockets-out').textContent = j.command + '\n\n' + j.sockets.join('\n');
+            }
+        } catch (e) {
+            const target = tool === 'neighbors' ? el('neighbors-table').querySelector('tbody') : el(tool + '-out');
+            target.textContent = 'Failed: ' + e.message;
+        }
+    }
+    if (el('neighbors-card')) { loadTable('neighbors'); loadTable('routes'); loadTable('sockets'); }
+</script>
+{% endblock %}

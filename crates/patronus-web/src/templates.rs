@@ -664,6 +664,15 @@ impl fmt::Display for LogEntry {
     }
 }
 
+/// Diagnostics page: ping, traceroute, DNS lookup and the neighbour,
+/// routing and socket tables (data from `POST /api/system/diag`).
+#[derive(Template)]
+#[template(path = "diagnostics.html")]
+pub struct DiagnosticsTemplate {
+    pub page: &'static str,
+    pub is_admin: bool,
+}
+
 /// Interfaces page (lane C). Static shell; data comes from `/api/interfaces`.
 #[derive(Template)]
 #[template(path = "interfaces.html")]

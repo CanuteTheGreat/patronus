@@ -161,6 +161,34 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- mDNS repeater: avahi-daemon receives 224.0.0.251 / ff02::fb on
+    // every reflected interface (the table may not exist on old stores)
+    let mdns = settings(store, "mdns").await?;
+    if on(&mdns, "enabled") {
+        let rows = sqlx::query("SELECT iface FROM mdns_interfaces WHERE enabled = 1")
+            .fetch_all(store.pool()?)
+            .await
+            .unwrap_or_default();
+        let mut devs: Vec<String> = Vec::new();
+        for r in rows {
+            for d in devices(store, &r.get::<String, _>(0)).await {
+                if !devs.contains(&d) {
+                    devs.push(d);
+                }
+            }
+        }
+        if devs.len() >= 2 {
+            for d in &devs {
+                out.filter.push(format!(
+                    "add rule {t} input iifname \"{d}\" udp dport 5353 ip daddr 224.0.0.251 accept comment \"mDNS repeater\""
+                ));
+                out.filter.push(format!(
+                    "add rule {t} input iifname \"{d}\" udp dport 5353 ip6 daddr ff02::fb accept comment \"mDNS repeater\""
+                ));
+            }
+        }
+    }
+
     // --- NAT64
     let n = settings(store, "nat64").await?;
     if on(&n, "enabled") {
@@ -396,6 +424,49 @@ mod tests {
         assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
         put(&s, "igmp.enabled", "0").await;
         put(&s, "nat64.enabled", "0").await;
+        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
+    }
+
+    #[tokio::test]
+    async fn mdns_repeater_accepts_5353_on_each_reflected_interface() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth0", Some("wan")).await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        put(&s, "mdns.enabled", "1").await;
+        sqlx::query(
+            "INSERT INTO mdns_interfaces (iface, enabled, updated_at) VALUES ('@lan', 1, 0)",
+        )
+        .execute(s.pool().unwrap())
+        .await
+        .unwrap();
+        // one interface is not a repeater: nothing opened
+        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
+        sqlx::query(
+            "INSERT INTO mdns_interfaces (iface, enabled, updated_at) VALUES ('eth2', 1, 0)",
+        )
+        .execute(s.pool().unwrap())
+        .await
+        .unwrap();
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        for d in ["eth1", "eth2"] {
+            assert!(
+                f.contains(&format!(
+                    "input iifname \"{d}\" udp dport 5353 ip daddr 224.0.0.251 accept"
+                )),
+                "{f}"
+            );
+            assert!(
+                f.contains(&format!(
+                    "input iifname \"{d}\" udp dport 5353 ip6 daddr ff02::fb accept"
+                )),
+                "{f}"
+            );
+        }
+        assert!(
+            !f.contains("\"eth0\" udp dport 5353"),
+            "never on the WAN: {f}"
+        );
+        put(&s, "mdns.enabled", "0").await;
         assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
     }
 

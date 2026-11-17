@@ -9,6 +9,7 @@ net-dialup/ppp
 net-misc/bridge-utils
 sys-apps/ethtool
 net-analyzer/tcpdump
+net-analyzer/traceroute
 net-analyzer/mtr
 dev-libs/elfutils
 dev-db/sqlite

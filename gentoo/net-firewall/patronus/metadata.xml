@@ -29,6 +29,7 @@
 		<flag name="plugins">Signed plugins and optional components (Packages page, patronus plugin)</flag>
 		<flag name="syslog">Forward the system log to remote collectors from the web UI (rsyslog)</flag>
 		<flag name="igmp">IGMP proxy for multicast forwarding (igmpproxy)</flag>
+		<flag name="mdns">mDNS repeater: Bonjour/AirPlay/printer discovery across LAN segments (avahi-daemon reflector)</flag>
 		<flag name="nat64">NAT64 / DNS64 for IPv6-only clients (tayga + Unbound)</flag>
 		<flag name="l2tp">L2TP server with PPP users (xl2tpd)</flag>
 		<flag name="sdwan">SD-WAN edge agent: join a Patronus SD-WAN overlay (WireGuard mesh, endpoint failover, path reporting)</flag>

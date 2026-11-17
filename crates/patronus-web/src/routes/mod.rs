@@ -44,6 +44,7 @@ pub fn build_router(
         .route("/routing", get(api::routing::page))
         .route("/monitoring", get(pages::monitoring))
         .route("/system", get(pages::system))
+        .route("/diagnostics", get(pages::diagnostics))
         .merge(api::lan::pages())
         .merge(api::ha::pages())
         .merge(api::qos::pages())
@@ -389,6 +390,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "syslog",
         "netflow",
         "igmp",
+        "mdns",
         "nat64",
         "upnp",
         "vrf",

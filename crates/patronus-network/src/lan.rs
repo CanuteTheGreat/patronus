@@ -54,6 +54,7 @@ pub const LAN_TABLES: &[&str] = &[
     // feature pages (crate::svc): syslog, IGMP proxy, L2TP, IDS, FRR, Wake-on-LAN
     "syslog_targets",
     "igmp_interfaces",
+    "mdns_interfaces",
     "l2tp_users",
     "proxy_blocked",
     "vrf_instances",
@@ -914,6 +915,8 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::netflow::NetflowApplier::default()));
     #[cfg(feature = "igmp")]
     v.push(Arc::new(crate::igmp::IgmpApplier::default()));
+    #[cfg(feature = "mdns")]
+    v.push(Arc::new(crate::mdns::MdnsApplier::default()));
     #[cfg(feature = "nat64")]
     v.push(Arc::new(crate::nat64::Nat64Applier::default()));
     #[cfg(feature = "l2tp")]

@@ -10,6 +10,7 @@ pub mod applyd;
 pub mod bond;
 pub mod bridge;
 pub mod dhcp_client;
+pub mod diag;
 pub mod general;
 pub mod interfaces;
 pub mod lan;
@@ -97,6 +98,8 @@ pub mod netflow;
 
 #[cfg(feature = "igmp")]
 pub mod igmp;
+#[cfg(feature = "mdns")]
+pub mod mdns;
 
 #[cfg(feature = "nat64")]
 pub mod nat64;

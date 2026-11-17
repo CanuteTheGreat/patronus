@@ -73,10 +73,10 @@ rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
 # scenarios start what they test, in their own namespaces)
 printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d; chmod +x /usr/sbin/policy-rc.d
 for i in 1 2 3; do apt-get update -qq && break; [ "\$i" = 3 ] && exit 1; sleep 15; done
-apt-get install -y -qq nftables iproute2 curl python3 dnsmasq-base conntrack sqlite3 iputils-ping tcpdump >/dev/null
-# lane J feature scenarios: rsyslog (syslog), softflowd (NetFlow), igmpproxy, tayga + unbound
+apt-get install -y -qq nftables iproute2 curl python3 dnsmasq-base conntrack sqlite3 iputils-ping tcpdump traceroute >/dev/null
+# lane J feature scenarios: rsyslog (syslog), softflowd (NetFlow), igmpproxy, avahi-daemon (mDNS), tayga + unbound
 # (NAT64/DNS64), xl2tpd + ppp (L2TP), suricata (IDS/IPS), frr (BGP/OSPF)
-apt-get install -y -qq --no-install-recommends rsyslog softflowd igmpproxy tayga unbound xl2tpd ppp suricata frr >/dev/null
+apt-get install -y -qq --no-install-recommends rsyslog softflowd igmpproxy tayga unbound xl2tpd ppp suricata frr avahi-daemon >/dev/null
 # lane N LDAP login: OpenLDAP (preseeded so the postinst needs no questions); installed here
 # because scenarios that ran before it leave the container without working DNS
 apt-get install -y -qq debconf-utils >/dev/null

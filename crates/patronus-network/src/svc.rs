@@ -169,6 +169,8 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     v.push(Arc::new(crate::netflow::NetflowSvc));
     #[cfg(feature = "igmp")]
     v.push(Arc::new(crate::igmp::IgmpSvc));
+    #[cfg(feature = "mdns")]
+    v.push(Arc::new(crate::mdns::MdnsSvc));
     #[cfg(feature = "nat64")]
     v.push(Arc::new(crate::nat64::Nat64Svc));
     #[cfg(feature = "l2tp")]
@@ -199,6 +201,7 @@ pub fn find(slug: &str) -> Option<Arc<dyn Svc>> {
 pub const SVC_TABLES: &[&str] = &[
     "syslog_targets",
     "igmp_interfaces",
+    "mdns_interfaces",
     "l2tp_users",
     "proxy_blocked",
     "vrf_instances",

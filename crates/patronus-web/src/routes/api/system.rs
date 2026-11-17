@@ -658,6 +658,36 @@ async fn capture(
     }
 }
 
+/// POST /api/system/diag -- ping, traceroute, DNS lookup, neighbour
+/// table, routing tables, listening sockets (admins). Body:
+/// `{"tool":"ping","target":"192.0.2.1","count":3,"family":"auto","interface":""}`,
+/// `{"tool":"traceroute","target":"example.com","max_hops":15}`,
+/// `{"tool":"dns","name":"example.com","type":"AAAA","server":""}`,
+/// `{"tool":"neighbors"|"routes"|"sockets"}`. Every field is validated
+/// (patronus_network::diag); nothing reaches a shell.
+async fn diag(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(req): Json<serde_json::Value>,
+) -> Response {
+    match state.system.system_op("diag", req).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => {
+            let m = e.to_string();
+            let code = if m.contains("Invalid") {
+                StatusCode::BAD_REQUEST
+            } else if m.contains("not installed") {
+                StatusCode::NOT_IMPLEMENTED
+            } else if m.contains("no answer from") {
+                StatusCode::GATEWAY_TIMEOUT
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            error(code, m)
+        }
+    }
+}
+
 pub fn router() -> axum::Router<AppState> {
     use axum::routing::{get, post, put};
     axum::Router::new()
@@ -681,6 +711,7 @@ pub fn router() -> axum::Router<AppState> {
         .route("/system/updates/apply", post(apply_updates))
         .route("/system/factory-reset", post(factory_reset))
         .route("/system/capture", post(capture))
+        .route("/system/diag", post(diag))
         .route("/system/general", get(get_general).put(put_general))
         .route("/system/reboot", post(reboot))
         .route("/system/shutdown", post(shutdown))
