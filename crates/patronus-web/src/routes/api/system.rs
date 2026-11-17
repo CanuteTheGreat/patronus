@@ -1072,6 +1072,9 @@ async fn diag(
             };
             error(code, m)
         }
+    }
+}
+
 /// GET /api/system/packet-steering
 async fn get_packet_steering(State(state): State<AppState>) -> Response {
     let on = state
@@ -1094,6 +1097,7 @@ struct PacketSteeringBody {
 /// over all CPUs (RPS/XPS), applied now and at every boot.
 async fn put_packet_steering(
     State(state): State<AppState>,
+    _admin: AdminUser,
     Json(b): Json<PacketSteeringBody>,
 ) -> Response {
     let store = &state.firewall.store;
