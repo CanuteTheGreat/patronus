@@ -151,7 +151,8 @@ install -m600 "$U"/dropbear_*_host_key "$R/etc/dropbear/"
 install -m600 "$U/wpa_supplicant.conf" "$R/etc/wpa_supplicant/wpa_supplicant.conf"
 if [ -f "$U/unit.conf" ]; then install -m644 "$U/unit.conf" "$R/etc/patronus/unit.conf"; fi
 for c in "$U"/hostapd/*.conf; do if [ -f "$c" ]; then install -m600 "$c" "$R/etc/hostapd/"; fi; done
-echo "$HW_DEVICE_HOSTNAME" > "$R/etc/hostname"; printf '127.0.0.1 localhost\n' > "$R/etc/hosts"
+UNIT_HOSTNAME=$(sed -n 's/^UNIT_HOSTNAME=\([A-Za-z0-9.-]*\).*/\1/p' "$U/unit.conf" 2>/dev/null | head -n1)   # per-unit name (private unit data), else the hw profile default
+echo "${UNIT_HOSTNAME:-$HW_DEVICE_HOSTNAME}" > "$R/etc/hostname"; printf '127.0.0.1 localhost\n' > "$R/etc/hosts"
 ln -sf /tmp/resolv.conf.auto "$R/etc/resolv.conf"
 ln -sf /proc/self/mounts "$R/etc/mtab"   # df/mount -o remount need it
 rm -rf "$R/var/run"; ln -s ../run "$R/var/run"   # FHS; the systemd variant's dnsmasq.service writes /var/run/dnsmasq.pid

@@ -28,6 +28,9 @@ for p in "patronus-board:patronus-network" "patronus-etph:patronus-etph" "patron
 done
 t "py_compile t_slate.py" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$D/t_slate.py"
 
+# 1a. no baked-in hostname: early boot takes it from /etc/hostname (owner rule: nothing hard-coded)
+t "early boot has no hard-coded hostname" sh -c "! grep -E '^hostname (slate|ax1800)' '$D/overlay/usr/libexec/patronus/early' '$D/../../embedded-aarch64/ax1800/overlay/usr/libexec/patronus/early'"
+
 # 1b. wifi-follow: the AP follows the uplink client's channel (stub iw/hostapd)
 t "wifi-follow (AP follows the uplink channel)" sh "$D/tests/wifi-follow-test.sh"
 

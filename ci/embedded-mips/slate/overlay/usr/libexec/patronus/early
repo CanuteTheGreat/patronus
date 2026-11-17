@@ -14,7 +14,7 @@ mount -t tmpfs -o size=16m tmpfs /tmp; mount -t tmpfs -o size=4m,mode=0755 tmpfs
 mount -t tmpfs -o size=2m tmpfs /var/log
 mount -t cgroup2 cgroup2 /sys/fs/cgroup 2>/dev/null
 mark early-start
-hostname slate
+hostname patronus   # placeholder until /etc/hostname is readable (set again after the /etc overlay is up)
 
 # 0. the safety net: revert to OpenWrt unless somebody marks this boot good (see patronus-guard)
 setsid /usr/sbin/patronus-guard arm >/dev/null 2>&1 </dev/null &
@@ -31,6 +31,7 @@ for d in etc var/lib root; do n=$(echo $d | tr / -); mkdir -p /data/overlay/$n /
 mkdir -p /var/lib/patronus /var/lib/misc /data/tls
 # package-managed login accounts of this image (owner account, keys): reconciled into the persisted /etc
 [ -x /usr/libexec/patronus/accounts-sync ] && /usr/libexec/patronus/accounts-sync 2>&1 | while IFS= read -r l; do mark "$l"; done
+[ -s /etc/hostname ] && hostname "$(head -n1 /etc/hostname)"   # the image's own /etc/hostname (UNIT_HOSTNAME in unit.conf, else the hw profile), or the user's later edit
 mark data-mounted
 
 # 2. kernel modules (OpenWrt's kmods for this exact kernel), in OpenWrt's /etc/modules.d order;
