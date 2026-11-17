@@ -13,12 +13,13 @@ if ls "$C"/*/hostapd-2.11-r*.apk >/dev/null 2>&1; then
   echo "hostapd package cached ($STAMP)"
 else
   command -v abuild >/dev/null || apk add --no-cache abuild libnl3-dev >/dev/null
-  B=$(mktemp -d /tmp/hostapd-build.XXXX)
+  B=$(mktemp -d /tmp/hostapd-build.XXXXXX)
   cp -a "$H/hostapd/." "$B/"
   export ABUILD_USERDIR=$B/.abuild SRCDEST=/cache/hostapd-src REPODEST=$B/repo
   mkdir -p "$ABUILD_USERDIR" "$SRCDEST"
   # throwaway key (the apk is installed from a local file with --allow-untrusted, never via a repository)
   abuild-keygen -a -n > /out/build-hostapd.log 2>&1
+  cp "$ABUILD_USERDIR"/*.rsa.pub /etc/apk/keys/   # abuild indexes the repo it writes and must trust its own key
   ( cd "$B" && abuild -F -r ) >> /out/build-hostapd.log 2>&1 || { tail -40 /out/build-hostapd.log; exit 1; }
   mkdir -p "$C"
   cp -a "$REPODEST"/*/. "$C/"   # <arch>/hostapd-*.apk

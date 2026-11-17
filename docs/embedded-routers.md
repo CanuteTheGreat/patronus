@@ -509,12 +509,41 @@ until its inactivity timeout. `ap-event` (`hostapd_cli -a` per BSS) removes it t
 connects on the other radio. It never touches BSSes of the same radio: hostapd already disconnects a station from its
 other BSSes on that radio when it authenticates.
 
-Known firmware limit (IPQ6018 WLAN.HK.2.5.0.1, also seen on OpenWrt): a client with a FIXED MAC that is still listed on
-one SSID of a radio (for example after it left for the other AP without a goodbye) and then joins the OTHER SSID on the
-same radio makes the firmware assert (`ar_wal_peer.c:2462 Assertion is_graceful_to_handle failed`, remoteproc "fatal
-error") and the unit restarts. hostapd creates the new peer before it removes the old one with the same MAC. Phones use a
-private MAC per SSID and do not hit it. Reproduced on a unit with a laptop: hogs 5 GHz on unit A, roam to unit B, then
-the other SSID on unit A's 5 GHz radio.
+### 12.6d Wi-Fi: one MAC on two SSIDs of a radio (firmware assert) and crash containment
+
+The IPQ6018 firmware (WLAN.HK.2.5.0.1, also seen on OpenWrt and GL stock) asserts (`ar_wal_peer.c:2462 Assertion
+is_graceful_to_handle failed`, remoteproc "fatal error") the moment one MAC is a peer on two BSSes of the same radio, and
+the unit restarts. Stock hostapd does exactly that when a client with a FIXED MAC that is still listed on one SSID (it left
+without a goodbye: roamed to the other AP, walked out of range, or is a weak IoT device whose authentication frames go to
+both SSIDs within milliseconds) authenticates on the other SSID of the radio: it adds the station to the driver on the new
+BSS at authentication and removes it from the old BSS only after a timer (`ap_sta_disconnect`, about a second). Phones use
+a private MAC per SSID and do not hit it. In the field this put two units into a ~45 s restart loop: a 2.4 GHz-only
+smart-home device with a weak link authenticated to both SSIDs in turn right after every boot.
+
+The image therefore ships its own hostapd: `ci/embedded-aarch64/ax1800/hostapd/APKBUILD` is Alpine 3.24's hostapd 2.11
+package plus `patronus-xbss.diff`, built by `stage-hostapd.sh` and installed by `stage-rootfs.sh` instead of Alpine's
+(`check-rootfs.sh` refuses an image whose hostapd lacks the patch):
+
+- before a station is added to the driver on a BSS (authentication and association), it is removed from every other BSS
+  of that radio, from hostapd's table and from the driver, synchronously (no frame is sent: the client has already left);
+- a MAC that hops between the SSIDs of one radio more than 6 times a minute is refused on the new BSS for 30 s and stays
+  where it is (hostapd logs `patronus-xbss: hopped between SSIDs ...`).
+
+Proof without hardware: `tests/xbss-hwsim.sh` (CI job `xbss-hwsim`, mac80211_hwsim on an x86_64 runner) associates a
+station on SSID A and a second station with the same MAC on SSID B of the same radio, and reads the kernel's station
+events: Alpine's hostapd creates the peer on B before deleting it on A (the overlap the firmware asserts on), the Patronus
+build deletes it on A first; the flap limit is exercised too.
+
+Band moves (the other radio) are still handled after the association by `ap-event` (above).
+
+Crash containment (`/usr/libexec/patronus/wifi-guard`, started by `ap start` on both inits): it follows the kernel log and,
+on every firmware crash, logs `PATRONUS-WIFI-CRASH` (daemon.err) and records it on /data at once (the unit may restart
+within a second); 20 s later every BSS must be up again, otherwise the access points are restarted (never a driver
+unload: `rmmod ath11k_ahb` crashes this board). Safe mode keeps only the FIRST SSID of `AP_SSIDS` on each radio
+(`PATRONUS-AP-SAFE-MODE on|off` in the log, state in `/var/lib/patronus/wifi-guard/`, `wifi-guard status`). It is entered
+after 3 crashes within 10 minutes, or at boot when a firmware crash was recorded in each of the 2 previous boots (a
+restart loop, broken before hostapd starts), and ends after an hour without a crash (each new entry within a day doubles
+the hold, at most 24 h).
 
 `ht_coex` is not written: it is an OpenWrt hostapd patch and the stock hostapd rejects it. Any test of the Wi-Fi
 settings must use a REAL phone in power save (screen off, deep idle) and check downstream loss over at least 60 s: a
