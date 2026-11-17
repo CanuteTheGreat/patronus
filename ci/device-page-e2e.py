@@ -158,7 +158,8 @@ def run(p, kind):
         browser.close()
         return
     fps = page.eval_on_selector_all("#keys table.keys", "ts => ts.map(t => [t.dataset.user, [...t.querySelectorAll('td.dev-key')].map(e => e.textContent)])")
-    want = [[u["user"], [k["fingerprint"] for k in u["keys"] if k["fingerprint"]]] for u in keys["users"]]
+    # every key line is a row, also one the page does not manage (no fingerprint, shown with the reason, no Remove)
+    want = [[u["user"], [k["fingerprint"] for k in u["keys"]]] for u in keys["users"]]
     check(tag + "Device: SSH keys per account as the API lists them", fps == want, (fps, want))
     leds = api(page, "/api/device/leds")["json"]
     lt = wait_text(page, "#leds-state")
