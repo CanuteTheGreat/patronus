@@ -538,6 +538,8 @@ mod dns_routes {
         pub block_mode: String,
         pub rebind_protection: bool,
         pub rebind_exceptions: String,
+        pub upstream_tls: bool,
+        pub upstream_tls_name: String,
         pub services: Vec<(String, bool)>,
         pub hosts: Vec<HostView>,
         pub domains: Vec<DomainView>,
@@ -578,6 +580,8 @@ mod dns_routes {
             block_mode: set.block_mode.clone(),
             rebind_protection: set.rebind_protection,
             rebind_exceptions: set.rebind_exceptions.join(", "),
+            upstream_tls: set.upstream_tls,
+            upstream_tls_name: set.upstream_tls_name.clone(),
             services,
             hosts: dns::list_hosts(s)
                 .await

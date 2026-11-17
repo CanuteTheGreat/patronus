@@ -32,6 +32,9 @@
             </select></label>
         <label>Upstream servers (empty = recurse / resolv.conf)
             <input name="upstreams" value="{{ upstreams }}" data-keep-empty="1" placeholder="9.9.9.9, 1.1.1.1"></label>
+        <label title="Queries to the upstream servers are encrypted (DNS over TLS, port 853) and the servers' certificate must carry the name below. Needs the resolver mode.">DNS over TLS to the upstreams <input type="checkbox" name="upstream_tls" {% if upstream_tls %}checked{% endif %}></label>
+        <label>TLS server name (in the upstreams' certificate)
+            <input name="upstream_tls_name" value="{{ upstream_tls_name }}" data-keep-empty="1" placeholder="dns.quad9.net, cloudflare-dns.com, dns.google"></label>
         <label>Serve on <input name="interfaces" value="{{ interfaces }}"></label>
         <label>DNSSEC <input type="checkbox" name="dnssec" {% if dnssec %}checked{% endif %}></label>
         <label>Blocked names answer

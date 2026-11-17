@@ -67,7 +67,19 @@ pub struct DnsSettings {
     /// dnsmasq `rebind-domain-ok`).
     #[serde(default)]
     pub rebind_exceptions: Vec<String>,
+    /// DNS over TLS to the upstreams (Unbound `forward-tls-upstream`, port
+    /// 853), certificate checked against `upstream_tls_name`.
+    #[serde(default)]
+    pub upstream_tls: bool,
+    /// The name in the upstreams' TLS certificate (`dns.quad9.net`,
+    /// `cloudflare-dns.com`, `dns.google`, ...).
+    #[serde(default)]
+    pub upstream_tls_name: String,
 }
+
+/// CA bundle Unbound checks DoT upstream certificates against
+/// (app-misc/ca-certificates; same path on Debian).
+pub const UNBOUND_CA_BUNDLE: &str = "/etc/ssl/certs/ca-certificates.crt";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DnsSettingsInput {
@@ -87,6 +99,10 @@ pub struct DnsSettingsInput {
     pub rebind_protection: Option<bool>,
     #[serde(default)]
     pub rebind_exceptions: Option<String>,
+    #[serde(default)]
+    pub upstream_tls: Option<bool>,
+    #[serde(default)]
+    pub upstream_tls_name: Option<String>,
 }
 
 /// Private and local ranges unbound strips from public answers.
@@ -158,6 +174,8 @@ pub async fn settings(store: &ConfigStore) -> Result<DnsSettings> {
         block_mode: g("dns.block_mode", "nxdomain"),
         rebind_protection: lan::flag(&g("dns.rebind_protection", "0")),
         rebind_exceptions: split_list(&g("dns.rebind_exceptions", "")),
+        upstream_tls: lan::flag(&g("dns.upstream_tls", "0")),
+        upstream_tls_name: g("dns.upstream_tls_name", ""),
         dns64_prefix: {
             let n = lan::settings_with_prefix(store, "nat64.").await?;
             let on = n.get("nat64.enabled").is_some_and(|v| lan::flag(v))
@@ -222,17 +240,47 @@ pub async fn save_settings(store: &ConfigStore, i: &DnsSettingsInput) -> Result<
             .collect::<Result<Vec<_>>>()?;
         kv.push(("dns.rebind_exceptions", v.join(",")));
     }
+    if let Some(t) = i.upstream_tls {
+        kv.push(("dns.upstream_tls", if t { "1" } else { "0" }.into()));
+    }
+    if let Some(n) = &i.upstream_tls_name {
+        let n = if n.trim().is_empty() {
+            String::new()
+        } else {
+            lan::check_dns_name("DNS over TLS server name", n)?
+        };
+        kv.push(("dns.upstream_tls_name", n));
+    }
     let after = {
         let mut s = settings(store).await?;
         for (k, v) in &kv {
             match *k {
                 "dns.mode" => s.mode = v.clone(),
                 "dns.upstreams" => s.upstreams = lan::parse_ip_list("", v)?,
+                "dns.upstream_tls" => s.upstream_tls = lan::flag(v),
+                "dns.upstream_tls_name" => s.upstream_tls_name = v.clone(),
                 _ => {}
             }
         }
         s
     };
+    if after.upstream_tls {
+        if after.upstreams.is_empty() {
+            return Err(invalid(
+                "DNS over TLS: set the upstream servers it should use (e.g. 9.9.9.9, 149.112.112.112)",
+            ));
+        }
+        if after.upstream_tls_name.is_empty() {
+            return Err(invalid(
+                "DNS over TLS: the server name in the upstreams' certificate (e.g. dns.quad9.net)",
+            ));
+        }
+        if after.mode == "forwarder" {
+            return Err(invalid(
+                "DNS over TLS needs the resolver mode (Unbound); the dnsmasq forwarder cannot speak TLS",
+            ));
+        }
+    }
     if after.mode == "forwarder" && after.upstreams.is_empty() {
         // allowed: dnsmasq then uses the router's own /etc/resolv.conf
         tracing::info!("DNS forwarder without upstreams: using /etc/resolv.conf");
@@ -665,6 +713,9 @@ pub fn render_unbound(
         c.push_str(&format!("    access-control: {n} allow\n"));
     }
     c.push_str("    hide-identity: yes\n    hide-version: yes\n    prefetch: yes\n");
+    if dot(s) {
+        c.push_str(&format!("    tls-cert-bundle: \"{UNBOUND_CA_BUNDLE}\"\n"));
+    }
     // unbound refuses to forward to 127.0.0.0/8 / ::1 unless told otherwise
     // (a local DNS server on another port is a common domain override)
     if domains.iter().any(|d| d.server.is_loopback()) || s.upstreams.iter().any(|u| u.is_loopback())
@@ -768,11 +819,28 @@ pub fn render_unbound(
     }
     if !s.upstreams.is_empty() {
         c.push_str("\nforward-zone:\n    name: \".\"\n");
-        for u in &s.upstreams {
-            c.push_str(&format!("    forward-addr: {u}\n"));
+        if dot(s) {
+            // DNS over TLS: port 853, certificate must carry the name;
+            // never falls back to plain DNS
+            c.push_str("    forward-tls-upstream: yes\n");
+            for u in &s.upstreams {
+                c.push_str(&format!(
+                    "    forward-addr: {u}@853#{}\n",
+                    s.upstream_tls_name
+                ));
+            }
+        } else {
+            for u in &s.upstreams {
+                c.push_str(&format!("    forward-addr: {u}\n"));
+            }
         }
     }
     c
+}
+
+/// Is DNS over TLS to the upstreams in effect?
+fn dot(s: &DnsSettings) -> bool {
+    s.upstream_tls && !s.upstreams.is_empty() && !s.upstream_tls_name.is_empty()
 }
 
 /// DNS lines of `/etc/dnsmasq.conf` (forwarder mode only).
@@ -1017,6 +1085,13 @@ impl Applier for DnsApplier {
                 rep.warn(
                     "per-device DNS policies need DNS mode \"resolver\" (Unbound): the dnsmasq \
                      forwarder has no per-client views, so they are NOT enforced"
+                        .to_string(),
+                );
+            }
+            if mode == "forwarder" && s.upstream_tls {
+                rep.warn(
+                    "DNS over TLS is on but DNS runs as the dnsmasq forwarder, which cannot use \
+                     TLS: upstream queries go out as plain DNS (switch DNS to resolver mode)"
                         .to_string(),
                 );
             }
@@ -1285,6 +1360,104 @@ mod tests {
         ] {
             assert!(c.contains(want), "missing {want:?} in\n{c}");
         }
+    }
+
+    #[tokio::test]
+    async fn dns_over_tls_upstreams_render_and_validate() {
+        let t = testutil::env(&[UNBOUND_BIN, lan::DNSMASQ_BIN]);
+        std::fs::create_dir_all(t.env.path("/var/lib/unbound")).unwrap();
+        std::fs::write(t.env.path(UNBOUND_ANCHOR), "x").unwrap();
+        let s = testutil::store().await;
+        seed(&s).await;
+        // needs upstreams and a certificate name, never with the forwarder
+        let e = save_settings(
+            &s,
+            &DnsSettingsInput {
+                upstream_tls: Some(true),
+                upstream_tls_name: Some("dns.quad9.net".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(e.to_string().contains("upstream servers"), "{e}");
+        let e = save_settings(
+            &s,
+            &DnsSettingsInput {
+                upstream_tls: Some(true),
+                upstreams: Some("9.9.9.9".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(e.to_string().contains("server name"), "{e}");
+        let e = save_settings(
+            &s,
+            &DnsSettingsInput {
+                upstream_tls: Some(true),
+                upstreams: Some("9.9.9.9".into()),
+                upstream_tls_name: Some("dns.quad9.net\nforward-addr: 6.6.6.6".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(e.to_string().contains("Invalid"), "{e}");
+        let e = save_settings(
+            &s,
+            &DnsSettingsInput {
+                mode: Some("forwarder".into()),
+                upstream_tls: Some(true),
+                upstreams: Some("9.9.9.9".into()),
+                upstream_tls_name: Some("dns.quad9.net".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(e.to_string().contains("resolver"), "{e}");
+        save_settings(
+            &s,
+            &DnsSettingsInput {
+                mode: Some("resolver".into()),
+                upstream_tls: Some(true),
+                upstreams: Some("9.9.9.9, 2620:fe::fe".into()),
+                upstream_tls_name: Some("DNS.Quad9.net.".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let a = DnsApplier::new(t.env.clone());
+        a.apply(&s).await.unwrap();
+        let c = read(&t, UNBOUND_CONF);
+        for want in [
+            "tls-cert-bundle: \"/etc/ssl/certs/ca-certificates.crt\"",
+            "forward-tls-upstream: yes",
+            "forward-addr: 9.9.9.9@853#dns.quad9.net",
+            "forward-addr: 2620:fe::fe@853#dns.quad9.net",
+        ] {
+            assert!(c.contains(want), "missing {want:?} in\n{c}");
+        }
+        assert!(
+            !c.contains("forward-addr: 9.9.9.9\n"),
+            "no plain fallback:\n{c}"
+        );
+        // off again: plain forwarding
+        save_settings(
+            &s,
+            &DnsSettingsInput {
+                upstream_tls: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        a.apply(&s).await.unwrap();
+        let c = read(&t, UNBOUND_CONF);
+        assert!(c.contains("forward-addr: 9.9.9.9\n") && !c.contains("forward-tls-upstream"));
+        assert!(!c.contains("tls-cert-bundle"));
     }
 
     #[tokio::test]

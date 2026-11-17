@@ -84,7 +84,7 @@ PY
 nl_bg INET python3 "$NL_T/nl-notify-http.py" "$NL_T/notify-http.log"
 nl_bg INET python3 "$NL_T/nl-notify-smtp.py" "$NL_T/notify-smtp.log"
 for p in 9200 2525; do
-  for _ in $(seq 1 40); do INET sh -c "exec 3<>/dev/tcp/$NL_WWW/$p" 2>/dev/null && break; sleep 0.25; done
+  for _ in $(seq 1 40); do INET bash -c "exec 3<>/dev/tcp/$NL_WWW/$p" 2>/dev/null && break; sleep 0.25; done
 done
 H="http://$NL_WWW:9200"
 
