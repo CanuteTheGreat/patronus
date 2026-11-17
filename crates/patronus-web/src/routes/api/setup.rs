@@ -4,6 +4,14 @@
 //! clients. It drives the same managers as the Interfaces and DHCP pages
 //! (store -> applier -> kernel/daemon), so the result is persisted and
 //! survives reboot; it adds only the "wizard completed" marker.
+//!
+//! The wizard is for routers. A unit whose role is set at build time
+//! (`PATRONUS_DEVICE_ROLE=ap`: a wired access point with every port bridged
+//! and no WAN, DHCP or DNS of its own) is configured by its image and needs
+//! no wizard: its first start records setup as complete
+//! ([`record_provisioned`]), the status always says so, and the wizard
+//! refuses to run there. `PATRONUS_SETUP_PROVISIONED=1` does the same for a
+//! router image whose network was provisioned at build or first boot.
 
 use crate::state::interfaces::InterfaceUpdate;
 use crate::state::AppState;
@@ -20,17 +28,91 @@ use std::net::SocketAddr;
 
 const DONE_KEY: &str = "setup.completed";
 
+/// What this unit is, from the image (`PATRONUS_DEVICE_ROLE`): `router`
+/// (default) or `ap`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceRole {
+    Router,
+    Ap,
+}
+
+impl DeviceRole {
+    pub fn parse(v: Option<&str>) -> Self {
+        match v.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+            Some("ap") | Some("access-point") => DeviceRole::Ap,
+            _ => DeviceRole::Router,
+        }
+    }
+    pub fn from_env() -> Self {
+        Self::parse(std::env::var("PATRONUS_DEVICE_ROLE").ok().as_deref())
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeviceRole::Router => "router",
+            DeviceRole::Ap => "ap",
+        }
+    }
+    /// The router wizard (WAN/LAN/DHCP) applies to this role.
+    pub fn wizard_applies(self) -> bool {
+        self == DeviceRole::Router
+    }
+}
+
+/// Why setup counts as done without the wizard, if it does: the role, or an
+/// image that provisioned its network (`PATRONUS_SETUP_PROVISIONED=1`).
+pub fn provisioned_reason(role: DeviceRole, provisioned_env: Option<&str>) -> Option<&'static str> {
+    if role == DeviceRole::Ap {
+        Some("access point: configured by its image, the router wizard does not apply")
+    } else if provisioned_env.is_some_and(|v| v.trim() == "1") {
+        Some("network provisioned by the image")
+    } else {
+        None
+    }
+}
+
+/// First start of a provisioned unit: record setup as complete (once, with an
+/// audit row), so the "not set up yet" banner never appears. Returns whether
+/// it wrote the marker now.
+pub async fn record_provisioned(
+    store: &patronus_config::ConfigStore,
+    role: DeviceRole,
+    provisioned_env: Option<&str>,
+) -> anyhow::Result<bool> {
+    let Some(reason) = provisioned_reason(role, provisioned_env) else {
+        return Ok(false);
+    };
+    if patronus_network::lan::get_setting(store, DONE_KEY)
+        .await?
+        .is_some_and(|v| v == "1")
+    {
+        return Ok(false);
+    }
+    patronus_network::lan::set_setting(store, DONE_KEY, "1").await?;
+    let _ = store
+        .audit(
+            "system",
+            "provisioned",
+            "setup-wizard",
+            None,
+            &json!({"role": role.as_str(), "reason": reason}),
+        )
+        .await;
+    Ok(true)
+}
+
 #[derive(Template)]
 #[template(path = "setup.html")]
 pub struct SetupTemplate {
     pub page: &'static str,
     pub can_modify: bool,
+    pub ap_mode: bool,
 }
 
 pub async fn page(me: crate::auth::AuthUser) -> Response {
     match (SetupTemplate {
         page: "setup",
         can_modify: me.session.role.can_modify(),
+        ap_mode: !DeviceRole::from_env().wizard_applies(),
     })
     .render()
     {
@@ -81,7 +163,16 @@ pub async fn status(State(state): State<AppState>) -> Response {
             })
         })
         .collect();
-    Json(json!({ "completed": completed(&state).await, "interfaces": ifs })).into_response()
+    let role = DeviceRole::from_env();
+    // an AP never waits for the router wizard, whatever the store says
+    let done = completed(&state).await || !role.wizard_applies();
+    Json(json!({
+        "completed": done,
+        "role": role.as_str(),
+        "wizard": role.wizard_applies(),
+        "interfaces": ifs,
+    }))
+    .into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,6 +207,12 @@ pub async fn apply(
     _admin: crate::auth::AdminUser,
     Json(b): Json<SetupBody>,
 ) -> Response {
+    if !DeviceRole::from_env().wizard_applies() {
+        return error(
+            StatusCode::CONFLICT,
+            "this unit is an access point: the router setup wizard (WAN, LAN address, DHCP) does not apply",
+        );
+    }
     if b.wan_interface == b.lan_interface {
         return error(
             StatusCode::BAD_REQUEST,
@@ -241,4 +338,69 @@ pub fn router() -> axum::Router<AppState> {
 pub fn pages() -> axum::Router<AppState> {
     use axum::routing::get;
     axum::Router::new().route("/setup", get(page))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn store() -> patronus_config::ConfigStore {
+        let dir = std::env::temp_dir().join(format!("patronus-setup-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        patronus_config::ConfigStore::open(dir.join("config.db"))
+            .await
+            .unwrap()
+    }
+
+    async fn done(s: &patronus_config::ConfigStore) -> bool {
+        patronus_network::lan::get_setting(s, DONE_KEY)
+            .await
+            .unwrap()
+            .is_some_and(|v| v == "1")
+    }
+
+    #[test]
+    fn role_parsing_defaults_to_router() {
+        assert_eq!(DeviceRole::parse(None), DeviceRole::Router);
+        assert_eq!(DeviceRole::parse(Some("")), DeviceRole::Router);
+        assert_eq!(DeviceRole::parse(Some("router")), DeviceRole::Router);
+        assert_eq!(DeviceRole::parse(Some(" AP ")), DeviceRole::Ap);
+        assert_eq!(DeviceRole::parse(Some("access-point")), DeviceRole::Ap);
+        assert!(DeviceRole::Router.wizard_applies());
+        assert!(!DeviceRole::Ap.wizard_applies());
+    }
+
+    #[tokio::test]
+    async fn an_access_point_records_setup_complete_at_first_start() {
+        let s = store().await;
+        assert!(!done(&s).await);
+        assert!(record_provisioned(&s, DeviceRole::Ap, None).await.unwrap());
+        assert!(done(&s).await);
+        // once only: a second start writes nothing (and no second audit row)
+        assert!(!record_provisioned(&s, DeviceRole::Ap, None).await.unwrap());
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT action FROM audit_log WHERE entity_type = 'setup-wizard'")
+                .fetch_all(s.pool().unwrap())
+                .await
+                .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "provisioned");
+    }
+
+    #[tokio::test]
+    async fn a_fresh_router_still_needs_the_wizard() {
+        let s = store().await;
+        assert!(!record_provisioned(&s, DeviceRole::Router, None)
+            .await
+            .unwrap());
+        assert!(!record_provisioned(&s, DeviceRole::Router, Some("0"))
+            .await
+            .unwrap());
+        assert!(!done(&s).await, "a router-mode unit must keep the banner");
+        // a router image that provisioned its network says so explicitly
+        assert!(record_provisioned(&s, DeviceRole::Router, Some("1"))
+            .await
+            .unwrap());
+        assert!(done(&s).await);
+    }
 }

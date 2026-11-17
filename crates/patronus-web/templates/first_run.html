@@ -101,25 +101,33 @@
             <h1>Welcome</h1>
             <p>This router has no account yet. Create the administrator: a user of this router (member of the administrators group) who signs in like any other system account. The password needs at least 12 characters and is not sent anywhere but this router.</p>
         </div>
+        {% if minutes_left == 0 %}
+        <div id="fr-closed" class="error-message show">{{ closed_reason }}</div>
+        {% else %}
+        <p id="fr-window" style="font-size:.9rem;color:var(--ink-2)">To prove this router is yours, enter its <strong>setup code</strong>. It is printed on the router's console, and over ssh as root it is in <code>/run/patronus/first-run-code</code>. On a router moved over from OpenWrt or the vendor firmware, its root password works too. This page accepts a code for another {{ minutes_left }} min.</p>
         <div id="error-message" class="error-message"></div>
         <form id="fr-form">
+            <div class="form-group"><label for="setup_code">Setup code</label>
+                <input type="password" id="setup_code" required autofocus autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX"></div>
             <div class="form-group"><label for="username">User name</label>
-                <input type="text" id="username" required autofocus maxlength="32" pattern="[A-Za-z0-9._][A-Za-z0-9._\-]*" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
+                <input type="text" id="username" required maxlength="32" pattern="[A-Za-z0-9._][A-Za-z0-9._\-]*" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
             <div class="form-group"><label for="password">New password</label>
                 <input type="password" id="password" required minlength="12" autocomplete="new-password"></div>
             <div class="form-group"><label for="confirm">Repeat password</label>
                 <input type="password" id="confirm" required minlength="12" autocomplete="new-password"></div>
             <button type="submit" class="btn-login">Create administrator</button>
         </form>
+        {% endif %}
     </div>
     <script>
-        document.getElementById('fr-form').addEventListener('submit', async (e) => {
+        const frForm = document.getElementById('fr-form');
+        if (frForm) frForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const err = document.getElementById('error-message');
             err.classList.remove('show');
             try {
                 const r = await fetch('/api/first-run', {method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({username: document.getElementById('username').value, password: document.getElementById('password').value, confirm: document.getElementById('confirm').value})});
+                    body: JSON.stringify({setup_code: document.getElementById('setup_code').value, username: document.getElementById('username').value, password: document.getElementById('password').value, confirm: document.getElementById('confirm').value})});
                 if (r.ok) { window.location.href = '/login'; return; }
                 const j = await r.json(); err.textContent = j.error || 'Failed'; err.classList.add('show');
             } catch (x) { err.textContent = 'Network error. Please try again.'; err.classList.add('show'); }

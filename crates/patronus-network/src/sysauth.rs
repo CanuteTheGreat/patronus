@@ -177,11 +177,14 @@ pub fn add_account(
         std::fs::rename(&tmp, etc.join(f)).map_err(|e| e.to_string())
     };
     let passwd = read("passwd");
-    let uid = passwd
-        .lines()
-        .filter_map(|l| l.split(':').nth(2)?.parse::<u32>().ok())
-        .max()
-        .map_or(1000, |m| (m + 1).max(1000));
+    // the lowest free id in the regular range: `nobody` (65534) and other
+    // ids above it must not push new accounts into the overflow range
+    let uid = free_id(
+        passwd
+            .lines()
+            .filter_map(|l| l.split(':').nth(2)?.parse::<u32>().ok()),
+        1000,
+    );
     let uid = passwd
         .lines()
         .find_map(|l| {
@@ -227,15 +230,31 @@ pub fn add_account(
             })
             .collect();
         if !found {
-            let gid = group
-                .lines()
-                .filter_map(|l| l.split(':').nth(2)?.parse::<u32>().ok())
-                .max()
-                .map_or(2000, |m| (m + 1).max(2000));
+            let gid = free_id(
+                group
+                    .lines()
+                    .filter_map(|l| l.split(':').nth(2)?.parse::<u32>().ok()),
+                2000,
+            );
             group += &format!("{g}:x:{gid}:{name}\n");
         }
     }
     write("group", group, 0o644)
+}
+
+/// Lowest id from `base` up to 59999 not in `used` (the regular account
+/// range; 60000+ holds nobody/nogroup and system overflow ids). Falls back to
+/// one past the highest regular id if the range is full.
+fn free_id(used: impl Iterator<Item = u32>, base: u32) -> u32 {
+    let used: std::collections::BTreeSet<u32> = used.collect();
+    (base..60000)
+        .find(|i| !used.contains(i))
+        .unwrap_or_else(|| {
+            used.iter()
+                .filter(|i| **i < 60000)
+                .max()
+                .map_or(base, |m| m + 1)
+        })
 }
 
 /// Non-root accounts in `etc`'s passwd/group files that belong to one of
@@ -489,6 +508,31 @@ mod tests {
         for bad in ["", "-x", "a b", "a:b", "a/b", "a\nb", &"x".repeat(33)] {
             assert!(!valid_name(bad), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn new_accounts_get_regular_ids_even_with_nobody_present() {
+        // nobody/nogroup (65534) used to push the next id to 65535/65536
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(
+            d.path().join("passwd"),
+            "root:x:0:0::/root:/bin/sh\nnobody:x:65534:65534::/:/sbin/nologin\n",
+        )
+        .unwrap();
+        std::fs::write(d.path().join("group"), "root:x:0:\nnogroup:x:65534:\n").unwrap();
+        add_account(
+            d.path(),
+            "owner",
+            "Correct-Horse-Battery-9",
+            &["patronus-admin".into()],
+        )
+        .unwrap();
+        let passwd = std::fs::read_to_string(d.path().join("passwd")).unwrap();
+        assert!(passwd.contains("owner:x:1000:1000:"), "{passwd}");
+        let group = std::fs::read_to_string(d.path().join("group")).unwrap();
+        assert!(group.contains("patronus-admin:x:2000:owner"), "{group}");
+        assert_eq!(free_id([1000, 1001, 1003].into_iter(), 1000), 1002);
+        assert_eq!(free_id(std::iter::empty(), 1000), 1000);
     }
 
     #[test]

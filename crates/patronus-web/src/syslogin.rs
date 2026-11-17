@@ -158,6 +158,120 @@ pub struct SysLogin {
     /// First-run setup is pending (see `first_run_pending`). Per instance, not a
     /// process global: parallel unit tests each build their own SysLogin.
     first_run: Arc<std::sync::atomic::AtomicBool>,
+    /// The open first-run window and its one-time setup code.
+    first_run_gate: Arc<Mutex<Option<FirstRunGate>>>,
+}
+
+/// How long `/first-run` accepts a claim after the web service starts.
+pub const FIRST_RUN_WINDOW: Duration = Duration::from_secs(60 * 60);
+/// Wrong setup codes accepted before the window closes early.
+pub const FIRST_RUN_MAX_FAILS: u32 = 10;
+/// Where the setup code is written (root-only), unless
+/// `$PATRONUS_FIRST_RUN_CODE_FILE` says otherwise.
+pub const FIRST_RUN_CODE_FILE: &str = "/run/patronus/first-run-code";
+
+/// The embedded first run's proof of ownership: a random code that only
+/// someone with the console or a root shell can read, valid for a window
+/// after the service starts and for a few wrong tries.
+#[derive(Debug)]
+struct FirstRunGate {
+    code: String,
+    opened: Instant,
+    window: Duration,
+    fails: u32,
+}
+
+/// State of the first-run window, for the page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirstRunWindow {
+    /// open, this many whole minutes left (at least 1)
+    Open(u64),
+    /// the window ran out
+    Expired,
+    /// too many wrong setup codes
+    Locked,
+    /// no first run is pending / no window was opened
+    Closed,
+}
+
+/// The setup code file path (`$PATRONUS_FIRST_RUN_CODE_FILE`, else
+/// [`FIRST_RUN_CODE_FILE`]).
+pub fn first_run_code_path() -> PathBuf {
+    std::env::var_os("PATRONUS_FIRST_RUN_CODE_FILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(FIRST_RUN_CODE_FILE))
+}
+
+/// A setup code: 12 characters from an alphabet without look-alikes (60
+/// bits), grouped `XXXX-XXXX-XXXX`.
+pub fn new_setup_code() -> String {
+    use rand::Rng;
+    const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let mut rng = rand::rngs::OsRng;
+    let mut s = String::with_capacity(14);
+    for i in 0..12 {
+        if i > 0 && i % 4 == 0 {
+            s.push('-');
+        }
+        s.push(ALPHABET[rng.gen_range(0..ALPHABET.len())] as char);
+    }
+    s
+}
+
+/// Codes are compared without case, spaces or dashes.
+fn normalize_code(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .collect()
+}
+
+fn same_bytes(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Write the setup code where the owner can read it: a root-only file
+/// (`cat /run/patronus/first-run-code` over ssh) and the system console
+/// (serial), unless `PATRONUS_FIRST_RUN_CONSOLE=0`. Best effort: a failure
+/// is logged; the window stays usable through whichever one worked.
+pub fn publish_first_run_code(code: &str, window: Duration) {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = first_run_code_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::remove_file(&path);
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .and_then(|mut f| f.write_all(format!("{code}\n").as_bytes()))
+    {
+        Ok(()) => {}
+        Err(e) => tracing::warn!("first-run setup code file {}: {e}", path.display()),
+    }
+    if std::env::var("PATRONUS_FIRST_RUN_CONSOLE").is_ok_and(|v| v == "0") {
+        return;
+    }
+    let msg = format!(
+        "\r\nPatronus first-run setup code: {code}\r\n(valid for {} min after the web UI starts; also in {})\r\n",
+        window.as_secs() / 60,
+        path.display()
+    );
+    if let Ok(mut c) = std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NOCTTY | libc::O_NONBLOCK)
+        .open("/dev/console")
+    {
+        let _ = c.write_all(msg.as_bytes());
+    }
+}
+
+/// Remove the setup code file once the administrator exists.
+pub fn retire_first_run_code() {
+    let _ = std::fs::remove_file(first_run_code_path());
 }
 
 /// After this many failures for a name within [`BACKOFF_WINDOW`] it is not
@@ -182,6 +296,84 @@ impl SysLogin {
             legacy_clamp: !cfg!(test),
             fails: Arc::default(),
             first_run: Arc::default(),
+            first_run_gate: Arc::default(),
+        }
+    }
+
+    /// Open the first-run window: setup pending, a new setup code valid for
+    /// `window` (returned, for [`publish_first_run_code`]).
+    pub fn open_first_run(&self, window: Duration) -> String {
+        let code = new_setup_code();
+        *self.gate() = Some(FirstRunGate {
+            code: normalize_code(&code),
+            opened: Instant::now(),
+            window,
+            fails: 0,
+        });
+        self.set_first_run_pending(true);
+        code
+    }
+
+    fn gate(&self) -> std::sync::MutexGuard<'_, Option<FirstRunGate>> {
+        self.first_run_gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Where the first-run window stands.
+    pub fn first_run_window(&self) -> FirstRunWindow {
+        if !self.first_run_pending() {
+            return FirstRunWindow::Closed;
+        }
+        match &*self.gate() {
+            None => FirstRunWindow::Closed,
+            Some(g) if g.fails >= FIRST_RUN_MAX_FAILS => FirstRunWindow::Locked,
+            Some(g) => match g.window.checked_sub(g.opened.elapsed()) {
+                Some(left) if !left.is_zero() => {
+                    FirstRunWindow::Open(left.as_secs().div_ceil(60).max(1))
+                }
+                _ => FirstRunWindow::Expired,
+            },
+        }
+    }
+
+    /// Does `proof` show ownership of this unit for the first run: the
+    /// setup code of the open window, or the password of the unit's existing
+    /// root account (e.g. carried over from OpenWrt or the vendor firmware)?
+    /// Wrong proofs count towards [`FIRST_RUN_MAX_FAILS`]. Blocking (the root
+    /// password check runs the password hash).
+    pub fn check_first_run_proof(&self, proof: &str) -> Result<(), String> {
+        match self.first_run_window() {
+            FirstRunWindow::Open(_) => {}
+            FirstRunWindow::Expired => {
+                return Err("the setup window has closed: restart the router (or its web service) and enter the new setup code within the hour".into())
+            }
+            FirstRunWindow::Locked => {
+                return Err("too many wrong setup codes: restart the router (or its web service) to get a new one".into())
+            }
+            FirstRunWindow::Closed => return Err("first-run setup is not open".into()),
+        }
+        let want = normalize_code(proof);
+        let code_ok = {
+            let g = self.gate();
+            g.as_ref()
+                .is_some_and(|g| !want.is_empty() && same_bytes(want.as_bytes(), g.code.as_bytes()))
+        };
+        let ok = code_ok || (!proof.is_empty() && self.root_password_matches(proof));
+        if ok {
+            return Ok(());
+        }
+        if let Some(g) = self.gate().as_mut() {
+            g.fails += 1;
+        }
+        Err("Invalid setup code: use the code shown on the router's console or in /run/patronus/first-run-code, or the router's root password".into())
+    }
+
+    /// The unit's root account has a usable password and `password` is it.
+    fn root_password_matches(&self, password: &str) -> bool {
+        match &self.mode {
+            Mode::Direct(b) => sysauth::authenticate(b, "root", password).unwrap_or(false),
+            Mode::Broker(_) => false,
         }
     }
 

@@ -55,6 +55,7 @@ for s in dnsmasq patronus-dhcpd patronus-dnsd; do
   { [ -e "$R/etc/systemd/system/multi-user.target.wants/$s.service" ] || [ -L "$R/etc/systemd/system/multi-user.target.wants/$s.service" ]; } && fail "AP role: $s.service is enabled"; done
 . "$R/etc/patronus/board.sh" 2>/dev/null
 [ "${ROLE:-}" = ap ] || fail "board.sh must set ROLE=ap"
+grep -qx 'PATRONUS_DEVICE_ROLE=ap' "$R/etc/patronus/embedded.env" || fail "embedded.env must set PATRONUS_DEVICE_ROLE=ap (board.sh ROLE=ap): the web UI would offer the router wizard"
 [ "${AP_FT:-0}" = 0 ] || fail "board.sh: AP_FT must default to 0 (802.11r crashes ath11k firmware)"
 if [ -f "$R/etc/patronus/ap.env" ]; then
   grep -qE '^[[:space:]]*AP_FT=1' "$R/etc/patronus/ap.env" && fail "ap.env enables 802.11r (AP_FT=1)"

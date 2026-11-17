@@ -996,7 +996,7 @@
         });
     }).catch(() => {});
     </script>
-    <script>if (location.pathname !== '/setup') fetch('/api/setup/status', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(d => { if (d && !d.completed) document.getElementById('setup-banner').style.display = ''; }).catch(() => {});</script>
+    <script>if (location.pathname !== '/setup') fetch('/api/setup/status', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(d => { if (d && !d.completed && d.wizard !== false) document.getElementById('setup-banner').style.display = ''; }).catch(() => {});</script>
     {% block extra_scripts %}{% endblock %}
 </body>
 </html>

@@ -71,6 +71,24 @@ firewall() { t=$(R 'nft list tables') && [ -n "$t" ] && echo "$t"; }
 release() { R "grep -qx BOARD=glinet,gl-ax1800 /etc/patronus-release && grep -qx INIT=$INIT /etc/patronus-release && cat /etc/patronus-release"; }
 no_dhcp_server() { R '! pgrep -x dnsmasq >/dev/null && ! pgrep -x udhcpd >/dev/null'; }
 no_ft() { R '! grep -rqs "^ieee80211r=1" /run/hostapd /etc'; }
+# first run: the setup code is root-only, nobody claims the unit without it, the owner does with it; an AP records
+# setup as complete at its first start (no "not set up yet" banner, no router wizard)
+FRPW='Ci-Gate-Passw0rd-2026'
+fr_post() { curl -sk -o "$W/fr-post.json" -w '%{http_code}' -m 60 -H 'content-type: application/json' \
+  -d "{\"username\":\"cigate\",\"password\":\"$FRPW\",\"confirm\":\"$FRPW\",\"setup_code\":\"$1\"}" https://127.0.0.1:$WEBP/api/first-run; }
+fr_code_file() { R 'test -s /run/patronus/first-run-code && ls -l /run/patronus/first-run-code | grep -q "^-rw------- "'; }
+fr_no_code() { c=$(fr_post ''); [ "$c" = 403 ] || { echo "no code: HTTP $c $(cat "$W/fr-post.json")"; return 1; }
+  c=$(fr_post 'AAAA-BBBB-CCCC'); [ "$c" = 403 ] || { echo "wrong code: HTTP $c"; return 1; }; }
+fr_claim() { code=$(R 'cat /run/patronus/first-run-code') || return 1; c=$(fr_post "$code")
+  [ "$c" = 200 ] || { echo "with code: HTTP $c $(cat "$W/fr-post.json")"; return 1; }; R '! test -e /run/patronus/first-run-code'; }
+setup_ap() { R 'grep -q "setup recorded as complete (role ap)" /var/log/web.log' || { echo "no provisioned line in web.log"; return 1; }
+  rm -f "$W/jar"; c=$(curl -sk -c "$W/jar" -o /dev/null -w '%{http_code}' -m 60 -H 'content-type: application/json' \
+    -d "{\"username\":\"cigate\",\"password\":\"$FRPW\"}" https://127.0.0.1:$WEBP/api/auth/login); [ "$c" = 200 ] || { echo "login HTTP $c"; return 1; }
+  s=$(curl -sk -b "$W/jar" -m 60 https://127.0.0.1:$WEBP/api/setup/status); echo "$s" | grep -q '"completed":true' && echo "$s" | grep -q '"role":"ap"' \
+    && echo "$s" | grep -q '"wizard":false' || { echo "status: $s"; return 1; }
+  c=$(curl -sk -b "$W/jar" -o /dev/null -w '%{http_code}' -m 60 -H 'content-type: application/json' -d '{"wan_interface":"a","lan_interface":"b","lan_ipv4":"192.168.9.1/24"}' https://127.0.0.1:$WEBP/api/setup/apply)
+  [ "$c" = 409 ] || { echo "wizard apply on an AP: HTTP $c"; return 1; }; }
+web_claimed() { c=$(curl -sk -o /dev/null -w '%{http_code} %{redirect_url}' -m 30 https://127.0.0.1:$WEBP/first-run); case "$c" in 30?*/login) ;; *) echo "first-run: $c"; return 1;; esac; }
 
 # fake UBI + board for the flash-guard checks (QEMU has no UBI and is not a GL-AX1800)
 FAKES='mkdir -p /tmp/fk && printf "glinet,gl-ax1800\0qcom,ipq6018\0" > /tmp/fk/compat && cat > /tmp/fk/ubinfo <<"EOF"
@@ -95,6 +113,10 @@ check "firewall applied by patronus-web (nftables tables present)" firewall
 check "patronus-release: board + init" release
 check "AP role: no DHCP/DNS server running" no_dhcp_server
 check "no 802.11r in any config" no_ft
+check "first run: setup code written root-only (/run/patronus/first-run-code)" fr_code_file
+check "first run: refused without / with a wrong setup code (403)" fr_no_code
+check "first run: the setup code claims the unit, then the code file is gone" fr_claim
+check "AP role: setup recorded complete at first start, status completed/ap/no wizard, wizard apply refused (409)" setup_ap
 scp -O -q "${SSHO[@]}" -P $SSHP "$TAR" root@127.0.0.1:/data/up.tar || fail "scp image into the guest"
 refuse_board() { o=$(R 'patronus-flash check /data/up.tar' 2>&1) && { echo "accepted: $o"; return 1; }; case "$o" in *"image is for glinet,gl-ax1800"*) ;; *) echo "$o"; return 1;; esac; }
 check "flash guard: refuses on a non-GL-AX1800 board" refuse_board
@@ -112,7 +134,8 @@ check "boot 2: settings persisted (/etc overlay, /root)" R 'test -s /etc/patronu
 check "boot 2: PID 1 is $INIT" pid1
 check "boot 2: all services up" services_up
 check "boot 2: ETPhoneHome running" etph
-check "boot 2: web UI answers" web
+check "boot 2: web UI answers" web_claimed
+check "boot 2: setup not recorded again (once only), no first-run code" R '! grep -q "setup recorded as complete" /var/log/web.log && ! test -e /run/patronus/first-run-code'
 R 'free -k; cat /tmp/boot-times; ps -o rss,comm | sort -n | tail -8; df -k /data' > "$RES/boot2-stats.txt" 2>&1
 { echo "init=$INIT accel=$ACCEL"; grep -E '^Mem:' "$RES/boot2-stats.txt"; grep -E 'exec-|patronus-started|network-up' "$RES/boot2-stats.txt"; } >> "$RES/summary.txt"
 poweroff_vm

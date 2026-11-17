@@ -7,6 +7,22 @@
 {% endblock %}
 
 {% block content %}
+{% if ap_mode %}
+<div class="page-header">
+    <h1 class="page-title">Setup</h1>
+    <p class="page-subtitle">This unit is an access point: every port is bridged into the LAN, it takes its address from the
+        network's DHCP server and it runs no WAN, DHCP or DNS of its own. Its Wi-Fi and bridge come from the image's access-point
+        settings, so there is no router setup wizard to run here.</p>
+</div>
+<div class="card">
+    <p class="text-sm">Things you may want to look at on an access point:</p>
+    <ul class="text-sm">
+        <li><a href="/interfaces">Interfaces</a>: the bridge, its ports and its address.</li>
+        <li><a href="/monitoring">Monitoring</a>: Wi-Fi clients joining and leaving (system log).</li>
+        <li><a href="/system">System</a>: accounts, backups, firmware and services.</li>
+    </ul>
+</div>
+{% else %}
 <div class="page-header">
     <h1 class="page-title">Setup wizard</h1>
     <p class="page-subtitle">Pick the WAN and LAN ports, give the LAN an address and (optionally) a DHCP pool. Everything is
@@ -78,4 +94,5 @@
     }
     document.addEventListener('DOMContentLoaded', loadSetup);
 </script>
+{% endif %}
 {% endblock %}

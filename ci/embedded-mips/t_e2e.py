@@ -46,11 +46,14 @@ r = subprocess.run(['curl','-sk','-m','60','-o','/dev/null','-w','%{http_code} %
 check('GET / before password -> 303 /first-run', r.startswith('303') and r.endswith('/first-run'), r)
 code, txt = api('GET', '/first-run', auth=False); check('first-run page served', code == 200 and 'Create administrator' in txt, str(code))
 code, txt = api('GET', '/api/firewall/rules', auth=False); check('API locked before password (403)', code == 403, str(code))
+o, _ = g.run('cat /run/patronus/first-run-code', 30); CODE = o.strip().splitlines()[-1] if o.strip() else ''   # proof of ownership
+check('setup code file written', len(CODE) == 14, CODE[:4])
+code, txt = api('POST', '/api/first-run', {'username': USER, 'password': PW, 'confirm': PW, 'setup_code': ''}, auth=False); check('first-run without the setup code refused (403)', code == 403, str(code))
 code, txt = api('POST', '/api/auth/login', {'username': 'admin', 'password': 'admin'}, auth=False); check('login admin/admin refused', code in (400, 401, 403), str(code))
-code, txt = api('POST', '/api/first-run', {'username': USER, 'password': 'short', 'confirm': 'short'}, auth=False); check('weak password rejected', code == 400, txt[:80])
-code, txt = api('POST', '/api/first-run', {'username': USER, 'password': PW, 'confirm': PW + 'x'}, auth=False); check('mismatch rejected', code == 400, txt[:80])
-t=time.time(); code, txt = api('POST', '/api/first-run', {'username': USER, 'password': PW, 'confirm': PW}, auth=False); check('password set', code == 200, txt[:80]); res['first_run_s']=round(time.time()-t,1)
-code, txt = api('POST', '/api/first-run', {'username': USER + 'b', 'password': PW + 'z', 'confirm': PW + 'z'}, auth=False); check('second first-run refused (409)', code == 409, str(code))
+code, txt = api('POST', '/api/first-run', {'username': USER, 'password': 'short', 'confirm': 'short', 'setup_code': CODE}, auth=False); check('weak password rejected', code == 400, txt[:80])
+code, txt = api('POST', '/api/first-run', {'username': USER, 'password': PW, 'confirm': PW + 'x', 'setup_code': CODE}, auth=False); check('mismatch rejected', code == 400, txt[:80])
+t=time.time(); code, txt = api('POST', '/api/first-run', {'username': USER, 'password': PW, 'confirm': PW, 'setup_code': CODE}, auth=False); check('password set', code == 200, txt[:80]); res['first_run_s']=round(time.time()-t,1)
+code, txt = api('POST', '/api/first-run', {'username': USER + 'b', 'password': PW + 'z', 'confirm': PW + 'z', 'setup_code': CODE}, auth=False); check('second first-run refused (409)', code == 409, str(code))
 r = subprocess.run(['curl','-sk','-m','60','-o','/dev/null','-w','%{http_code} %{redirect_url}',BASE+'/first-run'],capture_output=True,text=True).stdout
 check('/first-run now redirects to /login', r.startswith('303') or r.startswith('307') or r.startswith('308') or r.startswith('302'), r)
 t = time.time(); code, txt = api('POST', '/api/auth/login', {'username': USER, 'password': PW}, auth=False, t=200) if False else (0, '')

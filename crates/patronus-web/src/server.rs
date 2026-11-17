@@ -62,14 +62,45 @@ pub async fn run() -> Result<()> {
         state.auth.syslogin.cfg.admin_groups
     );
 
+    // A unit configured by its image (an access point, or a router image
+    // that provisioned its network) records setup as complete at its first
+    // start: no "not set up yet" banner, no router wizard on an AP.
+    let role = crate::routes::api::setup::DeviceRole::from_env();
+    match crate::routes::api::setup::record_provisioned(
+        &state.config_store,
+        role,
+        std::env::var("PATRONUS_SETUP_PROVISIONED").ok().as_deref(),
+    )
+    .await
+    {
+        Ok(true) => info!("setup recorded as complete (role {})", role.as_str()),
+        Ok(false) => {}
+        Err(e) => error!("recording provisioned setup: {e}"),
+    }
+
     // Router images ship with no account at all: PATRONUS_FIRST_RUN_SETUP=1
     // makes the UI serve only /first-run (create the first administrator, a
-    // system user in the first admin group) until such a user exists.
+    // system user in the first admin group) until such a user exists. The
+    // page asks for proof of ownership: a one-time setup code shown on the
+    // console and in a root-only file (or the unit's existing root password,
+    // e.g. carried over from OpenWrt), within a window after the service
+    // starts, so whoever reaches the LAN first cannot claim the unit.
     if std::env::var("PATRONUS_FIRST_RUN_SETUP").is_ok_and(|v| v == "1")
         && !state.auth.syslogin.admin_account_exists()
     {
-        state.auth.syslogin.set_first_run_pending(true);
-        info!("no administrator account yet: the UI serves /first-run until the owner creates one");
+        let window = std::env::var("PATRONUS_FIRST_RUN_WINDOW_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .map(std::time::Duration::from_secs)
+            .unwrap_or(crate::syslogin::FIRST_RUN_WINDOW);
+        let code = state.auth.syslogin.open_first_run(window);
+        crate::syslogin::publish_first_run_code(&code, window);
+        info!(
+            "no administrator account yet: the UI serves /first-run for {} min; the setup code is in {} and on the console",
+            window.as_secs() / 60,
+            crate::syslogin::first_run_code_path().display()
+        );
     }
 
     // PATRONUS_HTTPS_PORT (default 8443; the embedded router image uses 443) and

@@ -200,7 +200,10 @@ dhcpcd 10.5.2 for DHCPv6/PD (built without OpenSSL: 332 KB) and one multi-call `
 
 Web login on the router tier = system users through PAM: there is no built-in admin. The first run (`/first-run`, while
 `PATRONUS_FIRST_RUN_SETUP=1` and no account in the admin group exists) creates the first administrator as a system user
-(sha512 in `/etc/shadow`, group `patronus-admin`) and then logs in through PAM like any other account.
+(sha512 in `/etc/shadow`, group `patronus-admin`) and then logs in through PAM like any other account. Claiming it needs
+proof of ownership (since 2026-11-17, section 12.9): the one-time setup code the web service prints on the console and
+writes to the root-only `/run/patronus/first-run-code`, or the unit's existing root password, within an hour of the web
+service starting.
 
 Real GL-AR750S, same build of everything else (o6 = OpenRC, sd9 = systemd, both with the per-instance supervisor lock and
 the system log; o4/o5/sd8 = the same images before those two changes; p7 = the old busybox-init image, older binaries):
@@ -261,7 +264,7 @@ What the router build contains (`patronus-web --no-default-features --features d
 
 1. **Default LAN IP `192.168.1.1/24`** with DHCP `.100-.249`, WAN port as DHCP client: `[firstboot]` in `/etc/patronus/patronus.toml` is applied once by `patronus-cli apply` (store key `firstboot.lan_seeded`), after which the Interfaces/DHCP pages own the settings.
 2. **HTTPS on 443 with a self-signed certificate** generated on the box at first start (ECDSA P-256, valid 10 years, back-dated so a 1970 router clock does not matter; SANs `patronus`, `patronus.local`, the LAN IP). **HTTP on 80 only answers `308` to the https URL** (no page, no login, no cookie). Browsers warn once; there is no ACME/cloud step.
-3. **No shipped password.** With `PATRONUS_FIRST_RUN_SETUP=1` and no `admin` account, every page redirects to `/first-run` and every API answers 403 until the owner chooses a password (12+ characters, known defaults refused, entered twice). Then `/first-run` redirects to the login. `admin/admin` is refused before and after (tested). Until it is set the UI is reachable only from the LAN side (input policy drop on the WAN); the password is chosen over TLS and never leaves the box. Recovery of a lost password: set `PATRONUS_ADMIN_PASSWORD` in the init script (re-applied at every web start while set), as on every other tier; removing the store from the console starts over with the first-run page (not tested).
+3. **No shipped password.** With `PATRONUS_FIRST_RUN_SETUP=1` and no `admin` account, every page redirects to `/first-run` and every API answers 403 until the owner chooses a password (12+ characters, known defaults refused, entered twice) and enters the setup code from the console or `/run/patronus/first-run-code` (or the root password; section 12.9). Then `/first-run` redirects to the login. `admin/admin` is refused before and after (tested). Until it is set the UI is reachable only from the LAN side (input policy drop on the WAN); the password is chosen over TLS and never leaves the box. Recovery of a lost password: set `PATRONUS_ADMIN_PASSWORD` in the init script (re-applied at every web start while set), as on every other tier; removing the store from the console starts over with the first-run page (not tested).
 4. No outbound connection is needed to use the UI: no CDN assets (static files are compiled in), no update check, no threat feed.
 
 ### Relation to central management (decision)
@@ -615,3 +618,42 @@ cookies seeded, sign-in must reach the dashboard and stay signed in, the old coo
 and be in the web log), unit tests `auth::cookie_tests` and `routes::auth_gate_tests` (split cookie fields, non-ASCII
 neighbour, stale duplicate, foreign-cookie deletion, back-off message). The same script can be pointed at a unit:
 `BASE_URL=https://<unit> E2E_USER=<test account> E2E_PASSWORD=... ci/stale-origin-login-e2e.py firefox,chromium`.
+
+### 12.9 First start of an access point, and claiming a unit on the first-run page (2026-11-17)
+
+Two problems found on units migrated from GL.iNet stock and OpenWrt:
+
+- **"This router has not been set up yet. Run the setup wizard"** on every page after the first sign-in. The wizard is the
+  router one (WAN port, LAN address, DHCP pool); a GL-AX1800 is a wired access point configured by its image (bridge,
+  Wi-Fi from `ap.env`), so nothing ever recorded setup as done, and running the wizard there would have turned it into a
+  router with its own DHCP server on the house LAN.
+  Now the image says what the unit is: `PATRONUS_DEVICE_ROLE=ap` in `/etc/patronus/embedded.env` (`check-rootfs.sh`
+  refuses an image where it does not match `ROLE=ap` in `board.sh`). The web service's first start on such a unit records
+  setup as complete (store key `setup.completed`, one audit row `provisioned`, web log line `setup recorded as complete
+  (role ap)`); `/api/setup/status` answers `completed: true, role: "ap", wizard: false` whatever the store says; `/setup`
+  shows what an AP is and links to Interfaces, Monitoring and System instead of the wizard; `POST /api/setup/apply` answers
+  409. A router image whose network is provisioned at build time sets `PATRONUS_SETUP_PROVISIONED=1` for the same result.
+  A router-mode unit without either (the Slate, a fresh router) still shows the banner until the wizard runs or is skipped.
+- **The first-run page could be claimed by anyone on the LAN.** A unit with no web administrator served "Welcome / Create
+  administrator" to the first visitor, who became its administrator. Now the page needs proof of ownership:
+  - a one-time **setup code** (`XXXX-XXXX-XXXX`, 60 bits, no look-alike characters) generated at every start of the web
+    service while no administrator exists. It is printed on the system console (serial) and written to
+    `/run/patronus/first-run-code` (mode 0600, tmpfs; `cat` it over ssh as root). The file is removed once the
+    administrator exists;
+  - or the unit's existing **root password** (a unit moved over from OpenWrt or the vendor firmware keeps its root login;
+    a locked root never counts);
+  - within a **window** of one hour after the web service starts (`PATRONUS_FIRST_RUN_WINDOW_SECS`), and for at most ten
+    wrong codes. After that the page says the window is closed; restarting the router or its web service opens a new one
+    with a new code. Code checks are constant-time; an empty or wrong proof is refused with 403 before any account is made.
+  - Units that already have an administrator (any non-root member of `patronus-admin`) never see the page; their accounts
+    and PAM sign-in are unchanged.
+- New accounts made on the first-run page get the lowest free uid from 1000 and gid from 2000. Before, `nobody` (65534) in
+  `/etc/passwd` pushed them to 65535/65536 (the overflow range); existing accounts keep their ids.
+
+Proof: unit tests `routes::api::setup::tests` (AP records setup at first start once, router keeps the banner, explicit
+provisioning), `routes::first_run::tests` (no claim without the code, lower-case/no-dash code accepted, ten wrong codes
+lock the window and a restart opens a new one, expiry, root password as proof, locked root refused),
+`sysauth::tests::new_accounts_get_regular_ids_even_with_nobody_present`; `qemu-gate.sh` on every embedded-aarch64 push
+(both init systems): code file root-only, claim refused without and with a wrong code, claimed with the code and the file
+removed, web log line, status `completed/ap/no wizard`, wizard apply 409, and after a restart no second record and no code.
+The MIPS harnesses (`t_e2e.py`, `t_slate.py`) read the code over the console/ssh.
