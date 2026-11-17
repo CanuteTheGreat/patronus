@@ -1,0 +1,13 @@
+[Unit]
+Description=Enable the QEMU guest agent inside KVM/QEMU guests
+ConditionVirtualization=vm
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PATRONUS_INIT=systemd
+ExecStart=/usr/libexec/patronus-qga-enable
+
+[Install]
+WantedBy=multi-user.target

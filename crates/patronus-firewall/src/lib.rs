@@ -10,6 +10,7 @@ pub mod applier;
 pub mod asn;
 pub mod feeds;
 pub mod ha_rules;
+pub mod hardening;
 pub mod nftables;
 pub mod rules;
 pub mod schedule;

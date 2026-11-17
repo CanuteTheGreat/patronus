@@ -1,0 +1,8 @@
+table inet ipopts
+delete table inet ipopts
+table inet ipopts {
+  chain raw_prerouting {
+    type filter hook prerouting priority raw; policy accept;
+    ip protocol tcp ip hdrlength > 5 counter drop comment "drop TCP with IPv4 options"
+  }
+}

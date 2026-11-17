@@ -45,6 +45,25 @@ pub struct StaticMapping {
     pub ip: Ipv4Addr,
     pub hostname: Option<String>,
     pub description: Option<String>,
+    /// `None` = the pool's lease time, `Some(0)` = infinite.
+    #[serde(default)]
+    pub lease_time: Option<u32>,
+    /// Publish `hostname.<dns.local_domain>` -> `ip` even while offline.
+    #[serde(default)]
+    pub dns_record: bool,
+}
+
+impl StaticMapping {
+    /// dnsmasq lease-time field / Kea valid-lifetime (`infinite`).
+    fn lease_field(&self) -> Option<String> {
+        self.lease_time.map(|t| {
+            if t == 0 {
+                "infinite".to_string()
+            } else {
+                t.to_string()
+            }
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -137,6 +156,11 @@ pub struct StaticInput {
     pub hostname: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// Seconds (120 s to 1 year); 0 = infinite; unset = the pool's.
+    #[serde(default)]
+    pub lease_time: Option<u32>,
+    #[serde(default)]
+    pub dns_record: bool,
 }
 
 impl StaticInput {
@@ -159,6 +183,16 @@ impl StaticInput {
                 .map(|h| lan::check_label("hostname", h))
                 .transpose()?,
             description: lan::check_description(self.description.as_deref())?,
+            lease_time: match self.lease_time {
+                Some(0) | None => self.lease_time,
+                Some(t) if (120..=31_536_000).contains(&t) => Some(t),
+                Some(_) => {
+                    return Err(invalid(
+                        "static lease time (0 = infinite, or 120 s to 1 year)",
+                    ))
+                }
+            },
+            dns_record: self.dns_record,
         })
     }
 }
@@ -254,6 +288,12 @@ pub async fn list_pools(store: &ConfigStore) -> Result<Vec<DhcpPool>> {
             ip,
             hostname: m.get("hostname"),
             description: m.get("description"),
+            lease_time: m
+                .try_get::<Option<i64>, _>("lease_time")
+                .ok()
+                .flatten()
+                .map(|t| t as u32),
+            dns_record: m.try_get::<i64, _>("dns_record").unwrap_or(0) != 0,
         };
         if let Some(p) = pools.iter_mut().find(|p| p.id == sm.pool_id) {
             p.static_mappings.push(sm);
@@ -322,8 +362,8 @@ pub async fn delete_pool(store: &ConfigStore, id: i64) -> Result<()> {
 pub async fn add_static(store: &ConfigStore, m: &StaticMapping) -> Result<i64> {
     let what = format!("a mapping for {} or {}", m.mac, m.ip);
     let res = sqlx::query(
-        "INSERT INTO dhcp_static_mappings (pool_id, mac, ip, hostname, description, updated_at)
-         VALUES (?,?,?,?,?,?)",
+        "INSERT INTO dhcp_static_mappings (pool_id, mac, ip, hostname, description, updated_at,
+         lease_time, dns_record) VALUES (?,?,?,?,?,?,?,?)",
     )
     .bind(m.pool_id)
     .bind(&m.mac)
@@ -331,6 +371,8 @@ pub async fn add_static(store: &ConfigStore, m: &StaticMapping) -> Result<i64> {
     .bind(&m.hostname)
     .bind(&m.description)
     .bind(now())
+    .bind(m.lease_time.map(|t| t as i64))
+    .bind(m.dns_record as i64)
     .execute(store.pool()?)
     .await
     .map_err(|e| lan::unique_err(e, &what))?;
@@ -606,7 +648,12 @@ fn ip_join(v: &[Ipv4Addr], sep: &str) -> String {
 }
 
 /// `/etc/kea/kea-dhcp4.conf`.
-pub fn render_kea4(pools: &[Resolved4], dns_on: bool, ntp_on: bool) -> String {
+pub fn render_kea4(
+    pools: &[Resolved4],
+    dns_on: bool,
+    ntp_on: bool,
+    local_domain: Option<&str>,
+) -> String {
     let mut ifaces: Vec<&str> = pools.iter().map(|r| r.dev.as_str()).collect();
     ifaces.sort();
     ifaces.dedup();
@@ -621,7 +668,7 @@ pub fn render_kea4(pools: &[Resolved4], dns_on: bool, ntp_on: bool) -> String {
             if !o.ntp.is_empty() {
                 opts.push(json!({"name": "ntp-servers", "data": ip_join(&o.ntp, ", ")}));
             }
-            if let Some(d) = &r.pool.domain {
+            if let Some(d) = r.pool.domain.as_deref().or(local_domain) {
                 opts.push(json!({"name": "domain-name", "data": d}));
             }
             let reservations: Vec<Value> = r
@@ -632,6 +679,9 @@ pub fn render_kea4(pools: &[Resolved4], dns_on: bool, ntp_on: bool) -> String {
                     let mut v = json!({"hw-address": m.mac, "ip-address": m.ip.to_string()});
                     if let Some(h) = &m.hostname {
                         v["hostname"] = json!(h);
+                    }
+                    if m.lease_time.is_some() {
+                        v["client-classes"] = json!([format!("static-{}", m.id)]);
                     }
                     v
                 })
@@ -647,8 +697,23 @@ pub fn render_kea4(pools: &[Resolved4], dns_on: bool, ntp_on: bool) -> String {
             })
         })
         .collect();
+    // static mappings with their own lease time: a class that only the
+    // reservation assigns carries the lifetime (infinite = 0xffffffff)
+    let classes: Vec<Value> = pools
+        .iter()
+        .flat_map(|r| r.pool.static_mappings.iter())
+        .filter_map(|m| {
+            m.lease_time.map(|t| {
+                json!({
+                    "name": format!("static-{}", m.id),
+                    "valid-lifetime": if t == 0 { u32::MAX } else { t },
+                })
+            })
+        })
+        .collect();
     let doc = json!({
         "Dhcp4": {
+            "client-classes": classes,
             "interfaces-config": {"interfaces": ifaces},
             "lease-database": {"type": "memfile", "persist": true, "name": KEA4_LEASES, "lfc-interval": 3600},
             "subnet4": subnets,
@@ -662,7 +727,12 @@ pub fn render_kea4(pools: &[Resolved4], dns_on: bool, ntp_on: bool) -> String {
     )
 }
 
-fn dnsmasq_v4_lines(r: &Resolved4, dns_on: bool, ntp_on: bool) -> Vec<String> {
+fn dnsmasq_v4_lines(
+    r: &Resolved4,
+    dns_on: bool,
+    ntp_on: bool,
+    local_domain: Option<&str>,
+) -> Vec<String> {
     let tag = format!("p{}", r.pool.id);
     let o = options4(r, dns_on, ntp_on);
     let mut v = vec![
@@ -687,14 +757,18 @@ fn dnsmasq_v4_lines(r: &Resolved4, dns_on: bool, ntp_on: bool) -> Vec<String> {
             ip_join(&o.ntp, ",")
         ));
     }
-    if let Some(d) = &r.pool.domain {
+    if let Some(d) = r.pool.domain.as_deref().or(local_domain) {
         v.push(format!("dhcp-option=tag:{tag},option:domain-name,{d}"));
     }
     for m in &r.pool.static_mappings {
-        match &m.hostname {
-            Some(h) => v.push(format!("dhcp-host={},{},{h}", m.mac, m.ip)),
-            None => v.push(format!("dhcp-host={},{}", m.mac, m.ip)),
+        let mut f = vec![m.mac.clone(), m.ip.to_string()];
+        if let Some(h) = &m.hostname {
+            f.push(h.clone());
         }
+        if let Some(l) = m.lease_field() {
+            f.push(l);
+        }
+        v.push(format!("dhcp-host={}", f.join(",")));
     }
     v
 }
@@ -710,6 +784,8 @@ struct Plan {
     relays: Vec<(String, IpAddr, Vec<IpAddr>)>,
     dns_on: bool,
     ntp_on: bool,
+    /// `dns.local_domain`: default DHCP domain when a pool has none.
+    local_domain: Option<String>,
 }
 
 async fn plan(store: &ConfigStore, env: &LanEnv, rep: &mut ApplyReport) -> Result<Plan> {
@@ -717,7 +793,19 @@ async fn plan(store: &ConfigStore, env: &LanEnv, rep: &mut ApplyReport) -> Resul
     let backend = backend(store, env).await?;
     let ra_backend = ra_backend(store, env, backend).await?;
     let v4 = resolve_pools(store, &addrs, rep).await?;
-    let v6 = dhcp6::resolve(store, &addrs, rep).await?;
+    let mut v6 = dhcp6::resolve(store, &addrs, rep).await?;
+    if backend == Backend::Kea {
+        v6.retain(|r| {
+            if r.pool.is_prefix_relative() {
+                rep.warn(format!(
+                    "DHCPv6 pool {}-{} on {}: prefix-relative ranges need the dnsmasq backend \
+                     (Kea cannot follow a delegated prefix); pool skipped",
+                    r.pool.range_start, r.pool.range_end, r.pool.interface
+                ));
+            }
+            !r.pool.is_prefix_relative()
+        });
+    }
     let ras = ra::resolve(store, &addrs, rep).await?;
     if ra_backend == RaBackend::Dnsmasq {
         // dnsmasq only sets the M flag (and clears A) for a DHCPv6 range it
@@ -786,6 +874,11 @@ async fn plan(store: &ConfigStore, env: &LanEnv, rep: &mut ApplyReport) -> Resul
         relays,
         dns_on,
         ntp_on,
+        local_domain: lan::setting_or(store, "dns.local_domain", "")
+            .await
+            .ok()
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty()),
     })
 }
 
@@ -806,7 +899,12 @@ pub async fn dnsmasq_part(
         lines.push(format!("dhcp-leasefile={}", lan::DNSMASQ_LEASES));
         for r in &p.v4 {
             part.interfaces.push(r.dev.clone());
-            lines.extend(dnsmasq_v4_lines(r, p.dns_on, p.ntp_on));
+            lines.extend(dnsmasq_v4_lines(
+                r,
+                p.dns_on,
+                p.ntp_on,
+                p.local_domain.as_deref(),
+            ));
         }
         for r in &p.v6 {
             part.interfaces.push(r.dev.clone());
@@ -1010,7 +1108,7 @@ impl DhcpApplier {
                 KEA4_BIN,
                 ManagedFile {
                     path: KEA4_CONF,
-                    content: render_kea4(&p.v4, p.dns_on, p.ntp_on),
+                    content: render_kea4(&p.v4, p.dns_on, p.ntp_on, p.local_domain.as_deref()),
                     mode: 0o640,
                     group: Some("dhcp"),
                     check: Some(vec![KEA4_BIN, "-t", "{}"]),
@@ -1049,7 +1147,7 @@ impl DhcpApplier {
     /// the daemon is no longer needed.
     fn idle_content(svc: &str, p: &Plan) -> String {
         match svc {
-            "kea-dhcp4" => render_kea4(&[], p.dns_on, p.ntp_on),
+            "kea-dhcp4" => render_kea4(&[], p.dns_on, p.ntp_on, None),
             "kea-dhcp6" => dhcp6::render_kea(&[], p.dns_on),
             _ => ra::render_radvd(&[], p.dns_on),
         }
@@ -1195,6 +1293,7 @@ mod tests {
             ip: "192.168.50.20".into(),
             hostname: Some("printer".into()),
             description: None,
+            ..Default::default()
         }
         .validate(&pool)
         .unwrap();
@@ -1453,6 +1552,7 @@ mod tests {
             ip: ip.into(),
             hostname: Some(host.into()),
             description: None,
+            ..Default::default()
         };
         assert!(mk("192.168.50.20", "nas").validate(&pool).is_ok());
         assert!(mk("192.168.50.150", "nas").validate(&pool).is_err());
@@ -1480,5 +1580,206 @@ mod tests {
         assert_eq!(l[0].hostname.as_deref(), Some("printer"));
         assert_eq!(l[1].family, "ipv6");
         assert_eq!(l[1].mac, "00:01:00:01:bb");
+    }
+
+    #[tokio::test]
+    async fn static_lease_options_render_for_dnsmasq_and_kea() {
+        let t = testutil::env(&[lan::DNSMASQ_BIN, "/usr/sbin/unbound"]);
+        let s = testutil::store().await;
+        let id = seed(&s).await;
+        lan::set_setting(&s, "dns.local_domain", "home.example")
+            .await
+            .unwrap();
+        let pool = get_pool(&s, id).await.unwrap().unwrap();
+        for (mac, ip, host, lease) in [
+            ("AA:BB:CC:00:00:03", "192.168.50.21", "nas", Some(0)),
+            ("AA:BB:CC:00:00:04", "192.168.50.22", "cam", Some(7200)),
+        ] {
+            let m = StaticInput {
+                mac: mac.into(),
+                ip: ip.into(),
+                hostname: Some(host.into()),
+                lease_time: lease,
+                dns_record: true,
+                ..Default::default()
+            }
+            .validate(&pool)
+            .unwrap();
+            add_static(&s, &m).await.unwrap();
+        }
+        // stored and read back
+        let pool = get_pool(&s, id).await.unwrap().unwrap();
+        let nas = pool
+            .static_mappings
+            .iter()
+            .find(|m| m.ip.to_string() == "192.168.50.21")
+            .unwrap();
+        assert_eq!((nas.lease_time, nas.dns_record), (Some(0), true));
+        let printer = pool
+            .static_mappings
+            .iter()
+            .find(|m| m.ip.to_string() == "192.168.50.20")
+            .unwrap();
+        assert_eq!((printer.lease_time, printer.dns_record), (None, false));
+
+        let a = DhcpApplier::new(t.env.clone());
+        a.apply(&s).await.unwrap();
+        let c = read(&t, lan::DNSMASQ_CONF);
+        for want in [
+            "dhcp-host=aa:bb:cc:00:00:02,192.168.50.20,printer\n",
+            "dhcp-host=aa:bb:cc:00:00:03,192.168.50.21,nas,infinite\n",
+            "dhcp-host=aa:bb:cc:00:00:04,192.168.50.22,cam,7200\n",
+        ] {
+            assert!(
+                c.contains(&want.replace("\\n", "")),
+                "missing {want:?} in\n{c}"
+            );
+        }
+        // pool has its own domain: that wins over the local domain
+        assert!(c.contains("option:domain-name,lan.example"), "{c}");
+
+        let r = resolve_pools(&s, &t.env.addrs().unwrap(), &mut ApplyReport::default())
+            .await
+            .unwrap();
+        let k = render_kea4(&r, true, false, Some("home.example"));
+        let body: String = k
+            .lines()
+            .filter(|l| !l.starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let j: Value = serde_json::from_str(&body).unwrap();
+        let classes = j["Dhcp4"]["client-classes"].as_array().unwrap();
+        assert!(
+            classes
+                .iter()
+                .any(|c| c["valid-lifetime"] == json!(4294967295u32)),
+            "{classes:?}"
+        );
+        assert!(
+            classes.iter().any(|c| c["valid-lifetime"] == json!(7200)),
+            "{classes:?}"
+        );
+        let res = j["Dhcp4"]["subnet4"][0]["reservations"].as_array().unwrap();
+        assert_eq!(
+            res.iter()
+                .filter(|r| r.get("client-classes").is_some())
+                .count(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn local_domain_is_the_default_dhcp_domain() {
+        let t = testutil::env(&[lan::DNSMASQ_BIN, "/usr/sbin/unbound"]);
+        let s = testutil::store().await;
+        let pool = PoolInput {
+            interface: "@lan".into(),
+            enabled: true,
+            range_start: "192.168.50.100".into(),
+            range_end: "192.168.50.199".into(),
+            ..Default::default()
+        }
+        .validate()
+        .unwrap();
+        upsert_pool(&s, None, &pool).await.unwrap();
+        lan::set_setting(&s, "dns.local_domain", "home.example")
+            .await
+            .unwrap();
+        DhcpApplier::new(t.env.clone()).apply(&s).await.unwrap();
+        let c = read(&t, lan::DNSMASQ_CONF);
+        assert!(
+            c.contains("dhcp-option=tag:p1,option:domain-name,home.example"),
+            "{c}"
+        );
+    }
+
+    #[test]
+    fn static_lease_time_validation() {
+        let pool = DhcpPool {
+            id: 1,
+            interface: "@lan".into(),
+            enabled: true,
+            range_start: "192.0.2.100".parse().unwrap(),
+            range_end: "192.0.2.150".parse().unwrap(),
+            lease_time: 3600,
+            gateway: None,
+            dns_servers: vec![],
+            domain: None,
+            ntp_servers: vec![],
+            description: None,
+            static_mappings: vec![],
+        };
+        let mk = |l: Option<u32>| StaticInput {
+            mac: "aa:bb:cc:00:00:09".into(),
+            ip: "192.0.2.10".into(),
+            lease_time: l,
+            ..Default::default()
+        };
+        assert_eq!(mk(None).validate(&pool).unwrap().lease_time, None);
+        assert_eq!(mk(Some(0)).validate(&pool).unwrap().lease_time, Some(0));
+        assert_eq!(mk(Some(600)).validate(&pool).unwrap().lease_time, Some(600));
+        assert!(mk(Some(5)).validate(&pool).is_err());
+        assert!(mk(Some(99_999_999)).validate(&pool).is_err());
+    }
+
+    #[tokio::test]
+    async fn prefix_relative_pool_follows_every_prefix_and_kea_refuses() {
+        use crate::lan::{IfAddr, StaticAddrs};
+        let mut t = testutil::env(&[
+            lan::DNSMASQ_BIN,
+            KEA4_BIN,
+            dhcp6::KEA6_BIN,
+            "/usr/sbin/unbound",
+        ]);
+        // LAN: static ULA plus a delegated (dynamic) /64
+        let a = |s: &str, p| IfAddr {
+            ifname: "rtr-lan".into(),
+            addr: s.parse().unwrap(),
+            prefix: p,
+        };
+        t.env.addrs = std::sync::Arc::new(StaticAddrs(vec![
+            a("192.168.50.1", 24),
+            a("fd00:50::1", 64),
+            a("2001:db8:0:1::1", 64),
+        ]));
+        let s = testutil::store().await;
+        let p6 = dhcp6::Dhcp6Input {
+            interface: "@lan".into(),
+            enabled: true,
+            range_start: "::1000".into(),
+            range_end: "::ffff".into(),
+            ..Default::default()
+        }
+        .validate()
+        .unwrap();
+        assert!(p6.is_prefix_relative());
+        dhcp6::upsert(&s, None, &p6).await.unwrap();
+        let ra = ra::RaInput {
+            interface: "@lan".into(),
+            enabled: true,
+            mode: Some("managed".into()),
+            ..Default::default()
+        }
+        .validate()
+        .unwrap();
+        ra::upsert(&s, None, &ra).await.unwrap();
+        lan::set_setting(&s, "dhcp.backend", "dnsmasq")
+            .await
+            .unwrap();
+        let rep = DhcpApplier::new(t.env.clone()).apply(&s).await.unwrap();
+        let c = read(&t, lan::DNSMASQ_CONF);
+        assert!(
+            c.contains("dhcp-range=set:v6p1,::1000,::ffff,constructor:rtr-lan,64,86400"),
+            "{c}\n{rep:?}"
+        );
+        // Kea cannot follow a prefix: warn, no pool rendered
+        lan::set_setting(&s, "dhcp.backend", "kea").await.unwrap();
+        let mut w = ApplyReport::default();
+        let plan = plan(&s, &t.env, &mut w).await.unwrap();
+        assert!(plan.v6.is_empty());
+        assert!(
+            w.warnings.iter().any(|m| m.contains("prefix-relative")),
+            "{w:?}"
+        );
     }
 }

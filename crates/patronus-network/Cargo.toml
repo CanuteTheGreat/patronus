@@ -46,6 +46,8 @@ vrf = []
 segmentation = []
 # per-device Wi-Fi credentials: hostapd config + wpa_psk_file (RDEPEND net-wireless/hostapd)
 wifi-ap = ["segmentation"]
+# Wi-Fi client uplink: wpa_supplicant per device (RDEPEND net-wireless/wpa_supplicant)
+wifi-client = []
 # signed plugins + Gentoo package jobs (Packages page)
 plugins = ["dep:ed25519-dalek", "dep:rand"]
 web-proxy = []

@@ -25,12 +25,51 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct SysctlApplier {
     proc_root: PathBuf,
+    /// `/sys` (queue masks for packet steering).
+    sys_root: PathBuf,
+}
+
+/// `system_config` key: spread receive/transmit processing over all CPUs.
+pub const PACKET_STEERING_KEY: &str = "system.packet_steering";
+
+/// Hex CPU mask in the kernel's `rps_cpus` format (32-bit groups, comma
+/// separated, most significant first) for the given CPU numbers.
+pub fn cpu_mask(cpus: &[usize]) -> String {
+    let top = cpus.iter().copied().max().unwrap_or(0);
+    let words = top / 32 + 1;
+    let mut w = vec![0u32; words];
+    for &c in cpus {
+        w[c / 32] |= 1 << (c % 32);
+    }
+    let mut it = w.iter().rev();
+    let first = format!("{:x}", it.next().unwrap());
+    std::iter::once(first)
+        .chain(it.map(|x| format!("{x:08x}")))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Parse a cpulist like `0-3,8,10-11`.
+pub fn parse_cpulist(s: &str) -> Vec<usize> {
+    let mut v = Vec::new();
+    for part in s.trim().split(',').filter(|p| !p.is_empty()) {
+        match part.split_once('-') {
+            Some((a, b)) => {
+                if let (Ok(a), Ok(b)) = (a.parse::<usize>(), b.parse::<usize>()) {
+                    v.extend(a..=b.min(a + 4096));
+                }
+            }
+            None => v.extend(part.parse::<usize>()),
+        }
+    }
+    v
 }
 
 impl Default for SysctlApplier {
     fn default() -> Self {
         Self {
             proc_root: PathBuf::from("/proc/sys"),
+            sys_root: PathBuf::from("/sys"),
         }
     }
 }
@@ -38,9 +77,77 @@ impl Default for SysctlApplier {
 impl SysctlApplier {
     /// An applier writing under `root` instead of `/proc/sys` (tests).
     pub fn with_root(root: impl Into<PathBuf>) -> Self {
+        let proc_root: PathBuf = root.into();
         Self {
-            proc_root: root.into(),
+            sys_root: proc_root.join("__sys"),
+            proc_root,
         }
+    }
+
+    /// Packet steering (OpenWrt `packet_steering`): every receive queue of
+    /// every real interface may be processed on all CPUs (`rps_cpus`), and
+    /// transmit queue N is bound to CPU N mod ncpu (`xps_cpus`). `off`
+    /// writes zeros back (kernel default), but only when the setting is
+    /// explicitly `0`, so hand-tuned queues are left alone by default.
+    async fn packet_steering(&self, store: &ConfigStore, report: &mut ApplyReport) {
+        let want = match store.load_system_config(PACKET_STEERING_KEY).await {
+            Ok(Some(v)) => v.trim().to_string(),
+            _ => return,
+        };
+        let on = match want.as_str() {
+            "1" => true,
+            "0" => false,
+            _ => return,
+        };
+        let mut cpus = std::fs::read_to_string(self.sys_root.join("devices/system/cpu/online"))
+            .map(|s| parse_cpulist(&s))
+            .unwrap_or_default();
+        if cpus.is_empty() {
+            cpus = (0..std::thread::available_parallelism().map_or(1, |n| n.get())).collect();
+        }
+        let all = cpu_mask(&cpus);
+        let Ok(rd) = std::fs::read_dir(self.sys_root.join("class/net")) else {
+            return;
+        };
+        let mut n = 0;
+        let mut devs: Vec<_> = rd.flatten().collect();
+        devs.sort_by_key(|d| d.file_name());
+        for d in devs {
+            let name = d.file_name().to_string_lossy().to_string();
+            if name == "lo" {
+                continue;
+            }
+            let Ok(q) = std::fs::read_dir(d.path().join("queues")) else {
+                continue;
+            };
+            let mut qs: Vec<_> = q.flatten().collect();
+            qs.sort_by_key(|d| d.file_name());
+            for q in qs {
+                let qn = q.file_name().to_string_lossy().to_string();
+                let (file, val) = if let Some(i) = qn.strip_prefix("tx-") {
+                    let i: usize = i.parse().unwrap_or(0);
+                    ("xps_cpus", cpu_mask(&[cpus[i % cpus.len()]]))
+                } else if qn.starts_with("rx-") {
+                    ("rps_cpus", all.clone())
+                } else {
+                    continue;
+                };
+                let path = q.path().join(file);
+                if !path.exists() {
+                    continue;
+                }
+                let val = if on { val } else { "0".to_string() };
+                match std::fs::write(&path, format!("{val}\n")) {
+                    Ok(()) => n += 1,
+                    Err(e) => report.warn(format!("packet steering: {name}/{qn}/{file}: {e}")),
+                }
+            }
+        }
+        report.applied(format!(
+            "packet steering {} ({n} queue file(s), {} CPU(s))",
+            if on { "on" } else { "off" },
+            cpus.len()
+        ));
     }
 
     /// `/proc/sys/...` path for a sysctl(8) key (`/` inside a component
@@ -143,6 +250,7 @@ impl Applier for SysctlApplier {
                 Err(e) => errors.push(format!("sysctl {key}: read back failed: {e}")),
             }
         }
+        self.packet_steering(store, &mut report).await;
         if errors.is_empty() {
             Ok(report)
         } else {
@@ -241,5 +349,61 @@ mod tests {
             a.apply(&s).await.is_err(),
             "a missing non-device key is an error"
         );
+    }
+
+    #[test]
+    fn cpu_masks() {
+        assert_eq!(cpu_mask(&[0, 1, 2, 3]), "f");
+        assert_eq!(cpu_mask(&[2]), "4");
+        assert_eq!(cpu_mask(&(0..24).collect::<Vec<_>>()), "ffffff");
+        assert_eq!(cpu_mask(&(0..36).collect::<Vec<_>>()), "f,ffffffff");
+        assert_eq!(cpu_mask(&[32]), "1,00000000");
+        assert_eq!(parse_cpulist("0-3,8,10-11\n"), vec![0, 1, 2, 3, 8, 10, 11]);
+        assert_eq!(parse_cpulist("0\n"), vec![0]);
+    }
+
+    #[tokio::test]
+    async fn packet_steering_spreads_queues_over_all_cpus() {
+        let proc = fake_proc();
+        let sys = proc.path().join("__sys");
+        std::fs::create_dir_all(sys.join("devices/system/cpu")).unwrap();
+        std::fs::write(sys.join("devices/system/cpu/online"), "0-3\n").unwrap();
+        for dev in ["eth0", "lo"] {
+            for q in [
+                "rx-0/rps_cpus",
+                "rx-1/rps_cpus",
+                "tx-0/xps_cpus",
+                "tx-1/xps_cpus",
+            ] {
+                let f = sys.join("class/net").join(dev).join("queues").join(q);
+                std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+                std::fs::write(&f, "0\n").unwrap();
+            }
+        }
+        let rd = |p: &str| std::fs::read_to_string(sys.join("class/net").join(p)).unwrap();
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let a = SysctlApplier::with_root(proc.path());
+        // unset: nothing touched
+        a.apply(&s).await.unwrap();
+        assert_eq!(rd("eth0/queues/rx-0/rps_cpus"), "0\n");
+        s.save_system_config(PACKET_STEERING_KEY, "1")
+            .await
+            .unwrap();
+        let r = a.apply(&s).await.unwrap();
+        assert!(
+            r.applied.iter().any(|l| l.contains("packet steering on")),
+            "{r:?}"
+        );
+        assert_eq!(rd("eth0/queues/rx-0/rps_cpus"), "f\n");
+        assert_eq!(rd("eth0/queues/rx-1/rps_cpus"), "f\n");
+        assert_eq!(rd("eth0/queues/tx-0/xps_cpus"), "1\n");
+        assert_eq!(rd("eth0/queues/tx-1/xps_cpus"), "2\n");
+        assert_eq!(rd("lo/queues/rx-0/rps_cpus"), "0\n", "lo is left alone");
+        s.save_system_config(PACKET_STEERING_KEY, "0")
+            .await
+            .unwrap();
+        a.apply(&s).await.unwrap();
+        assert_eq!(rd("eth0/queues/rx-0/rps_cpus"), "0\n");
+        assert_eq!(rd("eth0/queues/tx-1/xps_cpus"), "0\n");
     }
 }

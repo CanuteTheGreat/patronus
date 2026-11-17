@@ -53,6 +53,35 @@ pub fn anti_lockout_ports() -> Vec<u16> {
         .unwrap_or_else(|| ANTI_LOCKOUT_PORTS.to_vec())
 }
 
+/// `system_config` key of the managed SSH server's port (lane H/L3).
+pub const SSH_PORT_KEY: &str = "ssh.port";
+
+/// The SSH port the anti-lockout rule must keep open (`ssh.port`, default 22).
+pub async fn ssh_port(store: &ConfigStore) -> u16 {
+    store
+        .load_system_config(SSH_PORT_KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.trim().parse::<u16>().ok())
+        .filter(|p| *p != 0)
+        .unwrap_or(22)
+}
+
+/// The stored anti-lockout rule opens tcp/22 (seeded before `ssh.port`
+/// existed): make a system "Anti-lockout" rule open `ssh_port` instead.
+pub fn follow_ssh_port(rule: &mut FirewallRule, origin: RuleOrigin, ssh_port: u16) {
+    if origin != RuleOrigin::System || rule.name != "Anti-lockout" || ssh_port == 22 {
+        return;
+    }
+    if let Some(PortSpec::Multiple(ports)) = &mut rule.dport {
+        if ports.contains(&22) {
+            ports.retain(|p| *p != 22 && *p != ssh_port);
+            ports.insert(0, ssh_port);
+        }
+    }
+}
+
 /// The bootstrap file path: `$PATRONUS_BOOTSTRAP` or the default.
 pub fn default_bootstrap_path() -> PathBuf {
     std::env::var_os("PATRONUS_BOOTSTRAP")

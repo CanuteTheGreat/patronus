@@ -28,6 +28,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 
+#[path = "import_uci_ext.rs"]
+mod ext;
+pub use ext::*;
+
 // ---------------------------------------------------------------------------
 // UCI parser
 // ---------------------------------------------------------------------------
@@ -259,9 +263,15 @@ fn config_members(listing: &str) -> Vec<String> {
 
 /// Load a directory, or a `.tar.gz` (extracted with `tar xzf`, only the
 /// `etc/config/*` members: the backup also holds passwords and host keys).
+#[cfg(test)]
 pub fn load_input(input: &Path) -> Result<Files> {
+    Ok(load_input_full(input)?.0)
+}
+
+/// The configuration files plus the extra files (sshd_config, SSH CA/principals, nft includes).
+pub fn load_input_full(input: &Path) -> Result<(Files, Extras)> {
     if input.is_dir() {
-        return load_dir(input);
+        return Ok((load_dir(input)?, load_extras(input)));
     }
     let list = std::process::Command::new("tar")
         .arg("tzf")
@@ -275,10 +285,18 @@ pub fn load_input(input: &Path) -> Result<Files> {
             String::from_utf8_lossy(&list.stderr).trim()
         );
     }
-    let members = config_members(&String::from_utf8_lossy(&list.stdout));
+    let listing = String::from_utf8_lossy(&list.stdout).into_owned();
+    let mut members = config_members(&listing);
+    let extra_members: Vec<String> = listing
+        .lines()
+        .map(str::trim)
+        .filter(|l| wanted_extra(l.strip_prefix("./").unwrap_or(l)))
+        .map(str::to_string)
+        .collect();
     if members.is_empty() {
         bail!("{}: no etc/config/* in the archive", input.display());
     }
+    members.extend(extra_members);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
@@ -304,7 +322,7 @@ pub fn load_input(input: &Path) -> Result<Files> {
     if !st.success() {
         bail!("tar xzf {} failed", input.display());
     }
-    load_dir(&tmp.0)
+    Ok((load_dir(&tmp.0)?, load_extras(&tmp.0)))
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +396,8 @@ pub struct Plan {
     pub covered: Vec<String>,
     pub notes: Vec<String>,
     pub unmapped: Vec<String>,
+    /// Full-router mappings (`import_uci_ext.rs`).
+    pub ext: ExtPlan,
 }
 
 const STOCK_RULES: &[&str] = &[
@@ -392,7 +412,9 @@ const STOCK_RULES: &[&str] = &[
     "Allow-ISAKMP",
 ];
 
-const HANDLED_FILES: &[&str] = &["network", "wireless", "firewall", "dhcp", "system"];
+const HANDLED_FILES: &[&str] = &[
+    "network", "wireless", "firewall", "dhcp", "system", "mwan3", "ddns", "dropbear",
+];
 
 /// Parse repeated `--map UCI=DEVICE`.
 pub fn parse_maps(maps: &[String]) -> Result<BTreeMap<String, String>> {
@@ -517,7 +539,13 @@ fn role_of_zone(z: &str) -> Option<&'static str> {
 }
 
 /// Build the plan from the parsed UCI files.
+#[cfg(test)]
 pub fn build_plan(files: &Files, maps: &BTreeMap<String, String>) -> Plan {
+    build_plan_with(files, &Extras::default(), maps)
+}
+
+/// The import plan, with the extra files of the input tree (sshd_config, nft includes).
+pub fn build_plan_with(files: &Files, extras: &Extras, maps: &BTreeMap<String, String>) -> Plan {
     let mut plan = Plan::default();
     let zones: Vec<Zone> = sections(files, "firewall", "zone")
         .map(|z| Zone {
@@ -533,8 +561,14 @@ pub fn build_plan(files: &Files, maps: &BTreeMap<String, String>) -> Plan {
             .map(str::to_string)
     };
     network_plan(&mut plan, files, maps, &role_of);
+    let zones = zone_map(&plan, files, &wg_devices(files, maps));
     dhcp_plan(&mut plan, files);
-    firewall_plan(&mut plan, files);
+    let own: Vec<IpAddr> = plan
+        .ifaces
+        .iter()
+        .flat_map(|i| i.addrs.iter().map(|a| a.ip()))
+        .collect();
+    firewall_plan(&mut plan, files, &zones, &own);
     wireless_plan(&mut plan, files, maps);
     system_plan(&mut plan, files);
     for (name, secs) in files {
@@ -545,6 +579,7 @@ pub fn build_plan(files: &Files, maps: &BTreeMap<String, String>) -> Plan {
             ));
         }
     }
+    plan_ext(&mut plan, files, extras, maps);
     plan
 }
 
@@ -555,7 +590,19 @@ fn network_plan(
     role_of: &dyn Fn(&str) -> Option<String>,
 ) {
     const KNOWN: &[&str] = &[
-        "proto", "device", "ifname", "ipaddr", "netmask", "gateway", "mtu", "auto",
+        "proto",
+        "device",
+        "ifname",
+        "ipaddr",
+        "netmask",
+        "gateway",
+        "mtu",
+        "auto",
+        // IPv6 assignment / DHCPv6 client options: import_uci_ext.rs
+        "ip6assign",
+        "reqaddress",
+        "reqprefix",
+        "clientid",
     ];
     let mut dev_of_uci_device: BTreeMap<String, String> = BTreeMap::new();
     let mut v6_pending: Vec<(&Section, String)> = Vec::new();
@@ -578,6 +625,7 @@ fn network_plan(
                 v6_pending.push((s, uci_dev));
                 continue;
             }
+            "wireguard" => continue,
             other => {
                 plan.unmapped.push(format!(
                     "network: interface '{name}' proto '{other}' (not supported by the importer)"
@@ -648,7 +696,11 @@ fn network_plan(
         }
     }
     for s in files.get("network").into_iter().flatten() {
-        if s.kind == "interface" {
+        if s.kind == "interface"
+            || s.kind == "globals"
+            || s.kind == "route"
+            || s.kind.starts_with("wireguard_")
+        {
             continue;
         }
         let detail = match s.kind.as_str() {
@@ -675,6 +727,10 @@ fn dhcp_plan(plan: &mut Plan, files: &Files) {
         "leasetime",
         "ignore",
         "dhcpv4",
+        // dhcp_option 6, force, ndp, IPv6: import_uci_ext.rs
+        "dhcp_option",
+        "force",
+        "ndp",
     ];
     let domain = sections(files, "dhcp", "dnsmasq")
         .next()
@@ -789,20 +845,11 @@ fn dhcp_plan(plan: &mut Plan, files: &Files) {
             mac: mac.clone(),
             ip,
         });
-        unmapped_opts(plan, "dhcp", s, &["name", "mac", "ip"]);
+        unmapped_opts(plan, "dhcp", s, &["name", "mac", "ip", "leasetime", "dns"]);
     }
     for s in files.get("dhcp").into_iter().flatten() {
         match s.kind.as_str() {
-            "dhcp" | "host" => {}
-            "dnsmasq" => {
-                let left = s.leftover(&["domain"]);
-                plan.unmapped.push(format!(
-                    "dhcp: dnsmasq '{}': {} option(s) not imported ({}); domain is used for the DHCP pool",
-                    s.label(),
-                    left.len(),
-                    left.join(", ")
-                ));
-            }
+            "dhcp" | "host" | "domain" | "ipset" | "odhcpd" | "dnsmasq" => {}
             _ => plan
                 .unmapped
                 .push(format!("dhcp: {} '{}' (not imported)", s.kind, s.label())),
@@ -810,16 +857,21 @@ fn dhcp_plan(plan: &mut Plan, files: &Files) {
     }
 }
 
-fn zone_iface(zone: Option<&str>) -> Result<Option<String>, String> {
+/// The Patronus interface specs of a zone (one rule per spec): `@lan`, a
+/// tunnel device in the same zone, ... `None` = any interface.
+fn zone_specs(zones: &ZoneMap, zone: Option<&str>) -> Result<Vec<Option<String>>, String> {
     match zone {
-        None | Some("*") => Ok(None),
-        Some(z) => role_of_zone(z)
-            .map(|r| Some(format!("@{r}")))
-            .ok_or_else(|| format!("zone '{z}' (only the lan and wan zones map to roles)")),
+        None | Some("*") => Ok(vec![None]),
+        Some(z) => match zones.get(z) {
+            Some(v) if !v.is_empty() => Ok(v.iter().cloned().map(Some).collect()),
+            _ => role_of_zone(z)
+                .map(|r| vec![Some(format!("@{r}"))])
+                .ok_or_else(|| format!("zone '{z}' (no imported interface in it)")),
+        },
     }
 }
 
-fn firewall_plan(plan: &mut Plan, files: &Files) {
+fn firewall_plan(plan: &mut Plan, files: &Files, zones: &ZoneMap, own: &[IpAddr]) {
     for s in files.get("firewall").into_iter().flatten() {
         match s.kind.as_str() {
             "defaults" => {
@@ -837,9 +889,9 @@ fn firewall_plan(plan: &mut Plan, files: &Files) {
             }
             "zone" => {
                 let name = s.get("name").unwrap_or("");
-                if role_of_zone(name).is_none() {
+                if role_of_zone(name).is_none() && zones.get(name).is_none_or(|v| v.is_empty()) {
                     plan.unmapped.push(format!(
-                        "firewall: zone '{name}' (only lan and wan zones map to roles)"
+                        "firewall: zone '{name}' (no imported interface in it)"
                     ));
                     continue;
                 }
@@ -859,7 +911,9 @@ fn firewall_plan(plan: &mut Plan, files: &Files) {
                     plan,
                     "firewall",
                     s,
-                    &["name", "network", "masq", "input", "output", "forward"],
+                    &[
+                        "name", "network", "masq", "input", "output", "forward", "mtu_fix",
+                    ],
                 );
             }
             "forwarding" => {
@@ -873,8 +927,9 @@ fn firewall_plan(plan: &mut Plan, files: &Files) {
                         .push(format!("firewall: forwarding {src} -> {dest}"));
                 }
             }
-            "rule" => rule_plan(plan, s),
-            "redirect" => redirect_plan(plan, s),
+            "rule" => rule_plan(plan, s, zones),
+            "redirect" => redirect_plan(plan, s, zones, own),
+            "include" => {}
             _ => plan.unmapped.push(format!(
                 "firewall: {} '{}' (not imported)",
                 s.kind,
@@ -884,7 +939,7 @@ fn firewall_plan(plan: &mut Plan, files: &Files) {
     }
 }
 
-fn rule_plan(plan: &mut Plan, s: &Section) {
+fn rule_plan(plan: &mut Plan, s: &Section, zones: &ZoneMap) {
     let name = s.get("name").unwrap_or(&s.label()).to_string();
     let is_stock = STOCK_RULES.contains(&name.as_str())
         && s.get("src") == Some("wan")
@@ -917,30 +972,36 @@ fn rule_plan(plan: &mut Plan, s: &Section) {
     if !left.is_empty() {
         return skip(plan, format!("option(s) not imported: {}", left.join(", ")));
     }
-    if !s
+    let action = match s
         .get("target")
         .unwrap_or("ACCEPT")
-        .eq_ignore_ascii_case("ACCEPT")
+        .to_ascii_uppercase()
+        .as_str()
     {
-        return skip(
-            plan,
-            format!(
-                "target {} (only ACCEPT rules are imported)",
-                s.get("target").unwrap_or("")
-            ),
-        );
-    }
+        "ACCEPT" => FirewallAction::Accept,
+        "DROP" => FirewallAction::Drop,
+        "REJECT" => FirewallAction::Reject,
+        other => {
+            return skip(
+                plan,
+                format!("target {other} (ACCEPT, DROP and REJECT are imported)"),
+            )
+        }
+    };
     let protos = match protocols(s) {
         Ok(p) => p,
         Err(e) => return skip(plan, e),
     };
-    let iface_in = match zone_iface(s.get("src")) {
+    let ins = match zone_specs(zones, s.get("src")) {
         Ok(v) => v,
         Err(e) => return skip(plan, e),
     };
-    let iface_out = match zone_iface(s.get("dest")) {
-        Ok(v) => v,
-        Err(e) => return skip(plan, e),
+    let outs = match s.get("dest") {
+        None => vec![None],
+        d => match zone_specs(zones, d) {
+            Ok(v) => v,
+            Err(e) => return skip(plan, e),
+        },
     };
     let dport = match s.get("dest_port").map(parse_dports) {
         Some(None) => return skip(plan, "dest_port (unsupported syntax)".into()),
@@ -972,16 +1033,28 @@ fn rule_plan(plan: &mut Plan, s: &Section) {
         Some("ipv6") => Some(IpVersion::V6),
         _ => None,
     };
-    let chain = if iface_out.is_some() || s.get("dest").is_some() {
+    let chain = if s.get("dest").is_some() {
         ChainType::Forward
     } else {
         ChainType::Input
     };
-    let many = protos.len() * sources.len() * dests.len() > 1;
+    let many = protos.len() * sources.len() * dests.len() * ins.len() * outs.len() > 1;
     let mut n = 0;
+    let mut combos = Vec::new();
     for p in &protos {
         for src in &sources {
             for dst in &dests {
+                for i in &ins {
+                    for o in &outs {
+                        combos.push((p, (src, (dst, (i, o)))));
+                    }
+                }
+            }
+        }
+    }
+    for (p, (src, (dst, (iface_in, iface_out)))) in combos {
+        {
+            {
                 n += 1;
                 let mut r = FirewallRule::new(
                     if many {
@@ -990,7 +1063,7 @@ fn rule_plan(plan: &mut Plan, s: &Section) {
                         name.clone()
                     },
                     chain.clone(),
-                    FirewallAction::Accept,
+                    action.clone(),
                 );
                 r.enabled = s.flag("enabled").unwrap_or(true);
                 r.protocol = p.clone();
@@ -1008,7 +1081,7 @@ fn rule_plan(plan: &mut Plan, s: &Section) {
     }
 }
 
-fn redirect_plan(plan: &mut Plan, s: &Section) {
+fn redirect_plan(plan: &mut Plan, s: &Section, zones: &ZoneMap, own: &[IpAddr]) {
     let name = s.get("name").unwrap_or(&s.label()).to_string();
     let skip = |plan: &mut Plan, why: String| {
         plan.unmapped
@@ -1027,9 +1100,24 @@ fn redirect_plan(plan: &mut Plan, s: &Section) {
         "target",
         "enabled",
         "reflection",
+        "family",
     ]);
     if !left.is_empty() {
         return skip(plan, format!("option(s) not imported: {}", left.join(", ")));
+    }
+    // `family` only has to agree with the target address (the rule follows dest_ip)
+    if let (Some(f), Some(to)) = (
+        s.get("family"),
+        s.get("dest_ip").and_then(|a| a.parse::<IpAddr>().ok()),
+    ) {
+        let ok = match f {
+            "ipv4" => to.is_ipv4(),
+            "ipv6" => to.is_ipv6(),
+            _ => true,
+        };
+        if !ok {
+            return skip(plan, format!("family '{f}' does not match dest_ip {to}"));
+        }
     }
     if !s
         .get("target")
@@ -1044,8 +1132,8 @@ fn redirect_plan(plan: &mut Plan, s: &Section) {
             "no dest_ip (a port forward needs an internal address)".into(),
         );
     };
-    let iface_in = match zone_iface(s.get("src").or(Some("wan"))) {
-        Ok(v) => v,
+    let iface_in = match zone_specs(zones, s.get("src").or(Some("wan"))) {
+        Ok(v) => v.into_iter().next().flatten(),
         Err(e) => return skip(plan, e),
     };
     let dport = match s.get("src_dport").map(parse_dports) {
@@ -1066,6 +1154,34 @@ fn redirect_plan(plan: &mut Plan, s: &Section) {
         Ok(_) => vec![Some(Protocol::Tcp), Some(Protocol::Udp)],
         Err(e) => return skip(plan, e),
     };
+    if own.contains(&to) {
+        // a "forward" to the router itself: an input allow (fw4 adds a reflection SNAT, not needed here)
+        for p in &protos {
+            let mut r = FirewallRule::new(
+                if protos.len() > 1 {
+                    format!(
+                        "{name} ({})",
+                        p.as_ref().map(|p| p.to_string()).unwrap_or_default()
+                    )
+                } else {
+                    name.clone()
+                },
+                ChainType::Input,
+                FirewallAction::Accept,
+            );
+            r.enabled = s.flag("enabled").unwrap_or(true);
+            r.protocol = p.clone();
+            r.dport = dport.clone();
+            r.interface_in = iface_in.clone();
+            r.source = s.get("src_ip").map(str::to_string);
+            r.comment = Some("imported from OpenWrt UCI (redirect to the router itself)".into());
+            plan.fw_rules.push(r);
+        }
+        plan.notes.push(format!(
+            "firewall: redirect '{name}' targets the router's own address {to} -> input allow"
+        ));
+        return;
+    }
     let many = protos.len() > 1;
     for p in protos {
         if dport.is_some() && !matches!(p, Some(Protocol::Tcp | Protocol::Udp)) {
@@ -1105,7 +1221,9 @@ fn wireless_plan(plan: &mut Plan, files: &Files, maps: &BTreeMap<String, String>
             plan,
             "wireless",
             d,
-            &["band", "channel", "country", "htmode", "path", "type"],
+            &[
+                "band", "channel", "country", "htmode", "path", "type", "disabled",
+            ],
         );
         if d.get("path").is_some_and(|p| p.contains("c000000.wifi")) {
             plan.notes.push(format!(
@@ -1126,7 +1244,9 @@ fn wireless_plan(plan: &mut Plan, files: &Files, maps: &BTreeMap<String, String>
             ssid: s.get("ssid").unwrap_or("").to_string(),
             encryption: s.get("encryption").unwrap_or("none").to_string(),
             key: s.get("key").map(str::to_string),
-            disabled: s.flag("disabled").unwrap_or(false),
+            // a disabled radio disables every network on it
+            disabled: s.flag("disabled").unwrap_or(false)
+                || dev.is_some_and(|d| d.flag("disabled") == Some(true)),
             radio,
             network: s.get("network").unwrap_or("").to_string(),
             band: dev.and_then(|d| d.get("band")).map(str::to_string),
@@ -1373,11 +1493,12 @@ pub fn render(plan: &Plan, dry_run: bool) -> String {
                 None => format!("-> Wi-Fi network on {}", w.device.as_deref().unwrap_or("")),
                 Some(b) => format!("-> reported only: {b}"),
             },
-            "sta" => "-> parked as setting import.uci.wifi_sta (no client resource yet)".into(),
+            "sta" => "-> Wi-Fi uplink (first enabled network per radio, see below; all kept as setting import.uci.wifi_sta)".into(),
             m => format!("-> reported only: mode '{m}'"),
         };
         let _ = writeln!(o, "     {how}");
     }
+    render_ext(&plan.ext, &mut o, verb);
     let _ = writeln!(o, "\ncovered by default:");
     for c in &plan.covered {
         let _ = writeln!(o, "  {c}");
@@ -1483,6 +1604,8 @@ pub async fn apply(
                 ip: s.ip.to_string(),
                 hostname: s.name.clone(),
                 description: Some("imported from OpenWrt UCI".into()),
+                lease_time: plan.ext.static_opts.get(&s.ip).and_then(|o| o.0),
+                dns_record: plan.ext.static_opts.get(&s.ip).is_some_and(|o| o.1),
             }
             .validate(pool);
             match m {
@@ -1580,6 +1703,7 @@ pub async fn apply(
             ));
         }
     }
+    apply_ext(store, plan, &mut out).await?;
     let sta: Vec<serde_json::Value> = plan
         .wifi
         .iter()
@@ -1615,13 +1739,33 @@ pub async fn apply(
 
 pub async fn run(
     db: Option<PathBuf>,
-    input: PathBuf,
+    input: Option<PathBuf>,
+    ssh: Option<String>,
     dry_run: bool,
     maps: Vec<String>,
 ) -> Result<()> {
     let maps = parse_maps(&maps)?;
-    let files = load_input(&input)?;
-    let plan = build_plan(&files, &maps);
+    // `--ssh root@router[:port]`: the configuration travels over ssh into a 0700 scratch dir, removed after
+    let scratch = ssh.as_ref().map(|_| {
+        let d = std::env::temp_dir().join(format!("patronus-import-ssh-{}", std::process::id()));
+        Scratch(d)
+    });
+    let input = match (&ssh, input) {
+        (Some(t), _) => {
+            let d = &scratch.as_ref().expect("scratch").0;
+            std::fs::create_dir_all(d)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700))?;
+            }
+            fetch_over_ssh(t, d)?
+        }
+        (None, Some(i)) => i,
+        (None, None) => bail!("give a tarball/directory or --ssh root@router[:port]"),
+    };
+    let (files, extras) = load_input_full(&input)?;
+    let plan = build_plan_with(&files, &extras, &maps);
     print!("{}", render(&plan, dry_run));
     if dry_run {
         return Ok(());
@@ -1754,7 +1898,12 @@ mod tests {
             .iter()
             .any(|u| u.contains("interface 'phone' proto 'etph'")));
         assert!(p.unmapped.iter().any(|u| u.contains("switch_vlan")));
-        assert!(p.unmapped.iter().any(|u| u.contains("ip6assign")));
+        // ip6assign + the ULA prefix give the LAN a static ULA; the WAN delegates its prefix to it
+        assert_eq!(
+            p.ext.iface6["br-lan"].addrs,
+            vec!["fd00:1234:5678::1/64".parse::<IpNetwork>().unwrap()]
+        );
+        assert!(!p.unmapped.iter().any(|u| u.contains("ip6assign")));
     }
 
     #[test]
@@ -1851,11 +2000,11 @@ mod tests {
     #[test]
     fn fixture_system_is_reported() {
         let p = fixture_plan();
-        assert!(p
-            .unmapped
-            .iter()
-            .any(|u| u.contains("hostname 'slate'") && u.contains("timezone 'GMT0'")));
-        assert!(p.unmapped.iter().any(|u| u.contains("timeserver")));
+        assert_eq!(
+            p.ext.general,
+            Some((Some("slate".into()), Some("UTC".into())))
+        );
+        assert!(p.ext.ntp.is_some());
     }
 
     #[test]
@@ -1914,7 +2063,10 @@ mod tests {
         assert_eq!(p.nat_rules[0].dport, Some(PortSpec::Single(2222)));
         let u = p.unmapped.join("\n");
         assert!(u.contains("zone 'dmz'"), "{u}");
-        assert!(u.contains("rule 'drop-it': target DROP"), "{u}");
+        assert!(p
+            .fw_rules
+            .iter()
+            .any(|r| r.name == "drop-it" && r.action == FirewallAction::Drop));
         assert!(
             u.contains("rule 'ping6': option(s) not imported: icmp_type"),
             "{u}"

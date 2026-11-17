@@ -1,0 +1,5 @@
+
+config dropbear
+	option PasswordAuth 'off'
+	option Port '2224'
+	option DirectInterface 'lan'

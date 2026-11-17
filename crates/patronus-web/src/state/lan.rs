@@ -541,8 +541,10 @@ mod dns_impl {
             let _g = self.edit.lock().await;
             let snap = self.begin("change DNS settings").await?;
             dns::save_settings(&self.store, &i).await.map_err(e)?;
-            // the DNS server handed out by DHCP/RA follows the DNS mode
-            self.commit("DNS settings", snap, &["dns", "dhcp"]).await
+            // the DNS server handed out by DHCP/RA follows the DNS mode; DNS on
+            // extra interfaces (dns.interfaces) opens port 53 there (firewall)
+            self.commit("DNS settings", snap, &["dns", "dhcp", "firewall"])
+                .await
         }
 
         pub async fn add_host(&self, i: dns::HostInput) -> anyhow::Result<i64> {
@@ -655,6 +657,64 @@ impl LanManager {
             .await
             .map_err(e)?;
         self.commit("general setup", snap, &["general"]).await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SSH server (System page): port, listen addresses, CA / principals / host cert
+// ---------------------------------------------------------------------------
+
+impl LanManager {
+    pub async fn ssh_overview(&self) -> anyhow::Result<Value> {
+        Ok(serde_json::json!({
+            "settings": patronus_network::ssh::settings(&self.store).await.map_err(e)?,
+            "status": self.status("ssh").await?,
+        }))
+    }
+
+    /// Store, apply sshd, then the firewall (the anti-lockout rule follows
+    /// `ssh.port`); undo the store write when either fails.
+    pub async fn save_ssh(&self, i: patronus_network::ssh::SshInput) -> anyhow::Result<()> {
+        use patronus_network::ssh;
+        let _g = self.edit.lock().await;
+        let snap = ssh::snapshot(&self.store).await.map_err(e)?;
+        self.store
+            .snapshot("web", "before change SSH server settings")
+            .await
+            .map_err(e)?;
+        ssh::save_settings(&self.store, &i).await.map_err(e)?;
+        let names = ["ssh", "firewall"];
+        let mut failure = None;
+        for n in names {
+            if let Some(a) = self.appliers.get(n) {
+                if let Err(err) = a.apply(&self.store).await {
+                    failure = Some(format!("{err}"));
+                    break;
+                }
+            }
+        }
+        match failure {
+            None => {
+                let _ = self
+                    .store
+                    .audit("web", "update", "ssh", None, &Value::Null)
+                    .await;
+                Ok(())
+            }
+            Some(msg) => {
+                if let Err(re) = ssh::restore(&self.store, &snap).await {
+                    tracing::error!("could not undo the SSH settings after a failed apply: {re}");
+                }
+                for n in names {
+                    if let Some(a) = self.appliers.get(n) {
+                        if let Err(re) = a.apply(&self.store).await {
+                            tracing::warn!("re-applying the previous {n} config: {re}");
+                        }
+                    }
+                }
+                Err(anyhow::anyhow!("{msg}"))
+            }
+        }
     }
 }
 

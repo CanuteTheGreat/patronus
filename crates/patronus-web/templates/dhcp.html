@@ -67,10 +67,10 @@
             <b>Static mappings</b>
             {% if p.statics.is_empty() %}<span class="empty">none</span>{% else %}
             <table class="lan">
-                <thead><tr><th>MAC</th><th>IP address</th><th>Hostname</th><th><span class="sr-only">Actions</span></th></tr></thead>
+                <thead><tr><th>MAC</th><th>IP address</th><th>Hostname</th><th>Lease</th><th>DNS record</th><th><span class="sr-only">Actions</span></th></tr></thead>
                 <tbody>
                 {% for m in p.statics %}
-                <tr><td class="mono">{{ m.mac }}</td><td class="mono">{{ m.ip }}</td><td>{{ m.hostname }}</td>
+                <tr><td class="mono">{{ m.mac }}</td><td class="mono">{{ m.ip }}</td><td>{{ m.hostname }}</td><td>{{ m.lease }}</td><td>{% if m.dns_record %}yes{% endif %}</td>
                     <td><button class="btn btn-danger btn-sm" onclick="del('/api/dhcp/static/{{ m.id }}', 'Delete this static mapping?')">Delete</button></td></tr>
                 {% endfor %}
                 </tbody>
@@ -80,6 +80,8 @@
                 <label>MAC <input name="mac" placeholder="aa:bb:cc:dd:ee:ff" required></label>
                 <label>IP (outside the range) <input name="ip" required></label>
                 <label>Hostname <input name="hostname"></label>
+                <label title="Seconds; 0 = infinite; empty = the pool's lease time">Lease time (s) <input name="lease_time" type="number" min="0" placeholder="pool"></label>
+                <label title="Publish hostname.local-domain in DNS even while the device is offline">DNS record <input type="checkbox" name="dns_record"></label>
                 <label>Description <input name="description"></label>
                 <button class="btn btn-primary btn-sm" type="submit">Add static mapping</button>
             </form>
@@ -140,7 +142,7 @@
     </table>{% endif %}
     <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dhcp/v6')">
         <label>Interface <input name="interface" value="@lan" required></label>
-        <label>Range start <input name="range_start" placeholder="fd00::100" required></label>
+        <label>Range start <input name="range_start" placeholder="fd00::100, or ::1000 to follow a delegated prefix" required></label>
         <label>Range end <input name="range_end" placeholder="fd00::1ff" required></label>
         <label>Prefix length <input name="prefix_len" type="number" value="64"></label>
         <label>Lease time (s) <input name="lease_time" type="number" value="86400"></label>

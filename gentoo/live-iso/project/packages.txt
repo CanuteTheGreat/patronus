@@ -16,3 +16,7 @@ dev-db/sqlite
 # unattended disk encryption: the ZFS key is sealed to the TPM 2.0 (installer + initramfs unlock)
 app-crypt/tpm2-tools
 app-crypt/tpm2-tss
+# hypervisor guest agent (OpenWrt-router-in-a-VM parity: out-of-band recovery over the virtio port). Installed on
+# x86_64 and aarch64; patronus-qga-enable starts it only when the QEMU agent virtio port exists (KVM/QEMU guests).
+x86_64? app-emulation/qemu-guest-agent
+aarch64? app-emulation/qemu-guest-agent

@@ -37,6 +37,7 @@ stage3/packages:
     # Networking essentials
     net-misc/dhcpcd
     net-misc/openssh
+    app-emulation/qemu-guest-agent
     sys-apps/iproute2
     net-firewall/nftables
     net-firewall/iptables

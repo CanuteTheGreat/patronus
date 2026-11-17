@@ -268,6 +268,13 @@ impl FirewallApplier {
                 report.warn("WAN guard is on but no interface has the WAN role".to_string());
             }
         }
+        // fw4-style hardening: head rules go before every other rule
+        let hard = if lockdown {
+            Default::default()
+        } else {
+            crate::hardening::render(&crate::hardening::load(store).await?, &roles)
+        };
+        script.push_str(&hard.head);
 
         let (mut nfilter, mut nnat, mut nsched) = (0usize, 0usize, 0usize);
         // policy routing (lane E contract): gateway/group name -> mark
@@ -280,7 +287,9 @@ impl FirewallApplier {
         // lane B: threat-intelligence feeds drop right after the system
         // (anti-lockout) rules, ahead of everything the user wrote
         let mut threat_done = lockdown;
-        for (rule, origin) in store.load_firewall_rules_with_origin().await? {
+        let ssh_port = patronus_config::defaults::ssh_port(store).await;
+        for (mut rule, origin) in store.load_firewall_rules_with_origin().await? {
+            patronus_config::defaults::follow_ssh_port(&mut rule, origin, ssh_port);
             if !threat_done && origin != RuleOrigin::System {
                 threat_done = true;
                 nfilter += push_threat_rules(&mut script, &aliases);
@@ -520,6 +529,14 @@ impl FirewallApplier {
                 at.format("%a %H:%M")
             ));
         }
+        // blocked inbound traffic from WAN: reject instead of the drop policy
+        script.push_str(&hard.tail);
+        for w in hard.warnings {
+            report.warn(w);
+        }
+        for l in hard.applied {
+            report.applied(l);
+        }
         let mut script = if lockdown {
             script
         } else {
@@ -611,10 +628,12 @@ impl FirewallApplier {
         let roles = load_roles(store).await.unwrap_or_default();
         let mut script = format!("add table {TABLE}\ndelete table {TABLE}\n");
         script.push_str(&base_table_script());
-        for (rule, origin) in patronus_config::defaults::default_filter_rules() {
+        let ssh_port = patronus_config::defaults::ssh_port(store).await;
+        for (mut rule, origin) in patronus_config::defaults::default_filter_rules() {
             if origin != RuleOrigin::System {
                 continue;
             }
+            patronus_config::defaults::follow_ssh_port(&mut rule, origin, ssh_port);
             for i in resolve_iface(&rule.interface_in, &roles).unwrap_or_else(|| vec![None]) {
                 let mut r = rule.clone();
                 r.interface_in = i;
@@ -1476,6 +1495,152 @@ mod tests {
         assert_eq!((x.url.as_deref(), x.max_entries), (Some(u), 77));
     }
 
+    /// L3: the anti-lockout rule keeps the web UI port and swaps tcp/22 for
+    /// `ssh.port`, in the normal ruleset and in lockdown.
+    #[tokio::test]
+    async fn anti_lockout_follows_ssh_port() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        s.save_system_config("ssh.port", "2222").await.unwrap();
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(
+            r.script.contains(
+                "add rule inet patronus input iifname \"eth1\" tcp dport {2222,8443} accept"
+            ),
+            "{}",
+            r.script
+        );
+        assert!(!r.script.contains("{22,8443}"));
+        let l = FirewallApplier.render_lockdown(&s).await;
+        assert!(l.contains("tcp dport {2222,8443} accept"), "{l}");
+        s.save_system_config("ssh.port", "").await.unwrap();
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(r.script.contains("tcp dport {22,8443} accept"));
+    }
+
+    #[tokio::test]
+    async fn hardening_defaults_clamp_mss_on_wan_only() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        let sc = FirewallApplier
+            .render_script(&s, false)
+            .await
+            .unwrap()
+            .script;
+        assert!(
+            sc.contains("add chain inet patronus mss_clamp { type filter hook forward priority mangle; policy accept; }"),
+            "{sc}"
+        );
+        assert!(
+            sc.contains("add rule inet patronus mss_clamp oifname \"eth0\" tcp flags syn tcp option maxseg size set rt mtu"),
+            "{sc}"
+        );
+        assert!(
+            sc.contains("mss_clamp iifname \"eth0\" tcp flags syn"),
+            "{sc}"
+        );
+        for off in ["reject with", "SYN flood", "raw_prerouting"] {
+            assert!(!sc.contains(off), "{off} must be off by default:\n{sc}");
+        }
+        // empty list turns clamping off
+        s.save_system_config("firewall.mss_clamp", "")
+            .await
+            .unwrap();
+        let sc = FirewallApplier
+            .render_script(&s, false)
+            .await
+            .unwrap()
+            .script;
+        assert!(!sc.contains("mss_clamp"), "{sc}");
+        // explicit interfaces: role and device
+        s.save_system_config("firewall.mss_clamp", "@lan, ppp0")
+            .await
+            .unwrap();
+        let sc = FirewallApplier
+            .render_script(&s, false)
+            .await
+            .unwrap()
+            .script;
+        assert!(
+            sc.contains("mss_clamp oifname { \"eth1\", \"ppp0\" } tcp flags syn"),
+            "{sc}"
+        );
+        // a bad entry is an error, not a silently dropped clamp
+        s.save_system_config("firewall.mss_clamp", "@wan; flush ruleset")
+            .await
+            .unwrap();
+        assert!(FirewallApplier.render_script(&s, false).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn inbound_reject_synflood_and_ip_options_render() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        s.save_system_config("firewall.inbound_action", "reject")
+            .await
+            .unwrap();
+        s.save_system_config("firewall.synflood_protect", "1")
+            .await
+            .unwrap();
+        s.save_system_config("firewall.drop_ipv4_options", "1")
+            .await
+            .unwrap();
+        s.save_system_config("firewall.synflood_rate", "30")
+            .await
+            .unwrap();
+        s.save_system_config("firewall.synflood_burst", "70")
+            .await
+            .unwrap();
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        let sc = &r.script;
+        let pos = |needle: &str| {
+            sc.find(needle)
+                .unwrap_or_else(|| panic!("{needle} in\n{sc}"))
+        };
+        // synflood sits before the accept rules, reject after everything
+        let syn = pos("add rule inet patronus input iifname \"eth0\" tcp flags & (fin | syn | rst | ack) == syn limit rate over 30/second burst 70 packets counter drop");
+        // after the stateful base rules (only NEW SYNs reach it), before any accept by interface
+        assert!(syn < pos("Anti-lockout"), "{sc}");
+        pos("add rule inet patronus forward iifname \"eth0\" tcp flags & (fin | syn | rst | ack) == syn limit rate over 30/second");
+        let rej = pos(
+            "add rule inet patronus input iifname \"eth0\" meta l4proto tcp reject with tcp reset",
+        );
+        assert!(
+            rej > pos("add rule inet patronus input iifname \"eth1\" tcp dport"),
+            "{sc}"
+        );
+        pos("add rule inet patronus input iifname \"eth0\" meta l4proto udp reject with icmpx type port-unreachable");
+        pos("add rule inet patronus forward iifname \"eth0\" reject with icmpx type admin-prohibited");
+        pos("add chain inet patronus raw_prerouting { type filter hook prerouting priority raw; policy accept; }");
+        pos("add rule inet patronus raw_prerouting ip hdrlength > 5 meta l4proto tcp counter drop");
+        assert!(
+            !sc.contains("iifname \"eth1\" meta l4proto tcp reject"),
+            "LAN is never rejected:\n{sc}"
+        );
+        // lockdown ignores all of it
+        let l = FirewallApplier
+            .render_script(&s, true)
+            .await
+            .unwrap()
+            .script;
+        assert!(
+            !l.contains("reject with") && !l.contains("SYN flood") && !l.contains("mss_clamp"),
+            "{l}"
+        );
+        // no WAN: warning instead of a broken rule
+        let n = seeded(&[], &["eth1"]).await;
+        n.save_system_config("firewall.inbound_action", "reject")
+            .await
+            .unwrap();
+        n.save_system_config("firewall.synflood_protect", "1")
+            .await
+            .unwrap();
+        let r = FirewallApplier.render_script(&n, false).await.unwrap();
+        assert!(
+            r.report.warnings.iter().any(|w| w.contains("reject")),
+            "{:?}",
+            r.report.warnings
+        );
+        assert!(r.report.warnings.iter().any(|w| w.contains("SYN flood")));
+    }
+
     #[tokio::test]
     async fn default_ruleset_renders_safe_router_policy() {
         let s = seeded(&["eth0"], &["eth1"]).await;
@@ -1502,8 +1667,12 @@ mod tests {
             ),
             "{sc}"
         );
-        // nothing accepts traffic arriving on the WAN
-        assert!(!sc.contains("iifname \"eth0\""), "{sc}");
+        // nothing accepts traffic arriving on the WAN (the default MSS clamp only rewrites SYNs)
+        assert!(
+            !sc.lines()
+                .any(|l| l.contains("iifname \"eth0\"") && !l.contains("inet patronus mss_clamp ")),
+            "{sc}"
+        );
         assert!(r.report.warnings.is_empty(), "{:?}", r.report.warnings);
     }
 
@@ -1904,7 +2073,8 @@ mod tests {
             r.report.applied,
             vec![
                 "outbound NAT mode hybrid",
-                "6 filter rule(s), 1 NAT rule(s), 0 alias(es)"
+                "6 filter rule(s), 1 NAT rule(s), 0 alias(es)",
+                "MSS clamping on eth0"
             ]
         );
         let s1 = seeded(&["eth0"], &[]).await;

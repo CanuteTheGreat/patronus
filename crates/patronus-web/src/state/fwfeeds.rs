@@ -15,6 +15,20 @@ fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+/// Body of `PUT /api/firewall/hardening`; every field optional.
+#[derive(Debug, Default, Deserialize)]
+pub struct HardeningBody {
+    /// drop | reject
+    pub inbound_action: Option<String>,
+    pub synflood_protect: Option<bool>,
+    /// e.g. `25/second`
+    pub synflood_rate: Option<String>,
+    pub synflood_burst: Option<u32>,
+    /// comma list of `@wan` / `@optN` / device; empty turns clamping off
+    pub mss_clamp: Option<String>,
+    pub drop_ipv4_options: Option<bool>,
+}
+
 /// One row of the threat-intel page.
 #[derive(Debug, Clone, Serialize)]
 pub struct ThreatFeed {
@@ -250,6 +264,82 @@ impl FirewallManager {
             "firewall-wan-guard",
             "wan",
             serde_json::json!({ "block_private": g.block_private, "block_bogons": g.block_bogons }),
+        )
+        .await;
+        Ok(())
+    }
+
+    // ---------------- hardening (fw4 parity) ----------------
+
+    pub async fn hardening(&self) -> anyhow::Result<serde_json::Value> {
+        use patronus_firewall::hardening as h;
+        let c = h::load(&self.store).await.map_err(Self::e)?;
+        Ok(serde_json::json!({
+            "inbound_action": if c.reject { "reject" } else { "drop" },
+            "synflood_protect": c.synflood,
+            "synflood_rate": c.synflood_rate,
+            "synflood_burst": c.synflood_burst,
+            "mss_clamp": c.mss_clamp.join(","),
+            "drop_ipv4_options": c.drop_ipv4_options,
+        }))
+    }
+
+    /// Change any of the hardening settings (omitted ones stay), validate,
+    /// apply, and put the old values back when the apply fails.
+    pub async fn set_hardening(&self, b: HardeningBody) -> anyhow::Result<()> {
+        use patronus_firewall::hardening as h;
+        let mut kv: Vec<(&str, String)> = Vec::new();
+        if let Some(a) = &b.inbound_action {
+            let a = a.trim().to_ascii_lowercase();
+            if a != "drop" && a != "reject" {
+                anyhow::bail!("Invalid inbound action {a:?} (drop or reject)");
+            }
+            kv.push((h::INBOUND_ACTION_KEY, a));
+        }
+        if let Some(v) = b.synflood_protect {
+            kv.push((h::SYNFLOOD_KEY, if v { "1" } else { "0" }.into()));
+        }
+        if let Some(r) = &b.synflood_rate {
+            kv.push((h::SYNFLOOD_RATE_KEY, h::normalize_rate(r).map_err(Self::e)?));
+        }
+        if let Some(n) = b.synflood_burst {
+            if n == 0 || n > 1_000_000 {
+                anyhow::bail!("Invalid SYN flood burst {n} (1 to 1000000)");
+            }
+            kv.push((h::SYNFLOOD_BURST_KEY, n.to_string()));
+        }
+        if let Some(m) = &b.mss_clamp {
+            kv.push((
+                h::MSS_CLAMP_KEY,
+                h::parse_mss_list(m).map_err(Self::e)?.join(","),
+            ));
+        }
+        if let Some(v) = b.drop_ipv4_options {
+            kv.push((h::DROP_IPV4_OPTIONS_KEY, if v { "1" } else { "0" }.into()));
+        }
+        let _g = self.edit.lock().await;
+        let mut old = Vec::new();
+        for (k, _) in &kv {
+            old.push((*k, self.store.load_system_config(k).await.map_err(Self::e)?));
+        }
+        self.snapshot("firewall hardening".into()).await?;
+        for (k, v) in &kv {
+            self.store.save_system_config(k, v).await.map_err(Self::e)?;
+        }
+        if let Err(e) = self.push().await {
+            for (k, v) in old {
+                let _ = self
+                    .store
+                    .save_system_config(k, v.as_deref().unwrap_or(""))
+                    .await;
+            }
+            return Err(e);
+        }
+        self.audit(
+            "update",
+            "firewall-hardening",
+            "settings",
+            serde_json::json!({ "changed": kv.iter().map(|(k, _)| *k).collect::<Vec<_>>() }),
         )
         .await;
         Ok(())

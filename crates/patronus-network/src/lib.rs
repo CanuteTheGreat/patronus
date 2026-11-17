@@ -82,6 +82,8 @@ pub mod seg_dns;
 
 #[cfg(feature = "ntp")]
 pub mod ntp;
+pub mod ssh;
+pub use ssh::SshApplier;
 
 #[cfg(feature = "qos")]
 pub mod shaping;
@@ -126,6 +128,8 @@ pub mod seg;
 pub mod upnp;
 #[cfg(feature = "vrf")]
 pub mod vrf;
+#[cfg(feature = "wifi-client")]
+pub mod wifi_client;
 #[cfg(feature = "wifi-ap")]
 pub mod wifichan;
 #[cfg(feature = "wifi-ap")]

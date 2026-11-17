@@ -181,6 +181,19 @@ exit 0
     )
 }
 
+/// Where dhcpcd keeps the DUID it presents (its `duid` file in the database
+/// directory); the first existing directory wins, Gentoo/Debian default last.
+pub const DHCPCD_DBDIRS: &[&str] = &["/var/lib/dhcpcd", "/var/db/dhcpcd", "/var/lib/dhcpcd5"];
+
+/// Path of dhcpcd's `duid` file on this box.
+pub fn duid_file() -> PathBuf {
+    let dir = DHCPCD_DBDIRS
+        .iter()
+        .find(|d| std::path::Path::new(d).is_dir())
+        .unwrap_or(&DHCPCD_DBDIRS[0]);
+    PathBuf::from(dir).join("duid")
+}
+
 /// dhcpcd.conf for one interface.
 pub fn dhcpcd_conf(dev: &str, v4: bool, v6: bool, metric: u32, pd: &[String]) -> String {
     let mut c = format!(
@@ -237,6 +250,7 @@ pub fn spec(
     argv_prefix: &[String],
     paths: &NetPaths,
     pd: &[String],
+    duid: Option<&str>,
 ) -> Result<DaemonSpec> {
     let metric = metric_for(role, own_metric);
     let dir = paths.state_dir.join("dhcp");
@@ -285,6 +299,11 @@ pub fn spec(
             }
             files.push((conf.clone(), text, 0o644));
             files.extend(hook_file);
+            // a pinned DUID: dhcpcd reads its duid file at start, so the file
+            // is in place before the daemon is (re)started
+            if let (true, Some(d)) = (v6, duid) {
+                files.push((duid_file(), format!("{d}\n"), 0o644));
+            }
             argv.extend(
                 ["-B", "-f", &conf.to_string_lossy(), dev]
                     .iter()
@@ -317,6 +336,7 @@ mod tests {
             &["udhcpc".into()],
             &p,
             &[],
+            None,
         )
         .unwrap();
         assert_eq!(s.argv[..5], ["udhcpc", "-f", "-i", "eth0", "-s"]);
@@ -343,6 +363,7 @@ mod tests {
             &["udhcpc".into()],
             &p,
             &[],
+            None,
         )
         .unwrap();
         assert!(!lan.files[0].1.contains("resolv.conf"));
@@ -356,7 +377,8 @@ mod tests {
             Client::Udhcpc,
             &["udhcpc".into()],
             &p,
-            &[]
+            &[],
+            None
         )
         .is_err());
         let d = spec(
@@ -369,9 +391,13 @@ mod tests {
             &["dhcpcd".into()],
             &p,
             &["lan0".into(), "opt1".into()],
+            Some("00:04:aa:bb"),
         )
         .unwrap();
         assert!(d.files[0].1.contains("ia_pd 1 lan0/0/64 opt1/1/64\n"));
+        // the pinned DUID lands in dhcpcd's duid file, newline terminated
+        let duid = d.files.iter().find(|f| f.0.ends_with("duid")).unwrap();
+        assert_eq!(duid.1, "00:04:aa:bb\n");
         assert_eq!(d.argv.last().unwrap(), "eth0");
         assert!(d.files[0].1.contains("ipv6only\nipv6rs\nia_na"));
         assert!(d.files[0].1.contains("metric 202"));
@@ -386,6 +412,7 @@ mod tests {
             &["udhcpc".into()],
             &p,
             &[],
+            None,
         )
         .unwrap();
         assert!(own.files[0].1.contains("metric 150 proto dhcp"));

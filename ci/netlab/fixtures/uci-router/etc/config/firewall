@@ -1,0 +1,53 @@
+
+config defaults
+	option input 'REJECT'
+	option output 'ACCEPT'
+	option forward 'REJECT'
+	option synflood_protect '1'
+
+config zone
+	option name 'lan'
+	option input 'ACCEPT'
+	option output 'ACCEPT'
+	option forward 'ACCEPT'
+	option masq '1'
+	list network 'lan'
+	list network 'vpn'
+
+config zone
+	option name 'wan'
+	option input 'REJECT'
+	option output 'ACCEPT'
+	option forward 'REJECT'
+	option masq '1'
+	option mtu_fix '1'
+	list network 'wan'
+
+config forwarding
+	option src 'lan'
+	option dest 'wan'
+
+config redirect
+	option dest 'lan'
+	option target 'DNAT'
+	option name 'WireGuard'
+	option proto 'udp'
+	option src 'wan'
+	option src_dport '51820'
+	option dest_ip '192.168.50.1'
+	option dest_port '51820'
+
+config redirect
+	option dest 'lan'
+	option target 'DNAT'
+	option name 'lan-tcp'
+	option proto 'tcp'
+	option src 'wan'
+	option src_dport '9100'
+	option dest_ip '192.168.50.10'
+	option dest_port '9000'
+
+config include 'ipopts'
+	option type 'nftables'
+	option path '/etc/drop-ipopts.nft'
+	option position 'ruleset-append'

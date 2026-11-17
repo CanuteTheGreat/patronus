@@ -502,6 +502,37 @@ pub async fn put_general(
     }
 }
 
+/// GET /api/system/ssh -- the managed OpenSSH server settings (public
+/// keys and the host certificate only; there are no secrets in them).
+pub async fn get_ssh(State(state): State<AppState>) -> Response {
+    match state.lan.ssh_overview().await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// PUT /api/system/ssh -- port, listen interfaces/addresses, password and
+/// root policy, user CA keys, per-user principals, host certificate. Bad
+/// input is refused; a config sshd rejects is rolled back.
+pub async fn put_ssh(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(i): Json<patronus_network::ssh::SshInput>,
+) -> Response {
+    match state.lan.save_ssh(i).await {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => {
+            let m = e.to_string();
+            let code = if m.contains("Invalid") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            error(code, m)
+        }
+    }
+}
+
 pub async fn reboot(State(state): State<AppState>, _admin: AdminUser) -> Response {
     power(state, "reboot").await
 }
@@ -1041,12 +1072,60 @@ async fn diag(
             };
             error(code, m)
         }
+/// GET /api/system/packet-steering
+async fn get_packet_steering(State(state): State<AppState>) -> Response {
+    let on = state
+        .firewall
+        .store
+        .load_system_config(patronus_network::sysctl::PACKET_STEERING_KEY)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|v| v.trim() == "1");
+    Json(serde_json::json!({ "enabled": on })).into_response()
+}
+
+#[derive(Deserialize)]
+struct PacketSteeringBody {
+    enabled: bool,
+}
+
+/// PUT /api/system/packet-steering {"enabled": true}: spread NIC queues
+/// over all CPUs (RPS/XPS), applied now and at every boot.
+async fn put_packet_steering(
+    State(state): State<AppState>,
+    Json(b): Json<PacketSteeringBody>,
+) -> Response {
+    let store = &state.firewall.store;
+    let key = patronus_network::sysctl::PACKET_STEERING_KEY;
+    if let Err(e) = store
+        .save_system_config(key, if b.enabled { "1" } else { "0" })
+        .await
+    {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to save: {e}"),
+        );
+    }
+    let a = patronus_network::applyd::RemoteApplier::wrap(std::sync::Arc::new(
+        patronus_network::SysctlApplier::default(),
+    ));
+    match a.apply(store).await {
+        Ok(_) => Json(serde_json::json!({ "message": "Packet steering updated" })).into_response(),
+        Err(e) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Saved, but applying failed: {e}"),
+        ),
     }
 }
 
 pub fn router() -> axum::Router<AppState> {
     use axum::routing::{get, post, put};
     axum::Router::new()
+        .route(
+            "/system/packet-steering",
+            get(get_packet_steering).put(put_packet_steering),
+        )
         .route("/system/users", get(list_users).post(create_user))
         .route("/system/users/:id", put(update_user).delete(delete_user))
         .route("/system/users/:id/2fa/reset", post(reset_2fa))
@@ -1077,6 +1156,7 @@ pub fn router() -> axum::Router<AppState> {
             axum::routing::put(put_speedtest),
         )
         .route("/system/general", get(get_general).put(put_general))
+        .route("/system/ssh", get(get_ssh).put(put_ssh))
         .route("/system/reboot", post(reboot))
         .route(
             "/system/firmware",

@@ -60,8 +60,12 @@ enum Commands {
     #[cfg(feature = "uci-import")]
     #[command(name = "import-uci")]
     ImportUci {
-        /// Tarball (.tar.gz) or directory
-        input: PathBuf,
+        /// Tarball (.tar.gz) or directory (omit with --ssh)
+        input: Option<PathBuf>,
+        /// Read the configuration straight from the running OpenWrt router over ssh
+        /// (`root@192.0.2.1` or `root@192.0.2.1:2222`); keys never touch a file outside a 0700 scratch dir
+        #[arg(long, value_name = "USER@HOST[:PORT]")]
+        ssh: Option<String>,
         /// Print what would be written and write nothing
         #[arg(long)]
         dry_run: bool,
@@ -804,10 +808,11 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "uci-import")]
         Commands::ImportUci {
             input,
+            ssh,
             dry_run,
             map,
         } => {
-            commands::import_uci::run(cli.db, input, dry_run, map).await?;
+            commands::import_uci::run(cli.db, input, ssh, dry_run, map).await?;
         }
 
         Commands::Ztp { bootstrap, force } => {

@@ -205,7 +205,22 @@ pub async fn system(State(state): State<AppState>, me: crate::auth::AuthUser) ->
     let disk = host::disk("/");
     let about = crate::routes::legal::about_links(&state).await;
     let dash = || "unknown".to_string();
+    let ssh = patronus_network::ssh::settings(state.lan.store())
+        .await
+        .unwrap_or_default();
     let template = SystemTemplate {
+        ssh_port: ssh.port,
+        ssh_listen: ssh.listen.join(", "),
+        ssh_password: ssh.password_auth,
+        ssh_root: ssh.root_login.clone(),
+        ssh_ca: ssh.trusted_user_ca_keys.join("\n"),
+        ssh_principals: ssh
+            .authorized_principals
+            .iter()
+            .map(|(u, p)| format!("{u}={}", p.join(",")))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        ssh_cert: ssh.host_certificate.clone(),
         page: "system",
         site_url: about.site_url,
         source_url: about.source_url,

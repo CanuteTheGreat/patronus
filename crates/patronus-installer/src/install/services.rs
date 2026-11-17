@@ -22,11 +22,46 @@ pub async fn configure_services(
     } else {
         configure_openrc_services(target, config).await?;
     }
+    configure_guest_agent(target, Path::new("/sys")).await?;
 
     // Configure Patronus
     configure_patronus(target, config, patronus_config).await?;
 
     Ok(())
+}
+
+/// virtio port the QEMU/KVM guest agent talks over.
+pub const QGA_PORT: &str = "org.qemu.guest_agent.0";
+
+/// Is a QEMU guest-agent virtio port present under `sysfs` (`/sys`)? That
+/// is the one sign that a hypervisor is listening for the agent (bare metal
+/// and other hypervisors have no such port, so nothing is enabled there).
+pub fn qemu_guest_agent_port_present(sysfs: &Path) -> bool {
+    let Ok(rd) = std::fs::read_dir(sysfs.join("class/virtio-ports")) else {
+        return false;
+    };
+    rd.flatten().any(|e| {
+        std::fs::read_to_string(e.path().join("name"))
+            .map(|n| n.trim() == QGA_PORT)
+            .unwrap_or(false)
+    })
+}
+
+/// Enable app-emulation/qemu-guest-agent on the installed system when the
+/// installer itself runs in a QEMU/KVM guest with the agent channel, on
+/// systemd and OpenRC. The installed image also enables it at boot under the
+/// same condition (`patronus-qga-enable`), so a disk moved to another VM
+/// still gets it. Returns whether it was enabled.
+pub async fn configure_guest_agent(target: &Path, sysfs: &Path) -> Result<bool> {
+    if !qemu_guest_agent_port_present(sysfs) {
+        return Ok(false);
+    }
+    if target.join("usr/lib/systemd").exists() {
+        enable_systemd_unit(target, "qemu-guest-agent.service").await?;
+    } else {
+        add_to_openrc_runlevel(target, "qemu-guest-agent", "default").await?;
+    }
+    Ok(true)
 }
 
 /// Configure systemd services
@@ -380,5 +415,65 @@ mod tests {
         let content = generate_patronus_config(&config, &patronus_config).unwrap();
         assert!(content.contains("enabled: true"));
         assert!(content.contains("port: 8080"));
+    }
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("patronus-qga-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn sysfs_with_port(root: &Path, name: &str) {
+        let p = root.join("class/virtio-ports/vport1p1");
+        std::fs::create_dir_all(&p).unwrap();
+        std::fs::write(p.join("name"), format!("{name}\n")).unwrap();
+    }
+
+    #[test]
+    fn guest_agent_port_detection() {
+        let none = tmp("none");
+        assert!(!qemu_guest_agent_port_present(&none));
+        let other = tmp("other");
+        sysfs_with_port(&other, "com.example.channel");
+        assert!(!qemu_guest_agent_port_present(&other));
+        let qga = tmp("qga");
+        sysfs_with_port(&qga, QGA_PORT);
+        assert!(qemu_guest_agent_port_present(&qga));
+    }
+
+    #[tokio::test]
+    async fn guest_agent_enabled_only_under_qemu_on_both_inits() {
+        let sys = tmp("sys-yes");
+        sysfs_with_port(&sys, QGA_PORT);
+        let bare = tmp("sys-no");
+
+        // OpenRC target
+        let o = tmp("openrc");
+        std::fs::create_dir_all(o.join("etc/init.d")).unwrap();
+        std::fs::write(o.join("etc/init.d/qemu-guest-agent"), "").unwrap();
+        assert!(!configure_guest_agent(&o, &bare).await.unwrap());
+        assert!(!o.join("etc/runlevels/default/qemu-guest-agent").exists());
+        assert!(configure_guest_agent(&o, &sys).await.unwrap());
+        assert!(o
+            .join("etc/runlevels/default/qemu-guest-agent")
+            .symlink_metadata()
+            .is_ok());
+
+        // systemd target
+        let d = tmp("systemd");
+        std::fs::create_dir_all(d.join("usr/lib/systemd/system")).unwrap();
+        std::fs::write(
+            d.join("usr/lib/systemd/system/qemu-guest-agent.service"),
+            "",
+        )
+        .unwrap();
+        std::fs::create_dir_all(d.join("etc/systemd/system/multi-user.target.wants")).unwrap();
+        assert!(!configure_guest_agent(&d, &bare).await.unwrap());
+        assert!(configure_guest_agent(&d, &sys).await.unwrap());
+        assert!(d
+            .join("etc/systemd/system/multi-user.target.wants/qemu-guest-agent.service")
+            .symlink_metadata()
+            .is_ok());
     }
 }

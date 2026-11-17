@@ -1,0 +1,14 @@
+Port 2222
+ListenAddress 192.168.50.1
+ListenAddress fd12:3456:789a::1
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostCertificate /etc/ssh/ssh_host_ed25519_key-cert.pub
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+TrustedUserCAKeys /etc/ssh/user_ca.pub
+AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u
+AuthorizedKeysFile /etc/ssh/authorized_keys.d/%u
+X11Forwarding no
+Subsystem sftp /usr/libexec/sftp-server

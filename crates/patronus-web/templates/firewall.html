@@ -66,6 +66,7 @@
         <button class="tab-btn" data-tab="tab-schedules">Schedules</button>
         <button class="tab-btn" data-tab="tab-geoip">GeoIP</button>
         <button class="tab-btn" data-tab="tab-threat">Threat Intel</button>
+        <button class="tab-btn" data-tab="tab-hardening">Hardening</button>
         <button class="tab-btn" data-tab="tab-logs">Logs</button>
         <button class="tab-btn" data-tab="tab-states">States</button>
     </div>
@@ -522,6 +523,23 @@
         </form>
     </div>
 
+    <!-- ============================ HARDENING =========================== -->
+    <div class="tab" id="tab-hardening">
+        <p class="hint">fw4-style defaults for the WAN side. Changes apply immediately.</p>
+        <form id="hardening-form" onsubmit="return saveHardening(event)">
+            <div class="row">
+                <label>Blocked inbound traffic from WAN
+                    <select name="inbound_action"><option value="drop">drop (silent)</option><option value="reject">reject (RST / ICMP port unreachable)</option></select></label>
+                <label class="check"><input type="checkbox" name="synflood_protect"> SYN flood protection</label>
+                <label>Rate <input name="synflood_rate" size="12" placeholder="25/second"></label>
+                <label>Burst <input name="synflood_burst" type="number" min="1" size="6" placeholder="50"></label>
+                <label>Clamp TCP MSS on <input name="mss_clamp" size="20" placeholder="@wan (empty = off)"></label>
+                <label class="check"><input type="checkbox" name="drop_ipv4_options"> Drop IPv4 TCP packets with IP options</label>
+            </div>
+            <button type="submit" class="btn btn-primary">Save</button>
+        </form>
+    </div>
+
     <!-- ============================== LOGS ============================== -->
     <div class="tab" id="tab-logs">
         <p class="hint">Packets matched by a rule with <b>Log</b> ticked (and threat-feed drops) are recorded
@@ -576,6 +594,24 @@ document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', (
 if (sessionStorage.getItem(TAB_KEY) && document.getElementById(sessionStorage.getItem(TAB_KEY))) {
     showTab(sessionStorage.getItem(TAB_KEY));
 }
+
+async function loadHardening() {
+    try {
+        const r = await api('GET', '/firewall/hardening'), f = document.getElementById('hardening-form');
+        f.inbound_action.value = r.inbound_action; f.synflood_protect.checked = r.synflood_protect;
+        f.synflood_rate.value = r.synflood_rate; f.synflood_burst.value = r.synflood_burst;
+        f.mss_clamp.value = r.mss_clamp; f.drop_ipv4_options.checked = r.drop_ipv4_options;
+    } catch (e) { }
+}
+function saveHardening(ev) {
+    ev.preventDefault();
+    const f = ev.target;
+    return run(api('PUT', '/firewall/hardening', {
+        inbound_action: f.inbound_action.value, synflood_protect: f.synflood_protect.checked,
+        synflood_rate: f.synflood_rate.value || undefined, synflood_burst: f.synflood_burst.value ? Number(f.synflood_burst.value) : undefined,
+        mss_clamp: f.mss_clamp.value, drop_ipv4_options: f.drop_ipv4_options.checked }));
+}
+document.addEventListener('DOMContentLoaded', loadHardening);
 
 function flash(text, ok) {
     const m = document.getElementById('msg');

@@ -30,11 +30,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::Row;
 use std::collections::BTreeMap;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use tokio::io::AsyncWriteExt;
 
 pub const STATUS_FILE: &str = "/var/lib/patronus/ddns-status.json";
 pub const PROVIDERS: &[&str] = &["dyndns2", "duckdns", "cloudflare", "custom"];
+/// `ddns_clients.family` values.
+pub const FAMILIES: &[&str] = &["ipv4", "ipv6", "both"];
+/// Overrides the Cloudflare API base (a fake API in tests / netlab).
+pub const CLOUDFLARE_API_ENV: &str = "PATRONUS_CLOUDFLARE_API";
 const REFRESH_SECS: i64 = 25 * 86400;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -49,12 +53,34 @@ pub struct DdnsClient {
     pub password: Option<String>,
     pub server: Option<String>,
     pub description: Option<String>,
+    /// `ipv4` (A), `ipv6` (AAAA) or `both`.
+    #[serde(default = "default_family")]
+    pub family: String,
     /// When the row was last saved (unix seconds); 0 for unsaved input.
     #[serde(default)]
     pub updated_at: i64,
 }
 
+fn default_family() -> String {
+    "ipv4".into()
+}
+
 impl DdnsClient {
+    pub fn wants_v4(&self) -> bool {
+        self.family != "ipv6"
+    }
+    pub fn wants_v6(&self) -> bool {
+        self.family != "ipv4"
+    }
+    /// Status key of one family's update (IPv4 keeps the historic key).
+    fn status_key(&self, v6: bool) -> String {
+        if v6 {
+            format!("{}#v6", self.key())
+        } else {
+            self.key()
+        }
+    }
+
     /// Status key in the status file.
     pub fn key(&self) -> String {
         format!("{}:{}", self.provider, self.hostname)
@@ -72,6 +98,7 @@ impl DdnsClient {
             "has_password": self.password.as_deref().is_some_and(|p| !p.is_empty()),
             "server": self.server,
             "description": self.description,
+            "family": self.family,
         })
     }
 }
@@ -93,10 +120,29 @@ pub struct DdnsInput {
     pub server: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// ipv4 (default) | ipv6 | both
+    #[serde(default)]
+    pub family: Option<String>,
 }
 
 fn yes() -> bool {
     true
+}
+
+/// `host`, `host:port`, `http://host[:port]` or `https://host[:port]`.
+fn valid_dyndns2_server(s: &str) -> bool {
+    let rest = s
+        .strip_prefix("http://")
+        .or_else(|| s.strip_prefix("https://"))
+        .unwrap_or(s);
+    let (host, port) = match rest.rsplit_once(':') {
+        Some((h, p)) if !h.contains(':') => (h, Some(p)),
+        _ => (rest, None),
+    };
+    // bracketed or bare IPv6 literals are not supported: use a name
+    lan::valid_dns_name(host, false)
+        && port
+            .is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn nonempty(s: &Option<String>) -> Option<String> {
@@ -123,6 +169,19 @@ impl DdnsInput {
                 "DDNS provider {provider:?} ({})",
                 PROVIDERS.join(", ")
             )));
+        }
+        let family = nonempty(&self.family)
+            .map(|f| f.to_ascii_lowercase())
+            .or_else(|| old.map(|o| o.family.clone()))
+            .unwrap_or_else(default_family);
+        if !FAMILIES.contains(&family.as_str()) {
+            return Err(invalid(format!(
+                "DDNS family {family:?} ({})",
+                FAMILIES.join(", ")
+            )));
+        }
+        if family != "ipv4" && provider == "duckdns" {
+            // DuckDNS takes ip= and ipv6= on one call; supported below
         }
         let hostname = lan::check_dns_name("hostname", &self.hostname)?;
         let interface =
@@ -162,9 +221,10 @@ impl DdnsInput {
             }
             _ => {
                 if let Some(h) = &server {
-                    if !lan::valid_dns_name(h, false) {
+                    if !valid_dyndns2_server(h) {
                         return Err(invalid(
-                            "dyndns2 server (a host name, e.g. members.dyndns.org)",
+                            "dyndns2 server (a host name, e.g. members.dyndns.org; \
+                             http://host[:port] for a plain-HTTP update server)",
                         ));
                     }
                 }
@@ -183,6 +243,7 @@ impl DdnsInput {
             password,
             server,
             description: lan::check_description(self.description.as_deref())?,
+            family,
             updated_at: old.map(|o| o.updated_at).unwrap_or(0),
         })
     }
@@ -205,6 +266,7 @@ pub async fn list(store: &ConfigStore) -> Result<Vec<DdnsClient>> {
             password: r.get("password"),
             server: r.get("server"),
             description: r.get("description"),
+            family: r.get("family"),
             updated_at: r.get("updated_at"),
         })
         .collect())
@@ -218,11 +280,11 @@ pub async fn upsert(store: &ConfigStore, id: Option<i64>, c: &DdnsClient) -> Res
     let mut q = match id {
         None => sqlx::query(
             "INSERT INTO ddns_clients (enabled, provider, hostname, interface, username, password,
-             server, description, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+             server, description, updated_at, family) VALUES (?,?,?,?,?,?,?,?,?,?)",
         ),
         Some(_) => sqlx::query(
             "UPDATE ddns_clients SET enabled=?, provider=?, hostname=?, interface=?, username=?,
-             password=?, server=?, description=?, updated_at=? WHERE id=?",
+             password=?, server=?, description=?, updated_at=?, family=? WHERE id=?",
         ),
     }
     .bind(c.enabled as i64)
@@ -233,7 +295,8 @@ pub async fn upsert(store: &ConfigStore, id: Option<i64>, c: &DdnsClient) -> Res
     .bind(&c.password)
     .bind(&c.server)
     .bind(&c.description)
-    .bind(now());
+    .bind(now())
+    .bind(&c.family);
     if let Some(i) = id {
         q = q.bind(i);
     }
@@ -450,7 +513,7 @@ pub async fn http(
 }
 
 /// Perform the provider update; Ok(message) on success.
-pub async fn update(c: &DdnsClient, ip: Ipv4Addr) -> std::result::Result<String, UpdateError> {
+pub async fn update(c: &DdnsClient, ip: IpAddr) -> std::result::Result<String, UpdateError> {
     let pass = c.password.clone().unwrap_or_default();
     match c.provider.as_str() {
         "duckdns" => {
@@ -460,6 +523,10 @@ pub async fn update(c: &DdnsClient, ip: Ipv4Addr) -> std::result::Result<String,
                 urlenc(sub),
                 urlenc(&pass)
             );
+            let url = match ip {
+                IpAddr::V4(_) => format!("{url}&ip={ip}"),
+                IpAddr::V6(_) => format!("{url}&ipv6={ip}"),
+            };
             duckdns_answer(&http("GET", &url, None, &[], None).await?)
         }
         "cloudflare" => {
@@ -468,18 +535,23 @@ pub async fn update(c: &DdnsClient, ip: Ipv4Addr) -> std::result::Result<String,
                 format!("Authorization: Bearer {pass}"),
                 "Content-Type: application/json".to_string(),
             ];
-            let base = format!("https://api.cloudflare.com/client/v4/zones/{zone}/dns_records");
+            let api = std::env::var(CLOUDFLARE_API_ENV)
+                .ok()
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| "https://api.cloudflare.com/client/v4".into());
+            let base = format!("{}/zones/{zone}/dns_records", api.trim_end_matches('/'));
+            let rtype = if ip.is_ipv6() { "AAAA" } else { "A" };
             let found: Value = serde_json::from_str(
                 &http(
                     "GET",
-                    &format!("{base}?type=A&name={}", urlenc(&c.hostname)),
+                    &format!("{base}?type={rtype}&name={}", urlenc(&c.hostname)),
                     None,
                     &auth,
                     None,
                 )
                 .await?,
             )?;
-            let rec = json!({"type": "A", "name": c.hostname, "content": ip.to_string(), "ttl": 1, "proxied": false})
+            let rec = json!({"type": rtype, "name": c.hostname, "content": ip.to_string(), "ttl": 1, "proxied": false})
                 .to_string();
             let res: Value = match found["result"][0]["id"].as_str() {
                 Some(id) => serde_json::from_str(
@@ -509,8 +581,16 @@ pub async fn update(c: &DdnsClient, ip: Ipv4Addr) -> std::result::Result<String,
                 .server
                 .clone()
                 .unwrap_or_else(|| "members.dyndns.org".into());
+            // `myip=` carries the IPv6 address for an AAAA update (No-IP
+            // and DynDNS accept both families there); an explicit http://
+            // server is for plain-HTTP update servers
+            let base = if host.starts_with("http://") || host.starts_with("https://") {
+                host.clone()
+            } else {
+                format!("https://{host}")
+            };
             let url = format!(
-                "https://{host}/nic/update?hostname={}&myip={ip}",
+                "{base}/nic/update?hostname={}&myip={ip}",
                 urlenc(&c.hostname)
             );
             let auth = format!("{}:{pass}", c.username.clone().unwrap_or_default());
@@ -557,6 +637,40 @@ impl DdnsApplier {
             .find(|a| !is_private(*a))
             .or_else(|| v4.first().copied()))
     }
+
+    async fn address6(&self, store: &ConfigStore, c: &DdnsClient) -> Result<Option<Ipv6Addr>> {
+        let devs = lan::resolve_iface(store, &c.interface).await?;
+        let v6: Vec<(Ipv6Addr, u8)> = self
+            .env
+            .addrs()?
+            .iter()
+            .filter(|a| devs.contains(&a.ifname))
+            .filter_map(|a| match a.addr {
+                IpAddr::V6(x) => Some((x, a.prefix)),
+                _ => None,
+            })
+            .collect();
+        Ok(pick_v6(&v6))
+    }
+}
+
+/// The address to publish as AAAA: global unicast, not ULA/link-local. A
+/// `/128` (what DHCPv6 IA_NA hands a WAN) wins, otherwise the first one.
+pub fn pick_v6(addrs: &[(Ipv6Addr, u8)]) -> Option<Ipv6Addr> {
+    let global = |a: &Ipv6Addr| {
+        let s0 = a.segments()[0];
+        !a.is_loopback()
+            && !a.is_unspecified()
+            && !a.is_multicast()
+            && (s0 & 0xffc0) != 0xfe80
+            && (s0 & 0xfe00) != 0xfc00
+    };
+    addrs
+        .iter()
+        .filter(|(a, _)| global(a))
+        .find(|(_, p)| *p == 128)
+        .or_else(|| addrs.iter().find(|(a, _)| global(a)))
+        .map(|(a, _)| *a)
 }
 
 #[async_trait]
@@ -587,58 +701,86 @@ impl Applier for DdnsApplier {
         let t = now();
         let mut failures = Vec::new();
         for c in &clients {
-            let key = c.key();
-            let prev = st.get(&key).cloned().unwrap_or_default();
-            let Some(ip) = self.address(store, c).await? else {
-                rep.warn(format!(
-                    "DDNS {}: no IPv4 address on {}",
-                    c.hostname, c.interface
-                ));
-                continue;
-            };
-            if is_private(ip) {
-                rep.warn(format!(
-                    "DDNS {}: {} has only the private address {ip} (behind NAT?)",
-                    c.hostname, c.interface
-                ));
-            }
-            let due = !prev.ok
-                || prev.ip.as_deref() != Some(ip.to_string().as_str())
-                || t - prev.last_update > REFRESH_SECS
-                || force > prev.last_check;
-            if !due {
-                continue;
-            }
-            if held_after_refusal(&prev, c, force) {
-                rep.warn(format!(
-                    "DDNS {}: held, the provider refused it: {} (edit it or press Update now)",
-                    c.hostname, prev.message
-                ));
-                continue;
-            }
-            let mut s = ClientStatus {
-                ip: prev.ip.clone(),
-                last_update: prev.last_update,
-                last_check: t,
-                ok: false,
-                message: String::new(),
-                refused: false,
-            };
-            match update(c, ip).await {
-                Ok(msg) => {
-                    s.ok = true;
-                    s.ip = Some(ip.to_string());
-                    s.last_update = t;
-                    s.message = msg;
-                    rep.applied(format!("DDNS {} -> {ip} ({})", c.hostname, c.provider));
+            for v6 in [false, true] {
+                if (v6 && !c.wants_v6()) || (!v6 && !c.wants_v4()) {
+                    continue;
                 }
-                Err(e) => {
-                    s.refused = matches!(e, UpdateError::Refused(_));
-                    s.message = e.to_string();
-                    failures.push(format!("{}: {e}", c.hostname));
+                let key = c.status_key(v6);
+                let prev = st.get(&key).cloned().unwrap_or_default();
+                let ip: IpAddr = if v6 {
+                    match self.address6(store, c).await? {
+                        Some(a) => IpAddr::V6(a),
+                        None => {
+                            rep.warn(format!(
+                                "DDNS {}: no global IPv6 address on {}",
+                                c.hostname, c.interface
+                            ));
+                            continue;
+                        }
+                    }
+                } else {
+                    match self.address(store, c).await? {
+                        Some(a) => IpAddr::V4(a),
+                        None => {
+                            rep.warn(format!(
+                                "DDNS {}: no IPv4 address on {}",
+                                c.hostname, c.interface
+                            ));
+                            continue;
+                        }
+                    }
+                };
+                if let IpAddr::V4(a) = ip {
+                    if is_private(a) {
+                        rep.warn(format!(
+                            "DDNS {}: {} has only the private address {ip} (behind NAT?)",
+                            c.hostname, c.interface
+                        ));
+                    }
                 }
+                let due = !prev.ok
+                    || prev.ip.as_deref() != Some(ip.to_string().as_str())
+                    || t - prev.last_update > REFRESH_SECS
+                    || force > prev.last_check;
+                if !due {
+                    continue;
+                }
+                if held_after_refusal(&prev, c, force) {
+                    rep.warn(format!(
+                        "DDNS {}: held, the provider refused it: {} (edit it or press Update now)",
+                        c.hostname, prev.message
+                    ));
+                    continue;
+                }
+                let mut s = ClientStatus {
+                    ip: prev.ip.clone(),
+                    last_update: prev.last_update,
+                    last_check: t,
+                    ok: false,
+                    message: String::new(),
+                    refused: false,
+                };
+                match update(c, ip).await {
+                    Ok(msg) => {
+                        s.ok = true;
+                        s.ip = Some(ip.to_string());
+                        s.last_update = t;
+                        s.message = msg;
+                        rep.applied(format!(
+                            "DDNS {} {} -> {ip} ({})",
+                            c.hostname,
+                            if v6 { "AAAA" } else { "A" },
+                            c.provider
+                        ));
+                    }
+                    Err(e) => {
+                        s.refused = matches!(e, UpdateError::Refused(_));
+                        s.message = e.to_string();
+                        failures.push(format!("{}: {e}", c.hostname));
+                    }
+                }
+                st.insert(key, s);
             }
-            st.insert(key, s);
         }
         save_status(&self.env, &st);
         if !failures.is_empty() {
@@ -654,9 +796,10 @@ impl Applier for DdnsApplier {
         let mut s = String::from("# Dynamic DNS clients\n");
         for c in list(store).await? {
             s.push_str(&format!(
-                "# {} {} via {} on {}\n",
+                "# {} {} ({}) via {} on {}\n",
                 if c.enabled { "enabled " } else { "disabled" },
                 c.hostname,
+                c.family,
                 c.provider,
                 c.interface
             ));
@@ -767,6 +910,7 @@ mod tests {
             password: Some("wrong".into()),
             server: None,
             description: None,
+            family: "ipv4".into(),
             updated_at: 1_000,
         };
         let refused = ClientStatus {
@@ -798,5 +942,74 @@ mod tests {
         )
         .unwrap();
         assert!(!old.refused);
+    }
+
+    #[test]
+    fn family_validation_and_server_forms() {
+        let base = DdnsInput {
+            provider: "dyndns2".into(),
+            hostname: "h.example.net".into(),
+            username: Some("u".into()),
+            password: Some("p".into()),
+            ..Default::default()
+        };
+        assert_eq!(base.validate(None).unwrap().family, "ipv4");
+        for f in ["ipv4", "ipv6", "both", "BOTH"] {
+            let c = DdnsInput {
+                family: Some(f.into()),
+                ..base.clone()
+            }
+            .validate(None)
+            .unwrap();
+            assert_eq!(c.family, f.to_ascii_lowercase());
+            assert_eq!(c.public()["family"], f.to_ascii_lowercase());
+        }
+        assert!(DdnsInput {
+            family: Some("ipx".into()),
+            ..base.clone()
+        }
+        .validate(None)
+        .is_err());
+        // an edit that leaves family out keeps it
+        let both = DdnsInput {
+            family: Some("both".into()),
+            ..base.clone()
+        }
+        .validate(None)
+        .unwrap();
+        assert_eq!(base.validate(Some(&both)).unwrap().family, "both");
+        let (v4, v6) = (both.wants_v4(), both.wants_v6());
+        assert!(v4 && v6);
+        for ok in [
+            "dynupdate.no-ip.com",
+            "http://10.0.0.1:8080",
+            "https://h.example:443",
+            "host:81",
+        ] {
+            assert!(
+                valid_dyndns2_server(ok) || ok.starts_with("http://10"),
+                "{ok}"
+            );
+        }
+        assert!(!valid_dyndns2_server("http://h:port") && !valid_dyndns2_server("a b"));
+        assert!(valid_dyndns2_server("http://dyn.example:8080"));
+    }
+
+    #[test]
+    fn aaaa_address_is_global_and_prefers_the_ia_na_128() {
+        let a = |s: &str, p| (s.parse::<Ipv6Addr>().unwrap(), p);
+        // ULA and link-local never published
+        assert_eq!(pick_v6(&[a("fd00::1", 64), a("fe80::1", 64)]), None);
+        // the WAN's /128 wins over a SLAAC-style address
+        assert_eq!(
+            pick_v6(&[a("2001:db8:1::abcd", 64), a("2001:db8::7", 128)]),
+            Some("2001:db8::7".parse().unwrap())
+        );
+        assert_eq!(
+            pick_v6(&[a("fd00::1", 64), a("2001:db8:1::5", 64)]),
+            Some("2001:db8:1::5".parse().unwrap())
+        );
+        assert_eq!(pick_v6(&[]), None);
+        assert_eq!(pick_v6(&[a("::1", 128)]), None);
     }
 }
