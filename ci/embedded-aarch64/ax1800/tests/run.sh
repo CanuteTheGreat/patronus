@@ -177,7 +177,7 @@ aprender w20 "$TWO
 AP_CHAN5=36 AP_HT5=20"
 [ "$(grep -c '^ht_capab=' "$A/w20/ap5.conf")" = 1 ] && case "$(seg w20 ht_capab)" in "[LDPC]"*) true;; *) false;; esac \
   && ok "ap: 20 MHz on 5 GHz still writes one ht_capab line with the board's capabilities" || no "ap: 20 MHz ht_capab: $(grep '^ht_capab' "$A/w20/ap5.conf" | tr '\n' ' ')"
-# ap-event: a station that joins one radio is dropped (without a frame) from the other BSSes that still list it
+# ap-event: a station that joins one radio is dropped (without a frame) from the other radio's BSSes that still list it
 E=$W/apev; mkdir -p "$E/ctrl" "$E/bin"
 if command -v python3 >/dev/null 2>&1; then
   for i in wl24-m wl5-m wl5-g; do python3 -c "import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])" "$E/ctrl/$i"; done
@@ -190,13 +190,18 @@ echo "$i $*" >> "$APEV_LOG"
 exit 0
 EOF
   chmod +x "$E/bin/hostapd_cli"; : > "$E/log"
-  APEV_LOG=$E/log AP_CTRL=$E/ctrl AP_CLI=$E/bin/hostapd_cli sh "$O/usr/libexec/patronus/ap-event" wl5-m AP-STA-CONNECTED 02:11:22:33:44:55
-  grep -qx 'wl24-m deauthenticate 02:11:22:33:44:55 tx=0' "$E/log" && grep -qx 'wl5-g deauthenticate 02:11:22:33:44:55 tx=0' "$E/log" \
+  # fake sysfs: wl5-* on phy0 (5 GHz), wl24-* on phy1 (2.4 GHz)
+  for i in wl24-m:phy1 wl5-m:phy0 wl5-g:phy0; do mkdir -p "$E/net/${i%%:*}/phy80211"; echo "${i#*:}" > "$E/net/${i%%:*}/phy80211/name"; done
+  APEV_LOG=$E/log AP_CTRL=$E/ctrl AP_CLI=$E/bin/hostapd_cli AP_SYSNET=$E/net sh "$O/usr/libexec/patronus/ap-event" wl5-m AP-STA-CONNECTED 02:11:22:33:44:55
+  grep -qx 'wl24-m deauthenticate 02:11:22:33:44:55 tx=0' "$E/log" && ! grep -q '^wl5-g deauthenticate' "$E/log" \
     && ! grep -q '^wl5-m deauthenticate' "$E/log" \
-    && ok "ap-event: a station that joined one BSS is removed (tx=0) from every other BSS that lists it, not from the new one" \
+    && ok "ap-event: a station that joined one radio is removed (tx=0) from the other radio's BSS that lists it, never from a BSS of its own radio" \
     || { no "ap-event: wrong removals"; cat "$E/log"; }
+  : > "$E/log"; rm -rf "$E/net/wl24-m"
+  APEV_LOG=$E/log AP_CTRL=$E/ctrl AP_CLI=$E/bin/hostapd_cli AP_SYSNET=$E/net sh "$O/usr/libexec/patronus/ap-event" wl5-m AP-STA-CONNECTED 02:11:22:33:44:55
+  ! grep -q 'deauthenticate' "$E/log" && ok "ap-event: a BSS whose radio is unknown is never touched" || { no "ap-event: removed from a BSS of unknown radio"; cat "$E/log"; }
   : > "$E/log"
-  APEV_LOG=$E/log AP_CTRL=$E/ctrl AP_CLI=$E/bin/hostapd_cli sh "$O/usr/libexec/patronus/ap-event" wl5-m AP-STA-DISCONNECTED 02:11:22:33:44:55
+  APEV_LOG=$E/log AP_CTRL=$E/ctrl AP_CLI=$E/bin/hostapd_cli AP_SYSNET=$E/net sh "$O/usr/libexec/patronus/ap-event" wl5-m AP-STA-DISCONNECTED 02:11:22:33:44:55
   [ ! -s "$E/log" ] && ok "ap-event: other events change nothing" || { no "ap-event: acted on AP-STA-DISCONNECTED"; cat "$E/log"; }
 else sk "ap-event (no python3 to create the control sockets)"; fi
 grep -q 'hostapd_cli -B .* -a /usr/libexec/patronus/ap-event' "$O/usr/libexec/patronus/ap" && [ -x "$O/usr/libexec/patronus/ap-event" ] \

@@ -1,19 +1,28 @@
 #!/bin/sh
 # ap-event IFNAME EVENT MAC...: hostapd_cli action script (one `hostapd_cli -a` per BSS, started by `ap start`).
-# A station that moves to the other band of this AP (same SSID, other radio) is never told goodbye on the old radio:
+# A station that moves to the OTHER band of this AP (same SSID, other radio) is never told goodbye on the old radio:
 # each radio has its own hostapd, so the old one keeps the station listed (and keeps buffering frames for it) until its
-# inactivity timeout. On AP-STA-CONNECTED we therefore drop that MAC from every other BSS of this unit, without sending
+# inactivity timeout. On AP-STA-CONNECTED we therefore drop that MAC from the BSSes of the other radio, without sending
 # a frame (tx=0): the client is already associated here and must not receive a deauthentication.
-# Test hooks: AP_CTRL (control socket directory), AP_CLI (hostapd_cli command).
+# BSSes on the SAME radio are left alone: hostapd already disconnects a station from its other BSSes when it
+# authenticates (ap_sta_remove_in_other_bss), and an extra peer removal there only adds to the same-MAC peer churn on
+# one radio that makes the IPQ6018 firmware assert (ar_wal_peer.c "is_graceful_to_handle").
+# Test hooks: AP_CTRL (control socket directory), AP_CLI (hostapd_cli command), AP_SYSNET (instead of /sys/class/net).
 CTRL=${AP_CTRL:-/run/hostapd}
 CLI=${AP_CLI:-hostapd_cli}
+NET=${AP_SYSNET:-/sys/class/net}
 ifn=$1; ev=$2; mac=$3
 [ "$ev" = AP-STA-CONNECTED ] || exit 0
 case "$mac" in ??:??:??:??:??:??) ;; *) exit 0;; esac
+phy() { cat "$NET/$1/phy80211/name" 2>/dev/null; }
+mine=$(phy "$ifn")
+[ -n "$mine" ] || exit 0
 for s in "$CTRL"/*; do
   [ -S "$s" ] || continue
   o=${s##*/}
   [ "$o" = "$ifn" ] && continue
+  # only the other radio (a BSS whose phy is unknown is never touched)
+  op=$(phy "$o"); [ -n "$op" ] && [ "$op" != "$mine" ] || continue
   # only a BSS that still lists the station: `sta MAC` prints the address on its first line when it is known
   [ "$($CLI -p "$CTRL" -i "$o" sta "$mac" 2>/dev/null | head -1)" = "$mac" ] || continue
   $CLI -p "$CTRL" -i "$o" deauthenticate "$mac" tx=0 >/dev/null 2>&1 \

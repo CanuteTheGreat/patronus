@@ -501,6 +501,18 @@ OpenWrt's `mac80211.sh`/`hostapd.sh` generate for this board:
 - every BSS: U-APSD advertised, low-ACK disassociation, the inactivity poll, BSS load reporting, and its own control
   socket (so `ap-event` sees every BSS).
 
+Band moves: each radio runs its own hostapd, so a station that moves to the other band stayed listed on the old radio
+until its inactivity timeout. `ap-event` (`hostapd_cli -a` per BSS) removes it there, without sending a frame, when it
+connects on the other radio. It never touches BSSes of the same radio: hostapd already disconnects a station from its
+other BSSes on that radio when it authenticates.
+
+Known firmware limit (IPQ6018 WLAN.HK.2.5.0.1, also seen on OpenWrt): a client with a FIXED MAC that is still listed on
+one SSID of a radio (for example after it left for the other AP without a goodbye) and then joins the OTHER SSID on the
+same radio makes the firmware assert (`ar_wal_peer.c:2462 Assertion is_graceful_to_handle failed`, remoteproc "fatal
+error") and the unit restarts. hostapd creates the new peer before it removes the old one with the same MAC. Phones use a
+private MAC per SSID and do not hit it. Reproduced on a unit with a laptop: hogs 5 GHz on unit A, roam to unit B, then
+the other SSID on unit A's 5 GHz radio.
+
 `ht_coex` is not written: it is an OpenWrt hostapd patch and the stock hostapd rejects it. Any test of the Wi-Fi
 settings must use a REAL phone in power save (screen off, deep idle) and check downstream loss over at least 60 s: a
 client that never sleeps, or a laptop radio with `iw ... set power_save on`, does not show the problem.
