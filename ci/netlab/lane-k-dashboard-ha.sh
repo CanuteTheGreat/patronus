@@ -36,7 +36,7 @@ cleanup() {
   local rc=$?
   [ "$rc" = 0 ] || diag
   [ -n "${NETLAB_KEEP:-}" ] && [ "$rc" != 0 ] && return 0
-  pkill -x patronus-dashboard 2>/dev/null || true
+  pkill -f '/patronus-dashboard( |$)' 2>/dev/null || true
   sleep 1
   for n in $NODES cl sw; do ip netns del "$n" 2>/dev/null || true; done
   rm -rf /t/ha

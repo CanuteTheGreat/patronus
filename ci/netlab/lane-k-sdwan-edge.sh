@@ -42,7 +42,7 @@ cleanup() {
   for n in "${NSS[@]:-}"; do :; done
   pkill -x patronus 2>/dev/null || true
   pkill -x patronus-web 2>/dev/null || true
-  pkill -x patronus-dashboard 2>/dev/null || true
+  pkill -f '/patronus-dashboard( |$)' 2>/dev/null || true
   sleep 1
   for n in dash isp sa sb ca cb; do ip netns del "$n" 2>/dev/null || true; done
   rm -rf /t/net-a /t/net-b /t/run-a /t/run-b
