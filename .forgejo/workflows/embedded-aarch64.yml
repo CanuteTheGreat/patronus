@@ -11,6 +11,7 @@ on:
   push:
     paths:
       - 'ci/embedded-aarch64/**'
+      - 'ci/embedded-common/**'
       - 'ci/hw-profile/**'
       - 'profiles/**'
       - 'crates/patronus-cli/**'

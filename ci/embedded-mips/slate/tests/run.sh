@@ -28,13 +28,16 @@ t "py_compile t_slate.py" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]
 # 1b. wifi-follow: the AP follows the uplink client's channel (stub iw/hostapd)
 t "wifi-follow (AP follows the uplink channel)" sh "$D/tests/wifi-follow-test.sh"
 
+# 1c. package-managed accounts (shared with the AX1800 tier)
+t "accounts-sync (package-managed accounts)" sh "$D/../../embedded-common/tests/accounts-sync.sh"
+
 # 2. check-rootfs.sh
 mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/etc/wpa_supplicant" "$r/bin" "$r/sbin" "$r/root/.ssh" "$r/var/lib/misc" "$r/usr/sbin" "$r/usr/share/patronus-recovery" "$r/etc/init.d" "$r/usr/libexec/patronus" "$r/etc/pam.d" "$r/lib/security"
   printf 'network={\n ssid="x"\n psk="y"\n}\n' > "$r/etc/wpa_supplicant/wpa_supplicant.conf"
   printf 'root:x:0:0:root:/root:/bin/sh\nnobody:x:65534:65534:nobody:/:/bin/false\n' > "$r/etc/passwd"
   echo 'root:$6$salt$hash:1::::::' > "$r/etc/shadow"; ln -s busybox "$r/bin/sh"; : > "$r/bin/busybox"; chmod +x "$r/bin/busybox"
   : > "$r/usr/sbin/patronus-guard"; : > "$r/usr/sbin/patronus-flash"; : > "$r/usr/sbin/patronus-init"; : > "$r/usr/libexec/patronus/early"
-  : > "$r/etc/pam.d/patronus"; : > "$r/lib/security/pam_unix.so"; ln -s /usr/sbin/patronus-init "$r/sbin/init"; echo INIT=openrc > "$r/etc/patronus-init"
+  : > "$r/etc/pam.d/patronus"; : > "$r/lib/security/pam_unix.so"; : > "$r/usr/libexec/patronus/accounts-sync"; chmod +x "$r/usr/libexec/patronus/accounts-sync"; ln -s /usr/sbin/patronus-init "$r/sbin/init"; echo INIT=openrc > "$r/etc/patronus-init"
   for b in openrc-init openrc-run supervise-daemon; do : > "$r/sbin/$b"; chmod +x "$r/sbin/$b"; done; printf '#!/bin/sh\nexec /sbin/openrc-shutdown -r now\n' > "$r/sbin/reboot"; chmod +x "$r/sbin/reboot"
   for s in patronus-board patronus-apply patronus-applyd patronus-web dropbear dnsmasq patronus-dhcpc; do : > "$r/etc/init.d/$s"; chmod +x "$r/etc/init.d/$s"; done
   echo "http 80/tcp" > "$r/etc/services"

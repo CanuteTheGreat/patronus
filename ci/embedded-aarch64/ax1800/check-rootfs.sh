@@ -81,6 +81,12 @@ for s in dnsmasq patronus-dhcpd patronus-dnsd; do
 . "$R/etc/patronus/board.sh" 2>/dev/null
 [ "${ROLE:-}" = ap ] || fail "board.sh must set ROLE=ap"
 grep -qx 'PATRONUS_DEVICE_ROLE=ap' "$R/etc/patronus/embedded.env" || fail "embedded.env must set PATRONUS_DEVICE_ROLE=ap (board.sh ROLE=ap): the web UI would offer the router wizard"
+[ -x "$R/usr/libexec/patronus/accounts-sync" ] || fail "missing /usr/libexec/patronus/accounts-sync (package-managed accounts)"
+if [ -d "$R/usr/share/patronus/accounts.d" ]; then
+  grep accounts-sync "$R/usr/libexec/patronus/early" >/dev/null || fail "early boot never runs accounts-sync"
+  for a in "$R"/usr/share/patronus/accounts.d/*/; do [ -s "$a/passwd" ] || fail "account ${a%/}: no passwd line"; done
+fi
+grep -qx 'PATRONUS_AUTH_BACKEND=shadow' "$R/etc/patronus/embedded.env" || fail "embedded.env must set PATRONUS_AUTH_BACKEND=shadow: pam_unix on musl cannot verify yescrypt hashes copied from Gentoo/Horcrux hosts"
 [ "${AP_FT:-0}" = 0 ] || fail "board.sh: AP_FT must default to 0 (802.11r crashes ath11k firmware)"
 if [ -f "$R/etc/patronus/ap.env" ]; then
   grep -qE '^[[:space:]]*AP_FT=1' "$R/etc/patronus/ap.env" && fail "ap.env enables 802.11r (AP_FT=1)"

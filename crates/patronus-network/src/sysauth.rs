@@ -14,7 +14,11 @@
 //!   (MD5-crypt `$1$`, SHA-256/512-crypt `$5$`/`$6$`, bcrypt `$2*$`: what
 //!   busybox `passwd`/`mkpasswd` and musl `crypt` produce). Locked (`!`,
 //!   `*`) and empty passwords and expired accounts never verify. yescrypt
-//!   (`$y$`) is not supported here: it fails closed; use PAM on that tier.
+//!   (`$y$`, what Gentoo/Debian/Fedora `passwd` write by default) is checked
+//!   in pure Rust too (RustCrypto `yescrypt`), so an account copied from a
+//!   Horcrux/Gentoo host signs in unchanged. Its memory use is set by the
+//!   hash's own cost field (16 MiB for the usual `$y$j9T$`), allocated for
+//!   one verification at a time inside the root broker.
 //!
 //! Reading `/etc/shadow` / running the PAM helpers needs root, and the web
 //! UI runs as the unprivileged `patronus` user: it asks the root broker
@@ -328,10 +332,22 @@ fn usable_hash(etc: &Path, name: &str, today: i64) -> Option<String> {
     Some(h.to_string())
 }
 
+/// Verify `password` against one shadow hash of any supported scheme.
+/// Unparsable or unsupported hashes never verify.
+fn verify_hash(password: &str, hash: &str) -> bool {
+    if hash.starts_with("$y$") {
+        use yescrypt::PasswordVerifier;
+        return yescrypt::Yescrypt::default()
+            .verify_password(password.as_bytes(), hash)
+            .is_ok();
+    }
+    pwhash::unix::verify(password, hash)
+}
+
 fn shadow_verify(etc: &Path, name: &str, password: &str) -> bool {
     let h = usable_hash(etc, name, days_today());
     // unknown/locked accounts cost one decoy verification as well
-    let ok = pwhash::unix::verify(password, h.as_deref().unwrap_or_else(|| decoy_hash()));
+    let ok = verify_hash(password, h.as_deref().unwrap_or_else(|| decoy_hash()));
     ok && h.is_some()
 }
 
@@ -544,6 +560,72 @@ mod tests {
         assert_eq!(authenticate(&b, "bob", "busybox-pw"), Ok(true));
         assert_eq!(authenticate(&b, "carol", "bcrypt-pw"), Ok(true));
         assert_eq!(authenticate(&b, "carol", "bcrypt-pw "), Ok(false));
+    }
+
+    // Reference vectors made by libxcrypt's crypt(3) (what Gentoo/Debian
+    // `passwd` use), not by the crate under test.
+    const Y_DEFAULT: &str =
+        "$y$j9T$abcdefghijklmnop$F7kfVk.oOhV81K9PnQ5GcZ31QaSOFBtNI3Y3euDcm9C";
+    const Y_UTF8: &str = "$y$jDT$Qm9iYnlTYWx0$A02IyJR1aSQa7fpcNxb.iqyN//n7cGNLz.Q6hlnn9iD";
+    const Y_EMPTY_PW: &str = "$y$j9T$saltsaltsalt$fngpNhGkx4DMa5D10p0zPG3eL.oKthDF.wsC./kslu9";
+
+    fn yetc(hash: &str, extra: &str) -> tempfile::TempDir {
+        let d = etc();
+        let mut sh = std::fs::read_to_string(d.path().join("shadow")).unwrap();
+        sh.push_str(&format!("yuser:{hash}:1::::::\n{extra}"));
+        std::fs::write(d.path().join("shadow"), sh).unwrap();
+        let mut pw = std::fs::read_to_string(d.path().join("passwd")).unwrap();
+        pw.push_str("yuser:x:1010:1010::/h:/bin/sh\n");
+        std::fs::write(d.path().join("passwd"), pw).unwrap();
+        d
+    }
+
+    #[test]
+    fn yescrypt_hashes_from_gentoo_hosts_verify() {
+        let d = yetc(Y_DEFAULT, "");
+        let b = Backend::Shadow(d.path().to_path_buf());
+        assert_eq!(authenticate(&b, "yuser", "correct horse battery"), Ok(true));
+        assert_eq!(authenticate(&b, "yuser", "correct horse batterY"), Ok(false));
+        assert_eq!(authenticate(&b, "yuser", ""), Ok(false));
+        assert_eq!(authenticate(&b, "yuser", "correct horse battery "), Ok(false));
+        assert!(check(&b, "yuser", "correct horse battery").unwrap().is_some());
+    }
+
+    #[test]
+    fn yescrypt_other_costs_non_ascii_and_empty_password() {
+        assert!(verify_hash("p@ss w0rd/\u{e9}", Y_UTF8));
+        assert!(!verify_hash("p@ss w0rd/e", Y_UTF8));
+        assert!(verify_hash("", Y_EMPTY_PW));
+        assert!(!verify_hash("x", Y_EMPTY_PW));
+    }
+
+    #[test]
+    fn damaged_or_foreign_yescrypt_strings_fail_closed() {
+        for bad in [
+            "$y$",
+            "$y$j9T$",
+            "$y$j9T$abcdefghijklmnop",
+            "$y$j9T$abcdefghijklmnop$",
+            "$y$j9T$abcdefghijklmnop$short",
+            "$y$!!!!$abcdefghijklmnop$F7kfVk.oOhV81K9PnQ5GcZ31QaSOFBtNI3Y3euDcm9C",
+            "$y$j9T$abcdefghijklmnop$F7kfVk.oOhV81K9PnQ5GcZ31QaSOFBtNI3Y3euDcm9C$extra",
+            // one character of the digest changed
+            "$y$j9T$abcdefghijklmnop$G7kfVk.oOhV81K9PnQ5GcZ31QaSOFBtNI3Y3euDcm9C",
+            // gost-yescrypt ($gy$) is a different scheme
+            "$gy$j9T$abcdefghijklmnop$F7kfVk.oOhV81K9PnQ5GcZ31QaSOFBtNI3Y3euDcm9C",
+        ] {
+            assert!(!verify_hash("correct horse battery", bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn locked_yescrypt_accounts_never_verify() {
+        let d = yetc(Y_DEFAULT, &format!("ylock:!{Y_DEFAULT}:1::::::\n"));
+        let mut pw = std::fs::read_to_string(d.path().join("passwd")).unwrap();
+        pw.push_str("ylock:x:1011:1011::/h:/bin/sh\n");
+        std::fs::write(d.path().join("passwd"), pw).unwrap();
+        let b = Backend::Shadow(d.path().to_path_buf());
+        assert_eq!(authenticate(&b, "ylock", "correct horse battery"), Ok(false));
     }
 
     #[test]

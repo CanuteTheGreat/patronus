@@ -1,0 +1,110 @@
+#!/bin/sh
+# accounts-sync: make the package-managed login accounts of this image exist in the live /etc (router tier, busybox sh).
+#
+# The image carries /usr/share/patronus/accounts.d/<user>/ (put there by assemble.sh from ACCOUNTS_DIR; on a Gentoo-based
+# install the same directory is shipped by a package). Per account:
+#   passwd           the complete passwd line (uid, gid, home, shell)
+#   shadow           the complete shadow line (any hash scheme the web login and PAM accept)
+#   group            group lines that must exist (the account's primary group, patronus-admin, ...), created when missing
+#   member-of        one group name per line the account must belong to
+#   authorized_keys  installed as <home>/.ssh/authorized_keys
+# /etc is an overlay on the persistent data volume: an account written by an older image or by hand is already there, so
+# this reconciles instead of overwriting.
+#   - passwd/group/membership lines are added or corrected; an existing uid is never reassigned to another name
+#   - the password hash is applied when the account has none, still has the hash this script applied last time, or
+#     already equals the package's. A password the user changed since is left alone (the package never undoes it).
+#   - the key file is always rewritten (the package owns it)
+# Safe to run on every boot; prints one line per change on stdout. ACCOUNTS_SRC / ACCOUNTS_ETC point it at other dirs (tests).
+SRC=${ACCOUNTS_SRC:-/usr/share/patronus/accounts.d}
+ETC=${ACCOUNTS_ETC:-/etc}
+STATE=${ACCOUNTS_STATE:-$ETC/patronus/.accounts-applied}
+ROOTD=${ACCOUNTS_ROOT:-}
+[ -d "$SRC" ] || exit 0
+umask 077
+mkdir -p "$STATE"
+rc=0
+
+# replace_line FILE NAME NEWLINE: first-field match, append when absent; atomic rename, mode kept
+replace_line() {
+  f=$1; n=$2; l=$3
+  t=$f.accsync.$$
+  if grep "^$n:" "$f" >/dev/null 2>&1; then
+    while IFS= read -r x || [ -n "$x" ]; do case "$x" in "$n:"*) printf '%s\n' "$l";; *) printf '%s\n' "$x";; esac; done < "$f" > "$t"
+  else
+    { [ -f "$f" ] && cat "$f"; printf '%s\n' "$l"; } > "$t"
+  fi
+  chmod --reference="$f" "$t" 2>/dev/null || chmod 644 "$t"
+  mv "$t" "$f"
+}
+
+for d in "$SRC"/*/; do
+  [ -d "$d" ] || continue
+  u=${d%/}; u=${u##*/}
+  [ -s "$d/passwd" ] || { echo "accounts-sync: $u: no passwd line, skipped"; rc=1; continue; }
+  pl=$(head -n1 "$d/passwd")
+  [ "${pl%%:*}" = "$u" ] || { echo "accounts-sync: $u: passwd line names another user, skipped"; rc=1; continue; }
+  uid=$(printf '%s' "$pl" | cut -d: -f3); gid=$(printf '%s' "$pl" | cut -d: -f4)
+  home=$(printf '%s' "$pl" | cut -d: -f6); shell=$(printf '%s' "$pl" | cut -d: -f7)
+
+  # groups first (the primary group has to exist before the account refers to it)
+  if [ -f "$d/group" ]; then
+    while IFS= read -r gl; do
+      case "$gl" in ''|\#*) continue;; esac
+      gn=${gl%%:*}
+      grep "^$gn:" "$ETC/group" >/dev/null 2>&1 || { replace_line "$ETC/group" "$gn" "$gl"; echo "accounts-sync: $u: group $gn created"; }
+    done < "$d/group"
+  fi
+
+  # an existing account keeps its place; another name on the same uid is a conflict, not something to overwrite
+  other=$(awk -F: -v u="$u" -v id="$uid" '$3==id && $1!=u {print $1}' "$ETC/passwd" 2>/dev/null | head -n1)
+  if [ -n "$other" ]; then echo "accounts-sync: $u: uid $uid belongs to $other, skipped"; rc=1; continue; fi
+  cur=$(grep "^$u:" "$ETC/passwd" 2>/dev/null | head -n1)
+  if [ "$cur" != "$pl" ]; then replace_line "$ETC/passwd" "$u" "$pl"; if [ -n "$cur" ]; then echo "accounts-sync: $u: passwd line updated"; else echo "accounts-sync: $u: passwd line added"; fi; fi
+
+  # group membership
+  if [ -f "$d/member-of" ]; then
+    while IFS= read -r g; do
+      case "$g" in ''|\#*) continue;; esac
+      gl=$(grep "^$g:" "$ETC/group" | head -n1)
+      [ -n "$gl" ] || { echo "accounts-sync: $u: group $g missing, not joined"; rc=1; continue; }
+      mem=${gl##*:}
+      case ",$mem," in *",$u,"*) continue;; esac
+      pre=${gl%:*}
+      if [ -z "$mem" ]; then nl="$pre:$u"; else nl="$pre:$mem,$u"; fi
+      replace_line "$ETC/group" "$g" "$nl"; echo "accounts-sync: $u: joined $g"
+    done < "$d/member-of"
+  fi
+
+  # password hash
+  if [ -s "$d/shadow" ]; then
+    sl=$(head -n1 "$d/shadow")
+    newh=$(printf '%s' "$sl" | cut -d: -f2)
+    cursl=$(grep "^$u:" "$ETC/shadow" 2>/dev/null | head -n1)
+    curh=$(printf '%s' "$cursl" | cut -d: -f2)
+    prev=$(cat "$STATE/$u" 2>/dev/null)
+    apply=
+    case "$curh" in ''|'!'*|'*'*) apply=1;; esac
+    [ -n "$cursl" ] || apply=1
+    [ "$curh" = "$newh" ] && apply=1
+    [ -n "$prev" ] && [ "$curh" = "$prev" ] && apply=1
+    if [ -n "$apply" ]; then
+      if [ "$cursl" != "$sl" ]; then replace_line "$ETC/shadow" "$u" "$sl"; chmod 600 "$ETC/shadow"; echo "accounts-sync: $u: password hash set"; fi
+      printf '%s\n' "$newh" > "$STATE/$u"
+    else
+      echo "accounts-sync: $u: password was changed on the box, kept"
+    fi
+  fi
+
+  # login shell must be an allowed one for dropbear
+  if [ -f "$ETC/shells" ] && [ -n "$shell" ]; then grep -x "$shell" "$ETC/shells" >/dev/null 2>&1 || echo "$shell" >> "$ETC/shells"; fi
+
+  # ssh key (dropbear's StrictModes: home and .ssh owned by the user, not group/world writable)
+  if [ -s "$d/authorized_keys" ] && [ -n "$home" ]; then
+    H=$ROOTD$home
+    mkdir -p "$H/.ssh"
+    cp "$d/authorized_keys" "$H/.ssh/authorized_keys"
+    chmod 755 "$H"; chmod 700 "$H/.ssh"; chmod 600 "$H/.ssh/authorized_keys"
+    chown "$uid:$gid" "$H" "$H/.ssh" "$H/.ssh/authorized_keys" 2>/dev/null
+  fi
+done
+exit $rc

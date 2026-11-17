@@ -28,6 +28,8 @@ mount -t ubifs ubi0:patronus_data /data || { mark NO-DATA; mount -t tmpfs -o siz
 for d in etc var/lib root; do n=$(echo $d | tr / -); mkdir -p /data/overlay/$n /data/overlay/.work-$n
   mount -t overlay overlay -o lowerdir=/$d,upperdir=/data/overlay/$n,workdir=/data/overlay/.work-$n /$d || mark "NO-OVERLAY $d"; done
 mkdir -p /var/lib/patronus /var/lib/misc /data/tls
+# package-managed login accounts of this image (owner account, keys): reconciled into the persisted /etc
+[ -x /usr/libexec/patronus/accounts-sync ] && /usr/libexec/patronus/accounts-sync 2>&1 | while IFS= read -r l; do mark "$l"; done
 mark data-mounted
 
 # 2. kernel modules (OpenWrt's kmods for this exact kernel), in OpenWrt's /etc/modules.d order;

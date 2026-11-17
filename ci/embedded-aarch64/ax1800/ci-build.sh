@@ -48,6 +48,8 @@ python3 "$H/ubi-layout.py" check "$FACTORY_UBI"
 step "throwaway CI unit"
 sh "$H/ci-unit.sh" /out/unit
 export UNIT_DIR=/out/unit SOURCE_REV=${SOURCE_REV:-unknown}
+# a package-managed test account with a yescrypt hash (tests/ci-accounts): the QEMU gate proves accounts-sync + the web login on it
+export ACCOUNTS_DIR=$H/tests/ci-accounts
 
 : > /out/summary.txt
 for init in $VARIANTS; do

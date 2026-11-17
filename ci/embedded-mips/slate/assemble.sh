@@ -8,6 +8,7 @@
 #   HW_PROFILE        optional: another device profile (profiles/hw/*.toml, docs/hardware-support.md); default the GL-AR750S
 #   RECOVERY_ROOT     stock root squashfs embedded as the guard's way back (usually the unit's own ubi0_0 dump)
 #   RECOVERY_CFG      optional: OpenWrt sysupgrade -b tarball restored when the guard reverts
+#   ACCOUNTS_DIR      optional dir of package-managed login accounts <user>/{passwd,shadow,group,member-of,authorized_keys} (see ../../embedded-common/accounts-sync)
 #   UNIT_DIR          per-unit private files: shadow-root, authorized_keys, dropbear_*_host_key, wpa_supplicant.conf,
 #                     unit.conf (see overlay/etc/patronus/unit.conf.example), hostapd/*.conf (see ap5.conf.example)
 #   OUT_DIR           where <tag>/root.squashfs and the sysupgrade tar go
@@ -139,6 +140,13 @@ for g in 'root:x:0:' 'nobody:x:65534:' 'dnsmasq:x:453:' 'patronus:x:900:'; do gr
 U=$UNIT_DIR
 { cat "$U/shadow-root"; grep -v '^root:' "$R/etc/shadow" 2>/dev/null || true; } > "$R/etc/shadow.new"; mv "$R/etc/shadow.new" "$R/etc/shadow"; chmod 600 "$R/etc/shadow"
 install -m600 "$U/authorized_keys" "$R/root/.ssh/authorized_keys"; chmod 700 "$R/root/.ssh"
+# package-managed login accounts (ACCOUNTS_DIR, e.g. the owner's from the private overlay): reconciled into the live /etc at every boot
+install -m755 "$HERE/../../embedded-common/accounts-sync" "$R/usr/libexec/patronus/accounts-sync"
+if [ -n "${ACCOUNTS_DIR:-}" ]; then
+  [ -d "$ACCOUNTS_DIR" ] || { echo "assemble.sh: ACCOUNTS_DIR $ACCOUNTS_DIR is not a directory"; exit 2; }
+  mkdir -p "$R/usr/share/patronus"; rm -rf "$R/usr/share/patronus/accounts.d"; cp -a "$ACCOUNTS_DIR" "$R/usr/share/patronus/accounts.d"
+  chmod -R go-rwx "$R/usr/share/patronus/accounts.d"; chmod 755 "$R/usr/share/patronus"
+fi
 install -m600 "$U"/dropbear_*_host_key "$R/etc/dropbear/"
 install -m600 "$U/wpa_supplicant.conf" "$R/etc/wpa_supplicant/wpa_supplicant.conf"
 if [ -f "$U/unit.conf" ]; then install -m644 "$U/unit.conf" "$R/etc/patronus/unit.conf"; fi

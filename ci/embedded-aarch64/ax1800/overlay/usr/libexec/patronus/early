@@ -50,6 +50,8 @@ for f in passwd group; do [ -s /run/.image-$f ] || continue
   while IFS= read -r l; do case "$l" in ''|\#*) continue;; esac
     grep -q "^${l%%:*}:" /etc/$f || { echo "$l" >> /etc/$f; mark "account-added $f ${l%%:*}"; }; done < /run/.image-$f
   rm -f /run/.image-$f; done
+# package-managed login accounts of this image (owner account, keys): reconciled into the persisted /etc
+[ -x /usr/libexec/patronus/accounts-sync ] && /usr/libexec/patronus/accounts-sync 2>&1 | while IFS= read -r l; do mark "$l"; done
 mark data-mounted
 # no RTC: until chrony syncs, start the clock at the last time this box knew (chrony's drift file on the /var/lib overlay,
 # rewritten about hourly once synced; /data/.clock from images that ran busybox ntpd) or at the image's build time, never

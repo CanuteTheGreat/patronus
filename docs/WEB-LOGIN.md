@@ -30,9 +30,10 @@ logged). Mechanisms, in `patronus_network::sysauth`:
   NSS (`getgrouplist`).
 * **Shadow files** (embedded MIPS / OpenWrt-style tier, no PAM): pure Rust
   over `/etc/passwd`, `/etc/group`, `/etc/shadow`. Verifies md5-crypt
-  (`$1$`, busybox), sha256/512-crypt (`$5$`/`$6$`) and bcrypt. Locked
-  (`!`, `*`), empty and expired accounts never verify; yescrypt (`$y$`)
-  fails closed (use PAM there). `PATRONUS_AUTH_ETC` points the same code
+  (`$1$`, busybox), sha256/512-crypt (`$5$`/`$6$`), bcrypt and yescrypt
+  (`$y$`, the Gentoo/Debian/Fedora default, so a hash copied from a
+  Horcrux host works unchanged). Locked (`!`, `*`), empty and expired
+  accounts never verify; a damaged hash fails closed. `PATRONUS_AUTH_ETC` points the same code
   at another directory.
 * **Container image** (no root broker): accounts are passwd/group/shadow
   files in `/var/lib/patronus/auth`; add one with

@@ -7,6 +7,7 @@ on:
   push:
     paths:
       - 'ci/embedded-mips/**'
+      - 'ci/embedded-common/**'
       - 'ci/hw-profile/**'
       - 'profiles/**'
       - 'crates/patronus-cli/**'

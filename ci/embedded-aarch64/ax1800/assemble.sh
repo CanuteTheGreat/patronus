@@ -9,6 +9,7 @@
 #   STOCK_ROOT        unpacked root of the stock OpenWrt 25.12.6 qualcommax/ipq60xx GL-AX1800 image (fetch-stock.sh): the
 #                     kmods for its 6.12.112 kernel, the IPQ6018 Wi-Fi firmware, the ath11k board data
 #   STOCK_SYSUPGRADE  that image's sysupgrade tar: its FIT kernel (kernel + the board's device tree) and CONTROL are reused
+#   ACCOUNTS_DIR      optional dir of package-managed login accounts <user>/{passwd,shadow,group,member-of,authorized_keys} (see embedded-common/accounts-sync)
 #   UNIT_DIR          per-unit private files: shadow-root, authorized_keys, dropbear_*_host_key, ap.env (ap.env.example)
 #   OUT_DIR           where <tag>/root.squashfs and the sysupgrade tar go
 #   SOURCE_REV        optional: recorded in /etc/patronus-release
@@ -108,6 +109,13 @@ for g in 'root:x:0:' 'nobody:x:65534:' 'patronus:x:900:' 'shadow:x:42:' 'chrony:
 U=$UNIT_DIR
 { cat "$U/shadow-root"; grep -v '^root:' "$R/etc/shadow" 2>/dev/null || true; } > "$R/etc/shadow.new"; mv "$R/etc/shadow.new" "$R/etc/shadow"; chmod 600 "$R/etc/shadow"
 install -m600 "$U/authorized_keys" "$R/root/.ssh/authorized_keys"; chmod 700 "$R/root/.ssh"
+# package-managed login accounts (ACCOUNTS_DIR, e.g. the owner's from the private overlay): reconciled into the live /etc at every boot
+install -m755 "$HERE/../../embedded-common/accounts-sync" "$R/usr/libexec/patronus/accounts-sync"
+if [ -n "${ACCOUNTS_DIR:-}" ]; then
+  [ -d "$ACCOUNTS_DIR" ] || { echo "assemble.sh: ACCOUNTS_DIR $ACCOUNTS_DIR is not a directory"; exit 2; }
+  mkdir -p "$R/usr/share/patronus"; chmod 700 "$R/usr/share/patronus"; rm -rf "$R/usr/share/patronus/accounts.d"; cp -a "$ACCOUNTS_DIR" "$R/usr/share/patronus/accounts.d"
+  chmod -R go-rwx "$R/usr/share/patronus/accounts.d"; chmod 755 "$R/usr/share/patronus"
+fi
 install -m600 "$U"/dropbear_*_host_key "$R/etc/dropbear/"
 if [ -f "$U/ap.env" ]; then install -m600 "$U/ap.env" "$R/etc/patronus/ap.env"; fi
 echo "$HW_DEVICE_HOSTNAME" > "$R/etc/hostname"; printf '127.0.0.1 localhost\n' > "$R/etc/hosts"

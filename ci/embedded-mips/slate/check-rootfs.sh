@@ -16,6 +16,12 @@ grep -q '^root:[^:!*]' "$R/etc/shadow" 2>/dev/null || [ -s "$R/root/.ssh/authori
 grep -q '^nobody:' "$R/etc/passwd" || fail "no nobody user (dnsmasq)"
 [ -d "$R/var/lib/misc" ] || fail "no /var/lib/misc (dnsmasq leases)"
 [ -s "$R/etc/services" ] || fail "no /etc/services (busybox wget/nc: bad port 'http', p4)"
+[ -x "$R/usr/libexec/patronus/accounts-sync" ] || fail "missing /usr/libexec/patronus/accounts-sync (package-managed accounts)"
+if [ -d "$R/usr/share/patronus/accounts.d" ]; then
+  grep accounts-sync "$R/usr/libexec/patronus/early" >/dev/null || fail "early boot never runs accounts-sync"
+  for a in "$R"/usr/share/patronus/accounts.d/*/; do [ -s "$a/passwd" ] || fail "account ${a%/}: no passwd line"; done
+fi
+[ ! -f "$R/etc/patronus/embedded.env" ] || grep -qx 'PATRONUS_AUTH_BACKEND=shadow' "$R/etc/patronus/embedded.env" || fail "embedded.env must set PATRONUS_AUTH_BACKEND=shadow (musl pam_unix cannot verify yescrypt hashes)"
 for f in usr/sbin/patronus-guard usr/sbin/patronus-flash usr/sbin/patronus-init usr/libexec/patronus/early etc/patronus-init etc/pam.d/patronus lib/security/pam_unix.so; do
   [ -e "$R/$f" ] || fail "missing /$f"; done
 [ -n "${NOR_PROFILE:-}" ] || [ -e "$R/usr/share/patronus-recovery/openwrt-root.squashfs" ] || fail "missing the recovery root"

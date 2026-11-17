@@ -762,3 +762,27 @@ features belong to the main router; the System page lists each missing feature w
 (about 70 MiB of NAND stays free after the 16 MiB settings reserve); RAM and what an upgrade has to write are, so further
 features are added one at a time with their measured cost, as here. The Slate (`ci/embedded-mips`, 16 MiB NOR) keeps its own
 smaller set and is unchanged.
+
+### 12.11 Accounts on a router image: yescrypt logins and package-managed users (2026-11-17)
+
+Web login on the router tier reads `/etc/passwd`, `/etc/group` and `/etc/shadow` in-process (`PATRONUS_AUTH_BACKEND=shadow` in
+`embedded.env`, enforced by `check-rootfs.sh`) instead of going through `pam_unix`. Reason: the image's libc is musl, whose
+`crypt()` cannot check yescrypt (`$y$`), the hash Gentoo, Debian and Fedora write, so a password copied from a Horcrux or
+Gentoo host was refused. The shadow backend verifies md5-crypt, sha256/512-crypt, bcrypt and yescrypt in pure Rust (the
+RustCrypto `yescrypt` crate; a `$y$j9T$` hash needs about 16 MiB while it is checked, inside the root broker, one at a time).
+Locked, empty, expired, damaged and unknown-scheme hashes never verify. Unit tests use hashes made by libxcrypt's `crypt(3)`;
+the QEMU gate logs in through the web API with a yescrypt account and expects a wrong password to get 401. SSH password
+logins still go through dropbear's `crypt()` and so need a hash musl can check; key logins work with any hash.
+
+Accounts come from packages, not from copied shadow lines. An image carries `/usr/share/patronus/accounts.d/<user>/`
+(`passwd`, `shadow`, `group`, `member-of`, `authorized_keys`), put there by `assemble.sh` from `ACCOUNTS_DIR` (the owner's
+account lives in the private overlay package `net-misc/ctg-router-accounts`, which is where the build takes the directory from).
+`/usr/libexec/patronus/accounts-sync` (run by the early boot after the `/etc` overlay is mounted, every boot) reconciles it into
+the live files: adds or corrects the passwd line, creates the groups, joins them, sets the password hash and installs the key
+into the account's home (on the data volume, dropbear's strict-modes ownership). Units whose `/etc` already holds the account
+(made by the first-run page) are corrected in place. A password the user changed on the box is kept: the hash is only applied
+when the account has none, still has the one this script set last time, or already equals the package's. A uid that belongs to
+another name is refused. Host tests: `ci/embedded-common/tests/accounts-sync.sh` (23 checks, run by both tiers' `tests/run.sh`);
+`check-rootfs.sh` refuses an image without the script, or with accounts that the early boot never applies. The CI image carries
+a test account (`tests/ci-accounts`, public test password) that the QEMU gate checks after boot. The same script and account
+directory serve the Slate (`ci/embedded-mips`), whose early boot runs it too.
