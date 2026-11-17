@@ -143,7 +143,9 @@ for _ in range(int(sys.argv[2])):
 sys.exit(1)
 PY
 }
-ntp_client() { R 'p=$(pgrep -x chronyd) && ps -o user,comm | grep -E "^ *chrony +chronyd" >/dev/null && chronyc -n sources && test -d /var/lib/chrony' || { R 'ps; tail -20 /var/log/messages'; return 1; }; }
+ntp_client() { o=$(R 'pidof chronyd && ps -o user,comm | grep -E "^ *chrony +chronyd" && chronyc -n sources && ls -ld /var/lib/chrony' 2>&1) || { echo "$o"; R 'ps -o pid,user,args | grep [c]hrony; ls -l /dev/urandom'; return 1; }; echo "$o"; }
+# /dev from mdev (no devtmpfs): the standard nodes are world-usable, so daemons that drop root work
+dev_modes() { o=$(R 'ls -l /dev/null /dev/zero /dev/urandom /dev/random') || return 1; echo "$o"; n=$(echo "$o" | grep -c '^crw-rw-rw-'); [ "$n" = 4 ]; }
 ntp_quiet() { o=$(ntp_query 1) && { echo "answered before the NTP server was switched on: $o"; return 1; }; return 0; }
 ntp_enable() { login || return 1
   c=$(api PUT /api/ntp '{"enabled":true,"servers":"pool.ntp.org","interfaces":"@lan"}'); [ "$c" = 200 ] || { echo "PUT /api/ntp: HTTP $c $(cat "$W/api.json")"; return 1; }
@@ -169,11 +171,11 @@ PY
   SLP=$!; sleep 1; }
 syslog_wait() { # pattern: up to 60 s for it to arrive at the listener
   i=0; while [ $i -lt 30 ]; do grep -a "$1" "$W/syslog-rx.txt" 2>/dev/null && return 0; i=$((i+1)); sleep 2; done
-  echo "nothing matching '$1' arrived at 127.0.0.1:$SYSLP"; R 'cat /etc/patronus/syslogd-remote.conf; ps | grep [s]yslogd; tail -5 /var/log/messages'; return 1; }
+  echo "nothing matching '$1' arrived at 127.0.0.1:$SYSLP"; R 'cat /etc/patronus/syslogd-remote.conf; ps -o args | grep [s]yslogd; tail -5 /var/log/messages'; return 1; }
 syslog_enable() { login || return 1
   c=$(api POST /api/svc/syslog/targets "{\"host\":\"10.0.2.2\",\"port\":$SYSLP,\"proto\":\"udp\",\"severity\":\"info\",\"description\":\"ci collector\"}")
   case "$c" in 200|201) ;; *) echo "add collector: HTTP $c $(cat "$W/api.json")"; return 1;; esac
-  i=0; while :; do o=$(R "cat /etc/patronus/syslogd-remote.conf; cat /proc/\$(pgrep -x syslogd)/cmdline | tr '\\0' ' '" 2>&1)
+  i=0; while :; do o=$(R 'cat /etc/patronus/syslogd-remote.conf; ps -o args | grep "[/]bin/syslogd"' 2>&1)
     case "$o" in *"-R 10.0.2.2:$SYSLP"*"-L"*) break;; esac
     i=$((i+1)); [ $i -ge 10 ] && { echo "$o"; echo "syslogd does not forward to 10.0.2.2:$SYSLP"; return 1; }; sleep 3; done; echo "$o"
   c=$(api GET /api/svc/syslog); case "$(cat "$W/api.json")" in *'"backend":"busybox"'*) ;; *) echo "status: $(cat "$W/api.json" | head -c 600)"; return 1;; esac; }
@@ -211,7 +213,8 @@ check "first run: setup code written root-only (/run/patronus/first-run-code)" f
 check "first run: refused without / with a wrong setup code (403)" fr_no_code
 check "first run: the setup code claims the unit, then the code file is gone" fr_claim
 check "AP role: setup recorded complete at first start, status completed/ap/no wizard, wizard apply refused (409)" setup_ap
-check "clock: chronyd (the one NTP daemon) runs as user chrony" ntp_client
+check "/dev (mdev): null, zero, random, urandom are 0666" dev_modes
+check "clock: chronyd (the one NTP daemon) runs as user chrony, chronyc answers" ntp_client
 if has_feature vpn-wireguard; then
   check "WireGuard: kernel module loaded at boot (/etc/modules.d)" wg_module
   check "WireGuard: server + client tunnels and peers created through the web API, road-warrior config exported" wg_create
@@ -264,8 +267,9 @@ if has_feature syslog; then
   kill $SLP 2>/dev/null; syslog_listen 300
   check "boot 2: collector list persisted, syslogd forwards from boot (a logger message arrives)" syslog_boot2
 fi
-R 'free -k; cat /tmp/boot-times; ps -o rss,comm | sort -n | tail -8; df -k /data' > "$RES/boot2-stats.txt" 2>&1
-{ echo "init=$INIT accel=$ACCEL"; grep -E '^Mem:' "$RES/boot2-stats.txt"; grep -E 'exec-|patronus-started|network-up' "$RES/boot2-stats.txt"; } >> "$RES/summary.txt"
+sleep 60   # idle: let the boot's apply/ETPhoneHome settle before reading memory
+R 'free -k; cat /tmp/boot-times; ps -o rss,comm | sort -n | tail -8; df -k /data; for p in $(pidof patronus-web patronus-cli chronyd syslogd); do echo "rss $(sed -n "s/^Name:[[:space:]]*//p" /proc/$p/status) $(sed -n "s/^VmRSS:[[:space:]]*//p" /proc/$p/status)"; done' > "$RES/boot2-stats.txt" 2>&1
+{ echo "init=$INIT accel=$ACCEL"; grep -E '^Mem:' "$RES/boot2-stats.txt"; grep -E 'exec-|patronus-started|network-up|^rss ' "$RES/boot2-stats.txt"; } >> "$RES/summary.txt"
 poweroff_vm
 cat "$RES/summary.txt"
 if [ ${#fails[@]} = 0 ]; then echo "FAILED: none" | tee -a "$RES/results.txt"; exit 0; fi

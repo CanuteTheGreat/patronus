@@ -514,7 +514,7 @@ mod tests {
             .unwrap();
         let e = a.apply(&s).await.unwrap_err();
         assert!(
-            e.to_string().contains("UDP only") && e.to_string().starts_with("Invalid"),
+            e.to_string().contains("UDP only") && e.to_string().contains("Invalid request"),
             "{e}"
         );
         assert!(!read(&t, BB_CONF).contains("198.51.100.4"));

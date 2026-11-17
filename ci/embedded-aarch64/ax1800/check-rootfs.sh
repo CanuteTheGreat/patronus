@@ -40,6 +40,9 @@ if has_feature syslog; then
   [ -x "$R/usr/libexec/patronus/syslogd" ] || fail "syslog: no /usr/libexec/patronus/syslogd (the Syslog page's busybox backend: remote collectors -> syslogd -R)"
   grep -q /usr/libexec/patronus/syslogd "$R/etc/init.d/patronus-syslogd" "$R/etc/systemd/system/patronus-syslogd.service" 2>/dev/null || fail "syslog: patronus-syslogd does not run the launcher (remote collectors would be ignored)"
 fi
+# /dev comes from mdev (no devtmpfs in these kernels): without mdev.conf /dev/null and /dev/urandom are root-only
+grep -qE '^urandom[[:space:]]+0:0[[:space:]]+666' "$R/etc/mdev.conf" 2>/dev/null && grep -qE '^null[[:space:]]+0:0[[:space:]]+666' "$R/etc/mdev.conf" \
+  || fail "/etc/mdev.conf must make /dev/null and /dev/urandom 0666 (daemons that drop root cannot open them otherwise)"
 # the clock (no RTC) and the NTP server page (ntp-server) are one daemon: chrony, run as its own user, service chronyd
 [ -x "$R/usr/sbin/chronyd" ] || fail "no /usr/sbin/chronyd (the box would never get the time)"
 grep -q '^chrony:' "$R/etc/passwd" && grep -q '^chrony:' "$R/etc/group" || fail "no chrony user/group (chronyd drops root to it)"
