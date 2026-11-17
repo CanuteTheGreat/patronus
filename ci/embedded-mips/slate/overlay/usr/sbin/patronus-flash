@@ -6,14 +6,17 @@
 #   patronus-flash rollback                    swap rootfs and rootfs_prev (boot the previous root again)
 #   patronus-flash factory-reset               wipe the settings (patronus_data) at the next boot: first-run flow again
 # All steps keep the running root mounted: UBI renames work on a mounted volume (UBI_METAONLY open).
-# Test hooks: PATRONUS_UBI (UBI device), PATRONUS_FLASH_TMP, PATRONUS_RECOVERY, PATRONUS_DATA.
+# Test hooks: PATRONUS_UBI (UBI device), PATRONUS_UBI_SYS (sysfs ubi class dir), PATRONUS_FLASH_TMP, PATRONUS_RECOVERY, PATRONUS_DATA.
 set -e
 UBI=${PATRONUS_UBI:-/dev/ubi0}
 REC=${PATRONUS_RECOVERY:-/usr/share/patronus-recovery}
 T=${PATRONUS_FLASH_TMP:-/tmp}/pf
 DATA=${PATRONUS_DATA:-/data}
 log() { echo "patronus-flash: $*"; logger -t patronus-flash "$*" 2>/dev/null || true; }
-volid() { ubinfo $UBI -N "$1" 2>/dev/null | sed -n 's/^Volume ID: *\([0-9]*\).*/\1/p'; }
+# volume id by name: mtd-utils' ubinfo when the image has it, else sysfs. The way back (guard revert, boot-loop rollback) must
+# work with busybox's ubi applets alone: an image without mtd-utils once could not revert itself.
+volid() { v=$(ubinfo $UBI -N "$1" 2>/dev/null | sed -n 's/^Volume ID: *\([0-9]*\).*/\1/p'); [ -n "$v" ] && { echo "$v"; return 0; }
+  for d in ${PATRONUS_UBI_SYS:-/sys/class/ubi}/$(basename "$UBI")_*; do [ "$(cat "$d/name" 2>/dev/null)" = "$1" ] && { echo "${d##*_}"; return 0; }; done; return 0; }
 rmvol() { [ -n "$(volid "$1")" ] && ubirmvol $UBI -N "$1"; true; }
 node() { # the volume's device node: ubimkvol's uevent only creates it when a hotplug helper runs (not under
   # systemd on this kernel: /dev/ubi0_3 was missing on the real unit), so make it from sysfs when absent

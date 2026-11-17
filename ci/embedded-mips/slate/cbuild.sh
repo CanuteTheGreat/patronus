@@ -23,7 +23,8 @@ CONFIG_IEEE80211AC=y
 CONFIG_NO_RANDOM_POOL=y
 CONFIG_GETRANDOM=y
 EOF
-make -j4 CC=$T-gcc CFLAGS="$CF -I$SYS/usr/include/libnl3 -MMD -O2 -Wall -g" LDFLAGS="-L$SYS/usr/lib -Wl,--gc-sections" wpa_supplicant wpa_cli > /out/wpa-build.log 2>&1; echo "wpa rc=$?"
+# CFLAGS/LDFLAGS go in through the ENVIRONMENT: on the make command line they would replace the -I../src paths the Makefile appends
+CFLAGS="$CF -I$SYS/usr/include/libnl3 -MMD -O2 -Wall -g" LDFLAGS="-L$SYS/usr/lib -Wl,--gc-sections" make -j4 CC=$T-gcc wpa_supplicant wpa_cli > /out/wpa-build.log 2>&1; echo "wpa rc=$?"
 $T-strip wpa_supplicant wpa_cli && install -m755 wpa_supplicant wpa_cli /rootfs/usr/sbin/ && ls -l /rootfs/usr/sbin/wpa_supplicant
 cd /tmp/cb
 # --- dropbear (bundled libtom, no zlib)
@@ -34,4 +35,6 @@ rm -rf dropbear-$DV && tar xjf dropbear-$DV.tar.bz2 && cd dropbear-$DV
 make -j4 PROGRAMS="dropbear dbclient dropbearkey scp" MULTI=1 >> /out/dropbear-build.log 2>&1; echo "dropbear rc=$?"
 $T-strip dropbearmulti && install -m755 dropbearmulti /rootfs/usr/sbin/dropbearmulti && for l in dropbear dbclient dropbearkey scp; do ln -sf dropbearmulti /rootfs/usr/sbin/$l; done
 ls -l /rootfs/usr/sbin/dropbear* /rootfs/usr/sbin/scp
+# the image must not be built without them (a missing daemon = a unit with no network, nothing to revert it)
+for f in /rootfs/usr/sbin/wpa_supplicant /rootfs/usr/sbin/wpa_cli /rootfs/usr/sbin/dropbearmulti; do [ -x "$f" ] || { echo "CBUILD-FAILED: $f missing"; exit 1; }; done
 echo CBUILD-DONE

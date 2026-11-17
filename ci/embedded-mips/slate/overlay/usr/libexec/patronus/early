@@ -21,7 +21,8 @@ setsid /usr/sbin/patronus-guard arm >/dev/null 2>&1 </dev/null &
 
 # 1. persistent data: own UBI volume patronus_data (OpenWrt's rootfs_data is left alone)
 UBI=/dev/ubi0
-ubinfo $UBI -N patronus_data >/dev/null 2>&1 || { ubinfo $UBI -N rootfs_data >/dev/null 2>&1 && ubirmvol $UBI -N rootfs_data; ubimkvol $UBI -N patronus_data -s 24MiB >/tmp/ubimkvol.log 2>&1; mark created-patronus_data; }
+has_vol() { ubinfo $UBI -N "$1" >/dev/null 2>&1 && return 0; for d in /sys/class/ubi/$(basename $UBI)_*; do [ "$(cat $d/name 2>/dev/null)" = "$1" ] && return 0; done; return 1; }   # sysfs when the image has no mtd-utils
+has_vol patronus_data || { has_vol rootfs_data && ubirmvol $UBI -N rootfs_data; ubimkvol $UBI -N patronus_data -s 24MiB >/tmp/ubimkvol.log 2>&1; mark created-patronus_data; }
 mkdir -p /data
 mount -t ubifs ubi0:patronus_data /data || { mark NO-DATA; mount -t tmpfs -o size=8m tmpfs /data; }
 [ -f /data/.factory-reset ] && { rm -rf /data/overlay /data/tls /data/.factory-reset; mark factory-reset-done; }

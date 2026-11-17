@@ -12,6 +12,9 @@ ok() { echo "PASS: $*"; pass=$((pass+1)); }
 no() { echo "FAIL: $*"; failn=$((failn+1)); }
 t() { name=$1; shift; if "$@" >"$W/out" 2>&1; then ok "$name"; else no "$name"; sed 's/^/    /' "$W/out"; fi; }
 tn() { name=$1; shift; if "$@" >"$W/out" 2>&1; then no "$name (expected failure)"; sed 's/^/    /' "$W/out"; else ok "$name"; fi; }
+# tn_msg NAME PATTERN cmd...: must fail AND say why
+tn_msg() { name=$1; pat=$2; shift 2; if "$@" >"$W/out" 2>&1; then no "$name (expected failure)"; sed 's/^/    /' "$W/out";
+  elif grep -q "$pat" "$W/out"; then ok "$name"; else no "$name (failed without '$pat')"; sed 's/^/    /' "$W/out"; fi; }
 
 # 1. syntax
 for f in "$D"/*.sh "$D"/overlay/usr/libexec/patronus/* "$D"/overlay/usr/sbin/* "$D"/overlay/etc/patronus/board.sh "$D"/tests/fake-ubi/*; do
@@ -44,12 +47,17 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/etc/wpa_supplicant" "$r/bin" 
   # ETPhoneHome (baked into every image): ELF binary + runner + the OpenRC service enabled in the default runlevel
   printf '\177ELF' > "$r/usr/sbin/etphonehome"; chmod +x "$r/usr/sbin/etphonehome"; : > "$r/usr/libexec/patronus/etph-run"; chmod +x "$r/usr/libexec/patronus/etph-run"
   : > "$r/etc/init.d/patronus-etph"; chmod +x "$r/etc/init.d/patronus-etph"; mkdir -p "$r/etc/runlevels/default"; ln -s /etc/init.d/patronus-etph "$r/etc/runlevels/default/patronus-etph"
+  for b in usr/sbin/wpa_supplicant usr/sbin/dropbearmulti usr/sbin/hostapd usr/sbin/dnsmasq sbin/nft; do : > "$r/$b"; chmod +x "$r/$b"; done; ln -s dropbearmulti "$r/usr/sbin/dropbear"
   printf 'hsqs....' > "$r/usr/share/patronus-recovery/openwrt-root.squashfs"; echo "$r"; }
 t "check-rootfs: good root" "$D/check-rootfs.sh" "$(mkroot good)"
 r=$(mkroot upd); sed -i '1i update_config=1' "$r/etc/wpa_supplicant/wpa_supplicant.conf"
 tn "check-rootfs: rejects update_config (p1)" "$D/check-rootfs.sh" "$r"
 r=$(mkroot bash); sed -i 's#^root:.*#root:!:0:0:root:/root:/bin/bash#' "$r/etc/passwd"
 tn "check-rootfs: rejects root:! with a missing /bin/bash (p2)" "$D/check-rootfs.sh" "$r"
+r=$(mkroot nowpa); rm "$r/usr/sbin/wpa_supplicant"
+tn_msg "check-rootfs: rejects an image without wpa_supplicant (no uplink)" "no network" "$D/check-rootfs.sh" "$r"
+r=$(mkroot nodb); rm "$r/usr/sbin/dropbearmulti"
+tn_msg "check-rootfs: rejects an image without dropbear (no ssh)" "no network" "$D/check-rootfs.sh" "$r"
 r=$(mkroot noguard); rm "$r/usr/sbin/patronus-guard"
 tn "check-rootfs: rejects an image without the guard" "$D/check-rootfs.sh" "$r"
 r=$(mkroot rec); printf 'XXXX' > "$r/usr/share/patronus-recovery/openwrt-root.squashfs"
@@ -114,6 +122,14 @@ echo 2 > "$FAKE_UBI/max-vols"; printf 'hsqs-KEEP' > "$FAKE_UBI/by-name/rootfs"
 tn "flash root with no room at all fails" "$F" root "$W/b.sq"
 t "...and leaves the running root alone" test "$(vol rootfs)" = hsqs-KEEP
 rm -f "$FAKE_UBI/max-vols"
+# the way back must not need mtd-utils' ubinfo (an image without mtd-utils could not revert itself): same operations, ubinfo gone, sysfs view only
+rm -rf "$FAKE_UBI"; mkdir -p "$FAKE_UBI"; rm -f "$W/bin/ubinfo"; export PATRONUS_UBI_SYS=$FAKE_UBI/sysview
+ubimkvol "$PATRONUS_UBI" -N rootfs -s 8 >/dev/null; printf 'hsqs-A' > "$FAKE_UBI/by-name/rootfs"
+t "flash root without ubinfo: new root in, old root kept" sh -c "'$F' root '$W/b.sq' && [ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-B ] && [ \"\$(cat $FAKE_UBI/by-name/rootfs_prev)\" = hsqs-A ]"
+t "flash rollback without ubinfo" sh -c "'$F' rollback && [ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-A ]"
+printf 'hsqs-OPENWRT' > "$W/rec/openwrt-root.squashfs"
+t "flash openwrt (the guard's revert) without ubinfo" sh -c "'$F' openwrt && [ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-OPENWRT ]"
+unset PATRONUS_UBI_SYS; for n in ubinfo; do ln -sf "$D/tests/fake-ubi/ubi" "$W/bin/$n"; done
 t "flash factory-reset: marker for the early boot" sh -c "'$F' factory-reset && [ -f $W/data/.factory-reset ]"
 t "early boot wipes settings on the factory-reset marker" grep -q '\.factory-reset.*rm -rf /data/overlay /data/tls' "$D/overlay/usr/libexec/patronus/early"
 

@@ -37,7 +37,7 @@ net-wireless/hostapd -ssl internal-tls
 net-wireless/wpa_supplicant -dbus -qt5 -qt6 -ssl -readline -tkip -wps -ap -fils -p2p -mesh -smartcard -uncommon-eap-types -eap-sim-aka internal-tls
 sys-apps/iproute2 -iptables -berkdb -elf -bpf -atm -minimal -tipc
 net-vpn/wireguard-tools -wg-quick
-sys-fs/mtd-utils -lzo -zstd -xattr
+sys-fs/mtd-utils -lzo -zstd -xattr -ssl
 net-misc/dropbear -pam -shadow -syslog -zlib minimal
 sys-apps/systemd-utils -udev -acl -kmod -sysctl tmpfiles
 sys-apps/util-linux -cramfs -ncurses -readline -python -su -suid -logger -tty-helpers -udev -systemd -cryptsetup -audit -nls -pam -selinux -magic -rtas -uuidd -kill -hardlink -caps

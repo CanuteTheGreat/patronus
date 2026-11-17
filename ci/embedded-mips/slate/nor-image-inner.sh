@@ -8,6 +8,12 @@ T=mips-unknown-linux-musl; SYS=/usr/$T; P=/opt/pembed
 . /w/stock.env
 bash /w/stage-all.sh || exit 1
 for m in crossdev rootfs openssl rust; do [ -f /out/stage-$m.ok ] || { echo "stage $m failed"; exit 1; }; done
+# stage-all's `--keep-going` emerge silently drops wpa_supplicant, dropbear and mtd-utils on some days (the image once came out
+# without them and a Slate flashed from it had no ssh and no uplink): build them explicitly and refuse an image that lacks them
+bash /w/cbuild.sh || exit 1
+ROOT=/rootfs $T-emerge --root-deps=rdeps -q sys-fs/mtd-utils || exit 1
+for f in /rootfs/usr/sbin/wpa_supplicant /rootfs/usr/sbin/dropbearmulti /rootfs/usr/sbin/hostapd /rootfs/usr/sbin/dnsmasq /rootfs/usr/sbin/ubinfo /rootfs/usr/sbin/ubirename /rootfs/sbin/nft /rootfs/bin/busybox; do
+  [ -x "$f" ] || { echo "builder image: $f missing"; exit 1; }; done
 bash /w/stage-openrc.sh || exit 1
 [ -f /out/stage-openrc.ok ] || { echo "stage openrc failed"; exit 1; }
 # libucontext (systemd on musl/mips): distfile via portage, built by hand for mips

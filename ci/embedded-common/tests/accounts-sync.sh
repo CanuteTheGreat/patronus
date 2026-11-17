@@ -35,7 +35,7 @@ chk "fresh unit: shadow stays 0600" test "$(stat -c %a "$E/shadow")" = 600
 chk "fresh unit: primary and admin groups created" sh -c "grep -qx 'ron:x:65535:' $E/group && grep -qx 'patronus-admin:x:65536:ron' $E/group"
 chk "fresh unit: root untouched" grep -qx 'root:!:1::::::' "$E/shadow"
 chk "fresh unit: key installed with strict modes" sh -c "test \"\$(stat -c %a $R/data/home/ron/.ssh)\" = 700 && test \"\$(stat -c %a $R/data/home/ron/.ssh/authorized_keys)\" = 600 && grep -q ron@test $R/data/home/ron/.ssh/authorized_keys"
-chk "fresh unit: reports what it did" sh -c "echo '$out' | grep -q 'ron: passwd line added'"
+case "$out" in *"ron: passwd line added"*) ok "fresh unit: reports what it did";; *) no "fresh unit: reports what it did";; esac
 
 # 2. second run changes nothing and says nothing
 cp "$E/passwd" "$W/p1"; cp "$E/group" "$W/g1"; cp "$E/shadow" "$W/s1"
@@ -58,7 +58,7 @@ mkunit chg; run >/dev/null
 sed -i "s#^ron:[^:]*:#ron:\$6\$user\$changedbyuser:#" "$E/shadow"
 out=$(run)
 chk "changed password: kept" grep -q '^ron:\$6\$user\$changedbyuser:' "$E/shadow"
-chk "changed password: says so" sh -c "echo '$out' | grep -q 'password was changed on the box, kept'"
+case "$out" in *"password was changed on the box, kept"*) ok "changed password: says so";; *) no "changed password: says so";; esac
 # ... and a new package hash replaces the one the package itself set last time
 mkunit rot; run >/dev/null
 NEW='$6$other$ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ'

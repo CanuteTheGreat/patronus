@@ -4,6 +4,9 @@
 set -e
 B=${FAKE_UBI:?}; mkdir -p "$B/by-name" "$B/ids"
 id_of() { for f in "$B"/ids/*; do [ -e "$f" ] && [ "$(cat "$f")" = "$1" ] && { basename "$f"; return 0; }; done; return 1; }
+# sysfs view of the volume names (what /sys/class/ubi/ubi0_N/name shows), refreshed after every tool call
+resync() { rm -rf "$B/sysview"; mkdir -p "$B/sysview"; for f in "$B"/ids/*; do [ -e "$f" ] || continue; n=$(basename "$f"); mkdir -p "$B/sysview/ubi0_$n"; cp "$f" "$B/sysview/ubi0_$n/name"; done; }
+trap resync EXIT
 case "$(basename "$0")" in
 ubinfo) # ubinfo DEV -N name
   [ -e "$B/by-name/$3" ] || { echo "ubinfo: no volume $3" >&2; exit 1; }
