@@ -564,8 +564,7 @@ mod tests {
 
     // Reference vectors made by libxcrypt's crypt(3) (what Gentoo/Debian
     // `passwd` use), not by the crate under test.
-    const Y_DEFAULT: &str =
-        "$y$j9T$abcdefghijklmnop$F7kfVk.oOhV81K9PnQ5GcZ31QaSOFBtNI3Y3euDcm9C";
+    const Y_DEFAULT: &str = "$y$j9T$abcdefghijklmnop$F7kfVk.oOhV81K9PnQ5GcZ31QaSOFBtNI3Y3euDcm9C";
     const Y_UTF8: &str = "$y$jDT$Qm9iYnlTYWx0$A02IyJR1aSQa7fpcNxb.iqyN//n7cGNLz.Q6hlnn9iD";
     const Y_EMPTY_PW: &str = "$y$j9T$saltsaltsalt$fngpNhGkx4DMa5D10p0zPG3eL.oKthDF.wsC./kslu9";
 
@@ -585,10 +584,18 @@ mod tests {
         let d = yetc(Y_DEFAULT, "");
         let b = Backend::Shadow(d.path().to_path_buf());
         assert_eq!(authenticate(&b, "yuser", "correct horse battery"), Ok(true));
-        assert_eq!(authenticate(&b, "yuser", "correct horse batterY"), Ok(false));
+        assert_eq!(
+            authenticate(&b, "yuser", "correct horse batterY"),
+            Ok(false)
+        );
         assert_eq!(authenticate(&b, "yuser", ""), Ok(false));
-        assert_eq!(authenticate(&b, "yuser", "correct horse battery "), Ok(false));
-        assert!(check(&b, "yuser", "correct horse battery").unwrap().is_some());
+        assert_eq!(
+            authenticate(&b, "yuser", "correct horse battery "),
+            Ok(false)
+        );
+        assert!(check(&b, "yuser", "correct horse battery")
+            .unwrap()
+            .is_some());
     }
 
     #[test]
@@ -625,7 +632,10 @@ mod tests {
         pw.push_str("ylock:x:1011:1011::/h:/bin/sh\n");
         std::fs::write(d.path().join("passwd"), pw).unwrap();
         let b = Backend::Shadow(d.path().to_path_buf());
-        assert_eq!(authenticate(&b, "ylock", "correct horse battery"), Ok(false));
+        assert_eq!(
+            authenticate(&b, "ylock", "correct horse battery"),
+            Ok(false)
+        );
     }
 
     #[test]
