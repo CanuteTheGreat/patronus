@@ -48,6 +48,13 @@ fn db_err(what: &str) -> impl Fn(sqlx::Error) -> Error + '_ {
     move |e| Error::Config(format!("{what}: {e}"))
 }
 
+tokio::task_local! {
+    /// Who is making the change on this task (a web request sets it to the
+    /// signed-in user), so managers that record their change set as `web`
+    /// are attributed to the person.
+    pub static ACTOR: String;
+}
+
 /// One generation (without its document).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Generation {
@@ -168,10 +175,11 @@ impl ConfigStore {
     /// Hashes of generations copied from the old revision table are computed
     /// on first use.
     async fn ensure_hashes(&self) -> Result<()> {
-        let rows = sqlx::query("SELECT id, config_json FROM config_generations WHERE content_hash = ''")
-            .fetch_all(self.pool()?)
-            .await
-            .map_err(db_err("read generations"))?;
+        let rows =
+            sqlx::query("SELECT id, config_json FROM config_generations WHERE content_hash = ''")
+                .fetch_all(self.pool()?)
+                .await
+                .map_err(db_err("read generations"))?;
         for r in rows {
             let id: i64 = r.get(0);
             let doc: Value = serde_json::from_str(&r.get::<String, _>(1)).unwrap_or(Value::Null);
@@ -188,12 +196,11 @@ impl ConfigStore {
     /// (id, hash) of the newest generation.
     async fn latest_generation(&self) -> Result<Option<(i64, String)>> {
         self.ensure_hashes().await?;
-        let r = sqlx::query(
-            "SELECT id, content_hash FROM config_generations ORDER BY id DESC LIMIT 1",
-        )
-        .fetch_optional(self.pool()?)
-        .await
-        .map_err(db_err("read newest generation"))?;
+        let r =
+            sqlx::query("SELECT id, content_hash FROM config_generations ORDER BY id DESC LIMIT 1")
+                .fetch_optional(self.pool()?)
+                .await
+                .map_err(db_err("read newest generation"))?;
         Ok(r.map(|r| (r.get(0), r.get(1))))
     }
 
@@ -303,6 +310,14 @@ impl ConfigStore {
     }
 
     pub async fn snapshot_kind(&self, user: &str, summary: &str, kind: &str) -> Result<i64> {
+        let user = if user == "web" {
+            ACTOR
+                .try_with(|a| a.clone())
+                .unwrap_or_else(|_| user.to_string())
+        } else {
+            user.to_string()
+        };
+        let user = user.as_str();
         self.seal().await?;
         let doc = self.export_json().await?;
         let hash = content_hash(&doc);
@@ -320,7 +335,14 @@ impl ConfigStore {
                 .await?
                 .unwrap_or(0),
             None => self
-                .insert_generation(now(), "system", "initial configuration", "baseline", &doc, true)
+                .insert_generation(
+                    now(),
+                    "system",
+                    "initial configuration",
+                    "baseline",
+                    &doc,
+                    true,
+                )
                 .await?
                 .unwrap_or(0),
         };
@@ -330,7 +352,8 @@ impl ConfigStore {
             kind: kind.to_string(),
             at: now(),
         };
-        self.gstate_set("open", &serde_json::to_string(&open)?).await?;
+        self.gstate_set("open", &serde_json::to_string(&open)?)
+            .await?;
         Ok(id)
     }
 
@@ -497,10 +520,11 @@ impl ConfigStore {
     pub async fn pending(&self) -> Result<Option<Pending>> {
         match self.gstate_get("pending").await? {
             None => Ok(None),
-            Some(s) => Ok(Some(
-                serde_json::from_str(&s)
-                    .map_err(|e| Error::Config(format!("pending commit-confirm: {e}")))?,
-            )),
+            Some(s) => {
+                Ok(Some(serde_json::from_str(&s).map_err(|e| {
+                    Error::Config(format!("pending commit-confirm: {e}"))
+                })?))
+            }
         }
     }
 
@@ -544,7 +568,8 @@ impl ConfigStore {
             actor: actor.to_string(),
         };
         self.gstate_set("boot", &previous.to_string()).await?;
-        self.gstate_set("pending", &serde_json::to_string(&p)?).await?;
+        self.gstate_set("pending", &serde_json::to_string(&p)?)
+            .await?;
         let _ = self
             .audit(
                 actor,
@@ -590,7 +615,8 @@ impl ConfigStore {
             return Ok(false);
         };
         p.deadline = now();
-        self.gstate_set("pending", &serde_json::to_string(&p)?).await?;
+        self.gstate_set("pending", &serde_json::to_string(&p)?)
+            .await?;
         Ok(true)
     }
 
@@ -601,9 +627,10 @@ impl ConfigStore {
         let Some(p) = self.pending().await? else {
             return Ok(None);
         };
-        let doc = self.generation_json(p.previous).await?.ok_or_else(|| {
-            Error::Config(format!("previous generation {} is gone", p.previous))
-        })?;
+        let doc = self
+            .generation_json(p.previous)
+            .await?
+            .ok_or_else(|| Error::Config(format!("previous generation {} is gone", p.previous)))?;
         self.seal().await?;
         self.import_checked(&doc).await?;
         // cleared before anything is applied: from here on the store, which
@@ -712,15 +739,14 @@ where
     Fut: std::future::Future<Output = std::result::Result<(), String>>,
 {
     let new = store
-        .revert_pending_store(
-            actor,
-            &format!("commit-confirm: change reverted, {reason}"),
-        )
+        .revert_pending_store(actor, &format!("commit-confirm: change reverted, {reason}"))
         .await?;
     let res = apply().await;
     let rec = match &res {
         Ok(()) => json!({"at": now(), "generation": new, "ok": true, "reason": reason}),
-        Err(e) => json!({"at": now(), "generation": new, "ok": false, "reason": reason, "error": e}),
+        Err(e) => {
+            json!({"at": now(), "generation": new, "ok": false, "reason": reason, "error": e})
+        }
     };
     let _ = store.set_last_revert(&rec).await;
     if let Err(e) = res {
@@ -1001,7 +1027,9 @@ mod tests {
         assert!(s.pending().await.unwrap().is_none());
         let g = s.generations().await.unwrap();
         assert_eq!(g[0].kind, "revert");
-        assert!(g[0].message.contains(&format!("back to generation {}", p.previous)));
+        assert!(g[0]
+            .message
+            .contains(&format!("back to generation {}", p.previous)));
         assert!(g[0].boot && g[0].live);
         assert_eq!(s.last_revert().await.unwrap().unwrap()["ok"], true);
         // a revert with an apply error still leaves the store reverted
@@ -1034,13 +1062,18 @@ mod tests {
             BootPending::Reverted(_)
         ));
         assert_eq!(marker(&s).await.as_deref(), Some("good"));
-        assert_eq!(resolve_pending_at_boot(&s).await.unwrap(), BootPending::None);
+        assert_eq!(
+            resolve_pending_at_boot(&s).await.unwrap(),
+            BootPending::None
+        );
     }
 
     #[tokio::test]
     async fn reverting_keeps_the_anti_lockout_rules() {
         let s = ConfigStore::open_in_memory().await.unwrap();
-        s.save_system_config(crate::defaults::DEFAULTS_SEEDED_KEY, "test").await.unwrap();
+        s.save_system_config(crate::defaults::DEFAULTS_SEEDED_KEY, "test")
+            .await
+            .unwrap();
         crate::defaults::ensure_system_rules(&s).await.unwrap();
         let mut doc = s.export_json().await.unwrap();
         doc["tables"]["firewall_rules"] = json!([]);

@@ -173,6 +173,8 @@ pub async fn run(
     let res = apply::import(
         &tmp,
         true,
+        false,
+        None,
         ApplyOptions {
             db: db.clone(),
             bootstrap,

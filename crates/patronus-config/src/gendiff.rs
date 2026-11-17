@@ -91,7 +91,15 @@ fn row_key(table: &str, row: &Map<String, Value>, keys: &KeyMap) -> String {
 }
 
 fn row_label(row: &Map<String, Value>) -> Option<String> {
-    for c in ["name", "username", "interface", "alias", "key", "hostname", "description"] {
+    for c in [
+        "name",
+        "username",
+        "interface",
+        "alias",
+        "key",
+        "hostname",
+        "description",
+    ] {
         if let Some(Value::String(s)) = row.get(c) {
             if !s.is_empty() && !looks_secret(c) {
                 return Some(s.clone());
@@ -363,7 +371,11 @@ mod tests {
         assert_eq!(d["summary"]["added"], 1);
         assert_eq!(d["summary"]["removed"], 1);
         assert_eq!(d["summary"]["changed"], 1);
-        assert_eq!(d["tables"].as_array().unwrap().len(), 1, "unchanged tables are left out");
+        assert_eq!(
+            d["tables"].as_array().unwrap().len(),
+            1,
+            "unchanged tables are left out"
+        );
         let t = &d["tables"][0];
         assert_eq!(t["table"], "firewall_rules");
         assert_eq!(t["changed"][0]["label"], "ssh");
@@ -372,7 +384,9 @@ mod tests {
         assert_eq!(t["changed"][0]["fields"][0]["to"], 0);
         assert_eq!(t["added"][0]["label"], "new");
         assert_eq!(t["removed"][0]["label"], "old");
-        assert!(diff_docs(&a, &a, &KeyMap::new())["identical"].as_bool().unwrap());
+        assert!(diff_docs(&a, &a, &KeyMap::new())["identical"]
+            .as_bool()
+            .unwrap());
     }
 
     #[test]
@@ -435,7 +449,9 @@ mod tests {
     fn unified_diff_shows_hunks_and_is_empty_for_equal_text() {
         assert_eq!(unified_diff("a\nb\n", "a\nb\n", "x", "y"), "");
         let a: String = (1..=20).map(|i| format!("line{i}\n")).collect();
-        let b = a.replace("line10\n", "line10 changed\n").replace("line19\n", "");
+        let b = a
+            .replace("line10\n", "line10 changed\n")
+            .replace("line19\n", "");
         let d = unified_diff(&a, &b, "gen 1", "live");
         assert!(d.starts_with("--- gen 1\n+++ live\n"), "{d}");
         assert!(d.contains("-line10\n+line10 changed\n"), "{d}");

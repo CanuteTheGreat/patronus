@@ -64,8 +64,9 @@ nl_assert_nft_has 'keep-me'
 nl_assert_nft_lacks 'kernel-rejects-me'
 
 echo "=== B. damaged row at boot -> lockdown, then repair by rollback"
-REV=$(R "$P" --db "$DB" config revisions | awk '/before create firewall rule keep-me/{print $1; exit}')
-[ -n "$REV" ] || nl_fail "no revision before keep-me"
+# generations hold the state AFTER a change: the one to go back to is the generation before "create firewall rule keep-me"
+REV=$(R "$P" --db "$DB" config generations --json | python3 -c 'import json,sys; g=json.load(sys.stdin)["generations"]; i=[x["message"] for x in g].index("create firewall rule keep-me"); print(g[i+1]["id"])')
+[ -n "$REV" ] || nl_fail "no generation before keep-me"
 sqlite3 "$DB" "UPDATE firewall_rules SET dport = 'garbage' WHERE id = $KEEP_ID"
 nl_up
 if nl_apply "$DB"; then cat "$NL_OUT"; nl_fail "boot apply succeeded with a damaged rule"; fi

@@ -279,11 +279,6 @@ pub fn parse_phases(v: &[String]) -> anyhow::Result<Option<Vec<Phase>>> {
         .map(Some)
 }
 
-/// `patronus config revisions` (the old name of `config generations`)
-pub async fn list_revisions(db: Option<&Path>) -> anyhow::Result<()> {
-    super::generations::list(db, false).await
-}
-
 /// `patronus config rollback <id> [--confirm-in N]`: restore a generation
 /// and apply it. The rollback is a new generation itself.
 pub async fn rollback(id: i64, opts: ApplyOptions, confirm_in: Option<i64>) -> anyhow::Result<()> {
@@ -397,7 +392,11 @@ pub async fn import(
         .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
     if dry_run || preview.identical {
         if preview.identical {
-            println!("{} {} is identical to the live configuration", "•".cyan(), file.display());
+            println!(
+                "{} {} is identical to the live configuration",
+                "•".cyan(),
+                file.display()
+            );
         } else {
             let s = &preview.diff["summary"];
             println!(

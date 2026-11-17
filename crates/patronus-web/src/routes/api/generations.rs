@@ -141,9 +141,14 @@ pub async fn revert_now(State(state): State<AppState>, admin: AdminUser) -> Resp
         }
         Err(e) => return store_err(e),
     };
-    match state.system.revert_now(store, &admin.session.username).await {
-        Ok(new) => Json(json!({"ok": true, "reverted_to": p.previous, "generation": new}))
-            .into_response(),
+    match state
+        .system
+        .revert_now(store, &admin.session.username)
+        .await
+    {
+        Ok(new) => {
+            Json(json!({"ok": true, "reverted_to": p.previous, "generation": new})).into_response()
+        }
         Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
@@ -492,11 +497,7 @@ pub async fn change_set_layer(
             hdr("x-commit-message").and_then(|m| clean_commit_message(&m)),
         )
     };
-    if !mutating
-        || !path.starts_with("/api/")
-        || exempt(&path)
-        || (confirm.is_none() && message.is_none())
-    {
+    if !mutating || !path.starts_with("/api/") || exempt(&path) {
         return next.run(req).await;
     }
     let minutes = match confirm {
@@ -511,6 +512,7 @@ pub async fn change_set_layer(
             }
         },
     };
+    let wants_dance = minutes.is_some() || message.is_some();
     if minutes.is_some() && !state.system.watchdog_available().await {
         return error(
             StatusCode::CONFLICT,
@@ -529,22 +531,33 @@ pub async fn change_set_layer(
         Err(_) => "api-key".to_string(),
     };
     let req = Request::from_parts(parts, body);
+    if !wants_dance {
+        // a plain change: only attribute it to the person who made it
+        return patronus_config::generations::ACTOR
+            .scope(actor, next.run(req))
+            .await;
+    }
     let store = state.config_store.clone();
-    let prev = match store
-        .snapshot(&actor, "change made in the web UI")
-        .await
-    {
+    let prev = match store.snapshot(&actor, "change made in the web UI").await {
         Ok(p) => p,
         Err(e) => return store_err(e),
     };
-    let mut res = next.run(req).await;
+    let mut res = patronus_config::generations::ACTOR
+        .scope(actor.clone(), next.run(req))
+        .await;
     if !res.status().is_success() {
         let _ = store.finish_change_set().await;
         return res;
     }
-    let new = store.finish_change_set().await.ok().flatten();
-    if let (Some(id), Some(m)) = (new, &message) {
-        let _ = store.set_generation_message(id, m).await;
+    let _ = store.finish_change_set().await;
+    if let Some(m) = &message {
+        // the generation this request produced (a rollback or import seals
+        // its own before we get here)
+        if let Ok(Some(g)) = store.live_generation().await {
+            if g.id > prev {
+                let _ = store.set_generation_message(g.id, m).await;
+            }
+        }
     }
     if let Some(n) = minutes {
         match store.start_pending(prev, n, &actor).await {

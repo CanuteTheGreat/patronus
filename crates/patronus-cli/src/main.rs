@@ -764,14 +764,17 @@ async fn main() -> anyhow::Result<()> {
     }
     let cli = Cli::parse();
 
-    // Initialize logging
+    // Initialize logging. Logs go to stderr: stdout is the command's output
+    // (`config export`, `config generations --json`, ... are piped and parsed).
     if cli.verbose {
         tracing_subscriber::fmt()
             .with_max_level(tracing::Level::DEBUG)
+            .with_writer(std::io::stderr)
             .init();
     } else {
         tracing_subscriber::fmt()
             .with_max_level(tracing::Level::INFO)
+            .with_writer(std::io::stderr)
             .init();
     }
 
@@ -891,7 +894,10 @@ async fn main() -> anyhow::Result<()> {
                     id,
                     json,
                     include_secrets,
-                } => commands::generations::show(cli.db.as_deref(), id, json, include_secrets).await?,
+                } => {
+                    commands::generations::show(cli.db.as_deref(), id, json, include_secrets)
+                        .await?
+                }
                 ConfigCommands::Diff { from, to, json } => {
                     commands::generations::diff(cli.db.as_deref(), from, to, json).await?
                 }
@@ -901,11 +907,15 @@ async fn main() -> anyhow::Result<()> {
                 ConfigCommands::Pin { id, unpin } => {
                     commands::generations::pin(cli.db.as_deref(), id, unpin).await?
                 }
-                ConfigCommands::Confirm => commands::generations::confirm(cli.db.as_deref()).await?,
+                ConfigCommands::Confirm => {
+                    commands::generations::confirm(cli.db.as_deref()).await?
+                }
                 ConfigCommands::RevertNow => {
                     commands::generations::revert_now(cli.db.as_deref()).await?
                 }
-                ConfigCommands::Pending => commands::generations::pending(cli.db.as_deref()).await?,
+                ConfigCommands::Pending => {
+                    commands::generations::pending(cli.db.as_deref()).await?
+                }
                 ConfigCommands::Export {
                     output,
                     declarative,

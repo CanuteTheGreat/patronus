@@ -282,7 +282,11 @@ async fn has_user_rules(store: &ConfigStore) -> Result<bool> {
 pub async fn ensure_system_rules(store: &ConfigStore) -> Result<()> {
     // a configuration from before the defaults were seeded gets them (all of
     // them) at the next boot
-    if store.load_system_config(DEFAULTS_SEEDED_KEY).await?.is_none() {
+    if store
+        .load_system_config(DEFAULTS_SEEDED_KEY)
+        .await?
+        .is_none()
+    {
         return Ok(());
     }
     let have: Vec<String> = store
@@ -293,7 +297,7 @@ pub async fn ensure_system_rules(store: &ConfigStore) -> Result<()> {
         .map(|(r, _)| r.name)
         .collect();
     for (rule, origin) in default_filter_rules() {
-        if origin == RuleOrigin::System && !have.iter().any(|n| *n == rule.name) {
+        if origin == RuleOrigin::System && !have.contains(&rule.name) {
             store.insert_firewall_rule(&rule, origin).await?;
         }
     }

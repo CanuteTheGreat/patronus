@@ -262,7 +262,11 @@ pub async fn delete_backup(
 /// restore an older backup) or one it has disabled, demoted or with
 /// another password kept working until the session expired. The caller
 /// keeps theirs only if their id is still the same enabled admin.
-pub(super) async fn end_sessions_after_restore(state: &AppState, admin: &AdminUser, doc: &serde_json::Value) {
+pub(super) async fn end_sessions_after_restore(
+    state: &AppState,
+    admin: &AdminUser,
+    doc: &serde_json::Value,
+) {
     if !crate::state::system::restores_accounts(doc) {
         return;
     }

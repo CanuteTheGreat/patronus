@@ -178,9 +178,22 @@ config file that only one process knows about.
   accounts; one that replaces them ends every other session (sessions cache
   id + role), keeping the caller's only if its id is still the same enabled
   admin. `patronus users list|reset-2fa` on the box.
-- History: `ConfigStore::snapshot()` before a change set,
-  `restore_revision()` to roll back (`patronus config revisions|rollback`).
-  `export_json()`/`import_json()` cover every lane's tables automatically.
+- History = **generations** (`patronus_config::generations`, docs/CONFIG-GENERATIONS.md):
+  `ConfigStore::snapshot()` before a change set (as always) opens the change set
+  and returns the generation holding the state as it is; the change itself is
+  sealed into the next numbered generation (time, actor, message, hash; ids are
+  never reused; live / boot / pinned are kept) on the next snapshot or read.
+  `restore_revision()` / `restore_generation()` roll back (recorded as a new
+  generation); `patronus config generations|show|diff|rollback|pin`. A manager's
+  failure path may still undo with `restore_revision(rev)`: undoing a change set
+  that was never sealed records nothing. Commit-confirmed changes
+  (`start_pending` / `confirm_pending`, deadline enforced by `patronus applyd`'s
+  own timer, by `patronus apply` at boot, never by the web process) and the
+  declarative YAML file (`genfile`, `gendiff`) live in the same crate;
+  secrets never show in a diff or the default export. `config_generations`,
+  `config_generation_state` (and the legacy `config_revisions`) are in
+  `NON_CONFIG_TABLES`. `export_json()`/`import_json()` cover every lane's
+  tables automatically; `import_checked()` also re-adds the anti-lockout rules.
 - **Measured history is not configuration.** Tables that fill themselves with
   measurements (`ins_usage`, `ins_uplink_samples`, `ins_uplink_hourly`: traffic
   insight and uplink health, `docs/INSIGHT-UPLINK.md`) are listed in

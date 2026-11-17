@@ -203,9 +203,10 @@ assert_default_traffic
 echo "--- nft list ruleset after boot apply:"; R nft list ruleset
 
 echo "=== 3. config history: roll back to before netlab-wan-2222 was added"
-REVS=$(R "$P" --db $DB config revisions); echo "$REVS"
-REV=$(awk '/before create firewall rule netlab-wan-2222/{print $1; exit}' <<<"$REVS")
-[ -n "$REV" ] || fail "no revision recorded for the API change"
+REVS=$(R "$P" --db $DB config generations); echo "$REVS"
+# a generation holds the state AFTER its change: go back to the one before "create firewall rule netlab-wan-2222"
+REV=$(R "$P" --db $DB config generations --json | python3 -c 'import json,sys; g=json.load(sys.stdin)["generations"]; i=[x["message"] for x in g].index("create firewall rule netlab-wan-2222"); print(g[i+1]["id"])')
+[ -n "$REV" ] || fail "no generation recorded for the API change"
 R "$P" --db $DB config rollback "$REV"
 RS=$(R nft list ruleset)
 grep -q netlab-block-8080 <<<"$RS" || fail "rollback lost the earlier rule"

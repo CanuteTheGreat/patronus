@@ -49,10 +49,8 @@ pub async fn list(db: Option<&Path>, json: bool) -> anyhow::Result<()> {
         );
         return Ok(());
     }
-    println!(
-        "{:>5}  {:<19}  {:<12} {:<9} {:<14} {}",
-        "ID", "TIME", "ACTOR", "KIND", "MARKERS", "MESSAGE"
-    );
+    let (id, time, actor, kind, marks, msg) = ("ID", "TIME", "ACTOR", "KIND", "MARKERS", "MESSAGE");
+    println!("{id:>5}  {time:<19}  {actor:<12} {kind:<9} {marks:<14} {msg}");
     for g in &gens {
         let line = format!(
             "{:>5}  {:<19}  {:<12} {:<9} {:<14} {}",
@@ -98,7 +96,12 @@ fn print_pending(p: &Pending) {
 }
 
 /// `patronus config show ID [--json]`: metadata and the declarative file.
-pub async fn show(db: Option<&Path>, id: i64, json: bool, include_secrets: bool) -> anyhow::Result<()> {
+pub async fn show(
+    db: Option<&Path>,
+    id: i64,
+    json: bool,
+    include_secrets: bool,
+) -> anyhow::Result<()> {
     let store = open_store(db).await?;
     let g = store
         .generation(id)
@@ -234,22 +237,25 @@ pub async fn confirm(db: Option<&Path>) -> anyhow::Result<()> {
 pub async fn revert_now(db: Option<&Path>) -> anyhow::Result<()> {
     let store = open_store(db).await?;
     let Some(p) = store.pending().await.map_err(e)? else {
-        println!("nothing is waiting for confirmation: nothing to revert (use `config rollback ID`)");
+        println!(
+            "nothing is waiting for confirmation: nothing to revert (use `config rollback ID`)"
+        );
         return Ok(());
     };
     let reg = registry();
     let store_ref = &store;
-    let res = patronus_config::generations::revert_now(&store, "cli", "reverted by hand", || async {
-        let run = reg.apply_all(store_ref, None).await;
-        if run.ok() {
-            Ok(())
-        } else {
-            let names: Vec<&str> = run.failures().iter().map(|o| o.applier).collect();
-            Err(format!("apply failed for: {}", names.join(", ")))
-        }
-    })
-    .await
-    .map_err(e)?;
+    let res =
+        patronus_config::generations::revert_now(&store, "cli", "reverted by hand", || async {
+            let run = reg.apply_all(store_ref, None).await;
+            if run.ok() {
+                Ok(())
+            } else {
+                let names: Vec<&str> = run.failures().iter().map(|o| o.applier).collect();
+                Err(format!("apply failed for: {}", names.join(", ")))
+            }
+        })
+        .await
+        .map_err(e)?;
     println!(
         "{} reverted to generation {} (recorded as generation {})",
         "✓".green(),
@@ -272,7 +278,11 @@ pub async fn require_watchdog() -> anyhow::Result<()> {
 }
 
 /// After an applied change: arm the auto-revert when asked.
-pub async fn arm(store: &ConfigStore, previous: i64, confirm_in: Option<i64>) -> anyhow::Result<()> {
+pub async fn arm(
+    store: &ConfigStore,
+    previous: i64,
+    confirm_in: Option<i64>,
+) -> anyhow::Result<()> {
     store.seal().await.map_err(e)?;
     let Some(n) = confirm_in else { return Ok(()) };
     match store.start_pending(previous, n, "cli").await.map_err(e)? {

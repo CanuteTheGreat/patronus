@@ -247,18 +247,21 @@ async fn commit_confirm_watchdog(
             continue;
         }
         let _g = lock.lock().await;
-        tracing::warn!("applyd: commit-confirm deadline reached, reverting to the previous generation");
+        tracing::warn!(
+            "applyd: commit-confirm deadline reached, reverting to the previous generation"
+        );
         let (reg, st) = (registry.clone(), store.clone());
-        let r = patronus_config::generations::revert_if_due(&store, "commit-confirm", || async move {
-            let run = reg.apply_all(&st, None).await;
-            if run.ok() {
-                Ok(())
-            } else {
-                let names: Vec<&str> = run.failures().iter().map(|o| o.applier).collect();
-                Err(format!("apply failed for: {}", names.join(", ")))
-            }
-        })
-        .await;
+        let r =
+            patronus_config::generations::revert_if_due(&store, "commit-confirm", || async move {
+                let run = reg.apply_all(&st, None).await;
+                if run.ok() {
+                    Ok(())
+                } else {
+                    let names: Vec<&str> = run.failures().iter().map(|o| o.applier).collect();
+                    Err(format!("apply failed for: {}", names.join(", ")))
+                }
+            })
+            .await;
         match r {
             Ok(Some(id)) => tracing::warn!("applyd: reverted; generation {id} records it"),
             Ok(None) => {}

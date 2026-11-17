@@ -903,7 +903,10 @@ async fn configuration_history_lists_revisions_and_restores_one() {
     assert_eq!(s, StatusCode::OK, "{list}");
     let rows = list.as_array().unwrap();
     assert!(rows.len() >= 2);
-    assert_eq!(rows[0]["summary"], "marker is one", "newest first: the change that produced the live state");
+    assert_eq!(
+        rows[0]["summary"], "marker is one",
+        "newest first: the change that produced the live state"
+    );
     assert!(rows[0]["when"].as_str().unwrap().ends_with("UTC"));
     assert!(rows.iter().any(|r| r["id"] == first));
 
@@ -2339,7 +2342,6 @@ async fn groups_grant_per_area_privileges_that_the_gate_enforces() {
     assert_ne!(s, StatusCode::FORBIDDEN, "back to the operator role");
 }
 
-
 // ---------------------------------------------------------------------------
 // config generations: list / diff / rollback / pin, commit-confirmed, the
 // declarative file
@@ -2364,19 +2366,27 @@ async fn generations_list_show_diff_and_pin_without_leaking_secrets() {
     let c = t.admin().await;
     let store = &t.state.config_store;
     store.snapshot("alice", "before first").await.unwrap();
-    store.save_system_config("test.marker", "one").await.unwrap();
+    store
+        .save_system_config("test.marker", "one")
+        .await
+        .unwrap();
     store
         .save_system_config("smtp.password", "hunter2-OLD")
         .await
         .unwrap();
     store.snapshot("bob", "before second").await.unwrap();
-    store.save_system_config("test.marker", "two").await.unwrap();
+    store
+        .save_system_config("test.marker", "two")
+        .await
+        .unwrap();
     store
         .save_system_config("smtp.password", "hunter2-NEW")
         .await
         .unwrap();
 
-    let (s, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    let (s, list) = t
+        .call(&c, Method::GET, "/api/system/generations", None)
+        .await;
     assert_eq!(s, StatusCode::OK, "{list}");
     let g = list["generations"].as_array().unwrap();
     assert!(g.len() >= 3, "{list}");
@@ -2409,7 +2419,10 @@ async fn generations_list_show_diff_and_pin_without_leaking_secrets() {
     assert_eq!(d["diff"]["identical"], false);
     assert!(raw.contains("(changed)"), "{raw}");
     let tables = d["diff"]["tables"].as_array().unwrap();
-    let sc = tables.iter().find(|t| t["table"] == "system_config").unwrap();
+    let sc = tables
+        .iter()
+        .find(|t| t["table"] == "system_config")
+        .unwrap();
     let fields = serde_json::to_string(&sc["changed"]).unwrap();
     assert!(fields.contains("\"two\""), "{fields}");
     assert!(d["text"].as_str().unwrap().contains("@@"));
@@ -2433,11 +2446,21 @@ async fn generations_list_show_diff_and_pin_without_leaking_secrets() {
     assert_eq!(s, StatusCode::OK, "{d}");
     assert_eq!(d["diff"]["identical"], false);
     let (s, _) = t
-        .call(&c, Method::GET, "/api/system/generations/diff?from=999999&to=live", None)
+        .call(
+            &c,
+            Method::GET,
+            "/api/system/generations/diff?from=999999&to=live",
+            None,
+        )
         .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     let (s, _) = t
-        .call(&c, Method::GET, "/api/system/generations/diff?from=abc&to=live", None)
+        .call(
+            &c,
+            Method::GET,
+            "/api/system/generations/diff?from=abc&to=live",
+            None,
+        )
         .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 
@@ -2468,7 +2491,9 @@ async fn generations_list_show_diff_and_pin_without_leaking_secrets() {
         )
         .await;
     assert_eq!(s, StatusCode::OK, "{b}");
-    let (_, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    let (_, list) = t
+        .call(&c, Method::GET, "/api/system/generations", None)
+        .await;
     let row = list["generations"]
         .as_array()
         .unwrap()
@@ -2481,7 +2506,10 @@ async fn generations_list_show_diff_and_pin_without_leaking_secrets() {
     let (s, page, _) = t.raw(Method::GET, "/generations", Some(&c), None).await;
     assert_eq!(s, StatusCode::OK);
     assert!(page.contains("id=\"gen-table\"") && page.contains("Config generations"));
-    assert!(page.contains("id=\"pending-banner\""), "the banner is on every page");
+    assert!(
+        page.contains("id=\"pending-banner\""),
+        "the banner is on every page"
+    );
     let (_, other, _) = t.raw(Method::GET, "/system", Some(&c), None).await;
     assert!(other.contains("id=\"pending-banner\""));
 }
@@ -2500,10 +2528,15 @@ async fn rollback_through_the_api_applies_and_is_a_new_generation() {
         .await;
     assert_eq!(s, StatusCode::CREATED, "{b}");
     assert!(rule_names(&t).await.contains(&"gen-block".to_string()));
-    let (_, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    let (_, list) = t
+        .call(&c, Method::GET, "/api/system/generations", None)
+        .await;
     let g = list["generations"].as_array().unwrap();
     assert_eq!(g[0]["actor"], "admin");
-    assert!(g[0]["message"].as_str().unwrap().contains("create firewall rule"));
+    assert!(g[0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("create firewall rule"));
     // the generation before it has no such rule
     let before = g[1]["id"].as_i64().unwrap();
     let live = g[0]["id"].as_i64().unwrap();
@@ -2519,7 +2552,9 @@ async fn rollback_through_the_api_applies_and_is_a_new_generation() {
     assert_eq!(s, StatusCode::OK, "{b}");
     assert!(t.restore_fake.applies.load(Ordering::SeqCst) > applies);
     assert!(!rule_names(&t).await.contains(&"gen-block".to_string()));
-    let (_, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    let (_, list) = t
+        .call(&c, Method::GET, "/api/system/generations", None)
+        .await;
     let g = list["generations"].as_array().unwrap();
     assert!(g[0]["id"].as_i64().unwrap() > live, "a new generation");
     assert_eq!(g[0]["kind"], "rollback");
@@ -2538,13 +2573,7 @@ async fn rollback_through_the_api_applies_and_is_a_new_generation() {
     assert!(rule_names(&t).await.contains(&"gen-block".to_string()));
     // a refusing subsystem: undone, 409, and nothing recorded
     t.restore_fake.fail.store(true, Ordering::SeqCst);
-    let n = t
-        .state
-        .config_store
-        .generations()
-        .await
-        .unwrap()
-        .len();
+    let n = t.state.config_store.generations().await.unwrap().len();
     let (s, b) = t
         .call(
             &c,
@@ -2558,7 +2587,12 @@ async fn rollback_through_the_api_applies_and_is_a_new_generation() {
     assert!(rule_names(&t).await.contains(&"gen-block".to_string()));
     assert_eq!(t.state.config_store.generations().await.unwrap().len(), n);
     let (s, _) = t
-        .call(&c, Method::POST, "/api/system/generations/999999/rollback", None)
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/generations/999999/rollback",
+            None,
+        )
         .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
@@ -2582,7 +2616,11 @@ async fn commit_confirm_arms_confirms_and_reverts_independently_of_the_session()
     };
     // bad values change nothing
     for bad in ["0", "9999", "abc", "-5"] {
-        let (s, b, _) = post(vec![("x-confirm-in", bad), ("content-type", "application/json")]).await;
+        let (s, b, _) = post(vec![
+            ("x-confirm-in", bad),
+            ("content-type", "application/json"),
+        ])
+        .await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "{bad}: {b}");
     }
     assert!(!rule_names(&t).await.contains(&"gen-block".to_string()));
@@ -2603,9 +2641,14 @@ async fn commit_confirm_arms_confirms_and_reverts_independently_of_the_session()
     assert!(pend["seconds_left"].as_i64().unwrap() > 290, "{p}");
     assert_eq!(pend["actor"], "admin");
     assert!(rule_names(&t).await.contains(&"gen-block".to_string()));
-    let (_, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    let (_, list) = t
+        .call(&c, Method::GET, "/api/system/generations", None)
+        .await;
     let g = list["generations"].as_array().unwrap();
-    assert_eq!(g[0]["message"], "open a risky rule", "the commit message is kept");
+    assert_eq!(
+        g[0]["message"], "open a risky rule",
+        "the commit message is kept"
+    );
     assert_eq!(list["pending"]["previous"], pend["previous"]);
     // the boot default is still the previous generation while pending
     let boot = g.iter().find(|r| r["boot"] == true).unwrap();
@@ -2614,15 +2657,35 @@ async fn commit_confirm_arms_confirms_and_reverts_independently_of_the_session()
     // survives a restart of the web process: a fresh state over the same store file
     let again = state_at(&t.dir).await;
     assert_eq!(
-        again.config_store.pending().await.unwrap().unwrap().previous,
+        again
+            .config_store
+            .pending()
+            .await
+            .unwrap()
+            .unwrap()
+            .previous,
         pend["previous"].as_i64().unwrap()
     );
 
     // the independent timer reaches the deadline: previous generation is back, applied
     let applies = t.restore_fake.applies.load(Ordering::SeqCst);
-    assert!(t.state.system.revert_if_due(&t.state.config_store).await.unwrap().is_none(), "not due yet");
+    assert!(
+        t.state
+            .system
+            .revert_if_due(&t.state.config_store)
+            .await
+            .unwrap()
+            .is_none(),
+        "not due yet"
+    );
     t.state.config_store.expire_pending_now().await.unwrap();
-    assert!(t.state.system.revert_if_due(&t.state.config_store).await.unwrap().is_some());
+    assert!(t
+        .state
+        .system
+        .revert_if_due(&t.state.config_store)
+        .await
+        .unwrap()
+        .is_some());
     assert!(t.restore_fake.applies.load(Ordering::SeqCst) > applies);
     assert!(!rule_names(&t).await.contains(&"gen-block".to_string()));
     let (_, p) = t
@@ -2630,25 +2693,43 @@ async fn commit_confirm_arms_confirms_and_reverts_independently_of_the_session()
         .await;
     assert_eq!(p["pending"], Value::Null);
     assert_eq!(p["last_revert"]["ok"], true);
-    let (_, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    let (_, list) = t
+        .call(&c, Method::GET, "/api/system/generations", None)
+        .await;
     assert_eq!(list["generations"][0]["kind"], "revert");
     assert_eq!(list["generations"][0]["actor"], "commit-confirm");
 
     // armed again and confirmed from ANOTHER admin session: the change stays
-    let (s, _, _) = post(vec![("x-confirm-in", "5"), ("content-type", "application/json")]).await;
+    let (s, _, _) = post(vec![
+        ("x-confirm-in", "5"),
+        ("content-type", "application/json"),
+    ])
+    .await;
     assert_eq!(s, StatusCode::CREATED);
     let c2 = t.admin().await;
     let (s, b) = t
-        .call(&c2, Method::POST, "/api/system/generations/pending/confirm", None)
+        .call(
+            &c2,
+            Method::POST,
+            "/api/system/generations/pending/confirm",
+            None,
+        )
         .await;
     assert_eq!(s, StatusCode::OK, "{b}");
     assert!(rule_names(&t).await.contains(&"gen-block".to_string()));
     assert!(t.state.config_store.pending().await.unwrap().is_none());
-    let (_, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    let (_, list) = t
+        .call(&c, Method::GET, "/api/system/generations", None)
+        .await;
     let live = &list["generations"][0];
     assert_eq!(live["boot"], true, "confirmed: boot default is live");
     let (s, _) = t
-        .call(&c, Method::POST, "/api/system/generations/pending/confirm", None)
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/generations/pending/confirm",
+            None,
+        )
         .await;
     assert_eq!(s, StatusCode::NOT_FOUND, "nothing left to confirm");
 
@@ -2659,17 +2740,30 @@ async fn commit_confirm_arms_confirms_and_reverts_independently_of_the_session()
             Method::DELETE,
             &format!("/api/firewall/rules/{}", {
                 let r = t.state.config_store.load_firewall_rules().await.unwrap();
-                r.iter().find(|r| r.name == "gen-block").unwrap().id.unwrap()
+                r.iter()
+                    .find(|r| r.name == "gen-block")
+                    .unwrap()
+                    .id
+                    .unwrap()
             }),
             None,
         )
         .await;
     assert_eq!(s, StatusCode::OK, "{b}");
-    let (s, _, h) = post(vec![("x-confirm-in", "5"), ("content-type", "application/json")]).await;
+    let (s, _, h) = post(vec![
+        ("x-confirm-in", "5"),
+        ("content-type", "application/json"),
+    ])
+    .await;
     assert_eq!(s, StatusCode::CREATED);
     assert!(h.get("x-pending-deadline").is_some());
     let (s, b) = t
-        .call(&c, Method::POST, "/api/system/generations/pending/revert-now", None)
+        .call(
+            &c,
+            Method::POST,
+            "/api/system/generations/pending/revert-now",
+            None,
+        )
         .await;
     assert_eq!(s, StatusCode::OK, "{b}");
     assert!(!rule_names(&t).await.contains(&"gen-block".to_string()));
@@ -2691,10 +2785,18 @@ async fn commit_confirm_is_refused_when_no_timer_can_enforce_it() {
         .await;
     assert_eq!(s, StatusCode::CONFLICT, "{b}");
     assert!(b.contains("applyd"));
-    assert!(!rule_names(&t).await.contains(&"gen-block".to_string()), "nothing changed");
+    assert!(
+        !rule_names(&t).await.contains(&"gen-block".to_string()),
+        "nothing changed"
+    );
     // without the header the same change works
     let (s, _) = t
-        .call(&c, Method::POST, "/api/firewall/rules", Some(serde_json::from_str(RULE).unwrap()))
+        .call(
+            &c,
+            Method::POST,
+            "/api/firewall/rules",
+            Some(serde_json::from_str(RULE).unwrap()),
+        )
         .await;
     assert_eq!(s, StatusCode::CREATED);
 }
@@ -2732,10 +2834,18 @@ async fn the_declarative_file_exports_without_secrets_and_imports_as_a_generatio
         .save_system_config("smtp.password", "hunter2-SECRET")
         .await
         .unwrap();
-    store.save_system_config("test.marker", "one").await.unwrap();
+    store
+        .save_system_config("test.marker", "one")
+        .await
+        .unwrap();
 
     let (s, y1, h) = t
-        .raw(Method::GET, "/api/system/config/export?format=yaml", Some(&c), None)
+        .raw(
+            Method::GET,
+            "/api/system/config/export?format=yaml",
+            Some(&c),
+            None,
+        )
         .await;
     assert_eq!(s, StatusCode::OK);
     assert!(h
@@ -2756,27 +2866,52 @@ async fn the_declarative_file_exports_without_secrets_and_imports_as_a_generatio
         .await;
     assert!(withsec.contains("hunter2-SECRET") && withsec.contains("secrets: included"));
     let (s, j, _) = t
-        .raw(Method::GET, "/api/system/config/export?format=json", Some(&c), None)
+        .raw(
+            Method::GET,
+            "/api/system/config/export?format=json",
+            Some(&c),
+            None,
+        )
         .await;
     assert_eq!(s, StatusCode::OK);
     assert!(j.contains("\"tables\""));
     let (s, _, _) = t
-        .raw(Method::GET, "/api/system/config/export?format=toml", Some(&c), None)
+        .raw(
+            Method::GET,
+            "/api/system/config/export?format=toml",
+            Some(&c),
+            None,
+        )
         .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 
     // fixed point: importing the export changes nothing and exports the same file
     let (s, b, _) = t
-        .rawh(Method::POST, "/api/system/config/import", &c, Some(y1.clone()), &[])
+        .rawh(
+            Method::POST,
+            "/api/system/config/import",
+            &c,
+            Some(y1.clone()),
+            &[],
+        )
         .await;
     assert_eq!(s, StatusCode::OK, "{b}");
     assert!(b.contains("\"unchanged\":true"), "{b}");
     let (_, y2, _) = t
-        .raw(Method::GET, "/api/system/config/export?format=yaml", Some(&c), None)
+        .raw(
+            Method::GET,
+            "/api/system/config/export?format=yaml",
+            Some(&c),
+            None,
+        )
         .await;
     assert_eq!(y1, y2);
     assert_eq!(
-        store.load_system_config("smtp.password").await.unwrap().as_deref(),
+        store
+            .load_system_config("smtp.password")
+            .await
+            .unwrap()
+            .as_deref(),
         Some("hunter2-SECRET"),
         "the excluded secret was kept"
     );
@@ -2796,10 +2931,17 @@ async fn the_declarative_file_exports_without_secrets_and_imports_as_a_generatio
     let d: Value = serde_json::from_str(&b).unwrap();
     assert_eq!(d["dry_run"], true);
     assert_eq!(d["preview"]["identical"], false);
-    assert!(d["preview"]["text"].as_str().unwrap().contains("two-edited"));
+    assert!(d["preview"]["text"]
+        .as_str()
+        .unwrap()
+        .contains("two-edited"));
     assert!(!b.contains("hunter2-SECRET"));
     assert_eq!(
-        store.load_system_config("test.marker").await.unwrap().as_deref(),
+        store
+            .load_system_config("test.marker")
+            .await
+            .unwrap()
+            .as_deref(),
         Some("one")
     );
 
@@ -2817,10 +2959,16 @@ async fn the_declarative_file_exports_without_secrets_and_imports_as_a_generatio
     assert_eq!(s, StatusCode::OK, "{b}");
     assert!(t.restore_fake.applies.load(Ordering::SeqCst) > applies);
     assert_eq!(
-        store.load_system_config("test.marker").await.unwrap().as_deref(),
+        store
+            .load_system_config("test.marker")
+            .await
+            .unwrap()
+            .as_deref(),
         Some("two-edited")
     );
-    let (_, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    let (_, list) = t
+        .call(&c, Method::GET, "/api/system/generations", None)
+        .await;
     let live = &list["generations"][0];
     assert_eq!(live["kind"], "import");
     assert_eq!(live["message"], "from git");
@@ -2829,18 +2977,33 @@ async fn the_declarative_file_exports_without_secrets_and_imports_as_a_generatio
     // bad files: 400 with a reason, nothing changes
     for (body, want) in [
         ("not: [valid", "Invalid"),
-        ("patronus_config_version: 1\ntables:\n  no_such_table:\n    - id: 1\n", "unknown table"),
+        (
+            "patronus_config_version: 1\ntables:\n  no_such_table:\n    - id: 1\n",
+            "unknown table",
+        ),
         ("patronus_config_version: 7\ntables: {}\n", "version 7"),
     ] {
         let (s, b, _) = t
-            .rawh(Method::POST, "/api/system/config/import", &c, Some(body.to_string()), &[])
+            .rawh(
+                Method::POST,
+                "/api/system/config/import",
+                &c,
+                Some(body.to_string()),
+                &[],
+            )
             .await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "{body}: {b}");
         assert!(b.contains(want), "{b}");
     }
     // the JSON backup still imports
     let (s, b, _) = t
-        .rawh(Method::POST, "/api/system/config/import?dry_run=true", &c, Some(j), &[])
+        .rawh(
+            Method::POST,
+            "/api/system/config/import?dry_run=true",
+            &c,
+            Some(j),
+            &[],
+        )
         .await;
     assert_eq!(s, StatusCode::OK, "{b}");
 }

@@ -114,7 +114,12 @@ pub fn to_yaml(doc: &Value, keys: &KeyMap, include_secrets: bool) -> Result<Stri
     );
     top.insert(
         "secrets".into(),
-        if include_secrets { "included" } else { "excluded" }.into(),
+        if include_secrets {
+            "included"
+        } else {
+            "excluded"
+        }
+        .into(),
     );
     top.insert("tables".into(), serde_yaml::Value::Mapping(out_tables));
     let body = serde_yaml::to_string(&serde_yaml::Value::Mapping(top))
@@ -157,7 +162,11 @@ pub fn from_yaml(text: &str) -> Result<(Value, bool)> {
     let tables = match obj.get("tables") {
         None | Some(Value::Null) => Map::new(),
         Some(Value::Object(t)) => t.clone(),
-        Some(_) => return Err(Error::Config("Invalid declarative file: 'tables' is not a mapping".into())),
+        Some(_) => {
+            return Err(Error::Config(
+                "Invalid declarative file: 'tables' is not a mapping".into(),
+            ))
+        }
     };
     let mut out = Map::new();
     for (t, rows) in tables {
@@ -214,7 +223,9 @@ pub fn merge_missing_secrets(new: &mut Value, live: &Value, keys: &KeyMap) {
             continue;
         }
         for row in rows.as_array_mut().into_iter().flatten() {
-            let Some(row) = row.as_object_mut() else { continue };
+            let Some(row) = row.as_object_mut() else {
+                continue;
+            };
             let k = row_identity(t, row, keys);
             let Some(lr) = live_rows.iter().find(|l| row_identity(t, l, keys) == k) else {
                 continue;
@@ -293,9 +304,9 @@ pub async fn prepare_import(store: &ConfigStore, text: &str) -> Result<ImportPre
     let live = store.export_json().await?;
     let keys = store.table_keys().await?;
     merge_missing_secrets(&mut doc, &live, &keys);
-    let resulting = scratch_import(doc.clone()).await.map_err(|e| {
-        Error::Config(format!("Invalid configuration, nothing was imported: {e}"))
-    })?;
+    let resulting = scratch_import(doc.clone())
+        .await
+        .map_err(|e| Error::Config(format!("Invalid configuration, nothing was imported: {e}")))?;
     let diff = gendiff::diff_docs(&live, &resulting, &keys);
     let text_diff = gendiff::unified_diff(
         &to_yaml(&live, &keys, false)?,
@@ -319,10 +330,14 @@ mod tests {
 
     async fn store_with_stuff() -> ConfigStore {
         let s = ConfigStore::open_in_memory().await.unwrap();
-        s.save_system_config(crate::defaults::DEFAULTS_SEEDED_KEY, "test").await.unwrap();
+        s.save_system_config(crate::defaults::DEFAULTS_SEEDED_KEY, "test")
+            .await
+            .unwrap();
         crate::defaults::ensure_system_rules(&s).await.unwrap();
         s.save_system_config("hostname", "fw1").await.unwrap();
-        s.save_system_config("smtp.password", "hunter2").await.unwrap();
+        s.save_system_config("smtp.password", "hunter2")
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO wg_interfaces (name, private_key, listen_port, addresses, updated_at) VALUES ('wg0', 'PRIVATE-KEY-VALUE', 51820, '10.9.0.1/24', 1)",
         )
@@ -387,10 +402,11 @@ mod tests {
         assert!(!pv.diff.to_string().contains("PRIVATE-KEY-VALUE"));
         assert!(!pv.text_diff.contains("PRIVATE-KEY-VALUE"));
         s.import_checked(&pv.doc).await.unwrap();
-        let k: String = sqlx::query_scalar("SELECT private_key FROM wg_interfaces WHERE name='wg0'")
-            .fetch_one(s.pool().unwrap())
-            .await
-            .unwrap();
+        let k: String =
+            sqlx::query_scalar("SELECT private_key FROM wg_interfaces WHERE name='wg0'")
+                .fetch_one(s.pool().unwrap())
+                .await
+                .unwrap();
         assert_eq!(k, "PRIVATE-KEY-VALUE");
         let pw = s.load_system_config("smtp.password").await.unwrap();
         assert_eq!(pw.as_deref(), Some("hunter2"));
@@ -412,11 +428,20 @@ mod tests {
         for (text, want) in [
             ("tables: {}\n", "no patronus_config_version"),
             ("patronus_config_version: 9\ntables: {}\n", "version 9"),
-            ("patronus_config_version: 1\ntables:\n  no_such_table:\n    - id: 1\n", "unknown table"),
-            ("patronus_config_version: 1\ntables:\n  firewall_rules:\n    - bogus_column: 1\n", "nothing was imported"),
+            (
+                "patronus_config_version: 1\ntables:\n  no_such_table:\n    - id: 1\n",
+                "unknown table",
+            ),
+            (
+                "patronus_config_version: 1\ntables:\n  firewall_rules:\n    - bogus_column: 1\n",
+                "nothing was imported",
+            ),
             ("- just\n- a list\n", "not a mapping"),
             ("{\"tables\": 5}", "no \"tables\""),
-            ("patronus_config_version: 1\ntables:\n  firewall_rules: 5\n", "not a list of rows"),
+            (
+                "patronus_config_version: 1\ntables:\n  firewall_rules: 5\n",
+                "not a list of rows",
+            ),
         ] {
             let e = prepare_import(&s, text).await.unwrap_err().to_string();
             assert!(e.contains(want), "{text:?}: {e}");
@@ -432,7 +457,11 @@ mod tests {
         let y = to_yaml(&doc, &keys, false).unwrap();
         let pv = prepare_import(&s, &y).await.unwrap();
         // the anti-lockout rule is part of what would be stored: no removal
-        assert!(pv.identical || !pv.diff.to_string().contains("Anti-lockout"), "{}", pv.text_diff);
+        assert!(
+            pv.identical || !pv.diff.to_string().contains("Anti-lockout"),
+            "{}",
+            pv.text_diff
+        );
         s.import_checked(&pv.doc).await.unwrap();
         assert!(s
             .load_firewall_rules_with_origin()
@@ -455,7 +484,13 @@ mod tests {
         let s = store_with_stuff().await;
         let keys = s.table_keys().await.unwrap();
         let y = to_yaml(&s.export_json().await.unwrap(), &keys, true).unwrap();
-        for t in ["ins_usage", "ins_uplink_samples", "audit_log", "config_generations", "config_revisions"] {
+        for t in [
+            "ins_usage",
+            "ins_uplink_samples",
+            "audit_log",
+            "config_generations",
+            "config_revisions",
+        ] {
             assert!(!y.contains(t), "{t} in the declarative file");
         }
     }
