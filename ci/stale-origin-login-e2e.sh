@@ -4,7 +4,8 @@
 # cookie, which is what broke sign-in when another cookie was stored for the address.
 #
 # Usage: ci/stale-origin-login-e2e.sh <image>
-# Runs the web container (capped) and the official Playwright image in its network namespace; removes both on exit.
+# Runs the web container (capped) and the official Playwright image (browsers only: the matching `playwright` Python
+# package is installed at start) in its network namespace; removes both on exit.
 set -euo pipefail
 
 IMAGE=${1:?usage: ci/stale-origin-login-e2e.sh <image>}
@@ -32,10 +33,12 @@ for _ in $(seq 1 60); do
 done
 docker exec "$C" curl -ksf -o /dev/null https://localhost:8443/login || fail "patronus-web did not come up"
 
+PWV=${PW_IMAGE##*:v}; PWV=${PWV%%-*}   # the Python package version that matches the image's browsers
 docker pull -q "$PW_IMAGE" >/dev/null
 docker create --name "$B" --network "container:$C" --memory 3g --memory-swap 3g --cpus 2 --ipc host \
   -e BASE_URL=https://localhost:8443 -e E2E_USER=admin -e E2E_PASSWORD="$PW" -e E2E_BACKOFF_USER=e2e-nobody \
-  -w /e2e "$PW_IMAGE" python3 /e2e/stale-origin-login-e2e.py firefox,chromium >/dev/null
+  -w /e2e --entrypoint sh "$PW_IMAGE" -c \
+  "pip install -q --root-user-action=ignore --break-system-packages playwright==$PWV && python3 /e2e/stale-origin-login-e2e.py firefox,chromium" >/dev/null
 docker cp "$HERE/stale-origin-login-e2e.py" "$B:/e2e/stale-origin-login-e2e.py"
 docker start -a "$B"
 
