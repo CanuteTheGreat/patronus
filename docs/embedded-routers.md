@@ -843,9 +843,9 @@ channel 400, admin reveal, settings kept across a restart, systemd scope placeme
 Chromium, with `E2E_WRITE=1` add + remove a network through the page) run against a real unit: all checks passed, both
 radios restarted and verified twice in 12 s, the unit's Wi-Fi variables identical afterwards.
 
-### 12.12 Guest networks, block list, transmit power, client names, survey, Device page, online check (2026-11-17)
+### 12.13 Guest networks, block list, transmit power, client names, survey, Device page, online check (2026-11-17)
 
-The follow-up to 12.11 closes the remaining gaps of the router-tier table (docs/router-tier-ui.md section 5 has the
+The follow-up to 12.12 closes the remaining gaps of the router-tier table (docs/router-tier-ui.md section 5 has the
 details and the API):
 
 - **Wi-Fi page**: crash-protection state (`wifi-guard status`, 12.6d: normal, or safe mode with its reason); per
