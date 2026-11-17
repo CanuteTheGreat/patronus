@@ -9,6 +9,7 @@
 #   the early boot must reject (not this board) without stopping the boot.
 # Prints PASS/FAIL per check, ends with "FAILED: none" when all passed. Exit 0 = all passed.
 set -uo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
 INIT=${1:?usage: qemu-gate.sh <openrc|systemd> <image-dir>}; I=$(readlink -f "${2:?image dir}")
 K=${VIRT_KERNEL:?VIRT_KERNEL}; KEY=${UNIT_DIR:?UNIT_DIR}/ci_ed25519
 RES=${RESULTS:-/out/qemu-$INIT}; mkdir -p "$RES"; : > "$RES/results.txt"
@@ -249,6 +250,39 @@ refuse_board() { o=$(R 'patronus-flash check /data/up.tar' 2>&1) && { echo "acce
 check "flash guard: refuses on a non-GL-AX1800 board" refuse_board
 R "$FAKES"
 check "flash check: the real image passes every guard (loop-mounted root, busybox)" R "$FENV patronus-flash check /data/up.tar"
+# release signature on the real board firmware (gpgv + the keyring in the image, busybox): the CI image itself is release-signed;
+# an UNSIGNED copy and a TAMPERED copy (root changed, patronus.sha256 re-made, the original signature kept: what an attacker
+# without the key can do) must both be refused with the signature message, and nothing may be staged
+mk_bad_images() {
+  bd=$(mktemp -d); tar xf "$TAR" -C "$bd" 2>/dev/null; dd=$(ls -d "$bd"/sysupgrade-*); dn=$(basename "$dd")
+  python3 - "$TAR" "$HERE/fwmeta.py" "$bd/meta.json" <<'PY'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("fwmeta", sys.argv[2]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+json.dump(m.read(open(sys.argv[1], "rb").read()), open(sys.argv[3], "w"))
+PY
+  remeta() { python3 - "$1" "$HERE/fwmeta.py" "$bd/meta.json" "$2" <<'PY'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("fwmeta", sys.argv[2]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+meta = json.load(open(sys.argv[3]))
+if sys.argv[4] == "unsigned":
+    meta.pop("patronus_sig", None)
+data = open(sys.argv[1], "rb").read(); payload = b"\0" * 8 + (json.dumps(meta) + "\n").encode()
+open(sys.argv[1], "ab").write(payload + m.trailer_for(data, payload))
+PY
+  }
+  (cd "$bd" && tar cf "$bd/unsigned.tar" --sort=name "$dn") && remeta "$bd/unsigned.tar" unsigned
+  printf 'tampered' >> "$dd/root"; (cd "$dd" && sha256sum kernel root > patronus.sha256)
+  (cd "$bd" && tar cf "$bd/tampered.tar" --sort=name "$dn") && remeta "$bd/tampered.tar" keep
+  grep -q patronus_sig "$bd/meta.json" || { echo "the CI image carries no release signature"; return 1; }
+  scp -O -q "${SSHO[@]}" -P $SSHP "$bd/unsigned.tar" "$bd/tampered.tar" root@127.0.0.1:/data/ || return 1
+  rm -rf "$bd"
+}
+check "release signature: the CI image is signed; unsigned + tampered copies built and copied in" mk_bad_images
+refuse_sig() { o=$(R "$FENV patronus-flash sysupgrade /data/$1.tar" 2>&1) && { echo "ACCEPTED $1: $o"; return 1; }
+  case "$o" in *"$2"*) ;; *) echo "$o"; return 1;; esac; R 'test ! -e /data/.upgrade && test ! -e /data/.upgrade.new' || { echo "something was staged"; return 1; }; }
+check "flash guard: an UNSIGNED image is refused, nothing staged" refuse_sig unsigned "not signed"
+check "flash guard: a TAMPERED image (root changed, sha256 re-made) is refused, nothing staged" refuse_sig tampered "signature check FAILED"
+R 'rm -f /data/unsigned.tar /data/tampered.tar'
 check "flash guard: a corrupt image is refused" R "cp /data/up.tar /tmp/bad.tar && printf 'XXXXXXXX' | dd of=/tmp/bad.tar bs=1 seek=3000000 conv=notrunc 2>/dev/null && ! $FENV patronus-flash check /tmp/bad.tar; rm -f /tmp/bad.tar"
 check "flash sysupgrade: stages the image" R "$FENV patronus-flash sysupgrade /data/up.tar && test -f /data/.upgrade/ready"
 check "upgrade-install verify accepts it (with the board's identity)" R "$FENV /usr/libexec/patronus/upgrade-install verify"

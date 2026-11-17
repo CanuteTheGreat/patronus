@@ -50,6 +50,9 @@ sh "$H/ci-unit.sh" /out/unit
 export UNIT_DIR=/out/unit SOURCE_REV=${SOURCE_REV:-unknown}
 # a package-managed test account with a yescrypt hash (tests/ci-accounts): the QEMU gate proves accounts-sync + the web login on it
 export ACCOUNTS_DIR=$H/tests/ci-accounts
+# release signing key (ci-docker.sh build puts it here from the RELEASE_SIGNING_KEY secret): read into the env of this script
+# only, the file is removed at once
+if [ -s /w/.release-signing-key ]; then RELEASE_SIGNING_KEY=$(cat /w/.release-signing-key); export RELEASE_SIGNING_KEY; rm -f /w/.release-signing-key; fi
 
 : > /out/summary.txt
 for init in $VARIANTS; do

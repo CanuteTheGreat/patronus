@@ -4,7 +4,8 @@
 #  - every script parses; OpenRC <-> systemd service parity; no udev units shipped in the systemd overlay
 #  - check-rootfs.sh accepts a good root and rejects the mistakes it exists for (busybox init, no ETPhoneHome, 802.11r)
 #  - the AP renderer never writes 802.11r unless asked; explicit unique BSSIDs; 5 GHz centre channels; caldata path
-#  - patronus-flash check/sysupgrade and upgrade-install verify against a fake UBI: every guard fails closed
+#  - patronus-flash check/sysupgrade and upgrade-install verify against a fake UBI: every guard fails closed, incl. the release
+#    signature (unsigned, foreign key, tampered root with a re-made patronus.sha256): needs gpg + gpgv, the cases fail without them
 #  - ubi-layout.py / nand-budget.sh on ubinize-made images; profile values agree with stock.pin
 set -u
 D=$(cd "$(dirname "$0")/.." && pwd); ROOT=$(cd "$D/../../.." && pwd)
@@ -38,7 +39,7 @@ bad=$(find "$D/overlay-systemd/etc/systemd/system" -maxdepth 1 -type f -size 0)
 # 1c. every command the flash guard / installer runs on the box exists there: a busybox applet (busybox-applets.txt) or a
 #     packaged tool (mtd-utils UBI tools); od was missing once and the guard refused every image on the QEMU gate
 for c in od tail head tr cut mktemp sha256sum wc cmp date logger mknod pivot_root sed grep sleep tar dd mount umount cat ls \
-         basename mv rm cp sync mkdir rmdir uname reboot; do
+         basename mv rm cp sync mkdir rmdir uname reboot base64 chmod printf; do
   grep -qx "$c" "$D/busybox-applets.txt" && ok "busybox applet for $c (flash guard/installer)" || no "no busybox applet for $c (used on the box by fwcheck.sh/upgrade-install)"; done
 
 # 2. check-rootfs.sh
@@ -60,6 +61,7 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/bin" "$r/sbin" "$r/usr/bin" "
   echo INIT=openrc > "$r/etc/patronus-init"; echo FEATURES=nftables,cli,web-multicall,vpn-wireguard,ntp-server,syslog > "$r/etc/patronus-release"
   : > "$r/lib/modules/6.12.112/wireguard.ko"; mkdir -p "$r/etc/modules.d" "$r/etc/chrony"; echo wireguard > "$r/etc/modules.d/wireguard"
   for b in usr/bin/wg usr/sbin/chronyd usr/libexec/patronus/syslogd; do : > "$r/$b"; chmod +x "$r/$b"; done; cp "$O/etc/chrony/chrony.conf" "$r/etc/chrony/"; ln -s /usr/sbin/patronus-init "$r/sbin/init"
+  mkdir -p "$r/usr/share/openpgp-keys"; echo k > "$r/usr/share/openpgp-keys/errantsolutions.gpg"; : > "$r/usr/bin/gpgv"; chmod +x "$r/usr/bin/gpgv"
   for b in openrc-init openrc-run supervise-daemon; do : > "$r/sbin/$b"; chmod +x "$r/sbin/$b"; done
   printf '#!/bin/sh\nexec /sbin/openrc-shutdown -r now "$@"\n' > "$r/sbin/reboot"; chmod +x "$r/sbin/reboot"
   for s in patronus-board patronus-apply patronus-applyd patronus-web dropbear patronus-etph chronyd; do : > "$r/etc/init.d/$s"; chmod +x "$r/etc/init.d/$s"; done
@@ -75,6 +77,8 @@ r=$(mkroot dhcp); : > "$r/etc/init.d/dnsmasq"; ln -s /etc/init.d/dnsmasq "$r/etc
 r=$(mkroot rocal); sed -i 's#CALDATA_OUT:-/run/#CALDATA_OUT:-/lib/#' "$r/usr/libexec/patronus/ath11k-caldata"; tn "check-rootfs: rejects caldata written to the read-only root" $CR "$r"
 r=$(mkroot rmmod); echo 'rmmod ath11k_ahb' >> "$r/usr/libexec/patronus/early"; tn "check-rootfs: rejects an early boot that unloads ath11k" $CR "$r"
 r=$(mkroot noupg); rm "$r/usr/libexec/patronus/upgrade-install"; tn "check-rootfs: rejects an image without the upgrade installer" $CR "$r"
+r=$(mkroot nogpgv); rm "$r/usr/bin/gpgv"; tn "check-rootfs: rejects an image without gpgv (release signatures could not be checked)" $CR "$r"
+r=$(mkroot nokey); rm "$r/usr/share/openpgp-keys/errantsolutions.gpg"; tn "check-rootfs: rejects an image without the release keyring" $CR "$r"
 r=$(mkroot norole); sed -i '/^PATRONUS_DEVICE_ROLE=/d' "$r/etc/patronus/embedded.env"; tn "check-rootfs: rejects an AP image whose web UI does not know it is an AP" $CR "$r"
 r=$(mkroot noauth); sed -i '/^PATRONUS_AUTH_BACKEND=/d' "$r/etc/patronus/embedded.env"; tn "check-rootfs: rejects an image whose web login would go through musl pam_unix (no yescrypt)" $CR "$r"
 r=$(mkroot noacc); rm "$r/usr/libexec/patronus/accounts-sync"; tn "check-rootfs: rejects an image without accounts-sync" $CR "$r"
@@ -344,6 +348,15 @@ EOF
 glinet,gl-ax1800 qcom,ipq6018
 EOF
   printf 'linux,dummy-virt\0' > "$F/compat-other"
+  # release signing: a throwaway "release" key (its keyring plays the box's FW_KEYRING) and a foreign key
+  KR=$F/keyring.gpg
+  mkkey() { g=$F/gpg-$1; mkdir -p "$g"; chmod 700 "$g"
+    gpg --homedir "$g" --batch --pinentry-mode loopback --passphrase '' --quick-gen-key "test $1 <$1@example.invalid>" ed25519 sign 1d >/dev/null 2>&1; }
+  if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
+    mkkey rel; mkkey foreign; gpg --homedir "$F/gpg-rel" --batch --export > "$KR"
+  else no "gpg/gpgv missing: the release signature cases cannot run (install gnupg gpgv)"; fi
+  # sigfor KEY FILE: binary detached signature of FILE on stdout
+  sigfor() { gpg --homedir "$F/gpg-$1" --batch --pinentry-mode loopback --passphrase '' --detach-sign --output - "$2" 2>/dev/null; }
   # mkimg NAME [board-in-release] [meta-board] [dist] [init]
   mkimg() { n=$1; rb=${2:-glinet,gl-ax1800}; mb=${3:-glinet,gl-ax1800}; dist=${4:-Patronus}; init=${5:-openrc}
     s=$F/src-$n; rm -rf "$s"; mkdir -p "$s/r/etc" "$s/r/usr/sbin" "$s/t/sysupgrade-glinet_gl-ax1800"
@@ -353,16 +366,21 @@ EOF
     mksquashfs "$s/r" "$T/root" -quiet -noappend -all-root >/dev/null; printf '\320\015\376\355' > "$T/kernel"; head -c 300000 /dev/urandom >> "$T/kernel"
     cp "$s/r/etc/patronus-release" "$T/patronus-release"; [ -n "${TREL:-}" ] && sed -i "s/^BOARD=.*/BOARD=$TREL/" "$T/patronus-release"; echo "CONTROL" > "$T/CONTROL"; (cd "$T" && sha256sum kernel root > patronus.sha256)
     (cd "$s/t" && tar cf "$F/$n.tar" sysupgrade-glinet_gl-ax1800)
-    [ "$mb" = none ] || python3 - "$F/$n.tar" "$mb" "$dist" "$D/fwmeta.py" <<'PY'
-import importlib.util, json, sys
+    # SIGN=rel (default) | foreign | none: who signs patronus.sha256 (the signature rides in the metadata as patronus_sig)
+    : > "$s/sig"; [ "${SIGN:-rel}" = none ] || sigfor "${SIGN:-rel}" "$T/patronus.sha256" > "$s/sig"
+    [ "$mb" = none ] || python3 - "$F/$n.tar" "$mb" "$dist" "$D/fwmeta.py" "$s/sig" <<'PY'
+import base64, importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("fwmeta", sys.argv[4]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 data = open(sys.argv[1], "rb").read()
 meta = {"metadata_version": "1.1", "compat_version": "1.0", "supported_devices": [sys.argv[2]], "version": {"dist": sys.argv[3], "version": "t"}}
+sig = open(sys.argv[5], "rb").read()
+if sig:
+    meta["patronus_sig"] = base64.b64encode(sig).decode()
 payload = b"\0" * 8 + (json.dumps(meta) + "\n").encode()
 open(sys.argv[1], "ab").write(payload + m.trailer_for(data, payload))
 PY
     echo "$F/$n.tar"; }
-  PF() { env PATH="$F/bin:$PATH" PATRONUS_DATA="$F/data" PATRONUS_LIB="$LIB" PATRONUS_DT_COMPAT="${COMPAT:-$F/compat}" FW_UBINFO="$F/bin/ubinfo" sh "$O/usr/sbin/patronus-flash" "$@"; }
+  PF() { env PATH="$F/bin:$PATH" PATRONUS_DATA="$F/data" PATRONUS_LIB="$LIB" PATRONUS_DT_COMPAT="${COMPAT:-$F/compat}" FW_UBINFO="$F/bin/ubinfo" FW_KEYRING="${KEYRING:-$KR}" sh "$O/usr/sbin/patronus-flash" "$@"; }
   good=$(mkimg good)
   t "fwmeta.py reads the test metadata back" python3 "$D/fwmeta.py" show "$good"
   t "flash check: good image" PF check "$good"
@@ -372,6 +390,21 @@ PY
   tn_msg "flash check: refuses an OpenWrt image" "not a Patronus image" PF check "$(mkimg owrt glinet,gl-ax1800 glinet,gl-ax1800 OpenWrt)"
   tn_msg "flash check: refuses a root built for another board" "not for\|not built for" PF check "$(mkimg rootboard glinet,gl-mt6000)"
   tn_msg "flash check: refuses a root image built for another board (tar says this board)" "not built for" PF check "$(TREL=glinet,gl-ax1800 mkimg rootonly glinet,gl-mt6000)"
+  # release signature: unsigned, signed by another key, a modified root with a re-made patronus.sha256 (the attacker cannot re-sign),
+  # a box without the keyring
+  tn_msg "flash check: refuses an UNSIGNED image" "not signed" PF check "$(SIGN=none mkimg unsigned)"
+  tn_msg "flash check: refuses an image signed by a foreign key" "signature check FAILED" PF check "$(SIGN=foreign mkimg foreign)"
+  tm=$F/tampered.tar; rm -rf "$F/tt"; mkdir -p "$F/tt"; tar xf "$good" -C "$F/tt" 2>/dev/null
+  printf 'evil' >> "$F/tt/sysupgrade-glinet_gl-ax1800/root"; (cd "$F/tt/sysupgrade-glinet_gl-ax1800" && sha256sum kernel root > patronus.sha256)
+  (cd "$F/tt" && tar cf "$tm" sysupgrade-glinet_gl-ax1800); python3 - "$good" "$tm" "$D/fwmeta.py" <<'PY'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("fwmeta", sys.argv[3]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+meta = m.read(open(sys.argv[1], "rb").read())          # the good image's metadata, signature included
+data = open(sys.argv[2], "rb").read(); payload = b"\0" * 8 + (json.dumps(meta) + "\n").encode()
+open(sys.argv[2], "ab").write(payload + m.trailer_for(data, payload))
+PY
+  tn_msg "flash check: refuses a TAMPERED image (root changed, sha256 re-made, old signature)" "signature check FAILED" PF check "$tm"
+  KEYRING=$F/no-such-keyring tn_msg "flash check: refuses when the box has no release keyring" "no release signing key" PF check "$good"
   tn_msg "flash check: refuses a raw squashfs" "no image metadata\|not a tar" PF check "$F/src-good/t/sysupgrade-glinet_gl-ax1800/root"
   c=$F/corrupt.tar; cp "$good" "$c"; python3 - "$c" <<'PY'
 import sys
@@ -381,20 +414,28 @@ PY
   x=$F/extra.tar; rm -rf "$F/xx"; cp -r "$F/src-nometa/t" "$F/xx"; echo e > "$F/xx/sysupgrade-glinet_gl-ax1800/extra"
   (cd "$F/xx" && tar cf "$x" sysupgrade-glinet_gl-ax1800); python3 "$D/fwmeta.py" add "$x" glinet,gl-ax1800 --version t
   tn_msg "flash check: refuses an unexpected tar member" "unexpected tar member" PF check "$x"
-  if env FAKE_KID=0 FAKE_RID=0 FAKE_ROOT_LEBS=160 PATH="$F/bin:$PATH" PATRONUS_DATA="$F/data" PATRONUS_LIB="$LIB" PATRONUS_DT_COMPAT="$F/compat" FW_UBINFO="$F/bin/ubinfo" sh "$O/usr/sbin/patronus-flash" check "$good" >"$W/out" 2>&1; then
+  if env FAKE_KID=0 FAKE_RID=0 FAKE_ROOT_LEBS=160 PATH="$F/bin:$PATH" PATRONUS_DATA="$F/data" PATRONUS_LIB="$LIB" PATRONUS_DT_COMPAT="$F/compat" FW_UBINFO="$F/bin/ubinfo" FW_KEYRING="$KR" sh "$O/usr/sbin/patronus-flash" check "$good" >"$W/out" 2>&1; then
     no "flash check: accepted volume ids kernel=0 rootfs=0"; else grep -q "rootfs=0" "$W/out" && ok "flash check: refuses a UBI whose rootfs is not volume 1" || { no "flash check: wrong volume ids, wrong message"; cat "$W/out"; }; fi
   # a root that needs more LEBs than volume + free
-  big=$(mkimg big); if env FAKE_ROOT_LEBS=0 FAKE_AVAIL=0 PATH="$F/bin:$PATH" PATRONUS_DATA="$F/data" PATRONUS_LIB="$LIB" PATRONUS_DT_COMPAT="$F/compat" FW_UBINFO="$F/bin/ubinfo" sh "$O/usr/sbin/patronus-flash" check "$big" >"$W/out" 2>&1; then
+  big=$(mkimg big); if env FAKE_ROOT_LEBS=0 FAKE_AVAIL=0 PATH="$F/bin:$PATH" PATRONUS_DATA="$F/data" PATRONUS_LIB="$LIB" PATRONUS_DT_COMPAT="$F/compat" FW_UBINFO="$F/bin/ubinfo" FW_KEYRING="$KR" sh "$O/usr/sbin/patronus-flash" check "$big" >"$W/out" 2>&1; then
     no "flash check: accepted an image that does not fit"; else grep -q "more LEBs" "$W/out" && ok "flash check: refuses an image that does not fit the UBI" || { no "flash check: no-room case, wrong message"; cat "$W/out"; }; fi
   t "flash sysupgrade: stages a good image" PF sysupgrade "$good"
   [ -f "$F/data/.upgrade/ready" ] && [ -s "$F/data/.upgrade/root" ] && [ ! -e "$F/data/.upgrade.new" ] && ok "staged: ready marker + parts" || no "staged layout wrong: $(ls -a "$F/data" "$F/data/.upgrade" 2>&1)"
   tn_msg "flash sysupgrade: refuses a second staging" "already staged" PF sysupgrade "$good"
-  UV() { env PATH="$F/bin:$PATH" PATRONUS_DATA="$F/data" PATRONUS_LIB="$LIB" PATRONUS_DT_COMPAT="${COMPAT:-$F/compat}" FW_UBINFO="$F/bin/ubinfo" sh "$LIB/upgrade-install" verify; }
+  UV() { env PATH="$F/bin:$PATH" PATRONUS_DATA="$F/data" PATRONUS_LIB="$LIB" PATRONUS_DT_COMPAT="${COMPAT:-$F/compat}" FW_UBINFO="$F/bin/ubinfo" FW_KEYRING="$KR" sh "$LIB/upgrade-install" verify; }
   t "upgrade-install verify: accepts the staged image (early boot re-check)" UV
   COMPAT=$F/compat-other tn "upgrade-install verify: refuses on another board" UV
   [ -d "$F/data/.upgrade-rejected" ] && [ ! -e "$F/data/.upgrade" ] && ok "rejected upgrade moved aside (normal boot goes on)" || no "rejected upgrade not moved aside"
   t "flash sysupgrade: stage again after a rejection" PF sysupgrade "$good"
+  [ -s "$F/data/.upgrade/patronus.sha256.sig" ] && ok "staged: the release signature is kept for the boot-time re-check" || no "staged upgrade has no patronus.sha256.sig"
   printf 'x' >> "$F/data/.upgrade/root"; tn "upgrade-install verify: refuses a staged root changed after staging" UV
+  t "flash sysupgrade: stage again (2)" PF sysupgrade "$good"
+  printf 'x' >> "$F/data/.upgrade/root"; (cd "$F/data/.upgrade" && sha256sum kernel root > patronus.sha256)
+  : > "$F/data/upgrade.log"; tn "upgrade-install verify: refuses a staged root + re-made sha256 (release signature)" UV
+  grep -q "signature check FAILED" "$F/data/upgrade.log" && ok "upgrade.log names the failed release signature" || { no "upgrade.log lacks the signature failure"; cat "$F/data/upgrade.log"; }
+  t "flash sysupgrade: stage again (3)" PF sysupgrade "$good"; rm -f "$F/data/.upgrade/patronus.sha256.sig"
+  : > "$F/data/upgrade.log"; tn "upgrade-install verify: refuses a staged upgrade without its signature" UV
+  grep -q "not signed" "$F/data/upgrade.log" && ok "upgrade.log says the staged upgrade is not signed" || { no "upgrade.log lacks 'not signed'"; cat "$F/data/upgrade.log"; }
   t "flash cancel" PF cancel; [ ! -e "$F/data/.upgrade" ] && ok "cancel removed the staged upgrade" || no "cancel left the staged upgrade"
   tn_msg "flash: unknown command shows usage" "patronus-flash check" PF frobnicate
 else sk "patronus-flash image cases (no mksquashfs/unsquashfs)"; fi

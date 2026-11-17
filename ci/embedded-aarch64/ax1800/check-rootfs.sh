@@ -68,6 +68,9 @@ grep -q 'CALDATA_OUT:-/run/' "$R/usr/libexec/patronus/ath11k-caldata" 2>/dev/nul
 grep -q 'firmware_class/parameters/path' "$R/usr/libexec/patronus/early" 2>/dev/null || fail "early boot does not point firmware_class.path at the calibration dir"
 grep -qE '^[^#]*rmmod[^#]*ath11k' "$R/usr/libexec/patronus/early" 2>/dev/null && fail "early boot unloads ath11k (crashes the board)"
 # ETPhoneHome
+# release signature checks of upgrade images (fwcheck.sh): gpgv + the release keyring must be on every image
+[ -x "$R/usr/bin/gpgv" ] || [ -x "$R/bin/gpgv" ] || fail "gpgv missing: patronus-flash could not check release signatures (every upgrade would be refused)"
+[ -s "$R/usr/share/openpgp-keys/errantsolutions.gpg" ] || fail "release keyring /usr/share/openpgp-keys/errantsolutions.gpg missing"
 [ -x "$R/usr/sbin/etphonehome" ] && head -c4 "$R/usr/sbin/etphonehome" | grep ELF >/dev/null || fail "ETPhoneHome: no /usr/sbin/etphonehome ELF binary"
 [ -x "$R/usr/libexec/patronus/etph-run" ] || fail "ETPhoneHome: no /usr/libexec/patronus/etph-run"
 case "${INIT:-}" in

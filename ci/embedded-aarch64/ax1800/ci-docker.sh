@@ -24,13 +24,16 @@ up)
   tar --exclude=./.git -cf - . | docker exec -i "$C" sh -c 'mkdir -p /w/src && tar -xf - -C /w/src'
   echo "builder $IMG, container $C" ;;
 build)
+  # the release signing key goes in through stdin into a 0600 file (never on a command line or in the container's env), ci-build.sh
+  # reads and deletes it after assemble.sh; no key = assemble.sh refuses to make an unsigned image
+  if [ -n "${RELEASE_SIGNING_KEY:-}" ]; then printf '%s\n' "$RELEASE_SIGNING_KEY" | docker exec -i "$C" sh -c 'umask 077; cat > /w/.release-signing-key'; fi
   docker exec -e VARIANTS="$V" -e SOURCE_REV="$SHA" -e TAG="ci-$(echo "$SHA" | cut -c1-8)" "$C" bash /w/src/$H/ci-build.sh ;;
 qemu)
   docker exec -e VIRT_KERNEL=/out/stock/virt-kernel.bin -e UNIT_DIR=/out/unit -e RESULTS=/out/qemu-$V "$C" \
     sh -c "bash /w/src/$H/qemu-gate.sh $V \$(ls -d /out/images/$V/*/ | head -1)" ;;
 down)
   mkdir -p ci-out
-  docker exec "$C" sh -c 'cd /out && tar cf - summary.txt images/*/*/sizes.txt images/*/*/nand-budget.txt images/*/*/sha256sums qemu-* build-patronus-cli.log 2>/dev/null' | tar xf - -C ci-out 2>/dev/null || true
+  docker exec "$C" sh -c 'cd /out && tar cf - summary.txt images/*/*/sizes.txt images/*/*/nand-budget.txt images/*/*/sha256sums images/*/*/sha256sums.asc qemu-* build-patronus-cli.log 2>/dev/null' | tar xf - -C ci-out 2>/dev/null || true
   docker rm -f "$C" >/dev/null 2>&1 || true
   ls -R ci-out | head -40 ;;
 *) echo "unknown command $CMD"; exit 2 ;;

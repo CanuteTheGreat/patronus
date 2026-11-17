@@ -27,5 +27,8 @@ COPY gentoo/net-firewall/patronus/files/web-auth.toml /out/etc/patronus/web-auth
 COPY gentoo/net-firewall/patronus/files/patronus-web.service gentoo/net-firewall/patronus/files/patronus-applyd.service gentoo/net-firewall/patronus/files/patronus-firewall.service /out/usr/lib/systemd/system/
 # same drop-in the ebuild installs (systemd_install_dropin -> 00gentoo.conf): unbound may create the control socket/query log Patronus configures
 COPY gentoo/net-firewall/patronus/files/unbound-patronus.conf /out/usr/lib/systemd/system/unbound.service.d/00gentoo.conf
+# release signing key (verifies downloaded Patronus images, checksums and SBOMs; same file as keys/release-signing.asc and the
+# overlay package sec-keys/openpgp-keys-errantsolutions, which Gentoo installs own; this ISO copies the app files by hand)
+COPY keys/release-signing.asc /out/usr/share/openpgp-keys/errantsolutions.asc
 FROM scratch
 COPY --from=app /out/ /out/

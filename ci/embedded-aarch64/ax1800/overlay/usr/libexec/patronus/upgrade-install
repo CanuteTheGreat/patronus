@@ -2,7 +2,7 @@
 # upgrade-install: installs an upgrade staged by `patronus-flash sysupgrade` (GL-AX1800, both init systems).
 # The kernel command line pins root=/dev/ubiblock0_1, so the root volume cannot be written while it is the running root.
 # The write therefore happens at the start of the next boot, before any service, from a RAM root:
-#   verify   (early boot, child of PID 1)  re-check the staged parts (fwcheck.sh: board, sha256, FIT/squashfs, the root's
+#   verify   (early boot, child of PID 1)  re-check the staged parts (fwcheck.sh: board, sha256, release signature, FIT/squashfs, the root's
 #                                         patronus-release, UBI room). Bad -> /data/.upgrade-rejected, normal boot goes on.
 #   install  (PID 1, from patronus-init)  copy the parts + busybox + the UBI tools to a tmpfs, unmount everything,
 #                                         pivot_root into it and exec stage2. Any failure before the pivot: nothing has been
@@ -67,8 +67,11 @@ install)
   export PATH=/usr/sbin:/usr/bin:/sbin:/bin
   mount -t tmpfs -o size=160m,mode=0755 upgrade-ram /mnt || fail "no tmpfs"
   mkdir -p /mnt/img /mnt/bin /mnt/lib /mnt/proc /mnt/sys /mnt/dev /mnt/old /mnt/data || fail "mkdir"
-  cp "$S/kernel" "$S/root" "$S/patronus.sha256" /mnt/img/ || fail "copy to RAM (space?)"
+  cp "$S/kernel" "$S/root" "$S/patronus.sha256" "$S/patronus.sha256.sig" /mnt/img/ || fail "copy to RAM (space? or no release signature)"
   (cd /mnt/img && sha256sum -c patronus.sha256 >/dev/null 2>&1) || fail "RAM copy does not match patronus.sha256"
+  # the exact bytes about to be written: release signature checked once more on the RAM copy (the old root's gpgv + keyring)
+  . "${PATRONUS_LIB:-/usr/libexec/patronus}/fwcheck.sh"; fw_sig_ok /mnt/img 2>>"$DATA/upgrade.log" || fail "release signature of the RAM copy does not verify"
+  rm -f /mnt/img/patronus.sha256.sig
   for b in /bin/busybox /usr/sbin/ubinfo /usr/sbin/ubiupdatevol /usr/sbin/ubirsvol /usr/sbin/ubiblock; do
     cp "$b" /mnt/bin/ || fail "copy $b"
     # shared libraries (musl loader prints "name => path (addr)")

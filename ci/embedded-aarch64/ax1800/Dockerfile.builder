@@ -6,7 +6,7 @@ RUN apk add --no-cache bash build-base git curl pkgconf perl cmake clang-dev lin
       openssl-dev openssl-libs-static libmnl-dev libnftnl-dev abuild libnl3-dev \
       squashfs-tools xz tar coreutils findutils binutils file python3 mtd-utils-ubi \
       meson samurai gperf py3-jinja2 py3-elftools libcap-dev util-linux-dev libucontext-dev \
-      qemu-system-aarch64 qemu-img cpio e2fsprogs kmod dropbear openssh-client
+      qemu-system-aarch64 qemu-img cpio e2fsprogs kmod dropbear openssh-client gnupg gpgv
 # the stable Rust toolchain with the tier-2 musl target (no build-std, no nightly)
 RUN rustup-init -y --profile minimal --default-toolchain stable -t aarch64-unknown-linux-musl >/dev/null 2>&1 && /root/.cargo/bin/rustc -V
 ENV PATH=/root/.cargo/bin:$PATH

@@ -20,6 +20,7 @@ bad=0; for b in /usr/bin/patronus-cli /usr/bin/patronus-web /usr/bin/patronus-in
 # backend, which fails closed on yescrypt hashes (chpasswd / the console menu password reset): fail the build instead
 [ -s /etc/pam.d/patronus ] && [ -e /etc/pam.d/system-auth ] || { echo "/etc/pam.d/patronus or system-auth missing: web login would fall back to the shadow backend"; exit 1; }
 [ -e /etc/patronus/web-auth.toml ] || { echo "/etc/patronus/web-auth.toml missing"; exit 1; }
+grep -q "BEGIN PGP PUBLIC KEY BLOCK" /usr/share/openpgp-keys/errantsolutions.asc || { echo "release signing key /usr/share/openpgp-keys/errantsolutions.asc missing"; exit 1; }
 find /lib64 /usr/lib64 /lib /usr/lib -maxdepth 2 -name 'libpam.so.0' 2>/dev/null | grep -q . || { echo "libpam.so.0 missing"; exit 1; }
 if [ "$(uname -m)" = riscv64 ]; then echo 'riscv64: no ZFS in the image (XFS fallback)'; exit 0; fi
 # ZFS (default root file system + mirror installs): module + tools + dracut hook + a kernel build tree must be in the image

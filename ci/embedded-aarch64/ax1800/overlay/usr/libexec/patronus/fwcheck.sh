@@ -6,15 +6,19 @@
 # Checks (each one fails closed):
 #   - this box is a GL-AX1800 (device tree compatible), so an image is never written to another board
 #   - fwtool metadata: present, supported_devices lists this board, dist is Patronus
+#   - RELEASE SIGNATURE: the metadata's `patronus_sig` is a valid OpenPGP signature of patronus.sha256 by a key in the box's
+#     release keyring (FW_KEYRING, the Errant Solutions release key built into this firmware); checked with gpgv BEFORE the root
+#     image is opened, so an unsigned, foreign-signed or modified image is refused before anything parses it
 #   - the tar holds exactly the board's sysupgrade directory; sha256 of kernel and root match patronus.sha256
 #   - kernel is a FIT (FDT magic), root is a squashfs whose /etc/patronus-release names this board and whose
 #     /etc/patronus-init is openrc or systemd, with patronus-init and ETPhoneHome inside
 #   - kernel + root fit the UBI device (current volumes + free LEBs), the settings volume keeps FW_DATA_MIN_KIB
-# Test hooks: PATRONUS_DT_COMPAT (compatible file), PATRONUS_UBI, FW_UBINFO (ubinfo command), FW_DATA_MIN_KIB.
+# Test hooks: PATRONUS_DT_COMPAT (compatible file), PATRONUS_UBI, FW_UBINFO (ubinfo command), FW_DATA_MIN_KIB, FW_KEYRING.
 FW_BOARD=glinet,gl-ax1800
 FW_DIR=sysupgrade-glinet_gl-ax1800
 FW_LEB=126976
 FW_DATA_MIN_KIB=${FW_DATA_MIN_KIB:-4096}
+FW_KEYRING=${FW_KEYRING:-/usr/share/openpgp-keys/errantsolutions.gpg}
 
 fw_err() { echo "patronus-flash: REFUSED: $*" >&2; logger -t patronus-flash "REFUSED: $*" 2>/dev/null; return 1; }
 
@@ -37,6 +41,26 @@ fw_meta_ok() {
   m=$(fw_meta "$1") || { fw_err "$1 has no image metadata (not a Patronus sysupgrade image)"; return 1; }
   echo "$m" | tr -d ' \n' | grep '"supported_devices":\[[^]]*"'"$FW_BOARD"'"' >/dev/null || { fw_err "image metadata does not list $FW_BOARD"; return 1; }
   echo "$m" | tr -d ' \n' | grep '"dist":"Patronus"' >/dev/null || fw_err "image metadata is not a Patronus image (use OpenWrt's own sysupgrade for OpenWrt images)"
+}
+
+# fw_sig_extract <image> <out>: the binary signature from the metadata's "patronus_sig" (base64) into <out>; 1 = none
+fw_sig_extract() {
+  s=$(fw_meta "$1" | tr -d ' \n' | sed -n 's/.*"patronus_sig":"\([A-Za-z0-9+/=]*\)".*/\1/p')
+  [ -n "$s" ] || return 1
+  printf '%s' "$s" | base64 -d > "$2" 2>/dev/null && [ -s "$2" ]
+}
+
+# fw_sig_ok <dir>: <dir>/patronus.sha256.sig is a good signature of <dir>/patronus.sha256 by a release key of this box
+fw_sig_ok() {
+  d=$1
+  [ -s "$d/patronus.sha256.sig" ] || { fw_err "the image is not signed (no release signature): unsigned firmware is never installed"; return 1; }
+  [ -s "$FW_KEYRING" ] || { fw_err "no release signing key on this box ($FW_KEYRING): cannot check the image"; return 1; }
+  command -v gpgv >/dev/null 2>&1 || { fw_err "gpgv is missing: cannot check the release signature"; return 1; }
+  g=$d/.gnupg; rm -rf "$g"; mkdir -p "$g" && chmod 700 "$g"
+  st=$(GNUPGHOME=$g gpgv --status-fd 1 --keyring "$FW_KEYRING" "$d/patronus.sha256.sig" "$d/patronus.sha256" 2>/dev/null); rm -rf "$g"
+  fp=$(echo "$st" | sed -n 's/^\[GNUPG:\] VALIDSIG \([0-9A-F]*\) .*/\1/p' | head -1)
+  [ -n "$fp" ] || { fw_err "release signature check FAILED: the image was modified or is not signed by the Patronus release key"; return 1; }
+  echo "signature: good, release key $fp" >&2
 }
 
 # fw_root_file <root.squashfs> <path>: print one file of the squashfs (unsquashfs when there is one, else a loop mount)
@@ -78,6 +102,7 @@ fw_check_parts() {
   for f in kernel root patronus.sha256 patronus-release; do [ -s "$d/$f" ] || { fw_err "image has no $f"; return 1; }; done
   (cd "$d" && grep -E '^[0-9a-f]{64}  (kernel|root)$' patronus.sha256 | sha256sum -c - >/dev/null 2>&1) || { fw_err "sha256 of kernel/root does not match patronus.sha256 (corrupt download?)"; return 1; }
   [ "$(grep -cE '^[0-9a-f]{64}  (kernel|root)$' "$d/patronus.sha256")" = 2 ] || { fw_err "patronus.sha256 must list kernel and root"; return 1; }
+  fw_sig_ok "$d" || return 1
   [ "$(fw_magic "$d/kernel")" = d00dfeed ] || { fw_err "kernel is not a FIT image"; return 1; }
   [ "$(fw_magic "$d/root")" = 68737173 ] || { fw_err "root is not a squashfs"; return 1; }
   grep -qx "BOARD=$FW_BOARD" "$d/patronus-release" || { fw_err "patronus-release is not for $FW_BOARD"; return 1; }
@@ -103,5 +128,6 @@ fw_check_tar() {
   mkdir -p "$out" && tar xf "$img" -C "$out" 2>/dev/null || { fw_err "cannot unpack $img into $out (space?)"; return 1; }
   for f in kernel root patronus.sha256 patronus-release; do [ -f "$out/$FW_DIR/$f" ] && mv "$out/$FW_DIR/$f" "$out/$f"; done
   rm -rf "${out:?}/$FW_DIR"
+  rm -f "$out/patronus.sha256.sig"; fw_sig_extract "$img" "$out/patronus.sha256.sig" || rm -f "$out/patronus.sha256.sig"
   fw_check_parts "$out"
 }

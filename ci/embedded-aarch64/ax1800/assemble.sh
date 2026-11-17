@@ -16,6 +16,10 @@
 #   Init system, exactly one (both variants are first-class; busybox only provides applets):
 #   OPENRC_TREE       tar of OpenRC (stage-openrc.sh -> pack.sh: openrc.tar): openrc-init as PID 1 after patronus-init's early boot
 #   SYSTEMD_TREE      tar of the systemd install (stage-systemd.sh: /out/systemd-root as a tar): systemd as PID 1, same early boot
+#   RELEASE_SIGNING_KEY  armoured secret release key (CI secret; per-unit builds: the escrow copy). patronus.sha256 (kernel + root
+#                     hashes) is signed and the signature goes into the fwtool metadata (`patronus_sig`), where patronus-flash and the
+#                     boot-time installer verify it with the key built into the running firmware; every output file also gets a
+#                     detached .asc. Without the key the build FAILS (ALLOW_UNSIGNED=1: a test build that no Patronus box installs).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 B=$(readlink -f "$1"); TAG=$2
@@ -47,6 +51,10 @@ sh "$HERE/fetch-kmods.sh" board "$R" "${KMOD_CACHE:-$OUT_DIR/.kmod-cache}"
 for f in services protocols; do [ -e "$R/etc/$f" ] || cp "$S/etc/$f" "$R/etc/$f"; done
 # overlay (early boot, board glue, ath11k caldata, AP renderer, flash tool, Patronus config); examples stay out of the image
 cp -a "$HERE"/overlay/. "$R/"; rm -f "$R"/etc/patronus/*.example
+# release signing key: gpgv keyring (binary) for the flash guard + the armoured copy (same file as keys/release-signing.asc)
+REPO=$(cd "$HERE/../../.." && pwd); mkdir -p "$R/usr/share/openpgp-keys"
+install -m644 "$REPO/keys/release-signing.asc" "$R/usr/share/openpgp-keys/errantsolutions.asc"
+gpg --batch --quiet --dearmor < "$REPO/keys/release-signing.asc" > "$R/usr/share/openpgp-keys/errantsolutions.gpg"; chmod 644 "$R/usr/share/openpgp-keys/errantsolutions.gpg"
 ln -sf /usr/sbin/patronus-init "$R/sbin/init"
 # ETPhoneHome router client (every variant, owner rule): the pinned release package (etph.pin), sha256-verified, client only
 . "$HERE/etph.pin"
@@ -144,10 +152,24 @@ tar xf "$STOCK_SYSUPGRADE" -C "$W" --wildcards '*/kernel' '*/CONTROL'
 [ "$(head -c4 "$D/kernel" | od -An -tx1 | tr -d ' ')" = d00dfeed ] || { echo "assemble.sh: the stock kernel is not a FIT"; exit 1; }
 cp "$OUTD/root.squashfs" "$D/root"; cp "$R/etc/patronus-release" "$D/patronus-release"
 (cd "$D" && sha256sum kernel root > patronus.sha256)
+# release signature of patronus.sha256 (it binds kernel + root): carried in the fwtool metadata, so the tar keeps exactly the
+# members every older patronus-flash accepts and OpenWrt's sysupgrade ignores the extra JSON key
+SIG=$W/patronus.sha256.sig; SIGARGS=()
+if [ -n "${RELEASE_SIGNING_KEY:-}" ]; then
+  GH=$(mktemp -d "${TMPDIR:-/tmp}/relsign.XXXX"); chmod 700 "$GH"
+  printf '%s\n' "$RELEASE_SIGNING_KEY" | gpg --homedir "$GH" --batch --quiet --import 2>/dev/null
+  gpg --homedir "$GH" --batch --quiet --pinentry-mode loopback --passphrase '' --detach-sign --output "$SIG" "$D/patronus.sha256"
+  gpgconf --homedir "$GH" --kill all >/dev/null 2>&1 || true; rm -rf "$GH"
+  # must verify with the keyring that goes into the image (a foreign key would make every box refuse this image)
+  GV=$(mktemp -d); GNUPGHOME=$GV gpgv --keyring "$R/usr/share/openpgp-keys/errantsolutions.gpg" "$SIG" "$D/patronus.sha256" 2>/dev/null \
+    || { rm -rf "$GV"; echo "assemble.sh: the signature does not verify with keys/release-signing.asc (RELEASE_SIGNING_KEY is not the release key)"; exit 1; }
+  rm -rf "$GV"; SIGARGS=(--sig "$SIG"); echo "release signature: patronus.sha256 signed"
+elif [ "${ALLOW_UNSIGNED:-}" = 1 ]; then echo "assemble.sh: WARNING: unsigned test build (ALLOW_UNSIGNED=1): patronus-flash refuses to install it"
+else echo "assemble.sh: RELEASE_SIGNING_KEY is not set: refusing to build an unsigned upgrade image (ALLOW_UNSIGNED=1 for a test build)"; exit 1; fi
 OUT_TAR=$OUTD/patronus-$TAG-$BOARD_DIR-sysupgrade.tar
 (cd "$W" && tar cf "$OUT_TAR" --owner=0 --group=0 --sort=name sysupgrade-$BOARD_DIR)
 ALSO=$(echo "$HW_DEVICE_BOARD_ALIASES" | tr ' ' ',')
-"$HERE/fwmeta.py" add "$OUT_TAR" "$BOARD" --version "$TAG" ${ALSO:+--also "$ALSO"}
+"$HERE/fwmeta.py" add "$OUT_TAR" "$BOARD" --version "$TAG" ${ALSO:+--also "$ALSO"} "${SIGARGS[@]}"
 # factory.ubi: the UBI image GL's U-Boot web recovery writes to mtd "rootfs" (layout = OpenWrt's factory.ubi for this
 # board: kernel id 0, rootfs id 1, rootfs_data id 2 with autoresize; checked by nand-budget.sh/ubi-layout.py below)
 cat > "$W/ubinize.cfg" <<EOT
@@ -179,6 +201,8 @@ ubinize -o "$OUT_UBI" -p "$HW_NAND_PEB_BYTES" -m "$HW_NAND_MIN_IO" -s "$HW_NAND_
 cp "$OUT_UBI" "$OUT_BIN"; "$HERE/fwmeta.py" add "$OUT_BIN" "$BOARD" --version "$TAG" ${ALSO:+--also "$ALSO"}
 cp "$D/kernel" "$OUTD/.kernel"; rm -rf "$W"
 (cd "$OUTD" && sha256sum root.squashfs patronus-$TAG-* > sha256sums)
+# detached .asc for every output file (images written by U-Boot / GL's web UI can only be checked this way, before flashing)
+if [ -n "${RELEASE_SIGNING_KEY:-}" ]; then (cd "$OUTD" && RELEASE_PUBKEY="$REPO/keys/release-signing.asc" bash "$REPO/gentoo/live-iso/common/sign-artifacts.sh" sha256sums root.squashfs patronus-$TAG-*-sysupgrade.tar patronus-$TAG-*-factory.ubi patronus-$TAG-*-factory.bin); fi
 unsquashfs -s "$OUTD/root.squashfs" | grep -E 'Filesystem size|Compression|Block size'
 rc=0; sh "$HERE/nand-budget.sh" "$OUTD/root.squashfs" "$OUTD/.kernel" "$OUT_UBI" > "$OUTD/nand-budget.txt" 2>&1 || rc=$?; cat "$OUTD/nand-budget.txt"
 { echo "build=$TAG init=$INIT"; for f in $(cd "$OUTD" && ls root.squashfs patronus-$TAG-*); do awk -v f="$f" -v n="$(stat -c%s "$OUTD/$f")" 'BEGIN{printf "%s %d bytes (%.2f MiB)\n", f, n, n/1048576}'; done

@@ -6,7 +6,8 @@
 # Marker /out/stage-rootfs.ok. Package choice (docs/embedded-routers.md, GL-AX1800): a wired AP needs hostapd + iw + the
 # iproute2 `ip` + a DHCP client (busybox udhcpc) + dropbear + the UBI tools; PAM for the web login; libmnl/libnftnl for
 # patronus-cli's nftables backend; wireless-regdb for the regulatory database; libucontext for systemd (musl) and libmount, which systemd dlopen()s to mount
-# the API filesystems (without it PID 1 freezes: "Failed to mangle mount options ... Not supported").
+# the API filesystems (without it PID 1 freezes: "Failed to mangle mount options ... Not supported"); gpgv checks the release
+# signature of every upgrade image before patronus-flash stages it (fwcheck.sh).
 # WireGuard VPN (feature vpn-wireguard): `wg` (wireguard-tools-wg, the applier runs `wg syncconf`; the kernel module is a pinned
 # OpenWrt kmod, kmods.pin). Clock and NTP server: chrony (non-NTS build, no GnuTLS), the one NTP daemon of the image: it keeps
 # the clock and, with the NTP server page (feature ntp-server), serves the LAN.
@@ -16,7 +17,7 @@ set -euo pipefail
 R=/out/rootfs; rm -rf $R; mkdir -p $R
 COMMON="alpine-baselayout-data busybox busybox-binsh musl libgcc libcap2 linux-pam libmnl libnftnl ca-certificates-bundle \
   iw iproute2-minimal dropbear dropbear-scp mtd-utils-ubi nftables wireless-regdb libnl3 libssl3 libcrypto3 zlib libucontext libmount \
-  wireguard-tools-wg chrony"
+  wireguard-tools-wg chrony gpgv"
 APK="apk --initdb --no-scripts --no-cache --keys-dir /etc/apk/keys --repositories-file /etc/apk/repositories"
 HOSTAPD_APK=$(ls /out/hostapd/*/hostapd-2.11-r1[0-9][0-9].apk 2>/dev/null | head -1)
 [ -n "$HOSTAPD_APK" ] || { echo "stage-rootfs: no Patronus hostapd package in /out/hostapd (run stage-hostapd.sh first)"; exit 1; }

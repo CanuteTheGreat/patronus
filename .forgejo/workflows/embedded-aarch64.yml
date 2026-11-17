@@ -12,6 +12,9 @@ on:
     paths:
       - 'ci/embedded-aarch64/**'
       - 'ci/embedded-common/**'
+      - 'keys/**'
+      - 'gentoo/live-iso/common/sign-artifacts.sh'
+      - 'gentoo/live-iso/common/verify-artifacts.sh'
       - 'ci/hw-profile/**'
       - 'profiles/**'
       - 'crates/patronus-cli/**'
@@ -38,7 +41,7 @@ jobs:
         run: |
           sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
           for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
-          sudo apt-get install -y squashfs-tools mtd-utils
+          sudo apt-get install -y squashfs-tools mtd-utils gnupg gpgv
       - name: Image tooling tests
         run: sh ci/embedded-aarch64/ax1800/tests/run.sh
       - name: Device profiles
@@ -73,7 +76,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Builder container (image cached on the host)
         run: bash ci/embedded-aarch64/ax1800/ci-docker.sh up ${{ matrix.init }}
-      - name: Build ${{ matrix.init }} image + NAND budget
+      - name: Build ${{ matrix.init }} image + NAND budget (release-signed)
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}   # patronus.sha256 signature in the image metadata + .asc files
         run: bash ci/embedded-aarch64/ax1800/ci-docker.sh build ${{ matrix.init }}
       - name: QEMU aarch64 gate (${{ matrix.init }})
         run: bash ci/embedded-aarch64/ax1800/ci-docker.sh qemu ${{ matrix.init }}

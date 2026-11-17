@@ -81,6 +81,17 @@ jobs:
           "dist/$d/patronus-cli" --version
           ls -l "$d.tar.gz"*
 
+      # every attached file gets a detached OpenPGP signature (.asc) with the release key, verified against keys/release-signing.asc;
+      # no key / a foreign key / a bad signature fails the job here, before anything is attached
+      - name: Sign the archive and its checksum
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          set -eu
+          command -v gpgv >/dev/null || sudo apt-get install -y gnupg gpgv
+          d=patronus-$TAG-${{ matrix.target }}
+          bash gentoo/live-iso/common/sign-artifacts.sh "$d.tar.gz" "$d.tar.gz.sha256"
+
       - name: Attach to the release
         env:
           FORGEJO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -102,7 +113,8 @@ jobs:
           fi
           [ -n "$id" ] || { echo "cannot find or create the release of $tag"; exit 1; }
           # Forgejo keeps assets on Backblaze B2, which intermittently drops a PUT: retry with a fresh slot each time
-          for f in patronus-$tag-${{ matrix.target }}.tar.gz patronus-$tag-${{ matrix.target }}.tar.gz.sha256; do
+          for f in patronus-$tag-${{ matrix.target }}.tar.gz patronus-$tag-${{ matrix.target }}.tar.gz.sha256 \
+                   patronus-$tag-${{ matrix.target }}.tar.gz.asc patronus-$tag-${{ matrix.target }}.tar.gz.sha256.asc; do
             ok=
             for n in 1 2 3 4 5 6; do
               old=$(curl -fsS "${auth[@]}" "$api/releases/$id/assets" | python3 -c 'import json,sys;print(" ".join(str(a["id"]) for a in json.load(sys.stdin) if a["name"]==sys.argv[1]))' "$f")

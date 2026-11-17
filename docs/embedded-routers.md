@@ -461,6 +461,18 @@ OpenWrt's `rootfs_data` (which after factory.ubi has autoresized over the whole 
   our OpenRC factory.ubi (the U-Boot path), attach, first-boot `patronus_data` creation (455 LEBs, 264 left free), settings
   written, then `check` + `sysupgrade` + `verify` + `ubi-write` of the systemd image (rootfs grown 133 -> 155 LEBs, ubiblock
   released, both volumes read back equal), settings file intact: all passed. Not run in CI (loading nandsim is a host change).
+- **Release signature (2026-11-17).** `assemble.sh` signs `patronus.sha256` (which binds the kernel and root hashes) with the
+  Errant Solutions release key (fingerprint `5439 3549 39B9 C055 2A68  E9BB E323 A6A3 AC0A 6506`, `keys/release-signing.asc`)
+  and stores the binary signature base64 in the fwtool metadata as `patronus_sig`. The tar keeps exactly the members older
+  `patronus-flash` builds accept, and OpenWrt's `sysupgrade -T` ignores the extra JSON key. The image ships `gpgv` and the
+  keyring `/usr/share/openpgp-keys/errantsolutions.gpg`; `fwcheck.sh` checks the signature right after the sha256 and before
+  the root image is opened, `upgrade-install` checks it again at boot and once more on the RAM copy it is about to write.
+  Unsigned, foreign-signed or modified images are refused (`REFUSED: the image is not signed` / `release signature check
+  FAILED`). Every output file also gets a detached `.asc`. `assemble.sh` refuses to build without `RELEASE_SIGNING_KEY`
+  (`ALLOW_UNSIGNED=1` makes a test image that no Patronus box installs). Units still on a build from before this change don't
+  check signatures yet; they start doing so once they run a signed build. Proof: host tests (unsigned, foreign key, tampered root
+  with a re-made sha256, missing keyring, staged-then-modified) and the QEMU gate (an unsigned and a tampered copy of the CI
+  image are refused on the real firmware, nothing is staged; the signed image is accepted and staged).
 
 ### 12.5 QEMU aarch64 gate (`qemu-gate.sh`, both init systems, every push)
 

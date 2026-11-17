@@ -7,9 +7,11 @@ JSON, then a 16-byte big-endian trailer
   magic 'FWx0' | crc32 | type (1 = FWIMAGE_INFO) | 3 pad bytes | size (header + JSON + trailer)
 where crc32 = ~zlib.crc32(every byte before the trailer). Checked against the 25.12.6 GL-AR750S image.
 
-usage: fwmeta.py add <image> <board> [--version V] [--also B1,B2]   (supported_devices = <board> + extra names)
+usage: fwmeta.py add <image> <board> [--version V] [--also B1,B2] [--sig FILE]   (supported_devices = <board> + extra names;
+       --sig: the binary OpenPGP signature of patronus.sha256, stored base64 as "patronus_sig")
        fwmeta.py show <image>
 """
+import base64
 import json
 import struct
 import sys
@@ -24,7 +26,7 @@ def trailer_for(data: bytes, payload: bytes) -> bytes:
     return struct.pack(">IIB3xI", MAGIC, crc, INFO, len(payload) + 16)
 
 
-def add(path: str, board: str, version: str = "embedded", also=()) -> None:
+def add(path: str, board: str, version: str = "embedded", also=(), sig: bytes = b"") -> None:
     data = open(path, "rb").read()
     if read(data) is not None:
         raise SystemExit(f"{path}: already has metadata")
@@ -34,6 +36,8 @@ def add(path: str, board: str, version: str = "embedded", also=()) -> None:
         "supported_devices": [board, *also],
         "version": {"dist": "Patronus", "version": version, "board": board.replace(",", "_")},
     }
+    if sig:
+        meta["patronus_sig"] = base64.b64encode(sig).decode()
     payload = b"\0" * 8 + (json.dumps(meta) + "\n").encode()  # fwimage_header, then the JSON
     with open(path, "ab") as f:
         f.write(payload + trailer_for(data, payload))
@@ -58,7 +62,8 @@ if __name__ == "__main__":
     if len(sys.argv) >= 4 and sys.argv[1] == "add":
         v = sys.argv[sys.argv.index("--version") + 1] if "--version" in sys.argv else "embedded"
         also = sys.argv[sys.argv.index("--also") + 1].split(",") if "--also" in sys.argv else []
-        add(sys.argv[2], sys.argv[3], v, also)
+        sig = open(sys.argv[sys.argv.index("--sig") + 1], "rb").read() if "--sig" in sys.argv else b""
+        add(sys.argv[2], sys.argv[3], v, also, sig)
     elif len(sys.argv) == 3 and sys.argv[1] == "show":
         print(json.dumps(read(open(sys.argv[2], "rb").read())))
     else:
