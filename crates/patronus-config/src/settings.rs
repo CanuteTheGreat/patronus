@@ -234,6 +234,72 @@ pub static REGISTRY: &[Setting] = &[
         effect: "next web proxy apply",
         table: Table::Lan,
     },
+    Setting {
+        key: "guard.confirm_secs",
+        section: "Router firmware safety",
+        label: "Boot confirmation window",
+        doc: "How long a freshly flashed Patronus boot has to be confirmed (by an operator or the unattended gateway check) before the unit reverts to the previous firmware.",
+        kind: Kind::Int { min: 60, max: 86_400 },
+        default: "600",
+        unit: "seconds",
+        effect: "next boot (router-tier units)",
+        table: Table::System,
+    },
+    Setting {
+        key: "guard.max_unconfirmed_boots",
+        section: "Router firmware safety",
+        label: "Unconfirmed boots before rollback",
+        doc: "After this many boots in a row that were never confirmed, early boot puts the previous root back instead of starting init again (stops a boot loop).",
+        kind: Kind::Int { min: 1, max: 20 },
+        default: "3",
+        unit: "boots",
+        effect: "next boot (router-tier units)",
+        table: Table::System,
+    },
+    Setting {
+        key: "guard.wan_lease_fallback_secs",
+        section: "Router firmware safety",
+        label: "WAN lease fallback delay",
+        doc: "Seconds the boot script waits for Patronus' own DHCP client to get a WAN lease before it starts the fallback client.",
+        kind: Kind::Int { min: 5, max: 600 },
+        default: "45",
+        unit: "seconds",
+        effect: "next boot (router-tier units)",
+        table: Table::System,
+    },
+    Setting {
+        key: "wifi.radio_wait_secs",
+        section: "Wi-Fi access point",
+        label: "Radio detection wait",
+        doc: "How long the access-point start waits for both Wi-Fi radios to appear after boot (the firmware loads them late) before it gives up.",
+        kind: Kind::Int { min: 10, max: 600 },
+        default: "90",
+        unit: "seconds",
+        effect: "next access-point start",
+        table: Table::System,
+    },
+    Setting {
+        key: "wifi.recover_wait_secs",
+        section: "Wi-Fi access point",
+        label: "Firmware crash recovery wait",
+        doc: "How long wifi-guard waits after a Wi-Fi firmware crash for every network to come back by itself before it restarts the access points.",
+        kind: Kind::Int { min: 5, max: 300 },
+        default: "20",
+        unit: "seconds",
+        effect: "next firmware crash",
+        table: Table::System,
+    },
+    Setting {
+        key: "upgrade.ubiblock_wait_secs",
+        section: "Firmware upgrade",
+        label: "Root volume release wait",
+        doc: "How long the firmware installer waits for the old root volume to be released before it gives up.",
+        kind: Kind::Int { min: 1, max: 120 },
+        default: "10",
+        unit: "seconds",
+        effect: "next firmware upgrade",
+        table: Table::System,
+    },
 ];
 
 /// Registry entry for `key`.
@@ -391,12 +457,39 @@ pub async fn set(store: &ConfigStore, key: &str, value: &str) -> Result<String> 
     let s = entry(key)?;
     let v = validate(s, value)?;
     save_raw(store, s, &v).await?;
+    notify_changed();
     Ok(v)
+}
+
+/// Where the router-tier images keep their `settings-env` helper (the boot scripts read the file
+/// it renders). `PATRONUS_SETTINGS_HOOK` points elsewhere (tests, other layouts); a path that
+/// does not exist means this box has no such scripts and nothing runs.
+pub const DEFAULT_CHANGE_HOOK: &str = "/usr/libexec/patronus/settings-env";
+
+/// After a stored change: let the boot/helper scripts see it without waiting for the next boot
+/// (`settings-env refresh`). Fire and forget: a failing hook never fails the change.
+pub fn notify_changed() {
+    let hook = std::env::var("PATRONUS_SETTINGS_HOOK").unwrap_or_else(|_| DEFAULT_CHANGE_HOOK.into());
+    if hook.is_empty() || !std::path::Path::new(&hook).exists() {
+        return;
+    }
+    if let Ok(mut child) = std::process::Command::new(&hook)
+        .arg("refresh")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
 }
 
 /// Back to the default (removes the stored value).
 pub async fn reset(store: &ConfigStore, key: &str) -> Result<()> {
     delete_raw(store, entry(key)?).await?;
+    notify_changed();
     Ok(())
 }
 
@@ -639,6 +732,33 @@ mod tests {
                 k.key
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_change_runs_the_refresh_hook() {
+        let d = tempfile::tempdir().unwrap();
+        let hook = d.path().join("hook.sh");
+        let out = d.path().join("out");
+        std::fs::write(&hook, format!("#!/bin/sh\necho \"$1\" >> {}\n", out.display())).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::env::set_var("PATRONUS_SETTINGS_HOOK", &hook);
+        let (_d, s) = store().await;
+        set(&s, "web.login_max_failures", "6").await.unwrap();
+        reset(&s, "web.login_max_failures").await.unwrap();
+        std::env::remove_var("PATRONUS_SETTINGS_HOOK");
+        for _ in 0..50 {
+            if std::fs::read_to_string(&out).map(|t| t.lines().count() >= 2).unwrap_or(false) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        // other tests set values at the same time and may trigger it too: at least our two
+        let t = std::fs::read_to_string(&out).unwrap();
+        assert!(t.lines().count() >= 2 && t.lines().all(|l| l == "refresh"), "{t:?}");
     }
 
     #[tokio::test]

@@ -32,7 +32,7 @@ for c in "$R"/etc/hostapd/*.conf; do [ -f "$c" ] || continue
 for f in usr/sbin/wpa_supplicant usr/sbin/dropbearmulti usr/sbin/hostapd usr/sbin/dnsmasq sbin/nft bin/busybox; do
   [ -x "$R/$f" ] || fail "missing executable /$f (the unit would boot with no network)"; done
 [ -e "$R/usr/sbin/dropbear" ] || [ -L "$R/usr/sbin/dropbear" ] || fail "missing /usr/sbin/dropbear (link to dropbearmulti)"
-for f in usr/sbin/patronus-guard usr/sbin/patronus-flash usr/sbin/patronus-init usr/libexec/patronus/early etc/patronus-init etc/pam.d/patronus lib/security/pam_unix.so; do
+for f in usr/sbin/patronus-guard usr/sbin/patronus-flash usr/sbin/patronus-init usr/libexec/patronus/early usr/libexec/patronus/settings-env etc/patronus-init etc/pam.d/patronus lib/security/pam_unix.so; do
   [ -e "$R/$f" ] || fail "missing /$f"; done
 [ -n "${NOR_PROFILE:-}" ] || [ -e "$R/usr/share/patronus-recovery/openwrt-root.squashfs" ] || fail "missing the recovery root"
 # the init system recorded for patronus-init must be in the image (busybox init is not a variant)

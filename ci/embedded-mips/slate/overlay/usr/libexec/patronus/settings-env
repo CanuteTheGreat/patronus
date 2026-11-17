@@ -1,0 +1,24 @@
+#!/bin/sh
+# settings-env ensure|refresh: render the typed settings (System > Advanced settings, `patronus settings`)
+# as PATRONUS_SET_<KEY>='value' lines for the boot and helper scripts of the router tier.
+#   ensure   write the file if this boot has none yet (cheap: scripts call it before sourcing)
+#   refresh  rewrite it (apply start, after the stored config was applied)
+# Readers keep their own fallback to the registry default, so a missing file never stops a service.
+# SETTINGS_ENV overrides the output path (tests); PATRONUS_DB selects the store as for patronus-cli.
+# The file is also kept on the data volume (PERSIST), so the very early boot steps that run before the
+# store is applied (patronus-guard, the unconfirmed-boot counter) read the values of the previous boot.
+OUT=${SETTINGS_ENV:-/run/patronus/settings.env}
+PERSIST=${SETTINGS_PERSIST:-/data/.settings.env}
+CLI=${SETTINGS_CLI:-patronus-cli}
+[ -n "$PATRONUS_DB" ] || { set -a; . /etc/patronus/embedded.env 2>/dev/null; set +a; }
+case "${1:-ensure}" in
+ensure) [ -s "$OUT" ] && exit 0
+  [ -s "$PERSIST" ] && { mkdir -p "${OUT%/*}"; cp "$PERSIST" "$OUT" 2>/dev/null; exit 0; } ;;
+refresh) ;;
+*) echo "usage: settings-env ensure|refresh" >&2; exit 2 ;;
+esac
+mkdir -p "${OUT%/*}"
+$CLI settings env --output "$OUT" 2>/dev/null || { logger -t patronus "settings-env: could not render $OUT (defaults apply)" 2>/dev/null; exit 1; }
+chmod 0644 "$OUT"
+[ -d "${PERSIST%/*}" ] && cp "$OUT" "$PERSIST.new" 2>/dev/null && mv "$PERSIST.new" "$PERSIST"
+exit 0

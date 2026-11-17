@@ -8,10 +8,15 @@
 #   ok    mark this boot good;  auto  switch to the unattended (gateway ping) check for later boots;  status
 # Test hooks (ci/embedded-mips/slate/tests): PATRONUS_GUARD_RUN, PATRONUS_GUARD_DATA, PATRONUS_FLASH, PATRONUS_REBOOT.
 BOARD=${PATRONUS_BOARD:-/etc/patronus/board.sh}; [ -f "$BOARD" ] && . "$BOARD"
-GRACE=${PATRONUS_GUARD_GRACE:-600}
 GW=${PATRONUS_GUARD_GW:-$GUARD_GW}
 RUN=${PATRONUS_GUARD_RUN:-/tmp}
 DATA=${PATRONUS_GUARD_DATA:-/data}
+# The confirmation window is a setting (guard.confirm_secs, System > Advanced settings). This runs before the
+# store is applied, so it reads the copy `settings-env` keeps on the data volume; an explicit environment
+# value (tests) wins, the registry default applies when there is none.
+SETF=${PATRONUS_GUARD_SETTINGS:-$DATA/.settings.env}
+[ -r "$SETF" ] && . "$SETF"
+GRACE=${PATRONUS_GUARD_GRACE:-${PATRONUS_SET_GUARD_CONFIRM_SECS:-600}}
 FLASH=${PATRONUS_FLASH:-/usr/sbin/patronus-flash}
 REBOOT=${PATRONUS_REBOOT:-}
 restart_now() { # the systemd variant's /usr/sbin/reboot is systemctl, which only works under systemd
