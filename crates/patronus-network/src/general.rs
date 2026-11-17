@@ -290,7 +290,7 @@ mod tests {
     #[test]
     fn names_are_validated() {
         assert_eq!(check_hostname(" Gate-1 ").unwrap(), "gate-1");
-        for bad in ["a.b", "", "-x", "x_y", "a b", "x\n"] {
+        for bad in ["a.b", "", "-x", "x_y", "a b", "x\ny"] {
             assert!(check_hostname(bad).is_err(), "{bad:?}");
         }
         assert!(check_timezone("Europe/Berlin").is_ok());
