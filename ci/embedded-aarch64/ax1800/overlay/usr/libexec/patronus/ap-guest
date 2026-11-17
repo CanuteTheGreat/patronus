@@ -1,0 +1,100 @@
+#!/bin/sh
+# ap-guest apply|clear|render|status: keep guest Wi-Fi networks (GUEST_<id>=1 in /etc/patronus/ap.env) off the LAN.
+# An access point bridges every network into br-lan, so a guest network shares the LAN's layer 2. The isolation is an
+# nftables `bridge` table (patronus_guest) on br-lan:
+#   - guest BSS ports cannot talk to each other (ap_isolate already stops clients of one BSS reaching each other);
+#   - from a guest port: ARP, DHCP, router solicitation/neighbour discovery pass; DNS (udp/tcp 53) and ICMP only to the
+#     gateway and the unit's DNS servers; every other IPv4 packet to a private/LAN address (RFC 1918, 100.64/10,
+#     169.254/16, the bridge's own subnet) and every IPv6 packet to ULA/link-local/the bridge's own prefixes is dropped.
+#     Everything else (the internet, through the gateway's MAC) passes;
+#   - towards a guest port: nothing that a LAN host (other than the gateway / DNS servers) starts reaches it;
+#   - nothing from a guest port reaches this unit itself over TCP/UDP (no web UI, no SSH, no DNS here).
+# Limits (docs/router-tier-ui.md): it is the same subnet as the LAN (the router hands out LAN addresses, sees guests as
+# LAN hosts and cannot tell them apart); a separate subnet needs a VLAN to the router.
+# Needs nf_tables with bridge support in the kernel; `status` says why not when it is missing.
+# Test hooks: AP_BOARD (board.sh), AP_GUEST_NFT (nft command), AP_GUEST_NETS4 / AP_GUEST_NETS6 (instead of `ip route`),
+#             AP_GUEST_GW, AP_GUEST_RESOLV.
+B=${AP_BOARD:-/etc/patronus/board.sh}; [ -f "$B" ] && . "$B"
+NFT=${AP_GUEST_NFT:-nft}
+BR=br-lan
+RESOLV=${AP_GUEST_RESOLV:-/etc/resolv.conf}
+ports() { for s in $AP_SSIDS; do eval "g=\${GUEST_$s:-0} only=\${BANDS_$s:-both}"; [ "$g" = 1 ] || continue
+  [ "$only" = 5 ] || printf '"wl24-%s", ' "$s"; [ "$only" = 24 ] || printf '"wl5-%s", ' "$s"; done; }
+# the bridge's on-link networks (the kernel's own routes for its addresses: already network/prefix)
+nets4() { if [ -n "${AP_GUEST_NETS4+x}" ]; then echo "$AP_GUEST_NETS4"; else ip -4 route show dev $BR scope link 2>/dev/null | awk '$1 ~ /\// { print $1 }'; fi; }
+nets6() { if [ -n "${AP_GUEST_NETS6+x}" ]; then echo "$AP_GUEST_NETS6"; else ip -6 route show dev $BR 2>/dev/null | awk '$1 ~ /\// && $1 !~ /^fe80:/ && $1 !~ /^ff/ { print $1 }'; fi; }
+gw4() { if [ -n "${AP_GUEST_GW+x}" ]; then echo "$AP_GUEST_GW"; else ip -4 route show default 2>/dev/null | awk '/^default/ { print $3; exit }'; fi; }
+dns4() { awk '/^nameserver/ && $2 ~ /^[0-9.]+$/ { print $2 }' "$RESOLV" 2>/dev/null; }
+dns6() { awk '/^nameserver/ && $2 ~ /:/ { print $2 }' "$RESOLV" 2>/dev/null; }
+join() { tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//; s/ /, /g'; }
+render() {
+  P=$(ports); P=${P%, }
+  [ -n "$P" ] || return 1
+  L4="10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16"
+  for n in $(nets4); do L4="$L4, $n"; done
+  L6="fc00::/7, fe80::/10"
+  for n in $(nets6); do L6="$L6, $n"; done
+  OK4=$( { gw4; dns4; } | sort -u | join); OK6=$(dns6 | sort -u | join)
+  echo "table bridge patronus_guest {"
+  echo "  set ports { type ifname; elements = { $P } }"
+  echo "  set lan4 { type ipv4_addr; flags interval; auto-merge; elements = { $L4 } }"
+  echo "  set lan6 { type ipv6_addr; flags interval; auto-merge; elements = { $L6 } }"
+  if [ -n "$OK4" ]; then echo "  set ok4 { type ipv4_addr; elements = { $OK4 } }"; else echo "  set ok4 { type ipv4_addr; }"; fi
+  if [ -n "$OK6" ]; then echo "  set ok6 { type ipv6_addr; elements = { $OK6 } }"; else echo "  set ok6 { type ipv6_addr; }"; fi
+  cat <<'EOF'
+  chain forward {
+    type filter hook forward priority 0; policy accept;
+    iifname @ports oifname @ports drop
+    iifname @ports ether type arp accept
+    iifname @ports udp sport 68 udp dport 67 accept
+    iifname @ports ip daddr @ok4 udp dport 53 accept
+    iifname @ports ip daddr @ok4 tcp dport 53 accept
+    iifname @ports ip daddr @ok4 icmp type echo-request accept
+    iifname @ports ip daddr @lan4 drop
+    iifname @ports icmpv6 type { nd-router-solicit, nd-neighbor-solicit, nd-neighbor-advert, mld-listener-report, mld2-listener-report } accept
+    iifname @ports udp sport 546 udp dport 547 accept
+    iifname @ports ip6 daddr @ok6 udp dport 53 accept
+    iifname @ports ip6 daddr @ok6 tcp dport 53 accept
+    iifname @ports ip6 daddr @lan6 drop
+    oifname @ports ether type arp accept
+    oifname @ports icmpv6 type { nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept
+    oifname @ports udp sport 547 udp dport 546 accept
+    oifname @ports udp sport 67 udp dport 68 accept
+    oifname @ports ip saddr @ok4 accept
+    oifname @ports ip saddr @lan4 drop
+    oifname @ports ip6 saddr @ok6 accept
+    oifname @ports ip6 saddr @lan6 drop
+  }
+  chain input {
+    type filter hook input priority 0; policy accept;
+    iifname @ports meta l4proto { tcp, udp } drop
+  }
+}
+EOF
+}
+clear_table() { $NFT list table bridge patronus_guest > /dev/null 2>&1 && $NFT delete table bridge patronus_guest; true; }
+case "$1" in
+render) render ;;
+apply)
+  t=$(mktemp); trap 'rm -f "$t"' EXIT
+  if render > "$t"; then
+    # replace atomically: delete + add in one transaction
+    { $NFT list table bridge patronus_guest > /dev/null 2>&1 && echo "delete table bridge patronus_guest"; cat "$t"; } > "$t.all"
+    if $NFT -f "$t.all" 2> "$t.err"; then echo "ap-guest: guest networks kept off the LAN ($(ports | sed 's/, $//'))"
+      logger -t patronus-ap "guest filter on: $(ports | sed 's/, $//')" 2>/dev/null
+    else echo "ap-guest: FAILED to load the guest filter: $(cat "$t.err")" >&2; logger -p daemon.err -t patronus-ap "guest filter FAILED: $(cat "$t.err")" 2>/dev/null
+      rm -f "$t.all" "$t.err"; exit 1; fi
+    rm -f "$t.all" "$t.err"
+  else clear_table; fi ;;
+clear) clear_table ;;
+status)
+  P=$(ports | sed 's/, $//; s/"//g')
+  if $NFT list table bridge patronus_guest > /dev/null 2>&1; then a=yes; else a=no; fi
+  # can this kernel filter bridged frames with nftables? (a throwaway table)
+  if $NFT add table bridge patronus_probe 2> /tmp/.ap-guest-probe && $NFT delete table bridge patronus_probe; then
+    echo "available=yes"; echo "reason="
+  else echo "available=no"; echo "reason=the kernel has no nftables bridge filtering: $(head -1 /tmp/.ap-guest-probe)"; fi
+  rm -f /tmp/.ap-guest-probe
+  echo "active=$a"; echo "ports=$P" ;;
+*) echo "usage: ap-guest apply|clear|render|status" >&2; exit 2 ;;
+esac

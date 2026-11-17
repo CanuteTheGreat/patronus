@@ -1,5 +1,5 @@
 #!/bin/sh
-# ap render|start|stop: hostapd for the GL-AX1800's two radios from /etc/patronus/ap.env (board.sh sources it).
+# ap render|start|stop|txpower|acl: hostapd for the GL-AX1800's two radios from /etc/patronus/ap.env (board.sh sources it).
 #   one hostapd per radio (phy), one BSS per entry of AP_SSIDS, all bridged into br-lan:
 #   2 SSIDs -> 2 BSS on 2.4 GHz + 2 BSS on 5 GHz. Config files: /run/hostapd/<band>.conf (0600, they hold the keys).
 # 802.11r (fast transition) is NEVER written unless ap.env sets AP_FT=1: on this board's ath11k stock-firmware lineage it
@@ -17,6 +17,10 @@
 # low-ACK disassociation and the inactivity poll. A bare `ieee80211ax=1` without them left phones in power save with
 # 50-100 % downstream loss and re-associations every few minutes, while always-awake stations saw nothing wrong.
 # Every BSS gets its own control socket, so ap-event can watch (and clean up) each one.
+# Guest networks (GUEST_<id>=1) always isolate their clients and are kept off the LAN and off this unit by ap-guest
+# (nftables bridge filter, applied after the radios start). MAC block lists (AP_DENY for every network, DENY_<id> for
+# one) are hostapd deny files, one per BSS (<run>/deny-<bss>); `ap acl` rewrites them and pushes them to the running
+# hostapds (DENY_ACL), `ap txpower` sets AP_TXPOWER24 / AP_TXPOWER5 ("auto" or dBm): both without a restart.
 # Test hooks: AP_RENDER_OUT (directory), AP_PHY24 / AP_PHY5 (phy names), AP_BOARD (board.sh path),
 #             AP_SYSFS (instead of /sys/class/ieee80211: <phy>/macaddress), AP_PHY_WAIT (seconds to wait for the phys).
 . ${AP_BOARD:-/etc/patronus/board.sh}
@@ -84,6 +88,27 @@ he_lines() { # PHY-MAC: 802.11ax radio settings (OpenWrt 25.12 parity, see the h
 bss_lines() { # settings every BSS gets (OpenWrt's wifi-iface defaults)
   echo "uapsd_advertisement_enabled=1"; echo "disassoc_low_ack=1"; echo "skip_inactivity_poll=0"
   echo "bss_load_update_period=60"; echo "chan_util_avg_period=600"; }
+deny_macs() { # ID: the unit's block list + the network's own, one valid MAC per line
+  eval "d=\${DENY_$1:-}"
+  for m in $AP_DENY $d; do case "$m" in [0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]) echo "$m" | tr 'A-F' 'a-f';; esac; done | sort -u; }
+deny_file() { # BSS-IFNAME ID: hostapd needs the file to exist (empty = nobody blocked)
+  ( umask 077; deny_macs "$2" > "$OUTD/deny-$1" ); }
+txpower() { # set both radios' transmit power (first BSS of each config) from AP_TXPOWER24 / AP_TXPOWER5
+  for b in 5 24; do f=$OUTD/ap$b.conf; [ -f "$f" ] || continue; i=$(sed -n 's/^interface=//p' "$f")
+    eval "t=\${AP_TXPOWER$b:-auto}"
+    case "$t" in ''|auto) iw dev "$i" set txpower auto 2>&1 && echo "txpower $i auto";;
+      *[!0-9]*) echo "ap: AP_TXPOWER$b=$t is not auto or dBm" >&2;;
+      *) iw dev "$i" set txpower fixed "$((t * 100))" 2>&1 && echo "txpower $i $t dBm";; esac
+  done; }
+acl() { # rewrite every BSS' deny file and load it into the running hostapd (a listed station is disconnected)
+  for f in $OUTD/ap5.conf $OUTD/ap24.conf; do [ -f "$f" ] || continue
+    for i in $(sed -n 's/^interface=//p; s/^bss=//p' "$f"); do
+      deny_file "$i" "${i#*-}"
+      hostapd_cli -p /run/hostapd -i "$i" deny_acl CLEAR > /dev/null 2>&1
+      n=0; for m in $(cat "$OUTD/deny-$i"); do hostapd_cli -p /run/hostapd -i "$i" deny_acl ADD_MAC "$m" > /dev/null 2>&1; n=$((n + 1)); done
+      echo "acl $i: $n blocked"
+    done
+  done; }
 render_band() { # 24|5 phy
   b=$1; phy=$2; f=$OUTD/ap$b.conf; first=1; n=0
   case "${AP_HE:-1}" in 0|no|off) he=0;; *) he=1;; esac
@@ -93,7 +118,8 @@ render_band() { # 24|5 phy
     [ "$ch" = 0 ] || valid5 "$ch" || { echo "ap: AP_CHAN5=$ch is not a 5 GHz channel: using auto" >&2; ch=0; }
   fi
   for s in $AP_SSIDS; do
-    eval "ssid=\$SSID_$s key=\$KEY_$s sec=\${SEC_$s:-wpa2} hide=\${HIDE_$s:-0} only=\${BANDS_$s:-both} iso=\${ISOLATE_$s:-0}"
+    eval "ssid=\$SSID_$s key=\$KEY_$s sec=\${SEC_$s:-wpa2} hide=\${HIDE_$s:-0} only=\${BANDS_$s:-both} iso=\${ISOLATE_$s:-0} guest=\${GUEST_$s:-0}"
+    [ "$guest" = 1 ] && iso=1
     [ "$only" = both ] || [ "$only" = $b ] || continue
     [ -n "$ssid" ] && [ -n "$key" ] || { echo "ap: SSID_$s / KEY_$s missing" >&2; continue; }
     ifn=$pre-$s; bssid=$(next_bssid "$pmac" $n) || return 1; USED="$USED$bssid "; n=$((n + 1))
@@ -119,7 +145,9 @@ render_band() { # 24|5 phy
     else
       { echo "bss=$ifn"; echo "bssid=$bssid"; echo "bridge=br-lan"; echo "ctrl_interface=/run/hostapd"; } >> $f
     fi
+    deny_file "$ifn" "$s"
     { echo "ssid=$ssid"; echo "ignore_broadcast_ssid=$hide"; echo "ap_isolate=$iso"; sec_lines "$sec" "$key"; bss_lines
+      echo "macaddr_acl=0"; echo "deny_mac_file=$OUTD/deny-$ifn"
       if [ "${AP_FT:-0}" = 1 ]; then echo "ieee80211r=1"; echo "mobility_domain=${AP_MDID:-4f57}"; echo "ft_psk_generate_local=1"; echo "nas_identifier=ax1800-$b"; fi
     } >> $f
   done
@@ -135,7 +163,8 @@ start_all() {
         hostapd_cli -B -P /run/hostapd-cli-$i.pid -p /run/hostapd -i $i -a /usr/libexec/patronus/ap-event > /dev/null 2>&1
       done
     else echo "hostapd $b failed"; cat /tmp/hostapd-$b.log; fi
-  done; }
+  done
+  txpower; }
 case "$1" in
 render) mkdir -p $OUTD; find_phys
   # both radios' own MACs are reserved first, so no variant of one radio can take the other's address
@@ -150,6 +179,15 @@ start)
     p=$(cat /run/patronus-wifi-guard.pid 2>/dev/null); [ -n "$p" ] && kill -0 "$p" 2>/dev/null \
       || setsid "$WG" run > /dev/null 2>&1 < /dev/null &
   fi
+  # guest networks: off the LAN and off this unit (nftables bridge filter), loaded BEFORE any radio starts so a guest
+  # is never bridged unfiltered; clears the filter when there are none
+  GF=${AP_GUEST:-/usr/libexec/patronus/ap-guest}
+  if [ -x "$GF" ] && ! "$GF" apply; then
+    # no filter, no guest network: a guest network bridged without it would be a plain LAN network
+    keep=; for s in $AP_SSIDS; do eval "g=\${GUEST_$s:-0}"; [ "$g" = 1 ] || keep="$keep $s"; done; AP_SSIDS=${keep# }
+    echo "ap: the guest filter could not be loaded: guest networks are NOT started"
+    logger -p daemon.err -t patronus-ap "guest filter failed: guest networks not started" 2>/dev/null
+  fi
   [ -n "$AP_SSIDS" ] || { echo "ap: no AP_SSIDS configured (/etc/patronus/ap.env): Wi-Fi stays off"; exit 0; }
   find_phys
   if [ -n "$P24" ] && [ -n "$P5" ]; then start_all; exit 0; fi
@@ -161,5 +199,7 @@ start)
     [ -n "$P24$P5" ] || { echo "ap: no Wi-Fi phy after ${AP_PHY_WAIT:-90} s (see /tmp/caldata.log, dmesg)"; exit 0; }
     echo "$(cut -d' ' -f1 /proc/uptime) wifi-phys" >> /tmp/boot-times; start_all ) > /tmp/ap.log 2>&1 < /dev/null &
   ;;
+txpower) mkdir -p $OUTD; txpower ;;
+acl) mkdir -p $OUTD; acl ;;
 stop) for p in /run/hostapd-cli-*.pid /run/hostapd-*.pid; do [ -f "$p" ] && kill $(cat $p) 2>/dev/null && rm -f $p; done; true ;;
 esac

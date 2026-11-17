@@ -32,6 +32,16 @@ pub async fn run(
         let store = std::sync::Arc::new(open_store(db.as_deref()).await?);
         patronus_network::routes::Monitor::system(routes).spawn(store);
     }
+    // access point: names of Wi-Fi clients from the DHCP requests crossing the bridge (read only)
+    let ap = patronus_network::apwifi::Paths::default();
+    if ap.present() {
+        let names = std::fs::read_to_string(&ap.env)
+            .map(|t| patronus_network::apwifi::view(&patronus_network::apwifi::parse(&t)).names)
+            .unwrap_or_default();
+        if names != "off" {
+            patronus_network::apnames::spawn_snoop("br-lan".into());
+        }
+    }
     patronus_network::applyd::serve(reg, store, &socket, Some(&group))
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))

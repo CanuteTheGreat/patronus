@@ -179,6 +179,64 @@ pub async fn reveal(
     }
 }
 
+#[derive(Deserialize)]
+pub struct BlockRequest {
+    pub mac: String,
+    /// a network id, or none / "all" for the unit-wide list
+    pub network: Option<String>,
+    /// true = block (default), false = unblock
+    pub block: Option<bool>,
+}
+
+/// POST /api/wifi/block (admins, audited): add or remove a MAC address on a network's block list or on the
+/// unit-wide one. Applied live (hostapd deny list): the client is disconnected, nobody else is.
+pub async fn block(
+    State(state): State<AppState>,
+    admin: crate::auth::AdminUser,
+    Json(b): Json<BlockRequest>,
+) -> Response {
+    let on = b.block.unwrap_or(true);
+    let p = json!({ "mac": b.mac, "network": b.network });
+    let op = if on { "wifi_block" } else { "wifi_unblock" };
+    match state.system.system_op(op, p.clone()).await {
+        Ok(v) => {
+            let _ = state
+                .config_store
+                .audit(
+                    &admin.session.username,
+                    if on { "block" } else { "unblock" },
+                    "wifi_client",
+                    Some(&b.mac),
+                    &p,
+                )
+                .await;
+            Json(v).into_response()
+        }
+        Err(e) => op_err(e),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SurveyQuery {
+    pub fresh: Option<bool>,
+}
+
+/// GET /api/wifi/survey[?fresh=true]: channel use per radio (busy %, neighbouring networks per channel, the
+/// least crowded channel). Read-only; `fresh` asks the radios for a new scan, which does not drop clients.
+pub async fn survey(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<SurveyQuery>,
+) -> Response {
+    match state
+        .system
+        .system_op("wifi_survey", json!({ "fresh": q.fresh.unwrap_or(false) }))
+        .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => op_err(e),
+    }
+}
+
 /// GET /api/ap/uplink: how this unit reaches the network (bridge address,
 /// gateway, DNS, wired ports with link and speed).
 pub async fn uplink() -> Response {
@@ -200,6 +258,8 @@ pub fn router() -> Router<AppState> {
         .route("/wifi/clients", get(clients))
         .route("/wifi/clients/kick", post(kick))
         .route("/wifi/networks/:id/reveal", post(reveal))
+        .route("/wifi/block", post(block))
+        .route("/wifi/survey", get(survey))
         .route("/ap/uplink", get(uplink))
 }
 

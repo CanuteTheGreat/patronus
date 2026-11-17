@@ -597,6 +597,19 @@ pub fn handle_in(dir: &Path, action: &str, params: &Value) -> Result<Value> {
             &crate::apwifi::Paths::default(),
             params.get("ap_env").and_then(Value::as_str).unwrap_or(""),
         ),
+        "wifi_block" | "wifi_unblock" => crate::apwifi::set_block(
+            &crate::apwifi::Paths::default(),
+            params.get("mac").and_then(Value::as_str).unwrap_or(""),
+            params.get("network").and_then(Value::as_str),
+            action == "wifi_block",
+        ),
+        "wifi_survey" => Ok(crate::apsurvey::survey(
+            &crate::apwifi::Paths::default(),
+            params
+                .get("fresh")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        )),
         // router-tier firmware images through patronus-flash (validate, stage; the box installs at the next start)
         "firmware_status" => Ok(firmware_status()),
         "firmware_check" => firmware_flash("check"),

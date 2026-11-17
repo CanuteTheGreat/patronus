@@ -220,8 +220,16 @@ const MANAGED: &[&str] = &[
     "AP_HT5",
     "AP_HE",
     "AP_SSIDS",
+    "AP_TXPOWER24",
+    "AP_TXPOWER5",
+    "AP_NAMES",
 ];
-const NET_PREFIXES: &[&str] = &["SSID_", "KEY_", "SEC_", "HIDE_", "BANDS_", "ISOLATE_"];
+const NET_PREFIXES: &[&str] = &[
+    "SSID_", "KEY_", "SEC_", "HIDE_", "BANDS_", "ISOLATE_", "GUEST_", "DENY_",
+];
+/// Settings the `ap` script applies to running radios without restarting them (transmit power, MAC block lists).
+const LIVE_VARS: &[&str] = &["AP_TXPOWER24", "AP_TXPOWER5", "AP_DENY", "AP_NAMES"];
+const LIVE_PREFIXES: &[&str] = &["DENY_"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Network {
@@ -235,6 +243,12 @@ pub struct Network {
     pub bands: String,
     /// clients of this network cannot reach each other
     pub isolate: bool,
+    /// guest network: clients reach the internet through the gateway, never the LAN or this unit
+    #[serde(default)]
+    pub guest: bool,
+    /// MACs refused on this network only (the global list is `WifiConfig::blocked`)
+    #[serde(default)]
+    pub blocked: Vec<String>,
     pub has_key: bool,
 }
 
@@ -249,7 +263,34 @@ pub struct WifiConfig {
     pub width5: u32,
     /// 802.11ax (Wi-Fi 6) on both radios
     pub wifi6: bool,
+    /// transmit power per radio: "auto" or dBm
+    #[serde(default = "auto")]
+    pub txpower24: String,
+    #[serde(default = "auto")]
+    pub txpower5: String,
+    /// where client names come from: "dhcp" (DHCP requests seen on the LAN + reverse DNS at this unit's DNS server),
+    /// an IPv4 address of a DNS server to ask instead, or "off"
+    #[serde(default = "dhcp")]
+    pub names: String,
+    /// MACs refused on every network of this unit
+    #[serde(default)]
+    pub blocked: Vec<String>,
     pub networks: Vec<Network>,
+}
+
+fn auto() -> String {
+    "auto".into()
+}
+fn dhcp() -> String {
+    "dhcp".into()
+}
+
+/// A MAC list value (`AP_DENY` / `DENY_<id>`): space-separated, lower case, only valid MACs.
+pub fn mac_list(v: &str) -> Vec<String> {
+    v.split_whitespace()
+        .map(str::to_ascii_lowercase)
+        .filter(|m| valid_mac(m))
+        .collect()
 }
 
 /// The typed settings of a parsed file (defaults as `board.sh` sets them).
@@ -289,6 +330,8 @@ pub fn view(f: &EnvFile) -> WifiConfig {
                     _ => "both".into(),
                 },
                 isolate: g("ISOLATE_") == "1",
+                guest: g("GUEST_") == "1",
+                blocked: mac_list(&g("DENY_")),
                 has_key: !g("KEY_").is_empty(),
                 id,
             }
@@ -298,12 +341,23 @@ pub fn view(f: &EnvFile) -> WifiConfig {
         "" | "0" | "auto" => "auto".to_string(),
         c => c.to_string(),
     };
+    let txp = |k: &str| match f.get(k).unwrap_or("auto") {
+        "" | "auto" => "auto".to_string(),
+        c => c.to_string(),
+    };
     WifiConfig {
         country: f.get("AP_COUNTRY").unwrap_or("00").to_string(),
         chan24: chan("AP_CHAN24"),
         chan5: chan("AP_CHAN5"),
         width5: f.get("AP_HT5").and_then(|w| w.parse().ok()).unwrap_or(80),
         wifi6: !matches!(f.get("AP_HE").unwrap_or("1"), "0" | "no" | "off"),
+        txpower24: txp("AP_TXPOWER24"),
+        txpower5: txp("AP_TXPOWER5"),
+        names: match f.get("AP_NAMES").unwrap_or("") {
+            "" | "dhcp" => "dhcp".to_string(),
+            v => v.to_string(),
+        },
+        blocked: mac_list(f.get("AP_DENY").unwrap_or("")),
         networks,
     }
 }
@@ -324,6 +378,9 @@ pub struct NetworkInput {
     pub bands: Option<String>,
     #[serde(default)]
     pub isolate: bool,
+    /// guest network (internet only: no LAN, no access to this unit)
+    #[serde(default)]
+    pub guest: bool,
     /// new passphrase; absent or empty = keep the current one
     #[serde(default)]
     pub key: Option<String>,
@@ -345,6 +402,14 @@ pub struct WifiInput {
     pub width5: Option<u32>,
     #[serde(default)]
     pub wifi6: Option<bool>,
+    /// "auto" or dBm (1..=30), per radio; applied live
+    #[serde(default)]
+    pub txpower24: Option<String>,
+    #[serde(default)]
+    pub txpower5: Option<String>,
+    /// client names: "dhcp", "off" or the IPv4 address of a DNS server
+    #[serde(default)]
+    pub names: Option<String>,
     /// the full list of networks (a network left out is deleted); absent =
     /// networks unchanged
     #[serde(default)]
@@ -401,6 +466,34 @@ fn check_key(k: &str, sec: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// A transmit power setting: "auto" or whole dBm 1..=30 (the regulatory limit still applies on top).
+fn check_txpower(v: &str) -> Result<String> {
+    let v = v.trim().to_ascii_lowercase();
+    let v = v.trim_end_matches("dbm").trim();
+    if v.is_empty() || v == "auto" {
+        return Ok("auto".into());
+    }
+    match v.parse::<u32>() {
+        Ok(n) if (1..=30).contains(&n) => Ok(n.to_string()),
+        _ => Err(invalid(format!(
+            "transmit power {v:?}: auto or 1 to 30 dBm"
+        ))),
+    }
+}
+
+/// Where client names come from: dhcp | off | an IPv4 DNS server.
+fn check_names(v: &str) -> Result<String> {
+    let v = v.trim();
+    match v {
+        "" | "dhcp" => Ok("dhcp".into()),
+        "off" => Ok("off".into()),
+        ip if ip.parse::<std::net::Ipv4Addr>().is_ok() => Ok(ip.to_string()),
+        _ => Err(invalid(format!(
+            "client names {v:?}: dhcp, off or the IPv4 address of a DNS server"
+        ))),
+    }
 }
 
 /// A free network id derived from the SSID: `[a-z][a-z0-9]{0,9}` (the BSS
@@ -466,6 +559,17 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
     if let Some(he) = input.wifi6 {
         set.push(("AP_HE".into(), if he { "1" } else { "0" }.into()));
     }
+    for (k, v) in [
+        ("AP_TXPOWER24", &input.txpower24),
+        ("AP_TXPOWER5", &input.txpower5),
+    ] {
+        if let Some(v) = v {
+            set.push((k.into(), check_txpower(v)?));
+        }
+    }
+    if let Some(n) = &input.names {
+        set.push(("AP_NAMES".into(), check_names(n)?));
+    }
 
     let mut out = EnvFile {
         header: f.header.clone(),
@@ -491,7 +595,16 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         out.vars.push((k.clone(), v.clone()));
     }
     // managed radio settings: the new value, else the current one
-    for k in ["AP_COUNTRY", "AP_CHAN24", "AP_CHAN5", "AP_HT5", "AP_HE"] {
+    for k in [
+        "AP_COUNTRY",
+        "AP_CHAN24",
+        "AP_CHAN5",
+        "AP_HT5",
+        "AP_HE",
+        "AP_TXPOWER24",
+        "AP_TXPOWER5",
+        "AP_NAMES",
+    ] {
         if let Some((_, v)) = set.iter().find(|(n, _)| n == k) {
             out.vars.push((k.into(), v.clone()));
         } else if let Some(v) = f.get(k) {
@@ -579,6 +692,18 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
                 }
                 if n.isolate {
                     net_vars.push((format!("ISOLATE_{id}"), "1".into()));
+                }
+                if n.guest {
+                    net_vars.push((format!("GUEST_{id}"), "1".into()));
+                }
+                // the network's own block list is edited through block()/unblock(), never dropped by a page save
+                if n.id.is_some() {
+                    if let Some(d) = f
+                        .get(&format!("DENY_{id}"))
+                        .filter(|d| !d.trim().is_empty())
+                    {
+                        net_vars.push((format!("DENY_{id}"), d.to_string()));
+                    }
                 }
             }
             if per_band.iter().any(|&c| c > MAX_PER_BAND) {
@@ -800,6 +925,8 @@ pub fn get(p: &Paths) -> Result<Value> {
         "config": view(&f),
         "radios": radios(p),
         "radio_count": p.radios(),
+        "guard": guard_status(),
+        "guest_filter": guest_filter_status(p),
     }))
 }
 
@@ -838,12 +965,22 @@ pub fn radios(p: &Paths) -> Vec<Value> {
                 })
             })
             .collect();
+        let txpower = (!first.is_empty())
+            .then(|| {
+                Command::new("iw")
+                    .args(["dev", &first, "info"])
+                    .output()
+                    .ok()
+            })
+            .flatten()
+            .and_then(|o| parse_txpower(&String::from_utf8_lossy(&o.stdout)));
         out.push(json!({
             "band": band,
             "state": if st.is_empty() { "not running".to_string() } else { g("state") },
             "channel": g("channel"),
             "freq": g("freq"),
             "wifi6": g("ieee80211ax") == "1",
+            "txpower_dbm": txpower,
             "bss": bss,
         }));
     }
@@ -883,6 +1020,16 @@ fn commit(p: &Paths, old_text: &str, new: &EnvFile, text: &str) -> Result<Value>
             "restarted": false,
             "note": "saved; this unit has no Wi-Fi radio up right now, the settings apply when the radios start"
         }));
+    }
+    if !restart_needed(&old, new) {
+        // transmit power, block lists, client names: applied to the running radios, nobody is disconnected
+        let mut out = String::new();
+        for a in ["txpower", "acl"] {
+            out.push_str(&run_script(p, a)?);
+        }
+        return Ok(
+            json!({ "changed": true, "restarted": false, "live": true, "output": out.trim() }),
+        );
     }
     let log = restart(p)?;
     let want = expected_interfaces(new);
@@ -941,6 +1088,157 @@ pub fn restore_text(p: &Paths, text: &str) -> Result<Value> {
     }
     let old_text = std::fs::read_to_string(&p.env).unwrap_or_default();
     commit(p, &old_text, &new, text)
+}
+
+/// Does going from `old` to `new` need the radios restarted? Not when only live settings changed (transmit power,
+/// block lists, client names) and comments.
+pub fn restart_needed(old: &EnvFile, new: &EnvFile) -> bool {
+    let live = |k: &str| LIVE_VARS.contains(&k) || LIVE_PREFIXES.iter().any(|p| k.starts_with(p));
+    let rest = |f: &EnvFile| {
+        let mut v: Vec<(String, String)> = f
+            .vars
+            .iter()
+            .filter(|(k, _)| !live(k))
+            .map(|(k, _)| (k.clone(), f.get(k).unwrap_or("").to_string()))
+            .collect();
+        v.sort();
+        v.dedup();
+        (v, f.other.clone())
+    };
+    rest(old) != rest(new)
+}
+
+/// Add (`block = true`) or remove a MAC on one network's block list (`network` = its id) or on the unit's list
+/// (`network` = None / "all"). Applied to the running radios through hostapd's deny list: a blocked client still
+/// connected is disconnected, nobody else is.
+pub fn set_block(p: &Paths, mac: &str, network: Option<&str>, block: bool) -> Result<Value> {
+    let mac = mac.trim().to_ascii_lowercase();
+    if !valid_mac(&mac) {
+        return Err(invalid(format!("MAC address {mac:?}")));
+    }
+    if !p.present() {
+        return Err(Error::Config(
+            "Invalid: this unit has no access-point Wi-Fi backend".into(),
+        ));
+    }
+    let old_text = std::fs::read_to_string(&p.env).unwrap_or_default();
+    let f = parse(&old_text);
+    let key = match network.filter(|n| !n.is_empty() && *n != "all") {
+        Some(id) => {
+            if f.get(&format!("SSID_{id}")).is_none() {
+                return Err(Error::Config(format!("no such network {id:?}")));
+            }
+            format!("DENY_{id}")
+        }
+        None => "AP_DENY".to_string(),
+    };
+    let mut list = mac_list(f.get(&key).unwrap_or(""));
+    if block {
+        if !list.contains(&mac) {
+            list.push(mac.clone());
+        }
+    } else {
+        list.retain(|m| *m != mac);
+    }
+    if list.len() > 256 {
+        return Err(invalid("at most 256 blocked devices per list"));
+    }
+    let mut new = f.clone();
+    new.vars.retain(|(k, _)| *k != key);
+    if !list.is_empty() {
+        new.vars.push((key, list.join(" ")));
+    }
+    let text = render(&new);
+    commit(p, &old_text, &new, &text)
+}
+
+fn guard_script() -> PathBuf {
+    PathBuf::from(
+        std::env::var("PATRONUS_AP_GUARD")
+            .unwrap_or_else(|_| "/usr/libexec/patronus/wifi-guard".into()),
+    )
+}
+
+/// `wifi-guard status` (firmware crash containment, docs 12.6d) as JSON: mode normal | safe-mode, the reason and
+/// hold time of safe mode, firmware crashes this boot. `None` when the unit has no guard.
+pub fn parse_guard_status(text: &str) -> Value {
+    let mut lines = text.lines();
+    let first = lines.next().unwrap_or("").trim();
+    let mut v = json!({ "mode": "unknown" });
+    if first == "normal" {
+        v["mode"] = json!("normal");
+    } else if let Some(rest) = first.strip_prefix("safe-mode") {
+        v["mode"] = json!("safe-mode");
+        let rest = rest.trim();
+        if let Some(i) = rest.find("reason=") {
+            let r = &rest[i + 7..];
+            let (reason, tail) = match r.rfind(" hold=") {
+                Some(h) => (&r[..h], &r[h + 6..]),
+                None => (r, ""),
+            };
+            v["reason"] = json!(reason.trim());
+            if let Ok(h) = tail.trim().parse::<u64>() {
+                v["hold_s"] = json!(h);
+            }
+        }
+    }
+    for l in lines {
+        for (k, val) in kv(&l.replace(' ', "\n")) {
+            if let Ok(n) = val.parse::<u64>() {
+                match k.as_str() {
+                    "crashes-this-boot" => v["crashes_this_boot"] = json!(n),
+                    "boot" => v["boot"] = json!(n),
+                    _ => {}
+                }
+            }
+        }
+    }
+    v
+}
+
+pub fn guard_status() -> Option<Value> {
+    let g = guard_script();
+    if !g.is_file() {
+        return None;
+    }
+    let o = Command::new(&g).arg("status").output().ok()?;
+    Some(parse_guard_status(&String::from_utf8_lossy(&o.stdout)))
+}
+
+/// `ap-guest status`: whether this unit can keep guest networks off the LAN, and why not.
+pub fn guest_filter_status(p: &Paths) -> Value {
+    let s = p.script.with_file_name("ap-guest");
+    if !s.is_file() {
+        return json!({ "available": false, "reason": "this firmware has no guest network filter (ap-guest)" });
+    }
+    let out = Command::new(&s)
+        .arg("status")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let kvs = kv(&out);
+    let g = |k: &str| {
+        kvs.iter()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+    json!({
+        "available": g("available") == "yes",
+        "active": g("active") == "yes",
+        "ports": g("ports"),
+        "reason": g("reason"),
+    })
+}
+
+/// Transmit power a wireless interface uses right now (`iw dev <if> info`: "txpower 20.00 dBm").
+pub fn parse_txpower(info: &str) -> Option<f64> {
+    info.lines().find_map(|l| {
+        l.trim()
+            .strip_prefix("txpower ")
+            .and_then(|r| r.split_whitespace().next())
+            .and_then(|n| n.parse().ok())
+    })
 }
 
 /// The passphrase of one network (admin-only in the web UI).
@@ -1077,6 +1375,12 @@ pub fn clients(p: &Paths) -> Result<Value> {
             all.push(c);
         }
     }
+    crate::apnames::annotate(
+        &mut all,
+        &names.names,
+        &crate::apnames::names_file(),
+        &std::fs::read_to_string("/etc/resolv.conf").unwrap_or_default(),
+    );
     Ok(json!({ "clients": all }))
 }
 
@@ -1313,6 +1617,7 @@ mod tests {
                 hidden: n.hidden,
                 bands: Some(n.bands),
                 isolate: n.isolate,
+                guest: n.guest,
                 key: None,
             })
             .collect()
@@ -1472,6 +1777,145 @@ mod tests {
         for id in [new_id("Some Very Long Network Name", &[]), new_id("x", &[])] {
             assert!(valid_id(&id) && format!("wl24-{id}").len() <= 15, "{id}");
         }
+    }
+
+    #[test]
+    fn guest_block_lists_txpower_and_live_changes() {
+        let f = sample();
+        let mut l = nets(&f);
+        l[1].guest = true;
+        let n = update(
+            &f,
+            &WifiInput {
+                networks: Some(l),
+                txpower5: Some("17 dBm".into()),
+                names: Some("192.0.2.1".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let back = parse(&render(&n));
+        assert_eq!(back.get("GUEST_hs"), Some("1"));
+        assert_eq!(back.get("AP_TXPOWER5"), Some("17"));
+        let v = view(&back);
+        assert!(v.networks[1].guest && !v.networks[0].guest);
+        assert_eq!((v.txpower5.as_str(), v.txpower24.as_str()), ("17", "auto"));
+        assert_eq!(v.names, "192.0.2.1");
+        assert!(
+            restart_needed(&f, &back),
+            "a guest network needs the radios restarted"
+        );
+        // transmit power and block lists alone are live changes
+        let t = update(
+            &back,
+            &WifiInput {
+                txpower24: Some("10".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!restart_needed(&back, &t));
+        let mut d = back.clone();
+        d.vars.push(("AP_DENY".into(), "aa:bb:cc:dd:ee:ff".into()));
+        d.vars
+            .push(("DENY_p".into(), "02:00:00:00:00:01 junk".into()));
+        assert!(!restart_needed(&back, &d));
+        let v = view(&d);
+        assert_eq!(v.blocked, vec!["aa:bb:cc:dd:ee:ff"]);
+        assert_eq!(
+            v.networks[0].blocked,
+            vec!["02:00:00:00:00:01"],
+            "invalid entries are dropped"
+        );
+        // a page save keeps a network's block list; deleting the network drops it
+        let kept = update(
+            &d,
+            &WifiInput {
+                networks: Some(nets(&d)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(kept.get("DENY_p"), Some("02:00:00:00:00:01 junk"));
+        assert_eq!(kept.get("AP_DENY"), Some("aa:bb:cc:dd:ee:ff"));
+        let mut l = nets(&d);
+        l.remove(0);
+        let gone = update(
+            &d,
+            &WifiInput {
+                networks: Some(l),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(gone.get("DENY_p"), None);
+        for bad in ["0", "31", "max"] {
+            assert!(
+                update(
+                    &f,
+                    &WifiInput {
+                        txpower24: Some(bad.into()),
+                        ..Default::default()
+                    }
+                )
+                .is_err(),
+                "{bad}"
+            );
+        }
+        assert!(update(
+            &f,
+            &WifiInput {
+                names: Some("router.lan".into()),
+                ..Default::default()
+            }
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn block_and_unblock_without_radios() {
+        let d = tempfile::tempdir().unwrap();
+        let env = d.path().join("ap.env");
+        let script = d.path().join("ap");
+        std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::write(&env, render(&sample())).unwrap();
+        let p = Paths {
+            env: env.clone(),
+            script,
+            run: d.path().join("run"),
+            sysfs: d.path().join("nosys"),
+            net: d.path().join("net"),
+        };
+        set_block(&p, "AA:BB:CC:DD:EE:01", None, true).unwrap();
+        set_block(&p, "aa:bb:cc:dd:ee:02", Some("hs"), true).unwrap();
+        set_block(&p, "aa:bb:cc:dd:ee:02", Some("hs"), true).unwrap();
+        let v = view(&parse(&std::fs::read_to_string(&env).unwrap()));
+        assert_eq!(v.blocked, vec!["aa:bb:cc:dd:ee:01"]);
+        assert_eq!(v.networks[1].blocked, vec!["aa:bb:cc:dd:ee:02"]);
+        assert!(set_block(&p, "nope", None, true).is_err());
+        assert!(set_block(&p, "aa:bb:cc:dd:ee:03", Some("zz"), true).is_err());
+        set_block(&p, "aa:bb:cc:dd:ee:01", Some("all"), false).unwrap();
+        let t = std::fs::read_to_string(&env).unwrap();
+        assert!(!t.contains("AP_DENY"), "{t}");
+        assert!(t.contains("KEY_p=secretpw1"));
+    }
+
+    #[test]
+    fn guard_status_lines() {
+        let n = parse_guard_status("normal\ncrashes-this-boot=0 boot=12\n");
+        assert_eq!(n["mode"], "normal");
+        assert_eq!(n["crashes_this_boot"], 0);
+        assert_eq!(n["boot"], 12);
+        let s = parse_guard_status("safe-mode boot=7 up=31 reason=3 firmware crashes within 600 s hold=7200\ncrashes-this-boot=3 boot=7\n");
+        assert_eq!(s["mode"], "safe-mode");
+        assert_eq!(s["reason"], "3 firmware crashes within 600 s");
+        assert_eq!(s["hold_s"], 7200);
+        assert_eq!(s["crashes_this_boot"], 3);
+        assert_eq!(parse_guard_status("")["mode"], "unknown");
+        assert_eq!(
+            parse_txpower("Interface wl5-p\n\tchannel 36 (5180 MHz)\n\ttxpower 23.00 dBm\n"),
+            Some(23.0)
+        );
     }
 
     #[test]
