@@ -830,7 +830,7 @@ def serial_tail(vm, n=12):
         return f" (no serial tail: {e})"
 
 
-def serial_probe(vm, wait=25):
+def serial_probe(vm, wait=45):
     """Last resort when web AND ssh are silent after a reset (lab hogshead plain runs, 1 in ~10): ask the guest over the serial console.
     Enter tells whether the console menu still answers (kernel + userland alive); option 8 (Shell) then dumps network, listeners, load and
     the kernel log, so the stall is named (net down, daemon dead, guest hung) instead of guessed. Prints everything, returns a short summary."""
@@ -844,13 +844,19 @@ def serial_probe(vm, wait=25):
             vm.send("8\r")
             time.sleep(2)
             cmds = ("echo DIAG-S-$((6*7)); ip -br a; ip r; ss -ltn | head -12; uptime; free -m | head -2; ps -eo stat,comm | sort | uniq -c | sort -rn | head -6; "
-                    "(rc-status -c 2>/dev/null; systemctl --failed --no-legend 2>/dev/null) | head -8; dmesg 2>/dev/null | tail -12; echo DIAG-E-$((6*7))")
+                    "(rc-status -c 2>/dev/null; systemctl --failed --no-legend 2>/dev/null) | head -8; dmesg 2>/dev/null | tail -12; "
+                    # 2026-11-16 (gringotts j05543: guest up 5 min, 22/8443 listening, forwards dead for 180 s): was the ruleset only half loaded after the
+                    # reset (a drop policy without its accept rules), did applyd/web log an error, does the web answer on the guest itself?
+                    "echo NFT-RULES; nft list ruleset 2>&1 | grep -E 'table |chain |policy|dport|iifname' | head -30; "
+                    "echo APPLY-LOGS; tail -n 4 /var/log/patronus/*.log /var/log/horcrux/*.log 2>/dev/null | cut -c1-160; "
+                    "for p in 8443 8006; do ss -ltn | grep -q \":$p \" && echo LOCALWEB-$p-$(curl -sk -m8 -o /dev/null -w %{http_code} https://127.0.0.1:$p/ 2>&1 | tail -c 40); done; "
+                    "echo DIAG-E-$((6*7))")
             vm.send(cmds + "\r")
             m = vm.expect_raw(r"(?s)DIAG-S-42.*?DIAG-E-42", wait)
             out = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", m.group(0).decode(errors="replace")) if m else "<<no shell answer>>"
             vm.send("exit\r")
         print("--- serial probe (guest console menu %s) ---\n%s\n---" % ("answers" if alive else "SILENT", out), flush=True)
-        facts = [l.strip() for l in out.splitlines() if re.match(r"\s*(lo|enp\S*|eth\S*|LISTEN|\d+:\d+:\d+ up)", l) or "LISTEN" in l][:6]
+        facts = [l.strip() for l in out.splitlines() if re.match(r"\s*(lo|enp\S*|eth\S*|\d+:\d+:\d+ up|LOCALWEB-)", l) or "LISTEN" in l or "policy" in l][:12]
         return " [serial probe: console menu " + ("answers" if alive else "SILENT (guest hung?)") + ("; " + " // ".join(facts) if facts else "") + "]"
     except Exception as e:  # diagnostics must never mask the failure
         return f" [serial probe failed: {e}]"
@@ -1875,8 +1881,11 @@ class Runner:
         scr = vm.screen()
         vm.snap("console-menu")
         vm.shot("console-menu")
-        self.step("console-menu-shown", "console menu" in scr and "Assign interfaces" in scr and ("Reset a user password" if P.get("web_user") else "Reset the admin password") in scr and "Web UI:" in scr,   # web_auth=pam products reword option 3
-                  "header, interface list, web URL and the numbered options are on the serial console")
+        want = ["console menu", "Assign interfaces", "Reset a user password" if P.get("web_user") else "Reset the admin password", "Web UI:"]   # web_auth=pam products reword option 3
+        missing = [w for w in want if w not in scr]
+        self.step("console-menu-shown", not missing,
+                  "header, interface list, web URL and the numbered options are on the serial console"
+                  + (f" [missing {missing!r}; screen tail: {re.sub(chr(10), ' | ', scr.strip())[-300:]!r}]" if missing else ""))
         t = self.opt(vm, "9")
         self.step("console-menu-status", "Web UI :" in t and "running" in t, re.sub(r"\s+", " ", t)[:120])
         t = self.opt(vm, "7", [("Host name or IP address to ping", "x;reboot")], done=r"Press Enter to return to the menu")
@@ -1936,6 +1945,15 @@ class Runner:
         vm.expect_raw("Enter an option", 20)
         c3 = self.web_login_code(PW2 if self.P.get("web_user") else PW3, 180)    # system users survive a product factory reset: the same account still signs in
         err3 = self.login_err
+        if c3 == 0:
+            # Patronus run 1298 (qemu-uefi-usb-auto-zfs-default-tpm, 1 of 9 same-sha runs of this scenario): no HTTP answer for 180 s and an ssh
+            # 'timed out during banner exchange' although the guest was idle with 22/8443 listening, yet the very next request (the old-password
+            # probe below) got a 401, so the forwarded ports came back late. ONE bounded retry of the no-answer case (a second 120 s wait for the
+            # SAME login); a wrong answer (401) or a guest that never answers still fails, and the assertion below is unchanged.
+            print(f"[factory-reset] no HTTP answer for 180 s ({err3!r}); one more 120 s wait for the same login", flush=True)
+            c3 = self.web_login_code(PW2 if self.P.get("web_user") else PW3, 120)
+            err3 = self.login_err
+            print(f"[factory-reset] after the retry: new password -> {c3}", flush=True)
         c2 = self.web_login_code(PW2) if not self.P.get("web_user") else 401
         if c3 != 200:
             rc, o = ssh(FWD_SSH, self.key, f"{init_cmds.service_status_cmd(self.a.init, self.P['svc'])}; ls -la /var/lib/{a.project}; tail -n 8 /var/log/{a.project}/web-error.log; nft list ruleset 2>&1 | grep -n {P['port']} | head -5; ss -ltn | grep {P['port']}")
@@ -1948,7 +1966,13 @@ class Runner:
         else:
             diag = ""
         self.step("console-menu-factory-reset", c3 == 200 and c2 != 200, f"factory defaults: new password -> {c3}, password from before the reset -> {c2}" + diag)
-        rc, o = ssh(FWD_SSH, self.key, f"sleep 12; test -e {P['seedfile']} && echo present || echo gone")
+        # a forwarded sshd can answer 'timed out during banner exchange' (rc 255) right after the reset: re-ask for up to 60 s, result unchanged
+        end = time.time() + 60
+        while True:
+            rc, o = ssh(FWD_SSH, self.key, f"sleep 12; test -e {P['seedfile']} && echo present || echo gone")
+            if rc != 255 or time.time() >= end:
+                break
+            time.sleep(5)
         self.step("console-menu-firstboot-file-removed", "gone" in o, f"{P['seedfile']}: {o.strip()}")
         vm.send("10\r")
         m = vm.expect_raw(r"(?s).*?Backup to restore", 60)
@@ -1969,24 +1993,88 @@ class Runner:
         vm.send("5\r")
         vm.expect_raw("Power off", 20)
         vm.send("y\r")
-        end = time.time() + T(90)
+        # a systemd shutdown of a ZFS-root guest (stop jobs, pool export, PSCI off) runs several times longer under TCG than the OpenRC one:
+        # runs 3161/3281 (aarch64 TCG) still had QEMU alive 270 s after the 'y'. Wait T(300) before judging; the assertion is unchanged and a
+        # miss prints where the shutdown stood.
+        end = time.time() + T(300)
         while vm.alive() and time.time() < end:
             time.sleep(2)
         self.menu_off = True
-        self.step("console-menu-poweroff", not vm.alive(), "option 5 powered the VM off")
+        off = not vm.alive()
+        self.step("console-menu-poweroff", off, "option 5 powered the VM off" + ("" if off else f" (still running {int(T(300))} s after confirming)" + serial_tail(vm, 40)))
 
     def vga_console_check(self, vm):
         """VGA-only run (no serial): log in on tty1 by keyboard; the console menu must be what runs there."""
         kb = Kbd(vm, True)
         vm.shot("vga-console-login")
         pam = self.P.get("web_user")
-        for t in ((pam or "root") + "\n", PW + "\n") + ((PW + "\n",) if pam else ()):     # pam: root is locked, the administrator signs in, sudo asks again
-            kb.text(t)
-            time.sleep(4)
-        time.sleep(4)
+
+        def tty1_wait(pat, secs):
+            """poll the guest (over ssh) until the processes on tty1 (and the pty children sudo starts for them) match pat; (found, last ps output).
+            pat is a regex applied to the tty1 lines, or a callable applied to the whole listing. The VGA console has no text to wait on,
+            and fixed 4 s sleeps were shorter than a PAM login + sudo + menu start on the emulated aarch64 guest (run 3110: empty ps
+            output, no process on tty1 at all), so every keyboard step now waits for the guest's own progress instead of the clock."""
+            end, o = time.time() + T(secs), ""
+            while True:
+                rc, o = ssh(FWD_SSH, self.key, "ps -eo tty,args | grep -E '^ *(tty1|pts/[0-9]+) '", timeout=30)
+                o = o if isinstance(o, str) else str(o)
+                t1 = "\n".join(l for l in o.splitlines() if re.match(r"\s*tty1\s", l))
+                if (pat(o) if callable(pat) else re.search(pat, t1, re.M)):
+                    return True, (o if callable(pat) else t1)
+                if time.time() >= end:
+                    return False, t1
+
+        # The administrator's profile runs `sudo /usr/bin/console-menu`: that command line CONTAINS "console-menu" while sudo still waits for the
+        # password, so it alone proves nothing. Once the password is accepted, sudo (use_pty) runs the menu on a pty of its own: the python
+        # process `python3 /usr/bin/console-menu` is then on pts/N while sudo stays on tty1 (run 3242: tty1 showed only sudo, pts/0 the menu, and
+        # the check kept waiting for a python process ON tty1). So the menu is up when its python process runs on tty1 (root's login shell) or
+        # on a pty with sudo's tty1 line as its parent.
+        menu_py = r"^\s*%s\s+(?!(?:\S*/)?sudo\b)(?:\S+\s+)?\S*console-menu\b"
+
+        def menu_up(o):
+            if re.search(menu_py % "tty1", o, re.M):
+                return True
+            return bool(re.search(r"^\s*tty1\s+(?:\S*/)?sudo\b.*console-menu", o, re.M) and re.search(menu_py % r"pts/\d+", o, re.M))
+        menu_re = menu_up
+        stage = {}
+        found, o = False, ""
+        for attempt in (1, 2, 3):
+            # A keystroke batch can be lost (agetty flushes the tty input when it redraws its prompt; run 17265: the guest was
+            # up over ssh and tty1 still showed a bare agetty). Retry the whole login instead of failing on one lost key.
+            last = attempt == 3
+            kb.text((pam or "root") + "\n")
+            # Wait for the guest's own progress, but type the NEXT key whether or not the wait matched: a pattern that never matches the guest's
+            # real command line must cost time, not turn into a retyped user name that lands in the password prompt (runs 3152/3170/17466: every
+            # x86_64 VGA login ended on a bare agetty after the polling version of this check; the fixed-sleep version passed).
+            ok, o = tty1_wait(r"\blogin\b|sudo|console-menu|-?bash|-?sh$", 30 if last else 20)   # agetty hands over to login once the user name is in
+            stage["user"] = (ok, re.sub(r"\s+", " ", o)[:80])
+            time.sleep(T(3))                                 # the password prompt is drawn after PAM starts the conversation
+            kb.text(PW + "\n")
+            if pam:                                          # root is locked: the administrator's profile runs `sudo console-menu`, which asks again
+                ok, o = tty1_wait(lambda x: bool(re.search(r"^\s*tty1\s.*sudo", x, re.M)) or menu_up(x), 40 if last else 25)
+                stage["pw"] = (ok, re.sub(r"\s+", " ", o)[:80])
+                if not menu_up(o):
+                    time.sleep(T(3))
+                    kb.text(PW + "\n")
+            found, o = tty1_wait(menu_re, 120 if last else 60)
+            if found:
+                break
+            print(f"[vga-login] attempt {attempt}: no console-menu on tty1 yet: {re.sub(chr(10), ' | ', o)[:160]}")
+            # a failed login hands tty1 back to a fresh agetty; retype the user name only once it is back at the prompt (not into a password prompt)
+            tty1_wait(r"agetty", 60)
+            time.sleep(T(5))
+        time.sleep(2)
         vm.shot("vga-console-menu")
-        rc, o = ssh(FWD_SSH, self.key, "ps -eo tty,args | grep '[c]onsole-menu'")
-        self.step("console-menu-on-vga-tty1", rc == 0 and "tty1" in o, o.strip()[:100])
+        rc, o2 = ssh(FWD_SSH, self.key, "ps -eo tty,args | grep '[c]onsole-menu'")
+        o2 = o2 if isinstance(o2, str) else str(o2)
+        up = rc == 0 and menu_up(o2)
+        if not up:
+            rc3, why = ssh(FWD_SSH, self.key, "tail -n 40 /var/log/messages /var/log/auth.log 2>/dev/null | grep -iE 'login|sudo|pam|getty' | tail -n 8", timeout=30)
+            print("[vga-login] stages " + repr(stage) + " guest log: " + re.sub(chr(10), " | ", why if isinstance(why, str) else str(why)))
+            o = (o2 + " | tty1: " + re.sub(r"\s+", " ", o) + " | stages " + repr(stage))[:300]
+        else:
+            o = o2
+        self.step("console-menu-on-vga-tty1", up, o.strip()[:300])
 
     def serial_login(self, vm, pw, expect_ok, user="root"):
         for _ in range(6):
