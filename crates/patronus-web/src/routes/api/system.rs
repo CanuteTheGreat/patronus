@@ -658,6 +658,47 @@ async fn capture(
     }
 }
 
+/// GET /api/system/speedtest -- settings, whether a test runs now, the
+/// newest results.
+async fn get_speedtest(State(state): State<AppState>) -> Response {
+    use crate::state::speedtest;
+    let store = &state.config_store;
+    match (
+        speedtest::settings(store).await,
+        speedtest::history(store, 50).await,
+    ) {
+        (Ok(s), Ok(h)) => {
+            Json(json!({"settings": s, "running": speedtest::running(), "results": h}))
+                .into_response()
+        }
+        (Err(e), _) | (_, Err(e)) => err(e),
+    }
+}
+
+/// POST /api/system/speedtest -- run a test now (admins; takes up to ~1 min).
+async fn run_speedtest(State(state): State<AppState>, _admin: AdminUser) -> Response {
+    match crate::state::speedtest::run(&state.config_store, "manual").await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) if e.to_string().contains("already running") => {
+            error(StatusCode::CONFLICT, e.to_string())
+        }
+        Err(e) => err(e),
+    }
+}
+
+/// PUT /api/system/speedtest/settings -- `{"down_url","up_url","bytes_down",
+/// "bytes_up","interval_hours"}` (admins).
+async fn put_speedtest(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(i): Json<crate::state::speedtest::SettingsInput>,
+) -> Response {
+    match crate::state::speedtest::save_settings(&state.config_store, &i).await {
+        Ok(s) => Json(s).into_response(),
+        Err(e) => err(e),
+    }
+}
+
 /// POST /api/system/diag -- ping, traceroute, DNS lookup, neighbour
 /// table, routing tables, listening sockets (admins). Body:
 /// `{"tool":"ping","target":"192.0.2.1","count":3,"family":"auto","interface":""}`,
@@ -712,6 +753,11 @@ pub fn router() -> axum::Router<AppState> {
         .route("/system/factory-reset", post(factory_reset))
         .route("/system/capture", post(capture))
         .route("/system/diag", post(diag))
+        .route("/system/speedtest", get(get_speedtest).post(run_speedtest))
+        .route(
+            "/system/speedtest/settings",
+            axum::routing::put(put_speedtest),
+        )
         .route("/system/general", get(get_general).put(put_general))
         .route("/system/reboot", post(reboot))
         .route("/system/shutdown", post(shutdown))

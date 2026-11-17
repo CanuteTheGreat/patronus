@@ -30,6 +30,7 @@ pub mod seg;
 pub mod segmentation;
 #[cfg(feature = "wifi-ap")]
 pub mod segmentation_wifi;
+pub mod speedtest;
 pub mod system;
 pub mod telemetry;
 pub mod tunnels;
@@ -230,6 +231,8 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
     }
     // gateway / tunnel / HA / configuration events for the event log and webhooks
     telemetry::spawn_watcher(state.clone());
+    // scheduled internet speed tests (off unless an interval is set)
+    speedtest::spawn_scheduler(state.config_store.clone());
     // traffic insight history (conntrack deltas by country/ASN) and uplink health history
     insight::spawn_collector(state.config_store.clone());
     insight::spawn_db_refresh(state.config_store.clone());

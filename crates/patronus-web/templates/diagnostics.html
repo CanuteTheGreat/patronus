@@ -16,6 +16,25 @@
 {% if !is_admin %}
 <div class="alert-error">Diagnostics need an administrator account.</div>
 {% else %}
+<div class="card" id="speedtest-card">
+    <div class="card-header"><h2 class="card-title">Internet speed test</h2></div>
+    <p class="text-sm">Latency, download and upload measured from the router to a test server
+        (about 25 MB down and 10 MB up by default; on a metered connection, keep the schedule off).</p>
+    <button class="btn btn-primary btn-sm" id="st-run" type="button" onclick="runSpeedtest()">Run speed test</button>
+    <span class="text-sm" id="st-status"></span>
+    <table class="lan" id="st-table"><thead><tr><th>When</th><th>Download</th><th>Upload</th><th>Latency</th><th>Server</th><th>Result</th></tr></thead><tbody></tbody></table>
+    <details><summary class="text-sm">Settings</summary>
+    <form class="lan-form" id="st-form" onsubmit="return saveSpeedtest(event)">
+        <label>Download URL ({bytes} = size) <input name="down_url" maxlength="300"></label>
+        <label>Upload URL (empty = no upload test) <input name="up_url" maxlength="300" data-keep-empty="1"></label>
+        <label>Download bytes <input name="bytes_down" type="number" min="100000" max="1000000000"></label>
+        <label>Upload bytes <input name="bytes_up" type="number" min="100000" max="1000000000"></label>
+        <label>Run every (hours, 0 = only on demand) <input name="interval_hours" type="number" min="0" max="168"></label>
+        <button class="btn btn-secondary btn-sm" type="submit">Save</button>
+    </form>
+    </details>
+</div>
+
 <div class="card" id="ping-card">
     <div class="card-header"><h2 class="card-title">Ping</h2></div>
     <form class="lan-form" onsubmit="return runDiag(event, 'ping')">
@@ -140,6 +159,49 @@
             target.textContent = 'Failed: ' + e.message;
         }
     }
+    function mbps(b) { return b == null ? '-' : (b / 1e6).toFixed(b < 1e7 ? 2 : 1) + ' Mbit/s'; }
+    async function stCall(method, path, body) {
+        const r = await fetch('/api' + path, {method, headers: {'Content-Type': 'application/json'}, body: body ? JSON.stringify(body) : undefined});
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || r.statusText);
+        return j;
+    }
+    async function loadSpeedtest() {
+        try {
+            const j = await stCall('GET', '/system/speedtest');
+            const f = el('st-form');
+            for (const k of ['down_url', 'up_url', 'bytes_down', 'bytes_up', 'interval_hours']) f.elements[k].value = j.settings[k];
+            const tb = el('st-table').querySelector('tbody'); tb.innerHTML = '';
+            if (!j.results.length) { const tr = document.createElement('tr'); const c = td('No speed tests yet.'); c.colSpan = 6; tr.appendChild(c); tb.appendChild(tr); }
+            for (const r of j.results) {
+                const tr = document.createElement('tr');
+                for (const v of [new Date(r.ts * 1000).toLocaleString() + (r.trigger === 'schedule' ? ' (scheduled)' : ''), mbps(r.down_bps), mbps(r.up_bps),
+                                 r.latency_ms == null ? '-' : r.latency_ms + ' ms', r.server, r.ok ? 'ok' : (r.error || 'failed')]) tr.appendChild(td(String(v)));
+                tb.appendChild(tr);
+            }
+            if (j.running) el('st-status').textContent = 'A test is running...';
+        } catch (e) { el('st-status').textContent = 'Failed: ' + e.message; }
+    }
+    async function runSpeedtest() {
+        const b = el('st-run'); b.disabled = true; el('st-status').textContent = 'Testing (up to a minute)...';
+        try {
+            const r = await stCall('POST', '/system/speedtest');
+            el('st-status').textContent = r.ok ? 'Download ' + mbps(r.down_bps) + ', upload ' + mbps(r.up_bps) + ', latency ' + r.latency_ms + ' ms' : 'Failed: ' + r.error;
+        } catch (e) { el('st-status').textContent = 'Failed: ' + e.message; }
+        b.disabled = false; loadSpeedtest();
+    }
+    async function saveSpeedtest(ev) {
+        ev.preventDefault();
+        const f = ev.target;
+        try {
+            await stCall('PUT', '/system/speedtest/settings', {down_url: f.elements.down_url.value, up_url: f.elements.up_url.value,
+                bytes_down: Number(f.elements.bytes_down.value), bytes_up: Number(f.elements.bytes_up.value), interval_hours: Number(f.elements.interval_hours.value)});
+            el('st-status').textContent = 'Settings saved.';
+        } catch (e) { el('st-status').textContent = 'Failed: ' + e.message; }
+        loadSpeedtest();
+        return false;
+    }
+    if (el('speedtest-card')) loadSpeedtest();
     if (el('neighbors-card')) { loadTable('neighbors'); loadTable('routes'); loadTable('sockets'); }
 </script>
 {% endblock %}
