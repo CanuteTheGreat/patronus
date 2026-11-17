@@ -802,3 +802,43 @@ directory serve the Slate (`ci/embedded-mips`), whose early boot runs it too.
 The Slate (`ci/embedded-mips/slate/README.md`, "Before a real flash") runs the same `accounts-sync` from its early boot. A real flash
 of a Slate image built in a builder without wpa_supplicant/dropbear/mtd-utils stranded the unit once (no ssh, no uplink, and the
 guard could not revert); the image checks, the sysfs volume lookup and the builder's explicit build steps listed there close that.
+### 12.12 The Wi-Fi page, access-point menus and "not available on this device" (2026-11-17)
+
+Before this, an access point's web UI had no Wi-Fi entry at all (the radios came only from the access-point file
+`/etc/patronus/ap.env`), offered router pages that do nothing useful on an AP (Routing, DHCP, DNS, segmentation,
+traffic insights: the main router does those, and DHCP/DNS there could even start a second server on the LAN), and hid
+the features the router-tier build leaves out (VPN, NTP, syslog, ...) without saying why. Coverage against LuCI and the
+vendor firmware, and what is still missing: docs/router-tier-ui.md.
+
+- **Wi-Fi** (`/wifi`, `GET/PUT /api/wifi`): country, 2.4/5 GHz channel, 5 GHz width, Wi-Fi 6 (on by default); networks
+  with name, bands (both / 2.4 / 5), WPA2 / WPA2+WPA3 / WPA3, password (write-only; an admin can reveal one, audited),
+  hidden, client isolation (`ISOLATE_<id>=1` -> `ap_isolate=1`), on/off, add/remove (at most 4 per band); connected
+  clients with band, signal, rates and connected time, and "Disconnect" (`hostapd_cli deauthenticate`). It edits the
+  same `ap.env` the boot reads (every line it does not manage is kept: address settings, test switches, comments),
+  writes it atomically (0600, previous copy `ap.env.prev`), restarts the radios with `ap stop` / `ap start` and checks
+  every expected network with `hostapd_cli status` (`ENABLED`, or `DFS` during the radar check); if one does not come
+  up, the previous file is restored and the radios restarted, and the page says so. A unit without radios (QEMU) saves
+  and reports that nothing was restarted. Under systemd the radios are started into their own transient scope, so a
+  restart of the web UI never takes Wi-Fi down.
+- **Access-point role** (`PATRONUS_DEVICE_ROLE=ap`): the router-only pages answer with an explanation naming the main
+  router (the unit's gateway); changes to their APIs (`/api/dhcp`, `/api/dns`, `/api/ddns`, `/api/routing`,
+  `/api/segmentation`) answer 409. The dashboard shows the uplink (bridge address, DHCP/static, gateway reachability, DNS,
+  wired ports with link and speed) and a Wi-Fi summary; the VPN tile is hidden when no VPN is built.
+- **System > Firmware** (`GET/POST/DELETE /api/system/firmware`, `POST /api/system/firmware/install`, admins): upload
+  a `...-sysupgrade.tar` (up to 64 MiB, kept in RAM under /tmp); it is checked at once by `patronus-flash check` (the same
+  guards as the console: board, fwtool metadata, kernel/root sha256, UBI sizes) and refused with the tool's reason
+  otherwise; Install runs `patronus-flash sysupgrade` (staged on the settings volume, settings kept) and restarts the
+  box; Discard drops the upload and any staged image. Every upload and install is in the audit log.
+- **Backups** (System > Backups) of an access point also carry its Wi-Fi file (`"access_point": {"ap_env": ...}` in the
+  export, 0600, admin download only, like the rest of the backup); restoring such a backup writes it back, restarts the
+  radios and verifies every network, rolling the radios back (and saying so) if they don't come up.
+- **System > Not available on this device**: `/api/features` adds `role`, `tier`, `board`, `wifi_backend` and `absent`
+  (feature, label, reason: not in this router-tier image / not built (USE flag) / the main router does this on an AP).
+
+Proof: unit tests `apwifi::tests` (shell quoting round trip, unmanaged lines kept, password change/keep, add/delete/
+disable, validation, ids fit interface names, station dump, atomic write without radios) and
+`routes::api::wifi::tests`; host test `ap: ISOLATE_<id>=1 ...`; `qemu-gate.sh` (both init systems): features + absent
+list, AP pages and 409s, Wi-Fi PUT -> file 0600 and the boot's own `board.sh` sees the new values, no key in GET, bad
+channel 400, admin reveal, settings kept across a restart, systemd scope placement; `ci/wifi-page-e2e.py` (Firefox +
+Chromium, with `E2E_WRITE=1` add + remove a network through the page) run against a real unit: all checks passed, both
+radios restarted and verified twice in 12 s, the unit's Wi-Fi variables identical afterwards.

@@ -456,6 +456,105 @@ fn capture(params: &Value) -> Result<Value> {
 }
 
 // ---------------------------------------------------------------------------
+// router-tier firmware (patronus-flash)
+// ---------------------------------------------------------------------------
+
+/// Paths of the firmware flow (environment overrides for tests and other boards).
+#[derive(Debug, Clone)]
+pub struct FwPaths {
+    /// `patronus-flash` (present on the router-tier images only)
+    pub tool: PathBuf,
+    /// where the web UI puts an uploaded image: RAM (/tmp is a tmpfs on the router tier), so the settings
+    /// volume keeps its room for the staged copy
+    pub upload: PathBuf,
+    pub data: PathBuf,
+    pub release: PathBuf,
+}
+
+impl Default for FwPaths {
+    fn default() -> Self {
+        let p = |k: &str, d: &str| PathBuf::from(std::env::var(k).unwrap_or_else(|_| d.into()));
+        FwPaths {
+            tool: p("PATRONUS_FLASH", "/usr/sbin/patronus-flash"),
+            upload: p("PATRONUS_FW_UPLOAD", "/tmp/patronus-firmware.tar"),
+            data: p("PATRONUS_DATA", "/data"),
+            release: p("PATRONUS_RELEASE_FILE", "/etc/patronus-release"),
+        }
+    }
+}
+
+/// Where the web UI writes an uploaded firmware image.
+pub fn firmware_upload_path() -> PathBuf {
+    FwPaths::default().upload
+}
+
+fn release_value(text: &str, key: &str) -> Option<String> {
+    text.lines()
+        .find_map(|l| l.strip_prefix(&format!("{key}=")))
+        .map(|v| v.trim().to_string())
+}
+
+/// What runs now, whether an image is uploaded or staged.
+pub fn firmware_status_in(p: &FwPaths) -> Value {
+    let rel = std::fs::read_to_string(&p.release).unwrap_or_default();
+    let staged = std::fs::read_to_string(p.data.join(".upgrade/patronus-release"))
+        .ok()
+        .filter(|_| p.data.join(".upgrade/ready").exists())
+        .and_then(|t| release_value(&t, "BUILD"));
+    json!({
+        "available": p.tool.is_file(),
+        "build": release_value(&rel, "BUILD"),
+        "board": release_value(&rel, "BOARD"),
+        "init": release_value(&rel, "INIT"),
+        "uploaded": p.upload.is_file(),
+        "uploaded_bytes": std::fs::metadata(&p.upload).map(|m| m.len()).ok(),
+        "staged": staged,
+    })
+}
+
+pub fn firmware_status() -> Value {
+    firmware_status_in(&FwPaths::default())
+}
+
+/// `patronus-flash check|sysupgrade <upload>` or `cancel`: the tool's own guards decide (board, metadata,
+/// checksums, UBI sizes); its message is returned either way. A refusal is an "Invalid image" error (HTTP 400).
+pub fn firmware_flash_in(p: &FwPaths, op: &str) -> Result<Value> {
+    if !p.tool.is_file() {
+        return Err(Error::Config(
+            "Invalid: firmware images are installed with patronus-flash, which this system does not have".into(),
+        ));
+    }
+    let mut cmd = std::process::Command::new(&p.tool);
+    cmd.arg(op);
+    if op != "cancel" {
+        if !p.upload.is_file() {
+            return Err(Error::Config("Invalid: no firmware image uploaded".into()));
+        }
+        cmd.arg(&p.upload);
+    }
+    let o = cmd
+        .output()
+        .map_err(|e| Error::Service(format!("{}: {e}", p.tool.display())))?;
+    let mut msg = String::from_utf8_lossy(&o.stdout).into_owned();
+    msg.push_str(&String::from_utf8_lossy(&o.stderr));
+    let msg = msg.trim().to_string();
+    if !o.status.success() {
+        return Err(Error::Config(format!("Invalid image: {msg}")));
+    }
+    if op == "sysupgrade" || op == "cancel" {
+        // staged: the tool copied what it needs onto the settings volume; cancel: nothing to keep
+        let _ = std::fs::remove_file(&p.upload);
+    }
+    let mut st = firmware_status_in(p);
+    st["output"] = json!(msg);
+    Ok(st)
+}
+
+fn firmware_flash(op: &str) -> Result<Value> {
+    firmware_flash_in(&FwPaths::default(), op)
+}
+
+// ---------------------------------------------------------------------------
 // entry point
 // ---------------------------------------------------------------------------
 
@@ -470,6 +569,39 @@ pub fn handle_in(dir: &Path, action: &str, params: &Value) -> Result<Value> {
         "reboot" | "shutdown" => power(action),
         "capture" => capture(params),
         "diag" => crate::diag::handle(params),
+        // access-point Wi-Fi of the router-tier images (/etc/patronus/ap.env, see crate::apwifi)
+        "wifi_get" => crate::apwifi::get(&crate::apwifi::Paths::default()),
+        "wifi_set" => {
+            let input: crate::apwifi::WifiInput = serde_json::from_value(params.clone())
+                .map_err(|e| Error::Config(format!("Invalid Wi-Fi settings: {e}")))?;
+            crate::apwifi::apply(&crate::apwifi::Paths::default(), &input)
+        }
+        "wifi_clients" => crate::apwifi::clients(&crate::apwifi::Paths::default()),
+        "wifi_kick" => crate::apwifi::kick(
+            &crate::apwifi::Paths::default(),
+            params
+                .get("interface")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            params.get("mac").and_then(Value::as_str).unwrap_or(""),
+        ),
+        "wifi_key" => crate::apwifi::reveal_key(
+            &crate::apwifi::Paths::default(),
+            params.get("id").and_then(Value::as_str).unwrap_or(""),
+        )
+        .map(|k| json!({ "key": k })),
+        // the access-point file in configuration backups
+        "wifi_export" => crate::apwifi::export_text(&crate::apwifi::Paths::default())
+            .map(|t| json!({ "ap_env": t })),
+        "wifi_restore" => crate::apwifi::restore_text(
+            &crate::apwifi::Paths::default(),
+            params.get("ap_env").and_then(Value::as_str).unwrap_or(""),
+        ),
+        // router-tier firmware images through patronus-flash (validate, stage; the box installs at the next start)
+        "firmware_status" => Ok(firmware_status()),
+        "firmware_check" => firmware_flash("check"),
+        "firmware_stage" => firmware_flash("sysupgrade"),
+        "firmware_discard" => firmware_flash("cancel"),
         #[cfg(feature = "plugins")]
         "package_job" => {
             let job = params.get("job").and_then(Value::as_i64).unwrap_or(0);
@@ -519,6 +651,59 @@ pub fn handle_in(dir: &Path, action: &str, params: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn firmware_flow_runs_the_flash_tool_and_reports_its_verdict() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let tool = d.path().join("patronus-flash");
+        // fake tool: refuses images that contain BAD, stages the rest like the real one (data/.upgrade/{ready,patronus-release})
+        std::fs::write(&tool, format!("#!/bin/sh\nD={}\ncase \"$1\" in\n check) grep -q BAD \"$2\" && {{ echo 'patronus-flash: ERROR: image is for another board'; exit 1; }}; echo 'patronus-flash: OK: unit-abc-openrc (openrc)';;\n sysupgrade) mkdir -p $D/.upgrade && echo BUILD=unit-abc-openrc > $D/.upgrade/patronus-release && date > $D/.upgrade/ready; echo staged;;\n cancel) rm -rf $D/.upgrade; echo dropped;;\nesac\n", d.path().join("data").display())).unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(
+            d.path().join("rel"),
+            "BUILD=unit-old-openrc\nBOARD=x,y\nINIT=openrc\n",
+        )
+        .unwrap();
+        let p = FwPaths {
+            tool,
+            upload: d.path().join("up.tar"),
+            data: d.path().join("data"),
+            release: d.path().join("rel"),
+        };
+        assert_eq!(firmware_status_in(&p)["build"], "unit-old-openrc");
+        assert!(firmware_flash_in(&p, "check")
+            .unwrap_err()
+            .to_string()
+            .contains("no firmware image uploaded"));
+        std::fs::write(&p.upload, "BAD image").unwrap();
+        let e = firmware_flash_in(&p, "check").unwrap_err().to_string();
+        assert!(
+            e.contains(": Invalid image") && e.contains("another board"),
+            "{e}"
+        );
+        std::fs::write(&p.upload, "good image").unwrap();
+        assert!(firmware_flash_in(&p, "check").unwrap()["output"]
+            .as_str()
+            .unwrap()
+            .contains("OK: unit-abc"));
+        let st = firmware_flash_in(&p, "sysupgrade").unwrap();
+        assert_eq!(st["staged"], "unit-abc-openrc");
+        assert_eq!(st["uploaded"], false, "the upload is removed once staged");
+        assert_eq!(
+            firmware_flash_in(&p, "cancel").unwrap()["staged"],
+            Value::Null
+        );
+        let none = FwPaths {
+            tool: d.path().join("missing"),
+            ..p
+        };
+        assert_eq!(firmware_status_in(&none)["available"], false);
+        assert!(firmware_flash_in(&none, "check")
+            .unwrap_err()
+            .to_string()
+            .contains("does not have"));
+    }
 
     const PRETEND: &str = "\n These are the packages that would be merged, in order:\n\n\
 Calculating dependencies... done!\n\

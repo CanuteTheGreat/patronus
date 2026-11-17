@@ -718,6 +718,12 @@
 
                 <div class="nav-section">
                     <div class="nav-section-title">Network</div>
+                    <a href="/wifi" id="nav-wifi" style="display:none" class="nav-item {% if page == "wifi" %}active{% endif %}">
+                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"></path>
+                        </svg>
+                        <span>Wi-Fi</span>
+                    </a>
                     <a href="/interfaces" class="nav-item {% if page == "interfaces" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
@@ -1001,6 +1007,16 @@
             const f = need[a.getAttribute('href')];
             if (f && !f.some(x => have.has(x))) a.style.display = 'none';
         });
+        // the Wi-Fi page: units whose radios this UI drives (router-tier access points)
+        const wifi = document.getElementById('nav-wifi');
+        if (wifi && d.wifi_backend) wifi.style.display = '';
+        // an access point leaves addresses, names and routes to the main router: no router-only entries
+        if (d.role === 'ap') {
+            const routerOnly = ['/routing', '/dhcp', '/dns', '/segmentation', '/segmentation/time', '/segmentation/dns', '/insights'];
+            document.querySelectorAll('.sidebar-nav a.nav-item').forEach(a => {
+                if (routerOnly.includes(a.getAttribute('href'))) a.style.display = 'none';
+            });
+        }
         document.querySelectorAll('.nav-section').forEach(s => {
             if (![...s.querySelectorAll('a.nav-item')].some(a => a.style.display !== 'none')) s.style.display = 'none';
         });

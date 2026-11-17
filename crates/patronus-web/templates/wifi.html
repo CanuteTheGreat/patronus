@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+
+{% block title %}Wi-Fi - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    .wifi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+    .wifi-note { color: var(--muted); font-size: .85em; margin: 4px 0 10px; }
+    .wifi-warn { background: var(--warn-bg); color: var(--warn-fg); padding: 8px 10px; border-radius: 6px; margin: 8px 0; font-size: .9em; }
+    .wifi-net input[type=text], .wifi-net input[type=password], .wifi-net select { width: 100%; box-sizing: border-box; }
+    .wifi-net select[name=bands] { min-width: 9.5em; }
+    form.lan-form label.wifi-check { flex-direction: row; align-items: center; gap: 6px; }
+    form.lan-form label.wifi-check input { min-width: 0; }
+    #wifi-networks td { vertical-align: top; }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: .8em; background: var(--line); }
+    .pill.on { background: var(--ok-bg, #d7f5dd); color: var(--ok-fg); }
+    .pill.off { background: var(--bad-bg); color: var(--bad-fg); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Wi-Fi</h1>
+    <p class="page-subtitle">The radios and networks this {% if ap_mode %}access point{% else %}unit{% endif %} broadcasts, from the settings file it boots with. Saving restarts the radios (clients reconnect within
+        about ten seconds); if a radio does not come back with the new settings, the previous ones are restored.</p>
+</div>
+
+<div id="wifi-msg"></div>
+<div id="wifi-nobackend" class="card" style="display:none">
+    <p>Wi-Fi on this unit is not managed from this page. On routers that run their access points through device
+        segmentation, the networks are on <a href="/segmentation">Device segmentation</a> (Wi-Fi tab).</p>
+</div>
+
+<div id="wifi-main" style="display:none">
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Radios</h2></div>
+    <div class="wifi-grid" id="wifi-radios"></div>
+    <form class="lan-form" id="wifi-radio-form" onsubmit="return false">
+        <label>Country (regulatory domain) <input name="country" maxlength="2" size="3"></label>
+        <label>2.4 GHz channel <select name="chan24"></select></label>
+        <label>5 GHz channel <select name="chan5"></select></label>
+        <label>5 GHz width <select name="width5"><option value="20">20 MHz</option><option value="40">40 MHz</option><option value="80">80 MHz</option></select></label>
+        <label class="wifi-check"><input type="checkbox" name="wifi6"> Wi-Fi 6 (802.11ax)</label>
+    </form>
+    <p class="wifi-note">Wi-Fi 6 is on by default. Turn it off only for an old client that cannot connect with it. 5 GHz
+        channels 52-144 need a radar check (DFS) of up to ten minutes before the 5 GHz networks appear.</p>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Networks</h2></div>
+    <table class="lan" id="wifi-networks">
+        <thead><tr><th>On</th><th>Name (SSID)</th><th>Bands</th><th>Security</th><th>Password</th><th>Hidden</th><th>Isolate clients</th><th></th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <p class="wifi-note">Leave a password empty to keep the current one. "Isolate clients" stops clients of that network from
+        reaching each other through this access point (they still reach the rest of the LAN).</p>
+    {% if can_modify %}
+    <button class="btn btn-secondary" type="button" onclick="addNet()">Add network</button>
+    <button class="btn btn-primary" type="button" id="wifi-save" onclick="saveWifi()">Save and restart Wi-Fi</button>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Connected clients</h2>
+        <button class="btn btn-secondary" type="button" onclick="loadClients()">Refresh</button></div>
+    <table class="lan" id="wifi-clients">
+        <thead><tr><th>Device (MAC)</th><th>Address</th><th>Network</th><th>Band</th><th>Signal</th><th>Rate down / up</th><th>Connected</th><th></th></tr></thead>
+        <tbody><tr><td colspan="8" class="empty">Loading...</td></tr></tbody>
+    </table>
+    <p class="wifi-note">"Disconnect" drops a client once; it can join again with the password. Phones use a private
+        (random) MAC per network, so the same phone shows a different MAC on each network.</p>
+</div>
+</div>
+
+<script>
+const CAN_MODIFY = {% if can_modify %}true{% else %}false{% endif %};
+let CFG = null;
+const CH24 = ['auto', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+const CH5 = ['auto', 36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165];
+
+function el(tag, props, ...kids) {
+    const e = document.createElement(tag);
+    for (const k in (props || {})) {
+        if (k === 'text') e.textContent = props[k];
+        else if (k === 'class') e.className = props[k];
+        else if (k.startsWith('on')) e[k] = props[k];
+        else if (k === 'checked' || k === 'disabled') e[k] = !!props[k];
+        else e.setAttribute(k, props[k]);
+    }
+    for (const c of kids) if (c != null) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    return e;
+}
+function msg(text, bad) {
+    const m = document.getElementById('wifi-msg'); m.innerHTML = '';
+    if (text) m.appendChild(el('div', {class: bad ? 'alert-error' : 'wifi-warn', text}));
+}
+async function api(method, url, body) {
+    const r = await fetch(url, {method, credentials: 'same-origin',
+        headers: body ? {'content-type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
+    let d = null; try { d = await r.json(); } catch (_) {}
+    if (!r.ok) throw new Error((d && d.error) || ('HTTP ' + r.status));
+    return d;
+}
+function fillSelect(s, vals, cur) {
+    s.innerHTML = '';
+    for (const v of vals) s.appendChild(el('option', {value: String(v), text: v === 'auto' ? 'auto' : String(v)}));
+    if (cur != null && !vals.map(String).includes(String(cur))) s.appendChild(el('option', {value: String(cur), text: String(cur)}));
+    s.value = String(cur);
+}
+function radioCard(r) {
+    const band = r.band === '5' ? '5 GHz' : '2.4 GHz';
+    const up = r.state === 'ENABLED';
+    const c = el('div', {class: 'card', style: 'margin:0'},
+        el('strong', {text: band + ' '}), el('span', {class: 'pill ' + (up ? 'on' : 'off'), text: r.state || 'off'}),
+        el('div', {class: 'wifi-note', text: r.channel ? ('channel ' + r.channel + ' (' + r.freq + ' MHz)' + (r.wifi6 ? ', Wi-Fi 6' : '')) : 'not broadcasting'}));
+    for (const b of (r.bss || [])) c.appendChild(el('div', {class: 'text-sm', text: b.ssid + ' - ' + b.clients + ' client(s) - ' + b.bssid}));
+    return c;
+}
+function netRow(n) {
+    const tr = el('tr', {class: 'wifi-net'});
+    tr.dataset.id = n.id || '';
+    const dis = !CAN_MODIFY;
+    const bands = el('select', {name: 'bands', disabled: dis});
+    for (const [v, t] of [['both', '2.4 + 5 GHz'], ['24', '2.4 GHz only'], ['5', '5 GHz only']]) bands.appendChild(el('option', {value: v, text: t}));
+    bands.value = n.bands || 'both';
+    const sec = el('select', {name: 'security', disabled: dis});
+    for (const [v, t] of [['wpa2', 'WPA2'], ['wpa2+3', 'WPA2/WPA3'], ['wpa3', 'WPA3']]) sec.appendChild(el('option', {value: v, text: t}));
+    sec.value = n.security || 'wpa2';
+    const key = el('input', {type: 'password', name: 'key', autocomplete: 'new-password', placeholder: n.has_key ? '(unchanged)' : 'required, 8-63 characters', disabled: dis});
+    const keyCell = el('td', {}, key);
+    if (CAN_MODIFY && n.id && n.has_key) keyCell.appendChild(el('button', {class: 'btn btn-secondary btn-sm', type: 'button', text: 'Show',
+        onclick: async () => { try { const d = await api('POST', '/api/wifi/networks/' + encodeURIComponent(n.id) + '/reveal'); key.type = 'text'; key.value = d.key; } catch (e) { msg(e.message, true); } }}));
+    tr.append(
+        el('td', {}, el('input', {type: 'checkbox', name: 'enabled', checked: n.enabled !== false, disabled: dis})),
+        el('td', {}, el('input', {type: 'text', name: 'ssid', value: n.ssid || '', maxlength: '32', disabled: dis})),
+        el('td', {}, bands), el('td', {}, sec), keyCell,
+        el('td', {}, el('input', {type: 'checkbox', name: 'hidden', checked: n.hidden, disabled: dis})),
+        el('td', {}, el('input', {type: 'checkbox', name: 'isolate', checked: n.isolate, disabled: dis})),
+        el('td', {}, CAN_MODIFY ? el('button', {class: 'btn btn-danger btn-sm', type: 'button', text: 'Remove', onclick: () => tr.remove()}) : null));
+    return tr;
+}
+function addNet() {
+    document.querySelector('#wifi-networks tbody').appendChild(netRow({enabled: true, security: 'wpa2', bands: 'both'}));
+}
+async function loadWifi() {
+    let d;
+    try { d = await api('GET', '/api/wifi'); } catch (e) { msg('Could not read the Wi-Fi settings: ' + e.message, true); return; }
+    if (!d.backend) { document.getElementById('wifi-nobackend').style.display = ''; return; }
+    document.getElementById('wifi-main').style.display = '';
+    CFG = d.config;
+    const f = document.getElementById('wifi-radio-form');
+    f.country.value = CFG.country; f.width5.value = String(CFG.width5); f.wifi6.checked = CFG.wifi6;
+    fillSelect(f.chan24, CH24, CFG.chan24); fillSelect(f.chan5, CH5, CFG.chan5);
+    for (const i of f.elements) i.disabled = !CAN_MODIFY;
+    const rr = document.getElementById('wifi-radios'); rr.innerHTML = '';
+    for (const r of d.radios || []) rr.appendChild(radioCard(r));
+    if (!d.radio_count) rr.appendChild(el('div', {class: 'wifi-warn', text: 'No Wi-Fi radio is up on this unit right now: settings are saved and apply when the radios start.'}));
+    const tb = document.querySelector('#wifi-networks tbody'); tb.innerHTML = '';
+    for (const n of CFG.networks) tb.appendChild(netRow(n));
+    if (!CFG.networks.length) tb.appendChild(el('tr', {}, el('td', {colspan: '8', class: 'empty', text: 'No networks: Wi-Fi is off.'})));
+}
+async function saveWifi() {
+    const f = document.getElementById('wifi-radio-form');
+    const nets = [];
+    for (const tr of document.querySelectorAll('#wifi-networks tbody tr.wifi-net')) {
+        const q = n => tr.querySelector('[name=' + n + ']');
+        const n = {ssid: q('ssid').value, enabled: q('enabled').checked, security: q('security').value, bands: q('bands').value,
+            hidden: q('hidden').checked, isolate: q('isolate').checked};
+        if (tr.dataset.id) n.id = tr.dataset.id;
+        if (q('key').value && q('key').type === 'password') n.key = q('key').value;
+        else if (q('key').type === 'text' && q('key').value) n.key = q('key').value;
+        nets.push(n);
+    }
+    if (!nets.some(n => n.enabled) && !confirm('No network is switched on: this turns Wi-Fi off on this unit. Continue?')) return;
+    const body = {country: f.country.value, chan24: f.chan24.value, chan5: f.chan5.value, width5: Number(f.width5.value),
+        wifi6: f.wifi6.checked, networks: nets};
+    const b = document.getElementById('wifi-save'); b.disabled = true; b.textContent = 'Restarting Wi-Fi...';
+    msg('Applying: the radios restart, clients reconnect.', false);
+    try {
+        const r = await api('PUT', '/api/wifi', body);
+        msg(r.changed === false ? 'Nothing changed.' : (r.note || 'Saved; Wi-Fi restarted with the new settings.'), false);
+    } catch (e) { msg('Not applied: ' + e.message, true); }
+    b.disabled = false; b.textContent = 'Save and restart Wi-Fi';
+    loadWifi(); setTimeout(loadClients, 3000);
+}
+function dur(s) { if (s == null) return ''; const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? h + ' h ' + m + ' min' : m + ' min'; }
+function rate(s) { return s ? s.split(' ').slice(0, 2).join(' ') : ''; }
+async function loadClients() {
+    const tb = document.querySelector('#wifi-clients tbody');
+    let d; try { d = await api('GET', '/api/wifi/clients'); } catch (e) { tb.innerHTML = ''; tb.appendChild(el('tr', {}, el('td', {colspan: '8', class: 'empty', text: e.message}))); return; }
+    tb.innerHTML = '';
+    const list = (d.clients || []).sort((a, b) => (b.signal_dbm || -999) - (a.signal_dbm || -999));
+    if (!list.length) tb.appendChild(el('tr', {}, el('td', {colspan: '8', class: 'empty', text: 'No clients connected.'})));
+    for (const c of list) {
+        const sig = c.signal_dbm != null ? c.signal_dbm + ' dBm' : '';
+        tb.appendChild(el('tr', {},
+            el('td', {class: 'mono', text: c.mac}), el('td', {text: c.ipv4 || ''}), el('td', {text: c.ssid || c.interface}),
+            el('td', {text: c.band}), el('td', {class: c.signal_dbm < -75 ? 'bad' : '', text: sig}),
+            el('td', {text: (c.tx_rate || c.rx_rate) ? rate(c.tx_rate) + ' / ' + rate(c.rx_rate) : ''}), el('td', {text: dur(c.connected_s)}),
+            el('td', {}, CAN_MODIFY ? el('button', {class: 'btn btn-secondary btn-sm', type: 'button', text: 'Disconnect', onclick: async () => {
+                if (!confirm('Disconnect ' + c.mac + ' from ' + (c.ssid || c.interface) + '?')) return;
+                try { await api('POST', '/api/wifi/clients/kick', {interface: c.interface, mac: c.mac}); setTimeout(loadClients, 1500); } catch (e) { msg(e.message, true); }
+            }}) : null)));
+    }
+}
+loadWifi().then(loadClients);
+</script>
+{% endblock %}

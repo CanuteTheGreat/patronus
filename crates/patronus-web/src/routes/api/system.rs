@@ -506,6 +506,129 @@ pub async fn reboot(State(state): State<AppState>, _admin: AdminUser) -> Respons
     power(state, "reboot").await
 }
 
+/// Largest firmware image the upload takes (a router-tier sysupgrade tar is ~22 MiB).
+const MAX_FIRMWARE: usize = 64 * 1024 * 1024;
+
+/// GET /api/system/firmware: running build, uploaded / staged image (router tier, `patronus-flash`).
+pub async fn firmware_status(State(state): State<AppState>) -> Response {
+    match state
+        .system
+        .system_op("firmware_status", serde_json::Value::Null)
+        .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// POST /api/system/firmware (admins): the sysupgrade image as the request body; it is checked right away with
+/// the box's own guards (`patronus-flash check`: board, metadata, checksums, flash sizes) and the verdict returned.
+pub async fn firmware_upload(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    body: Bytes,
+) -> Response {
+    let path = patronus_network::sysops::firmware_upload_path();
+    if body.len() < 1024 {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Invalid image: the upload is empty or not a firmware image",
+        );
+    }
+    let write = {
+        let path = path.clone();
+        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let tmp = path.with_extension("part");
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp)?;
+            f.write_all(&body)?;
+            f.sync_all()?;
+            std::fs::rename(&tmp, &path)
+        })
+        .await
+    };
+    if let Err(e) = write
+        .map_err(|e| e.to_string())
+        .and_then(|r| r.map_err(|e| e.to_string()))
+    {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("could not store the upload: {e}"),
+        );
+    }
+    let r = state
+        .system
+        .system_op("firmware_check", serde_json::Value::Null)
+        .await;
+    let _ = state
+        .config_store
+        .audit(
+            &admin.session.username,
+            "upload",
+            "firmware",
+            None,
+            &json!({ "ok": r.is_ok() }),
+        )
+        .await;
+    match r {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => {
+            let _ = std::fs::remove_file(&path);
+            err(e)
+        }
+    }
+}
+
+/// POST /api/system/firmware/install (admins): stage the checked upload (settings are kept) and restart the box
+/// to install it. The answer comes before the restart.
+pub async fn firmware_install(State(state): State<AppState>, admin: AdminUser) -> Response {
+    match state
+        .system
+        .system_op("firmware_stage", serde_json::Value::Null)
+        .await
+    {
+        Ok(v) => {
+            let _ = state
+                .config_store
+                .audit(
+                    &admin.session.username,
+                    "install",
+                    "firmware",
+                    v.get("staged").and_then(|s| s.as_str()),
+                    &v,
+                )
+                .await;
+            let st = state.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                if let Err(e) = st.system.system_op("reboot", serde_json::Value::Null).await {
+                    tracing::error!("firmware install: restart failed: {e}");
+                }
+            });
+            (StatusCode::ACCEPTED, Json(v)).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+/// DELETE /api/system/firmware (admins): drop the uploaded and any staged image.
+pub async fn firmware_discard(State(state): State<AppState>, _admin: AdminUser) -> Response {
+    match state
+        .system
+        .system_op("firmware_discard", serde_json::Value::Null)
+        .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => err(e),
+    }
+}
+
 pub async fn shutdown(State(state): State<AppState>, _admin: AdminUser) -> Response {
     power(state, "shutdown").await
 }
@@ -829,6 +952,14 @@ pub fn router() -> axum::Router<AppState> {
         )
         .route("/system/general", get(get_general).put(put_general))
         .route("/system/reboot", post(reboot))
+        .route(
+            "/system/firmware",
+            get(firmware_status)
+                .post(firmware_upload)
+                .delete(firmware_discard)
+                .layer(axum::extract::DefaultBodyLimit::max(MAX_FIRMWARE)),
+        )
+        .route("/system/firmware/install", post(firmware_install))
         .route("/system/shutdown", post(shutdown))
         .route("/system/services", get(list_services))
         .route("/system/services/:name/start", post(start_service))

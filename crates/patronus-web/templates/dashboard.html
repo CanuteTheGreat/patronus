@@ -12,6 +12,49 @@
     <p class="page-subtitle">{{ system_info.hostname }} &middot; up {{ uptime }} &middot; measured when this page loaded</p>
 </div>
 
+<div class="card" id="ap-uplink" style="display:none">
+    <div class="card-header"><h2 class="card-title">Access point</h2></div>
+    <p class="text-sm" id="ap-uplink-summary"></p>
+    <table class="lan" id="ap-uplink-ports"><thead><tr><th>Port</th><th>Link</th><th>Speed</th></tr></thead><tbody></tbody></table>
+    <p class="text-sm" id="ap-wifi-summary"></p>
+</div>
+<script>
+// An access point: show how it is connected (uplink) and what it broadcasts, instead of router figures.
+fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(async f => {
+    if (!f) return;
+    if (!(f.features || []).some(x => ['wireguard', 'ipsec', 'openvpn', 'l2tp'].includes(x))) {
+        document.querySelectorAll('.stat-card').forEach(c => { if (c.querySelector('#vpn-connections')) c.style.display = 'none'; });
+    }
+    if (f.role !== 'ap') return;
+    const u = await fetch('/api/ap/uplink', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null);
+    if (!u || !u.uplink) return;
+    const up = u.uplink, card = document.getElementById('ap-uplink');
+    card.style.display = '';
+    const gw = up.gateway ? up.gateway + (up.gateway_reachable ? ' (reachable)' : ' (not answering yet)') : 'none';
+    document.getElementById('ap-uplink-summary').textContent =
+        'Address ' + ((up.addresses || []).join(', ') || 'none yet') + ' (' + up.addressing + ') on ' + up.bridge +
+        ' \u00b7 gateway (main router) ' + gw + ' \u00b7 DNS ' + ((up.dns || []).join(', ') || 'none');
+    const tb = document.querySelector('#ap-uplink-ports tbody');
+    for (const p of up.ports || []) {
+        const tr = document.createElement('tr');
+        for (const v of [p.name, p.link ? 'up' : 'down', p.speed_mbps ? p.speed_mbps + ' Mbit/s ' + (p.duplex || '') : '']) {
+            const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+        }
+        tb.appendChild(tr);
+    }
+    if (f.wifi_backend) {
+        const w = await fetch('/api/wifi', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null);
+        if (w && w.radios) {
+            const parts = w.radios.map(r => (r.band === '5' ? '5 GHz' : '2.4 GHz') + ': ' + (r.state === 'ENABLED'
+                ? 'ch ' + r.channel + ', ' + (r.bss || []).map(b => b.ssid + ' (' + b.clients + ')').join(', ') : (r.state || 'off')));
+            const s = document.getElementById('ap-wifi-summary');
+            s.textContent = 'Wi-Fi \u00b7 ' + parts.join(' \u00b7 ') + ' ';
+            const a = document.createElement('a'); a.href = '/wifi'; a.textContent = 'Wi-Fi settings and clients'; s.appendChild(a);
+        }
+    }
+}).catch(() => {});
+</script>
+
 <div class="stat-grid">
     <div class="stat-card">
         <h3>Interfaces</h3>

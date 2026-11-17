@@ -35,6 +35,85 @@
     </div>
 </div>
 
+<div class="card" id="not-available" style="display:none">
+    <div class="card-header"><h2 class="card-title">Not available on this device</h2></div>
+    <p class="text-sm" id="not-available-intro"></p>
+    <table class="lan"><thead><tr><th>Feature</th><th>Why</th></tr></thead><tbody id="not-available-list"></tbody></table>
+</div>
+<script>
+// Menu entries this build or role leaves out are listed here with the reason, instead of silently missing.
+fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(f => {
+    if (!f || !(f.absent || []).length) return;
+    document.getElementById('not-available').style.display = '';
+    const kind = f.role === 'ap' ? 'access point' : 'router';
+    document.getElementById('not-available-intro').textContent = 'This ' + (f.tier === 'embedded' ? 'router-tier ' : '') + kind +
+        (f.board ? ' (' + f.board + ')' : '') + ' does not offer the following; their menu entries are hidden.';
+    const tb = document.getElementById('not-available-list');
+    for (const a of f.absent) {
+        const tr = document.createElement('tr');
+        for (const v of [a.label, a.reason]) { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); }
+        tb.appendChild(tr);
+    }
+}).catch(() => {});
+</script>
+
+<div class="card" id="firmware-card" style="display:none">
+    <div class="card-header"><h2 class="card-title">Firmware</h2></div>
+    <p class="text-sm" id="fw-state"></p>
+    {% if can_modify %}
+    <p class="text-sm">Upload a Patronus sysupgrade image (<span class="mono">...-sysupgrade.tar</span>) for this device. It is
+        checked first (board, signature data, checksums, flash sizes); installing keeps every setting and restarts the
+        device (about two minutes offline).</p>
+    <input type="file" id="fw-file" accept=".tar">
+    <button class="btn btn-secondary" type="button" id="fw-upload" onclick="fwUpload()">Upload and check</button>
+    <button class="btn btn-primary" type="button" id="fw-install" style="display:none" onclick="fwInstall()">Install and restart</button>
+    <button class="btn btn-secondary" type="button" id="fw-discard" style="display:none" onclick="fwDiscard()">Discard</button>
+    {% endif %}
+    <pre class="text-sm" id="fw-out" style="white-space:pre-wrap"></pre>
+</div>
+<script>
+async function fwCall(method, url, body, headers) {
+    const r = await fetch(url, {method, credentials: 'same-origin', headers: headers || {}, body});
+    let d = null; try { d = await r.json(); } catch (_) {}
+    if (!r.ok) throw new Error((d && d.error) || ('HTTP ' + r.status));
+    return d;
+}
+function fwShow(s) {
+    if (!s || !s.available) return;
+    document.getElementById('firmware-card').style.display = '';
+    document.getElementById('fw-state').textContent = 'Running ' + (s.build || 'unknown build') + (s.init ? ' (' + s.init + ')' : '') +
+        (s.staged ? ' \u00b7 staged for the next start: ' + s.staged : '') + (s.uploaded ? ' \u00b7 an uploaded image is waiting' : '');
+    const i = document.getElementById('fw-install'), x = document.getElementById('fw-discard');
+    if (i) i.style.display = s.uploaded ? '' : 'none';
+    if (x) x.style.display = (s.uploaded || s.staged) ? '' : 'none';
+}
+async function fwUpload() {
+    const f = document.getElementById('fw-file').files[0], out = document.getElementById('fw-out');
+    if (!f) { out.textContent = 'Choose the image file first.'; return; }
+    out.textContent = 'Uploading and checking ' + f.name + ' (' + Math.round(f.size / 1048576) + ' MiB)...';
+    try { const s = await fwCall('POST', '/api/system/firmware', f, {'content-type': 'application/octet-stream'}); out.textContent = s.output || 'Checked.'; fwShow(s); }
+    catch (e) { out.textContent = 'Not accepted: ' + e.message; fwCall('GET', '/api/system/firmware').then(fwShow).catch(() => {}); }
+}
+async function fwInstall() {
+    if (!confirm('Install the uploaded image and restart this device now? It is offline for about two minutes; settings are kept.')) return;
+    const out = document.getElementById('fw-out');
+    try { const s = await fwCall('POST', '/api/system/firmware/install'); out.textContent = (s.output || '') + '\nRestarting to install ' + (s.staged || '') + ': this page reconnects when the device is back.'; }
+    catch (e) { out.textContent = 'Not installed: ' + e.message; return; }
+    const t0 = Date.now();
+    setTimeout(function poll() {
+        fetch('/api/system/firmware', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(s => {
+            if (s && !s.staged && Date.now() - t0 > 30000) { out.textContent += '\nBack: running ' + s.build + '.'; fwShow(s); }
+            else setTimeout(poll, 10000);
+        }).catch(() => setTimeout(poll, 10000));
+    }, 20000);
+}
+async function fwDiscard() {
+    try { fwShow(await fwCall('DELETE', '/api/system/firmware')); document.getElementById('fw-out').textContent = 'Discarded.'; }
+    catch (e) { document.getElementById('fw-out').textContent = e.message; }
+}
+fwCall('GET', '/api/system/firmware').then(fwShow).catch(() => {});
+</script>
+
 <div class="card">
     <div class="card-header"><h2 class="card-title">General</h2></div>
     <table class="lan" id="system-facts">

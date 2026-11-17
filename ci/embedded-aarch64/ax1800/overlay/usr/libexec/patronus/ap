@@ -93,7 +93,7 @@ render_band() { # 24|5 phy
     [ "$ch" = 0 ] || valid5 "$ch" || { echo "ap: AP_CHAN5=$ch is not a 5 GHz channel: using auto" >&2; ch=0; }
   fi
   for s in $AP_SSIDS; do
-    eval "ssid=\$SSID_$s key=\$KEY_$s sec=\${SEC_$s:-wpa2} hide=\${HIDE_$s:-0} only=\${BANDS_$s:-both}"
+    eval "ssid=\$SSID_$s key=\$KEY_$s sec=\${SEC_$s:-wpa2} hide=\${HIDE_$s:-0} only=\${BANDS_$s:-both} iso=\${ISOLATE_$s:-0}"
     [ "$only" = both ] || [ "$only" = $b ] || continue
     [ -n "$ssid" ] && [ -n "$key" ] || { echo "ap: SSID_$s / KEY_$s missing" >&2; continue; }
     ifn=$pre-$s; bssid=$(next_bssid "$pmac" $n) || return 1; USED="$USED$bssid "; n=$((n + 1))
@@ -119,7 +119,7 @@ render_band() { # 24|5 phy
     else
       { echo "bss=$ifn"; echo "bssid=$bssid"; echo "bridge=br-lan"; echo "ctrl_interface=/run/hostapd"; } >> $f
     fi
-    { echo "ssid=$ssid"; echo "ignore_broadcast_ssid=$hide"; echo "ap_isolate=0"; sec_lines "$sec" "$key"; bss_lines
+    { echo "ssid=$ssid"; echo "ignore_broadcast_ssid=$hide"; echo "ap_isolate=$iso"; sec_lines "$sec" "$key"; bss_lines
       if [ "${AP_FT:-0}" = 1 ]; then echo "ieee80211r=1"; echo "mobility_domain=${AP_MDID:-4f57}"; echo "ft_psk_generate_local=1"; echo "nas_identifier=ax1800-$b"; fi
     } >> $f
   done

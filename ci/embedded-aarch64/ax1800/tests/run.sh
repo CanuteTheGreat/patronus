@@ -159,6 +159,14 @@ AP_CHAN5=auto AP_HT5=80"
 aprender bad "$TWO
 AP_CHAN5=150"
 [ "$(seg bad channel)" = 0 ] && grep -q 'not a 5 GHz channel' "$A/bad.out" && ok "ap: an off-raster 5 GHz channel falls back to auto, with a message" || no "ap: AP_CHAN5=150 not handled"
+# client isolation per SSID (the Wi-Fi page's "isolate clients"): ISOLATE_<id>=1 -> ap_isolate=1 on that SSID's BSSes only;
+# values the web UI writes with shell quoting (spaces, quotes) reach hostapd unchanged
+aprender iso "AP_SSIDS=\"m g\"
+SSID_m='Main 9 3/4' KEY_m='it'\\''s a key' SEC_m=wpa2
+SSID_g=Guest KEY_g=guestkey99 ISOLATE_g=1"
+iso5=$(awk '/^ssid=/{s=$0} /^ap_isolate=/{print s" "$0}' "$A/iso/ap5.conf" 2>/dev/null | tr '\n' '|')
+[ "$iso5" = "ssid=Main 9 3/4 ap_isolate=0|ssid=Guest ap_isolate=1|" ] && grep -qx "wpa_passphrase=it's a key" "$A/iso/ap24.conf" \
+  && ok "ap: ISOLATE_<id>=1 isolates only that SSID; quoted SSID/key values pass through" || { no "ap: isolation/quoting wrong: $iso5"; cat "$A/iso.out"; }
 # 802.11ax: ON by default with OpenWrt 25.12's radio settings for this board (a bare ieee80211ax=1 without them left
 # phones in power save with 50-100 % downstream loss); AP_HE=0 turns it off on both radios, VHT 80 MHz stays complete
 aprender he1 "$TWO

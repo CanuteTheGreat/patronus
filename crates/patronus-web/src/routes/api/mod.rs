@@ -30,3 +30,4 @@ pub mod svc;
 pub mod system;
 pub mod telemetry;
 pub mod vpn;
+pub mod wifi;

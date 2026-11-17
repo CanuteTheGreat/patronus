@@ -55,6 +55,7 @@ pub fn build_router(
         .merge(seg_time_pages())
         .merge(seg_dns_pages())
         .merge(api::setup::pages())
+        .merge(api::wifi::pages())
         // The old "simple" pages claimed services were operational and
         // listed invented "recent activity"; keep the URLs as redirects.
         .route("/simple", get(|| async { Redirect::to("/") }))
@@ -99,6 +100,10 @@ pub fn build_router(
         .nest_service("/static", ServeDir::new("static"))
         // Attach application state
         .with_state(state)
+        // An access point (PATRONUS_DEVICE_ROLE=ap) answers the router-only
+        // pages with an explanation and refuses changes to their APIs (runs
+        // after the session check below).
+        .layer(axum::middleware::from_fn(api::wifi::ap_role_guard))
         // Every page and API call except the login page/endpoint and static
         // assets requires a valid session (runs after session_middleware,
         // which is the outer layer and provides the SessionStore).
@@ -403,7 +408,113 @@ async fn features() -> axum::Json<serde_json::Value> {
         "segmentation",
         "wifi-ap"
     ];
-    axum::Json(serde_json::json!({ "features": list }))
+    let role = api::wifi::role();
+    let release = std::fs::read_to_string(
+        std::env::var("PATRONUS_RELEASE_FILE").unwrap_or_else(|_| "/etc/patronus-release".into()),
+    )
+    .unwrap_or_default();
+    let tier = release
+        .lines()
+        .find_map(|l| l.strip_prefix("PATRONUS_TIER="))
+        .unwrap_or("standard")
+        .trim()
+        .to_string();
+    let board = release
+        .lines()
+        .find_map(|l| l.strip_prefix("BOARD="))
+        .map(|b| b.trim().to_string());
+    axum::Json(serde_json::json!({
+        "features": list,
+        "role": role.as_str(),
+        "tier": tier,
+        "board": board,
+        "wifi_backend": patronus_network::apwifi::Paths::default().present(),
+        "absent": absent_features(&list, &tier, role),
+    }))
+}
+
+/// What a user may look for and not find on this unit, and why: features
+/// this build leaves out, and (on an access point) the router functions the
+/// main router provides. Shown on the System page, so a hidden menu entry
+/// is explained instead of silently missing.
+pub fn absent_features(
+    built: &[&str],
+    tier: &str,
+    role: api::setup::DeviceRole,
+) -> Vec<serde_json::Value> {
+    const OPTIONAL: &[(&str, &str)] = &[
+        ("wireguard", "WireGuard VPN"),
+        ("ipsec", "IPsec VPN"),
+        ("openvpn", "OpenVPN"),
+        ("l2tp", "L2TP VPN server"),
+        ("ntp", "NTP time server for the network"),
+        ("syslog", "Remote syslog forwarding"),
+        ("ha", "High availability (VRRP)"),
+        ("qos", "Traffic shaping (SQM)"),
+        ("multiwan", "Multi-WAN failover / load balancing"),
+        ("pppoe", "PPPoE WAN"),
+        ("vlan", "VLANs"),
+        ("netflow", "NetFlow export"),
+        ("igmp", "IGMP proxy"),
+        ("nat64", "NAT64 / DNS64"),
+        ("upnp", "UPnP / NAT-PMP"),
+        ("vrf", "VRFs"),
+        ("web-proxy", "Web proxy"),
+        ("intrusion-detection", "Intrusion detection (Suricata)"),
+        ("dynamic-routing", "BGP / OSPF"),
+        ("sdwan-edge", "SD-WAN edge"),
+        ("totp", "Two-factor login (TOTP)"),
+        ("ldap", "LDAP / Active Directory login"),
+        ("plugins", "Add-on packages"),
+        ("dhcp", "DHCP server"),
+        ("dns", "DNS resolver"),
+        ("segmentation", "Device segmentation"),
+    ];
+    let ap = role == api::setup::DeviceRole::Ap;
+    let router_job: &[&str] = &[
+        "dhcp",
+        "dns",
+        "segmentation",
+        "multiwan",
+        "pppoe",
+        "nat64",
+        "upnp",
+        "igmp",
+        "qos",
+        "ha",
+        "sdwan-edge",
+        "dynamic-routing",
+        "vrf",
+        "web-proxy",
+    ];
+    let mut out = Vec::new();
+    for (f, label) in OPTIONAL {
+        let reason = if ap && router_job.contains(f) {
+            "this unit is an access point: the main router does this for the network"
+        } else if built.contains(f) {
+            continue;
+        } else if tier == "embedded" {
+            "not included in this router-tier image (kept small for the device's flash and memory)"
+        } else {
+            "not built into this installation (its USE flag is off)"
+        };
+        out.push(serde_json::json!({ "feature": f, "label": label, "reason": reason }));
+    }
+    if ap {
+        for (label, why) in [
+            (
+                "Routing, gateways and NAT",
+                "this unit is an access point: the main router routes and translates addresses",
+            ),
+            (
+                "Traffic insights",
+                "this unit is an access point: traffic is bridged, the main router sees the flows",
+            ),
+        ] {
+            out.push(serde_json::json!({ "feature": serde_json::Value::Null, "label": label, "reason": why }));
+        }
+    }
+    out
 }
 
 fn api_routes() -> Router<AppState> {
@@ -440,6 +551,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::setup::router())
         .merge(api::authservers::router())
         .merge(api::telemetry::router())
+        .merge(api::wifi::router())
 }
 
 #[cfg(test)]

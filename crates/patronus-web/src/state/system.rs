@@ -169,6 +169,7 @@ impl SystemManager {
                     .audit("web", "restore", "config", Some(what), &Value::Null)
                     .await;
                 notes.extend(lines);
+                notes.extend(self.restore_access_point(&doc).await);
                 Ok(notes)
             }
             Err(failed) => {
@@ -184,6 +185,33 @@ impl SystemManager {
                     "restore of {what} was undone because it could not be applied: {failed}"
                 ))
             }
+        }
+    }
+
+    /// Put a backup's access-point Wi-Fi file back (when it has one and this unit is an access point). Its own
+    /// failure is reported but does not undo the configuration restore: the radios are rolled back to the settings
+    /// that worked.
+    async fn restore_access_point(&self, doc: &Value) -> Vec<String> {
+        let Some(t) = doc.pointer("/access_point/ap_env").and_then(Value::as_str) else {
+            return Vec::new();
+        };
+        let have = self
+            .system_op("wifi_export", Value::Null)
+            .await
+            .ok()
+            .and_then(|v| v.get("ap_env").and_then(Value::as_str).map(str::to_string));
+        if have.is_none() {
+            return vec!["the backup has access-point Wi-Fi settings; this unit has no access-point Wi-Fi, skipped".into()];
+        }
+        if have.as_deref() == Some(t) {
+            return vec!["Wi-Fi: access-point settings unchanged".into()];
+        }
+        match self
+            .system_op("wifi_restore", serde_json::json!({ "ap_env": t }))
+            .await
+        {
+            Ok(_) => vec!["Wi-Fi: access-point settings restored, radios restarted".into()],
+            Err(e) => vec![format!("Wi-Fi: access-point settings NOT restored: {e}")],
         }
     }
 
@@ -264,10 +292,16 @@ impl SystemManager {
         &self,
         store: &patronus_config::ConfigStore,
     ) -> anyhow::Result<crate::templates::Backup> {
-        let doc = store
+        let mut doc = store
             .export_json()
             .await
             .map_err(|e| anyhow::anyhow!("exporting the configuration: {e}"))?;
+        // an access point's Wi-Fi (networks, passwords, radios) lives in its access-point file, not in the store
+        if let Ok(v) = self.system_op("wifi_export", Value::Null).await {
+            if let Some(t) = v.get("ap_env").and_then(Value::as_str) {
+                doc["access_point"] = serde_json::json!({ "ap_env": t });
+            }
+        }
         let text = serde_json::to_string_pretty(&doc)? + "\n";
         self.write_backup_file(text, "").await
     }

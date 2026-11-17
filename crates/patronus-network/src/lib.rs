@@ -7,6 +7,7 @@ use patronus_core::{types::Interface, Result};
 pub use ipnetwork;
 
 pub mod applyd;
+pub mod apwifi;
 pub mod bond;
 pub mod bridge;
 pub mod dhcp_client;

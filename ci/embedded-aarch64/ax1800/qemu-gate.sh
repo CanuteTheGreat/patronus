@@ -89,6 +89,42 @@ setup_ap() { R 'grep -q "setup recorded as complete (role ap)" /var/log/web.log'
   c=$(curl -sk -b "$W/jar" -o /dev/null -w '%{http_code}' -m 60 -H 'content-type: application/json' -d '{"wan_interface":"a","lan_interface":"b","lan_ipv4":"192.168.9.1/24"}' https://127.0.0.1:$WEBP/api/setup/apply)
   [ "$c" = 409 ] || { echo "wizard apply on an AP: HTTP $c"; return 1; }; }
 web_claimed() { c=$(curl -sk -o /dev/null -w '%{http_code} %{redirect_url}' -m 30 https://127.0.0.1:$WEBP/first-run); case "$c" in 30?*/login) ;; *) echo "first-run: $c"; return 1;; esac; }
+# Wi-Fi page backend (the access-point file the boot uses), AP-role pages, the "not available" list
+# JSON objects come back with their keys sorted: match each fragment on its own
+has_all() { s=$1; shift; for p in "$@"; do case "$s" in *"$p"*) ;; *) return 1;; esac; done; }
+login() { rm -f "$W/jar"; c=$(curl -sk -c "$W/jar" -o /dev/null -w '%{http_code}' -m 60 -H 'content-type: application/json' \
+    -d "{\"username\":\"cigate\",\"password\":\"$FRPW\"}" https://127.0.0.1:$WEBP/api/auth/login); [ "$c" = 200 ] || { echo "login HTTP $c"; return 1; }; }
+wapi() { curl -sk -b "$W/jar" -m 90 -o "$W/api.json" -w '%{http_code}' -H 'content-type: application/json' "$@"; }
+features_ap() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/features); f=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$f" '"role":"ap"' '"wifi_backend":true' || { echo "features: $c $f"; return 1; }
+  case "$f" in *'"absent":['*'"feature":"ha"'*'not included in this router-tier image'*) ;; *) echo "no absent list: $f"; return 1;; esac
+  case "$f" in *'"feature":"dhcp"'*'access point'*) ;; *) echo "dhcp not explained as the main router's job: $f"; return 1;; esac; }
+ap_pages() { c=$(wapi https://127.0.0.1:$WEBP/dhcp); grep -q 'This unit is an access point' "$W/api.json" && [ "$c" = 200 ] || { echo "/dhcp: $c"; return 1; }
+  c=$(wapi -X POST -d '{"start":"192.0.2.100","end":"192.0.2.150"}' https://127.0.0.1:$WEBP/api/dhcp/pools); [ "$c" = 409 ] || { echo "dhcp pool on an AP: HTTP $c"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/wifi); [ "$c" = 200 ] && grep -q 'id="wifi-networks"' "$W/api.json" || { echo "/wifi page: $c"; return 1; }; }
+WIFI_SET='{"country":"US","chan24":"6","chan5":"36","width5":80,"wifi6":true,"networks":[{"ssid":"CI Gate Net","key":"ci-gate-wifi-pass","security":"wpa2+3","enabled":true},{"ssid":"CI Gate IoT","key":"ci-gate-iot-pass","bands":"24","isolate":true,"enabled":true}]}'
+wifi_set() { c=$(wapi -X PUT -d "$WIFI_SET" https://127.0.0.1:$WEBP/api/wifi); r=$(cat "$W/api.json")
+  [ "$c" = 200 ] || { echo "PUT /api/wifi: $c $r"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=$(cat "$W/api.json")
+  case "$g" in *ci-gate-wifi-pass*|*ci-gate-iot-pass*) echo "GET /api/wifi leaks a key"; return 1;; esac
+  has_all "$g" '"ssid":"CI Gate Net"' '"security":"wpa2+3"' '"ssid":"CI Gate IoT"' '"bands":"24"' '"isolate":true' '"chan24":"6"' || { echo "GET after PUT: $g"; return 1; }
+  m=$(R 'ls -l /etc/patronus/ap.env; . /etc/patronus/board.sh; echo "SSIDS=$AP_SSIDS CH=$AP_CHAN24/$AP_CHAN5 HE=$AP_HE"') || return 1
+  case "$m" in "-rw------- "*"SSIDS=cigatene cigateio CH=6/36 HE=1"*) ;; *) echo "ap.env on the unit: $m"; return 1;; esac
+  c=$(wapi -X PUT -d '{"chan5":"150"}' https://127.0.0.1:$WEBP/api/wifi); [ "$c" = 400 ] || { echo "bad channel: HTTP $c"; return 1; }
+  c=$(wapi -X POST https://127.0.0.1:$WEBP/api/wifi/networks/cigatene/reveal); grep -q ci-gate-wifi-pass "$W/api.json" || { echo "reveal: $c"; return 1; }; }
+# configuration backup carries the access-point file; restoring it puts the Wi-Fi settings back (chan24 6 -> 11 -> 6)
+wifi_backup() { c=$(wapi -X POST https://127.0.0.1:$WEBP/api/system/backups); b=$(cat "$W/api.json")
+  n=$(printf '%s' "$b" | sed -n 's/.*"name":"\(patronus-config-[^"]*\.json\)".*/\1/p'); [ "$c" = 201 ] && [ -n "$n" ] || { echo "backup: $c $b"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/api/system/backups/$n); g=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$g" '"access_point"' 'AP_CHAN24=6' 'CI Gate Net' || { echo "backup has no access-point file: $c"; return 1; }
+  c=$(wapi -X PUT -d '{"chan24":"11"}' https://127.0.0.1:$WEBP/api/wifi); [ "$c" = 200 ] || { echo "PUT chan24 11: $c"; return 1; }
+  m=$(R '. /etc/patronus/board.sh; echo "CH=$AP_CHAN24"'); [ "$m" = CH=11 ] || { echo "after PUT: $m"; return 1; }
+  c=$(wapi -X POST https://127.0.0.1:$WEBP/api/system/backups/$n/restore); r=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$r" 'access-point settings restored' || { echo "restore: $c $r"; return 1; }
+  m=$(R 'ls -l /etc/patronus/ap.env; . /etc/patronus/board.sh; echo "CH=$AP_CHAN24 SSIDS=$AP_SSIDS"')
+  case "$m" in "-rw------- "*"CH=6 SSIDS=cigatene cigateio"*) ;; *) echo "after restore: $m"; return 1;; esac; }
+wifi_persisted() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$g" '"ssid":"CI Gate Net"' '"chan24":"6"' '"ssid":"CI Gate IoT"' || { echo "after restart: $c $g"; return 1; }; }
 
 # the features this build has (FEATURES= in /etc/patronus-release): their checks run only when built in
 FEATURES=$(unsquashfs -cat "$SQ" etc/patronus-release 2>/dev/null | sed -n 's/^FEATURES=//p')
@@ -187,6 +223,20 @@ syslog_tcp_refused() { c=$(api POST /api/svc/syslog/targets '{"host":"10.0.2.2",
   [ "$c" = 400 ] && grep -F 'UDP only' "$W/api.json" >/dev/null || { echo "TCP collector: HTTP $c $(cat "$W/api.json")"; return 1; }
   R '! grep -q 6514 /etc/patronus/syslogd-remote.conf'; }
 
+# firmware upload from the web UI: status shows the running build; a file that is not an image for this board is
+# refused by patronus-flash's own guards (400) and not kept; nothing gets staged
+fw_web() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/system/firmware); g=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$g" '"available":true' '"build":"' '"staged":null' || { echo "status: $c $g"; return 1; }
+  head -c 4096 /dev/urandom > "$W/junk.tar"
+  c=$(curl -sk -b "$W/jar" -m 120 -o "$W/api.json" -w '%{http_code}' -H 'content-type: application/octet-stream' \
+    --data-binary @"$W/junk.tar" https://127.0.0.1:$WEBP/api/system/firmware); g=$(cat "$W/api.json")
+  [ "$c" = 400 ] && has_all "$g" 'Invalid image' || { echo "junk upload: $c $g"; return 1; }
+  R '! test -e /tmp/patronus-firmware.tar && ! test -e /data/.upgrade' || { echo "junk image left behind"; return 1; }; }
+# systemd: the Wi-Fi page restarts hostapd through `systemd-run --scope`, so the radios live in a transient scope of
+# their own and not in the web UI's unit (a web UI restart would otherwise kill them); prove that placement works here
+wifi_scope() { [ "$INIT" = systemd ] || { echo "openrc: n/a"; return 0; }
+  o=$(R 'systemd-run --scope --quiet --collect -- sh -c "sleep 300 >/dev/null 2>&1 < /dev/null & echo \$!"') || { echo "systemd-run: $o"; return 1; }
+  cg=$(R "cat /proc/$o/cgroup; kill $o") || return 1; case "$cg" in *"/run-"*".scope"*) ;; *) echo "pid $o cgroup: $cg"; return 1;; esac; }
 # fake UBI + board for the flash-guard checks (QEMU has no UBI and is not a GL-AX1800)
 FAKES='mkdir -p /tmp/fk && printf "glinet,gl-ax1800\0qcom,ipq6018\0" > /tmp/fk/compat && cat > /tmp/fk/ubinfo <<"EOF"
 #!/bin/sh
@@ -245,6 +295,12 @@ if has_feature syslog; then
   check "Syslog page: the test message arrives at the collector" syslog_test_msg
   check "Syslog page: a TCP collector is refused (busybox forwards over UDP only), nothing written" syslog_tcp_refused
 else echo "SKIP: Syslog (not in FEATURES=$FEATURES)" | tee -a "$RES/results.txt"; fi
+check "features: role ap, Wi-Fi backend, \"not available\" list with reasons" features_ap
+check "AP role: router-only pages explain the main router, their APIs refuse changes (409); Wi-Fi page served" ap_pages
+check "Wi-Fi page API: networks + radios written to the access-point file (0600), no key in GET, bad channel 400, admin reveal" wifi_set
+check "Wi-Fi restart path: hostapd started into its own transient scope (systemd)" wifi_scope
+check "backup includes the access-point Wi-Fi file; restoring the backup puts it back" wifi_backup
+check "firmware page API: running build shown, a non-image upload refused by patronus-flash and not kept" fw_web
 scp -O -q "${SSHO[@]}" -P $SSHP "$TAR" root@127.0.0.1:/data/up.tar || fail "scp image into the guest"
 refuse_board() { o=$(R 'patronus-flash check /data/up.tar' 2>&1) && { echo "accepted: $o"; return 1; }; case "$o" in *"image is for glinet,gl-ax1800"*) ;; *) echo "$o"; return 1;; esac; }
 check "flash guard: refuses on a non-GL-AX1800 board" refuse_board
@@ -298,6 +354,7 @@ check "boot 2: PID 1 is $INIT" pid1
 check "boot 2: all services up" services_up
 check "boot 2: ETPhoneHome running" etph
 check "boot 2: web UI answers" web_claimed
+check "boot 2: Wi-Fi settings from the web UI persisted" wifi_persisted
 check "boot 2: setup not recorded again (once only), no first-run code" R '! grep -q "setup recorded as complete" /var/log/web.log && ! test -e /run/patronus/first-run-code'
 check "boot 2: the image's system account (chrony) was added back to the persisted /etc/passwd" R 'grep -q "account-added passwd chrony" /tmp/boot-times && grep -q "^chrony:x:980:" /etc/passwd'
 check "boot 2: chronyd runs as user chrony" ntp_client

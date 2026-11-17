@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} - Patronus{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">{{ title }}</h1>
+    <p class="page-subtitle">This unit is an access point: it bridges its Wi-Fi and Ethernet ports into your network and takes
+        its own address from it. Addresses, names, routes and per-device rules for the network come from your main router,
+        so there is nothing to set here.</p>
+</div>
+<div class="card">
+    {% if gateway.is_empty() %}
+    <p class="text-sm">This unit has no default gateway right now: check the <a href="/">uplink status on the dashboard</a>.</p>
+    {% else %}
+    <p class="text-sm">Your main router (this unit's gateway) is <strong class="mono">{{ gateway }}</strong>: open its
+        admin page to change {{ title }}.</p>
+    {% endif %}
+    <ul class="text-sm">
+        <li><a href="/wifi">Wi-Fi</a>: networks, passwords, channels and connected clients of this access point.</li>
+        <li><a href="/">Dashboard</a>: how this unit is connected (address, gateway, ports).</li>
+        <li><a href="/system">System</a>: what this unit includes and what it leaves to the main router.</li>
+    </ul>
+</div>
+{% endblock %}
