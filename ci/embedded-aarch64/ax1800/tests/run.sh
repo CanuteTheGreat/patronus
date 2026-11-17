@@ -52,7 +52,8 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/bin" "$r/sbin" "$r/usr/bin" "
            usr/sbin/hostapd usr/sbin/dropbear usr/bin/patronus-cli lib/firmware/ath11k/IPQ6018/hw1.0/board-2.bin lib/firmware/IPQ6018/q6_fw.mdt \
            lib/firmware/IPQ6018/m3_fw.mdt lib/firmware/regulatory.db usr/libexec/patronus/etph-run; do : > "$r/$f"; chmod +x "$r/$f"; done
   ln -s patronus-cli "$r/usr/bin/patronus-web"; cp "$O/etc/patronus/board.sh" "$O/etc/patronus/embedded.env" "$r/etc/patronus/"
-  cp "$O/usr/libexec/patronus/early" "$O/usr/libexec/patronus/ath11k-caldata" "$r/usr/libexec/patronus/"
+  cp "$O/usr/libexec/patronus/early" "$O/usr/libexec/patronus/ath11k-caldata" "$O/usr/libexec/patronus/settings-env" \
+    "$O/usr/libexec/patronus/wifi-guard" "$r/usr/libexec/patronus/"
   for b in ubinfo ubimkvol ubirmvol ubirsvol ubiupdatevol ubiblock iw ip sha256sum pivot_root; do ln -s /bin/busybox "$r/usr/sbin/$b"; done
   echo x > "$r/lib/modules/6.12.112/modules.dep"; for m in ath11k_ahb qca-nss-dp qca-ssdk mac80211 cfg80211 nf_tables nfnetlink_log nft_reject_inet nf_conntrack; do : > "$r/lib/modules/6.12.112/$m.ko"; done
   echo patronus-xbss > "$r/usr/sbin/hostapd"
@@ -67,6 +68,7 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/bin" "$r/sbin" "$r/usr/bin" "
   ln -s /etc/init.d/patronus-etph "$r/etc/runlevels/default/patronus-etph"; echo "$r"; }
 CR="env PATH=/usr/bin:/bin:/usr/sbin:/sbin sh $D/check-rootfs.sh"   # readelf check runs only where binutils exist; fake roots have no ELFs
 t "check-rootfs: good OpenRC root" $CR "$(mkroot good)"
+r=$(mkroot noset); rm "$r/usr/libexec/patronus/settings-env"; tn "check-rootfs: rejects a root without settings-env" $CR "$r"
 r=$(mkroot bbinit); echo INIT=busybox > "$r/etc/patronus-init"; tn "check-rootfs: rejects busybox init (not a variant)" $CR "$r"
 r=$(mkroot noetph); rm "$r/etc/runlevels/default/patronus-etph"; tn "check-rootfs: rejects ETPhoneHome not enabled" $CR "$r"
 r=$(mkroot noetphbin); rm "$r/usr/sbin/etphonehome"; tn "check-rootfs: rejects a missing ETPhoneHome binary" $CR "$r"
@@ -227,6 +229,15 @@ grep -q 'hostapd_cli -B .* -a /usr/libexec/patronus/ap-event' "$O/usr/libexec/pa
 grep -q centr_freq "$A/two/ap24.conf" && no "ap: 2.4 GHz config got a 5 GHz centre channel" || ok "ap: 2.4 GHz config has no VHT/HE centre channel"
 [ "$(stat -c %a "$A/two/ap5.conf")" = 600 ] && ok "ap: config is 0600 (holds the keys)" || no "ap: config mode $(stat -c %a "$A/two/ap5.conf")"
 
+# 2z. settings-env renders the typed settings for the scripts (ensure once per boot, refresh always)
+SE=$W/se; mkdir -p "$SE"
+printf '#!/bin/sh\necho call >> %s/n; o=; while [ $# -gt 0 ]; do [ "$1" = --output ] && o=$2; shift; done; echo "PATRONUS_SET_X=1" > "$o"\n' "$SE" > "$SE/cli"; chmod +x "$SE/cli"
+sev() { env SETTINGS_ENV="$SE/out/settings.env" SETTINGS_CLI="$SE/cli" PATRONUS_DB=/nonexistent sh "$O/usr/libexec/patronus/settings-env" "$@"; }
+sev ensure; sev ensure; sev refresh
+[ "$(wc -l < "$SE/n")" = 2 ] && grep -q PATRONUS_SET_X "$SE/out/settings.env" \
+  && ok "settings-env: ensure renders once per boot, refresh rewrites" || no "settings-env: $(wc -l < "$SE/n" 2>/dev/null) renders"
+grep -q 'settings-env refresh' "$O/usr/libexec/patronus/apply" && ok "apply: refreshes the settings file after applying" || no "apply: settings file not refreshed"
+
 # 3a. Wi-Fi firmware crash containment (wifi-guard) and the Patronus hostapd package (docs 12.6d)
 G=$W/wg; WGS=$O/usr/libexec/patronus/wifi-guard; mkdir -p "$G/bin"
 printf '#!/bin/sh\necho "ap $*" >> %s/calls\n' "$G" > "$G/bin/ap"
@@ -266,6 +277,16 @@ if command -v python3 >/dev/null 2>&1; then
   kmsg 3; wgenv CRASH_MAX=3 timeout 20 sh "$WGS" run >/dev/null 2>&1
   wgenv sh "$WGS" safe && grep -q 'PATRONUS-AP-SAFE-MODE on' "$G/calls" && grep -q 'ap start' "$G/calls" \
     && ok "wifi-guard: 3 crashes within 10 min -> safe mode + APs restarted with it" || { no "wifi-guard: crash burst not contained"; cat "$G/calls"; }
+  # thresholds come from the typed settings (settings-env output); explicit env values still win
+  sock() { python3 -c "import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])" "$G/ctrl/wl24-m"; }
+  wgreset; echo 7 > "$G/st/boot"; sock; printf "PATRONUS_SET_WIFI_GUARD_CRASH_MAX='1'\n" > "$G/set.env"
+  kmsg 1; wgenv WG_SETTINGS="$G/set.env" timeout 20 sh "$WGS" run >/dev/null 2>&1
+  wgenv sh "$WGS" safe && ok "wifi-guard: wifi.guard_crash_max=1 from the settings -> one crash enters safe mode" \
+    || { no "wifi-guard: crash threshold not read from the settings"; cat "$G/calls"; }
+  wgreset; echo 7 > "$G/st/boot"; sock
+  kmsg 1; wgenv WG_SETTINGS="$G/none.env" timeout 20 sh "$WGS" run >/dev/null 2>&1
+  wgenv sh "$WGS" safe && no "wifi-guard: one crash entered safe mode without a settings file (default is 3)" \
+    || ok "wifi-guard: no settings file -> registry default (3 crashes)"
   grep -q 'rmmod\|modprobe -r' "$WGS" && no "wifi-guard: unloads a driver (crashes this board)" || ok "wifi-guard: never unloads ath11k"
 else sk "wifi-guard run cases (no python3 to create the control sockets)"; fi
 printf '#!/bin/sh\nexit 0\n' > "$G/safe-on"; printf '#!/bin/sh\nexit 1\n' > "$G/safe-off"; chmod +x "$G/safe-on" "$G/safe-off"
