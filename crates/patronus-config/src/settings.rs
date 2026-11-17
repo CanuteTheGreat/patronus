@@ -49,6 +49,26 @@ pub enum Kind {
     },
 }
 
+/// Which key/value table holds a setting: `system_config` (system-wide) or
+/// `lan_settings` (next to the subsystem's other keys, e.g. `ha.*`). Both are
+/// configuration tables, so either way the value is exported, versioned and
+/// restored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Table {
+    System,
+    Lan,
+}
+
+impl Table {
+    fn name(self) -> &'static str {
+        match self {
+            Table::System => "system_config",
+            Table::Lan => "lan_settings",
+        }
+    }
+}
+
 /// One registry entry.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Setting {
@@ -65,6 +85,8 @@ pub struct Setting {
     pub unit: &'static str,
     /// When a change takes effect.
     pub effect: &'static str,
+    /// Where the value is stored.
+    pub table: Table,
 }
 
 /// Every setting. Keep keys stable: they are part of exported configs.
@@ -78,6 +100,7 @@ pub static REGISTRY: &[Setting] = &[
         default: "86400",
         unit: "seconds",
         effect: "new logins at once; existing sessions are checked against the new value",
+        table: Table::System,
     },
     Setting {
         key: "web.login_max_failures",
@@ -88,6 +111,7 @@ pub static REGISTRY: &[Setting] = &[
         default: "5",
         unit: "attempts",
         effect: "at once",
+        table: Table::System,
     },
     Setting {
         key: "web.login_lockout_secs",
@@ -98,6 +122,7 @@ pub static REGISTRY: &[Setting] = &[
         default: "900",
         unit: "seconds",
         effect: "at once",
+        table: Table::System,
     },
     Setting {
         key: "web.min_password_length",
@@ -108,6 +133,7 @@ pub static REGISTRY: &[Setting] = &[
         default: "12",
         unit: "characters",
         effect: "next password change",
+        table: Table::System,
     },
     Setting {
         key: "web.housekeeping_interval_secs",
@@ -118,6 +144,7 @@ pub static REGISTRY: &[Setting] = &[
         default: "3600",
         unit: "seconds",
         effect: "next web service start",
+        table: Table::System,
     },
     Setting {
         key: "network.ddns_refresh_secs",
@@ -128,6 +155,7 @@ pub static REGISTRY: &[Setting] = &[
         default: "2160000",
         unit: "seconds",
         effect: "next DDNS check",
+        table: Table::System,
     },
     Setting {
         key: "wifi.enrolment_ttl_secs",
@@ -138,6 +166,29 @@ pub static REGISTRY: &[Setting] = &[
         default: "86400",
         unit: "seconds",
         effect: "credentials created after the change",
+        table: Table::System,
+    },
+    Setting {
+        key: "ha.sync_port",
+        section: "High availability",
+        label: "State sync port",
+        doc: "UDP port conntrackd uses to copy connection state to the HA peer (both routers must use the same port; the firewall opens it on the sync interface for the peer only).",
+        kind: Kind::Port,
+        default: "3780",
+        unit: "UDP port",
+        effect: "next HA apply",
+        table: Table::Lan,
+    },
+    Setting {
+        key: "proxy.intercept_port",
+        section: "Web proxy",
+        label: "Intercept port",
+        doc: "Port Squid listens on for plain HTTP that the firewall redirects from the LAN when interception is on (the proxy port itself is on the Web proxy page).",
+        kind: Kind::Int { min: 1025, max: 65_535 },
+        default: "3129",
+        unit: "TCP port",
+        effect: "next web proxy apply",
+        table: Table::Lan,
     },
 ];
 
@@ -221,11 +272,60 @@ fn entry(key: &str) -> Result<&'static Setting> {
     find(key).ok_or_else(|| invalid(format!("unknown key {key:?}")))
 }
 
+fn db_err(e: sqlx::Error) -> Error {
+    Error::Config(format!("settings store: {e}"))
+}
+
+async fn load_raw(store: &ConfigStore, s: &Setting) -> Result<Option<String>> {
+    if s.table == Table::System {
+        return store.load_system_config(s.key).await;
+    }
+    let row: Option<String> = sqlx::query_scalar(&format!(
+        "SELECT value FROM {} WHERE key = ?",
+        s.table.name()
+    ))
+    .bind(s.key)
+    .fetch_optional(store.pool()?)
+    .await
+    .map_err(db_err)?;
+    Ok(row)
+}
+
+async fn save_raw(store: &ConfigStore, s: &Setting, v: &str) -> Result<()> {
+    if s.table == Table::System {
+        return store.save_system_config(s.key, v).await;
+    }
+    sqlx::query(&format!(
+        "INSERT INTO {} (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        s.table.name()
+    ))
+    .bind(s.key)
+    .bind(v)
+    .bind(chrono::Utc::now().timestamp())
+    .execute(store.pool()?)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+async fn delete_raw(store: &ConfigStore, s: &Setting) -> Result<()> {
+    if s.table == Table::System {
+        return store.delete_system_config(s.key).await;
+    }
+    sqlx::query(&format!("DELETE FROM {} WHERE key = ?", s.table.name()))
+        .bind(s.key)
+        .execute(store.pool()?)
+        .await
+        .map_err(db_err)?;
+    Ok(())
+}
+
 /// Stored value of `key`, or its default. A stored value that no longer
 /// validates (bounds tightened in a newer release) falls back to the default.
 pub async fn get(store: &ConfigStore, key: &str) -> Result<String> {
     let s = entry(key)?;
-    Ok(match store.load_system_config(key).await? {
+    Ok(match load_raw(store, s).await? {
         Some(v) => validate(s, &v).unwrap_or_else(|e| {
             tracing::warn!("{e}; using the default {}", s.default);
             s.default.to_string()
@@ -246,14 +346,13 @@ pub async fn get_i64(store: &ConfigStore, key: &str) -> Result<i64> {
 pub async fn set(store: &ConfigStore, key: &str, value: &str) -> Result<String> {
     let s = entry(key)?;
     let v = validate(s, value)?;
-    store.save_system_config(key, &v).await?;
+    save_raw(store, s, &v).await?;
     Ok(v)
 }
 
 /// Back to the default (removes the stored value).
 pub async fn reset(store: &ConfigStore, key: &str) -> Result<()> {
-    entry(key)?;
-    store.delete_system_config(key).await?;
+    delete_raw(store, entry(key)?).await?;
     Ok(())
 }
 
@@ -270,7 +369,7 @@ pub struct SettingView {
 pub async fn list(store: &ConfigStore) -> Result<Vec<SettingView>> {
     let mut out = Vec::with_capacity(REGISTRY.len());
     for s in REGISTRY {
-        let stored = store.load_system_config(s.key).await?;
+        let stored = load_raw(store, s).await?;
         let value = get(store, s.key).await?;
         out.push(SettingView {
             setting: *s,
@@ -320,7 +419,7 @@ fn cache() -> &'static RwLock<HashMap<String, String>> {
 pub async fn load_cache(store: &ConfigStore) -> Result<()> {
     let mut fresh = HashMap::new();
     for s in REGISTRY {
-        if store.load_system_config(s.key).await?.is_some() {
+        if load_raw(store, s).await?.is_some() {
             fresh.insert(s.key.to_string(), get(store, s.key).await?);
         }
     }

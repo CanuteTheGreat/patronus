@@ -117,8 +117,8 @@ c51393b2aec2d8e2	crates/patronus-firewall/src/feeds.rs	url	https://www.spamhaus.
 deffc22d5186510a	crates/patronus-firewall/src/geoip.rs	path	/etc/patronus/geoip/ipsets	firewall.path.ipsets_dir
 f9aa10ff6a61bcb0	crates/patronus-firewall/src/geoip.rs	url	https://www.ipdeny.com/ipblocks/data/aggregated/{	firewall.url.https
 a34031e38523da9f	crates/patronus-firewall/src/geoip.rs	url	https://www.ipdeny.com/ipblocks/data/countries/{	firewall.url.https
-d0bbb8009b559a02	crates/patronus-firewall/src/ha_rules.rs	constant	SYNC_PORT	firewall.sync_port
 57c3e610c9a5a5d2	crates/patronus-firewall/src/seg_time.rs	constant	PORTAL_PORT	firewall.portal_port
+93ce5ca046b02c0f	crates/patronus-firewall/src/svc_rules.rs	port	5000	firewall.port.port
 a5692cd2a21994e1	crates/patronus-gitops/src/watcher.rs	path	/var/lib/patronus/gitops/repo	gitops.path.local_path
 00f3cf0b79694329	crates/patronus-gitops/src/webhook.rs	port	127	gitops.port.listen_addr
 42b3ac468b8e2c91	crates/patronus-gitops/src/webhook.rs	port	9999	gitops.port.port
@@ -157,7 +157,6 @@ d74059f4de9fddb3	crates/patronus-network/src/diag.rs	timing	Duration::from_secs(
 6ca48700d953d8ed	crates/patronus-network/src/general.rs	constant	K_HOST	network.k_host
 e8733889f043f577	crates/patronus-network/src/ha.rs	address	192.168.50.254/24	network.address.s
 9cf17c1089d7d64b	crates/patronus-network/src/ha.rs	constant	STATE_FILE	network.state_file
-c76bca424d0d6999	crates/patronus-network/src/ha.rs	constant	SYNC_PORT	network.sync_port
 5e9a21357368c78a	crates/patronus-network/src/ha.rs	path	/etc/patronus	network.path.lan
 0157cff8adc15b1c	crates/patronus-network/src/ha.rs	path	/etc/patronus/ha-notify.sh	network.path.notify_script
 a714c16df8c5cc5b	crates/patronus-network/src/ha.rs	path	/run/patronus/ha-state	network.state_file
@@ -193,7 +192,6 @@ f44f4116edaff7ff	crates/patronus-network/src/plugins.rs	constant	KEY_DIR	network
 7da8f962aba0b28e	crates/patronus-network/src/plugins.rs	constant	MAX_BUNDLE_BYTES	network.max_bundle_bytes
 ea29dd1d26c4dd3e	crates/patronus-network/src/plugins.rs	path	/etc/patronus/plugin-keys.d	network.key_dir
 bc6fceabe1af32d6	crates/patronus-network/src/plugins.rs	size	16 * 1024 * 1024	network.max_bundle_bytes
-bc534348609eaab8	crates/patronus-network/src/proxy.rs	constant	INTERCEPT_PORT	network.intercept_port
 1546c85fce93e7ee	crates/patronus-network/src/routes.rs	address	10.20.0.0/16	network.address.d
 83aaf1be2e934fbe	crates/patronus-network/src/routes.rs	constant	MAX_FAILBACK_SECS	network.max_failback_secs
 d588670fa7935532	crates/patronus-network/src/routes.rs	path	/run/patronus/gateway-status.json	network.path.pathbuf

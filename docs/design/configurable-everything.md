@@ -37,7 +37,8 @@ example/placeholder text. A constant that only looks operational carries
 
 - `crates/patronus-config/src/settings.rs`: `REGISTRY` of `Setting { key, section, label,
   doc, kind (Bool | Int{min,max} | Port | Text{max_len} | Url{optional} | Choice{options}),
-  default, unit, effect }`. Values live in `system_config`; an unset key reads as its
+  default, unit, effect, table }`. Values live in `system_config`, or in `lan_settings` next
+  to a subsystem's other keys (`ha.*`, `proxy.*`); an unset key reads as its
   default; a stored value that no longer validates (bounds tightened later) reads as the
   default with a warning.
 - API: `GET /api/settings` (login), `PUT /api/settings/{key}` `{"value": ...}` and
@@ -80,19 +81,19 @@ literal, then `python3 ci/hardcode-scan.py --update` (the baseline only shrinks)
 
 | category | must become config | legit constant | test fixture | total |
 |---|---|---|---|---|
-| address | 32 | 162 | 1422 | 1616 |
-| constant | 76 | 8 | 4 | 88 |
+| address | 32 | 162 | 1423 | 1617 |
+| constant | 73 | 8 | 4 | 85 |
 | fixed-list | 7 | 0 | 4 | 11 |
 | hostname | 2 | 0 | 0 | 2 |
-| interface | 21 | 16 | 437 | 474 |
+| interface | 21 | 16 | 438 | 475 |
 | path | 59 | 85 | 67 | 211 |
-| port | 9 | 3 | 20 | 32 |
+| port | 10 | 22 | 59 | 91 |
 | size | 10 | 0 | 0 | 10 |
 | timing | 133 | 5 | 66 | 204 |
 | uid/gid | 0 | 5 | 14 | 19 |
 | url | 43 | 21 | 33 | 97 |
 | wifi | 7 | 6 | 10 | 23 |
-| **all** | 399 | 311 | 2077 | 2787 |
+| **all** | 397 | 330 | 2118 | 2845 |
 
 Full table with file:line and proposed key: [configurable-everything-inventory.md](configurable-everything-inventory.md).
 
@@ -107,6 +108,8 @@ Full table with file:line and proposed key: [configurable-everything-inventory.m
 | session-cleanup / secret-rotation `interval(3600)` (patronus-web lib.rs) | `web.housekeeping_interval_secs` | 3600 s | yes |
 | `REFRESH_SECS = 25*86400` (patronus-network ddns.rs) | `network.ddns_refresh_secs` | 2160000 s | yes |
 | `PENDING_TTL_SECS = 24*3600` (patronus-config seg_wifi.rs) | `wifi.enrolment_ttl_secs` | 86400 s | yes |
+| `SYNC_PORT = 3780` (patronus-network ha.rs + patronus-firewall ha_rules.rs, kept in step by hand) | `ha.sync_port` (in `lan_settings` with the other `ha.*` keys) | 3780 | yes |
+| `INTERCEPT_PORT = 3129` (patronus-network proxy.rs + a literal in patronus-firewall svc_rules.rs) | `proxy.intercept_port` (`lan_settings`) | 3129 (1025 .. 65535) | yes |
 | fixed 13-entry language list (shared live installer; changed in the Horcrux master copy, reaches `gentoo/live-iso/common` with the next `sync-common.sh --from`) | the image's glibc `SUPPORTED` list | shortlist first, fallback only without glibc data | installer |
 
 ## Remaining, in priority order
@@ -131,10 +134,12 @@ This sweep, next batches (P1 = owner-visible or security, P2 = operator tuning, 
    blocklists, `CFG_ASN_URL`/`CFG_GEO_URL` defaults, speedtest defaults, captive-portal
    probe URL and DNS servers `8.8.8.8/8.8.4.4/1.1.1.1`): catalog entries become data rows
    with an editable URL; resolver defaults become `dns.fallback_servers`.
-3. **P1 service ports**: HA sync port (`ha.rs`/`ha_rules.rs` `SYNC_PORT`), time's-up page
-   port (`seg_time.rs` `PORTAL_PORT`), transparent proxy `INTERCEPT_PORT`, VXLAN
-   `DEFAULT_VXLAN_PORT`, WireGuard/OpenVPN form defaults (`DEFAULT_PORT`, 1194),
-   gitops webhook 9999, UPnP 5000.
+3. **P1 service ports**: VXLAN `DEFAULT_VXLAN_PORT`, WireGuard/OpenVPN form defaults
+   (`DEFAULT_PORT`, 1194), gitops webhook 9999, UPnP 5000 (`svc_rules.rs`), and the
+   duplicated default proxy port (`unwrap_or(3128)` in `svc_rules.rs`, also `.def("3128")` on
+   the svc field). The time's-up page port is already a setting (`seg.time_portal_port`);
+   register it (and the other existing `lan_settings` keys with their own pages, e.g.
+   `ddns.force`, `general.*`) in the registry so one page and one CLI list every setting.
 4. **P2 default subnets offered by forms** (L2TP `10.88.0.x`, OpenVPN `10.8.0.0/24`,
    NAT64 `192.168.255.0/24`, SD-WAN overlay `10.99.0.0/16`, HA example `192.168.50.254`):
    one `network.default_*` key each, used as the form's pre-filled value.

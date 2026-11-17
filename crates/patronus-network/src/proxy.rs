@@ -18,8 +18,6 @@ use patronus_core::{Error, Result};
 use serde_json::{json, Value};
 
 pub const INSTANCE: &str = "squid";
-/// Port Squid listens on for redirected (intercepted) HTTP.
-pub const INTERCEPT_PORT: u16 = 3129;
 
 static FIELDS: [Field; 5] = [
     Field::new("enabled", "Web proxy", Kind::Bool).def("0"),
@@ -81,8 +79,10 @@ pub fn safe_domain(d: &str) -> bool {
 
 /// squid.conf. `nets` are the CIDRs of the served interfaces, `listen` the
 /// addresses to bind.
+/// `intercept`: setting `proxy.intercept_port`.
 pub fn render_conf(
     s: &Settings,
+    intercept: i64,
     nets: &[String],
     listen: &[String],
     blocked: &[String],
@@ -93,7 +93,7 @@ pub fn render_conf(
     for l in listen {
         c.push_str(&format!("http_port {l}:{port}\n"));
         if s.b("transparent") {
-            c.push_str(&format!("http_port {l}:{INTERCEPT_PORT} intercept\n"));
+            c.push_str(&format!("http_port {l}:{intercept} intercept\n"));
         }
     }
     for (i, n) in nets.iter().enumerate() {
@@ -196,8 +196,10 @@ impl Applier for ProxyApplier {
         }
         let b = blocked(store).await?;
         let conf = self.sup.paths.state_dir.join("squid.conf");
+        let intercept = patronus_config::settings::get_i64(store, "proxy.intercept_port").await?;
         let text = render_conf(
             &s,
+            intercept,
             &nets,
             &listen,
             &b,
@@ -235,8 +237,10 @@ impl Applier for ProxyApplier {
             return Ok("# web proxy off\n".into());
         }
         let (nets, listen) = served(store, &s.s("interface")).await.unwrap_or_default();
+        let intercept = patronus_config::settings::get_i64(store, "proxy.intercept_port").await?;
         Ok(render_conf(
             &s,
+            intercept,
             &nets,
             &listen,
             &blocked(store).await.unwrap_or_default(),
@@ -266,6 +270,7 @@ mod tests {
         }
         let c = render_conf(
             &Settings(m),
+            3129,
             &["192.168.50.0/24".into()],
             &["192.168.50.1".into()],
             &["blocked.example.test".into()],
