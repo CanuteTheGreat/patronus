@@ -13,6 +13,7 @@ pub mod migrate;
 pub mod policy;
 pub mod seg;
 pub mod seg_wifi;
+pub mod settings;
 pub mod store;
 
 pub use applier::{Applier, ApplierOutcome, ApplierRegistry, ApplyReport, ApplyRunReport, Phase};

@@ -23,6 +23,7 @@ pub mod seg_dns;
 #[cfg(feature = "segmentation")]
 pub mod seg_time;
 pub mod segmentation;
+pub mod settings;
 pub mod setup;
 pub mod states;
 pub mod status;

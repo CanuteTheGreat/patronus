@@ -35,7 +35,6 @@ use tokio::io::AsyncWriteExt;
 
 pub const STATUS_FILE: &str = "/var/lib/patronus/ddns-status.json";
 pub const PROVIDERS: &[&str] = &["dyndns2", "duckdns", "cloudflare", "custom"];
-const REFRESH_SECS: i64 = 25 * 86400;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DdnsClient {
@@ -583,6 +582,9 @@ impl Applier for DdnsApplier {
             .await?
             .parse()
             .unwrap_or(0);
+        // forced refresh age: setting `network.ddns_refresh_secs`
+        let refresh_secs =
+            patronus_config::settings::get_i64(store, "network.ddns_refresh_secs").await?;
         let mut st = load_status(&self.env);
         let t = now();
         let mut failures = Vec::new();
@@ -604,7 +606,7 @@ impl Applier for DdnsApplier {
             }
             let due = !prev.ok
                 || prev.ip.as_deref() != Some(ip.to_string().as_str())
-                || t - prev.last_update > REFRESH_SECS
+                || t - prev.last_update > refresh_secs
                 || force > prev.last_check;
             if !due {
                 continue;

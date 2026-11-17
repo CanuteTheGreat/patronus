@@ -144,8 +144,11 @@ pub const ADMIN_PASSWORD_ENV: &str = "PATRONUS_ADMIN_PASSWORD";
 pub const ADMIN_PASSWORD_FILE_ENV: &str = "PATRONUS_ADMIN_PASSWORD_FILE";
 /// Where a per-install admin password is generated on first start.
 pub const DEFAULT_ADMIN_PASSWORD_FILE: &str = "/var/lib/patronus/initial-admin-password";
-/// Minimum accepted password length (every account).
-pub const MIN_ADMIN_PASSWORD_LEN: usize = 12;
+/// Minimum accepted password length (every account): setting
+/// `web.min_password_length`.
+pub fn min_password_len() -> usize {
+    patronus_config::settings::current_i64("web.min_password_length") as usize
+}
 /// Passwords that shipped as defaults or are trivially guessable.
 const KNOWN_DEFAULT_PASSWORDS: &[&str] = &[
     "admin",
@@ -178,11 +181,9 @@ pub fn check_admin_password(pw: &str) -> Result<(), String> {
     if KNOWN_DEFAULT_PASSWORDS.contains(&lower.as_str()) {
         return Err("admin password is a publicly known default".to_string());
     }
-    if pw.chars().count() < MIN_ADMIN_PASSWORD_LEN {
-        return Err(format!(
-            "admin password must be at least {} characters",
-            MIN_ADMIN_PASSWORD_LEN
-        ));
+    let min = min_password_len();
+    if pw.chars().count() < min {
+        return Err(format!("admin password must be at least {min} characters"));
     }
     Ok(())
 }
@@ -884,7 +885,7 @@ impl SessionStore {
         session_id
     }
 
-    /// Get session by ID. A session older than [`SESSION_LIFETIME_SECS`]
+    /// Get session by ID. A session older than [`session_lifetime_secs`]
     /// (counted from login, not from last use) is gone: it is removed and
     /// `None` is returned, so a copied cookie value cannot be kept alive
     /// forever by using it, and an expired session does not keep working
@@ -927,7 +928,7 @@ impl SessionStore {
             .retain(|id, _| Some(id.as_str()) == keep);
     }
 
-    /// Remove sessions past [`SESSION_LIFETIME_SECS`].
+    /// Remove sessions past [`session_lifetime_secs`].
     pub async fn cleanup_expired(&self) {
         let now = Utc::now();
         self.sessions
@@ -937,12 +938,15 @@ impl SessionStore {
     }
 }
 
-/// How long a web session lasts from login. The session cookie's
-/// `Max-Age` is the same, so the browser and the server agree.
-pub const SESSION_LIFETIME_SECS: i64 = 24 * 60 * 60;
+/// How long a web session lasts from login (setting
+/// `web.session_lifetime_secs`). The session cookie's `Max-Age` is the
+/// same, so the browser and the server agree.
+pub fn session_lifetime_secs() -> i64 {
+    patronus_config::settings::current_i64("web.session_lifetime_secs")
+}
 
 fn session_alive(s: &Session, now: DateTime<Utc>) -> bool {
-    s.created_at > now - Duration::seconds(SESSION_LIFETIME_SECS)
+    s.created_at > now - Duration::seconds(session_lifetime_secs())
 }
 
 /// Authentication errors
@@ -1214,11 +1218,17 @@ pub struct LoginResponse {
     pub role: UserRole,
 }
 
-/// Failed logins allowed per client within [`LOGIN_FAILURE_WINDOW_SECS`]
-/// before further attempts from that client are refused with 429.
-pub const MAX_LOGIN_FAILURES: u32 = 5;
-/// Window (and lockout length) for [`MAX_LOGIN_FAILURES`].
-pub const LOGIN_FAILURE_WINDOW_SECS: i64 = 15 * 60;
+/// Failed logins allowed per client within [`login_failure_window_secs`]
+/// before further attempts from that client are refused with 429
+/// (setting `web.login_max_failures`).
+pub fn max_login_failures() -> u32 {
+    patronus_config::settings::current_i64("web.login_max_failures") as u32
+}
+/// Window (and lockout length) for [`max_login_failures`] (setting
+/// `web.login_lockout_secs`).
+pub fn login_failure_window_secs() -> i64 {
+    patronus_config::settings::current_i64("web.login_lockout_secs")
+}
 /// Upper bound on tracked clients, so a spray from many addresses can't
 /// grow the table without limit.
 const MAX_TRACKED_LOGIN_CLIENTS: usize = 65_536;
@@ -1276,7 +1286,7 @@ impl LoginThrottle {
     }
 
     fn window() -> Duration {
-        Duration::seconds(LOGIN_FAILURE_WINDOW_SECS)
+        Duration::seconds(login_failure_window_secs())
     }
 
     /// `Some(seconds until the client may try again)` if it is locked out.
@@ -1288,7 +1298,7 @@ impl LoginThrottle {
         let map = self.failures.lock().unwrap_or_else(|e| e.into_inner());
         let (count, start) = *map.get(&Self::key(ip))?;
         let until = start + Self::window();
-        if count >= MAX_LOGIN_FAILURES && now < until {
+        if count >= max_login_failures() && now < until {
             Some((until - now).num_seconds().max(1) as u64)
         } else {
             None
@@ -1316,12 +1326,12 @@ impl LoginThrottle {
             *entry = (0, now);
         }
         entry.0 = entry.0.saturating_add(1);
-        if entry.0 == MAX_LOGIN_FAILURES {
+        if entry.0 == max_login_failures() {
             tracing::warn!(
                 "{} failed logins from {}; locking it out for {}s",
-                MAX_LOGIN_FAILURES,
+                entry.0,
                 key,
-                LOGIN_FAILURE_WINDOW_SECS
+                login_failure_window_secs()
             );
         }
     }
@@ -1590,7 +1600,8 @@ pub async fn login(
     // Set secure cookie
     let cookie = format!(
         "session_id={}; HttpOnly; SameSite=Strict; Max-Age={}; Path=/",
-        session_id, SESSION_LIFETIME_SECS
+        session_id,
+        session_lifetime_secs()
     );
 
     tracing::info!(
@@ -2027,7 +2038,7 @@ mod default_credential_tests {
         let src = store.provision_admin(None, &file).await.unwrap();
         assert_eq!(src, AdminPasswordSource::GeneratedFile(file.clone()));
         let pw = std::fs::read_to_string(&file).unwrap().trim().to_string();
-        assert!(pw.len() >= MIN_ADMIN_PASSWORD_LEN);
+        assert!(pw.len() >= min_password_len());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -2370,7 +2381,7 @@ mod account_tests {
         let ss = SessionStore::new();
         let id = ss.create_session(1, "a".into(), UserRole::Admin).await;
         let login = ss.sessions.read().await[&id].created_at;
-        let life = Duration::seconds(SESSION_LIFETIME_SECS);
+        let life = Duration::seconds(session_lifetime_secs());
         // used every hour for most of a day: still valid
         for h in 1..24 {
             let at = login + Duration::hours(h);
@@ -2394,7 +2405,7 @@ mod account_tests {
         {
             let mut t = ss.sessions.write().await;
             let s = t.get_mut(&old).unwrap();
-            s.created_at -= Duration::seconds(SESSION_LIFETIME_SECS + 1);
+            s.created_at -= Duration::seconds(session_lifetime_secs() + 1);
             s.last_active = Utc::now(); // recent use does not save it
         }
         ss.cleanup_expired().await;
@@ -2418,17 +2429,17 @@ mod login_throttle_tests {
         let t = LoginThrottle::new();
         let now = Utc::now();
         let a = ip("192.0.2.1");
-        for _ in 0..MAX_LOGIN_FAILURES - 1 {
+        for _ in 0..max_login_failures() - 1 {
             t.record_failure_at(a, now);
             assert!(t.check_at(a, now).is_none());
         }
         t.record_failure_at(a, now);
         let retry = t.check_at(a, now).expect("locked out");
-        assert!(retry > 0 && retry <= LOGIN_FAILURE_WINDOW_SECS as u64);
+        assert!(retry > 0 && retry <= login_failure_window_secs() as u64);
         // Another client is unaffected.
         assert!(t.check_at(ip("192.0.2.2"), now).is_none());
         // After the window it may try again, with a fresh count.
-        let later = now + Duration::seconds(LOGIN_FAILURE_WINDOW_SECS + 1);
+        let later = now + Duration::seconds(login_failure_window_secs() + 1);
         assert!(t.check_at(a, later).is_none());
         t.record_failure_at(a, later);
         assert!(t.check_at(a, later).is_none());
@@ -2438,7 +2449,7 @@ mod login_throttle_tests {
     fn success_clears_the_record() {
         let t = LoginThrottle::new();
         let a = ip("198.51.100.7");
-        for _ in 0..MAX_LOGIN_FAILURES - 1 {
+        for _ in 0..max_login_failures() - 1 {
             t.record_failure(a);
         }
         t.record_success(a);
@@ -2449,13 +2460,13 @@ mod login_throttle_tests {
     #[test]
     fn ipv6_clients_are_grouped_by_slash_64_and_mapped_v4_by_v4() {
         let t = LoginThrottle::new();
-        for i in 0..MAX_LOGIN_FAILURES {
+        for i in 0..max_login_failures() {
             t.record_failure(ip(&format!("2001:db8:1:2::{:x}", i + 1)));
         }
         assert!(t.check(ip("2001:db8:1:2:ffff::1")).is_some());
         assert!(t.check(ip("2001:db8:1:3::1")).is_none());
 
-        for _ in 0..MAX_LOGIN_FAILURES {
+        for _ in 0..max_login_failures() {
             t.record_failure(ip("::ffff:203.0.113.9"));
         }
         assert!(t.check(ip("203.0.113.9")).is_some());

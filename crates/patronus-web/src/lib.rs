@@ -32,16 +32,26 @@ pub fn create_app(state: AppState, ws_broadcaster: std::sync::Arc<WsBroadcaster>
     routes::build_router(state, ws_broadcaster)
 }
 
+/// Period of the housekeeping tasks (setting `web.housekeeping_interval_secs`).
+fn housekeeping_secs() -> u64 {
+    patronus_config::settings::current_i64("web.housekeeping_interval_secs").max(60) as u64
+}
+
 /// Wire up the background tasks (session cleanup, secret rotation,
 /// websocket broadcasters) and build the router. Shared by both the
 /// plain-HTTP and TLS listeners.
 fn prepare_app(state: AppState) -> axum::Router {
     let ws_broadcaster = std::sync::Arc::new(WsBroadcaster::new());
 
-    // Start session cleanup task
+    // Start session cleanup task (period: setting `web.housekeeping_interval_secs`)
     let cleanup_state = state.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
+        // fill the settings cache before the first request is answered
+        if let Err(e) = patronus_config::settings::load_cache(&cleanup_state.config_store).await {
+            tracing::warn!("settings cache: {e}; using defaults");
+        }
+        let secs = housekeeping_secs();
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(secs));
         loop {
             interval.tick().await;
             cleanup_state.auth.session_store.cleanup_expired().await;
@@ -56,6 +66,12 @@ fn prepare_app(state: AppState) -> axum::Router {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
         loop {
             interval.tick().await;
+            // settings changed outside this process (`patronus settings set`,
+            // GitOps, a restore) reach the synchronous readers within a minute
+            if let Err(e) = patronus_config::settings::load_cache(&backup_state.config_store).await
+            {
+                tracing::warn!("settings cache refresh: {e}");
+            }
             backup_state.backup_targets.run_due().await;
         }
     });
@@ -67,7 +83,9 @@ fn prepare_app(state: AppState) -> axum::Router {
     // cadence as session cleanup.
     let rotation_state = state.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
+        let _ = patronus_config::settings::load_cache(&rotation_state.config_store).await;
+        let mut interval =
+            tokio::time::interval(tokio::time::Duration::from_secs(housekeeping_secs()));
         loop {
             interval.tick().await;
             match rotation_state.secrets.enforce_rotation_policy().await {

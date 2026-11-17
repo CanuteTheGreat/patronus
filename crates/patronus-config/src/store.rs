@@ -227,6 +227,16 @@ impl ConfigStore {
         Ok(())
     }
 
+    /// Remove a system configuration value (back to its default).
+    pub async fn delete_system_config(&self, key: &str) -> Result<()> {
+        sqlx::query("DELETE FROM system_config WHERE key = ?")
+            .bind(key)
+            .execute(self.pool()?)
+            .await
+            .map_err(db_err("Failed to delete system config"))?;
+        Ok(())
+    }
+
     /// Load a system configuration value
     pub async fn load_system_config(&self, key: &str) -> Result<Option<String>> {
         let row = sqlx::query("SELECT value FROM system_config WHERE key = ?")

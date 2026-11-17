@@ -55,6 +55,7 @@ pub fn build_router(
         .merge(seg_time_pages())
         .merge(seg_dns_pages())
         .merge(api::setup::pages())
+        .merge(api::settings::pages())
         // The old "simple" pages claimed services were operational and
         // listed invented "recent activity"; keep the URLs as redirects.
         .route("/simple", get(|| async { Redirect::to("/") }))
@@ -438,6 +439,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::groups::router())
         .merge(api::backup_targets::router())
         .merge(api::setup::router())
+        .merge(api::settings::router())
         .merge(api::authservers::router())
         .merge(api::telemetry::router())
 }
@@ -446,6 +448,8 @@ fn api_routes() -> Router<AppState> {
 mod honesty_tests;
 #[cfg(test)]
 mod insight_api_tests;
+#[cfg(test)]
+mod settings_api_tests;
 
 #[cfg(test)]
 mod lane_fh_tests;
@@ -803,7 +807,7 @@ mod auth_gate_tests {
         let bad = r#"{"username":"admin","password":"not-the-password"}"#;
         let good = format!(r#"{{"username":"admin","password":"{pw}"}}"#);
         let attacker = "203.0.113.50";
-        for i in 0..crate::auth::MAX_LOGIN_FAILURES {
+        for i in 0..crate::auth::max_login_failures() {
             let r = app
                 .clone()
                 .oneshot(from_ip(
@@ -869,7 +873,7 @@ mod auth_gate_tests {
         let thief = "203.0.113.77";
         let guess =
             r#"{"current_password":"guess-Passw0rd-1","new_password":"Thief-Owns-It-1234"}"#;
-        for i in 0..crate::auth::MAX_LOGIN_FAILURES {
+        for i in 0..crate::auth::max_login_failures() {
             let (uri, body) = if i % 2 == 0 {
                 ("/api/auth/password", guess.to_string())
             } else {
@@ -1140,7 +1144,7 @@ mod auth_gate_tests {
     async fn address_lockout_message_names_the_wait() {
         let (app, _) = app().await;
         let bad = r#"{"username":"admin","password":"Wrong-Passw0rd!"}"#;
-        for _ in 0..crate::auth::MAX_LOGIN_FAILURES {
+        for _ in 0..crate::auth::max_login_failures() {
             app.clone()
                 .oneshot(from_ip(
                     req(Method::POST, "/api/auth/login", None, Some(bad)),

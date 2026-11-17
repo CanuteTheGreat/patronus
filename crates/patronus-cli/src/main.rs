@@ -143,6 +143,13 @@ enum Commands {
         action: UsersCommands,
     },
 
+    /// Typed settings (timeouts, limits and other operational values):
+    /// the same registry as System > Advanced settings and /api/settings
+    Settings {
+        #[command(subcommand)]
+        action: SettingsCommands,
+    },
+
     /// Initialize a new Patronus deployment
     Init {
         /// Deployment name
@@ -394,6 +401,28 @@ enum BgpCommands {
 
     /// Show BGP routes
     Routes,
+}
+
+#[derive(Subcommand)]
+enum SettingsCommands {
+    /// Every setting with its value, unit and default
+    List {
+        /// JSON with type, bounds and documentation
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print one value (the default when it was never set)
+    Get { key: String },
+    /// Validate and store a value
+    Set { key: String, value: String },
+    /// Back to the default
+    Reset { key: String },
+    /// Every value as shell variables (PATRONUS_SET_<KEY>='value') for boot scripts
+    Env {
+        /// Write to this file (atomically) instead of stdout
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -660,6 +689,24 @@ async fn main() -> anyhow::Result<()> {
             })
             .await?;
         }
+
+        Commands::Settings { action } => match action {
+            SettingsCommands::List { json } => {
+                commands::settings::list(cli.db.as_deref(), json).await?
+            }
+            SettingsCommands::Get { key } => {
+                commands::settings::get(cli.db.as_deref(), &key).await?
+            }
+            SettingsCommands::Set { key, value } => {
+                commands::settings::set(cli.db.as_deref(), &key, &value).await?
+            }
+            SettingsCommands::Reset { key } => {
+                commands::settings::reset(cli.db.as_deref(), &key).await?
+            }
+            SettingsCommands::Env { output } => {
+                commands::settings::env(cli.db.as_deref(), output.as_deref()).await?
+            }
+        },
 
         Commands::Users { action } => match action {
             UsersCommands::List => users::list(cli.db.as_deref()).await?,
