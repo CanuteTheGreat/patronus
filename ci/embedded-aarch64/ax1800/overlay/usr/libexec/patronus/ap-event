@@ -1,0 +1,22 @@
+#!/bin/sh
+# ap-event IFNAME EVENT MAC...: hostapd_cli action script (one `hostapd_cli -a` per BSS, started by `ap start`).
+# A station that moves to the other band of this AP (same SSID, other radio) is never told goodbye on the old radio:
+# each radio has its own hostapd, so the old one keeps the station listed (and keeps buffering frames for it) until its
+# inactivity timeout. On AP-STA-CONNECTED we therefore drop that MAC from every other BSS of this unit, without sending
+# a frame (tx=0): the client is already associated here and must not receive a deauthentication.
+# Test hooks: AP_CTRL (control socket directory), AP_CLI (hostapd_cli command).
+CTRL=${AP_CTRL:-/run/hostapd}
+CLI=${AP_CLI:-hostapd_cli}
+ifn=$1; ev=$2; mac=$3
+[ "$ev" = AP-STA-CONNECTED ] || exit 0
+case "$mac" in ??:??:??:??:??:??) ;; *) exit 0;; esac
+for s in "$CTRL"/*; do
+  [ -S "$s" ] || continue
+  o=${s##*/}
+  [ "$o" = "$ifn" ] && continue
+  # only a BSS that still lists the station: `sta MAC` prints the address on its first line when it is known
+  [ "$($CLI -p "$CTRL" -i "$o" sta "$mac" 2>/dev/null | head -1)" = "$mac" ] || continue
+  $CLI -p "$CTRL" -i "$o" deauthenticate "$mac" tx=0 >/dev/null 2>&1 \
+    && logger -t patronus-ap "$mac moved to $ifn: removed its stale entry on $o"
+done
+exit 0

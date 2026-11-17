@@ -483,6 +483,28 @@ unit's `ap.env` sets `AP_FT=1` (testing only), `check-rootfs.sh` refuses an imag
 as NOT imported: the AP comes up with fast transition off and roaming falls back to plain re-association. The importer
 also recognises the IPQ6018 radio (`c000000.wifi`) and keeps `htmode` in its plan (fixture `tests/fixtures/uci-ax1800`).
 
+### 12.6c Wi-Fi: 802.11ax (HE) settings
+
+802.11ax is on by default (`AP_HE=0` in `ap.env` limits both radios to 802.11n/ac). The first image wrote only
+`ieee80211ax=1` plus the HE channel width. With that, clients in power save (phones with the screen off) lost 50-100 %
+of the frames sent to them, with round trips up to 1.2 s, and re-associated every few minutes; always-awake clients on
+the same AP saw no loss, and the same radios with 802.11ax off delivered every frame. The same unit had run OpenWrt
+25.12.6 with HE80/HE40 without this, on the same kernel, ath11k modules and firmware, so the renderer now writes what
+OpenWrt's `mac80211.sh`/`hostapd.sh` generate for this board:
+
+- radio: the board's full HT and VHT capabilities (`AP_HTCAPS24`, `AP_HTCAPS5`, `AP_VHTCAPS5` in `board.sh`, as OpenWrt
+  derives them from `iw phy info`), `beacon_int=100`, `stationary_ap=1`, short preamble, no 802.11b rates on 2.4 GHz,
+  `tx_queue_data2_burst=2.0` on 5 GHz;
+- 802.11ax: SU/MU beamforming, a BSS color (hostapd leaves BSS color disabled unless `he_bss_color` is set; the
+  renderer derives 1-63 from the radio MAC, so the two radios differ), spatial reuse (`he_spr_sr_control=3`), a 16 us
+  PE duration, the TXOP RTS threshold off (1023) and the MU EDCA parameter set;
+- every BSS: U-APSD advertised, low-ACK disassociation, the inactivity poll, BSS load reporting, and its own control
+  socket (so `ap-event` sees every BSS).
+
+`ht_coex` is not written: it is an OpenWrt hostapd patch and the stock hostapd rejects it. Any test of the Wi-Fi
+settings must use a REAL phone in power save (screen off, deep idle) and check downstream loss over at least 60 s: a
+client that never sleeps, or a laptop radio with `iw ... set power_save on`, does not show the problem.
+
 ### 12.6a Wi-Fi bring-up on the real unit (found on the first install, 2026-11-16)
 
 The first real boot had wired networking but no Wi-Fi. Three bugs, each reproduced on the unit and fixed in the image:

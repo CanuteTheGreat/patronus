@@ -114,16 +114,17 @@ seg() { sed -n "s/^$2=//p" "$A/$1/ap5.conf" 2>/dev/null | head -1; }
 for c in 36:42:+ 40:42:- 44:42:+ 48:42:- 52:58:+ 100:106:+ 116:122:+ 132:138:+ 149:155:+ 153:155:- 157:155:+ 161:155:- 165:171:+; do
   ch=${c%%:*}; r=${c#*:}; want=${r%:*}; dir=${r#*:}
   aprender c$ch "$TWO
-AP_CHAN5=$ch AP_HT5=80"
+AP_CHAN5=$ch AP_HT5=80 AP_HE=1"
   [ "$(seg c$ch vht_oper_centr_freq_seg0_idx)" = $want ] && [ "$(seg c$ch he_oper_centr_freq_seg0_idx)" = $want ] && [ "$(seg c$ch vht_oper_chwidth)" = 1 ] \
-    && [ "$(seg c$ch ht_capab)" = "[HT40$dir]" ] && [ "$(seg c$ch channel)" = $ch ] \
+    && case "$(seg c$ch ht_capab)" in "[HT40$dir][LDPC]"*) true;; *) false;; esac && [ "$(seg c$ch channel)" = $ch ] \
     && ok "ap: 5 GHz ch $ch / 80 MHz -> centre $want, HT40$dir" || { no "ap: ch $ch / 80 MHz: seg0=$(seg c$ch vht_oper_centr_freq_seg0_idx) he=$(seg c$ch he_oper_centr_freq_seg0_idx) ht=$(seg c$ch ht_capab)"; cat "$A/c$ch.out"; }
 done
 for c in 36:38:+ 40:38:- 149:151:+ 153:151:-; do
   ch=${c%%:*}; r=${c#*:}; want=${r%:*}; dir=${r#*:}
   aprender w$ch "$TWO
 AP_CHAN5=$ch AP_HT5=40"
-  [ "$(seg w$ch vht_oper_centr_freq_seg0_idx)" = $want ] && [ "$(seg w$ch vht_oper_chwidth)" = 0 ] && [ "$(seg w$ch ht_capab)" = "[HT40$dir]" ] \
+  [ "$(seg w$ch vht_oper_centr_freq_seg0_idx)" = $want ] && [ "$(seg w$ch vht_oper_chwidth)" = 0 ] \
+    && case "$(seg w$ch ht_capab)" in "[HT40$dir][LDPC]"*) true;; *) false;; esac \
     && ok "ap: 5 GHz ch $ch / 40 MHz -> centre $want, HT40$dir" || no "ap: ch $ch / 40 MHz: seg0=$(seg w$ch vht_oper_centr_freq_seg0_idx) ht=$(seg w$ch ht_capab)"
 done
 aprender auto "$TWO
@@ -133,6 +134,73 @@ AP_CHAN5=auto AP_HT5=80"
 aprender bad "$TWO
 AP_CHAN5=150"
 [ "$(seg bad channel)" = 0 ] && grep -q 'not a 5 GHz channel' "$A/bad.out" && ok "ap: an off-raster 5 GHz channel falls back to auto, with a message" || no "ap: AP_CHAN5=150 not handled"
+# 802.11ax: ON by default with OpenWrt 25.12's radio settings for this board (a bare ieee80211ax=1 without them left
+# phones in power save with 50-100 % downstream loss); AP_HE=0 turns it off on both radios, VHT 80 MHz stays complete
+aprender he1 "$TWO
+AP_CHAN5=149 AP_HT5=80"
+c5="$A/he1/ap5.conf"; c24="$A/he1/ap24.conf"
+cnt() { grep -c "^$1" "$2" 2>/dev/null; }
+if [ "$(seg he1 ieee80211ax)" = 1 ] && grep -q '^ieee80211ax=1' "$c24" && [ "$(seg he1 he_oper_centr_freq_seg0_idx)" = 155 ] \
+  && [ "$(seg he1 he_oper_chwidth)" = 1 ]; then ok "ap: 802.11ax on by default on both radios, HE centre channel set"
+else no "ap: default HE state wrong: $(grep -hE '^(ieee80211ax|he_oper)' "$c5" "$c24" | tr '\n' ' ')"; cat "$A/he1.out"; fi
+heok=1
+for f in "$c5" "$c24"; do
+  for k in he_su_beamformer=1 he_su_beamformee=1 he_mu_beamformer=1 he_spr_sr_control=3 he_default_pe_duration=4 \
+           he_rts_threshold=1023 he_mu_edca_ac_be_aifsn=8 he_mu_edca_ac_bk_aifsn=15 he_mu_edca_ac_vi_ecwmax=7 \
+           he_mu_edca_ac_vo_timer=255 beacon_int=100 stationary_ap=1; do grep -qx "$k" "$f" || { heok=0; echo "  missing $k in ${f##*/}"; }; done
+  col=$(sed -n 's/^he_bss_color=//p' "$f"); [ -n "$col" ] && [ "$col" -ge 1 ] && [ "$col" -le 63 ] || { heok=0; echo "  he_bss_color=$col in ${f##*/}"; }
+  [ "$(cnt he_bss_color= "$f")" = 1 ] || heok=0
+done
+[ $heok = 1 ] && ok "ap: HE beamforming, BSS color 1-63, spatial reuse, PE 16 us, RTS off and MU EDCA on both radios" \
+  || no "ap: HE radio settings incomplete (see above)"
+[ "$(sed -n 's/^he_bss_color=//p' "$c5")" != "$(sed -n 's/^he_bss_color=//p' "$c24")" ] && ok "ap: the two radios get different BSS colors" \
+  || no "ap: both radios have the same BSS color"
+case "$(seg he1 ht_capab)" in "[HT40+][LDPC][SHORT-GI-20][SHORT-GI-40][TX-STBC][RX-STBC1]"*) v=1;; *) v=0;; esac
+grep -q '^vht_capab=\[RXLDPC\]\[SHORT-GI-80\].*\[SU-BEAMFORMER\]' "$c5" || v=0
+grep -qx 'ht_capab=\[LDPC\]\[SHORT-GI-20\]\[SHORT-GI-40\]\[TX-STBC\]\[RX-STBC1\]\[DSSS_CCK-40\]' "$c24" || v=0
+grep -qx 'basic_rates=60 120 240' "$c24" && ! grep -qE '^supported_rates=(.* )?(10|20|55|110)( |$)' "$c24" || v=0
+[ $v = 1 ] && ok "ap: the board's HT/VHT capabilities are written, 2.4 GHz without 802.11b rates" \
+  || no "ap: ht/vht capabilities: $(grep -hE '^(ht_capab|vht_capab|basic_rates|supported_rates)' "$c5" "$c24" | tr '\n' ' ')"
+# every BSS (2 SSIDs x 2 radios): own control socket, U-APSD advertised, low-ACK disassoc, inactivity poll
+b=1; for f in "$c5" "$c24"; do
+  for k in ctrl_interface=/run/hostapd uapsd_advertisement_enabled=1 disassoc_low_ack=1 skip_inactivity_poll=0; do
+    [ "$(grep -cx "$k" "$f")" = 2 ] || { b=0; echo "  $k: $(grep -cx "$k" "$f") of 2 BSS in ${f##*/}"; }; done; done
+[ $b = 1 ] && ok "ap: every BSS has its control socket, U-APSD, low-ACK disassociation and the inactivity poll" \
+  || no "ap: per-BSS settings missing (see above)"
+aprender he0 "$TWO
+AP_CHAN5=149 AP_HT5=80 AP_HE=0"
+if [ "$(seg he0 ieee80211ax)" = 0 ] && grep -q '^ieee80211ax=0' "$A/he0/ap24.conf" && ! grep -q '^he_' "$A/he0/ap5.conf" "$A/he0/ap24.conf" \
+  && [ "$(seg he0 vht_oper_centr_freq_seg0_idx)" = 155 ] && [ "$(seg he0 vht_oper_chwidth)" = 1 ] && [ "$(seg he0 ieee80211ac)" = 1 ]; then
+  ok "ap: AP_HE=0 turns 802.11ax off on both radios (no he_* lines), VHT 80 MHz centre kept"
+else no "ap: AP_HE=0 not rendered: $(grep -hE '^(ieee80211ax|ieee80211ac|he_|vht_oper)' "$A/he0/ap5.conf" "$A/he0/ap24.conf" | tr '\n' ' ')"; cat "$A/he0.out"; fi
+aprender w20 "$TWO
+AP_CHAN5=36 AP_HT5=20"
+[ "$(grep -c '^ht_capab=' "$A/w20/ap5.conf")" = 1 ] && case "$(seg w20 ht_capab)" in "[LDPC]"*) true;; *) false;; esac \
+  && ok "ap: 20 MHz on 5 GHz still writes one ht_capab line with the board's capabilities" || no "ap: 20 MHz ht_capab: $(grep '^ht_capab' "$A/w20/ap5.conf" | tr '\n' ' ')"
+# ap-event: a station that joins one radio is dropped (without a frame) from the other BSSes that still list it
+E=$W/apev; mkdir -p "$E/ctrl" "$E/bin"
+if command -v python3 >/dev/null 2>&1; then
+  for i in wl24-m wl5-m wl5-g; do python3 -c "import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])" "$E/ctrl/$i"; done
+  # fake hostapd_cli: wl24-m and wl5-g list the station, wl5-m is where it just connected
+  cat > "$E/bin/hostapd_cli" <<'EOF'
+#!/bin/sh
+while [ $# -gt 0 ]; do case "$1" in -p) shift 2;; -i) i=$2; shift 2;; *) break;; esac; done
+echo "$i $*" >> "$APEV_LOG"
+[ "$1" = sta ] && case "$i" in wl24-m|wl5-g) echo "$2"; echo flags=[AUTH][ASSOC];; *) echo FAIL;; esac
+exit 0
+EOF
+  chmod +x "$E/bin/hostapd_cli"; : > "$E/log"
+  APEV_LOG=$E/log AP_CTRL=$E/ctrl AP_CLI=$E/bin/hostapd_cli sh "$O/usr/libexec/patronus/ap-event" wl5-m AP-STA-CONNECTED 02:11:22:33:44:55
+  grep -qx 'wl24-m deauthenticate 02:11:22:33:44:55 tx=0' "$E/log" && grep -qx 'wl5-g deauthenticate 02:11:22:33:44:55 tx=0' "$E/log" \
+    && ! grep -q '^wl5-m deauthenticate' "$E/log" \
+    && ok "ap-event: a station that joined one BSS is removed (tx=0) from every other BSS that lists it, not from the new one" \
+    || { no "ap-event: wrong removals"; cat "$E/log"; }
+  : > "$E/log"
+  APEV_LOG=$E/log AP_CTRL=$E/ctrl AP_CLI=$E/bin/hostapd_cli sh "$O/usr/libexec/patronus/ap-event" wl5-m AP-STA-DISCONNECTED 02:11:22:33:44:55
+  [ ! -s "$E/log" ] && ok "ap-event: other events change nothing" || { no "ap-event: acted on AP-STA-DISCONNECTED"; cat "$E/log"; }
+else sk "ap-event (no python3 to create the control sockets)"; fi
+grep -q 'hostapd_cli -B .* -a /usr/libexec/patronus/ap-event' "$O/usr/libexec/patronus/ap" && [ -x "$O/usr/libexec/patronus/ap-event" ] \
+  && ok "ap: start runs ap-event for every BSS (executable)" || no "ap: ap-event not wired into start, or not executable"
 grep -q centr_freq "$A/two/ap24.conf" && no "ap: 2.4 GHz config got a 5 GHz centre channel" || ok "ap: 2.4 GHz config has no VHT/HE centre channel"
 [ "$(stat -c %a "$A/two/ap5.conf")" = 600 ] && ok "ap: config is 0600 (holds the keys)" || no "ap: config mode $(stat -c %a "$A/two/ap5.conf")"
 

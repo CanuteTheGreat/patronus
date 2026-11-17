@@ -10,6 +10,13 @@
 # 2.4 GHz BSS is the 5 GHz radio's own MAC.
 # A fixed 5 GHz channel at 40/80 MHz gets its HT40 direction and VHT/HE centre channel (hostapd refuses 80 MHz without
 # vht_oper_centr_freq_seg0_idx); channel auto (ACS) leaves them to hostapd.
+# 802.11ax (HE, Wi-Fi 6) is ON (AP_HE=0 in ap.env turns it off). The radio settings follow what OpenWrt 25.12's
+# mac80211.sh/hostapd.sh write for this board, on top of the same kernel, ath11k modules and firmware: the board's full
+# HT/VHT capabilities, HE beamforming, a BSS color (hostapd leaves BSS color DISABLED unless he_bss_color is set), spatial
+# reuse, HE PE duration 16 us, the TXOP RTS threshold off, the MU EDCA parameter set, and per BSS U-APSD advertisement,
+# low-ACK disassociation and the inactivity poll. A bare `ieee80211ax=1` without them left phones in power save with
+# 50-100 % downstream loss and re-associations every few minutes, while always-awake stations saw nothing wrong.
+# Every BSS gets its own control socket, so ap-event can watch (and clean up) each one.
 # Test hooks: AP_RENDER_OUT (directory), AP_PHY24 / AP_PHY5 (phy names), AP_BOARD (board.sh path),
 #             AP_SYSFS (instead of /sys/class/ieee80211: <phy>/macaddress), AP_PHY_WAIT (seconds to wait for the phys).
 . ${AP_BOARD:-/etc/patronus/board.sh}
@@ -62,8 +69,21 @@ valid5() { # a 5 GHz channel number on the 20 MHz raster (36..144 from 36, 149..
   { [ "$1" -ge 36 ] && [ "$1" -le 144 ] && [ $(( ($1 - 36) % 4 )) = 0 ]; } || { [ "$1" -ge 149 ] && [ "$1" -le 177 ] && [ $(( ($1 - 149) % 4 )) = 0 ]; }; }
 phy_mac() { m=$(tr 'A-F' 'a-f' < $SYSFS/$1/macaddress 2>/dev/null)
   case "$m" in ??:??:??:??:??:??) echo "$m";; *) echo "ap: no MAC for $1 ($SYSFS/$1/macaddress)" >&2; return 1;; esac; }
+he_lines() { # PHY-MAC: 802.11ax radio settings (OpenWrt 25.12 parity, see the header); BSS color 1..63 from the radio MAC
+  m=$1; echo "he_su_beamformer=1"; echo "he_su_beamformee=1"; echo "he_mu_beamformer=1"
+  echo "he_bss_color=$(( (0x${m##*:} % 63) + 1 ))"; echo "he_spr_sr_control=3"
+  echo "he_default_pe_duration=4"; echo "he_rts_threshold=1023"
+  echo "he_mu_edca_qos_info_param_count=0"; echo "he_mu_edca_qos_info_q_ack=0"
+  echo "he_mu_edca_qos_info_queue_request=0"; echo "he_mu_edca_qos_info_txop_request=0"
+  for e in "be 8 0 9 10" "bk 15 1 9 10" "vi 5 2 5 7" "vo 5 3 5 7"; do set -- $e   # AC aifsn aci ecwmin ecwmax
+    echo "he_mu_edca_ac_$1_aifsn=$2"; echo "he_mu_edca_ac_$1_aci=$3"; echo "he_mu_edca_ac_$1_ecwmin=$4"
+    echo "he_mu_edca_ac_$1_ecwmax=$5"; echo "he_mu_edca_ac_$1_timer=255"; done; }
+bss_lines() { # settings every BSS gets (OpenWrt's wifi-iface defaults)
+  echo "uapsd_advertisement_enabled=1"; echo "disassoc_low_ack=1"; echo "skip_inactivity_poll=0"
+  echo "bss_load_update_period=60"; echo "chan_util_avg_period=600"; }
 render_band() { # 24|5 phy
   b=$1; phy=$2; f=$OUTD/ap$b.conf; first=1; n=0
+  case "${AP_HE:-1}" in 0|no|off) he=0;; *) he=1;; esac
   pmac=$(phy_mac $phy) || return 1
   if [ $b = 24 ]; then ch=$AP_CHAN24; hw=g; [ "$ch" = auto ] && ch=0; pre=wl24
   else ch=$AP_CHAN5; hw=a; [ "$ch" = auto ] && ch=0; pre=wl5
@@ -77,14 +97,26 @@ render_band() { # 24|5 phy
     if [ $first = 1 ]; then
       first=0; : > $f; chmod 600 $f
       { echo "driver=nl80211"; echo "country_code=$AP_COUNTRY"; echo "ieee80211d=1"; echo "ieee80211h=$([ $b = 5 ] && echo 1 || echo 0)"
-        echo "hw_mode=$hw"; echo "channel=$ch"; echo "wmm_enabled=1"; echo "ieee80211n=1"; echo "ieee80211ax=1"
-        [ $b = 5 ] && { echo "ieee80211ac=1"; chan5_lines "$ch" "${AP_HT5:-80}"; }
+        echo "hw_mode=$hw"; echo "channel=$ch"; echo "wmm_enabled=1"; echo "ieee80211n=1"; echo "ieee80211ax=$he"
+        echo "beacon_int=100"; echo "stationary_ap=1"; echo "preamble=1"
+        if [ $b = 5 ]; then echo "ieee80211ac=1"; echo "tx_queue_data2_burst=2.0"
+          c5=$(chan5_lines "$ch" "${AP_HT5:-80}"); [ $he = 1 ] || c5=$(echo "$c5" | grep -v '^he_')
+          # the HT40 direction (if any) and the board's HT capabilities go in ONE ht_capab line
+          if echo "$c5" | grep '^ht_capab=' >/dev/null; then echo "$c5" | sed "s/^ht_capab=\(.*\)/ht_capab=\1$AP_HTCAPS5/"
+          else [ -n "$c5" ] && echo "$c5"; echo "ht_capab=$AP_HTCAPS5"; fi
+          echo "vht_capab=$AP_VHTCAPS5"
+        else
+          echo "ht_capab=$AP_HTCAPS24"
+          # no 802.11b rates (OpenWrt's default): 1-11 Mbit/s beacons and broadcasts cost the whole cell airtime
+          echo "supported_rates=60 90 120 180 240 360 480 540"; echo "basic_rates=60 120 240"
+        fi
+        [ $he = 1 ] && he_lines "$pmac"
         [ "$ch" = 0 ] && echo "acs_num_scans=1"
         echo "interface=$ifn"; echo "bssid=$bssid"; echo "bridge=br-lan"; echo "ctrl_interface=/run/hostapd"; } >> $f
     else
-      { echo "bss=$ifn"; echo "bssid=$bssid"; echo "bridge=br-lan"; } >> $f
+      { echo "bss=$ifn"; echo "bssid=$bssid"; echo "bridge=br-lan"; echo "ctrl_interface=/run/hostapd"; } >> $f
     fi
-    { echo "ssid=$ssid"; echo "ignore_broadcast_ssid=$hide"; echo "ap_isolate=0"; sec_lines "$sec" "$key"
+    { echo "ssid=$ssid"; echo "ignore_broadcast_ssid=$hide"; echo "ap_isolate=0"; sec_lines "$sec" "$key"; bss_lines
       if [ "${AP_FT:-0}" = 1 ]; then echo "ieee80211r=1"; echo "mobility_domain=${AP_MDID:-4f57}"; echo "ft_psk_generate_local=1"; echo "nas_identifier=ax1800-$b"; fi
     } >> $f
   done
@@ -95,6 +127,10 @@ start_all() {
     # the first BSS' netdev is created on its phy here (hostapd then adds the `bss=` ones itself)
     iw phy $phy interface add $(sed -n 's/^interface=//p' $f) type __ap 2>/dev/null
     if hostapd -B -P /run/hostapd-$b.pid $f > /tmp/hostapd-$b.log 2>&1; then echo "$(cut -d' ' -f1 /proc/uptime) hostapd-$b" >> /tmp/boot-times
+      # band moves: a station that joins one radio is dropped from the other radio's BSSes (see ap-event)
+      for i in $(sed -n 's/^interface=//p; s/^bss=//p' $f); do
+        hostapd_cli -B -P /run/hostapd-cli-$i.pid -p /run/hostapd -i $i -a /usr/libexec/patronus/ap-event > /dev/null 2>&1
+      done
     else echo "hostapd $b failed"; cat /tmp/hostapd-$b.log; fi
   done; }
 case "$1" in
@@ -117,5 +153,5 @@ start)
     [ -n "$P24$P5" ] || { echo "ap: no Wi-Fi phy after ${AP_PHY_WAIT:-90} s (see /tmp/caldata.log, dmesg)"; exit 0; }
     echo "$(cut -d' ' -f1 /proc/uptime) wifi-phys" >> /tmp/boot-times; start_all ) > /tmp/ap.log 2>&1 < /dev/null &
   ;;
-stop) for p in /run/hostapd-*.pid; do [ -f "$p" ] && kill $(cat $p) 2>/dev/null; done; true ;;
+stop) for p in /run/hostapd-cli-*.pid /run/hostapd-*.pid; do [ -f "$p" ] && kill $(cat $p) 2>/dev/null && rm -f $p; done; true ;;
 esac
