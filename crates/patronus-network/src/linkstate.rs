@@ -90,6 +90,40 @@ pub struct KernelState {
     pub default_routes: Vec<KRoute>,
 }
 
+/// iproute2 6.1 (Debian bookworm) prints the bare text `fan-map ` into the
+/// JSON of `ip -j -d link show` for every VXLAN device that has a remote
+/// (`..."remote":"1.2.3.4"fan-map ,"local":...`), which no JSON parser
+/// accepts and which used to fail every interface apply once a VXLAN overlay
+/// existed. Drop that stray token wherever it sits outside a string.
+fn strip_stray_text(json: &str) -> std::borrow::Cow<'_, str> {
+    const STRAY: &str = "fan-map ";
+    if !json.contains(STRAY) {
+        return std::borrow::Cow::Borrowed(json);
+    }
+    let mut out = String::with_capacity(json.len());
+    let (mut in_str, mut esc) = (false, false);
+    let mut rest = json;
+    while let Some(c) = rest.chars().next() {
+        if in_str {
+            esc = !esc && c == '\\';
+            if c == '"' && !esc {
+                in_str = false;
+            }
+            if c != '\\' {
+                esc = false;
+            }
+        } else if c == '"' {
+            in_str = true;
+        } else if rest.starts_with(STRAY) {
+            rest = &rest[STRAY.len()..];
+            continue;
+        }
+        out.push(c);
+        rest = &rest[c.len_utf8()..];
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 fn s(v: &Value, k: &str) -> Option<String> {
     v.get(k).and_then(|x| x.as_str()).map(str::to_string)
 }
@@ -97,7 +131,7 @@ fn s(v: &Value, k: &str) -> Option<String> {
 impl KernelState {
     /// Parse `ip -j -d -s link show` and `ip -j addr show` output.
     pub fn parse(link_json: &str, addr_json: &str) -> Result<Self> {
-        let links: Vec<Value> = serde_json::from_str(link_json)
+        let links: Vec<Value> = serde_json::from_str(&strip_stray_text(link_json))
             .map_err(|e| Error::Network(format!("parse `ip -j link`: {e}")))?;
         let addrs: Vec<Value> = if addr_json.trim().is_empty() {
             Vec::new()
@@ -345,6 +379,19 @@ mod tests {
  {"ifindex":5,"ifname":"bond0","addr_info":[
    {"family":"inet","local":"192.168.1.1","prefixlen":24,"scope":"global","valid_life_time":4294967295}]}
 ]"#;
+
+    #[test]
+    fn parses_iproute2_6_1_vxlan_fan_map_garbage() {
+        // verbatim shape from iproute2-6.1.0 `ip -j -d -s link show` (VXLAN with a remote)
+        let links = r#"[{"ifindex":9,"ifname":"vx-t0","flags":["UP"],"mtu":1450,"operstate":"UNKNOWN","link_type":"ether","address":"5e:19:87:be:26:a1","linkinfo":{"info_kind":"vxlan","info_data":{"id":100,"remote":"192.168.50.10"fan-map ,"local":"192.168.50.1","port":4789}},"ifalias":"has fan-map  inside, a \" quote"}]"#;
+        assert!(serde_json::from_str::<Vec<Value>>(links).is_err());
+        let st = KernelState::parse(links, "[]").expect("stray fan-map text is tolerated");
+        let l = &st.links["vx-t0"];
+        assert_eq!(l.mtu, 1450);
+        // text inside a string is untouched
+        let v: Vec<Value> = serde_json::from_str(&strip_stray_text(links)).unwrap();
+        assert_eq!(v[0]["ifalias"], "has fan-map  inside, a \" quote");
+    }
 
     #[test]
     fn parses_iproute2_json() {
