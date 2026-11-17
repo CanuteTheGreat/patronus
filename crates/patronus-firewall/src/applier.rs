@@ -251,6 +251,23 @@ impl FirewallApplier {
         };
         script.push_str(&sets_script(&aliases)?);
         let amap = alias_map(&aliases);
+        // WAN source guard (block private / bogon sources), ahead of every rule
+        if !lockdown {
+            let g = crate::wanguard::load(store).await?;
+            let devs = roles.get("wan").cloned().unwrap_or_default();
+            let ws = crate::wanguard::script(g, &devs, crate::feeds::NFLOG_GROUP);
+            if !ws.is_empty() {
+                script.push_str(&ws);
+                report.applied(format!(
+                    "WAN guard on {}: {}{}",
+                    devs.join(", "),
+                    if g.block_private { "private " } else { "" },
+                    if g.block_bogons { "bogon " } else { "" }
+                ));
+            } else if g.any() {
+                report.warn("WAN guard is on but no interface has the WAN role".to_string());
+            }
+        }
 
         let (mut nfilter, mut nnat, mut nsched) = (0usize, 0usize, 0usize);
         // policy routing (lane E contract): gateway/group name -> mark

@@ -221,6 +221,40 @@ impl FirewallManager {
         Ok(())
     }
 
+    // ---------------- WAN source guard ----------------
+
+    pub async fn wan_guard(&self) -> anyhow::Result<patronus_firewall::wanguard::WanGuard> {
+        patronus_firewall::wanguard::load(&self.store)
+            .await
+            .map_err(Self::e)
+    }
+
+    /// Block private / bogon source addresses on the WAN (rolled back when
+    /// the ruleset does not load).
+    pub async fn set_wan_guard(
+        &self,
+        g: patronus_firewall::wanguard::WanGuard,
+    ) -> anyhow::Result<()> {
+        let _gl = self.edit.lock().await;
+        let old = self.wan_guard().await?;
+        self.snapshot("WAN source guard".into()).await?;
+        patronus_firewall::wanguard::save(&self.store, g)
+            .await
+            .map_err(Self::e)?;
+        if let Err(e) = self.push().await {
+            let _ = patronus_firewall::wanguard::save(&self.store, old).await;
+            return Err(e);
+        }
+        self.audit(
+            "update",
+            "firewall-wan-guard",
+            "wan",
+            serde_json::json!({ "block_private": g.block_private, "block_bogons": g.block_bogons }),
+        )
+        .await;
+        Ok(())
+    }
+
     // ---------------- GeoIP ----------------
 
     pub async fn geoip_overview(&self) -> anyhow::Result<GeoOverview> {

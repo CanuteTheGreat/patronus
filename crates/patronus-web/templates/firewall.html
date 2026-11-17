@@ -73,6 +73,13 @@
         <p class="hint">Rules are evaluated top to bottom; the first match wins. The anti-lockout
             rule is a system rule: it always comes first and cannot be moved, edited or deleted.
             Traffic that matches no rule is dropped (inbound and forwarded).</p>
+        <fieldset id="wan-guard"><legend>WAN source checks</legend>
+            <p class="hint">New connections arriving on a WAN interface from these source addresses are dropped
+                (and logged), before your own rules. Leave them off when this router sits behind another router or
+                a carrier-grade NAT, whose addresses are private. DHCP replies always pass.</p>
+            <label class="check"><input type="checkbox" id="wg-private" onchange="setWanGuard()"> Block private networks and loopback (10/8, 172.16/12, 192.168/16, 100.64/10, 127/8, fc00::/7)</label>
+            <label class="check"><input type="checkbox" id="wg-bogons" onchange="setWanGuard()"> Block bogon networks (reserved, documentation, multicast and future-use ranges)</label>
+        </fieldset>
         <table id="rules-table">
             <thead><tr>
                 <th>#</th><th>Name</th><th>Chain</th><th>Interface</th><th>Action</th><th>Proto</th>
@@ -911,6 +918,9 @@ function logLive() {
     clearInterval(logTimer);
     if (document.getElementById('log-live').checked) logTimer = setInterval(logPoll, 2000);
 }
+function loadWanGuard() { api('GET', '/firewall/wan-guard').then(g => { document.getElementById('wg-private').checked = !!g.block_private; document.getElementById('wg-bogons').checked = !!g.block_bogons; }).catch(() => {}); }
+function setWanGuard() { api('PUT', '/firewall/wan-guard', { block_private: document.getElementById('wg-private').checked, block_bogons: document.getElementById('wg-bogons').checked }).then(() => flash('WAN source checks updated.', true)).catch(e => { flash(e.message, false); loadWanGuard(); }); }
+if (document.getElementById('wan-guard')) loadWanGuard();
 function setDefaultDeny() { api('PUT', '/firewall/logs/default-deny', { enabled: document.getElementById('log-default-deny').checked }).then(() => flash('Default-deny logging updated.', true)).catch(e => flash(e.message, false)); }
 function clearLog() { if (confirm('Delete the stored firewall log?')) api('DELETE', '/firewall/logs').then(() => logSearch()).catch(e => flash(e.message, false)); }
 

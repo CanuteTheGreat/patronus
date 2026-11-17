@@ -17,6 +17,7 @@ pub mod seg_rules;
 pub mod seg_time;
 pub mod svc_rules;
 pub mod vpn_rules;
+pub mod wanguard;
 
 #[cfg(feature = "geoip")]
 pub mod geoip;

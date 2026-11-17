@@ -694,6 +694,25 @@ pub async fn put_default_deny(
     }
 }
 
+/// GET /api/firewall/wan-guard
+pub async fn get_wan_guard(State(state): State<AppState>) -> Response {
+    match state.firewall.wan_guard().await {
+        Ok(g) => Json(g).into_response(),
+        Err(e) => err("Failed to read the WAN source guard", e),
+    }
+}
+
+/// PUT /api/firewall/wan-guard  {"block_private": bool, "block_bogons": bool}
+pub async fn put_wan_guard(
+    State(state): State<AppState>,
+    Json(b): Json<patronus_firewall::wanguard::WanGuard>,
+) -> Response {
+    match state.firewall.set_wan_guard(b).await {
+        Ok(_) => ok("WAN source guard updated"),
+        Err(e) => err("Failed to change the WAN source guard", e),
+    }
+}
+
 /// GET /api/firewall/schedules
 pub async fn list_schedules(State(state): State<AppState>) -> Response {
     match state.firewall.list_schedules().await {
@@ -773,6 +792,7 @@ pub fn router() -> axum::Router<AppState> {
         .route("/firewall/aliases/refresh", post(refresh_aliases))
         .route("/firewall/logs", get(get_logs).delete(clear_logs))
         .route("/firewall/logs/default-deny", put(put_default_deny))
+        .route("/firewall/wan-guard", get(get_wan_guard).put(put_wan_guard))
         .route("/firewall/geoip", get(get_geoip).put(put_geoip))
         .route("/firewall/geoip/refresh", post(refresh_geoip))
         .route("/firewall/geoip/lookup", get(geoip_lookup))
