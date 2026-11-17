@@ -76,7 +76,7 @@ no_ft() { R '! grep -rqs "^ieee80211r=1" /run/hostapd /etc'; }
 FRPW='Ci-Gate-Passw0rd-2026'
 fr_post() { curl -sk -o "$W/fr-post.json" -w '%{http_code}' -m 60 -H 'content-type: application/json' \
   -d "{\"username\":\"cigate\",\"password\":\"$FRPW\",\"confirm\":\"$FRPW\",\"setup_code\":\"$1\"}" https://127.0.0.1:$WEBP/api/first-run; }
-fr_code_file() { R 'test -s /run/patronus/first-run-code && ls -l /run/patronus/first-run-code | grep -q "^-rw------- "'; }
+fr_code_file() { m=$(R 'test -s /run/patronus/first-run-code && ls -l /run/patronus/first-run-code') || return 1; case "$m" in "-rw------- "*) ;; *) echo "$m"; return 1;; esac; }
 fr_no_code() { c=$(fr_post ''); [ "$c" = 403 ] || { echo "no code: HTTP $c $(cat "$W/fr-post.json")"; return 1; }
   c=$(fr_post 'AAAA-BBBB-CCCC'); [ "$c" = 403 ] || { echo "wrong code: HTTP $c"; return 1; }; }
 fr_claim() { code=$(R 'cat /run/patronus/first-run-code') || return 1; c=$(fr_post "$code")
@@ -84,8 +84,7 @@ fr_claim() { code=$(R 'cat /run/patronus/first-run-code') || return 1; c=$(fr_po
 setup_ap() { R 'grep -q "setup recorded as complete (role ap)" /var/log/web.log' || { echo "no provisioned line in web.log"; return 1; }
   rm -f "$W/jar"; c=$(curl -sk -c "$W/jar" -o /dev/null -w '%{http_code}' -m 60 -H 'content-type: application/json' \
     -d "{\"username\":\"cigate\",\"password\":\"$FRPW\"}" https://127.0.0.1:$WEBP/api/auth/login); [ "$c" = 200 ] || { echo "login HTTP $c"; return 1; }
-  s=$(curl -sk -b "$W/jar" -m 60 https://127.0.0.1:$WEBP/api/setup/status); echo "$s" | grep -q '"completed":true' && echo "$s" | grep -q '"role":"ap"' \
-    && echo "$s" | grep -q '"wizard":false' || { echo "status: $s"; return 1; }
+  s=$(curl -sk -b "$W/jar" -m 60 https://127.0.0.1:$WEBP/api/setup/status); case "$s" in *'"completed":true'*'"role":"ap"'*'"wizard":false'*) ;; *) echo "status: $s"; return 1;; esac
   c=$(curl -sk -b "$W/jar" -o /dev/null -w '%{http_code}' -m 60 -H 'content-type: application/json' -d '{"wan_interface":"a","lan_interface":"b","lan_ipv4":"192.168.9.1/24"}' https://127.0.0.1:$WEBP/api/setup/apply)
   [ "$c" = 409 ] || { echo "wizard apply on an AP: HTTP $c"; return 1; }; }
 web_claimed() { c=$(curl -sk -o /dev/null -w '%{http_code} %{redirect_url}' -m 30 https://127.0.0.1:$WEBP/first-run); case "$c" in 30?*/login) ;; *) echo "first-run: $c"; return 1;; esac; }
