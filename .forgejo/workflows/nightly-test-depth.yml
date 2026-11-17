@@ -14,11 +14,16 @@ name: Nightly test depth (mutation baseline, deep netlab, upgrade)
 # failing on any new surviving mutant there; with no change it finishes in about a minute.
 on:
   # Event-driven (2026-11-06; file name kept for the sweeper's low-priority rule): push to main when product code changed. Mutants
-  # job runs incremental on changed lines (full on Wednesdays). Replace: group below coalesces bursts. No cron.
+  # job runs incremental on changed lines (full on Wednesdays). Replace: group below coalesces bursts.
+  # Weekly net (2026-11-17): Deep netlab (previous-release upgrade, 30 power cuts) had gone 8 days unrun on main since the
+  # per-push cuts; Saturday 19:23 PST (measured trough) runs it, and a config-store migration change triggers it at once.
+  schedule:
+    - cron: '23 3 * * 0'
   push:
     branches: [main]
     tags: ['v*']
     paths:
+      - 'crates/patronus-config/migrations/**'
       - 'ci/mutants-floors.txt'
       - 'ci/mutation-incremental.py'
       - '.forgejo/workflows/nightly-test-depth.yml'
