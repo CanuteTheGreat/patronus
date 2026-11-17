@@ -143,4 +143,121 @@
     </div>
     {% endif %}
 </div>
+<div class="card" id="history-card">
+    <div class="card-header"><h2 class="card-title">History</h2></div>
+    <p class="text-sm">5-minute averages recorded by the router.
+        <label>Range <select id="hist-range" onchange="loadHistory()">
+            <option value="6">6 hours</option><option value="24" selected>24 hours</option>
+            <option value="168">7 days</option><option value="720">30 days</option></select></label>
+        <span id="hist-status"></span></p>
+    <div id="hist-charts"></div>
+</div>
+
+<div class="card" id="usage-card">
+    <div class="card-header"><h2 class="card-title">Data usage</h2></div>
+    <p class="text-sm" id="usage-cap"></p>
+    <table class="lan" id="usage-table"><thead><tr><th>Period</th><th>Interface</th><th>Received</th><th>Sent</th><th>Total</th></tr></thead><tbody></tbody></table>
+    <details><summary class="text-sm">Accounting settings</summary>
+    <form class="lan-form" id="usage-form" onsubmit="return saveUsage(event)">
+        <label>Month starts on day (1-28) <input name="month_start_day" type="number" min="1" max="28"></label>
+        <label>Monthly allowance in GB (0 = none; warnings at 80% and 100%) <input name="cap_gb" type="number" min="0" step="any"></label>
+        <label>Interface it counts (empty = the busiest) <input name="cap_interface" maxlength="15" data-keep-empty="1"></label>
+        <label>Keep graph history (days) <input name="retention_days" type="number" min="1" max="400"></label>
+        <button class="btn btn-secondary btn-sm" type="submit">Save</button> <span class="text-sm" id="usage-status"></span>
+    </form>
+    </details>
+</div>
+
+<script>
+(function () {
+    const $ = id => document.getElementById(id);
+    async function call(method, path, body) {
+        const r = await fetch('/api' + path, {method, headers: {'Content-Type': 'application/json'}, body: body ? JSON.stringify(body) : undefined});
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || r.statusText);
+        return j;
+    }
+    function bytes(n) { const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1000 && i < 4) { n /= 1000; i++; } return n.toFixed(i ? 2 : 0) + ' ' + u[i]; }
+    function rate(b) { return b >= 1e6 ? (b / 1e6).toFixed(1) + ' Mbit/s' : (b / 1e3).toFixed(1) + ' kbit/s'; }
+    const NS = 'http://www.w3.org/2000/svg';
+    function chart(title, series, fmt, max) {
+        const W = 640, H = 120, P = 4;
+        const all = series.flatMap(s => s.points);
+        const box = document.createElement('div');
+        const h = document.createElement('h3'); h.className = 'text-sm'; box.appendChild(h);
+        if (!all.length) { h.textContent = title + ': no data yet'; return box; }
+        const t0 = Math.min(...all.map(p => p.ts)), t1 = Math.max(...all.map(p => p.ts));
+        const vmax = max || Math.max(1, ...all.map(p => p.value));
+        const svg = document.createElementNS(NS, 'svg');
+        svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H); svg.setAttribute('width', '100%'); svg.setAttribute('role', 'img');
+        svg.setAttribute('aria-label', title);
+        const frame = document.createElementNS(NS, 'rect');
+        frame.setAttribute('x', 0); frame.setAttribute('y', 0); frame.setAttribute('width', W); frame.setAttribute('height', H);
+        frame.setAttribute('fill', 'none'); frame.setAttribute('stroke', 'currentColor'); frame.setAttribute('stroke-opacity', '0.2');
+        svg.appendChild(frame);
+        const legend = [];
+        series.forEach((s, i) => {
+            if (!s.points.length) return;
+            const pl = document.createElementNS(NS, 'polyline');
+            pl.setAttribute('points', s.points.map(p => {
+                const x = t1 > t0 ? P + (p.ts - t0) / (t1 - t0) * (W - 2 * P) : W / 2;
+                return x.toFixed(1) + ',' + (H - P - p.value / vmax * (H - 2 * P)).toFixed(1);
+            }).join(' '));
+            pl.setAttribute('fill', 'none'); pl.setAttribute('stroke-width', '1.5');
+            pl.setAttribute('stroke', ['var(--accent)', 'var(--chart-warn)'][i % 2]);
+            svg.appendChild(pl);
+            const last = s.points[s.points.length - 1].value;
+            legend.push(s.name + ' now ' + fmt(last) + ', peak ' + fmt(Math.max(...s.points.map(p => p.value))));
+        });
+        h.textContent = title + ' (' + legend.join('; ') + ')';
+        box.appendChild(svg);
+        return box;
+    }
+    window.loadHistory = async function () {
+        try {
+            const j = await call('GET', '/stats/history?hours=' + $('hist-range').value);
+            const m = j.metrics, c = $('hist-charts'); c.innerHTML = '';
+            c.appendChild(chart('CPU %', [{name: 'cpu', points: m.cpu || []}], v => v.toFixed(1) + '%', 100));
+            c.appendChild(chart('Memory %', [{name: 'used', points: m.mem || []}], v => v.toFixed(1) + '%', 100));
+            const ifs = [...new Set(Object.keys(m).filter(k => k.startsWith('rx:') || k.startsWith('tx:')).map(k => k.slice(3)))].sort();
+            for (const i of ifs) c.appendChild(chart(i, [{name: 'in', points: m['rx:' + i] || []}, {name: 'out', points: m['tx:' + i] || []}], rate));
+            $('hist-status').textContent = Object.keys(m).length ? '' : 'Collecting: the first points appear about five minutes after start.';
+        } catch (e) { $('hist-status').textContent = 'Failed: ' + e.message; }
+    };
+    window.loadUsage = async function () {
+        try {
+            const j = await call('GET', '/stats/usage?months=3');
+            const f = $('usage-form');
+            for (const k of ['month_start_day', 'cap_gb', 'cap_interface', 'retention_days']) f.elements[k].value = j.settings[k];
+            const tb = $('usage-table').querySelector('tbody'); tb.innerHTML = '';
+            for (const p of j.periods) {
+                const rows = p.usage.length ? p.usage : [{iface: '-', rx: 0, tx: 0}];
+                for (const u of rows) {
+                    const tr = document.createElement('tr');
+                    for (const v of [p.start + ' to ' + p.end, u.iface, bytes(u.rx), bytes(u.tx), bytes(u.rx + u.tx)]) { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); }
+                    tb.appendChild(tr);
+                }
+            }
+            const s = j.settings, cur = j.periods[0];
+            if (s.cap_gb > 0 && cur) {
+                const u = s.cap_interface ? cur.usage.find(x => x.iface === s.cap_interface) : cur.usage[0];
+                const used = u ? u.rx + u.tx : 0;
+                $('usage-cap').textContent = 'Allowance: ' + bytes(used) + ' of ' + s.cap_gb + ' GB used this period (' + Math.round(used / (s.cap_gb * 1e9) * 100) + '%)' + (u ? ' on ' + u.iface : '') + '.';
+            } else { $('usage-cap').textContent = 'No monthly allowance set.'; }
+        } catch (e) { $('usage-cap').textContent = 'Failed: ' + e.message; }
+    };
+    window.saveUsage = async function (ev) {
+        ev.preventDefault();
+        const f = ev.target;
+        try {
+            await call('PUT', '/stats/settings', {month_start_day: Number(f.elements.month_start_day.value), cap_gb: Number(f.elements.cap_gb.value),
+                cap_interface: f.elements.cap_interface.value.trim(), retention_days: Number(f.elements.retention_days.value)});
+            $('usage-status').textContent = 'Saved.';
+        } catch (e) { $('usage-status').textContent = 'Failed: ' + e.message; }
+        loadUsage();
+        return false;
+    };
+    loadHistory(); loadUsage();
+})();
+</script>
 {% endblock %}

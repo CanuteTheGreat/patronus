@@ -699,6 +699,72 @@ async fn put_speedtest(
     }
 }
 
+#[derive(Deserialize)]
+struct HistoryQuery {
+    hours: Option<i64>,
+}
+
+/// GET /api/stats/history?hours=24 -- CPU / memory (percent) and per-
+/// interface throughput (bit/s) as 5-minute averages.
+async fn stats_history(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<HistoryQuery>,
+) -> Response {
+    use crate::state::stats;
+    let hours = q.hours.unwrap_or(24).clamp(1, 24 * 400);
+    let since = chrono::Utc::now().timestamp() - hours * 3600;
+    let store = &state.config_store;
+    let names = match stats::metrics(store, since).await {
+        Ok(n) => n,
+        Err(e) => return err(e),
+    };
+    let mut out = serde_json::Map::new();
+    for m in names {
+        match stats::series(store, &m, since).await {
+            Ok(p) => {
+                out.insert(m, json!(p));
+            }
+            Err(e) => return err(e),
+        }
+    }
+    Json(json!({"hours": hours, "metrics": out})).into_response()
+}
+
+#[derive(Deserialize)]
+struct UsageQuery {
+    months: Option<usize>,
+}
+
+/// GET /api/stats/usage?months=3 -- per-interface traffic per accounting
+/// month (newest first) and the data-cap settings.
+async fn stats_usage(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<UsageQuery>,
+) -> Response {
+    use crate::state::stats;
+    let store = &state.config_store;
+    match (
+        stats::periods(store, q.months.unwrap_or(3).clamp(1, 24)).await,
+        stats::settings(store).await,
+    ) {
+        (Ok(p), Ok(s)) => Json(json!({"periods": p, "settings": s})).into_response(),
+        (Err(e), _) | (_, Err(e)) => err(e),
+    }
+}
+
+/// PUT /api/stats/settings -- `{"month_start_day","cap_gb","cap_interface",
+/// "retention_days"}` (admins).
+async fn put_stats_settings(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(i): Json<crate::state::stats::SettingsInput>,
+) -> Response {
+    match crate::state::stats::save_settings(&state.config_store, &i).await {
+        Ok(s) => Json(s).into_response(),
+        Err(e) => err(e),
+    }
+}
+
 /// POST /api/system/diag -- ping, traceroute, DNS lookup, neighbour
 /// table, routing tables, listening sockets (admins). Body:
 /// `{"tool":"ping","target":"192.0.2.1","count":3,"family":"auto","interface":""}`,
@@ -754,6 +820,9 @@ pub fn router() -> axum::Router<AppState> {
         .route("/system/capture", post(capture))
         .route("/system/diag", post(diag))
         .route("/system/speedtest", get(get_speedtest).post(run_speedtest))
+        .route("/stats/history", get(stats_history))
+        .route("/stats/usage", get(stats_usage))
+        .route("/stats/settings", axum::routing::put(put_stats_settings))
         .route(
             "/system/speedtest/settings",
             axum::routing::put(put_speedtest),
