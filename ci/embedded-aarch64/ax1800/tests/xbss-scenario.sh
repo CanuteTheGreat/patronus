@@ -45,16 +45,16 @@ iw event -t > $T/events 2>&1 &
 EV=$!
 $HOSTAPD -t -dd $T/ap.conf > $T/hostapd.log 2>&1 &
 HP=$!
-i=0; until hostapd_cli -p $T/ctrl -i ap1 status 2>/dev/null | grep -q state=ENABLED; do i=$((i + 1)); [ $i -gt 30 ] && break; sleep 1; done
+i=0; until hostapd_cli -p $T/ctrl -i ap1 status 2>/dev/null | grep state=ENABLED >/dev/null; do i=$((i + 1)); [ $i -gt 30 ] && break; sleep 1; done
 sup() { # IF SSID BSSID
   printf 'ctrl_interface=%s/s-%s\nnetwork={\n ssid="%s"\n psk="xbsstest1"\n bssid=%s\n scan_freq=2437\n}\n' $T $1 $2 $3 > $T/$1.conf
   wpa_supplicant -dd -t -i $1 -c $T/$1.conf > $T/$1.log 2>&1 &
   echo $! > $T/$1.pid; sleep 1; }
 assoc() { # IF: wait for COMPLETED
-  i=0; until wpa_cli -p $T/s-$1 -i $1 status 2>/dev/null | grep -q wpa_state=COMPLETED; do i=$((i + 1)); [ $i -gt 30 ] && return 1; sleep 0.5; done; }
+  i=0; until wpa_cli -p $T/s-$1 -i $1 status 2>/dev/null | grep wpa_state=COMPLETED >/dev/null; do i=$((i + 1)); [ $i -gt 30 ] && return 1; sleep 0.5; done; }
 ip link set sta1 up; ip link set sta2 up
 sup sta1 xbss-a $A0; assoc sta1 && pass "sta1 ($M) associated on xbss-a" || fail "sta1 did not associate on xbss-a"
-hostapd_cli -p $T/ctrl -i ap0 sta $M | head -1 | grep -qx "$M" && pass "ap0 lists $M" || fail "ap0 does not list $M"
+hostapd_cli -p $T/ctrl -i ap0 sta $M | head -1 | grep -x "$M" >/dev/null && pass "ap0 lists $M" || fail "ap0 does not list $M"
 : > $T/events.mark; sleep 1; cp $T/events $T/events.before
 # the same MAC now joins the other SSID of the same radio while sta1 is still associated (it never said goodbye)
 sup sta2 xbss-b $A1; assoc sta2 && pass "sta2 (same MAC) associated on xbss-b" || fail "sta2 did not associate on xbss-b"
