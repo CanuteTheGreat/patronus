@@ -342,6 +342,13 @@ gap_feed() { c=$(wapi -X PUT -d '{"feed":"ftp://x"}' https://127.0.0.1:$WEBP/api
   case "$r" in *"not by the release key"*|*"no release keyring"*|*"signature is missing or bad"*) ;; *) echo "check: $c $r"; return 1;; esac
   c=$(wapi -X POST https://127.0.0.1:$WEBP/api/system/firmware/feed/download); [ "$c" != 200 ] || { echo "download of a foreign feed: 200"; return 1; }
   R '! test -e /tmp/patronus-firmware.tar && ! test -e /data/.upgrade' || { echo "image left behind"; return 1; }; }
+# Diagnostics stays usable on an access point: ping, traceroute and a DNS lookup through the web API (busybox tools)
+gap_diag() { c=$(wapi -X POST -d '{"tool":"ping","target":"10.0.2.2","count":2}' https://127.0.0.1:$WEBP/api/system/diag); r=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$r" '"received":2' || { echo "ping: $c $r"; return 1; }
+  c=$(wapi -X POST -d '{"tool":"traceroute","target":"10.0.2.2"}' https://127.0.0.1:$WEBP/api/system/diag); r=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$r" '10.0.2.2' || { echo "traceroute: $c $r"; return 1; }
+  c=$(wapi -X POST -d '{"tool":"routes"}' https://127.0.0.1:$WEBP/api/system/diag); [ "$c" = 200 ] || { echo "routes: $c $(cat "$W/api.json")"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/diagnostics); [ "$c" = 200 ] || { echo "/diagnostics page: $c"; return 1; }; }
 # system accounts in backups: the web admin's passwd/shadow/group lines are in the backup; after losing them, a restore
 # brings the login back
 gap_accounts() { c=$(wapi -X POST https://127.0.0.1:$WEBP/api/system/backups); b=$(cat "$W/api.json")
@@ -434,6 +441,7 @@ check "LEDs: no LEDs in QEMU -> shown unavailable with the reason, change refuse
 check "scheduled restart: off by default, weekly enables the $INIT unit with that schedule, off disables it" gap_restart
 check "address: an unconfirmed change reverts by itself, a confirmed one (from the new address) stays, back to DHCP" gap_address
 check "online firmware check: a feed not signed by the release key is refused, nothing downloaded or staged" gap_feed
+check "Diagnostics on an access point: page served, ping/traceroute/routes through the web API" gap_diag
 check "backup includes the system login accounts; a restore brings a lost login back" gap_accounts
 scp -O -q "${SSHO[@]}" -P $SSHP "$TAR" root@127.0.0.1:/data/up.tar || fail "scp image into the guest"
 refuse_board() { o=$(R 'patronus-flash check /data/up.tar' 2>&1) && { echo "accepted: $o"; return 1; }; case "$o" in *"image is for glinet,gl-ax1800"*) ;; *) echo "$o"; return 1;; esac; }

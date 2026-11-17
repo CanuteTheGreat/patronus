@@ -146,6 +146,8 @@ def run(p, kind):
     page.wait_for_load_state("networkidle")
     vis = page.evaluate("() => { const a = document.getElementById('nav-device'); return !!a && a.offsetParent !== null; }")
     check(tag + "menu: Device shown on a router-tier unit (and only there)", vis == embedded, (vis, feats.get("tier")))
+    dg = page.evaluate("() => [...document.querySelectorAll('.sidebar-nav a.nav-item')].some(a => a.getAttribute('href') === '/diagnostics' && a.offsetParent !== null)")
+    check(tag + "menu: Diagnostics visible (also on an access point)", dg, feats.get("role"))
     page.goto(BASE + "/device")
     page.wait_for_load_state("networkidle")
     keys = api(page, "/api/device/ssh-keys")["json"]
