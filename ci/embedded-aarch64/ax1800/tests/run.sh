@@ -59,8 +59,8 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/bin" "$r/sbin" "$r/usr/bin" "
   echo x > "$r/lib/modules/6.12.112/modules.dep"; for m in ath11k_ahb qca-nss-dp qca-ssdk mac80211 cfg80211 nf_tables nfnetlink_log nft_reject_inet nf_conntrack; do : > "$r/lib/modules/6.12.112/$m.ko"; done
   echo patronus-xbss > "$r/usr/sbin/hostapd"
   printf '\177ELF' > "$r/usr/sbin/etphonehome"; chmod +x "$r/usr/sbin/etphonehome"
-  echo INIT=openrc > "$r/etc/patronus-init"; echo FEATURES=nftables,cli,web-multicall,vpn-wireguard,ntp-server,syslog > "$r/etc/patronus-release"
-  : > "$r/lib/modules/6.12.112/wireguard.ko"; mkdir -p "$r/etc/modules.d" "$r/etc/chrony"; echo wireguard > "$r/etc/modules.d/wireguard"
+  echo INIT=openrc > "$r/etc/patronus-init"; echo FEATURES=nftables,cli,wifi-ap,web-multicall,vpn-wireguard,ntp-server,syslog > "$r/etc/patronus-release"
+  : > "$r/lib/modules/6.12.112/wireguard.ko"; : > "$r/lib/modules/6.12.112/nft_meta_bridge.ko"; : > "$r/lib/modules/6.12.112/nf_conntrack_bridge.ko"; mkdir -p "$r/etc/modules.d" "$r/etc/chrony"; echo wireguard > "$r/etc/modules.d/wireguard"
   for b in usr/bin/wg usr/sbin/chronyd usr/libexec/patronus/syslogd; do : > "$r/$b"; chmod +x "$r/$b"; done; cp "$O/etc/chrony/chrony.conf" "$r/etc/chrony/"; ln -s /usr/sbin/patronus-init "$r/sbin/init"
   mkdir -p "$r/usr/share/openpgp-keys"; echo k > "$r/usr/share/openpgp-keys/errantsolutions.gpg"; : > "$r/usr/bin/gpgv"; chmod +x "$r/usr/bin/gpgv"
   for b in openrc-init openrc-run supervise-daemon; do : > "$r/sbin/$b"; chmod +x "$r/sbin/$b"; done
@@ -87,6 +87,7 @@ r=$(mkroot accnoearly); mkdir -p "$r/usr/share/patronus/accounts.d/u"; echo "u:x
 r=$(mkroot nowg); rm "$r/usr/bin/wg"; tn_msg "check-rootfs: vpn-wireguard build without wg is refused" 'no /usr/bin/wg' $CR "$r"
 r=$(mkroot nowgko); rm "$r/lib/modules/6.12.112/wireguard.ko"; tn_msg "check-rootfs: vpn-wireguard build without wireguard.ko is refused" 'wireguard.ko missing' $CR "$r"
 r=$(mkroot nowgload); rm "$r/etc/modules.d/wireguard"; tn_msg "check-rootfs: vpn-wireguard build that does not load the module at boot is refused" 'not loaded at boot' $CR "$r"
+r=$(mkroot nobrko); rm "$r/lib/modules/6.12.112/nft_meta_bridge.ko"; tn_msg "check-rootfs: a wifi-ap build without the nftables bridge modules is refused" 'nft_meta_bridge.ko missing' $CR "$r"
 r=$(mkroot wgoff); rm "$r/usr/bin/wg" "$r/lib/modules/6.12.112/wireguard.ko"; echo FEATURES=nftables,cli,web-multicall > "$r/etc/patronus-release"; t "check-rootfs: a build without vpn-wireguard needs no wg" $CR "$r"
 r=$(mkroot nochrony); rm "$r/usr/sbin/chronyd"; tn_msg "check-rootfs: rejects an image without chronyd (no clock)" 'no /usr/sbin/chronyd' $CR "$r"
 r=$(mkroot nochronyuser); sed -i '/^chrony:/d' "$r/etc/passwd"; tn_msg "check-rootfs: rejects an image without the chrony user" 'no chrony user' $CR "$r"

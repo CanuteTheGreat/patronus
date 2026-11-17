@@ -218,18 +218,29 @@ pub async fn address_put(
     .await
 }
 
+/// The address the browser used: HTTP/2 carries it as the `:authority` pseudo-header (the request URI), HTTP/1.1 as
+/// `Host`.
+fn request_host(uri: &axum::http::Uri, headers: &HeaderMap) -> String {
+    uri.authority()
+        .map(|a| a.as_str().to_string())
+        .or_else(|| {
+            headers
+                .get(axum::http::header::HOST)
+                .and_then(|h| h.to_str().ok())
+                .map(str::to_string)
+        })
+        .unwrap_or_default()
+}
+
 /// POST /api/device/address/confirm: keep the new address. Only counts when this request reached the unit over one
 /// of the NEW addresses (the Host header), which is the proof that the new address works.
 pub async fn address_confirm(
     State(s): State<AppState>,
     admin: AdminUser,
     headers: HeaderMap,
+    uri: axum::http::Uri,
 ) -> Response {
-    let host = headers
-        .get(axum::http::header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("")
-        .to_string();
+    let host = request_host(&uri, &headers);
     change(
         &s,
         &admin,
@@ -302,4 +313,22 @@ pub fn router() -> Router<AppState> {
         .route("/system/firmware/feed", get(feed_get).put(feed_put))
         .route("/system/firmware/feed/check", post(feed_check))
         .route("/system/firmware/feed/download", post(feed_download))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_from_http2_authority_or_http1_host_header() {
+        let mut h = HeaderMap::new();
+        let u: axum::http::Uri = "https://10.0.2.78:443/api/device/address/confirm"
+            .parse()
+            .unwrap();
+        assert_eq!(request_host(&u, &h), "10.0.2.78:443");
+        h.insert(axum::http::header::HOST, "10.0.2.79".parse().unwrap());
+        let u: axum::http::Uri = "/api/device/address/confirm".parse().unwrap();
+        assert_eq!(request_host(&u, &h), "10.0.2.79");
+        assert_eq!(request_host(&u, &HeaderMap::new()), "");
+    }
 }

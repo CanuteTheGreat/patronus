@@ -28,7 +28,7 @@ dns4() { awk '/^nameserver/ && $2 ~ /^[0-9.]+$/ { print $2 }' "$RESOLV" 2>/dev/n
 dns6() { awk '/^nameserver/ && $2 ~ /:/ { print $2 }' "$RESOLV" 2>/dev/null; }
 join() { tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//; s/ /, /g'; }
 render() {
-  P=$(ports); P=${P%, }
+  P=${AP_GUEST_PORTS:-$(ports)}; P=${P%, }
   [ -n "$P" ] || return 1
   L4="10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16"
   for n in $(nets4); do L4="$L4, $n"; done
@@ -72,11 +72,13 @@ render() {
 }
 EOF
 }
+# the bridge family's matches live in OpenWrt's kmod-nft-bridge (kmods.pin); load them before the first use
+mods() { for m in nf_conntrack_bridge nft_meta_bridge nft_reject_bridge; do modprobe "$m" 2>/dev/null; done; true; }
 clear_table() { $NFT list table bridge patronus_guest > /dev/null 2>&1 && $NFT delete table bridge patronus_guest; true; }
 case "$1" in
 render) render ;;
 apply)
-  t=$(mktemp); trap 'rm -f "$t"' EXIT
+  mods; t=$(mktemp); trap 'rm -f "$t"' EXIT
   if render > "$t"; then
     # replace atomically: delete + add in one transaction
     { $NFT list table bridge patronus_guest > /dev/null 2>&1 && echo "delete table bridge patronus_guest"; cat "$t"; } > "$t.all"
@@ -90,10 +92,11 @@ clear) clear_table ;;
 status)
   P=$(ports | sed 's/, $//; s/"//g')
   if $NFT list table bridge patronus_guest > /dev/null 2>&1; then a=yes; else a=no; fi
-  # can this kernel filter bridged frames with nftables? (a throwaway table)
-  if $NFT add table bridge patronus_probe 2> /tmp/.ap-guest-probe && $NFT delete table bridge patronus_probe; then
+  # can this kernel filter bridged frames with the real rule set? (checked by the kernel, nothing is loaded)
+  mods
+  if AP_GUEST_PORTS='"patronus-probe0"' render | sed 's/patronus_guest/patronus_probe/' | $NFT -c -f - 2> /tmp/.ap-guest-probe; then
     echo "available=yes"; echo "reason="
-  else echo "available=no"; echo "reason=the kernel has no nftables bridge filtering: $(head -1 /tmp/.ap-guest-probe)"; fi
+  else echo "available=no"; echo "reason=the kernel cannot filter bridged traffic with nftables: $(grep -m1 Error /tmp/.ap-guest-probe)"; fi
   rm -f /tmp/.ap-guest-probe
   echo "active=$a"; echo "ports=$P" ;;
 *) echo "usage: ap-guest apply|clear|render|status" >&2; exit 2 ;;

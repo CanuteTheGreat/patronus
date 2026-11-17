@@ -151,7 +151,12 @@ def run(p, kind):
     page.goto(BASE + "/device")
     page.wait_for_load_state("networkidle")
     keys = api(page, "/api/device/ssh-keys")["json"]
-    page.wait_for_selector("#keys table.keys", timeout=30000)
+    try:
+        page.wait_for_selector("#keys table.keys", timeout=30000)
+    except Exception as e:  # an older firmware has no Device page
+        check(tag + "Device page: SSH key tables shown", False, e)
+        browser.close()
+        return
     fps = page.eval_on_selector_all("#keys table.keys", "ts => ts.map(t => [t.dataset.user, [...t.querySelectorAll('td.dev-key')].map(e => e.textContent)])")
     want = [[u["user"], [k["fingerprint"] for k in u["keys"] if k["fingerprint"]]] for u in keys["users"]]
     check(tag + "Device: SSH keys per account as the API lists them", fps == want, (fps, want))

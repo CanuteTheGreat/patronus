@@ -3,7 +3,8 @@
 #         firewall's `log group` rules need, so the whole netfilter set comes from these pinned packages);
 # virt  = armsr/armv8 (same 6.12.112 kernel release, only for the QEMU gate's test copy of the root).
 # The set is the dependency closure of kmod-nft-core kmod-nft-nat kmod-nft-fib kmod-nft-offload kmod-nfnetlink-log,
-# plus kmod-wireguard (the WireGuard VPN; its etc/modules.d file loads it at boot) (apk adbdump depends).
+# plus kmod-wireguard (the WireGuard VPN; its etc/modules.d file loads it at boot) and kmod-nft-bridge (guest Wi-Fi
+# networks: the nftables bridge filter of ap-guest; depends only on kmod-nft-core) (apk adbdump depends).
 # Bump = new kmods dir + sha256 lines; fetch-kmods.sh refuses anything else.
 KMOD_URL_board=https://downloads.openwrt.org/releases/25.12.6/targets/qualcommax/ipq60xx/kmods/6.12.112-1-b5fefb5a894e3008353ac9f988245f52
 KMOD_URL_virt=https://downloads.openwrt.org/releases/25.12.6/targets/armsr/armv8/kmods/6.12.112-1-67e205f26d0458c4d12f1fd315216398
@@ -33,6 +34,7 @@ board kmod-udptunnel6 2659d92613c7f3cf90e5a1d1313451b0c0a3817e50247cd9670bac2ce8
 board kmod-crypto-lib-chacha20 d679935ce64465532347ba880edfefb2e22851199457a2e13285d115cee22360
 board kmod-crypto-lib-poly1305 827e937a77b6f0c36892007b0e75de5e9f3b291f1e5128d42ba773a6b396baaf
 board kmod-crypto-kpp 1440c22b095ba9969868d903c66ade3ab814593913a70076296f08d6fb0d80c8
+board kmod-nft-bridge 846319317070ac16f723e4f0fb02ddf7242fd71d635abbd06dea0dff506383dd
 virt kmod-nft-core 5ef5b3042439ad17098f0e4f0b98037c3aea51430eabb8b90f5deb6665b88d95
 virt kmod-nft-nat c795bf4c9b3d6ed671fea738d04aac26a2bc6829c1bd8dbce6fa81c91cd24457
 virt kmod-nft-fib 9f82e64dbd184d699e1a8dc5d7192b725a6f9a8f258078e5e3bf6b971cc25bd2
@@ -58,3 +60,4 @@ virt kmod-udptunnel6 6f67af1e93ac5042717d7b20336c0a3e9ed47c971f0b85c321b95ee1b57
 virt kmod-crypto-lib-chacha20 d05302dfe14d44fc3ee9fcce0587a90af4ba34eb4f66bb6e8d8aaa415b99723f
 virt kmod-crypto-lib-poly1305 7a1de072ae53a4bfa010264bfb80aaffe817af7e4b522360cf14925d31ca0180
 virt kmod-crypto-kpp 583967e4bc7b7e150ebff4746ac36a4a161d781e35e5b519c961e16f837e358f
+virt kmod-nft-bridge 420b6c999fa93521926d59bf945fcb6a2aac949933fb86b6fd76fb64a51f5168

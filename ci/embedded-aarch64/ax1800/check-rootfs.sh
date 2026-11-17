@@ -36,6 +36,9 @@ for m in ath11k_ahb qca-nss-dp qca-ssdk mac80211 cfg80211 nf_tables nfnetlink_lo
 FEAT=$(sed -n 's/^FEATURES=//p' "$R/etc/patronus-release" 2>/dev/null)
 [ -n "$FEAT" ] || fail "/etc/patronus-release has no FEATURES= line (which pages the web UI has)"
 has_feature() { case ",$FEAT," in *",$1,"*) return 0;; esac; return 1; }
+if has_feature wifi-ap; then
+  for m in nft_meta_bridge nf_conntrack_bridge; do [ -e "$R/lib/modules/$KV/$m.ko" ] || fail "wifi-ap: kernel module $m.ko missing (kmods.pin kmod-nft-bridge; guest networks need it)"; done
+fi
 if has_feature vpn-wireguard; then
   [ -x "$R/usr/bin/wg" ] || fail "vpn-wireguard: no /usr/bin/wg (wireguard-tools-wg): every tunnel would fail at wg syncconf"
   [ -e "$R/lib/modules/$KV/wireguard.ko" ] || fail "vpn-wireguard: kernel module wireguard.ko missing (kmods.pin)"
