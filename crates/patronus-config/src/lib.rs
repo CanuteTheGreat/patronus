@@ -14,6 +14,7 @@ pub mod policy;
 pub mod seg;
 pub mod seg_wifi;
 pub mod seg_wifi_chan;
+pub mod settings;
 pub mod store;
 
 pub use applier::{Applier, ApplierOutcome, ApplierRegistry, ApplyReport, ApplyRunReport, Phase};

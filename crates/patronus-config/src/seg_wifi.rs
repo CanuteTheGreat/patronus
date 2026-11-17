@@ -27,8 +27,11 @@ use sqlx::Row;
 use std::net::Ipv4Addr;
 
 pub const SECURITIES: &[&str] = &["wpa2", "wpa2_wpa3", "wpa3"];
-/// Pending credentials stop working after this long.
-pub const PENDING_TTL_SECS: i64 = 24 * 3600;
+/// Pending credentials stop working after this long (setting
+/// `wifi.enrolment_ttl_secs`).
+pub async fn pending_ttl_secs(store: &ConfigStore) -> Result<i64> {
+    crate::settings::get_i64(store, "wifi.enrolment_ttl_secs").await
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Network {
@@ -664,7 +667,7 @@ pub async fn create_wifi_device(
     let (state, exp) = if d.state == "active" {
         ("active", None)
     } else {
-        ("pending", Some(now() + PENDING_TTL_SECS))
+        ("pending", Some(now() + pending_ttl_secs(store).await?))
     };
     let (cid, secret) = match insert_credential(store, d.id, &net, state, exp).await {
         Ok(v) => v,
@@ -707,7 +710,7 @@ pub async fn rotate(store: &ConfigStore, device_id: i64, grace_secs: i64) -> Res
     let (state, exp) = if d.state == "active" {
         ("active", None)
     } else {
-        ("pending", Some(now() + PENDING_TTL_SECS))
+        ("pending", Some(now() + pending_ttl_secs(store).await?))
     };
     let old: Vec<i64> = sqlx::query_scalar(
         "SELECT id FROM seg_wifi_creds WHERE device_id = ? AND state != 'revoked'",
@@ -1411,14 +1414,16 @@ mod tests {
             .unwrap();
         assert_eq!(expire_pending(&s, now() + 60).await.unwrap(), 0);
         assert_eq!(
-            ap_config(&s, now() + PENDING_TTL_SECS + 1).await.unwrap()[0]
+            ap_config(&s, now() + pending_ttl_secs(&s).await.unwrap() + 1)
+                .await
+                .unwrap()[0]
                 .creds
                 .len(),
             0,
             "expired = not rendered even before the sweep"
         );
         assert_eq!(
-            expire_pending(&s, now() + PENDING_TTL_SECS + 1)
+            expire_pending(&s, now() + pending_ttl_secs(&s).await.unwrap() + 1)
                 .await
                 .unwrap(),
             1

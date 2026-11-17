@@ -23,6 +23,7 @@ pub mod metrics;
 #[cfg(feature = "plugins")]
 pub mod plugin;
 pub mod policy;
+pub mod settings;
 pub mod site;
 pub mod status;
 pub mod tunnel;

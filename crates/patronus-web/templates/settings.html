@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block title %}Advanced settings - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Advanced settings</h1>
+    <p class="page-subtitle">Timeouts, limits and other operational values. Each one has a documented default;
+        a changed value is stored in the configuration, so backups, revisions and GitOps carry it.
+        Back to <a href="/system">System</a>.</p>
+</div>
+
+<div class="card" id="settings-card">
+    <p class="text-sm" id="settings-status">Loading...</p>
+    <div id="settings-sections"></div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const IS_ADMIN = {% if is_admin %}true{% else %}false{% endif %};
+    function esc(s) {
+        return String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+    }
+    function input(s) {
+        const k = s.kind, id = 'set-' + s.key.replace(/[^a-z0-9]/g, '-');
+        const dis = IS_ADMIN ? '' : ' disabled';
+        if (k.type === 'bool') {
+            return `<input type="checkbox" id="${id}" data-key="${esc(s.key)}"${s.value === 'true' ? ' checked' : ''}${dis}>`;
+        }
+        if (k.type === 'choice') {
+            return `<select id="${id}" data-key="${esc(s.key)}"${dis}>` + k.options.map(o =>
+                `<option${o === s.value ? ' selected' : ''}>${esc(o)}</option>`).join('') + '</select>';
+        }
+        if (k.type === 'int') {
+            return `<input type="number" id="${id}" data-key="${esc(s.key)}" min="${k.min}" max="${k.max}" value="${esc(s.value)}"${dis}>`;
+        }
+        if (k.type === 'port') {
+            return `<input type="number" id="${id}" data-key="${esc(s.key)}" min="1" max="65535" value="${esc(s.value)}"${dis}>`;
+        }
+        return `<input id="${id}" data-key="${esc(s.key)}" value="${esc(s.value)}"${dis}>`;
+    }
+    async function send(method, key, body) {
+        const r = await fetch('/api/settings/' + encodeURIComponent(key), {
+            method, credentials: 'same-origin',
+            headers: body ? {'content-type': 'application/json'} : {},
+            body: body ? JSON.stringify(body) : undefined,
+        });
+        if (!r.ok) {
+            let msg = r.status + '';
+            try { msg = (await r.json()).error || msg; } catch (_) {}
+            alert('Not applied: ' + msg);
+            return;
+        }
+        load();
+    }
+    function save(key) {
+        const el = document.querySelector(`[data-key="${CSS.escape(key)}"]`);
+        const value = el.type === 'checkbox' ? el.checked : el.value;
+        send('PUT', key, {value});
+    }
+    async function load() {
+        const st = document.getElementById('settings-status');
+        let data;
+        try {
+            const r = await fetch('/api/settings', {credentials: 'same-origin'});
+            if (!r.ok) throw new Error(r.status);
+            data = await r.json();
+        } catch (e) {
+            st.textContent = 'Could not load the settings (' + e.message + ').';
+            return;
+        }
+        const groups = {};
+        for (const s of data.settings) (groups[s.section] = groups[s.section] || []).push(s);
+        let html = '';
+        for (const [sec, list] of Object.entries(groups)) {
+            html += `<h2 class="card-title">${esc(sec)}</h2><table class="lan"><thead><tr><th>Setting</th><th>Value</th><th>Default</th><th>Takes effect</th><th></th></tr></thead><tbody>`;
+            for (const s of list) {
+                const btns = IS_ADMIN
+                    ? `<button class="btn btn-primary btn-sm" type="button" onclick="save('${esc(s.key)}')">Save</button>` +
+                      (s.is_default ? '' : ` <button class="btn btn-sm" type="button" onclick="send('DELETE','${esc(s.key)}')">Reset</button>`)
+                    : '';
+                html += `<tr><td><strong>${esc(s.label)}</strong><br><span class="text-sm">${esc(s.doc)}</span><br><code class="text-sm">${esc(s.key)}</code></td>` +
+                    `<td>${input(s)} ${esc(s.unit)}${s.is_default ? '' : ' <span class="badge">changed</span>'}</td>` +
+                    `<td>${esc(s.default)}</td><td class="text-sm">${esc(s.effect)}</td><td>${btns}</td></tr>`;
+            }
+            html += '</tbody></table>';
+        }
+        document.getElementById('settings-sections').innerHTML = html;
+        st.textContent = IS_ADMIN ? '' : 'Changing settings needs an administrator account.';
+    }
+    load();
+</script>
+{% endblock %}

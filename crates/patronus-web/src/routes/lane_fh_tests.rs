@@ -732,7 +732,7 @@ async fn wrong_codes_confirming_two_factor_setup_hit_the_login_throttle() {
     assert_eq!(s, StatusCode::BAD_REQUEST);
     let secret = begin(&t, &c).await;
     let wrong = wrong_code(&secret);
-    for _ in 1..crate::auth::MAX_LOGIN_FAILURES {
+    for _ in 1..crate::auth::max_login_failures() {
         let (s, b) = enable(&t, &c, &wrong).await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
     }
@@ -746,7 +746,7 @@ async fn wrong_codes_confirming_two_factor_setup_hit_the_login_throttle() {
     let c = t.admin().await;
     let secret = begin(&t, &c).await;
     let wrong = wrong_code(&secret);
-    for _ in 0..crate::auth::MAX_LOGIN_FAILURES {
+    for _ in 0..crate::auth::max_login_failures() {
         let (s, b) = enable(&t, &c, &wrong).await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
     }

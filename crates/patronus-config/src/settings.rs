@@ -1,0 +1,514 @@
+//! Typed settings registry: operational values that used to be hard-coded.
+//!
+//! Product rule: nothing operational is baked into the code or the image.
+//! Every such value is a key here with a type, bounds, a documented default
+//! and a description. Values live in the `system_config` table, so
+//! `export_json`/`import_json`, revisions, rollback and config generations
+//! carry them without any extra code; a key that was never set reads as its
+//! default. `docs/design/configurable-everything.md` lists every key and the
+//! values still waiting for one.
+//!
+//! Interfaces: `GET/PUT/DELETE /api/settings[/{key}]` (web, System >
+//! Advanced settings), `patronus settings list|get|set|reset|env` (CLI).
+//! `patronus settings env` prints every value as shell variables
+//! (`PATRONUS_SET_<KEY>`), which the embedded images' boot scripts source.
+//!
+//! Synchronous code (session checks, login throttle) reads [`current`],
+//! a process cache filled by [`load_cache`]; async code reads the store with
+//! [`get`] so it always sees the latest value.
+
+use crate::store::ConfigStore;
+use patronus_core::{Error, Result};
+use serde::Serialize;
+use std::collections::HashMap;
+use std::sync::{OnceLock, RwLock};
+
+/// Value type and bounds of a setting.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Kind {
+    Bool,
+    /// Whole number in `min..=max` (unit in [`Setting::unit`]).
+    Int {
+        min: i64,
+        max: i64,
+    },
+    /// TCP/UDP port 1-65535.
+    Port,
+    /// Free text up to `max_len` bytes, no control characters.
+    Text {
+        max_len: usize,
+    },
+    /// An http(s) URL; empty allowed only when `optional`.
+    Url {
+        optional: bool,
+    },
+    /// One of a fixed set of words.
+    Choice {
+        options: &'static [&'static str],
+    },
+}
+
+/// One registry entry.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Setting {
+    /// Store key, `<section>.<name>`.
+    pub key: &'static str,
+    /// UI group.
+    pub section: &'static str,
+    pub label: &'static str,
+    /// What it does, for the UI and the docs.
+    pub doc: &'static str,
+    pub kind: Kind,
+    pub default: &'static str,
+    /// Unit shown next to numbers ("seconds", "characters", ...).
+    pub unit: &'static str,
+    /// When a change takes effect.
+    pub effect: &'static str,
+}
+
+/// Every setting. Keep keys stable: they are part of exported configs.
+pub static REGISTRY: &[Setting] = &[
+    Setting {
+        key: "web.session_lifetime_secs",
+        section: "Web interface",
+        label: "Session lifetime",
+        doc: "How long a web login lasts before the user must sign in again (the cookie's Max-Age is the same).",
+        kind: Kind::Int { min: 300, max: 30 * 86_400 },
+        default: "86400",
+        unit: "seconds",
+        effect: "new logins at once; existing sessions are checked against the new value",
+    },
+    Setting {
+        key: "web.login_max_failures",
+        section: "Web interface",
+        label: "Failed logins before lockout",
+        doc: "Wrong passwords (or two-factor codes) one client may send within the lockout window before its logins are refused with 429.",
+        kind: Kind::Int { min: 1, max: 100 },
+        default: "5",
+        unit: "attempts",
+        effect: "at once",
+    },
+    Setting {
+        key: "web.login_lockout_secs",
+        section: "Web interface",
+        label: "Login lockout window",
+        doc: "Window in which failed logins are counted, and how long a client stays locked out after reaching the limit.",
+        kind: Kind::Int { min: 60, max: 86_400 },
+        default: "900",
+        unit: "seconds",
+        effect: "at once",
+    },
+    Setting {
+        key: "web.min_password_length",
+        section: "Web interface",
+        label: "Minimum password length",
+        doc: "Shortest password accepted for any web account (existing passwords are not affected until changed).",
+        kind: Kind::Int { min: 8, max: 128 },
+        default: "12",
+        unit: "characters",
+        effect: "next password change",
+    },
+    Setting {
+        key: "web.housekeeping_interval_secs",
+        section: "Web interface",
+        label: "Housekeeping interval",
+        doc: "How often expired sessions and login-throttle records are purged and secret rotation is enforced.",
+        kind: Kind::Int { min: 60, max: 86_400 },
+        default: "3600",
+        unit: "seconds",
+        effect: "next web service start",
+    },
+    Setting {
+        key: "network.ddns_refresh_secs",
+        section: "Network",
+        label: "Dynamic DNS forced refresh",
+        doc: "Re-send a dynamic DNS update after this long even when the address did not change (providers expire idle records).",
+        kind: Kind::Int { min: 3_600, max: 365 * 86_400 },
+        default: "2160000",
+        unit: "seconds",
+        effect: "next DDNS check",
+    },
+    Setting {
+        key: "wifi.enrolment_ttl_secs",
+        section: "Wi-Fi",
+        label: "Pending device credential lifetime",
+        doc: "How long a per-device Wi-Fi credential that no device has used yet stays valid before it expires.",
+        kind: Kind::Int { min: 300, max: 30 * 86_400 },
+        default: "86400",
+        unit: "seconds",
+        effect: "credentials created after the change",
+    },
+];
+
+/// Registry entry for `key`.
+pub fn find(key: &str) -> Option<&'static Setting> {
+    REGISTRY.iter().find(|s| s.key == key)
+}
+
+fn invalid(msg: String) -> Error {
+    Error::Config(format!("Invalid setting: {msg}"))
+}
+
+/// Validate and normalise `value` for `s`.
+pub fn validate(s: &Setting, value: &str) -> Result<String> {
+    let v = value.trim();
+    match s.kind {
+        Kind::Bool => match v.to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Ok("true".into()),
+            "0" | "false" | "no" | "off" => Ok("false".into()),
+            _ => Err(invalid(format!("{}: {value:?} is not true/false", s.key))),
+        },
+        Kind::Int { min, max } => {
+            let n: i64 = v
+                .parse()
+                .map_err(|_| invalid(format!("{}: {value:?} is not a whole number", s.key)))?;
+            if n < min || n > max {
+                return Err(invalid(format!(
+                    "{}: {n} is outside {min}..{max} {}",
+                    s.key, s.unit
+                )));
+            }
+            Ok(n.to_string())
+        }
+        Kind::Port => match v.parse::<u16>() {
+            Ok(p) if p > 0 => Ok(p.to_string()),
+            _ => Err(invalid(format!(
+                "{}: {value:?} is not a port (1-65535)",
+                s.key
+            ))),
+        },
+        Kind::Text { max_len } => {
+            if v.len() > max_len || v.chars().any(char::is_control) {
+                return Err(invalid(format!(
+                    "{}: at most {max_len} bytes, no control characters",
+                    s.key
+                )));
+            }
+            Ok(v.to_string())
+        }
+        Kind::Url { optional } => {
+            if v.is_empty() && optional {
+                return Ok(String::new());
+            }
+            let ok = (v.starts_with("http://") || v.starts_with("https://"))
+                && v.len() <= 2048
+                && !v.chars().any(|c| c.is_control() || c.is_whitespace());
+            if ok {
+                Ok(v.to_string())
+            } else {
+                Err(invalid(format!(
+                    "{}: {value:?} is not an http(s) URL",
+                    s.key
+                )))
+            }
+        }
+        Kind::Choice { options } => {
+            if options.contains(&v) {
+                Ok(v.to_string())
+            } else {
+                Err(invalid(format!(
+                    "{}: {value:?} is not one of {}",
+                    s.key,
+                    options.join(", ")
+                )))
+            }
+        }
+    }
+}
+
+fn entry(key: &str) -> Result<&'static Setting> {
+    find(key).ok_or_else(|| invalid(format!("unknown key {key:?}")))
+}
+
+/// Stored value of `key`, or its default. A stored value that no longer
+/// validates (bounds tightened in a newer release) falls back to the default.
+pub async fn get(store: &ConfigStore, key: &str) -> Result<String> {
+    let s = entry(key)?;
+    Ok(match store.load_system_config(key).await? {
+        Some(v) => validate(s, &v).unwrap_or_else(|e| {
+            tracing::warn!("{e}; using the default {}", s.default);
+            s.default.to_string()
+        }),
+        None => s.default.to_string(),
+    })
+}
+
+/// [`get`] as a number (Int/Port settings).
+pub async fn get_i64(store: &ConfigStore, key: &str) -> Result<i64> {
+    let v = get(store, key).await?;
+    v.parse()
+        .map_err(|_| invalid(format!("{key}: {v:?} is not a number")))
+}
+
+/// Validate and store `value`; returns the normalised value. Processes
+/// holding a cache refresh it with [`load_cache`].
+pub async fn set(store: &ConfigStore, key: &str, value: &str) -> Result<String> {
+    let s = entry(key)?;
+    let v = validate(s, value)?;
+    store.save_system_config(key, &v).await?;
+    Ok(v)
+}
+
+/// Back to the default (removes the stored value).
+pub async fn reset(store: &ConfigStore, key: &str) -> Result<()> {
+    entry(key)?;
+    store.delete_system_config(key).await?;
+    Ok(())
+}
+
+/// A setting with its current value, for the API/UI.
+#[derive(Debug, Clone, Serialize)]
+pub struct SettingView {
+    #[serde(flatten)]
+    pub setting: Setting,
+    pub value: String,
+    pub is_default: bool,
+}
+
+/// Every setting with its value.
+pub async fn list(store: &ConfigStore) -> Result<Vec<SettingView>> {
+    let mut out = Vec::with_capacity(REGISTRY.len());
+    for s in REGISTRY {
+        let stored = store.load_system_config(s.key).await?;
+        let value = get(store, s.key).await?;
+        out.push(SettingView {
+            setting: *s,
+            is_default: stored.is_none(),
+            value,
+        });
+    }
+    Ok(out)
+}
+
+/// Shell variable name of a key: `web.session_lifetime_secs` ->
+/// `PATRONUS_SET_WEB_SESSION_LIFETIME_SECS`.
+pub fn env_name(key: &str) -> String {
+    let mut n = String::from("PATRONUS_SET_");
+    for c in key.chars() {
+        n.push(if c.is_ascii_alphanumeric() {
+            c.to_ascii_uppercase()
+        } else {
+            '_'
+        });
+    }
+    n
+}
+
+/// Every value as `NAME='value'` lines, safe to `.` from a POSIX shell.
+pub fn render_env(values: &[SettingView]) -> String {
+    let mut out = String::from("# Generated by `patronus settings env` -- edit through the web UI or `patronus settings set`.\n");
+    for v in values {
+        out.push_str(&env_name(v.setting.key));
+        out.push_str("='");
+        out.push_str(&v.value.replace('\'', "'\\''"));
+        out.push_str("'\n");
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Process cache for synchronous readers.
+
+fn cache() -> &'static RwLock<HashMap<String, String>> {
+    static C: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
+    C.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Refill the process cache from the store (web start, after changes, and
+/// periodically so `patronus settings set` from a shell reaches the web).
+pub async fn load_cache(store: &ConfigStore) -> Result<()> {
+    let mut fresh = HashMap::new();
+    for s in REGISTRY {
+        if store.load_system_config(s.key).await?.is_some() {
+            fresh.insert(s.key.to_string(), get(store, s.key).await?);
+        }
+    }
+    *cache().write().unwrap_or_else(|e| e.into_inner()) = fresh;
+    Ok(())
+}
+
+/// Cached value of `key` (default when not set or not loaded yet).
+/// Panics in debug builds on an unregistered key: that is a code bug.
+pub fn current(key: &str) -> String {
+    if let Some(v) = cache().read().unwrap_or_else(|e| e.into_inner()).get(key) {
+        return v.clone();
+    }
+    match find(key) {
+        Some(s) => s.default.to_string(),
+        None => {
+            debug_assert!(false, "unregistered setting {key}");
+            String::new()
+        }
+    }
+}
+
+/// [`current`] as a number; falls back to the registered default.
+pub fn current_i64(key: &str) -> i64 {
+    current(key)
+        .parse()
+        .ok()
+        .or_else(|| find(key).and_then(|s| s.default.parse().ok()))
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn store() -> (tempfile::TempDir, ConfigStore) {
+        let d = tempfile::tempdir().unwrap();
+        let s = ConfigStore::open(d.path().join("c.db")).await.unwrap();
+        (d, s)
+    }
+
+    #[test]
+    fn registry_is_well_formed() {
+        let mut seen = std::collections::HashSet::new();
+        for s in REGISTRY {
+            assert!(seen.insert(s.key), "duplicate key {}", s.key);
+            assert!(
+                s.key.contains('.') && s.key == s.key.to_ascii_lowercase(),
+                "{}",
+                s.key
+            );
+            assert!(
+                !s.doc.is_empty() && !s.label.is_empty() && !s.effect.is_empty(),
+                "{}",
+                s.key
+            );
+            // every default must pass its own validation
+            assert_eq!(validate(s, s.default).unwrap(), s.default, "{}", s.key);
+        }
+    }
+
+    #[test]
+    fn validation_rejects_out_of_range_and_junk() {
+        let s = find("web.min_password_length").unwrap();
+        assert!(validate(s, "7").is_err());
+        assert!(validate(s, "x").is_err());
+        assert_eq!(validate(s, " 16 ").unwrap(), "16");
+        let b = Setting {
+            kind: Kind::Bool,
+            ..*s
+        };
+        assert_eq!(validate(&b, "on").unwrap(), "true");
+        assert!(validate(&b, "maybe").is_err());
+        let p = Setting {
+            kind: Kind::Port,
+            ..*s
+        };
+        assert!(validate(&p, "0").is_err() && validate(&p, "70000").is_err());
+        let u = Setting {
+            kind: Kind::Url { optional: true },
+            ..*s
+        };
+        assert_eq!(validate(&u, "").unwrap(), "");
+        assert!(validate(&u, "ftp://x").is_err());
+        let c = Setting {
+            kind: Kind::Choice {
+                options: &["a", "b"],
+            },
+            ..*s
+        };
+        assert!(validate(&c, "c").is_err());
+        let t = Setting {
+            kind: Kind::Text { max_len: 3 },
+            ..*s
+        };
+        assert!(validate(&t, "abcd").is_err() && validate(&t, "a\nb").is_err());
+    }
+
+    #[tokio::test]
+    async fn set_get_reset_and_unknown_keys() {
+        let (_d, s) = store().await;
+        assert_eq!(get(&s, "web.login_max_failures").await.unwrap(), "5");
+        assert_eq!(set(&s, "web.login_max_failures", "7").await.unwrap(), "7");
+        assert_eq!(get_i64(&s, "web.login_max_failures").await.unwrap(), 7);
+        assert!(set(&s, "web.login_max_failures", "0").await.is_err());
+        assert!(set(&s, "no.such_key", "1").await.is_err());
+        let l = list(&s).await.unwrap();
+        let v = l
+            .iter()
+            .find(|v| v.setting.key == "web.login_max_failures")
+            .unwrap();
+        assert!(!v.is_default && v.value == "7");
+        reset(&s, "web.login_max_failures").await.unwrap();
+        assert_eq!(get(&s, "web.login_max_failures").await.unwrap(), "5");
+        // a stored value that no longer validates reads as the default
+        s.save_system_config("web.login_max_failures", "100000")
+            .await
+            .unwrap();
+        assert_eq!(get(&s, "web.login_max_failures").await.unwrap(), "5");
+    }
+
+    /// The schema contract: every registered key survives export -> import
+    /// into a fresh box, and so does "never set" (stays the default).
+    #[tokio::test]
+    async fn every_key_round_trips_export_import() {
+        let (_d, a) = store().await;
+        let mut want = HashMap::new();
+        for (i, k) in REGISTRY.iter().enumerate() {
+            // a non-default valid value per type
+            let v = match k.kind {
+                Kind::Bool => if k.default == "true" { "false" } else { "true" }.to_string(),
+                Kind::Int { min, max } => {
+                    let d: i64 = k.default.parse().unwrap();
+                    if d < max {
+                        (d + 1).to_string()
+                    } else {
+                        min.to_string()
+                    }
+                }
+                Kind::Port => if k.default == "1024" { "1025" } else { "1024" }.to_string(),
+                Kind::Text { .. } => format!("v{i}"),
+                Kind::Url { .. } => format!("https://example.test/{i}"),
+                Kind::Choice { options } => options
+                    .iter()
+                    .find(|o| **o != k.default)
+                    .unwrap_or(&options[0])
+                    .to_string(),
+            };
+            assert_ne!(v, k.default, "{}", k.key);
+            set(&a, k.key, &v).await.unwrap();
+            want.insert(k.key, v);
+        }
+        let doc = a.export_json().await.unwrap();
+        let (_d2, b) = store().await;
+        b.import_json(&doc).await.unwrap();
+        for k in REGISTRY {
+            assert_eq!(
+                get(&b, k.key).await.unwrap(),
+                want[k.key],
+                "{} lost in export/import",
+                k.key
+            );
+        }
+        // and an export of an untouched box imports as all-defaults
+        let (_d3, c) = store().await;
+        let doc = c.export_json().await.unwrap();
+        b.import_json(&doc).await.unwrap();
+        for k in REGISTRY {
+            assert_eq!(
+                get(&b, k.key).await.unwrap(),
+                k.default,
+                "{} not reset by import",
+                k.key
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn env_rendering_is_shell_safe() {
+        let (_d, s) = store().await;
+        let v = list(&s).await.unwrap();
+        let mut odd = v[0].clone();
+        odd.value = "it's $(x)".into();
+        let out = render_env(&[odd]);
+        assert!(
+            out.contains("PATRONUS_SET_WEB_SESSION_LIFETIME_SECS='it'\\''s $(x)'"),
+            "{out}"
+        );
+        assert_eq!(env_name("a.b-c"), "PATRONUS_SET_A_B_C");
+    }
+}
