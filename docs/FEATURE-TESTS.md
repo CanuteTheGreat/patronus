@@ -58,7 +58,7 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | Groups and privileges (RBAC) | `ci/netlab/lane-n-rbac.sh` | netlab | PASS 8 s|
 | UPnP / NAT-PMP | `ci/netlab/lane-n-upnp.sh` | netlab | PASS 7 s|
 | VRF segmentation | `ci/netlab/lane-n-vrf.sh` | netlab | PASS 24 s|
-| GRE / VXLAN overlay links (Interfaces > Overlays) | `ci/netlab/lane-n-overlays.sh` | netlab | pending first CI run |
+| GRE / VXLAN overlay links (Interfaces > Overlays) | `ci/netlab/lane-n-overlays.sh` | netlab | PASS 29 s, 2026-11-16, run 1354 on 36a6cab0 (job 106369): GRE key 7 + VXLAN VNI 100 ping across, key change recreates, reboot rebuild, delete |
 | First-boot setup wizard | `ci/netlab/lane-n-wizard.sh` | netlab | PASS 12 s|
 | Zero-touch provisioning (export/import, sealed) | `ci/netlab/lane-n-ztp.sh` | netlab | PASS 56 s|
 | DNS rebinding protection | `ci/netlab/lane-s-dns-rebind.sh` | netlab | PASS 23 s|
