@@ -355,7 +355,10 @@ impl Applier for SyslogApplier {
     async fn render(&self, store: &ConfigStore) -> Result<String> {
         let t = targets(store).await?;
         if backend(&self.env) == Some(Backend::Busybox) {
-            return Ok(format!("## {BB_CONF} (busybox syslogd)\n{}", render_busybox(&t)));
+            return Ok(format!(
+                "## {BB_CONF} (busybox syslogd)\n{}",
+                render_busybox(&t)
+            ));
         }
         Ok(format!("## {CONF}\n{}", render(&t)))
     }
@@ -497,7 +500,10 @@ mod tests {
         assert!(c.contains("\n[2001:db8::7]:514\n"), "{c}");
         assert!(!c.contains("omfwd"));
         assert!(t.services.is_running(BB_SERVICE));
-        assert!(!t.services.is_running(SERVICE), "rsyslog is not the backend");
+        assert!(
+            !t.services.is_running(SERVICE),
+            "rsyslog is not the backend"
+        );
         // the severity filter busybox cannot honour is reported, not hidden
         assert_eq!(rep.warnings.len(), 1, "{:?}", rep.warnings);
         assert!(rep.warnings[0].contains("every severity"));
