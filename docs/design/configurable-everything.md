@@ -50,7 +50,9 @@ example/placeholder text. A constant that only looks operational carries
   scripts on the router tier (sourced, with the registered default as the fallback).
 - Router-tier shell scripts: `/usr/libexec/patronus/settings-env ensure|refresh` writes
   `/run/patronus/settings.env` (`patronus-cli settings env`); `apply start` refreshes it at
-  boot and a script that runs earlier calls `ensure` itself. Scripts source it and keep
+  boot, after every `settings set/reset` (the `notify_changed` hook) and a script that runs
+  earlier calls `ensure` itself (a copy lives on `/data/.settings.env` for the steps that run
+  before the store is applied). Scripts source it and keep
   the registry default as their own fallback, so a missing file never stops a service.
   `check-rootfs.sh` refuses an image without `settings-env`.
 - Synchronous code (session checks, login throttle) reads `settings::current()`, a process
@@ -91,14 +93,14 @@ literal, then `python3 ci/hardcode-scan.py --update` (the baseline only shrinks)
 | fixed-list | 7 | 0 | 4 | 11 |
 | hostname | 2 | 0 | 0 | 2 |
 | interface | 21 | 16 | 438 | 475 |
-| path | 59 | 85 | 67 | 211 |
+| path | 59 | 86 | 67 | 212 |
 | port | 10 | 22 | 59 | 91 |
 | size | 10 | 0 | 0 | 10 |
-| timing | 133 | 5 | 66 | 204 |
+| timing | 133 | 5 | 67 | 205 |
 | uid/gid | 0 | 5 | 14 | 19 |
 | url | 43 | 21 | 33 | 97 |
 | wifi | 7 | 6 | 10 | 23 |
-| **all** | 397 | 330 | 2118 | 2845 |
+| **all** | 397 | 331 | 2119 | 2847 |
 
 Full table with file:line and proposed key: [configurable-everything-inventory.md](configurable-everything-inventory.md).
 
@@ -116,6 +118,12 @@ Full table with file:line and proposed key: [configurable-everything-inventory.m
 | `SYNC_PORT = 3780` (patronus-network ha.rs + patronus-firewall ha_rules.rs, kept in step by hand) | `ha.sync_port` (in `lan_settings` with the other `ha.*` keys) | 3780 | yes |
 | wifi-guard `CRASH_MAX=3 CRASH_WINDOW=600 SAFE_HOLD=3600 LOOP_BOOTS=2` (router-tier AP script) | `wifi.guard_crash_max`, `wifi.guard_crash_window_secs`, `wifi.guard_safe_hold_secs`, `wifi.guard_loop_boots` | 3 / 600 s / 3600 s / 2 | yes (takes effect at the next boot) |
 | `INTERCEPT_PORT = 3129` (patronus-network proxy.rs + a literal in patronus-firewall svc_rules.rs) | `proxy.intercept_port` (`lan_settings`) | 3129 (1025 .. 65535) | yes |
+| `patronus-guard` `GRACE=600` (Slate) | `guard.confirm_secs` | 600 s (60 .. 86400) | yes (next boot) |
+| `patronus-init` rollback after the 3rd unconfirmed boot (Slate) | `guard.max_unconfirmed_boots` | 3 (1 .. 20) | yes (next boot) |
+| `sleep 45` WAN-lease fallback in the Slate `apply` | `guard.wan_lease_fallback_secs` | 45 s (5 .. 600) | yes (next boot) |
+| `AP_PHY_WAIT` 90 s radio wait (`ap`, GL-AX1800) | `wifi.radio_wait_secs` | 90 s (10 .. 600) | yes (next AP start) |
+| wifi-guard `RECOVER_WAIT=20` | `wifi.recover_wait_secs` | 20 s (5 .. 300) | yes (next crash) |
+| `upgrade-install` ubiblock wait (10 tries) | `upgrade.ubiblock_wait_secs` | 10 s (1 .. 120) | yes (next upgrade) |
 | fixed 13-entry language list (shared live installer; changed in the Horcrux master copy, reaches `gentoo/live-iso/common` with the next `sync-common.sh --from`) | the image's glibc `SUPPORTED` list | shortlist first, fallback only without glibc data | installer |
 
 ## Remaining, in priority order
@@ -132,10 +140,12 @@ Owned elsewhere (named here so the sweep stays complete):
 
 This sweep, next batches (P1 = owner-visible or security, P2 = operator tuning, P3 = rare):
 
-1. **P1 more router-tier script values through `settings-env`**: `patronus-guard` confirm
-   window (600 s) and unconfirmed-boot limit, `upgrade-install` waits, the 45 s WAN-lease
-   fallback in the Slate `apply`, `ap` start/verify waits. (wifi-guard is done.) Also
-   refresh the file when a setting changes, not only at boot (applyd hook).
+1. ~~**P1 router-tier script values through `settings-env`**~~ done (batch 3): guard confirm
+   window, unconfirmed-boot limit, WAN-lease fallback, radio/recovery/ubiblock waits, and the
+   file is refreshed when a setting changes (`settings::set`/`reset` run
+   `settings-env refresh`, hook path `PATRONUS_SETTINGS_HOOK`). `settings-env` also keeps a
+   copy on the data volume (`/data/.settings.env`) because the earliest boot steps
+   (`patronus-init`, `patronus-guard`) run before the store is applied.
 2. **P1 feed and update URLs** (`patronus-firewall` feeds.rs/geoip.rs catalog, seg_dns
    blocklists, `CFG_ASN_URL`/`CFG_GEO_URL` defaults, speedtest defaults, captive-portal
    probe URL and DNS servers `8.8.8.8/8.8.4.4/1.1.1.1`): catalog entries become data rows

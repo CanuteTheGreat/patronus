@@ -1,7 +1,7 @@
 #!/bin/sh
 # Apply the stored config at boot (both init systems: OpenRC patronus-apply, systemd patronus-apply.service), keep
 # SSH/web reachable from the management subnet, and fall back to busybox udhcpc if Patronus' own WAN DHCP client
-# has no lease after 45 s.  usage: apply [start|mgmt]
+# has no lease after guard.wan_lease_fallback_secs (default 45).  usage: apply [start|mgmt]
 set -a; . /etc/patronus/embedded.env; set +a
 . /etc/patronus/board.sh
 mgmt_from_home() { # until the store has its own WAN rule: keep SSH/web reachable from the upstream LAN (unit.conf MGMT_NET)
@@ -13,7 +13,9 @@ case "${1:-start}" in
 start)
   s=$(cut -d' ' -f1 /proc/uptime); patronus-cli apply > /var/log/apply.log 2>&1; echo "apply rc=$? ${s}->$(cut -d' ' -f1 /proc/uptime)" >> /var/log/apply.log
   mgmt_from_home
-  setsid sh -c "sleep 45; ip -4 addr show dev $WAN_IF | grep -q inet || { logger -t patronus 'no WAN lease from patronus: udhcpc fallback'; udhcpc -b -i $WAN_IF -s /usr/share/udhcpc/default.script -p /run/udhcpc-fallback.pid; }; $0 mgmt" </dev/null >/dev/null 2>&1 &
+  /usr/libexec/patronus/settings-env refresh  # typed settings for the boot/helper scripts
+  [ -r /run/patronus/settings.env ] && . /run/patronus/settings.env
+  setsid sh -c "sleep ${PATRONUS_SET_GUARD_WAN_LEASE_FALLBACK_SECS:-45}; ip -4 addr show dev $WAN_IF | grep -q inet || { logger -t patronus 'no WAN lease from patronus: udhcpc fallback'; udhcpc -b -i $WAN_IF -s /usr/share/udhcpc/default.script -p /run/udhcpc-fallback.pid; }; $0 mgmt" </dev/null >/dev/null 2>&1 &
   ;;
 mgmt) mgmt_from_home ;;
 esac

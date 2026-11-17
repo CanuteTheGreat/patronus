@@ -232,10 +232,16 @@ grep -q centr_freq "$A/two/ap24.conf" && no "ap: 2.4 GHz config got a 5 GHz cent
 # 2z. settings-env renders the typed settings for the scripts (ensure once per boot, refresh always)
 SE=$W/se; mkdir -p "$SE"
 printf '#!/bin/sh\necho call >> %s/n; o=; while [ $# -gt 0 ]; do [ "$1" = --output ] && o=$2; shift; done; echo "PATRONUS_SET_X=1" > "$o"\n' "$SE" > "$SE/cli"; chmod +x "$SE/cli"
-sev() { env SETTINGS_ENV="$SE/out/settings.env" SETTINGS_CLI="$SE/cli" PATRONUS_DB=/nonexistent sh "$O/usr/libexec/patronus/settings-env" "$@"; }
+sev() { env SETTINGS_ENV="$SE/out/settings.env" SETTINGS_PERSIST="$SE/persist/.settings.env" SETTINGS_CLI="$SE/cli" PATRONUS_DB=/nonexistent sh "$O/usr/libexec/patronus/settings-env" "$@"; }
 sev ensure; sev ensure; sev refresh
 [ "$(wc -l < "$SE/n")" = 2 ] && grep -q PATRONUS_SET_X "$SE/out/settings.env" \
   && ok "settings-env: ensure renders once per boot, refresh rewrites" || no "settings-env: $(wc -l < "$SE/n" 2>/dev/null) renders"
+# the data-volume copy: written by refresh, and an `ensure` after a reboot (empty /run) restores from it without the CLI
+mkdir -p "$SE/persist"; sev refresh; rm -f "$SE/out/settings.env"; n0=$(wc -l < "$SE/n"); sev ensure
+[ -s "$SE/persist/.settings.env" ] && grep -q PATRONUS_SET_X "$SE/out/settings.env" && [ "$(wc -l < "$SE/n")" = "$n0" ] \
+  && ok "settings-env: values persist on the data volume (early boot reads them before the store)" || no "settings-env: no persisted copy"
+grep -q PATRONUS_SET_WIFI_RADIO_WAIT_SECS "$O/usr/libexec/patronus/ap" && grep -q PATRONUS_SET_WIFI_RECOVER_WAIT_SECS "$O/usr/libexec/patronus/wifi-guard" \
+  && grep -q PATRONUS_SET_UPGRADE_UBIBLOCK_WAIT_SECS "$O/usr/libexec/patronus/upgrade-install" && ok "ap/wifi-guard/upgrade-install read their waits from the settings" || no "a wait is still fixed in a script"
 grep -q 'settings-env refresh' "$O/usr/libexec/patronus/apply" && ok "apply: refreshes the settings file after applying" || no "apply: settings file not refreshed"
 
 # 3a. Wi-Fi firmware crash containment (wifi-guard) and the Patronus hostapd package (docs 12.6d)

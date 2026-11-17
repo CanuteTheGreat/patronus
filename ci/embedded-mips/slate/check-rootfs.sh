@@ -16,7 +16,7 @@ grep -q '^root:[^:!*]' "$R/etc/shadow" 2>/dev/null || [ -s "$R/root/.ssh/authori
 grep -q '^nobody:' "$R/etc/passwd" || fail "no nobody user (dnsmasq)"
 [ -d "$R/var/lib/misc" ] || fail "no /var/lib/misc (dnsmasq leases)"
 [ -s "$R/etc/services" ] || fail "no /etc/services (busybox wget/nc: bad port 'http', p4)"
-for f in usr/sbin/patronus-guard usr/sbin/patronus-flash usr/sbin/patronus-init usr/libexec/patronus/early etc/patronus-init etc/pam.d/patronus lib/security/pam_unix.so; do
+for f in usr/sbin/patronus-guard usr/sbin/patronus-flash usr/sbin/patronus-init usr/libexec/patronus/early usr/libexec/patronus/settings-env etc/patronus-init etc/pam.d/patronus lib/security/pam_unix.so; do
   [ -e "$R/$f" ] || fail "missing /$f"; done
 [ -n "${NOR_PROFILE:-}" ] || [ -e "$R/usr/share/patronus-recovery/openwrt-root.squashfs" ] || fail "missing the recovery root"
 # the init system recorded for patronus-init must be in the image (busybox init is not a variant)

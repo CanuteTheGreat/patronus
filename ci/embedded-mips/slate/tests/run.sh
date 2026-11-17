@@ -33,7 +33,7 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/etc/wpa_supplicant" "$r/bin" 
   printf 'network={\n ssid="x"\n psk="y"\n}\n' > "$r/etc/wpa_supplicant/wpa_supplicant.conf"
   printf 'root:x:0:0:root:/root:/bin/sh\nnobody:x:65534:65534:nobody:/:/bin/false\n' > "$r/etc/passwd"
   echo 'root:$6$salt$hash:1::::::' > "$r/etc/shadow"; ln -s busybox "$r/bin/sh"; : > "$r/bin/busybox"; chmod +x "$r/bin/busybox"
-  : > "$r/usr/sbin/patronus-guard"; : > "$r/usr/sbin/patronus-flash"; : > "$r/usr/sbin/patronus-init"; : > "$r/usr/libexec/patronus/early"
+  : > "$r/usr/sbin/patronus-guard"; : > "$r/usr/sbin/patronus-flash"; : > "$r/usr/sbin/patronus-init"; : > "$r/usr/libexec/patronus/early"; : > "$r/usr/libexec/patronus/settings-env"
   : > "$r/etc/pam.d/patronus"; : > "$r/lib/security/pam_unix.so"; ln -s /usr/sbin/patronus-init "$r/sbin/init"; echo INIT=openrc > "$r/etc/patronus-init"
   for b in openrc-init openrc-run supervise-daemon; do : > "$r/sbin/$b"; chmod +x "$r/sbin/$b"; done; printf '#!/bin/sh\nexec /sbin/openrc-shutdown -r now\n' > "$r/sbin/reboot"; chmod +x "$r/sbin/reboot"
   for s in patronus-board patronus-apply patronus-applyd patronus-web dropbear dnsmasq patronus-dhcpc; do : > "$r/etc/init.d/$s"; chmod +x "$r/etc/init.d/$s"; done
@@ -124,6 +124,11 @@ reset_g() { rm -rf "$W/run" "$W/gdata" "$W/calls"; mkdir -p "$W/run" "$W/gdata";
 reset_g; touch "$W/run/patronus-good"
 t "guard: operator-confirmed boot stays" sh -c "'$G' arm && [ ! -e $W/calls ] && grep -q 'confirmed by operator' $W/run/patronus-guard.state"
 reset_g
+# the window is the guard.confirm_secs setting, read from the copy on the data volume (no env override)
+reset_g; echo "PATRONUS_SET_GUARD_CONFIRM_SECS=0" > "$W/gdata/.settings.env"
+t "guard: the confirmation window comes from the persisted setting" sh -c "unset PATRONUS_GUARD_GRACE; '$G' arm; grep -q 'grace=0s' $W/run/patronus-guard.state"
+reset_g
+grep -q 'GUARD_MAX_UNCONFIRMED_BOOTS' "$D/overlay/usr/sbin/patronus-init" && grep -q 'GUARD_WAN_LEASE_FALLBACK_SECS' "$D/overlay/usr/libexec/patronus/apply" && ok "init/apply read the rollback limit and WAN fallback from the settings" || no "a boot value is still fixed"
 t "guard: unconfirmed boot reverts to OpenWrt and reboots" sh -c "'$G' arm; grep -q 'flash openwrt' $W/calls && grep -q reboot $W/calls && grep -q REVERTING $W/run/patronus-guard.state && [ -d $W/gdata/guard-log ]"
 reset_g; touch "$W/gdata/.guard-auto"
 t "guard: unattended mode stays when the gateway answers" sh -c "FAKE_PING_RC=0 PATRONUS_GUARD_GW=192.0.2.1 '$G' arm && [ ! -e $W/calls ] && [ -f $W/run/patronus-good ]"

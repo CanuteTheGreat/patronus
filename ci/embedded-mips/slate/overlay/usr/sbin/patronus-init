@@ -12,9 +12,12 @@ case "$INIT" in
   systemd) INIT_BIN=/usr/lib/systemd/systemd ;;
 esac
 t() { cut -d' ' -f1 /proc/uptime; }
+# unconfirmed boots before the rollback: setting guard.max_unconfirmed_boots (copy kept on the data volume)
+[ -r /data/.settings.env ] && . /data/.settings.env
+MAXB=${PATRONUS_SET_GUARD_MAX_UNCONFIRMED_BOOTS:-3}
 n=$(cat /data/.init-boot-attempts 2>/dev/null || echo 0); n=$((n + 1)); echo $n > /data/.init-boot-attempts; sync
 echo "$(t) $INIT-attempt-$n" >> /tmp/boot-times
-if [ "$n" -gt 2 ]; then
+if [ "$n" -ge "$MAXB" ]; then
   echo "$(t) too many unconfirmed $INIT boots: rollback" >> /tmp/boot-times
   rm -f /data/.init-boot-attempts; cp /tmp/boot-times /data/init-rollback-boot-times 2>/dev/null
   /usr/sbin/patronus-flash rollback > /data/init-rollback.txt 2>&1; sync; /bin/busybox reboot -f   # no init manager yet
