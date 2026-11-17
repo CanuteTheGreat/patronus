@@ -213,6 +213,7 @@ pub struct GatewayView {
     pub loss_threshold: u64,
     pub latency_threshold: u64,
     pub failback_delay: u64,
+    pub failback_ramp: u64,
     pub state: String,
     pub state_class: &'static str,
     pub loss: String,
@@ -313,6 +314,7 @@ pub fn views(st: &Value) -> (Vec<GatewayView>, Vec<GroupView>, Vec<RouteView>) {
                 loss_threshold: g["loss_threshold"].as_u64().unwrap_or(20),
                 latency_threshold: g["latency_threshold"].as_u64().unwrap_or(500),
                 failback_delay: g["failback_delay"].as_u64().unwrap_or(0),
+                failback_ramp: g["failback_ramp"].as_u64().unwrap_or(0),
                 state_class: state_class(&state),
                 state,
                 loss: g["loss_pct"]

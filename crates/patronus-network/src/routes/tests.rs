@@ -102,6 +102,7 @@ fn gw(name: &str, iface: &str, addr: Option<&str>) -> Gateway {
         loss_threshold: 20,
         latency_threshold: 500,
         failback_delay: 0,
+        failback_ramp: 0,
         description: None,
     }
 }
@@ -114,6 +115,8 @@ fn st(state: GwState) -> GwStatus {
         samples: 10,
         detail: None,
         since: 0,
+        recovered_at: None,
+        ramp_secs: 0,
         probes: Vec::new(),
     }
 }
@@ -1603,5 +1606,97 @@ async fn failback_delay_is_validated_and_stored() {
             .unwrap()
             .failback_delay,
         0
+    );
+}
+
+fn ramping(rec: i64, ramp: u32) -> GwStatus {
+    let mut s = st(GwState::Online);
+    s.recovered_at = Some(rec);
+    s.ramp_secs = ramp;
+    s
+}
+
+#[test]
+fn ramp_pct_grows_in_steps_over_the_ramp() {
+    let s = ramping(1000, 90);
+    assert_eq!(ramp_pct(Some(&s), 1000), 10);
+    assert_eq!(ramp_pct(Some(&s), 1009), 10);
+    assert_eq!(ramp_pct(Some(&s), 1010), 20);
+    assert_eq!(ramp_pct(Some(&s), 1045), 50);
+    assert_eq!(ramp_pct(Some(&s), 1089), 90);
+    assert_eq!(ramp_pct(Some(&s), 1090), 100);
+    // off, unknown or never recovered: no ramp
+    assert_eq!(ramp_pct(Some(&ramping(1000, 0)), 1000), 100);
+    assert_eq!(ramp_pct(Some(&st(GwState::Online)), 1000), 100);
+    assert_eq!(ramp_pct(None, 1000), 100);
+}
+
+#[test]
+fn a_recovering_tier_shares_traffic_with_the_fallback_tier() {
+    let (cfg, res) = two_wan_cfg();
+    let g = &cfg.groups[0];
+    let w = |s: &BTreeMap<String, GwStatus>, now: i64| {
+        select_weighted(g, &res, s, now)
+            .into_iter()
+            .map(|(m, w)| (m.gateway.clone(), w))
+            .collect::<Vec<_>>()
+    };
+    let one = |n: &str, w: u32| (n.to_string(), w);
+    // no ramp: exactly the old selection and weights
+    assert_eq!(w(&BTreeMap::new(), 5), [one("WAN1", 1)]);
+    // WAN1 recovered at t=100 with a 100 s ramp: at t=125 it gets 30 %,
+    // the tier-2 members split the other 70 % by their weights
+    let s = BTreeMap::from([("WAN1".to_string(), ramping(100, 100))]);
+    assert_eq!(
+        w(&s, 125),
+        [one("WAN1", 30), one("WAN2", 17), one("WAN3", 52)]
+    );
+    // ramp over: WAN1 alone again
+    assert_eq!(w(&s, 200), [one("WAN1", 1)]);
+    // nothing to fall back to (tier 2 down): the recovered tier carries all
+    let mut s2 = s.clone();
+    s2.insert("WAN2".into(), st(GwState::Down));
+    s2.insert("WAN3".into(), st(GwState::Down));
+    assert_eq!(w(&s2, 125), [one("WAN1", 1)]);
+    // a gateway that is down is never ramped in
+    let mut s3 = BTreeMap::from([("WAN1".to_string(), ramping(100, 100))]);
+    s3.get_mut("WAN1").unwrap().state = GwState::Down;
+    assert_eq!(w(&s3, 125), [one("WAN2", 1), one("WAN3", 3)]);
+}
+
+#[test]
+fn ramping_group_renders_one_weighted_multipath_default() {
+    if !MULTIWAN {
+        return;
+    }
+    let (mut cfg, res) = two_wan_cfg();
+    cfg.default4 = Some("FAILOVER".into());
+    let s = BTreeMap::from([("WAN1".to_string(), ramping(now() - 10, 100))]);
+    let d = desired(&cfg, &res, &s, &BTreeMap::new());
+    let dr = d.routes.iter().find(|r| r.dst == "default").unwrap();
+    let mut devs: Vec<&str> = dr.hops.iter().filter_map(|h| h.dev.as_deref()).collect();
+    devs.sort();
+    assert_eq!(devs, ["wan1", "wan2", "wan3"], "{dr:?}");
+    let wan1 = dr.hops.iter().find(|h| h.dev.as_deref() == Some("wan1"));
+    assert_eq!(wan1.map(|h| h.weight), Some(10), "{dr:?}");
+}
+
+#[tokio::test]
+async fn failback_ramp_is_validated_and_stored() {
+    let s = store().await;
+    let mut i = gi("WAN1", "@wan");
+    i.failback_ramp = Some(MAX_FAILBACK_SECS + 1);
+    assert!(i
+        .validated()
+        .unwrap_err()
+        .to_string()
+        .contains("failback ramp"));
+    i.failback_ramp = Some(60);
+    save_gateway(&s, None, &i.validated().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        load(&s).await.unwrap().gateway("WAN1").unwrap().failback_ramp,
+        60
     );
 }

@@ -145,6 +145,9 @@ pub struct Gateway {
     /// Seconds a recovered gateway must stay healthy before it carries
     /// traffic again (0 = at once).
     pub failback_delay: u32,
+    /// Seconds over which a group moves traffic back to this gateway once it
+    /// is usable again (0 = all at once).
+    pub failback_ramp: u32,
     pub description: Option<String>,
 }
 
@@ -258,7 +261,7 @@ pub async fn load(store: &ConfigStore) -> Result<RoutingConfig> {
     let mut c = RoutingConfig::default();
     for r in sqlx::query(
         "SELECT name, interface, family, address, monitor_ip, monitor_enabled,
-                loss_threshold, latency_threshold, description, failback_delay
+                loss_threshold, latency_threshold, description, failback_delay, failback_ramp
          FROM route_gateways ORDER BY name",
     )
     .fetch_all(pool)
@@ -276,6 +279,7 @@ pub async fn load(store: &ConfigStore) -> Result<RoutingConfig> {
             loss_threshold: r.get::<i64, _>(6).clamp(1, 100) as u32,
             latency_threshold: r.get::<i64, _>(7).max(1) as u32,
             failback_delay: r.get::<i64, _>(9).clamp(0, MAX_FAILBACK_SECS as i64) as u32,
+            failback_ramp: r.get::<i64, _>(10).clamp(0, MAX_FAILBACK_SECS as i64) as u32,
             description: r.get(8),
             name,
         });
@@ -413,6 +417,8 @@ pub struct GatewayInput {
     #[serde(default)]
     pub failback_delay: Option<u32>,
     #[serde(default)]
+    pub failback_ramp: Option<u32>,
+    #[serde(default)]
     pub description: Option<String>,
 }
 
@@ -452,6 +458,12 @@ impl GatewayInput {
                 "failback delay (0-{MAX_FAILBACK_SECS} seconds)"
             )));
         }
+        let failback_ramp = self.failback_ramp.unwrap_or(0);
+        if failback_ramp > MAX_FAILBACK_SECS {
+            return Err(invalid(format!(
+                "failback ramp (0-{MAX_FAILBACK_SECS} seconds)"
+            )));
+        }
         Ok(Gateway {
             name: check_name("gateway", &self.name)?,
             interface: check_iface_spec(&self.interface)?,
@@ -462,6 +474,7 @@ impl GatewayInput {
             loss_threshold,
             latency_threshold,
             failback_delay,
+            failback_ramp,
             description: check_description(self.description.as_deref())?,
         })
     }
@@ -530,15 +543,16 @@ pub async fn save_gateway(store: &ConfigStore, existing: Option<&str>, g: &Gatew
     sqlx::query(
         "INSERT INTO route_gateways (name, interface, family, address, monitor_ip,
             monitor_enabled, loss_threshold, latency_threshold, description, updated_at,
-            failback_delay)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            failback_delay, failback_ramp)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET interface = excluded.interface,
             family = excluded.family, address = excluded.address,
             monitor_ip = excluded.monitor_ip, monitor_enabled = excluded.monitor_enabled,
             loss_threshold = excluded.loss_threshold,
             latency_threshold = excluded.latency_threshold,
             description = excluded.description, updated_at = excluded.updated_at,
-            failback_delay = excluded.failback_delay",
+            failback_delay = excluded.failback_delay,
+            failback_ramp = excluded.failback_ramp",
     )
     .bind(&g.name)
     .bind(&g.interface)
@@ -551,6 +565,7 @@ pub async fn save_gateway(store: &ConfigStore, existing: Option<&str>, g: &Gatew
     .bind(&g.description)
     .bind(now())
     .bind(g.failback_delay as i64)
+    .bind(g.failback_ramp as i64)
     .execute(pool)
     .await
     .map_err(db_err("write gateway"))?;
@@ -1226,6 +1241,13 @@ pub struct GwStatus {
     pub detail: Option<String>,
     /// Unix time the state last changed.
     pub since: i64,
+    /// Unix time the gateway turned healthy again after being down, lossy or
+    /// slow (failback ramp start); kept while it stays healthy.
+    #[serde(default)]
+    pub recovered_at: Option<i64>,
+    /// The gateway's failback ramp in seconds when it was last evaluated.
+    #[serde(default)]
+    pub ramp_secs: u32,
     /// Latest results of the gateway's extra probes (tcp/http/dns).
     #[serde(default)]
     pub probes: Vec<ProbeResult>,
@@ -1665,6 +1687,84 @@ pub fn select_members<'a>(
     Vec::new()
 }
 
+/// Share of the traffic a recently recovered gateway gets now, in percent:
+/// 100 unless it recovered less than its failback ramp ago, else 10..=90 in
+/// steps of 10 growing evenly over the ramp.
+pub fn ramp_pct(s: Option<&GwStatus>, now: i64) -> u32 {
+    let Some(s) = s else {
+        return 100;
+    };
+    let (Some(at), secs) = (s.recovered_at, i64::from(s.ramp_secs)) else {
+        return 100;
+    };
+    let el = (now - at).max(0);
+    if secs == 0 || el >= secs {
+        return 100;
+    }
+    (10 + (el * 9 / secs) * 10) as u32
+}
+
+/// Like [`select_members`] but with the weight each member gets. While the
+/// lowest usable tier has recovered less than its failback ramp ago and a
+/// later tier is usable, both tiers carry traffic: the recovered one with
+/// `ramp_pct` percent of the weight, the fallback tier with the rest, so new
+/// flows move back gradually (weighted multipath) instead of all at once.
+pub fn select_weighted<'a>(
+    g: &'a GatewayGroup,
+    resolved: &BTreeMap<String, Resolved>,
+    status: &BTreeMap<String, GwStatus>,
+    now: i64,
+) -> Vec<(&'a Member, u32)> {
+    fn usable_in<'a>(
+        g: &'a GatewayGroup,
+        t: u32,
+        resolved: &BTreeMap<String, Resolved>,
+        status: &BTreeMap<String, GwStatus>,
+    ) -> Vec<&'a Member> {
+        g.members
+            .iter()
+            .filter(|m| m.tier == t)
+            .filter(|m| {
+                resolved
+                    .get(&m.gateway)
+                    .is_some_and(|r| usable(effective(&m.gateway, r, status), g.trigger))
+            })
+            .collect()
+    }
+    fn share(ms: Vec<&Member>, pct: u32) -> Vec<(&Member, u32)> {
+        let sum: u32 = ms.iter().map(|m| m.weight).sum::<u32>().max(1);
+        ms.into_iter()
+            .map(|m| (m, (pct * m.weight / sum).clamp(1, 100)))
+            .collect()
+    }
+    let tiers: BTreeSet<u32> = g.members.iter().map(|m| m.tier).collect();
+    let mut it = tiers.into_iter();
+    while let Some(t) = it.next() {
+        let up = usable_in(g, t, resolved, status);
+        if up.is_empty() {
+            continue;
+        }
+        let pct = up
+            .iter()
+            .map(|m| ramp_pct(status.get(&m.gateway), now))
+            .min()
+            .unwrap_or(100);
+        if pct < 100 {
+            let next = it.find_map(|t2| {
+                let v = usable_in(g, t2, resolved, status);
+                (!v.is_empty()).then_some(v)
+            });
+            if let Some(next) = next {
+                let mut out = share(up, pct);
+                out.extend(share(next, 100 - pct));
+                return out;
+            }
+        }
+        return up.into_iter().map(|m| (m, m.weight)).collect();
+    }
+    Vec::new()
+}
+
 /// Compute the desired routes from the config, resolved gateways, monitor
 /// results and the devices static-route interface specs resolve to.
 pub fn desired(
@@ -1707,17 +1807,17 @@ pub fn desired(
                 ));
                 vec![]
             } else {
-                let sel = select_members(g, resolved, status);
+                let sel = select_weighted(g, resolved, status, now());
                 if sel.is_empty() {
                     d.warnings.push(format!(
                         "every member of gateway group {name} is down; the interfaces' own default routes apply"
                     ));
                 }
                 sel.into_iter()
-                    .filter_map(|m| {
+                    .filter_map(|(m, w)| {
                         resolved
                             .get(&m.gateway)
-                            .and_then(|r| hop_for(&m.gateway, r, m.weight))
+                            .and_then(|r| hop_for(&m.gateway, r, w))
                             .map(|h| (m.gateway.clone(), h))
                     })
                     .collect()
@@ -1764,12 +1864,12 @@ pub fn desired(
             let (Some(&mark), Some(fam)) = (cfg.marks.get(&g.name), group_family(cfg, g)) else {
                 continue;
             };
-            let hops: Vec<Hop> = select_members(g, resolved, status)
+            let hops: Vec<Hop> = select_weighted(g, resolved, status, now())
                 .into_iter()
-                .filter_map(|m| {
+                .filter_map(|(m, w)| {
                     resolved
                         .get(&m.gateway)
-                        .and_then(|r| hop_for(&m.gateway, r, m.weight))
+                        .and_then(|r| hop_for(&m.gateway, r, w))
                 })
                 .collect();
             if hops.is_empty() {
@@ -2396,6 +2496,8 @@ impl Applier for RoutesApplier {
                     "loss_threshold": g.loss_threshold,
                     "latency_threshold": g.latency_threshold,
                     "failback_delay": g.failback_delay,
+                    "failback_ramp": g.failback_ramp,
+                    "ramp_pct": ramp_pct(s, now()),
                     "description": g.description,
                     "dev": r.dev,
                     "resolved_address": r.address.map(|a| a.to_string()),
@@ -2415,9 +2517,9 @@ impl Applier for RoutesApplier {
             .groups
             .iter()
             .map(|g| {
-                let active: BTreeSet<String> = select_members(g, &resolved, &st)
+                let active: BTreeSet<String> = select_weighted(g, &resolved, &st, now())
                     .into_iter()
-                    .map(|m| m.gateway.clone())
+                    .map(|(m, _)| m.gateway.clone())
                     .collect();
                 json!({
                     "name": g.name,
@@ -2809,6 +2911,17 @@ impl Monitor {
                 }
                 state = gated;
             }
+            let was_bad = self.states.get(&g.name).is_some_and(|p| {
+                matches!(p.state, GwState::Down | GwState::Loss | GwState::Latency)
+            });
+            let recovered_at = if matches!(state, GwState::Down | GwState::Loss | GwState::Latency)
+            {
+                None
+            } else if was_bad {
+                Some(t)
+            } else {
+                self.states.get(&g.name).and_then(|p| p.recovered_at)
+            };
             let since = match self.states.get(&g.name) {
                 Some(prev) if prev.state == state => prev.since,
                 _ => t,
@@ -2830,6 +2943,8 @@ impl Monitor {
                     samples: entry.1.len() as u32,
                     detail,
                     since,
+                    recovered_at,
+                    ramp_secs: g.failback_ramp,
                     probes: gw_extra,
                 },
             );
@@ -2838,6 +2953,7 @@ impl Monitor {
         self.failback.retain(|n, _| next.contains_key(n));
         self.states = next;
         publish(&self.states);
+        let t_sig = now();
         let sig = format!(
             "{:?}",
             cfg.gateways
@@ -2848,6 +2964,7 @@ impl Monitor {
                         &g.name,
                         r.map(|r| (r.dev.clone(), r.address, r.routable())),
                         self.states.get(&g.name).map(|s| s.state),
+                        ramp_pct(self.states.get(&g.name), t_sig),
                     )
                 })
                 .collect::<Vec<_>>()

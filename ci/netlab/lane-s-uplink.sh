@@ -209,6 +209,24 @@ wait_for "default back on WAN1" 20 via_is 'via 203.0.113.1 dev rtr-wan'
 must 200 PUT /routing/gateways/WAN1 '{"name":"WAN1","interface":"@wan","latency_threshold":100,"failback_delay":0}'
 nl_ok "hold-down elapsed: WAN1 online, default and LAN client back on WAN1"
 
+# --- 4b2. gradual failback --------------------------------------------------------
+# With a failback ramp the recovered uplink does not take the whole default at once:
+# for the ramp both tiers sit in one weighted multipath route (WAN1 share growing),
+# then the default is WAN1 alone again.
+must 200 PUT /routing/gateways/WAN1 '{"name":"WAN1","interface":"@wan","latency_threshold":100,"failback_delay":0,"failback_ramp":40}'
+ISP tc qdisc add dev up0 root netem loss 100%
+wait_for "WAN1 down" 40 gw_is WAN1 down
+wait_for "default on WAN2" 20 via_is 'via 100.64.0.1 dev rtr-wan2'
+ISP tc qdisc del dev up0 root
+both_wans() { via_is 'via 203.0.113.1 dev rtr-wan' && via_is 'via 100.64.0.1 dev rtr-wan2'; }
+only_wan1() { via_is 'via 203.0.113.1 dev rtr-wan' && ! via_is 'via 100.64.0.1'; }
+wait_for "failback ramp: WAN1 and WAN2 both carry the default" 60 both_wans
+nl_ok "failback ramp 40 s: WAN1 recovered, the default is weighted multipath over WAN1 + WAN2 ($(default_via | tr '\n' ' '))"
+wait_for "ramp over: default on WAN1 alone" 90 only_wan1
+[ "$(who)" = "$NL_RTR_WAN" ] || fail "LAN should be back on WAN1 after the ramp"
+must 200 PUT /routing/gateways/WAN1 '{"name":"WAN1","interface":"@wan","latency_threshold":100,"failback_delay":0}'
+nl_ok "ramp elapsed: default and LAN client back on WAN1 alone"
+
 # --- 4c. loss hysteresis ---------------------------------------------------------
 # The ISP answers 3 of every 4 pings (deterministic: nft numgen, no randomness), so
 # the 10-probe window holds 20-30 % loss. With the loss threshold at 25 the raw
