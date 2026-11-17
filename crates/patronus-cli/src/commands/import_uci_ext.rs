@@ -2428,6 +2428,135 @@ mod tests {
         assert!(!un.contains("dhcp: dnsmasq"), "{un}");
     }
 
+    /// A sanitized copy of a router with 7 WireGuard peers (test keys only):
+    /// every attribute that matters must reach the store unchanged.
+    #[cfg(feature = "vpn-wireguard")]
+    #[tokio::test]
+    async fn wireguard_seven_peers_all_attributes() {
+        const IFACE_KEY: &str = "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=";
+        let pk = |n: usize| {
+            [
+                "4NFQRhy5Bp+A5o95B17GRNkR2hKHCUUmpVtWqZy4XHs=",
+                "IN6hfoxQn9m0Kkm57QwX1qQzdgExI3iOWGhgR8pBImI=",
+                "QBohFPseMT7MDdYLFQ/ioW30REO6G9dLyKTTOM+SvlQ=",
+                "CNaf/ZYQoPq7Q0NWGBJz9Hu4Ikl610bFdPLyO4KBmmk=",
+                "cHdOrPa0QWiXE9S0XHdjccJjdaQlNf+qRNr6l9sCm0M=",
+                "4B95uXKAy2nbfgIjLKjiMlsd0LxieTZuIkDOkxd9GEA=",
+                "OKrUBrhUmuviIACTujtN/SLb4CDQRhQhucPcfSHhHlI=",
+            ][n]
+        };
+        let psk = "qDjIBwVu2E5iGiCOotzH38urWFSwC2xRmq+xkEWdtnA=";
+        let tmp = tempfile::tempdir().unwrap();
+        let st = std::process::Command::new("cp")
+            .arg("-r")
+            .arg(dir())
+            .arg(tmp.path().join("r"))
+            .status()
+            .unwrap();
+        assert!(st.success());
+        let net = tmp.path().join("r/etc/config/network");
+        let old = std::fs::read_to_string(&net).unwrap();
+        let head = &old[..old.find("config wireguard_vpn").unwrap()];
+        let tail = &old[old.find("config interface 'wwan'").unwrap()..];
+        let peers = [
+            (
+                "laptop",
+                pk(0),
+                Some(psk),
+                "'10.99.0.2/32'\n\tlist allowed_ips 'fd12:3456:789a:10::2/128'",
+                "",
+                "\toption persistent_keepalive '25'\n",
+            ),
+            (
+                "phone",
+                pk(1),
+                Some(psk),
+                "'10.99.0.3/32'",
+                "",
+                "\toption route_allowed_ips '1'\n",
+            ),
+            (
+                "site-b",
+                pk(2),
+                None,
+                "'10.99.0.9/32'\n\tlist allowed_ips '10.200.0.0/24'",
+                "\toption endpoint_host '198.51.100.7'\n\toption endpoint_port '51821'\n",
+                "\toption persistent_keepalive '25'\n",
+            ),
+            (
+                "v6 site",
+                pk(3),
+                None,
+                "'10.99.0.11/32'",
+                "\toption endpoint_host '2001:db8::7'\n\toption endpoint_port '51820'\n",
+                "",
+            ),
+            (
+                "named",
+                pk(4),
+                None,
+                "'10.99.0.12/32'",
+                "\toption endpoint_host 'vpn.example.net'\n",
+                "",
+            ),
+            (
+                "off",
+                pk(5),
+                None,
+                "'10.99.0.13/32'",
+                "",
+                "\toption disabled '1'\n",
+            ),
+            ("laptop", pk(6), None, "'10.99.0.14/32'", "", ""),
+        ];
+        let mut mid = String::new();
+        for (d, k, ps, al, ep, extra) in peers {
+            mid += &format!(
+                "config wireguard_vpn\n\toption description '{d}'\n\toption public_key '{k}'\n"
+            );
+            if let Some(ps) = ps {
+                mid += &format!("\toption preshared_key '{ps}'\n");
+            }
+            mid += &format!("\tlist allowed_ips {al}\n{ep}{extra}\n");
+        }
+        std::fs::write(&net, format!("{head}{mid}{tail}")).unwrap();
+        let (f, x) = load_input_full(&tmp.path().join("r")).unwrap();
+        let p = build_plan_with(&f, &x, &maps());
+        let store = ConfigStore::open_in_memory().await.unwrap();
+        let out = apply(&store, &p).await.unwrap().join("\n");
+        assert!(!out.contains("skipped"), "{out}");
+        assert!(
+            !out.contains(psk) && !out.contains(IFACE_KEY),
+            "keys leaked"
+        );
+        let w = patronus_network::wireguard::list_peers(&store)
+            .await
+            .unwrap();
+        assert_eq!(w.len(), 7, "{w:?}");
+        let k: (String,) =
+            sqlx::query_as("SELECT private_key FROM wg_interfaces WHERE name = 'wg0'")
+                .fetch_one(store.pool().unwrap())
+                .await
+                .unwrap();
+        assert_eq!(k.0, IFACE_KEY);
+        let by = |k: &str| w.iter().find(|p| p.public_key == k).unwrap();
+        let a = by(pk(0));
+        assert_eq!(a.allowed_ips, "10.99.0.2/32, fd12:3456:789a:10::2/128");
+        assert_eq!((a.persistent_keepalive, a.has_psk), (Some(25), true));
+        assert_eq!(a.description.as_deref(), Some("laptop"));
+        assert_eq!(a.preshared_key.as_deref(), Some(psk));
+        assert!(by(pk(1)).has_psk);
+        let b = by(pk(2));
+        assert_eq!(b.endpoint.as_deref(), Some("198.51.100.7:51821"));
+        assert_eq!(b.allowed_ips, "10.99.0.9/32, 10.200.0.0/24");
+        assert_eq!(by(pk(3)).endpoint.as_deref(), Some("[2001:db8::7]:51820"));
+        assert_eq!(by(pk(4)).endpoint.as_deref(), Some("vpn.example.net:51820"));
+        assert!(!by(pk(5)).enabled);
+        assert!(by(pk(0)).enabled && by(pk(6)).enabled);
+        let names: std::collections::BTreeSet<_> = w.iter().map(|p| p.name.clone()).collect();
+        assert_eq!(names.len(), 7, "peer names must stay unique: {names:?}");
+    }
+
     #[tokio::test]
     async fn full_router_store_writes() {
         let store = ConfigStore::open_in_memory().await.unwrap();

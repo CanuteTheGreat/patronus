@@ -117,6 +117,20 @@ pub const CATALOG: &[Component] = &[
         atom: "net-vpn/strongswan",
         binary: "swanctl",
     },
+    Component {
+        id: "wpa-supplicant",
+        feature: "wifi-client",
+        title: "wpa_supplicant (Wi-Fi uplink)",
+        atom: "net-wireless/wpa_supplicant",
+        binary: "wpa_supplicant",
+    },
+    Component {
+        id: "hostapd",
+        feature: "wifi-ap",
+        title: "hostapd (Wi-Fi access point)",
+        atom: "net-wireless/hostapd",
+        binary: "hostapd",
+    },
 ];
 
 pub fn find(id: &str) -> Option<&'static Component> {
