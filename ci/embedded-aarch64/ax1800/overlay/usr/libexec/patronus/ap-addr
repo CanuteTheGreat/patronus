@@ -108,7 +108,7 @@ confirm)
 status)
   if [ -f "$PEND" ]; then echo "pending=yes"; echo "left=$(( $(cat "$PEND") - $(up) ))"
   else echo "pending=no"; fi
-  echo "new=$(tr '\n' ' ' < "$RUN/ap-addr.new" 2>/dev/null)"
+  echo "new=$(cat "$RUN/ap-addr.new" 2>/dev/null | tr '\n' ' ')"
   echo "current=$(addrs | tr '\n' ' ')"
   echo "dhcp=$([ -n "$(dhcp_pid)" ] && echo yes || echo no)" ;;
 *) echo "usage: ap-addr boot|trial SECS|confirm|status" >&2; exit 2 ;;
