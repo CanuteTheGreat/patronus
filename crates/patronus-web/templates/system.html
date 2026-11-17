@@ -46,8 +46,16 @@
         <tr><td>Architecture</td><td>{{ arch }}</td></tr>
         <tr><td>CPU</td><td>{{ cpu }}</td></tr>
     </table>
-    <p class="text-sm text-muted">Hostname, domain and time zone are system settings (on Gentoo:
-        /etc/hostname or /etc/conf.d/hostname, /etc/timezone or /etc/localtime); Patronus does not edit them yet.</p>
+    {% if is_admin %}
+    <form id="general-form" class="inline-form" onsubmit="return submitJson(event, 'PUT', '/api/system/general')">
+        <label>Host name <input name="hostname" value="{{ config.hostname }}" required pattern="[A-Za-z0-9-]+" maxlength="63"></label>
+        <label>DNS domain <input name="domain" value="{{ config.domain }}" data-keep-empty="1" placeholder="none"></label>
+        <label>Time zone <input name="timezone" value="{% if !config.timezone.contains(' ') %}{{ config.timezone }}{% endif %}" placeholder="Europe/Berlin or UTC"></label>
+        <button class="btn btn-sm btn-primary" id="save-general" type="submit">Save</button>
+    </form>
+    {% endif %}
+    <p class="text-sm text-muted">Saved here, these are written to /etc/hostname (and /etc/conf.d/hostname on OpenRC),
+        the marked block in /etc/hosts and /etc/localtime + /etc/timezone, and re-applied at every boot.</p>
 </div>
 
 <div class="card">

@@ -471,6 +471,37 @@ async fn power(state: AppState, action: &str) -> Response {
     }
 }
 
+/// GET /api/system/general -- the stored host name / domain / time zone
+/// (a key that was never set is unmanaged: the system keeps its own value).
+pub async fn get_general(State(state): State<AppState>) -> Response {
+    match state.lan.general_overview().await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// PUT /api/system/general -- set host name, DNS domain and/or time zone and
+/// apply them (an unknown time zone or bad name is refused and nothing
+/// changes).
+pub async fn put_general(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(i): Json<patronus_network::general::GeneralInput>,
+) -> Response {
+    match state.lan.save_general(i).await {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => {
+            let m = e.to_string();
+            let code = if m.contains("Invalid") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            error(code, m)
+        }
+    }
+}
+
 pub async fn reboot(State(state): State<AppState>, _admin: AdminUser) -> Response {
     power(state, "reboot").await
 }
@@ -650,6 +681,7 @@ pub fn router() -> axum::Router<AppState> {
         .route("/system/updates/apply", post(apply_updates))
         .route("/system/factory-reset", post(factory_reset))
         .route("/system/capture", post(capture))
+        .route("/system/general", get(get_general).put(put_general))
         .route("/system/reboot", post(reboot))
         .route("/system/shutdown", post(shutdown))
         .route("/system/services", get(list_services))

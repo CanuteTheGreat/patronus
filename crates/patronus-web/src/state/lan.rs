@@ -575,6 +575,30 @@ mod dns_impl {
 }
 
 // ---------------------------------------------------------------------------
+// General setup: host name, DNS domain, time zone
+// ---------------------------------------------------------------------------
+
+impl LanManager {
+    pub async fn general_overview(&self) -> anyhow::Result<Value> {
+        Ok(serde_json::json!({
+            "settings": patronus_network::general::settings(&self.store).await.map_err(e)?,
+        }))
+    }
+
+    pub async fn save_general(
+        &self,
+        i: patronus_network::general::GeneralInput,
+    ) -> anyhow::Result<()> {
+        let _g = self.edit.lock().await;
+        let snap = self.begin("change general setup").await?;
+        patronus_network::general::save_settings(&self.store, &i)
+            .await
+            .map_err(e)?;
+        self.commit("general setup", snap, &["general"]).await
+    }
+}
+
+// ---------------------------------------------------------------------------
 // NTP
 // ---------------------------------------------------------------------------
 

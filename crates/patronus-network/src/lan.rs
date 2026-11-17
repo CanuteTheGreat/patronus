@@ -892,6 +892,7 @@ pub fn appliers() -> Vec<Arc<dyn patronus_config::Applier>> {
 pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     #[allow(unused_mut)]
     let mut v: Vec<Arc<dyn patronus_config::Applier>> = Vec::new();
+    v.push(Arc::new(crate::general::GeneralApplier::new(env.clone())));
     #[cfg(feature = "dns")]
     v.push(Arc::new(crate::dns::DnsApplier::new(env.clone())));
     #[cfg(feature = "dhcp")]

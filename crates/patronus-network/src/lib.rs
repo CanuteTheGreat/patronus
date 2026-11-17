@@ -10,6 +10,7 @@ pub mod applyd;
 pub mod bond;
 pub mod bridge;
 pub mod dhcp_client;
+pub mod general;
 pub mod interfaces;
 pub mod lan;
 pub mod linkstate;
