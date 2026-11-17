@@ -195,8 +195,16 @@ that are not finished are listed separately under
 - A crash or power cut while editing or applying never corrupts the store or
   loses a saved rule, and the next boot enforces exactly what was saved.
   [C6]
-- Every change is kept in the configuration history and can be rolled back.
-  [C7]
+- Every change is a numbered configuration generation with its time, who made
+  it and a message; any two generations (or one and the live configuration)
+  can be compared, secrets never show in a comparison, and a rollback is a new
+  generation. [C7]
+- Commit-confirmed changes: a change applied on trial is put back by the root
+  daemon's own timer at its deadline unless an admin confirms it, also when the
+  web UI is restarted or the box is rebooted in between. [C73]
+- The whole configuration exports as one stable, readable YAML file (secrets
+  left out unless asked for) that imports back as a new generation after a
+  dry-run diff. [C74]
 - Backup and restore: export the whole configuration and import it onto the
   same box or a replacement; an import that does not apply is reverted.
   [C8]
@@ -388,8 +396,12 @@ groupadd -r patronus-admin && usermod -aG patronus-admin <you>
 ```bash
 patronus apply --dry-run          # show what would be loaded (nft script, sysctls)
 patronus apply                    # load the stored configuration now
-patronus config revisions         # configuration history
-patronus config rollback <id>     # restore a revision and apply it
+patronus config generations       # configuration history (generations)
+patronus config diff 12 live      # what differs (secrets masked)
+patronus config rollback <id> [--confirm-in N]   # restore a generation and apply it
+patronus config confirm | revert-now             # keep / undo a change on trial
+patronus config export --declarative             # the whole config as one YAML file
+patronus config import FILE [--dry-run]
 patronus config export -o backup.json
 patronus config import backup.json
 ```

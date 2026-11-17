@@ -563,7 +563,15 @@ impl ConfigStore {
             return Ok(None);
         };
         self.gstate_del("pending").await?;
-        self.gstate_set("boot", &p.generation.to_string()).await?;
+        // everything applied while it was on trial is confirmed with it: the
+        // boot default is whatever is live now
+        self.seal().await?;
+        let boot = self
+            .latest_generation()
+            .await?
+            .map(|l| l.0)
+            .unwrap_or(p.generation);
+        self.gstate_set("boot", &boot.to_string()).await?;
         let _ = self
             .audit(
                 actor,
