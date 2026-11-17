@@ -1,2 +1,3 @@
 acct-*/*          # account packages
 net-firewall/patronus*  # first-party Patronus packages, released by this repo's CI
+sec-keys/openpgp-keys-errantsolutions # first-party: the release signing public key, versioned by this repo (no upstream)
