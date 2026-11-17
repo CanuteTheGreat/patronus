@@ -23,8 +23,17 @@ CTRL=${WG_CTRL:-/run/hostapd}
 UPF=${WG_UPTIME:-/proc/uptime}
 LOGGER=${WG_LOGGER:-logger}
 RUN=${WG_RUN:-/run}
-CRASH_MAX=${CRASH_MAX:-3} CRASH_WINDOW=${CRASH_WINDOW:-600} SAFE_HOLD=${SAFE_HOLD:-3600}
-LOOP_BOOTS=${LOOP_BOOTS:-2} RECOVER_WAIT=${RECOVER_WAIT:-20}
+# Thresholds are settings (System > Advanced settings, `patronus settings`): wifi.guard_crash_max,
+# wifi.guard_crash_window_secs, wifi.guard_safe_hold_secs, wifi.guard_loop_boots, read from the
+# file `settings-env` writes; an explicit environment value (tests) wins, the registry defaults
+# apply when the file is missing.
+SETF=${WG_SETTINGS:-$RUN/patronus/settings.env}
+[ -n "$WG_SETTINGS" ] || /usr/libexec/patronus/settings-env ensure 2>/dev/null
+[ -r "$SETF" ] && . "$SETF"
+CRASH_MAX=${CRASH_MAX:-${PATRONUS_SET_WIFI_GUARD_CRASH_MAX:-3}}
+CRASH_WINDOW=${CRASH_WINDOW:-${PATRONUS_SET_WIFI_GUARD_CRASH_WINDOW_SECS:-600}}
+SAFE_HOLD=${SAFE_HOLD:-${PATRONUS_SET_WIFI_GUARD_SAFE_HOLD_SECS:-3600}}
+LOOP_BOOTS=${LOOP_BOOTS:-${PATRONUS_SET_WIFI_GUARD_LOOP_BOOTS:-2}} RECOVER_WAIT=${RECOVER_WAIT:-20}
 up() { cut -d. -f1 "$UPF"; }
 log() { $LOGGER -p "daemon.$1" -t patronus-wifi "$2" 2>/dev/null; echo "$2"; }
 boot_no() { cat "$STATE/boot" 2>/dev/null || echo 0; }

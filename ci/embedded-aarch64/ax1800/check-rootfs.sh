@@ -83,6 +83,8 @@ grep -qE '^[^#]*rmmod[^#]*ath11k' "$R/usr/libexec/patronus/early" 2>/dev/null &&
 [ -x "$R/usr/bin/gpgv" ] || [ -x "$R/bin/gpgv" ] || fail "gpgv missing: patronus-flash could not check release signatures (every upgrade would be refused)"
 [ -s "$R/usr/share/openpgp-keys/errantsolutions.gpg" ] || fail "release keyring /usr/share/openpgp-keys/errantsolutions.gpg missing"
 [ -x "$R/usr/sbin/etphonehome" ] && head -c4 "$R/usr/sbin/etphonehome" | grep ELF >/dev/null || fail "ETPhoneHome: no /usr/sbin/etphonehome ELF binary"
+[ -x "$R/usr/libexec/patronus/settings-env" ] || fail "no /usr/libexec/patronus/settings-env (boot scripts read typed settings through it)"
+grep -q 'PATRONUS_SET_WIFI_GUARD_CRASH_MAX' "$R/usr/libexec/patronus/wifi-guard" 2>/dev/null || fail "wifi-guard does not read its thresholds from the settings"
 [ -x "$R/usr/libexec/patronus/etph-run" ] || fail "ETPhoneHome: no /usr/libexec/patronus/etph-run"
 case "${INIT:-}" in
   openrc)  [ -x "$R/etc/init.d/patronus-etph" ] && [ -L "$R/etc/runlevels/default/patronus-etph" ] || fail "ETPhoneHome: OpenRC service patronus-etph missing or not in the default runlevel" ;;

@@ -13,6 +13,7 @@ start)
     patronus-cli apply > /var/log/apply.log 2>&1
   fi
   echo "apply rc=$? ${s}->$(cut -d' ' -f1 /proc/uptime)" >> /var/log/apply.log
+  /usr/libexec/patronus/settings-env refresh  # typed settings for the boot/helper scripts
   ;;
 esac
 exit 0
