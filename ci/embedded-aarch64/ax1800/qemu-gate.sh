@@ -24,7 +24,9 @@ sh "$(dirname "$0")/fetch-kmods.sh" virt "$W/r" "${KMOD_CACHE:-/cache/kmods}" ||
 depmod -b "$W/r" "$KV"; : > "$W/r/etc/patronus/qemu-kmods"
 mksquashfs "$W/r" "$W/root.img" -comp xz -b 256K -noappend -no-xattrs -all-root -quiet >/dev/null; rm -rf "$W/r"
 truncate -s 256M "$W/data.img"; mkfs.ext4 -q -F -L patronus_data "$W/data.img"
-SSHP=${GATE_SSHP:-2222}; WEBP=${GATE_WEBP:-8443}; NTPP=${GATE_NTPP:-11123}; FEEDP=${GATE_FEEDP:-18080}; QP=
+# the address trial moves the unit from its DHCP address (10.0.2.15) to a static one (10.0.2.78): slirp forwards each
+# host port to ONE guest address, so the static address gets its own ssh/web ports (RP = the ssh port R uses now)
+SSHP=${GATE_SSHP:-2222}; WEBP=${GATE_WEBP:-8443}; SSHP2=${GATE_SSHP2:-$((SSHP + 1))}; WEBP2=${GATE_WEBP2:-$((WEBP + 1))}; RP=$SSHP; NTPP=${GATE_NTPP:-11123}; FEEDP=${GATE_FEEDP:-18080}; QP=
 # GATE_BIND=0.0.0.0 publishes the web UI port beyond the container (browser e2e against the running unit);
 # GATE_HOLD=<s> keeps the unit running that long after the boot-2 checks (for those e2e runs)
 BIND=${GATE_BIND:-127.0.0.1}; INJP=${GATE_INJP:-12224}
@@ -37,14 +39,14 @@ pass() { echo "PASS: $*" | tee -a "$RES/results.txt"; }
 fail() { echo "FAIL: $*" | tee -a "$RES/results.txt"; fails+=("$1"); }
 check() { n=$1; shift; if out=$("$@" 2>&1); then pass "$n"; else fail "$n"; echo "$out" | tail -15 | sed 's/^/    /' | tee -a "$RES/results.txt"; fi; }
 SSHO=(-i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10 -o ServerAliveInterval=15)
-R() { ssh "${SSHO[@]}" -p $SSHP root@127.0.0.1 "$@"; }
+R() { ssh "${SSHO[@]}" -p $RP root@127.0.0.1 "$@"; }
 ACCEL=tcg; [ -w /dev/kvm ] && [ "$(uname -m)" = aarch64 ] && ACCEL=kvm
 boot() { # n
   n=$1; t0=$(date +%s)
   qemu-system-aarch64 -M virt -accel $ACCEL -cpu $([ $ACCEL = kvm ] && echo host || echo cortex-a53) -smp 2 -m 512 \
     -kernel "$K" -append "root=/dev/vda rootfstype=squashfs ro console=ttyAMA0 patronus.data=/dev/vdb panic=-1" \
     -drive file="$W/root.img",if=virtio,format=raw,readonly=on -drive file="$W/data.img",if=virtio,format=raw \
-    -netdev user,id=n0,hostfwd=tcp:127.0.0.1:$SSHP-:22,hostfwd=tcp:$BIND:$WEBP-:443,hostfwd=udp:127.0.0.1:$NTPP-:123 -device virtio-net-pci,netdev=n0 \
+    -netdev user,id=n0,hostfwd=tcp:127.0.0.1:$SSHP-:22,hostfwd=tcp:$BIND:$WEBP-:443,hostfwd=udp:127.0.0.1:$NTPP-:123,hostfwd=tcp:127.0.0.1:$SSHP2-10.0.2.78:22,hostfwd=tcp:127.0.0.1:$WEBP2-10.0.2.78:443 -device virtio-net-pci,netdev=n0 \
     -netdev socket,id=n1,listen=127.0.0.1:$INJP -device virtio-net-pci,netdev=n1,mac=02:c1:9a:7e:00:fe \
     -display none -monitor none -serial file:"$RES/serial-boot$n.txt" -no-reboot &
   QP=$!
@@ -343,13 +345,14 @@ gap_address() { c=$(wapi https://127.0.0.1:$WEBP/api/device/address); g=$(cat "$
   c=$(addr_put '{"mode":"static","address":"10.0.2.78/24","gateway":"10.0.2.2","dns":"10.0.2.3","confirm_within":120}'); [ "$c" = 200 ] || { echo "PUT 2: $c"; return 1; }
   sleep 8; R 'ping -c1 -W2 -I 10.0.2.78 10.0.2.2 >/dev/null' || { echo "new address does not reach the gateway"; return 1; }
   c=$(wapi -X POST https://127.0.0.1:$WEBP/api/device/address/confirm); [ "$c" = 400 ] || { echo "confirm from the old address accepted: $c"; return 1; }
-  c=$(wapi -X POST -H 'Host: 10.0.2.78' -H "cookie: $(jar_cookie)" https://127.0.0.1:$WEBP/api/device/address/confirm); [ "$c" = 200 ] || { echo "confirm: $c $(cat "$W/api.json")"; return 1; }
-  addr_wait_idle || return 1
+  # the browser reaches the unit at its NEW address: https://10.0.2.78 (forwarded to the guest's 10.0.2.78)
+  c=$(wapi -X POST --connect-to 10.0.2.78:443:127.0.0.1:$WEBP2 -H "cookie: $(jar_cookie)" https://10.0.2.78/api/device/address/confirm); [ "$c" = 200 ] || { echo "confirm: $c $(cat "$W/api.json")"; return 1; }
+  RP=$SSHP2; addr_wait_idle || return 1
   o=$(R 'ip -4 -o addr show dev br-lan; grep "^AP_ADDR=" /etc/patronus/ap.env; cat /tmp/resolv.conf.auto'); has_all "$o" '10.0.2.78/24' 'AP_ADDR=10.0.2.78/24' 'nameserver 10.0.2.3' || { echo "confirmed: $o"; return 1; }
   # 3) back to DHCP (confirmed from the DHCP address)
-  c=$(addr_put '{"mode":"dhcp","confirm_within":120}'); [ "$c" = 200 ] || { echo "PUT dhcp: $c"; return 1; }
-  sleep 12; c=$(wapi -X POST -H 'Host: 10.0.2.15' -H "cookie: $(jar_cookie)" https://127.0.0.1:$WEBP/api/device/address/confirm); [ "$c" = 200 ] || { echo "confirm dhcp: $c $(cat "$W/api.json")"; return 1; }
-  addr_wait_idle || return 1
+  c=$(wapi -X PUT --connect-to 10.0.2.78:443:127.0.0.1:$WEBP2 -H "cookie: $(jar_cookie)" -d '{"mode":"dhcp","confirm_within":120}' https://10.0.2.78/api/device/address); [ "$c" = 200 ] || { echo "PUT dhcp: $c $(cat "$W/api.json")"; return 1; }
+  sleep 12; c=$(wapi -X POST --connect-to 10.0.2.15:443:127.0.0.1:$WEBP -H "cookie: $(jar_cookie)" https://10.0.2.15/api/device/address/confirm); [ "$c" = 200 ] || { echo "confirm dhcp: $c $(cat "$W/api.json")"; return 1; }
+  RP=$SSHP; addr_wait_idle || return 1
   o=$(R 'ip -4 -o addr show dev br-lan; grep -c "^AP_ADDR=." /etc/patronus/ap.env'); case "$o" in *10.0.2.78*) echo "static left: $o"; return 1;; esac
   has_all "$o" '10.0.2.15/24' || { echo "dhcp: $o"; return 1; }; }
 # online firmware check: a feed signed by another key is refused; nothing is downloaded or staged
