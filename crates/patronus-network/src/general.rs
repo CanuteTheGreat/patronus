@@ -151,8 +151,20 @@ fn write_atomic(path: &Path, content: &str, mode: u32) -> Result<bool> {
     std::fs::write(&tmp, content)
         .map_err(|e| Error::Config(format!("write {}: {e}", tmp.display())))?;
     let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode));
-    std::fs::rename(&tmp, path)
-        .map_err(|e| Error::Config(format!("install {}: {e}", path.display())))?;
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => {}
+        // A bind-mounted file (/etc/hostname and /etc/hosts in a container)
+        // cannot be replaced by rename: write it in place instead.
+        Err(e) if e.raw_os_error() == Some(16) => {
+            let _ = std::fs::remove_file(&tmp);
+            std::fs::write(path, content)
+                .map_err(|e| Error::Config(format!("write {}: {e}", path.display())))?;
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(Error::Config(format!("install {}: {e}", path.display())));
+        }
+    }
     Ok(true)
 }
 
