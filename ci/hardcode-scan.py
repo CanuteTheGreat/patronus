@@ -38,6 +38,7 @@ BASELINE = os.path.join(ROOT, "ci", "hardcode-baseline.tsv")
 
 IPV4 = re.compile(r"(?<![\w.$-])((?:\d{1,3}\.){3}\d{1,3})(/\d{1,2})?(?![\w.])")
 PORT = re.compile(r"(?i)\b(?:port|listen|bind)[a-z_]*\s*(?:=|:|=>)\s*\"?(\d{2,5})\b")
+NFT_PORT = re.compile(r"\b(?:dport|sport)\s+(\d{2,5})\b|redirect to :(\d{2,5})\b")
 DUR_RS = re.compile(r"Duration::from_(secs|millis|mins|micros)\(\s*(\d[\d_]*)\s*\)")
 DUR_SH = re.compile(r"(?:^|[;&|(\s])(?:sleep|timeout)\s+(\d+(?:\.\d+)?)\b")
 NAMED_CONST = re.compile(
@@ -177,6 +178,11 @@ def scan_file(path, cfg, text=None):
         for m in PORT.finditer(raw):
             p = m.group(1)
             found.append(("port", p, "protocol port" if p in PROTOCOL_PORTS else None))
+        for m in NFT_PORT.finditer(raw):
+            # a rule matching a protocol's own traffic (HTTP on 80, HTTPS on 443, SSH on 22)
+            p = next(g for g in m.groups() if g)
+            legit = p in PROTOCOL_PORTS or p in ("22", "80", "443")
+            found.append(("port", p, "protocol port" if legit else None))
         if is_rs:
             for m in DUR_RS.finditer(raw):
                 found.append(("timing", m.group(0), None))
@@ -376,6 +382,8 @@ def self_test():
          [("fixed-list", "timezone Europe/Berlin", "legit"), ("fixed-list", "timezone Asia/Tokyo", "config")]),
         ("src/a.rs", 'let u = "https://updates.vendor.net/feed";', [("url", "https://updates.vendor.net/feed", "config")]),
         ("src/a.rs", 'let v = format!("version 1.2.3.4");', []),
+        ("src/a.rs", '"add rule t input tcp dport 3129 accept"', [("port", "3129", "config")]),
+        ("src/a.rs", '"add rule t input udp dport 53 accept"', [("port", "53", "legit")]),
     ]
     bad = 0
     for path, text, want in cases:

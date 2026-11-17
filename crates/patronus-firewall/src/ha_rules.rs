@@ -3,7 +3,7 @@
 //!
 //! - input: VRRP (IP protocol 112, IPv4 multicast 224.0.0.18 or unicast
 //!   from the peer, and IPv6) on the interfaces that carry a virtual IP;
-//! - input: connection-state sync (conntrackd, UDP 3780) from the sync
+//! - input: connection-state sync (conntrackd, UDP `ha.sync_port`, default 3780) from the sync
 //!   peer on the sync interface only.
 
 use crate::nftables::TABLE;
@@ -12,8 +12,6 @@ use patronus_core::{Error, Result};
 use sqlx::Row;
 use std::collections::BTreeSet;
 use std::net::IpAddr;
-
-pub const SYNC_PORT: u16 = 3780;
 
 async fn setting(store: &ConfigStore, key: &str) -> Result<Option<String>> {
     let row = sqlx::query("SELECT value FROM lan_settings WHERE key = ?")
@@ -74,9 +72,11 @@ pub async fn ha_rules(store: &ConfigStore) -> Result<Vec<String>> {
         setting(store, "ha.sync_peer").await?,
     ) {
         if let Ok(IpAddr::V4(p)) = peer.trim().parse::<IpAddr>() {
+            // setting `ha.sync_port` (same value conntrackd is rendered with)
+            let port = patronus_config::settings::get_i64(store, "ha.sync_port").await?;
             for d in devices(store, &spec).await.iter().filter(|d| safe_dev(d)) {
                 out.push(format!(
-                    "add rule {TABLE} input iifname \"{d}\" ip saddr {p} udp dport {SYNC_PORT} accept comment \"HA state sync\""
+                    "add rule {TABLE} input iifname \"{d}\" ip saddr {p} udp dport {port} accept comment \"HA state sync\""
                 ));
             }
         }
@@ -121,6 +121,16 @@ mod tests {
         assert!(
             r.iter()
                 .any(|l| l.contains("iifname \"eth2\" ip saddr 10.9.9.2 udp dport 3780 accept")),
+            "{r:?}"
+        );
+        // the port is the `ha.sync_port` setting
+        patronus_config::settings::set(&s, "ha.sync_port", "4790")
+            .await
+            .unwrap();
+        let r = ha_rules(&s).await.unwrap();
+        assert!(
+            r.iter()
+                .any(|l| l.contains("ip saddr 10.9.9.2 udp dport 4790 accept")),
             "{r:?}"
         );
         // a hostile device name never reaches nft

@@ -39,7 +39,6 @@ pub const CONNTRACKD_CONF: &str = "/etc/conntrackd/conntrackd.conf";
 pub const CONNTRACKD_BIN: &str = "/usr/sbin/conntrackd";
 pub const NOTIFY_SCRIPT: &str = "/etc/patronus/ha-notify.sh";
 pub const STATE_FILE: &str = "/run/patronus/ha-state";
-pub const SYNC_PORT: u16 = 3780;
 pub const DEFAULT_PRIORITY: u8 = 100;
 /// The priority a node in maintenance mode advertises (0 would release).
 pub const MAINTENANCE_PRIORITY: u8 = 1;
@@ -571,7 +570,8 @@ pub fn idle_conntrackd() -> String {
 }
 
 /// conntrackd.conf for FTFW state sync over UDP unicast.
-pub fn render_conntrackd(local: IpAddr, peer: &str, dev: &str) -> String {
+/// `port`: setting `ha.sync_port`.
+pub fn render_conntrackd(local: IpAddr, peer: &str, dev: &str, port: u16) -> String {
     let mut o = lan::header("#", "connection state sync");
     o.push_str(&format!(
         "Sync {{
@@ -585,7 +585,7 @@ pub fn render_conntrackd(local: IpAddr, peer: &str, dev: &str) -> String {
     UDP {{
         IPv4_address {local}
         IPv4_Destination_Address {peer}
-        Port {SYNC_PORT}
+        Port {port}
         Interface {dev}
         SndSocketBuffer 1249280
         RcvSocketBuffer 1249280
@@ -876,10 +876,12 @@ impl HaApplier {
             let local = self.own_addr(dev, false, &[]).ok_or_else(|| {
                 Error::Config(format!("HA state sync: {dev} has no IPv4 address"))
             })?;
+            let port = patronus_config::settings::get_i64(store, "ha.sync_port").await? as u16;
             Some(render_conntrackd(
                 local,
                 s.sync_peer.as_deref().unwrap_or(""),
                 dev,
+                port,
             ))
         } else {
             None
@@ -1162,7 +1164,7 @@ mod tests {
 
     #[test]
     fn conntrackd_and_notify_content() {
-        let c = render_conntrackd("10.9.9.1".parse().unwrap(), "10.9.9.2", "eth2");
+        let c = render_conntrackd("10.9.9.1".parse().unwrap(), "10.9.9.2", "eth2", 3780);
         for want in [
             "Mode FTFW",
             "IPv4_address 10.9.9.1",

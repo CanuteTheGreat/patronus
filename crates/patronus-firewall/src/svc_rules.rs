@@ -287,6 +287,8 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
     if on(&px, "enabled") {
         let port: u16 = px.get("port").and_then(|p| p.parse().ok()).unwrap_or(3128);
         let icpt = on(&px, "transparent");
+        // setting `proxy.intercept_port` (the port squid is rendered with)
+        let intercept = patronus_config::settings::get_i64(store, "proxy.intercept_port").await?;
         for d in devices(
             store,
             px.get("interface").map(String::as_str).unwrap_or("@lan"),
@@ -298,12 +300,12 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
             ));
             if icpt {
                 out.filter.push(format!(
-                    "add rule {t} input iifname \"{d}\" tcp dport 3129 accept comment \"web proxy (intercepted HTTP)\""
+                    "add rule {t} input iifname \"{d}\" tcp dport {intercept} accept comment \"web proxy (intercepted HTTP)\""
                 ));
                 // the router's own web server must stay reachable: only
                 // traffic to other hosts is redirected
                 out.nat_pre.push(format!(
-                    "add rule {t} prerouting iifname \"{d}\" fib daddr type != local tcp dport 80 redirect to :3129 comment \"web proxy intercept\""
+                    "add rule {t} prerouting iifname \"{d}\" fib daddr type != local tcp dport 80 redirect to :{intercept} comment \"web proxy intercept\""
                 ));
             }
         }
@@ -414,6 +416,31 @@ mod tests {
         .execute(s.pool().unwrap())
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn proxy_interception_uses_the_intercept_port_setting() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        put(&s, "proxy.enabled", "1").await;
+        put(&s, "proxy.transparent", "1").await;
+        let r = svc_rules(&s).await.unwrap();
+        assert!(
+            r.nat_pre.iter().any(|l| l.contains("redirect to :3129")),
+            "{r:?}"
+        );
+        patronus_config::settings::set(&s, "proxy.intercept_port", "8129")
+            .await
+            .unwrap();
+        let r = svc_rules(&s).await.unwrap();
+        assert!(
+            r.nat_pre.iter().any(|l| l.contains("redirect to :8129")),
+            "{r:?}"
+        );
+        assert!(
+            r.filter.iter().any(|l| l.contains("tcp dport 8129 accept")),
+            "{r:?}"
+        );
     }
 
     #[tokio::test]
