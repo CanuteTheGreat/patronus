@@ -75,29 +75,34 @@ pub async fn list_hooks(State(state): State<AppState>, _a: AdminUser) -> Respons
     }
 }
 
-#[derive(Deserialize)]
-pub struct HookInput {
-    pub name: String,
-    pub url: String,
-    #[serde(default)]
-    pub secret: String,
-    /// comma-separated event kinds; empty = all
-    #[serde(default)]
-    pub kinds: String,
-}
-
-/// POST /api/system/hooks
+/// POST /api/system/hooks -- a notification channel: `{"name","channel":
+/// "webhook"|"ntfy"|"telegram"|"discord"|"slack"|"email","url","secret",
+/// "target","sender","username","kinds","min_severity"}` (see
+/// `telemetry::check_spec`; a body without `channel` is a signed webhook).
 pub async fn create_hook(
     State(state): State<AppState>,
     _a: AdminUser,
-    Json(i): Json<HookInput>,
+    Json(i): Json<telemetry::HookSpec>,
 ) -> Response {
-    match telemetry::save_hook(&state.config_store, &i.name, &i.url, &i.secret, &i.kinds).await {
+    match telemetry::save_channel(&state.config_store, &i).await {
         Ok(id) => (StatusCode::CREATED, Json(json!({"id": id}))).into_response(),
         Err(e) if e.to_string().starts_with("Invalid") => {
             error(StatusCode::BAD_REQUEST, e.to_string())
         }
         Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// POST /api/system/hooks/:id/test -- send a test message now.
+pub async fn test_hook(
+    State(state): State<AppState>,
+    _a: AdminUser,
+    Path(id): Path<i64>,
+) -> Response {
+    match telemetry::send_test(&state.config_store, id).await {
+        Ok(Some(r)) => Json(json!({"ok": true, "result": r})).into_response(),
+        Ok(None) => error(StatusCode::NOT_FOUND, "no such webhook"),
+        Err(e) => error(StatusCode::BAD_GATEWAY, format!("not delivered: {e}")),
     }
 }
 
@@ -122,4 +127,5 @@ pub fn router() -> axum::Router<AppState> {
         .route("/events/kinds", get(kinds))
         .route("/system/hooks", get(list_hooks).post(create_hook))
         .route("/system/hooks/:id", delete(delete_hook))
+        .route("/system/hooks/:id/test", axum::routing::post(test_hook))
 }

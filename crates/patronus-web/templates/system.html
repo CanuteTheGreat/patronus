@@ -369,23 +369,32 @@
 {% endif %}
 
 <div class="card" id="events-card">
-    <div class="card-header"><h2 class="card-title">Events and webhooks</h2></div>
+    <div class="card-header"><h2 class="card-title">Events and notifications</h2></div>
     <p class="text-sm text-muted">Gateway up/down, gateway-group failover, tunnel up/down, HA state changes and configuration
-        changes are logged here and POSTed to the webhooks below (JSON, signed with HMAC-SHA256 in
+        changes are logged here and sent to the notification channels below: email, ntfy push, Telegram,
+        Discord, Slack, or a JSON webhook (signed with HMAC-SHA256 in
         <span class="mono">X-Patronus-Signature: sha256=...</span> when a secret is set). Collectors can also read
         <span class="mono">GET /api/events?after=&lt;id&gt;</span>, <span class="mono">GET /api/status/summary</span> and
         <span class="mono">GET /metrics</span> with an API key.</p>
     <table class="lan" id="events-table"><thead><tr><th>Time</th><th>Event</th><th>About</th><th>Detail</th></tr></thead><tbody></tbody></table>
     <p class="empty" id="events-empty" style="display:none">No events yet.</p>
     {% if is_admin %}
-    <h3 class="text-sm">Webhooks</h3>
-    <table class="lan" id="hooks-table"><thead><tr><th>Name</th><th>URL</th><th>Events</th><th>Last delivery</th><th></th></tr></thead><tbody></tbody></table>
+    <h3 class="text-sm">Notification channels</h3>
+    <table class="lan" id="hooks-table"><thead><tr><th>Name</th><th>Type</th><th>Destination</th><th>Events</th><th>Last delivery</th><th></th></tr></thead><tbody></tbody></table>
     <form class="lan-form" id="hook-form" onsubmit="return createHook(event)">
         <label>Name <input name="name" required></label>
-        <label>URL <input name="url" type="url" placeholder="https://..." required></label>
-        <label>Secret (optional) <input name="secret" autocomplete="off"></label>
+        <label>Type <select name="channel" onchange="hookFields(this.form)">
+            <option value="email">Email (SMTP)</option><option value="ntfy">ntfy push</option>
+            <option value="telegram">Telegram</option><option value="discord">Discord</option>
+            <option value="slack">Slack</option><option value="webhook" selected>Webhook (JSON)</option></select></label>
+        <label><span id="hook-url-label">URL</span> <input name="url" placeholder="https://..."></label>
+        <label data-for="email">Send to (comma separated) <input name="target" placeholder="admin@example.com"></label>
+        <label data-for="email">From address <input name="sender" placeholder="router@example.com"></label>
+        <label data-for="email">SMTP user (optional) <input name="username" autocomplete="off"></label>
+        <label><span id="hook-secret-label">Secret (optional)</span> <input name="secret" type="password" autocomplete="new-password"></label>
         <label>Events (comma separated, empty = all) <input name="kinds" placeholder="gateway_down, tunnel_down"></label>
-        <button class="btn btn-primary btn-sm" type="submit">Add webhook</button>
+        <label>Minimum severity <select name="min_severity"><option>info</option><option>warning</option><option>critical</option></select></label>
+        <button class="btn btn-primary btn-sm" type="submit">Add channel</button>
     </form>
     {% endif %}
 </div>
@@ -448,8 +457,14 @@
         const hooks = await getJson('/api/system/hooks');
         const hb = document.querySelector('#hooks-table tbody'); hb.textContent = '';
         for (const h of hooks || []) { const tr = document.createElement('tr'); tr.dataset.hook = h.name;
-            cell(tr, h.name); cell(tr, h.url); cell(tr, h.kinds || 'all'); cell(tr, h.last_attempt_at ? fmtTs(h.last_attempt_at) + ': ' + h.last_result : 'never');
-            const td = document.createElement('td'); const b = document.createElement('button');
+            const dest = h.channel === 'email' ? h.target + ' via ' + h.url : (h.channel === 'telegram' ? 'chat ' + h.target : h.url);
+            cell(tr, h.name); cell(tr, h.channel); cell(tr, dest); cell(tr, (h.kinds || 'all') + (h.min_severity !== 'info' ? ' (' + h.min_severity + '+)' : ''));
+            cell(tr, h.last_attempt_at ? fmtTs(h.last_attempt_at) + ': ' + h.last_result : 'never');
+            const td = document.createElement('td');
+            const t = document.createElement('button'); t.className = 'btn btn-sm'; t.textContent = 'Send test';
+            t.onclick = async () => { t.disabled = true; const r = await post('/api/system/hooks/' + h.id + '/test', {}); t.disabled = false; if (r) alert('Test sent: ' + r.result); loadEvents(); };
+            td.appendChild(t);
+            const b = document.createElement('button');
             b.className = 'btn btn-sm btn-danger'; b.textContent = 'Delete';
             b.onclick = async () => { if (!confirm('Delete webhook ' + h.name + '?')) return;
                 const d = await fetch('/api/system/hooks/' + h.id, {method: 'DELETE', credentials: 'same-origin'}); if (d.ok) loadEvents(); };
@@ -458,10 +473,30 @@
     async function createHook(ev) {
         ev.preventDefault();
         const f = ev.target.elements;
-        const j = await post('/api/system/hooks', {name: f['name'].value, url: f['url'].value, secret: f['secret'].value, kinds: f['kinds'].value});
-        if (j) { ev.target.reset(); loadEvents(); }
+        const body = {};
+        for (const k of ['name', 'channel', 'url', 'secret', 'kinds', 'min_severity', 'target', 'sender', 'username']) body[k] = f[k].value.trim();
+        if (body.channel !== 'email') { body.sender = ''; body.username = ''; if (body.channel !== 'telegram') body.target = ''; }
+        const j = await post('/api/system/hooks', body);
+        if (j) { ev.target.reset(); hookFields(ev.target); loadEvents(); }
         return false;
     }
+    // show the fields each channel type needs, with matching hints
+    function hookFields(form) {
+        const c = form.elements['channel'].value;
+        for (const l of form.querySelectorAll('[data-for]')) l.style.display = l.dataset.for.split(' ').includes(c) || (c === 'telegram' && l.querySelector('[name=target]')) ? '' : 'none';
+        const hints = {email: ['Mail server', 'smtps://mail.example.com:465 or smtp://...:587', 'SMTP password (optional)', 'Send to (comma separated)'],
+            ntfy: ['Topic URL', 'https://ntfy.sh/your-topic', 'Access token (optional)'],
+            telegram: ['Bot API URL (empty = api.telegram.org)', '', 'Bot token (from @BotFather)', 'Chat id'],
+            discord: ['Discord webhook URL', 'https://discord.com/api/webhooks/...', 'Secret (not used)'],
+            slack: ['Slack incoming-webhook URL', 'https://hooks.slack.com/services/...', 'Secret (not used)'],
+            webhook: ['URL', 'https://...', 'Secret (optional)']}[c];
+        document.getElementById('hook-url-label').textContent = hints[0];
+        form.elements['url'].placeholder = hints[1];
+        document.getElementById('hook-secret-label').textContent = hints[2];
+        const tl = form.elements['target'].closest('label');
+        if (tl && hints[3]) tl.firstChild.textContent = hints[3] + ' ';
+    }
+    if (document.getElementById('hook-form')) hookFields(document.getElementById('hook-form'));
     async function loadAuthServers() {
         if (!{{ is_admin }}) return;
         const l = await getJson('/api/system/auth-servers');
