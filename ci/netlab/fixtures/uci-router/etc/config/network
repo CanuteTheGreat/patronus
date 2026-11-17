@@ -1,0 +1,49 @@
+
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config globals 'globals'
+	option ula_prefix 'fd12:3456:789a::/48'
+	option packet_steering '1'
+
+config interface 'lan'
+	option device 'eth0'
+	option proto 'static'
+	option ipaddr '192.168.50.1'
+	option netmask '255.255.255.0'
+	option ip6assign '60'
+
+config interface 'wan'
+	option device 'eth1'
+	option proto 'static'
+	option ipaddr '203.0.113.2'
+	option netmask '255.255.255.0'
+	option gateway '203.0.113.1'
+
+config interface 'vpn'
+	option proto 'wireguard'
+	option private_key 'yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk='
+	option listen_port '51820'
+	option ip6assign '64'
+	option mtu '1400'
+	list addresses '10.99.0.1/24'
+
+config wireguard_vpn
+	option description 'site-b'
+	option private_key 'cEhzR3xbVwCJk9i0e6dbHUeW8wy9vEaRbNk+9bk5TlE='
+	option public_key 'PLACEHOLDER-SITE-B-PUB'
+	list allowed_ips '10.99.0.9/32'
+	list allowed_ips '10.200.0.0/24'
+
+config wireguard_vpn
+	option description 'phone'
+	option public_key 'xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg='
+	option preshared_key 'FpCyhws9cxwWoV4xELtfJvjJN+zQVRPISllRWgeopVE='
+	list allowed_ips '10.99.0.10/32'
+
+config route
+	option target '10.200.0.0/24'
+	option gateway '10.99.0.9'

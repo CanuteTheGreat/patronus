@@ -713,6 +713,26 @@ pub async fn put_wan_guard(
     }
 }
 
+/// GET /api/firewall/hardening
+pub async fn get_hardening(State(state): State<AppState>) -> Response {
+    match state.firewall.hardening().await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => err("Failed to read the hardening settings", e),
+    }
+}
+
+/// PUT /api/firewall/hardening  {"inbound_action":"reject","synflood_protect":true,
+/// "synflood_rate":"25/second","synflood_burst":50,"mss_clamp":"@wan","drop_ipv4_options":true}
+pub async fn put_hardening(
+    State(state): State<AppState>,
+    Json(b): Json<crate::state::fwfeeds::HardeningBody>,
+) -> Response {
+    match state.firewall.set_hardening(b).await {
+        Ok(_) => ok("Hardening settings updated"),
+        Err(e) => err("Failed to change the hardening settings", e),
+    }
+}
+
 /// GET /api/firewall/schedules
 pub async fn list_schedules(State(state): State<AppState>) -> Response {
     match state.firewall.list_schedules().await {
@@ -793,6 +813,7 @@ pub fn router() -> axum::Router<AppState> {
         .route("/firewall/logs", get(get_logs).delete(clear_logs))
         .route("/firewall/logs/default-deny", put(put_default_deny))
         .route("/firewall/wan-guard", get(get_wan_guard).put(put_wan_guard))
+        .route("/firewall/hardening", get(get_hardening).put(put_hardening))
         .route("/firewall/geoip", get(get_geoip).put(put_geoip))
         .route("/firewall/geoip/refresh", post(refresh_geoip))
         .route("/firewall/geoip/lookup", get(geoip_lookup))

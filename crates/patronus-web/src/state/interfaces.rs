@@ -50,6 +50,8 @@ pub struct InterfaceUpdate {
     pub description: Option<String>,
     /// Route metric of the DHCP default route (lower = preferred uplink); null = the role's default.
     pub metric: Option<u32>,
+    /// Pinned DHCPv6 client DUID (hex bytes, colon separated); null = dhcpcd's own.
+    pub dhcp6_duid: Option<String>,
     /// Apply even if it may cut off the current management session.
     pub force: bool,
 }
@@ -600,6 +602,10 @@ impl InterfacesManager {
             .map(|m| netconf::normalize_mac(&m))
             .transpose()
             .map_err(Self::e)?;
+        let dhcp6_duid = opt(&u.dhcp6_duid)
+            .map(|d| netconf::normalize_duid(&d))
+            .transpose()
+            .map_err(Self::e)?;
         let role = opt(&u.role)
             .map(|r| r.to_ascii_lowercase())
             .filter(|r| r != "none");
@@ -639,6 +645,11 @@ impl InterfacesManager {
             };
             i.mtu = u.mtu.filter(|m| *m > 0);
             i.metric = u.metric.filter(|m| *m > 0);
+            i.dhcp6_duid = if ipv6_mode == V6Mode::Dhcp6 {
+                dhcp6_duid
+            } else {
+                None
+            };
             i.mac = mac;
             i.description = opt(&u.description);
             Ok(())

@@ -1,0 +1,70 @@
+
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config globals 'globals'
+	option ula_prefix 'fd12:3456:789a::/48'
+	option packet_steering '1'
+	option dhcp_default_duid '0004aabbccddeeff00112233445566778899'
+
+config interface 'lan'
+	option device 'eth0'
+	option proto 'static'
+	option ipaddr '192.168.50.1'
+	option netmask '255.255.255.0'
+	option ip6assign '60'
+
+config interface 'wan'
+	option device 'eth1'
+	option proto 'dhcp'
+
+config interface 'wan6'
+	option proto 'dhcpv6'
+	option device 'eth1'
+	option reqaddress 'try'
+	option reqprefix 'auto'
+
+config interface 'vpn'
+	option proto 'wireguard'
+	option private_key 'yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk='
+	option listen_port '51820'
+	option ip6assign '64'
+	option mtu '1400'
+	option force_link '1'
+	list addresses '10.99.0.1/24'
+
+config wireguard_vpn
+	option description 'site-b'
+	option private_key 'cEhzR3xbVwCJk9i0e6dbHUeW8wy9vEaRbNk+9bk5TlE='
+	list allowed_ips '10.99.0.9/32'
+	list allowed_ips '10.200.0.0/24'
+
+config route
+	option target '10.200.0.0/24'
+	option gateway '10.99.0.9'
+
+config wireguard_vpn
+	option description 'phone'
+	option public_key 'xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg='
+	option preshared_key 'FpCyhws9cxwWoV4xELtfJvjJN+zQVRPISllRWgeopVE='
+	option route_allowed_ips '1'
+	list allowed_ips '10.99.0.10/32'
+	list allowed_ips '198.51.100.50/32'
+
+config wireguard_vpn
+	option description 'ci runner (restricted)'
+	option public_key 'TrMvSoP4jYQlY6RIzBgbssQqY3vxI2Pi+y71lOWWXX0='
+	option route_allowed_ips '1'
+	list allowed_ips '10.99.0.20/32'
+
+config interface 'wwan'
+	option proto 'dhcp'
+
+config route
+	option interface 'lan'
+	option target '203.0.113.53'
+	option netmask '255.255.255.255'
+	option gateway '192.168.50.60'

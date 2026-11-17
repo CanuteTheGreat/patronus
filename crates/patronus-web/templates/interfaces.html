@@ -69,7 +69,7 @@
                     <option value="none">None</option></select></label></div>
                 <div class="v6s"><label>IPv6 addresses (CIDR, one per line)<textarea name="ipv6" placeholder="fd00:1::1/64"></textarea></label></div>
                 <div class="v6pd"><label>Delegate prefix to (DHCPv6-PD, comma-separated interface names)<input name="pd_downstream" placeholder="e.g. eth1"></label></div>
-                <div class="v6s"><label>IPv6 gateway<input name="gateway6" placeholder="optional"></label></div>
+        XX<input name="gateway6" placeholder="optional"></label></div>
                 <div class="v4d"><label>Uplink metric (lower = preferred; empty = role default)<input name="metric" type="number" min="1" max="9999" placeholder="e.g. 150 for a fallback uplink"></label></div>
                 <div><label>MTU<input name="mtu" type="number" min="68" max="65535" placeholder="default"></label></div>
                 <div><label>MAC address (spoof)<input name="mac" placeholder="hardware default"></label></div>
@@ -310,6 +310,7 @@ function edit(name) {
     f.ipv6.value = (c.ipv6 || []).join('\n');
     f.gateway6.value = c.gateway6 || '';
     f.pd_downstream.value = (c.pd_downstream || []).join(', ');
+    f.dhcp6_duid.value = c.dhcp6_duid || '';
     f.metric.value = c.metric || '';
     f.mtu.value = c.mtu || '';
     f.mac.value = c.mac || '';
@@ -328,7 +329,7 @@ async function saveIface(ev) {
     const body = {
         role: f.role.value || null, enabled: f.enabled.checked,
         ipv4_mode: f.ipv4_mode.value, ipv4: lines(f.ipv4.value), gateway4: f.gateway4.value || null,
-        ipv6_mode: f.ipv6_mode.value, ipv6: lines(f.ipv6.value), gateway6: f.gateway6.value || null, pd_downstream: f.pd_downstream.value.split(',').map(x => x.trim()).filter(x => x),
+        ipv6_mode: f.ipv6_mode.value, ipv6: lines(f.ipv6.value), gateway6: f.gateway6.value || null, pd_downstream: f.pd_downstream.value.split(',').map(x => x.trim()).filter(x => x), dhcp6_duid: f.dhcp6_duid.value || null,
         metric: f.metric.value ? parseInt(f.metric.value, 10) : null, mtu: f.mtu.value ? parseInt(f.mtu.value, 10) : null, mac: f.mac.value || null, description: f.description.value || null,
     };
     if (await call('PUT', '/api/interfaces/' + encodeURIComponent(f.name.value), body)) hide('edit-card');

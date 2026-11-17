@@ -209,6 +209,12 @@ pub struct GatewayView {
     pub dev: String,
     pub resolved: String,
     pub monitor_ip: String,
+    /// extra monitor targets, comma separated
+    pub monitor_ips: String,
+    pub monitor_reliability: u64,
+    pub monitor_interval: u64,
+    pub monitor_down: u64,
+    pub monitor_up: u64,
     pub monitor_enabled: bool,
     pub loss_threshold: u64,
     pub latency_threshold: u64,
@@ -310,6 +316,19 @@ pub fn views(st: &Value) -> (Vec<GatewayView>, Vec<GroupView>, Vec<RouteView>) {
                     s(g, "resolved_address")
                 },
                 monitor_ip: s(g, "monitor_ip"),
+                monitor_ips: g["monitor_ips"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default(),
+                monitor_reliability: g["monitor_reliability"].as_u64().unwrap_or(1),
+                monitor_interval: g["monitor_interval"].as_u64().unwrap_or(1),
+                monitor_down: g["monitor_down"].as_u64().unwrap_or(5),
+                monitor_up: g["monitor_up"].as_u64().unwrap_or(1),
                 monitor_enabled: g["monitor_enabled"].as_bool().unwrap_or(true),
                 loss_threshold: g["loss_threshold"].as_u64().unwrap_or(20),
                 latency_threshold: g["latency_threshold"].as_u64().unwrap_or(500),

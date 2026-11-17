@@ -1,0 +1,44 @@
+
+config globals 'globals'
+	option mmx_mask '0x3F00'
+
+config interface 'wan'
+	option enabled '1'
+	option family 'ipv4'
+	option reliability '2'
+	list track_ip '192.0.2.10'
+	list track_ip '192.0.2.11'
+	list track_ip '198.51.100.10'
+
+config interface 'wan6'
+	option enabled '0'
+	option family 'ipv6'
+	list track_ip '2001:db8::10'
+
+config interface 'wwan'
+	option enabled '1'
+	option family 'ipv4'
+	option reliability '1'
+	option interval '10'
+	option down '3'
+	option up '5'
+	list track_ip '192.0.2.10'
+
+config member 'wan_m1'
+	option interface 'wan'
+	option metric '1'
+	option weight '3'
+
+config member 'wwan_m2'
+	option interface 'wwan'
+	option metric '2'
+	option weight '3'
+
+config policy 'failover'
+	list use_member 'wan_m1'
+	list use_member 'wwan_m2'
+
+config rule 'default_rule_v4'
+	option dest_ip '0.0.0.0/0'
+	option use_policy 'failover'
+	option family 'ipv4'

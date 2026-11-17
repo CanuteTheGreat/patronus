@@ -45,6 +45,10 @@
         <label title="Answers for public names that contain a private address (10/8, 172.16/12, 192.168/16, link-local, loopback, ULA) are dropped, so a web page cannot point a name at your LAN. Host and domain overrides are exempt.">Rebinding protection <input type="checkbox" name="rebind_protection" {% if rebind_protection %}checked{% endif %}></label>
         <label>Rebinding exceptions (domains that may resolve to private addresses)
             <input name="rebind_exceptions" value="{{ rebind_exceptions }}" data-keep-empty="1" placeholder="plex.direct, home.example"></label>
+        <label title="Lease and static-mapping hostnames resolve as host.domain; the domain is answered locally and is the default DHCP domain (option 15). Empty = off.">Local domain
+            <input name="local_domain" value="{{ local_domain }}" data-keep-empty="1" placeholder="home.arpa"></label>
+        <label>Cache size (dnsmasq entries) <input name="cache_size" type="number" min="0" value="{{ cache_size }}"></label>
+        <label>Log queries (dnsmasq) <input type="checkbox" name="log_queries" {% if log_queries %}checked{% endif %}></label>
         <label>Block list URLs (hosts or domain lists, one per line)
             <textarea name="blocklist_urls" rows="2" cols="50" data-keep-empty="1">{{ blocklist_urls }}</textarea></label>
         <button class="btn btn-primary btn-sm" type="submit">Save</button>
@@ -116,11 +120,11 @@
     <div class="card-header"><h2 class="card-title">Dynamic DNS</h2></div>
     {% if ddns.is_empty() %}<p class="empty">No dynamic DNS client.</p>{% else %}
     <table class="lan" id="ddns-clients">
-        <thead><tr><th>Hostname</th><th>Provider</th><th>Interface</th><th>Published address</th><th>Last update</th><th>Result</th><th>Enabled</th><th><span class="sr-only">Actions</span></th></tr></thead>
+        <thead><tr><th>Hostname</th><th>Provider</th><th>Interface</th><th>Family</th><th>Published address</th><th>Last update</th><th>Result</th><th>Enabled</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for c in ddns %}
         <tr><td class="mono">{{ c.hostname }}</td><td>{{ c.provider }}{% if !c.server.is_empty() %} ({{ c.server }}){% endif %}{% if !c.username.is_empty() %}<br><span class="text-muted text-sm">user {{ c.username }}</span>{% endif %}</td>
-            <td>{{ c.interface }}</td><td class="mono">{{ c.ip }}</td><td>{{ c.last_update }}</td>
+            <td>{{ c.interface }}</td><td>{{ c.family }}</td><td class="mono">{{ c.ip }}</td><td>{{ c.last_update }}</td>
             <td>{% if c.ok %}<span class="ok">{{ c.result }}</span>{% else %}<span class="bad">{{ c.result }}</span>{% endif %}</td>
             <td>{% if c.enabled %}yes{% else %}no{% endif %}</td>
             <td><button class="btn btn-danger btn-sm" onclick="del('/api/ddns/{{ c.id }}', 'Delete this client?')">Delete</button></td></tr>
@@ -139,6 +143,8 @@
             </select></label>
         <label>Hostname <input name="hostname" placeholder="home.example.net" required></label>
         <label>Interface <input name="interface" value="@wan"></label>
+        <label title="IPv4 publishes an A record, IPv6 an AAAA record (the interface's global address, e.g. the /128 from DHCPv6), both publishes one name with A and AAAA">Address family
+            <select name="family"><option value="ipv4">IPv4 (A)</option><option value="ipv6">IPv6 (AAAA)</option><option value="both">IPv4 + IPv6</option></select></label>
         <label>Username <input name="username"></label>
         <label>Password / token <input name="password" type="password" autocomplete="new-password"></label>
         <label>Server / zone id / URL (%h, %i) <input name="server"></label>

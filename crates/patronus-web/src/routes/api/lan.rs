@@ -104,6 +104,8 @@ mod dhcp_routes {
         pub mac: String,
         pub ip: String,
         pub hostname: String,
+        pub lease: String,
+        pub dns_record: bool,
     }
     pub struct PoolView {
         pub id: i64,
@@ -251,6 +253,12 @@ mod dhcp_routes {
                             mac: m.mac.clone(),
                             ip: m.ip.to_string(),
                             hostname: opt_s(&m.hostname),
+                            lease: match m.lease_time {
+                                None => "pool".to_string(),
+                                Some(0) => "infinite".to_string(),
+                                Some(t) => format!("{t} s"),
+                            },
+                            dns_record: m.dns_record,
                         })
                         .collect(),
                 })
@@ -519,10 +527,24 @@ mod dns_routes {
         pub interface: String,
         pub username: String,
         pub server: String,
+        pub family: String,
         pub ip: String,
         pub last_update: String,
         pub result: String,
         pub ok: bool,
+    }
+
+    trait PipeEmpty {
+        fn pipe_empty(self) -> String;
+    }
+    impl PipeEmpty for String {
+        fn pipe_empty(self) -> String {
+            if self.is_empty() {
+                "-".into()
+            } else {
+                self
+            }
+        }
     }
 
     #[derive(Template)]
@@ -540,6 +562,9 @@ mod dns_routes {
         pub rebind_exceptions: String,
         pub upstream_tls: bool,
         pub upstream_tls_name: String,
+        pub local_domain: String,
+        pub cache_size: u32,
+        pub log_queries: bool,
         pub services: Vec<(String, bool)>,
         pub hosts: Vec<HostView>,
         pub domains: Vec<DomainView>,
@@ -582,6 +607,9 @@ mod dns_routes {
             rebind_exceptions: set.rebind_exceptions.join(", "),
             upstream_tls: set.upstream_tls,
             upstream_tls_name: set.upstream_tls_name.clone(),
+            local_domain: set.local_domain.clone(),
+            cache_size: set.cache_size,
+            log_queries: set.log_queries,
             services,
             hosts: dns::list_hosts(s)
                 .await
@@ -621,6 +649,7 @@ mod dns_routes {
                 .iter()
                 .map(|c| {
                     let st = &dstatus[c.key()];
+                    let v6 = &dstatus[format!("{}#v6", c.key())];
                     DdnsView {
                         id: c.id,
                         enabled: c.enabled,
@@ -629,7 +658,13 @@ mod dns_routes {
                         interface: c.interface.clone(),
                         username: opt_s(&c.username),
                         server: opt_s(&c.server),
-                        ip: st["ip"].as_str().unwrap_or("-").into(),
+                        family: c.family.clone(),
+                        ip: [st, v6]
+                            .iter()
+                            .filter_map(|s| s["ip"].as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                            .pipe_empty(),
                         last_update: fmt_time(st["last_update"].as_i64().unwrap_or(0)),
                         result: st["message"].as_str().unwrap_or("not run yet").into(),
                         ok: st["ok"].as_bool().unwrap_or(false),

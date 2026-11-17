@@ -245,6 +245,53 @@ async function fwFeedDownload() {
         the marked block in /etc/hosts and /etc/localtime + /etc/timezone, and re-applied at every boot.</p>
 </div>
 
+<div class="card" id="ssh-card">
+    <div class="card-header"><h2 class="card-title">SSH server</h2></div>
+    <p class="text-sm text-muted">Managed OpenSSH drop-in (/etc/ssh/sshd_config.d/50-patronus.conf), checked with
+        <code>sshd -t</code> before it is installed. The firewall anti-lockout rule follows the port.
+        Listen on interfaces (<code>@lan</code>, <code>@opt1</code>, a device) or addresses; empty = all addresses.</p>
+    {% if is_admin %}
+    <form id="ssh-form" class="inline-form" onsubmit="return submitSsh(event)">
+        <label>Port <input name="port" type="number" min="1" max="65535" value="{{ ssh_port }}"></label>
+        <label>Listen <input name="listen" value="{{ ssh_listen }}" data-keep-empty="1" placeholder="@lan, 192.0.2.1"></label>
+        <label>Root login <select name="root_login">
+            <option value="prohibit-password"{% if ssh_root == "prohibit-password" %} selected{% endif %}>keys only</option>
+            <option value="yes"{% if ssh_root == "yes" %} selected{% endif %}>yes</option>
+            <option value="no"{% if ssh_root == "no" %} selected{% endif %}>no</option>
+        </select></label>
+        <label><input name="password_auth" type="checkbox"{% if ssh_password %} checked{% endif %}> Allow password login</label>
+        <label>Trusted user CA public keys (one per line)<br>
+            <textarea name="trusted_user_ca_keys" rows="3" cols="70" data-keep-empty="1">{{ ssh_ca }}</textarea></label>
+        <label>Authorized principals (<code>user=principal,principal</code> per line)<br>
+            <textarea name="principals" rows="3" cols="70" data-keep-empty="1">{{ ssh_principals }}</textarea></label>
+        <label>Host certificate (one line)<br>
+            <textarea name="host_certificate" rows="2" cols="70" data-keep-empty="1">{{ ssh_cert }}</textarea></label>
+        <button class="btn btn-sm btn-primary" id="save-ssh" type="submit">Save</button>
+    </form>
+    <script>
+    function submitSsh(ev) {
+        ev.preventDefault();
+        const o = formJson(ev.target);
+        const pr = {};
+        for (const line of (o.principals || '').split('\n')) {
+            const t = line.trim();
+            if (!t) continue;
+            const i = t.indexOf('=');
+            if (i < 1) { alert('Principals: use user=principal,principal'); return false; }
+            pr[t.slice(0, i).trim()] = t.slice(i + 1).split(',').map(x => x.trim()).filter(Boolean);
+        }
+        delete o.principals;
+        o.authorized_principals = pr;
+        call('PUT', '/api/system/ssh', o);
+        return false;
+    }
+    </script>
+    {% else %}
+    <table class="lan"><tr><td>Port</td><td>{{ ssh_port }}</td></tr>
+        <tr><td>Listen</td><td>{% if ssh_listen.is_empty() %}all addresses{% else %}{{ ssh_listen }}{% endif %}</td></tr></table>
+    {% endif %}
+</div>
+
 <div class="card">
     <div class="card-header"><h2 class="card-title">Web accounts</h2></div>
     <p class="text-sm text-muted">Admins manage accounts, backups and restores; operators change the configuration;
@@ -542,6 +589,14 @@ async function fwFeedDownload() {
 {% endif %}
 
 {% if is_admin %}
+<div class="card" id="packet-steering-card">
+    <div class="card-header"><h2 class="card-title">Packet steering</h2></div>
+    <p class="hint">Spread network receive/transmit processing over all CPUs (RPS/XPS), as OpenWrt's packet_steering.</p>
+    <label class="check"><input type="checkbox" id="packet-steering"
+        onchange="call('PUT', '/api/system/packet-steering', {enabled: this.checked})"> Enable packet steering</label>
+    <script>fetch('/api/system/packet-steering', {credentials: 'same-origin'}).then(r => r.json()).then(r => { document.getElementById('packet-steering').checked = !!r.enabled; });</script>
+</div>
+
 <div class="card" id="capture-card">
     <div class="card-header"><h2 class="card-title">Packet capture</h2></div>
     <p class="text-sm text-muted">Runs tcpdump on one interface and shows the decoded packets (at most 500 packets or 30 seconds). Leave a field empty to match everything.</p>

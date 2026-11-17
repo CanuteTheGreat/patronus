@@ -30,6 +30,7 @@ pub const KNOWN_SERVICES: &[(&str, &str)] = &[
         "IPsec (strongSwan charon, swanctl unit)",
     ),
     ("sshd", "SSH"),
+    ("qemu-guest-agent", "Hypervisor guest agent (KVM/QEMU)"),
 ];
 
 /// Services the web UI may only restart: stopping them would cut the UI

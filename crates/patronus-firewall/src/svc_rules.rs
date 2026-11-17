@@ -160,6 +160,39 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- DNS served on extra interfaces (`dns.interfaces`, e.g. a WireGuard
+    // tunnel): the LAN already reaches the router; every other listed
+    // interface gets DNS (udp/tcp 53) and nothing else.
+    {
+        let dns = settings(store, "dns").await.unwrap_or_default();
+        let mode = dns
+            .get("mode")
+            .map(|m| m.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        let ifs = dns.get("interfaces").cloned().unwrap_or_default();
+        if !matches!(mode.as_str(), "off" | "disabled" | "none") && !ifs.trim().is_empty() {
+            let lan = devices(store, "@lan").await;
+            let mut seen = Vec::new();
+            for spec in ifs
+                .split(',')
+                .map(str::trim)
+                .filter(|x| !x.is_empty() && *x != "@lan")
+            {
+                for d in devices(store, spec).await {
+                    if lan.contains(&d) || seen.contains(&d) {
+                        continue;
+                    }
+                    for proto in ["udp", "tcp"] {
+                        out.filter.push(format!(
+                            "add rule {t} input iifname \"{d}\" {proto} dport 53 accept comment \"DNS on {d}\""
+                        ));
+                    }
+                    seen.push(d);
+                }
+            }
+        }
+    }
+
     // --- IGMP proxy
     let igmp = settings(store, "igmp").await?;
     if on(&igmp, "enabled") {
@@ -620,6 +653,30 @@ mod tests {
         );
         put(&s, "mdns.enabled", "0").await;
         assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
+    }
+
+    #[tokio::test]
+    async fn dns_on_extra_interfaces_opens_port_53_there_only() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth0", Some("wan")).await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        put(&s, "dns.interfaces", "@lan,wg0").await;
+        let r = svc_rules(&s).await.unwrap().filter;
+        assert_eq!(
+            r,
+            vec![
+                "add rule inet patronus input iifname \"wg0\" udp dport 53 accept comment \"DNS on wg0\"".to_string(),
+                "add rule inet patronus input iifname \"wg0\" tcp dport 53 accept comment \"DNS on wg0\"".to_string(),
+            ]
+        );
+        put(&s, "dns.mode", "off").await;
+        assert!(svc_rules(&s).await.unwrap().filter.is_empty());
+        put(&s, "dns.mode", "forwarder").await;
+        put(&s, "dns.interfaces", "@lan, eth0;x").await;
+        assert!(
+            svc_rules(&s).await.unwrap().filter.is_empty(),
+            "unsafe device names are dropped"
+        );
     }
 
     #[tokio::test]

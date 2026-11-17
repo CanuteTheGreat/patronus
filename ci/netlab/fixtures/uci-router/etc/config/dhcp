@@ -1,0 +1,47 @@
+
+config dnsmasq
+	option domainneeded '1'
+	option rebind_protection '1'
+	option rebind_localhost '1'
+	option local '/home.example/'
+	option domain 'home.example'
+	option expandhosts '1'
+	option cachesize '1000'
+	option authoritative '1'
+	option localservice '0'
+	option logqueries '1'
+	list rebind_domain 'home.example'
+	list rebind_domain 'corp.example'
+	list server '/corp.example/198.51.100.61'
+	list server '/corp.example/198.51.100.62'
+	list server '/10.in-addr.arpa/198.51.100.61'
+
+config dhcp 'lan'
+	option interface 'lan'
+	option start '100'
+	option limit '50'
+	option leasetime '12h'
+	option dhcpv4 'server'
+	option ra 'hybrid'
+	option dhcpv6 'hybrid'
+	list ra_flags 'managed-config'
+	list ra_flags 'other-config'
+
+config dhcp 'wan'
+	option interface 'wan'
+	option ignore '1'
+
+config host
+	option name 'nas'
+	option mac '02:00:00:00:00:21'
+	option ip '192.168.50.21'
+	option leasetime 'infinite'
+	option dns '1'
+
+config domain
+	option name 'router.home.example'
+	option ip '192.168.50.1'
+
+config domain
+	option name 'printer'
+	option ip '192.168.50.22'

@@ -1,0 +1,4 @@
+#!/bin/sh
+# OpenRC: enable the QEMU guest agent when running as a KVM/QEMU guest (no-op elsewhere)
+[ -x /usr/libexec/patronus-qga-enable ] && /usr/libexec/patronus-qga-enable >/dev/null 2>&1
+exit 0

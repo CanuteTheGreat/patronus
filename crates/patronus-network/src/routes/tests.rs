@@ -169,6 +169,11 @@ fn gw(name: &str, iface: &str, addr: Option<&str>) -> Gateway {
         family: Family::Inet,
         address: addr.map(|a| a.parse().unwrap()),
         monitor_ip: None,
+        monitor_ips: vec![],
+        monitor_reliability: 1,
+        monitor_interval: 1,
+        monitor_down: DOWN_AFTER as u32,
+        monitor_up: 1,
         monitor_enabled: true,
         loss_threshold: 20,
         latency_threshold: 500,
@@ -1411,6 +1416,216 @@ async fn the_monitor_marks_a_silent_gateway_down_and_reapplies_on_changes_only()
     m.tick(&s).await.unwrap();
     assert_ne!(m.states()["WAN1"].state, GwState::Down);
     assert!(*applier.0.lock().unwrap() > after_down);
+}
+
+/// Counts probes per target.
+struct CountingProber {
+    answers: Mutex<BTreeMap<IpAddr, f64>>,
+    seen: Mutex<Vec<IpAddr>>,
+}
+
+#[async_trait]
+impl Prober for CountingProber {
+    async fn probe(&self, _dev: &str, target: IpAddr) -> Option<f64> {
+        self.seen.lock().unwrap().push(target);
+        self.answers.lock().unwrap().get(&target).copied()
+    }
+}
+
+fn ip(s: &str) -> IpAddr {
+    s.parse().unwrap()
+}
+
+async fn multi_target_store(reliability: u32, down: u32, up: u32, interval: u32) -> ConfigStore {
+    let s = store().await;
+    let mut g = gi("WWAN", "@wan");
+    g.monitor_ip = Some("192.0.2.1".into());
+    g.monitor_ips = Some("192.0.2.2, 192.0.2.3".into());
+    g.monitor_reliability = Some(reliability);
+    g.monitor_down = Some(down);
+    g.monitor_up = Some(up);
+    g.monitor_interval = Some(interval);
+    save_gateway(&s, None, &g.validated().unwrap())
+        .await
+        .unwrap();
+    s
+}
+
+fn counting(answering: &[&str]) -> Arc<CountingProber> {
+    Arc::new(CountingProber {
+        answers: Mutex::new(answering.iter().map(|a| (ip(a), 5.0)).collect()),
+        seen: Mutex::new(vec![]),
+    })
+}
+
+#[tokio::test]
+async fn mwan3_reliability_needs_that_many_monitor_ips_to_answer() {
+    let s = multi_target_store(2, 3, 1, 1).await;
+    let p = counting(&["192.0.2.1", "192.0.2.2", "192.0.2.3"]);
+    let mut m = Monitor::new(
+        Arc::new(CountingApplier::default()),
+        Arc::new(fake()),
+        p.clone(),
+    );
+    for _ in 0..3 {
+        m.tick(&s).await.unwrap();
+    }
+    assert_eq!(m.states()["WWAN"].state, GwState::Online);
+    // every round probed all three targets
+    assert_eq!(p.seen.lock().unwrap().len(), 9);
+    // one target answers: fewer than the reliability of 2, so the rounds are lost
+    p.answers
+        .lock()
+        .unwrap()
+        .retain(|k, _| *k == ip("192.0.2.1"));
+    for _ in 0..3 {
+        m.tick(&s).await.unwrap();
+    }
+    assert_eq!(
+        m.states()["WWAN"].state,
+        GwState::Down,
+        "down after 3 failed rounds"
+    );
+    // reliability 1 would have been fine with a single answering target
+    let s1 = multi_target_store(1, 3, 1, 1).await;
+    let p1 = counting(&["192.0.2.3"]);
+    let mut m1 = Monitor::new(Arc::new(CountingApplier::default()), Arc::new(fake()), p1);
+    for _ in 0..4 {
+        m1.tick(&s1).await.unwrap();
+    }
+    assert_eq!(m1.states()["WWAN"].state, GwState::Online);
+}
+
+#[tokio::test]
+async fn mwan3_up_count_holds_a_down_gateway_until_enough_good_rounds() {
+    let s = multi_target_store(1, 3, 3, 1).await;
+    let p = counting(&["192.0.2.1"]);
+    let mut m = Monitor::new(
+        Arc::new(CountingApplier::default()),
+        Arc::new(fake()),
+        p.clone(),
+    );
+    for _ in 0..3 {
+        m.tick(&s).await.unwrap();
+    }
+    p.answers.lock().unwrap().clear();
+    for _ in 0..3 {
+        m.tick(&s).await.unwrap();
+    }
+    assert_eq!(m.states()["WWAN"].state, GwState::Down);
+    p.answers.lock().unwrap().insert(ip("192.0.2.2"), 5.0);
+    for round in 1..=2 {
+        m.tick(&s).await.unwrap();
+        assert_eq!(
+            m.states()["WWAN"].state,
+            GwState::Down,
+            "still down after {round} good round(s), up = 3"
+        );
+    }
+    m.tick(&s).await.unwrap();
+    assert_ne!(
+        m.states()["WWAN"].state,
+        GwState::Down,
+        "up after 3 good rounds"
+    );
+}
+
+#[tokio::test]
+async fn mwan3_interval_spaces_the_probe_rounds() {
+    let s = multi_target_store(1, 3, 1, 3600).await;
+    let p = counting(&["192.0.2.1"]);
+    let mut m = Monitor::new(
+        Arc::new(CountingApplier::default()),
+        Arc::new(fake()),
+        p.clone(),
+    );
+    for _ in 0..4 {
+        m.tick(&s).await.unwrap();
+    }
+    assert_eq!(
+        p.seen.lock().unwrap().len(),
+        3,
+        "one round (3 targets) in an hour-long interval"
+    );
+}
+
+#[tokio::test]
+async fn monitor_settings_are_validated_stored_and_default_to_the_old_behaviour() {
+    let s = store().await;
+    let mut g = gi("A", "@wan");
+    g.monitor_ip = Some("192.0.2.1".into());
+    let v = g.validated().unwrap();
+    assert!(v.monitor_ips.is_empty());
+    assert_eq!(
+        (
+            v.monitor_reliability,
+            v.monitor_interval,
+            v.monitor_down,
+            v.monitor_up
+        ),
+        (1, 1, DOWN_AFTER as u32, 1)
+    );
+    for bad in [
+        GatewayInput {
+            monitor_ips: Some("192.0.2.2 nonsense".into()),
+            ..g.clone()
+        },
+        GatewayInput {
+            monitor_ips: Some("2001:db8::1".into()),
+            ..g.clone()
+        },
+        GatewayInput {
+            monitor_reliability: Some(0),
+            ..g.clone()
+        },
+        GatewayInput {
+            monitor_reliability: Some(2),
+            ..g.clone()
+        },
+        GatewayInput {
+            monitor_interval: Some(0),
+            ..g.clone()
+        },
+        GatewayInput {
+            monitor_down: Some(0),
+            ..g.clone()
+        },
+        GatewayInput {
+            monitor_up: Some(11),
+            ..g.clone()
+        },
+        GatewayInput {
+            monitor_ips: Some(
+                "192.0.2.2,192.0.2.3,192.0.2.4,192.0.2.5,192.0.2.6,192.0.2.7,192.0.2.8,192.0.2.9"
+                    .into(),
+            ),
+            ..g.clone()
+        },
+    ] {
+        assert!(bad.validated().is_err(), "{bad:?}");
+    }
+    let mut ok = g.clone();
+    ok.monitor_ips = Some("192.0.2.2, 192.0.2.3 192.0.2.2".into());
+    ok.monitor_reliability = Some(2);
+    ok.monitor_interval = Some(10);
+    ok.monitor_down = Some(3);
+    ok.monitor_up = Some(5);
+    save_gateway(&s, None, &ok.validated().unwrap())
+        .await
+        .unwrap();
+    let back = load(&s).await.unwrap();
+    let g = back.gateway("A").unwrap();
+    assert_eq!(g.monitor_ips, vec![ip("192.0.2.2"), ip("192.0.2.3")]);
+    assert_eq!(
+        (
+            g.monitor_reliability,
+            g.monitor_interval,
+            g.monitor_down,
+            g.monitor_up
+        ),
+        (2, 10, 3, 5)
+    );
+    assert_eq!(g.targets(None).len(), 3);
 }
 
 /// Answers per probe id (`true` = ok); an id missing from the map fails.

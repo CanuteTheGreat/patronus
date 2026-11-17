@@ -1,0 +1,16 @@
+
+config wifi-device 'radio0'
+	option type 'mac80211'
+	option path 'pci0000:00/0000:00:10.0'
+	option band '5g'
+	option htmode 'HE80'
+	option country 'US'
+	option channel 'auto'
+
+config wifi-iface 'wwan_sta'
+	option device 'radio0'
+	option mode 'sta'
+	option network 'wwan'
+	option ssid 'Backup Uplink'
+	option encryption 'psk2'
+	option key 'test-uplink-passphrase'

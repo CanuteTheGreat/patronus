@@ -75,6 +75,24 @@ pub struct DnsSettings {
     /// `cloudflare-dns.com`, `dns.google`, ...).
     #[serde(default)]
     pub upstream_tls_name: String,
+    /// Local domain (`dns.local_domain`, empty = off): lease and static
+    /// hostnames resolve as `<host>.<domain>`, queries for it never leave
+    /// the router, and it is the default DHCP domain option.
+    #[serde(default)]
+    pub local_domain: String,
+    /// dnsmasq cache entries (`dns.cache_size`).
+    #[serde(default = "default_cache_size")]
+    pub cache_size: u32,
+    /// Log every query (dnsmasq `log-queries`; `dns.log_queries`).
+    #[serde(default)]
+    pub log_queries: bool,
+}
+
+pub const DEFAULT_CACHE_SIZE: u32 = 10000;
+const MAX_CACHE_SIZE: u32 = 10_000_000;
+
+fn default_cache_size() -> u32 {
+    DEFAULT_CACHE_SIZE
 }
 
 /// CA bundle Unbound checks DoT upstream certificates against
@@ -83,6 +101,12 @@ pub const UNBOUND_CA_BUNDLE: &str = "/etc/ssl/certs/ca-certificates.crt";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DnsSettingsInput {
+    #[serde(default)]
+    pub local_domain: Option<String>,
+    #[serde(default)]
+    pub cache_size: Option<u32>,
+    #[serde(default)]
+    pub log_queries: Option<bool>,
     #[serde(default)]
     pub mode: Option<String>,
     #[serde(default)]
@@ -176,6 +200,11 @@ pub async fn settings(store: &ConfigStore) -> Result<DnsSettings> {
         rebind_exceptions: split_list(&g("dns.rebind_exceptions", "")),
         upstream_tls: lan::flag(&g("dns.upstream_tls", "0")),
         upstream_tls_name: g("dns.upstream_tls_name", ""),
+        local_domain: g("dns.local_domain", "").trim().to_string(),
+        cache_size: g("dns.cache_size", "")
+            .parse()
+            .unwrap_or(DEFAULT_CACHE_SIZE),
+        log_queries: lan::flag(&g("dns.log_queries", "0")),
         dns64_prefix: {
             let n = lan::settings_with_prefix(store, "nat64.").await?;
             let on = n.get("nat64.enabled").is_some_and(|v| lan::flag(v))
@@ -250,6 +279,26 @@ pub async fn save_settings(store: &ConfigStore, i: &DnsSettingsInput) -> Result<
             lan::check_dns_name("DNS over TLS server name", n)?
         };
         kv.push(("dns.upstream_tls_name", n));
+    }
+    if let Some(d) = &i.local_domain {
+        let d = d.trim().trim_matches('.');
+        let d = if d.is_empty() {
+            String::new()
+        } else {
+            lan::check_dns_name("local domain", d)?
+        };
+        kv.push(("dns.local_domain", d));
+    }
+    if let Some(n) = i.cache_size {
+        if n > MAX_CACHE_SIZE {
+            return Err(invalid(format!(
+                "cache size {n} (0 disables caching, at most {MAX_CACHE_SIZE})"
+            )));
+        }
+        kv.push(("dns.cache_size", n.to_string()));
+    }
+    if let Some(l) = i.log_queries {
+        kv.push(("dns.log_queries", if l { "1" } else { "0" }.into()));
     }
     let after = {
         let mut s = settings(store).await?;
@@ -770,6 +819,9 @@ pub fn render_unbound(
         "always_nxdomain"
     };
     let mut zones: BTreeMap<&str, &str> = BTreeMap::new();
+    if !s.local_domain.is_empty() {
+        zones.insert(s.local_domain.as_str(), "transparent");
+    }
     for z in hosts.iter().map(|h| h.domain.as_str()) {
         zones.insert(z, "transparent");
     }
@@ -843,6 +895,34 @@ fn dot(s: &DnsSettings) -> bool {
     s.upstream_tls && !s.upstreams.is_empty() && !s.upstream_tls_name.is_empty()
 }
 
+/// `(<host>.<domain>, ip)` of static DHCP mappings with a hostname.
+/// `only_dns_record`: just the ones flagged `dns_record`.
+pub async fn static_records(
+    store: &ConfigStore,
+    domain: &str,
+    only_dns_record: bool,
+) -> Result<Vec<(String, std::net::Ipv4Addr)>> {
+    #[cfg(feature = "dhcp")]
+    {
+        let mut out = Vec::new();
+        for p in crate::dhcp::list_pools(store).await? {
+            for m in p.static_mappings {
+                if let Some(h) = m.hostname.filter(|_| m.dns_record || !only_dns_record) {
+                    out.push((format!("{h}.{domain}"), m.ip));
+                }
+            }
+        }
+        out.sort();
+        out.dedup();
+        Ok(out)
+    }
+    #[cfg(not(feature = "dhcp"))]
+    {
+        let _ = (store, domain, only_dns_record);
+        Ok(Vec::new())
+    }
+}
+
 /// DNS lines of `/etc/dnsmasq.conf` (forwarder mode only).
 pub async fn dnsmasq_part(
     store: &ConfigStore,
@@ -858,8 +938,23 @@ pub async fn dnsmasq_part(
     let mut lines = vec![
         "domain-needed".to_string(),
         "bogus-priv".to_string(),
-        "cache-size=10000".to_string(),
+        format!("cache-size={}", s.cache_size),
     ];
+    if s.log_queries {
+        lines.push("log-queries".into());
+    }
+    let local = s.local_domain.as_str();
+    if !local.is_empty() {
+        // names of DHCP leases and static mappings are <host>.<domain>;
+        // the domain is answered here only, never forwarded upstream
+        lines.push(format!("domain={local}"));
+        lines.push(format!("local=/{local}/"));
+        lines.push("expand-hosts".into());
+        // dns_record: published whether or not the device is online
+        for (name, ip) in static_records(store, local, true).await? {
+            lines.push(format!("host-record={name},{ip}"));
+        }
+    }
     if s.rebind_protection {
         lines.push("stop-dns-rebind".into());
         lines.push("rebind-localhost-ok".into());
@@ -961,8 +1056,23 @@ impl DnsApplier {
         let sv = served(store, &self.env, &s, rep).await?;
         let blocked = blocked_domains(store, &self.env, &s, fetch, rep).await?;
         let dnssec = s.dnssec && (!fetch || self.ensure_anchor(rep));
-        let hosts = list_hosts(store).await?;
+        let mut hosts = list_hosts(store).await?;
         let domains = list_domains(store).await?;
+        // local domain: static-mapping hostnames are local-data (lease
+        // names need dnsmasq, see docs); the zone itself is transparent
+        if !s.local_domain.is_empty() {
+            for (name, ip) in static_records(store, &s.local_domain, false).await? {
+                if let Some(h) = name.strip_suffix(&format!(".{}", s.local_domain)) {
+                    hosts.push(HostOverride {
+                        id: 0,
+                        hostname: h.to_string(),
+                        domain: s.local_domain.clone(),
+                        address: IpAddr::V4(ip),
+                        description: None,
+                    });
+                }
+            }
+        }
         let conf = render_unbound(&s, &sv.addrs, &sv.nets, &hosts, &domains, &blocked, dnssec);
         // per-device / per-group DNS policy views (device segmentation)
         #[cfg(feature = "segmentation")]
@@ -1504,5 +1614,173 @@ mod tests {
         assert!(check_url("https://x.example/list\"").is_err());
         let d = parse_blocklist("127.0.0.1 localhost\n0.0.0.0 a.example b.example # c\nbad name\n");
         assert_eq!(d.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn local_domain_cache_log_and_static_names_in_dnsmasq() {
+        let t = testutil::env(&[UNBOUND_BIN, lan::DNSMASQ_BIN]);
+        let s = testutil::store().await;
+        seed(&s).await;
+        // a static mapping with dns_record (published offline) and one without
+        let pool = crate::dhcp::PoolInput {
+            interface: "@lan".into(),
+            enabled: true,
+            range_start: "192.168.50.100".into(),
+            range_end: "192.168.50.199".into(),
+            ..Default::default()
+        }
+        .validate()
+        .unwrap();
+        let pid = crate::dhcp::upsert_pool(&s, None, &pool).await.unwrap();
+        let pool = crate::dhcp::get_pool(&s, pid).await.unwrap().unwrap();
+        for (mac, ip, h, rec) in [
+            ("aa:bb:cc:00:00:01", "192.168.50.20", "printer", true),
+            ("aa:bb:cc:00:00:02", "192.168.50.21", "camera", false),
+        ] {
+            let m = crate::dhcp::StaticInput {
+                mac: mac.into(),
+                ip: ip.into(),
+                hostname: Some(h.into()),
+                dns_record: rec,
+                ..Default::default()
+            }
+            .validate(&pool)
+            .unwrap();
+            crate::dhcp::add_static(&s, &m).await.unwrap();
+        }
+        save_settings(
+            &s,
+            &DnsSettingsInput {
+                mode: Some("forwarder".into()),
+                upstreams: Some("9.9.9.9".into()),
+                dnssec: Some(false),
+                local_domain: Some(" .Lan.Example. ".into()),
+                cache_size: Some(2500),
+                log_queries: Some(true),
+                // DNS to a WireGuard device as well as the LAN
+                interfaces: Some("@lan,wg0".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let set = settings(&s).await.unwrap();
+        assert_eq!(set.local_domain, "lan.example");
+        assert_eq!((set.cache_size, set.log_queries), (2500, true));
+        DnsApplier::new(t.env.clone()).apply(&s).await.unwrap();
+        let c = read(&t, lan::DNSMASQ_CONF);
+        for want in [
+            "cache-size=2500",
+            "log-queries",
+            "domain=lan.example",
+            "local=/lan.example/",
+            "expand-hosts",
+            "host-record=printer.lan.example,192.168.50.20",
+            "interface=wg0",
+            "server=/corp.example/10.0.0.53#5353",
+        ] {
+            assert!(c.contains(want), "missing {want:?} in\n{c}");
+        }
+        assert!(
+            !c.contains("camera.lan.example"),
+            "no dns_record, no offline name:\n{c}"
+        );
+        // off again
+        save_settings(
+            &s,
+            &DnsSettingsInput {
+                local_domain: Some("".into()),
+                log_queries: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        DnsApplier::new(t.env.clone()).apply(&s).await.unwrap();
+        let c = read(&t, lan::DNSMASQ_CONF);
+        for no in [
+            "expand-hosts",
+            "local=/",
+            "log-queries",
+            "host-record=printer",
+        ] {
+            assert!(!c.contains(no), "{no} still present:\n{c}");
+        }
+    }
+
+    #[tokio::test]
+    async fn local_domain_and_cache_validation_and_defaults() {
+        let s = testutil::store().await;
+        let d = settings(&s).await.unwrap();
+        assert_eq!(
+            (d.local_domain.as_str(), d.cache_size, d.log_queries),
+            ("", 10000, false)
+        );
+        for bad in ["bad domain", "a..b", "x;y"] {
+            let r = save_settings(
+                &s,
+                &DnsSettingsInput {
+                    local_domain: Some(bad.into()),
+                    ..Default::default()
+                },
+            )
+            .await;
+            assert!(r.is_err(), "{bad}");
+        }
+        let r = save_settings(
+            &s,
+            &DnsSettingsInput {
+                cache_size: Some(MAX_CACHE_SIZE + 1),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(r.is_err());
+    }
+
+    #[tokio::test]
+    async fn resolver_mode_keeps_local_domain_local_and_adds_static_names() {
+        let t = testutil::env(&[UNBOUND_BIN, lan::DNSMASQ_BIN]);
+        std::fs::create_dir_all(t.env.path("/var/lib/unbound")).unwrap();
+        std::fs::write(t.env.path(UNBOUND_ANCHOR), "x").unwrap();
+        let s = testutil::store().await;
+        let pool = crate::dhcp::PoolInput {
+            interface: "@lan".into(),
+            enabled: true,
+            range_start: "192.168.50.100".into(),
+            range_end: "192.168.50.199".into(),
+            ..Default::default()
+        }
+        .validate()
+        .unwrap();
+        let pid = crate::dhcp::upsert_pool(&s, None, &pool).await.unwrap();
+        let pool = crate::dhcp::get_pool(&s, pid).await.unwrap().unwrap();
+        let m = crate::dhcp::StaticInput {
+            mac: "aa:bb:cc:00:00:01".into(),
+            ip: "192.168.50.20".into(),
+            hostname: Some("printer".into()),
+            ..Default::default()
+        }
+        .validate(&pool)
+        .unwrap();
+        crate::dhcp::add_static(&s, &m).await.unwrap();
+        save_settings(
+            &s,
+            &DnsSettingsInput {
+                dnssec: Some(false),
+                local_domain: Some("lan.example".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        DnsApplier::new(t.env.clone()).apply(&s).await.unwrap();
+        let c = read(&t, UNBOUND_CONF);
+        assert!(
+            c.contains("local-zone: \"lan.example.\" transparent"),
+            "{c}"
+        );
+        assert!(c.contains("printer.lan.example."), "{c}");
+        assert!(c.contains("192.168.50.20"), "{c}");
     }
 }

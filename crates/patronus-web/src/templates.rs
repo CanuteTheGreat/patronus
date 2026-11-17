@@ -225,6 +225,14 @@ pub struct SystemTemplate {
     pub kernel: String,
     pub arch: String,
     pub cpu: String,
+    pub ssh_port: u16,
+    pub ssh_listen: String,
+    pub ssh_password: bool,
+    pub ssh_root: String,
+    pub ssh_ca: String,
+    /// One `user=principal,principal` per line.
+    pub ssh_principals: String,
+    pub ssh_cert: String,
 }
 
 // Data structures used in templates

@@ -131,6 +131,17 @@ impl Family {
     }
 }
 
+fn one() -> u32 {
+    1
+}
+fn default_down() -> u32 {
+    DOWN_AFTER as u32
+}
+
+/// Upper bounds of the monitor settings.
+pub const MAX_MONITOR_IPS: usize = 8;
+pub const MAX_MONITOR_INTERVAL: u32 = 3600;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Gateway {
     pub name: String,
@@ -139,6 +150,24 @@ pub struct Gateway {
     /// None = dynamic (learned from the interface's default route).
     pub address: Option<IpAddr>,
     pub monitor_ip: Option<IpAddr>,
+    /// More monitor targets besides `monitor_ip` (mwan3 `track_ip` lists).
+    #[serde(default)]
+    pub monitor_ips: Vec<IpAddr>,
+    /// How many of the targets must answer for a probe round to count as
+    /// good (mwan3 `reliability`; 1 = any one).
+    #[serde(default = "one")]
+    pub monitor_reliability: u32,
+    /// Seconds between probe rounds (mwan3 `interval`; 1 = every tick).
+    #[serde(default = "one")]
+    pub monitor_interval: u32,
+    /// Consecutive failed rounds before the gateway counts as down (mwan3
+    /// `down`); the built-in default is [`DOWN_AFTER`].
+    #[serde(default = "default_down")]
+    pub monitor_down: u32,
+    /// Consecutive good rounds before a down gateway counts as up again
+    /// (mwan3 `up`; 1 = the first good round).
+    #[serde(default = "one")]
+    pub monitor_up: u32,
     pub monitor_enabled: bool,
     pub loss_threshold: u32,
     pub latency_threshold: u32,
@@ -149,6 +178,26 @@ pub struct Gateway {
     /// is usable again (0 = all at once).
     pub failback_ramp: u32,
     pub description: Option<String>,
+}
+
+impl Gateway {
+    /// Every address probed for this gateway: the monitor IP (or `fallback`,
+    /// the gateway's own address, when none is set) plus `monitor_ips`.
+    pub fn targets(&self, fallback: Option<IpAddr>) -> Vec<IpAddr> {
+        let mut v: Vec<IpAddr> = self.monitor_ip.or(fallback).into_iter().collect();
+        for ip in &self.monitor_ips {
+            if !v.contains(ip) {
+                v.push(*ip);
+            }
+        }
+        v
+    }
+
+    /// Targets that must answer: `monitor_reliability`, capped by how many
+    /// targets there are.
+    pub fn needed(&self, targets: usize) -> usize {
+        (self.monitor_reliability.max(1) as usize).min(targets.max(1))
+    }
 }
 
 /// When a group member stops carrying traffic.
@@ -255,13 +304,26 @@ fn parse_opt_ip(what: &str, v: Option<String>) -> Result<Option<IpAddr>> {
     }
 }
 
+fn parse_ip_list(what: &str, v: Option<String>) -> Result<Vec<IpAddr>> {
+    v.unwrap_or_default()
+        .split([',', ' '])
+        .filter(|t| !t.trim().is_empty())
+        .map(|t| {
+            t.trim().parse().map_err(|_| {
+                Error::Config(format!("stored {what} entry {t:?} is not an IP address"))
+            })
+        })
+        .collect()
+}
+
 /// Load every lane-E row.
 pub async fn load(store: &ConfigStore) -> Result<RoutingConfig> {
     let pool = store.pool()?;
     let mut c = RoutingConfig::default();
     for r in sqlx::query(
         "SELECT name, interface, family, address, monitor_ip, monitor_enabled,
-                loss_threshold, latency_threshold, description, failback_delay, failback_ramp
+                loss_threshold, latency_threshold, description, failback_delay, failback_ramp,
+                monitor_ips, monitor_reliability, monitor_interval, monitor_down, monitor_up
          FROM route_gateways ORDER BY name",
     )
     .fetch_all(pool)
@@ -274,6 +336,11 @@ pub async fn load(store: &ConfigStore) -> Result<RoutingConfig> {
                 .map_err(|e| Error::Config(format!("gateway {name}: {e}")))?,
             address: parse_opt_ip("gateway address", r.get(3))?,
             monitor_ip: parse_opt_ip("monitor IP", r.get(4))?,
+            monitor_ips: parse_ip_list("monitor IPs", r.get(11))?,
+            monitor_reliability: r.get::<i64, _>(12).clamp(1, MAX_MONITOR_IPS as i64 + 1) as u32,
+            monitor_interval: r.get::<i64, _>(13).clamp(1, MAX_MONITOR_INTERVAL as i64) as u32,
+            monitor_down: r.get::<i64, _>(14).clamp(1, WINDOW as i64) as u32,
+            monitor_up: r.get::<i64, _>(15).clamp(1, WINDOW as i64) as u32,
             interface: r.get(1),
             monitor_enabled: r.get::<i64, _>(5) != 0,
             loss_threshold: r.get::<i64, _>(6).clamp(1, 100) as u32,
@@ -408,6 +475,17 @@ pub struct GatewayInput {
     pub address: Option<String>,
     #[serde(default)]
     pub monitor_ip: Option<String>,
+    /// More monitor targets (comma/space separated addresses).
+    #[serde(default)]
+    pub monitor_ips: Option<String>,
+    #[serde(default)]
+    pub monitor_reliability: Option<u32>,
+    #[serde(default)]
+    pub monitor_interval: Option<u32>,
+    #[serde(default)]
+    pub monitor_down: Option<u32>,
+    #[serde(default)]
+    pub monitor_up: Option<u32>,
     #[serde(default)]
     pub monitor_enabled: Option<bool>,
     #[serde(default)]
@@ -444,6 +522,53 @@ impl GatewayInput {
                 }
             }
         }
+        let mut monitor_ips: Vec<IpAddr> = Vec::new();
+        for t in self
+            .monitor_ips
+            .as_deref()
+            .unwrap_or("")
+            .split([',', ' ', '\n'])
+            .filter(|t| !t.trim().is_empty())
+        {
+            let ip = opt_ip("monitor IP", Some(t.trim()))?.unwrap_or(IpAddr::from([0, 0, 0, 0]));
+            if Family::of(&ip) != family {
+                return Err(invalid(format!(
+                    "monitor IP {ip}: not an {} address",
+                    if family.v6() { "IPv6" } else { "IPv4" }
+                )));
+            }
+            if ip.is_unspecified() || ip.is_multicast() || ip.is_loopback() {
+                return Err(invalid(format!("monitor IP {ip}")));
+            }
+            if Some(ip) != monitor_ip && !monitor_ips.contains(&ip) {
+                monitor_ips.push(ip);
+            }
+        }
+        if monitor_ips.len() + usize::from(monitor_ip.is_some()) > MAX_MONITOR_IPS {
+            return Err(invalid(format!("monitor IPs (at most {MAX_MONITOR_IPS})")));
+        }
+        let n_targets = monitor_ips.len() + usize::from(monitor_ip.is_some());
+        let monitor_reliability = self.monitor_reliability.unwrap_or(1);
+        if monitor_reliability == 0 || (n_targets > 0 && monitor_reliability as usize > n_targets) {
+            return Err(invalid(format!(
+                "reliability {monitor_reliability} (1-{}: how many monitor IPs must answer)",
+                n_targets.max(1)
+            )));
+        }
+        let monitor_interval = self.monitor_interval.unwrap_or(1);
+        if !(1..=MAX_MONITOR_INTERVAL).contains(&monitor_interval) {
+            return Err(invalid(format!(
+                "monitor interval (1-{MAX_MONITOR_INTERVAL} seconds)"
+            )));
+        }
+        let monitor_down = self.monitor_down.unwrap_or(DOWN_AFTER as u32);
+        if !(1..=WINDOW as u32).contains(&monitor_down) {
+            return Err(invalid(format!("down count (1-{WINDOW} failed rounds)")));
+        }
+        let monitor_up = self.monitor_up.unwrap_or(1);
+        if !(1..=WINDOW as u32).contains(&monitor_up) {
+            return Err(invalid(format!("up count (1-{WINDOW} good rounds)")));
+        }
         let loss_threshold = self.loss_threshold.unwrap_or(20);
         if !(1..=100).contains(&loss_threshold) {
             return Err(invalid("loss threshold (1-100 %)"));
@@ -470,6 +595,11 @@ impl GatewayInput {
             family,
             address,
             monitor_ip,
+            monitor_ips,
+            monitor_reliability,
+            monitor_interval,
+            monitor_down,
+            monitor_up,
             monitor_enabled: self.monitor_enabled.unwrap_or(true),
             loss_threshold,
             latency_threshold,
@@ -543,8 +673,9 @@ pub async fn save_gateway(store: &ConfigStore, existing: Option<&str>, g: &Gatew
     sqlx::query(
         "INSERT INTO route_gateways (name, interface, family, address, monitor_ip,
             monitor_enabled, loss_threshold, latency_threshold, description, updated_at,
-            failback_delay, failback_ramp)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            failback_delay, failback_ramp, monitor_ips, monitor_reliability, monitor_interval,
+            monitor_down, monitor_up)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET interface = excluded.interface,
             family = excluded.family, address = excluded.address,
             monitor_ip = excluded.monitor_ip, monitor_enabled = excluded.monitor_enabled,
@@ -552,7 +683,10 @@ pub async fn save_gateway(store: &ConfigStore, existing: Option<&str>, g: &Gatew
             latency_threshold = excluded.latency_threshold,
             description = excluded.description, updated_at = excluded.updated_at,
             failback_delay = excluded.failback_delay,
-            failback_ramp = excluded.failback_ramp",
+            failback_ramp = excluded.failback_ramp, monitor_ips = excluded.monitor_ips,
+            monitor_reliability = excluded.monitor_reliability,
+            monitor_interval = excluded.monitor_interval,
+            monitor_down = excluded.monitor_down, monitor_up = excluded.monitor_up",
     )
     .bind(&g.name)
     .bind(&g.interface)
@@ -566,6 +700,17 @@ pub async fn save_gateway(store: &ConfigStore, existing: Option<&str>, g: &Gatew
     .bind(now())
     .bind(g.failback_delay as i64)
     .bind(g.failback_ramp as i64)
+    .bind(
+        g.monitor_ips
+            .iter()
+            .map(|a| a.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+    )
+    .bind(g.monitor_reliability as i64)
+    .bind(g.monitor_interval as i64)
+    .bind(g.monitor_down as i64)
+    .bind(g.monitor_up as i64)
     .execute(pool)
     .await
     .map_err(db_err("write gateway"))?;
@@ -1388,8 +1533,9 @@ pub fn evaluate(samples: &VecDeque<Option<f64>>, g: &Gateway) -> (GwState, u32, 
     let loss = (lost * 100).checked_div(n).unwrap_or(0) as u32;
     let ok: Vec<f64> = samples.iter().flatten().copied().collect();
     let rtt = (!ok.is_empty()).then(|| ok.iter().sum::<f64>() / ok.len() as f64);
-    let tail = n.min(DOWN_AFTER);
-    let state = if n >= 3 && samples.iter().rev().take(tail).all(|s| s.is_none()) {
+    let down = (g.monitor_down as usize).clamp(1, WINDOW);
+    let tail = n.min(down);
+    let state = if n >= down.min(3) && samples.iter().rev().take(tail).all(|s| s.is_none()) {
         GwState::Down
     } else if n < 3 {
         GwState::Pending
@@ -1401,6 +1547,30 @@ pub fn evaluate(samples: &VecDeque<Option<f64>>, g: &Gateway) -> (GwState, u32, 
         GwState::Online
     };
     (state, loss, rtt)
+}
+
+/// mwan3 `up`: a gateway that was down stays down until its last `up` probe
+/// rounds were all good (`up` = 1: the first good round brings it back).
+pub fn up_gate(
+    prev: Option<GwState>,
+    state: GwState,
+    samples: &VecDeque<Option<f64>>,
+    up: u32,
+) -> GwState {
+    let usable = matches!(state, GwState::Online | GwState::Loss | GwState::Latency);
+    if prev == Some(GwState::Down) && usable {
+        let need = (up.max(1) as usize).min(WINDOW);
+        let good = samples
+            .iter()
+            .rev()
+            .take(need)
+            .filter(|s| s.is_some())
+            .count();
+        if good < need {
+            return GwState::Down;
+        }
+    }
+    state
 }
 
 static PUBLISHED: StdMutex<Option<BTreeMap<String, GwStatus>>> = StdMutex::new(None);
@@ -1887,31 +2057,38 @@ pub fn desired(
     }
     // monitor host routes: probes for a monitor IP leave via that gateway
     for g in &cfg.gateways {
-        let (Some(mon), Some(r)) = (g.monitor_ip, resolved.get(&g.name)) else {
+        let Some(r) = resolved.get(&g.name) else {
             continue;
         };
-        if !g.monitor_enabled || !r.routable() || Some(mon) == r.address {
+        if !g.monitor_enabled || !r.routable() {
             continue;
         }
-        d.routes.push(KRoute {
-            v6: g.family.v6(),
-            dst: host_net(&mon),
-            metric: 0,
-            proto: MONITOR_PROTO.into(),
-            table: MAIN_TABLE,
-            hops: vec![Hop {
-                via: r.address.map(|a| a.to_string()),
-                dev: r.dev.clone(),
-                weight: 1,
-            }],
-        });
+        let mut seen: Vec<IpAddr> = Vec::new();
+        for mon in g.monitor_ip.iter().chain(g.monitor_ips.iter()).copied() {
+            if Some(mon) == r.address || seen.contains(&mon) {
+                continue;
+            }
+            seen.push(mon);
+            d.routes.push(KRoute {
+                v6: g.family.v6(),
+                dst: host_net(&mon),
+                metric: 0,
+                proto: MONITOR_PROTO.into(),
+                table: MAIN_TABLE,
+                hops: vec![Hop {
+                    via: r.address.map(|a| a.to_string()),
+                    dev: r.dev.clone(),
+                    weight: 1,
+                }],
+            });
+        }
     }
     // extra-probe targets: like a monitor IP, a probe for a tcp/dns/http target
     // leaves via its own gateway even while another one carries the default
     let mut pinned: BTreeMap<IpAddr, String> = BTreeMap::new();
     for g in &cfg.gateways {
-        if let Some(m) = g.monitor_ip {
-            pinned.insert(m, g.name.clone());
+        for m in g.monitor_ip.iter().chain(g.monitor_ips.iter()) {
+            pinned.insert(*m, g.name.clone());
         }
     }
     for (gw, ip) in &cfg.probe_targets {
@@ -2584,6 +2761,11 @@ impl Applier for RoutesApplier {
                     "address": g.address.map(|a| a.to_string()),
                     "dynamic": g.address.is_none(),
                     "monitor_ip": g.monitor_ip.map(|a| a.to_string()),
+                    "monitor_ips": g.monitor_ips.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+                    "monitor_reliability": g.monitor_reliability,
+                    "monitor_interval": g.monitor_interval,
+                    "monitor_down": g.monitor_down,
+                    "monitor_up": g.monitor_up,
                     "monitor_enabled": g.monitor_enabled,
                     "loss_threshold": g.loss_threshold,
                     "latency_threshold": g.latency_threshold,
@@ -2775,6 +2957,8 @@ pub struct Monitor {
     windows: BTreeMap<String, ProbeWindow>,
     /// Per gateway: when its current healthy run began (failback hold-down).
     failback: BTreeMap<String, i64>,
+    /// Per gateway: when the last probe round ran (`monitor_interval`).
+    last_round: BTreeMap<String, i64>,
     states: BTreeMap<String, GwStatus>,
     last_sig: Option<String>,
     ticks: u64,
@@ -2791,6 +2975,7 @@ impl Monitor {
             extra_busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             windows: BTreeMap::new(),
             failback: BTreeMap::new(),
+            last_round: BTreeMap::new(),
             states: BTreeMap::new(),
             last_sig: None,
             ticks: 0,
@@ -2893,27 +3078,55 @@ impl Monitor {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
+        let t = now();
+        // gateways whose probe round is not due yet (monitor_interval): the
+        // window and the state stay as they are
+        let skip: std::collections::BTreeSet<String> = cfg
+            .gateways
+            .iter()
+            .filter(|g| {
+                g.monitor_interval > 1
+                    && self
+                        .last_round
+                        .get(&g.name)
+                        .is_some_and(|l| t - *l < i64::from(g.monitor_interval))
+            })
+            .map(|g| g.name.clone())
+            .collect();
         let probes = cfg.gateways.iter().map(|g| {
             let r = resolved.get(&g.name).cloned().unwrap_or_default();
-            let target = g.monitor_ip.or(r.address);
+            let targets = g.targets(r.address);
+            let needed = g.needed(targets.len());
             let prober = self.prober.clone();
-            let go = g.monitor_enabled && r.routable() && r.link_up && target.is_some();
+            let go = g.monitor_enabled
+                && r.routable()
+                && r.link_up
+                && !targets.is_empty()
+                && !skip.contains(&g.name);
             async move {
                 if !go {
                     return (g.name.clone(), None);
                 }
                 let dev = r.dev.clone().unwrap_or_default();
-                (
-                    g.name.clone(),
-                    Some(prober.probe(&dev, target.unwrap()).await),
-                )
+                let answers =
+                    futures::future::join_all(targets.iter().map(|ip| prober.probe(&dev, *ip)))
+                        .await;
+                let rtts: Vec<f64> = answers.into_iter().flatten().collect();
+                // reliability: this many targets must answer for a good round
+                let sample = (rtts.len() >= needed && !rtts.is_empty())
+                    .then(|| rtts.iter().sum::<f64>() / rtts.len() as f64);
+                (g.name.clone(), Some(sample))
             }
         });
         let results: BTreeMap<String, Option<Option<f64>>> = futures::future::join_all(probes)
             .await
             .into_iter()
             .collect();
-        let t = now();
+        for (n, r) in &results {
+            if r.is_some() {
+                self.last_round.insert(n.clone(), t);
+            }
+        }
         let mut next = BTreeMap::new();
         for g in &cfg.gateways {
             let r = resolved.get(&g.name).cloned().unwrap_or_default();
@@ -2930,14 +3143,28 @@ impl Monitor {
             // a failing critical probe makes the sample a lost one: the
             // gateway group's loss/down triggers then fail over as for ICMP
             let crit = gw_extra.iter().find(|p| p.critical && !p.ok);
-            let (state, loss, rtt, detail) = match results.get(&g.name).cloned().flatten() {
+            let skipped = skip.contains(&g.name) && !entry.1.is_empty();
+            let probed = if skipped {
+                Some(None)
+            } else {
+                results.get(&g.name).cloned().flatten()
+            };
+            let (state, loss, rtt, detail) = match probed {
                 Some(sample) => {
                     let sample = if crit.is_some() { None } else { sample };
-                    entry.1.push_back(sample);
-                    while entry.1.len() > WINDOW {
-                        entry.1.pop_front();
+                    if !skipped {
+                        entry.1.push_back(sample);
+                        while entry.1.len() > WINDOW {
+                            entry.1.pop_front();
+                        }
                     }
                     let (s, l, rt) = evaluate(&entry.1, g);
+                    let s = up_gate(
+                        self.states.get(&g.name).map(|p| p.state),
+                        s,
+                        &entry.1,
+                        g.monitor_up,
+                    );
                     let s = loss_hysteresis(
                         self.states.get(&g.name).map(|p| p.state),
                         s,
@@ -3042,6 +3269,7 @@ impl Monitor {
             );
         }
         self.windows.retain(|n, _| next.contains_key(n));
+        self.last_round.retain(|n, _| next.contains_key(n));
         self.failback.retain(|n, _| next.contains_key(n));
         self.states = next;
         publish(&self.states);

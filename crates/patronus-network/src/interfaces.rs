@@ -619,7 +619,15 @@ impl<'a> Planner<'a> {
             V6Mode::Static => {
                 self.sysctl(dev, "accept_ra", "0");
                 self.sysctl(dev, "autoconf", "0");
-                self.addr_diff(dev, &i.ipv6, true, false);
+                // a LAN with a static ULA that is also a WAN's pd_downstream
+                // target keeps the prefix dhcpcd delegates onto it
+                let pd_target = self
+                    .inp
+                    .cfg
+                    .interfaces
+                    .iter()
+                    .any(|w| w.pd_downstream.iter().any(|d| d == dev));
+                self.addr_diff(dev, &i.ipv6, true, pd_target);
                 self.gateway(dev, true, i.gateway6, metric);
             }
             V6Mode::Slaac => {
@@ -672,6 +680,7 @@ impl<'a> Planner<'a> {
                         prefix,
                         self.inp.paths,
                         &i.pd_downstream,
+                        i.dhcp6_duid.as_deref(),
                     ) {
                         Ok(s) => self.push(Op::Ensure(s)),
                         Err(e) => self.warn(format!("{dev}: DHCP client not started: {e}")),

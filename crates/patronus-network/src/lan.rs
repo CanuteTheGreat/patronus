@@ -397,6 +397,11 @@ pub trait ServiceControl: Send + Sync {
     fn disable(&self, _svc: &str) -> Result<()> {
         Ok(())
     }
+    /// Re-read the config without dropping live sessions (sshd); a daemon
+    /// that is not running is started. Defaults to a restart.
+    fn reload(&self, svc: &str) -> Result<()> {
+        self.restart(svc)
+    }
 }
 
 /// The real init system.
@@ -468,6 +473,13 @@ impl ServiceControl for SystemServices {
         }
         Ok(())
     }
+    fn reload(&self, svc: &str) -> Result<()> {
+        let m = Self::manager();
+        if Self::defer() || !m.is_running(svc).unwrap_or(false) {
+            return self.restart(svc);
+        }
+        m.reload(svc)
+    }
 }
 
 /// Records calls instead of touching the system (tests).
@@ -499,6 +511,11 @@ impl ServiceControl for RecordingServices {
     }
     fn disable(&self, svc: &str) -> Result<()> {
         self.enabled.lock().unwrap().remove(svc);
+        Ok(())
+    }
+    fn reload(&self, svc: &str) -> Result<()> {
+        self.log.lock().unwrap().push(format!("reload {svc}"));
+        self.running.lock().unwrap().insert(svc.to_string());
         Ok(())
     }
 }
@@ -944,6 +961,7 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::dhcp::DhcpApplier::new(env.clone())));
     #[cfg(feature = "ntp")]
     v.push(Arc::new(crate::ntp::NtpApplier::new(env.clone())));
+    v.push(Arc::new(crate::ssh::SshApplier::new(env.clone())));
     #[cfg(feature = "dns")]
     v.push(Arc::new(crate::ddns::DdnsApplier::new(env.clone())));
     #[cfg(feature = "ha")]
@@ -975,6 +993,8 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::guest::GuestApplier::default()));
     #[cfg(feature = "wifi-ap")]
     v.push(Arc::new(crate::wireless::WifiApplier::default()));
+    #[cfg(feature = "wifi-client")]
+    v.push(Arc::new(crate::wifi_client::WifiClientApplier::default()));
     #[cfg(feature = "openvpn")]
     v.push(Arc::new(crate::openvpn_server::OpenVpnApplier::default()));
     #[cfg(feature = "web-proxy")]

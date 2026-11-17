@@ -367,3 +367,22 @@ nl_api_code() {
 }
 # nl_json FILE PYTHON-EXPR: print a field of a JSON file (d = the document).
 nl_json() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$1" "$2"; }
+
+# nl_dnsmasq_shim: this container has no init system, so Patronus' service
+# manager (SysV path: /etc/init.d/<name>) gets a tiny dnsmasq script that runs
+# the router's dnsmasq inside the router namespace with the config Patronus wrote.
+nl_dnsmasq_shim() {
+  cat > /etc/init.d/dnsmasq <<'SH'
+#!/bin/sh
+PIDF=/run/dnsmasq-netlab.pid
+alive() { [ -f $PIDF ] && kill -0 "$(cat $PIDF)" 2>/dev/null; }
+run() { ip netns exec nl-rtr /usr/sbin/dnsmasq --conf-file=/etc/dnsmasq.conf --pid-file=$PIDF --user=root --group=root; }
+case "$1" in
+  start) alive || run ;;
+  stop) alive && kill "$(cat $PIDF)"; rm -f $PIDF ;;
+  restart|reload) alive && kill "$(cat $PIDF)"; sleep 0.3; rm -f $PIDF; run ;;
+  status) alive ;;
+esac
+SH
+  chmod 755 /etc/init.d/dnsmasq
+}

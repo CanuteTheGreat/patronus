@@ -31,6 +31,23 @@ pub struct Dhcp6Pool {
     pub description: Option<String>,
 }
 
+impl Dhcp6Pool {
+    /// A range like `::1000`-`::ffff` (no prefix bits set): the pool follows
+    /// whatever prefixes the interface carries, a delegated (dynamic) one
+    /// and any static ULA alike. Only dnsmasq (`constructor:`) can do this.
+    pub fn is_prefix_relative(&self) -> bool {
+        is_relative(self.range_start, self.range_end, self.prefix_len)
+    }
+}
+
+/// Both addresses lie wholly in the host part (prefix bits all zero).
+pub fn is_relative(start: Ipv6Addr, end: Ipv6Addr, prefix_len: u8) -> bool {
+    let mask = u128::MAX
+        .checked_shl(128 - prefix_len.min(128) as u32)
+        .unwrap_or(0);
+    u128::from(start) & mask == 0 && u128::from(end) & mask == 0
+}
+
 /// API/UI input (strings, validated by [`Dhcp6Input::validate`]).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Dhcp6Input {
@@ -199,12 +216,14 @@ pub async fn resolve(
             ));
             continue;
         }
+        let relative = p.is_prefix_relative();
         let hit = addrs.iter().find(|a| {
             devs.contains(&a.ifname)
                 && a.is_global_v6()
                 && a.prefix == p.prefix_len
-                && a.network()
-                    .is_some_and(|n| n.contains(IpAddr::V6(p.range_start)))
+                && (relative
+                    || a.network()
+                        .is_some_and(|n| n.contains(IpAddr::V6(p.range_start))))
         });
         match hit {
             Some(a) => {
@@ -216,6 +235,15 @@ pub async fn resolve(
                     pool: p,
                 });
             }
+            None if relative => rep.warn(format!(
+                "DHCPv6 pool {}-{} on {}: no global /{} address on {} yet (waiting for a \
+                 delegated prefix or a static address), skipped",
+                p.range_start,
+                p.range_end,
+                p.interface,
+                p.prefix_len,
+                devs.join(",")
+            )),
             None => rep.warn(format!(
                 "DHCPv6 pool {}-{} on {}: no address in that /{} on {}, skipped",
                 p.range_start,
@@ -285,8 +313,15 @@ pub fn render_kea(pools: &[Resolved6], dns_on: bool) -> String {
 /// dnsmasq lines for one pool (the RA mode decides `slaac`).
 pub fn dnsmasq_lines(r: &Resolved6, with_slaac: bool, dns_on: bool) -> Vec<String> {
     let tag = format!("v6p{}", r.pool.id);
+    // prefix-relative: dnsmasq builds one range per prefix on the device
+    // (delegated + ULA), re-evaluated as the prefix changes
+    let ctor = if r.pool.is_prefix_relative() {
+        format!("constructor:{},", r.dev)
+    } else {
+        String::new()
+    };
     let mut v = vec![format!(
-        "dhcp-range=set:{tag},{},{},{}{},{}",
+        "dhcp-range=set:{tag},{},{},{ctor}{}{},{}",
         r.pool.range_start,
         r.pool.range_end,
         if with_slaac { "slaac," } else { "" },
@@ -324,5 +359,80 @@ mod tests {
         assert!(i.validate().unwrap_err().to_string().contains("Invalid"));
         i.range_end = "nope".into();
         assert!(i.validate().is_err());
+    }
+
+    #[test]
+    fn prefix_relative_ranges() {
+        let mk = |a: &str, b: &str| Dhcp6Input {
+            interface: "@lan".into(),
+            range_start: a.into(),
+            range_end: b.into(),
+            ..Default::default()
+        };
+        let rel = mk("::1000", "::ffff").validate().unwrap();
+        assert!(rel.is_prefix_relative());
+        assert!(!mk("fd00:50::100", "fd00:50::1ff")
+            .validate()
+            .unwrap()
+            .is_prefix_relative());
+        assert!(!mk("2001:db8::100", "2001:db8::1ff")
+            .validate()
+            .unwrap()
+            .is_prefix_relative());
+        // /48 pools: a range using bits inside the prefix is not relative
+        assert!(is_relative(
+            "::1:0:0:1".parse().unwrap(),
+            "::1:0:0:2".parse().unwrap(),
+            64
+        ));
+        assert!(!is_relative(
+            "0:0:0:1::1".parse().unwrap(),
+            "0:0:0:1::2".parse().unwrap(),
+            64
+        ));
+    }
+
+    #[test]
+    fn relative_pool_renders_constructor() {
+        let pool = mk_pool("::1000", "::ffff");
+        let r = Resolved6 {
+            pool,
+            dev: "br-lan".into(),
+            router: "fd00:50::1".parse().unwrap(),
+            subnet: "fd00:50::/64".into(),
+        };
+        let v = dnsmasq_lines(&r, false, false);
+        assert_eq!(
+            v[0],
+            "dhcp-range=set:v6p1,::1000,::ffff,constructor:br-lan,64,3600"
+        );
+        let v = dnsmasq_lines(&r, true, false);
+        assert_eq!(
+            v[0],
+            "dhcp-range=set:v6p1,::1000,::ffff,constructor:br-lan,slaac,64,3600"
+        );
+        // an absolute pool is unchanged
+        let abs = Resolved6 {
+            pool: mk_pool("fd00:50::100", "fd00:50::1ff"),
+            ..r
+        };
+        assert_eq!(
+            dnsmasq_lines(&abs, false, false)[0],
+            "dhcp-range=set:v6p1,fd00:50::100,fd00:50::1ff,64,3600"
+        );
+    }
+
+    fn mk_pool(a: &str, b: &str) -> Dhcp6Pool {
+        Dhcp6Pool {
+            id: 1,
+            interface: "@lan".into(),
+            enabled: true,
+            range_start: a.parse().unwrap(),
+            range_end: b.parse().unwrap(),
+            prefix_len: 64,
+            lease_time: 3600,
+            dns_servers: vec![],
+            description: None,
+        }
     }
 }

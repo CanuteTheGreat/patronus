@@ -1,0 +1,28 @@
+#!/bin/sh
+# Enable + start qemu-guest-agent, but only inside a KVM/QEMU guest that exposes the agent's virtio port
+# (org.qemu.guest_agent.0). Bare metal and other hypervisors: does nothing. Idempotent; OpenRC and systemd.
+# Called at boot by /etc/local.d/60-patronus-qga.start (OpenRC) and patronus-qga.service (systemd).
+# Test hooks: PATRONUS_SYSFS, PATRONUS_DEVDIR, PATRONUS_INIT=openrc|systemd, PATRONUS_DRYRUN=1 (print instead of run).
+SYS=${PATRONUS_SYSFS:-/sys}
+DEV=${PATRONUS_DEVDIR:-/dev}
+PORT=org.qemu.guest_agent.0
+found=no
+[ -e "$DEV/virtio-ports/$PORT" ] && found=yes
+for n in "$SYS"/class/virtio-ports/*/name; do
+	[ -r "$n" ] || continue
+	[ "$(cat "$n")" = "$PORT" ] && found=yes
+done
+[ "$found" = yes ] || exit 0
+init=${PATRONUS_INIT:-}
+if [ -z "$init" ]; then
+	if [ -d /run/systemd/system ]; then init=systemd; else init=openrc; fi
+fi
+run() { if [ -n "$PATRONUS_DRYRUN" ]; then echo "$*"; else "$@"; fi; }
+case "$init" in
+systemd)
+	run systemctl enable --now qemu-guest-agent.service ;;
+*)
+	run rc-update add qemu-guest-agent default
+	run rc-service qemu-guest-agent start ;;
+esac
+exit 0
