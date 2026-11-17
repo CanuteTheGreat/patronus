@@ -270,6 +270,7 @@ R "$P" --db "$DB" config import /t/cg-with.yaml --dry-run >"$NL_OUT" 2>&1 || { c
 grep -q 'cg-svc-block' "$NL_OUT" || { cat "$NL_OUT"; nl_fail "dry run did not show the diff"; }
 nl_assert_nft_lacks cg-svc-block
 nl_ok "import --dry-run shows the diff against live and changes nothing"
+R "$P" --db "$DB" config export --declarative -o /t/cg-pre.yaml 2>/dev/null
 CG_LR0=$(cg_last_revert)
 R "$P" --db "$DB" config import /t/cg-with.yaml --confirm-in 1 >"$NL_OUT" 2>&1 || { cat "$NL_OUT"; nl_fail "import --confirm-in"; }
 nl_assert_nft_has cg-svc-block
@@ -281,7 +282,7 @@ nl_wait 60 cg_reverted || nl_fail "the import was not reverted"
 nl_assert_nft_lacks cg-svc-block
 nl_expect_tcp "imported on trial, not confirmed: router :2222 open again" C $NL_RTR_LAN 2222
 R "$P" --db "$DB" config export --declarative -o /t/cg3.yaml 2>/dev/null
-cmp /t/cg1.yaml /t/cg3.yaml || nl_fail "after import -> revert the exported file differs from the one before"
+cmp /t/cg-pre.yaml /t/cg3.yaml || { diff /t/cg-pre.yaml /t/cg3.yaml | head -20; nl_fail "after import -> revert the exported file differs from the one before"; }
 nl_ok "import --confirm-in applied the file as a generation and the timer reverted it; the export is the same file as before"
 # a file without the anti-lockout rule: the rule is kept
 python3 - <<'PY'
