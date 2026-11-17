@@ -580,3 +580,38 @@ calibration from the ART partition, hostapd on both radios with two SSIDs each, 
 the U-Boot recovery and stock-UI installs of a Patronus image, RAM and boot time on the IPQ6018 beyond the first unit, and
 the early-boot upgrade installer end to end (its UBI write step is proven on nandsim; the first real run is the
 `patronus-flash sysupgrade` from the fixed image).
+
+### 12.8 Signing in from a browser that used the old firmware's web page (2026-11-16)
+
+A router that replaces another firmware keeps its address, so the browser of whoever administered it still holds that
+firmware's state for the address: GL.iNet 4.x sets an `Admin-Token` cookie at `Path=/`, LuCI a `sysauth_https` cookie
+under `/cgi-bin/luci/`, and either may have left cached pages. Found on a real unit migrated from GL.iNet stock: in the
+browser that had used the GL.iNet page, every sign-in was accepted by the router (the audit log shows a successful
+`login` each time), the session cookie was stored, and the browser was sent straight back to the login page; a private
+window, or clearing the cookies for the address, worked at once.
+
+Cause: over HTTP/2 a browser sends each cookie as its own `cookie` header field (RFC 9113 8.2.3). patronus-web read only
+the first field, which held the old firmware's cookie, so the session cookie in the second field was never seen and every
+page answered `303 /login`. With only the session cookie stored (fresh profile, private window) there was one field and
+it worked. Reproduced with Firefox and Chromium and with curl (`-H 'cookie: a=b' -H 'cookie: session_id=...'` -> 401).
+
+Since then:
+- every `cookie` field is read, a cookie with non-ASCII bytes is skipped on its own instead of hiding the rest, and a
+  stale duplicate session cookie in front of the current one is passed over;
+- the login page deletes (at `Path=/`) every cookie Patronus does not set and sends `Clear-Site-Data: "cache"` (no
+  stale cached page for `/`); its script removes service workers and Cache Storage (Patronus uses neither). The session
+  cookie and the theme choice in local storage are left alone. A successful sign-in deletes foreign cookies too;
+- after the password is accepted the login page checks that the browser sends the session back before leaving, and
+  otherwise says so (clear the site data for the address) instead of bouncing silently;
+- refusals say what they are: "Too many failed sign-in attempts for this account; try again in 1 minute." (per-name
+  back-off: 5 failures in 10 minutes pause that name for 60 s, also for the right password and for names that do not
+  exist) and "... from this address; try again in N minutes." (per-address lockout: 5 failures, 15 minutes), never
+  "Invalid username or password";
+- every sign-in, failure (with its reason) and refusal is written to the web log (`/var/log/web.log` on the router,
+  tracing target `patronus::audit`, logged whatever `RUST_LOG` says) as well as the store's audit log.
+
+Fixed in 3c1a84d4 (CI run 18032 green, including the browser test). Proof: `ci/stale-origin-login-e2e.sh` (CI, image as built: Firefox and Chromium over HTTP/2 with the GL.iNet and LuCI
+cookies seeded, sign-in must reach the dashboard and stay signed in, the old cookies must be gone, a lockout must say so
+and be in the web log), unit tests `auth::cookie_tests` and `routes::auth_gate_tests` (split cookie fields, non-ASCII
+neighbour, stale duplicate, foreign-cookie deletion, back-off message). The same script can be pointed at a unit:
+`BASE_URL=https://<unit> E2E_USER=<test account> E2E_PASSWORD=... ci/stale-origin-login-e2e.py firefox,chromium`.
