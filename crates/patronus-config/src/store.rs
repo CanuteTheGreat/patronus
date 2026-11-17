@@ -79,6 +79,10 @@ const KEEP_WHEN_ABSENT: &[&str] = &["web_users"];
 const NON_CONFIG_TABLES: &[&str] = &[
     "schema_migrations",
     "config_revisions",
+    // generations (commit history, boot default, pending commit-confirm):
+    // bookkeeping about the configuration, never part of it
+    "config_generations",
+    "config_generation_state",
     "audit_log",
     "config_backups",
     // device segmentation: logs and counters, not configuration (a revision
@@ -876,7 +880,7 @@ impl ConfigStore {
     // ---------------------------------------------------------------
 
     /// Names of every configuration table (all lanes), sorted.
-    async fn config_tables(&self) -> Result<Vec<String>> {
+    pub(crate) async fn config_tables(&self) -> Result<Vec<String>> {
         let rows = sqlx::query(
             "SELECT name FROM sqlite_master
              WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
@@ -1001,70 +1005,35 @@ impl ConfigStore {
         Ok(())
     }
 
-    /// Record the current configuration as a revision (call before a
-    /// change set). Returns the revision id.
+    /// Start a change set: records the configuration as it is now (a
+    /// generation, unless the newest one already holds exactly this) and
+    /// returns that generation's id. The change that follows becomes the
+    /// next generation, with `summary` as its message, the next time the
+    /// store is sealed (see [`crate::generations`]).
     pub async fn snapshot(&self, user: &str, summary: &str) -> Result<i64> {
-        let doc = self.export_json().await?;
-        let r = sqlx::query(
-            "INSERT INTO config_revisions (created_at, user, summary, config_json)
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(chrono::Utc::now().timestamp())
-        .bind(user)
-        .bind(summary)
-        .bind(doc.to_string())
-        .execute(self.pool()?)
-        .await
-        .map_err(db_err("Failed to record revision"))?;
-        let id = r.last_insert_rowid();
-        sqlx::query("DELETE FROM config_revisions WHERE id <= ?")
-            .bind(id - MAX_REVISIONS)
-            .execute(self.pool()?)
-            .await
-            .map_err(db_err("Failed to prune revisions"))?;
-        Ok(id)
+        self.snapshot_kind(user, summary, "change").await
     }
 
-    /// (id, created_at, user, summary) of every revision, newest first.
+    /// (id, created_at, actor, message) of every generation, newest first.
     pub async fn list_revisions(&self) -> Result<Vec<(i64, i64, String, String)>> {
-        let rows = sqlx::query(
-            "SELECT id, created_at, user, summary FROM config_revisions ORDER BY id DESC",
-        )
-        .fetch_all(self.pool()?)
-        .await
-        .map_err(db_err("Failed to list revisions"))?;
-        Ok(rows
-            .iter()
-            .map(|r| (r.get(0), r.get(1), r.get(2), r.get(3)))
+        Ok(self
+            .generations()
+            .await?
+            .into_iter()
+            .map(|g| (g.id, g.created_at, g.actor, g.message))
             .collect())
     }
 
-    /// The full configuration document stored in revision `id`, `None` when
-    /// there is no such revision (it may have been pruned).
+    /// The full configuration document of generation `id`, `None` when
+    /// there is no such generation (it may have been pruned).
     pub async fn revision_json(&self, id: i64) -> Result<Option<Value>> {
-        let row = sqlx::query("SELECT config_json FROM config_revisions WHERE id = ?")
-            .bind(id)
-            .fetch_optional(self.pool()?)
-            .await
-            .map_err(db_err("Failed to load revision"))?;
-        row.map(|r| serde_json::from_str(&r.get::<String, _>(0)).map_err(Into::into))
-            .transpose()
+        self.generation_json(id).await
     }
 
-    /// Restore the configuration of revision `id` into the store (the
-    /// caller then runs the appliers). The current state is snapshotted
-    /// first, so a restore can itself be undone.
+    /// Put the configuration of generation `id` back into the store (the
+    /// caller then runs the appliers). Recorded as a new generation.
     pub async fn restore_revision(&self, id: i64, user: &str) -> Result<()> {
-        let row = sqlx::query("SELECT config_json FROM config_revisions WHERE id = ?")
-            .bind(id)
-            .fetch_optional(self.pool()?)
-            .await
-            .map_err(db_err("Failed to load revision"))?
-            .ok_or_else(|| Error::Config(format!("Revision {id} not found")))?;
-        let doc: Value = serde_json::from_str(&row.get::<String, _>(0))?;
-        self.snapshot(user, &format!("before restoring revision {id}"))
-            .await?;
-        self.import_json(&doc).await
+        self.restore_generation(id, user).await.map(|_| ())
     }
 
     /// Create a configuration backup (full export) in `config_backups`.
@@ -1564,12 +1533,17 @@ mod tests {
         let s = ConfigStore::open_in_memory().await.unwrap();
         let mut last = 0;
         for i in 0..(MAX_REVISIONS + 5) {
+            // every change set that changes something is one generation
             last = s.snapshot("t", &format!("r{i}")).await.unwrap();
+            s.save_system_config("test.counter", &i.to_string())
+                .await
+                .unwrap();
         }
         let revs = s.list_revisions().await.unwrap();
         assert_eq!(revs.len() as i64, MAX_REVISIONS);
-        assert_eq!(revs[0].0, last);
-        assert_eq!(revs.last().unwrap().0, last - MAX_REVISIONS + 1);
+        assert_eq!(revs[0].3, format!("r{}", MAX_REVISIONS + 4));
+        assert!(revs[0].0 > last);
+        assert!(revs.windows(2).all(|w| w[0].0 > w[1].0));
     }
 
     #[tokio::test]
@@ -1637,8 +1611,10 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["before".to_string()]);
         assert_eq!(s.load_sysctls().await.unwrap()[0].1, "1");
-        // restore snapshotted the pre-restore state too
-        assert_eq!(s.list_revisions().await.unwrap().len(), 2);
+        // the change was never sealed as a generation, so undoing it leaves
+        // exactly the baseline (a rollback to an older generation is its own
+        // generation: see generations.rs)
+        assert_eq!(s.list_revisions().await.unwrap().len(), 1);
     }
 
     #[test]

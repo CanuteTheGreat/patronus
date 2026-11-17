@@ -1583,10 +1583,10 @@ mod tests {
             .map(|(_, _, _, s)| s)
             .collect();
         for want in [
-            "before create firewall rule",
-            "before update firewall rule",
-            "before create NAT rule",
-            "before delete NAT rule",
+            "create firewall rule",
+            "update firewall rule",
+            "create NAT rule",
+            "delete NAT rule",
         ] {
             assert!(
                 summaries.iter().any(|s| s.starts_with(want)),

@@ -602,27 +602,85 @@ enum IpdbCommands {
 
 #[derive(Subcommand)]
 enum ConfigCommands {
-    /// List stored configuration revisions (newest first)
-    Revisions,
-    /// Restore a revision and apply it
-    Rollback {
-        /// Revision id (see `patronus config revisions`)
-        id: i64,
+    /// List configuration generations (newest first): every applied change
+    /// set, with time, actor, message and the live / boot / pinned markers
+    #[command(alias = "revisions")]
+    Generations {
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
     },
-    /// Write the whole configuration as JSON (a backup)
+    /// Show one generation (metadata and the declarative file)
+    Show {
+        /// Generation id (see `patronus config generations`)
+        id: i64,
+        /// Print the raw JSON document instead
+        #[arg(long)]
+        json: bool,
+        /// Include secrets (VPN keys, PSKs, password hashes)
+        #[arg(long)]
+        include_secrets: bool,
+    },
+    /// Diff two generations (ids or `live`): per table / row / field, plus a
+    /// unified text diff. One argument compares it with live; none compares
+    /// live with the generation before it. Secrets show as (changed).
+    Diff {
+        from: Option<String>,
+        to: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Restore a generation and apply it (itself a new generation)
+    Rollback {
+        /// Generation id (see `patronus config generations`)
+        id: i64,
+        /// Apply on trial: revert automatically after N minutes unless
+        /// `patronus config confirm` runs (needs `patronus applyd`)
+        #[arg(long, value_name = "MINUTES")]
+        confirm_in: Option<i64>,
+    },
+    /// Pin a generation: retention never removes it
+    Pin {
+        id: i64,
+        #[arg(long)]
+        unpin: bool,
+    },
+    /// Keep the change that was applied with --confirm-in
+    Confirm,
+    /// Go back to the generation before a change applied with --confirm-in,
+    /// now instead of at the deadline
+    RevertNow,
+    /// Show the change waiting for confirmation, with the time left
+    Pending,
+    /// Write the whole configuration (a backup; `--declarative` for the
+    /// human-readable, diff-friendly YAML file)
     Export {
         /// Output file (mode 0600) [default: stdout]
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// One stable-ordered YAML file with a version header
+        #[arg(long)]
+        declarative: bool,
+        /// Put secrets in the file too (with --declarative; the JSON backup
+        /// always has them)
+        #[arg(long, requires = "declarative")]
+        include_secrets: bool,
     },
-    /// Replace the configuration with an export and apply it; reverted if
-    /// it does not apply
+    /// Replace the configuration with a declarative file or JSON backup,
+    /// after validating it and showing the diff against live; reverted if
+    /// it does not apply. A new generation.
     Import {
-        /// File written by `patronus config export`
+        /// File written by `patronus config export` (YAML or JSON)
         file: PathBuf,
         /// Only write the store; apply at the next `patronus apply`/boot
         #[arg(long)]
         no_apply: bool,
+        /// Validate and print the diff, change nothing
+        #[arg(long)]
+        dry_run: bool,
+        /// Apply on trial: revert after N minutes unless `config confirm`
+        #[arg(long, value_name = "MINUTES")]
+        confirm_in: Option<i64>,
     },
 }
 
@@ -818,37 +876,60 @@ async fn main() -> anyhow::Result<()> {
             applyd::run(cli.db, socket, group).await?;
         }
 
-        Commands::Config { action } => match action {
-            ConfigCommands::Revisions => apply::list_revisions(cli.db.as_deref()).await?,
-            ConfigCommands::Rollback { id } => {
-                apply::rollback(
+        Commands::Config { action } => {
+            let plain = |db: Option<PathBuf>| apply::ApplyOptions {
+                db,
+                bootstrap: None,
+                phases: None,
+                dry_run: false,
+            };
+            match action {
+                ConfigCommands::Generations { json } => {
+                    commands::generations::list(cli.db.as_deref(), json).await?
+                }
+                ConfigCommands::Show {
                     id,
-                    apply::ApplyOptions {
-                        db: cli.db,
-                        bootstrap: None,
-                        phases: None,
-                        dry_run: false,
-                    },
-                )
-                .await?
+                    json,
+                    include_secrets,
+                } => commands::generations::show(cli.db.as_deref(), id, json, include_secrets).await?,
+                ConfigCommands::Diff { from, to, json } => {
+                    commands::generations::diff(cli.db.as_deref(), from, to, json).await?
+                }
+                ConfigCommands::Rollback { id, confirm_in } => {
+                    apply::rollback(id, plain(cli.db), confirm_in).await?
+                }
+                ConfigCommands::Pin { id, unpin } => {
+                    commands::generations::pin(cli.db.as_deref(), id, unpin).await?
+                }
+                ConfigCommands::Confirm => commands::generations::confirm(cli.db.as_deref()).await?,
+                ConfigCommands::RevertNow => {
+                    commands::generations::revert_now(cli.db.as_deref()).await?
+                }
+                ConfigCommands::Pending => commands::generations::pending(cli.db.as_deref()).await?,
+                ConfigCommands::Export {
+                    output,
+                    declarative,
+                    include_secrets,
+                } => {
+                    if declarative {
+                        commands::generations::export_declarative(
+                            cli.db.as_deref(),
+                            output.as_deref(),
+                            include_secrets,
+                        )
+                        .await?
+                    } else {
+                        apply::export(cli.db.as_deref(), output.as_deref()).await?
+                    }
+                }
+                ConfigCommands::Import {
+                    file,
+                    no_apply,
+                    dry_run,
+                    confirm_in,
+                } => apply::import(&file, !no_apply, dry_run, confirm_in, plain(cli.db)).await?,
             }
-            ConfigCommands::Export { output } => {
-                apply::export(cli.db.as_deref(), output.as_deref()).await?
-            }
-            ConfigCommands::Import { file, no_apply } => {
-                apply::import(
-                    &file,
-                    !no_apply,
-                    apply::ApplyOptions {
-                        db: cli.db,
-                        bootstrap: None,
-                        phases: None,
-                        dry_run: false,
-                    },
-                )
-                .await?
-            }
-        },
+        }
 
         #[cfg(feature = "plugins")]
         Commands::Plugin { action } => match action {

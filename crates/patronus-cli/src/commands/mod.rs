@@ -11,6 +11,7 @@ pub mod deploy;
 pub mod edge;
 pub mod firewall;
 pub mod firstboot;
+pub mod generations;
 #[cfg(feature = "gitops")]
 pub mod gitops;
 #[cfg(feature = "guest")]

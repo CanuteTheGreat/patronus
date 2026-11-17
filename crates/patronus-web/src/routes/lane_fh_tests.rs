@@ -87,6 +87,10 @@ async fn state_at(dir: &std::path::Path) -> crate::AppState {
 }
 
 async fn setup() -> T {
+    setup_wd(true).await
+}
+
+async fn setup_wd(watchdog: bool) -> T {
     let dir = std::env::temp_dir().join(format!("patronus-web-fh-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("pw"), format!("{ADMIN_PW}\n")).unwrap();
@@ -102,6 +106,7 @@ async fn setup() -> T {
     let restore_fake = Fake::new("firewall", Phase::Firewall);
     state.system = Arc::new(
         crate::state::SystemManager::new(dir.join("backups"))
+            .with_watchdog(watchdog)
             .with_appliers(vec![restore_fake.clone(), wg.clone()]),
     );
     let app = super::build_router(state.clone(), Arc::new(crate::WsBroadcaster::new()));
@@ -128,6 +133,36 @@ impl T {
         }
         if body.is_some() {
             b = b.header(header::CONTENT_TYPE, "application/json");
+        }
+        let r = self
+            .app
+            .clone()
+            .oneshot(
+                b.body(body.map(Body::from).unwrap_or_else(Body::empty))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let (s, h) = (r.status(), r.headers().clone());
+        let bytes = axum::body::to_bytes(r.into_body(), 16 << 20).await.unwrap();
+        (s, String::from_utf8_lossy(&bytes).into_owned(), h)
+    }
+
+    /// Like `raw` with extra request headers and a text body.
+    async fn rawh(
+        &self,
+        m: Method,
+        uri: &str,
+        cookie: &str,
+        body: Option<String>,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, String, axum::http::HeaderMap) {
+        let mut b = Request::builder()
+            .method(m)
+            .uri(uri)
+            .header(header::COOKIE, cookie);
+        for (k, v) in headers {
+            b = b.header(*k, *v);
         }
         let r = self
             .app
@@ -868,7 +903,7 @@ async fn configuration_history_lists_revisions_and_restores_one() {
     assert_eq!(s, StatusCode::OK, "{list}");
     let rows = list.as_array().unwrap();
     assert!(rows.len() >= 2);
-    assert_eq!(rows[0]["summary"], "marker is two", "newest first");
+    assert_eq!(rows[0]["summary"], "marker is one", "newest first: the change that produced the live state");
     assert!(rows[0]["when"].as_str().unwrap().ends_with("UTC"));
     assert!(rows.iter().any(|r| r["id"] == first));
 
@@ -893,7 +928,7 @@ async fn configuration_history_lists_revisions_and_restores_one() {
     let revs = t.state.config_store.list_revisions().await.unwrap();
     assert!(revs
         .iter()
-        .any(|r| r.3.contains(&format!("before restore of revision {first}"))));
+        .any(|r| r.3.contains(&format!("rollback to generation {first}"))));
 
     // a subsystem refusing it: undone, 409, store unchanged
     t.state
@@ -974,7 +1009,7 @@ async fn backups_restore_from_the_list_and_from_an_upload() {
     let revs = t.state.config_store.list_revisions().await.unwrap();
     assert!(revs
         .iter()
-        .any(|r| r.3.contains(&format!("before restore of {name}"))));
+        .any(|r| r.3.contains(&format!("import of {name}"))));
 
     // a subsystem refusing the restored config: undone, 409
     t.state
@@ -2302,4 +2337,527 @@ async fn groups_grant_per_area_privileges_that_the_gate_enforces() {
     assert_eq!(s, StatusCode::OK);
     let (s, _) = t.call(&nc, Method::GET, "/api/vpn/wireguard", None).await;
     assert_ne!(s, StatusCode::FORBIDDEN, "back to the operator role");
+}
+
+
+// ---------------------------------------------------------------------------
+// config generations: list / diff / rollback / pin, commit-confirmed, the
+// declarative file
+// ---------------------------------------------------------------------------
+
+const RULE: &str = r#"{"name":"gen-block","chain":"forward","action":"drop","interface":"@lan","protocol":"tcp","source":"any","destination":"198.51.100.20","port":"80","description":"gen-block","enabled":true}"#;
+
+async fn rule_names(t: &T) -> Vec<String> {
+    t.state
+        .config_store
+        .load_firewall_rules()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.name)
+        .collect()
+}
+
+#[tokio::test]
+async fn generations_list_show_diff_and_pin_without_leaking_secrets() {
+    let t = setup().await;
+    let c = t.admin().await;
+    let store = &t.state.config_store;
+    store.snapshot("alice", "before first").await.unwrap();
+    store.save_system_config("test.marker", "one").await.unwrap();
+    store
+        .save_system_config("smtp.password", "hunter2-OLD")
+        .await
+        .unwrap();
+    store.snapshot("bob", "before second").await.unwrap();
+    store.save_system_config("test.marker", "two").await.unwrap();
+    store
+        .save_system_config("smtp.password", "hunter2-NEW")
+        .await
+        .unwrap();
+
+    let (s, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    assert_eq!(s, StatusCode::OK, "{list}");
+    let g = list["generations"].as_array().unwrap();
+    assert!(g.len() >= 3, "{list}");
+    assert_eq!(g[0]["message"], "second");
+    assert_eq!(g[0]["actor"], "bob");
+    assert_eq!(g[0]["live"], true);
+    assert_eq!(g[0]["boot"], true);
+    assert_eq!(g[1]["message"], "first");
+    assert_eq!(g[1]["actor"], "alice");
+    assert_eq!(g[0]["hash"].as_str().unwrap().len(), 64);
+    assert!(g[0]["when"].as_str().unwrap().ends_with("UTC"));
+    assert_eq!(list["pending"], Value::Null);
+    assert_eq!(list["watchdog"], true);
+    let (first, second) = (g[1]["id"].as_i64().unwrap(), g[0]["id"].as_i64().unwrap());
+
+    // diff between two generations: structured + unified text, secrets masked
+    let (s, raw, _) = t
+        .raw(
+            Method::GET,
+            &format!("/api/system/generations/diff?from={first}&to={second}"),
+            Some(&c),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{raw}");
+    for leak in ["hunter2-OLD", "hunter2-NEW"] {
+        assert!(!raw.contains(leak), "secret leaked in the diff: {raw}");
+    }
+    let d: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(d["diff"]["identical"], false);
+    assert!(raw.contains("(changed)"), "{raw}");
+    let tables = d["diff"]["tables"].as_array().unwrap();
+    let sc = tables.iter().find(|t| t["table"] == "system_config").unwrap();
+    let fields = serde_json::to_string(&sc["changed"]).unwrap();
+    assert!(fields.contains("\"two\""), "{fields}");
+    assert!(d["text"].as_str().unwrap().contains("@@"));
+    assert!(!d["text"].as_str().unwrap().contains("hunter2"));
+
+    // vs live: the live generation against itself is identical
+    let (s, d) = t
+        .call(
+            &c,
+            Method::GET,
+            &format!("/api/system/generations/diff?from={second}&to=live"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(d["diff"]["identical"], true);
+    // default: the generation before live against live
+    let (s, d) = t
+        .call(&c, Method::GET, "/api/system/generations/diff", None)
+        .await;
+    assert_eq!(s, StatusCode::OK, "{d}");
+    assert_eq!(d["diff"]["identical"], false);
+    let (s, _) = t
+        .call(&c, Method::GET, "/api/system/generations/diff?from=999999&to=live", None)
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = t
+        .call(&c, Method::GET, "/api/system/generations/diff?from=abc&to=live", None)
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    // show: the declarative file of one generation, no secret values
+    let (s, raw, _) = t
+        .raw(
+            Method::GET,
+            &format!("/api/system/generations/{first}"),
+            Some(&c),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(raw.contains("patronus_config_version"));
+    assert!(!raw.contains("hunter2"));
+    let (s, _) = t
+        .call(&c, Method::GET, "/api/system/generations/999999", None)
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // pin
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            &format!("/api/system/generations/{first}/pin"),
+            Some(json!({"pinned": true})),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let (_, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    let row = list["generations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == first)
+        .unwrap();
+    assert_eq!(row["pinned"], true);
+
+    // the page renders with the table and the countdown hooks
+    let (s, page, _) = t.raw(Method::GET, "/generations", Some(&c), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(page.contains("id=\"gen-table\"") && page.contains("Config generations"));
+    assert!(page.contains("id=\"pending-banner\""), "the banner is on every page");
+    let (_, other, _) = t.raw(Method::GET, "/system", Some(&c), None).await;
+    assert!(other.contains("id=\"pending-banner\""));
+}
+
+#[tokio::test]
+async fn rollback_through_the_api_applies_and_is_a_new_generation() {
+    let t = setup().await;
+    let c = t.admin().await;
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/firewall/rules",
+            Some(serde_json::from_str(RULE).unwrap()),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    assert!(rule_names(&t).await.contains(&"gen-block".to_string()));
+    let (_, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    let g = list["generations"].as_array().unwrap();
+    assert_eq!(g[0]["actor"], "admin");
+    assert!(g[0]["message"].as_str().unwrap().contains("create firewall rule"));
+    // the generation before it has no such rule
+    let before = g[1]["id"].as_i64().unwrap();
+    let live = g[0]["id"].as_i64().unwrap();
+    let applies = t.restore_fake.applies.load(Ordering::SeqCst);
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            &format!("/api/system/generations/{before}/rollback"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(t.restore_fake.applies.load(Ordering::SeqCst) > applies);
+    assert!(!rule_names(&t).await.contains(&"gen-block".to_string()));
+    let (_, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    let g = list["generations"].as_array().unwrap();
+    assert!(g[0]["id"].as_i64().unwrap() > live, "a new generation");
+    assert_eq!(g[0]["kind"], "rollback");
+    assert_eq!(g[0]["actor"], "admin");
+    assert_eq!(g[0]["message"], format!("rollback to generation {before}"));
+    // and rolling forward again brings the rule back
+    let (s, _) = t
+        .call(
+            &c,
+            Method::POST,
+            &format!("/api/system/generations/{live}/rollback"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(rule_names(&t).await.contains(&"gen-block".to_string()));
+    // a refusing subsystem: undone, 409, and nothing recorded
+    t.restore_fake.fail.store(true, Ordering::SeqCst);
+    let n = t
+        .state
+        .config_store
+        .generations()
+        .await
+        .unwrap()
+        .len();
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            &format!("/api/system/generations/{before}/rollback"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::CONFLICT, "{b}");
+    t.restore_fake.fail.store(false, Ordering::SeqCst);
+    assert!(rule_names(&t).await.contains(&"gen-block".to_string()));
+    assert_eq!(t.state.config_store.generations().await.unwrap().len(), n);
+    let (s, _) = t
+        .call(&c, Method::POST, "/api/system/generations/999999/rollback", None)
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn commit_confirm_arms_confirms_and_reverts_independently_of_the_session() {
+    let t = setup().await;
+    let c = t.admin().await;
+    let post = |hdrs: Vec<(&'static str, &'static str)>| {
+        let (t, c) = (&t, c.clone());
+        async move {
+            t.rawh(
+                Method::POST,
+                "/api/firewall/rules",
+                &c,
+                Some(RULE.to_string()),
+                &hdrs,
+            )
+            .await
+        }
+    };
+    // bad values change nothing
+    for bad in ["0", "9999", "abc", "-5"] {
+        let (s, b, _) = post(vec![("x-confirm-in", bad), ("content-type", "application/json")]).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{bad}: {b}");
+    }
+    assert!(!rule_names(&t).await.contains(&"gen-block".to_string()));
+
+    // armed: the change applies, the previous generation and deadline are stored
+    let (s, b, h) = post(vec![
+        ("x-confirm-in", "5"),
+        ("x-commit-message", "open%20a%20risky%20rule"),
+        ("content-type", "application/json"),
+    ])
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    assert!(h.get("x-pending-deadline").is_some(), "{h:?}");
+    let (_, p) = t
+        .call(&c, Method::GET, "/api/system/generations/pending", None)
+        .await;
+    let pend = &p["pending"];
+    assert!(pend["seconds_left"].as_i64().unwrap() > 290, "{p}");
+    assert_eq!(pend["actor"], "admin");
+    assert!(rule_names(&t).await.contains(&"gen-block".to_string()));
+    let (_, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    let g = list["generations"].as_array().unwrap();
+    assert_eq!(g[0]["message"], "open a risky rule", "the commit message is kept");
+    assert_eq!(list["pending"]["previous"], pend["previous"]);
+    // the boot default is still the previous generation while pending
+    let boot = g.iter().find(|r| r["boot"] == true).unwrap();
+    assert_eq!(boot["id"], pend["previous"]);
+
+    // survives a restart of the web process: a fresh state over the same store file
+    let again = state_at(&t.dir).await;
+    assert_eq!(
+        again.config_store.pending().await.unwrap().unwrap().previous,
+        pend["previous"].as_i64().unwrap()
+    );
+
+    // the independent timer reaches the deadline: previous generation is back, applied
+    let applies = t.restore_fake.applies.load(Ordering::SeqCst);
+    assert!(t.state.system.revert_if_due(&t.state.config_store).await.unwrap().is_none(), "not due yet");
+    t.state.config_store.expire_pending_now().await.unwrap();
+    assert!(t.state.system.revert_if_due(&t.state.config_store).await.unwrap().is_some());
+    assert!(t.restore_fake.applies.load(Ordering::SeqCst) > applies);
+    assert!(!rule_names(&t).await.contains(&"gen-block".to_string()));
+    let (_, p) = t
+        .call(&c, Method::GET, "/api/system/generations/pending", None)
+        .await;
+    assert_eq!(p["pending"], Value::Null);
+    assert_eq!(p["last_revert"]["ok"], true);
+    let (_, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    assert_eq!(list["generations"][0]["kind"], "revert");
+    assert_eq!(list["generations"][0]["actor"], "commit-confirm");
+
+    // armed again and confirmed from ANOTHER admin session: the change stays
+    let (s, _, _) = post(vec![("x-confirm-in", "5"), ("content-type", "application/json")]).await;
+    assert_eq!(s, StatusCode::CREATED);
+    let c2 = t.admin().await;
+    let (s, b) = t
+        .call(&c2, Method::POST, "/api/system/generations/pending/confirm", None)
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(rule_names(&t).await.contains(&"gen-block".to_string()));
+    assert!(t.state.config_store.pending().await.unwrap().is_none());
+    let (_, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    let live = &list["generations"][0];
+    assert_eq!(live["boot"], true, "confirmed: boot default is live");
+    let (s, _) = t
+        .call(&c, Method::POST, "/api/system/generations/pending/confirm", None)
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "nothing left to confirm");
+
+    // "Revert now" puts the previous generation back at once
+    let (s, b) = t
+        .call(
+            &c,
+            Method::DELETE,
+            &format!("/api/firewall/rules/{}", {
+                let r = t.state.config_store.load_firewall_rules().await.unwrap();
+                r.iter().find(|r| r.name == "gen-block").unwrap().id.unwrap()
+            }),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let (s, _, h) = post(vec![("x-confirm-in", "5"), ("content-type", "application/json")]).await;
+    assert_eq!(s, StatusCode::CREATED);
+    assert!(h.get("x-pending-deadline").is_some());
+    let (s, b) = t
+        .call(&c, Method::POST, "/api/system/generations/pending/revert-now", None)
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(!rule_names(&t).await.contains(&"gen-block".to_string()));
+    assert!(t.state.config_store.pending().await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn commit_confirm_is_refused_when_no_timer_can_enforce_it() {
+    let t = setup_wd(false).await;
+    let c = t.admin().await;
+    let (s, b, _) = t
+        .rawh(
+            Method::POST,
+            "/api/firewall/rules",
+            &c,
+            Some(RULE.to_string()),
+            &[("x-confirm-in", "5"), ("content-type", "application/json")],
+        )
+        .await;
+    assert_eq!(s, StatusCode::CONFLICT, "{b}");
+    assert!(b.contains("applyd"));
+    assert!(!rule_names(&t).await.contains(&"gen-block".to_string()), "nothing changed");
+    // without the header the same change works
+    let (s, _) = t
+        .call(&c, Method::POST, "/api/firewall/rules", Some(serde_json::from_str(RULE).unwrap()))
+        .await;
+    assert_eq!(s, StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn a_change_that_changes_nothing_arms_nothing_and_failures_do_not_arm() {
+    let t = setup().await;
+    let c = t.admin().await;
+    // an invalid rule: 400, no pending, no generation
+    let n = t.state.config_store.generations().await.unwrap().len();
+    let (s, _, h) = t
+        .rawh(
+            Method::POST,
+            "/api/firewall/rules",
+            &c,
+            Some(r#"{"name":""}"#.to_string()),
+            &[("x-confirm-in", "5"), ("content-type", "application/json")],
+        )
+        .await;
+    assert!(s.is_client_error(), "{s}");
+    assert!(h.get("x-pending-deadline").is_none());
+    assert!(t.state.config_store.pending().await.unwrap().is_none());
+    assert!(
+        t.state.config_store.generations().await.unwrap().len() <= n.max(1),
+        "a refused change leaves no generation (at most the baseline)"
+    );
+}
+
+#[tokio::test]
+async fn the_declarative_file_exports_without_secrets_and_imports_as_a_generation() {
+    let t = setup().await;
+    let c = t.admin().await;
+    let store = &t.state.config_store;
+    store
+        .save_system_config("smtp.password", "hunter2-SECRET")
+        .await
+        .unwrap();
+    store.save_system_config("test.marker", "one").await.unwrap();
+
+    let (s, y1, h) = t
+        .raw(Method::GET, "/api/system/config/export?format=yaml", Some(&c), None)
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(h
+        .get(header::CONTENT_DISPOSITION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .contains(".yaml"));
+    assert!(y1.contains("patronus_config_version: 1") && y1.contains("secrets: excluded"));
+    assert!(!y1.contains("hunter2-SECRET"));
+    let (_, withsec, _) = t
+        .raw(
+            Method::GET,
+            "/api/system/config/export?format=yaml&include_secrets=true",
+            Some(&c),
+            None,
+        )
+        .await;
+    assert!(withsec.contains("hunter2-SECRET") && withsec.contains("secrets: included"));
+    let (s, j, _) = t
+        .raw(Method::GET, "/api/system/config/export?format=json", Some(&c), None)
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(j.contains("\"tables\""));
+    let (s, _, _) = t
+        .raw(Method::GET, "/api/system/config/export?format=toml", Some(&c), None)
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    // fixed point: importing the export changes nothing and exports the same file
+    let (s, b, _) = t
+        .rawh(Method::POST, "/api/system/config/import", &c, Some(y1.clone()), &[])
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(b.contains("\"unchanged\":true"), "{b}");
+    let (_, y2, _) = t
+        .raw(Method::GET, "/api/system/config/export?format=yaml", Some(&c), None)
+        .await;
+    assert_eq!(y1, y2);
+    assert_eq!(
+        store.load_system_config("smtp.password").await.unwrap().as_deref(),
+        Some("hunter2-SECRET"),
+        "the excluded secret was kept"
+    );
+
+    // edit the file: dry run shows the diff and changes nothing
+    let edited = y1.replace("one", "two-edited");
+    let (s, b, _) = t
+        .rawh(
+            Method::POST,
+            "/api/system/config/import?dry_run=true",
+            &c,
+            Some(edited.clone()),
+            &[],
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let d: Value = serde_json::from_str(&b).unwrap();
+    assert_eq!(d["dry_run"], true);
+    assert_eq!(d["preview"]["identical"], false);
+    assert!(d["preview"]["text"].as_str().unwrap().contains("two-edited"));
+    assert!(!b.contains("hunter2-SECRET"));
+    assert_eq!(
+        store.load_system_config("test.marker").await.unwrap().as_deref(),
+        Some("one")
+    );
+
+    // apply it: a new generation of kind import, applied, with the user's message
+    let applies = t.restore_fake.applies.load(Ordering::SeqCst);
+    let (s, b, _) = t
+        .rawh(
+            Method::POST,
+            "/api/system/config/import",
+            &c,
+            Some(edited),
+            &[("x-commit-message", "from%20git")],
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(t.restore_fake.applies.load(Ordering::SeqCst) > applies);
+    assert_eq!(
+        store.load_system_config("test.marker").await.unwrap().as_deref(),
+        Some("two-edited")
+    );
+    let (_, list) = t.call(&c, Method::GET, "/api/system/generations", None).await;
+    let live = &list["generations"][0];
+    assert_eq!(live["kind"], "import");
+    assert_eq!(live["message"], "from git");
+    assert_eq!(live["actor"], "admin");
+
+    // bad files: 400 with a reason, nothing changes
+    for (body, want) in [
+        ("not: [valid", "Invalid"),
+        ("patronus_config_version: 1\ntables:\n  no_such_table:\n    - id: 1\n", "unknown table"),
+        ("patronus_config_version: 7\ntables: {}\n", "version 7"),
+    ] {
+        let (s, b, _) = t
+            .rawh(Method::POST, "/api/system/config/import", &c, Some(body.to_string()), &[])
+            .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{body}: {b}");
+        assert!(b.contains(want), "{b}");
+    }
+    // the JSON backup still imports
+    let (s, b, _) = t
+        .rawh(Method::POST, "/api/system/config/import?dry_run=true", &c, Some(j), &[])
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+}
+
+#[tokio::test]
+async fn generations_need_a_login_and_changes_need_an_admin() {
+    let t = setup().await;
+    for (m, p) in [
+        (Method::GET, "/api/system/generations"),
+        (Method::GET, "/api/system/generations/pending"),
+        (Method::POST, "/api/system/generations/pending/confirm"),
+        (Method::GET, "/api/system/config/export"),
+        (Method::POST, "/api/system/config/import"),
+    ] {
+        let (s, _, _) = t.raw(m, p, None, None).await;
+        assert_eq!(s, StatusCode::UNAUTHORIZED, "{p}");
+    }
+    let (s, _, _) = t.raw(Method::GET, "/generations", None, None).await;
+    assert_eq!(s, StatusCode::SEE_OTHER);
 }

@@ -1,0 +1,309 @@
+{% extends "base.html" %}
+
+{% block title %}Config generations - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    .gen-badges .badge { margin-right: .25em; }
+    .table-scroll { overflow-x: auto; }
+    .diff-add { color: #1a7f37; }
+    .diff-del { color: #cf222e; }
+    .diff-hunk { color: #6639ba; }
+    .gen-actions { display: flex; flex-wrap: wrap; gap: .35em; }
+    #gen-diff-text { max-height: 32em; overflow: auto; white-space: pre; font-size: .85em; }
+    .gen-msg-input { width: 100%; max-width: 32em; }
+    .diff-table td, .diff-table th { vertical-align: top; }
+    @media (max-width: 900px) { .gen-hide-sm { display: none; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Config generations</h1>
+    <p class="page-subtitle">Every change you apply is a numbered generation with its time, who made it and a message.
+        Compare any two, go back to one (the rollback is a new generation too), and apply risky changes on trial:
+        switch on <em>Auto-revert in N min</em> in the top bar and the router puts the old configuration back by itself
+        unless you confirm, even if you lose access.</p>
+</div>
+
+<div id="gen-error" class="alert-error" style="display:none"></div>
+
+<div class="card" id="gen-pending-card" style="display:none">
+    <div class="card-header"><h2 class="card-title">Change on trial</h2></div>
+    <p id="gen-pending-text"></p>
+</div>
+
+<div class="card" id="gen-list-card">
+    <div class="card-header"><h2 class="card-title">Generations</h2></div>
+    <p class="text-sm" id="gen-note"></p>
+    <div class="gen-actions" style="margin-bottom:.6em">
+        <button class="btn btn-sm" type="button" id="gen-compare">Compare the two selected</button>
+        <span class="text-sm" id="gen-sel-hint">Tick two generations to compare them, or use Diff vs live on a row.</span>
+    </div>
+    <div class="table-scroll">
+    <table class="table" id="gen-table" style="display:none">
+        <thead><tr><th></th><th>#</th><th>Time</th><th class="gen-hide-sm">Who</th><th class="gen-hide-sm">Kind</th><th>Message</th><th></th><th></th></tr></thead>
+        <tbody></tbody>
+    </table>
+    </div>
+    <p id="gen-empty" class="text-sm" style="display:none">No generations yet. The first change you save (a firewall rule, an address, a route) creates generation 1,
+        and the configuration as it was just before it.</p>
+</div>
+
+<div class="card" id="gen-diff-card" style="display:none">
+    <div class="card-header"><h2 class="card-title" id="gen-diff-title">Differences</h2></div>
+    <p class="text-sm">Secrets (VPN keys, pre-shared keys, password hashes) are never shown: a changed one reads <em>(changed)</em>.</p>
+    <p id="gen-diff-summary"></p>
+    <div class="table-scroll"><table class="table diff-table" id="gen-diff-table" style="display:none">
+        <thead><tr><th>Table</th><th>Row</th><th>Change</th></tr></thead><tbody></tbody></table></div>
+    <details style="margin-top:.6em"><summary>Unified text diff of the declarative file</summary>
+        <pre class="mono" id="gen-diff-text"></pre></details>
+</div>
+
+<div class="card" id="gen-file-card">
+    <div class="card-header"><h2 class="card-title">Declarative file: export and import</h2></div>
+    <p class="text-sm">The whole configuration as one readable, stable-ordered YAML file (good for <code>git diff</code>).
+        Secrets are left out unless you ask for them; an import keeps the stored secret of every row it matches.</p>
+    {% if is_admin %}
+    <p class="gen-actions">
+        <a class="btn btn-sm" id="gen-export" href="/api/system/config/export?format=yaml">Download declarative file</a>
+        <label class="text-sm"><input type="checkbox" id="gen-export-secrets"> include secrets (the file then needs protecting)</label>
+        <a class="btn btn-sm" href="/api/system/config/export?format=json">Download JSON backup</a>
+    </p>
+    <form id="gen-import-form" onsubmit="return false" class="lan-form">
+        <label>File (YAML or JSON backup) <input type="file" id="gen-import-file" accept=".yaml,.yml,.json,text/yaml,application/json"></label>
+        <label>Message <input type="text" id="gen-import-msg" class="gen-msg-input" maxlength="200" placeholder="what this import is for"></label>
+        <span class="gen-actions">
+            <button class="btn btn-sm" type="button" id="gen-import-preview">Validate and show the diff</button>
+            <button class="btn btn-primary btn-sm" type="button" id="gen-import-apply" disabled>Apply as a new generation</button>
+        </span>
+    </form>
+    <p class="text-sm" id="gen-import-status"></p>
+    <div id="gen-import-preview-box" style="display:none">
+        <p id="gen-import-summary"></p>
+        <pre class="mono" id="gen-import-text" style="max-height:24em;overflow:auto"></pre>
+    </div>
+    {% else %}
+    <p class="text-sm">Exporting and importing need an administrator account.</p>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+    const isAdmin = {% if is_admin %}true{% else %}false{% endif %};
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+    let gens = [];
+    const selected = new Set();
+
+    function err(m) { const e = $('gen-error'); e.textContent = m; e.style.display = m ? '' : 'none'; }
+    function confirmHeaders(extra) {
+        // fetch() is wrapped by the top bar's switch; nothing to add here
+        return Object.assign({}, extra || {});
+    }
+    async function api(method, path, body, headers) {
+        const init = {method, credentials: 'same-origin', headers: confirmHeaders(headers)};
+        if (body !== undefined) {
+            if (typeof body === 'string') { init.body = body; }
+            else { init.body = JSON.stringify(body); init.headers['Content-Type'] = 'application/json'; }
+        }
+        const r = await fetch(path, init);
+        let d = null;
+        try { d = await r.json(); } catch (e) {}
+        if (!r.ok) throw new Error((d && d.error) || ('HTTP ' + r.status));
+        return d;
+    }
+
+    async function load() {
+        try {
+            const d = await api('GET', '/api/system/generations');
+            gens = d.generations;
+            render(d);
+            err('');
+        } catch (e) { err('Could not read the generations: ' + e.message); }
+    }
+
+    function render(d) {
+        const tb = $('gen-table').querySelector('tbody');
+        tb.innerHTML = '';
+        $('gen-table').style.display = gens.length ? '' : 'none';
+        $('gen-empty').style.display = gens.length ? 'none' : '';
+        const notes = [];
+        if (d.unrecorded_changes && gens.length) notes.push('The live configuration differs from the newest generation: something wrote it outside a change (the next change records it as a baseline).');
+        if (!d.watchdog) notes.push('Auto-revert is unavailable: patronus applyd, which enforces the deadline, is not running here. Changes made with the switch on are refused rather than left without a safety net.');
+        $('gen-note').textContent = notes.join(' ');
+        for (const g of gens) {
+            const tr = document.createElement('tr');
+            const badges = [];
+            if (g.live) badges.push('<span class="badge success">live</span>');
+            if (g.boot) badges.push('<span class="badge info">boot default</span>');
+            if (g.pinned) badges.push('<span class="badge warning">pinned</span>');
+            const acts = [];
+            acts.push('<button class="btn btn-sm" data-act="show" data-id="' + g.id + '">Show</button>');
+            if (!g.live) acts.push('<button class="btn btn-sm" data-act="vs-live" data-id="' + g.id + '">Diff vs live</button>');
+            tr.innerHTML =
+                '<td><input type="checkbox" data-sel="' + g.id + '" aria-label="Select generation ' + g.id + '"' + (selected.has(g.id) ? ' checked' : '') + '></td>' +
+                '<td>' + g.id + '</td><td title="' + esc(g.when) + '">' + esc(g.when.replace(' UTC', '')) + '</td>' +
+                '<td class="gen-hide-sm">' + esc(g.actor) + '</td><td class="gen-hide-sm">' + esc(g.kind) + '</td>' +
+                '<td>' + esc(g.message) + ' <span class="gen-badges">' + badges.join('') + '</span></td>' +
+                '<td><div class="gen-actions">' + acts.join('') + '</div></td>' +
+                '<td>' + (isAdmin ? '<div class="gen-actions">' +
+                    (g.live ? '' : '<button class="btn btn-sm" data-act="rollback" data-id="' + g.id + '">Roll back</button>') +
+                    '<button class="btn btn-sm" data-act="pin" data-id="' + g.id + '" data-pinned="' + (g.pinned ? 1 : 0) + '">' + (g.pinned ? 'Unpin' : 'Pin') + '</button></div>' : '') + '</td>';
+            tb.appendChild(tr);
+        }
+        renderPending(d.pending);
+    }
+
+    function renderPending(p) {
+        $('gen-pending-card').style.display = p ? '' : 'none';
+        if (p) $('gen-pending-text').textContent = 'Generation ' + p.generation + ' is applied on trial (by ' + p.actor + '). It reverts to generation ' + p.previous +
+            ' at the deadline unless confirmed: use Confirm or Revert now in the bar at the top.';
+    }
+
+    function diffRows(d) {
+        const rows = [];
+        for (const t of d.diff.tables) {
+            for (const r of t.added) rows.push([t.table, r.label || r.key, '<span class="diff-add">added</span> ' + esc(JSON.stringify(r.row))]);
+            for (const r of t.removed) rows.push([t.table, r.label || r.key, '<span class="diff-del">removed</span> ' + esc(JSON.stringify(r.row))]);
+            for (const r of t.changed) {
+                const f = r.fields.map(x => x.secret
+                    ? esc(x.field) + ': <em>(changed)</em>'
+                    : esc(x.field) + ': <span class="diff-del">' + esc(JSON.stringify(x.from)) + '</span> → <span class="diff-add">' + esc(JSON.stringify(x.to)) + '</span>').join('<br>');
+                rows.push([t.table, r.label || r.key, f]);
+            }
+        }
+        return rows;
+    }
+
+    function colorize(text) {
+        return text.split('\n').map(l => {
+            const e = esc(l);
+            if (l.startsWith('@@')) return '<span class="diff-hunk">' + e + '</span>';
+            if (l.startsWith('+') && !l.startsWith('+++')) return '<span class="diff-add">' + e + '</span>';
+            if (l.startsWith('-') && !l.startsWith('---')) return '<span class="diff-del">' + e + '</span>';
+            return e;
+        }).join('\n');
+    }
+
+    async function showDiff(from, to) {
+        try {
+            const d = await api('GET', '/api/system/generations/diff?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to));
+            $('gen-diff-card').style.display = '';
+            $('gen-diff-title').textContent = 'Differences: generation ' + from + ' → ' + (to === 'live' ? 'live configuration' : 'generation ' + to);
+            const s = d.diff.summary;
+            $('gen-diff-summary').textContent = d.diff.identical ? 'Identical: nothing differs.' :
+                s.added + ' row(s) added, ' + s.removed + ' removed, ' + s.changed + ' changed in ' + s.tables + ' table(s).';
+            const rows = diffRows(d);
+            const tb = $('gen-diff-table').querySelector('tbody');
+            tb.innerHTML = rows.map(r => '<tr><td>' + esc(r[0]) + '</td><td>' + esc(r[1]) + '</td><td>' + r[2] + '</td></tr>').join('');
+            $('gen-diff-table').style.display = rows.length ? '' : 'none';
+            $('gen-diff-text').innerHTML = colorize(d.text || '(no text differences)');
+            $('gen-diff-card').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+            err('');
+        } catch (e) { err('Diff failed: ' + e.message); }
+    }
+
+    $('gen-table').addEventListener('change', ev => {
+        const id = ev.target.getAttribute('data-sel');
+        if (!id) return;
+        const n = parseInt(id, 10);
+        if (ev.target.checked) selected.add(n); else selected.delete(n);
+        $('gen-sel-hint').textContent = selected.size + ' selected';
+    });
+    $('gen-compare').addEventListener('click', () => {
+        const ids = [...selected].sort((a, b) => a - b);
+        if (ids.length !== 2) { err('Tick exactly two generations to compare.'); return; }
+        showDiff(ids[0], ids[1]);
+    });
+    $('gen-table').addEventListener('click', async ev => {
+        const b = ev.target.closest('button[data-act]');
+        if (!b) return;
+        const id = parseInt(b.getAttribute('data-id'), 10);
+        const act = b.getAttribute('data-act');
+        if (act === 'vs-live') return showDiff(id, 'live');
+        if (act === 'show') {
+            try {
+                const d = await api('GET', '/api/system/generations/' + id);
+                $('gen-diff-card').style.display = '';
+                $('gen-diff-title').textContent = 'Generation ' + id + ': ' + d.generation.message;
+                $('gen-diff-summary').textContent = 'The configuration as it was in this generation (declarative file, secrets left out).';
+                $('gen-diff-table').style.display = 'none';
+                $('gen-diff-text').textContent = d.declarative;
+                $('gen-diff-card').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+            } catch (e) { err(e.message); }
+            return;
+        }
+        if (act === 'pin') {
+            try { await api('POST', '/api/system/generations/' + id + '/pin', {pinned: b.getAttribute('data-pinned') !== '1'}); await load(); }
+            catch (e) { err(e.message); }
+            return;
+        }
+        if (act === 'rollback') {
+            const n = window.patronusConfirmIn && window.patronusConfirmIn();
+            const q = 'Roll back to generation ' + id + '? It is applied to the router now and recorded as a new generation.' +
+                (n ? '\n\nIt is applied on trial: it reverts by itself in ' + n + ' minutes unless you confirm.' : '');
+            if (!confirm(q)) return;
+            try {
+                const d = await api('POST', '/api/system/generations/' + id + '/rollback', undefined);
+                err('');
+                await load();
+                if (window.patronusPollPending) window.patronusPollPending();
+            } catch (e) { err('Rollback failed: ' + e.message); }
+        }
+    });
+
+    if (isAdmin) {
+        $('gen-export-secrets').addEventListener('change', ev => {
+            $('gen-export').href = '/api/system/config/export?format=yaml' + (ev.target.checked ? '&include_secrets=true' : '');
+        });
+        let fileText = null;
+        async function readFile() {
+            const f = $('gen-import-file').files[0];
+            if (!f) { $('gen-import-status').textContent = 'Choose a file first.'; return null; }
+            return await f.text();
+        }
+        $('gen-import-preview').addEventListener('click', async () => {
+            fileText = await readFile();
+            if (fileText === null) return;
+            try {
+                const d = await api('POST', '/api/system/config/import?dry_run=true', fileText, {'Content-Type': 'text/plain'});
+                const p = d.preview;
+                $('gen-import-preview-box').style.display = '';
+                $('gen-import-summary').textContent = p.identical ? 'The file is identical to the live configuration: nothing to import.' :
+                    p.summary.added + ' row(s) added, ' + p.summary.removed + ' removed, ' + p.summary.changed + ' changed in ' + p.summary.tables + ' table(s).';
+                $('gen-import-text').innerHTML = colorize(p.text || '(no differences)');
+                $('gen-import-apply').disabled = p.identical;
+                $('gen-import-status').textContent = p.identical ? '' : 'Valid. Nothing is applied until you press Apply.';
+            } catch (e) {
+                $('gen-import-apply').disabled = true;
+                $('gen-import-status').textContent = 'Not imported: ' + e.message;
+            }
+        });
+        $('gen-import-apply').addEventListener('click', async () => {
+            if (fileText === null) return;
+            const n = window.patronusConfirmIn && window.patronusConfirmIn();
+            if (!confirm('Apply this file to the router now?' + (n ? '\n\nIt is applied on trial: it reverts by itself in ' + n + ' minutes unless you confirm.' : ''))) return;
+            const headers = {'Content-Type': 'text/plain'};
+            const m = $('gen-import-msg').value.trim();
+            if (m) headers['X-Commit-Message'] = encodeURIComponent(m);
+            try {
+                await api('POST', '/api/system/config/import', fileText, headers);
+                $('gen-import-status').textContent = 'Applied as a new generation.';
+                $('gen-import-apply').disabled = true;
+                await load();
+                if (window.patronusPollPending) window.patronusPollPending();
+            } catch (e) { $('gen-import-status').textContent = 'Import failed: ' + e.message; }
+        });
+    }
+
+    document.addEventListener('patronus-generations-changed', load);
+    document.addEventListener('patronus-pending-resolved', load);
+    load();
+    setInterval(load, 15000);
+})();
+</script>
+{% endblock %}

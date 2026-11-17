@@ -19,7 +19,7 @@ fn error(code: StatusCode, msg: impl Into<String>) -> Response {
     (code, Json(json!({ "error": msg.into() }))).into_response()
 }
 
-fn err(e: anyhow::Error) -> Response {
+pub(super) fn err(e: anyhow::Error) -> Response {
     let msg = e.to_string();
     let code = if msg.starts_with("Invalid") || msg.contains(": Invalid") {
         StatusCode::BAD_REQUEST
@@ -262,7 +262,7 @@ pub async fn delete_backup(
 /// restore an older backup) or one it has disabled, demoted or with
 /// another password kept working until the session expired. The caller
 /// keeps theirs only if their id is still the same enabled admin.
-async fn end_sessions_after_restore(state: &AppState, admin: &AdminUser, doc: &serde_json::Value) {
+pub(super) async fn end_sessions_after_restore(state: &AppState, admin: &AdminUser, doc: &serde_json::Value) {
     if !crate::state::system::restores_accounts(doc) {
         return;
     }
@@ -287,7 +287,17 @@ pub async fn restore_backup(
         Ok(None) => return error(StatusCode::NOT_FOUND, "no such backup"),
         Err(e) => return err(e),
     };
-    match state.system.restore(&state.config_store, &doc, &name).await {
+    match state
+        .system
+        .restore_as(
+            &state.config_store,
+            &doc,
+            &name,
+            &admin.session.username,
+            "import",
+        )
+        .await
+    {
         Ok(lines) => {
             end_sessions_after_restore(&state, &admin, &doc).await;
             Json(json!({ "ok": true, "restored": name, "applied": lines })).into_response()
@@ -336,7 +346,13 @@ pub async fn restore_history(
     };
     match state
         .system
-        .restore(&state.config_store, &doc, &format!("revision {id}"))
+        .restore_as(
+            &state.config_store,
+            &doc,
+            &format!("generation {id}"),
+            &admin.session.username,
+            "rollback",
+        )
         .await
     {
         Ok(lines) => {
@@ -379,7 +395,13 @@ pub async fn upload_restore(
     };
     match state
         .system
-        .restore(&state.config_store, &doc, &b.name)
+        .restore_as(
+            &state.config_store,
+            &doc,
+            &b.name,
+            &admin.session.username,
+            "import",
+        )
         .await
     {
         Ok(lines) => {

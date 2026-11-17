@@ -88,8 +88,8 @@ nl_api POST "/system/backups/$BK/restore"
 nl_assert_nft_lacks after-backup
 nl_expect_http "after restoring $BK: blocked.example.test reachable again" http://blocked.example.test/ "sees"
 [ -z "$(sqlite3 "$DB" "SELECT 1 FROM web_users WHERE username='temp'")" ] || nl_fail "restore kept the later account"
-sqlite3 "$DB" "SELECT summary FROM config_revisions" | grep "before restore of $BK" >/dev/null || nl_fail "no revision before the restore"
-nl_ok "stored backup restored: rule gone from nftables, later account gone, previous config kept as a revision"
+sqlite3 "$DB" "SELECT message FROM config_generations" | grep "import of $BK" >/dev/null || nl_fail "no revision before the restore"
+nl_ok "stored backup restored: rule gone from nftables, later account gone, previous config kept as a generation"
 
 # break it again, then restore by uploading the downloaded file
 nl_api POST /firewall/rules '{"name":"after-backup-2","chain":"forward","action":"drop","interface":"@lan","protocol":"tcp","source":"any","destination":"198.51.100.20","port":"80","description":"after-backup-2","enabled":true}'
@@ -113,7 +113,7 @@ for n in a b; do
 done
 nl_assert_nft_has hist-a
 nl_assert_nft_has hist-b
-REV=$(sqlite3 "$DB" "SELECT id FROM config_revisions WHERE config_json LIKE '%hist-a%' AND config_json NOT LIKE '%hist-b%' ORDER BY id DESC LIMIT 1")
+REV=$(sqlite3 "$DB" "SELECT id FROM config_generations WHERE config_json LIKE '%hist-a%' AND config_json NOT LIKE '%hist-b%' ORDER BY id DESC LIMIT 1")
 [ -n "$REV" ] || nl_fail "no revision holds hist-a without hist-b"
 nl_api GET /system/history
 [ "$NL_CODE" = 200 ] || nl_fail "history list: $NL_CODE"
@@ -124,8 +124,8 @@ nl_api POST "/system/history/$REV/restore"
 [ "$NL_CODE" = 200 ] || nl_fail "restore revision $REV: $NL_CODE $(cat "$NL_OUT")"
 nl_assert_nft_has hist-a
 nl_assert_nft_lacks hist-b
-sqlite3 "$DB" "SELECT summary FROM config_revisions" | grep "before restore of revision $REV" >/dev/null || nl_fail "no revision before the history restore"
-nl_ok "configuration history: revision $REV restored through the web (hist-b gone from nftables, hist-a kept, previous config kept as a revision)"
+sqlite3 "$DB" "SELECT message FROM config_generations" | grep "rollback to generation $REV" >/dev/null || nl_fail "no revision before the history restore"
+nl_ok "configuration history: revision $REV restored through the web (hist-b gone from nftables, hist-a kept, previous config kept as a generation)"
 nl_web_stop
 nl_boot "$DB"
 nl_assert_nft_lacks after-backup

@@ -47,6 +47,7 @@ pub fn build_router(
         .route("/system", get(pages::system))
         .route("/diagnostics", get(pages::diagnostics))
         .merge(api::lan::pages())
+        .merge(api::generations::pages())
         .merge(api::ha::pages())
         .merge(api::qos::pages())
         .merge(api::insights::pages())
@@ -107,6 +108,12 @@ pub fn build_router(
         // pages with an explanation and refuses changes to their APIs (runs
         // after the session check below).
         .layer(axum::middleware::from_fn(api::wifi::ap_role_guard))
+        // Commit message / commit-confirmed for any changing API call
+        // (inside the session gate: only signed-in callers reach it).
+        .layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            api::generations::change_set_layer,
+        ))
         // Every page and API call except the login page/endpoint and static
         // assets requires a valid session (runs after session_middleware,
         // which is the outer layer and provides the SessionStore).
@@ -559,6 +566,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::routing::router())
         .merge(api::interfaces::router())
         .merge(api::system::router())
+        .merge(api::generations::router())
         .merge(api::apikeys::router())
         .merge(api::groups::router())
         .merge(api::backup_targets::router())

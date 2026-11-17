@@ -158,6 +158,27 @@ pub async fn run(opts: ApplyOptions) -> anyhow::Result<()> {
     let reg = registry();
     let phases = opts.phases.clone();
 
+    // A commit-confirmed change whose deadline passed while the box was down
+    // must not come back: put the previous generation in the store first.
+    if !opts.dry_run {
+        match patronus_config::generations::resolve_pending_at_boot(&store).await {
+            Ok(patronus_config::generations::BootPending::Reverted(p)) => println!(
+                "{} the change in generation {} was not confirmed before its deadline: booting generation {} again",
+                "!".yellow(),
+                p.generation,
+                p.previous
+            ),
+            Ok(patronus_config::generations::BootPending::Resumed(p)) => println!(
+                "{} generation {} is still on trial: {}s until it reverts unless confirmed",
+                "•".cyan(),
+                p.generation,
+                p.seconds_left(chrono::Utc::now().timestamp())
+            ),
+            Ok(patronus_config::generations::BootPending::None) => {}
+            Err(e) => println!("{} commit-confirm state: {e}", "!".yellow()),
+        }
+    }
+
     if opts.dry_run {
         // Seed a scratch copy, so a dry run never changes the real store.
         let scratch = ConfigStore::open_in_memory()
@@ -258,36 +279,38 @@ pub fn parse_phases(v: &[String]) -> anyhow::Result<Option<Vec<Phase>>> {
         .map(Some)
 }
 
-/// `patronus config revisions`
+/// `patronus config revisions` (the old name of `config generations`)
 pub async fn list_revisions(db: Option<&Path>) -> anyhow::Result<()> {
-    let store = open_store(db).await?;
-    for (id, at, user, summary) in store
-        .list_revisions()
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?
-    {
-        let when = chrono::DateTime::from_timestamp(at, 0)
-            .map(|t| t.to_rfc3339())
-            .unwrap_or_default();
-        println!("{id:>5}  {when}  {user:<10} {summary}");
-    }
-    Ok(())
+    super::generations::list(db, false).await
 }
 
-/// `patronus config rollback <id>`: restore a revision and apply it.
-pub async fn rollback(id: i64, opts: ApplyOptions) -> anyhow::Result<()> {
+/// `patronus config rollback <id> [--confirm-in N]`: restore a generation
+/// and apply it. The rollback is a new generation itself.
+pub async fn rollback(id: i64, opts: ApplyOptions, confirm_in: Option<i64>) -> anyhow::Result<()> {
+    if confirm_in.is_some() {
+        super::generations::require_watchdog().await?;
+    }
     let store = open_store(opts.db.as_deref()).await?;
     let before = store
         .export_json()
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let prev = store
+        .snapshot_kind("cli", &format!("rollback to generation {id}"), "rollback")
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     store
-        .restore_revision(id, "cli")
+        .restore_generation(id, "cli")
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     store.close().await;
-    println!("{} restored revision {id}; applying", "•".cyan());
-    apply_or_revert(opts, before).await
+    println!("{} restored generation {id}; applying", "•".cyan());
+    let db = opts.db.clone();
+    apply_or_revert(opts, before).await?;
+    let store = open_store(db.as_deref()).await?;
+    super::generations::arm(&store, prev, confirm_in).await?;
+    store.close().await;
+    Ok(())
 }
 
 /// Apply what was just written to the store. If it does not apply, put the
@@ -354,33 +377,64 @@ pub async fn export(db: Option<&Path>, output: Option<&Path>) -> anyhow::Result<
     Ok(())
 }
 
-/// `patronus config import FILE`: replace the configuration with a backup
-/// and apply it (atomically in the store; reverted if it does not apply).
-/// The configuration it replaces is kept as a revision.
-pub async fn import(file: &Path, apply: bool, opts: ApplyOptions) -> anyhow::Result<()> {
+/// `patronus config import FILE [--dry-run] [--confirm-in N]`: replace the
+/// configuration with a declarative file (or a JSON backup), after showing
+/// the diff against the live configuration, and apply it (reverted if it
+/// does not apply). It becomes a new generation; the configuration it
+/// replaces stays one.
+pub async fn import(
+    file: &Path,
+    apply: bool,
+    dry_run: bool,
+    confirm_in: Option<i64>,
+    opts: ApplyOptions,
+) -> anyhow::Result<()> {
     let text =
         std::fs::read_to_string(file).map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
-    let doc: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| anyhow::anyhow!("{} is not a Patronus config export: {e}", file.display()))?;
     let store = open_store(opts.db.as_deref()).await?;
+    let preview = patronus_config::genfile::prepare_import(&store, &text)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+    if dry_run || preview.identical {
+        if preview.identical {
+            println!("{} {} is identical to the live configuration", "•".cyan(), file.display());
+        } else {
+            let s = &preview.diff["summary"];
+            println!(
+                "{} row(s) added, {} removed, {} changed in {} table(s) (dry run, nothing written)",
+                s["added"], s["removed"], s["changed"], s["tables"]
+            );
+            print!("{}", preview.text_diff);
+        }
+        return Ok(());
+    }
+    if confirm_in.is_some() {
+        super::generations::require_watchdog().await?;
+    }
     let before = store
         .export_json()
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    store
-        .snapshot("cli", &format!("before import of {}", file.display()))
+    let prev = store
+        .snapshot_kind("cli", &format!("import of {}", file.display()), "import")
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     store
-        .import_json(&doc)
+        .import_checked(&preview.doc)
         .await
         .map_err(|e| anyhow::anyhow!("{} was not imported: {e}", file.display()))?;
-    store.close().await;
     println!("{} imported {}", "•".cyan(), file.display());
     if !apply {
+        store.close().await;
         return Ok(());
     }
-    apply_or_revert(opts, before).await
+    store.close().await;
+    let db = opts.db.clone();
+    apply_or_revert(opts, before).await?;
+    let store = open_store(db.as_deref()).await?;
+    super::generations::arm(&store, prev, confirm_in).await?;
+    store.close().await;
+    Ok(())
 }
 
 #[cfg(test)]

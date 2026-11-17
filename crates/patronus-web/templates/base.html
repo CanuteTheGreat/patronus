@@ -673,6 +673,18 @@
         .font-bold {
             font-weight: 600;
         }
+        /* commit-confirmed banner + safe-mode switch */
+        #pending-banner { position: sticky; top: 0; z-index: 180; display: flex; flex-wrap: wrap; gap: .5em 1em;
+            align-items: center; justify-content: space-between; padding: .6em 1em;
+            background: var(--warn-bg, #fff3cd); color: var(--warn-fg, #5c4400); border-bottom: 2px solid #d9a400; }
+        #pending-banner[hidden] { display: none; }
+        #pending-banner .pb-actions { display: flex; gap: .5em; align-items: center; flex-wrap: wrap; }
+        #pending-banner .pb-link { color: inherit; text-decoration: underline; }
+        #pending-banner .pb-msg { flex-basis: 100%; font-size: .85em; }
+        #pending-banner #pb-left { font-variant-numeric: tabular-nums; }
+        .safe-mode { display: inline-flex; align-items: center; gap: .35em; font-size: .8em; white-space: nowrap; }
+        .safe-mode select { font-size: 1em; }
+        @media (max-width: 900px) { .safe-mode .safe-label { display: none; } }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
@@ -864,6 +876,12 @@
                         </svg>
                         <span>Device</span>
                     </a>
+                    <a href="/generations" class="nav-item {% if page == "generations" %}active{% endif %}">
+                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <span>Config generations</span>
+                    </a>
                     <a href="/system" class="nav-item {% if page == "system" %}active{% endif %}">
                         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
@@ -884,6 +902,17 @@
 
         <!-- Main Content -->
         <div class="main-content">
+            <!-- Commit-confirmed: shown on every page while a change is on trial -->
+            <div id="pending-banner" role="alert" aria-live="polite" hidden>
+                <span class="pb-text"><strong>Change on trial.</strong>
+                    Reverting to generation <span id="pb-prev">?</span> in <strong id="pb-left">--:--</strong> unless you confirm it.</span>
+                <span class="pb-actions">
+                    <button type="button" class="btn btn-primary btn-sm" id="pb-confirm">Confirm</button>
+                    <button type="button" class="btn btn-sm" id="pb-revert">Revert now</button>
+                    <a href="/generations" class="pb-link">Details</a>
+                </span>
+                <span id="pb-msg" class="pb-msg"></span>
+            </div>
             <!-- Header -->
             <header class="header">
                 <div class="header-left">
@@ -902,6 +931,15 @@
                     <div class="search-box">
                         <input type="text" class="search-input" placeholder="Search...">
                     </div>
+
+                    <label class="safe-mode" title="Risky change: apply on trial and revert automatically unless you confirm">
+                        <input type="checkbox" id="safeMode">
+                        <span class="safe-label">Auto-revert in</span>
+                        <select id="safeMinutes" aria-label="Minutes until the change reverts">
+                            <option value="2">2 min</option><option value="5" selected>5 min</option>
+                            <option value="10">10 min</option><option value="30">30 min</option>
+                        </select>
+                    </label>
 
                     <button class="theme-toggle" id="themeToggle" title="Toggle dark mode">
                         🌙
@@ -1044,6 +1082,88 @@
     }).catch(() => {});
     </script>
     <script>if (location.pathname !== '/setup') fetch('/api/setup/status', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(d => { if (d && !d.completed && d.wizard !== false) document.getElementById('setup-banner').style.display = ''; }).catch(() => {});</script>
+    <script>
+    // Commit-confirmed ("risky change"): while the switch is on, every changing API call is sent with
+    // X-Confirm-In, so it applies on trial and patronus applyd reverts it at the deadline unless confirmed.
+    (function () {
+        const KEY = 'patronus-safe-mode';
+        const box = document.getElementById('safeMode');
+        const mins = document.getElementById('safeMinutes');
+        function load() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } }
+        function save() { try { localStorage.setItem(KEY, JSON.stringify({on: box.checked, minutes: mins.value})); } catch (e) {} }
+        const st = load();
+        if (st) { box.checked = !!st.on; if (st.minutes) mins.value = st.minutes; }
+        box.addEventListener('change', save); mins.addEventListener('change', save);
+        window.patronusConfirmIn = () => box.checked ? parseInt(mins.value, 10) : null;
+        const origFetch = window.fetch.bind(window);
+        window.fetch = function (input, init) {
+            init = init || {};
+            const url = typeof input === 'string' ? input : (input && input.url) || '';
+            const method = ((init.method || (input && input.method) || 'GET') + '').toUpperCase();
+            const n = window.patronusConfirmIn();
+            const pathOnly = url.replace(/^https?:\/\/[^/]+/, '');
+            if (n && method !== 'GET' && method !== 'HEAD' && pathOnly.indexOf('/api/') === 0
+                && pathOnly.indexOf('/api/auth/') !== 0 && pathOnly.indexOf('/api/system/generations/pending') !== 0
+                && !/\/pin(\?|$)/.test(pathOnly) && !/dry_run=true/.test(pathOnly)) {
+                const h = new Headers(init.headers || (input && input.headers) || {});
+                if (!h.has('X-Confirm-In')) h.set('X-Confirm-In', String(n));
+                init.headers = h;
+            }
+            return origFetch(input, init).then(r => { if (r.headers.get('X-Pending-Deadline')) pollPending(); return r; });
+        };
+
+        // banner with a live countdown, on every page
+        const banner = document.getElementById('pending-banner');
+        const left = document.getElementById('pb-left');
+        const prev = document.getElementById('pb-prev');
+        const msg = document.getElementById('pb-msg');
+        let deadlineAt = null; // local ms
+        let timer = null;
+        function fmt(s) { s = Math.max(0, Math.floor(s)); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); }
+        function tick() {
+            if (deadlineAt === null) return;
+            const s = (deadlineAt - Date.now()) / 1000;
+            left.textContent = fmt(s);
+            if (s <= 0) { msg.textContent = 'Deadline reached: the router is reverting now.'; }
+        }
+        function show(p) {
+            if (!p) { banner.hidden = true; deadlineAt = null; return; }
+            banner.hidden = false;
+            deadlineAt = Date.now() + p.seconds_left * 1000;
+            prev.textContent = p.previous;
+            document.body.dataset.pendingGeneration = p.generation;
+            if (!timer) timer = setInterval(tick, 500);
+            tick();
+        }
+        let lastWasPending = false;
+        function pollPending() {
+            return origFetch('/api/system/generations/pending', {credentials: 'same-origin'})
+                .then(r => r.ok ? r.json() : null)
+                .then(d => {
+                    if (!d) return;
+                    if (lastWasPending && !d.pending) { document.dispatchEvent(new CustomEvent('patronus-pending-resolved', {detail: d})); }
+                    lastWasPending = !!d.pending;
+                    show(d.pending);
+                })
+                .catch(() => {});
+        }
+        window.patronusPollPending = pollPending;
+        async function act(path, okText) {
+            msg.textContent = 'Working...';
+            try {
+                const r = await origFetch(path, {method: 'POST', credentials: 'same-origin'});
+                const d = await r.json().catch(() => ({}));
+                msg.textContent = r.ok ? okText : (d.error || ('Failed: HTTP ' + r.status));
+            } catch (e) { msg.textContent = 'The router did not answer: ' + e; }
+            await pollPending();
+            document.dispatchEvent(new CustomEvent('patronus-generations-changed'));
+        }
+        document.getElementById('pb-confirm').addEventListener('click', () => act('/api/system/generations/pending/confirm', 'Confirmed: the change is permanent.'));
+        document.getElementById('pb-revert').addEventListener('click', () => act('/api/system/generations/pending/revert-now', 'Reverted to the previous generation.'));
+        pollPending();
+        setInterval(pollPending, 5000);
+    })();
+    </script>
     {% block extra_scripts %}{% endblock %}
     <script>
     // Tables that scroll sideways on a narrow screen must be reachable by keyboard (WCAG 2.1.1): give a scrolling

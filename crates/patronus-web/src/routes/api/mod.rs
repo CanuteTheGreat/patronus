@@ -7,6 +7,7 @@ pub mod authservers;
 pub mod backup_targets;
 pub mod device;
 pub mod firewall;
+pub mod generations;
 pub mod groups;
 pub mod ha;
 pub mod insight_history;

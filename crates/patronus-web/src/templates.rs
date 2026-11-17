@@ -676,6 +676,15 @@ pub struct DiagnosticsTemplate {
     pub is_admin: bool,
 }
 
+/// Config generations page: list, diff, rollback, pin, export/import and
+/// apply-with-confirm (static shell; data from `/api/system/generations`).
+#[derive(Template)]
+#[template(path = "generations.html")]
+pub struct GenerationsTemplate {
+    pub page: &'static str,
+    pub is_admin: bool,
+}
+
 /// Interfaces page (lane C). Static shell; data comes from `/api/interfaces`.
 #[derive(Template)]
 #[template(path = "interfaces.html")]

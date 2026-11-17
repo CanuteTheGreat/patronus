@@ -18,6 +18,7 @@ tracing.workspace = true
 sqlx.workspace = true
 chrono.workspace = true
 uuid.workspace = true
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3.10"

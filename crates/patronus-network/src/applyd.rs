@@ -88,12 +88,20 @@ pub async fn serve(
     let store = Arc::new(store);
     let registry = Arc::new(registry);
     let lock = Arc::new(tokio::sync::Mutex::new(()));
+    let last_tick = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    tokio::spawn(commit_confirm_watchdog(
+        registry.clone(),
+        store.clone(),
+        lock.clone(),
+        last_tick.clone(),
+    ));
     loop {
         let (conn, _) = listener
             .accept()
             .await
             .map_err(|e| Error::Network(format!("accept: {e}")))?;
         let (store, registry, lock) = (store.clone(), registry.clone(), lock.clone());
+        let last_tick = last_tick.clone();
         tokio::spawn(async move {
             let (rd, mut wr) = conn.into_split();
             let mut line = String::new();
@@ -107,6 +115,15 @@ pub async fn serve(
                 .and_then(|a| a.as_str())
                 .map(str::to_string);
             let op = req.get("op").and_then(|o| o.as_str()).unwrap_or("apply");
+            if op == "watchdog" {
+                // the web UI asks before it arms a commit-confirm: a timer
+                // that cannot fire is worse than none
+                let t = last_tick.load(std::sync::atomic::Ordering::SeqCst);
+                let age = chrono::Utc::now().timestamp() - t;
+                let out = json!({"ok": true, "watchdog": t > 0 && age < 10, "age": age});
+                let _ = wr.write_all(format!("{out}\n").as_bytes()).await;
+                return;
+            }
             if op == "service" {
                 let svc = req
                     .get("service")
@@ -197,6 +214,64 @@ pub async fn serve(
             out.push('\n');
             let _ = wr.write_all(out.as_bytes()).await;
         });
+    }
+}
+
+/// The independent timer behind commit-confirmed changes: once a second look
+/// at the pending state in the store and, at the deadline, put the previous
+/// generation back and apply it (as root, under the same lock as every other
+/// apply). It lives here, not in patronus-web: the web process may be
+/// restarted, or unreachable because of the very change being tested.
+async fn commit_confirm_watchdog(
+    registry: Arc<ApplierRegistry>,
+    store: Arc<ConfigStore>,
+    lock: Arc<tokio::sync::Mutex<()>>,
+    last_tick: Arc<std::sync::atomic::AtomicI64>,
+) {
+    let mut t = tokio::time::interval(std::time::Duration::from_secs(1));
+    loop {
+        t.tick().await;
+        last_tick.store(
+            chrono::Utc::now().timestamp(),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        let due = match store.pending().await {
+            Ok(Some(p)) => chrono::Utc::now().timestamp() >= p.deadline,
+            Ok(None) => false,
+            Err(e) => {
+                tracing::warn!("commit-confirm: reading the pending state: {e}");
+                false
+            }
+        };
+        if !due {
+            continue;
+        }
+        let _g = lock.lock().await;
+        tracing::warn!("applyd: commit-confirm deadline reached, reverting to the previous generation");
+        let (reg, st) = (registry.clone(), store.clone());
+        let r = patronus_config::generations::revert_if_due(&store, "commit-confirm", || async move {
+            let run = reg.apply_all(&st, None).await;
+            if run.ok() {
+                Ok(())
+            } else {
+                let names: Vec<&str> = run.failures().iter().map(|o| o.applier).collect();
+                Err(format!("apply failed for: {}", names.join(", ")))
+            }
+        })
+        .await;
+        match r {
+            Ok(Some(id)) => tracing::warn!("applyd: reverted; generation {id} records it"),
+            Ok(None) => {}
+            Err(e) => tracing::error!("applyd: commit-confirm revert failed: {e}"),
+        }
+    }
+}
+
+/// Does a broker answer, with its commit-confirm timer running?
+pub async fn watchdog_alive(socket: &Path) -> bool {
+    match call(socket, json!({ "op": "watchdog" })).await {
+        Ok(v) => v.get("watchdog").and_then(|w| w.as_bool()) == Some(true),
+        Err(_) => false,
     }
 }
 

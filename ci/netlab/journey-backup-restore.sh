@@ -51,8 +51,8 @@ nl_web_stop
 nl_expect_http "box 1 after deleting: blocked.example.test reachable" http://blocked.example.test/ "sees"
 R "$P" --db "$DB" config import /t/backup.json >"$NL_OUT" 2>&1 || { cat "$NL_OUT"; nl_fail "import on box 1"; }
 nl_expect_http_blocked "box 1 after restore: bk-block enforced again" http://blocked.example.test/
-grep -q 'before import of /t/backup.json' <<<"$(R "$P" --db "$DB" config revisions)" || nl_fail "import left no revision"
-nl_ok "the configuration the import replaced is kept as a revision"
+grep -q 'import of /t/backup.json' <<<"$(R "$P" --db "$DB" config generations)" || nl_fail "import left no generation"
+nl_ok "the import is a generation, and the configuration it replaced is kept as one"
 nl_boot "$DB"
 nl_expect_http_blocked "box 1 after reboot: bk-block enforced" http://blocked.example.test/
 nl_assert_store_ok "$DB"

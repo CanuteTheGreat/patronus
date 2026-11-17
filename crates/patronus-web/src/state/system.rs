@@ -41,6 +41,9 @@ pub struct SystemManager {
     /// Every subsystem applier this process can drive (through applyd when
     /// it runs), used to apply a restored configuration.
     appliers: Vec<Arc<dyn Applier>>,
+    /// Tests: whether a commit-confirm timer is "running" (None = ask
+    /// `patronus applyd`, which enforces the deadlines).
+    watchdog: Option<bool>,
 }
 
 /// Where configuration backups live: `$PATRONUS_BACKUP_DIR`, else a
@@ -95,7 +98,50 @@ impl SystemManager {
         Self {
             backup_dir,
             appliers: Vec::new(),
+            watchdog: None,
         }
+    }
+
+    /// Pretend the commit-confirm timer is (not) running; for tests that have
+    /// no `patronus applyd`.
+    pub fn with_watchdog(mut self, running: bool) -> Self {
+        self.watchdog = Some(running);
+        self
+    }
+
+    /// Is something independent of this process ready to enforce a
+    /// commit-confirm deadline? A change is never armed without one.
+    pub async fn watchdog_available(&self) -> bool {
+        match self.watchdog {
+            Some(v) => v,
+            None => {
+                patronus_network::applyd::watchdog_alive(&patronus_network::applyd::socket_path())
+                    .await
+            }
+        }
+    }
+
+    /// Revert the pending commit-confirm now (the user pressed "Revert now").
+    pub async fn revert_now(
+        &self,
+        store: &ConfigStore,
+        actor: &str,
+    ) -> anyhow::Result<Option<i64>> {
+        patronus_config::generations::revert_now(store, actor, "reverted by hand", || async {
+            self.apply_all(store).await.map(|_| ())
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))
+    }
+
+    /// What `patronus applyd`'s timer does at the deadline, for tests that
+    /// drive the clock.
+    pub async fn revert_if_due(&self, store: &ConfigStore) -> anyhow::Result<Option<i64>> {
+        patronus_config::generations::revert_if_due(store, "commit-confirm", || async {
+            self.apply_all(store).await.map(|_| ())
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     /// The appliers a restore runs, in any order (sorted by boot phase).
@@ -135,6 +181,19 @@ impl SystemManager {
         doc: &Value,
         what: &str,
     ) -> anyhow::Result<Vec<String>> {
+        self.restore_as(store, doc, what, "web", "change").await
+    }
+
+    /// [`restore`](Self::restore) recorded as generation kind `kind`
+    /// (`rollback`, `import`, ...) made by `actor`.
+    pub async fn restore_as(
+        &self,
+        store: &ConfigStore,
+        doc: &Value,
+        what: &str,
+        actor: &str,
+        kind: &str,
+    ) -> anyhow::Result<Vec<String>> {
         let mut doc = doc.clone();
         let tables = doc
             .get_mut("tables")
@@ -155,26 +214,32 @@ impl SystemManager {
                     .to_string(),
             );
         }
+        let message = match kind {
+            "rollback" => format!("rollback to {what}"),
+            "import" => format!("import of {what}"),
+            _ => format!("restore of {what}"),
+        };
         let rev = store
-            .snapshot("web", &format!("before restore of {what}"))
+            .snapshot_kind(actor, &message, kind)
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         store
-            .import_json(&doc)
+            .import_checked(&doc)
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         match self.apply_all(store).await {
             Ok(lines) => {
                 let _ = store
-                    .audit("web", "restore", "config", Some(what), &Value::Null)
+                    .audit(actor, "restore", "config", Some(what), &Value::Null)
                     .await;
+                let _ = store.seal().await;
                 notes.extend(lines);
                 notes.extend(self.restore_access_point(&doc).await);
                 notes.extend(self.restore_accounts(&doc).await);
                 Ok(notes)
             }
             Err(failed) => {
-                if let Err(e) = store.restore_revision(rev, "web").await {
+                if let Err(e) = store.restore_revision(rev, actor).await {
                     tracing::error!(
                         "could not put the configuration back after a failed restore: {e}"
                     );

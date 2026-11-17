@@ -276,6 +276,30 @@ async fn has_user_rules(store: &ConfigStore) -> Result<bool> {
         .any(|(_, o)| *o == RuleOrigin::User))
 }
 
+/// Put back any anti-lockout (system) rule that is missing. A restored or
+/// imported document can never take management access away: the store
+/// refuses to delete system rules, and this covers the whole-table replace.
+pub async fn ensure_system_rules(store: &ConfigStore) -> Result<()> {
+    // a configuration from before the defaults were seeded gets them (all of
+    // them) at the next boot
+    if store.load_system_config(DEFAULTS_SEEDED_KEY).await?.is_none() {
+        return Ok(());
+    }
+    let have: Vec<String> = store
+        .load_firewall_rules_with_origin()
+        .await?
+        .into_iter()
+        .filter(|(_, o)| *o == RuleOrigin::System)
+        .map(|(r, _)| r.name)
+        .collect();
+    for (rule, origin) in default_filter_rules() {
+        if origin == RuleOrigin::System && !have.iter().any(|n| *n == rule.name) {
+            store.insert_firewall_rule(&rule, origin).await?;
+        }
+    }
+    Ok(())
+}
+
 async fn seed_default_rules(store: &ConfigStore) -> Result<()> {
     let have: Vec<(String, RuleOrigin)> = store
         .load_firewall_rules_with_origin()
