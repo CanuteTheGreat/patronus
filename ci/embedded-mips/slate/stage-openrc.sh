@@ -24,6 +24,8 @@ for g in $SYS/etc/group /rootfs/etc/group; do grep -q '^shadow:' $g 2>/dev/null 
 ROOT=/rootfs $T-emerge --nodeps -q sys-libs/pam 2>&1 | tail -30
 emerge -q --fetchonly net-misc/dhcpcd >/dev/null 2>&1; bash /w/dhcpcd-build.sh
 step openrc into /rootfs-openrc
+# openrc 0.64 needs libcap at configure time in the cross sysroot (older releases did not)
+[ -e $SYS/usr/lib/libcap.so ] || ROOT=$SYS $T-emerge --nodeps -q sys-libs/libcap 2>&1 | tail -10
 mkdir -p /rootfs-openrc
 # runtime deps (musl, libcrypt) come from /rootfs; virtual/tmpfiles is only for opentmpfiles units the router does not use
 [ -x /rootfs-openrc/sbin/openrc-init ] || ROOT=/rootfs-openrc $T-emerge --nodeps -q sys-apps/openrc 2>&1 | tail -30

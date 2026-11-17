@@ -75,8 +75,9 @@ jobs:
 
   nor-budget:
     name: NOR tier size budget (16 MiB NOR-only routers, OpenRC and systemd variants)
-    # embedded-mips-arm64 = the burst runner on the arm64 build host, whose label maps to the local builder image
-    # pembed-slate-img:ci (crossdev mips-unknown-linux-musl, router rootfs, OpenRC, cross-built systemd, stock OpenWrt
+    # embedded-mips-arm64 = the burst runner on the arm64 build host, whose label maps to the builder image
+    # git.canutethegreat.com/canutethegreat/pembed-slate-img:ci (kept in the Forgejo registry so a docker prune cannot lose
+    # it; rebuilt reproducibly by ci/embedded-mips/slate/build-nor-image.sh) (crossdev mips-unknown-linux-musl, router rootfs, OpenRC, cross-built systemd, stock OpenWrt
     # image; no node, so the checkout is plain git). Builds the multi-call binary from this commit, assembles the
     # NOR-profile root for both init systems and checks the flash budget (ci/embedded-mips/slate/nor-budget.sh).
     runs-on: embedded-mips-arm64

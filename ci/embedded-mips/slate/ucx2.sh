@@ -1,6 +1,8 @@
 T=mips-unknown-linux-musl; SYS=/usr/$T; cd /tmp/ucx/libucontext-1.5.1
-cp -a libucontext.so* libucontext.a $SYS/usr/lib/ 2>/dev/null; ls libucontext.so*; 
-[ -e $SYS/usr/lib/libucontext.so.1 ] || cp libucontext.so $SYS/usr/lib/libucontext.so.1
+cp -a libucontext.a $SYS/usr/lib/
+# the shared object may be a real libucontext.so with a .so.1 link to it (1.5.x) or the reverse: ship ONE real .so.1
+rm -f $SYS/usr/lib/libucontext.so $SYS/usr/lib/libucontext.so.1
+cp -L libucontext.so.1 $SYS/usr/lib/libucontext.so.1 2>/dev/null || cp -L libucontext.so $SYS/usr/lib/libucontext.so.1
 ln -sf libucontext.so.1 $SYS/usr/lib/libucontext.so
 mkdir -p $SYS/usr/include/libucontext; cp -a include/libucontext/*.h $SYS/usr/include/libucontext/ 2>/dev/null; cp -a arch/mips/include/libucontext/* $SYS/usr/include/libucontext/ 2>/dev/null; cp -a include/*.h $SYS/usr/include/ 2>/dev/null
 cat > $SYS/usr/lib/pkgconfig/libucontext.pc <<P
