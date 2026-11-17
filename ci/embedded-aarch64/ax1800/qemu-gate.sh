@@ -417,7 +417,7 @@ check "AP role: setup recorded complete at first start, status completed/ap/no w
 # a yescrypt ($y$) account, the hash Gentoo/Horcrux hosts write: musl's crypt() behind pam_unix cannot check it, so the web
 # login reads the shadow file itself (PATRONUS_AUTH_BACKEND=shadow). The CI image carries tests/ci-accounts (ciacct, yescrypt hash
 # of a public test password, applied by accounts-sync at boot); the gate makes it an admin for the test and takes it back.
-accounts_sync() { R 'grep -q "^ciacct:x:61000:61000:" /etc/passwd && grep -q "^ciacct:\$y\$" /etc/shadow && grep -q ciacct@ci /data/home/ciacct/.ssh/authorized_keys && grep -q "account-added\|accounts-sync: ciacct" /tmp/boot-times'; }
+accounts_sync() { R 'grep -q "^ciacct:x:61000:61000:" /etc/passwd && grep -q "^ciacct:[$]y[$]" /etc/shadow && grep -q ciacct@ci /data/home/ciacct/.ssh/authorized_keys && grep -q "account-added\|accounts-sync: ciacct" /tmp/boot-times'; }
 yescrypt_login() { R 'sed -i "s/^patronus-admin:x:\([0-9]*\):\(.*\)$/patronus-admin:x:\1:\2,ciacct/; s/,,/,/; s/:,ciacct/:ciacct/" /etc/group' || return 1
   rm -f "$W/jar2"; c=$(curl -sk -c "$W/jar2" -o /dev/null -w '%{http_code}' -m 60 -H 'content-type: application/json' \
     -d '{"username":"ciacct","password":"correct horse battery"}' https://127.0.0.1:$WEBP/api/auth/login); r1=$c
