@@ -454,12 +454,12 @@ EOF
   # release signing: a throwaway "release" key (its keyring plays the box's FW_KEYRING) and a foreign key
   KR=$F/keyring.gpg
   mkkey() { g=$F/gpg-$1; mkdir -p "$g"; chmod 700 "$g"
-    gpg --homedir "$g" --batch --pinentry-mode loopback --passphrase '' --quick-gen-key "test $1 <$1@example.invalid>" ed25519 sign 1d >/dev/null 2>&1; }
+    gpg --homedir "$g" ${MKTIME:+--faked-system-time $MKTIME} --batch --pinentry-mode loopback --passphrase '' --quick-gen-key "test $1 <$1@example.invalid>" ed25519 sign 1d >/dev/null 2>&1; }
   if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
     mkkey rel; mkkey foreign; gpg --homedir "$F/gpg-rel" --batch --export > "$KR"
   else no "gpg/gpgv missing: the release signature cases cannot run (install gnupg gpgv)"; fi
   # sigfor KEY FILE: binary detached signature of FILE on stdout
-  sigfor() { gpg --homedir "$F/gpg-$1" --batch --pinentry-mode loopback --passphrase '' --detach-sign --output - "$2" 2>/dev/null; }
+  sigfor() { gpg --homedir "$F/gpg-$1" ${SIGTIME:+--faked-system-time $SIGTIME} --batch --pinentry-mode loopback --passphrase '' --detach-sign --output - "$2" 2>/dev/null; }
   # mkimg NAME [board-in-release] [meta-board] [dist] [init]
   mkimg() { n=$1; rb=${2:-glinet,gl-ax1800}; mb=${3:-glinet,gl-ax1800}; dist=${4:-Patronus}; init=${5:-openrc}
     s=$F/src-$n; rm -rf "$s"; mkdir -p "$s/r/etc" "$s/r/usr/sbin" "$s/t/sysupgrade-glinet_gl-ax1800"
@@ -497,6 +497,14 @@ PY
   # a box without the keyring
   tn_msg "flash check: refuses an UNSIGNED image" "not signed" PF check "$(SIGN=none mkimg unsigned)"
   tn_msg "flash check: refuses an image signed by a foreign key" "signature check FAILED" PF check "$(SIGN=foreign mkimg foreign)"
+  # no RTC on the board: the early boot re-verifies a staged upgrade while the clock still says 1970, so the release key
+  # (and every signature) is "created in the future" for gpgv; that must not fail the check (a unit refused its signed
+  # upgrade this way). Same condition on the host: a key and signature made one day ahead of the clock.
+  if command -v gpg >/dev/null; then
+    FT=$(( $(date +%s) + 86400 )); MKTIME=$FT mkkey future; gpg --homedir "$F/gpg-future" --batch --export > "$F/keyring-future.gpg"
+    KEYRING=$F/keyring-future.gpg t "flash check: a key/signature newer than the box clock (no RTC, early boot at 1970) is still good" \
+      PF check "$(SIGN=future SIGTIME=$FT mkimg future)"
+  fi
   tm=$F/tampered.tar; rm -rf "$F/tt"; mkdir -p "$F/tt"; tar xf "$good" -C "$F/tt" 2>/dev/null
   printf 'evil' >> "$F/tt/sysupgrade-glinet_gl-ax1800/root"; (cd "$F/tt/sysupgrade-glinet_gl-ax1800" && sha256sum kernel root > patronus.sha256)
   (cd "$F/tt" && tar cf "$tm" sysupgrade-glinet_gl-ax1800); python3 - "$good" "$tm" "$D/fwmeta.py" <<'PY'

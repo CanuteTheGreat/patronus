@@ -57,7 +57,9 @@ fw_sig_ok() {
   [ -s "$FW_KEYRING" ] || { fw_err "no release signing key on this box ($FW_KEYRING): cannot check the image"; return 1; }
   command -v gpgv >/dev/null 2>&1 || { fw_err "gpgv is missing: cannot check the release signature"; return 1; }
   g=$d/.gnupg; rm -rf "$g"; mkdir -p "$g" && chmod 700 "$g"
-  st=$(GNUPGHOME=$g gpgv --status-fd 1 --keyring "$FW_KEYRING" "$d/patronus.sha256.sig" "$d/patronus.sha256" 2>/dev/null); rm -rf "$g"
+  # --ignore-time-conflict: the board has no RTC, and the early boot re-verifies a staged upgrade before the clock is set
+  # (1970), so the key and every signature look "made in the future"; the time of a release signature proves nothing here
+  st=$(GNUPGHOME=$g gpgv --ignore-time-conflict --status-fd 1 --keyring "$FW_KEYRING" "$d/patronus.sha256.sig" "$d/patronus.sha256" 2>/dev/null); rm -rf "$g"
   fp=$(echo "$st" | sed -n 's/^\[GNUPG:\] VALIDSIG \([0-9A-F]*\) .*/\1/p' | head -1)
   [ -n "$fp" ] || { fw_err "release signature check FAILED: the image was modified or is not signed by the Patronus release key"; return 1; }
   echo "signature: good, release key $fp" >&2
