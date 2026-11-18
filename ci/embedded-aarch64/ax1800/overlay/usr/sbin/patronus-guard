@@ -239,6 +239,8 @@ arm() { # new-build
 }
 
 # --- health checks ---
+# a process by its kernel name (/proc/PID/comm): busybox pgrep -x compares the full argv0 (/usr/bin/patronus-web)
+running() { for c in /proc/[0-9]*/comm; do [ "$(cat "$c" 2>/dev/null)" = "$1" ] && return 0; done; return 1; }
 listening() { # port
   p=$(printf '%04X' "$1"); cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk -v p=":$p" '$2 ~ p"$" && $4=="0A" {f=1} END {exit !f}'; }
 c_network() {
@@ -249,7 +251,7 @@ c_network() {
 }
 c_ssh() { listening "$GUARD_SSH_PORT" || { echo "nothing listens on tcp/$GUARD_SSH_PORT"; return 1; }; }
 c_web() {
-  pgrep -x patronus-web >/dev/null || { echo "patronus-web not running"; return 1; }
+  running patronus-web || { echo "patronus-web not running"; return 1; }
   timeout "$GUARD_WEB_TIMEOUT" wget -q -O /dev/null --no-check-certificate "$GUARD_WEB_URL" 2>/dev/null || { echo "$GUARD_WEB_URL does not answer"; return 1; }
 }
 wifi_on() { [ -f /etc/patronus/ap.env ] && (. /etc/patronus/ap.env; [ -n "${AP_SSIDS:-}" ]) && ls /sys/class/ieee80211/ 2>/dev/null | grep -q .; }
@@ -258,7 +260,7 @@ c_hostapd() {
   case "$(hostapd -v 2>&1)" in *hostapd\ v*) ;; *) echo "hostapd does not run"; return 1;; esac
   if [ "$GUARD_HOSTAPD" = require ] || wifi_on; then
     [ "$GUARD_HOSTAPD" = require ] && ! wifi_on && return 0
-    pgrep -x hostapd >/dev/null || { echo "Wi-Fi configured but hostapd is not running"; return 1; }
+    running hostapd || { echo "Wi-Fi configured but hostapd is not running"; return 1; }
     for s in /var/run/hostapd/*; do [ -S "$s" ] || continue
       st=$(hostapd_cli -p /var/run/hostapd -i "${s##*/}" status 2>/dev/null | sed -n 's/^state=//p')
       [ "$st" = ENABLED ] || { echo "${s##*/}: ${st:-no answer}"; return 1; }; done
