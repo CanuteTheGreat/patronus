@@ -241,5 +241,11 @@ start)
   ;;
 txpower) mkdir -p $OUTD; txpower ;;
 acl) mkdir -p $OUTD; acl ;;
-stop) for p in /run/hostapd-cli-*.pid /run/hostapd-*.pid; do [ -f "$p" ] && kill $(cat $p) 2>/dev/null && rm -f $p; done; true ;;
+stop) # wait until each hostapd has really exited: a new one started while the old still holds the radio's nl80211
+  # registrations fails ("Match already configured", then hostapd crashes), which made a Wi-Fi page save roll back
+  pids=; for p in /run/hostapd-cli-*.pid /run/hostapd-*.pid; do [ -f "$p" ] || continue; i=$(cat "$p"); rm -f "$p"
+    kill "$i" 2>/dev/null && pids="$pids $i"; done
+  for i in $pids; do n=0; while kill -0 "$i" 2>/dev/null && [ "$(sed -n 's/^State:[[:space:]]*\([A-Z]\).*/\1/p' /proc/$i/status 2>/dev/null)" != Z ]; do
+      n=$((n + 1)); [ $n -ge ${AP_STOP_WAIT:-50} ] && { echo "ap: hostapd $i did not exit, killing it" >&2; kill -9 "$i" 2>/dev/null; break; }
+      sleep 0.2; done; done; true ;;
 esac
