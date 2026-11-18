@@ -34,6 +34,12 @@ export default function Layout() {
   const user = getUser()
   const [menuOpen, setMenuOpen] = useState(false)
 
+  // Each page gets its own tab/history title ("Traffic - Patronus").
+  useEffect(() => {
+    const page = navigation.find((n) => location.pathname === n.href || location.pathname.startsWith(n.href + '/'))
+    document.title = page ? `${page.name} - Patronus` : 'Patronus'
+  }, [location.pathname])
+
   // The phone menu closes on navigation and on Escape.
   useEffect(() => { setMenuOpen(false) }, [location.pathname])
   useEffect(() => {

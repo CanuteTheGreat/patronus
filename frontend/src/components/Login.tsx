@@ -1,9 +1,10 @@
-import { useState, FormEvent } from 'react'
+import { useEffect, useState, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Shield } from 'lucide-react'
 import { login } from '../auth'
 
 export default function Login() {
+  useEffect(() => { document.title = 'Sign in - Patronus' }, [])
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
