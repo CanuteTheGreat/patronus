@@ -230,7 +230,7 @@ start_all() { # [BAND]: both radios, or only 5 / 24
   txpower
   # periodic re-check of the channel plan against the other access points (once per start)
   if [ -x "$COORD" ] && [ -z "${1:-}" ]; then p=$(cat /run/patronus-ap-coord.pid 2>/dev/null); [ -n "$p" ] && kill "$p" 2>/dev/null
-    setsid "$COORD" run > /dev/null 2>&1 < /dev/null & fi; }
+    setsid "$COORD" run >> /tmp/ap-coord.log 2>&1 < /dev/null & fi; }
 stop_all() { # [BAND]: wait until each hostapd has really exited (a new one started while the old still holds the radio's
   # nl80211 registrations fails with "Match already configured" and then crashes)
   pids=; for p in /run/hostapd-cli-*.pid /run/hostapd-ap*.pid; do [ -f "$p" ] || continue

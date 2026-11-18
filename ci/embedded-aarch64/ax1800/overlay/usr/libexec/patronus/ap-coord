@@ -9,7 +9,7 @@
 # default), AP_COORD_PEERS (MACs of other units, any BSSID of a unit matches all its BSSes), AP_COORD_MIN_SIGNAL (dBm,
 # weaker peers are ignored), AP_COORD_DELAY (seconds after start before the first re-check), AP_COORD_INTERVAL (seconds
 # between later re-checks, 0 = only the first), AP_COORD_QUIET (hours "1-5" in which a re-check may restart a radio that
-# still has stations; empty = any time), AP_COORD_SCAN_SECS (longest a scan may take).
+# still has stations; empty = any time), AP_COORD_SCAN_SECS (longest a scan, or the wait for a starting radio, may take).
 #   ap-coord plan BAND PHY   before hostapd starts: scan from a temporary interface, write/remove $OUTD/coord-BAND
 #   ap-coord check BAND [now]  on the running radio: when another unit sits on an overlapping block and this unit's
 #                            tie-break key is the higher one, restart that radio (`ap restart-band`) so ACS avoids it
@@ -107,8 +107,12 @@ check() { # BAND [now]
   [ -f "$conf" ] || return 0
   [ "$(sed -n 's/^channel=//p' "$conf" | head -1)" = 0 ] || return 0                    # fixed channel
   ifc=$(sed -n 's/^interface=//p' "$conf" | head -1)
-  if [ -n "${AP_COORD_STATUS_FILE:-}" ]; then st=$(cat "$AP_COORD_STATUS_FILE"); else st=$(hostapd_cli -p /run/hostapd -i "$ifc" status 2>/dev/null); fi
-  fq=$(echo "$st" | sed -n 's/^freq=//p'); [ -n "$fq" ] || return 0                      # not up (DFS check, starting)
+  # the first check after a start waits (at most AP_COORD_SCAN_SECS) for the radio to come up: ACS measures for a while
+  w=0; while :; do
+    if [ -n "${AP_COORD_STATUS_FILE:-}" ]; then st=$(cat "$AP_COORD_STATUS_FILE"); else st=$(hostapd_cli -p /run/hostapd -i "$ifc" status 2>/dev/null); fi
+    fq=$(echo "$st" | sed -n 's/^freq=//p'); [ -n "$fq" ] && break
+    [ "${2:-}" = now ] && [ $w -lt "$(num "${AP_COORD_SCAN_SECS:-}" 25)" ] || return 0   # not up (DFS check, starting)
+    sleep 2; w=$((w + 2)); done
   sc=$(echo "$st" | sed -n 's/^secondary_channel=//p'); wd=$(echo "$st" | sed -n 's/^vht_oper_chwidth=//p')
   ct=$(echo "$st" | sed -n 's/^vht_oper_centr_freq_seg0_idx=//p'); sec=none; w=20
   [ "$sc" = 1 ] && sec=above && w=40; [ "$sc" = -1 ] && sec=below && w=40

@@ -1063,7 +1063,7 @@ without a controller, from what each unit can hear. Default ON, per band.
   `AP_COORD5` / `AP_COORD24` (`coord5`, `coord24`, true), `AP_COORD_PEERS` (`coord_peers`, empty),
   `AP_COORD_MIN_SIGNAL` (`coord_min_signal`, -90 dBm, -100..-30), `AP_COORD_DELAY` (`coord_delay`, 120 s, 0..3600),
   `AP_COORD_INTERVAL` (`coord_interval`, 3600 s, 0 or 60..86400), `AP_COORD_QUIET` (`coord_quiet`, "1-5"),
-  `AP_COORD_SCAN_SECS` (`coord_scan_secs`, 25 s, 5..120). They are live: saving them restarts no radio, `ap-coord run`
+  `AP_COORD_SCAN_SECS` (`coord_scan_secs`, 25 s, 5..120; also how long the first re-check waits for a starting radio). They are live: saving them restarts no radio, `ap-coord run`
   re-reads `ap.env` at each check.
 - Not covered: three or more units on a band with only two free blocks (the list is then left to ACS), coordination with
   units of another vendor (they are found by SSID, which works when they carry the same SSIDs), DFS radar events (ACS and

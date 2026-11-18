@@ -27,7 +27,7 @@ HWSIM_CAPS="AP_HTCAPS24='[SHORT-GI-20][SHORT-GI-40]' AP_HTCAPS5='[SHORT-GI-20][S
 mac() { cat /sys/class/ieee80211/$1/macaddress; }
 key() { mac "$1" | cut -d: -f2-; }
 board() { # UNIT PHY24 PHY5 extra...: the unit's board file
-  u=$1; shift 2
+  u=$1; shift 3
   printf '. %s/etc/patronus/board.sh\n%s\nAP_COUNTRY=US\nAP_SSIDS=%s\nSSID_%s=coordnet KEY_%s=coordtest123 SEC_%s=wpa2\nAP_COORD_DELAY=8 AP_COORD_INTERVAL=0 AP_ACS_SCANS=1\n%s\n' \
     "$AP_DIR" "$HWSIM_CAPS" "$u" "$u" "$u" "$u" "$*" > $T/board-$u.sh; }
 NSA=; NSB=
@@ -47,7 +47,7 @@ st() { inu "$1" hostapd_cli -p /run/hostapd -i "$2" status 2>/dev/null | sed -n 
 wait_up() { u=$1; i=$2; n=0; until [ "$(st $u $i state)" = ENABLED ]; do n=$((n + 1)); [ $n -gt ${3:-60} ] && return 1; sleep 1; done; }
 seg() { st "$1" "$2" vht_oper_centr_freq_seg0_idx; }
 dump() { echo "--- unit $1: start log"; cat $T/start-$1.log 2>/dev/null; echo "--- unit $1: /run, /tmp, hostapd logs"
-  inu $1 sh -c 'ls /run /run/hostapd /tmp; tail -15 /tmp/hostapd-ap5.log /tmp/hostapd-ap24.log /tmp/ap.log 2>/dev/null; ps | grep -c hostapd' 2>&1; iw dev | grep -E 'Interface|channel|ssid' | head -20; }
+  inu $1 sh -c 'ls /run /run/hostapd /tmp; tail -15 /tmp/hostapd-ap5.log /tmp/hostapd-ap24.log /tmp/ap.log /tmp/ap-coord.log 2>/dev/null; ps | grep -c hostapd' 2>&1; iw dev | grep -E 'Interface|channel|ssid' | head -20; }
 holder a; holder b
 cleanup() { for u in a b; do ap_stop $u; kill $(cat $T/ns-$u 2>/dev/null) 2>/dev/null; done; }
 trap cleanup EXIT
@@ -75,9 +75,9 @@ repair)
     ka=$(key $A5); kb=$(key $B5)
     if [ "$(printf '%s\n%s\n' "$ka" "$kb" | sort | head -1)" = "$ka" ]; then mover=b; stayer=a; else mover=a; stayer=b; fi
     first=$ca; echo "    same block $ca: the higher key moves = unit $mover"
-    n=0; while [ $n -lt 90 ]; do sleep 2; n=$((n + 2)); wait_up $mover wl5-$mover 8 >/dev/null 2>&1
+    n=0; while [ $n -lt 60 ]; do sleep 2; n=$((n + 2)); wait_up $mover wl5-$mover 8 >/dev/null 2>&1
       ca=$(seg a wl5-a); cb=$(seg b wl5-b); [ -n "$ca" ] && [ -n "$cb" ] && [ "$ca" != "$cb" ] && break; done
-    [ -n "$ca" ] && [ -n "$cb" ] && [ "$ca" != "$cb" ] && pass "repair: after the re-check the units sit on different blocks ($ca / $cb)" || fail "repair: still on one block ($ca / $cb) after ${n}s"
+    [ -n "$ca" ] && [ -n "$cb" ] && [ "$ca" != "$cb" ] && pass "repair: after the re-check the units sit on different blocks ($ca / $cb)" || { fail "repair: still on one block ($ca / $cb) after ${n}s"; dump a; dump b; }
     # the unit with the lower key kept its block: its centre is the one both reported at the start
     [ "$stayer" = a ] && now=$ca || now=$cb
     [ "$now" = "$first" ] && pass "repair: unit $stayer (lower key) stayed on its block $first" || fail "repair: unit $stayer moved too ($first -> $now)"
