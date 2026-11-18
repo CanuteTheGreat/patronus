@@ -917,6 +917,12 @@ never exported):
   still gets both from the renderer (12.6a).
 - The radio cards on the Wi-Fi page show what the radio really runs (`hostapd_cli status`: channel, frequency, width,
   centre) and "picked automatically" or "fixed"; while ACS measures they say so. `patronus ap-wifi show` prints the same.
+- ACS does not coordinate between access points: after both house units restarted on the defaults they picked the same
+  5 GHz block (36-48) and the busier unit's 5 GHz went from 7-9 % to 38 % busy. Until coordination exists (queued), give
+  neighbouring units disjoint channel lists on the Wi-Fi page (e.g. one `36 40 44 48`, the other `149 153 157 161`):
+  still automatic within the list, nothing baked into an image.
+- `ap stop` waits until each hostapd has exited (it needs ~0.8 s to release the radio): a start right after a stop
+  failed with "Match already configured" and crashed, so a Wi-Fi page save rolled back now and then.
 - A save or `apply` that only spells out defaults (`AP_HT24=20` written or left out) is no change and restarts nothing;
   any channel-plan change restarts both radios (ACS only runs at hostapd start).
 
