@@ -62,7 +62,7 @@ plan)
   cb5=$(seg b wl5-b); cb24=$(st b wl24-b channel)
   echo "    unit b started second: 5 GHz centre $cb5, 2.4 GHz channel $cb24"; sed 's/^/    b: /' $T/start-b.log | grep 'ap-coord\|ACS' | head -4
   [ -n "$ca5" ] && [ -n "$cb5" ] && [ "$ca5" != "$cb5" ] && pass "plan: the two units' 5 GHz radios sit on different 80 MHz blocks (centres $ca5 / $cb5)" \
-    || fail "plan: both 5 GHz radios on centre '$ca5' / '$cb5'"
+    || { fail "plan: both 5 GHz radios on centre '$ca5' / '$cb5'"; grep -h 'ap-coord\|ap:' $T/start-b.log | head -8; dump b; }
   [ -n "$ca24" ] && [ -n "$cb24" ] && [ "$ca24" != "$cb24" ] && pass "plan: the 2.4 GHz radios sit on different channels ($ca24 / $cb24)" || fail "plan: both 2.4 GHz radios on $ca24 / $cb24"
   ap_stop a; ap_stop b;;
 repair)

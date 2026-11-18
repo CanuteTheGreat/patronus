@@ -36,6 +36,10 @@ n=$(ls "$D/overlay-systemd/etc/systemd/system" | grep -c 'udev\|hwdb')
 bad=$(find "$D/overlay-systemd/etc/systemd/system" -maxdepth 1 -type f -size 0)
 [ -z "$bad" ] && ok "systemd masks are /dev/null links, not empty unit files" || no "empty unit files (not masks): $bad"
 
+# 1b. the scripts the boot path runs by path must be executable in the tree (ap-coord was committed 0644 once: `ap` tests -x)
+for f in "$O"/usr/libexec/patronus/*; do case "${f##*/}" in fwcheck.sh) continue;; esac
+  [ -x "$f" ] && ok "executable: ${f#$D/}" || no "not executable: ${f#$D/}"; done
+
 # 1c. every command the flash guard / installer runs on the box exists there: a busybox applet (busybox-applets.txt) or a
 #     packaged tool (mtd-utils UBI tools); od was missing once and the guard refused every image on the QEMU gate
 for c in od tail head tr cut mktemp sha256sum wc cmp date logger mknod pivot_root sed grep sleep tar dd mount umount cat ls \
