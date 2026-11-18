@@ -527,7 +527,13 @@ check "flash guard: an UNSIGNED image is refused, nothing staged" refuse_sig uns
 check "flash guard: a TAMPERED image (root changed, sha256 re-made) is refused, nothing staged" refuse_sig tampered "signature check FAILED"
 R 'rm -f /data/unsigned.tar /data/tampered.tar'
 check "flash guard: a corrupt image is refused" R "cp /data/up.tar /tmp/bad.tar && printf 'XXXXXXXX' | dd of=/tmp/bad.tar bs=1 seek=3000000 conv=notrunc 2>/dev/null && ! $FENV patronus-flash check /tmp/bad.tar; rm -f /tmp/bad.tar"
-check "flash sysupgrade: stages the image" R "$FENV patronus-flash sysupgrade /data/up.tar && test -f /data/.upgrade/ready"
+# boot rollback (12.14): this VM has no GL bootloader environment, so an upgrade that cannot be rolled back is refused
+# by default (GUARD_REQUIRE=1) and installed only with --no-rollback; the rollback itself is proven by rollback-gate.sh
+refuse_norb() { o=$(R "$FENV patronus-flash sysupgrade /data/up.tar" 2>&1) && { echo "ACCEPTED: $o"; return 1; }
+  case "$o" in *"no rollback possible"*) ;; *) echo "$o"; return 1;; esac; R 'test ! -e /data/.upgrade && test ! -e /data/.upgrade.new' || { echo "something was staged"; return 1; }; }
+check "flash guard: no bootloader rollback possible here -> refused by default, nothing staged" refuse_norb
+check "patronus-flash status --json reports the boot guard (no bootloader script)" R 'o=$(patronus-flash status --json); case "$o" in *"\"installed\":false"*) ;; *) echo "$o"; exit 1;; esac'
+check "flash sysupgrade --no-rollback: stages the image" R "$FENV patronus-flash sysupgrade /data/up.tar --no-rollback && test -f /data/.upgrade/ready && test -f /data/.upgrade/no-rollback"
 check "upgrade-install verify accepts it (with the board's identity)" R "$FENV /usr/libexec/patronus/upgrade-install verify"
 check "persistence marker written (/etc overlay, /root)" R 'echo ci-$$ > /etc/patronus/ci-marker && echo ok > /root/ci-marker && rm -f /data/up.tar && sync'
 # an older image's /etc/passwd in the overlay (no chrony user): the next boot must add the image's system account
