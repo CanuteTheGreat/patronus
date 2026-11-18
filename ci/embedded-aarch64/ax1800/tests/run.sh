@@ -55,7 +55,7 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/bin" "$r/sbin" "$r/usr/bin" "
   for f in usr/sbin/patronus-flash usr/libexec/patronus/fwcheck.sh usr/libexec/patronus/upgrade-install usr/libexec/patronus/ubi-data usr/sbin/patronus-init usr/libexec/patronus/early \
            usr/libexec/patronus/ath11k-caldata usr/libexec/patronus/ap usr/libexec/patronus/board-network etc/pam.d/patronus lib/security/pam_unix.so \
            usr/sbin/hostapd usr/sbin/dropbear usr/bin/patronus-cli lib/firmware/ath11k/IPQ6018/hw1.0/board-2.bin lib/firmware/IPQ6018/q6_fw.mdt \
-           lib/firmware/IPQ6018/m3_fw.mdt lib/firmware/regulatory.db usr/libexec/patronus/etph-run usr/libexec/patronus/ap-guest usr/libexec/patronus/ap-coord usr/libexec/patronus/ap-steer usr/libexec/patronus/ap-event usr/libexec/patronus/wifi-guard usr/libexec/patronus/ap-addr \
+           lib/firmware/IPQ6018/m3_fw.mdt lib/firmware/regulatory.db usr/libexec/patronus/etph-run usr/libexec/patronus/ap-guest usr/libexec/patronus/ap-coord usr/libexec/patronus/ap-steer usr/libexec/patronus/ap-chan usr/libexec/patronus/ap-event usr/libexec/patronus/wifi-guard usr/libexec/patronus/ap-addr \
            usr/libexec/patronus/leds usr/libexec/patronus/restart-schedule usr/libexec/patronus/scheduled-restart usr/bin/gpgv usr/bin/ssl_client usr/libexec/patronus/accounts-sync \
            usr/sbin/patronus-guard usr/bin/fw_printenv etc/patronus/boot-guard.board etc/patronus/boot-guard.conf; do : > "$r/$f"; chmod +x "$r/$f"; done
   ln -s fw_printenv "$r/usr/bin/fw_setenv"
@@ -105,6 +105,7 @@ r=$(mkroot nomdev); rm "$r/etc/mdev.conf"; tn_msg "check-rootfs: rejects an imag
 r=$(mkroot stockhostapd); : > "$r/usr/sbin/hostapd"; tn_msg "check-rootfs: rejects stock hostapd (no synchronous cross-BSS removal)" 'not the Patronus build' $CR "$r"
 r=$(mkroot oldhostapd); echo patronus-xbss > "$r/usr/sbin/hostapd"; tn_msg "check-rootfs: rejects a Patronus hostapd without the authentication backoff (rendered configs would be refused)" 'no patronus_authfail' $CR "$r"
 r=$(mkroot steer644); chmod 644 "$r/usr/libexec/patronus/ap-steer"; tn_msg "check-rootfs: rejects a non-executable ap-steer (ap would skip it silently)" 'ap-steer is not executable' $CR "$r"
+r=$(mkroot chan644); chmod 644 "$r/usr/libexec/patronus/ap-chan"; tn_msg "check-rootfs: rejects a non-executable ap-chan (ap-coord would skip it silently)" 'ap-chan is not executable' $CR "$r"
 r=$(mkroot nofeat); : > "$r/etc/patronus-release"; tn_msg "check-rootfs: rejects an image that does not record its features" 'no FEATURES= line' $CR "$r"
 
 # 3. AP renderer (the real script, `ap render`, against a fake sysfs). The fake radios have the board's MAC shape: the
