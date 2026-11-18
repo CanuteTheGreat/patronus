@@ -98,3 +98,8 @@ site/dist/
 site/THIRD-PARTY-LICENSES.txt
 THIRD-PARTY-LICENSES.txt
 THIRD-PARTY-LICENSES.txt.gz
+
+# release tarballs and ISOs are release assets, never tracked (every CI checkout downloads the whole tree)
+/releases/*.tar.gz
+/releases/*.sha256
+/output/

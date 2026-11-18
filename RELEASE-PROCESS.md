@@ -87,7 +87,7 @@ cd /path/to/patronus
 ```
 
 This creates:
-- `releases/patronus-$VERSION.tar.gz`
+- `releases/patronus-$VERSION.tar.gz` (untracked; attach it to the Forgejo release, do not commit it)
 - `releases/patronus-$VERSION.tar.gz.sha256`
 
 ### 7. Create Git Tags
