@@ -9,10 +9,15 @@ c686dcf29a7bd3a4	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap	timi
 d23f57a1f106cb78	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap	wifi	vht_oper_chwidth=0	embedded.ap.wifi.vht_oper_chwidth
 c3992b98cd8e622f	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap	wifi	vht_oper_chwidth=1	embedded.ap.wifi.ht_capab
 fb3e4f1767eca66c	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap	wifi	vht_oper_chwidth=1	embedded.ap.wifi.vht_oper_chwidth
+9950726649ebfc3c	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-addr	timing	sleep 1	embedded.ap-addr.timing.i
+b08a02227e04c23d	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-addr	timing	sleep 1	embedded.ap-addr.timing.timing
+629c5004cecabbec	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-addr	timing	sleep 1	embedded.ap-addr.timing.i
+7425a343549d4ce9	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-addr	timing	sleep 2	embedded.ap-addr.timing.secs
+da61da44099eeca5	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-guest	interface	lan4	embedded.ap-guest.interface.elements
+80f4a38d8ab35a25	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-guest	interface	lan6	embedded.ap-guest.interface.elements
 8faf201daffdb7d9	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/board-network	interface	br-lan	embedded.board-network.interface.interface
 40372642bcf76f65	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/board-network	interface	br-lan	embedded.board-network.interface.interface
 22d0e41c62cc377a	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/board-network	interface	br-lan	embedded.board-network.interface.interface
-57a74a0ce814a901	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/board-network	interface	br-lan	embedded.board-network.interface.interface
 91fd0aa15399a89b	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/early	hostname	ax1800	embedded.early.hostname.hostname
 405c1d33b7d4a10c	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/upgrade-install	timing	sleep 1	embedded.upgrade-install.timing.i
 159ccc17f0f524f7	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/upgrade-install	timing	sleep 30	embedded.upgrade-install.timing.timing
@@ -46,6 +51,7 @@ e336307558aef443	crates/patronus-ai/src/threat_intel.rs	url	https://rules.emergi
 97aa3736dc6c1b9c	crates/patronus-captiveportal/src/portal.rs	interface	wlan0	captiveportal.interface.interface
 49b7190bd66668c2	crates/patronus-captiveportal/src/portal.rs	timing	Duration::from_secs(60)	captiveportal.timing.interval
 0e786057a70629df	crates/patronus-captiveportal/src/portal.rs	url	http://portal.local	captiveportal.url.portal_url
+7c5ff5886d03a69b	crates/patronus-cli/src/commands/applyd.rs	interface	br-lan	cli.interface.patronus_network
 760bd255a5945cc8	crates/patronus-cli/src/commands/applyd.rs	timing	Duration::from_secs(300)	cli.timing.t
 9c39b4f4fbe14298	crates/patronus-cli/src/commands/daemon.rs	timing	Duration::from_secs(1)	cli.timing.tokio
 a77bf0dd5d920c72	crates/patronus-cli/src/commands/edge.rs	address	10.99.0.0/16	cli.address.address
@@ -130,7 +136,23 @@ e0b002c1b54ca301#2	crates/patronus-monitoring/src/alerts.rs	url	https://api.tele
 ed25f2cb990e9fa0	crates/patronus-monitoring/src/metrics.rs	timing	Duration::from_secs(5)	monitoring.timing.sys_interval
 b98b52d805a87076	crates/patronus-monitoring/src/status.rs	interface	eth0	monitoring.interface.name
 59f704bfdabd9dd1	crates/patronus-monitoring/src/status.rs	path	/var/lib/dhcp/dhcpd.leases	monitoring.path.lease_file
+d41b450bbb315e07	crates/patronus-network/src/apdev.rs	path	/etc/patronus-release	network.path.release
+89ae1647b7fca4b5	crates/patronus-network/src/apdev.rs	path	/etc/patronus/device.env	network.path.path
+84922bdcea60d817	crates/patronus-network/src/apdev.rs	path	/tmp/patronus-feed	network.path.work
+3f78315de35241ec	crates/patronus-network/src/apdev.rs	path	/usr/libexec/patronus	network.path.path
+22af56a69a9e2cb1	crates/patronus-network/src/apnames.rs	constant	NAMES_FILE	network.names_file
+16678498e15167b5	crates/patronus-network/src/apnames.rs	path	/run/patronus/dhcp-names	network.names_file
+6f88f4f95ff236ce	crates/patronus-network/src/apnames.rs	timing	Duration::from_millis(1)	network.timing._
+5e1aea216cfd4996	crates/patronus-network/src/apnames.rs	timing	Duration::from_millis(800)	network.timing.duration
+5169eccc8234eea1	crates/patronus-network/src/apnames.rs	timing	Duration::from_secs(30)	network.timing.std
 59a02b3f6cca1b36	crates/patronus-network/src/applyd.rs	path	/run/patronus/applyd.sock	network.path.default_socket
+ee5546580623a54e	crates/patronus-network/src/apwifi.rs	interface	wl24	network.interface.interface
+3a76e7963d9d3d33	crates/patronus-network/src/apwifi.rs	path	/etc/patronus/ap.env	network.path.env
+4f2580fd5b693b20	crates/patronus-network/src/apwifi.rs	path	/usr/libexec/patronus/ap	network.path.script
+dab15d46440a0217	crates/patronus-network/src/apwifi.rs	path	/usr/libexec/patronus/wifi-guard	network.path.path
+61117f6b679fe0f1	crates/patronus-network/src/apwifi.rs	timing	Duration::from_millis(1000)	network.timing.std
+8cb886bb638f1272	crates/patronus-network/src/apwifi.rs	timing	Duration::from_secs(40)	network.timing.bad
+0007b185fbef021e	crates/patronus-network/src/apwifi.rs	timing	Duration::from_secs(40)	network.timing.back
 082ca75fac321409	crates/patronus-network/src/ddns.rs	constant	STATUS_FILE	network.status_file
 288517a07d87d724	crates/patronus-network/src/ddns.rs	path	/var/lib/patronus/ddns-status.json	network.status_file
 2cc245f6a157955c	crates/patronus-network/src/ddns.rs	url	https://api.cloudflare.com/client/v4/zones/{zone	network.url.base
@@ -141,6 +163,7 @@ d74059f4de9fddb3	crates/patronus-network/src/diag.rs	timing	Duration::from_secs(
 8d8449011d1ebefb	crates/patronus-network/src/dns.rs	path	/var/lib/patronus/dnsbl	network.path.dnsbl_cache
 3d3fa7678611b2ab	crates/patronus-network/src/dns.rs	path	/var/lib/unbound/root.key	network.path.unbound_anchor
 6ca48700d953d8ed	crates/patronus-network/src/general.rs	constant	K_HOST	network.k_host
+bc5943e7eb7a8353	crates/patronus-network/src/guest.rs	address	192.168.30.1/24	network.address.address
 e8733889f043f577	crates/patronus-network/src/ha.rs	address	192.168.50.254/24	network.address.s
 9cf17c1089d7d64b	crates/patronus-network/src/ha.rs	constant	STATE_FILE	network.state_file
 5e9a21357368c78a	crates/patronus-network/src/ha.rs	path	/etc/patronus	network.path.lan
@@ -202,6 +225,8 @@ d51980b8b596e3d3	crates/patronus-network/src/syslog.rs	path	/etc/patronus/syslog
 8a9d1b55f0523474	crates/patronus-network/src/syslog.rs	path	/usr/libexec/patronus/syslogd	network.path.bb_launcher
 cf8d833f71d66051	crates/patronus-network/src/syslog.rs	path	/var/log/messages	network.path.path
 90abe2b0d67780b2	crates/patronus-network/src/syslog.rs	path	/var/log/syslog	network.path.path
+a8ab45a147b6bef3	crates/patronus-network/src/sysops.rs	path	/etc/patronus-release	network.path.release
+d0fe09ad5b4ce6b2	crates/patronus-network/src/sysops.rs	path	/tmp/patronus-firmware.tar	network.path.upload
 d113b2920acfda7b	crates/patronus-network/src/sysops.rs	path	/var/lib/patronus/update	network.path.pathbuf
 54a1bc6ee256d1cb	crates/patronus-network/src/sysops.rs	timing	Duration::from_secs(3)	network.timing.std
 9afbb0b3464e21f6	crates/patronus-network/src/uplink_probe.rs	constant	EVERY_SECS	network.every_secs
@@ -264,6 +289,19 @@ c2b8e6983fcec66e	crates/patronus-web/src/auth.rs	path	/var/lib/patronus/initial-
 751c422cac1c045d	crates/patronus-web/src/lib.rs	timing	Duration::from_secs(60)	web.timing.interval
 22a40a5b272d2fff	crates/patronus-web/src/routes/api/states.rs	constant	DEFAULT_LIMIT	web.default_limit
 09816e9147832393	crates/patronus-web/src/routes/api/states.rs	constant	MAX_LIMIT	web.max_limit
+a6b57ff4415f0faa	crates/patronus-web/src/routes/api/system.rs	size	64 * 1024 * 1024	web.size.max_firmware
+5d70775a166a5c1a	crates/patronus-web/src/routes/api/system.rs	timing	Duration::from_secs(3)	web.timing.tokio
+7448d0e0db4cca1b	crates/patronus-web/src/routes/api/wifi.rs	interface	br-lan	web.interface.patronus_network
+e94f240c26dcb07f	crates/patronus-web/src/routes/legal.rs	constant	CFG_LICENSES_FILE	web.cfg_licenses_file
+cf2a966bec10cc32	crates/patronus-web/src/routes/legal.rs	constant	CFG_SITE_URL	web.cfg_site_url
+9bc89eb74e3dbe92	crates/patronus-web/src/routes/legal.rs	constant	CFG_SOURCE_URL	web.cfg_source_url
+14cdfb0c061269cf	crates/patronus-web/src/routes/legal.rs	constant	DEFAULT_LICENSES_FILE	web.default_licenses_file
+b5db13e60d6ca194	crates/patronus-web/src/routes/legal.rs	constant	DEFAULT_SITE_URL	web.default_site_url
+b0a0f8bafdba8b06	crates/patronus-web/src/routes/legal.rs	constant	DEFAULT_SOURCE_URL	web.default_source_url
+160ab77a9aa8675a	crates/patronus-web/src/routes/legal.rs	constant	MAX_BUNDLE_BYTES	web.max_bundle_bytes
+bcc561fd38466e43	crates/patronus-web/src/routes/legal.rs	size	32 * 1024 * 1024	web.max_bundle_bytes
+73753110a2b1f077	crates/patronus-web/src/routes/legal.rs	url	https://patronus.errant.solutions	web.default_site_url
+9faae5c4128db935	crates/patronus-web/src/routes/mod.rs	path	/etc/patronus-release	web.path.std
 b42eacad0eabd25f	crates/patronus-web/src/routes/pages.rs	timing	Duration::from_millis(500)	web.timing.sample
 d6b9ae86231c5cfe	crates/patronus-web/src/state/fwlog.rs	timing	Duration::from_secs(1)	web.timing.t
 c33293d05e0c8435	crates/patronus-web/src/state/fwlog.rs	timing	Duration::from_secs(30)	web.timing.std
@@ -289,6 +327,7 @@ c0ab9173e20c8ac4	crates/patronus-web/src/state/speedtest.rs	timing	Duration::fro
 e2b6e91258fb4f3c	crates/patronus-web/src/state/stats.rs	constant	CFG_CAP_IFACE	web.cfg_cap_iface
 e4cf2b3de2604c7d	crates/patronus-web/src/state/stats.rs	constant	CFG_CAP_NOTIFIED	web.cfg_cap_notified
 cf953347a7c53931	crates/patronus-web/src/state/stats.rs	constant	CFG_RETENTION_DAYS	web.cfg_retention_days
+43f9f766ccabd0ec	crates/patronus-web/src/state/system.rs	path	/etc/patronus-release	web.path.std
 9dbc8327bbedcf78	crates/patronus-web/src/state/system.rs	timing	Duration::from_millis(250)	web.timing.s
 4bcb8ee016b4f757	crates/patronus-web/src/state/telemetry.rs	timing	Duration::from_secs(10)	web.timing.t
 0ed9d4e4ad4bd232	crates/patronus-web/src/state/telemetry.rs	url	https://api.telegram.org	web.url.telegram_api
@@ -364,9 +403,11 @@ a3a821851d1d654c	gentoo/live-iso/common/overlay/usr/libexec/live-installer-gui	t
 cd4c2f65d4115098	gentoo/live-iso/common/overlay/usr/share/live-installer/test-machine/horcrux-test-watchdog.sh	timing	sleep 1	embedded.horcrux-test-watchdog.timing.soft_margin
 15e617b582e1ae19	gentoo/live-iso/common/publish-github.sh	timing	sleep 10	pkg.common.timing.timing
 eb2b4d8ee6591e1d	gentoo/live-iso/common/publish-github.sh	url	https://%s.errant.solutions/docs/iso-install/	pkg.common.url.releases
+8edfad4d3d8b4ea6	gentoo/live-iso/common/publish-github.sh	url	https://%s.errant.solutions/signing-key.asc	pkg.common.url.nverify
 21a81c320a0eb71c	gentoo/live-iso/common/publish-github.sh	url	https://api.github.com/repos/$repo	pkg.common.url.api
 3e4e2ce218135518	gentoo/live-iso/common/publish-github.sh	url	https://github.com/$repo/releases/download/$DAILY_TAG/$name	pkg.common.url.https
 ec945bd422c8d8d7	gentoo/live-iso/common/publish-github.sh	url	https://github.com/$repo/releases/download/$tag/$n	pkg.common.url.https
+7d3c8bb19d72518c	gentoo/live-iso/common/sbom.py	url	https://errant.solutions/	pkg.common.url.https
 56f1ee291085b7c1	gentoo/live-iso/common/setup-rootfs.sh	url	https://patronus.errant.solutions/	pkg.common.url.home_url
 97134687880581f7	gentoo/live-iso/common/setup-rootfs.sh	url	https://patronus.errant.solutions/docs/	pkg.common.url.home_url
 7f12dbff72322540	gentoo/live-iso/common/udisks_gate.py	timing	sleep 1	pkg.common.timing.timeout
