@@ -181,7 +181,8 @@ for sc in $SCEN; do
     boot
   fi
   ok=1
-  if wait_ssh && s=$(wait_guard '"event":"reverted"'); then :; else ok=0; fi
+  # match THIS scenario's revert: an earlier scenario's "reverted" event is still in the log (and a bad image with ssh answers)
+  if wait_ssh && s=$(wait_guard "\"event\":\"reverted\",\"detail\":\"trial of rbgate-$sc-$INIT failed"); then :; else ok=0; fi
   st=$(E pat_state); bo=$(E pat_boots)
   if [ $ok = 1 ] && R 'grep -q "^BUILD=rbgate-good2-" /etc/patronus-release'; then
     pass "$sc: reverted by itself to good2 in $(( $(date +%s) - t0 ))s (bootloader state $st, $bo trial boots)"
