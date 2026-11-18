@@ -695,7 +695,7 @@ pub fn render_nft(c: &Cfg, wan_devs: &[String], now: i64) -> String {
     }
     o.push_str(&format!("  chain guest_out {{\n{gout}  }}\n"));
     let mut tg = String::from(
-        "    ct state != established,related drop comment \"nothing starts a connection into the guest network\"\n",
+        "    ct state != { established, related } drop comment \"nothing starts a connection into the guest network\"\n",
     );
     gate_lines(&mut tg);
     if c.limits.client_down > 0 {
@@ -742,7 +742,9 @@ pub fn tc_download(c: &Cfg) -> Option<Vec<String>> {
 pub fn tc_upload(c: &Cfg) -> Option<Vec<String>> {
     (c.limits.up > 0).then(|| {
         let rate = c.limits.up;
-        let burst = (rate * 125 / 25).max(12000);
+        // a policer drops what exceeds its bucket: the bucket must hold a whole GSO super-packet
+        // (up to 64 KB) or TCP never gets going, so 125 ms of traffic but never below 70 KB
+        let burst = (rate * 125 / 8).max(70_000);
         vec![
             "filter".into(),
             "replace".into(),
@@ -1744,7 +1746,7 @@ mod tests {
         assert!(t.contains("drop comment \"guests reach nothing else on the router\""));
         assert!(t.contains("oifname != { \"eth0\" } drop"));
         assert!(t.contains("ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16"));
-        assert!(t.contains("ct state != established,related drop"));
+        assert!(t.contains("ct state != { established, related } drop"));
         assert!(t.contains("ip saddr 192.168.30.0/24 oifname { \"eth0\" } masquerade"));
         assert!(!t.contains("set up_clients"), "no per-client cap by default");
         assert!(!t.contains("closed"), "always open by default");
