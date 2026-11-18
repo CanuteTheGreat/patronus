@@ -1,5 +1,5 @@
 #!/bin/sh
-# ap-coord: keep this unit's automatic (ACS) channels off the channels its OTHER access points use (docs 12.15).
+# ap-coord: keep this unit's automatic (ACS) channels off the channels its OTHER access points use (docs 12.16).
 # hostapd's ACS measures only what it hears, so two units with the same SSIDs that start together (or one after the
 # other, with the first not yet on air) can both end on the same 80 MHz block and share its airtime. Commercial
 # controllers plan channels across their APs; this does the same without a controller, from what each unit can hear:
@@ -18,7 +18,7 @@
 #   ap-coord covered         parse output on stdin -> the 20 MHz channel numbers each BSS covers (2.4 GHz: every channel it overlaps)
 #   ap-coord busy BAND       parse output on stdin -> channels the peers cover (sorted, unique); own BSSIDs are skipped
 # Tie-break: the unit whose phy MAC (last five octets: the first one differs between a radio's BSSes) is HIGHER moves.
-# Test hooks: AP_BOARD, AP_RENDER_OUT (as for `ap`), AP_COORD_SCAN_FILE (parse this scan instead of scanning),
+# Test hooks: AP_COORD_NOPLAN (skip the pre-start scan once), AP_BOARD, AP_RENDER_OUT (as for `ap`), AP_COORD_SCAN_FILE (parse this scan instead of scanning),
 #             AP_COORD_STATUS_FILE (hostapd_cli status text), AP_COORD_AP (path of the ap script), AP_COORD_NOW (hour).
 . ${AP_BOARD:-/etc/patronus/board.sh}
 OUTD=${AP_RENDER_OUT:-/run/hostapd}
@@ -77,6 +77,7 @@ scan_if() { # BAND IF: a fresh scan of the band's frequencies (falls back to the
 plan() { # BAND PHY
   b=$1; phy=$2; f=$OUTD/coord-$b; rm -f "$f"
   coord_on "$b" || return 0
+  [ -z "${AP_COORD_NOPLAN:-}" ] || return 0                                         # test hook: start blind
   eval "c=\${AP_CHAN$b:-auto}"; [ "$c" = auto ] || [ "$c" = 0 ] || return 0       # a fixed channel is not planned
   if [ -n "${AP_COORD_SCAN_FILE:-}" ]; then s=$(scan_if "$b" x)
   else ifn=wl$b-coord; iw dev $ifn del >/dev/null 2>&1
@@ -155,6 +156,7 @@ $ssid
   done; true; }
 
 run() {
+  unset AP_COORD_NOPLAN
   echo $$ > "$PIDF"
   sleep "$(num "${AP_COORD_DELAY:-}" 120)"
   first=now

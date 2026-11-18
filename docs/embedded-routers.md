@@ -918,9 +918,8 @@ never exported):
 - The radio cards on the Wi-Fi page show what the radio really runs (`hostapd_cli status`: channel, frequency, width,
   centre) and "picked automatically" or "fixed"; while ACS measures they say so. `patronus ap-wifi show` prints the same.
 - ACS does not coordinate between access points: after both house units restarted on the defaults they picked the same
-  5 GHz block (36-48) and the busier unit's 5 GHz went from 7-9 % to 38 % busy. Until coordination exists (queued), give
-  neighbouring units disjoint channel lists on the Wi-Fi page (e.g. one `36 40 44 48`, the other `149 153 157 161`):
-  still automatic within the list, nothing baked into an image.
+  5 GHz block (36-48) and the busier unit's 5 GHz went from 7-9 % to 38 % busy. Units of one network now coordinate
+  (12.16); disjoint channel lists on the Wi-Fi page remain the manual alternative.
 - `ap stop` waits until each hostapd has exited (it needs ~0.8 s to release the radio): a start right after a stop
   failed with "Match already configured" and crashed, so a Wi-Fi page save rolled back now and then.
 - A save or `apply` that only spells out defaults (`AP_HT24=20` written or left out) is no change and restarts nothing;
@@ -1033,3 +1032,46 @@ LEBs (31 MiB) on a unit with `patronus_data` from `ubi-data`: room for a full pr
 - Real unit: section 12.16 results below (hardware-only parts: `bootipq` after our prefix, U-Boot's own `ubi write`
   revert, the watchdog arm, ath11k/Wi-Fi after a revert).
 
+
+### 12.16 Channel coordination between the access points of one network (2026-11-18)
+
+Automatic channel selection (12.14) measures only what the unit hears while it decides, so two units with the same
+SSIDs that start together, or one after the other with the first not yet on air, can both land on the same 80 MHz block
+and share its airtime. UniFi, Aruba Instant and Omada plan channels across their access points; Patronus does the same
+without a controller, from what each unit can hear. Default ON, per band.
+
+- **Peers.** A peer is any BSS in a scan that broadcasts one of this unit's SSIDs (units are told apart from the
+  neighbours' networks by SSID) or whose BSSID matches an entry of `AP_COORD_PEERS` (MAC of any BSSID of the other unit;
+  needed only for hidden networks), is heard at `AP_COORD_MIN_SIGNAL` dBm or better, and is not this unit's own. Each
+  peer's blocks are read from its beacon (HT operation secondary-channel offset, VHT operation width and centre): an
+  80 MHz BSS covers four 20 MHz channels, a 40 MHz one two, a 2.4 GHz BSS every channel it overlaps (primary +-4).
+- **At start** (`ap start`, also a Wi-Fi page save, `ap restart-band`): before hostapd is configured, `ap-coord plan` makes
+  a temporary managed interface on each radio, scans the channels ACS may use (both bands at once, at most
+  `AP_COORD_SCAN_SECS`), and writes the peers' channels to `/run/hostapd/coord-<band>`. The `ap` renderer drops every
+  candidate channel whose 20/40/80 MHz block overlaps one of them from the ACS `chanlist` ("whole block" rule of 12.14
+  still applies) and says so in its output. When no whole block would remain, the list is left alone and ACS decides
+  (a third unit on a two-block band). A fixed channel is not planned.
+- **Later** (`ap-coord run`, started by `ap start`): `AP_COORD_DELAY` seconds after start and then every
+  `AP_COORD_INTERVAL` seconds (0 = once) the unit compares its own block (`hostapd_cli status`) with the peers it can hear.
+  When one overlaps, the unit with the HIGHER key restarts that radio (`ap restart-band 5|24`, which plans again, so
+  ACS lands elsewhere); the other stays. The key is the last five octets of the radio's own MAC (the first octet differs
+  between a radio's BSSes, and both units compute the same ordering). This repairs the case the start-time scan cannot
+  see: both units starting at the same second hear nobody. A move that would drop stations waits for the quiet hours
+  `AP_COORD_QUIET` ("1-5", empty = any time); the first check after a start is not delayed (the clients just
+  reconnected anyway).
+- **Settings** (all typed, default in `board.sh`, `ap.env`, `/api/wifi`, the Wi-Fi page, `patronus ap-wifi export|plan|apply`):
+  `AP_COORD5` / `AP_COORD24` (`coord5`, `coord24`, true), `AP_COORD_PEERS` (`coord_peers`, empty),
+  `AP_COORD_MIN_SIGNAL` (`coord_min_signal`, -90 dBm, -100..-30), `AP_COORD_DELAY` (`coord_delay`, 120 s, 0..3600),
+  `AP_COORD_INTERVAL` (`coord_interval`, 3600 s, 0 or 60..86400), `AP_COORD_QUIET` (`coord_quiet`, "1-5"),
+  `AP_COORD_SCAN_SECS` (`coord_scan_secs`, 25 s, 5..120). They are live: saving them restarts no radio, `ap-coord run`
+  re-reads `ap.env` at each check.
+- Not covered: three or more units on a band with only two free blocks (the list is then left to ACS), coordination with
+  units of another vendor (they are found by SSID, which works when they carry the same SSIDs), DFS radar events (ACS and
+  hostapd handle those).
+
+Proof: host tests (`tests/run.sh`: scan parsing, block coverage, peer filter by SSID/MAC/signal, rendered chanlist with
+and without free blocks, 2.4 GHz, `AP_COORD5=0`, `plan`, `check` tie-break and quiet hours), unit tests (`apwifi`:
+defaults, round trip, validation, live), the QEMU gate (`wifi_chanplan`), `ci/wifi-page-e2e.py` (form = API) and the
+mac80211_hwsim scenario `tests/coord-scenario.sh` (two units, same SSID, private mount namespaces: started one after the
+other they end on different blocks on both bands; started blind at the same moment, the re-check moves exactly the
+higher-key unit).
