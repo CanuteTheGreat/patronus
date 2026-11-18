@@ -1140,7 +1140,7 @@ Changes:
   station lists. A station whose average signal stayed at or below `AP_STEER_SIGNAL` dBm for `AP_STEER_AFTER` s and that
   is idle (below `AP_STEER_IDLE` kbit/s, so a call or a stream is never cut) is refused on every BSS of this unit for
   `AP_STEER_BLOCK` s through hostapd's deny list, at most `AP_STEER_MAX` per round; `AP_STEER_EXEMPT` lists MACs it never
-  moves. A station that comes back just as weak has no better unit and is left alone for `AP_STEER_RETRY` s. The unit's
+  moves. A station it moved that comes back is left alone for `AP_STEER_RETRY` s (see "No ping-pong" below). The unit's
   own block list (`deny-<bss>`) is never lifted by it. `AP_STEER=auto` (default) acts only when another access point of
   this network is known (heard by `ap-coord plan`, listed in `AP_COORD_PEERS`, or a station that left turned up behind a
   wired bridge port); `1` always, `0` off. `ap-steer status` shows what it is doing. No 802.11k/v/r frames are sent: the
@@ -1154,4 +1154,21 @@ Changes:
 Defaults (board.sh, override in ap.env): `AP_STEER=auto AP_STEER_SIGNAL=-65 AP_STEER_AFTER=600 AP_STEER_IDLE=64
 AP_STEER_BLOCK=30 AP_STEER_RETRY=21600 AP_STEER_MAX=2 AP_STEER_INTERVAL=30`, `AP_AUTHFAIL_MAX=10 AP_AUTHFAIL_WINDOW=60
 AP_AUTHFAIL_HOLD=60 AP_AUTHFAIL_HOLD_MAX=3600`, `AP_XBSS_MAX=6 AP_XBSS_WINDOW=60 AP_XBSS_HOLD=30`. Host tests:
-`tests/run.sh` (renderer values and validation, ap-steer decisions with a fake station dump and hostapd_cli).
+`tests/run.sh` (renderer values and validation, ap-steer decisions with a fake station dump and hostapd_cli, two units
+swapping one station).
+
+No ping-pong: a unit keeps the record of every station it moved for `AP_STEER_RETRY` s. If the station joins this unit
+again in that time (it found no better unit, or the other unit sent it back because it was even weaker there), it is
+left alone here until the move is `AP_STEER_RETRY` s old. So each unit moves a given station at most once per
+`AP_STEER_RETRY`, and two units can swap a station at most once (one round trip) in that time; `tests/run.sh` drives two
+units for 11,000 s and checks it. The units do not exchange signal readings over the LAN: that needs an authenticated
+channel between units, and the per-unit record already bounds the cost to one round trip of an idle station.
+
+Settings (typed, like the channel coordination of 12.17): every key above is in `/api/wifi`, the Wi-Fi page (groups
+"Steering" and "Misbehaving devices") and the declarative document (`patronus ap-wifi export|plan|apply`), with these
+ranges: `steer` auto|on|off, `steer_signal` -90..-40 dBm, `steer_after` 30..86400 s, `steer_idle` 0..1000000 kbit/s,
+`steer_block` 0..3600 s, `steer_retry` 0..604800 s, `steer_max` 0..64, `steer_interval` 10..3600 s, `steer_exempt` up to
+256 MACs; `authfail_*` and `xbss_*` 0..86400 (and `authfail_hold_max` >= `authfail_hold`). Steering settings are live (no
+radio restart: ap-steer re-reads ap.env every round); the hostapd limits restart the radios. `check-rootfs.sh` requires
+an executable ap-steer and a hostapd that knows `patronus_authfail_*`; the QEMU gate checks the defaults, a live
+steering change, bad values (400) and `ap-steer status`.

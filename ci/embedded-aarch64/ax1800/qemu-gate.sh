@@ -151,6 +151,25 @@ wifi_chanplan() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi);
     c=$(wapi -X PUT -d "$bad" https://127.0.0.1:$WEBP/api/wifi); [ "$c" = 400 ] || { echo "$bad: HTTP $c"; return 1; }; done
   c=$(wapi -X PUT -d '{"width24":20,"dfs":false,"unii4":false,"chanlist5":[],"chanlist24":[1,6,11],"acs_scans":5,"coord5":true,"coord_peers":[],"coord_min_signal":-90,"coord_interval":3600,"coord_quiet":"1-5"}' https://127.0.0.1:$WEBP/api/wifi)
   [ "$c" = 200 ] || { echo "PUT back: $c"; return 1; }; }
+# steering + misbehaving-station limits (docs 12.18): defaults in GET, a steering change is live (no radio restart) and
+# lands in ap.env, bad values 400, the hostapd limits are settings too; ap-steer is installed executable and `status` runs
+wifi_steer() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$g" '"steer":"auto"' '"steer_signal":-65' '"steer_after":600' '"steer_idle":64' '"steer_block":30' \
+    '"steer_retry":21600' '"steer_max":2' '"steer_interval":30' '"steer_exempt":[]' '"authfail_max":10' '"authfail_window":60' \
+    '"authfail_hold":60' '"authfail_hold_max":3600' '"xbss_max":6' '"xbss_window":60' '"xbss_hold":30' || { echo "defaults: $c $g"; return 1; }
+  c=$(wapi -X PUT -d '{"steer":"on","steer_signal":-70,"steer_retry":3600,"steer_exempt":["AA:BB:CC:DD:EE:01"]}' https://127.0.0.1:$WEBP/api/wifi)
+  r=$(cat "$W/api.json"); [ "$c" = 200 ] || { echo "PUT steer: $c $r"; return 1; }
+  case "$r" in *'"restarted":true'*) echo "a steering change restarted the radios: $r"; return 1;; esac
+  m=$(R '. /etc/patronus/board.sh; echo "S=$AP_STEER SIG=$AP_STEER_SIGNAL R=$AP_STEER_RETRY X=$AP_STEER_EXEMPT"')
+  [ "$m" = "S=1 SIG=-70 R=3600 X=aa:bb:cc:dd:ee:01" ] || { echo "ap.env after PUT: $m"; return 1; }
+  for bad in '{"steer":"maybe"}' '{"steer_signal":-20}' '{"steer_after":5}' '{"steer_exempt":["nope"]}' '{"xbss_hold":90000}' '{"authfail_hold_max":10}'; do
+    c=$(wapi -X PUT -d "$bad" https://127.0.0.1:$WEBP/api/wifi); [ "$c" = 400 ] || { echo "$bad: HTTP $c"; return 1; }; done
+  c=$(wapi -X PUT -d '{"authfail_max":12,"xbss_hold":45}' https://127.0.0.1:$WEBP/api/wifi); [ "$c" = 200 ] || { echo "PUT limits: $c $(cat "$W/api.json")"; return 1; }
+  m=$(R '. /etc/patronus/board.sh; echo "A=$AP_AUTHFAIL_MAX H=$AP_XBSS_HOLD"'); [ "$m" = "A=12 H=45" ] || { echo "ap.env limits: $m"; return 1; }
+  s=$(R 'ls -l /usr/libexec/patronus/ap-steer; /usr/libexec/patronus/ap-steer status; echo rc=$?') || { echo "ap-steer status: $s"; return 1; }
+  has_all "$s" '-rwx' 'steering: ' 'rc=0' || { echo "ap-steer status: $s"; return 1; }
+  c=$(wapi -X PUT -d '{"steer":"auto","steer_signal":-65,"steer_retry":21600,"steer_exempt":[],"authfail_max":10,"xbss_hold":30}' https://127.0.0.1:$WEBP/api/wifi)
+  [ "$c" = 200 ] || { echo "PUT back: $c"; return 1; }; }
 wifi_cli() { d=$(R 'patronus-cli ap-wifi export --json') || { echo "export failed: $d"; return 1; }
   case "$d" in *ci-gate-wifi-pass*) echo "export leaks a key"; return 1;; esac
   has_all "$d" '"apiVersion": "patronus.ap-wifi/v1"' '"chan24": "6"' '"ssid": "CI Gate Net"' || { echo "export: $d"; return 1; }
@@ -479,6 +498,7 @@ check "Wi-Fi page API: networks + radios written to the access-point file (0600)
 check "Wi-Fi restart path: hostapd started into its own transient scope (systemd)" wifi_scope
 check "backup includes the access-point Wi-Fi file; restoring the backup puts it back" wifi_backup
 check "patronus ap-wifi: declarative export (no keys), plan shows only the edited setting, apply writes it" wifi_cli
+check "Wi-Fi steering + misbehaving-station limits: defaults, live steering change in ap.env, bad values 400, ap-steer status runs" wifi_steer
 check "firmware page API: running build shown, a non-image upload refused by patronus-flash and not kept" fw_web
 check "Wi-Fi page: crash protection (wifi-guard) and guest-filter availability reported" gap_state
 check "guest network: GUEST_ flag written, nftables bridge filter loads with the guest ports, removed without guests" gap_guest

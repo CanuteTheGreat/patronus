@@ -13,6 +13,10 @@
     form.lan-form label.wifi-check { flex-direction: row; align-items: center; gap: 6px; }
     form.lan-form label.wifi-check input { min-width: 0; }
     #wifi-networks td { vertical-align: top; }
+    form.lan-form fieldset.wifi-group { flex-basis: 100%; box-sizing: border-box; display: flex; flex-wrap: wrap; gap: 10px;
+        align-items: flex-end; border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; margin: 6px 0; min-width: 0; }
+    form.lan-form fieldset.wifi-group legend { font-weight: 600; padding: 0 4px; }
+    form.lan-form fieldset.wifi-group .wifi-note { flex-basis: 100%; margin: 0; }
     .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: .8em; background: var(--line); }
     .pill.on { background: var(--ok-bg, #d7f5dd); color: var(--ok-fg); }
     .pill.off { background: var(--bad-bg); color: var(--bad-fg); }
@@ -74,6 +78,48 @@
         <label>5 GHz transmit power <select name="txpower5"></select></label>
         <label>Client names <input name="names" placeholder="dhcp" size="14"
             title="dhcp: names from the clients' own DHCP requests plus the router's DNS; off; or the IP address of a DNS server that knows the names"></label>
+        <fieldset class="wifi-group" id="wifi-steer-group">
+            <legend>Steering</legend>
+            <p class="wifi-note">When an access point restarts, its devices move to another one and most of them never come
+                back, even when they end up two rooms away with a weak signal. Steering finds devices that stay connected
+                here with a weak signal while they are idle, and refuses them on this unit for a short time so they join a
+                closer access point. A device that comes back just as weak (or bounces straight back from the other access
+                point) is left alone. These settings apply at once, without restarting the radios.</p>
+            <label>Steering <select name="steer">
+                <option value="auto">Automatic (only when another access point of this network is found)</option>
+                <option value="on">On</option><option value="off">Off</option></select></label>
+            <label>Weak signal at or below (dBm) <input name="steer_signal" type="number" min="-90" max="-40" size="4"
+                title="A device whose average signal is at or below this is a candidate for a move (-65 = about two walls away)"></label>
+            <label>Weak for at least (s) <input name="steer_after" type="number" min="30" max="86400" size="6"
+                title="How long a device must stay weak, and connected here, before it is moved"></label>
+            <label>Idle below (kbit/s) <input name="steer_idle" type="number" min="0" max="1000000" size="7"
+                title="Only devices moving less data than this are moved, so a call or a video is never cut"></label>
+            <label>Refuse here for (s) <input name="steer_block" type="number" min="0" max="3600" size="5"
+                title="How long a moved device is refused on this unit (0 = never refuse: steering does nothing)"></label>
+            <label>Leave a device alone for (s) <input name="steer_retry" type="number" min="0" max="604800" size="7"
+                title="A device that came back just as weak has no better access point: it is not moved again for this long"></label>
+            <label>Devices moved per round <input name="steer_max" type="number" min="0" max="64" size="3"></label>
+            <label>Check every (s) <input name="steer_interval" type="number" min="10" max="3600" size="5"></label>
+            <label>Never move these devices (MACs) <input name="steer_exempt" size="30" placeholder="none"
+                title="MAC addresses separated by spaces: devices that must stay on this unit whatever their signal"></label>
+        </fieldset>
+        <fieldset class="wifi-group" id="wifi-misbehave-group">
+            <legend>Misbehaving devices</legend>
+            <p class="wifi-note">Some devices (often smart plugs far from the access point) retry joining every few seconds
+                without ever finishing, or jump between this unit's networks. That fills the log and, on some radios, can
+                crash the Wi-Fi. These limits make the radio ignore such a device for a while; it is let in again as soon
+                as it really connects. Changing them restarts the radios. 0 in the first box of a row turns that limit off.</p>
+            <label>Ignore a device after (failed joins) <input name="authfail_max" type="number" min="0" max="86400" size="5"
+                title="Join attempts the device never acknowledged, within the time below"></label>
+            <label>within (s) <input name="authfail_window" type="number" min="0" max="86400" size="5"></label>
+            <label>first for (s) <input name="authfail_hold" type="number" min="0" max="86400" size="5"
+                title="Doubles every time the device is ignored again"></label>
+            <label>at most (s) <input name="authfail_hold_max" type="number" min="0" max="86400" size="6"></label>
+            <label>Refuse a device that switches networks more than <input name="xbss_max" type="number" min="0" max="86400" size="5"
+                title="Times a device moves between this radio's networks (for example home and guest)"></label>
+            <label>times within (s) <input name="xbss_window" type="number" min="0" max="86400" size="5"></label>
+            <label>for (s) <input name="xbss_hold" type="number" min="0" max="86400" size="5"></label>
+        </fieldset>
     </form>
     <p class="wifi-note">Transmit power: "auto" lets the radio use the most the country allows; a lower value shrinks the
         coverage (useful when two access points overlap). Power and client names apply at once, without restarting the radios.</p>
@@ -234,6 +280,11 @@ async function loadWifi() {
     f.coord_min_signal.value = String(CFG.coord_min_signal == null ? -90 : CFG.coord_min_signal); f.coord_delay.value = String(CFG.coord_delay == null ? 120 : CFG.coord_delay);
     f.coord_interval.value = String(CFG.coord_interval == null ? 3600 : CFG.coord_interval); f.coord_quiet.value = CFG.coord_quiet == null ? '1-5' : CFG.coord_quiet;
     f.coord_scan_secs.value = String(CFG.coord_scan_secs || 25);
+    f.steer.value = CFG.steer || 'auto'; f.steer_exempt.value = (CFG.steer_exempt || []).join(' ');
+    const num = (k, d) => { f[k].value = String(CFG[k] == null ? d : CFG[k]); };
+    num('steer_signal', -65); num('steer_after', 600); num('steer_idle', 64); num('steer_block', 30); num('steer_retry', 21600);
+    num('steer_max', 2); num('steer_interval', 30); num('authfail_max', 10); num('authfail_window', 60); num('authfail_hold', 60);
+    num('authfail_hold_max', 3600); num('xbss_max', 6); num('xbss_window', 60); num('xbss_hold', 30);
     fillSelect(f.chan24, CH24, CFG.chan24); fillSelect(f.chan5, CH5, CFG.chan5);
     fillSelect(f.txpower24, TXP, CFG.txpower24 || 'auto'); fillSelect(f.txpower5, TXP, CFG.txpower5 || 'auto');
     for (const o of [...f.txpower24.options, ...f.txpower5.options]) if (o.value !== 'auto') o.textContent = o.value + ' dBm';
@@ -270,6 +321,10 @@ async function saveWifi() {
         coord5: f.coord5.checked, coord24: f.coord24.checked, coord_peers: f.coord_peers.value.split(/[\s,]+/).filter(x => x),
         coord_min_signal: Number(f.coord_min_signal.value), coord_delay: Number(f.coord_delay.value), coord_interval: Number(f.coord_interval.value),
         coord_quiet: f.coord_quiet.value.trim(), coord_scan_secs: Number(f.coord_scan_secs.value) || 25,
+        steer: f.steer.value, steer_exempt: f.steer_exempt.value.split(/[\s,]+/).filter(x => x),
+        ...Object.fromEntries(['steer_signal', 'steer_after', 'steer_idle', 'steer_block', 'steer_retry', 'steer_max', 'steer_interval',
+            'authfail_max', 'authfail_window', 'authfail_hold', 'authfail_hold_max', 'xbss_max', 'xbss_window', 'xbss_hold']
+            .map(k => [k, Number(f[k].value)])),
         wifi6: f.wifi6.checked, txpower24: f.txpower24.value, txpower5: f.txpower5.value, names: f.names.value.trim() || 'dhcp',
         networks: nets};
     const b = document.getElementById('wifi-save'); b.disabled = true; b.textContent = 'Restarting Wi-Fi...';

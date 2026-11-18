@@ -55,7 +55,7 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/bin" "$r/sbin" "$r/usr/bin" "
   for f in usr/sbin/patronus-flash usr/libexec/patronus/fwcheck.sh usr/libexec/patronus/upgrade-install usr/libexec/patronus/ubi-data usr/sbin/patronus-init usr/libexec/patronus/early \
            usr/libexec/patronus/ath11k-caldata usr/libexec/patronus/ap usr/libexec/patronus/board-network etc/pam.d/patronus lib/security/pam_unix.so \
            usr/sbin/hostapd usr/sbin/dropbear usr/bin/patronus-cli lib/firmware/ath11k/IPQ6018/hw1.0/board-2.bin lib/firmware/IPQ6018/q6_fw.mdt \
-           lib/firmware/IPQ6018/m3_fw.mdt lib/firmware/regulatory.db usr/libexec/patronus/etph-run usr/libexec/patronus/ap-guest usr/libexec/patronus/ap-coord usr/libexec/patronus/ap-addr \
+           lib/firmware/IPQ6018/m3_fw.mdt lib/firmware/regulatory.db usr/libexec/patronus/etph-run usr/libexec/patronus/ap-guest usr/libexec/patronus/ap-coord usr/libexec/patronus/ap-steer usr/libexec/patronus/ap-event usr/libexec/patronus/wifi-guard usr/libexec/patronus/ap-addr \
            usr/libexec/patronus/leds usr/libexec/patronus/restart-schedule usr/libexec/patronus/scheduled-restart usr/bin/gpgv usr/bin/ssl_client usr/libexec/patronus/accounts-sync \
            usr/sbin/patronus-guard usr/bin/fw_printenv etc/patronus/boot-guard.board etc/patronus/boot-guard.conf; do : > "$r/$f"; chmod +x "$r/$f"; done
   ln -s fw_printenv "$r/usr/bin/fw_setenv"
@@ -63,7 +63,7 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/bin" "$r/sbin" "$r/usr/bin" "
   cp "$O/usr/libexec/patronus/early" "$O/usr/libexec/patronus/ath11k-caldata" "$r/usr/libexec/patronus/"
   for b in ubinfo ubimkvol ubirmvol ubirsvol ubiupdatevol ubiblock iw ip sha256sum pivot_root; do ln -s /bin/busybox "$r/usr/sbin/$b"; done
   echo x > "$r/lib/modules/6.12.112/modules.dep"; for m in ath11k_ahb qca-nss-dp qca-ssdk mac80211 cfg80211 nf_tables nfnetlink_log nft_reject_inet nf_conntrack; do : > "$r/lib/modules/6.12.112/$m.ko"; done
-  echo patronus-xbss > "$r/usr/sbin/hostapd"
+  printf "patronus-xbss\npatronus_authfail_max\n" > "$r/usr/sbin/hostapd"
   printf '\177ELF' > "$r/usr/sbin/etphonehome"; chmod +x "$r/usr/sbin/etphonehome"
   echo INIT=openrc > "$r/etc/patronus-init"; echo FEATURES=nftables,cli,wifi-ap,web-multicall,vpn-wireguard,ntp-server,syslog > "$r/etc/patronus-release"
   : > "$r/lib/modules/6.12.112/wireguard.ko"; : > "$r/lib/modules/6.12.112/nft_meta_bridge.ko"; : > "$r/lib/modules/6.12.112/nf_conntrack_bridge.ko"; mkdir -p "$r/etc/modules.d" "$r/etc/chrony"; echo wireguard > "$r/etc/modules.d/wireguard"
@@ -103,6 +103,8 @@ r=$(mkroot nosyslogd); rm "$r/usr/libexec/patronus/syslogd"; tn_msg "check-rootf
 r=$(mkroot syslogbare); echo 'command=/bin/syslogd' > "$r/etc/init.d/patronus-syslogd"; tn_msg "check-rootfs: syslog build whose logger ignores the collectors is refused" 'does not run the launcher' $CR "$r"
 r=$(mkroot nomdev); rm "$r/etc/mdev.conf"; tn_msg "check-rootfs: rejects an image whose /dev/null and /dev/urandom would be root-only" 'mdev.conf' $CR "$r"
 r=$(mkroot stockhostapd); : > "$r/usr/sbin/hostapd"; tn_msg "check-rootfs: rejects stock hostapd (no synchronous cross-BSS removal)" 'not the Patronus build' $CR "$r"
+r=$(mkroot oldhostapd); echo patronus-xbss > "$r/usr/sbin/hostapd"; tn_msg "check-rootfs: rejects a Patronus hostapd without the authentication backoff (rendered configs would be refused)" 'no patronus_authfail' $CR "$r"
+r=$(mkroot steer644); chmod 644 "$r/usr/libexec/patronus/ap-steer"; tn_msg "check-rootfs: rejects a non-executable ap-steer (ap would skip it silently)" 'ap-steer is not executable' $CR "$r"
 r=$(mkroot nofeat); : > "$r/etc/patronus-release"; tn_msg "check-rootfs: rejects an image that does not record its features" 'no FEATURES= line' $CR "$r"
 
 # 3. AP renderer (the real script, `ap render`, against a fake sysfs). The fake radios have the board's MAC shape: the
@@ -299,6 +301,37 @@ stround 2131 "$SB AP_STEER_MAX=1"
 grep -q "$first came back on wl5-g at -78 dBm: no better access point" "$ST/out" && ok "ap-steer: back just as weak = no better access point, left alone" || { no "ap-steer: comeback not recognised"; tail -4 "$ST/out"; }
 for n in 2240 2340; do stsay wl5-g "$first" -78 100 220; stround $n "$SB AP_STEER_MAX=1"; done
 grep -q "ADD_MAC $first" "$ST/cli.log" && no "ap-steer: moved a station that has no better access point again" || ok "ap-steer: a station left alone is not moved again within AP_STEER_RETRY"
+# two units, no ping-pong: A moves a weak station, it lands on B even weaker, B sends it back after AP_STEER_AFTER, and A
+# then keeps it. Each unit moves a station at most once per AP_STEER_RETRY, so there is at most one round trip per RETRY.
+PP=$A/pp; rm -rf "$PP"; for u in a b; do mkdir -p "$PP/$u/run" "$PP/$u/dump"; printf 'interface=wl5-m\n' > "$PP/$u/run/ap5.conf"
+  printf '#!/bin/sh\necho "$AP_STEER_NOW $6 $7" >> %s/%s/cli.log\n' "$PP" "$u" > "$PP/$u/cli"; chmod +x "$PP/$u/cli"; : > "$PP/$u/cli.log"; done
+ppround() { # UNIT NOW
+  printf '. %s\nAP_STEER=1 AP_STEER_AFTER=60 AP_STEER_BLOCK=30 AP_STEER_RETRY=3600\n' "$O/etc/patronus/board.sh" > "$PP/$1/board.sh"
+  AP_BOARD=$PP/$1/board.sh AP_RENDER_OUT=$PP/$1/run AP_STEER_STATE=$PP/$1/state AP_STEER_NOW=$2 AP_STEER_DUMP_DIR=$PP/$1/dump \
+    AP_STEER_FDB_FILE=$PP/$1/fdb AP_STEER_WIRED="1" AP_CLI=$PP/$1/cli sh "$O/usr/libexec/patronus/ap-steer" once >> "$PP/$1/out" 2>&1; }
+PM=aa:00:00:00:00:a1; loc=a; conn=700; trips=
+for t in $(seq 10000 100 21000); do other=b; [ $loc = b ] && other=a
+  sig=-75; [ $loc = b ] && sig=-82
+  : > "$PP/$loc/dump/wl5-m"; : > "$PP/$other/dump/wl5-m"
+  printf 'Station %s (on wl5-m)\n\trx bytes:\t100\n\ttx bytes:\t0\n\tsignal:  \t%s dBm\n\tsignal avg:\t%s dBm\n\tconnected time:\t%s seconds\n' \
+    $PM $sig $sig $conn > "$PP/$loc/dump/wl5-m"
+  printf 'port no\tmac addr\t\tis local?\tageing timer\n  7\t%s\tno\t\t   0.10\n' $PM > "$PP/$loc/fdb"
+  printf 'port no\tmac addr\t\tis local?\tageing timer\n  1\t%s\tno\t\t   0.10\n' $PM > "$PP/$other/fdb"
+  n=$(grep -c "ADD_MAC $PM" "$PP/$loc/cli.log"); ppround a $t; ppround b $t
+  if [ "$(grep -c "ADD_MAC $PM" "$PP/$loc/cli.log")" -gt "$n" ]; then trips="$trips $loc@$t"; loc=$other; conn=95; else conn=$((conn + 100)); fi
+done
+movesA=$(grep -c "ADD_MAC $PM" "$PP/a/cli.log"); movesB=$(grep -c "ADD_MAC $PM" "$PP/b/cli.log")
+first=$(awk -v m=$PM '$2 == "ADD_MAC" && $3 == m && $1 < 13600' "$PP/a/cli.log" "$PP/b/cli.log" | wc -l)
+case "$trips" in " a@"*" b@"*) ;; *) trips="BAD$trips";; esac
+[ "$first" = 2 ] && [ "${trips#BAD}" = "$trips" ] && grep -q "$PM came back on wl5-m at -75 dBm: no better access point for it, left alone" "$PP/a/out" \
+  && ok "ap-steer, two units: moved A->B, weaker on B, sent back once, then left alone on A (one round trip within AP_STEER_RETRY)" \
+  || { no "ap-steer two units: moves $trips"; tail -5 "$PP/a/out" "$PP/b/out"; }
+gap=$(for u in a b; do awk -v m=$PM '$2 == "ADD_MAC" && $3 == m { if (p != "" && $1 - p < 3600) print "'$u'", p, $1; p = $1 }' "$PP/$u/cli.log"; done)
+[ -z "$gap" ] && [ "$movesA" -le 4 ] && [ "$movesB" -le 4 ] \
+  && ok "ap-steer, two units over 11000 s: each unit moves the station at most once per AP_STEER_RETRY (A $movesA, B $movesB moves)" \
+  || no "ap-steer two units: moves closer than AP_STEER_RETRY: $gap (A $movesA, B $movesB)"
+AP_BOARD=$PP/a/board.sh AP_RENDER_OUT=$PP/a/run AP_STEER_STATE=$PP/a/state AP_STEER_NOW=10400 sh "$O/usr/libexec/patronus/ap-steer" status > /dev/null 2>&1 \
+  && ok "ap-steer status runs on a unit with records" || no "ap-steer status failed"
 # auto = only when another access point is known; 0 = off
 rm -rf "$ST/state"; : > "$ST/cli.log"
 for n in 3000 3100; do stsay wl24-m aa:00:00:00:00:07 -80 100 700; stround $n "AP_STEER=auto AP_STEER_AFTER=60"; done

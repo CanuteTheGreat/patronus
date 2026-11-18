@@ -232,6 +232,22 @@ const MANAGED: &[&str] = &[
     "AP_COORD_INTERVAL",
     "AP_COORD_QUIET",
     "AP_COORD_SCAN_SECS",
+    "AP_STEER",
+    "AP_STEER_SIGNAL",
+    "AP_STEER_AFTER",
+    "AP_STEER_IDLE",
+    "AP_STEER_BLOCK",
+    "AP_STEER_RETRY",
+    "AP_STEER_MAX",
+    "AP_STEER_INTERVAL",
+    "AP_STEER_EXEMPT",
+    "AP_AUTHFAIL_MAX",
+    "AP_AUTHFAIL_WINDOW",
+    "AP_AUTHFAIL_HOLD",
+    "AP_AUTHFAIL_HOLD_MAX",
+    "AP_XBSS_MAX",
+    "AP_XBSS_WINDOW",
+    "AP_XBSS_HOLD",
     "AP_HE",
     "AP_SSIDS",
     "AP_TXPOWER24",
@@ -255,6 +271,15 @@ const LIVE_VARS: &[&str] = &[
     "AP_COORD_INTERVAL",
     "AP_COORD_QUIET",
     "AP_COORD_SCAN_SECS",
+    "AP_STEER",
+    "AP_STEER_SIGNAL",
+    "AP_STEER_AFTER",
+    "AP_STEER_IDLE",
+    "AP_STEER_BLOCK",
+    "AP_STEER_RETRY",
+    "AP_STEER_MAX",
+    "AP_STEER_INTERVAL",
+    "AP_STEER_EXEMPT",
 ];
 const LIVE_PREFIXES: &[&str] = &["DENY_"];
 
@@ -330,6 +355,56 @@ pub struct WifiConfig {
     /// longest a channel scan may take, seconds
     #[serde(default = "default_coord_scan_secs")]
     pub coord_scan_secs: u32,
+    /// steering of weak stations to a closer access point of this network (docs 12.18): "auto" (only when another
+    /// access point of this network is known), "on" or "off"
+    #[serde(default = "auto")]
+    pub steer: String,
+    /// a station at or below this average signal (dBm) is weak
+    #[serde(default = "default_steer_signal")]
+    pub steer_signal: i32,
+    /// seconds a station stays weak (and on this unit) before it is moved
+    #[serde(default = "default_steer_after")]
+    pub steer_after: u32,
+    /// a station moving less than this many kbit/s counts as idle (only idle stations are moved)
+    #[serde(default = "default_steer_idle")]
+    pub steer_idle: u32,
+    /// seconds a moved station is refused on this unit (0 = never refuse: steering does nothing)
+    #[serde(default = "default_steer_block")]
+    pub steer_block: u32,
+    /// a station that comes back just as weak, or bounces back from another unit, is left alone this many seconds
+    #[serde(default = "default_steer_retry")]
+    pub steer_retry: u32,
+    /// most stations moved per round
+    #[serde(default = "default_steer_max")]
+    pub steer_max: u32,
+    /// seconds between rounds
+    #[serde(default = "default_steer_interval")]
+    pub steer_interval: u32,
+    /// MACs never moved
+    #[serde(default)]
+    pub steer_exempt: Vec<String>,
+    // limits for misbehaving stations in the image's hostapd (docs 12.6d, 12.18); a radio restart applies them
+    /// unacknowledged authentication responses within authfail_window before hostapd ignores the station (0 = off)
+    #[serde(default = "default_authfail_max")]
+    pub authfail_max: u32,
+    /// seconds over which authfail_max is counted
+    #[serde(default = "default_authfail_window")]
+    pub authfail_window: u32,
+    /// seconds such a station is ignored the first time (doubles each further time)
+    #[serde(default = "default_authfail_hold")]
+    pub authfail_hold: u32,
+    /// longest such hold, seconds
+    #[serde(default = "default_authfail_hold_max")]
+    pub authfail_hold_max: u32,
+    /// hops between this radio's networks within xbss_window before a station is refused on the new one (0 = off)
+    #[serde(default = "default_xbss_max")]
+    pub xbss_max: u32,
+    /// seconds over which xbss_max is counted
+    #[serde(default = "default_xbss_window")]
+    pub xbss_window: u32,
+    /// seconds a hopping station is refused
+    #[serde(default = "default_xbss_hold")]
+    pub xbss_hold: u32,
     /// 802.11ax (Wi-Fi 6) on both radios
     pub wifi6: bool,
     /// transmit power per radio: "auto" or dBm
@@ -367,6 +442,184 @@ fn default_coord_quiet() -> String {
 }
 fn default_coord_scan_secs() -> u32 {
     DEFAULT_COORD_SCAN_SECS
+}
+/// Steering and station-limit settings (board.sh `AP_STEER_*`, `AP_AUTHFAIL_*`, `AP_XBSS_*`).
+pub const DEFAULT_STEER_SIGNAL: i32 = -65;
+pub const STEER_SIGNAL_RANGE: std::ops::RangeInclusive<i32> = -90..=-40;
+fn default_steer_signal() -> i32 {
+    DEFAULT_STEER_SIGNAL
+}
+/// (field, ap.env key, default, min, max, what the error says)
+pub const STATION_NUMBERS: &[(&str, &str, u32, u32, u32, &str)] = &[
+    (
+        "steer_after",
+        "AP_STEER_AFTER",
+        600,
+        30,
+        86400,
+        "steering: seconds weak before a move: 30 to 86400",
+    ),
+    (
+        "steer_idle",
+        "AP_STEER_IDLE",
+        64,
+        0,
+        1000000,
+        "steering: idle below (kbit/s): 0 to 1000000",
+    ),
+    (
+        "steer_block",
+        "AP_STEER_BLOCK",
+        30,
+        0,
+        3600,
+        "steering: refuse a moved station for 0 to 3600 seconds",
+    ),
+    (
+        "steer_retry",
+        "AP_STEER_RETRY",
+        21600,
+        0,
+        604800,
+        "steering: leave a station alone for 0 to 604800 seconds",
+    ),
+    (
+        "steer_max",
+        "AP_STEER_MAX",
+        2,
+        0,
+        64,
+        "steering: stations moved per round: 0 to 64",
+    ),
+    (
+        "steer_interval",
+        "AP_STEER_INTERVAL",
+        30,
+        10,
+        3600,
+        "steering: round every 10 to 3600 seconds",
+    ),
+    (
+        "authfail_max",
+        "AP_AUTHFAIL_MAX",
+        10,
+        0,
+        86400,
+        "unacknowledged authentications before a hold: 0 (off) to 86400",
+    ),
+    (
+        "authfail_window",
+        "AP_AUTHFAIL_WINDOW",
+        60,
+        0,
+        86400,
+        "authentication count window: 0 to 86400 seconds",
+    ),
+    (
+        "authfail_hold",
+        "AP_AUTHFAIL_HOLD",
+        60,
+        0,
+        86400,
+        "first authentication hold: 0 to 86400 seconds",
+    ),
+    (
+        "authfail_hold_max",
+        "AP_AUTHFAIL_HOLD_MAX",
+        3600,
+        0,
+        86400,
+        "longest authentication hold: 0 to 86400 seconds",
+    ),
+    (
+        "xbss_max",
+        "AP_XBSS_MAX",
+        6,
+        0,
+        86400,
+        "network hops before a hold: 0 (off) to 86400",
+    ),
+    (
+        "xbss_window",
+        "AP_XBSS_WINDOW",
+        60,
+        0,
+        86400,
+        "network hop window: 0 to 86400 seconds",
+    ),
+    (
+        "xbss_hold",
+        "AP_XBSS_HOLD",
+        30,
+        0,
+        86400,
+        "network hop hold: 0 to 86400 seconds",
+    ),
+];
+fn station_default(field: &str) -> u32 {
+    STATION_NUMBERS
+        .iter()
+        .find(|e| e.0 == field)
+        .map(|e| e.2)
+        .unwrap_or(0)
+}
+fn default_steer_after() -> u32 {
+    station_default("steer_after")
+}
+fn default_steer_idle() -> u32 {
+    station_default("steer_idle")
+}
+fn default_steer_block() -> u32 {
+    station_default("steer_block")
+}
+fn default_steer_retry() -> u32 {
+    station_default("steer_retry")
+}
+fn default_steer_max() -> u32 {
+    station_default("steer_max")
+}
+fn default_steer_interval() -> u32 {
+    station_default("steer_interval")
+}
+fn default_authfail_max() -> u32 {
+    station_default("authfail_max")
+}
+fn default_authfail_window() -> u32 {
+    station_default("authfail_window")
+}
+fn default_authfail_hold() -> u32 {
+    station_default("authfail_hold")
+}
+fn default_authfail_hold_max() -> u32 {
+    station_default("authfail_hold_max")
+}
+fn default_xbss_max() -> u32 {
+    station_default("xbss_max")
+}
+fn default_xbss_window() -> u32 {
+    station_default("xbss_window")
+}
+fn default_xbss_hold() -> u32 {
+    station_default("xbss_hold")
+}
+/// `AP_STEER` as the typed view shows it: auto | on | off.
+pub fn steer_mode(v: &str) -> &'static str {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "1" | "on" | "yes" | "true" => "on",
+        "0" | "off" | "no" | "false" => "off",
+        _ => "auto",
+    }
+}
+/// A number setting of [`STATION_NUMBERS`] from the file: out of range or not a number = its default.
+fn station_number(f: &EnvFile, key: &str) -> u32 {
+    match STATION_NUMBERS.iter().find(|e| e.1 == key) {
+        Some(e) => f
+            .get(key)
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .filter(|n| (e.3..=e.4).contains(n))
+            .unwrap_or(e.2),
+        None => 0,
+    }
 }
 /// `AP_COORD_QUIET`: "" or "H-H" with hours 0-23.
 pub fn valid_quiet(v: &str) -> bool {
@@ -523,6 +776,26 @@ pub fn view(f: &EnvFile) -> WifiConfig {
             .and_then(|v| v.parse().ok())
             .filter(|n| (5..=120).contains(n))
             .unwrap_or(DEFAULT_COORD_SCAN_SECS),
+        steer: steer_mode(f.get("AP_STEER").unwrap_or("auto")).to_string(),
+        steer_signal: f
+            .get("AP_STEER_SIGNAL")
+            .and_then(|v| v.trim().parse().ok())
+            .filter(|n| STEER_SIGNAL_RANGE.contains(n))
+            .unwrap_or(DEFAULT_STEER_SIGNAL),
+        steer_after: station_number(f, "AP_STEER_AFTER"),
+        steer_idle: station_number(f, "AP_STEER_IDLE"),
+        steer_block: station_number(f, "AP_STEER_BLOCK"),
+        steer_retry: station_number(f, "AP_STEER_RETRY"),
+        steer_max: station_number(f, "AP_STEER_MAX"),
+        steer_interval: station_number(f, "AP_STEER_INTERVAL"),
+        steer_exempt: mac_list(f.get("AP_STEER_EXEMPT").unwrap_or("")),
+        authfail_max: station_number(f, "AP_AUTHFAIL_MAX"),
+        authfail_window: station_number(f, "AP_AUTHFAIL_WINDOW"),
+        authfail_hold: station_number(f, "AP_AUTHFAIL_HOLD"),
+        authfail_hold_max: station_number(f, "AP_AUTHFAIL_HOLD_MAX"),
+        xbss_max: station_number(f, "AP_XBSS_MAX"),
+        xbss_window: station_number(f, "AP_XBSS_WINDOW"),
+        xbss_hold: station_number(f, "AP_XBSS_HOLD"),
         wifi6: !matches!(f.get("AP_HE").unwrap_or("1"), "0" | "no" | "off"),
         txpower24: txp("AP_TXPOWER24"),
         txpower5: txp("AP_TXPOWER5"),
@@ -607,6 +880,40 @@ pub struct WifiInput {
     pub coord_quiet: Option<String>,
     #[serde(default)]
     pub coord_scan_secs: Option<u32>,
+    /// steering (docs 12.18): "auto", "on" or "off"
+    #[serde(default)]
+    pub steer: Option<String>,
+    #[serde(default)]
+    pub steer_signal: Option<i32>,
+    #[serde(default)]
+    pub steer_after: Option<u32>,
+    #[serde(default)]
+    pub steer_idle: Option<u32>,
+    #[serde(default)]
+    pub steer_block: Option<u32>,
+    #[serde(default)]
+    pub steer_retry: Option<u32>,
+    #[serde(default)]
+    pub steer_max: Option<u32>,
+    #[serde(default)]
+    pub steer_interval: Option<u32>,
+    #[serde(default)]
+    pub steer_exempt: Option<Vec<String>>,
+    /// station limits of the image's hostapd (docs 12.18)
+    #[serde(default)]
+    pub authfail_max: Option<u32>,
+    #[serde(default)]
+    pub authfail_window: Option<u32>,
+    #[serde(default)]
+    pub authfail_hold: Option<u32>,
+    #[serde(default)]
+    pub authfail_hold_max: Option<u32>,
+    #[serde(default)]
+    pub xbss_max: Option<u32>,
+    #[serde(default)]
+    pub xbss_window: Option<u32>,
+    #[serde(default)]
+    pub xbss_hold: Option<u32>,
     #[serde(default)]
     pub wifi6: Option<bool>,
     /// "auto" or dBm (1..=30), per radio; applied live
@@ -868,6 +1175,75 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         }
         set.push(("AP_COORD_SCAN_SECS".into(), n.to_string()));
     }
+    if let Some(m) = &input.steer {
+        let v = match m.trim().to_ascii_lowercase().as_str() {
+            "auto" | "" => "auto",
+            "on" | "1" | "yes" | "true" => "1",
+            "off" | "0" | "no" | "false" => "0",
+            _ => return Err(invalid("steering: auto, on or off")),
+        };
+        set.push(("AP_STEER".into(), v.into()));
+    }
+    if let Some(n) = input.steer_signal {
+        if !STEER_SIGNAL_RANGE.contains(&n) {
+            return Err(invalid("weak signal for steering: -90 to -40 dBm"));
+        }
+        set.push(("AP_STEER_SIGNAL".into(), n.to_string()));
+    }
+    for (field, v) in [
+        ("steer_after", input.steer_after),
+        ("steer_idle", input.steer_idle),
+        ("steer_block", input.steer_block),
+        ("steer_retry", input.steer_retry),
+        ("steer_max", input.steer_max),
+        ("steer_interval", input.steer_interval),
+        ("authfail_max", input.authfail_max),
+        ("authfail_window", input.authfail_window),
+        ("authfail_hold", input.authfail_hold),
+        ("authfail_hold_max", input.authfail_hold_max),
+        ("xbss_max", input.xbss_max),
+        ("xbss_window", input.xbss_window),
+        ("xbss_hold", input.xbss_hold),
+    ] {
+        if let (Some(n), Some(e)) = (v, STATION_NUMBERS.iter().find(|e| e.0 == field)) {
+            if !(e.3..=e.4).contains(&n) {
+                return Err(invalid(e.5));
+            }
+            set.push((e.1.into(), n.to_string()));
+        }
+    }
+    if let Some(list) = &input.steer_exempt {
+        let mut out: Vec<String> = Vec::new();
+        for m in list {
+            let m = m.trim().to_ascii_lowercase();
+            if !valid_mac(&m) {
+                return Err(invalid(format!(
+                    "{m:?} is not a MAC address (stations never moved)"
+                )));
+            }
+            if !out.contains(&m) {
+                out.push(m);
+            }
+        }
+        if out.len() > 256 {
+            return Err(invalid("at most 256 stations exempt from steering"));
+        }
+        set.push(("AP_STEER_EXEMPT".into(), out.join(" ")));
+    }
+    // the authentication hold doubles up to its maximum: a maximum below the first hold is a mistake
+    {
+        let num = |k: &str| {
+            set.iter()
+                .find(|(n, _)| n == k)
+                .and_then(|(_, v)| v.parse::<u32>().ok())
+                .unwrap_or_else(|| station_number(f, k))
+        };
+        if num("AP_AUTHFAIL_HOLD_MAX") < num("AP_AUTHFAIL_HOLD") {
+            return Err(invalid(
+                "longest authentication hold must be at least the first hold",
+            ));
+        }
+    }
     if let Some(he) = input.wifi6 {
         set.push(("AP_HE".into(), if he { "1" } else { "0" }.into()));
     }
@@ -926,6 +1302,22 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         "AP_COORD_INTERVAL",
         "AP_COORD_QUIET",
         "AP_COORD_SCAN_SECS",
+        "AP_STEER",
+        "AP_STEER_SIGNAL",
+        "AP_STEER_AFTER",
+        "AP_STEER_IDLE",
+        "AP_STEER_BLOCK",
+        "AP_STEER_RETRY",
+        "AP_STEER_MAX",
+        "AP_STEER_INTERVAL",
+        "AP_STEER_EXEMPT",
+        "AP_AUTHFAIL_MAX",
+        "AP_AUTHFAIL_WINDOW",
+        "AP_AUTHFAIL_HOLD",
+        "AP_AUTHFAIL_HOLD_MAX",
+        "AP_XBSS_MAX",
+        "AP_XBSS_WINDOW",
+        "AP_XBSS_HOLD",
         "AP_HE",
         "AP_TXPOWER24",
         "AP_TXPOWER5",
@@ -1597,6 +1989,15 @@ fn radio_state(f: &EnvFile) -> RadioState {
             "coord_interval",
             "coord_quiet",
             "coord_scan_secs",
+            "steer",
+            "steer_signal",
+            "steer_after",
+            "steer_idle",
+            "steer_block",
+            "steer_retry",
+            "steer_max",
+            "steer_interval",
+            "steer_exempt",
         ] {
             o.remove(k);
         }
@@ -2248,6 +2649,201 @@ mod tests {
                 && !valid_quiet("5")
                 && !valid_quiet("1-24")
         );
+    }
+
+    #[test]
+    fn steering_and_station_limits_default_round_trip_validate() {
+        // defaults as board.sh sets them
+        let c = view(&parse("AP_SSIDS=p\nSSID_p=P KEY_p=secretpw1\n"));
+        assert_eq!((c.steer.as_str(), c.steer_signal), ("auto", -65));
+        assert_eq!(
+            (
+                c.steer_after,
+                c.steer_idle,
+                c.steer_block,
+                c.steer_retry,
+                c.steer_max,
+                c.steer_interval
+            ),
+            (600, 64, 30, 21600, 2, 30)
+        );
+        assert!(c.steer_exempt.is_empty());
+        assert_eq!(
+            (
+                c.authfail_max,
+                c.authfail_window,
+                c.authfail_hold,
+                c.authfail_hold_max
+            ),
+            (10, 60, 60, 3600)
+        );
+        assert_eq!((c.xbss_max, c.xbss_window, c.xbss_hold), (6, 60, 30));
+        // the image's board.sh carries the same defaults (no second, drifting copy)
+        let board = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ci/embedded-aarch64/ax1800/overlay/etc/patronus/board.sh");
+        if let Ok(t) = std::fs::read_to_string(&board) {
+            let b = parse(&t);
+            for e in STATION_NUMBERS {
+                assert_eq!(
+                    b.get(e.1).and_then(|v| v.parse::<u32>().ok()),
+                    Some(e.2),
+                    "board.sh {}",
+                    e.1
+                );
+            }
+            assert_eq!(b.get("AP_STEER_SIGNAL"), Some("-65"));
+            assert_eq!(b.get("AP_STEER"), Some("auto"));
+        }
+        // out-of-range values in the file fall back to the default
+        let c = view(&parse(
+            "AP_STEER=1\nAP_STEER_SIGNAL=-20\nAP_STEER_AFTER=5\nAP_XBSS_HOLD=x\nAP_STEER_EXEMPT='AA:BB:CC:DD:EE:FF bad'\n",
+        ));
+        assert_eq!(
+            (c.steer.as_str(), c.steer_signal, c.steer_after, c.xbss_hold),
+            ("on", -65, 600, 30)
+        );
+        assert_eq!(c.steer_exempt, vec!["aa:bb:cc:dd:ee:ff"]);
+
+        let f = sample();
+        let n = update(
+            &f,
+            &WifiInput {
+                steer: Some("off".into()),
+                steer_signal: Some(-72),
+                steer_after: Some(300),
+                steer_idle: Some(0),
+                steer_block: Some(45),
+                steer_retry: Some(3600),
+                steer_max: Some(1),
+                steer_interval: Some(60),
+                steer_exempt: Some(vec!["AA:BB:CC:DD:EE:01".into(), "aa:bb:cc:dd:ee:01".into()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let back = parse(&render(&n));
+        assert_eq!(back.get("AP_STEER"), Some("0"));
+        assert_eq!(back.get("AP_STEER_SIGNAL"), Some("-72"));
+        assert_eq!(back.get("AP_STEER_EXEMPT"), Some("aa:bb:cc:dd:ee:01"));
+        let v = view(&back);
+        assert_eq!(v.steer, "off");
+        assert_eq!(
+            (
+                v.steer_after,
+                v.steer_idle,
+                v.steer_block,
+                v.steer_retry,
+                v.steer_max,
+                v.steer_interval
+            ),
+            (300, 0, 45, 3600, 1, 60)
+        );
+        // export -> plan -> apply carries them
+        let d = export_doc(&back);
+        assert_eq!(d["steer"], "off");
+        assert_eq!(d["steer_exempt"], json!(["aa:bb:cc:dd:ee:01"]));
+        assert_eq!(d["steer_retry"], 3600);
+        let again = parse_doc(&d).unwrap();
+        assert_eq!(again.steer_signal, Some(-72));
+        // steering is live: ap-steer re-reads ap.env every round, no radio restart
+        assert!(!restart_needed(&f, &n));
+        let pl = plan(
+            &f,
+            &WifiInput {
+                steer_max: Some(5),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(pl["restart"], false);
+        assert_eq!(pl["changes"][0]["setting"], "steer_max");
+
+        // the hostapd limits are rendered into the radio config: a change restarts the radios
+        let n2 = update(
+            &f,
+            &WifiInput {
+                authfail_max: Some(0),
+                authfail_hold: Some(120),
+                authfail_hold_max: Some(7200),
+                xbss_max: Some(4),
+                xbss_window: Some(30),
+                xbss_hold: Some(90),
+                authfail_window: Some(30),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let b2 = parse(&render(&n2));
+        assert_eq!(b2.get("AP_AUTHFAIL_MAX"), Some("0"));
+        assert_eq!(b2.get("AP_AUTHFAIL_HOLD_MAX"), Some("7200"));
+        assert_eq!(b2.get("AP_XBSS_HOLD"), Some("90"));
+        assert_eq!(view(&b2).xbss_window, 30);
+        assert!(restart_needed(&f, &n2));
+        assert_eq!(export_doc(&b2)["authfail_hold"], 120);
+
+        for bad in [
+            WifiInput {
+                steer: Some("sometimes".into()),
+                ..Default::default()
+            },
+            WifiInput {
+                steer_signal: Some(-30),
+                ..Default::default()
+            },
+            WifiInput {
+                steer_signal: Some(-95),
+                ..Default::default()
+            },
+            WifiInput {
+                steer_after: Some(10),
+                ..Default::default()
+            },
+            WifiInput {
+                steer_block: Some(4000),
+                ..Default::default()
+            },
+            WifiInput {
+                steer_interval: Some(5),
+                ..Default::default()
+            },
+            WifiInput {
+                steer_max: Some(100),
+                ..Default::default()
+            },
+            WifiInput {
+                steer_exempt: Some(vec!["nope".into()]),
+                ..Default::default()
+            },
+            WifiInput {
+                xbss_hold: Some(86401),
+                ..Default::default()
+            },
+            WifiInput {
+                authfail_window: Some(100000),
+                ..Default::default()
+            },
+            // a longest hold below the first hold
+            WifiInput {
+                authfail_hold_max: Some(30),
+                ..Default::default()
+            },
+            WifiInput {
+                authfail_hold: Some(7200),
+                ..Default::default()
+            },
+        ] {
+            assert!(update(&f, &bad).is_err(), "{bad:?}");
+        }
+        // ... but raising both together is fine
+        assert!(update(
+            &f,
+            &WifiInput {
+                authfail_hold: Some(7200),
+                authfail_hold_max: Some(14400),
+                ..Default::default()
+            }
+        )
+        .is_ok());
     }
 
     #[test]

@@ -105,6 +105,12 @@ def run(p, kind):
     want_plan = {k: c.get(k) for k in ("chan24", "chan5", "width24", "width5", "dfs", "unii4", "chanlist24", "chanlist5", "acs_scans",
                                       "coord5", "coord24", "coord_peers", "coord_min_signal", "coord_delay", "coord_interval", "coord_quiet", "coord_scan_secs")}
     check(f"{kind}: channel plan form = GET /api/wifi", form == want_plan, {"page": form, "api": want_plan})
+    nums = ["steer_signal", "steer_after", "steer_idle", "steer_block", "steer_retry", "steer_max", "steer_interval",
+            "authfail_max", "authfail_window", "authfail_hold", "authfail_hold_max", "xbss_max", "xbss_window", "xbss_hold"]
+    sform = page.evaluate("""(nums) => { const f = document.getElementById('wifi-radio-form'); const o = {steer: f.steer.value,
+        steer_exempt: f.steer_exempt.value.split(/\\s+/).filter(x => x)}; for (const k of nums) o[k] = Number(f[k].value); return o; }""", nums)
+    want_steer = {k: c.get(k) for k in ["steer", "steer_exempt"] + nums}
+    check(f"{kind}: steering + misbehaving-device form = GET /api/wifi", sform == want_steer, {"page": sform, "api": want_steer})
     cards = page.evaluate("() => [...document.querySelectorAll('#wifi-radios .radio-chan')].map(d => [d.dataset.band, d.innerText])")
     ok_cards = len(cards) == 2
     for band, text in cards:
