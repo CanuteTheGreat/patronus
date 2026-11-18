@@ -369,8 +369,10 @@ nl_api PUT /svc/guest '{"address":"192.168.31.1/24","lease_minutes":30,"dhcp_sta
 [ "$(R ip -4 -o addr show dev br-guest | awk '{print $4}')" = 192.168.31.1/24 ] || nl_fail "br-guest did not move"
 guest_dhcp 1; case $(lease_field 1 1) in 192.168.31.*) ;; *) nl_fail "guest stayed on $(lease_field 1 1)";; esac
 nl_ok "subnet changed live: guest renewed on 192.168.31.0/24"
-REVS=$(R "$P" --db "$DB" config revisions); REV=$(awk '/before change guest settings/{print $1; exit}' <<<"$REVS")   # newest first
-[ -n "$REV" ] || { echo "$REVS"; nl_fail "no config revision for the guest change"; }
+REVS=$(R "$P" --db "$DB" config generations)
+# a generation holds the state AFTER its change: go back to the one before the newest "change guest settings"
+REV=$(R "$P" --db "$DB" config generations --json | python3 -c 'import json,sys; g=json.load(sys.stdin)["generations"]; i=[x["message"] for x in g].index("change guest settings"); print(g[i+1]["id"])') || REV=
+[ -n "$REV" ] || { echo "$REVS"; nl_fail "no config generation for the guest change"; }
 R "$P" --db "$DB" config rollback "$REV" >"$NL_OUT" 2>&1 || { cat "$NL_OUT"; nl_fail "config rollback $REV failed"; }
 [ "$(R ip -4 -o addr show dev br-guest | awk '{print $4}')" = 192.168.30.1/24 ] || nl_fail "rollback did not restore the guest subnet: $(R ip -4 -o addr show dev br-guest)"
 [ "$(sqlite3 "$DB" "select value from lan_settings where key='guest.address'")" = 192.168.30.1/24 ] || nl_fail "rollback did not restore the setting"
