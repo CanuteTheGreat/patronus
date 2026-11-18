@@ -9,6 +9,7 @@ pub use ipnetwork;
 pub mod apdev;
 pub mod apnames;
 pub mod applyd;
+pub mod bootguard;
 pub mod apsurvey;
 pub mod apwifi;
 pub mod bond;

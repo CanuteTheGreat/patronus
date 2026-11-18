@@ -80,6 +80,28 @@ fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() :
         installs anything: a downloaded image is checked like an upload and waits for "Install and restart".</p>
     {% endif %}
     <pre class="text-sm" id="fw-out" style="white-space:pre-wrap"></pre>
+    <div id="bg-card" style="display:none">
+        <h3 class="text-sm" style="margin-top:14px">Boot rollback</h3>
+        <p class="text-sm">A new image starts on trial: unless its checks pass in time, the device restarts and the bootloader
+            puts the previous image back by itself (also after a crash, a hang or an image that does not start at all).</p>
+        <p class="text-sm" id="bg-state"></p>
+        <ul class="text-sm" id="bg-events"></ul>
+        {% if can_modify %}
+        <form class="lan-form" id="bg-form" onsubmit="return false" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+            <label><input type="checkbox" id="bg-enabled"> Trial-boot new images</label>
+            <label><input type="checkbox" id="bg-require"> Refuse images that cannot be rolled back</label>
+            <label>Boots to prove itself <input id="bg-attempts" type="number" min="1" max="9" style="width:4em"></label>
+            <label>Time for the checks (s) <input id="bg-window" type="number" min="60" max="3600" style="width:6em"></label>
+            <label>Checks <input id="bg-checks" size="24" placeholder="network ssh web hostapd"></label>
+            <label>Network check pings <input id="bg-ping" size="14" placeholder="gateway"></label>
+            <label>Wi-Fi check <select id="bg-hostapd"><option value="auto">when Wi-Fi is on</option><option value="require">always</option><option value="off">off</option></select></label>
+            <label><input type="checkbox" id="bg-wdt"> Hardware watchdog during the trial</label>
+            <button class="btn btn-secondary" type="button" onclick="bgSave()">Save rollback settings</button>
+            <button class="btn btn-secondary" type="button" id="bg-confirm" style="display:none" onclick="bgConfirm()">Confirm this image now</button>
+            <button class="btn btn-secondary" type="button" id="bg-rollback" style="display:none" onclick="bgRollback()">Go back to the previous image</button>
+        </form>
+        {% endif %}
+    </div>
 </div>
 <script>
 async function fwCall(method, url, body, headers) {
@@ -93,9 +115,50 @@ function fwShow(s) {
     document.getElementById('firmware-card').style.display = '';
     document.getElementById('fw-state').textContent = 'Running ' + (s.build || 'unknown build') + (s.init ? ' (' + s.init + ')' : '') +
         (s.staged ? ' \u00b7 staged for the next start: ' + s.staged : '') + (s.uploaded ? ' \u00b7 an uploaded image is waiting' : '');
+    bgShow(s.boot_guard);
     const i = document.getElementById('fw-install'), x = document.getElementById('fw-discard');
     if (i) i.style.display = s.uploaded ? '' : 'none';
     if (x) x.style.display = (s.uploaded || s.staged) ? '' : 'none';
+}
+const BG_STATE = {idle: 'no trial running', ok: 'the running image is confirmed', trial: 'TRIAL: the running image has not confirmed itself yet',
+    revert: 'a rollback is pending (next restart)', reverted: 'the bootloader just restored the previous image', 'revert-failed': 'the last rollback FAILED in the bootloader'};
+function bgShow(g) {
+    const c = document.getElementById('bg-card'); if (!c) return;
+    if (!g) { c.style.display = 'none'; return; }
+    c.style.display = '';
+    const st = document.getElementById('bg-state');
+    if (!g.installed) st.textContent = 'Not active: ' + (g.env_ok ? 'the bootloader script is not installed.' : 'the bootloader settings cannot be read.') + ' Upgrades are refused unless "Refuse images that cannot be rolled back" is off.';
+    else st.textContent = (BG_STATE[g.state] || g.state) + (g.state === 'trial' ? ' (' + (g.boots_left || '0') + ' more boot(s) before it is rolled back)' : '') +
+        ' \u00b7 previous image: ' + (g.prev_build || 'none') + (g.rollback_image ? ' (kept on flash)' : '') +
+        (g.last_failure ? ' \u00b7 last failure: ' + g.last_failure : '') + (g.checks ? ' \u00b7 checks: ' + g.checks : '');
+    const ul = document.getElementById('bg-events'); ul.textContent = '';
+    (g.events || []).slice(-5).reverse().forEach(e => { const li = document.createElement('li');
+        li.textContent = new Date(e.time * 1000).toLocaleString() + ': ' + e.event + ' \u2013 ' + e.detail; ul.appendChild(li); });
+    const set = g.settings || {}, v = (id, x) => { const el = document.getElementById(id); if (el && document.activeElement !== el) { if (el.type === 'checkbox') el.checked = !!x; else el.value = x == null ? '' : x; } };
+    v('bg-enabled', g.enabled); v('bg-require', set.require); v('bg-attempts', set.attempts); v('bg-window', set.window_s);
+    v('bg-checks', set.checks); v('bg-ping', set.net_ping); v('bg-hostapd', set.hostapd); v('bg-wdt', set.watchdog);
+    const cb = document.getElementById('bg-confirm'), rb = document.getElementById('bg-rollback');
+    if (cb) cb.style.display = g.state === 'trial' ? '' : 'none';
+    if (rb) rb.style.display = (g.rollback_image && g.installed && g.state !== 'trial') ? '' : 'none';
+}
+async function bgSave() {
+    const out = document.getElementById('fw-out'), n = id => parseInt(document.getElementById(id).value, 10), c = id => document.getElementById(id).checked;
+    const body = {enabled: c('bg-enabled'), require: c('bg-require'), attempts: n('bg-attempts'), window_s: n('bg-window'),
+        checks: document.getElementById('bg-checks').value.trim(), net_ping: document.getElementById('bg-ping').value.trim() || 'gateway',
+        hostapd: document.getElementById('bg-hostapd').value, watchdog: c('bg-wdt')};
+    try { bgShow(await fwCall('PUT', '/api/system/firmware/boot-guard', JSON.stringify(body), {'content-type': 'application/json'})); out.textContent = 'Rollback settings saved.'; }
+    catch (e) { out.textContent = 'Not saved: ' + e.message; }
+}
+async function bgConfirm() {
+    const out = document.getElementById('fw-out');
+    try { const r = await fwCall('POST', '/api/system/firmware/confirm'); out.textContent = r.output || 'Confirmed.'; bgShow(r.boot_guard); }
+    catch (e) { out.textContent = e.message; }
+}
+async function bgRollback() {
+    if (!confirm('Restart now and go back to the previous image? The running image is replaced; settings are kept.')) return;
+    const out = document.getElementById('fw-out');
+    try { const r = await fwCall('POST', '/api/system/firmware/rollback'); out.textContent = (r.output || '') + '\nRestarting: this page reconnects when the device is back.'; }
+    catch (e) { out.textContent = 'Not done: ' + e.message; }
 }
 async function fwUpload() {
     const f = document.getElementById('fw-file').files[0], out = document.getElementById('fw-out');

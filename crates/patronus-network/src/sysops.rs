@@ -676,7 +676,15 @@ pub fn handle_in(dir: &Path, action: &str, params: &Value) -> Result<Value> {
             Ok(st)
         }
         // router-tier firmware images through patronus-flash (validate, stage; the box installs at the next start)
-        "firmware_status" => Ok(firmware_status()),
+        "firmware_status" => {
+            let mut v = firmware_status();
+            v["boot_guard"] = crate::bootguard::status();
+            Ok(v)
+        }
+        // boot rollback (patronus-guard): policy, manual rollback (the caller restarts), confirm a trial by hand
+        "firmware_guard_set" => crate::bootguard::set(params),
+        "firmware_rollback" => crate::bootguard::action("rollback"),
+        "firmware_confirm" => crate::bootguard::action("confirm"),
         "firmware_check" => firmware_flash("check"),
         "firmware_stage" => firmware_flash("sysupgrade"),
         "firmware_discard" => firmware_flash("cancel"),

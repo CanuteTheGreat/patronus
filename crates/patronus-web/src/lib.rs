@@ -50,6 +50,29 @@ fn prepare_app(state: AppState) -> axum::Router {
         }
     });
 
+    // Boot rollback (router tier): the guard's events become audit entries even when nobody opens the firmware page.
+    // It writes its state to a world-readable file (PATRONUS_BOOTGUARD_STATUS) at boot and on every change.
+    let guard_state = state.clone();
+    tokio::spawn(async move {
+        let path = std::env::var("PATRONUS_BOOTGUARD_STATUS")
+            .unwrap_or_else(|_| "/run/patronus/boot-guard.json".into());
+        let secs = std::env::var("PATRONUS_BOOTGUARD_AUDIT_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60u64)
+            .max(5);
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(secs));
+        loop {
+            interval.tick().await;
+            let Ok(t) = tokio::fs::read_to_string(&path).await else {
+                continue;
+            };
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
+                crate::routes::api::system::bootguard_audit(&guard_state, &v).await;
+            }
+        }
+    });
+
     // Remote / encrypted automatic backups: upload to every target that is due.
     let backup_state = state.clone();
     tokio::spawn(async move {

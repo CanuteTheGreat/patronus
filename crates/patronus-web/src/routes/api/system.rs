@@ -509,14 +509,127 @@ pub async fn reboot(State(state): State<AppState>, _admin: AdminUser) -> Respons
 /// Largest firmware image the upload takes (a router-tier sysupgrade tar is ~22 MiB).
 const MAX_FIRMWARE: usize = 64 * 1024 * 1024;
 
-/// GET /api/system/firmware: running build, uploaded / staged image (router tier, `patronus-flash`).
+/// GET /api/system/firmware: running build, uploaded / staged image (router tier, `patronus-flash`) and the boot
+/// rollback state (`boot_guard`: trial / confirmed / reverted, boots left, previous image, settings, events).
 pub async fn firmware_status(State(state): State<AppState>) -> Response {
     match state
         .system
         .system_op("firmware_status", serde_json::Value::Null)
         .await
     {
+        Ok(v) => {
+            bootguard_audit(&state, &v["boot_guard"]).await;
+            Json(v).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+static BOOTGUARD_AUDIT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// The boot guard's events (trial armed, confirmed, failed, reverted by the bootloader, ...) happen before the web UI
+/// runs; each one becomes an audit-log entry (user `boot-guard`) once, by its sequence number.
+pub async fn bootguard_audit(state: &AppState, guard: &serde_json::Value) {
+    let Some(events) = guard.get("events").and_then(|e| e.as_array()) else {
+        return;
+    };
+    let _g = BOOTGUARD_AUDIT.lock().await;
+    let key = "bootguard.audit_seq";
+    let mut last: i64 = match state.config_store.load_system_config(key).await {
+        Ok(v) => v.and_then(|v| v.parse().ok()).unwrap_or(0),
+        Err(_) => return,
+    };
+    // a unit whose event log restarted (factory reset of the settings volume) counts from 1 again
+    let max = events.iter().filter_map(|e| e["seq"].as_i64()).max().unwrap_or(0);
+    if max < last {
+        last = 0;
+    }
+    for e in events {
+        let Some(seq) = e["seq"].as_i64() else { continue };
+        if seq <= last {
+            continue;
+        }
+        let action = format!("boot-{}", e["event"].as_str().unwrap_or("event"));
+        let _ = state
+            .config_store
+            .audit(
+                "boot-guard",
+                &action,
+                "firmware",
+                guard["running"].as_str(),
+                &json!({ "detail": e["detail"], "time": e["time"], "seq": seq }),
+            )
+            .await;
+        last = seq;
+    }
+    let _ = state
+        .config_store
+        .save_system_config(key, &last.to_string())
+        .await;
+}
+
+/// PUT /api/system/firmware/boot-guard (admins): the boot rollback policy (boot-guard.conf).
+pub async fn firmware_guard_put(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Json(b): Json<serde_json::Value>,
+) -> Response {
+    let r = state.system.system_op("firmware_guard_set", b.clone()).await;
+    let _ = state
+        .config_store
+        .audit(
+            &admin.session.username,
+            if r.is_ok() { "update" } else { "update-refused" },
+            "boot_guard",
+            None,
+            &b,
+        )
+        .await;
+    match r {
         Ok(v) => Json(v).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// POST /api/system/firmware/rollback (admins): restart now; the bootloader restores the previous image.
+pub async fn firmware_rollback(State(state): State<AppState>, admin: AdminUser) -> Response {
+    match state
+        .system
+        .system_op("firmware_rollback", serde_json::Value::Null)
+        .await
+    {
+        Ok(v) => {
+            let _ = state
+                .config_store
+                .audit(&admin.session.username, "rollback", "firmware", None, &v)
+                .await;
+            let st = state.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                if let Err(e) = st.system.system_op("reboot", serde_json::Value::Null).await {
+                    tracing::error!("firmware rollback: restart failed: {e}");
+                }
+            });
+            (StatusCode::ACCEPTED, Json(v)).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+/// POST /api/system/firmware/confirm (admins): confirm the running trial image by hand.
+pub async fn firmware_confirm(State(state): State<AppState>, admin: AdminUser) -> Response {
+    match state
+        .system
+        .system_op("firmware_confirm", serde_json::Value::Null)
+        .await
+    {
+        Ok(v) => {
+            let _ = state
+                .config_store
+                .audit(&admin.session.username, "confirm", "firmware", None, &v)
+                .await;
+            Json(v).into_response()
+        }
         Err(e) => err(e),
     }
 }
@@ -960,6 +1073,12 @@ pub fn router() -> axum::Router<AppState> {
                 .layer(axum::extract::DefaultBodyLimit::max(MAX_FIRMWARE)),
         )
         .route("/system/firmware/install", post(firmware_install))
+        .route(
+            "/system/firmware/boot-guard",
+            axum::routing::put(firmware_guard_put),
+        )
+        .route("/system/firmware/rollback", post(firmware_rollback))
+        .route("/system/firmware/confirm", post(firmware_confirm))
         .route("/system/shutdown", post(shutdown))
         .route("/system/services", get(list_services))
         .route("/system/services/:name/start", post(start_service))
