@@ -465,6 +465,15 @@ OpenWrt's `rootfs_data` (which after factory.ubi has autoresized over the whole 
   are installed from Patronus itself with `patronus-flash sysupgrade` (12.4).
 - A fresh OpenWrt or GL image runs a DHCP server on its LAN ports even when another DHCP server is present. On an existing
   network, connect it only to the WAN port or set `dhcp.lan.ignore=1` right after first boot.
+- **A remote install through OpenWrt needs the uplink on a LAN port.** Fresh OpenWrt answers SSH only on its LAN ports
+  (192.168.1.1). If the unit's only cable sits in the port OpenWrt names `wan`, the unit takes a DHCP lease there and
+  answers ping, but the `wan` firewall zone rejects SSH and HTTP, Wi-Fi is off, and there is no remote way in: someone has
+  to move the cable to a LAN port (or use U-Boot recovery). This happened on a unit whose stock firmware worked as a plain
+  LAN bridge, so the stock setup does not tell you which port OpenWrt will call `wan`. Before writing OpenWrt's
+  factory.ubi without hands on site, check which port has link on the stock firmware (each `ethN`'s `carrier` and its
+  MAC, compared with OpenWrt's `wan` MAC from the ART partition), and if it is the WAN port, write a factory.ubi whose
+  first boot bridges all ports (a Patronus factory.ubi does: br-lan holds `lan1`-`lan4` and `wan` and takes a DHCP lease;
+  writing it straight from stock is not yet tested on a unit).
 - Automatic rollback of a bad upgrade: 12.16 (`patronus-guard`). The kernel command line pins volume 1 as the root, so
   there is no A/B root as on the Slate; instead the bootloader itself copies the previous image back.
 
