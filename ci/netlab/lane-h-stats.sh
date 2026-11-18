@@ -63,7 +63,11 @@ nl_ok "20 MB LAN download counted: WAN in +$((A_WAN - B_WAN)) B, LAN out +$((A_L
 echo "=== history"
 has_points() { nl_api GET '/stats/history?hours=1'; [ "$(j 'all(k in d["metrics"] for k in ["cpu","mem","rx:'"$NL_WAN_IF"'","tx:'"$NL_LAN_IF"'"])')" = True ]; }
 nl_wait 20 has_points || nl_fail "no history points: $(head -c 400 "$NL_OUT")"
-PEAK=$(j 'max(p["value"] for p in d["metrics"]["rx:'"$NL_WAN_IF"'"])')
+# history points are 5-tick averages: the first one can be written before the one holding the download (an
+# idle bucket peaks at a few hundred bit/s), so wait for the download's bucket instead of reading once
+peak_seen() { nl_api GET '/stats/history?hours=1'; PEAK=$(j 'max(p["value"] for p in d["metrics"]["rx:'"$NL_WAN_IF"'"])'); python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) > 1e6 else 1)" "$PEAK"; }
+PEAK=0
+nl_wait 20 peak_seen || true
 python3 -c "import sys; assert float(sys.argv[1]) > 1e6, sys.argv[1]" "$PEAK" || nl_fail "WAN throughput history never shows the download (peak $PEAK bit/s)"
 nl_ok "history has cpu, mem and per-interface throughput (WAN peak $PEAK bit/s)"
 
