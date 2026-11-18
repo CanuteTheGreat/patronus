@@ -6,7 +6,7 @@
   "fail_impacts": ["critical", "serious"],
   "report_impacts": ["moderate", "minor"],
   "axe_tags": ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"],
-  "browsers": ["firefox"],
+  "browsers": ["firefox", "chromium"],
   "viewports": {"desktop": [1280, 800], "phone": [390, 844]},
   "schemes": ["light", "dark"],
   "login": {"path": "/login", "user_sel": "#username", "pass_sel": "#password", "submit_sel": "button[type=submit]", "settle_ms": 700},

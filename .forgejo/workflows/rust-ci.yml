@@ -818,6 +818,13 @@ jobs:
         # Also: the login page/sign-in remove the old cookies, refusals say why, and are in the web log.
         run: ci/stale-origin-login-e2e.sh patronus/web:${{ github.sha }}
 
+      - name: "Accessibility gate (axe-core on the ten most used pages, 1280 and 390 px, light and dark, real Firefox and Chromium)"
+        # ci/a11y/axe_gate.py with the vendored axe-core; pages, impact threshold and justified false positives are in
+        # ci/a11y/a11y-config.json and axe-allowlist.json. A serious or critical violation fails the job.
+        run: |
+          python3 -m unittest discover -s ci/a11y -p 'test_*.py'
+          ci/a11y/run-e2e.sh patronus/web:${{ github.sha }}
+
       - name: Verify the ebuild install (binaries, USE flags, service files)
         run: |
           set -e
