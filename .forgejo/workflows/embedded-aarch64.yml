@@ -19,6 +19,7 @@ on:
       - 'profiles/**'
       - 'crates/patronus-cli/**'
       - 'crates/patronus-web/**'
+      - 'crates/patronus-network/**'
       - 'gentoo/net-firewall/patronus/files/**'
       - '.forgejo/workflows/embedded-aarch64.yml'
   workflow_dispatch:
@@ -65,7 +66,7 @@ jobs:
   image:
     name: GL-AX1800 ${{ matrix.init }} image (build, NAND budget, QEMU gate)
     runs-on: arm64
-    timeout-minutes: 170
+    timeout-minutes: 230
     container:
       image: catthehacker/ubuntu:act-latest
     strategy:
@@ -82,9 +83,12 @@ jobs:
         run: bash ci/embedded-aarch64/ax1800/ci-docker.sh build ${{ matrix.init }}
       - name: QEMU aarch64 gate (${{ matrix.init }})
         run: bash ci/embedded-aarch64/ax1800/ci-docker.sh qemu ${{ matrix.init }}
+      - name: Boot rollback gate (${{ matrix.init }}, real U-Boot; docs 12.14)
+        run: bash ci/embedded-aarch64/ax1800/ci-docker.sh rollback ${{ matrix.init }}
       - name: Results (sizes, NAND budget, QEMU checks)
         if: always()
         run: |
           bash ci/embedded-aarch64/ax1800/ci-docker.sh down ${{ matrix.init }}
           cat ci-out/summary.txt 2>/dev/null || true
           cat ci-out/qemu-*/results.txt 2>/dev/null || true
+          cat ci-out/rb-*/results.txt 2>/dev/null || true

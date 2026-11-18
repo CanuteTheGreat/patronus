@@ -6,9 +6,10 @@
 #   up     build/reuse the builder image, start the container, copy the checkout in
 #   build  ci-build.sh for this variant: host tests, patronus-cli, (systemd), userland, assemble, NAND budget
 #   qemu   qemu-gate.sh for this variant (QEMU aarch64 virt; TCG on hosts without KVM)
+#   rollback  rollback-gate.sh: the image's boot rollback under a real U-Boot (good image confirms, bad images revert)
 #   down   copy summaries/results/serial logs out to ./ci-out, remove the container
 set -euo pipefail
-CMD=${1:?usage: ci-docker.sh up|build|qemu|down <openrc|systemd>}; V=${2:?variant}
+CMD=${1:?usage: ci-docker.sh up|build|qemu|rollback|down <openrc|systemd>}; V=${2:?variant}
 case "$V" in openrc|systemd) ;; *) echo "variant must be openrc or systemd"; exit 2;; esac
 H=ci/embedded-aarch64/ax1800
 IMG=pembed-ax1800-builder:$(sha256sum "$H/Dockerfile.builder" | cut -c1-12)
@@ -31,9 +32,12 @@ build)
 qemu)
   docker exec -e VIRT_KERNEL=/out/stock/virt-kernel.bin -e UNIT_DIR=/out/unit -e RESULTS=/out/qemu-$V "$C" \
     sh -c "bash /w/src/$H/qemu-gate.sh $V \$(ls -d /out/images/$V/*/ | head -1)" ;;
+rollback)
+  docker exec -e VIRT_KERNEL=/out/stock/virt-kernel.bin -e UNIT_DIR=/out/unit -e RESULTS=/out/rb-$V "$C" \
+    sh -c "bash /w/src/$H/rollback-gate.sh $V \$(ls -d /out/images/$V/*/ | head -1)" ;;
 down)
   mkdir -p ci-out
-  docker exec "$C" sh -c 'cd /out && tar cf - summary.txt images/*/*/sizes.txt images/*/*/nand-budget.txt images/*/*/sha256sums images/*/*/sha256sums.asc qemu-* build-patronus-cli.log 2>/dev/null' | tar xf - -C ci-out 2>/dev/null || true
+  docker exec "$C" sh -c 'cd /out && tar cf - summary.txt images/*/*/sizes.txt images/*/*/nand-budget.txt images/*/*/sha256sums images/*/*/sha256sums.asc qemu-* rb-*/results.txt rb-*/serial-* build-patronus-cli.log 2>/dev/null' | tar xf - -C ci-out 2>/dev/null || true
   docker rm -f "$C" >/dev/null 2>&1 || true
   ls -R ci-out | head -40 ;;
 *) echo "unknown command $CMD"; exit 2 ;;
