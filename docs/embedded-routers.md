@@ -898,14 +898,20 @@ never exported):
 | 2.4 GHz width | `AP_HT24` | `width24` | 20 (or 40) |
 | 5 GHz width | `AP_HT5` | `width5` | 80 (or 20, 40) |
 | channels ACS may pick, 2.4 GHz | `AP_CHANLIST24` | `chanlist24` | `1 6 11` (empty = all the country allows) |
-| channels ACS may pick, 5 GHz | `AP_CHANLIST5` | `chanlist5` | empty = all the country allows |
+| channels ACS may pick, 5 GHz | `AP_CHANLIST5` | `chanlist5` | empty = 36-48 and 149-165 (+ DFS / 5.9 GHz when allowed) |
 | ACS may use DFS channels 52-144 | `AP_DFS` | `dfs` | off |
+| ACS may use the 5.9 GHz channels 169-177 (U-NII-4) | `AP_UNII4` | `unii4` | off |
 | ACS survey rounds | `AP_ACS_SCANS` | `acs_scans` | 5 (1-20) |
 
 - 2.4 GHz ACS is limited to the three channels that do not overlap, so two units never end up half on top of each other.
 - 5 GHz ACS leaves the radar (DFS) channels out by default: a DFS channel costs a 1-minute radar check (10 minutes on
   the weather channels 120-128) at every radio start, and a radar hit moves the radio. `AP_DFS=1` lets ACS use them;
   the Wi-Fi page's save then accepts the `DFS` state while the check runs.
+- 5.9 GHz (U-NII-4, 169-177) is left out by default: the first live run of ACS on a house unit (regulatory domain
+  US, OpenWrt 25.12 regdb) picked channel 177, which many phones and laptops cannot see at all. hostapd's ACS checks only
+  the PRIMARY channel against `chanlist`, so a list ending in 165 still let it run 80 MHz on 165-177. The renderer
+  therefore offers ACS only the primaries whose whole 40/80 MHz block is allowed (default at 80 MHz:
+  `chanlist=36 40 44 48 149 153 157 161`); a list with no complete block is used as given, with a message.
 - With ACS at 40/80 MHz the renderer writes only the width (`[HT40+]`, `vht/he_oper_chwidth`); hostapd sets the HT40
   direction and the VHT/HE centre channel for the channel it picks (proven in hwsim, below). A fixed channel
   still gets both from the renderer (12.6a).
@@ -922,3 +928,26 @@ mac80211_hwsim scenario `tests/acs-scenario.sh` run by `tests/xbss-hwsim.sh` in 
 direction right in hostapd AND the kernel, a station associates; 5 GHz 40 MHz; 2.4 GHz 40 MHz; DFS excluded from a
 mixed list; DFS allowed: radar check, then ENABLED and a station joins) and the browser check `ci/wifi-page-e2e.py`
 (form = API, radio cards = live state; `E2E_CHAN=1` changes the plan through the page and reverts it).
+
+
+### 12.15 Signed upgrades refused at boot on builds before dca34699 (no clock at early boot), and the handoff install
+
+The board has no RTC. The early boot re-verifies a staged upgrade (`upgrade-install verify` -> `fwcheck.sh`) before
+anything sets the clock, so it runs at 1970: gpgv saw the release key (created 2026) and its signature as "created in
+the future" and refused EVERY signed image (`/data/upgrade.log`: "release signature check FAILED", then "staged upgrade
+failed verification"; the unit comes back up on the old build). A unit on a signed build before the fix could not
+install any upgrade, through `patronus-flash`, the web Firmware page or the online update. The same staged files
+verify at runtime. CI missed it because QEMU's virt machine has an RTC. Fix: gpgv runs with `--ignore-time-conflict`
+(the time of a release signature proves nothing on this board); host test in `tests/run.sh` (a key and signature newer
+than the clock still verify; fails without the fix).
+
+Units still on an affected build (a signed build without the fix) get onto a fixed build ONCE with
+`tools/handoff-install.sh`, which does not go through the early-boot verifier: stage the image with
+`patronus-flash sysupgrade <img>` (no `--now`), copy the script to the unit, `sh handoff-install.sh arm`. It checks the
+staged parts at runtime (board, sha256, release signature), bind-mounts itself over `/sbin/openrc-init` and runs
+`openrc-shutdown --reexec`, so PID 1 becomes the script: it stops every process, unmounts the /etc, /var/lib and /root
+overlays (the early-boot state) and execs `upgrade-install install`, which copies the parts to RAM, checks sha256 and
+the signature again, pivots to the RAM root, writes root + kernel with read-back and restarts. Any failure before
+writing restarts into the old system. OpenRC only (both house units). Proof: `tools/qemu-handoff.sh` (QEMU: PID 1
+reaches the installer, the RAM root and stage2, the box restarts with its settings) and the first house unit
+(hogs10-a14d1263 -> hogs10-dca34699: handoff, install, back up in ~60 s).

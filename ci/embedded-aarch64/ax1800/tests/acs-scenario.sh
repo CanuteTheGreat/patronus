@@ -65,7 +65,8 @@ assoc5() { # a station joins the 5 GHz network ACS put on the air
   f=$(wpa_cli -p $T/s -i sta0 status 2>/dev/null | sed -n 's/^freq=//p')
   [ $n -le 40 ] && pass "$1: a station associated on the ACS channel ($f MHz)" || { fail "$1: station did not associate"; tail -15 $T/sta-$1.log; }
   kill $sp 2>/dev/null; sleep 1; iw dev sta0 del 2>/dev/null; }
-NODFS5="36 40 44 48 149 153 157 161 165"
+# default 5 GHz plan at 40/80 MHz: whole blocks 36-48 and 149-161 only (165 would run 165-177 = U-NII-4)
+NODFS5="36 40 44 48 149 153 157 161"
 # hwsim radios do not have the IPQ6018's HT/VHT capabilities (LDPC, STBC, beamforming): the board's capability strings
 # are replaced by what hwsim offers; the channel plan lines (HT40 direction, centre channel, ACS limits) stay the image's
 HWSIM_CAPS="AP_HTCAPS24='[SHORT-GI-20][SHORT-GI-40]' AP_HTCAPS5='[SHORT-GI-20][SHORT-GI-40]' AP_VHTCAPS5='[SHORT-GI-80]'"

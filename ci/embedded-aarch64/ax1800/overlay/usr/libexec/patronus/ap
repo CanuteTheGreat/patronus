@@ -12,7 +12,9 @@
 # measures how busy each allowed channel is at start and takes the least busy one) or a fixed channel; AP_HT24 (20|40)
 # and AP_HT5 (20|40|80) = width. ACS only picks from AP_CHANLIST24 / AP_CHANLIST5 (space-separated channels; empty = every
 # channel the country allows; 2.4 GHz defaults to the non-overlapping 1 6 11), AP_ACS_SCANS survey rounds, and on 5 GHz
-# skips the radar (DFS) channels 52-144 unless AP_DFS=1 (a DFS channel costs a 1-10 min radar check at every start).
+# skips the radar (DFS) channels 52-144 unless AP_DFS=1 (a DFS channel costs a 1-10 min radar check at every start) and
+# the 5.9 GHz channels 169-177 unless AP_UNII4=1 (many clients cannot use them); at 40/80 MHz only channels whose whole
+# block is allowed are offered (hostapd checks only the primary).
 # A fixed 5 GHz channel at 40/80 MHz gets its HT40 direction and VHT/HE centre channel (hostapd refuses 80 MHz without
 # vht_oper_centr_freq_seg0_idx); with ACS hostapd sets the direction and centre for the channel it picks.
 # 802.11ax (HE, Wi-Fi 6) is ON (AP_HE=0 in ap.env turns it off). The radio settings follow what OpenWrt 25.12's
@@ -84,8 +86,28 @@ chanlist() { # BAND LIST: the valid channels of LIST (space-separated), the rest
   done; echo "${out# }"; }
 acs_lines() { # BAND: what ACS may pick from and how long it measures
   case "${AP_ACS_SCANS:-5}" in [1-9]|1[0-9]|20) echo "acs_num_scans=${AP_ACS_SCANS:-5}";; *) echo "acs_num_scans=5";; esac
-  eval "l=\${AP_CHANLIST$1:-}"; l=$(chanlist "$1" "$l"); [ -n "$l" ] && echo "chanlist=$l"
-  [ "$1" = 5 ] && case "${AP_DFS:-0}" in 1|yes|on) echo "acs_exclude_dfs=0";; *) echo "acs_exclude_dfs=1";; esac; true; }
+  eval "l=\${AP_CHANLIST$1:-}"; l=$(chanlist "$1" "$l")
+  if [ "$1" = 5 ]; then l=$(acs5_primaries "$l" "${AP_HT5:-80}"); echo "chanlist=$l"
+    case "${AP_DFS:-0}" in 1|yes|on) echo "acs_exclude_dfs=0";; *) echo "acs_exclude_dfs=1";; esac
+  else [ -n "$l" ] && echo "chanlist=$l"; fi; true; }
+on() { case "${1:-0}" in 1|yes|on|true) return 0;; esac; return 1; }
+# 5 GHz channels ACS may use when AP_CHANLIST5 is empty: 36-48, 149-165, plus 52-144 with AP_DFS=1 and the 5.9 GHz
+# channels 169-177 (U-NII-4) with AP_UNII4=1 (off by default: many phones and laptops cannot see them at all)
+acs5_default() { l="36 40 44 48"; on "${AP_DFS:-0}" && l="$l 52 56 60 64 100 104 108 112 116 120 124 128 132 136 140 144"
+  l="$l 149 153 157 161 165"; on "${AP_UNII4:-0}" && l="$l 169 173 177"; echo "$l"; }
+blk5() { # CHANNEL WIDTH: the channels of the 40/80 MHz block CHANNEL belongs to (empty = no such block)
+  c=$1; case "$2" in 80) n=4;; 40) n=2;; *) echo "$c"; return;; esac
+  for b in 36 52 100 116 132 149 165; do [ "$c" -ge $b ] && [ "$c" -le $((b + 12)) ] && base=$b; done
+  [ -n "${base:-}" ] || return 0
+  o=$(( (c - base) / 4 / n * n )); i=0; while [ $i -lt $n ]; do printf '%s ' $((base + (o + i) * 4)); i=$((i + 1)); done; base=; }
+# acs5_primaries LIST WIDTH: hostapd's ACS checks only the primary channel against chanlist, so at 40/80 MHz it can
+# pick 165 and run 165-177 (U-NII-4) although only 165 was allowed; keep the primaries whose whole block is allowed
+acs5_primaries() { a=" ${1:-$(acs5_default)} "; out=
+  for c in $a; do ok=1; bl=$(blk5 "$c" "$2"); [ -n "$bl" ] || ok=0
+    for x in $bl; do case "$a" in *" $x "*) ;; *) ok=0;; esac; done
+    [ $ok = 1 ] && out="$out $c"; done
+  [ -n "$out" ] || { echo "ap: no 5 GHz channel in '$1' has a whole ${2} MHz block allowed; ACS uses the list as given" >&2; out=" $1"; }
+  echo "${out# }"; }
 ht24_dir() { # CHANNEL(0 = ACS): HT40 direction on 2.4 GHz (1-7 above, 8-13 below)
   [ "$1" = 0 ] && { echo "[HT40+]"; return; }; [ "$1" -le 7 ] && echo "[HT40+]" || echo "[HT40-]"; }
 valid5() { # a 5 GHz channel number on the 20 MHz raster (36..144 from 36, 149..177 from 149)

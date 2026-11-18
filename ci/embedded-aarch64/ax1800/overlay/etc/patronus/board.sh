@@ -9,7 +9,7 @@ OWLIB=/usr/lib/openwrt
 AP_COUNTRY=00                         # 00 = world regulatory domain until ap.env sets one
 AP_CHAN24=auto AP_CHAN5=auto AP_HT5=80 AP_FT=0 AP_HE=1   # AP_HE=0: no 802.11ax (see libexec/patronus/ap)
 # channel plan defaults (libexec/patronus/ap header): ACS picks among 1/6/11 on 2.4 GHz and the non-DFS 5 GHz channels
-AP_HT24=20 AP_DFS=0 AP_CHANLIST24="1 6 11" AP_CHANLIST5= AP_ACS_SCANS=5
+AP_HT24=20 AP_DFS=0 AP_UNII4=0 AP_CHANLIST24="1 6 11" AP_CHANLIST5= AP_ACS_SCANS=5
 # the radios' HT/VHT capabilities as OpenWrt 25.12 derives them from `iw phy info` on this board (IPQ6018 ath11k)
 AP_HTCAPS24='[LDPC][SHORT-GI-20][SHORT-GI-40][TX-STBC][RX-STBC1][DSSS_CCK-40]'
 AP_HTCAPS5='[LDPC][SHORT-GI-20][SHORT-GI-40][TX-STBC][RX-STBC1][MAX-AMSDU-7935][DSSS_CCK-40]'

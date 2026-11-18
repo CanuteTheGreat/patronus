@@ -161,16 +161,31 @@ AP_CHAN5=auto AP_HT5=80"
 # channel plan defaults: no channel in ap.env = ACS on both radios, 2.4 GHz only among 1/6/11, 5 GHz without DFS
 s24() { sed -n "s/^$2=//p" "$A/$1/ap24.conf" 2>/dev/null | head -1; }
 aprender dflt "$TWO"
-if [ "$(seg dflt channel)" = 0 ] && [ "$(s24 dflt channel)" = 0 ] && [ "$(s24 dflt chanlist)" = "1 6 11" ] && [ -z "$(seg dflt chanlist)" ] \
+if [ "$(seg dflt channel)" = 0 ] && [ "$(s24 dflt channel)" = 0 ] && [ "$(s24 dflt chanlist)" = "1 6 11" ] && [ "$(seg dflt chanlist)" = "36 40 44 48 149 153 157 161" ] \
   && [ "$(seg dflt acs_exclude_dfs)" = 1 ] && [ -z "$(s24 dflt acs_exclude_dfs)" ] && [ "$(seg dflt acs_num_scans)" = 5 ] && [ "$(s24 dflt acs_num_scans)" = 5 ]; then
-  ok "ap: default channel plan = ACS on both radios (2.4 GHz among 1/6/11, 5 GHz without DFS, 5 survey rounds)"
+  ok "ap: default channel plan = ACS on both radios (2.4 GHz among 1/6/11, 5 GHz 80 MHz blocks 36-48/149-161: no DFS, no 165-177, 5 survey rounds)"
 else no "ap: default channel plan: $(grep -hE '^(channel|chanlist|acs_)' "$A/dflt/ap5.conf" "$A/dflt/ap24.conf" | tr '\n' ' ')"; cat "$A/dflt.out"; fi
 aprender dfs "$TWO
-AP_DFS=1 AP_CHANLIST5=\"36 40 52 150\" AP_CHANLIST24= AP_ACS_SCANS=3"
-[ "$(seg dfs acs_exclude_dfs)" = 0 ] && [ "$(seg dfs chanlist)" = "36 40 52" ] && grep -q 'AP_CHANLIST5: 150 is not a channel' "$A/dfs.out" \
+AP_DFS=1 AP_CHANLIST5=\"36 40 44 48 52 56 60 150\" AP_CHANLIST24= AP_ACS_SCANS=3"
+[ "$(seg dfs acs_exclude_dfs)" = 0 ] && [ "$(seg dfs chanlist)" = "36 40 44 48" ] && grep -q 'AP_CHANLIST5: 150 is not a channel' "$A/dfs.out" \
   && [ -z "$(s24 dfs chanlist)" ] && [ "$(seg dfs acs_num_scans)" = 3 ] \
   && ok "ap: AP_DFS=1 lets ACS use DFS channels; AP_CHANLIST5 keeps valid channels only; empty 2.4 list = all; AP_ACS_SCANS" \
   || { no "ap: DFS/chanlist: $(grep -hE '^(chanlist|acs_)' "$A/dfs/ap5.conf" "$A/dfs/ap24.conf" | tr '\n' ' ')"; cat "$A/dfs.out"; }
+# hostapd's ACS checks only the primary against chanlist: at 80 MHz a lone 165 would run 165-177 (U-NII-4), and an
+# incomplete block (52-60 without 64) would run on 64 too; only primaries whose whole block is allowed are offered
+aprender dfsall "$TWO
+AP_DFS=1"
+[ "$(seg dfsall chanlist)" = "36 40 44 48 52 56 60 64 100 104 108 112 116 120 124 128 132 136 140 144 149 153 157 161" ] \
+  && ok "ap: AP_DFS=1 + empty list = every non-U-NII-4 80 MHz block incl. DFS" || no "ap: DFS default list: $(seg dfsall chanlist)"
+aprender unii4 "$TWO
+AP_UNII4=1"
+[ "$(seg unii4 chanlist)" = "36 40 44 48 149 153 157 161 165 169 173 177" ] && ok "ap: AP_UNII4=1 adds the 165-177 block" || no "ap: U-NII-4: $(seg unii4 chanlist)"
+aprender w40 "$TWO
+AP_HT5=40 AP_CHANLIST5=\"36 40 44 157 161 165\""
+[ "$(seg w40 chanlist)" = "36 40 157 161" ] && ok "ap: 40 MHz: only channels whose pair is allowed (44 without 48, 165 without 169 dropped)" || no "ap: 40 MHz list: $(seg w40 chanlist)"
+aprender w20 "$TWO
+AP_HT5=20"
+[ "$(seg w20 chanlist)" = "36 40 44 48 149 153 157 161 165" ] && ok "ap: 20 MHz default list includes 165" || no "ap: 20 MHz list: $(seg w20 chanlist)"
 aprender fixed "$TWO
 AP_CHAN5=149 AP_CHAN24=6"
 ! grep -qE '^(acs_|chanlist=)' "$A/fixed/ap5.conf" "$A/fixed/ap24.conf" && ok "ap: a fixed channel writes no ACS settings" || no "ap: ACS lines with fixed channels"

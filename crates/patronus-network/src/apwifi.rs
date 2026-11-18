@@ -220,6 +220,7 @@ const MANAGED: &[&str] = &[
     "AP_HT24",
     "AP_HT5",
     "AP_DFS",
+    "AP_UNII4",
     "AP_CHANLIST24",
     "AP_CHANLIST5",
     "AP_ACS_SCANS",
@@ -272,6 +273,9 @@ pub struct WifiConfig {
     /// automatic channel choice (ACS) may pick a 5 GHz DFS channel (52-144; a 1-10 min radar check at each start)
     #[serde(default)]
     pub dfs: bool,
+    /// automatic channel choice may pick the 5.9 GHz channels 169-177 (U-NII-4; many clients cannot use them)
+    #[serde(default)]
+    pub unii4: bool,
     /// channels ACS may pick per band (empty = every channel the country allows)
     #[serde(default = "default_chanlist24")]
     pub chanlist24: Vec<u32>,
@@ -401,6 +405,7 @@ pub fn view(f: &EnvFile) -> WifiConfig {
             _ => 20,
         },
         dfs: matches!(f.get("AP_DFS").unwrap_or("0"), "1" | "yes" | "on"),
+        unii4: matches!(f.get("AP_UNII4").unwrap_or("0"), "1" | "yes" | "on"),
         chanlist24: match f.get("AP_CHANLIST24") {
             None => default_chanlist24(),
             Some(v) => chan_list(v, false),
@@ -467,6 +472,9 @@ pub struct WifiInput {
     /// ACS may pick 5 GHz DFS channels
     #[serde(default)]
     pub dfs: Option<bool>,
+    /// ACS may pick the 5.9 GHz channels 169-177
+    #[serde(default)]
+    pub unii4: Option<bool>,
     /// channels ACS may pick (empty list = all the country allows)
     #[serde(default)]
     pub chanlist24: Option<Vec<u32>>,
@@ -640,6 +648,9 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
     if let Some(d) = input.dfs {
         set.push(("AP_DFS".into(), if d { "1" } else { "0" }.into()));
     }
+    if let Some(d) = input.unii4 {
+        set.push(("AP_UNII4".into(), if d { "1" } else { "0" }.into()));
+    }
     for (k, band5, list) in [
         ("AP_CHANLIST24", false, &input.chanlist24),
         ("AP_CHANLIST5", true, &input.chanlist5),
@@ -717,6 +728,7 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         "AP_HT24",
         "AP_HT5",
         "AP_DFS",
+        "AP_UNII4",
         "AP_CHANLIST24",
         "AP_CHANLIST5",
         "AP_ACS_SCANS",
@@ -1923,6 +1935,7 @@ mod tests {
             assert_eq!((c.chan24.as_str(), c.chan5.as_str()), ("auto", "auto"));
             assert_eq!((c.width24, c.width5), (20, 80));
             assert!(!c.dfs);
+            assert!(!c.unii4);
             assert_eq!(c.chanlist24, vec![1, 6, 11]);
             assert!(c.chanlist5.is_empty());
             assert_eq!(c.acs_scans, 5);
@@ -1943,6 +1956,7 @@ mod tests {
                 width24: Some(40),
                 width5: Some(80),
                 dfs: Some(true),
+                unii4: Some(true),
                 chanlist24: Some(vec![]),
                 chanlist5: Some(vec![36, 40, 44, 48, 36, 149]),
                 acs_scans: Some(3),
@@ -1955,6 +1969,7 @@ mod tests {
         assert_eq!(back.get("AP_CHAN5"), Some("auto"));
         assert_eq!(back.get("AP_HT24"), Some("40"));
         assert_eq!(back.get("AP_DFS"), Some("1"));
+        assert_eq!(back.get("AP_UNII4"), Some("1"));
         assert_eq!(
             back.get("AP_CHANLIST24"),
             Some(""),
@@ -1965,6 +1980,7 @@ mod tests {
         let c = view(&back);
         assert_eq!(c.width24, 40);
         assert!(c.dfs);
+        assert!(c.unii4);
         assert!(c.chanlist24.is_empty());
         assert_eq!(c.chanlist5, vec![36, 40, 44, 48, 149]);
         assert_eq!(c.acs_scans, 3);

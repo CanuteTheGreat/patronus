@@ -141,8 +141,8 @@ and 11 only; 5 GHz: channels without radar detection).
 ### 5.3a Channel plan
 
 Each band's channel is `auto` by default (hostapd ACS at every radio start: 2.4 GHz among 1/6/11, 5 GHz among the
-non-DFS channels at 80 MHz) or a fixed channel; the page also sets the width per band, the channels ACS may use, whether
-it may use DFS channels and its survey rounds. The radio cards show the channel and width each radio really runs and
+non-DFS 80 MHz blocks 36-48/149-161) or a fixed channel; the page also sets the width per band, the channels ACS may use, whether
+it may use DFS channels or the 5.9 GHz channels 169-177 (both off by default) and its survey rounds. The radio cards show the channel and width each radio really runs and
 whether ACS picked it. The same settings as a document: `patronus ap-wifi export > wifi.yaml`, edit,
 `patronus ap-wifi plan wifi.yaml` (what would change, passphrases hidden), `patronus ap-wifi apply wifi.yaml`.
 
