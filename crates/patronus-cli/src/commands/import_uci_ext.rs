@@ -2563,7 +2563,15 @@ mod tests {
         let p = plan();
         let out = apply(&store, &p).await.unwrap();
         let j = out.join("\n");
-        assert!(!j.contains("skipped"), "{j}");
+        // the gateway group needs USE=multiwan; a build without it says so and skips just that
+        let unexpected: Vec<&str> = j
+            .lines()
+            .filter(|l| {
+                l.contains("skipped")
+                    && !(cfg!(not(feature = "multiwan")) && l.contains("USE=multiwan"))
+            })
+            .collect();
+        assert!(unexpected.is_empty(), "{j}");
         for s in ["test-uplink-passphrase", "test-password", "yAnz5TF"] {
             assert!(!j.contains(s));
         }
@@ -2586,6 +2594,7 @@ mod tests {
             Some("reject")
         );
         let rt = patronus_network::routes::load(&store).await.unwrap();
+        #[cfg(feature = "multiwan")]
         assert_eq!(rt.default4.as_deref(), Some("failover"));
         assert_eq!(rt.routes.len(), 2);
         #[cfg(feature = "vpn-wireguard")]
