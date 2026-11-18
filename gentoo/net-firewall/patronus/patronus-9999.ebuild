@@ -606,4 +606,27 @@ pkg_postinst() {
 	elog ""
 	elog "Quick start guide: /usr/share/doc/${PF}/QUICKSTART.md"
 	elog "Gentoo integration: /usr/share/doc/${PF}/GENTOO-INTEGRATION-COMPLETE.md"
+	patronus_admins_into_portage
+}
+
+# Every administrator account (wheel / patronus-admin member, UID 1000..59999) is in the portage group, so equery and eix work for it without
+# sudo. The installer creates the first administrator that way; this fixes existing installs on their next update. Idempotent, never removes.
+patronus_admins_into_portage() {
+	local r=${EROOT%/} g u users=
+	[[ -r ${r}/etc/group && -r ${r}/etc/passwd ]] || return 0
+	grep -q '^portage:' "${r}/etc/group" || return 0
+	for g in wheel patronus-admin; do
+		users+=" $(awk -F: -v g="${g}" '$1==g {gsub(",", " ", $4); print $4}' "${r}/etc/group")"
+		local gid=$(awk -F: -v g="${g}" '$1==g {print $3}' "${r}/etc/group")
+		[[ -n ${gid} ]] && users+=" $(awk -F: -v gid="${gid}" '$4==gid {print $1}' "${r}/etc/passwd")"
+	done
+	for u in $(printf '%s\n' ${users} | sort -u); do
+		awk -F: -v u="${u}" '$1==u && $3>=1000 && $3<60000 {f=1} END {exit !f}' "${r}/etc/passwd" || continue
+		awk -F: -v u="${u}" '$1=="portage" {n=split($4, m, ","); for (i=1; i<=n; i++) if (m[i]==u) f=1} END {exit !f}' "${r}/etc/group" && continue
+		if gpasswd ${r:+--root "${r}"} -a "${u}" portage >/dev/null; then
+			elog "Administrator ${u} added to the portage group (equery, eix without sudo)"
+		else
+			ewarn "Could not add administrator ${u} to the portage group"
+		fi
+	done
 }
