@@ -88,7 +88,8 @@ pub async fn serve(
     let store = Arc::new(store);
     let registry = Arc::new(registry);
     let lock = Arc::new(tokio::sync::Mutex::new(()));
-    let last_tick = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    // a Mutex, not an AtomicI64: the router tier includes 32-bit MIPS, which has no 64-bit atomics
+    let last_tick = Arc::new(std::sync::Mutex::new(0i64));
     tokio::spawn(commit_confirm_watchdog(
         registry.clone(),
         store.clone(),
@@ -118,7 +119,7 @@ pub async fn serve(
             if op == "watchdog" {
                 // the web UI asks before it arms a commit-confirm: a timer
                 // that cannot fire is worse than none
-                let t = last_tick.load(std::sync::atomic::Ordering::SeqCst);
+                let t = *last_tick.lock().unwrap_or_else(|e| e.into_inner());
                 let age = chrono::Utc::now().timestamp() - t;
                 let out = json!({"ok": true, "watchdog": t > 0 && age < 10, "age": age});
                 let _ = wr.write_all(format!("{out}\n").as_bytes()).await;
@@ -226,15 +227,12 @@ async fn commit_confirm_watchdog(
     registry: Arc<ApplierRegistry>,
     store: Arc<ConfigStore>,
     lock: Arc<tokio::sync::Mutex<()>>,
-    last_tick: Arc<std::sync::atomic::AtomicI64>,
+    last_tick: Arc<std::sync::Mutex<i64>>,
 ) {
     let mut t = tokio::time::interval(std::time::Duration::from_secs(1));
     loop {
         t.tick().await;
-        last_tick.store(
-            chrono::Utc::now().timestamp(),
-            std::sync::atomic::Ordering::SeqCst,
-        );
+        *last_tick.lock().unwrap_or_else(|e| e.into_inner()) = chrono::Utc::now().timestamp();
         let due = match store.pending().await {
             Ok(Some(p)) => chrono::Utc::now().timestamp() >= p.deadline,
             Ok(None) => false,
