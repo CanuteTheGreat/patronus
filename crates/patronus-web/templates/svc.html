@@ -199,7 +199,17 @@
                 if (SLUG === 'guest' && a.name === 'voucher') { const n = prompt('Voucher name (optional)', ''); if (n === null) return; const m = prompt('Valid for how many minutes? (0 = never expires)', '1440'); if (!m) return; if (n) body.name = n; body.minutes = Number(m); }
                 if (SLUG === 'guest' && a.name === 'new_password' && !confirm('Replace the shared guest Wi-Fi password? Guests using the old one are disconnected.')) return;
                 const res = await api('POST', '/api/svc/' + SLUG + '/action/' + a.name, body);
-                if (res) { const pre = document.getElementById('svc-action-result'); pre.style.display = ''; pre.textContent = JSON.stringify(res, null, 1); load(); }
+                if (res) {
+                    const pre = document.getElementById('svc-action-result'); pre.style.display = '';
+                    const shown = Object.assign({}, res); delete shown.qr_svg;
+                    pre.textContent = JSON.stringify(shown, null, 1);
+                    const old = document.getElementById('svc-action-qr'); if (old) old.remove();
+                    if (res.qr_svg) {
+                        const img = document.createElement('img'); img.id = 'svc-action-qr'; img.alt = 'QR code: join the guest Wi-Fi'; img.width = 220; img.height = 220;
+                        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(res.qr_svg); pre.after(img);
+                    }
+                    load();
+                }
             };
             ab.appendChild(b);
         }

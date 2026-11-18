@@ -307,7 +307,16 @@ impl LanManager {
     pub async fn svc_action(&self, slug: &str, name: &str, body: Value) -> anyhow::Result<Value> {
         let m = Self::svc_model(slug)?;
         if !m.action_applies(name) {
-            return m.action(&self.store, name, &body).await.map_err(e);
+            let mut out = m.action(&self.store, name, &body).await.map_err(e)?;
+            // the guest Wi-Fi share card: add the QR code of the "join this network" text
+            if slug == "guest" && name == "share" {
+                if let Some(uri) = out["uri"].as_str() {
+                    out["qr_svg"] = crate::qrcode::generate_qr_code_svg(uri)
+                        .map(Value::String)
+                        .unwrap_or(Value::Null);
+                }
+            }
+            return Ok(out);
         }
         // a button that changes stored settings: snapshot, act, apply, undo on failure
         let _g = self.edit.lock().await;
@@ -337,7 +346,9 @@ impl LanManager {
         match last {
             Some(prev) if *prev != cur => {
                 match self.reapply("guest").await {
-                    Ok(_) => tracing::info!("guest network re-applied (voucher set or UTC offset changed)"),
+                    Ok(_) => tracing::info!(
+                        "guest network re-applied (voucher set or UTC offset changed)"
+                    ),
                     Err(err) => tracing::error!("guest network re-apply: {err}"),
                 }
                 *last = Some(cur);

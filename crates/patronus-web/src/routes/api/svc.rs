@@ -48,7 +48,9 @@ struct SvcTemplate {
 async fn page(Path(slug): Path<String>, me: crate::auth::AuthUser) -> Response {
     let Some(m) = patronus_network::svc::find(&slug) else {
         if slug == "guest" {
-            let why = if crate::routes::api::wifi::role() == crate::routes::api::setup::DeviceRole::Ap {
+            let why = if crate::routes::api::wifi::role()
+                == crate::routes::api::setup::DeviceRole::Ap
+            {
                 "This unit is an access point: the main router provides the guest network (VLAN, DHCP, \
                  firewall isolation, speed caps) and this unit only carries its Wi-Fi name."
             } else {

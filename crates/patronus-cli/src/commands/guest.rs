@@ -22,11 +22,15 @@ async fn change(store: &ConfigStore, what: &str, snap: Value) -> anyhow::Result<
     }
     match failure {
         None => {
-            let _ = store.audit("cli", "update", "lan", Some(what), &Value::Null).await;
+            let _ = store
+                .audit("cli", "update", "lan", Some(what), &Value::Null)
+                .await;
             Ok(())
         }
         Some(msg) => {
-            lan::restore_tables(store, &snap).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+            lan::restore_tables(store, &snap)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             anyhow::bail!("{what} failed and was undone: {msg}")
         }
     }
@@ -52,7 +56,10 @@ pub async fn run(action: GuestCommands, db: Option<PathBuf>) -> anyhow::Result<(
             println!("{}", serde_json::to_string_pretty(&v)?);
         }
         GuestCommands::Status => {
-            let v = guest::GuestApplier::default().status(&store).await.map_err(mapped)?;
+            let v = guest::GuestApplier::default()
+                .status(&store)
+                .await
+                .map_err(mapped)?;
             println!("{}", serde_json::to_string_pretty(&v)?);
         }
         GuestCommands::Set { pairs } => {
@@ -65,25 +72,40 @@ pub async fn run(action: GuestCommands, db: Option<PathBuf>) -> anyhow::Result<(
         GuestCommands::Enable | GuestCommands::Disable => {
             let on = matches!(action, GuestCommands::Enable);
             let snap = lan::snapshot_tables(&store).await.map_err(mapped)?;
-            GuestSvc.put(&store, &json!({"enabled": on})).await.map_err(mapped)?;
+            GuestSvc
+                .put(&store, &json!({"enabled": on}))
+                .await
+                .map_err(mapped)?;
             change(&store, "guest network switch", snap).await?;
             println!("guest network {}", if on { "enabled" } else { "disabled" });
         }
         GuestCommands::Open { minutes } => {
             let snap = lan::snapshot_tables(&store).await.map_err(mapped)?;
-            let r = GuestSvc.action(&store, "open", &json!({"minutes": minutes})).await.map_err(mapped)?;
+            let r = GuestSvc
+                .action(&store, "open", &json!({"minutes": minutes}))
+                .await
+                .map_err(mapped)?;
             change(&store, "guest open", snap).await?;
-            println!("guest network open for {minutes} minutes (until {})", r["open_until"]);
+            println!(
+                "guest network open for {minutes} minutes (until {})",
+                r["open_until"]
+            );
         }
         GuestCommands::Close => {
             let snap = lan::snapshot_tables(&store).await.map_err(mapped)?;
-            GuestSvc.action(&store, "close", &Value::Null).await.map_err(mapped)?;
+            GuestSvc
+                .action(&store, "close", &Value::Null)
+                .await
+                .map_err(mapped)?;
             change(&store, "guest close", snap).await?;
             println!("guest network closed (timed access)");
         }
         GuestCommands::NewPassword => {
             let snap = lan::snapshot_tables(&store).await.map_err(mapped)?;
-            let r = GuestSvc.action(&store, "new_password", &Value::Null).await.map_err(mapped)?;
+            let r = GuestSvc
+                .action(&store, "new_password", &Value::Null)
+                .await
+                .map_err(mapped)?;
             change(&store, "guest Wi-Fi password", snap).await?;
             println!("{}", r["wifi_password"].as_str().unwrap_or_default());
         }
@@ -93,7 +115,10 @@ pub async fn run(action: GuestCommands, db: Option<PathBuf>) -> anyhow::Result<(
             if let Some(n) = name {
                 body["name"] = json!(n);
             }
-            let r = GuestSvc.action(&store, "voucher", &body).await.map_err(mapped)?;
+            let r = GuestSvc
+                .action(&store, "voucher", &body)
+                .await
+                .map_err(mapped)?;
             change(&store, "guest voucher", snap).await?;
             println!("{}", r["wifi_password"].as_str().unwrap_or_default());
         }
@@ -114,7 +139,10 @@ pub async fn run(action: GuestCommands, db: Option<PathBuf>) -> anyhow::Result<(
         }
         GuestCommands::VoucherDelete { id } => {
             let snap = lan::snapshot_tables(&store).await.map_err(mapped)?;
-            GuestSvc.delete_row(&store, "vouchers", id).await.map_err(mapped)?;
+            GuestSvc
+                .delete_row(&store, "vouchers", id)
+                .await
+                .map_err(mapped)?;
             change(&store, "guest voucher delete", snap).await?;
             println!("voucher {id} deleted");
         }

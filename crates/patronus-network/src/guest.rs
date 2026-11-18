@@ -175,6 +175,7 @@ static SPEC: Spec = Spec {
         ("voucher", "New voucher"),
         ("open", "Open for a while"),
         ("close", "Close now"),
+        ("share", "Show Wi-Fi password and QR code"),
     ],
 };
 
@@ -211,7 +212,10 @@ pub fn parse_ports(s: &str, what: &str) -> Result<Vec<PortSpec>> {
             _ => return Err(bad()),
         };
         let (lo, hi) = match ports.split_once('-') {
-            Some((a, b)) => (a.parse::<u16>().map_err(|_| bad())?, b.parse::<u16>().map_err(|_| bad())?),
+            Some((a, b)) => (
+                a.parse::<u16>().map_err(|_| bad())?,
+                b.parse::<u16>().map_err(|_| bad())?,
+            ),
             None => {
                 let p = ports.parse::<u16>().map_err(|_| bad())?;
                 (p, p)
@@ -351,7 +355,11 @@ fn ifname_ok(n: &str) -> bool {
 }
 
 fn net_base(a: Ipv4Addr, prefix: u8) -> u32 {
-    let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - u32::from(prefix)) };
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - u32::from(prefix))
+    };
     u32::from(a) & mask
 }
 
@@ -360,9 +368,7 @@ impl Cfg {
     pub fn parse(s: &Settings, now: i64) -> Result<Self> {
         let bridge = s.s("bridge");
         if !ifname_ok(&bridge) {
-            return Err(invalid(
-                "guest bridge (1-15 letters, digits, - _ .)",
-            ));
+            return Err(invalid("guest bridge (1-15 letters, digits, - _ .)"));
         }
         let vlan_id = s.n("vlan_id") as u32;
         let ports: Vec<String> = s
@@ -400,7 +406,9 @@ impl Cfg {
             if v.is_empty() {
                 return Ok(None);
             }
-            let a: Ipv4Addr = v.parse().map_err(|_| invalid(format!("{what} (an IPv4 address)")))?;
+            let a: Ipv4Addr = v
+                .parse()
+                .map_err(|_| invalid(format!("{what} (an IPv4 address)")))?;
             let u = u32::from(a);
             if u <= base || u >= bcast {
                 return Err(invalid(format!("{what} (outside the guest subnet)")));
@@ -410,7 +418,8 @@ impl Cfg {
         let hosts = size - 2;
         let dhcp_start = ip4("dhcp_start", "DHCP range start")?
             .unwrap_or_else(|| Ipv4Addr::from(base + (100.min(hosts / 2) as u32).max(2)));
-        let dhcp_end = ip4("dhcp_end", "DHCP range end")?.unwrap_or_else(|| Ipv4Addr::from(bcast - 1));
+        let dhcp_end =
+            ip4("dhcp_end", "DHCP range end")?.unwrap_or_else(|| Ipv4Addr::from(bcast - 1));
         if u32::from(dhcp_start) > u32::from(dhcp_end) {
             return Err(invalid("DHCP range (start is after the end)"));
         }
@@ -535,7 +544,11 @@ impl Cfg {
     }
 
     pub fn netmask(&self) -> Ipv4Addr {
-        let mask = if self.prefix == 0 { 0 } else { u32::MAX << (32 - u32::from(self.prefix)) };
+        let mask = if self.prefix == 0 {
+            0
+        } else {
+            u32::MAX << (32 - u32::from(self.prefix))
+        };
         Ipv4Addr::from(mask)
     }
 
@@ -569,7 +582,10 @@ pub fn gate_closed(g: &Gate, now: i64) -> Option<Vec<String>> {
             if days.len() < 7 {
                 v.push(format!(
                     "meta day != {{ {} }}",
-                    days.iter().map(u8::to_string).collect::<Vec<_>>().join(", ")
+                    days.iter()
+                        .map(u8::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
             if from < to {
@@ -600,7 +616,10 @@ pub fn render_nft(c: &Cfg, wan_devs: &[String], now: i64) -> String {
     let r = c.router;
     let mut o = format!("add table inet {TABLE}\ndelete table inet {TABLE}\n");
     o.push_str(&format!("table inet {TABLE} {{\n"));
-    for (name, kbit) in [("up_clients", c.limits.client_up), ("down_clients", c.limits.client_down)] {
+    for (name, kbit) in [
+        ("up_clients", c.limits.client_up),
+        ("down_clients", c.limits.client_down),
+    ] {
         if kbit > 0 {
             o.push_str(&format!(
                 "  set {name} {{ type ipv4_addr; flags dynamic; size 8192; timeout 5m; }}\n"
@@ -614,7 +633,9 @@ pub fn render_nft(c: &Cfg, wan_devs: &[String], now: i64) -> String {
                 chain.push_str("    drop comment \"guest network is closed\"\n");
             }
             for e in exprs {
-                chain.push_str(&format!("    {e} drop comment \"guest network is closed\"\n"));
+                chain.push_str(&format!(
+                    "    {e} drop comment \"guest network is closed\"\n"
+                ));
             }
         }
     };
@@ -801,7 +822,10 @@ pub fn render_dnsmasq(c: &Cfg, lease_file: &str, pid_file: &str) -> String {
     } else {
         c.dns_servers.iter().map(|d| d.to_string()).collect()
     };
-    o.push_str(&format!("dhcp-option=option:dns-server,{}\n", dns.join(",")));
+    o.push_str(&format!(
+        "dhcp-option=option:dns-server,{}\n",
+        dns.join(",")
+    ));
     o
 }
 
@@ -877,10 +901,12 @@ impl Voucher {
 
 pub async fn vouchers(store: &ConfigStore) -> Result<Vec<Voucher>> {
     use sqlx::Row;
-    let rows = sqlx::query("SELECT id, name, code, COALESCE(minutes, 0), updated_at FROM guest_vouchers ORDER BY id")
-        .fetch_all(store.pool()?)
-        .await
-        .map_err(|e| Error::Config(format!("read vouchers: {e}")))?;
+    let rows = sqlx::query(
+        "SELECT id, name, code, COALESCE(minutes, 0), updated_at FROM guest_vouchers ORDER BY id",
+    )
+    .fetch_all(store.pool()?)
+    .await
+    .map_err(|e| Error::Config(format!("read vouchers: {e}")))?;
     Ok(rows
         .iter()
         .map(|r| Voucher {
@@ -901,7 +927,10 @@ pub fn random_code(n: usize) -> Result<String> {
     std::fs::File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(&mut buf))
         .map_err(|e| Error::Network(format!("random: {e}")))?;
-    Ok(buf.iter().map(|b| A[usize::from(*b) % 32] as char).collect())
+    Ok(buf
+        .iter()
+        .map(|b| A[usize::from(*b) % 32] as char)
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -945,7 +974,10 @@ impl Svc for GuestSvc {
             conflict_check(store, &cfg).await?;
         }
         svc::put_settings(store, &SPEC, body).await?;
-        let keys: Vec<&String> = body.as_object().map(|o| o.keys().collect()).unwrap_or_default();
+        let keys: Vec<&String> = body
+            .as_object()
+            .map(|o| o.keys().collect())
+            .unwrap_or_default();
         let _ = store
             .audit(
                 "web",
@@ -958,14 +990,26 @@ impl Svc for GuestSvc {
         Ok(())
     }
 
-    async fn save_row(&self, store: &ConfigStore, coll: &str, id: Option<i64>, body: &Value) -> Result<i64> {
+    async fn save_row(
+        &self,
+        store: &ConfigStore,
+        coll: &str,
+        id: Option<i64>,
+        body: &Value,
+    ) -> Result<i64> {
         let c = svc::find_coll(&SPEC, coll)?;
         if let Some(code) = body.get("code").and_then(Value::as_str) {
             check_wifi_secret(code)?;
         }
         let rid = svc::save_row(store, c, id, body).await?;
         let _ = store
-            .audit("web", "guest_voucher_save", "guest", Some(&rid.to_string()), &json!({}))
+            .audit(
+                "web",
+                "guest_voucher_save",
+                "guest",
+                Some(&rid.to_string()),
+                &json!({}),
+            )
             .await;
         Ok(rid)
     }
@@ -974,13 +1018,19 @@ impl Svc for GuestSvc {
         let c = svc::find_coll(&SPEC, coll)?;
         svc::delete_row(store, c, id).await?;
         let _ = store
-            .audit("web", "guest_voucher_delete", "guest", Some(&id.to_string()), &json!({}))
+            .audit(
+                "web",
+                "guest_voucher_delete",
+                "guest",
+                Some(&id.to_string()),
+                &json!({}),
+            )
             .await;
         Ok(())
     }
 
-    fn action_applies(&self, _name: &str) -> bool {
-        true
+    fn action_applies(&self, name: &str) -> bool {
+        name != "share"
     }
 
     async fn action(&self, store: &ConfigStore, name: &str, body: &Value) -> Result<Value> {
@@ -991,32 +1041,54 @@ impl Svc for GuestSvc {
                 let _ = store
                     .audit("web", "guest_new_password", "guest", None, &json!({}))
                     .await;
-                Ok(json!({"wifi_password": code, "note": "shown once; the Wi-Fi page never shows it again"}))
+                Ok(
+                    json!({"wifi_password": code, "note": "shown once; the Wi-Fi page never shows it again"}),
+                )
             }
             "voucher" => {
                 let mins = body
                     .get("minutes")
-                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                    .and_then(|v| {
+                        v.as_i64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                    })
                     .unwrap_or(1440);
                 if !(0..=525_600).contains(&mins) {
                     return Err(invalid("voucher minutes (0 to 525600)"));
                 }
                 let code = random_code(12)?;
                 let existing = vouchers(store).await?;
-                let name = match body.get("name").and_then(Value::as_str).filter(|n| !n.is_empty()) {
+                let name = match body
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|n| !n.is_empty())
+                {
                     Some(n) => n.to_string(),
-                    None => format!("voucher-{}", existing.iter().map(|v| v.id).max().unwrap_or(0) + 1),
+                    None => format!(
+                        "voucher-{}",
+                        existing.iter().map(|v| v.id).max().unwrap_or(0) + 1
+                    ),
                 };
                 let id = self
-                    .save_row(store, "vouchers", None, &json!({"name": name, "code": code, "minutes": mins}))
+                    .save_row(
+                        store,
+                        "vouchers",
+                        None,
+                        &json!({"name": name, "code": code, "minutes": mins}),
+                    )
                     .await?;
-                Ok(json!({"id": id, "name": name, "wifi_password": code, "valid_minutes": mins,
-                          "note": "shown once"}))
+                Ok(
+                    json!({"id": id, "name": name, "wifi_password": code, "valid_minutes": mins,
+                          "note": "shown once"}),
+                )
             }
             "open" => {
                 let mins = body
                     .get("minutes")
-                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                    .and_then(|v| {
+                        v.as_i64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                    })
                     .unwrap_or(240);
                 if !(1..=10_080).contains(&mins) {
                     return Err(invalid("open for (1 to 10080 minutes)"));
@@ -1029,16 +1101,43 @@ impl Svc for GuestSvc {
                 )
                 .await?;
                 let _ = store
-                    .audit("web", "guest_open", "guest", None, &json!({"minutes": mins, "until": until}))
+                    .audit(
+                        "web",
+                        "guest_open",
+                        "guest",
+                        None,
+                        &json!({"minutes": mins, "until": until}),
+                    )
                     .await;
                 Ok(json!({"open_until": until, "minutes": mins}))
             }
+            "share" => {
+                // an admin reveal: the password and the text a phone turns into a "join this network" prompt
+                let raw = svc::raw_settings(store, &SPEC).await?;
+                let psk = raw["wifi_psk"].as_str().unwrap_or_default().to_string();
+                let ssid = raw["ssid"].as_str().unwrap_or_default().to_string();
+                if psk.is_empty() {
+                    return Err(invalid(
+                        "Wi-Fi password (not set yet: use \"New Wi-Fi password\")",
+                    ));
+                }
+                let _ = store
+                    .audit("web", "guest_share", "guest", None, &json!({"ssid": ssid}))
+                    .await;
+                Ok(json!({"ssid": ssid, "wifi_password": psk,
+                          "uri": patronus_config::seg_wifi::wifi_uri(&ssid, &psk, "wpa2")}))
+            }
             "close" => {
-                svc::put_settings(store, &SPEC, &json!({"access": "timed", "open_until": "0"})).await?;
-                let _ = store.audit("web", "guest_close", "guest", None, &json!({})).await;
+                svc::put_settings(store, &SPEC, &json!({"access": "timed", "open_until": "0"}))
+                    .await?;
+                let _ = store
+                    .audit("web", "guest_close", "guest", None, &json!({}))
+                    .await;
                 Ok(json!({"open_until": 0}))
             }
-            other => Err(Error::Config(format!("Invalid request: no action {other:?}"))),
+            other => Err(Error::Config(format!(
+                "Invalid request: no action {other:?}"
+            ))),
         }
     }
 }
@@ -1048,7 +1147,9 @@ fn check_wifi_secret(s: &str) -> Result<()> {
         return Ok(());
     }
     if !(8..=63).contains(&s.len()) || s.bytes().any(|b| matches!(b, b'|' | b',' | b' ')) {
-        return Err(invalid("Wi-Fi password (8-63 characters, no | , or spaces)"));
+        return Err(invalid(
+            "Wi-Fi password (8-63 characters, no | , or spaces)",
+        ));
     }
     Ok(())
 }
@@ -1059,9 +1160,13 @@ async fn conflict_check(store: &ConfigStore, c: &Cfg) -> Result<()> {
     if !c.overlap_check {
         return Ok(());
     }
-    let mine: ipnetwork::Ipv4Network = format!("{}/{}", Ipv4Addr::from(net_base(c.router, c.prefix)), c.prefix)
-        .parse()
-        .map_err(|_| invalid("guest subnet"))?;
+    let mine: ipnetwork::Ipv4Network = format!(
+        "{}/{}",
+        Ipv4Addr::from(net_base(c.router, c.prefix)),
+        c.prefix
+    )
+    .parse()
+    .map_err(|_| invalid("guest subnet"))?;
     let mut others: Vec<(String, ipnetwork::Ipv4Network)> = Vec::new();
     {
         use crate::lan::AddrSource;
@@ -1074,7 +1179,10 @@ async fn conflict_check(store: &ConfigStore, c: &Cfg) -> Result<()> {
                     if v4.is_loopback() || v4.is_link_local() {
                         continue;
                     }
-                    if let Ok(n) = ipnetwork::Ipv4Network::new(Ipv4Addr::from(net_base(v4, a.prefix)), a.prefix) {
+                    if let Ok(n) = ipnetwork::Ipv4Network::new(
+                        Ipv4Addr::from(net_base(v4, a.prefix)),
+                        a.prefix,
+                    ) {
                         others.push((a.ifname.clone(), n));
                     }
                 }
@@ -1089,9 +1197,10 @@ async fn conflict_check(store: &ConfigStore, c: &Cfg) -> Result<()> {
             }
             for a in &i.ipv4 {
                 if let ipnetwork::IpNetwork::V4(n) = a {
-                    if let Ok(nn) =
-                        ipnetwork::Ipv4Network::new(Ipv4Addr::from(net_base(n.ip(), n.prefix())), n.prefix())
-                    {
+                    if let Ok(nn) = ipnetwork::Ipv4Network::new(
+                        Ipv4Addr::from(net_base(n.ip(), n.prefix())),
+                        n.prefix(),
+                    ) {
                         others.push((i.name.clone(), nn));
                     }
                 }
@@ -1225,7 +1334,12 @@ fn bridge_addrs(host: &dyn Host, bridge: &str) -> Vec<String> {
     v.as_array()
         .into_iter()
         .flatten()
-        .flat_map(|e| e.get("addr_info").and_then(Value::as_array).cloned().unwrap_or_default())
+        .flat_map(|e| {
+            e.get("addr_info")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        })
         .filter_map(|ai| {
             Some(format!(
                 "{}/{}",
@@ -1238,14 +1352,28 @@ fn bridge_addrs(host: &dyn Host, bridge: &str) -> Vec<String> {
 
 /// Make the kernel side (bridge, VLAN, ports, address, isolation, caps) match `c`.
 /// Returns the human-readable lines of what it did.
-pub fn apply_kernel(host: &dyn Host, c: &Cfg, parent_dev: Option<&str>, wifi_iface: Option<&str>) -> Result<Vec<String>> {
+pub fn apply_kernel(
+    host: &dyn Host,
+    c: &Cfg,
+    parent_dev: Option<&str>,
+    wifi_iface: Option<&str>,
+) -> Result<Vec<String>> {
     let br = c.bridge.as_str();
     let mut said = Vec::new();
     if !host.dev_exists(br) {
         host.run(&a(&["ip", "link", "add", "name", br, "type", "bridge"]))?;
         said.push(format!("bridge {br} created"));
     }
-    host.try_run(&a(&["ip", "link", "set", br, "type", "bridge", "stp_state", "0"]));
+    host.try_run(&a(&[
+        "ip",
+        "link",
+        "set",
+        br,
+        "type",
+        "bridge",
+        "stp_state",
+        "0",
+    ]));
     // addresses: exactly the configured one
     let want = format!("{}/{}", c.router, c.prefix);
     let have = bridge_addrs(host, br);
@@ -1263,7 +1391,8 @@ pub fn apply_kernel(host: &dyn Host, c: &Cfg, parent_dev: Option<&str>, wifi_ifa
     // members
     let mut want_members: Vec<(String, bool)> = Vec::new(); // (dev, isolate-able)
     if c.vlan_id > 0 {
-        let parent = parent_dev.ok_or_else(|| invalid("VLAN trunk interface (no device behind it)"))?;
+        let parent =
+            parent_dev.ok_or_else(|| invalid("VLAN trunk interface (no device behind it)"))?;
         let vd = c.vlan_dev(parent);
         if vd.len() > 15 {
             return Err(invalid(format!(
@@ -1273,7 +1402,17 @@ pub fn apply_kernel(host: &dyn Host, c: &Cfg, parent_dev: Option<&str>, wifi_ifa
         if !host.dev_exists(&vd) {
             host.run(&a(&["ip", "link", "set", parent, "up"]))?;
             host.run(&a(&[
-                "ip", "link", "add", "link", parent, "name", &vd, "type", "vlan", "id", &c.vlan_id.to_string(),
+                "ip",
+                "link",
+                "add",
+                "link",
+                parent,
+                "name",
+                &vd,
+                "type",
+                "vlan",
+                "id",
+                &c.vlan_id.to_string(),
             ]))?;
             said.push(format!("VLAN {vd} created"));
         }
@@ -1323,7 +1462,9 @@ pub fn apply_kernel(host: &dyn Host, c: &Cfg, parent_dev: Option<&str>, wifi_ifa
     }
     match tc_upload(c) {
         Some(args) => {
-            host.try_run(&a(&["tc", "qdisc", "replace", "dev", br, "handle", "ffff:", "ingress"]));
+            host.try_run(&a(&[
+                "tc", "qdisc", "replace", "dev", br, "handle", "ffff:", "ingress",
+            ]));
             let mut v = vec!["tc".to_string()];
             v.extend(args);
             host.run(&v)?;
@@ -1426,7 +1567,10 @@ impl GuestApplier {
         }
         conflict_check(store, &c).await?;
         let parent_dev = if c.vlan_id > 0 {
-            lan::resolve_iface(store, &c.parent).await?.into_iter().next()
+            lan::resolve_iface(store, &c.parent)
+                .await?
+                .into_iter()
+                .next()
         } else {
             None
         };
@@ -1444,9 +1588,13 @@ impl GuestApplier {
             )));
         }
         let dnsmasq = which("dnsmasq").ok_or_else(|| {
-            Error::Service("the guest network needs dnsmasq, which is not installed (emerge net-dns/dnsmasq)".into())
+            Error::Service(
+                "the guest network needs dnsmasq, which is not installed (emerge net-dns/dnsmasq)"
+                    .into(),
+            )
         })?;
-        std::fs::create_dir_all(&dir).map_err(|e| Error::Network(format!("{}: {e}", dir.display())))?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| Error::Network(format!("{}: {e}", dir.display())))?;
 
         // Wi-Fi (optional): resolve the radio before touching the kernel
         let mut wifi_note = None;
@@ -1490,7 +1638,11 @@ impl GuestApplier {
         .await?;
         rep.applied(format!(
             "guest DHCP/DNS {} on {} ({} - {})",
-            if started { "(re)started" } else { "running, unchanged" },
+            if started {
+                "(re)started"
+            } else {
+                "running, unchanged"
+            },
             c.bridge,
             c.dhcp_start,
             c.dhcp_end
@@ -1504,12 +1656,15 @@ impl GuestApplier {
                 })?;
                 let psk_path = dir.join("hostapd.psk");
                 let ctrl = self.sup.paths.run_dir.join("guest-hostapd");
-                std::fs::create_dir_all(&ctrl).map_err(|e| Error::Network(format!("{}: {e}", ctrl.display())))?;
+                std::fs::create_dir_all(&ctrl)
+                    .map_err(|e| Error::Network(format!("{}: {e}", ctrl.display())))?;
                 let now_ts = now();
                 let active: Vec<(i64, String)> = vouchers(store)
                     .await?
                     .into_iter()
-                    .filter(|v| v.active(now_ts) && check_wifi_secret(&v.code).is_ok() && !v.code.is_empty())
+                    .filter(|v| {
+                        v.active(now_ts) && check_wifi_secret(&v.code).is_ok() && !v.code.is_empty()
+                    })
                     .map(|v| (v.id, v.code))
                     .collect();
                 let psk_text = render_psk_file(&c.wifi.psk, &active);
@@ -1520,7 +1675,10 @@ impl GuestApplier {
                 let restarted = svc::ensure_daemon(
                     &self.sup,
                     HOSTAPD_INSTANCE,
-                    vec![hostapd.to_string_lossy().into(), conf_path.to_string_lossy().into()],
+                    vec![
+                        hostapd.to_string_lossy().into(),
+                        conf_path.to_string_lossy().into(),
+                    ],
                     vec![(conf_path, conf, 0o600)],
                 )
                 .await?;
@@ -1535,11 +1693,37 @@ impl GuestApplier {
                     if let Some(cli) = cli {
                         let cli = cli.to_string_lossy().to_string();
                         let ctrl_s = ctrl.to_string_lossy().to_string();
-                        host.try_run(&[cli.clone(), "-p".into(), ctrl_s.clone(), "-i".into(), iface.clone(), "reload_wpa_psk".into()]);
+                        host.try_run(&[
+                            cli.clone(),
+                            "-p".into(),
+                            ctrl_s.clone(),
+                            "-i".into(),
+                            iface.clone(),
+                            "reload_wpa_psk".into(),
+                        ]);
                         if removed {
-                            if let Some(sta) = host.try_run(&[cli.clone(), "-p".into(), ctrl_s.clone(), "-i".into(), iface.clone(), "all_sta".into()]) {
-                                for mac in sta.lines().map(str::trim).filter(|l| l.len() == 17 && l.matches(':').count() == 5) {
-                                    host.try_run(&[cli.clone(), "-p".into(), ctrl_s.clone(), "-i".into(), iface.clone(), "deauthenticate".into(), mac.into()]);
+                            if let Some(sta) = host.try_run(&[
+                                cli.clone(),
+                                "-p".into(),
+                                ctrl_s.clone(),
+                                "-i".into(),
+                                iface.clone(),
+                                "all_sta".into(),
+                            ]) {
+                                for mac in sta
+                                    .lines()
+                                    .map(str::trim)
+                                    .filter(|l| l.len() == 17 && l.matches(':').count() == 5)
+                                {
+                                    host.try_run(&[
+                                        cli.clone(),
+                                        "-p".into(),
+                                        ctrl_s.clone(),
+                                        "-i".into(),
+                                        iface.clone(),
+                                        "deauthenticate".into(),
+                                        mac.into(),
+                                    ]);
                                 }
                             }
                         }
@@ -1585,7 +1769,9 @@ impl Applier for GuestApplier {
         if !c.enabled {
             return Ok("# guest network off\n".into());
         }
-        let wan = lan::resolve_iface(store, &c.internet).await.unwrap_or_default();
+        let wan = lan::resolve_iface(store, &c.internet)
+            .await
+            .unwrap_or_default();
         let mut o = render_nft(&c, &wan, now());
         o.push_str("\n# dnsmasq\n");
         o.push_str(&render_dnsmasq(&c, "dnsmasq.leases", "dnsmasq.pid"));
@@ -1603,7 +1789,10 @@ impl Applier for GuestApplier {
         m.insert("enabled".into(), json!(c.enabled));
         m.insert("network".into(), json!(c.network()));
         m.insert("bridge_up".into(), json!(host.dev_exists(&c.bridge)));
-        m.insert("dhcp_dns_running".into(), json!(self.sup.is_running(svc::DAEMON_SERVICE, DNSMASQ_INSTANCE)));
+        m.insert(
+            "dhcp_dns_running".into(),
+            json!(self.sup.is_running(svc::DAEMON_SERVICE, DNSMASQ_INSTANCE)),
+        );
         m.insert(
             "firewall_table".into(),
             json!(host
@@ -1614,12 +1803,25 @@ impl Applier for GuestApplier {
             None => (true, "always open".to_string()),
             Some(v) if v.is_empty() => (false, "closed (timed access is not open)".to_string()),
             Some(_) => match &c.gate {
-                Gate::Timed { open_until } => (true, format!("open until {open_until} (epoch)")),
-                Gate::Schedule { from, to, .. } => (true, format!("schedule {}-{}", clock(*from), clock(*to))),
+                Gate::Timed { open_until } => (
+                    true,
+                    format!(
+                        "open until {}",
+                        chrono::DateTime::from_timestamp(*open_until, 0)
+                            .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+                            .unwrap_or_else(|| open_until.to_string())
+                    ),
+                ),
+                Gate::Schedule { from, to, .. } => {
+                    (true, format!("schedule {}-{}", clock(*from), clock(*to)))
+                }
                 Gate::Always => (true, String::new()),
             },
         };
-        m.insert("access_now".into(), json!(if open { "open" } else { "closed" }));
+        m.insert(
+            "access_now".into(),
+            json!(if open { "open" } else { "closed" }),
+        );
         m.insert("access_detail".into(), json!(why));
         let leases = std::fs::read_to_string(self.dir().join("dnsmasq.leases")).unwrap_or_default();
         let clients: Vec<String> = leases
@@ -1640,7 +1842,10 @@ impl Applier for GuestApplier {
         }
         let vs = vouchers(store).await.unwrap_or_default();
         let active = vs.iter().filter(|v| v.active(now_ts)).count();
-        m.insert("vouchers".into(), json!({"active": active, "expired": vs.len() - active}));
+        m.insert(
+            "vouchers".into(),
+            json!({"active": active, "expired": vs.len() - active}),
+        );
         Ok(Value::Object(m))
     }
 }
@@ -1708,19 +1913,40 @@ mod tests {
     #[test]
     fn bad_values_are_refused() {
         let bad = |pairs: &[(&str, &str)]| Cfg::parse(&settings(pairs), 0).is_err();
-        assert!(bad(&[("address", "192.168.30.0/24")]), "network address as router");
+        assert!(
+            bad(&[("address", "192.168.30.0/24")]),
+            "network address as router"
+        );
         assert!(bad(&[("address", "192.168.30.1/31")]), "prefix too long");
-        assert!(bad(&[("dhcp_start", "192.168.31.5")]), "range outside subnet");
-        assert!(bad(&[("dhcp_start", "192.168.30.50"), ("dhcp_end", "192.168.30.40")]));
-        assert!(bad(&[("dhcp_start", "192.168.30.1"), ("dhcp_end", "192.168.30.9")]), "router in range");
+        assert!(
+            bad(&[("dhcp_start", "192.168.31.5")]),
+            "range outside subnet"
+        );
+        assert!(bad(&[
+            ("dhcp_start", "192.168.30.50"),
+            ("dhcp_end", "192.168.30.40")
+        ]));
+        assert!(
+            bad(&[("dhcp_start", "192.168.30.1"), ("dhcp_end", "192.168.30.9")]),
+            "router in range"
+        );
         assert!(bad(&[("bridge", "br guest")]));
         assert!(bad(&[("ports", "eth1,a;b")]));
         assert!(bad(&[("router_ports", "tcp/99999")]));
         assert!(bad(&[("router_ports", "icmp/1")]));
-        assert!(bad(&[("access", "schedule"), ("schedule_from", "08:00"), ("schedule_to", "08:00")]));
+        assert!(bad(&[
+            ("access", "schedule"),
+            ("schedule_from", "08:00"),
+            ("schedule_to", "08:00")
+        ]));
         assert!(bad(&[("access", "schedule"), ("schedule_from", "25:00")]));
         assert!(bad(&[("wifi", "1"), ("wifi_psk", "short")]));
-        assert!(bad(&[("wifi", "1"), ("wifi_psk", "longenough1"), ("wifi_band", "5g"), ("wifi_channel", "6")]));
+        assert!(bad(&[
+            ("wifi", "1"),
+            ("wifi_psk", "longenough1"),
+            ("wifi_band", "5g"),
+            ("wifi_channel", "6")
+        ]));
         assert!(bad(&[("dns_servers", "2001:db8::1")]));
         assert!(!bad(&[("wifi", "1"), ("wifi_psk", "longenough1")]));
     }
@@ -1746,7 +1972,10 @@ mod tests {
         assert!(t.contains("ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16"));
         assert!(t.contains("ct state != { established, related } drop"));
         assert!(t.contains("ip saddr 192.168.30.0/24 oifname { \"eth0\" } masquerade"));
-        assert!(!t.contains("set up_clients"), "no per-client cap by default");
+        assert!(
+            !t.contains("set up_clients"),
+            "no per-client cap by default"
+        );
         assert!(!t.contains("closed"), "always open by default");
         // IPv6 never passes
         assert_eq!(t.matches("meta nfproto ipv6 drop").count(), 2);
@@ -1754,12 +1983,18 @@ mod tests {
 
     #[test]
     fn dns_handed_out_elsewhere_closes_port_53_on_the_router() {
-        let c = cfg(&[("enabled", "1"), ("dns_servers", "9.9.9.9, 1.1.1.1"), ("allow_ping", "0")]);
+        let c = cfg(&[
+            ("enabled", "1"),
+            ("dns_servers", "9.9.9.9, 1.1.1.1"),
+            ("allow_ping", "0"),
+        ]);
         let t = render_nft(&c, &["eth0".into()], 0);
         assert!(!t.contains("dport 53"));
         assert!(!t.contains("echo-request"));
         let d = render_dnsmasq(&c, "/l", "/p");
-        assert!(d.contains("port=0\n") && d.contains("dhcp-option=option:dns-server,9.9.9.9,1.1.1.1\n"));
+        assert!(
+            d.contains("port=0\n") && d.contains("dhcp-option=option:dns-server,9.9.9.9,1.1.1.1\n")
+        );
     }
 
     #[test]
@@ -1778,7 +2013,9 @@ mod tests {
         assert!(t.contains("tcp dport { 853, 8000-8010 } accept comment \"guest router service\""));
         assert!(t.contains("udp dport { 123 } accept"));
         // the cap is evaluated before the allow-list accepts, or an accept would skip it
-        assert!(t.find("add @up_clients").unwrap() < t.find("tcp dport { 80, 443 } accept").unwrap());
+        assert!(
+            t.find("add @up_clients").unwrap() < t.find("tcp dport { 80, 443 } accept").unwrap()
+        );
         assert!(t.contains("drop comment \"port not allowed for guests\""));
     }
 
@@ -1786,27 +2023,59 @@ mod tests {
     fn network_caps_become_tc_commands() {
         let c = cfg(&[("down_kbit", "10000"), ("up_kbit", "2000")]);
         let d = tc_download(&c).unwrap().join(" ");
-        assert!(d.starts_with("qdisc replace dev br-guest root tbf rate 10000kbit burst"), "{d}");
+        assert!(
+            d.starts_with("qdisc replace dev br-guest root tbf rate 10000kbit burst"),
+            "{d}"
+        );
         let u = tc_upload(&c).unwrap().join(" ");
-        assert!(u.contains("parent ffff: protocol all prio 1 matchall action police rate 2000kbit"), "{u}");
+        assert!(
+            u.contains("parent ffff: protocol all prio 1 matchall action police rate 2000kbit"),
+            "{u}"
+        );
         assert!(tc_download(&cfg(&[])).is_none() && tc_upload(&cfg(&[])).is_none());
     }
 
     #[test]
     fn schedule_and_timed_access_close_the_network_by_themselves() {
-        let day = cfg(&[("enabled", "1"), ("access", "schedule"), ("schedule_from", "07:00"), ("schedule_to", "23:00"),
-                        ("schedule_days", "mon,tue,wed,thu,fri")]);
+        let day = cfg(&[
+            ("enabled", "1"),
+            ("access", "schedule"),
+            ("schedule_from", "07:00"),
+            ("schedule_to", "23:00"),
+            ("schedule_days", "mon,tue,wed,thu,fri"),
+        ]);
         let g = gate_closed(&day.gate, 0).unwrap();
-        assert_eq!(g, vec!["meta day != { 1, 2, 3, 4, 5 }", "meta hour != \"07:00\"-\"22:59\""]);
-        let night = cfg(&[("access", "schedule"), ("schedule_from", "22:00"), ("schedule_to", "06:00")]);
-        assert_eq!(gate_closed(&night.gate, 0).unwrap(), vec!["meta hour \"06:00\"-\"21:59\""]);
+        assert_eq!(
+            g,
+            vec![
+                "meta day != { 1, 2, 3, 4, 5 }",
+                "meta hour != \"07:00\"-\"22:59\""
+            ]
+        );
+        let night = cfg(&[
+            ("access", "schedule"),
+            ("schedule_from", "22:00"),
+            ("schedule_to", "06:00"),
+        ]);
+        assert_eq!(
+            gate_closed(&night.gate, 0).unwrap(),
+            vec!["meta hour \"06:00\"-\"21:59\""]
+        );
         let t = render_nft(&day, &["eth0".into()], 0);
-        assert!(t.contains("meta hour != \"07:00\"-\"22:59\" drop comment \"guest network is closed\""));
+        assert!(
+            t.contains("meta hour != \"07:00\"-\"22:59\" drop comment \"guest network is closed\"")
+        );
         // the DHCP accept stays above the closing rules: a closed network still answers DHCP
         assert!(t.find("guest DHCP").unwrap() < t.find("guest network is closed").unwrap());
         let timed = cfg(&[("access", "timed"), ("open_until", "5000")]);
-        assert_eq!(gate_closed(&timed.gate, 1000).unwrap(), vec!["meta time >= 5000"]);
-        assert_eq!(gate_closed(&timed.gate, 6000).unwrap(), Vec::<String>::new());
+        assert_eq!(
+            gate_closed(&timed.gate, 1000).unwrap(),
+            vec!["meta time >= 5000"]
+        );
+        assert_eq!(
+            gate_closed(&timed.gate, 6000).unwrap(),
+            Vec::<String>::new()
+        );
         let t = render_nft(&timed, &["eth0".into()], 6000);
         assert!(t.contains("    drop comment \"guest network is closed\""));
         assert!(gate_closed(&Gate::Always, 0).is_none());
@@ -1814,7 +2083,11 @@ mod tests {
 
     #[test]
     fn dnsmasq_serves_only_the_guest_address() {
-        let c = cfg(&[("enabled", "1"), ("dns_upstreams", "198.51.100.53"), ("lease_minutes", "30")]);
+        let c = cfg(&[
+            ("enabled", "1"),
+            ("dns_upstreams", "198.51.100.53"),
+            ("lease_minutes", "30"),
+        ]);
         let d = render_dnsmasq(&c, "/var/l", "/var/p");
         for l in [
             "interface=br-guest",
@@ -1833,22 +2106,45 @@ mod tests {
 
     #[test]
     fn hostapd_isolates_clients_and_carries_the_vouchers() {
-        let c = cfg(&[("wifi", "1"), ("wifi_psk", "sharedpass1"), ("ssid", "Guest Wi-Fi")]);
+        let c = cfg(&[
+            ("wifi", "1"),
+            ("wifi_psk", "sharedpass1"),
+            ("ssid", "Guest Wi-Fi"),
+        ]);
         let h = render_hostapd(&c, "wlan0", Path::new("/s/psk"), Path::new("/r")).unwrap();
         assert!(h.contains("bridge=br-guest\nssid=Guest Wi-Fi\n"));
         assert!(h.contains("ap_isolate=1"));
-        assert!(h.contains("wpa_key_mgmt=WPA-PSK SAE") && h.contains("sae_password=sharedpass1") && !h.contains("VOUCHERCODE"), "vouchers never touch hostapd.conf (a change there restarts hostapd)");
+        assert!(
+            h.contains("wpa_key_mgmt=WPA-PSK SAE")
+                && h.contains("sae_password=sharedpass1")
+                && !h.contains("VOUCHERCODE"),
+            "vouchers never touch hostapd.conf (a change there restarts hostapd)"
+        );
         let p = render_psk_file("sharedpass1", &[(3, "VOUCHERCODE".into())]);
-        assert!(p.contains("keyid=guest 00:00:00:00:00:00 sharedpass1\n") && p.contains("keyid=voucher-3 00:00:00:00:00:00 VOUCHERCODE\n"));
+        assert!(
+            p.contains("keyid=guest 00:00:00:00:00:00 sharedpass1\n")
+                && p.contains("keyid=voucher-3 00:00:00:00:00:00 VOUCHERCODE\n")
+        );
         assert!(render_hostapd(&c, "wlan0;x", Path::new("/p"), Path::new("/r")).is_err());
-        let open = cfg(&[("wifi", "1"), ("wifi_psk", "sharedpass1"), ("isolate_clients", "0"), ("wifi_security", "wpa2")]);
+        let open = cfg(&[
+            ("wifi", "1"),
+            ("wifi_psk", "sharedpass1"),
+            ("isolate_clients", "0"),
+            ("wifi_security", "wpa2"),
+        ]);
         let h = render_hostapd(&open, "wlan0", Path::new("/s/psk"), Path::new("/r")).unwrap();
         assert!(h.contains("ap_isolate=0") && !h.contains("SAE") && h.contains("ieee80211w=0"));
     }
 
     #[test]
     fn voucher_expiry_counts_from_when_it_was_saved() {
-        let v = Voucher { id: 1, name: "a".into(), code: "x".into(), minutes: 60, saved_at: 1000 };
+        let v = Voucher {
+            id: 1,
+            name: "a".into(),
+            code: "x".into(),
+            minutes: 60,
+            saved_at: 1000,
+        };
         assert!(v.active(1000 + 3599) && !v.active(1000 + 3600));
         let forever = Voucher { minutes: 0, ..v };
         assert!(forever.active(i64::MAX / 2));
@@ -1903,9 +2199,17 @@ mod tests {
 
     #[test]
     fn kernel_setup_builds_bridge_vlan_and_isolated_ports() {
-        let c = cfg(&[("enabled", "1"), ("ports", "gst-a,gst-b"), ("down_kbit", "5000"), ("up_kbit", "1000")]);
+        let c = cfg(&[
+            ("enabled", "1"),
+            ("ports", "gst-a,gst-b"),
+            ("down_kbit", "5000"),
+            ("up_kbit", "1000"),
+        ]);
         let h = Rec::default();
-        h.devs.lock().unwrap().extend(["gst-a".to_string(), "gst-b".to_string()]);
+        h.devs
+            .lock()
+            .unwrap()
+            .extend(["gst-a".to_string(), "gst-b".to_string()]);
         let said = apply_kernel(&h, &c, Some("eth1"), None).unwrap();
         let cmds = h.cmds.lock().unwrap().join("\n");
         for want in [
@@ -1922,16 +2226,29 @@ mod tests {
         ] {
             assert!(cmds.contains(want), "missing {want}\n{cmds}");
         }
-        assert!(h.sysctls.lock().unwrap().contains(&"net/ipv6/conf/br-guest/disable_ipv6=1".to_string()));
+        assert!(h
+            .sysctls
+            .lock()
+            .unwrap()
+            .contains(&"net/ipv6/conf/br-guest/disable_ipv6=1".to_string()));
         assert!(said.iter().any(|l| l.contains("VLAN eth1.30 created")));
     }
 
     #[test]
     fn kernel_setup_is_idempotent_and_removes_stale_members() {
-        let c = cfg(&[("enabled", "1"), ("vlan_id", "0"), ("ports", "gst-a"), ("isolate_clients", "0")]);
+        let c = cfg(&[
+            ("enabled", "1"),
+            ("vlan_id", "0"),
+            ("ports", "gst-a"),
+            ("isolate_clients", "0"),
+        ]);
         let h = Rec::default();
-        h.devs.lock().unwrap().extend(["br-guest", "gst-a"].map(String::from));
-        *h.addrs.lock().unwrap() = r#"[{"addr_info":[{"local":"192.168.30.1","prefixlen":24}]}]"#.into();
+        h.devs
+            .lock()
+            .unwrap()
+            .extend(["br-guest", "gst-a"].map(String::from));
+        *h.addrs.lock().unwrap() =
+            r#"[{"addr_info":[{"local":"192.168.30.1","prefixlen":24}]}]"#.into();
         *h.members.lock().unwrap() = r#"[{"ifname":"gst-a","linkinfo":{}},{"ifname":"old.30","linkinfo":{"info_kind":"vlan"}},{"ifname":"gst-old","linkinfo":{}}]"#.into();
         apply_kernel(&h, &c, None, None).unwrap();
         let cmds = h.cmds.lock().unwrap().join("\n");
@@ -1941,7 +2258,10 @@ mod tests {
         assert!(cmds.contains("ip link set gst-old nomaster"));
         assert!(!cmds.contains("gst-a master"), "already a member");
         assert!(cmds.contains("bridge link set dev gst-a isolated off"));
-        assert!(cmds.contains("tc qdisc del dev br-guest root"), "no cap: any old cap removed");
+        assert!(
+            cmds.contains("tc qdisc del dev br-guest root"),
+            "no cap: any old cap removed"
+        );
     }
 
     #[test]
@@ -1949,7 +2269,10 @@ mod tests {
         let c = cfg(&[("enabled", "1"), ("vlan_id", "0"), ("ports", "nope0")]);
         assert!(apply_kernel(&Rec::default(), &c, None, None).is_err());
         let c = cfg(&[("enabled", "1")]);
-        assert!(apply_kernel(&Rec::default(), &c, Some("a-very-long-trunk0"), None).is_err(), "VLAN name over 15 chars");
+        assert!(
+            apply_kernel(&Rec::default(), &c, Some("a-very-long-trunk0"), None).is_err(),
+            "VLAN name over 15 chars"
+        );
     }
 
     #[test]
@@ -1960,7 +2283,11 @@ mod tests {
         let said = teardown_kernel(&h, "br-guest");
         let cmds = h.cmds.lock().unwrap().join("\n");
         assert!(cmds.contains("nft delete table inet patronus_guest"));
-        assert!(cmds.contains("ip link del eth1.30") && cmds.contains("ip link set gst-a nomaster") && cmds.contains("ip link del br-guest"));
+        assert!(
+            cmds.contains("ip link del eth1.30")
+                && cmds.contains("ip link set gst-a nomaster")
+                && cmds.contains("ip link del br-guest")
+        );
         assert!(said[0].contains("removed"));
     }
 
@@ -1969,56 +2296,125 @@ mod tests {
     #[tokio::test]
     async fn settings_are_validated_as_a_whole_and_audited() {
         let store = ConfigStore::open_in_memory().await.unwrap();
-        GuestSvc.put(&store, &json!({"enabled": false, "vlan_id": 40, "address": "10.40.0.1/24"})).await.unwrap();
+        GuestSvc
+            .put(
+                &store,
+                &json!({"enabled": false, "vlan_id": 40, "address": "10.40.0.1/24"}),
+            )
+            .await
+            .unwrap();
         let v = GuestSvc.get(&store).await.unwrap();
         assert_eq!(v["settings"]["vlan_id"], json!(40));
         assert_eq!(v["settings"]["bridge"], json!("br-guest"), "default shown");
         // a range that no longer fits the new subnet is refused as a whole, nothing half-saved
-        let err = GuestSvc.put(&store, &json!({"address": "10.41.0.1/24", "dhcp_start": "10.40.0.50"})).await.unwrap_err();
+        let err = GuestSvc
+            .put(
+                &store,
+                &json!({"address": "10.41.0.1/24", "dhcp_start": "10.40.0.50"}),
+            )
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("Invalid"), "{err}");
         let v = GuestSvc.get(&store).await.unwrap();
         assert_eq!(v["settings"]["address"], json!("10.40.0.1/24"));
         // the password is stored but never returned
-        GuestSvc.put(&store, &json!({"wifi": true, "wifi_psk": "sharedpass1"})).await.unwrap();
-        let v = GuestSvc.get(&store).await.unwrap();
-        assert_eq!(v["settings"]["wifi_psk"], json!("********"));
-        GuestSvc.put(&store, &json!({"ssid": "Visitors", "wifi_psk": "********"})).await.unwrap();
-        let raw = svc::raw_settings(&store, &SPEC).await.unwrap();
-        assert_eq!(raw["wifi_psk"], json!("sharedpass1"), "mask keeps the stored secret");
-        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = 'guest_settings'")
-            .fetch_one(store.pool().unwrap())
+        GuestSvc
+            .put(&store, &json!({"wifi": true, "wifi_psk": "sharedpass1"}))
             .await
             .unwrap();
+        let v = GuestSvc.get(&store).await.unwrap();
+        assert_eq!(v["settings"]["wifi_psk"], json!("********"));
+        GuestSvc
+            .put(&store, &json!({"ssid": "Visitors", "wifi_psk": "********"}))
+            .await
+            .unwrap();
+        let raw = svc::raw_settings(&store, &SPEC).await.unwrap();
+        assert_eq!(
+            raw["wifi_psk"],
+            json!("sharedpass1"),
+            "mask keeps the stored secret"
+        );
+        let n: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = 'guest_settings'")
+                .fetch_one(store.pool().unwrap())
+                .await
+                .unwrap();
         assert!(n >= 3, "every change is in the audit log");
     }
 
     #[tokio::test]
     async fn actions_open_close_vouchers_and_password() {
         let store = ConfigStore::open_in_memory().await.unwrap();
-        let r = GuestSvc.action(&store, "open", &json!({"minutes": 90})).await.unwrap();
+        let r = GuestSvc
+            .action(&store, "open", &json!({"minutes": 90}))
+            .await
+            .unwrap();
         let until = r["open_until"].as_i64().unwrap();
         assert!(until > now() + 89 * 60 && until <= now() + 90 * 60 + 2);
         let raw = svc::raw_settings(&store, &SPEC).await.unwrap();
         assert_eq!(raw["access"], json!("timed"));
         assert_eq!(raw["open_until"], json!(until.to_string()));
-        assert!(GuestSvc.action(&store, "open", &json!({"minutes": 0})).await.is_err());
-        GuestSvc.action(&store, "close", &Value::Null).await.unwrap();
-        assert_eq!(svc::raw_settings(&store, &SPEC).await.unwrap()["open_until"], json!("0"));
-        let r = GuestSvc.action(&store, "voucher", &json!({"name": "friday", "minutes": 30})).await.unwrap();
+        assert!(GuestSvc
+            .action(&store, "open", &json!({"minutes": 0}))
+            .await
+            .is_err());
+        GuestSvc
+            .action(&store, "close", &Value::Null)
+            .await
+            .unwrap();
+        assert_eq!(
+            svc::raw_settings(&store, &SPEC).await.unwrap()["open_until"],
+            json!("0")
+        );
+        let r = GuestSvc
+            .action(&store, "voucher", &json!({"name": "friday", "minutes": 30}))
+            .await
+            .unwrap();
         let code = r["wifi_password"].as_str().unwrap().to_string();
         assert_eq!(code.len(), 12);
         let vs = vouchers(&store).await.unwrap();
-        assert_eq!((vs[0].name.as_str(), vs[0].minutes, vs[0].code.as_str()), ("friday", 30, code.as_str()));
+        assert_eq!(
+            (vs[0].name.as_str(), vs[0].minutes, vs[0].code.as_str()),
+            ("friday", 30, code.as_str())
+        );
         assert!(vs[0].active(now()));
         // the list never shows the code
         let g = GuestSvc.get(&store).await.unwrap();
         assert_eq!(g["collections"]["vouchers"][0]["code"], json!("********"));
-        let p = GuestSvc.action(&store, "new_password", &Value::Null).await.unwrap();
+        let p = GuestSvc
+            .action(&store, "new_password", &Value::Null)
+            .await
+            .unwrap();
         assert_eq!(p["wifi_password"].as_str().unwrap().len(), 16);
         assert!(GuestSvc.action(&store, "nope", &Value::Null).await.is_err());
+        // the share card needs a password; once set it carries the join-this-network text
+        let fresh = ConfigStore::open_in_memory().await.unwrap();
+        assert!(
+            GuestSvc
+                .action(&fresh, "share", &Value::Null)
+                .await
+                .is_err(),
+            "no password yet: nothing to share"
+        );
+        let s = GuestSvc
+            .action(&store, "share", &Value::Null)
+            .await
+            .unwrap();
+        assert_eq!(s["wifi_password"], p["wifi_password"]);
+        assert_eq!(
+            s["uri"].as_str().unwrap(),
+            format!(
+                "WIFI:T:WPA;S:Guest;P:{};;",
+                p["wifi_password"].as_str().unwrap()
+            )
+        );
+        assert!(!GuestSvc.action_applies("share") && GuestSvc.action_applies("open"));
         let ids = active_voucher_ids(&store, now()).await.unwrap();
         assert_eq!(ids, vec![vs[0].id]);
-        assert!(active_voucher_ids(&store, now() + 31 * 60).await.unwrap().is_empty());
+        assert!(active_voucher_ids(&store, now() + 31 * 60)
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
@@ -2033,7 +2429,10 @@ mod tests {
         });
         let h = Rec::default();
         let rep = ap.apply_with(&store, &h).await.unwrap();
-        assert!(rep.applied.iter().any(|l| l.contains("guest network is off")));
+        assert!(rep
+            .applied
+            .iter()
+            .any(|l| l.contains("guest network is off")));
         assert!(h.nft.lock().unwrap().is_empty());
     }
 }

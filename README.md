@@ -260,6 +260,20 @@ that are not finished are listed separately under
   session state is shown live. [C52]
 - Wake-on-LAN: saved hosts (MAC + interface) are woken with a magic packet
   broadcast on their network. [C53]
+- Guest network (USE=guest, off by default): an isolated network for visitors on
+  its own VLAN and/or Wi-Fi name, with its own DHCP and DNS. Guests get the
+  internet and nothing else: they cannot reach the LAN, this router's web page
+  or SSH (on any of its addresses), private ranges behind the WAN (the ISP
+  modem's admin page), other guests, and nothing can start a connection into the
+  guest network. Optional speed caps per guest network and per guest, an opening
+  schedule or a "open for N minutes" window that closes by itself, allowed
+  router services and internet ports, and a shared Wi-Fi password with
+  time-limited vouchers (no login page). Every value is a setting with a default,
+  in the configuration (export, history, rollback), on the Guest network page, in
+  the API and in `patronus guest`, and every change is in the audit log. [C80]
+  The guest Wi-Fi name is served by its own hostapd with client isolation; a
+  voucher stops working when it expires. [C81] Not on an access-point unit or in
+  the embedded router images: the page says so and why.
 - Packet capture (admin API `POST /api/system/capture`): captures packets on one
   interface with tcpdump, filtered by protocol, host and port (at most 500
   packets or 30 seconds), and returns the decoded lines. [C72]

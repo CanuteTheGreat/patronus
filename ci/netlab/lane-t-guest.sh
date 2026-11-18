@@ -344,6 +344,10 @@ VC=$(jget 'd["wifi_password"]'); [ "${#VC}" = 12 ] || nl_fail "voucher code: $VC
 nl_api GET /svc/guest; grep -qF "$VC" "$NL_OUT" && nl_fail "a voucher code is listed by the API"
 [ "$(jget 'd["collections"]["vouchers"][0]["code"]')" = '********' ] || nl_fail "voucher list: $(cat "$NL_OUT")"
 nl_api POST /svc/guest/action/nope; [ "$NL_CODE" != 200 ] || nl_fail "an unknown action must fail"
+nl_api POST /svc/guest/action/share; [ "$NL_CODE" = 200 ] || nl_fail "share card: $NL_CODE $(cat "$NL_OUT")"
+URI=$(jget 'd["uri"]'); [ "$(jget 'd["wifi_password"]')" = "$PW" ] && [ "$URI" = "WIFI:T:WPA;S:Guest;P:$PW;;" ] || nl_fail "share card does not carry the password and the join text: $URI"
+grep -q '<svg' "$NL_OUT" || nl_fail "share card has no QR code"
+nl_ok "Show Wi-Fi password and QR code: password, join-this-network text and an SVG QR code (an audited reveal)"
 nl_ok "password generated once, vouchers listed without their codes"
 
 echo "=== 9. audit log"

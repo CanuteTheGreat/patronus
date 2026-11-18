@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Guest network (`USE=guest`, on by default in the ebuild, off until you switch it on)
+
+- New **Guest network** page, API (`/api/svc/guest`) and `patronus guest` command: an isolated network for visitors on its own VLAN and/or Wi-Fi name with its own DHCP and DNS. Guests get the internet and nothing else; they cannot reach the LAN, the router's web page or SSH, private ranges behind the WAN, or each other, and nothing can start a connection into the guest network. Own nft table `inet patronus_guest`, applied atomically; every value is a setting with a default and is part of the configuration (export, history, rollback).
+- Optional speed caps (network: `tc`; per guest: nft meters), a daily schedule or an "open for N minutes" window that closes itself in the kernel, router services and internet ports guests may use, a shared Wi-Fi password with a QR code and time-limited WPA2 vouchers (no login page).
+- Not available on an access-point unit or in the embedded router images (flash/RAM); the page, the menu and the System page say so and why. IPv6 for guests is not supported yet (guest IPv6 is dropped).
+- Migration 1400 (new lane `t`): `guest_vouchers`. Docs: `docs/GUEST-NETWORK.md`.
+
 ## [0.2.0] - 2026-10-30
 
 ### Device segmentation

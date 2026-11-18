@@ -37,7 +37,7 @@ IUSE="
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp +plugins
-	+segmentation wifi-ap
+	+segmentation wifi-ap +guest
 	geoip geoip2
 	+aliases +insight
 	scheduled-rules
@@ -123,6 +123,7 @@ RDEPEND="
 	)
 	vlan? ( sys-apps/iproute2 )
 	segmentation? ( sys-apps/iproute2 net-firewall/nftables )
+	guest? ( net-dns/dnsmasq sys-apps/iproute2 net-firewall/nftables hostapd? ( net-wireless/hostapd ) )
 	wifi-ap? ( net-wireless/hostapd )
 	qos? ( sys-apps/iproute2 )
 	tc? ( sys-apps/iproute2 )
@@ -254,6 +255,7 @@ src_configure() {
 		$(usex plugins "plugins" "")
 		$(usex segmentation "segmentation" "")
 		$(usex wifi-ap "wifi-ap" "")
+		$(usex guest "guest" "")
 	)
 
 	cargo_src_configure --no-default-features
@@ -381,6 +383,7 @@ src_install() {
 		use plugins && webfeatures+=( plugins )
 		use segmentation && webfeatures+=( segmentation )
 		use wifi-ap && webfeatures+=( wifi-ap )
+		use guest && webfeatures+=( guest )
 		use syslog && webfeatures+=( syslog )
 		use netflow && webfeatures+=( netflow )
 		use igmp && webfeatures+=( igmp )
