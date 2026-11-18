@@ -876,3 +876,49 @@ render, live txpower/acl, LEDs, restart schedule both inits, address revert at b
 API, including an unconfirmed address change reverting by itself and a lost login coming back from a backup) and the
 browser check `ci/device-page-e2e.py`. Real radios (block/guest with a phone, transmit power on air) are proven on the
 house access points separately.
+
+
+### 12.14 Channel plan: automatic channel selection by default (2026-11-17)
+
+Every unit and every image now starts both radios on **automatic channel selection** (hostapd ACS): at each radio
+start hostapd surveys the allowed channels (busy time per channel from the driver's survey, `acs_num_scans` rounds)
+and takes the least busy one. No channel is baked into an image or a unit file; a fixed channel is a choice made on
+the Wi-Fi page, never a default. Why: one house unit had its 2.4 GHz radio pinned to channel 1, which measured 70-75 %
+busy, and 2.4 GHz roams into that unit failed (no association within 20 s, or 11-22 s to recover), while the other unit
+on automatic channel 11 and every 5 GHz path were fine.
+
+The plan is a set of settings, per band, in `/etc/patronus/ap.env` (defaults in `board.sh`), `GET/PUT /api/wifi`, the
+Wi-Fi page and `patronus ap-wifi export|plan|apply` (a declarative YAML/JSON document of the same settings, passphrases
+never exported):
+
+| Setting | ap.env | API | Default |
+|---|---|---|---|
+| 2.4 GHz channel | `AP_CHAN24` | `chan24` | `auto` (or 1-13) |
+| 5 GHz channel | `AP_CHAN5` | `chan5` | `auto` (or 36-48, 52-144 DFS, 149-165) |
+| 2.4 GHz width | `AP_HT24` | `width24` | 20 (or 40) |
+| 5 GHz width | `AP_HT5` | `width5` | 80 (or 20, 40) |
+| channels ACS may pick, 2.4 GHz | `AP_CHANLIST24` | `chanlist24` | `1 6 11` (empty = all the country allows) |
+| channels ACS may pick, 5 GHz | `AP_CHANLIST5` | `chanlist5` | empty = all the country allows |
+| ACS may use DFS channels 52-144 | `AP_DFS` | `dfs` | off |
+| ACS survey rounds | `AP_ACS_SCANS` | `acs_scans` | 5 (1-20) |
+
+- 2.4 GHz ACS is limited to the three channels that do not overlap, so two units never end up half on top of each other.
+- 5 GHz ACS leaves the radar (DFS) channels out by default: a DFS channel costs a 1-minute radar check (10 minutes on
+  the weather channels 120-128) at every radio start, and a radar hit moves the radio. `AP_DFS=1` lets ACS use them;
+  the Wi-Fi page's save then accepts the `DFS` state while the check runs.
+- With ACS at 40/80 MHz the renderer writes only the width (`[HT40+]`, `vht/he_oper_chwidth`); hostapd sets the HT40
+  direction and the VHT/HE centre channel for the channel it picks (proven in hwsim, below). A fixed channel
+  still gets both from the renderer (12.6a).
+- The radio cards on the Wi-Fi page show what the radio really runs (`hostapd_cli status`: channel, frequency, width,
+  centre) and "picked automatically" or "fixed"; while ACS measures they say so. `patronus ap-wifi show` prints the same.
+- A save or `apply` that only spells out defaults (`AP_HT24=20` written or left out) is no change and restarts nothing;
+  any channel-plan change restarts both radios (ACS only runs at hostapd start).
+
+Proof: renderer host tests (`tests/run.sh`: defaults, DFS, channel lists, fixed channel without ACS lines, 2.4 GHz
+HT40 direction, invalid values fall back to auto with a message), unit tests (`apwifi`: defaults, round trip,
+validation, live width, export/plan/apply), the QEMU gate (`wifi_chanplan`, `wifi_cli`, both init systems), the
+mac80211_hwsim scenario `tests/acs-scenario.sh` run by `tests/xbss-hwsim.sh` in CI with the image's own hostapd and the
+`ap render` configs (default plan: 2.4 GHz lands on 1/6/11 at 20 MHz, 5 GHz at 80 MHz with the centre channel and HT40
+direction right in hostapd AND the kernel, a station associates; 5 GHz 40 MHz; 2.4 GHz 40 MHz; DFS excluded from a
+mixed list; DFS allowed: radar check, then ENABLED and a station joins) and the browser check `ci/wifi-page-e2e.py`
+(form = API, radio cards = live state; `E2E_CHAN=1` changes the plan through the page and reverts it).

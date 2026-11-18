@@ -36,6 +36,7 @@ explains that instead of offering controls; **gap** = missing, planned.
 | Area | LuCI (OpenWrt) | GL.iNet 4.x | Patronus router tier |
 |---|---|---|---|
 | Wi-Fi per radio: country, channel, width | yes | yes | **new** (Wi-Fi page) |
+| Automatic channel selection (default), allowed channel lists, DFS opt-in | yes (ACS) | yes | **new**: auto on every unit by default, the channel/width really in use shown per radio (docs/embedded-routers.md 12.14) |
 | Wi-Fi 6 (802.11ax) | yes | yes | **new** toggle, on by default |
 | Transmit power | yes | yes (low/medium/high) | **new** per radio (auto or 1-30 dBm), applied without a restart |
 | SSIDs per band, add/remove/disable | yes | main + guest per band | **new** (up to 4 per band) |
@@ -136,6 +137,14 @@ Transmit power is per radio, `auto` or 1-30 dBm (the regulatory limit of the cou
 `iw survey dump` and the radios' scan results (`scan dump`; "Scan now" = `scan ap-force`, which scans while the access
 point keeps serving), and suggests the channel with the least load and the fewest overlapping networks (2.4 GHz: 1, 6
 and 11 only; 5 GHz: channels without radar detection).
+
+### 5.3a Channel plan
+
+Each band's channel is `auto` by default (hostapd ACS at every radio start: 2.4 GHz among 1/6/11, 5 GHz among the
+non-DFS channels at 80 MHz) or a fixed channel; the page also sets the width per band, the channels ACS may use, whether
+it may use DFS channels and its survey rounds. The radio cards show the channel and width each radio really runs and
+whether ACS picked it. The same settings as a document: `patronus ap-wifi export > wifi.yaml`, edit,
+`patronus ap-wifi plan wifi.yaml` (what would change, passphrases hidden), `patronus ap-wifi apply wifi.yaml`.
 
 ### 5.4 Device page
 
