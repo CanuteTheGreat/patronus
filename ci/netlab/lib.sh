@@ -105,10 +105,17 @@ except OSError as e:
 EOF
 
 # --- topology --------------------------------------------------------------
-nl_down() {
+# Stop every server this script started. A lane that ends without nl_down (the Wi-Fi
+# lanes end right after a reboot scenario) must call this from its EXIT trap, or the
+# next lane's nl_up finds the survivors and fails its leak check (nightly 2007).
+nl_stop_servers() {
+  local p
   for p in "${NL_PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null; done
   for p in "${NL_PIDS[@]:-}"; do [ -n "$p" ] && { wait "$p" 2>/dev/null || true; }; done
   NL_PIDS=()
+}
+nl_down() {
+  nl_stop_servers
   sleep 0.2
   # Every server nl_bg started must be gone; a survivor means nl_bg lost track
   # of the real process (see nl_bg).

@@ -62,6 +62,7 @@ wifi_release() { # NS...
   done
 }
 wifi_clean() {
+  nl_stop_servers
   for n in $STA; do
     ip netns pids "$n" 2>/dev/null | xargs -r kill 2>/dev/null || true
   done
