@@ -137,10 +137,13 @@ speed() { # NS-FN URL...: bytes/s as an integer (curl exits 28 when -m ends the 
   echo "${o%%.*}"
 }
 speed_up() { # NS-FN URL: bytes/s that ARRIVED at the server over a 6 s window (curl's own figure counts what sits in the send buffer)
+  # The server counts bytes from every connection, so no upload may outlive its own window. curl ends itself (-m 9, the
+  # window is 2 + 6 s) and is waited for: `kill $!` would only hit the subshell running the G1/G2 wrapper and leave curl
+  # uploading into the next measurement (a capped run went on in the background and doubled the per-guest figure).
   local fn=$1 b1 b2 pid; shift
-  "$fn" curl -s -m 30 -T "$NL_T/nl-upload.bin" -o /dev/null "$@" >/dev/null 2>&1 & pid=$!
+  "$fn" curl -s -m 9 -T "$NL_T/nl-upload.bin" -o /dev/null "$@" >/dev/null 2>&1 & pid=$!
   sleep 2; b1=$(INET curl -s http://$NL_WWW:8081/received); sleep 6; b2=$(INET curl -s http://$NL_WWW:8081/received)
-  kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
   echo $(( (b2 - b1) / 6 ))
 }
 upload_secs() { # NS-FN URL: seconds to upload the whole file
