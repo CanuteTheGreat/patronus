@@ -1,0 +1,19 @@
+# GL.iNet GL-AX1800 (IPQ6018, GL U-Boot 2016.01 "uboot2.0") facts for the boot rollback (patronus-guard, docs 12.14).
+# Image-owned; unit policy goes in /etc/patronus/boot-guard.conf. Checked on the units 2026-11-17: the environment is one
+# copy at offset 0 of 0:appsblenv (CRC over 0x40000 bytes, 128 KiB erase blocks, 4 blocks in the partition), bootcmd starts
+# with bootipq, the NAND is qcom_nand (U-Boot nand device 0), UBI sits on the MTD "rootfs" (0x7300000 @ 0xa00000, read
+# from sysfs at install time), the APCS watchdog (qcom,kpss-wdt) is at 0xb017000 on a 32768 Hz clock (max 32 s), and RAM
+# 0x44000000-0x4a0fffff is free of the SoC's reserved regions (bootloader from 0x4a100000).
+GUARD_ENV_MTD=0:appsblenv
+GUARD_ENV_OFFSET=0x0
+GUARD_ENV_SIZE=0x40000
+GUARD_ENV_SECTOR=0x20000
+GUARD_ENV_SECTORS=4
+GUARD_UB_BOOT=bootipq
+GUARD_UB_UBI_MTD=rootfs
+GUARD_UB_NAND_DEV=0
+GUARD_UB_ROOT_ADDR=0x44000000
+GUARD_UB_ROOT_MAX=0x4000000
+GUARD_UB_KERNEL_ADDR=0x48000000
+GUARD_UB_KERNEL_MAX=0x2000000
+GUARD_UB_WDT_HZ=32768

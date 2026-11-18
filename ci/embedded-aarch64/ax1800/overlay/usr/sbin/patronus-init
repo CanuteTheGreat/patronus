@@ -2,12 +2,15 @@
 # /sbin/init of both embedded variants: the shared early boot (/usr/libexec/patronus/early: /dev, data volume,
 # overlays, kmods, ath11k calibration), then exec the image's init system as PID 1: OpenRC (openrc-init) or systemd,
 # as recorded in /etc/patronus-init at image build.
-# There is no automatic way back to OpenWrt on this board: a box that does not come up is recovered with U-Boot's web
-# recovery (reset held at power-on, http://192.168.1.1) and a factory.ubi (Patronus or OpenWrt); a factory.bin uploaded
-# there does NOT work (docs/embedded-routers.md section 7).
+# A new image is trial-booted and the bootloader restores the previous one unless it confirms itself (patronus-guard,
+# docs/embedded-routers.md 12.14). A box whose flash is beyond that is recovered with U-Boot's web recovery (reset held at
+# power-on, http://192.168.1.1) and GL.iNet's .img, then OpenWrt's factory.ubi over SSH (docs 12.3).
 /usr/libexec/patronus/early
 # a verified staged upgrade: PID 1 goes to the installer (RAM root, writes kernel + root, restarts)
 [ -f /tmp/upgrade-pending ] && exec /usr/libexec/patronus/upgrade-install install
+# boot rollback (patronus-guard): keep the bootloader script current, record a revert the bootloader did, and on a trial
+# boot start the health checks + watchdog feeder that confirm the new image or restart it (the bootloader counts)
+[ -x /usr/sbin/patronus-guard ] && { /usr/sbin/patronus-guard boot >>/tmp/boot-guard.log 2>&1; echo "$(cut -d' ' -f1 /proc/uptime) boot-guard" >> /tmp/boot-times; }
 . /etc/patronus-init
 case "$INIT" in
   openrc)  INIT_BIN=/sbin/openrc-init ;;

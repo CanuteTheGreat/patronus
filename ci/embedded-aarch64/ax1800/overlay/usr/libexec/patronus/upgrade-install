@@ -72,13 +72,31 @@ install)
   # the exact bytes about to be written: release signature checked once more on the RAM copy (the old root's gpgv + keyring)
   . "${PATRONUS_LIB:-/usr/libexec/patronus}/fwcheck.sh"; fw_sig_ok /mnt/img 2>>"$DATA/upgrade.log" || fail "release signature of the RAM copy does not verify"
   rm -f /mnt/img/patronus.sha256.sig
-  for b in /bin/busybox /usr/sbin/ubinfo /usr/sbin/ubiupdatevol /usr/sbin/ubirsvol /usr/sbin/ubiblock; do
+  # boot rollback (patronus-guard): the running image is kept as kernel_prev/rootfs_prev and the new one trial-booted;
+  # decided here, on the old root, before anything is written
+  GUARD=0; GB=/usr/sbin/patronus-guard
+  if [ -x "$GB" ]; then
+    if why=$("$GB" can-arm /mnt/img/kernel /mnt/img/root 2>&1); then GUARD=1; log "rollback: $why"
+    else . /etc/patronus/boot-guard.board 2>/dev/null; . /etc/patronus/boot-guard.conf 2>/dev/null
+      if [ "${GUARD_REQUIRE:-1}" = 1 ] && [ "${GUARD_ENABLED:-1}" = 1 ] && [ ! -f "$S/no-rollback" ]; then fail "no rollback possible ($why); patronus-flash sysupgrade --no-rollback installs it anyway"; fi
+      log "installing WITHOUT rollback: $why"; fi
+  fi
+  echo "$GUARD" > /mnt/img/guard
+  BINS="/bin/busybox /usr/sbin/ubinfo /usr/sbin/ubiupdatevol /usr/sbin/ubirsvol /usr/sbin/ubiblock"
+  if [ "$GUARD" = 1 ]; then
+    BINS="$BINS /usr/sbin/ubimkvol /usr/bin/fw_printenv"
+    mkdir -p /mnt/etc/patronus /mnt/usr/sbin /mnt/run /mnt/usr/bin
+    cp "$GB" /mnt/usr/sbin/patronus-guard && cp /etc/patronus-release /mnt/etc/ && cp /etc/patronus/boot-guard.* /mnt/etc/patronus/ 2>/dev/null || fail "copy boot guard"
+    cp /mnt/img/patronus-release /mnt/img/new-release 2>/dev/null || cp "$S/patronus-release" /mnt/img/new-release || fail "copy new release"
+  fi
+  for b in $BINS; do
     cp "$b" /mnt/bin/ || fail "copy $b"
     # shared libraries (musl loader prints "name => path (addr)")
     for l in $(/lib/ld-musl-*.so.1 --list "$b" 2>/dev/null | sed -n 's/.*=> \([^ ]*\) .*/\1/p'); do [ -e "/mnt/lib/${l##*/}" ] || cp -L "$l" /mnt/lib/; done
   done
   cp -L /lib/ld-musl-*.so.1 /mnt/lib/ || fail "musl loader"
-  for a in sh mount umount sync sleep cat echo mkdir mknod sed grep head cut ls tr basename sha256sum wc mv rm; do ln -sf busybox "/mnt/bin/$a"; done
+  for a in sh mount umount sync sleep cat echo mkdir mknod sed grep head cut ls tr basename sha256sum wc mv rm od awk printf date logger tail setsid; do ln -sf busybox "/mnt/bin/$a"; done
+  [ "$GUARD" = 1 ] && { ln -sf fw_printenv /mnt/bin/fw_setenv; for t in ubinfo ubimkvol ubirsvol ubiupdatevol ubiblock fw_printenv fw_setenv; do ln -sf /bin/$t /mnt/usr/sbin/$t 2>/dev/null; done; }
   cp /usr/libexec/patronus/upgrade-install /mnt/bin/upgrade-install || fail "copy installer"
   mv "$S" /data/.upgrade-installing || fail "cannot mark the upgrade as in progress"
   log "installing $(sed -n 's/^BUILD=//p' /data/.upgrade-installing/patronus-release 2>/dev/null) from RAM"
@@ -89,9 +107,19 @@ install)
   exec /bin/busybox sh /bin/upgrade-install stage2 ;;
 
 stage2)
-  export PATH=/bin
+  export PATH=/bin:/usr/sbin
   umount -l /old 2>/dev/null
-  if ubi_write /img/kernel /img/root; then r=done; else r=failed; fi
+  r=
+  if [ "$(cat /img/guard 2>/dev/null)" = 1 ]; then
+    # keep the running image as the rollback, then start the trial BEFORE writing: from here a power cut or a bad new image
+    # ends with the bootloader putting the old image back (patronus-guard)
+    mkdir -p /data /run/patronus; mount -t ubifs ubi0:patronus_data /data 2>/dev/null
+    nb=$(sed -n 's/^BUILD=//p' /img/new-release)
+    if PATRONUS_UBI=$U patronus-guard save-prev && PATRONUS_UBI=$U patronus-guard arm "$nb"; then log "rollback kept, trial of $nb armed"
+    else log "could not keep the rollback: nothing written"; r=failed; fi
+    umount /data 2>/dev/null
+  fi
+  if [ -z "$r" ]; then if ubi_write /img/kernel /img/root; then r=done; else r=failed; fi; fi
   if mount -t ubifs ubi0:patronus_data /data 2>/dev/null; then
     rm -rf "/data/.upgrade-$r.old"; [ -d "/data/.upgrade-$r" ] && mv "/data/.upgrade-$r" "/data/.upgrade-$r.old"
     mv /data/.upgrade-installing "/data/.upgrade-$r"; rm -f "/data/.upgrade-$r/kernel" "/data/.upgrade-$r/root"

@@ -1,0 +1,370 @@
+#!/bin/sh
+# patronus-guard: boot rollback of the GL-AX1800 router tier (docs/embedded-routers.md 12.14). A new image is trial-booted;
+# it is confirmed only when its health checks pass within a window, otherwise the bootloader puts the previous image back.
+#
+#   patronus-guard boot                early boot (patronus-init, before the init system): keep the bootloader script
+#                                      current, record a revert done by the bootloader, start `run` on a trial boot
+#   patronus-guard run                 trial boot: feed the hardware watchdog, run the checks until all pass (confirm)
+#                                      or the window ends (record the failure, restart: the bootloader counts the boot)
+#   patronus-guard check               run the health checks once and print them
+#   patronus-guard ok                  confirm the running trial image now
+#   patronus-guard status [--json]     state, previous image, last result, settings, recent events
+#   patronus-guard can-arm <kernel> <root>
+#                                      is there room and a working bootloader environment to keep the running image as
+#                                      the rollback for an upgrade to these parts (patronus-flash sysupgrade asks this)
+#   patronus-guard save-prev           copy the running kernel + root into kernel_prev/rootfs_prev (upgrade-install)
+#   patronus-guard arm <new-build>     start a trial of the image about to be written (upgrade-install, after save-prev)
+#   patronus-guard rollback            put the previous image back at the next restart (the bootloader copies it)
+#   patronus-guard env-install|env-remove
+#                                      install / remove the bootloader script (only `boot` calls env-install)
+#
+# How it works (the bootloader does the counting, so a kernel panic or a hang before userspace is covered too):
+#   GL's U-Boot runs `bootcmd` from its environment (NAND partition 0:appsblenv). env-install prefixes the stock
+#   bootcmd with `run pat_boot;` and puts `run pat_failed;` right after the stock boot command (bootipq). On a trial
+#   boot (pat_state=trial) pat_boot counts the boot down (saveenv), arms the hardware watchdog and passes
+#   patronus.trial=<n> (+ watchdog.handle_boot_enabled=0) to the kernel, then the unchanged bootipq boots the new
+#   image. When no boots are left, pat_boot sets pat_state=revert and copies kernel_prev/rootfs_prev back over the
+#   kernel/rootfs volumes with U-Boot's own `ubi read`/`ubi write` (both read into RAM before anything is written; a
+#   power cut during the copy repeats it at the next boot), sets pat_state=reverted and boots the old image the
+#   normal way. A boot command that returns during a trial or revert (bad kernel) restarts the box at once.
+#   Everything the bootloader runs is generated from the settings below; nothing is fixed in the script.
+# Settings: /etc/patronus/boot-guard.board (image: board facts), /etc/patronus/boot-guard.conf (unit: policy; the web
+# UI writes it). Data: /data/boot-guard/ (events, last failure), status for the web UI: /run/patronus/boot-guard.json.
+# Test hooks: PATRONUS_DATA, PATRONUS_UBI, GUARD_CONF_DIR, GUARD_RUN, FW_PRINTENV/FW_SETENV, GUARD_NOW (epoch).
+set -u
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+CD=${GUARD_CONF_DIR:-/etc/patronus}
+[ -f "$CD/boot-guard.board" ] && . "$CD/boot-guard.board"
+[ -f "$CD/boot-guard.conf" ] && . "$CD/boot-guard.conf"
+# --- policy (boot-guard.conf) ---
+: "${GUARD_ENABLED:=1}"            # 0: upgrades are installed without a trial (no rollback)
+: "${GUARD_REQUIRE:=1}"            # 1: patronus-flash refuses an upgrade it cannot roll back (no room, no bootloader env)
+: "${GUARD_ATTEMPTS:=2}"           # boots a new image gets to confirm itself before the bootloader reverts
+: "${GUARD_WINDOW:=300}"           # s after the early boot for all checks to pass on a trial boot
+: "${GUARD_INTERVAL:=5}"           # s between check rounds (also the watchdog feed interval)
+: "${GUARD_PASS_ROUNDS:=2}"        # consecutive passing rounds needed to confirm
+: "${GUARD_CHECKS:=network ssh web hostapd}"
+: "${GUARD_NET_PING:=gateway}"     # network check pings this: gateway (the default route's), none, or an address
+: "${GUARD_PING_TIMEOUT:=2}"
+: "${GUARD_SSH_PORT:=22}"
+: "${GUARD_WEB_URL:=https://127.0.0.1:443/}"
+: "${GUARD_WEB_TIMEOUT:=10}"
+: "${GUARD_HOSTAPD:=auto}"         # auto: binary must run; every configured radio must be up when Wi-Fi is on. require / off
+: "${GUARD_WATCHDOG:=1}"           # arm the hardware watchdog on trial boots (bootloader + userspace feeder)
+: "${GUARD_WATCHDOG_TIMEOUT:=30}"  # s, at most the board's maximum (qcom_wdt: 32)
+: "${GUARD_REBOOT_GRACE:=90}"      # s for a clean restart after a failed trial before a forced one
+: "${GUARD_EVENTS_KEEP:=50}"
+# --- board (boot-guard.board) ---
+: "${GUARD_ENV_MTD:=0:appsblenv}"  # MTD partition name of the bootloader environment (or a device/file path)
+: "${GUARD_ENV_OFFSET:=0x0}"
+: "${GUARD_ENV_SIZE:=0x40000}"
+: "${GUARD_ENV_SECTOR:=0x20000}"
+: "${GUARD_ENV_SECTORS:=4}"
+: "${GUARD_UB_BOOT:=bootipq}"      # the stock boot command (first command of the stock bootcmd)
+: "${GUARD_UB_VOL:=}"              # bootloader commands that make the UBI volumes reachable (generated when empty)
+: "${GUARD_UB_UBI_MTD:=rootfs}"    # MTD partition (Linux name) that holds UBI
+: "${GUARD_UB_NAND_DEV:=0}"        # U-Boot nand device index of that flash (qcom_nand = 0, SPI-NAND = 1)
+: "${GUARD_UB_ROOT_ADDR:=0x44000000}"   # RAM for the revert copy (below the SoC's reserved regions)
+: "${GUARD_UB_KERNEL_ADDR:=0x48000000}"
+: "${GUARD_UB_ROOT_MAX:=0x4000000}"     # largest root / kernel the copy takes (must not reach the next region)
+: "${GUARD_UB_KERNEL_MAX:=0x2000000}"
+: "${GUARD_UB_RD_ROOT:=}"          # copy primitives (generated for U-Boot ubi when empty; the QEMU gate sets virtio ones)
+: "${GUARD_UB_RD_KERNEL:=}"
+: "${GUARD_UB_WR_ROOT:=}"
+: "${GUARD_UB_WR_KERNEL:=}"
+: "${GUARD_UB_SAVE:=setenv mtdids; setenv mtdparts; saveenv}"
+: "${GUARD_UB_WDT=mw.l 0xb017004 1; mw.l 0xb017010 \${pat_wdt_ticks}; mw.l 0xb017014 \${pat_wdt_ticks}; mw.l 0xb017008 1}"
+: "${GUARD_UB_WDT_HZ:=32768}"      # watchdog clock (ticks per second)
+: "${GUARD_UB_KARGS=watchdog.handle_boot_enabled=0}"
+: "${GUARD_UB_BOOTARGS:=bootargs}" # the variable the stock boot command builds the kernel command line from
+: "${GUARD_UB_ENV_ADDR:=}"         # RAM the copy primitives / save command may use for the environment (QEMU gate)
+: "${GUARD_RELEASE:=/etc/patronus-release}"
+: "${GUARD_ENV_VERSION:=1}"
+DATA=${PATRONUS_DATA:-/data}
+U=${PATRONUS_UBI:-/dev/ubi0}
+RUN=${GUARD_RUN:-/run/patronus}
+GD=$DATA/boot-guard
+STATUS=$RUN/boot-guard.json
+LEB=${UBI_LEB:-126976}
+
+log() { echo "patronus-guard: $*" >&2; logger -t patronus-guard "$*" 2>/dev/null; return 0; }
+now() { echo "${GUARD_NOW:-$(date +%s)}"; }
+uptime_s() { cut -d' ' -f1 /proc/uptime 2>/dev/null | cut -d. -f1; }
+event() { # kind detail...: append to the event log the web UI turns into audit entries
+  k=$1; shift; mkdir -p "$GD"; n=$(( $(tail -n1 "$GD/events" 2>/dev/null | cut -d'|' -f1 || echo 0) + 1 ))
+  printf '%s|%s|%s|%s\n' "$n" "$(now)" "$k" "$*" | tr -d '"\\' >> "$GD/events"
+  t=$(wc -l < "$GD/events"); [ "$t" -gt "$GUARD_EVENTS_KEEP" ] && { tail -n "$GUARD_EVENTS_KEEP" "$GD/events" > "$GD/events.new"; mv "$GD/events.new" "$GD/events"; }
+  sync; log "$k: $*"
+}
+
+# --- bootloader environment (u-boot-tools fw_printenv/fw_setenv) ---
+env_dev() {
+  case "$GUARD_ENV_MTD" in /*) echo "$GUARD_ENV_MTD"; return 0;; esac
+  m=$(grep "\"$GUARD_ENV_MTD\"" /proc/mtd 2>/dev/null | cut -d: -f1); [ -n "$m" ] && echo "/dev/$m"
+}
+env_cfg() {
+  d=$(env_dev) || return 1; [ -n "$d" ] && [ -e "$d" ] || return 1
+  mkdir -p "$RUN"; c=$RUN/fw_env.config
+  case "$d" in /dev/mtd*) l="$d $GUARD_ENV_OFFSET $GUARD_ENV_SIZE $GUARD_ENV_SECTOR $GUARD_ENV_SECTORS";;
+               *) l="$d $GUARD_ENV_OFFSET $GUARD_ENV_SIZE";; esac
+  [ "$(cat "$c" 2>/dev/null)" = "$l" ] || echo "$l" > "$c"; echo "$c"
+}
+genv() { c=$(env_cfg) || return 1; ${FW_PRINTENV:-fw_printenv} -c "$c" -n "$1" 2>/dev/null; }
+genv_all() { c=$(env_cfg) || return 1; ${FW_PRINTENV:-fw_printenv} -c "$c" 2>/dev/null; }
+senv_script() { # file with "name value" lines (a name alone deletes it): one environment write
+  c=$(env_cfg) || return 1; ${FW_SETENV:-fw_setenv} -c "$c" -s "$1" >/dev/null 2>&1
+}
+senv() { f=$RUN/.senv.$$; mkdir -p "$RUN"; : > "$f"; while [ $# -gt 0 ]; do printf '%s\n' "$1" >> "$f"; shift; done
+  senv_script "$f"; r=$?; rm -f "$f"; return $r; }
+env_ok() { genv_all >/dev/null && [ -n "$(genv bootcmd)" ]; }
+env_installed() { [ "$(genv pat_ver)" = "$GUARD_ENV_VERSION" ] && case "$(genv bootcmd)" in "run pat_boot; "*) true;; *) false;; esac; }
+
+ub_vol() {
+  [ -n "$GUARD_UB_VOL" ] && { echo "$GUARD_UB_VOL"; return 0; }
+  n=$(grep "\"$GUARD_UB_UBI_MTD\"" /proc/mtd | cut -d: -f1) || return 1; [ -n "$n" ] || return 1
+  off=$(printf '0x%x' "$(cat /sys/class/mtd/$n/offset)"); sz=$(printf '0x%x' "$(cat /sys/class/mtd/$n/size)")
+  d=$GUARD_UB_NAND_DEV
+  echo "nand device $d && setenv mtdids nand$d=nand$d && setenv mtdparts mtdparts=nand$d:$sz@$off(fs) && ubi part fs"
+}
+# the bootloader script: every value comes from the settings above
+env_script() { # file: writes the "name value" lines
+  orig=$1; out=$2; vol=$(ub_vol) || return 1
+  rr=${GUARD_UB_RD_ROOT:-ubi read \${pat_ra} rootfs_prev \${pat_rsz}}; rk=${GUARD_UB_RD_KERNEL:-ubi read \${pat_ka} kernel_prev \${pat_ksz}}
+  wr=${GUARD_UB_WR_ROOT:-ubi write \${pat_ra} rootfs \${pat_rsz}}; wk=${GUARD_UB_WR_KERNEL:-ubi write \${pat_ka} kernel \${pat_ksz}}
+  rest=${orig#"$GUARD_UB_BOOT"}; rest=${rest#;}; rest=${rest# }
+  ka=; wdt=true; ticks=0
+  if [ "$GUARD_WATCHDOG" = 1 ] && [ -n "$GUARD_UB_WDT" ]; then ka=" $GUARD_UB_KARGS"; wdt=$GUARD_UB_WDT; ticks=$(printf '0x%x' $((GUARD_WATCHDOG_TIMEOUT * GUARD_UB_WDT_HZ))); fi
+  B=$GUARD_UB_BOOTARGS
+  {
+  echo "pat_ver $GUARD_ENV_VERSION"
+  echo "pat_orig_bootcmd $orig"
+  echo "bootcmd run pat_boot; $GUARD_UB_BOOT; run pat_failed; $rest"
+  echo "pat_boot if test \"\${pat_state}\" = revert; then run pat_revert; elif test \"\${pat_state}\" = trial; then run pat_trial; fi"
+  echo "pat_trial if itest \${pat_left} -gt 0; then setexpr pat_left \${pat_left} - 1; setexpr pat_boots \${pat_boots} + 1; run pat_save; setenv $B \${$B} patronus.trial=\${pat_boots}$ka; run pat_wdt; else setenv pat_state revert; run pat_save; run pat_revert; fi"
+  echo "pat_revert echo patronus: restoring the previous image; run pat_vol && run pat_rd_r && run pat_rd_k && run pat_wr_r && run pat_wr_k && setenv pat_state reverted && run pat_save"
+  echo "pat_failed if test \"\${pat_state}\" = trial; then reset; fi; if test \"\${pat_state}\" = revert; then reset; fi"
+  echo "pat_vol $vol"
+  echo "pat_rd_r $rr"; echo "pat_rd_k $rk"; echo "pat_wr_r $wr"; echo "pat_wr_k $wk"
+  echo "pat_save $GUARD_UB_SAVE"
+  echo "pat_wdt $wdt"
+  echo "pat_wdt_ticks $ticks"
+  echo "pat_ra $GUARD_UB_ROOT_ADDR"; echo "pat_ka $GUARD_UB_KERNEL_ADDR"
+  [ -n "$GUARD_UB_ENV_ADDR" ] && echo "pat_ea $GUARD_UB_ENV_ADDR"
+  } > "$out"
+}
+env_install() {
+  env_ok || { log "bootloader environment not readable (fw_printenv): no rollback"; return 1; }
+  cur=$(genv bootcmd)
+  case "$cur" in
+    "run pat_boot; "*) orig=$(genv pat_orig_bootcmd) ;;
+    "$GUARD_UB_BOOT"|"$GUARD_UB_BOOT;"*) orig=$cur ;;
+    *) log "bootcmd is not the stock one ($GUARD_UB_BOOT ...): left alone, no rollback"; return 1 ;;
+  esac
+  [ -n "$orig" ] || { log "pat_orig_bootcmd missing: left alone"; return 1; }
+  mkdir -p "$RUN"; want=$RUN/.env-want; env_script "$orig" "$want" || { log "cannot generate the bootloader script"; return 1; }
+  # write only what differs (the environment lives on NAND)
+  diff=$RUN/.env-diff; : > "$diff"
+  while IFS= read -r l; do n=${l%% *}; v=${l#* }; [ "$(genv "$n")" = "$v" ] || echo "$l" >> "$diff"; done < "$want"
+  if [ -s "$diff" ]; then
+    senv_script "$diff" || { rm -f "$diff" "$want"; log "fw_setenv failed"; return 1; }
+    while IFS= read -r l; do n=${l%% *}; v=${l#* }; [ "$(genv "$n")" = "$v" ] || { rm -f "$diff" "$want"; log "environment read-back differs ($n)"; return 1; }; done < "$want"
+    event env-installed "bootloader script v$GUARD_ENV_VERSION ($(wc -l < "$diff") variables written)"
+  fi
+  rm -f "$diff" "$want"; return 0
+}
+env_remove() {
+  orig=$(genv pat_orig_bootcmd); [ -n "$orig" ] || { echo "not installed"; return 0; }
+  f=$RUN/.env-rm; mkdir -p "$RUN"; echo "bootcmd $orig" > "$f"
+  genv_all | sed -n 's/^\(pat_[a-z_]*\)=.*/\1/p' >> "$f"; senv_script "$f"; r=$?; rm -f "$f"; [ $r = 0 ] && event env-removed "stock bootcmd restored"; return $r
+}
+
+# --- volumes ---
+vid() { ubinfo "$U" -N "$1" 2>/dev/null | sed -n 's/^Volume ID: *\([0-9]*\).*/\1/p'; }
+vlebs() { ubinfo "$U" -n "$1" 2>/dev/null | sed -n 's/^Size: *\([0-9]*\) LEBs.*/\1/p'; }
+free_lebs() { ubinfo "$U" | sed -n 's/^Amount of available logical eraseblocks: *\([0-9]*\).*/\1/p'; }
+node() { n=${U}_$1; [ -c "$n" ] || { d=$(cat "/sys/class/ubi/$(basename "$U")_$1/dev" 2>/dev/null) && mknod "$n" c "${d%:*}" "${d#*:}"; }; echo "$n"; }
+lebs_of() { echo $(( ($1 + LEB - 1) / LEB )); }
+be32() { od -An -tu1 -j "$2" -N4 "$1" | awk '{print $1*16777216+$2*65536+$3*256+$4}'; }
+le64() { od -An -tu1 -j "$2" -N8 "$1" | awk '{s=0; for(i=8;i>=1;i--) s=s*256+$i; print s}'; }
+kernel_bytes() { # FIT = flattened device tree: totalsize at offset 4
+  n=$(node 0); [ "$(od -An -tx1 -N4 "$n" | tr -d ' \n')" = d00dfeed ] || return 1; be32 "$n" 4; }
+root_bytes() { # squashfs bytes_used at offset 40, padded to 4 KiB like mksquashfs
+  n=$(node 1); [ "$(head -c4 "$n")" = hsqs ] || return 1; b=$(le64 "$n" 40); echo $(( (b + 4095) / 4096 * 4096 )); }
+# can_arm <new kernel file> <new root file>: prints the reason when it cannot
+can_arm() {
+  [ "$GUARD_ENABLED" = 1 ] || { echo "the boot guard is switched off (GUARD_ENABLED=0)"; return 1; }
+  env_ok || { echo "the bootloader environment is not readable"; return 1; }
+  env_installed || { echo "the bootloader script is not installed (bootcmd is not the stock one or the environment is not writable)"; return 1; }
+  case "$(genv pat_state)" in trial) echo "a trial of $(genv pat_new) is still running: it must confirm (or revert) first"; return 1;;
+    revert) echo "a rollback is pending"; return 1;; revert-failed) echo "the last rollback failed in the bootloader"; return 1;; esac
+  kb=$(kernel_bytes) || { echo "running kernel volume is not a FIT"; return 1; }; rb=$(root_bytes) || { echo "running root volume is not a squashfs"; return 1; }
+  [ "$rb" -le $((GUARD_UB_ROOT_MAX)) ] && [ "$kb" -le $((GUARD_UB_KERNEL_MAX)) ] || { echo "running image larger than the bootloader copy area"; return 1; }
+  nk=$(wc -c < "$1"); nr=$(wc -c < "$2")
+  [ "$nr" -le $((GUARD_UB_ROOT_MAX)) ] && [ "$nk" -le $((GUARD_UB_KERNEL_MAX)) ] || { echo "new image larger than the bootloader copy area"; return 1; }
+  need=0
+  for p in "kernel_prev $kb" "rootfs_prev $rb"; do set -- $p; id=$(vid "$1"); want=$(lebs_of "$2")
+    if [ -n "$id" ]; then have=$(vlebs "$id"); [ "$want" -gt "$have" ] && need=$((need + want - have)); else need=$((need + want)); fi; done
+  g=$(( $(lebs_of "$nk") - $(vlebs 0) )); [ $g -gt 0 ] && need=$((need + g))
+  g=$(( $(lebs_of "$nr") - $(vlebs 1) )); [ $g -gt 0 ] && need=$((need + g))
+  f=$(free_lebs); [ "$need" -le "${f:-0}" ] || { echo "not enough free flash for the rollback copy: $need LEBs needed, $f free"; return 1; }
+  echo "ok: kernel $kb + root $rb bytes kept as the rollback ($need LEBs of $f free used)"
+}
+ensure_vol() { # name lebs
+  id=$(vid "$1")
+  if [ -z "$id" ]; then ubimkvol "$U" -N "$1" -S "$2" >/dev/null || return 1
+  elif [ "$(vlebs "$id")" -lt "$2" ]; then ubirsvol "$U" -n "$id" -S "$2" || return 1; fi
+  vid "$1"
+}
+copy_vol() { # from-id to-name bytes
+  to=$(ensure_vol "$2" "$(lebs_of "$3")") || { log "cannot make volume $2"; return 1; }
+  head -c "$3" "$(node "$1")" | ubiupdatevol "$(node "$to")" -s "$3" - || { log "ubiupdatevol $2 failed"; return 1; }
+  a=$(head -c "$3" "$(node "$1")" | sha256sum | cut -d' ' -f1); b=$(head -c "$3" "$(node "$to")" | sha256sum | cut -d' ' -f1)
+  [ "$a" = "$b" ] || { log "$2 read-back differs"; return 1; }
+}
+save_prev() {
+  kb=$(kernel_bytes) || return 1; rb=$(root_bytes) || return 1
+  copy_vol 0 kernel_prev "$kb" && copy_vol 1 rootfs_prev "$rb" || return 1
+  mkdir -p "$RUN"; printf 'PREV_KSZ=%s\nPREV_RSZ=%s\n' "$kb" "$rb" > "$RUN/prev-sizes"
+  log "running image saved as the rollback (kernel $kb, root $rb bytes)"
+}
+arm() { # new-build
+  . "$RUN/prev-sizes" 2>/dev/null || { log "save-prev first"; return 1; }
+  cur=$(sed -n 's/^BUILD=//p' "$GUARD_RELEASE" 2>/dev/null)
+  senv "pat_state trial" "pat_left $(printf '%x' "$GUARD_ATTEMPTS")" "pat_boots 0" "pat_new $1" "pat_prev ${cur:-unknown}" \
+       "pat_ksz $(printf '0x%x' "$PREV_KSZ")" "pat_rsz $(printf '0x%x' "$PREV_RSZ")" "pat_armed $(now)" || return 1
+  [ "$(genv pat_state)" = trial ] || return 1
+  event armed "trial of $1 ($GUARD_ATTEMPTS boots, ${GUARD_WINDOW}s window); rollback: ${cur:-unknown}"
+}
+
+# --- health checks ---
+listening() { # port
+  p=$(printf '%04X' "$1"); cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk -v p=":$p" '$2 ~ p"$" && $4=="0A" {f=1} END {exit !f}'; }
+c_network() {
+  a=$(ip -4 -o addr show scope global 2>/dev/null | head -1); [ -n "$a" ] || { echo "no IPv4 address"; return 1; }
+  case "$GUARD_NET_PING" in none) return 0;; gateway) t=$(ip -4 route show default 2>/dev/null | awk '/via/ {print $3; exit}')
+    [ -n "$t" ] || { echo "no default route"; return 1; };; *) t=$GUARD_NET_PING;; esac
+  ping -c1 -W "$GUARD_PING_TIMEOUT" "$t" >/dev/null 2>&1 || { echo "$t does not answer"; return 1; }
+}
+c_ssh() { listening "$GUARD_SSH_PORT" || { echo "nothing listens on tcp/$GUARD_SSH_PORT"; return 1; }; }
+c_web() {
+  pgrep -x patronus-web >/dev/null || { echo "patronus-web not running"; return 1; }
+  timeout "$GUARD_WEB_TIMEOUT" wget -q -O /dev/null --no-check-certificate "$GUARD_WEB_URL" 2>/dev/null || { echo "$GUARD_WEB_URL does not answer"; return 1; }
+}
+wifi_on() { [ -f /etc/patronus/ap.env ] && (. /etc/patronus/ap.env; [ -n "${AP_SSIDS:-}" ]) && ls /sys/class/ieee80211/ 2>/dev/null | grep -q .; }
+c_hostapd() {
+  [ "$GUARD_HOSTAPD" = off ] && return 0
+  case "$(hostapd -v 2>&1)" in *hostapd\ v*) ;; *) echo "hostapd does not run"; return 1;; esac
+  if [ "$GUARD_HOSTAPD" = require ] || wifi_on; then
+    [ "$GUARD_HOSTAPD" = require ] && ! wifi_on && return 0
+    pgrep -x hostapd >/dev/null || { echo "Wi-Fi configured but hostapd is not running"; return 1; }
+    for s in /var/run/hostapd/*; do [ -S "$s" ] || continue
+      st=$(hostapd_cli -p /var/run/hostapd -i "${s##*/}" status 2>/dev/null | sed -n 's/^state=//p')
+      [ "$st" = ENABLED ] || { echo "${s##*/}: ${st:-no answer}"; return 1; }; done
+    ls /var/run/hostapd/* >/dev/null 2>&1 || { echo "no hostapd control socket"; return 1; }
+  fi
+}
+checks() { # prints one line per check; exit 0 when all pass
+  r=0; for c in $GUARD_CHECKS; do
+    if o=$(c_$c 2>&1); then echo "$c ok"; else echo "$c FAIL ${o:-failed}"; r=1; fi; done; return $r; }
+
+# --- status ---
+jesc() { sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\n\r'; }
+status_json() {
+  st=$(genv pat_state 2>/dev/null); envok=false; env_ok && envok=true; inst=false; env_installed && inst=true
+  printf '{"available":true,"enabled":%s,"env_ok":%s,"installed":%s,' "$( [ "$GUARD_ENABLED" = 1 ] && echo true || echo false)" "$envok" "$inst"
+  printf '"state":"%s","boots_left":"%s","trial_boots":"%s","new_build":"%s","prev_build":"%s",' \
+    "$(echo "${st:-idle}" | jesc)" "$(genv pat_left | jesc)" "$(genv pat_boots | jesc)" "$(genv pat_new | jesc)" "$(genv pat_prev | jesc)"
+  printf '"running":"%s","trial_this_boot":%s,' "$(sed -n 's/^BUILD=//p' "$GUARD_RELEASE" | jesc)" "$( [ -f "$RUN/guard-trial" ] && echo true || echo false)"
+  kp=$(vid kernel_prev); rp=$(vid rootfs_prev); printf '"rollback_image":%s,' "$( [ -n "$kp" ] && [ -n "$rp" ] && echo true || echo false)"
+  printf '"cmdline_trial":%s,' "$(grep -q 'patronus.trial=' /proc/cmdline 2>/dev/null && echo true || echo false)"
+  printf '"watchdog":"%s",' "$(cat "$RUN/guard-wdt" 2>/dev/null | jesc)"
+  printf '"last_failure":"%s","checks":"%s",' "$(cat "$GD/last-failure" 2>/dev/null | jesc)" "$(cat "$RUN/guard-checks" 2>/dev/null | tr '\n' ';' | jesc)"
+  printf '"settings":{"attempts":%s,"window_s":%s,"interval_s":%s,"pass_rounds":%s,"checks":"%s","net_ping":"%s","hostapd":"%s","watchdog":%s,"watchdog_timeout_s":%s,"require":%s},' \
+    "$GUARD_ATTEMPTS" "$GUARD_WINDOW" "$GUARD_INTERVAL" "$GUARD_PASS_ROUNDS" "$GUARD_CHECKS" "$GUARD_NET_PING" "$GUARD_HOSTAPD" \
+    "$( [ "$GUARD_WATCHDOG" = 1 ] && echo true || echo false)" "$GUARD_WATCHDOG_TIMEOUT" "$( [ "$GUARD_REQUIRE" = 1 ] && echo true || echo false)"
+  printf '"events":['; s=; tail -n 20 "$GD/events" 2>/dev/null | while IFS='|' read -r n t k d; do
+    printf '%s{"seq":%s,"time":%s,"event":"%s","detail":"%s"}' "$s" "$n" "$t" "$(echo "$k" | jesc)" "$(echo "$d" | jesc)"; s=,; done
+  printf ']}\n'
+}
+write_status() { mkdir -p "$RUN"; status_json > "$RUN/.bg.json" 2>/dev/null && chmod 0644 "$RUN/.bg.json" && mv "$RUN/.bg.json" "$STATUS"; }
+
+restart_box() { # clean restart through the init system, forced after the grace time
+  sync; (sleep "$GUARD_REBOOT_GRACE"; sync; busybox reboot -f) & 
+  if [ -d /run/systemd/system ]; then systemctl reboot; else reboot 2>/dev/null || busybox reboot; fi
+}
+
+confirm() {
+  b=$(genv pat_new); senv "pat_state ok" "pat_left" "pat_confirmed ${b:-$(sed -n 's/^BUILD=//p' "$GUARD_RELEASE")}" || { log "cannot write the bootloader environment"; return 1; }
+  rm -f "$RUN/guard-trial"; event confirmed "$(sed -n 's/^BUILD=//p' "$GUARD_RELEASE") confirmed after $(genv pat_boots) boot(s): $*"
+  write_status
+}
+
+case "${1:-}" in
+boot)
+  mkdir -p "$RUN" "$GD"
+  [ "$GUARD_ENABLED" = 1 ] && env_install
+  st=$(genv pat_state)
+  case "$st" in
+    reverted) nb=$(genv pat_new); cause=
+              # the failure report of THIS trial image (written by its own guard before it restarted), if it got that far
+              case "$(cat "$GD/last-failure" 2>/dev/null)" in "$nb: "*) cause=$(cat "$GD/last-failure");; esac
+              [ -n "$cause" ] || cause="no report from $nb: it never reached its health checks (kernel panic, hang, crash or unbootable kernel)"
+              event reverted "trial of $nb failed after $(genv pat_boots) boot(s); the bootloader restored $(genv pat_prev). Cause: $cause"
+              rm -f "$GD/last-failure"; senv "pat_state idle" "pat_left" ;;
+    revert)   event revert-failed "the bootloader could not restore $(genv pat_prev); running whatever booted" ; senv "pat_state revert-failed" ;;
+    trial)    : > "$RUN/guard-trial"; rm -f "$GD/last-failure"
+              setsid "$0" run </dev/null >>/tmp/boot-guard.log 2>&1 & ;;
+  esac
+  write_status ;;
+run)
+  t0=$(uptime_s); end=$((t0 + GUARD_WINDOW)); passes=0; WDP=
+  if [ "$GUARD_WATCHDOG" = 1 ] && [ -c /dev/watchdog ]; then
+    watchdog -F -T "$GUARD_WATCHDOG_TIMEOUT" -t "$GUARD_INTERVAL" /dev/watchdog & WDP=$!
+    echo "fed by the boot guard (timeout ${GUARD_WATCHDOG_TIMEOUT}s)" > "$RUN/guard-wdt"
+  elif [ "$GUARD_WATCHDOG" = 1 ]; then echo "no hardware watchdog" > "$RUN/guard-wdt"
+  else echo "off" > "$RUN/guard-wdt"; fi
+  write_status
+  while :; do
+    out=$(checks); rc=$?; echo "$out" > "$RUN/guard-checks"
+    if [ $rc = 0 ]; then passes=$((passes + 1)); else passes=0; fi
+    if [ $passes -ge "$GUARD_PASS_ROUNDS" ]; then
+      [ -n "$WDP" ] && { kill -TERM "$WDP"; wait "$WDP" 2>/dev/null; echo "released after confirmation" > "$RUN/guard-wdt"; }
+      confirm "$(echo "$out" | tr '\n' ' ')" && exit 0
+    fi
+    if [ "$(uptime_s)" -ge "$end" ]; then
+      f="$(echo "$out" | grep FAIL | tr '\n' ';') (window ${GUARD_WINDOW}s, boot $(genv pat_boots) of $(( $(genv pat_boots) + 0x$(genv pat_left) )))"
+      echo "$(sed -n 's/^BUILD=//p' "$GUARD_RELEASE"): $f" > "$GD/last-failure"
+      event trial-failed "$(sed -n 's/^BUILD=//p' "$GUARD_RELEASE"): $f"
+      write_status
+      # stop feeding without the magic close: the watchdog resets the box if the clean restart hangs
+      [ -n "$WDP" ] && kill -KILL "$WDP"
+      restart_box; exit 1
+    fi
+    write_status; sleep "$GUARD_INTERVAL"
+  done ;;
+check) checks ;;
+ok) [ "$(genv pat_state)" = trial ] || { echo "no trial running"; exit 0; }; confirm "confirmed by hand" ;;
+status)
+  if [ "${2:-}" = --json ]; then status_json; exit 0; fi
+  echo "boot guard: $( [ "$GUARD_ENABLED" = 1 ] && echo on || echo off), bootloader script: $(env_installed && echo installed || echo 'NOT installed')"
+  echo "state: $(genv pat_state || echo unknown)  boots left: $(genv pat_left)  trial boots: $(genv pat_boots)"
+  echo "running: $(sed -n 's/^BUILD=//p' "$GUARD_RELEASE")  trial image: $(genv pat_new)  previous image: $(genv pat_prev)"
+  echo "rollback image on flash: $( [ -n "$(vid kernel_prev)" ] && [ -n "$(vid rootfs_prev)" ] && echo yes || echo no)"
+  [ -f "$GD/last-failure" ] && echo "last failure: $(cat "$GD/last-failure")"
+  [ -f "$RUN/guard-checks" ] && { echo "checks:"; sed 's/^/  /' "$RUN/guard-checks"; }
+  echo "settings: attempts=$GUARD_ATTEMPTS window=${GUARD_WINDOW}s checks=\"$GUARD_CHECKS\" watchdog=$GUARD_WATCHDOG/${GUARD_WATCHDOG_TIMEOUT}s"
+  tail -n 5 "$GD/events" 2>/dev/null | sed 's/^/  event /' ;;
+can-arm) can_arm "$2" "$3" ;;
+save-prev) save_prev ;;
+arm) arm "$2" ;;
+rollback)
+  [ -n "$(vid kernel_prev)" ] && [ -n "$(vid rootfs_prev)" ] || { echo "no previous image on flash"; exit 1; }
+  env_installed || { echo "bootloader script not installed"; exit 1; }
+  senv "pat_state revert" "pat_new $(sed -n 's/^BUILD=//p' "$GUARD_RELEASE")" || exit 1
+  event rollback-requested "previous image $(genv pat_prev) is restored at the next restart"; write_status ;;
+clear) senv "pat_state idle" "pat_left" && event cleared "state reset by hand" && write_status ;;
+env-install) env_install ;;
+env-remove) env_remove ;;
+env-script) env_script "$(genv pat_orig_bootcmd || genv bootcmd)" /dev/stdout ;;
+*) sed -n '2,24p' "$0"; exit 2 ;;
+esac

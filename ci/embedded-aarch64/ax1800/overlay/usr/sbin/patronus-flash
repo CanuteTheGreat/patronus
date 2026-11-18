@@ -5,6 +5,12 @@
 #                                           validate, then stage it on the settings volume; the next boot installs it
 #                                           from a RAM root before any service starts (upgrade-install), keeping the
 #                                           settings. --now restarts right away.
+#                                           The running image is kept as the rollback and the new one is trial-booted:
+#                                           unless it passes its health checks in time, the bootloader puts the old
+#                                           one back (patronus-guard). --no-rollback installs without that when there is
+#                                           no room or no usable bootloader environment (refused otherwise).
+#   patronus-flash rollback [--now]         put the previous image back at the next restart
+#   patronus-flash confirm                  confirm a running trial now (patronus-guard ok)
 #   patronus-flash cancel                   drop a staged upgrade
 #   patronus-flash factory-reset            wipe the settings (patronus_data) at the next boot: first-run flow again
 #   patronus-flash status                   UBI volumes, staged/last upgrade
@@ -18,7 +24,7 @@ DATA=${PATRONUS_DATA:-/data}
 LIB=${PATRONUS_LIB:-/usr/libexec/patronus}
 . "$LIB/fwcheck.sh"
 log() { echo "patronus-flash: $*"; logger -t patronus-flash "$*" 2>/dev/null || true; }
-usage() { sed -n '2,17p' "$0"; exit 2; }
+usage() { sed -n '2,23p' "$0"; exit 2; }
 case "${1:-}" in
 check)
   [ $# -ge 2 ] || usage
@@ -32,17 +38,34 @@ sysupgrade)
   if ! fw_check_tar "$2" "$DATA/.upgrade.new"; then rm -rf "$DATA/.upgrade.new"; exit 1; fi
   ( cd "$DATA/.upgrade.new" && sha256sum kernel root > patronus.sha256.staged && cmp -s patronus.sha256 patronus.sha256.staged ) || {
     rm -rf "$DATA/.upgrade.new"; fw_err "the staged copy does not match (flash full?)"; exit 1; }
-  rm -f "$DATA/.upgrade.new/patronus.sha256.staged"; sync
+  rm -f "$DATA/.upgrade.new/patronus.sha256.staged"
+  NR=; for a in "$@"; do [ "$a" = --no-rollback ] && NR=1; done
+  if [ -x "${GUARD_BIN:-/usr/sbin/patronus-guard}" ]; then
+    if why=$("${GUARD_BIN:-/usr/sbin/patronus-guard}" can-arm "$DATA/.upgrade.new/kernel" "$DATA/.upgrade.new/root" 2>&1); then log "rollback: $why"
+    elif [ -n "$NR" ]; then log "installing WITHOUT rollback (--no-rollback): $why"; : > "$DATA/.upgrade.new/no-rollback"
+    else ( . /etc/patronus/boot-guard.board 2>/dev/null; . /etc/patronus/boot-guard.conf 2>/dev/null; [ "${GUARD_REQUIRE:-1}" = 1 ] && [ "${GUARD_ENABLED:-1}" = 1 ] ) \
+      && { rm -rf "$DATA/.upgrade.new"; fw_err "no rollback possible: $why (--no-rollback installs it anyway)"; exit 1; }
+      log "installing without rollback: $why"; : > "$DATA/.upgrade.new/no-rollback"; fi
+  fi
+  sync
   mv "$DATA/.upgrade.new" "$DATA/.upgrade" && date > "$DATA/.upgrade/ready" && sync
   log "staged $(sed -n 's/^BUILD=//p' "$DATA/.upgrade/patronus-release"): it is installed at the next boot (settings kept)"
-  if [ "${3:-}" = --now ]; then log "restarting to install"; exec reboot; fi
+  case " $* " in *" --now "*) log "restarting to install"; exec reboot;; esac
   exit 0 ;;
+rollback)
+  "${GUARD_BIN:-/usr/sbin/patronus-guard}" rollback || exit 1
+  if [ "${2:-}" = --now ]; then log "restarting: the bootloader restores the previous image"; exec reboot; fi
+  log "the previous image is restored at the next restart"; exit 0 ;;
+confirm) exec "${GUARD_BIN:-/usr/sbin/patronus-guard}" ok ;;
 cancel) rm -rf "$DATA/.upgrade" "$DATA/.upgrade.new"; sync; log "staged upgrade dropped" ;;
 factory-reset) touch "$DATA/.factory-reset"; sync; log "factory reset scheduled for the next boot" ;;
 status)
+  [ "${2:-}" = --json ] && exec "${GUARD_BIN:-/usr/sbin/patronus-guard}" status --json
   ${FW_UBINFO:-ubinfo} -a "${PATRONUS_UBI:-/dev/ubi0}" 2>/dev/null | grep -E '^(Volume ID|Name|Size)'
   [ -f "$DATA/.upgrade/ready" ] && echo "staged: $(sed -n 's/^BUILD=//p' "$DATA/.upgrade/patronus-release")"
   for r in done failed rejected; do [ -d "$DATA/.upgrade-$r" ] && echo "last upgrade $r: $(sed -n 's/^BUILD=//p' "$DATA/.upgrade-$r/patronus-release" 2>/dev/null)"; done
-  tail -5 "$DATA/upgrade.log" 2>/dev/null; exit 0 ;;
+  tail -5 "$DATA/upgrade.log" 2>/dev/null
+  [ -x "${GUARD_BIN:-/usr/sbin/patronus-guard}" ] && "${GUARD_BIN:-/usr/sbin/patronus-guard}" status
+  exit 0 ;;
 *) usage ;;
 esac

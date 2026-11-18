@@ -19,6 +19,7 @@ for f in usr/sbin/patronus-flash usr/libexec/patronus/fwcheck.sh usr/libexec/pat
          usr/libexec/patronus/ap-guest usr/libexec/patronus/ap-addr usr/libexec/patronus/leds usr/libexec/patronus/restart-schedule \
          usr/libexec/patronus/scheduled-restart usr/libexec/patronus/board-network etc/patronus/board.sh etc/patronus-init etc/pam.d/patronus \
          usr/sbin/hostapd usr/sbin/dropbear usr/bin/patronus-cli usr/bin/patronus-web \
+         usr/sbin/patronus-guard usr/bin/fw_printenv usr/bin/fw_setenv etc/patronus/boot-guard.board etc/patronus/boot-guard.conf usr/sbin/ubimkvol \
          lib/firmware/ath11k/IPQ6018/hw1.0/board-2.bin lib/firmware/IPQ6018/q6_fw.mdt lib/firmware/IPQ6018/m3_fw.mdt lib/firmware/regulatory.db; do
   [ -e "$R/$f" ] || [ -L "$R/$f" ] || fail "missing /$f"; done
 # hostapd must be the Patronus build (synchronous cross-BSS station removal): Alpine's stock one lets one MAC be a peer
