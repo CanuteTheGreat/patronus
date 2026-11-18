@@ -711,15 +711,18 @@ pub fn render_kea4(
             })
         })
         .collect();
-    let doc = json!({
+    let mut doc = json!({
         "Dhcp4": {
-            "client-classes": classes,
             "interfaces-config": {"interfaces": ifaces},
             "lease-database": {"type": "memfile", "persist": true, "name": KEA4_LEASES, "lfc-interval": 3600},
             "subnet4": subnets,
             "loggers": [{"name": "kea-dhcp4", "output-options": [{"output": "stdout"}], "severity": "INFO"}],
         }
     });
+    // kea-dhcp4 rejects an empty "client-classes" list ("unexpected ], expecting {"): the key exists only when a class does
+    if !classes.is_empty() {
+        doc["Dhcp4"]["client-classes"] = json!(classes);
+    }
     format!(
         "{}{}\n",
         lan::header("//", "Kea DHCPv4 server"),
@@ -1580,6 +1583,13 @@ mod tests {
         assert_eq!(l[0].hostname.as_deref(), Some("printer"));
         assert_eq!(l[1].family, "ipv6");
         assert_eq!(l[1].mac, "00:01:00:01:bb");
+    }
+
+    #[test]
+    fn kea_config_has_no_empty_client_classes_list() {
+        // kea-dhcp4 refuses `"client-classes": []` (syntax error: unexpected ], expecting {)
+        let doc = render_kea4(&[], true, true, None);
+        assert!(!doc.contains("client-classes"), "{doc}");
     }
 
     #[tokio::test]
