@@ -69,7 +69,8 @@
                     <option value="none">None</option></select></label></div>
                 <div class="v6s"><label>IPv6 addresses (CIDR, one per line)<textarea name="ipv6" placeholder="fd00:1::1/64"></textarea></label></div>
                 <div class="v6pd"><label>Delegate prefix to (DHCPv6-PD, comma-separated interface names)<input name="pd_downstream" placeholder="e.g. eth1"></label></div>
-        XX<input name="gateway6" placeholder="optional"></label></div>
+                <div class="v6pd"><label>DHCPv6 client DUID (pin; hex bytes like 00:04:..., empty = automatic)<input name="dhcp6_duid" placeholder="keeps the delegated prefix when replacing a router"></label></div>
+                <div class="v6s"><label>IPv6 gateway<input name="gateway6" placeholder="optional"></label></div>
                 <div class="v4d"><label>Uplink metric (lower = preferred; empty = role default)<input name="metric" type="number" min="1" max="9999" placeholder="e.g. 150 for a fallback uplink"></label></div>
                 <div><label>MTU<input name="mtu" type="number" min="68" max="65535" placeholder="default"></label></div>
                 <div><label>MAC address (spoof)<input name="mac" placeholder="hardware default"></label></div>
