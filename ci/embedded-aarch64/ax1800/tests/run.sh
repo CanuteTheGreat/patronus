@@ -191,6 +191,58 @@ AP_HT5=20"
 aprender fixed "$TWO
 AP_CHAN5=149 AP_CHAN24=6"
 ! grep -qE '^(acs_|chanlist=)' "$A/fixed/ap5.conf" "$A/fixed/ap24.conf" && ok "ap: a fixed channel writes no ACS settings" || no "ap: ACS lines with fixed channels"
+
+# 3a. channel coordination between access points (docs 12.15): ap-coord parse/busy/plan/check and the ACS list in the render
+CO=$O/usr/libexec/patronus/ap-coord; FX=$D/tests/fixtures/scan-coord.txt
+printf '. %s\nAP_SSIDS="m g"\nSSID_m="Plat 9" KEY_m=examplekey\nSSID_g=Hogs KEY_g=guestkey99\n' "$O/etc/patronus/board.sh" > "$A/co-board.sh"
+co() { AP_BOARD=${CB:-$A/co-board.sh} AP_RENDER_OUT=$A/co sh "$CO" "$@"; }
+mkdir -p "$A/co"
+[ "$(co parse < "$FX" | head -1)" = "06:aa:bb:cc:11:11 5180 -48 above 80 42 Plat_9" ] \
+  && ok "ap-coord: parses iw scan output (primary frequency, signal, HT offset, VHT width + centre, SSID)" || no "ap-coord parse: $(co parse < "$FX" | head -2)"
+[ "$(co parse < "$FX" | sed -n 6p)" = "12:11:22:33:44:55 5805 -50 none 20 0 -" ] \
+  && ok "ap-coord: a 20 MHz BSS without VHT, a hidden SSID is '-'" || no "ap-coord parse hidden: $(co parse < "$FX" | sed -n 6p)"
+[ "$(co parse < "$FX" | co covered | head -1)" = "06:aa:bb:cc:11:11 36 40 44 48" ] && ok "ap-coord: an 80 MHz BSS covers its four 20 MHz channels" || no "ap-coord covered: $(co parse < "$FX" | co covered | head -1)"
+b5=$(co parse < "$FX" | co busy 5); [ "$b5" = "36 40 44 48" ] \
+  && ok "ap-coord: peers = BSSes with this unit's SSIDs; other networks, 2.4 GHz entries and peers weaker than -90 dBm are ignored" || no "ap-coord busy 5: $b5"
+b24=$(co parse < "$FX" | co busy 24); [ "$b24" = "2 3 4 5 6 7 8 9 10" ] && ok "ap-coord: a 2.4 GHz peer on channel 6 overlaps channels 2-10" || no "ap-coord busy 24: $b24"
+printf '. %s\nAP_SSIDS="m g"\nSSID_m="Plat 9" KEY_m=examplekey\nSSID_g=Hogs KEY_g=guestkey99\nAP_COORD_PEERS="ff:11:22:33:44:55"\n' "$O/etc/patronus/board.sh" > "$A/co-board-peers.sh"
+b5h=$(co parse < "$FX" | CB=$A/co-board-peers.sh co busy 5); [ "$b5h" = "36 40 44 48 161" ] \
+  && ok "ap-coord: AP_COORD_PEERS names a unit by any of its BSSIDs (a hidden-SSID peer) and adds its channels" || no "ap-coord peers: $b5h"
+aprender co1 "$TWO"
+echo "36 40 44 48" > "$A/co1/coord-5"; aprender_keep() { AP_BOARD=$A/board-$1.sh AP_RENDER_OUT=$A/$1 AP_SYSFS=$A/sys AP_PHY5=phy0 AP_PHY24=phy1 sh "$O/usr/libexec/patronus/ap" render >"$A/$1.out" 2>&1; }
+aprender_keep co1
+[ "$(seg co1 chanlist)" = "149 153 157 161" ] && grep -q 'left out of the ACS list' "$A/co1.out" \
+  && ok "ap: the 5 GHz ACS list drops the block another unit is on (36-48) and keeps 149-161" || no "ap: coordinated 5 GHz list: $(seg co1 chanlist)"; cat "$A/co1.out" | sed 's/^/    /' | grep -v 'left out' | head -3
+printf '36 40 44 48 149 153 157 161\n' > "$A/co1/coord-5"; aprender_keep co1
+[ "$(seg co1 chanlist)" = "36 40 44 48 149 153 157 161" ] && grep -q 'ACS decides alone' "$A/co1.out" \
+  && ok "ap: when every block overlaps another unit the list is left alone (ACS decides)" || no "ap: no free block: $(seg co1 chanlist)"
+printf '1 2 3 4 5 6 7 8 9\n' > "$A/co1/coord-24"; echo "36 40 44 48" > "$A/co1/coord-5"; aprender_keep co1
+[ "$(s24 co1 chanlist)" = "11" ] && ok "ap: the 2.4 GHz list (1 6 11) loses 1 and 6 next to a unit on channel 4/5" || no "ap: 2.4 GHz coordinated: $(s24 co1 chanlist)"
+printf '. %s\nAP_COORD5=0 AP_COORD24=0\n' "$O/etc/patronus/board.sh" > "$A/board-co2.sh"; mkdir -p "$A/co2"; echo "36 40 44 48" > "$A/co2/coord-5"
+AP_BOARD=$A/board-co2.sh AP_RENDER_OUT=$A/co2 AP_SYSFS=$A/sys AP_PHY5=phy0 AP_PHY24=phy1 sh "$O/usr/libexec/patronus/ap" render > "$A/co2.out" 2>&1
+printf 'AP_SSIDS="m"\nSSID_m=Example KEY_m=examplekey\n' >> "$A/board-co2.sh"; AP_BOARD=$A/board-co2.sh AP_RENDER_OUT=$A/co2 AP_SYSFS=$A/sys AP_PHY5=phy0 AP_PHY24=phy1 sh "$O/usr/libexec/patronus/ap" render > "$A/co2.out" 2>&1
+[ "$(seg co2 chanlist)" = "36 40 44 48 149 153 157 161" ] && ok "ap: AP_COORD5=0 switches the coordination off per band" || no "ap: AP_COORD5=0: $(seg co2 chanlist)"
+# plan from a canned scan
+rm -f "$A/co/coord-5" "$A/co/coord-24"
+AP_COORD_SCAN_FILE=$FX co plan 5 phy0 > "$A/co-plan.out" 2>&1; [ "$(cat "$A/co/coord-5" 2>/dev/null)" = "36 40 44 48" ] && ok "ap-coord plan 5: writes the peers' channels for the renderer" || { no "ap-coord plan: $(cat "$A/co/coord-5" 2>&1)"; cat "$A/co-plan.out"; }
+AP_COORD_SCAN_FILE=/dev/null co plan 5 phy0 > "$A/co-plan.out" 2>&1; [ ! -e "$A/co/coord-5" ] && ok "ap-coord plan 5: nobody heard = no file (a stale plan is removed)" || no "ap-coord plan left a stale file"
+printf '. %s\nAP_CHAN5=149\n' "$O/etc/patronus/board.sh" > "$A/co-board-fixed.sh"
+CB=$A/co-board-fixed.sh AP_COORD_SCAN_FILE=$FX co plan 5 phy0 > /dev/null 2>&1; [ ! -e "$A/co/coord-5" ] && ok "ap-coord plan: a fixed channel is not planned" || no "ap-coord plan wrote for a fixed channel"
+# check: who moves. Own radio = 5 GHz ACS on 44/80 (36-48), the peer BSSes 06:aa:bb:cc:11:11 / 0a:aa:bb:cc:11:11 (key aa:bb:cc:11:11)
+fakeap=$A/fake-ap; printf '#!/bin/sh\necho "$@" >> %s/fake-ap.log\n' "$A" > "$fakeap"; chmod +x "$fakeap"
+printf 'state=ENABLED\nfreq=5220\nsecondary_channel=-1\nvht_oper_chwidth=1\nvht_oper_centr_freq_seg0_idx=42\n' > "$A/co-status"
+cocheck() { # OWN-PHY-MAC -> runs `check 5` with the fixture scan; prints restart log
+  rm -f "$A/fake-ap.log"; mkdir -p "$A/co3"; printf 'channel=0\ninterface=wl5-m\nbssid=%s\n' "$1" > "$A/co3/ap5.conf"
+  AP_BOARD=$A/co-board.sh AP_RENDER_OUT=$A/co3 AP_COORD_AP=$fakeap AP_COORD_SCAN_FILE=$FX AP_COORD_STATUS_FILE=$A/co-status sh "$CO" check 5 "${2:-}" > "$A/co-check.out" 2>&1; cat "$A/fake-ap.log" 2>/dev/null; }
+r=$(cocheck 02:cc:00:00:00:99 now); [ "$r" = "restart-band 5" ] && ok "ap-coord check: overlapping the unit with the lower key -> this (higher) unit restarts its 5 GHz radio" || { no "ap-coord check (higher key): '$r'"; cat "$A/co-check.out"; }
+r=$(cocheck 02:00:00:00:00:01 now); [ -z "$r" ] && grep -q 'lower key and moves' "$A/co-check.out" && ok "ap-coord check: the unit with the lower key stays where it is" || { no "ap-coord check (lower key): '$r'"; cat "$A/co-check.out"; }
+printf 'state=ENABLED\nfreq=5745\nsecondary_channel=1\nvht_oper_chwidth=1\nvht_oper_centr_freq_seg0_idx=155\n' > "$A/co-status"
+r=$(cocheck 02:cc:00:00:00:99 now); [ -z "$r" ] && grep -q 'no other access point shares' "$A/co-check.out" && ok "ap-coord check: disjoint blocks (149-161 vs 36-48) = nothing happens" || { no "ap-coord check disjoint: '$r'"; cat "$A/co-check.out"; }
+printf 'state=ENABLED\nfreq=5220\nsecondary_channel=-1\nvht_oper_chwidth=1\nvht_oper_centr_freq_seg0_idx=42\n' > "$A/co-status"
+mkdir -p "$A/bin"; printf '#!/bin/sh\necho "Station aa:bb"\n' > "$A/bin/iw"; chmod +x "$A/bin/iw"
+r=$(PATH=$A/bin:$PATH AP_COORD_QUIET=1-5 AP_COORD_NOW=14 cocheck 02:cc:00:00:00:99); [ -z "$r" ] && grep -q 'moving later' "$A/co-check.out" \
+  && ok "ap-coord check: stations connected + outside the quiet hours = the move waits" || { no "ap-coord quiet hours: '$r'"; cat "$A/co-check.out"; }
+r=$(PATH=$A/bin:$PATH AP_COORD_QUIET=1-5 AP_COORD_NOW=03 cocheck 02:cc:00:00:00:99); [ "$r" = "restart-band 5" ] && ok "ap-coord check: inside the quiet hours it restarts the radio" || no "ap-coord quiet window: '$r'"
 for c in 1:+ 6:+ 7:+ 8:- 11:- auto:+; do ch=${c%%:*}; dir=${c#*:}
   aprender h24$ch "$TWO
 AP_CHAN24=$ch AP_HT24=40"

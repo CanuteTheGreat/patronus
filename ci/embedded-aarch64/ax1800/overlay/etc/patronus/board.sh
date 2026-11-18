@@ -10,6 +10,8 @@ AP_COUNTRY=00                         # 00 = world regulatory domain until ap.en
 AP_CHAN24=auto AP_CHAN5=auto AP_HT5=80 AP_FT=0 AP_HE=1   # AP_HE=0: no 802.11ax (see libexec/patronus/ap)
 # channel plan defaults (libexec/patronus/ap header): ACS picks among 1/6/11 on 2.4 GHz and the non-DFS 5 GHz channels
 AP_HT24=20 AP_DFS=0 AP_UNII4=0 AP_CHANLIST24="1 6 11" AP_CHANLIST5= AP_ACS_SCANS=5
+# channel coordination between this network's access points (libexec/patronus/ap-coord): ACS avoids the blocks the other units use
+AP_COORD24=1 AP_COORD5=1 AP_COORD_PEERS= AP_COORD_MIN_SIGNAL=-90 AP_COORD_DELAY=120 AP_COORD_INTERVAL=3600 AP_COORD_QUIET=1-5 AP_COORD_SCAN_SECS=25
 # the radios' HT/VHT capabilities as OpenWrt 25.12 derives them from `iw phy info` on this board (IPQ6018 ath11k)
 AP_HTCAPS24='[LDPC][SHORT-GI-20][SHORT-GI-40][TX-STBC][RX-STBC1][DSSS_CCK-40]'
 AP_HTCAPS5='[LDPC][SHORT-GI-20][SHORT-GI-40][TX-STBC][RX-STBC1][MAX-AMSDU-7935][DSSS_CCK-40]'

@@ -1,0 +1,57 @@
+BSS 06:aa:bb:cc:11:11(on wl5-coord)
+	freq: 5180.0
+	signal: -48.00 dBm
+	SSID: Plat 9
+	HT operation:
+		 * primary channel: 36
+		 * secondary channel offset: above
+		 * STA channel width: any
+	VHT operation:
+		 * channel width: 1 (80 MHz)
+		 * center freq segment 1: 42
+		 * center freq segment 2: 0
+BSS 0a:aa:bb:cc:11:11(on wl5-coord)
+	freq: 5180.0
+	signal: -49.00 dBm
+	SSID: Hogs
+	HT operation:
+		 * primary channel: 36
+		 * secondary channel offset: above
+		 * STA channel width: any
+	VHT operation:
+		 * channel width: 1 (80 MHz)
+		 * center freq segment 1: 42
+		 * center freq segment 2: 0
+BSS 3c:de:ad:be:ef:01(on wl5-coord)
+	freq: 5745.0
+	signal: -60.00 dBm
+	SSID: NeighbourNet
+	HT operation:
+		 * primary channel: 149
+		 * secondary channel offset: above
+		 * STA channel width: any
+	VHT operation:
+		 * channel width: 1 (80 MHz)
+		 * center freq segment 1: 155
+BSS 0e:aa:bb:cc:22:22(on wl5-coord) -- associated
+	freq: 5765.0
+	signal: -97.00 dBm
+	SSID: Plat 9
+	HT operation:
+		 * primary channel: 153
+		 * secondary channel offset: below
+VHT operation:
+BSS 06:aa:bb:cc:33:33(on wl5-coord)
+	freq: 2437.0
+	signal: -55.00 dBm
+	SSID: Plat 9
+	HT operation:
+		 * primary channel: 6
+		 * secondary channel offset: no secondary
+BSS 12:11:22:33:44:55(on wl5-coord)
+	freq: 5805.0
+	signal: -50.00 dBm
+	SSID:
+	HT operation:
+		 * primary channel: 161
+		 * secondary channel offset: no secondary

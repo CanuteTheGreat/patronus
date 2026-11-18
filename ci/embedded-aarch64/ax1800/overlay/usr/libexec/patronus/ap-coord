@@ -1,0 +1,177 @@
+#!/bin/sh
+# ap-coord: keep this unit's automatic (ACS) channels off the channels its OTHER access points use (docs 12.15).
+# hostapd's ACS measures only what it hears, so two units with the same SSIDs that start together (or one after the
+# other, with the first not yet on air) can both end on the same 80 MHz block and share its airtime. Commercial
+# controllers plan channels across their APs; this does the same without a controller, from what each unit can hear:
+# a "peer" is any BSS that broadcasts one of this unit's SSIDs (hidden SSIDs: list the peer in AP_COORD_PEERS) and is not
+# this unit's own. Peers' 20/40/80 MHz blocks are dropped from the ACS channel list (`ap` reads $OUTD/coord-<band>) as long
+# as another block remains. Settings (board.sh defaults, ap.env, /api/wifi, export/plan): AP_COORD24 / AP_COORD5 (1 = on,
+# default), AP_COORD_PEERS (MACs of other units, any BSSID of a unit matches all its BSSes), AP_COORD_MIN_SIGNAL (dBm,
+# weaker peers are ignored), AP_COORD_DELAY (seconds after start before the first re-check), AP_COORD_INTERVAL (seconds
+# between later re-checks, 0 = only the first), AP_COORD_QUIET (hours "1-5" in which a re-check may restart a radio that
+# still has stations; empty = any time), AP_COORD_SCAN_SECS (longest a scan may take).
+#   ap-coord plan BAND PHY   before hostapd starts: scan from a temporary interface, write/remove $OUTD/coord-BAND
+#   ap-coord check BAND [now]  on the running radio: when another unit sits on an overlapping block and this unit's
+#                            tie-break key is the higher one, restart that radio (`ap restart-band`) so ACS avoids it
+#   ap-coord run             background loop started by `ap start` (first check after AP_COORD_DELAY, then every AP_COORD_INTERVAL)
+#   ap-coord parse           `iw ... scan` output on stdin -> "bssid freq signal above|below|none width centre ssid"
+#   ap-coord covered         parse output on stdin -> the 20 MHz channel numbers each BSS covers (2.4 GHz: every channel it overlaps)
+#   ap-coord busy BAND       parse output on stdin -> channels the peers cover (sorted, unique); own BSSIDs are skipped
+# Tie-break: the unit whose phy MAC (last five octets: the first one differs between a radio's BSSes) is HIGHER moves.
+# Test hooks: AP_BOARD, AP_RENDER_OUT (as for `ap`), AP_COORD_SCAN_FILE (parse this scan instead of scanning),
+#             AP_COORD_STATUS_FILE (hostapd_cli status text), AP_COORD_AP (path of the ap script), AP_COORD_NOW (hour).
+. ${AP_BOARD:-/etc/patronus/board.sh}
+OUTD=${AP_RENDER_OUT:-/run/hostapd}
+APX=${AP_COORD_AP:-/usr/libexec/patronus/ap}
+PIDF=${AP_COORD_PID:-/run/patronus-ap-coord.pid}
+on() { case "${1:-0}" in 1|yes|on|true) return 0;; esac; return 1; }
+num() { case "$1" in ''|*[!0-9-]*) echo "$2";; *) echo "$1";; esac; }
+say() { echo "ap-coord: $*"; logger -t patronus-ap-coord "$*" 2>/dev/null; true; }
+coord_on() { eval "v=\${AP_COORD$1:-1}"; on "$v"; }
+
+parse() {
+  awk '
+    function flush() { if (b != "") print b, f, s, sec, w, ctr, (ss == "" ? "-" : ss) }
+    /^BSS /     { flush(); b = $2; sub(/\(.*/, "", b); f = 0; s = -100; sec = "none"; w = 20; ctr = 0; ss = ""; vw = -1; next }
+    /^[ \t]freq:/ { f = $2 + 0; next }
+    /^[ \t]signal:/ { s = $2 + 0; next }
+    /^[ \t]SSID:/ { sub(/^[ \t]SSID: ?/, ""); ss = $0; gsub(/\\x20/, "_", ss); gsub(/[ \t]/, "_", ss); next }
+    /\* secondary channel offset:/ { sec = ($0 ~ /above/ ? "above" : ($0 ~ /below/ ? "below" : "none")); if (sec != "none" && vw < 1) w = 40; next }
+    /\* channel width:/ { vw = $4 + 0; if (vw >= 1) w = 80; next }
+    /\* center freq segment 1:/ { ctr = $6 + 0; next }
+    END { flush() }'
+}
+
+covered() { # parse output -> "bssid ch ch ch ..." per BSS
+  awk '{ f = $2; sec = $4; w = $5; c = $6; o = $1
+    if (f >= 5000) { p = (f - 5000) / 5
+      if (w == 80 && c > 0) print o, c - 6, c - 2, c + 2, c + 6
+      else if (w == 40 && sec == "above") print o, p, p + 4
+      else if (w == 40 && sec == "below") print o, p - 4, p
+      else print o, p }
+    else { p = (f == 2484) ? 14 : (f - 2407) / 5; lo = p - 4; hi = p + 4
+      if (w == 40 && sec == "above") hi = p + 8; else if (w == 40 && sec == "below") lo = p - 8
+      s = o; for (i = lo; i <= hi; i++) s = s " " i; print s } }'
+}
+
+own_ssids() { for s in $AP_SSIDS; do eval "v=\${SSID_$s:-}"; [ -n "$v" ] && echo "$v" | sed 's/[ \t]/_/g'; done; }
+own_keys() { # the last five octets of every BSSID this unit transmits (the first octet differs between BSSes of one radio)
+  for f in "$OUTD"/ap5.conf "$OUTD"/ap24.conf; do [ -f "$f" ] && sed -n 's/^bssid=//p' "$f"; done | tr 'A-F' 'a-f' | cut -d: -f2-; }
+peer_keys() { for m in ${AP_COORD_PEERS:-}; do echo "$m" | tr 'A-F' 'a-f' | sed 's/^[0-9a-f][0-9a-f]://'; done; }
+
+# busy BAND: stdin = parse output; stdout = channels covered by peers of that band, one line, sorted, unique
+busy() { peers "$1" | covered | cut -d' ' -f2- | tr ' ' '\n' | grep . | sort -n | uniq | tr '\n' ' ' | sed 's/ $//'; echo; }
+
+freqs() { # BAND: the frequencies a scan has to visit (what ACS may pick, plus every non-DFS channel of the band)
+  if [ "$1" = 5 ]; then l="36 40 44 48 149 153 157 161 165 ${AP_CHANLIST5:-}"; on "${AP_DFS:-0}" && l="$l 52 56 60 64 100 104 108 112 116 120 124 128 132 136 140 144"
+    for c in $l; do echo $((5000 + c * 5)); done | sort -un | tr '\n' ' '
+  else for c in 1 2 3 4 5 6 7 8 9 10 11 12 13; do echo $((2407 + c * 5)); done | tr '\n' ' '; fi; }
+
+scan_if() { # BAND IF: a fresh scan of the band's frequencies (falls back to the kernel's cached list)
+  t=$(num "${AP_COORD_SCAN_SECS:-}" 25)
+  if [ -n "${AP_COORD_SCAN_FILE:-}" ]; then cat "$AP_COORD_SCAN_FILE"; return; fi
+  out=$(timeout "$t" iw dev "$2" scan freq $(freqs "$1") 2>/dev/null) || out=
+  [ -n "$out" ] || out=$(iw dev "$2" scan dump 2>/dev/null)
+  echo "$out"; }
+
+plan() { # BAND PHY
+  b=$1; phy=$2; f=$OUTD/coord-$b; rm -f "$f"
+  coord_on "$b" || return 0
+  eval "c=\${AP_CHAN$b:-auto}"; [ "$c" = auto ] || [ "$c" = 0 ] || return 0       # a fixed channel is not planned
+  if [ -n "${AP_COORD_SCAN_FILE:-}" ]; then s=$(scan_if "$b" x)
+  else ifn=wl$b-coord; iw dev $ifn del >/dev/null 2>&1
+    iw phy "$phy" interface add $ifn type managed >/dev/null 2>&1 && ip link set $ifn up >/dev/null 2>&1 \
+      || { say "$b GHz: could not create a scan interface on $phy, channels are not coordinated"; iw dev $ifn del >/dev/null 2>&1; return 0; }
+    s=$(scan_if "$b" $ifn); iw dev $ifn del >/dev/null 2>&1
+  fi
+  l=$(echo "$s" | parse | busy "$b")
+  if [ -n "$l" ]; then mkdir -p "$OUTD"; echo "$l" > "$f"; say "$b GHz: other access points of this network use channels $l, ACS avoids them"
+  else say "$b GHz: no other access point of this network heard"; fi
+  true; }
+
+hours_ok() { # AP_COORD_QUIET "1-5" (wraps over midnight): is it inside?
+  q=${AP_COORD_QUIET:-}; [ -n "$q" ] || return 0
+  h=${AP_COORD_NOW:-$(date +%H)}; h=$(echo "$h" | sed "s/^0*//"); h=${h:-0}; a=${q%-*}; z=${q#*-}
+  case "$a$z" in *[!0-9]*) return 0;; esac
+  if [ "$a" -le "$z" ]; then [ "$h" -ge "$a" ] && [ "$h" -le "$z" ]; else [ "$h" -ge "$a" ] || [ "$h" -le "$z" ]; fi; }
+
+stations() { # BAND: stations on every BSS of the radio
+  f=$OUTD/ap$1.conf; n=0
+  for i in $(sed -n 's/^interface=//p; s/^bss=//p' "$f" 2>/dev/null); do
+    c=$(iw dev "$i" station dump 2>/dev/null | grep -c '^Station'); n=$((n + c)); done; echo $n; }
+
+check() { # BAND [now]
+  b=$1; conf=$OUTD/ap$b.conf
+  coord_on "$b" || return 0
+  [ -f "$conf" ] || return 0
+  [ "$(sed -n 's/^channel=//p' "$conf" | head -1)" = 0 ] || return 0                    # fixed channel
+  ifc=$(sed -n 's/^interface=//p' "$conf" | head -1)
+  if [ -n "${AP_COORD_STATUS_FILE:-}" ]; then st=$(cat "$AP_COORD_STATUS_FILE"); else st=$(hostapd_cli -p /run/hostapd -i "$ifc" status 2>/dev/null); fi
+  fq=$(echo "$st" | sed -n 's/^freq=//p'); [ -n "$fq" ] || return 0                      # not up (DFS check, starting)
+  sc=$(echo "$st" | sed -n 's/^secondary_channel=//p'); wd=$(echo "$st" | sed -n 's/^vht_oper_chwidth=//p')
+  ct=$(echo "$st" | sed -n 's/^vht_oper_centr_freq_seg0_idx=//p'); sec=none; w=20
+  [ "$sc" = 1 ] && sec=above && w=40; [ "$sc" = -1 ] && sec=below && w=40
+  [ "$b" = 5 ] && [ "$wd" = 1 ] && [ "${ct:-0}" -gt 0 ] && w=80
+  own=$(echo "0:00:00:00:00:00 $fq -50 $sec $w ${ct:-0} -" | covered | cut -d' ' -f2-)
+  s=$(scan_if "$b" "$ifc")
+  mykey=$(sed -n 's/^bssid=//p' "$conf" | head -1 | tr 'A-F' 'a-f' | cut -d: -f2-)
+  yield=0; hit=
+  echo "$s" | parse | peers "$b" | while read -r bssid f sig sec2 w2 c2 ssid; do
+    pc=$(echo "$bssid $f $sig $sec2 $w2 $c2 $ssid" | covered | cut -d' ' -f2-)
+    for x in $pc; do case " $own " in *" $x "*) echo "$bssid"; break;; esac; done
+  done > "$OUTD/coord-hit-$b"
+  hit=$(sort -u "$OUTD/coord-hit-$b" | tr '\n' ' '); rm -f "$OUTD/coord-hit-$b"
+  [ -n "$hit" ] || { say "$b GHz: no other access point shares channels with this one ($own)"; return 0; }
+  for h in $hit; do hk=$(echo "$h" | tr 'A-F' 'a-f' | cut -d: -f2-); [ "$hk" != "$mykey" ] && [ "$(printf "%s\n%s\n" "$hk" "$mykey" | sort | head -1)" = "$hk" ] && yield=1; done
+  [ $yield = 1 ] || { say "$b GHz: shares channels with $hit; the other unit has the lower key and moves"; return 0; }
+  if [ "${2:-}" != now ] && ! hours_ok && [ "$(stations "$b")" -gt 0 ]; then
+    say "$b GHz: shares channels with $hit; stations are connected and it is outside the quiet hours (AP_COORD_QUIET=${AP_COORD_QUIET}), moving later"; return 0; fi
+  say "$b GHz: shares channels with $hit; restarting this radio so ACS picks another block"
+  "$APX" restart-band "$b"; }
+
+peers() { # BAND: parse output on stdin -> only the peers' lines (same filter as busy)
+  band=$1; min=$(num "${AP_COORD_MIN_SIGNAL:-}" -90); ssids=$(own_ssids); me=$(own_keys); pk=$(peer_keys)
+  while read -r bssid f sig sec w c ssid; do
+    case "$band" in 5) [ "$f" -ge 5000 ] 2>/dev/null || continue;; *) [ "$f" -lt 5000 ] 2>/dev/null && [ "$f" -gt 0 ] || continue;; esac
+    [ "${sig%.*}" -ge "$min" ] 2>/dev/null || continue
+    k=$(echo "$bssid" | tr 'A-F' 'a-f' | cut -d: -f2-)
+    case "
+$me
+" in *"
+$k
+"*) continue;; esac
+    peer=0
+    case "
+$pk
+" in *"
+$k
+"*) peer=1;; esac
+    [ "$ssid" != "-" ] && case "
+$ssids
+" in *"
+$ssid
+"*) peer=1;; esac
+    [ $peer = 1 ] && echo "$bssid $f $sig $sec $w $c $ssid"
+  done; true; }
+
+run() {
+  echo $$ > "$PIDF"
+  sleep "$(num "${AP_COORD_DELAY:-}" 120)"
+  first=now
+  while :; do
+    for b in 5 24; do check "$b" $first; done
+    first=
+    i=$(num "${AP_COORD_INTERVAL:-}" 3600); [ "$i" -gt 0 ] || break
+    sleep "$i"
+  done
+  rm -f "$PIDF"; }
+
+case "${1:-}" in
+parse) parse ;;
+covered) covered ;;
+busy) busy "$2" ;;
+plan) mkdir -p "$OUTD"; plan "$2" "${3:-}" ;;
+check) check "$2" "${3:-}" ;;
+run) run ;;
+*) sed -n '2,24p' "$0"; exit 2 ;;
+esac

@@ -84,9 +84,23 @@ chanlist() { # BAND LIST: the valid channels of LIST (space-separated), the rest
     else valid5 "$c" && ok=1 || ok=0; fi
     [ $ok = 1 ] && out="$out $c" || echo "ap: AP_CHANLIST$1: $c is not a channel of that band, ignored" >&2
   done; echo "${out# }"; }
+# coordinate_list BAND LIST: drop the candidates whose block overlaps a channel another access point of this network
+# uses ($OUTD/coord-BAND, written by ap-coord plan; AP_COORD24 / AP_COORD5 = 0 turns it off). LIST empty = every channel
+# the band offers. Nothing is dropped when no whole block would remain (ACS then decides alone, with a message).
+coordinate_list() { b=$1; l=$2; f=$OUTD/coord-$b
+  eval "cv=\${AP_COORD$b:-1}"; on "$cv" && [ -s "$f" ] || { echo "$l"; return; }
+  busyl=" $(cat "$f") "
+  if [ "$b" = 5 ]; then w=${AP_HT5:-80}; l=$(acs5_primaries "${l:-$(acs5_default)}" "$w" 2>/dev/null); else [ -n "$l" ] || l="1 2 3 4 5 6 7 8 9 10 11 12 13"; w=20; fi
+  out=; for c in $l; do hit=0
+    if [ "$b" = 5 ]; then for x in $(blk5 "$c" "$w"); do case "$busyl" in *" $x "*) hit=1;; esac; done
+    else case "$busyl" in *" $c "*) hit=1;; esac; fi
+    [ $hit = 1 ] || out="$out $c"; done
+  out=${out# }
+  if [ -n "$out" ]; then [ "$out" = "$l" ] || echo "ap: $b GHz: channels used by this network's other access points ($(cat "$f")) are left out of the ACS list" >&2; echo "$out"
+  else echo "ap: $b GHz: every block overlaps another access point of this network, ACS decides alone" >&2; echo "$2"; fi; }
 acs_lines() { # BAND: what ACS may pick from and how long it measures
   case "${AP_ACS_SCANS:-5}" in [1-9]|1[0-9]|20) echo "acs_num_scans=${AP_ACS_SCANS:-5}";; *) echo "acs_num_scans=5";; esac
-  eval "l=\${AP_CHANLIST$1:-}"; l=$(chanlist "$1" "$l")
+  eval "l=\${AP_CHANLIST$1:-}"; l=$(chanlist "$1" "$l"); l=$(coordinate_list "$1" "$l")
   if [ "$1" = 5 ]; then l=$(acs5_primaries "$l" "${AP_HT5:-80}"); echo "chanlist=$l"
     case "${AP_DFS:-0}" in 1|yes|on) echo "acs_exclude_dfs=0";; *) echo "acs_exclude_dfs=1";; esac
   else [ -n "$l" ] && echo "chanlist=$l"; fi; true; }
@@ -192,9 +206,16 @@ render_band() { # 24|5 phy
     } >> $f
   done
   [ $n -gt 0 ] && echo "$f $phy $n"; }
-start_all() {
+COORD=${AP_COORD_BIN:-/usr/libexec/patronus/ap-coord}
+start_all() { # [BAND]: both radios, or only 5 / 24
+  # channels other access points of this network use are scanned BEFORE the config is rendered (ACS then avoids them)
+  if [ -x "$COORD" ]; then
+    [ -n "$P5" ] && { [ -z "${1:-}" ] || [ "$1" = 5 ]; } && "$COORD" plan 5 "$P5"
+    [ -n "$P24" ] && { [ -z "${1:-}" ] || [ "$1" = 24 ]; } && "$COORD" plan 24 "$P24"
+  fi
   /usr/libexec/patronus/ap render | while read -r f phy n; do
     b=$(basename $f .conf)
+    [ -z "${1:-}" ] || [ "ap$1" = "$b" ] || continue
     # the first BSS' netdev is created on its phy here (hostapd then adds the `bss=` ones itself)
     iw phy $phy interface add $(sed -n 's/^interface=//p' $f) type __ap 2>/dev/null
     if hostapd -B -P /run/hostapd-$b.pid $f > /tmp/hostapd-$b.log 2>&1; then echo "$(cut -d' ' -f1 /proc/uptime) hostapd-$b" >> /tmp/boot-times
@@ -204,7 +225,18 @@ start_all() {
       done
     else echo "hostapd $b failed"; cat /tmp/hostapd-$b.log; fi
   done
-  txpower; }
+  txpower
+  # periodic re-check of the channel plan against the other access points (once per start)
+  if [ -x "$COORD" ] && [ -z "${1:-}" ]; then p=$(cat /run/patronus-ap-coord.pid 2>/dev/null); [ -n "$p" ] && kill "$p" 2>/dev/null
+    setsid "$COORD" run > /dev/null 2>&1 < /dev/null & fi; }
+stop_all() { # [BAND]: wait until each hostapd has really exited (a new one started while the old still holds the radio's
+  # nl80211 registrations fails with "Match already configured" and then crashes)
+  pids=; for p in /run/hostapd-cli-*.pid /run/hostapd-ap*.pid; do [ -f "$p" ] || continue
+    if [ -n "${1:-}" ]; then case "$p" in /run/hostapd-cli-wl$1-*) ;; /run/hostapd-ap$1.pid) ;; *) continue;; esac; fi
+    i=$(cat "$p"); rm -f "$p"; kill "$i" 2>/dev/null && pids="$pids $i"; done
+  for i in $pids; do n=0; while kill -0 "$i" 2>/dev/null && [ "$(sed -n 's/^State:[[:space:]]*\([A-Z]\).*/\1/p' /proc/$i/status 2>/dev/null)" != Z ]; do
+      n=$((n + 1)); [ $n -ge ${AP_STOP_WAIT:-50} ] && { echo "ap: hostapd $i did not exit, killing it" >&2; kill -9 "$i" 2>/dev/null; break; }
+      sleep 0.2; done; done; true; }
 case "$1" in
 render) mkdir -p $OUTD; find_phys
   # both radios' own MACs are reserved first, so no variant of one radio can take the other's address
@@ -241,11 +273,9 @@ start)
   ;;
 txpower) mkdir -p $OUTD; txpower ;;
 acl) mkdir -p $OUTD; acl ;;
-stop) # wait until each hostapd has really exited: a new one started while the old still holds the radio's nl80211
-  # registrations fails ("Match already configured", then hostapd crashes), which made a Wi-Fi page save roll back
-  pids=; for p in /run/hostapd-cli-*.pid /run/hostapd-*.pid; do [ -f "$p" ] || continue; i=$(cat "$p"); rm -f "$p"
-    kill "$i" 2>/dev/null && pids="$pids $i"; done
-  for i in $pids; do n=0; while kill -0 "$i" 2>/dev/null && [ "$(sed -n 's/^State:[[:space:]]*\([A-Z]\).*/\1/p' /proc/$i/status 2>/dev/null)" != Z ]; do
-      n=$((n + 1)); [ $n -ge ${AP_STOP_WAIT:-50} ] && { echo "ap: hostapd $i did not exit, killing it" >&2; kill -9 "$i" 2>/dev/null; break; }
-      sleep 0.2; done; done; true ;;
+stop) p=$(cat /run/patronus-ap-coord.pid 2>/dev/null); [ -n "$p" ] && kill "$p" 2>/dev/null; rm -f /run/patronus-ap-coord.pid
+  stop_all ;;
+restart-band) # BAND (5|24): restart one radio; its channel list is planned again (ap-coord)
+  case "${2:-}" in 5|24) ;; *) echo "usage: ap restart-band 5|24" >&2; exit 2;; esac
+  mkdir -p $OUTD; find_phys; stop_all "$2"; start_all "$2" ;;
 esac
