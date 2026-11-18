@@ -3,12 +3,15 @@
 
   ci/third-party-licenses.py                      # write THIRD-PARTY-LICENSES.txt
   ci/third-party-licenses.py --out X --gzip       # also write X.gz (what the web UI serves; deterministic bytes)
-  ci/third-party-licenses.py --check-text         # exit 1 if a crate ships no license text at all
+  ci/third-party-licenses.py --check-text         # exit 1 if a crate has no license text and no standard text covers it
 
 Which crates: the normal (non-dev, non-build) dependency closure of the shipped binaries (SHIPPED_PACKAGES)
 with default features, for the platforms in PLATFORMS, resolved from Cargo.lock through `cargo metadata`.
 The workspace has no committed Cargo.lock (it is gitignored), so the file is only reproducible for one
 lockfile: release.yml generates the lockfile once, builds, and runs this script against the same lock.
+A crate that ships no license file (some publish only the SPDX expression in Cargo.toml) is covered by the standard
+MIT / Apache-2.0 text, printed once at the end, when its expression offers one of them; any other license without a
+text is an error under --check-text.
 Crate sources must be in the cargo registry (cargo metadata fetches them); license texts are the LICENSE /
 COPYING / NOTICE files each crate ships. Equal texts are printed once, followed by the crates they cover.
 The output is sorted and contains no dates, so the same lockfile always produces the same bytes.
@@ -91,7 +94,7 @@ def main():
         rows.append((p["name"], p["version"], lic, repo))
         files = license_files(p)
         if not files:
-            missing.append(f"{p['name']} {p['version']} ({lic})")
+            missing.append({"id": f"{p['name']} {p['version']} ({lic})", "lic": lic})
         for f in files:
             body = open(f, "rb").read().decode("utf-8", "replace").replace("\r\n", "\n").strip()
             if not body:
@@ -131,20 +134,33 @@ def main():
         L.append("-" * 78)
         L.append(t["body"])
         L.append("")
+    std_texts = {}
+    for h, t in sorted(texts.items()):
+        if "MIT" not in std_texts and "Permission is hereby granted, free of charge" in t["body"] and len(t["body"]) < 1500:
+            std_texts["MIT"] = t["body"]
+        if "Apache-2.0" not in std_texts and "Version 2.0, January 2004" in t["body"] and "APPENDIX" in t["body"]:
+            std_texts["Apache-2.0"] = t["body"]
+    uncovered = []
     if missing:
-        L += ["-" * 78, "Crates that ship no license file (license given by the crate's manifest only):", "-" * 78]
-        L += sorted(missing)
+        L += ["-" * 78, "Crates that ship no license file: the license is the SPDX expression of their manifest;", "the standard text of the license(s) it offers is printed below.", "-" * 78]
+        for m in sorted(missing, key=lambda m: m["id"]):
+            L.append(m["id"] + f" -> " + (", ".join(k for k in std_texts if k in re.split(r"[\s/()]+", m["lic"])) or "NO STANDARD TEXT"))
+            if not any(k in re.split(r"[\s/()]+", m["lic"]) for k in std_texts):
+                uncovered.append(m["id"])
         L.append("")
+        used = [k for k in std_texts if any(k in re.split(r"[\s/()]+", m["lic"]) for m in missing)]
+        for k in used:
+            L += ["-" * 78, f"Standard text: {k}", "-" * 78, std_texts[k], ""]
     data = ("\n".join(L)).encode()
     with open(a.out, "wb") as f:
         f.write(data)
-    print(f"wrote {a.out}: {len(rows)} crates, {len(texts)} distinct license texts, {len(missing)} without a file, {len(data)} bytes")
+    print(f"wrote {a.out}: {len(rows)} crates, {len(texts)} distinct license texts, {len(missing)} without a file (covered by a standard text: {len(missing) - len(uncovered)}), {len(data)} bytes")
     if a.gzip:
         with open(a.out + ".gz", "wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0, compresslevel=9) as gz:
             gz.write(data)
         print(f"wrote {a.out}.gz: {os.path.getsize(a.out + '.gz')} bytes")
-    if a.check_text and missing:
-        print("no license text for: " + "; ".join(missing), file=sys.stderr)
+    if a.check_text and uncovered:
+        print("no license text for: " + "; ".join(uncovered), file=sys.stderr)
         sys.exit(1)
 
 
