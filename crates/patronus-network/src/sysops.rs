@@ -256,11 +256,26 @@ fn check_script(sync: bool) -> String {
     format!("{sync_step}emerge --pretend --update --deep --newuse --verbose --columns @world")
 }
 
+/// Shell guard run before every apply. GRUB reads kernels from the separate
+/// `boot`-labelled partition; when that partition is not mounted at /boot a
+/// kernel update lands in the root file system's empty /boot and the machine
+/// keeps booting the old kernel. Mount it (fstab entry, else by label); if that
+/// fails, refuse the update instead of installing an unbootable kernel.
+const BOOT_GUARD: &str = "\
+if blkid -L boot >/dev/null 2>&1 && ! mountpoint -q /boot; then \
+echo 'patronus-update: /boot is not mounted (partition labelled boot exists), mounting it'; \
+mount /boot 2>/dev/null || mount \"$(blkid -L boot)\" /boot || \
+{ echo 'patronus-update: REFUSING to update: cannot mount the boot partition on /boot, a kernel update would never be booted'; exit 1; }; \
+fi; \
+if [ \"$(awk '/^MemTotal:/{print int($2/1048576)}' /proc/meminfo)\" -lt 3 ]; then \
+export MAKEOPTS=-j1 EMERGE_DEFAULT_OPTS=\"$EMERGE_DEFAULT_OPTS --jobs=1\"; fi; ";
+
 fn apply_script(scope: &str) -> String {
-    match scope {
+    let emerge = match scope {
         "patronus" => format!("emerge --oneshot --update --quiet-build {PATRONUS_ATOM}"),
         _ => "emerge --update --deep --newuse --quiet-build @world".to_string(),
-    }
+    };
+    format!("{BOOT_GUARD}{emerge}")
 }
 
 /// The result of the last finished check job (what is pending).
@@ -856,6 +871,40 @@ Total: 4 packages (1 upgrade, 1 new, 1 reinstall), Size of downloads: 120 KiB\n"
         assert_eq!(p[3].kind, "U");
         assert_eq!(p[3].atom, "sys-kernel/gentoo-sources");
         assert!(parse_pretend("nothing to do\n").is_empty());
+    }
+
+    #[test]
+    fn apply_refuses_when_the_boot_partition_cannot_be_mounted() {
+        // stubbed blkid/mountpoint/mount/emerge: a boot partition exists, /boot is not mounted
+        let d = tempfile::tempdir().unwrap();
+        let w = |n: &str, body: &str| {
+            use std::os::unix::fs::PermissionsExt;
+            let p = d.path().join(n);
+            std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        w("blkid", "echo /dev/sda2");
+        w("mountpoint", "exit 1");
+        w("emerge", "echo EMERGE-RAN");
+        let run = |mount_rc: i32| {
+            w("mount", &format!("exit {mount_rc}"));
+            std::process::Command::new("sh")
+                .arg("-c")
+                .arg(apply_script("world"))
+                .env(
+                    "PATH",
+                    format!("{}:{}", d.path().display(), std::env::var("PATH").unwrap()),
+                )
+                .output()
+                .unwrap()
+        };
+        let bad = run(1);
+        let out = String::from_utf8_lossy(&bad.stdout);
+        assert!(!bad.status.success(), "{out}");
+        assert!(out.contains("REFUSING") && !out.contains("EMERGE-RAN"), "{out}");
+        let ok = run(0);
+        assert!(ok.status.success());
+        assert!(String::from_utf8_lossy(&ok.stdout).contains("EMERGE-RAN"));
     }
 
     #[test]
