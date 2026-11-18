@@ -901,7 +901,10 @@ Total: 4 packages (1 upgrade, 1 new, 1 reinstall), Size of downloads: 120 KiB\n"
         let bad = run(1);
         let out = String::from_utf8_lossy(&bad.stdout);
         assert!(!bad.status.success(), "{out}");
-        assert!(out.contains("REFUSING") && !out.contains("EMERGE-RAN"), "{out}");
+        assert!(
+            out.contains("REFUSING") && !out.contains("EMERGE-RAN"),
+            "{out}"
+        );
         let ok = run(0);
         assert!(ok.status.success());
         assert!(String::from_utf8_lossy(&ok.stdout).contains("EMERGE-RAN"));
