@@ -137,14 +137,15 @@ wifi_backup() { c=$(wapi -X POST https://127.0.0.1:$WEBP/api/system/backups); b=
 # no DFS); every part of the plan is a setting (API -> ap.env), bad values refused; then the declarative CLI document
 wifi_chanplan() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=$(cat "$W/api.json")
   [ "$c" = 200 ] && has_all "$g" '"chan24":"auto"' '"chan5":"auto"' '"chanlist24":[1,6,11]' '"chanlist5":[]' '"dfs":false' '"unii4":false' '"width24":20' \
-    '"width5":80' '"acs_scans":5' || { echo "defaults: $c $g"; return 1; }
-  c=$(wapi -X PUT -d '{"width24":40,"dfs":true,"unii4":true,"chanlist5":[36,40,52],"chanlist24":[],"acs_scans":3}' https://127.0.0.1:$WEBP/api/wifi)
+    '"width5":80' '"acs_scans":5' '"coord5":true' '"coord24":true' '"coord_peers":[]' '"coord_min_signal":-90' '"coord_delay":120' \
+    '"coord_interval":3600' '"coord_quiet":"1-5"' '"coord_scan_secs":25' || { echo "defaults: $c $g"; return 1; }
+  c=$(wapi -X PUT -d '{"width24":40,"dfs":true,"unii4":true,"chanlist5":[36,40,52],"chanlist24":[],"acs_scans":3,"coord5":false,"coord_peers":["AA:BB:CC:DD:EE:FF"],"coord_min_signal":-80,"coord_interval":0,"coord_quiet":""}' https://127.0.0.1:$WEBP/api/wifi)
   [ "$c" = 200 ] || { echo "PUT plan: $c $(cat "$W/api.json")"; return 1; }
-  m=$(R '. /etc/patronus/board.sh; echo "HT24=$AP_HT24 DFS=$AP_DFS U4=$AP_UNII4 L5=$AP_CHANLIST5 L24=[$AP_CHANLIST24] S=$AP_ACS_SCANS"')
-  [ "$m" = "HT24=40 DFS=1 U4=1 L5=36 40 52 L24=[] S=3" ] || { echo "ap.env after PUT: $m"; return 1; }
-  for bad in '{"width24":80}' '{"chanlist24":[14]}' '{"chanlist5":[150]}' '{"acs_scans":0}'; do
+  m=$(R '. /etc/patronus/board.sh; echo "HT24=$AP_HT24 DFS=$AP_DFS U4=$AP_UNII4 L5=$AP_CHANLIST5 L24=[$AP_CHANLIST24] S=$AP_ACS_SCANS C5=$AP_COORD5 CP=$AP_COORD_PEERS CS=$AP_COORD_MIN_SIGNAL CI=$AP_COORD_INTERVAL CQ=[$AP_COORD_QUIET]"')
+  [ "$m" = "HT24=40 DFS=1 U4=1 L5=36 40 52 L24=[] S=3 C5=0 CP=aa:bb:cc:dd:ee:ff CS=-80 CI=0 CQ=[]" ] || { echo "ap.env after PUT: $m"; return 1; }
+  for bad in '{"width24":80}' '{"chanlist24":[14]}' '{"chanlist5":[150]}' '{"acs_scans":0}' '{"coord_peers":["nope"]}' '{"coord_min_signal":-10}' '{"coord_quiet":"25-3"}' '{"coord_interval":30}' '{"coord_scan_secs":2}'; do
     c=$(wapi -X PUT -d "$bad" https://127.0.0.1:$WEBP/api/wifi); [ "$c" = 400 ] || { echo "$bad: HTTP $c"; return 1; }; done
-  c=$(wapi -X PUT -d '{"width24":20,"dfs":false,"unii4":false,"chanlist5":[],"chanlist24":[1,6,11],"acs_scans":5}' https://127.0.0.1:$WEBP/api/wifi)
+  c=$(wapi -X PUT -d '{"width24":20,"dfs":false,"unii4":false,"chanlist5":[],"chanlist24":[1,6,11],"acs_scans":5,"coord5":true,"coord_peers":[],"coord_min_signal":-90,"coord_interval":3600,"coord_quiet":"1-5"}' https://127.0.0.1:$WEBP/api/wifi)
   [ "$c" = 200 ] || { echo "PUT back: $c"; return 1; }; }
 wifi_cli() { d=$(R 'patronus-cli ap-wifi export --json') || { echo "export failed: $d"; return 1; }
   case "$d" in *ci-gate-wifi-pass*) echo "export leaks a key"; return 1;; esac

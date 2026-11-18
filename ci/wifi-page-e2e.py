@@ -97,9 +97,13 @@ def run(p, kind):
     check(f"{kind}: no password in the page", "KEY_" not in html and "wpa_passphrase" not in html)
     form = page.evaluate("""() => { const f = document.getElementById('wifi-radio-form'); const l = v => v.split(/\\s+/).filter(x => x).map(Number);
         return {chan24: f.chan24.value, chan5: f.chan5.value, width24: Number(f.width24.value), width5: Number(f.width5.value),
-                dfs: f.dfs.checked, unii4: f.unii4.checked, chanlist24: l(f.chanlist24.value), chanlist5: l(f.chanlist5.value), acs_scans: Number(f.acs_scans.value)}; }""")
+                dfs: f.dfs.checked, unii4: f.unii4.checked, chanlist24: l(f.chanlist24.value), chanlist5: l(f.chanlist5.value), acs_scans: Number(f.acs_scans.value),
+                coord5: f.coord5.checked, coord24: f.coord24.checked, coord_peers: f.coord_peers.value.split(/\\s+/).filter(x => x),
+                coord_min_signal: Number(f.coord_min_signal.value), coord_delay: Number(f.coord_delay.value),
+                coord_interval: Number(f.coord_interval.value), coord_quiet: f.coord_quiet.value, coord_scan_secs: Number(f.coord_scan_secs.value)}; }""")
     c = cfg["config"]
-    want_plan = {k: c.get(k) for k in ("chan24", "chan5", "width24", "width5", "dfs", "unii4", "chanlist24", "chanlist5", "acs_scans")}
+    want_plan = {k: c.get(k) for k in ("chan24", "chan5", "width24", "width5", "dfs", "unii4", "chanlist24", "chanlist5", "acs_scans",
+                                      "coord5", "coord24", "coord_peers", "coord_min_signal", "coord_delay", "coord_interval", "coord_quiet", "coord_scan_secs")}
     check(f"{kind}: channel plan form = GET /api/wifi", form == want_plan, {"page": form, "api": want_plan})
     cards = page.evaluate("() => [...document.querySelectorAll('#wifi-radios .radio-chan')].map(d => [d.dataset.band, d.innerText])")
     ok_cards = len(cards) == 2

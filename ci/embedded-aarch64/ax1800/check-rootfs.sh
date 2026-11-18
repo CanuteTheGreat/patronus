@@ -16,7 +16,7 @@ grep -q '^root:[^:!*]' "$R/etc/shadow" 2>/dev/null || [ -s "$R/root/.ssh/authori
 grep -q '^nobody:' "$R/etc/passwd" || fail "no nobody user"
 [ -s "$R/etc/services" ] || fail "no /etc/services (busybox wget/nc: bad port 'http')"
 for f in usr/sbin/patronus-flash usr/libexec/patronus/fwcheck.sh usr/libexec/patronus/upgrade-install usr/libexec/patronus/ubi-data usr/sbin/patronus-init usr/libexec/patronus/early usr/libexec/patronus/ath11k-caldata usr/libexec/patronus/ap \
-         usr/libexec/patronus/ap-guest usr/libexec/patronus/ap-addr usr/libexec/patronus/leds usr/libexec/patronus/restart-schedule \
+         usr/libexec/patronus/ap-guest usr/libexec/patronus/ap-coord usr/libexec/patronus/ap-addr usr/libexec/patronus/leds usr/libexec/patronus/restart-schedule \
          usr/libexec/patronus/scheduled-restart usr/libexec/patronus/board-network etc/patronus/board.sh etc/patronus-init etc/pam.d/patronus \
          usr/sbin/hostapd usr/sbin/dropbear usr/bin/patronus-cli usr/bin/patronus-web \
          usr/sbin/patronus-guard usr/bin/fw_printenv usr/bin/fw_setenv etc/patronus/boot-guard.board etc/patronus/boot-guard.conf usr/sbin/ubimkvol \

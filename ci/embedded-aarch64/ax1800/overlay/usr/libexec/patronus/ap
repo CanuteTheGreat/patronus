@@ -210,8 +210,10 @@ COORD=${AP_COORD_BIN:-/usr/libexec/patronus/ap-coord}
 start_all() { # [BAND]: both radios, or only 5 / 24
   # channels other access points of this network use are scanned BEFORE the config is rendered (ACS then avoids them)
   if [ -x "$COORD" ]; then
-    [ -n "$P5" ] && { [ -z "${1:-}" ] || [ "$1" = 5 ]; } && "$COORD" plan 5 "$P5"
-    [ -n "$P24" ] && { [ -z "${1:-}" ] || [ "$1" = 24 ]; } && "$COORD" plan 24 "$P24"
+    # both bands at once (two phys), so the scans cost the time of one
+    [ -n "$P5" ] && { [ -z "${1:-}" ] || [ "$1" = 5 ]; } && "$COORD" plan 5 "$P5" &
+    [ -n "$P24" ] && { [ -z "${1:-}" ] || [ "$1" = 24 ]; } && "$COORD" plan 24 "$P24" &
+    wait
   fi
   /usr/libexec/patronus/ap render | while read -r f phy n; do
     b=$(basename $f .conf)

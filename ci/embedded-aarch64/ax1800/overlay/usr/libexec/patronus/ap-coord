@@ -159,6 +159,7 @@ run() {
   sleep "$(num "${AP_COORD_DELAY:-}" 120)"
   first=now
   while :; do
+    . "${AP_BOARD:-/etc/patronus/board.sh}"        # settings saved in the meantime (web page, plan/apply) count at once
     for b in 5 24; do check "$b" $first; done
     first=
     i=$(num "${AP_COORD_INTERVAL:-}" 3600); [ "$i" -gt 0 ] || break

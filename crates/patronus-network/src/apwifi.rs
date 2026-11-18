@@ -224,6 +224,14 @@ const MANAGED: &[&str] = &[
     "AP_CHANLIST24",
     "AP_CHANLIST5",
     "AP_ACS_SCANS",
+    "AP_COORD24",
+    "AP_COORD5",
+    "AP_COORD_PEERS",
+    "AP_COORD_MIN_SIGNAL",
+    "AP_COORD_DELAY",
+    "AP_COORD_INTERVAL",
+    "AP_COORD_QUIET",
+    "AP_COORD_SCAN_SECS",
     "AP_HE",
     "AP_SSIDS",
     "AP_TXPOWER24",
@@ -234,7 +242,20 @@ const NET_PREFIXES: &[&str] = &[
     "SSID_", "KEY_", "SEC_", "HIDE_", "BANDS_", "ISOLATE_", "GUEST_", "DENY_",
 ];
 /// Settings the `ap` script applies to running radios without restarting them (transmit power, MAC block lists).
-const LIVE_VARS: &[&str] = &["AP_TXPOWER24", "AP_TXPOWER5", "AP_DENY", "AP_NAMES"];
+const LIVE_VARS: &[&str] = &[
+    "AP_TXPOWER24",
+    "AP_TXPOWER5",
+    "AP_DENY",
+    "AP_NAMES",
+    "AP_COORD24",
+    "AP_COORD5",
+    "AP_COORD_PEERS",
+    "AP_COORD_MIN_SIGNAL",
+    "AP_COORD_DELAY",
+    "AP_COORD_INTERVAL",
+    "AP_COORD_QUIET",
+    "AP_COORD_SCAN_SECS",
+];
 const LIVE_PREFIXES: &[&str] = &["DENY_"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -284,6 +305,31 @@ pub struct WifiConfig {
     /// ACS survey rounds (1-20)
     #[serde(default = "default_acs_scans")]
     pub acs_scans: u32,
+    /// channel coordination between this network's access points (docs 12.15): ACS keeps off the channels other
+    /// units use, per band (default on)
+    #[serde(default = "yes")]
+    pub coord24: bool,
+    #[serde(default = "yes")]
+    pub coord5: bool,
+    /// MACs of other units (any of their BSSIDs) whose channels are avoided even when they do not broadcast one of
+    /// this unit's SSIDs (hidden networks)
+    #[serde(default)]
+    pub coord_peers: Vec<String>,
+    /// access points weaker than this (dBm) are ignored
+    #[serde(default = "default_coord_min_signal")]
+    pub coord_min_signal: i32,
+    /// seconds after a radio start before the first re-check against the other units
+    #[serde(default = "default_coord_delay")]
+    pub coord_delay: u32,
+    /// seconds between later re-checks (0 = only the first)
+    #[serde(default = "default_coord_interval")]
+    pub coord_interval: u32,
+    /// hours "H-H" in which a re-check may restart a radio that still has stations ("" = any time)
+    #[serde(default = "default_coord_quiet")]
+    pub coord_quiet: String,
+    /// longest a channel scan may take, seconds
+    #[serde(default = "default_coord_scan_secs")]
+    pub coord_scan_secs: u32,
     /// 802.11ax (Wi-Fi 6) on both radios
     pub wifi6: bool,
     /// transmit power per radio: "auto" or dBm
@@ -301,6 +347,42 @@ pub struct WifiConfig {
     pub networks: Vec<Network>,
 }
 
+fn yes() -> bool {
+    true
+}
+/// Defaults of the channel coordination (board.sh `AP_COORD_*`).
+pub const DEFAULT_COORD_MIN_SIGNAL: i32 = -90;
+pub const DEFAULT_COORD_DELAY: u32 = 120;
+pub const DEFAULT_COORD_INTERVAL: u32 = 3600;
+pub const DEFAULT_COORD_QUIET: &str = "1-5";
+pub const DEFAULT_COORD_SCAN_SECS: u32 = 25;
+fn default_coord_min_signal() -> i32 {
+    DEFAULT_COORD_MIN_SIGNAL
+}
+fn default_coord_delay() -> u32 {
+    DEFAULT_COORD_DELAY
+}
+fn default_coord_interval() -> u32 {
+    DEFAULT_COORD_INTERVAL
+}
+fn default_coord_quiet() -> String {
+    DEFAULT_COORD_QUIET.into()
+}
+fn default_coord_scan_secs() -> u32 {
+    DEFAULT_COORD_SCAN_SECS
+}
+/// `AP_COORD_QUIET`: "" or "H-H" with hours 0-23.
+pub fn valid_quiet(v: &str) -> bool {
+    if v.is_empty() {
+        return true;
+    }
+    match v.split_once('-') {
+        Some((a, b)) => [a, b]
+            .iter()
+            .all(|h| !h.is_empty() && h.len() <= 2 && h.parse::<u32>().is_ok_and(|n| n < 24)),
+        None => false,
+    }
+}
 fn auto() -> String {
     "auto".into()
 }
@@ -416,6 +498,34 @@ pub fn view(f: &EnvFile) -> WifiConfig {
             .and_then(|v| v.parse().ok())
             .filter(|n| (1..=20).contains(n))
             .unwrap_or(DEFAULT_ACS_SCANS),
+        coord24: !matches!(f.get("AP_COORD24").unwrap_or("1"), "0" | "no" | "off"),
+        coord5: !matches!(f.get("AP_COORD5").unwrap_or("1"), "0" | "no" | "off"),
+        coord_peers: mac_list(f.get("AP_COORD_PEERS").unwrap_or("")),
+        coord_min_signal: f
+            .get("AP_COORD_MIN_SIGNAL")
+            .and_then(|v| v.parse().ok())
+            .filter(|n| (-100..=-30).contains(n))
+            .unwrap_or(DEFAULT_COORD_MIN_SIGNAL),
+        coord_delay: f
+            .get("AP_COORD_DELAY")
+            .and_then(|v| v.parse().ok())
+            .filter(|n| *n <= 3600)
+            .unwrap_or(DEFAULT_COORD_DELAY),
+        coord_interval: f
+            .get("AP_COORD_INTERVAL")
+            .and_then(|v| v.parse().ok())
+            .filter(|n| *n == 0 || (60..=86400).contains(n))
+            .unwrap_or(DEFAULT_COORD_INTERVAL),
+        coord_quiet: match f.get("AP_COORD_QUIET") {
+            None => DEFAULT_COORD_QUIET.to_string(),
+            Some(v) if valid_quiet(v) => v.to_string(),
+            Some(_) => DEFAULT_COORD_QUIET.to_string(),
+        },
+        coord_scan_secs: f
+            .get("AP_COORD_SCAN_SECS")
+            .and_then(|v| v.parse().ok())
+            .filter(|n| (5..=120).contains(n))
+            .unwrap_or(DEFAULT_COORD_SCAN_SECS),
         wifi6: !matches!(f.get("AP_HE").unwrap_or("1"), "0" | "no" | "off"),
         txpower24: txp("AP_TXPOWER24"),
         txpower5: txp("AP_TXPOWER5"),
@@ -483,6 +593,23 @@ pub struct WifiInput {
     /// ACS survey rounds (1-20)
     #[serde(default)]
     pub acs_scans: Option<u32>,
+    /// channel coordination between this network's access points (docs 12.15)
+    #[serde(default)]
+    pub coord24: Option<bool>,
+    #[serde(default)]
+    pub coord5: Option<bool>,
+    #[serde(default)]
+    pub coord_peers: Option<Vec<String>>,
+    #[serde(default)]
+    pub coord_min_signal: Option<i32>,
+    #[serde(default)]
+    pub coord_delay: Option<u32>,
+    #[serde(default)]
+    pub coord_interval: Option<u32>,
+    #[serde(default)]
+    pub coord_quiet: Option<String>,
+    #[serde(default)]
+    pub coord_scan_secs: Option<u32>,
     #[serde(default)]
     pub wifi6: Option<bool>,
     /// "auto" or dBm (1..=30), per radio; applied live
@@ -682,6 +809,58 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         }
         set.push(("AP_ACS_SCANS".into(), n.to_string()));
     }
+    for (k, v) in [("AP_COORD24", input.coord24), ("AP_COORD5", input.coord5)] {
+        if let Some(d) = v {
+            set.push((k.into(), if d { "1" } else { "0" }.into()));
+        }
+    }
+    if let Some(list) = &input.coord_peers {
+        let mut out: Vec<String> = Vec::new();
+        for m in list {
+            let m = m.trim().to_ascii_lowercase();
+            if !valid_mac(&m) {
+                return Err(invalid(format!("{m:?} is not a MAC address (channel coordination peers)")));
+            }
+            if !out.contains(&m) {
+                out.push(m);
+            }
+        }
+        if out.len() > 16 {
+            return Err(invalid("at most 16 channel coordination peers"));
+        }
+        set.push(("AP_COORD_PEERS".into(), out.join(" ")));
+    }
+    if let Some(n) = input.coord_min_signal {
+        if !(-100..=-30).contains(&n) {
+            return Err(invalid("weakest access point to coordinate with: -100 to -30 dBm"));
+        }
+        set.push(("AP_COORD_MIN_SIGNAL".into(), n.to_string()));
+    }
+    if let Some(n) = input.coord_delay {
+        if n > 3600 {
+            return Err(invalid("first channel re-check: 0 to 3600 seconds after start"));
+        }
+        set.push(("AP_COORD_DELAY".into(), n.to_string()));
+    }
+    if let Some(n) = input.coord_interval {
+        if n != 0 && !(60..=86400).contains(&n) {
+            return Err(invalid("channel re-check interval: 0 (never) or 60 to 86400 seconds"));
+        }
+        set.push(("AP_COORD_INTERVAL".into(), n.to_string()));
+    }
+    if let Some(q) = &input.coord_quiet {
+        let q = q.trim();
+        if !valid_quiet(q) {
+            return Err(invalid("quiet hours for channel moves: empty (any time) or hours like 1-5"));
+        }
+        set.push(("AP_COORD_QUIET".into(), q.to_string()));
+    }
+    if let Some(n) = input.coord_scan_secs {
+        if !(5..=120).contains(&n) {
+            return Err(invalid("channel scan time: 5 to 120 seconds"));
+        }
+        set.push(("AP_COORD_SCAN_SECS".into(), n.to_string()));
+    }
     if let Some(he) = input.wifi6 {
         set.push(("AP_HE".into(), if he { "1" } else { "0" }.into()));
     }
@@ -732,6 +911,14 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         "AP_CHANLIST24",
         "AP_CHANLIST5",
         "AP_ACS_SCANS",
+        "AP_COORD24",
+        "AP_COORD5",
+        "AP_COORD_PEERS",
+        "AP_COORD_MIN_SIGNAL",
+        "AP_COORD_DELAY",
+        "AP_COORD_INTERVAL",
+        "AP_COORD_QUIET",
+        "AP_COORD_SCAN_SECS",
         "AP_HE",
         "AP_TXPOWER24",
         "AP_TXPOWER5",
@@ -1388,7 +1575,22 @@ fn radio_state(f: &EnvFile) -> RadioState {
     let c = view(f);
     let mut v = serde_json::to_value(&c).unwrap_or(Value::Null);
     if let Some(o) = v.as_object_mut() {
-        for k in ["txpower24", "txpower5", "names", "blocked"] {
+        // live settings: transmit power, names, block lists, and the channel coordination (ap-coord re-reads ap.env
+        // at every check, the channel list is planned at the next radio start anyway)
+        for k in [
+            "txpower24",
+            "txpower5",
+            "names",
+            "blocked",
+            "coord24",
+            "coord5",
+            "coord_peers",
+            "coord_min_signal",
+            "coord_delay",
+            "coord_interval",
+            "coord_quiet",
+            "coord_scan_secs",
+        ] {
             o.remove(k);
         }
         if let Some(nets) = o.get_mut("networks").and_then(Value::as_array_mut) {
@@ -1943,6 +2145,64 @@ mod tests {
         // "0" and "" are auto too (what the `ap` script treats as ACS)
         let c = view(&parse("AP_CHAN24=0\nAP_CHAN5=\n"));
         assert_eq!((c.chan24.as_str(), c.chan5.as_str()), ("auto", "auto"));
+    }
+
+    #[test]
+    fn channel_coordination_defaults_round_trip_validate_and_stay_live() {
+        // on by default per band, nothing listed, the documented timings (board.sh)
+        let c = view(&parse("AP_SSIDS=p\nSSID_p=P KEY_p=secretpw1\n"));
+        assert!(c.coord24 && c.coord5);
+        assert!(c.coord_peers.is_empty());
+        assert_eq!(
+            (c.coord_min_signal, c.coord_delay, c.coord_interval, c.coord_scan_secs),
+            (-90, 120, 3600, 25)
+        );
+        assert_eq!(c.coord_quiet, "1-5");
+        let f = sample();
+        let n = update(
+            &f,
+            &WifiInput {
+                coord5: Some(false),
+                coord_peers: Some(vec!["AA:BB:CC:DD:EE:FF".into(), "aa:bb:cc:dd:ee:ff".into()]),
+                coord_min_signal: Some(-75),
+                coord_delay: Some(30),
+                coord_interval: Some(0),
+                coord_quiet: Some("".into()),
+                coord_scan_secs: Some(10),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let back = parse(&render(&n));
+        assert_eq!(back.get("AP_COORD5"), Some("0"));
+        assert_eq!(back.get("AP_COORD_PEERS"), Some("aa:bb:cc:dd:ee:ff"));
+        assert_eq!(back.get("AP_COORD_MIN_SIGNAL"), Some("-75"));
+        assert_eq!(back.get("AP_COORD_QUIET"), Some(""));
+        let v = view(&back);
+        assert!(!v.coord5 && v.coord24);
+        assert_eq!(v.coord_peers, vec!["aa:bb:cc:dd:ee:ff"]);
+        assert_eq!((v.coord_delay, v.coord_interval, v.coord_scan_secs), (30, 0, 10));
+        assert_eq!(v.coord_quiet, "");
+        // the declarative document carries them (export -> plan -> apply)
+        let d = export_doc(&back);
+        assert_eq!(d["coord5"], false);
+        assert_eq!(d["coord_peers"], json!(["aa:bb:cc:dd:ee:ff"]));
+        assert_eq!(d["coord_quiet"], "");
+        // none of them restarts the radios: ap-coord re-reads ap.env
+        assert!(!restart_needed(&f, &n));
+        for bad in [
+            WifiInput { coord_peers: Some(vec!["nope".into()]), ..Default::default() },
+            WifiInput { coord_min_signal: Some(-10), ..Default::default() },
+            WifiInput { coord_min_signal: Some(-120), ..Default::default() },
+            WifiInput { coord_delay: Some(4000), ..Default::default() },
+            WifiInput { coord_interval: Some(30), ..Default::default() },
+            WifiInput { coord_quiet: Some("25-3".into()), ..Default::default() },
+            WifiInput { coord_quiet: Some("night".into()), ..Default::default() },
+            WifiInput { coord_scan_secs: Some(2), ..Default::default() },
+        ] {
+            assert!(update(&f, &bad).is_err(), "{bad:?}");
+        }
+        assert!(valid_quiet("") && valid_quiet("1-5") && valid_quiet("22-6") && !valid_quiet("5") && !valid_quiet("1-24"));
     }
 
     #[test]
