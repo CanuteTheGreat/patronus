@@ -25,7 +25,37 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  verify-release:
+    # A release tag must be semver (vMAJOR.MINOR.PATCH[-pre]), equal the workspace version in Cargo.toml and have its
+    # CHANGELOG.md section (ci/release.sh cuts all three together). Policy: docs/UPDATE-POLICY.md. A manual dispatch
+    # for an existing older tag (cut before this check existed) is not verified.
+    name: Verify release tag
+    runs-on: linux-any
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Tag, Cargo version and changelog agree
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -eu
+          if [ "$EVENT" != push ]; then
+            echo "manual dispatch for an existing tag: not verified"
+            exit 0
+          fi
+          tag="$GITHUB_REF_NAME"
+          grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' <<<"$tag" ||
+            { echo "::error::$tag is not a semver release tag (vMAJOR.MINOR.PATCH[-pre])"; exit 1; }
+          cargo_ver="$(python3 -c 'import re; print(re.search(r"\[workspace\.package\][^\[]*?\nversion\s*=\s*\"([^\"]+)\"", open("Cargo.toml").read()).group(1))')"
+          [ "v$cargo_ver" = "$tag" ] ||
+            { echo "::error::tag $tag but Cargo.toml says $cargo_ver: cut releases with ci/release.sh"; exit 1; }
+          python3 ci/changelog.py --check
+          python3 ci/changelog.py --section "$tag"
+
   build-release:
+    needs: [verify-release]
     name: Build and attach (${{ matrix.target }})
     strategy:
       fail-fast: false
@@ -66,6 +96,14 @@ jobs:
       - name: Build patronus-web and patronus-cli
         run: cargo build --release -p patronus-web -p patronus-cli
 
+      # The crates inside the binaries just built (same Cargo.lock: the build generated it), with their license texts.
+      # Both targets are resolved by one run; only the x86_64 job attaches it to the release.
+      - name: Third-party license list
+        run: |
+          set -eu
+          python3 ci/third-party-licenses.py --out THIRD-PARTY-LICENSES.txt --gzip --check-text
+          ls -l THIRD-PARTY-LICENSES.txt*
+
       - name: Create the archive
         run: |
           set -eu
@@ -73,7 +111,7 @@ jobs:
           d=patronus-$v-${{ matrix.target }}
           mkdir -p "dist/$d"
           cp target/release/patronus-web target/release/patronus-cli "dist/$d/"
-          cp README.md LICENSE CHANGELOG.md "dist/$d/"
+          cp README.md LICENSE CHANGELOG.md THIRD-PARTY-LICENSES.txt "dist/$d/"
           cp -r docs "dist/$d/docs"
           tar -C dist -czf "$d.tar.gz" "$d"
           sha256sum "$d.tar.gz" > "$d.tar.gz.sha256"
@@ -90,7 +128,9 @@ jobs:
           set -eu
           command -v gpgv >/dev/null || sudo apt-get install -y gnupg gpgv
           d=patronus-$TAG-${{ matrix.target }}
-          bash gentoo/live-iso/common/sign-artifacts.sh "$d.tar.gz" "$d.tar.gz.sha256"
+          files="$d.tar.gz $d.tar.gz.sha256"
+          if [ "${{ matrix.target }}" = x86_64-unknown-linux-gnu ]; then files="$files THIRD-PARTY-LICENSES.txt"; fi
+          bash gentoo/live-iso/common/sign-artifacts.sh $files
 
       - name: Attach to the release
         env:
@@ -104,7 +144,9 @@ jobs:
           id=$(rel_id)
           if [ -z "$id" ]; then
             # the CHANGELOG section of this version is the release body
-            awk -v v="$ver" '$0 ~ "^## \\[" v "\\]" {f=1; next} f && /^## \[/ {exit} f' CHANGELOG.md > body.md || true
+            python3 ci/changelog.py --section "$tag" > body.md 2>/dev/null ||
+              awk -v v="$ver" '$0 ~ "^## \\[" v "\\]" {f=1; next} f && /^## \[/ {exit} f' CHANGELOG.md > body.md || true
+            printf '\nUpdate and rollback policy: docs/UPDATE-POLICY.md. Third-party licenses: THIRD-PARTY-LICENSES.txt (attached).\n' >> body.md
             [ -s body.md ] || echo "Release $tag" > body.md
             pre=false; case "$tag" in *alpha*|*beta*|*rc*) pre=true ;; esac
             b=$(python3 -c 'import json,sys;print(json.dumps({"tag_name":sys.argv[1],"target_commitish":sys.argv[2],"name":sys.argv[1],"body":open("body.md").read(),"prerelease":sys.argv[3]=="true"}))' "$tag" "$(git rev-parse HEAD)" "$pre")
@@ -113,8 +155,10 @@ jobs:
           fi
           [ -n "$id" ] || { echo "cannot find or create the release of $tag"; exit 1; }
           # Forgejo keeps assets on Backblaze B2, which intermittently drops a PUT: retry with a fresh slot each time
+          extra=""
+          [ "${{ matrix.target }}" = x86_64-unknown-linux-gnu ] && extra="THIRD-PARTY-LICENSES.txt THIRD-PARTY-LICENSES.txt.asc"
           for f in patronus-$tag-${{ matrix.target }}.tar.gz patronus-$tag-${{ matrix.target }}.tar.gz.sha256 \
-                   patronus-$tag-${{ matrix.target }}.tar.gz.asc patronus-$tag-${{ matrix.target }}.tar.gz.sha256.asc; do
+                   patronus-$tag-${{ matrix.target }}.tar.gz.asc patronus-$tag-${{ matrix.target }}.tar.gz.sha256.asc $extra; do
             ok=
             for n in 1 2 3 4 5 6; do
               old=$(curl -fsS "${auth[@]}" "$api/releases/$id/assets" | python3 -c 'import json,sys;print(" ".join(str(a["id"]) for a in json.load(sys.stdin) if a["name"]==sys.argv[1]))' "$f")

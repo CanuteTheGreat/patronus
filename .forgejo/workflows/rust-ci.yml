@@ -43,8 +43,58 @@ jobs:
         with:
           fetch-depth: 0
       - run: python3 ci/check-public-leaks.py
+      - name: CHANGELOG.md matches the release tags (ci/changelog.py; releases are cut with ci/release.sh)
+        run: python3 ci/changelog.py --check
       - if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/'))
         run: python3 ci/check-public-leaks.py --commits "origin/${{ github.base_ref || 'main' }}..HEAD"
+
+  dependency-licenses:
+    name: Dependency licenses (cargo-deny)
+    # Every crate in the lockfile must carry a license from the allowlist in .cargo/deny.toml (GPL-3.0-or-later
+    # compatible), and ci/third-party-licenses.py must be able to produce THIRD-PARTY-LICENSES.txt (a text for
+    # every crate, same bytes twice). Only cargo metadata runs (no compile), so any arch serves. cargo-deny is
+    # installed from source with --locked at the version in ci/cargo-deny-version and cached by that version.
+    runs-on: linux-any
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 2
+    container:
+      image: catthehacker/ubuntu:act-26.04
+      options: --memory 6g --memory-swap 6g --cpus 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: cargo-deny version
+        id: v
+        run: echo "ver=$(tr -d '[:space:]' < ci/cargo-deny-version)" >> "$GITHUB_OUTPUT"
+      - name: Cache cargo-deny
+        id: cd
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-deny-${{ steps.v.outputs.ver }}
+      - name: Install cargo-deny (pinned, --locked)
+        if: steps.cd.outputs.cache-hit != 'true'
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
+          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
+          sudo apt-get install -y build-essential pkg-config libssl-dev
+          cargo install cargo-deny --version "${{ steps.v.outputs.ver }}" --locked
+      - name: Generate Cargo.lock
+        # gitignored in this workspace (see the cargo-audit step of lint-test-audit)
+        run: cargo generate-lockfile
+      - name: cargo deny check licenses
+        run: cargo deny --manifest-path Cargo.toml --config .cargo/deny.toml check --hide-inclusion-graph licenses
+      - name: THIRD-PARTY-LICENSES.txt can be generated, with a text for every crate, reproducibly
+        run: |
+          set -eu
+          python3 ci/third-party-licenses.py --out /tmp/tpl-1.txt --gzip --check-text
+          python3 ci/third-party-licenses.py --out /tmp/tpl-2.txt --gzip
+          cmp /tmp/tpl-1.txt /tmp/tpl-2.txt
+          cmp /tmp/tpl-1.txt.gz /tmp/tpl-2.txt.gz
+          ls -l /tmp/tpl-1.txt /tmp/tpl-1.txt.gz
 
   plan:
     name: Plan (what needs to run)
@@ -427,7 +477,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-netlabf-
       - name: Lane J + K scenarios in a capped NET_ADMIN/SYS_ADMIN container
-        run: ci/netlab/run.sh ci/netlab/lane-j-*.sh ci/netlab/lane-k-*.sh ci/netlab/lane-n-*.sh ci/netlab/lane-s-*.sh
+        run: ci/netlab/run.sh ci/netlab/lane-j-*.sh ci/netlab/lane-k-*.sh ci/netlab/lane-n-*.sh ci/netlab/lane-s-*.sh ci/netlab/lane-t-*.sh
 
   feature-matrix:
     # `cargo test --workspace` only ever compiles default features, so every
@@ -817,6 +867,13 @@ jobs:
         # page back to /login after a successful sign-in whenever another cookie was stored for the address.
         # Also: the login page/sign-in remove the old cookies, refusals say why, and are in the web log.
         run: ci/stale-origin-login-e2e.sh patronus/web:${{ github.sha }}
+
+      - name: "Accessibility gate (axe-core on the ten most used pages, 1280 and 390 px, light and dark, real Firefox and Chromium)"
+        # ci/a11y/axe_gate.py with the vendored axe-core; pages, impact threshold and justified false positives are in
+        # ci/a11y/a11y-config.json and axe-allowlist.json. A serious or critical violation fails the job.
+        run: |
+          python3 -m unittest discover -s ci/a11y -p 'test_*.py'
+          ci/a11y/run-e2e.sh patronus/web:${{ github.sha }}
 
       - name: Verify the ebuild install (binaries, USE flags, service files)
         run: |

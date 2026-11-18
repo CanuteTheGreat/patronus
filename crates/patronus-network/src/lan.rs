@@ -69,6 +69,7 @@ pub const LAN_TABLES: &[&str] = &[
     "frr_bgp_networks",
     "frr_ospf_interfaces",
     "wol_hosts",
+    "guest_vouchers",
     "edge_endpoints",
     "edge_subnets",
     // signed plugins (USE=plugins)
@@ -927,6 +928,8 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::vrf::VrfApplier));
     #[cfg(feature = "segmentation")]
     v.push(Arc::new(crate::seg::SegApplier::default()));
+    #[cfg(feature = "guest")]
+    v.push(Arc::new(crate::guest::GuestApplier::default()));
     #[cfg(feature = "wifi-ap")]
     v.push(Arc::new(crate::wireless::WifiApplier::default()));
     #[cfg(feature = "openvpn")]

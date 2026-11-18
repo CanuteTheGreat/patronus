@@ -49,7 +49,7 @@
     <p class="empty">No DHCP pool configured: the router hands out no addresses. Add one below.</p>
     {% else %}
     <table class="lan" id="dhcp-pools">
-        <thead><tr><th>Interface</th><th>Range</th><th>Lease</th><th>Gateway</th><th>DNS</th><th>Domain</th><th>NTP</th><th>Enabled</th><th></th></tr></thead>
+        <thead><tr><th>Interface</th><th>Range</th><th>Lease</th><th>Gateway</th><th>DNS</th><th>Domain</th><th>NTP</th><th>Enabled</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for p in pools %}
         <tr>
@@ -67,7 +67,7 @@
             <b>Static mappings</b>
             {% if p.statics.is_empty() %}<span class="empty">none</span>{% else %}
             <table class="lan">
-                <thead><tr><th>MAC</th><th>IP address</th><th>Hostname</th><th></th></tr></thead>
+                <thead><tr><th>MAC</th><th>IP address</th><th>Hostname</th><th><span class="sr-only">Actions</span></th></tr></thead>
                 <tbody>
                 {% for m in p.statics %}
                 <tr><td class="mono">{{ m.mac }}</td><td class="mono">{{ m.ip }}</td><td>{{ m.hostname }}</td>
@@ -109,7 +109,7 @@
     <p class="empty">No leases yet. Leases appear here as soon as a client gets an address.</p>
     {% else %}
     <table class="lan" id="dhcp-leases">
-        <thead><tr><th>IP address</th><th>MAC / DUID</th><th>Hostname</th><th>Expires</th><th>State</th><th>Type</th><th></th></tr></thead>
+        <thead><tr><th>IP address</th><th>MAC / DUID</th><th>Hostname</th><th>Expires</th><th>State</th><th>Type</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for l in leases %}
         <tr>
@@ -128,7 +128,7 @@
     <div class="card-header"><h2 class="card-title">DHCPv6</h2></div>
     {% if v6.is_empty() %}<p class="empty">No DHCPv6 pool. Clients only ask for DHCPv6 addresses when the router advertisement says so (managed/assisted mode).</p>{% else %}
     <table class="lan" id="dhcp6-pools">
-        <thead><tr><th>Interface</th><th>Range</th><th>Prefix</th><th>Lease</th><th>DNS</th><th>Enabled</th><th></th></tr></thead>
+        <thead><tr><th>Interface</th><th>Range</th><th>Prefix</th><th>Lease</th><th>DNS</th><th>Enabled</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for p in v6 %}
         <tr><td>{{ p.interface }}</td><td class="mono">{{ p.range }}</td><td>/{{ p.prefix_len }}</td><td>{{ p.lease_time }} s</td>
@@ -153,7 +153,7 @@
     <div class="card-header"><h2 class="card-title">Router advertisements (SLAAC)</h2></div>
     {% if ras.is_empty() %}<p class="empty">No router advertisements: IPv6 clients on the LAN get no prefix or default route from this router.</p>{% else %}
     <table class="lan" id="ra-list">
-        <thead><tr><th>Interface</th><th>Mode</th><th>Prefix</th><th>RDNSS</th><th>Interval</th><th>Enabled</th><th></th></tr></thead>
+        <thead><tr><th>Interface</th><th>Mode</th><th>Prefix</th><th>RDNSS</th><th>Interval</th><th>Enabled</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for r in ras %}
         <tr><td>{{ r.interface }}</td><td>{{ r.mode }}</td><td class="mono">{{ r.prefix }}</td>
@@ -184,7 +184,7 @@
     <div class="card-header"><h2 class="card-title">DHCP relay</h2></div>
     {% if relays.is_empty() %}<p class="empty">No relay. A relay forwards DHCP requests from an interface to a DHCP server elsewhere (an interface with a local pool cannot also relay).</p>{% else %}
     <table class="lan" id="relay-list">
-        <thead><tr><th>Interface</th><th>Servers</th><th>Enabled</th><th></th></tr></thead>
+        <thead><tr><th>Interface</th><th>Servers</th><th>Enabled</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for r in relays %}
         <tr><td>{{ r.interface }}</td><td class="mono">{{ r.servers }}</td><td>{% if r.enabled %}yes{% else %}no{% endif %}</td>

@@ -100,6 +100,10 @@
   [
    "PERFORMANCE_TUNING.md",
    "Performance tuning"
+  ],
+  [
+   "UPDATE-POLICY.md",
+   "Versions, updates and rollback"
   ]
  ],
  "docs_index": [
@@ -112,6 +116,11 @@
    "QUICKSTART.md",
    "Quick start",
    ""
+  ],
+  [
+   "UPDATE-POLICY.md",
+   "Versions, updates and rollback",
+   "Version numbers, supported versions, security-fix targets, update and rollback paths"
   ],
   [
    "PRODUCTION_DEPLOYMENT.md",

@@ -1,21 +1,22 @@
-# cargo-deny configuration for Patronus Firewall
-# https://embarkstudios.github.io/cargo-deny/
+# cargo-deny policy for Patronus (schema of cargo-deny 0.19+; the CI gate pins the version in
+# ci/cargo-deny-version). The gate that runs in CI is `cargo deny check licenses`
+# (rust-ci.yml, job "Dependency licenses"); advisories are gated by cargo-audit (.cargo/audit.toml),
+# bans and sources are checked by `cargo deny check bans sources` below as well.
+#
+# Keys removed in cargo-deny 0.16-0.19 (`vulnerability`, `unlicensed`, `notice`, `deny`, `default`,
+# `copyleft`, `allow-osi-fsf-free`) are errors in current releases: do not add them back. A license
+# that is not in `allow` is denied; to accept a new one, add it here with the crate that needs it.
 
-[advisories]
-# Vulnerability database sources
-db-path = "~/.cargo/advisory-db"
-db-urls = ["https://github.com/rustsec/advisory-db"]
-vulnerability = "deny"
-unmaintained = "warn"
-yanked = "warn"
-notice = "warn"
-ignore = [
-    # Add specific CVE IDs to ignore (with justification comments)
+[graph]
+# The shipped binaries are Linux builds; the lockfile also lists crates that only build on other
+# platforms (windows-sys, ...) and would otherwise need licenses we never ship.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
 ]
 
 [licenses]
-# License policy
-unlicensed = "deny"
+confidence-threshold = 0.8
 allow = [
     "MIT",
     "Apache-2.0",
@@ -23,40 +24,32 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "Unicode-DFS-2016",
-    "GPL-3.0-or-later", # Patronus license
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",             # file-level copyleft, GPL-3.0 compatible (MPL-2.0 section 3.3): colored, ascii_utils
+    "CC0-1.0",             # public-domain dedication: notify
+    "CDLA-Permissive-2.0", # data licence of the root certificate list: webpki-roots
+    "GPL-3.0-or-later", # Patronus' own workspace crates
 ]
-deny = [
-    "AGPL-3.0",  # Copyleft
-]
-copyleft = "warn"
-allow-osi-fsf-free = "both"
-default = "deny"
-confidence-threshold = 0.8
+
+# ring 0.16 has no license field; its LICENSE file mixes ISC, MIT and the OpenSSL license (parts derived from
+# BoringSSL). The OpenSSL license is not accepted for any other crate (exceptions below).
+[[licenses.clarify]]
+crate = "ring@0.16.20"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[[licenses.exceptions]]
+crate = "ring"
+allow = ["OpenSSL"]
 
 [bans]
-# Crate bans and restrictions
-multiple-versions = "warn"
+multiple-versions = "allow"
 wildcards = "allow"
 highlight = "all"
-workspace-default-features = "allow"
-external-default-features = "allow"
-
-# Specific crates to deny
-deny = [
-    # { name = "openssl", wrappers = [] }, # Prefer rustls
-]
-
-skip = []
-skip-tree = []
 
 [sources]
-# Source repository policy
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = []
-
-[sources.allow-org]
-# Allow specific GitHub orgs
-github = []

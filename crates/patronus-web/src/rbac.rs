@@ -32,7 +32,14 @@ pub const AREAS: &[(&str, &str)] = &[
 /// The area a request path belongs to; `None` = not restricted by groups
 /// (login/logout, one's own password and 2FA, static assets).
 pub fn area_for_path(path: &str) -> Option<&'static str> {
-    if path.starts_with("/static/") || path.starts_with("/api/auth/") || path == "/login" {
+    // The license information is for every signed-in account (GPL notices must stay reachable), not a
+    // privilege of any group.
+    if path.starts_with("/static/")
+        || path.starts_with("/api/auth/")
+        || path == "/login"
+        || path == "/licenses"
+        || path.starts_with("/licenses/")
+    {
         return None;
     }
     let p = path.strip_prefix("/api").unwrap_or(path);
@@ -265,6 +272,10 @@ mod tests {
         assert_eq!(area_for_path("/api/unknown-thing"), Some("system"));
         assert_eq!(area_for_path("/"), Some("dashboard"));
         assert_eq!(area_for_path("/api/auth/password"), None);
+        // licenses: open to every signed-in account, whatever its group
+        assert_eq!(area_for_path("/licenses"), None);
+        assert_eq!(area_for_path("/licenses/third-party.txt"), None);
+        assert_eq!(area_for_path("/licensesx"), Some("system"));
     }
 
     #[test]

@@ -109,6 +109,8 @@ pub mod mdns;
 #[cfg(feature = "nat64")]
 pub mod nat64;
 
+#[cfg(feature = "guest")]
+pub mod guest;
 #[cfg(feature = "l2tp")]
 pub mod l2tp;
 #[cfg(feature = "plugins")]
@@ -117,6 +119,7 @@ pub mod packages;
 pub mod plugins;
 #[cfg(feature = "web-proxy")]
 pub mod proxy;
+pub mod radio;
 #[cfg(feature = "segmentation")]
 pub mod seg;
 #[cfg(feature = "upnp")]

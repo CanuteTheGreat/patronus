@@ -47,6 +47,26 @@ struct SvcTemplate {
 
 async fn page(Path(slug): Path<String>, me: crate::auth::AuthUser) -> Response {
     let Some(m) = patronus_network::svc::find(&slug) else {
+        if slug == "guest" {
+            let why = if crate::routes::api::wifi::role()
+                == crate::routes::api::setup::DeviceRole::Ap
+            {
+                "This unit is an access point: the main router provides the guest network (VLAN, DHCP, \
+                 firewall isolation, speed caps) and this unit only carries its Wi-Fi name."
+            } else {
+                "This build does not include the guest network (its USE flag <code>guest</code> is off, \
+                 or this router-tier image leaves it out to keep the device's flash and memory small)."
+            };
+            return (
+                StatusCode::NOT_FOUND,
+                Html(format!(
+                    "<!DOCTYPE html><html><head><title>Guest network unavailable - Patronus</title></head><body>\
+                     <h1>Guest network is not available here</h1><p id=\"guest-unavailable\">{why}</p>\
+                     <p><a href=\"/\">Back to the dashboard</a></p></body></html>"
+                )),
+            )
+                .into_response();
+        }
         return (
             StatusCode::NOT_FOUND,
             Html(format!(

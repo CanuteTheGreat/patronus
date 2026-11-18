@@ -57,24 +57,24 @@ fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() :
 
 <div class="stat-grid">
     <div class="stat-card">
-        <h3>Interfaces</h3>
+        <h2>Interfaces</h2>
         <div class="value">{{ interfaces.len() }}</div>
         <div class="label"><a href="/interfaces">Interfaces</a></div>
     </div>
     <div class="stat-card">
-        <h3>Active firewall rules</h3>
+        <h2>Active firewall rules</h2>
         <div class="value">{{ active_rules }}</div>
         <div class="label"><a href="/firewall">Firewall</a></div>
     </div>
     {% if vpn_errors.is_empty() %}
     <div class="stat-card">
-        <h3>VPN connections</h3>
+        <h2>VPN connections</h2>
         <div class="value" id="vpn-connections">{{ vpn_connections }}</div>
         <div class="label">WireGuard peers with a handshake in the last 3 min + established IPsec SAs (<a href="/vpn">VPN</a>)</div>
     </div>
     {% else %}
     <div class="stat-card warning" id="vpn-connections-card">
-        <h3>VPN connections</h3>
+        <h2>VPN connections</h2>
         <div class="value" id="vpn-connections">{% if vpn_connections > 0 %}at least {{ vpn_connections }}{% else %}unknown{% endif %}</div>
         <div class="alert-error" id="vpn-errors">VPN state could not be read:
             {% for e in vpn_errors %}{{ e }}{% if !loop.last %}; {% endif %}{% endfor %}</div>
@@ -82,7 +82,7 @@ fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() :
     </div>
     {% endif %}
     <div class="stat-card">
-        <h3>System</h3>
+        <h2>System</h2>
         <div class="label">CPU {{ "{:.1}"|format(system_info.cpu_usage) }}% &middot;
             memory {{ "{:.1}"|format(system_info.memory_usage) }}% &middot;
             disk / {{ "{:.1}"|format(system_info.disk_usage) }}%</div>

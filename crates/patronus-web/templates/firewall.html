@@ -9,6 +9,7 @@
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         .stat-card { border: 1px solid var(--line); padding: 15px; margin: 10px; border-radius: 5px; }
+        .stat-card h2 { font-size: 1.17em; margin: 1em 0; }
         .btn { padding: 6px 12px; margin: 2px; border: none; border-radius: 4px; cursor: pointer; }
         .btn-primary { background: var(--b-primary); color: white; }
         .btn-secondary { background: var(--b-secondary); color: white; }
@@ -39,17 +40,18 @@
     </style>
 </head>
 <body>
+<main>
     <p><a href="/">&larr; Dashboard</a></p>
     <h1>Firewall</h1>
 
     <div style="display: flex; flex-wrap: wrap; gap: 10px;">
-        <div class="stat-card"><h3>Filter Rules</h3>
+        <div class="stat-card"><h2>Filter Rules</h2>
             <div>Total: {{ filter_rules.len() }}</div><div>Enabled: {{ enabled_filter_rules }}</div></div>
-        <div class="stat-card"><h3>NAT Rules</h3>
+        <div class="stat-card"><h2>NAT Rules</h2>
             <div>Total: {{ nat_rules.len() }}</div><div>Enabled: {{ enabled_nat_rules }}</div></div>
-        <div class="stat-card"><h3>Allow Rules</h3><div>{{ accept_rules_count }}</div></div>
-        <div class="stat-card"><h3>Block Rules</h3><div>{{ drop_rules_count }}</div></div>
-        <div class="stat-card"><h3>Outbound NAT</h3><div>{{ outbound_mode }}</div></div>
+        <div class="stat-card"><h2>Allow Rules</h2><div>{{ accept_rules_count }}</div></div>
+        <div class="stat-card"><h2>Block Rules</h2><div>{{ drop_rules_count }}</div></div>
+        <div class="stat-card"><h2>Outbound NAT</h2><div>{{ outbound_mode }}</div></div>
     </div>
 
     <div id="msg" class="msg"></div>
@@ -192,7 +194,7 @@
             NAT reflection lets LAN clients use the WAN address too.</p>
         <table id="pf-table">
             <thead><tr><th>Name</th><th>Interface</th><th>Proto</th><th>External port</th><th>Source</th>
-                <th>Target</th><th>Reflection</th><th>On</th><th></th></tr></thead>
+                <th>Target</th><th>Reflection</th><th>On</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
             {% for r in port_forwards %}
             <tr data-nat-id="{{ r.id }}">
@@ -250,7 +252,7 @@
             <button class="btn btn-primary" onclick="saveMode()">Save mode</button>
         </fieldset>
         <table id="outbound-table">
-            <thead><tr><th>Name</th><th>Type</th><th>Interface</th><th>Source</th><th>Destination</th><th>Translation</th><th>On</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Type</th><th>Interface</th><th>Source</th><th>Destination</th><th>Translation</th><th>On</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
             {% for r in outbound_rules %}
             <tr data-nat-id="{{ r.id }}">
@@ -291,7 +293,7 @@
         <p class="hint">1:1 NAT maps an external address to one internal host in both directions.
             Add a filter rule (forward chain) to allow the inbound connections you want.</p>
         <table id="onetoone-table">
-            <thead><tr><th>Name</th><th>Interface</th><th>External</th><th>Internal</th><th>On</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Interface</th><th>External</th><th>Internal</th><th>On</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
             {% for r in one_to_one %}
             <tr data-nat-id="{{ r.id }}">
@@ -330,7 +332,7 @@
             rewritten to the external prefix on the way out of the interface and back for traffic to the external prefix.
             Both prefixes must have the same length; host bits are kept. Add a filter rule (forward chain) for what may come in.</p>
         <table id="npt-table">
-            <thead><tr><th>Name</th><th>Interface</th><th>External prefix</th><th>Internal prefix</th><th>On</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Interface</th><th>External prefix</th><th>Internal prefix</th><th>On</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
             {% for r in npt %}
             <tr data-nat-id="{{ r.id }}">
@@ -369,7 +371,7 @@
             addresses, networks and ranges; port aliases hold ports and port ranges. Saving an alias
             updates its nftables set immediately, without reloading the ruleset.</p>
         <table id="aliases-table">
-            <thead><tr><th>Name</th><th>Type</th><th>Entries</th><th>Description</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Type</th><th>Entries</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
             {% for a in aliases %}
             <tr data-alias="{{ a.name }}">
@@ -414,7 +416,7 @@
         <p class="hint">A rule with a schedule is enforced only during the schedule's window (local
             time on the firewall). A window whose end is before its start runs past midnight.</p>
         <table id="schedules-table">
-            <thead><tr><th>Name</th><th>Days</th><th>From</th><th>Until</th><th>Now</th><th>Description</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Days</th><th>From</th><th>Until</th><th>Now</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
             {% for s in schedules %}
             <tr data-schedule="{{ s.name }}" data-days="{{ s.days }}" data-start="{{ s.start }}" data-end="{{ s.end }}" data-description="{{ s.description }}">
@@ -475,7 +477,7 @@
                 <button type="submit" class="btn btn-secondary">Look up</button> <span id="geo-lookup-result"></span>
             </form>
         </fieldset>
-        <table id="geo-table"><thead><tr><th>Alias</th><th>Countries</th><th>Ranges</th><th>Status</th><th>Used by rules</th><th></th></tr></thead><tbody></tbody></table>
+        <table id="geo-table"><thead><tr><th>Alias</th><th>Countries</th><th>Ranges</th><th>Status</th><th>Used by rules</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
         <form id="geo-form" onsubmit="return saveGeo(event)">
             <fieldset><legend>Add a country set</legend>
                 <div class="row">
@@ -500,7 +502,7 @@
             whatever a feed lists. Put hosts that must never be blocked into a host alias named
             <code>ti_allow</code>. A failed refresh keeps the previous list.</p>
         <div id="threat-summary" class="hint">loading...</div>
-        <table id="threat-table"><thead><tr><th>Feed</th><th>On</th><th>Direction</th><th>Refresh</th><th>Entries</th><th>Status</th><th></th></tr></thead><tbody></tbody></table>
+        <table id="threat-table"><thead><tr><th>Feed</th><th>On</th><th>Direction</th><th>Refresh</th><th>Entries</th><th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
         <button class="btn btn-secondary" onclick="refreshThreat()">Refresh enabled feeds now</button>
         <form id="threat-budget" onsubmit="return saveBudget(event)" style="display:inline">
             <label>Total entries across all feeds <input name="max_total" type="number" min="1000" max="1000000" value="400000"></label>
@@ -559,9 +561,10 @@
             <button class="btn btn-primary" type="submit">Show states</button>
         </form>
         <div id="states-summary" class="hint">loading...</div>
-        <table id="states-table"><thead><tr><th>Proto</th><th>Source</th><th>Destination</th><th>State</th><th>Expires (s)</th><th>Bytes</th><th></th></tr></thead><tbody></tbody></table>
+        <table id="states-table"><thead><tr><th>Proto</th><th>Source</th><th>Destination</th><th>State</th><th>Expires (s)</th><th>Bytes</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
     </div>
 
+</main>
 <script>
 const TAB_KEY = 'patronus-fw-tab';
 function showTab(id) {

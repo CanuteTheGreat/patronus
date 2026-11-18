@@ -156,6 +156,13 @@ pub trait Svc: Send + Sync {
     fn action_applier(&self) -> bool {
         false
     }
+
+    /// Does the button change stored settings that an applier must make real
+    /// (the web layer then runs the applier, snapshots first and undoes the
+    /// change if the apply fails)?
+    fn action_applies(&self, _name: &str) -> bool {
+        false
+    }
 }
 
 /// Every feature page compiled into this build.
@@ -188,6 +195,8 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     #[cfg(feature = "dynamic-routing")]
     v.push(Arc::new(crate::frr::FrrSvc));
     v.push(Arc::new(crate::wol::WolSvc));
+    #[cfg(feature = "guest")]
+    v.push(Arc::new(crate::guest::GuestSvc));
     #[cfg(feature = "sdwan-edge")]
     v.push(Arc::new(crate::edge::EdgeSvc));
     v
@@ -215,6 +224,7 @@ pub const SVC_TABLES: &[&str] = &[
     "wol_hosts",
     "edge_endpoints",
     "edge_subnets",
+    "guest_vouchers",
 ];
 
 pub fn find_coll(spec: &Spec, key: &str) -> Result<&'static Coll> {

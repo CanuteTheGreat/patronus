@@ -93,7 +93,7 @@
 <div class="card">
     <div class="card-header"><h2 class="card-title">Networks</h2></div>
     <table class="lan" id="wifi-networks">
-        <thead><tr><th>On</th><th>Name (SSID)</th><th>Bands</th><th>Security</th><th>Password</th><th>Hidden</th><th>Isolate clients</th><th>Guest</th><th></th></tr></thead>
+        <thead><tr><th>On</th><th>Name (SSID)</th><th>Bands</th><th>Security</th><th>Password</th><th>Hidden</th><th>Isolate clients</th><th>Guest</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody></tbody>
     </table>
     <p class="wifi-note">Leave a password empty to keep the current one. "Isolate clients" stops clients of that network from
@@ -109,7 +109,7 @@
 <div class="card">
     <div class="card-header"><h2 class="card-title">Blocked devices</h2></div>
     <table class="lan" id="wifi-blocked">
-        <thead><tr><th>Device (MAC)</th><th>Blocked on</th><th></th></tr></thead>
+        <thead><tr><th>Device (MAC)</th><th>Blocked on</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody></tbody>
     </table>
     {% if can_modify %}
@@ -127,7 +127,7 @@
     <div class="card-header"><h2 class="card-title">Connected clients</h2>
         <button class="btn btn-secondary" type="button" onclick="loadClients()">Refresh</button></div>
     <table class="lan" id="wifi-clients">
-        <thead><tr><th>Name</th><th>Device (MAC)</th><th>Address</th><th>Network</th><th>Band</th><th>Signal</th><th>Rate down / up</th><th>Connected</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Device (MAC)</th><th>Address</th><th>Network</th><th>Band</th><th>Signal</th><th>Rate down / up</th><th>Connected</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody><tr><td colspan="9" class="empty">Loading...</td></tr></tbody>
     </table>
     <p class="wifi-note">"Disconnect" drops a client once; it can join again with the password. Phones use a private

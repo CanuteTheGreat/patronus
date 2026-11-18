@@ -37,7 +37,7 @@ IUSE="
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp +plugins
-	+segmentation wifi-ap
+	+segmentation wifi-ap +guest
 	geoip geoip2
 	+aliases +insight
 	scheduled-rules
@@ -46,6 +46,7 @@ IUSE="
 	squid tinyproxy
 	+backup
 	gitops
+	+license-bundle
 	+systemd +openrc
 	test
 "
@@ -123,6 +124,7 @@ RDEPEND="
 	)
 	vlan? ( sys-apps/iproute2 )
 	segmentation? ( sys-apps/iproute2 net-firewall/nftables )
+	guest? ( net-dns/dnsmasq sys-apps/iproute2 net-firewall/nftables hostapd? ( net-wireless/hostapd ) )
 	wifi-ap? ( net-wireless/hostapd )
 	qos? ( sys-apps/iproute2 )
 	tc? ( sys-apps/iproute2 )
@@ -165,6 +167,7 @@ DEPEND="${RDEPEND}"
 BDEPEND="
 	|| ( >=dev-lang/rust-1.75 >=dev-lang/rust-bin-1.75 )
 	dev-libs/protobuf
+	license-bundle? ( dev-lang/python )
 "
 
 QA_FLAGS_IGNORED="usr/bin/patronus.*"
@@ -254,6 +257,7 @@ src_configure() {
 		$(usex plugins "plugins" "")
 		$(usex segmentation "segmentation" "")
 		$(usex wifi-ap "wifi-ap" "")
+		$(usex guest "guest" "")
 	)
 
 	cargo_src_configure --no-default-features
@@ -381,6 +385,7 @@ src_install() {
 		use plugins && webfeatures+=( plugins )
 		use segmentation && webfeatures+=( segmentation )
 		use wifi-ap && webfeatures+=( wifi-ap )
+		use guest && webfeatures+=( guest )
 		use syslog && webfeatures+=( syslog )
 		use netflow && webfeatures+=( netflow )
 		use igmp && webfeatures+=( igmp )
@@ -515,6 +520,19 @@ src_install() {
 	dodoc COMPETITIVE-ANALYSIS.md
 	dodoc INNOVATION-ROADMAP.md
 	dodoc -r docs/ 2>/dev/null || true
+
+	# Licenses of the Rust crates inside the binaries, compressed (about 1/5 of the text), served by the web UI's
+	# "Open-source licenses" page from /usr/share/doc/patronus (setting legal.licenses_file). Generated from the
+	# crate sources this build just used (offline); USE=-license-bundle leaves it out and the page says so.
+	if use license-bundle; then
+		if CARGO_NET_OFFLINE=true python3 ci/third-party-licenses.py \
+			--out "${T}/THIRD-PARTY-LICENSES.txt" --gzip; then
+			insinto /usr/share/doc/patronus
+			doins "${T}/THIRD-PARTY-LICENSES.txt.gz"
+		else
+			ewarn "could not generate the third-party license list: the web UI's licenses page will say it is not installed"
+		fi
+	fi
 
 	# Set permissions
 	fowners patronus:patronus /var/lib/patronus

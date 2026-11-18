@@ -105,6 +105,7 @@
             background: var(--bg);
         }
 
+        .nav-item.nav-unavailable { opacity: 0.6; font-style: italic; }
         .nav-item.active {
             background: var(--bg);
             border-left-color: var(--primary);
@@ -365,7 +366,7 @@
             box-shadow: 0 1px 3px var(--shadow);
         }
 
-        .stat-card h3 {
+        .stat-card h3, .stat-card h2 {
             font-size: 0.85rem;
             color: var(--text-muted);
             margin-bottom: 0.75rem;
@@ -478,6 +479,7 @@
         .btn-sm {
             padding: 0.25rem 0.75rem;
             font-size: 0.85rem;
+            min-height: 24px; /* WCAG 2.2 target size */
         }
 
         .btn-icon {
@@ -772,6 +774,10 @@
                         </svg>
                         <span>Device segmentation</span>
                     </a>
+                    <a href="/svc/guest" class="nav-item {% if page == "svc-guest" %}active{% endif %}">
+                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        <span>Guest network</span>
+                    </a>
                 </div>
 
                 <div class="nav-section">
@@ -1008,10 +1014,16 @@
         const need = {'/vpn': ['wireguard', 'ipsec', 'openvpn', 'l2tp'], '/dhcp': ['dhcp'], '/dns': ['dns'], '/ntp': ['ntp'], '/ha': ['ha'], '/qos': ['qos'],
             '/segmentation': ['segmentation'], '/segmentation/time': ['segmentation'], '/segmentation/dns': ['dns'], '/packages': ['plugins'],
             '/svc/syslog': ['syslog'], '/svc/netflow': ['netflow'], '/svc/igmp': ['igmp'], '/svc/mdns': ['mdns'], '/svc/nat64': ['nat64'], '/svc/l2tp': ['l2tp'],
-            '/svc/ids': ['intrusion-detection'], '/svc/frr': ['dynamic-routing']};
+            '/svc/ids': ['intrusion-detection'], '/svc/frr': ['dynamic-routing'], '/svc/guest': ['guest']};
         document.querySelectorAll('.sidebar-nav a.nav-item').forEach(a => {
             const f = need[a.getAttribute('href')];
-            if (f && !f.some(x => have.has(x))) a.style.display = 'none';
+            if (f && !f.some(x => have.has(x))) {
+                if (a.getAttribute('href') === '/svc/guest') {
+                    // never silently hidden: stays in the menu, marked, and the page says why
+                    a.classList.add('nav-unavailable'); a.title = 'Not available on this unit: open it to see why';
+                    const sp = a.querySelector('span'); if (sp && !sp.textContent.includes('unavailable')) sp.textContent += ' (unavailable)';
+                } else a.style.display = 'none';
+            }
         });
         // the Wi-Fi page: units whose radios this UI drives (router-tier access points)
         const wifi = document.getElementById('nav-wifi');
@@ -1033,5 +1045,25 @@
     </script>
     <script>if (location.pathname !== '/setup') fetch('/api/setup/status', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(d => { if (d && !d.completed && d.wizard !== false) document.getElementById('setup-banner').style.display = ''; }).catch(() => {});</script>
     {% block extra_scripts %}{% endblock %}
+    <script>
+    // Tables that scroll sideways on a narrow screen must be reachable by keyboard (WCAG 2.1.1): give a scrolling
+    // table with nothing focusable inside a tab stop, and take it away again when it stops scrolling.
+    (function () {
+        function fix() {
+            document.querySelectorAll('.content table, .table-container').forEach(el => {
+                const scrolls = el.scrollWidth > el.clientWidth + 1 && ['auto', 'scroll'].includes(getComputedStyle(el).overflowX);
+                const inner = el.querySelector('a[href], button, input, select, textarea, [tabindex]');
+                if (scrolls && !inner) el.setAttribute('tabindex', '0');
+                else if (el.getAttribute('tabindex') === '0' && el.dataset.scrollFocus !== undefined) el.removeAttribute('tabindex');
+                if (scrolls && !inner) el.dataset.scrollFocus = '';
+            });
+        }
+        let t;
+        const later = () => { clearTimeout(t); t = setTimeout(fix, 150); };
+        window.addEventListener('load', later);
+        window.addEventListener('resize', later);
+        new MutationObserver(later).observe(document.querySelector('.content') || document.body, {childList: true, subtree: true});
+    })();
+    </script>
 </body>
 </html>

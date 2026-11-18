@@ -278,6 +278,7 @@ pub const AP_ROUTER_PAGES: &[(&str, &str)] = &[
     ("/segmentation/time", "Time limits"),
     ("/segmentation/dns", "DNS policy and logs"),
     ("/insights", "Traffic insights"),
+    ("/svc/guest", "Guest network"),
 ];
 
 /// API prefixes whose changes only make sense on a router.
@@ -287,6 +288,7 @@ const AP_ROUTER_APIS: &[&str] = &[
     "/api/ddns",
     "/api/routing",
     "/api/segmentation",
+    "/api/svc/guest",
     "/api/setup/apply",
 ];
 
@@ -370,6 +372,17 @@ mod tests {
         assert!(ap_router_api_change(&Method::POST, "/api/dhcp/pools"));
         assert!(ap_router_api_change(&Method::PUT, "/api/routing/default"));
         assert!(ap_router_api_change(&Method::POST, "/api/setup/apply"));
+        // the guest network is the main router's job: an AP explains instead of offering a dead page
+        assert_eq!(
+            ap_router_page(&Method::GET, "/svc/guest/"),
+            Some("Guest network")
+        );
+        assert!(ap_router_api_change(&Method::PUT, "/api/svc/guest"));
+        assert!(ap_router_api_change(
+            &Method::POST,
+            "/api/svc/guest/action/open"
+        ));
+        assert!(!ap_router_api_change(&Method::PUT, "/api/svc/syslog"));
         assert!(!ap_router_api_change(&Method::GET, "/api/dhcp/leases"));
         assert!(!ap_router_api_change(&Method::PUT, "/api/wifi"));
         assert!(!ap_router_api_change(&Method::POST, "/api/dnsx"));
@@ -394,6 +407,11 @@ mod tests {
             "built but the main router's job on an AP"
         );
         assert!(ap.iter().any(|a| a["label"] == "Routing, gateways and NAT"));
+        // never silently hidden: an AP lists the guest network with the reason, built or not
+        assert!(
+            find(&ap, "guest").unwrap().contains("access point"),
+            "guest network on an AP: {ap:?}"
+        );
         let router = absent_features(&router_tier, "embedded", DeviceRole::Router);
         assert!(
             find(&router, "dhcp").is_none(),

@@ -36,7 +36,7 @@ if [ $# -eq 0 ]; then
   set -- ci/netlab/lane-*.sh ci/netlab/journey-*.sh ci/netlab/failure-*.sh ci/netlab/upgrade-*.sh
   if [ -z "${NETLAB_ALL:-}" ]; then
     keep=()
-    for s in "$@"; do case "$s" in */lane-j-*|*/lane-k-*|*/lane-n-*|*/lane-s-*) ;; *) keep+=("$s") ;; esac; done
+    for s in "$@"; do case "$s" in */lane-j-*|*/lane-k-*|*/lane-n-*|*/lane-s-*|*/lane-t-*) ;; *) keep+=("$s") ;; esac; done
     set -- "${keep[@]}"
   fi
 fi
@@ -54,6 +54,8 @@ cp "$BIN/patronus-web" "$OUT/patronus-web"
 for s in "$@"; do cp "$s" "$OUT/"; done
 cp ci/netlab/lib.sh "$OUT/"
 cp -r ci/netlab/fixtures "$OUT/"
+# lane T UI scenario drives this Playwright script
+cp ci/guest-page-e2e.py "$OUT/"
 # lane J XDP data plane: the shipped BPF program source
 cp crates/patronus-ebpf/src/xdp_firewall.bpf.c "$OUT/"
 OLD_ENV=
@@ -83,7 +85,7 @@ apt-get install -y -qq debconf-utils >/dev/null
 printf 'slapd slapd/password1 password Ldap-Admin-Pw-1\\nslapd slapd/password2 password Ldap-Admin-Pw-1\\nslapd slapd/domain string example.net\\nslapd shared/organization string Example\\nslapd slapd/no_configuration boolean false\\n' | debconf-set-selections
 apt-get install -y -qq slapd ldap-utils >/dev/null
 # lane N scenarios (OpenVPN, Squid, UPnP, DHCPv6-PD): installed here while DNS still works
-apt-get install -y -qq --no-install-recommends openvpn squid miniupnpc radvd isc-dhcp-server git >/dev/null
+apt-get install -y -qq --no-install-recommends openvpn squid miniupnpc radvd isc-dhcp-server git udhcpc >/dev/null
 apt-get install -y -qq --no-install-recommends miniupnpd-nftables >/dev/null 2>&1 || apt-get install -y -qq --no-install-recommends miniupnpd >/dev/null
 apt-get install -y -qq dhcpcd-base >/dev/null 2>&1 || apt-get install -y -qq dhcpcd5 >/dev/null 2>&1 || apt-get install -y -qq dhcpcd >/dev/null
 # wg(8) only; its "recommends" would pull wireguard-dkms + kernel headers

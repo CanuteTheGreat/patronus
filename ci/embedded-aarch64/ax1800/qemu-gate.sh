@@ -108,9 +108,13 @@ wapi() { curl -sk -b "$W/jar" -m 90 -o "$W/api.json" -w '%{http_code}' -H 'conte
 features_ap() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/features); f=$(cat "$W/api.json")
   [ "$c" = 200 ] && has_all "$f" '"role":"ap"' '"wifi_backend":true' || { echo "features: $c $f"; return 1; }
   case "$f" in *'"absent":['*'"feature":"ha"'*'not included in this router-tier image'*) ;; *) echo "no absent list: $f"; return 1;; esac
-  case "$f" in *'"feature":"dhcp"'*'access point'*) ;; *) echo "dhcp not explained as the main router's job: $f"; return 1;; esac; }
+  case "$f" in *'"feature":"dhcp"'*'access point'*) ;; *) echo "dhcp not explained as the main router's job: $f"; return 1;; esac
+  # the guest network is the main router's job: listed with that reason, never silently missing
+  case "$f" in *'"feature":"guest"'*'access point'*) ;; *) echo "guest network not explained as the main router's job: $f"; return 1;; esac; }
 ap_pages() { c=$(wapi https://127.0.0.1:$WEBP/dhcp); grep -q 'This unit is an access point' "$W/api.json" && [ "$c" = 200 ] || { echo "/dhcp: $c"; return 1; }
   c=$(wapi -X POST -d '{"start":"192.0.2.100","end":"192.0.2.150"}' https://127.0.0.1:$WEBP/api/dhcp/pools); [ "$c" = 409 ] || { echo "dhcp pool on an AP: HTTP $c"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/svc/guest); grep -q 'This unit is an access point' "$W/api.json" && [ "$c" = 200 ] || { echo "/svc/guest: $c"; return 1; }
+  c=$(wapi -X PUT -d '{"enabled":true}' https://127.0.0.1:$WEBP/api/svc/guest); [ "$c" = 409 ] || { echo "guest network change on an AP: HTTP $c"; return 1; }
   c=$(wapi https://127.0.0.1:$WEBP/wifi); [ "$c" = 200 ] && grep -q 'id="wifi-networks"' "$W/api.json" || { echo "/wifi page: $c"; return 1; }; }
 WIFI_SET='{"country":"US","chan24":"6","chan5":"36","width5":80,"wifi6":true,"networks":[{"ssid":"CI Gate Net","key":"ci-gate-wifi-pass","security":"wpa2+3","enabled":true},{"ssid":"CI Gate IoT","key":"ci-gate-iot-pass","bands":"24","isolate":true,"enabled":true}]}'
 wifi_set() { c=$(wapi -X PUT -d "$WIFI_SET" https://127.0.0.1:$WEBP/api/wifi); r=$(cat "$W/api.json")

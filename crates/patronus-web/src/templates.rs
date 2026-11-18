@@ -196,6 +196,9 @@ pub struct MonitoringTemplate {
 #[template(path = "system.html")]
 pub struct SystemTemplate {
     pub page: &'static str,
+    /// About card: product site and public source addresses (`about.site_url`, `about.source_url`).
+    pub site_url: String,
+    pub source_url: String,
     pub users: Vec<User>,
     /// The logged-in account.
     pub me_id: u32,

@@ -25,7 +25,7 @@
         automatically). What peers may reach is decided by firewall rules on the tunnel interface (e.g. interface <code>wg0</code>).</p>
     {% if tunnels.is_empty() %}<p class="empty">No WireGuard tunnels configured.</p>{% else %}
     <table class="lan" id="wg-tunnels">
-        <thead><tr><th>Interface</th><th>Port</th><th>Tunnel addresses</th><th>Public key</th><th>Client endpoint</th><th>Peers</th><th>Enabled</th><th></th></tr></thead>
+        <thead><tr><th>Interface</th><th>Port</th><th>Tunnel addresses</th><th>Public key</th><th>Client endpoint</th><th>Peers</th><th>Enabled</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for t in tunnels %}
         <tr data-tunnel="{{ t.name }}">
@@ -71,7 +71,7 @@
         public key and give its endpoint and the networks behind it.</p>
     {% if peers.is_empty() %}<p class="empty">No peers configured.</p>{% else %}
     <table class="lan" id="wg-config-peers">
-        <thead><tr><th>Peer</th><th>Tunnel</th><th>Allowed IPs</th><th>Endpoint</th><th>Status</th><th>Last handshake</th><th>Transfer</th><th></th></tr></thead>
+        <thead><tr><th>Peer</th><th>Tunnel</th><th>Allowed IPs</th><th>Endpoint</th><th>Status</th><th>Last handshake</th><th>Transfer</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for p in peers %}
         <tr data-peer="{{ p.name }}">
@@ -125,7 +125,7 @@
         Leave the key empty to have one generated (shown once).</p>
     {% if connections.is_empty() %}<p class="empty">No IPsec tunnels configured.</p>{% else %}
     <table class="lan" id="ipsec-connections">
-        <thead><tr><th>Name</th><th>Local</th><th>Remote gateway</th><th>Local networks</th><th>Remote networks</th><th>Start</th><th>State</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Local</th><th>Remote gateway</th><th>Local networks</th><th>Remote networks</th><th>Start</th><th>State</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for c in connections %}
         <tr data-ipsec="{{ c.name }}">
@@ -177,7 +177,7 @@
         setup file for each user: iOS / macOS (<code>.mobileconfig</code>), Android (strongSwan app
         <code>.sswan</code>) or Windows (PowerShell script).</p>
     <div id="rw-msg" class="text-sm"></div>
-    <table class="lan" id="rw-profiles"><thead><tr><th>Profile</th><th>Auth</th><th>Server name</th><th>Pool</th><th>Reaches</th><th>Users</th><th></th></tr></thead><tbody></tbody></table>
+    <table class="lan" id="rw-profiles"><thead><tr><th>Profile</th><th>Auth</th><th>Server name</th><th>Pool</th><th>Reaches</th><th>Users</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
     <p><button class="btn btn-secondary btn-sm" type="button" onclick="window.location = '/api/vpn/ipsec/roadwarrior/ca'">Download the CA certificate (PEM)</button></p>
     {% if can_modify %}
     <form class="lan-form" id="rw-profile-form" onsubmit="return rwSaveProfile(event)">
