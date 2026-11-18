@@ -1,0 +1,117 @@
+#!/bin/sh
+# ap-steer: move stations that stay on this unit with a weak signal to a better access point of this network (docs 12.18).
+# Clients pick an access point when they join and most never leave it while the link still works: when one unit restarts
+# (an upgrade, a power cut) every station moves to the others and stays there, smart plugs and cameras at -75 dBm two
+# rooms away from the unit next to them. Commercial controllers steer such stations; this does it per unit, without a
+# controller: a station whose average signal has stayed at or below AP_STEER_SIGNAL for AP_STEER_AFTER seconds, and that
+# is idle (less than AP_STEER_IDLE kbit/s since the last look), is refused on every BSS of this unit for AP_STEER_BLOCK
+# seconds (hostapd deny_acl: the station is disconnected and has to join another access point). If it comes back here
+# just as weak, there is no better access point for it: it is left alone for AP_STEER_RETRY seconds. At most
+# AP_STEER_MAX stations are moved per round (every AP_STEER_INTERVAL seconds); AP_STEER_EXEMPT lists MACs never moved.
+# AP_STEER: auto (default) = only on a unit that knows another access point of this network exists (heard at start by
+# ap-coord, listed in AP_COORD_PEERS, or a station that left here showed up behind a wired port, i.e. at another unit),
+# 1 = always, 0 = off. Every setting is re-read each round (Wi-Fi page / plan+apply change it live).
+#   ap-steer run       background loop started by `ap start`
+#   ap-steer once      one round (tests)
+#   ap-steer status    peers known, stations refused right now, stations left alone
+# Test hooks: AP_BOARD, AP_RENDER_OUT (as for `ap`), AP_STEER_STATE (state dir), AP_STEER_NOW (epoch seconds),
+#   AP_STEER_DUMP_DIR (<dir>/<bss> = `iw dev <bss> station dump` text), AP_STEER_FDB_FILE (`brctl showmacs` text),
+#   AP_STEER_WIRED (bridge port numbers of the wired ports), AP_CLI (hostapd_cli), AP_CTRL (control socket dir).
+. ${AP_BOARD:-/etc/patronus/board.sh}
+OUTD=${AP_RENDER_OUT:-/run/hostapd}
+SD=${AP_STEER_STATE:-$OUTD/steer}
+CLI=${AP_CLI:-hostapd_cli}
+CTRL=${AP_CTRL:-/run/hostapd}
+PIDF=${AP_STEER_PID:-/run/patronus-ap-steer.pid}
+num() { case "$1" in ''|*[!0-9-]*) echo "$2";; -) echo "$2";; *) echo "$1";; esac; }
+say() { echo "ap-steer: $*"; logger -t patronus-ap-steer "$*" 2>/dev/null; true; }
+now() { echo "${AP_STEER_NOW:-$(date +%s)}"; }
+settings() {
+  MODE=${AP_STEER:-auto}; SIG=$(num "${AP_STEER_SIGNAL:-}" -65); AFTER=$(num "${AP_STEER_AFTER:-}" 600)
+  IDLE=$(num "${AP_STEER_IDLE:-}" 64); BLOCK=$(num "${AP_STEER_BLOCK:-}" 30); RETRY=$(num "${AP_STEER_RETRY:-}" 21600)
+  MAXN=$(num "${AP_STEER_MAX:-}" 2); IVL=$(num "${AP_STEER_INTERVAL:-}" 30)
+  EXEMPT=" $(echo "${AP_STEER_EXEMPT:-}" | tr 'A-F' 'a-f') "; }
+
+bsses() { for f in "$OUTD"/ap5.conf "$OUTD"/ap24.conf; do [ -f "$f" ] && sed -n 's/^interface=//p; s/^bss=//p' "$f"; done; }
+dump() { # BSS -> "mac signal bytes connected" per station
+  if [ -n "${AP_STEER_DUMP_DIR:-}" ]; then cat "$AP_STEER_DUMP_DIR/$1" 2>/dev/null; else iw dev "$1" station dump 2>/dev/null; fi | awk '
+    function out() { if (m != "") printf "%s %d %.0f %d\n", m, (a != "" ? a : s), rb + tb, c }
+    /^Station / { out(); m = tolower($2); s = 0; a = ""; rb = 0; tb = 0; c = 0; next }
+    /^[ \t]+signal avg:/ { a = $3 + 0; next }
+    /^[ \t]+signal:/ { s = $2 + 0; next }
+    /^[ \t]+rx bytes:/ { rb = $3 + 0; next }
+    /^[ \t]+tx bytes:/ { tb = $3 + 0; next }
+    /^[ \t]+connected time:/ { c = $3 + 0; next }
+    END { out() }'; }
+fdb() { if [ -n "${AP_STEER_FDB_FILE:-}" ]; then cat "$AP_STEER_FDB_FILE"; else brctl showmacs br-lan 2>/dev/null; fi; }
+wired() { # bridge port numbers of the non-Wi-Fi ports
+  if [ -n "${AP_STEER_WIRED:-}" ]; then echo "$AP_STEER_WIRED"; return; fi
+  for p in /sys/class/net/br-lan/brif/*; do [ -f "$p/port_no" ] || continue
+    case "${p##*/}" in wl*) ;; *) echo $(( $(cat "$p/port_no") ));; esac; done | tr '\n' ' '; }
+peers_known() {
+  case "$MODE" in 0|no|off|false) return 1;; 1|yes|on|true) return 0;; esac
+  [ -s "$OUTD/peers-5" ] || [ -s "$OUTD/peers-24" ] || [ -n "${AP_COORD_PEERS:-}" ] || [ -f "$SD/peer-seen" ]; }
+setacl() { # ADD_MAC|DEL_MAC MAC: on every BSS of this unit (DEL keeps a MAC the unit's own block list holds)
+  for i in $(bsses); do
+    [ "$1" = DEL_MAC ] && grep -qix "$2" "$OUTD/deny-$i" 2>/dev/null && continue
+    $CLI -p "$CTRL" -i "$i" deny_acl "$1" "$2" > /dev/null 2>&1; done; }
+
+round() {
+  settings; mkdir -p "$SD"; t=$(now)
+  # end the refusals that are over
+  if [ -f "$SD/blocked" ]; then : > "$SD/blocked.new"
+    while read -r m u; do if [ "$u" -le "$t" ]; then setacl DEL_MAC "$m"; else echo "$m $u" >> "$SD/blocked.new"; fi; done < "$SD/blocked"
+    mv "$SD/blocked.new" "$SD/blocked"; fi
+  for i in $(bsses); do dump "$i" | sed "s/\$/ $i/"; done > "$SD/now"
+  # stations that left since the last round: one that shows up behind a wired port is at another access point
+  if [ -f "$SD/prev" ]; then w=" $(wired) "
+    for m in $(cut -d' ' -f1 "$SD/prev"); do grep -q "^$m " "$SD/now" && continue
+      p=$(fdb | awk -v m="$m" 'tolower($2) == m && $3 == "no" { print $1; exit }')
+      case "$w" in *" $p "*) [ -n "$p" ] || continue
+        [ -f "$SD/peer-seen" ] || say "$m joined another access point of this network (seen behind bridge port $p): steering is possible"
+        echo "$t" > "$SD/peer-seen"
+        if [ -f "$SD/sta-$m" ] && [ "$(cut -d' ' -f4 "$SD/sta-$m")" -gt 0 ]; then say "$m moved to another access point"; rm -f "$SD/sta-$m"; fi;;
+      esac; done; fi
+  cp "$SD/now" "$SD/prev"
+  moved=0; peers_known && pk=1 || pk=0
+  while read -r m sig bytes conn ifn; do
+    ws=0 bp=-1 tp=0 ka=0 ks=0 hu=0; [ -f "$SD/sta-$m" ] && read -r ws bp tp ka ks hu < "$SD/sta-$m"
+    # back after being moved: as weak as before = no better access point for it
+    if [ "$ka" -gt 0 ] && [ "$conn" -lt $((t - ka)) ]; then
+      if [ "$sig" -le "$SIG" ]; then hu=$((t + RETRY))
+        say "$m came back on $ifn at $sig dBm: no better access point for it, left alone for $RETRY s"
+      fi; ka=0; ks=0; fi
+    weak=0; [ "$sig" -ne 0 ] && [ "$sig" -le "$SIG" ] && weak=1
+    if [ $weak = 1 ]; then [ "$ws" -gt 0 ] || ws=$t; else ws=0; fi
+    idle=0; if [ "$bp" -ge 0 ] && [ "$bytes" -ge "$bp" ] && [ "$t" -gt "$tp" ]; then
+      [ $(( (bytes - bp) * 8 / 1000 / (t - tp) )) -lt "$IDLE" ] && idle=1; fi
+    if [ $weak = 1 ] && [ $pk = 1 ] && [ $idle = 1 ] && [ $((t - ws)) -ge "$AFTER" ] && [ "$conn" -ge "$AFTER" ] \
+       && [ "$hu" -le "$t" ] && [ $moved -lt "$MAXN" ] && [ "$BLOCK" -gt 0 ]; then
+      case "$EXEMPT" in *" $m "*) ;; *)
+        setacl ADD_MAC "$m"; echo "$m $((t + BLOCK))" >> "$SD/blocked"; moved=$((moved + 1))
+        say "$m: $sig dBm on $ifn for $((t - ws)) s and idle: refused on this unit for $BLOCK s so it joins a closer access point"
+        ka=$t; ks=$sig; ws=0;; esac
+    fi
+    echo "$ws $bytes $t $ka $ks $hu" > "$SD/sta-$m"
+  done < "$SD/now"
+  # forget stations that are gone, unless something about them still runs (a hold, a move in progress)
+  for f in "$SD"/sta-*; do [ -f "$f" ] || continue; m=${f##*/sta-}; grep -q "^$m " "$SD/now" && continue
+    read -r ws bp tp ka ks hu < "$f"; [ "$hu" -gt "$t" ] || [ $((ka + RETRY)) -gt "$t" ] || rm -f "$f"; done
+  true; }
+
+status() { settings; t=$(now)
+  peers_known && echo "steering: on ($MODE)" || echo "steering: idle ($MODE: no other access point of this network known)"
+  for b in 5 24; do [ -s "$OUTD/peers-$b" ] && echo "peers $b GHz: $(cut -d' ' -f1 "$OUTD/peers-$b" | tr '\n' ' ')"; done
+  [ -f "$SD/peer-seen" ] && echo "a station was last seen leaving for another access point $(( t - $(cat "$SD/peer-seen") )) s ago"
+  [ -s "$SD/blocked" ] && while read -r m u; do echo "refused here: $m for $((u - t)) s more"; done < "$SD/blocked"
+  for f in "$SD"/sta-*; do [ -f "$f" ] || continue; read -r ws bp tp ka ks hu < "$f"
+    [ "$hu" -gt "$t" ] && echo "left alone: ${f##*/sta-} (no better access point) for $((hu - t)) s more"
+    [ "$ws" -gt 0 ] && echo "weak: ${f##*/sta-} for $((t - ws)) s"; done; true; }
+
+case "${1:-}" in
+once) round ;;
+status) status ;;
+run) echo $$ > "$PIDF"
+  while :; do . "${AP_BOARD:-/etc/patronus/board.sh}"; round; settings; sleep "$IVL"; done ;;
+*) sed -n '2,20p' "$0"; exit 2 ;;
+esac

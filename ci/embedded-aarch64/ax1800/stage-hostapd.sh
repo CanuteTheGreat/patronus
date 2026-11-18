@@ -1,6 +1,6 @@
 #!/bin/bash
 # stage-hostapd.sh: INSIDE the builder image, build the Patronus hostapd package (hostapd/APKBUILD = Alpine 3.24's
-# hostapd 2.11 + patronus-xbss.diff) with abuild. Output: /out/hostapd/<arch>/hostapd-2.11-r104.apk (+ -openrc, -doc),
+# hostapd 2.11 + patronus-xbss.diff) with abuild. Output: /out/hostapd/<arch>/hostapd-2.11-r1NN.apk (+ -openrc, -doc),
 # installed by stage-rootfs.sh in place of Alpine's package. Cached in /cache/hostapd by the hash of hostapd/ (a rebuild
 # costs about 2 minutes). The packages are signed with a throwaway build key and installed with --allow-untrusted from
 # this local path only (never from a repository).
@@ -25,5 +25,6 @@ else
   cp -a "$REPODEST"/*/. "$C/"   # <arch>/hostapd-*.apk
   rm -rf "$B"
 fi
+rm -rf /out/hostapd/*   # only this build: an older package left in /out would be installed instead
 cp -a "$C"/. /out/hostapd/
 ls -l /out/hostapd/*/hostapd-2.11-r*.apk

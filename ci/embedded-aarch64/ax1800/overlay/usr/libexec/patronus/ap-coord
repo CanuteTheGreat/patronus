@@ -89,6 +89,8 @@ plan() { # BAND PHY
     s=$(scan_if "$b" $ifn); iw dev $ifn del >/dev/null 2>&1
   fi
   l=$(echo "$s" | parse | busy "$b")
+  # the peers themselves (ap-steer moves weak stations only on a unit that knows another access point exists)
+  mkdir -p "$OUTD"; echo "$s" | parse | peers "$b" > "$OUTD/peers-$b"; [ -s "$OUTD/peers-$b" ] || rm -f "$OUTD/peers-$b"
   if [ -n "$l" ]; then mkdir -p "$OUTD"; echo "$l" > "$f"; say "$b GHz: other access points of this network use channels $l, ACS avoids them"
   else say "$b GHz: no other access point of this network heard"; fi
   true; }

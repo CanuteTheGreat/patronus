@@ -21,7 +21,7 @@ COMMON="alpine-baselayout-data busybox busybox-binsh musl libgcc libcap2 linux-p
   iw iproute2-minimal dropbear dropbear-scp mtd-utils-ubi nftables wireless-regdb libnl3 libssl3 libcrypto3 zlib libucontext libmount \
   wireguard-tools-wg chrony gpgv ssl_client u-boot-tools"
 APK="apk --initdb --no-scripts --no-cache --keys-dir /etc/apk/keys --repositories-file /etc/apk/repositories"
-HOSTAPD_APK=$(ls /out/hostapd/*/hostapd-2.11-r1[0-9][0-9].apk 2>/dev/null | head -1)
+HOSTAPD_APK=$(ls /out/hostapd/*/hostapd-2.11-r1[0-9][0-9].apk 2>/dev/null | sort -V | tail -1)
 [ -n "$HOSTAPD_APK" ] || { echo "stage-rootfs: no Patronus hostapd package in /out/hostapd (run stage-hostapd.sh first)"; exit 1; }
 $APK --root $R add --allow-untrusted $COMMON "$HOSTAPD_APK"
 rm -rf $R/lib/apk $R/var/cache/apk $R/etc/apk

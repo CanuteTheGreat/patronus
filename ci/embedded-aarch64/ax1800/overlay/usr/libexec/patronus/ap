@@ -141,6 +141,18 @@ he_lines() { # PHY-MAC: 802.11ax radio settings (OpenWrt 25.12 parity, see the h
 bss_lines() { # settings every BSS gets (OpenWrt's wifi-iface defaults)
   echo "uapsd_advertisement_enabled=1"; echo "disassoc_low_ack=1"; echo "skip_inactivity_poll=0"
   echo "bss_load_update_period=60"; echo "chan_util_avg_period=600"; }
+# the image's hostapd limits for misbehaving stations, per radio (hostapd/patronus-xbss.diff, docs 12.6d + 12.18):
+# AP_XBSS_MAX hops between this radio's SSIDs within AP_XBSS_WINDOW s -> refused on the new SSID for AP_XBSS_HOLD s;
+# more than AP_AUTHFAIL_MAX unacknowledged authentication responses within AP_AUTHFAIL_WINDOW s -> the station is ignored
+# for AP_AUTHFAIL_HOLD s, doubling per further hold up to AP_AUTHFAIL_HOLD_MAX, until it connects. A *_MAX of 0 = off.
+station_limits() {
+  for kv in "xbss_max AP_XBSS_MAX 6" "xbss_window AP_XBSS_WINDOW 60" "xbss_hold AP_XBSS_HOLD 30" \
+      "authfail_max AP_AUTHFAIL_MAX 10" "authfail_window AP_AUTHFAIL_WINDOW 60" "authfail_hold AP_AUTHFAIL_HOLD 60" \
+      "authfail_hold_max AP_AUTHFAIL_HOLD_MAX 3600"; do
+    set -- $kv; eval "v=\${$2:-$3}"
+    case "$v" in ''|*[!0-9]*) echo "ap: $2=$v is not a whole number: using $3" >&2; v=$3;; esac
+    [ "$v" -le 86400 ] || { echo "ap: $2=$v is above 86400: using 86400" >&2; v=86400; }
+    echo "patronus_$1=$v"; done; }
 deny_macs() { # ID: the unit's block list + the network's own, one valid MAC per line
   eval "d=\${DENY_$1:-}"
   for m in $AP_DENY $d; do case "$m" in [0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]) echo "$m" | tr 'A-F' 'a-f';; esac; done | sort -u; }
@@ -195,6 +207,7 @@ render_band() { # 24|5 phy
         fi
         [ $he = 1 ] && he_lines "$pmac"
         [ "$ch" = 0 ] && acs_lines $b
+        station_limits
         echo "interface=$ifn"; echo "bssid=$bssid"; echo "bridge=br-lan"; echo "ctrl_interface=/run/hostapd"; } >> $f
     else
       { echo "bss=$ifn"; echo "bssid=$bssid"; echo "bridge=br-lan"; echo "ctrl_interface=/run/hostapd"; } >> $f
@@ -207,6 +220,7 @@ render_band() { # 24|5 phy
   done
   [ $n -gt 0 ] && echo "$f $phy $n"; }
 COORD=${AP_COORD_BIN:-/usr/libexec/patronus/ap-coord}
+STEER=${AP_STEER_BIN:-/usr/libexec/patronus/ap-steer}
 start_all() { # [BAND]: both radios, or only 5 / 24
   # channels other access points of this network use are scanned BEFORE the config is rendered (ACS then avoids them)
   if [ -x "$COORD" ]; then
@@ -230,7 +244,10 @@ start_all() { # [BAND]: both radios, or only 5 / 24
   txpower
   # periodic re-check of the channel plan against the other access points (once per start)
   if [ -x "$COORD" ] && [ -z "${1:-}" ]; then p=$(cat /run/patronus-ap-coord.pid 2>/dev/null); [ -n "$p" ] && kill "$p" 2>/dev/null
-    setsid "$COORD" run >> /tmp/ap-coord.log 2>&1 < /dev/null & fi; }
+    setsid "$COORD" run >> /tmp/ap-coord.log 2>&1 < /dev/null & fi
+  # stations left on this unit with a weak signal are moved to a better access point of the network (ap-steer)
+  if [ -x "$STEER" ] && [ -z "${1:-}" ]; then p=$(cat /run/patronus-ap-steer.pid 2>/dev/null); [ -n "$p" ] && kill "$p" 2>/dev/null
+    setsid "$STEER" run >> /tmp/ap-steer.log 2>&1 < /dev/null & fi; }
 stop_all() { # [BAND]: wait until each hostapd has really exited (a new one started while the old still holds the radio's
   # nl80211 registrations fails with "Match already configured" and then crashes)
   pids=; for p in /run/hostapd-cli-*.pid /run/hostapd-ap*.pid; do [ -f "$p" ] || continue
@@ -275,7 +292,7 @@ start)
   ;;
 txpower) mkdir -p $OUTD; txpower ;;
 acl) mkdir -p $OUTD; acl ;;
-stop) p=$(cat /run/patronus-ap-coord.pid 2>/dev/null); [ -n "$p" ] && kill "$p" 2>/dev/null; rm -f /run/patronus-ap-coord.pid
+stop) for pf in /run/patronus-ap-coord.pid /run/patronus-ap-steer.pid; do p=$(cat $pf 2>/dev/null); [ -n "$p" ] && kill "$p" 2>/dev/null; rm -f $pf; done
   stop_all ;;
 restart-band) # BAND (5|24): restart one radio; its channel list is planned again (ap-coord)
   case "${2:-}" in 5|24) ;; *) echo "usage: ap restart-band 5|24" >&2; exit 2;; esac

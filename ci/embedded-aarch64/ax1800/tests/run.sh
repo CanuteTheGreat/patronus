@@ -247,6 +247,70 @@ mkdir -p "$A/bin"; printf '#!/bin/sh\necho "Station aa:bb"\n' > "$A/bin/iw"; chm
 r=$(PATH=$A/bin:$PATH AP_COORD_QUIET=1-5 AP_COORD_NOW=14 cocheck 02:cc:00:00:00:99); [ -z "$r" ] && grep -q 'moving later' "$A/co-check.out" \
   && ok "ap-coord check: stations connected + outside the quiet hours = the move waits" || { no "ap-coord quiet hours: '$r'"; cat "$A/co-check.out"; }
 r=$(PATH=$A/bin:$PATH AP_COORD_QUIET=1-5 AP_COORD_NOW=03 cocheck 02:cc:00:00:00:99); [ "$r" = "restart-band 5" ] && ok "ap-coord check: inside the quiet hours it restarts the radio" || no "ap-coord quiet window: '$r'"
+AP_COORD_SCAN_FILE=$FX co plan 5 phy0 > /dev/null 2>&1; [ -s "$A/co/peers-5" ] && ok "ap-coord plan: records the peers it heard (ap-steer knows another access point exists)" || no "ap-coord plan wrote no peers-5"
+AP_COORD_SCAN_FILE=/dev/null co plan 5 phy0 > /dev/null 2>&1; [ ! -e "$A/co/peers-5" ] && ok "ap-coord plan: no peer heard = no peers file" || no "ap-coord plan left a stale peers-5"
+
+# 3b. limits for misbehaving stations (patronus-xbss.diff) are radio settings in the render, defaults from board.sh
+aprender lim "$TWO"
+[ "$(seg lim patronus_xbss_max)/$(seg lim patronus_xbss_hold)/$(seg lim patronus_authfail_max)/$(seg lim patronus_authfail_hold_max)" = "6/30/10/3600" ] \
+  && [ "$(s24 lim patronus_authfail_window)" = 60 ] && ok "ap: hostapd station limits rendered per radio with the board.sh defaults" || no "ap: station limits: $(grep patronus_ "$A/lim/ap5.conf" | tr '\n' ' ')"
+aprender lim2 "$TWO
+AP_AUTHFAIL_MAX=0 AP_XBSS_HOLD=x AP_AUTHFAIL_HOLD_MAX=999999"
+[ "$(seg lim2 patronus_authfail_max)/$(seg lim2 patronus_xbss_hold)/$(seg lim2 patronus_authfail_hold_max)" = "0/30/86400" ] && grep -q 'AP_XBSS_HOLD=x is not a whole number' "$A/lim2.out" \
+  && ok "ap: station limits: 0 = off, a bad value falls back to the default, the top is clamped (with messages)" || no "ap: station limits validation: $(grep patronus_ "$A/lim2/ap5.conf" | tr '\n' ' ')"
+
+# 3c. ap-steer (docs 12.18): weak + idle stations are refused here for a while; busy, strong, exempt and "no better AP" ones stay
+ST=$A/st; mkdir -p "$ST/dump" "$ST/run"
+printf 'interface=wl5-m\nbss=wl5-g\n' > "$ST/run/ap5.conf"; printf 'interface=wl24-m\n' > "$ST/run/ap24.conf"
+echo "aa:00:00:00:00:0f" > "$ST/run/deny-wl5-g"; : > "$ST/run/deny-wl5-m"; : > "$ST/run/deny-wl24-m"
+printf '#!/bin/sh\necho "$6 $7" >> %s/cli.log\n' "$ST" > "$ST/cli"; chmod +x "$ST/cli"   # -p DIR -i IF deny_acl ADD_MAC|DEL_MAC MAC
+stsay() { # IF MAC SIGNAL BYTES CONNECTED (appends a station to the fake dump of IF)
+  printf 'Station %s (on %s)\n\tinactive time:\t100 ms\n\trx bytes:\t%s\n\ttx bytes:\t0\n\tsignal:  \t%s [%s, %s] dBm\n\tsignal avg:\t%s [%s, %s] dBm\n\tconnected time:\t%s seconds\n' \
+    "$2" "$1" "$4" "$3" "$3" "$3" "$3" "$3" "$3" "$5" >> "$ST/dump/$1"; }
+stround() { # NOW BOARD-EXTRA: one round
+  printf '. %s\n%s\n' "$O/etc/patronus/board.sh" "$2" > "$ST/board.sh"
+  AP_BOARD=$ST/board.sh AP_RENDER_OUT=$ST/run AP_STEER_STATE=$ST/state AP_STEER_NOW=$1 AP_STEER_DUMP_DIR=$ST/dump \
+    AP_STEER_FDB_FILE=$ST/fdb AP_STEER_WIRED="1 2 3 4 5" AP_CLI=$ST/cli sh "$O/usr/libexec/patronus/ap-steer" once >> "$ST/out" 2>&1; rm -f "$ST/dump"/*; }
+SB="AP_STEER=1 AP_STEER_AFTER=60"
+printf 'port no\tmac addr\t\tis local?\tageing timer\n' > "$ST/fdb"
+for n in 1000 1100; do b=$((n * 10))
+  stsay wl24-m aa:00:00:00:00:01 -80 "$b" 700        # weak, idle
+  stsay wl24-m aa:00:00:00:00:02 -50 "$b" 700        # strong
+  stsay wl5-m aa:00:00:00:00:03 -80 $((n * 9000000)) 700   # weak but busy (~72 Mbit/s)
+  stsay wl5-m aa:00:00:00:00:04 -80 "$b" 700         # weak, idle, exempt
+  stround $n "$SB AP_STEER_EXEMPT=aa:00:00:00:00:04"; done
+grep -qx "ADD_MAC aa:00:00:00:00:01" "$ST/cli.log" && [ "$(grep -c 'ADD_MAC aa:00:00:00:00:01' "$ST/cli.log")" = 3 ] \
+  && ok "ap-steer: a weak idle station is refused on every BSS of the unit (3 BSSes)" || { no "ap-steer: weak idle station not moved"; cat "$ST/out" "$ST/cli.log" 2>/dev/null; }
+grep -q 'aa:00:00:00:00:0[234]' "$ST/cli.log" && no "ap-steer: moved a strong, busy or exempt station: $(cat "$ST/cli.log")" \
+  || ok "ap-steer: strong, busy and AP_STEER_EXEMPT stations stay"
+: > "$ST/cli.log"; printf '  1\taa:00:00:00:00:01\tno\t\t   0.10\n' >> "$ST/fdb"; stround 1110 "$SB"
+grep -q 'aa:00:00:00:00:01 moved to another access point' "$ST/out" && [ -f "$ST/state/peer-seen" ] \
+  && ok "ap-steer: the moved station shows up behind a wired port = it joined another access point (peer learnt)" || { no "ap-steer: move not recognised"; tail -3 "$ST/out"; }
+stround 1131 "$SB"; [ "$(grep -c 'DEL_MAC aa:00:00:00:00:01' "$ST/cli.log")" = 3 ] && ok "ap-steer: the refusal ends after AP_STEER_BLOCK" || { no "ap-steer: no DEL_MAC: $(cat "$ST/cli.log")"; }
+# no better access point: refused, comes back just as weak -> left alone
+rm -rf "$ST/state"; : > "$ST/cli.log"; : > "$ST/out"; printf 'port no\tmac addr\t\tis local?\tageing timer\n' > "$ST/fdb"
+for n in 2000 2100; do stsay wl5-g aa:00:00:00:00:0f -79 100 700; stsay wl5-g aa:00:00:00:00:05 -79 100 700; stround $n "$SB AP_STEER_MAX=1"; done
+first=$(sed -n 's/^ADD_MAC //p' "$ST/cli.log" | head -1); [ "$(sed -n 's/^ADD_MAC //p' "$ST/cli.log" | sort -u | wc -l)" = 1 ] \
+  && ok "ap-steer: at most AP_STEER_MAX stations are moved per round" || no "ap-steer: AP_STEER_MAX=1 moved $(sed -n 's/^ADD_MAC //p' "$ST/cli.log" | sort -u | tr '\n' ' ')"
+stround 2131 "$SB AP_STEER_MAX=1"
+[ "$first" != aa:00:00:00:00:0f ] || [ "$(grep -c '^DEL_MAC aa:00:00:00:00:0f$' "$ST/cli.log")" = 2 ] \
+  && ok "ap-steer: ending a refusal keeps a MAC the unit's own block list holds (deny-wl5-g)" || no "ap-steer: DEL_MAC removed the unit's own block of 0f: $(cat "$ST/cli.log")"
+: > "$ST/cli.log"; stsay wl5-g "$first" -78 100 20; stsay wl5-g aa:00:00:00:00:06 -50 100 700; stround 2140 "$SB AP_STEER_MAX=1"
+grep -q "$first came back on wl5-g at -78 dBm: no better access point" "$ST/out" && ok "ap-steer: back just as weak = no better access point, left alone" || { no "ap-steer: comeback not recognised"; tail -4 "$ST/out"; }
+for n in 2240 2340; do stsay wl5-g "$first" -78 100 220; stround $n "$SB AP_STEER_MAX=1"; done
+grep -q "ADD_MAC $first" "$ST/cli.log" && no "ap-steer: moved a station that has no better access point again" || ok "ap-steer: a station left alone is not moved again within AP_STEER_RETRY"
+# auto = only when another access point is known; 0 = off
+rm -rf "$ST/state"; : > "$ST/cli.log"
+for n in 3000 3100; do stsay wl24-m aa:00:00:00:00:07 -80 100 700; stround $n "AP_STEER=auto AP_STEER_AFTER=60"; done
+[ -s "$ST/cli.log" ] && no "ap-steer auto: moved a station with no other access point known" || ok "ap-steer: AP_STEER=auto does nothing while no other access point is known"
+echo "06:aa:bb:cc:11:11 5180 -60 none 80 42 Example" > "$ST/run/peers-5"
+for n in 3200 3300; do stsay wl24-m aa:00:00:00:00:07 -80 100 700; stround $n "AP_STEER=auto AP_STEER_AFTER=60"; done
+grep -q "ADD_MAC aa:00:00:00:00:07" "$ST/cli.log" && ok "ap-steer: AP_STEER=auto steers once ap-coord heard a peer" || no "ap-steer auto with peers-5: nothing moved"
+rm -rf "$ST/state"; : > "$ST/cli.log"
+for n in 4000 4100; do stsay wl24-m aa:00:00:00:00:08 -80 100 700; stround $n "AP_STEER=0 AP_STEER_AFTER=60"; done
+[ -s "$ST/cli.log" ] && no "ap-steer: AP_STEER=0 still moved a station" || ok "ap-steer: AP_STEER=0 turns it off"
+AP_BOARD=$ST/board.sh AP_RENDER_OUT=$ST/run AP_STEER_STATE=$ST/state AP_STEER_NOW=4100 sh "$O/usr/libexec/patronus/ap-steer" status > "$ST/status" 2>&1
+grep -q 'steering: off\|steering: idle' "$ST/status" && ok "ap-steer status: says when steering is off" || { no "ap-steer status"; cat "$ST/status"; }
 for c in 1:+ 6:+ 7:+ 8:- 11:- auto:+; do ch=${c%%:*}; dir=${c#*:}
   aprender h24$ch "$TWO
 AP_CHAN24=$ch AP_HT24=40"

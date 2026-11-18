@@ -1121,3 +1121,37 @@ Hardware (two GL-AX1800 access points of one network with the same SSIDs, 2026-1
 - Client tests through a lab Wi-Fi client (private container, MAC cleared between tests): lease < 0.3 s, gateway,
   internet, DNS, 0 % loss of 40 pings on every BSS of both units (SSID x band x unit = 8), roams between the units on 5
   and 2.4 GHz and between the bands of one unit online again within 1.3 s, repeated after the restarts above.
+
+### 12.18 Weak stations stay on the wrong access point; a deaf station floods authentication (2026-11-18)
+
+Found on a two-unit network the morning after both units were upgraded one after the other. Each restart sends every
+station to the other unit, and most clients never leave an access point while the link still works (no 802.11k/v on
+these images; 802.11r stays off, section 12.6d). The unit restarted last ended up with the far-away devices of the whole
+house: 39 stations instead of ~5, smart plugs, washer/dryer and cameras at -65..-79 dBm, while the unit next to them
+heard them at -20..-50 dBm. Measured by disconnecting 17 such stations one at a time (hostapd `deauthenticate`): 7
+re-joined the other unit 20-45 dB stronger, 10 came straight back (no better unit in range). Weak links mean low rates and
+retries (one smart speaker at -79 dBm: 7,943 failed transmissions), which costs airtime for every station on the channel.
+A second source of lost airtime: a smart-home device with a deaf radio (never acknowledges the authentication response)
+retried every ~4 s on both 2.4 GHz SSIDs, about 1,000 attempts an hour per unit, each a response plus retransmissions,
+and its log lines rotated `/var/log/messages` within ~30 min, so every other event was gone before anyone could read it.
+
+Changes:
+- `libexec/patronus/ap-steer` (started by `ap start`, stopped by `ap stop`): every `AP_STEER_INTERVAL` s it reads the
+  station lists. A station whose average signal stayed at or below `AP_STEER_SIGNAL` dBm for `AP_STEER_AFTER` s and that
+  is idle (below `AP_STEER_IDLE` kbit/s, so a call or a stream is never cut) is refused on every BSS of this unit for
+  `AP_STEER_BLOCK` s through hostapd's deny list, at most `AP_STEER_MAX` per round; `AP_STEER_EXEMPT` lists MACs it never
+  moves. A station that comes back just as weak has no better unit and is left alone for `AP_STEER_RETRY` s. The unit's
+  own block list (`deny-<bss>`) is never lifted by it. `AP_STEER=auto` (default) acts only when another access point of
+  this network is known (heard by `ap-coord plan`, listed in `AP_COORD_PEERS`, or a station that left turned up behind a
+  wired bridge port); `1` always, `0` off. `ap-steer status` shows what it is doing. No 802.11k/v/r frames are sent: the
+  ath11k firmware on IPQ6018 is only proven with plain disassociation.
+- The image's hostapd (`hostapd/patronus-xbss.diff`, pkgrel 105): a station with more than `AP_AUTHFAIL_MAX`
+  unacknowledged authentication responses in `AP_AUTHFAIL_WINDOW` s is ignored on that radio for `AP_AUTHFAIL_HOLD` s,
+  doubling per further hold up to `AP_AUTHFAIL_HOLD_MAX`, until it completes a connection (one log line per hold instead
+  of one per attempt). The SSID-hop limit of 12.6d is now settable too (`AP_XBSS_MAX/WINDOW/HOLD`). Both are written per
+  radio as `patronus_*` lines by `ap render`; a `*_MAX` of 0 turns a limit off.
+
+Defaults (board.sh, override in ap.env): `AP_STEER=auto AP_STEER_SIGNAL=-65 AP_STEER_AFTER=600 AP_STEER_IDLE=64
+AP_STEER_BLOCK=30 AP_STEER_RETRY=21600 AP_STEER_MAX=2 AP_STEER_INTERVAL=30`, `AP_AUTHFAIL_MAX=10 AP_AUTHFAIL_WINDOW=60
+AP_AUTHFAIL_HOLD=60 AP_AUTHFAIL_HOLD_MAX=3600`, `AP_XBSS_MAX=6 AP_XBSS_WINDOW=60 AP_XBSS_HOLD=30`. Host tests:
+`tests/run.sh` (renderer values and validation, ap-steer decisions with a fake station dump and hostapd_cli).

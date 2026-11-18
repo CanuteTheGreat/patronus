@@ -1,11 +1,94 @@
+diff --git a/hostapd/config_file.c b/hostapd/config_file.c
+index 3fb0597..71ec33a 100644
+--- a/hostapd/config_file.c
++++ b/hostapd/config_file.c
+@@ -4699,6 +4699,29 @@ static int hostapd_config_fill(struct hostapd_config *conf,
+ 		bss->gas_address3 = atoi(pos);
+ 	} else if (os_strcmp(buf, "stationary_ap") == 0) {
+ 		conf->stationary_ap = atoi(pos);
++	} else if (os_strncmp(buf, "patronus_", 9) == 0) {
++		int *dst = NULL, val = atoi(pos);
++
++		if (os_strcmp(buf, "patronus_xbss_max") == 0)
++			dst = &conf->patronus_xbss_max;
++		else if (os_strcmp(buf, "patronus_xbss_window") == 0)
++			dst = &conf->patronus_xbss_window;
++		else if (os_strcmp(buf, "patronus_xbss_hold") == 0)
++			dst = &conf->patronus_xbss_hold;
++		else if (os_strcmp(buf, "patronus_authfail_max") == 0)
++			dst = &conf->patronus_authfail_max;
++		else if (os_strcmp(buf, "patronus_authfail_window") == 0)
++			dst = &conf->patronus_authfail_window;
++		else if (os_strcmp(buf, "patronus_authfail_hold") == 0)
++			dst = &conf->patronus_authfail_hold;
++		else if (os_strcmp(buf, "patronus_authfail_hold_max") == 0)
++			dst = &conf->patronus_authfail_hold_max;
++		if (!dst || val < 0 || val > 86400) {
++			wpa_printf(MSG_ERROR, "Line %d: invalid %s=%s (0..86400)",
++				   line, buf, pos);
++			return 1;
++		}
++		*dst = val;
+ 	} else if (os_strcmp(buf, "ftm_responder") == 0) {
+ 		bss->ftm_responder = atoi(pos);
+ 	} else if (os_strcmp(buf, "ftm_initiator") == 0) {
+diff --git a/src/ap/ap_config.c b/src/ap/ap_config.c
+index 565b587..ebebc40 100644
+--- a/src/ap/ap_config.c
++++ b/src/ap/ap_config.c
+@@ -255,6 +255,15 @@ struct hostapd_config * hostapd_config_defaults(void)
+ 	conf->ht_capab = HT_CAP_INFO_SMPS_DISABLED;
+ 
+ 	conf->ap_table_max_size = 255;
++
++	/* Patronus: misbehaving-station limits (max 0 = off) */
++	conf->patronus_xbss_max = 6;
++	conf->patronus_xbss_window = 60;
++	conf->patronus_xbss_hold = 30;
++	conf->patronus_authfail_max = 10;
++	conf->patronus_authfail_window = 60;
++	conf->patronus_authfail_hold = 60;
++	conf->patronus_authfail_hold_max = 3600;
+ 	conf->ap_table_expiration_time = 60;
+ 	conf->track_sta_max_age = 180;
+ 
+diff --git a/src/ap/ap_config.h b/src/ap/ap_config.h
+index ced2181..7d5c618 100644
+--- a/src/ap/ap_config.h
++++ b/src/ap/ap_config.h
+@@ -1155,6 +1155,16 @@ struct hostapd_config {
+ 	struct wpabuf *civic;
+ 	int stationary_ap;
+ 
++	/* Patronus (patronus-xbss.diff): per-radio limits for misbehaving
++	 * stations, see ap_sta_xbss_hop_refused() and ap_sta_authfail_refused() */
++	int patronus_xbss_max;
++	int patronus_xbss_window;
++	int patronus_xbss_hold;
++	int patronus_authfail_max;
++	int patronus_authfail_window;
++	int patronus_authfail_hold;
++	int patronus_authfail_hold_max;
++
+ 	int ieee80211ax;
+ #ifdef CONFIG_IEEE80211AX
+ 	struct he_phy_capabilities_info he_phy_capab;
 diff --git a/src/ap/ieee802_11.c b/src/ap/ieee802_11.c
-index 6c516bc..c1f534d 100644
+index 6c516bc..46058cc 100644
 --- a/src/ap/ieee802_11.c
 +++ b/src/ap/ieee802_11.c
-@@ -3081,6 +3081,14 @@ static void handle_auth(struct hostapd_data *hapd,
+@@ -3081,6 +3081,22 @@ static void handle_auth(struct hostapd_data *hapd,
  	if (res == HOSTAPD_ACL_PENDING)
  		return;
  
++	/* Patronus: a station that never acknowledges the responses is ignored
++	 * for a while (no response at all, see ap_sta_authfail_note) */
++	if (auth_transaction == 1 && ap_sta_authfail_refused(hapd, sa)) {
++		wpa_printf(MSG_DEBUG, "patronus-authfail: %s: ignore Authentication frame from "
++			   MACSTR " (backing off)", hapd->conf->iface, MAC2STR(sa));
++		return;
++	}
++
 +	/* Patronus: a MAC hopping between the SSIDs of one radio */
 +	if (auth_transaction == 1 &&
 +	    !(auth_alg == WLAN_AUTH_SAE && from_queue) &&
@@ -17,7 +100,7 @@ index 6c516bc..c1f534d 100644
  #ifdef CONFIG_SAE
  	if (auth_alg == WLAN_AUTH_SAE && !from_queue &&
  	    (auth_transaction == 1 ||
-@@ -4798,6 +4806,9 @@ static int add_associated_sta(struct hostapd_data *hapd,
+@@ -4798,6 +4814,9 @@ static int add_associated_sta(struct hostapd_data *hapd,
  				      sta->eht_capab_len);
  #endif /* CONFIG_IEEE80211BE */
  
@@ -27,11 +110,19 @@ index 6c516bc..c1f534d 100644
  	/*
  	 * Add the station with forced WLAN_STA_ASSOC flag. The sta->flags
  	 * will be set when the ACK frame for the (Re)Association Response frame
+@@ -6393,6 +6412,7 @@ static void handle_auth_cb(struct hostapd_data *hapd,
+ 		hostapd_logger(hapd, mgmt->da, HOSTAPD_MODULE_IEEE80211,
+ 			       HOSTAPD_LEVEL_NOTICE,
+ 			       "did not acknowledge authentication response");
++		ap_sta_authfail_note(hapd, mgmt->da);
+ 		goto fail;
+ 	}
+ 
 diff --git a/src/ap/sta_info.c b/src/ap/sta_info.c
-index 13613db..6f0ed83 100644
+index 13613db..9ecebc8 100644
 --- a/src/ap/sta_info.c
 +++ b/src/ap/sta_info.c
-@@ -884,30 +884,131 @@ static int ap_sta_remove(struct hostapd_data *hapd, struct sta_info *sta)
+@@ -884,30 +884,235 @@ static int ap_sta_remove(struct hostapd_data *hapd, struct sta_info *sta)
  
  static void ap_sta_remove_in_other_bss(struct hostapd_data *hapd,
  				       struct sta_info *sta)
@@ -92,24 +183,16 @@ index 13613db..6f0ed83 100644
 +	}
 +}
 +
- 
--		wpa_printf(MSG_DEBUG, "%s: disconnect old STA " MACSTR
--			   " association from another BSS %s",
--			   hapd->conf->iface, MAC2STR(sta2->addr),
--			   bss->conf->iface);
--		ap_sta_disconnect(bss, sta2, sta2->addr,
--				  WLAN_REASON_PREV_AUTH_NOT_VALID);
++
 +/*
 + * Patronus: rate limit a MAC that hops between the BSSes of one radio. Each
 + * hop is a peer delete + create in the firmware; a client switching SSIDs
 + * every few seconds (two connection managers fighting over one radio) is
-+ * refused on the NEW BSS for XBSS_HOLD seconds after more than XBSS_MAX hops
-+ * within XBSS_WINDOW seconds, and stays where it is. Returns 1 to refuse.
++ * refused on the NEW BSS for patronus_xbss_hold seconds after more than
++ * patronus_xbss_max hops within patronus_xbss_window seconds, and stays where
++ * it is (radio settings, patronus_xbss_max=0 = no limit). Returns 1 to refuse.
 + */
 +#define XBSS_SLOTS 32
-+#define XBSS_MAX 6
-+#define XBSS_WINDOW 60
-+#define XBSS_HOLD 30
 +static struct {
 +	const void *iface;
 +	u8 addr[ETH_ALEN];
@@ -117,20 +200,31 @@ index 13613db..6f0ed83 100644
 +	struct os_reltime hold_until;
 +	unsigned int hops;
 +} xbss_track[XBSS_SLOTS];
-+
+ 
+-		wpa_printf(MSG_DEBUG, "%s: disconnect old STA " MACSTR
+-			   " association from another BSS %s",
+-			   hapd->conf->iface, MAC2STR(sta2->addr),
+-			   bss->conf->iface);
+-		ap_sta_disconnect(bss, sta2, sta2->addr,
+-				  WLAN_REASON_PREV_AUTH_NOT_VALID);
 +int ap_sta_xbss_hop_refused(struct hostapd_data *hapd, const u8 *addr)
 +{
 +	struct hostapd_iface *iface = hapd->iface;
 +	struct os_reltime now;
 +	size_t i;
 +	int other = 0, slot = -1, oldest = 0;
++	int xmax = hapd->iconf->patronus_xbss_max;
++	int xwin = hapd->iconf->patronus_xbss_window;
++	int xhold = hapd->iconf->patronus_xbss_hold;
 +
++	if (xmax <= 0)
++		return 0;
 +	for (i = 0; iface && i < iface->num_bss; i++) {
 +		struct hostapd_data *bss = iface->bss[i];
 +
 +		if (bss && bss != hapd && ap_get_sta(bss, addr))
 +			other = 1;
-+	}
+ 	}
 +	if (!other)
 +		return 0; /* not a hop between BSSes of this radio */
 +
@@ -144,7 +238,7 @@ index 13613db..6f0ed83 100644
 +		if (os_reltime_before(&xbss_track[i].first,
 +				      &xbss_track[oldest].first))
 +			oldest = i;
- 	}
++	}
 +	if (slot < 0) {
 +		slot = oldest;
 +		os_memset(&xbss_track[slot], 0, sizeof(xbss_track[slot]));
@@ -158,27 +252,137 @@ index 13613db..6f0ed83 100644
 +			   hapd->conf->iface, MAC2STR(addr));
 +		return 1;
 +	}
-+	if (os_reltime_expired(&now, &xbss_track[slot].first, XBSS_WINDOW)) {
++	if (os_reltime_expired(&now, &xbss_track[slot].first, xwin)) {
 +		xbss_track[slot].first = now;
 +		xbss_track[slot].hops = 0;
 +	}
-+	if (++xbss_track[slot].hops > XBSS_MAX) {
++	if (++xbss_track[slot].hops > (unsigned int) xmax) {
 +		xbss_track[slot].hold_until = now;
-+		xbss_track[slot].hold_until.sec += XBSS_HOLD;
++		xbss_track[slot].hold_until.sec += xhold;
 +		xbss_track[slot].first = now;
 +		xbss_track[slot].hops = 0;
 +		hostapd_logger(hapd, addr, HOSTAPD_MODULE_IEEE80211,
 +			       HOSTAPD_LEVEL_NOTICE,
 +			       "patronus-xbss: hopped between SSIDs more than %d times in %d s: refused on %s for %d s",
-+			       XBSS_MAX, XBSS_WINDOW, hapd->conf->iface,
-+			       XBSS_HOLD);
++			       xmax, xwin, hapd->conf->iface, xhold);
 +		return 1;
 +	}
 +	return 0;
++}
++
++
++/*
++ * Patronus: back off from a station whose Authentication responses it never
++ * acknowledges (a device with a deaf or broken radio retrying for hours: each
++ * attempt is a response plus up to 15 retransmissions on the air, and one log
++ * line). After more than patronus_authfail_max unacknowledged responses within
++ * patronus_authfail_window seconds on any BSS of the radio, its Authentication
++ * frames are ignored (no response at all) for patronus_authfail_hold seconds;
++ * every further hold doubles, up to patronus_authfail_hold_max, until the
++ * station completes a connection (ap_sta_authfail_clear). A hold is logged
++ * once. patronus_authfail_max=0 turns it off.
++ */
++#define AUTHFAIL_SLOTS 32
++static struct {
++	const void *iface;
++	u8 addr[ETH_ALEN];
++	struct os_reltime first;
++	struct os_reltime hold_until;
++	unsigned int fails;
++	unsigned int holds;
++} authfail_track[AUTHFAIL_SLOTS];
++
++static int authfail_slot(const void *iface, const u8 *addr, int create)
++{
++	int i, oldest = 0;
++
++	for (i = 0; i < AUTHFAIL_SLOTS; i++) {
++		if (authfail_track[i].iface == iface &&
++		    os_memcmp(authfail_track[i].addr, addr, ETH_ALEN) == 0)
++			return i;
++		if (os_reltime_before(&authfail_track[i].first,
++				      &authfail_track[oldest].first))
++			oldest = i;
++	}
++	if (!create)
++		return -1;
++	os_memset(&authfail_track[oldest], 0, sizeof(authfail_track[oldest]));
++	authfail_track[oldest].iface = iface;
++	os_memcpy(authfail_track[oldest].addr, addr, ETH_ALEN);
++	os_get_reltime(&authfail_track[oldest].first);
++	return oldest;
++}
++
++void ap_sta_authfail_note(struct hostapd_data *hapd, const u8 *addr)
++{
++	struct os_reltime now;
++	int s, amax = hapd->iconf->patronus_authfail_max;
++	int awin = hapd->iconf->patronus_authfail_window;
++	int hold = hapd->iconf->patronus_authfail_hold;
++	int hmax = hapd->iconf->patronus_authfail_hold_max;
++	unsigned int k;
++
++	if (amax <= 0 || !hapd->iface)
++		return;
++	s = authfail_slot(hapd->iface, addr, 1);
++	os_get_reltime(&now);
++	if (os_reltime_expired(&now, &authfail_track[s].first, awin)) {
++		authfail_track[s].first = now;
++		authfail_track[s].fails = 0;
++	}
++	if (++authfail_track[s].fails <= (unsigned int) amax)
++		return;
++	for (k = 0; k < authfail_track[s].holds && hold < hmax; k++)
++		hold = hold * 2;
++	if (hold > hmax)
++		hold = hmax;
++	authfail_track[s].holds++;
++	authfail_track[s].fails = 0;
++	authfail_track[s].first = now;
++	authfail_track[s].hold_until = now;
++	authfail_track[s].hold_until.sec += hold;
++	hostapd_logger(hapd, addr, HOSTAPD_MODULE_IEEE80211,
++		       HOSTAPD_LEVEL_NOTICE,
++		       "patronus-authfail: more than %d authentication responses not acknowledged in %d s: ignoring it on this radio for %d s (hold %u)",
++		       amax, awin, hold, authfail_track[s].holds);
++}
++
++int ap_sta_authfail_refused(struct hostapd_data *hapd, const u8 *addr)
++{
++	struct os_reltime now;
++	int s;
++
++	if (hapd->iconf->patronus_authfail_max <= 0 || !hapd->iface)
++		return 0;
++	s = authfail_slot(hapd->iface, addr, 0);
++	if (s < 0)
++		return 0;
++	os_get_reltime(&now);
++	return os_reltime_before(&now, &authfail_track[s].hold_until);
++}
++
++void ap_sta_authfail_clear(struct hostapd_data *hapd, const u8 *addr)
++{
++	int s;
++
++	if (!hapd->iface)
++		return;
++	s = authfail_slot(hapd->iface, addr, 0);
++	if (s >= 0)
++		os_memset(&authfail_track[s], 0, sizeof(authfail_track[s]));
  }
  
  
-@@ -1854,6 +1955,8 @@ int ap_sta_re_add(struct hostapd_data *hapd, struct sta_info *sta)
+@@ -1601,6 +1806,8 @@ void ap_sta_set_authorized(struct hostapd_data *hapd, struct sta_info *sta,
+ {
+ 	if (!ap_sta_set_authorized_flag(hapd, sta, authorized))
+ 		return;
++	if (authorized)
++		ap_sta_authfail_clear(hapd, sta->addr); /* Patronus */
+ 	ap_sta_set_authorized_event(hapd, sta, authorized);
+ }
+ 
+@@ -1854,6 +2061,8 @@ int ap_sta_re_add(struct hostapd_data *hapd, struct sta_info *sta)
  	hostapd_drv_sta_remove(hapd, sta->addr);
  	sta->flags &= ~(WLAN_STA_ASSOC | WLAN_STA_AUTH | WLAN_STA_AUTHORIZED);
  
@@ -188,15 +392,18 @@ index 13613db..6f0ed83 100644
  			    sta->supported_rates,
  			    sta->supported_rates_len,
 diff --git a/src/ap/sta_info.h b/src/ap/sta_info.h
-index 8462935..2d6cf79 100644
+index 8462935..819076b 100644
 --- a/src/ap/sta_info.h
 +++ b/src/ap/sta_info.h
-@@ -418,6 +418,8 @@ void ap_sta_delayed_1x_auth_fail_disconnect(struct hostapd_data *hapd,
+@@ -418,6 +418,11 @@ void ap_sta_delayed_1x_auth_fail_disconnect(struct hostapd_data *hapd,
  int ap_sta_pending_delayed_1x_auth_fail_disconnect(struct hostapd_data *hapd,
  						   struct sta_info *sta);
  int ap_sta_re_add(struct hostapd_data *hapd, struct sta_info *sta);
 +void ap_sta_drop_in_other_bss(struct hostapd_data *hapd, const u8 *addr);
 +int ap_sta_xbss_hop_refused(struct hostapd_data *hapd, const u8 *addr);
++void ap_sta_authfail_note(struct hostapd_data *hapd, const u8 *addr);
++int ap_sta_authfail_refused(struct hostapd_data *hapd, const u8 *addr);
++void ap_sta_authfail_clear(struct hostapd_data *hapd, const u8 *addr);
  
  void ap_free_sta_pasn(struct hostapd_data *hapd, struct sta_info *sta);
  

@@ -12,6 +12,10 @@ AP_CHAN24=auto AP_CHAN5=auto AP_HT5=80 AP_FT=0 AP_HE=1   # AP_HE=0: no 802.11ax 
 AP_HT24=20 AP_DFS=0 AP_UNII4=0 AP_CHANLIST24="1 6 11" AP_CHANLIST5= AP_ACS_SCANS=5
 # channel coordination between this network's access points (libexec/patronus/ap-coord): ACS avoids the blocks the other units use
 AP_COORD24=1 AP_COORD5=1 AP_COORD_PEERS= AP_COORD_MIN_SIGNAL=-90 AP_COORD_DELAY=120 AP_COORD_INTERVAL=3600 AP_COORD_QUIET=1-5 AP_COORD_SCAN_SECS=25
+# weak stations are moved to a closer access point of this network (libexec/patronus/ap-steer, docs 12.18)
+AP_STEER=auto AP_STEER_SIGNAL=-65 AP_STEER_AFTER=600 AP_STEER_IDLE=64 AP_STEER_BLOCK=30 AP_STEER_RETRY=21600 AP_STEER_MAX=2 AP_STEER_INTERVAL=30 AP_STEER_EXEMPT=
+# limits for misbehaving stations in the image's hostapd (SSID hopping, unacknowledged authentication; docs 12.6d, 12.18)
+AP_XBSS_MAX=6 AP_XBSS_WINDOW=60 AP_XBSS_HOLD=30 AP_AUTHFAIL_MAX=10 AP_AUTHFAIL_WINDOW=60 AP_AUTHFAIL_HOLD=60 AP_AUTHFAIL_HOLD_MAX=3600
 # the radios' HT/VHT capabilities as OpenWrt 25.12 derives them from `iw phy info` on this board (IPQ6018 ath11k)
 AP_HTCAPS24='[LDPC][SHORT-GI-20][SHORT-GI-40][TX-STBC][RX-STBC1][DSSS_CCK-40]'
 AP_HTCAPS5='[LDPC][SHORT-GI-20][SHORT-GI-40][TX-STBC][RX-STBC1][MAX-AMSDU-7935][DSSS_CCK-40]'

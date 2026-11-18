@@ -6,11 +6,13 @@
 # is_graceful_to_handle failed") when one MAC becomes a peer on a second BSS of the same radio while it is still a peer
 # on the first; the SoC then restarts. Stock hostapd adds the station to the driver on the new BSS at authentication and
 # removes it from the old BSS only after a timer. The patch removes it from every other BSS of the radio, in the driver,
-# synchronously, before the new peer is created, and holds back a MAC that hops between the SSIDs of one radio more than
-# 6 times a minute (refused on the new BSS for 30 s). docs/embedded-routers.md 12.6d.
+# synchronously, before the new peer is created, holds back a MAC that hops between the SSIDs of one radio more than
+# 6 times a minute (refused on the new BSS for 30 s), and backs off from a MAC that never acknowledges its
+# authentication responses (ignored for 60 s after more than 10 in a minute, doubling to 1 h). All limits are radio
+# settings (patronus_xbss_* / patronus_authfail_*), written by libexec/patronus/ap from ap.env. docs 12.6d, 12.18.
 pkgname=hostapd
 pkgver=2.11
-pkgrel=104
+pkgrel=105
 pkgdesc="daemon for wireless software access points (Patronus: synchronous cross-BSS station removal)"
 url="https://w1.fi/hostapd/"
 arch="all"
@@ -101,5 +103,5 @@ sha512sums="
 1382af2a243e3a555507b55942f41d1233cc942826d26bc4f4dbe5e75560b3fe22e426948762fe162453e934685a69ef0c05723b7fecef71811fc1987e32b048  hostapd-2.11.tar.gz
 adeca34c6254ac6fccd84e6f08f8c394225e1b89e2c8771b46da5c85fe3fdabc568628530c39da3ab30b72e98891b07bbdb63f74217e79d6afb9796715d822f1  hostapd.initd
 250b072ae26892d5ba285d717d2742a29c12d52db59f021ff18a5eff709827f9987965539bf3f7b83c03fb8c103ea49604118a1d15056e6f1d8a7ae8043affbb  hostapd.confd
-be39658baba19b25ebc7226782dfa2ef19fa25731fcf4126cc5917b6f821181978e06f19d3bfb614f0fa531fc1b5c46ea77b85fb32e3b80b373ad56b4ad89764  patronus-xbss.diff
+13fcfd29f11a934342bd7117372854719555347152ff01bbd176dd5e838f517bee0aed551ab37cdc440a96e14b5531083d7cd94be23d94f42ed19359fc96c607  patronus-xbss.diff
 "
