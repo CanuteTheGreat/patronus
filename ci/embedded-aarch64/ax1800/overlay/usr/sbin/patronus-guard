@@ -118,7 +118,10 @@ senv_script() { # file with "name value" lines (a name alone deletes it): one en
 }
 senv() { f=$RUN/.senv.$$; mkdir -p "$RUN"; : > "$f"; while [ $# -gt 0 ]; do printf '%s\n' "$1" >> "$f"; shift; done
   senv_script "$f"; r=$?; rm -f "$f"; return $r; }
-env_ok() { genv_all >/dev/null && [ -n "$(genv bootcmd)" ]; }
+# a readable environment with a valid CRC: on "Bad CRC" fw_printenv silently falls back to the tools' built-in default,
+# and writing that back would replace the board's own environment
+env_ok() { c=$(env_cfg) || return 1; o=$(${FW_PRINTENV:-fw_printenv} -c "$c" 2>&1 >/dev/null) || return 1
+  case "$o" in *"Bad CRC"*|*"default environment"*) return 1;; esac; [ -n "$(genv bootcmd)" ]; }
 env_installed() { [ "$(genv pat_ver)" = "$GUARD_ENV_VERSION" ] && case "$(genv bootcmd)" in "run pat_boot; "*) true;; *) false;; esac; }
 
 ub_vol() {

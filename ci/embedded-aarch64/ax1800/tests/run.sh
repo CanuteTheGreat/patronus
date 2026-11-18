@@ -620,6 +620,9 @@ if command -v mkenvimage >/dev/null && command -v fw_printenv >/dev/null; then
   t "ok: confirm clears the trial and logs the event" sh -c "env $GE sh '$G' ok >/dev/null 2>&1; [ \"\$(fw_printenv -c $GR/fw_env.config -n pat_state)\" = ok ] && grep -q '|confirmed|' $W/gdata/boot-guard/events"
   t "status --json is valid JSON" sh -c "env $GE sh '$G' status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"state\"]==\"ok\" and d[\"installed\"] and d[\"settings\"][\"attempts\"]==3, d'"
   t "env-remove restores the stock bootcmd and drops every pat_ variable" sh -c "env $GE sh '$G' env-remove && [ \"\$(fw_printenv -c $GR/fw_env.config -n bootcmd)\" = 'bootipq; ping 192.168.1.2; run lfq; bootipq; httpd 192.168.1.1; reset' ] && ! fw_printenv -c $GR/fw_env.config | grep -q '^pat_'"
+  head -c 262144 /dev/zero > $W/env.img; cp $W/env.img $W/env.before
+  tn_msg "an environment with a bad CRC is never written (tools' default env would replace the board's)" "not readable" env $GE sh "$G" env-install
+  t "... and the bad-CRC environment is untouched" cmp -s $W/env.img $W/env.before
   printf 'bootcmd=run custom_boot\n' > $W/env2.txt; mkenvimage -s 0x40000 -o $W/env.img $W/env2.txt; cp $W/env.img $W/env.before
   tn_msg "a bootcmd that is not the stock one is left alone" "not the stock one" env $GE sh "$G" env-install
   t "... and the environment is untouched" cmp -s $W/env.img $W/env.before
