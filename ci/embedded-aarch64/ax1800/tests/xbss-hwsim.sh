@@ -13,7 +13,6 @@ LOCK=${HWSIM_LOCK:-/tmp/patronus-hwsim.lock}
 SUDO=; [ "$(id -u)" = 0 ] || SUDO=sudo
 DOCKER="${DOCKER:-$SUDO docker}"
 exec 9>"$LOCK"; flock -n 9 || { echo "another hwsim run holds $LOCK"; exit 1; }
-if grep -q '^mac80211_hwsim ' /proc/modules; then echo "mac80211_hwsim already loaded (another user?): refusing"; exit 1; fi
 C=xbss-hwsim-$$
 KIMG=${KMOD_IMAGE:-debian:trixie}
 # load/unload the host-global module: directly (root/sudo on the host) or, from a CI job container, through a
@@ -24,6 +23,21 @@ modctl() { local cmd="rmmod mac80211_hwsim"; [ "$1" = load ] && cmd="modprobe ma
     "command -v modprobe >/dev/null || (apt-get update -qq >/dev/null && apt-get install -y -qq kmod >/dev/null); $cmd" >/dev/null 2>&1; }
 regset() { $DOCKER run --rm --net=host --cap-add NET_ADMIN "$IMAGE" sh -c "apk add -q --no-cache iw >/dev/null && iw reg set $1" >/dev/null 2>&1; }
 cleanup() { $DOCKER rm -fv "$C" >/dev/null 2>&1 || true; regset 00 || true; sleep 1; modctl unload || { sleep 2; modctl unload || echo "could not unload mac80211_hwsim"; }; }
+# The module is host-global and $LOCK is not shared with runs in other job containers: when it is loaded, wait for the
+# other run (a few minutes) instead of failing; a scenario container of ours older than STALE_MIN (a cancelled job never
+# ran its cleanup) is removed and the module it left is unloaded.
+STALE_MIN=${HWSIM_STALE_MIN:-60}; WAIT_MIN=${HWSIM_WAIT_MIN:-20}; t0=$(date +%s)
+while grep -q '^mac80211_hwsim ' /proc/modules; do
+  removed=0
+  for o in $($DOCKER ps -a --filter name=xbss-hwsim- --format '{{.Names}}' 2>/dev/null); do
+    age=$(( $(date +%s) - $(date -d "$($DOCKER inspect -f '{{.Created}}' "$o")" +%s) ))
+    [ $age -gt $((STALE_MIN * 60)) ] && { echo "removing stale $o (${age}s old)"; $DOCKER rm -fv "$o" >/dev/null; removed=1; }
+  done
+  if [ $removed = 1 ] && [ -z "$($DOCKER ps --filter name=xbss-hwsim- -q 2>/dev/null)" ]; then
+    echo "unloading the mac80211_hwsim the stale run left"; modctl unload; continue; fi
+  [ $(( $(date +%s) - t0 )) -gt $((WAIT_MIN * 60)) ] && { echo "mac80211_hwsim still loaded after ${WAIT_MIN} min (another user?): refusing"; exit 1; }
+  echo "mac80211_hwsim is loaded by another run: waiting"; sleep 20
+done
 trap cleanup EXIT
 $DOCKER run -d --name "$C" --cap-add NET_ADMIN --cap-add NET_RAW --security-opt apparmor=unconfined \
   --memory 2g --cpus 2 "$IMAGE" sleep infinity >/dev/null
