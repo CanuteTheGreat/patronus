@@ -964,7 +964,7 @@ reaches the installer, the RAM root and stage2, the box restarts with its settin
 house units) boots with `bootipq`, which reads the volume named `kernel`. A second root volume would need a rebuilt FIT
 per slot, and a trial image whose kernel panics never reaches userspace, so the rollback must happen *before* Linux.
 
-**What the units really have** (read on 10.66.69.10, read-only, 2026-11-17): the U-Boot environment is ONE copy at offset
+**What the units really have** (read on a unit, read-only, 2026-11-17): the U-Boot environment is ONE copy at offset
 0 of the NAND partition `0:appsblenv` (0x80000 bytes, 128 KiB blocks), CRC32 over 0x40000 bytes (`fw_env.config`:
 `/dev/mtdN 0x0 0x40000 0x20000 4`); `bootcmd=bootipq; ping 192.168.1.2; run lfq; bootipq; run lf; bootipq; httpd
 192.168.1.1; reset`, so U-Boot runs `bootcmd` from its environment and has hush (`if`/`test`/`&&`), `setexpr`,
@@ -1076,19 +1076,20 @@ mac80211_hwsim scenario `tests/coord-scenario.sh` (two units, same SSID, private
 other they end on different blocks on both bands; started blind at the same moment, the re-check moves exactly the
 higher-key unit).
 
-Hardware (the two house units, 2026-11-17/18, builds `*-07b044e8-openrc`; .10 first, then .11):
-- `ap start` scan: .10 booted while .11 was on 149 (2.4 GHz channel 1): its lists became `36 40 44 48` and `6 11` and ACS took
-  44 / 6. .11 flashed second heard .10 on 36-48 and took 153 (block 149-161), 2.4 GHz 11. Before this, on the same
-  radios and ACS alone, both units had ended on 36-48 and .10's 5 GHz went from 7-9 % to 38 % busy.
+Hardware (two GL-AX1800 access points of one network with the same SSIDs, 2026-11-17/18):
+- `ap start` scan: the first unit booted while the second was on 149 (2.4 GHz channel 1): its lists became `36 40 44 48`
+  and `6 11` and ACS took 44 / 6. The second unit, flashed afterwards, heard the first on 36-48 and took 153 (block
+  149-161) and 2.4 GHz 11. Before this, on the same radios and ACS alone, both units had ended on 36-48 and one unit's
+  5 GHz went from 7-9 % to 38 % busy.
 - A scan on a radio that is already running an AP only sees its own channel (ath11k does not scan off-channel while it
   serves clients); that is enough for the re-check (an overlap is by definition on or beside the unit's own channel),
   and the start-time scan runs from a temporary interface before the AP exists, where the whole band is visible.
 - Both units restarted at the same instant without the start scan (`AP_COORD_NOPLAN=1`, the test hook): 5 GHz happened
-  to separate (36-48 / 149-161), 2.4 GHz did not (both on 6). Two minutes later the first re-check on .10 (higher key)
-  logged "shares channels with 94:83:c4:12:83:d6 ...; restarting this radio so ACS picks another block", the 2.4 GHz radio
-  of .10 restarted (about 4 s) and came back on 11; .11 logged "the other unit has the lower key and moves" and stayed.
+  to separate (36-48 / 149-161), 2.4 GHz did not (both on 6). Two minutes later the first re-check on the unit with the
+  higher key logged "shares channels with ...; restarting this radio so ACS picks another block", its 2.4 GHz radio
+  restarted (about 4 s) and came back on 11; the other unit logged "the other unit has the lower key and moves" and stayed.
 - Restarted at the same instant WITH the start scan, both avoided each other at once: the kernel keeps a BSS in its scan
   list for 30 s after its last beacon, so a unit that restarts still shows up for the other one.
-- Client tests through HOGSMEADE's radio (private container, MAC cleared between tests): lease < 0.3 s, gateway,
-  internet, DNS, 0 % loss of 40 pings on every BSS of both units (SSID x band x unit = 8), roams .10 <-> .11 on 5 and
-  2.4 GHz and 5 <-> 2.4 GHz on .10 online again within 1.3 s, repeated after the restarts above.
+- Client tests through a lab Wi-Fi client (private container, MAC cleared between tests): lease < 0.3 s, gateway,
+  internet, DNS, 0 % loss of 40 pings on every BSS of both units (SSID x band x unit = 8), roams between the units on 5
+  and 2.4 GHz and between the bands of one unit online again within 1.3 s, repeated after the restarts above.

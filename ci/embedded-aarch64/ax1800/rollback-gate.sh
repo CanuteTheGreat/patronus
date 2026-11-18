@@ -159,7 +159,7 @@ if upgrade good2; then pass "armed trial of good2 (pat_state=trial, $ATT boots)"
 boot
 if wait_ssh && s=$(wait_guard '"state":"ok"'); then
   pass "good image confirmed itself"; note "$(echo "$s" | grep -o '"events":.*' | cut -c1-400)"
-  R 'grep -o "patronus.trial=[0-9]*" /proc/cmdline' | grep -q 'patronus.trial=1' && pass "kernel got patronus.trial=1 from the bootloader" || fail "patronus.trial on the command line"
+  R 'grep -o "patronus.trial=[0-9]*" /proc/cmdline' | grep 'patronus.trial=1' >/dev/null && pass "kernel got patronus.trial=1 from the bootloader" || fail "patronus.trial on the command line"
   [ "$(E pat_boots)" = 1 ] && [ "$(E pat_left)" = "" ] && pass "counters: 1 trial boot, none left after confirm" || fail "counters after confirm: boots=$(E pat_boots) left=$(E pat_left)"
   R 'grep -q "^BUILD=rbgate-good2-" /etc/patronus-release' && pass "running good2" || fail "not running good2"
   web_ok && pass "good2 web UI up" || fail "good2 web"

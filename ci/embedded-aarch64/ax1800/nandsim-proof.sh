@@ -53,7 +53,7 @@ printf 'BUILD=nandsim-old\n' > $GR/release
 GE="GUARD_CONF_DIR=$GC GUARD_RUN=$GR GUARD_RELEASE=$GR/release PATRONUS_UBI=$U PATRONUS_DATA=/tmp/ud"
 chk "guard env-install: bootloader script written into the stock environment" env $GE sh "$G" env-install
 chk "bootcmd = run pat_boot; bootipq; run pat_failed; <stock rest>" sh -c "[ \"\$(fw_printenv -c $GR/fw_env.config -n bootcmd)\" = 'run pat_boot; bootipq; run pat_failed; ping 192.168.1.2; run lfq; bootipq; httpd 192.168.1.1; reset' ]"
-chk "pat_vol selects the UBI MTD with its sysfs offset/size" sh -c "fw_printenv -c $GR/fw_env.config -n pat_vol | grep -q 'nand device 0 && setenv mtdids nand0=nand0 && setenv mtdparts mtdparts=nand0:0x[0-9a-f]*@0x[0-9a-f]*(fs) && ubi part fs'"
+chk "pat_vol selects the UBI MTD with its sysfs offset/size" sh -c "fw_printenv -c $GR/fw_env.config -n pat_vol | grep 'nand device 0 && setenv mtdids nand0=nand0 && setenv mtdparts mtdparts=nand0:0x[0-9a-f]*@0x[0-9a-f]*(fs) && ubi part fs' >/dev/null"
 chk "guard can-arm: room + environment for the rollback" env $GE sh "$G" can-arm /tmp/ud/.upgrade/kernel /tmp/ud/.upgrade/root
 chk "guard save-prev: running kernel/root copied to kernel_prev/rootfs_prev and read back" env $GE sh "$G" save-prev
 chk "guard arm: trial armed (pat_state=trial, sizes recorded)" env $GE sh "$G" arm nandsim-new
