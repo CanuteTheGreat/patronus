@@ -46,6 +46,8 @@ ap_stop() { u=$1; inu $u sh -c "kill \$(cat /run/patronus-ap-coord.pid 2>/dev/nu
 st() { inu "$1" hostapd_cli -p /run/hostapd -i "$2" status 2>/dev/null | sed -n "s/^$3=//p" | head -1; }
 wait_up() { u=$1; i=$2; n=0; until [ "$(st $u $i state)" = ENABLED ]; do n=$((n + 1)); [ $n -gt ${3:-60} ] && return 1; sleep 1; done; }
 seg() { st "$1" "$2" vht_oper_centr_freq_seg0_idx; }
+dump() { echo "--- unit $1: start log"; cat $T/start-$1.log 2>/dev/null; echo "--- unit $1: /run, /tmp, hostapd logs"
+  inu $1 sh -c 'ls /run /run/hostapd /tmp; tail -15 /tmp/hostapd-ap5.log /tmp/hostapd-ap24.log /tmp/ap.log 2>/dev/null; ps | grep -c hostapd' 2>&1; iw dev | grep -E 'Interface|channel|ssid' | head -20; }
 holder a; holder b
 cleanup() { for u in a b; do ap_stop $u; kill $(cat $T/ns-$u 2>/dev/null) 2>/dev/null; done; }
 trap cleanup EXIT
@@ -53,7 +55,7 @@ echo "    unit a = $A24/$A5 key $(key $A5), unit b = $B24/$B5 key $(key $B5)"
 for c in $CASES; do case $c in
 plan)
   board a $A24 $A5; board b $B24 $B5
-  ap_start a $A24 $A5; wait_up a wl5-a 90 && wait_up a wl24-a 30 || fail "plan: unit a did not come up (see $T/start-a.log)"
+  ap_start a $A24 $A5; wait_up a wl5-a 90 && wait_up a wl24-a 30 || { fail "plan: unit a did not come up (see $T/start-a.log)"; dump a; }
   ca5=$(seg a wl5-a); ca24=$(st a wl24-a channel)
   echo "    unit a alone: 5 GHz centre $ca5, 2.4 GHz channel $ca24"
   ap_start b $B24 $B5; wait_up b wl5-b 90 && wait_up b wl24-b 30 || fail "plan: unit b did not come up (see $T/start-b.log)"
@@ -65,7 +67,7 @@ plan)
   ap_stop a; ap_stop b;;
 repair)
   board a $A24 $A5; board b $B24 $B5
-  ap_start a $A24 $A5 AP_COORD_NOPLAN=1 & ap_start b $B24 $B5 AP_COORD_NOPLAN=1 & wait
+  ap_start a $A24 $A5 AP_COORD_NOPLAN=1 & pa=$!; ap_start b $B24 $B5 AP_COORD_NOPLAN=1 & pb=$!; wait $pa $pb
   wait_up a wl5-a 90 || fail "repair: unit a 5 GHz not up"; wait_up b wl5-b 90 || fail "repair: unit b 5 GHz not up"
   ca=$(seg a wl5-a); cb=$(seg b wl5-b); echo "    both started blind: centres $ca / $cb"
   if [ "$ca" != "$cb" ]; then pass "repair: (ACS happened to separate them already; the re-check has nothing to fix)"

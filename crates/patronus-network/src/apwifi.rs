@@ -816,7 +816,9 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         for m in list {
             let m = m.trim().to_ascii_lowercase();
             if !valid_mac(&m) {
-                return Err(invalid(format!("{m:?} is not a MAC address (channel coordination peers)")));
+                return Err(invalid(format!(
+                    "{m:?} is not a MAC address (channel coordination peers)"
+                )));
             }
             if !out.contains(&m) {
                 out.push(m);
@@ -829,26 +831,34 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
     }
     if let Some(n) = input.coord_min_signal {
         if !(-100..=-30).contains(&n) {
-            return Err(invalid("weakest access point to coordinate with: -100 to -30 dBm"));
+            return Err(invalid(
+                "weakest access point to coordinate with: -100 to -30 dBm",
+            ));
         }
         set.push(("AP_COORD_MIN_SIGNAL".into(), n.to_string()));
     }
     if let Some(n) = input.coord_delay {
         if n > 3600 {
-            return Err(invalid("first channel re-check: 0 to 3600 seconds after start"));
+            return Err(invalid(
+                "first channel re-check: 0 to 3600 seconds after start",
+            ));
         }
         set.push(("AP_COORD_DELAY".into(), n.to_string()));
     }
     if let Some(n) = input.coord_interval {
         if n != 0 && !(60..=86400).contains(&n) {
-            return Err(invalid("channel re-check interval: 0 (never) or 60 to 86400 seconds"));
+            return Err(invalid(
+                "channel re-check interval: 0 (never) or 60 to 86400 seconds",
+            ));
         }
         set.push(("AP_COORD_INTERVAL".into(), n.to_string()));
     }
     if let Some(q) = &input.coord_quiet {
         let q = q.trim();
         if !valid_quiet(q) {
-            return Err(invalid("quiet hours for channel moves: empty (any time) or hours like 1-5"));
+            return Err(invalid(
+                "quiet hours for channel moves: empty (any time) or hours like 1-5",
+            ));
         }
         set.push(("AP_COORD_QUIET".into(), q.to_string()));
     }
@@ -2151,7 +2161,12 @@ mod tests {
         assert!(c.coord24 && c.coord5);
         assert!(c.coord_peers.is_empty());
         assert_eq!(
-            (c.coord_min_signal, c.coord_delay, c.coord_interval, c.coord_scan_secs),
+            (
+                c.coord_min_signal,
+                c.coord_delay,
+                c.coord_interval,
+                c.coord_scan_secs
+            ),
             (-90, 120, 3600, 25)
         );
         assert_eq!(c.coord_quiet, "1-5");
@@ -2178,7 +2193,10 @@ mod tests {
         let v = view(&back);
         assert!(!v.coord5 && v.coord24);
         assert_eq!(v.coord_peers, vec!["aa:bb:cc:dd:ee:ff"]);
-        assert_eq!((v.coord_delay, v.coord_interval, v.coord_scan_secs), (30, 0, 10));
+        assert_eq!(
+            (v.coord_delay, v.coord_interval, v.coord_scan_secs),
+            (30, 0, 10)
+        );
         assert_eq!(v.coord_quiet, "");
         // the declarative document carries them (export -> plan -> apply)
         let d = export_doc(&back);
@@ -2188,18 +2206,48 @@ mod tests {
         // none of them restarts the radios: ap-coord re-reads ap.env
         assert!(!restart_needed(&f, &n));
         for bad in [
-            WifiInput { coord_peers: Some(vec!["nope".into()]), ..Default::default() },
-            WifiInput { coord_min_signal: Some(-10), ..Default::default() },
-            WifiInput { coord_min_signal: Some(-120), ..Default::default() },
-            WifiInput { coord_delay: Some(4000), ..Default::default() },
-            WifiInput { coord_interval: Some(30), ..Default::default() },
-            WifiInput { coord_quiet: Some("25-3".into()), ..Default::default() },
-            WifiInput { coord_quiet: Some("night".into()), ..Default::default() },
-            WifiInput { coord_scan_secs: Some(2), ..Default::default() },
+            WifiInput {
+                coord_peers: Some(vec!["nope".into()]),
+                ..Default::default()
+            },
+            WifiInput {
+                coord_min_signal: Some(-10),
+                ..Default::default()
+            },
+            WifiInput {
+                coord_min_signal: Some(-120),
+                ..Default::default()
+            },
+            WifiInput {
+                coord_delay: Some(4000),
+                ..Default::default()
+            },
+            WifiInput {
+                coord_interval: Some(30),
+                ..Default::default()
+            },
+            WifiInput {
+                coord_quiet: Some("25-3".into()),
+                ..Default::default()
+            },
+            WifiInput {
+                coord_quiet: Some("night".into()),
+                ..Default::default()
+            },
+            WifiInput {
+                coord_scan_secs: Some(2),
+                ..Default::default()
+            },
         ] {
             assert!(update(&f, &bad).is_err(), "{bad:?}");
         }
-        assert!(valid_quiet("") && valid_quiet("1-5") && valid_quiet("22-6") && !valid_quiet("5") && !valid_quiet("1-24"));
+        assert!(
+            valid_quiet("")
+                && valid_quiet("1-5")
+                && valid_quiet("22-6")
+                && !valid_quiet("5")
+                && !valid_quiet("1-24")
+        );
     }
 
     #[test]

@@ -41,7 +41,7 @@ while grep -q '^mac80211_hwsim ' /proc/modules; do
   echo "mac80211_hwsim is loaded by another run: waiting"; sleep 20
 done
 trap cleanup EXIT
-$DOCKER run -d --name "$C" --cap-add NET_ADMIN --cap-add NET_RAW --security-opt apparmor=unconfined \
+$DOCKER run -d --name "$C" --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
   --memory 2g --cpus 2 "$IMAGE" sleep infinity >/dev/null
 $DOCKER exec "$C" apk add -q --no-cache bash hostapd wpa_supplicant iw iproute2 abuild build-base openssl-dev libnl3-dev linux-headers util-linux
 $DOCKER exec "$C" mkdir -p /w/h
