@@ -15,7 +15,7 @@ SUDO=; [ "$(id -u)" = 0 ] || SUDO=sudo
 DOCKER="${DOCKER:-$SUDO docker}"
 C=xbss-hwsim-$$
 # host-wide mutex (docker network): job containers do not share /tmp, a flock never excluded a run in another one
-HWSIM_DOCKER=$DOCKER; . ../../../hwsim-lock.sh
+HWSIM_DOCKER=$DOCKER; . ../../hwsim-lock.sh
 LOADED=
 KIMG=${KMOD_IMAGE:-debian:trixie}
 # load/unload the host-global module: directly (root/sudo on the host) or, from a CI job container, through a
