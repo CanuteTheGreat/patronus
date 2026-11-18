@@ -576,7 +576,7 @@ eval "$(python3 "$ROOT/ci/hw-profile/hwprofile.py" env "$ROOT/profiles/hw/qualco
 [ "$((HW_NAND_PEB_BYTES - 2 * HW_NAND_MIN_IO))" = "$HW_NAND_LEB_BYTES" ] && ok "profile LEB = PEB - 2 pages" || no "profile LEB inconsistent"
 : > "$W/k"; truncate -s 5305856 "$W/k"; : > "$W/r"; truncate -s 25000000 "$W/r"
 out=$(sh "$D/nand-budget.sh" "$W/r" "$W/k"); rc=$?
-[ $rc = 0 ] && case "$out" in *"920 PEBs - 24 reserved"*"kernel 42 "*) true;; *) false;; esac && ok "nand-budget: 25 MB root fits, stock kernel = 42 LEBs" || no "nand-budget: $out"
+[ $rc = 0 ] && case "$out" in *"920 PEBs - 24 reserved"*"kernel 42 "*"rollback copy "*) true;; *) false;; esac && ok "nand-budget: 25 MB root fits with its rollback copy, stock kernel = 42 LEBs" || no "nand-budget: $out"
 truncate -s 100000000 "$W/r"; sh "$D/nand-budget.sh" "$W/r" "$W/k" >/dev/null 2>&1; [ $? = 1 ] && ok "nand-budget: 100 MB root is over budget" || no "nand-budget: 100 MB root not rejected"
 if command -v ubinize >/dev/null; then
   printf '\320\015\376\355' > "$W/k"; head -c 400000 /dev/zero >> "$W/k"; printf 'hsqs' > "$W/r"; head -c 900000 /dev/zero >> "$W/r"

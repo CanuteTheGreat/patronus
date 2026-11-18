@@ -8,6 +8,8 @@
 # (layout volume 2 + wear-levelling 1 + atomic LEB change 1 + bad-block reserve 20 per 1024 PEBs of the 128 MiB chip).
 # With [factory.ubi]: its layout is checked too (ubi-layout.py check) and its kernel/rootfs volumes must match the parts.
 # NAND_DATA_MIN / NAND_MARGIN (KiB) override the profile's data_min_kib / margin_kib.
+# Boot rollback (12.14) keeps the previous image as kernel_prev/rootfs_prev: counted at this image's size unless
+# NAND_ROLLBACK=0.
 # Exit 0 = fits with margin, 1 = over budget or bad layout, 2 = usage.
 HERE=$(cd "$(dirname "$0")" && pwd)
 R=${1:-}; K=${2:-}; U=${3:-}
@@ -27,8 +29,9 @@ if [ -n "$U" ]; then
   set -- $uk
   [ "$1" = "$k" ] && [ "$2" = "$r" ] || { echo "NAND budget: factory.ubi reserves kernel $1 / rootfs $2 PEBs, the parts need $k / $r"; exit 1; }
 fi
-used=$((k + r + d)); free=$((avail - used)); fkib=$((free * LEB / 1024)); mkib=$MARGIN
-printf 'NAND budget: UBI %d PEBs - %d reserved = %d LEBs; kernel %d + root %d + settings(min %d KiB) %d = %d; free %d LEBs = %d KiB (margin wanted %d KiB)\n' \
-  "$total" "$RESERVE" "$avail" "$k" "$r" "$DATA" "$d" "$used" "$free" "$fkib" "$mkib"
+rb=0; [ "${NAND_ROLLBACK:-1}" = 1 ] && rb=$((k + r))
+used=$((k + r + d + rb)); free=$((avail - used)); fkib=$((free * LEB / 1024)); mkib=$MARGIN
+printf 'NAND budget: UBI %d PEBs - %d reserved = %d LEBs; kernel %d + root %d + rollback copy %d + settings(min %d KiB) %d = %d; free %d LEBs = %d KiB (margin wanted %d KiB)\n' \
+  "$total" "$RESERVE" "$avail" "$k" "$r" "$rb" "$DATA" "$d" "$used" "$free" "$fkib" "$mkib"
 if [ "$fkib" -lt "$mkib" ]; then echo "NAND budget: OVER by $((mkib - fkib)) KiB"; exit 1; fi
 echo "NAND budget: fits"
