@@ -52,7 +52,9 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/bin" "$r/sbin" "$r/usr/bin" "
            usr/libexec/patronus/ath11k-caldata usr/libexec/patronus/ap usr/libexec/patronus/board-network etc/pam.d/patronus lib/security/pam_unix.so \
            usr/sbin/hostapd usr/sbin/dropbear usr/bin/patronus-cli lib/firmware/ath11k/IPQ6018/hw1.0/board-2.bin lib/firmware/IPQ6018/q6_fw.mdt \
            lib/firmware/IPQ6018/m3_fw.mdt lib/firmware/regulatory.db usr/libexec/patronus/etph-run usr/libexec/patronus/ap-guest usr/libexec/patronus/ap-addr \
-           usr/libexec/patronus/leds usr/libexec/patronus/restart-schedule usr/libexec/patronus/scheduled-restart usr/bin/gpgv usr/bin/ssl_client usr/libexec/patronus/accounts-sync; do : > "$r/$f"; chmod +x "$r/$f"; done
+           usr/libexec/patronus/leds usr/libexec/patronus/restart-schedule usr/libexec/patronus/scheduled-restart usr/bin/gpgv usr/bin/ssl_client usr/libexec/patronus/accounts-sync \
+           usr/sbin/patronus-guard usr/bin/fw_printenv etc/patronus/boot-guard.board etc/patronus/boot-guard.conf; do : > "$r/$f"; chmod +x "$r/$f"; done
+  ln -s fw_printenv "$r/usr/bin/fw_setenv"
   ln -s patronus-cli "$r/usr/bin/patronus-web"; cp "$O/etc/patronus/board.sh" "$O/etc/patronus/embedded.env" "$r/etc/patronus/"
   cp "$O/usr/libexec/patronus/early" "$O/usr/libexec/patronus/ath11k-caldata" "$r/usr/libexec/patronus/"
   for b in ubinfo ubimkvol ubirmvol ubirsvol ubiupdatevol ubiblock iw ip sha256sum pivot_root; do ln -s /bin/busybox "$r/usr/sbin/$b"; done
@@ -589,6 +591,38 @@ if command -v ubinize >/dev/null; then
   ubinize -o "$W/sub.ubi" -p 131072 -m 2048 -s 512 "$W/u.cfg" >/dev/null 2>&1 && mkcfg 0 1 vol_flags=autoresize && ubinize -o "$W/sub.ubi" -p 131072 -m 2048 -s 512 "$W/u.cfg" >/dev/null 2>&1 \
     && tn_msg "ubi-layout: a sub-page VID offset (wrong LEB size) is rejected" "leb is" python3 "$D/ubi-layout.py" check "$W/sub.ubi"
 else sk "ubinize image cases (no ubinize)"; fi
+
+# 3b. boot rollback (patronus-guard): the bootloader script it writes into a U-Boot environment (a file in U-Boot's
+#     format, fw_setenv/fw_printenv from u-boot-tools), idempotence, refusal of a non-stock bootcmd, trial arm/confirm
+if command -v mkenvimage >/dev/null && command -v fw_printenv >/dev/null; then
+  G=$O/usr/sbin/patronus-guard; GC=$W/gconf; GR=$W/grun; mkdir -p $GC $GR $W/gdata
+  printf 'bootcmd=bootipq; ping 192.168.1.2; run lfq; bootipq; httpd 192.168.1.1; reset\nbootargs=console=ttyMSM0,115200n8\n' > $W/env.txt
+  mkenvimage -s 0x40000 -o $W/env.img $W/env.txt
+  cp $O/etc/patronus/boot-guard.board $O/etc/patronus/boot-guard.conf $GC/
+  printf 'GUARD_ENV_MTD=%s\nGUARD_UB_VOL="ubi part fs"\n' "$W/env.img" >> $GC/boot-guard.board
+  echo BUILD=host-old > $GR/release
+  GE="GUARD_CONF_DIR=$GC GUARD_RUN=$GR GUARD_RELEASE=$GR/release PATRONUS_DATA=$W/gdata"
+  pe() { fw_printenv -c $GR/fw_env.config -n "$1" 2>/dev/null; }
+  t "guard env-install on a stock environment" env $GE sh "$G" env-install
+  t "bootcmd = guard prefix + stock boot + pat_failed + stock rest" sh -c "[ \"\$(fw_printenv -c $GR/fw_env.config -n bootcmd)\" = 'run pat_boot; bootipq; run pat_failed; ping 192.168.1.2; run lfq; bootipq; httpd 192.168.1.1; reset' ]"
+  t "trial: count down + save BEFORE booting, watchdog + trial flag only for this boot" sh -c "fw_printenv -c $GR/fw_env.config -n pat_trial | grep -q 'setexpr pat_left \${pat_left} - 1; setexpr pat_boots \${pat_boots} + 1; run pat_save; setenv bootargs \${bootargs} patronus.trial=\${pat_boots} watchdog.handle_boot_enabled=0; run pat_wdt'"
+  t "revert: both old parts read into RAM before anything is written, then state reverted + save" sh -c "fw_printenv -c $GR/fw_env.config -n pat_revert | grep -q 'run pat_vol && run pat_rd_r && run pat_rd_k && run pat_wr_r && run pat_wr_k && setenv pat_state reverted && run pat_save'"
+  t "copy primitives are U-Boot ubi read/write of the prev/live volumes" sh -c "[ \"\$(fw_printenv -c $GR/fw_env.config -n pat_rd_r)\" = 'ubi read \${pat_ra} rootfs_prev \${pat_rsz}' ] && [ \"\$(fw_printenv -c $GR/fw_env.config -n pat_wr_k)\" = 'ubi write \${pat_ka} kernel \${pat_ksz}' ]"
+  t "watchdog: 30 s x 32768 Hz ticks, APCS WDT registers" sh -c "[ \"\$(fw_printenv -c $GR/fw_env.config -n pat_wdt_ticks)\" = 0xf0000 ] && fw_printenv -c $GR/fw_env.config -n pat_wdt | grep -q 'mw.l 0xb017008 1'"
+  cp $W/env.img $W/env.before; t "env-install again: nothing written (NAND wear)" env $GE sh "$G" env-install
+  t "env-install is idempotent" cmp -s $W/env.img $W/env.before
+  printf 'GUARD_WATCHDOG=0\nGUARD_ATTEMPTS=3\n' > $GC/boot-guard.conf
+  t "a setting change rewrites the script (watchdog off: no kernel args, pat_wdt=true)" sh -c "env $GE sh '$G' env-install && [ \"\$(fw_printenv -c $GR/fw_env.config -n pat_wdt)\" = true ] && ! fw_printenv -c $GR/fw_env.config -n pat_trial | grep -q handle_boot"
+  printf 'PREV_KSZ=5242880\nPREV_RSZ=16998400\n' > $GR/prev-sizes
+  t "arm: trial with 3 boots, sizes in hex, previous build recorded" sh -c "env $GE sh '$G' arm host-new && [ \"\$(fw_printenv -c $GR/fw_env.config -n pat_state)\" = trial ] && [ \"\$(fw_printenv -c $GR/fw_env.config -n pat_left)\" = 3 ] && [ \"\$(fw_printenv -c $GR/fw_env.config -n pat_rsz)\" = 0x1036000 ] && [ \"\$(fw_printenv -c $GR/fw_env.config -n pat_prev)\" = host-old ]"
+  tn_msg "can-arm refuses while a trial runs" "still running" env $GE sh "$G" can-arm /dev/null /dev/null
+  t "ok: confirm clears the trial and logs the event" sh -c "env $GE sh '$G' ok >/dev/null 2>&1; [ \"\$(fw_printenv -c $GR/fw_env.config -n pat_state)\" = ok ] && grep -q '|confirmed|' $W/gdata/boot-guard/events"
+  t "status --json is valid JSON" sh -c "env $GE sh '$G' status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d[\"state\"]==\"ok\" and d[\"installed\"] and d[\"settings\"][\"attempts\"]==3, d'"
+  t "env-remove restores the stock bootcmd and drops every pat_ variable" sh -c "env $GE sh '$G' env-remove && [ \"\$(fw_printenv -c $GR/fw_env.config -n bootcmd)\" = 'bootipq; ping 192.168.1.2; run lfq; bootipq; httpd 192.168.1.1; reset' ] && ! fw_printenv -c $GR/fw_env.config | grep -q '^pat_'"
+  printf 'bootcmd=run custom_boot\n' > $W/env2.txt; mkenvimage -s 0x40000 -o $W/env.img $W/env2.txt; cp $W/env.img $W/env.before
+  tn_msg "a bootcmd that is not the stock one is left alone" "not the stock one" env $GE sh "$G" env-install
+  t "... and the environment is untouched" cmp -s $W/env.img $W/env.before
+else sk "boot rollback environment cases (no mkenvimage/fw_printenv: u-boot-tools)"; fi
 
 # 4. package-managed accounts (shared with the Slate)
 if out=$(sh "$D/../../embedded-common/tests/accounts-sync.sh" 2>&1); then ok "accounts-sync: $(echo "$out" | tail -1)"; else no "accounts-sync tests"; echo "$out" | grep FAIL | sed 's/^/    /'; fi
