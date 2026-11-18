@@ -50,7 +50,11 @@ const KEYS: &[(&str, &str, Kind)] = &[
     ("net_ping", "GUARD_NET_PING", Kind::Ping),
     ("hostapd", "GUARD_HOSTAPD", Kind::Hostapd),
     ("watchdog", "GUARD_WATCHDOG", Kind::Bool),
-    ("watchdog_timeout_s", "GUARD_WATCHDOG_TIMEOUT", Kind::Int(5, 32)),
+    (
+        "watchdog_timeout_s",
+        "GUARD_WATCHDOG_TIMEOUT",
+        Kind::Int(5, 32),
+    ),
     ("reboot_grace_s", "GUARD_REBOOT_GRACE", Kind::Int(10, 600)),
 ];
 const CHECKS: &[&str] = &["network", "ssh", "web", "hostapd"];
@@ -68,7 +72,9 @@ fn file_value(kind: &Kind, name: &str, v: &Value) -> Result<String> {
             .ok_or_else(|| invalid(format!("{name} must be true or false"))),
         Kind::Int(lo, hi) => match v.as_i64() {
             Some(n) if n >= *lo && n <= *hi => Ok(n.to_string()),
-            _ => Err(invalid(format!("{name} must be a whole number from {lo} to {hi}"))),
+            _ => Err(invalid(format!(
+                "{name} must be a whole number from {lo} to {hi}"
+            ))),
         },
         Kind::Checks => {
             let s = v
@@ -92,9 +98,7 @@ fn file_value(kind: &Kind, name: &str, v: &Value) -> Result<String> {
             if s == "gateway" || s == "none" || s.parse::<std::net::IpAddr>().is_ok() {
                 Ok(s.to_string())
             } else {
-                Err(invalid(
-                    "net_ping must be gateway, none or an IP address",
-                ))
+                Err(invalid("net_ping must be gateway, none or an IP address"))
             }
         }
         Kind::Hostapd => match v.as_str() {
@@ -160,7 +164,14 @@ fn conf_value(text: &str, key: &str) -> Option<String> {
     text.lines()
         .filter_map(|l| l.strip_prefix(&format!("{key}=")))
         .last()
-        .map(|v| v.split('#').next().unwrap_or("").trim().trim_matches('"').to_string())
+        .map(|v| {
+            v.split('#')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .trim_matches('"')
+                .to_string()
+        })
 }
 
 /// State for the UI: `patronus-guard status --json` (reads the bootloader environment), or null without the guard.
@@ -172,9 +183,9 @@ pub fn status_in(p: &GuardPaths) -> Value {
         .args(["status", "--json"])
         .output()
     {
-        Ok(o) => serde_json::from_slice(&o.stdout).unwrap_or_else(|e| {
-            json!({ "available": true, "error": format!("unreadable status: {e}") })
-        }),
+        Ok(o) => serde_json::from_slice(&o.stdout).unwrap_or_else(
+            |e| json!({ "available": true, "error": format!("unreadable status: {e}") }),
+        ),
         Err(e) => json!({ "available": true, "error": e.to_string() }),
     }
 }
@@ -223,7 +234,11 @@ pub fn action_in(p: &GuardPaths, what: &str) -> Result<Value> {
     let mut v = match what {
         "rollback" => run(&p.flash, &["rollback"])?,
         "confirm" => run(&p.flash, &["confirm"])?,
-        other => return Err(Error::Config(format!("Invalid boot rollback action {other:?}"))),
+        other => {
+            return Err(Error::Config(format!(
+                "Invalid boot rollback action {other:?}"
+            )))
+        }
     };
     v["boot_guard"] = status_in(p);
     Ok(v)
@@ -249,7 +264,10 @@ mod tests {
             &json!({"attempts": 3, "window_s": 240, "checks": "web, ssh web", "net_ping": "10.0.0.1", "watchdog": false}),
         )
         .unwrap();
-        assert!(n.contains("# comment\n#GUARD_ATTEMPTS=2\nGUARD_WINDOW=240\nOTHER=x\n"), "{n}");
+        assert!(
+            n.contains("# comment\n#GUARD_ATTEMPTS=2\nGUARD_WINDOW=240\nOTHER=x\n"),
+            "{n}"
+        );
         assert!(n.contains("GUARD_ATTEMPTS=3\n") && n.contains("GUARD_CHECKS=\"web ssh\"\n"));
         assert!(n.contains("GUARD_NET_PING=10.0.0.1\n") && n.contains("GUARD_WATCHDOG=0\n"));
         assert_eq!(conf_value(&n, "GUARD_CHECKS").as_deref(), Some("web ssh"));

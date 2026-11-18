@@ -540,12 +540,18 @@ pub async fn bootguard_audit(state: &AppState, guard: &serde_json::Value) {
         Err(_) => return,
     };
     // a unit whose event log restarted (factory reset of the settings volume) counts from 1 again
-    let max = events.iter().filter_map(|e| e["seq"].as_i64()).max().unwrap_or(0);
+    let max = events
+        .iter()
+        .filter_map(|e| e["seq"].as_i64())
+        .max()
+        .unwrap_or(0);
     if max < last {
         last = 0;
     }
     for e in events {
-        let Some(seq) = e["seq"].as_i64() else { continue };
+        let Some(seq) = e["seq"].as_i64() else {
+            continue;
+        };
         if seq <= last {
             continue;
         }
@@ -574,12 +580,19 @@ pub async fn firmware_guard_put(
     admin: AdminUser,
     Json(b): Json<serde_json::Value>,
 ) -> Response {
-    let r = state.system.system_op("firmware_guard_set", b.clone()).await;
+    let r = state
+        .system
+        .system_op("firmware_guard_set", b.clone())
+        .await;
     let _ = state
         .config_store
         .audit(
             &admin.session.username,
-            if r.is_ok() { "update" } else { "update-refused" },
+            if r.is_ok() {
+                "update"
+            } else {
+                "update-refused"
+            },
             "boot_guard",
             None,
             &b,
