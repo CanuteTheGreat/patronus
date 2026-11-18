@@ -366,7 +366,7 @@
             box-shadow: 0 1px 3px var(--shadow);
         }
 
-        .stat-card h3 {
+        .stat-card h3, .stat-card h2 {
             font-size: 0.85rem;
             color: var(--text-muted);
             margin-bottom: 0.75rem;
@@ -1044,5 +1044,25 @@
     </script>
     <script>if (location.pathname !== '/setup') fetch('/api/setup/status', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null).then(d => { if (d && !d.completed && d.wizard !== false) document.getElementById('setup-banner').style.display = ''; }).catch(() => {});</script>
     {% block extra_scripts %}{% endblock %}
+    <script>
+    // Tables that scroll sideways on a narrow screen must be reachable by keyboard (WCAG 2.1.1): give a scrolling
+    // table with nothing focusable inside a tab stop, and take it away again when it stops scrolling.
+    (function () {
+        function fix() {
+            document.querySelectorAll('.content table, .table-container').forEach(el => {
+                const scrolls = el.scrollWidth > el.clientWidth + 1 && ['auto', 'scroll'].includes(getComputedStyle(el).overflowX);
+                const inner = el.querySelector('a[href], button, input, select, textarea, [tabindex]');
+                if (scrolls && !inner) el.setAttribute('tabindex', '0');
+                else if (el.getAttribute('tabindex') === '0' && el.dataset.scrollFocus !== undefined) el.removeAttribute('tabindex');
+                if (scrolls && !inner) el.dataset.scrollFocus = '';
+            });
+        }
+        let t;
+        const later = () => { clearTimeout(t); t = setTimeout(fix, 150); };
+        window.addEventListener('load', later);
+        window.addEventListener('resize', later);
+        new MutationObserver(later).observe(document.querySelector('.content') || document.body, {childList: true, subtree: true});
+    })();
+    </script>
 </body>
 </html>

@@ -40,6 +40,7 @@
     </style>
 </head>
 <body>
+<main>
     <p><a href="/">&larr; Dashboard</a> &middot; <a href="/network">Network services</a> &middot; <a href="/firewall">Firewall</a></p>
     <h1>Interfaces</h1>
     <div class="muted" id="session-line">Loading&hellip;</div>
@@ -50,7 +51,7 @@
         configuration are left exactly as the operating system set them up.
         The anti-lockout rule (SSH + web UI) follows the LAN role (or WAN when there is no LAN).</p>
     <table id="devices">
-        <thead><tr><th>Interface</th><th>Role</th><th>State</th><th>Addresses</th><th>Configuration</th><th>MAC / MTU</th><th>Traffic</th><th></th></tr></thead>
+        <thead><tr><th>Interface</th><th>Role</th><th>State</th><th>Addresses</th><th>Configuration</th><th>MAC / MTU</th><th>Traffic</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody></tbody>
     </table>
     <div id="devices-empty" class="empty hidden">No network interfaces were reported by the kernel.</div>
@@ -61,24 +62,24 @@
         <form id="edit-form" onsubmit="return saveIface(event)">
             <input type="hidden" name="name">
             <div class="grid">
-                <div><label>Role</label><select name="role" id="role-select"></select></div>
+                <div><label>Role<select name="role" id="role-select"></select></label></div>
                 <div><label><input type="checkbox" name="enabled" checked> Enabled (link up)</label></div>
-                <div><label>IPv4</label><select name="ipv4_mode" onchange="modeVis()">
+                <div><label>IPv4<select name="ipv4_mode" onchange="modeVis()">
                     <option value="unmanaged">Leave as is (unmanaged)</option><option value="static">Static</option>
-                    <option value="dhcp">DHCP client</option><option value="none">None</option></select></div>
-                <div class="v4s"><label>IPv4 addresses (CIDR, one per line)</label><textarea name="ipv4" placeholder="192.168.1.1/24"></textarea></div>
-                <div class="v4s"><label>IPv4 gateway (upstream)</label><input name="gateway4" placeholder="optional"></div>
-                <div><label>IPv6</label><select name="ipv6_mode" onchange="modeVis()">
+                    <option value="dhcp">DHCP client</option><option value="none">None</option></select></label></div>
+                <div class="v4s"><label>IPv4 addresses (CIDR, one per line)<textarea name="ipv4" placeholder="192.168.1.1/24"></textarea></label></div>
+                <div class="v4s"><label>IPv4 gateway (upstream)<input name="gateway4" placeholder="optional"></label></div>
+                <div><label>IPv6<select name="ipv6_mode" onchange="modeVis()">
                     <option value="unmanaged">Leave as is (unmanaged)</option><option value="static">Static</option>
                     <option value="slaac">SLAAC (router advertisements)</option><option value="dhcp6">DHCPv6 (dhcpcd)</option>
-                    <option value="none">None</option></select></div>
-                <div class="v6s"><label>IPv6 addresses (CIDR, one per line)</label><textarea name="ipv6" placeholder="fd00:1::1/64"></textarea></div>
-                <div class="v6pd"><label>Delegate prefix to (DHCPv6-PD, comma-separated interface names)</label><input name="pd_downstream" placeholder="e.g. eth1"></div>
-                <div class="v6s"><label>IPv6 gateway</label><input name="gateway6" placeholder="optional"></div>
-                <div class="v4d"><label>Uplink metric (lower = preferred; empty = role default)</label><input name="metric" type="number" min="1" max="9999" placeholder="e.g. 150 for a fallback uplink"></div>
-                <div><label>MTU</label><input name="mtu" type="number" min="68" max="65535" placeholder="default"></div>
-                <div><label>MAC address (spoof)</label><input name="mac" placeholder="hardware default"></div>
-                <div><label>Description</label><input name="description"></div>
+                    <option value="none">None</option></select></label></div>
+                <div class="v6s"><label>IPv6 addresses (CIDR, one per line)<textarea name="ipv6" placeholder="fd00:1::1/64"></textarea></label></div>
+                <div class="v6pd"><label>Delegate prefix to (DHCPv6-PD, comma-separated interface names)<input name="pd_downstream" placeholder="e.g. eth1"></label></div>
+                <div class="v6s"><label>IPv6 gateway<input name="gateway6" placeholder="optional"></label></div>
+                <div class="v4d"><label>Uplink metric (lower = preferred; empty = role default)<input name="metric" type="number" min="1" max="9999" placeholder="e.g. 150 for a fallback uplink"></label></div>
+                <div><label>MTU<input name="mtu" type="number" min="68" max="65535" placeholder="default"></label></div>
+                <div><label>MAC address (spoof)<input name="mac" placeholder="hardware default"></label></div>
+                <div><label>Description<input name="description"></label></div>
             </div>
             <p><button class="btn btn-primary" type="submit">Save &amp; apply</button>
                <button class="btn" type="button" onclick="hide('edit-card')">Cancel</button></p>
@@ -86,16 +87,16 @@
     </div>
 
     <h2>Overlays <span class="muted">(GRE, GRE-TAP, VXLAN)</span></h2>
-    <table id="overlays"><thead><tr><th>Name</th><th>Type</th><th>Local</th><th>Remote</th><th>Key / VNI</th><th>State</th><th>Description</th><th></th></tr></thead><tbody></tbody></table>
+    <table id="overlays"><thead><tr><th>Name</th><th>Type</th><th>Local</th><th>Remote</th><th>Key / VNI</th><th>State</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
     <div id="overlays-empty" class="empty hidden">No overlay links configured.</div>
     <form class="card" id="overlay-form" onsubmit="return addOverlay(event)">
         <div class="grid">
-            <div><label>Name</label><input name="name" maxlength="15" required></div>
-            <div><label>Type</label><select name="kind"><option value="gre">GRE (L3)</option><option value="gretap">GRE-TAP (L2)</option><option value="vxlan">VXLAN</option></select></div>
-            <div><label>Local address (optional)</label><input name="local"></div>
-            <div><label>Remote address</label><input name="remote" required></div>
-            <div><label>GRE key / VXLAN VNI</label><input name="key" type="number" min="1"></div>
-            <div><label>Description</label><input name="description"></div>
+            <div><label>Name<input name="name" maxlength="15" required></label></div>
+            <div><label>Type<select name="kind"><option value="gre">GRE (L3)</option><option value="gretap">GRE-TAP (L2)</option><option value="vxlan">VXLAN</option></select></label></div>
+            <div><label>Local address (optional)<input name="local"></label></div>
+            <div><label>Remote address<input name="remote" required></label></div>
+            <div><label>GRE key / VXLAN VNI<input name="key" type="number" min="1"></label></div>
+            <div><label>Description<input name="description"></label></div>
         </div>
         <p><button class="btn btn-primary" type="submit">Save &amp; apply</button></p>
     </form>
@@ -103,45 +104,45 @@
     <h2>VLANs <span class="muted">(802.1Q, QinQ via an 802.1ad parent)</span></h2>
     <div id="vlan-off" class="empty hidden">This build has no VLAN support (Gentoo USE=vlan).</div>
     <div id="vlan-on">
-        <table id="vlans"><thead><tr><th>Name</th><th>Parent</th><th>Tag</th><th>Protocol</th><th>State</th><th>Description</th><th></th></tr></thead><tbody></tbody></table>
+        <table id="vlans"><thead><tr><th>Name</th><th>Parent</th><th>Tag</th><th>Protocol</th><th>State</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
         <div id="vlans-empty" class="empty hidden">No VLANs configured.</div>
         <form class="card" id="vlan-form" onsubmit="return addVlan(event)">
             <div class="grid">
-                <div><label>Parent interface</label><select name="parent" class="parents"></select></div>
-                <div><label>VLAN tag (1-4094)</label><input name="vlan_id" type="number" min="1" max="4094" required></div>
-                <div><label>Protocol</label><select name="protocol"><option value="802.1q">802.1Q</option><option value="802.1ad">802.1ad (QinQ service tag)</option></select></div>
-                <div><label>Name (default parent.tag)</label><input name="name" maxlength="15"></div>
-                <div><label>Description</label><input name="description"></div>
+                <div><label>Parent interface<select name="parent" class="parents"></select></label></div>
+                <div><label>VLAN tag (1-4094)<input name="vlan_id" type="number" min="1" max="4094" required></label></div>
+                <div><label>Protocol<select name="protocol"><option value="802.1q">802.1Q</option><option value="802.1ad">802.1ad (QinQ service tag)</option></select></label></div>
+                <div><label>Name (default parent.tag)<input name="name" maxlength="15"></label></div>
+                <div><label>Description<input name="description"></label></div>
             </div>
             <p><button class="btn btn-primary" type="submit">Add VLAN</button></p>
         </form>
     </div>
 
     <h2>Link aggregation (bonds)</h2>
-    <table id="bonds"><thead><tr><th>Name</th><th>Mode</th><th>Members</th><th>Primary</th><th>Kernel state</th><th></th></tr></thead><tbody></tbody></table>
+    <table id="bonds"><thead><tr><th>Name</th><th>Mode</th><th>Members</th><th>Primary</th><th>Kernel state</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
     <div id="bonds-empty" class="empty hidden">No bonds configured.</div>
     <form class="card" id="bond-form" onsubmit="return addBond(event)">
         <div class="grid">
-            <div><label>Name</label><input name="name" value="bond0" maxlength="15" required></div>
-            <div><label>Mode</label><select name="mode">
+            <div><label>Name<input name="name" value="bond0" maxlength="15" required></label></div>
+            <div><label>Mode<select name="mode">
                 <option value="active-backup">active-backup (failover)</option><option value="802.3ad">802.3ad (LACP)</option>
                 <option value="balance-xor">balance-xor</option><option value="balance-rr">balance-rr</option>
-                <option value="broadcast">broadcast</option><option value="balance-tlb">balance-tlb</option><option value="balance-alb">balance-alb</option></select></div>
+                <option value="broadcast">broadcast</option><option value="balance-tlb">balance-tlb</option><option value="balance-alb">balance-alb</option></select></label></div>
             <div><label>Member ports</label><div class="ports" data-name="members"></div></div>
-            <div><label>Primary (active-backup)</label><input name="primary" placeholder="optional"></div>
-            <div><label>Link monitor (miimon, ms)</label><input name="miimon" type="number" value="100" min="0"></div>
-            <div><label>LACP rate</label><select name="lacp_rate"><option value="">default (slow)</option><option>slow</option><option>fast</option></select></div>
-            <div><label>Transmit hash</label><select name="xmit_hash_policy"><option value="">default</option><option>layer2</option><option>layer2+3</option><option>layer3+4</option></select></div>
+            <div><label>Primary (active-backup)<input name="primary" placeholder="optional"></label></div>
+            <div><label>Link monitor (miimon, ms)<input name="miimon" type="number" value="100" min="0"></label></div>
+            <div><label>LACP rate<select name="lacp_rate"><option value="">default (slow)</option><option>slow</option><option>fast</option></select></label></div>
+            <div><label>Transmit hash<select name="xmit_hash_policy"><option value="">default</option><option>layer2</option><option>layer2+3</option><option>layer3+4</option></select></label></div>
         </div>
         <p><button class="btn btn-primary" type="submit">Save bond</button></p>
     </form>
 
     <h2>Bridges</h2>
-    <table id="bridges"><thead><tr><th>Name</th><th>Members</th><th>STP</th><th>Kernel state</th><th></th></tr></thead><tbody></tbody></table>
+    <table id="bridges"><thead><tr><th>Name</th><th>Members</th><th>STP</th><th>Kernel state</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
     <div id="bridges-empty" class="empty hidden">No bridges configured.</div>
     <form class="card" id="bridge-form" onsubmit="return addBridge(event)">
         <div class="grid">
-            <div><label>Name</label><input name="name" value="br0" maxlength="15" required></div>
+            <div><label>Name<input name="name" value="br0" maxlength="15" required></label></div>
             <div><label>Member ports</label><div class="ports" data-name="members" data-virtual="1"></div></div>
             <div><label><input type="checkbox" name="stp"> Spanning tree (STP)</label></div>
         </div>
@@ -152,16 +153,16 @@
     <div id="pppoe-off" class="empty hidden">This build has no PPPoE support (Gentoo USE=pppoe).</div>
     <div id="pppoe-on">
         <p class="muted">A PPPoE link is a new interface (e.g. <span class="mono">pppoe0</span>); assign it the WAN role above once created.</p>
-        <table id="pppoe"><thead><tr><th>Name</th><th>Over</th><th>User</th><th>MTU</th><th>Link</th><th></th></tr></thead><tbody></tbody></table>
+        <table id="pppoe"><thead><tr><th>Name</th><th>Over</th><th>User</th><th>MTU</th><th>Link</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
         <div id="pppoe-empty" class="empty hidden">No PPPoE links configured.</div>
         <form class="card" id="pppoe-form" onsubmit="return addPppoe(event)">
             <div class="grid">
-                <div><label>Name</label><input name="name" value="pppoe0" maxlength="15" required></div>
-                <div><label>Over interface</label><select name="parent" class="parents"></select></div>
-                <div><label>Username</label><input name="username" required autocomplete="off"></div>
-                <div><label>Password (blank = keep)</label><input name="password" type="password" autocomplete="new-password"></div>
-                <div><label>Service name</label><input name="service_name" placeholder="optional"></div>
-                <div><label>MTU</label><input name="mtu" type="number" value="1492"></div>
+                <div><label>Name<input name="name" value="pppoe0" maxlength="15" required></label></div>
+                <div><label>Over interface<select name="parent" class="parents"></select></label></div>
+                <div><label>Username<input name="username" required autocomplete="off"></label></div>
+                <div><label>Password (blank = keep)<input name="password" type="password" autocomplete="new-password"></label></div>
+                <div><label>Service name<input name="service_name" placeholder="optional"></label></div>
+                <div><label>MTU<input name="mtu" type="number" value="1492"></label></div>
                 <div><label><input type="checkbox" name="default_route" checked> Default route via this link</label></div>
                 <div><label><input type="checkbox" name="use_peer_dns" checked> Use provider DNS</label></div>
                 <div><label><input type="checkbox" name="ipv6"> IPv6 (IPV6CP)</label></div>
@@ -173,10 +174,11 @@
     <h2>DHCP client</h2>
     <p class="muted">Used by interfaces in DHCP mode. Build default: <span id="dhcp-default" class="mono"></span>.
         Running clients: <span id="daemons"></span></p>
-    <p><select id="dhcp-client"><option value="">build default</option><option value="dhcpcd">dhcpcd</option><option value="udhcpc">busybox udhcpc</option></select>
+    <p><select id="dhcp-client" aria-label="DHCP client"><option value="">build default</option><option value="dhcpcd">dhcpcd</option><option value="udhcpc">busybox udhcpc</option></select>
        <button class="btn" onclick="setDhcpClient()">Save</button>
        <button class="btn" onclick="call('POST','/api/interfaces/apply')">Re-apply all interfaces</button></p>
 
+</main>
 <script>
 let D = null;
 let pending = null;

@@ -13,7 +13,7 @@
   "pages": [
     {"id": "login", "path": "/login", "auth": false, "wait_for": "#username"},
     {"id": "dashboard", "path": "/", "wait_for": ".sidebar-nav"},
-    {"id": "interfaces", "path": "/interfaces", "wait_for": ".sidebar-nav"},
+    {"id": "interfaces", "path": "/interfaces", "wait_for": "h1"},
     {"id": "firewall-rules", "path": "/firewall", "wait_for": "#tab-rules"},
     {"id": "nat", "path": "/firewall", "wait_for": "#tab-pf", "click": ["button[data-tab=tab-pf]"]},
     {"id": "dhcp", "path": "/dhcp", "wait_for": ".sidebar-nav"},

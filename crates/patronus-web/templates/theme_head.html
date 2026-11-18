@@ -128,4 +128,7 @@
         --chart-down: #5a2326; --chart-warn: #4f3d0f; --chart-axis: #5b616c;
     }
     :root[data-theme="light"] { color-scheme: light; }
+    /* pages that style their own body still get the themed canvas (dark mode on a white page fails contrast) */
+    body { background: var(--bg); color: var(--ink); }
+    .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 </style>

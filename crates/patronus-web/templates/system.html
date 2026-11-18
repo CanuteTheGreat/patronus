@@ -15,21 +15,21 @@
 
 <div class="stat-grid">
     <div class="stat-card">
-        <h3>Uptime</h3>
+        <h2>Uptime</h2>
         <div class="value">{{ uptime }}</div>
     </div>
     <div class="stat-card">
-        <h3>Disk (/)</h3>
+        <h2>Disk (/)</h2>
         <div class="value">{{ disk_usage_percent }}%</div>
         <div class="label">{{ disk_used }} used of {{ disk_total }}</div>
     </div>
     <div class="stat-card">
-        <h3>Memory</h3>
+        <h2>Memory</h2>
         <div class="value">{{ memory_total }}</div>
         <div class="label">installed</div>
     </div>
     <div class="stat-card">
-        <h3>Patronus</h3>
+        <h2>Patronus</h2>
         <div class="value">{{ version }}</div>
         <div class="label">init system: {{ init_system }}</div>
     </div>
@@ -179,7 +179,7 @@ async function fwFeedDownload() {
     <p class="empty">No accounts.</p>
     {% else %}
     <table class="lan" id="users">
-        <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Two-factor</th><th>Created</th><th>Last login</th><th></th></tr></thead>
+        <thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Two-factor</th><th>Created</th><th>Last login</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for user in users %}
         <tr data-user="{{ user.username }}">
@@ -190,7 +190,7 @@ async function fwFeedDownload() {
             <td>{{ user.created_at }}</td>
             <td>{{ user.last_login_display }}</td>
             <td>{% if is_admin %}
-                <select onchange="if (this.value) call('PUT', '/api/system/users/{{ user.id }}', {role: this.value})">
+                <select aria-label="Change role of {{ user.username }}" onchange="if (this.value) call('PUT', '/api/system/users/{{ user.id }}', {role: this.value})">
                     <option value="">role...</option><option value="admin">admin</option><option value="operator">operator</option><option value="readonly">read-only</option>
                 </select>
                 {% if user.is_active %}<button class="btn btn-sm btn-secondary" onclick="call('PUT', '/api/system/users/{{ user.id }}', {enabled: false})">Disable</button>
@@ -219,7 +219,7 @@ async function fwFeedDownload() {
     <p class="text-sm text-muted">A group grants read or write on areas of the product. A non-admin account in a group gets exactly
         the group's privileges (instead of its role); admins always have everything. Enforced on every page and API call.</p>
     <p class="empty" id="groups-empty">No groups yet.</p>
-    <table class="lan" id="groups-table"><thead><tr><th>Group</th><th>Privileges</th><th>Members</th><th></th></tr></thead><tbody></tbody></table>
+    <table class="lan" id="groups-table"><thead><tr><th>Group</th><th>Privileges</th><th>Members</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
     <form class="lan-form" id="group-form" onsubmit="return saveGroup(event)">
         <label>Name <input name="name" required></label>
         <label>Description <input name="description"></label>
@@ -238,7 +238,7 @@ async function fwFeedDownload() {
     <p class="text-sm text-muted">Upload the configuration automatically to a WebDAV/HTTPS server (PUT), SFTP or FTPS. With a passphrase the
         file is encrypted (AES-256-GCM, Argon2id key) before it leaves this box; restore an encrypted file by uploading it with the passphrase.</p>
     <p class="empty" id="backup-targets-empty">No remote targets.</p>
-    <table class="lan" id="backup-targets-table"><thead><tr><th>Name</th><th>URL</th><th>Every</th><th>Encrypted</th><th>Last run</th><th></th></tr></thead><tbody></tbody></table>
+    <table class="lan" id="backup-targets-table"><thead><tr><th>Name</th><th>URL</th><th>Every</th><th>Encrypted</th><th>Last run</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
     <form class="lan-form" id="backup-target-form" onsubmit="return addBackupTarget(event)">
         <label>Name <input name="name" required></label>
         <label>URL <input name="url" placeholder="https://dav.example.net/patronus" required></label>
@@ -257,7 +257,7 @@ async function fwFeedDownload() {
         A <b>read-only</b> key can only read; an <b>operator</b> key can also change configuration. Keys never manage
         accounts, backups or other keys. The token is shown once; only a digest is stored.</p>
     <table class="lan" id="api-keys-table">
-        <thead><tr><th>Name</th><th>Token</th><th>Scope</th><th>Created</th><th>Expires</th><th>Last used</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Token</th><th>Scope</th><th>Created</th><th>Expires</th><th>Last used</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody></tbody>
     </table>
     <p class="empty" id="api-keys-empty" style="display:none">No API keys.</p>
@@ -339,7 +339,7 @@ async function fwFeedDownload() {
     <p class="empty">No backups yet.</p>
     {% else %}
     <table class="lan" id="backups">
-        <thead><tr><th>File</th><th>Created</th><th>Size</th><th>Contents</th><th></th></tr></thead>
+        <thead><tr><th>File</th><th>Created</th><th>Size</th><th>Contents</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for backup in backups %}
         <tr>
@@ -366,7 +366,7 @@ async function fwFeedDownload() {
         restore can be undone the same way, and if any part cannot be applied the restore is undone. On the box:
         <span class="mono">patronus config history</span> and <span class="mono">patronus config rollback &lt;id&gt;</span>.</p>
     <p class="empty" id="history-empty" style="display:none">No revisions yet.</p>
-    <table class="lan" id="history-table" style="display:none"><thead><tr><th>#</th><th>When</th><th>Who</th><th>Change</th><th></th></tr></thead><tbody></tbody></table>
+    <table class="lan" id="history-table" style="display:none"><thead><tr><th>#</th><th>When</th><th>Who</th><th>Change</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
 </div>
 
 <div class="card">
@@ -375,7 +375,7 @@ async function fwFeedDownload() {
     <p class="empty">None of the services Patronus manages are installed on this system (or the init system is not systemd/OpenRC).</p>
     {% else %}
     <table class="lan" id="services">
-        <thead><tr><th>Service</th><th>Purpose</th><th>Status</th><th>Running for</th><th>Memory</th><th>Starts at boot</th><th></th></tr></thead>
+        <thead><tr><th>Service</th><th>Purpose</th><th>Status</th><th>Running for</th><th>Memory</th><th>Starts at boot</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for service in services %}
         <tr>
@@ -422,7 +422,7 @@ async function fwFeedDownload() {
     </p>
     {% endif %}
     <table class="lan" id="updates-table" style="display:none">
-        <thead><tr><th>Package</th><th>Installed</th><th>Available</th><th></th></tr></thead>
+        <thead><tr><th>Package</th><th>Installed</th><th>Available</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody></tbody>
     </table>
     <pre class="mono" id="updates-log" style="display:none;max-height:20em;overflow:auto"></pre>
@@ -437,7 +437,7 @@ async function fwFeedDownload() {
         like any other. Local accounts never fall back to RADIUS, and there is no two-factor step for RADIUS logins
         (use the RADIUS server's own). User names are 1-32 letters, digits, '.', '_' or '-'.</p>
     <table class="lan" id="auth-servers-table">
-        <thead><tr><th>Name</th><th>Server</th><th>Default role</th><th>Timeout</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Server</th><th>Default role</th><th>Timeout</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody></tbody>
     </table>
     <p class="empty" id="auth-servers-empty" style="display:none">No RADIUS servers: only local accounts can log in.</p>
@@ -493,7 +493,7 @@ async function fwFeedDownload() {
     <p class="empty" id="events-empty" style="display:none">No events yet.</p>
     {% if is_admin %}
     <h3 class="text-sm">Notification channels</h3>
-    <table class="lan" id="hooks-table"><thead><tr><th>Name</th><th>Type</th><th>Destination</th><th>Events</th><th>Last delivery</th><th></th></tr></thead><tbody></tbody></table>
+    <table class="lan" id="hooks-table"><thead><tr><th>Name</th><th>Type</th><th>Destination</th><th>Events</th><th>Last delivery</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
     <form class="lan-form" id="hook-form" onsubmit="return createHook(event)">
         <label>Name <input name="name" required></label>
         <label>Type <select name="channel" onchange="hookFields(this.form)">

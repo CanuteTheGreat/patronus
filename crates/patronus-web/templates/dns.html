@@ -56,7 +56,7 @@
     <div class="card-header"><h2 class="card-title">Host overrides</h2></div>
     {% if hosts.is_empty() %}<p class="empty">No host overrides.</p>{% else %}
     <table class="lan" id="dns-hosts">
-        <thead><tr><th>Name</th><th>Address</th><th>Description</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Address</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for h in hosts %}
         <tr><td class="mono">{{ h.name }}</td><td class="mono">{{ h.address }}</td><td>{{ h.description }}</td>
@@ -77,7 +77,7 @@
     <div class="card-header"><h2 class="card-title">Domain overrides</h2></div>
     {% if domains.is_empty() %}<p class="empty">No domain overrides.</p>{% else %}
     <table class="lan" id="dns-domains">
-        <thead><tr><th>Domain</th><th>Server</th><th>Description</th><th></th></tr></thead>
+        <thead><tr><th>Domain</th><th>Server</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for d in domains %}
         <tr><td class="mono">{{ d.domain }}</td><td class="mono">{{ d.server }}</td><td>{{ d.description }}</td>
@@ -97,7 +97,7 @@
     <div class="card-header"><h2 class="card-title">Block list (DNSBL)</h2></div>
     {% if blocked.is_empty() %}<p class="empty">No domains blocked by hand.</p>{% else %}
     <table class="lan" id="dns-blocklist">
-        <thead><tr><th>Domain (and everything below it)</th><th>Description</th><th></th></tr></thead>
+        <thead><tr><th>Domain (and everything below it)</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for b in blocked %}
         <tr><td class="mono">{{ b.domain }}</td><td>{{ b.description }}</td>
@@ -116,7 +116,7 @@
     <div class="card-header"><h2 class="card-title">Dynamic DNS</h2></div>
     {% if ddns.is_empty() %}<p class="empty">No dynamic DNS client.</p>{% else %}
     <table class="lan" id="ddns-clients">
-        <thead><tr><th>Hostname</th><th>Provider</th><th>Interface</th><th>Published address</th><th>Last update</th><th>Result</th><th>Enabled</th><th></th></tr></thead>
+        <thead><tr><th>Hostname</th><th>Provider</th><th>Interface</th><th>Published address</th><th>Last update</th><th>Result</th><th>Enabled</th><th><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>
         {% for c in ddns %}
         <tr><td class="mono">{{ c.hostname }}</td><td>{{ c.provider }}{% if !c.server.is_empty() %} ({{ c.server }}){% endif %}{% if !c.username.is_empty() %}<br><span class="text-muted text-sm">user {{ c.username }}</span>{% endif %}</td>

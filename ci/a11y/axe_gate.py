@@ -89,12 +89,18 @@ def main():
                             ctx.clear_cookies()
                             logged_in = False
                         page.goto(base + pg["path"], wait_until="load")
+                        label = f"{kind}/{vp}/{scheme}/{pg['id']}"
                         if pg.get("wait_for"):
-                            page.wait_for_selector(pg["wait_for"], state="attached", timeout=30000)
+                            try:
+                                page.wait_for_selector(pg["wait_for"], state="attached", timeout=30000)
+                            except Exception:  # noqa: BLE001
+                                failures.append({"where": label, "rule": "page-not-rendered", "impact": "critical",
+                                                 "detail": f"{pg['wait_for']} never appeared at {page.url} (title {page.title()!r})"})
+                                log(f"FAIL {label}: page did not render ({page.url})")
+                                continue
                         for sel in pg.get("click", []):
                             page.click(sel)
                         page.wait_for_timeout(lg.get("settle_ms", 700))
-                        label = f"{kind}/{vp}/{scheme}/{pg['id']}"
                         if "/login" in page.url and pg.get("auth", True):
                             failures.append({"where": label, "rule": "page-not-reached", "impact": "critical", "detail": f"redirected to {page.url}"})
                             continue
@@ -121,13 +127,12 @@ def main():
 
     stale = [e for e in allow if id(e) not in used and (not want or e["page"] in want or e["page"] == "*")]
     byrule = Counter((f["rule"], f["impact"]) for f in failures)
-    seen = set()
+    # one line per rule and page (first node as the example), the full list is in --report
+    first = {}
     for f in failures:
-        k = (f["rule"], f.get("target"), f["where"].split("/")[-1])
-        if k in seen:
-            continue
-        seen.add(k)
-        log(f"  {f['impact']:8} {f['rule']:24} {f['where']}  {f.get('target', '')}  {f.get('detail', '')[:140]}")
+        first.setdefault((f["rule"], f["where"].split("/")[-1]), [f, 0])[1] += 1
+    for (rule, pid), (f, n) in sorted(first.items()):
+        log(f"  {f['impact']:8} {rule:24} {pid:15} x{n} e.g. {f.get('target', '')[:70]}  {f.get('detail', '')[:100]}")
     wr = Counter((f["rule"], f["impact"]) for f in warnings)
     if wr:
         log("warnings (below the threshold): " + ", ".join(f"{r}[{i}] x{c}" for (r, i), c in sorted(wr.items())))
