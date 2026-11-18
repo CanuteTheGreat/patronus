@@ -437,8 +437,8 @@ OpenWrt's `rootfs_data` (which after factory.ubi has autoresized over the whole 
   are installed from Patronus itself with `patronus-flash sysupgrade` (12.4).
 - A fresh OpenWrt or GL image runs a DHCP server on its LAN ports even when another DHCP server is present. On an existing
   network, connect it only to the WAN port or set `dhcp.lan.ignore=1` right after first boot.
-- There is no automatic rollback on this board: the kernel command line pins volume 1 as the root, so there is no A/B root
-  as on the Slate. A box that does not come up is recovered as above.
+- Automatic rollback of a bad upgrade: 12.16 (`patronus-guard`). The kernel command line pins volume 1 as the root, so
+  there is no A/B root as on the Slate; instead the bootloader itself copies the previous image back.
 
 ### 12.4 Upgrades from Patronus: `patronus-flash`, guarded and fail-closed
 
@@ -957,3 +957,79 @@ the signature again, pivots to the RAM root, writes root + kernel with read-back
 writing restarts into the old system. OpenRC only (both house units). Proof: `tools/qemu-handoff.sh` (QEMU: PID 1
 reaches the installer, the RAM root and stage2, the box restarts with its settings) and the first house unit
 (hogs10-a14d1263 -> hogs10-dca34699: handoff, install, back up in ~60 s).
+
+### 12.16 Boot rollback: a failed upgrade puts the previous image back by itself (2026-11-17)
+
+**Constraint.** The stock OpenWrt FIT pins the root to UBI volume 1 (`root=/dev/ubiblock0_1` in its device tree's
+`bootargs-append`, which wins over U-Boot's `root=`), and GL's U-Boot (`U-Boot 2016.01`, "uboot2.0 21.12.01" on the
+house units) boots with `bootipq`, which reads the volume named `kernel`. A second root volume would need a rebuilt FIT
+per slot, and a trial image whose kernel panics never reaches userspace, so the rollback must happen *before* Linux.
+
+**What the units really have** (read on 10.66.69.10, read-only, 2026-11-17): the U-Boot environment is ONE copy at offset
+0 of the NAND partition `0:appsblenv` (0x80000 bytes, 128 KiB blocks), CRC32 over 0x40000 bytes (`fw_env.config`:
+`/dev/mtdN 0x0 0x40000 0x20000 4`); `bootcmd=bootipq; ping 192.168.1.2; run lfq; bootipq; run lf; bootipq; httpd
+192.168.1.1; reset`, so U-Boot runs `bootcmd` from its environment and has hush (`if`/`test`/`&&`), `setexpr`,
+`itest`, `saveenv`, `mw`, `reset` and `ubi part/read/write` (its own recovery code writes UBI volumes with
+`ubi write`); the help texts are stripped. The flash is qcom_nand (U-Boot `nand device 0`); UBI lives on MTD `rootfs`
+(0x7300000 bytes at 0xa00000; read from sysfs, never typed in). No fastmap. The APCS watchdog (`qcom,kpss-wdt`,
+0xb017000, 32768 Hz, max 32 s) is built into the kernel (`qcom_wdt`, `handle_boot_enabled=Y`), `panic=1` is the
+kernel default (`/proc/sys/kernel/panic`), RAM 0x44000000-0x4a0fffff is clear of the SoC's reserved regions. 254 free
+LEBs (31 MiB) on a unit with `patronus_data` from `ubi-data`: room for a full previous kernel + root.
+
+**Design.**
+- `upgrade-install` (stage 2, RAM root) first copies the *running* kernel (FIT `totalsize`) and root (squashfs
+  `bytes_used`, 4 KiB-padded) into the UBI volumes `kernel_prev`/`rootfs_prev` and reads them back, then arms a trial in
+  the U-Boot environment (`pat_state=trial`, `pat_left=<attempts>`, `pat_boots=0`, `pat_prev`, `pat_new`, `pat_ksz`,
+  `pat_rsz`) and only then writes the new image. From that moment a power cut during the write, a kernel that does not
+  start, a root that panics or hangs and a system that never becomes healthy all end the same way.
+- The bootloader script is installed by the image itself (`patronus-guard env-install`, every boot, writes only what
+  differs): `bootcmd` becomes `run pat_boot; bootipq; run pat_failed; <stock rest>` (`pat_orig_bootcmd` keeps the stock
+  one; `patronus-guard env-remove` restores it; any other `bootcmd` is left alone and the unit reports "no rollback").
+  On a trial (`pat_boot` -> `pat_trial`) U-Boot counts the boot down and saves BEFORE booting, adds
+  `patronus.trial=<n> watchdog.handle_boot_enabled=0` to the kernel command line for this boot only and arms the
+  hardware watchdog (`pat_wdt`, `GUARD_WATCHDOG_TIMEOUT` x 32768 ticks), then the unchanged `bootipq` boots. With no
+  boots left it sets `pat_state=revert`, saves, reads `rootfs_prev` and `kernel_prev` into RAM (both before writing
+  anything), writes them over `rootfs`/`kernel` with `ubi write`, sets `pat_state=reverted`, saves and boots the old
+  image normally. A boot command that returns during a trial or revert (unbootable kernel) resets at once
+  (`pat_failed`); a power cut during the copy repeats it (the previous volumes are untouched).
+- Linux side (`patronus-guard boot`, from `patronus-init` before the init system, so it covers OpenRC and systemd
+  alike): on a trial it starts the watchdog feeder (busybox `watchdog`, the kernel no longer feeds it, so a userspace
+  that never gets this far is reset) and the checks: `network` (an IPv4 address and the default gateway answers ping),
+  `ssh` (tcp/22 listening), `web` (patronus-web running and its HTTPS answering), `hostapd` (the binary runs; when Wi-Fi
+  is configured every radio's hostapd is `ENABLED`). `GUARD_PASS_ROUNDS` passing rounds in a row confirm the image
+  (`pat_state=ok`, watchdog released with the magic close). If the window ends first the failure is written to
+  `/data/boot-guard/last-failure`, the feeder is killed without the magic close (backstop) and the box restarts; U-Boot
+  counts. After a revert the old image reports it (`reverted`, with the trial's own failure report, or "never reached its
+  health checks" for a panic/hang/unbootable kernel) and sets `pat_state=idle`.
+- Settings (nothing fixed in code): `/etc/patronus/boot-guard.board` (image: environment location, stock boot command,
+  UBI MTD and U-Boot nand index, copy RAM addresses and limits, watchdog registers/clock, kernel arguments) and
+  `/etc/patronus/boot-guard.conf` (unit policy, the web UI writes it): `GUARD_ENABLED`, `GUARD_REQUIRE` (refuse an
+  upgrade that cannot be rolled back; `patronus-flash sysupgrade --no-rollback` overrides), `GUARD_ATTEMPTS` (2),
+  `GUARD_WINDOW` (300 s), `GUARD_INTERVAL` (5 s), `GUARD_PASS_ROUNDS` (2), `GUARD_CHECKS`, `GUARD_NET_PING`
+  (gateway/none/address), `GUARD_HOSTAPD` (auto/require/off), `GUARD_WATCHDOG` (1), `GUARD_WATCHDOG_TIMEOUT` (30 s),
+  `GUARD_REBOOT_GRACE` (90 s).
+- Where it shows: `patronus-flash status` (and `--json`), `patronus-guard status`, System > Firmware > "Boot rollback"
+  (state, previous image, last failure, last events, settings form, "Confirm this image now", "Go back to the previous
+  image"), `GET /api/system/firmware` (`boot_guard`), `PUT /api/system/firmware/boot-guard`, `POST
+  /api/system/firmware/rollback|confirm`, and the audit log (every guard event once, user `boot-guard`, action
+  `boot-<event>`; settings changes, rollbacks and confirmations under the admin's name). `patronus-flash rollback
+  [--now]` puts the previous image back by hand (the bootloader copies it at the next restart).
+
+**Proof.**
+- Host tests (`tests/run.sh` 3b): the script written into a real U-Boot-format environment file with u-boot-tools
+  (bootcmd, count-and-save-before-boot, read-both-before-write, watchdog ticks), idempotence (no write when nothing
+  changed), a setting change rewrites it, arm/confirm/status JSON, env-remove, a non-stock `bootcmd` left untouched.
+- `rollback-gate.sh` (both init systems): the shipped root under a REAL U-Boot (Alpine `u-boot-qemu`, qemu_arm64) on
+  QEMU: the image installs its own script on first boot; a good image confirms (`patronus.trial=1` on its command line,
+  counters cleared); bad images revert by themselves to the good one, byte for byte, healthy, with the right reason
+  and exactly `GUARD_ATTEMPTS` trial boots: init exits (kernel panic), no network, web UI dead (with a power cut in the
+  middle of the trial: counters survive), hostapd broken, kernel not bootable. Board facts that differ are settings in
+  the test copy's `boot-guard.board`: virtio disks instead of UBI volumes (`virtio read/write` copy primitives),
+  `run qboot` (virtio read + booti) instead of `bootipq`, environment on a virtio disk (`env export -c` + `virtio
+  write`, a 3-line pflash bootstrap imports it), no hardware watchdog.
+- `nandsim-proof.sh` (Linux UBI driver, simulated NAND of the board's geometry): env-install into a stock environment,
+  `can-arm`, `save-prev` + `arm` as stage 2 runs them, the upgrade write, then the revert copy with the sizes from the
+  environment gives back the old kernel and root byte for byte.
+- Real unit: section 12.16 results below (hardware-only parts: `bootipq` after our prefix, U-Boot's own `ubi write`
+  revert, the watchdog arm, ath11k/Wi-Fi after a revert).
+
