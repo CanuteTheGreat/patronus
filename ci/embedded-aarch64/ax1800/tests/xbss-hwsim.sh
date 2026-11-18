@@ -11,11 +11,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 IMAGE=${XBSS_IMAGE:-alpine:3.24}
-LOCK=${HWSIM_LOCK:-/tmp/patronus-hwsim.lock}
 SUDO=; [ "$(id -u)" = 0 ] || SUDO=sudo
 DOCKER="${DOCKER:-$SUDO docker}"
-exec 9>"$LOCK"; flock -n 9 || { echo "another hwsim run holds $LOCK"; exit 1; }
 C=xbss-hwsim-$$
+# host-wide mutex (docker network): job containers do not share /tmp, a flock never excluded a run in another one
+HWSIM_DOCKER=$DOCKER; . ../../../hwsim-lock.sh
+LOADED=
 KIMG=${KMOD_IMAGE:-debian:trixie}
 # load/unload the host-global module: directly (root/sudo on the host) or, from a CI job container, through a
 # throw-away privileged sibling that sees the host's /lib/modules (as ci/netlab/wifi-hwsim.sh does)
@@ -24,11 +25,16 @@ modctl() { local cmd="rmmod mac80211_hwsim"; [ "$1" = load ] && cmd="modprobe ma
   $DOCKER run --rm --privileged -v /lib/modules:/lib/modules:ro "$KIMG" sh -c \
     "command -v modprobe >/dev/null || (apt-get update -qq >/dev/null && apt-get install -y -qq kmod >/dev/null); $cmd" >/dev/null 2>&1; }
 regset() { $DOCKER run --rm --net=host --cap-add NET_ADMIN "$IMAGE" sh -c "apk add -q --no-cache iw >/dev/null && iw reg set $1" >/dev/null 2>&1; }
-cleanup() { $DOCKER rm -fv "$C" >/dev/null 2>&1 || true; regset 00 || true; sleep 1; modctl unload || { sleep 2; modctl unload || echo "could not unload mac80211_hwsim"; }; }
+cleanup() { $DOCKER rm -fv "$C" >/dev/null 2>&1 || true
+  # unload only what THIS run loaded (a second run's rmmod removed the radios of a running one)
+  if [ -n "$LOADED" ]; then regset 00 || true; sleep 1; modctl unload || { sleep 2; modctl unload || echo "could not unload mac80211_hwsim"; }; fi
+  hwsim_lock_drop; }
 # The module is host-global and $LOCK is not shared with runs in other job containers: when it is loaded, wait for the
 # other run (a few minutes) instead of failing; a scenario container of ours older than STALE_MIN (a cancelled job never
 # ran its cleanup) is removed and the module it left is unloaded.
 STALE_MIN=${HWSIM_STALE_MIN:-60}; WAIT_MIN=${HWSIM_WAIT_MIN:-20}; t0=$(date +%s)
+trap cleanup EXIT
+hwsim_lock_take || exit 1
 while grep -q '^mac80211_hwsim ' /proc/modules; do
   removed=0
   for o in $($DOCKER ps -a --filter name=xbss-hwsim- --format '{{.Names}}' 2>/dev/null); do
@@ -40,7 +46,6 @@ while grep -q '^mac80211_hwsim ' /proc/modules; do
   [ $(( $(date +%s) - t0 )) -gt $((WAIT_MIN * 60)) ] && { echo "mac80211_hwsim still loaded after ${WAIT_MIN} min (another user?): refusing"; exit 1; }
   echo "mac80211_hwsim is loaded by another run: waiting"; sleep 20
 done
-trap cleanup EXIT
 $DOCKER run -d --name "$C" --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
   --memory 2g --cpus 2 "$IMAGE" sleep infinity >/dev/null
 $DOCKER exec "$C" apk add -q --no-cache bash hostapd wpa_supplicant iw iproute2 abuild build-base openssl-dev libnl3-dev linux-headers util-linux
@@ -50,6 +55,7 @@ tar -cf - stage-hostapd.sh hostapd tests/xbss-scenario.sh tests/acs-scenario.sh 
 echo "--- building the Patronus hostapd package (x86_64, same APKBUILD as the image)"
 $DOCKER exec "$C" sh -c 'mkdir -p /out /cache && bash /w/h/stage-hostapd.sh >/dev/null && mkdir -p /opt/ph && tar -xzf /out/hostapd/*/hostapd-2.11-r1*.apk -C /opt/ph usr/sbin/hostapd 2>/dev/null; /opt/ph/usr/sbin/hostapd -v 2>&1 | head -1'
 modctl load || { echo "SKIP: no mac80211_hwsim on this kernel"; exit 0; }
+LOADED=1
 PID=$($DOCKER inspect -f '{{.State.Pid}}' "$C")
 PHYS=$($DOCKER run --rm --net=host "$IMAGE" sh -c 'ls /sys/class/ieee80211' | sort -V | tail -n 4); [ "$(echo $PHYS | wc -w)" = 4 ] || { echo "expected 4 hwsim radios"; exit 1; }
 $DOCKER run --rm --net=host --pid=host --cap-add NET_ADMIN "$IMAGE" sh -c \

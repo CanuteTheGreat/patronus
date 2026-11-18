@@ -20,14 +20,15 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 IMAGE=${NETLAB_IMAGE:-debian:trixie}
-LOCK=${HWSIM_LOCK:-/tmp/patronus-hwsim.lock}
 RADIOS=${HWSIM_RADIOS:-6}
 SUDO=; [ "$(id -u)" = 0 ] || SUDO=sudo
 C=${HWSIM_CONTAINER:-}
 OWN=
 
-exec 9>"$LOCK"
-flock -n 9 || { echo "another hwsim run holds $LOCK"; exit 1; }
+# host-wide mutex (docker network; job containers do not share /tmp, see ci/hwsim-lock.sh)
+. ci/hwsim-lock.sh
+trap 'hwsim_lock_drop' EXIT
+hwsim_lock_take || exit 1
 if grep -q '^mac80211_hwsim ' /proc/modules; then
   echo "mac80211_hwsim is already loaded on this host (another user?): refusing to touch it"; exit 1
 fi
@@ -47,6 +48,7 @@ cleanup() {
   # phys that were moved into the container's namespaces come back to the host when those die
   sleep 1
   modctl unload || { sleep 2; modctl unload || echo "::warning::could not unload mac80211_hwsim"; }
+  hwsim_lock_drop
 }
 trap cleanup EXIT
 
