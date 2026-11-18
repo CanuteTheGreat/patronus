@@ -33,6 +33,7 @@ command -v dnsmasq >/dev/null || nl_fail "dnsmasq missing in the lab image"
 
 # a failure prints the router's view, so a CI log says why
 nl_fail() {
+  set +e
   echo "FAIL: $*" >&2
   { echo "--- router addresses/routes"; R ip -br addr; R ip route; echo "--- bridge"; R bridge link; echo "--- nft ruleset"; R nft list ruleset;
     echo "--- inet listeners"; INET ss -ltn; echo "--- guest 1 view"; G1 ip -br addr; G1 ip route; G1 curl -sv -m 3 -o /dev/null "http://$NL_WWW:8081/up" 2>&1 | tail -8; echo "--- guest dnsmasq conf"; cat /var/lib/patronus/net/guest/dnsmasq.conf; echo "--- web log tail"; tail -20 "$NL_T/nl-web.log"; } >&2 2>/dev/null || true

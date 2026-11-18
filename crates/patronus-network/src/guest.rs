@@ -149,7 +149,7 @@ static VOUCHER_FIELDS: [Field; 3] = [
     Field::new("name", "Voucher", Kind::Token).req(),
     Field::new("code", "Wi-Fi password", Kind::Secret)
         .req()
-        .help("8-63 characters; works until the time below has passed"),
+        .help("8-63 characters; a WPA2 password that works until the time below has passed"),
     Field::new("minutes", "Valid for (minutes)", Kind::Int(0, 525_600))
         .def("1440")
         .help("0 = never expires; counted from when the voucher was saved"),
@@ -815,7 +815,7 @@ pub fn render_psk_file(shared: &str, vouchers: &[(i64, String)]) -> String {
     o
 }
 
-pub fn render_hostapd(c: &Cfg, iface: &str, psk_path: &Path, ctrl_dir: &Path, vouchers: &[(i64, String)]) -> Result<String> {
+pub fn render_hostapd(c: &Cfg, iface: &str, psk_path: &Path, ctrl_dir: &Path) -> Result<String> {
     let w = &c.wifi;
     if !ifname_ok(iface) {
         return Err(invalid("Wi-Fi radio interface"));
@@ -843,10 +843,8 @@ pub fn render_hostapd(c: &Cfg, iface: &str, psk_path: &Path, ctrl_dir: &Path, vo
     }
     o.push_str(&format!("wpa_psk_file={}\n", psk_path.display()));
     if sae {
+        // vouchers are WPA2 passwords (psk file, changed live); a SAE password would need a restart
         o.push_str(&format!("sae_password={}\n", w.psk));
-        for (_, code) in vouchers {
-            o.push_str(&format!("sae_password={code}\n"));
-        }
     }
     o.push_str(&format!(
         "ap_isolate={}\nmulticast_to_unicast=1\ntdls_prohibit=1\nwpa_disable_eapol_key_retries=1\n",
@@ -1518,7 +1516,7 @@ impl GuestApplier {
                 let before = std::fs::read_to_string(&psk_path).unwrap_or_default();
                 let changed_psk = crate::supervise::write_atomic(&psk_path, &psk_text, 0o600)?;
                 let conf_path = dir.join("hostapd.conf");
-                let conf = render_hostapd(&c, iface, &psk_path, &ctrl, &active)?;
+                let conf = render_hostapd(&c, iface, &psk_path, &ctrl)?;
                 let restarted = svc::ensure_daemon(
                     &self.sup,
                     HOSTAPD_INSTANCE,
@@ -1836,15 +1834,15 @@ mod tests {
     #[test]
     fn hostapd_isolates_clients_and_carries_the_vouchers() {
         let c = cfg(&[("wifi", "1"), ("wifi_psk", "sharedpass1"), ("ssid", "Guest Wi-Fi")]);
-        let h = render_hostapd(&c, "wlan0", Path::new("/s/psk"), Path::new("/r"), &[(3, "VOUCHERCODE".into())]).unwrap();
+        let h = render_hostapd(&c, "wlan0", Path::new("/s/psk"), Path::new("/r")).unwrap();
         assert!(h.contains("bridge=br-guest\nssid=Guest Wi-Fi\n"));
         assert!(h.contains("ap_isolate=1"));
-        assert!(h.contains("wpa_key_mgmt=WPA-PSK SAE") && h.contains("sae_password=sharedpass1") && h.contains("sae_password=VOUCHERCODE"));
+        assert!(h.contains("wpa_key_mgmt=WPA-PSK SAE") && h.contains("sae_password=sharedpass1") && !h.contains("VOUCHERCODE"), "vouchers never touch hostapd.conf (a change there restarts hostapd)");
         let p = render_psk_file("sharedpass1", &[(3, "VOUCHERCODE".into())]);
         assert!(p.contains("keyid=guest 00:00:00:00:00:00 sharedpass1\n") && p.contains("keyid=voucher-3 00:00:00:00:00:00 VOUCHERCODE\n"));
-        assert!(render_hostapd(&c, "wlan0;x", Path::new("/p"), Path::new("/r"), &[]).is_err());
+        assert!(render_hostapd(&c, "wlan0;x", Path::new("/p"), Path::new("/r")).is_err());
         let open = cfg(&[("wifi", "1"), ("wifi_psk", "sharedpass1"), ("isolate_clients", "0"), ("wifi_security", "wpa2")]);
-        let h = render_hostapd(&open, "wlan0", Path::new("/s/psk"), Path::new("/r"), &[]).unwrap();
+        let h = render_hostapd(&open, "wlan0", Path::new("/s/psk"), Path::new("/r")).unwrap();
         assert!(h.contains("ap_isolate=0") && !h.contains("SAE") && h.contains("ieee80211w=0"));
     }
 
