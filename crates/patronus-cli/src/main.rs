@@ -137,6 +137,15 @@ enum Commands {
         action: PluginCommands,
     },
 
+    /// Access-point Wi-Fi of a router-tier unit (/etc/patronus/ap.env) as a declarative document:
+    /// export it, plan a change, apply it (radios restart and are verified, rolled back on failure)
+    #[cfg(feature = "wifi-ap")]
+    #[command(name = "ap-wifi")]
+    ApWifi {
+        #[command(subcommand)]
+        action: ApWifiCommands,
+    },
+
     /// Web UI accounts (recovery on the box: lost second factor)
     Users {
         #[command(subcommand)]
@@ -427,6 +436,28 @@ enum UsersCommands {
     },
 }
 
+#[cfg(feature = "wifi-ap")]
+#[derive(Subcommand)]
+enum ApWifiCommands {
+    /// Settings (no passphrases), live radio state (channel, width) and BSS states as JSON
+    Show,
+    /// The settings as a declarative YAML document (no passphrases; --json for JSON)
+    Export {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate a document and show what applying it would change (nothing is written)
+    Plan {
+        /// YAML or JSON document (`-` = stdin)
+        file: std::path::PathBuf,
+    },
+    /// Apply a document: write ap.env, restart the radios, verify every network (rolled back on failure)
+    Apply {
+        /// YAML or JSON document (`-` = stdin)
+        file: std::path::PathBuf,
+    },
+}
+
 #[cfg(feature = "plugins")]
 #[derive(Subcommand)]
 enum PluginCommands {
@@ -660,6 +691,14 @@ async fn main() -> anyhow::Result<()> {
             })
             .await?;
         }
+
+        #[cfg(feature = "wifi-ap")]
+        Commands::ApWifi { action } => match action {
+            ApWifiCommands::Show => commands::apwifi::show()?,
+            ApWifiCommands::Export { json } => commands::apwifi::export(json)?,
+            ApWifiCommands::Plan { file } => commands::apwifi::plan(file)?,
+            ApWifiCommands::Apply { file } => commands::apwifi::apply(file)?,
+        },
 
         Commands::Users { action } => match action {
             UsersCommands::List => users::list(cli.db.as_deref()).await?,

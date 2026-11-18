@@ -217,7 +217,12 @@ const MANAGED: &[&str] = &[
     "AP_COUNTRY",
     "AP_CHAN24",
     "AP_CHAN5",
+    "AP_HT24",
     "AP_HT5",
+    "AP_DFS",
+    "AP_CHANLIST24",
+    "AP_CHANLIST5",
+    "AP_ACS_SCANS",
     "AP_HE",
     "AP_SSIDS",
     "AP_TXPOWER24",
@@ -261,6 +266,20 @@ pub struct WifiConfig {
     pub chan5: String,
     /// 5 GHz channel width in MHz: 20 | 40 | 80
     pub width5: u32,
+    /// 2.4 GHz channel width in MHz: 20 | 40
+    #[serde(default = "w20")]
+    pub width24: u32,
+    /// automatic channel choice (ACS) may pick a 5 GHz DFS channel (52-144; a 1-10 min radar check at each start)
+    #[serde(default)]
+    pub dfs: bool,
+    /// channels ACS may pick per band (empty = every channel the country allows)
+    #[serde(default = "default_chanlist24")]
+    pub chanlist24: Vec<u32>,
+    #[serde(default)]
+    pub chanlist5: Vec<u32>,
+    /// ACS survey rounds (1-20)
+    #[serde(default = "default_acs_scans")]
+    pub acs_scans: u32,
     /// 802.11ax (Wi-Fi 6) on both radios
     pub wifi6: bool,
     /// transmit power per radio: "auto" or dBm
@@ -280,6 +299,33 @@ pub struct WifiConfig {
 
 fn auto() -> String {
     "auto".into()
+}
+fn w20() -> u32 {
+    20
+}
+/// ACS on 2.4 GHz picks among the three non-overlapping channels unless told otherwise (board.sh `AP_CHANLIST24`).
+pub const DEFAULT_CHANLIST24: [u32; 3] = [1, 6, 11];
+pub const DEFAULT_ACS_SCANS: u32 = 5;
+fn default_chanlist24() -> Vec<u32> {
+    DEFAULT_CHANLIST24.to_vec()
+}
+fn default_acs_scans() -> u32 {
+    DEFAULT_ACS_SCANS
+}
+/// A channel list value (`AP_CHANLIST24` / `AP_CHANLIST5`): the valid channels of the band, in order, no duplicates.
+pub fn chan_list(v: &str, band5: bool) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::new();
+    for c in v.split_whitespace().filter_map(|c| c.parse::<u32>().ok()) {
+        let ok = if band5 {
+            valid5(c)
+        } else {
+            (1..=13).contains(&c)
+        };
+        if ok && !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    out
 }
 fn dhcp() -> String {
     "dhcp".into()
@@ -350,6 +396,21 @@ pub fn view(f: &EnvFile) -> WifiConfig {
         chan24: chan("AP_CHAN24"),
         chan5: chan("AP_CHAN5"),
         width5: f.get("AP_HT5").and_then(|w| w.parse().ok()).unwrap_or(80),
+        width24: match f.get("AP_HT24") {
+            Some("40") => 40,
+            _ => 20,
+        },
+        dfs: matches!(f.get("AP_DFS").unwrap_or("0"), "1" | "yes" | "on"),
+        chanlist24: match f.get("AP_CHANLIST24") {
+            None => default_chanlist24(),
+            Some(v) => chan_list(v, false),
+        },
+        chanlist5: chan_list(f.get("AP_CHANLIST5").unwrap_or(""), true),
+        acs_scans: f
+            .get("AP_ACS_SCANS")
+            .and_then(|v| v.parse().ok())
+            .filter(|n| (1..=20).contains(n))
+            .unwrap_or(DEFAULT_ACS_SCANS),
         wifi6: !matches!(f.get("AP_HE").unwrap_or("1"), "0" | "no" | "off"),
         txpower24: txp("AP_TXPOWER24"),
         txpower5: txp("AP_TXPOWER5"),
@@ -400,6 +461,20 @@ pub struct WifiInput {
     pub chan5: Option<String>,
     #[serde(default)]
     pub width5: Option<u32>,
+    /// 2.4 GHz width: 20 | 40
+    #[serde(default)]
+    pub width24: Option<u32>,
+    /// ACS may pick 5 GHz DFS channels
+    #[serde(default)]
+    pub dfs: Option<bool>,
+    /// channels ACS may pick (empty list = all the country allows)
+    #[serde(default)]
+    pub chanlist24: Option<Vec<u32>>,
+    #[serde(default)]
+    pub chanlist5: Option<Vec<u32>>,
+    /// ACS survey rounds (1-20)
+    #[serde(default)]
+    pub acs_scans: Option<u32>,
     #[serde(default)]
     pub wifi6: Option<bool>,
     /// "auto" or dBm (1..=30), per radio; applied live
@@ -556,6 +631,46 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         }
         set.push(("AP_HT5".into(), w.to_string()));
     }
+    if let Some(w) = input.width24 {
+        if !matches!(w, 20 | 40) {
+            return Err(invalid("2.4 GHz channel width is 20 or 40 MHz"));
+        }
+        set.push(("AP_HT24".into(), w.to_string()));
+    }
+    if let Some(d) = input.dfs {
+        set.push(("AP_DFS".into(), if d { "1" } else { "0" }.into()));
+    }
+    for (k, band5, list) in [
+        ("AP_CHANLIST24", false, &input.chanlist24),
+        ("AP_CHANLIST5", true, &input.chanlist5),
+    ] {
+        if let Some(list) = list {
+            let mut out: Vec<String> = Vec::new();
+            for &c in list {
+                let ok = if band5 {
+                    valid5(c)
+                } else {
+                    (1..=13).contains(&c)
+                };
+                if !ok {
+                    return Err(invalid(format!(
+                        "{c} is not a {} channel (automatic channel list)",
+                        if band5 { "5 GHz" } else { "2.4 GHz" }
+                    )));
+                }
+                if !out.contains(&c.to_string()) {
+                    out.push(c.to_string());
+                }
+            }
+            set.push((k.into(), out.join(" ")));
+        }
+    }
+    if let Some(n) = input.acs_scans {
+        if !(1..=20).contains(&n) {
+            return Err(invalid("automatic channel survey rounds: 1 to 20"));
+        }
+        set.push(("AP_ACS_SCANS".into(), n.to_string()));
+    }
     if let Some(he) = input.wifi6 {
         set.push(("AP_HE".into(), if he { "1" } else { "0" }.into()));
     }
@@ -599,7 +714,12 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         "AP_COUNTRY",
         "AP_CHAN24",
         "AP_CHAN5",
+        "AP_HT24",
         "AP_HT5",
+        "AP_DFS",
+        "AP_CHANLIST24",
+        "AP_CHANLIST5",
+        "AP_ACS_SCANS",
         "AP_HE",
         "AP_TXPOWER24",
         "AP_TXPOWER5",
@@ -974,17 +1094,46 @@ pub fn radios(p: &Paths) -> Vec<Value> {
             })
             .flatten()
             .and_then(|o| parse_txpower(&String::from_utf8_lossy(&o.stdout)));
+        let (width, centre) = live_width(&st);
         out.push(json!({
             "band": band,
             "state": if st.is_empty() { "not running".to_string() } else { g("state") },
             "channel": g("channel"),
             "freq": g("freq"),
+            "width_mhz": width,
+            "centre_channel": centre,
             "wifi6": g("ieee80211ax") == "1",
             "txpower_dbm": txpower,
             "bss": bss,
         }));
     }
     out
+}
+
+/// Width (MHz) and centre channel a radio is really using, from `hostapd_cli status`: 80 MHz when the VHT/HE
+/// operating width says so, 40 with a secondary channel, else 20. With channel "auto" this is what ACS picked.
+pub fn live_width(st: &[(String, String)]) -> (Option<u32>, Option<u32>) {
+    let g = |k: &str| st.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+    let ch: Option<u32> = g("channel").and_then(|c| c.parse().ok());
+    let Some(ch) = ch.filter(|&c| c > 0) else {
+        return (None, None);
+    };
+    let seg0: Option<u32> = g("vht_oper_centr_freq_seg0_idx")
+        .or_else(|| g("he_oper_centr_freq_seg0_idx"))
+        .and_then(|c| c.parse().ok())
+        .filter(|&c| c > 0);
+    let chw = g("vht_oper_chwidth")
+        .or_else(|| g("he_oper_chwidth"))
+        .and_then(|c| c.parse::<u32>().ok());
+    let sec: i32 = g("secondary_channel")
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0);
+    match (chw, seg0) {
+        (Some(1), Some(c)) => (Some(80), Some(c)),
+        (Some(2), Some(c)) => (Some(160), Some(c)),
+        _ if sec != 0 => (Some(40), Some((ch as i32 + 2 * sec) as u32)),
+        _ => (Some(20), Some(ch)),
+    }
 }
 
 /// PUT: validate, write, restart, verify (rolls back on failure).
@@ -1004,7 +1153,7 @@ pub fn apply(p: &Paths, input: &WifiInput) -> Result<Value> {
 /// Write `text` (parsed as `new`) over `old_text`, restart the radios and verify every network; roll back on failure.
 fn commit(p: &Paths, old_text: &str, new: &EnvFile, text: &str) -> Result<Value> {
     let old = parse(old_text);
-    if text == old_text {
+    if text == old_text || (!old_text.is_empty() && same_settings(&old, new)) {
         return Ok(json!({ "changed": false, "restarted": false }));
     }
     if !old_text.is_empty() {
@@ -1052,6 +1201,124 @@ fn commit(p: &Paths, old_text: &str, new: &EnvFile, text: &str) -> Result<Value>
     )))
 }
 
+/// Declarative document of this unit's access-point Wi-Fi (`patronus ap-wifi export`): the typed settings in the
+/// shape `apply`/`plan` take ([`WifiInput`]), passphrases left out (an import keeps the stored passphrase of every
+/// network it names by `id`).
+pub const DOC_API: &str = "patronus.ap-wifi/v1";
+
+pub fn export_doc(f: &EnvFile) -> Value {
+    let c = view(f);
+    let mut v = serde_json::to_value(&c).unwrap_or(Value::Null);
+    if let Some(o) = v.as_object_mut() {
+        o.insert("apiVersion".into(), json!(DOC_API));
+        // per-network block lists and the global one are edited live (Block/Unblock), not through this document
+        o.remove("blocked");
+        if let Some(nets) = o.get_mut("networks").and_then(Value::as_array_mut) {
+            for n in nets {
+                if let Some(n) = n.as_object_mut() {
+                    n.remove("has_key");
+                    n.remove("blocked");
+                }
+            }
+        }
+    }
+    v
+}
+
+/// Parse a declarative document (YAML or JSON) into the settings change it describes.
+pub fn parse_doc(v: &Value) -> Result<WifiInput> {
+    match v.get("apiVersion").and_then(Value::as_str) {
+        Some(DOC_API) | None => {}
+        Some(other) => return Err(invalid(format!("apiVersion {other:?}: expected {DOC_API}"))),
+    }
+    serde_json::from_value(v.clone()).map_err(|e| invalid(format!("document: {e}")))
+}
+
+/// What applying `input` would change, without writing anything: every changed setting (passphrases shown as
+/// "(changed)"), and whether the radios restart.
+pub fn plan(f: &EnvFile, input: &WifiInput) -> Result<Value> {
+    let new = update(f, input)?;
+    let (a, b) = (view(f), view(&new));
+    let (ja, jb) = (
+        serde_json::to_value(&a).unwrap_or(Value::Null),
+        serde_json::to_value(&b).unwrap_or(Value::Null),
+    );
+    let mut changes = Vec::new();
+    if let (Some(oa), Some(ob)) = (ja.as_object(), jb.as_object()) {
+        for (k, vb) in ob {
+            if k == "networks" {
+                continue;
+            }
+            let va = oa.get(k).cloned().unwrap_or(Value::Null);
+            if &va != vb {
+                changes.push(json!({ "setting": k, "from": va, "to": vb }));
+            }
+        }
+    }
+    let net = |c: &WifiConfig, id: &str| {
+        c.networks
+            .iter()
+            .find(|n| n.id == id)
+            .map(|n| serde_json::to_value(n).unwrap_or(Value::Null))
+    };
+    let mut ids: Vec<String> = a
+        .networks
+        .iter()
+        .chain(b.networks.iter())
+        .map(|n| n.id.clone())
+        .collect();
+    ids.dedup();
+    let mut seen = std::collections::HashSet::new();
+    for id in ids.into_iter().filter(|i| seen.insert(i.clone())) {
+        match (net(&a, &id), net(&b, &id)) {
+            (Some(_), None) => changes.push(
+                json!({ "setting": format!("networks.{id}"), "from": "present", "to": "removed" }),
+            ),
+            (None, Some(n)) => {
+                changes.push(json!({ "setting": format!("networks.{id}"), "from": null, "to": n }))
+            }
+            (Some(na), Some(nb)) => {
+                if let (Some(oa), Some(ob)) = (na.as_object(), nb.as_object()) {
+                    for (k, vb) in ob.iter().filter(|(k, _)| k.as_str() != "has_key") {
+                        let va = oa.get(k).cloned().unwrap_or(Value::Null);
+                        if &va != vb {
+                            changes.push(json!({ "setting": format!("networks.{id}.{k}"), "from": va, "to": vb }));
+                        }
+                    }
+                }
+                if f.get(&format!("KEY_{id}")) != new.get(&format!("KEY_{id}")) {
+                    changes.push(json!({ "setting": format!("networks.{id}.key"), "from": "(set)", "to": "(changed)" }));
+                }
+            }
+            (None, None) => {}
+        }
+    }
+    Ok(json!({
+        "changes": changes,
+        "restart": !changes.is_empty() && restart_needed(f, &new),
+    }))
+}
+
+/// [`plan`] against this unit's file.
+pub fn plan_unit(p: &Paths, input: &WifiInput) -> Result<Value> {
+    if !p.present() {
+        return Err(Error::Config(
+            "Invalid: this unit has no access-point Wi-Fi backend".into(),
+        ));
+    }
+    plan(&read_env(p)?, input)
+}
+
+/// [`export_doc`] of this unit's file.
+pub fn export_unit(p: &Paths) -> Result<Value> {
+    if !p.present() {
+        return Err(Error::Config(
+            "Invalid: this unit has no access-point Wi-Fi backend".into(),
+        ));
+    }
+    Ok(export_doc(&read_env(p)?))
+}
+
 /// The access-point file as it is (for a configuration backup), or None on a unit without the backend.
 pub fn export_text(p: &Paths) -> Result<Option<String>> {
     if !p.present() {
@@ -1093,19 +1360,71 @@ pub fn restore_text(p: &Paths, text: &str) -> Result<Value> {
 /// Does going from `old` to `new` need the radios restarted? Not when only live settings changed (transmit power,
 /// block lists, client names) and comments.
 pub fn restart_needed(old: &EnvFile, new: &EnvFile) -> bool {
+    radio_state(old) != radio_state(new)
+}
+
+/// Everything a radio restart depends on, compared by meaning, not by spelling: the typed settings without the live
+/// ones (transmit power, client names, block lists), every network's passphrase, the unmanaged non-live variables and
+/// the non-assignment lines. A setting written out at its default (`AP_HT24=20`) equals the setting left out.
+type RadioState = (
+    Value,
+    Vec<(String, String)>,
+    Vec<(String, String)>,
+    Vec<String>,
+);
+fn radio_state(f: &EnvFile) -> RadioState {
+    let c = view(f);
+    let mut v = serde_json::to_value(&c).unwrap_or(Value::Null);
+    if let Some(o) = v.as_object_mut() {
+        for k in ["txpower24", "txpower5", "names", "blocked"] {
+            o.remove(k);
+        }
+        if let Some(nets) = o.get_mut("networks").and_then(Value::as_array_mut) {
+            for n in nets.iter_mut().filter_map(Value::as_object_mut) {
+                n.remove("blocked");
+            }
+        }
+    }
+    let ids: Vec<String> = c.networks.iter().map(|n| n.id.clone()).collect();
+    let mut keys: Vec<(String, String)> = ids
+        .iter()
+        .map(|id| {
+            (
+                id.clone(),
+                f.get(&format!("KEY_{id}")).unwrap_or("").to_string(),
+            )
+        })
+        .collect();
+    keys.sort();
     let live = |k: &str| LIVE_VARS.contains(&k) || LIVE_PREFIXES.iter().any(|p| k.starts_with(p));
-    let rest = |f: &EnvFile| {
-        let mut v: Vec<(String, String)> = f
-            .vars
-            .iter()
-            .filter(|(k, _)| !live(k))
-            .map(|(k, _)| (k.clone(), f.get(k).unwrap_or("").to_string()))
-            .collect();
-        v.sort();
-        v.dedup();
-        (v, f.other.clone())
+    let net_var = |k: &str| {
+        NET_PREFIXES.iter().any(|p| {
+            k.strip_prefix(p)
+                .is_some_and(|id| ids.iter().any(|n| n == id))
+        })
     };
-    rest(old) != rest(new)
+    let mut rest: Vec<(String, String)> = f
+        .vars
+        .iter()
+        .filter(|(k, _)| !live(k) && !MANAGED.contains(&k.as_str()) && !net_var(k))
+        .map(|(k, _)| (k.clone(), f.get(k).unwrap_or("").to_string()))
+        .collect();
+    rest.sort();
+    rest.dedup();
+    (v, keys, rest, f.other.clone())
+}
+
+/// Same settings in meaning (radio state and the live settings): nothing to write or apply.
+pub fn same_settings(old: &EnvFile, new: &EnvFile) -> bool {
+    radio_state(old) == radio_state(new) && {
+        let (a, b) = (view(old), view(new));
+        (a.txpower24, a.txpower5, a.names, a.blocked)
+            == (b.txpower24, b.txpower5, b.names, b.blocked)
+            && a.networks
+                .iter()
+                .map(|n| &n.blocked)
+                .eq(b.networks.iter().map(|n| &n.blocked))
+    }
 }
 
 /// Add (`block = true`) or remove a MAC on one network's block list (`network` = its id) or on the unit's list
@@ -1594,6 +1913,190 @@ mod tests {
         assert_eq!(back.get("SSID_old"), Some("Old"));
         assert!(t.starts_with("# Unit header\n"));
         assert_eq!(view(&back).networks, view(&f).networks);
+    }
+
+    #[test]
+    fn channel_plan_defaults_to_auto_everywhere() {
+        // a file without any channel setting (and an empty one) = ACS on both radios, 1/6/11 on 2.4 GHz, no DFS
+        for f in [parse(""), parse("AP_SSIDS=p\nSSID_p=P KEY_p=secretpw1\n")] {
+            let c = view(&f);
+            assert_eq!((c.chan24.as_str(), c.chan5.as_str()), ("auto", "auto"));
+            assert_eq!((c.width24, c.width5), (20, 80));
+            assert!(!c.dfs);
+            assert_eq!(c.chanlist24, vec![1, 6, 11]);
+            assert!(c.chanlist5.is_empty());
+            assert_eq!(c.acs_scans, 5);
+        }
+        // "0" and "" are auto too (what the `ap` script treats as ACS)
+        let c = view(&parse("AP_CHAN24=0\nAP_CHAN5=\n"));
+        assert_eq!((c.chan24.as_str(), c.chan5.as_str()), ("auto", "auto"));
+    }
+
+    #[test]
+    fn channel_plan_settings_round_trip_and_validate() {
+        let f = sample();
+        let n = update(
+            &f,
+            &WifiInput {
+                chan24: Some("auto".into()),
+                chan5: Some("auto".into()),
+                width24: Some(40),
+                width5: Some(80),
+                dfs: Some(true),
+                chanlist24: Some(vec![]),
+                chanlist5: Some(vec![36, 40, 44, 48, 36, 149]),
+                acs_scans: Some(3),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let back = parse(&render(&n));
+        assert_eq!(back.get("AP_CHAN24"), Some("auto"));
+        assert_eq!(back.get("AP_CHAN5"), Some("auto"));
+        assert_eq!(back.get("AP_HT24"), Some("40"));
+        assert_eq!(back.get("AP_DFS"), Some("1"));
+        assert_eq!(
+            back.get("AP_CHANLIST24"),
+            Some(""),
+            "empty list = all channels"
+        );
+        assert_eq!(back.get("AP_CHANLIST5"), Some("36 40 44 48 149"));
+        assert_eq!(back.get("AP_ACS_SCANS"), Some("3"));
+        let c = view(&back);
+        assert_eq!(c.width24, 40);
+        assert!(c.dfs);
+        assert!(c.chanlist24.is_empty());
+        assert_eq!(c.chanlist5, vec![36, 40, 44, 48, 149]);
+        assert_eq!(c.acs_scans, 3);
+        assert_eq!(back.get("KEY_p"), Some("secretpw1"), "networks untouched");
+        // a pinned channel goes back to auto (what the house units needed)
+        let pinned = parse("AP_CHAN24=1\nAP_CHAN5=36\nAP_SSIDS=p\nSSID_p=P KEY_p=secretpw1\n");
+        let a = update(
+            &pinned,
+            &WifiInput {
+                chan24: Some("auto".into()),
+                chan5: Some("auto".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(view(&a).chan24, "auto");
+        assert_eq!(view(&a).chan5, "auto");
+        // refused, nothing changed
+        for bad in [
+            WifiInput {
+                width24: Some(80),
+                ..Default::default()
+            },
+            WifiInput {
+                chanlist24: Some(vec![14]),
+                ..Default::default()
+            },
+            WifiInput {
+                chanlist5: Some(vec![150]),
+                ..Default::default()
+            },
+            WifiInput {
+                acs_scans: Some(0),
+                ..Default::default()
+            },
+            WifiInput {
+                acs_scans: Some(21),
+                ..Default::default()
+            },
+            WifiInput {
+                chan24: Some("14".into()),
+                ..Default::default()
+            },
+            WifiInput {
+                chan5: Some("150".into()),
+                ..Default::default()
+            },
+        ] {
+            let e = update(&f, &bad).unwrap_err().to_string();
+            assert!(e.contains("Invalid Wi-Fi settings"), "{e}");
+        }
+        // channel plan changes restart the radios (ACS runs at hostapd start)
+        assert!(restart_needed(&f, &n));
+    }
+
+    #[test]
+    fn declarative_export_plan_apply_round_trip() {
+        let f = parse("AP_COUNTRY=US\nAP_CHAN24=1\nAP_CHAN5=36\nAP_SSIDS=p\nSSID_p=P KEY_p=secretpw1 DENY_p=02:00:00:00:00:01\nAP_DENY=02:00:00:00:00:02\n");
+        let doc = export_doc(&f);
+        let text = serde_json::to_string(&doc).unwrap();
+        assert!(
+            !text.contains("secretpw1"),
+            "no passphrase in the export: {text}"
+        );
+        assert_eq!(doc["apiVersion"], DOC_API);
+        assert_eq!(doc["chan24"], "1");
+        // the export applied as it is changes nothing (keys and block lists kept)
+        let same = parse_doc(&doc).unwrap();
+        let p = plan(&f, &same).unwrap();
+        assert_eq!(p["changes"], json!([]), "{p}");
+        assert_eq!(p["restart"], false);
+        let n = update(&f, &same).unwrap();
+        assert_eq!(n.get("KEY_p"), Some("secretpw1"));
+        assert_eq!(n.get("DENY_p"), Some("02:00:00:00:00:01"));
+        assert_eq!(n.get("AP_DENY"), Some("02:00:00:00:00:02"));
+        // edit the document: channels to auto, a new password
+        let mut d2 = doc.clone();
+        d2["chan24"] = json!("auto");
+        d2["chan5"] = json!("auto");
+        d2["networks"][0]["key"] = json!("newsecret9");
+        let p = plan(&f, &parse_doc(&d2).unwrap()).unwrap();
+        let ch: Vec<String> = p["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["setting"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(ch, vec!["chan24", "chan5", "networks.p.key"]);
+        // spelling out a default is not a change, and not a restart
+        let mut d3 = doc.clone();
+        d3["width24"] = json!(20);
+        d3["acs_scans"] = json!(5);
+        let p3 = plan(&f, &parse_doc(&d3).unwrap()).unwrap();
+        assert_eq!(p3["changes"], json!([]), "{p3}");
+        assert!(same_settings(
+            &f,
+            &update(&f, &parse_doc(&d3).unwrap()).unwrap()
+        ));
+        assert_eq!(p["restart"], true);
+        let ptext = p.to_string();
+        assert!(
+            !ptext.contains("secretpw1") && !ptext.contains("newsecret9"),
+            "plan hides passphrases: {ptext}"
+        );
+        // a wrong apiVersion or a bad value is refused
+        assert!(parse_doc(&json!({"apiVersion": "x/v9"})).is_err());
+        assert!(plan(&f, &parse_doc(&json!({"chan5": "150"})).unwrap()).is_err());
+    }
+
+    #[test]
+    fn live_width_from_hostapd_status() {
+        let st = |t: &str| kv(t);
+        // .10's 5 GHz radio after hostapd's HT40 coexistence swap: primary 40, secondary below, 80 MHz centre 42
+        assert_eq!(
+            live_width(&st("state=ENABLED\nchannel=40\nsecondary_channel=-1\nvht_oper_chwidth=1\nvht_oper_centr_freq_seg0_idx=42\n")),
+            (Some(80), Some(42))
+        );
+        assert_eq!(
+            live_width(&st("channel=149\nsecondary_channel=1\nvht_oper_chwidth=0\nvht_oper_centr_freq_seg0_idx=151\n")),
+            (Some(40), Some(151))
+        );
+        assert_eq!(
+            live_width(&st("channel=6\nsecondary_channel=0\n")),
+            (Some(20), Some(6))
+        );
+        assert_eq!(
+            live_width(&st("channel=1\nsecondary_channel=1\n")),
+            (Some(40), Some(3))
+        );
+        // ACS still surveying: no channel yet
+        assert_eq!(live_width(&st("state=ACS\nchannel=0\n")), (None, None));
+        assert_eq!(live_width(&[]), (None, None));
     }
 
     #[test]

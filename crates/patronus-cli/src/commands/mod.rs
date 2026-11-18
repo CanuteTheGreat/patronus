@@ -2,6 +2,8 @@
 
 pub mod apply;
 pub mod applyd;
+#[cfg(feature = "wifi-ap")]
+pub mod apwifi;
 pub mod bgp;
 pub mod captiveportal;
 pub mod daemon;

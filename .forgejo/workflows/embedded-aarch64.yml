@@ -48,7 +48,7 @@ jobs:
         run: sh ci/hw-profile/tests/run.sh
 
   xbss-hwsim:
-    name: hostapd cross-BSS station removal (mac80211_hwsim, stock vs Patronus hostapd)
+    name: hostapd cross-BSS station removal + automatic channel selection (mac80211_hwsim, stock vs Patronus hostapd)
     # one MAC still associated on one SSID of a radio joins the other SSID: stock hostapd creates the new peer before it
     # deletes the old one (the IPQ6018 firmware asserts on that), the image's hostapd must delete first (docs 12.6d).
     # mac80211_hwsim is host-global: the script locks, loads 3 radios, always unloads; skips where the kernel has none.
@@ -59,7 +59,7 @@ jobs:
       options: --memory 1g --memory-swap 1g --cpus 1
     steps:
       - uses: actions/checkout@v4
-      - name: Stock hostapd overlaps, the Patronus build removes the old peer first; flap limit
+      - name: Stock hostapd overlaps, the Patronus build removes the old peer first; flap limit; ACS (1/6/11, 80 MHz centre, DFS)
         run: bash ci/embedded-aarch64/ax1800/tests/xbss-hwsim.sh
 
   image:

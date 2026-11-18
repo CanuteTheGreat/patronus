@@ -9,10 +9,16 @@ Signs in, then requires, in each browser (Firefox and Chromium by default):
   3. the dashboard shows the access-point uplink card (address, gateway) and System lists "Not available on this
      device" with a reason per entry;
   4. /dhcp answers with the access-point explanation, not DHCP controls;
-  5. no JavaScript error on any of these pages.
+  5. the channel plan form (channel and width per band, automatic channel lists, DFS, survey rounds) shows exactly
+     GET /api/wifi's settings, and each radio card shows the channel and width the radio really runs (from hostapd),
+     marked "picked automatically" when the band's channel is auto;
+  6. no JavaScript error on any of these pages.
 With E2E_WRITE=1 it also adds a network through the page (Add network, name, password, 5 GHz only, Save), requires
 the page to report success and GET /api/wifi to list it, then removes it again through the page and requires the
-original network list back. That restarts the unit's radios twice (clients reconnect within seconds).
+original network list back. That restarts the unit's radios twice (clients reconnect within seconds). E2E_CHAN=1 changes the channel plan through
+the page (2.4 GHz automatic channels "1 6", 4 survey rounds), requires the API to show it and the 2.4 GHz radio to come
+back on channel 1 or 6, refuses a malformed channel list without saving, then restores the original plan (two more
+radio restarts).
 
 Usage: BASE_URL=https://192.0.2.10 E2E_USER=admin E2E_PASSWORD=... wifi-page-e2e.py [firefox,chromium]
 Exit 0 = every check passed. Needs the `playwright` package and its browsers.
@@ -27,6 +33,7 @@ BASE = os.environ.get("BASE_URL", "https://localhost:8443").rstrip("/")
 USER = os.environ["E2E_USER"]
 PASSWORD = os.environ["E2E_PASSWORD"]
 WRITE = os.environ.get("E2E_WRITE") == "1"
+CHAN = os.environ.get("E2E_CHAN") == "1"
 TEST_SSID = os.environ.get("E2E_TEST_SSID", "pat-e2e-test")
 TEST_KEY = os.environ.get("E2E_TEST_KEY", "e2e-test-key-123")
 ROUTER_ONLY = ["/routing", "/dhcp", "/dns", "/segmentation", "/insights"]
@@ -88,6 +95,21 @@ def run(p, kind):
     check(f"{kind}: both radios shown", radios == 2, radios)
     html = page.content()
     check(f"{kind}: no password in the page", "KEY_" not in html and "wpa_passphrase" not in html)
+    form = page.evaluate("""() => { const f = document.getElementById('wifi-radio-form'); const l = v => v.split(/\s+/).filter(x => x).map(Number);
+        return {chan24: f.chan24.value, chan5: f.chan5.value, width24: Number(f.width24.value), width5: Number(f.width5.value),
+                dfs: f.dfs.checked, chanlist24: l(f.chanlist24.value), chanlist5: l(f.chanlist5.value), acs_scans: Number(f.acs_scans.value)}; }""")
+    c = cfg["config"]
+    want_plan = {k: c.get(k) for k in ("chan24", "chan5", "width24", "width5", "dfs", "chanlist24", "chanlist5", "acs_scans")}
+    check(f"{kind}: channel plan form = GET /api/wifi", form == want_plan, {"page": form, "api": want_plan})
+    cards = page.evaluate("() => [...document.querySelectorAll('#wifi-radios .radio-chan')].map(d => [d.dataset.band, d.innerText])")
+    ok_cards = len(cards) == 2
+    for band, text in cards:
+        r = next((x for x in cfg["radios"] if x["band"] == band), {})
+        auto = c["chan5" if band == "5" else "chan24"] == "auto"
+        if r.get("state") == "ENABLED":
+            ok_cards &= f"channel {r['channel']} " in text and f"{r.get('width_mhz')} MHz wide" in text \
+                and (("picked automatically" in text) == auto)
+    check(f"{kind}: radio cards show the live channel and width (auto marked)", ok_cards, {"cards": cards, "radios": cfg["radios"]})
     clients = page.locator("#wifi-clients tbody tr").count()
     check(f"{kind}: clients table filled", clients >= 1, clients)
     page.screenshot(path=f"wifi-{kind}.png", full_page=True)
@@ -127,6 +149,35 @@ def run(p, kind):
         page.wait_for_function("() => document.querySelector('#wifi-save').textContent.startsWith('Save')", timeout=120000)
         final = [x["ssid"] for x in json.loads(api(page, "/api/wifi")["body"])["config"]["networks"]]
         check(f"{kind}: removed again, original networks back", final == before, final)
+    if CHAN:
+        orig = json.loads(api(page, "/api/wifi")["body"])["config"]
+        page.goto(BASE + "/wifi")
+        page.wait_for_selector("#wifi-main", state="visible", timeout=30000)
+        page.fill("[name=chanlist24]", "1 x")
+        page.click("#wifi-save")
+        msg = page.inner_text("#wifi-msg")
+        same = json.loads(api(page, "/api/wifi")["body"])["config"]
+        check(f"{kind}: a malformed channel list is refused, nothing saved", "channel numbers" in msg and same == orig, msg)
+
+        def save_plan(ch24, list24, scans):
+            page.goto(BASE + "/wifi")
+            page.wait_for_selector("#wifi-main", state="visible", timeout=30000)
+            page.select_option("[name=chan24]", ch24)
+            page.fill("[name=chanlist24]", list24)
+            page.fill("[name=acs_scans]", str(scans))
+            page.click("#wifi-save")
+            page.wait_for_function("() => document.querySelector('#wifi-save').textContent.startsWith('Save')", timeout=180000)
+            return page.inner_text("#wifi-msg")
+
+        msg = save_plan("auto", "1 6", 4)
+        got = json.loads(api(page, "/api/wifi")["body"])
+        r24 = next((x for x in got["radios"] if x["band"] == "24"), {})
+        check(f"{kind}: channel plan saved through the page", "Saved" in msg and got["config"]["chanlist24"] == [1, 6]
+              and got["config"]["acs_scans"] == 4 and got["config"]["chan24"] == "auto", {"msg": msg, "config": got["config"]})
+        check(f"{kind}: 2.4 GHz radio came back on a channel from the list (ACS)", r24.get("state") == "ENABLED" and r24.get("channel") in ("1", "6"), r24)
+        msg = save_plan(orig["chan24"], " ".join(str(x) for x in orig["chanlist24"]), orig["acs_scans"])
+        back = json.loads(api(page, "/api/wifi")["body"])["config"]
+        check(f"{kind}: original channel plan restored", back == orig and "Saved" in msg, {"msg": msg, "back": back, "orig": orig})
     check(f"{kind}: no JavaScript errors", not errors, errors)
     browser.close()
 

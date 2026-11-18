@@ -44,8 +44,16 @@
     <form class="lan-form" id="wifi-radio-form" onsubmit="return false">
         <label>Country (regulatory domain) <input name="country" maxlength="2" size="3"></label>
         <label>2.4 GHz channel <select name="chan24"></select></label>
+        <label>2.4 GHz width <select name="width24"><option value="20">20 MHz</option><option value="40">40 MHz</option></select></label>
         <label>5 GHz channel <select name="chan5"></select></label>
         <label>5 GHz width <select name="width5"><option value="20">20 MHz</option><option value="40">40 MHz</option><option value="80">80 MHz</option></select></label>
+        <label>Automatic 2.4 GHz channels <input name="chanlist24" size="12" placeholder="all"
+            title="Channels the automatic choice may use on 2.4 GHz, separated by spaces (1 6 11 = the three that do not overlap). Empty = every channel the country allows."></label>
+        <label>Automatic 5 GHz channels <input name="chanlist5" size="18" placeholder="all"
+            title="Channels the automatic choice may use on 5 GHz, separated by spaces. Empty = every channel the country allows."></label>
+        <label class="wifi-check"><input type="checkbox" name="dfs"> Automatic choice may use radar (DFS) channels 52-144</label>
+        <label>Survey rounds <input name="acs_scans" type="number" min="1" max="20" size="3"
+            title="How many times the automatic choice measures every channel before it picks one (more = steadier choice, slower start)"></label>
         <label class="wifi-check"><input type="checkbox" name="wifi6"> Wi-Fi 6 (802.11ax)</label>
         <label>2.4 GHz transmit power <select name="txpower24"></select></label>
         <label>5 GHz transmit power <select name="txpower5"></select></label>
@@ -54,6 +62,9 @@
     </form>
     <p class="wifi-note">Transmit power: "auto" lets the radio use the most the country allows; a lower value shrinks the
         coverage (useful when two access points overlap). Power and client names apply at once, without restarting the radios.</p>
+    <p class="wifi-note" id="wifi-auto-note">Channel "auto" (the default) measures how busy each allowed channel is every time the
+        radios start and takes the least busy one; the radio cards above show the channel it picked. Pick a fixed channel only
+        when you plan channels for several access points by hand.</p>
     <p class="wifi-note">Wi-Fi 6 is on by default. Turn it off only for an old client that cannot connect with it. 5 GHz
         channels 52-144 need a radar check (DFS) of up to ten minutes before the 5 GHz networks appear.</p>
 </div>
@@ -153,7 +164,10 @@ function radioCard(r) {
     const up = r.state === 'ENABLED';
     const c = el('div', {class: 'card', style: 'margin:0'},
         el('strong', {text: band + ' '}), el('span', {class: 'pill ' + (up ? 'on' : 'off'), text: r.state || 'off'}),
-        el('div', {class: 'wifi-note', text: r.channel ? ('channel ' + r.channel + ' (' + r.freq + ' MHz)' + (r.wifi6 ? ', Wi-Fi 6' : '')) : 'not broadcasting'}));
+        el('div', {class: 'wifi-note radio-chan', 'data-band': r.band, text: r.channel && r.channel !== '0'
+            ? ('channel ' + r.channel + ' (' + r.freq + ' MHz)' + (r.width_mhz ? ', ' + r.width_mhz + ' MHz wide' : '') + (r.wifi6 ? ', Wi-Fi 6' : '')
+               + (CFG && CFG[r.band === '5' ? 'chan5' : 'chan24'] === 'auto' ? ', picked automatically' : ', fixed')
+            : (r.state === 'ACS' ? 'choosing the least busy channel...' : r.state === 'DFS' ? 'radar check before broadcasting (DFS)...' : 'not broadcasting')}));
     for (const b of (r.bss || [])) c.appendChild(el('div', {class: 'text-sm', text: b.ssid + ' - ' + b.clients + ' client(s) - ' + b.bssid}));
     return c;
 }
@@ -193,6 +207,8 @@ async function loadWifi() {
     CFG = d.config;
     const f = document.getElementById('wifi-radio-form');
     f.country.value = CFG.country; f.width5.value = String(CFG.width5); f.wifi6.checked = CFG.wifi6;
+    f.width24.value = String(CFG.width24 || 20); f.dfs.checked = !!CFG.dfs; f.acs_scans.value = String(CFG.acs_scans || 5);
+    f.chanlist24.value = (CFG.chanlist24 || []).join(' '); f.chanlist5.value = (CFG.chanlist5 || []).join(' ');
     fillSelect(f.chan24, CH24, CFG.chan24); fillSelect(f.chan5, CH5, CFG.chan5);
     fillSelect(f.txpower24, TXP, CFG.txpower24 || 'auto'); fillSelect(f.txpower5, TXP, CFG.txpower5 || 'auto');
     for (const o of [...f.txpower24.options, ...f.txpower5.options]) if (o.value !== 'auto') o.textContent = o.value + ' dBm';
@@ -220,7 +236,12 @@ async function saveWifi() {
         nets.push(n);
     }
     if (!nets.some(n => n.enabled) && !confirm('No network is switched on: this turns Wi-Fi off on this unit. Continue?')) return;
+    const chans = v => v.split(/[\s,]+/).filter(x => x).map(Number);
+    const bad = [...chans(f.chanlist24.value), ...chans(f.chanlist5.value)].filter(x => !Number.isInteger(x));
+    if (bad.length) { msg('Automatic channel lists take channel numbers separated by spaces.', true); return; }
     const body = {country: f.country.value, chan24: f.chan24.value, chan5: f.chan5.value, width5: Number(f.width5.value),
+        width24: Number(f.width24.value), dfs: f.dfs.checked, chanlist24: chans(f.chanlist24.value), chanlist5: chans(f.chanlist5.value),
+        acs_scans: Number(f.acs_scans.value) || 5,
         wifi6: f.wifi6.checked, txpower24: f.txpower24.value, txpower5: f.txpower5.value, names: f.names.value.trim() || 'dhcp',
         networks: nets};
     const b = document.getElementById('wifi-save'); b.disabled = true; b.textContent = 'Restarting Wi-Fi...';

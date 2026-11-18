@@ -8,8 +8,13 @@
 # BSS a locally administered variant of it, unique across both radios. hostapd's automatic addressing fails here: it
 # needs an even start address (this board's 5 GHz phy MAC is odd: "Invalid BSSID mask"), and its +1 address for a second
 # 2.4 GHz BSS is the 5 GHz radio's own MAC.
+# Channel plan, per radio (ap.env, defaults in board.sh): AP_CHAN24 / AP_CHAN5 = "auto" (the default: hostapd's ACS
+# measures how busy each allowed channel is at start and takes the least busy one) or a fixed channel; AP_HT24 (20|40)
+# and AP_HT5 (20|40|80) = width. ACS only picks from AP_CHANLIST24 / AP_CHANLIST5 (space-separated channels; empty = every
+# channel the country allows; 2.4 GHz defaults to the non-overlapping 1 6 11), AP_ACS_SCANS survey rounds, and on 5 GHz
+# skips the radar (DFS) channels 52-144 unless AP_DFS=1 (a DFS channel costs a 1-10 min radar check at every start).
 # A fixed 5 GHz channel at 40/80 MHz gets its HT40 direction and VHT/HE centre channel (hostapd refuses 80 MHz without
-# vht_oper_centr_freq_seg0_idx); channel auto (ACS) leaves them to hostapd.
+# vht_oper_centr_freq_seg0_idx); with ACS hostapd sets the direction and centre for the channel it picks.
 # 802.11ax (HE, Wi-Fi 6) is ON (AP_HE=0 in ap.env turns it off). The radio settings follow what OpenWrt 25.12's
 # mac80211.sh/hostapd.sh write for this board, on top of the same kernel, ath11k modules and firmware: the board's full
 # HT/VHT capabilities, HE beamforming, a BSS color (hostapd leaves BSS color DISABLED unless he_bss_color is set), spatial
@@ -71,6 +76,18 @@ chan5_lines() { # CHANNEL WIDTH(20|40|80): HT40 direction + VHT/HE width and cen
   else
     echo "vht_oper_chwidth=0"; echo "vht_oper_centr_freq_seg0_idx=$c40"; echo "he_oper_chwidth=0"; echo "he_oper_centr_freq_seg0_idx=$c40"
   fi; }
+chanlist() { # BAND LIST: the valid channels of LIST (space-separated), the rest dropped with a message
+  out=; for c in $2; do
+    if [ "$1" = 24 ]; then case "$c" in ''|*[!0-9]*) ok=0;; *) [ "$c" -ge 1 ] && [ "$c" -le 13 ] && ok=1 || ok=0;; esac
+    else valid5 "$c" && ok=1 || ok=0; fi
+    [ $ok = 1 ] && out="$out $c" || echo "ap: AP_CHANLIST$1: $c is not a channel of that band, ignored" >&2
+  done; echo "${out# }"; }
+acs_lines() { # BAND: what ACS may pick from and how long it measures
+  case "${AP_ACS_SCANS:-5}" in [1-9]|1[0-9]|20) echo "acs_num_scans=${AP_ACS_SCANS:-5}";; *) echo "acs_num_scans=5";; esac
+  eval "l=\${AP_CHANLIST$1:-}"; l=$(chanlist "$1" "$l"); [ -n "$l" ] && echo "chanlist=$l"
+  [ "$1" = 5 ] && case "${AP_DFS:-0}" in 1|yes|on) echo "acs_exclude_dfs=0";; *) echo "acs_exclude_dfs=1";; esac; true; }
+ht24_dir() { # CHANNEL(0 = ACS): HT40 direction on 2.4 GHz (1-7 above, 8-13 below)
+  [ "$1" = 0 ] && { echo "[HT40+]"; return; }; [ "$1" -le 7 ] && echo "[HT40+]" || echo "[HT40-]"; }
 valid5() { # a 5 GHz channel number on the 20 MHz raster (36..144 from 36, 149..177 from 149)
   case "$1" in ''|*[!0-9]*) return 1;; esac
   { [ "$1" -ge 36 ] && [ "$1" -le 144 ] && [ $(( ($1 - 36) % 4 )) = 0 ]; } || { [ "$1" -ge 149 ] && [ "$1" -le 177 ] && [ $(( ($1 - 149) % 4 )) = 0 ]; }; }
@@ -113,8 +130,9 @@ render_band() { # 24|5 phy
   b=$1; phy=$2; f=$OUTD/ap$b.conf; first=1; n=0
   case "${AP_HE:-1}" in 0|no|off) he=0;; *) he=1;; esac
   pmac=$(phy_mac $phy) || return 1
-  if [ $b = 24 ]; then ch=$AP_CHAN24; hw=g; [ "$ch" = auto ] && ch=0; pre=wl24
-  else ch=$AP_CHAN5; hw=a; [ "$ch" = auto ] && ch=0; pre=wl5
+  if [ $b = 24 ]; then ch=$AP_CHAN24; hw=g; [ "$ch" = auto ] || [ -z "$ch" ] && ch=0; pre=wl24
+    case "$ch" in *[!0-9]*) ch=x;; esac; { [ "$ch" != x ] && [ "$ch" -le 13 ]; } || { echo "ap: AP_CHAN24=$AP_CHAN24 is not a 2.4 GHz channel: using auto" >&2; ch=0; }
+  else ch=$AP_CHAN5; hw=a; [ "$ch" = auto ] || [ -z "$ch" ] && ch=0; pre=wl5
     [ "$ch" = 0 ] || valid5 "$ch" || { echo "ap: AP_CHAN5=$ch is not a 5 GHz channel: using auto" >&2; ch=0; }
   fi
   for s in $AP_SSIDS; do
@@ -135,12 +153,12 @@ render_band() { # 24|5 phy
           else [ -n "$c5" ] && echo "$c5"; echo "ht_capab=$AP_HTCAPS5"; fi
           echo "vht_capab=$AP_VHTCAPS5"
         else
-          echo "ht_capab=$AP_HTCAPS24"
+          case "${AP_HT24:-20}" in 40) echo "ht_capab=$(ht24_dir "$ch")$AP_HTCAPS24";; *) echo "ht_capab=$AP_HTCAPS24";; esac
           # no 802.11b rates (OpenWrt's default): 1-11 Mbit/s beacons and broadcasts cost the whole cell airtime
           echo "supported_rates=60 90 120 180 240 360 480 540"; echo "basic_rates=60 120 240"
         fi
         [ $he = 1 ] && he_lines "$pmac"
-        [ "$ch" = 0 ] && echo "acs_num_scans=1"
+        [ "$ch" = 0 ] && acs_lines $b
         echo "interface=$ifn"; echo "bssid=$bssid"; echo "bridge=br-lan"; echo "ctrl_interface=/run/hostapd"; } >> $f
     else
       { echo "bss=$ifn"; echo "bssid=$bssid"; echo "bridge=br-lan"; echo "ctrl_interface=/run/hostapd"; } >> $f

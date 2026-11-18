@@ -158,6 +158,30 @@ aprender auto "$TWO
 AP_CHAN5=auto AP_HT5=80"
 [ "$(seg auto channel)" = 0 ] && ! grep -q 'centr_freq_seg0_idx' "$A/auto/ap5.conf" && [ "$(seg auto vht_oper_chwidth)" = 1 ] \
   && ok "ap: 5 GHz auto (ACS) at 80 MHz leaves the centre channel to hostapd" || no "ap: ACS config wrong: $(grep -E 'channel|centr|chwidth' "$A/auto/ap5.conf" | tr '\n' ' ')"
+# channel plan defaults: no channel in ap.env = ACS on both radios, 2.4 GHz only among 1/6/11, 5 GHz without DFS
+s24() { sed -n "s/^$2=//p" "$A/$1/ap24.conf" 2>/dev/null | head -1; }
+aprender dflt "$TWO"
+if [ "$(seg dflt channel)" = 0 ] && [ "$(s24 dflt channel)" = 0 ] && [ "$(s24 dflt chanlist)" = "1 6 11" ] && [ -z "$(seg dflt chanlist)" ] \
+  && [ "$(seg dflt acs_exclude_dfs)" = 1 ] && [ -z "$(s24 dflt acs_exclude_dfs)" ] && [ "$(seg dflt acs_num_scans)" = 5 ] && [ "$(s24 dflt acs_num_scans)" = 5 ]; then
+  ok "ap: default channel plan = ACS on both radios (2.4 GHz among 1/6/11, 5 GHz without DFS, 5 survey rounds)"
+else no "ap: default channel plan: $(grep -hE '^(channel|chanlist|acs_)' "$A/dflt/ap5.conf" "$A/dflt/ap24.conf" | tr '\n' ' ')"; cat "$A/dflt.out"; fi
+aprender dfs "$TWO
+AP_DFS=1 AP_CHANLIST5=\"36 40 52 150\" AP_CHANLIST24= AP_ACS_SCANS=3"
+[ "$(seg dfs acs_exclude_dfs)" = 0 ] && [ "$(seg dfs chanlist)" = "36 40 52" ] && grep -q 'AP_CHANLIST5: 150 is not a channel' "$A/dfs.out" \
+  && [ -z "$(s24 dfs chanlist)" ] && [ "$(seg dfs acs_num_scans)" = 3 ] \
+  && ok "ap: AP_DFS=1 lets ACS use DFS channels; AP_CHANLIST5 keeps valid channels only; empty 2.4 list = all; AP_ACS_SCANS" \
+  || { no "ap: DFS/chanlist: $(grep -hE '^(chanlist|acs_)' "$A/dfs/ap5.conf" "$A/dfs/ap24.conf" | tr '\n' ' ')"; cat "$A/dfs.out"; }
+aprender fixed "$TWO
+AP_CHAN5=149 AP_CHAN24=6"
+! grep -qE '^(acs_|chanlist=)' "$A/fixed/ap5.conf" "$A/fixed/ap24.conf" && ok "ap: a fixed channel writes no ACS settings" || no "ap: ACS lines with fixed channels"
+for c in 1:+ 6:+ 7:+ 8:- 11:- auto:+; do ch=${c%%:*}; dir=${c#*:}
+  aprender h24$ch "$TWO
+AP_CHAN24=$ch AP_HT24=40"
+  case "$(s24 h24$ch ht_capab)" in "[HT40$dir][LDPC]"*) ok "ap: 2.4 GHz ch $ch / 40 MHz -> HT40$dir";; *) no "ap: 2.4 GHz ch $ch / 40 MHz: $(s24 h24$ch ht_capab)";; esac; done
+aprender h24x "$TWO
+AP_CHAN24=14"
+[ "$(s24 h24x channel)" = 0 ] && grep -q 'AP_CHAN24=14 is not a 2.4 GHz channel' "$A/h24x.out" && case "$(s24 h24x ht_capab)" in "[LDPC]"*) true;; *) false;; esac \
+  && ok "ap: an invalid 2.4 GHz channel falls back to auto (with a message); 20 MHz writes no HT40 flag" || no "ap: AP_CHAN24=14 not handled"
 aprender bad "$TWO
 AP_CHAN5=150"
 [ "$(seg bad channel)" = 0 ] && grep -q 'not a 5 GHz channel' "$A/bad.out" && ok "ap: an off-raster 5 GHz channel falls back to auto, with a message" || no "ap: AP_CHAN5=150 not handled"
