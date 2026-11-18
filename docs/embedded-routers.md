@@ -241,6 +241,30 @@ manual (`t_slate.py`, `slate-lan-client.sh`).
 Failsafe path C (GL U-Boot web recovery, reset button held at power-on) is **documented, not exercised**: it needs a person at the
 unit. The stock GL 4.3.25 and OpenWrt 25.12.6 images are staged with verified sha256 next to the unit's mtd backups.
 
+### 6d. Two Wi-Fi uplinks in one upstream subnet (2026-11-17)
+
+The repeater runs a client on each radio (`wl5-sta` preferred, `wl24-sta` fallback, board.sh `WAN5_IF`/`WAN_IF`), and both usually
+join the same upstream network, so the box holds two addresses in one subnet with two MACs. A first install from OpenWrt came up
+with both leases, synced its clock and resolved names, but was unreachable on its reserved address for the whole guard window and
+was rolled back. Cause, reproduced in network namespaces (`tests/netns-multihome.sh`, needs root; the slower 2.4 GHz air is
+modelled with `netem`): every uplink answered ARP for **both** addresses (`arp_ignore=0`), the faster 5 GHz client won the race,
+so the upstream LAN mapped the 2.4 GHz client's reserved address to the 5 GHz MAC; new connections then arrived on `wl5-sta`,
+and the boot management rule (SSH/web from `MGMT_NET`) only accepted `wl24-sta`. Result before the fix: 0/20 connections to either
+address; after: 20/20 to both.
+
+Fix (all board scripts, both init systems):
+- `board-network`: each uplink answers ARP only for its own address and asks with it (`arp_ignore=1`, `arp_announce=2`), loose
+  reverse-path filter (`rp_filter=2`). The list is `UPLINKS` in board.sh.
+- `wifi-follow`: per-uplink source routing. For each `UPLINK_TABLES` entry `<sta>:<table>:<pref>` (defaults 4241/4242 and prefs
+  30241/30242, clear of the routes applier's table 4250 and prefs 31000-31999; a unit can override them in unit.conf) it keeps a
+  table with the client's subnet and gateway plus `ip rule from <addr>`, follows lease changes and removes both when the client
+  loses its address.
+- `apply`: the boot management rule covers every uplink client.
+- `check-rootfs.sh` refuses an AP template without WPA (`wpa=` plus a passphrase/PSK); `ALLOW_OPEN_AP=1` is the explicit
+  exception for a deliberate open network.
+- The early boot takes the hostname from `/etc/hostname` (unit value `UNIT_HOSTNAME`, else the hardware profile); nothing is
+  hard-coded.
+
 ## 6a. Local web UI (the LuCI equivalent)
 
 **Yes: the Slate keeps a local web UI, and it is the real Patronus UI**, not a lite copy. Decision rule that was applied: try the straight port first; fall back to a `web-lite` only if it missed the 16 MiB slot or a 25-30 MB RSS cap. It met both, so no second UI exists to maintain.
