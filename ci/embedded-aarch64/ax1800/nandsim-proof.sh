@@ -37,7 +37,9 @@ mkdir -p /tmp/ud && mount -t ubifs "ubi$D:patronus_data" /tmp/ud && echo "settin
 chk "settings written to UBIFS on patronus_data" test -s /tmp/ud/settings
 # upgrade: guards against this UBI (board identity faked: the host is not a GL-AX1800), then the installer's write step
 printf 'glinet,gl-ax1800\0qcom,ipq6018\0' > /tmp/compat
-FE="PATRONUS_DT_COMPAT=/tmp/compat PATRONUS_UBI=$U PATRONUS_LIB=$LIB PATRONUS_DATA=/tmp/ud"
+# the box's release keyring: the public key shipped in the repo (images are signed since 2026-11-17)
+gpg --batch --no-default-keyring --keyring /tmp/fwkeys.gpg --import "$H/../../../gentoo/sec-keys/openpgp-keys-errantsolutions/files/errantsolutions.asc" 2>/dev/null
+FE="PATRONUS_DT_COMPAT=/tmp/compat PATRONUS_UBI=$U PATRONUS_LIB=$LIB PATRONUS_DATA=/tmp/ud FW_KEYRING=/tmp/fwkeys.gpg"
 chk "patronus-flash check: the new image passes every guard against this UBI" env $FE sh "$H/overlay/usr/sbin/patronus-flash" check "$NEW"
 chk "patronus-flash sysupgrade stages it on patronus_data" env $FE sh "$H/overlay/usr/sbin/patronus-flash" sysupgrade "$NEW"
 chk "upgrade-install verify (the early-boot re-check)" env $FE sh "$LIB/upgrade-install" verify
@@ -46,7 +48,7 @@ G=$H/overlay/usr/sbin/patronus-guard; GC=/tmp/gconf; GR=/tmp/grun; rm -rf $GC $G
 printf 'bootcmd=bootipq; ping 192.168.1.2; run lfq; bootipq; httpd 192.168.1.1; reset\nbootargs=console=ttyMSM0,115200n8\n' > /tmp/env.txt
 mkenvimage -s 0x40000 -o /tmp/env.img /tmp/env.txt
 cp "$H/overlay/etc/patronus/boot-guard.board" "$H/overlay/etc/patronus/boot-guard.conf" $GC/
-printf 'GUARD_ENV_MTD=/tmp/env.img\nGUARD_UB_UBI_MTD=%s\n' "$(sed -n "s/^$MTD: [0-9a-f]* [0-9a-f]* \"\(.*\)\"/\1/p" /proc/mtd)" >> $GC/boot-guard.board
+printf 'GUARD_ENV_MTD=/tmp/env.img\nGUARD_UB_UBI_MTD="%s"\n' "$(sed -n "s/^$MTD: [0-9a-f]* [0-9a-f]* \"\(.*\)\"/\1/p" /proc/mtd)" >> $GC/boot-guard.board
 printf 'BUILD=nandsim-old\n' > $GR/release
 GE="GUARD_CONF_DIR=$GC GUARD_RUN=$GR GUARD_RELEASE=$GR/release PATRONUS_UBI=$U PATRONUS_DATA=/tmp/ud"
 chk "guard env-install: bootloader script written into the stock environment" env $GE sh "$G" env-install

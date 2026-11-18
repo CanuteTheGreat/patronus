@@ -188,6 +188,8 @@ for sc in $SCEN; do
     [ "$bo" = "$ATT" ] && pass "$sc: the bad image got exactly $ATT boots" || fail "$sc: trial boots $bo (want $ATT)"
     [ "$(sha "$W/rootfs.img" "$W/good2.sq")" = "$(sha256sum < "$W/good2.sq" | cut -d' ' -f1)" ] && pass "$sc: rootfs volume = good2 byte for byte" || fail "$sc: rootfs content"
     [ "$(sha "$W/kernel.img" "$K")" = "$(sha256sum < "$K" | cut -d' ' -f1)" ] && pass "$sc: kernel volume = the old kernel" || fail "$sc: kernel content"
+    # the revert is reported from the early boot; the web UI starts later (TCG, two gates in parallel): give it time
+    t1=$(date +%s); until web_ok >/dev/null; do [ $(( $(date +%s) - t1 )) -gt "${WEB_WAIT:-180}" ] && break; sleep 5; done
     web_ok && pass "$sc: old image healthy again (web UI)" || fail "$sc: web after revert"
     d=$(echo "$s" | grep -o '"event":"reverted","detail":"[^"]*"' | tail -1); note "$d"
     case "$sc:$d" in panic:*kernel\ panic*|badkernel:*kernel\ panic*|nonet:*network\ FAIL*|webdead:*web\ FAIL*|hostapddead:*hostapd\ FAIL*) pass "$sc: revert reason recorded";;
