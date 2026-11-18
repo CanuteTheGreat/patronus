@@ -366,7 +366,7 @@ ok) case "$(genv pat_state)" in trial|revert-failed) confirm "confirmed by hand"
 status)
   if [ "${2:-}" = --json ]; then status_json; exit 0; fi
   echo "boot guard: $( [ "$GUARD_ENABLED" = 1 ] && echo on || echo off), bootloader script: $(env_installed && echo installed || echo 'NOT installed')"
-  echo "state: $(genv pat_state || echo unknown)  boots left: $(genv pat_left)  trial boots: $(genv pat_boots)"
+  echo "state: $(s=$(genv pat_state); echo "${s:-idle}")  boots left: $(genv pat_left)  trial boots: $(genv pat_boots)"
   echo "running: $(sed -n 's/^BUILD=//p' "$GUARD_RELEASE")  trial image: $(genv pat_new)  previous image: $(genv pat_prev)"
   echo "rollback image on flash: $( [ -n "$(vid kernel_prev)" ] && [ -n "$(vid rootfs_prev)" ] && echo yes || echo no)"
   [ -f "$GD/last-failure" ] && echo "last failure: $(cat "$GD/last-failure")"
