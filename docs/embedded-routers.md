@@ -1172,3 +1172,7 @@ ranges: `steer` auto|on|off, `steer_signal` -90..-40 dBm, `steer_after` 30..8640
 radio restart: ap-steer re-reads ap.env every round); the hostapd limits restart the radios. `check-rootfs.sh` requires
 an executable ap-steer and a hostapd that knows `patronus_authfail_*`; the QEMU gate checks the defaults, a live
 steering change, bad values (400) and `ap-steer status`.
+
+Found by that gate: the Wi-Fi API compared only some live settings when deciding whether anything changed, so a
+change of only the channel-coordination (12.17) or steering settings answered 200 "nothing changed" and was never
+written. `same_settings` now compares every typed setting; unit tests cover a live-only change of each kind.

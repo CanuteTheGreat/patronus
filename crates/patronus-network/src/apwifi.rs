@@ -2038,15 +2038,9 @@ fn radio_state(f: &EnvFile) -> RadioState {
 
 /// Same settings in meaning (radio state and the live settings): nothing to write or apply.
 pub fn same_settings(old: &EnvFile, new: &EnvFile) -> bool {
-    radio_state(old) == radio_state(new) && {
-        let (a, b) = (view(old), view(new));
-        (a.txpower24, a.txpower5, a.names, a.blocked)
-            == (b.txpower24, b.txpower5, b.names, b.blocked)
-            && a.networks
-                .iter()
-                .map(|n| &n.blocked)
-                .eq(b.networks.iter().map(|n| &n.blocked))
-    }
+    // every typed setting, live ones included (transmit power, names, block lists, channel coordination, steering):
+    // comparing only some of them once made a change of the others report "nothing changed" and never reach ap.env
+    radio_state(old) == radio_state(new) && view(old) == view(new)
 }
 
 /// Add (`block = true`) or remove a MAC on one network's block list (`network` = its id) or on the unit's list
@@ -2747,6 +2741,28 @@ mod tests {
         assert_eq!(again.steer_signal, Some(-72));
         // steering is live: ap-steer re-reads ap.env every round, no radio restart
         assert!(!restart_needed(&f, &n));
+        // ... but it IS a change: apply writes it (a live-only change must not look like "nothing changed")
+        assert!(!same_settings(&f, &n));
+        for live_only in [
+            WifiInput {
+                steer_max: Some(5),
+                ..Default::default()
+            },
+            WifiInput {
+                coord_min_signal: Some(-70),
+                ..Default::default()
+            },
+            WifiInput {
+                coord_quiet: Some("".into()),
+                ..Default::default()
+            },
+        ] {
+            let n = update(&f, &live_only).unwrap();
+            assert!(
+                !same_settings(&f, &n) && !restart_needed(&f, &n),
+                "{live_only:?}"
+            );
+        }
         let pl = plan(
             &f,
             &WifiInput {
