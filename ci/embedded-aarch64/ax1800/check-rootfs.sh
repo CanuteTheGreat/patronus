@@ -16,7 +16,7 @@ grep -q '^root:[^:!*]' "$R/etc/shadow" 2>/dev/null || [ -s "$R/root/.ssh/authori
 grep -q '^nobody:' "$R/etc/passwd" || fail "no nobody user"
 [ -s "$R/etc/services" ] || fail "no /etc/services (busybox wget/nc: bad port 'http')"
 for f in usr/sbin/patronus-flash usr/libexec/patronus/fwcheck.sh usr/libexec/patronus/upgrade-install usr/libexec/patronus/ubi-data usr/sbin/patronus-init usr/libexec/patronus/early usr/libexec/patronus/ath11k-caldata usr/libexec/patronus/ap \
-         usr/libexec/patronus/ap-guest usr/libexec/patronus/ap-coord usr/libexec/patronus/ap-steer usr/libexec/patronus/ap-addr usr/libexec/patronus/leds usr/libexec/patronus/restart-schedule \
+         usr/libexec/patronus/ap-guest usr/libexec/patronus/ap-coord usr/libexec/patronus/ap-steer usr/libexec/patronus/ap-chan usr/libexec/patronus/ap-addr usr/libexec/patronus/leds usr/libexec/patronus/restart-schedule \
          usr/libexec/patronus/scheduled-restart usr/libexec/patronus/board-network etc/patronus/board.sh etc/patronus-init etc/pam.d/patronus \
          usr/sbin/hostapd usr/sbin/dropbear usr/bin/patronus-cli usr/bin/patronus-web \
          usr/sbin/patronus-guard usr/bin/fw_printenv usr/bin/fw_setenv etc/patronus/boot-guard.board etc/patronus/boot-guard.conf usr/sbin/ubimkvol \
@@ -29,7 +29,7 @@ grep -a 'patronus-xbss' "$R/usr/sbin/hostapd" >/dev/null 2>&1 || fail "hostapd i
 # older Patronus hostapd refuses (no radio would start)
 grep -a 'patronus_authfail_max' "$R/usr/sbin/hostapd" >/dev/null 2>&1 || fail "hostapd has no patronus_authfail_* settings (built before the authentication backoff): the rendered radio configs would be refused"
 # `ap` starts these only when executable: a 0644 helper is skipped silently (no channel plan, no steering)
-for f in ap ap-coord ap-steer ap-event ap-guest wifi-guard; do [ -x "$R/usr/libexec/patronus/$f" ] || fail "/usr/libexec/patronus/$f is not executable (ap skips it silently)"; done
+for f in ap ap-coord ap-steer ap-chan ap-event ap-guest wifi-guard; do [ -x "$R/usr/libexec/patronus/$f" ] || fail "/usr/libexec/patronus/$f is not executable (ap skips it silently)"; done
 [ -e "$R/usr/lib/security/pam_unix.so" ] || [ -e "$R/lib/security/pam_unix.so" ] || fail "missing pam_unix.so (web UI login)"
 # gpgv: release signatures (update feed, images); ssl_client: busybox wget over https (online firmware check)
 for t in ubinfo ubimkvol ubirmvol ubirsvol ubiupdatevol ubiblock iw ip sha256sum pivot_root gpgv ssl_client; do

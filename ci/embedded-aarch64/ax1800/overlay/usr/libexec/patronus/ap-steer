@@ -8,7 +8,8 @@
 # seconds (hostapd deny_acl: the station is disconnected and has to join another access point). A station this unit
 # moved that comes back here (just as weak = no better access point for it, or bounced back by the other unit because it
 # was even weaker there) is left alone for AP_STEER_RETRY seconds: each unit moves a station at most once per
-# AP_STEER_RETRY and a station that returns stays, so two units can swap it at most once (no ping-pong). At most
+# AP_STEER_RETRY and a station that returns stays, so two units can swap it at most once (no ping-pong); each further
+# return in a row doubles that hold, up to AP_STEER_RETRY_MAX (a device with no better access point is left alone). At most
 # AP_STEER_MAX stations are moved per round (every AP_STEER_INTERVAL seconds); AP_STEER_EXEMPT lists MACs never moved.
 # AP_STEER: auto (default) = only on a unit that knows another access point of this network exists (heard at start by
 # ap-coord, listed in AP_COORD_PEERS, or a station that left here showed up behind a wired port, i.e. at another unit),
@@ -31,9 +32,14 @@ now() { echo "${AP_STEER_NOW:-$(date +%s)}"; }
 settings() {
   MODE=${AP_STEER:-auto}; SIG=$(num "${AP_STEER_SIGNAL:-}" -65); AFTER=$(num "${AP_STEER_AFTER:-}" 600)
   IDLE=$(num "${AP_STEER_IDLE:-}" 64); BLOCK=$(num "${AP_STEER_BLOCK:-}" 30); RETRY=$(num "${AP_STEER_RETRY:-}" 21600)
+  RMAX=$(num "${AP_STEER_RETRY_MAX:-}" 604800); [ "$RMAX" -ge "$RETRY" ] || RMAX=$RETRY
   MAXN=$(num "${AP_STEER_MAX:-}" 2); IVL=$(num "${AP_STEER_INTERVAL:-}" 30)
   EXEMPT=" $(echo "${AP_STEER_EXEMPT:-}" | tr 'A-F' 'a-f') "; }
 
+hold() { # N: how long a station is left alone after its N-th return in a row (AP_STEER_RETRY doubled per return, at most
+  # AP_STEER_RETRY_MAX)
+  h=$RETRY; i=1; while [ "$i" -lt "$1" ] && [ "$h" -lt "$RMAX" ]; do h=$((h * 2)); i=$((i + 1)); done
+  [ "$h" -le "$RMAX" ] || h=$RMAX; echo "$h"; }
 bsses() { for f in "$OUTD"/ap5.conf "$OUTD"/ap24.conf; do [ -f "$f" ] && sed -n 's/^interface=//p; s/^bss=//p' "$f"; done; }
 dump() { # BSS -> "mac signal bytes connected" per station
   if [ -n "${AP_STEER_DUMP_DIR:-}" ]; then cat "$AP_STEER_DUMP_DIR/$1" 2>/dev/null; else iw dev "$1" station dump 2>/dev/null; fi | awk '
@@ -78,16 +84,18 @@ round() {
   cp "$SD/now" "$SD/prev"
   moved=0; peers_known && pk=1 || pk=0
   while read -r m sig bytes conn ifn; do
-    ws=0 bp=-1 tp=0 ka=0 ks=0 hu=0; [ -f "$SD/sta-$m" ] && read -r ws bp tp ka ks hu < "$SD/sta-$m"
+    ws=0 bp=-1 tp=0 ka=0 ks=0 hu=0 nr=0; [ -f "$SD/sta-$m" ] && read -r ws bp tp ka ks hu nr < "$SD/sta-$m"; nr=${nr:-0}
     # back after being moved (joined again since): it stays here. As weak as before = no better access point for it;
-    # stronger = it moved closer, or the other unit sent it back. Either way it is not moved again within AP_STEER_RETRY.
-    if [ "$ka" -gt 0 ] && [ "$conn" -lt $((t - ka)) ]; then hu=$((ka + RETRY))
+    # stronger = it moved closer, or the other unit sent it back. Either way it is not moved again for a while: the first
+    # time AP_STEER_RETRY, each further time in a row twice as long, up to AP_STEER_RETRY_MAX (a device that has no
+    # better access point is not cut off every AP_STEER_RETRY forever).
+    if [ "$ka" -gt 0 ] && [ "$conn" -lt $((t - ka)) ]; then nr=$((nr + 1)); hu=$((ka + $(hold "$nr")))
       if [ "$sig" -le "$SIG" ]; then
-        say "$m came back on $ifn at $sig dBm: no better access point for it, left alone for $((hu - t)) s"
+        say "$m came back on $ifn at $sig dBm: no better access point for it (time $nr in a row), left alone for $((hu - t)) s"
       else say "$m came back on $ifn at $sig dBm (was $ks dBm when moved): left alone for $((hu - t)) s"; fi
       ka=0; ks=0; fi
     weak=0; [ "$sig" -ne 0 ] && [ "$sig" -le "$SIG" ] && weak=1
-    if [ $weak = 1 ]; then [ "$ws" -gt 0 ] || ws=$t; else ws=0; fi
+    if [ $weak = 1 ]; then [ "$ws" -gt 0 ] || ws=$t; else ws=0; [ "$hu" -le "$t" ] && nr=0; fi
     idle=0; if [ "$bp" -ge 0 ] && [ "$bytes" -ge "$bp" ] && [ "$t" -gt "$tp" ]; then
       [ $(( (bytes - bp) * 8 / 1000 / (t - tp) )) -lt "$IDLE" ] && idle=1; fi
     if [ $weak = 1 ] && [ $pk = 1 ] && [ $idle = 1 ] && [ $((t - ws)) -ge "$AFTER" ] && [ "$conn" -ge "$AFTER" ] \
@@ -97,11 +105,11 @@ round() {
         say "$m: $sig dBm on $ifn for $((t - ws)) s and idle: refused on this unit for $BLOCK s so it joins a closer access point"
         ka=$t; ks=$sig; ws=0;; esac
     fi
-    echo "$ws $bytes $t $ka $ks $hu" > "$SD/sta-$m"
+    echo "$ws $bytes $t $ka $ks $hu $nr" > "$SD/sta-$m"
   done < "$SD/now"
   # forget stations that are gone, unless something about them still runs (a hold, a move in progress)
   for f in "$SD"/sta-*; do [ -f "$f" ] || continue; m=${f##*/sta-}; grep -q "^$m " "$SD/now" && continue
-    read -r ws bp tp ka ks hu < "$f"; [ "$hu" -gt "$t" ] || [ $((ka + RETRY)) -gt "$t" ] || rm -f "$f"; done
+    read -r ws bp tp ka ks hu nr < "$f"; [ "$hu" -gt "$t" ] || [ $((ka + RETRY)) -gt "$t" ] || rm -f "$f"; done
   true; }
 
 status() { settings; t=$(now)
@@ -109,8 +117,8 @@ status() { settings; t=$(now)
   for b in 5 24; do [ -s "$OUTD/peers-$b" ] && echo "peers $b GHz: $(cut -d' ' -f1 "$OUTD/peers-$b" | tr '\n' ' ')"; done
   [ -f "$SD/peer-seen" ] && echo "a station was last seen leaving for another access point $(( t - $(cat "$SD/peer-seen") )) s ago"
   [ -s "$SD/blocked" ] && while read -r m u; do echo "refused here: $m for $((u - t)) s more"; done < "$SD/blocked"
-  for f in "$SD"/sta-*; do [ -f "$f" ] || continue; read -r ws bp tp ka ks hu < "$f"
-    [ "$hu" -gt "$t" ] && echo "left alone: ${f##*/sta-} (no better access point) for $((hu - t)) s more"
+  for f in "$SD"/sta-*; do [ -f "$f" ] || continue; read -r ws bp tp ka ks hu nr < "$f"
+    [ "$hu" -gt "$t" ] && echo "left alone: ${f##*/sta-} (no better access point, ${nr:-1} time(s) in a row) for $((hu - t)) s more"
     [ "$ka" -gt 0 ] && echo "moved away: ${f##*/sta-} $((t - ka)) s ago at $ks dBm (left alone if it comes back within $((ka + RETRY - t)) s)"
     [ "$ws" -gt 0 ] && echo "weak: ${f##*/sta-} for $((t - ws)) s"; done; true; }
 

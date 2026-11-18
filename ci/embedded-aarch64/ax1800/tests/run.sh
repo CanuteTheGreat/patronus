@@ -252,6 +252,112 @@ r=$(PATH=$A/bin:$PATH AP_COORD_QUIET=1-5 AP_COORD_NOW=03 cocheck 02:cc:00:00:00:
 AP_COORD_SCAN_FILE=$FX co plan 5 phy0 > /dev/null 2>&1; [ -s "$A/co/peers-5" ] && ok "ap-coord plan: records the peers it heard (ap-steer knows another access point exists)" || no "ap-coord plan wrote no peers-5"
 AP_COORD_SCAN_FILE=/dev/null co plan 5 phy0 > /dev/null 2>&1; [ ! -e "$A/co/peers-5" ] && ok "ap-coord plan: no peer heard = no peers file" || no "ap-coord plan left a stale peers-5"
 
+# 3a2. channel choice by measurement (docs 12.19): ap-chan scoring, the start-time pick through ap-coord plan (serialized
+#      between units), the nightly re-check with hysteresis + agreeing samples, the move by CSA, and the history
+CH=$O/usr/libexec/patronus/ap-chan; C2=$A/ch; mkdir -p "$C2/run" "$C2/db"
+chx() { AP_BOARD=${CHB:-$A/co-board.sh} AP_RENDER_OUT=$C2/run AP_CHAN_DB=$C2/db AP_SYSFS=$A/sys AP_CHAN_AP=$O/usr/libexec/patronus/ap \
+  AP_CHAN_COORD=$CO AP_COORD_CHAN=$CH AP_CHAN_NOW=${NOW:-1000000} AP_CHAN_NOSLEEP=1 AP_COORD_NOSLEEP=1 sh "$@"; }
+# score: 5 GHz, 80 MHz. Block 36-48 busy 40-50 % with a strong neighbour, block 149-161 5 % with one neighbour -> 149 first
+printf 'S 36 400 200\nS 40 400 160\nS 44 400 160\nS 48 400 160\nS 149 400 20\nS 153 400 20\nS 157 400 20\nS 161 400 20\nB 3c:de:ad:be:ef:01 5180 -60 above 80 42 Neighbour\nB 3c:de:ad:be:ef:02 5745 -70 above 80 155 Other\n' > "$C2/m5"
+sc=$(chx "$CH" score 5 "36 40 44 48 149 153 157 161" < "$C2/m5")
+[ "$(echo "$sc" | head -1)" = "149 7.0 5.0 1" ] && [ "$(echo "$sc" | grep '^36 ')" = "36 46.0 44.0 1" ] \
+  && ok "ap-chan score: busy % from comparable samples (primary counted twice) + 2 per access point heard; the quiet block wins" \
+  || { no "ap-chan score 5 GHz"; echo "$sc" | sed 's/^/    /'; }
+sc=$(chx "$CH" score 5 "36 40 44 48 149 153 157 161" 153 < "$C2/m5")
+[ "$(echo "$sc" | head -1 | cut -d' ' -f1)" = 153 ] && ok "ap-chan score: on equal scores the channel in use comes first (nothing to gain by moving)" \
+  || { no "ap-chan score tie"; echo "$sc" | head -3 | sed 's/^/    /'; }
+# 2.4 GHz: equal busy everywhere; a strong neighbour on 3 overlaps 1 (2 away) and 6 (3 away); a co-channel one on 11 costs 2
+printf 'S 1 400 120\nS 6 400 120\nS 11 400 120\nB 3c:00:00:00:00:03 2422 -62 none 20 0 Near\nB 3c:00:00:00:00:0b 2462 -70 none 20 0 Co\nB 3c:00:00:00:00:0c 2462 -95 none 20 0 TooFar\n' > "$C2/m24"
+sc=$(chx "$CH" score 24 "1 6 11" < "$C2/m24" | tr '\n' '|')
+[ "$sc" = "11 32.0 30.0 1|6 34.0 30.0 0|1 36.0 30.0 0|" ] \
+  && ok "ap-chan score 2.4 GHz: partly overlapping strong neighbours cost by overlap, co-channel ones by count, weaker than -90 dBm ignored" \
+  || no "ap-chan score 2.4 GHz: $sc"
+# the history line is valid JSON with every field
+chx "$CH" note 5 start "unit test" > /dev/null; python3 -c "import json,sys; [json.loads(l) for l in open(sys.argv[1])]" "$C2/db/history" \
+  && ok "ap-chan history: one JSON object per line" || { no "ap-chan history JSON"; cat "$C2/db/history"; }
+# start: ap-coord plan scans, ap-chan measures (canned scan + survey) and pins its best candidate for the renderer
+printf 'Survey data from wl5-coord\n\tfrequency:\t\t\t5180 MHz\n\tchannel active time:\t\t105 ms\n\tchannel busy time:\t\t80 ms\n' > "$C2/survey"
+for c in 40 44 48 149 153 157 161 165; do printf 'Survey data from wl5-coord\n\tfrequency:\t\t\t%s MHz\n\tchannel active time:\t\t105 ms\n\tchannel busy time:\t\t%s ms\n' $((5000 + c * 5)) $([ $c -ge 149 ] && echo 10 || echo 60) >> "$C2/survey"; done
+rm -f "$C2/db/history"
+AP_COORD_SCAN_FILE=$FX AP_CHAN_SCAN_FILE=$FX AP_CHAN_SURVEY_FILE=$C2/survey chx "$CO" plan 5 phy0 > "$C2/plan.out" 2>&1
+# the peer (Plat 9) sits on 36-48: not a candidate; NeighbourNet on 149-161 (-60) and a hidden BSS on 161 cost points
+[ "$(cat "$C2/run/coord-5" 2>/dev/null)" = "36 40 44 48" ] && [ "$(cat "$C2/run/chan-5" 2>/dev/null)" = 149 ] \
+  && grep -q '"event":"start"' "$C2/db/history" && grep -q '"chosen":149' "$C2/run/chan-status-5" \
+  && ok "ap-coord plan + ap-chan pick: the peer's block is out, the measured best channel (149) is pinned, history + status written" \
+  || { no "ap-chan start pick: chan-5=$(cat "$C2/run/chan-5" 2>&1)"; cat "$C2/plan.out" "$C2/run/chan-score-5" 2>/dev/null | sed 's/^/    /'; }
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['candidates'] and d['reason'].startswith('channel 149')" "$C2/run/chan-status-5" \
+  && ok "ap-chan status: JSON with the reason and every candidate (Wi-Fi page 'why this channel')" || { no "ap-chan status JSON"; cat "$C2/run/chan-status-5"; }
+grep -q '^peers-5\|aa:bb:cc:11:11' "$C2/db/peers-5" && ok "ap-chan remember: the unit heard is recorded for the next start's order" || { no "ap-chan remember"; cat "$C2/db/peers-5" 2>&1; }
+printf '. %s\n%s\n' "$A/co-board.sh" "$TWO" > "$A/board-chp.sh"; mkdir -p "$A/chp"; cp "$C2/run/chan-5" "$C2/run/coord-5" "$A/chp/"
+AP_BOARD=$A/board-chp.sh AP_RENDER_OUT=$A/chp AP_SYSFS=$A/sys AP_PHY5=phy0 AP_PHY24=phy1 sh "$O/usr/libexec/patronus/ap" render > "$A/chp.out" 2>&1
+[ "$(seg chp chanlist)" = 149 ] && [ "$(seg chp channel)" = 0 ] && ok "ap: the measured channel is ACS's only choice (channel=0, chanlist=149)" || no "ap render with chan-5: $(seg chp chanlist)"
+echo 36 > "$A/chp/chan-5"; AP_BOARD=$A/board-chp.sh AP_RENDER_OUT=$A/chp AP_SYSFS=$A/sys AP_PHY5=phy0 AP_PHY24=phy1 sh "$O/usr/libexec/patronus/ap" render > "$A/chp.out" 2>&1
+[ "$(seg chp chanlist)" = "149 153 157 161" ] && grep -q 'no longer allowed' "$A/chp.out" && ok "ap: a measured channel that is no longer a candidate (peer moved there) is ignored" || no "ap: stale chan-5: $(seg chp chanlist)"
+printf '. %s\nAP_CHAN_SMART5=0\n' "$A/board-chp.sh" > "$A/board-chp0.sh"; echo 149 > "$A/chp/chan-5"
+AP_BOARD=$A/board-chp0.sh AP_RENDER_OUT=$A/chp AP_SYSFS=$A/sys AP_PHY5=phy0 AP_PHY24=phy1 sh "$O/usr/libexec/patronus/ap" render > "$A/chp.out" 2>&1
+[ "$(seg chp chanlist)" = "149 153 157 161" ] && ok "ap: AP_CHAN_SMART5=0 = plain ACS over every candidate" || no "ap: AP_CHAN_SMART5=0: $(seg chp chanlist)"
+# simultaneous start: a known unit with a LOWER key (picks first) that is not on air -> wait (AP_CHAN_WAIT), then pick anyway;
+# one with a higher key, or one forgotten (not heard for AP_CHAN_FORGET), is not waited for
+echo "00:00:00:00:01 999000" > "$C2/db/peers-5"; rm -f "$C2/db/history"
+CHB=$A/board-chw.sh; printf '. %s\nAP_CHAN_WAIT=10 AP_CHAN_JITTER=0\n' "$A/co-board.sh" > "$CHB"
+e=$(chx "$CH" earlier 5 phy0); [ "$e" = "10 00:00:00:00:01" ] && ok "ap-chan earlier: a known unit with a lower key picks first (wait limit + key)" || no "ap-chan earlier: '$e'"
+AP_COORD_SCAN_FILE=$FX AP_CHAN_SCAN_FILE=$FX AP_CHAN_SURVEY_FILE=$C2/survey chx "$CO" plan 5 phy0 > "$C2/plan2.out" 2>&1
+grep -q 'not on air after 10 s: 00:00:00:00:01' "$C2/db/history" && [ "$(cat "$C2/run/chan-5")" = 149 ] \
+  && ok "ap-coord plan: waits for the earlier unit, then picks anyway after AP_CHAN_WAIT (no single point of failure)" || { no "ap-coord plan wait"; cat "$C2/plan2.out" "$C2/db/history" | sed 's/^/    /'; }
+echo "aa:bb:cc:11:11 999000" > "$C2/db/peers-5"; e=$(chx "$CH" earlier 5 phy0); [ -z "$e" ] && ok "ap-chan earlier: a unit with a higher key waits for this one, not the other way round" || no "ap-chan earlier higher: '$e'"
+echo "00:00:00:00:01 1" > "$C2/db/peers-5"; e=$(chx "$CH" earlier 5 phy0); [ -z "$e" ] && ok "ap-chan earlier: a unit not heard for AP_CHAN_FORGET is not waited for" || no "ap-chan earlier forgotten: '$e'"
+# an earlier unit that IS on air (in the scan): no wait at all, its block is avoided
+echo "00:00:00:00:01 999000" > "$C2/db/peers-5"; sed 's/^BSS 06:aa:bb:cc:11:11/BSS 06:00:00:00:00:01/' "$FX" > "$C2/scan-early"; rm -f "$C2/db/history"
+AP_COORD_SCAN_FILE=$C2/scan-early AP_CHAN_SCAN_FILE=$C2/scan-early AP_CHAN_SURVEY_FILE=$C2/survey chx "$CO" plan 5 phy0 > "$C2/plan3.out" 2>&1
+grep -q 'waited 0 s until' "$C2/db/history" && ok "ap-coord plan: the earlier unit is already on air -> no wait" || { no "ap-coord plan earlier on air"; cat "$C2/plan3.out" "$C2/db/history" | sed 's/^/    /'; }
+CHB=
+# nightly re-check: the radio runs on 36/80 (status file); samples see 149 clearly better 3 times -> CSA to 149
+mkdir -p "$C2/run2"; printf 'channel=0\ninterface=wl5-m\nbssid=94:00:5e:10:20:d7\nbss=wl5-g\nbssid=96:00:5e:10:20:d7\n' > "$C2/run2/ap5.conf"
+printf 'state=ENABLED\nfreq=5180\nchannel=36\n' > "$C2/st"
+cat > "$C2/cli" <<EOF
+#!/bin/sh
+echo "\$*" >> $C2/cli.log
+case "\$5" in chan_switch) f=\$7; printf 'state=ENABLED\\nfreq=%s\\nchannel=%s\\n' \$f \$(( (f - 5000) / 5 )) > $C2/st; echo OK;; esac
+EOF
+chmod +x "$C2/cli"
+printf 'Survey data from wl5-m\n\tfrequency:\t\t\t5180 MHz [in use]\n\tchannel active time:\t\t100000 ms\n\tchannel busy time:\t\t40000 ms\n' > "$C2/survey2"
+for c in 40 44 48 149 153 157 161; do printf 'Survey data from wl5-m\n\tfrequency:\t\t\t%s MHz\n\tchannel active time:\t\t105 ms\n\tchannel busy time:\t\t%s ms\n' $((5000 + c * 5)) $([ $c -ge 149 ] && echo 5 || echo 50) >> "$C2/survey2"; done
+printf '10000 3000\n40000 30000\n' > "$C2/home"   # this channel over the window: 30000 ms active, 27000 busy, own airtime 3000
+rc() { : > "$C2/cli.log"; AP_RENDER_OUT=$C2/run2 AP_CLI=$C2/cli AP_CHAN_STATUS_FILE=$C2/st AP_CHAN_SCAN_FILE=$C2/scan-none \
+  AP_CHAN_HOME_FILE=$C2/home AP_COORD_SCAN_FILE=$C2/scan-none AP_CHAN_SURVEY_FILE=${SV:-$C2/survey2} AP_CHAN_OWN_MS=${OWN:-3000} AP_CHAN_CSA_OK=${CSA:-1} AP_BOARD=$A/co-board.sh AP_CHAN_DB=$C2/db AP_SYSFS=$A/sys \
+  AP_CHAN_AP=${CHAP:-$O/usr/libexec/patronus/ap} AP_CHAN_COORD=$CO AP_CHAN_NOW=2000000 AP_CHAN_NOSLEEP=1 sh "$CH" recheck 5 > "$C2/rc.out" 2>&1; }
+: > "$C2/scan-none"; rm -f "$C2/db/history"; rc
+grep -q 'chan_switch 10 5745 sec_channel_offset=1 center_freq1=5775 bandwidth=80 ht vht he' "$C2/cli.log" && grep -q 'channel=149' "$C2/st" \
+  && [ "$(grep -c "\"event\":\"sample\"" "$C2/db/history")" = 3 ] && grep -q '"event":"move".*by CSA' "$C2/db/history" \
+  && ok "ap-chan recheck: 80 % busy (own airtime left out) vs 5 %: better in 3 samples in a row -> channel switch announcement to 149/80" \
+  || { no "ap-chan recheck move"; cat "$C2/rc.out" "$C2/cli.log" "$C2/db/history" | sed 's/^/    /'; }
+# small gain: stays (hysteresis), nothing switched
+sed 's/busy time:\t\t50 ms/busy time:\t\t5 ms/' "$C2/survey2" > "$C2/survey3"
+printf 'state=ENABLED\nfreq=5180\nchannel=36\n' > "$C2/st"; printf '10000 3000\n40000 6000\n' > "$C2/home"; rm -f "$C2/db/history"; SV=$C2/survey3 OWN=0 rc
+[ ! -s "$C2/cli.log" ] || ! grep -q chan_switch "$C2/cli.log" && grep -q '"event":"stay"' "$C2/db/history" \
+  && ok "ap-chan recheck: a channel only slightly better (score 6.9 vs 4.8: under AP_CHAN_MIN_GAIN) -> stays, logged with the reason" \
+  || { no "ap-chan recheck hysteresis"; cat "$C2/rc.out" "$C2/cli.log" | sed 's/^/    /'; }
+# no CSA support -> the radio is restarted onto the pinned channel instead
+printf 'state=ENABLED\nfreq=5180\nchannel=36\n' > "$C2/st"; printf '10000 3000\n40000 30000\n' > "$C2/home"; rm -f "$C2/db/history" "$A/fake-ap.log"
+cat > "$C2/apwrap" <<EOF
+#!/bin/sh
+case "\$1" in candidates) exec sh $O/usr/libexec/patronus/ap "\$@";; *) echo "\$@" >> $A/fake-ap.log;; esac
+EOF
+chmod +x "$C2/apwrap"; rm -f "$A/fake-ap.log" "$C2/db/history"; CSA=0 CHAP=$C2/apwrap rc
+grep -q 'restart-band 5' "$A/fake-ap.log" && [ "$(cat "$C2/run2/chan-5")" = 149 ] && grep -q '"event":"move".*by restart' "$C2/db/history" \
+  && ok "ap-chan move: a driver without channel switch support -> radio restart pinned to the chosen channel" || { no "ap-chan move without CSA"; cat "$C2/rc.out" "$A/fake-ap.log" 2>&1 | sed 's/^/    /'; }
+# a fixed channel is never re-checked
+printf 'channel=44\ninterface=wl5-m\n' > "$C2/run2/ap5.conf"; rc; grep -q 'fixed channel' "$C2/rc.out" && ok "ap-chan recheck: a fixed channel is left alone" || no "ap-chan recheck fixed"
+# due: once a day at AP_CHAN_TIME, later by AP_CHAN_STAGGER per unit that comes first
+dueat() { rm -f "$C2/run2/chan-done-5"; AP_RENDER_OUT=$C2/run2 AP_BOARD=$A/co-board.sh AP_CHAN_DB=$C2/db AP_SYSFS=$A/sys AP_CHAN_HM=$1 AP_CHAN_NOW=2000000 sh "$CH" due 5 && echo due; }
+printf 'channel=0\ninterface=wl5-m\nbssid=94:00:5e:10:20:d7\n' > "$C2/run2/ap5.conf"; rm -f "$C2/db/peers-5"
+[ "$(dueat 0335)/$(dueat 1200)/$(dueat 0329)" = "due//" ] && ok "ap-chan due: in the hour after 03:30, not at noon or before" || no "ap-chan due: $(dueat 0335)/$(dueat 1200)/$(dueat 0329)"
+r=$(rm -f "$C2/run2/chan-done-5"; for i in 1 2; do AP_RENDER_OUT=$C2/run2 AP_BOARD=$A/co-board.sh AP_CHAN_DB=$C2/db AP_CHAN_HM=0340 AP_CHAN_NOW=2000000 sh "$CH" due 5 && echo due; done)
+[ "$r" = "due" ] && ok "ap-chan due: once per day" || no "ap-chan due twice: $r"
+echo "00:00:00:00:01 1999000" > "$C2/db/peers-5"
+[ "$(dueat 0335)/$(dueat 0405)" = "/due" ] && ok "ap-chan due: a unit with one unit ahead of it re-checks AP_CHAN_STAGGER (30 min) later: never both at once" || no "ap-chan due stagger: $(dueat 0335)/$(dueat 0405)"
+rm -f "$C2/db/peers-5"
+
 # 3b. limits for misbehaving stations (patronus-xbss.diff) are radio settings in the render, defaults from board.sh
 aprender lim "$TWO"
 [ "$(seg lim patronus_xbss_max)/$(seg lim patronus_xbss_hold)/$(seg lim patronus_authfail_max)/$(seg lim patronus_authfail_hold_max)" = "6/30/10/3600" ] \
@@ -306,11 +412,12 @@ grep -q "ADD_MAC $first" "$ST/cli.log" && no "ap-steer: moved a station that has
 PP=$A/pp; rm -rf "$PP"; for u in a b; do mkdir -p "$PP/$u/run" "$PP/$u/dump"; printf 'interface=wl5-m\n' > "$PP/$u/run/ap5.conf"
   printf '#!/bin/sh\necho "$AP_STEER_NOW $6 $7" >> %s/%s/cli.log\n' "$PP" "$u" > "$PP/$u/cli"; chmod +x "$PP/$u/cli"; : > "$PP/$u/cli.log"; done
 ppround() { # UNIT NOW
-  printf '. %s\nAP_STEER=1 AP_STEER_AFTER=60 AP_STEER_BLOCK=30 AP_STEER_RETRY=3600\n' "$O/etc/patronus/board.sh" > "$PP/$1/board.sh"
+  printf '. %s\nAP_STEER=1 AP_STEER_AFTER=60 AP_STEER_BLOCK=30 AP_STEER_RETRY=3600 %s\n' "$O/etc/patronus/board.sh" "${PPX:-}" > "$PP/$1/board.sh"
   AP_BOARD=$PP/$1/board.sh AP_RENDER_OUT=$PP/$1/run AP_STEER_STATE=$PP/$1/state AP_STEER_NOW=$2 AP_STEER_DUMP_DIR=$PP/$1/dump \
     AP_STEER_FDB_FILE=$PP/$1/fdb AP_STEER_WIRED="1" AP_CLI=$PP/$1/cli sh "$O/usr/libexec/patronus/ap-steer" once >> "$PP/$1/out" 2>&1; }
+pploop() { # END: the station between the two units from t=10000; trips = "unit@time" of every move
 PM=aa:00:00:00:00:a1; loc=a; conn=700; trips=
-for t in $(seq 10000 100 21000); do other=b; [ $loc = b ] && other=a
+for t in $(seq 10000 100 $1); do other=b; [ $loc = b ] && other=a
   sig=-75; [ $loc = b ] && sig=-82
   : > "$PP/$loc/dump/wl5-m"; : > "$PP/$other/dump/wl5-m"
   printf 'Station %s (on wl5-m)\n\trx bytes:\t100\n\ttx bytes:\t0\n\tsignal:  \t%s dBm\n\tsignal avg:\t%s dBm\n\tconnected time:\t%s seconds\n' \
@@ -319,17 +426,29 @@ for t in $(seq 10000 100 21000); do other=b; [ $loc = b ] && other=a
   printf 'port no\tmac addr\t\tis local?\tageing timer\n  1\t%s\tno\t\t   0.10\n' $PM > "$PP/$other/fdb"
   n=$(grep -c "ADD_MAC $PM" "$PP/$loc/cli.log"); ppround a $t; ppround b $t
   if [ "$(grep -c "ADD_MAC $PM" "$PP/$loc/cli.log")" -gt "$n" ]; then trips="$trips $loc@$t"; loc=$other; conn=95; else conn=$((conn + 100)); fi
-done
+done; }
+pploop 21000
 movesA=$(grep -c "ADD_MAC $PM" "$PP/a/cli.log"); movesB=$(grep -c "ADD_MAC $PM" "$PP/b/cli.log")
 first=$(awk -v m=$PM '$2 == "ADD_MAC" && $3 == m && $1 < 13600' "$PP/a/cli.log" "$PP/b/cli.log" | wc -l)
 case "$trips" in " a@"*" b@"*) ;; *) trips="BAD$trips";; esac
-[ "$first" = 2 ] && [ "${trips#BAD}" = "$trips" ] && grep -q "$PM came back on wl5-m at -75 dBm: no better access point for it, left alone" "$PP/a/out" \
+[ "$first" = 2 ] && [ "${trips#BAD}" = "$trips" ] && grep -q "$PM came back on wl5-m at -75 dBm: no better access point for it (time 1 in a row), left alone" "$PP/a/out" \
   && ok "ap-steer, two units: moved A->B, weaker on B, sent back once, then left alone on A (one round trip within AP_STEER_RETRY)" \
   || { no "ap-steer two units: moves $trips"; tail -5 "$PP/a/out" "$PP/b/out"; }
 gap=$(for u in a b; do awk -v m=$PM '$2 == "ADD_MAC" && $3 == m { if (p != "" && $1 - p < 3600) print "'$u'", p, $1; p = $1 }' "$PP/$u/cli.log"; done)
 [ -z "$gap" ] && [ "$movesA" -le 4 ] && [ "$movesB" -le 4 ] \
   && ok "ap-steer, two units over 11000 s: each unit moves the station at most once per AP_STEER_RETRY (A $movesA, B $movesB moves)" \
   || no "ap-steer two units: moves closer than AP_STEER_RETRY: $gap (A $movesA, B $movesB)"
+# back-off: a station that keeps coming back (no better access point) is left alone twice as long each time, at most
+# AP_STEER_RETRY_MAX: A's moves 3600, then 7200 s apart; with the maximum at 7200 the gaps stay 7200 (one outage per max)
+agaps() { awk -v m=$PM '$2 == "ADD_MAC" && $3 == m { if (p != "") printf "%d ", int(($1 - p + 50) / 100) * 100; p = $1 }' "$PP/a/cli.log"; }
+g=$(agaps); case "$g" in "3600 7200 "*) ok "ap-steer back-off: a returning station's hold doubles per return (A's moves $g s apart)";;
+  *) no "ap-steer back-off: A's moves $g s apart (trips$trips)"; tail -3 "$PP/a/out";; esac
+rm -rf "$PP"; for u in a b; do mkdir -p "$PP/$u/run" "$PP/$u/dump"; printf 'interface=wl5-m\n' > "$PP/$u/run/ap5.conf"
+  printf '#!/bin/sh\necho "$AP_STEER_NOW $6 $7" >> %s/%s/cli.log\n' "$PP" "$u" > "$PP/$u/cli"; chmod +x "$PP/$u/cli"; : > "$PP/$u/cli.log"; done
+PPX=AP_STEER_RETRY_MAX=7200 pploop 40000; g=$(agaps)
+case "$g" in "3600 7200 7200 7200"*) ok "ap-steer back-off: capped at AP_STEER_RETRY_MAX (A's moves $g s apart)";;
+  *) no "ap-steer back-off cap: A's moves $g s apart"; tail -3 "$PP/a/out";; esac
+grep -q 'time 3 in a row' "$PP/a/out" && ok "ap-steer back-off: the log says how many times in a row" || no "ap-steer back-off: no 'time N in a row'"
 AP_BOARD=$PP/a/board.sh AP_RENDER_OUT=$PP/a/run AP_STEER_STATE=$PP/a/state AP_STEER_NOW=10400 sh "$O/usr/libexec/patronus/ap-steer" status > /dev/null 2>&1 \
   && ok "ap-steer status runs on a unit with records" || no "ap-steer status failed"
 # auto = only when another access point is known; 0 = off

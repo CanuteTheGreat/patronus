@@ -98,10 +98,17 @@ coordinate_list() { b=$1; l=$2; f=$OUTD/coord-$b
   out=${out# }
   if [ -n "$out" ]; then [ "$out" = "$l" ] || echo "ap: $b GHz: channels used by this network's other access points ($(cat "$f")) are left out of the ACS list" >&2; echo "$out"
   else echo "ap: $b GHz: every block overlaps another access point of this network, ACS decides alone" >&2; echo "$2"; fi; }
+acs_candidates() { # BAND: the primary channels ACS may pick (AP_CHANLIST*, DFS/U-NII-4 switches, whole blocks, minus the
+  # blocks this network's other access points use); ap-chan scores exactly these
+  eval "l=\${AP_CHANLIST$1:-}"; l=$(chanlist "$1" "$l"); l=$(coordinate_list "$1" "$l")
+  if [ "$1" = 5 ]; then acs5_primaries "$l" "${AP_HT5:-80}"; else echo "$l"; fi; }
 acs_lines() { # BAND: what ACS may pick from and how long it measures
   case "${AP_ACS_SCANS:-5}" in [1-9]|1[0-9]|20) echo "acs_num_scans=${AP_ACS_SCANS:-5}";; *) echo "acs_num_scans=5";; esac
-  eval "l=\${AP_CHANLIST$1:-}"; l=$(chanlist "$1" "$l"); l=$(coordinate_list "$1" "$l")
-  if [ "$1" = 5 ]; then l=$(acs5_primaries "$l" "${AP_HT5:-80}"); echo "chanlist=$l"
+  l=$(acs_candidates "$1")
+  # ap-chan measured the candidates before this start (docs 12.19): its choice is ACS's only channel
+  eval "sm=\${AP_CHAN_SMART$1:-1}"; pin=$(cat "$OUTD/chan-$1" 2>/dev/null)
+  if on "$sm" && [ -n "$pin" ]; then case " $l " in *" $pin "*) l=$pin;; *) echo "ap: $1 GHz: measured channel $pin is no longer allowed, ACS decides" >&2;; esac; fi
+  if [ "$1" = 5 ]; then echo "chanlist=$l"
     case "${AP_DFS:-0}" in 1|yes|on) echo "acs_exclude_dfs=0";; *) echo "acs_exclude_dfs=1";; esac
   else [ -n "$l" ] && echo "chanlist=$l"; fi; true; }
 on() { case "${1:-0}" in 1|yes|on|true) return 0;; esac; return 1; }
@@ -291,6 +298,7 @@ start)
     echo "$(cut -d' ' -f1 /proc/uptime) wifi-phys" >> /tmp/boot-times; start_all ) > /tmp/ap.log 2>&1 < /dev/null &
   ;;
 txpower) mkdir -p $OUTD; txpower ;;
+candidates) l=$(acs_candidates "${2:-5}" 2>/dev/null); [ -n "$l" ] || [ "${2:-5}" = 5 ] || l="1 2 3 4 5 6 7 8 9 10 11 12 13"; echo "$l" ;;
 acl) mkdir -p $OUTD; acl ;;
 stop) for pf in /run/patronus-ap-coord.pid /run/patronus-ap-steer.pid; do p=$(cat $pf 2>/dev/null); [ -n "$p" ] && kill "$p" 2>/dev/null; rm -f $pf; done
   stop_all ;;

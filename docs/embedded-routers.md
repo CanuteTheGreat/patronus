@@ -1176,3 +1176,76 @@ steering change, bad values (400) and `ap-steer status`.
 Found by that gate: the Wi-Fi API compared only some live settings when deciding whether anything changed, so a
 change of only the channel-coordination (12.17) or steering settings answered 200 "nothing changed" and was never
 written. `same_settings` now compares every typed setting; unit tests cover a live-only change of each kind.
+
+### 12.19 Channel choice by measurement, nightly re-check by channel switch, steering back-off (2026-11-18)
+
+Until now the channel came from hostapd's ACS at radio start, minus the blocks of this network's other units (12.17).
+ACS measures once, only busy time, and only while the radio is not yet serving. A running radio's own-channel survey
+counter keeps adding up for hours and includes the unit's own traffic, while every other channel is only seen in short
+scans, so comparing survey numbers by hand (or re-running ACS) favoured moving off a channel that was only busy with our
+own clients. Measured on the house units 2026-11-18: 5 GHz 0-40 % busy, 2.4 GHz 45-50 % busy from neighbours on every
+channel (own traffic under 15 %), 32 neighbouring access points heard on 2.4 GHz channel 6 alone.
+
+`libexec/patronus/ap-chan` (started by `ap-coord plan` at radio start and by `ap-coord run` once a minute when due):
+- Measurement: every candidate channel (exactly the list ACS may use: `ap candidates BAND`, i.e. AP_CHANLIST*, DFS and
+  U-NII-4 switches, whole 40/80 MHz blocks, minus the peers' blocks) gets `AP_CHAN_ROUNDS` scans of `AP_CHAN_DWELL` ms
+  each (`iw scan ... duration`; on a radio that already serves clients `scan ap-force`, which the ath11k driver does
+  off-channel between beacons). The busy share of each channel is the sum of those dwells, so every candidate is measured
+  the same way. The channel in use is measured over the same window from its own survey counters with this unit's own
+  airtime (tx/rx bytes of its stations over their bitrates) taken out. Nightly samples spread the rounds over
+  `AP_CHAN_SAMPLE_SECS`.
+- Score (lower is better): the block's busy % (primary channel counted twice, the other 20 MHz channels of the block once)
+  plus `AP_CHAN_BSS_COST` points per other access point heard on the block (at most 10 counted, weaker than
+  `AP_CHAN_MIN_SIGNAL` ignored; this unit's own BSSes never count). On 2.4 GHz a neighbour 1-4 channels away adds up to 10
+  points scaled by overlap and signal (a strong neighbour on 3 hurts 1 and 6, not 11). Equal best scores keep the channel
+  in use.
+- At start (`AP_CHAN_SMART5/24=1`): the best candidate becomes ACS's only channel (`chanlist=<ch>`, `channel=0`, so
+  hostapd still does its own DFS/HT checks); a pinned channel that is no longer allowed falls back to plain ACS.
+- Nightly (`AP_CHAN_RECHECK5/24=1`, at `AP_CHAN_TIME`, default 03:30 local; empty = never): `AP_CHAN_CONFIRM` samples
+  `AP_CHAN_CONFIRM_GAP` s apart must all name the same better channel, at least `AP_CHAN_HYST` % and `AP_CHAN_MIN_GAIN`
+  points below the current one. Then the radio moves by channel switch announcement (`hostapd_cli chan_switch
+  AP_CHAN_CSA_COUNT <freq> ... ht vht he`, width kept): clients follow without disconnecting. A driver without
+  channel-switch support (`iw phy` lacks `channel_switch`) or `AP_CHAN_CSA=off` restarts the radio pinned to the new
+  channel instead; the Wi-Fi page says so per radio. A fixed channel is never measured or moved.
+- One after the other: units of the same network never select at once. At start each unit waits for the known units with
+  a lower key (last five octets of the radio MAC, as in 12.17) to be on air, at most `AP_CHAN_WAIT` s plus a random
+  0..`AP_CHAN_JITTER` s, then picks with their blocks excluded; a unit that never appears does not stop the others. Known
+  units are kept in `/var/lib/patronus/ap-chan/peers-BAND` and forgotten after `AP_CHAN_FORGET` s unheard. The nightly
+  re-check runs `AP_CHAN_STAGGER` s later per unit ahead in that order, and ap-coord's collision check (12.17) still
+  separates units that land on one block.
+- History: every start pick, sample, stay and move goes to `/var/lib/patronus/ap-chan/history` (JSON lines, last
+  `AP_CHAN_HISTORY` kept) with channel, busy %, neighbours, score and the reason in words; the last decision per band with
+  every candidate's numbers is `/run/hostapd/chan-status-BAND`. `GET /api/wifi` returns both (`channels`,
+  `channel_history`) and the Wi-Fi page shows them as "Why this channel" and "History".
+
+Steering (12.18) changes:
+- Back-off: a station that comes back to a unit after being moved (no better access point for it) is left alone for
+  `AP_STEER_RETRY` s, doubled for every further return in a row, up to `AP_STEER_RETRY_MAX` (default 7 days). An IoT
+  device at -66..-71 dBm with no better unit used to lose 30 s of connection every 6 h; now that falls to one per week.
+  `ap-steer status` and the log say how many times in a row. Two-unit host test: moves 3600, then 7200 s apart, capped
+  at the maximum.
+- "Only refuse a station another unit hears stronger" is not built, because the units cannot hear other units' stations:
+  the ath11k firmware answers probe requests itself (probe response offload), so hostapd gets no `RX-PROBE-REQUEST`
+  events. Measured on a house unit 2026-11-18: 0 events in 80 s on both radios with 32 stations associated and dozens of
+  devices around (hostapd_cli action mode on each BSS). Without probes, the only signal a unit has is for its own
+  associated stations, so there is nothing to exchange; a monitor interface beside the AP is unproven on this firmware
+  (12.6d). The per-unit record plus the back-off bounds a bad move to one round trip per hold.
+
+Settings: all typed, live (ap-chan and ap-steer re-read ap.env, no radio restart), in `/api/wifi`, the Wi-Fi page (group
+"Channel choice" and the steering hold maximum) and the declarative document (`patronus ap-wifi export|plan|apply`):
+`chan_smart5/24`, `chan_recheck5/24` (bool), `chan_time` (HH:MM or empty), `chan_csa` (auto|off), `chan_hyst` 0..90 %,
+`chan_min_gain` 0..100, `chan_confirm` 1..10, `chan_confirm_gap` 0..3600 s, `chan_rounds` 1..20, `chan_dwell` 20..500 ms,
+`chan_sample_secs` 0..600 s, `chan_bss_cost` 0..20, `chan_min_signal` -100..-30 dBm, `chan_csa_count` 1..50 beacons,
+`chan_wait` 0..600 s, `chan_jitter` 0..300 s, `chan_stagger` 0..21600 s, `chan_history` 10..5000, `chan_forget`
+3600..31536000 s, `steer_retry_max` 0..2592000 s (at least `steer_retry`). Defaults are in board.sh; a unit test checks
+the API defaults against it.
+
+Tests: `tests/run.sh` (scoring on both bands, the start pick through `ap-coord plan` with the renderer pin, the wait for
+an earlier unit and the timeout, nightly move by CSA, hysteresis, the restart fallback, the once-a-day and per-unit
+stagger timing, the steering back-off with two units), unit tests in `apwifi.rs`, the QEMU gate check `wifi_chan`
+(defaults, a live change, bad values, `ap-chan score` on the image, `channels`/`channel_history` in GET).
+`check-rootfs.sh` requires an executable ap-chan.
+
+Other tiers: the Slate's radios run its AP on the channel of its Wi-Fi uplink (one channel per radio, section 6d), so it
+has no channel of its own to choose; the standard tier's Wi-Fi (`wireless.rs`) has a fixed channel per network and no
+automatic choice yet (follow-up).

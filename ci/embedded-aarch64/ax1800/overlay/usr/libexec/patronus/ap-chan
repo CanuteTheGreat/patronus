@@ -1,0 +1,309 @@
+#!/bin/sh
+# ap-chan: choose each radio's channel from comparable airtime measurements and the neighbours heard, at radio start and
+# again every night, and move a running radio with a channel switch announcement (CSA) so clients follow (docs 12.19).
+# Why not hostapd's ACS alone: ACS measures only at start and only busy time; a running radio's survey of its own channel
+# accumulates for hours and includes this unit's own traffic, while every other channel is measured only in short scans,
+# so comparing those numbers is meaningless. Here every candidate gets the SAME kind of sample: AP_CHAN_ROUNDS scans of
+# AP_CHAN_DWELL ms per channel (on a running radio `scan ap-force`: the radio leaves its channel for one dwell at a time),
+# and this radio's own channel is measured over the same window with this unit's own transmit/receive airtime (station
+# byte counters / rates) subtracted. Score per candidate (lower = better), in airtime percent:
+#   busy (primary channel counted twice, the block's other 20 MHz channels once)
+#   + AP_CHAN_BSS_COST per neighbour access point heard on the block at or above AP_CHAN_MIN_SIGNAL (at most 10 counted)
+#   + on 2.4 GHz, partly overlapping neighbours (1-4 channels away): up to 10 each, by overlap and by how far above the
+#     802.11 clear-channel threshold for a non-decodable signal (-82 dBm, full at -62 dBm) they are heard
+# Candidates are the channels ACS may use (AP_CHANLIST*, DFS/U-NII-4 switches, whole 40/80 MHz blocks) minus the blocks
+# this network's other access points use (ap-coord).
+#   ap-chan pick BAND IF [boot]  measure + score; boot: write $OUTD/chan-BAND (the channel `ap` gives ACS as its only
+#                               choice), history entry. Prints the chosen channel.
+#   ap-chan recheck BAND [now]   on the running radio: AP_CHAN_CONFIRM samples AP_CHAN_CONFIRM_GAP s apart; when every
+#                               sample finds the same channel better by AP_CHAN_HYST % AND AP_CHAN_MIN_GAIN points, move
+#                               there (CSA; `ap restart-band` when the driver or AP_CHAN_CSA=off rules CSA out)
+#   ap-chan move BAND CH REASON  CSA (or restart) to CH now, history entry
+#   ap-chan due BAND             exit 0 when tonight's re-check of BAND should run now (AP_CHAN_TIME + this unit's rank
+#                               among the network's units * AP_CHAN_STAGGER, once per day)
+#   ap-chan earlier BAND PHY     before a start: "LIMIT KEY..." = the known units of this network that select BEFORE this
+#                               one (lower key) and how long to wait for them (AP_CHAN_WAIT s + up to AP_CHAN_JITTER s);
+#                               ap-coord plan rescans until they are on air, so units that start together never pick at once
+#   ap-chan remember BAND        record the units heard (ap-coord's peers-BAND) with the time, for the next start
+#   ap-chan note BAND EVENT TEXT a history entry
+#   ap-chan status [BAND]        last choice + candidates (JSON per band); ap-chan history: the JSON lines
+#   ap-chan csa-capable BAND     exit 0 when the radio's driver supports channel switch announcements
+# Settings (board.sh defaults, ap.env, /api/wifi, export/plan): AP_CHAN_SMART24 / AP_CHAN_SMART5, AP_CHAN_RECHECK24 /
+# AP_CHAN_RECHECK5 (1 = on), AP_CHAN_TIME (HH:MM local, "" = no nightly re-check), AP_CHAN_HYST, AP_CHAN_MIN_GAIN,
+# AP_CHAN_CONFIRM, AP_CHAN_CONFIRM_GAP, AP_CHAN_ROUNDS, AP_CHAN_DWELL, AP_CHAN_SAMPLE_SECS, AP_CHAN_BSS_COST,
+# AP_CHAN_MIN_SIGNAL, AP_CHAN_CSA (auto|off), AP_CHAN_CSA_COUNT, AP_CHAN_WAIT, AP_CHAN_JITTER, AP_CHAN_STAGGER,
+# AP_CHAN_HISTORY (entries kept), AP_CHAN_FORGET (seconds after which a unit not heard any more is no longer waited for).
+# Test hooks: AP_BOARD, AP_RENDER_OUT, AP_SYSFS, AP_CLI, AP_CTRL, AP_CHAN_AP (ap script), AP_CHAN_COORD (ap-coord),
+#   AP_CHAN_SCAN_FILE (iw scan text), AP_CHAN_SURVEY_FILE (iw survey dump text, read after every round),
+#   AP_CHAN_HOME_FILE ("active busy" of this radio's channel at start, then at end: two lines), AP_CHAN_OWN_MS (own airtime),
+#   AP_CHAN_STATUS_FILE (hostapd_cli status text), AP_CHAN_NOW (epoch), AP_CHAN_HM (HHMM), AP_CHAN_DB (state dir),
+#   AP_CHAN_CSA_OK (1/0 instead of asking the driver), AP_CHAN_NOSLEEP.
+. ${AP_BOARD:-/etc/patronus/board.sh}
+OUTD=${AP_RENDER_OUT:-/run/hostapd}
+SYSFS=${AP_SYSFS:-/sys/class/ieee80211}
+APX=${AP_CHAN_AP:-/usr/libexec/patronus/ap}
+COORD=${AP_CHAN_COORD:-/usr/libexec/patronus/ap-coord}
+CLI=${AP_CLI:-hostapd_cli}
+CTRL=${AP_CTRL:-/run/hostapd}
+DB=${AP_CHAN_DB:-/var/lib/patronus/ap-chan}
+num() { case "$1" in ''|-|*[!0-9-]*) echo "$2";; *) echo "$1";; esac; }
+on() { case "${1:-0}" in 1|yes|on|true) return 0;; esac; return 1; }
+say() { echo "ap-chan: $*"; logger -t patronus-ap-chan "$*" 2>/dev/null; true; }
+now() { echo "${AP_CHAN_NOW:-$(date +%s)}"; }
+nap() { [ -n "${AP_CHAN_NOSLEEP:-}" ] || sleep "$1"; }
+settings() {
+  ROUNDS=$(num "${AP_CHAN_ROUNDS:-}" 4); DWELL=$(num "${AP_CHAN_DWELL:-}" 105); SAMPLE=$(num "${AP_CHAN_SAMPLE_SECS:-}" 30)
+  COST=$(num "${AP_CHAN_BSS_COST:-}" 2); MINSIG=$(num "${AP_CHAN_MIN_SIGNAL:-}" -90); HYST=$(num "${AP_CHAN_HYST:-}" 20)
+  GAIN=$(num "${AP_CHAN_MIN_GAIN:-}" 10); CONFIRM=$(num "${AP_CHAN_CONFIRM:-}" 3); GAP=$(num "${AP_CHAN_CONFIRM_GAP:-}" 300)
+  CSAN=$(num "${AP_CHAN_CSA_COUNT:-}" 10); WAITS=$(num "${AP_CHAN_WAIT:-}" 90); JIT=$(num "${AP_CHAN_JITTER:-}" 30)
+  STAG=$(num "${AP_CHAN_STAGGER:-}" 1800); KEEP=$(num "${AP_CHAN_HISTORY:-}" 200); FORGET=$(num "${AP_CHAN_FORGET:-}" 604800)
+  [ "$ROUNDS" -ge 1 ] || ROUNDS=1; [ "$DWELL" -ge 20 ] || DWELL=20; [ "$CONFIRM" -ge 1 ] || CONFIRM=1; }
+smart_on() { eval "v=\${AP_CHAN_SMART$1:-1}"; on "$v"; }
+recheck_on() { eval "v=\${AP_CHAN_RECHECK$1:-1}"; on "$v"; }
+width() { if [ "$1" = 5 ]; then echo "${AP_HT5:-80}"; else echo "${AP_HT24:-20}"; fi; }
+he_on() { case "${AP_HE:-1}" in 0|no|off) return 1;; esac; return 0; }
+jstr() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# hist EVENT BAND CH SCORE BUSY NBSS BEST BESTSCORE REASON: one JSON line, the file kept to AP_CHAN_HISTORY lines
+hist() { mkdir -p "$DB" 2>/dev/null || return 0; f=$DB/history
+  printf '{"t":%s,"event":"%s","band":"%s","channel":%s,"width":%s,"score":%s,"busy":%s,"neighbours":%s,"best":%s,"best_score":%s,"reason":"%s"}\n' \
+    "$(now)" "$1" "$2" "${3:-null}" "$(width "$2")" "${4:-null}" "${5:-null}" "${6:-null}" "${7:-null}" "${8:-null}" "$(jstr "$9")" >> "$f"
+  n=$(wc -l < "$f"); [ "$n" -gt "$KEEP" ] && { tail -n "$KEEP" "$f" > "$f.new" && mv "$f.new" "$f"; }; true; }
+
+bandfreqs() { # BAND CANDIDATES WIDTH: the 20 MHz channels a measurement visits (2.4: every channel, 5: every candidate block)
+  if [ "$1" = 24 ]; then echo "1 2 3 4 5 6 7 8 9 10 11 12 13"; return; fi
+  for c in $2; do blk "$c" "$3"; done | tr ' ' '\n' | grep . | sort -un | tr '\n' ' '; }
+blk() { # 5 GHz CHANNEL WIDTH -> the 20 MHz channels of its block (same table as `ap`)
+  c=$1; case "$2" in 80) n=4;; 40) n=2;; *) echo "$c"; return;; esac; base=
+  for bb in 36 52 100 116 132 149 165; do [ "$c" -ge $bb ] && [ "$c" -le $((bb + 12)) ] && base=$bb; done
+  [ -n "$base" ] || { echo "$c"; return; }
+  o=$(( (c - base) / 4 / n * n )); ii=0; while [ $ii -lt $n ]; do printf '%s ' $((base + (o + ii) * 4)); ii=$((ii + 1)); done; echo; }
+c2f() { if [ "$1" = 24 ]; then [ "$2" = 14 ] && echo 2484 || echo $((2407 + $2 * 5)); else echo $((5000 + $2 * 5)); fi; }
+f2c() { awk -v f="$1" 'BEGIN { f = int(f); if (f >= 5000) print (f - 5000) / 5; else if (f == 2484) print 14; else print (f - 2407) / 5 }'; }
+
+survey() { # IF -> "freq active busy inuse" per channel
+  if [ -n "${AP_CHAN_SURVEY_FILE:-}" ]; then cat "$AP_CHAN_SURVEY_FILE"; else iw dev "$1" survey dump 2>/dev/null; fi | awk '
+    function out() { if (f != "") print f, a + 0, b + 0, u }
+    /frequency:/ { out(); f = int($2); a = 0; b = 0; u = ($0 ~ /in use/) ? 1 : 0; next }
+    /channel active time:/ { a = $4; next }
+    /channel busy time:/ { b = $4; next }
+    END { out() }'; }
+own_ms() { # IF...: this radio's own airtime (ms) from the station counters, as "bytes8/rate" summed over stations (snapshot)
+  if [ -n "${AP_CHAN_OWN_MS:-}" ]; then return; fi
+  for i in "$@"; do iw dev "$i" station dump 2>/dev/null; done | awk '
+    /^Station / { m = $2 } /rx bytes:/ { rb[m] = $3 } /tx bytes:/ { tb[m] = $3 }
+    /tx bitrate:/ { tr[m] = $3 } /rx bitrate:/ { rr[m] = $3 }
+    END { for (m in tb) printf "%s %s %s %s %s\n", m, tb[m] + 0, rb[m] + 0, tr[m] + 0, rr[m] + 0 }'; }
+own_delta() { # FILE-BEFORE FILE-AFTER -> ms of airtime between the two snapshots
+  [ -n "${AP_CHAN_OWN_MS:-}" ] && { echo "$AP_CHAN_OWN_MS"; return; }
+  awk 'NR == FNR { t[$1] = $2; r[$1] = $3; next }
+    { dt = $2 - t[$1]; dr = $3 - r[$1]; if (!($1 in t)) { dt = 0; dr = 0 }
+      if (dt > 0 && $4 > 0) ms += dt * 8 / ($4 * 1000); if (dr > 0 && $5 > 0) ms += dr * 8 / ($5 * 1000) }
+    END { printf "%d\n", ms }' "$1" "$2"; }
+bss_of() { sed -n 's/^interface=//p; s/^bss=//p' "$OUTD/ap$1.conf" 2>/dev/null; }
+
+# measure BAND IF MODE(boot|ap) CANDIDATES: writes $OUTD/chan-meas-BAND ("S chan active busy", "H chan active busy own",
+# "B <ap-coord parse line>" per BSS heard)
+measure() {
+  b=$1; ifn=$2; mode=$3; cands=$4; w=$(width "$b"); m=$OUTD/chan-meas-$b; : > "$m.tmp"
+  fl=; for c in $(bandfreqs "$b" "$cands" "$w"); do fl="$fl $(c2f "$b" "$c")"; done
+  force=; [ "$mode" = ap ] && force=ap-force
+  home=; if [ "$mode" = ap ]; then home=$(survey "$ifn" | awk '$4 == 1 { print $1, $2, $3; exit }'); own_ms $(bss_of "$b") > "$m.own0"; fi
+  gap=$(( SAMPLE / ROUNDS )); [ "$mode" = boot ] && gap=0
+  r=0; : > "$m.scan"
+  while [ $r -lt "$ROUNDS" ]; do r=$((r + 1))
+    if [ -n "${AP_CHAN_SCAN_FILE:-}" ]; then cat "$AP_CHAN_SCAN_FILE" >> "$m.scan"
+    else timeout 60 iw dev "$ifn" scan $force freq $fl duration "$DWELL" >> "$m.scan" 2>/dev/null; fi
+    # each dwell replaces the channel's survey entry: add up what this round measured off this radio's own channel
+    survey "$ifn" | awk -v hf="${home%% *}" '$4 == 0 && $1 != hf && $2 > 0 { print "S", $1, $2, $3 }' >> "$m.tmp"
+    [ $r -lt "$ROUNDS" ] && [ "$gap" -gt 0 ] && nap "$gap"
+  done
+  if [ "$mode" = ap ] && [ -n "$home" ]; then
+    if [ -n "${AP_CHAN_HOME_FILE:-}" ]; then h0=$(sed -n 1p "$AP_CHAN_HOME_FILE"); h1=$(sed -n 2p "$AP_CHAN_HOME_FILE"); home="${home%% *} $h0"
+    else h1=$(survey "$ifn" | awk '$4 == 1 { print $2, $3; exit }'); fi
+    own_ms $(bss_of "$b") > "$m.own1"; o=$(own_delta "$m.own0" "$m.own1")
+    set -- $home $h1; [ $# -ge 5 ] && echo "H $1 $(($4 - $2)) $(($5 - $3)) ${o:-0}" >> "$m.tmp"
+  fi
+  # summed per channel, frequencies -> channel numbers
+  awk '$1 == "S" { a[$2] += $3; bz[$2] += $4 } $1 == "H" { print "H", $2, $3, $4, $5 }
+    END { for (f in a) print "S", f, a[f], bz[f] }' "$m.tmp" | while read -r k f a bz o; do echo "$k $(f2c "$f") $a $bz $o"; done > "$m"
+  "$COORD" parse < "$m.scan" | sort -k1,1 -k3,3nr | awk '!s[$1]++ { print "B", $0 }' >> "$m"
+  rm -f "$m.tmp" "$m.own0" "$m.own1" "$m.scan"; }
+
+own_keys() { for f in "$OUTD"/ap5.conf "$OUTD"/ap24.conf; do [ -f "$f" ] && sed -n 's/^bssid=//p' "$f"; done | tr 'A-F' 'a-f' | cut -d: -f2-; }
+
+# score BAND CANDIDATES CURRENT: stdin = measure file; stdout "ch score busy nbss" per candidate, best first
+score() {
+  b=$1; cands=$2; cur=${3:-0}; w=$(width "$b")
+  blocks=; for c in $cands; do if [ "$b" = 5 ]; then blocks="$blocks $c:$(blk "$c" "$w" | tr ' ' ',' | sed 's/,$//')"
+    elif [ "$w" = 40 ]; then [ "$c" -le 7 ] && blocks="$blocks $c:$c,$((c + 4))" || blocks="$blocks $c:$c,$((c - 4))"
+    else blocks="$blocks $c:$c"; fi; done
+  awk -v band="$b" -v blocks="$blocks" -v cost="$COST" -v minsig="$MINSIG" -v cur="$cur" -v own=" $(own_keys | tr '\n' ' ') " '
+    $1 == "S" { if ($3 > 0) bz[$2] = 100 * $4 / $3; next }
+    $1 == "H" { if ($3 > 0) { v = 100 * ($4 - $5) / $3; if (v < 0) v = 0; bz[$2] = v }; next }
+    $1 == "B" { k = tolower($2); sub(/^[0-9a-f][0-9a-f]:/, "", k); if (index(own, " " k " ")) next
+      if ($4 + 0 < minsig) next; f = $3 + 0
+      p = (f >= 5000) ? (f - 5000) / 5 : ((f == 2484) ? 14 : (f - 2407) / 5)
+      n++; np[n] = p; ns[n] = $4 + 0; nw[n] = $6 + 0; nc[n] = $7 + 0; nsec[n] = $5; next }
+    function covers5(i, x,   lo, hi) {   # does neighbour i occupy 20 MHz channel x (5 GHz)?
+      if (nw[i] == 80 && nc[i] > 0) { lo = nc[i] - 6; hi = nc[i] + 6 }
+      else if (nw[i] == 40 && nsec[i] == "above") { lo = np[i]; hi = np[i] + 4 }
+      else if (nw[i] == 40 && nsec[i] == "below") { lo = np[i] - 4; hi = np[i] }
+      else { lo = np[i]; hi = np[i] }
+      return (x >= lo && x <= hi) }
+    END {
+      nb = split(blocks, B, " ")
+      for (j = 1; j <= nb; j++) {
+        split(B[j], cb, ":"); c = cb[1] + 0; m = split(cb[2], ch, ",")
+        sum = 0; wt = 0
+        for (q = 1; q <= m; q++) { x = ch[q] + 0; if (!(x in bz)) continue; f = (x == c) ? 2 : 1; sum += f * bz[x]; wt += f }
+        busy = (wt > 0) ? sum / wt : 0
+        co = 0; adj = 0
+        for (i = 1; i <= n; i++) {
+          if (band == 5) { hit = 0; for (q = 1; q <= m; q++) if (covers5(i, ch[q] + 0)) hit = 1; if (hit) co++ }
+          else { d = np[i] - c; if (d < 0) d = -d
+            if (d == 0) co++
+            else if (d <= 4) { s = (ns[i] + 82) / 20; if (s < 0) s = 0; if (s > 1) s = 1; adj += (5 - d) / 5 * s * 10 } }
+        }
+        cc = (co > 10) ? 10 : co
+        sc = busy + cost * cc + adj
+        printf "%d %.1f %.1f %d\n", c, sc, busy, co
+      } }' | sort -k2,2n -k1,1n | awk -v cur="$cur" '{ l[NR] = $0; if (NR == 1) bs = $2 } END {
+        # equal best scores: the current channel first (nothing to gain by moving)
+        for (i = 1; i <= NR; i++) { split(l[i], a, " "); if (a[2] == bs && a[1] == cur) { print l[i]; done = i; break } }
+        for (i = 1; i <= NR; i++) if (i != done) print l[i] }'; }
+
+why() { # SCOREFILE CHOSEN: one sentence
+  awk -v ch="$2" 'NR == 1 && $1 == ch { first = 1 } $1 == ch { me = $0 } $1 != ch && nb == "" { nb = $0 }
+    END { split(me, a, " "); s = "channel " a[1] ": " a[3] "% busy, " a[4] " other access point" (a[4] == 1 ? "" : "s") " (score " a[2] ")"
+      if (nb != "") { split(nb, b, " "); s = s "; next best " b[1] ": " b[3] "% busy, " b[4] " (score " b[2] ")" }
+      print s }' "$1"; }
+
+status_json() { # BAND MODE CHOSEN CURRENT SCOREFILE WHY
+  { printf '{"band":"%s","mode":"%s","time":%s,"chosen":%s,"current":%s,"width":%s,"csa":%s,"reason":"%s","candidates":[' \
+      "$1" "$2" "$(now)" "${3:-null}" "${4:-null}" "$(width "$1")" "$(csa_capable "$1" && echo true || echo false)" "$(jstr "$6")"
+    awk 'NR > 1 { printf "," } { printf "{\"channel\":%s,\"score\":%s,\"busy\":%s,\"neighbours\":%s}", $1, $2, $3, $4 }' "$5"
+    printf ']}\n'; } > "$OUTD/chan-status-$1.new" && mv "$OUTD/chan-status-$1.new" "$OUTD/chan-status-$1"; }
+
+pick() { # BAND IF [boot]
+  b=$1; ifn=$2; mode=${3:-ap}; settings; mkdir -p "$OUTD"; [ "$mode" = boot ] && rm -f "$OUTD/chan-$b"
+  smart_on "$b" || { [ "$mode" = boot ] && return 0; }
+  cands=$("$APX" candidates "$b" 2>/dev/null); [ -n "$cands" ] || { say "$b GHz: no candidate channel"; return 1; }
+  cur=0; [ "$mode" = boot ] || cur=$(cur_chan "$b")
+  measure "$b" "$ifn" "$( [ "$mode" = boot ] && echo boot || echo ap )" "$cands"
+  score "$b" "$cands" "$cur" < "$OUTD/chan-meas-$b" > "$OUTD/chan-score-$b"
+  best=$(sed -n '1s/ .*//p' "$OUTD/chan-score-$b"); [ -n "$best" ] || return 1
+  if [ "$mode" = boot ]; then echo "$best" > "$OUTD/chan-$b"
+    w=$(why "$OUTD/chan-score-$b" "$best"); status_json "$b" start "$best" "$best" "$OUTD/chan-score-$b" "$w"
+    set -- $(sed -n 1p "$OUTD/chan-score-$b"); n2=$(sed -n 2p "$OUTD/chan-score-$b")
+    hist start "$b" "$1" "$2" "$3" "$4" "$(echo "$n2" | cut -d' ' -f1)" "$(echo "$n2" | cut -d' ' -f2)" "$w"
+    say "$b GHz at start: $w"; fi
+  echo "$best"; }
+
+cur_chan() { st=$(hstatus "$1"); echo "$st" | sed -n 's/^channel=//p' | head -1; }
+hstatus() { if [ -n "${AP_CHAN_STATUS_FILE:-}" ]; then cat "$AP_CHAN_STATUS_FILE"; else
+  i=$(sed -n 's/^interface=//p' "$OUTD/ap$1.conf" 2>/dev/null | head -1); [ -n "$i" ] && $CLI -p "$CTRL" -i "$i" status 2>/dev/null; fi; }
+phy_of() { i=$(sed -n 's/^interface=//p' "$OUTD/ap$1.conf" 2>/dev/null | head -1); cat "/sys/class/net/$i/phy80211/name" 2>/dev/null; }
+csa_capable() { [ -n "${AP_CHAN_CSA_OK:-}" ] && { [ "$AP_CHAN_CSA_OK" = 1 ]; return; }
+  p=$(phy_of "$1"); [ -n "$p" ] && iw phy "$p" info 2>/dev/null | grep -qi 'channel_switch'; }
+
+move() { # BAND CH REASON
+  b=$1; ch=$2; reason=$3; settings
+  i=$(sed -n 's/^interface=//p' "$OUTD/ap$b.conf" 2>/dev/null | head -1); [ -n "$i" ] || return 1
+  from=$(cur_chan "$b"); w=$(width "$b"); f=$(c2f "$b" "$ch"); args=
+  if [ "$b" = 5 ]; then args="vht"; he_on && args="$args he"
+    if [ "$w" -ge 40 ]; then bl=$(blk "$ch" "$w"); first=${bl%% *}; i2=$(( (ch - first) / 4 ))
+      [ $((i2 % 2)) = 0 ] && so=1 || so=-1; set -- $bl; ctr=0; for x in "$@"; do ctr=$((ctr + x)); done; ctr=$((ctr / $#))
+      args="sec_channel_offset=$so center_freq1=$((5000 + ctr * 5)) bandwidth=$w ht $args"
+    else args="bandwidth=20 ht $args"; fi
+  else args="ht"; he_on && args="$args he"
+    if [ "$w" = 40 ]; then [ "$ch" -le 7 ] && so=1 || so=-1; args="sec_channel_offset=$so center_freq1=$(( f + so * 10 )) bandwidth=40 $args"
+    else args="bandwidth=20 $args"; fi; fi
+  done=0
+  if [ "${AP_CHAN_CSA:-auto}" != off ] && csa_capable "$b"; then
+    r=$($CLI -p "$CTRL" -i "$i" chan_switch "$CSAN" "$f" $args 2>&1)
+    case "$r" in *OK*) nap $(( CSAN / 10 + 3 )); [ "$(cur_chan "$b")" = "$ch" ] && done=1;; esac
+    [ $done = 1 ] || say "$b GHz: channel switch to $ch failed ($r), restarting the radio instead"
+  fi
+  if [ $done = 0 ]; then echo "$ch" > "$OUTD/chan-$b"; AP_CHAN_KEEP=1 "$APX" restart-band "$b" > /dev/null 2>&1
+    how=restart; else how=CSA; fi
+  hist move "$b" "$ch" "" "" "" "$from" "" "moved from $from by $how: $reason"
+  say "$b GHz: moved from channel $from to $ch ($how): $reason"; }
+
+recheck() { # BAND [now]: AP_CHAN_CONFIRM samples; move when all agree
+  b=$1; settings; mkdir -p "$OUTD"
+  recheck_on "$b" && smart_on "$b" || return 0
+  [ -f "$OUTD/ap$b.conf" ] || return 0
+  [ "$(sed -n 's/^channel=//p' "$OUTD/ap$b.conf" | head -1)" = 0 ] || { say "$b GHz: fixed channel, no re-check"; return 0; }
+  i=$(sed -n 's/^interface=//p' "$OUTD/ap$b.conf" | head -1)
+  # the other units' current blocks (heard now) are not candidates: ap-coord's list is refreshed from a scan first
+  "$COORD" refresh "$b" "$i" > /dev/null 2>&1
+  want=; k=0; tries=0; last=
+  while [ $tries -lt $((CONFIRM * 2)) ]; do tries=$((tries + 1))
+    cur=$(cur_chan "$b"); [ -n "$cur" ] || return 0
+    pick "$b" "$i" ap > /dev/null || return 0
+    sf=$OUTD/chan-score-$b; best=$(sed -n '1s/ .*//p' "$sf")
+    cs=$(awk -v c="$cur" '$1 == c { print $2 }' "$sf"); bs=$(sed -n '1p' "$sf" | cut -d' ' -f2)
+    w=$(why "$sf" "$best"); status_json "$b" recheck "$best" "$cur" "$sf" "$w"
+    set -- $(awk -v c="$cur" '$1 == c' "$sf")
+    better=$(awk -v c="${cs:-}" -v b="$bs" -v h="$HYST" -v g="$GAIN" 'BEGIN { print (c != "" && c - b >= g && b <= c * (100 - h) / 100) ? 1 : 0 }')
+    if [ "$best" = "$cur" ] || [ "$better" != 1 ]; then
+      hist stay "$b" "$cur" "${2:-}" "${3:-}" "${4:-}" "$best" "$bs" "no clearly better channel: $w"
+      say "$b GHz: staying on $cur ($w)"; return 0; fi
+    [ "$best" = "$want" ] && k=$((k + 1)) || { want=$best; k=1; }
+    hist sample "$b" "$cur" "${2:-}" "${3:-}" "${4:-}" "$best" "$bs" "sample $k of $CONFIRM: $best is better ($w)"
+    [ $k -ge "$CONFIRM" ] && { move "$b" "$best" "better in $k samples $GAP s apart: $w"; return 0; }
+    nap "$GAP"
+  done
+  hist stay "$b" "$cur" "" "" "" "" "" "the better channel changed between samples: staying"; }
+
+rank() { # BAND: how many known units of this network select before this one (lower key)
+  me=$(mykey "$1"); n=0; f=$DB/peers-$1; t=$(now)
+  [ -f "$f" ] && while read -r k seen; do [ $((t - seen)) -le "$FORGET" ] || continue
+    [ "$(printf '%s\n%s\n' "$k" "$me" | sort | head -1)" = "$k" ] && [ "$k" != "$me" ] && n=$((n + 1)); done < "$f"; echo $n; }
+mykey() { # BAND: this radio's key (last five octets of its MAC; the first BSS uses the radio MAC)
+  m=$(sed -n 's/^bssid=//p' "$OUTD/ap$1.conf" 2>/dev/null | head -1)
+  [ -n "$m" ] || m=$(cat "$SYSFS/${2:-x}/macaddress" 2>/dev/null)
+  echo "$m" | tr 'A-F' 'a-f' | cut -d: -f2-; }
+due() { # BAND: once per day at AP_CHAN_TIME + rank * AP_CHAN_STAGGER
+  b=$1; settings; t=${AP_CHAN_TIME-03:30}; [ -n "$t" ] || return 1
+  hh=${t%%:*}; mm=${t#*:}; hh=$(echo "$hh" | sed 's/^0//'); mm=$(echo "$mm" | sed 's/^0//')
+  case "$hh$mm" in ''|*[!0-9]*) return 1;; esac
+  at=$(( hh * 60 + mm + $(rank "$b") * STAG / 60 ))
+  hm=${AP_CHAN_HM:-$(date +%H%M)}; h=$(echo "$hm" | cut -c1-2 | sed 's/^0//'); mi=$(echo "$hm" | cut -c3-4 | sed 's/^0//')
+  nowm=$(( ${h:-0} * 60 + ${mi:-0} )); at=$((at % 1440))
+  day=$(( $(now) / 86400 )); last=$(cat "$OUTD/chan-done-$b" 2>/dev/null)
+  [ "$last" = "$day" ] && return 1
+  d=$(( (nowm - at + 1440) % 1440 )); [ $d -lt 60 ] || return 1   # within the hour after the time
+  echo "$day" > "$OUTD/chan-done-$b"; return 0; }
+
+earlier() { # BAND PHY: "LIMIT KEY..." = the known units of this network that pick their channel before this one (lower
+  # key) and how long (s) to wait for them to be on air; nothing = pick now. Units not heard for AP_CHAN_FORGET s are dropped.
+  b=$1; phy=$2; settings; f=$DB/peers-$b; me=$(mykey "$b" "$phy"); [ -n "$me" ] && [ -s "$f" ] || return 0
+  t=$(now); e=; while read -r k seen; do [ $((t - seen)) -le "$FORGET" ] || continue
+    [ "$k" != "$me" ] && [ "$(printf '%s\n%s\n' "$k" "$me" | sort | head -1)" = "$k" ] && e="$e $k"; done < "$f"
+  [ -n "$e" ] || return 0
+  j=0; [ "$JIT" -gt 0 ] && j=$(( $(od -An -N2 -tu2 /dev/urandom 2>/dev/null | tr -d ' ') % (JIT + 1) ))
+  echo "$((WAITS + j))$e"; }
+
+remember() { # BAND: record the peers heard in $OUTD/peers-BAND (for wait_turn / rank after the next start)
+  b=$1; settings; mkdir -p "$DB" 2>/dev/null || return 0; f=$DB/peers-$b; t=$(now)
+  [ -s "$OUTD/peers-$b" ] || return 0
+  { cut -d' ' -f1 "$OUTD/peers-$b" | tr 'A-F' 'a-f' | cut -d: -f2- | sort -u | sed "s/\$/ $t/"; cat "$f" 2>/dev/null; } \
+    | awk -v t="$t" -v fg="$FORGET" '!s[$1]++ && t - $2 <= fg' > "$f.new" && mv "$f.new" "$f"; }
+
+case "${1:-}" in
+pick) pick "$2" "$3" "${4:-ap}" ;;
+recheck) recheck "$2" ;;
+move) move "$2" "$3" "${4:-requested}" ;;
+due) due "$2" ;;
+earlier) earlier "$2" "$3" ;;
+note) settings; hist "$3" "$2" "" "" "" "" "" "" "$4" ;;
+remember) remember "$2" ;;
+rank) settings; rank "$2" ;;
+score) settings; score "$2" "$3" "${4:-0}" ;;
+csa-capable) csa_capable "$2" ;;
+status) for b in ${2:-5 24}; do cat "$OUTD/chan-status-$b" 2>/dev/null; done; true ;;
+history) cat "$DB/history" 2>/dev/null; true ;;
+*) sed -n '2,40p' "$0"; exit 2 ;;
+esac

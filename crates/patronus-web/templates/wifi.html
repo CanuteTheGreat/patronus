@@ -98,6 +98,8 @@
                 title="How long a moved device is refused on this unit (0 = never refuse: steering does nothing)"></label>
             <label>Leave a device alone for (s) <input name="steer_retry" type="number" min="0" max="604800" size="7"
                 title="A device that came back just as weak has no better access point: it is not moved again for this long"></label>
+            <label>doubling each time, at most (s) <input name="steer_retry_max" type="number" min="0" max="2592000" size="8"
+                title="A device that keeps coming back (it has no better access point) is left alone twice as long each time, up to this (default 7 days)"></label>
             <label>Devices moved per round <input name="steer_max" type="number" min="0" max="64" size="3"></label>
             <label>Check every (s) <input name="steer_interval" type="number" min="10" max="3600" size="5"></label>
             <label>Never move these devices (MACs) <input name="steer_exempt" size="30" placeholder="none"
@@ -119,6 +121,41 @@
                 title="Times a device moves between this radio's networks (for example home and guest)"></label>
             <label>times within (s) <input name="xbss_window" type="number" min="0" max="86400" size="5"></label>
             <label>for (s) <input name="xbss_hold" type="number" min="0" max="86400" size="5"></label>
+        </fieldset>
+        <fieldset class="wifi-group" id="wifi-chan-group">
+            <legend>Channel choice</legend>
+            <p class="wifi-note">Every time the radios start, and again every night, the unit measures how busy each allowed
+                channel is (the same short sample on every channel, its own traffic left out) and counts the other access
+                points it hears there, then takes the best one. At night it moves only when another channel is clearly and
+                repeatedly better, by a channel switch announcement: connected devices follow without disconnecting. Units of
+                the same network pick one after the other and never take each other's channels. These settings apply at
+                once, without restarting the radios.</p>
+            <label class="wifi-check"><input type="checkbox" name="chan_smart5"> Choose the automatic 5 GHz channel by measurement</label>
+            <label class="wifi-check"><input type="checkbox" name="chan_smart24"> Same on 2.4 GHz</label>
+            <label class="wifi-check"><input type="checkbox" name="chan_recheck5"> Re-check the 5 GHz channel every night</label>
+            <label class="wifi-check"><input type="checkbox" name="chan_recheck24"> Same on 2.4 GHz</label>
+            <label>Nightly re-check at <input name="chan_time" size="5" placeholder="never"
+                title="Local time HH:MM (empty = no nightly re-check). Other units of the network re-check later, one after the other."></label>
+            <label>Move when better by at least (%) <input name="chan_hyst" type="number" min="0" max="90" size="3"></label>
+            <label>and by (points) <input name="chan_min_gain" type="number" min="0" max="100" size="3"
+                title="Score points (about percent of airtime) the new channel must be better by"></label>
+            <label>in samples in a row <input name="chan_confirm" type="number" min="1" max="10" size="3"></label>
+            <label>taken every (s) <input name="chan_confirm_gap" type="number" min="0" max="3600" size="5"></label>
+            <label>Move by <select name="chan_csa"><option value="auto">channel switch announcement (devices stay connected)</option>
+                <option value="off">restarting the radio</option></select></label>
+            <label>Scan rounds <input name="chan_rounds" type="number" min="1" max="20" size="3"></label>
+            <label>per channel (ms) <input name="chan_dwell" type="number" min="20" max="500" size="4"></label>
+            <label>over (s) <input name="chan_sample_secs" type="number" min="0" max="600" size="4"
+                title="The rounds of a nightly sample are spread over this time; this unit's own channel is measured over all of it"></label>
+            <label>Points per access point heard <input name="chan_bss_cost" type="number" min="0" max="20" size="3"></label>
+            <label>Count access points from (dBm) <input name="chan_min_signal" type="number" min="-100" max="-30" size="4"></label>
+            <label>Announce the switch (beacons ahead) <input name="chan_csa_count" type="number" min="1" max="50" size="3"></label>
+            <label>Wait for units that pick first (s) <input name="chan_wait" type="number" min="0" max="600" size="4"
+                title="Units that start at the same moment pick one after the other: this one waits at most this long (plus a random extra) for the units ahead of it to be on air"></label>
+            <label>random extra (s) <input name="chan_jitter" type="number" min="0" max="300" size="4"></label>
+            <label>Nightly offset per unit (s) <input name="chan_stagger" type="number" min="0" max="21600" size="6"></label>
+            <label>Forget a unit not heard for (s) <input name="chan_forget" type="number" min="3600" max="31536000" size="8"></label>
+            <label>History entries kept <input name="chan_history" type="number" min="10" max="5000" size="5"></label>
         </fieldset>
     </form>
     <p class="wifi-note">Transmit power: "auto" lets the radio use the most the country allows; a lower value shrinks the
@@ -181,6 +218,18 @@
         the client sent one in its DHCP request or the router's DNS knows it; otherwise it stays empty.</p>
 </div>
 
+<div class="card" id="wifi-chan-card">
+    <div class="card-header"><h2 class="card-title">Why this channel</h2></div>
+    <div id="wifi-chan-why"><p class="wifi-note">Loading...</p></div>
+    <h3 class="text-sm">History</h3>
+    <table class="lan" id="wifi-chan-history">
+        <thead><tr><th>When</th><th>Band</th><th>What</th><th>Channel</th><th>Busy %</th><th>Access points</th><th>Why</th></tr></thead>
+        <tbody></tbody>
+    </table>
+    <p class="wifi-note">Busy % is measured the same way on every channel (short samples, this unit's own traffic left out);
+        the score adds a few points for every other access point heard on the channel. Lower is better.</p>
+</div>
+
 <div class="card">
     <div class="card-header"><h2 class="card-title">Channel survey</h2>
         <button class="btn btn-secondary" type="button" id="survey-btn" onclick="loadSurvey(true)">Scan now</button></div>
@@ -196,6 +245,35 @@ let CFG = null;
 const CH24 = ['auto', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
 const TXP = ['auto', 30, 27, 24, 22, 20, 18, 17, 15, 14, 12, 10, 8, 6, 5, 3, 1];
 const CH5 = ['auto', 36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165];
+// channel choice + steering back-off numbers (field, default): the API's TUNING table
+const CHAN_NUMS = [['chan_hyst', 20], ['chan_min_gain', 10], ['chan_confirm', 3], ['chan_confirm_gap', 300], ['chan_rounds', 4],
+    ['chan_dwell', 105], ['chan_sample_secs', 30], ['chan_bss_cost', 2], ['chan_min_signal', -90], ['chan_csa_count', 10],
+    ['chan_wait', 90], ['chan_jitter', 30], ['chan_stagger', 1800], ['chan_history', 200], ['chan_forget', 604800], ['steer_retry_max', 604800]];
+function bandName(b) { return String(b) === '5' ? '5 GHz' : '2.4 GHz'; }
+function showChannels(d) {
+    const w = document.getElementById('wifi-chan-why'); w.innerHTML = '';
+    const ch = d.channels || {};
+    if (!Object.keys(ch).length) w.appendChild(el('p', {class: 'wifi-note', text: 'No measurement yet: the unit measures the channels the next time its radios start (a fixed channel is never measured).'}));
+    for (const b of ['5', '24']) {
+        const s = ch[b]; if (!s) continue;
+        const box = el('div', {class: 'chan-why', 'data-band': b});
+        box.appendChild(el('p', {}, el('strong', {text: bandName(b) + ': channel ' + (s.current || s.chosen) + ' '}),
+            el('span', {text: (s.mode === 'start' ? 'chosen at start' : 'last re-check') + ' ' + new Date(s.time * 1000).toLocaleString() + ': ' + s.reason})));
+        if (!s.csa) box.appendChild(el('p', {class: 'wifi-warn', text: 'This radio\'s driver cannot announce a channel switch: a nightly move restarts the radio instead (devices reconnect).'}));
+        const t = el('table', {class: 'lan'}, el('thead', {}, el('tr', {}, el('th', {text: 'Candidate'}), el('th', {text: 'Busy %'}),
+            el('th', {text: 'Access points'}), el('th', {text: 'Score'}))));
+        const tb = el('tbody'); t.appendChild(tb);
+        for (const c of s.candidates || []) tb.appendChild(el('tr', {}, el('td', {text: String(c.channel) + (c.channel === (s.current || s.chosen) ? ' (in use)' : '')}),
+            el('td', {text: String(c.busy)}), el('td', {text: String(c.neighbours)}), el('td', {text: String(c.score)})));
+        box.appendChild(t); w.appendChild(box);
+    }
+    const hb = document.querySelector('#wifi-chan-history tbody'); hb.innerHTML = '';
+    const hist = (d.channel_history || []).slice().reverse();
+    for (const h of hist) hb.appendChild(el('tr', {}, el('td', {text: new Date(h.t * 1000).toLocaleString()}), el('td', {text: bandName(h.band)}),
+        el('td', {text: h.event}), el('td', {text: h.channel == null ? '' : String(h.channel)}), el('td', {text: h.busy == null ? '' : String(h.busy)}),
+        el('td', {text: h.neighbours == null ? '' : String(h.neighbours)}), el('td', {text: h.reason || ''})));
+    if (!hist.length) hb.appendChild(el('tr', {}, el('td', {colspan: '7', class: 'empty', text: 'Nothing yet.'})));
+}
 
 function el(tag, props, ...kids) {
     const e = document.createElement(tag);
@@ -285,6 +363,10 @@ async function loadWifi() {
     num('steer_signal', -65); num('steer_after', 600); num('steer_idle', 64); num('steer_block', 30); num('steer_retry', 21600);
     num('steer_max', 2); num('steer_interval', 30); num('authfail_max', 10); num('authfail_window', 60); num('authfail_hold', 60);
     num('authfail_hold_max', 3600); num('xbss_max', 6); num('xbss_window', 60); num('xbss_hold', 30);
+    for (const [k, d] of CHAN_NUMS) num(k, d);
+    for (const k of ['chan_smart5', 'chan_smart24', 'chan_recheck5', 'chan_recheck24']) f[k].checked = CFG[k] !== false;
+    f.chan_time.value = CFG.chan_time == null ? '03:30' : CFG.chan_time; f.chan_csa.value = CFG.chan_csa || 'auto';
+    showChannels(d);
     fillSelect(f.chan24, CH24, CFG.chan24); fillSelect(f.chan5, CH5, CFG.chan5);
     fillSelect(f.txpower24, TXP, CFG.txpower24 || 'auto'); fillSelect(f.txpower5, TXP, CFG.txpower5 || 'auto');
     for (const o of [...f.txpower24.options, ...f.txpower5.options]) if (o.value !== 'auto') o.textContent = o.value + ' dBm';
@@ -323,8 +405,11 @@ async function saveWifi() {
         coord_quiet: f.coord_quiet.value.trim(), coord_scan_secs: Number(f.coord_scan_secs.value) || 25,
         steer: f.steer.value, steer_exempt: f.steer_exempt.value.split(/[\s,]+/).filter(x => x),
         ...Object.fromEntries(['steer_signal', 'steer_after', 'steer_idle', 'steer_block', 'steer_retry', 'steer_max', 'steer_interval',
-            'authfail_max', 'authfail_window', 'authfail_hold', 'authfail_hold_max', 'xbss_max', 'xbss_window', 'xbss_hold']
+            'authfail_max', 'authfail_window', 'authfail_hold', 'authfail_hold_max', 'xbss_max', 'xbss_window', 'xbss_hold',
+            ...CHAN_NUMS.map(e => e[0])]
             .map(k => [k, Number(f[k].value)])),
+        chan_smart5: f.chan_smart5.checked, chan_smart24: f.chan_smart24.checked, chan_recheck5: f.chan_recheck5.checked,
+        chan_recheck24: f.chan_recheck24.checked, chan_time: f.chan_time.value.trim(), chan_csa: f.chan_csa.value,
         wifi6: f.wifi6.checked, txpower24: f.txpower24.value, txpower5: f.txpower5.value, names: f.names.value.trim() || 'dhcp',
         networks: nets};
     const b = document.getElementById('wifi-save'); b.disabled = true; b.textContent = 'Restarting Wi-Fi...';

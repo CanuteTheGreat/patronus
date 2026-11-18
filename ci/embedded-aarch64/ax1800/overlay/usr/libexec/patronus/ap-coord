@@ -23,6 +23,7 @@
 . ${AP_BOARD:-/etc/patronus/board.sh}
 OUTD=${AP_RENDER_OUT:-/run/hostapd}
 APX=${AP_COORD_AP:-/usr/libexec/patronus/ap}
+CHAN=${AP_COORD_CHAN:-/usr/libexec/patronus/ap-chan}
 PIDF=${AP_COORD_PID:-/run/patronus-ap-coord.pid}
 on() { case "${1:-0}" in 1|yes|on|true) return 0;; esac; return 1; }
 num() { case "$1" in ''|*[!0-9-]*) echo "$2";; *) echo "$1";; esac; }
@@ -68,32 +69,64 @@ freqs() { # BAND: the frequencies a scan has to visit (what ACS may pick, plus e
     for c in $l; do echo $((5000 + c * 5)); done | sort -un | tr '\n' ' '
   else for c in 1 2 3 4 5 6 7 8 9 10 11 12 13; do echo $((2407 + c * 5)); done | tr '\n' ' '; fi; }
 
-scan_if() { # BAND IF: a fresh scan of the band's frequencies (falls back to the kernel's cached list)
+scan_if() { # BAND IF [ap-force]: a fresh scan of the band's frequencies (falls back to the kernel's cached list)
   t=$(num "${AP_COORD_SCAN_SECS:-}" 25)
   if [ -n "${AP_COORD_SCAN_FILE:-}" ]; then cat "$AP_COORD_SCAN_FILE"; return; fi
   # a scan right after the interface came up can answer "busy": try again (three times), then use the kernel's cached list
-  n=0; while :; do out=$(timeout "$t" iw dev "$2" scan freq $(freqs "$1") 2>/dev/null) && break
+  # (a running access point scans with ap-force and a fixed dwell: without them it only reports its own channel)
+  xa=; [ "${3:-}" = ap-force ] && xa="ap-force"
+  n=0; while :; do out=$(timeout "$t" iw dev "$2" scan $xa freq $(freqs "$1") ${xa:+duration $(num "${AP_CHAN_DWELL:-}" 105)} 2>/dev/null) && break
     n=$((n + 1)); [ $n -ge 3 ] && { out=$(iw dev "$2" scan dump 2>/dev/null); say "$1 GHz: the scan failed three times, using the cached list" >&2; break; }
     sleep 1; done
   echo "$out"; }
 
+scan_peers() { # BAND IF [ap-force]: scan; write $OUTD/coord-BAND (the peers' channels, when coordination is on) and
+  # $OUTD/peers-BAND (the peers heard: ap-steer, ap-chan's selection order)
+  b=$1; f=$OUTD/coord-$b; s=$(scan_if "$b" "$2" "${3:-}"); mkdir -p "$OUTD"
+  echo "$s" | parse | peers "$b" > "$OUTD/peers-$b"; [ -s "$OUTD/peers-$b" ] || rm -f "$OUTD/peers-$b"
+  coord_on "$b" || { rm -f "$f"; return 0; }
+  l=$(echo "$s" | parse | busy "$b")
+  if [ -n "$l" ]; then echo "$l" > "$f"; say "$b GHz: other access points of this network use channels $l, they are not candidates"
+  else rm -f "$f"; say "$b GHz: no other access point of this network heard"; fi; true; }
+
 plan() { # BAND PHY
-  b=$1; phy=$2; f=$OUTD/coord-$b; rm -f "$f"
-  coord_on "$b" || return 0
+  b=$1; phy=$2; rm -f "$OUTD/coord-$b"
   [ -z "${AP_COORD_NOPLAN:-}" ] || return 0                                         # test hook: start blind
   eval "c=\${AP_CHAN$b:-auto}"; [ "$c" = auto ] || [ "$c" = 0 ] || return 0       # a fixed channel is not planned
-  if [ -n "${AP_COORD_SCAN_FILE:-}" ]; then s=$(scan_if "$b" x)
+  # ap-chan (channel choice by measurement, docs 12.19) works on the same temporary interface
+  ch=0; eval "v=\${AP_CHAN_SMART$b:-1}"; [ -x "$CHAN" ] && on "$v" && ch=1
+  coord_on "$b" || [ $ch = 1 ] || return 0
+  if [ -n "${AP_COORD_SCAN_FILE:-}" ]; then ifn=x
   else ifn=wl$b-coord; iw dev $ifn del >/dev/null 2>&1
     iw phy "$phy" interface add $ifn type managed >/dev/null 2>&1 && ip link set $ifn up >/dev/null 2>&1 \
       || { say "$b GHz: could not create a scan interface on $phy, channels are not coordinated"; iw dev $ifn del >/dev/null 2>&1; return 0; }
-    s=$(scan_if "$b" $ifn); iw dev $ifn del >/dev/null 2>&1
   fi
-  l=$(echo "$s" | parse | busy "$b")
-  # the peers themselves (ap-steer moves weak stations only on a unit that knows another access point exists)
-  mkdir -p "$OUTD"; echo "$s" | parse | peers "$b" > "$OUTD/peers-$b"; [ -s "$OUTD/peers-$b" ] || rm -f "$OUTD/peers-$b"
-  if [ -n "$l" ]; then mkdir -p "$OUTD"; echo "$l" > "$f"; say "$b GHz: other access points of this network use channels $l, ACS avoids them"
-  else say "$b GHz: no other access point of this network heard"; fi
+  scan_peers "$b" "$ifn"
+  if [ $ch = 1 ]; then
+    "$CHAN" remember "$b"
+    # units that start at the same moment pick one after the other: the ones with a lower key first; this one waits
+    # until they are on air (their channel is then known and avoided), or gives up after the limit ap-chan sets
+    set -- $("$CHAN" earlier "$b" "$phy")
+    if [ $# -gt 0 ]; then lim=$1; shift; want=$*; w=0; miss=$want
+      say "$b GHz: waiting (at most $lim s) for the unit(s) that pick their channel first: $want"
+      while [ $w -lt "$lim" ]; do
+        heard=" $(cut -d' ' -f1 "$OUTD/peers-$b" 2>/dev/null | tr 'A-F' 'a-f' | cut -d: -f2- | tr '\n' ' ') "
+        miss=; for k in $want; do case "$heard" in *" $k "*) ;; *) miss="$miss $k";; esac; done
+        [ -n "$miss" ] || break
+        [ -n "${AP_COORD_NOSLEEP:-}" ] || sleep 5; w=$((w + 5)); scan_peers "$b" "$ifn" > /dev/null
+      done
+      if [ -n "$miss" ]; then "$CHAN" note "$b" wait "not on air after $lim s:$miss; picking anyway"
+      else "$CHAN" note "$b" wait "waited $w s until $want was on air"; fi
+      "$CHAN" remember "$b"
+    fi
+    if [ -n "${AP_CHAN_KEEP:-}" ] && [ -s "$OUTD/chan-$b" ]; then :
+    else "$CHAN" pick "$b" "$ifn" boot > /dev/null || rm -f "$OUTD/chan-$b"; fi
+  fi
+  [ "$ifn" = x ] || iw dev $ifn del >/dev/null 2>&1
   true; }
+
+refresh() { # BAND IF: on the running radio: the other units' channels and the peers, heard now
+  scan_peers "$1" "$2" ap-force; [ -x "$CHAN" ] && "$CHAN" remember "$1"; true; }
 
 hours_ok() { # AP_COORD_QUIET "1-5" (wraps over midnight): is it inside?
   q=${AP_COORD_QUIET:-}; [ -n "$q" ] || return 0
@@ -136,6 +169,15 @@ check() { # BAND [now]
   [ $yield = 1 ] || { say "$b GHz: shares channels with $hit; the other unit has the lower key and moves"; return 0; }
   if [ "${2:-}" != now ] && ! hours_ok && [ "$(stations "$b")" -gt 0 ]; then
     say "$b GHz: shares channels with $hit; stations are connected and it is outside the quiet hours (AP_COORD_QUIET=${AP_COORD_QUIET}), moving later"; return 0; fi
+  # another unit's block: move with a channel switch announcement to the best measured free channel (ap-chan), so the
+  # stations follow; a restart (ACS) only when there is no ap-chan or it found nothing
+  if [ -x "$CHAN" ]; then
+    l=$(echo "$s" | parse | busy "$b"); [ -n "$l" ] && echo "$l" > "$OUTD/coord-$b"
+    best=$("$CHAN" pick "$b" "$ifc" ap 2>/dev/null | tail -1)
+    case " $own " in *" ${best:-x} "*) best=;; esac
+    if [ -n "$best" ]; then say "$b GHz: shares channels with $hit; moving to channel $best"
+      "$CHAN" move "$b" "$best" "another access point of this network ($hit) used the same block"; return 0; fi
+  fi
   say "$b GHz: shares channels with $hit; restarting this radio so ACS picks another block"
   "$APX" restart-band "$b"; }
 
@@ -168,13 +210,15 @@ run() {
   unset AP_COORD_NOPLAN
   echo $$ > "$PIDF"
   sleep "$(num "${AP_COORD_DELAY:-}" 120)"
-  first=now
+  first=now; last=0; t=0
+  # one tick a minute: the collision check every AP_COORD_INTERVAL, the nightly channel re-check (ap-chan) when it is due
   while :; do
     . "${AP_BOARD:-/etc/patronus/board.sh}"        # settings saved in the meantime (web page, plan/apply) count at once
-    for b in 5 24; do check "$b" $first; done
-    first=
-    i=$(num "${AP_COORD_INTERVAL:-}" 3600); [ "$i" -gt 0 ] || break
-    sleep "$i"
+    i=$(num "${AP_COORD_INTERVAL:-}" 3600)
+    if [ -n "$first" ] || { [ "$i" -gt 0 ] && [ $((t - last)) -ge "$i" ]; }; then
+      for b in 5 24; do check "$b" $first; done; first=; last=$t; fi
+    if [ -x "$CHAN" ]; then for b in 5 24; do "$CHAN" due "$b" && "$CHAN" recheck "$b" >> /tmp/ap-chan.log 2>&1; done; fi
+    sleep 60; t=$((t + 60))
   done
   rm -f "$PIDF"; }
 
@@ -184,6 +228,7 @@ covered) covered ;;
 busy) busy "$2" ;;
 plan) mkdir -p "$OUTD"; plan "$2" "${3:-}" ;;
 check) check "$2" "${3:-}" ;;
+refresh) mkdir -p "$OUTD"; refresh "$2" "$3" ;;
 run) run ;;
 *) sed -n '2,24p' "$0"; exit 2 ;;
 esac

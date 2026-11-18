@@ -282,6 +282,27 @@ const LIVE_VARS: &[&str] = &[
     "AP_STEER_EXEMPT",
 ];
 const LIVE_PREFIXES: &[&str] = &["DENY_"];
+/// The channel-choice switches (docs 12.19); with [`TUNING`] they are managed and live.
+const CHAN_SWITCHES: &[&str] = &[
+    "AP_CHAN_SMART24",
+    "AP_CHAN_SMART5",
+    "AP_CHAN_RECHECK24",
+    "AP_CHAN_RECHECK5",
+    "AP_CHAN_TIME",
+    "AP_CHAN_CSA",
+];
+fn chan_keys() -> impl Iterator<Item = &'static str> {
+    CHAN_SWITCHES
+        .iter()
+        .copied()
+        .chain(TUNING.iter().map(|e| e.1))
+}
+fn is_chan_key(k: &str) -> bool {
+    chan_keys().any(|c| c == k)
+}
+fn is_managed(k: &str) -> bool {
+    MANAGED.contains(&k) || is_chan_key(k)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Network {
@@ -383,6 +404,27 @@ pub struct WifiConfig {
     /// MACs never moved
     #[serde(default)]
     pub steer_exempt: Vec<String>,
+    /// channel choice by measurement (docs 12.19): the channel each radio starts on is the best-scoring candidate of
+    /// comparable airtime samples + neighbours heard, per band
+    #[serde(default = "yes")]
+    pub chan_smart24: bool,
+    #[serde(default = "yes")]
+    pub chan_smart5: bool,
+    /// nightly re-check of the running radio's channel, per band (moves only when clearly and repeatedly better)
+    #[serde(default = "yes")]
+    pub chan_recheck24: bool,
+    #[serde(default = "yes")]
+    pub chan_recheck5: bool,
+    /// local time "HH:MM" of the nightly re-check ("" = no nightly re-check)
+    #[serde(default = "default_chan_time")]
+    pub chan_time: String,
+    /// how a running radio moves: "auto" (channel switch announcement when the driver supports it; clients follow
+    /// without disconnecting) or "off" (restart the radio)
+    #[serde(default = "auto")]
+    pub chan_csa: String,
+    /// the numbers of [`TUNING`] (channel choice and steering back-off), by field name
+    #[serde(flatten)]
+    pub tuning: std::collections::BTreeMap<String, i64>,
     // limits for misbehaving stations in the image's hostapd (docs 12.6d, 12.18); a radio restart applies them
     /// unacknowledged authentication responses within authfail_window before hostapd ignores the station (0 = off)
     #[serde(default = "default_authfail_max")]
@@ -445,6 +487,171 @@ fn default_coord_scan_secs() -> u32 {
 }
 /// Steering and station-limit settings (board.sh `AP_STEER_*`, `AP_AUTHFAIL_*`, `AP_XBSS_*`).
 pub const DEFAULT_STEER_SIGNAL: i32 = -65;
+pub const DEFAULT_CHAN_TIME: &str = "03:30";
+fn default_chan_time() -> String {
+    DEFAULT_CHAN_TIME.into()
+}
+/// Channel choice by measurement (`ap-chan`, docs 12.19) and the steering back-off: (field, ap.env key, default, min,
+/// max, what the error says). Every one is live (re-read by ap-chan / ap-steer, no radio restart).
+pub const TUNING: &[(&str, &str, i64, i64, i64, &str)] = &[
+    (
+        "chan_hyst",
+        "AP_CHAN_HYST",
+        20,
+        0,
+        90,
+        "channel move: at least 0 to 90 % better",
+    ),
+    (
+        "chan_min_gain",
+        "AP_CHAN_MIN_GAIN",
+        10,
+        0,
+        100,
+        "channel move: at least 0 to 100 points better",
+    ),
+    (
+        "chan_confirm",
+        "AP_CHAN_CONFIRM",
+        3,
+        1,
+        10,
+        "channel move: 1 to 10 agreeing samples",
+    ),
+    (
+        "chan_confirm_gap",
+        "AP_CHAN_CONFIRM_GAP",
+        300,
+        0,
+        3600,
+        "channel samples: 0 to 3600 seconds apart",
+    ),
+    (
+        "chan_rounds",
+        "AP_CHAN_ROUNDS",
+        4,
+        1,
+        20,
+        "channel measurement: 1 to 20 scan rounds",
+    ),
+    (
+        "chan_dwell",
+        "AP_CHAN_DWELL",
+        105,
+        20,
+        500,
+        "channel measurement: 20 to 500 ms per channel",
+    ),
+    (
+        "chan_sample_secs",
+        "AP_CHAN_SAMPLE_SECS",
+        30,
+        0,
+        600,
+        "channel sample: 0 to 600 seconds",
+    ),
+    (
+        "chan_bss_cost",
+        "AP_CHAN_BSS_COST",
+        2,
+        0,
+        20,
+        "points per neighbouring access point: 0 to 20",
+    ),
+    (
+        "chan_min_signal",
+        "AP_CHAN_MIN_SIGNAL",
+        -90,
+        -100,
+        -30,
+        "neighbours counted from -100 to -30 dBm",
+    ),
+    (
+        "chan_csa_count",
+        "AP_CHAN_CSA_COUNT",
+        10,
+        1,
+        50,
+        "channel switch announced 1 to 50 beacons ahead",
+    ),
+    (
+        "chan_wait",
+        "AP_CHAN_WAIT",
+        90,
+        0,
+        600,
+        "wait for the units that pick first: 0 to 600 seconds",
+    ),
+    (
+        "chan_jitter",
+        "AP_CHAN_JITTER",
+        30,
+        0,
+        300,
+        "random extra wait: 0 to 300 seconds",
+    ),
+    (
+        "chan_stagger",
+        "AP_CHAN_STAGGER",
+        1800,
+        0,
+        21600,
+        "nightly re-check offset per unit: 0 to 21600 seconds",
+    ),
+    (
+        "chan_history",
+        "AP_CHAN_HISTORY",
+        200,
+        10,
+        5000,
+        "channel history: 10 to 5000 entries",
+    ),
+    (
+        "chan_forget",
+        "AP_CHAN_FORGET",
+        604800,
+        3600,
+        31536000,
+        "forget a unit not heard for 3600 to 31536000 seconds",
+    ),
+    (
+        "steer_retry_max",
+        "AP_STEER_RETRY_MAX",
+        604800,
+        0,
+        2592000,
+        "steering: longest hold 0 to 2592000 seconds",
+    ),
+];
+/// A [`TUNING`] number from the file: out of range or not a number = its default.
+fn tuning_number(f: &EnvFile, key: &str) -> i64 {
+    match TUNING.iter().find(|e| e.1 == key) {
+        Some(e) => f
+            .get(key)
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|n| (e.3..=e.4).contains(n))
+            .unwrap_or(e.2),
+        None => 0,
+    }
+}
+/// `AP_CHAN_TIME`: "" or "HH:MM" (00:00-23:59).
+pub fn valid_hhmm(v: &str) -> bool {
+    if v.is_empty() {
+        return true;
+    }
+    match v.split_once(':') {
+        Some((h, m)) => {
+            h.len() == 2
+                && m.len() == 2
+                && h.parse::<u32>().is_ok_and(|n| n < 24)
+                && m.parse::<u32>().is_ok_and(|n| n < 60)
+        }
+        None => false,
+    }
+}
+fn on_off(v: Option<&str>) -> bool {
+    !matches!(v.unwrap_or("1"), "0" | "no" | "off" | "false")
+}
 pub const STEER_SIGNAL_RANGE: std::ops::RangeInclusive<i32> = -90..=-40;
 fn default_steer_signal() -> i32 {
     DEFAULT_STEER_SIGNAL
@@ -789,6 +996,23 @@ pub fn view(f: &EnvFile) -> WifiConfig {
         steer_max: station_number(f, "AP_STEER_MAX"),
         steer_interval: station_number(f, "AP_STEER_INTERVAL"),
         steer_exempt: mac_list(f.get("AP_STEER_EXEMPT").unwrap_or("")),
+        chan_smart24: on_off(f.get("AP_CHAN_SMART24")),
+        chan_smart5: on_off(f.get("AP_CHAN_SMART5")),
+        chan_recheck24: on_off(f.get("AP_CHAN_RECHECK24")),
+        chan_recheck5: on_off(f.get("AP_CHAN_RECHECK5")),
+        chan_time: match f.get("AP_CHAN_TIME") {
+            None => DEFAULT_CHAN_TIME.to_string(),
+            Some(v) if valid_hhmm(v.trim()) => v.trim().to_string(),
+            Some(_) => DEFAULT_CHAN_TIME.to_string(),
+        },
+        chan_csa: match f.get("AP_CHAN_CSA").unwrap_or("auto") {
+            "off" | "0" | "no" => "off".into(),
+            _ => "auto".into(),
+        },
+        tuning: TUNING
+            .iter()
+            .map(|e| (e.0.to_string(), tuning_number(f, e.1)))
+            .collect(),
         authfail_max: station_number(f, "AP_AUTHFAIL_MAX"),
         authfail_window: station_number(f, "AP_AUTHFAIL_WINDOW"),
         authfail_hold: station_number(f, "AP_AUTHFAIL_HOLD"),
@@ -899,6 +1123,22 @@ pub struct WifiInput {
     pub steer_interval: Option<u32>,
     #[serde(default)]
     pub steer_exempt: Option<Vec<String>>,
+    /// channel choice by measurement (docs 12.19)
+    #[serde(default)]
+    pub chan_smart24: Option<bool>,
+    #[serde(default)]
+    pub chan_smart5: Option<bool>,
+    #[serde(default)]
+    pub chan_recheck24: Option<bool>,
+    #[serde(default)]
+    pub chan_recheck5: Option<bool>,
+    #[serde(default)]
+    pub chan_time: Option<String>,
+    #[serde(default)]
+    pub chan_csa: Option<String>,
+    /// [`TUNING`] numbers by field name (any other key here is not a setting and is ignored, as before)
+    #[serde(flatten)]
+    pub tuning: std::collections::BTreeMap<String, Value>,
     /// station limits of the image's hostapd (docs 12.18)
     #[serde(default)]
     pub authfail_max: Option<u32>,
@@ -1230,6 +1470,59 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         }
         set.push(("AP_STEER_EXEMPT".into(), out.join(" ")));
     }
+    for (k, v) in [
+        ("AP_CHAN_SMART24", input.chan_smart24),
+        ("AP_CHAN_SMART5", input.chan_smart5),
+        ("AP_CHAN_RECHECK24", input.chan_recheck24),
+        ("AP_CHAN_RECHECK5", input.chan_recheck5),
+    ] {
+        if let Some(b) = v {
+            set.push((k.into(), if b { "1" } else { "0" }.into()));
+        }
+    }
+    if let Some(t) = &input.chan_time {
+        let t = t.trim();
+        if !valid_hhmm(t) {
+            return Err(invalid(
+                "nightly channel re-check: a time like 03:30, or empty for none",
+            ));
+        }
+        set.push(("AP_CHAN_TIME".into(), t.to_string()));
+    }
+    if let Some(c) = &input.chan_csa {
+        let v = match c.trim().to_ascii_lowercase().as_str() {
+            "auto" | "" | "on" => "auto",
+            "off" => "off",
+            _ => return Err(invalid("channel switch announcement: auto or off")),
+        };
+        set.push(("AP_CHAN_CSA".into(), v.into()));
+    }
+    for e in TUNING {
+        if let Some(v) = input.tuning.get(e.0) {
+            let n = v
+                .as_i64()
+                .filter(|n| (e.3..=e.4).contains(n))
+                .ok_or_else(|| invalid(e.5))?;
+            set.push((e.1.into(), n.to_string()));
+        }
+    }
+    // the steering hold doubles up to its maximum: a maximum below the first hold is a mistake
+    {
+        let num = |k: &str| {
+            set.iter()
+                .find(|(n, _)| n == k)
+                .and_then(|(_, v)| v.parse::<i64>().ok())
+        };
+        let retry =
+            num("AP_STEER_RETRY").unwrap_or_else(|| station_number(f, "AP_STEER_RETRY") as i64);
+        let max =
+            num("AP_STEER_RETRY_MAX").unwrap_or_else(|| tuning_number(f, "AP_STEER_RETRY_MAX"));
+        if max < retry {
+            return Err(invalid(
+                "steering: the longest hold must be at least the first one (leave a device alone for)",
+            ));
+        }
+    }
     // the authentication hold doubles up to its maximum: a maximum below the first hold is a mistake
     {
         let num = |k: &str| {
@@ -1274,7 +1567,7 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
     };
     let replace_nets = input.networks.is_some();
     for (k, v) in &f.vars {
-        if MANAGED.contains(&k.as_str()) || (replace_nets && is_net_var(k)) {
+        if is_managed(k) || (replace_nets && is_net_var(k)) {
             continue;
         }
         if !replace_nets && k == "AP_SSIDS" {
@@ -1322,7 +1615,10 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         "AP_TXPOWER24",
         "AP_TXPOWER5",
         "AP_NAMES",
-    ] {
+    ]
+    .into_iter()
+    .chain(chan_keys())
+    {
         if let Some((_, v)) = set.iter().find(|(n, _)| n == k) {
             out.vars.push((k.into(), v.clone()));
         } else if let Some(v) = f.get(k) {
@@ -1645,7 +1941,48 @@ pub fn get(p: &Paths) -> Result<Value> {
         "radio_count": p.radios(),
         "guard": guard_status(),
         "guest_filter": guest_filter_status(p),
+        "channels": channel_status(p),
+        "channel_history": channel_history(50),
     }))
+}
+
+/// The channel state directory of ap-chan (history, the units heard): `PATRONUS_AP_CHAN_DB`.
+fn chan_db() -> PathBuf {
+    PathBuf::from(
+        std::env::var("PATRONUS_AP_CHAN_DB").unwrap_or_else(|_| "/var/lib/patronus/ap-chan".into()),
+    )
+}
+
+/// Why each radio is on its channel (ap-chan's last choice, per band): chosen and current channel, the scores of every
+/// candidate, whether the driver can move by channel switch announcement. Bands ap-chan has not measured are absent.
+pub fn channel_status(p: &Paths) -> Value {
+    let mut out = serde_json::Map::new();
+    for band in ["5", "24"] {
+        if let Some(v) = std::fs::read_to_string(p.run.join(format!("chan-status-{band}")))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(t.trim()).ok())
+        {
+            out.insert(band.into(), v);
+        }
+    }
+    Value::Object(out)
+}
+
+/// The last `n` entries of ap-chan's history (newest last): every start, nightly sample, stay and move with its reason.
+pub fn channel_history(n: usize) -> Vec<Value> {
+    parse_history(
+        &std::fs::read_to_string(chan_db().join("history")).unwrap_or_default(),
+        n,
+    )
+}
+pub fn parse_history(text: &str, n: usize) -> Vec<Value> {
+    let v: Vec<Value> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(Value::is_object)
+        .collect();
+    let skip = v.len().saturating_sub(n);
+    v.into_iter().skip(skip).collect()
 }
 
 /// Live radio state from hostapd (first BSS of each config).
@@ -1998,8 +2335,18 @@ fn radio_state(f: &EnvFile) -> RadioState {
             "steer_max",
             "steer_interval",
             "steer_exempt",
+            "chan_smart24",
+            "chan_smart5",
+            "chan_recheck24",
+            "chan_recheck5",
+            "chan_time",
+            "chan_csa",
         ] {
             o.remove(k);
+        }
+        // channel choice tuning and the steering back-off (ap-chan / ap-steer re-read them)
+        for e in TUNING {
+            o.remove(e.0);
         }
         if let Some(nets) = o.get_mut("networks").and_then(Value::as_array_mut) {
             for n in nets.iter_mut().filter_map(Value::as_object_mut) {
@@ -2018,7 +2365,9 @@ fn radio_state(f: &EnvFile) -> RadioState {
         })
         .collect();
     keys.sort();
-    let live = |k: &str| LIVE_VARS.contains(&k) || LIVE_PREFIXES.iter().any(|p| k.starts_with(p));
+    let live = |k: &str| {
+        LIVE_VARS.contains(&k) || is_chan_key(k) || LIVE_PREFIXES.iter().any(|p| k.starts_with(p))
+    };
     let net_var = |k: &str| {
         NET_PREFIXES.iter().any(|p| {
             k.strip_prefix(p)
@@ -2028,7 +2377,7 @@ fn radio_state(f: &EnvFile) -> RadioState {
     let mut rest: Vec<(String, String)> = f
         .vars
         .iter()
-        .filter(|(k, _)| !live(k) && !MANAGED.contains(&k.as_str()) && !net_var(k))
+        .filter(|(k, _)| !live(k) && !is_managed(k) && !net_var(k))
         .map(|(k, _)| (k.clone(), f.get(k).unwrap_or("").to_string()))
         .collect();
     rest.sort();
@@ -2860,6 +3209,187 @@ mod tests {
             }
         )
         .is_ok());
+    }
+
+    #[test]
+    fn channel_choice_and_steer_backoff_defaults_round_trip_validate_and_stay_live() {
+        let c = view(&parse("AP_SSIDS=p\nSSID_p=P KEY_p=secretpw1\n"));
+        assert!(c.chan_smart5 && c.chan_smart24 && c.chan_recheck5 && c.chan_recheck24);
+        assert_eq!(
+            (c.chan_time.as_str(), c.chan_csa.as_str()),
+            ("03:30", "auto")
+        );
+        for e in TUNING {
+            assert_eq!(c.tuning.get(e.0), Some(&e.2), "{} default", e.0);
+        }
+        // flat in the API document (no nested object), so plan lists each one
+        let j = serde_json::to_value(&c).unwrap();
+        assert_eq!(j["chan_hyst"], 20);
+        assert_eq!(j["steer_retry_max"], 604800);
+        // board.sh carries the same defaults
+        let board = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ci/embedded-aarch64/ax1800/overlay/etc/patronus/board.sh");
+        if let Ok(t) = std::fs::read_to_string(&board) {
+            let b = parse(&t);
+            for e in TUNING {
+                assert_eq!(
+                    b.get(e.1).and_then(|v| v.parse::<i64>().ok()),
+                    Some(e.2),
+                    "board.sh {}",
+                    e.1
+                );
+            }
+            for k in [
+                "AP_CHAN_SMART24",
+                "AP_CHAN_SMART5",
+                "AP_CHAN_RECHECK24",
+                "AP_CHAN_RECHECK5",
+            ] {
+                assert_eq!(b.get(k), Some("1"), "board.sh {k}");
+            }
+            assert_eq!(b.get("AP_CHAN_TIME"), Some(DEFAULT_CHAN_TIME));
+            assert_eq!(b.get("AP_CHAN_CSA"), Some("auto"));
+        }
+        // out of range in the file = default
+        let c = view(&parse(
+            "AP_CHAN_HYST=95\nAP_CHAN_TIME=25:00\nAP_CHAN_CSA=bogus\nAP_CHAN_SMART5=0\n",
+        ));
+        assert_eq!(c.tuning["chan_hyst"], 20);
+        assert_eq!(
+            (c.chan_time.as_str(), c.chan_csa.as_str()),
+            ("03:30", "auto")
+        );
+        assert!(!c.chan_smart5);
+
+        let f = sample();
+        let mut t = std::collections::BTreeMap::new();
+        t.insert("chan_hyst".to_string(), json!(30));
+        t.insert("chan_min_signal".to_string(), json!(-85));
+        t.insert("steer_retry_max".to_string(), json!(86400));
+        t.insert("apiVersion".to_string(), json!(DOC_API)); // not a setting: ignored
+        let input = WifiInput {
+            chan_smart24: Some(false),
+            chan_recheck5: Some(false),
+            chan_time: Some("02:15".into()),
+            chan_csa: Some("off".into()),
+            tuning: t,
+            ..Default::default()
+        };
+        let n = update(&f, &input).unwrap();
+        let v = view(&n);
+        assert!(!v.chan_smart24 && v.chan_smart5 && !v.chan_recheck5);
+        assert_eq!(
+            (v.chan_time.as_str(), v.chan_csa.as_str()),
+            ("02:15", "off")
+        );
+        assert_eq!(
+            (
+                v.tuning["chan_hyst"],
+                v.tuning["chan_min_signal"],
+                v.tuning["steer_retry_max"]
+            ),
+            (30, -85, 86400)
+        );
+        assert_eq!(n.get("AP_CHAN_TIME"), Some("02:15"));
+        // all live: written, never a radio restart
+        assert!(!restart_needed(&f, &n));
+        assert!(!same_settings(&f, &n));
+        // the file round-trips through render/parse
+        assert_eq!(view(&parse(&render(&n))), v);
+        // export -> plan of the same document changes nothing
+        let doc = export_doc(&n);
+        let again = parse_doc(&doc).unwrap();
+        let p = plan(&n, &again).unwrap();
+        assert_eq!(p["changes"], json!([]), "{p}");
+        // the plan of a change names the setting
+        let mut t = std::collections::BTreeMap::new();
+        t.insert("chan_confirm".to_string(), json!(5));
+        let p = plan(
+            &n,
+            &WifiInput {
+                tuning: t,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(p["changes"][0]["setting"], "chan_confirm");
+        assert_eq!(p["restart"], false);
+
+        // refused, nothing written
+        for (k, bad) in [
+            ("chan_hyst", json!(95)),
+            ("chan_dwell", json!(5)),
+            ("chan_min_signal", json!(-20)),
+            ("chan_confirm", json!("three")),
+            ("steer_retry_max", json!(60)), // below steer_retry (21600)
+        ] {
+            let mut t = std::collections::BTreeMap::new();
+            t.insert(k.to_string(), bad.clone());
+            let r = update(
+                &f,
+                &WifiInput {
+                    tuning: t,
+                    ..Default::default()
+                },
+            );
+            assert!(r.is_err(), "{k}={bad} accepted");
+        }
+        for (time, csa) in [("3:30", "auto"), ("03:30", "maybe")] {
+            let r = update(
+                &f,
+                &WifiInput {
+                    chan_time: Some(time.into()),
+                    chan_csa: Some(csa.into()),
+                    ..Default::default()
+                },
+            );
+            assert!(r.is_err(), "{time} {csa} accepted");
+        }
+        // no nightly re-check: empty time
+        let n = update(
+            &f,
+            &WifiInput {
+                chan_time: Some(String::new()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(view(&n).chan_time, "");
+    }
+
+    #[test]
+    fn channel_history_keeps_the_newest_valid_lines() {
+        let t = "{\"t\":1,\"event\":\"start\",\"band\":\"5\",\"channel\":36}\nnot json\n[1]\n{\"t\":2,\"event\":\"move\",\"band\":\"24\",\"channel\":6}\n{\"t\":3,\"event\":\"stay\",\"band\":\"5\",\"channel\":36}\n";
+        let h = parse_history(t, 2);
+        assert_eq!(h.len(), 2);
+        assert_eq!(h[0]["t"], 2);
+        assert_eq!(h[1]["event"], "stay");
+        assert_eq!(parse_history(t, 50).len(), 3);
+        assert!(parse_history("", 5).is_empty());
+    }
+
+    #[test]
+    fn channel_status_reads_each_measured_band() {
+        let d = std::env::temp_dir().join(format!("apchan-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        std::fs::write(
+            d.join("chan-status-5"),
+            "{\"band\":\"5\",\"chosen\":36,\"current\":36,\"csa\":true,\"reason\":\"channel 36: 12% busy\",\"candidates\":[{\"channel\":36,\"score\":20.0,\"busy\":12.0,\"neighbours\":4}]}\n",
+        )
+        .unwrap();
+        std::fs::write(d.join("chan-status-24"), "garbage").unwrap();
+        let p = Paths {
+            env: d.join("ap.env"),
+            script: d.join("ap"),
+            run: d.clone(),
+            sysfs: d.join("sys"),
+            net: d.join("net"),
+        };
+        let s = channel_status(&p);
+        assert_eq!(s["5"]["chosen"], 36);
+        assert_eq!(s["5"]["candidates"][0]["busy"], 12.0);
+        assert!(s.get("24").is_none());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

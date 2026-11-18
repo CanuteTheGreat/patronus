@@ -170,6 +170,25 @@ wifi_steer() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=
   has_all "$s" '-rwx' 'steering: ' 'rc=0' || { echo "ap-steer status: $s"; return 1; }
   c=$(wapi -X PUT -d '{"steer":"auto","steer_signal":-65,"steer_retry":21600,"steer_exempt":[],"authfail_max":10,"xbss_hold":30}' https://127.0.0.1:$WEBP/api/wifi)
   [ "$c" = 200 ] || { echo "PUT back: $c"; return 1; }; }
+# channel choice by measurement (docs 12.19): defaults in GET, a change is live (no radio restart) and lands in ap.env, bad
+# values 400; ap-chan is installed executable and scores a measurement; GET carries channels + history
+wifi_chan() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$g" '"chan_smart5":true' '"chan_smart24":true' '"chan_recheck5":true' '"chan_recheck24":true' \
+    '"chan_time":"03:30"' '"chan_csa":"auto"' '"chan_hyst":20' '"chan_min_gain":10' '"chan_confirm":3' '"chan_dwell":105' \
+    '"chan_wait":90' '"chan_stagger":1800' '"steer_retry_max":604800' || { echo "defaults: $c $g"; return 1; }
+  c=$(wapi -X PUT -d '{"chan_time":"02:45","chan_hyst":30,"chan_smart24":false,"steer_retry_max":86400}' https://127.0.0.1:$WEBP/api/wifi)
+  r=$(cat "$W/api.json"); [ "$c" = 200 ] || { echo "PUT chan: $c $r"; return 1; }
+  case "$r" in *'"restarted":true'*) echo "a channel-choice change restarted the radios: $r"; return 1;; esac
+  m=$(R '. /etc/patronus/board.sh; echo "T=$AP_CHAN_TIME H=$AP_CHAN_HYST S=$AP_CHAN_SMART24 M=$AP_STEER_RETRY_MAX"')
+  [ "$m" = "T=02:45 H=30 S=0 M=86400" ] || { echo "ap.env after PUT: $m"; return 1; }
+  for bad in '{"chan_time":"25:00"}' '{"chan_hyst":95}' '{"chan_csa":"maybe"}' '{"chan_dwell":1}' '{"steer_retry_max":60}'; do
+    c=$(wapi -X PUT -d "$bad" https://127.0.0.1:$WEBP/api/wifi); [ "$c" = 400 ] || { echo "$bad: HTTP $c"; return 1; }; done
+  s=$(R 'ls -l /usr/libexec/patronus/ap-chan; printf "S 1 400 40\nS 6 400 200\nS 11 400 120\n" | /usr/libexec/patronus/ap-chan score 24 "1 6 11"; echo rc=$?')
+  has_all "$s" '-rwx' '1 10.0 10.0 0' 'rc=0' || { echo "ap-chan score: $s"; return 1; }
+  c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$g" '"channels":' '"channel_history":' || { echo "status: $c $g"; return 1; }
+  c=$(wapi -X PUT -d '{"chan_time":"03:30","chan_hyst":20,"chan_smart24":true,"steer_retry_max":604800}' https://127.0.0.1:$WEBP/api/wifi)
+  [ "$c" = 200 ] || { echo "PUT back: $c"; return 1; }; }
 wifi_cli() { d=$(R 'patronus-cli ap-wifi export --json') || { echo "export failed: $d"; return 1; }
   case "$d" in *ci-gate-wifi-pass*) echo "export leaks a key"; return 1;; esac
   has_all "$d" '"apiVersion": "patronus.ap-wifi/v1"' '"chan24": "6"' '"ssid": "CI Gate Net"' || { echo "export: $d"; return 1; }
@@ -499,6 +518,7 @@ check "Wi-Fi restart path: hostapd started into its own transient scope (systemd
 check "backup includes the access-point Wi-Fi file; restoring the backup puts it back" wifi_backup
 check "patronus ap-wifi: declarative export (no keys), plan shows only the edited setting, apply writes it" wifi_cli
 check "Wi-Fi steering + misbehaving-station limits: defaults, live steering change in ap.env, bad values 400, ap-steer status runs" wifi_steer
+check "Wi-Fi channel choice: defaults, live change in ap.env, bad values 400, ap-chan scores, channels + history in GET" wifi_chan
 check "firmware page API: running build shown, a non-image upload refused by patronus-flash and not kept" fw_web
 check "Wi-Fi page: crash protection (wifi-guard) and guest-filter availability reported" gap_state
 check "guest network: GUEST_ flag written, nftables bridge filter loads with the guest ports, removed without guests" gap_guest
