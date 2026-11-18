@@ -38,7 +38,8 @@ docker network create "$NET" >/dev/null
 docker run -d --name "$TAG" --hostname "$TAG" --network "$NET" --privileged \
   --memory 2g --memory-swap 2g --cpus 2 \
   rancher/k3s:latest server --disable traefik --disable metrics-server \
-  --disable servicelb --tls-san "$TAG" >/dev/null
+  --disable servicelb --tls-san "$TAG" \
+  --kubelet-arg=cgroups-per-qos=false --kubelet-arg=enforce-node-allocatable= >/dev/null
 
 APISERVER=127.0.0.1
 if [ -n "$SELF" ]; then
@@ -48,8 +49,13 @@ else
   APISERVER=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$TAG")
 fi
 
+# cgroups-per-qos=false above: on runner hosts where the container's cgroup has no cpu/cpuset/memory/pids controllers delegated
+# (run 1813: 'kubepods has some missing controllers', k3s exited) the kubelet otherwise dies creating its QoS cgroups. Tests need
+# no pod QoS. Fail at once if the container is gone instead of polling a dead one for 3 minutes.
 for _ in $(seq 1 90); do
-  docker exec "$TAG" kubectl get --raw /readyz >/dev/null 2>&1 && break; sleep 2
+  docker exec "$TAG" kubectl get --raw /readyz >/dev/null 2>&1 && break
+  [ "$(docker inspect -f '{{.State.Running}}' "$TAG" 2>/dev/null)" = true ] || { echo "k3s container exited"; exit 1; }
+  sleep 2
 done
 docker exec "$TAG" kubectl get --raw /readyz
 docker exec "$TAG" cat /etc/rancher/k3s/k3s.yaml | sed "s#https://127.0.0.1:6443#https://$APISERVER:6443#" > "$WORK/kubeconfig"
