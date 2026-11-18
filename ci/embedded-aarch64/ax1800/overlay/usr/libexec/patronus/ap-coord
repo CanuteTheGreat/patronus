@@ -51,6 +51,7 @@ covered() { # parse output -> "bssid ch ch ch ..." per BSS
       else print o, p }
     else { p = (f == 2484) ? 14 : (f - 2407) / 5; lo = p - 4; hi = p + 4
       if (w == 40 && sec == "above") hi = p + 8; else if (w == 40 && sec == "below") lo = p - 8
+      if (lo < 1) lo = 1; if (hi > 14) hi = 14
       s = o; for (i = lo; i <= hi; i++) s = s " " i; print s } }'
 }
 

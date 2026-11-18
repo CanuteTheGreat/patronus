@@ -84,6 +84,7 @@ repair)
   fi
   ap_stop a; ap_stop b;;
 off)
+  sleep 35   # the kernel keeps a BSS in its scan list for 30 s after its last beacon: let the units of the earlier cases expire
   board a $A24 $A5; board b $B24 $B5; cp $T/board-b.sh $T/board-b1.sh; board b $B24 $B5 AP_COORD5=0
   ap_start a $A24 $A5; wait_up a wl5-a 90 || fail "off: unit a not up"
   ca=$(seg a wl5-a); want="$((ca - 6)) $((ca - 2)) $((ca + 2)) $((ca + 6))"
