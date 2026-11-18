@@ -73,7 +73,7 @@ CD=${GUARD_CONF_DIR:-/etc/patronus}
 : "${GUARD_UB_WR_ROOT:=}"
 : "${GUARD_UB_WR_KERNEL:=}"
 : "${GUARD_UB_SAVE:=setenv mtdids; setenv mtdparts; saveenv}"
-: "${GUARD_UB_WDT=mw.l 0xb017004 1; mw.l 0xb017010 \${pat_wdt_ticks}; mw.l 0xb017014 \${pat_wdt_ticks}; mw.l 0xb017008 1}"
+[ -n "${GUARD_UB_WDT+set}" ] || GUARD_UB_WDT='mw.l 0xb017004 1; mw.l 0xb017010 ${pat_wdt_ticks}; mw.l 0xb017014 ${pat_wdt_ticks}; mw.l 0xb017008 1'
 : "${GUARD_UB_WDT_HZ:=32768}"      # watchdog clock (ticks per second)
 : "${GUARD_UB_KARGS=watchdog.handle_boot_enabled=0}"
 : "${GUARD_UB_BOOTARGS:=bootargs}" # the variable the stock boot command builds the kernel command line from
@@ -129,8 +129,10 @@ ub_vol() {
 # the bootloader script: every value comes from the settings above
 env_script() { # file: writes the "name value" lines
   orig=$1; out=$2; vol=$(ub_vol) || return 1
-  rr=${GUARD_UB_RD_ROOT:-ubi read \${pat_ra} rootfs_prev \${pat_rsz}}; rk=${GUARD_UB_RD_KERNEL:-ubi read \${pat_ka} kernel_prev \${pat_ksz}}
-  wr=${GUARD_UB_WR_ROOT:-ubi write \${pat_ra} rootfs \${pat_rsz}}; wk=${GUARD_UB_WR_KERNEL:-ubi write \${pat_ka} kernel \${pat_ksz}}
+  rr=$GUARD_UB_RD_ROOT; [ -n "$rr" ] || rr='ubi read ${pat_ra} rootfs_prev ${pat_rsz}'
+  rk=$GUARD_UB_RD_KERNEL; [ -n "$rk" ] || rk='ubi read ${pat_ka} kernel_prev ${pat_ksz}'
+  wr=$GUARD_UB_WR_ROOT; [ -n "$wr" ] || wr='ubi write ${pat_ra} rootfs ${pat_rsz}'
+  wk=$GUARD_UB_WR_KERNEL; [ -n "$wk" ] || wk='ubi write ${pat_ka} kernel ${pat_ksz}'
   rest=${orig#"$GUARD_UB_BOOT"}; rest=${rest#;}; rest=${rest# }
   ka=; wdt=true; ticks=0
   if [ "$GUARD_WATCHDOG" = 1 ] && [ -n "$GUARD_UB_WDT" ]; then ka=" $GUARD_UB_KARGS"; wdt=$GUARD_UB_WDT; ticks=$(printf '0x%x' $((GUARD_WATCHDOG_TIMEOUT * GUARD_UB_WDT_HZ))); fi
@@ -149,7 +151,7 @@ env_script() { # file: writes the "name value" lines
   echo "pat_wdt $wdt"
   echo "pat_wdt_ticks $ticks"
   echo "pat_ra $GUARD_UB_ROOT_ADDR"; echo "pat_ka $GUARD_UB_KERNEL_ADDR"
-  [ -n "$GUARD_UB_ENV_ADDR" ] && echo "pat_ea $GUARD_UB_ENV_ADDR"
+  if [ -n "$GUARD_UB_ENV_ADDR" ]; then echo "pat_ea $GUARD_UB_ENV_ADDR"; fi
   } > "$out"
 }
 env_install() {
