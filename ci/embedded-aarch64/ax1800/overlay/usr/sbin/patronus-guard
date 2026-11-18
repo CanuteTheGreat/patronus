@@ -93,6 +93,8 @@ uptime_s() { cut -d' ' -f1 /proc/uptime 2>/dev/null | cut -d. -f1; }
 event() { # kind detail...: append to the event log the web UI turns into audit entries
   k=$1; shift; mkdir -p "$GD"; n=$(( $(tail -n1 "$GD/events" 2>/dev/null | cut -d'|' -f1 || echo 0) + 1 ))
   printf '%s|%s|%s|%s\n' "$n" "$(now)" "$k" "$*" | tr -d '"\\' >> "$GD/events"
+  # also into the kernel log: on the serial console and in the system log even when /data is lost
+  [ -w /dev/kmsg ] && echo "patronus-guard: $k: $*" > /dev/kmsg 2>/dev/null
   t=$(wc -l < "$GD/events"); [ "$t" -gt "$GUARD_EVENTS_KEEP" ] && { tail -n "$GUARD_EVENTS_KEEP" "$GD/events" > "$GD/events.new"; mv "$GD/events.new" "$GD/events"; }
   sync; log "$k: $*"
 }
@@ -290,7 +292,7 @@ status_json() {
     printf '%s{"seq":%s,"time":%s,"event":"%s","detail":"%s"}' "$s" "$n" "$t" "$(echo "$k" | jesc)" "$(echo "$d" | jesc)"; s=,; done
   printf ']}\n'
 }
-write_status() { mkdir -p "$RUN"; status_json > "$RUN/.bg.json" 2>/dev/null && chmod 0644 "$RUN/.bg.json" && mv "$RUN/.bg.json" "$STATUS"; }
+write_status() { mkdir -p "$RUN"; t="$RUN/.bg.$$.json"; status_json > "$t" 2>/dev/null && chmod 0644 "$t" && mv "$t" "$STATUS"; rm -f "$t"; }
 
 restart_box() { # clean restart through the init system, forced after the grace time
   sync; (sleep "$GUARD_REBOOT_GRACE"; sync; busybox reboot -f) & 
@@ -328,6 +330,7 @@ run)
   elif [ "$GUARD_WATCHDOG" = 1 ]; then echo "no hardware watchdog" > "$RUN/guard-wdt"
   else echo "off" > "$RUN/guard-wdt"; fi
   write_status
+  [ -w /dev/kmsg ] && echo "patronus-guard: trial boot $(genv pat_boots), checks \"$GUARD_CHECKS\" for ${GUARD_WINDOW}s" > /dev/kmsg 2>/dev/null
   while :; do
     out=$(checks); rc=$?; echo "$out" > "$RUN/guard-checks"
     if [ $rc = 0 ]; then passes=$((passes + 1)); else passes=0; fi
