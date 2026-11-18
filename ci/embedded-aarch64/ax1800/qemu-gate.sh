@@ -527,7 +527,7 @@ check "flash guard: an UNSIGNED image is refused, nothing staged" refuse_sig uns
 check "flash guard: a TAMPERED image (root changed, sha256 re-made) is refused, nothing staged" refuse_sig tampered "signature check FAILED"
 R 'rm -f /data/unsigned.tar /data/tampered.tar'
 check "flash guard: a corrupt image is refused" R "cp /data/up.tar /tmp/bad.tar && printf 'XXXXXXXX' | dd of=/tmp/bad.tar bs=1 seek=3000000 conv=notrunc 2>/dev/null && ! $FENV patronus-flash check /tmp/bad.tar; rm -f /tmp/bad.tar"
-# boot rollback (12.14): this VM has no GL bootloader environment, so an upgrade that cannot be rolled back is refused
+# boot rollback (12.16): this VM has no GL bootloader environment, so an upgrade that cannot be rolled back is refused
 # by default (GUARD_REQUIRE=1) and installed only with --no-rollback; the rollback itself is proven by rollback-gate.sh
 refuse_norb() { o=$(R "$FENV patronus-flash sysupgrade /data/up.tar" 2>&1) && { echo "ACCEPTED: $o"; return 1; }
   case "$o" in *"no rollback possible"*) ;; *) echo "$o"; return 1;; esac; R 'test ! -e /data/.upgrade && test ! -e /data/.upgrade.new' || { echo "something was staged"; return 1; }; }

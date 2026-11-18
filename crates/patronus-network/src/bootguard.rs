@@ -1,4 +1,4 @@
-//! Boot rollback of the router tier (`patronus-guard`, docs/embedded-routers.md 12.14): its state for the System >
+//! Boot rollback of the router tier (`patronus-guard`, docs/embedded-routers.md 12.16): its state for the System >
 //! Firmware page and `/api/system/firmware`, its policy file (`/etc/patronus/boot-guard.conf`, the one source of truth
 //! the guard itself reads in the early boot) and the manual rollback / confirm actions. Runs as root (applyd).
 //!

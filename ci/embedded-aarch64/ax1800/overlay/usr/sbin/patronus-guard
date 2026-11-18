@@ -1,5 +1,5 @@
 #!/bin/sh
-# patronus-guard: boot rollback of the GL-AX1800 router tier (docs/embedded-routers.md 12.14). A new image is trial-booted;
+# patronus-guard: boot rollback of the GL-AX1800 router tier (docs/embedded-routers.md 12.16). A new image is trial-booted;
 # it is confirmed only when its health checks pass within a window, otherwise the bootloader puts the previous image back.
 #
 #   patronus-guard boot                early boot (patronus-init, before the init system): keep the bootloader script

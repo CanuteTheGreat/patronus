@@ -6,7 +6,7 @@
 #   3. upgrade: patronus-flash check/sysupgrade guards against this UBI, then upgrade-install ubi-write writes the other
 #      image's kernel + root into volumes 0/1 (growing rootfs with ubirsvol when needed) and reads both back
 #   4. the settings volume and its file survive; the layout is still kernel=0 rootfs=1
-#   boot rollback (patronus-guard, docs 12.14), between 2 and 3: the bootloader script is installed into a stock-like
+#   boot rollback (patronus-guard, docs 12.16), between 2 and 3: the bootloader script is installed into a stock-like
 #   environment (fw_setenv on a file in U-Boot's format), the running image is kept as kernel_prev/rootfs_prev and the
 #   trial armed exactly as upgrade-install's stage2 does; after the write, what the bootloader's revert copies back
 #   (pat_ksz/pat_rsz bytes of kernel_prev/rootfs_prev into kernel/rootfs) must be the old image byte for byte

@@ -1,5 +1,5 @@
 #!/bin/bash
-# rollback-gate.sh <openrc|systemd> <image-dir>: the boot rollback (patronus-guard, docs/embedded-routers.md 12.14) under a
+# rollback-gate.sh <openrc|systemd> <image-dir>: the boot rollback (patronus-guard, docs/embedded-routers.md 12.16) under a
 # REAL U-Boot (Alpine u-boot-qemu, qemu_arm64) on QEMU aarch64 virt, with the shipped root of this image.
 # What is the same as on the GL-AX1800: the whole bootloader state machine (bootcmd prefix, pat_boot/pat_trial/pat_revert/
 # pat_failed, the counters, setexpr/itest, the order "count + save, then boot"; "read both old parts, then write") is

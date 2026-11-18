@@ -3,7 +3,7 @@
 # overlays, kmods, ath11k calibration), then exec the image's init system as PID 1: OpenRC (openrc-init) or systemd,
 # as recorded in /etc/patronus-init at image build.
 # A new image is trial-booted and the bootloader restores the previous one unless it confirms itself (patronus-guard,
-# docs/embedded-routers.md 12.14). A box whose flash is beyond that is recovered with U-Boot's web recovery (reset held at
+# docs/embedded-routers.md 12.16). A box whose flash is beyond that is recovered with U-Boot's web recovery (reset held at
 # power-on, http://192.168.1.1) and GL.iNet's .img, then OpenWrt's factory.ubi over SSH (docs 12.3).
 /usr/libexec/patronus/early
 # a verified staged upgrade: PID 1 goes to the installer (RAM root, writes kernel + root, restarts)

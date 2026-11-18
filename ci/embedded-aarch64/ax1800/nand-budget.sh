@@ -8,7 +8,7 @@
 # (layout volume 2 + wear-levelling 1 + atomic LEB change 1 + bad-block reserve 20 per 1024 PEBs of the 128 MiB chip).
 # With [factory.ubi]: its layout is checked too (ubi-layout.py check) and its kernel/rootfs volumes must match the parts.
 # NAND_DATA_MIN / NAND_MARGIN (KiB) override the profile's data_min_kib / margin_kib.
-# Boot rollback (12.14) keeps the previous image as kernel_prev/rootfs_prev: counted at this image's size unless
+# Boot rollback (12.16) keeps the previous image as kernel_prev/rootfs_prev: counted at this image's size unless
 # NAND_ROLLBACK=0.
 # Exit 0 = fits with margin, 1 = over budget or bad layout, 2 = usage.
 HERE=$(cd "$(dirname "$0")" && pwd)

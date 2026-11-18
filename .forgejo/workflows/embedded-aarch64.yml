@@ -83,7 +83,7 @@ jobs:
         run: bash ci/embedded-aarch64/ax1800/ci-docker.sh build ${{ matrix.init }}
       - name: QEMU aarch64 gate (${{ matrix.init }})
         run: bash ci/embedded-aarch64/ax1800/ci-docker.sh qemu ${{ matrix.init }}
-      - name: Boot rollback gate (${{ matrix.init }}, real U-Boot; docs 12.14)
+      - name: Boot rollback gate (${{ matrix.init }}, real U-Boot; docs 12.16)
         run: bash ci/embedded-aarch64/ax1800/ci-docker.sh rollback ${{ matrix.init }}
       - name: Results (sizes, NAND budget, QEMU checks)
         if: always()

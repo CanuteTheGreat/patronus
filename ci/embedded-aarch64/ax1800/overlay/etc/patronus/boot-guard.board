@@ -1,4 +1,4 @@
-# GL.iNet GL-AX1800 (IPQ6018, GL U-Boot 2016.01 "uboot2.0") facts for the boot rollback (patronus-guard, docs 12.14).
+# GL.iNet GL-AX1800 (IPQ6018, GL U-Boot 2016.01 "uboot2.0") facts for the boot rollback (patronus-guard, docs 12.16).
 # Image-owned; unit policy goes in /etc/patronus/boot-guard.conf. Checked on the units 2026-11-17: the environment is one
 # copy at offset 0 of 0:appsblenv (CRC over 0x40000 bytes, 128 KiB erase blocks, 4 blocks in the partition), bootcmd starts
 # with bootipq, the NAND is qcom_nand (U-Boot nand device 0), UBI sits on the MTD "rootfs" (0x7300000 @ 0xa00000, read
