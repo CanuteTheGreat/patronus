@@ -14,5 +14,11 @@ AP5_IF=wl5-ap
 AP24_IF=wl24-ap
 FOLLOW="wl5-sta:wl5-ap:ap5 wl24-sta:wl24-ap:ap24"
 FREQ5="5180 5200 5220 5240 5260 5280 5300 5320 5500 5520 5540 5560 5580 5600 5620 5640 5660 5680 5700 5720 5745 5765 5785 5805 5825"
+# Both clients usually join the SAME upstream network, so the box is multi-homed in one subnet (two addresses, two MACs).
+# Each uplink then answers ARP only for its own address and replies leave by the uplink their address belongs to
+# (source routing: one table + one `ip rule from <addr>` per uplink, kept by wifi-follow). UPLINK_TABLES lists
+# "<sta_if>:<table>:<rule pref>"; the defaults stay clear of the Patronus routes applier (table 4250, prefs 31000-31999).
+UPLINKS="$WAN5_IF $WAN_IF"
+UPLINK_TABLES="$WAN5_IF:4241:30241 $WAN_IF:4242:30242"
 STA_MAC= STA5_MAC= AP5_MAC= AP24_MAC= MGMT_NET= GUARD_GW=
 [ -f /etc/patronus/unit.conf ] && . /etc/patronus/unit.conf

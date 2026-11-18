@@ -16,7 +16,7 @@ mount -t tmpfs -o size=32m tmpfs /tmp; mount -t tmpfs -o size=16m,mode=0755 tmpf
 mount -t tmpfs -o size=4m tmpfs /var/log
 mount -t cgroup2 cgroup2 /sys/fs/cgroup 2>/dev/null
 mark early-start
-hostname patronus   # placeholder until /etc/hostname is readable (set again after the /etc overlay is up)
+[ -s /etc/hostname ] && hostname "$(head -n1 /etc/hostname)"   # the image's default (read-only root); set again once the /etc overlay is up
 
 # 1. persistent data
 mkdir -p /data

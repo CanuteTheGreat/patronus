@@ -41,6 +41,7 @@ IPCMD=${IPCMD:-ip}
 WPA_CLI=${WPA_CLI:-wpa_cli}
 PKILL=${PKILL:-pkill}
 WPA_CTRL=${WPA_CTRL:-/run/wpa_supplicant}
+UPLINK_TABLES=${UPLINK_TABLES:-}   # "<sta>:<table>:<pref> ..." from board.sh: per-uplink source routing (empty = off)
 
 now() { if [ -n "$NOW" ]; then $NOW; else cut -d. -f1 /proc/uptime; fi; }
 log() { echo "wifi-follow: $*"; logger -t wifi-follow "$*" 2>/dev/null; }
@@ -244,9 +245,40 @@ health_one() {
   rm -f "$RUN/$sta.assoc" "$RUN/$sta.fails"
 }
 
+# Source routing per uplink. Both clients usually hold an address in the SAME upstream subnet; without per-address routes
+# a reply from the 2.4 GHz client's address can leave by the 5 GHz client (whichever connected route the kernel lists
+# first) and the box's reachability on its reserved address depends on route order. For each "<sta>:<table>:<pref>" in
+# UPLINK_TABLES keep table <table> = the client's connected subnet + its default gateway, and `ip rule from <addr> lookup
+# <table> pref <pref>`. Rebuilt only when the address/subnet/gateway changes; removed when the client has no address.
+src_one() {
+  sta=$1; tbl=$2; pref=$3
+  a=$($IPCMD -4 -o addr show dev "$sta" scope global 2>/dev/null | awk '{print $4; exit}')
+  net=$($IPCMD -4 route show dev "$sta" proto kernel scope link 2>/dev/null | awk '{print $1; exit}')
+  gw=$($IPCMD -4 route show default dev "$sta" 2>/dev/null | sed -n 's/.* via \([0-9.]*\).*/\1/p' | head -n 1)
+  mkdir -p "$RUN"
+  have=$(cat "$RUN/$sta.src" 2>/dev/null)
+  if [ -z "$a" ]; then
+    [ -n "$have" ] || return 0
+    while $IPCMD rule del pref "$pref" 2>/dev/null; do :; done
+    $IPCMD route flush table "$tbl" 2>/dev/null; rm -f "$RUN/$sta.src"
+    log "$sta: no address: source route (table $tbl) removed"; return 0
+  fi
+  want="${a%/*} $net $gw"
+  # also repair it when something flushed the rule (the routes applier owns other prefs only, but be robust)
+  if [ "$have" = "$want" ] && [ -n "$($IPCMD rule list pref "$pref" 2>/dev/null)" ]; then return 0; fi
+  while $IPCMD rule del pref "$pref" 2>/dev/null; do :; done
+  $IPCMD route flush table "$tbl" 2>/dev/null
+  [ -n "$net" ] && $IPCMD route replace "$net" dev "$sta" src "${a%/*}" table "$tbl"
+  [ -n "$gw" ] && $IPCMD route replace default via "$gw" dev "$sta" table "$tbl"
+  $IPCMD rule add from "${a%/*}" lookup "$tbl" pref "$pref"
+  echo "$want" > "$RUN/$sta.src"
+  log "$sta: replies from ${a%/*} leave by $sta (table $tbl${gw:+, gateway $gw})"
+}
+
 pass() {
   for h in $HEALTH_STA; do health_one "$h"; done
   for p in $FOLLOW; do follow_one "${p%%:*}" "$(echo "$p" | cut -d: -f2)" "${p##*:}"; done
+  for u in $UPLINK_TABLES; do src_one "${u%%:*}" "$(echo "$u" | cut -d: -f2)" "${u##*:}"; done
 }
 
 status() {

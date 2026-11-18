@@ -22,6 +22,11 @@ if [ -d "$R/usr/share/patronus/accounts.d" ]; then
   for a in "$R"/usr/share/patronus/accounts.d/*/; do [ -s "$a/passwd" ] || fail "account ${a%/}: no passwd line"; done
 fi
 [ ! -f "$R/etc/patronus/embedded.env" ] || grep -qx 'PATRONUS_AUTH_BACKEND=shadow' "$R/etc/patronus/embedded.env" || fail "embedded.env must set PATRONUS_AUTH_BACKEND=shadow (musl pam_unix cannot verify yescrypt hashes)"
+# an AP bridged to the LAN must be encrypted: an open template puts anyone in radio range on the LAN (and through it on the
+# upstream network). ALLOW_OPEN_AP=1 at build time is the deliberate exception (e.g. a captive test network).
+for c in "$R"/etc/hostapd/*.conf; do [ -f "$c" ] || continue
+  if ! grep -E '^wpa=[123]' "$c" >/dev/null || ! grep -E '^(wpa_passphrase|wpa_psk|wpa_psk_file|sae_password)=' "$c" >/dev/null; then
+    [ "${ALLOW_OPEN_AP:-}" = 1 ] || fail "${c#$R}: open AP (no wpa=/passphrase); set ALLOW_OPEN_AP=1 only for a deliberate open network"; fi; done
 # the daemons a unit needs to be reachable at all: no wpa_supplicant = no Wi-Fi uplink, no dropbear = no ssh, and without them
 # nothing can run the way back either (an image from a builder lacking them was flashed once and stranded the unit)
 for f in usr/sbin/wpa_supplicant usr/sbin/dropbearmulti usr/sbin/hostapd usr/sbin/dnsmasq sbin/nft bin/busybox; do

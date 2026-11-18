@@ -6,8 +6,10 @@ set -a; . /etc/patronus/embedded.env; set +a
 . /etc/patronus/board.sh
 mgmt_from_home() { # until the store has its own WAN rule: keep SSH/web reachable from the upstream LAN (unit.conf MGMT_NET)
   [ -n "$MGMT_NET" ] || return 0
-  nft list chain inet patronus input >/dev/null 2>&1 && ! nft list chain inet patronus input | grep -q 'patronus-boot-mgmt' && \
-  nft insert rule inet patronus input iifname "$WAN_IF" ip saddr "$MGMT_NET" tcp dport '{ 22, 80, 443 }' accept comment '"patronus-boot-mgmt"'
+  # every uplink client (both usually sit in the upstream LAN, each with its own address)
+  ifs=; for u in ${UPLINKS:-$WAN_IF}; do ifs="${ifs:+$ifs, }\"$u\""; done
+  nft list chain inet patronus input >/dev/null 2>&1 && ! nft list chain inet patronus input | grep 'patronus-boot-mgmt' >/dev/null && \
+  nft insert rule inet patronus input iifname "{ $ifs }" ip saddr "$MGMT_NET" tcp dport '{ 22, 80, 443 }' accept comment '"patronus-boot-mgmt"'
 }
 case "${1:-start}" in
 start)

@@ -29,7 +29,7 @@ done
 t "py_compile t_slate.py" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$D/t_slate.py"
 
 # 1a. no baked-in hostname: early boot takes it from /etc/hostname (owner rule: nothing hard-coded)
-t "early boot has no hard-coded hostname" sh -c "! grep -E '^hostname (slate|ax1800)' '$D/overlay/usr/libexec/patronus/early' '$D/../../embedded-aarch64/ax1800/overlay/usr/libexec/patronus/early'"
+t "early boot has no hard-coded hostname" sh -c "! grep -E '(^|[;&|] *)hostname [A-Za-z]' '$D/overlay/usr/libexec/patronus/early' '$D/../../embedded-aarch64/ax1800/overlay/usr/libexec/patronus/early'"
 
 # 1b. wifi-follow: the AP follows the uplink client's channel (stub iw/hostapd)
 t "wifi-follow (AP follows the uplink channel)" sh "$D/tests/wifi-follow-test.sh"
@@ -61,6 +61,11 @@ r=$(mkroot nowpa); rm "$r/usr/sbin/wpa_supplicant"
 tn_msg "check-rootfs: rejects an image without wpa_supplicant (no uplink)" "no network" "$D/check-rootfs.sh" "$r"
 r=$(mkroot nodb); rm "$r/usr/sbin/dropbearmulti"
 tn_msg "check-rootfs: rejects an image without dropbear (no ssh)" "no network" "$D/check-rootfs.sh" "$r"
+r=$(mkroot openap); mkdir -p "$r/etc/hostapd"; printf 'interface=wl5-ap\nssid=Open\nauth_algs=1\n' > "$r/etc/hostapd/ap5.conf"
+tn_msg "check-rootfs: rejects an open AP template" "open AP" "$D/check-rootfs.sh" "$r"
+t "check-rootfs: open AP accepted only with ALLOW_OPEN_AP=1" env ALLOW_OPEN_AP=1 "$D/check-rootfs.sh" "$r"
+printf 'wpa=2\nwpa_key_mgmt=WPA-PSK\nwpa_passphrase=example-passphrase\n' >> "$r/etc/hostapd/ap5.conf"
+t "check-rootfs: WPA2 AP template accepted" "$D/check-rootfs.sh" "$r"
 r=$(mkroot noguard); rm "$r/usr/sbin/patronus-guard"
 tn "check-rootfs: rejects an image without the guard" "$D/check-rootfs.sh" "$r"
 r=$(mkroot rec); printf 'XXXX' > "$r/usr/share/patronus-recovery/openwrt-root.squashfs"

@@ -3,7 +3,7 @@
 # Each check prints "ok: ..." or "FAIL: ..."; the script exits non-zero if any failed.
 D=$(cd "$(dirname "$0")/.." && pwd)
 WF=$D/overlay/usr/libexec/patronus/wifi-follow
-W=$(mktemp -d "${TMPDIR:-/tmp}/wf-test.XXXX"); trap 'for p in "$W"/run/hostapd-*.pid; do [ -f "$p" ] && kill "$(cat "$p")" 2>/dev/null; done; rm -rf "$W"' EXIT
+W=$(mktemp -d "${TMPDIR:-/tmp}/wf-test.XXXX"); [ -n "${KEEP:-}" ] && echo "W=$W"; [ -n "${KEEP:-}" ] || trap 'for p in "$W"/run/hostapd-*.pid; do [ -f "$p" ] && kill "$(cat "$p")" 2>/dev/null; done; rm -rf "$W"' EXIT
 fails=0
 ok() { echo "ok: $*"; }
 bad() { echo "FAIL: $*"; fails=$((fails+1)); }
@@ -178,5 +178,52 @@ rm -f "$FX/gw.up" "$FX/route.wl5-sta"; sta wl5-sta 5220 80 5210; rm -rf "$W/run/
 now 3000; sh "$WF" once; now 3030; sh "$WF" once; now 3033; sh "$WF" once; now 3036; sh "$WF" once
 chk "associated but no lease/default route: counts as dead too" grep -q 'blacklist' "$FX/wpa_cli.calls"
 chk "gen_wpa5 (board-network) drops disabled= and priority=" grep -q -E '[(]priority[|]disabled[)]=' "$D/overlay/usr/libexec/patronus/board-network"
+
+# ---- per-uplink source routing (both clients in the same upstream subnet)
+cat > "$W/bin/ip2" <<'X'
+#!/bin/sh
+# stub iproute2: addresses/routes from fixtures, rules and table routes kept in $FX/rules and $FX/tables
+[ "$1" = -4 ] && shift; [ "$1" = -o ] && shift
+case "$1 $2" in
+  "addr show") cat "$FX/addr.$4" 2>/dev/null ;;
+  "route show") if [ "$3" = default ]; then cat "$FX/defroute.$5" 2>/dev/null; else cat "$FX/kroute.$4" 2>/dev/null; fi ;;
+  "rule list") grep "^$4 " "$FX/rules" 2>/dev/null ;;
+  "rule del") grep "^$4 " "$FX/rules" >/dev/null 2>&1 || exit 2; grep -v "^$4 " "$FX/rules" > "$FX/rules.n"; mv "$FX/rules.n" "$FX/rules" ;;
+  "rule add") echo "$8 from $4 lookup $6" >> "$FX/rules" ;;
+  "route flush") grep -v "^$4 " "$FX/tables" > "$FX/tables.n" 2>/dev/null; mv "$FX/tables.n" "$FX/tables" ;;
+  "route replace") shift 2; t=$(echo "$*" | sed -n 's/.* table \([0-9]*\).*/\1/p'); echo "$t $*" >> "$FX/tables" ;;
+esac; exit 0
+X
+chmod +x "$W/bin/ip2"
+export IPCMD=$W/bin/ip2 HEALTH_STA= FOLLOW= UPLINK_TABLES="wl5-sta:4241:30241 wl24-sta:4242:30242"
+rm -rf "$W/run/wf"; : > "$FX/rules"; : > "$FX/tables"
+echo "7: wl5-sta    inet 10.1.1.141/24 brd 10.1.1.255 scope global dynamic wl5-sta" > "$FX/addr.wl5-sta"
+echo "8: wl24-sta    inet 10.1.1.173/24 brd 10.1.1.255 scope global wl24-sta" > "$FX/addr.wl24-sta"
+echo "10.1.1.0/24 proto kernel scope link src 10.1.1.141" > "$FX/kroute.wl5-sta"
+echo "10.1.1.0/24 proto kernel scope link src 10.1.1.173" > "$FX/kroute.wl24-sta"
+echo "default via 10.1.1.1 proto dhcp metric 100" > "$FX/defroute.wl5-sta"
+echo "default via 10.1.1.1 proto dhcp metric 150" > "$FX/defroute.wl24-sta"
+now 4000; sh "$WF" once
+chk "same-subnet uplinks: one source rule per address (pref 30241 -> 4241, 30242 -> 4242)" sh -c "grep -qx '30241 from 10.1.1.141 lookup 4241' $FX/rules && grep -qx '30242 from 10.1.1.173 lookup 4242' $FX/rules && [ \$(wc -l < $FX/rules) = 2 ]"
+chk "each uplink table: its subnet with its own source address + its gateway" sh -c "grep -q '^4242 10.1.1.0/24 dev wl24-sta src 10.1.1.173 table 4242' $FX/tables && grep -q '^4242 default via 10.1.1.1 dev wl24-sta table 4242' $FX/tables && grep -q '^4241 10.1.1.0/24 dev wl5-sta src 10.1.1.141 table 4241' $FX/tables"
+cp "$FX/tables" "$FX/tables.before"; now 4003; sh "$WF" once
+chk "steady state: nothing rewritten" sh -c "cmp -s $FX/tables $FX/tables.before && [ \$(wc -l < $FX/rules) = 2 ]"
+grep -v '^30242 ' "$FX/rules" > "$FX/r.n"; mv "$FX/r.n" "$FX/rules"; now 4006; sh "$WF" once
+chk "a flushed rule is restored" grep -qx '30242 from 10.1.1.173 lookup 4242' "$FX/rules"
+echo "7: wl5-sta    inet 10.1.1.150/24 brd 10.1.1.255 scope global dynamic wl5-sta" > "$FX/addr.wl5-sta"; now 4009; sh "$WF" once
+chk "new lease on one uplink: its rule follows the address, the old one is gone" sh -c "grep -qx '30241 from 10.1.1.150 lookup 4241' $FX/rules && ! grep -q '10.1.1.141' $FX/rules && [ \$(wc -l < $FX/rules) = 2 ]"
+: > "$FX/addr.wl5-sta"; : > "$FX/kroute.wl5-sta"; : > "$FX/defroute.wl5-sta"; now 4012; sh "$WF" once
+chk "uplink without an address: rule and table removed, the other uplink untouched" sh -c "! grep -q '^30241 ' $FX/rules && ! grep -q '^4241 ' $FX/tables && grep -qx '30242 from 10.1.1.173 lookup 4242' $FX/rules"
+chk "board-network: uplinks answer ARP only for their own address (arp_ignore=1, arp_announce=2)" sh -c "grep -q 'echo 1 > \$c/arp_ignore; echo 2 > \$c/arp_announce' '$D/overlay/usr/libexec/patronus/board-network'"
+# apply: the management rule covers every uplink client, not only the 2.4 GHz one
+cat > "$W/bin/nft" <<'X'
+#!/bin/sh
+case "$1 $2" in "list chain") echo "chain input {";; "insert rule") echo "$*" >> "$FX/nft.calls";; esac; exit 0
+X
+chmod +x "$W/bin/nft"; mkdir -p "$W/etc"
+printf 'UPLINKS="wl5-sta wl24-sta"\nWAN_IF=wl24-sta\nMGMT_NET=10.1.1.0/24\n' > "$W/etc/board.sh"; : > "$W/etc/embedded.env"; rm -f "$FX/nft.calls"
+sed -e "s#/etc/patronus/embedded.env#$W/etc/embedded.env#; s#/etc/patronus/board.sh#$W/etc/board.sh#" "$D/overlay/usr/libexec/patronus/apply" > "$W/apply"
+PATH="$W/bin:$PATH" sh "$W/apply" mgmt
+chk "apply mgmt: SSH/web from MGMT_NET accepted on BOTH uplinks" grep -q 'iifname { "wl5-sta", "wl24-sta" } ip saddr 10.1.1.0/24' "$FX/nft.calls"
 
 [ "$fails" = 0 ] && echo "wifi-follow: all checks passed" || { echo "wifi-follow: $fails failed"; exit 1; }

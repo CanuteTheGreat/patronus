@@ -31,6 +31,12 @@ start)
     wpa_supplicant -B -i $WAN5_IF -D nl80211 -c /run/wpa_supplicant-$WAN5_IF.conf -P /run/wpa_supplicant-$WAN5_IF.pid > /tmp/wpa5-start.txt 2>&1 \
       || { echo "wpa_supplicant ($WAN5_IF) failed to start" >> /tmp/boot-times; cat /tmp/wpa5-start.txt >&2; }
   fi
+  # Multi-homed in one subnet (both clients on the same upstream network): each uplink answers ARP only for its own
+  # address (arp_ignore=1) and asks with it (arp_announce=2). Without this the upstream router learns the 5 GHz client's
+  # MAC for the 2.4 GHz client's reserved address, its traffic arrives on the wrong uplink and the box drops it.
+  # Replies may come back on the other uplink while routes settle: loose reverse-path check (rp_filter=2).
+  for u in $UPLINKS; do c=/proc/sys/net/ipv4/conf/$u; [ -d $c ] || continue
+    echo 1 > $c/arp_ignore; echo 2 > $c/arp_announce; echo 2 > $c/rp_filter; done
   # APs: created here, started by patronus-wifi-follow on the channel of the client of the same radio
   iw phy $PHY5 interface add $AP5_IF type __ap && { [ -z "$AP5_MAC" ] || ip link set $AP5_IF address $AP5_MAC; }
   [ -f /etc/hostapd/ap5.conf ] && [ -n "$AP24_IF" ] && iw phy $PHY24 interface add $AP24_IF type __ap && { [ -z "$AP24_MAC" ] || ip link set $AP24_IF address $AP24_MAC; }
