@@ -54,8 +54,14 @@ t = {"A": 1, "PTR": 12, "AAAA": 28}[typ]
 q = struct.pack("!HHHHHH", 0x4321, 0x0100, 1, 0, 0, 0)
 for l in name.rstrip(".").split("."): q += bytes([len(l)]) + l.encode()
 q += b"\x00" + struct.pack("!HH", t, 1)
-s = socket.socket(socket.AF_INET6 if ":" in server else socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(4)
-s.sendto(q, (server, 53)); d, _ = s.recvfrom(4096)
+s = socket.socket(socket.AF_INET6 if ":" in server else socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(1)
+# like a real stub resolver: retransmit the same query (dnsmasq sends a retried query to every server of a zone,
+# while a first query only goes to the last server that answered)
+for _try in range(4):
+    s.sendto(q, (server, 53))
+    try: d, _ = s.recvfrom(4096); break
+    except socket.timeout: pass
+else: raise TimeoutError("timed out")
 def rd(i):
     out = []
     while True:
@@ -102,8 +108,8 @@ expect_ans() { # NAME TYPE SERVER WANT-SUBSTRING
   case "$got" in *"$4"*) ;; *) nl_fail "$1 $2 via $3: got [$got], want [$4]";; esac
 }
 expect_ans_wait() { # NAME TYPE SERVER WANT
-  # dnsmasq keeps using the last good server of a zone and probes all of them again
-  # only every 20 s / 50 queries (FORWARD_TIME), per zone: give each zone 45 s
+  # dnsmasq keeps using the last good server of a zone; a retransmitted query (dnsq.py resends it) goes to all of them,
+  # and it also probes them again every 20 s / 50 queries (FORWARD_TIME), per zone: give each zone 45 s
   local end=$((SECONDS + 45)) got=
   while [ "$SECONDS" -lt "$end" ]; do got=$(ask "$1" "$2" "$3" || true); case "$got" in *"$4"*) return 0;; esac; sleep 0.5; done
   nl_fail "$1 $2 via $3: got [$got], want [$4]"
