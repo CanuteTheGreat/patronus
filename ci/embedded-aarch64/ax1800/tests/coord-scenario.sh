@@ -37,7 +37,7 @@ holder() { # UNIT: a mount namespace of its own, kept alive by a sleep; its pid 
   echo $! > $T/ns-$1; sleep 1; }
 inu() { u=$1; shift; nsenter -m -t "$(cat $T/ns-$u)" "$@"; }
 uenv() { # UNIT PHY24 PHY5 -> env words for the ap scripts
-  echo "AP_BOARD=$T/board-$1.sh AP_PHY24=$2 AP_PHY5=$3 AP_GUARD=/nonexistent AP_GUEST=/nonexistent AP_COORD_AP=$AP_DIR/usr/libexec/patronus/ap AP_COORD_BIN=$AP_DIR/usr/libexec/patronus/ap-coord PATH=$T/bin:$PATH"; }
+  echo "AP_BOARD=$T/board-$1.sh AP_CHAN_DB=$T/db-$1 AP_PHY24=$2 AP_PHY5=$3 AP_GUARD=/nonexistent AP_GUEST=/nonexistent AP_COORD_AP=$AP_DIR/usr/libexec/patronus/ap AP_COORD_BIN=$AP_DIR/usr/libexec/patronus/ap-coord PATH=$T/bin:$PATH"; }
 ap_start() { # UNIT PHY24 PHY5 [extra env]
   u=$1; p24=$2; p5=$3; shift 3
   inu $u env $(uenv $u $p24 $p5) "$@" sh $AP_DIR/usr/libexec/patronus/ap start > $T/start-$u.log 2>&1; }
