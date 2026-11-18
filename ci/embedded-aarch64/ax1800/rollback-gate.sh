@@ -196,10 +196,29 @@ for sc in $SCEN; do
       *) fail "$sc: revert reason: $d";; esac
     [ "$st" = idle ] && pass "$sc: bootloader state back to idle" || fail "$sc: state $st"
     sv=$(R 'if [ -d /run/systemd/system ]; then systemctl --failed --no-legend --plain; else rc-status -c 2>/dev/null; fi'); [ -z "$sv" ] && pass "$sc: no failed services after revert" || fail "$sc: failed services: $sv"
-  else fail "$sc: did not come back on good2 (state $st, boots $bo)"; note "$s"; tail -25 "$SER" | sed 's/^/    /'; fi
+  else fail "$sc: did not come back on good2 (state $st, boots $bo)"; note "$s"; tail -25 "$SER" | sed 's/^/    /'
+    # put good2 back by hand so the next scenario starts from a known state (no cascade)
+    stop; put "$W/good2.sq" "$W/rootfs.img"; put "$K" "$W/kernel.img"; fw_setenv -c "$FWC" pat_state idle; fi
   stop
   cp "$ENVF" "$RES/env-after-$sc.img" 2>/dev/null
 done
+
+# 4. a revert that cannot work in the bootloader (its copy command fails): marked revert-failed and saved, no reset loop,
+#    the stock boot command's fallback runs (here "stock-failsafe", on the GL unit its recovery web page)
+if [ "${REVERTFAIL:-1}" = 1 ]; then
+  echo "== revert that fails in the bootloader"
+  if upgrade badkernel "$W/badkernel.k" && fw_setenv -c "$FWC" pat_rd_r false; then
+    boot; t0=$(date +%s)
+    until [ "$(E pat_state)" = revert-failed ]; do sleep 5; [ $(( $(date +%s) - t0 )) -gt "$TMO" ] && break; done
+    sleep 45
+    if [ "$(E pat_state)" = revert-failed ]; then pass "revertfail: state revert-failed saved after $(E pat_boots) trial boots"
+      r=$(grep -ac "U-Boot 20" "$SER"); sleep 30
+      [ "$(grep -ac "U-Boot 20" "$SER")" = "$r" ] && [ "$r" -le $((ATT + 2)) ] && pass "revertfail: no reset loop ($r bootloader starts in total)" || fail "revertfail: resets keep coming ($r)"
+      grep -aq stock-failsafe "$SER" && pass "revertfail: the stock boot command's fallback runs" || fail "revertfail: no stock fallback"
+    else fail "revertfail: state $(E pat_state)"; tail -25 "$SER" | sed 's/^/    /'; fi
+  else fail "revertfail: arm"; fi
+  stop
+fi
 
 fw_printenv -c "$FWC" > "$RES/env-final.txt" 2>&1
 echo

@@ -143,10 +143,13 @@ env_script() { # file: writes the "name value" lines
   echo "pat_ver $GUARD_ENV_VERSION"
   echo "pat_orig_bootcmd $orig"
   echo "bootcmd run pat_boot; $GUARD_UB_BOOT; run pat_failed; $rest"
-  echo "pat_boot if test \"\${pat_state}\" = revert; then run pat_revert; if test \"\${pat_state}\" = revert; then run pat_wdt; fi; elif test \"\${pat_state}\" = trial; then run pat_trial; fi"
+  echo "pat_boot if test \"\${pat_state}\" = revert; then run pat_revert; if test \"\${pat_state}\" = revert; then setenv pat_state revert-failed; run pat_save; fi; elif test \"\${pat_state}\" = trial; then run pat_trial; fi"
   echo "pat_trial if itest \${pat_left} -gt 0; then setexpr pat_left \${pat_left} - 1; setexpr pat_boots \${pat_boots} + 1; run pat_save; setenv $B \${$B} patronus.trial=\${pat_boots}$ka; run pat_wdt; else setenv pat_state revert; run pat_save; run pat_revert; fi"
   echo "pat_revert echo patronus: restoring the previous image; run pat_vol && run pat_rd_r && run pat_rd_k && run pat_wr_r && run pat_wr_k && setenv pat_state reverted && run pat_save"
-  echo "pat_failed if test \"\${pat_state}\" = trial; then reset; fi; if test \"\${pat_state}\" = revert; then reset; fi"
+  # a trial image that does not boot: reset (the next boot counts). A revert that failed in this boot is NOT retried
+  # in a reset loop (a power cut during the copy is: the state is still "revert" at the next power-on); the stock
+  # boot command's own fallbacks (GL's recovery web page) follow
+  echo "pat_failed if test \"\${pat_state}\" = trial; then reset; fi"
   echo "pat_vol $vol"
   echo "pat_rd_r $rr"; echo "pat_rd_k $rk"; echo "pat_wr_r $wr"; echo "pat_wr_k $wk"
   echo "pat_save $GUARD_UB_SAVE"
@@ -317,7 +320,13 @@ boot)
               [ -n "$cause" ] || cause="no report from $nb: it never reached its health checks (kernel panic, hang, crash or unbootable kernel)"
               event reverted "trial of $nb failed after $(genv pat_boots) boot(s); the bootloader restored $(genv pat_prev). Cause: $cause"
               rm -f "$GD/last-failure"; senv "pat_state idle" "pat_left" ;;
-    revert)   event revert-failed "the bootloader could not restore $(genv pat_prev); running whatever booted" ; senv "pat_state revert-failed" ;;
+    revert|revert-failed)
+              # reported once per armed trial; `patronus-guard ok` (patronus-flash confirm) clears it
+              a=$(genv pat_armed)
+              if [ "$(cat "$GD/revert-failed-reported" 2>/dev/null)" != "$a" ]; then
+                event revert-failed "the bootloader could not restore $(genv pat_prev); running $(sed -n 's/^BUILD=//p' "$GUARD_RELEASE")"
+                echo "$a" > "$GD/revert-failed-reported"; fi
+              [ "$st" = revert-failed ] || senv "pat_state revert-failed" ;;
     trial)    : > "$RUN/guard-trial"; rm -f "$GD/last-failure"
               setsid "$0" run </dev/null >>/tmp/boot-guard.log 2>&1 & ;;
   esac
@@ -350,7 +359,7 @@ run)
     write_status; sleep "$GUARD_INTERVAL"
   done ;;
 check) checks ;;
-ok) [ "$(genv pat_state)" = trial ] || { echo "no trial running"; exit 0; }; confirm "confirmed by hand" ;;
+ok) case "$(genv pat_state)" in trial|revert-failed) confirm "confirmed by hand" ;; *) echo "no trial running" ;; esac ;;
 status)
   if [ "${2:-}" = --json ]; then status_json; exit 0; fi
   echo "boot guard: $( [ "$GUARD_ENABLED" = 1 ] && echo on || echo off), bootloader script: $(env_installed && echo installed || echo 'NOT installed')"
