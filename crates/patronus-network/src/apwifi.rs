@@ -305,7 +305,7 @@ pub struct WifiConfig {
     /// ACS survey rounds (1-20)
     #[serde(default = "default_acs_scans")]
     pub acs_scans: u32,
-    /// channel coordination between this network's access points (docs 12.16): ACS keeps off the channels other
+    /// channel coordination between this network's access points (docs 12.17): ACS keeps off the channels other
     /// units use, per band (default on)
     #[serde(default = "yes")]
     pub coord24: bool,
@@ -590,7 +590,7 @@ pub struct WifiInput {
     /// ACS survey rounds (1-20)
     #[serde(default)]
     pub acs_scans: Option<u32>,
-    /// channel coordination between this network's access points (docs 12.16)
+    /// channel coordination between this network's access points (docs 12.17)
     #[serde(default)]
     pub coord24: Option<bool>,
     #[serde(default)]

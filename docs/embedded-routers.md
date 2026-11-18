@@ -919,7 +919,7 @@ never exported):
   centre) and "picked automatically" or "fixed"; while ACS measures they say so. `patronus ap-wifi show` prints the same.
 - ACS does not coordinate between access points: after both house units restarted on the defaults they picked the same
   5 GHz block (36-48) and the busier unit's 5 GHz went from 7-9 % to 38 % busy. Units of one network now coordinate
-  (12.16); disjoint channel lists on the Wi-Fi page remain the manual alternative.
+  (12.17); disjoint channel lists on the Wi-Fi page remain the manual alternative.
 - `ap stop` waits until each hostapd has exited (it needs ~0.8 s to release the radio): a start right after a stop
   failed with "Match already configured" and crashed, so a Wi-Fi page save rolled back now and then.
 - A save or `apply` that only spells out defaults (`AP_HT24=20` written or left out) is no change and restarts nothing;
@@ -1033,7 +1033,7 @@ LEBs (31 MiB) on a unit with `patronus_data` from `ubi-data`: room for a full pr
   revert, the watchdog arm, ath11k/Wi-Fi after a revert).
 
 
-### 12.16 Channel coordination between the access points of one network (2026-11-18)
+### 12.17 Channel coordination between the access points of one network (2026-11-18)
 
 Automatic channel selection (12.14) measures only what the unit hears while it decides, so two units with the same
 SSIDs that start together, or one after the other with the first not yet on air, can both land on the same 80 MHz block

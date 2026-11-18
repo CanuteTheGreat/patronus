@@ -1,5 +1,5 @@
 #!/bin/sh
-# ap-coord: keep this unit's automatic (ACS) channels off the channels its OTHER access points use (docs 12.16).
+# ap-coord: keep this unit's automatic (ACS) channels off the channels its OTHER access points use (docs 12.17).
 # hostapd's ACS measures only what it hears, so two units with the same SSIDs that start together (or one after the
 # other, with the first not yet on air) can both end on the same 80 MHz block and share its airtime. Commercial
 # controllers plan channels across their APs; this does the same without a controller, from what each unit can hear:

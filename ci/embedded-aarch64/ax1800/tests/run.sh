@@ -192,7 +192,7 @@ aprender fixed "$TWO
 AP_CHAN5=149 AP_CHAN24=6"
 ! grep -qE '^(acs_|chanlist=)' "$A/fixed/ap5.conf" "$A/fixed/ap24.conf" && ok "ap: a fixed channel writes no ACS settings" || no "ap: ACS lines with fixed channels"
 
-# 3a. channel coordination between access points (docs 12.16): ap-coord parse/busy/plan/check and the ACS list in the render
+# 3a. channel coordination between access points (docs 12.17): ap-coord parse/busy/plan/check and the ACS list in the render
 CO=$O/usr/libexec/patronus/ap-coord; FX=$D/tests/fixtures/scan-coord.txt
 printf '. %s\nAP_SSIDS="m g"\nSSID_m="Plat 9" KEY_m=examplekey\nSSID_g=Hogs KEY_g=guestkey99\n' "$O/etc/patronus/board.sh" > "$A/co-board.sh"
 co() { AP_BOARD=${CB:-$A/co-board.sh} AP_RENDER_OUT=$A/co sh "$CO" "$@"; }

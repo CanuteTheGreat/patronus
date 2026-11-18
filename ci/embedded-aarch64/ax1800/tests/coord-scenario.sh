@@ -1,6 +1,6 @@
 #!/bin/sh
 # coord-scenario.sh (inside the hwsim container, 4 radios, regulatory domain US): two access points of ONE network (same
-# SSID) must not end on the same channel block (docs 12.16). Each "unit" is the image's own `ap start` run in a private
+# SSID) must not end on the same channel block (docs 12.17). Each "unit" is the image's own `ap start` run in a private
 # mount namespace (own /run, /tmp: hostapd control sockets, pid files, logs) on two radios of its own, with the Patronus
 # hostapd; the radios hear each other through mac80211_hwsim like units in one house.
 #   radios 1,2 = unit a (2.4 / 5 GHz), radios 3,4 = unit b.

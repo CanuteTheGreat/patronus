@@ -6,7 +6,7 @@
 # firmware asserts on (so the check can go red). Then automatic channel selection (acs-scenario.sh) with the configs the
 # image's `ap render` writes, regulatory domain US (host-global like the module: set for the run, reset to 00 after).
 # Then channel coordination between two units of one network (coord-scenario.sh: 4 radios, two units in private mount
-# namespaces, docs 12.16).
+# namespaces, docs 12.17).
 # Usage: ci/embedded-aarch64/ax1800/tests/xbss-hwsim.sh   (SCENARIOS="xbss acs coord" by default)
 set -euo pipefail
 cd "$(dirname "$0")/.."
