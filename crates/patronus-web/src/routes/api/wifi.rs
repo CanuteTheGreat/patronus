@@ -278,6 +278,7 @@ pub const AP_ROUTER_PAGES: &[(&str, &str)] = &[
     ("/segmentation/time", "Time limits"),
     ("/segmentation/dns", "DNS policy and logs"),
     ("/insights", "Traffic insights"),
+    ("/svc/guest", "Guest network"),
 ];
 
 /// API prefixes whose changes only make sense on a router.
@@ -287,6 +288,7 @@ const AP_ROUTER_APIS: &[&str] = &[
     "/api/ddns",
     "/api/routing",
     "/api/segmentation",
+    "/api/svc/guest",
     "/api/setup/apply",
 ];
 

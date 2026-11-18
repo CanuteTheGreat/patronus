@@ -37,6 +37,9 @@ mdns = []
 nat64 = []
 l2tp = []
 upnp = []
+# guest network: isolated VLAN/Wi-Fi network with its own DHCP/DNS, caps, schedule and vouchers
+# (RDEPEND net-dns/dnsmasq, iproute2, nftables; net-wireless/hostapd for the guest SSID)
+guest = []
 vrf = []
 # device segmentation (lane s): L2 isolation settings (proxy ARP, isolated bridge ports)
 # for the nft default-deny table; the rules themselves are always compiled

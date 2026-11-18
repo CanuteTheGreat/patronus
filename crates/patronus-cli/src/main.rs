@@ -172,6 +172,13 @@ enum Commands {
         action: PolicyCommands,
     },
 
+    /// Guest network: an isolated VLAN/Wi-Fi network for visitors (USE=guest)
+    #[cfg(feature = "guest")]
+    Guest {
+        #[command(subcommand)]
+        action: GuestCommands,
+    },
+
     /// SD-WAN edge agent (join the overlay of a Patronus SD-WAN dashboard)
     Edge {
         #[command(subcommand)]
@@ -356,6 +363,46 @@ enum PolicyCommands {
         /// Policy name or ID
         policy: String,
     },
+}
+
+#[cfg(feature = "guest")]
+#[derive(Subcommand)]
+pub enum GuestCommands {
+    /// Every setting (secrets masked) and the vouchers
+    Show,
+    /// Live state: bridge, DHCP/DNS, firewall table, clients, access, Wi-Fi
+    Status,
+    /// Change settings, e.g. `patronus guest set vlan_id=40 down_kbit=20000 enabled=true`
+    Set {
+        /// key=value pairs (see `patronus guest show` for the keys)
+        #[arg(required = true)]
+        pairs: Vec<String>,
+    },
+    /// Switch the guest network on
+    Enable,
+    /// Switch the guest network off (bridge, VLAN, DHCP and firewall table are removed)
+    Disable,
+    /// Timed access: open for N minutes (the network closes by itself)
+    Open {
+        #[arg(default_value_t = 240)]
+        minutes: i64,
+    },
+    /// Timed access: close now
+    Close,
+    /// Generate a new shared guest Wi-Fi password and print it once
+    NewPassword,
+    /// Make a voucher (its own Wi-Fi password that expires) and print the password once
+    Voucher {
+        #[arg(long)]
+        name: Option<String>,
+        /// valid for this many minutes (0 = never expires)
+        #[arg(long, default_value_t = 1440)]
+        minutes: i64,
+    },
+    /// List the vouchers
+    Vouchers,
+    /// Delete a voucher by id
+    VoucherDelete { id: i64 },
 }
 
 #[derive(Subcommand)]
@@ -629,6 +676,11 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Policy { action } => {
             policy::handle_policy_command(action, cli.config).await?;
+        }
+
+        #[cfg(feature = "guest")]
+        Commands::Guest { action } => {
+            commands::guest::run(action, cli.db).await?;
         }
 
         Commands::Edge { action } => {

@@ -173,6 +173,7 @@ fn svc_appliers(spec: &patronus_network::svc::Spec) -> Vec<&'static str> {
             | "frr"
             | "edge"
             | "vrf"
+            | "guest"
     ) {
         v.push("firewall");
     }
@@ -305,7 +306,45 @@ impl LanManager {
 
     pub async fn svc_action(&self, slug: &str, name: &str, body: Value) -> anyhow::Result<Value> {
         let m = Self::svc_model(slug)?;
-        m.action(&self.store, name, &body).await.map_err(e)
+        if !m.action_applies(name) {
+            return m.action(&self.store, name, &body).await.map_err(e);
+        }
+        // a button that changes stored settings: snapshot, act, apply, undo on failure
+        let _g = self.edit.lock().await;
+        let snap = self.begin(&format!("{slug} {name}")).await?;
+        let out = m.action(&self.store, name, &body).await.map_err(e)?;
+        self.commit(&format!("{slug} {name}"), snap, &svc_appliers(m.spec()))
+            .await?;
+        Ok(out)
+    }
+
+    /// Guest network watcher tick: re-apply the guest network when a Wi-Fi
+    /// voucher has expired (or was added) since the last look, or when the
+    /// local UTC offset changed (the schedule's nft `meta hour` rules are
+    /// converted from local time when they are loaded).
+    #[cfg(feature = "guest")]
+    pub async fn guest_tick(&self, last: &mut Option<(Vec<i64>, i32)>) {
+        if !patronus_network::guest::is_enabled(&self.store).await {
+            *last = None;
+            return;
+        }
+        let now = chrono::Utc::now().timestamp();
+        let offset = chrono::Local::now().offset().local_minus_utc();
+        let ids = patronus_network::guest::active_voucher_ids(&self.store, now)
+            .await
+            .unwrap_or_default();
+        let cur = (ids, offset);
+        match last {
+            Some(prev) if *prev != cur => {
+                match self.reapply("guest").await {
+                    Ok(_) => tracing::info!("guest network re-applied (voucher set or UTC offset changed)"),
+                    Err(err) => tracing::error!("guest network re-apply: {err}"),
+                }
+                *last = Some(cur);
+            }
+            Some(_) => {}
+            None => *last = Some(cur),
+        }
     }
 }
 

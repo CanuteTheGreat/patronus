@@ -9,7 +9,7 @@ name = "patronus-cli"
 path = "src/main.rs"
 
 [features]
-default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "uci-import"]
+default = ["web", "cli", "nftables", "vlan", "pppoe", "dhcpcd", "dhcp-server", "dns-server", "ntp-server", "multiwan", "vpn-wireguard", "vpn-ipsec", "totp", "gitops", "ha", "qos", "syslog", "netflow", "igmp", "mdns", "nat64", "l2tp", "vpn-openvpn", "upnp", "vrf", "web-proxy", "intrusion-detection", "dynamic-routing", "sdwan-edge", "ldap", "plugins", "segmentation", "wifi-ap", "guest", "uci-import"]
 
 # `patronus import-uci`: OpenWrt UCI config importer (no extra dependencies;
 # its wifi-ap / dhcp-server parts are cfg-gated inside it)
@@ -69,6 +69,7 @@ mdns = ["patronus-network/mdns", "patronus-web?/mdns"]
 nat64 = ["patronus-network/nat64", "patronus-web?/nat64"]
 l2tp = ["patronus-network/l2tp", "patronus-web?/l2tp"]
 upnp = ["patronus-network/upnp", "patronus-web?/upnp"]
+guest = ["patronus-network/guest", "patronus-web?/guest"]
 ldap = ["patronus-web?/ldap"]
 plugins = ["patronus-network/plugins", "patronus-web?/plugins"]
 segmentation = ["patronus-network/segmentation", "patronus-web?/segmentation"]

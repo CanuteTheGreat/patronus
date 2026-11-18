@@ -407,7 +407,8 @@ async fn features() -> axum::Json<serde_json::Value> {
         "ldap",
         "plugins",
         "segmentation",
-        "wifi-ap"
+        "wifi-ap",
+        "guest"
     ];
     let role = api::wifi::role();
     let release = std::fs::read_to_string(
@@ -471,12 +472,14 @@ pub fn absent_features(
         ("dhcp", "DHCP server"),
         ("dns", "DNS resolver"),
         ("segmentation", "Device segmentation"),
+        ("guest", "Guest network"),
     ];
     let ap = role == api::setup::DeviceRole::Ap;
     let router_job: &[&str] = &[
         "dhcp",
         "dns",
         "segmentation",
+        "guest",
         "multiwan",
         "pppoe",
         "nat64",

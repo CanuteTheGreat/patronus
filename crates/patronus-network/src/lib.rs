@@ -120,6 +120,9 @@ pub mod proxy;
 pub mod seg;
 #[cfg(feature = "upnp")]
 pub mod upnp;
+#[cfg(feature = "guest")]
+pub mod guest;
+pub mod radio;
 #[cfg(feature = "vrf")]
 pub mod vrf;
 #[cfg(feature = "wifi-ap")]

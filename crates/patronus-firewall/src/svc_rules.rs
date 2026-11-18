@@ -52,6 +52,35 @@ fn safe_dev(d: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
 }
 
+/// `tcp/853,udp/123,tcp/8000-8010` -> [("tcp", ["853", "8000-8010"]), ("udp", ["123"])];
+/// anything that is not proto/digits[-digits] is dropped.
+fn guest_ports(s: &str) -> Vec<(&'static str, Vec<String>)> {
+    let mut tcp = Vec::new();
+    let mut udp = Vec::new();
+    for part in s.split(',').map(str::trim) {
+        let Some((proto, ports)) = part.split_once('/') else { continue };
+        let ok = !ports.is_empty()
+            && ports.split('-').count() <= 2
+            && ports.split('-').all(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()));
+        if !ok {
+            continue;
+        }
+        match proto.to_ascii_lowercase().as_str() {
+            "tcp" => tcp.push(ports.to_string()),
+            "udp" => udp.push(ports.to_string()),
+            _ => {}
+        }
+    }
+    let mut v = Vec::new();
+    if !tcp.is_empty() {
+        v.push(("tcp", tcp));
+    }
+    if !udp.is_empty() {
+        v.push(("udp", udp));
+    }
+    v
+}
+
 async fn devices(store: &ConfigStore, spec: &str) -> Vec<String> {
     let v = match spec.strip_prefix('@') {
         Some(role) => store.interfaces_with_role(role).await.unwrap_or_default(),
@@ -254,6 +283,41 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- Guest network: the accepts the isolated network needs in the main table
+    // (the `inet patronus_guest` table drops everything else first). Defaults
+    // are the ones of `patronus_network::guest` (bridge br-guest, internet @wan).
+    let g = settings(store, "guest").await?;
+    if on(&g, "enabled") {
+        let br = g.get("bridge").map(String::as_str).filter(|b| !b.is_empty()).unwrap_or("br-guest");
+        if safe_dev(br) {
+            out.filter.push(format!(
+                "add rule {t} input iifname \"{br}\" udp sport 68 udp dport 67 accept comment \"guest DHCP\""
+            ));
+            if g.get("dns_servers").map(|v| v.trim().is_empty()).unwrap_or(true) {
+                out.filter.push(format!(
+                    "add rule {t} input iifname \"{br}\" meta l4proto {{ tcp, udp }} th dport 53 accept comment \"guest DNS\""
+                ));
+            }
+            if g.get("allow_ping").map(|v| on(&g, "allow_ping") || v.trim().is_empty()).unwrap_or(true) {
+                out.filter.push(format!(
+                    "add rule {t} input iifname \"{br}\" icmp type echo-request accept comment \"guest ping\""
+                ));
+            }
+            for (proto, ports) in guest_ports(g.get("router_ports").map(String::as_str).unwrap_or("")) {
+                out.filter.push(format!(
+                    "add rule {t} input iifname \"{br}\" {proto} dport {{ {} }} accept comment \"guest router service\"",
+                    ports.join(", ")
+                ));
+            }
+            let wan_spec = g.get("internet_interface").map(String::as_str).filter(|b| !b.is_empty()).unwrap_or("@wan");
+            for w in devices(store, wan_spec).await {
+                out.filter.push(format!(
+                    "add rule {t} forward iifname \"{br}\" oifname \"{w}\" accept comment \"guest to the internet\""
+                ));
+            }
+        }
+    }
+
     // --- OpenVPN server: the listen port, and the tunnel may reach the LAN
     let ov = settings(store, "openvpn").await?;
     if on(&ov, "enabled") {
@@ -425,6 +489,34 @@ mod tests {
         put(&s, "igmp.enabled", "0").await;
         put(&s, "nat64.enabled", "0").await;
         assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
+    }
+
+    #[tokio::test]
+    async fn guest_network_opens_only_dhcp_dns_ping_and_the_internet_leg() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth0", Some("wan")).await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        put(&s, "guest.enabled", "0").await;
+        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default(), "off: nothing");
+        put(&s, "guest.enabled", "1").await;
+        put(&s, "guest.router_ports", "tcp/853, udp/123, tcp/8000-8010, tcp/80; flush ruleset, icmp/1").await;
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(f.contains("input iifname \"br-guest\" udp sport 68 udp dport 67 accept"), "{f}");
+        assert!(f.contains("input iifname \"br-guest\" meta l4proto { tcp, udp } th dport 53 accept"), "{f}");
+        assert!(f.contains("input iifname \"br-guest\" icmp type echo-request accept"), "{f}");
+        assert!(f.contains("tcp dport { 853, 8000-8010 } accept"), "{f}");
+        assert!(f.contains("udp dport { 123 } accept"), "{f}");
+        assert!(!f.contains("flush ruleset") && !f.contains("icmp/1"), "bad entries never reach nft: {f}");
+        assert!(f.contains("forward iifname \"br-guest\" oifname \"eth0\" accept"), "{f}");
+        assert!(!f.contains("oifname \"eth1\""), "never towards the LAN: {f}");
+        // DNS handed out elsewhere, ping off, another bridge name
+        put(&s, "guest.dns_servers", "9.9.9.9").await;
+        put(&s, "guest.allow_ping", "0").await;
+        put(&s, "guest.bridge", "gst0").await;
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(!f.contains("th dport 53") && !f.contains("echo-request") && f.contains("iifname \"gst0\""), "{f}");
+        put(&s, "guest.bridge", "gst0\" accept #").await;
+        assert!(!svc_rules(&s).await.unwrap().filter.join("\n").contains("accept #"), "an unsafe device name emits nothing");
     }
 
     #[tokio::test]

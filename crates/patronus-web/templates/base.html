@@ -105,6 +105,7 @@
             background: var(--bg);
         }
 
+        .nav-item.nav-unavailable { opacity: 0.6; font-style: italic; }
         .nav-item.active {
             background: var(--bg);
             border-left-color: var(--primary);
@@ -772,6 +773,10 @@
                         </svg>
                         <span>Device segmentation</span>
                     </a>
+                    <a href="/svc/guest" class="nav-item {% if page == "svc-guest" %}active{% endif %}">
+                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        <span>Guest network</span>
+                    </a>
                 </div>
 
                 <div class="nav-section">
@@ -1008,10 +1013,16 @@
         const need = {'/vpn': ['wireguard', 'ipsec', 'openvpn', 'l2tp'], '/dhcp': ['dhcp'], '/dns': ['dns'], '/ntp': ['ntp'], '/ha': ['ha'], '/qos': ['qos'],
             '/segmentation': ['segmentation'], '/segmentation/time': ['segmentation'], '/segmentation/dns': ['dns'], '/packages': ['plugins'],
             '/svc/syslog': ['syslog'], '/svc/netflow': ['netflow'], '/svc/igmp': ['igmp'], '/svc/mdns': ['mdns'], '/svc/nat64': ['nat64'], '/svc/l2tp': ['l2tp'],
-            '/svc/ids': ['intrusion-detection'], '/svc/frr': ['dynamic-routing']};
+            '/svc/ids': ['intrusion-detection'], '/svc/frr': ['dynamic-routing'], '/svc/guest': ['guest']};
         document.querySelectorAll('.sidebar-nav a.nav-item').forEach(a => {
             const f = need[a.getAttribute('href')];
-            if (f && !f.some(x => have.has(x))) a.style.display = 'none';
+            if (f && !f.some(x => have.has(x))) {
+                if (a.getAttribute('href') === '/svc/guest') {
+                    // never silently hidden: stays in the menu, marked, and the page says why
+                    a.classList.add('nav-unavailable'); a.title = 'Not available on this unit: open it to see why';
+                    const sp = a.querySelector('span'); if (sp && !sp.textContent.includes('unavailable')) sp.textContent += ' (unavailable)';
+                } else a.style.display = 'none';
+            }
         });
         // the Wi-Fi page: units whose radios this UI drives (router-tier access points)
         const wifi = document.getElementById('nav-wifi');

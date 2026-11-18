@@ -16,6 +16,8 @@ pub mod import_uci;
 pub mod init;
 pub mod ipdb;
 pub mod metrics;
+#[cfg(feature = "guest")]
+pub mod guest;
 #[cfg(feature = "plugins")]
 pub mod plugin;
 pub mod policy;

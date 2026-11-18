@@ -50,6 +50,25 @@ fn prepare_app(state: AppState) -> axum::Router {
         }
     });
 
+    // Guest network: expire Wi-Fi vouchers (and follow a changed UTC offset) every minute.
+    #[cfg(feature = "guest")]
+    {
+        let guest_state = state.clone();
+        tokio::spawn(async move {
+            let secs = std::env::var("PATRONUS_GUEST_TICK_SECS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .filter(|s| *s > 0)
+                .unwrap_or(60);
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(secs));
+            let mut last = None;
+            loop {
+                interval.tick().await;
+                guest_state.lan.guest_tick(&mut last).await;
+            }
+        });
+    }
+
     // Remote / encrypted automatic backups: upload to every target that is due.
     let backup_state = state.clone();
     tokio::spawn(async move {
