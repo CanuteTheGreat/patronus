@@ -92,3 +92,9 @@ jwt_secret
 # live ISO builder outputs
 gentoo/iso/
 iso-out/
+
+# site build inputs/outputs
+site/dist/
+site/THIRD-PARTY-LICENSES.txt
+THIRD-PARTY-LICENSES.txt
+THIRD-PARTY-LICENSES.txt.gz

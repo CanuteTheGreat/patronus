@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}Open-source licenses - Patronus{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Open-source licenses</h1>
+    <p class="page-subtitle">The license of Patronus and of the software built into it. This page and the files
+        it links to are served by this device; nothing is fetched from the internet.</p>
+</div>
+
+<div class="card" id="patronus-license">
+    <div class="card-header"><h2 class="card-title">Patronus {{ version }}</h2></div>
+    <p class="text-sm">Patronus is free software: you can redistribute it and modify it under the terms of the
+        GNU General Public License, version 3 or (at your option) any later version. It is distributed in the hope
+        that it will be useful, but without any warranty.</p>
+    <p class="text-sm">The full license text is in the file <span class="mono">LICENSE</span> of the source code.
+        The source code of this version is public:
+        <a href="{{ source_url }}" rel="noopener">{{ source_url }}</a>.</p>
+</div>
+
+<div class="card" id="third-party">
+    <div class="card-header"><h2 class="card-title">Third-party components</h2></div>
+    {% if bundle_present %}
+    <p class="text-sm">The Rust libraries built into <span class="mono">patronus-web</span> and
+        <span class="mono">patronus-cli</span>, each with its license text and copyright notice.</p>
+    <p class="text-sm"><a id="third-party-link" class="btn btn-secondary btn-sm" href="/licenses/third-party.txt">Open the third-party license list</a>
+        <span class="text-muted">plain text, {{ bundle_size }}{% if bundle_gz %} (compressed on this device){% endif %}</span></p>
+    {% else %}
+    <p class="text-sm" id="third-party-omitted"><b>The third-party license list is not on this device.</b>
+        {{ omitted_reason }}</p>
+    <p class="text-sm">The same list is attached to every release as <span class="mono">THIRD-PARTY-LICENSES.txt</span>
+        and published at <a href="{{ site_url }}/licenses/" rel="noopener">{{ site_url }}/licenses/</a>.</p>
+    {% endif %}
+</div>
+
+<div class="card" id="os-licenses">
+    <div class="card-header"><h2 class="card-title">Operating system packages</h2></div>
+    <p class="text-sm">The Linux kernel, nftables, Unbound, chrony, hostapd and the other programs on the image are
+        separate works with their own licenses.{% if embedded_tier %} The router-tier root file system is built from
+        the same kind of packages.{% endif %} On a system with a package database, the license of each installed
+        package is listed in <span class="mono">/var/db/pkg/*/*/LICENSE</span>
+        (<span class="mono">equery meta &lt;package&gt;</span> shows it), and the license texts are in
+        <span class="mono">/var/db/repos/gentoo/licenses/</span> where the package tree is installed.</p>
+</div>
+{% endblock %}

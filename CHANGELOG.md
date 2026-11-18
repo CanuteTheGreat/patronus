@@ -1,18 +1,8 @@
 # Changelog
 
-All notable changes to Patronus Firewall will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-
-### Guest network (`USE=guest`, on by default in the ebuild, off until you switch it on)
-
-- New **Guest network** page, API (`/api/svc/guest`) and `patronus guest` command: an isolated network for visitors on its own VLAN and/or Wi-Fi name with its own DHCP and DNS. Guests get the internet and nothing else; they cannot reach the LAN, the router's web page or SSH, private ranges behind the WAN, or each other, and nothing can start a connection into the guest network. Own nft table `inet patronus_guest`, applied atomically; every value is a setting with a default and is part of the configuration (export, history, rollback).
-- Optional speed caps (network: `tc`; per guest: nft meters), a daily schedule or an "open for N minutes" window that closes itself in the kernel, router services and internet ports guests may use, a shared Wi-Fi password with a QR code and time-limited WPA2 vouchers (no login page).
-- Not available on an access-point unit or in the embedded router images (flash/RAM); the page, the menu and the System page say so and why. IPv6 for guests is not supported yet (guest IPv6 is dropped).
-- Migration 1400 (new lane `t`): `guest_vouchers`. Docs: `docs/GUEST-NETWORK.md`.
+All notable changes to Patronus Firewall. Versions follow [Semantic Versioning](https://semver.org/);
+see [docs/UPDATE-POLICY.md](docs/UPDATE-POLICY.md) for what each kind of release means and how to update
+or roll back. Generated from the commit history by `ci/changelog.py`; do not edit by hand.
 
 ## [0.2.0] - 2026-10-30
 
@@ -193,51 +183,3 @@ CI on the release commit: Format + Clippy (whole workspace, `-D warnings`) + Tes
 
 ### Fixed
 - N/A (initial release)
-
----
-
-## Release Process
-
-See [RELEASE-PROCESS.md](RELEASE-PROCESS.md) for details on creating releases.
-
-### Version Numbering
-
-Patronus follows Semantic Versioning:
-- **MAJOR** version for incompatible API changes
-- **MINOR** version for new functionality in a backwards compatible manner
-- **PATCH** version for backwards compatible bug fixes
-
-### Release Checklist
-
-- [ ] Update CHANGELOG.md
-- [ ] Update version in Cargo.toml files
-- [ ] Run full test suite
-- [ ] Update documentation
-- [ ] Create Git tag
-- [ ] Build release binaries
-- [ ] Update Gentoo ebuild
-- [ ] Generate ebuild manifest
-- [ ] Create GitHub release
-- [ ] Announce release
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on contributing to Patronus.
-
----
-
-## Links
-
-- **Repository:** https://github.com/CanuteTheGreat/patronus
-- **Issue Tracker:** https://github.com/CanuteTheGreat/patronus/issues
-- **Discussions:** https://github.com/CanuteTheGreat/patronus/discussions
-- **Documentation:** [docs/](docs/)
-- **Gentoo Overlay:** https://github.com/CanuteTheGreat/patronus-overlay
-
----
-
-**Co-Authored-By:** Claude <noreply@anthropic.com>
-**Date:** 2025-10-08
-**License:** GPL-3.0-or-later

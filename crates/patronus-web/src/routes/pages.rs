@@ -203,9 +203,12 @@ pub async fn system(State(state): State<AppState>, me: crate::auth::AuthUser) ->
     let services = state.system.list_services().await.unwrap_or_default();
     let config = state.system.get_config().await.unwrap_or_default();
     let disk = host::disk("/");
+    let about = crate::routes::legal::about_links(&state).await;
     let dash = || "unknown".to_string();
     let template = SystemTemplate {
         page: "system",
+        site_url: about.site_url,
+        source_url: about.source_url,
         users,
         me_id: me.session.user_id,
         me_username: me.session.username.clone(),

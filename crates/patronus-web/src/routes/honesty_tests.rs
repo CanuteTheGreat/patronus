@@ -412,6 +412,7 @@ async fn routes_services_updates_and_pages_are_live_or_honest() {
         "/vpn",
         "/routing",
         "/diagnostics",
+        "/licenses",
     ] {
         let (s, page) = a.call(Method::GET, uri, None).await;
         assert_eq!(s, StatusCode::OK, "{uri}");
@@ -501,6 +502,7 @@ async fn page_assets_and_the_favicon_are_served() {
         "/monitoring",
         "/system",
         "/diagnostics",
+        "/licenses",
         "/login",
     ];
     for page in pages {
@@ -578,4 +580,63 @@ async fn routing_starts_empty_and_refuses_bad_input() {
         .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     let _ = std::fs::remove_dir_all(&a.dir);
+}
+
+/// The Open-source licenses page: reachable from the System page's About card as a real anchor, titled,
+/// and the bundle is served from the file the setting names (or the page says why it is not there).
+#[tokio::test]
+async fn licenses_page_is_reachable_and_serves_the_bundle_or_says_why_not() {
+    let a = app().await;
+    let (_, system) = a.call(Method::GET, "/system", None).await;
+    assert!(
+        system.contains(r#"<a href="/licenses">Open-source licenses</a>"#),
+        "the About card links to the licenses page"
+    );
+    assert!(system.contains("/privacy/") && system.contains("/docs/update-policy/"));
+
+    let (s, page) = a.call(Method::GET, "/licenses", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(page.contains("<title>Open-source licenses - Patronus</title>"));
+    assert!(page.contains("GNU General Public License"));
+    assert!(
+        page.contains("id=\"third-party-omitted\"")
+            && page.contains("not installed on this system"),
+        "no bundle installed: the page says so and why, no dead link"
+    );
+    assert!(!page.contains("/licenses/third-party.txt\""));
+    let (s, text) = a.call(Method::GET, "/licenses/third-party.txt", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(
+        text.contains("not on this device") && text.contains("not installed"),
+        "{text}"
+    );
+
+    let file = std::env::temp_dir().join(format!("pat-lic-bundle-{}.txt", std::process::id()));
+    std::fs::write(&file, "Patronus test bundle\nMIT License\n").unwrap();
+    let store = patronus_config::ConfigStore::open(a.dir.join("config.db"))
+        .await
+        .unwrap();
+    store
+        .save_system_config("legal.licenses_file", file.to_str().unwrap())
+        .await
+        .unwrap();
+    let (s, page) = a.call(Method::GET, "/licenses", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(page.contains(
+        r#"id="third-party-link" class="btn btn-secondary btn-sm" href="/licenses/third-party.txt""#
+    ));
+    let (s, text) = a.call(Method::GET, "/licenses/third-party.txt", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(text, "Patronus test bundle\nMIT License\n");
+
+    store
+        .save_system_config("legal.licenses_file", "")
+        .await
+        .unwrap();
+    let (_, page) = a.call(Method::GET, "/licenses", None).await;
+    assert!(
+        page.contains("Switched off"),
+        "an empty setting turns the bundle off and says so"
+    );
+    std::fs::remove_file(&file).ok();
 }

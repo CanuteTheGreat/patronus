@@ -15,6 +15,8 @@ on:
       - 'docs/**'
       - 'branding/**'
       - 'keys/**'
+      - 'ci/third-party-licenses.py'
+      - 'Cargo.toml'
       - 'SECURITY.md'
       - '.forgejo/workflows/deploy-site.yml'
   # Daily rebuild: picks up systemd ISOs that were published since the last deploy (the build lists a systemd
@@ -40,6 +42,15 @@ jobs:
           apt-get update -qq
           apt-get install -y -qq rsync openssh-client jq curl python3 python3-markdown gnupg
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install Rust (cargo metadata only; nothing is compiled here)
+        uses: https://github.com/dtolnay/rust-toolchain@stable
+      - name: Third-party license list for the licenses page
+        # Same generator the release uses (ci/third-party-licenses.py); the lockfile is not committed, so this lists the
+        # crates of the current dependency resolution of main. Releases attach their own list.
+        run: |
+          set -e
+          cargo generate-lockfile
+          python3 ci/third-party-licenses.py --out site/THIRD-PARTY-LICENSES.txt
       - name: Build the site and check every link
         run: |
           set -e

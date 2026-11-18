@@ -46,6 +46,7 @@ IUSE="
 	squid tinyproxy
 	+backup
 	gitops
+	+license-bundle
 	+systemd +openrc
 	test
 "
@@ -166,6 +167,7 @@ DEPEND="${RDEPEND}"
 BDEPEND="
 	|| ( >=dev-lang/rust-1.75 >=dev-lang/rust-bin-1.75 )
 	dev-libs/protobuf
+	license-bundle? ( dev-lang/python )
 "
 
 QA_FLAGS_IGNORED="usr/bin/patronus.*"
@@ -518,6 +520,19 @@ src_install() {
 	dodoc COMPETITIVE-ANALYSIS.md
 	dodoc INNOVATION-ROADMAP.md
 	dodoc -r docs/ 2>/dev/null || true
+
+	# Licenses of the Rust crates inside the binaries, compressed (about 1/5 of the text), served by the web UI's
+	# "Open-source licenses" page from /usr/share/doc/patronus (setting legal.licenses_file). Generated from the
+	# crate sources this build just used (offline); USE=-license-bundle leaves it out and the page says so.
+	if use license-bundle; then
+		if CARGO_NET_OFFLINE=true python3 ci/third-party-licenses.py \
+			--out "${T}/THIRD-PARTY-LICENSES.txt" --gzip; then
+			insinto /usr/share/doc/patronus
+			doins "${T}/THIRD-PARTY-LICENSES.txt.gz"
+		else
+			ewarn "could not generate the third-party license list: the web UI's licenses page will say it is not installed"
+		fi
+	fi
 
 	# Set permissions
 	fowners patronus:patronus /var/lib/patronus

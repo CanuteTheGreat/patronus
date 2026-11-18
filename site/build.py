@@ -34,6 +34,10 @@ def rel(frm, to):
 PAGES = {}   # source path under docs/ -> (site dir, title)
 PAGES["ROADMAP.md"] = ("roadmap/", "Roadmap to 1.0")
 PAGES["stable-channel.md"] = ("stable-channel/", "Stable channel design")
+PAGES["PRIVACY.md"] = ("privacy/", "Privacy")
+PAGES["OPEN-SOURCE-LICENSES.md"] = ("licenses/", "Open-source licenses")
+# THIRD-PARTY-LICENSES.txt (ci/third-party-licenses.py; deploy-site.yml generates it before the build) is published with the licenses page
+TPL = os.environ.get("PATRONUS_SITE_LICENSES") or os.path.join(HERE, "THIRD-PARTY-LICENSES.txt")
 for fn, title in CFG["docs"]:
     PAGES[fn] = ("docs/" + re.sub(r"[^a-z0-9]+", "-", fn[:-3].lower()).strip("-") + "/", title)
 
@@ -96,6 +100,7 @@ def page(page_dir, title, body, active="", desc=None):
 <footer><div class="wrap foot">
 <p>{CFG['name']} is a free, GPL-3.0 project by <a href="https://errant.solutions/">Errant Solutions</a>.
 Source: <a href="{SRC}">GitHub</a>.</p>
+<p class="legal"><a href="{r('privacy/')}">Privacy</a> &middot; <a href="{r('licenses/')}">Open-source licenses</a> &middot; <a href="{r('docs/update-policy/')}">Updates and rollback policy</a> &middot; <a href="{r('security/')}">Security</a></p>
 <p>Commercial support: planned after 1.0. Nothing is for sale today.</p></div></footer>
 </body></html>
 """
@@ -113,6 +118,14 @@ def doc_page(src_name, active):
     text = open(os.path.join(ROOT, "docs", src_name), encoding="utf-8").read()
     d, title = PAGES[src_name]
     body = fix_links(md_to_html(text), d)
+    if src_name == "OPEN-SOURCE-LICENSES.md":
+        if os.path.exists(TPL):
+            os.makedirs(os.path.join(DIST, d), exist_ok=True)
+            shutil.copy(TPL, os.path.join(DIST, d, "THIRD-PARTY-LICENSES.txt"))
+            body += ('<p><a class="btn sm" href="THIRD-PARTY-LICENSES.txt">Third-party license list (text, '
+                     f'{os.path.getsize(TPL) // 1024} KiB)</a> for the current <code>main</code> branch; releases carry their own.</p>')
+        else:
+            body += "<p>The third-party license list is attached to every release. This build of the site does not include a copy.</p>"
     edit = f'<p class="edit"><a href="{BLOB}docs/{src_name}">View or edit this page in the repository</a></p>'
     write(d + "index.html", page(d, title, f'<main class="wrap doc">{body}{edit}</main>', active))
 

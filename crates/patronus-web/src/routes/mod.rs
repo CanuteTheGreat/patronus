@@ -6,6 +6,7 @@
 
 pub mod api;
 pub mod first_run;
+pub mod legal;
 pub mod pages;
 
 use axum::{
@@ -57,6 +58,7 @@ pub fn build_router(
         .merge(api::setup::pages())
         .merge(api::wifi::pages())
         .merge(api::device::pages())
+        .merge(legal::pages())
         // The old "simple" pages claimed services were operational and
         // listed invented "recent activity"; keep the URLs as redirects.
         .route("/simple", get(|| async { Redirect::to("/") }))
@@ -372,6 +374,26 @@ fn seg_dns_router() -> Router<AppState> {
 /// Convention: each subsystem's endpoints live in `routes/api/<subsystem>.rs`
 /// and are registered there in its own `router()`; this function only
 /// merges them, one line per lane, so lanes never edit each other's routes.
+/// `(release file text, PATRONUS_TIER, BOARD)` of `/etc/patronus-release` (or `PATRONUS_RELEASE_FILE`);
+/// the tier is `standard` when the file says nothing.
+pub(crate) fn release_info() -> (String, String, Option<String>) {
+    let release = std::fs::read_to_string(
+        std::env::var("PATRONUS_RELEASE_FILE").unwrap_or_else(|_| "/etc/patronus-release".into()),
+    )
+    .unwrap_or_default();
+    let tier = release
+        .lines()
+        .find_map(|l| l.strip_prefix("PATRONUS_TIER="))
+        .unwrap_or("standard")
+        .trim()
+        .to_string();
+    let board = release
+        .lines()
+        .find_map(|l| l.strip_prefix("BOARD="))
+        .map(|b| b.trim().to_string());
+    (release, tier, board)
+}
+
 /// GET /api/features: the optional features this build contains. The UI hides
 /// navigation entries for the rest (a router build has no VPN, HA, QoS ...), and
 /// their APIs answer "not built" instead of pretending.
@@ -411,20 +433,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "guest"
     ];
     let role = api::wifi::role();
-    let release = std::fs::read_to_string(
-        std::env::var("PATRONUS_RELEASE_FILE").unwrap_or_else(|_| "/etc/patronus-release".into()),
-    )
-    .unwrap_or_default();
-    let tier = release
-        .lines()
-        .find_map(|l| l.strip_prefix("PATRONUS_TIER="))
-        .unwrap_or("standard")
-        .trim()
-        .to_string();
-    let board = release
-        .lines()
-        .find_map(|l| l.strip_prefix("BOARD="))
-        .map(|b| b.trim().to_string());
+    let (_, tier, board) = release_info();
     axum::Json(serde_json::json!({
         "features": list,
         "role": role.as_str(),
@@ -667,6 +676,8 @@ mod auth_gate_tests {
             "/vpn",
             "/network",
             "/system",
+            "/licenses",
+            "/licenses/third-party.txt",
             "/simple/status",
         ] {
             let r = app

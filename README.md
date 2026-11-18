@@ -28,6 +28,8 @@ that are not finished are listed separately under
 
 **[Roadmap to 1.0 (live checklist)](docs/ROADMAP.md)** | **[Stable channel design](docs/stable-channel.md)** | **[Installing from the ISO](docs/ISO-INSTALL.md)**
 
+**[Versions, updates and rollback](docs/UPDATE-POLICY.md)** | **[Privacy: what a device sends out](docs/PRIVACY.md)** | **[Open-source licenses](docs/OPEN-SOURCE-LICENSES.md)** | **[Changelog](CHANGELOG.md)**
+
 ---
 
 ## What works today
@@ -304,6 +306,11 @@ that are not finished are listed separately under
 - Services (DHCP, DNS, IPsec, NTP, ...) can be started, stopped and
   restarted from the System page; the unprivileged web UI does it through
   the root apply broker. [C37]
+- Licenses are on the device: the System page links to an Open-source licenses
+  page (GPL-3.0-or-later for Patronus, the license text of every bundled Rust
+  crate) that works offline and says why when the list is left out (router
+  tier). [C82] CI refuses a dependency whose license is not on the allowlist.
+  [C83]
 - Gentoo: installed by the in-tree ebuild (an `emerge` runs in CI), and every
   USE flag that maps to a cargo feature compiles on its own. [C12]
 - The installer partitions a real disk, installs, and the installed system
