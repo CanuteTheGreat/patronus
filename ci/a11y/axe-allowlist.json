@@ -1,0 +1,4 @@
+{
+  "_doc": "Justified false positives only. An entry is {rule, page, target (substring of the axe CSS target), reason}. Every entry needs a reason that says why axe is wrong here; real problems are fixed in the templates, never listed. An entry that matches nothing fails the gate (stale).",
+  "entries": []
+}

@@ -1,0 +1,25 @@
+{
+  "axe_file": "vendor/axe.min.js",
+  "axe_version": "4.14.1",
+  "axe_sha256": "29348999450cdf2849a8e70b7912fc2da85a849da39c0d0d5394f51d4a9ed95c",
+  "allowlist": "axe-allowlist.json",
+  "fail_impacts": ["critical", "serious"],
+  "report_impacts": ["moderate", "minor"],
+  "axe_tags": ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa", "best-practice"],
+  "browsers": ["firefox"],
+  "viewports": {"desktop": [1280, 800], "phone": [390, 844]},
+  "schemes": ["light", "dark"],
+  "login": {"path": "/login", "user_sel": "#username", "pass_sel": "#password", "submit_sel": "button[type=submit]", "settle_ms": 700},
+  "pages": [
+    {"id": "login", "path": "/login", "auth": false, "wait_for": "#username"},
+    {"id": "dashboard", "path": "/", "wait_for": ".sidebar-nav"},
+    {"id": "interfaces", "path": "/interfaces", "wait_for": ".sidebar-nav"},
+    {"id": "firewall-rules", "path": "/firewall", "wait_for": "#tab-rules"},
+    {"id": "nat", "path": "/firewall", "wait_for": "#tab-pf", "click": ["button[data-tab=tab-pf]"]},
+    {"id": "dhcp", "path": "/dhcp", "wait_for": ".sidebar-nav"},
+    {"id": "dns", "path": "/dns", "wait_for": ".sidebar-nav"},
+    {"id": "vpn", "path": "/vpn", "wait_for": ".sidebar-nav"},
+    {"id": "wifi", "path": "/wifi", "wait_for": ".sidebar-nav"},
+    {"id": "system", "path": "/system", "wait_for": "#users"}
+  ]
+}
