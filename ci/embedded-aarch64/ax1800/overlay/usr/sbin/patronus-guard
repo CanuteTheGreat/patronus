@@ -141,7 +141,7 @@ env_script() { # file: writes the "name value" lines
   echo "pat_ver $GUARD_ENV_VERSION"
   echo "pat_orig_bootcmd $orig"
   echo "bootcmd run pat_boot; $GUARD_UB_BOOT; run pat_failed; $rest"
-  echo "pat_boot if test \"\${pat_state}\" = revert; then run pat_revert; elif test \"\${pat_state}\" = trial; then run pat_trial; fi"
+  echo "pat_boot if test \"\${pat_state}\" = revert; then run pat_revert; if test \"\${pat_state}\" = revert; then run pat_wdt; fi; elif test \"\${pat_state}\" = trial; then run pat_trial; fi"
   echo "pat_trial if itest \${pat_left} -gt 0; then setexpr pat_left \${pat_left} - 1; setexpr pat_boots \${pat_boots} + 1; run pat_save; setenv $B \${$B} patronus.trial=\${pat_boots}$ka; run pat_wdt; else setenv pat_state revert; run pat_save; run pat_revert; fi"
   echo "pat_revert echo patronus: restoring the previous image; run pat_vol && run pat_rd_r && run pat_rd_k && run pat_wr_r && run pat_wr_k && setenv pat_state reverted && run pat_save"
   echo "pat_failed if test \"\${pat_state}\" = trial; then reset; fi; if test \"\${pat_state}\" = revert; then reset; fi"

@@ -91,6 +91,7 @@ KB=$(stat -c %s "$K"); KBLK=$(( (KB + 511) / 512 ))
 # the "stock" environment: what bootipq is on the board (boot the kernel volume), then the stock failsafe
 cat > "$W/env.txt" <<EOF
 bootcmd=run qboot; echo stock-failsafe; sleep 100000
+kernel_addr_r=0x40400000
 qboot=virtio dev 3 && virtio read \${kernel_addr_r} 0 $(printf '0x%x' $KBLK) && booti \${kernel_addr_r} - \${fdtcontroladdr}
 bootargs=root=/dev/vda rootfstype=squashfs ro console=ttyAMA0 patronus.data=/dev/vdb panic=1
 EOF
