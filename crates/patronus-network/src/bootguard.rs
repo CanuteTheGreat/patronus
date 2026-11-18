@@ -163,7 +163,7 @@ pub fn render_conf(old: &str, params: &Value) -> Result<String> {
 fn conf_value(text: &str, key: &str) -> Option<String> {
     text.lines()
         .filter_map(|l| l.strip_prefix(&format!("{key}=")))
-        .last()
+        .next_back()
         .map(|v| {
             v.split('#')
                 .next()
