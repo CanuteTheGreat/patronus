@@ -115,6 +115,17 @@ t "flash rollback: previous root boots again" sh -c "'$F' rollback && [ \"\$(cat
 t "flash rollback twice: back to B" sh -c "'$F' rollback && [ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-B ]"
 t "flash openwrt: stock root + rootfs_data + config placed" sh -c "'$F' openwrt && [ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-OPENWRT ] && [ -e $FAKE_UBI/by-name/rootfs_data ] && [ \"\$(cat $W/pf/rd/sysupgrade.tgz)\" = cfg ]"
 t "flash openwrt: patronus root kept as rootfs_prev" test "$(vol rootfs_prev)" = hsqs-B
+# the unconfirmed-boot count belongs to the root that made it: every root change starts a new count (a stale count of 2
+# rolled a fresh install back to the old root on its first boot)
+for op in "root $W/b.sq" "rollback" "openwrt"; do echo "2 old-build" > "$W/data/.init-boot-attempts"
+  t "flash $op: clears the unconfirmed-boot count" sh -c "'$F' $op >/dev/null && [ ! -e '$W/data/.init-boot-attempts' ]"; done
+# patronus-init's counting lines, run against a scratch /data + release file
+sed -n '/^b=\$(sed -n/,/^n=\$((/p' "$D/overlay/usr/sbin/patronus-init" | sed "s#/data/#$W/pi/#g; s#/etc/patronus-release#$W/pi/rel#g" > "$W/pi.sh"; mkdir -p "$W/pi"
+pi() { echo "BUILD=$1" > "$W/pi/rel"; sh "$W/pi.sh" >/dev/null 2>&1; cat "$W/pi/.init-boot-attempts"; }
+t "patronus-init: first boot of a root counts 1" test "$(pi new-a)" = "1 new-a"
+t "patronus-init: the same root counts up" test "$(pi new-a)" = "2 new-a"
+t "patronus-init: a different root (installed from outside) starts a new count" test "$(pi new-b)" = "1 new-b"
+echo 2 > "$W/pi/.init-boot-attempts"; t "patronus-init: an old-format count (no BUILD) starts over" test "$(pi new-b)" = "1 new-b"
 mkdir -p "$W/sut/sysupgrade-x"; printf 'hsqs-TAR' > "$W/sut/sysupgrade-x/root"; tar cf "$W/su.tar" -C "$W/sut" sysupgrade-x
 t "flash openwrt: from a sysupgrade tar" sh -c "'$F' openwrt '$W/su.tar' '' && [ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-TAR ]"
 # after an OpenWrt sysupgrade, rootfs_data holds all free space (p4 -> sd1 on the real unit: ENOSPC, and the old

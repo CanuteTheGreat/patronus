@@ -262,6 +262,10 @@ Fix (all board scripts, both init systems):
 - `apply`: the boot management rule covers every uplink client.
 - `check-rootfs.sh` refuses an AP template without WPA (`wpa=` plus a passphrase/PSK); `ALLOW_OPEN_AP=1` is the explicit
   exception for a deliberate open network.
+- The unconfirmed-boot count (`/data/.init-boot-attempts`, read by `patronus-init`) now records the root it belongs to
+  (`<n> <BUILD>`), and every `patronus-flash root|rollback|openwrt` clears it. Before, a count of 2 left by a root the guard
+  reverted survived the OpenWrt round trip, so the next Patronus install from OpenWrt was rolled back to the OLD root on its very
+  first boot (seen on the unit: `openrc-attempt-3` -> rollback before any network).
 - The early boot takes the hostname from `/etc/hostname` (unit value `UNIT_HOSTNAME`, else the hardware profile); nothing is
   hard-coded.
 

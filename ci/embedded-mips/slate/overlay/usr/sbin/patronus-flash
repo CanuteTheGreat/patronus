@@ -41,7 +41,7 @@ root)
     log "could not write next to rootfs_prev (no room?): dropping it and retrying (no rollback to the old previous root after this)"
     rmvol rootfs_new; rmvol rootfs_prev; write_vol rootfs_new "$2"
   fi
-  swap_in; sync ;;
+  swap_in; rm -f $DATA/.init-boot-attempts; sync ;;
 openwrt)
   SRC=${2:-$REC/openwrt-root.squashfs}; CFG=${3-$REC/sysupgrade.tgz}
   rm -rf $T; mkdir -p $T
@@ -54,11 +54,12 @@ openwrt)
     mkdir -p $T/rd; mount -t ubifs ubi0:rootfs_data $T/rd; cp "$CFG" $T/rd/sysupgrade.tgz; sync; umount $T/rd
     log "OpenWrt config backup placed for restore at first boot"
   fi
-  swap_in; sync ;;
+  # a later Patronus install must not inherit this root's unconfirmed-boot count (it rolled back a fresh install at once)
+  swap_in; rm -f $DATA/.init-boot-attempts; sync ;;
 rollback)
   [ -n "$(volid rootfs_prev)" ] || { echo "no rootfs_prev"; exit 2; }
   ubirename $UBI rootfs rootfs_new rootfs_prev rootfs
-  ubirename $UBI rootfs_new rootfs_prev; log "rolled back to the previous root"; sync ;;
+  ubirename $UBI rootfs_new rootfs_prev; rm -f $DATA/.init-boot-attempts; log "rolled back to the previous root"; sync ;;
 factory-reset)
   # rcS sees the marker before mounting the overlays and wipes the stored settings, TLS key and overlays
   touch $DATA/.factory-reset; sync; log "factory reset scheduled for the next boot" ;;
