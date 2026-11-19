@@ -144,6 +144,9 @@ capab() { # MAC BSS CONNECTED -> "btm bcn" (cached per association): 802.11v BSS
   s=$($CLI -p "$CTRL" -i "$2" sta "$1" 2>/dev/null); ec=$(echo "$s" | sed -n 's/^ext_capab=//p'); rr=$(echo "$s" | sed -n 's/^rrm_enabled_capab=//p')
   btm=0; x=$(echo "$ec" | cut -c5-6); case "$x" in [0-9a-fA-F][0-9a-fA-F]) [ $(( 0x$x & 8 )) -ne 0 ] && btm=1;; esac
   bcn=0; x=$(echo "$rr" | cut -c1-2); case "$x" in [0-9a-fA-F][0-9a-fA-F]) [ $(( 0x$x & 112 )) -ne 0 ] && bcn=1;; esac
+  # hostapd 2.10 does not print rrm_enabled_capab in `sta`: fall back to the capability field's Radio Measurement bit
+  # (0x1000); a station that then never answers the beacon request is dropped by the norep rule
+  if [ -z "$rr" ]; then x=$(echo "$s" | sed -n 's/^capability=0x//p'); case "$x" in [0-9a-fA-F]*) [ $(( 0x$x & 4096 )) -ne 0 ] && bcn=1;; esac; fi
   echo "$a $btm $bcn" > "$SD/cap-$1"; echo "$btm $bcn"; }
 events() { # answers queued by ap-event: BSS-TM-RESP (move request answered), BEACON-RESP-RX (what the station hears)
   [ -s "$SD/events" ] || return 0; mv "$SD/events" "$SD/events.work"; own=" $(own_bssids | tr '\n' ' ') "
@@ -175,6 +178,10 @@ round() {
     mv "$SD/blocked.new" "$SD/blocked"; fi
   for i in $(bsses); do dump "$i" | sed "s/\$/ $i/"; done > "$SD/now"
   wired_macs > "$SD/wired.now"
+  # a station that roamed away on its own (most clients send no disassociation) stays in this unit's station list until
+  # hostapd's inactivity timeout (minutes) while the bridge already learns its address behind a wired port: it is gone
+  if [ -s "$SD/wired.now" ]; then
+    awk 'NR == FNR { w[$1]; next } !($1 in w)' "$SD/wired.now" "$SD/now" > "$SD/now.live" && mv "$SD/now.live" "$SD/now"; fi
   : > "$SD/arrived"
   if [ -f "$SD/prev" ]; then
     # just arrived from another unit: not here last round, behind a wired port last round
