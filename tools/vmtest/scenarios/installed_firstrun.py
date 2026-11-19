@@ -96,7 +96,7 @@ def define(args):
         fw.wait_for_shell()
         fw.wait_for_unit(P["svc"], 300)
         m.check(f"{P['svc']}-active", True, fw.init.name)
-        fw.wait_until_succeeds(f"nc -z -w 2 127.0.0.1 {P['port']}", 120, 3)
+        fw.wait_until_succeeds(f"timeout 3 bash -c ': </dev/tcp/127.0.0.1/{P['port']}'", 120, 3)   # no nc on the image
         fw.put_file(_write_tmp(API_PY), "/tmp/fwapi.py")
         code, st = api("GET", "/api/setup/status")
         m.check("wizard-status-before", code == 200 and st.get("completed") is False and st.get("wizard") is True, str(st)[:300])
