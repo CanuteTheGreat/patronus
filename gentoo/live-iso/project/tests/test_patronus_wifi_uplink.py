@@ -19,21 +19,26 @@ def pkglist(init):
     return out.split()
 
 
+def _read(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
 class WifiUplink(unittest.TestCase):
     def test_wpa_supplicant_in_the_image_for_both_inits(self):
-        txt = open(os.path.join(PROJECT, "packages.txt")).read().splitlines()
+        txt = _read(os.path.join(PROJECT, "packages.txt")).splitlines()
         self.assertIn(PKG, txt, "unconditional (every arch)")
         for init in ("openrc", "systemd"):
             self.assertIn(PKG, pkglist(init), f"{init} on {platform.machine()}")
 
     def test_ebuild_ships_the_uplink_service_for_both_inits(self):
         files = os.path.join(EBUILD_DIR, "files")
-        unit = open(os.path.join(files, "patronus-wpa@.service")).read()
-        initd = open(os.path.join(files, "patronus-wpa.initd")).read()
+        unit = _read(os.path.join(files, "patronus-wpa@.service"))
+        initd = _read(os.path.join(files, "patronus-wpa.initd"))
         self.assertIn("EnvironmentFile=/var/lib/patronus/net/svc/patronus-wpa.%i.env", unit)
         self.assertIn('ENVFILE="/var/lib/patronus/net/svc/patronus-wpa.${DEV}.env"', initd)
         self.assertTrue(initd.startswith("#!/sbin/openrc-run"))
-        eb = open(os.path.join(EBUILD_DIR, "patronus-9999.ebuild")).read()
+        eb = _read(os.path.join(EBUILD_DIR, "patronus-9999.ebuild"))
         self.assertIn('use wifi-client && systemd_dounit "${FILESDIR}/patronus-wpa@.service"', eb)
         self.assertIn('use wifi-client && newinitd "${FILESDIR}/patronus-wpa.initd" patronus-wpa', eb)
         self.assertIn("+wifi-client", eb, "on by default: the router tier carries the Wi-Fi uplink")

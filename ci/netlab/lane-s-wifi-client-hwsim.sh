@@ -108,6 +108,13 @@ cleanup() {
   sleep 0.5
   for p in $(ip netns exec sat iw phy 2>/dev/null | awk '/^Wiphy/ {print $2}'); do ip netns exec sat iw phy "$p" set netns 1; done
   ip netns del sat 2>/dev/null
+  # leave every radio with a device for the scenarios that follow (iwd removed the router radio's own)
+  local ph used
+  used=$(for d in /sys/class/net/*/phy80211; do [ -e "$d" ] && basename "$(readlink "$d")"; done)
+  for ph in /sys/class/ieee80211/*; do
+    ph=$(basename "$ph")
+    grep -qx "$ph" <<<"$used" || iw phy "$ph" interface add "wlan${ph#phy}" type managed 2>/dev/null
+  done
   nl_down
   true
 }
@@ -173,8 +180,11 @@ sat_link() {
   INET ip route add 10.42.0.0/24 via 192.0.2.1
 }
 radio_to_router() {
-  iw phy "$(phy_of 1)" set netns name nl-rtr
+  local p; p=$(phy_of 1)
+  iw phy "$p" set netns name nl-rtr
   sleep 1
+  # a radio iwd managed earlier (another scenario in the same hwsim load) has no device left: give it one
+  [ -n "$(R ip -br link | awk '/^wlan/ {print $1; exit}')" ] || R iw phy "$p" interface add wlan1 type managed
   WIF=$(R ip -br link | awk '/^wlan/ {print $1; exit}')
   [ -n "$WIF" ] || fail "the router's radio did not arrive in its namespace"
 }
@@ -205,23 +215,30 @@ if [ -n "$IWD_BIN" ] && command -v dbus-daemon >/dev/null; then
   if [ ! -e /dev/rfkill ] && [ -r /sys/class/misc/rfkill/dev ]; then
     rf=$(cat /sys/class/misc/rfkill/dev); mknod /dev/rfkill c "${rf%:*}" "${rf#*:}" 2>/dev/null || true
   fi
+  # iwd deletes the radio's device and creates its own, named wlan<phy number> (which may be the same name):
+  # judge by the ifindex
+  idx() { R cat "/sys/class/net/$WIF/ifindex" 2>/dev/null || true; }
+  IDX0=$(idx)
   ip netns exec nl-rtr "$IWD_BIN" >"$T/iwd.log" 2>&1 &
-  for _ in $(seq 1 40); do R ip link show "$WIF" >/dev/null 2>&1 || break; sleep 0.25; done
+  for _ in $(seq 1 40); do [ "$(idx)" = "$IDX0" ] || break; sleep 0.25; done
   sleep 1
   if pgrep -x iwd >/dev/null; then
     IWD=1
-    R ip link show "$WIF" >/dev/null 2>&1 && fail "iwd runs but $WIF is still there (iwd replaces the radio's device)"
-    nl_ok "iwd runs on the router's radio (as the image starts it at boot) and has replaced $WIF with its own device"
+    [ "$(idx)" = "$IDX0" ] && fail "iwd runs but $WIF (ifindex $IDX0) is still the kernel's device (iwd replaces it)"
+    nl_ok "iwd runs on the router's radio (as the image starts it at boot) and has replaced $WIF with its own device ($(R ip -br link | awk '/^wlan/ {printf "%s ", $1}'))"
   fi
 fi
 [ "$IWD" = 1 ] || echo "note: iwd could not be started in this container; the iwd hand-over is proven by unit tests only"
+
+# iwd is a child of this script (no init reaps it here): a killed iwd stays a zombie until wait, so ignore zombies
+iwd_alive() { ps -eo stat=,comm= | awk '$1 !~ /^Z/ && $2 == "iwd" {f=1} END {exit !f}'; }
 
 # --- 3. the uplink through the API --------------------------------------------------------------------------------
 must 200 PUT "/wifi/uplinks/$WIF" "{\"ssid\":\"$SSID\",\"security\":\"wpa2\",\"psk\":\"$GOOD_PSK\",\"description\":\"satellite backup\"}"
 APPLIED=$(cat "$NL_OUT")
 if [ "$IWD" = 1 ]; then
   grep -q 'iwd' <<<"$APPLIED" || fail "the apply did not say what it did to iwd: $APPLIED"
-  pgrep -x iwd >/dev/null && fail "iwd still runs beside wpa_supplicant"
+  iwd_alive && fail "iwd still runs beside wpa_supplicant"
   nl_ok "iwd ended before wpa_supplicant took $WIF ($(python3 -c 'import json,sys; print([l for l in json.load(open(sys.argv[1]))["applied"] if "iwd" in l][0])' "$NL_OUT"))"
   # iwd deleted the radio's device when it took it and removed its own when it stopped: Patronus made it again
   grep -q "$WIF: device created on radio" <<<"$APPLIED" || fail "the device iwd removed was not created again: $APPLIED"

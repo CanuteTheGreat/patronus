@@ -434,6 +434,15 @@ impl WifiClientApplier {
         let list = devices.join(", ");
         let installed = self.iwd_installed();
         let mut did = Vec::new();
+        // the devices as they are while iwd may own them (iwd names its own `wlan<phy number>`, which can be the
+        // uplink's name): the kernel deletes iwd's devices only after iwd is gone
+        let ifindex = |d: &str| {
+            std::fs::read_to_string(self.sysfs.join("class/net").join(d).join("ifindex"))
+                .ok()
+                .map(|s| s.trim().to_string())
+        };
+        let before: Vec<(&str, Option<String>)> =
+            devices.iter().map(|d| (*d, ifindex(d))).collect();
         if installed {
             if self.services.is_running(IWD_SERVICE) {
                 match self.services.stop(IWD_SERVICE) {
@@ -473,6 +482,22 @@ impl WifiClientApplier {
                  not started (stop iwd: rc-service iwd stop / systemctl stop iwd)"
             ));
             return false;
+        }
+        if did
+            .iter()
+            .any(|d| d.starts_with("stopped") || d.starts_with("ended"))
+        {
+            // wait (bounded) until the devices iwd owned are gone, so a device of the same name is not used just
+            // before the kernel removes it; a device iwd did not own stays, and the wait ends at the bound
+            for _ in 0..30 {
+                if before
+                    .iter()
+                    .all(|(d, idx)| idx.is_none() || ifindex(d) != *idx)
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
         }
         if !did.is_empty() {
             let _ = std::fs::create_dir_all(self.iwd_marker().parent().unwrap_or(Path::new("/")));
