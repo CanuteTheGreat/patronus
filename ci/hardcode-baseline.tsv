@@ -14,10 +14,14 @@ fb3e4f1767eca66c	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap	wifi
 b08a02227e04c23d	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-addr	timing	sleep 1	embedded.ap-addr.timing.timing
 629c5004cecabbec	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-addr	timing	sleep 1	embedded.ap-addr.timing.i
 7425a343549d4ce9	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-addr	timing	sleep 2	embedded.ap-addr.timing.secs
+283969624cdd708c	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-chan	timing	timeout 60	embedded.ap-chan.timing.timing
 8d624f085132fa22	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-coord	timing	sleep 1	embedded.ap-coord.timing.timing
 9868a51ad4a2ddc1	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-coord	timing	sleep 2	embedded.ap-coord.timing.w
+39f042bc00bf6cc5	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-coord	timing	sleep 5	embedded.ap-coord.timing.ap_coord_nosleep
+641191adb6e8428b	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-coord	timing	sleep 60	embedded.ap-coord.timing.t
 da61da44099eeca5	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-guest	interface	lan4	embedded.ap-guest.interface.elements
 80f4a38d8ab35a25	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-guest	interface	lan6	embedded.ap-guest.interface.elements
+cfaffb5bb50cc086	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/ap-steer	interface	br-lan	embedded.ap-steer.interface.ap_steer_fdb_file
 8faf201daffdb7d9	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/board-network	interface	br-lan	embedded.board-network.interface.interface
 40372642bcf76f65	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/board-network	interface	br-lan	embedded.board-network.interface.interface
 22d0e41c62cc377a	ci/embedded-aarch64/ax1800/overlay/usr/libexec/patronus/board-network	interface	br-lan	embedded.board-network.interface.interface
@@ -70,6 +74,10 @@ d3880bf77df02c4a	crates/patronus-cli/src/main.rs	path	/etc/patronus/config.yaml	
 f1924a200c1ad04a	crates/patronus-config/src/defaults.rs	constant	ANTI_LOCKOUT_PORTS	config.anti_lockout_ports
 39266b6274995a24	crates/patronus-config/src/defaults.rs	constant	DEFAULT_BOOTSTRAP_PATH	config.default_bootstrap_path
 d3e6ca9cdbfcb1af	crates/patronus-config/src/defaults.rs	path	/etc/patronus/patronus.toml	config.default_bootstrap_path
+9137e81f3bd967c4	crates/patronus-config/src/seg_wifi_chan.rs	constant	DEFAULT_CSA_COUNT	config.default_csa_count
+f67ba1f232271637	crates/patronus-config/src/seg_wifi_chan.rs	constant	DEFAULT_MIN_GAIN	config.default_min_gain
+5809663e76fb066e	crates/patronus-config/src/seg_wifi_chan.rs	constant	DEFAULT_MIN_SIGNAL	config.default_min_signal
+cfb19da878784f54	crates/patronus-config/src/seg_wifi_chan.rs	wifi	channel=excluded.channel	config.wifi.channel
 5f8e791d863f5b10	crates/patronus-config/src/store.rs	constant	DEFAULT_DB_PATH	config.default_db_path
 dcc668f83321c87a	crates/patronus-config/src/store.rs	path	/var/lib/patronus/config.db	config.default_db_path
 620fdef9c01e3a08	crates/patronus-config/src/store.rs	timing	Duration::from_secs(10)	config.timing.duration
@@ -155,6 +163,7 @@ ee5546580623a54e	crates/patronus-network/src/apwifi.rs	interface	wl24	network.in
 3a76e7963d9d3d33	crates/patronus-network/src/apwifi.rs	path	/etc/patronus/ap.env	network.path.env
 4f2580fd5b693b20	crates/patronus-network/src/apwifi.rs	path	/usr/libexec/patronus/ap	network.path.script
 dab15d46440a0217	crates/patronus-network/src/apwifi.rs	path	/usr/libexec/patronus/wifi-guard	network.path.path
+f41cbda78593cb92	crates/patronus-network/src/apwifi.rs	path	/var/lib/patronus/ap-chan	network.path.std
 61117f6b679fe0f1	crates/patronus-network/src/apwifi.rs	timing	Duration::from_millis(1000)	network.timing.std
 8cb886bb638f1272	crates/patronus-network/src/apwifi.rs	timing	Duration::from_secs(40)	network.timing.bad
 0007b185fbef021e	crates/patronus-network/src/apwifi.rs	timing	Duration::from_secs(40)	network.timing.back
@@ -206,11 +215,14 @@ f44f4116edaff7ff	crates/patronus-network/src/plugins.rs	constant	KEY_DIR	network
 ea29dd1d26c4dd3e	crates/patronus-network/src/plugins.rs	path	/etc/patronus/plugin-keys.d	network.key_dir
 bc6fceabe1af32d6	crates/patronus-network/src/plugins.rs	size	16 * 1024 * 1024	network.max_bundle_bytes
 1546c85fce93e7ee	crates/patronus-network/src/routes.rs	address	10.20.0.0/16	network.address.d
+fd1fa36970e9b028	crates/patronus-network/src/routes.rs	constant	APPLY_LOCK_FILE	network.apply_lock_file
 83aaf1be2e934fbe	crates/patronus-network/src/routes.rs	constant	MAX_FAILBACK_SECS	network.max_failback_secs
 d588670fa7935532	crates/patronus-network/src/routes.rs	path	/run/patronus/gateway-status.json	network.path.pathbuf
+a6f3b140bb829f23	crates/patronus-network/src/routes.rs	timing	Duration::from_millis(20)	network.timing.tokio
 72a20fc05ab2123a	crates/patronus-network/src/routes.rs	timing	Duration::from_secs(1)	network.timing.t
 8ed4602798396160	crates/patronus-network/src/routes.rs	timing	Duration::from_secs(3)	network.timing.duration
 ab88cc4b3bb02008	crates/patronus-network/src/routes.rs	timing	Duration::from_secs(30)	network.timing.duration
+24ce7c0bbd01a1a2	crates/patronus-network/src/routes.rs	timing	Duration::from_secs(30)	network.timing.xlock_wait
 36021ccb465dfa0f	crates/patronus-network/src/seg.rs	constant	STATE_FILE	network.state_file
 93442e213c72792a	crates/patronus-network/src/seg.rs	path	/var/lib/patronus/seg-l2.json	network.state_file
 e8daa9d11116d3da	crates/patronus-network/src/seg.rs	timing	Duration::from_secs(1)	network.timing.std
@@ -408,7 +420,8 @@ cf27a34250577652	gentoo/live-iso/common/overlay/usr/lib/live-installer/liveinst/
 a00333d783eed4d6	gentoo/live-iso/common/overlay/usr/lib/live-installer/liveinst/t2.py	size	8 * 1024 * 1024	embedded.t2.py.size.fw_max_file
 a3a821851d1d654c	gentoo/live-iso/common/overlay/usr/libexec/live-installer-gui	timing	sleep 0.5	embedded.live-installer-gui.timing.i
 78dab152206bae86	gentoo/live-iso/common/overlay/usr/libexec/live-installer-session	timing	sleep 1	embedded.live-installer-session.timing.timing
-cd4c2f65d4115098	gentoo/live-iso/common/overlay/usr/share/live-installer/test-machine/horcrux-test-watchdog.sh	timing	sleep 1	embedded.horcrux-test-watchdog.timing.soft_margin
+ff1b7f0bd7aac77d	gentoo/live-iso/common/overlay/usr/share/live-installer/test-machine/horcrux-test-watchdog.sh	timing	sleep 1	embedded.horcrux-test-watchdog.timing.timing
+5ec3da83e16aa631	gentoo/live-iso/common/overlay/usr/share/live-installer/test-machine/horcrux-test-watchdog.sh	timing	sleep 1	embedded.horcrux-test-watchdog.timing.soft_margin
 15e617b582e1ae19	gentoo/live-iso/common/publish-github.sh	timing	sleep 10	pkg.common.timing.timing
 eb2b4d8ee6591e1d	gentoo/live-iso/common/publish-github.sh	url	https://%s.errant.solutions/docs/iso-install/	pkg.common.url.releases
 8edfad4d3d8b4ea6	gentoo/live-iso/common/publish-github.sh	url	https://%s.errant.solutions/signing-key.asc	pkg.common.url.nverify
