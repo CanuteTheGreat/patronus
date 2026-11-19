@@ -14,6 +14,7 @@
 //! configuration. No subsystem may show fixture rows: an empty system shows
 //! an empty list (see tests/no_fixtures.rs).
 
+pub mod confirm;
 pub mod firewall;
 pub mod fwfeeds;
 pub mod fwlog;
@@ -79,6 +80,8 @@ pub struct AppState {
     pub secrets: Arc<SecretManager>,
     /// Remote / encrypted automatic backups.
     pub backup_targets: crate::backup_remote::BackupTargets,
+    /// Confirm-or-revert countdown for risky changes (`history.confirm_seconds`).
+    pub confirm: Arc<confirm::ConfirmTimer>,
 }
 
 impl AppState {
@@ -122,6 +125,7 @@ impl AppState {
             monitoring: Arc::new(MonitoringManager::new()),
             auth: AuthState::new(config_store.clone()),
             backup_targets: crate::backup_remote::BackupTargets::new(config_store.clone()),
+            confirm: confirm::ConfirmTimer::new(),
             config_store,
             secrets: Arc::new(SecretManager::new(Arc::new(
                 patronus_secrets::store::MemoryStore::new(),

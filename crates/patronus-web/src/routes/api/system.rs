@@ -310,6 +310,7 @@ pub async fn list_history(State(state): State<AppState>) -> Response {
                             .map(|t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string())
                             .unwrap_or_default(),
                         "user": user,
+                        "source": user,
                         "summary": summary,
                     })
                 })
@@ -334,6 +335,12 @@ pub async fn restore_history(
         Ok(None) => return error(StatusCode::NOT_FOUND, "no such revision"),
         Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
+    let secs = patronus_config::history::confirm_seconds(&state.config_store).await;
+    let before = if secs > 0 && !state.confirm.is_pending() {
+        state.config_store.export_json().await.ok()
+    } else {
+        None
+    };
     match state
         .system
         .restore(&state.config_store, &doc, &format!("revision {id}"))
@@ -341,10 +348,127 @@ pub async fn restore_history(
     {
         Ok(lines) => {
             end_sessions_after_restore(&state, &admin, &doc).await;
-            Json(json!({ "ok": true, "restored": id, "applied": lines })).into_response()
+            let mut armed = false;
+            if let Some(before) = before {
+                state
+                    .confirm
+                    .arm(&state, secs, format!("restore of revision {id}"), before)
+                    .await;
+                armed = true;
+            }
+            Json(json!({ "ok": true, "restored": id, "applied": lines, "confirm_pending": armed }))
+                .into_response()
         }
         Err(e) => err(e),
     }
+}
+
+/// GET /api/system/history/:id/diff -- what restoring revision `id` would
+/// change in the running configuration, per section (secrets hidden).
+pub async fn diff_history(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+    let rev = match state.config_store.revision_json(id).await {
+        Ok(Some(d)) => d,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "no such revision"),
+        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+    let cur = match state.config_store.export_json().await {
+        Ok(d) => d,
+        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+    let sections = patronus_config::history::diff_docs(&cur, &rev);
+    Json(json!({ "id": id, "identical": sections.is_empty(), "sections": sections })).into_response()
+}
+
+/// GET /api/system/history/settings
+pub async fn get_history_settings(State(state): State<AppState>) -> Response {
+    use patronus_config::history as h;
+    Json(json!({
+        "confirm_seconds": h::confirm_seconds(&state.config_store).await,
+        "confirm_seconds_min": h::CONFIRM_SECONDS_MIN,
+        "confirm_seconds_max": h::CONFIRM_SECONDS_MAX,
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+pub struct HistorySettings {
+    confirm_seconds: u32,
+}
+
+/// PUT /api/system/history/settings (admins): the confirm-or-revert timer.
+pub async fn put_history_settings(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Json(i): Json<HistorySettings>,
+) -> Response {
+    match patronus_config::history::set_confirm_seconds(&state.config_store, i.confirm_seconds).await
+    {
+        Ok(()) => {
+            let _ = state
+                .config_store
+                .audit(
+                    &admin.session.username,
+                    "update",
+                    "history_settings",
+                    Some("history.confirm_seconds"),
+                    &json!({ "confirm_seconds": i.confirm_seconds }),
+                )
+                .await;
+            Json(json!({ "ok": true, "confirm_seconds": i.confirm_seconds })).into_response()
+        }
+        Err(e) => err(anyhow::anyhow!("{e}")),
+    }
+}
+
+/// GET /api/system/history/pending -- the unconfirmed change, if any.
+pub async fn pending_history(State(state): State<AppState>) -> Response {
+    Json(state.confirm.view()).into_response()
+}
+
+fn may_modify(u: &crate::auth::AuthUser) -> Option<Response> {
+    (!u.session.role.can_modify()).then(|| error(StatusCode::FORBIDDEN, "read-only account"))
+}
+
+/// POST /api/system/history/confirm -- keep the unconfirmed change.
+pub async fn confirm_history(State(state): State<AppState>, u: crate::auth::AuthUser) -> Response {
+    if let Some(r) = may_modify(&u) {
+        return r;
+    }
+    if state.confirm.confirm(&state, &u.session.username).await {
+        Json(json!({ "ok": true })).into_response()
+    } else {
+        error(StatusCode::NOT_FOUND, "no such pending change (it may have been reverted already)")
+    }
+}
+
+/// POST /api/system/history/revert -- put the unconfirmed change back now.
+pub async fn revert_history(State(state): State<AppState>, u: crate::auth::AuthUser) -> Response {
+    if let Some(r) = may_modify(&u) {
+        return r;
+    }
+    match state.confirm.revert_now(&state, &u.session.username).await {
+        Ok(Some(what)) => Json(json!({ "ok": true, "reverted": what })).into_response(),
+        Ok(None) => error(StatusCode::NOT_FOUND, "no such pending change (it may have been reverted already)"),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(askama::Template)]
+#[template(path = "history.html")]
+pub struct HistoryTemplate {
+    pub page: &'static str,
+    pub is_admin: bool,
+}
+
+/// GET /history -- System > Configuration history.
+pub async fn history_page(me: crate::auth::AuthUser) -> Response {
+    crate::routes::pages::render(
+        &HistoryTemplate {
+            page: "history",
+            is_admin: me.session.role.is_admin(),
+        },
+        "history",
+    )
 }
 
 /// POST /api/system/restore -- upload an exported configuration (the
@@ -1144,6 +1268,11 @@ pub fn router() -> axum::Router<AppState> {
             post(upload_restore).layer(axum::extract::DefaultBodyLimit::max(MAX_UPLOAD)),
         )
         .route("/system/history", get(list_history))
+        .route("/system/history/settings", get(get_history_settings).put(put_history_settings))
+        .route("/system/history/pending", get(pending_history))
+        .route("/system/history/confirm", post(confirm_history))
+        .route("/system/history/revert", post(revert_history))
+        .route("/system/history/:id/diff", get(diff_history))
         .route("/system/history/:id/restore", post(restore_history))
         .route("/system/updates", get(list_updates))
         .route("/system/updates/check", post(check_updates))
