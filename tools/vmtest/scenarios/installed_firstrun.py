@@ -111,8 +111,12 @@ def define(args):
         m.check("every-file-of-the-product-package-is-on-disk", "files=0 " not in out and out.strip().endswith("missing=0"), out.strip()[-300:])
 
         m.phase("2. a failing wizard is readable and leaves nothing applied")
-        code, r = api("POST", "/api/setup/apply", {"wan_interface": "nosuch0", "wan_mode": "dhcp", "lan_interface": LAN, "lan_ipv4": UNUSED_LAN,
-                                                   "dhcp": False, "force": True})
+        code, r = api("POST", "/api/setup/apply", {"wan_interface": "nosuch0", "wan_mode": "dhcp", "lan_interface": LAN, "lan_ipv4": UNUSED_LAN, "dhcp": False, "force": True})
+        msg = r.get("error", "") if isinstance(r, dict) else str(r)
+        m.check("wizard-refuses-a-port-that-does-not-exist", code == 400 and "does not exist" in msg and "\n" not in msg, f"{code} {msg[:300]}")
+        # the LAN step succeeds and applies, the WAN step then fails on its address: the LAN change must be undone, not left half-applied
+        code, r = api("POST", "/api/setup/apply", {"wan_interface": WAN, "wan_mode": "static", "wan_ipv4": "not-an-address", "wan_gateway": WAN_GW, "lan_interface": LAN,
+                                                   "lan_ipv4": UNUSED_LAN, "dhcp": False, "force": True})
         msg = r.get("error", "") if isinstance(r, dict) else str(r)
         m.check("failing-wizard-is-http-4xx-5xx-with-one-sentence", code >= 400 and msg.startswith("Setup was not applied and nothing was changed.") and "\n" not in msg and r.get("rolled_back") is True, f"{code} {msg[:300]}")
         m.check("failing-wizard-left-the-lan-port-alone", UNUSED_LAN.split("/")[0] not in fw.succeed(f"ip -4 addr show dev {LAN}") and LAN_IP in fw.succeed(f"ip -4 addr show dev {LAN}"), "LAN keeps the installer's address")

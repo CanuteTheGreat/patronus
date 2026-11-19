@@ -262,6 +262,28 @@ pub async fn apply(
             "Invalid setup: the DHCP pool needs a start and an end address",
         );
     }
+    // both ports must exist on this box: a typo would otherwise be stored as a phantom interface and "applied"
+    if let Ok(ov) = state.interfaces.overview(None).await {
+        let known: Vec<String> = ov["devices"]
+            .as_array()
+            .map(|d| {
+                d.iter()
+                    .filter_map(|x| x["name"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (role, port) in [("WAN", &b.wan_interface), ("LAN", &b.lan_interface)] {
+            if !known.is_empty() && !known.contains(port) {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "Invalid setup: the {role} port {port:?} does not exist on this box (ports: {}). Nothing was changed.",
+                        known.join(", ")
+                    ),
+                );
+            }
+        }
+    }
     let client = ci.map(|ConnectInfo(a)| a.ip());
     let static_wan = b.wan_mode.as_deref() == Some("static");
     let wan = InterfaceUpdate {
