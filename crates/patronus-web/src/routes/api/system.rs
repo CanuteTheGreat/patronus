@@ -376,7 +376,8 @@ pub async fn diff_history(State(state): State<AppState>, Path(id): Path<i64>) ->
         Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     };
     let sections = patronus_config::history::diff_docs(&cur, &rev);
-    Json(json!({ "id": id, "identical": sections.is_empty(), "sections": sections })).into_response()
+    Json(json!({ "id": id, "identical": sections.is_empty(), "sections": sections }))
+        .into_response()
 }
 
 /// GET /api/system/history/settings
@@ -401,7 +402,8 @@ pub async fn put_history_settings(
     admin: AdminUser,
     Json(i): Json<HistorySettings>,
 ) -> Response {
-    match patronus_config::history::set_confirm_seconds(&state.config_store, i.confirm_seconds).await
+    match patronus_config::history::set_confirm_seconds(&state.config_store, i.confirm_seconds)
+        .await
     {
         Ok(()) => {
             let _ = state
@@ -437,7 +439,10 @@ pub async fn confirm_history(State(state): State<AppState>, u: crate::auth::Auth
     if state.confirm.confirm(&state, &u.session.username).await {
         Json(json!({ "ok": true })).into_response()
     } else {
-        error(StatusCode::NOT_FOUND, "no such pending change (it may have been reverted already)")
+        error(
+            StatusCode::NOT_FOUND,
+            "no such pending change (it may have been reverted already)",
+        )
     }
 }
 
@@ -448,7 +453,10 @@ pub async fn revert_history(State(state): State<AppState>, u: crate::auth::AuthU
     }
     match state.confirm.revert_now(&state, &u.session.username).await {
         Ok(Some(what)) => Json(json!({ "ok": true, "reverted": what })).into_response(),
-        Ok(None) => error(StatusCode::NOT_FOUND, "no such pending change (it may have been reverted already)"),
+        Ok(None) => error(
+            StatusCode::NOT_FOUND,
+            "no such pending change (it may have been reverted already)",
+        ),
         Err(e) => err(e),
     }
 }
@@ -1268,7 +1276,10 @@ pub fn router() -> axum::Router<AppState> {
             post(upload_restore).layer(axum::extract::DefaultBodyLimit::max(MAX_UPLOAD)),
         )
         .route("/system/history", get(list_history))
-        .route("/system/history/settings", get(get_history_settings).put(put_history_settings))
+        .route(
+            "/system/history/settings",
+            get(get_history_settings).put(put_history_settings),
+        )
         .route("/system/history/pending", get(pending_history))
         .route("/system/history/confirm", post(confirm_history))
         .route("/system/history/revert", post(revert_history))
