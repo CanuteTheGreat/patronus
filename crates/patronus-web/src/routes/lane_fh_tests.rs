@@ -510,6 +510,25 @@ async fn two_factor_login_needs_the_code_after_enrolment() {
         .unwrap()
         .starts_with("otpauth://totp/Patronus:admin?"));
     assert!(b["qr_svg"].as_str().unwrap().contains("<svg"));
+    // the QR encodes the otpauth URI (re-render and compare)
+    let uri = b["otpauth_uri"].as_str().unwrap();
+    assert_eq!(
+        b["qr_svg"].as_str().unwrap(),
+        crate::qrcode::generate_qr_code_svg(uri).unwrap()
+    );
+    // the page carries the QR slot, the text-secret fallback and the recovery-code actions
+    let (_, page, _) = t.raw(Method::GET, "/system", Some(&c), None).await;
+    for id in [
+        "id=\"totp-qr\"",
+        "id=\"totp-secret\"",
+        "id=\"totp-recovery-copy\"",
+        "id=\"totp-recovery-download\"",
+        "id=\"totp-recovery-print\"",
+    ] {
+        assert!(page.contains(id), "system page missing {id}");
+    }
+    assert!(page.contains("totpRecoveryDownload") && page.contains("patronus-recovery-codes.txt"));
+    assert!(!page.contains("cdn.") && !page.contains("qrcode.min.js"));
     // not on yet: password alone still works
     assert_eq!(t.login("admin", ADMIN_PW, None).await.0, StatusCode::OK);
     let now = chrono::Utc::now().timestamp() as u64;

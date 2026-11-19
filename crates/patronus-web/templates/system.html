@@ -375,7 +375,8 @@ async function fwFeedDownload() {
         <button class="btn btn-primary btn-sm" type="submit">Set up two-factor login</button>
     </form>
     <div id="totp-enrol" style="display:none">
-        <div id="totp-qr" style="width:240px"></div>
+        <div id="totp-qr" role="img" aria-label="QR code for your authenticator app" style="width:256px;background:#fff;padding:8px"></div>
+        <p class="text-sm" id="totp-qr-missing" style="display:none">The QR code could not be drawn; use the secret below.</p>
         <p class="text-sm">Or enter this secret by hand: <span class="mono" id="totp-secret"></span></p>
         <form class="lan-form" id="totp-enable-form" onsubmit="return totpEnable(event)">
             <label>Code from the app <input name="code" required autocomplete="one-time-code"></label>
@@ -385,7 +386,10 @@ async function fwFeedDownload() {
     <div id="totp-recovery" style="display:none">
         <p><b>Recovery codes</b> (each works once instead of a code; they are not shown again):</p>
         <pre class="mono" id="totp-recovery-codes"></pre>
-        <button class="btn btn-secondary btn-sm" onclick="location.reload()">Done</button>
+        <button class="btn btn-secondary btn-sm" type="button" id="totp-recovery-copy" onclick="totpRecoveryCopy()">Copy</button>
+        <button class="btn btn-secondary btn-sm" type="button" id="totp-recovery-download" onclick="totpRecoveryDownload()">Download (.txt)</button>
+        <button class="btn btn-secondary btn-sm" type="button" id="totp-recovery-print" onclick="totpRecoveryPrint()">Print</button>
+        <button class="btn btn-primary btn-sm" type="button" onclick="location.reload()">Done</button>
     </div>
     {% endif %}
 </div>
@@ -879,7 +883,8 @@ async function fwFeedDownload() {
         ev.preventDefault();
         const j = await post('/api/auth/2fa/setup', formJson(ev.target));
         if (!j) return false;
-        document.getElementById('totp-qr').innerHTML = j.qr_svg;
+        document.getElementById('totp-qr').innerHTML = j.qr_svg || '';
+        document.getElementById('totp-qr-missing').style.display = j.qr_svg ? 'none' : 'block';
         document.getElementById('totp-secret').textContent = j.secret;
         document.getElementById('totp-enrol').style.display = 'block';
         ev.target.style.display = 'none';
@@ -893,6 +898,34 @@ async function fwFeedDownload() {
         document.getElementById('totp-recovery-codes').textContent = j.recovery_codes.join('\n');
         document.getElementById('totp-recovery').style.display = 'block';
         return false;
+    }
+    function totpRecoveryText() {
+        return document.getElementById('totp-recovery-codes').textContent;
+    }
+    async function totpRecoveryCopy() {
+        const t = totpRecoveryText();
+        try { await navigator.clipboard.writeText(t); alert('Recovery codes copied.'); return; } catch (_) {}
+        const r = document.createRange();
+        r.selectNodeContents(document.getElementById('totp-recovery-codes'));
+        const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+        try { document.execCommand('copy'); alert('Recovery codes copied.'); } catch (_) { alert('Select the codes and copy them by hand.'); }
+    }
+    function totpRecoveryDownload() {
+        const blob = new Blob(['Patronus two-factor recovery codes (each works once)\n\n' + totpRecoveryText() + '\n'], {type: 'text/plain'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'patronus-recovery-codes.txt';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+    function totpRecoveryPrint() {
+        const w = window.open('', '_blank');
+        if (!w) { window.print(); return; }
+        const pre = w.document.createElement('pre');
+        pre.textContent = totpRecoveryText();
+        w.document.body.appendChild(pre);
+        w.document.title = 'Patronus recovery codes';
+        w.focus(); w.print(); w.close();
     }
     async function loadHistory() {
         const r = await fetch('/api/system/history', {credentials: 'same-origin'});
