@@ -54,7 +54,7 @@ jobs:
     # mac80211_hwsim is host-global: the script locks, loads 4 radios, always unloads. Runs on the hwsim-x86_64 lane
     # (hosts whose kernel package ships the module); FAILS, never skips, without it and ends with a "HWSIM SUMMARY" line.
     runs-on: hwsim-x86_64
-    timeout-minutes: 30
+    timeout-minutes: 90
     container:
       image: catthehacker/ubuntu:act-latest
       options: --memory 1g --memory-swap 1g --cpus 1

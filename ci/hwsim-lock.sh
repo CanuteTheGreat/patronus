@@ -7,10 +7,21 @@
 # and visible to every job container that has the docker socket.
 # Settings (all overridable): HWSIM_DOCKER (docker command, default "docker"), HWSIM_LOCK_NAME, HWSIM_STALE_MIN (a lock
 # older than this belongs to a run that died without cleanup: removed), HWSIM_WAIT_MIN (longest wait for the lock).
+# The lock label also records the holder's job container (its hostname = the short container id); when that container
+# no longer exists (cancelled/killed run whose EXIT trap never ran) the lock is removed at once instead of after
+# HWSIM_STALE_MIN. The default wait (65 min) is longer than the stale limit (60 min) on purpose: a waiter must outlast
+# the longest legitimate holder (the Wi-Fi job, 60 min limit) or a leaked lock, otherwise it fails a green tree red
+# (xbss-hwsim 2026-11-19 gave up after 20 min).
 hwsim_lock_take() {
   _d=${HWSIM_DOCKER:-docker}; _n=${HWSIM_LOCK_NAME:-patronus-hwsim-lock}
-  _stale=$(( ${HWSIM_STALE_MIN:-60} * 60 )); _wait=$(( ${HWSIM_WAIT_MIN:-20} * 60 )); _t0=$(date +%s)
-  while ! $_d network create --label "patronus.hwsim-lock=$(date +%s)" "$_n" >/dev/null 2>&1; do
+  _stale=$(( ${HWSIM_STALE_MIN:-60} * 60 )); _wait=$(( ${HWSIM_WAIT_MIN:-65} * 60 )); _t0=$(date +%s)
+  while ! $_d network create --label "patronus.hwsim-lock=$(date +%s)" --label "patronus.hwsim-holder=$(hostname)" "$_n" >/dev/null 2>&1; do
+    _h=$($_d network inspect -f '{{index .Labels "patronus.hwsim-holder"}}' "$_n" 2>/dev/null)
+    case "$_h" in
+      [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+        if [ "$_h" != "$(hostname)" ] && ! $_d container inspect "$_h" >/dev/null 2>&1; then
+          echo "removing the mac80211_hwsim lock of the dead job container $_h"; $_d network rm "$_n" >/dev/null 2>&1; continue; fi;;
+    esac
     _ts=$($_d network inspect -f '{{index .Labels "patronus.hwsim-lock"}}' "$_n" 2>/dev/null)
     if [ -n "$_ts" ] && [ "$_ts" -gt 0 ] 2>/dev/null && [ $(( $(date +%s) - _ts )) -gt "$_stale" ]; then
       echo "removing the stale mac80211_hwsim lock ($(( ($(date +%s) - _ts) / 60 )) min old)"; $_d network rm "$_n" >/dev/null 2>&1; continue; fi
