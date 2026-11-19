@@ -9,6 +9,7 @@ pub mod applier;
 pub mod apply;
 pub mod declarative;
 pub mod defaults;
+pub mod history;
 pub mod migrate;
 pub mod policy;
 pub mod seg;

@@ -533,13 +533,8 @@ async function fwFeedDownload() {
 
 <div class="card" id="history-card">
     <div class="card-header"><h2 class="card-title">Configuration history</h2></div>
-    <p class="text-sm">Every configuration change is kept as a revision (the last few hundred). Restoring one puts that
-        configuration back and applies it to the whole system; the configuration it replaces becomes a new revision, so a
-        restore can be undone the same way, and if any part cannot be applied the restore is undone. On the box:
-        <span class="mono">patronus config revisions</span> and <span class="mono">patronus config rollback &lt;id&gt;</span>.</p>
-    <p class="empty" id="history-empty" style="display:none">No revisions yet.</p>
-    <pre class="mono" id="history-diff" style="display:none;white-space:pre-wrap;max-height:24em;overflow:auto"></pre>
-    <table class="lan" id="history-table" style="display:none"><thead><tr><th>#</th><th>When</th><th>Who</th><th>Change</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+    <p class="text-sm">Every configuration change is kept as a revision. <a href="/history" id="history-link">Open Configuration history</a> to compare a revision with
+        the running configuration and restore it. On the box: <span class="mono">patronus config revisions</span> and <span class="mono">patronus config rollback &lt;id&gt;</span>.</p>
 </div>
 
 <div class="card">
@@ -1030,55 +1025,6 @@ async function fwFeedDownload() {
         w.document.title = 'Patronus recovery codes';
         w.focus(); w.print(); w.close();
     }
-    async function loadHistory() {
-        const r = await fetch('/api/system/history', {credentials: 'same-origin'});
-        if (!r.ok) return;
-        const list = await r.json();
-        const isAdmin = {% if is_admin %}true{% else %}false{% endif %};
-        const tb = document.querySelector('#history-table tbody'); tb.textContent = '';
-        document.getElementById('history-empty').style.display = list.length ? 'none' : '';
-        document.getElementById('history-table').style.display = list.length ? '' : 'none';
-        list.slice(0, 50).forEach(h => {
-            const tr = document.createElement('tr');
-            [h.id, h.when, h.user, h.summary].forEach((v, i) => {
-                const td = document.createElement('td'); td.textContent = v; if (i === 3) td.className = 'history-summary'; tr.appendChild(td);
-            });
-            const act = document.createElement('td');
-            if (isAdmin) {
-                const d = document.createElement('button');
-                d.className = 'btn btn-sm'; d.textContent = 'Compare'; d.dataset.diff = h.id;
-                d.onclick = () => showRevisionDiff(h.id);
-                act.appendChild(d); act.appendChild(document.createTextNode(' '));
-                const b = document.createElement('button');
-                b.className = 'btn btn-sm btn-danger'; b.textContent = 'Restore'; b.dataset.revision = h.id;
-                b.onclick = () => restoreRevision(h.id);
-                act.appendChild(b);
-            }
-            tr.appendChild(act); tb.appendChild(tr);
-        });
-    }
-    async function showRevisionDiff(id) {
-        const r = await fetch('/api/system/history/' + id + '/diff', {credentials: 'same-origin'});
-        const pre = document.getElementById('history-diff');
-        pre.style.display = '';
-        if (!r.ok) { pre.textContent = 'Could not compare revision ' + id + '.'; return; }
-        const j = await r.json();
-        if (!j.tables.length) { pre.textContent = 'Revision ' + id + ' is identical to the running configuration.'; return; }
-        const out = ['Restoring revision ' + id + ' would change:'];
-        j.tables.forEach(t => {
-            out.push('', t.table);
-            t.removed.forEach(x => out.push('  - ' + JSON.stringify(x)));
-            t.restored.forEach(x => out.push('  + ' + JSON.stringify(x)));
-        });
-        out.push('', '(- is removed from the running configuration, + is put back)');
-        pre.textContent = out.join('\n');
-    }
-    async function restoreRevision(id) {
-        if (!confirm('Put the configuration of revision ' + id + ' back and apply it now? The current configuration is kept as a new revision.')) return;
-        const j = await post('/api/system/history/' + id + '/restore', {});
-        if (j) { alert('Restored revision ' + j.restored + '.'); location.reload(); }
-    }
-    document.addEventListener('DOMContentLoaded', loadHistory);
     async function restoreStored(name) {
         if (!confirm('Replace the whole configuration with ' + name + ' and apply it now?')) return;
         const j = await post('/api/system/backups/' + encodeURIComponent(name) + '/restore', {});

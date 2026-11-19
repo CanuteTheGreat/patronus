@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+
+{% block title %}Configuration history - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    .rev-source { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.78em; font-weight: 600; background: var(--line); color: var(--muted); }
+    .rev-source.web { background: #dbeafe; color: #1e40af; }
+    .rev-source.cli { background: #ede9fe; color: #5b21b6; }
+    .history-summary { word-break: break-word; }
+    #history-msg { margin: 10px 0; padding: 10px; border-radius: 6px; }
+    #history-msg.ok-box { background: var(--ok-bg, #dcfce7); color: var(--ok-fg, #166534); }
+    #history-msg.bad-box { background: var(--bad-bg); color: var(--bad-fg); }
+    dialog#rev-dialog { max-width: min(760px, 94vw); width: 100%; border: 1px solid var(--line-strong); border-radius: 8px; padding: 16px; background: var(--card-bg, #fff); color: inherit; max-height: 88vh; overflow: auto; }
+    dialog#rev-dialog::backdrop { background: rgba(0,0,0,.5); }
+    .diff-section { margin: 12px 0; }
+    .diff-section h3 { margin: 0 0 4px; font-size: 1em; }
+    .diff-list { list-style: none; padding: 0; margin: 2px 0 6px; font-size: 0.9em; }
+    .diff-list li { padding: 3px 8px; border-left: 3px solid var(--line-strong); margin: 2px 0; word-break: break-word; }
+    .diff-add li { border-color: #16a34a; }
+    .diff-del li { border-color: #dc2626; }
+    .diff-chg li { border-color: #d97706; }
+    .diff-kind { font-size: 0.8em; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+    .dlg-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 14px; }
+    @media (max-width: 640px) {
+        table#history-table, table#history-table tbody, table#history-table tr, table#history-table td { display: block; width: 100%; box-sizing: border-box; }
+        table#history-table thead { display: none; }
+        table#history-table tr { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 10px; padding: 6px 8px; }
+        table#history-table td { border: 0; padding: 2px 0; }
+        table#history-table td[data-label]::before { content: attr(data-label) ": "; color: var(--muted); font-size: 0.85em; }
+        table#history-table td.actions { display: flex; gap: 8px; padding-top: 6px; }
+        table#history-table td.actions .btn { flex: 1; min-height: 40px; }
+        .dlg-actions .btn { flex: 1; min-height: 44px; }
+        form.lan-form input { width: 100%; box-sizing: border-box; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Configuration history</h1>
+    <p class="page-subtitle">Every change made in the web UI or with <span class="mono">patronus config</span> keeps the configuration it started from
+        as a revision (the last 200). Compare a revision with what is running, and restore it: the restore is applied to the whole
+        system, and undone by itself if any part cannot be applied.</p>
+</div>
+
+<div id="history-msg" role="status" hidden></div>
+
+<div class="card" id="history-card">
+    <div class="card-header"><h2 class="card-title">Revisions</h2></div>
+    <p class="empty" id="history-empty" hidden>No revisions yet. A revision is recorded before every change you make: change a rule on
+        <a href="/firewall">Firewall</a> or an address on <a href="/interfaces">Interfaces</a> and it shows up here.
+        For a full backup file use <a href="/system">System &gt; Backups</a> or <span class="mono">patronus config export &gt; backup.json</span>.</p>
+    <p class="empty" id="history-loading">Loading...</p>
+    <table class="lan" id="history-table" hidden><thead><tr><th>#</th><th>When</th><th>Source</th><th>Change</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+    <p class="text-sm text-muted">On the box: <span class="mono">patronus config revisions</span> and <span class="mono">patronus config rollback &lt;id&gt;</span>.</p>
+</div>
+
+<div class="card" id="confirm-timer-card">
+    <div class="card-header"><h2 class="card-title">Confirm-or-revert timer</h2></div>
+    <p class="text-sm">For risky changes on <a href="/interfaces">Interfaces</a> and <a href="/firewall">Firewall</a> (and restores from this page):
+        the change is applied at once, and if you do not press <b>Keep changes</b> within this time the box puts the previous configuration
+        back by itself. A change that cuts you off from the box heals without anyone having to reach it. 0 turns the timer off.</p>
+    <form class="lan-form" id="confirm-form">
+        <label>Seconds (0 = off, <span id="confirm-range">10 to 3600</span>)
+            <input type="number" id="confirm-seconds" name="confirm_seconds" min="0" max="3600" step="1" value="0" {% if !is_admin %}disabled{% endif %}></label>
+        {% if is_admin %}<button class="btn btn-primary btn-sm" type="submit" id="confirm-save">Save</button>{% endif %}
+    </form>
+    <p class="text-sm text-muted" id="confirm-note"></p>
+</div>
+
+<dialog id="rev-dialog" aria-labelledby="rev-title">
+    <h2 id="rev-title" style="margin-top:0"></h2>
+    <p class="text-sm" id="rev-sub"></p>
+    <div id="rev-body"><p class="empty">Loading...</p></div>
+    <div class="dlg-actions">
+        <button type="button" class="btn btn-sm" id="rev-close">Close</button>
+        {% if is_admin %}<button type="button" class="btn btn-sm btn-danger" id="rev-restore">Restore this revision</button>{% endif %}
+    </div>
+</dialog>
+
+<script>
+(function () {
+    var isAdmin = {% if is_admin %}true{% else %}false{% endif %};
+    var msg = document.getElementById('history-msg');
+    var dlg = document.getElementById('rev-dialog');
+    var current = null, confirming = false, revs = [];
+
+    function say(text, bad) { msg.hidden = false; msg.className = bad ? 'bad-box' : 'ok-box'; msg.textContent = text; }
+    function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+    function show(v) { if (v === null || v === undefined) return 'none'; if (typeof v === 'object') return JSON.stringify(v); return String(v); }
+    function api(path, method, body) {
+        return fetch(path, {method: method || 'GET', credentials: 'same-origin',
+            headers: body ? {'content-type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined})
+            .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return {ok: r.ok, status: r.status, json: j}; }); });
+    }
+
+    function load() {
+        api('/api/system/history').then(function (r) {
+            document.getElementById('history-loading').hidden = true;
+            if (!r.ok) { say('Could not load the history: ' + (r.json.error || r.status), true); return; }
+            revs = r.json;
+            var tb = document.querySelector('#history-table tbody'); tb.textContent = '';
+            document.getElementById('history-empty').hidden = revs.length > 0;
+            document.getElementById('history-table').hidden = revs.length === 0;
+            revs.slice(0, 200).forEach(function (h) {
+                var tr = el('tr'); tr.dataset.revision = h.id;
+                [['#', h.id], ['When', h.when]].forEach(function (c) { var td = el('td', '', c[1]); td.dataset.label = c[0]; tr.appendChild(td); });
+                var src = el('td'); src.dataset.label = 'Source';
+                src.appendChild(el('span', 'rev-source ' + h.source, h.source)); tr.appendChild(src);
+                var ch = el('td', 'history-summary', h.summary); ch.dataset.label = 'Change'; tr.appendChild(ch);
+                var act = el('td', 'actions');
+                var d = el('button', 'btn btn-sm', 'Diff'); d.type = 'button'; d.dataset.action = 'diff'; d.onclick = function () { openRev(h, false); }; act.appendChild(d);
+                if (isAdmin) { var b = el('button', 'btn btn-sm btn-danger', 'Restore'); b.type = 'button'; b.dataset.action = 'restore'; b.onclick = function () { openRev(h, true); }; act.appendChild(b); }
+                tr.appendChild(act); tb.appendChild(tr);
+            });
+        });
+    }
+
+    function renderDiff(j) {
+        var body = document.getElementById('rev-body'); body.textContent = '';
+        if (j.identical) { body.appendChild(el('p', 'ok', 'This revision matches the running configuration: restoring it would change nothing.')); return; }
+        j.sections.forEach(function (s) {
+            var sec = el('div', 'diff-section'); sec.dataset.section = s.table;
+            sec.appendChild(el('h3', '', s.title));
+            function list(kind, cls, rows, fmt) {
+                if (!rows.length) return;
+                sec.appendChild(el('div', 'diff-kind', kind + ' (' + rows.length + ')'));
+                var ul = el('ul', 'diff-list ' + cls);
+                rows.forEach(function (r) { ul.appendChild(el('li', '', fmt(r))); });
+                sec.appendChild(ul);
+            }
+            var brief = function (r) {
+                var parts = [];
+                Object.keys(r.values).forEach(function (k) { if (r.values[k] !== null && r.values[k] !== '' && k !== 'id') parts.push(k + '=' + show(r.values[k])); });
+                return r.label + (parts.length ? ' - ' + parts.join(', ') : '');
+            };
+            list('Brought back', 'diff-add', s.added, brief);
+            list('Removed', 'diff-del', s.removed, brief);
+            list('Changed', 'diff-chg', s.changed, function (c) {
+                return c.label + ': ' + c.fields.map(function (f) { return f.field + ' ' + show(f.from) + ' -> ' + show(f.to); }).join('; ');
+            });
+            if (s.more) sec.appendChild(el('p', 'text-sm text-muted', '... and ' + s.more + ' more rows.'));
+            body.appendChild(sec);
+        });
+    }
+
+    function setConfirming(on) {
+        confirming = on;
+        var rb = document.getElementById('rev-restore');
+        if (rb) rb.textContent = on ? 'Confirm restore' : 'Restore this revision';
+        document.getElementById('rev-sub').textContent = on
+            ? 'This puts the configuration below back and applies it now. The configuration it replaces is kept as a new revision.'
+            : 'What restoring this revision would change in the running configuration:';
+    }
+
+    function openRev(h, confirm) {
+        current = h;
+        document.getElementById('rev-title').textContent = (confirm ? 'Restore revision ' : 'Revision ') + h.id + (confirm ? '?' : '');
+        document.getElementById('rev-body').textContent = 'Loading...';
+        setConfirming(confirm);
+        if (!dlg.open) dlg.showModal();
+        document.getElementById('rev-body').dataset.rev = h.id;
+        api('/api/system/history/' + h.id + '/diff').then(function (r) {
+            if (!r.ok) { document.getElementById('rev-body').textContent = r.json.error || 'Could not load the diff.'; return; }
+            var intro = el('p', 'text-sm', h.when + ' - ' + h.source + ' - ' + h.summary);
+            renderDiff(r.json);
+            document.getElementById('rev-body').insertBefore(intro, document.getElementById('rev-body').firstChild);
+        });
+    }
+
+    document.getElementById('rev-close').onclick = function () { dlg.close(); };
+    var restoreBtn = document.getElementById('rev-restore');
+    if (restoreBtn) restoreBtn.onclick = function () {
+        if (!confirming) { setConfirming(true); return; }
+        restoreBtn.disabled = true;
+        api('/api/system/history/' + current.id + '/restore', 'POST', {}).then(function (r) {
+            restoreBtn.disabled = false; dlg.close();
+            if (!r.ok) { say('Restore of revision ' + current.id + ' failed: ' + (r.json.error || r.status), true); return; }
+            say('Restored revision ' + r.json.restored + '. ' + (r.json.confirm_pending ? 'The restore is unconfirmed: keep it with the button at the top, or it is reverted. ' : '') + (r.json.applied || []).join(' '));
+            load();
+        });
+    };
+
+    function loadSettings() {
+        api('/api/system/history/settings').then(function (r) {
+            if (!r.ok) return;
+            document.getElementById('confirm-seconds').value = r.json.confirm_seconds;
+            document.getElementById('confirm-range').textContent = r.json.confirm_seconds_min + ' to ' + r.json.confirm_seconds_max;
+            document.getElementById('confirm-note').textContent = r.json.confirm_seconds ? 'On: ' + r.json.confirm_seconds + ' s.' : 'Off.';
+        });
+    }
+    document.getElementById('confirm-form').onsubmit = function (ev) {
+        ev.preventDefault();
+        var n = parseInt(document.getElementById('confirm-seconds').value, 10);
+        api('/api/system/history/settings', 'PUT', {confirm_seconds: isNaN(n) ? -1 : n}).then(function (r) {
+            if (!r.ok) { say('Not saved: ' + (r.json.error || r.status), true); return; }
+            say('Saved: confirm-or-revert timer ' + (r.json.confirm_seconds ? r.json.confirm_seconds + ' s' : 'off') + '.'); loadSettings();
+        });
+        return false;
+    };
+
+    load(); loadSettings();
+})();
+</script>
+{% endblock %}

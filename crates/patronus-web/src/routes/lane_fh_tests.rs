@@ -891,10 +891,15 @@ async fn configuration_history_lists_revisions_and_restores_one() {
     assert!(rows[0]["when"].as_str().unwrap().ends_with("UTC"));
     assert!(rows.iter().any(|r| r["id"] == first));
 
-    // the page carries the card
+    // the System page points at the history page, which carries the table
     let (s, page, _) = t.raw(Method::GET, "/system", Some(&c), None).await;
     assert_eq!(s, StatusCode::OK);
+    assert!(page.contains("id=\"history-link\""));
+    let (s, page, _) = t.raw(Method::GET, "/history", Some(&c), None).await;
+    assert_eq!(s, StatusCode::OK);
     assert!(page.contains("id=\"history-table\""));
+    assert!(page.contains("id=\"history-empty\""), "empty state with a next step");
+    assert!(rows.iter().all(|r| r["source"] == "web"));
 
     // restore revision `first`: config back, applied, previous state kept
     let applies = t.restore_fake.applies.load(Ordering::SeqCst);
@@ -2324,69 +2329,172 @@ async fn groups_grant_per_area_privileges_that_the_gate_enforces() {
 }
 
 #[tokio::test]
-async fn configuration_history_compare_shows_what_a_restore_would_change() {
+async fn history_diff_is_readable_and_hides_secrets() {
     let t = setup().await;
     let c = t.admin().await;
-    t.state
-        .config_store
-        .save_system_config("test.marker", "one")
-        .await
-        .unwrap();
-    let first = t
-        .state
-        .config_store
-        .snapshot("web", "marker is one")
-        .await
-        .unwrap();
-    // identical to the running configuration: nothing to change
-    let (s, b) = t
-        .call(
-            &c,
-            Method::GET,
-            &format!("/api/system/history/{first}/diff"),
-            None,
-        )
-        .await;
-    assert_eq!(s, StatusCode::OK, "{b}");
-    assert!(b["tables"].as_array().unwrap().is_empty(), "{b}");
+    let st = &t.state.config_store;
+    st.save_system_config("test.marker", "one").await.unwrap();
+    st.save_system_config("test.api_token", "tok-first").await.unwrap();
+    let first = st.snapshot("web", "marker is one").await.unwrap();
 
-    t.state
-        .config_store
-        .save_system_config("test.marker", "two")
-        .await
-        .unwrap();
-    let (s, b) = t
-        .call(
-            &c,
-            Method::GET,
-            &format!("/api/system/history/{first}/diff"),
-            None,
-        )
+    // identical to the running configuration
+    let (s, d) = t
+        .call(&c, Method::GET, &format!("/api/system/history/{first}/diff"), None)
         .await;
-    assert_eq!(s, StatusCode::OK, "{b}");
-    let text = b.to_string();
-    assert!(
-        text.contains("\"one\"") && text.contains("\"two\""),
-        "{text}"
-    );
+    assert_eq!(s, StatusCode::OK, "{d}");
+    assert_eq!(d["identical"], true, "{d}");
+
+    st.save_system_config("test.marker", "two").await.unwrap();
+    st.save_system_config("test.api_token", "tok-second").await.unwrap();
+    let (_, d) = t
+        .call(&c, Method::GET, &format!("/api/system/history/{first}/diff"), None)
+        .await;
+    assert_eq!(d["identical"], false);
+    let text = d.to_string();
+    assert!(!text.contains("tok-first") && !text.contains("tok-second"), "secret leaked: {text}");
+    let sys = d["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["table"] == "system_config")
+        .expect("system_config section");
+    assert_eq!(sys["title"], "System settings");
+    let ch = sys["changed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["label"] == "test.marker")
+        .expect("marker change");
+    assert_eq!(ch["fields"][0]["from"], "two");
+    assert_eq!(ch["fields"][0]["to"], "one");
 
     let (s, _) = t
         .call(&c, Method::GET, "/api/system/history/999999/diff", None)
         .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
-
-    let (s, page, _) = t.raw(Method::GET, "/system", Some(&c), None).await;
-    assert_eq!(s, StatusCode::OK);
-    assert!(page.contains("showRevisionDiff"));
 }
 
-#[test]
-fn config_diff_hides_secret_columns() {
-    use serde_json::json;
-    let old = json!({"tables": {"web_users": [{"name": "a", "password_hash": "H1"}]}});
-    let cur = json!({"tables": {"web_users": [{"name": "a", "password_hash": "H2"}]}});
-    let d = crate::routes::api::system::config_diff(&old, &cur);
-    let text = serde_json::to_string(&d).unwrap();
-    assert!(!text.contains("H1") && !text.contains("H2"), "{text}");
-    assert!(text.contains("(hidden)"));
+#[tokio::test]
+async fn confirm_timer_setting_is_typed_audited_and_off_by_default() {
+    let t = setup().await;
+    let c = t.admin().await;
+    let (s, v) = t.call(&c, Method::GET, "/api/system/history/settings", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(v["confirm_seconds"], 0);
+    for bad in [1, 9, 3601] {
+        let (s, _) = t
+            .call(
+                &c,
+                Method::PUT,
+                "/api/system/history/settings",
+                Some(json!({ "confirm_seconds": bad })),
+            )
+            .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{bad}");
+    }
+    let (s, b) = t
+        .call(
+            &c,
+            Method::PUT,
+            "/api/system/history/settings",
+            Some(json!({ "confirm_seconds": 90 })),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let (_, v) = t.call(&c, Method::GET, "/api/system/history/settings", None).await;
+    assert_eq!(v["confirm_seconds"], 90);
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE entity_type = 'history_settings'")
+        .fetch_one(t.state.config_store.pool().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(n, 1, "one audit entry for the one saved change");
+}
+
+fn rule_body(name: &str) -> serde_json::Value {
+    json!({"name": name, "chain": "input", "action": "accept", "interface": "@lan", "protocol": "tcp",
+           "source": "any", "destination": "any", "port": "2222", "description": name, "enabled": true})
+}
+
+#[tokio::test]
+async fn risky_change_waits_for_confirmation_and_can_be_reverted_or_kept() {
+    let t = setup().await;
+    let c = t.admin().await;
+    t.state
+        .config_store
+        .save_system_config(patronus_config::history::CONFIRM_SECONDS_KEY, "600")
+        .await
+        .unwrap();
+    let rule_count = || async {
+        t.state
+            .config_store
+            .export_json()
+            .await
+            .unwrap()["tables"]["firewall_rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["name"].as_str().is_some_and(|n| n.starts_with("ct-")))
+            .count()
+    };
+    let (s, p) = t.call(&c, Method::GET, "/api/system/history/pending", None).await;
+    assert_eq!((s, &p["active"]), (StatusCode::OK, &json!(false)));
+
+    // a firewall change starts the countdown and stays in force
+    let (s, b) = t
+        .call(&c, Method::POST, "/api/firewall/rules", Some(rule_body("ct-revert")))
+        .await;
+    assert!(s.is_success(), "{s} {b}");
+    let (_, p) = t.call(&c, Method::GET, "/api/system/history/pending", None).await;
+    assert_eq!(p["active"], true, "{p}");
+    assert!(p["seconds_left"].as_i64().unwrap() > 500);
+    assert_eq!(rule_count().await, 1);
+
+    // reverting puts the previous configuration back
+    let (s, b) = t.call(&c, Method::POST, "/api/system/history/revert", None).await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert_eq!(rule_count().await, 0);
+    let (_, p) = t.call(&c, Method::GET, "/api/system/history/pending", None).await;
+    assert_eq!(p["active"], false);
+
+    // keeping it makes it permanent
+    let (s, _) = t
+        .call(&c, Method::POST, "/api/firewall/rules", Some(rule_body("ct-keep")))
+        .await;
+    assert!(s.is_success());
+    let (s, _) = t.call(&c, Method::POST, "/api/system/history/confirm", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(rule_count().await, 1);
+    let (s, _) = t.call(&c, Method::POST, "/api/system/history/confirm", None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "nothing left to confirm");
+
+    // the timeout path is the same revert, run by the box
+    let (s, _) = t
+        .call(&c, Method::POST, "/api/firewall/rules", Some(rule_body("ct-timeout")))
+        .await;
+    assert!(s.is_success());
+    assert_eq!(rule_count().await, 2);
+    let what = t.state.confirm.revert_now(&t.state, "timeout").await.unwrap();
+    assert!(what.is_some());
+    assert_eq!(rule_count().await, 1);
+
+    // audit trail of the three outcomes
+    let actions: Vec<String> = sqlx::query_scalar("SELECT action FROM audit_log")
+        .fetch_all(t.state.config_store.pool().unwrap())
+        .await
+        .unwrap();
+    for a in ["confirm_armed", "confirm_revert", "confirm", "confirm_timeout_revert"] {
+        assert!(actions.iter().any(|x| x == a), "no {a} in the audit log: {actions:?}");
+    }
+}
+
+#[tokio::test]
+async fn confirm_timer_off_means_no_countdown() {
+    let t = setup().await;
+    let c = t.admin().await;
+    let (s, _) = t
+        .call(&c, Method::POST, "/api/firewall/rules", Some(rule_body("ct-none")))
+        .await;
+    assert!(s.is_success());
+    let (_, p) = t.call(&c, Method::GET, "/api/system/history/pending", None).await;
+    assert_eq!(p["active"], false);
 }
