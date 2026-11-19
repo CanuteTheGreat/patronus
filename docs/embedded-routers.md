@@ -1258,5 +1258,10 @@ stagger timing, the steering back-off with two units), unit tests in `apwifi.rs`
 `check-rootfs.sh` requires an executable ap-chan.
 
 Other tiers: the Slate's radios run its AP on the channel of its Wi-Fi uplink (one channel per radio, section 6d), so it
-has no channel of its own to choose; the standard tier's Wi-Fi (`wireless.rs`) has a fixed channel per network and no
-automatic choice yet (follow-up).
+has no channel of its own to choose; the standard tier's Wi-Fi (`wireless.rs`) has the same
+feature since 2026-11-18 (done): channel `auto` is the default of a new network, measured at radio start with the same
+scoring in Rust (`wifichan.rs`: equal dwell samples, own airtime subtracted, neighbour cost, 2.4 GHz overlap),
+re-checked nightly and on request by the per-network `patronus wifi-chan run` service, moved by CSA only when clearly and
+repeatedly better (restart where the driver or the setting rules CSA out), with the reason and history in the API and
+the Segmentation > Wi-Fi tab, typed settings and export. Existing fixed channels are unchanged. Not coordinated between
+separate boxes (this tier's units are neighbours of each other). See docs/WIFI-AUTO-CHANNEL.md.
