@@ -509,20 +509,23 @@ grep -q '"event":"measure".*did not answer' "$ST/db/history" && grep -q 'bss_tm_
   && ok "ap-steer: no beacon report answer -> asked to move anyway, the station measures itself" || { no "ap-steer: silent 802.11k station stuck"; cat "$ST/cli.log"; }
 # quiet hours: the last resort
 rm -rf "$ST/state" "$ST/db"; fdbhead; : > "$ST/cli.log"; NB="$SB AP_STEER_QUIET_IDLE=300"
-echo "$BTM" > "$ST/sta/aa:00:00:00:00:07"; echo "$BTM" > "$ST/sta/aa:00:00:00:00:08"
+echo "$BTM" > "$ST/sta/aa:00:00:00:00:07"; echo "$BTM" > "$ST/sta/aa:00:00:00:00:08"; echo "$BTM" > "$ST/sta/aa:00:00:00:00:0a"
 for n in 4000 4100 4200 4300 4400 4500 4600 4700 4800; do
   stsay wl5-m aa:00:00:00:00:01 -80 100 900                 # legacy, idle
   stsay wl5-m aa:00:00:00:00:09 -80 $(( n > 4600 ? 460000000 : n * 100000 )) 900   # legacy, traffic until 4600
   stsay wl5-m aa:00:00:00:00:07 -80 100 900                 # 802.11v, ignores the request
   stsay wl5-m aa:00:00:00:00:08 -80 100 900                 # 802.11v, declines: no suitable candidate
-  [ $n = 4200 ] && echo "4150 wl5-m BSS-TM-RESP aa:00:00:00:00:08 dialog_token=1 status_code=7 bss_termination_delay=0" > "$ST/state/events"
+  stsay wl5-m aa:00:00:00:00:0a -80 100 900                 # 802.11v, "accepts" with THIS unit's BSS as the target (stays)
+  [ $n = 4200 ] && printf '%s\n' "4150 wl5-m BSS-TM-RESP aa:00:00:00:00:08 dialog_token=1 status_code=7 bss_termination_delay=0" \
+    "4150 wl5-m BSS-TM-RESP aa:00:00:00:00:0a dialog_token=1 status_code=0 bss_termination_delay=0 target_bssid=94:00:00:00:00:01" > "$ST/state/events"
   c=14:00; [ $n -ge 4400 ] && c=02:00; stround $n $c "$NB"; done
 k() { grep -c "deny_acl ADD_MAC $1" "$ST/cli.log"; }
 [ "$(k aa:00:00:00:00:01)" = 3 ] && [ "$(k aa:00:00:00:00:07)" = 3 ] && [ "$(k aa:00:00:00:00:08)" = 0 ] && [ "$(k aa:00:00:00:00:09)" = 0 ] \
+  && [ "$(k aa:00:00:00:00:0a)" = 0 ] && grep -q '"event":"btm-answer","mac":"aa:00:00:00:00:0a".*stays on this access point' "$ST/db/history" \
   && [ -z "$(awk '$3 == "deny_acl" && $1 < 4400' "$ST/cli.log")" ] \
   && grep -q '"event":"kick","mac":"aa:00:00:00:00:07".*ignored the move request' "$ST/db/history" \
-  && ok "ap-steer: in the quiet hours an idle station that ignored the request (or has no 802.11v) is refused on every BSS; one that declined, or had traffic, is not" \
-  || { no "ap-steer: quiet-hour disconnects: 01=$(k aa:00:00:00:00:01) 07=$(k aa:00:00:00:00:07) 08=$(k aa:00:00:00:00:08) 09=$(k aa:00:00:00:00:09)"; grep deny_acl "$ST/cli.log"; }
+  && ok "ap-steer: in the quiet hours an idle station that ignored the request (or has no 802.11v) is refused on every BSS; one that declined, chose to stay (target = this unit) or had traffic, is not" \
+  || { no "ap-steer: quiet-hour disconnects: 01=$(k aa:00:00:00:00:01) 07=$(k aa:00:00:00:00:07) 08=$(k aa:00:00:00:00:08) 09=$(k aa:00:00:00:00:09) 0a=$(k aa:00:00:00:00:0a)"; grep deny_acl "$ST/cli.log"; }
 # at most once per AP_STEER_KICK_EVERY: it comes back, is left alone (RETRY 60 here), is weak again -> not disconnected again
 for n in 4900 5000 5100 5200 5300 5400 5500; do stsay wl5-m aa:00:00:00:00:01 -80 100 $((n - 4850)); stround $n 02:00 "$NB AP_STEER_RETRY=60 AP_STEER_RETRY_MAX=60"; done
 [ "$(k aa:00:00:00:00:01)" = 3 ] && ok "ap-steer: a device is disconnected at most once per AP_STEER_KICK_EVERY" || { no "ap-steer: kicked again: $(k aa:00:00:00:00:01)"; grep 'aa:00:00:00:00:01' "$ST/db/history" | tail -3; }

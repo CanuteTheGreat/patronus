@@ -153,7 +153,11 @@ events() { # answers queued by ap-event: BSS-TM-RESP (move request answered), BE
   while read -r et ifn ev m a1 a2 a3 rest; do case "$ev" in
   BSS-TM-RESP) st=$(echo "$a1 $a2 $a3 $rest" | sed -n 's/.*status_code=\([0-9]*\).*/\1/p'); st=${st:-1}
     tb=$(echo "$a1 $a2 $a3 $rest" | sed -n 's/.*target_bssid=\([0-9a-fA-F:]*\).*/\1/p')
+    # "accepted" with THIS unit's BSS as the target = it measured the candidates and chose to stay (seen on hardware
+    # with wpa_supplicant): the same as "no better access point" (7), never a reason for a night disconnect
+    tl=$(echo "$tb" | tr 'A-F' 'a-f'); [ "$st" = 0 ] && [ -n "$tl" ] && case "$own" in *" $tl "*) st=7; tb=own;; esac
     echo "$et $st ${tb:--}" > "$SD/btm-$m"
+    [ "$tb" = own ] && w="answered: it stays on this access point (it measured the others, none better)" || \
     case "$st" in 0) w="accepted the move request${tb:+, roaming to $tb}";; 7) w="declined: no suitable candidate (it hears no better access point)";;
       6) w="declined: it named its own candidates";; *) w="declined the move request (status $st)";; esac
     hist btm-answer "$m" "$ifn" "" "$w";;
