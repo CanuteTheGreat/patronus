@@ -1266,7 +1266,7 @@ Hardware results (two GL-AX1800 units, ~50 stations, 2026-11-19):
   and was not disconnected again. A wpa_supplicant 2.10 client with 802.11v answered the request with status 0 and
   THIS unit's BSSID as the target (it measured the candidates and stayed, no disconnect): that answer is now treated
   like status 7 (never a reason for a night disconnect); before, it counted as "ignored".
-- `AP_TZ`: with `AP_TZ=PST8PDT,M3.2.0,M11.1.0` the units' `date`, the quiet hours and the nightly channel re-check run
+- `AP_TZ`: with a local POSIX TZ string in `AP_TZ` the units' `date`, the quiet hours and the nightly channel re-check run
   in local time.
 
 ### 12.19 Channel choice by measurement, nightly re-check by channel switch, steering back-off (2026-11-18)
