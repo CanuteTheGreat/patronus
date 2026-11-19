@@ -1150,6 +1150,20 @@ impl InterfacesApplier {
                     )),
                 }
             }
+            // OpenRC: dhcpcd was the only `net` provider. With no provider in the runlevel, the next start of anything that
+            // needs `net` (dnsmasq, the web UI) starts dhcpcd again as its provider, and that manager takes every port back.
+            // netifrc's loopback service provides `net` without touching any other port.
+            if svc.init_system() == patronus_core::service::InitSystem::OpenRC
+                && std::path::Path::new("/etc/init.d/net.lo").exists()
+                && !svc.is_enabled("net.lo").unwrap_or(true)
+            {
+                match svc.enable("net.lo").and_then(|_| svc.start("net.lo")) {
+                    Ok(()) => report.applied(
+                        "net.lo enabled as the `net` provider (OpenRC would otherwise start the system dhcpcd again)",
+                    ),
+                    Err(e) => report.warn(format!("could not enable net.lo as the `net` provider: {e}")),
+                }
+            }
         }
         let delegating = self.delegates_dhcp(store).await.is_some();
         let owned = Self::owned_interfaces(&cfg, delegating);
