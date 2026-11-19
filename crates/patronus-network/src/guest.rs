@@ -614,7 +614,11 @@ pub fn gate_closed_at(g: &Gate, now: i64, off_min: i32) -> Option<Vec<String>> {
                     v.push(day.trim_end().to_string());
                 }
                 for (a, b) in runs {
-                    v.push(format!("{day}meta hour \"{}\"-\"{}:59\"", clock(a), clock(b)));
+                    v.push(format!(
+                        "{day}meta hour \"{}\"-\"{}:59\"",
+                        clock(a),
+                        clock(b)
+                    ));
                 }
             }
             Some(v)
