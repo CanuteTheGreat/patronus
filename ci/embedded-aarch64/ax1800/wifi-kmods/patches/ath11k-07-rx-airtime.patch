@@ -1,0 +1,85 @@
+From: Julius Bairaktaris <julius@bairaktaris.de>
+Date: Tue,  8 Sep 2026 15:53:16 +0200
+Subject: [PATCH ath-next v4 7/9] wifi: ath11k: charge received airtime to the  station deficit
+Origin: https://lore.kernel.org/all/20260908135319.754140-8-julius@bairaktaris.de/
+
+mac80211's airtime scheduler is configured to account both directions:
+local->airtime_flags is AIRTIME_USE_TX | AIRTIME_USE_RX, and
+ieee80211_sta_register_airtime() adds the received airtime to the same
+deficit the transmit side subtracts from. ath11k passes zero for it, so
+an access point serving a station that mostly uploads charges that
+station nothing for the medium it occupies, and the deficit that decides
+whose queue is served next describes half the traffic.
+
+Register the duration the hardware reports for each received PPDU. It
+arrives in the RXPCU PPDU end TLV on the monitor status ring, which is
+subscribed for every radio, and ath11k already accumulates it as the
+station's rx_duration. Charging it once per PPDU matches what the
+transmit side registers, whereas an estimate rebuilt per MSDU counts the
+preamble and the interframe space once for every subframe of an
+aggregate.
+
+The PPDU end user stats TLV that names the TID is not in the default
+monitor status filter, so the airtime is charged to best effort, the
+access category the deficit arbitrates the bulk of the traffic in. The
+call is made after ab->base_lock is dropped, under the rcu read lock the
+loop holds, as the tx completion path does; base_lock is contended by
+every tx completion. A PPDU from a peer with no station entry is not
+charged to anyone.
+
+Tested-on: IPQ8074 hw2.0 AHB WLAN.HK.2.9.0.1-02146-QCAHKSWPL_SILICONZ-1
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
+---
+ drivers/net/wireless/ath/ath11k/dp_rx.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath11k/dp_rx.c b/drivers/net/wireless/ath/ath11k/dp_rx.c
+index 68472e1e748a..a7b9bb295728 100644
+--- a/drivers/net/wireless/ath/ath11k/dp_rx.c
++++ b/drivers/net/wireless/ath/ath11k/dp_rx.c
+@@ -5270,6 +5270,7 @@ int ath11k_dp_rx_process_mon_status(struct ath11k_base *ab, int mac_id,
+ 	struct sk_buff_head skb_list;
+ 	struct ath11k_peer *peer;
+ 	struct ath11k_sta *arsta;
++	struct ieee80211_sta *sta;
+ 	int num_buffs_reaped = 0;
+ 	u32 rx_buf_sz;
+ 	u16 log_type;
+@@ -5324,6 +5325,7 @@ int ath11k_dp_rx_process_mon_status(struct ath11k_base *ab, int mac_id,
+ 			continue;
+ 		}
+ 
++		sta = NULL;
+ 		rcu_read_lock();
+ 		spin_lock_bh(&ab->base_lock);
+ 		peer = ath11k_peer_find_by_id(ab, ppdu_info->peer_id);
+@@ -5337,12 +5339,25 @@ int ath11k_dp_rx_process_mon_status(struct ath11k_base *ab, int mac_id,
+ 
+ 		arsta = ath11k_sta_to_arsta(peer->sta);
+ 		ath11k_dp_rx_update_peer_stats(arsta, ppdu_info);
++		sta = peer->sta;
+ 
+ 		if (ath11k_debugfs_is_pktlog_peer_valid(ar, peer->addr))
+ 			trace_ath11k_htt_rxdesc(ar, skb->data, log_type, rx_buf_sz);
+ 
+ next_skb:
+ 		spin_unlock_bh(&ab->base_lock);
++
++		/* The airtime a station spends transmitting is taken from
++		 * the others, so its deficit is charged for it too, with the
++		 * duration the hardware measured for the whole PPDU, as on
++		 * the transmit side. The TLV that names the TID is not in
++		 * the default monitor status filter, so the charge goes to
++		 * BE. Outside base_lock, which tx completion contends for;
++		 * sta is held by the rcu read lock.
++		 */
++		if (sta && ppdu_info->rx_duration)
++			ieee80211_sta_register_airtime(sta, 0, 0,
++						       ppdu_info->rx_duration);
+ 		rcu_read_unlock();
+ 
+ 		dev_kfree_skb_any(skb);
+-- 
+2.53.0

@@ -1,0 +1,48 @@
+From: Julius Bairaktaris <julius@bairaktaris.de>
+Date: Tue,  8 Sep 2026 15:53:12 +0200
+Subject: [PATCH ath-next v4 3/9] wifi: ath11k: report the pending tx MSDU  count in soc_dp_stats
+Origin: https://lore.kernel.org/all/20260908135319.754140-4-julius@bairaktaris.de/
+
+ar->dp.num_tx_pending counts the MSDUs the hardware has not completed
+yet, and is used to wait for the transmit path to drain. It is never
+shown.
+
+soc_dp_stats can therefore say when the transmit path overflowed - TCL ring
+full, misc transmit failures - and not how deep it is at this instant. The
+count added here is bounded by the tx descriptor idr, one entry short of
+DP_TX_IDR_SIZE per ring, which is large enough that occupancy rather than
+exhaustion is what characterises the path under load.
+
+Print it per radio, beside the failure counters it complements.
+
+Tested-on: IPQ8074 hw2.0 AHB WLAN.HK.2.9.0.1-02146-QCAHKSWPL_SILICONZ-1
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
+---
+ drivers/net/wireless/ath/ath11k/debugfs.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/net/wireless/ath/ath11k/debugfs.c b/drivers/net/wireless/ath/ath11k/debugfs.c
+index 70922612d3fb..ffe1f466aefb 100644
+--- a/drivers/net/wireless/ath/ath11k/debugfs.c
++++ b/drivers/net/wireless/ath/ath11k/debugfs.c
+@@ -714,6 +714,16 @@ static ssize_t ath11k_debugfs_dump_soc_dp_stats(struct file *file,
+ 			 "\nMisc Transmit Failures: %d\n",
+ 			 atomic_read(&soc_stats->tx_err.misc_fail));
+ 
++	/* Descriptors the hardware has not completed. */
++	len += scnprintf(buf + len, size - len, "\nPending Tx MSDUs:\n");
++	for (i = 0; i < ab->num_radios; i++) {
++		struct ath11k *ar = ab->pdevs[i].ar;
++
++		if (ar)
++			len += scnprintf(buf + len, size - len, "radio%d: %d\n",
++					 i, atomic_read(&ar->dp.num_tx_pending));
++	}
++
+ 	len += ath11k_debugfs_dump_soc_ring_bp_stats(ab, buf + len, size - len);
+ 
+ 	if (len > size)
+-- 
+2.53.0

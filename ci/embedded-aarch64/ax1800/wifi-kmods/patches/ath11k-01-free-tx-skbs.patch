@@ -1,0 +1,57 @@
+From: Julius Bairaktaris <julius@bairaktaris.de>
+Date: Tue,  8 Sep 2026 15:53:10 +0200
+Subject: [PATCH ath-next v4 1/9] wifi: ath11k: free tx skbs through  ieee80211_free_txskb()
+Origin: https://lore.kernel.org/all/20260908135319.754140-2-julius@bairaktaris.de/
+
+ath11k_dp_tx_free_txbuf(), reached from the HTT tx completion handler for
+the REINJ and INSPECT statuses, releases the frame with
+dev_kfree_skb_any(). Every other tx completion path in dp_tx.c hands the
+skb back to mac80211, and this one is the last that does not.
+
+A frame freed that way keeps whatever state mac80211 was holding for it.
+A data frame whose socket asked for tx status has a clone parked in
+local->ack_status_frames and an index allocated from an idr bounded at
+8191 entries; ieee80211_free_txskb() releases both through
+ieee80211_report_used_skb(), and dev_kfree_skb_any() leaks them for the
+lifetime of the hw. Commit 29d15589f084 ("wifi: ath11k: Cleanup mac80211
+references on failure during tx_complete") converted three sibling paths
+for exactly that reason and left this one.
+
+On a driver that advertises NL80211_EXT_FEATURE_AQL, which the next
+patch makes ath11k do, ieee80211_free_txskb() also returns the pending
+airtime the frame was charged at dequeue, and dev_kfree_skb_any() does
+not. The charge then stays on the access category for good, and once
+local->aql_ac_pending_airtime[] reaches its limit
+ieee80211_txq_schedule_airtime_check() stops every station on the radio
+in that category.
+
+Neither status was seen on the hardware below during the measurements
+in this series, so the change is by inspection of the completion path.
+
+Tested-on: IPQ8074 hw2.0 AHB WLAN.HK.2.9.0.1-02146-QCAHKSWPL_SILICONZ-1
+
+Fixes: d5c65159f289 ("ath11k: driver for Qualcomm IEEE 802.11ax devices")
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
+---
+ drivers/net/wireless/ath/ath11k/dp_tx.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath11k/dp_tx.c b/drivers/net/wireless/ath/ath11k/dp_tx.c
+index cac970c92806..52c4a9924a31 100644
+--- a/drivers/net/wireless/ath/ath11k/dp_tx.c
++++ b/drivers/net/wireless/ath/ath11k/dp_tx.c
+@@ -305,9 +305,10 @@ static void ath11k_dp_tx_free_txbuf(struct ath11k_base *ab, u8 mac_id,
+ 	skb_cb = ATH11K_SKB_CB(msdu);
+ 
+ 	dma_unmap_single(ab->dev, skb_cb->paddr, msdu->len, DMA_TO_DEVICE);
+-	dev_kfree_skb_any(msdu);
+ 
+ 	ar = ab->pdevs[mac_id].ar;
++	ieee80211_free_txskb(ar->hw, msdu);
++
+ 	if (atomic_dec_and_test(&ar->dp.num_tx_pending))
+ 		wake_up(&ar->dp.tx_empty_waitq);
+ }
+-- 
+2.53.0

@@ -46,6 +46,9 @@ cp -a "$S/lib/firmware" "$R/lib/"
 # netfilter kmods from the pinned OpenWrt packages of this exact kernel (the stock root has no nfnetlink_log, which the
 # firewall's NFLOG `log group` rules need); same release + kmods hash as the stock FIT
 sh "$HERE/fetch-kmods.sh" board "$R" "${KMOD_CACHE:-$OUT_DIR/.kmod-cache}"
+# Wi-Fi modules rebuilt from OpenWrt's own package with the airtime queue limit / airtime fairness patches for ath11k
+# (wifi-kmods/: build-kmods.sh, patches, pin; docs 12.20); WIFI_KMODS=stock keeps OpenWrt's unpatched ones
+sh "$HERE/wifi-kmods/fetch.sh" "$R" "${KMOD_CACHE:-$OUT_DIR/.kmod-cache}"
 { /sbin/depmod -b "$R" "$KV" || depmod -b "$R" "$KV"; } 2>/dev/null || true
 [ -s "$R/lib/modules/$KV/modules.dep" ] || { echo "depmod failed (kmod's depmod is needed in the builder)"; exit 1; }
 for f in services protocols; do [ -e "$R/etc/$f" ] || cp "$S/etc/$f" "$R/etc/$f"; done
@@ -140,7 +143,9 @@ BUILD=$TAG
 INIT=$INIT
 SOURCE=patronus ${SOURCE_REV:-unknown}
 KERNEL=$HW_KERNEL_LABEL $KV (stock FIT, unchanged)
+WIFI_KMODS=$(sed -n 's/^TAG=//p' "$R/usr/share/patronus/wifi-kmods.manifest" 2>/dev/null || true)
 EOT
+[ -n "$(sed -n 's/^WIFI_KMODS=//p' "$R/etc/patronus-release")" ] || sed -i 's/^WIFI_KMODS=$/WIFI_KMODS=stock/' "$R/etc/patronus-release"
 chmod 755 "$R"; chmod 1777 "$R/tmp"
 "$HERE/check-rootfs.sh" "$R"
 P=(-p "/dev/console c 600 0 0 5 1" -p "/dev/null c 666 0 0 1 3" -p "/dev/ttyMSM0 c 600 0 0 248 0")

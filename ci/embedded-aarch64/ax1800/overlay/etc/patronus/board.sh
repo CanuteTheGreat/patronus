@@ -18,6 +18,8 @@ AP_CHAN_CONFIRM=3 AP_CHAN_CONFIRM_GAP=300 AP_CHAN_ROUNDS=4 AP_CHAN_DWELL=105 AP_
 AP_CHAN_CSA=auto AP_CHAN_CSA_COUNT=10 AP_CHAN_WAIT=90 AP_CHAN_JITTER=30 AP_CHAN_SYNC_WAIT=90 AP_CHAN_STAGGER=1800 AP_CHAN_HISTORY=200 AP_CHAN_FORGET=604800
 # weak stations are moved to a closer access point of this network (libexec/patronus/ap-steer, docs 12.18)
 AP_STEER=auto AP_STEER_SIGNAL=-65 AP_STEER_AFTER=600 AP_STEER_IDLE=64 AP_STEER_BLOCK=30 AP_STEER_RETRY=21600 AP_STEER_RETRY_MAX=604800 AP_STEER_MAX=2 AP_STEER_INTERVAL=30 AP_STEER_EXEMPT=
+# queueing and airtime sharing per radio, live (libexec/patronus/ap airtime, docs 12.20; needs the rebuilt ath11k, wifi-kmods/)
+AP_AQL=on AP_ATF=on AP_AQL_LOW24=5000 AP_AQL_HIGH24=12000 AP_AQL_LOW5=5000 AP_AQL_HIGH5=12000
 # limits for misbehaving stations in the image's hostapd (SSID hopping, unacknowledged authentication; docs 12.6d, 12.18)
 AP_XBSS_MAX=6 AP_XBSS_WINDOW=60 AP_XBSS_HOLD=30 AP_AUTHFAIL_MAX=10 AP_AUTHFAIL_WINDOW=60 AP_AUTHFAIL_HOLD=60 AP_AUTHFAIL_HOLD_MAX=3600
 # the radios' HT/VHT capabilities as OpenWrt 25.12 derives them from `iw phy info` on this board (IPQ6018 ath11k)

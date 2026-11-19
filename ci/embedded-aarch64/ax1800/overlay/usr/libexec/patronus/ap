@@ -27,7 +27,8 @@
 # Guest networks (GUEST_<id>=1) always isolate their clients and are kept off the LAN and off this unit by ap-guest
 # (nftables bridge filter, applied after the radios start). MAC block lists (AP_DENY for every network, DENY_<id> for
 # one) are hostapd deny files, one per BSS (<run>/deny-<bss>); `ap acl` rewrites them and pushes them to the running
-# hostapds (DENY_ACL), `ap txpower` sets AP_TXPOWER24 / AP_TXPOWER5 ("auto" or dBm): both without a restart.
+# hostapds (DENY_ACL), `ap txpower` sets AP_TXPOWER24 / AP_TXPOWER5 ("auto" or dBm), `ap airtime` the airtime queue limit and
+# airtime fairness (AP_AQL, AP_AQL_LOW24/HIGH24, AP_AQL_LOW5/HIGH5, AP_ATF): all without a restart.
 # Test hooks: AP_RENDER_OUT (directory), AP_PHY24 / AP_PHY5 (phy names), AP_BOARD (board.sh path),
 #             AP_SYSFS (instead of /sys/class/ieee80211: <phy>/macaddress), AP_PHY_WAIT (seconds to wait for the phys).
 . ${AP_BOARD:-/etc/patronus/board.sh}
@@ -179,6 +180,28 @@ txpower() { # set both radios' transmit power (first BSS of each config) from AP
       *[!0-9]*) echo "ap: AP_TXPOWER$b=$t is not auto or dBm" >&2;;
       *) iw dev "$i" set txpower fixed "$((t * 100))" 2>&1 && echo "txpower $i $t dBm";; esac
   done; }
+# airtime: queueing and airtime sharing per radio, live (no restart; docs 12.20). Needs the rebuilt ath11k (wifi-kmods):
+# OpenWrt's stock module advertises neither, so every queued byte of a busy station sits in the hardware rings (seconds
+# of delay behind a slow 2.4 GHz station's download, and that station takes most of the airtime).
+#   AP_AQL (on|off, default on): mac80211's airtime queue limit. AP_AQL_LOW24 / AP_AQL_HIGH24 and AP_AQL_LOW5 /
+#   AP_AQL_HIGH5: microseconds of airtime one station may have queued in the hardware (LOW while the radio is busy,
+#   HIGH otherwise; 100..50000, defaults mac80211's 5000 / 12000). AP_ATF (on|off, default on): airtime fairness.
+airtime() {
+  DBG=${AP_DEBUGFS:-/sys/kernel/debug/ieee80211}; find_phys
+  for b in 24 5; do eval "p=\${P$b:-}"; [ -n "$p" ] || continue
+    if ! iw phy "$p" info 2>/dev/null | grep '\[ AQL \]' > /dev/null; then
+      echo "airtime $p: this driver has no airtime queue limit (OpenWrt's stock Wi-Fi modules): nothing applied"; continue; fi
+    [ -w "$DBG/$p/aql_enable" ] || { echo "ap: airtime $p: $DBG/$p not writable (debugfs not mounted?)" >&2; continue; }
+    on "${AP_AQL:-on}" && a=1 || a=0
+    eval "lo=\${AP_AQL_LOW$b:-5000} hi=\${AP_AQL_HIGH$b:-12000}"
+    case "$lo$hi" in ''|*[!0-9]*) echo "ap: AP_AQL_LOW$b / AP_AQL_HIGH$b ($lo / $hi) are not microseconds: using 5000 / 12000" >&2; lo=5000; hi=12000;; esac
+    if [ "$lo" -lt 100 ] || [ "$hi" -gt 50000 ] || [ "$lo" -gt "$hi" ]; then
+      echo "ap: AP_AQL_LOW$b / AP_AQL_HIGH$b ($lo / $hi) out of range (100 <= LOW <= HIGH <= 50000): using 5000 / 12000" >&2; lo=5000; hi=12000; fi
+    echo $a > "$DBG/$p/aql_enable"
+    for ac in 0 1 2 3; do echo "$ac $lo $hi" > "$DBG/$p/aql_txq_limit"; done
+    on "${AP_ATF:-on}" && f=3 || f=0; echo $f > "$DBG/$p/airtime_flags"
+    echo "airtime $p: queue limit $([ $a = 1 ] && echo "on $lo/$hi us" || echo off), fairness $([ $f = 3 ] && echo on || echo off)"
+  done; true; }
 acl() { # rewrite every BSS' deny file and load it into the running hostapd (a listed station is disconnected)
   for f in $OUTD/ap5.conf $OUTD/ap24.conf; do [ -f "$f" ] || continue
     for i in $(sed -n 's/^interface=//p; s/^bss=//p' "$f"); do
@@ -261,6 +284,7 @@ start_all() { # [BAND]: both radios, or only 5 / 24
   if [ -x "$CHANX" ]; then for b in 5 24; do [ -z "${1:-}" ] || [ "$1" = $b ] || continue; [ -f $OUTD/ap$b.conf ] || continue
     setsid "$CHANX" sync $b >> /tmp/ap-chan.log 2>&1 < /dev/null & done; fi
   txpower
+  airtime
   # periodic re-check of the channel plan against the other access points (once per start)
   if [ -x "$COORD" ] && [ -z "${1:-}" ]; then p=$(cat /run/patronus-ap-coord.pid 2>/dev/null); [ -n "$p" ] && kill "$p" 2>/dev/null
     setsid "$COORD" run >> /tmp/ap-coord.log 2>&1 < /dev/null & fi
@@ -310,6 +334,7 @@ start)
     echo "$(cut -d' ' -f1 /proc/uptime) wifi-phys" >> /tmp/boot-times; start_all ) > /tmp/ap.log 2>&1 < /dev/null &
   ;;
 txpower) mkdir -p $OUTD; txpower ;;
+airtime) airtime ;;
 candidates) l=$(acs_candidates "${2:-5}" 2>/dev/null); [ -n "$l" ] || [ "${2:-5}" = 5 ] || l="1 2 3 4 5 6 7 8 9 10 11 12 13"; echo "$l" ;;
 acl) mkdir -p $OUTD; acl ;;
 stop) for pf in /run/patronus-ap-coord.pid /run/patronus-ap-steer.pid; do p=$(cat $pf 2>/dev/null); [ -n "$p" ] && kill "$p" 2>/dev/null; rm -f $pf; done

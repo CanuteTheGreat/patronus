@@ -122,6 +122,20 @@
             <label>times within (s) <input name="xbss_window" type="number" min="0" max="86400" size="5"></label>
             <label>for (s) <input name="xbss_hold" type="number" min="0" max="86400" size="5"></label>
         </fieldset>
+        <fieldset class="wifi-group" id="wifi-airtime-group">
+            <legend>Airtime</legend>
+            <p class="wifi-note">Each device may have only a few milliseconds of airtime waiting in the radio; the rest waits
+                in a per-device fair queue in the unit. A device that downloads at full speed, or a slow one far away, then
+                no longer delays every other device on that radio (without it, 2.4 GHz delays reach seconds under load), and
+                every device gets an equal share of airtime. These settings apply at once, without restarting the radios.</p>
+            <label class="wifi-check"><input type="checkbox" name="aql"> Limit the airtime queued per device</label>
+            <label class="wifi-check"><input type="checkbox" name="atf"> Share airtime fairly between devices</label>
+            <label>2.4 GHz limit (microseconds) <input name="aql_high24" type="number" min="100" max="50000" size="6"></label>
+            <label>when the radio is busy <input name="aql_low24" type="number" min="100" max="50000" size="6"></label>
+            <label>5 GHz limit (microseconds) <input name="aql_high5" type="number" min="100" max="50000" size="6"></label>
+            <label>when the radio is busy <input name="aql_low5" type="number" min="100" max="50000" size="6"></label>
+            <p class="wifi-note" id="wifi-airtime-state"></p>
+        </fieldset>
         <fieldset class="wifi-group" id="wifi-chan-group">
             <legend>Channel choice</legend>
             <p class="wifi-note">Every time the radios start, and again every night, the unit measures how busy each allowed
@@ -250,7 +264,8 @@ const CH5 = ['auto', 36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 12
 // channel choice + steering back-off numbers (field, default): the API's TUNING table
 const CHAN_NUMS = [['chan_hyst', 20], ['chan_min_gain', 10], ['chan_confirm', 3], ['chan_confirm_gap', 300], ['chan_rounds', 4],
     ['chan_dwell', 105], ['chan_sample_secs', 30], ['chan_bss_cost', 2], ['chan_min_signal', -90], ['chan_csa_count', 10],
-    ['chan_wait', 90], ['chan_jitter', 30], ['chan_sync_wait', 90], ['chan_stagger', 1800], ['chan_history', 200], ['chan_forget', 604800], ['steer_retry_max', 604800]];
+    ['chan_wait', 90], ['chan_jitter', 30], ['chan_sync_wait', 90], ['chan_stagger', 1800], ['chan_history', 200], ['chan_forget', 604800], ['steer_retry_max', 604800],
+    ['aql_low24', 5000], ['aql_high24', 12000], ['aql_low5', 5000], ['aql_high5', 12000]];
 function bandName(b) { return String(b) === '5' ? '5 GHz' : '2.4 GHz'; }
 function showChannels(d) {
     const w = document.getElementById('wifi-chan-why'); w.innerHTML = '';
@@ -371,7 +386,9 @@ async function loadWifi() {
     num('steer_max', 2); num('steer_interval', 30); num('authfail_max', 10); num('authfail_window', 60); num('authfail_hold', 60);
     num('authfail_hold_max', 3600); num('xbss_max', 6); num('xbss_window', 60); num('xbss_hold', 30);
     for (const [k, d] of CHAN_NUMS) num(k, d);
-    for (const k of ['chan_smart5', 'chan_smart24', 'chan_recheck5', 'chan_recheck24']) f[k].checked = CFG[k] !== false;
+    for (const k of ['chan_smart5', 'chan_smart24', 'chan_recheck5', 'chan_recheck24', 'aql', 'atf']) f[k].checked = CFG[k] !== false;
+    const at = document.getElementById('wifi-airtime-state');
+    at.textContent = d.airtime && d.airtime.supported === false ? 'This unit\'s Wi-Fi driver has no airtime queue limit or fairness: these settings are saved but have no effect until it runs firmware with them.' : '';
     f.chan_time.value = CFG.chan_time == null ? '03:30' : CFG.chan_time; f.chan_csa.value = CFG.chan_csa || 'auto';
     showChannels(d);
     fillSelect(f.chan24, CH24, CFG.chan24); fillSelect(f.chan5, CH5, CFG.chan5);
@@ -417,6 +434,7 @@ async function saveWifi() {
             .map(k => [k, Number(f[k].value)])),
         chan_smart5: f.chan_smart5.checked, chan_smart24: f.chan_smart24.checked, chan_recheck5: f.chan_recheck5.checked,
         chan_recheck24: f.chan_recheck24.checked, chan_time: f.chan_time.value.trim(), chan_csa: f.chan_csa.value,
+        aql: f.aql.checked, atf: f.atf.checked,
         wifi6: f.wifi6.checked, txpower24: f.txpower24.value, txpower5: f.txpower5.value, names: f.names.value.trim() || 'dhcp',
         networks: nets};
     const b = document.getElementById('wifi-save'); b.disabled = true; b.textContent = 'Restarting Wi-Fi...';

@@ -1,0 +1,123 @@
+From: Julius Bairaktaris <julius@bairaktaris.de>
+Date: Tue,  8 Sep 2026 15:53:17 +0200
+Subject: [PATCH ath-next v4 8/9] wifi: ath11k: stop a scheduling round when  the hardware refuses a frame
+Origin: https://lore.kernel.org/all/20260908135319.754140-9-julius@bairaktaris.de/
+
+ath11k_dp_tx() returns -ENOSPC when the MSDU idr is exhausted and -ENOMEM
+when no TCL descriptor is free on any ring or a DMA mapping fails, and the
+caller answers both by freeing the frame. Inside a scheduling round that is
+a loop: the next iteration pulls the next frame out of the same flow queue
+and drops that one too, so a transient shortage costs the head of an
+FQ-CoDel queue rather than the tail of a hardware one.
+
+Return the error from the transmit path and end the round on it. The
+frame that met the shortage is freed as before; the ones behind it stay
+queued. The round-robin over the remaining stations stops as well, since
+a shortage that reaches this point is not specific to the station being
+served.
+
+ath11k_mac_mgmt_tx() returns -ENOSPC as well, for a full management
+queue, and that ends the round the same way; the next tx completion on
+the radio starts another.
+
+ath11k_dp_tx() also rejects a frame the hardware can never accept, with
+-EINVAL or -EOPNOTSUPP, and every frame with -ESHUTDOWN while a firmware
+crash is being flushed; those describe the frame or the device and not the
+ring, so the round continues past them.
+
+ath10k and mt76 check for room before they dequeue and never hold a frame
+at this point; ath11k learns of the shortage from ath11k_dp_tx() and
+cannot.
+
+Tested-on: IPQ8074 hw2.0 AHB WLAN.HK.2.9.0.1-02146-QCAHKSWPL_SILICONZ-1
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
+---
+ drivers/net/wireless/ath/ath11k/mac.c | 41 ++++++++++++++++++++-------
+ 1 file changed, 30 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath11k/mac.c b/drivers/net/wireless/ath/ath11k/mac.c
+index ffb6b865c2df..12535926631b 100644
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -6499,9 +6499,9 @@ static int ath11k_mac_mgmt_tx(struct ath11k *ar, struct sk_buff *skb,
+ 	return 0;
+ }
+ 
+-static void ath11k_mac_op_tx(struct ieee80211_hw *hw,
+-			     struct ieee80211_tx_control *control,
+-			     struct sk_buff *skb)
++static int ath11k_mac_tx(struct ieee80211_hw *hw,
++			 struct ieee80211_tx_control *control,
++			 struct sk_buff *skb)
+ {
+ 	struct ath11k_skb_cb *skb_cb = ATH11K_SKB_CB(skb);
+ 	struct ath11k *ar = hw->priv;
+@@ -6533,7 +6533,7 @@ static void ath11k_mac_op_tx(struct ieee80211_hw *hw,
+ 				    ret);
+ 			ieee80211_free_txskb(ar->hw, skb);
+ 		}
+-		return;
++		return ret;
+ 	}
+ 
+ 	if (control->sta)
+@@ -6544,20 +6544,36 @@ static void ath11k_mac_op_tx(struct ieee80211_hw *hw,
+ 		ath11k_warn(ar->ab, "failed to transmit frame %d\n", ret);
+ 		ieee80211_free_txskb(ar->hw, skb);
+ 	}
++
++	return ret;
++}
++
++static void ath11k_mac_op_tx(struct ieee80211_hw *hw,
++			     struct ieee80211_tx_control *control,
++			     struct sk_buff *skb)
++{
++	ath11k_mac_tx(hw, control, skb);
+ }
+ 
+-static void ath11k_mac_tx_push_txq(struct ath11k *ar, struct ieee80211_txq *txq)
++static int ath11k_mac_tx_push_txq(struct ath11k *ar, struct ieee80211_txq *txq)
+ {
+ 	struct ieee80211_tx_control control = { .sta = txq->sta };
+ 	struct sk_buff *skb;
++	int ret;
+ 
+ 	/* ieee80211_tx_dequeue() applies the airtime queue limit itself, so a
+-	 * selection ends where that limit binds, where the hardware queue is
+-	 * stopped, or when the queue empties, as the generic handler does
+-	 * today.
++	 * selection ends where the airtime queue limit binds, where the
++	 * hardware queue is stopped, or when the queue empties, as the generic
++	 * handler does today, and additionally when the hardware refuses a
++	 * frame.
+ 	 */
+-	while ((skb = ieee80211_tx_dequeue(ar->hw, txq)))
+-		ath11k_mac_op_tx(ar->hw, &control, skb);
++	while ((skb = ieee80211_tx_dequeue(ar->hw, txq))) {
++		ret = ath11k_mac_tx(ar->hw, &control, skb);
++		if (unlikely(ret == -ENOSPC || ret == -ENOMEM))
++			return ret;
++	}
++
++	return 0;
+ }
+ 
+ static void ath11k_mac_schedule_txq(struct ath11k *ar, u8 ac)
+@@ -6569,8 +6585,11 @@ static void ath11k_mac_schedule_txq(struct ath11k *ar, u8 ac)
+ 
+ 	ieee80211_txq_schedule_start(hw, ac);
+ 	while ((txq = ieee80211_next_txq(hw, ac))) {
+-		ath11k_mac_tx_push_txq(ar, txq);
++		int ret = ath11k_mac_tx_push_txq(ar, txq);
++
+ 		ieee80211_return_txq(hw, txq, false);
++		if (unlikely(ret))
++			break;
+ 	}
+ 	ieee80211_txq_schedule_end(hw, ac);
+ 
+-- 
+2.53.0

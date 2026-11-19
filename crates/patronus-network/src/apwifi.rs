@@ -282,7 +282,8 @@ const LIVE_VARS: &[&str] = &[
     "AP_STEER_EXEMPT",
 ];
 const LIVE_PREFIXES: &[&str] = &["DENY_"];
-/// The channel-choice switches (docs 12.19); with [`TUNING`] they are managed and live.
+/// The channel-choice switches (docs 12.19) and the airtime switches (queue limit, fairness: docs 12.20); with
+/// [`TUNING`] they are managed and live (`ap airtime` applies the airtime ones to the running radios).
 const CHAN_SWITCHES: &[&str] = &[
     "AP_CHAN_SMART24",
     "AP_CHAN_SMART5",
@@ -290,6 +291,8 @@ const CHAN_SWITCHES: &[&str] = &[
     "AP_CHAN_RECHECK5",
     "AP_CHAN_TIME",
     "AP_CHAN_CSA",
+    "AP_AQL",
+    "AP_ATF",
 ];
 fn chan_keys() -> impl Iterator<Item = &'static str> {
     CHAN_SWITCHES
@@ -422,7 +425,16 @@ pub struct WifiConfig {
     /// without disconnecting) or "off" (restart the radio)
     #[serde(default = "auto")]
     pub chan_csa: String,
-    /// the numbers of [`TUNING`] (channel choice and steering back-off), by field name
+    /// airtime queue limit (docs 12.20): each station may have only a few milliseconds of airtime queued in the
+    /// radio's hardware (the rest waits in the per-station fair queue), so one busy or slow station no longer delays
+    /// everything else on that radio; the limits per band are `aql_low*` / `aql_high*` in [`TUNING`]. Live.
+    #[serde(default = "yes")]
+    pub aql: bool,
+    /// airtime fairness: every station gets an equal share of the radio's airtime (a slow station can no longer take
+    /// most of it). Live.
+    #[serde(default = "yes")]
+    pub atf: bool,
+    /// the numbers of [`TUNING`] (channel choice, steering back-off, airtime queue limits), by field name
     #[serde(flatten)]
     pub tuning: std::collections::BTreeMap<String, i64>,
     // limits for misbehaving stations in the image's hostapd (docs 12.6d, 12.18); a radio restart applies them
@@ -629,6 +641,40 @@ pub const TUNING: &[(&str, &str, i64, i64, i64, &str)] = &[
         0,
         2592000,
         "steering: longest hold 0 to 2592000 seconds",
+    ),
+    // airtime queue limit per band (docs 12.20, `ap airtime`): microseconds of airtime one station may have queued in
+    // the radio's hardware, LOW while the radio is busy and HIGH otherwise (mac80211's defaults 5000 / 12000)
+    (
+        "aql_low24",
+        "AP_AQL_LOW24",
+        5000,
+        100,
+        50000,
+        "2.4 GHz airtime queue limit (busy radio): 100 to 50000 microseconds",
+    ),
+    (
+        "aql_high24",
+        "AP_AQL_HIGH24",
+        12000,
+        100,
+        50000,
+        "2.4 GHz airtime queue limit: 100 to 50000 microseconds",
+    ),
+    (
+        "aql_low5",
+        "AP_AQL_LOW5",
+        5000,
+        100,
+        50000,
+        "5 GHz airtime queue limit (busy radio): 100 to 50000 microseconds",
+    ),
+    (
+        "aql_high5",
+        "AP_AQL_HIGH5",
+        12000,
+        100,
+        50000,
+        "5 GHz airtime queue limit: 100 to 50000 microseconds",
     ),
 ];
 /// A [`TUNING`] number from the file: out of range or not a number = its default.
@@ -1017,6 +1063,8 @@ pub fn view(f: &EnvFile) -> WifiConfig {
             "off" | "0" | "no" => "off".into(),
             _ => "auto".into(),
         },
+        aql: on_off(f.get("AP_AQL")),
+        atf: on_off(f.get("AP_ATF")),
         tuning: TUNING
             .iter()
             .map(|e| (e.0.to_string(), tuning_number(f, e.1)))
@@ -1144,6 +1192,11 @@ pub struct WifiInput {
     pub chan_time: Option<String>,
     #[serde(default)]
     pub chan_csa: Option<String>,
+    /// airtime queue limit / airtime fairness (docs 12.20)
+    #[serde(default)]
+    pub aql: Option<bool>,
+    #[serde(default)]
+    pub atf: Option<bool>,
     /// [`TUNING`] numbers by field name (any other key here is not a setting and is ignored, as before)
     #[serde(flatten)]
     pub tuning: std::collections::BTreeMap<String, Value>,
@@ -1483,6 +1536,8 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         ("AP_CHAN_SMART5", input.chan_smart5),
         ("AP_CHAN_RECHECK24", input.chan_recheck24),
         ("AP_CHAN_RECHECK5", input.chan_recheck5),
+        ("AP_AQL", input.aql),
+        ("AP_ATF", input.atf),
     ] {
         if let Some(b) = v {
             set.push((k.into(), if b { "1" } else { "0" }.into()));
@@ -1529,6 +1584,23 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
             return Err(invalid(
                 "steering: the longest hold must be at least the first one (leave a device alone for)",
             ));
+        }
+    }
+    // airtime queue limit: the busy-radio limit can't be above the normal one
+    for (lo, hi, band) in [
+        ("AP_AQL_LOW24", "AP_AQL_HIGH24", "2.4 GHz"),
+        ("AP_AQL_LOW5", "AP_AQL_HIGH5", "5 GHz"),
+    ] {
+        let num = |k: &str| {
+            set.iter()
+                .find(|(n, _)| n == k)
+                .and_then(|(_, v)| v.parse::<i64>().ok())
+                .unwrap_or_else(|| tuning_number(f, k))
+        };
+        if num(lo) > num(hi) {
+            return Err(invalid(format!(
+                "{band} airtime queue limit: the busy-radio limit must not be above the normal one"
+            )));
         }
     }
     // the authentication hold doubles up to its maximum: a maximum below the first hold is a mistake
@@ -1951,7 +2023,31 @@ pub fn get(p: &Paths) -> Result<Value> {
         "guest_filter": guest_filter_status(p),
         "channels": channel_status(p),
         "channel_history": channel_history(50),
+        "airtime": airtime_status(p),
     }))
+}
+
+/// Does the Wi-Fi driver take the airtime settings (docs 12.20)? mac80211 applies the airtime queue limit only for
+/// drivers that advertise it (`iw phy` lists "[ AQL ]"); `supported` is null while no radio is registered.
+fn airtime_status(p: &Paths) -> Value {
+    let phys: Vec<String> = std::fs::read_dir(&p.sysfs)
+        .map(|d| {
+            d.filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    if phys.is_empty() {
+        return json!({ "supported": Value::Null });
+    }
+    let supported = phys.iter().all(|phy| {
+        Command::new("iw")
+            .args(["phy", phy, "info"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("[ AQL ]"))
+            .unwrap_or(false)
+    });
+    json!({ "supported": supported })
 }
 
 /// The channel state directory of ap-chan (history, the units heard): `PATRONUS_AP_CHAN_DB`.
@@ -2132,7 +2228,7 @@ fn commit(p: &Paths, old_text: &str, new: &EnvFile, text: &str) -> Result<Value>
     if !restart_needed(&old, new) {
         // transmit power, block lists, client names: applied to the running radios, nobody is disconnected
         let mut out = String::new();
-        for a in ["txpower", "acl"] {
+        for a in ["txpower", "acl", "airtime"] {
             out.push_str(&run_script(p, a)?);
         }
         return Ok(
@@ -2365,6 +2461,8 @@ fn radio_state(f: &EnvFile) -> RadioState {
             "chan_recheck5",
             "chan_time",
             "chan_csa",
+            "aql",
+            "atf",
         ] {
             o.remove(k);
         }
@@ -3233,6 +3331,74 @@ mod tests {
             }
         )
         .is_ok());
+    }
+
+    #[test]
+    fn airtime_settings_default_on_validate_and_stay_live() {
+        // defaults: queue limit + fairness on, mac80211's limits (the board.sh parity is checked with TUNING above)
+        let c = view(&parse("AP_SSIDS=p\nSSID_p=P KEY_p=secretpw1\n"));
+        assert!(c.aql && c.atf);
+        assert_eq!(
+            (
+                c.tuning["aql_low24"],
+                c.tuning["aql_high24"],
+                c.tuning["aql_low5"],
+                c.tuning["aql_high5"]
+            ),
+            (5000, 12000, 5000, 12000)
+        );
+        let board = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ci/embedded-aarch64/ax1800/overlay/etc/patronus/board.sh");
+        if let Ok(t) = std::fs::read_to_string(&board) {
+            let b = parse(&t);
+            assert_eq!((b.get("AP_AQL"), b.get("AP_ATF")), (Some("on"), Some("on")));
+        }
+        let f = sample();
+        let mut t = std::collections::BTreeMap::new();
+        t.insert("aql_low24".to_string(), json!(1500));
+        t.insert("aql_high24".to_string(), json!(4000));
+        let n = update(
+            &f,
+            &WifiInput {
+                atf: Some(false),
+                tuning: t,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let v = view(&n);
+        assert!(v.aql && !v.atf);
+        assert_eq!(
+            (v.tuning["aql_low24"], v.tuning["aql_high24"]),
+            (1500, 4000)
+        );
+        assert_eq!(n.get("AP_ATF"), Some("0"));
+        assert_eq!(n.get("AP_AQL_LOW24"), Some("1500"));
+        // live: written and applied by `ap airtime`, never a radio restart; and it IS a change
+        assert!(!restart_needed(&f, &n));
+        assert!(!same_settings(&f, &n));
+        assert_eq!(view(&parse(&render(&n))), v);
+        // a busy-radio limit above the normal one, or out of range, is refused
+        for (lo, hi) in [(9000, 4000), (50, 4000), (5000, 60000)] {
+            let mut t = std::collections::BTreeMap::new();
+            t.insert("aql_low24".to_string(), json!(lo));
+            t.insert("aql_high24".to_string(), json!(hi));
+            assert!(
+                update(
+                    &f,
+                    &WifiInput {
+                        tuning: t,
+                        ..Default::default()
+                    }
+                )
+                .is_err(),
+                "{lo}/{hi}"
+            );
+        }
+        // export -> plan of the same document changes nothing
+        let doc = export_doc(&n);
+        let again = parse_doc(&doc).unwrap();
+        assert_eq!(plan(&n, &again).unwrap()["changes"], json!([]));
     }
 
     #[test]

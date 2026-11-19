@@ -1,0 +1,79 @@
+From: Julius Bairaktaris <julius@bairaktaris.de>
+Date: Tue,  8 Sep 2026 15:53:11 +0200
+Subject: [PATCH ath-next v4 2/9] wifi: ath11k: enable airtime queue limits
+Origin: https://lore.kernel.org/all/20260908135319.754140-3-julius@bairaktaris.de/
+
+ath11k does not advertise NL80211_EXT_FEATURE_AQL, and every user of AQL in
+mac80211 is gated on that bit: the airtime charge in
+ieee80211_tx_dequeue(), ieee80211_txq_airtime_check(),
+ieee80211_sta_update_pending_airtime(), and the per-station aql file in
+debugfs, which is not even created.
+
+That matters here more than it would elsewhere, because AQL is the only
+brake. ath11k uses ieee80211_handle_wake_tx_queue(), whose
+wake_tx_push_queue() drains a selected txq whole into the driver, and the
+check at the top of ieee80211_tx_dequeue() is what stops that drain.
+Without the feature bit nothing does, so mac80211 holds no backlog and
+every queued byte of a saturated download sits in the hardware TX rings,
+where there is no AQM and no flow separation.
+
+Measured on an IPQ8074 AP with a TCP download forwarded from a wired
+host to one 1x1 VHT80 station at 101 Mbit/s, sampled once a second from
+that station's own aql file: BE pending airtime sits at the 12000 us
+default high limit, 12024 us at the median, and at 1008 to 1024 us when
+the limit is lowered to 500/1000 us. Pending airtime stands a frame
+above the limit it is tested against because
+ieee80211_txq_airtime_check() admits a frame while pending is still
+below it. Without this patch the file does not exist and the limits are
+never consulted.
+
+The rate the estimator needs is already there: ath11k keeps a per-station
+rate_info in arsta->last_txrate and passes it to ieee80211_tx_status_ext(),
+which stores it as tx_stats.last_rate_info, and that is what
+ieee80211_calc_expected_tx_airtime() reads. Where no rate is known yet the
+estimator falls back to its 4 us floor, so a station's queue is charged the
+minimum until the first HTT PPDU stats arrive and the per-AC limits of 5000
+and 12000 us stay loose over that window. The current code charges nothing
+and consults no limit at all, so that window changes nothing. A rate that
+has gone stale low overcharges a station that has since sped up, bounded
+by the same lag.
+
+The estimate is only as fresh as arsta->last_txrate, which is updated from
+the HTT PPDU stats when a descriptor is evicted from ar->ppdu_stats_info,
+so the rate behind it can lag a rate change by up to
+HTT_PPDU_DESC_MAX_DEPTH PPDUs.
+
+ieee80211_sta_update_pending_airtime() returns the airtime but does not
+reschedule the txq, and ath11k has no completion-side push, so a queue held
+back by AQL is re-poked only by the next enqueue or queue wake.
+
+The bit alone brakes the queue but does not refill it: the check at the top
+of ieee80211_tx_dequeue() stops the drain, and nothing restarts it until
+mac80211 next calls the wake_tx_queue callback. Later patches in this
+series give the driver a scheduling round and run it from tx completion,
+which is what makes a binding limit affordable.
+
+ath10k and mt76 set the same feature bit.
+
+Tested-on: IPQ8074 hw2.0 AHB WLAN.HK.2.9.0.1-02146-QCAHKSWPL_SILICONZ-1
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
+---
+ drivers/net/wireless/ath/ath11k/mac.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/net/wireless/ath/ath11k/mac.c b/drivers/net/wireless/ath/ath11k/mac.c
+index 2d55cdc4d165..38f641bbc53c 100644
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -10592,6 +10592,7 @@ static int __ath11k_mac_register(struct ath11k *ar)
+ 	ar->hw->sta_data_size = sizeof(struct ath11k_sta);
+ 
+ 	wiphy_ext_feature_set(ar->hw->wiphy, NL80211_EXT_FEATURE_CQM_RSSI_LIST);
++	wiphy_ext_feature_set(ar->hw->wiphy, NL80211_EXT_FEATURE_AQL);
+ 	wiphy_ext_feature_set(ar->hw->wiphy, NL80211_EXT_FEATURE_STA_TX_PWR);
+ 	if (test_bit(WMI_TLV_SERVICE_BSS_COLOR_OFFLOAD,
+ 		     ar->ab->wmi_ab.svc_map)) {
+-- 
+2.53.0

@@ -63,6 +63,8 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/bin" "$r/sbin" "$r/usr/bin" "
   cp "$O/usr/libexec/patronus/early" "$O/usr/libexec/patronus/ath11k-caldata" "$r/usr/libexec/patronus/"
   for b in ubinfo ubimkvol ubirmvol ubirsvol ubiupdatevol ubiblock iw ip sha256sum pivot_root; do ln -s /bin/busybox "$r/usr/sbin/$b"; done
   echo x > "$r/lib/modules/6.12.112/modules.dep"; for m in ath11k_ahb qca-nss-dp qca-ssdk mac80211 cfg80211 nf_tables nfnetlink_log nft_reject_inet nf_conntrack; do : > "$r/lib/modules/6.12.112/$m.ko"; done
+  # the rebuilt ath11k (wifi-kmods, docs 12.20): carries the airtime queue limit series' debugfs text
+  printf 'x\nPending Tx MSDUs:\n' > "$r/lib/modules/6.12.112/ath11k.ko"; mkdir -p "$r/usr/share/patronus"; echo TAG=test > "$r/usr/share/patronus/wifi-kmods.manifest"
   printf "patronus-xbss\npatronus_authfail_max\n" > "$r/usr/sbin/hostapd"
   printf '\177ELF' > "$r/usr/sbin/etphonehome"; chmod +x "$r/usr/sbin/etphonehome"
   echo INIT=openrc > "$r/etc/patronus-init"; echo FEATURES=nftables,cli,wifi-ap,web-multicall,vpn-wireguard,ntp-server,syslog > "$r/etc/patronus-release"
@@ -83,6 +85,8 @@ r=$(mkroot ft); printf 'AP_SSIDS=m\nSSID_m=x KEY_m=yyyyyyyy\nAP_FT=1\n' > "$r/et
 r=$(mkroot dhcp); : > "$r/etc/init.d/dnsmasq"; ln -s /etc/init.d/dnsmasq "$r/etc/runlevels/default/dnsmasq"; tn "check-rootfs: rejects a DHCP server on the AP" $CR "$r"
 r=$(mkroot rocal); sed -i 's#CALDATA_OUT:-/run/#CALDATA_OUT:-/lib/#' "$r/usr/libexec/patronus/ath11k-caldata"; tn "check-rootfs: rejects caldata written to the read-only root" $CR "$r"
 r=$(mkroot rmmod); echo 'rmmod ath11k_ahb' >> "$r/usr/libexec/patronus/early"; tn "check-rootfs: rejects an early boot that unloads ath11k" $CR "$r"
+r=$(mkroot stockath); : > "$r/lib/modules/6.12.112/ath11k.ko"; tn "check-rootfs: rejects OpenWrt's stock ath11k (no airtime queue limit)" $CR "$r"
+WIFI_KMODS=stock t "check-rootfs: WIFI_KMODS=stock builds the stock modules on purpose" $CR "$r"
 r=$(mkroot noupg); rm "$r/usr/libexec/patronus/upgrade-install"; tn "check-rootfs: rejects an image without the upgrade installer" $CR "$r"
 r=$(mkroot nogpgv); rm "$r/usr/bin/gpgv"; tn "check-rootfs: rejects an image without gpgv (release signatures could not be checked)" $CR "$r"
 r=$(mkroot nokey); rm "$r/usr/share/openpgp-keys/errantsolutions.gpg"; tn "check-rootfs: rejects an image without the release keyring" $CR "$r"
@@ -684,6 +688,20 @@ PATH=$FB:$PATH AP_BOARD=$A/board-live.sh AP_RENDER_OUT=$A/gst sh "$O/usr/libexec
 c=$(cat "$A/calls")
 case "$c" in *"iw dev wl5-m set txpower fixed 1700"*"iw dev wl24-m set txpower auto"*) ok "ap txpower: 5 GHz fixed 17 dBm, 2.4 GHz auto, no restart";; *) no "ap txpower: $c";; esac
 case "$c" in *"-i wl5-g deny_acl CLEAR"*"-i wl5-g deny_acl ADD_MAC aa:bb:cc:dd:ee:03"*) ok "ap acl: deny lists pushed to the running hostapds (DENY_ACL)";; *) no "ap acl: $c";; esac
+# live: `ap airtime` (docs 12.20) writes mac80211's airtime queue limit + fairness for each radio whose driver has AQL,
+# and leaves a driver without it alone
+DB=$A/dbg; mkdir -p "$DB/phy0" "$DB/phy1"; for p in phy0 phy1; do : > "$DB/$p/aql_enable"; : > "$DB/$p/aql_txq_limit"; : > "$DB/$p/airtime_flags"; done
+FA=$A/fakeaql; mkdir -p "$FA"
+printf '#!/bin/sh\ncase "$*" in "phy phy0 info"|"phy phy1 info") echo "		* [ AQL ]: Airtime-based queue limits";; esac\n' > "$FA/iw"; chmod +x "$FA/iw"
+printf '. %s\nAP_SSIDS=m\nAP_AQL_LOW24=1500 AP_AQL_HIGH24=4000 AP_ATF=off\n' "$O/etc/patronus/board.sh" > "$A/board-air.sh"
+ao=$(PATH=$FA:$PATH AP_BOARD=$A/board-air.sh AP_DEBUGFS=$DB AP_PHY24=phy1 AP_PHY5=phy0 sh "$O/usr/libexec/patronus/ap" airtime 2>&1)
+[ "$(cat "$DB/phy1/aql_enable")" = 1 ] && [ "$(cat "$DB/phy1/aql_txq_limit")" = "3 1500 4000" ] && [ "$(cat "$DB/phy1/airtime_flags")" = 0 ] \
+  && [ "$(cat "$DB/phy0/aql_txq_limit")" = "3 5000 12000" ] \
+  && ok "ap airtime: per-band queue limits (2.4 GHz 1500/4000 us, 5 GHz defaults), fairness off, no restart" || { no "ap airtime: $ao"; head "$DB"/phy*/*; }
+printf '#!/bin/sh\nexit 0\n' > "$FA/iw"; : > "$DB/phy1/aql_txq_limit"
+ao=$(PATH=$FA:$PATH AP_BOARD=$A/board-air.sh AP_DEBUGFS=$DB AP_PHY24=phy1 AP_PHY5=phy0 sh "$O/usr/libexec/patronus/ap" airtime 2>&1)
+case "$ao" in *"no airtime queue limit"*) [ ! -s "$DB/phy1/aql_txq_limit" ] && ok "ap airtime: a driver without AQL (stock modules) is left alone, said so" || no "ap airtime wrote without AQL";;
+  *) no "ap airtime without AQL: $ao";; esac
 # guest filter: nft bridge table from ap.env; none -> no table
 printf '. %s\nAP_SSIDS="m g i"\nGUEST_g=1 BANDS_g=24 GUEST_i=1\n' "$O/etc/patronus/board.sh" > "$A/board-g.sh"
 gr=$(AP_BOARD=$A/board-g.sh AP_GUEST_NETS4=192.0.2.0/24 AP_GUEST_NETS6=2001:db8:1:2::/64 AP_GUEST_GW=192.0.2.1 AP_GUEST_RESOLV=/dev/null \

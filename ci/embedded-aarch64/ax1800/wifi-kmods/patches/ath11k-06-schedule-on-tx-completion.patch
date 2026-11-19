@@ -1,0 +1,118 @@
+From: Julius Bairaktaris <julius@bairaktaris.de>
+Date: Tue,  8 Sep 2026 15:53:15 +0200
+Subject: [PATCH ath-next v4 6/9] wifi: ath11k: run the TXQ scheduler on tx  completion
+Origin: https://lore.kernel.org/all/20260908135319.754140-7-julius@bairaktaris.de/
+
+A station whose airtime queue limit is reached stops being served by
+ieee80211_tx_dequeue(), and the airtime it is waiting on is only returned
+when the hardware completes the frames already charged to it. ath11k starts
+a scheduling round only where mac80211 calls the wake_tx_queue callback, so
+once the limit binds, the backlog moves again only when one of those events
+comes round: most often the next frame from the network stack. Under a
+saturated download the arrivals keep the round running; a flow that has
+just filled the intermediate queue, or one whose sender is waiting on the
+acknowledgements behind that queue, stalls for as long as it takes the next
+arrival to appear.
+
+Start a round for each access category a reaped completion belonged to,
+on that radio, at the point where the airtime has been returned. The
+airtime queue limit then bounds a queue that is refilled as it drains,
+rather than one that is refilled when the network stack happens to push.
+The access category is the queue mapping mac80211 stamped on the frame.
+
+Measured on an IPQ8074 AP with a TCP download forwarded from a wired
+host to one 1x1 VHT80 station, BE aql_txq_limit 500/1000 us, 20 s runs,
+three interleaved runs per arm, download rate and the RTT the sender's
+TCP sees on that flow, mean and maximum:
+
+                    Mbit/s               RTT mean ms   RTT max ms
+  with this patch   100.8, 101.5, 100.6  27, 26, 26    32, 31, 32
+  without            93.0,  99.1,  76.2  26, 27, 94    66, 36, 347
+
+Without it the download moves only when the network stack pushes, and
+a run in three stalls until the sender retransmits. At the default
+limit, which binds on this flow as well, this patch reads 101 Mbit/s at
+48 to 55 ms and the arm without it 80.7 to 101.1 Mbit/s at 54 to 79 ms.
+
+Tested-on: IPQ8074 hw2.0 AHB WLAN.HK.2.9.0.1-02146-QCAHKSWPL_SILICONZ-1
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
+---
+ drivers/net/wireless/ath/ath11k/dp_tx.c | 14 +++++++++++++-
+ drivers/net/wireless/ath/ath11k/mac.c   |  7 +++++++
+ drivers/net/wireless/ath/ath11k/mac.h   |  1 +
+ 3 files changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/ath/ath11k/dp_tx.c b/drivers/net/wireless/ath/ath11k/dp_tx.c
+index 52c4a9924a31..70d326fe6a1f 100644
+--- a/drivers/net/wireless/ath/ath11k/dp_tx.c
++++ b/drivers/net/wireless/ath/ath11k/dp_tx.c
+@@ -694,9 +694,10 @@ void ath11k_dp_tx_completion_handler(struct ath11k_base *ab, int ring_id)
+ 	struct sk_buff *msdu;
+ 	struct hal_tx_status ts = {};
+ 	struct dp_tx_ring *tx_ring = &dp->tx_ring[ring_id];
++	unsigned long push = 0;
+ 	u32 *desc;
+ 	u32 msdu_id;
+-	u8 mac_id;
++	u8 mac_id, i;
+ 
+ 	spin_lock_bh(&status_ring->lock);
+ 
+@@ -756,12 +757,23 @@ void ath11k_dp_tx_completion_handler(struct ath11k_base *ab, int ring_id)
+ 		spin_unlock(&tx_ring->tx_idr_lock);
+ 
+ 		ar = ab->pdevs[mac_id].ar;
++		__set_bit(mac_id * IEEE80211_NUM_ACS + skb_get_queue_mapping(msdu),
++			  &push);
+ 
+ 		if (atomic_dec_and_test(&ar->dp.num_tx_pending))
+ 			wake_up(&ar->dp.tx_empty_waitq);
+ 
+ 		ath11k_dp_tx_complete_msdu(ar, msdu, &ts);
+ 	}
++
++	/* A completion returns the airtime the frame was charged, which is
++	 * what an airtime-limited station in that access category is waiting
++	 * on. The arrivals that would otherwise start a round are themselves
++	 * queued behind that limit.
++	 */
++	for_each_set_bit(i, &push, ab->num_radios * IEEE80211_NUM_ACS)
++		ath11k_mac_tx_push_pending(ab->pdevs[i / IEEE80211_NUM_ACS].ar,
++					   i % IEEE80211_NUM_ACS);
+ }
+ 
+ int ath11k_dp_tx_send_reo_cmd(struct ath11k_base *ab, struct dp_rx_tid *rx_tid,
+diff --git a/drivers/net/wireless/ath/ath11k/mac.c b/drivers/net/wireless/ath/ath11k/mac.c
+index 342b38308468..ffb6b865c2df 100644
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -6583,6 +6583,13 @@ static void ath11k_mac_op_wake_tx_queue(struct ieee80211_hw *hw,
+ 	ath11k_mac_schedule_txq(hw->priv, txq->ac);
+ }
+ 
++void ath11k_mac_tx_push_pending(struct ath11k *ar, u8 ac)
++{
++	rcu_read_lock();
++	ath11k_mac_schedule_txq(ar, ac);
++	rcu_read_unlock();
++}
++
+ void ath11k_mac_drain_tx(struct ath11k *ar)
+ {
+ 	/* make sure rcu-protected mac80211 tx path itself is drained */
+diff --git a/drivers/net/wireless/ath/ath11k/mac.h b/drivers/net/wireless/ath/ath11k/mac.h
+index 59f83c7175fd..d577c5ca249c 100644
+--- a/drivers/net/wireless/ath/ath11k/mac.h
++++ b/drivers/net/wireless/ath/ath11k/mac.h
+@@ -161,6 +161,7 @@ struct ath11k *ath11k_mac_get_ar_by_vdev_id(struct ath11k_base *ab, u32 vdev_id)
+ struct ath11k *ath11k_mac_get_ar_by_pdev_id(struct ath11k_base *ab, u32 pdev_id);
+ 
+ void ath11k_mac_drain_tx(struct ath11k *ar);
++void ath11k_mac_tx_push_pending(struct ath11k *ar, u8 ac);
+ void ath11k_mac_peer_cleanup_all(struct ath11k *ar);
+ int ath11k_mac_tx_mgmt_pending_free(int buf_id, void *skb, void *ctx);
+ u8 ath11k_mac_bw_to_mac80211_bw(u8 bw);
+-- 
+2.53.0

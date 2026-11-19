@@ -1287,3 +1287,35 @@ re-checked nightly and on request by the per-network `patronus wifi-chan run` se
 repeatedly better (restart where the driver or the setting rules CSA out), with the reason and history in the API and
 the Segmentation > Wi-Fi tab, typed settings and export. Existing fixed channels are unchanged. Not coordinated between
 separate boxes (this tier's units are neighbours of each other). See docs/WIFI-AUTO-CHANNEL.md.
+
+### 12.20 Airtime queue limit and airtime fairness: 2.4 GHz delay under load (2026-11-19)
+
+Symptom: on 2.4 GHz, a laptop at a strong signal (-45 dBm) saw ping times of over a second to the gateway while the
+wired side was fast. Cause, measured on the unit and read from the driver source: OpenWrt's ath11k (the module this
+image takes from the stock root) advertises neither `NL80211_EXT_FEATURE_AQL` nor `..._AIRTIME_FAIRNESS`
+(`iw phy` lists TXQS but no AQL, every station's debugfs `airtime` reads 0 us, `aql_pending` stays 0), and its
+`.wake_tx_queue` drains a station's whole mac80211 queue into the hardware rings. So nothing bounds how much of a busy
+station's traffic waits in the radio, where there is no AQM and no per-flow separation: a download's own delay is the
+depth of that queue in airtime. At 2.4 GHz rates that depth is large (measured on a GL-AX1800 with a test client:
+a legacy 54 Mbit/s station, 4 TCP streams downstream: median 82 ms, max 221 ms; by estimate about 8x that, i.e.
+near a second, for a station served at 6.5 Mbit/s, which the unit had for several devices at -55..-65 dBm), and without airtime fairness
+a slow station also takes most of the radio's airtime. The GL stock firmware avoided it with QSDK's NSS Wi-Fi offload
+(own queueing) and firmware WLAN.HK.2.7.0.1, neither of which is usable with the upstream driver.
+
+Fix: the image rebuilds the Wi-Fi modules (cfg80211, mac80211, ath, ath11k, ath11k_ahb) from OpenWrt's own mac80211
+package of the same release, with the upstream ath11k series "airtime queue limits, fairness and a driver TXQ scheduler"
+(v4, 9 patches) and the mac80211 fix "don't reset the TXQ scheduling round number" applied
+(`ci/embedded-aarch64/ax1800/wifi-kmods/`: `patches/`, `sdk.pin` = the release SDK by sha256 and the base-feed commit,
+`build-kmods.sh` = the reproducible x86_64 build, `wifi-kmods.pin` = the built tar by sha256, `fetch.sh` = puts the
+modules over the stock ones and refuses a different kernel release or vermagic). `/etc/patronus-release` records
+`WIFI_KMODS=<tag>`; `check-rootfs.sh` refuses a root whose ath11k lacks the series (`WIFI_KMODS=stock` builds the old
+modules on purpose). On the unit, `iw phy` then lists `[ AQL ]` and `[ AIRTIME_FAIRNESS ]`.
+
+Settings (typed, live, Wi-Fi page "Airtime", `/api/wifi`, export/plan; `ap airtime` applies them through mac80211's
+debugfs, also at every radio start): `AP_AQL` (on), `AP_ATF` (on), `AP_AQL_LOW24`/`AP_AQL_HIGH24` and
+`AP_AQL_LOW5`/`AP_AQL_HIGH5` (microseconds of airtime one station may have queued in the hardware, LOW while the radio
+is busy; mac80211's defaults 5000/12000). With the stock modules `ap airtime` says the driver has no airtime queue
+limit and changes nothing; the Wi-Fi page says the same.
+
+Proof: `tests/run.sh` (`ap airtime` against a fake debugfs, with and without AQL in the driver), apwifi.rs unit tests
+(defaults, board.sh parity, validation, live, export/plan), the per-unit A/B on hardware below.

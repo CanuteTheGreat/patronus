@@ -38,6 +38,12 @@ for t in ubinfo ubimkvol ubirmvol ubirsvol ubiupdatevol ubiblock iw ip sha256sum
 KV=$(ls "$R/lib/modules" 2>/dev/null | head -1)
 [ -n "$KV" ] && [ -s "$R/lib/modules/$KV/modules.dep" ] || fail "no kernel modules / modules.dep"
 for m in ath11k_ahb qca-nss-dp qca-ssdk mac80211 cfg80211 nf_tables nfnetlink_log nft_reject_inet nf_conntrack; do [ -e "$R/lib/modules/$KV/$m.ko" ] || fail "kernel module $m.ko missing (no Ethernet/Wi-Fi/firewall without it)"; done
+# Wi-Fi queueing (docs 12.20): ath11k must be the rebuilt one with airtime queue limits + fairness (wifi-kmods/), unless the
+# build asked for OpenWrt's stock modules (WIFI_KMODS=stock: seconds of delay behind a slow 2.4 GHz station's download)
+if [ "${WIFI_KMODS:-patched}" != stock ]; then
+  [ -s "$R/usr/share/patronus/wifi-kmods.manifest" ] || fail "wifi-kmods: no manifest (wifi-kmods/fetch.sh did not run)"
+  grep -a 'Pending Tx MSDUs' "$R/lib/modules/$KV/ath11k.ko" >/dev/null 2>&1 || fail "wifi-kmods: ath11k.ko is OpenWrt's stock module (no airtime queue limits)"
+fi
 # features of the patronus-cli build (FEATURES= in /etc/patronus-release, from stage-patronus.sh): each one's runtime pieces
 FEAT=$(sed -n 's/^FEATURES=//p' "$R/etc/patronus-release" 2>/dev/null)
 [ -n "$FEAT" ] || fail "/etc/patronus-release has no FEATURES= line (which pages the web UI has)"
