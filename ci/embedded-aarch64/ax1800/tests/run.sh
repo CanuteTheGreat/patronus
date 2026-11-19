@@ -279,6 +279,7 @@ chx "$CH" note 5 start "unit test" > /dev/null; python3 -c "import json,sys; [js
 # start: ap-coord plan scans, ap-chan measures (canned scan + survey) and pins its best candidate for the renderer
 printf 'Survey data from wl5-coord\n\tfrequency:\t\t\t5180 MHz\n\tchannel active time:\t\t105 ms\n\tchannel busy time:\t\t80 ms\n' > "$C2/survey"
 for c in 40 44 48 149 153 157 161 165; do printf 'Survey data from wl5-coord\n\tfrequency:\t\t\t%s MHz\n\tchannel active time:\t\t105 ms\n\tchannel busy time:\t\t%s ms\n' $((5000 + c * 5)) $([ $c -ge 149 ] && echo 10 || echo 60) >> "$C2/survey"; done
+sed 's/busy time:\t\t60 ms/busy time:\t\t1 ms/' "$C2/survey" > "$C2/survey2b"
 rm -f "$C2/db/history"
 AP_COORD_SCAN_FILE=$FX AP_CHAN_SCAN_FILE=$FX AP_CHAN_SURVEY_FILE=$C2/survey chx "$CO" plan 5 phy0 > "$C2/plan.out" 2>&1
 # the peer (Plat 9) sits on 36-48: not a candidate; NeighbourNet on 149-161 (-60) and a hidden BSS on 161 cost points
@@ -286,6 +287,13 @@ AP_COORD_SCAN_FILE=$FX AP_CHAN_SCAN_FILE=$FX AP_CHAN_SURVEY_FILE=$C2/survey chx 
   && grep -q '"event":"start"' "$C2/db/history" && grep -q '"chosen":149' "$C2/run/chan-status-5" \
   && ok "ap-coord plan + ap-chan pick: the peer's block is out, the measured best channel (149) is pinned, history + status written" \
   || { no "ap-chan start pick: chan-5=$(cat "$C2/run/chan-5" 2>&1)"; cat "$C2/plan.out" "$C2/run/chan-score-5" 2>/dev/null | sed 's/^/    /'; }
+# a unit of this network that ap-coord's own scan missed but ap-chan's measurement hears: its block is added to
+# ap-coord's list and never picked (found on hardware: the other unit's 2.4 GHz channel was chosen)
+: > "$C2/scan-none"; rm -f "$C2/run/coord-5" "$C2/run/chan-5"
+AP_COORD_SCAN_FILE=$C2/scan-none AP_CHAN_SCAN_FILE=$FX AP_CHAN_SURVEY_FILE=$C2/survey2b chx "$CO" plan 5 phy0 > "$C2/planm.out" 2>&1
+[ "$(cat "$C2/run/coord-5" 2>/dev/null)" = "36 40 44 48" ] && [ "$(cat "$C2/run/chan-5" 2>/dev/null)" = 149 ] && grep -q 'heard on channels 36 40 44 48' "$C2/planm.out" \
+  && ok "ap-chan: a unit of this network heard only by the measurement is avoided (its block joins ap-coord's list)" \
+  || { no "ap-chan peer merge: coord-5='$(cat "$C2/run/coord-5" 2>&1)' chan-5='$(cat "$C2/run/chan-5" 2>&1)'"; cat "$C2/planm.out" | sed 's/^/    /'; }
 python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['candidates'] and d['reason'].startswith('channel 149')" "$C2/run/chan-status-5" \
   && ok "ap-chan status: JSON with the reason and every candidate (Wi-Fi page 'why this channel')" || { no "ap-chan status JSON"; cat "$C2/run/chan-status-5"; }
 grep -q '^peers-5\|aa:bb:cc:11:11' "$C2/db/peers-5" && ok "ap-chan remember: the unit heard is recorded for the next start's order" || { no "ap-chan remember"; cat "$C2/db/peers-5" 2>&1; }

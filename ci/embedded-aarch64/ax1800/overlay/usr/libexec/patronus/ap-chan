@@ -128,7 +128,18 @@ measure() {
   awk '$1 == "S" { a[$2] += $3; bz[$2] += $4 } $1 == "H" { print "H", $2, $3, $4, $5 }
     END { for (f in a) print "S", f, a[f], bz[f] }' "$m.tmp" | while read -r k f a bz o; do echo "$k $(f2c "$f") $a $bz $o"; done > "$m"
   "$COORD" parse < "$m.scan" | sort -k1,1 -k3,3nr | awk '!s[$1]++ { print "B", $0 }' >> "$m"
+  # this network's other units heard by this measurement (ap-coord's own filter: same SSIDs or AP_COORD_PEERS)
+  "$COORD" parse < "$m.scan" | "$COORD" busy "$b" > "$m.peers" 2>/dev/null
   rm -f "$m.tmp" "$m.own0" "$m.own1" "$m.scan"; }
+coord_on() { eval "v=\${AP_COORD$1:-1}"; on "$v"; }
+peer_merge() { # BAND: channels of this network's other units that the measurement heard and ap-coord's own scan missed
+  # (a unit seen only now) are added to ap-coord's list, so neither ap-chan nor the renderer picks them
+  b=$1; p=$(cat "$OUTD/chan-meas-$b.peers" 2>/dev/null); rm -f "$OUTD/chan-meas-$b.peers"
+  [ -n "$p" ] && coord_on "$b" || return 1
+  old=$(cat "$OUTD/coord-$b" 2>/dev/null); new=$(echo "$old $p" | tr ' ' '\n' | grep . | sort -n | uniq | tr '\n' ' ' | sed 's/ $//')
+  [ "$new" = "$old" ] && return 1
+  echo "$new" > "$OUTD/coord-$b"; say "$b GHz: other access points of this network heard on channels $p: not candidates" >&2
+  hist peers "$b" "" "" "" "" "" "" "other access points of this network heard on channels $p (not candidates)"; return 0; }
 
 own_keys() { for f in "$OUTD"/ap5.conf "$OUTD"/ap24.conf; do [ -f "$f" ] && sed -n 's/^bssid=//p' "$f"; done | tr 'A-F' 'a-f' | cut -d: -f2-; }
 
@@ -191,6 +202,7 @@ pick() { # BAND IF [boot]
   cands=$("$APX" candidates "$b" 2>/dev/null); [ -n "$cands" ] || { say "$b GHz: no candidate channel"; return 1; }
   cur=0; [ "$mode" = boot ] || cur=$(cur_chan "$b")
   measure "$b" "$ifn" "$( [ "$mode" = boot ] && echo boot || echo ap )" "$cands"
+  if peer_merge "$b"; then c2=$("$APX" candidates "$b" 2>/dev/null); [ -n "$c2" ] && cands=$c2; fi
   score "$b" "$cands" "$cur" < "$OUTD/chan-meas-$b" > "$OUTD/chan-score-$b"
   best=$(sed -n '1s/ .*//p' "$OUTD/chan-score-$b"); [ -n "$best" ] || return 1
   if [ "$mode" = boot ]; then echo "$best" > "$OUTD/chan-$b"
@@ -229,7 +241,7 @@ move() { # BAND CH REASON
   fi
   if [ $done = 0 ]; then echo "$ch" > "$OUTD/chan-$b"; AP_CHAN_KEEP=1 "$APX" restart-band "$b" > /dev/null 2>&1
     how=restart; else how=CSA; fi
-  hist move "$b" "$ch" "" "" "" "$from" "" "moved from $from by $how: $reason"
+  hist move "$b" "$ch" "" "" "" "" "" "moved from $from by $how: $reason"
   say "$b GHz: moved from channel $from to $ch ($how): $reason"; }
 
 recheck() { # BAND [now]: AP_CHAN_CONFIRM samples; move when all agree
