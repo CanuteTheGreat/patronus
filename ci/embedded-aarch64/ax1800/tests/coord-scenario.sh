@@ -44,7 +44,7 @@ ap_start() { # UNIT PHY24 PHY5 [extra env]
 ap_stop() { u=$1; inu $u sh -c "kill \$(cat /run/patronus-ap-coord.pid 2>/dev/null) 2>/dev/null; env $(uenv $1 x x) sh $AP_DIR/usr/libexec/patronus/ap stop" > /dev/null 2>&1
   for i in $(iw dev | awk '$1 == "Interface" { print $2 }'); do case "$i" in wl*-$u|wl*-coord) iw dev $i del 2>/dev/null;; esac; done; }
 st() { inu "$1" hostapd_cli -p /run/hostapd -i "$2" status 2>/dev/null | sed -n "s/^$3=//p" | head -1; }
-wait_up() { u=$1; i=$2; n=0; until [ "$(st $u $i state)" = ENABLED ]; do n=$((n + 1)); [ $n -gt ${3:-60} ] && return 1; sleep 1; done; }
+wait_up() { u=$1; i=$2; wn=0; until [ "$(st $u $i state)" = ENABLED ]; do wn=$((wn + 1)); [ $wn -gt ${3:-60} ] && return 1; sleep 1; done; }  # own counter: the repair loop's n must not be reset in here
 seg() { st "$1" "$2" vht_oper_centr_freq_seg0_idx; }
 dump() { echo "--- unit $1: start log"; cat $T/start-$1.log 2>/dev/null; echo "--- unit $1: /run, /tmp, hostapd logs"
   inu $1 sh -c 'ls /run /run/hostapd /tmp; tail -15 /tmp/hostapd-ap5.log /tmp/hostapd-ap24.log /tmp/ap.log /tmp/ap-coord.log 2>/dev/null; ps | grep -c hostapd' 2>&1; iw dev | grep -E 'Interface|channel|ssid' | head -20; }
@@ -66,6 +66,7 @@ plan)
   [ -n "$ca24" ] && [ -n "$cb24" ] && [ "$ca24" != "$cb24" ] && pass "plan: the 2.4 GHz radios sit on different channels ($ca24 / $cb24)" || fail "plan: both 2.4 GHz radios on $ca24 / $cb24"
   ap_stop a; ap_stop b;;
 repair)
+  sleep 35   # the earlier case's units left BSSs in the kernel scan list for 30 s: with them heard every block looks taken and ACS decides alone
   board a $A24 $A5; board b $B24 $B5
   ap_start a $A24 $A5 AP_COORD_NOPLAN=1 & pa=$!; ap_start b $B24 $B5 AP_COORD_NOPLAN=1 & pb=$!; wait $pa $pb
   wait_up a wl5-a 90 || fail "repair: unit a 5 GHz not up"; wait_up b wl5-b 90 || fail "repair: unit b 5 GHz not up"
