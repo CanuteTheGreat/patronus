@@ -51,6 +51,12 @@ def world_resolve_verdict(o):
     return True, "resolves, no blocker markers"
 
 
+
+def zfs_scrub_progress(o):
+    """the (scanned, issued) byte counters of a running scrub in `zpool status` output, or None"""
+    m = re.search(r"scan:\s+scrub in progress.*?\n\s+(\S+)(?: / \S+)? scanned.*?(\S+)(?: / \S+)? issued", o, re.S)
+    return (m.group(1), m.group(2)) if m else None
+
 class ZRun(qt.Runner):
     def __init__(self, a):
         ns = types.SimpleNamespace(iso=a.iso, project="horcrux", arch=qt.HOST_ARCH, mode="uefi", media="usb", flow="auto", fs="zfs",
@@ -219,6 +225,16 @@ class ZRun(qt.Runner):
         except OSError:
             pass
         err += dbg
+        rs = getattr(vm, "reset_state", "")
+        if rs:
+            print("[DIAG] guest-vanished CPU state (QEMU held paused by -no-shutdown, registers read over HMP):\n" + rs[-6000:], flush=True)
+            self.res["reset_state"] = rs
+            for m in re.finditer(r"^RIP=([0-9a-f]{16})", rs, flags=re.M):
+                tr = self.res.get("text_runtime")
+                if tr:
+                    off = (int(m.group(1), 16) - int(tr, 16)) & (2**64 - 1)
+                    self.res.setdefault("rip_offsets", []).append(f"{off:x}")
+            err += f" | runstate/regs: {' '.join(rs.split()[:60])}"
         tail = qt.serial_tail(vm, 40)
         msg = f"{label}: QEMU exited during the command (exit status {rc}); qemu stderr: {err!r}; cgroup memory.events: {ev}{tail}"
         print("[DIAG] " + msg, flush=True)
@@ -258,6 +274,51 @@ class ZRun(qt.Runner):
                 break
             rc, o = self.sh(cmd, timeout=timeout)
         return rc, o
+
+    @staticmethod
+    def scrub_state(o):
+        """(done, progress-token) from `zpool status rpool`: done once a scrub FINISHED ('scrub repaired ... with N errors'); the token changes
+        whenever the scrub scanned/issued more (None when no scrub is running and none finished)"""
+        if re.search(r"scan:\s+scrub repaired .* with \d+ errors", o):
+            return True, "done"
+        m = zfs_scrub_progress(o)
+        return False, m
+
+    def scrub_wait(self, vm, boot_id, label="scrub-after-resume", idle=600, hard=3600, poll=15):
+        """Scrub the resumed pool and wait until it is finished. Replaces one blocking `zpool scrub -w` capped at 600 s (run 4083: the resumed guest was
+        alive, pool ONLINE, and the single ssh command simply outlived its cap on the nested-KVM runner, so the harness saw only 'timeout'). The scrub is
+        started (a scrub already running or paused is resumed), then `zpool status` is polled; the wait ends when the scrub finished, fails when it
+        made NO progress (scanned/issued bytes unchanged) for `idle` seconds, or when `hard` seconds passed. The assertion on the final
+        `zpool status` ('with 0 errors', 'No known data errors') is unchanged; a failure prints why the scrub is stuck (D-state tasks, load, zpool
+        events, dmesg) instead of 'timeout'. Returns (rc, output) like sh()."""
+        grep = "zpool status rpool | grep -E 'scan:|errors:|state:'"
+        rc, o = self.sh_resilient("zpool scrub rpool 2>&1; zpool status rpool | sed -n '/scan:/,/config:/p'", timeout=int(qt.T(120)), label=label, boot_id=boot_id, vm=vm)
+        t0 = last_change = time.time()
+        prev, polls = None, 0
+        while True:
+            done, tok = self.scrub_state(o)
+            if done:
+                rc, o = self.sh_resilient(grep, timeout=int(qt.T(120)), label=label, boot_id=boot_id, vm=vm)
+                print(f"[DIAG] {label}: scrub finished after {int(time.time() - t0)} s ({polls} polls)", flush=True)
+                return rc, o
+            if "paused" in o and "scrub" in o:
+                self.sh_resilient("zpool scrub rpool 2>&1", timeout=int(qt.T(60)), label=label, boot_id=boot_id, vm=vm)
+            if tok != prev:
+                prev, last_change = tok, time.time()
+            now = time.time()
+            if rc != 0 and "timeout" not in o and not self.TRANSPORT_LOST.search(o) and polls > 2:
+                return rc, o
+            if now - last_change > qt.T(idle) or now - t0 > qt.T(hard):
+                _r, d = self.sh("cat /proc/loadavg; ps -eo pid,stat,wchan:24,comm | awk '$2 ~ /D/' | head -15; zpool events 2>&1 | tail -8; "
+                                "zpool status rpool | head -15; dmesg | tail -20", timeout=int(qt.T(60)))
+                msg = (f"{label}: scrub made no progress for {int(now - last_change)} s (total {int(now - t0)} s, progress token {tok!r}); guest: "
+                       + re.sub(r"\s+", " ", d).strip()[:900])
+                print("[DIAG] " + msg, flush=True)
+                self.res.setdefault("scrub_stalled", []).append(msg)
+                return 1, "scrub stalled: " + o.strip()[:200] + " | " + msg[-300:]
+            time.sleep(qt.T(poll))
+            polls += 1
+            rc, o = self.sh_resilient("zpool status rpool | sed -n '/scan:/,/config:/p'", timeout=int(qt.T(120)), label=label, boot_id=boot_id, vm=vm)
 
     def vga_stable(self, vm, label, timeout=360):
         """wait until the VGA console shows something and then stops changing (= the passphrase prompt)"""
@@ -750,7 +811,11 @@ class ZRun(qt.Runner):
         # boot again: ONE passphrase; the kernel resumes the saved memory BEFORE the pool is imported
         qt.pflash_vars(nvars)
         self.resume_boot = True
-        vm = qt.VM("5-boot4-resume", self.qemu_args(None, True, nvars), a.out)
+        qt.VM.HOLD_ON_RESET = True      # keep a guest that resets after the resume paused so its registers can be read (vm_death_report)
+        try:
+            vm = qt.VM("5-boot4-resume", self.qemu_args(None, True, nvars), a.out)
+        finally:
+            qt.VM.HOLD_ON_RESET = False
         self.resume_boot = False
         try:
             _ok, ok = self.type_passphrase_usb(vm, "passphrase-prompt-resume-boot")
@@ -758,6 +823,11 @@ class ZRun(qt.Runner):
             # diagnostics (runs 3963/3964: the resumed guest resets seconds later and says nothing): the quiet kernel prints nothing on the serial line, so
             # stream every kernel message to it from the first command on; an oops/VERIFY/panic before the reset then lands in the serial tail of the report
             self.sh("dmesg -n 8; nohup sh -c 'dmesg -w > /dev/ttyS0' </dev/null >/dev/null 2>&1 & sleep 1; echo streaming", timeout=15)
+            # runtime address of the kernel text of the RESUMED kernel (its KASLR base): a register dump of a vanished guest is turned into a symbol
+            # by resume_postmortem (RIP minus this, looked up in the postmortem boot's own kallsyms)
+            rc, o = self.sh("sysctl -qw kernel.kptr_restrict=0 2>/dev/null; grep -m1 -E ' [Tt] _text$' /proc/kallsyms", timeout=30)
+            m = re.search(r"^([0-9a-f]{16}) [Tt] _text$", o, flags=re.M)
+            self.res["text_runtime"] = m.group(1) if m else ""
             rc, o = self.sh("echo BOOT_NOW=$(cat /proc/sys/kernel/random/boot_id); echo BOOT_BEFORE=$(cat /dev/shm/boot_id_before 2>/dev/null); "
                             "echo GUEST_DATE=$(date -u +%FT%TZ); echo MARKER=$(cat /dev/shm/marker 2>/dev/null); echo C1=$(cat /dev/shm/counter 2>/dev/null); "
                             "p=$(cat /dev/shm/counter.pid 2>/dev/null); kill -0 $p 2>/dev/null && echo PROC=ALIVE || echo PROC=DEAD; sleep 3; "
@@ -780,8 +850,7 @@ class ZRun(qt.Runner):
             self.res["resume_dmesg"] = "\n".join(ls)
             rc, o = self.sh("zpool status -x; zpool status rpool | grep -E 'state|errors'; zfs get -H -o value keystatus rpool; test -e /run/hx/key && echo KEYLEFT || echo nokey")
             self.step("pool-healthy-after-resume", "all pools are healthy" in o and "available" in o and "KEYLEFT" not in o, o.strip().replace("\n", " | ")[:300])
-            rc, o = self.sh_resilient("zpool scrub -w rpool; zpool status rpool | grep -E 'scan:|errors:|state:'", timeout=int(qt.T(600)),
-                                      label="scrub-after-resume", boot_id=before["boot_id"], vm=vm)
+            rc, o = self.scrub_wait(vm, before["boot_id"])
             self.step("scrub-clean-after-resume", rc == 0 and "with 0 errors" in o and "No known data errors" in o, o.strip().replace("\n", " | ")[:300])
             self.sh("poweroff", timeout=10)
             self.wait_exit(vm)
@@ -813,7 +882,13 @@ class ZRun(qt.Runner):
                 if not up:
                     print("[DIAG] resume-postmortem: the disk did not come back after one passphrase", flush=True)
                     return
-                rc, o = self.sh(self.POSTMORTEM_CMD, timeout=120)
+                sym = ""
+                for off in self.res.get("rip_offsets", [])[:4]:     # hex of RIP - _text of the vanished guest (resumed kernel) -> symbol in this boot's kallsyms
+                    if re.fullmatch(r"[0-9a-f]{1,16}", off):
+                        sym += (f"; echo ---RIP-SYMBOL-{off}; T=$(grep -m1 -E ' [Tt] _text$' /proc/kallsyms | cut -d' ' -f1); "
+                                f"tg=$(printf '%016x' $((0x$T + 0x{off}))); echo target $tg; "
+                                "awk -v tg=$tg '($1 \"\") <= (tg \"\") {last=$0} ($1 \"\") > (tg \"\") {print last; exit}' /proc/kallsyms")
+                rc, o = self.sh(self.POSTMORTEM_CMD + sym, timeout=120)
                 self.res["resume_postmortem"] = o
                 open(f"{a.out}/resume-postmortem.txt", "w").write(o)
                 print("[DIAG] resume-postmortem (what the guest logged before it died after the resume):\n" + o[-14000:], flush=True)
