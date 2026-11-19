@@ -610,7 +610,7 @@ for n in 3400 3500; do s2 $n "AP_STEER=auto AP_STEER_AFTER=60 AP_STEER_QUIET_IDL
 grep -q "ADD_MAC aa:00:00:00:00:07" "$ST2/cli.log" && ok "ap-steer: AP_STEER=auto steers once ap-coord heard a peer" || no "ap-steer auto with peers-24: nothing moved"
 rm -rf "$ST2/state" "$ST2/db"; : > "$ST2/cli.log"
 for n in 4000 4100 4200 4300; do s2 $n "AP_STEER=off AP_STEER_AFTER=60 AP_STEER_QUIET_IDLE=60"; done
-[ -s "$ST2/cli.log" ] && grep -v set_neighbor "$ST2/cli.log" | grep -q . && no "ap-steer: AP_STEER=off still steered: $(cat "$ST2/cli.log")" || ok "ap-steer: AP_STEER=off turns it off"
+[ -s "$ST2/cli.log" ] && grep -v set_neighbor "$ST2/cli.log" | grep . >/dev/null && no "ap-steer: AP_STEER=off still steered: $(cat "$ST2/cli.log")" || ok "ap-steer: AP_STEER=off turns it off"
 : > "$ST2/out"; s2 4300 "AP_STEER=off" status
 grep -q 'steering: idle (off: switched off in the settings' "$ST2/out" && ! grep -q 'no other access point' "$ST2/out" \
   && ok "ap-steer status: off by the setting says so (not 'no other access point known')" || { no "ap-steer status reason"; cat "$ST2/out"; }

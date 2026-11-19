@@ -125,8 +125,8 @@ X
 chmod +x $L/hlog.sh
 start_ap() { local x=$1
   ns ap$x hostapd -B -t -P $L/hostapd-$x.pid -f $L/hostapd-$x.log $R/$x/ap24.conf || bad "hostapd $x"
-  for i in $(seq 40); do hcli $x status 2>/dev/null | grep -q state=ENABLED && break; sleep 0.5; done
-  hcli $x status | grep -q state=ENABLED || { bad "hostapd $x not enabled"; tail -5 $L/hostapd-$x.log; }
+  for i in $(seq 40); do hcli $x status 2>/dev/null | grep state=ENABLED >/dev/null && break; sleep 0.5; done
+  hcli $x status | grep state=ENABLED >/dev/null || { bad "hostapd $x not enabled"; tail -5 $L/hostapd-$x.log; }
   mkdir -p $W/st-$x $W/db-$x
   ns ap$x env AP_STEER_STATE=$W/st-$x AP_CTRL=/run/hostapd-$x AP_RENDER_OUT=$R/$x hostapd_cli -B -P $L/cli1-$x.pid -p /run/hostapd-$x -i wl$x -a $O/usr/libexec/patronus/ap-event
   ns ap$x hostapd_cli -B -P $L/cli2-$x.pid -p /run/hostapd-$x -i wl$x -a $L/hlog.sh; }
@@ -158,11 +158,11 @@ X
 ns sta wpa_supplicant -B -t -i $STAIF -c $L/sta.conf -f $WPALOG -P $L/wpa.pid || bad "wpa_supplicant"
 waitfor() { local what=$1 tmo=$2; shift 2; local i; for i in $(seq $((tmo * 2))); do "$@" && return 0; sleep 0.5; done; bad "timeout waiting for $what"; return 1; }
 cur_bss() { wcli status 2>/dev/null | sed -n 's/^bssid=//p'; }
-on_bss() { [ "$(cur_bss)" = "$1" ] && wcli status | grep -q wpa_state=COMPLETED; }
+on_bss() { [ "$(cur_bss)" = "$1" ] && wcli status | grep wpa_state=COMPLETED >/dev/null; }
 waitfor "station on A" 30 on_bss $BSSA || { tail -20 $WPALOG; exit 1; }
 start_ap B
 say "capabilities hostapd A sees: $(hcli A sta $STAMAC | grep -E '^(ext_capab|rrm_enabled_capab)=' | tr '\n' ' ')"
-hcli A sta $STAMAC | grep -q '^capability=0x[0-9a-f]*[1-9a-f][0-9a-f]\{3\}$' || true
+hcli A sta $STAMAC | grep '^capability=0x[0-9a-f]*[1-9a-f][0-9a-f]\{3\}$' || true
 cap=$(hcli A sta $STAMAC | sed -n 's/^capability=0x//p'); [ $(( 0x$cap & 4096 )) -ne 0 ] || bad "the station does not advertise radio measurement (802.11k)"
 ns sta ping -c 3 -W 1 $SRV >/dev/null && say "station reaches the server through A" || bad "no ping through A"
 board A 0; board B 0; start_steer A; start_steer B
@@ -242,7 +242,7 @@ done
 night="skipped (NIGHT=0)"
 if [ "${NIGHT:-1}" = 1 ]; then
   board A 0; board B 0; pw A 5; pw B 30; reset_to A
-  if wcli set disable_btm 1 2>/dev/null | grep -q OK; then
+  if wcli set disable_btm 1 2>/dev/null | grep OK >/dev/null; then
     say "=== night path: 02:00, station ignores move requests, quiet idle 60 s, btm wait 30 s"
     rm -rf $W/db-A $W/st-A/sta-* $W/st-A/cap-* $W/st-A/rep-* $W/st-A/btm-*; mkdir -p $W/db-A
     say "waiting 65 s of connected time"; sleep 65
