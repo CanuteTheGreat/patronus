@@ -354,6 +354,13 @@ Unit tests of the installer's validation rules (`common/tests`) run first.
 Build it yourself on any x86_64 Docker host: `gentoo/live-iso/build.sh -o ./iso` (BuildKit required; a
 first build compiles QEMU/libvirt and takes ~1 hour, cached rebuilds take minutes).
 
+Beyond the QEMU matrix, `gentoo/live-iso/project/ci-gates.sh` (x86_64) runs the vmtest scenario `tools/vmtest/scenarios/installed_firstrun.py`
+against the same ISO: install, then through the installed web API a package-ownership check of the product files, a wizard that fails
+half-way (readable sentence, nothing applied), the wizard with WAN = DHCP (200 and a dhcpcd client on the WAN port), then LAN pool +
+reservation + static WAN, a reboot, and afterwards dnsmasq running, a second machine on the LAN receiving the reserved address, the static
+default route present and no DHCP default route or `proto dhcp` LAN route from the system dhcpcd. The scenario never names a service
+manager, so the OpenRC and the systemd ISO run it unchanged.
+
 ## Stable ISO criteria
 
 A `v*` release gets a stable ISO attached (non-pre-release asset
@@ -399,6 +406,33 @@ Screens (real QEMU captures from the CI run, UEFI, VGA console): the login on a 
 Tests (QEMU, UEFI + BIOS, serial and VGA): the serial runs drive options 9, 7 (including a rejected `x;reboot`), 2,
 3, 11, 4, 10 and 5, and log in to the web UI with the new password after each reset (the old one must fail); the VGA run
 logs in on tty1 by keyboard and checks that `console-menu` is the process on tty1. Both products.
+
+## How the product is installed, and what boot brings back
+
+**Package-owned.** The image does not copy Patronus files into place. The application stage of the ISO build compiles the binaries and
+stages them with the real ebuild's `files/` directory; `common/setup-rootfs.sh` then runs `/usr/libexec/project-image-packages`, which
+merges them through Portage as `net-firewall/patronus` (plus `acct-user/patronus`, `acct-group/patronus` and the release-key package).
+Every file (binaries, OpenRC scripts, systemd units and templates such as `patronus-dhcpc@.service`, config, the `patronus` PAM service,
+state directories) is therefore owned by a package on the installed system: `qfile`, `qcheck`, file-collision protection, `emerge --depclean`
+and the web UI's `emerge -1u net-firewall/patronus` all work. Init scripts and units are installed by glob over `files/`, so a service
+file added there reaches the image without editing a list (`ci/check-image-ebuild-parity.sh` guards this; before it the image lost
+`patronus-dhcpc` and the setup wizard failed with "service does not exist" on the installed system).
+
+**Boot is two passes.** `patronus-firewall` runs before the network and applies sysctl, interfaces, routes, firewall and the service
+configs; it can only queue the DHCP/DNS/NTP daemons (they need the network). `patronus-services` (OpenRC script / systemd unit,
+enabled by the installer) runs after the network is up and re-applies the interfaces, routes and services phases inline, retrying a
+failed apply (`PATRONUS_LATE_TRIES`, `PATRONUS_LATE_RETRY_DELAY` in `/etc/conf.d/patronus`). Every daemon Patronus configures
+(dnsmasq, unbound, chrony, ...) is also enabled at boot (`rc-update add` / `systemctl enable`) and disabled again when nothing is
+configured for it.
+
+**One network manager per port.** The installer's system `dhcpcd` manages every wired NIC until Patronus configures one. From then
+on the interfaces applier keeps a `# BEGIN patronus-managed` block in the system dhcpcd config (`denyinterfaces <ports>`, placed in the
+global part of the file, before the first `interface` scope) and tells a running dhcpcd to let go of those ports (addresses stay, the
+installer's config sets `persistent`). Settings: `network.system_dhcpcd` (`release` or `leave`) and `network.system_dhcpcd_conf`, on
+the Interfaces page and in `PUT /api/interfaces/system-dhcpcd`.
+
+**Setup wizard.** It is all-or-nothing: if any step fails, the interface configuration is restored and re-applied, the completed flag
+stays unset, and the answer is one readable sentence ("Setup was not applied and nothing was changed. Configuring the WAN port ... failed: ...").
 
 ## Shared installer source
 

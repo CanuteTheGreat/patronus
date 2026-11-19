@@ -7,28 +7,22 @@ WORKDIR /src
 COPY . .
 ENV CARGO_TARGET_DIR=/cache/target CARGO_PROFILE_RELEASE_DEBUG=0
 ARG JOBS=4
+ARG IMAGE_BUILD=
 RUN --mount=type=cache,target=/cache/target --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git \
     set -e; export CARGO_BUILD_JOBS=${JOBS}; \
     case "$(uname -m)" in x86_64) cpu=x86-64-v2; trip=X86_64_UNKNOWN_LINUX_GNU;; aarch64) cpu=generic; trip=AARCH64_UNKNOWN_LINUX_GNU;; riscv64) cpu=generic-rv64; trip=RISCV64GC_UNKNOWN_LINUX_GNU;; *) echo "unsupported arch"; exit 1;; esac; \
     export CARGO_TARGET_${trip}_RUSTFLAGS="-C target-cpu=$cpu"; \
     cargo build --release -p patronus-cli -p patronus-web -p patronus-installer; \
-    mkdir -p /out/usr/bin /out/etc/init.d /out/etc/conf.d /out/etc/patronus; \
-    cp /cache/target/release/patronus-cli /cache/target/release/patronus-web /cache/target/release/patronus-install /out/usr/bin/; \
-    ln -s patronus-cli /out/usr/bin/patronus; \
-    python3 gentoo/live-iso/common/check-cpu-baseline.py /out/usr/bin/patronus-cli /out/usr/bin/patronus-web /out/usr/bin/patronus-install; \
-    cp gentoo/net-firewall/patronus/files/patronus.toml /out/etc/patronus/patronus.toml
-COPY gentoo/net-firewall/patronus/files/patronus-web.initd /out/etc/init.d/patronus-web
-COPY gentoo/net-firewall/patronus/files/patronus-applyd.initd /out/etc/init.d/patronus-applyd
-COPY gentoo/net-firewall/patronus/files/patronus-firewall.initd /out/etc/init.d/patronus-firewall
-COPY gentoo/net-firewall/patronus/files/patronus.confd /out/etc/conf.d/patronus
-# web UI login roles (system groups): the same file the ebuild installs, one source (no overlay copy to drift)
-COPY gentoo/net-firewall/patronus/files/web-auth.toml /out/etc/patronus/web-auth.toml
-# systemd twins of the three services (the systemd ISO uses them; on an OpenRC image they are inert files, as in the ebuild which installs both)
-COPY gentoo/net-firewall/patronus/files/patronus-web.service gentoo/net-firewall/patronus/files/patronus-applyd.service gentoo/net-firewall/patronus/files/patronus-firewall.service /out/usr/lib/systemd/system/
-# same drop-in the ebuild installs (systemd_install_dropin -> 00gentoo.conf): unbound may create the control socket/query log Patronus configures
-COPY gentoo/net-firewall/patronus/files/unbound-patronus.conf /out/usr/lib/systemd/system/unbound.service.d/00gentoo.conf
-# release signing key (verifies downloaded Patronus images, checksums and SBOMs; same file as keys/release-signing.asc and the
-# overlay package sec-keys/openpgp-keys-errantsolutions, which Gentoo installs own; this ISO copies the app files by hand)
-COPY keys/release-signing.asc /out/usr/share/openpgp-keys/errantsolutions.asc
+    P=/out/usr/share/patronus-image; mkdir -p $P/payload/bin $P/payload/files $P/repo/net-firewall/patronus; \
+    cp /cache/target/release/patronus-cli /cache/target/release/patronus-web /cache/target/release/patronus-install $P/payload/bin/; \
+    python3 gentoo/live-iso/common/check-cpu-baseline.py $P/payload/bin/patronus-cli $P/payload/bin/patronus-web $P/payload/bin/patronus-install; \
+    ver=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1); [ -n "$ver" ]; \
+    cp -a gentoo/net-firewall/patronus/files/. $P/payload/files/; \
+    cp -a gentoo/acct-group gentoo/acct-user gentoo/sec-keys $P/repo/; \
+    cp gentoo/live-iso/project/image/patronus-image.ebuild $P/repo/net-firewall/patronus/patronus-${ver}_p${IMAGE_BUILD:-$(date -u +%Y%m%d)}.ebuild
+# The application stage only STAGES the product (binaries + the real ebuild's files/ directory + an image-local Portage repository).
+# common/setup-rootfs.sh runs /usr/libexec/project-image-packages (project/overlay) while the Portage tree is still present, and that
+# emerges net-firewall/patronus from the staged payload: every file of the product ends up owned by a package on the installed system.
+# Nothing here is copied to / by hand any more (the old hand-copy lost every init script nobody listed, e.g. patronus-dhcpc).
 FROM scratch
 COPY --from=app /out/ /out/

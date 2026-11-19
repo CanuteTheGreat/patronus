@@ -48,7 +48,7 @@
         <button class="btn btn-primary" type="submit">Apply setup</button>
         <button class="btn btn-secondary" type="button" onclick="skipSetup()">Skip the wizard</button>
     </form>
-    <pre id="setup-result" class="text-sm"></pre>
+    <div id="setup-result" class="text-sm" role="status" aria-live="polite" style="white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-width:100%"></div>
 </div>
 <script>
     async function loadSetup() {
@@ -80,11 +80,19 @@
             lan_interface: f['lan_interface'].value, lan_ipv4: f['lan_ipv4'].value,
             dhcp: f['dhcp'].checked, dhcp_start: f['dhcp_start'].value, dhcp_end: f['dhcp_end'].value,
             dns_servers: f['dns_servers'].value || null, force: f['force'].checked};
-        const r = await fetch('/api/setup/apply', {method: 'POST', credentials: 'same-origin',
-            headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
+        const out = document.getElementById('setup-result');
+        let r;
+        try {
+            r = await fetch('/api/setup/apply', {method: 'POST', credentials: 'same-origin',
+                headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
+        } catch (e) {
+            out.textContent = 'Setup was not applied: the router did not answer (' + e + '). Check the connection and try again.';
+            return false;
+        }
         let j = {}; try { j = await r.json(); } catch (_) {}
-        document.getElementById('setup-result').textContent = r.ok
-            ? 'Applied: ' + (j.applied || []).join(', ') : 'Not applied (' + r.status + '): ' + (j.error || '');
+        out.textContent = r.ok
+            ? 'Applied: ' + (j.applied || []).join(', ')
+            : (j.error || ('Setup was not applied (HTTP ' + r.status + ').'));
         if (r.ok) loadSetup();
         return false;
     }

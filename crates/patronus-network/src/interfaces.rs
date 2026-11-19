@@ -996,6 +996,10 @@ pub struct InterfacesApplier {
     cmd: Arc<dyn Cmd>,
     sup: Supervisor,
     proc_root: PathBuf,
+    /// Keep the installer's system dhcpcd off the interfaces configured here
+    /// ([`crate::system_dhcpcd`]); off for a test applier, which must never
+    /// edit the host's dhcpcd.conf.
+    release_system_dhcpcd: bool,
 }
 
 impl Default for InterfacesApplier {
@@ -1004,6 +1008,7 @@ impl Default for InterfacesApplier {
             cmd: Arc::new(SystemCmd),
             sup: Supervisor::detect(),
             proc_root: PathBuf::from("/proc/sys"),
+            release_system_dhcpcd: true,
         }
     }
 }
@@ -1014,6 +1019,77 @@ impl InterfacesApplier {
             cmd,
             sup,
             proc_root,
+            release_system_dhcpcd: false,
+        }
+    }
+
+    /// The interfaces Patronus owns: it configures an address (or none, for
+    /// a bridge/bond member) or keeps them down. The system dhcpcd must not
+    /// manage these.
+    pub fn owned_interfaces(cfg: &NetConfig) -> Vec<String> {
+        cfg.interfaces
+            .iter()
+            .filter(|i| {
+                i.ipv4_mode != V4Mode::Unmanaged || i.ipv6_mode != V6Mode::Unmanaged || !i.enabled
+            })
+            .map(|i| i.name.clone())
+            .collect()
+    }
+
+    /// Before the plan is computed (so it sees the kernel as it is
+    /// afterwards): put the interfaces Patronus owns on the system dhcpcd's
+    /// deny list and tell a running manager to let go of the newly denied
+    /// ones. Never fails the apply: a problem is a warning.
+    async fn release_from_system_dhcpcd(&self, store: &ConfigStore, report: &mut ApplyReport) {
+        use crate::system_dhcpcd as sd;
+        if !self.release_system_dhcpcd {
+            return;
+        }
+        let mode = store.load_system_config(sd::MODE_KEY).await.ok().flatten();
+        let conf = store.load_system_config(sd::CONF_KEY).await.ok().flatten();
+        let settings = match sd::Settings::from_values(mode.as_deref(), conf.as_deref()) {
+            Ok(s) => s,
+            Err(e) => {
+                report.warn(e.to_string());
+                return;
+            }
+        };
+        if settings.mode == sd::Mode::Leave {
+            return;
+        }
+        let Ok(cfg) = NetConfig::load(store).await else {
+            return;
+        };
+        let owned = Self::owned_interfaces(&cfg);
+        let was: BTreeSet<String> = std::fs::read_to_string(&settings.conf)
+            .map(|c| sd::denied(&c).into_iter().collect())
+            .unwrap_or_default();
+        match sd::write_block(&settings.conf, &owned) {
+            Ok(true) => report.applied(format!(
+                "system dhcpcd ({}) ignores {}",
+                settings.conf.display(),
+                if owned.is_empty() {
+                    "no interface".to_string()
+                } else {
+                    owned.join(", ")
+                }
+            )),
+            Ok(false) => {}
+            Err(e) => {
+                report.warn(format!(
+                    "could not update {} to keep the system dhcpcd off {}: {e}",
+                    settings.conf.display(),
+                    owned.join(", ")
+                ));
+                return;
+            }
+        }
+        for dev in owned.iter().filter(|d| !was.contains(*d)) {
+            // no manager running, or it never had this interface: nothing to release
+            let _ = self
+                .cmd
+                .run("dhcpcd", &["-x".to_string(), dev.clone()])
+                .await;
         }
     }
 
@@ -1133,8 +1209,9 @@ impl Applier for InterfacesApplier {
     }
 
     async fn apply(&self, store: &ConfigStore) -> Result<ApplyReport> {
-        let (_, _, plan) = self.compute(store).await?;
         let mut report = ApplyReport::default();
+        self.release_from_system_dhcpcd(store, &mut report).await;
+        let (_, _, plan) = self.compute(store).await?;
         for w in &plan.warnings {
             report.warn(w.clone());
         }
