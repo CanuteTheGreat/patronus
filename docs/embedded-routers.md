@@ -1206,6 +1206,12 @@ channel (own traffic under 15 %), 32 neighbouring access points heard on 2.4 GHz
   off with `chanlist=48`. The boot guard (12.16) confirmed that boot because its hostapd check only asked the control
   sockets that existed; it now requires a socket for every `interface=`/`bss=` the renderer wrote (host test with one
   radio down), so such an image is rolled back. The hwsim ACS scenario has a `pin` case (157 at 80 MHz, 11 on 2.4 GHz).
+- The measurement also hears this network's other units (same SSIDs or `AP_COORD_PEERS`, ap-coord's filter): their
+  channels join ap-coord's list even when ap-coord's own pre-start scan missed them, which happened on hardware for
+  2.4 GHz (the unit took the other unit's channel 11; ap-coord's collision check then moved it to 1 by channel switch
+  announcement 3 minutes later, which proved the CSA path with house clients: 13 of 13 2.4 GHz stations stayed
+  associated). A hand test on the 5 GHz radio (44 -> 40, both BSSes) kept 3 of 3 stations; on 2.4 GHz a few IoT
+  devices reconnect after a switch instead of following (2 of 12 on the second move).
 - Nightly (`AP_CHAN_RECHECK5/24=1`, at `AP_CHAN_TIME`, default 03:30 local; empty = never): `AP_CHAN_CONFIRM` samples
   `AP_CHAN_CONFIRM_GAP` s apart must all name the same better channel, at least `AP_CHAN_HYST` % and `AP_CHAN_MIN_GAIN`
   points below the current one. Then the radio moves by channel switch announcement (`hostapd_cli chan_switch
