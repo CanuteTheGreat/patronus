@@ -27,8 +27,8 @@ HOMEPAGE="https://patronus.errant.solutions/"
 LICENSE="GPL-3+"
 SLOT="0"
 KEYWORDS="amd64 arm64 riscv"
-IUSE="+openrc +systemd"
-REQUIRED_USE="|| ( openrc systemd )"
+# No init USE flags: the image ships BOTH init systems' files (the one it does not run is inert), whatever the profile's USE says. The
+# image is built once per init variant from the same payload, and an installed system keeps both so a later switch needs no re-merge.
 
 # Prebuilt, already stripped; there is nothing to fetch.
 RESTRICT="strip mirror"
@@ -43,6 +43,8 @@ RDEPEND="
 	sys-apps/iproute2
 	net-firewall/nftables
 "
+# src_install chowns to patronus:patronus, so the account must exist while it runs (the real ebuild does the same)
+DEPEND="${RDEPEND}"
 
 # Where the application stage left the files (overridable for a test build).
 PATRONUS_IMAGE_PAYLOAD="${PATRONUS_IMAGE_PAYLOAD:-/usr/share/patronus-image/payload}"
@@ -62,27 +64,23 @@ src_install() {
 	dobin bin/patronus-cli bin/patronus-web bin/patronus-install
 	dosym patronus-cli /usr/bin/patronus
 
-	if use systemd; then
-		for f in files/*.service files/*.timer; do
-			[[ -e ${f} ]] || continue
-			case ${f##*/} in patronus-dashboard.*) continue ;; esac
-			systemd_dounit "${f}"
-		done
-		# unbound keeps /var/lib/unbound (root:unbound 0775): the vendor unit would chown it to root and DNSSEC autotrust fails
-		systemd_install_dropin unbound.service files/unbound-patronus.conf
-	fi
+	for f in files/*.service files/*.timer; do
+		[[ -e ${f} ]] || continue
+		case ${f##*/} in patronus-dashboard.*) continue ;; esac
+		systemd_dounit "${f}"
+	done
+	# unbound keeps /var/lib/unbound (root:unbound 0775): the vendor unit would chown it to root and DNSSEC autotrust fails
+	systemd_install_dropin unbound.service files/unbound-patronus.conf
 
-	if use openrc; then
-		for f in files/*.initd; do
-			n=${f##*/}; n=${n%.initd}
-			case ${n} in patronus-dashboard) continue ;; esac
-			newinitd "${f}" "${n}"
-		done
-		newconfd files/patronus.confd patronus
-		# monthly DB-IP country/ASN refresh behind the traffic insight page (the systemd twin is the .timer above)
-		exeinto /etc/cron.monthly
-		newexe files/patronus-ipdb.cron patronus-ipdb
-	fi
+	for f in files/*.initd; do
+		n=${f##*/}; n=${n%.initd}
+		case ${n} in patronus-dashboard) continue ;; esac
+		newinitd "${f}" "${n}"
+	done
+	newconfd files/patronus.confd patronus
+	# monthly DB-IP country/ASN refresh behind the traffic insight page (the systemd twin is the .timer above)
+	exeinto /etc/cron.monthly
+	newexe files/patronus-ipdb.cron patronus-ipdb
 
 	insinto /etc/patronus
 	doins files/patronus.toml files/web-auth.toml
