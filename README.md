@@ -294,7 +294,7 @@ that are not finished are listed separately under
   port forwards, the WireGuard server with its key, port and every peer (old
   client configs keep working), static routes, mwan3 failover, DDNS, the ULA
   prefix and DHCPv6/RA, NTP, host name and the OpenSSH server settings; keys
-  are never printed and everything it cannot translate is listed. [C73]
+  are never printed and everything it cannot translate is listed. [C75]
 - SD-WAN edge (USE=sdwan): the edge agent enrolls this firewall with a
   Patronus SD-WAN dashboard using a one-time token, builds an encrypted
   WireGuard mesh to the other sites with their subnets routed through it,
