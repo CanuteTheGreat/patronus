@@ -311,7 +311,7 @@ function radioCard(r) {
         el('strong', {text: band + ' '}), el('span', {class: 'pill ' + (up ? 'on' : 'off'), text: r.state || 'off'}),
         el('div', {class: 'wifi-note radio-chan', 'data-band': r.band, text: r.channel && r.channel !== '0'
             ? ('channel ' + r.channel + ' (' + r.freq + ' MHz)' + (r.width_mhz ? ', ' + r.width_mhz + ' MHz wide' : '') + (r.wifi6 ? ', Wi-Fi 6' : '')
-               + (CFG && CFG[r.band === '5' ? 'chan5' : 'chan24'] === 'auto' ? ', picked automatically' : ', fixed')
+               + (CFG && CFG[r.band === '5' ? 'chan5' : 'chan24'] === 'auto' ? ', picked automatically' : ', fixed'))
             : (r.state === 'ACS' ? 'choosing the least busy channel...' : r.state === 'DFS' ? 'radar check before broadcasting (DFS)...' : 'not broadcasting')}));
     for (const b of (r.bss || [])) c.appendChild(el('div', {class: 'text-sm', text: b.ssid + ' - ' + b.clients + ' client(s) - ' + b.bssid}));
     return c;

@@ -984,6 +984,10 @@ jobs:
         continue-on-error: true
         run: |
           curl -fsS -m 5 http://10.1.10.103:8088/ci/env.sh -o /tmp/rw-cache-env.sh && RW_CACHE_WANT=npm RW_CACHE_EXPORT=1 . /tmp/rw-cache-env.sh || true
+      # the server-rendered pages (crates/patronus-web/templates) carry inline scripts no build step parses: one syntax
+      # error leaves a whole page at "Loading..." (the Wi-Fi page, 2026-11-17..18)
+      - name: Web UI templates - every inline script parses (node --check)
+        run: python3 ci/check-template-js.py crates/patronus-web/templates
       - name: npm ci + tsc + vite build
         working-directory: frontend
         run: |
