@@ -166,14 +166,9 @@ pub struct StaticInput {
 impl StaticInput {
     pub fn validate(&self, pool: &DhcpPool) -> Result<StaticMapping> {
         let ip = v4("static mapping address", &self.ip)?;
-        if (u32::from(pool.range_start)..=u32::from(pool.range_end)).contains(&u32::from(ip)) {
-            // Kea and dnsmasq accept it, but it is the classic way to hand
-            // one address out twice
-            return Err(invalid(format!(
-                "static mapping address {ip}: it is inside the dynamic range {}-{}",
-                pool.range_start, pool.range_end
-            )));
-        }
+        // An address inside the dynamic range is allowed (OpenWrt, UniFi and other routers allow it and migrated configs carry
+        // such leases): both servers keep a reserved address away from other clients (dnsmasq skips dhcp-host addresses when it
+        // allocates, Kea checks reservations first). A client that already holds it dynamically loses it at its next renewal.
         Ok(StaticMapping {
             id: 0,
             pool_id: pool.id,
@@ -1558,7 +1553,8 @@ mod tests {
             ..Default::default()
         };
         assert!(mk("192.168.50.20", "nas").validate(&pool).is_ok());
-        assert!(mk("192.168.50.150", "nas").validate(&pool).is_err());
+        // inside the dynamic range: allowed (the servers keep a reserved address from other clients)
+        assert!(mk("192.168.50.150", "nas").validate(&pool).is_ok());
         assert!(mk("192.168.50.20", "nas\ndhcp-range=x")
             .validate(&pool)
             .is_err());
