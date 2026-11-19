@@ -344,6 +344,26 @@ grep -q 'chan_switch 10 5745 sec_channel_offset=1 center_freq1=5775 bandwidth=80
   && [ "$(grep -c "\"event\":\"sample\"" "$C2/db/history")" = 3 ] && grep -q '"event":"move".*by CSA' "$C2/db/history" \
   && ok "ap-chan recheck: 80 % busy (own airtime left out) vs 5 %: better in 3 samples in a row -> channel switch announcement to 149/80" \
   || { no "ap-chan recheck move"; cat "$C2/rc.out" "$C2/cli.log" "$C2/db/history" | sed 's/^/    /'; }
+# the status names the block and the primary that really runs, after a channel switch too (docs 12.19)
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['current']==149 and d['block']==[149,153,157,161] and d['chosen']==149, d" "$C2/run2/chan-status-5" \
+  && ok "ap-chan move (CSA): the status records the running primary and its 80 MHz block" || { no "ap-chan status after CSA"; cat "$C2/run2/chan-status-5"; }
+# hostapd's ACS picks its own primary inside the pinned block: measured 48, running 36 (hardware, 2026-11-18)
+mkdir -p "$C2/run3"; rm -f "$C2/db/history"
+printf '{"band":"5","mode":"start","time":1,"chosen":48,"current":null,"block":[36,40,44,48],"width":80,"csa":true,"reason":"channel 48: 5%% busy","candidates":[{"channel":48,"score":5.0,"busy":5.0,"neighbours":0}]}\n' > "$C2/run3/chan-status-5"
+printf 'state=ENABLED\nfreq=5180\nchannel=36\n' > "$C2/st3"
+sy() { AP_RENDER_OUT=$C2/run3 AP_CHAN_STATUS_FILE=$C2/st3 AP_BOARD=$A/co-board.sh AP_CHAN_DB=$C2/db AP_CHAN_NOW=2000000 AP_CHAN_NOSLEEP=1 AP_CHAN_SYNC_WAIT=${W:-90} sh "$CH" sync 5 > "$C2/sy.out" 2>&1; }
+sy
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['chosen']==48 and d['current']==36 and d['block']==[36,40,44,48] and d['reason']=='channel 48: 5% busy' and len(d['candidates'])==1, d" "$C2/run3/chan-status-5" \
+  && grep -q '"event":"primary".*"channel":36.*primary 36 inside the pinned block 36 40 44 48' "$C2/db/history" \
+  && ok "ap-chan sync: measured 48, hostapd runs 36 in the same 80 MHz block -> status keeps chosen 48 and records current 36 + block, history says why" \
+  || { no "ap-chan sync inside the block"; cat "$C2/run3/chan-status-5" "$C2/db/history" "$C2/sy.out"; }
+# a radio that is not serving is never recorded (waits AP_CHAN_SYNC_WAIT, then leaves the status alone)
+printf 'state=DISABLED\nchannel=36\n' > "$C2/st3"; printf '{"band":"5","chosen":48,"current":null,"block":[36,40,44,48],"candidates":[]}\n' > "$C2/run3/chan-status-5"; W=6 sy
+grep -q '"current":null' "$C2/run3/chan-status-5" && grep -q 'not serving' "$C2/sy.out" \
+  && ok "ap-chan sync: a radio that is not serving leaves the status alone and says so" || { no "ap-chan sync on a disabled radio"; cat "$C2/run3/chan-status-5" "$C2/sy.out"; }
+# the renderer's start path launches the sync for each band it started
+grep -q 'ap-chan}' "$O/usr/libexec/patronus/ap" && grep -q 'sync \$b' "$O/usr/libexec/patronus/ap" \
+  && ok "ap start: runs ap-chan sync per started band (the running primary reaches the Wi-Fi page)" || no "ap start does not sync the channel status"
 # small gain: stays (hysteresis), nothing switched
 sed 's/busy time:\t\t50 ms/busy time:\t\t5 ms/' "$C2/survey2" > "$C2/survey3"
 printf 'state=ENABLED\nfreq=5180\nchannel=36\n' > "$C2/st"; printf '10000 3000\n40000 6000\n' > "$C2/home"; rm -f "$C2/db/history"; SV=$C2/survey3 OWN=0 rc

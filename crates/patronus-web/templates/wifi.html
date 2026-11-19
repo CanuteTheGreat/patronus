@@ -153,6 +153,8 @@
             <label>Wait for units that pick first (s) <input name="chan_wait" type="number" min="0" max="600" size="4"
                 title="Units that start at the same moment pick one after the other: this one waits at most this long (plus a random extra) for the units ahead of it to be on air"></label>
             <label>random extra (s) <input name="chan_jitter" type="number" min="0" max="300" size="4"></label>
+            <label>Wait for a started radio (s) <input name="chan_sync_wait" type="number" min="0" max="600" size="4"
+                title="After a radio start the page shows the channel hostapd really picked inside the pinned block; the unit waits this long for the radio to serve before reading it"></label>
             <label>Nightly offset per unit (s) <input name="chan_stagger" type="number" min="0" max="21600" size="6"></label>
             <label>Forget a unit not heard for (s) <input name="chan_forget" type="number" min="3600" max="31536000" size="8"></label>
             <label>History entries kept <input name="chan_history" type="number" min="10" max="5000" size="5"></label>
@@ -248,7 +250,7 @@ const CH5 = ['auto', 36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 12
 // channel choice + steering back-off numbers (field, default): the API's TUNING table
 const CHAN_NUMS = [['chan_hyst', 20], ['chan_min_gain', 10], ['chan_confirm', 3], ['chan_confirm_gap', 300], ['chan_rounds', 4],
     ['chan_dwell', 105], ['chan_sample_secs', 30], ['chan_bss_cost', 2], ['chan_min_signal', -90], ['chan_csa_count', 10],
-    ['chan_wait', 90], ['chan_jitter', 30], ['chan_stagger', 1800], ['chan_history', 200], ['chan_forget', 604800], ['steer_retry_max', 604800]];
+    ['chan_wait', 90], ['chan_jitter', 30], ['chan_sync_wait', 90], ['chan_stagger', 1800], ['chan_history', 200], ['chan_forget', 604800], ['steer_retry_max', 604800]];
 function bandName(b) { return String(b) === '5' ? '5 GHz' : '2.4 GHz'; }
 function showChannels(d) {
     const w = document.getElementById('wifi-chan-why'); w.innerHTML = '';
@@ -257,13 +259,18 @@ function showChannels(d) {
     for (const b of ['5', '24']) {
         const s = ch[b]; if (!s) continue;
         const box = el('div', {class: 'chan-why', 'data-band': b});
-        box.appendChild(el('p', {}, el('strong', {text: bandName(b) + ': channel ' + (s.current || s.chosen) + ' '}),
+        const prim = s.primary || s.current || s.chosen, blk = s.block || [];
+        // hostapd's ACS picks the primary inside the pinned 40/80 MHz block: say both, never the measured one as "the" channel
+        const where = blk.length > 1 ? 'block ' + blk[0] + '-' + blk[blk.length - 1] + (s.width ? ' (' + s.width + ' MHz)' : '') + ', primary ' + prim + ' in use' : 'channel ' + prim;
+        box.appendChild(el('p', {}, el('strong', {text: bandName(b) + ': ' + where + ' '}),
             el('span', {text: (s.mode === 'start' ? 'chosen at start' : 'last re-check') + ' ' + new Date(s.time * 1000).toLocaleString() + ': ' + s.reason})));
+        if (s.primary_differs) box.appendChild(el('p', {class: 'wifi-note', 'data-role': 'primary-note',
+            text: 'Measured best primary ' + s.chosen + '; the radio\'s automatic channel selection runs primary ' + s.current + ' inside the same block, so the airtime and neighbours are the same.'}));
         if (!s.csa) box.appendChild(el('p', {class: 'wifi-warn', text: 'This radio\'s driver cannot announce a channel switch: a nightly move restarts the radio instead (devices reconnect).'}));
         const t = el('table', {class: 'lan'}, el('thead', {}, el('tr', {}, el('th', {text: 'Candidate'}), el('th', {text: 'Busy %'}),
             el('th', {text: 'Access points'}), el('th', {text: 'Score'}))));
         const tb = el('tbody'); t.appendChild(tb);
-        for (const c of s.candidates || []) tb.appendChild(el('tr', {}, el('td', {text: String(c.channel) + (c.channel === (s.current || s.chosen) ? ' (in use)' : '')}),
+        for (const c of s.candidates || []) tb.appendChild(el('tr', {}, el('td', {text: String(c.channel) + (c.channel === prim ? ' (in use)' : (blk.indexOf(c.channel) >= 0 ? ' (same block)' : ''))}),
             el('td', {text: String(c.busy)}), el('td', {text: String(c.neighbours)}), el('td', {text: String(c.score)})));
         box.appendChild(t); w.appendChild(box);
     }
