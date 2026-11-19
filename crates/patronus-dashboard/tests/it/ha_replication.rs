@@ -242,9 +242,9 @@ async fn writes_replicate_and_survive_leader_failover() {
 
     // Keep writing with 2 of 3 nodes (still a majority), through both.
     let op = ReplicatedOp::UpsertSite(site("branch-2"));
-    replicate_retry(&survivors[new_leader], op).await;
+    replicate_retry(survivors[new_leader], op).await;
     let op = ReplicatedOp::UpsertSite(site("branch-3"));
-    replicate_retry(&survivors[1 - new_leader], op).await;
+    replicate_retry(survivors[1 - new_leader], op).await;
     let want: BTreeSet<String> = ["hq", "branch-1", "branch-2", "branch-3"]
         .iter()
         .map(|s| s.to_string())
