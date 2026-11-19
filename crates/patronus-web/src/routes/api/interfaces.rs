@@ -234,7 +234,8 @@ pub async fn legacy_list(State(state): State<AppState>) -> Response {
 /// GET /interfaces (the page; data comes from /api/interfaces)
 pub async fn page() -> Response {
     use askama::Template;
-    match crate::templates::InterfacesTemplate.render() {
+    let rendered = crate::templates::InterfacesTemplate { page: "interfaces" }.render();
+    match rendered {
         Ok(h) => Html(h).into_response(),
         Err(e) => {
             tracing::error!("render interfaces page: {e}");

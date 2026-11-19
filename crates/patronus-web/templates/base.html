@@ -593,6 +593,9 @@
             .content table {
                 display: block;
                 overflow-x: auto;
+                /* contains absolutely positioned children (.sr-only header labels):
+                   unpositioned they escape the scroll box and widen the page */
+                position: relative;
                 -webkit-overflow-scrolling: touch;
             }
 

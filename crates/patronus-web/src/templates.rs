@@ -26,6 +26,8 @@ pub struct DashboardTemplate {
 #[derive(Template)]
 #[template(path = "firewall.html")]
 pub struct FirewallTemplate {
+    /// Active sidebar entry (the shared app shell in `base.html`).
+    pub page: &'static str,
     pub rules: Vec<FirewallRule>,
     pub nat_rules: Vec<NatRule>,
     pub aliases: Vec<Alias>,
@@ -679,7 +681,10 @@ pub struct DiagnosticsTemplate {
 /// Interfaces page (lane C). Static shell; data comes from `/api/interfaces`.
 #[derive(Template)]
 #[template(path = "interfaces.html")]
-pub struct InterfacesTemplate;
+pub struct InterfacesTemplate {
+    /// Active sidebar entry (the shared app shell in `base.html`).
+    pub page: &'static str,
+}
 
 #[cfg(test)]
 mod tests {
@@ -721,5 +726,92 @@ mod tests {
         let partial = dashboard(1, vec!["a".into(), "b".into()]);
         assert!(partial.contains(r#"id="vpn-connections">at least 1</div>"#));
         assert!(partial.contains("a; b"));
+    }
+    fn firewall_page() -> String {
+        FirewallTemplate {
+            page: "firewall",
+            rules: vec![],
+            nat_rules: vec![],
+            aliases: vec![],
+            filter_rules: vec![],
+            enabled_filter_rules: 0,
+            enabled_nat_rules: 0,
+            accept_rules_count: 0,
+            drop_rules_count: 0,
+            port_forwards: vec![],
+            one_to_one: vec![],
+            npt: vec![],
+            outbound_rules: vec![],
+            host_aliases: vec![],
+            port_aliases: vec![],
+            schedules: vec![],
+            interfaces: vec![],
+            outbound_mode: "automatic".into(),
+            auto_nat_interfaces: String::new(),
+            gateways: vec![],
+        }
+        .render()
+        .unwrap()
+    }
+
+    /// The app shell every page shares: sidebar, off-canvas phone nav,
+    /// header, one `<main>`, the phone table scroll, and the active entry.
+    fn assert_app_shell(html: &str, href: &str) {
+        for needle in [
+            r#"<aside class="sidebar" id="sidebar">"#,
+            r#"id="menuToggle""#,
+            r#"id="navBackdrop""#,
+            r#"<main class="content">"#,
+            r#"name="viewport" content="width=device-width"#,
+            ".content table {",
+            "position: relative;",
+        ] {
+            assert!(html.contains(needle), "shell markup missing: {needle}");
+        }
+        let active = format!(r#"<a href="{href}" class="nav-item active">"#);
+        assert!(html.contains(&active), "sidebar entry {href} not active");
+        assert_eq!(html.matches("<main").count(), 1, "exactly one <main>");
+        assert_eq!(html.matches("<!DOCTYPE html>").count(), 1);
+        assert!(
+            !html.contains("&larr; Dashboard"),
+            "bare back link of the old layout is back"
+        );
+        assert!(
+            !html.contains("body { font-family: Arial"),
+            "the old per-page body style is back"
+        );
+    }
+
+    /// Finding 2026-11-18: Firewall and Interfaces still used the old
+    /// unstyled standalone layout (no sidebar, no phone nav, 844/921 px
+    /// wide at 390 px). Both now render inside `base.html`.
+    #[test]
+    fn firewall_page_uses_the_app_shell() {
+        let html = firewall_page();
+        assert_app_shell(&html, "/firewall");
+        assert!(html.contains(r#"class="stat-grid""#));
+        assert!(html.contains("data-tab=\"tab-rules\""), "tabs kept");
+    }
+
+    #[test]
+    fn interfaces_page_uses_the_app_shell() {
+        let html = InterfacesTemplate { page: "interfaces" }.render().unwrap();
+        assert_app_shell(&html, "/interfaces");
+        assert!(html.contains(r#"id="devices""#), "interface table kept");
+        assert!(html.contains(r#"id="edit-card""#), "edit form kept");
+    }
+
+    /// Source guard: neither page may go back to a standalone document.
+    #[test]
+    fn firewall_and_interfaces_templates_extend_base() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        for name in ["firewall.html", "interfaces.html"] {
+            let src = std::fs::read_to_string(dir.join(name)).unwrap();
+            assert!(
+                src.trim_start().starts_with(r#"{% extends "base.html" %}"#),
+                "{name} must extend base.html"
+            );
+            assert!(!src.contains("<!DOCTYPE"), "{name} is a standalone page");
+        }
     }
 }

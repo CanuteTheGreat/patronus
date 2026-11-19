@@ -1301,6 +1301,7 @@ impl FirewallManager {
         let nat_rules = self.list_nat_rules().await?;
         let aliases = self.list_aliases().await?;
         Ok(templates::FirewallTemplate {
+            page: "firewall",
             enabled_filter_rules: rules.iter().filter(|r| r.enabled).count(),
             enabled_nat_rules: nat_rules.iter().filter(|r| r.enabled).count(),
             accept_rules_count: rules.iter().filter(|r| r.action == "Accept").count(),

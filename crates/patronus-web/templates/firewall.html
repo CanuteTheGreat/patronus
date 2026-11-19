@@ -1,57 +1,49 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" href="/favicon.ico" sizes="any">
-    {% include "theme_head.html" %}
-    <title>Firewall - Patronus</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .stat-card { border: 1px solid var(--line); padding: 15px; margin: 10px; border-radius: 5px; }
-        .stat-card h2 { font-size: 1.17em; margin: 1em 0; }
-        .btn { padding: 6px 12px; margin: 2px; border: none; border-radius: 4px; cursor: pointer; }
-        .btn-primary { background: var(--b-primary); color: white; }
-        .btn-secondary { background: var(--b-secondary); color: white; }
-        .btn-danger { background: var(--b-danger); color: white; }
-        .btn-sm { padding: 3px 8px; font-size: 0.85em; }
-        .badge { padding: 3px 8px; border-radius: 3px; font-size: 0.8em; background: var(--surface-3); }
-        .badge.success { background: var(--b-success); color: white; }
-        .badge.danger { background: var(--b-danger); color: white; }
-        .badge.warning { background: #ffc107; color: black; }
-        table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-        th, td { border: 1px solid var(--line); padding: 6px; text-align: left; font-size: 0.9em; }
-        th { background: var(--surface-2); }
-        .tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--line); margin: 20px 0; }
-        .tab-btn { padding: 10px 16px; border: none; background: none; cursor: pointer; }
-        .tab-btn.active { background: var(--surface-2); border-bottom: 2px solid var(--accent); }
-        .tab { display: none; }
-        .tab.active { display: block; }
-        fieldset { border: 1px solid var(--line); border-radius: 5px; padding: 12px; margin: 12px 0; }
-        .row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
-        .row label { display: flex; flex-direction: column; font-size: 0.85em; min-width: 150px; }
-        .row label.check { flex-direction: row; align-items: center; gap: 6px; min-width: 0; }
-        input, select, textarea { padding: 5px; font-size: 0.95em; }
-        .msg { padding: 8px; margin: 8px 0; border-radius: 4px; display: none; }
-        .msg.error { display: block; background: var(--bad-bg); color: var(--bad-fg); }
-        .msg.ok { display: block; background: var(--ok-bg); color: var(--ok-fg); }
-        .hint { color: var(--muted); font-size: 0.85em; }
-        .empty { color: var(--muted); font-style: italic; }
-    </style>
-</head>
-<body>
-<main>
-    <p><a href="/">&larr; Dashboard</a></p>
-    <h1>Firewall</h1>
+{% extends "base.html" %}
 
-    <div style="display: flex; flex-wrap: wrap; gap: 10px;">
-        <div class="stat-card"><h2>Filter Rules</h2>
+{% block title %}Firewall - Patronus{% endblock %}
+
+{% block extra_head %}
+<style>
+    .fw-page .btn-sm { padding: 3px 8px; font-size: 0.85em; }
+    .fw-page .tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--line); margin: 20px 0; }
+    .fw-page .tab-btn { padding: 10px 16px; border: none; background: none; color: var(--text); cursor: pointer; }
+    .fw-page .tab-btn.active { background: var(--surface-2); border-bottom: 2px solid var(--accent); }
+    .fw-page .tab { display: none; }
+    .fw-page .tab.active { display: block; }
+    .fw-page fieldset { border: 1px solid var(--line); border-radius: 5px; padding: 12px; margin: 12px 0; min-width: 0; }
+    .fw-page legend { padding: 0 6px; }
+    .fw-page h2, .fw-page h3 { margin: 16px 0 8px; }
+    .fw-page p { margin: 8px 0; }
+    .fw-page table { margin: 12px 0; }
+    .fw-page .row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
+    .fw-page .row label { display: flex; flex-direction: column; font-size: 0.85em; min-width: min(150px, 100%); }
+    .fw-page .row label.check { flex-direction: row; align-items: center; gap: 6px; min-width: 0; }
+    .fw-page input, .fw-page select, .fw-page textarea { padding: 5px; font-size: 0.95em; max-width: 100%; }
+    .fw-page .msg { padding: 8px; margin: 8px 0; border-radius: 4px; display: none; }
+    .fw-page .msg.error { display: block; background: var(--bad-bg); color: var(--bad-fg); }
+    .fw-page .msg.ok { display: block; background: var(--ok-bg); color: var(--ok-fg); }
+    .fw-page .hint { color: var(--muted); font-size: 0.85em; }
+    .fw-page .empty { color: var(--muted); font-style: italic; }
+    .fw-page .tabs { overflow-x: auto; flex-wrap: nowrap; }
+    .fw-page .tab-btn { white-space: nowrap; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="fw-page">
+    <div class="page-header">
+        <h1 class="page-title">Firewall</h1>
+        <p class="page-subtitle">Filter rules, NAT, aliases, schedules, GeoIP and threat feeds, logs and states.</p>
+    </div>
+
+    <div class="stat-grid">
+        <div class="stat-card"><h2 class="fw-stat-title">Filter Rules</h2>
             <div>Total: {{ filter_rules.len() }}</div><div>Enabled: {{ enabled_filter_rules }}</div></div>
-        <div class="stat-card"><h2>NAT Rules</h2>
+        <div class="stat-card"><h2 class="fw-stat-title">NAT Rules</h2>
             <div>Total: {{ nat_rules.len() }}</div><div>Enabled: {{ enabled_nat_rules }}</div></div>
-        <div class="stat-card"><h2>Allow Rules</h2><div>{{ accept_rules_count }}</div></div>
-        <div class="stat-card"><h2>Block Rules</h2><div>{{ drop_rules_count }}</div></div>
-        <div class="stat-card"><h2>Outbound NAT</h2><div>{{ outbound_mode }}</div></div>
+        <div class="stat-card"><h2 class="fw-stat-title">Allow Rules</h2><div>{{ accept_rules_count }}</div></div>
+        <div class="stat-card"><h2 class="fw-stat-title">Block Rules</h2><div>{{ drop_rules_count }}</div></div>
+        <div class="stat-card"><h2 class="fw-stat-title">Outbound NAT</h2><div>{{ outbound_mode }}</div></div>
     </div>
 
     <div id="msg" class="msg"></div>
@@ -563,8 +555,10 @@
         <div id="states-summary" class="hint">loading...</div>
         <table id="states-table"><thead><tr><th>Proto</th><th>Source</th><th>Destination</th><th>State</th><th>Expires (s)</th><th>Bytes</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
     </div>
+</div>
+{% endblock %}
 
-</main>
+{% block extra_scripts %}
 <script>
 const TAB_KEY = 'patronus-fw-tab';
 function showTab(id) {
@@ -960,5 +954,4 @@ async function killStates(p, ask) {
 
 loadGeo(); loadThreat(); logSearch(); aliasTypeChanged(); loadStates();
 </script>
-</body>
-</html>
+{% endblock %}

@@ -1,49 +1,43 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" href="/favicon.ico" sizes="any">
-    {% include "theme_head.html" %}
-    <title>Interfaces - Patronus</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; color: var(--ink); }
-        h1 { margin-bottom: 4px; }
-        h2 { margin-top: 32px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
-        .muted { color: var(--muted); font-size: 0.9em; }
-        table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-        th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
-        th { background: var(--surface-2); }
-        .badge { padding: 2px 7px; border-radius: 3px; font-size: 0.8em; margin-right: 3px; display: inline-block; }
-        .up { background: var(--b-success); color: #fff; }
-        .down { background: var(--b-danger); color: #fff; }
-        .role { background: var(--b-primary); color: #fff; }
-        .dyn { background: var(--b-info); color: #fff; }
-        .grey { background: var(--surface-3); color: var(--ink); }
-        .btn { padding: 5px 11px; margin: 2px; border: none; border-radius: 4px; cursor: pointer; background: var(--b-secondary); color: #fff; }
-        .btn-primary { background: var(--b-primary); }
-        .btn-danger { background: var(--b-danger); }
-        .btn-warning { background: #ffc107; color: #000; }
-        .card { border: 1px solid var(--line); border-radius: 5px; padding: 14px; margin: 12px 0; background: var(--surface-2); }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px 18px; }
-        label { display: block; font-size: 0.85em; color: var(--ink); }
-        input, select, textarea { width: 100%; box-sizing: border-box; padding: 5px; margin-top: 2px; }
-        input[type=checkbox] { width: auto; }
-        textarea { font-family: monospace; min-height: 48px; }
-        #msg { margin: 12px 0; padding: 10px; border-radius: 4px; display: none; white-space: pre-wrap; }
-        #msg.ok { display: block; background: var(--ok-bg); border: 1px solid #28a745; }
-        #msg.err { display: block; background: var(--bad-bg); border: 1px solid #dc3545; }
-        #msg.warn { display: block; background: var(--warn-bg); border: 1px solid #ffc107; }
-        .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
-        .mono { font-family: monospace; }
-        .hidden { display: none; }
-    </style>
-</head>
-<body>
-<main>
-    <p><a href="/">&larr; Dashboard</a> &middot; <a href="/network">Network services</a> &middot; <a href="/firewall">Firewall</a></p>
-    <h1>Interfaces</h1>
-    <div class="muted" id="session-line">Loading&hellip;</div>
+{% extends "base.html" %}
+
+{% block title %}Interfaces - Patronus{% endblock %}
+
+{% block extra_head %}
+<style>
+    .if-page h2 { margin: 28px 0 8px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+    .if-page h3 { margin: 14px 0 6px; }
+    .if-page p { margin: 8px 0; }
+    .if-page .muted { color: var(--muted); font-size: 0.9em; }
+    .if-page table { margin: 12px 0; }
+    .if-page .badge { padding: 2px 7px; border-radius: 3px; font-size: 0.8em; margin-right: 3px; display: inline-block; text-transform: none; }
+    .if-page .up { background: var(--b-success); color: #fff; }
+    .if-page .down { background: var(--b-danger); color: #fff; }
+    .if-page .role { background: var(--b-primary); color: #fff; }
+    .if-page .dyn { background: var(--b-info); color: #fff; }
+    .if-page .grey { background: var(--surface-3); color: var(--ink); }
+    .if-page .btn { margin: 2px; }
+    .if-page .btn-warning { background: #ffc107; color: #000; }
+    .if-page .card { background: var(--surface-2); }
+    .if-page .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 10px 18px; }
+    .if-page label { display: block; font-size: 0.85em; color: var(--ink); }
+    .if-page input, .if-page select, .if-page textarea { width: 100%; max-width: 100%; box-sizing: border-box; padding: 5px; margin-top: 2px; }
+    .if-page input[type=checkbox] { width: auto; }
+    .if-page textarea { font-family: monospace; min-height: 48px; }
+    .if-page #msg { margin: 12px 0; padding: 10px; border-radius: 4px; display: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .if-page #msg.ok { display: block; background: var(--ok-bg); border: 1px solid var(--ok-fg); }
+    .if-page #msg.err { display: block; background: var(--bad-bg); border: 1px solid var(--bad-fg); }
+    .if-page #msg.warn { display: block; background: var(--warn-bg); border: 1px solid var(--warn-fg); }
+    .if-page .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
+    .if-page .mono { font-family: monospace; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="if-page">
+    <div class="page-header">
+        <h1 class="page-title">Interfaces</h1>
+        <p class="page-subtitle"><span id="session-line">Loading&hellip;</span> &middot; <a href="/network">Network services</a></p>
+    </div>
     <div id="msg"></div>
 
     <h2>Interface assignments</h2>
@@ -177,8 +171,10 @@
     <p><select id="dhcp-client" aria-label="DHCP client"><option value="">build default</option><option value="dhcpcd">dhcpcd</option><option value="udhcpc">busybox udhcpc</option></select>
        <button class="btn" onclick="setDhcpClient()">Save</button>
        <button class="btn" onclick="call('POST','/api/interfaces/apply')">Re-apply all interfaces</button></p>
+</div>
+{% endblock %}
 
-</main>
+{% block extra_scripts %}
 <script>
 let D = null;
 let pending = null;
@@ -387,5 +383,4 @@ async function load() {
 }
 load();
 </script>
-</body>
-</html>
+{% endblock %}
