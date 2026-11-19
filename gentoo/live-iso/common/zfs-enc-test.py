@@ -68,7 +68,10 @@ class ZRun(qt.Runner):
             i = args.index("-machine")
             args[i + 1] = args[i + 1] + ",i8042=off"
             args += ["-device", "usb-kbd,bus=xhci.0"]     # the ONLY keyboard: like the T2 Mac, whose keyboard is a USB device
-        if (self.z.desktop or self.z.server) and getattr(self.z, "rtc_base", ""):
+        if (self.z.desktop or self.z.server) and getattr(self.z, "rtc_base", "") and not getattr(self, "resume_boot", False):
+            # (not on the hibernate RESUME boot: a hibernated machine's hardware clock keeps running while it is off, so the resumed kernel finds the RTC
+            # at "now"; restoring the image against an RTC 140 days in the PAST is a state no real machine is in, and the guest died seconds later with
+            # QEMU exit 0 in runs 3087/3150/3168/3447/3824/3825 once the clock was stepped forward again. The months-off clock gates run on the other boots.)
             # a MONTHS-OFF hardware clock on every boot, like gringotts' first real boot (RTC in July, installed in November): the installer must write a
             # good time to the RTC (checked in the install log) and the installed system must get its clock stepped by chrony once the network is up
             args += ["-rtc", f"base={self.z.rtc_base}"]
@@ -207,6 +210,12 @@ class ZRun(qt.Runner):
             ev = " ".join(open("/sys/fs/cgroup/memory.events").read().split())
         except OSError:
             pass
+        dbg = ""
+        try:
+            dbg = " | qemu -d cpu_reset log tail: " + open(f"{vm.out}/{vm.name}-qemu-debug.log", errors="replace").read().strip()[-1500:].replace("\n", " / ")
+        except OSError:
+            pass
+        err += dbg
         tail = qt.serial_tail(vm, 40)
         msg = f"{label}: QEMU exited during the command (exit status {rc}); qemu stderr: {err!r}; cgroup memory.events: {ev}{tail}"
         print("[DIAG] " + msg, flush=True)
@@ -737,17 +746,20 @@ class ZRun(qt.Runner):
         time.sleep(3)
         # boot again: ONE passphrase; the kernel resumes the saved memory BEFORE the pool is imported
         qt.pflash_vars(nvars)
+        self.resume_boot = True
         vm = qt.VM("5-boot4-resume", self.qemu_args(None, True, nvars), a.out)
+        self.resume_boot = False
         try:
             _ok, ok = self.type_passphrase_usb(vm, "passphrase-prompt-resume-boot")
             self.step("resume-boot-single-passphrase-ssh", ok, "back on the network after ONE passphrase")
             rc, o = self.sh("echo BOOT_NOW=$(cat /proc/sys/kernel/random/boot_id); echo BOOT_BEFORE=$(cat /dev/shm/boot_id_before 2>/dev/null); "
-                            "echo MARKER=$(cat /dev/shm/marker 2>/dev/null); echo C1=$(cat /dev/shm/counter 2>/dev/null); "
+                            "echo GUEST_DATE=$(date -u +%FT%TZ); echo MARKER=$(cat /dev/shm/marker 2>/dev/null); echo C1=$(cat /dev/shm/counter 2>/dev/null); "
                             "p=$(cat /dev/shm/counter.pid 2>/dev/null); kill -0 $p 2>/dev/null && echo PROC=ALIVE || echo PROC=DEAD; sleep 3; "
                             "echo C2=$(cat /dev/shm/counter 2>/dev/null); dmesg | grep -iE 'hibernat|image restored|PM: Image' | tail -6")
             kv = dict(l.split("=", 1) for l in o.splitlines() if re.match(r"^[A-Z0-9_]+=", l))
             resumed = bool(kv.get("BOOT_NOW")) and kv.get("BOOT_NOW") == kv.get("BOOT_BEFORE") == before["boot_id"] and kv.get("MARKER") == before["marker"]
             self.step("resumed-same-boot-id-and-marker-survived", resumed, f"boot_id before/now: {before['boot_id'][:8]}/{(kv.get('BOOT_NOW') or '')[:8]}; marker equal={kv.get('MARKER') == before['marker']}")
+            print(f"[DIAG] resume-clock: guest date right after the resume {kv.get('GUEST_DATE')}, host {time.strftime('%FT%TZ', time.gmtime())}", flush=True)
             c1 = int(kv["C1"]) if (kv.get("C1") or "").isdigit() else -1
             c2 = int(kv["C2"]) if (kv.get("C2") or "").isdigit() else -1
             self.step("process-survived-and-still-running", kv.get("PROC") == "ALIVE" and c1 >= before["counter"] and c2 > c1,
@@ -770,6 +782,42 @@ class ZRun(qt.Runner):
         finally:
             if vm.alive():
                 vm.p.kill()
+        if self.res.get("vm_died_during_command"):
+            self.resume_postmortem(nvars)
+
+    POSTMORTEM_CMD = ("echo BOOTS; uptime; last -x 2>/dev/null | head -8; echo ---SYSLOG; "
+                      "for f in /var/log/messages /var/log/syslog; do test -s $f && { tail -n 30 $f; "
+                      "echo ---SYSLOG-BEFORE-LAST-BOOT; n=$(grep -n 'Linux version' $f | tail -n 1 | cut -d: -f1); "
+                      "test -n \"$n\" && head -n $((n-1)) $f | tail -n 90; "
+                      "echo ---SYSLOG-POWER; grep -aiE 'PM:|hibernat|resume|panic|oops|BUG:|shut" "down|power.?off|segfault|killed process|out of memory' $f | tail -n 40; break; }; done; "
+                      "echo ---JOURNAL; command -v journalctl >/dev/null && journalctl -b -1 -n 80 --no-pager 2>&1; "
+                      "echo ---PSTORE; ls /sys/fs/pstore 2>&1; cat /sys/fs/pstore/dmesg* 2>/dev/null | tail -40; "
+                      "echo ---RC; rc-status -a 2>/dev/null | grep -vE 'started|stopped|^ *$' | head -20; "
+                      "echo ---ZPOOL; zpool history -il rpool 2>&1 | tail -12")
+
+    def resume_postmortem(self, nvars):
+        """The resumed guest vanished seconds after the resume (QEMU exit 0 under -no-reboot: a guest reset or poweroff, runs 3087/3150/3168/18193/19058)\n        and its serial console says nothing (quiet kernel, the only text is the bootloader countdown from before the resume). Boot the same disk once more\n        and print what the guest itself logged before it died, so the next run names the cause. Diagnostics only: never changes a verdict."""
+        a = self.z
+        try:
+            time.sleep(3)
+            qt.pflash_vars(nvars)
+            vm = qt.VM("6-postmortem", self.qemu_args(None, True, nvars), a.out)
+            try:
+                _ok, up = self.type_passphrase_usb(vm, "passphrase-prompt-postmortem")
+                if not up:
+                    print("[DIAG] resume-postmortem: the disk did not come back after one passphrase", flush=True)
+                    return
+                rc, o = self.sh(self.POSTMORTEM_CMD, timeout=120)
+                self.res["resume_postmortem"] = o
+                open(f"{a.out}/resume-postmortem.txt", "w").write(o)
+                print("[DIAG] resume-postmortem (what the guest logged before it died after the resume):\n" + o[-14000:], flush=True)
+                self.sh("poweroff", timeout=10)
+                self.wait_exit(vm)
+            finally:
+                if vm.alive():
+                    vm.p.kill()
+        except BaseException as e:        # diagnostics must never mask the failure
+            print(f"[DIAG] resume-postmortem failed: {e!r}", flush=True)
 
     def session_audio_autostart_pre(self, user):
         """before the first GNOME login: an XDG autostart entry for this user and a system-wide one, each leaving a marker when gnome-session-openrc runs it"""
