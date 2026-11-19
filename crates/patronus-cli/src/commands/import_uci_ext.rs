@@ -105,6 +105,8 @@ pub struct Iface6 {
     pub addrs: Vec<IpNetwork>,
     pub pd_downstream: Vec<String>,
     pub duid: Option<String>,
+    /// UCI `metric` of the interface: the order of several DHCP uplinks (`interfaces.metric`)
+    pub metric: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -451,6 +453,16 @@ fn network_ext(
             e.duid = Some(d);
         }
     }
+    // route metrics: several DHCP uplinks (wan + a Wi-Fi backup) must not install their default routes with the same
+    // metric (the second one is refused and the primary WAN can end up without its default route)
+    for s in sections(files, "network", "interface") {
+        let Some(m) = s.get("metric").and_then(|m| m.parse::<u32>().ok()) else {
+            continue;
+        };
+        if let Some(i) = plan.ifaces.iter().find(|i| i.uci == s.label()) {
+            x.iface6.entry(i.device.clone()).or_default().metric = Some(m.clamp(1, 9999));
+        }
+    }
     // WireGuard tunnels + peers
     for s in sections(files, "network", "interface") {
         if s.get("proto") != Some("wireguard") {
@@ -601,6 +613,7 @@ fn network_ext(
                         "reqaddress",
                         "reqprefix",
                         "clientid",
+                        "metric",
                         "force_link",
                         "multipath",
                     ]
@@ -1778,6 +1791,9 @@ pub async fn apply_ext(
             if let Some(d) = &i6.duid {
                 i.dhcp6_duid = Some(d.clone());
             }
+            if let Some(m) = i6.metric {
+                i.metric = Some(m);
+            }
         }
         cfg.save(store).await.map_err(e)?;
         out.push(format!("ipv6: {} interface(s) updated", x.iface6.len()));
@@ -2591,6 +2607,9 @@ mod tests {
         let wan = cfg.iface("eth1").unwrap();
         assert_eq!(wan.pd_downstream, vec!["eth0".to_string()]);
         assert!(wan.dhcp6_duid.is_some());
+        // the uplinks' UCI metrics order their DHCP default routes (equal metrics: the second route is refused)
+        assert_eq!(wan.metric, Some(10));
+        assert_eq!(cfg.iface("wlan0").unwrap().metric, Some(20));
         assert!(cfg
             .iface("eth0")
             .unwrap()

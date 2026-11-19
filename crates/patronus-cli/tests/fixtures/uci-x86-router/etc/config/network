@@ -20,6 +20,7 @@ config interface 'lan'
 config interface 'wan'
 	option device 'eth1'
 	option proto 'dhcp'
+	option metric '10'
 
 config interface 'wan6'
 	option proto 'dhcpv6'
@@ -62,6 +63,7 @@ config wireguard_vpn
 
 config interface 'wwan'
 	option proto 'dhcp'
+	option metric '20'
 
 config route
 	option interface 'lan'
