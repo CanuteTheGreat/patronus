@@ -706,16 +706,17 @@ async fn main() -> anyhow::Result<()> {
     }
     let cli = Cli::parse();
 
-    // Initialize logging
-    if cli.verbose {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::DEBUG)
-            .init();
+    // Initialize logging. Logs go to STDERR for every subcommand: stdout carries
+    // data only (`patronus config export > backup.json` must stay valid JSON).
+    let level = if cli.verbose {
+        tracing::Level::DEBUG
     } else {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::INFO)
-            .init();
-    }
+        tracing::Level::INFO
+    };
+    tracing_subscriber::fmt()
+        .with_max_level(level)
+        .with_writer(std::io::stderr)
+        .init();
 
     match cli.command {
         Commands::Init { name, org } => {

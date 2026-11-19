@@ -1005,6 +1005,12 @@ impl ConfigStore {
     /// change set). Returns the revision id.
     pub async fn snapshot(&self, user: &str, summary: &str) -> Result<i64> {
         let doc = self.export_json().await?;
+        self.snapshot_doc(user, summary, &doc).await
+    }
+
+    /// Record an already exported configuration document as a revision
+    /// (the state a risky change started from, taken before the change).
+    pub async fn snapshot_doc(&self, user: &str, summary: &str, doc: &Value) -> Result<i64> {
         let r = sqlx::query(
             "INSERT INTO config_revisions (created_at, user, summary, config_json)
              VALUES (?, ?, ?, ?)",

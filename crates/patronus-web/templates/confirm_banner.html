@@ -1,0 +1,42 @@
+<div id="confirm-banner" role="alert" aria-live="assertive" hidden style="position:fixed;top:0;left:0;right:0;z-index:2000;display:none;flex-wrap:wrap;gap:8px 14px;align-items:center;justify-content:center;padding:10px 14px;background:#b45309;color:#fff;font:600 14px/1.3 system-ui,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.35)">
+    <span id="confirm-banner-text"></span>
+    <span style="display:flex;gap:8px">
+        <button type="button" id="confirm-keep" style="padding:6px 14px;border:0;border-radius:4px;background:#fff;color:#111;font-weight:700;cursor:pointer;min-height:32px">Keep changes</button>
+        <button type="button" id="confirm-revert" style="padding:6px 14px;border:1px solid #fff;border-radius:4px;background:transparent;color:#fff;font-weight:700;cursor:pointer;min-height:32px">Revert now</button>
+    </span>
+</div>
+<script>
+(function () {
+    // Confirm-or-revert countdown (System > Configuration history, "history.confirm_seconds"):
+    // the server reverts an unconfirmed risky change by itself; this only shows and answers it.
+    var box = document.getElementById('confirm-banner'), txt = document.getElementById('confirm-banner-text');
+    var wasActive = false, mine = false, left = 0, tick = null, polling = null;
+    function show(on) { box.hidden = !on; box.style.display = on ? 'flex' : 'none'; document.body.style.paddingTop = on ? box.offsetHeight + 'px' : ''; }
+    function render(what) { txt.textContent = 'Unconfirmed change (' + what + '): reverting in ' + left + ' s unless you keep it.'; }
+    function apply(v) {
+        if (v.active) {
+            wasActive = true; left = v.seconds_left; render(v.what); show(true);
+            if (!tick) tick = setInterval(function () { if (left > 0) { left--; render(v.what); } }, 1000);
+        } else {
+            if (tick) { clearInterval(tick); tick = null; }
+            if (wasActive && !mine) {
+                wasActive = false; txt.textContent = 'The change was not confirmed and has been reverted. Reloading...';
+                box.querySelector('span:last-child').style.display = 'none'; show(true);
+                setTimeout(function () { location.reload(); }, 2500);
+            } else { wasActive = false; show(false); }
+        }
+    }
+    function poll() {
+        fetch('/api/system/history/pending', {credentials: 'same-origin'}).then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (v) { if (v) apply(v); }).catch(function () {});
+    }
+    function act(path, done) {
+        mine = true;
+        fetch(path, {method: 'POST', credentials: 'same-origin'}).then(function (r) { return r.json().catch(function () { return {}; }); })
+            .then(function (j) { show(false); wasActive = false; if (done) done(j); }).catch(function () { mine = false; });
+    }
+    document.getElementById('confirm-keep').onclick = function () { act('/api/system/history/confirm'); };
+    document.getElementById('confirm-revert').onclick = function () { act('/api/system/history/revert', function () { location.reload(); }); };
+    poll(); polling = setInterval(poll, 2000);
+})();
+</script>

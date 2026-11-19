@@ -677,6 +677,7 @@
     {% block extra_head %}{% endblock %}
 </head>
 <body>
+    {% include "confirm_banner.html" %}
     <div class="backdrop" id="navBackdrop"></div>
     <div class="layout">
         <!-- Sidebar -->
@@ -870,6 +871,12 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
                         </svg>
                         <span>System</span>
+                    </a>
+                    <a href="/history" class="nav-item {% if page == "history" %}active{% endif %}">
+                        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 2m6-2a9 9 0 11-3-6.7M21 4v5h-5"></path>
+                        </svg>
+                        <span>Config history</span>
                     </a>
                 </div>
             </nav>

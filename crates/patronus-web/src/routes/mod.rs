@@ -45,6 +45,7 @@ pub fn build_router(
         .route("/routing", get(api::routing::page))
         .route("/monitoring", get(pages::monitoring))
         .route("/system", get(pages::system))
+        .route("/history", get(api::system::history_page))
         .route("/diagnostics", get(pages::diagnostics))
         .merge(api::lan::pages())
         .merge(api::ha::pages())
@@ -103,6 +104,12 @@ pub fn build_router(
         .nest_service("/static", ServeDir::new("static"))
         // Attach application state
         .with_state(state)
+        // A risky change (Interfaces, Firewall) starts the confirm-or-revert
+        // countdown when `history.confirm_seconds` is set.
+        .layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            crate::state::confirm::guard,
+        ))
         // An access point (PATRONUS_DEVICE_ROLE=ap) answers the router-only
         // pages with an explanation and refuses changes to their APIs (runs
         // after the session check below).
