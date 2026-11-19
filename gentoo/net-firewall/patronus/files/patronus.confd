@@ -13,3 +13,8 @@ PATRONUS_WEB_ADDR="0.0.0.0:8080"
 
 # Configuration file location
 #PATRONUS_CONFIG="/etc/patronus/patronus.toml"
+
+# Second boot pass (patronus-services): how often `patronus apply --phase interfaces --phase routes --phase services` is tried after the
+# network is up, and the pause between tries in seconds.
+#PATRONUS_LATE_TRIES="5"
+#PATRONUS_LATE_RETRY_DELAY="3"

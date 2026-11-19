@@ -219,6 +219,24 @@ pub async fn set_dhcp_client(
     result(state.interfaces.set_dhcp_client(&b.client).await)
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SystemDhcpcdBody {
+    /// `release` (default) or `leave`
+    #[serde(default)]
+    pub mode: String,
+    /// config file of the system dhcpcd; empty = the default
+    #[serde(default)]
+    pub conf: String,
+}
+
+/// PUT /api/interfaces/system-dhcpcd  {"mode": "release"|"leave", "conf": ""}
+pub async fn set_system_dhcpcd(
+    State(state): State<AppState>,
+    Json(b): Json<SystemDhcpcdBody>,
+) -> Response {
+    result(state.interfaces.set_system_dhcpcd(&b.mode, &b.conf).await)
+}
+
 /// GET /api/network/interfaces (kernel list, legacy shape)
 pub async fn legacy_list(State(state): State<AppState>) -> Response {
     match state.interfaces.list_template().await {
@@ -251,6 +269,7 @@ pub fn router() -> axum::Router<AppState> {
         .route("/interfaces", get(overview))
         .route("/interfaces/apply", post(apply))
         .route("/interfaces/dhcp-client", put(set_dhcp_client))
+        .route("/interfaces/system-dhcpcd", put(set_system_dhcpcd))
         .route("/interfaces/vlans", post(add_vlan))
         .route("/interfaces/vlans/:name", delete(delete_vlan))
         .route("/interfaces/bonds", post(add_bond))

@@ -1,0 +1,46 @@
+#!/bin/sh
+# Install the product through Portage (runs from common/setup-rootfs.sh while the Portage tree is still in the image).
+#
+# The application stage (Dockerfile.app) staged the product under /usr/share/patronus-image: payload/ (binaries + the real ebuild's
+# files/ directory), repo/ (the image-local repository: net-firewall/patronus + its acct-user/acct-group and the release-key
+# package). `emerge` installs them like any other package, so every Patronus file is owned by net-firewall/patronus and `qfile`,
+# `qcheck`, file-collision protection, depclean and `emerge -1u net-firewall/patronus` (the web UI's updater) behave.
+set -eu
+SRC=/usr/share/patronus-image
+REPO=/var/db/repos/patronus-image
+[ -d "$SRC/payload" ] || { echo "project-image-packages: no $SRC/payload (Dockerfile.app did not stage the product)"; exit 1; }
+
+mkdir -p "$REPO/metadata" "$REPO/profiles" /etc/portage/repos.conf
+cp -a "$SRC/repo/." "$REPO/"
+echo patronus-image > "$REPO/profiles/repo_name"
+printf 'masters = gentoo\nthin-manifests = true\nauto-sync = false\n' > "$REPO/metadata/layout.conf"
+printf '[patronus-image]\nlocation = %s\nauto-sync = no\n' "$REPO" > /etc/portage/repos.conf/patronus-image.conf
+
+# the staged ebuild is net-firewall/patronus-<workspace version>_p<build>; no distfile, so the manifest is empty
+eb=$(ls "$REPO"/net-firewall/patronus/patronus-*.ebuild)
+[ "$(echo "$eb" | wc -l)" = 1 ] || { echo "project-image-packages: expected exactly one staged ebuild, got: $eb"; exit 1; }
+ebuild "$eb" manifest >/dev/null
+for p in acct-group/patronus acct-user/patronus sec-keys/openpgp-keys-errantsolutions; do
+  for e in "$REPO"/$p/*.ebuild; do ebuild "$e" manifest >/dev/null; done
+done
+ver=$(basename "$eb" .ebuild); ver=${ver#patronus-}
+atom="=net-firewall/patronus-$ver::patronus-image"
+
+# --noreplace WITHOUT --oneshot: the package goes into @world, so `emerge --depclean` on the installed system keeps it.
+# --usepkg=n: nothing of ours is in a binhost; dependencies are already in the image (the image packages list).
+emerge --noreplace --usepkg=n --getbinpkg=n --with-bdeps=n "$atom"
+
+# the product must now be owned by that package, init scripts and templates included (the wizard once failed on a missing one)
+for f in /usr/bin/patronus-web /usr/bin/patronus-cli /etc/init.d/patronus-web /etc/init.d/patronus-dhcpc \
+         /usr/lib/systemd/system/patronus-dhcpc@.service /etc/patronus/patronus.toml /etc/pam.d/patronus \
+         /usr/share/openpgp-keys/errantsolutions.asc; do
+  [ -e "$f" ] || { echo "project-image-packages: $f missing after the emerge"; exit 1; }
+  o=$(qfile -Cq "$f" || true)
+  case "$o" in
+    net-firewall/patronus|sec-keys/openpgp-keys-errantsolutions) ;;
+    *) echo "project-image-packages: $f is not owned by the product package (owner: '${o:-none}')"; exit 1 ;;
+  esac
+done
+
+# the staging area and the image-local repository are build input only (the tree is deleted right after this)
+rm -rf "$SRC" "$REPO" /etc/portage/repos.conf/patronus-image.conf

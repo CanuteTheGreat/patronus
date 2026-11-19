@@ -16,7 +16,7 @@ default_hostname = "patronus.localdomain"
 # creates that user: there is no 'admin' account and no generated first-boot password.
 web_auth = "pam"
 web_admin_group = "patronus-admin"
-services = ["patronus-firewall", "patronus-applyd", "patronus-web", "chronyd", "sshd", "dhcpcd"]
+services = ["patronus-firewall", "patronus-applyd", "patronus-web", "patronus-services", "chronyd", "sshd", "dhcpcd"]
 # console menu (installed system)
 web_service = "patronus-web"
 db_path = "/var/lib/patronus/config.db"

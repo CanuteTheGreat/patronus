@@ -128,6 +128,40 @@ fn error(code: StatusCode, m: impl Into<String>) -> Response {
     (code, Json(json!({ "error": m.into() }))).into_response()
 }
 
+/// One readable sentence for a failed wizard step: whitespace collapsed
+/// (daemon output often carries newlines and padding), no trailing noise.
+/// The raw text stays in the server log.
+pub fn friendly_failure(stage: &str, raw: &str) -> String {
+    let flat = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let flat = flat.trim().trim_end_matches(['.', ';', ':']).to_string();
+    let flat = if flat.is_empty() {
+        "no further detail was reported".to_string()
+    } else {
+        flat
+    };
+    format!("Setup was not applied and nothing was changed. {stage} failed: {flat}.")
+}
+
+/// Fail the wizard: put the interface configuration back to what it was
+/// before the first step (no half-applied setup), log the raw error, and
+/// answer with the readable message.
+async fn abort(
+    state: &AppState,
+    cp: &crate::state::interfaces::Checkpoint,
+    code: StatusCode,
+    stage: &str,
+    raw: &str,
+) -> Response {
+    tracing::warn!("setup wizard: {stage} failed, rolling back: {raw}");
+    state.interfaces.rollback(cp).await;
+    let msg = friendly_failure(stage, raw);
+    (
+        code,
+        Json(json!({ "error": msg, "stage": stage, "rolled_back": true })),
+    )
+        .into_response()
+}
+
 async fn completed(state: &AppState) -> bool {
     patronus_network::lan::get_setting(&state.config_store, DONE_KEY)
         .await
@@ -247,6 +281,15 @@ pub async fn apply(
         force: b.force,
         ..Default::default()
     };
+    let cp = match state.interfaces.checkpoint().await {
+        Ok(c) => c,
+        Err(e) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                friendly_failure("Reading the current network configuration", &e.to_string()),
+            )
+        }
+    };
     let mut applied = Vec::new();
     for (name, u) in [(&b.lan_interface, lan), (&b.wan_interface, wan)] {
         match state.interfaces.update_interface(name, u, client).await {
@@ -260,17 +303,33 @@ pub async fn apply(
                 } else {
                     StatusCode::INTERNAL_SERVER_ERROR
                 };
-                return error(code, format!("{name}: {m}"));
+                let role = if *name == b.lan_interface {
+                    "LAN"
+                } else {
+                    "WAN"
+                };
+                return abort(
+                    &state,
+                    &cp,
+                    code,
+                    &format!("Configuring the {role} port {name}"),
+                    &m,
+                )
+                .await;
             }
         }
     }
     #[cfg(feature = "dhcp")]
     if b.dhcp {
         let (Some(s), Some(e)) = (b.dhcp_start.clone(), b.dhcp_end.clone()) else {
-            return error(
+            return abort(
+                &state,
+                &cp,
                 StatusCode::BAD_REQUEST,
+                "Checking the DHCP pool",
                 "Invalid setup: the DHCP pool needs a start and an end address",
-            );
+            )
+            .await;
         };
         let lan_ip = b.lan_ipv4.split('/').next().unwrap_or("").to_string();
         let pool = patronus_network::dhcp::PoolInput {
@@ -294,7 +353,7 @@ pub async fn apply(
             } else {
                 StatusCode::INTERNAL_SERVER_ERROR
             };
-            return error(code, format!("DHCP pool: {m}"));
+            return abort(&state, &cp, code, "Creating the LAN DHCP pool", &m).await;
         }
         applied.push("dhcp".into());
     }
@@ -357,6 +416,18 @@ mod tests {
             .await
             .unwrap()
             .is_some_and(|v| v == "1")
+    }
+
+    #[test]
+    fn a_failed_step_is_one_readable_sentence() {
+        let m = friendly_failure(
+            "Configuring the WAN port enp0s1",
+            "failed to apply interfaces (interface enp0s1): rc-service: service\n  patronus-dhcpc.enp0s1 does not exist\n",
+        );
+        assert!(m.starts_with("Setup was not applied and nothing was changed. Configuring the WAN port enp0s1 failed: "));
+        assert!(m.ends_with("does not exist."), "{m}");
+        assert!(!m.contains('\n') && !m.contains("  "), "{m:?}");
+        assert!(friendly_failure("X", "").contains("no further detail"));
     }
 
     #[test]

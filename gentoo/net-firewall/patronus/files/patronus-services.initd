@@ -1,0 +1,39 @@
+#!/sbin/openrc-run
+# Copyright 2026 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v3
+
+# Second boot pass, once the network is up.
+#
+# patronus-firewall (the first pass) runs BEFORE `net`: it can only queue the DHCP/DNS/NTP daemons (starting them inline would wait on
+# the network it is ordered before), and the system's own network manager (the installer's dhcpcd) brings the links up after it. A
+# queued start can lose that race, and a route or address installed before the link had carrier is gone again. So after `net` this
+# service runs the interfaces, routes and services phases of `patronus apply` once more, inline: addresses and DHCP clients,
+# the configured static routes and default gateway, and every configured daemon (DHCP/DNS/NTP, VPN, ...) are up when the box is
+# reachable, and an apply that fails is retried instead of leaving a daemon down until someone applies by hand.
+#
+# Tunables (/etc/conf.d/patronus): PATRONUS_LATE_TRIES, PATRONUS_LATE_RETRY_DELAY.
+
+description="Patronus second boot pass (interfaces, routes and daemons once the network is up)"
+
+depend() {
+	need patronus-firewall
+	use net logger
+	after net dhcpcd patronus-applyd
+}
+
+start() {
+	local tries="${PATRONUS_LATE_TRIES:-5}" delay="${PATRONUS_LATE_RETRY_DELAY:-3}" try=0 rc=1
+	ebegin "Re-applying Patronus interfaces, routes and services"
+	while [ "${try}" -lt "${tries}" ]; do
+		/usr/bin/patronus apply --phase interfaces --phase routes --phase services && { rc=0; break; }
+		rc=$?
+		try=$((try + 1))
+		[ "${try}" -lt "${tries}" ] && sleep "${delay}"
+	done
+	eend ${rc}
+}
+
+# nothing to undo: the daemons keep serving, the firewall service owns the ruleset
+stop() {
+	return 0
+}

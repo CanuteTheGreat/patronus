@@ -1,0 +1,22 @@
+[Unit]
+# Second boot pass, once the network is up (the OpenRC twin is patronus-services.initd).
+# patronus-firewall (first pass) runs before network.target and can only queue the DHCP/DNS/NTP daemons; the system's network manager
+# brings the links up after it. This unit re-runs the interfaces, routes and services phases of `patronus apply` inline once the
+# network is up: static routes, the default gateway and every configured daemon are in place, and a failed apply is retried.
+Description=Patronus second boot pass (interfaces, routes and daemons once the network is up)
+After=patronus-firewall.service patronus-applyd.service network-online.target
+Wants=network-online.target
+Requires=patronus-firewall.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/patronus apply --phase interfaces --phase routes --phase services
+Restart=on-failure
+RestartSec=3
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

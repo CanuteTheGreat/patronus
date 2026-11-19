@@ -724,10 +724,15 @@ pub fn reconcile(
         } else {
             rep.applied(format!("{svc} running, config unchanged"));
         }
-    } else if is_managed(env, managed_path) && env.services.is_running(svc) {
-        env.services.stop(svc)?;
-        let _ = env.services.disable(svc);
-        rep.applied(format!("{svc} stopped (nothing configured)"));
+    } else if is_managed(env, managed_path) {
+        // a stopped daemon can still be in the boot runlevel: retire both
+        if let Err(e) = env.services.disable(svc) {
+            rep.warn(format!("{svc}: still enabled at boot: {e}"));
+        }
+        if env.services.is_running(svc) {
+            env.services.stop(svc)?;
+            rep.applied(format!("{svc} stopped (nothing configured)"));
+        }
     }
     Ok(())
 }

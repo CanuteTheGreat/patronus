@@ -1,13 +1,11 @@
 #!/bin/sh
 set -e
-chmod +x /etc/init.d/patronus-*
-getent group patronus >/dev/null || groupadd -r patronus
-getent passwd patronus >/dev/null || useradd -r -g patronus -d /var/lib/patronus -s /sbin/nologin patronus
-mkdir -p /var/lib/patronus /var/log/patronus /etc/patronus/tls /run/patronus
-chown -R patronus:patronus /var/lib/patronus /var/log/patronus /etc/patronus/tls
-# patronus-web runs as user patronus and must read /etc/patronus/patronus.toml
-chgrp patronus /etc/patronus && chmod 0750 /etc/patronus
-chgrp patronus /etc/patronus/patronus.toml && chmod 0640 /etc/patronus/patronus.toml
+# The product itself (binaries, init scripts, systemd units, config, PAM service, the patronus user/group and state directories) was installed by
+# Portage in /usr/libexec/project-image-packages (net-firewall/patronus + acct-user/acct-group), so it is owned by a package. Nothing is created by hand here.
+for f in /usr/bin/patronus-web /etc/init.d/patronus-dhcpc /usr/lib/systemd/system/patronus-dhcpc@.service /etc/pam.d/patronus; do
+  [ -n "$(qfile -Cq "$f" 2>/dev/null)" ] || { echo "$f is not owned by any package: the product was not installed through Portage"; exit 1; }
+done
+getent passwd patronus >/dev/null || { echo "user patronus missing (acct-user/patronus)"; exit 1; }
 # patronus-firewall = boot-time `patronus apply` (seeds + applies the ruleset); the stock
 # nftables service is NOT enabled (patronus owns the ruleset)
 # NOT in the live runlevel: the installer enables them on the installed system (profile services); "Try it live" starts

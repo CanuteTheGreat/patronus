@@ -27,6 +27,12 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Prefix of errors that mean "this change would cut off the admin" (409).
+/// State captured by [`InterfacesManager::checkpoint`].
+pub struct Checkpoint {
+    tables: Value,
+    kernel: KernelState,
+}
+
 pub const LOCKOUT: &str = "Lockout risk";
 
 /// Body of `PUT /api/interfaces/:name`.
@@ -509,6 +515,7 @@ impl InterfacesManager {
         Ok(json!({
             "features": patronus_network::interface_features(),
             "dhcp_client_override": dhcp_override,
+            "system_dhcpcd": self.system_dhcpcd_settings().await?,
             "devices": devices,
             "missing": missing,
             "roles": roles,
@@ -655,6 +662,46 @@ impl InterfacesManager {
             Ok(())
         })
         .await
+    }
+
+    /// Remember the interface configuration and the kernel addresses before
+    /// a multi-step change (the setup wizard), so that a failure part-way
+    /// can put everything back with [`Self::rollback`].
+    pub async fn checkpoint(&self) -> anyhow::Result<Checkpoint> {
+        let _g = self.edit.lock().await;
+        Ok(Checkpoint {
+            tables: netconf::snapshot_tables(&self.store)
+                .await
+                .map_err(Self::e)?,
+            kernel: self.kernel().await,
+        })
+    }
+
+    /// Undo everything done since `cp`: restore the stored interface rows,
+    /// re-apply them (and the firewall, whose rules follow the roles), and
+    /// take off the addresses the abandoned attempt already put on a NIC.
+    /// Best effort and logged: it runs while another error is being
+    /// reported.
+    pub async fn rollback(&self, cp: &Checkpoint) {
+        let _g = self.edit.lock().await;
+        let attempted = NetConfig::load(&self.store).await.ok();
+        if let Err(e) = netconf::restore_tables(&self.store, &cp.tables).await {
+            tracing::error!("restoring the interface configuration after a failed setup: {e}");
+            return;
+        }
+        if let Err(e) = self.applier.apply(&self.store).await {
+            tracing::error!("re-applying the previous interface configuration: {e}");
+        }
+        if let Some(attempted) = attempted {
+            let now = self.kernel().await;
+            for (dev, net) in leftover_addrs(&cp.kernel, &now, &attempted) {
+                let a = ["addr", "del", &net, "dev", &dev].map(str::to_string);
+                if let Err(e) = self.cmd.run("ip", &a).await {
+                    tracing::error!("removing {net} from {dev} after a failed setup: {e}");
+                }
+            }
+        }
+        let _ = self.firewall.apply(&self.store).await;
     }
 
     /// Administratively enable/disable an interface (persisted).
@@ -891,6 +938,52 @@ impl InterfacesManager {
             Ok(())
         })
         .await
+    }
+
+    /// The system-dhcpcd release settings (stored values or defaults).
+    pub async fn system_dhcpcd_settings(&self) -> anyhow::Result<Value> {
+        use patronus_network::system_dhcpcd as sd;
+        let mode = self
+            .store
+            .load_system_config(sd::MODE_KEY)
+            .await
+            .map_err(Self::e)?;
+        let conf = self
+            .store
+            .load_system_config(sd::CONF_KEY)
+            .await
+            .map_err(Self::e)?;
+        let s = sd::Settings::from_values(mode.as_deref(), conf.as_deref()).unwrap_or_default();
+        Ok(json!({
+            "mode": s.mode.as_str(),
+            "conf": s.conf,
+            "default_conf": sd::DEFAULT_CONF,
+        }))
+    }
+
+    /// Keep the installer's system dhcpcd off the interfaces Patronus
+    /// configures (`release`, the default) or never touch it (`leave`);
+    /// `conf` empty = the default config path.
+    pub async fn set_system_dhcpcd(&self, mode: &str, conf: &str) -> anyhow::Result<ApplyReport> {
+        use patronus_network::system_dhcpcd as sd;
+        let s = sd::Settings::from_values(Some(mode), Some(conf)).map_err(Self::e)?;
+        {
+            let _g = self.edit.lock().await;
+            self.store
+                .save_system_config(sd::MODE_KEY, s.mode.as_str())
+                .await
+                .map_err(Self::e)?;
+            let stored = if conf.trim().is_empty() {
+                ""
+            } else {
+                conf.trim()
+            };
+            self.store
+                .save_system_config(sd::CONF_KEY, stored)
+                .await
+                .map_err(Self::e)?;
+        }
+        self.apply().await
     }
 
     /// Choose the DHCP client (`dhcpcd`, `udhcpc`, or "" for the build default).

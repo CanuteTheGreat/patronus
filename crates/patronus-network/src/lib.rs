@@ -28,6 +28,7 @@ pub mod supervise;
 pub mod sysauth;
 pub mod sysctl;
 pub mod sysops;
+pub mod system_dhcpcd;
 pub mod uplink_probe;
 pub mod vpn;
 

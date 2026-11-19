@@ -445,6 +445,8 @@ src_install() {
 		systemd_dounit "${FILESDIR}/patronus-firewall.service"
 		# root apply broker (lanes C, D) + per-interface DHCP client / pppd
 		systemd_dounit "${FILESDIR}/patronus-applyd.service"
+		# second boot pass: interfaces, routes and daemons once the network is up
+		systemd_dounit "${FILESDIR}/patronus-services.service"
 		use gitops && systemd_dounit "${FILESDIR}/patronus-gitops.service"
 		systemd_dounit "${FILESDIR}/patronus-ztp.service"
 		systemd_dounit "${FILESDIR}/patronus-dhcpc@.service"
@@ -465,6 +467,7 @@ src_install() {
 		newinitd "${FILESDIR}/patronus-web.initd" patronus-web
 		newinitd "${FILESDIR}/patronus-firewall.initd" patronus-firewall
 		newinitd "${FILESDIR}/patronus-applyd.initd" patronus-applyd
+		newinitd "${FILESDIR}/patronus-services.initd" patronus-services
 		use gitops && newinitd "${FILESDIR}/patronus-gitops.initd" patronus-gitops
 		newinitd "${FILESDIR}/patronus-ztp.initd" patronus-ztp
 		newinitd "${FILESDIR}/patronus-dhcpc.initd" patronus-dhcpc
@@ -577,6 +580,7 @@ pkg_postinst() {
 		elog "Boot-time apply of the stored config (sysctl, interfaces, routes,"
 		elog "firewall/NAT, services; seeds a safe default ruleset on first boot):"
 		elog "  systemctl enable --now patronus-firewall   # runs 'patronus apply'"
+		elog "  systemctl enable --now patronus-services   # second pass once the network is up: routes + DHCP/DNS/NTP daemons"
 	fi
 	if use openrc; then
 		elog "To start the web interface (OpenRC):"
@@ -587,6 +591,7 @@ pkg_postinst() {
 		elog ""
 		elog "Boot-time apply of the stored config (OpenRC; runs 'patronus apply'):"
 		elog "  rc-update add patronus-firewall boot && rc-service patronus-firewall start"
+		elog "  rc-update add patronus-services default   # second pass once the network is up: routes + DHCP/DNS/NTP daemons"
 	fi
 	elog ""
 	elog "Default web interface: http://localhost:8080"

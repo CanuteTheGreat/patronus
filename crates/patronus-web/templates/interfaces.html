@@ -195,6 +195,14 @@
     <p><select id="dhcp-client" aria-label="DHCP client"><option value="">build default</option><option value="dhcpcd">dhcpcd</option><option value="udhcpc">busybox udhcpc</option></select>
        <button class="btn" onclick="setDhcpClient()">Save</button>
        <button class="btn" onclick="call('POST','/api/interfaces/apply')">Re-apply all interfaces</button></p>
+
+    <h2>System DHCP client (installer network)</h2>
+    <p class="muted">The system's own <span class="mono">dhcpcd</span> brings the ports up before Patronus is configured. Once a port is set up here,
+        keeping that client away from it stops two managers fighting over the address and the default route.
+        Config file (blank = <span id="sd-default" class="mono"></span>).</p>
+    <p><select id="sd-mode" aria-label="System dhcpcd"><option value="release">keep it off the ports Patronus configures</option><option value="leave">leave it alone</option></select>
+       <input id="sd-conf" aria-label="System dhcpcd config file" placeholder="/etc/dhcpcd.conf" size="28">
+       <button class="btn" onclick="setSystemDhcpcd()">Save</button></p>
 </div>
 {% endblock %}
 
@@ -305,6 +313,9 @@ function render() {
     fill('pppoe', D.pppoe, p => '<tr><td>' + esc(p.name) + '</td><td>' + esc(p.parent) + '</td><td>' + esc(p.username) + '</td><td>' + p.mtu + '</td><td>' + kstate(p.name) + '</td><td>' + del(p.name) + '</td></tr>');
     document.getElementById('dhcp-default').textContent = D.features.dhcp_client;
     document.getElementById('dhcp-client').value = D.dhcp_client_override || '';
+    document.getElementById('sd-mode').value = D.system_dhcpcd.mode;
+    document.getElementById('sd-default').textContent = D.system_dhcpcd.default_conf;
+    document.getElementById('sd-conf').value = D.system_dhcpcd.conf === D.system_dhcpcd.default_conf ? '' : D.system_dhcpcd.conf;
     document.getElementById('daemons').innerHTML = D.daemons.length ? D.daemons.map(x => esc(x.service + '[' + x.instance + ']') + ' ' + (x.running ? '<span class="badge up">running</span>' : '<span class="badge down">stopped</span>')).join(', ') : '<span class="muted">none</span>';
 
     const rs = document.getElementById('role-select');
@@ -396,6 +407,7 @@ function addPppoe(ev) {
     f.password.value = '';
     return false;
 }
+function setSystemDhcpcd() { call('PUT', '/api/interfaces/system-dhcpcd', {mode: document.getElementById('sd-mode').value, conf: document.getElementById('sd-conf').value}); }
 function setDhcpClient() { call('PUT', '/api/interfaces/dhcp-client', {client: document.getElementById('dhcp-client').value}); }
 
 async function loadUplinks() {
