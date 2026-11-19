@@ -387,6 +387,16 @@ pub trait ServiceControl: Send + Sync {
     /// (Re)start `svc` so it runs with its current config.
     fn restart(&self, svc: &str) -> Result<()>;
     fn stop(&self, svc: &str) -> Result<()>;
+    /// Make `svc` start at boot (OpenRC default runlevel / systemd enable),
+    /// so a reboot brings it back even when the boot-time queued start is
+    /// lost (the boot apply runs before the network is up). Idempotent.
+    fn enable(&self, _svc: &str) -> Result<()> {
+        Ok(())
+    }
+    /// Undo [`ServiceControl::enable`] for a daemon nothing needs any more.
+    fn disable(&self, _svc: &str) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// The real init system.
@@ -442,6 +452,22 @@ impl ServiceControl for SystemServices {
     fn stop(&self, svc: &str) -> Result<()> {
         Self::manager().stop(svc)
     }
+
+    fn enable(&self, svc: &str) -> Result<()> {
+        let m = Self::manager();
+        if m.is_enabled(svc).unwrap_or(false) {
+            return Ok(());
+        }
+        m.enable(svc)
+    }
+
+    fn disable(&self, svc: &str) -> Result<()> {
+        let m = Self::manager();
+        if m.is_enabled(svc).unwrap_or(false) {
+            m.disable(svc)?;
+        }
+        Ok(())
+    }
 }
 
 /// Records calls instead of touching the system (tests).
@@ -449,6 +475,8 @@ impl ServiceControl for SystemServices {
 pub struct RecordingServices {
     pub log: std::sync::Mutex<Vec<String>>,
     pub running: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    /// Daemons enabled at boot.
+    pub enabled: std::sync::Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl ServiceControl for RecordingServices {
@@ -463,6 +491,14 @@ impl ServiceControl for RecordingServices {
     fn stop(&self, svc: &str) -> Result<()> {
         self.log.lock().unwrap().push(format!("stop {svc}"));
         self.running.lock().unwrap().remove(svc);
+        Ok(())
+    }
+    fn enable(&self, svc: &str) -> Result<()> {
+        self.enabled.lock().unwrap().insert(svc.to_string());
+        Ok(())
+    }
+    fn disable(&self, svc: &str) -> Result<()> {
+        self.enabled.lock().unwrap().remove(svc);
         Ok(())
     }
 }
@@ -640,6 +676,12 @@ pub fn reconcile(
     rep: &mut ApplyReport,
 ) -> Result<()> {
     if needed {
+        // start at boot too: dnsmasq/kea/unbound are not in the default
+        // runlevel on the installed image, and the queued boot-time start
+        // can be lost (best effort: a failure here must not fail the apply)
+        if let Err(e) = env.services.enable(svc) {
+            rep.warn(format!("could not enable {svc} at boot: {e}"));
+        }
         let running = env.services.is_running(svc);
         if changed || !running {
             env.services.restart(svc)?;
@@ -656,6 +698,7 @@ pub fn reconcile(
         }
     } else if is_managed(env, managed_path) && env.services.is_running(svc) {
         env.services.stop(svc)?;
+        let _ = env.services.disable(svc);
         rep.applied(format!("{svc} stopped (nothing configured)"));
     }
     Ok(())
@@ -1041,6 +1084,26 @@ mod tests {
             "192.168.50.0/24".to_string()
         );
         assert!(v[1].is_global_v6());
+    }
+
+    #[tokio::test]
+    async fn needed_daemon_is_enabled_at_boot_and_disabled_when_retired() {
+        let t = testutil::env(&[]);
+        let f = ManagedFile {
+            path: "/etc/z.conf",
+            content: header("#", "z") + "a=1\n",
+            mode: 0o644,
+            group: None,
+            check: None,
+        };
+        let mut rep = ApplyReport::default();
+        let changed = install(&t.env, &f).unwrap();
+        reconcile(&t.env, "z", true, changed, "/etc/z.conf", &mut rep).unwrap();
+        assert!(t.services.enabled.lock().unwrap().contains("z"));
+        assert!(t.services.is_running("z"));
+        reconcile(&t.env, "z", false, false, "/etc/z.conf", &mut rep).unwrap();
+        assert!(!t.services.enabled.lock().unwrap().contains("z"));
+        assert!(!t.services.is_running("z"));
     }
 
     #[tokio::test]
