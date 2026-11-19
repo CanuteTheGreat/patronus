@@ -1247,6 +1247,28 @@ Limits: the units still exchange nothing over the LAN; "the other unit hears it 
 beacon report (802.11k) or its own choice (802.11v). Devices with neither (many smart-home devices and some displays)
 are never asked; with `AP_STEER_LEGACY=quiet` they can only be moved by the night disconnect.
 
+Hardware results (two GL-AX1800 units, ~50 stations, 2026-11-19):
+- 802.11v/k on the IPQ6018 firmware (WLAN.HK.2.5.0.1): `bss_transition=1`, `rrm_neighbor_report=1`,
+  `rrm_beacon_report=1` on every BSS ran for 100+ min (first unit, up to 42 stations) and 85 min (second unit) with no
+  firmware assert, no remoteproc recovery and no `wifi-guard` crash. 802.11r stays off.
+- What stations do (survey with both units advertising 11k/v): 13 of 51 advertise BSS transition (phones, laptops, a
+  streaming stick, TVs, a doorbell, one smart plug); most phones advertise it ONLY once the access point does. 30 set the
+  Radio Measurement capability bit, but only 2 answered a beacon request (most smart-home devices ignore it and are
+  treated as stations without 802.11k after one try). The smart display that was disconnected the evening before has
+  no 802.11v; its beacon report claims an implausible -9 dBm for the other unit.
+- Daytime mode, 43 min on one unit (`AP_STEER=on`, quiet hours set to a window that excluded the test,
+  `AP_STEER_SIGNAL=-60`, `AP_STEER_AFTER=120`): 23 beacon requests, 1 "stay", 4 move requests (one smart plug, which
+  declined each time with status 1) and 0 disconnect events on either unit. 1/s pings to the display, streaming stick,
+  TVs, speaker and phones: the display lost 1 of 2597, the streaming devices 0. The evening before, the old refusal
+  disconnected 7 stations on one unit in 4 min (the display was gone for 8 s).
+- Night path with a test client only (house devices exempt): a station without 802.11v, idle 309 s with
+  `AP_STEER_QUIET_IDLE=300`, was disconnected once, refused 30 s, came back to the same unit ("back": left alone 6 h)
+  and was not disconnected again. A wpa_supplicant 2.10 client with 802.11v answered the request with status 0 and
+  THIS unit's BSSID as the target (it measured the candidates and stayed, no disconnect): that answer is now treated
+  like status 7 (never a reason for a night disconnect); before, it counted as "ignored".
+- `AP_TZ`: with `AP_TZ=PST8PDT,M3.2.0,M11.1.0` the units' `date`, the quiet hours and the nightly channel re-check run
+  in local time.
+
 ### 12.19 Channel choice by measurement, nightly re-check by channel switch, steering back-off (2026-11-18)
 
 Until now the channel came from hostapd's ACS at radio start, minus the blocks of this network's other units (12.17).
