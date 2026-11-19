@@ -54,7 +54,7 @@ tar -cf - stage-hostapd.sh hostapd tests/xbss-scenario.sh tests/acs-scenario.sh 
   | $DOCKER exec -i "$C" tar -xf - -C /w/h
 echo "--- building the Patronus hostapd package (x86_64, same APKBUILD as the image)"
 $DOCKER exec "$C" sh -c 'mkdir -p /out /cache && bash /w/h/stage-hostapd.sh >/dev/null && mkdir -p /opt/ph && tar -xzf /out/hostapd/*/hostapd-2.11-r1*.apk -C /opt/ph usr/sbin/hostapd 2>/dev/null; /opt/ph/usr/sbin/hostapd -v 2>&1 | head -1'
-modctl load || { echo "SKIP: no mac80211_hwsim on this kernel"; exit 0; }
+modctl load || hwsim_skip_or_fail "this kernel has no mac80211_hwsim"
 LOADED=1
 PID=$($DOCKER inspect -f '{{.State.Pid}}' "$C")
 PHYS=$($DOCKER run --rm --net=host "$IMAGE" sh -c 'ls /sys/class/ieee80211' | sort -V | tail -n 4); [ "$(echo $PHYS | wc -w)" = 4 ] || { echo "expected 4 hwsim radios"; exit 1; }
@@ -64,15 +64,16 @@ echo "--- radios $PHYS moved into $C"
 rc=0
 case " ${SCENARIOS:-xbss acs coord} " in *" xbss "*)
 echo "=== stock hostapd (Alpine): the overlap must be visible"
-$DOCKER exec -e HOSTAPD=/usr/sbin/hostapd -e EXPECT=overlap "$C" sh /w/h/tests/xbss-scenario.sh || rc=1
+hwsim_run xbss-stock-hostapd $DOCKER exec -e HOSTAPD=/usr/sbin/hostapd -e EXPECT=overlap "$C" sh /w/h/tests/xbss-scenario.sh || rc=1
 echo "=== Patronus hostapd"
-$DOCKER exec -e HOSTAPD=/opt/ph/usr/sbin/hostapd -e EXPECT=sync "$C" sh /w/h/tests/xbss-scenario.sh || rc=1;; esac
+hwsim_run xbss-patronus-hostapd $DOCKER exec -e HOSTAPD=/opt/ph/usr/sbin/hostapd -e EXPECT=sync "$C" sh /w/h/tests/xbss-scenario.sh || rc=1;; esac
 case " ${SCENARIOS:-xbss acs coord} " in *" acs "*)
 echo "=== automatic channel selection (Patronus hostapd, ap render configs, regulatory domain US)"
 regset US || { echo "could not set the regulatory domain"; rc=1; }
-$DOCKER exec -e HOSTAPD=/opt/ph/usr/sbin/hostapd -e AP_DIR=/w/h/overlay ${ACS_CASES:+-e ACS_CASES="$ACS_CASES"} "$C" sh /w/h/tests/acs-scenario.sh || rc=1;; esac
+hwsim_run acs $DOCKER exec -e HOSTAPD=/opt/ph/usr/sbin/hostapd -e AP_DIR=/w/h/overlay ${ACS_CASES:+-e ACS_CASES="$ACS_CASES"} "$C" sh /w/h/tests/acs-scenario.sh || rc=1;; esac
 case " ${SCENARIOS:-xbss acs coord} " in *" coord "*)
 echo "=== channel coordination between two access points of one network (Patronus hostapd, ap start, regulatory domain US)"
 regset US || { echo "could not set the regulatory domain"; rc=1; }
-$DOCKER exec -e HOSTAPD=/opt/ph/usr/sbin/hostapd -e AP_DIR=/w/h/overlay ${COORD_CASES:+-e COORD_CASES="$COORD_CASES"} "$C" sh /w/h/tests/coord-scenario.sh || rc=1;; esac
+hwsim_run coord $DOCKER exec -e HOSTAPD=/opt/ph/usr/sbin/hostapd -e AP_DIR=/w/h/overlay ${COORD_CASES:+-e COORD_CASES="$COORD_CASES"} "$C" sh /w/h/tests/coord-scenario.sh || rc=1;; esac
+hwsim_summary || rc=1
 exit $rc

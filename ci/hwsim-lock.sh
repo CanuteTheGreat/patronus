@@ -21,3 +21,33 @@ hwsim_lock_take() {
 hwsim_lock_drop() {
   [ "${HWSIM_LOCK_HELD:-}" = 1 ] || return 0
   ${HWSIM_DOCKER:-docker} network rm "${HWSIM_LOCK_NAME:-patronus-hwsim-lock}" >/dev/null 2>&1; HWSIM_LOCK_HELD=; }
+
+# --- skip policy and scenario accounting (bash; sourced by ci/netlab/wifi-hwsim.sh and xbss-hwsim.sh) -------------------
+# A Wi-Fi job that cannot load mac80211_hwsim proves nothing, so in CI it FAILS: it is routed to the hwsim-x86_64 runner
+# lane (rw-man-02/03, declared in redweek-devops runners-expected.json) whose kernel package ships the module, and a
+# host without it is an error, never a green SKIP (the job used to "pass" on rw-man-01, whose 6.8 kernel has none, and the
+# Wi-Fi code went unproven for weeks). HWSIM_ALLOW_SKIP=1 turns that back into a SKIP for a developer box without the module.
+HWSIM_RUN=0; HWSIM_EXEC=0; HWSIM_SKIPPED=0; HWSIM_FAILED=0; HWSIM_CHECKS=0; HWSIM_FAILED_LIST=
+hwsim_skip_or_fail() { # REASON
+  if [ "${HWSIM_ALLOW_SKIP:-0}" = 1 ]; then echo "SKIP wifi-hwsim: $1 (HWSIM_ALLOW_SKIP=1)"; exit 0; fi
+  echo "FAIL wifi-hwsim: $1 on $(hostname) (kernel $(uname -r)). This job needs a runner of the hwsim-x86_64 lane; set HWSIM_ALLOW_SKIP=1 only for a local run." >&2
+  exit 1; }
+# hwsim_run NAME CMD...: run one scenario, stream its output, and count it as EXECUTED only when it exited 0, printed no
+# line starting with SKIP and produced at least one check line (ok - ... / PASS...).
+hwsim_run() {
+  local name=$1 f rc checks; shift
+  f=$(mktemp); HWSIM_RUN=$((HWSIM_RUN + 1))
+  echo "=== HWSIM scenario $HWSIM_RUN: $name"
+  if "$@" 2>&1 | tee "$f"; then rc=0; else rc=${PIPESTATUS[0]}; fi   # survives set -e/pipefail in the caller
+  checks=$(grep -c -E '^(ok - |PASS)' "$f" || true)
+  if [ "$rc" != 0 ]; then HWSIM_FAILED=$((HWSIM_FAILED + 1)); HWSIM_FAILED_LIST="$HWSIM_FAILED_LIST $name"; echo "--- HWSIM $name: FAILED (rc=$rc)"
+  elif grep -q -E '^SKIP' "$f"; then HWSIM_SKIPPED=$((HWSIM_SKIPPED + 1)); HWSIM_FAILED_LIST="$HWSIM_FAILED_LIST $name(skipped)"; echo "--- HWSIM $name: SKIPPED"
+  elif [ "$checks" -lt 1 ]; then HWSIM_FAILED=$((HWSIM_FAILED + 1)); HWSIM_FAILED_LIST="$HWSIM_FAILED_LIST $name(no checks)"; echo "--- HWSIM $name: ran but printed no check line"
+  else HWSIM_EXEC=$((HWSIM_EXEC + 1)); HWSIM_CHECKS=$((HWSIM_CHECKS + checks)); echo "--- HWSIM $name: EXECUTED ($checks checks)"; fi
+  rm -f "$f"; }
+# hwsim_summary: one line the job log can be audited by; returns non-zero unless every scenario executed.
+hwsim_summary() {
+  echo "HWSIM SUMMARY: host=$(hostname) kernel=$(uname -r) scenarios=$HWSIM_RUN executed=$HWSIM_EXEC skipped=$HWSIM_SKIPPED failed=$HWSIM_FAILED checks=$HWSIM_CHECKS${HWSIM_FAILED_LIST:+ problems:$HWSIM_FAILED_LIST}"
+  [ "$HWSIM_RUN" -ge 1 ] && [ "$HWSIM_EXEC" = "$HWSIM_RUN" ] && return 0
+  [ "${HWSIM_ALLOW_SKIP:-0}" = 1 ] && [ "$HWSIM_FAILED" = 0 ] && [ "$HWSIM_EXEC" -ge 1 ] && return 0
+  return 1; }

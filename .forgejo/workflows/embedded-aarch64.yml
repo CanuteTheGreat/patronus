@@ -52,8 +52,9 @@ jobs:
     name: hostapd cross-BSS station removal + automatic channel selection (mac80211_hwsim, stock vs Patronus hostapd)
     # one MAC still associated on one SSID of a radio joins the other SSID: stock hostapd creates the new peer before it
     # deletes the old one (the IPQ6018 firmware asserts on that), the image's hostapd must delete first (docs 12.6d).
-    # mac80211_hwsim is host-global: the script locks, loads 3 radios, always unloads; skips where the kernel has none.
-    runs-on: mutation-x86_64
+    # mac80211_hwsim is host-global: the script locks, loads 4 radios, always unloads. Runs on the hwsim-x86_64 lane
+    # (hosts whose kernel package ships the module); FAILS, never skips, without it and ends with a "HWSIM SUMMARY" line.
+    runs-on: hwsim-x86_64
     timeout-minutes: 30
     container:
       image: catthehacker/ubuntu:act-latest

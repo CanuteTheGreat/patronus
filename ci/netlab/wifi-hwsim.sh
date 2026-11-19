@@ -13,9 +13,10 @@
 #   NETLAB_BIN_DIR=<dir with patronus-cli + patronus-web> ci/netlab/wifi-hwsim.sh
 #   HWSIM_CONTAINER=<running container with /t, hostapd, wpa_supplicant, iw> ci/netlab/wifi-hwsim.sh
 #
-# Hosts with the module: rw-man-02/03 (x86_64, kernel 7.0), rw-man-04/05 (arm64,
-# untested); rw-man-01 (kernel 6.8) has none. The scenario skips itself (exit 0,
-# "SKIP") where it cannot run.
+# Hosts with the module: rw-man-02/03 (x86_64, kernel 7.0; the hwsim-x86_64 runner lane), rw-man-04/05
+# (arm64, untested); rw-man-01 (kernel 6.8) has none. Where the module cannot be loaded, or a scenario
+# prints SKIP, the run FAILS (HWSIM_ALLOW_SKIP=1 turns that into a skip for a local run) and ends with one
+# "HWSIM SUMMARY: ... executed=N" line (ci/hwsim-lock.sh).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -42,7 +43,7 @@ modctl() { # load|unload
   docker run --rm --privileged -v /lib/modules:/lib/modules:ro "$IMAGE" sh -c \
     "command -v modprobe >/dev/null || (apt-get update -qq >/dev/null && apt-get install -y -qq kmod >/dev/null); $cmd" >/dev/null 2>&1
 }
-modctl load || { echo "SKIP wifi-hwsim: this kernel has no mac80211_hwsim (rw-man-01's 6.8 kernel has none)"; exit 0; }
+modctl load || hwsim_skip_or_fail "this kernel has no mac80211_hwsim (rw-man-01's 6.8 kernel has none)"
 
 cleanup() {
   [ -n "$OWN" ] && docker rm -fv "$C" >/dev/null 2>&1 || true
@@ -78,4 +79,7 @@ mapfile -t PHYS < <(host_phys)
 docker run --rm --net=host --pid=host --cap-add NET_ADMIN "$IMAGE" sh -c \
   "command -v iw >/dev/null || (apt-get update -qq >/dev/null && apt-get install -y -qq iw >/dev/null); for p in ${PHYS[*]}; do iw phy \$p set netns $PID || exit 1; done"
 echo "--- ${#PHYS[@]} radios (${PHYS[*]}) moved into $C"
-docker exec -e PATH="/opt/wifi/wrap:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" -e SCENARIOS="$SCENARIOS" "$C" bash -c 'cd /t; failed=; for s in $SCENARIOS; do bash ./$s || failed="$failed $s"; done; [ -z "$failed" ] || { echo "FAILED:$failed"; exit 1; }'
+for s in $SCENARIOS; do
+  hwsim_run "$s" docker exec -e PATH="/opt/wifi/wrap:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" "$C" bash -c "cd /t; bash ./$s"
+done
+hwsim_summary

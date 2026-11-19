@@ -168,9 +168,11 @@ jobs:
   wifi-hwsim:
     name: Wi-Fi per-device credentials (mac80211_hwsim, stock hostapd)
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.only == '' || github.event.inputs.only == 'wifi-hwsim'
-    # mac80211_hwsim is host-global: the script takes a lock, loads it, unloads it afterwards
-    # and skips (exit 0) on a host whose kernel has no such module (rw-man-01, kernel 6.8)
-    runs-on: mutation-x86_64
+    # mac80211_hwsim is host-global: the script takes a lock, loads it and unloads it afterwards. The dedicated
+    # hwsim-x86_64 lane (rw-man-02/03, runners-expected.json in redweek-devops) only exists on hosts whose kernel
+    # package carries the module; the job FAILS (never skips) if the module or a scenario is missing, and its log ends
+    # with a "HWSIM SUMMARY: ... executed=N" line.
+    runs-on: hwsim-x86_64
     timeout-minutes: 60
     env:
       CARGO_BUILD_JOBS: 4
