@@ -1199,8 +1199,13 @@ channel (own traffic under 15 %), 32 neighbouring access points heard on 2.4 GHz
   `AP_CHAN_MIN_SIGNAL` ignored; this unit's own BSSes never count). On 2.4 GHz a neighbour 1-4 channels away adds up to 10
   points scaled by overlap and signal (a strong neighbour on 3 hurts 1 and 6, not 11). Equal best scores keep the channel
   in use.
-- At start (`AP_CHAN_SMART5/24=1`): the best candidate becomes ACS's only channel (`chanlist=<ch>`, `channel=0`, so
-  hostapd still does its own DFS/HT checks); a pinned channel that is no longer allowed falls back to plain ACS.
+- At start (`AP_CHAN_SMART5/24=1`): ACS may only use the best candidate's 40/80 MHz block, the measured primary listed
+  first (`chanlist=157 149 153 161`, `channel=0`, so hostapd still does its own DFS/HT checks and picks the primary inside
+  the block); a pinned channel that is no longer allowed falls back to plain ACS. A lone primary is not enough: hostapd's
+  ACS refuses an 80 MHz primary whose block is not in `chanlist`, and on the first hardware flash the 5 GHz radio stayed
+  off with `chanlist=48`. The boot guard (12.16) confirmed that boot because its hostapd check only asked the control
+  sockets that existed; it now requires a socket for every `interface=`/`bss=` the renderer wrote (host test with one
+  radio down), so such an image is rolled back. The hwsim ACS scenario has a `pin` case (157 at 80 MHz, 11 on 2.4 GHz).
 - Nightly (`AP_CHAN_RECHECK5/24=1`, at `AP_CHAN_TIME`, default 03:30 local; empty = never): `AP_CHAN_CONFIRM` samples
   `AP_CHAN_CONFIRM_GAP` s apart must all name the same better channel, at least `AP_CHAN_HYST` % and `AP_CHAN_MIN_GAIN`
   points below the current one. Then the radio moves by channel switch announcement (`hostapd_cli chan_switch
