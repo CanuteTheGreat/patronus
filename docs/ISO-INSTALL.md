@@ -425,11 +425,17 @@ failed apply (`PATRONUS_LATE_TRIES`, `PATRONUS_LATE_RETRY_DELAY` in `/etc/conf.d
 (dnsmasq, unbound, chrony, ...) is also enabled at boot (`rc-update add` / `systemctl enable`) and disabled again when nothing is
 configured for it.
 
-**One network manager per port.** The installer's system `dhcpcd` manages every wired NIC until Patronus configures one. From then
-on the interfaces applier keeps a `# BEGIN patronus-managed` block in the system dhcpcd config (`denyinterfaces <ports>`, placed in the
-global part of the file, before the first `interface` scope) and tells a running dhcpcd to let go of those ports (addresses stay, the
-installer's config sets `persistent`). Settings: `network.system_dhcpcd` (`release` or `leave`) and `network.system_dhcpcd_conf`, on
-the Interfaces page and in `PUT /api/interfaces/system-dhcpcd`.
+**One network manager per port.** The installer's system `dhcpcd` (a manager daemon in the default runlevel) manages every wired NIC
+until Patronus configures one. It is also the only DHCP client the box can run: a second `dhcpcd <port>` cannot start beside a manager
+(it hands its command line to the manager and exits). So a port Patronus puts in DHCP mode stays with that manager (Patronus asks it to
+run DHCP there and the applier does not start its own `patronus-dhcpc` instance), while a port with a static address, a bridge/bond
+member or a port kept down is taken away from it: the interfaces applier keeps a `# BEGIN patronus-managed` block in the system dhcpcd
+config (`denyinterfaces <ports>`, in the global part of the file, before the first `interface` scope, because dhcpcd ignores it inside
+one) and tells the running manager to let go (addresses stay, the installer's config sets `persistent`). A static entry that names an
+address the manager had leased replaces it with a permanent one (the manager's copy has no connected route). Settings:
+`network.system_dhcpcd` (`release` or `leave`), `network.system_dhcpcd_conf` and `network.system_dhcpcd_run`, on the Interfaces page and in
+`PUT /api/interfaces/system-dhcpcd`. Without a system dhcpcd (embedded tiers, containers) nothing changes: Patronus runs its own
+per-interface clients.
 
 **Setup wizard.** It is all-or-nothing: if any step fails, the interface configuration is restored and re-applied, the completed flag
 stays unset, and the answer is one readable sentence ("Setup was not applied and nothing was changed. Configuring the WAN port ... failed: ...").

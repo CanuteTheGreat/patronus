@@ -21,13 +21,21 @@
 //! Settings (system_config, set from the Interfaces page / `PUT /api/interfaces/system-dhcpcd`):
 //! - [`MODE_KEY`] `network.system_dhcpcd`: `release` (default) or `leave`
 //! - [`CONF_KEY`] `network.system_dhcpcd_conf`: the config file to edit (default [`DEFAULT_CONF`])
+//! - [`RUN_KEY`] `network.system_dhcpcd_run`: its run directory (default [`DEFAULT_RUN_DIR`])
+//!
+//! A port Patronus puts in DHCP mode is NOT denied: with the manager running, a second `dhcpcd <port>` cannot run beside it (it hands its
+//! command line to the manager and exits), so the manager stays the DHCP client of that port and Patronus only asks it to start
+//! (`dhcpcd <port>`). Static, down and member ports are denied.
 
 use patronus_core::{Error, Result};
 use std::path::{Path, PathBuf};
 
 pub const MODE_KEY: &str = "network.system_dhcpcd";
 pub const CONF_KEY: &str = "network.system_dhcpcd_conf";
+pub const RUN_KEY: &str = "network.system_dhcpcd_run";
 pub const DEFAULT_CONF: &str = "/etc/dhcpcd.conf";
+/// dhcpcd's run directory; `<run dir>/sock` is the control socket of the manager daemon (a per-interface instance has `<iface>.sock`).
+pub const DEFAULT_RUN_DIR: &str = "/run/dhcpcd";
 pub const BEGIN: &str = "# BEGIN patronus-managed";
 pub const END: &str = "# END patronus-managed";
 
@@ -63,6 +71,7 @@ impl Mode {
 pub struct Settings {
     pub mode: Mode,
     pub conf: PathBuf,
+    pub run_dir: PathBuf,
 }
 
 impl Default for Settings {
@@ -70,25 +79,35 @@ impl Default for Settings {
         Self {
             mode: Mode::Release,
             conf: PathBuf::from(DEFAULT_CONF),
+            run_dir: PathBuf::from(DEFAULT_RUN_DIR),
         }
     }
 }
 
 impl Settings {
-    pub fn from_values(mode: Option<&str>, conf: Option<&str>) -> Result<Self> {
-        let conf = conf.map(str::trim).filter(|c| !c.is_empty());
-        if let Some(c) = conf {
-            if !c.starts_with('/') || c.contains('\0') || c.contains("..") {
-                return Err(Error::Config(format!(
-                    "Invalid system dhcpcd config path {c:?}: an absolute path"
-                )));
+    pub fn from_values(mode: Option<&str>, conf: Option<&str>, run: Option<&str>) -> Result<Self> {
+        let path = |what: &str, v: Option<&str>, default: &str| -> Result<PathBuf> {
+            let v = v.map(str::trim).filter(|c| !c.is_empty());
+            if let Some(c) = v {
+                if !c.starts_with('/') || c.contains('\0') || c.contains("..") {
+                    return Err(Error::Config(format!(
+                        "Invalid system dhcpcd {what} {c:?}: an absolute path"
+                    )));
+                }
             }
-        }
+            Ok(PathBuf::from(v.unwrap_or(default)))
+        };
         Ok(Self {
             mode: Mode::parse(mode.unwrap_or(""))?,
-            conf: PathBuf::from(conf.unwrap_or(DEFAULT_CONF)),
+            conf: path("config path", conf, DEFAULT_CONF)?,
+            run_dir: path("run directory", run, DEFAULT_RUN_DIR)?,
         })
     }
+}
+
+/// Is a dhcpcd manager daemon running (its control socket exists in `run_dir`)?
+pub fn manager_running(run_dir: &Path) -> bool {
+    run_dir.join("sock").exists()
 }
 
 /// An interface name that is safe to put on a `denyinterfaces` line (no glob, no whitespace).
@@ -103,9 +122,10 @@ fn plain_name(n: &str) -> bool {
 /// `denyinterfaces` is only honoured in the global part, i.e. BEFORE the first one.
 fn opens_scope(line: &str) -> bool {
     let t = line.trim_start();
-    ["interface", "ssid", "profile", "arping"]
-        .iter()
-        .any(|k| t.strip_prefix(k).is_some_and(|r| r.starts_with([' ', '\t'])))
+    ["interface", "ssid", "profile", "arping"].iter().any(|k| {
+        t.strip_prefix(k)
+            .is_some_and(|r| r.starts_with([' ', '\t']))
+    })
 }
 
 /// `conf` with the Patronus block set to `owned` (sorted, deduplicated); the block is removed when `owned` is empty. Everything outside the
@@ -150,7 +170,10 @@ pub fn merge(conf: &str, owned: &[String]) -> String {
         return kept.concat();
     }
     let block = format!("{BEGIN}\ndenyinterfaces {}\n{END}\n", names.join(" "));
-    let at = kept.iter().position(|l| opens_scope(l)).unwrap_or(kept.len());
+    let at = kept
+        .iter()
+        .position(|l| opens_scope(l))
+        .unwrap_or(kept.len());
     let mut out = String::with_capacity(conf.len() + block.len() + 1);
     for l in &kept[..at] {
         out.push_str(l);
@@ -218,7 +241,10 @@ mod tests {
         let m = merge(INSTALLER, &v(&["enp0s2", "enp0s1", "enp0s2"]));
         let block = format!("{BEGIN}\ndenyinterfaces enp0s1 enp0s2\n{END}\n");
         let (b, i) = (m.find(&block).unwrap(), m.find("interface enp0s2").unwrap());
-        assert!(b < i, "denyinterfaces must precede `interface enp0s2`, else dhcpcd ignores it:\n{m}");
+        assert!(
+            b < i,
+            "denyinterfaces must precede `interface enp0s2`, else dhcpcd ignores it:\n{m}"
+        );
         assert!(m.contains("denyinterfaces wlan* wlp*"), "{m}");
         assert_eq!(merge(&m, &v(&["enp0s1", "enp0s2"])), m, "idempotent");
         assert_eq!(denied(&m), v(&["enp0s1", "enp0s2"]));
@@ -231,11 +257,18 @@ mod tests {
         let m = merge(INSTALLER, &v(&["enp0s1", "enp0s2"]));
         let m2 = merge(&m, &v(&["enp0s1"]));
         assert_eq!(denied(&m2), v(&["enp0s1"]));
-        assert_eq!(merge(&m2, &[]), INSTALLER, "removing the block restores the file byte for byte");
+        assert_eq!(
+            merge(&m2, &[]),
+            INSTALLER,
+            "removing the block restores the file byte for byte"
+        );
         // a block left at the END by an older build moves into the global part
         let old = format!("{INSTALLER}{BEGIN}\ndenyinterfaces enp0s1\n{END}\n");
         let fixed = merge(&old, &v(&["enp0s1"]));
-        assert!(fixed.find(BEGIN).unwrap() < fixed.find("interface enp0s2").unwrap(), "{fixed}");
+        assert!(
+            fixed.find(BEGIN).unwrap() < fixed.find("interface enp0s2").unwrap(),
+            "{fixed}"
+        );
         assert_eq!(fixed.matches(BEGIN).count(), 1);
     }
 
@@ -243,10 +276,16 @@ mod tests {
     fn a_file_without_scopes_or_a_final_newline_and_hostile_names() {
         let m = merge("duid", &v(&["eth0", "a b", "wlan*", "", "x\ny"]));
         assert_eq!(m, format!("duid\n{BEGIN}\ndenyinterfaces eth0\n{END}\n"));
-        assert_eq!(merge("", &v(&["eth0"])), format!("{BEGIN}\ndenyinterfaces eth0\n{END}\n"));
+        assert_eq!(
+            merge("", &v(&["eth0"])),
+            format!("{BEGIN}\ndenyinterfaces eth0\n{END}\n")
+        );
         // comments that merely mention interface do not open a scope
         let c = merge("# interface eth9 is special\nduid\n", &v(&["eth0"]));
-        assert!(c.ends_with(&format!("{BEGIN}\ndenyinterfaces eth0\n{END}\n")), "{c}");
+        assert!(
+            c.ends_with(&format!("{BEGIN}\ndenyinterfaces eth0\n{END}\n")),
+            "{c}"
+        );
     }
 
     #[test]
@@ -258,19 +297,26 @@ mod tests {
     #[test]
     fn settings_validate() {
         assert_eq!(
-            Settings::from_values(None, None).unwrap(),
+            Settings::from_values(None, None, None).unwrap(),
             Settings::default()
         );
         assert_eq!(
-            Settings::from_values(Some("leave"), Some("/etc/x.conf")).unwrap(),
+            Settings::from_values(Some("leave"), Some("/etc/x.conf"), Some("/run/x")).unwrap(),
             Settings {
                 mode: Mode::Leave,
-                conf: "/etc/x.conf".into()
+                conf: "/etc/x.conf".into(),
+                run_dir: "/run/x".into()
             }
         );
-        assert!(Settings::from_values(Some("bogus"), None).is_err());
-        assert!(Settings::from_values(None, Some("rel/x")).is_err());
-        assert!(Settings::from_values(None, Some("/etc/../x")).is_err());
+        assert!(Settings::from_values(Some("bogus"), None, None).is_err());
+        assert!(Settings::from_values(None, Some("rel/x"), None).is_err());
+        assert!(Settings::from_values(None, None, Some("/etc/../x")).is_err());
+        let d = std::env::temp_dir().join(format!("pdhcpcd-run-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        assert!(!manager_running(&d));
+        std::fs::write(d.join("sock"), "").unwrap();
+        assert!(manager_running(&d));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

@@ -227,6 +227,9 @@ pub struct SystemDhcpcdBody {
     /// config file of the system dhcpcd; empty = the default
     #[serde(default)]
     pub conf: String,
+    /// run directory of the system dhcpcd; empty = the default
+    #[serde(default)]
+    pub run_dir: String,
 }
 
 /// PUT /api/interfaces/system-dhcpcd  {"mode": "release"|"leave", "conf": ""}
@@ -234,7 +237,12 @@ pub async fn set_system_dhcpcd(
     State(state): State<AppState>,
     Json(b): Json<SystemDhcpcdBody>,
 ) -> Response {
-    result(state.interfaces.set_system_dhcpcd(&b.mode, &b.conf).await)
+    result(
+        state
+            .interfaces
+            .set_system_dhcpcd(&b.mode, &b.conf, &b.run_dir)
+            .await,
+    )
 }
 
 /// GET /api/network/interfaces (kernel list, legacy shape)
