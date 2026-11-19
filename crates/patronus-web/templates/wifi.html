@@ -82,9 +82,11 @@
             <legend>Steering</legend>
             <p class="wifi-note">When an access point restarts, its devices move to another one and most of them never come
                 back, even when they end up two rooms away with a weak signal. Steering finds devices that stay connected
-                here with a weak signal while they are idle, and refuses them on this unit for a short time so they join a
-                closer access point. A device that comes back just as weak (or bounces straight back from the other access
-                point) is left alone. These settings apply at once, without restarting the radios.</p>
+                here with a weak signal and ASKS them to move (802.11v): devices that support it first say what they hear
+                (802.11k), and are asked only when another access point of this network is clearly better; they roam
+                without dropping the connection. A device is disconnected only as the last resort: inside the quiet hours,
+                when it had no traffic for a while and ignored the request (or cannot be asked), at most once a day. A
+                device that comes back just as weak is left alone. These settings apply at once, without restarting the radios.</p>
             <label>Steering <select name="steer">
                 <option value="auto">Automatic (only when another access point of this network is found)</option>
                 <option value="on">On</option><option value="off">Off</option></select></label>
@@ -103,7 +105,29 @@
             <label>Devices moved per round <input name="steer_max" type="number" min="0" max="64" size="3"></label>
             <label>Check every (s) <input name="steer_interval" type="number" min="10" max="3600" size="5"></label>
             <label>Never move these devices (MACs) <input name="steer_exempt" size="30" placeholder="none"
-                title="MAC addresses separated by spaces: devices that must stay on this unit whatever their signal"></label>
+                title="MAC addresses separated by spaces: devices that must stay on this unit whatever their signal (also the Steer checkbox in Connected clients)"></label>
+            <label>Hears another access point better by (dB) <input name="steer_margin" type="number" min="0" max="40" size="3"
+                title="A device that reports what it hears (802.11k) is asked to move only when another access point of this network is this much stronger"></label>
+            <label>Ask a device again after (s) <input name="steer_btm_every" type="number" min="60" max="86400" size="6"></label>
+            <label>Measurement <select name="steer_report"><option value="active">active (the device scans the other access point's channel)</option>
+                <option value="passive">passive (listens on that channel)</option><option value="table">from its own scan results</option>
+                <option value="off">off (the device decides itself)</option></select></label>
+            <label>Disconnect as last resort <select name="steer_kick"><option value="quiet">only in the quiet hours</option>
+                <option value="never">never</option></select></label>
+            <label>Quiet hours <input name="steer_quiet" size="11" placeholder="01:00-05:00"
+                title="Local time window (HH:MM-HH:MM, may cross midnight) in which an idle device that ignored a move request may be disconnected"></label>
+            <label>Devices that cannot be asked (no 802.11v) <select name="steer_legacy"><option value="quiet">may be disconnected in the quiet hours</option>
+                <option value="never">are never moved</option></select></label>
+            <label>No traffic for at least (s) <input name="steer_quiet_idle" type="number" min="300" max="86400" size="6"
+                title="Byte counters: a device that sent or received data within this time is never disconnected"></label>
+            <label>A request counts as ignored after (s) <input name="steer_btm_wait" type="number" min="30" max="3600" size="5"></label>
+            <label>Disconnect a device at most every (s) <input name="steer_kick_every" type="number" min="3600" max="2592000" size="8"></label>
+            <label>History entries kept <input name="steer_history" type="number" min="10" max="5000" size="5"></label>
+            <label>Time zone <input name="timezone" size="24" placeholder="UTC0"
+                title="POSIX time zone of this unit (e.g. PST8PDT,M3.2.0,M11.1.0): the local time of the quiet hours, the nightly channel re-check and the coordination hours"></label>
+            <label><input type="checkbox" name="bss_transition"> Move requests (802.11v BSS transition; restarts the radios)</label>
+            <label><input type="checkbox" name="rrm"> Measurements and neighbor lists (802.11k; restarts the radios)</label>
+            <label><input type="checkbox" name="wnm_sleep"> WNM sleep mode (off by default; restarts the radios)</label>
         </fieldset>
         <fieldset class="wifi-group" id="wifi-misbehave-group">
             <legend>Misbehaving devices</legend>
@@ -226,12 +250,22 @@
     <div class="card-header"><h2 class="card-title">Connected clients</h2>
         <button class="btn btn-secondary" type="button" onclick="loadClients()">Refresh</button></div>
     <table class="lan" id="wifi-clients">
-        <thead><tr><th>Name</th><th>Device (MAC)</th><th>Address</th><th>Network</th><th>Band</th><th>Signal</th><th>Rate down / up</th><th>Connected</th><th><span class="sr-only">Actions</span></th></tr></thead>
-        <tbody><tr><td colspan="9" class="empty">Loading...</td></tr></tbody>
+        <thead><tr><th>Name</th><th>Device (MAC)</th><th>Address</th><th>Network</th><th>Band</th><th>Signal</th><th>Rate down / up</th><th>Connected</th><th title="Untick to keep a device where it is: steering never asks or disconnects it">Steer</th><th><span class="sr-only">Actions</span></th></tr></thead>
+        <tbody><tr><td colspan="10" class="empty">Loading...</td></tr></tbody>
     </table>
     <p class="wifi-note">"Disconnect" drops a client once; it can join again with the password. Phones use a private
         (random) MAC per network, so the same phone shows a different MAC on each network. A name is shown only when
         the client sent one in its DHCP request or the router's DNS knows it; otherwise it stays empty.</p>
+</div>
+
+<div class="card" id="wifi-steer-card">
+    <div class="card-header"><h2 class="card-title">Steering</h2></div>
+    <div id="wifi-steer-why"><p class="wifi-note">Loading...</p></div>
+    <h3 class="text-sm">History</h3>
+    <table class="lan" id="wifi-steer-history">
+        <thead><tr><th>When</th><th>Device (MAC)</th><th>What</th><th>Network</th><th>Signal</th><th>Why</th></tr></thead>
+        <tbody></tbody>
+    </table>
 </div>
 
 <div class="card" id="wifi-chan-card">
@@ -265,7 +299,8 @@ const CH5 = ['auto', 36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 12
 const CHAN_NUMS = [['chan_hyst', 20], ['chan_min_gain', 10], ['chan_confirm', 3], ['chan_confirm_gap', 300], ['chan_rounds', 4],
     ['chan_dwell', 105], ['chan_sample_secs', 30], ['chan_bss_cost', 2], ['chan_min_signal', -90], ['chan_csa_count', 10],
     ['chan_wait', 90], ['chan_jitter', 30], ['chan_sync_wait', 90], ['chan_stagger', 1800], ['chan_history', 200], ['chan_forget', 604800], ['steer_retry_max', 604800],
-    ['aql_low24', 2500], ['aql_high24', 5000], ['aql_low5', 5000], ['aql_high5', 12000]];
+    ['aql_low24', 2500], ['aql_high24', 5000], ['aql_low5', 5000], ['aql_high5', 12000],
+    ['steer_margin', 8], ['steer_btm_every', 1800], ['steer_btm_wait', 300], ['steer_quiet_idle', 1800], ['steer_kick_every', 86400], ['steer_history', 500]];
 function bandName(b) { return String(b) === '5' ? '5 GHz' : '2.4 GHz'; }
 function showChannels(d) {
     const w = document.getElementById('wifi-chan-why'); w.innerHTML = '';
@@ -390,7 +425,10 @@ async function loadWifi() {
     const at = document.getElementById('wifi-airtime-state');
     at.textContent = d.airtime && d.airtime.supported === false ? 'This unit\'s Wi-Fi driver has no airtime queue limit or fairness: these settings are saved but have no effect until it runs firmware with them.' : '';
     f.chan_time.value = CFG.chan_time == null ? '03:30' : CFG.chan_time; f.chan_csa.value = CFG.chan_csa || 'auto';
-    showChannels(d);
+    f.steer_kick.value = CFG.steer_kick || 'quiet'; f.steer_legacy.value = CFG.steer_legacy || 'quiet'; f.steer_report.value = CFG.steer_report || 'active';
+    f.steer_quiet.value = CFG.steer_quiet || '01:00-05:00'; f.timezone.value = CFG.timezone || 'UTC0';
+    f.bss_transition.checked = CFG.bss_transition !== false; f.rrm.checked = CFG.rrm !== false; f.wnm_sleep.checked = !!CFG.wnm_sleep;
+    showChannels(d); showSteer(d);
     fillSelect(f.chan24, CH24, CFG.chan24); fillSelect(f.chan5, CH5, CFG.chan5);
     fillSelect(f.txpower24, TXP, CFG.txpower24 || 'auto'); fillSelect(f.txpower5, TXP, CFG.txpower5 || 'auto');
     for (const o of [...f.txpower24.options, ...f.txpower5.options]) if (o.value !== 'auto') o.textContent = o.value + ' dBm';
@@ -435,6 +473,8 @@ async function saveWifi() {
         chan_smart5: f.chan_smart5.checked, chan_smart24: f.chan_smart24.checked, chan_recheck5: f.chan_recheck5.checked,
         chan_recheck24: f.chan_recheck24.checked, chan_time: f.chan_time.value.trim(), chan_csa: f.chan_csa.value,
         aql: f.aql.checked, atf: f.atf.checked,
+        steer_kick: f.steer_kick.value, steer_legacy: f.steer_legacy.value, steer_report: f.steer_report.value, steer_quiet: f.steer_quiet.value.trim(),
+        timezone: f.timezone.value.trim() || 'UTC0', bss_transition: f.bss_transition.checked, rrm: f.rrm.checked, wnm_sleep: f.wnm_sleep.checked,
         wifi6: f.wifi6.checked, txpower24: f.txpower24.value, txpower5: f.txpower5.value, names: f.names.value.trim() || 'dhcp',
         networks: nets};
     const b = document.getElementById('wifi-save'); b.disabled = true; b.textContent = 'Restarting Wi-Fi...';
@@ -450,10 +490,10 @@ function dur(s) { if (s == null) return ''; const h = Math.floor(s / 3600), m = 
 function rate(s) { return s ? s.split(' ').slice(0, 2).join(' ') : ''; }
 async function loadClients() {
     const tb = document.querySelector('#wifi-clients tbody');
-    let d; try { d = await api('GET', '/api/wifi/clients'); } catch (e) { tb.innerHTML = ''; tb.appendChild(el('tr', {}, el('td', {colspan: '9', class: 'empty', text: e.message}))); return; }
+    let d; try { d = await api('GET', '/api/wifi/clients'); } catch (e) { tb.innerHTML = ''; tb.appendChild(el('tr', {}, el('td', {colspan: '10', class: 'empty', text: e.message}))); return; }
     tb.innerHTML = '';
     const list = (d.clients || []).sort((a, b) => (b.signal_dbm || -999) - (a.signal_dbm || -999));
-    if (!list.length) tb.appendChild(el('tr', {}, el('td', {colspan: '9', class: 'empty', text: 'No clients connected.'})));
+    if (!list.length) tb.appendChild(el('tr', {}, el('td', {colspan: '10', class: 'empty', text: 'No clients connected.'})));
     for (const c of list) {
         const sig = c.signal_dbm != null ? c.signal_dbm + ' dBm' : '';
         tb.appendChild(el('tr', {class: 'wifi-client'},
@@ -461,6 +501,8 @@ async function loadClients() {
             el('td', {class: 'mono', text: c.mac}), el('td', {text: c.ipv4 || ''}), el('td', {text: c.ssid || c.interface}),
             el('td', {text: c.band}), el('td', {class: c.signal_dbm < -75 ? 'bad' : '', text: sig}),
             el('td', {text: (c.tx_rate || c.rx_rate) ? rate(c.tx_rate) + ' / ' + rate(c.rx_rate) : ''}), el('td', {text: dur(c.connected_s)}),
+            el('td', {}, el('input', {type: 'checkbox', class: 'steer-toggle', 'data-mac': c.mac, checked: !(CFG && (CFG.steer_exempt || []).includes(c.mac)),
+                disabled: !CAN_MODIFY, title: 'Steering may ask this device to move to a closer access point', onchange: ev => setSteer(c.mac, ev.target.checked)})),
             el('td', {}, CAN_MODIFY ? el('button', {class: 'btn btn-secondary btn-sm', type: 'button', text: 'Disconnect', onclick: async () => {
                 if (!confirm('Disconnect ' + c.mac + ' from ' + (c.ssid || c.interface) + '?')) return;
                 try { await api('POST', '/api/wifi/clients/kick', {interface: c.interface, mac: c.mac}); setTimeout(loadClients, 1500); } catch (e) { msg(e.message, true); }
@@ -471,6 +513,32 @@ async function loadClients() {
                 await setBlock(c.mac, net, true);
             }}) : null)));
     }
+}
+async function setSteer(mac, on) {
+    // the per-device toggle edits the exempt list (a live setting: no radio restart)
+    const cur = (CFG && CFG.steer_exempt) || [];
+    const list = on ? cur.filter(m => m !== mac) : [...new Set([...cur, mac])];
+    try { await api('PUT', '/api/wifi', {steer_exempt: list}); msg(on ? mac + ' may be steered again.' : mac + ' is never steered.', false); }
+    catch (e) { msg('Not applied: ' + e.message, true); }
+    loadWifi();
+}
+function showSteer(d) {
+    const s = d.steer_status, w = document.getElementById('wifi-steer-why'); if (!w) return; w.innerHTML = '';
+    if (!s) w.appendChild(el('p', {class: 'wifi-note', text: 'Steering has not run yet (it starts with the radios).'}));
+    else {
+        w.appendChild(el('p', {id: 'wifi-steer-state', 'data-active': String(!!s.active)}, el('strong', {text: s.active ? 'Steering is on. ' : 'Steering is idle: '}),
+            el('span', {text: (s.active ? '' : s.reason + '. ') + 'Disconnects: ' + (s.kick === 'quiet' ? 'only in the quiet hours ' + s.quiet + (s.quiet_now ? ' (now)' : '') : 'never') +
+                '. Other access points known: ' + ((s.peers || []).map(p => p.bssid + ' (' + bandName(p.band) + ' ch ' + p.channel + ')').join(', ') || 'none') + '.'})));
+        const busy = (s.stations || []).filter(x => x.state !== 'ok');
+        for (const x of busy) w.appendChild(el('div', {class: 'text-sm', text: x.mac + ' on ' + x.bss + ' at ' + x.signal + ' dBm: ' + x.state +
+            ' (' + (x.btm ? 'can be asked to move' : 'cannot be asked to move') + (x.beacon_report ? ', reports what it hears' : '') + ')'}));
+    }
+    const hb = document.querySelector('#wifi-steer-history tbody'); if (!hb) return; hb.innerHTML = '';
+    const hist = (d.steer_history || []).slice().reverse();
+    const what = {measure: 'asked what it hears', btm: 'asked to move', 'btm-answer': 'answer', roamed: 'moved', stay: 'left alone', kick: 'disconnected (last resort)', back: 'came back'};
+    for (const h of hist) hb.appendChild(el('tr', {}, el('td', {text: new Date(h.t * 1000).toLocaleString()}), el('td', {class: 'mono', text: h.mac}),
+        el('td', {text: what[h.event] || h.event}), el('td', {text: h.bss || ''}), el('td', {text: h.signal ? h.signal + ' dBm' : ''}), el('td', {text: h.detail || ''})));
+    if (!hist.length) hb.appendChild(el('tr', {}, el('td', {colspan: '6', class: 'empty', text: 'Nothing yet.'})));
 }
 function netOfInterface(i) { const m = /^wl(?:24|5)-(.+)$/.exec(i || ''); return m ? m[1] : null; }
 function showState(d) {

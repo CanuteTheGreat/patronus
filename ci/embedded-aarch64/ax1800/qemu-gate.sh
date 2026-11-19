@@ -156,7 +156,23 @@ wifi_chanplan() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi);
 wifi_steer() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=$(cat "$W/api.json")
   [ "$c" = 200 ] && has_all "$g" '"steer":"auto"' '"steer_signal":-65' '"steer_after":600' '"steer_idle":64' '"steer_block":30' \
     '"steer_retry":21600' '"steer_max":2' '"steer_interval":30' '"steer_exempt":[]' '"authfail_max":10' '"authfail_window":60' \
-    '"authfail_hold":60' '"authfail_hold_max":3600' '"xbss_max":6' '"xbss_window":60' '"xbss_hold":30' || { echo "defaults: $c $g"; return 1; }
+    '"authfail_hold":60' '"authfail_hold_max":3600' '"xbss_max":6' '"xbss_window":60' '"xbss_hold":30' \
+    '"steer_kick":"quiet"' '"steer_quiet":"01:00-05:00"' '"steer_legacy":"quiet"' '"steer_report":"active"' '"steer_margin":8' \
+    '"steer_btm_every":1800' '"steer_quiet_idle":1800' '"steer_kick_every":86400' '"bss_transition":true' '"rrm":true' '"wnm_sleep":false' \
+    '"timezone":"UTC0"' '"steer_history":[' || { echo "defaults: $c $g"; return 1; }
+  # the soft-steering switches and the time zone are live too (each group ALONE: a restart key would hide a live bug)
+  c=$(wapi -X PUT -d '{"steer_kick":"never","steer_quiet":"23:30-04:00","steer_report":"table","timezone":"PST8PDT,M3.2.0,M11.1.0"}' https://127.0.0.1:$WEBP/api/wifi)
+  r=$(cat "$W/api.json"); [ "$c" = 200 ] || { echo "PUT soft steer: $c $r"; return 1; }
+  case "$r" in *'"restarted":true'*|*'"changed":false'*) echo "soft-steering change restarted the radios or was not written: $r"; return 1;; esac
+  m=$(R '. /etc/patronus/board.sh; echo "K=$AP_STEER_KICK Q=$AP_STEER_QUIET R=$AP_STEER_REPORT TZ=$TZ"')
+  [ "$m" = "K=never Q=23:30-04:00 R=table TZ=PST8PDT,M3.2.0,M11.1.0" ] || { echo "ap.env after soft PUT: $m"; return 1; }
+  for bad in '{"steer_kick":"always"}' '{"steer_quiet":"1-5"}' '{"timezone":"$(id)"}' '{"steer_margin":99}'; do
+    c=$(wapi -X PUT -d "$bad" https://127.0.0.1:$WEBP/api/wifi); [ "$c" = 400 ] || { echo "$bad: HTTP $c"; return 1; }; done
+  c=$(wapi -X PUT -d '{"steer_kick":"quiet","steer_quiet":"01:00-05:00","steer_report":"active","timezone":"UTC0"}' https://127.0.0.1:$WEBP/api/wifi)
+  [ "$c" = 200 ] || { echo "PUT soft back: $c"; return 1; }
+  # the image's hostapd configs carry 802.11v/k (never 802.11r) on every BSS the unit renders
+  k=$(R 'for f in /run/hostapd/ap5.conf /run/hostapd/ap24.conf; do [ -f "$f" ] && grep -c "^bss_transition=1" "$f"; done; grep -l "^ieee80211r\|^mobility_domain" /run/hostapd/ap*.conf 2>/dev/null; echo end')
+  case "$k" in *ap5.conf*|*ap24.conf*) echo "802.11r in the hostapd config: $k"; return 1;; esac
   c=$(wapi -X PUT -d '{"steer":"on","steer_signal":-70,"steer_retry":3600,"steer_exempt":["AA:BB:CC:DD:EE:01"]}' https://127.0.0.1:$WEBP/api/wifi)
   r=$(cat "$W/api.json"); [ "$c" = 200 ] || { echo "PUT steer: $c $r"; return 1; }
   case "$r" in *'"restarted":true'*) echo "a steering change restarted the radios: $r"; return 1;; esac

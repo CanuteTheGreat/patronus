@@ -1163,8 +1163,8 @@ Changes:
   moves. A station it moved that comes back is left alone for `AP_STEER_RETRY` s (see "No ping-pong" below). The unit's
   own block list (`deny-<bss>`) is never lifted by it. `AP_STEER=auto` (default) acts only when another access point of
   this network is known (heard by `ap-coord plan`, listed in `AP_COORD_PEERS`, or a station that left turned up behind a
-  wired bridge port); `1` always, `0` off. `ap-steer status` shows what it is doing. No 802.11k/v/r frames are sent: the
-  ath11k firmware on IPQ6018 is only proven with plain disassociation.
+  wired bridge port); `1` always, `0` off. `ap-steer status` shows what it is doing. (Superseded by 12.18a: the
+  refusal is now the last resort; steering asks first with 802.11v and measures with 802.11k.)
 - The image's hostapd (`hostapd/patronus-xbss.diff`, pkgrel 105): a station with more than `AP_AUTHFAIL_MAX`
   unacknowledged authentication responses in `AP_AUTHFAIL_WINDOW` s is ignored on that radio for `AP_AUTHFAIL_HOLD` s,
   doubling per further hold up to `AP_AUTHFAIL_HOLD_MAX`, until it completes a connection (one log line per hold instead
@@ -1196,6 +1196,56 @@ steering change, bad values (400) and `ap-steer status`.
 Found by that gate: the Wi-Fi API compared only some live settings when deciding whether anything changed, so a
 change of only the channel-coordination (12.17) or steering settings answered 200 "nothing changed" and was never
 written. `same_settings` now compares every typed setting; unit tests cover a live-only change of each kind.
+
+### 12.18a Steering asks first; a disconnect is the last resort, at night only (2026-11-18)
+
+Found in use: the refusal of 12.18 is a disconnect, and "idle" by byte rate still covers devices people look at. A smart
+display at -80 dBm was refused at 17:42 local time and was gone for 8 s before it joined the other unit, and the
+drop was visible on it. Several speakers, plugs and a phone were refused the same evening. A disconnect is visible on displays,
+speakers and TVs, and a phone in a pocket is "idle" until it is picked up.
+
+Changes (`libexec/patronus/ap-steer`, rewritten; header comment = the exact rules):
+- Every BSS now advertises 802.11v BSS transition management and 802.11k radio measurement (`bss_transition=1`,
+  `rrm_neighbor_report=1`, `rrm_beacon_report=1`, settings `AP_BSS_TRANSITION` / `AP_RRM`, default on; `AP_WNM_SLEEP`
+  default off). 802.11r stays off (12.6d). The other units' BSSes of the same SSID are loaded as neighbor reports.
+- A weak station that supports beacon reports is first asked what it hears (`req_beacon`, `AP_STEER_REPORT`
+  active|passive|table|off). Only if it hears another unit `AP_STEER_MARGIN` dB (default 8) better than this one is it
+  asked to move; otherwise it is left alone for `AP_STEER_RETRY`. A station that never answers is treated as one without
+  802.11k. A station with 802.11v but no 802.11k gets the request with the other units as candidates and measures them
+  itself. The request (`bss_tm_req`, preferred candidate, no "disassociation imminent") is advisory: the station roams
+  without a disconnect or declines. At most every `AP_STEER_BTM_EVERY` s per station, only while it is idle.
+- A disconnect (the old refusal) happens only inside `AP_STEER_QUIET` (default 01:00-05:00, local time from `AP_TZ`) with
+  `AP_STEER_KICK=quiet`, only for a station with no traffic for `AP_STEER_QUIET_IDLE` s (byte counters), that ignored a
+  request for `AP_STEER_BTM_WAIT` s (or has no 802.11v, with `AP_STEER_LEGACY=quiet`), never when its own measurement
+  says no unit is better or it declined with "no suitable candidate", at most once per `AP_STEER_KICK_EVERY` (a day).
+- A weak station that just arrived from another unit (its MAC was behind a wired port last round) is measured at once;
+  if it hears another unit clearly better it is asked straight over, so a bad move is undone within a few rounds. A
+  station that roamed away on its own is dropped from the live list as soon as the bridge learns it behind a wired port.
+- Per-device "don't steer": the Steer checkbox in Connected clients edits `AP_STEER_EXEMPT` (live).
+- Every step (measure, request, answer, roam, stay, disconnect, return) is a JSON line in
+  `/var/lib/patronus/ap-steer/history` (newest `AP_STEER_HISTORY`, default 500) and in syslog; `/api/wifi` returns
+  `steer_status` (mode, why idle/on, peers, stations being worked on) and `steer_history`, shown in the Wi-Fi page's
+  Steering card. `ap-steer status` says "off: switched off in the settings" when `AP_STEER=off` (it used to say "no other
+  access point known").
+- `AP_TZ` (typed `timezone`, POSIX TZ string, default UTC0): board.sh exports it as `TZ`, so the quiet hours, the
+  nightly channel re-check (12.19) and the coordination hours (12.17) are local time. The image has no zoneinfo; before
+  this every hour setting on these units was UTC (a "03:30" re-check ran at 19:30 in UTC-8).
+
+Proof: `tests/run.sh` (decisions with a fake station dump and hostapd_cli: no disconnect outside the quiet hours for any
+station kind, beacon-report-driven requests, roam recording, "stay" when nothing is better, silent 802.11k stations,
+night disconnect rules, once per day, midnight-wrapping window, bad-move revert, two units without ping-pong);
+`tests/steer-hwsim.sh` (mac80211_hwsim, real hostapd + wpa_supplicant, two APs, the product's `ap render` configs):
+10 of 10 soft moves without a disconnect event (BSS-TM-RESP status 0, 0-1 lost pings at 10/s), against the old
+refusal, which disconnected the station every time (5 of 5). hwsim has no scan or authentication latency, so it proves
+disconnect vs no disconnect, not the length of a real outage. Settings: typed in `/api/wifi`, the Wi-Fi page and
+export/plan (`steer_kick`, `steer_quiet`, `steer_legacy`, `steer_report`, `timezone` live; `steer_margin`,
+`steer_btm_every`, `steer_btm_wait`, `steer_quiet_idle`, `steer_kick_every`, `steer_history` live numbers;
+`bss_transition`, `rrm`, `wnm_sleep` restart the radios). QEMU gate: defaults, a live soft-steering change, bad values,
+no 802.11r in the rendered configs.
+
+Limits: the units still exchange nothing over the LAN; "the other unit hears it better" comes from the station's own
+beacon report (802.11k) or its own choice (802.11v). Devices with neither (many smart-home devices and some displays)
+are never asked; with `AP_STEER_LEGACY=quiet` they can only be moved by the night disconnect.
 
 ### 12.19 Channel choice by measurement, nightly re-check by channel switch, steering back-off (2026-11-18)
 
