@@ -1280,7 +1280,18 @@ fn system_ext(plan: &mut Plan, x: &mut ExtPlan, files: &Files) {
     for s in secs {
         match s.kind.as_str() {
             "system" => {
-                let host = s.get("hostname").map(|h| h.to_ascii_lowercase());
+                // "OpenWrt" is the firmware's stock default, not a name anybody chose:
+                // keep the name the new box was installed with instead
+                let host = s
+                    .get("hostname")
+                    .map(|h| h.to_ascii_lowercase())
+                    .filter(|h| h != "openwrt");
+                if s.get("hostname").is_some() && host.is_none() {
+                    plan.notes.push(
+                        "system: hostname 'OpenWrt' is the stock default, the installed host name is kept"
+                            .into(),
+                    );
+                }
                 let tz = s.get("zonename").map(|z| z.replace(' ', "_")).or_else(|| {
                     match s.get("timezone") {
                         Some("UTC") | Some("GMT0") | Some("UTC0") => Some("UTC".to_string()),
@@ -2384,11 +2395,12 @@ mod tests {
         assert_eq!(x.ddns.len(), 1);
         assert_eq!(x.ddns[0].family, "both");
         assert_eq!(x.ddns[0].provider, "dyndns2");
-        // system
-        assert_eq!(
-            x.general,
-            Some((Some("openwrt".into()), Some("America/Los_Angeles".into())))
-        );
+        // system: the stock default name "OpenWrt" is not carried (the installed name stays)
+        assert_eq!(x.general, Some((None, Some("America/Los_Angeles".into()))));
+        assert!(p
+            .notes
+            .iter()
+            .any(|n| n.contains("hostname 'OpenWrt' is the stock default")));
         assert!(x.ntp.as_ref().unwrap().0);
         // sshd
         assert_eq!(setting(&x.sys_settings, "ssh.port"), Some("2222"));

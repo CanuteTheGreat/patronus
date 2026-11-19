@@ -1458,7 +1458,7 @@ pub fn render(plan: &Plan, dry_run: bool) -> String {
         {
             let _ = writeln!(
                 o,
-                "  port forward {} {} {} -> {}{}  \"{}\"",
+                "  port forward {} {} {} -> {}{}  \"{}\"{}",
                 n.interface_in.as_deref().unwrap_or("any"),
                 n.protocol
                     .as_ref()
@@ -1470,7 +1470,10 @@ pub fn render(plan: &Plan, dry_run: bool) -> String {
                     .unwrap_or_else(|| "any".into()),
                 to_address,
                 to_port.map(|p| format!(":{p}")).unwrap_or_default(),
-                n.name
+                n.name,
+                // a disabled OpenWrt redirect stays disabled; say so, or the
+                // review reads as if the port were about to be opened
+                if n.enabled { "" } else { " (disabled)" }
             );
         }
     }
@@ -1743,6 +1746,7 @@ pub async fn run(
     ssh: Option<String>,
     dry_run: bool,
     maps: Vec<String>,
+    ddns_disabled: bool,
 ) -> Result<()> {
     let maps = parse_maps(&maps)?;
     // `--ssh root@router[:port]`: the configuration travels over ssh into a 0700 scratch dir, removed after
@@ -1765,7 +1769,10 @@ pub async fn run(
         (None, None) => bail!("give a tarball/directory or --ssh root@router[:port]"),
     };
     let (files, extras) = load_input_full(&input)?;
-    let plan = build_plan_with(&files, &extras, &maps);
+    let mut plan = build_plan_with(&files, &extras, &maps);
+    if ddns_disabled {
+        disable_ddns(&mut plan);
+    }
     print!("{}", render(&plan, dry_run));
     if dry_run {
         return Ok(());
@@ -1779,10 +1786,44 @@ pub async fn run(
     Ok(())
 }
 
+/// `--ddns-disabled`: every dynamic-DNS client is imported switched off, so a rehearsal
+/// box never publishes its (test) addresses under the live router's names.
+pub fn disable_ddns(plan: &mut Plan) {
+    let mut n = 0;
+    for d in plan.ext.ddns.iter_mut().filter(|d| d.enabled) {
+        d.enabled = false;
+        n += 1;
+    }
+    if n > 0 {
+        plan.notes.push(format!(
+            "ddns: {n} client(s) imported switched off (--ddns-disabled); switch them on at cutover"
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use patronus_config::store::ConfigStore;
+
+    #[test]
+    fn ddns_disabled_switches_every_client_off() {
+        let mut p = Plan::default();
+        p.ext.ddns.push(DdnsPlan {
+            provider: "dyndns2".into(),
+            hostname: "h.example.net".into(),
+            server: None,
+            username: None,
+            password: None,
+            family: "both".into(),
+            interface: "@wan".into(),
+            enabled: true,
+        });
+        disable_ddns(&mut p);
+        assert!(!p.ext.ddns[0].enabled);
+        assert!(p.notes.iter().any(|n| n.contains("--ddns-disabled")));
+        assert!(render(&p, true).contains(" disabled"));
+    }
 
     fn fixture_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/uci-slate")

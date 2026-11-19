@@ -73,6 +73,10 @@ enum Commands {
         /// (`--map lan=br-lan --map wwan=wl24-sta`)
         #[arg(long = "map", value_name = "UCI=DEVICE")]
         map: Vec<String>,
+        /// Import dynamic-DNS clients switched OFF (a rehearsal on a test box must not
+        /// publish its addresses under the live router's names); switch them on at cutover
+        #[arg(long)]
+        ddns_disabled: bool,
     },
 
     /// Called by hostapd (through `hostapd_cli -a`) when a station joins with
@@ -813,8 +817,9 @@ async fn main() -> anyhow::Result<()> {
             ssh,
             dry_run,
             map,
+            ddns_disabled,
         } => {
-            commands::import_uci::run(cli.db, input, ssh, dry_run, map).await?;
+            commands::import_uci::run(cli.db, input, ssh, dry_run, map, ddns_disabled).await?;
         }
 
         Commands::Ztp { bootstrap, force } => {

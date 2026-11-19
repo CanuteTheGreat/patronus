@@ -939,7 +939,36 @@ pub async fn dnsmasq_part(
         "domain-needed".to_string(),
         "bogus-priv".to_string(),
         format!("cache-size={}", s.cache_size),
+        // the router's own /etc/hosts maps its name to 127.0.1.1 for local
+        // tools; served to the LAN that sends clients to their own loopback
+        "no-hosts".to_string(),
     ];
+    // the router's own name answers with its address on each served network
+    let g = crate::general::settings(store).await?;
+    // no name in the store (an install that never set one): the kernel's
+    #[cfg(not(test))]
+    let kernel = std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .ok()
+        .map(|h| h.trim().to_string())
+        .filter(|h| !h.is_empty() && h != "localhost" && h != "(none)");
+    #[cfg(test)]
+    let kernel: Option<String> = None;
+    if let Some(h) = g.hostname.clone().or(kernel).as_deref() {
+        let short = h.split('.').next().unwrap_or(h).to_string();
+        let mut names = vec![short.clone()];
+        if h.contains('.') {
+            names.push(h.to_string());
+        } else if let Some(d) = g.domain.as_deref().or(Some(s.local_domain.as_str())) {
+            if !d.is_empty() {
+                names.push(format!("{short}.{d}"));
+            }
+        }
+        for n in names {
+            for dev in &sv.devs {
+                lines.push(format!("interface-name={n},{dev}"));
+            }
+        }
+    }
     if s.log_queries {
         lines.push("log-queries".into());
     }
@@ -1667,6 +1696,15 @@ mod tests {
         let set = settings(&s).await.unwrap();
         assert_eq!(set.local_domain, "lan.example");
         assert_eq!((set.cache_size, set.log_queries), (2500, true));
+        crate::general::save_settings(
+            &s,
+            &crate::general::GeneralInput {
+                hostname: Some("gw".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         DnsApplier::new(t.env.clone()).apply(&s).await.unwrap();
         let c = read(&t, lan::DNSMASQ_CONF);
         for want in [
@@ -1678,6 +1716,10 @@ mod tests {
             "host-record=printer.lan.example,192.168.50.20",
             "interface=wg0",
             "server=/corp.example/10.0.0.53#5353",
+            // the router's own name: its interface addresses, never /etc/hosts' 127.0.1.1
+            "no-hosts",
+            "interface-name=gw,wg0",
+            "interface-name=gw.lan.example,wg0",
         ] {
             assert!(c.contains(want), "missing {want:?} in\n{c}");
         }
