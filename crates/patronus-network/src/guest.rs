@@ -30,8 +30,9 @@
 //!   the client's address, both directions);
 //! - time-limited access, enforced in the kernel (no daemon, it expires by
 //!   itself): `schedule` (daily window and weekdays, nft `meta hour`/`meta
-//!   day`, converted from local time when the rules are loaded: re-applied
-//!   when the UTC offset changes) or `timed` (closed until the "open for N
+//!   day`: hours are converted from local time when the rules are loaded, the
+//!   kernel weekday is UTC, so the closed stretches are cut per UTC weekday;
+//!   re-applied when the UTC offset changes) or `timed` (closed until the "open for N
 //!   minutes" button is pressed, closes by itself at `open_until`);
 //! - the Wi-Fi password: one shared passphrase plus optional vouchers (own
 //!   passphrases that stop working after N minutes; a 60 s watcher in the web
@@ -568,6 +569,23 @@ const PRIVATE_RANGES: &str =
 /// Expressions that, when true, close the network (each becomes its own drop
 /// rule); `None` = never closed; `Some(vec![])` = closed unconditionally.
 pub fn gate_closed(g: &Gate, now: i64) -> Option<Vec<String>> {
+    gate_closed_at(g, now, local_offset_minutes(now))
+}
+
+/// The router's UTC offset (minutes east) at `now`: what nft uses to turn the
+/// local `meta hour` strings into the kernel's UTC clock when it loads rules.
+fn local_offset_minutes(now: i64) -> i32 {
+    use chrono::{Local, Offset, TimeZone};
+    Local
+        .timestamp_opt(now, 0)
+        .single()
+        .map(|t| t.offset().fix().local_minus_utc() / 60)
+        .unwrap_or(0)
+}
+
+/// `gate_closed` with an explicit UTC offset (minutes east of UTC).
+pub fn gate_closed_at(g: &Gate, now: i64, off_min: i32) -> Option<Vec<String>> {
+    use std::collections::BTreeMap;
     match g {
         Gate::Always => None,
         Gate::Timed { open_until } => {
@@ -578,32 +596,90 @@ pub fn gate_closed(g: &Gate, now: i64) -> Option<Vec<String>> {
             }
         }
         Gate::Schedule { from, to, days } => {
-            let mut v = Vec::new();
-            if days.len() < 7 {
-                v.push(format!(
-                    "meta day != {{ {} }}",
-                    days.iter()
-                        .map(u8::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
+            let mut groups: BTreeMap<Vec<(u32, u32)>, Vec<u8>> = BTreeMap::new();
+            for (d, runs) in schedule_closed_runs(*from, *to, days, off_min) {
+                groups.entry(runs).or_default().push(d);
             }
-            if from < to {
-                v.push(format!(
-                    "meta hour != \"{}\"-\"{}\"",
-                    clock(*from),
-                    clock(to - 1)
-                ));
-            } else {
-                v.push(format!(
-                    "meta hour \"{}\"-\"{}\"",
-                    clock(*to),
-                    clock(from - 1)
-                ));
+            let mut v = Vec::new();
+            for (runs, ds) in groups {
+                let day = if ds.len() == 7 {
+                    String::new()
+                } else if ds.len() == 1 {
+                    format!("meta day {} ", ds[0])
+                } else {
+                    let list: Vec<String> = ds.iter().map(u8::to_string).collect();
+                    format!("meta day {{ {} }} ", list.join(", "))
+                };
+                if runs.is_empty() {
+                    v.push(day.trim_end().to_string());
+                }
+                for (a, b) in runs {
+                    v.push(format!("{day}meta hour \"{}\"-\"{}:59\"", clock(a), clock(b)));
+                }
             }
             Some(v)
         }
     }
+}
+
+/// When a daily schedule is closed, per kernel weekday (nft `meta day` is the
+/// UTC weekday, 0 = Sunday; nft converts `meta hour` strings from local time,
+/// so the two only agree when the router is on UTC). The window is on the
+/// router's local weekdays `days` and local hours `from`..`to` (wrapping past
+/// midnight when `to` <= `from`). Per UTC weekday: the closed stretches as
+/// inclusive local minute-of-day pairs, cut at local midnight so each is a
+/// plain ascending range; an empty list = closed the whole UTC day.
+pub fn schedule_closed_runs(
+    from: u32,
+    to: u32,
+    days: &[u8],
+    off_min: i32,
+) -> Vec<(u8, Vec<(u32, u32)>)> {
+    const WEEK: i32 = 7 * 1440;
+    let in_window = |m: u32| {
+        if from < to {
+            m >= from && m < to
+        } else {
+            m >= from || m < to
+        }
+    };
+    let open = |u: i32| {
+        let l = (u + off_min).rem_euclid(WEEK);
+        days.contains(&((l / 1440) as u8)) && in_window((l % 1440) as u32)
+    };
+    let local = |u: i32| (u + off_min).rem_euclid(1440) as u32;
+    let mut out = Vec::new();
+    for d in 0..7i32 {
+        let base = d * 1440;
+        if (0..1440).all(|m| !open(base + m)) {
+            out.push((d as u8, Vec::new()));
+            continue;
+        }
+        let mut runs = Vec::new();
+        let mut start: Option<i32> = None;
+        for m in 0..1440 {
+            let closed = !open(base + m);
+            match (closed, start) {
+                (true, None) => start = Some(m),
+                (true, Some(s)) if local(base + m) == 0 => {
+                    runs.push((local(base + s), local(base + m - 1)));
+                    start = Some(m);
+                }
+                (false, Some(s)) => {
+                    runs.push((local(base + s), local(base + m - 1)));
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(s) = start {
+            runs.push((local(base + s), local(base + 1439)));
+        }
+        if !runs.is_empty() {
+            out.push((d as u8, runs));
+        }
+    }
+    out
 }
 
 fn kbytes(kbit: u64) -> u64 {
@@ -2044,12 +2120,13 @@ mod tests {
             ("schedule_to", "23:00"),
             ("schedule_days", "mon,tue,wed,thu,fri"),
         ]);
-        let g = gate_closed(&day.gate, 0).unwrap();
+        let g = gate_closed_at(&day.gate, 0, 0).unwrap();
         assert_eq!(
             g,
             vec![
-                "meta day != { 1, 2, 3, 4, 5 }",
-                "meta hour != \"07:00\"-\"22:59\""
+                "meta day { 0, 6 }",
+                "meta day { 1, 2, 3, 4, 5 } meta hour \"00:00\"-\"06:59:59\"",
+                "meta day { 1, 2, 3, 4, 5 } meta hour \"23:00\"-\"23:59:59\"",
             ]
         );
         let night = cfg(&[
@@ -2058,13 +2135,11 @@ mod tests {
             ("schedule_to", "06:00"),
         ]);
         assert_eq!(
-            gate_closed(&night.gate, 0).unwrap(),
-            vec!["meta hour \"06:00\"-\"21:59\""]
+            gate_closed_at(&night.gate, 0, 0).unwrap(),
+            vec!["meta hour \"06:00\"-\"21:59:59\""]
         );
         let t = render_nft(&day, &["eth0".into()], 0);
-        assert!(
-            t.contains("meta hour != \"07:00\"-\"22:59\" drop comment \"guest network is closed\"")
-        );
+        assert!(t.contains("meta day { 0, 6 } drop comment \"guest network is closed\""));
         // the DHCP accept stays above the closing rules: a closed network still answers DHCP
         assert!(t.find("guest DHCP").unwrap() < t.find("guest network is closed").unwrap());
         let timed = cfg(&[("access", "timed"), ("open_until", "5000")]);
@@ -2079,6 +2154,27 @@ mod tests {
         let t = render_nft(&timed, &["eth0".into()], 6000);
         assert!(t.contains("    drop comment \"guest network is closed\""));
         assert!(gate_closed(&Gate::Always, 0).is_none());
+    }
+
+    /// nft's `meta day` is the kernel's UTC weekday while `meta hour` is
+    /// converted from local time: on a router east of UTC, shortly after local
+    /// midnight the weekday is still yesterday's. The schedule must follow
+    /// the router's local weekday (netlab runs 2052/2058 closed the network
+    /// inside a Thursday 23:07-01:07 window at local 00:07 Thursday).
+    #[test]
+    fn schedule_weekday_follows_local_time_east_of_utc() {
+        // Thursday only, 23:07-01:07, router on UTC+1
+        let r = schedule_closed_runs(23 * 60 + 7, 67, &[4], 60);
+        let day = |d: u8| r.iter().find(|(x, _)| *x == d).unwrap().1.clone();
+        // UTC Wednesday 23:00-23:59 is local Thursday 00:00-00:59: open
+        assert_eq!(day(3), vec![(60, 1439)]);
+        // UTC Thursday: open 00:00-00:06 and 22:07-22:59; closed from local Friday 00:00
+        assert_eq!(day(4), vec![(67, 1386), (0, 59)]);
+        assert_eq!(day(5), Vec::<(u32, u32)>::new());
+        // west of UTC (-5h), Friday 18:00-22:00 local: UTC Saturday 00:00-02:59 is open
+        let w = schedule_closed_runs(18 * 60, 22 * 60, &[5], -300);
+        let sat = w.iter().find(|(x, _)| *x == 6).unwrap().1.clone();
+        assert_eq!(sat, vec![(1320, 1439), (0, 1139)]);
     }
 
     #[test]
