@@ -78,7 +78,7 @@
             {% endif %}
             <form class="lan-form" id="static-form-{{ p.id }}" onsubmit="return submitJson(event, 'POST', '/api/dhcp/pools/{{ p.id }}/static')">
                 <label>MAC <input name="mac" placeholder="aa:bb:cc:dd:ee:ff" required></label>
-                <label>IP (outside the range) <input name="ip" required></label>
+                <label>IP <input name="ip" required></label>
                 <label>Hostname <input name="hostname"></label>
                 <label title="Seconds; 0 = infinite; empty = the pool's lease time">Lease time (s) <input name="lease_time" type="number" min="0" placeholder="pool"></label>
                 <label title="Publish hostname.local-domain in DNS even while the device is offline">DNS record <input type="checkbox" name="dns_record"></label>
