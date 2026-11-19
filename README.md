@@ -175,6 +175,14 @@ that are not finished are listed separately under
   until approved. Proven with real 802.11 associations on the simulated
   radios of mac80211_hwsim, not on real radio hardware. [C64]
 
+- The access point's Wi-Fi channel is chosen automatically (the default for a
+  new network): measured when the radio starts and re-checked every night, and
+  it only moves when another channel is clearly and repeatedly better, by a
+  channel switch announcement so connected devices follow without a
+  disconnect. Proven on the simulated radios of mac80211_hwsim; the real
+  measurement (neighbours heard, airtime) depends on the radio's driver.
+  [C84]
+
 ### Configuration you can trust
 
 - The configuration survives restarts and reboots: it lives in one SQLite

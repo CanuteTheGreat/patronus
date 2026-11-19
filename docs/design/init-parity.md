@@ -11,7 +11,7 @@ that are easy to miss. Measured by reading every call site and by running the sh
 Already at parity before phase 1:
 
 * Every service Patronus ships has both halves in `gentoo/net-firewall/patronus/files/`: `*.initd` and `*.service`
-  (web, firewall, applyd, gitops, ztp, dhcpc@, daemon@, pppoe@, hostapd@, wifi-events@, dashboard); ipdb is a timer + cron pair.
+  (web, firewall, applyd, gitops, ztp, dhcpc@, daemon@, pppoe@, hostapd@, wifi-events@, wifi-chan@, dashboard); ipdb is a timer + cron pair.
   Ebuilds (`9999`, `0.1.0`, `0.2.0`) install both under `USE=systemd` / `USE=openrc`, `REQUIRED_USE="|| ( systemd openrc )"`.
 * The `ServiceManager` in `patronus-core` detected the init system and had systemd, OpenRC and SysV paths; the LAN-service
   code (`patronus-network/src/lan.rs`, `dhcp.rs`, `supervise.rs`, `services.rs`) used it and had both-init unit tests.

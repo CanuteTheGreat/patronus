@@ -36,7 +36,9 @@ impl LanManager {
     /// "Re-check now" for an automatic channel: the network's channel service runs the same samples as the
     /// nightly check (hysteresis included) within seconds. Nothing is applied here.
     pub async fn wifi_chan_request(&self, id: i64) -> anyhow::Result<()> {
-        seg_wifi_chan::request_recheck(&self.store, id).await.map_err(e)
+        seg_wifi_chan::request_recheck(&self.store, id)
+            .await
+            .map_err(e)
     }
 
     pub async fn wifi_overview(&self) -> anyhow::Result<Value> {
@@ -47,7 +49,10 @@ impl LanManager {
         for n in networks.iter().filter(|n| n.channel == 0) {
             let state = seg_wifi_chan::get_state(s, n.id).await.map_err(e)?;
             let history = seg_wifi_chan::history(s, n.id, 50).await.map_err(e)?;
-            channels.insert(n.id.to_string(), json!({"state": state, "history": history}));
+            channels.insert(
+                n.id.to_string(),
+                json!({"state": state, "history": history}),
+            );
         }
         Ok(json!({
             "channels": channels,

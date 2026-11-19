@@ -23,12 +23,12 @@
 //! with `|` would inject SAE options, a newline would add a config line).
 
 use crate::supervise::{write_atomic, DaemonSpec, Supervisor};
+use crate::wifichan::{self, Iw, IwTools, Mode};
 use async_trait::async_trait;
 use patronus_config::applier::{Applier, ApplyReport, Phase};
 use patronus_config::seg::{self, is_ifname, norm_mac};
 use patronus_config::seg_wifi::{self, check_psk, check_sae, ApCred, ApNet};
 use patronus_config::seg_wifi_chan::{self, ChanEvent};
-use crate::wifichan::{self, Iw, IwTools, Mode};
 use patronus_config::store::ConfigStore;
 use patronus_core::{Error, Result};
 use serde_json::{json, Value};
@@ -200,7 +200,11 @@ pub fn render_hostapd(
         "country_code={}\nieee80211d=1\nhw_mode={hw_mode}\nchannel={}\nieee80211n=1\n",
         n.country, n.channel
     ));
-    o.push_str(&crate::wifichan::conf_lines(&n.band, n.channel, n.chan.width));
+    o.push_str(&crate::wifichan::conf_lines(
+        &n.band,
+        n.channel,
+        n.chan.width,
+    ));
     o.push_str(&format!(
         "auth_algs=1\nwpa=2\nrsn_pairwise=CCMP\nwpa_key_mgmt={}\n",
         km.join(" ")
@@ -556,8 +560,12 @@ impl WifiApplier {
                     Some(csa),
                 )
                 .await?;
-                self.note(store, n, "start", Some(&best), c.get(1), w.clone()).await;
-                rep.applied(format!("Wi-Fi {}: automatic channel {} at start: {w}", n.name, best.channel));
+                self.note(store, n, "start", Some(&best), c.get(1), w.clone())
+                    .await;
+                rep.applied(format!(
+                    "Wi-Fi {}: automatic channel {} at start: {w}",
+                    n.name, best.channel
+                ));
                 Ok(best.channel)
             }
             Err(e) => {
@@ -569,7 +577,8 @@ impl WifiApplier {
                     .or_else(|| want.first().copied())
                     .ok_or_else(|| err(format!("{}: no candidate channel", n.name)))?;
                 let w = format!("measurement unavailable ({e}); using channel {ch}");
-                seg_wifi_chan::set_channel(store, n.id, ch, n.chan.width, &w, &json!([]), None).await?;
+                seg_wifi_chan::set_channel(store, n.id, ch, n.chan.width, &w, &json!([]), None)
+                    .await?;
                 self.note(store, n, "note", None, None, w.clone()).await;
                 rep.warn(format!("Wi-Fi {}: {w}", n.name));
                 Ok(ch)
@@ -600,7 +609,10 @@ impl WifiApplier {
         let spec = DaemonSpec {
             service: SVC_HOSTAPD,
             instance: n.name.clone(),
-            argv: vec![hostapd.to_string_lossy().into(), conf_path.to_string_lossy().into()],
+            argv: vec![
+                hostapd.to_string_lossy().into(),
+                conf_path.to_string_lossy().into(),
+            ],
             files: vec![(conf_path, conf, 0o600)],
         };
         self.sup.record(&spec)
@@ -630,7 +642,10 @@ impl WifiApplier {
             let ifn = n.ifname.clone();
             // the channel hostapd is really on (the record could be stale after a crash)
             let live = tokio::task::spawn_blocking(move || {
-                iw.hostapd_status(&ifn).ok().as_deref().and_then(wifichan::status_channel)
+                iw.hostapd_status(&ifn)
+                    .ok()
+                    .as_deref()
+                    .and_then(wifichan::status_channel)
             })
             .await
             .ok()
@@ -642,13 +657,19 @@ impl WifiApplier {
             let cur_c = c.iter().find(|x| x.channel == cur).cloned();
             let w = wifichan::why(&c, best.channel);
             let better = best.channel != cur
-                && cur_c
-                    .as_ref()
-                    .map_or(true, |cc| wifichan::clearly_better(cc.score, best.score, n.chan.hysteresis, n.chan.min_gain));
+                && cur_c.as_ref().is_none_or(|cc| {
+                    wifichan::clearly_better(
+                        cc.score,
+                        best.score,
+                        n.chan.hysteresis,
+                        n.chan.min_gain,
+                    )
+                });
             if !better {
                 let msg = format!("no clearly better channel: {w}");
                 seg_wifi_chan::set_decision(store, id, &msg, &Self::cands_json(&c), csa_ok).await?;
-                self.note(store, &n, "stay", cur_c.as_ref(), Some(&best), msg.clone()).await;
+                self.note(store, &n, "stay", cur_c.as_ref(), Some(&best), msg.clone())
+                    .await;
                 return Ok(format!("staying on {cur} ({w})"));
             }
             if best.channel == want {
@@ -663,13 +684,22 @@ impl WifiApplier {
                 "sample",
                 cur_c.as_ref(),
                 Some(&best),
-                format!("sample {k} of {}: {} is better ({w})", n.chan.confirm, best.channel),
+                format!(
+                    "sample {k} of {}: {} is better ({w})",
+                    n.chan.confirm, best.channel
+                ),
             )
             .await;
             if k >= n.chan.confirm {
                 let reason = format!("better in {k} samples {} s apart: {w}", n.chan.confirm_gap);
                 let how = self
-                    .move_to(store, &n, cur, best.channel, csa, &reason, &Self::cands_json(&c))
+                    .move_to(
+                        store,
+                        &n,
+                        (cur, best.channel, csa),
+                        &reason,
+                        &Self::cands_json(&c),
+                    )
                     .await?;
                 self.note(
                     store,
@@ -680,7 +710,10 @@ impl WifiApplier {
                     format!("moved from {cur} by {how}: {reason}"),
                 )
                 .await;
-                return Ok(format!("moved from channel {cur} to {} by {how}", best.channel));
+                return Ok(format!(
+                    "moved from channel {cur} to {} by {how}",
+                    best.channel
+                ));
             }
             tokio::time::sleep(Duration::from_secs(n.chan.confirm_gap as u64)).await;
         }
@@ -695,19 +728,20 @@ impl WifiApplier {
         &self,
         store: &ConfigStore,
         n: &seg_wifi::Network,
-        from: i64,
-        to: i64,
-        csa_capable: bool,
+        mv: (i64, i64, bool), // (from channel, to channel, the driver can switch by CSA)
         reason: &str,
         cands: &serde_json::Value,
     ) -> Result<&'static str> {
+        let (from, to, csa_capable) = mv;
         let mut how = "restart";
         if n.chan.csa != "off" && csa_capable {
             let (iw, ifn, band) = (self.iw.clone(), n.ifname.clone(), n.band.clone());
             let (w, count) = (n.chan.width, n.chan.csa_count);
-            let r = tokio::task::spawn_blocking(move || wifichan::switch_by_csa(&*iw, &ifn, &band, to, w, count))
-                .await
-                .map_err(|e| err(format!("channel switch task: {e}")))?;
+            let r = tokio::task::spawn_blocking(move || {
+                wifichan::switch_by_csa(&*iw, &ifn, &band, to, w, count)
+            })
+            .await
+            .map_err(|e| err(format!("channel switch task: {e}")))?;
             match r {
                 Ok(true) => {
                     how = "CSA";
@@ -724,8 +758,14 @@ impl WifiApplier {
                     // hostapd's files now name the new channel, so the next apply sees nothing to restart
                     self.record_files(store, n.id, to).await?;
                 }
-                Ok(false) => tracing::warn!("Wi-Fi {}: channel switch to {to} did not take effect, restarting", n.name),
-                Err(e) => tracing::warn!("Wi-Fi {}: channel switch to {to} failed ({e}), restarting", n.name),
+                Ok(false) => tracing::warn!(
+                    "Wi-Fi {}: channel switch to {to} did not take effect, restarting",
+                    n.name
+                ),
+                Err(e) => tracing::warn!(
+                    "Wi-Fi {}: channel switch to {to} failed ({e}), restarting",
+                    n.name
+                ),
             }
         }
         if how == "restart" {
@@ -801,7 +841,9 @@ impl Applier for WifiApplier {
             };
             let was_running = self.sup.is_running(SVC_HOSTAPD, &n0.name);
             // automatic channel: the measured one (state), or a fresh measurement when the radio starts
-            let chosen = self.resolve_channel(store, net0, was_running, &mut rep).await?;
+            let chosen = self
+                .resolve_channel(store, net0, was_running, &mut rep)
+                .await?;
             let mut netv = net0.clone();
             netv.network.channel = chosen;
             let net = &netv;
@@ -1331,7 +1373,10 @@ mod tests {
             Self {
                 // channel 1 busy, 6 half busy and with two neighbours, 11 the quietest
                 busy: Mutex::new([(1, 70), (6, 40), (11, 20)].into_iter().collect()),
-                neigh: Mutex::new(vec![("aa:00:00:00:00:01".into(), 6, -50), ("aa:00:00:00:00:02".into(), 6, -60)]),
+                neigh: Mutex::new(vec![
+                    ("aa:00:00:00:00:01".into(), 6, -50),
+                    ("aa:00:00:00:00:02".into(), 6, -60),
+                ]),
                 channel: Mutex::new(0),
                 csa: Mutex::new(true),
                 switches: Mutex::new(vec![]),
@@ -1346,7 +1391,12 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .map(|(m, c, s)| format!("BSS {m}(on wlan0)\n\tfreq: {}.0\n\tsignal: {s}.00 dBm\n", 2407 + c * 5))
+                .map(|(m, c, s)| {
+                    format!(
+                        "BSS {m}(on wlan0)\n\tfreq: {}.0\n\tsignal: {s}.00 dBm\n",
+                        2407 + c * 5
+                    )
+                })
                 .collect())
         }
         fn survey(&self, _: &str) -> Result<String> {
@@ -1378,7 +1428,9 @@ mod tests {
             Ok(String::new())
         }
         fn phy_info(&self, _: &str) -> Result<String> {
-            let mut o: String = (1..=13).map(|c| format!("\t\t\t* {} MHz [{c}] (20.0 dBm)\n", 2407 + c * 5)).collect();
+            let mut o: String = (1..=13)
+                .map(|c| format!("\t\t\t* {} MHz [{c}] (20.0 dBm)\n", 2407 + c * 5))
+                .collect();
             if *self.csa.lock().unwrap() {
                 o.push_str("\t\t * channel_switch\n");
             }
@@ -1388,10 +1440,16 @@ mod tests {
             (i == "wlan0").then(|| "02:00:00:00:00:00".to_string())
         }
         fn hostapd_status(&self, _: &str) -> Result<String> {
-            Ok(format!("state=ENABLED\nchannel={}\n", self.channel.lock().unwrap()))
+            Ok(format!(
+                "state=ENABLED\nchannel={}\n",
+                self.channel.lock().unwrap()
+            ))
         }
         fn chan_switch(&self, _: &str, count: i64, freq: i64, _: &[String]) -> Result<String> {
-            self.switches.lock().unwrap().push(format!("{count} {freq}"));
+            self.switches
+                .lock()
+                .unwrap()
+                .push(format!("{count} {freq}"));
             *self.channel.lock().unwrap() = (freq - 2407) / 5;
             Ok("OK".into())
         }
@@ -1618,23 +1676,51 @@ mod tests {
         let r = l.apply.apply(&l.store).await.unwrap();
         // 1 is 70% busy, 6 is 40% busy with two neighbours, 11 is 20% busy: 11 wins
         assert_eq!(conf_channel(&l), "11", "{r:?}");
-        assert!(r.applied.iter().any(|x| x.contains("automatic channel 11 at start")), "{r:?}");
-        let id = seg_wifi::network_by_name(&l.store, "home").await.unwrap().unwrap().id;
-        let st = seg_wifi_chan::get_state(&l.store, id).await.unwrap().unwrap();
+        assert!(
+            r.applied
+                .iter()
+                .any(|x| x.contains("automatic channel 11 at start")),
+            "{r:?}"
+        );
+        let id = seg_wifi::network_by_name(&l.store, "home")
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
+        let st = seg_wifi_chan::get_state(&l.store, id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(st.channel, 11);
-        assert!(st.reason.contains("channel 11") && st.csa_capable == Some(true), "{st:?}");
+        assert!(
+            st.reason.contains("channel 11") && st.csa_capable == Some(true),
+            "{st:?}"
+        );
         assert_eq!(st.candidates.as_array().unwrap().len(), 3);
         let h = seg_wifi_chan::history(&l.store, id, 10).await.unwrap();
-        assert_eq!((h.len(), h[0].event.as_str(), h[0].channel), (1, "start", Some(11)));
+        assert_eq!(
+            (h.len(), h[0].event.as_str(), h[0].channel),
+            (1, "start", Some(11))
+        );
         let pid1 = pid(&l);
         // the world changes, but a running radio is not measured again by an apply
         l.iw.set_busy(&[(1, 0), (6, 0), (11, 90)]);
         l.apply.apply(&l.store).await.unwrap();
         assert_eq!(pid(&l), pid1, "no restart");
         assert_eq!(conf_channel(&l), "11");
-        assert_eq!(seg_wifi_chan::history(&l.store, id, 10).await.unwrap().len(), 1);
+        assert_eq!(
+            seg_wifi_chan::history(&l.store, id, 10)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
         // the chan service runs for an automatic network
-        assert!(l.apply.sup.instances(SVC_CHAN).contains(&"home".to_string()));
+        assert!(l
+            .apply
+            .sup
+            .instances(SVC_CHAN)
+            .contains(&"home".to_string()));
         l.apply.teardown().await.unwrap();
         assert!(l.apply.sup.instances(SVC_CHAN).is_empty());
     }
@@ -1645,7 +1731,11 @@ mod tests {
         set_auto(&l, |_| {}).await;
         l.apply.apply(&l.store).await.unwrap();
         *l.iw.channel.lock().unwrap() = 11;
-        let id = seg_wifi::network_by_name(&l.store, "home").await.unwrap().unwrap().id;
+        let id = seg_wifi::network_by_name(&l.store, "home")
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
         let pid1 = pid(&l);
         // 11 stays the best: no move, a "stay" entry
         let r = l.apply.recheck(&l.store, id).await.unwrap();
@@ -1661,14 +1751,27 @@ mod tests {
         assert!(r.contains("moved from channel 11 to 1 by CSA"), "{r}");
         assert_eq!(l.iw.switches.lock().unwrap().as_slice(), ["10 2412"]);
         assert_eq!(pid(&l), pid1, "CSA does not restart hostapd");
-        assert_eq!(conf_channel(&l), "1", "hostapd's files follow the live channel");
+        assert_eq!(
+            conf_channel(&l),
+            "1",
+            "hostapd's files follow the live channel"
+        );
         // ... so the next apply finds nothing to do
         let r = l.apply.apply(&l.store).await.unwrap();
         assert!(r.applied.iter().any(|x| x.contains("unchanged")), "{r:?}");
         assert_eq!(pid(&l), pid1);
-        let st = seg_wifi_chan::get_state(&l.store, id).await.unwrap().unwrap();
+        let st = seg_wifi_chan::get_state(&l.store, id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(st.channel, 1);
-        let ev: Vec<String> = seg_wifi_chan::history(&l.store, id, 20).await.unwrap().into_iter().rev().map(|h| h.event).collect();
+        let ev: Vec<String> = seg_wifi_chan::history(&l.store, id, 20)
+            .await
+            .unwrap()
+            .into_iter()
+            .rev()
+            .map(|h| h.event)
+            .collect();
         assert_eq!(ev, ["start", "stay", "stay", "sample", "sample", "move"]);
         l.apply.teardown().await.unwrap();
     }
@@ -1681,8 +1784,15 @@ mod tests {
             set_auto(&l, |i| i.chan.csa = Some(setting.into())).await;
             l.apply.apply(&l.store).await.unwrap();
             *l.iw.channel.lock().unwrap() = 11;
-            let id = seg_wifi::network_by_name(&l.store, "home").await.unwrap().unwrap().id;
-            let st = seg_wifi_chan::get_state(&l.store, id).await.unwrap().unwrap();
+            let id = seg_wifi::network_by_name(&l.store, "home")
+                .await
+                .unwrap()
+                .unwrap()
+                .id;
+            let st = seg_wifi_chan::get_state(&l.store, id)
+                .await
+                .unwrap()
+                .unwrap();
             assert_eq!(st.csa_capable, Some(csa_driver));
             let pid1 = pid(&l);
             l.iw.set_busy(&[(1, 5), (6, 30), (11, 80)]);
@@ -1699,13 +1809,27 @@ mod tests {
     async fn a_failed_measurement_falls_back_to_the_first_candidate_and_says_so() {
         struct NoScan(FakeIw);
         impl Iw for NoScan {
-            fn scan(&self, _: &str, _: &[i64], _: i64, _: bool) -> Result<String> { Err(err("scan failed: busy")) }
-            fn survey(&self, i: &str) -> Result<String> { self.0.survey(i) }
-            fn stations(&self, i: &str) -> Result<String> { self.0.stations(i) }
-            fn phy_info(&self, i: &str) -> Result<String> { self.0.phy_info(i) }
-            fn mac_of(&self, i: &str) -> Option<String> { self.0.mac_of(i) }
-            fn hostapd_status(&self, i: &str) -> Result<String> { self.0.hostapd_status(i) }
-            fn chan_switch(&self, i: &str, c: i64, f: i64, a: &[String]) -> Result<String> { self.0.chan_switch(i, c, f, a) }
+            fn scan(&self, _: &str, _: &[i64], _: i64, _: bool) -> Result<String> {
+                Err(err("scan failed: busy"))
+            }
+            fn survey(&self, i: &str) -> Result<String> {
+                self.0.survey(i)
+            }
+            fn stations(&self, i: &str) -> Result<String> {
+                self.0.stations(i)
+            }
+            fn phy_info(&self, i: &str) -> Result<String> {
+                self.0.phy_info(i)
+            }
+            fn mac_of(&self, i: &str) -> Option<String> {
+                self.0.mac_of(i)
+            }
+            fn hostapd_status(&self, i: &str) -> Result<String> {
+                self.0.hostapd_status(i)
+            }
+            fn chan_switch(&self, i: &str, c: i64, f: i64, a: &[String]) -> Result<String> {
+                self.0.chan_switch(i, c, f, a)
+            }
             fn pause(&self, _: u64) {}
         }
         let mut l = lab().await;
@@ -1713,7 +1837,12 @@ mod tests {
         set_auto(&l, |_| {}).await;
         let r = l.apply.apply(&l.store).await.unwrap();
         assert_eq!(conf_channel(&l), "1", "{r:?}");
-        assert!(r.warnings.iter().any(|w| w.contains("measurement unavailable")), "{r:?}");
+        assert!(
+            r.warnings
+                .iter()
+                .any(|w| w.contains("measurement unavailable")),
+            "{r:?}"
+        );
         l.apply.teardown().await.unwrap();
     }
 
@@ -1726,20 +1855,34 @@ mod tests {
         l.apply.apply(&l.store).await.unwrap();
         assert_eq!(conf_channel(&l), "9");
         assert!(l.apply.sup.instances(SVC_CHAN).is_empty());
-        let id = seg_wifi::network_by_name(&l.store, "home").await.unwrap().unwrap().id;
-        assert!(seg_wifi_chan::get_state(&l.store, id).await.unwrap().is_none());
+        let id = seg_wifi::network_by_name(&l.store, "home")
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
+        assert!(seg_wifi_chan::get_state(&l.store, id)
+            .await
+            .unwrap()
+            .is_none());
         // switching it to automatic starts the service and measures; back to fixed stops it
         i.channel = Some(0);
         seg_wifi::update_network(&l.store, id, &i).await.unwrap();
         l.apply.apply(&l.store).await.unwrap();
         assert_eq!(conf_channel(&l), "11");
-        assert!(l.apply.sup.instances(SVC_CHAN).contains(&"home".to_string()));
+        assert!(l
+            .apply
+            .sup
+            .instances(SVC_CHAN)
+            .contains(&"home".to_string()));
         i.channel = Some(6);
         seg_wifi::update_network(&l.store, id, &i).await.unwrap();
         l.apply.apply(&l.store).await.unwrap();
         assert_eq!(conf_channel(&l), "6");
         assert!(l.apply.sup.instances(SVC_CHAN).is_empty());
-        assert!(seg_wifi_chan::get_state(&l.store, id).await.unwrap().is_none());
+        assert!(seg_wifi_chan::get_state(&l.store, id)
+            .await
+            .unwrap()
+            .is_none());
         l.apply.teardown().await.unwrap();
     }
 

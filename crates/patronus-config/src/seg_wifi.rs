@@ -85,7 +85,9 @@ fn ser_channel<S: serde::Serializer>(c: &i64, s: S) -> std::result::Result<S::Ok
     }
 }
 
-fn de_channel<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<i64>, D::Error> {
+fn de_channel<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Option<i64>, D::Error> {
     use serde::de::Error as _;
     match Option::<serde_json::Value>::deserialize(d)? {
         None | Some(serde_json::Value::Null) => Ok(None),
@@ -377,7 +379,9 @@ fn check_network(i: &NetworkInput, old: Option<&Network>) -> Result<Checked> {
         .unwrap_or_default()
         .merged(&band, &i.chan)?;
     if channel != 0 && chan.width == 80 && crate::seg_wifi_chan::block80_start(channel).is_none() {
-        return Err(invalid(format!("channel {channel}: not in an 80 MHz block")));
+        return Err(invalid(format!(
+            "channel {channel}: not in an 80 MHz block"
+        )));
     }
     let country = i.country.clone().unwrap_or_else(|| "US".into());
     if country.len() != 2 || !country.bytes().all(|b| b.is_ascii_uppercase()) {
@@ -937,6 +941,246 @@ mod tests {
         for bad in ["", "enrol", "dev-", "dev-0", "dev--3", "dev-x", "laptop"] {
             assert_eq!(parse_keyid(bad), None, "{bad:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn new_networks_default_to_an_automatic_channel_with_the_documented_tuning() {
+        let s = lab().await;
+        let id = create_network(&s, &net("home", "wlan0", "wpa2"))
+            .await
+            .unwrap();
+        let n = get_network(&s, id).await.unwrap().unwrap();
+        assert_eq!(n.channel, 0);
+        // the migration's column defaults are the documented defaults of the code
+        assert_eq!(n.chan, ChanSettings::default());
+        let j = serde_json::to_value(&n).unwrap();
+        assert_eq!(j["channel"], "auto");
+        assert_eq!(j["width"], 20);
+        assert_eq!(j["recheck_time"], "03:30");
+        // a fixed channel serializes as a number; "auto", "6", 6 and nothing all parse
+        for (body, want) in [
+            (
+                r#"{"name":"a","ifname":"w","ssid":"s","channel":"auto"}"#,
+                Some(0),
+            ),
+            (
+                r#"{"name":"a","ifname":"w","ssid":"s","channel":"AUTO"}"#,
+                Some(0),
+            ),
+            (
+                r#"{"name":"a","ifname":"w","ssid":"s","channel":"6"}"#,
+                Some(6),
+            ),
+            (
+                r#"{"name":"a","ifname":"w","ssid":"s","channel":6}"#,
+                Some(6),
+            ),
+            (r#"{"name":"a","ifname":"w","ssid":"s"}"#, None),
+        ] {
+            let i: NetworkInput = serde_json::from_str(body).unwrap();
+            assert_eq!(i.channel, want, "{body}");
+        }
+        for bad in [r#""fast""#, "6.5", "[6]", "true"] {
+            let body = format!(r#"{{"name":"a","ifname":"w","ssid":"s","channel":{bad}}}"#);
+            assert!(
+                serde_json::from_str::<NetworkInput>(&body).is_err(),
+                "{bad}"
+            );
+        }
+        // tuning keys come in flat, beside the others
+        let i: NetworkInput = serde_json::from_str(
+            r#"{"name":"a","ifname":"w","ssid":"s","band":"5g","width":80,"chanlist":"36,149","recheck_time":"04:15","csa":"off","hysteresis":30}"#,
+        )
+        .unwrap();
+        let id2 = create_network(&s, &i).await.unwrap();
+        let n2 = get_network(&s, id2).await.unwrap().unwrap();
+        assert_eq!(
+            (n2.channel, n2.chan.width, n2.chan.chanlist.as_str()),
+            (0, 80, "36,149")
+        );
+        assert_eq!(
+            (
+                n2.chan.recheck_time.as_str(),
+                n2.chan.csa.as_str(),
+                n2.chan.hysteresis
+            ),
+            ("04:15", "off", 30)
+        );
+        assert_eq!(n2.chan.confirm, ChanSettings::default().confirm);
+    }
+
+    #[tokio::test]
+    async fn existing_fixed_channels_stay_and_an_update_without_a_channel_keeps_it() {
+        let s = lab().await;
+        // a row from before the migration: only the old columns
+        sqlx::query("INSERT INTO seg_wifi_networks (name, ifname, ssid, band, channel, country, security, segment, unknown_policy, enabled, updated_at) VALUES ('old','wlan9','Old','5g',44,'US','wpa2','@lan','reject',1,0)")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        let n = network_by_name(&s, "old").await.unwrap().unwrap();
+        assert_eq!((n.channel, n.band.as_str()), (44, "5g"));
+        assert_eq!(n.chan, ChanSettings::default());
+        // an update that names no channel (or band) keeps both; tuning keys keep their old values
+        let mut i = net("old", "wlan9", "wpa2");
+        i.chan.hysteresis = Some(35);
+        update_network(&s, n.id, &i).await.unwrap();
+        let n = get_network(&s, n.id).await.unwrap().unwrap();
+        assert_eq!(
+            (n.channel, n.band.as_str(), n.chan.hysteresis),
+            (44, "5g", 35)
+        );
+        // to automatic and back
+        update_network(
+            &s,
+            n.id,
+            &NetworkInput {
+                channel: Some(0),
+                ..net("old", "wlan9", "wpa2")
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(get_network(&s, n.id).await.unwrap().unwrap().channel, 0);
+        update_network(
+            &s,
+            n.id,
+            &NetworkInput {
+                channel: Some(48),
+                ..net("old", "wlan9", "wpa2")
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(get_network(&s, n.id).await.unwrap().unwrap().channel, 48);
+        // validation reaches the API input
+        for bad in [
+            NetworkInput {
+                chan: crate::seg_wifi_chan::ChanInput {
+                    width: Some(80),
+                    ..Default::default()
+                },
+                band: Some("2g".into()),
+                ..net("x1", "wlan2", "wpa2")
+            },
+            NetworkInput {
+                chan: crate::seg_wifi_chan::ChanInput {
+                    chanlist: Some("1,99".into()),
+                    ..Default::default()
+                },
+                ..net("x1", "wlan2", "wpa2")
+            },
+            NetworkInput {
+                chan: crate::seg_wifi_chan::ChanInput {
+                    recheck_time: Some("late".into()),
+                    ..Default::default()
+                },
+                ..net("x1", "wlan2", "wpa2")
+            },
+            NetworkInput {
+                channel: Some(37),
+                band: Some("5g".into()),
+                ..net("x1", "wlan2", "wpa2")
+            },
+            NetworkInput {
+                channel: Some(165),
+                band: Some("5g".into()),
+                chan: crate::seg_wifi_chan::ChanInput {
+                    width: Some(80),
+                    ..Default::default()
+                },
+                ..net("x1", "wlan2", "wpa2")
+            },
+        ] {
+            assert!(create_network(&s, &bad).await.is_err(), "{bad:?}");
+        }
+        // the measured state and history tables are not configuration: export leaves them out
+        crate::seg_wifi_chan::set_channel(&s, n.id, 48, 20, "r", &serde_json::json!([]), None)
+            .await
+            .unwrap();
+        let ex = s.export_json().await.unwrap();
+        let tables = ex["tables"].as_object().unwrap();
+        assert!(tables.contains_key("seg_wifi_networks"));
+        assert!(
+            !tables.contains_key("seg_wifi_chan_state")
+                && !tables.contains_key("seg_wifi_chan_history")
+        );
+        assert!(
+            tables["seg_wifi_networks"][0].get("chan_hyst").is_some(),
+            "the tuning is part of the exported configuration"
+        );
+    }
+
+    #[tokio::test]
+    async fn state_history_retention_and_recheck_request() {
+        use crate::seg_wifi_chan as c;
+        let s = lab().await;
+        let id = create_network(&s, &net("home", "wlan0", "wpa2"))
+            .await
+            .unwrap();
+        assert!(
+            c::request_recheck(&s, id).await.is_err(),
+            "nothing recorded yet"
+        );
+        c::set_channel(
+            &s,
+            id,
+            6,
+            20,
+            "why",
+            &serde_json::json!([{"channel": 6}]),
+            Some(true),
+        )
+        .await
+        .unwrap();
+        c::request_recheck(&s, id).await.unwrap();
+        assert!(c::get_state(&s, id)
+            .await
+            .unwrap()
+            .unwrap()
+            .requested_at
+            .is_some());
+        c::mark_checked(&s, id, Some(77)).await.unwrap();
+        let st = c::get_state(&s, id).await.unwrap().unwrap();
+        assert_eq!(
+            (st.requested_at, st.last_day, st.csa_capable),
+            (None, Some(77), Some(true))
+        );
+        // a later channel record keeps the check bookkeeping and the known CSA support
+        c::set_channel(&s, id, 11, 20, "again", &serde_json::json!([]), None)
+            .await
+            .unwrap();
+        let st = c::get_state(&s, id).await.unwrap().unwrap();
+        assert_eq!(
+            (st.channel, st.last_day, st.csa_capable),
+            (11, Some(77), Some(true))
+        );
+        c::mark_checked(&s, id, None).await.unwrap();
+        assert_eq!(
+            c::get_state(&s, id).await.unwrap().unwrap().last_day,
+            Some(77)
+        );
+        for k in 0..30 {
+            let e = c::ChanEvent {
+                id: 0,
+                at: 1000 + k,
+                event: "sample".into(),
+                channel: Some(6),
+                score: Some(1.0),
+                busy: None,
+                neighbours: None,
+                best: None,
+                best_score: None,
+                reason: format!("n{k}"),
+            };
+            c::add_history(&s, id, 10, &e).await.unwrap();
+        }
+        let h = c::history(&s, id, 100).await.unwrap();
+        assert_eq!(h.len(), 10, "only the newest are kept");
+        assert_eq!(h[0].reason, "n29");
+        // deleting the network removes its state and history
+        delete_network(&s, id).await.unwrap();
+        assert!(c::get_state(&s, id).await.unwrap().is_none());
+        assert!(c::history(&s, id, 10).await.unwrap().is_empty());
     }
 
     #[tokio::test]

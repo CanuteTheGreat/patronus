@@ -70,6 +70,8 @@ pub struct Bss {
     pub center: i64,
     /// 40 MHz: +1 secondary above, -1 below, 0 none
     pub secondary: i8,
+    /// milliseconds since its last beacon was heard (the kernel keeps a BSS about 30 s after the last one)
+    pub age_ms: u64,
 }
 
 impl Bss {
@@ -114,6 +116,7 @@ pub fn parse_scan(text: &str) -> Vec<Bss> {
                     width: 20,
                     center: 0,
                     secondary: 0,
+                    age_ms: 0,
                 });
             }
             continue;
@@ -121,6 +124,12 @@ pub fn parse_scan(text: &str) -> Vec<Bss> {
         let Some(b) = cur.as_mut() else { continue };
         if let Some(v) = t.strip_prefix("freq:") {
             b.freq = v.trim().parse::<f64>().unwrap_or(0.0) as i64;
+        } else if let Some(v) = t.strip_prefix("last seen:") {
+            b.age_ms = v
+                .split_whitespace()
+                .next()
+                .and_then(|x| x.parse().ok())
+                .unwrap_or(0);
         } else if let Some(v) = t.strip_prefix("signal:") {
             b.signal = v
                 .split_whitespace()
@@ -287,7 +296,19 @@ impl IwTools {
             c.arg(f.to_string());
         }
         c.args(["duration", &dwell.to_string()]);
-        run(&mut c, "iw scan")
+        run(&mut c, "iw scan").or_else(|first| {
+            // a driver that cannot set the dwell scans with its own: still a comparable sample of every channel
+            let mut c = Command::new("iw");
+            c.args(["dev", ifname, "scan"]);
+            if ap_force {
+                c.arg("ap-force");
+            }
+            c.arg("freq");
+            for f in freqs {
+                c.arg(f.to_string());
+            }
+            run(&mut c, "iw scan").map_err(|e| err(format!("{first}; without a dwell: {e}")))
+        })
     }
 }
 
@@ -297,7 +318,9 @@ impl Iw for IwTools {
             return Err(err("bad interface name"));
         }
         if !ap_force {
-            let _ = Command::new("ip").args(["link", "set", ifname, "up"]).status();
+            let _ = Command::new("ip")
+                .args(["link", "set", ifname, "up"])
+                .status();
             return self.scan_cmd(ifname, freqs, dwell, false);
         }
         match self.scan_cmd(ifname, freqs, dwell, true) {
@@ -309,11 +332,21 @@ impl Iw for IwTools {
                 };
                 let tmp = format!("pchan{}", std::process::id() % 10000);
                 run(
-                    Command::new("iw").args(["phy", &phy, "interface", "add", &tmp, "type", "managed"]),
+                    Command::new("iw").args([
+                        "phy",
+                        &phy,
+                        "interface",
+                        "add",
+                        &tmp,
+                        "type",
+                        "managed",
+                    ]),
                     "iw interface add",
                 )
                 .map_err(|e| err(format!("{first}; and {e}")))?;
-                let _ = Command::new("ip").args(["link", "set", &tmp, "up"]).status();
+                let _ = Command::new("ip")
+                    .args(["link", "set", &tmp, "up"])
+                    .status();
                 let r = self.scan_cmd(&tmp, freqs, dwell, false);
                 let _ = Command::new("iw").args(["dev", &tmp, "del"]).status();
                 r
@@ -324,17 +357,28 @@ impl Iw for IwTools {
         if !safe(ifname) {
             return Err(err("bad interface name"));
         }
-        run(Command::new("iw").args(["dev", ifname, "survey", "dump"]), "iw survey")
+        run(
+            Command::new("iw").args(["dev", ifname, "survey", "dump"]),
+            "iw survey",
+        )
     }
     fn stations(&self, ifname: &str) -> Result<String> {
         if !safe(ifname) {
             return Err(err("bad interface name"));
         }
-        run(Command::new("iw").args(["dev", ifname, "station", "dump"]), "iw station dump")
+        run(
+            Command::new("iw").args(["dev", ifname, "station", "dump"]),
+            "iw station dump",
+        )
     }
     fn phy_info(&self, ifname: &str) -> Result<String> {
-        let phy = self.phy(ifname).ok_or_else(|| err(format!("{ifname} has no phy")))?;
-        run(Command::new("iw").args(["phy", &phy, "info"]), "iw phy info")
+        let phy = self
+            .phy(ifname)
+            .ok_or_else(|| err(format!("{ifname} has no phy")))?;
+        run(
+            Command::new("iw").args(["phy", &phy, "info"]),
+            "iw phy info",
+        )
     }
     fn mac_of(&self, ifname: &str) -> Option<String> {
         if !safe(ifname) {
@@ -357,14 +401,25 @@ impl Iw for IwTools {
         )
     }
     fn chan_switch(&self, ifname: &str, count: i64, freq: i64, args: &[String]) -> Result<String> {
-        if !safe(ifname) || args.iter().any(|a| !a.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'=' | b'-' | b'_'))) {
+        if !safe(ifname)
+            || args.iter().any(|a| {
+                !a.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'=' | b'-' | b'_'))
+            })
+        {
             return Err(err("bad channel switch arguments"));
         }
         let o = run(
             Command::new("hostapd_cli")
                 .arg("-p")
                 .arg(&self.ctrl_dir)
-                .args(["-i", ifname, "chan_switch", &count.to_string(), &freq.to_string()])
+                .args([
+                    "-i",
+                    ifname,
+                    "chan_switch",
+                    &count.to_string(),
+                    &freq.to_string(),
+                ])
                 .args(args),
             "hostapd_cli chan_switch",
         )?;
@@ -416,12 +471,21 @@ fn station_counters(text: &str) -> BTreeMap<String, (u64, u64, f64, f64)> {
     for l in text.lines() {
         let t = l.trim();
         if let Some(r) = t.strip_prefix("Station ") {
-            mac = r.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+            mac = r
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
             m.entry(mac.clone()).or_default();
             continue;
         }
         let Some(e) = m.get_mut(&mac) else { continue };
-        let first = |v: &str| v.split_whitespace().next().map(str::to_string).unwrap_or_default();
+        let first = |v: &str| {
+            v.split_whitespace()
+                .next()
+                .map(str::to_string)
+                .unwrap_or_default()
+        };
         if let Some(v) = t.strip_prefix("rx bytes:") {
             e.1 = first(v).parse().unwrap_or(0);
         } else if let Some(v) = t.strip_prefix("tx bytes:") {
@@ -441,7 +505,9 @@ pub fn own_airtime_ms(before: &str, after: &str) -> u64 {
     let a = station_counters(after);
     let mut ms = 0.0;
     for (mac, (tx1, rx1, txr, rxr)) in &a {
-        let Some((tx0, rx0, _, _)) = b.get(mac) else { continue };
+        let Some((tx0, rx0, _, _)) = b.get(mac) else {
+            continue;
+        };
         let dt = tx1.saturating_sub(*tx0) as f64;
         let dr = rx1.saturating_sub(*rx0) as f64;
         if dt > 0.0 && *txr > 0.0 {
@@ -473,12 +539,19 @@ pub fn measure(
     } else {
         None
     };
-    let own0 = if running { iw.stations(ifname).unwrap_or_default() } else { String::new() };
-    let mut scans = String::new();
+    let own0 = if running {
+        iw.stations(ifname).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let started = std::time::Instant::now();
+    let mut heard: Vec<Bss> = Vec::new();
     for _ in 0..s.rounds {
         let t = iw.scan(ifname, &freqs, s.dwell, running)?;
-        scans.push_str(&t);
-        scans.push('\n');
+        // an access point whose last beacon is older than this measurement has gone: the kernel only forgets
+        // it after about 30 s, and it must not cost the channel it used to be on
+        let limit = started.elapsed().as_millis() as u64 + 1000;
+        heard.extend(parse_scan(&t).into_iter().filter(|b| b.age_ms <= limit));
         // each dwell replaces the channel's survey entry: add up what this round measured off our own channel
         for e in parse_survey(&iw.survey(ifname).unwrap_or_default()) {
             if e.in_use || e.active == 0 || home0.as_ref().is_some_and(|h| h.freq == e.freq) {
@@ -503,7 +576,16 @@ pub fn measure(
             });
         }
     }
-    m.bss = parse_scan(&scans);
+    // the strongest sighting of every BSSID over the rounds
+    heard.sort_by(|a, b| {
+        a.bssid.cmp(&b.bssid).then(
+            b.signal
+                .partial_cmp(&a.signal)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
+    heard.dedup_by(|b, a| a.bssid == b.bssid);
+    m.bss = heard;
     Ok(m)
 }
 
@@ -563,7 +645,9 @@ pub fn score(
     let nb: Vec<&Bss> = m
         .bss
         .iter()
-        .filter(|b| !own.iter().any(|o| o.eq_ignore_ascii_case(&b.bssid)) && b.signal >= s.min_signal as f64)
+        .filter(|b| {
+            !own.iter().any(|o| o.eq_ignore_ascii_case(&b.bssid)) && b.signal >= s.min_signal as f64
+        })
         .collect();
     let mut out: Vec<Cand> = Vec::new();
     for &c in cands {
@@ -671,7 +755,10 @@ pub fn visit(band: &str, width: i64, cands: &[i64], phy: &PhyChannels) -> Vec<i6
             .filter(|c| phy.usable.is_empty() || phy.usable.get(c).copied().unwrap_or(false))
             .collect()
     } else {
-        cands.iter().flat_map(|c| block_of(band, *c, width)).collect()
+        cands
+            .iter()
+            .flat_map(|c| block_of(band, *c, width))
+            .collect()
     };
     v.sort_unstable();
     v.dedup();
@@ -688,7 +775,10 @@ pub fn conf_lines(band: &str, ch: i64, width: i64) -> String {
     match (band, width) {
         (_, 40) | ("5g", 80) => {
             let plus = if band == "2g" { ch <= 7 } else { ht40_plus(ch) };
-            o.push_str(&format!("ht_capab=[HT40{}]\n", if plus { '+' } else { '-' }));
+            o.push_str(&format!(
+                "ht_capab=[HT40{}]\n",
+                if plus { '+' } else { '-' }
+            ));
             if band == "5g" && width == 80 {
                 let block = block_of(band, ch, 80);
                 let center = block.iter().sum::<i64>() / block.len() as i64;
@@ -711,7 +801,11 @@ pub fn csa_args(band: &str, ch: i64, width: i64) -> (i64, Vec<String>) {
         let so = if plus { 1 } else { -1 };
         let block = block_of(band, ch, width);
         let ctr = block.iter().sum::<i64>() as f64 / block.len() as f64;
-        let cf = if band == "2g" { f + so * 10 } else { 5000 + (ctr * 5.0).round() as i64 };
+        let cf = if band == "2g" {
+            f + so * 10
+        } else {
+            5000 + (ctr * 5.0).round() as i64
+        };
         a.push(format!("sec_channel_offset={so}"));
         a.push(format!("center_freq1={cf}"));
     }
@@ -731,13 +825,26 @@ pub fn status_channel(text: &str) -> Option<i64> {
 }
 
 /// Announce a switch to `ch` and wait until hostapd is on it. `Ok(true)` = on the new channel.
-pub fn switch_by_csa(iw: &dyn Iw, ifname: &str, band: &str, ch: i64, width: i64, count: i64) -> Result<bool> {
+pub fn switch_by_csa(
+    iw: &dyn Iw,
+    ifname: &str,
+    band: &str,
+    ch: i64,
+    width: i64,
+    count: i64,
+) -> Result<bool> {
     let (f, args) = csa_args(band, ch, width);
     iw.chan_switch(ifname, count, f, &args)?;
     // the announcement counts beacons (~102 ms each); then hostapd is on the new channel
     for _ in 0..(count / 5 + 6) {
         iw.pause(1);
-        if iw.hostapd_status(ifname).ok().as_deref().and_then(status_channel) == Some(ch) {
+        if iw
+            .hostapd_status(ifname)
+            .ok()
+            .as_deref()
+            .and_then(status_channel)
+            == Some(ch)
+        {
             return Ok(true);
         }
     }
@@ -746,8 +853,12 @@ pub fn switch_by_csa(iw: &dyn Iw, ifname: &str, band: &str, ch: i64, width: i64,
 
 /// `HH:MM` of the nightly re-check reached (within the hour after it) and not yet run on `today`?
 pub fn due(now_minute: u32, today: i64, time: &str, last_day: Option<i64>) -> bool {
-    let Some((h, m)) = time.split_once(':') else { return false };
-    let (Ok(h), Ok(m)) = (h.parse::<u32>(), m.parse::<u32>()) else { return false };
+    let Some((h, m)) = time.split_once(':') else {
+        return false;
+    };
+    let (Ok(h), Ok(m)) = (h.parse::<u32>(), m.parse::<u32>()) else {
+        return false;
+    };
     if h > 23 || m > 59 || last_day == Some(today) {
         return false;
     }
@@ -780,6 +891,7 @@ mod tests {
             width: 20,
             center: 0,
             secondary: 0,
+            age_ms: 0,
         }
     }
 
@@ -800,6 +912,25 @@ mod tests {
     }
 
     #[test]
+    fn a_vanished_access_point_is_not_a_neighbour() {
+        // heard in this scan (last seen 40 ms ago) and kept by the kernel from 28 s ago
+        let t = "BSS aa:00:00:00:00:01(on wlan0)\n\tlast seen: 40 ms ago\n\tfreq: 2412.0\n\tsignal: -50.00 dBm\nBSS aa:00:00:00:00:02(on wlan0)\n\tlast seen: 28000 ms ago\n\tfreq: 2437.0\n\tsignal: -50.00 dBm\n";
+        let iw = fake(t);
+        let s = ChanSettings {
+            rounds: 2,
+            ..Default::default()
+        };
+        let m = measure(&iw, "wlan0", "2g", Mode::Idle, &[1, 6, 11], &s).unwrap();
+        assert_eq!(m.bss.len(), 1, "{:?}", m.bss);
+        assert_eq!(m.bss[0].primary(), 1);
+        assert_eq!(
+            parse_scan(t).len(),
+            2,
+            "parsing keeps both; the measurement judges their age"
+        );
+    }
+
+    #[test]
     fn survey_and_phy_parse() {
         let s = parse_survey("Survey data from wlan0\n\tfrequency:\t\t\t2412 MHz [in use]\n\tchannel active time:\t\t1000 ms\n\tchannel busy time:\t\t 250 ms\nSurvey data from wlan0\n\tfrequency:\t\t\t2437 MHz\n\tchannel active time:\t\t100 ms\n\tchannel busy time:\t\t 10 ms\n");
         assert_eq!(s.len(), 2);
@@ -807,7 +938,10 @@ mod tests {
         let p = parse_phy("\t\t\t* 2412 MHz [1] (20.0 dBm)\n\t\t\t* 2467 MHz [12] (disabled)\n\t\t\t* 5260 MHz [52] (23.0 dBm) (no IR, radar detection)\n\t\t\t* channel_switch\n");
         assert!(p.csa && p.usable[&1] && !p.usable[&12] && !p.usable[&52]);
         assert_eq!(usable("2g", 20, &[1, 6, 12], &p), vec![1]);
-        assert_eq!(usable("2g", 20, &[1, 6], &PhyChannels::default()), vec![1, 6]);
+        assert_eq!(
+            usable("2g", 20, &[1, 6], &PhyChannels::default()),
+            vec![1, 6]
+        );
     }
 
     #[test]
@@ -815,7 +949,12 @@ mod tests {
         let s = ChanSettings::default();
         let m = meas(
             &[(1, 300), (6, 100), (11, 100)],
-            vec![nb("a1", 6, -50.0), nb("a2", 6, -60.0), nb("a3", 6, -88.0), nb("a4", 1, -50.0)],
+            vec![
+                nb("a1", 6, -50.0),
+                nb("a2", 6, -60.0),
+                nb("a3", 6, -88.0),
+                nb("a4", 1, -50.0),
+            ],
         );
         let c = score("2g", 20, &[1, 6, 11], &m, &s, &[], 0);
         assert_eq!(c[0].channel, 11, "{c:?}");
@@ -851,7 +990,12 @@ mod tests {
         let s = ChanSettings::default();
         let mut m = meas(&[(1, 100), (11, 100)], vec![]);
         // channel 6 (ours): 40% busy, 30 points of it our own traffic
-        m.home = Some(Home { channel: 6, active: 1000, busy: 400, own_ms: 300 });
+        m.home = Some(Home {
+            channel: 6,
+            active: 1000,
+            busy: 400,
+            own_ms: 300,
+        });
         let c = score("2g", 20, &[1, 6, 11], &m, &s, &[], 6);
         let six = c.iter().find(|x| x.channel == 6).unwrap();
         assert!((six.busy - 10.0).abs() < 0.11, "{six:?}");
@@ -860,7 +1004,12 @@ mod tests {
         let c = score("2g", 20, &[1, 6, 11], &m, &s, &[], 11);
         assert_eq!(c[0].channel, 11);
         // more own traffic than busy time cannot go negative
-        m.home = Some(Home { channel: 6, active: 1000, busy: 100, own_ms: 900 });
+        m.home = Some(Home {
+            channel: 6,
+            active: 1000,
+            busy: 100,
+            own_ms: 900,
+        });
         let c = score("2g", 20, &[6], &m, &s, &[], 6);
         assert_eq!(c[0].busy, 0.0);
     }
@@ -873,9 +1022,18 @@ mod tests {
         wide.width = 80;
         wide.center = 42;
         let m = Measurement {
-            samples: [(36, (1000, 0)), (40, (1000, 0)), (44, (1000, 0)), (48, (1000, 0)), (149, (1000, 0)), (153, (1000, 0)), (157, (1000, 0)), (161, (1000, 0))]
-                .into_iter()
-                .collect(),
+            samples: [
+                (36, (1000, 0)),
+                (40, (1000, 0)),
+                (44, (1000, 0)),
+                (48, (1000, 0)),
+                (149, (1000, 0)),
+                (153, (1000, 0)),
+                (157, (1000, 0)),
+                (161, (1000, 0)),
+            ]
+            .into_iter()
+            .collect(),
             home: None,
             bss: vec![wide],
         };
@@ -890,7 +1048,10 @@ mod tests {
     #[test]
     fn hysteresis_rules() {
         assert!(clearly_better(40.0, 20.0, 20, 10));
-        assert!(!clearly_better(40.0, 35.0, 20, 10), "needs 20% and 10 points");
+        assert!(
+            !clearly_better(40.0, 35.0, 20, 10),
+            "needs 20% and 10 points"
+        );
         assert!(!clearly_better(12.0, 4.0, 20, 10), "8 points is not enough");
         assert!(clearly_better(40.0, 30.0, 20, 10));
         assert!(!clearly_better(50.0, 41.0, 20, 5), "18% < 20%");
@@ -912,27 +1073,66 @@ mod tests {
 
     #[test]
     fn switch_arguments_and_conf_lines() {
-        assert_eq!(csa_args("2g", 6, 20), (2437, vec!["bandwidth=20".to_string(), "ht".to_string()]));
+        assert_eq!(
+            csa_args("2g", 6, 20),
+            (2437, vec!["bandwidth=20".to_string(), "ht".to_string()])
+        );
         let (f, a) = csa_args("5g", 36, 80);
         assert_eq!(f, 5180);
-        assert_eq!(a, ["sec_channel_offset=1", "center_freq1=5210", "bandwidth=80", "ht", "vht"]);
+        assert_eq!(
+            a,
+            [
+                "sec_channel_offset=1",
+                "center_freq1=5210",
+                "bandwidth=80",
+                "ht",
+                "vht"
+            ]
+        );
         let (_, a) = csa_args("5g", 40, 40);
-        assert_eq!(a, ["sec_channel_offset=-1", "center_freq1=5190", "bandwidth=40", "ht"]);
+        assert_eq!(
+            a,
+            [
+                "sec_channel_offset=-1",
+                "center_freq1=5190",
+                "bandwidth=40",
+                "ht"
+            ]
+        );
         let (_, a) = csa_args("2g", 11, 40);
-        assert_eq!(a, ["sec_channel_offset=-1", "center_freq1=2452", "bandwidth=40", "ht"]);
+        assert_eq!(
+            a,
+            [
+                "sec_channel_offset=-1",
+                "center_freq1=2452",
+                "bandwidth=40",
+                "ht"
+            ]
+        );
         assert_eq!(conf_lines("2g", 6, 20), "");
         assert_eq!(conf_lines("2g", 1, 40), "ht_capab=[HT40+]\n");
         let c = conf_lines("5g", 149, 80);
-        assert!(c.contains("[HT40+]") && c.contains("vht_oper_centr_freq_seg0_idx=155") && c.contains("ieee80211ac=1"), "{c}");
+        assert!(
+            c.contains("[HT40+]")
+                && c.contains("vht_oper_centr_freq_seg0_idx=155")
+                && c.contains("ieee80211ac=1"),
+            "{c}"
+        );
         assert!(conf_lines("5g", 40, 40).contains("[HT40-]"));
     }
 
     #[test]
     fn airtime_from_station_counters() {
-        let t = |tx: u64, rx: u64| format!("Station AA:BB:CC:DD:EE:01 (on wlan0)\n\trx bytes:\t{rx}\n\ttx bytes:\t{tx}\n\ttx bitrate:\t10.0 MBit/s\n\trx bitrate:\t20.0 MBit/s\n");
+        let t = |tx: u64, rx: u64| {
+            format!("Station AA:BB:CC:DD:EE:01 (on wlan0)\n\trx bytes:\t{rx}\n\ttx bytes:\t{tx}\n\ttx bitrate:\t10.0 MBit/s\n\trx bitrate:\t20.0 MBit/s\n")
+        };
         // 1.25 MB sent at 10 Mbit/s = 1000 ms, 2.5 MB received at 20 Mbit/s = 1000 ms
         assert_eq!(own_airtime_ms(&t(0, 0), &t(1_250_000, 2_500_000)), 2000);
-        assert_eq!(own_airtime_ms("", &t(1_250_000, 0)), 0, "a station not seen before has no baseline");
+        assert_eq!(
+            own_airtime_ms("", &t(1_250_000, 0)),
+            0,
+            "a station not seen before has no baseline"
+        );
     }
 
     /// A radio with scripted scans: the first scan text for every round, one survey text.
@@ -949,7 +1149,11 @@ mod tests {
         }
         fn survey(&self, _: &str) -> Result<String> {
             let mut v = self.survey.lock().unwrap();
-            Ok(if v.len() > 1 { v.remove(0) } else { v[0].clone() })
+            Ok(if v.len() > 1 {
+                v.remove(0)
+            } else {
+                v[0].clone()
+            })
         }
         fn stations(&self, _: &str) -> Result<String> {
             Ok(String::new())
@@ -967,7 +1171,10 @@ mod tests {
             if self.fail_switch {
                 return Err(err("refused"));
             }
-            self.switches.lock().unwrap().push((count, freq, args.to_vec()));
+            self.switches
+                .lock()
+                .unwrap()
+                .push((count, freq, args.to_vec()));
             *self.status.lock().unwrap() = format!("state=ENABLED\nchannel={}\n", f2c(freq));
             Ok("OK".into())
         }
@@ -989,8 +1196,10 @@ mod tests {
     #[test]
     fn idle_measurement_sums_rounds_and_picks_the_quiet_channel() {
         let iw = fake(&bss("aa:00:00:00:00:01", 2412, -50.0));
-        let mut s = ChanSettings::default();
-        s.rounds = 3;
+        let s = ChanSettings {
+            rounds: 3,
+            ..Default::default()
+        };
         let m = measure(&iw, "wlan0", "2g", Mode::Idle, &[1, 6, 11], &s).unwrap();
         assert_eq!(m.samples[&1], (300, 240));
         assert_eq!(m.bss.len(), 1);
@@ -1012,13 +1221,27 @@ mod tests {
         *stuck.status.lock().unwrap() = "channel=1\n".into();
         struct NoMove(Fake);
         impl Iw for NoMove {
-            fn scan(&self, a: &str, b: &[i64], c: i64, d: bool) -> Result<String> { self.0.scan(a, b, c, d) }
-            fn survey(&self, a: &str) -> Result<String> { self.0.survey(a) }
-            fn stations(&self, a: &str) -> Result<String> { self.0.stations(a) }
-            fn phy_info(&self, a: &str) -> Result<String> { self.0.phy_info(a) }
-            fn mac_of(&self, a: &str) -> Option<String> { self.0.mac_of(a) }
-            fn hostapd_status(&self, a: &str) -> Result<String> { self.0.hostapd_status(a) }
-            fn chan_switch(&self, _: &str, _: i64, _: i64, _: &[String]) -> Result<String> { Ok("OK".into()) }
+            fn scan(&self, a: &str, b: &[i64], c: i64, d: bool) -> Result<String> {
+                self.0.scan(a, b, c, d)
+            }
+            fn survey(&self, a: &str) -> Result<String> {
+                self.0.survey(a)
+            }
+            fn stations(&self, a: &str) -> Result<String> {
+                self.0.stations(a)
+            }
+            fn phy_info(&self, a: &str) -> Result<String> {
+                self.0.phy_info(a)
+            }
+            fn mac_of(&self, a: &str) -> Option<String> {
+                self.0.mac_of(a)
+            }
+            fn hostapd_status(&self, a: &str) -> Result<String> {
+                self.0.hostapd_status(a)
+            }
+            fn chan_switch(&self, _: &str, _: i64, _: i64, _: &[String]) -> Result<String> {
+                Ok("OK".into())
+            }
             fn pause(&self, _: u64) {}
         }
         assert!(!switch_by_csa(&NoMove(stuck), "wlan0", "2g", 6, 20, 10).unwrap());

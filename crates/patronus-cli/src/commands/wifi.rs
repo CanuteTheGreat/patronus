@@ -128,7 +128,8 @@ pub async fn chan_run(db: Option<PathBuf>, name: String) -> anyhow::Result<()> {
                             Ok(m) => println!("wifi-chan {name}: {m}"),
                             Err(e) => eprintln!("wifi-chan {name}: {e}"),
                         }
-                        let _ = seg_wifi_chan::mark_checked(&store, n.id, nightly.then_some(today)).await;
+                        let _ = seg_wifi_chan::mark_checked(&store, n.id, nightly.then_some(today))
+                            .await;
                     }
                 }
             }
@@ -159,16 +160,28 @@ pub async fn chan_recheck(db: Option<PathBuf>, name: String) -> anyhow::Result<(
 pub async fn chan_status(db: Option<PathBuf>) -> anyhow::Result<()> {
     use patronus_config::seg_wifi_chan;
     let store = apply::open_store(db.as_deref()).await?;
-    for n in seg_wifi::list_networks(&store).await.map_err(|e| anyhow::anyhow!("{e}"))? {
+    for n in seg_wifi::list_networks(&store)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+    {
         if n.channel != 0 {
             println!("{}: fixed channel {}", n.name, n.channel);
             continue;
         }
-        match seg_wifi_chan::get_state(&store, n.id).await.map_err(|e| anyhow::anyhow!("{e}"))? {
-            Some(s) => println!("{}: automatic, channel {} - {}", n.name, s.channel, s.reason),
+        match seg_wifi_chan::get_state(&store, n.id)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+        {
+            Some(s) => println!(
+                "{}: automatic, channel {} - {}",
+                n.name, s.channel, s.reason
+            ),
             None => println!("{}: automatic, not measured yet", n.name),
         }
-        for h in seg_wifi_chan::history(&store, n.id, 10).await.map_err(|e| anyhow::anyhow!("{e}"))? {
+        for h in seg_wifi_chan::history(&store, n.id, 10)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+        {
             println!("  {} {:<6} {}", h.at, h.event, h.reason);
         }
     }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Host-side runner for ci/netlab/lane-s-wifi-hwsim.sh (per-device Wi-Fi credentials
-# on mac80211_hwsim) and lane-t-guest-wifi.sh (the guest SSID); HWSIM_SCENARIOS picks others. The kernel module is host-global, so this
+# on mac80211_hwsim), lane-s-wifi-chan-hwsim.sh (automatic channel choice) and lane-t-guest-wifi.sh (the guest SSID); HWSIM_SCENARIOS picks others. The kernel module is host-global, so this
 #   1. takes a lock and refuses to run if mac80211_hwsim is already loaded,
 #   2. loads it with 6 radios (modprobe: sudo when not root),
 #   3. moves the new phys into the test container's network namespace
@@ -21,7 +21,7 @@ cd "$(dirname "$0")/../.."
 
 IMAGE=${NETLAB_IMAGE:-debian:trixie}
 RADIOS=${HWSIM_RADIOS:-6}
-SCENARIOS=${HWSIM_SCENARIOS:-lane-s-wifi-hwsim.sh lane-t-guest-wifi.sh}
+SCENARIOS=${HWSIM_SCENARIOS:-lane-s-wifi-hwsim.sh lane-s-wifi-chan-hwsim.sh lane-t-guest-wifi.sh}
 SUDO=; [ "$(id -u)" = 0 ] || SUDO=sudo
 C=${HWSIM_CONTAINER:-}
 OWN=

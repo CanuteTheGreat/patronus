@@ -207,15 +207,15 @@ pub fn parse_chanlist(band: &str, width: i64, s: &str) -> Result<Vec<i64>> {
             .parse()
             .map_err(|_| invalid(format!("channel list {s:?}: {t:?} is not a channel")))?;
         if !all.contains(&c) {
-            return Err(invalid(format!("channel list: {c} is not a {band} channel")));
+            return Err(invalid(format!(
+                "channel list: {c} is not a {band} channel"
+            )));
         }
         if band == "5g" && width >= 40 && c == 165 {
             return Err(invalid("channel list: 165 cannot carry 40 or 80 MHz"));
         }
         if band == "5g" && width == 80 && block80_start(c).is_none() {
-            return Err(invalid(format!(
-                "channel list: {c} is in no 80 MHz block"
-            )));
+            return Err(invalid(format!("channel list: {c} is in no 80 MHz block")));
         }
         if !out.contains(&c) {
             out.push(c);
@@ -232,7 +232,12 @@ impl ChanSettings {
     pub fn merged(&self, band: &str, i: &ChanInput) -> Result<ChanSettings> {
         let mut c = self.clone();
         if let Some(v) = &i.chanlist {
-            c.chanlist = v.split(',').map(str::trim).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(",");
+            c.chanlist = v
+                .split(',')
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+                .join(",");
         }
         if let Some(v) = i.width {
             c.width = v;
@@ -562,19 +567,36 @@ mod tests {
         assert!(d.merged("2g", &i(&|x| x.width = Some(80))).is_err());
         assert!(d.merged("5g", &i(&|x| x.width = Some(80))).is_ok());
         assert!(d.merged("5g", &i(&|x| x.width = Some(60))).is_err());
-        assert!(d.merged("2g", &i(&|x| x.chanlist = Some("1, 6,11".into()))).is_ok());
-        assert!(d.merged("2g", &i(&|x| x.chanlist = Some("1,14".into()))).is_err());
-        assert!(d.merged("2g", &i(&|x| x.chanlist = Some("36".into()))).is_err());
-        assert!(d.merged("2g", &i(&|x| x.chanlist = Some("x".into()))).is_err());
         assert!(d
-            .merged("5g", &i(&|x| {
-                x.width = Some(40);
-                x.chanlist = Some("36,165".into())
-            }))
+            .merged("2g", &i(&|x| x.chanlist = Some("1, 6,11".into())))
+            .is_ok());
+        assert!(d
+            .merged("2g", &i(&|x| x.chanlist = Some("1,14".into())))
             .is_err());
-        assert!(d.merged("5g", &i(&|x| x.recheck_time = Some("25:00".into()))).is_err());
-        assert!(d.merged("5g", &i(&|x| x.recheck_time = Some("3:30".into()))).is_err());
-        assert!(d.merged("5g", &i(&|x| x.recheck_time = Some(String::new()))).is_ok());
+        assert!(d
+            .merged("2g", &i(&|x| x.chanlist = Some("36".into())))
+            .is_err());
+        assert!(d
+            .merged("2g", &i(&|x| x.chanlist = Some("x".into())))
+            .is_err());
+        assert!(d
+            .merged(
+                "5g",
+                &i(&|x| {
+                    x.width = Some(40);
+                    x.chanlist = Some("36,165".into())
+                })
+            )
+            .is_err());
+        assert!(d
+            .merged("5g", &i(&|x| x.recheck_time = Some("25:00".into())))
+            .is_err());
+        assert!(d
+            .merged("5g", &i(&|x| x.recheck_time = Some("3:30".into())))
+            .is_err());
+        assert!(d
+            .merged("5g", &i(&|x| x.recheck_time = Some(String::new())))
+            .is_ok());
         assert!(d.merged("5g", &i(&|x| x.csa = Some("on".into()))).is_err());
         for (f, bad) in [
             (0, i(&|x| x.hysteresis = Some(91))),
@@ -605,9 +627,13 @@ mod tests {
         assert_eq!(block_of("2g", 11, 40), vec![7, 11]);
         assert_eq!(block_of("2g", 6, 20), vec![6]);
         assert_eq!(ChanSettings::default().candidates("2g"), vec![1, 6, 11]);
-        let mut s = ChanSettings::default();
-        s.chanlist = "6,11".into();
+        let s = ChanSettings {
+            chanlist: "6,11".into(),
+            ..Default::default()
+        };
         assert_eq!(s.candidates("2g"), vec![6, 11]);
-        assert!(!default_candidates("5g", 20).iter().any(|c| (52..=144).contains(c)));
+        assert!(!default_candidates("5g", 20)
+            .iter()
+            .any(|c| (52..=144).contains(c)));
     }
 }
