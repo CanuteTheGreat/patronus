@@ -96,6 +96,11 @@ class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 class S(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True; daemon_threads = True
+    # HTTPServer.server_bind does a reverse lookup of the bind address (socket.getfqdn); with no resolver in the lab it
+    # takes many seconds, so a lane's first request got "connection refused" (guest Wi-Fi lane on the hwsim runners)
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[0], self.server_address[1]
 S((sys.argv[1], int(sys.argv[2])), H).serve_forever()
 EOF
 cat > "$NL_T/nl-tcp.py" <<'EOF'
@@ -122,7 +127,8 @@ EOF
 # next lane's nl_up finds the survivors and fails its leak check (nightly 2007).
 nl_stop_servers() {
   local p
-  for p in "${NL_PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null; done
+  # a server that is already gone must not make the caller's EXIT trap fail the whole lane under set -e
+  for p in "${NL_PIDS[@]:-}"; do [ -n "$p" ] && { kill "$p" 2>/dev/null || true; }; done
   for p in "${NL_PIDS[@]:-}"; do [ -n "$p" ] && { wait "$p" 2>/dev/null || true; }; done
   NL_PIDS=()
 }

@@ -54,19 +54,19 @@ wifi_release() {
     done
   done
 }
+# (wifi_topo calls this right after nl_up: it must not stop the lab's servers; the EXIT trap stops them)
 wifi_clean() {
-  nl_stop_servers
   for n in $STA; do ip netns pids "$n" 2>/dev/null | xargs -r kill 2>/dev/null || true; done
   sleep 0.5
   wifi_release nl-rtr $STA
   for n in $STA; do ip netns del "$n" 2>/dev/null || true; rm -rf "/etc/netns/$n"; done
 }
-trap '[ -n "${WIFI_KEEP:-}" ] || wifi_clean' EXIT
+trap '[ -n "${WIFI_KEEP:-}" ] || { nl_stop_servers; wifi_clean; }' EXIT
 
 nl_fail() {
   set +e
   echo "FAIL: $*" >&2
-  { echo "--- router"; R ip -br addr; R bridge link; R nft list table inet patronus_guest; echo "--- hostapd"; cat /var/lib/patronus/net/guest/hostapd.conf 2>/dev/null | grep -v -e sae_password -e wpa_passphrase;
+  { echo "--- router"; R ip -br addr; R bridge link; R nft list table inet patronus_guest; echo "--- router: main table, routes, sysctls"; R nft list table inet patronus; R ip route; R ip rule; R sysctl net.ipv4.ip_forward; echo "--- lab servers"; INET ss -ltn; pgrep -af "nl-(http|tcp)\\.py"; echo "--- station"; for s in $STA; do X "$s" ip -br addr; X "$s" ip route; done; X sta1 curl -sv -m 4 "http://$NL_WWW/" 2>&1 | head -12; echo "--- hostapd"; cat /var/lib/patronus/net/guest/hostapd.conf 2>/dev/null | grep -v -e sae_password -e wpa_passphrase;
     echo "--- hostapd log"; tail -20 /run/patronus/patronus-daemon.guest-hostapd.log 2>/dev/null; echo "--- web log"; tail -15 "$NL_T/nl-web.log"; } >&2 2>/dev/null || true
   exit 1
 }

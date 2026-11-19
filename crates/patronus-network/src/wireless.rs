@@ -643,7 +643,7 @@ impl WifiApplier {
     }
 
     /// Re-check an automatic channel on a running radio: `confirm` samples `confirm_gap` s apart must all
-    /// name the same clearly better channel; then the radio moves by CSA (or by restart when the driver or
+    /// find a common clearly better channel (the best of those on total score); then the radio moves by CSA (or by restart when the driver or
     /// the setting rules CSA out). Returns a one-line outcome.
     pub async fn recheck(&self, store: &ConfigStore, id: i64) -> Result<String> {
         let Some(n) = seg_wifi::get_network(store, id).await? else {
@@ -658,7 +658,10 @@ impl WifiApplier {
         let Some(state) = seg_wifi_chan::get_state(store, id).await? else {
             return Ok("no channel recorded yet".into());
         };
-        let (mut want, mut k, mut tries) = (0i64, 0i64, 0i64);
+        // channels that were clearly better than the current one in EVERY sample so far, with their summed score:
+        // two quiet channels that tie within the measurement noise must not make the samples "disagree" and
+        // stall the move for ever (the move goes to the one with the lowest total score)
+        let (mut agreed, mut k, mut tries): (Vec<(i64, f64)>, i64, i64) = (Vec::new(), 0, 0);
         let mut csa_ok = state.csa_capable;
         while tries < n.chan.confirm * 2 {
             tries += 1;
@@ -680,28 +683,49 @@ impl WifiApplier {
             let best = c[0].clone();
             let cur_c = c.iter().find(|x| x.channel == cur).cloned();
             let w = wifichan::why(&c, best.channel);
-            let better = best.channel != cur
-                && cur_c.as_ref().is_none_or(|cc| {
-                    wifichan::clearly_better(
-                        cc.score,
-                        best.score,
-                        n.chan.hysteresis,
-                        n.chan.min_gain,
-                    )
-                });
-            if !better {
+            let good: Vec<(i64, f64)> = c
+                .iter()
+                .filter(|x| x.channel != cur)
+                .filter(|x| {
+                    cur_c.as_ref().map_or(x.channel == best.channel, |cc| {
+                        wifichan::clearly_better(
+                            cc.score,
+                            x.score,
+                            n.chan.hysteresis,
+                            n.chan.min_gain,
+                        )
+                    })
+                })
+                .map(|x| (x.channel, x.score))
+                .collect();
+            if good.is_empty() {
                 let msg = format!("no clearly better channel: {w}");
                 seg_wifi_chan::set_decision(store, id, &msg, &Self::cands_json(&c), csa_ok).await?;
                 self.note(store, &n, "stay", cur_c.as_ref(), Some(&best), msg.clone())
                     .await;
                 return Ok(format!("staying on {cur} ({w})"));
             }
-            if best.channel == want {
+            let common: Vec<(i64, f64)> = agreed
+                .iter()
+                .filter_map(|(ch, s)| good.iter().find(|g| g.0 == *ch).map(|g| (*ch, s + g.1)))
+                .collect();
+            if k > 0 && !common.is_empty() {
+                agreed = common;
                 k += 1;
             } else {
-                want = best.channel;
+                agreed = good;
                 k = 1;
             }
+            let pick = agreed
+                .iter()
+                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+                .map_or(best.channel, |x| x.0);
+            let best = c
+                .iter()
+                .find(|x| x.channel == pick)
+                .cloned()
+                .unwrap_or(best);
+            let w = wifichan::why(&c, best.channel);
             self.note(
                 store,
                 &n,
@@ -1397,6 +1421,8 @@ mod tests {
         csa: Mutex<bool>,
         switches: Mutex<Vec<String>>,
         calls: Mutex<u64>,
+        /// when set, every survey swaps `busy` with this map (two channels that trade places within the noise)
+        flip: Mutex<Option<BTreeMap<i64, u64>>>,
     }
     impl Default for FakeIw {
         fn default() -> Self {
@@ -1411,6 +1437,7 @@ mod tests {
                 csa: Mutex::new(true),
                 switches: Mutex::new(vec![]),
                 calls: Mutex::new(0),
+                flip: Mutex::new(None),
             }
         }
     }
@@ -1431,6 +1458,9 @@ mod tests {
         }
         fn survey(&self, _: &str) -> Result<String> {
             let cur = *self.channel.lock().unwrap();
+            if let Some(alt) = self.flip.lock().unwrap().as_mut() {
+                std::mem::swap(&mut *self.busy.lock().unwrap(), alt);
+            }
             // the counters of a real survey only grow: the channel in use keeps counting
             let n = {
                 let mut c = self.calls.lock().unwrap();
@@ -1803,6 +1833,27 @@ mod tests {
             .map(|h| h.event)
             .collect();
         assert_eq!(ev, ["start", "stay", "stay", "sample", "sample", "move"]);
+        l.apply.teardown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn two_quiet_channels_that_trade_places_between_samples_still_get_the_move() {
+        // 1 and 6 are both far better than the busy 11 but swap rank on every measurement (equal within the noise):
+        // the samples agree that "a quiet channel" exists, so the radio moves instead of staying for ever
+        let l = lab().await;
+        set_auto(&l, |_| {}).await;
+        l.apply.apply(&l.store).await.unwrap();
+        *l.iw.channel.lock().unwrap() = 11;
+        let id = seg_wifi::network_by_name(&l.store, "home")
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
+        l.iw.neigh.lock().unwrap().clear();
+        l.iw.set_busy(&[(1, 5), (6, 7), (11, 80)]);
+        *l.iw.flip.lock().unwrap() = Some([(1, 7), (6, 5), (11, 80)].into_iter().collect());
+        let r = l.apply.recheck(&l.store, id).await.unwrap();
+        assert!(r.contains("moved from channel 11 to"), "{r}");
         l.apply.teardown().await.unwrap();
     }
 
