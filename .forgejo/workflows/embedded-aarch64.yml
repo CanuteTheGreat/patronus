@@ -41,8 +41,7 @@ jobs:
       - name: Install squashfs-tools and mtd-utils (ubinize)
         run: |
           sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
-          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
-          sudo apt-get install -y squashfs-tools mtd-utils gnupg gpgv
+          bash ci/apt-install.sh squashfs-tools mtd-utils gnupg gpgv
       - name: Image tooling tests
         run: sh ci/embedded-aarch64/ax1800/tests/run.sh
       - name: Device profiles

@@ -56,8 +56,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
-          for i in 1 2 3; do sudo apt-get update && break; [ "$i" = 3 ] && exit 1; sleep 15; done
-          sudo apt-get install -y build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler
+          bash ci/apt-install.sh build-essential libmnl-dev libnftnl-dev libssl-dev pkg-config libelf-dev zlib1g-dev protobuf-compiler
       - name: Build env (mold linker, no incremental)
         run: CI_NO_SCCACHE=1 CI_RUST_ENV_EXPORT=1 . ci/ci-rust-env.sh
       - name: Format (the files this tier owns)
