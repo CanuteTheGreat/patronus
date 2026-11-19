@@ -1564,7 +1564,7 @@ pub fn render_ext(x: &ExtPlan, o: &mut String, verb: &str) {
     for (d, e) in &x.iface6 {
         let _ = writeln!(
             o,
-            "  {d}: static {}{}{}",
+            "  {d}: static {}{}{}{}",
             if e.addrs.is_empty() {
                 "-".to_string()
             } else {
@@ -1583,7 +1583,10 @@ pub fn render_ext(x: &ExtPlan, o: &mut String, verb: &str) {
                 ", DHCPv6 DUID kept"
             } else {
                 ""
-            }
+            },
+            e.metric
+                .map(|m| format!(", route metric {m}"))
+                .unwrap_or_default()
         );
     }
     for (d, m, st) in &x.ra {
