@@ -1013,14 +1013,26 @@ fn firewall_ext(plan: &mut Plan, x: &mut ExtPlan, files: &Files, extras: &Extras
                     x.sys_settings.retain(|(k, _, _)| k != "firewall.mss_clamp");
                     x.sys("firewall.mss_clamp", cur.join(","));
                 }
-                if s.flag("masq") == Some(true) && name != "wan" {
-                    for sp in &specs {
+                // fw4: `masq` masquerades IPv4 only, `masq6` IPv6 only. The source match pins
+                // each rule to its family (a rule without addresses would cover both).
+                // The wan zone's IPv4 masquerade is the automatic outbound NAT (see import_uci.rs).
+                let masq4 = s.flag("masq") == Some(true) && name != "wan";
+                let masq6 = s.flag("masq6") == Some(true);
+                for sp in &specs {
+                    for (on, src, label, opt) in [
+                        (masq4, "0.0.0.0/0", "", "masq"),
+                        (masq6, "::/0", " IPv6", "masq6"),
+                    ] {
+                        if !on {
+                            continue;
+                        }
                         let mut r = NatRule::new(
-                            format!("Masquerade out {sp} (zone {name})"),
+                            format!("Masquerade{label} out {sp} (zone {name})"),
                             NatType::Masquerade,
                         );
                         r.interface_out = Some(sp.clone());
-                        r.comment = Some("imported from OpenWrt UCI (zone masq)".into());
+                        r.source = Some(src.into());
+                        r.comment = Some(format!("imported from OpenWrt UCI (zone {opt})"));
                         plan.nat_rules.push(r);
                     }
                 }
@@ -2368,10 +2380,15 @@ mod tests {
             setting(&x.sys_settings, "system.packet_steering"),
             Some("1")
         );
-        assert!(p
+        // fw4 `masq` is IPv4-only: the imported masquerade is pinned to IPv4 (no IPv6 NAT
+        // towards the LAN/VPN unless the zone also sets `masq6`)
+        let wg_masq: Vec<_> = p
             .nat_rules
             .iter()
-            .any(|r| r.interface_out.as_deref() == Some("wg0")));
+            .filter(|r| r.interface_out.as_deref() == Some("wg0"))
+            .collect();
+        assert_eq!(wg_masq.len(), 1, "{wg_masq:?}");
+        assert_eq!(wg_masq[0].source.as_deref(), Some("0.0.0.0/0"));
         // the "redirect to the router itself" became an input allow, not a DNAT
         assert!(p
             .fw_rules
