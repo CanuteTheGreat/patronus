@@ -11,6 +11,8 @@ What it proves on the SHIPPED image (the daily ISO's own files, init scripts and
     patronus-dhcpc instance), the LAN is static and the installer's system dhcpcd is told to keep off both ports
  4. a LAN pool + a reservation + a static WAN gateway configured through the API are all still there after a reboot: dnsmasq runs, the client gets
     the RESERVED address, the static default route (proto 250) is present, no DHCP default route fights it
+ 5. the ETPhoneHome router client (net-misc/etphonehome-bin, USE=etph) is package-owned for both inits, running after the reboot (USB by default),
+    and a Wi-Fi phone set in /etc/etph/etph.conf is really tried by the client (status file names the target and the refused connection)
 
     python3 -m vmtest run scenarios/installed_firstrun.py --arg iso=patronus-...iso
 """
@@ -18,6 +20,7 @@ import json
 import os
 import re
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from vmtest import Disk, Network, Nic, NodeSpec, Test, cache  # noqa: E402
@@ -31,6 +34,9 @@ WAN, LAN = "enp0s1", "enp0s2"
 WAN_NET, WAN_GW = "10.0.2.15/24", "10.0.2.2"
 LAN_IP, POOL = "10.77.0.1", ("10.77.0.100", "10.77.0.199")
 CLIENT_MAC, RESERVED = "52:54:00:02:00:01", "10.77.0.50"
+ETPH_UNIT = "etphonehome"           # OpenRC script / systemd unit of net-misc/etphonehome-bin (the same name on both inits)
+ETPH_FILES = ["/usr/sbin/etphonehome", "/usr/libexec/etphonehome/etphonehome-run", "/etc/etph/etph.conf", "/etc/init.d/etphonehome",
+              "/usr/lib/systemd/system/etphonehome.service"]
 UNUSED_LAN = "10.88.0.1/24"          # what a half-applied failing wizard would leave on the LAN port
 
 # runs inside the guest: log in once (cookie jar), then METHOD PATH [JSON] -> "HTTP <code>\n<body>"
@@ -172,6 +178,39 @@ def define(args):
         m.check("lan-port-is-static-not-dhcp-managed", "proto dhcp" not in lan_routes and LAN_IP in fw.succeed(f"ip -4 addr show dev {LAN}"), lan_routes.strip())
         _lease(m, cli, "after-reboot")
         fw.screenshot("fw-after-reboot")
+
+        m.phase("5. the ETPhoneHome router client (USE=etph) is installed, owned, running after the reboot and reads its settings")
+        eowned = fw.succeed(f"for f in {' '.join(ETPH_FILES)}; do echo \"$f $(qfile -Cq $f)\"; done")
+        ebad = [ln for ln in eowned.strip().splitlines() if not ln.endswith(" net-misc/etphonehome-bin")]
+        m.check("etph-files-owned-by-net-misc-etphonehome-bin", not ebad, "unowned: " + "; ".join(ebad) if ebad else "client, run script, config, OpenRC script, systemd unit")
+        m.check("etph-config-private", fw.succeed("stat -c %a /etc/etph /etc/etph/etph.conf").split() == ["700", "600"], "/etc/etph 0700, etph.conf 0600")
+        fw.wait_for_unit(ETPH_UNIT, 180)   # enabled at boot by the installer profile; started by whichever init this image runs
+        m.check("etphonehome-active-after-reboot", True, fw.init.name)
+        status = _etph_status(fw, lambda st: st.get("transport") == "usb")
+        m.check("etph-default-usb-client-runs-and-reports", status["transport"] == "usb" and status["interface"] == "etph0", json.dumps(status)[:300])
+        # Wi-Fi phone: point the client at the second machine (nothing listens on the app port, so the attempt is refused, which proves the
+        # service read /etc/etph/etph.conf, built the command line and the client reached out to the configured target)
+        fw.succeed(f"printf 'ETPH_TRANSPORT=wifi\\nETPH_HOST={RESERVED}\\nETPH_TOKEN=vmtest\\nETPH_MAX_RETRIES=0\\n' > /etc/etph/etph.conf && chmod 600 /etc/etph/etph.conf")
+        fw.succeed(fw.init.restart(ETPH_UNIT))
+        fw.wait_for_unit(ETPH_UNIT, 60)
+        status = _etph_status(fw, lambda st: st.get("transport") == "wifi" and (st.get("attempt") or 0) >= 1 and st.get("last_error"))
+        m.check("etph-wifi-client-tried-the-configured-phone", status["target"].startswith(RESERVED + ":") and RESERVED in status["last_error"], json.dumps(status)[:400])
+        m.check("etph-service-keeps-running-while-the-phone-is-away", fw.execute(fw.init.is_active(ETPH_UNIT))[0] == 0, "supervised, retries forever (max retries 0)")
+
+    def _etph_status(fw, ok, timeout=120):
+        """Wait for /run/etph/status.json (the client's own JSON status) to satisfy ok(status); return it."""
+        last = {}
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            rc, out = fw.execute("cat /run/etph/status.json 2>/dev/null")
+            try:
+                last = json.loads(out)
+                if ok(last):
+                    return last
+            except ValueError:
+                pass
+            time.sleep(3)
+        raise AssertionError(f"/run/etph/status.json never satisfied the check; last: {last}")
 
     def _lease(m, cli, when):
         """The client (no address) asks for one: the pool must hand out the RESERVED address for its MAC."""

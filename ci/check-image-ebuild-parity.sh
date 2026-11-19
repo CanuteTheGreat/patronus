@@ -7,6 +7,9 @@
 #   3. project/setup.sh creates nothing by hand (no chmod of init scripts, groupadd, useradd): packages own it
 #   4. the installer profile enables patronus-services (the second boot pass) and the files exist for both inits
 #   5. both real ebuilds install patronus-services too (same service set as the image)
+#   6. the ETPhoneHome router client (USE=etph, default on) is in the product's dependencies, staged into the image repository, verified
+#      by project-image-packages (the build fails when a file of it is missing) and enabled by the installer profile (OpenRC + systemd files
+#      are the package's: net-misc/etphonehome-bin ships /etc/init.d/etphonehome and etphonehome.service, which the image gate asserts)
 # Usage: ci/check-image-ebuild-parity.sh [repo-root]
 set -euo pipefail
 cd "${1:-$(dirname "$0")/..}"
@@ -40,5 +43,14 @@ grep -Eq '^services = \[.*"patronus-services"' $P/overlay/etc/live-installer/pro
 for e in gentoo/net-firewall/patronus/patronus-9999.ebuild gentoo/net-firewall/patronus/patronus-0.2.0.ebuild; do
   grep -q 'patronus-services.initd' "$e" && grep -q 'patronus-services.service' "$e" || bad "$e does not install patronus-services for both inits"
 done
+for e in gentoo/net-firewall/patronus/patronus-9999.ebuild gentoo/net-firewall/patronus/patronus-0.2.0.ebuild $E; do
+  grep -Eq '^IUSE=.*\+etph|^[[:space:]]+\+etph' "$e" && grep -q 'etph? ( net-misc/etphonehome-bin )' "$e" || bad "$e lacks the default-on etph USE flag pulling net-misc/etphonehome-bin"
+done
+grep -q 'net-misc/etphonehome-bin' "$D" || bad "$D does not stage net-misc/etphonehome-bin into the image repository"
+PK=$P/overlay/usr/libexec/project-image-packages
+for f in /usr/sbin/etphonehome /etc/init.d/etphonehome /usr/lib/systemd/system/etphonehome.service /etc/etph/etph.conf; do
+  grep -q "$f" "$PK" || bad "project-image-packages does not verify $f (a missing ETPhoneHome file must fail the image build)"
+done
+grep -Eq '^services = \[.*"etphonehome"' $P/overlay/etc/live-installer/profile.toml || bad "installer profile does not enable etphonehome"
 [ $rc -eq 0 ] && echo "[image-ebuild] ok"
 exit $rc

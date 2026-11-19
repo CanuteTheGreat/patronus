@@ -27,6 +27,9 @@ HOMEPAGE="https://patronus.errant.solutions/"
 LICENSE="GPL-3+"
 SLOT="0"
 KEYWORDS="amd64 arm64 riscv"
+# USE=etph (default on): the ETPhoneHome router client (net-misc/etphonehome-bin, phone as WAN uplink) is part of every standard-tier install;
+# the application stage stages that package into the image-local repository (Dockerfile.app), so Portage installs it as a dependency.
+IUSE="+etph"
 # No init USE flags: the image ships BOTH init systems' files (the one it does not run is inert), whatever the profile's USE says. The
 # image is built once per init variant from the same payload, and an installed system keeps both so a later switch needs no re-merge.
 
@@ -36,6 +39,7 @@ QA_PREBUILT="usr/bin/patronus-cli usr/bin/patronus-web usr/bin/patronus-install"
 
 RDEPEND="
 	acct-user/patronus
+	etph? ( net-misc/etphonehome-bin )
 	acct-group/patronus
 	sec-keys/openpgp-keys-errantsolutions
 	sys-auth/pambase

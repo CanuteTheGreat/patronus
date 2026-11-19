@@ -16,7 +16,7 @@ default_hostname = "patronus.localdomain"
 # creates that user: there is no 'admin' account and no generated first-boot password.
 web_auth = "pam"
 web_admin_group = "patronus-admin"
-services = ["patronus-firewall", "patronus-applyd", "patronus-web", "patronus-services", "chronyd", "sshd", "dhcpcd"]
+services = ["patronus-firewall", "patronus-applyd", "patronus-web", "patronus-services", "chronyd", "etphonehome", "sshd", "dhcpcd"]
 # console menu (installed system)
 web_service = "patronus-web"
 db_path = "/var/lib/patronus/config.db"
@@ -34,8 +34,8 @@ live_services = ["patronus-applyd", "patronus-web"]
 
 # installer pages (stages.py)
 brand_color = "#1f6fb2"
-services_optional = ["chronyd"]
-service_info = { chronyd = "NTP time synchronisation (keeps certificates and logs correct)" }
+services_optional = ["chronyd", "etphonehome"]
+service_info = { chronyd = "NTP time synchronisation (keeps certificates and logs correct)", etphonehome = "ETPhoneHome router client: a phone (USB or Wi-Fi) as this router's internet uplink; idle until a phone is plugged in or a Wi-Fi phone is set in /etc/etph/etph.conf" }
 # a firewall routes: its own sysctl applier owns the network sysctls, so the installer's hardening set stays off
 sysctl_hardening = false
 use_critical = ["net-firewall/nftables:json"]

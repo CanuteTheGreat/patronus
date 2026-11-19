@@ -24,6 +24,7 @@ SLOT="0"
 # USE flags matching Patronus feature set (The Gentoo Way - OPTIONS!)
 IUSE="
 	+web +cli +api
+	+etph
 	dashboard
 	+nftables iptables
 	+dhcp +dns +unbound bind dnsmasq kea +ntp
@@ -76,6 +77,7 @@ REQUIRED_USE="
 # (No comments inside RDEPEND: Portage would parse '#' as an atom.)
 RDEPEND="
 	acct-user/patronus
+	etph? ( net-misc/etphonehome-bin )
 	sys-auth/pambase
 	sys-libs/pam
 	acct-group/patronus

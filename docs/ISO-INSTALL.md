@@ -440,6 +440,17 @@ per-interface clients.
 **Setup wizard.** It is all-or-nothing: if any step fails, the interface configuration is restored and re-applied, the completed flag
 stays unset, and the answer is one readable sentence ("Setup was not applied and nothing was changed. Configuring the WAN port ... failed: ...").
 
+**ETPhoneHome router client (standard tier).** A phone running the ETPH app can be the router's internet uplink over USB or Wi-Fi, as it is on
+the embedded images. The standard tier carries the client as the package `net-misc/etphonehome-bin` (public overlay: upstream's static router build,
+OpenRC script + systemd unit, Manifest-pinned checksums). `net-firewall/patronus` pulls it in through `USE=etph`, which is on by default; the
+live-ISO application stage copies that one package into the image-local repository (`ETPH_OVERLAY_URL` / `ETPH_OVERLAY_REF` build arguments), so
+Portage installs it with the product and `project-image-packages` fails the image build, for both inits, when one of its files is missing. The
+installer profile enables `etphonehome` (the user can untick it on the services page). Settings are all in `/etc/etph/etph.conf` (mode 0600;
+transport `usb`/`wifi`/`auto`, phone address and port, pairing token, TUN name and addresses, route handling, up/down scripts, retries, log
+level, status file); every key has a default, nothing is baked into the image. With the defaults the client idles until a phone is plugged in. Its
+JSON status is `/run/etph/status.json`. Gate: `installed_firstrun.py` phase 5 (package ownership, running after the reboot, a Wi-Fi phone set in
+the config file is tried by the client), on both inits.
+
 ## Shared installer source
 
 `build/live-iso/common` in Horcrux is the master; Patronus `gentoo/live-iso/common` is a vendored copy.

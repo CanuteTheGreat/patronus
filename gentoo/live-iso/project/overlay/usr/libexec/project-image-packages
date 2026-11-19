@@ -31,13 +31,16 @@ atom="=net-firewall/patronus-$ver::patronus-image"
 emerge --noreplace --usepkg=n --getbinpkg=n --with-bdeps=n "$atom"
 
 # the product must now be owned by that package, init scripts and templates included (the wizard once failed on a missing one)
+# (USE=etph, default on: the ETPhoneHome router client came in as a dependency; a missing file fails the image build for BOTH inits)
 for f in /usr/bin/patronus-web /usr/bin/patronus-cli /etc/init.d/patronus-web /etc/init.d/patronus-dhcpc \
          /usr/lib/systemd/system/patronus-dhcpc@.service /etc/patronus/patronus.toml /etc/pam.d/patronus \
-         /usr/share/openpgp-keys/errantsolutions.asc; do
+         /usr/share/openpgp-keys/errantsolutions.asc \
+         /usr/sbin/etphonehome /usr/libexec/etphonehome/etphonehome-run /etc/etph/etph.conf /etc/init.d/etphonehome \
+         /usr/lib/systemd/system/etphonehome.service; do
   [ -e "$f" ] || { echo "project-image-packages: $f missing after the emerge"; exit 1; }
   o=$(qfile -Cq "$f" || true)
   case "$o" in
-    net-firewall/patronus|sec-keys/openpgp-keys-errantsolutions) ;;
+    net-firewall/patronus|sec-keys/openpgp-keys-errantsolutions|net-misc/etphonehome-bin) ;;
     *) echo "project-image-packages: $f is not owned by the product package (owner: '${o:-none}')"; exit 1 ;;
   esac
 done

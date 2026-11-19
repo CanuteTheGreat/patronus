@@ -8,6 +8,10 @@ COPY . .
 ENV CARGO_TARGET_DIR=/cache/target CARGO_PROFILE_RELEASE_DEBUG=0
 ARG JOBS=4
 ARG IMAGE_BUILD=
+# The ETPhoneHome router client (USE=etph) is a package of the public overlay; the image-local repository gets that one package so Portage
+# installs it with the product. Overridable per build (a mirror, a pinned commit); the Manifest in the package pins the distfile checksums.
+ARG ETPH_OVERLAY_URL=https://git.canutethegreat.com/CanuteTheGreat/canutethegreat-overlay.git
+ARG ETPH_OVERLAY_REF=master
 RUN --mount=type=cache,target=/cache/target --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git \
     set -e; export CARGO_BUILD_JOBS=${JOBS}; \
     case "$(uname -m)" in x86_64) cpu=x86-64-v2; trip=X86_64_UNKNOWN_LINUX_GNU;; aarch64) cpu=generic; trip=AARCH64_UNKNOWN_LINUX_GNU;; riscv64) cpu=generic-rv64; trip=RISCV64GC_UNKNOWN_LINUX_GNU;; *) echo "unsupported arch"; exit 1;; esac; \
@@ -19,6 +23,9 @@ RUN --mount=type=cache,target=/cache/target --mount=type=cache,target=/usr/local
     ver=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1); [ -n "$ver" ]; \
     cp -a gentoo/net-firewall/patronus/files/. $P/payload/files/; \
     cp -a gentoo/acct-group gentoo/acct-user gentoo/sec-keys $P/repo/; \
+    ov=$(mktemp -d); git clone -q --depth 1 --branch "$ETPH_OVERLAY_REF" "$ETPH_OVERLAY_URL" "$ov"; \
+    mkdir -p $P/repo/net-misc; cp -a "$ov/net-misc/etphonehome-bin" $P/repo/net-misc/; rm -rf "$ov"; \
+    ls $P/repo/net-misc/etphonehome-bin/etphonehome-bin-*.ebuild >/dev/null; test -s $P/repo/net-misc/etphonehome-bin/Manifest; \
     cp gentoo/live-iso/project/image/patronus-image.ebuild $P/repo/net-firewall/patronus/patronus-${ver}_p${IMAGE_BUILD:-$(date -u +%Y%m%d)}.ebuild
 # The application stage only STAGES the product (binaries + the real ebuild's files/ directory + an image-local Portage repository).
 # common/setup-rootfs.sh runs /usr/libexec/project-image-packages (project/overlay) while the Portage tree is still present, and that
