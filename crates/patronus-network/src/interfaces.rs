@@ -1129,7 +1129,12 @@ impl InterfacesApplier {
             let enabled = svc.is_enabled("dhcpcd").unwrap_or(false);
             let running = sd::manager_running(&settings.run_dir);
             if enabled || running {
-                let stop = if running { svc.stop("dhcpcd") } else { Ok(()) };
+                // stop ONLY the manager: on OpenRC it provides `net`, and a plain stop also stops dnsmasq, the web UI, ...
+                let stop = if running {
+                    svc.stop_alone("dhcpcd")
+                } else {
+                    Ok(())
+                };
                 let off = if enabled {
                     svc.disable("dhcpcd")
                 } else {

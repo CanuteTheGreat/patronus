@@ -42,6 +42,9 @@ pub enum ServiceState {
 pub enum ServiceAction {
     Start,
     Stop,
+    /// Stop only this service. OpenRC otherwise also stops every service that `need`s it (stopping `dhcpcd`, which
+    /// provides `net`, took dnsmasq and the web UI down with it); systemd never cascades a plain stop that way.
+    StopAlone,
     Restart,
     Reload,
 }
@@ -50,7 +53,7 @@ impl ServiceAction {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Start => "start",
-            Self::Stop => "stop",
+            Self::Stop | Self::StopAlone => "stop",
             Self::Restart => "restart",
             Self::Reload => "reload",
         }
@@ -286,9 +289,14 @@ impl InitBackend for OpenRcBackend {
 
     fn act(&self, action: ServiceAction, name: &str) -> Result<()> {
         let a = action.as_str();
+        let args: &[&str] = if action == ServiceAction::StopAlone {
+            &[name, "--nodeps", a]
+        } else {
+            &[name, a]
+        };
         let o = self
             .run
-            .run("rc-service", &[name, a])
+            .run("rc-service", args)
             .map_err(|e| fail("service", a, e))?;
         if o.success {
             Ok(())
@@ -632,6 +640,12 @@ impl ServiceManager {
             .act(ServiceAction::Stop, self.native(service_name))
     }
 
+    /// Stop a service without stopping the services that depend on it (OpenRC `--nodeps`).
+    pub fn stop_alone(&self, service_name: &str) -> Result<()> {
+        self.backend
+            .act(ServiceAction::StopAlone, self.native(service_name))
+    }
+
     /// Restart a service
     pub fn restart(&self, service_name: &str) -> Result<()> {
         self.backend
@@ -724,6 +738,7 @@ pub async fn act_blocking(action: ServiceAction, name: &str) -> Result<()> {
         match action {
             ServiceAction::Start => m.start(&name),
             ServiceAction::Stop => m.stop(&name),
+            ServiceAction::StopAlone => m.stop_alone(&name),
             ServiceAction::Restart => m.restart(&name),
             ServiceAction::Reload => m.reload(&name),
         }
@@ -872,6 +887,7 @@ mod tests {
         let (m, f) = mgr(InitSystem::OpenRC);
         m.start("patronus-web").unwrap();
         m.stop("patronus-web").unwrap();
+        m.stop_alone("dhcpcd").unwrap();
         m.restart("unbound").unwrap();
         m.reload("haproxy").unwrap();
         m.enable("patronus-web").unwrap();
@@ -883,6 +899,7 @@ mod tests {
             [
                 "rc-service patronus-web start",
                 "rc-service patronus-web stop",
+                "rc-service dhcpcd --nodeps stop",
                 "rc-service unbound restart",
                 "rc-service haproxy reload",
                 "rc-update add patronus-web default",

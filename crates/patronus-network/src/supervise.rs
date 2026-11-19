@@ -380,7 +380,16 @@ impl Supervisor {
             InitMode::OpenRc => {
                 let link =
                     PathBuf::from("/etc/init.d").join(Self::rc_name(spec.service, &spec.instance));
-                if !link.exists() {
+                // the multiplexed script itself must exist (a dangling instance link made `symlink` fail with "File exists")
+                let base = PathBuf::from("/etc/init.d").join(spec.service);
+                if !base.exists() {
+                    return Err(Error::Network(format!(
+                        "{}: init script {} is missing (is the Patronus package installed completely?)",
+                        spec.describe(),
+                        base.display()
+                    )));
+                }
+                if std::fs::symlink_metadata(&link).is_err() {
                     std::os::unix::fs::symlink(spec.service, &link).map_err(io(link.display()))?;
                 }
                 self.sm()
