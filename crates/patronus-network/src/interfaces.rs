@@ -1150,18 +1150,47 @@ impl InterfacesApplier {
                     )),
                 }
             }
-            // OpenRC: dhcpcd was the only `net` provider. With no provider in the runlevel, the next start of anything that
-            // needs `net` (dnsmasq, the web UI) starts dhcpcd again as its provider, and that manager takes every port back.
-            // netifrc's loopback service provides `net` without touching any other port.
+            // OpenRC: dhcpcd provides `net`; disabled, it would still be started again as the `net` provider of the next
+            // service that needs it (dnsmasq, the web UI) and take every port back. The drop-in moves `net` to patronus-firewall.
+            if svc.init_system() == patronus_core::service::InitSystem::OpenRC {
+                let key = store
+                    .load_system_config(sd::OPENRC_DROPIN_KEY)
+                    .await
+                    .ok()
+                    .flatten();
+                match sd::openrc_dropin_path(key.as_deref())
+                    .and_then(|p| sd::write_openrc_dropin(&p).map(|ch| (p, ch)))
+                {
+                    Ok((p, true)) => {
+                        let _ = self.cmd.run("rc-update", &["-u".to_string()]).await;
+                        report.applied(format!(
+                            "{} written: OpenRC's `net` now comes from patronus-firewall, not the system dhcpcd",
+                            p.display()
+                        ))
+                    }
+                    Ok((_, false)) => {}
+                    Err(e) => report.warn(format!("could not write the OpenRC `net` drop-in: {e}")),
+                }
+            }
+        } else {
+            // the system dhcpcd is in use again (no prefix delegation, or an admin enabled it): give `net` back to it
+            let svc = patronus_core::service::ServiceManager::new();
             if svc.init_system() == patronus_core::service::InitSystem::OpenRC
-                && std::path::Path::new("/etc/init.d/net.lo").exists()
-                && !svc.is_enabled("net.lo").unwrap_or(true)
+                && svc.is_enabled("dhcpcd").unwrap_or(false)
             {
-                match svc.enable("net.lo").and_then(|_| svc.start("net.lo")) {
-                    Ok(()) => report.applied(
-                        "net.lo enabled as the `net` provider (OpenRC would otherwise start the system dhcpcd again)",
-                    ),
-                    Err(e) => report.warn(format!("could not enable net.lo as the `net` provider: {e}")),
+                let key = store
+                    .load_system_config(sd::OPENRC_DROPIN_KEY)
+                    .await
+                    .ok()
+                    .flatten();
+                if let Ok(p) = sd::openrc_dropin_path(key.as_deref()) {
+                    if sd::remove_openrc_dropin(&p).unwrap_or(false) {
+                        let _ = self.cmd.run("rc-update", &["-u".to_string()]).await;
+                        report.applied(format!(
+                            "{} removed: the system dhcpcd provides `net` again",
+                            p.display()
+                        ));
+                    }
                 }
             }
         }
