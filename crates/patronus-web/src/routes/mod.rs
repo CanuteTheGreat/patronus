@@ -566,6 +566,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::authservers::router())
         .merge(api::telemetry::router())
         .merge(api::wifi::router())
+        .merge(api::wifi_uplink::router())
         .merge(api::device::router())
 }
 

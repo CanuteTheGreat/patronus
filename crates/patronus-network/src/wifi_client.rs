@@ -314,6 +314,19 @@ pub fn render_wpa_supplicant(c: &WifiClient, ctrl_dir: &Path) -> Result<String> 
 // applier
 // ---------------------------------------------------------------------------
 
+/// The other Wi-Fi supplicant a Gentoo image may start at boot. iwd takes every wireless device it sees
+/// (it even deletes and re-creates their netdevs), so it and wpa_supplicant must never run on the same radio.
+pub const IWD_SERVICE: &str = "iwd";
+/// Unit files that mean "the iwd service is installed" (OpenRC script, systemd unit in either prefix).
+const IWD_UNITS: [&str; 3] = [
+    "etc/init.d/iwd",
+    "usr/lib/systemd/system/iwd.service",
+    "lib/systemd/system/iwd.service",
+];
+/// Marker in the wpa state dir: Patronus stopped (and disabled) iwd for a Wi-Fi uplink, so removing the last
+/// uplink gives the radio back to it.
+const IWD_MARKER: &str = "iwd-released-by-patronus";
+
 /// Applier `wifi-client` (boot phase `services`): one wpa_supplicant per enabled uplink.
 #[derive(Clone)]
 pub struct WifiClientApplier {
@@ -321,6 +334,15 @@ pub struct WifiClientApplier {
     ctrl_dir: PathBuf,
     sysfs: PathBuf,
     wpa: Option<PathBuf>,
+    /// Filesystem root for the iwd unit check (tests point it at a temp dir).
+    root: PathBuf,
+    /// /proc, for an iwd that runs without the init system (started by hand, containers).
+    proc_dir: PathBuf,
+    services: std::sync::Arc<dyn crate::lan::ServiceControl>,
+    /// `iw`, to give a radio its device again (None = from $PATH).
+    iw: Option<PathBuf>,
+    /// Run the interfaces phase again after a device was re-created (off in unit tests).
+    reapply_interfaces: bool,
 }
 
 impl Default for WifiClientApplier {
@@ -332,19 +354,312 @@ impl Default for WifiClientApplier {
             ),
             sysfs: PathBuf::from("/sys"),
             wpa: None,
+            root: PathBuf::from("/"),
+            proc_dir: PathBuf::from("/proc"),
+            services: std::sync::Arc::new(crate::lan::SystemServices),
+            iw: None,
+            reapply_interfaces: true,
         }
     }
 }
 
 impl WifiClientApplier {
+    /// Tests: explicit paths. iwd is looked for under `sysfs`'s parent (nothing there unless the test puts
+    /// it there, see [`Self::with_iwd_env`]), and services are only recorded.
     pub fn with_parts(sup: Supervisor, ctrl_dir: PathBuf, sysfs: PathBuf, wpa: PathBuf) -> Self {
+        let base = sysfs
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| sysfs.clone());
         Self {
             sup,
             ctrl_dir,
             sysfs,
             wpa: Some(wpa),
+            root: base.clone(),
+            proc_dir: base,
+            services: std::sync::Arc::new(crate::lan::RecordingServices::default()),
+            iw: None,
+            reapply_interfaces: false,
         }
     }
+    /// Tests: the `iw` to run.
+    pub fn with_iw(mut self, iw: PathBuf) -> Self {
+        self.iw = Some(iw);
+        self
+    }
+    /// Tests: where iwd's unit files and processes are looked for, and the init system that stops it.
+    pub fn with_iwd_env(
+        mut self,
+        root: PathBuf,
+        proc_dir: PathBuf,
+        services: std::sync::Arc<dyn crate::lan::ServiceControl>,
+    ) -> Self {
+        self.root = root;
+        self.proc_dir = proc_dir;
+        self.services = services;
+        self
+    }
+    fn iwd_installed(&self) -> bool {
+        IWD_UNITS.iter().any(|u| self.root.join(u).exists())
+    }
+    fn iwd_marker(&self) -> PathBuf {
+        self.sup.paths.state_dir.join("wpa").join(IWD_MARKER)
+    }
+    /// Live `iwd` processes (not zombies), whoever started them.
+    fn iwd_pids(&self) -> Vec<i32> {
+        let Ok(rd) = std::fs::read_dir(&self.proc_dir) else {
+            return Vec::new();
+        };
+        rd.filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
+            .filter(|pid| {
+                let d = self.proc_dir.join(pid.to_string());
+                let comm = std::fs::read_to_string(d.join("comm")).unwrap_or_default();
+                let zombie = std::fs::read_to_string(d.join("stat"))
+                    .ok()
+                    .and_then(|s| {
+                        s.rsplit_once(')')
+                            .map(|(_, r)| r.trim_start().starts_with('Z'))
+                    })
+                    .unwrap_or(false);
+                comm.trim() == "iwd" && !zombie
+            })
+            .collect()
+    }
+
+    /// Never two supplicants on one radio: before wpa_supplicant takes `devices`, stop iwd (and keep it from
+    /// starting at boot). Returns false when iwd is still running afterwards (the caller then starts nothing).
+    async fn keep_iwd_off(&self, rep: &mut ApplyReport, devices: &[&str]) -> bool {
+        let list = devices.join(", ");
+        let installed = self.iwd_installed();
+        let mut did = Vec::new();
+        if installed {
+            if self.services.is_running(IWD_SERVICE) {
+                match self.services.stop(IWD_SERVICE) {
+                    Ok(()) => did.push("stopped"),
+                    Err(e) => rep.warn(format!("Wi-Fi uplink {list}: could not stop iwd: {e}")),
+                }
+            }
+            if self.services.is_enabled(IWD_SERVICE) {
+                match self.services.disable(IWD_SERVICE) {
+                    Ok(()) => did.push("disabled at boot"),
+                    Err(e) => rep.warn(format!(
+                        "Wi-Fi uplink {list}: could not disable iwd at boot: {e}"
+                    )),
+                }
+            }
+        }
+        // an iwd outside the init system (started by hand): it holds the radio just the same
+        let stray = self.iwd_pids();
+        if !stray.is_empty() {
+            for pid in &stray {
+                let _ = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(*pid),
+                    nix::sys::signal::Signal::SIGTERM,
+                );
+            }
+            for _ in 0..30 {
+                if self.iwd_pids().is_empty() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            did.push("ended (it ran outside the init system)");
+        }
+        if !self.iwd_pids().is_empty() {
+            rep.warn(format!(
+                "Wi-Fi uplink {list}: iwd is still running and would fight wpa_supplicant over the radio; \
+                 not started (stop iwd: rc-service iwd stop / systemctl stop iwd)"
+            ));
+            return false;
+        }
+        if !did.is_empty() {
+            let _ = std::fs::create_dir_all(self.iwd_marker().parent().unwrap_or(Path::new("/")));
+            let _ = std::fs::write(
+                self.iwd_marker(),
+                if installed { "service\n" } else { "process\n" },
+            );
+            rep.applied(format!(
+                "iwd {}: Patronus runs wpa_supplicant on {list} (two supplicants on one radio fight over it)",
+                did.join(", ")
+            ));
+        }
+        true
+    }
+
+    /// The last uplink is gone: give the radio back to iwd if Patronus took it away (and no Patronus access
+    /// point uses a radio now).
+    fn give_back_iwd(&self, rep: &mut ApplyReport) {
+        let marker = self.iwd_marker();
+        let Ok(how) = std::fs::read_to_string(&marker) else {
+            return;
+        };
+        if !self.sup.instances("patronus-hostapd").is_empty() {
+            return;
+        }
+        if how.trim() == "service" && self.iwd_installed() {
+            if let Err(e) = self
+                .services
+                .enable(IWD_SERVICE)
+                .and_then(|_| self.services.restart(IWD_SERVICE))
+            {
+                rep.warn(format!("could not start iwd again: {e}"));
+                return;
+            }
+            rep.applied("no Wi-Fi uplink left: iwd enabled and started again".to_string());
+        }
+        let _ = std::fs::remove_file(marker);
+    }
+
+    /// Radios (phys) in this network namespace that have no network device at all.
+    fn free_phys(&self) -> Vec<String> {
+        let names = |d: PathBuf| -> Vec<String> {
+            std::fs::read_dir(d)
+                .map(|r| {
+                    r.filter_map(|e| e.ok())
+                        .map(|e| e.file_name().to_string_lossy().to_string())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let used: Vec<String> = names(self.sysfs.join("class/net"))
+            .into_iter()
+            .filter_map(|n| {
+                std::fs::read_link(self.sysfs.join("class/net").join(n).join("phy80211"))
+                    .ok()
+                    .and_then(|l| l.file_name().map(|f| f.to_string_lossy().to_string()))
+            })
+            .collect();
+        let mut free: Vec<String> = names(self.sysfs.join("class/ieee80211"))
+            .into_iter()
+            .filter(|p| !used.contains(p))
+            .collect();
+        free.sort();
+        free
+    }
+
+    /// An uplink whose device is gone while its radio is free gets the device back: iwd deletes the kernel's
+    /// device when it takes a radio and removes its own when it stops, so after iwd the radio has none. The radio
+    /// is the one named like the device (`wlanN` = `phyN`, the kernel's and iwd's naming) or the only free one.
+    /// Returns the devices created.
+    async fn recreate_missing(&self, rep: &mut ApplyReport, wanted: &[&WifiClient]) -> Vec<String> {
+        let missing: Vec<&str> = wanted
+            .iter()
+            .map(|c| c.device.as_str())
+            .filter(|d| !self.sysfs.join("class/net").join(d).exists())
+            .collect();
+        if missing.is_empty() {
+            return Vec::new();
+        }
+        // the kernel deletes the devices iwd owned shortly AFTER iwd exits (they belong to its netlink socket)
+        let mut free = self.free_phys();
+        for _ in 0..30 {
+            if !free.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            free = self.free_phys();
+        }
+        if free.is_empty() {
+            return Vec::new();
+        }
+        let Some(iw) = self.iw.clone().or_else(|| which("iw")) else {
+            rep.warn(format!(
+                "Wi-Fi uplink {}: the device is gone and a radio is free, but iw is not installed to re-create it",
+                missing.join(", ")
+            ));
+            return Vec::new();
+        };
+        let mut made = Vec::new();
+        for dev in missing {
+            let by_name = dev
+                .strip_prefix("wlan")
+                .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+                .map(|n| format!("phy{n}"))
+                .filter(|p| free.contains(p));
+            let Some(phy) = by_name.or_else(|| (free.len() == 1).then(|| free[0].clone())) else {
+                rep.warn(format!(
+                    "Wi-Fi uplink {dev}: no such device, and several radios are free ({}): cannot tell which one \
+                     it is (name the device wlanN after its radio phyN)",
+                    free.join(", ")
+                ));
+                continue;
+            };
+            let out = tokio::process::Command::new(&iw)
+                .args([
+                    "phy",
+                    phy.as_str(),
+                    "interface",
+                    "add",
+                    dev,
+                    "type",
+                    "managed",
+                ])
+                .output()
+                .await;
+            match out {
+                Ok(o) if o.status.success() && self.sysfs.join("class/net").join(dev).exists() => {
+                    free.retain(|p| p != &phy);
+                    rep.applied(format!(
+                        "Wi-Fi uplink {dev}: device created on radio {phy} (it had none: iwd removes the \
+                         devices of the radios it managed when it stops)"
+                    ));
+                    made.push(dev.to_string());
+                }
+                Ok(o) => rep.warn(format!(
+                    "Wi-Fi uplink {dev}: could not create the device on radio {phy}: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                )),
+                Err(e) => rep.warn(format!("Wi-Fi uplink {dev}: could not run iw: {e}")),
+            }
+        }
+        made
+    }
+
+    /// Ask the running wpa_supplicant (control socket, through wpa_cli) how the uplink is doing.
+    async fn query(&self, c: &WifiClient) -> Value {
+        let cli = self
+            .wpa_bin()
+            .and_then(|w| w.parent().map(|d| d.join("wpa_cli")))
+            .filter(|p| p.exists())
+            .or_else(|| which("wpa_cli"));
+        let Some(cli) = cli else {
+            return json!({ "connected": false, "wpa_state": "UNKNOWN",
+                           "problem": "wpa_cli is not installed (it comes with wpa_supplicant)" });
+        };
+        let run = |cmd: &'static str| {
+            let cli = cli.clone();
+            let ctrl = self.ctrl_dir.clone();
+            let dev = c.device.clone();
+            async move {
+                let o = tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    tokio::process::Command::new(cli)
+                        .arg("-p")
+                        .arg(ctrl)
+                        .arg("-i")
+                        .arg(dev)
+                        .arg(cmd)
+                        .output(),
+                )
+                .await
+                .ok()?
+                .ok()?;
+                o.status
+                    .success()
+                    .then(|| String::from_utf8_lossy(&o.stdout).to_string())
+            }
+        };
+        let Some(st) = run("status").await else {
+            return json!({ "connected": false, "wpa_state": "UNKNOWN",
+                           "problem": "wpa_supplicant does not answer on its control socket" });
+        };
+        let nets = run("list_networks").await.unwrap_or_default();
+        let scan = run("scan_results").await.unwrap_or_default();
+        summarize(&c.ssid, &st, &nets, &scan)
+    }
+
     fn wpa_bin(&self) -> Option<PathBuf> {
         self.wpa.clone().or_else(|| which("wpa_supplicant"))
     }
@@ -395,6 +710,7 @@ impl Applier for WifiClientApplier {
             }
         }
         if wanted.is_empty() {
+            self.give_back_iwd(&mut rep);
             if rep.applied.is_empty() {
                 rep.applied("no Wi-Fi uplinks configured (wpa_supplicant untouched)".to_string());
             }
@@ -405,14 +721,29 @@ impl Applier for WifiClientApplier {
                 "wpa_supplicant is not installed (emerge net-wireless/wpa_supplicant, USE=wifi-client)",
             ));
         };
-        for c in wanted {
-            if !self.sysfs.join("class/net").join(&c.device).exists() {
-                rep.warn(format!(
-                    "Wi-Fi uplink {}: no such device (is the wireless driver loaded?), not started",
-                    c.device
-                ));
-                continue;
-            }
+        // iwd first: while it runs it owns the radio (and it removes the device when it stops)
+        let all: Vec<&str> = wanted.iter().map(|c| c.device.as_str()).collect();
+        if !self.keep_iwd_off(&mut rep, &all).await {
+            return Ok(rep);
+        }
+        let recreated = self.recreate_missing(&mut rep, &wanted).await;
+        let present: Vec<&WifiClient> = wanted
+            .into_iter()
+            .filter(|c| {
+                let ok = self.sysfs.join("class/net").join(&c.device).exists();
+                if !ok {
+                    rep.warn(format!(
+                        "Wi-Fi uplink {}: no such device (is the wireless driver loaded?), not started",
+                        c.device
+                    ));
+                }
+                ok
+            })
+            .collect();
+        if present.is_empty() {
+            return Ok(rep);
+        }
+        for c in present {
             let spec = self.spec(&wpa, c)?;
             if self.sup.ensure(&spec).await? {
                 rep.applied(format!(
@@ -425,7 +756,59 @@ impl Applier for WifiClientApplier {
                 rep.applied(format!("Wi-Fi uplink {}: already running", c.device));
             }
         }
+        if !recreated.is_empty() && self.reapply_interfaces {
+            // the device is new: its DHCP client (if the interfaces phase started one for the old device) is
+            // bound to a vanished interface, so it starts again for the new one
+            for d in &recreated {
+                let _ = self.sup.stop(crate::dhcp_client::SERVICE, d).await;
+            }
+            match crate::InterfacesApplier::default().apply(store).await {
+                Ok(_) => rep.applied(format!(
+                    "interface settings applied again for {}",
+                    recreated.join(", ")
+                )),
+                Err(e) => rep.warn(format!(
+                    "interface settings for {}: {e}",
+                    recreated.join(", ")
+                )),
+            }
+        }
         Ok(rep)
+    }
+
+    async fn status(&self, store: &ConfigStore) -> Result<Value> {
+        let mut out = Vec::new();
+        for c in list(store).await? {
+            let mut v = c.public();
+            let running = c.enabled && self.sup.is_running(SERVICE, &c.device);
+            let live = if !c.enabled {
+                json!({ "connected": false, "wpa_state": "DISABLED", "problem": Value::Null })
+            } else if !running {
+                let why = if !self.sysfs.join("class/net").join(&c.device).exists() {
+                    format!("no device {} (is the wireless driver loaded?)", c.device)
+                } else if self.wpa_bin().is_none() {
+                    "wpa_supplicant is not installed (emerge net-wireless/wpa_supplicant)"
+                        .to_string()
+                } else {
+                    "wpa_supplicant is not running (see the apply log)".to_string()
+                };
+                json!({ "connected": false, "wpa_state": "STOPPED", "problem": why })
+            } else {
+                self.query(&c).await
+            };
+            v["running"] = json!(running);
+            if let (Some(o), Some(l)) = (v.as_object_mut(), live.as_object()) {
+                for (k, x) in l {
+                    o.insert(k.clone(), x.clone());
+                }
+            }
+            out.push(v);
+        }
+        Ok(json!({
+            "available": self.wpa_bin().is_some(),
+            "iwd_running": !self.iwd_pids().is_empty(),
+            "uplinks": out,
+        }))
     }
 
     async fn render(&self, store: &ConfigStore) -> Result<String> {
@@ -448,6 +831,67 @@ impl Applier for WifiClientApplier {
     }
 }
 
+/// Turn `wpa_cli status` / `list_networks` / `scan_results` into the uplink's state and, when it is not
+/// connected, one sentence saying why (shown on the API and the page).
+pub fn summarize(ssid: &str, status: &str, networks: &str, scan: &str) -> Value {
+    let field = |k: &str| {
+        status
+            .lines()
+            .find_map(|l| l.strip_prefix(k)?.strip_prefix('='))
+            .map(str::to_string)
+    };
+    let state = field("wpa_state").unwrap_or_else(|| "UNKNOWN".to_string());
+    let connected = state == "COMPLETED";
+    let temp_disabled = networks
+        .lines()
+        .skip(1)
+        .any(|l| l.contains("[TEMP-DISABLED]"));
+    // scan_results: bssid / frequency / signal level / flags / ssid (tab separated, header first)
+    let seen: Vec<(String, String)> = scan
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            (f.len() >= 5 && f[4] == ssid).then(|| (f[2].to_string(), f[3].to_string()))
+        })
+        .collect();
+    let problem: Option<String> = if connected {
+        None
+    } else if temp_disabled && !seen.is_empty() {
+        Some(format!(
+            "authentication with {ssid:?} keeps failing (the access point rejects the key exchange): \
+             most likely a wrong passphrase; wpa_supplicant retries with growing pauses"
+        ))
+    } else if temp_disabled {
+        Some(format!(
+            "connecting to {ssid:?} keeps failing; wpa_supplicant retries with growing pauses"
+        ))
+    } else {
+        match state.as_str() {
+            "INTERFACE_DISABLED" => {
+                Some("the wireless device is down or blocked (rfkill)".to_string())
+            }
+            "SCANNING" | "DISCONNECTED" | "INACTIVE" if seen.is_empty() && !scan.is_empty() => {
+                Some(format!(
+                    "no access point named {ssid:?} in range (last scan)"
+                ))
+            }
+            "SCANNING" | "DISCONNECTED" | "INACTIVE" => Some(format!("looking for {ssid:?}")),
+            s => Some(format!("connecting to {ssid:?} ({})", s.to_lowercase())),
+        }
+    };
+    json!({
+        "connected": connected,
+        "wpa_state": state,
+        "ap_bssid": field("bssid"),
+        "freq": field("freq").and_then(|f| f.parse::<u32>().ok()),
+        "ip_address": field("ip_address"),
+        "key_mgmt": field("key_mgmt"),
+        "signal": seen.first().and_then(|(s, _)| s.parse::<i32>().ok()),
+        "problem": problem,
+    })
+}
+
 /// Is a wpa_supplicant binary installed (for the UI)?
 pub fn available() -> bool {
     which("wpa_supplicant").is_some()
@@ -456,6 +900,8 @@ pub fn available() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lan::ServiceControl;
+    use std::sync::Arc;
 
     fn input(dev: &str) -> WifiClientInput {
         WifiClientInput {
@@ -569,6 +1015,195 @@ mod tests {
         assert!(delete(&s, "wlan0").await.unwrap());
         assert!(!delete(&s, "wlan0").await.unwrap());
         assert!(list(&s).await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn status_explains_why_the_uplink_is_not_connected() {
+        let hdr = "bssid / frequency / signal level / flags / ssid\n";
+        let scan = format!("{hdr}02:00:00:00:00:00\t2412\t-30\t[WPA2-PSK-CCMP][ESS]\tupstream\n");
+        let nets_bad = "network id / ssid / bssid / flags\n0\tupstream\tany\t[TEMP-DISABLED]\n";
+        let nets_ok = "network id / ssid / bssid / flags\n0\tupstream\tany\t[CURRENT]\n";
+        // connected: the details, no problem
+        let v = summarize(
+            "upstream",
+            "bssid=02:00:00:00:00:00\nfreq=2412\nssid=upstream\nkey_mgmt=WPA2-PSK\nwpa_state=COMPLETED\nip_address=10.42.0.120\n",
+            nets_ok,
+            &scan,
+        );
+        assert_eq!(v["connected"], true);
+        assert_eq!(v["freq"], 2412);
+        assert_eq!(v["ip_address"], "10.42.0.120");
+        assert_eq!(v["signal"], -30);
+        assert!(v["problem"].is_null());
+        // the AP is there but the network is temporarily disabled: a wrong passphrase
+        let v = summarize("upstream", "wpa_state=DISCONNECTED\n", nets_bad, &scan);
+        assert_eq!(v["connected"], false);
+        let p = v["problem"].as_str().unwrap();
+        assert!(p.contains("wrong passphrase"), "{p}");
+        // not in range
+        let v = summarize("elsewhere", "wpa_state=SCANNING\n", nets_ok, &scan);
+        assert!(v["problem"].as_str().unwrap().contains("in range"), "{v}");
+        // in progress / radio off
+        let v = summarize("upstream", "wpa_state=4WAY_HANDSHAKE\n", nets_ok, &scan);
+        assert!(v["problem"].as_str().unwrap().contains("4way_handshake"));
+        let v = summarize("upstream", "wpa_state=INTERFACE_DISABLED\n", nets_ok, "");
+        assert!(v["problem"].as_str().unwrap().contains("rfkill"));
+    }
+
+    fn iwd_env(dir: &Path, unit: bool) -> (WifiClientApplier, Arc<crate::lan::RecordingServices>) {
+        let sys = dir.join("sys");
+        std::fs::create_dir_all(sys.join("class/net/wlan0")).unwrap();
+        std::fs::create_dir_all(dir.join("proc")).unwrap();
+        let root = dir.join("root");
+        if unit {
+            std::fs::create_dir_all(root.join("etc/init.d")).unwrap();
+            std::fs::write(root.join("etc/init.d/iwd"), "").unwrap();
+        }
+        let sup = Supervisor::new(
+            crate::supervise::InitMode::Systemd,
+            crate::supervise::NetPaths::under(dir),
+        );
+        let fake = dir.join("wpa_supplicant");
+        std::fs::write(&fake, "").unwrap();
+        let svc = Arc::new(crate::lan::RecordingServices::default());
+        let a = WifiClientApplier::with_parts(sup, dir.join("ctrl"), sys, fake).with_iwd_env(
+            root,
+            dir.join("proc"),
+            svc.clone(),
+        );
+        (a, svc)
+    }
+
+    #[tokio::test]
+    async fn iwd_is_stopped_and_disabled_for_an_uplink_and_gets_the_radio_back_after() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, svc) = iwd_env(dir.path(), true);
+        svc.running.lock().unwrap().insert("iwd".into());
+        svc.enabled.lock().unwrap().insert("iwd".into());
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        // no uplink: iwd is left alone
+        a.apply(&s).await.unwrap();
+        assert!(svc.is_running("iwd") && svc.is_enabled("iwd"));
+        save(&s, &input("wlan0")).await.unwrap();
+        // systemd mode needs systemctl for the wpa unit; iwd is dealt with before that
+        let r = a.apply(&s).await;
+        assert!(!svc.is_running("iwd"), "iwd still running");
+        assert!(!svc.is_enabled("iwd"), "iwd still enabled at boot");
+        assert!(svc.log.lock().unwrap().contains(&"stop iwd".to_string()));
+        if let Ok(r) = &r {
+            assert!(
+                r.applied
+                    .iter()
+                    .any(|l| l.contains("iwd stopped, disabled at boot")),
+                "{r:?}"
+            );
+        }
+        assert!(a.iwd_marker().exists());
+        // the uplink is removed: iwd comes back, the marker goes
+        delete(&s, "wlan0").await.unwrap();
+        let r = a.apply(&s).await.unwrap();
+        assert!(svc.is_running("iwd") && svc.is_enabled("iwd"), "{r:?}");
+        assert!(r
+            .applied
+            .iter()
+            .any(|l| l.contains("iwd enabled and started again")));
+        assert!(!a.iwd_marker().exists());
+        // without the marker (iwd was never ours to stop) nothing happens to it
+        svc.running.lock().unwrap().remove("iwd");
+        a.apply(&s).await.unwrap();
+        assert!(!svc.is_running("iwd"));
+    }
+
+    #[tokio::test]
+    async fn a_device_iwd_took_away_is_created_again_on_its_free_radio() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let (a, _svc) = iwd_env(dir.path(), false);
+        let sys = dir.path().join("sys");
+        // after iwd: radios phy3 and phy4, no wlan0 any more; wlan9 still sits on phy4
+        std::fs::remove_dir_all(sys.join("class/net/wlan0")).unwrap();
+        for p in ["phy3", "phy4"] {
+            std::fs::create_dir_all(sys.join("class/ieee80211").join(p)).unwrap();
+        }
+        std::fs::create_dir_all(sys.join("class/net/wlan9")).unwrap();
+        std::os::unix::fs::symlink("../../ieee80211/phy4", sys.join("class/net/wlan9/phy80211"))
+            .unwrap();
+        // a fake iw that "creates" the device: iw phy P interface add DEV type managed
+        let iw = dir.path().join("iw");
+        std::fs::write(
+            &iw,
+            format!(
+                "#!/bin/sh\necho \"$@\" >> {0}/iw.log\nmkdir -p {1}/class/net/$5\n",
+                dir.path().display(),
+                sys.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&iw, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let a = a.with_iw(iw);
+        assert_eq!(a.free_phys(), vec!["phy3".to_string()]);
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        save(&s, &input("wlan0")).await.unwrap();
+        let mut rep = ApplyReport::default();
+        let c = get(&s, "wlan0").await.unwrap().unwrap();
+        let made = a.recreate_missing(&mut rep, &[&c]).await;
+        assert_eq!(made, vec!["wlan0".to_string()], "{rep:?}");
+        let log = std::fs::read_to_string(dir.path().join("iw.log")).unwrap();
+        assert_eq!(log.trim(), "phy phy3 interface add wlan0 type managed");
+        assert!(rep
+            .applied
+            .iter()
+            .any(|l| l.contains("created on radio phy3")));
+        // the device exists now: nothing more to do
+        let mut rep = ApplyReport::default();
+        assert!(a.recreate_missing(&mut rep, &[&c]).await.is_empty());
+        // two free radios and a name that matches neither: refused with a reason
+        std::fs::create_dir_all(sys.join("class/ieee80211/phy5")).unwrap();
+        save(
+            &s,
+            &WifiClientInput {
+                device: "wlx1".into(),
+                ..input("wlx1")
+            },
+        )
+        .await
+        .unwrap();
+        let c2 = get(&s, "wlx1").await.unwrap().unwrap();
+        std::fs::remove_dir_all(sys.join("class/net/wlan0")).unwrap();
+        let mut rep = ApplyReport::default();
+        assert!(a.recreate_missing(&mut rep, &[&c2]).await.is_empty());
+        assert!(
+            rep.warnings
+                .iter()
+                .any(|w| w.contains("several radios are free")),
+            "{rep:?}"
+        );
+        // ... but wlanN goes to phyN
+        save(&s, &input("wlan5")).await.unwrap();
+        let c3 = get(&s, "wlan5").await.unwrap().unwrap();
+        let mut rep = ApplyReport::default();
+        assert_eq!(
+            a.recreate_missing(&mut rep, &[&c3]).await,
+            vec!["wlan5".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn no_iwd_installed_means_no_service_calls() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, svc) = iwd_env(dir.path(), false);
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        save(&s, &input("wlan0")).await.unwrap();
+        let _ = a.apply(&s).await;
+        assert!(svc.log.lock().unwrap().is_empty());
+        assert!(!a.iwd_marker().exists());
+        // the status of a configured uplink whose daemon is not running says why
+        let st = a.status(&s).await.unwrap();
+        let u = &st["uplinks"][0];
+        assert_eq!(u["device"], "wlan0");
+        assert_eq!(u["connected"], false);
+        assert!(u["problem"].as_str().is_some(), "{st}");
+        assert!(!st.to_string().contains("correct horse"));
     }
 
     #[tokio::test]

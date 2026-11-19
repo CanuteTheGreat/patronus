@@ -348,6 +348,63 @@ fn dynamic_gateways_learn_the_interfaces_own_default_route() {
     assert!(r.routable() && !r.link_up);
 }
 
+fn wlan_with(up: bool, oper: &str, dynamic_lease: bool) -> KernelState {
+    let mut k = KernelState::default();
+    k.links.insert(
+        "wlan0".into(),
+        crate::linkstate::KLink {
+            name: "wlan0".into(),
+            up,
+            operstate: oper.into(),
+            addrs: vec![crate::linkstate::KAddr {
+                net: "10.42.0.106/24".parse().unwrap(),
+                dynamic: dynamic_lease,
+                scope: "global".into(),
+            }],
+            ..Default::default()
+        },
+    );
+    k
+}
+
+#[test]
+fn a_lease_without_its_default_route_asks_for_a_dhcp_renew() {
+    // the Wi-Fi uplink came back (carrier, lease still there) but the kernel dropped the route
+    let k = wlan_with(true, "UP", true);
+    let r = resolve_one(&gw("WWAN", "wlan0", None), Some("wlan0"), &k);
+    assert!(!r.routable());
+    assert_eq!(
+        renew_wanted(&gw("WWAN", "wlan0", None), &r, &k).as_deref(),
+        Some("wlan0")
+    );
+    // not while the radio is not associated, not for a static address, not for a fixed gateway
+    for k2 in [
+        wlan_with(true, "DORMANT", true),
+        wlan_with(false, "DOWN", true),
+        wlan_with(true, "UP", false),
+    ] {
+        let r = resolve_one(&gw("WWAN", "wlan0", None), Some("wlan0"), &k2);
+        assert_eq!(renew_wanted(&gw("WWAN", "wlan0", None), &r, &k2), None);
+    }
+    let r = resolve_one(&gw("S", "wlan0", Some("10.42.0.1")), Some("wlan0"), &k);
+    assert_eq!(
+        renew_wanted(&gw("S", "wlan0", Some("10.42.0.1")), &r, &k),
+        None
+    );
+    // the route is there: nothing to do
+    let mut k3 = k.clone();
+    k3.default_routes.push(crate::linkstate::KRoute {
+        v6: false,
+        dev: "wlan0".into(),
+        gateway: Some("10.42.0.1".into()),
+        metric: 201,
+        protocol: "dhcp".into(),
+    });
+    let r = resolve_one(&gw("WWAN", "wlan0", None), Some("wlan0"), &k3);
+    assert!(r.routable());
+    assert_eq!(renew_wanted(&gw("WWAN", "wlan0", None), &r, &k3), None);
+}
+
 // ---------------------------------------------------------------------------
 // planning
 // ---------------------------------------------------------------------------

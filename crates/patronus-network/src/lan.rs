@@ -384,6 +384,10 @@ pub async fn resolve_iface(store: &ConfigStore, spec: &str) -> Result<Vec<String
 /// in tests).
 pub trait ServiceControl: Send + Sync {
     fn is_running(&self, svc: &str) -> bool;
+    /// Does `svc` start at boot? (Unknown = false.)
+    fn is_enabled(&self, _svc: &str) -> bool {
+        false
+    }
     /// (Re)start `svc` so it runs with its current config.
     fn restart(&self, svc: &str) -> Result<()>;
     fn stop(&self, svc: &str) -> Result<()>;
@@ -432,6 +436,10 @@ impl SystemServices {
 impl ServiceControl for SystemServices {
     fn is_running(&self, svc: &str) -> bool {
         Self::manager().is_running(svc).unwrap_or(false)
+    }
+
+    fn is_enabled(&self, svc: &str) -> bool {
+        Self::manager().is_enabled(svc).unwrap_or(false)
     }
 
     fn restart(&self, svc: &str) -> Result<()> {
@@ -494,6 +502,9 @@ pub struct RecordingServices {
 impl ServiceControl for RecordingServices {
     fn is_running(&self, svc: &str) -> bool {
         self.running.lock().unwrap().contains(svc)
+    }
+    fn is_enabled(&self, svc: &str) -> bool {
+        self.enabled.lock().unwrap().contains(svc)
     }
     fn restart(&self, svc: &str) -> Result<()> {
         self.log.lock().unwrap().push(format!("restart {svc}"));

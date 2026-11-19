@@ -2944,6 +2944,52 @@ type ProbeWindow = (
     VecDeque<Option<f64>>,
 );
 
+/// `system_config` key: seconds between DHCP renew requests for a dynamic IPv4 gateway whose device has a DHCP
+/// address and carrier but no default route any more (0 = never ask). Default [`DHCP_RENEW_DEFAULT_SECS`].
+pub const DHCP_RENEW_KEY: &str = "routing.dhcp_renew_secs";
+pub const DHCP_RENEW_DEFAULT_SECS: i64 = 30;
+
+/// The device of a dynamic IPv4 gateway that lost its default route while it still holds a DHCP lease and has
+/// carrier: the device went down and up (a Wi-Fi uplink whose wpa_supplicant restarted, a NIC reset), the kernel
+/// dropped its routes, and a DHCP client that does not watch the link (busybox udhcpc) would only put the route
+/// back at the next renew, hours later.
+pub fn renew_wanted(g: &Gateway, r: &Resolved, k: &KernelState) -> Option<String> {
+    if g.address.is_some() || g.family.v6() || r.ptp || r.address.is_some() {
+        return None;
+    }
+    let dev = r.dev.as_deref()?;
+    let l = k.links.get(dev)?;
+    let carrier = l.up && l.operstate == "UP";
+    let leased = l.v4().any(|a| a.dynamic && a.scope == "global");
+    (carrier && leased).then(|| dev.to_string())
+}
+
+/// Asks a device's DHCP client for a renew ([`crate::dhcp_client::renew`]; a recorder in tests).
+#[async_trait::async_trait]
+pub trait DhcpRenewer: Send + Sync {
+    async fn renew(&self, dev: &str) -> Result<String>;
+}
+
+/// The real DHCP clients.
+pub struct SystemRenewer;
+
+#[async_trait::async_trait]
+impl DhcpRenewer for SystemRenewer {
+    async fn renew(&self, dev: &str) -> Result<String> {
+        crate::dhcp_client::renew(dev).await
+    }
+}
+
+/// Never asks (unit tests of the monitor that do not care).
+pub struct NoRenewer;
+
+#[async_trait::async_trait]
+impl DhcpRenewer for NoRenewer {
+    async fn renew(&self, _dev: &str) -> Result<String> {
+        Ok("not asked".into())
+    }
+}
+
 /// Gateway monitor: probes every gateway once a tick, publishes the states
 /// and re-applies the routes phase when a state or address changes.
 pub struct Monitor {
@@ -2962,6 +3008,9 @@ pub struct Monitor {
     states: BTreeMap<String, GwStatus>,
     last_sig: Option<String>,
     ticks: u64,
+    renewer: Arc<dyn DhcpRenewer>,
+    /// Per device: when its DHCP client was last asked for a renew.
+    renewed: BTreeMap<String, i64>,
 }
 
 impl Monitor {
@@ -2979,13 +3028,60 @@ impl Monitor {
             states: BTreeMap::new(),
             last_sig: None,
             ticks: 0,
+            renewer: Arc::new(NoRenewer),
+            renewed: BTreeMap::new(),
         }
     }
 
-    /// The real monitor (ping + ip + the extra probes).
+    /// The real monitor (ping + ip + the extra probes + DHCP renew requests).
     pub fn system(applier: Arc<dyn Applier>) -> Self {
         Self::new(applier, Arc::new(SystemCmd), Arc::new(PingProber))
             .with_extra(Arc::new(SysExtraProber))
+            .with_renewer(Arc::new(SystemRenewer))
+    }
+
+    /// Who asks a device's DHCP client for a renew ([`renew_wanted`]).
+    pub fn with_renewer(mut self, r: Arc<dyn DhcpRenewer>) -> Self {
+        self.renewer = r;
+        self
+    }
+
+    /// Ask the DHCP client of every dynamic gateway's device that lost its default route for a renew, at most
+    /// once per `routing.dhcp_renew_secs`.
+    async fn renew_lost_routes(
+        &mut self,
+        store: &ConfigStore,
+        cfg: &RoutingConfig,
+        resolved: &BTreeMap<String, Resolved>,
+        k: &KernelState,
+    ) {
+        let every = store
+            .load_system_config(DHCP_RENEW_KEY)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .unwrap_or(DHCP_RENEW_DEFAULT_SECS);
+        if every <= 0 {
+            return;
+        }
+        let t = now();
+        for g in &cfg.gateways {
+            let Some(dev) = resolved.get(&g.name).and_then(|r| renew_wanted(g, r, k)) else {
+                continue;
+            };
+            if self.renewed.get(&dev).is_some_and(|l| t - *l < every) {
+                continue;
+            }
+            self.renewed.insert(dev.clone(), t);
+            match self.renewer.renew(&dev).await {
+                Ok(m) => tracing::info!(
+                    "gateway {}: {dev} holds a DHCP lease but lost its default route (link went down and up): {m}",
+                    g.name
+                ),
+                Err(e) => tracing::warn!("gateway {}: DHCP renew on {dev}: {e}", g.name),
+            }
+        }
     }
 
     /// Also run the extra tcp/http/dns probes stored for each gateway.
@@ -3070,6 +3166,7 @@ impl Monitor {
         }
         let k = KernelState::read(self.cmd.as_ref()).await?;
         let resolved = resolve_all(store, &cfg, &k).await?;
+        self.renew_lost_routes(store, &cfg, &resolved, &k).await;
         if self.extra.is_some() && (self.ticks - 1).is_multiple_of(EXTRA_EVERY_TICKS) {
             self.kick_extra(store, &cfg, &resolved).await;
         }

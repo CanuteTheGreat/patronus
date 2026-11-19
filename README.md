@@ -99,6 +99,15 @@ that are not finished are listed separately under
   seconds and comes back when it recovers; gateways in the same tier share
   the traffic (load balancing), and every uplink with a gateway gets
   outbound NAT. [C29]
+- A Wi-Fi network can be an uplink (USE=wifi-client, e.g. the backup line of
+  a satellite or mobile router's own Wi-Fi): wpa_supplicant joins it, the
+  device gets its address by DHCP like a wired WAN, and as the lower tier of a
+  gateway group it carries the traffic (with outbound NAT) when the wired WAN
+  goes down and hands it back when the wired WAN returns; it reconnects by
+  itself after a reboot, an iwd on the same radio is stopped first, and the
+  status says in words why it is not connected (e.g. a wrong passphrase).
+  Proven on the simulated radios of mac80211_hwsim, not on real radio
+  hardware. [C85]
 - Static routes go via an IP address or a named gateway, and all routing
   configuration survives a reboot (`patronus apply` rebuilds it; applying
   again changes nothing). [C30]

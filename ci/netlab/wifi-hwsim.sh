@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Host-side runner for ci/netlab/lane-s-wifi-hwsim.sh (per-device Wi-Fi credentials
-# on mac80211_hwsim), lane-s-wifi-chan-hwsim.sh (automatic channel choice) and lane-t-guest-wifi.sh (the guest SSID); HWSIM_SCENARIOS picks others. The kernel module is host-global, so this
+# on mac80211_hwsim), lane-s-wifi-chan-hwsim.sh (automatic channel choice), lane-t-guest-wifi.sh (the guest SSID) and lane-s-wifi-client-hwsim.sh (a Wi-Fi
+# uplink as failover WAN); HWSIM_SCENARIOS picks others. The kernel module is host-global, so this
 #   1. takes a lock and refuses to run if mac80211_hwsim is already loaded,
 #   2. loads it with 6 radios (modprobe: sudo when not root),
 #   3. moves the new phys into the test container's network namespace
@@ -22,7 +23,7 @@ cd "$(dirname "$0")/../.."
 
 IMAGE=${NETLAB_IMAGE:-debian:trixie}
 RADIOS=${HWSIM_RADIOS:-6}
-SCENARIOS=${HWSIM_SCENARIOS:-lane-s-wifi-hwsim.sh lane-s-wifi-chan-hwsim.sh lane-t-guest-wifi.sh}
+SCENARIOS=${HWSIM_SCENARIOS:-lane-s-wifi-hwsim.sh lane-s-wifi-chan-hwsim.sh lane-t-guest-wifi.sh lane-s-wifi-client-hwsim.sh}
 SUDO=; [ "$(id -u)" = 0 ] || SUDO=sudo
 C=${HWSIM_CONTAINER:-}
 OWN=
@@ -60,8 +61,11 @@ if [ -z "$C" ]; then
   BIN=${NETLAB_BIN_DIR:-target/debug}
   docker run -d --name "$C" --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN \
     --security-opt apparmor=unconfined --security-opt systempaths=unconfined \
+    `# iwd (the Wi-Fi uplink lane ends one on the router's radio) needs AF_ALG sockets, which docker's seccomp` \
+    `# refuses, and /dev/rfkill (misc major 10; the lane creates the node)` \
+    --security-opt seccomp=unconfined --device-cgroup-rule 'c 10:* rmw' \
     --memory 2g --cpus 2 "$IMAGE" sleep infinity >/dev/null
-  docker exec "$C" bash -c 'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq hostapd wpasupplicant iw nftables iproute2 curl python3 dnsmasq-base conntrack sqlite3 iputils-ping >/dev/null'
+  docker exec "$C" bash -c 'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && apt-get install -y -qq hostapd wpasupplicant iw nftables iproute2 curl python3 dnsmasq-base conntrack sqlite3 iputils-ping udhcpc iwd dbus-daemon >/dev/null'
   docker exec "$C" mkdir -p /t
   docker cp "$BIN/patronus-cli" "$C:/t/patronus"; docker cp "$BIN/patronus-web" "$C:/t/patronus-web"
   docker cp ci/netlab/lib.sh "$C:/t/"; for s in $SCENARIOS; do docker cp "ci/netlab/$s" "$C:/t/"; done

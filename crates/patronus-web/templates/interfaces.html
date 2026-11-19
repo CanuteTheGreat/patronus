@@ -166,6 +166,29 @@
         </form>
     </div>
 
+    <h2>Wi-Fi uplinks <span class="muted">(station mode: a Wi-Fi network as WAN or backup WAN)</span></h2>
+    <div id="wu-off" class="empty hidden"></div>
+    <div id="wu-on">
+        <p class="muted">The wireless device joins the upstream network here; give it a role (e.g. OPT1) and IPv4 mode
+            DHCP above, then a gateway on the <a href="/routing">Routing</a> page (a gateway group makes it a failover
+            uplink). An iwd on the same radio is stopped first.</p>
+        <table id="wu"><thead><tr><th>Device</th><th>Network</th><th>Security</th><th>State</th><th>Signal / channel</th><th>Address</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+        <div id="wu-empty" class="empty hidden">No Wi-Fi uplinks configured.</div>
+        <form class="card" id="wu-form" onsubmit="return saveUplink(event)">
+            <div class="grid">
+                <div><label>Wireless device<input name="device" placeholder="wlan0" maxlength="15" required></label></div>
+                <div><label>Network name (SSID)<input name="ssid" maxlength="32" required></label></div>
+                <div><label>Security<select name="security"><option value="wpa2">WPA2</option><option value="wpa2-wpa3">WPA2/WPA3</option>
+                    <option value="wpa3">WPA3</option><option value="open">Open</option></select></label></div>
+                <div><label>Passphrase (empty = keep the stored one)<input name="psk" type="password" autocomplete="new-password"></label></div>
+                <div><label>Only this access point (BSSID, optional)<input name="bssid" placeholder="aa:bb:cc:dd:ee:ff"></label></div>
+                <div><label>Description<input name="description"></label></div>
+                <div><label><input type="checkbox" name="enabled" checked> Enabled</label></div>
+            </div>
+            <p><button class="btn btn-primary" type="submit">Save &amp; connect</button></p>
+        </form>
+    </div>
+
     <h2>DHCP client</h2>
     <p class="muted">Used by interfaces in DHCP mode. Build default: <span id="dhcp-default" class="mono"></span>.
         Running clients: <span id="daemons"></span></p>
@@ -374,6 +397,57 @@ function addPppoe(ev) {
     return false;
 }
 function setDhcpClient() { call('PUT', '/api/interfaces/dhcp-client', {client: document.getElementById('dhcp-client').value}); }
+
+async function loadUplinks() {
+    const r = await fetch('/api/wifi/uplinks', {credentials: 'same-origin'});
+    let j = {};
+    try { j = await r.json(); } catch (e) {}
+    if (!r.ok) {
+        hide('wu-on'); show('wu-off');
+        document.getElementById('wu-off').textContent = j.error || ('Wi-Fi uplinks: HTTP ' + r.status);
+        return;
+    }
+    show('wu-on'); hide('wu-off');
+    const tb = document.querySelector('#wu tbody');
+    const u = j.uplinks || [];
+    u.length ? hide('wu-empty') : show('wu-empty');
+    tb.innerHTML = u.map(x => {
+        const st = !x.enabled ? '<span class="badge grey">disabled</span>'
+            : x.connected ? '<span class="badge up">connected</span>'
+            : '<span class="badge down">not connected</span>';
+        const why = x.problem ? '<br><span class="muted">' + esc(x.problem) + '</span>' : '';
+        const sig = x.connected ? esc((x.signal != null ? x.signal + ' dBm' : '') + (x.freq ? ' · ' + x.freq + ' MHz' : '') + (x.ap_bssid ? ' · ' + x.ap_bssid : '')) : '';
+        return '<tr><td class="mono">' + esc(x.device) + '</td><td>' + esc(x.ssid) + (x.description ? '<br><span class="muted">' + esc(x.description) + '</span>' : '')
+            + '</td><td>' + esc(x.security) + '</td><td>' + st + why + '</td><td>' + sig + '</td><td class="mono">' + esc(x.ip_address || '')
+            + '</td><td><button class="btn" onclick="editUplink(' + esc(JSON.stringify(x.device)) + ')">Edit</button>'
+            + '<button class="btn btn-danger" onclick="delUplink(' + esc(JSON.stringify(x.device)) + ')">Delete</button></td></tr>';
+    }).join('');
+    WU = u;
+    if (j.available === false) msg('warn', 'wpa_supplicant is not installed: emerge net-wireless/wpa_supplicant (USE=wifi-client).');
+}
+let WU = [];
+function editUplink(dev) {
+    const x = WU.find(u => u.device === dev); if (!x) return;
+    const f = document.getElementById('wu-form');
+    f.device.value = x.device; f.ssid.value = x.ssid; f.security.value = x.security; f.psk.value = '';
+    f.bssid.value = x.bssid || ''; f.description.value = x.description || ''; f.enabled.checked = x.enabled;
+    f.scrollIntoView({behavior: 'smooth'});
+}
+async function saveUplink(ev) {
+    ev.preventDefault();
+    const f = ev.target;
+    const ok = await call('PUT', '/api/wifi/uplinks/' + encodeURIComponent(f.device.value.trim()), {
+        ssid: f.ssid.value, security: f.security.value, psk: f.psk.value || null, bssid: f.bssid.value || null,
+        description: f.description.value || null, enabled: f.enabled.checked});
+    f.psk.value = '';
+    if (ok) await loadUplinks();
+    return false;
+}
+async function delUplink(dev) {
+    if (!confirm('Remove the Wi-Fi uplink on ' + dev + '? wpa_supplicant stops.')) return;
+    if (await call('DELETE', '/api/wifi/uplinks/' + encodeURIComponent(dev))) await loadUplinks();
+}
+loadUplinks();
 
 async function load() {
     const r = await fetch('/api/interfaces', {credentials: 'same-origin'});

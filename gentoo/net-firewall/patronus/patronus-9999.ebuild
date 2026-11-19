@@ -37,7 +37,7 @@ IUSE="
 	+vlan qos +tc
 	certificates acme certbot
 	ldap radius +totp +plugins
-	+segmentation wifi-ap wifi-client +guest
+	+segmentation wifi-ap +wifi-client +guest
 	+uci-import
 	geoip geoip2
 	+aliases +insight
@@ -127,7 +127,7 @@ RDEPEND="
 	segmentation? ( sys-apps/iproute2 net-firewall/nftables )
 	guest? ( net-dns/dnsmasq sys-apps/iproute2 net-firewall/nftables hostapd? ( net-wireless/hostapd ) )
 	wifi-ap? ( net-wireless/hostapd net-wireless/iw )
-	wifi-client? ( net-wireless/wpa_supplicant )
+	wifi-client? ( net-wireless/wpa_supplicant net-wireless/iw )
 	qos? ( sys-apps/iproute2 )
 	tc? ( sys-apps/iproute2 )
 	certificates? (
@@ -455,6 +455,7 @@ src_install() {
 			systemd_dounit "${FILESDIR}/patronus-wifi-events@.service"
 			systemd_dounit "${FILESDIR}/patronus-wifi-chan@.service"
 		fi
+		use wifi-client && systemd_dounit "${FILESDIR}/patronus-wpa@.service"
 		use dashboard && systemd_dounit "${FILESDIR}/patronus-dashboard.service"
 		# unbound keeps /var/lib/unbound (root:unbound 0775): the vendor unit would chown it to root and DNSSEC autotrust fails
 		use unbound && systemd_install_dropin unbound.service "${FILESDIR}/unbound-patronus.conf"
@@ -474,6 +475,7 @@ src_install() {
 			newinitd "${FILESDIR}/patronus-wifi-events.initd" patronus-wifi-events
 			newinitd "${FILESDIR}/patronus-wifi-chan.initd" patronus-wifi-chan
 		fi
+		use wifi-client && newinitd "${FILESDIR}/patronus-wpa.initd" patronus-wpa
 		newconfd "${FILESDIR}/patronus.confd" patronus
 		if use dashboard; then
 			newinitd "${FILESDIR}/patronus-dashboard.initd" patronus-dashboard

@@ -1,0 +1,18 @@
+[Unit]
+# wpa_supplicant for the Patronus Wi-Fi uplink on device %i (USE=wifi-client): the
+# wireless device joins an upstream access point and becomes a WAN like any other.
+# The command line and its generated config (mode 0600, holds the passphrase) come
+# from the Patronus config store; `patronus apply` writes
+# /var/lib/patronus/net/svc/patronus-wpa.%i.env and starts or stops this unit.
+# Do not enable it by hand.
+Description=Patronus Wi-Fi uplink (wpa_supplicant) on %i
+After=patronus-firewall.service
+Conflicts=iwd.service
+
+[Service]
+Type=simple
+EnvironmentFile=/var/lib/patronus/net/svc/patronus-wpa.%i.env
+# $$ = let the shell (not systemd) expand and word-split the command
+ExecStart=/bin/sh -c 'exec $$PATRONUS_CMD'
+Restart=always
+RestartSec=3

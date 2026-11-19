@@ -238,6 +238,72 @@ pub fn pd_hook_script() -> String {
         .to_string()
 }
 
+/// Ask the DHCP client that serves `dev` for a renew, so it runs its bound/renew handling again and puts the
+/// lease's default route back. Needed when the device went administratively down and up while the lease stayed
+/// (the kernel drops every route of a device that goes down; wpa_supplicant takes its device down when it
+/// restarts): busybox udhcpc never notices that by itself. udhcpc gets SIGUSR1 (renew), dhcpcd `-n` (rebind).
+pub async fn renew(dev: &str) -> Result<String> {
+    renew_in(std::path::Path::new("/proc"), dev, which("dhcpcd")).await
+}
+
+/// [`renew`] against another /proc (tests).
+pub async fn renew_in(
+    proc_dir: &std::path::Path,
+    dev: &str,
+    dhcpcd: Option<PathBuf>,
+) -> Result<String> {
+    let mut hit = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(proc_dir) {
+        for e in rd.flatten() {
+            let Ok(pid) = e.file_name().to_string_lossy().parse::<i32>() else {
+                continue;
+            };
+            let d = e.path();
+            if std::fs::read_to_string(d.join("comm"))
+                .unwrap_or_default()
+                .trim()
+                != "udhcpc"
+            {
+                continue;
+            }
+            let cmd = std::fs::read(d.join("cmdline")).unwrap_or_default();
+            let args: Vec<&[u8]> = cmd.split(|b| *b == 0).collect();
+            if args
+                .windows(2)
+                .any(|w| w[0] == b"-i" && w[1] == dev.as_bytes())
+            {
+                hit.push(pid);
+            }
+        }
+    }
+    if !hit.is_empty() {
+        for pid in &hit {
+            nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(*pid),
+                nix::sys::signal::Signal::SIGUSR1,
+            )
+            .map_err(|e| Error::Network(format!("udhcpc {pid}: {e}")))?;
+        }
+        return Ok(format!("asked udhcpc (pid {hit:?}) to renew its lease"));
+    }
+    if let Some(bin) = dhcpcd {
+        let out = tokio::process::Command::new(&bin)
+            .args(["-n", dev])
+            .output()
+            .await
+            .map_err(|e| Error::Network(format!("dhcpcd -n {dev}: {e}")))?;
+        return if out.status.success() {
+            Ok("asked dhcpcd to rebind".to_string())
+        } else {
+            Err(Error::Network(format!(
+                "dhcpcd -n {dev}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )))
+        };
+    }
+    Err(Error::Network(format!("no DHCP client runs for {dev}")))
+}
+
 /// The daemon spec for `dev`.
 #[allow(clippy::too_many_arguments)]
 pub fn spec(
@@ -322,6 +388,41 @@ pub fn spec(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn renew_finds_the_udhcpc_of_the_device_only() {
+        let d = tempfile::tempdir().unwrap();
+        // our own pid stands in for "a udhcpc of another device" (it must not be signalled), a missing pid for
+        // the one of the device: the signal then fails, which proves it was picked
+        let mk = |pid: &str, comm: &str, args: &[&str]| {
+            let p = d.path().join(pid);
+            std::fs::create_dir_all(&p).unwrap();
+            std::fs::write(p.join("comm"), format!("{comm}\n")).unwrap();
+            std::fs::write(p.join("cmdline"), args.join("\0")).unwrap();
+        };
+        mk(
+            &std::process::id().to_string(),
+            "udhcpc",
+            &["udhcpc", "-f", "-i", "eth1"],
+        );
+        mk(
+            "2147483000",
+            "udhcpc",
+            &["udhcpc", "-f", "-i", "wlan0", "-s", "x"],
+        );
+        mk("12", "bash", &["bash", "-i", "wlan0"]);
+        let e = renew_in(d.path(), "wlan0", None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("udhcpc 2147483000"), "{e}");
+        // nobody serves wlan5 and there is no dhcpcd: said so
+        let e = renew_in(d.path(), "wlan5", None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("no DHCP client runs for wlan5"), "{e}");
+    }
 
     #[test]
     fn specs_and_scripts() {
