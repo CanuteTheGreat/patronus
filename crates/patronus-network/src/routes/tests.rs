@@ -17,6 +17,11 @@ struct FakeCmd {
     owned: BTreeMap<(String, String), String>,
     calls: Mutex<Vec<String>>,
     fail_on: Option<String>,
+    /// Emulate the kernel's policy-rule table (`ip rule show|add|del`):
+    /// `Some(pause)` = stateful, with a pause after each read to widen
+    /// the read-then-write window the way a loaded host does.
+    kernel_rules: Option<std::time::Duration>,
+    rule_table: Mutex<Vec<String>>,
 }
 
 #[async_trait]
@@ -32,6 +37,42 @@ impl Cmd for FakeCmd {
             }
         }
         let a: Vec<&str> = args.iter().map(String::as_str).collect();
+        if let Some(pause) = self.kernel_rules {
+            match a.as_slice() {
+                ["-j", fam, "rule", "show"] => {
+                    let out = self.kernel_rule_listing(fam);
+                    tokio::time::sleep(pause).await;
+                    return Ok(out);
+                }
+                [fam, "rule", "add", rest @ ..] => {
+                    let key = format!("{fam} {}", rest.join(" "));
+                    let mut t = self.rule_table.lock().unwrap();
+                    if t.iter().any(|r| *r == key) {
+                        return Err(Error::Network(format!(
+                            "`{line}` failed: RTNETLINK answers: File exists"
+                        )));
+                    }
+                    t.push(key);
+                    return Ok(String::new());
+                }
+                [fam, "rule", "del", "pref", p] => {
+                    let mut t = self.rule_table.lock().unwrap();
+                    let pre = format!("{fam} pref {p} ");
+                    match t.iter().position(|r| r.starts_with(&pre)) {
+                        Some(i) => {
+                            t.remove(i);
+                            return Ok(String::new());
+                        }
+                        None => {
+                            return Err(Error::Network(format!(
+                                "`{line}` failed: RTNETLINK answers: No such file or directory"
+                            )))
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
         Ok(match a.as_slice() {
             ["-j", "-d", "-s", "link", "show"] => self.links.clone(),
             ["-j", "addr", "show"] => self.addrs.clone(),
@@ -55,6 +96,36 @@ impl Cmd for FakeCmd {
 }
 
 impl FakeCmd {
+    /// `ip -j <fam> rule show` of the emulated table.
+    fn kernel_rule_listing(&self, fam: &str) -> String {
+        let rows: Vec<String> = self
+            .rule_table
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|r| r.starts_with(&format!("{fam} ")))
+            .map(|r| {
+                // "-4 pref 31100 fwmark 0x10002 lookup 65538 [suppress_prefixlength 0]"
+                let w: Vec<&str> = r.split(' ').collect();
+                let val = |k: &str| w.iter().position(|x| *x == k).map(|i| w[i + 1]);
+                let mut j = format!(
+                    r#"{{"priority":{},"src":"all","table":"{}""#,
+                    val("pref").unwrap(),
+                    val("lookup").unwrap()
+                );
+                if let Some(m) = val("fwmark") {
+                    j.push_str(&format!(r#","fwmark":"{m}""#));
+                }
+                if let Some(sp) = val("suppress_prefixlength") {
+                    j.push_str(&format!(r#","suppress_prefixlen":{sp}"#));
+                }
+                j.push('}');
+                j
+            })
+            .collect();
+        format!("[{}]", rows.join(","))
+    }
+
     fn writes(&self) -> Vec<String> {
         self.calls
             .lock()
@@ -1026,6 +1097,82 @@ async fn apply_installs_the_routes_and_removes_only_its_own_stale_ones() {
     assert_eq!(st["gateways"][0]["resolved_address"], "198.51.100.1");
     assert_eq!(st["gateways"][0]["dev"], "wan1");
     assert_eq!(st["default_via"]["inet"][0], "WAN1");
+}
+
+/// Two gateways with policy tables, so the apply wants several `ip rule`s.
+async fn two_gateway_store() -> ConfigStore {
+    let s = store().await;
+    for (n, i) in [("WAN1", "@wan"), ("WAN2", "@opt1")] {
+        save_gateway(&s, None, &gi(n, i).validated().unwrap())
+            .await
+            .unwrap();
+    }
+    set_default(&s, Family::Inet, Some("WAN1")).await.unwrap();
+    s
+}
+
+/// Root cause of the netlab reds "ip -4 rule add pref 31101 ... File exists"
+/// (lane-e-routing, lane-s-uplink): `patronus applyd`'s gateway monitor and a
+/// root patronus-web (or `patronus apply`) are separate processes, each with its
+/// own in-process mutex, so one's read of the kernel's rules and its `rule add`
+/// interleaved with the other's. Two appliers sharing a kernel table and a lock
+/// file must never both add the same rule.
+#[tokio::test]
+async fn two_processes_applying_routes_do_not_race_on_ip_rule_add() {
+    let s = two_gateway_store().await;
+    let dir = tempfile::tempdir().unwrap();
+    let lock = dir.path().join("run").join(APPLY_LOCK_FILE);
+    let mut f = fake();
+    f.kernel_rules = Some(std::time::Duration::from_millis(80));
+    let f = Arc::new(f);
+    let mk = || {
+        RoutesApplier::new(f.clone(), PathBuf::from("/nonexistent"))
+            .with_status(BTreeMap::new())
+            .with_process_lock(lock.clone(), std::time::Duration::from_secs(10))
+    };
+    let (a, b) = (mk(), mk());
+    let (ra, rb) = tokio::join!(a.apply(&s), b.apply(&s));
+    ra.unwrap();
+    rb.unwrap();
+    let adds: Vec<String> = f
+        .writes()
+        .into_iter()
+        .filter(|w| w.contains(" rule add "))
+        .collect();
+    let mut uniq = adds.clone();
+    uniq.sort();
+    uniq.dedup();
+    assert_eq!(adds.len(), uniq.len(), "a rule was added twice: {adds:?}");
+    assert!(!adds.is_empty());
+}
+
+/// The negative control: without the shared lock the same two appliers do
+/// race (this is the failure the netlab lanes saw), and the idempotent add
+/// is what keeps the apply from failing on a rule that is already there.
+#[tokio::test]
+async fn a_rule_that_appeared_between_read_and_add_is_not_an_error() {
+    let s = two_gateway_store().await;
+    let mut f = fake();
+    f.kernel_rules = Some(std::time::Duration::from_millis(80));
+    let f = Arc::new(f);
+    let mk = || {
+        RoutesApplier::new(f.clone(), PathBuf::from("/nonexistent")).with_status(BTreeMap::new())
+    };
+    let (a, b) = (mk(), mk());
+    let (ra, rb) = tokio::join!(a.apply(&s), b.apply(&s));
+    let (ra, rb) = (ra.unwrap(), rb.unwrap());
+    let dup = |r: &ApplyReport| r.applied.iter().any(|l| l.contains("already present"));
+    assert!(
+        dup(&ra) || dup(&rb),
+        "no lock: the race must have happened and been absorbed"
+    );
+    // and the kernel ends up right: a third apply has nothing to do
+    let c = mk().apply(&s).await.unwrap();
+    assert!(
+        c.applied.iter().all(|l| !l.contains(" rule ")),
+        "{:?}",
+        c.applied
+    );
 }
 
 #[tokio::test]

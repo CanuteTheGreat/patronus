@@ -28,6 +28,18 @@
 # Every daemon the scenarios start inherits this.
 ulimit -n 65536 2>/dev/null || true
 
+# The daemons under test write the config store while a scenario reads it with the sqlite3
+# CLI. The store runs in journal_mode=DELETE with a 10 s busy_timeout (patronus-config
+# store.rs), so a daemon's commit blocks other connections briefly, and the CLI's own
+# default busy timeout is 0: a read that lands in that window fails with
+# "database is locked" and the scenario asserts on an empty result (lane-n-dhcp6pd run 2106,
+# lane-s-segmentation run 782). Wait for the lock like the product does; every lane gets
+# this by sourcing the library. Exported so `bash -c` children inherit it.
+NL_SQLITE_BUSY_MS=${NL_SQLITE_BUSY_MS:-10000}
+sqlite3() { command sqlite3 -cmd ".timeout $NL_SQLITE_BUSY_MS" "$@"; }
+export -f sqlite3
+export NL_SQLITE_BUSY_MS
+
 NL_T=${NL_T:-/t}
 P=${PATRONUS_BIN:-$NL_T/patronus}
 WEB=${PATRONUS_WEB_BIN:-$NL_T/patronus-web}

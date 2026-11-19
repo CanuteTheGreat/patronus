@@ -2194,11 +2194,30 @@ pub struct RoutesApplier {
     proc_sys: PathBuf,
     status_override: Option<BTreeMap<String, GwStatus>>,
     lock: tokio::sync::Mutex<()>,
+    /// Advisory lock file shared by every process that applies routes
+    /// (patronus applyd's gateway monitor, `patronus apply`, a root
+    /// patronus-web): the in-process mutex alone leaves their
+    /// read-kernel-then-write sequences free to interleave.
+    xlock: Option<PathBuf>,
+    /// How long to wait for that lock before giving up.
+    xlock_wait: Duration,
 }
+
+/// Name of the cross-process lock file inside the run directory
+/// (`PATRONUS_RUN_DIR`, see [`crate::supervise::NetPaths`]).
+pub const APPLY_LOCK_FILE: &str = "routes-apply.lock";
 
 impl Default for RoutesApplier {
     fn default() -> Self {
-        Self::new(Arc::new(SystemCmd), PathBuf::from("/proc/sys"))
+        let mut a = Self::new(Arc::new(SystemCmd), PathBuf::from("/proc/sys"));
+        a.xlock = Some(crate::supervise::NetPaths::default().run_dir.join(APPLY_LOCK_FILE));
+        if let Some(n) = std::env::var("PATRONUS_ROUTES_LOCK_WAIT_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            a.xlock_wait = Duration::from_secs(n);
+        }
+        a
     }
 }
 
@@ -2209,6 +2228,63 @@ impl RoutesApplier {
             proc_sys,
             status_override: None,
             lock: tokio::sync::Mutex::new(()),
+            xlock: None,
+            xlock_wait: Duration::from_secs(30),
+        }
+    }
+
+    /// Serialise with other processes through this lock file (the run
+    /// directory's [`APPLY_LOCK_FILE`] for the system applier).
+    pub fn with_process_lock(mut self, path: PathBuf, wait: Duration) -> Self {
+        self.xlock = Some(path);
+        self.xlock_wait = wait;
+        self
+    }
+
+    /// Take the cross-process lock; the guard releases it when dropped.
+    /// A lock file that cannot be opened (an unprivileged caller, a missing
+    /// run directory) is not an error here: such a process cannot change
+    /// the kernel either, and the apply reports its own failure.
+    async fn process_lock(&self) -> Result<Option<nix::fcntl::Flock<std::fs::File>>> {
+        use nix::fcntl::{Flock, FlockArg};
+        let Some(path) = &self.xlock else {
+            return Ok(None);
+        };
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let mut file = match std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)
+        {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::debug!("routes apply lock {}: {e}", path.display());
+                return Ok(None);
+            }
+        };
+        let deadline = tokio::time::Instant::now() + self.xlock_wait;
+        loop {
+            match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+                Ok(g) => return Ok(Some(g)),
+                Err((f, nix::errno::Errno::EWOULDBLOCK)) => {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(Error::Network(format!(
+                            "routes: another process held {} for {} s",
+                            path.display(),
+                            self.xlock_wait.as_secs()
+                        )));
+                    }
+                    file = f;
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err((_, e)) => {
+                    tracing::debug!("routes apply lock {}: {e}", path.display());
+                    return Ok(None);
+                }
+            }
         }
     }
 
@@ -2406,6 +2482,7 @@ impl Applier for RoutesApplier {
 
     async fn apply(&self, store: &ConfigStore) -> Result<ApplyReport> {
         let _g = self.lock.lock().await;
+        let _x = self.process_lock().await?;
         let (_cfg, d, _) = self.plan(store).await?;
         let have = self.owned_routes().await?;
         let mut rep = ApplyReport::default();
@@ -2426,6 +2503,17 @@ impl Applier for RoutesApplier {
                     if op.get(2).map(String::as_str) == Some("del")
                         && (msg.contains("No such process") || msg.contains("No such file"))
                     {
+                        continue;
+                    }
+                    // Adding a rule the kernel already has (identical in
+                    // every field) is the wanted end state: something else
+                    // (a hand-run `ip rule`, a tool outside this lock)
+                    // installed it between our read and our write.
+                    if op.get(1).map(String::as_str) == Some("rule")
+                        && op.get(2).map(String::as_str) == Some("add")
+                        && msg.contains("File exists")
+                    {
+                        rep.applied(format!("ip {} (already present)", op.join(" ")));
                         continue;
                     }
                     failed.push(msg);
