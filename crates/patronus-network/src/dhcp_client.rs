@@ -243,7 +243,26 @@ pub fn pd_hook_script() -> String {
 /// (the kernel drops every route of a device that goes down; wpa_supplicant takes its device down when it
 /// restarts): busybox udhcpc never notices that by itself. udhcpc gets SIGUSR1 (renew), dhcpcd `-n` (rebind).
 pub async fn renew(dev: &str) -> Result<String> {
-    renew_in(std::path::Path::new("/proc"), dev, which("dhcpcd")).await
+    // `dhcpcd -n DEV` STARTS a new dhcpcd (a manager) when no dhcpcd serves DEV yet: only ask a running one
+    let dhcpcd = which("dhcpcd").filter(|_| dhcpcd_serves(&DHCPCD_RUN_DIRS, dev));
+    renew_in(std::path::Path::new("/proc"), dev, dhcpcd).await
+}
+
+/// Where dhcpcd keeps its pid files (`<dev>.pid` per-interface instance, `pid` for a manager); build-time choice.
+const DHCPCD_RUN_DIRS: [&str; 2] = ["/run/dhcpcd", "/var/run/dhcpcd"];
+
+/// Does a running dhcpcd (a per-interface instance for `dev`, or a manager) answer `dhcpcd -n dev`?
+pub fn dhcpcd_serves(run_dirs: &[&str], dev: &str) -> bool {
+    run_dirs.iter().any(|d| {
+        [format!("{dev}.pid"), "pid".to_string()].iter().any(|f| {
+            std::fs::read_to_string(std::path::Path::new(d).join(f))
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok())
+                .is_some_and(|pid| {
+                    pid > 0 && nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
+                })
+        })
+    })
 }
 
 /// [`renew`] against another /proc (tests).
@@ -422,6 +441,25 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(e.contains("no DHCP client runs for wlan5"), "{e}");
+    }
+
+    #[test]
+    fn dhcpcd_is_asked_only_when_one_serves_the_device() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().to_str().unwrap().to_string();
+        let dirs = [dir.as_str()];
+        assert!(!dhcpcd_serves(&dirs, "wan0"), "no pid file");
+        std::fs::write(d.path().join("wan0.pid"), "2147483000\n").unwrap();
+        assert!(!dhcpcd_serves(&dirs, "wan0"), "stale pid");
+        std::fs::write(
+            d.path().join("wan0.pid"),
+            format!("{}\n", std::process::id()),
+        )
+        .unwrap();
+        assert!(dhcpcd_serves(&dirs, "wan0"), "per-interface instance");
+        assert!(!dhcpcd_serves(&dirs, "wan1"));
+        std::fs::write(d.path().join("pid"), format!("{}\n", std::process::id())).unwrap();
+        assert!(dhcpcd_serves(&dirs, "wan1"), "a manager serves every port");
     }
 
     #[test]
