@@ -1087,6 +1087,19 @@ impl InterfacesApplier {
             .collect()
     }
 
+    /// A port that needs Patronus' own DHCP client: prefix delegation (the system manager's config has no `ia_pd` for it and a
+    /// second dhcpcd cannot run beside the manager). Then Patronus is the DHCP client of every port and the manager goes away.
+    pub fn needs_own_client(cfg: &NetConfig) -> Option<String> {
+        cfg.interfaces
+            .iter()
+            .find(|i| {
+                i.enabled
+                    && !i.pd_downstream.is_empty()
+                    && (i.ipv4_mode == V4Mode::Dhcp || i.ipv6_mode == V6Mode::Dhcp6)
+            })
+            .map(|i| i.name.clone())
+    }
+
     /// Before the plan is computed (so it sees the kernel as it is
     /// afterwards): put the interfaces Patronus owns on the system dhcpcd's
     /// deny list and tell a running manager to let go of the newly denied
@@ -1109,6 +1122,30 @@ impl InterfacesApplier {
         let Ok(cfg) = NetConfig::load(store).await else {
             return;
         };
+        if let Some(port) = Self::needs_own_client(&cfg) {
+            // every port becomes Patronus' (nothing is delegated below), so the manager is stopped for good: its addresses stay
+            // (`persistent`) until Patronus' own clients and static config take each port over in this same apply
+            let svc = patronus_core::service::ServiceManager::new();
+            let enabled = svc.is_enabled("dhcpcd").unwrap_or(false);
+            let running = sd::manager_running(&settings.run_dir);
+            if enabled || running {
+                let stop = if running { svc.stop("dhcpcd") } else { Ok(()) };
+                let off = if enabled {
+                    svc.disable("dhcpcd")
+                } else {
+                    Ok(())
+                };
+                match (stop, off) {
+                    (Ok(()), Ok(())) => report.applied(format!(
+                        "system dhcpcd stopped and disabled: {port} uses prefix delegation, which needs Patronus' own DHCP client, so Patronus is the DHCP client of every port"
+                    )),
+                    (a, b) => report.warn(format!(
+                        "could not stop/disable the system dhcpcd ({port} needs prefix delegation): {}",
+                        a.err().or(b.err()).map(|e| e.to_string()).unwrap_or_default()
+                    )),
+                }
+            }
+        }
         let delegating = self.delegates_dhcp(store).await.is_some();
         let owned = Self::owned_interfaces(&cfg, delegating);
         let was: BTreeSet<String> = std::fs::read_to_string(&settings.conf)
@@ -1156,6 +1193,13 @@ impl InterfacesApplier {
         }
         let settings = Self::system_dhcpcd_settings(store).await?;
         if settings.mode == sd::Mode::Leave || !settings.conf.exists() {
+            return None;
+        }
+        if NetConfig::load(store)
+            .await
+            .ok()
+            .is_some_and(|c| Self::needs_own_client(&c).is_some())
+        {
             return None;
         }
         let present = sd::manager_running(&settings.run_dir)
@@ -1523,6 +1567,20 @@ mod applier_tests {
             None,
         ));
         assert!(l.iter().any(|x| x.starts_with("run ")), "{l:?}");
+    }
+
+    #[test]
+    fn prefix_delegation_needs_patronus_own_client() {
+        let mut c = NetConfig::default();
+        c.iface_mut("eth0").ipv4_mode = V4Mode::Dhcp;
+        assert_eq!(InterfacesApplier::needs_own_client(&c), None);
+        c.iface_mut("eth0").ipv6_mode = V6Mode::Dhcp6;
+        c.iface_mut("eth0").pd_downstream = vec!["eth1".into()];
+        assert_eq!(InterfacesApplier::needs_own_client(&c), Some("eth0".into()));
+        // with the manager gone the port is Patronus' own, kept off the system config
+        assert_eq!(InterfacesApplier::owned_interfaces(&c, false), vec!["eth0"]);
+        c.iface_mut("eth0").enabled = false;
+        assert_eq!(InterfacesApplier::needs_own_client(&c), None);
     }
 
     #[test]

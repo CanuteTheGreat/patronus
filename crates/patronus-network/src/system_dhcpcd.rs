@@ -26,6 +26,10 @@
 //! A port Patronus puts in DHCP mode is NOT denied: with the manager running, a second `dhcpcd <port>` cannot run beside it (it hands its
 //! command line to the manager and exits), so the manager stays the DHCP client of that port and Patronus only asks it to start
 //! (`dhcpcd <port>`). Static, down and member ports are denied.
+//!
+//! Exception: a port with DHCPv6 prefix delegation needs Patronus' own client (the manager's config has no `ia_pd` for the
+//! downstream ports). Then the applier stops and disables the system manager and Patronus is the DHCP client of every port
+//! ([`crate::interfaces::InterfacesApplier::needs_own_client`]).
 
 use patronus_core::{Error, Result};
 use std::path::{Path, PathBuf};
