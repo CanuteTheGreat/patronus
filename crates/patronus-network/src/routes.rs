@@ -2210,7 +2210,11 @@ pub const APPLY_LOCK_FILE: &str = "routes-apply.lock";
 impl Default for RoutesApplier {
     fn default() -> Self {
         let mut a = Self::new(Arc::new(SystemCmd), PathBuf::from("/proc/sys"));
-        a.xlock = Some(crate::supervise::NetPaths::default().run_dir.join(APPLY_LOCK_FILE));
+        a.xlock = Some(
+            crate::supervise::NetPaths::default()
+                .run_dir
+                .join(APPLY_LOCK_FILE),
+        );
         if let Some(n) = std::env::var("PATRONUS_ROUTES_LOCK_WAIT_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())

@@ -47,7 +47,7 @@ impl Cmd for FakeCmd {
                 [fam, "rule", "add", rest @ ..] => {
                     let key = format!("{fam} {}", rest.join(" "));
                     let mut t = self.rule_table.lock().unwrap();
-                    if t.iter().any(|r| *r == key) {
+                    if t.contains(&key) {
                         return Err(Error::Network(format!(
                             "`{line}` failed: RTNETLINK answers: File exists"
                         )));
