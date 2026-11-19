@@ -26,7 +26,26 @@ pub const HIDDEN: &str = "(hidden)";
 const MAX_ROWS: usize = 100;
 
 /// Fields that change on every write and say nothing about the configuration.
-const NOISE_FIELDS: &[&str] = &["updated_at", "created_at", "modified_at", "last_seen"];
+const NOISE_FIELDS: &[&str] = &[
+    "updated_at",
+    "created_at",
+    "modified_at",
+    "last_seen",
+    "last_login",
+    "last_used_at",
+];
+
+/// Tables that fill themselves with events and measurements. They are part of an
+/// export but are not settings, so they never show up in a diff.
+const DIFF_SKIP_TABLES: &[&str] = &[
+    "system_events",
+    "traffic_daily",
+    "firewall_log",
+    "speedtests",
+    "stat_points",
+    "package_jobs",
+    "edge_state",
+];
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct FieldChange {
@@ -281,6 +300,7 @@ pub fn diff_docs(current: &Value, revision: &Value) -> Vec<SectionDiff> {
     names.dedup();
     names
         .iter()
+        .filter(|t| !DIFF_SKIP_TABLES.contains(&t.as_str()))
         .filter_map(|t| diff_table(t, rows_of(current, t), rows_of(revision, t)))
         .collect()
 }
@@ -367,6 +387,19 @@ mod tests {
         }
         assert_eq!(d.len(), 2, "a changed secret is still reported as changed");
         assert!(text.contains(HIDDEN));
+    }
+
+    #[test]
+    fn event_and_measurement_tables_and_login_times_are_not_differences() {
+        let cur = doc(json!({
+            "system_events": [{"id": 1, "detail": "x"}],
+            "traffic_daily": [{"day": "d", "rx": 1}],
+            "web_users": [{"id": 1, "username": "a", "role": "admin", "last_login": 5}]}));
+        let rev = doc(json!({
+            "system_events": [],
+            "traffic_daily": [],
+            "web_users": [{"id": 1, "username": "a", "role": "admin", "last_login": 9}]}));
+        assert!(diff_docs(&cur, &rev).is_empty());
     }
 
     #[test]

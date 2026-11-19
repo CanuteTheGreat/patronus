@@ -89,7 +89,7 @@ def run(browser_name):
         page.wait_for_selector("#rev-dialog[open] .diff-section", timeout=30000)
         text = page.inner_text("#rev-dialog")
         check("diff names the section", "Firewall rules" in text, text)
-        check("diff says what restoring would remove", "Removed" in text and undo in text, text)
+        check("diff says what restoring would remove", "removed" in text.lower() and undo in text, text)
         check("diff does not show the kept rule as a change", keep not in text, text)
         check("diff shows no secret", "password_hash" not in text and "$argon2" not in text, text)
         check("diff offers the restore", page.is_visible("#rev-restore"))
