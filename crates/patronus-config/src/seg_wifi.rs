@@ -1177,8 +1177,9 @@ mod tests {
         let h = c::history(&s, id, 100).await.unwrap();
         assert_eq!(h.len(), 10, "only the newest are kept");
         assert_eq!(h[0].reason, "n29");
-        // deleting the network removes its state and history
+        // deleting the network: its state and history go with the next prune
         delete_network(&s, id).await.unwrap();
+        c::prune_orphans(&s).await.unwrap();
         assert!(c::get_state(&s, id).await.unwrap().is_none());
         assert!(c::history(&s, id, 10).await.unwrap().is_empty());
     }

@@ -19,8 +19,9 @@ ALTER TABLE seg_wifi_networks ADD COLUMN chan_min_signal INTEGER NOT NULL DEFAUL
 ALTER TABLE seg_wifi_networks ADD COLUMN chan_history INTEGER NOT NULL DEFAULT 200; -- history entries kept per network
 
 -- Measured, not configuration (listed in NON_CONFIG_TABLES): what the radio is on and why, and the history.
+-- delete_network() removes a network's rows by hand.
 CREATE TABLE IF NOT EXISTS seg_wifi_chan_state (
-    network_id INTEGER PRIMARY KEY REFERENCES seg_wifi_networks(id) ON DELETE CASCADE,
+    network_id INTEGER PRIMARY KEY,            -- no foreign key: a rollback that re-creates the network rows must not wipe it
     channel INTEGER NOT NULL,
     width INTEGER NOT NULL,
     since INTEGER NOT NULL,
@@ -33,7 +34,7 @@ CREATE TABLE IF NOT EXISTS seg_wifi_chan_state (
 );
 CREATE TABLE IF NOT EXISTS seg_wifi_chan_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    network_id INTEGER NOT NULL REFERENCES seg_wifi_networks(id) ON DELETE CASCADE,
+    network_id INTEGER NOT NULL,
     at INTEGER NOT NULL,
     event TEXT NOT NULL,                       -- start | sample | stay | move | note
     channel INTEGER,

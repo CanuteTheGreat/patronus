@@ -540,9 +540,28 @@ impl WifiApplier {
         }
         let want = n.chan.candidates(&n.band);
         let state = seg_wifi_chan::get_state(store, n.id).await?;
-        if let Some(st) = &state {
-            if running && st.width == n.chan.width && want.contains(&st.channel) {
-                return Ok(st.channel);
+        if running {
+            // the channel hostapd really is on wins over the record: a channel switch changes the radio a moment
+            // before the record, and an apply in between must not restart it onto the old one
+            let (iw, ifn) = (self.iw.clone(), n.ifname.clone());
+            let live = tokio::task::spawn_blocking(move || {
+                iw.hostapd_status(&ifn)
+                    .ok()
+                    .as_deref()
+                    .and_then(wifichan::status_channel)
+            })
+            .await
+            .ok()
+            .flatten();
+            if let Some(c) = live.filter(|c| want.contains(c)) {
+                if state.as_ref().is_some_and(|s| s.width == n.chan.width) {
+                    return Ok(c);
+                }
+            }
+            if let Some(st) = &state {
+                if st.width == n.chan.width && want.contains(&st.channel) {
+                    return Ok(st.channel);
+                }
             }
         }
         let cur = state.as_ref().map_or(0, |s| s.channel);
@@ -586,23 +605,28 @@ impl WifiApplier {
         }
     }
 
-    /// The spec of a running network's hostapd with its channel as recorded (no restart: `Supervisor::record`).
-    async fn record_files(&self, store: &ConfigStore, id: i64, channel: i64) -> Result<()> {
+    /// The spec of a network's hostapd for `channel` (what `apply` would build for it).
+    async fn channel_spec(
+        &self,
+        store: &ConfigStore,
+        id: i64,
+        channel: i64,
+    ) -> Result<Option<DaemonSpec>> {
         let at = chrono::Utc::now().timestamp();
         let Some(mut net) = seg_wifi::ap_config(store, at)
             .await?
             .into_iter()
             .find(|n| n.network.id == id)
         else {
-            return Ok(());
+            return Ok(None);
         };
         net.network.channel = channel;
         let n = &net.network;
         let Some(bridge) = self.bridge_of(store, &n.segment).await else {
-            return Ok(());
+            return Ok(None);
         };
         let Some(hostapd) = self.hostapd_bin() else {
-            return Ok(());
+            return Ok(None);
         };
         let [conf_path, psk_path, _, _] = self.files(&n.name);
         let conf = render_hostapd(&net, &bridge, &psk_path, &self.ctrl_dir)?;
@@ -615,7 +639,7 @@ impl WifiApplier {
             ],
             files: vec![(conf_path, conf, 0o600)],
         };
-        self.sup.record(&spec)
+        Ok(Some(spec))
     }
 
     /// Re-check an automatic channel on a running radio: `confirm` samples `confirm_gap` s apart must all
@@ -756,7 +780,9 @@ impl WifiApplier {
                     )
                     .await?;
                     // hostapd's files now name the new channel, so the next apply sees nothing to restart
-                    self.record_files(store, n.id, to).await?;
+                    if let Some(spec) = self.channel_spec(store, n.id, to).await? {
+                        self.sup.record(&spec)?;
+                    }
                 }
                 Ok(false) => tracing::warn!(
                     "Wi-Fi {}: channel switch to {to} did not take effect, restarting",
@@ -779,7 +805,10 @@ impl WifiApplier {
                 Some(csa_capable),
             )
             .await?;
-            self.apply(store).await?;
+            // new channel into hostapd's files, then an unconditional restart (the live channel is still the old one)
+            if let Some(spec) = self.channel_spec(store, n.id, to).await? {
+                self.sup.force_restart(&spec).await?;
+            }
         }
         Ok(how)
     }
@@ -804,6 +833,7 @@ impl Applier for WifiApplier {
                 "{expired} unused pending Wi-Fi credential(s) expired"
             ));
         }
+        seg_wifi_chan::prune_orphans(store).await?;
         let nets = seg_wifi::ap_config(store, at).await?;
         let wanted: Vec<String> = nets.iter().map(|n| n.network.name.clone()).collect();
         // a network that was switched off or deleted: stop it, forget its files

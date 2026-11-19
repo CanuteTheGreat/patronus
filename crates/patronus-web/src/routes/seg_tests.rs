@@ -725,4 +725,166 @@ mod wifi {
             .await;
         assert_eq!(d, json!([]));
     }
+
+    #[tokio::test]
+    async fn an_automatic_channel_shows_why_takes_tuning_live_and_a_recheck_request() {
+        let t = setup().await;
+        let c = t.login("admin", ADMIN_PW).await;
+        // a new network is automatic (no channel given); "auto" and a number both work
+        let id = net(&t, &c, "wpa2").await;
+        let (_, o) = t
+            .call(&c, Method::GET, "/api/segmentation/wifi", None)
+            .await;
+        assert_eq!(o["networks"][0]["channel"], "auto", "{o}");
+        assert_eq!(o["networks"][0]["width"], 20);
+        assert_eq!(o["networks"][0]["recheck_time"], "03:30");
+        assert!(o["notes"]["auto_channel"]
+            .as_str()
+            .unwrap()
+            .contains("re-checked every night"));
+        // nothing measured yet: a re-check request is refused with a reason
+        let (s, b) = t
+            .call(
+                &c,
+                Method::POST,
+                &format!("/api/segmentation/wifi/networks/{id}/recheck-channel"),
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{b}");
+        // the applier would have recorded the channel and why: the overview carries it with the history
+        let st = &t.state.config_store;
+        patronus_config::seg_wifi_chan::set_channel(
+            st,
+            id,
+            11,
+            20,
+            "channel 11: 5% busy",
+            &json!([{"channel": 11, "score": 5.0, "busy": 5.0, "neighbours": 0}]),
+            Some(true),
+        )
+        .await
+        .unwrap();
+        let ev = patronus_config::seg_wifi_chan::ChanEvent {
+            id: 0,
+            at: 0,
+            event: "start".into(),
+            channel: Some(11),
+            score: Some(5.0),
+            busy: Some(5.0),
+            neighbours: Some(0),
+            best: None,
+            best_score: None,
+            reason: "channel 11: 5% busy".into(),
+        };
+        patronus_config::seg_wifi_chan::add_history(st, id, 200, &ev)
+            .await
+            .unwrap();
+        let (_, o) = t
+            .call(&c, Method::GET, "/api/segmentation/wifi", None)
+            .await;
+        let ch = &o["channels"][id.to_string()];
+        assert_eq!(ch["state"]["channel"], 11, "{o}");
+        assert_eq!(ch["state"]["csa_capable"], true);
+        assert_eq!(ch["history"][0]["event"], "start");
+        let (s, _) = t
+            .call(
+                &c,
+                Method::POST,
+                &format!("/api/segmentation/wifi/networks/{id}/recheck-channel"),
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(patronus_config::seg_wifi_chan::get_state(st, id)
+            .await
+            .unwrap()
+            .unwrap()
+            .requested_at
+            .is_some());
+        // tuning through PUT (absent keys keep their values; the channel stays auto)
+        let put = |extra: serde_json::Value| {
+            let mut b = json!({"name": "home", "ssid": "HomeNet", "ifname": "wlan0", "security": "wpa2", "segment": "@lan"});
+            for (k, v) in extra.as_object().unwrap() {
+                b[k] = v.clone();
+            }
+            b
+        };
+        let (s, b) = t
+            .call(
+                &c,
+                Method::PUT,
+                &format!("/api/segmentation/wifi/networks/{id}"),
+                Some(put(
+                    json!({"hysteresis": 35, "recheck_time": "04:15", "csa": "off"}),
+                )),
+            )
+            .await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        let (_, o) = t
+            .call(&c, Method::GET, "/api/segmentation/wifi", None)
+            .await;
+        let n = &o["networks"][0];
+        assert_eq!(
+            (
+                &n["channel"],
+                &n["hysteresis"],
+                &n["recheck_time"],
+                &n["csa"],
+                &n["confirm"]
+            ),
+            (
+                &json!("auto"),
+                &json!(35),
+                &json!("04:15"),
+                &json!("off"),
+                &json!(3)
+            )
+        );
+        // bad tuning is a 400 and changes nothing
+        for bad in [
+            json!({"width": 80}),
+            json!({"chanlist": "1,99"}),
+            json!({"hysteresis": 95}),
+            json!({"recheck_time": "noon"}),
+            json!({"csa": "maybe"}),
+            json!({"channel": "fast"}),
+            json!({"channel": 14}),
+        ] {
+            let (s, b) = t
+                .call(
+                    &c,
+                    Method::PUT,
+                    &format!("/api/segmentation/wifi/networks/{id}"),
+                    Some(put(bad.clone())),
+                )
+                .await;
+            assert!(
+                s == StatusCode::BAD_REQUEST || s == StatusCode::UNPROCESSABLE_ENTITY,
+                "{bad}: {s} {b}"
+            );
+        }
+        let (_, o) = t
+            .call(&c, Method::GET, "/api/segmentation/wifi", None)
+            .await;
+        assert_eq!(o["networks"][0]["hysteresis"], 35);
+        // fixed: a number, never measured
+        let (s, b) = t
+            .call(
+                &c,
+                Method::PUT,
+                &format!("/api/segmentation/wifi/networks/{id}"),
+                Some(put(json!({"channel": 6}))),
+            )
+            .await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        let (_, o) = t
+            .call(&c, Method::GET, "/api/segmentation/wifi", None)
+            .await;
+        assert_eq!(o["networks"][0]["channel"], 6);
+        assert!(
+            o["channels"].as_object().unwrap().is_empty(),
+            "a fixed channel has no automatic-channel block"
+        );
+    }
 }

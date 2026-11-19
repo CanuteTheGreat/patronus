@@ -427,6 +427,20 @@ pub async fn set_decision(
     Ok(())
 }
 
+/// Drop the state and history of networks that no longer exist (the tables carry no foreign key, so a
+/// rollback that re-creates network rows keeps them; the applier prunes after a delete has stuck).
+pub async fn prune_orphans(store: &ConfigStore) -> Result<()> {
+    for t in ["seg_wifi_chan_state", "seg_wifi_chan_history"] {
+        sqlx::query(&format!(
+            "DELETE FROM {t} WHERE network_id NOT IN (SELECT id FROM seg_wifi_networks)"
+        ))
+        .execute(store.pool()?)
+        .await
+        .map_err(db("prune channel state"))?;
+    }
+    Ok(())
+}
+
 pub async fn clear_state(store: &ConfigStore, network_id: i64) -> Result<()> {
     sqlx::query("DELETE FROM seg_wifi_chan_state WHERE network_id = ?")
         .bind(network_id)

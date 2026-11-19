@@ -151,7 +151,7 @@ nl_api POST /segmentation/wifi/networks "{\"name\":\"home\",\"ssid\":\"$SSID\",\
 nl_wait 60 ap_up || nl_fail "hostapd did not come up"
 [ "$(ap_chan)" = 11 ] || { R hostapd_cli -p "$CTRL" -i "$IF1" status; cat "$NL_OUT"; nl_fail "start: the radio is on channel $(ap_chan), not the free channel 11"; }
 nl_ok "automatic channel at start: with neighbours on 1 and 6 the radio picked channel 11 on its own"
-grep -q '^channel=11$' /var/lib/patronus/net/hostapd/home.conf || nl_fail "the hostapd.conf does not name channel 11"
+grep '^channel=11$' /var/lib/patronus/net/hostapd/home.conf >/dev/null || nl_fail "the hostapd.conf does not name channel 11"
 api_state
 python3 - "$NL_OUT" <<'PY' || nl_fail "the API does not show the automatic channel and why"
 import json, sys
@@ -224,7 +224,8 @@ sta_connected || nl_fail "the station lost its association during the move"
 [ "$(sta_disconnects)" = "$D0" ] || nl_fail "the station saw a disconnect during the move"
 nl_wait 10 sta_pings || nl_fail "the station cannot ping the router after the move"
 nl_ok "CSA: hostapd kept its pid, the station followed to channel $NEWCH with no disconnect and still pings the router"
-grep -q "^channel=$NEWCH\$" /var/lib/patronus/net/hostapd/home.conf || nl_fail "hostapd's files do not name the new channel"
+conf_names() { grep "^channel=$1\$" /var/lib/patronus/net/hostapd/home.conf >/dev/null; }
+nl_wait 15 conf_names "$NEWCH" || nl_fail "hostapd's files do not name the new channel"
 nl_apply "$DB" || { cat "$NL_OUT"; nl_fail "apply after the move failed"; }
 [ "$(hostapd_pid)" = "$PID0" ] && [ "$(ap_chan)" = "$NEWCH" ] || nl_fail "the next apply restarted the radio after a CSA"
 nl_ok "hostapd's files follow the live channel: the next apply finds nothing to do"
@@ -264,6 +265,7 @@ CH2=$(ap_chan)
 nl_wait 60 want_freq "$CH2" || nl_fail "the station did not come back on channel $CH2 (on $(sta_freq))"
 nl_wait 20 sta_pings || nl_fail "the station cannot ping the router after the restart"
 sqlite3 "$DB" "SELECT reason FROM seg_wifi_chan_history WHERE event='move' ORDER BY id DESC LIMIT 1" | grep 'by restart' >/dev/null || nl_fail "the second move is not recorded as a restart"
+sqlite3 "$DB" "SELECT event || ' ch=' || ifnull(channel,'') || ' ' || reason FROM seg_wifi_chan_history ORDER BY id" | sed 's/^/    history: /'
 nl_ok "CSA off: the radio restarted onto channel $CH2, the station came back on it, history says 'by restart'"
 
 # --- 6. a reboot measures again ---------------------------------------------------------------------------------------------------

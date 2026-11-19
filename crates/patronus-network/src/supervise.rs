@@ -326,6 +326,35 @@ impl Supervisor {
         Ok(())
     }
 
+    /// Write `spec`'s files and restart the daemon even when it already looks up to date (its running
+    /// state differs from its files: a Wi-Fi radio that must leave its channel).
+    pub async fn force_restart(&self, spec: &DaemonSpec) -> Result<()> {
+        let _lock = self.paths.instance_lock(spec.service, &spec.instance);
+        if self.mode == InitMode::Direct {
+            self.stop_direct(spec.service, &spec.instance).await;
+        }
+        for (p, c, m) in &spec.files {
+            write_atomic(p, c, *m)?;
+        }
+        write_atomic(
+            &self.paths.env_file(spec.service, &spec.instance),
+            &spec.env_content(),
+            0o600,
+        )?;
+        match self.mode {
+            InitMode::Systemd => {
+                self.sm()
+                    .restart(&Self::unit(spec.service, &spec.instance))?;
+            }
+            InitMode::OpenRc => {
+                self.sm()
+                    .restart(&Self::rc_name(spec.service, &spec.instance))?;
+            }
+            InitMode::Direct => self.start_direct(spec).await?,
+        }
+        Ok(())
+    }
+
     /// Make sure `spec` runs with exactly this command line + config.
     /// Returns true if it was (re)started.
     pub async fn ensure(&self, spec: &DaemonSpec) -> Result<bool> {
