@@ -591,6 +591,14 @@ pub const TUNING: &[(&str, &str, i64, i64, i64, &str)] = &[
         "random extra wait: 0 to 300 seconds",
     ),
     (
+        "chan_sync_wait",
+        "AP_CHAN_SYNC_WAIT",
+        90,
+        0,
+        600,
+        "wait for a started radio before recording its running channel: 0 to 600 seconds",
+    ),
+    (
         "chan_stagger",
         "AP_CHAN_STAGGER",
         1800,
@@ -1962,10 +1970,26 @@ pub fn channel_status(p: &Paths) -> Value {
             .ok()
             .and_then(|t| serde_json::from_str::<Value>(t.trim()).ok())
         {
-            out.insert(band.into(), v);
+            out.insert(band.into(), with_primary(v));
         }
     }
     Value::Object(out)
+}
+
+/// hostapd's ACS picks the primary channel itself inside the 40/80 MHz block ap-chan pins, so the measured `chosen`
+/// primary and the running `current` one can differ (both inside `block`). Adds `primary` (what runs: `current`, else
+/// `chosen` before the radio's first sync) and `primary_differs` for API consumers and the Wi-Fi page.
+fn with_primary(mut v: Value) -> Value {
+    let num = |k: &str| v.get(k).and_then(Value::as_u64);
+    let (chosen, current) = (num("chosen"), num("current"));
+    let primary = current.or(chosen);
+    let differs = matches!((chosen, current), (Some(a), Some(b)) if a != b);
+    if let Some(o) = v.as_object_mut() {
+        o.insert("primary".into(), primary.map_or(Value::Null, Value::from));
+        o.insert("primary_differs".into(), Value::Bool(differs));
+        o.entry("block").or_insert_with(|| Value::Array(vec![]));
+    }
+    v
 }
 
 /// The last `n` entries of ap-chan's history (newest last): every start, nightly sample, stay and move with its reason.
@@ -3388,7 +3412,44 @@ mod tests {
         let s = channel_status(&p);
         assert_eq!(s["5"]["chosen"], 36);
         assert_eq!(s["5"]["candidates"][0]["busy"], 12.0);
+        // an older status without `block`: primary = current, nothing differs
+        assert_eq!(s["5"]["primary"], 36);
+        assert_eq!(s["5"]["primary_differs"], false);
+        assert_eq!(s["5"]["block"], json!([]));
         assert!(s.get("24").is_none());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn channel_status_reports_the_running_primary_inside_the_pinned_block() {
+        // measured 48, hostapd's ACS runs 36: the same 80 MHz block (seen on hardware 2026-11-18)
+        let d = std::env::temp_dir().join(format!("apchan-blk-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        std::fs::write(
+            d.join("chan-status-5"),
+            "{\"band\":\"5\",\"chosen\":48,\"current\":36,\"block\":[36,40,44,48],\"width\":80,\"csa\":true,\"reason\":\"r\",\"candidates\":[]}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            d.join("chan-status-24"),
+            "{\"band\":\"24\",\"chosen\":1,\"current\":null,\"block\":[1],\"candidates\":[]}\n",
+        )
+        .unwrap();
+        let p = Paths {
+            env: d.join("ap.env"),
+            script: d.join("ap"),
+            run: d.clone(),
+            sysfs: d.join("sys"),
+            net: d.join("net"),
+        };
+        let s = channel_status(&p);
+        assert_eq!(s["5"]["chosen"], 48);
+        assert_eq!(s["5"]["primary"], 36);
+        assert_eq!(s["5"]["primary_differs"], true);
+        assert_eq!(s["5"]["block"], json!([36, 40, 44, 48]));
+        // before the radio's first sync the measured channel is all there is
+        assert_eq!(s["24"]["primary"], 1);
+        assert_eq!(s["24"]["primary_differs"], false);
         let _ = std::fs::remove_dir_all(&d);
     }
 

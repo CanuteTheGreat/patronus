@@ -175,7 +175,7 @@ wifi_steer() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=
 wifi_chan() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=$(cat "$W/api.json")
   [ "$c" = 200 ] && has_all "$g" '"chan_smart5":true' '"chan_smart24":true' '"chan_recheck5":true' '"chan_recheck24":true' \
     '"chan_time":"03:30"' '"chan_csa":"auto"' '"chan_hyst":20' '"chan_min_gain":10' '"chan_confirm":3' '"chan_dwell":105' \
-    '"chan_wait":90' '"chan_stagger":1800' '"steer_retry_max":604800' || { echo "defaults: $c $g"; return 1; }
+    '"chan_wait":90' '"chan_sync_wait":90' '"chan_stagger":1800' '"steer_retry_max":604800' || { echo "defaults: $c $g"; return 1; }
   c=$(wapi -X PUT -d '{"chan_time":"02:45","chan_hyst":30,"chan_smart24":false,"steer_retry_max":86400}' https://127.0.0.1:$WEBP/api/wifi)
   r=$(cat "$W/api.json"); [ "$c" = 200 ] || { echo "PUT chan: $c $r"; return 1; }
   case "$r" in *'"restarted":true'*) echo "a channel-choice change restarted the radios: $r"; return 1;; esac

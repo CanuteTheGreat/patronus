@@ -1206,6 +1206,19 @@ channel (own traffic under 15 %), 32 neighbouring access points heard on 2.4 GHz
   off with `chanlist=48`. The boot guard (12.16) confirmed that boot because its hostapd check only asked the control
   sockets that existed; it now requires a socket for every `interface=`/`bss=` the renderer wrote (host test with one
   radio down), so such an image is rolled back. The hwsim ACS scenario has a `pin` case (157 at 80 MHz, 11 on 2.4 GHz).
+- The running primary is not the measured one (2026-11-18, on hardware): the card said "channel 48 chosen" while
+  `hostapd_cli status` showed `channel=36`, because ACS picks its own primary inside the pinned block (36-48) and
+  both are the same 80 MHz block with the same airtime and neighbours. Pinning the exact primary would mean a fixed
+  `channel=` (no ACS, so no re-check and no DFS handling by hostapd); instead the status records both. `chan-status-BAND`
+  holds `chosen` (the measured primary), `current` (what hostapd runs), `block` (the 20 MHz channels that block occupies,
+  from the board's width) and `width`. `ap-chan sync BAND` fills `current` and `block` from `hostapd_cli status` once the
+  radio is ENABLED (waits `AP_CHAN_SYNC_WAIT` s, default 90, typed `chan_sync_wait`); `ap start` runs it in the background
+  for each band it started and `ap-chan move` after every channel switch announcement (a restart goes through `ap start`).
+  When the two primaries differ inside one block the history gets a `primary` entry saying so. `/api/wifi` `channels.BAND`
+  adds `primary` (current, else chosen) and `primary_differs`; the Wi-Fi page reads "5 GHz: block 36-48 (80 MHz), primary 36
+  in use" with a note on the measured primary, and marks the table rows "(in use)" for the running primary and "(same block)"
+  for the other candidates of that block. Tests: `tests/run.sh` (sync inside the block, a radio not serving, status after a
+  channel switch, the start hook) and `channel_status_reports_the_running_primary_inside_the_pinned_block` in `apwifi.rs`.
 - The measurement also hears this network's other units (same SSIDs or `AP_COORD_PEERS`, ap-coord's filter): their
   channels join ap-coord's list even when ap-coord's own pre-start scan missed them, which happened on hardware for
   2.4 GHz (the unit took the other unit's channel 11; ap-coord's collision check then moved it to 1 by channel switch
@@ -1247,7 +1260,7 @@ Settings: all typed, live (ap-chan and ap-steer re-read ap.env, no radio restart
 `chan_smart5/24`, `chan_recheck5/24` (bool), `chan_time` (HH:MM or empty), `chan_csa` (auto|off), `chan_hyst` 0..90 %,
 `chan_min_gain` 0..100, `chan_confirm` 1..10, `chan_confirm_gap` 0..3600 s, `chan_rounds` 1..20, `chan_dwell` 20..500 ms,
 `chan_sample_secs` 0..600 s, `chan_bss_cost` 0..20, `chan_min_signal` -100..-30 dBm, `chan_csa_count` 1..50 beacons,
-`chan_wait` 0..600 s, `chan_jitter` 0..300 s, `chan_stagger` 0..21600 s, `chan_history` 10..5000, `chan_forget`
+`chan_wait` 0..600 s, `chan_jitter` 0..300 s, `chan_sync_wait` 0..600 s, `chan_stagger` 0..21600 s, `chan_history` 10..5000, `chan_forget`
 3600..31536000 s, `steer_retry_max` 0..2592000 s (at least `steer_retry`). Defaults are in board.sh; a unit test checks
 the API defaults against it.
 

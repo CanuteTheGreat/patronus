@@ -255,6 +255,11 @@ start_all() { # [BAND]: both radios, or only 5 / 24
       done
     else echo "hostapd $b failed"; cat /tmp/hostapd-$b.log; fi
   done
+  # the channel hostapd's ACS really picked inside the pinned block goes into ap-chan's status (Wi-Fi page), once the
+  # radio serves (in the background: ACS takes seconds)
+  CHANX=${AP_CHAN_BIN:-/usr/libexec/patronus/ap-chan}
+  if [ -x "$CHANX" ]; then for b in 5 24; do [ -z "${1:-}" ] || [ "$1" = $b ] || continue; [ -f $OUTD/ap$b.conf ] || continue
+    setsid "$CHANX" sync $b >> /tmp/ap-chan.log 2>&1 < /dev/null & done; fi
   txpower
   # periodic re-check of the channel plan against the other access points (once per start)
   if [ -x "$COORD" ] && [ -z "${1:-}" ]; then p=$(cat /run/patronus-ap-coord.pid 2>/dev/null); [ -n "$p" ] && kill "$p" 2>/dev/null

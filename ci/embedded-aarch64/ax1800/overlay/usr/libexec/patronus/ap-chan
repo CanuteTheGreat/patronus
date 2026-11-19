@@ -28,11 +28,17 @@
 #   ap-chan note BAND EVENT TEXT a history entry
 #   ap-chan status [BAND]        last choice + candidates (JSON per band); ap-chan history: the JSON lines
 #   ap-chan csa-capable BAND     exit 0 when the radio's driver supports channel switch announcements
+#   ap-chan sync BAND            record the channel hostapd really runs on (its primary, read from hostapd_cli status once the
+#                               radio is ENABLED, waiting up to AP_CHAN_SYNC_WAIT s) and its 40/80 MHz block in the status:
+#                               `chosen` is the measured primary, `current` the running one, `block` the 20 MHz channels it
+#                               occupies. hostapd's ACS picks the primary itself inside the pinned block, so the two can
+#                               differ (measured 48, running 36: same 80 MHz block). `ap` calls it after every radio start,
+#                               `move` after every channel switch.
 # Settings (board.sh defaults, ap.env, /api/wifi, export/plan): AP_CHAN_SMART24 / AP_CHAN_SMART5, AP_CHAN_RECHECK24 /
 # AP_CHAN_RECHECK5 (1 = on), AP_CHAN_TIME (HH:MM local, "" = no nightly re-check), AP_CHAN_HYST, AP_CHAN_MIN_GAIN,
 # AP_CHAN_CONFIRM, AP_CHAN_CONFIRM_GAP, AP_CHAN_ROUNDS, AP_CHAN_DWELL, AP_CHAN_SAMPLE_SECS, AP_CHAN_BSS_COST,
 # AP_CHAN_MIN_SIGNAL, AP_CHAN_CSA (auto|off), AP_CHAN_CSA_COUNT, AP_CHAN_WAIT, AP_CHAN_JITTER, AP_CHAN_STAGGER,
-# AP_CHAN_HISTORY (entries kept), AP_CHAN_FORGET (seconds after which a unit not heard any more is no longer waited for).
+# AP_CHAN_SYNC_WAIT (s), AP_CHAN_HISTORY (entries kept), AP_CHAN_FORGET (seconds after which a unit not heard any more is no longer waited for).
 # Test hooks: AP_BOARD, AP_RENDER_OUT, AP_SYSFS, AP_CLI, AP_CTRL, AP_CHAN_AP (ap script), AP_CHAN_COORD (ap-coord),
 #   AP_CHAN_SCAN_FILE (iw scan text), AP_CHAN_SURVEY_FILE (iw survey dump text, read after every round),
 #   AP_CHAN_HOME_FILE ("active busy" of this radio's channel at start, then at end: two lines), AP_CHAN_OWN_MS (own airtime),
@@ -190,9 +196,29 @@ why() { # SCOREFILE CHOSEN: one sentence
       if (nb != "") { split(nb, b, " "); s = s "; next best " b[1] ": " b[3] "% busy, " b[4] " (score " b[2] ")" }
       print s }' "$1"; }
 
+block_of() { # BAND CH: the 20 MHz channels the radio occupies with CH as primary (comma list; 5 GHz: its 40/80 MHz block,
+  # 2.4 GHz at 40 MHz: CH and its secondary), empty without a channel
+  [ -n "${2:-}" ] || return 0
+  if [ "$1" = 5 ]; then blk "$2" "$(width 5)" | tr ' ' '\n' | grep . | tr '\n' ',' | sed 's/,$//'
+  elif [ "$(width 24)" = 40 ]; then if [ "$2" -le 7 ]; then echo "$2,$(($2 + 4))"; else echo "$(($2 - 4)),$2"; fi
+  else echo "$2"; fi; }
+sync_status() { # BAND: what the radio really runs on, into chan-status-BAND (the measured choice stays as it was)
+  b=$1; settings; f=$OUTD/chan-status-$b; [ -f "$f" ] || return 0
+  n=0; lim=$(num "${AP_CHAN_SYNC_WAIT:-}" 90); st=
+  while :; do st=$(hstatus "$b"); case "$st" in *state=ENABLED*) break;; esac
+    [ $n -ge "$lim" ] && { say "$b GHz: the radio is not serving after ${lim}s, the running channel is not recorded"; return 1; }
+    n=$((n + 2)); nap 2; done
+  c=$(echo "$st" | sed -n 's/^channel=//p' | head -1); [ -n "$c" ] || return 1
+  bl=$(block_of "$b" "$c"); chosen=$(sed -n 's/.*"chosen":\([0-9]*\).*/\1/p' "$f")
+  sed "s/\"current\":[0-9a-z]*,/\"current\":$c,/; s/\"block\":\[[0-9,]*\]/\"block\":[$bl]/" "$f" > "$f.new" && mv "$f.new" "$f"
+  if [ -n "$chosen" ] && [ "$chosen" != "$c" ]; then
+    case ",$bl," in *",$chosen,"*) hist primary "$b" "$c" "" "" "" "$chosen" "" \
+      "hostapd's ACS runs primary $c inside the pinned block $(echo "$bl" | tr ',' ' ') (measured best primary $chosen: same block, same airtime)";; esac; fi
+  true; }
+
 status_json() { # BAND MODE CHOSEN CURRENT SCOREFILE WHY
-  { printf '{"band":"%s","mode":"%s","time":%s,"chosen":%s,"current":%s,"width":%s,"csa":%s,"reason":"%s","candidates":[' \
-      "$1" "$2" "$(now)" "${3:-null}" "${4:-null}" "$(width "$1")" "$(csa_capable "$1" && echo true || echo false)" "$(jstr "$6")"
+  { printf '{"band":"%s","mode":"%s","time":%s,"chosen":%s,"current":%s,"block":[%s],"width":%s,"csa":%s,"reason":"%s","candidates":[' \
+      "$1" "$2" "$(now)" "${3:-null}" "${4:-null}" "$(block_of "$1" "${4:-$3}")" "$(width "$1")" "$(csa_capable "$1" && echo true || echo false)" "$(jstr "$6")"
     awk 'NR > 1 { printf "," } { printf "{\"channel\":%s,\"score\":%s,\"busy\":%s,\"neighbours\":%s}", $1, $2, $3, $4 }' "$5"
     printf ']}\n'; } > "$OUTD/chan-status-$1.new" && mv "$OUTD/chan-status-$1.new" "$OUTD/chan-status-$1"; }
 
@@ -242,6 +268,7 @@ move() { # BAND CH REASON
   if [ $done = 0 ]; then echo "$ch" > "$OUTD/chan-$b"; AP_CHAN_KEEP=1 "$APX" restart-band "$b" > /dev/null 2>&1
     how=restart; else how=CSA; fi
   hist move "$b" "$ch" "" "" "" "" "" "moved from $from by $how: $reason"
+  [ $how = CSA ] && sync_status "$b" > /dev/null
   say "$b GHz: moved from channel $from to $ch ($how): $reason"; }
 
 recheck() { # BAND [now]: AP_CHAN_CONFIRM samples; move when all agree
@@ -317,6 +344,7 @@ remember) remember "$2" ;;
 rank) settings; rank "$2" ;;
 score) settings; score "$2" "$3" "${4:-0}" ;;
 csa-capable) csa_capable "$2" ;;
+sync) sync_status "$2" ;;
 status) for b in ${2:-5 24}; do cat "$OUTD/chan-status-$b" 2>/dev/null; done; true ;;
 history) cat "$DB/history" 2>/dev/null; true ;;
 *) sed -n '2,40p' "$0"; exit 2 ;;
