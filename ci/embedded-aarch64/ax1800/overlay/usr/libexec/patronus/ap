@@ -102,12 +102,19 @@ acs_candidates() { # BAND: the primary channels ACS may pick (AP_CHANLIST*, DFS/
   # blocks this network's other access points use); ap-chan scores exactly these
   eval "l=\${AP_CHANLIST$1:-}"; l=$(chanlist "$1" "$l"); l=$(coordinate_list "$1" "$l")
   if [ "$1" = 5 ]; then acs5_primaries "$l" "${AP_HT5:-80}"; else echo "$l"; fi; }
+pin_block() { # BAND CH LIST: the channels of LIST in CH's block (5 GHz: its 20/40/80/160 MHz block; 2.4 GHz 40 MHz: CH
+  # and its secondary), CH first
+  if [ "$1" = 5 ]; then bl=$(blk5 "$2" "${AP_HT5:-80}"); else bl=$2; if [ "${AP_HT24:-20}" = 40 ]; then
+    [ "$2" -le 7 ] && bl="$2 $(($2 + 4))" || bl="$2 $(($2 - 4))"; fi; fi
+  o=$2; for x in ${bl:-$2}; do [ "$x" = "$2" ] && continue; case " $3 " in *" $x "*) o="$o $x";; esac; done; echo "$o"; }
 acs_lines() { # BAND: what ACS may pick from and how long it measures
   case "${AP_ACS_SCANS:-5}" in [1-9]|1[0-9]|20) echo "acs_num_scans=${AP_ACS_SCANS:-5}";; *) echo "acs_num_scans=5";; esac
   l=$(acs_candidates "$1")
   # ap-chan measured the candidates before this start (docs 12.19): its choice is ACS's only channel
   eval "sm=\${AP_CHAN_SMART$1:-1}"; pin=$(cat "$OUTD/chan-$1" 2>/dev/null)
-  if on "$sm" && [ -n "$pin" ]; then case " $l " in *" $pin "*) l=$pin;; *) echo "ap: $1 GHz: measured channel $pin is no longer allowed, ACS decides" >&2;; esac; fi
+  # (the whole 40/80 MHz block of that channel: hostapd's ACS refuses a primary whose block is not in chanlist)
+  if on "$sm" && [ -n "$pin" ]; then case " $l " in *" $pin "*) l=$(pin_block "$1" "$pin" "$l");;
+    *) echo "ap: $1 GHz: measured channel $pin is no longer allowed, ACS decides" >&2;; esac; fi
   if [ "$1" = 5 ]; then echo "chanlist=$l"
     case "${AP_DFS:-0}" in 1|yes|on) echo "acs_exclude_dfs=0";; *) echo "acs_exclude_dfs=1";; esac
   else [ -n "$l" ] && echo "chanlist=$l"; fi; true; }

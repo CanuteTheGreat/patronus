@@ -7,9 +7,9 @@
 # then ENABLED). For each: hostapd reaches ENABLED, the channel is in the allowed set, the VHT/HE centre channel and the
 # HT40 direction agree with the channel ACS picked, and the kernel runs the radio at that width and centre frequency.
 # Env: HOSTAPD (binary under test), AP_DIR (dir with usr/libexec/patronus/ap and etc/patronus/board.sh),
-#      ACS_CASES (default "default w40 h24 nodfs dfs"). Prints PASS/FAIL lines and "FAILED: none" on success.
+#      ACS_CASES (default "default pin w40 h24 nodfs dfs"; pin = the block ap-chan measured is ACS's only choice). Prints PASS/FAIL lines and "FAILED: none" on success.
 set -u
-HOSTAPD=${HOSTAPD:-hostapd}; AP_DIR=${AP_DIR:-/w/h/overlay}; CASES=${ACS_CASES:-default w40 h24 nodfs dfs}
+HOSTAPD=${HOSTAPD:-hostapd}; AP_DIR=${AP_DIR:-/w/h/overlay}; CASES=${ACS_CASES:-default pin w40 h24 nodfs dfs}
 T=/tmp/acs; rm -rf $T; mkdir -p $T /run/hostapd; fails=
 pass() { echo "PASS: $*"; }; fail() { echo "FAIL: $*"; fails="$fails|$*"; }
 set -- $(ls /sys/class/ieee80211 | sort -V); [ $# -ge 3 ] || { echo "SKIP: need 3 radios, have $#"; exit 0; }
@@ -25,6 +25,8 @@ run_case() {
   name=$1; wait=$2; printf '. %s/etc/patronus/board.sh\n%s\nAP_COUNTRY=US\nAP_SSIDS=m\nSSID_m=acs-%s KEY_m=acstest123 SEC_m=wpa2\n%s\n' \
     "$AP_DIR" "$HWSIM_CAPS" "$name" "$3" > $T/board-$name.sh
   rm -rf $T/$name; mkdir -p $T/$name
+  # the channel ap-chan measured before this start (docs 12.19): PIN5 / PIN24
+  [ -n "${PIN5:-}" ] && echo "$PIN5" > $T/$name/chan-5; [ -n "${PIN24:-}" ] && echo "$PIN24" > $T/$name/chan-24
   AP_BOARD=$T/board-$name.sh AP_RENDER_OUT=$T/$name AP_GUARD=/nonexistent AP_PHY24=$P24 AP_PHY5=$P5 \
     sh $AP_DIR/usr/libexec/patronus/ap render > $T/$name.render 2>&1
   for b in 24 5; do f=$T/$name/ap$b.conf; [ -f $f ] || { fail "$name: ap render wrote no ap$b.conf"; cat $T/$name.render; continue; }
@@ -80,6 +82,12 @@ default)
   check5 default 80 "$NODFS5"
   assoc5 default
   stop_case default;;
+pin)
+  # ap-chan measured 157 (80 MHz): ACS gets 157's block only and must still come up (a lone primary was refused on
+  # hardware), on 149-161; 2.4 GHz pinned to 11
+  PIN5=157 PIN24=11 run_case pin 60 ""; check5 pin 80 "149 153 157 161"
+  [ "$(st wl24-m channel)" = 11 ] && pass "pin: 2.4 GHz on the measured channel 11" || fail "pin: 2.4 GHz on $(st wl24-m channel), wanted 11"
+  stop_case pin;;
 w40)
   run_case w40 60 "AP_HT5=40"; check5 w40 40 "$NODFS5"; stop_case w40;;
 h24)

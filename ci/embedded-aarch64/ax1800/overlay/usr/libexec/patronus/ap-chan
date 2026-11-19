@@ -194,7 +194,7 @@ pick() { # BAND IF [boot]
   score "$b" "$cands" "$cur" < "$OUTD/chan-meas-$b" > "$OUTD/chan-score-$b"
   best=$(sed -n '1s/ .*//p' "$OUTD/chan-score-$b"); [ -n "$best" ] || return 1
   if [ "$mode" = boot ]; then echo "$best" > "$OUTD/chan-$b"
-    w=$(why "$OUTD/chan-score-$b" "$best"); status_json "$b" start "$best" "$best" "$OUTD/chan-score-$b" "$w"
+    w=$(why "$OUTD/chan-score-$b" "$best"); status_json "$b" start "$best" "" "$OUTD/chan-score-$b" "$w"
     set -- $(sed -n 1p "$OUTD/chan-score-$b"); n2=$(sed -n 2p "$OUTD/chan-score-$b")
     hist start "$b" "$1" "$2" "$3" "$4" "$(echo "$n2" | cut -d' ' -f1)" "$(echo "$n2" | cut -d' ' -f2)" "$w"
     say "$b GHz at start: $w"; fi
@@ -205,7 +205,9 @@ hstatus() { if [ -n "${AP_CHAN_STATUS_FILE:-}" ]; then cat "$AP_CHAN_STATUS_FILE
   i=$(sed -n 's/^interface=//p' "$OUTD/ap$1.conf" 2>/dev/null | head -1); [ -n "$i" ] && $CLI -p "$CTRL" -i "$i" status 2>/dev/null; fi; }
 phy_of() { i=$(sed -n 's/^interface=//p' "$OUTD/ap$1.conf" 2>/dev/null | head -1); cat "/sys/class/net/$i/phy80211/name" 2>/dev/null; }
 csa_capable() { [ -n "${AP_CHAN_CSA_OK:-}" ] && { [ "$AP_CHAN_CSA_OK" = 1 ]; return; }
-  p=$(phy_of "$1"); [ -n "$p" ] && iw phy "$p" info 2>/dev/null | grep -qi 'channel_switch'; }
+  # before hostapd made the interface (start), any radio of the board answers: they share one driver
+  p=$(phy_of "$1"); if [ -n "$p" ]; then iw phy "$p" info 2>/dev/null | grep -qi 'channel_switch'
+  else iw list 2>/dev/null | grep -qi 'channel_switch'; fi; }
 
 move() { # BAND CH REASON
   b=$1; ch=$2; reason=$3; settings

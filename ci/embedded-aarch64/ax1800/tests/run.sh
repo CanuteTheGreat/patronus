@@ -291,7 +291,11 @@ python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['candidate
 grep -q '^peers-5\|aa:bb:cc:11:11' "$C2/db/peers-5" && ok "ap-chan remember: the unit heard is recorded for the next start's order" || { no "ap-chan remember"; cat "$C2/db/peers-5" 2>&1; }
 printf '. %s\n%s\n' "$A/co-board.sh" "$TWO" > "$A/board-chp.sh"; mkdir -p "$A/chp"; cp "$C2/run/chan-5" "$C2/run/coord-5" "$A/chp/"
 AP_BOARD=$A/board-chp.sh AP_RENDER_OUT=$A/chp AP_SYSFS=$A/sys AP_PHY5=phy0 AP_PHY24=phy1 sh "$O/usr/libexec/patronus/ap" render > "$A/chp.out" 2>&1
-[ "$(seg chp chanlist)" = 149 ] && [ "$(seg chp channel)" = 0 ] && ok "ap: the measured channel is ACS's only choice (channel=0, chanlist=149)" || no "ap render with chan-5: $(seg chp chanlist)"
+[ "$(seg chp chanlist)" = "149 153 157 161" ] && [ "$(seg chp channel)" = 0 ] && ok "ap: ACS may use only the measured channel's 80 MHz block (channel=0, chanlist=149 153 157 161: hostapd refuses a lone primary at 80 MHz)" || no "ap render with chan-5: $(seg chp chanlist)"
+echo 157 > "$A/chp/chan-5"; AP_BOARD=$A/board-chp.sh AP_RENDER_OUT=$A/chp AP_SYSFS=$A/sys AP_PHY5=phy0 AP_PHY24=phy1 sh "$O/usr/libexec/patronus/ap" render > "$A/chp.out" 2>&1
+[ "$(seg chp chanlist)" = "157 149 153 161" ] && ok "ap: the measured primary comes first, then the rest of its block" || no "ap render with chan-5=157: $(seg chp chanlist)"
+printf '. %s\nAP_HT5=20\n' "$A/board-chp.sh" > "$A/board-chp20.sh"; AP_BOARD=$A/board-chp20.sh AP_RENDER_OUT=$A/chp AP_SYSFS=$A/sys AP_PHY5=phy0 AP_PHY24=phy1 sh "$O/usr/libexec/patronus/ap" render > "$A/chp.out" 2>&1
+[ "$(seg chp chanlist)" = 157 ] && ok "ap: at 20 MHz the measured channel alone" || no "ap render 20 MHz pin: $(seg chp chanlist)"
 echo 36 > "$A/chp/chan-5"; AP_BOARD=$A/board-chp.sh AP_RENDER_OUT=$A/chp AP_SYSFS=$A/sys AP_PHY5=phy0 AP_PHY24=phy1 sh "$O/usr/libexec/patronus/ap" render > "$A/chp.out" 2>&1
 [ "$(seg chp chanlist)" = "149 153 157 161" ] && grep -q 'no longer allowed' "$A/chp.out" && ok "ap: a measured channel that is no longer a candidate (peer moved there) is ignored" || no "ap: stale chan-5: $(seg chp chanlist)"
 printf '. %s\nAP_CHAN_SMART5=0\n' "$A/board-chp.sh" > "$A/board-chp0.sh"; echo 149 > "$A/chp/chan-5"
@@ -352,6 +356,20 @@ printf 'channel=44\ninterface=wl5-m\n' > "$C2/run2/ap5.conf"; rc; grep -q 'fixed
 # due: once a day at AP_CHAN_TIME, later by AP_CHAN_STAGGER per unit that comes first
 dueat() { rm -f "$C2/run2/chan-done-5"; AP_RENDER_OUT=$C2/run2 AP_BOARD=$A/co-board.sh AP_CHAN_DB=$C2/db AP_SYSFS=$A/sys AP_CHAN_HM=$1 AP_CHAN_NOW=2000000 sh "$CH" due 5 && echo due; }
 printf 'channel=0\ninterface=wl5-m\nbssid=94:00:5e:10:20:d7\n' > "$C2/run2/ap5.conf"; rm -f "$C2/db/peers-5"
+# boot guard hostapd check: every BSS the renderer wrote must be served (a radio whose hostapd gave up leaves no socket;
+# found on hardware: 5 GHz down, 2.4 GHz up, the trial was confirmed)
+GH=$W/gh; mkdir -p "$GH/ctl" "$GH/run" "$GH/bin" "$GH/sys/phy0" "$GH/gr"; printf 'AP_SSIDS=m\n' > "$GH/ap.env"
+printf 'interface=wl5-m\nbss=wl5-g\n' > "$GH/run/ap5.conf"; printf 'interface=wl24-m\n' > "$GH/run/ap24.conf"
+printf '#!/bin/sh\ncase "$1" in -v) echo "hostapd v2.11";; *) sleep 30;; esac\n' > "$GH/bin/hostapd"
+printf '#!/bin/sh\necho state=ENABLED\n' > "$GH/bin/hostapd_cli"; chmod +x "$GH/bin/hostapd" "$GH/bin/hostapd_cli"
+"$GH/bin/hostapd" run & ghp=$!
+for i in wl24-m wl5-g; do python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$GH/ctl/$i"; done
+ghc() { env GUARD_PATH="$GH/bin" GUARD_CONF_DIR="$GH" GUARD_RUN="$GH/gr" GUARD_RELEASE="$GH/gr/release" PATRONUS_DATA="$GH" GUARD_CHECKS=hostapd \
+  GUARD_HOSTAPD_CTRL="$GH/ctl" GUARD_AP_RUN="$GH/run" GUARD_AP_ENV="$GH/ap.env" GUARD_SYSWIFI="$GH/sys" sh "$O/usr/sbin/patronus-guard" check 2>&1; }
+o=$(ghc); case "$o" in *"hostapd FAIL wl5-m: not served (ap5.conf)"*) ok "patronus-guard: a configured BSS without hostapd fails the boot check (one radio down)";; *) no "patronus-guard hostapd check with wl5-m missing: $o";; esac
+python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$GH/ctl/wl5-m"
+o=$(ghc); case "$o" in "hostapd ok") ok "patronus-guard: every BSS served = hostapd ok";; *) no "patronus-guard hostapd check all served: $o";; esac
+kill $ghp 2>/dev/null; wait $ghp 2>/dev/null
 [ "$(dueat 0335)/$(dueat 1200)/$(dueat 0329)" = "due//" ] && ok "ap-chan due: in the hour after 03:30, not at noon or before" || no "ap-chan due: $(dueat 0335)/$(dueat 1200)/$(dueat 0329)"
 r=$(rm -f "$C2/run2/chan-done-5"; for i in 1 2; do AP_RENDER_OUT=$C2/run2 AP_BOARD=$A/co-board.sh AP_CHAN_DB=$C2/db AP_CHAN_HM=0340 AP_CHAN_NOW=2000000 sh "$CH" due 5 && echo due; done)
 [ "$r" = "due" ] && ok "ap-chan due: once per day" || no "ap-chan due twice: $r"

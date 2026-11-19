@@ -30,9 +30,10 @@
 #   Everything the bootloader runs is generated from the settings below; nothing is fixed in the script.
 # Settings: /etc/patronus/boot-guard.board (image: board facts), /etc/patronus/boot-guard.conf (unit: policy; the web
 # UI writes it). Data: /data/boot-guard/ (events, last failure), status for the web UI: /run/patronus/boot-guard.json.
-# Test hooks: PATRONUS_DATA, PATRONUS_UBI, GUARD_CONF_DIR, GUARD_RUN, FW_PRINTENV/FW_SETENV, GUARD_NOW (epoch).
+# Test hooks: PATRONUS_DATA, PATRONUS_UBI, GUARD_CONF_DIR, GUARD_RUN, FW_PRINTENV/FW_SETENV, GUARD_NOW (epoch), GUARD_PATH
+#   (prepended to PATH), GUARD_HOSTAPD_CTRL / GUARD_AP_RUN / GUARD_AP_ENV / GUARD_SYSWIFI (hostapd check paths).
 set -u
-export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH=${GUARD_PATH:+$GUARD_PATH:}/usr/sbin:/usr/bin:/sbin:/bin
 CD=${GUARD_CONF_DIR:-/etc/patronus}
 [ -f "$CD/boot-guard.board" ] && . "$CD/boot-guard.board"
 [ -f "$CD/boot-guard.conf" ] && . "$CD/boot-guard.conf"
@@ -262,17 +263,21 @@ c_web() {
   running patronus-web || { echo "patronus-web not running"; return 1; }
   timeout "$GUARD_WEB_TIMEOUT" wget -q -O /dev/null --no-check-certificate "$GUARD_WEB_URL" 2>/dev/null || { echo "$GUARD_WEB_URL does not answer"; return 1; }
 }
-wifi_on() { [ -f /etc/patronus/ap.env ] && (. /etc/patronus/ap.env; [ -n "${AP_SSIDS:-}" ]) && ls /sys/class/ieee80211/ 2>/dev/null | grep -q .; }
+HCTL=${GUARD_HOSTAPD_CTRL:-/var/run/hostapd}; HRUN=${GUARD_AP_RUN:-/run/hostapd}; APENV=${GUARD_AP_ENV:-/etc/patronus/ap.env}
+wifi_on() { [ -f "$APENV" ] && (. "$APENV"; [ -n "${AP_SSIDS:-}" ]) && ls "${GUARD_SYSWIFI:-/sys/class/ieee80211}"/ 2>/dev/null | grep -q .; }
 c_hostapd() {
   [ "$GUARD_HOSTAPD" = off ] && return 0
   case "$(hostapd -v 2>&1)" in *hostapd\ v*) ;; *) echo "hostapd does not run"; return 1;; esac
   if [ "$GUARD_HOSTAPD" = require ] || wifi_on; then
     [ "$GUARD_HOSTAPD" = require ] && ! wifi_on && return 0
     running hostapd || { echo "Wi-Fi configured but hostapd is not running"; return 1; }
-    for s in /var/run/hostapd/*; do [ -S "$s" ] || continue
-      st=$(hostapd_cli -p /var/run/hostapd -i "${s##*/}" status 2>/dev/null | sed -n 's/^state=//p')
+    for s in "$HCTL"/*; do [ -S "$s" ] || continue
+      st=$(hostapd_cli -p "$HCTL" -i "${s##*/}" status 2>/dev/null | sed -n 's/^state=//p')
       [ "$st" = ENABLED ] || { echo "${s##*/}: ${st:-no answer}"; return 1; }; done
-    ls /var/run/hostapd/* >/dev/null 2>&1 || { echo "no hostapd control socket"; return 1; }
+    ls "$HCTL"/* >/dev/null 2>&1 || { echo "no hostapd control socket"; return 1; }
+    # every BSS the renderer wrote must be served: a radio whose hostapd gave up has no socket left to ask
+    for f in "$HRUN"/ap*.conf; do [ -f "$f" ] || continue
+      for i in $(sed -n 's/^interface=//p; s/^bss=//p' "$f"); do [ -S "$HCTL/$i" ] || { echo "$i: not served (${f##*/})"; return 1; }; done; done
   fi
 }
 checks() { # prints one line per check; exit 0 when all pass
