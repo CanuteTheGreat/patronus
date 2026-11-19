@@ -701,6 +701,26 @@ impl InterfacesManager {
                 }
             }
         }
+        // Ports the abandoned attempt took over lose the permanent addresses the system had given them (the installer's static LAN
+        // address, say), and a restored "unmanaged" row does not bring them back: put them on again.
+        let now = self.kernel().await;
+        for (name, link) in &cp.kernel.links {
+            for a in link
+                .addrs
+                .iter()
+                .filter(|a| !a.dynamic && a.scope == "global")
+            {
+                let present = now
+                    .get(name)
+                    .is_some_and(|l| l.addrs.iter().any(|x| x.net == a.net));
+                if !present && now.get(name).is_some() {
+                    let args = ["addr", "add", &a.net.to_string(), "dev", name].map(str::to_string);
+                    if let Err(e) = self.cmd.run("ip", &args).await {
+                        tracing::error!("restoring {} on {name} after a failed setup: {e}", a.net);
+                    }
+                }
+            }
+        }
         let _ = self.firewall.apply(&self.store).await;
     }
 
