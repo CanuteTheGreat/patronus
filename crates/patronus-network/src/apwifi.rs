@@ -1007,14 +1007,13 @@ fn default_tz() -> String {
 /// `AP_TZ`: a POSIX TZ string (musl/busybox read it without a zoneinfo database): starts with a zone name of 3+
 /// letters or `<...>`, at most 64 characters of letters, digits and `<>+-,.:/`.
 pub fn valid_tz(v: &str) -> bool {
-    let name_ok = v.starts_with('<')
-        || (v.len() >= 3 && v.chars().take(3).all(|c| c.is_ascii_alphabetic()));
+    let name_ok =
+        v.starts_with('<') || (v.len() >= 3 && v.chars().take(3).all(|c| c.is_ascii_alphabetic()));
     !v.is_empty()
         && v.len() <= 64
         && name_ok
         && v.chars().any(|c| c.is_ascii_digit())
-        && v
-            .chars()
+        && v.chars()
             .all(|c| c.is_ascii_alphanumeric() || "<>+-,.:/".contains(c))
 }
 /// A number setting of [`STATION_NUMBERS`] from the file: out of range or not a number = its default.
@@ -1720,7 +1719,11 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         set.push(("AP_STEER_EXEMPT".into(), out.join(" ")));
     }
     for (k, v, what) in [
-        ("AP_STEER_KICK", &input.steer_kick, "steering disconnects: quiet or never"),
+        (
+            "AP_STEER_KICK",
+            &input.steer_kick,
+            "steering disconnects: quiet or never",
+        ),
         (
             "AP_STEER_LEGACY",
             &input.steer_legacy,
@@ -1739,9 +1742,7 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
     if let Some(v) = &input.steer_quiet {
         let v = v.trim();
         if !valid_window(v) {
-            return Err(invalid(
-                "steering quiet hours: a window like 01:00-05:00",
-            ));
+            return Err(invalid("steering quiet hours: a window like 01:00-05:00"));
         }
         set.push(("AP_STEER_QUIET".into(), v.to_string()));
     }
@@ -3695,12 +3696,21 @@ mod tests {
             "AP_STEER_KICK=sometimes\nAP_STEER_QUIET=25:00-02:00\nAP_STEER_REPORT=loud\nAP_WNM_SLEEP=1\n",
         ));
         assert_eq!(
-            (c.steer_kick.as_str(), c.steer_quiet.as_str(), c.steer_report.as_str()),
+            (
+                c.steer_kick.as_str(),
+                c.steer_quiet.as_str(),
+                c.steer_report.as_str()
+            ),
             ("quiet", "01:00-05:00", "active")
         );
         assert!(c.wnm_sleep);
         assert_eq!(view(&parse("")).timezone, "UTC0");
-        for ok in ["PST8PDT,M3.2.0,M11.1.0", "UTC0", "<+0530>-5:30", "CET-1CEST,M3.5.0,M10.5.0/3"] {
+        for ok in [
+            "PST8PDT,M3.2.0,M11.1.0",
+            "UTC0",
+            "<+0530>-5:30",
+            "CET-1CEST,M3.5.0,M10.5.0/3",
+        ] {
             assert!(valid_tz(ok), "{ok}");
         }
         for bad in ["", "PST", "P8", "PST8; reboot", "PST8\nX=1", "$(id)8"] {
