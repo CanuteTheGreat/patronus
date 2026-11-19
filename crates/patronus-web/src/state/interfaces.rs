@@ -953,20 +953,33 @@ impl InterfacesManager {
             .load_system_config(sd::CONF_KEY)
             .await
             .map_err(Self::e)?;
-        let s = sd::Settings::from_values(mode.as_deref(), conf.as_deref()).unwrap_or_default();
+        let run = self
+            .store
+            .load_system_config(sd::RUN_KEY)
+            .await
+            .map_err(Self::e)?;
+        let s = sd::Settings::from_values(mode.as_deref(), conf.as_deref(), run.as_deref())
+            .unwrap_or_default();
         Ok(json!({
             "mode": s.mode.as_str(),
             "conf": s.conf,
+            "run_dir": s.run_dir,
             "default_conf": sd::DEFAULT_CONF,
+            "default_run_dir": sd::DEFAULT_RUN_DIR,
         }))
     }
 
     /// Keep the installer's system dhcpcd off the interfaces Patronus
     /// configures (`release`, the default) or never touch it (`leave`);
     /// `conf` empty = the default config path.
-    pub async fn set_system_dhcpcd(&self, mode: &str, conf: &str) -> anyhow::Result<ApplyReport> {
+    pub async fn set_system_dhcpcd(
+        &self,
+        mode: &str,
+        conf: &str,
+        run: &str,
+    ) -> anyhow::Result<ApplyReport> {
         use patronus_network::system_dhcpcd as sd;
-        let s = sd::Settings::from_values(Some(mode), Some(conf)).map_err(Self::e)?;
+        let s = sd::Settings::from_values(Some(mode), Some(conf), Some(run)).map_err(Self::e)?;
         {
             let _g = self.edit.lock().await;
             self.store
@@ -980,6 +993,10 @@ impl InterfacesManager {
             };
             self.store
                 .save_system_config(sd::CONF_KEY, stored)
+                .await
+                .map_err(Self::e)?;
+            self.store
+                .save_system_config(sd::RUN_KEY, run.trim())
                 .await
                 .map_err(Self::e)?;
         }

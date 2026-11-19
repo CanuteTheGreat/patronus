@@ -332,7 +332,13 @@ pub async fn apply(
             .await;
         };
         let lan_ip = b.lan_ipv4.split('/').next().unwrap_or("").to_string();
-        let pool = patronus_network::dhcp::PoolInput {
+        // Running the wizard again re-applies it ("running it again re-applies the settings below"): a pool the wizard (or the DHCP
+        // page) already made on this port is updated in place, keeping its lease time, domain, NTP servers and reservations.
+        let existing = patronus_network::dhcp::list_pools(&state.config_store)
+            .await
+            .ok()
+            .and_then(|v| v.into_iter().find(|p| p.interface == b.lan_interface));
+        let mut pool = patronus_network::dhcp::PoolInput {
             interface: b.lan_interface.clone(),
             enabled: true,
             range_start: s,
@@ -346,7 +352,18 @@ pub async fn apply(
             description: Some("created by the setup wizard".into()),
             ..Default::default()
         };
-        if let Err(e) = state.lan.save_pool(None, pool).await {
+        if let Some(old) = &existing {
+            pool.lease_time = Some(old.lease_time);
+            pool.domain = old.domain.clone();
+            pool.ntp_servers = (!old.ntp_servers.is_empty()).then(|| {
+                old.ntp_servers
+                    .iter()
+                    .map(|a| a.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            });
+        }
+        if let Err(e) = state.lan.save_pool(existing.map(|p| p.id), pool).await {
             let m = e.to_string();
             let code = if m.contains("Invalid") {
                 StatusCode::BAD_REQUEST

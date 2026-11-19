@@ -311,6 +311,9 @@ pub enum Op {
         service: &'static str,
         instance: String,
     },
+    /// Ask the system dhcpcd manager to run DHCP on `dev` (the installed image has exactly one DHCP client: that manager;
+    /// a second `dhcpcd` for the same port would just hand its command line to the manager and exit).
+    SystemDhcp { dev: String, run_dir: PathBuf },
 }
 
 impl Op {
@@ -320,6 +323,7 @@ impl Op {
             Op::Sysctl { path, value } => format!("{} = {value}", path.replace('/', ".")),
             Op::Ensure(s) => format!("run {}", s.describe()),
             Op::Stop { service, instance } => format!("stop {service}[{instance}]"),
+            Op::SystemDhcp { dev, .. } => format!("system dhcpcd: DHCP on {dev}"),
         }
     }
 }
@@ -349,6 +353,10 @@ pub struct PlanInput<'a> {
     /// Current value of a `/proc/sys` path (`net/ipv6/conf/eth0/accept_ra`).
     pub sysctl: &'a dyn Fn(&str) -> Option<String>,
     pub paths: &'a NetPaths,
+    /// The box runs a system dhcpcd manager (the installer's network stack) and Patronus lets it be the DHCP client of
+    /// the interfaces in DHCP mode instead of starting its own per-interface dhcpcd, which cannot coexist with it.
+    /// Some(run dir of the manager) = delegating.
+    pub delegate_dhcp: Option<PathBuf>,
 }
 
 struct Planner<'a> {
@@ -379,6 +387,11 @@ impl<'a> Planner<'a> {
         } else {
             self.inp.kernel.get(n)
         }
+    }
+
+    /// DHCP on this interface is left to the system dhcpcd manager (no prefix delegation, which needs Patronus' own dhcpcd).
+    fn delegated(&self, i: &IfaceConfig) -> bool {
+        self.inp.delegate_dhcp.is_some() && i.pd_downstream.is_empty()
     }
 
     fn warn(&mut self, w: String) {
@@ -581,8 +594,18 @@ impl<'a> Planner<'a> {
             }
         }
         for a in want {
-            if !have.iter().any(|(h, _)| h == a) {
-                self.push(ip(&["addr", "add", &a.to_string(), "dev", dev]));
+            match have.iter().find(|(h, _)| h == a) {
+                None => self.push(ip(&["addr", "add", &a.to_string(), "dev", dev])),
+                Some((_, true)) => {
+                    // The address is there but it is a DHCP lease (finite lifetime, added `noprefixroute` by dhcpcd, which also
+                    // owned the connected route): a static entry must be permanent and carry its own prefix route. Taking an
+                    // interface over from a DHCP client used to leave exactly this address behind, and the gateway route then
+                    // failed with "Nexthop has invalid gateway" once the client let go. `ip addr replace` keeps noprefixroute,
+                    // so delete and add it again.
+                    self.push(ip(&["addr", "del", &a.to_string(), "dev", dev]));
+                    self.push(ip(&["addr", "add", &a.to_string(), "dev", dev]));
+                }
+                Some(_) => {}
             }
         }
     }
@@ -659,7 +682,18 @@ impl<'a> Planner<'a> {
         }
         let v4 = !is_ppp && i.ipv4_mode == V4Mode::Dhcp;
         let v6 = i.ipv6_mode == V6Mode::Dhcp6;
-        if v4 || v6 {
+        if (v4 || v6) && self.delegated(i) {
+            // the system manager is the client: ask it only when the port has no lease yet (idempotent apply)
+            let leased = self
+                .klink(dev)
+                .is_some_and(|k| k.v4().any(|a| a.dynamic && a.scope != "host"));
+            if let (false, Some(run_dir)) = (leased, self.inp.delegate_dhcp.clone()) {
+                self.push(Op::SystemDhcp {
+                    dev: dev.to_string(),
+                    run_dir,
+                });
+            }
+        } else if v4 || v6 {
             let choice = if v6 {
                 self.inp.dhcp_v6
             } else {
@@ -741,6 +775,7 @@ impl<'a> Planner<'a> {
             .interfaces
             .iter()
             .filter(|i| i.enabled && (i.ipv4_mode == V4Mode::Dhcp || i.ipv6_mode == V6Mode::Dhcp6))
+            .filter(|i| !self.delegated(i))
             .filter(|i| i.ipv6_mode == V6Mode::Dhcp6 || !cfg.pppoe.iter().any(|p| p.name == i.name))
             .map(|i| i.name.clone())
             .collect();
@@ -1035,11 +1070,18 @@ impl InterfacesApplier {
     /// The interfaces Patronus owns: it configures an address (or none, for
     /// a bridge/bond member) or keeps them down. The system dhcpcd must not
     /// manage these.
-    pub fn owned_interfaces(cfg: &NetConfig) -> Vec<String> {
+    pub fn owned_interfaces(cfg: &NetConfig, delegating: bool) -> Vec<String> {
         cfg.interfaces
             .iter()
             .filter(|i| {
                 i.ipv4_mode != V4Mode::Unmanaged || i.ipv6_mode != V6Mode::Unmanaged || !i.enabled
+            })
+            // a port the system manager runs DHCP on for Patronus is the manager's, not denied to it
+            .filter(|i| {
+                !(delegating
+                    && i.enabled
+                    && i.pd_downstream.is_empty()
+                    && (i.ipv4_mode == V4Mode::Dhcp || i.ipv6_mode == V6Mode::Dhcp6))
             })
             .map(|i| i.name.clone())
             .collect()
@@ -1054,12 +1096,10 @@ impl InterfacesApplier {
         if !self.release_system_dhcpcd {
             return;
         }
-        let mode = store.load_system_config(sd::MODE_KEY).await.ok().flatten();
-        let conf = store.load_system_config(sd::CONF_KEY).await.ok().flatten();
-        let settings = match sd::Settings::from_values(mode.as_deref(), conf.as_deref()) {
-            Ok(s) => s,
-            Err(e) => {
-                report.warn(e.to_string());
+        let settings = match Self::system_dhcpcd_settings(store).await {
+            Some(s) => s,
+            None => {
+                report.warn("the system dhcpcd settings are invalid; not touching its config");
                 return;
             }
         };
@@ -1069,7 +1109,8 @@ impl InterfacesApplier {
         let Ok(cfg) = NetConfig::load(store).await else {
             return;
         };
-        let owned = Self::owned_interfaces(&cfg);
+        let delegating = self.delegates_dhcp(store).await.is_some();
+        let owned = Self::owned_interfaces(&cfg, delegating);
         let was: BTreeSet<String> = std::fs::read_to_string(&settings.conf)
             .map(|c| sd::denied(&c).into_iter().collect())
             .unwrap_or_default();
@@ -1104,6 +1145,42 @@ impl InterfacesApplier {
 
     pub fn supervisor(&self) -> &Supervisor {
         &self.sup
+    }
+
+    /// The system dhcpcd manager's run dir when it is this box's DHCP client for the ports in DHCP mode: it is enabled (stable
+    /// across the boot passes) or already running, and the operator did not opt out.
+    async fn delegates_dhcp(&self, store: &ConfigStore) -> Option<PathBuf> {
+        use crate::system_dhcpcd as sd;
+        if !self.release_system_dhcpcd {
+            return None;
+        }
+        let settings = Self::system_dhcpcd_settings(store).await?;
+        if settings.mode == sd::Mode::Leave || !settings.conf.exists() {
+            return None;
+        }
+        let present = sd::manager_running(&settings.run_dir)
+            || patronus_core::service::ServiceManager::new()
+                .is_enabled("dhcpcd")
+                .unwrap_or(false);
+        present.then_some(settings.run_dir)
+    }
+
+    async fn system_dhcpcd_settings(store: &ConfigStore) -> Option<crate::system_dhcpcd::Settings> {
+        use crate::system_dhcpcd as sd;
+        let mode = store.load_system_config(sd::MODE_KEY).await.ok().flatten();
+        let conf = store.load_system_config(sd::CONF_KEY).await.ok().flatten();
+        let run = store.load_system_config(sd::RUN_KEY).await.ok().flatten();
+        sd::Settings::from_values(mode.as_deref(), conf.as_deref(), run.as_deref()).ok()
+    }
+
+    /// Ask the running system manager to bring DHCP up on `dev`. Not running yet (early boot): its service starts it and
+    /// the second boot pass finds the lease in place.
+    async fn system_dhcp(&self, dev: &str, run_dir: &std::path::Path) -> Result<bool> {
+        if !crate::system_dhcpcd::manager_running(run_dir) {
+            return Ok(false);
+        }
+        self.cmd.run("dhcpcd", &[dev.to_string()]).await?;
+        Ok(true)
     }
 
     /// Store config + kernel state -> plan.
@@ -1148,6 +1225,7 @@ impl InterfacesApplier {
         let root = self.proc_root.clone();
         let sysctl = move |p: &str| std::fs::read_to_string(root.join(p)).ok();
         let paths = self.sup.paths.clone();
+        let delegate_dhcp = self.delegates_dhcp(store).await;
         let p = plan(&PlanInput {
             cfg: &cfg,
             kernel: &kernel,
@@ -1157,6 +1235,7 @@ impl InterfacesApplier {
             dhcp_v6: &dhcp_v6,
             sysctl: &sysctl,
             paths: &paths,
+            delegate_dhcp,
         });
         Ok((cfg, kernel, p))
     }
@@ -1174,6 +1253,7 @@ impl InterfacesApplier {
                 }
                 Op::Ensure(s) => self.sup.ensure(s).await,
                 Op::Stop { service, instance } => self.sup.stop(service, instance).await,
+                Op::SystemDhcp { dev, run_dir } => self.system_dhcp(dev, run_dir).await,
             };
             match r {
                 Ok(true) => report.applied(op.describe()),
@@ -1336,6 +1416,15 @@ mod applier_tests {
 ]"#;
 
     fn run(cfg: &NetConfig, k: &KernelState, running: &[(&str, &str)]) -> Plan {
+        run_with(cfg, k, running, None)
+    }
+
+    fn run_with(
+        cfg: &NetConfig,
+        k: &KernelState,
+        running: &[(&str, &str)],
+        delegate_dhcp: Option<PathBuf>,
+    ) -> Plan {
         let managed: BTreeSet<(String, String)> = running
             .iter()
             .map(|(a, b)| (a.to_string(), b.to_string()))
@@ -1353,11 +1442,102 @@ mod applier_tests {
             dhcp_v6: &v6,
             sysctl: &sysctl,
             paths: &paths,
+            delegate_dhcp,
         })
     }
 
     fn lines(p: &Plan) -> Vec<String> {
         p.ops.iter().map(|o| o.describe()).collect()
+    }
+
+    #[test]
+    fn a_static_entry_replaces_the_same_address_when_it_is_only_a_dhcp_lease() {
+        // dhcpcd's lease: finite lifetime, noprefixroute (it owned the connected route too). The static config names the same address.
+        let addrs = r#"[
+ {"ifindex":2,"ifname":"eth0","addr_info":[{"family":"inet","local":"10.0.0.5","prefixlen":24,"scope":"global","dynamic":true,"valid_life_time":80000}]}
+]"#;
+        let k = KernelState::parse(LINKS, addrs).unwrap();
+        let mut c = NetConfig::default();
+        let i = c.iface_mut("eth0");
+        i.ipv4_mode = V4Mode::Static;
+        i.ipv4 = vec!["10.0.0.5/24".parse().unwrap()];
+        i.gateway4 = Some("10.0.0.1".parse().unwrap());
+        let l = lines(&run(&c, &k, &[]));
+        let del = l
+            .iter()
+            .position(|x| x == "ip addr del 10.0.0.5/24 dev eth0");
+        let add = l
+            .iter()
+            .position(|x| x == "ip addr add 10.0.0.5/24 dev eth0");
+        assert!(del.is_some() && add.is_some() && del < add, "{l:?}");
+        // a permanent address already in place is left alone
+        let k = KernelState::parse(LINKS, ADDRS).unwrap();
+        let mut c = NetConfig::default();
+        let i = c.iface_mut("eth0");
+        i.ipv4_mode = V4Mode::Static;
+        i.ipv4 = vec!["10.0.0.5/24".parse().unwrap()];
+        let l = lines(&run(&c, &k, &[]));
+        assert!(
+            !l.iter()
+                .any(|x| x.contains("addr del") || x.contains("addr add")),
+            "{l:?}"
+        );
+    }
+
+    #[test]
+    fn with_a_system_dhcpcd_manager_the_dhcp_port_is_left_to_it() {
+        let run_dir = PathBuf::from("/run/dhcpcd");
+        let mut c = NetConfig::default();
+        c.iface_mut("eth0").ipv4_mode = V4Mode::Dhcp;
+        c.iface_mut("eth0").role = Some("wan".into());
+        // no lease yet: ask the manager, never start a second dhcpcd for the port
+        let k = KernelState::parse(LINKS, "[]").unwrap();
+        let mine = |p: Plan| -> Vec<String> {
+            lines(&p)
+                .into_iter()
+                .filter(|x| !x.contains("old0"))
+                .collect()
+        };
+        let l = mine(run_with(&c, &k, &[], Some(run_dir.clone())));
+        assert_eq!(l, vec!["system dhcpcd: DHCP on eth0"], "{l:?}");
+        // the manager's lease is in place: nothing to do (idempotent)
+        let leased = r#"[{"ifindex":2,"ifname":"eth0","addr_info":[{"family":"inet","local":"10.0.0.5","prefixlen":24,"scope":"global","dynamic":true,"valid_life_time":80000}]}]"#;
+        let k = KernelState::parse(LINKS, leased).unwrap();
+        assert!(mine(run_with(&c, &k, &[], Some(run_dir.clone()))).is_empty());
+        // an own per-interface client from an earlier configuration is stopped
+        let l = lines(&run_with(
+            &c,
+            &k,
+            &[("patronus-dhcpc", "eth0")],
+            Some(run_dir.clone()),
+        ));
+        assert!(
+            l.iter().any(|x| x.contains("stop patronus-dhcpc[eth0]")),
+            "{l:?}"
+        );
+        // without a manager the interface gets Patronus' own client, as before
+        let l = lines(&run_with(
+            &c,
+            &KernelState::parse(LINKS, "[]").unwrap(),
+            &[],
+            None,
+        ));
+        assert!(l.iter().any(|x| x.starts_with("run ")), "{l:?}");
+    }
+
+    #[test]
+    fn the_system_dhcpcd_is_kept_off_static_ports_but_not_off_the_ports_it_leases() {
+        let mut c = NetConfig::default();
+        c.iface_mut("eth0").ipv4_mode = V4Mode::Dhcp;
+        let i = c.iface_mut("eth1");
+        i.ipv4_mode = V4Mode::Static;
+        i.ipv4 = vec!["192.168.9.1/24".parse().unwrap()];
+        c.iface_mut("eth2").role = Some("opt1".into()); // role only: still the manager's
+        assert_eq!(
+            InterfacesApplier::owned_interfaces(&c, false),
+            vec!["eth0", "eth1"]
+        );
+        assert_eq!(InterfacesApplier::owned_interfaces(&c, true), vec!["eth1"]);
     }
 
     #[test]

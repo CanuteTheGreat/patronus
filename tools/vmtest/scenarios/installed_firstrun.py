@@ -123,13 +123,17 @@ def define(args):
         code, r = api("POST", "/api/setup/apply", {"wan_interface": WAN, "wan_mode": "dhcp", "lan_interface": LAN, "lan_ipv4": f"{LAN_IP}/24",
                                                    "dhcp": True, "dhcp_start": POOL[0], "dhcp_end": POOL[1], "force": True})
         m.check("wizard-dhcp-wan-answers-200", code == 200 and r.get("completed") is True, f"{code} {str(r)[:300]}")
-        fw.wait_until_succeeds(f"pgrep -af '[d]hcpcd.*{WAN}' | grep -q -- ' -B '", 60, 2)
-        m.check("dhcpcd-client-runs-for-the-wan-interface", True, fw.succeed(f"pgrep -af '[d]hcpcd.*{WAN}'").strip()[:200])
+        # the installed image has ONE DHCP client, the system dhcpcd manager; Patronus asks it to run DHCP on the WAN port (a second dhcpcd for
+        # the same port would only hand its command line to the manager and exit). The lease must be the WAN's, dynamic, with a default route.
+        fw.wait_until_succeeds(f"dhcpcd -U {WAN} 2>&1 | grep -q '^ip_address='", 90, 3)
+        m.check("dhcpcd-holds-a-lease-for-the-wan-interface", True, fw.succeed(f"dhcpcd -U {WAN} 2>&1 | grep -E '^(ip_address|routers)='").strip()[:200])
+        m.check("no-failing-second-dhcp-client-for-the-wan", fw.execute(f"pgrep -fc '[s]upervise-daemon patronus-dhcpc.{WAN}'")[1].strip() in ("0", ""), "no respawning patronus-dhcpc instance beside the manager")
         fw.wait_until_succeeds(f"ip -4 route show default dev {WAN} | grep -q via", 90, 3)
         fw.wait_until_succeeds("pgrep -x dnsmasq >/dev/null", 60, 2)
         m.check("wizard-started-the-lan-dhcp-server", True, "dnsmasq")
         conf = fw.succeed("cat /etc/dhcpcd.conf")
-        m.check("system-dhcpcd-keeps-off-the-patronus-ports", f"denyinterfaces {LAN} {WAN}" in conf or f"denyinterfaces {WAN} {LAN}" in conf, "denyinterfaces block in /etc/dhcpcd.conf")
+        m.check("system-dhcpcd-keeps-off-the-static-lan-port-only", f"denyinterfaces {LAN}\n" in conf and f"denyinterfaces {WAN}" not in conf.split("# BEGIN patronus-managed")[-1], "denyinterfaces block: LAN denied, WAN (DHCP) left to the manager")
+        m.check("deny-block-is-in-the-global-part-of-dhcpcd-conf", conf.index("# BEGIN patronus-managed") < conf.index(f"interface {LAN}") if f"interface {LAN}" in conf else True, "before the first interface scope")
         code, st = api("GET", "/api/setup/status")
         m.check("wizard-marks-setup-done", st.get("completed") is True, str(st.get("completed")))
 
@@ -137,6 +141,8 @@ def define(args):
         code, r = api("POST", "/api/setup/apply", {"wan_interface": WAN, "wan_mode": "static", "wan_ipv4": WAN_NET, "wan_gateway": WAN_GW, "lan_interface": LAN,
                                                    "lan_ipv4": f"{LAN_IP}/24", "dhcp": True, "dhcp_start": POOL[0], "dhcp_end": POOL[1], "force": True})
         m.check("wizard-static-wan-answers-200", code == 200, f"{code} {str(r)[:300]}")
+        conf = fw.succeed("cat /etc/dhcpcd.conf")
+        m.check("system-dhcpcd-keeps-off-both-ports-once-static", f"denyinterfaces {WAN} {LAN}" in conf or f"denyinterfaces {LAN} {WAN}" in conf, "denyinterfaces block lists both ports")
         code, d = api("GET", "/api/dhcp")
         pools = d.get("pools", []) if isinstance(d, dict) else []
         pid = next((p["id"] for p in pools if p.get("interface") == LAN), None)
