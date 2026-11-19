@@ -422,6 +422,14 @@ mod tests {
     #[tokio::test]
     #[ignore] // Requires CAP_NET_RAW and network access
     async fn test_probe_google_dns() {
+        // Needs the public internet. CI runners are not guaranteed a reply
+        // from 8.8.8.8 within the timeout (run 2306 on main: Timeout(2s)), and
+        // test_probe_localhost already proves the probe measures a real echo,
+        // so this one only runs when asked for.
+        if std::env::var_os("PATRONUS_TEST_INTERNET").is_none() {
+            eprintln!("skipped: set PATRONUS_TEST_INTERNET=1 to probe 8.8.8.8");
+            return;
+        }
         let prober = IcmpProber::new().expect("ICMP prober creation failed");
         let target = "8.8.8.8".parse().unwrap();
 
