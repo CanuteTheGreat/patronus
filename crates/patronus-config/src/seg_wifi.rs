@@ -19,6 +19,7 @@
 //! the API; revealing one again is an audited admin action.
 
 use crate::seg::{self, db, invalid, now, unique, Device, DeviceInput};
+use crate::seg_wifi_chan::{ChanInput, ChanSettings};
 use crate::store::ConfigStore;
 use patronus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -36,7 +37,12 @@ pub struct Network {
     pub ifname: String,
     pub ssid: String,
     pub band: String,
+    /// 0 = automatic (serialized as "auto"); otherwise the fixed channel
+    #[serde(serialize_with = "ser_channel")]
     pub channel: i64,
+    /// tuning of the automatic choice (also kept for a fixed channel, in case it is switched to auto)
+    #[serde(flatten)]
+    pub chan: ChanSettings,
     pub country: String,
     pub security: String,
     pub segment: String,
@@ -54,7 +60,8 @@ pub struct NetworkInput {
     pub ssid: String,
     #[serde(default)]
     pub band: Option<String>,
-    #[serde(default)]
+    /// a channel number, or `"auto"` (stored as 0; the default of a new network)
+    #[serde(default, deserialize_with = "de_channel")]
     pub channel: Option<i64>,
     #[serde(default)]
     pub country: Option<String>,
@@ -66,6 +73,34 @@ pub struct NetworkInput {
     pub unknown_policy: Option<String>,
     #[serde(default)]
     pub enabled: Option<bool>,
+    #[serde(default, flatten)]
+    pub chan: ChanInput,
+}
+
+fn ser_channel<S: serde::Serializer>(c: &i64, s: S) -> std::result::Result<S::Ok, S::Error> {
+    if *c == 0 {
+        s.serialize_str("auto")
+    } else {
+        s.serialize_i64(*c)
+    }
+}
+
+fn de_channel<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<i64>, D::Error> {
+    use serde::de::Error as _;
+    match Option::<serde_json::Value>::deserialize(d)? {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(t)) if t.eq_ignore_ascii_case("auto") => Ok(Some(0)),
+        Some(serde_json::Value::String(t)) => t
+            .trim()
+            .parse::<i64>()
+            .map(Some)
+            .map_err(|_| D::Error::custom(format!("channel {t:?}: a number or \"auto\""))),
+        Some(serde_json::Value::Number(n)) => n
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| D::Error::custom("channel: a whole number or \"auto\"")),
+        Some(_) => Err(D::Error::custom("channel: a number or \"auto\"")),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -201,6 +236,9 @@ fn check_ssid(s: &str) -> Result<()> {
 }
 
 fn check_channel(band: &str, ch: i64) -> Result<()> {
+    if ch == 0 && matches!(band, "2g" | "5g") {
+        return Ok(()); // automatic
+    }
     let ok = match band {
         "2g" => (1..=13).contains(&ch),
         "5g" => matches!(
@@ -248,6 +286,23 @@ fn network_row(r: &sqlx::sqlite::SqliteRow) -> Network {
         ssid: r.get("ssid"),
         band: r.get("band"),
         channel: r.get("channel"),
+        chan: ChanSettings {
+            chanlist: r.get("chanlist"),
+            width: r.get("width"),
+            recheck: r.get::<i64, _>("chan_recheck") != 0,
+            recheck_time: r.get("chan_time"),
+            hysteresis: r.get("chan_hyst"),
+            min_gain: r.get("chan_min_gain"),
+            confirm: r.get("chan_confirm"),
+            confirm_gap: r.get("chan_confirm_gap"),
+            csa: r.get("chan_csa"),
+            csa_count: r.get("chan_csa_count"),
+            rounds: r.get("chan_rounds"),
+            dwell: r.get("chan_dwell"),
+            bss_cost: r.get("chan_bss_cost"),
+            min_signal: r.get("chan_min_signal"),
+            history: r.get("chan_history"),
+        },
         country: r.get("country"),
         restart_on_credential_change: security != "wpa2",
         security,
@@ -291,13 +346,14 @@ pub async fn network_by_name(store: &ConfigStore, name: &str) -> Result<Option<N
 struct Checked {
     band: String,
     channel: i64,
+    chan: ChanSettings,
     country: String,
     security: String,
     segment: String,
     policy: String,
 }
 
-fn check_network(i: &NetworkInput) -> Result<Checked> {
+fn check_network(i: &NetworkInput, old: Option<&Network>) -> Result<Checked> {
     if !seg::is_name(&i.name) {
         return Err(invalid(format!(
             "network name {:?}: use a-z 0-9 _ - (max 32)",
@@ -308,9 +364,21 @@ fn check_network(i: &NetworkInput) -> Result<Checked> {
         return Err(invalid(format!("interface {:?}", i.ifname)));
     }
     check_ssid(&i.ssid)?;
-    let band = i.band.clone().unwrap_or_else(|| "2g".into());
-    let channel = i.channel.unwrap_or(if band == "5g" { 36 } else { 6 });
+    let band = i
+        .band
+        .clone()
+        .or_else(|| old.map(|o| o.band.clone()))
+        .unwrap_or_else(|| "2g".into());
+    // a new network defaults to automatic channel choice; an update without a channel keeps the old one
+    let channel = i.channel.unwrap_or(old.map_or(0, |o| o.channel));
     check_channel(&band, channel)?;
+    let chan = old
+        .map(|o| o.chan.clone())
+        .unwrap_or_default()
+        .merged(&band, &i.chan)?;
+    if channel != 0 && chan.width == 80 && crate::seg_wifi_chan::block80_start(channel).is_none() {
+        return Err(invalid(format!("channel {channel}: not in an 80 MHz block")));
+    }
     let country = i.country.clone().unwrap_or_else(|| "US".into());
     if country.len() != 2 || !country.bytes().all(|b| b.is_ascii_uppercase()) {
         return Err(invalid(format!(
@@ -331,6 +399,7 @@ fn check_network(i: &NetworkInput) -> Result<Checked> {
     Ok(Checked {
         band,
         channel,
+        chan,
         country,
         security,
         segment,
@@ -339,11 +408,13 @@ fn check_network(i: &NetworkInput) -> Result<Checked> {
 }
 
 pub async fn create_network(store: &ConfigStore, i: &NetworkInput) -> Result<i64> {
-    let c = check_network(i)?;
+    let c = check_network(i, None)?;
     let enrol = (c.policy == "enrol").then(generate_passphrase);
     let r = sqlx::query(
-        "INSERT INTO seg_wifi_networks (name, ifname, ssid, band, channel, country, security, segment, unknown_policy, enrol_secret, enabled, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO seg_wifi_networks (name, ifname, ssid, band, channel, country, security, segment, unknown_policy, enrol_secret, enabled, updated_at,
+            chanlist, width, chan_recheck, chan_time, chan_hyst, chan_min_gain, chan_confirm, chan_confirm_gap, chan_csa,
+            chan_csa_count, chan_rounds, chan_dwell, chan_bss_cost, chan_min_signal, chan_history)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     )
     .bind(&i.name)
     .bind(&i.ifname)
@@ -357,6 +428,21 @@ pub async fn create_network(store: &ConfigStore, i: &NetworkInput) -> Result<i64
     .bind(enrol)
     .bind(i.enabled.unwrap_or(true) as i64)
     .bind(now())
+    .bind(&c.chan.chanlist)
+    .bind(c.chan.width)
+    .bind(c.chan.recheck as i64)
+    .bind(&c.chan.recheck_time)
+    .bind(c.chan.hysteresis)
+    .bind(c.chan.min_gain)
+    .bind(c.chan.confirm)
+    .bind(c.chan.confirm_gap)
+    .bind(&c.chan.csa)
+    .bind(c.chan.csa_count)
+    .bind(c.chan.rounds)
+    .bind(c.chan.dwell)
+    .bind(c.chan.bss_cost)
+    .bind(c.chan.min_signal)
+    .bind(c.chan.history)
     .execute(store.pool()?)
     .await
     .map_err(|e| unique(e, &format!("Wi-Fi network {} or interface {}", i.name, i.ifname)))?;
@@ -364,10 +450,10 @@ pub async fn create_network(store: &ConfigStore, i: &NetworkInput) -> Result<i64
 }
 
 pub async fn update_network(store: &ConfigStore, id: i64, i: &NetworkInput) -> Result<()> {
-    let c = check_network(i)?;
     let old = get_network(store, id)
         .await?
         .ok_or_else(|| Error::Config(format!("no Wi-Fi network {id}")))?;
+    let c = check_network(i, Some(&old))?;
     // moving to WPA3-only strands pending (MAC-less) devices: SAE entries need a MAC
     if c.security == "wpa3" && old.security != "wpa3" {
         let n: i64 = sqlx::query_scalar(
@@ -395,7 +481,10 @@ pub async fn update_network(store: &ConfigStore, id: i64, i: &NetworkInput) -> R
         None
     };
     sqlx::query(
-        "UPDATE seg_wifi_networks SET name=?, ifname=?, ssid=?, band=?, channel=?, country=?, security=?, segment=?, unknown_policy=?, enrol_secret=?, enabled=?, updated_at=? WHERE id=?",
+        "UPDATE seg_wifi_networks SET name=?, ifname=?, ssid=?, band=?, channel=?, country=?, security=?, segment=?, unknown_policy=?, enrol_secret=?, enabled=?, updated_at=?,
+           chanlist=?, width=?, chan_recheck=?, chan_time=?, chan_hyst=?, chan_min_gain=?, chan_confirm=?, chan_confirm_gap=?,
+           chan_csa=?, chan_csa_count=?, chan_rounds=?, chan_dwell=?, chan_bss_cost=?, chan_min_signal=?, chan_history=?
+         WHERE id=?",
     )
     .bind(&i.name)
     .bind(&i.ifname)
@@ -409,6 +498,21 @@ pub async fn update_network(store: &ConfigStore, id: i64, i: &NetworkInput) -> R
     .bind(enrol)
     .bind(i.enabled.unwrap_or(old.enabled) as i64)
     .bind(now())
+    .bind(&c.chan.chanlist)
+    .bind(c.chan.width)
+    .bind(c.chan.recheck as i64)
+    .bind(&c.chan.recheck_time)
+    .bind(c.chan.hysteresis)
+    .bind(c.chan.min_gain)
+    .bind(c.chan.confirm)
+    .bind(c.chan.confirm_gap)
+    .bind(&c.chan.csa)
+    .bind(c.chan.csa_count)
+    .bind(c.chan.rounds)
+    .bind(c.chan.dwell)
+    .bind(c.chan.bss_cost)
+    .bind(c.chan.min_signal)
+    .bind(c.chan.history)
     .bind(id)
     .execute(store.pool()?)
     .await

@@ -311,6 +311,21 @@ impl Supervisor {
             && self.is_running(spec.service, &spec.instance)
     }
 
+    /// Write `spec`'s files and env record WITHOUT restarting the daemon: it was already changed live
+    /// (a Wi-Fi channel switch), so the next [`ensure`](Self::ensure) must find nothing to do.
+    pub fn record(&self, spec: &DaemonSpec) -> Result<()> {
+        let _lock = self.paths.instance_lock(spec.service, &spec.instance);
+        for (p, c, m) in &spec.files {
+            write_atomic(p, c, *m)?;
+        }
+        write_atomic(
+            &self.paths.env_file(spec.service, &spec.instance),
+            &spec.env_content(),
+            0o600,
+        )?;
+        Ok(())
+    }
+
     /// Make sure `spec` runs with exactly this command line + config.
     /// Returns true if it was (re)started.
     pub async fn ensure(&self, spec: &DaemonSpec) -> Result<bool> {

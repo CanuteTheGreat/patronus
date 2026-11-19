@@ -84,6 +84,15 @@ enum Commands {
         keyid: String,
     },
 
+    /// Automatic Wi-Fi channel choice (USE=wifi-ap): the per-network service, a manual
+    /// re-check, and the channel of every network with the reason
+    #[cfg(feature = "wifi-ap")]
+    #[command(name = "wifi-chan")]
+    WifiChan {
+        #[command(subcommand)]
+        action: WifiChanCommands,
+    },
+
     /// Zero-touch provisioning: fetch the configuration named in the
     /// [provisioning] section of patronus.toml (url, optional
     /// passphrase_file for an encrypted bundle), import it and apply it.
@@ -452,6 +461,23 @@ enum BgpCommands {
     Routes,
 }
 
+#[cfg(feature = "wifi-ap")]
+#[derive(Subcommand)]
+enum WifiChanCommands {
+    /// The service of one network: nightly re-check and "re-check now" requests
+    Run {
+        /// Wi-Fi network name
+        network: String,
+    },
+    /// One re-check now (samples, hysteresis, channel switch)
+    Recheck {
+        /// Wi-Fi network name
+        network: String,
+    },
+    /// The channel of every network and the last decisions
+    Status,
+}
+
 #[derive(Subcommand)]
 enum UsersCommands {
     /// List the web UI accounts (role, enabled, two-factor)
@@ -759,6 +785,15 @@ async fn main() -> anyhow::Result<()> {
             UsersCommands::AddLocalAccount { name, groups, dir } => {
                 users::add_local_account(&name, &groups, dir)?
             }
+        },
+
+        #[cfg(feature = "wifi-ap")]
+        Commands::WifiChan { action } => match action {
+            WifiChanCommands::Run { network } => commands::wifi::chan_run(cli.db, network).await?,
+            WifiChanCommands::Recheck { network } => {
+                commands::wifi::chan_recheck(cli.db, network).await?
+            }
+            WifiChanCommands::Status => commands::wifi::chan_status(cli.db).await?,
         },
 
         #[cfg(feature = "wifi-ap")]

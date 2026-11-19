@@ -274,6 +274,13 @@ mod built {
                 Err(e) => err(e),
             }
         }
+        async fn recheck_channel(State(st): State<AppState>, Path(id): Path<i64>) -> Response {
+            match st.lan.wifi_chan_request(id).await {
+                Ok(()) => Json(json!({"ok": true, "note": "re-check requested: it runs within seconds and takes a few minutes"}))
+                    .into_response(),
+                Err(e) => err(e),
+            }
+        }
         async fn rotate_enrol(State(st): State<AppState>, Path(id): Path<i64>) -> Response {
             match st.lan.wifi_enrol_rotate(id).await {
                 Ok(v) => Json(v).into_response(),
@@ -363,6 +370,10 @@ mod built {
                 .route(
                     "/segmentation/wifi/networks/:id",
                     put(put_network).delete(del_network),
+                )
+                .route(
+                    "/segmentation/wifi/networks/:id/recheck-channel",
+                    post(recheck_channel),
                 )
                 .route(
                     "/segmentation/wifi/networks/:id/enrol-secret/rotate",

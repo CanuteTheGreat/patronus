@@ -92,3 +92,85 @@ pub async fn event(
     }
     Ok(())
 }
+
+/// `patronus wifi-chan run NAME`: the automatic-channel service of one Wi-Fi network. Every few seconds it
+/// looks whether tonight's re-check is due (the network's `recheck_time`, once a day) or a re-check was
+/// requested from the API/UI, and runs it (`WifiApplier::recheck`: samples, hysteresis, CSA).
+#[cfg(feature = "wifi-ap")]
+pub async fn chan_run(db: Option<PathBuf>, name: String) -> anyhow::Result<()> {
+    use chrono::{Datelike, Timelike};
+    use patronus_config::seg_wifi_chan;
+    use patronus_network::wifichan;
+    use patronus_network::wireless::WifiApplier;
+    let store = apply::open_store(db.as_deref()).await?;
+    let applier = WifiApplier::default();
+    let poll = std::time::Duration::from_secs(
+        std::env::var("PATRONUS_WIFI_CHAN_POLL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(15),
+    );
+    loop {
+        if let Ok(Some(n)) = seg_wifi::network_by_name(&store, &name).await {
+            if n.enabled && n.channel == 0 {
+                if let Ok(Some(st)) = seg_wifi_chan::get_state(&store, n.id).await {
+                    let now = chrono::Local::now();
+                    let today = i64::from(now.date_naive().num_days_from_ce());
+                    let nightly = n.chan.recheck
+                        && wifichan::due(
+                            now.hour() * 60 + now.minute(),
+                            today,
+                            &n.chan.recheck_time,
+                            st.last_day,
+                        );
+                    if nightly || st.requested_at.is_some() {
+                        match applier.recheck(&store, n.id).await {
+                            Ok(m) => println!("wifi-chan {name}: {m}"),
+                            Err(e) => eprintln!("wifi-chan {name}: {e}"),
+                        }
+                        let _ = seg_wifi_chan::mark_checked(&store, n.id, nightly.then_some(today)).await;
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(poll).await;
+    }
+}
+
+/// `patronus wifi-chan recheck NAME`: one re-check now (samples, hysteresis, CSA), for a hand run.
+#[cfg(feature = "wifi-ap")]
+pub async fn chan_recheck(db: Option<PathBuf>, name: String) -> anyhow::Result<()> {
+    use patronus_network::wireless::WifiApplier;
+    let store = apply::open_store(db.as_deref()).await?;
+    let n = seg_wifi::network_by_name(&store, &name)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .ok_or_else(|| anyhow::anyhow!("no Wi-Fi network {name:?}"))?;
+    let m = WifiApplier::default()
+        .recheck(&store, n.id)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!("{m}");
+    Ok(())
+}
+
+/// `patronus wifi-chan status`: the channel of every network and why.
+#[cfg(feature = "wifi-ap")]
+pub async fn chan_status(db: Option<PathBuf>) -> anyhow::Result<()> {
+    use patronus_config::seg_wifi_chan;
+    let store = apply::open_store(db.as_deref()).await?;
+    for n in seg_wifi::list_networks(&store).await.map_err(|e| anyhow::anyhow!("{e}"))? {
+        if n.channel != 0 {
+            println!("{}: fixed channel {}", n.name, n.channel);
+            continue;
+        }
+        match seg_wifi_chan::get_state(&store, n.id).await.map_err(|e| anyhow::anyhow!("{e}"))? {
+            Some(s) => println!("{}: automatic, channel {} - {}", n.name, s.channel, s.reason),
+            None => println!("{}: automatic, not measured yet", n.name),
+        }
+        for h in seg_wifi_chan::history(&store, n.id, 10).await.map_err(|e| anyhow::anyhow!("{e}"))? {
+            println!("  {} {:<6} {}", h.at, h.event, h.reason);
+        }
+    }
+    Ok(())
+}

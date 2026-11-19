@@ -92,6 +92,9 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "ins_usage",
     "ins_uplink_samples",
     "ins_uplink_hourly",
+    // Wi-Fi automatic channel choice (lane s): what each radio is on and why, plus its history
+    "seg_wifi_chan_state",
+    "seg_wifi_chan_history",
 ];
 
 /// Revisions kept by [`ConfigStore::snapshot`] (older ones are pruned).

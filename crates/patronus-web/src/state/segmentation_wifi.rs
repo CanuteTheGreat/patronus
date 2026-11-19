@@ -9,6 +9,7 @@
 use super::LanManager;
 use patronus_config::seg::{self, DeviceInput};
 use patronus_config::seg_wifi::{self, NetworkInput};
+use patronus_config::seg_wifi_chan;
 use serde_json::{json, Value};
 
 fn e(e: patronus_core::Error) -> anyhow::Error {
@@ -32,10 +33,25 @@ fn issued_json(i: &seg_wifi::Issued) -> Value {
 }
 
 impl LanManager {
+    /// "Re-check now" for an automatic channel: the network's channel service runs the same samples as the
+    /// nightly check (hysteresis included) within seconds. Nothing is applied here.
+    pub async fn wifi_chan_request(&self, id: i64) -> anyhow::Result<()> {
+        seg_wifi_chan::request_recheck(&self.store, id).await.map_err(e)
+    }
+
     pub async fn wifi_overview(&self) -> anyhow::Result<Value> {
         let s = &*self.store;
+        let networks = seg_wifi::list_networks(s).await.map_err(e)?;
+        // why each automatic channel was chosen, and what happened since
+        let mut channels = serde_json::Map::new();
+        for n in networks.iter().filter(|n| n.channel == 0) {
+            let state = seg_wifi_chan::get_state(s, n.id).await.map_err(e)?;
+            let history = seg_wifi_chan::history(s, n.id, 50).await.map_err(e)?;
+            channels.insert(n.id.to_string(), json!({"state": state, "history": history}));
+        }
         Ok(json!({
-            "networks": seg_wifi::list_networks(s).await.map_err(e)?,
+            "channels": channels,
+            "networks": networks,
             "credentials": seg_wifi::list_credentials(s).await.map_err(e)?,
             "status": self.status("wifi").await?,
             "notes": {
@@ -43,6 +59,7 @@ impl LanManager {
                 "wpa3": "WPA3 (SAE) per-device passwords are read by hostapd only at start: adding, rotating or revoking one restarts the access point and every station reconnects for a few seconds. WPA2 is the default for that reason.",
                 "pending": "A device created without a MAC joins with its own passphrase once; the router learns its MAC at that join and binds the passphrase to it. Unused passphrases expire after 24 hours.",
                 "unknown": "'enrol' lets unknown devices join with a shared secret that grants nothing: they get an address and reach DHCP/DNS/ping only (quarantine) until you approve them.",
+                "auto_channel": "An automatic channel is measured when the radio starts (every channel is scanned the same way, our own traffic is subtracted, neighbouring access points cost points) and re-checked every night: the radio only moves when another channel is clearly and repeatedly better, by a channel switch announcement so connected devices follow without disconnecting. A driver without that feature moves by restarting the radio.",
                 "random_mac": "A phone that uses a new random MAC on every connection cannot be bound to a MAC: turn on 'fixed' or 'private per network' in its Wi-Fi settings.",
             },
         }))
