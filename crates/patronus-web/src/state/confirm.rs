@@ -131,7 +131,12 @@ impl ConfirmTimer {
         }
     }
 
-    async fn revert_if(&self, state: &AppState, id: u64, who: &str) -> anyhow::Result<Option<String>> {
+    async fn revert_if(
+        &self,
+        state: &AppState,
+        id: u64,
+        who: &str,
+    ) -> anyhow::Result<Option<String>> {
         let p = {
             let mut g = self.pending.lock().unwrap();
             if g.as_ref().map(|p| p.id) != Some(id) {
@@ -142,13 +147,21 @@ impl ConfirmTimer {
         let by = if who == "timeout" { "web" } else { who };
         let r = state
             .system
-            .restore(&state.config_store, &p.before, &format!("unconfirmed change: {}", p.what))
+            .restore(
+                &state.config_store,
+                &p.before,
+                &format!("unconfirmed change: {}", p.what),
+            )
             .await;
         let _ = state
             .config_store
             .audit(
                 by,
-                if who == "timeout" { "confirm_timeout_revert" } else { "confirm_revert" },
+                if who == "timeout" {
+                    "confirm_timeout_revert"
+                } else {
+                    "confirm_revert"
+                },
                 "config",
                 Some(&p.what),
                 &json!({ "ok": r.is_ok(), "error": r.as_ref().err().map(|e| e.to_string()) }),
@@ -173,10 +186,14 @@ pub fn is_risky(method: &axum::http::Method, path: &str) -> bool {
     if path.ends_with("/refresh") || path.contains("/lookup") {
         return false;
     }
-    ["/api/firewall/rules", "/api/firewall/nat", "/api/firewall/aliases"]
-        .iter()
-        .chain(&["/api/interfaces", "/api/network/interfaces"])
-        .any(|p| path == *p || path.starts_with(&format!("{p}/")))
+    [
+        "/api/firewall/rules",
+        "/api/firewall/nat",
+        "/api/firewall/aliases",
+    ]
+    .iter()
+    .chain(&["/api/interfaces", "/api/network/interfaces"])
+    .any(|p| path == *p || path.starts_with(&format!("{p}/")))
 }
 
 /// Layer: a successful risky change starts the countdown when the setting is on.

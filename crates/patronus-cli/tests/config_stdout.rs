@@ -30,8 +30,12 @@ fn export_stdout_is_pure_json_and_logs_go_to_stderr() {
     let db = dir.path().join("a.db");
     let out = cli(&db, &["config", "export"]);
     let stdout = ok(&out);
-    let doc: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("stdout is not JSON ({e}): {}", &stdout[..stdout.len().min(200)]));
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "stdout is not JSON ({e}): {}",
+            &stdout[..stdout.len().min(200)]
+        )
+    });
     assert!(doc.get("tables").is_some());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(

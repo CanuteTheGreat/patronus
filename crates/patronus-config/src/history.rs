@@ -8,7 +8,7 @@
 //! put in the diff: their values read `(hidden)`.
 
 use crate::store::ConfigStore;
-use crate::Result;
+use patronus_core::{Error, Result};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -109,8 +109,10 @@ fn key_column(sides: &[&[Value]]) -> Option<&'static str> {
     ["id", "key", "name"].into_iter().find(|k| {
         sides.iter().all(|rows| {
             let mut seen = std::collections::HashSet::new();
-            rows.iter()
-                .all(|r| r.get(*k).is_some_and(|v| !v.is_null() && seen.insert(v.to_string())))
+            rows.iter().all(|r| {
+                r.get(*k)
+                    .is_some_and(|v| !v.is_null() && seen.insert(v.to_string()))
+            })
         })
     })
 }
@@ -118,7 +120,11 @@ fn key_column(sides: &[&[Value]]) -> Option<&'static str> {
 fn label(row: &Value, table: &str) -> String {
     let get = |k: &str| {
         row.get(k)
-            .and_then(|v| v.as_str().map(str::to_string).or_else(|| v.as_i64().map(|n| n.to_string())))
+            .and_then(|v| {
+                v.as_str()
+                    .map(str::to_string)
+                    .or_else(|| v.as_i64().map(|n| n.to_string()))
+            })
             .filter(|s| !s.is_empty())
     };
     if table == "system_config" {
@@ -126,9 +132,16 @@ fn label(row: &Value, table: &str) -> String {
             return k;
         }
     }
-    let name = ["name", "username", "description", "address", "interface", "device"]
-        .into_iter()
-        .find_map(get);
+    let name = [
+        "name",
+        "username",
+        "description",
+        "address",
+        "interface",
+        "device",
+    ]
+    .into_iter()
+    .find_map(get);
     match (name, get("id")) {
         (Some(n), Some(id)) => format!("{n} (#{id})"),
         (Some(n), None) => n,
@@ -204,8 +217,10 @@ fn diff_table(table: &str, cur: &[Value], rev: &[Value]) -> Option<SectionDiff> 
                             let (x, y) = (a.get(n), b.get(n));
                             if x == y {
                                 // hidden on both sides: compare the real values
-                                let real = |o: Option<&Map<String, Value>>| o.and_then(|o| o.get(n));
-                                if x == Some(&Value::from(HIDDEN)) && real(full_a) != real(full_b) {
+                                if x == Some(&Value::from(HIDDEN))
+                                    && full_a.and_then(|o| o.get(n))
+                                        != full_b.and_then(|o| o.get(n))
+                                {
                                     fields.push(FieldChange {
                                         field: n.clone(),
                                         from: Value::from(HIDDEN),
@@ -279,14 +294,20 @@ pub async fn confirm_seconds(store: &ConfigStore) -> u32 {
         .ok()
         .flatten()
         .and_then(|v| v.trim().parse::<u32>().ok())
-        .map(|n| if n == 0 { 0 } else { n.clamp(CONFIRM_SECONDS_MIN, CONFIRM_SECONDS_MAX) })
+        .map(|n| {
+            if n == 0 {
+                0
+            } else {
+                n.clamp(CONFIRM_SECONDS_MIN, CONFIRM_SECONDS_MAX)
+            }
+        })
         .unwrap_or(0)
 }
 
 /// Validate and store the timer (0, or 10..=3600 seconds).
 pub async fn set_confirm_seconds(store: &ConfigStore, seconds: u32) -> Result<()> {
     if seconds != 0 && !(CONFIRM_SECONDS_MIN..=CONFIRM_SECONDS_MAX).contains(&seconds) {
-        return Err(crate::Error::Config(format!(
+        return Err(Error::Config(format!(
             "Invalid confirm timer: use 0 (off) or {CONFIRM_SECONDS_MIN} to {CONFIRM_SECONDS_MAX} seconds"
         )));
     }
