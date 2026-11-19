@@ -1352,6 +1352,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_checkpoint_puts_a_half_finished_multi_step_change_back() {
+        // the setup wizard configures LAN, then WAN, then the DHCP pool: when a later step fails everything before it is undone
+        let (m, ifa, _, store) = mgr().await;
+        m.update_interface("eth1", static_lan("192.168.1.1/24"), None)
+            .await
+            .unwrap();
+        let cp = m.checkpoint().await.unwrap();
+        m.update_interface("eth1", static_lan("192.168.77.1/24"), None)
+            .await
+            .unwrap();
+        m.update_interface(
+            "eth2",
+            InterfaceUpdate {
+                role: Some("wan".into()),
+                ipv4_mode: "static".into(),
+                ipv4: vec!["203.0.113.2/24".into()],
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let applies_before = *ifa.n.lock().unwrap();
+        m.rollback(&cp).await;
+        let c = NetConfig::load(&store).await.unwrap();
+        assert_eq!(
+            c.iface("eth1").unwrap().ipv4[0].to_string(),
+            "192.168.1.1/24"
+        );
+        assert!(
+            c.iface("eth2")
+                .is_none_or(|i| i.ipv4.is_empty() && i.role.is_none()),
+            "the WAN row of the abandoned attempt is gone: {:?}",
+            c.iface("eth2")
+        );
+        assert!(
+            *ifa.n.lock().unwrap() > applies_before,
+            "the old config is applied again"
+        );
+    }
+
+    #[tokio::test]
     async fn virtual_devices_cannot_be_deleted_while_in_use() {
         let (m, _, _, _) = mgr().await;
         m.upsert_bridge(
