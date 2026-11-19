@@ -50,5 +50,17 @@ class PatronusFs(unittest.TestCase):
         self.assertTrue([e for e in errs if "never asks for a disk passphrase" in e], errs)
 
 
+
+class LiveSessionFirewall(unittest.TestCase):
+    """The live session never applies the firewall (profile.toml / setup.sh); systemd's patronus-web Wants= it, so a drop-in must skip it there."""
+
+    def test_firewall_unit_is_skipped_in_the_live_session(self):
+        d = os.path.join(HERE, "..", "overlay", "etc", "systemd", "system", "patronus-firewall.service.d")
+        txt = "".join(open(os.path.join(d, f)).read() for f in sorted(os.listdir(d)))
+        self.assertIn("ConditionKernelCommandLine=!rd.live.image", txt)
+
+    def test_live_services_do_not_include_the_firewall(self):
+        self.assertNotIn("patronus-firewall", PROFILE["live_services"])
+
 if __name__ == "__main__":
     unittest.main()
