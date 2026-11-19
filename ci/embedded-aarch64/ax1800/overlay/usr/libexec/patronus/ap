@@ -155,7 +155,12 @@ he_lines() { # PHY-MAC: 802.11ax radio settings (OpenWrt 25.12 parity, see the h
     echo "he_mu_edca_ac_$1_ecwmax=$5"; echo "he_mu_edca_ac_$1_timer=255"; done; }
 bss_lines() { # settings every BSS gets (OpenWrt's wifi-iface defaults)
   echo "uapsd_advertisement_enabled=1"; echo "disassoc_low_ack=1"; echo "skip_inactivity_poll=0"
-  echo "bss_load_update_period=60"; echo "chan_util_avg_period=600"; }
+  echo "bss_load_update_period=60"; echo "chan_util_avg_period=600"
+  # 802.11v/k (ap-steer, docs 12.18): stations can be ASKED to move (BSS transition management) and asked what they
+  # hear (beacon reports); neighbor reports list the other units. 802.11r is never written (IPQ6018 firmware assert).
+  if on "${AP_BSS_TRANSITION:-1}"; then echo "bss_transition=1"; fi
+  if on "${AP_WNM_SLEEP:-0}"; then echo "wnm_sleep_mode=1"; fi
+  if on "${AP_RRM:-1}"; then echo "rrm_neighbor_report=1"; echo "rrm_beacon_report=1"; fi; }
 # the image's hostapd limits for misbehaving stations, per radio (hostapd/patronus-xbss.diff, docs 12.6d + 12.18):
 # AP_XBSS_MAX hops between this radio's SSIDs within AP_XBSS_WINDOW s -> refused on the new SSID for AP_XBSS_HOLD s;
 # more than AP_AUTHFAIL_MAX unacknowledged authentication responses within AP_AUTHFAIL_WINDOW s -> the station is ignored

@@ -249,10 +249,14 @@ const MANAGED: &[&str] = &[
     "AP_XBSS_WINDOW",
     "AP_XBSS_HOLD",
     "AP_HE",
+    "AP_BSS_TRANSITION",
+    "AP_RRM",
+    "AP_WNM_SLEEP",
     "AP_SSIDS",
     "AP_TXPOWER24",
     "AP_TXPOWER5",
     "AP_NAMES",
+    "AP_TZ",
 ];
 const NET_PREFIXES: &[&str] = &[
     "SSID_", "KEY_", "SEC_", "HIDE_", "BANDS_", "ISOLATE_", "GUEST_", "DENY_",
@@ -263,6 +267,7 @@ const LIVE_VARS: &[&str] = &[
     "AP_TXPOWER5",
     "AP_DENY",
     "AP_NAMES",
+    "AP_TZ",
     "AP_COORD24",
     "AP_COORD5",
     "AP_COORD_PEERS",
@@ -294,10 +299,18 @@ const CHAN_SWITCHES: &[&str] = &[
     "AP_AQL",
     "AP_ATF",
 ];
+/// The steering switches (docs 12.18): managed and live like the channel switches (ap-steer re-reads them each round).
+const STEER_SWITCHES: &[&str] = &[
+    "AP_STEER_KICK",
+    "AP_STEER_QUIET",
+    "AP_STEER_LEGACY",
+    "AP_STEER_REPORT",
+];
 fn chan_keys() -> impl Iterator<Item = &'static str> {
     CHAN_SWITCHES
         .iter()
         .copied()
+        .chain(STEER_SWITCHES.iter().copied())
         .chain(TUNING.iter().map(|e| e.1))
 }
 fn is_chan_key(k: &str) -> bool {
@@ -407,6 +420,21 @@ pub struct WifiConfig {
     /// MACs never moved
     #[serde(default)]
     pub steer_exempt: Vec<String>,
+    /// disconnecting a station that ignored a move request (802.11v): "quiet" (only inside steer_quiet, only an idle
+    /// station, at most once per steer_kick_every) or "never". Outside the quiet window steering only ever ASKS.
+    #[serde(default = "default_steer_kick")]
+    pub steer_kick: String,
+    /// local time window "HH:MM-HH:MM" in which steer_kick may disconnect (may wrap midnight)
+    #[serde(default = "default_steer_quiet")]
+    pub steer_quiet: String,
+    /// stations without 802.11v (they cannot be asked to move): "quiet" (disconnected like an ignored request, only in
+    /// the quiet window) or "never" (never moved)
+    #[serde(default = "default_steer_kick")]
+    pub steer_legacy: String,
+    /// how a station that supports 802.11k is asked what it hears: "active" | "passive" | "table" (its scan cache) |
+    /// "off" (no beacon report; move requests go out without the station's own measurement)
+    #[serde(default = "default_steer_report")]
+    pub steer_report: String,
     /// channel choice by measurement (docs 12.19): the channel each radio starts on is the best-scoring candidate of
     /// comparable airtime samples + neighbours heard, per band
     #[serde(default = "yes")]
@@ -461,6 +489,15 @@ pub struct WifiConfig {
     pub xbss_hold: u32,
     /// 802.11ax (Wi-Fi 6) on both radios
     pub wifi6: bool,
+    /// 802.11v BSS transition management on every BSS (steering asks stations to move instead of disconnecting them)
+    #[serde(default = "yes")]
+    pub bss_transition: bool,
+    /// 802.11k radio measurement on every BSS (neighbor reports, beacon reports from stations)
+    #[serde(default = "yes")]
+    pub rrm: bool,
+    /// 802.11v WNM sleep mode (off by default: no steering need, and power-save changes on this radio were risky)
+    #[serde(default)]
+    pub wnm_sleep: bool,
     /// transmit power per radio: "auto" or dBm
     #[serde(default = "auto")]
     pub txpower24: String,
@@ -470,6 +507,10 @@ pub struct WifiConfig {
     /// an IPv4 address of a DNS server to ask instead, or "off"
     #[serde(default = "dhcp")]
     pub names: String,
+    /// POSIX time zone ("PST8PDT,M3.2.0,M11.1.0") of this unit: the local time of every hour/window setting
+    /// (steering quiet hours, the nightly channel re-check, the coordination quiet hours). Default UTC0.
+    #[serde(default = "default_tz")]
+    pub timezone: String,
     /// MACs refused on every network of this unit
     #[serde(default)]
     pub blocked: Vec<String>,
@@ -678,6 +719,54 @@ pub const TUNING: &[(&str, &str, i64, i64, i64, &str)] = &[
         50000,
         "5 GHz airtime queue limit: 100 to 50000 microseconds",
     ),
+    (
+        "steer_margin",
+        "AP_STEER_MARGIN",
+        8,
+        0,
+        40,
+        "steering: the other access point heard 0 to 40 dB better",
+    ),
+    (
+        "steer_btm_every",
+        "AP_STEER_BTM_EVERY",
+        1800,
+        60,
+        86400,
+        "steering: ask a station to move at most every 60 to 86400 seconds",
+    ),
+    (
+        "steer_btm_wait",
+        "AP_STEER_BTM_WAIT",
+        300,
+        30,
+        3600,
+        "steering: a request is ignored after 30 to 3600 seconds",
+    ),
+    (
+        "steer_quiet_idle",
+        "AP_STEER_QUIET_IDLE",
+        1800,
+        300,
+        86400,
+        "steering: no traffic for 300 to 86400 seconds before a disconnect",
+    ),
+    (
+        "steer_kick_every",
+        "AP_STEER_KICK_EVERY",
+        86400,
+        3600,
+        2592000,
+        "steering: disconnect a device at most every 3600 to 2592000 seconds",
+    ),
+    (
+        "steer_history",
+        "AP_STEER_HISTORY",
+        500,
+        10,
+        5000,
+        "steering history: 10 to 5000 entries",
+    ),
 ];
 /// A [`TUNING`] number from the file: out of range or not a number = its default.
 fn tuning_number(f: &EnvFile, key: &str) -> i64 {
@@ -873,6 +962,61 @@ pub fn steer_mode(v: &str) -> &'static str {
         _ => "auto",
     }
 }
+/// Defaults of the steering switches (board.sh `AP_STEER_KICK`, `AP_STEER_QUIET`, `AP_STEER_LEGACY`, `AP_STEER_REPORT`).
+pub const DEFAULT_STEER_KICK: &str = "quiet";
+pub const DEFAULT_STEER_QUIET: &str = "01:00-05:00";
+pub const DEFAULT_STEER_REPORT: &str = "active";
+fn default_steer_kick() -> String {
+    DEFAULT_STEER_KICK.into()
+}
+fn default_steer_quiet() -> String {
+    DEFAULT_STEER_QUIET.into()
+}
+fn default_steer_report() -> String {
+    DEFAULT_STEER_REPORT.into()
+}
+/// `AP_STEER_KICK` / `AP_STEER_LEGACY`: quiet | never (anything else = None).
+pub fn kick_mode(v: &str) -> Option<&'static str> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "quiet" | "night" | "window" => Some("quiet"),
+        "never" | "off" | "0" | "no" => Some("never"),
+        _ => None,
+    }
+}
+/// `AP_STEER_REPORT`: active | passive | table | off (anything else = None).
+pub fn report_mode(v: &str) -> Option<&'static str> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "active" => Some("active"),
+        "passive" => Some("passive"),
+        "table" => Some("table"),
+        "off" | "0" | "no" => Some("off"),
+        _ => None,
+    }
+}
+/// `AP_STEER_QUIET`: "HH:MM-HH:MM" (start != end; may wrap midnight).
+pub fn valid_window(v: &str) -> bool {
+    match v.split_once('-') {
+        Some((a, b)) => !a.is_empty() && !b.is_empty() && valid_hhmm(a) && valid_hhmm(b) && a != b,
+        None => false,
+    }
+}
+pub const DEFAULT_TZ: &str = "UTC0";
+fn default_tz() -> String {
+    DEFAULT_TZ.into()
+}
+/// `AP_TZ`: a POSIX TZ string (musl/busybox read it without a zoneinfo database): starts with a zone name of 3+
+/// letters or `<...>`, at most 64 characters of letters, digits and `<>+-,.:/`.
+pub fn valid_tz(v: &str) -> bool {
+    let name_ok = v.starts_with('<')
+        || (v.len() >= 3 && v.chars().take(3).all(|c| c.is_ascii_alphabetic()));
+    !v.is_empty()
+        && v.len() <= 64
+        && name_ok
+        && v.chars().any(|c| c.is_ascii_digit())
+        && v
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "<>+-,.:/".contains(c))
+}
 /// A number setting of [`STATION_NUMBERS`] from the file: out of range or not a number = its default.
 fn station_number(f: &EnvFile, key: &str) -> u32 {
     match STATION_NUMBERS.iter().find(|e| e.1 == key) {
@@ -1052,6 +1196,19 @@ pub fn view(f: &EnvFile) -> WifiConfig {
         steer_max: station_number(f, "AP_STEER_MAX"),
         steer_interval: station_number(f, "AP_STEER_INTERVAL"),
         steer_exempt: mac_list(f.get("AP_STEER_EXEMPT").unwrap_or("")),
+        steer_kick: kick_mode(f.get("AP_STEER_KICK").unwrap_or(DEFAULT_STEER_KICK))
+            .unwrap_or(DEFAULT_STEER_KICK)
+            .into(),
+        steer_quiet: match f.get("AP_STEER_QUIET").map(str::trim) {
+            Some(v) if valid_window(v) => v.to_string(),
+            _ => DEFAULT_STEER_QUIET.to_string(),
+        },
+        steer_legacy: kick_mode(f.get("AP_STEER_LEGACY").unwrap_or(DEFAULT_STEER_KICK))
+            .unwrap_or(DEFAULT_STEER_KICK)
+            .into(),
+        steer_report: report_mode(f.get("AP_STEER_REPORT").unwrap_or(DEFAULT_STEER_REPORT))
+            .unwrap_or(DEFAULT_STEER_REPORT)
+            .into(),
         chan_smart24: on_off(f.get("AP_CHAN_SMART24")),
         chan_smart5: on_off(f.get("AP_CHAN_SMART5")),
         chan_recheck24: on_off(f.get("AP_CHAN_RECHECK24")),
@@ -1079,11 +1236,18 @@ pub fn view(f: &EnvFile) -> WifiConfig {
         xbss_window: station_number(f, "AP_XBSS_WINDOW"),
         xbss_hold: station_number(f, "AP_XBSS_HOLD"),
         wifi6: !matches!(f.get("AP_HE").unwrap_or("1"), "0" | "no" | "off"),
+        bss_transition: on_off(f.get("AP_BSS_TRANSITION")),
+        rrm: on_off(f.get("AP_RRM")),
+        wnm_sleep: on_off(Some(f.get("AP_WNM_SLEEP").unwrap_or("0"))),
         txpower24: txp("AP_TXPOWER24"),
         txpower5: txp("AP_TXPOWER5"),
         names: match f.get("AP_NAMES").unwrap_or("") {
             "" | "dhcp" => "dhcp".to_string(),
             v => v.to_string(),
+        },
+        timezone: match f.get("AP_TZ").map(str::trim) {
+            Some(v) if valid_tz(v) => v.to_string(),
+            _ => DEFAULT_TZ.to_string(),
         },
         blocked: mac_list(f.get("AP_DENY").unwrap_or("")),
         networks,
@@ -1181,6 +1345,25 @@ pub struct WifiInput {
     pub steer_interval: Option<u32>,
     #[serde(default)]
     pub steer_exempt: Option<Vec<String>>,
+    /// "quiet" | "never"
+    #[serde(default)]
+    pub steer_kick: Option<String>,
+    /// "HH:MM-HH:MM"
+    #[serde(default)]
+    pub steer_quiet: Option<String>,
+    /// "quiet" | "never"
+    #[serde(default)]
+    pub steer_legacy: Option<String>,
+    /// "active" | "passive" | "table" | "off"
+    #[serde(default)]
+    pub steer_report: Option<String>,
+    /// 802.11v / 802.11k / WNM sleep on every BSS (a radio restart applies them)
+    #[serde(default)]
+    pub bss_transition: Option<bool>,
+    #[serde(default)]
+    pub rrm: Option<bool>,
+    #[serde(default)]
+    pub wnm_sleep: Option<bool>,
     /// channel choice by measurement (docs 12.19)
     #[serde(default)]
     pub chan_smart24: Option<bool>,
@@ -1227,6 +1410,9 @@ pub struct WifiInput {
     /// client names: "dhcp", "off" or the IPv4 address of a DNS server
     #[serde(default)]
     pub names: Option<String>,
+    /// POSIX time zone of the unit's hour settings
+    #[serde(default)]
+    pub timezone: Option<String>,
     /// the full list of networks (a network left out is deleted); absent =
     /// networks unchanged
     #[serde(default)]
@@ -1533,6 +1719,41 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         }
         set.push(("AP_STEER_EXEMPT".into(), out.join(" ")));
     }
+    for (k, v, what) in [
+        ("AP_STEER_KICK", &input.steer_kick, "steering disconnects: quiet or never"),
+        (
+            "AP_STEER_LEGACY",
+            &input.steer_legacy,
+            "steering of devices without 802.11v: quiet or never",
+        ),
+    ] {
+        if let Some(v) = v {
+            set.push((k.into(), kick_mode(v).ok_or_else(|| invalid(what))?.into()));
+        }
+    }
+    if let Some(v) = &input.steer_report {
+        let m = report_mode(v)
+            .ok_or_else(|| invalid("steering measurement: active, passive, table or off"))?;
+        set.push(("AP_STEER_REPORT".into(), m.into()));
+    }
+    if let Some(v) = &input.steer_quiet {
+        let v = v.trim();
+        if !valid_window(v) {
+            return Err(invalid(
+                "steering quiet hours: a window like 01:00-05:00",
+            ));
+        }
+        set.push(("AP_STEER_QUIET".into(), v.to_string()));
+    }
+    for (k, v) in [
+        ("AP_BSS_TRANSITION", input.bss_transition),
+        ("AP_RRM", input.rrm),
+        ("AP_WNM_SLEEP", input.wnm_sleep),
+    ] {
+        if let Some(b) = v {
+            set.push((k.into(), if b { "1" } else { "0" }.into()));
+        }
+    }
     for (k, v) in [
         ("AP_CHAN_SMART24", input.chan_smart24),
         ("AP_CHAN_SMART5", input.chan_smart5),
@@ -1633,6 +1854,15 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
     if let Some(n) = &input.names {
         set.push(("AP_NAMES".into(), check_names(n)?));
     }
+    if let Some(z) = &input.timezone {
+        let z = z.trim();
+        if !valid_tz(z) {
+            return Err(invalid(
+                "time zone: a POSIX TZ string like PST8PDT,M3.2.0,M11.1.0 or UTC0",
+            ));
+        }
+        set.push(("AP_TZ".into(), z.to_string()));
+    }
 
     let mut out = EnvFile {
         header: f.header.clone(),
@@ -1694,9 +1924,13 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         "AP_XBSS_WINDOW",
         "AP_XBSS_HOLD",
         "AP_HE",
+        "AP_BSS_TRANSITION",
+        "AP_RRM",
+        "AP_WNM_SLEEP",
         "AP_TXPOWER24",
         "AP_TXPOWER5",
         "AP_NAMES",
+        "AP_TZ",
     ]
     .into_iter()
     .chain(chan_keys())
@@ -2026,6 +2260,8 @@ pub fn get(p: &Paths) -> Result<Value> {
         "channels": channel_status(p),
         "channel_history": channel_history(50),
         "airtime": airtime_status(p),
+        "steer_status": steer_status(p),
+        "steer_history": steer_history(100),
     }))
 }
 
@@ -2050,6 +2286,27 @@ fn airtime_status(p: &Paths) -> Value {
             .unwrap_or(false)
     });
     json!({ "supported": supported })
+}
+
+
+/// ap-steer's state of the last round (`<run>/steer/status.json`): mode, why it is (not) steering, the peers it knows,
+/// what each tracked station is doing. Absent before the first round.
+pub fn steer_status(p: &Paths) -> Value {
+    std::fs::read_to_string(p.run.join("steer").join("status.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(t.trim()).ok())
+        .unwrap_or(Value::Null)
+}
+
+/// The last `n` steering events (newest last): every move request, answer, measurement, roam, disconnect and return,
+/// with its reason. `PATRONUS_AP_STEER_DB` (default /var/lib/patronus/ap-steer), file `history` (JSON lines).
+pub fn steer_history(n: usize) -> Vec<Value> {
+    let db = std::env::var("PATRONUS_AP_STEER_DB")
+        .unwrap_or_else(|_| "/var/lib/patronus/ap-steer".into());
+    parse_history(
+        &std::fs::read_to_string(PathBuf::from(db).join("history")).unwrap_or_default(),
+        n,
+    )
 }
 
 /// The channel state directory of ap-chan (history, the units heard): `PATRONUS_AP_CHAN_DB`.
@@ -2439,6 +2696,7 @@ fn radio_state(f: &EnvFile) -> RadioState {
             "txpower24",
             "txpower5",
             "names",
+            "timezone",
             "blocked",
             "coord24",
             "coord5",
@@ -2457,6 +2715,10 @@ fn radio_state(f: &EnvFile) -> RadioState {
             "steer_max",
             "steer_interval",
             "steer_exempt",
+            "steer_kick",
+            "steer_quiet",
+            "steer_legacy",
+            "steer_report",
             "chan_smart24",
             "chan_smart5",
             "chan_recheck24",
@@ -3401,6 +3663,115 @@ mod tests {
         let doc = export_doc(&n);
         let again = parse_doc(&doc).unwrap();
         assert_eq!(plan(&n, &again).unwrap()["changes"], json!([]));
+    }
+
+    #[test]
+    fn soft_steering_settings_default_validate_and_split_live_from_restart() {
+        let c = view(&parse("AP_SSIDS=p\nSSID_p=P KEY_p=secretpw1\n"));
+        assert_eq!(
+            (
+                c.steer_kick.as_str(),
+                c.steer_quiet.as_str(),
+                c.steer_legacy.as_str(),
+                c.steer_report.as_str()
+            ),
+            ("quiet", "01:00-05:00", "quiet", "active")
+        );
+        assert!(c.bss_transition && c.rrm && !c.wnm_sleep);
+        let board = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ci/embedded-aarch64/ax1800/overlay/etc/patronus/board.sh");
+        if let Ok(t) = std::fs::read_to_string(&board) {
+            let b = parse(&t);
+            assert_eq!(b.get("AP_STEER_KICK"), Some(DEFAULT_STEER_KICK));
+            assert_eq!(b.get("AP_STEER_QUIET"), Some(DEFAULT_STEER_QUIET));
+            assert_eq!(b.get("AP_STEER_LEGACY"), Some(DEFAULT_STEER_KICK));
+            assert_eq!(b.get("AP_STEER_REPORT"), Some(DEFAULT_STEER_REPORT));
+            assert_eq!(b.get("AP_BSS_TRANSITION"), Some("1"));
+            assert_eq!(b.get("AP_RRM"), Some("1"));
+            assert_eq!(b.get("AP_WNM_SLEEP"), Some("0"));
+        }
+        // nonsense in the file = default
+        let c = view(&parse(
+            "AP_STEER_KICK=sometimes\nAP_STEER_QUIET=25:00-02:00\nAP_STEER_REPORT=loud\nAP_WNM_SLEEP=1\n",
+        ));
+        assert_eq!(
+            (c.steer_kick.as_str(), c.steer_quiet.as_str(), c.steer_report.as_str()),
+            ("quiet", "01:00-05:00", "active")
+        );
+        assert!(c.wnm_sleep);
+        assert_eq!(view(&parse("")).timezone, "UTC0");
+        for ok in ["PST8PDT,M3.2.0,M11.1.0", "UTC0", "<+0530>-5:30", "CET-1CEST,M3.5.0,M10.5.0/3"] {
+            assert!(valid_tz(ok), "{ok}");
+        }
+        for bad in ["", "PST", "P8", "PST8; reboot", "PST8\nX=1", "$(id)8"] {
+            assert!(!valid_tz(bad), "{bad:?}");
+        }
+        assert_eq!(view(&parse("AP_TZ='$(id)'\n")).timezone, "UTC0");
+        let f = parse("AP_SSIDS=p\nSSID_p=P KEY_p=secretpw1\n");
+        // the steering switches are live: written, no radio restart
+        let live = WifiInput {
+            steer_kick: Some("never".into()),
+            steer_quiet: Some("23:30-04:00".into()),
+            steer_legacy: Some("never".into()),
+            steer_report: Some("table".into()),
+            timezone: Some("PST8PDT,M3.2.0,M11.1.0".into()),
+            ..Default::default()
+        };
+        let n = update(&f, &live).unwrap();
+        assert_eq!(n.get("AP_TZ"), Some("PST8PDT,M3.2.0,M11.1.0"));
+        assert_eq!(n.get("AP_STEER_QUIET"), Some("23:30-04:00"));
+        assert_eq!(view(&n).steer_report, "table");
+        assert!(!restart_needed(&f, &n), "steering switches are live");
+        assert!(!same_settings(&f, &n), "but they are a change");
+        // 802.11v/k on the BSSes need a radio restart
+        for i in [
+            WifiInput {
+                bss_transition: Some(false),
+                ..Default::default()
+            },
+            WifiInput {
+                rrm: Some(false),
+                ..Default::default()
+            },
+            WifiInput {
+                wnm_sleep: Some(true),
+                ..Default::default()
+            },
+        ] {
+            let n = update(&f, &i).unwrap();
+            assert!(restart_needed(&f, &n), "{i:?}");
+        }
+        // bad values refused
+        for bad in [
+            WifiInput {
+                steer_kick: Some("always".into()),
+                ..Default::default()
+            },
+            WifiInput {
+                steer_quiet: Some("01:00".into()),
+                ..Default::default()
+            },
+            WifiInput {
+                steer_quiet: Some("02:00-02:00".into()),
+                ..Default::default()
+            },
+            WifiInput {
+                steer_report: Some("loud".into()),
+                ..Default::default()
+            },
+        ] {
+            assert!(update(&f, &bad).is_err(), "{bad:?}");
+        }
+        let mut t = std::collections::BTreeMap::new();
+        t.insert("steer_margin".to_string(), json!(41));
+        assert!(update(
+            &f,
+            &WifiInput {
+                tuning: t,
+                ..Default::default()
+            }
+        )
+        .is_err());
     }
 
     #[test]

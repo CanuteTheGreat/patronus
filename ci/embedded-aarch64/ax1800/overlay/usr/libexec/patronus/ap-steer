@@ -1,46 +1,93 @@
 #!/bin/sh
-# ap-steer: move stations that stay on this unit with a weak signal to a better access point of this network (docs 12.18).
-# Clients pick an access point when they join and most never leave it while the link still works: when one unit restarts
-# (an upgrade, a power cut) every station moves to the others and stays there, smart plugs and cameras at -75 dBm two
-# rooms away from the unit next to them. Commercial controllers steer such stations; this does it per unit, without a
-# controller: a station whose average signal has stayed at or below AP_STEER_SIGNAL for AP_STEER_AFTER seconds, and that
-# is idle (less than AP_STEER_IDLE kbit/s since the last look), is refused on every BSS of this unit for AP_STEER_BLOCK
-# seconds (hostapd deny_acl: the station is disconnected and has to join another access point). A station this unit
-# moved that comes back here (just as weak = no better access point for it, or bounced back by the other unit because it
-# was even weaker there) is left alone for AP_STEER_RETRY seconds: each unit moves a station at most once per
-# AP_STEER_RETRY and a station that returns stays, so two units can swap it at most once (no ping-pong); each further
-# return in a row doubles that hold, up to AP_STEER_RETRY_MAX (a device with no better access point is left alone). At most
-# AP_STEER_MAX stations are moved per round (every AP_STEER_INTERVAL seconds); AP_STEER_EXEMPT lists MACs never moved.
-# AP_STEER: auto (default) = only on a unit that knows another access point of this network exists (heard at start by
-# ap-coord, listed in AP_COORD_PEERS, or a station that left here showed up behind a wired port, i.e. at another unit),
-# 1 = always, 0 = off. Every setting is re-read each round (Wi-Fi page / plan+apply change it live).
+# ap-steer: move stations that stay on this unit with a weak signal to an access point of this network they hear better
+# (docs 12.18). Clients pick an access point when they join and most never leave it while the link still works: after a
+# unit restarts every station sits on the other units, smart plugs and displays at -75 dBm two rooms away from the unit
+# next to them. Commercial controllers steer such stations; this does it per unit, without a controller, and it ASKS
+# first: a disconnect is visible on the device (a display or speaker drops its stream), so it is the last resort.
+#
+# A station is weak when its average signal has stayed at or below AP_STEER_SIGNAL for AP_STEER_AFTER seconds. Then:
+#  1. 802.11k (the station supports beacon reports, AP_STEER_REPORT != off): it is asked what it hears (beacon request,
+#     AP_STEER_REPORT = active|passive|table). Only when it hears another unit of this network at least AP_STEER_MARGIN
+#     dB better than this one is it asked to move; otherwise it is left alone for AP_STEER_RETRY ("no better AP"). A
+#     station that never answers beacon requests is treated as one without 802.11k.
+#  2. 802.11v (BSS transition management, hostapd bss_transition=1): the move is a REQUEST naming the other unit (no
+#     "disassociation imminent"): the station roams without a disconnect, or declines. At most every AP_STEER_BTM_EVERY
+#     seconds per station, only while it is idle (< AP_STEER_IDLE kbit/s since the last round). A station that declines
+#     with "no suitable candidate" (status 7) is never disconnected for it.
+#  3. Disconnect (hostapd deny_acl for AP_STEER_BLOCK s, so it joins another unit): ONLY inside the local-time window
+#     AP_STEER_QUIET (default 01:00-05:00, time zone AP_TZ) with AP_STEER_KICK=quiet, ONLY for a station with no traffic
+#     for AP_STEER_QUIET_IDLE seconds (byte counters, not the inactivity timer), ONLY when it ignored a move request at
+#     least AP_STEER_BTM_WAIT s ago (or cannot take one: no 802.11v, with AP_STEER_LEGACY=quiet), never when its own
+#     measurement says no other unit is better, and at most once per AP_STEER_KICK_EVERY seconds per device.
+# A station that ARRIVES from another unit (it was behind a wired port, i.e. at that unit, last round) and is weak here
+# is measured at once: if it hears another unit clearly better it is asked straight over (a bad move is undone within a
+# few rounds). A station this unit disconnected that comes back is left alone for AP_STEER_RETRY seconds, doubling per
+# return in a row up to AP_STEER_RETRY_MAX (no ping-pong). AP_STEER_EXEMPT lists MACs never steered (the Wi-Fi page's
+# per-device "don't steer"). At most AP_STEER_MAX move requests/disconnects per round (every AP_STEER_INTERVAL s).
+# Other units: ap-coord's start scan (peers-5/peers-24) and every unit a station named in a beacon report; they are also
+# loaded as 802.11k neighbor reports into every BSS of this unit.
+# AP_STEER: auto (default) = only on a unit that knows another access point of this network exists, 1 = always, 0 = off.
+# Every setting is re-read each round (Wi-Fi page / plan+apply change it live). Each step goes to syslog and to the
+# history (JSON lines, AP_STEER_DB/history, newest AP_STEER_HISTORY entries) shown on the Wi-Fi page.
 #   ap-steer run       background loop started by `ap start`
 #   ap-steer once      one round (tests)
-#   ap-steer status    peers known, stations refused right now, stations left alone
-# Test hooks: AP_BOARD, AP_RENDER_OUT (as for `ap`), AP_STEER_STATE (state dir), AP_STEER_NOW (epoch seconds),
-#   AP_STEER_DUMP_DIR (<dir>/<bss> = `iw dev <bss> station dump` text), AP_STEER_FDB_FILE (`brctl showmacs` text),
-#   AP_STEER_WIRED (bridge port numbers of the wired ports), AP_CLI (hostapd_cli), AP_CTRL (control socket dir).
+#   ap-steer status    why it is (not) steering, peers, stations it is working on
+# Test hooks: AP_BOARD, AP_RENDER_OUT (as for `ap`), AP_STEER_STATE (state dir), AP_STEER_DB (history dir),
+#   AP_STEER_NOW (epoch seconds), AP_STEER_CLOCK (local HH:MM), AP_STEER_DUMP_DIR (<dir>/<bss> = `iw dev <bss> station
+#   dump` text), AP_STEER_FDB_FILE (`brctl showmacs` text), AP_STEER_WIRED (bridge port numbers of the wired ports),
+#   AP_CLI (hostapd_cli), AP_CTRL (control socket dir).
 . ${AP_BOARD:-/etc/patronus/board.sh}
 OUTD=${AP_RENDER_OUT:-/run/hostapd}
 SD=${AP_STEER_STATE:-$OUTD/steer}
+DB=${AP_STEER_DB:-/var/lib/patronus/ap-steer}
 CLI=${AP_CLI:-hostapd_cli}
 CTRL=${AP_CTRL:-/run/hostapd}
 PIDF=${AP_STEER_PID:-/run/patronus-ap-steer.pid}
 num() { case "$1" in ''|*[!0-9-]*) echo "$2";; -) echo "$2";; *) echo "$1";; esac; }
 say() { echo "ap-steer: $*"; logger -t patronus-ap-steer "$*" 2>/dev/null; true; }
 now() { echo "${AP_STEER_NOW:-$(date +%s)}"; }
+since() { [ "${1:-0}" -gt 0 ] && echo $((t - $1)) || echo 999999999; }   # seconds since an epoch (0 = never)
+on() { case "${1:-0}" in 1|yes|on|true) return 0;; esac; return 1; }
 settings() {
   MODE=${AP_STEER:-auto}; SIG=$(num "${AP_STEER_SIGNAL:-}" -65); AFTER=$(num "${AP_STEER_AFTER:-}" 600)
   IDLE=$(num "${AP_STEER_IDLE:-}" 64); BLOCK=$(num "${AP_STEER_BLOCK:-}" 30); RETRY=$(num "${AP_STEER_RETRY:-}" 21600)
   RMAX=$(num "${AP_STEER_RETRY_MAX:-}" 604800); [ "$RMAX" -ge "$RETRY" ] || RMAX=$RETRY
   MAXN=$(num "${AP_STEER_MAX:-}" 2); IVL=$(num "${AP_STEER_INTERVAL:-}" 30)
-  EXEMPT=" $(echo "${AP_STEER_EXEMPT:-}" | tr 'A-F' 'a-f') "; }
+  EXEMPT=" $(echo "${AP_STEER_EXEMPT:-}" | tr 'A-F' 'a-f') "
+  case "${AP_STEER_KICK:-quiet}" in never|off|0|no) KICK=never;; *) KICK=quiet;; esac
+  case "${AP_STEER_LEGACY:-quiet}" in never|off|0|no) LEGACY=never;; *) LEGACY=quiet;; esac
+  case "${AP_STEER_REPORT:-active}" in passive|table|off) REPORT=$AP_STEER_REPORT;; *) REPORT=active;; esac
+  QUIET=${AP_STEER_QUIET:-01:00-05:00}; MARGIN=$(num "${AP_STEER_MARGIN:-}" 8)
+  BTMEVERY=$(num "${AP_STEER_BTM_EVERY:-}" 1800); BTMWAIT=$(num "${AP_STEER_BTM_WAIT:-}" 300)
+  QIDLE=$(num "${AP_STEER_QUIET_IDLE:-}" 1800); KEVERY=$(num "${AP_STEER_KICK_EVERY:-}" 86400)
+  HMAX=$(num "${AP_STEER_HISTORY:-}" 500); FRESH=$((IVL * 4 + 60))
+  on "${AP_BSS_TRANSITION:-1}" && BTMON=1 || BTMON=0; on "${AP_RRM:-1}" && RRMON=1 || RRMON=0; }
 
-hold() { # N: how long a station is left alone after its N-th return in a row (AP_STEER_RETRY doubled per return, at most
-  # AP_STEER_RETRY_MAX)
-  h=$RETRY; i=1; while [ "$i" -lt "$1" ] && [ "$h" -lt "$RMAX" ]; do h=$((h * 2)); i=$((i + 1)); done
-  [ "$h" -le "$RMAX" ] || h=$RMAX; echo "$h"; }
+hist() { # EVENT MAC BSS SIGNAL DETAIL: one history line (JSON) + syslog
+  mkdir -p "$DB"; d=$(echo "$5" | tr -d '"\\')
+  printf '{"t":%s,"event":"%s","mac":"%s","bss":"%s","signal":%s,"detail":"%s"}\n' "$t" "$1" "$2" "$3" "${4:-0}" "$d" >> "$DB/history"
+  say "$2 $1 (${3:--}, ${4:-?} dBm): $d"; }
+trim_hist() { [ -f "$DB/history" ] || return 0
+  [ "$(wc -l < "$DB/history")" -gt $((HMAX + HMAX / 5)) ] && tail -n "$HMAX" "$DB/history" > "$DB/history.new" && mv "$DB/history.new" "$DB/history"; true; }
+last_kick() { [ -f "$DB/history" ] || { echo 0; return; }
+  awk -v m="$1" 'index($0, "\"event\":\"kick\",\"mac\":\"" m "\"") { l = $0; sub(/^\{"t":/, "", l); sub(/,.*/, "", l); k = l } END { print k + 0 }' "$DB/history"; }
+mins() { h=$(echo "${1%%:*}" | sed 's/^0//'); m=$(echo "${1#*:}" | sed 's/^0//'); echo $(( ${h:-0} * 60 + ${m:-0} )); }
+in_quiet() { c=${AP_STEER_CLOCK:-$(date +%H:%M)}; a=${QUIET%-*}; b=${QUIET#*-}
+  case "$a$b" in *[!0-9:]*|'') return 1;; esac; c=$(mins "$c"); a=$(mins "$a"); b=$(mins "$b")
+  if [ "$a" -lt "$b" ]; then [ "$c" -ge "$a" ] && [ "$c" -lt "$b" ]; else [ "$c" -ge "$a" ] || [ "$c" -lt "$b" ]; fi; }
+
 bsses() { for f in "$OUTD"/ap5.conf "$OUTD"/ap24.conf; do [ -f "$f" ] && sed -n 's/^interface=//p; s/^bss=//p' "$f"; done; }
+band_of() { grep -qx "interface=$1\|bss=$1" "$OUTD/ap5.conf" 2>/dev/null && echo 5 || echo 24; }
+own_bssids() { cat "$OUTD"/ap5.conf "$OUTD"/ap24.conf 2>/dev/null | sed -n 's/^bssid=//p' | tr 'A-F' 'a-f'; }
+ssid_of() { # BSS -> its SSID with blanks as '_' (as ap-coord's peers files write it)
+  for f in "$OUTD"/ap5.conf "$OUTD"/ap24.conf; do [ -f "$f" ] || continue
+    awk -v i="$1" '/^(interface|bss)=/ { cur = substr($0, index($0, "=") + 1) } cur == i && /^ssid=/ { print substr($0, 6); exit }' "$f"
+  done | head -1 | sed 's/[ \t]/_/g'; }
+opclass() { # BAND CHANNEL -> global operating class (20 MHz)
+  if [ "$1" = 24 ]; then echo 81; elif [ "$2" -le 48 ]; then echo 115; elif [ "$2" -le 64 ]; then echo 118
+  elif [ "$2" -le 144 ]; then echo 121; elif [ "$2" -le 161 ]; then echo 124; else echo 125; fi; }
+hex2() { printf '%02x' "$1"; }
+ssidhex() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
 dump() { # BSS -> "mac signal bytes connected" per station
   if [ -n "${AP_STEER_DUMP_DIR:-}" ]; then cat "$AP_STEER_DUMP_DIR/$1" 2>/dev/null; else iw dev "$1" station dump 2>/dev/null; fi | awk '
     function out() { if (m != "") printf "%s %d %.0f %d\n", m, (a != "" ? a : s), rb + tb, c }
@@ -56,76 +103,215 @@ wired() { # bridge port numbers of the non-Wi-Fi ports
   if [ -n "${AP_STEER_WIRED:-}" ]; then echo "$AP_STEER_WIRED"; return; fi
   for p in /sys/class/net/br-lan/brif/*; do [ -f "$p/port_no" ] || continue
     case "${p##*/}" in wl*) ;; *) echo $(( $(cat "$p/port_no") ));; esac; done | tr '\n' ' '; }
+wired_macs() { # MACs the bridge learnt behind a wired port (= at another unit, or wired)
+  w=" $(wired) "; fdb | awk 'NR > 1 && $3 == "no" { print $1, tolower($2) }' | while read -r p m; do
+    case "$w" in *" $p "*) echo "$m";; esac; done; }
 peers_known() {
   case "$MODE" in 0|no|off|false) return 1;; 1|yes|on|true) return 0;; esac
-  [ -s "$OUTD/peers-5" ] || [ -s "$OUTD/peers-24" ] || [ -n "${AP_COORD_PEERS:-}" ] || [ -f "$SD/peer-seen" ]; }
+  [ -s "$OUTD/peers-5" ] || [ -s "$OUTD/peers-24" ] || [ -n "${AP_COORD_PEERS:-}" ] || [ -f "$SD/peer-seen" ] || [ -s "$SD/nbr" ]; }
+why_not() { case "$MODE" in 0|no|off|false) echo "off: switched off in the settings (AP_STEER=off)";;
+  *) echo "$MODE: no other access point of this network known yet";; esac; }
 setacl() { # ADD_MAC|DEL_MAC MAC: on every BSS of this unit (DEL keeps a MAC the unit's own block list holds)
   for i in $(bsses); do
     [ "$1" = DEL_MAC ] && grep -qix "$2" "$OUTD/deny-$i" 2>/dev/null && continue
     $CLI -p "$CTRL" -i "$i" deny_acl "$1" "$2" > /dev/null 2>&1; done; }
 
+cands() { # rebuild $SD/cand: "band bssid opclass channel ssid" of every other unit's BSS known
+  own=" $(own_bssids | tr '\n' ' ') "
+  { for b in 5 24; do [ -f "$OUTD/peers-$b" ] && while read -r bssid f sg sec w c ssid; do
+      case "$f" in ''|*[!0-9]*) continue;; esac
+      if [ "$b" = 5 ]; then ch=$(( (f - 5000) / 5 )); else ch=$(( (f - 2407) / 5 )); fi
+      echo "$b $(echo "$bssid" | tr 'A-F' 'a-f') $(opclass "$b" "$ch") $ch $ssid"; done < "$OUTD/peers-$b"; done
+    [ -f "$SD/nbr" ] && cut -d' ' -f1-5 "$SD/nbr"; } | awk -v own="$own" 'NF >= 5 && index(own, " " $2 " ") == 0 && !s[$2]++' > "$SD/cand"; }
+neighbors() { # 802.11k neighbor reports: every other unit's BSS with the same SSID, on every BSS of this unit
+  [ "$RRMON" = 1 ] || return 0; nsig=$(cksum < "$SD/cand")
+  [ "$nsig" = "$(cat "$SD/nbr-loaded" 2>/dev/null)" ] && [ $((t - $(cat "$SD/nbr-time" 2>/dev/null || echo 0))) -lt 600 ] && return 0
+  for i in $(bsses); do s=$(ssid_of "$i")
+    awk -v s="$s" '$5 == s' "$SD/cand" | while read -r b bssid op ch ss; do
+      [ "$b" = 5 ] && phy=09 || phy=07
+      nr="$(echo "$bssid" | tr -d ':')8f000000$(hex2 "$op")$(hex2 "$ch")$phy"
+      $CLI -p "$CTRL" -i "$i" set_neighbor "$bssid" "ssid=$(ssidhex "$(echo "$ss" | sed 's/_/ /g')")" "nr=$nr" > /dev/null 2>&1; done; done
+  echo "$nsig" > "$SD/nbr-loaded"; echo "$t" > "$SD/nbr-time"; }
+cand_for() { # BSS [BSSID] -> neighbor= arguments for bss_tm_req (other units' BSSes of its SSID and band)
+  s=$(ssid_of "$1"); b=$(band_of "$1"); [ "$b" = 5 ] && phy=9 || phy=7
+  awk -v s="$s" -v b="$b" -v p="${2:-}" '$5 == s && $1 == b && (p == "" || $2 == p) { print $2, $3, $4 }' "$SD/cand" 2>/dev/null |
+    while read -r bssid op ch; do printf ' neighbor=%s,0x0000008f,%s,%s,%s,0301ff' "$bssid" "$op" "$ch" "$phy"; done; }
+
+capab() { # MAC BSS CONNECTED -> "btm bcn" (cached per association): 802.11v BSS transition (extended capabilities bit
+  # 19), 802.11k beacon report passive|active|table (RRM enabled capabilities byte 0 bits 4-6)
+  a=$((t - $3)); if [ -f "$SD/cap-$1" ]; then read -r ca cb cr < "$SD/cap-$1"; d=$((ca - a)); [ ${d#-} -le 5 ] && { echo "$cb $cr"; return; }; fi
+  rm -f "$SD/norep-$1"
+  s=$($CLI -p "$CTRL" -i "$2" sta "$1" 2>/dev/null); ec=$(echo "$s" | sed -n 's/^ext_capab=//p'); rr=$(echo "$s" | sed -n 's/^rrm_enabled_capab=//p')
+  btm=0; x=$(echo "$ec" | cut -c5-6); case "$x" in [0-9a-fA-F][0-9a-fA-F]) [ $(( 0x$x & 8 )) -ne 0 ] && btm=1;; esac
+  bcn=0; x=$(echo "$rr" | cut -c1-2); case "$x" in [0-9a-fA-F][0-9a-fA-F]) [ $(( 0x$x & 112 )) -ne 0 ] && bcn=1;; esac
+  echo "$a $btm $bcn" > "$SD/cap-$1"; echo "$btm $bcn"; }
+events() { # answers queued by ap-event: BSS-TM-RESP (move request answered), BEACON-RESP-RX (what the station hears)
+  [ -s "$SD/events" ] || return 0; mv "$SD/events" "$SD/events.work"; own=" $(own_bssids | tr '\n' ' ') "
+  while read -r et ifn ev m a1 a2 a3 rest; do case "$ev" in
+  BSS-TM-RESP) st=$(echo "$a1 $a2 $a3 $rest" | sed -n 's/.*status_code=\([0-9]*\).*/\1/p'); st=${st:-1}
+    tb=$(echo "$a1 $a2 $a3 $rest" | sed -n 's/.*target_bssid=\([0-9a-fA-F:]*\).*/\1/p')
+    echo "$et $st ${tb:--}" > "$SD/btm-$m"
+    case "$st" in 0) w="accepted the move request${tb:+, roaming to $tb}";; 7) w="declined: no suitable candidate (it hears no better access point)";;
+      6) w="declined: it named its own candidates";; *) w="declined the move request (status $st)";; esac
+    hist btm-answer "$m" "$ifn" "" "$w";;
+  BEACON-RESP-RX) h=$a3; [ ${#h} -ge 42 ] || continue
+    op=$((0x$(echo "$h" | cut -c1-2))); ch=$((0x$(echo "$h" | cut -c3-4))); rc=$((0x$(echo "$h" | cut -c27-28)))
+    bs=$(echo "$h" | cut -c31-42 | sed 's/../&:/g; s/:$//' | tr 'A-F' 'a-f'); [ "$rc" -le 220 ] || continue; dbm=$((rc / 2 - 110))
+    pr=0 od=0 pb=- pd=-127 po=0 pc=0; [ -f "$SD/rep-$m" ] && read -r pr od pb pd po pc < "$SD/rep-$m"
+    [ $((et - pr)) -le 60 ] || { od=0; pb=-; pd=-127; }
+    case "$own" in *" $bs "*) od=$dbm;;
+      *) [ "$dbm" -gt "$pd" ] && { pb=$bs; pd=$dbm; po=$op; pc=$ch; }
+         [ "$op" -ge 81 ] && [ "$op" -le 84 ] && bb=24 || bb=5
+         grep -q " $bs " "$SD/nbr" 2>/dev/null || echo "$bb $bs $op $ch $(ssid_of "$ifn") $et" >> "$SD/nbr";; esac
+    echo "$et $od $pb $pd $po $pc" > "$SD/rep-$m";;
+  esac; done < "$SD/events.work"; rm -f "$SD/events.work"; }
+
 round() {
   settings; mkdir -p "$SD"; t=$(now)
+  events
   # end the refusals that are over
   if [ -f "$SD/blocked" ]; then : > "$SD/blocked.new"
     while read -r m u; do if [ "$u" -le "$t" ]; then setacl DEL_MAC "$m"; else echo "$m $u" >> "$SD/blocked.new"; fi; done < "$SD/blocked"
     mv "$SD/blocked.new" "$SD/blocked"; fi
   for i in $(bsses); do dump "$i" | sed "s/\$/ $i/"; done > "$SD/now"
-  # stations that left since the last round: one that shows up behind a wired port is at another access point
-  if [ -f "$SD/prev" ]; then w=" $(wired) "
+  wired_macs > "$SD/wired.now"
+  : > "$SD/arrived"
+  if [ -f "$SD/prev" ]; then
+    # just arrived from another unit: not here last round, behind a wired port last round
+    for m in $(cut -d' ' -f1 "$SD/now"); do grep -q "^$m " "$SD/prev" && continue
+      grep -qx "$m" "$SD/wired.prev" 2>/dev/null && echo "$m" >> "$SD/arrived"; done
+    # left since the last round: one that shows up behind a wired port is at another access point
     for m in $(cut -d' ' -f1 "$SD/prev"); do grep -q "^$m " "$SD/now" && continue
-      p=$(fdb | awk -v m="$m" 'tolower($2) == m && $3 == "no" { print $1; exit }')
-      case "$w" in *" $p "*) [ -n "$p" ] || continue
-        [ -f "$SD/peer-seen" ] || say "$m joined another access point of this network (seen behind bridge port $p): steering is possible"
-        echo "$t" > "$SD/peer-seen"
-        # keep its record: if it comes back (the other unit sends it back), it is left alone here
-        if [ -f "$SD/sta-$m" ] && [ "$(cut -d' ' -f4 "$SD/sta-$m")" -gt 0 ]; then say "$m moved to another access point"; fi;;
-      esac; done; fi
-  cp "$SD/now" "$SD/prev"
-  moved=0; peers_known && pk=1 || pk=0
+      grep -qx "$m" "$SD/wired.now" || continue
+      [ -f "$SD/peer-seen" ] || say "$m joined another access point of this network: steering is possible"
+      echo "$t" > "$SD/peer-seen"
+      [ -f "$SD/sta-$m" ] || continue; read -r ws bp tp ka ks hu nr la bt bs rq ar < "$SD/sta-$m"
+      set -- $(grep "^$m " "$SD/prev")
+      if [ "${ka:-0}" -gt 0 ]; then hist roamed "$m" "$5" "$2" "left after the disconnect: now at another access point"
+      elif [ "${bt:-0}" -gt 0 ] && [ $((t - bt)) -le "$BTMWAIT" ]; then
+        hist roamed "$m" "$5" "$2" "roamed to another access point $((t - bt)) s after the move request (no disconnect)"
+        echo "$ws $bp $tp $t $2 $hu $nr $la $bt $bs $rq 0" > "$SD/sta-$m"; fi
+    done; fi
+  cp "$SD/now" "$SD/prev"; cp "$SD/wired.now" "$SD/wired.prev"
+  cands; neighbors
+  moved=0; peers_known && pk=1 || pk=0; quiet=0; in_quiet && quiet=1
   while read -r m sig bytes conn ifn; do
-    ws=0 bp=-1 tp=0 ka=0 ks=0 hu=0 nr=0; [ -f "$SD/sta-$m" ] && read -r ws bp tp ka ks hu nr < "$SD/sta-$m"; nr=${nr:-0}
-    # back after being moved (joined again since): it stays here. As weak as before = no better access point for it;
+    ws=0 bp=-1 tp=0 ka=0 ks=0 hu=0 nr=0 la=0 bt=0 bs=-1 rq=0 ar=0
+    [ -f "$SD/sta-$m" ] && read -r ws bp tp ka ks hu nr la bt bs rq ar < "$SD/sta-$m"
+    nr=${nr:-0} la=${la:-0} bt=${bt:-0} bs=${bs:--1} rq=${rq:-0} ar=${ar:-0}
+    grep -qx "$m" "$SD/arrived" && ar=$t
+    # back after a disconnect (joined again since): it stays here. As weak as before = no better access point for it;
     # stronger = it moved closer, or the other unit sent it back. Either way it is not moved again for a while: the first
-    # time AP_STEER_RETRY, each further time in a row twice as long, up to AP_STEER_RETRY_MAX (a device that has no
-    # better access point is not cut off every AP_STEER_RETRY forever).
-    if [ "$ka" -gt 0 ] && [ "$conn" -lt $((t - ka)) ]; then nr=$((nr + 1)); hu=$((ka + $(hold "$nr")))
-      if [ "$sig" -le "$SIG" ]; then
-        say "$m came back on $ifn at $sig dBm: no better access point for it (time $nr in a row), left alone for $((hu - t)) s"
-      else say "$m came back on $ifn at $sig dBm (was $ks dBm when moved): left alone for $((hu - t)) s"; fi
+    # time AP_STEER_RETRY, each further time in a row twice as long, up to AP_STEER_RETRY_MAX.
+    if [ "$ka" -gt 0 ] && [ "$conn" -lt $((t - ka)) ]; then nr=$((nr + 1))
+      h=$RETRY; i=1; while [ "$i" -lt "$nr" ] && [ "$h" -lt "$RMAX" ]; do h=$((h * 2)); i=$((i + 1)); done; [ "$h" -le "$RMAX" ] || h=$RMAX
+      hu=$((ka + h))
+      if [ "$sig" -le "$SIG" ]; then hist back "$m" "$ifn" "$sig" "came back: no better access point for it (time $nr in a row), left alone for $((hu - t)) s"
+      else hist back "$m" "$ifn" "$sig" "came back stronger (was $ks dBm when moved): left alone for $((hu - t)) s"; fi
       ka=0; ks=0; fi
     weak=0; [ "$sig" -ne 0 ] && [ "$sig" -le "$SIG" ] && weak=1
     if [ $weak = 1 ]; then [ "$ws" -gt 0 ] || ws=$t; else ws=0; [ "$hu" -le "$t" ] && nr=0; fi
     idle=0; if [ "$bp" -ge 0 ] && [ "$bytes" -ge "$bp" ] && [ "$t" -gt "$tp" ]; then
       [ $(( (bytes - bp) * 8 / 1000 / (t - tp) )) -lt "$IDLE" ] && idle=1; fi
-    if [ $weak = 1 ] && [ $pk = 1 ] && [ $idle = 1 ] && [ $((t - ws)) -ge "$AFTER" ] && [ "$conn" -ge "$AFTER" ] \
-       && [ "$hu" -le "$t" ] && [ $moved -lt "$MAXN" ] && [ "$BLOCK" -gt 0 ]; then
-      case "$EXEMPT" in *" $m "*) ;; *)
-        setacl ADD_MAC "$m"; echo "$m $((t + BLOCK))" >> "$SD/blocked"; moved=$((moved + 1))
-        say "$m: $sig dBm on $ifn for $((t - ws)) s and idle: refused on this unit for $BLOCK s so it joins a closer access point"
-        ka=$t; ks=$sig; ws=0;; esac
+    # last traffic: a station seen for the first time counts as busy now
+    { [ $idle = 1 ] && [ "$la" -gt 0 ]; } || la=$t
+    fast=0; [ "$ar" -gt 0 ] && [ $((t - ar)) -le 300 ] && fast=1
+    due=0; if [ $weak = 1 ]; then { [ $((t - ws)) -ge "$AFTER" ] && [ "$conn" -ge "$AFTER" ]; } || [ $fast = 1 ] && due=1; fi
+    case "$EXEMPT" in *" $m "*) due=0;; esac
+    if [ $due = 1 ] && [ $pk = 1 ] && [ "$hu" -le "$t" ] && [ $moved -lt "$MAXN" ]; then
+      set -- $(capab "$m" "$ifn" "$conn"); btm=$1; bcn=$2; [ "$BTMON" = 1 ] || btm=0; [ "$RRMON" = 1 ] || bcn=0
+      [ -f "$SD/norep-$m" ] && bcn=0
+      cl=$(cand_for "$ifn")
+      rp=; rt=0 ro=0 rb=- rd=-127
+      [ -f "$SD/rep-$m" ] && read -r rt ro rb rd rop rch < "$SD/rep-$m" && [ $((t - rt)) -le "$FRESH" ] && rp=1
+      ref=$sig; [ -n "$rp" ] && [ "$ro" -ne 0 ] && ref=$ro
+      if [ $bcn = 1 ] && [ "$REPORT" != off ] && [ -n "$cl" ]; then
+        if [ -n "$rp" ]; then
+          if [ "$rb" != - ] && [ "$rd" -ge $((ref + MARGIN)) ]; then
+            if [ $btm = 1 ] && [ $idle = 1 ] && [ "$(since "$bt")" -ge "$BTMEVERY" ]; then
+              $CLI -p "$CTRL" -i "$ifn" bss_tm_req "$m" pref=1 abridged=1 valid_int=255 $(cand_for "$ifn" "$rb") > /dev/null 2>&1
+              bt=$t; bs=-1; moved=$((moved + 1)); [ $fast = 1 ] && w="arrived from another unit, hears one better" || w="weak for $((t - ws)) s"
+              hist btm "$m" "$ifn" "$sig" "$w: asked to move to $rb (it hears $rd dBm there, $ref dBm here)"; fi
+          elif [ $fast = 0 ]; then hu=$((t + RETRY))
+            hist stay "$m" "$ifn" "$sig" "hears no access point $MARGIN dB better (best other $rd dBm, here $ref dBm): left alone for $RETRY s"
+            rm -f "$SD/rep-$m"; fi
+        elif [ "$(since "$rq")" -ge "$FRESH" ] && { [ "$(since "$bt")" -ge "$BTMEVERY" ] || [ $fast = 1 ]; }; then
+          if [ "$rq" -gt 0 ] && [ $((t - rq)) -lt $((FRESH * 3)) ]; then
+            # asked before and never answered: it does not really do beacon reports (decides itself from now on)
+            echo "$t" > "$SD/norep-$m"; hist measure "$m" "$ifn" "$sig" "did not answer the beacon request: treated as a station without 802.11k"
+          else
+            set -- $(awk -v s="$(ssid_of "$ifn")" -v b="$(band_of "$ifn")" '$5 == s && $1 == b { print $3, $4; exit }' "$SD/cand")
+            case "$REPORT" in table) md=02 ch=255;; passive) md=00 ch=$2;; *) md=01 ch=$2;; esac
+            sh=$(ssidhex "$(ssid_of "$ifn" | sed 's/_/ /g')")
+            req="$(hex2 "$1")$(hex2 "$ch")00003200${md}ffffffffffff00$(hex2 $(( ${#sh} / 2 )))${sh}020100"
+            $CLI -p "$CTRL" -i "$ifn" req_beacon "$m" "$req" > /dev/null 2>&1; rq=$t
+            hist measure "$m" "$ifn" "$sig" "asked what it hears ($REPORT beacon report)"; fi; fi
+      elif [ $btm = 1 ] && [ -n "$cl" ] && [ $fast = 0 ] && [ $idle = 1 ] && [ "$(since "$bt")" -ge "$BTMEVERY" ]; then
+        # 802.11v without 802.11k: the station measures the named units itself and moves only if one is better
+        $CLI -p "$CTRL" -i "$ifn" bss_tm_req "$m" pref=1 abridged=1 valid_int=255 $cl > /dev/null 2>&1
+        bt=$t; bs=-1; moved=$((moved + 1)); hist btm "$m" "$ifn" "$sig" "weak for $((t - ws)) s: asked to move (it measures the other access points itself)"
+      fi
+      # the last resort, only in the quiet hours: disconnect a station that ignored the request (or cannot take one)
+      if [ $quiet = 1 ] && [ "$KICK" = quiet ] && [ $fast = 0 ] && [ $moved -lt "$MAXN" ] && [ "$BLOCK" -gt 0 ] \
+         && [ "$hu" -le "$t" ] && [ $((t - la)) -ge "$QIDLE" ] && [ "$conn" -ge "$QIDLE" ] && [ $((t - ws)) -ge "$AFTER" ]; then
+        ok=0; why=
+        if [ $btm = 1 ]; then st=; [ -f "$SD/btm-$m" ] && read -r xt st xb < "$SD/btm-$m"
+          [ "$bt" -gt 0 ] && [ $((t - bt)) -ge "$BTMWAIT" ] && [ "${st:-}" != 7 ] && ok=1 && why="ignored the move request of $((t - bt)) s ago"
+        elif [ "$LEGACY" = quiet ]; then ok=1; why="cannot take a move request (no 802.11v)"; fi
+        # its own measurement says no other unit is better: never
+        if [ $ok = 1 ] && [ -n "$rp" ] && { [ "$rb" = - ] || [ "$rd" -lt $((ref + MARGIN)) ]; }; then ok=0; fi
+        if [ $ok = 1 ]; then lk=$(last_kick "$m"); [ "$lk" -gt 0 ] && [ $((t - lk)) -lt "$KEVERY" ] && ok=0; fi
+        if [ $ok = 1 ]; then setacl ADD_MAC "$m"; echo "$m $((t + BLOCK))" >> "$SD/blocked"; moved=$((moved + 1))
+          hist kick "$m" "$ifn" "$sig" "quiet hours $QUIET, no traffic for $((t - la)) s, weak for $((t - ws)) s, $why: refused here for $BLOCK s"
+          ka=$t; ks=$sig; ws=0; fi
+      fi
     fi
-    echo "$ws $bytes $t $ka $ks $hu $nr" > "$SD/sta-$m"
+    echo "$ws $bytes $t $ka $ks $hu $nr $la $bt $bs $rq $ar" > "$SD/sta-$m"
   done < "$SD/now"
   # forget stations that are gone, unless something about them still runs (a hold, a move in progress)
   for f in "$SD"/sta-*; do [ -f "$f" ] || continue; m=${f##*/sta-}; grep -q "^$m " "$SD/now" && continue
-    read -r ws bp tp ka ks hu nr < "$f"; [ "$hu" -gt "$t" ] || [ $((ka + RETRY)) -gt "$t" ] || rm -f "$f"; done
+    read -r ws bp tp ka ks hu nr la bt bs rq ar < "$f"
+    [ "$hu" -gt "$t" ] || [ $((ka + RETRY)) -gt "$t" ] || rm -f "$f" "$SD/cap-$m" "$SD/rep-$m" "$SD/btm-$m" "$SD/norep-$m"; done
+  trim_hist; status_json > "$SD/status.json.new" && mv "$SD/status.json.new" "$SD/status.json"; chmod 644 "$SD/status.json" 2>/dev/null
   true; }
 
+status_json() { # for the Wi-Fi page (apwifi.rs steer_status)
+  peers_known && { a=true; r="steering"; } || { a=false; r=$(why_not); }
+  in_quiet && q=true || q=false
+  case "$MODE" in 0|no|off|false) md=off;; 1|yes|on|true) md=on;; *) md=auto;; esac
+  printf '{"mode":"%s","active":%s,"reason":"%s","quiet_now":%s,"quiet":"%s","kick":"%s","legacy":"%s","report":"%s","t":%s,"peers":[' \
+    "$md" "$a" "$r" "$q" "$QUIET" "$KICK" "$LEGACY" "$REPORT" "$t"
+  awk '{ gsub(/["\\]/, "", $5); printf "%s{\"band\":\"%s\",\"bssid\":\"%s\",\"channel\":%d,\"ssid\":\"%s\"}", s, $1, $2, $4, $5; s = "," }' "$SD/cand" 2>/dev/null
+  printf '],"stations":['; s=
+  while read -r m sg by cn bss; do [ -f "$SD/sta-$m" ] || continue; read -r ws bp tp ka ks hu nr la bt bs rq ar < "$SD/sta-$m"
+    st=ok; [ "$ws" -gt 0 ] && st="weak for $((t - ws)) s"; [ "${hu:-0}" -gt "$t" ] && st="left alone for $((hu - t)) s"
+    [ "${bt:-0}" -gt 0 ] && [ $((t - bt)) -lt "$BTMWAIT" ] && st="asked to move $((t - bt)) s ago"
+    case "$EXEMPT" in *" $m "*) st="never steered (exempt)";; esac
+    cb=0 cr=0; [ -f "$SD/cap-$m" ] && read -r ca cb cr < "$SD/cap-$m"
+    printf '%s{"mac":"%s","bss":"%s","signal":%d,"state":"%s","btm":%s,"beacon_report":%s}' "$s" "$m" "$bss" "$sg" "$st" \
+      "$([ "$cb" = 1 ] && echo true || echo false)" "$([ "$cr" = 1 ] && echo true || echo false)"
+    s=,; done < "$SD/now"
+  printf ']}\n'; }
+
 status() { settings; t=$(now)
-  peers_known && echo "steering: on ($MODE)" || echo "steering: idle ($MODE: no other access point of this network known)"
+  peers_known && echo "steering: on ($MODE)" || echo "steering: idle ($(why_not))"
+  echo "move requests: $([ "$BTMON" = 1 ] && echo "802.11v on" || echo "802.11v off"); measurements: $([ "$RRMON" = 1 ] && echo "802.11k $REPORT" || echo "802.11k off")"
+  in_quiet && qn="now" || qn="not now"; echo "disconnects: $KICK (quiet hours $QUIET, $qn; devices without 802.11v: $LEGACY)"
   for b in 5 24; do [ -s "$OUTD/peers-$b" ] && echo "peers $b GHz: $(cut -d' ' -f1 "$OUTD/peers-$b" | tr '\n' ' ')"; done
+  [ -s "$SD/nbr" ] && echo "units heard in beacon reports: $(cut -d' ' -f2 "$SD/nbr" | tr '\n' ' ')"
   [ -f "$SD/peer-seen" ] && echo "a station was last seen leaving for another access point $(( t - $(cat "$SD/peer-seen") )) s ago"
   [ -s "$SD/blocked" ] && while read -r m u; do echo "refused here: $m for $((u - t)) s more"; done < "$SD/blocked"
-  for f in "$SD"/sta-*; do [ -f "$f" ] || continue; read -r ws bp tp ka ks hu nr < "$f"
-    [ "$hu" -gt "$t" ] && echo "left alone: ${f##*/sta-} (no better access point, ${nr:-1} time(s) in a row) for $((hu - t)) s more"
+  for f in "$SD"/sta-*; do [ -f "$f" ] || continue; read -r ws bp tp ka ks hu nr la bt bs rq ar < "$f"
+    [ "$hu" -gt "$t" ] && echo "left alone: ${f##*/sta-} for $((hu - t)) s more"
     [ "$ka" -gt 0 ] && echo "moved away: ${f##*/sta-} $((t - ka)) s ago at $ks dBm (left alone if it comes back within $((ka + RETRY - t)) s)"
-    [ "$ws" -gt 0 ] && echo "weak: ${f##*/sta-} for $((t - ws)) s"; done; true; }
+    [ "${bt:-0}" -gt 0 ] && echo "asked to move: ${f##*/sta-} $((t - bt)) s ago"
+    [ "$ws" -gt 0 ] && echo "weak: ${f##*/sta-} for $((t - ws)) s"; done
+  [ -f "$DB/history" ] && { echo "last steps:"; tail -n 10 "$DB/history"; }; true; }
 
 case "${1:-}" in
 once) round ;;
 status) status ;;
 run) echo $$ > "$PIDF"
   while :; do . "${AP_BOARD:-/etc/patronus/board.sh}"; round; settings; sleep "$IVL"; done ;;
-*) sed -n '2,20p' "$0"; exit 2 ;;
+*) sed -n '2,37p' "$0"; exit 2 ;;
 esac

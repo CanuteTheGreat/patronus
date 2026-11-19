@@ -13,6 +13,12 @@ CTRL=${AP_CTRL:-/run/hostapd}
 CLI=${AP_CLI:-hostapd_cli}
 NET=${AP_SYSNET:-/sys/class/net}
 ifn=$1; ev=$2; mac=$3
+# 802.11v/k answers are for ap-steer (docs 12.18): queued for its next round, oldest first
+case "$ev" in BSS-TM-RESP|BEACON-RESP-RX)
+  case "$mac" in ??:??:??:??:??:??) ;; *) exit 0;; esac
+  d=${AP_STEER_STATE:-${AP_RENDER_OUT:-/run/hostapd}/steer}; mkdir -p "$d"
+  [ "$(wc -c < "$d/events" 2>/dev/null || echo 0)" -lt 262144 ] && echo "${AP_STEER_NOW:-$(date +%s)} $*" >> "$d/events"
+  exit 0;; esac
 [ "$ev" = AP-STA-CONNECTED ] || exit 0
 case "$mac" in ??:??:??:??:??:??) ;; *) exit 0;; esac
 phy() { cat "$NET/$1/phy80211/name" 2>/dev/null; }
