@@ -38,6 +38,7 @@ interface SLAData {
   slaPolicies: SLAPolicy[]
 }
 
+// The API reports loss and availability already in percent (99.95 = 99.95%).
 export default function SLA() {
   const { loading, error, data } = useQuery<SLAData>(SLA_QUERY, {
     pollInterval: 5000,
@@ -121,10 +122,10 @@ export default function SLA() {
                   )}
                 </div>
                 <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-                  {(policy.currentPacketLoss * 100).toFixed(3)}%
+                  {policy.currentPacketLoss.toFixed(3)}%
                 </p>
                 <p className="text-xs text-gray-600 dark:text-gray-300">
-                  Target: {(policy.targetPacketLoss * 100).toFixed(3)}%
+                  Target: {policy.targetPacketLoss.toFixed(3)}%
                 </p>
               </div>
 
@@ -139,10 +140,10 @@ export default function SLA() {
                   )}
                 </div>
                 <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-                  {(policy.currentAvailability * 100).toFixed(2)}%
+                  {policy.currentAvailability.toFixed(2)}%
                 </p>
                 <p className="text-xs text-gray-600 dark:text-gray-300">
-                  Target: {(policy.targetAvailability * 100).toFixed(2)}%
+                  Target: {policy.targetAvailability.toFixed(2)}%
                 </p>
               </div>
             </div>
@@ -150,7 +151,7 @@ export default function SLA() {
             {policy.violations > 0 && (
               <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg p-3">
                 <p className="text-sm text-red-800 dark:text-red-200">
-                  <span className="font-semibold">{policy.violations}</span> violations in the last 24 hours
+                  <span className="font-semibold">{policy.violations}</span> {policy.violations === 1 ? 'violation' : 'violations'} in the last 24 hours
                 </p>
               </div>
             )}
