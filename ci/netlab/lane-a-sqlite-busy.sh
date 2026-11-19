@@ -16,8 +16,11 @@ HOLD_SECS=${NL_SQLITE_TEST_HOLD_SECS:-3}
 rm -f "$DB" "$DB-journal"
 command sqlite3 "$DB" "CREATE TABLE t(v TEXT); INSERT INTO t VALUES ('stored');"
 
-# another connection takes the write lock and keeps it for HOLD_SECS
-{ echo 'BEGIN EXCLUSIVE;'; sleep "$HOLD_SECS"; echo 'COMMIT;'; } | command sqlite3 "$DB" >/dev/null &
+# another connection takes the write lock and keeps it for HOLD_SECS. It waits for the
+# lock itself (.timeout): the probe loop below reads concurrently, and with the CLI's
+# default timeout 0 a BEGIN EXCLUSIVE that met a probe's shared lock failed with
+# "database is locked", so nothing was ever held and the probe gave up (rust-ci run 2315).
+{ echo '.timeout 10000'; echo 'BEGIN EXCLUSIVE;'; sleep "$HOLD_SECS"; echo 'COMMIT;'; } | command sqlite3 "$DB" >/dev/null &
 HOLDER=$!
 trap 'kill "$HOLDER" 2>/dev/null || true' EXIT
 
