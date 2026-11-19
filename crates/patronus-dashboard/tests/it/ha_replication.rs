@@ -159,6 +159,29 @@ async fn wait_sites(n: &Node, want: &BTreeSet<String>) {
     }
 }
 
+/// Replicate through `n`, retrying while leadership is changing. The server
+/// answers 503 "leadership changed before the write committed; retry" when a
+/// heartbeat is late (400 ms election timeout on a loaded CI runner); that is
+/// the documented contract, so a client retries instead of failing.
+async fn replicate_retry(n: &Node, op: ReplicatedOp) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        match n.state.replicate(op.clone()).await {
+            Ok(()) => return,
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("leadership changed") && Instant::now() < deadline,
+                    "replicate on {} failed: {}",
+                    n.id,
+                    msg
+                );
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn writes_replicate_and_survive_leader_failover() {
     let nodes = start_cluster(3).await;
@@ -167,24 +190,18 @@ async fn writes_replicate_and_survive_leader_failover() {
     let follower = (leader + 1) % 3;
 
     // Write on the leader.
-    nodes[leader]
-        .state
-        .replicate(ReplicatedOp::UpsertSite(site("hq")))
-        .await
-        .unwrap();
+    let op = ReplicatedOp::UpsertSite(site("hq"));
+    replicate_retry(&nodes[leader], op).await;
     // Write through a follower (forwarded to the leader).
-    nodes[follower]
-        .state
-        .replicate(ReplicatedOp::UpsertSite(site("branch-1")))
-        .await
-        .unwrap();
+    let op = ReplicatedOp::UpsertSite(site("branch-1"));
+    replicate_retry(&nodes[follower], op).await;
     // The follower that took the write can read it back immediately.
     assert!(site_names(&nodes[follower]).await.contains("branch-1"));
 
     // Users replicate too (an admin created on one node can log in anywhere).
-    nodes[follower]
-        .state
-        .replicate(ReplicatedOp::CreateUser(ReplicatedUser {
+    replicate_retry(
+        &nodes[follower],
+        ReplicatedOp::CreateUser(ReplicatedUser {
             id: "u-ops".into(),
             email: "ops@example.test".into(),
             name: "Ops".into(),
@@ -192,9 +209,9 @@ async fn writes_replicate_and_survive_leader_failover() {
             password_hash: "$argon2id$dummy".into(),
             created_at: chrono::Utc::now(),
             is_active: true,
-        }))
-        .await
-        .unwrap();
+        }),
+    )
+    .await;
 
     let want: BTreeSet<String> = ["hq", "branch-1"].iter().map(|s| s.to_string()).collect();
     for n in &nodes {
@@ -224,16 +241,10 @@ async fn writes_replicate_and_survive_leader_failover() {
     assert_eq!(site_names(survivors[new_leader]).await, want);
 
     // Keep writing with 2 of 3 nodes (still a majority), through both.
-    survivors[new_leader]
-        .state
-        .replicate(ReplicatedOp::UpsertSite(site("branch-2")))
-        .await
-        .unwrap();
-    survivors[1 - new_leader]
-        .state
-        .replicate(ReplicatedOp::UpsertSite(site("branch-3")))
-        .await
-        .unwrap();
+    let op = ReplicatedOp::UpsertSite(site("branch-2"));
+    replicate_retry(&survivors[new_leader], op).await;
+    let op = ReplicatedOp::UpsertSite(site("branch-3"));
+    replicate_retry(&survivors[1 - new_leader], op).await;
     let want: BTreeSet<String> = ["hq", "branch-1", "branch-2", "branch-3"]
         .iter()
         .map(|s| s.to_string())
