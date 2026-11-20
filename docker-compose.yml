@@ -14,7 +14,7 @@ services:
     sysctls:
       net.ipv4.fib_multipath_hash_policy: 1
     ports:
-      - "8443:8443"
+      - "443:8443"
       # WireGuard tunnels created on the VPN page (default listen port)
       - "51820:51820/udp"
     volumes:

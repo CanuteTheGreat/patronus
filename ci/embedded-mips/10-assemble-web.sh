@@ -37,7 +37,7 @@ if [ ! -x $R/etc/init.d/patronus ]; then
 cat > $R/etc/init.d/patronus <<'EOF'
 #!/bin/sh
 export PATRONUS_DB=/var/lib/patronus/config.db PATRONUS_TLS_DIR=/data/tls PATH=$PATH:/usr/sbin:/sbin
-export PATRONUS_HTTPS_PORT=443 PATRONUS_HTTP_REDIRECT_PORT=80 PATRONUS_WEB_EXTRA_HTTPS_PORTS=none PATRONUS_ADMIN_PASSWORD=${PATRONUS_ADMIN_PASSWORD:-Qemu-Test-Passw0rd}
+export PATRONUS_HTTPS_PORT=443 PATRONUS_HTTP_REDIRECT_PORT=80 PATRONUS_ADMIN_PASSWORD=${PATRONUS_ADMIN_PASSWORD:-Qemu-Test-Passw0rd}
 patronus-cli apply > /tmp/apply.log 2>&1
 patronus-cli applyd > /var/log/applyd.log 2>&1 &
 sleep 2

@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
-# Lane W: where the web UI listens. OpenWrt / pfSense users expect http(s)://ROUTER-IP, so the built-in default is
-# HTTPS on 443, plain HTTP on 80 that only redirects to HTTPS, and 8443 kept as an extra HTTPS port; every one of
-# them is a setting (System page / PUT /api/system/web, patronus.toml [web], environment) and the firewall's
-# anti-lockout rule follows them.
+# Lane W: where the web UI listens. OpenWrt / pfSense users expect http(s)://ROUTER-IP, so the built-in default on every
+# tier is the standard ports: HTTPS on 443 and plain HTTP on 80 that only redirects to HTTPS. Nothing else listens by
+# default (8443 is an explicit opt-in extra port). Every one of them is a setting (System page / PUT /api/system/web,
+# patronus.toml [web], environment) and the firewall's anti-lockout rule follows them.
 #
 # Runs the real patronus-web the way the shipped OpenRC script and systemd unit do: as an UNPRIVILEGED user whose
 # only capabilities are net_admin, net_raw and net_bind_service (ambient), in the router namespace.
 #
 # Proves, from the LAN client: https://router/ -> login page; http://router/<path>?<query> -> 308 to the same
-# path on https and nothing else is served on port 80; 8443 still answers; the process is not root and holds
-# net_bind_service; the anti-lockout rule opens 22,443,80,8443 on the LAN only; a change through the API opens the
-# new ports in the firewall at once, leaves the old listener up until the restart, then 443/80 are gone and the
-# new port answers (8443 kept as extra); an impossible combination is refused (400) and changes nothing; without
-# net_bind_service the UI still comes up (8443) and the failure is logged; --help / --version answer and never
-# start a server.
+# path on https and nothing else is served on port 80; 8443 is NOT listening by default; the process is not root and
+# holds net_bind_service; the anti-lockout rule opens 22,80,443 on the LAN only; 8443 can be opted in through the
+# API (firewall first, listener at the restart); a change through the API opens the new ports in the firewall at
+# once, leaves the old listener up until the restart, then 443/80 are gone and the new port answers; an impossible
+# combination is refused (400) and changes nothing; without net_bind_service the UI cannot take 443/80, logs it and
+# a configured unprivileged port still serves; --help / --version answer and never start a server.
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 
 # this lane proves the built-in defaults: drop the single-listener environment lib.sh gives the other lanes
 unset PATRONUS_HTTPS_PORT PATRONUS_HTTP_REDIRECT_PORT PATRONUS_WEB_EXTRA_HTTPS_PORTS
+NL_UI=https://$NL_RTR_LAN   # nl_login / nl_api talk to the standard HTTPS port in this lane
 
 W=$NL_T/w-ports
 DB=$W/c.db
@@ -33,7 +34,8 @@ CAPS=net_admin,net_raw,net_bind_service
 start_web() {
   local caps=$1 inh amb
   inh=$(sed 's/\([a-z_]*\)/+\1/g' <<<"$caps"); amb=$inh
-  env PATRONUS_DB="$DB" PATRONUS_BOOTSTRAP="$NL_TOML" PATRONUS_ADMIN_PASSWORD="$NL_PASS" \
+  # shellcheck disable=SC2086 -- NL_WEB_EXTRA_ENV is a list of VAR=value words
+  env ${NL_WEB_EXTRA_ENV:-} PATRONUS_DB="$DB" PATRONUS_BOOTSTRAP="$NL_TOML" PATRONUS_ADMIN_PASSWORD="$NL_PASS" \
       PATRONUS_ADMIN_PASSWORD_FILE="$W/pw" PATRONUS_TLS_DIR="$W/tls" RUST_LOG=info \
       ip netns exec nl-rtr setpriv --reuid=65534 --regid=65534 --clear-groups \
         --bounding-set="-all,$inh" --inh-caps="$inh" --ambient-caps="$amb" "$WEB" >>"$W/web.log" 2>&1 &
@@ -70,8 +72,8 @@ wait_ui "https://$NL_RTR_LAN/login"
 [ "$(code_of "https://$NL_RTR_LAN/login")" = 200 ] || nl_fail "https://router/login did not answer 200"
 grep -qF 'id="login-form"' "$NL_OUT" || nl_fail "https://router/ answered, but not with the login page"
 nl_ok "https://$NL_RTR_LAN (port 443) serves the login page"
-[ "$(code_of "https://$NL_RTR_LAN:8443/login")" = 200 ] || nl_fail "8443 no longer answers"
-nl_ok "https://$NL_RTR_LAN:8443 still answers (extra listener)"
+refused "https://$NL_RTR_LAN:8443/login"
+nl_ok "nothing listens on 8443 by default (standard ports only)"
 hdr=$(C curl -s -m 5 -o "$NL_OUT" -D - "http://$NL_RTR_LAN/some/page?x=1&y=2" | tr -d '\r') || true
 grep -q '^HTTP/1.1 308' <<<"$hdr" || nl_fail "http://router/ did not answer 308: $hdr"
 grep -qi "^location: https://$NL_RTR_LAN/some/page?x=1&y=2\$" <<<"$hdr" || nl_fail "wrong redirect target: $hdr"
@@ -84,23 +86,34 @@ uid=$(awk '/^Uid:/ {print $2}' <<<"$st"); capeff=$(awk '/^CapEff:/ {print $2}' <
 [ $(( (0x$capeff >> 10) & 1 )) = 1 ] || nl_fail "patronus-web lacks CAP_NET_BIND_SERVICE (CapEff $capeff)"
 [ $(( (0x$capeff >> 21) & 1 )) = 0 ] || nl_fail "patronus-web holds CAP_SYS_ADMIN (CapEff $capeff)"
 nl_ok "patronus-web runs as uid $uid with CapEff $capeff (net_bind_service, no more than the unit grants)"
-nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 80, 443, 8443 } accept"
-nl_assert_nft_lacks "iifname \"$NL_WAN_IF\" tcp dport { 22, 80, 443, 8443 }"
+nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 80, 443 } accept"
+nl_assert_nft_lacks "iifname \"$NL_WAN_IF\" tcp dport { 22, 80, 443 }" "8443"
 
-echo "=== a change through the API: firewall first, listeners at restart"
 nl_login
 nl_api_ok "read the web settings" GET /system/web
 nl_json "$NL_OUT" 'd["effective"]["https_port"]' >"$W/p"
 [ "$(cat "$W/p")" = 443 ] || nl_fail "effective https_port is $(cat "$W/p"), want 443"
 nl_json "$NL_OUT" 'd["effective"]["extra_https_ports"]' >"$W/p"
-[ "$(cat "$W/p")" = "[8443]" ] || nl_fail "effective extra ports $(cat "$W/p")"
-nl_ok "GET /api/system/web reports the effective defaults (443, redirect 80, extra 8443)"
+[ "$(cat "$W/p")" = "[]" ] || nl_fail "effective extra ports $(cat "$W/p")"
+nl_ok "GET /api/system/web reports the effective defaults (443, redirect 80, no extra port)"
 before=$(nl_ruleset_fingerprint)
 nl_api_code "redirect port equal to the HTTPS port is refused" 400 PUT /system/web '{"http_redirect_port":443}'
 nl_api_code "a half certificate is refused" 400 PUT /system/web '{"tls_cert":"/x/cert.pem"}'
 nl_api_code "a listen name is refused" 400 PUT /system/web '{"listen":"@lan"}'
 [ "$(nl_ruleset_fingerprint)" = "$before" ] || nl_fail "a refused change altered the firewall"
 nl_ok "impossible combinations are 400 and change nothing"
+echo "=== 8443 as an explicit opt-in extra port"
+nl_api_ok "opt in to 8443" PUT /system/web '{"extra_https_ports":"8443"}'
+nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 80, 443, 8443 } accept"
+refused "https://$NL_RTR_LAN:8443/login"
+stop_web
+start_web "$CAPS"
+wait_ui "https://$NL_RTR_LAN:8443/login"
+[ "$(code_of "https://$NL_RTR_LAN:8443/login")" = 200 ] || nl_fail "8443 does not answer after opting in"
+[ "$(code_of "https://$NL_RTR_LAN/login")" = 200 ] || nl_fail "443 stopped answering after opting in to 8443"
+nl_ok "8443 answers only after it was opted in (firewall opened first, listener at the restart); 443 and 80 unchanged"
+rm -f "$NL_T/nl-jar"; nl_login
+echo "=== a change through the API: firewall first, listeners at restart"
 nl_api_ok "move the UI to 9443, no redirect, keep 8443" PUT /system/web \
   '{"https_port":9443,"http_redirect_port":0,"extra_https_ports":"8443"}'
 nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 8443, 9443 } accept"
@@ -127,21 +140,29 @@ nl_ok "after a reboot the anti-lockout rule still follows the stored ports"
 echo "=== a back-to-defaults reset"
 start_web "$CAPS"
 wait_ui "https://$NL_RTR_LAN:9443/login"
+NL_UI=https://$NL_RTR_LAN:9443
 rm -f "$NL_T/nl-jar"; nl_login
 nl_api_ok "reset" PUT /system/web '{"reset":true}'
-nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 80, 443, 8443 } accept"
+nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 80, 443 } accept"
 stop_web
 nl_ok "reset forgets the stored values: the defaults (and their firewall ports) are back"
 
-echo "=== no CAP_NET_BIND_SERVICE: the UI still comes up on the unprivileged port, the failure is logged"
+echo "=== no CAP_NET_BIND_SERVICE: 443/80 cannot be bound, it is logged, an unprivileged port configured as extra still serves"
 : >"$W/web.log"
 start_web "net_admin,net_raw"
+sleep 6
+if kill -0 "$NL_WEB_PID" 2>/dev/null; then nl_fail "patronus-web kept running with no listener at all"; fi
+wait "$NL_WEB_PID" 2>/dev/null || true; NL_WEB_PID=
+grep -q 'no HTTPS listener could be bound' "$W/web.log" || { tail -20 "$W/web.log"; nl_fail "the refusal was not logged"; }
+nl_ok "without the capability and without another port the service stops with 'no HTTPS listener could be bound' (not a silent UI-less process)"
+: >"$W/web.log"
+NL_WEB_EXTRA_ENV="PATRONUS_WEB_EXTRA_HTTPS_PORTS=8443" start_web "net_admin,net_raw"
 wait_ui "https://$NL_RTR_LAN:8443/login"
 refused "https://$NL_RTR_LAN/login"
 refused "http://$NL_RTR_LAN/"
 grep -q 'cannot listen on https://0.0.0.0:443' "$W/web.log" || { tail -20 "$W/web.log"; nl_fail "the failed 443 bind was not logged"; }
 grep -q 'cannot listen on http://0.0.0.0:80' "$W/web.log" || nl_fail "the failed 80 bind was not logged"
-nl_ok "without the capability only 8443 serves, and the log names the listeners that could not be bound"
+nl_ok "without the capability only the opted-in 8443 serves, and the log names the listeners that could not be bound"
 stop_web
 
 echo "PASS lane-w-web-ports"

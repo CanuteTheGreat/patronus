@@ -63,7 +63,7 @@ and is stricter: it checks what **is** installed, transitive dependencies includ
 |---|---|---|
 | serial console install | `Serial console (ttyS0 115200)` submenu, `--flow tui` | `ttyAMA0`, `--flow tui` |
 | unattended | answer file on a volume labelled `PATRONUS-ANSWERS`, `--flow auto` | same |
-| web UI after install | `https://<LAN address>:8443` (WAN closed) | same |
+| web UI after install | `https://<LAN address>` (WAN closed) | same |
 | firmware | UEFI and BIOS | UEFI |
 | QEMU | KVM | TCG (no `/dev/kvm` on Graviton), time budget x3 |
 
@@ -75,5 +75,5 @@ wait for the login prompt, which already existed.
 
 * Console: serial or VGA, login prompt (or the opt-in open console menu), `console-menu` for the web-UI password, network roles, reset.
 * SSH: key-only root by default, `ssh_password_auth = true` is an explicit opt-in.
-* Web UI: `https://<LAN IP>:8443`; sign in with a system user of the `patronus-admin` group (the installer creates the first one; see `docs/WEB-LOGIN.md`). There is no built-in `admin` and no generated password file.
+* Web UI: `https://<LAN IP>`; sign in with a system user of the `patronus-admin` group (the installer creates the first one; see `docs/WEB-LOGIN.md`). There is no built-in `admin` and no generated password file.
 * Configuration as code: `patronus gitops` (a private repo per site).

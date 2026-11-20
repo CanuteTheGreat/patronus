@@ -22,6 +22,9 @@
 #     in real traffic).
 #  3. `patronus firewall apply|flush` is the firewall-only subset.
 set -euo pipefail
+# The web UI's built-in listeners are the standard 443 + 80; this lane drives (and the ruleset it asserts opens) one listener
+# on 8443, the way lib.sh does for the other lanes. lane-w-web-ports.sh proves the standard ports.
+export PATRONUS_HTTPS_PORT=8443 PATRONUS_HTTP_REDIRECT_PORT=0 PATRONUS_WEB_EXTRA_HTTPS_PORTS=none
 
 P=/t/patronus
 WEB=/t/patronus-web
@@ -95,11 +98,11 @@ assert_router_state() {
   [ "$(R cat /proc/sys/net/ipv6/conf/rtr-wan/accept_ra)" = 2 ] || fail "WAN accept_ra not 2"
   ok "sysctl: net.ipv4.ip_forward=1 net.ipv6.conf.all.forwarding=1 net.ipv6.conf.rtr-wan.accept_ra=2"
   RS=$(R nft list ruleset)
-  for want in 'policy drop' 'iifname "rtr-lan" tcp dport { 22, 80, 443, 8443 } accept' \
+  for want in 'policy drop' 'iifname "rtr-lan" tcp dport { 22, 8443 } accept' \
               'iifname "rtr-lan" accept' 'oifname "rtr-wan" masquerade'; do
     grep -qF "$want" <<<"$RS" || { echo "$RS"; fail "ruleset lacks: $want"; }
   done
-  if grep -q 'iifname "rtr-wan" tcp dport { 22, 80, 443, 8443 }' <<<"$RS"; then fail "anti-lockout open on WAN"; fi
+  if grep -q 'iifname "rtr-wan" tcp dport { 22, 8443 }' <<<"$RS"; then fail "anti-lockout open on WAN"; fi
   ok "nft ruleset has drop policies, LAN anti-lockout, LAN->any, WAN masquerade"
 }
 

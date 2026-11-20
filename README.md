@@ -191,13 +191,15 @@ that are not finished are listed separately under
   disconnect. Proven on the simulated radios of mac80211_hwsim; the real
   measurement (neighbours heard, airtime) depends on the radio's driver.
   [C84]
-- The web UI answers where a router's UI is expected: `https://router-address`
-  (HTTPS on 443), `http://router-address` (port 80, which only redirects to
-  HTTPS and serves nothing else) and, for existing bookmarks, the old
-  `:8443`. The addresses, ports and certificate are settings (System page,
-  API, `patronus.toml`, environment), the firewall's anti-lockout rule follows
-  them, and the service runs as an unprivileged user that holds only the
-  capability to bind these ports, on both OpenRC and systemd. [C86]
+- The web UI answers where a router's UI is expected, on the standard ports
+  of every tier: `https://router-address` (HTTPS on 443) and
+  `http://router-address` (port 80, which only redirects to HTTPS and serves
+  nothing else). Nothing else listens by default; the old `:8443` is an
+  opt-in extra port. The addresses, ports and certificate are settings
+  (System page, API, `patronus.toml`, environment), the firewall's
+  anti-lockout rule follows them, and the service runs as an unprivileged
+  user that holds only the capability to bind these ports, on both OpenRC
+  and systemd. [C86]
 
 ### Configuration you can trust
 
@@ -402,7 +404,7 @@ Then enable the services (systemd shown; OpenRC scripts are installed too):
 
 ```bash
 systemctl enable --now patronus-firewall   # runs `patronus apply` at boot
-systemctl enable --now patronus-web        # https://<LAN address>:8443
+systemctl enable --now patronus-web        # https://<LAN address>
 # sign in with a SYSTEM user in group patronus-admin or wheel (PAM); no built-in admin, no default password
 groupadd -r patronus-admin && usermod -aG patronus-admin <you>
 ```
@@ -422,8 +424,8 @@ Rules are managed in the web UI (Firewall page) or through the API, e.g.
 
 ```bash
 curl -k -b jar -c jar -H 'content-type: application/json' \
-  -d '{"username":"admin","password":"..."}' https://192.168.1.1:8443/api/auth/login
-curl -k -b jar -H 'content-type: application/json' https://192.168.1.1:8443/api/firewall/rules \
+  -d '{"username":"admin","password":"..."}' https://192.168.1.1/api/auth/login
+curl -k -b jar -H 'content-type: application/json' https://192.168.1.1/api/firewall/rules \
   -d '{"name":"block-host","chain":"forward","action":"drop","interface":"@lan","protocol":"tcp","source":"any","destination":"198.51.100.20","port":"80","description":"block-host","enabled":true}'
 ```
 
