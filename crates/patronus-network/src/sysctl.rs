@@ -425,8 +425,14 @@ mod tests {
     fn xps_enoent_on_a_single_queue_device_is_not_a_warning() {
         let enoent = std::io::Error::from_raw_os_error(2);
         assert!(xps_unsupported("xps_cpus", &enoent));
-        assert!(!xps_unsupported("rps_cpus", &enoent), "rps has no such case");
+        assert!(
+            !xps_unsupported("rps_cpus", &enoent),
+            "rps has no such case"
+        );
         let eacces = std::io::Error::from_raw_os_error(13);
-        assert!(!xps_unsupported("xps_cpus", &eacces), "other errors still warn");
+        assert!(
+            !xps_unsupported("xps_cpus", &eacces),
+            "other errors still warn"
+        );
     }
 }
