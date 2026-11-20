@@ -1923,9 +1923,8 @@ mod tests {
         );
         let r = FirewallApplier.render_script(&s, false).await.unwrap();
         assert!(
-            r.script.contains(
-                "input iifname { \"eth1\", \"vrf-red\" } tcp dport {22,443,80} accept"
-            ),
+            r.script
+                .contains("input iifname { \"eth1\", \"vrf-red\" } tcp dport {22,443,80} accept"),
             "{}",
             r.script
         );
@@ -1934,13 +1933,13 @@ mod tests {
     #[test]
     fn vrf_members_are_matched_on_their_vrf_device_for_input_rules() {
         let m = vec![("eth1".to_string(), "vrf-red".to_string())];
-        let src =
-            "add rule inet patronus input iifname \"eth1\" tcp dport {22,443,80} accept\n\
+        let src = "add rule inet patronus input iifname \"eth1\" tcp dport {22,443,80} accept\n\
                    add rule inet patronus input iifname \"eth2\" tcp dport 22 accept\n\
                    add rule inet patronus forward iifname \"eth1\" accept\n";
         let out = via_vrf_devices(src, &m);
-        assert!(out
-            .contains("input iifname { \"eth1\", \"vrf-red\" } tcp dport {22,443,80} accept"));
+        assert!(
+            out.contains("input iifname { \"eth1\", \"vrf-red\" } tcp dport {22,443,80} accept")
+        );
         assert!(out.contains("input iifname \"eth2\" tcp dport 22 accept"));
         assert!(out.contains("forward iifname \"eth1\" accept"));
         assert_eq!(via_vrf_devices(src, &[]), src);

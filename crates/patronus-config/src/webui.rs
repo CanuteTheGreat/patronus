@@ -509,7 +509,8 @@ mod tests {
     fn eight_four_four_three_is_an_explicit_opt_in() {
         let s = WebSettings::default().overlay(&env(&[("PATRONUS_WEB_EXTRA_HTTPS_PORTS", "8443")]));
         assert_eq!(s.all_ports(), vec![443, 80, 8443]);
-        let s = WebSettings::default().overlay(&Layer::from_toml("[web]\nextra_https_ports = [8443]\n"));
+        let s = WebSettings::default()
+            .overlay(&Layer::from_toml("[web]\nextra_https_ports = [8443]\n"));
         assert_eq!(s.all_ports(), vec![443, 80, 8443]);
     }
 
