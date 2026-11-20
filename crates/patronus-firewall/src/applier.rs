@@ -288,8 +288,9 @@ impl FirewallApplier {
         // (anti-lockout) rules, ahead of everything the user wrote
         let mut threat_done = lockdown;
         let ssh_port = patronus_config::defaults::ssh_port(store).await;
+        let web_port = patronus_config::defaults::configured_web_port(store).await;
         for (mut rule, origin) in store.load_firewall_rules_with_origin().await? {
-            patronus_config::defaults::follow_ssh_port(&mut rule, origin, ssh_port);
+            patronus_config::defaults::follow_ports(&mut rule, origin, ssh_port, web_port);
             if !threat_done && origin != RuleOrigin::System {
                 threat_done = true;
                 nfilter += push_threat_rules(&mut script, &aliases);
@@ -629,11 +630,12 @@ impl FirewallApplier {
         let mut script = format!("add table {TABLE}\ndelete table {TABLE}\n");
         script.push_str(&base_table_script());
         let ssh_port = patronus_config::defaults::ssh_port(store).await;
+        let web_port = patronus_config::defaults::configured_web_port(store).await;
         for (mut rule, origin) in patronus_config::defaults::default_filter_rules() {
             if origin != RuleOrigin::System {
                 continue;
             }
-            patronus_config::defaults::follow_ssh_port(&mut rule, origin, ssh_port);
+            patronus_config::defaults::follow_ports(&mut rule, origin, ssh_port, web_port);
             for i in resolve_iface(&rule.interface_in, &roles).unwrap_or_else(|| vec![None]) {
                 let mut r = rule.clone();
                 r.interface_in = i;
@@ -1515,6 +1517,33 @@ mod tests {
         s.save_system_config("ssh.port", "").await.unwrap();
         let r = FirewallApplier.render_script(&s, false).await.unwrap();
         assert!(r.script.contains("tcp dport {22,8443} accept"));
+    }
+
+    /// The anti-lockout rule also follows the web UI port (`web.https_port`),
+    /// together with a moved sshd, in the ruleset and in lockdown.
+    #[tokio::test]
+    async fn anti_lockout_follows_web_port() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        s.save_system_config("web.https_port", "9443")
+            .await
+            .unwrap();
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(
+            r.script.contains(
+                "add rule inet patronus input iifname \"eth1\" tcp dport {22,9443} accept"
+            ),
+            "{}",
+            r.script
+        );
+        assert!(!r.script.contains("8443"), "{}", r.script);
+        s.save_system_config("ssh.port", "2222").await.unwrap();
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(r.script.contains("tcp dport {2222,9443} accept"));
+        let l = FirewallApplier.render_lockdown(&s).await;
+        assert!(l.contains("tcp dport {2222,9443} accept"), "{l}");
+        s.save_system_config("web.https_port", "").await.unwrap();
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(r.script.contains("tcp dport {2222,8443} accept"));
     }
 
     #[tokio::test]

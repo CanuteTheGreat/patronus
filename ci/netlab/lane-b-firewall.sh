@@ -247,6 +247,24 @@ api_ok PUT /firewall/nat/outbound '{"mode":"hybrid"}'
 api_ok DELETE /firewall/nat/$MANUAL
 nl_expect_online
 
+echo "=== 7b. NAT interface: the GET label round-trips, an unknown device is refused"
+api_ok POST /firewall/nat '{"name":"lb-label","rule_type":"MASQUERADE","interface":"@lan","source":"10.77.0.0/24","target":"masquerade","description":"lb-label","enabled":true}'
+LABEL=$(json_id)
+api_ok GET /firewall/nat/$LABEL
+grep -q '"interface":"LAN"' "$NL_OUT" && grep -q '"interface_raw":"@lan"' "$NL_OUT" || nl_fail "NAT GET shape: $(cat "$NL_OUT")"
+# what a client does: send back the display label GET emitted
+api_ok PUT /firewall/nat/$LABEL '{"name":"lb-label","rule_type":"MASQUERADE","interface":"LAN","source":"10.77.0.0/24","target":"masquerade","description":"lb-label","enabled":true}'
+LINE=$(R nft list ruleset | grep -F '10.77.0.0/24' | grep -F masquerade || true)
+grep -qF "oifname \"$NL_LAN_IF\"" <<<"$LINE" || { echo "$LINE"; nl_fail "label LAN was not stored as the LAN role"; }
+nl_assert_nft_lacks 'oifname "LAN"'
+nl_api PUT /firewall/nat/$LABEL '{"name":"lb-label","rule_type":"MASQUERADE","interface":"nosuchdev9","source":"10.77.0.0/24","target":"masquerade","description":"lb-label","enabled":true}'
+[ "$NL_CODE" = 400 ] || nl_fail "NAT PUT with an unknown device: HTTP $NL_CODE $(cat "$NL_OUT")"
+grep -q 'role token' "$NL_OUT" || nl_fail "refusal is not readable: $(cat "$NL_OUT")"
+nl_assert_nft_lacks 'nosuchdev9'
+nl_api POST /firewall/rules "$(rule lb-baddev accept $NL_WWW 9000 | sed 's/"@lan"/"nosuchdev9"/')"
+[ "$NL_CODE" = 400 ] || nl_fail "filter rule with an unknown device: HTTP $NL_CODE"
+api_ok DELETE /firewall/nat/$LABEL
+
 echo "=== 8. 1:1 NAT"
 ISP ip route add 203.0.113.50/32 via $NL_RTR_WAN
 api_ok POST /firewall/nat '{"name":"lb-1to1","rule_type":"1:1","interface":"@wan","external_address":"203.0.113.50","target":"192.168.50.10","description":"lb-1to1","enabled":true}'

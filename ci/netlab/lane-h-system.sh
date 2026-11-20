@@ -64,6 +64,23 @@ nl_api POST /system/backups
 [ "$NL_CODE" = 403 ] || nl_fail "operator created a backup: $NL_CODE"
 nl_ok "accounts survive a restart; read-only cannot change config, operator cannot manage accounts/backups"
 
+echo "=== 1b. web UI port: stored, followed by the anti-lockout rule, validated"
+nl_login
+nl_api GET /system/web
+[ "$NL_CODE" = 200 ] && [ "$(json 'd["effective_port"]')" = 8443 ] || nl_fail "GET /system/web: $NL_CODE $(cat "$NL_OUT")"
+nl_api PUT /system/web '{"https_port":9443}'
+[ "$NL_CODE" = 200 ] || nl_fail "PUT /system/web: $NL_CODE $(cat "$NL_OUT")"
+[ "$(json 'd["effective_port"]')" = 9443 ] && [ "$(json 'd["restart_required"]')" = True ] || nl_fail "web port answer: $(cat "$NL_OUT")"
+nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 9443 } accept"
+nl_assert_nft_lacks "tcp dport { 22, 8443 }"
+[ "$(sqlite3 "$DB" "SELECT value FROM system_config WHERE key='web.https_port'")" = 9443 ] || nl_fail "web.https_port not stored"
+nl_api PUT /system/web '{"https_port":70000}'
+[ "$NL_CODE" = 400 ] || nl_fail "web port 70000: HTTP $NL_CODE"
+nl_api PUT /system/web '{"https_port":0}'
+[ "$NL_CODE" = 200 ] || nl_fail "PUT /system/web 0: $NL_CODE"
+nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 8443 } accept"
+nl_ok "web port 9443 opens in the anti-lockout rule, bad port refused, 0 restores the default"
+
 echo "=== 2. backup -> change -> restore"
 nl_login
 nl_api POST /system/backups

@@ -556,7 +556,77 @@ impl FirewallManager {
             .collect())
     }
 
-    pub async fn add_rule(&self, rule: ApiFirewallRule) -> anyhow::Result<u32> {
+    /// Device names the box knows: present in the kernel now, or configured
+    /// in the store (interfaces, VLANs, bonds, bridges, WireGuard) and
+    /// possibly not up yet.
+    async fn known_devices(&self) -> Vec<String> {
+        let mut v = patronus_config::defaults::existing_interfaces();
+        if let Ok(pool) = self.store.pool() {
+            for q in [
+                "SELECT name FROM interfaces",
+                "SELECT name FROM vlans",
+                "SELECT name FROM l2_bonds",
+                "SELECT name FROM l2_bridges",
+                "SELECT name FROM wg_interfaces",
+            ] {
+                if let Ok(rows) = sqlx::query_scalar::<_, String>(q).fetch_all(pool).await {
+                    v.extend(rows);
+                }
+            }
+        }
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    /// Turn the interface field of an API payload into what the store holds:
+    /// `any`, a role token (`@wan`, `@lan`, `@optN`, `@mgmt`) or the name of a
+    /// device that exists. The display labels `GET` shows (`LAN`, `WAN`,
+    /// `OPT1`) are accepted and mapped to their token; anything else is a 400
+    /// (it used to be written as a device name that does not exist, and the
+    /// firewall then rendered a rule for it that never matched).
+    pub(crate) async fn resolve_interface(&self, s: &str) -> anyhow::Result<String> {
+        // a drop-down label such as "LAN (eth1)" also names the role
+        let s = s.split(" (").next().unwrap_or(s);
+        let Some(v) = interface_field(s)? else {
+            return Ok("any".into());
+        };
+        if v.starts_with('@') {
+            return Ok(v);
+        }
+        let known = self.known_devices().await;
+        if known.contains(&v) {
+            return Ok(v);
+        }
+        let lower = v.to_ascii_lowercase();
+        if lower == "mgmt" || patronus_config::store::is_valid_role(&lower) {
+            return Ok(format!("@{lower}"));
+        }
+        let shown: Vec<&str> = known
+            .iter()
+            .map(String::as_str)
+            .filter(|d| *d != "lo")
+            .collect();
+        anyhow::bail!(
+            "Invalid interface {v:?}: use any, a role token (@wan, @lan, @optN, @mgmt) or an existing device ({})",
+            if shown.is_empty() {
+                "none found".to_string()
+            } else {
+                shown.join(", ")
+            }
+        )
+    }
+
+    async fn resolve_rule_interfaces(&self, rule: &mut ApiFirewallRule) -> anyhow::Result<()> {
+        rule.interface = self.resolve_interface(&rule.interface).await?;
+        if let Some(o) = rule.interface_out.as_deref() {
+            rule.interface_out = Some(self.resolve_interface(o).await?);
+        }
+        Ok(())
+    }
+
+    pub async fn add_rule(&self, mut rule: ApiFirewallRule) -> anyhow::Result<u32> {
+        self.resolve_rule_interfaces(&mut rule).await?;
         let core = Self::rule_to_core(None, &rule)?;
         self.check_rule(&core).await?;
         let _g = self.edit.lock().await;
@@ -603,7 +673,8 @@ impl FirewallManager {
     }
 
     /// Update a rule in the store and nftables together.
-    pub async fn update_rule(&self, id: u32, rule: ApiFirewallRule) -> anyhow::Result<()> {
+    pub async fn update_rule(&self, id: u32, mut rule: ApiFirewallRule) -> anyhow::Result<()> {
+        self.resolve_rule_interfaces(&mut rule).await?;
         let core = Self::rule_to_core(Some(id as u64), &rule)?;
         let _g = self.edit.lock().await;
         let Some((old, _)) = self
@@ -771,6 +842,9 @@ impl FirewallManager {
     }
 
     async fn nat_to_core(&self, id: Option<u64>, rule: &ApiNatRule) -> anyhow::Result<CoreNatRule> {
+        let mut rule = rule.clone();
+        rule.interface = self.resolve_interface(&rule.interface).await?;
+        let rule = &rule;
         let nat_type = parse_nat_type(
             &rule.rule_type,
             &rule.target,
@@ -1437,7 +1511,7 @@ mod tests {
             name: None,
             chain: None,
             action: "Accept".to_string(),
-            interface: "eth0".to_string(),
+            interface: "@lan".to_string(),
             interface_out: None,
             protocol: "tcp".to_string(),
             source: source.to_string(),
@@ -1458,7 +1532,7 @@ mod tests {
             id: None,
             name: None,
             rule_type: rule_type.to_string(),
-            interface: "eth0".to_string(),
+            interface: "@wan".to_string(),
             source: source.to_string(),
             destination: "any".to_string(),
             target: target.to_string(),
@@ -2087,5 +2161,119 @@ mod tests {
         );
         fw.delete_rule(id).await.unwrap();
         fw.delete_alias("blk").await.unwrap();
+    }
+
+    /// The NAT list shows `LAN`/`WAN` for a role; sending that label back must
+    /// store the role token, not a device called "LAN" (which rendered
+    /// `oifname "LAN" masquerade`, a rule that matches nothing).
+    #[tokio::test]
+    async fn nat_put_accepts_display_label_and_stores_the_token() {
+        let (fw, _, store) = fake().await;
+        let id = fw
+            .add_nat_rule(sample_nat_rule("MASQUERADE", "10.0.0.0/8", "masquerade"))
+            .await
+            .unwrap();
+        let shown = fw.get_nat_rule(id).await.unwrap().unwrap();
+        assert_eq!(
+            (shown.interface.as_str(), shown.interface_raw.as_str()),
+            ("WAN", "@wan")
+        );
+        // the label GET emits
+        let mut put = sample_nat_rule("MASQUERADE", "10.0.0.0/8", "masquerade");
+        put.interface = "LAN".into();
+        fw.update_nat_rule(id, put).await.unwrap();
+        let (core, _) = store.get_nat_rule(id as u64).await.unwrap().unwrap();
+        assert_eq!(core.interface_out.as_deref(), Some("@lan"));
+        let shown = fw.get_nat_rule(id).await.unwrap().unwrap();
+        assert_eq!(
+            (shown.interface.as_str(), shown.interface_raw.as_str()),
+            ("LAN", "@lan")
+        );
+        // GET -> PUT round trip with the displayed values keeps the rule
+        let mut again = sample_nat_rule("MASQUERADE", "10.0.0.0/8", "masquerade");
+        again.interface = shown.interface.clone();
+        fw.update_nat_rule(id, again).await.unwrap();
+        let (core, _) = store.get_nat_rule(id as u64).await.unwrap().unwrap();
+        assert_eq!(core.interface_out.as_deref(), Some("@lan"));
+        let mut again = sample_nat_rule("MASQUERADE", "10.0.0.0/8", "masquerade");
+        again.interface = shown.interface_raw.clone();
+        fw.update_nat_rule(id, again).await.unwrap();
+        let (core, _) = store.get_nat_rule(id as u64).await.unwrap().unwrap();
+        assert_eq!(core.interface_out.as_deref(), Some("@lan"));
+    }
+
+    #[tokio::test]
+    async fn nat_and_filter_rules_refuse_an_unknown_interface() {
+        let (fw, a, store) = fake().await;
+        let id = fw
+            .add_nat_rule(sample_nat_rule("MASQUERADE", "10.0.0.0/8", "masquerade"))
+            .await
+            .unwrap();
+        let applies = a.applies.load(Ordering::SeqCst);
+        for bad in ["nosuchdev9", "LAN2x", "eth0;x"] {
+            let mut put = sample_nat_rule("MASQUERADE", "10.0.0.0/8", "masquerade");
+            put.interface = bad.into();
+            let e = fw
+                .update_nat_rule(id, put.clone())
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(e.starts_with("Invalid"), "{bad}: {e}");
+            assert!(fw.add_nat_rule(put).await.is_err(), "{bad}");
+            let mut r = sample_rule("any");
+            r.interface = bad.into();
+            let e = fw.add_rule(r.clone()).await.unwrap_err().to_string();
+            assert!(
+                e.starts_with("Invalid interface") || e.starts_with("Invalid"),
+                "{bad}: {e}"
+            );
+            assert!(fw.update_rule(1, r).await.is_err());
+        }
+        let e = {
+            let mut put = sample_nat_rule("MASQUERADE", "10.0.0.0/8", "masquerade");
+            put.interface = "nosuchdev9".into();
+            fw.add_nat_rule(put).await.unwrap_err().to_string()
+        };
+        assert!(
+            e.contains("role token") && e.contains("existing device"),
+            "{e}"
+        );
+        assert_eq!(
+            a.applies.load(Ordering::SeqCst),
+            applies,
+            "refused before apply"
+        );
+        let (core, _) = store.get_nat_rule(id as u64).await.unwrap().unwrap();
+        assert_eq!(
+            core.interface_out.as_deref(),
+            Some("@wan"),
+            "rule unchanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn filter_rule_accepts_labels_any_and_configured_devices() {
+        let (fw, _, store) = fake().await;
+        store
+            .set_interface_role("ethtest9", Some("opt1"))
+            .await
+            .unwrap();
+        for (given, want) in [
+            ("LAN", "@lan"),
+            ("opt1", "@opt1"),
+            ("@WAN", "@wan"),
+            ("ethtest9", "ethtest9"),
+            ("any", "any"),
+        ] {
+            let mut r = sample_rule("any");
+            r.interface = given.into();
+            let id = fw.add_rule(r).await.unwrap();
+            let shown = fw.get_rule(id).await.unwrap().unwrap();
+            assert_eq!(shown.interface, want, "{given}");
+        }
+        let mut r = sample_rule("any");
+        r.chain = Some("forward".into());
+        r.interface_out = Some("nosuchdev9".into());
+        assert!(fw.add_rule(r).await.is_err());
     }
 }

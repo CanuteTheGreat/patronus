@@ -7,6 +7,18 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use tracing::{error, info};
 
+/// The HTTPS port this process listens on (0 until the listener is set up).
+/// The System page compares it with the configured port to say that a restart is pending.
+static RUNNING_HTTPS_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+
+/// The HTTPS port patronus-web was started on (`None` before it listens).
+pub fn running_https_port() -> Option<u16> {
+    match RUNNING_HTTPS_PORT.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => None,
+        p => Some(p),
+    }
+}
+
 /// The web UI's log setup (`RUST_LOG`, else verbose patronus_web/tower_http).
 /// Sign-in outcomes (target `patronus::audit`: who, from where, and why a
 /// login was refused) are always logged at info, whatever `RUST_LOG` says,
@@ -103,12 +115,12 @@ pub async fn run() -> Result<()> {
         );
     }
 
-    // PATRONUS_HTTPS_PORT (default 8443; the embedded router image uses 443) and
-    // PATRONUS_HTTP_REDIRECT_PORT (unset = no plain-HTTP listener; 80 on the router).
-    let https_port: u16 = std::env::var("PATRONUS_HTTPS_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(8443);
+    // The HTTPS port: $PATRONUS_HTTPS_PORT (the embedded router image uses 443),
+    // else the stored `web.https_port` (System page / API / declarative config),
+    // else 8443. PATRONUS_HTTP_REDIRECT_PORT (unset = no plain-HTTP listener;
+    // 80 on the router).
+    let https_port: u16 = patronus_config::defaults::web_port(&state.config_store).await;
+    RUNNING_HTTPS_PORT.store(https_port, std::sync::atomic::Ordering::Relaxed);
     if let Some(p) = std::env::var("PATRONUS_HTTP_REDIRECT_PORT")
         .ok()
         .and_then(|v| v.parse::<u16>().ok())

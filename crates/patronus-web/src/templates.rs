@@ -226,6 +226,14 @@ pub struct SystemTemplate {
     pub arch: String,
     pub cpu: String,
     pub ssh_port: u16,
+    /// Configured web UI HTTPS port (`web.https_port`, else the default).
+    pub web_port: u16,
+    /// The port this process listens on right now.
+    pub web_running_port: u16,
+    /// `PATRONUS_HTTPS_PORT` is set and wins over the stored port.
+    pub web_port_env: String,
+    /// The effective port differs from the running one: a restart is pending.
+    pub web_restart_pending: bool,
     pub ssh_listen: String,
     pub ssh_password: bool,
     pub ssh_root: String,

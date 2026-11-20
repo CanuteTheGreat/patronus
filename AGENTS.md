@@ -234,7 +234,7 @@ Implement `Applier` once per subsystem, in the crate that owns it
 `patronus-firewall.service` / `/etc/init.d/patronus-firewall` run
 `patronus apply`: open the store, on first boot assign interface roles from
 `[network]` in `/etc/patronus/patronus.toml` and seed the safe defaults
-(`patronus_config::defaults`: anti-lockout tcp/22+8443 on LAN, LAN->any,
+(`patronus_config::defaults`: anti-lockout tcp/22+8443 on LAN, rewritten at render time to follow `ssh.port` and the web port `web.https_port` / `$PATRONUS_HTTPS_PORT`, docs/WEB-UI-PORT.md; LAN->any,
 WAN inbound dropped by policy, outbound masquerade on WAN, IPv4/IPv6
 forwarding), then run every applier in phase order. `patronus firewall
 apply` is the firewall phase only.

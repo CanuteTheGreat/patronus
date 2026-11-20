@@ -285,7 +285,7 @@ What the router build contains (`patronus-web --no-default-features --features d
 | `patronus-ai` (reqwest 0.11 -> native-tls) and `patronus-monitoring` (prometheus, reqwest) pulled OpenSSL-sys + a hourly threat-feed fetcher into the web crate | new features `threat-feeds`, `journal` (default on); off on the router: threat widget honestly empty, logs read from `$PATRONUS_SYSLOG` (default `/var/log/messages`) |
 | 64-bit atomics on mips32 | `libatomic.so.1` (69 KB) in the rootfs, `-C link-arg=-lgcc` |
 | login hashing needed 19 MiB (argon2 default) | `PATRONUS_ARGON2_MEM_KIB=8192` (4 passes) for new hashes; verification uses each hash's own parameters, so existing hashes keep working. Without it the login peak was **37.9 MB** instead of 24.8 MB |
-| anti-lockout only opened 22 + 8443 | `PATRONUS_ANTI_LOCKOUT_PORTS=22,80,443` at first-boot seeding |
+| anti-lockout only opened 22 + 8443 | `PATRONUS_ANTI_LOCKOUT_PORTS=22,80,443` at first-boot seeding; the rule also follows `ssh.port` and the web port (`PATRONUS_HTTPS_PORT` / `web.https_port`, docs/WEB-UI-PORT.md) |
 | Gentoo init scripts are `openrc-run` | the router rootfs ships two 10-line sysv scripts (dnsmasq, hostapd) until OpenRC cross-emerges |
 
 ### First boot (OpenWrt-like, no cloud)

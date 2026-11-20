@@ -208,8 +208,19 @@ pub async fn system(State(state): State<AppState>, me: crate::auth::AuthUser) ->
     let ssh = patronus_network::ssh::settings(state.lan.store())
         .await
         .unwrap_or_default();
+    let web_effective = patronus_config::defaults::web_port(state.lan.store()).await;
     let template = SystemTemplate {
         ssh_port: ssh.port,
+        web_port: patronus_config::defaults::stored_web_port(state.lan.store())
+            .await
+            .unwrap_or(patronus_config::defaults::DEFAULT_WEB_PORT),
+        web_restart_pending: crate::server::running_https_port()
+            .is_some_and(|r| r != web_effective),
+        web_running_port: crate::server::running_https_port().unwrap_or_default(),
+        web_port_env: std::env::var(patronus_config::defaults::WEB_PORT_ENV)
+            .ok()
+            .filter(|v| patronus_config::defaults::parse_port(v).is_some())
+            .unwrap_or_default(),
         ssh_listen: ssh.listen.join(", "),
         ssh_password: ssh.password_auth,
         ssh_root: ssh.root_login.clone(),

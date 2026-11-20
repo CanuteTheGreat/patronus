@@ -245,6 +245,33 @@ async function fwFeedDownload() {
         the marked block in /etc/hosts and /etc/localtime + /etc/timezone, and re-applied at every boot.</p>
 </div>
 
+<div class="card" id="web-card">
+    <div class="card-header"><h2 class="card-title">Web interface</h2></div>
+    <p class="text-sm text-muted">HTTPS port of this web interface (default 8443). The firewall anti-lockout rule
+        opens the new port as soon as it is saved; the interface itself moves to it at its next restart
+        (Services below, patronus-web).
+        {% if !web_port_env.is_empty() %}<strong>PATRONUS_HTTPS_PORT={{ web_port_env }}</strong> is set in the
+        environment of this service and overrides the saved port.{% endif %}</p>
+    {% if is_admin %}
+    <form id="web-form" class="inline-form" onsubmit="return submitWeb(event)">
+        <label>HTTPS port <input name="https_port" type="number" min="1" max="65535" value="{{ web_port }}"></label>
+        <button class="btn btn-sm btn-primary" id="save-web" type="submit">Save</button>
+        <span class="text-sm text-muted" id="web-note">{% if web_running_port != 0 %}Listening on {{ web_running_port }} now.{% endif %}{% if web_restart_pending %} <strong>Restart patronus-web to move to the saved port.</strong>{% endif %}</span>
+    </form>
+    <script>
+    function submitWeb(ev) {
+        ev.preventDefault();
+        const o = formJson(ev.target);
+        o.https_port = Number(o.https_port);
+        call('PUT', '/api/system/web', o);
+        return false;
+    }
+    </script>
+    {% else %}
+    <table class="lan"><tr><td>HTTPS port</td><td>{{ web_port }}</td></tr></table>
+    {% endif %}
+</div>
+
 <div class="card" id="ssh-card">
     <div class="card-header"><h2 class="card-title">SSH server</h2></div>
     <p class="text-sm text-muted">Managed OpenSSH drop-in (/etc/ssh/sshd_config.d/50-patronus.conf), checked with

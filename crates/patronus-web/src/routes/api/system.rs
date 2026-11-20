@@ -502,6 +502,40 @@ pub async fn put_general(
     }
 }
 
+/// GET /api/system/web -- the web UI's HTTPS port: stored value, the
+/// `PATRONUS_HTTPS_PORT` override, the effective port and the one running now.
+pub async fn get_web(State(state): State<AppState>) -> Response {
+    match state.lan.web_overview().await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// PUT /api/system/web  {"https_port": 9443}  (0 = default). The firewall
+/// opens the new port first; patronus-web moves to it at its next restart
+/// (`restart_required` in the answer).
+pub async fn put_web(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(i): Json<crate::state::lan::WebInput>,
+) -> Response {
+    match state.lan.save_web(i).await {
+        Ok(()) => match state.lan.web_overview().await {
+            Ok(v) => Json(v).into_response(),
+            Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        },
+        Err(e) => {
+            let m = e.to_string();
+            let code = if m.contains("Invalid") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            error(code, m)
+        }
+    }
+}
+
 /// GET /api/system/ssh -- the managed OpenSSH server settings (public
 /// keys and the host certificate only; there are no secrets in them).
 pub async fn get_ssh(State(state): State<AppState>) -> Response {
@@ -1161,6 +1195,7 @@ pub fn router() -> axum::Router<AppState> {
         )
         .route("/system/general", get(get_general).put(put_general))
         .route("/system/ssh", get(get_ssh).put(put_ssh))
+        .route("/system/web", get(get_web).put(put_web))
         .route("/system/reboot", post(reboot))
         .route(
             "/system/firmware",

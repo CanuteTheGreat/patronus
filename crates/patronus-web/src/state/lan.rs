@@ -864,6 +864,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn web_port_is_validated_stored_applied_and_undone_on_failure() {
+        use patronus_config::defaults::{stored_web_port, WEB_PORT_KEY};
+        let store = Arc::new(ConfigStore::open_in_memory().await.unwrap());
+        let fw = Arc::new(Flaky {
+            name: "firewall",
+            fail: false.into(),
+            runs: 0.into(),
+        });
+        let m = LanManager::with_appliers(store.clone(), vec![fw.clone()]);
+        let put = |p: u32| WebInput {
+            https_port: Some(p),
+        };
+        m.save_web(put(9443)).await.unwrap();
+        assert_eq!(stored_web_port(&store).await, Some(9443));
+        assert_eq!(fw.runs.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // refused before the store or the firewall is touched
+        for bad in [65536u32, 70000] {
+            let e = m.save_web(put(bad)).await.unwrap_err().to_string();
+            assert!(e.starts_with("Invalid web port"), "{e}");
+        }
+        store.save_system_config("ssh.port", "2222").await.unwrap();
+        let e = m.save_web(put(2222)).await.unwrap_err().to_string();
+        assert!(e.contains("SSH"), "{e}");
+        assert_eq!(stored_web_port(&store).await, Some(9443));
+        assert_eq!(fw.runs.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // an unchanged value does not re-apply; absent = unchanged
+        m.save_web(put(9443)).await.unwrap();
+        m.save_web(WebInput::default()).await.unwrap();
+        assert_eq!(fw.runs.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // a failing apply puts the old port back
+        fw.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(m.save_web(put(10443)).await.is_err());
+        assert_eq!(stored_web_port(&store).await, Some(9443));
+        fw.fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        // 0 = back to the default (key empty)
+        m.save_web(put(0)).await.unwrap();
+        assert_eq!(stored_web_port(&store).await, None);
+        assert_eq!(
+            store
+                .load_system_config(WEB_PORT_KEY)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("")
+        );
+        let v = m.web_overview().await.unwrap();
+        assert_eq!(v["default_port"], 8443);
+    }
+
+    #[tokio::test]
     async fn failed_apply_undoes_the_store_write() {
         let store = Arc::new(ConfigStore::open_in_memory().await.unwrap());
         let dhcp = Arc::new(Flaky {
@@ -891,5 +941,98 @@ mod tests {
         assert_eq!(dhcp.runs.load(std::sync::atomic::Ordering::SeqCst), runs);
         // every accepted change left a config revision
         assert!(!store.list_revisions().await.unwrap().is_empty());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Web UI port (System page): `web.https_port`
+// ---------------------------------------------------------------------------
+
+/// Fields of `PUT /api/system/web`: `https_port` absent = unchanged, 0 or
+/// empty = back to the default (8443).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct WebInput {
+    #[serde(default)]
+    pub https_port: Option<u32>,
+}
+
+impl LanManager {
+    /// Stored, overriding and effective web port, and the one this process runs on.
+    pub async fn web_overview(&self) -> anyhow::Result<Value> {
+        use patronus_config::defaults as d;
+        let stored = d::stored_web_port(&self.store).await;
+        let env = std::env::var(d::WEB_PORT_ENV)
+            .ok()
+            .and_then(|v| d::parse_port(&v));
+        let effective = d::web_port(&self.store).await;
+        let running = crate::server::running_https_port();
+        Ok(serde_json::json!({
+            "settings": { "https_port": stored.unwrap_or(d::DEFAULT_WEB_PORT) },
+            "default_port": d::DEFAULT_WEB_PORT,
+            "configured": stored,
+            "env_override": env,
+            "effective_port": effective,
+            "running_port": running,
+            "ssh_port": d::ssh_port(&self.store).await,
+            "restart_required": running.is_some_and(|r| r != effective),
+        }))
+    }
+
+    /// Validate, store `web.https_port`, re-apply the firewall (the anti-lockout
+    /// rule opens the new port before anyone restarts the UI on it); undo the
+    /// store write when the apply fails. The listener itself moves at the next
+    /// patronus-web restart (`restart_required`).
+    pub async fn save_web(&self, i: WebInput) -> anyhow::Result<()> {
+        use patronus_config::defaults as d;
+        let Some(raw) = i.https_port else {
+            return Ok(());
+        };
+        let new = match raw {
+            0 => None,
+            p if (1..=65535).contains(&p) => Some(p as u16),
+            p => anyhow::bail!(
+                "Invalid web port {p}: use 1-65535 (0 = default {})",
+                d::DEFAULT_WEB_PORT
+            ),
+        };
+        if let Some(p) = new {
+            let ssh = d::ssh_port(&self.store).await;
+            if p == ssh {
+                anyhow::bail!("Invalid web port {p}: the SSH server already uses it");
+            }
+        }
+        let _g = self.edit.lock().await;
+        let old = self
+            .store
+            .load_system_config(d::WEB_PORT_KEY)
+            .await
+            .map_err(e)?
+            .unwrap_or_default();
+        let value = new.map(|p| p.to_string()).unwrap_or_default();
+        if old == value {
+            return Ok(());
+        }
+        self.store
+            .snapshot("web", "before change web UI port")
+            .await
+            .map_err(e)?;
+        self.store
+            .save_system_config(d::WEB_PORT_KEY, &value)
+            .await
+            .map_err(e)?;
+        if let Some(a) = self.appliers.get("firewall") {
+            if let Err(err) = a.apply(&self.store).await {
+                let _ = self.store.save_system_config(d::WEB_PORT_KEY, &old).await;
+                if let Err(re) = a.apply(&self.store).await {
+                    tracing::warn!("re-applying the previous firewall config: {re}");
+                }
+                return Err(anyhow::anyhow!("{err}"));
+            }
+        }
+        let _ = self
+            .store
+            .audit("web", "update", "web_port", Some(&value), &Value::Null)
+            .await;
+        Ok(())
     }
 }
