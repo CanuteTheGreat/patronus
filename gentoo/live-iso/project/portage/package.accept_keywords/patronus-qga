@@ -1,0 +1,2 @@
+# qemu-guest-agent has no stable arm64 keyword in ::gentoo (live-iso aarch64 build failed: masked by ~arm64 keyword)
+app-emulation/qemu-guest-agent ~arm64
