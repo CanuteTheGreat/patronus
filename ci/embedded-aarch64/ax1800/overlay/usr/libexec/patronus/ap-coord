@@ -156,7 +156,7 @@ check() { # BAND [now]
   [ "$sc" = 1 ] && sec=above && w=40; [ "$sc" = -1 ] && sec=below && w=40
   [ "$b" = 5 ] && [ "$wd" = 1 ] && [ "${ct:-0}" -gt 0 ] && w=80
   own=$(echo "0:00:00:00:00:00 $fq -50 $sec $w ${ct:-0} -" | covered | cut -d' ' -f2-)
-  s=$(scan_if "$b" "$ifc")
+  s=$(scan_if "$b" "$ifc" ap-force)   # the radio is on air: without ap-force the scan reports only its own channel (or fails busy) and never hears the peer
   mykey=$(sed -n 's/^bssid=//p' "$conf" | head -1 | tr 'A-F' 'a-f' | cut -d: -f2-)
   yield=0; hit=
   echo "$s" | parse | peers "$b" | while read -r bssid f sig sec2 w2 c2 ssid; do
