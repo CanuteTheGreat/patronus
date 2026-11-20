@@ -843,6 +843,11 @@ jobs:
           fi
           echo "patronus-web responded successfully"
 
+      - name: Installed image - world records the plain atom, an upgrade from another repository resolves without a slot conflict
+        # The image hook once recorded `net-firewall/patronus::patronus-image` in @world: every later upgrade from another repository or
+        # binhost was a slot conflict on a real install. Runs the real hook in the CI base image (Portage tree) with a dummy payload.
+        run: ci/test-image-world-atom.sh git.canutethegreat.com/canutethegreat/patronus-ci-base:latest
+
       - name: Run the image as shipped (non-root, compose caps) - gateways, WireGuard, IPsec refusal
         # netlab runs as root / with applyd; this is the docker-compose.yml
         # setup (USER patronus, cap_add NET_ADMIN/NET_RAW, no applyd) where

@@ -26,9 +26,18 @@ done
 ver=$(basename "$eb" .ebuild); ver=${ver#patronus-}
 atom="=net-firewall/patronus-$ver::patronus-image"
 
-# --noreplace WITHOUT --oneshot: the package goes into @world, so `emerge --depclean` on the installed system keeps it.
+# Install the exact staged version from the image-local repository, then record the PLAIN atom in @world.
+# `emerge --noreplace =net-firewall/patronus-<ver>::patronus-image` would put `net-firewall/patronus::patronus-image` into world, and that
+# entry pins the package to this repository: any later upgrade from another repository or binhost (the web UI updater, `emerge -u`)
+# is a slot conflict. The plain atom lets Portage pick the best version from whichever repository carries it.
 # --usepkg=n: nothing of ours is in a binhost; dependencies are already in the image (the image packages list).
-emerge --noreplace --usepkg=n --getbinpkg=n --with-bdeps=n "$atom"
+emerge --oneshot --usepkg=n --getbinpkg=n --with-bdeps=n "$atom"
+WORLD=${EROOT:-}/var/lib/portage/world
+grep -v -x -e 'net-firewall/patronus' -e 'net-firewall/patronus::[A-Za-z0-9_-]*' "$WORLD" > "$WORLD.new" || true
+echo net-firewall/patronus >> "$WORLD.new"
+mv "$WORLD.new" "$WORLD"
+grep -q -x 'net-firewall/patronus' "$WORLD" || { echo "project-image-packages: net-firewall/patronus is not in world"; exit 1; }
+if grep -q '^net-firewall/patronus::' "$WORLD"; then echo "project-image-packages: world still pins net-firewall/patronus to a repository"; exit 1; fi
 
 # the product must now be owned by that package, init scripts and templates included (the wizard once failed on a missing one)
 for f in /usr/bin/patronus-web /usr/bin/patronus-cli /etc/init.d/patronus-web /etc/init.d/patronus-dhcpc \

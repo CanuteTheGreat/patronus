@@ -35,6 +35,12 @@ grep -Eq '^[^#]*(chmod \+x /etc/init\.d|groupadd|useradd)' "$S" && bad "$S creat
 [ -x $P/overlay/usr/libexec/project-image-packages ] || bad "project-image-packages is missing or not executable"
 grep -q 'project-image-packages' gentoo/live-iso/common/setup-rootfs.sh || bad "common/setup-rootfs.sh does not run /usr/libexec/project-image-packages"
 
+H=$P/overlay/usr/libexec/project-image-packages
+HCODE=$(grep -v '^[[:space:]]*#' "$H")
+grep -Eq 'emerge .*--noreplace .*::patronus-image' <<<"$HCODE" && bad "$H records a repository-qualified atom in world (net-firewall/patronus::patronus-image pins the package to a deleted repository: every later upgrade from another repository is a slot conflict)"
+grep -q 'echo net-firewall/patronus >> "$WORLD.new"' "$H" || bad "$H does not record the plain atom net-firewall/patronus in world (ci/test-image-world-atom.sh proves it against Portage)"
+[ -x ci/test-image-world-atom.sh ] && [ -x ci/test-image-world-atom-inner.sh ] || bad "ci/test-image-world-atom.sh (+ -inner) is missing or not executable"
+
 grep -Eq '^services = \[.*"patronus-services"' $P/overlay/etc/live-installer/profile.toml || bad "installer profile does not enable patronus-services"
 [ -f "$F/patronus-services.initd" ] && [ -f "$F/patronus-services.service" ] || bad "patronus-services needs both an OpenRC script and a systemd unit"
 for e in gentoo/net-firewall/patronus/patronus-9999.ebuild gentoo/net-firewall/patronus/patronus-0.2.0.ebuild; do
