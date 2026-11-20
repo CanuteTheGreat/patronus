@@ -84,8 +84,8 @@ uid=$(awk '/^Uid:/ {print $2}' <<<"$st"); capeff=$(awk '/^CapEff:/ {print $2}' <
 [ $(( (0x$capeff >> 10) & 1 )) = 1 ] || nl_fail "patronus-web lacks CAP_NET_BIND_SERVICE (CapEff $capeff)"
 [ $(( (0x$capeff >> 21) & 1 )) = 0 ] || nl_fail "patronus-web holds CAP_SYS_ADMIN (CapEff $capeff)"
 nl_ok "patronus-web runs as uid $uid with CapEff $capeff (net_bind_service, no more than the unit grants)"
-nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 443, 80, 8443 } accept"
-nl_assert_nft_lacks "iifname \"$NL_WAN_IF\" tcp dport { 22, 443, 80, 8443 }"
+nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 80, 443, 8443 } accept"
+nl_assert_nft_lacks "iifname \"$NL_WAN_IF\" tcp dport { 22, 80, 443, 8443 }"
 
 echo "=== a change through the API: firewall first, listeners at restart"
 nl_login
@@ -103,8 +103,8 @@ nl_api_code "a listen name is refused" 400 PUT /system/web '{"listen":"@lan"}'
 nl_ok "impossible combinations are 400 and change nothing"
 nl_api_ok "move the UI to 9443, no redirect, keep 8443" PUT /system/web \
   '{"https_port":9443,"http_redirect_port":0,"extra_https_ports":"8443"}'
-nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 9443, 8443 } accept"
-nl_assert_nft_lacks "tcp dport { 22, 443, 80, 8443 }"
+nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 8443, 9443 } accept"
+nl_assert_nft_lacks "tcp dport { 22, 80, 443, 8443 }"
 [ "$(code_of "https://$NL_RTR_LAN/login")" = 200 ] || nl_fail "the old listener should stay up until the restart"
 nl_ok "the firewall already opens 9443; the running UI still answers on 443 until it is restarted"
 stop_web
@@ -121,7 +121,7 @@ echo "=== it is part of the configuration: survives a reboot, export carries it"
 stop_web
 nl_boot "$DB"
 chown -R 65534:65534 "$W"
-nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 9443, 8443 } accept"
+nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 8443, 9443 } accept"
 nl_ok "after a reboot the anti-lockout rule still follows the stored ports"
 
 echo "=== a back-to-defaults reset"
@@ -129,7 +129,7 @@ start_web "$CAPS"
 wait_ui "https://$NL_RTR_LAN:9443/login"
 rm -f "$NL_T/nl-jar"; nl_login
 nl_api_ok "reset" PUT /system/web '{"reset":true}'
-nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 443, 80, 8443 } accept"
+nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport { 22, 80, 443, 8443 } accept"
 stop_web
 nl_ok "reset forgets the stored values: the defaults (and their firewall ports) are back"
 

@@ -1918,7 +1918,7 @@ mod tests {
             }
         }
         assert!(
-            table.contains("tcp dport { 22, 443, 80, 8443 } accept"),
+            table.contains("tcp dport { 22, 80, 443, 8443 } accept"),
             "{table}"
         );
         assert!(table.contains("masquerade"), "{table}");

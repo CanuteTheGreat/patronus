@@ -95,11 +95,11 @@ assert_router_state() {
   [ "$(R cat /proc/sys/net/ipv6/conf/rtr-wan/accept_ra)" = 2 ] || fail "WAN accept_ra not 2"
   ok "sysctl: net.ipv4.ip_forward=1 net.ipv6.conf.all.forwarding=1 net.ipv6.conf.rtr-wan.accept_ra=2"
   RS=$(R nft list ruleset)
-  for want in 'policy drop' 'iifname "rtr-lan" tcp dport { 22, 8443 } accept' \
+  for want in 'policy drop' 'iifname "rtr-lan" tcp dport { 22, 80, 443, 8443 } accept' \
               'iifname "rtr-lan" accept' 'oifname "rtr-wan" masquerade'; do
     grep -qF "$want" <<<"$RS" || { echo "$RS"; fail "ruleset lacks: $want"; }
   done
-  if grep -q 'iifname "rtr-wan" tcp dport { 22, 8443 }' <<<"$RS"; then fail "anti-lockout open on WAN"; fi
+  if grep -q 'iifname "rtr-wan" tcp dport { 22, 80, 443, 8443 }' <<<"$RS"; then fail "anti-lockout open on WAN"; fi
   ok "nft ruleset has drop policies, LAN anti-lockout, LAN->any, WAN masquerade"
 }
 
