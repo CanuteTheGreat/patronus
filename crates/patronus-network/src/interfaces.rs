@@ -1162,7 +1162,7 @@ impl InterfacesApplier {
                     .and_then(|p| sd::write_openrc_dropin(&p).map(|ch| (p, ch)))
                 {
                     Ok((p, true)) => {
-                        let _ = self.cmd.run("rc-update", &["-u".to_string()]).await;
+                        let _ = svc.refresh_dependencies();
                         report.applied(format!(
                             "{} written: OpenRC's `net` now comes from patronus-firewall, not the system dhcpcd",
                             p.display()
@@ -1185,7 +1185,7 @@ impl InterfacesApplier {
                     .flatten();
                 if let Ok(p) = sd::openrc_dropin_path(key.as_deref()) {
                     if sd::remove_openrc_dropin(&p).unwrap_or(false) {
-                        let _ = self.cmd.run("rc-update", &["-u".to_string()]).await;
+                        let _ = svc.refresh_dependencies();
                         report.applied(format!(
                             "{} removed: the system dhcpcd provides `net` again",
                             p.display()

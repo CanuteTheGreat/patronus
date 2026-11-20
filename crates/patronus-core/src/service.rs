@@ -140,6 +140,11 @@ pub trait InitBackend: Send + Sync {
     fn is_booting(&self) -> bool;
     /// Re-read unit files (systemd `daemon-reload`; nothing to do on OpenRC).
     fn reload_definitions(&self) -> Result<()>;
+    /// Recompute the dependency graph after a `provide`/`need` override changed
+    /// (OpenRC `rc-update -u`; nothing to do where the init system keeps no cache).
+    fn refresh_dependencies(&self) -> Result<()> {
+        Ok(())
+    }
     /// Where to look when a service will not stay up.
     fn log_hint(&self, name: &str) -> String;
 }
@@ -399,6 +404,18 @@ impl InitBackend for OpenRcBackend {
 
     fn reload_definitions(&self) -> Result<()> {
         Ok(())
+    }
+
+    fn refresh_dependencies(&self) -> Result<()> {
+        let o = self
+            .run
+            .run("rc-update", &["-u"])
+            .map_err(|e| fail("openrc", "update dependencies", e))?;
+        if o.success {
+            Ok(())
+        } else {
+            Err(fail("openrc", "update dependencies", o.stderr))
+        }
     }
 
     fn log_hint(&self, name: &str) -> String {
@@ -703,6 +720,12 @@ impl ServiceManager {
         self.backend.reload_definitions()
     }
 
+    /// Recompute the init system's dependency graph after a provide/need
+    /// override (an OpenRC `rc.conf.d` drop-in) changed (OpenRC only).
+    pub fn refresh_dependencies(&self) -> Result<()> {
+        self.backend.refresh_dependencies()
+    }
+
     /// Where to look when `service_name` will not stay up.
     pub fn log_hint(&self, service_name: &str) -> String {
         self.backend.log_hint(self.native(service_name))
@@ -893,6 +916,7 @@ mod tests {
         m.enable("patronus-web").unwrap();
         m.disable("patronus-web").unwrap();
         m.reload_definitions().unwrap(); // nothing to do, must not spawn
+        m.refresh_dependencies().unwrap();
         m.restart_queued("kea-dhcp4").unwrap();
         assert_eq!(
             f.calls(),
@@ -904,6 +928,7 @@ mod tests {
                 "rc-service haproxy reload",
                 "rc-update add patronus-web default",
                 "rc-update del patronus-web",
+                "rc-update -u",
                 "detached rc-service kea-dhcp4 restart",
             ]
         );
