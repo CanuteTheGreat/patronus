@@ -78,7 +78,7 @@ def define(args):
         m.check(f"{P['svc']}-active", True, m.fw.init.name)
 
         m.phase("import the OpenWrt configuration")
-        devs = m.fw.succeed("for d in /sys/class/net/*; do n=${d##*/}; [ -e $d/device ] && echo $n $(cat $d/address); done").split("\n")
+        devs = m.fw.succeed("for d in /sys/class/net/*; do n=${d##*/}; if [ -e $d/device ]; then echo $n $(cat $d/address); fi; done").split("\n")
         lan = next(l.split()[0] for l in devs if FW_LAN_MAC in l)
         wan = next(l.split()[0] for l in devs if l.strip() and FW_LAN_MAC not in l)
         m.fw.put_file(fixture_tarball(), "/root/uci.tgz", "600")
