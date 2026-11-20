@@ -6,21 +6,21 @@
 {% include "lan_head.html" %}
 <style>
     .rev-source { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.78em; font-weight: 600; background: var(--line); color: var(--muted); }
-    .rev-source.web { background: #dbeafe; color: #1e40af; }
-    .rev-source.cli { background: #ede9fe; color: #5b21b6; }
+    .rev-source.web { background: var(--surface-3); color: var(--b-blue); }
+    .rev-source.cli { background: var(--surface-3); color: var(--text); }
     .history-summary { word-break: break-word; }
     #history-msg { margin: 10px 0; padding: 10px; border-radius: 6px; }
-    #history-msg.ok-box { background: var(--ok-bg, #dcfce7); color: var(--ok-fg, #166534); }
+    #history-msg.ok-box { background: var(--ok-bg); color: var(--ok-fg); }
     #history-msg.bad-box { background: var(--bad-bg); color: var(--bad-fg); }
-    dialog#rev-dialog { max-width: min(760px, 94vw); width: 100%; border: 1px solid var(--line-strong); border-radius: 8px; padding: 16px; background: var(--card-bg, #fff); color: inherit; max-height: 88vh; overflow: auto; }
+    dialog#rev-dialog { max-width: min(760px, 94vw); width: 100%; border: 1px solid var(--line-strong); border-radius: 8px; padding: 16px; background: var(--card-bg); color: inherit; max-height: 88vh; overflow: auto; }
     dialog#rev-dialog::backdrop { background: rgba(0,0,0,.5); }
     .diff-section { margin: 12px 0; }
     .diff-section h3 { margin: 0 0 4px; font-size: 1em; }
     .diff-list { list-style: none; padding: 0; margin: 2px 0 6px; font-size: 0.9em; }
     .diff-list li { padding: 3px 8px; border-left: 3px solid var(--line-strong); margin: 2px 0; word-break: break-word; }
-    .diff-add li { border-color: #16a34a; }
-    .diff-del li { border-color: #dc2626; }
-    .diff-chg li { border-color: #d97706; }
+    .diff-add li { border-color: var(--b-success); }
+    .diff-del li { border-color: var(--b-danger); }
+    .diff-chg li { border-color: var(--warning); }
     .diff-kind { font-size: 0.8em; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
     .dlg-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 14px; }
     @media (max-width: 640px) {
