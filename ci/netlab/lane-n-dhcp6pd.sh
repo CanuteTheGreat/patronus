@@ -4,6 +4,10 @@
 # router's WAN; Patronus (dhcpcd ia_pd) carves a /64 for the LAN, puts the
 # router's address on it, and radvd advertises it so a LAN client configures a
 # global IPv6 address from the delegated prefix.
+#
+# The ISP's replies come from a GLOBAL address, as a real ISP's DHCPv6 server behind a relay does (a fake ISP that answers from its
+# link-local address hid a firewall bug that dropped every real ISP's advertise): the lab rewrites the source of the server's
+# replies with a source NAT in the ISP namespace. The WAN must get both the IA_NA address and the delegated prefix.
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 
@@ -44,6 +48,13 @@ CONF
 ISP sh -c 'echo 1 > /proc/sys/net/ipv6/conf/all/forwarding'
 nl_bg ISP radvd -n -C "$NL_T/isp-radvd.conf" -p /tmp/isp-radvd.pid
 nl_bg ISP dhcpd -6 -d -cf "$NL_T/isp-dhcpd6.conf" -lf "$NL_T/isp-dhcpd6.leases" up0
+# the server answers from a global address (what a relayed ISP server does), never from its link-local one
+cat >"$NL_T/isp-src.nft" <<'NFT'
+table ip6 isp_dhcp6_src {
+    chain post { type nat hook postrouting priority 100; ip6 saddr fe80::/10 udp sport 547 udp dport 546 counter snat to 2001:db8:ffff::1; }
+}
+NFT
+ISP nft -f "$NL_T/isp-src.nft" || nl_fail "could not install the global-source rewrite in the ISP namespace"
 sleep 2
 
 nl_web_start "$DB"; nl_login
@@ -71,6 +82,16 @@ nl_wait 90 sh -c 'ip netns exec nl-rtr ip -6 -o addr show dev rtr-lan scope glob
   || { R ip -6 addr; nl_fail "no delegated prefix address on the LAN port after 90 s"; }
 PD=$(lan_pd)
 nl_ok "the router carved $PD out of the delegated /56 for the LAN"
+
+# IA_NA: the WAN itself got an address from the ISP's pool
+wan_na() { R ip -6 -o addr show dev "$NL_WAN_IF" scope global | grep -o '2001:db8:ffff::[0-9a-f:]*/128' | head -1; }
+nl_wait 30 sh -c 'ip netns exec nl-rtr ip -6 -o addr show dev rtr-wan scope global | grep "2001:db8:ffff::[12][0-9a-f][0-9a-f]" >/dev/null' \
+  || { R ip -6 addr show dev "$NL_WAN_IF"; nl_fail "the WAN got no IA_NA address from the ISP pool"; }
+nl_ok "the WAN got its IA_NA address $(wan_na)"
+# the proof that the replies really came from the global address: the rewrite matched, and the router's own rule accepted them by destination
+SNAT=$(ISP nft list table ip6 isp_dhcp6_src)
+case "$SNAT" in *'counter packets 0 '*) nl_fail "no DHCPv6 reply was rewritten to the global source: $SNAT" ;; esac
+nl_ok "the server's DHCPv6 replies came from 2001:db8:ffff::1 (global), not a link-local address"
 
 nl_wait 60 sh -c 'ip netns exec nl-client ip -6 -o addr show dev lan0 scope global | grep "2001:db8:10" >/dev/null' \
   || { C ip -6 addr; R sh -c 'cat /etc/radvd.conf; pgrep -a radvd' || true; nl_fail "the LAN client got no address from the delegated prefix"; }
