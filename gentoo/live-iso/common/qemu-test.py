@@ -319,6 +319,21 @@ def sock_paths(out, name):
     return f"{d}/{h}.qmp", f"{d}/{h}.serial"
 
 
+_ACTION_FLAG = {}
+
+
+def watchdog_action_supported():
+    """does this QEMU know `-action watchdog=...` (QEMU 6.0+)? probed once per binary"""
+    q = str(ARCHS[ARCH]["qemu"])
+    if q not in _ACTION_FLAG:
+        try:
+            out = subprocess.run([q, "-help"], capture_output=True, text=True, timeout=30).stdout
+        except (OSError, subprocess.SubprocessError):
+            out = ""
+        _ACTION_FLAG[q] = "-action" in out
+    return _ACTION_FLAG[q]
+
+
 class VM:
     # a VM built while this is True keeps QEMU alive (paused) after a guest reset/poweroff (-no-reboot + -no-shutdown) so alive() can read the CPU
     # registers (HMP `info registers`) at the moment the guest vanished: with KVM a triple fault, a CF9/ACPI reset and a clean reboot all end as
@@ -348,8 +363,24 @@ class VM:
                        "-chardev", f"socket,id=ser0,path={self.ser_path},server=on,wait=off", "-serial", "chardev:ser0",
                        "-display", "none",
                        "-d", "cpu_reset", "-D", f"{out}/{name}-qemu-debug.log"]     # why QEMU ended: CPU reset / triple fault dump
+        self.events, self.ev_path = [], ""
         if self.hold:
             full += ["-no-shutdown"]
+            # a second, events-only QMP monitor: the SHUTDOWN event carries the reason (guest-shutdown = ACPI poweroff, guest-reset = reboot/CF9
+            # request turned into a shutdown by -no-reboot, guest-panic, host-qmp-quit) and is only delivered to a client connected at that moment;
+            # the control socket is used by one short-lived client at a time, so it cannot hold the subscription (runs 3963/3964/4033/4243: guest
+            # vanishes after the hibernate resume, registers show an idle kernel, no cpu_reset line, cause of the shutdown request unknown)
+            self.ev_path = self.qmp_path[:-4] + ".ev" if self.qmp_path.endswith(".qmp") else self.qmp_path + ".ev"
+            if os.path.exists(self.ev_path):
+                os.unlink(self.ev_path)
+            full += ["-chardev", f"socket,id=evc,path={self.ev_path},server=on,wait=off", "-mon", "chardev=evc,mode=control"]
+            # run 4283 (OpenRC) QMP events: `WATCHDOG {"action": "reset"}` then `SHUTDOWN guest-reset` 5 s after the resumed guest's NIC came up, cgroup
+            # oom_kill 0. The q35 iTCO watchdog is a harness-side device: no unit of this image arms it (only the test-machine payload does, and the
+            # hibernate guest is not a test machine), and its default action turns a stray TCO timeout into a guest reset that -no-reboot ends as a vanished
+            # guest. The action is only logged here (QEMU prints it, the event line records it, hibernate_phase prints it), so the resumed guest is
+            # judged on the pool/scrub assertions and a watchdog that really fires stays visible in the log.
+            if watchdog_action_supported():
+                full += ["-action", "watchdog=debug"]
         self.sock = None
         self.last_rx = time.time()
         self.poke = False          # serial TUI runs: send Ctrl-L when the line has been silent (see expect_screen)
@@ -398,6 +429,8 @@ class VM:
             raise SystemExit(f"cannot connect to the QEMU serial socket after 3 tries (last qemu exit={self.p.poll()}; stderr: {err or 'empty'})")
         LIVE_VMS.append(self)
         threading.Thread(target=self._rd, daemon=True).start()
+        if self.ev_path:
+            threading.Thread(target=self._ev_rd, daemon=True).start()
 
     def _rd(self):
         while True:
@@ -427,6 +460,40 @@ class VM:
                 if LUKS_PROMPT.search(win) and time.time() - self.luks_t > 10:
                     self.luks_t = time.time(); self.luks_n += 1
                     threading.Timer(1.0, lambda: self.send(VM.LUKS_UNLOCK + "\r")).start()
+
+    def _ev_rd(self):
+        """record the QMP events of the events-only monitor (SHUTDOWN reason, RESET, POWERDOWN, GUEST_PANICKED, ...) with a timestamp; diagnostics only"""
+        c = None
+        for _ in range(100):
+            try:
+                c = socket.socket(socket.AF_UNIX)
+                c.connect(self.ev_path)
+                break
+            except OSError:
+                c = None
+                if self.p.poll() is not None:
+                    return
+                time.sleep(0.2)
+        if c is None:
+            return
+        try:
+            c.settimeout(None)
+            f = c.makefile("rw")
+            f.readline()
+            f.write(json.dumps({"execute": "qmp_capabilities"}) + "\n")
+            f.flush()
+            while True:
+                line = f.readline()
+                if not line:
+                    break
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if "event" in r:
+                    self.events.append(f"{time.strftime('%H:%M:%S')} {r['event']} {json.dumps(r.get('data', {}))}")
+        except Exception:
+            pass
 
     def send(self, s):
         try:
@@ -897,6 +964,55 @@ def answer_toml(a, pubkey, pwhash):
     return "\n".join(lines) + "\n"
 
 
+GRUB_COUNTDOWN = rb"executed automatically in \d+s"
+GRUB_BOOTING = rb"Booting `([^'\r\n]*)'"
+
+
+def grub_serial_keys(vm, keys, want, tries=4, settle=1.6, quiet=30):
+    """Drive the GRUB menu over the serial line: `keys[:-1]` are menu hotkeys typed while the countdown runs (e.g. 's' = the
+    serial-console submenu), `keys[-1]` is the hotkey of the entry to boot (its title must match `want`). Returns (ok, detail).
+    Run 2319 (uefi-usb-auto-openconsole): GRUB never saw the single 's' + '4' sent over the UART, the countdown ran out and the
+    default Graphical install booted, so the automated installer never started (AUTOINSTALL-START timeout). Now:
+    - a menu key is re-sent until the countdown stops (no further 'executed automatically in Ns' line within `settle` s);
+    - the entry hotkey is re-sent only after `quiet` s without a single byte from GRUB (taking it redraws/clears the screen; a
+      submenu has no countdown, so a lost key just leaves GRUB waiting there);
+    - a "Booting `<title>'" line (GRUB prints it only when the countdown boots the default) for any other entry is final."""
+    want_rx = re.compile(want.encode() if isinstance(want, str) else want)
+    with vm.lock:
+        vm.raw = b""                                            # countdown lines from before the first key are not evidence
+
+    def wrong_entry(m):
+        b = re.match(GRUB_BOOTING, m.group(0)) if m else None
+        return b and not want_rx.search(b.group(1)), (b.group(1).decode("utf-8", "replace") if b else "")
+
+    for k in keys[:-1]:
+        for _ in range(tries):
+            vm.send(k)
+            m = vm.expect_raw(GRUB_COUNTDOWN + b"|" + GRUB_BOOTING, settle)
+            if m is None:
+                break                                           # countdown stopped: GRUB took the key
+            bad, title = wrong_entry(m if re.match(GRUB_BOOTING, m.group(0)) else vm.expect_raw(GRUB_BOOTING, 0.3, consume=False))
+            if bad:
+                return False, f"GRUB booted '{title}' (the countdown ran out: {k!r} was never taken)"
+        else:
+            return False, f"GRUB countdown kept running after {tries} x {k!r}"
+    k = keys[-1]
+    for n in range(tries):
+        end = time.time() + 15                                  # the submenu redraw is not an answer to this key: let the line go
+        while time.time() < end and vm.expect_raw(rb"[\s\S]+", 0.7) is not None:   # quiet, then drop what is left
+            pass
+        with vm.lock:
+            vm.raw = b""
+        vm.send(k)
+        if vm.expect_raw(rb"[\s\S]", quiet) is not None:
+            m = vm.expect_raw(GRUB_BOOTING, 2, consume=False)
+            bad, title = wrong_entry(m)
+            if bad:
+                return False, f"GRUB booted '{title}' instead of /{want}/"
+            return True, f"keys {keys} taken" + (f" ({n} re-send(s) of {k!r})" if n else "")
+    return False, f"GRUB silent after {tries} x {k!r}"
+
+
 def serial_tail(vm, n=12):
     """last lines of the guest's serial output, one line: a bare `timeout` told nothing about WHERE an install hung (aarch64 ZFS, run 8771)"""
     try:
@@ -1200,9 +1316,11 @@ class Runner:
                 # boot menu hotkeys (common/boot/gen-grub-cfg.sh): s = serial-console submenu, 2 = text install, 4 = automated
                 if a.flow == "gui":
                     self.shots.append((f"{vm.name}-grub-menu.png", "Boot menu (default entry: Graphical install)"))
-                vm.send("s")                        # the serial-console submenu: same entries, kernel console on the UART too
-                time.sleep(1.5)
-                vm.send({"tui": "2", "auto": "4", "gui": "1"}[a.flow])
+                # s = the serial-console submenu (same entries, kernel console on the UART too), then the flow's hotkey; each key is
+                # re-sent until GRUB shows it took it (a lost key let the countdown boot the graphical installer: run 2319)
+                key, want = {"tui": ("2", r"Install \(text mode\)"), "auto": ("4", r"Automated install"), "gui": ("1", r"Graphical install")}[a.flow]
+                ok, why = grub_serial_keys(vm, ["s", key], want)
+                self.step("grub-entry-chosen", ok, why)
                 self.step("kernel-boot-started", vm.expect_raw(init_cmds.BOOT_RE, 90))
             if a.flow == "auto":
                 ok = vm.expect_raw(r"AUTOINSTALL-START", 420)
@@ -1243,9 +1361,8 @@ class Runner:
         try:
             self.step("grub-menu-reached", vm.expect_raw(r"Serial console \(" + re.escape(ARCHS[a.arch]["serial"]), 120))
             time.sleep(2)
-            vm.send("s")                                    # serial-console submenu, then 4 = automated install
-            time.sleep(1.5)
-            vm.send("4")
+            ok, why = grub_serial_keys(vm, ["s", "4"], r"Automated install")   # serial-console submenu, then 4 = automated install
+            self.step("grub-entry-chosen", ok, why)
             self.step("no-answer-file-detected", vm.expect_raw(r"No answer file found[^\n]*", 480),
                       "the automated entry refuses to install without an answer file")
             self.step("falls-back-to-guided-installer", vm.expect_raw(r"INSTALLER-FALLBACK-INTERACTIVE", 60))
@@ -1968,6 +2085,17 @@ class Runner:
         a, P = self.a, self.P
         vm.expect_screen(r"Assign interfaces", 30)     # the menu may still be drawing after the login returned
         scr = vm.screen()
+        # The VT model is 24 rows and the menu fills ~22: one kernel message printed after the menu was drawn (a 2-line
+        # 'clocksource: Long readout interval, skipping watchdog check' when the runner cgroup stalls the guest, run 4127) scrolls the
+        # header off the top. Enter at the prompt makes the menu clear the screen and redraw itself, so ask for a repaint (up to 3 times)
+        # before judging; the assertion below is unchanged.
+        for _ in range(3):
+            if "console menu" in scr:
+                break
+            vm.send("\r")
+            time.sleep(1.5)
+            vm.expect_screen(r"Enter an option", 15)
+            scr = vm.screen()
         vm.snap("console-menu")
         vm.shot("console-menu")
         want = ["console menu", "Assign interfaces", "Reset a user password" if P.get("web_user") else "Reset the admin password", "Web UI:"]   # web_auth=pam products reword option 3
@@ -2334,7 +2462,11 @@ class Runner:
             rc, z = ssh(FWD_SSH, self.key, "zfs get -H -o value encryption,keyformat,keylocation,keystatus rpool | tr '\\n' ' '")
             if want_enc:
                 ok = "aes-256-gcm hex prompt available" in z.replace("\r", "")
-                rc, t = ssh(FWD_SSH, self.key, "ls -l /etc/tpm-unlock; for k in /boot/initramfs-*.img; do lsinitrd $k | grep -E 'tpm2_unseal|tpm-zfskey|tpm-unlock/key' | wc -l; done; grep -c . /etc/dracut.conf.d/92-tpm-unlock.conf")
+                # lsinitrd unpacks every initramfs (zfs + tpm2 tools, tens of MB) on a busy guest: it exceeded the default 40 s (run 21014: "timeout"), so allow T(240) and retry once
+                for _try in range(2):
+                    rc, t = ssh(FWD_SSH, self.key, "ls -l /etc/tpm-unlock; for k in /boot/initramfs-*.img; do lsinitrd $k | grep -E 'tpm2_unseal|tpm-zfskey|tpm-unlock/key' | wc -l; done; grep -c . /etc/dracut.conf.d/92-tpm-unlock.conf", timeout=int(T(240)))
+                    if t.strip() != "timeout":
+                        break
                 self.step("disk-encrypted-with-tpm-sealed-key-unlocked-without-a-console-prompt", ok and "key.priv" in t, re.sub(r"\s+", " ", z + " | " + t)[:300])
             else:
                 self.step("disk-not-encrypted-because-no-tpm-no-prompt", z.split()[:1] == ["off"], re.sub(r"\s+", " ", z)[:200])
