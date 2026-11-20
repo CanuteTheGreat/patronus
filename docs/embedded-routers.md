@@ -1317,5 +1317,22 @@ debugfs, also at every radio start): `AP_AQL` (on), `AP_ATF` (on), `AP_AQL_LOW24
 is busy; mac80211's defaults 5000/12000). With the stock modules `ap airtime` says the driver has no airtime queue
 limit and changes nothing; the Wi-Fi page says the same.
 
+The early boot does not mount debugfs; `ap airtime` mounts it on first use (mac80211's defaults apply without it, but a
+changed limit or AP_AQL/AP_ATF=off would otherwise be skipped with "debugfs not mounted").
+
 Proof: `tests/run.sh` (`ap airtime` against a fake debugfs, with and without AQL in the driver), apwifi.rs unit tests
-(defaults, board.sh parity, validation, live, export/plan), the per-unit A/B on hardware below.
+(defaults, board.sh parity, validation, live, export/plan), and an A/B on a GL-AX1800 (2026-11-20, test client 2 m from
+the unit at about -27 dBm, 2.4 GHz HT20, 15 s TCP loads from a wired host, 0.2 s pings wired -> client, median / max):
+
+| Client, load | stock modules (ch 6) | rebuilt, AQL+ATF off (ch 11) | rebuilt, AQL+ATF on (ch 11) |
+|---|---|---|---|
+| 54 Mbit/s legacy, 4 streams down | 77 / 222 ms and 129 / 431 ms, 6.7-7.9 Mbit/s | 173 / 617 ms, 15.8 Mbit/s | 35.5 / 90 ms and 35.5 / 74 ms, 13.5-14.9 Mbit/s |
+| 54 Mbit/s legacy, upstream | 67 / 245 ms and 72 / 324 ms, 4.2-5.0 Mbit/s | 41 / 92 ms, 15.2 Mbit/s | 44-45 / 98 ms, 18.2-18.6 Mbit/s |
+| HE, 4 streams down | 31.5 / 178 ms and 41.8 / 161 ms, 91-94 Mbit/s | 20.6 / 109 ms, 123 Mbit/s | 22.4 / 80 ms and 24.0 / 84 ms, 113-117 Mbit/s |
+| HE, upstream | 17.6 / 127 ms and 20.7 / 82 ms, 47-59 Mbit/s | 21.7 / 66 ms, 73 Mbit/s | 25-27 / 86 ms, 75-76 Mbit/s |
+
+The middle column is the clean comparison (same build, same channel, same minutes; mac80211's `aql_enable` and
+`airtime_flags` set to 0): the airtime queue limit cuts a loaded legacy station's delay about 5x at equal throughput; a
+fast HE station pays at most about 8% of throughput. The stock column ran on another channel the same night (channel
+coordination moved the radio after the flash), so its throughput is not comparable. Every BSS gave a client a lease (3.3 s for
+the first one after the boot, 0.2 s otherwise) with gateway, internet and DNS, again after `ap stop; ap start`; no firmware crash, wifi-guard normal.

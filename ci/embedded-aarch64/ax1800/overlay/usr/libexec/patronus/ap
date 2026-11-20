@@ -188,6 +188,9 @@ txpower() { # set both radios' transmit power (first BSS of each config) from AP
 #   HIGH otherwise; 100..50000, defaults mac80211's 5000 / 12000). AP_ATF (on|off, default on): airtime fairness.
 airtime() {
   DBG=${AP_DEBUGFS:-/sys/kernel/debug/ieee80211}; find_phys
+  # The early boot does not mount debugfs, and mac80211's settings live only there: mount it on first use (the
+  # defaults are mac80211's own, so without it only changed settings would be missing).
+  [ -n "${AP_DEBUGFS:-}" ] || [ -d "$DBG" ] || mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
   for b in 24 5; do eval "p=\${P$b:-}"; [ -n "$p" ] || continue
     if ! iw phy "$p" info 2>/dev/null | grep '\[ AQL \]' > /dev/null; then
       echo "airtime $p: this driver has no airtime queue limit (OpenWrt's stock Wi-Fi modules): nothing applied"; continue; fi
