@@ -2322,3 +2322,71 @@ async fn groups_grant_per_area_privileges_that_the_gate_enforces() {
     let (s, _) = t.call(&nc, Method::GET, "/api/vpn/wireguard", None).await;
     assert_ne!(s, StatusCode::FORBIDDEN, "back to the operator role");
 }
+
+#[tokio::test]
+async fn configuration_history_compare_shows_what_a_restore_would_change() {
+    let t = setup().await;
+    let c = t.admin().await;
+    t.state
+        .config_store
+        .save_system_config("test.marker", "one")
+        .await
+        .unwrap();
+    let first = t
+        .state
+        .config_store
+        .snapshot("web", "marker is one")
+        .await
+        .unwrap();
+    // identical to the running configuration: nothing to change
+    let (s, b) = t
+        .call(
+            &c,
+            Method::GET,
+            &format!("/api/system/history/{first}/diff"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    assert!(b["tables"].as_array().unwrap().is_empty(), "{b}");
+
+    t.state
+        .config_store
+        .save_system_config("test.marker", "two")
+        .await
+        .unwrap();
+    let (s, b) = t
+        .call(
+            &c,
+            Method::GET,
+            &format!("/api/system/history/{first}/diff"),
+            None,
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+    let text = b.to_string();
+    assert!(
+        text.contains("\"one\"") && text.contains("\"two\""),
+        "{text}"
+    );
+
+    let (s, _) = t
+        .call(&c, Method::GET, "/api/system/history/999999/diff", None)
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    let (s, page, _) = t.raw(Method::GET, "/system", Some(&c), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(page.contains("showRevisionDiff"));
+}
+
+#[test]
+fn config_diff_hides_secret_columns() {
+    use serde_json::json;
+    let old = json!({"tables": {"web_users": [{"name": "a", "password_hash": "H1"}]}});
+    let cur = json!({"tables": {"web_users": [{"name": "a", "password_hash": "H2"}]}});
+    let d = crate::routes::api::system::config_diff(&old, &cur);
+    let text = serde_json::to_string(&d).unwrap();
+    assert!(!text.contains("H1") && !text.contains("H2"), "{text}");
+    assert!(text.contains("(hidden)"));
+}

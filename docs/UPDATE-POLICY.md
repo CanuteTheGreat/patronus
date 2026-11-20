@@ -90,7 +90,7 @@ page shows what the device in front of you offers.
 
 ### Configuration
 
-Every configuration change is kept in the history. Roll back with `patronus config history` and
+Every configuration change is kept in the history. Roll back with `patronus config revisions` and
 `patronus config rollback <id>`, or from the System page. An import that does not apply is reverted
 automatically.
 

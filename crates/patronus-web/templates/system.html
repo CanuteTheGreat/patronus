@@ -489,8 +489,9 @@ async function fwFeedDownload() {
     <p class="text-sm">Every configuration change is kept as a revision (the last few hundred). Restoring one puts that
         configuration back and applies it to the whole system; the configuration it replaces becomes a new revision, so a
         restore can be undone the same way, and if any part cannot be applied the restore is undone. On the box:
-        <span class="mono">patronus config history</span> and <span class="mono">patronus config rollback &lt;id&gt;</span>.</p>
+        <span class="mono">patronus config revisions</span> and <span class="mono">patronus config rollback &lt;id&gt;</span>.</p>
     <p class="empty" id="history-empty" style="display:none">No revisions yet.</p>
+    <pre class="mono" id="history-diff" style="display:none;white-space:pre-wrap;max-height:24em;overflow:auto"></pre>
     <table class="lan" id="history-table" style="display:none"><thead><tr><th>#</th><th>When</th><th>Who</th><th>Change</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
 </div>
 
@@ -997,6 +998,10 @@ async function fwFeedDownload() {
             });
             const act = document.createElement('td');
             if (isAdmin) {
+                const d = document.createElement('button');
+                d.className = 'btn btn-sm'; d.textContent = 'Compare'; d.dataset.diff = h.id;
+                d.onclick = () => showRevisionDiff(h.id);
+                act.appendChild(d); act.appendChild(document.createTextNode(' '));
                 const b = document.createElement('button');
                 b.className = 'btn btn-sm btn-danger'; b.textContent = 'Restore'; b.dataset.revision = h.id;
                 b.onclick = () => restoreRevision(h.id);
@@ -1004,6 +1009,22 @@ async function fwFeedDownload() {
             }
             tr.appendChild(act); tb.appendChild(tr);
         });
+    }
+    async function showRevisionDiff(id) {
+        const r = await fetch('/api/system/history/' + id + '/diff', {credentials: 'same-origin'});
+        const pre = document.getElementById('history-diff');
+        pre.style.display = '';
+        if (!r.ok) { pre.textContent = 'Could not compare revision ' + id + '.'; return; }
+        const j = await r.json();
+        if (!j.tables.length) { pre.textContent = 'Revision ' + id + ' is identical to the running configuration.'; return; }
+        const out = ['Restoring revision ' + id + ' would change:'];
+        j.tables.forEach(t => {
+            out.push('', t.table);
+            t.removed.forEach(x => out.push('  - ' + JSON.stringify(x)));
+            t.restored.forEach(x => out.push('  + ' + JSON.stringify(x)));
+        });
+        out.push('', '(- is removed from the running configuration, + is put back)');
+        pre.textContent = out.join('\n');
     }
     async function restoreRevision(id) {
         if (!confirm('Put the configuration of revision ' + id + ' back and apply it now? The current configuration is kept as a new revision.')) return;
