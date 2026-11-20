@@ -49,6 +49,8 @@ No physical hardware is involved; the installed-ISO path is covered by the live-
 | GitOps: non-firewall resources | `ci/netlab/lane-m-gitops-resources.sh` | netlab | PASS 37 s|
 | Remote encrypted automatic backup | `ci/netlab/lane-n-backup.sh` | netlab | PASS 69 s|
 | DHCPv6 prefix delegation on the WAN | `ci/netlab/lane-n-dhcp6pd.sh` | netlab | PASS 12 s|
+| DHCPv6: ISP refuses the delegated prefix (address kept, readable problem, prefix taken at the next renew) | `ci/netlab/lane-n-dhcp6pd-refused.sh` | netlab | PASS (rw-man-06 lab, dhcpcd 9.4.1 and 10.5.2) |
+| Installed image: world records the plain `net-firewall/patronus` atom (upgrade from another repo resolves) | `ci/test-image-world-atom.sh` | Gentoo CI base image | PASS (rw-man-03) |
 | Factory reset | `ci/netlab/lane-n-factory-reset.sh` | netlab | PASS 12 s|
 | Traffic insights (hosts/services/protocols) | `ci/netlab/lane-n-insights.sh` | netlab | PASS 7 s|
 | LDAP login (real OpenLDAP) | `ci/netlab/lane-n-ldap.sh` | netlab | PASS 8 s|

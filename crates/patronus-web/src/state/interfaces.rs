@@ -272,6 +272,42 @@ pub fn lockout_reason(
 }
 
 /// Interfaces management operations.
+/// DHCPv6 WANs that should delegate a prefix and have none because the server refused it (read from dhcpcd's log). One entry
+/// per WAN: `{interface, kind, message}`; empty when everything delegates or nothing is configured to.
+pub fn dhcp6_problems(
+    cfg: &NetConfig,
+    k: &KernelState,
+    paths: &patronus_network::supervise::NetPaths,
+) -> Vec<Value> {
+    let mut out = Vec::new();
+    for i in cfg
+        .interfaces
+        .iter()
+        .filter(|i| i.enabled && i.ipv6_mode == V6Mode::Dhcp6 && !i.pd_downstream.is_empty())
+    {
+        // a delegated prefix puts a dynamic global address on a downstream port: then no refusal matters any more
+        let delegated = i.pd_downstream.iter().any(|d| {
+            k.links.get(d).is_some_and(|l| {
+                l.addrs
+                    .iter()
+                    .any(|a| a.dynamic && a.scope == "global" && a.net.is_ipv6())
+            })
+        });
+        if delegated {
+            continue;
+        }
+        let log = patronus_network::dhcp_client::dhcpcd_log_tail(
+            paths,
+            &i.name,
+            patronus_network::dhcp_client::LOG_TAIL_BYTES,
+        );
+        if let Some(p) = patronus_network::dhcp_client::dhcp6_problem(&log, &i.name) {
+            out.push(json!({"interface": i.name, "kind": p.kind, "message": p.message}));
+        }
+    }
+    out
+}
+
 pub struct InterfacesManager {
     store: Arc<ConfigStore>,
     applier: Arc<dyn Applier>,
@@ -509,6 +545,7 @@ impl InterfacesManager {
             )
         })
         .collect();
+        let problems = dhcp6_problems(&cfg, &k, &patronus_network::supervise::NetPaths::default());
         let dhcp_override = self
             .store
             .load_system_config(patronus_network::dhcp_client::CLIENT_KEY)
@@ -529,6 +566,7 @@ impl InterfacesManager {
             "overlays": cfg.overlays,
             "pppoe": cfg.pppoe.iter().map(PppoeConfig::redacted).collect::<Vec<_>>(),
             "daemons": daemons,
+            "problems": problems,
         }))
     }
 
@@ -1479,5 +1517,34 @@ mod tests {
             mgmt_set(&c).unwrap().into_iter().collect::<Vec<_>>(),
             vec!["eth1"]
         );
+    }
+
+    #[test]
+    fn a_refused_prefix_becomes_an_interfaces_problem() {
+        let d = tempfile::tempdir().unwrap();
+        let paths = patronus_network::supervise::NetPaths::under(d.path());
+        std::fs::create_dir_all(&paths.run_dir).unwrap();
+        let mut cfg = NetConfig::default();
+        let w = cfg.iface_mut("eth1");
+        w.ipv6_mode = V6Mode::Dhcp6;
+        w.pd_downstream = vec!["eth0".into()];
+        // no log yet, nothing to report
+        assert!(dhcp6_problems(&cfg, &KernelState::default(), &paths).is_empty());
+        std::fs::write(
+            patronus_network::dhcp_client::dhcpcd_log_path(&paths, "eth1"),
+            "eth1: soliciting a DHCPv6 lease\neth1: DHCPv6 REPLY: No prefixes available for this interface.\n",
+        )
+        .unwrap();
+        let p = dhcp6_problems(&cfg, &KernelState::default(), &paths);
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0]["interface"], "eth1");
+        assert_eq!(p[0]["kind"], "pd-refused");
+        assert!(p[0]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("The ISP refused the delegated prefix (NoPrefixAvail"));
+        // a WAN that asks for no prefix has no such problem
+        cfg.iface_mut("eth1").pd_downstream.clear();
+        assert!(dhcp6_problems(&cfg, &KernelState::default(), &paths).is_empty());
     }
 }

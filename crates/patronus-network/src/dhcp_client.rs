@@ -238,6 +238,79 @@ pub fn dhcpcd_conf(
     c
 }
 
+/// The file dhcpcd writes its own log to for `dev` (config `logfile`), under the run directory of [`NetPaths`].
+pub fn dhcpcd_log_path(paths: &NetPaths, dev: &str) -> PathBuf {
+    paths.run_dir.join(format!("{SERVICE}.{dev}.dhcpcd.log"))
+}
+
+/// What a DHCPv6 server refused, from dhcpcd's log.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Dhcp6Problem {
+    /// `pd-refused` (NoPrefixAvail), `address-refused` (NoAddrsAvail) or `refused` (another status)
+    pub kind: &'static str,
+    /// One readable sentence for the Interfaces page and the API
+    pub message: String,
+}
+
+/// The server's latest refusal of `dev` that no later delegated prefix has answered.
+///
+/// dhcpcd logs a failed IA as `<dev>: DHCPv6 REPLY: <status text>` (the server's own message when it sent one, else the RFC 8415
+/// name) and a granted prefix as `<dev>: delegated prefix <prefix>`. It keeps the IA_NA address a server offers while IA_PD is
+/// refused (dhcpcd 9.4 and 10.5, measured in netlab) and asks for the prefix again at every renew, so the refusal is a state to show,
+/// not one to repair.
+pub fn dhcp6_problem(log: &str, dev: &str) -> Option<Dhcp6Problem> {
+    let reply = format!("{dev}: DHCPv6 REPLY: ");
+    let granted = format!("{dev}: delegated prefix ");
+    let mut found: Option<String> = None;
+    for l in log.lines() {
+        if let Some((_, msg)) = l.split_once(&reply) {
+            found = Some(msg.trim().to_string());
+        } else if l.contains(&granted) {
+            found = None;
+        }
+    }
+    let msg = found?;
+    let low = msg.to_ascii_lowercase();
+    let (kind, text) = if low.contains("prefix") {
+        (
+            "pd-refused",
+            format!("The ISP refused the delegated prefix (NoPrefixAvail: \"{msg}\"). The router keeps asking at every renew; an ISP that still holds a replaced router's binding releases it when that expires, or pin the old router's DUID and IAID."),
+        )
+    } else if low.contains("address") {
+        (
+            "address-refused",
+            format!("The ISP offered no IPv6 address (NoAddrsAvail: \"{msg}\")."),
+        )
+    } else {
+        (
+            "refused",
+            format!("The DHCPv6 server refused the request: \"{msg}\"."),
+        )
+    };
+    Some(Dhcp6Problem {
+        kind,
+        message: text,
+    })
+}
+
+/// How much of the end of dhcpcd's log the Interfaces page reads for a refusal (the log only grows by one line per renew).
+pub const LOG_TAIL_BYTES: u64 = 65536;
+
+/// The last `max` bytes of dhcpcd's log for `dev` (empty when there is none).
+pub fn dhcpcd_log_tail(paths: &NetPaths, dev: &str, max: u64) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(dhcpcd_log_path(paths, dev)) else {
+        return String::new();
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    if len > max {
+        let _ = f.seek(SeekFrom::Start(len - max));
+    }
+    let mut b = Vec::new();
+    let _ = f.read_to_end(&mut b);
+    String::from_utf8_lossy(&b).into_owned()
+}
+
 /// dhcpcd `script`: run dhcpcd's stock hooks, then tell radvd that the
 /// delegated prefix changed (it advertises `::/64` = whatever /64 the
 /// downstream interface carries).
@@ -391,6 +464,12 @@ pub fn spec(
         Client::Dhcpcd => {
             let conf: PathBuf = dir.join(format!("dhcpcd-{dev}.conf"));
             let mut text = dhcpcd_conf(dev, v4, v6, metric, pd, iaid);
+            // dhcpcd's own log in a file that is the same under every init system: the Interfaces page reads the server's
+            // refusals (no prefix, no address) from it (`dhcp6_problem`)
+            text.push_str(&format!(
+                "logfile {}\n",
+                dhcpcd_log_path(paths, dev).display()
+            ));
             let mut hook_file = None;
             if v6 && !pd.is_empty() {
                 // after dhcpcd's own hooks, make radvd re-read the prefix
@@ -568,6 +647,15 @@ mod tests {
         );
         let c = dhcpcd_conf("eth0", true, true, 100, &[], Some(7));
         assert!(c.contains("ia_na 7\n") && !c.contains("ia_pd"), "{c}");
+        // dhcpcd writes its own log to a known file (read back for the server's refusals)
+        assert!(
+            d.files[0].1.contains(&format!(
+                "logfile {}\n",
+                dhcpcd_log_path(&p, "eth0").display()
+            )),
+            "{}",
+            d.files[0].1
+        );
         // an interface's own metric beats the role's default (5 GHz uplink ahead of the 2.4 GHz one)
         let own = spec(
             "wl24-sta",
@@ -591,5 +679,61 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Invalid"));
+    }
+
+    #[test]
+    fn refused_prefix_is_read_from_the_dhcpcd_log() {
+        let log = "Nov 20 05:00:01 rtr-wan: soliciting a DHCPv6 lease\n\
+                   Nov 20 05:00:02 rtr-wan: DHCPv6 REPLY: No prefixes available for this interface.\n\
+                   Nov 20 05:00:02 rtr-wan: adding address 2001:db8:ffff::200/128\n\
+                   Nov 20 05:05:02 rtr-wan: 2001:db8:ffff::1: DHCPv6 REPLY missing Prefix\n";
+        let p = dhcp6_problem(log, "rtr-wan").unwrap();
+        assert_eq!(p.kind, "pd-refused");
+        assert!(
+            p.message
+                .starts_with("The ISP refused the delegated prefix (NoPrefixAvail"),
+            "{}",
+            p.message
+        );
+        assert!(p
+            .message
+            .contains("No prefixes available for this interface."));
+        // the RFC name when the server sent no text
+        let p = dhcp6_problem("rtr-wan: DHCPv6 REPLY: No Prefix Available\n", "rtr-wan").unwrap();
+        assert_eq!(p.kind, "pd-refused");
+        // another port's refusal is not ours
+        assert!(dhcp6_problem(log, "rtr-lan").is_none());
+        // a later granted prefix clears it
+        let ok = format!("{log}rtr-wan: delegated prefix 2001:db8:10ff::/56\n");
+        assert!(dhcp6_problem(&ok, "rtr-wan").is_none());
+        // the address refusal and any other status are told apart
+        assert_eq!(
+            dhcp6_problem("w: DHCPv6 REPLY: No Addresses Available\n", "w")
+                .unwrap()
+                .kind,
+            "address-refused"
+        );
+        assert_eq!(
+            dhcp6_problem("w: DHCPv6 REPLY: Unspecified Failure\n", "w")
+                .unwrap()
+                .kind,
+            "refused"
+        );
+        assert!(dhcp6_problem("w: soliciting a DHCPv6 lease\n", "w").is_none());
+    }
+
+    #[test]
+    fn log_tail_reads_the_end_of_a_big_log() {
+        let d = tempfile::tempdir().unwrap();
+        let p = NetPaths::under(d.path());
+        std::fs::create_dir_all(&p.run_dir).unwrap();
+        assert_eq!(dhcpcd_log_tail(&p, "eth0", 1000), "");
+        std::fs::write(
+            dhcpcd_log_path(&p, "eth0"),
+            format!("{}\nlast line\n", "x".repeat(5000)),
+        )
+        .unwrap();
+        let t = dhcpcd_log_tail(&p, "eth0", 100);
+        assert!(t.len() <= 100 && t.ends_with("last line\n"), "{t:?}");
     }
 }

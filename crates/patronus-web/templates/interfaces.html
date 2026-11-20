@@ -39,6 +39,7 @@
         <p class="page-subtitle"><span id="session-line">Loading&hellip;</span> &middot; <a href="/network">Network services</a></p>
     </div>
     <div id="msg"></div>
+    <div id="problems"></div>
 
     <h2>Interface assignments</h2>
     <p class="muted">Assign WAN / LAN / OPT roles and configure addressing. Rows without
@@ -320,6 +321,7 @@ function render() {
     document.getElementById('sd-default').textContent = D.system_dhcpcd.default_conf;
     document.getElementById('sd-conf').value = D.system_dhcpcd.conf === D.system_dhcpcd.default_conf ? '' : D.system_dhcpcd.conf;
     document.getElementById('sd-run').value = D.system_dhcpcd.run_dir === D.system_dhcpcd.default_run_dir ? '' : D.system_dhcpcd.run_dir;
+    document.getElementById('problems').innerHTML = (D.problems || []).map(p => '<div class="card" role="alert" style="border-left: 4px solid var(--warn-fg); margin: 10px 0; padding: 10px;"><strong>' + esc(p.interface) + ':</strong> ' + esc(p.message) + '</div>').join('');
     document.getElementById('daemons').innerHTML = D.daemons.length ? D.daemons.map(x => esc(x.service + '[' + x.instance + ']') + ' ' + (x.running ? '<span class="badge up">running</span>' : '<span class="badge down">stopped</span>')).join(', ') : '<span class="muted">none</span>';
 
     const rs = document.getElementById('role-select');
