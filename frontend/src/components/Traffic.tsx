@@ -82,10 +82,10 @@ export default function Traffic() {
               <BarChart data={stat.applications}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" />
-                <YAxis />
+                <YAxis width={72} tickFormatter={(v: number) => formatBytes(v)} />
                 <Tooltip formatter={(value: number) => formatBytes(value)} />
                 <Legend />
-                <Bar dataKey="bytes" fill="#0ea5e9" name="Bytes" />
+                <Bar dataKey="bytes" fill="#0ea5e9" name="Traffic" />
               </BarChart>
             </ResponsiveContainer>
           </div>
