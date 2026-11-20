@@ -117,7 +117,7 @@ refused "http://$NL_RTR_LAN/"
 nl_ok "after the restart 9443 and 8443 answer; 443 and 80 are gone"
 nl_json_state=$(sqlite3 "$DB" "select value from system_config where key='web.https_port'")
 [ "$nl_json_state" = 9443 ] || nl_fail "web.https_port in the store is '$nl_json_state'"
-echo "=== it is part of the configuration: survives a reboot, export carries it"
+echo "=== it is part of the configuration: survives a reboot"
 stop_web
 nl_boot "$DB"
 chown -R 65534:65534 "$W"
