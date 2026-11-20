@@ -715,6 +715,7 @@ impl<'a> Planner<'a> {
                         self.inp.paths,
                         &i.pd_downstream,
                         i.dhcp6_duid.as_deref(),
+                        i.dhcp6_iaid,
                     ) {
                         Ok(s) => self.push(Op::Ensure(s)),
                         Err(e) => self.warn(format!("{dev}: DHCP client not started: {e}")),

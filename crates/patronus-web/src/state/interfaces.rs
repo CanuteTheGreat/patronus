@@ -58,6 +58,8 @@ pub struct InterfaceUpdate {
     pub metric: Option<u32>,
     /// Pinned DHCPv6 client DUID (hex bytes, colon separated); null = dhcpcd's own.
     pub dhcp6_duid: Option<String>,
+    /// DHCPv6 IAID for IA_NA and IA_PD (the replaced router's, to keep its prefix); null = automatic.
+    pub dhcp6_iaid: Option<u32>,
     /// Apply even if it may cut off the current management session.
     pub force: bool,
 }
@@ -654,6 +656,11 @@ impl InterfacesManager {
             i.metric = u.metric.filter(|m| *m > 0);
             i.dhcp6_duid = if ipv6_mode == V6Mode::Dhcp6 {
                 dhcp6_duid
+            } else {
+                None
+            };
+            i.dhcp6_iaid = if ipv6_mode == V6Mode::Dhcp6 {
+                u.dhcp6_iaid
             } else {
                 None
             };

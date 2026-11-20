@@ -132,7 +132,16 @@ pub struct IfaceConfig {
     /// ISP delegated to the old one. `None` = dhcpcd's own DUID.
     #[serde(default)]
     pub dhcp6_duid: Option<String>,
+    /// DHCPv6 IAID (IA_NA and IA_PD share it). The ISP binds the address and
+    /// the delegated prefix to DUID + IAID, so a replaced router that also
+    /// keeps the old router's IAID gets the same prefix at once. `None` =
+    /// dhcpcd's defaults (IA_NA from the MAC address, IA_PD [`DEFAULT_PD_IAID`]).
+    #[serde(default)]
+    pub dhcp6_iaid: Option<u32>,
 }
+
+/// IA_PD IAID when none is configured.
+pub const DEFAULT_PD_IAID: u32 = 1;
 
 /// Normalise a DUID to lowercase colon-separated hex bytes (2 to 130 bytes,
 /// RFC 8415). Accepts `:`/`-`/space separators or a plain hex run.
@@ -773,6 +782,12 @@ impl NetConfig {
                     )));
                 }
             }
+            if i.dhcp6_iaid.is_some() && i.ipv6_mode != V6Mode::Dhcp6 {
+                return Err(invalid(format!(
+                    "{}: a DHCPv6 IAID needs IPv6 mode dhcp6",
+                    i.name
+                )));
+            }
             if i.ipv6_mode != V6Mode::Static && !i.ipv6.is_empty() {
                 return Err(invalid(format!(
                     "{}: IPv6 addresses are only used in static mode",
@@ -809,7 +824,7 @@ impl NetConfig {
         let mut cfg = NetConfig::default();
         let rows = sqlx::query(
             "SELECT name, role, enabled, ipv4_mode, ipv6_mode, gateway4, gateway6, mtu, mac,
-                    description, dhcp, pd_downstream, metric, dhcp6_duid
+                    description, dhcp, pd_downstream, metric, dhcp6_duid, dhcp6_iaid
              FROM interfaces ORDER BY name",
         )
         .fetch_all(pool)
@@ -840,6 +855,9 @@ impl NetConfig {
                 .collect();
             i.metric = r.get::<Option<i64>, _>(12).map(|m| m as u32);
             i.dhcp6_duid = r.get::<Option<String>, _>(13).filter(|d| !d.is_empty());
+            i.dhcp6_iaid = r
+                .get::<Option<i64>, _>(14)
+                .and_then(|v| u32::try_from(v).ok());
             cfg.interfaces.push(i);
         }
         let addrs = sqlx::query(
@@ -1050,8 +1068,8 @@ impl NetConfig {
             sqlx::query(
                 "INSERT INTO interfaces (name, role, enabled, dhcp, ipv4_mode, ipv6_mode,
                      gateway4, gateway6, mtu, mac, description, pd_downstream, metric, dhcp6_duid,
-                     updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     dhcp6_iaid, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(name) DO UPDATE SET role = excluded.role,
                      enabled = excluded.enabled, dhcp = excluded.dhcp,
                      ipv4_mode = excluded.ipv4_mode, ipv6_mode = excluded.ipv6_mode,
@@ -1060,6 +1078,7 @@ impl NetConfig {
                      description = excluded.description,
                      pd_downstream = excluded.pd_downstream, metric = excluded.metric,
                      dhcp6_duid = excluded.dhcp6_duid,
+                     dhcp6_iaid = excluded.dhcp6_iaid,
                      updated_at = excluded.updated_at",
             )
             .bind(&i.name)
@@ -1076,6 +1095,7 @@ impl NetConfig {
             .bind(i.pd_downstream.join(","))
             .bind(i.metric.map(|m| m as i64))
             .bind(i.dhcp6_duid.as_deref().map(normalize_duid).transpose()?)
+            .bind(i.dhcp6_iaid.map(i64::from))
             .bind(now)
             .execute(&mut *tx)
             .await
