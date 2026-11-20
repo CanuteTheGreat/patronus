@@ -321,101 +321,6 @@ pub async fn list_history(State(state): State<AppState>) -> Response {
     }
 }
 
-/// Column names whose values never leave the box in a diff.
-fn secret_column(name: &str) -> bool {
-    let n = name.to_ascii_lowercase();
-    [
-        "password", "secret", "hash", "token", "key", "totp", "recovery", "psk",
-    ]
-    .iter()
-    .any(|w| n.contains(w))
-}
-
-fn redact_row(row: &serde_json::Value) -> serde_json::Value {
-    match row {
-        serde_json::Value::Object(o) => serde_json::Value::Object(
-            o.iter()
-                .map(|(k, v)| {
-                    if secret_column(k) && !v.is_null() {
-                        (k.clone(), json!("(hidden)"))
-                    } else {
-                        (k.clone(), v.clone())
-                    }
-                })
-                .collect(),
-        ),
-        other => other.clone(),
-    }
-}
-
-/// What restoring `old` would change in `current`: per table, the rows the
-/// restore would bring back (`restored`) and the rows it would remove
-/// (`removed`). Rows are compared whole; secret columns are shown hidden
-/// (a changed secret still shows as a different row, never its value).
-pub(crate) fn config_diff(
-    old: &serde_json::Value,
-    current: &serde_json::Value,
-) -> Vec<serde_json::Value> {
-    use std::collections::BTreeSet;
-    let empty = serde_json::Map::new();
-    let (ot, ct) = (
-        old.get("tables")
-            .and_then(|t| t.as_object())
-            .unwrap_or(&empty),
-        current
-            .get("tables")
-            .and_then(|t| t.as_object())
-            .unwrap_or(&empty),
-    );
-    let names: BTreeSet<&String> = ot.keys().chain(ct.keys()).collect();
-    let rows =
-        |t: &serde_json::Map<String, serde_json::Value>, n: &str| -> Vec<serde_json::Value> {
-            t.get(n)
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default()
-        };
-    let mut out = Vec::new();
-    for n in names {
-        let (o, c) = (rows(ot, n), rows(ct, n));
-        let restored: Vec<_> = o
-            .iter()
-            .filter(|r| !c.contains(r))
-            .map(redact_row)
-            .collect();
-        let removed: Vec<_> = c
-            .iter()
-            .filter(|r| !o.contains(r))
-            .map(redact_row)
-            .collect();
-        if restored.is_empty() && removed.is_empty() {
-            continue;
-        }
-        out.push(json!({ "table": n, "restored": restored, "removed": removed }));
-    }
-    out
-}
-
-/// GET /api/system/history/:id/diff -- what restoring a revision would
-/// change relative to the running configuration (admins: the rows can
-/// hold addresses and account names).
-pub async fn history_diff(
-    State(state): State<AppState>,
-    _admin: AdminUser,
-    Path(id): Path<i64>,
-) -> Response {
-    let old = match state.config_store.revision_json(id).await {
-        Ok(Some(d)) => d,
-        Ok(None) => return error(StatusCode::NOT_FOUND, "no such revision"),
-        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-    };
-    let current = match state.config_store.export_json().await {
-        Ok(d) => d,
-        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-    };
-    Json(json!({ "revision": id, "tables": config_diff(&old, &current) })).into_response()
-}
-
 /// POST /api/system/history/:id/restore -- put the configuration of one
 /// revision back and apply it to the whole system (admins). The state it
 /// replaces is kept as a new revision, so this can be undone the same way;
@@ -1414,7 +1319,6 @@ pub fn router() -> axum::Router<AppState> {
         .route("/system/history/revert", post(revert_history))
         .route("/system/history/:id/diff", get(diff_history))
         .route("/system/history/:id/restore", post(restore_history))
-        .route("/system/history/:id/diff", get(history_diff))
         .route("/system/updates", get(list_updates))
         .route("/system/updates/check", post(check_updates))
         .route("/system/updates/apply", post(apply_updates))
