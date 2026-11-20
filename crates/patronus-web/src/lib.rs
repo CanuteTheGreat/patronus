@@ -689,11 +689,7 @@ mod listener_tests {
         assert_eq!(bound.failed.len(), 1);
         assert_eq!(bound.failed[0].0.port(), taken);
 
-        let r = http_get(
-            SocketAddr::from(([127, 0, 0, 1], redirect)),
-            "192.0.2.1:80",
-        )
-        .await;
+        let r = http_get(SocketAddr::from(([127, 0, 0, 1], redirect)), "192.0.2.1:80").await;
         assert!(r.starts_with("HTTP/1.1 308"), "{r}");
         assert!(
             r.to_lowercase().contains(&format!(
