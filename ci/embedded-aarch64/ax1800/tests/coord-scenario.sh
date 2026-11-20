@@ -28,7 +28,7 @@ mac() { cat /sys/class/ieee80211/$1/macaddress; }
 key() { mac "$1" | cut -d: -f2-; }
 board() { # UNIT PHY24 PHY5 extra...: the unit's board file
   u=$1; shift 3
-  printf '. %s/etc/patronus/board.sh\n%s\nAP_COUNTRY=US\nAP_SSIDS=%s\nSSID_%s=coordnet KEY_%s=coordtest123 SEC_%s=wpa2\nAP_COORD_DELAY=8 AP_COORD_INTERVAL=0 AP_ACS_SCANS=1\n%s\n' \
+  printf '. %s/etc/patronus/board.sh\n%s\nAP_COUNTRY=US\nAP_SSIDS=%s\nSSID_%s=coordnet KEY_%s=coordtest123 SEC_%s=wpa2\nAP_COORD_DELAY=3600 AP_COORD_INTERVAL=0 AP_ACS_SCANS=1\n%s\n' \
     "$AP_DIR" "$HWSIM_CAPS" "$u" "$u" "$u" "$u" "$*" > $T/board-$u.sh; }
 NSA=; NSB=
 holder() { # UNIT: a mount namespace of its own, kept alive by a sleep; its pid in $T/ns-UNIT
@@ -67,7 +67,13 @@ plan)
   ap_stop a; ap_stop b;;
 repair)
   sleep 35   # the earlier case's units left BSSs in the kernel scan list for 30 s: with them heard every block looks taken and ACS decides alone
-  board a $A24 $A5; board b $B24 $B5
+  # The re-check scans with ap-force: the scanning radio leaves its channel for about a second and is not heard meanwhile.
+  # Two units that check at the same moment can therefore both miss each other (on a loaded host their scans drift by
+  # more than a dwell, and the mover's dwell on the other unit's channel falls into the other unit's off-channel time),
+  # so the case staggers the two checks by 30 s. The other cases never run the re-check (AP_COORD_DELAY=3600 in board()):
+  # a unit's re-check taking its radio off the air while the other unit scans made 'plan' miss it, 2 runs of 4 on rw-man-02.
+  RA=${COORD_REPAIR_DELAY:-30}; RB=$((RA + 30))
+  board a $A24 $A5 AP_COORD_DELAY=$RA; board b $B24 $B5 AP_COORD_DELAY=$RB
   ap_start a $A24 $A5 AP_COORD_NOPLAN=1 & pa=$!; ap_start b $B24 $B5 AP_COORD_NOPLAN=1 & pb=$!; wait $pa $pb
   wait_up a wl5-a 90 || fail "repair: unit a 5 GHz not up"; wait_up b wl5-b 90 || fail "repair: unit b 5 GHz not up"
   ca=$(seg a wl5-a); cb=$(seg b wl5-b); echo "    both started blind: centres $ca / $cb"
@@ -76,7 +82,7 @@ repair)
     ka=$(key $A5); kb=$(key $B5)
     if [ "$(printf '%s\n%s\n' "$ka" "$kb" | sort | head -1)" = "$ka" ]; then mover=b; stayer=a; else mover=a; stayer=b; fi
     first=$ca; echo "    same block $ca: the higher key moves = unit $mover"
-    n=0; t0=$(date +%s); while [ $n -lt 60 ] && [ $(( $(date +%s) - t0 )) -lt 150 ]; do sleep 2; n=$((n + 2))
+    n=0; t0=$(date +%s); while [ $n -lt $((RB + 60)) ] && [ $(( $(date +%s) - t0 )) -lt $((RB + 120)) ]; do sleep 2; n=$((n + 2))
       [ -d /sys/class/ieee80211/$A5 ] && [ -d /sys/class/ieee80211/$B5 ] || { fail "repair: a radio vanished (mac80211_hwsim unloaded by another run?)"; break; }
       wait_up $mover wl5-$mover 8 >/dev/null 2>&1
       ca=$(seg a wl5-a); cb=$(seg b wl5-b); [ -n "$ca" ] && [ -n "$cb" ] && [ "$ca" != "$cb" ] && break; done

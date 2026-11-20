@@ -75,7 +75,16 @@ scan_if() { # BAND IF [ap-force]: a fresh scan of the band's frequencies (falls 
   # a scan right after the interface came up can answer "busy": try again (three times), then use the kernel's cached list
   # (a running access point scans with ap-force and a fixed dwell: without them it only reports its own channel)
   xa=; [ "${3:-}" = ap-force ] && xa="ap-force"
-  n=0; while :; do out=$(timeout "$t" iw dev "$2" scan $xa freq $(freqs "$1") ${xa:+duration $(num "${AP_CHAN_DWELL:-}" 105)} 2>/dev/null) && break
+  # The very first scan of a freshly created interface can also succeed and return NOTHING (not even a neighbour; seen on
+  # a loaded host, where the same radio then heard the peer in every later scan): an empty answer from the pre-start scan
+  # is repeated (twice, AP_COORD_RESCANS) after a pause before the band counts as having no other access point.
+  z=0; rs=$(num "${AP_COORD_RESCANS:-}" 2)
+  n=0; while :; do
+    if out=$(timeout "$t" iw dev "$2" scan $xa freq $(freqs "$1") ${xa:+duration $(num "${AP_CHAN_DWELL:-}" 105)} 2>/dev/null); then
+      case "$out" in *BSS*) break;; esac
+      if [ -n "$xa" ] || [ $z -ge "$rs" ]; then break; fi
+      z=$((z + 1)); sleep 2; continue
+    fi
     n=$((n + 1)); [ $n -ge 3 ] && { out=$(iw dev "$2" scan dump 2>/dev/null); say "$1 GHz: the scan failed three times, using the cached list" >&2; break; }
     sleep 1; done
   echo "$out"; }
