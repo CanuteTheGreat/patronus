@@ -4,7 +4,6 @@
 //! appliers once instead of twice, see docs/embedded-routers.md).
 
 use anyhow::Result;
-use std::net::SocketAddr;
 use tracing::{error, info};
 
 /// The web UI's log setup (`RUST_LOG`, else verbose patronus_web/tower_http).
@@ -103,42 +102,88 @@ pub async fn run() -> Result<()> {
         );
     }
 
-    // PATRONUS_HTTPS_PORT (default 8443; the embedded router image uses 443) and
-    // PATRONUS_HTTP_REDIRECT_PORT (unset = no plain-HTTP listener; 80 on the router).
-    let https_port: u16 = std::env::var("PATRONUS_HTTPS_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(8443);
-    if let Some(p) = std::env::var("PATRONUS_HTTP_REDIRECT_PORT")
-        .ok()
-        .and_then(|v| v.parse::<u16>().ok())
-    {
-        tokio::spawn(async move {
-            if let Err(e) =
-                crate::serve_http_redirect(SocketAddr::from(([0, 0, 0, 0], p)), https_port).await
-            {
-                error!("HTTP redirect listener: {}", e);
-            }
-        });
+    // Where to listen: built-in default, environment, patronus.toml [web] and
+    // the config store's web.* keys (patronus_config::webui), highest wins.
+    let settings = patronus_config::webui::resolve(Some(&state.config_store)).await;
+    if let Err(e) = settings.validate() {
+        // a stored combination that cannot work must not leave the box without a UI
+        error!("{e}; using the built-in web listener defaults");
+        return serve_with(patronus_config::webui::WebSettings::default(), state).await;
     }
-    let addr = SocketAddr::from(([0, 0, 0, 0], https_port));
+    serve_with(settings, state).await?;
+    info!("Server shutdown gracefully");
+    Ok(())
+}
+
+async fn serve_with(
+    settings: patronus_config::webui::WebSettings,
+    state: crate::AppState,
+) -> Result<()> {
     let tls_dir = crate::tls::default_tls_dir();
     info!(
-        "Web interface listening on https://{} (self-signed TLS, cert dir: {})",
-        addr,
+        "Web interface: https on {:?} port {} (+ extra {:?}), http redirect port {}, TLS {} (cert dir: {})",
+        settings.listen,
+        settings.https_port,
+        settings.extra_https_ports,
+        settings.http_redirect_port,
+        if settings.tls_cert.is_empty() {
+            "self-signed".to_string()
+        } else {
+            settings.tls_cert.clone()
+        },
         tls_dir.display()
     );
-
-    // Start server using the library's TLS serve function. The dashboard is
-    // documented and configured as HTTPS on 8443, so it serves HTTPS by
-    // default (self-signed cert, auto-generated on first run).
-    if let Err(e) = crate::serve_tls(addr, state, &tls_dir).await {
+    if let Err(e) = crate::serve_web(settings, state, &tls_dir, None).await {
         error!("Server error: {}", e);
         return Err(e);
     }
-
-    info!("Server shutdown gracefully");
     Ok(())
+}
+
+/// `--help` / `--version` for the web binary (and the multi-call
+/// `patronus-web` link). `None` = no such flag: start the server. The server
+/// takes no other arguments, so anything else is refused instead of being
+/// ignored and starting a server by accident.
+pub fn cli_flags(args: &[String]) -> Option<(String, i32)> {
+    let first = args.first()?;
+    match first.as_str() {
+        "-h" | "--help" => Some((help_text(), 0)),
+        "-V" | "--version" => Some((format!("patronus-web {}\n", env!("CARGO_PKG_VERSION")), 0)),
+        other => Some((
+            format!(
+                "patronus-web: unexpected argument '{other}'\n\n{}",
+                help_text()
+            ),
+            2,
+        )),
+    }
+}
+
+fn help_text() -> String {
+    r#"patronus-web @VER@
+Patronus web UI server. Takes no arguments: it serves the management UI and API
+until stopped.
+
+Usage: patronus-web [--help | --version]
+
+Where it listens (each layer replaces the one before it, key by key):
+  1. built-in: HTTPS 443, HTTP 80 that only redirects to HTTPS, extra HTTPS 8443
+  2. environment: PATRONUS_WEB_LISTEN, PATRONUS_HTTPS_PORT,
+     PATRONUS_HTTP_REDIRECT_PORT (0 = off), PATRONUS_WEB_EXTRA_HTTPS_PORTS
+     (comma list, 'none' = off), PATRONUS_TLS_CERT, PATRONUS_TLS_KEY
+  3. /etc/patronus/patronus.toml [web]: listen_addr, https_port,
+     http_redirect_port, extra_https_ports, tls_cert, tls_key
+  4. the config store (System page, PUT /api/system/web): web.listen,
+     web.https_port, web.http_redirect_port, web.extra_https_ports,
+     web.tls_cert, web.tls_key
+
+Other environment: PATRONUS_DB (config store), PATRONUS_TLS_DIR (self-signed
+certificate directory, default /etc/patronus/tls), PATRONUS_TLS_IP /
+PATRONUS_TLS_HOSTNAME (names in a generated certificate), RUST_LOG.
+Ports below 1024 need CAP_NET_BIND_SERVICE (the shipped OpenRC script and
+systemd unit grant it); a listener that cannot be bound is logged and skipped.
+"#
+    .replace("@VER@", env!("CARGO_PKG_VERSION"))
 }
 
 #[cfg(test)]
@@ -157,5 +202,19 @@ mod tests {
             let f = super::audit_filter(rust_log).to_string();
             assert!(f.contains(want), "{rust_log:?} -> {f}");
         }
+    }
+
+    #[test]
+    fn help_and_version_never_start_the_server() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(super::cli_flags(&a(&[])), None);
+        let (t, c) = super::cli_flags(&a(&["--help"])).unwrap();
+        assert_eq!(c, 0);
+        assert!(t.contains("PATRONUS_HTTPS_PORT") && t.contains("Usage: patronus-web"));
+        let (t, c) = super::cli_flags(&a(&["--version"])).unwrap();
+        assert_eq!(c, 0);
+        assert!(t.starts_with("patronus-web "));
+        let (_, c) = super::cli_flags(&a(&["--bogus"])).unwrap();
+        assert_eq!(c, 2);
     }
 }

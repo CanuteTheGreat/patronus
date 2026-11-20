@@ -191,6 +191,13 @@ that are not finished are listed separately under
   disconnect. Proven on the simulated radios of mac80211_hwsim; the real
   measurement (neighbours heard, airtime) depends on the radio's driver.
   [C84]
+- The web UI answers where a router's UI is expected: `https://router-address`
+  (HTTPS on 443), `http://router-address` (port 80, which only redirects to
+  HTTPS and serves nothing else) and, for existing bookmarks, the old
+  `:8443`. The addresses, ports and certificate are settings (System page,
+  API, `patronus.toml`, environment), the firewall's anti-lockout rule follows
+  them, and the service runs as an unprivileged user that holds only the
+  capability to bind these ports, on both OpenRC and systemd. [C86]
 
 ### Configuration you can trust
 

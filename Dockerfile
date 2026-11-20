@@ -179,7 +179,7 @@ RUN emerge --verbose sys-libs/libcap && \
 ENV PATRONUS_AUTH_ETC=/var/lib/patronus/auth
 USER patronus
 WORKDIR /home/patronus
-EXPOSE 8443 51820/udp
+EXPOSE 443 80 8443 51820/udp
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -kf https://localhost:8443/ || exit 1

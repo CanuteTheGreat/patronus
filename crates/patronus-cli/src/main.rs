@@ -709,6 +709,15 @@ async fn main() -> anyhow::Result<()> {
         })
         .unwrap_or(false)
     {
+        let rest: Vec<String> = std::env::args().skip(1).collect();
+        if let Some((text, code)) = patronus_web::server::cli_flags(&rest) {
+            if code == 0 {
+                print!("{text}");
+            } else {
+                eprint!("{text}");
+            }
+            std::process::exit(code);
+        }
         patronus_web::server::init_tracing();
         return patronus_web::server::run().await;
     }

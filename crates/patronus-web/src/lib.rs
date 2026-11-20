@@ -190,40 +190,190 @@ pub async fn serve_tls(
     Ok(())
 }
 
+/// The `Location` of the HTTP -> HTTPS redirect: the host the client asked
+/// for (any port stripped, an IPv6 literal keeps its brackets), the HTTPS
+/// port (443 is omitted) and the original path and query. A missing or
+/// unusable Host header falls back to `patronus`.
+pub fn redirect_location(host_header: &str, path_and_query: &str, https_port: u16) -> String {
+    let h = host_header.trim();
+    let host = if let Some(rest) = h.strip_prefix('[') {
+        match rest.split_once(']') {
+            Some((a, _)) if !a.is_empty() => format!("[{a}]"),
+            _ => String::new(),
+        }
+    } else {
+        h.split(':').next().unwrap_or("").to_string()
+    };
+    // a Host header is attacker-controlled text that ends up in a header:
+    // keep only hostname / address characters
+    let host = if host.is_empty()
+        || !host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '[' | ']' | ':'))
+    {
+        "patronus".to_string()
+    } else {
+        host
+    };
+    let pq = if path_and_query.starts_with('/') && !path_and_query.contains(['\r', '\n']) {
+        path_and_query
+    } else {
+        "/"
+    };
+    if https_port == 443 {
+        format!("https://{host}{pq}")
+    } else {
+        format!("https://{host}:{https_port}{pq}")
+    }
+}
+
+fn redirect_app(https_port: u16) -> axum::Router {
+    use axum::http::{header, HeaderMap, StatusCode, Uri};
+    axum::Router::new().fallback(move |headers: HeaderMap, uri: Uri| async move {
+        let host = headers
+            .get(header::HOST)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("");
+        let pq = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
+        let loc = redirect_location(host, pq, https_port);
+        (StatusCode::PERMANENT_REDIRECT, [(header::LOCATION, loc)])
+    })
+}
+
 /// Plain-HTTP listener that only answers `308` to the HTTPS URL (OpenWrt-style
 /// "http://192.168.1.1 -> https://192.168.1.1"). It serves nothing else: no
 /// pages, no login, no cookies. `https_port` 443 is omitted from the Location.
 pub async fn serve_http_redirect(addr: SocketAddr, https_port: u16) -> anyhow::Result<()> {
-    use axum::http::{header, HeaderMap, StatusCode, Uri};
-    let app = axum::Router::new().fallback(move |headers: HeaderMap, uri: Uri| async move {
-        let host = headers
-            .get(header::HOST)
-            .and_then(|h| h.to_str().ok())
-            .unwrap_or("")
-            .split(':')
-            .next()
-            .unwrap_or("")
-            .to_string();
-        let host = if host.is_empty() {
-            "patronus".into()
-        } else {
-            host
-        };
-        let pq = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
-        let loc = if https_port == 443 {
-            format!("https://{host}{pq}")
-        } else {
-            format!("https://{host}:{https_port}{pq}")
-        };
-        (StatusCode::PERMANENT_REDIRECT, [(header::LOCATION, loc)])
-    });
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(
         "HTTP redirect on http://{} -> https port {}",
         addr,
         https_port
     );
-    axum::serve(listener, app).await?;
+    axum::serve(listener, redirect_app(https_port)).await?;
+    Ok(())
+}
+
+/// What [`serve_web`] bound.
+#[derive(Debug, Clone, Default)]
+pub struct Bound {
+    pub https: Vec<SocketAddr>,
+    pub redirect: Vec<SocketAddr>,
+    pub failed: Vec<(SocketAddr, String)>,
+}
+
+/// Every address the settings ask for: (HTTPS addresses, redirect addresses).
+pub fn listener_addrs(
+    s: &patronus_config::webui::WebSettings,
+) -> (Vec<SocketAddr>, Vec<SocketAddr>) {
+    let ips: Vec<std::net::IpAddr> = s.listen.iter().filter_map(|a| a.parse().ok()).collect();
+    let mut https = Vec::new();
+    let mut redirect = Vec::new();
+    for ip in &ips {
+        for p in std::iter::once(&s.https_port).chain(s.extra_https_ports.iter()) {
+            https.push(SocketAddr::new(*ip, *p));
+        }
+        if s.http_redirect_port != 0 {
+            redirect.push(SocketAddr::new(*ip, s.http_redirect_port));
+        }
+    }
+    (https, redirect)
+}
+
+/// Serve the web UI as the settings say: HTTPS on the main port and every
+/// extra port, and a plain-HTTP listener that only redirects to the main
+/// HTTPS port. Each address is bound on its own: one that cannot be bound
+/// (port in use, no permission for a port below 1024) is logged and skipped,
+/// and the call fails only when no HTTPS listener could be bound at all.
+/// The redirect always points at the main HTTPS port.
+pub async fn serve_web(
+    settings: patronus_config::webui::WebSettings,
+    state: AppState,
+    tls_dir: &std::path::Path,
+    on_bound: Option<tokio::sync::oneshot::Sender<Bound>>,
+) -> anyhow::Result<()> {
+    #[cfg(feature = "tls-rustls")]
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+    let app = with_secure_cookies(prepare_app(state));
+    let tls_config =
+        tls::configured_or_self_signed(&settings.tls_cert, &settings.tls_key, tls_dir).await?;
+    let (https, redirect) = listener_addrs(&settings);
+    let mut bound = Bound::default();
+    let mut set = tokio::task::JoinSet::new();
+
+    for addr in https {
+        match std::net::TcpListener::bind(addr) {
+            Ok(l) => {
+                bound.https.push(addr);
+                let app = app.clone();
+                let cfg = tls_config.clone();
+                #[cfg(feature = "tls-rustls")]
+                let server = axum_server::from_tcp(l)
+                    .acceptor(axum_server::tls_rustls::RustlsAcceptor::new(cfg));
+                #[cfg(all(feature = "tls-openssl", not(feature = "tls-rustls")))]
+                let server = axum_server::from_tcp(l)
+                    .acceptor(axum_server::tls_openssl::OpenSSLAcceptor::new(cfg));
+                tracing::info!("Web interface listening on https://{addr}");
+                set.spawn(async move {
+                    server
+                        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+                        .await
+                        .map_err(|e| format!("https {addr}: {e}"))
+                });
+            }
+            Err(e) => {
+                tracing::error!("cannot listen on https://{addr}: {e}");
+                bound.failed.push((addr, e.to_string()));
+            }
+        }
+    }
+    if bound.https.is_empty() {
+        if let Some(tx) = on_bound {
+            let _ = tx.send(bound.clone());
+        }
+        anyhow::bail!(
+            "no HTTPS listener could be bound ({})",
+            bound
+                .failed
+                .iter()
+                .map(|(a, e)| format!("{a}: {e}"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
+
+    for addr in redirect {
+        match std::net::TcpListener::bind(addr).and_then(|l| {
+            l.set_nonblocking(true)?;
+            tokio::net::TcpListener::from_std(l)
+        }) {
+            Ok(l) => {
+                bound.redirect.push(addr);
+                let port = settings.https_port;
+                tracing::info!("HTTP redirect on http://{addr} -> https port {port}");
+                set.spawn(async move {
+                    axum::serve(l, redirect_app(port))
+                        .await
+                        .map_err(|e| format!("http redirect {addr}: {e}"))
+                });
+            }
+            Err(e) => {
+                tracing::error!("cannot listen on http://{addr}: {e}");
+                bound.failed.push((addr, e.to_string()));
+            }
+        }
+    }
+    if let Some(tx) = on_bound {
+        let _ = tx.send(bound);
+    }
+    while let Some(r) = set.join_next().await {
+        match r {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::error!("listener ended: {e}"),
+            Err(e) => tracing::error!("listener task: {e}"),
+        }
+    }
     Ok(())
 }
 
@@ -408,6 +558,174 @@ mod secure_cookie_tests {
         let c = set_cookie(&r);
         assert!(c.contains("Max-Age=0") && c.ends_with("; Secure"), "{c}");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod listener_tests {
+    use super::*;
+    use patronus_config::webui::WebSettings;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn redirect_location_keeps_host_path_and_omits_443() {
+        assert_eq!(
+            redirect_location("192.0.2.1", "/a?b=1", 443),
+            "https://192.0.2.1/a?b=1"
+        );
+        assert_eq!(
+            redirect_location("router.lan:80", "/", 8443),
+            "https://router.lan:8443/"
+        );
+        assert_eq!(
+            redirect_location("[fd00::1]:80", "/x", 443),
+            "https://[fd00::1]/x"
+        );
+        // no / hostile Host header, odd path: never echoed into the header
+        assert_eq!(redirect_location("", "/", 443), "https://patronus/");
+        assert_eq!(
+            redirect_location("evil.example\r\nSet-Cookie: x=1", "/", 443),
+            "https://patronus/"
+        );
+        assert_eq!(redirect_location("a", "//evil", 443), "https://a//evil");
+        assert_eq!(redirect_location("a", "*", 443), "https://a/");
+    }
+
+    #[test]
+    fn addresses_follow_the_settings() {
+        let mut s = WebSettings {
+            listen: vec!["10.0.0.1".into(), "127.0.0.1".into()],
+            ..WebSettings::default()
+        };
+        let (https, redirect) = listener_addrs(&s);
+        let t = |v: &[SocketAddr]| v.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            t(&https),
+            [
+                "10.0.0.1:443",
+                "10.0.0.1:8443",
+                "127.0.0.1:443",
+                "127.0.0.1:8443"
+            ]
+        );
+        assert_eq!(t(&redirect), ["10.0.0.1:80", "127.0.0.1:80"]);
+        s.http_redirect_port = 0;
+        s.extra_https_ports.clear();
+        let (https, redirect) = listener_addrs(&s);
+        assert_eq!(t(&https), ["10.0.0.1:443", "127.0.0.1:443"]);
+        assert!(redirect.is_empty());
+    }
+
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    async fn test_state(dir: &std::path::Path) -> AppState {
+        let store = std::sync::Arc::new(
+            patronus_config::ConfigStore::open(dir.join("config.db"))
+                .await
+                .unwrap(),
+        );
+        crate::AppState::new(
+            store,
+            std::sync::Arc::new(crate::state::firewall::NoopApplier),
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn http_get(addr: SocketAddr, host: &str) -> String {
+        let mut c = tokio::net::TcpStream::connect(addr).await.unwrap();
+        c.write_all(
+            format!("GET /login?next=%2F HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+        let mut out = String::new();
+        let _ = c.read_to_string(&mut out).await;
+        out
+    }
+
+    /// The real listeners: the main HTTPS port, an extra one and the HTTP
+    /// redirect all come up from the settings; the redirect answers 308 to the
+    /// MAIN https port and serves nothing else; a port that is taken is
+    /// skipped (logged) while the rest keep working; with every HTTPS port
+    /// taken the call fails instead of running without a UI.
+    #[tokio::test]
+    async fn serve_web_binds_what_the_settings_say() {
+        let dir =
+            std::env::temp_dir().join(format!("patronus-web-listen-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let tls = dir.join("tls");
+        let tls2 = tls.clone();
+        let (https, extra, redirect, taken) = (free_port(), free_port(), free_port(), free_port());
+        // `taken` stays bound for the whole test
+        let _hold = std::net::TcpListener::bind(("127.0.0.1", taken)).unwrap();
+        let s = WebSettings {
+            listen: vec!["127.0.0.1".into()],
+            https_port: https,
+            extra_https_ports: vec![extra, taken],
+            http_redirect_port: redirect,
+            ..WebSettings::default()
+        };
+        let state = test_state(&dir).await;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move { serve_web(s, state, &tls2, Some(tx)).await });
+        let bound = rx.await.unwrap();
+        assert_eq!(
+            bound.https.iter().map(|a| a.port()).collect::<Vec<_>>(),
+            [https, extra]
+        );
+        assert_eq!(
+            bound.redirect.iter().map(|a| a.port()).collect::<Vec<_>>(),
+            [redirect]
+        );
+        assert_eq!(bound.failed.len(), 1);
+        assert_eq!(bound.failed[0].0.port(), taken);
+
+        let r = http_get(
+            SocketAddr::from(([127, 0, 0, 1], redirect)),
+            "192.0.2.1:80",
+        )
+        .await;
+        assert!(r.starts_with("HTTP/1.1 308"), "{r}");
+        assert!(
+            r.to_lowercase().contains(&format!(
+                "location: https://192.0.2.1:{https}/login?next=%2f"
+            )),
+            "{r}"
+        );
+        // both HTTPS ports accept connections, and a TLS port never answers plain HTTP with content
+        for p in [https, extra] {
+            let r = http_get(SocketAddr::from(([127, 0, 0, 1], p)), "x").await;
+            assert!(
+                !r.starts_with("HTTP/1.1 200") && !r.starts_with("HTTP/1.1 308"),
+                "{r:?}"
+            );
+        }
+        task.abort();
+
+        // nothing to serve on: an error, not a silent no-UI process
+        let s = WebSettings {
+            listen: vec!["127.0.0.1".into()],
+            https_port: taken,
+            extra_https_ports: vec![],
+            http_redirect_port: 0,
+            ..WebSettings::default()
+        };
+        std::fs::create_dir_all(dir.join("x")).unwrap();
+        let state = test_state(&dir.join("x")).await;
+        let e = serve_web(s, state, &tls, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("no HTTPS listener could be bound"), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

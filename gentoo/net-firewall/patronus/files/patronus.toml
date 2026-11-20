@@ -28,13 +28,17 @@ default_output = "accept"
 ipv6 = true
 
 [web]
-# Web interface settings
+# Where the web UI listens. Each key is optional: the built-in default is
+# HTTPS on 443, HTTP on 80 that only redirects to HTTPS, and 8443 as an extra
+# HTTPS port. The System page (config store) overrides this file.
+# (listen_port / use_tls from older releases were never honoured and are gone:
+# TLS is always on, the port is https_port.)
 listen_addr = "0.0.0.0"
-listen_port = 8080
-# Use HTTPS in production
-use_tls = false
-# tls_cert = "/etc/patronus/ssl/cert.pem"
-# tls_key = "/etc/patronus/ssl/key.pem"
+# https_port = 443
+# http_redirect_port = 80        # 0 = no plain-HTTP listener
+# extra_https_ports = [8443]     # [] = none
+# tls_cert = "/etc/patronus/tls/cert.pem"   # both empty = generated self-signed
+# tls_key = "/etc/patronus/tls/key.pem"
 
 [dns]
 # Enable DNS forwarder

@@ -245,6 +245,53 @@ async function fwFeedDownload() {
         the marked block in /etc/hosts and /etc/localtime + /etc/timezone, and re-applied at every boot.</p>
 </div>
 
+<div class="card" id="web-card">
+    <div class="card-header"><h2 class="card-title">Web UI addresses and ports</h2></div>
+    <p class="text-sm text-muted">Where this management UI answers: HTTPS on the main port (443 =
+        <code>https://router-address</code>), plain HTTP on the redirect port that only sends the browser to
+        HTTPS (0 = off), optional extra HTTPS ports, and the certificate (empty = the generated self-signed one).
+        The firewall's anti-lockout rule opens these ports at once; the listeners move when the web UI is
+        restarted. Keep an old port as an extra HTTPS port until the new address works.</p>
+    {% if is_admin %}
+    <form id="web-form" class="inline-form" onsubmit="return submitWeb(event)">
+        <label>HTTPS port <input name="https_port" type="number" min="1" max="65535" value="{{ web_https_port }}"></label>
+        <label>HTTP redirect port (0 = off) <input name="http_redirect_port" type="number" min="0" max="65535" value="{{ web_redirect_port }}"></label>
+        <label>Extra HTTPS ports <input name="extra_https_ports" value="{{ web_extra_ports }}" data-keep-empty="1" placeholder="8443 (none = no extra port)"></label>
+        <label>Listen addresses <input name="listen" value="{{ web_listen }}" data-keep-empty="1" placeholder="0.0.0.0"></label>
+        <label>TLS certificate file <input name="tls_cert" value="{{ web_cert }}" data-keep-empty="1" placeholder="/etc/patronus/tls/cert.pem"></label>
+        <label>TLS key file <input name="tls_key" value="{{ web_key }}" data-keep-empty="1" placeholder="/etc/patronus/tls/key.pem"></label>
+        <button class="btn btn-sm btn-primary" id="save-web" type="submit">Save</button>
+        <button class="btn btn-sm" id="reset-web" type="button" onclick="resetWeb()">Back to defaults</button>
+        <button class="btn btn-sm" id="restart-web" type="button" onclick="restartWeb()">Restart web UI now</button>
+    </form>
+    <script>
+    async function webPut(body) {
+        const r = await fetch('/api/system/web', {method: 'PUT', credentials: 'same-origin',
+            headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
+        if (!r.ok) {
+            let m = r.status + '';
+            try { m = (await r.json()).error || m; } catch (_) {}
+            alert('Not applied: ' + m);
+            return false;
+        }
+        alert('Saved. The firewall already allows the new ports; use "Restart web UI now" to move the listeners.');
+        return true;
+    }
+    function submitWeb(ev) { ev.preventDefault(); webPut(formJson(ev.target)); return false; }
+    function resetWeb() { if (confirm('Forget the saved web UI settings and use the defaults?')) webPut({reset: true}); }
+    async function restartWeb() {
+        if (!confirm('Restart the web UI? This page reloads on the same address if it is still served there.')) return;
+        try { await fetch('/api/system/services/patronus-web/restart', {method: 'POST', credentials: 'same-origin'}); } catch (_) {}
+        setTimeout(() => location.reload(), 4000);
+    }
+    </script>
+    {% else %}
+    <table class="lan"><tr><td>HTTPS port</td><td>{{ web_https_port }}</td></tr>
+        <tr><td>HTTP redirect port</td><td>{{ web_redirect_port }}</td></tr>
+        <tr><td>Extra HTTPS ports</td><td>{{ web_extra_ports }}</td></tr></table>
+    {% endif %}
+</div>
+
 <div class="card" id="ssh-card">
     <div class="card-header"><h2 class="card-title">SSH server</h2></div>
     <p class="text-sm text-muted">Managed OpenSSH drop-in (/etc/ssh/sshd_config.d/50-patronus.conf), checked with

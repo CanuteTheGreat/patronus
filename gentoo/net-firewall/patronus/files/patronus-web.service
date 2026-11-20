@@ -1,5 +1,5 @@
 [Unit]
-Description=Patronus Web Interface (HTTPS on :8443)
+Description=Patronus Web Interface (HTTPS on :443, HTTP :80 redirect)
 After=network.target patronus-firewall.service patronus-applyd.service
 # root-only changes (DHCP clients, pppd, DHCP/DNS/NTP daemons) go through
 # patronus-applyd
@@ -9,20 +9,23 @@ Wants=patronus-firewall.service patronus-applyd.service
 Type=simple
 User=patronus
 Group=patronus
-# Same binary and port as the container image: self-signed HTTPS on :8443
-# (cert generated into /etc/patronus/tls on first start). The admin
+# HTTPS on :443 (cert generated into /etc/patronus/tls on first start), plain
+# HTTP on :80 that only redirects, :8443 kept as an extra HTTPS port. Ports,
+# listen addresses and certificate are settings (System page, /api/system/web,
+# patronus.toml [web], Environment=PATRONUS_* in a drop-in); `patronus-web
+# --help` lists them. CAP_NET_BIND_SERVICE lets the unprivileged patronus user
+# bind 80 and 443. The admin
 # login is a SYSTEM user in the patronus-admin or wheel group
 # (PAM service "patronus", checked by the root patronus-applyd broker);
 # there is no built-in admin account and no generated password.
-# This used to run `/usr/bin/patronus web --addr 0.0.0.0:8080`, a binary
-# that was never installed (and plain HTTP).
 ExecStart=/usr/bin/patronus-web
 Restart=on-failure
 RestartSec=10s
 
-# patronus-web applies rules with nft, which needs these as the patronus user
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+# patronus-web applies rules with nft (net_admin/net_raw as the patronus user)
+# and binds ports below 1024 (net_bind_service)
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 
 # Security hardening
 PrivateTmp=yes

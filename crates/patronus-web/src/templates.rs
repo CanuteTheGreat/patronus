@@ -233,6 +233,12 @@ pub struct SystemTemplate {
     /// One `user=principal,principal` per line.
     pub ssh_principals: String,
     pub ssh_cert: String,
+    pub web_listen: String,
+    pub web_https_port: u16,
+    pub web_redirect_port: u16,
+    pub web_extra_ports: String,
+    pub web_cert: String,
+    pub web_key: String,
 }
 
 // Data structures used in templates

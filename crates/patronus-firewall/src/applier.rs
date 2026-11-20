@@ -288,8 +288,10 @@ impl FirewallApplier {
         // (anti-lockout) rules, ahead of everything the user wrote
         let mut threat_done = lockdown;
         let ssh_port = patronus_config::defaults::ssh_port(store).await;
+        let web = patronus_config::webui::resolve(Some(store)).await;
         for (mut rule, origin) in store.load_firewall_rules_with_origin().await? {
             patronus_config::defaults::follow_ssh_port(&mut rule, origin, ssh_port);
+            patronus_config::webui::follow_web_ports(&mut rule, origin, &web);
             if !threat_done && origin != RuleOrigin::System {
                 threat_done = true;
                 nfilter += push_threat_rules(&mut script, &aliases);
@@ -629,11 +631,13 @@ impl FirewallApplier {
         let mut script = format!("add table {TABLE}\ndelete table {TABLE}\n");
         script.push_str(&base_table_script());
         let ssh_port = patronus_config::defaults::ssh_port(store).await;
+        let web = patronus_config::webui::resolve(Some(store)).await;
         for (mut rule, origin) in patronus_config::defaults::default_filter_rules() {
             if origin != RuleOrigin::System {
                 continue;
             }
             patronus_config::defaults::follow_ssh_port(&mut rule, origin, ssh_port);
+            patronus_config::webui::follow_web_ports(&mut rule, origin, &web);
             for i in resolve_iface(&rule.interface_in, &roles).unwrap_or_else(|| vec![None]) {
                 let mut r = rule.clone();
                 r.interface_in = i;
@@ -1504,17 +1508,17 @@ mod tests {
         let r = FirewallApplier.render_script(&s, false).await.unwrap();
         assert!(
             r.script.contains(
-                "add rule inet patronus input iifname \"eth1\" tcp dport {2222,8443} accept"
+                "add rule inet patronus input iifname \"eth1\" tcp dport {2222,443,80,8443} accept"
             ),
             "{}",
             r.script
         );
-        assert!(!r.script.contains("{22,8443}"));
+        assert!(!r.script.contains("{22,"));
         let l = FirewallApplier.render_lockdown(&s).await;
-        assert!(l.contains("tcp dport {2222,8443} accept"), "{l}");
+        assert!(l.contains("tcp dport {2222,443,80,8443} accept"), "{l}");
         s.save_system_config("ssh.port", "").await.unwrap();
         let r = FirewallApplier.render_script(&s, false).await.unwrap();
-        assert!(r.script.contains("tcp dport {22,8443} accept"));
+        assert!(r.script.contains("tcp dport {22,443,80,8443} accept"));
     }
 
     #[tokio::test]
@@ -1653,10 +1657,15 @@ mod tests {
         assert!(sc.contains("policy drop"), "{sc}");
         // anti-lockout on LAN only, never on WAN
         assert!(
-            sc.contains("add rule inet patronus input iifname \"eth1\" tcp dport {22,8443} accept"),
+            sc.contains(
+                "add rule inet patronus input iifname \"eth1\" tcp dport {22,443,80,8443} accept"
+            ),
             "{sc}"
         );
-        assert!(!sc.contains("iifname \"eth0\" tcp dport {22,8443}"), "{sc}");
+        assert!(
+            !sc.contains("iifname \"eth0\" tcp dport {22,443,80,8443}"),
+            "{sc}"
+        );
         assert!(
             sc.contains("add rule inet patronus forward iifname \"eth1\" accept"),
             "{sc}"
@@ -1682,7 +1691,7 @@ mod tests {
         let r = FirewallApplier.render_script(&s, false).await.unwrap();
         assert!(
             r.script
-                .contains("input iifname \"eth0\" tcp dport {22,8443} accept"),
+                .contains("input iifname \"eth0\" tcp dport {22,443,80,8443} accept"),
             "{}",
             r.script
         );
@@ -1699,7 +1708,7 @@ mod tests {
         let r = FirewallApplier.render_script(&s, false).await.unwrap();
         assert!(
             r.script
-                .contains("add rule inet patronus input tcp dport {22,8443} accept"),
+                .contains("add rule inet patronus input tcp dport {22,443,80,8443} accept"),
             "{}",
             r.script
         );
@@ -1753,7 +1762,7 @@ mod tests {
         assert!(r.script.contains("forward iifname \"eth2\" accept"));
         assert!(r.script.contains("iifname \"eth2\" ip daddr 10.9.9.9 drop"));
         let l = FirewallApplier.render_script(&s, true).await.unwrap();
-        assert!(l.script.contains("tcp dport {22,8443} accept"));
+        assert!(l.script.contains("tcp dport {22,443,80,8443} accept"));
         assert!(!l.script.contains("masquerade") && !l.script.contains("10.9.9.9"));
     }
 
@@ -1816,7 +1825,9 @@ mod tests {
             "{l}"
         );
         assert!(
-            l.contains("add rule inet patronus input iifname \"eth1\" tcp dport {22,8443} accept"),
+            l.contains(
+                "add rule inet patronus input iifname \"eth1\" tcp dport {22,443,80,8443} accept"
+            ),
             "{l}"
         );
         assert!(!l.contains("eth0\" tcp dport"), "never on WAN: {l}");
@@ -1832,7 +1843,7 @@ mod tests {
             .unwrap();
         let l = FirewallApplier.render_lockdown(&s).await;
         assert!(
-            l.contains("add rule inet patronus input tcp dport {22,8443} accept"),
+            l.contains("add rule inet patronus input tcp dport {22,443,80,8443} accept"),
             "{l}"
         );
         assert!(
@@ -1912,8 +1923,9 @@ mod tests {
         );
         let r = FirewallApplier.render_script(&s, false).await.unwrap();
         assert!(
-            r.script
-                .contains("input iifname { \"eth1\", \"vrf-red\" } tcp dport {22,8443} accept"),
+            r.script.contains(
+                "input iifname { \"eth1\", \"vrf-red\" } tcp dport {22,443,80,8443} accept"
+            ),
             "{}",
             r.script
         );
@@ -1922,11 +1934,13 @@ mod tests {
     #[test]
     fn vrf_members_are_matched_on_their_vrf_device_for_input_rules() {
         let m = vec![("eth1".to_string(), "vrf-red".to_string())];
-        let src = "add rule inet patronus input iifname \"eth1\" tcp dport {22,8443} accept\n\
+        let src =
+            "add rule inet patronus input iifname \"eth1\" tcp dport {22,443,80,8443} accept\n\
                    add rule inet patronus input iifname \"eth2\" tcp dport 22 accept\n\
                    add rule inet patronus forward iifname \"eth1\" accept\n";
         let out = via_vrf_devices(src, &m);
-        assert!(out.contains("input iifname { \"eth1\", \"vrf-red\" } tcp dport {22,8443} accept"));
+        assert!(out
+            .contains("input iifname { \"eth1\", \"vrf-red\" } tcp dport {22,443,80,8443} accept"));
         assert!(out.contains("input iifname \"eth2\" tcp dport 22 accept"));
         assert!(out.contains("forward iifname \"eth1\" accept"));
         assert_eq!(via_vrf_devices(src, &[]), src);

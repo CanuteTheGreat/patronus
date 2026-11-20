@@ -53,6 +53,26 @@ pub async fn ensure_self_signed_cert(dir: &Path) -> Result<RustlsConfig> {
         .with_context(|| format!("failed to load TLS material from {}", dir.display()))
 }
 
+/// The certificate the settings name (`web.tls_cert` / `web.tls_key`), or the
+/// generated self-signed one when none is named. A named pair that cannot be
+/// loaded is logged and replaced by the self-signed certificate: the UI stays
+/// reachable (fail open to a working login page, never to no UI).
+pub async fn configured_or_self_signed(cert: &str, key: &str, dir: &Path) -> Result<RustlsConfig> {
+    if !cert.is_empty() && !key.is_empty() {
+        match load_config(Path::new(cert), Path::new(key)).await {
+            Ok(c) => {
+                tracing::info!("Using TLS certificate {cert}");
+                return Ok(c);
+            }
+            Err(e) => tracing::error!(
+                "cannot load the configured TLS certificate {cert} / {key}: {e:#}; \
+                 falling back to the self-signed certificate"
+            ),
+        }
+    }
+    ensure_self_signed_cert(dir).await
+}
+
 #[cfg(feature = "tls-rustls")]
 async fn load_config(cert: &Path, key: &Path) -> Result<RustlsConfig> {
     Ok(RustlsConfig::from_pem_file(cert, key).await?)

@@ -719,6 +719,71 @@ impl LanManager {
 }
 
 // ---------------------------------------------------------------------------
+// Web UI listeners (System page): HTTPS port, HTTP redirect, extra ports, cert
+// ---------------------------------------------------------------------------
+
+impl LanManager {
+    /// The effective settings, what is stored, and where each value comes from
+    /// is implied by the layers (store > patronus.toml > environment > built-in).
+    pub async fn web_overview(&self) -> anyhow::Result<Value> {
+        use patronus_config::webui;
+        let effective = webui::resolve(Some(&self.store)).await;
+        let stored: serde_json::Map<String, Value> = webui::stored(&self.store)
+            .await
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), Value::String(v)))
+            .collect();
+        Ok(serde_json::json!({
+            "effective": effective,
+            "stored": stored,
+            "ports_open_in_firewall": effective.all_ports(),
+            "applies": "after a restart of the web UI (POST /api/system/services/patronus-web/restart)",
+        }))
+    }
+
+    /// Validate and store the `web.*` keys, then re-apply the firewall so the
+    /// anti-lockout rule already opens the new ports before the web UI is
+    /// restarted onto them; undo the store write when the apply fails.
+    pub async fn save_web(&self, i: patronus_config::webui::WebInput) -> anyhow::Result<()> {
+        use patronus_config::webui;
+        let _g = self.edit.lock().await;
+        self.store
+            .snapshot("web", "before change web UI listeners")
+            .await
+            .map_err(e)?;
+        let before = webui::save(&self.store, &i).await.map_err(e)?;
+        let mut failure = None;
+        if let Some(a) = self.appliers.get("firewall") {
+            if let Err(err) = a.apply(&self.store).await {
+                failure = Some(format!("{err}"));
+            }
+        }
+        match failure {
+            None => {
+                let _ = self
+                    .store
+                    .audit("web", "update", "web-ui", None, &Value::Null)
+                    .await;
+                Ok(())
+            }
+            Some(msg) => {
+                if let Err(re) = webui::restore(&self.store, &before).await {
+                    tracing::error!(
+                        "could not undo the web UI settings after a failed apply: {re}"
+                    );
+                }
+                if let Some(a) = self.appliers.get("firewall") {
+                    if let Err(re) = a.apply(&self.store).await {
+                        tracing::warn!("re-applying the previous firewall: {re}");
+                    }
+                }
+                Err(anyhow::anyhow!("{msg}"))
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // NTP
 // ---------------------------------------------------------------------------
 

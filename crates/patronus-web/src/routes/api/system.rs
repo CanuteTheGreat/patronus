@@ -628,6 +628,40 @@ pub async fn put_ssh(
     }
 }
 
+/// GET /api/system/web -- where the web UI listens: the effective settings
+/// (store > patronus.toml > environment > built-in) and the raw stored values.
+pub async fn get_web(State(state): State<AppState>) -> Response {
+    match state.lan.web_overview().await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// PUT /api/system/web -- listen addresses, HTTPS port, HTTP redirect port
+/// (0 = off), extra HTTPS ports ("none" = off), TLS certificate/key paths.
+/// Absent = unchanged, empty = back to the lower layers, `reset` = forget all.
+/// The firewall's anti-lockout rule follows at once; the listeners move when
+/// the web UI is restarted (the answer says so), so a wrong value can be
+/// corrected from the old address first.
+pub async fn put_web(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(i): Json<patronus_config::webui::WebInput>,
+) -> Response {
+    match state.lan.save_web(i).await {
+        Ok(()) => Json(json!({ "ok": true, "restart_required": true })).into_response(),
+        Err(e) => {
+            let m = e.to_string();
+            let code = if m.contains("Invalid") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            error(code, m)
+        }
+    }
+}
+
 pub async fn reboot(State(state): State<AppState>, _admin: AdminUser) -> Response {
     power(state, "reboot").await
 }
@@ -1257,6 +1291,7 @@ pub fn router() -> axum::Router<AppState> {
         )
         .route("/system/general", get(get_general).put(put_general))
         .route("/system/ssh", get(get_ssh).put(put_ssh))
+        .route("/system/web", get(get_web).put(put_web))
         .route("/system/reboot", post(reboot))
         .route(
             "/system/firmware",
