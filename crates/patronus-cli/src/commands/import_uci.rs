@@ -1768,7 +1768,11 @@ pub async fn run(
         (None, Some(i)) => i,
         (None, None) => bail!("give a tarball/directory or --ssh root@router[:port]"),
     };
-    let (files, extras) = load_input_full(&input)?;
+    let (files, mut extras) = load_input_full(&input)?;
+    // the running odhcp6c names the IAID the old router really sends
+    if let Some(live) = ssh.as_deref().and_then(fetch_live_odhcp6c) {
+        extras.0.insert(LIVE_ODHCP6C.to_string(), live);
+    }
     let mut plan = build_plan_with(&files, &extras, &maps);
     if ddns_disabled {
         disable_ddns(&mut plan);

@@ -52,10 +52,21 @@ fn tree_base(root: &Path) -> PathBuf {
     }
 }
 
+/// Files that name the OpenWrt release (it decides how odhcp6c derives its DHCPv6 IAID). `os-release` first: a
+/// device can keep a stale `/etc/openwrt_release`.
+pub const OS_RELEASE_FILES: &[&str] = &[
+    "usr/lib/os-release",
+    "etc/os-release",
+    "etc/openwrt_release",
+];
+
+/// Key of the live `odhcp6c` command lines (`--ssh` import) in [`Extras`]; never a file of the input tree.
+pub const LIVE_ODHCP6C: &str = "live/odhcp6c.cmdline";
+
 /// Is this relative path one of the extra files the importer may read?
 pub fn wanted_extra(rel: &str) -> bool {
     let rel = rel.strip_prefix("./").unwrap_or(rel);
-    if rel == "etc/ssh/sshd_config" {
+    if rel == "etc/ssh/sshd_config" || OS_RELEASE_FILES.contains(&rel) {
         return true;
     }
     if let Some(f) = rel.strip_prefix("etc/ssh/") {
@@ -75,6 +86,7 @@ pub fn load_extras(root: &Path) -> Extras {
         base.join("etc"),
         base.join("etc/ssh"),
         base.join("etc/ssh/auth_principals"),
+        base.join("usr/lib"),
     ];
     while let Some(d) = dirs.pop() {
         let Ok(rd) = std::fs::read_dir(&d) else {
@@ -105,6 +117,8 @@ pub struct Iface6 {
     pub addrs: Vec<IpNetwork>,
     pub pd_downstream: Vec<String>,
     pub duid: Option<String>,
+    /// The old router's DHCPv6 IAID (`interfaces.dhcp6_iaid`), when it is known and one value serves IA_NA and IA_PD
+    pub iaid: Option<u32>,
     /// UCI `metric` of the interface: the order of several DHCP uplinks (`interfaces.metric`)
     pub metric: Option<u32>,
 }
@@ -355,7 +369,7 @@ pub fn plan_ext(plan: &mut Plan, files: &Files, extras: &Extras, maps: &BTreeMap
     let wg = wg_devices(files, maps);
     let zones = zone_map(plan, files, &wg);
     let mut x = ExtPlan::default();
-    network_ext(plan, &mut x, files, maps, &wg);
+    network_ext(plan, &mut x, files, extras, maps, &wg);
     dhcp_ext(plan, &mut x, files, &zones, &wg);
     firewall_ext(plan, &mut x, files, extras, &zones);
     mwan3_ext(plan, &mut x, files, maps);
@@ -367,10 +381,180 @@ pub fn plan_ext(plan: &mut Plan, files: &Files, extras: &Extras, maps: &BTreeMap
     plan.ext = x;
 }
 
+/// What the old OpenWrt router sends as DHCPv6 IAID (RFC 8415: the ISP binds address and prefix to DUID + IAID).
+///
+/// odhcp6c (`src/dhcpv6.c`, `src/odhcp6c.c`, netifd `dhcpv6.sh`):
+/// * OpenWrt 24.10 and older (odhcp6c up to 2025-10): IA_NA IAID is the constant 1 (`htonl(1)`), the IA_PD IAID is
+///   `-P<len>[:<hex>]`'s hex or else the request index, 1 for the first prefix. One value, 1, for both.
+/// * OpenWrt 25.12 and newer: `dhcpv6.sh` appends `:<iaid>` = first 8 hex digits of `md5(<l3 device name>)` to `-P`, and
+///   odhcp6c itself uses the first four md5 bytes of the device name for IA_NA. The same value for both.
+/// * `reqprefix 'len:hex'` in UCI pins the IA_PD IAID by hand (IA_NA keeps its derived value).
+///
+/// The kernel device name that odhcp6c is started on (`eth1`, `pppoe-wan`, ...) is what gets hashed.
+#[derive(Debug, PartialEq)]
+pub enum Iaid {
+    /// IA_NA and IA_PD share this value (and where it came from)
+    Pin(u32, String),
+    /// IA_NA and IA_PD differ (a hand-set `reqprefix` IAID)
+    Split { na: u32, pd: u32, how: String },
+    /// Not computable from the input: the candidates and their meaning
+    Unknown { candidates: Vec<(u32, String)> },
+}
+
+/// First four bytes of `md5(name)`, big endian: odhcp6c's IA_NA IAID and the hex `dhcpv6.sh` passes for IA_PD (25.12+).
+pub fn odhcp6c_name_iaid(name: &str) -> u32 {
+    use md5::{Digest, Md5};
+    let h = Md5::digest(name.as_bytes());
+    u32::from_be_bytes([h[0], h[1], h[2], h[3]])
+}
+
+/// The kernel device odhcp6c runs on for the DHCPv6 section: its `device`, an `@iface` alias resolved to that
+/// interface's device (`pppoe-<name>` for a PPPoE link), a plain `config device` rename resolved to its `ifname`.
+fn l3_device(files: &Files, s: &Section, uci_dev: &str) -> String {
+    let mut dev = uci_dev.to_string();
+    if let Some(alias) = dev.strip_prefix('@') {
+        let alias = alias.to_string();
+        if let Some(t) = sections(files, "network", "interface").find(|t| t.label() == alias) {
+            dev = if t.get("proto") == Some("pppoe") {
+                format!("pppoe-{alias}")
+            } else {
+                t.get("device")
+                    .or(t.get("ifname"))
+                    .unwrap_or(&alias)
+                    .to_string()
+            };
+        }
+    }
+    if dev.is_empty() {
+        dev = s.label();
+    }
+    sections(files, "network", "device")
+        .find(|d| d.get("name") == Some(dev.as_str()) && d.get("type").is_none())
+        .and_then(|d| d.get("ifname"))
+        .map(str::to_string)
+        .unwrap_or(dev)
+}
+
+/// The `major` of the OpenWrt release the input came from (`VERSION_ID` of os-release, `DISTRIB_RELEASE` of
+/// openwrt_release): `"25"`, `"24"`, `"snapshot"`.
+fn openwrt_major(extras: &Extras) -> Option<String> {
+    for f in OS_RELEASE_FILES {
+        let Some(t) = extras.get(f) else { continue };
+        for l in t.lines() {
+            let Some((k, v)) = l.split_once('=') else {
+                continue;
+            };
+            if k.trim() != "VERSION_ID" && k.trim() != "DISTRIB_RELEASE" {
+                continue;
+            }
+            let v = v
+                .trim()
+                .trim_matches(|c| c == '\'' || c == '"')
+                .to_lowercase();
+            if v.contains("snapshot") {
+                return Some("snapshot".into());
+            }
+            let major: String = v.chars().take_while(char::is_ascii_digit).collect();
+            if !major.is_empty() {
+                return Some(major);
+            }
+        }
+    }
+    None
+}
+
+/// One running `odhcp6c`: its `-P` IAID (None = no explicit IAID, firmware before 25.12) and the device it runs on.
+fn live_odhcp6c(cmdlines: &str, l3: &str) -> Option<(Option<u32>, String)> {
+    let mut found: Vec<(Option<u32>, String)> = Vec::new();
+    for l in cmdlines.lines() {
+        let w: Vec<&str> = l.split_whitespace().collect();
+        if w.is_empty() || !w[0].rsplit('/').next().is_some_and(|b| b == "odhcp6c") {
+            continue;
+        }
+        let Some(dev) = w.last().filter(|d| !d.starts_with('-')) else {
+            continue;
+        };
+        let iaid = w.iter().find_map(|a| {
+            let rest = a.strip_prefix("-P")?;
+            let (_, hex) = rest.rsplit_once(':')?;
+            u32::from_str_radix(hex, 16).ok()
+        });
+        found.push((iaid, dev.to_string()));
+    }
+    found
+        .iter()
+        .find(|(_, d)| d == l3)
+        .cloned()
+        .or_else(|| (found.len() == 1).then(|| found[0].clone()))
+}
+
+pub fn derive_iaid(
+    reqprefix: Option<&str>,
+    l3: &str,
+    major: Option<&str>,
+    live: Option<&str>,
+) -> Iaid {
+    let hand = reqprefix
+        .and_then(|r| r.rsplit_once(':'))
+        .and_then(|(_, h)| u32::from_str_radix(h, 16).ok());
+    // the running client is the truth: a `-P..:<hex>` argument is the 25.12+ scheme
+    if let Some((pd, dev)) = live.and_then(|t| live_odhcp6c(t, l3)) {
+        let (na, how) = match pd {
+            Some(_) => (
+                odhcp6c_name_iaid(&dev),
+                "read from the running odhcp6c, 25.12+ scheme",
+            ),
+            None => (1, "read from the running odhcp6c, 24.10 and older scheme"),
+        };
+        let pd = pd.or(hand).unwrap_or(1);
+        return if na == pd {
+            Iaid::Pin(pd, how.into())
+        } else {
+            Iaid::Split {
+                na,
+                pd,
+                how: how.into(),
+            }
+        };
+    }
+    let (na, pd, how) = match major.map(|m| m.parse::<u32>().ok()) {
+        Some(Some(m)) if m >= 25 => {
+            let h = odhcp6c_name_iaid(l3);
+            (h, hand.unwrap_or(h), format!("OpenWrt {m}: md5 of '{l3}'"))
+        }
+        Some(None) => {
+            let h = odhcp6c_name_iaid(l3);
+            (
+                h,
+                hand.unwrap_or(h),
+                format!("OpenWrt snapshot: md5 of '{l3}'"),
+            )
+        }
+        Some(Some(m)) => (1, hand.unwrap_or(1), format!("OpenWrt {m}: fixed IAID 1")),
+        None => {
+            return Iaid::Unknown {
+                candidates: vec![
+                    (1, "OpenWrt 24.10 and older".into()),
+                    (
+                        odhcp6c_name_iaid(l3),
+                        format!("OpenWrt 25.12 and newer, md5 of '{l3}'"),
+                    ),
+                ],
+            }
+        }
+    };
+    if na == pd {
+        Iaid::Pin(pd, how)
+    } else {
+        Iaid::Split { na, pd, how }
+    }
+}
+
 fn network_ext(
     plan: &mut Plan,
     x: &mut ExtPlan,
     files: &Files,
+    extras: &Extras,
     maps: &BTreeMap<String, String>,
     wg: &BTreeMap<String, String>,
 ) {
@@ -451,6 +635,41 @@ fn network_ext(
         }
         if let Some(d) = s.get("clientid").or(default_duid).and_then(duid_colons) {
             e.duid = Some(d);
+        }
+        let l3 = l3_device(files, s, uci_dev);
+        let found = derive_iaid(
+            s.get("reqprefix"),
+            &l3,
+            openwrt_major(extras).as_deref(),
+            extras.get(LIVE_ODHCP6C),
+        );
+        match found {
+            Iaid::Pin(n, how) => {
+                e.iaid = Some(n);
+                plan.notes.push(format!(
+                    "network: interface '{}' DHCPv6 IAID {n} kept for IA_NA and IA_PD ({how})",
+                    s.label()
+                ));
+            }
+            Iaid::Split { na, pd, how } => {
+                e.iaid = Some(pd);
+                plan.unmapped.push(format!(
+                    "manual: DHCPv6 on '{}': the old router asks with IAID {na} for IA_NA and {pd} for IA_PD ({how}); \
+                     Patronus pins one value for both: {pd} (the delegated prefix is what the ISP refuses first)",
+                    s.label()
+                ));
+            }
+            Iaid::Unknown { candidates } => plan.unmapped.push(format!(
+                "manual: DHCPv6 on '{}': the old router's IAID could not be determined (no OpenWrt release file and no live odhcp6c in the input). \
+                 Pin the old router's IAID (`interfaces.dhcp6_iaid`: {}) or the ISP may refuse the delegated prefix until the old binding expires; \
+                 `--ssh` reads it from the running odhcp6c",
+                s.label(),
+                candidates
+                    .iter()
+                    .map(|(n, w)| format!("{n} = {w}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
         }
     }
     // route metrics: several DHCP uplinks (wan + a Wi-Fi backup) must not install their default routes with the same
@@ -1576,7 +1795,7 @@ pub fn render_ext(x: &ExtPlan, o: &mut String, verb: &str) {
     for (d, e) in &x.iface6 {
         let _ = writeln!(
             o,
-            "  {d}: static {}{}{}{}",
+            "  {d}: static {}{}{}{}{}",
             if e.addrs.is_empty() {
                 "-".to_string()
             } else {
@@ -1596,6 +1815,9 @@ pub fn render_ext(x: &ExtPlan, o: &mut String, verb: &str) {
             } else {
                 ""
             },
+            e.iaid
+                .map(|n| format!(", DHCPv6 IAID {n}"))
+                .unwrap_or_default(),
             e.metric
                 .map(|m| format!(", route metric {m}"))
                 .unwrap_or_default()
@@ -1805,6 +2027,9 @@ pub async fn apply_ext(
             }
             if let Some(d) = &i6.duid {
                 i.dhcp6_duid = Some(d.clone());
+            }
+            if let Some(n) = i6.iaid {
+                i.dhcp6_iaid = Some(n);
             }
             if let Some(m) = i6.metric {
                 i.metric = Some(m);
@@ -2174,13 +2399,18 @@ async fn dns_ddns_list(
 
 /// `patronus import-uci --ssh root@router[:port]`: stream the needed files
 /// over ssh into a 0700 scratch tarball (keys never touch stdout or a log).
-pub fn fetch_over_ssh(target: &str, dir: &Path) -> Result<PathBuf> {
-    let (host, port) = match target.rsplit_once(':') {
+/// `[user@]host[:port]` -> the ssh host argument and the optional port.
+fn ssh_target(target: &str) -> (String, Option<String>) {
+    match target.rsplit_once(':') {
         Some((h, p)) if p.parse::<u16>().is_ok() && !h.contains(':') => {
             (h.to_string(), Some(p.to_string()))
         }
         _ => (target.to_string(), None),
-    };
+    }
+}
+
+pub fn fetch_over_ssh(target: &str, dir: &Path) -> Result<PathBuf> {
+    let (host, port) = ssh_target(target);
     let out = dir.join("router-config.tar.gz");
     let f = std::fs::OpenOptions::new()
         .write(true)
@@ -2192,7 +2422,7 @@ pub fn fetch_over_ssh(target: &str, dir: &Path) -> Result<PathBuf> {
     if let Some(p) = port {
         cmd.arg("-p").arg(p);
     }
-    let remote = "cd / && tar czf - etc/config $(ls etc/ssh/sshd_config etc/ssh/*.pub etc/*.nft 2>/dev/null) \
+    let remote = "cd / && tar czf - etc/config $(ls etc/ssh/sshd_config etc/ssh/*.pub etc/*.nft usr/lib/os-release etc/os-release etc/openwrt_release 2>/dev/null) \
                   $( [ -d etc/ssh/auth_principals ] && echo etc/ssh/auth_principals )";
     let st = cmd
         .arg("-o")
@@ -2206,6 +2436,26 @@ pub fn fetch_over_ssh(target: &str, dir: &Path) -> Result<PathBuf> {
         bail!("ssh {target}: reading the router configuration failed ({st})");
     }
     Ok(out)
+}
+
+/// The command lines of the running `odhcp6c` clients (one per line), read over ssh: they carry the DHCPv6 IAID
+/// the old router really sends (`-P<len>:<hex>`) and the device each runs on. `None` when ssh fails or none runs.
+pub fn fetch_live_odhcp6c(target: &str) -> Option<String> {
+    let (host, port) = ssh_target(target);
+    let mut cmd = std::process::Command::new("ssh");
+    if let Some(p) = port {
+        cmd.arg("-p").arg(p);
+    }
+    let remote = "for p in /proc/[0-9]*; do [ \"$(cat $p/comm 2>/dev/null)\" = odhcp6c ] && { tr '\\0' ' ' < $p/cmdline; echo; }; done";
+    let out = cmd
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg(&host)
+        .arg(remote)
+        .output()
+        .ok()?;
+    let t = String::from_utf8_lossy(&out.stdout).into_owned();
+    (out.status.success() && !t.trim().is_empty()).then_some(t)
 }
 
 trait Mode0600 {
@@ -2283,6 +2533,152 @@ mod tests {
     }
 
     #[test]
+    fn name_iaid_is_the_first_md5_bytes() {
+        // `printf eth1 | md5sum` = 6f1799c8...: what netifd's network_generate_iface_iaid and odhcp6c use
+        assert_eq!(odhcp6c_name_iaid("eth1"), 0x6f17_99c8);
+        assert_eq!(odhcp6c_name_iaid("pppoe-wan"), 0xceef_151a);
+    }
+
+    #[test]
+    fn iaid_by_openwrt_release() {
+        // 24.10 and older: IA_NA 1, IA_PD 1
+        assert_eq!(
+            derive_iaid(Some("auto"), "eth1", Some("24"), None),
+            Iaid::Pin(1, "OpenWrt 24: fixed IAID 1".into())
+        );
+        assert_eq!(
+            derive_iaid(None, "eth1", Some("21"), None),
+            Iaid::Pin(1, "OpenWrt 21: fixed IAID 1".into())
+        );
+        // 25.12 and snapshots: md5 of the device name for both
+        assert_eq!(
+            derive_iaid(None, "eth1", Some("25"), None),
+            Iaid::Pin(0x6f17_99c8, "OpenWrt 25: md5 of 'eth1'".into())
+        );
+        assert!(matches!(
+            derive_iaid(None, "eth1", Some("snapshot"), None),
+            Iaid::Pin(0x6f17_99c8, _)
+        ));
+        // a hand-set IA_PD IAID (reqprefix 56:abc) differs from IA_NA's derived one
+        assert_eq!(
+            derive_iaid(Some("56:abc"), "eth1", Some("24"), None),
+            Iaid::Split {
+                na: 1,
+                pd: 0xabc,
+                how: "OpenWrt 24: fixed IAID 1".into()
+            }
+        );
+        // nothing known about the release: both candidates are offered
+        match derive_iaid(Some("auto"), "eth1", None, None) {
+            Iaid::Unknown { candidates } => {
+                assert_eq!(candidates[0].0, 1);
+                assert_eq!(candidates[1].0, 0x6f17_99c8);
+            }
+            o => panic!("{o:?}"),
+        }
+    }
+
+    #[test]
+    fn iaid_from_the_running_odhcp6c_wins() {
+        // 25.12 style: -P0:<hex> is the explicit IA_PD IAID, IA_NA is md5(device)
+        let live = "odhcp6c -s /lib/netifd/dhcpv6.script -P0:6f1799c8 -c000300013c3a -t120 eth1 \n";
+        assert!(matches!(
+            derive_iaid(Some("auto"), "eth1", Some("24"), Some(live)),
+            Iaid::Pin(0x6f17_99c8, _)
+        ));
+        // 24.10 style: -P0 only, IAID 1 for both (the release file is not even needed)
+        let old = "/sbin/odhcp6c -s /lib/netifd/dhcpv6.script -P0 -t120 eth1\n";
+        assert!(matches!(
+            derive_iaid(None, "eth1", None, Some(old)),
+            Iaid::Pin(1, _)
+        ));
+        // a client that runs another IA_PD IAID than the device-name hash: split
+        let odd = "odhcp6c -P56:1234 -t120 eth1\n";
+        assert_eq!(
+            derive_iaid(None, "eth1", None, Some(odd)),
+            Iaid::Split {
+                na: 0x6f17_99c8,
+                pd: 0x1234,
+                how: "read from the running odhcp6c, 25.12+ scheme".into()
+            }
+        );
+        // a line for another device is not ours, unless it is the only client
+        let two = "odhcp6c -P0 eth9\nodhcp6c -P0:77 eth1\n";
+        assert!(matches!(
+            derive_iaid(None, "eth1", None, Some(two)),
+            Iaid::Split { pd: 0x77, .. }
+        ));
+        assert!(matches!(
+            derive_iaid(None, "eth5", Some("24"), Some(two)),
+            Iaid::Pin(1, _)
+        ));
+    }
+
+    #[test]
+    fn l3_device_resolves_aliases_and_pppoe() {
+        let f = |t: &str| -> Files {
+            [("network".to_string(), parse_uci(t).unwrap())]
+                .into_iter()
+                .collect()
+        };
+        let files = f("config interface 'wan'\n\toption proto 'pppoe'\n\toption device 'eth1'\nconfig interface 'wan6'\n\toption proto 'dhcpv6'\n\toption device '@wan'\n");
+        let s = sections(&files, "network", "interface").nth(1).unwrap();
+        assert_eq!(l3_device(&files, s, "@wan"), "pppoe-wan");
+        let files = f("config device\n\toption name 'wan'\n\toption ifname 'eth1'\nconfig interface 'wan6'\n\toption proto 'dhcpv6'\n\toption device 'wan'\n");
+        let s = sections(&files, "network", "interface").next().unwrap();
+        assert_eq!(l3_device(&files, s, "wan"), "eth1");
+    }
+
+    #[test]
+    fn release_major_from_os_release_or_openwrt_release() {
+        let mut e = Extras::default();
+        assert_eq!(openwrt_major(&e), None);
+        e.0.insert(
+            "etc/openwrt_release".into(),
+            "DISTRIB_RELEASE='24.10.0'\n".into(),
+        );
+        assert_eq!(openwrt_major(&e).as_deref(), Some("24"));
+        // os-release wins over a stale openwrt_release
+        e.0.insert(
+            "usr/lib/os-release".into(),
+            "VERSION_ID=\"25.12.0\"\n".into(),
+        );
+        assert_eq!(openwrt_major(&e).as_deref(), Some("25"));
+        e.0.insert(
+            "usr/lib/os-release".into(),
+            "VERSION_ID=\"SNAPSHOT\"\n".into(),
+        );
+        assert_eq!(openwrt_major(&e).as_deref(), Some("snapshot"));
+        assert!(wanted_extra("usr/lib/os-release") && wanted_extra("./etc/openwrt_release"));
+        assert!(!wanted_extra("etc/shadow"));
+    }
+
+    #[test]
+    fn unknown_release_lands_in_the_manual_steps() {
+        let (f, mut x) = load_input_full(&dir()).unwrap();
+        x.0.clear();
+        let p = build_plan_with(&f, &x, &maps());
+        let m = p
+            .unmapped
+            .iter()
+            .find(|u| u.starts_with("manual: DHCPv6"))
+            .expect("manual step");
+        assert!(
+            m.contains("pin the old router's IAID") || m.contains("Pin the old router's IAID"),
+            "{m}"
+        );
+        assert!(m.contains("1 = OpenWrt 24.10 and older"), "{m}");
+        assert!(
+            m.contains(&format!(
+                "{} = OpenWrt 25.12 and newer",
+                odhcp6c_name_iaid("eth1")
+            )),
+            "{m}"
+        );
+        assert_eq!(p.ext.iface6["eth1"].iaid, None);
+    }
+
+    #[test]
     fn full_router_plan() {
         let p = plan();
         let x = &p.ext;
@@ -2332,6 +2728,9 @@ mod tests {
             wan.duid.as_deref(),
             Some("00:04:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99")
         );
+        // OpenWrt 24.10 (os-release in the tree): IA_NA and IA_PD both use IAID 1
+        assert_eq!(wan.iaid, Some(1));
+        assert!(!p.unmapped.iter().any(|u| u.starts_with("manual: DHCPv6")));
         assert_eq!(x.ra, vec![("eth0".into(), "assisted".into(), true)]);
         assert_eq!(
             x.pool_dns6.get("eth0").map(String::as_str),
@@ -2627,6 +3026,7 @@ mod tests {
         let wan = cfg.iface("eth1").unwrap();
         assert_eq!(wan.pd_downstream, vec!["eth0".to_string()]);
         assert!(wan.dhcp6_duid.is_some());
+        assert_eq!(wan.dhcp6_iaid, Some(1));
         // the uplinks' UCI metrics order their DHCP default routes (equal metrics: the second route is refused)
         assert_eq!(wan.metric, Some(10));
         assert_eq!(cfg.iface("wlan0").unwrap().metric, Some(20));

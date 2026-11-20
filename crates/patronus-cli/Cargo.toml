@@ -97,6 +97,8 @@ patronus-gitops = { path = "../patronus-gitops", optional = true }
 patronus-ai = { path = "../patronus-ai", optional = true }
 patronus-cni = { path = "../patronus-cni", optional = true }
 reqwest = { workspace = true, optional = true }
+# OpenWrt's odhcp6c derives its DHCPv6 IAID from md5(device name): import-uci recomputes it
+md-5 = "0.10"
 
 # SD-WAN modules
 patronus-sdwan = { path = "../patronus-sdwan" }
