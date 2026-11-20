@@ -28,9 +28,9 @@
 # Every daemon the scenarios start inherits this.
 ulimit -n 65536 2>/dev/null || true
 
-# The web UI's built-in listeners are HTTPS 443 + HTTP 80 (redirect) + 8443. The lanes drive and firewall 8443 only (and some
-# start their own daemons on 80/443), so every process of a lane gets the old single listener through the environment layer of
-# the web settings; lane-w-web-ports.sh overrides these to prove the standard ports.
+# The web UI's built-in listeners are the standard ports, HTTPS 443 + HTTP 80 (redirect). The lanes drive and firewall 8443 only
+# (and some start their own daemons on 80/443), so every process of a lane gets one 8443 listener through the environment layer
+# of the web settings; lane-w-web-ports.sh drops these to prove the standard ports.
 export PATRONUS_HTTPS_PORT=${PATRONUS_HTTPS_PORT:-8443} PATRONUS_HTTP_REDIRECT_PORT=${PATRONUS_HTTP_REDIRECT_PORT:-0} \
   PATRONUS_WEB_EXTRA_HTTPS_PORTS=${PATRONUS_WEB_EXTRA_HTTPS_PORTS:-none}
 

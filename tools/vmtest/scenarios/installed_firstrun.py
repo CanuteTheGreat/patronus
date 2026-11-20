@@ -65,7 +65,10 @@ out = []
 def https(port):
     c = http.client.HTTPSConnection("127.0.0.1", port, timeout=15, context=ctx); c.request("GET", "/login"); r = c.getresponse(); return r.status
 out.append("https443=%s" % https(443))
-out.append("https8443=%s" % https(8443))
+try:
+    out.append("https8443=%s" % https(8443))
+except OSError:
+    out.append("https8443=closed")
 c = http.client.HTTPConnection("127.0.0.1", 80, timeout=15); c.request("GET", "/some/page?x=1", headers={"Host": "10.9.9.9"})
 r = c.getresponse(); out.append("http80=%s loc=%s" % (r.status, r.getheader("Location")))
 pid = subprocess.check_output(["pgrep", "-x", "patronus-web"]).split()[0].decode()
@@ -116,13 +119,13 @@ def define(args):
         fw.wait_until_succeeds(f"timeout 3 bash -c ': </dev/tcp/127.0.0.1/{P['port']}'", 120, 3)   # no nc on the image
         fw.put_file(_write_tmp(API_PY), "/tmp/fwapi.py")
         # the web UI is where OpenWrt/pfSense users expect it: https://router-address (443) and http://router-address (80, redirect only), the
-        # old 8443 kept as an extra port, and the process holds only the capability to bind them (not root); same on OpenRC and systemd
+        # nothing on 8443 unless opted in, and the process holds only the capability to bind them (not root); same on OpenRC and systemd
         m.phase("0. web UI on the standard ports")
         fw.put_file(_write_tmp(WEBPORTS_PY), "/tmp/webports.py")
         wp = fw.succeed("python3 /tmp/webports.py", timeout=90).strip()
         m.check("web-ui-https-443-answers", "https443=200" in wp, wp)
         m.check("web-ui-http-80-redirects-to-https", "http80=308 loc=https://10.9.9.9/some/page?x=1" in wp, wp)
-        m.check("web-ui-8443-still-answers", "https8443=200" in wp, wp)
+        m.check("web-ui-8443-is-not-listening-by-default", "https8443=closed" in wp, wp)
         m.check("web-ui-runs-unprivileged-with-bind-capability", "capeff_bind=1" in wp and "uid=0" not in wp, wp)
         code, st = api("GET", "/api/setup/status")
         m.check("wizard-status-before", code == 200 and st.get("completed") is False and st.get("wizard") is True, str(st)[:300])

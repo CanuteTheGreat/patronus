@@ -1628,7 +1628,7 @@ mod tests {
         let rules = fw.list_rules().await.unwrap();
         let anti = rules.iter().find(|r| r.origin == "system").unwrap();
         assert_eq!(anti.interface_display, "MGMT");
-        assert_eq!(anti.port, "22,443,80,8443");
+        assert_eq!(anti.port, "22,443,80");
         let e = fw.delete_rule(anti.id).await.unwrap_err().to_string();
         assert!(e.contains("Invalid"), "{e}");
         assert!(fw.update_rule(anti.id, sample_rule("any")).await.is_err());
@@ -1918,7 +1918,7 @@ mod tests {
             }
         }
         assert!(
-            table.contains("tcp dport { 22, 80, 443, 8443 } accept"),
+            table.contains("tcp dport { 22, 80, 443 } accept"),
             "{table}"
         );
         assert!(table.contains("masquerade"), "{table}");

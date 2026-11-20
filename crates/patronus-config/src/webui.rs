@@ -7,8 +7,9 @@
 //!
 //! Layers, lowest to highest (a higher layer replaces a lower one key by key):
 //!
-//! 1. built-in defaults: HTTPS on 443, plain HTTP on 80 that only redirects to
-//!    HTTPS, and 8443 as an extra HTTPS port (what earlier releases used);
+//! 1. built-in defaults: the standard ports on every tier, HTTPS on 443 and plain
+//!    HTTP on 80 that only redirects to HTTPS. No other listener: 8443 (what
+//!    earlier releases used) is an explicit opt-in through `extra_https_ports`;
 //! 2. environment (`PATRONUS_HTTPS_PORT`, `PATRONUS_HTTP_REDIRECT_PORT`,
 //!    `PATRONUS_WEB_EXTRA_HTTPS_PORTS`, `PATRONUS_WEB_LISTEN`,
 //!    `PATRONUS_TLS_CERT`, `PATRONUS_TLS_KEY`): deployment defaults of an image
@@ -46,7 +47,7 @@ pub const KEYS: &[&str] = &[
 /// Built-in defaults (layer 1).
 pub const DEFAULT_HTTPS_PORT: u16 = 443;
 pub const DEFAULT_REDIRECT_PORT: u16 = 80;
-pub const DEFAULT_EXTRA_PORTS: &[u16] = &[8443];
+pub const DEFAULT_EXTRA_PORTS: &[u16] = &[];
 /// Listen on every IPv4 address unless told otherwise.
 pub const DEFAULT_LISTEN: &str = "0.0.0.0";
 
@@ -495,13 +496,21 @@ mod tests {
     }
 
     #[test]
-    fn built_in_default_is_443_with_80_redirect_and_8443_extra() {
+    fn built_in_default_is_443_with_80_redirect_and_no_other_listener() {
         let d = WebSettings::default();
         assert_eq!(d.https_port, 443);
         assert_eq!(d.http_redirect_port, 80);
-        assert_eq!(d.extra_https_ports, vec![8443]);
-        assert_eq!(d.all_ports(), vec![443, 80, 8443]);
+        assert!(d.extra_https_ports.is_empty());
+        assert_eq!(d.all_ports(), vec![443, 80]);
         d.validate().unwrap();
+    }
+
+    #[test]
+    fn eight_four_four_three_is_an_explicit_opt_in() {
+        let s = WebSettings::default().overlay(&env(&[("PATRONUS_WEB_EXTRA_HTTPS_PORTS", "8443")]));
+        assert_eq!(s.all_ports(), vec![443, 80, 8443]);
+        let s = WebSettings::default().overlay(&Layer::from_toml("[web]\nextra_https_ports = [8443]\n"));
+        assert_eq!(s.all_ports(), vec![443, 80, 8443]);
     }
 
     #[test]
@@ -594,7 +603,7 @@ mod tests {
         let web = WebSettings::default();
         let mut r = anti(vec![22, 8443]);
         follow_web_ports(&mut r, RuleOrigin::System, &web);
-        assert_eq!(r.dport, Some(PortSpec::Multiple(vec![22, 443, 80, 8443])));
+        assert_eq!(r.dport, Some(PortSpec::Multiple(vec![22, 443, 80])));
         // a custom ssh port stays first, a web-less change drops stale ports
         let web = WebSettings {
             https_port: 4443,
@@ -641,7 +650,7 @@ mod tests {
         assert!(err.is_err());
         assert_eq!(resolve(Some(&s)).await.all_ports(), vec![7443]);
         restore(&s, &before).await.unwrap();
-        assert_eq!(resolve(Some(&s)).await.all_ports(), vec![443, 80, 8443]);
+        assert_eq!(resolve(Some(&s)).await.all_ports(), vec![443, 80]);
         // reset clears
         save(
             &s,

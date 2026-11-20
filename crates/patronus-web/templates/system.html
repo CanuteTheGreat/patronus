@@ -249,14 +249,14 @@ async function fwFeedDownload() {
     <div class="card-header"><h2 class="card-title">Web UI addresses and ports</h2></div>
     <p class="text-sm text-muted">Where this management UI answers: HTTPS on the main port (443 =
         <code>https://router-address</code>), plain HTTP on the redirect port that only sends the browser to
-        HTTPS (0 = off), optional extra HTTPS ports, and the certificate (empty = the generated self-signed one).
+        HTTPS (0 = off), optional extra HTTPS ports (none by default; 8443 is an opt-in for old bookmarks), and the certificate (empty = the generated self-signed one).
         The firewall's anti-lockout rule opens these ports at once; the listeners move when the web UI is
         restarted. Keep an old port as an extra HTTPS port until the new address works.</p>
     {% if is_admin %}
     <form id="web-form" class="inline-form" onsubmit="return submitWeb(event)">
         <label>HTTPS port <input name="https_port" type="number" min="1" max="65535" value="{{ web_https_port }}"></label>
         <label>HTTP redirect port (0 = off) <input name="http_redirect_port" type="number" min="0" max="65535" value="{{ web_redirect_port }}"></label>
-        <label>Extra HTTPS ports <input name="extra_https_ports" value="{{ web_extra_ports }}" data-keep-empty="1" placeholder="8443 (none = no extra port)"></label>
+        <label>Extra HTTPS ports <input name="extra_https_ports" value="{{ web_extra_ports }}" data-keep-empty="1" placeholder="empty = none; e.g. 8443 for old bookmarks"></label>
         <label>Listen addresses <input name="listen" value="{{ web_listen }}" data-keep-empty="1" placeholder="0.0.0.0"></label>
         <label>TLS certificate file <input name="tls_cert" value="{{ web_cert }}" data-keep-empty="1" placeholder="/etc/patronus/tls/cert.pem"></label>
         <label>TLS key file <input name="tls_key" value="{{ web_key }}" data-keep-empty="1" placeholder="/etc/patronus/tls/key.pem"></label>

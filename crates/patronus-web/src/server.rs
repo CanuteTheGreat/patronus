@@ -167,7 +167,7 @@ until stopped.
 Usage: patronus-web [--help | --version]
 
 Where it listens (each layer replaces the one before it, key by key):
-  1. built-in: HTTPS 443, HTTP 80 that only redirects to HTTPS, extra HTTPS 8443
+  1. built-in: HTTPS 443 and HTTP 80 that only redirects to HTTPS (no other port)
   2. environment: PATRONUS_WEB_LISTEN, PATRONUS_HTTPS_PORT,
      PATRONUS_HTTP_REDIRECT_PORT (0 = off), PATRONUS_WEB_EXTRA_HTTPS_PORTS
      (comma list, 'none' = off), PATRONUS_TLS_CERT, PATRONUS_TLS_KEY

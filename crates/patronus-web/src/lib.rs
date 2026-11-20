@@ -596,6 +596,7 @@ mod listener_tests {
     fn addresses_follow_the_settings() {
         let mut s = WebSettings {
             listen: vec!["10.0.0.1".into(), "127.0.0.1".into()],
+            extra_https_ports: vec![8443],
             ..WebSettings::default()
         };
         let (https, redirect) = listener_addrs(&s);

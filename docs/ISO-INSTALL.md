@@ -138,7 +138,7 @@ before you type `ERASE` on the summary screen.
 The screenshots are real QEMU screen captures of the VGA console (`qemu-test.py --flow tui-vga`), taken by
 the nightly test.
 
-After the install: remove the stick and boot. The web UI is at `https://<ip>:8443` (self-signed
+After the install: remove the stick and boot. The web UI is at `https://<ip>` (self-signed
 certificate; user `admin`, the password you set). The first-boot ruleset puts anti-lockout (SSH + web UI) on the LAN; the WAN drops everything inbound.
 
 ## Graphical installer (default)

@@ -29,6 +29,9 @@
 # No pipefail on purpose: piping into grep -q would fail whenever grep exits
 # early and cmd gets EPIPE.
 set -eu
+# The web UI's built-in listeners are the standard 443 + 80; this lane drives (and the ruleset it asserts opens) one listener
+# on 8443, the way lib.sh does for the other lanes. lane-w-web-ports.sh proves the standard ports.
+export PATRONUS_HTTPS_PORT=8443 PATRONUS_HTTP_REDIRECT_PORT=0 PATRONUS_WEB_EXTRA_HTTPS_PORTS=none
 
 P=/t/patronus
 WEB=/t/patronus-web
@@ -199,7 +202,7 @@ must 409 PUT /interfaces/rtr-lan '{"role":"lan","ipv4_mode":"static","ipv4":["19
 must 409 POST /interfaces/rtr-lan/down '{}'
 must 400 POST /interfaces/bridges '{"name":"br1","members":["rtr-lan"]}'
 has_addr rtr-lan 192.168.50.1/24 || fail "refused change still touched rtr-lan"
-R nft list ruleset | grep 'iifname "rtr-lan" tcp dport { 22, 80, 443, 8443 } accept' >/dev/null || fail "anti-lockout rule moved"
+R nft list ruleset | grep 'iifname "rtr-lan" tcp dport { 22, 8443 } accept' >/dev/null || fail "anti-lockout rule moved"
 ok "invalid input -> 400 (incl. enslaving the LAN); role move / address change / disable of the admin's interface -> 409, kernel untouched"
 
 assert_kernel() { # $1 = label
@@ -299,7 +302,7 @@ OUT=$(R "$P" --db $DB apply --bootstrap "$TOML" 2>&1); echo "$OUT"
 grep -q 'interfaces ' <<<"$OUT" && ! grep -q '✗' <<<"$OUT" || fail "boot apply: a phase failed"
 R ip -d link show bond0 | grep 'bond mode active-backup' >/dev/null || fail "bond not rebuilt"
 assert_kernel "after reboot"
-R nft list ruleset | grep 'iifname "rtr-lan" tcp dport { 22, 80, 443, 8443 } accept' >/dev/null || fail "anti-lockout after reboot"
+R nft list ruleset | grep 'iifname "rtr-lan" tcp dport { 22, 8443 } accept' >/dev/null || fail "anti-lockout after reboot"
 R nft list ruleset | grep 'oifname "rtr-wan" masquerade' >/dev/null || fail "WAN masquerade after reboot"
 ok "boot apply rebuilt VLAN/QinQ/bond/bridge/PPPoE/DHCP/static config and the role-based firewall"
 
