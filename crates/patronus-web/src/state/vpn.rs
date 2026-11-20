@@ -61,6 +61,8 @@ impl VpnSnapshot {
 /// runs, since charon's VICI socket is root-only.
 #[derive(Default)]
 pub struct VpnManager {
+    #[cfg_attr(not(feature = "wireguard"), allow(dead_code))]
+    names: Option<Arc<ConfigStore>>,
     ipsec: Option<(Arc<ConfigStore>, Arc<dyn Applier>)>,
 }
 
@@ -161,6 +163,7 @@ impl VpnManager {
     /// Read IPsec SAs through the IPsec applier (`patronus applyd`).
     pub fn with_ipsec(store: Arc<ConfigStore>, ipsec: Option<Arc<dyn Applier>>) -> Self {
         Self {
+            names: Some(store.clone()),
             ipsec: ipsec.map(|a| (store, a)),
         }
     }
@@ -203,6 +206,15 @@ impl VpnManager {
                 Err(e) => snap.ipsec_error = Some(format!("cannot read IPsec state: {e}")),
             }
         }
+        #[cfg(feature = "wireguard")]
+        if let Some(store) = &self.names {
+            // Live peers carry only a key: show the name the operator gave it.
+            if let Ok(rows) = patronus_network::wireguard::list_peers(store).await {
+                let names: Vec<(String, String)> =
+                    rows.into_iter().map(|p| (p.public_key, p.name)).collect();
+                apply_configured_names(&mut snap.wg_peers, &names);
+            }
+        }
         snap
     }
 
@@ -228,6 +240,22 @@ impl VpnManager {
     /// tool is installed: then there is nothing we could have counted).
     pub async fn count_active_connections(&self) -> anyhow::Result<usize> {
         Ok(self.snapshot().await.active_connections())
+    }
+}
+
+/// Replace the generated `wg0 peer 1` label with the configured peer name
+/// (matched by public key; blank names are ignored).
+pub fn apply_configured_names(
+    peers: &mut [crate::templates::WireGuardPeer],
+    names: &[(String, String)],
+) {
+    for p in peers.iter_mut() {
+        if let Some((_, n)) = names
+            .iter()
+            .find(|(k, n)| *k == p.public_key && !n.trim().is_empty())
+        {
+            p.name = n.clone();
+        }
     }
 }
 
@@ -406,6 +434,24 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(snap.active_connections(), 1, "only the recent handshake");
+    }
+
+    #[test]
+    fn configured_peer_names_replace_the_generated_label() {
+        let dump = "wg0\tPRIV=\tPUB=\t51820\toff\n\
+             wg0\tPEERA=\t(none)\t(none)\t10.99.0.2/32\t0\t0\t0\toff\n\
+             wg0\tPEERB=\t(none)\t(none)\t10.99.0.3/32\t0\t0\t0\toff";
+        let mut p = parse_wg_dump(dump, NOW);
+        apply_configured_names(
+            &mut p,
+            &[
+                ("PEERA=".into(), "alice-laptop".into()),
+                ("PEERB=".into(), "  ".into()),
+                ("OTHER=".into(), "nobody".into()),
+            ],
+        );
+        assert_eq!(p[0].name, "alice-laptop");
+        assert_eq!(p[1].name, "wg0 peer 2", "blank name keeps the label");
     }
 
     #[test]
