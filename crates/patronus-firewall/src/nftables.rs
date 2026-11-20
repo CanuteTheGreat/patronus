@@ -63,6 +63,11 @@ pub const TABLE: &str = "inet patronus";
 /// ruleset starts with (loopback, established/related, invalid, ICMP).
 /// Shared by [`initialize_table`] and the atomic full-ruleset render in
 /// [`crate::applier`].
+///
+/// DHCPv6 replies are matched on the DESTINATION (the client's link-local
+/// address): a server behind a relay (large ISPs) answers from its global
+/// address, so a source match on fe80::/10 dropped every reply and the WAN
+/// never got its IPv6 address or delegated prefix.
 pub fn base_table_script() -> String {
     let t = TABLE;
     format!(
@@ -79,7 +84,7 @@ add rule {t} input ct state invalid drop
 add rule {t} forward ct state invalid drop
 add rule {t} input ip protocol icmp accept
 add rule {t} input ip6 nexthdr icmpv6 accept
-add rule {t} input ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept comment "DHCPv6 replies (WAN client, prefix delegation)"
+add rule {t} input ip6 daddr fe80::/10 udp sport 547 udp dport 546 accept comment "DHCPv6 replies (WAN client, prefix delegation)"
 "#
     )
 }
