@@ -202,6 +202,20 @@ nl_apply() {
 }
 
 # nl_boot DB: reboot the box = fresh namespaces + `patronus apply`.
+# nl_forget_dhcp_leases: delete dhcpcd's stored leases and DUID (they live outside the namespaces and survive a lane). A lease6 left by
+# another scenario's fake ISP makes dhcpcd REBIND that address forever instead of soliciting (lane-n-dhcp6pd failed in CI right after
+# lane-n-dhcp6pd-refused). Lanes that bring up a DHCP client call it first.
+nl_forget_dhcp_leases() {
+  rm -rf /var/lib/dhcpcd /var/lib/dhcpcd5 /var/db/dhcpcd 2>/dev/null || true
+}
+# nl_dhcp_cleanup: EXIT trap of a lane that ran a DHCP client and servers: stop the servers the lane started, end every dhcpcd (a
+# survivor keeps its control socket and swallows the next lane's dhcpcd, which then exits at once) and forget its leases.
+nl_dhcp_cleanup() {
+  nl_stop_servers
+  pkill -x dhcpcd 2>/dev/null || true
+  nl_forget_dhcp_leases
+}
+
 nl_boot() {
   nl_up
   nl_apply "$1" || { cat "$NL_OUT"; nl_fail "boot: patronus apply failed"; }

@@ -20,6 +20,8 @@ command -v dhcpd >/dev/null || apt-get install -y -qq isc-dhcp-server >/dev/null
 for t in dhcpcd radvd dhcpd; do command -v $t >/dev/null || nl_fail "$t is not installed"; done
 
 nl_write_installer_toml
+nl_forget_dhcp_leases
+trap nl_dhcp_cleanup EXIT
 nl_boot "$DB"
 
 # --- the ISP side: RA with the managed flag + DHCPv6 (IA_NA and prefix6)
