@@ -719,7 +719,12 @@ async fn main() -> anyhow::Result<()> {
             std::process::exit(code);
         }
         patronus_web::server::init_tracing();
-        return patronus_web::server::run().await;
+        // a server that could not start must end the process, not wait for the runtime's background tasks
+        if let Err(e) = patronus_web::server::run().await {
+            eprintln!("patronus-web: {e:#}");
+            std::process::exit(1);
+        }
+        return Ok(());
     }
     let cli = Cli::parse();
 

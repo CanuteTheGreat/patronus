@@ -150,8 +150,8 @@ nl_ok "reset forgets the stored values: the defaults (and their firewall ports) 
 echo "=== no CAP_NET_BIND_SERVICE: 443/80 cannot be bound, it is logged, an unprivileged port configured as extra still serves"
 : >"$W/web.log"
 start_web "net_admin,net_raw"
-sleep 6
-if kill -0 "$NL_WEB_PID" 2>/dev/null; then nl_fail "patronus-web kept running with no listener at all"; fi
+for _ in $(seq 1 20); do kill -0 "$NL_WEB_PID" 2>/dev/null || break; sleep 1; done
+if kill -0 "$NL_WEB_PID" 2>/dev/null; then tail -20 "$W/web.log"; nl_fail "patronus-web kept running with no listener at all"; fi
 wait "$NL_WEB_PID" 2>/dev/null || true; NL_WEB_PID=
 grep -q 'no HTTPS listener could be bound' "$W/web.log" || { tail -20 "$W/web.log"; nl_fail "the refusal was not logged"; }
 nl_ok "without the capability and without another port the service stops with 'no HTTPS listener could be bound' (not a silent UI-less process)"
