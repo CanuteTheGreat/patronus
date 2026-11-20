@@ -1573,6 +1573,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn revision_json_returns_the_stored_document_or_none() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.save_firewall_rule(&rule("kept")).await.unwrap();
+        let rev = s.snapshot("t", "with kept").await.unwrap();
+        let doc = s
+            .revision_json(rev)
+            .await
+            .unwrap()
+            .expect("revision exists");
+        // the document is the export taken at snapshot time ...
+        assert_eq!(doc, s.export_json().await.unwrap());
+        assert!(doc.to_string().contains("kept"), "{doc}");
+        // ... and stays as it was after the store changes
+        s.save_firewall_rule(&rule("later")).await.unwrap();
+        let again = s.revision_json(rev).await.unwrap().unwrap();
+        assert_eq!(again, doc);
+        assert!(!again.to_string().contains("later"));
+        // an unknown (pruned) revision is None, not an error
+        assert!(s.revision_json(rev + 1000).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
     async fn system_rules_cannot_be_deleted_or_edited_and_sort_first() {
         let s = ConfigStore::open_in_memory().await.unwrap();
         let u = s.save_firewall_rule(&rule("user")).await.unwrap() as u64;

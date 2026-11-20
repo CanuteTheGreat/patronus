@@ -1707,6 +1707,40 @@ mod tests {
         assert!(!r.script.contains("forward iifname"));
     }
 
+    /// The WAN source guard is rendered in the normal ruleset (with its report line)
+    /// and never in lockdown, which keeps only anti-lockout access.
+    #[tokio::test]
+    async fn wan_guard_renders_in_the_normal_ruleset_and_never_in_lockdown() {
+        let s = seeded(&["eth0"], &["eth1"]).await;
+        crate::wanguard::save(
+            &s,
+            crate::wanguard::WanGuard {
+                block_private: true,
+                block_bogons: false,
+            },
+        )
+        .await
+        .unwrap();
+        let r = FirewallApplier.render_script(&s, false).await.unwrap();
+        assert!(
+            r.script.contains("add chain inet patronus wan_guard"),
+            "{}",
+            r.script
+        );
+        assert!(r.script.contains("jump wan_guard"));
+        assert!(
+            r.report
+                .applied
+                .iter()
+                .any(|a| a.contains("WAN guard on eth0: private")),
+            "{:?}",
+            r.report.applied
+        );
+        let l = FirewallApplier.render_script(&s, true).await.unwrap();
+        assert!(!l.script.contains("wan_guard"), "{}", l.script);
+        assert!(!l.report.applied.iter().any(|a| a.contains("WAN guard")));
+    }
+
     #[tokio::test]
     async fn multiple_lan_interfaces_expand_and_lockdown_keeps_only_system_rules() {
         let s = seeded(&["eth0"], &["eth1", "eth2"]).await;

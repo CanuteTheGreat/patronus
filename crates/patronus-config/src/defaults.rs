@@ -42,15 +42,20 @@ pub const ANTI_LOCKOUT_PORTS: &[u16] = &[22, 8443];
 /// or `$PATRONUS_ANTI_LOCKOUT_PORTS` (comma list) when set. The router image sets
 /// it to `22,80,443` because its web UI listens on 443 (+ the 80 redirect).
 pub fn anti_lockout_ports() -> Vec<u16> {
-    std::env::var("PATRONUS_ANTI_LOCKOUT_PORTS")
-        .ok()
-        .map(|v| {
-            v.split(',')
-                .filter_map(|p| p.trim().parse::<u16>().ok())
-                .collect::<Vec<_>>()
-        })
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| ANTI_LOCKOUT_PORTS.to_vec())
+    parse_anti_lockout_ports(std::env::var("PATRONUS_ANTI_LOCKOUT_PORTS").ok().as_deref())
+}
+
+/// The comma list of `$PATRONUS_ANTI_LOCKOUT_PORTS` (`None` = unset): entries
+/// that are not a port are dropped, and an empty result falls back to
+/// [`ANTI_LOCKOUT_PORTS`].
+fn parse_anti_lockout_ports(list: Option<&str>) -> Vec<u16> {
+    list.map(|v| {
+        v.split(',')
+            .filter_map(|p| p.trim().parse::<u16>().ok())
+            .collect::<Vec<_>>()
+    })
+    .filter(|v| !v.is_empty())
+    .unwrap_or_else(|| ANTI_LOCKOUT_PORTS.to_vec())
 }
 
 /// `system_config` key of the managed SSH server's port (lane H/L3).
@@ -574,5 +579,101 @@ mod tests {
                 ("b".to_string(), RuleOrigin::User),
             ]
         );
+    }
+
+    #[test]
+    fn anti_lockout_ports_come_from_the_list_or_the_default() {
+        assert_eq!(parse_anti_lockout_ports(None), vec![22, 8443]);
+        assert_eq!(
+            parse_anti_lockout_ports(Some("22, 80,443")),
+            vec![22, 80, 443]
+        );
+        // junk entries are dropped, the rest kept
+        assert_eq!(parse_anti_lockout_ports(Some("x,2222,,99999")), vec![2222]);
+        // nothing usable: the default, never an empty (lock-out) rule
+        assert_eq!(parse_anti_lockout_ports(Some("")), vec![22, 8443]);
+        assert_eq!(parse_anti_lockout_ports(Some("a,b")), vec![22, 8443]);
+        // the env-reading wrapper agrees with the parser for whatever the environment holds
+        let env = std::env::var("PATRONUS_ANTI_LOCKOUT_PORTS").ok();
+        assert_eq!(
+            anti_lockout_ports(),
+            parse_anti_lockout_ports(env.as_deref())
+        );
+        assert!(!anti_lockout_ports().is_empty());
+    }
+
+    #[tokio::test]
+    async fn ssh_port_reads_the_setting_and_falls_back_to_22() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        assert_eq!(ssh_port(&s).await, 22);
+        s.save_system_config(SSH_PORT_KEY, "2222").await.unwrap();
+        assert_eq!(ssh_port(&s).await, 2222);
+        s.save_system_config(SSH_PORT_KEY, " 2200 ").await.unwrap();
+        assert_eq!(ssh_port(&s).await, 2200);
+        // 1 is a real port (not the fallback), 0 / junk / empty are not
+        s.save_system_config(SSH_PORT_KEY, "1").await.unwrap();
+        assert_eq!(ssh_port(&s).await, 1);
+        for bad in ["0", "junk", "", "70000"] {
+            s.save_system_config(SSH_PORT_KEY, bad).await.unwrap();
+            assert_eq!(ssh_port(&s).await, 22, "{bad:?}");
+        }
+    }
+
+    fn anti(ports: Vec<u16>) -> FirewallRule {
+        let mut r = FirewallRule::new(
+            "Anti-lockout".into(),
+            ChainType::Input,
+            FirewallAction::Accept,
+        );
+        r.dport = Some(PortSpec::Multiple(ports));
+        r
+    }
+
+    fn ports_of(r: &FirewallRule) -> Vec<u16> {
+        match &r.dport {
+            Some(PortSpec::Multiple(p)) => p.clone(),
+            other => panic!("unexpected dport {other:?}"),
+        }
+    }
+
+    #[test]
+    fn follow_ssh_port_swaps_22_only_in_the_system_anti_lockout_rule() {
+        // the swap: ssh port first, the web port kept, 22 gone
+        let mut r = anti(vec![22, 8443]);
+        follow_ssh_port(&mut r, RuleOrigin::System, 2222);
+        assert_eq!(ports_of(&r), vec![2222, 8443]);
+        // idempotent (the rule is rewritten on every render)
+        follow_ssh_port(&mut r, RuleOrigin::System, 2222);
+        assert_eq!(ports_of(&r), vec![2222, 8443]);
+        // already containing the new port next to 22: no duplicate
+        let mut r = anti(vec![22, 2222, 8443]);
+        follow_ssh_port(&mut r, RuleOrigin::System, 2222);
+        assert_eq!(ports_of(&r), vec![2222, 8443]);
+        // ssh.port back to 22: untouched
+        let mut r = anti(vec![22, 8443]);
+        follow_ssh_port(&mut r, RuleOrigin::System, 22);
+        assert_eq!(ports_of(&r), vec![22, 8443]);
+        // a rule that never opened 22 is left alone
+        let mut r = anti(vec![80, 443]);
+        follow_ssh_port(&mut r, RuleOrigin::System, 2222);
+        assert_eq!(ports_of(&r), vec![80, 443]);
+        // not a system rule, or not the anti-lockout rule
+        let mut r = anti(vec![22, 8443]);
+        follow_ssh_port(&mut r, RuleOrigin::User, 2222);
+        assert_eq!(ports_of(&r), vec![22, 8443]);
+        follow_ssh_port(&mut r, RuleOrigin::Default, 2222);
+        assert_eq!(ports_of(&r), vec![22, 8443]);
+        let mut r = anti(vec![22, 8443]);
+        r.name = "Allow SSH".into();
+        follow_ssh_port(&mut r, RuleOrigin::System, 2222);
+        assert_eq!(ports_of(&r), vec![22, 8443]);
+        // a single-port / no-port rule is left alone
+        let mut r = anti(vec![]);
+        r.dport = Some(PortSpec::Single(22));
+        follow_ssh_port(&mut r, RuleOrigin::System, 2222);
+        assert!(matches!(r.dport, Some(PortSpec::Single(22))));
+        r.dport = None;
+        follow_ssh_port(&mut r, RuleOrigin::System, 2222);
+        assert!(r.dport.is_none());
     }
 }
