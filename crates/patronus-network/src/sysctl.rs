@@ -110,6 +110,7 @@ impl SysctlApplier {
             return;
         };
         let mut n = 0;
+        let mut no_xps = 0;
         let mut devs: Vec<_> = rd.flatten().collect();
         devs.sort_by_key(|d| d.file_name());
         for d in devs {
@@ -139,12 +140,18 @@ impl SysctlApplier {
                 let val = if on { val } else { "0".to_string() };
                 match std::fs::write(&path, format!("{val}\n")) {
                     Ok(()) => n += 1,
+                    Err(e) if xps_unsupported(file, &e) => no_xps += 1,
                     Err(e) => report.warn(format!("packet steering: {name}/{qn}/{file}: {e}")),
                 }
             }
         }
+        let skipped = if no_xps > 0 {
+            format!(", {no_xps} transmit queue(s) of single-queue devices without XPS left alone")
+        } else {
+            String::new()
+        };
         report.applied(format!(
-            "packet steering {} ({n} queue file(s), {} CPU(s))",
+            "packet steering {} ({n} queue file(s){skipped}, {} CPU(s))",
             if on { "on" } else { "off" },
             cpus.len()
         ));
@@ -188,6 +195,13 @@ impl SysctlApplier {
 }
 
 pub const CONNTRACK_ACCT: &str = "net.netfilter.nf_conntrack_acct";
+
+/// The kernel lists `queues/tx-N/xps_cpus` on every device but refuses a
+/// write with ENOENT when the device is not multiqueue (e.g. a single-queue
+/// virtio NIC): transmit steering does not apply there, which is not an error.
+fn xps_unsupported(file: &str, e: &std::io::Error) -> bool {
+    file == "xps_cpus" && e.kind() == std::io::ErrorKind::NotFound
+}
 
 /// Keys whose target depends on a device existing (`...conf.<dev>...`,
 /// `...neigh.<dev>...`), other than the `all`/`default` pseudo-devices.
@@ -405,5 +419,14 @@ mod tests {
         a.apply(&s).await.unwrap();
         assert_eq!(rd("eth0/queues/rx-0/rps_cpus"), "0\n");
         assert_eq!(rd("eth0/queues/tx-1/xps_cpus"), "0\n");
+    }
+
+    #[test]
+    fn xps_enoent_on_a_single_queue_device_is_not_a_warning() {
+        let enoent = std::io::Error::from_raw_os_error(2);
+        assert!(xps_unsupported("xps_cpus", &enoent));
+        assert!(!xps_unsupported("rps_cpus", &enoent), "rps has no such case");
+        let eacces = std::io::Error::from_raw_os_error(13);
+        assert!(!xps_unsupported("xps_cpus", &eacces), "other errors still warn");
     }
 }
