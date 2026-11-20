@@ -28,8 +28,8 @@ mod imp {
     use super::*;
     use axum::extract::{Path, State};
     use patronus_config::Applier;
-    use serde_json::Value;
     use patronus_network::wifi_client::{self, WifiClientApplier, WifiClientInput};
+    use serde_json::Value;
     use std::sync::Arc;
 
     fn applier() -> Arc<dyn Applier> {
