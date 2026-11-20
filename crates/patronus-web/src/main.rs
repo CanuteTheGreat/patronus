@@ -17,5 +17,11 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(code);
     }
     patronus_web::server::init_tracing();
-    patronus_web::server::run().await
+    // a server that could not start must END the process (so the init system sees it): returning the error from main
+    // would first wait for the runtime's remaining background tasks, which keep it alive
+    if let Err(e) = patronus_web::server::run().await {
+        eprintln!("patronus-web: {e:#}");
+        std::process::exit(1);
+    }
+    Ok(())
 }
