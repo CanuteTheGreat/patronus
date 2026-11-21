@@ -14,7 +14,7 @@ if [ ! -x "$PW/bin/playwright" ]; then
   { apt-get install -y -qq python3-venv python3-pip >/dev/null 2>&1 \
     && python3 -m venv "$PW" && "$PW/bin/pip" install -q playwright \
     && "$PW/bin/playwright" install --with-deps firefox >/dev/null 2>&1; } \
-    || nl_fail "Playwright/Firefox could not be installed in the netlab container"
+    || { echo "resolv.conf:"; cat /etc/resolv.conf; nl_fail "Playwright/Firefox could not be installed in the netlab container"; }
 fi
 [ -f "$NL_T/config-history-page-e2e.py" ] || nl_fail "ci/config-history-page-e2e.py was not copied next to the scenarios"
 
