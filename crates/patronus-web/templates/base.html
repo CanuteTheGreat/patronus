@@ -1065,7 +1065,9 @@
         const later = () => { clearTimeout(t); t = setTimeout(fix, 150); };
         window.addEventListener('load', later);
         window.addEventListener('resize', later);
-        new MutationObserver(later).observe(document.querySelector('.content') || document.body, {childList: true, subtree: true});
+        // a tab or panel that becomes visible (class/style change, no DOM insertion) needs a re-check too
+        document.addEventListener('click', later);
+        new MutationObserver(later).observe(document.querySelector('.content') || document.body, {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden']});
     })();
     </script>
 </body>
