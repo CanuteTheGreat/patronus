@@ -131,11 +131,7 @@ RUN useradd -r -u 1000 -m -s /bin/bash patronus 2>/dev/null || true && \
 # capabilities, so the non-root patronus user can still create/manage
 # nftables table/chains.
 #
-# docker-compose.yml runs this container as # The image runs as the unprivileged patronus user, which cannot bind ports below 1024: the web UI listens on 8443 inside the
-# container (deployment default through the environment layer of the web settings, see docs/WEB-UI-LISTENERS.md) and is
-published on the standard port (`-p 443:8443`, docker-compose.yml). A host install listens on 443 + 80 itself.
-ENV PATRONUS_HTTPS_PORT=8443 PATRONUS_HTTP_REDIRECT_PORT=0
-USER patronus (non-root) with
+# docker-compose.yml runs this container as USER patronus (non-root) with
 # only cap_add: [NET_ADMIN, NET_RAW] -- but docker/compose's cap_add only
 # ever populates the capability BOUNDING set for a non-root exec'd process;
 # CapEff/CapPrm/CapAmb for a non-root user stay all-zero regardless
@@ -181,6 +177,8 @@ RUN emerge --verbose sys-libs/libcap && \
 # no root broker in the image: web login accounts are passwd/group/shadow
 # files the patronus user owns (patronus users add-local-account)
 ENV PATRONUS_AUTH_ETC=/var/lib/patronus/auth
+# Unprivileged user cannot bind <1024: listen on 8443 inside the container, published as 443 (docker-compose.yml, docs/WEB-UI-LISTENERS.md).
+ENV PATRONUS_HTTPS_PORT=8443 PATRONUS_HTTP_REDIRECT_PORT=0
 USER patronus
 WORKDIR /home/patronus
 EXPOSE 8443 51820/udp

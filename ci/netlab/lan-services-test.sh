@@ -146,9 +146,11 @@ echo "=== 3. patronus-applyd + patronus-web through $INIT (web as user patronus)
 svc start patronus-applyd
 svc start patronus-web
 for i in $(seq 1 60); do
-  N adm curl -sk -o /dev/null https://192.168.50.1:8443/login && break; sleep 0.5
+  N adm curl -sk -o /dev/null https://192.168.50.1/login && break; sleep 0.5
 done
-N adm curl -sk -o /dev/null https://192.168.50.1:8443/login || fail "web UI not reachable from the LAN"
+N adm curl -sk -o /dev/null https://192.168.50.1/login || fail "web UI not reachable from the LAN"
+code=$(N adm curl -s -o /dev/null -w '%{http_code}' http://192.168.50.1/ || true)
+case "$code" in 301|302|307|308) ok "http://ROUTER/ redirects ($code)";; *) fail "port 80 did not redirect ($code)";; esac
 WEBUSER=$(ps -o user= -C patronus-web | head -1)
 [ "$WEBUSER" = patronus ] || fail "patronus-web runs as $WEBUSER, expected patronus"
 [ -S /run/patronus/applyd.sock ] || fail "no applyd socket"
@@ -163,7 +165,7 @@ api() { # method path [json] -> prints code, body in /tmp/api.out
   local data=()
   [ $# -ge 3 ] && data=(-d "$3")
   N adm curl -sk -b /t/jar -c /t/jar -o /tmp/api.out -w '%{http_code}' -X "$1" \
-     -H 'content-type: application/json' "${data[@]}" "https://192.168.50.1:8443$2"
+     -H 'content-type: application/json' "${data[@]}" "https://192.168.50.1$2"
 }
 want() { # code method path [json]
   local w=$1; shift
