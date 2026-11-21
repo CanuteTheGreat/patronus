@@ -896,3 +896,19 @@ pub fn pages() -> axum::Router<AppState> {
         .route("/dns", dns)
         .route("/ntp", ntp)
 }
+
+#[cfg(test)]
+mod dhcp_page_tests {
+    /// Pools used to be delete-and-re-add only (dogfood 2026-11-18): the page must offer Edit and save it with the
+    /// existing PUT /api/dhcp/pools/:id, which the router serves.
+    #[test]
+    fn dhcp_page_edits_a_pool_through_put() {
+        let page = include_str!("../../../templates/dhcp.html");
+        assert!(page.contains("onclick=\"editPool(this)\""), "every pool row has an Edit button");
+        assert!(page.contains("'PUT', '/api/dhcp/pools/' + id"), "edit saves with PUT on the pool");
+        assert!(page.contains("data-dns-servers=\"{{ p.dns }}\""), "Edit pre-fills from the pool's values");
+        assert!(page.contains("name=\"enabled\""), "an edit can enable/disable the pool");
+        let src = include_str!("lan.rs");
+        assert!(src.contains(".route(\"/dhcp/pools/:id\", put(put_pool).delete(del_pool))"));
+    }
+}

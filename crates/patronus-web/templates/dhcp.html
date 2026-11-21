@@ -61,7 +61,8 @@
             <td>{{ p.domain }}</td>
             <td>{% if p.ntp.is_empty() %}<span class="text-muted">router if NTP on</span>{% else %}{{ p.ntp }}{% endif %}</td>
             <td>{% if p.enabled %}yes{% else %}no{% endif %}</td>
-            <td><button class="btn btn-danger btn-sm" onclick="del('/api/dhcp/pools/{{ p.id }}', 'Delete this pool and its static mappings?')">Delete</button></td>
+            <td><button class="btn btn-secondary btn-sm" data-id="{{ p.id }}" data-interface="{{ p.interface }}" data-enabled="{{ p.enabled }}" data-range-start="{{ p.range_start }}" data-range-end="{{ p.range_end }}" data-lease-time="{{ p.lease_time }}" data-gateway="{{ p.gateway }}" data-dns-servers="{{ p.dns }}" data-domain="{{ p.domain }}" data-ntp-servers="{{ p.ntp }}" data-description="{{ p.description }}" onclick="editPool(this)">Edit</button>
+                <button class="btn btn-danger btn-sm" onclick="del('/api/dhcp/pools/{{ p.id }}', 'Delete this pool and its static mappings?')">Delete</button></td>
         </tr>
         <tr><td></td><td colspan="8">
             <b>Static mappings</b>
@@ -90,8 +91,8 @@
         </tbody>
     </table>
     {% endif %}
-    <h3 class="font-bold mt-4">Add a pool</h3>
-    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dhcp/pools')">
+    <h3 class="font-bold mt-4" id="pool-form-title">Add a pool</h3>
+    <form class="lan-form" id="pool-form" onsubmit="return submitPool(event)">
         <label>Interface <input name="interface" value="@lan" required title="@lan, @optN or a device name"></label>
         <label>Range start <input name="range_start" placeholder="192.168.1.100" required></label>
         <label>Range end <input name="range_end" placeholder="192.168.1.199" required></label>
@@ -101,7 +102,9 @@
         <label>Domain <input name="domain" placeholder="lan"></label>
         <label>NTP servers <input name="ntp_servers" placeholder="router if NTP on"></label>
         <label>Description <input name="description"></label>
-        <button class="btn btn-primary btn-sm" type="submit">Add pool</button>
+        <label>Enabled <input type="checkbox" name="enabled" checked></label>
+        <button class="btn btn-primary btn-sm" type="submit" id="pool-form-submit">Add pool</button>
+        <button class="btn btn-secondary btn-sm" type="button" id="pool-form-cancel" hidden onclick="location.reload()">Cancel edit</button>
     </form>
 </div>
 
@@ -211,6 +214,29 @@
     // "Make static": pre-fill the static mapping form of the first pool.
     // Lease data (client-chosen hostnames!) is read from data-* attributes,
     // never spliced into script.
+    // "Edit" on a pool: the add-pool form is pre-filled from data-* attributes and saves with PUT /api/dhcp/pools/:id.
+    function editPool(btn) {
+        const f = document.getElementById('pool-form'), d = btn.dataset;
+        f.dataset.editId = d.id;
+        f.elements['interface'].value = d.interface;
+        f.elements['range_start'].value = d.rangeStart;
+        f.elements['range_end'].value = d.rangeEnd;
+        f.elements['lease_time'].value = d.leaseTime;
+        f.elements['gateway'].value = d.gateway;
+        f.elements['dns_servers'].value = d.dnsServers;
+        f.elements['domain'].value = d.domain;
+        f.elements['ntp_servers'].value = d.ntpServers;
+        f.elements['description'].value = d.description;
+        f.elements['enabled'].checked = d.enabled === 'true';
+        document.getElementById('pool-form-title').textContent = 'Edit pool ' + d.interface + ' ' + d.rangeStart + ' - ' + d.rangeEnd;
+        document.getElementById('pool-form-submit').textContent = 'Save pool';
+        document.getElementById('pool-form-cancel').hidden = false;
+        f.scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
+    function submitPool(ev) {
+        const id = ev.target.dataset.editId;
+        return id ? submitJson(ev, 'PUT', '/api/dhcp/pools/' + id) : submitJson(ev, 'POST', '/api/dhcp/pools');
+    }
     function makeStatic(btn) {
         const f = document.querySelector('form[id^="static-form-"]');
         if (!f) { alert('Add a DHCP pool first.'); return; }
