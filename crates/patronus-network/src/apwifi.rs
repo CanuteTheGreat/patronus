@@ -2289,7 +2289,6 @@ fn airtime_status(p: &Paths) -> Value {
     json!({ "supported": supported })
 }
 
-
 /// ap-steer's state of the last round (`<run>/steer/status.json`): mode, why it is (not) steering, the peers it knows,
 /// what each tracked station is doing. Absent before the first round.
 pub fn steer_status(p: &Paths) -> Value {
