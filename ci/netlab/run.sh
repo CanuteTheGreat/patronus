@@ -102,9 +102,12 @@ echo "--- netlab container: \$(uname -m), kernel \$(uname -r)"
 grep Cap /proc/self/status
 ip netns add probe && ip netns del probe && echo "network namespaces: ok"
 cd /t
+# a lane that rewrites the container's resolv.conf (lane-d, lane-h-diag...) must not leave the next lane (pip install
+# playwright in lane-h-history-ui) without DNS: every scrub puts the original back
+cp -a /etc/resolv.conf /t/resolv.conf.orig 2>/dev/null || true
 # scenarios share this container: leave nothing of the previous one behind
 # (lanes J/K stop their own daemons but not the lib.sh DNS/HTTP helpers)
-scrub() { pkill -f 'nl-dnsmasq.pid' 2>/dev/null || true; pkill -f '/t/(nl|lb)-[a-z0-9]+[.]py' 2>/dev/null || true; pkill -x 'suricata|watchfrr|bgpd|ospfd|zebra|staticd|mgmtd|xl2tpd|softflowd|igmpproxy|tayga|unbound|rsyslogd|patronus-web|patronus-dashboard|charon-systemd|dhcpcd|dhcpd|radvd' 2>/dev/null || true; rm -f /tmp/charon-rtr.pid /run/charon.vici /run/charon-client.vici; for n in \$(ip netns list | cut -d' ' -f1); do ip netns del "\$n" 2>/dev/null || true; done; sleep 1; }
+scrub() { [ -f /t/resolv.conf.orig ] && cat /t/resolv.conf.orig > /etc/resolv.conf 2>/dev/null; pkill -f 'nl-dnsmasq.pid' 2>/dev/null || true; pkill -f '/t/(nl|lb)-[a-z0-9]+[.]py' 2>/dev/null || true; pkill -x 'suricata|watchfrr|bgpd|ospfd|zebra|staticd|mgmtd|xl2tpd|softflowd|igmpproxy|tayga|unbound|rsyslogd|patronus-web|patronus-dashboard|charon-systemd|dhcpcd|dhcpd|radvd' 2>/dev/null || true; rm -f /tmp/charon-rtr.pid /run/charon.vici /run/charon-client.vici; for n in \$(ip netns list | cut -d' ' -f1); do ip netns del "\$n" 2>/dev/null || true; done; sleep 1; }
 # Run EVERY scenario even when one fails (one failing scenario used to hide
 # all the ones after it) and fail the job at the end listing each failure.
 failed=""; passed=0
