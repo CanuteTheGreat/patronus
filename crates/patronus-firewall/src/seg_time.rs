@@ -40,7 +40,8 @@ use std::net::Ipv4Addr;
 
 pub const TABLE_NAME: &str = "patronus_time";
 /// Plain-HTTP port of the "time's up" page (`patronus-captiveportal` timeup).
-pub const PORTAL_PORT: u16 = 8081;
+/// Built-in default; the setting is `time.portal_port` (see `patronus_config::ports`).
+pub const PORTAL_PORT: u16 = patronus_config::ports::DEFAULT_TIMEUP_PORT;
 /// A one-shot grace warning redirects HTTP for this long.
 pub const WARN_SECONDS: u32 = 120;
 
@@ -985,19 +986,10 @@ pub fn sets_from(decisions: &[(Target, Usage, Decision)]) -> Sets {
     s
 }
 
-/// The time's-up page port (`seg.time_portal_port` in `lan_settings`).
+/// The time's-up page port: `time.portal_port` through the usual layers
+/// (default 8081); the firewall rules and the listener both read it here.
 pub async fn portal_port(store: &ConfigStore) -> u16 {
-    let Ok(pool) = store.pool() else {
-        return PORTAL_PORT;
-    };
-    sqlx::query("SELECT value FROM lan_settings WHERE key = 'seg.time_portal_port'")
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|r| r.get::<String, _>(0).trim().parse::<u16>().ok())
-        .filter(|p| *p >= 1024)
-        .unwrap_or(PORTAL_PORT)
+    patronus_config::ports::timeup_port(store).await
 }
 
 async fn write_state(
@@ -1515,6 +1507,33 @@ mod tests {
         // nothing blocked: no empty `add element` (nft syntax error)
         let e = render_script(&Sets::default(), &[], 8081);
         assert!(!e.contains("add element"));
+    }
+
+    #[test]
+    fn rendered_table_follows_the_configured_port() {
+        assert_eq!(PORTAL_PORT, 8081, "documented default");
+        let s = Sets::default();
+        let t = render_script(&s, &[], 8090);
+        assert!(t.contains("redirect to :8090"));
+        assert!(t.contains("tcp dport { 53, 8090 } return"));
+        assert!(!t.contains("8081"));
+    }
+
+    #[tokio::test]
+    async fn portal_port_is_a_setting_with_a_safe_default() {
+        let st = ConfigStore::open_in_memory().await.unwrap();
+        assert_eq!(portal_port(&st).await, 8081);
+        st.save_system_config("time.portal_port", "8090")
+            .await
+            .unwrap();
+        assert_eq!(portal_port(&st).await, 8090);
+        // 0 and the web UI's own ports never reach the ruleset
+        for bad in ["0", "80", "443"] {
+            st.save_system_config("time.portal_port", bad)
+                .await
+                .unwrap();
+            assert_eq!(portal_port(&st).await, 8081, "{bad}");
+        }
     }
 
     #[test]

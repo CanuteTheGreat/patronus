@@ -144,7 +144,11 @@ services:
     # worker processes to the unprivileged user right after startup.
     user: root
     environment:
-      - HAPROXY_STATS_PASSWORD=${HAPROXY_STATS_PASSWORD:?set HAPROXY_STATS_PASSWORD for the haproxy stats page (port 8404)}
+      - HAPROXY_STATS_PASSWORD=${HAPROXY_STATS_PASSWORD:?set HAPROXY_STATS_PASSWORD for the haproxy stats page}
+      # Stats page port and bind address inside the container (haproxy.cfg
+      # reads both); default 8404 on every address, published below.
+      - HAPROXY_STATS_PORT=${HAPROXY_STATS_PORT:-8404}
+      - HAPROXY_STATS_BIND=${HAPROXY_STATS_BIND:-*}
     volumes:
       - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - ./certs:/etc/ssl/certs:ro
@@ -153,7 +157,7 @@ services:
     ports:
       - "80:80"       # HTTP (redirects to HTTPS)
       - "443:443"     # HTTPS
-      - "8404:8404"   # HAProxy stats
+      - "${HAPROXY_STATS_PORT:-8404}:${HAPROXY_STATS_PORT:-8404}"   # HAProxy stats (admin password required)
       - "9101:9101"   # HAProxy Prometheus metrics
     depends_on:
       - dashboard1

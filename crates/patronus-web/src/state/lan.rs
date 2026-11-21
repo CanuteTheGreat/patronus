@@ -741,6 +741,62 @@ impl LanManager {
         }))
     }
 
+    /// The effective time's-up page / HAProxy stats ports and the raw stored values.
+    pub async fn ports_overview(&self) -> anyhow::Result<Value> {
+        use patronus_config::ports;
+        let effective = ports::resolve(Some(&self.store)).await;
+        let stored: serde_json::Map<String, Value> = ports::stored(&self.store)
+            .await
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), Value::String(v)))
+            .collect();
+        Ok(serde_json::json!({
+            "effective": effective,
+            "stored": stored,
+            "defaults": ports::ServicePorts::default(),
+            "applies": "the firewall follows at once; the time's-up page listener moves when the web UI is restarted",
+        }))
+    }
+
+    /// Validate and store `time.portal_port` / `haproxy.*`, re-apply the
+    /// firewall (the time-limit table and its input accept follow the port);
+    /// undo the store write when the apply fails.
+    pub async fn save_ports(&self, i: patronus_config::ports::PortsInput) -> anyhow::Result<()> {
+        use patronus_config::ports;
+        let _g = self.edit.lock().await;
+        self.store
+            .snapshot("ports", "before change service ports")
+            .await
+            .map_err(e)?;
+        let before = ports::save(&self.store, &i).await.map_err(e)?;
+        let mut failure = None;
+        if let Some(a) = self.appliers.get("firewall") {
+            if let Err(err) = a.apply(&self.store).await {
+                failure = Some(format!("{err}"));
+            }
+        }
+        match failure {
+            None => {
+                let _ = self
+                    .store
+                    .audit("ports", "update", "service-ports", None, &Value::Null)
+                    .await;
+                Ok(())
+            }
+            Some(msg) => {
+                if let Err(re) = ports::restore(&self.store, &before).await {
+                    tracing::error!("could not undo the service ports after a failed apply: {re}");
+                }
+                if let Some(a) = self.appliers.get("firewall") {
+                    if let Err(re) = a.apply(&self.store).await {
+                        tracing::warn!("re-applying the previous firewall: {re}");
+                    }
+                }
+                Err(anyhow::anyhow!("{msg}"))
+            }
+        }
+    }
+
     /// Validate and store the `web.*` keys, then re-apply the firewall so the
     /// anti-lockout rule already opens the new ports before the web UI is
     /// restarted onto them; undo the store write when the apply fails.

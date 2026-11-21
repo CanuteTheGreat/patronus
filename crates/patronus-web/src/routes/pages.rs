@@ -209,7 +209,11 @@ pub async fn system(State(state): State<AppState>, me: crate::auth::AuthUser) ->
         .await
         .unwrap_or_default();
     let web = patronus_config::webui::resolve(Some(state.lan.store())).await;
+    let svc = patronus_config::ports::resolve(Some(state.lan.store())).await;
     let template = SystemTemplate {
+        timeup_port: svc.timeup_port,
+        haproxy_stats_port: svc.haproxy_stats_port,
+        haproxy_stats_bind: svc.haproxy_stats_bind.clone(),
         web_listen: web.listen.join(", "),
         web_https_port: web.https_port,
         web_redirect_port: web.http_redirect_port,

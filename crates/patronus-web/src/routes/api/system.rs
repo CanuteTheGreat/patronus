@@ -662,6 +662,38 @@ pub async fn put_web(
     }
 }
 
+/// GET /api/system/ports -- the time's-up page port and the HAProxy stats
+/// port/bind address: effective values, stored values and built-in defaults.
+pub async fn get_ports(State(state): State<AppState>) -> Response {
+    match state.lan.ports_overview().await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+/// PUT /api/system/ports -- `timeup_port`, `haproxy_stats_port`,
+/// `haproxy_stats_bind`; absent = unchanged, 0 / empty = back to the lower
+/// layers, `reset` = forget all. Refused: 0, a web UI port, SSH/DNS/DHCP/NTP
+/// ports for the time page, a non-IP bind address.
+pub async fn put_ports(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(i): Json<patronus_config::ports::PortsInput>,
+) -> Response {
+    match state.lan.save_ports(i).await {
+        Ok(()) => Json(json!({ "ok": true, "restart_required": true })).into_response(),
+        Err(e) => {
+            let m = e.to_string();
+            let code = if m.contains("Invalid") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            error(code, m)
+        }
+    }
+}
+
 pub async fn reboot(State(state): State<AppState>, _admin: AdminUser) -> Response {
     power(state, "reboot").await
 }
@@ -1292,6 +1324,7 @@ pub fn router() -> axum::Router<AppState> {
         .route("/system/general", get(get_general).put(put_general))
         .route("/system/ssh", get(get_ssh).put(put_ssh))
         .route("/system/web", get(get_web).put(put_web))
+        .route("/system/ports", get(get_ports).put(put_ports))
         .route("/system/reboot", post(reboot))
         .route(
             "/system/firmware",

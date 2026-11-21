@@ -15,6 +15,7 @@ set -euo pipefail
 DB=/t/lane-s-time.db
 FAKE=$NL_T/nl-fake-time
 export PATRONUS_FAKE_TIME_FILE=$FAKE PATRONUS_TIME_TICK_SECS=1
+export PATRONUS_TIMEUP_PORT=$NL_TIMEUP_PORT   # one value for the web process, apply and the checks below
 rm -f "$DB" "$NL_T/nl-jar"
 # The limited LAN client must NOT reach the admin UI, so the test drives the API from the
 # router's own namespace (loopback) instead of from the LAN client.
@@ -139,8 +140,8 @@ nl_ok "DNS (router :53) still answers while blocked"
 nl_expect_no_tcp "blocked device -> router SSH (admin ports stay shut)" C $NL_RTR_LAN 22
 if tcp_open $NL_RTR_LAN 8443; then nl_fail "blocked device reaches the admin UI on 8443"; fi
 nl_ok "blocked device -> router web UI :8443 refused"
-tcp_open $NL_RTR_LAN 8081 || nl_fail "blocked device cannot reach the time's-up page port 8081"
-nl_ok "blocked device -> router :8081 (time's-up page) open"
+tcp_open $NL_RTR_LAN "$NL_TIMEUP_PORT" || nl_fail "blocked device cannot reach the time's-up page port $NL_TIMEUP_PORT"
+nl_ok "blocked device -> router :$NL_TIMEUP_PORT (time's-up page) open"
 nl_ok "ping router while blocked: $(C ping -c1 -W2 $NL_RTR_LAN >/dev/null 2>&1 && echo ok || echo FAIL)"
 C ping -c1 -W2 $NL_RTR_LAN >/dev/null 2>&1 || nl_fail "ICMP to the router must keep working"
 P1=$(page); grep -q "Time's up" <<<"$P1" || nl_fail "HTTP of a blocked device is not redirected to the time's-up page: $P1"

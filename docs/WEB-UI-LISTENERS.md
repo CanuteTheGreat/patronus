@@ -26,6 +26,27 @@ Each layer replaces the one before it, key by key:
 
 `patronus-web --help` prints the same list; `--version` prints the version. Neither starts a server.
 
+## Other service ports
+
+Two more listeners are settings with the same layers (built-in < environment < `patronus.toml` < config store) and
+the same API/UI path (`GET/PUT /api/system/ports`, System page card "Service ports"; export, backups and GitOps carry the
+`system_config` keys):
+
+| What | Default | Setting | Environment | `patronus.toml` |
+|---|---|---|---|---|
+| Parental time limits: the "time's up" page (plain HTTP) | 8081 | `time.portal_port` | `PATRONUS_TIMEUP_PORT` | `[time] portal_port` |
+| HAProxy statistics page (HA setups, admin password required) port | 8404 | `haproxy.stats_port` | `PATRONUS_HAPROXY_STATS_PORT` | `[haproxy] stats_port` |
+| HAProxy statistics page bind address | `127.0.0.1` | `haproxy.stats_bind` | `PATRONUS_HAPROXY_STATS_BIND` | `[haproxy] stats_bind` |
+
+The time's-up page is its own listener and does not default to a standard port on purpose: it is an HTTP landing page,
+and port 80 is the web UI's HTTP -> HTTPS redirect listener (`web.http_redirect_port`); two listeners cannot share a port.
+It therefore stays on 8081 unless you set it. Validation refuses 0, any port the web UI uses, and the SSH / DNS / DHCP / NTP
+ports. The firewall follows the value: the `inet patronus_time` table redirects blocked devices' HTTP to it and lets
+`tcp dport { 53, <port> }` through, and the main table's input accept for the page opens the same port. The old
+`lan_settings` key `seg.time_portal_port` is still read when `time.portal_port` is unset. The listener moves when the web
+UI restarts. `docker-compose.ha.yml` takes the HAProxy port from `HAPROXY_STATS_PORT` (default 8404) and the address from
+`HAPROXY_STATS_BIND` (default `*` inside the container); `haproxy/haproxy.cfg` reads both.
+
 ## Changing it safely
 
 `PUT /api/system/web` validates the combination (ports differ, certificate and key come as a pair, addresses are IPs),

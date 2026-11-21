@@ -60,6 +60,8 @@ NL_WWW=198.51.100.10
 NL_BLOCKED=198.51.100.20
 NL_DNS=198.51.100.53
 NL_UI=https://$NL_RTR_LAN:8443
+# the time's-up page port (setting time.portal_port / PATRONUS_TIMEUP_PORT, built-in default 8081)
+NL_TIMEUP_PORT=${NL_TIMEUP_PORT:-8081}
 NL_OUT=/tmp/nl.out
 
 nl_fail() { echo "FAIL: $*" >&2; exit 1; }

@@ -29,6 +29,7 @@ TAG=pha-${GITHUB_RUN_ID:-local}-$$
 NET=$TAG-net
 SECRET=$(openssl rand -hex 32)
 STATS_PW=$(openssl rand -hex 12)
+STATS_PORT=${HAPROXY_STATS_PORT:-9404}  # a non-default value on purpose: the port is a setting
 WORK=$(mktemp -d)
 ADMIN_EMAIL=e2e-admin@example.test
 ADMIN_PW='E2e-Adm1n-Passw0rd!'
@@ -131,7 +132,8 @@ cp "$REPO/generate-ha-certs.sh" "$WORK/repo/"
 HAP_USER=$(awk '/^  haproxy:/{f=1;next} f&&/^  [a-z]/{f=0} f&&/^    user:/{print $2}' "$REPO/docker-compose.ha.yml")
 [ -n "$HAP_USER" ] || fail "docker-compose.ha.yml haproxy service has no user: (image default 'haproxy' cannot read the 0600 key)"
 docker create --name "$TAG-hap" --network "$NET" --network-alias haproxy --user "$HAP_USER" \
-  --memory 256m --cpus 0.5 -e HAPROXY_STATS_PASSWORD="$STATS_PW" haproxy:2.8-alpine >/dev/null
+  --memory 256m --cpus 0.5 -e HAPROXY_STATS_PASSWORD="$STATS_PW" \
+  -e HAPROXY_STATS_PORT="$STATS_PORT" -e HAPROXY_STATS_BIND="*" haproxy:2.8-alpine >/dev/null
 docker cp "$REPO/haproxy/haproxy.cfg" "$TAG-hap:/usr/local/etc/haproxy/haproxy.cfg"
 docker cp -a "$WORK/repo/certs/." "$TAG-hap:/etc/ssl/certs/"
 docker start "$TAG-hap" >/dev/null
@@ -142,8 +144,8 @@ done
 [ "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' "$TAG-hap")" = "true 0" ] || fail "haproxy is not running"
 [ "${code:-}" = 200 ] || fail "haproxy did not serve https://haproxy/health (last: ${code:-none})"
 hc -k https://haproxy/ | grep -i "<html" >/dev/null || fail "haproxy did not serve the dashboard UI"
-[ "$(hc -o /dev/null -w '%{http_code}' http://haproxy:8404/stats)" = 401 ] || fail "stats page must need auth"
-[ "$(hc -u "admin:$STATS_PW" -o /dev/null -w '%{http_code}' http://haproxy:8404/stats)" = 200 ] || fail "stats auth"
+[ "$(hc -o /dev/null -w '%{http_code}' http://haproxy:$STATS_PORT/stats)" = 401 ] || fail "stats page must need auth"
+[ "$(hc -u "admin:$STATS_PW" -o /dev/null -w '%{http_code}' http://haproxy:$STATS_PORT/stats)" = 200 ] || fail "stats auth"
 log "haproxy up with generated cert (TLS OK, stats protected)"
 
 # --- 3. auth + writes ------------------------------------------------------

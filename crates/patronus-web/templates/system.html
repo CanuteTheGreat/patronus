@@ -292,6 +292,43 @@ async function fwFeedDownload() {
     {% endif %}
 </div>
 
+<div class="card" id="ports-card">
+    <div class="card-header"><h2 class="card-title">Service ports</h2></div>
+    <p class="text-sm text-muted">The plain-HTTP "time's up" page of the parental time limits (default 8081: the
+        web UI already uses port 80 for its HTTPS redirect, and two listeners cannot share a port; it cannot be set to a
+        web UI port, SSH, DNS, DHCP or NTP) and the HAProxy statistics page of an HA setup (default 8404 on 127.0.0.1;
+        the page always needs the admin password). The firewall follows at once; the time's-up page listener moves when the
+        web UI is restarted. Empty or 0 = the default.</p>
+    {% if is_admin %}
+    <form id="ports-form" class="inline-form" onsubmit="return submitPorts(event)">
+        <label>Time's-up page port <input name="timeup_port" type="number" min="0" max="65535" value="{{ timeup_port }}"></label>
+        <label>HAProxy stats port <input name="haproxy_stats_port" type="number" min="0" max="65535" value="{{ haproxy_stats_port }}"></label>
+        <label>HAProxy stats address <input name="haproxy_stats_bind" value="{{ haproxy_stats_bind }}" placeholder="127.0.0.1"></label>
+        <button class="btn btn-sm btn-primary" id="save-ports" type="submit">Save</button>
+        <button class="btn btn-sm" id="reset-ports" type="button" onclick="resetPorts()">Back to defaults</button>
+    </form>
+    <script>
+    async function portsPut(body) {
+        const r = await fetch('/api/system/ports', {method: 'PUT', credentials: '<redacted:credentials>',
+            headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
+        if (!r.ok) {
+            let m = r.status + '';
+            try { m = (await r.json()).error || m; } catch (_) {}
+            alert('Not applied: ' + m);
+            return false;
+        }
+        alert('Saved. The firewall already follows; restart the web UI to move the time\'s-up page listener.');
+        return true;
+    }
+    function submitPorts(ev) { ev.preventDefault(); portsPut(formJson(ev.target)); return false; }
+    function resetPorts() { if (confirm('Forget the saved service ports and use the defaults?')) portsPut({reset: true}); }
+    </script>
+    {% else %}
+    <table class="lan"><tr><td>Time's-up page port</td><td>{{ timeup_port }}</td></tr>
+        <tr><td>HAProxy stats</td><td>{{ haproxy_stats_bind }}:{{ haproxy_stats_port }}</td></tr></table>
+    {% endif %}
+</div>
+
 <div class="card" id="ssh-card">
     <div class="card-header"><h2 class="card-title">SSH server</h2></div>
     <p class="text-sm text-muted">Managed OpenSSH drop-in (/etc/ssh/sshd_config.d/50-patronus.conf), checked with

@@ -192,6 +192,9 @@ Health Check: /health/ready
        └──► Instance 3 (unhealthy)          ◄── Removed from pool
 ```
 
+The stats page (admin password required) listens on `HAPROXY_STATS_PORT` (default 8404) and `HAPROXY_STATS_BIND`
+(default `*`) from `docker-compose.ha.yml`; see [WEB-UI-LISTENERS.md](WEB-UI-LISTENERS.md#other-service-ports).
+
 **Configuration** (`haproxy/haproxy.cfg`):
 
 ```haproxy

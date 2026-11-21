@@ -209,7 +209,8 @@ DNS too), toggled with one atomic `nft -f` per change, so other devices see no
 blip. A blocked device: forwarded traffic is reset/dropped in both directions
 (IPv6 by MAC), the router still answers ICMP, DNS and DHCP and serves the
 "time's up" page, never SSH or the admin UI. Plain HTTP of a blocked device is
-redirected to that page (`patronus-captiveportal::timeup`, port 8081, answers
+redirected to that page (`patronus-captiveportal::timeup`, port 8081 by default (setting `time.portal_port`, see
+[WEB-UI-LISTENERS.md](WEB-UI-LISTENERS.md); the firewall rules follow it), answers
 from the stored decision by client address), so a phone's own captive-portal check
 opens it; the Android probe gets 200 instead of 204 while blocked. A grace warning
 (`grace_minutes`, default 5) redirects the device's HTTP to the page once, for two

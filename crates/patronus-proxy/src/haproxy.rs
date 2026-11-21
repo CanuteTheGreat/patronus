@@ -174,6 +174,19 @@ pub struct StatsConfig {
     pub refresh: u32, // Auto-refresh interval (seconds)
 }
 
+impl StatsConfig {
+    /// Take the bind address and port from the typed settings
+    /// (`haproxy.stats_bind` / `haproxy.stats_port`, see
+    /// `patronus_config::ports`); an unparsable address keeps the current one.
+    pub fn with_ports(mut self, p: &patronus_config::ports::ServicePorts) -> Self {
+        if let Ok(a) = p.haproxy_stats_bind.parse() {
+            self.bind_address = a;
+        }
+        self.bind_port = p.haproxy_stats_port;
+        self
+    }
+}
+
 /// HAProxy global configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HAProxyConfig {
@@ -341,8 +354,12 @@ impl HAProxyManager {
         config.push_str("    errorfile 503 /etc/haproxy/errors/503.http\n");
         config.push_str("    errorfile 504 /etc/haproxy/errors/504.http\n\n");
 
-        // Statistics page
-        if self.config.stats.enabled {
+        // Statistics page: admin-only, so it is never rendered without
+        // credentials (`stats admin` would otherwise be open to anyone).
+        if self.config.stats.enabled
+            && self.config.stats.username.is_some()
+            && self.config.stats.password.is_some()
+        {
             config.push_str("listen stats\n");
             config.push_str(&format!(
                 "    bind {}:{}\n",
@@ -661,8 +678,10 @@ impl Default for HAProxyConfig {
             ssl_default_bind_options: "no-sslv3 no-tlsv10 no-tlsv11".to_string(),
             stats: StatsConfig {
                 enabled: true,
-                bind_address: "127.0.0.1".parse().unwrap(),
-                bind_port: 8404,
+                bind_address: patronus_config::ports::DEFAULT_HAPROXY_STATS_BIND
+                    .parse()
+                    .unwrap(),
+                bind_port: patronus_config::ports::DEFAULT_HAPROXY_STATS_PORT,
                 uri: "/stats".to_string(),
                 username: Some("admin".to_string()),
                 password: Some("changeme".to_string()),
@@ -685,5 +704,43 @@ impl Default for HealthCheck {
             fall: 3,
             check_port: None,
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
+mod tests {
+    use super::*;
+    use patronus_config::ports::ServicePorts;
+
+    #[test]
+    fn stats_default_is_8404_on_loopback() {
+        let s = HAProxyConfig::default().stats;
+        assert_eq!(s.bind_port, 8404);
+        assert_eq!(s.bind_address.to_string(), "127.0.0.1");
+        let cfg = HAProxyManager::new(HAProxyConfig::default()).generate_config();
+        assert!(cfg.contains("bind 127.0.0.1:8404\n"));
+    }
+
+    #[test]
+    fn rendered_stats_bind_follows_the_settings() {
+        let mut c = HAProxyConfig::default();
+        c.stats = c.stats.with_ports(&ServicePorts {
+            haproxy_stats_port: 9404,
+            haproxy_stats_bind: "10.1.2.3".into(),
+            ..ServicePorts::default()
+        });
+        let cfg = HAProxyManager::new(c).generate_config();
+        assert!(cfg.contains("bind 10.1.2.3:9404\n"));
+        assert!(!cfg.contains("8404"));
+    }
+
+    #[test]
+    fn stats_page_needs_credentials() {
+        let mut c = HAProxyConfig::default();
+        c.stats.password = None;
+        let cfg = HAProxyManager::new(c).generate_config();
+        assert!(!cfg.contains("listen stats"));
+        assert!(!cfg.contains("stats admin"));
     }
 }
