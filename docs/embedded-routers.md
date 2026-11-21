@@ -1311,7 +1311,18 @@ once to the 5 GHz BSS of its own SSID (guest to guest); 2.4-only, no-802.11v, we
 not asked; 802.11k station measured first, moved only when it hears 5 GHz well enough; accept naming the other band;
 move and return recorded, hold after a return; "seen on 5 GHz" counts; busy gate; off switch; never a disconnect even in
 the quiet hours); `tests/bandsteer-hwsim.sh` (mac80211_hwsim, one unit with a 2.4 GHz and a 5 GHz radio from the
-product's `ap render`, real hostapd + wpa_supplicant): see the results below.
+product's `ap render`, real hostapd + wpa_supplicant 2.10, `AP_STEER=off` so only band steering acts): 5 of 5 moves
+2.4 -> 5 GHz without a disconnect event (BSS-TM-RESP status 0 naming the 5 GHz BSS, 0-2 lost pings at 10/s, longest
+gap 0.2-1.2 s), the first after an 802.11k measurement (it heard the 5 GHz BSS at -27 dBm), each return to 2.4 GHz
+recorded and not asked again within the hold; a station limited to 2.4 GHz (`freq_list`) was asked once, answered that
+it stays, and stayed connected (0 disconnects, 1 lost ping). hwsim has no survey busy times (busy shows -1 %, the gate
+then only works with `AP_BANDSTEER_BUSY=0`), no path loss and no scan latency: it proves the decisions and "no
+disconnect", not real-world timing.
+
+Limits: a dual-band station without 802.11v (many TVs, some IoT) cannot be asked and stays on 2.4 GHz; OpenWrt-style
+probe suppression is impossible because the firmware answers probes. hostapd 2.10 prints `supp_op_classes` only when
+the station sent the element (most phones and laptops do); a station that did not is asked only after it was seen on
+this unit's 5 GHz once.
 
 ### 12.19 Channel choice by measurement, nightly re-check by channel switch, steering back-off (2026-11-18)
 
