@@ -78,10 +78,10 @@ X sh -c "printf '[Service]\nEnvironment=PATRONUS_ADMIN_PASSWORD=%s\n' '$PW' > /e
 X systemctl daemon-reload
 X systemctl start patronus-web || fail "systemctl start patronus-web failed"
 for _ in $(seq 1 60); do
-  X curl -ksf -o /dev/null https://localhost:8443/login && break
+  X curl -ksf -o /dev/null https://localhost/login && break
   sleep 1
 done
-X curl -ksf -o /dev/null https://localhost:8443/login || fail "patronus-web did not answer on :8443 under systemd"
+X curl -ksf -o /dev/null https://localhost/login || fail "patronus-web did not answer on :443 under systemd"
 for s in patronus-web patronus-applyd; do
   [ "$(X systemctl is-active $s)" = active ] || fail "$s is not active"
 done
@@ -95,7 +95,7 @@ OUT=; CODE=
 api() {
   local r
   r=$(X curl -ks -b /tmp/jar -c /tmp/jar -X "$1" -H 'Content-Type: application/json' \
-        ${3:+--data "$3"} -w '\n%{http_code}' "https://localhost:8443/api$2")
+        ${3:+--data "$3"} -w '\n%{http_code}' "https://localhost/api$2")
   CODE=${r##*$'\n'}; OUT=${r%$'\n'*}
 }
 must() { local want=$1; shift; api "$@"; [ "$CODE" = "$want" ] || fail "$1 $2 -> $CODE (want $want): $OUT"; }
@@ -123,7 +123,7 @@ for _ in $(seq 1 30); do [ "$(X systemctl is-active patronus-applyd)" = active ]
 api POST /system/services/patronus-web/restart || true
 for _ in $(seq 1 60); do
   pid1=$(X systemctl show -p MainPID --value patronus-web)
-  [ "$pid1" != 0 ] && [ "$pid1" != "$pid0" ] && X curl -ksf -o /dev/null https://localhost:8443/login && break
+  [ "$pid1" != 0 ] && [ "$pid1" != "$pid0" ] && X curl -ksf -o /dev/null https://localhost/login && break
   sleep 1
 done
 [ "$pid1" != "$pid0" ] && [ "$pid1" != 0 ] || fail "patronus-web MainPID unchanged ($pid0) after UI restart"
