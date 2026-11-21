@@ -42,7 +42,9 @@ ap_start() { # UNIT PHY24 PHY5 [extra env]
   u=$1; p24=$2; p5=$3; shift 3
   inu $u env $(uenv $u $p24 $p5) "$@" sh $AP_DIR/usr/libexec/patronus/ap start > $T/start-$u.log 2>&1; }
 ap_stop() { u=$1; inu $u sh -c "kill \$(cat /run/patronus-ap-coord.pid 2>/dev/null) 2>/dev/null; env $(uenv $1 x x) sh $AP_DIR/usr/libexec/patronus/ap stop" > /dev/null 2>&1
-  for i in $(iw dev | awk '$1 == "Interface" { print $2 }'); do case "$i" in wl*-$u|wl*-coord) iw dev $i del 2>/dev/null;; esac; done; }
+  for i in $(iw dev | awk '$1 == "Interface" { print $2 }'); do case "$i" in wl*-$u|wl*-coord) iw dev $i del 2>/dev/null;; esac; done
+  sleep 1; left=$(iw dev | awk -v u="$u" '$1 == "Interface" && $2 ~ ("^wl.*-" u "$") { print $2 }' | tr '\n' ' ')  # a unit that is stopped must leave nothing on air
+  [ -z "$left" ] || { echo "LEFTOVER after stopping unit $u: $left"; ps | grep -E 'hostapd|ap-coord|ap-chan|ap restart' | grep -v grep; }; }
 st() { inu "$1" hostapd_cli -p /run/hostapd -i "$2" status 2>/dev/null | sed -n "s/^$3=//p" | head -1; }
 wait_up() { u=$1; i=$2; wn=0; until [ "$(st $u $i state)" = ENABLED ]; do wn=$((wn + 1)); [ $wn -gt ${3:-60} ] && return 1; sleep 1; done; }  # own counter: the repair loop's n must not be reset in here
 seg() { st "$1" "$2" vht_oper_centr_freq_seg0_idx; }

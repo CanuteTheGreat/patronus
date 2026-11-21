@@ -20,6 +20,8 @@
 # Tie-break: the unit whose phy MAC (last five octets: the first one differs between a radio's BSSes) is HIGHER moves.
 # Test hooks: AP_COORD_NOPLAN (skip the pre-start scan once), AP_BOARD, AP_RENDER_OUT (as for `ap`), AP_COORD_SCAN_FILE (parse this scan instead of scanning),
 #             AP_COORD_STATUS_FILE (hostapd_cli status text), AP_COORD_AP (path of the ap script), AP_COORD_NOW (hour).
+# Scan robustness (environment / board.sh knobs, defaults in the code): AP_COORD_RESCANS (repeats of an empty pre-start scan, 2),
+#             AP_COORD_SCAN_TRIES (scans in all when the kernel aborts one, 5).
 . ${AP_BOARD:-/etc/patronus/board.sh}
 OUTD=${AP_RENDER_OUT:-/run/hostapd}
 APX=${AP_COORD_AP:-/usr/libexec/patronus/ap}
@@ -79,8 +81,18 @@ scan_if() { # BAND IF [ap-force]: a fresh scan of the band's frequencies (falls 
   # a loaded host, where the same radio then heard the peer in every later scan): an empty answer from the pre-start scan
   # is repeated (twice, AP_COORD_RESCANS) after a pause before the band counts as having no other access point.
   z=0; rs=$(num "${AP_COORD_RESCANS:-}" 2)
+  # A scan can also be ABORTED by the kernel (the other radio's hostapd starting, a regulatory update, another scan):
+  # iw then prints "scan aborted!" and exits 0 with whatever the kernel had cached, which is partial or stale (the channels
+  # not yet visited are missing, other networks' leftovers are in). That is not a result: scan again (AP_COORD_SCAN_TRIES
+  # times in all). Seen in hwsim: a peer 2 s on air on channel 11 was not heard because the first scan of the band was
+  # aborted after 0.1 s, and the leftovers of an earlier test made the cached list look like a real answer.
+  ab=0; tries=$(num "${AP_COORD_SCAN_TRIES:-}" 5)
   n=0; while :; do
     if out=$(timeout "$t" iw dev "$2" scan $xa freq $(freqs "$1") ${xa:+duration $(num "${AP_CHAN_DWELL:-}" 105)} 2>/dev/null); then
+      case "$out" in *"scan aborted"*)
+        ab=$((ab + 1))
+        if [ $ab -lt "$tries" ]; then sleep 1; continue; fi
+        say "$1 GHz: the scan was aborted $ab times, using the kernel's partial list" >&2; break;; esac
       case "$out" in *BSS*) break;; esac
       if [ -n "$xa" ] || [ $z -ge "$rs" ]; then break; fi
       z=$((z + 1)); sleep 2; continue
