@@ -443,7 +443,7 @@ echo "aa:00:00:00:00:0f" > "$ST/run/deny-wl5-g"; : > "$ST/run/deny-wl5-m"; : > "
 echo "06:aa:bb:cc:11:11 5180 -60 none 80 42 Home_Net" > "$ST/run/peers-5"
 echo "06:aa:bb:cc:11:12 2437 -60 none 20 0 Home_Net" > "$ST/run/peers-24"
 # fake hostapd_cli: `sta MAC` answers from $ST/sta/MAC, everything else is logged as "NOW IF CMD ARGS"
-printf '#!/bin/sh\nif=$4; c=$5; shift 5\ncase "$c" in sta) cat %s/sta/"$1" 2>/dev/null;; *) echo "$AP_STEER_NOW $if $c $*" >> %s/cli.log;; esac\n' "$ST" "$ST" > "$ST/cli"; chmod +x "$ST/cli"
+printf '#!/bin/sh\nif=$4; c=$5; shift 5\ncase "$c" in sta) cat %s/sta/"$1" 2>/dev/null;; status) ;; *) echo "$AP_STEER_NOW $if $c $*" >> %s/cli.log;; esac\n' "$ST" "$ST" > "$ST/cli"; chmod +x "$ST/cli"
 BTM='ext_capab=0400080000000040'; BCN='rrm_enabled_capab=7000000000'
 stsay() { # IF MAC SIGNAL BYTES CONNECTED (appends a station to the fake dump of IF)
   printf 'Station %s (on %s)\n\tinactive time:\t100 ms\n\trx bytes:\t%s\n\ttx bytes:\t0\n\tsignal:  \t%s [%s, %s] dBm\n\tsignal avg:\t%s [%s, %s] dBm\n\tconnected time:\t%s seconds\n' \
@@ -618,6 +618,97 @@ for n in 4000 4100 4200 4300; do s2 $n "AP_STEER=off AP_STEER_AFTER=60 AP_STEER_
 grep -q 'steering: idle (off: switched off in the settings' "$ST2/out" && ! grep -q 'no other access point' "$ST2/out" \
   && ok "ap-steer status: off by the setting says so (not 'no other access point known')" || { no "ap-steer status reason"; cat "$ST2/out"; }
 grep -q '"reason":"off: switched off in the settings' "$ST2/state/status.json" && ok "ap-steer status.json: same reason for the Wi-Fi page" || { no "status.json reason"; cat "$ST2/state/status.json"; }
+# 3c2. band steering (docs 12.18b): a station on this unit's 2.4 GHz that has shown 5 GHz is ASKED (802.11v) to move to
+# this unit's 5 GHz BSS of the same SSID; never disconnected for it; once per AP_STEER_RETRY; works with AP_STEER=off
+B3=$A/st3; rm -rf "$B3"; mkdir -p "$B3/dump" "$B3/run" "$B3/sta" "$B3/survey"
+printf 'interface=wl5-m\nbssid=94:00:00:00:00:01\nssid=Home Net\nbss=wl5-g\nbssid=96:00:00:00:00:01\nssid=Guest\n' > "$B3/run/ap5.conf"
+printf 'interface=wl24-m\nbssid=94:00:00:00:00:02\nssid=Home Net\nbss=wl24-g\nbssid=96:00:00:00:00:02\nssid=Guest\n' > "$B3/run/ap24.conf"
+for i in wl5-m wl5-g; do printf 'state=ENABLED\nphy=phy0\nfreq=5180\nchannel=36\n' > "$B3/run/status-$i"; done
+printf '#!/bin/sh\nif=$4; c=$5; shift 5\ncase "$c" in sta) cat %s/sta/"$1" 2>/dev/null;; status) cat %s/run/status-"$if" 2>/dev/null;; *) echo "$AP_STEER_NOW $if $c $*" >> %s/cli.log;; esac\n' \
+  "$B3" "$B3" "$B3" > "$B3/cli"; chmod +x "$B3/cli"; : > "$B3/cli.log"; printf 'port no\tmac addr\t\tis local?\tageing timer\n' > "$B3/fdb"
+srv() { printf 'Survey data from wl24-m\n\tfrequency:\t\t\t2412 MHz [in use]\n\tnoise:\t\t\t\t-95 dBm\n\tchannel active time:\t\t%s ms\n\tchannel busy time:\t\t%s ms\nSurvey data from wl24-m\n\tfrequency:\t\t\t2417 MHz\n\tchannel active time:\t\t99 ms\n\tchannel busy time:\t\t99 ms\n' "$1" "$2" > "$B3/survey/wl24-m"; }
+bsay() { # IF MAC SIGNAL BYTES CONNECTED
+  printf 'Station %s (on %s)\n\tinactive time:\t100 ms\n\trx bytes:\t%s\n\ttx bytes:\t0\n\tsignal:  \t%s dBm\n\tsignal avg:\t%s dBm\n\tconnected time:\t%s seconds\n' \
+    "$2" "$1" "$4" "$3" "$3" "$5" >> "$B3/dump/$1"; }
+bround() { # NOW CLOCK BOARD-EXTRA
+  printf '. %s\n%s\n' "$O/etc/patronus/board.sh" "$3" > "$B3/board.sh"
+  AP_BOARD=$B3/board.sh AP_RENDER_OUT=$B3/run AP_STEER_STATE=$B3/state AP_STEER_DB=$B3/db AP_STEER_NOW=$1 AP_STEER_CLOCK=$2 \
+    AP_STEER_DUMP_DIR=$B3/dump AP_STEER_FDB_FILE=$B3/fdb AP_STEER_WIRED="1 2 3 4 5" AP_CLI=$B3/cli AP_STEER_SURVEY_DIR=$B3/survey \
+    sh "$O/usr/libexec/patronus/ap-steer" once >> "$B3/out" 2>&1; rm -f "$B3/dump"/*; }
+BTM='ext_capab=0400080000000040'; OC5='supp_op_classes=5151525354737476777c7d7e7f80'; OC24='supp_op_classes=51515354'
+printf '%s\n%s\n' "$BTM" "$OC5" > "$B3/sta/bb:00:00:00:00:01"                                    # 802.11v, 5 GHz classes
+printf '%s\n%s\n' "$BTM" "$OC24" > "$B3/sta/bb:00:00:00:00:02"                                   # 802.11v, 2.4 GHz only
+printf '%s\n' "$OC5" > "$B3/sta/bb:00:00:00:00:03"                                               # no 802.11v
+printf '%s\n%s\ncapability=0x1411\n' "$BTM" "$OC5" > "$B3/sta/bb:00:00:00:00:04"                 # 802.11v + 802.11k
+printf '%s\n%s\ncapability=0x1411\n' "$BTM" "$OC5" > "$B3/sta/bb:00:00:00:00:05"                 # 802.11v + 802.11k
+for m in 06 07 08 09; do printf '%s\n%s\n' "$BTM" "$OC5" > "$B3/sta/bb:00:00:00:00:$m"; done
+BB="AP_STEER=off AP_STEER_MAX=8 AP_STEER_EXEMPT=bb:00:00:00:00:07"
+for n in 1000 1030 1060; do b=$((n * 10)); srv $((n * 1000)) $((n * 300))
+  bsay wl24-m bb:00:00:00:00:01 -45 "$b" 700; bsay wl24-m bb:00:00:00:00:02 -45 "$b" 700; bsay wl24-m bb:00:00:00:00:03 -45 "$b" 700
+  bsay wl24-m bb:00:00:00:00:04 -45 "$b" 700; bsay wl24-m bb:00:00:00:00:05 -45 "$b" 700
+  bsay wl24-m bb:00:00:00:00:06 -62 "$b" 700                         # not weak (-65), but below AP_BANDSTEER_SIGNAL -60
+  bsay wl24-m bb:00:00:00:00:07 -45 "$b" 700                         # exempt
+  bsay wl24-m bb:00:00:00:00:08 -45 $((n * 9000000)) 700             # busy (~72 Mbit/s)
+  bsay wl24-g bb:00:00:00:00:09 -45 "$b" 700                         # guest SSID
+  bsay wl5-m bb:00:00:00:00:0a -50 "$b" 700                          # already on 5 GHz
+  bround $n 02:00 "$BB"; done
+grep -q 'deny_acl' "$B3/cli.log" && no "band steering: disconnected a station: $(grep deny_acl "$B3/cli.log")" \
+  || ok "band steering: never disconnects (quiet hours, AP_STEER=off for steering between units)"
+[ "$(grep -c 'wl24-m bss_tm_req bb:00:00:00:00:01 pref=1 abridged=1 valid_int=255 neighbor=94:00:00:00:00:01,0x0000008f,115,36,9,0301ff$' "$B3/cli.log")" = 1 ] \
+  && ok "band steering: an idle 802.11v station whose operating classes include 5 GHz is asked once to move to this unit's 5 GHz BSS of its SSID" \
+  || { no "band steering: no/odd request for bb:01"; cat "$B3/cli.log"; tail -5 "$B3/out"; }
+grep -q 'wl24-g bss_tm_req bb:00:00:00:00:09 .*neighbor=96:00:00:00:00:01,0x0000008f,115,36,' "$B3/cli.log" \
+  && ok "band steering: the 5 GHz BSS named is the one with the station's SSID (guest -> guest)" || { no "band steering: guest SSID pair"; grep ':09' "$B3/cli.log"; }
+grep -q 'bb:00:00:00:00:0[23678]\|bb:00:00:00:00:0a' "$B3/cli.log" \
+  && no "band steering: asked a 2.4-only, legacy, weak-2.4, exempt, busy or 5 GHz station: $(grep 'bb:00:00:00:00:0[23678]\|bb:00:00:00:00:0a' "$B3/cli.log")" \
+  || ok "band steering: 2.4 GHz-only, no-802.11v, 2.4 signal below AP_BANDSTEER_SIGNAL, exempt, busy and 5 GHz stations are not asked"
+grep -q 'wl24-m req_beacon bb:00:00:00:00:04 7324000032000[1]ffffffffffff0008486f6d65204e6574020100$' "$B3/cli.log" && ! grep -q 'bss_tm_req bb:00:00:00:00:04' "$B3/cli.log" \
+  && ok "band steering: an 802.11k station is first asked what it hears on this unit's 5 GHz channel (not moved yet)" \
+  || { no "band steering: 802.11k station not measured first"; grep ':04' "$B3/cli.log"; }
+grep -q 'wl24-m set_neighbor 94:00:00:00:00:01 ssid=486f6d65204e6574 nr=9400000000018f000000732409$' "$B3/cli.log" \
+  && grep -q 'wl24-g set_neighbor 96:00:00:00:00:01 ' "$B3/cli.log" && ! grep -q 'wl5-. set_neighbor 94:00:00:00:00:02' "$B3/cli.log" \
+  && ok "band steering: this unit's 5 GHz BSS is an 802.11k neighbor of its 2.4 GHz BSS of the same SSID" || { no "band steering: neighbor"; grep set_neighbor "$B3/cli.log"; }
+# beacon reports: 04 hears our 5 GHz at -60 (asked to move), 05 at -80 (stays, left alone)
+bev() { printf '73240000000000000000000000%s00%s0000000000\n' "$(printf %02x $(( ($2 + 110) * 2 )))" "$(echo "$1" | tr -d :)"; }
+{ echo "1070 wl24-m BEACON-RESP-RX bb:00:00:00:00:04 1 00 $(bev 94:00:00:00:00:01 -60)"; echo "1070 wl24-m BEACON-RESP-RX bb:00:00:00:00:05 1 00 $(bev 94:00:00:00:00:01 -80)"; } > "$B3/state/events"
+: > "$B3/cli.log"; for m in 04 05; do bsay wl24-m bb:00:00:00:00:$m -45 10700 800; done; srv 1090000 327000; bround 1090 14:00 "$BB"
+grep -q 'wl24-m bss_tm_req bb:00:00:00:00:04 .*neighbor=94:00:00:00:00:01,' "$B3/cli.log" && ! grep -q 'bss_tm_req bb:00:00:00:00:05' "$B3/cli.log" \
+  && grep -q '"event":"band-btm","mac":"bb:00:00:00:00:04".*it hears it at -60 dBm' "$B3/db/history" \
+  && grep -q '"event":"band-stay","mac":"bb:00:00:00:00:05".*-80 dBm only' "$B3/db/history" \
+  && ok "band steering: asked to move only when it hears this unit's 5 GHz at AP_BANDSTEER_MIN5 or better; otherwise left alone (history says why)" \
+  || { no "band steering: beacon report decision"; cat "$B3/cli.log"; grep 'bb:00:00:00:00:0[45]' "$B3/db/history"; }
+# its answer: status 0 with this unit's 5 GHz as the target is a move, not "chose to stay"
+echo "1100 wl24-m BSS-TM-RESP bb:00:00:00:00:04 dialog_token=1 status_code=0 bss_termination_delay=0 target_bssid=94:00:00:00:00:01" > "$B3/state/events"
+bsay wl24-m bb:00:00:00:00:04 -45 10700 810; bround 1120 14:00 "$BB"
+grep -q '"event":"btm-answer","mac":"bb:00:00:00:00:04".*accepted the move request, roaming to 94:00:00:00:00:01' "$B3/db/history" \
+  && ok "band steering: an accept naming this unit's other band counts as accepted (not 'stays here')" || { no "band steering: answer"; grep 'btm-answer' "$B3/db/history"; }
+# 01 moves to 5 GHz (recorded), comes back to 2.4 GHz: left alone for AP_STEER_RETRY; not asked again before
+: > "$B3/cli.log"; bsay wl5-m bb:00:00:00:00:01 -50 20000 30; bround 1150 14:00 "$BB"
+grep -q '"event":"band-moved","mac":"bb:00:00:00:00:01"' "$B3/db/history" && ok "band steering: the move to 5 GHz is in the history" || { no "band steering: move not recorded"; tail -3 "$B3/db/history"; }
+for n in 2000 2100 2200; do bsay wl24-m bb:00:00:00:00:01 -45 30000 $((n - 1900)); bround $n 14:00 "$BB AP_STEER_RETRY=3600"; done
+grep -q '"event":"band-back","mac":"bb:00:00:00:00:01".*time 1 in a row): not asked again for 3600 s' "$B3/db/history" && ! grep -q 'bss_tm_req bb:00:00:00:00:01' "$B3/cli.log" \
+  && ok "band steering: a station back on 2.4 GHz is not asked again for AP_STEER_RETRY" || { no "band steering: back"; cat "$B3/cli.log"; grep ':01' "$B3/db/history" | tail -3; }
+for n in 5800 5900 6000; do bsay wl24-m bb:00:00:00:00:01 -45 30000 $((n - 1900)); bround $n 14:00 "$BB AP_STEER_RETRY=3600"; done
+[ "$(grep -c 'bss_tm_req bb:00:00:00:00:01' "$B3/cli.log")" = 1 ] && ok "band steering: ... and asked again (once) after the hold" || { no "band steering: after hold"; cat "$B3/cli.log"; }
+# seen on 5 GHz before = has 5 GHz, even without operating classes
+printf '%s\n' "$BTM" > "$B3/sta/bb:00:00:00:00:0a"; : > "$B3/cli.log"
+for n in 7000 7030 7060; do bsay wl24-m bb:00:00:00:00:0a -45 100 700; bround $n 14:00 "$BB"; done
+grep -q 'wl24-m bss_tm_req bb:00:00:00:00:0a ' "$B3/cli.log" && ok "band steering: a station seen on this unit's 5 GHz before counts as 5 GHz-capable" || { no "band steering: seen5"; cat "$B3/db/seen5"; }
+# busy gate, off switch
+rm -rf "$B3/state" "$B3/db"; : > "$B3/cli.log"
+for n in 8000 8030 8060; do srv $((n * 1000)) $((n * 300)); bsay wl24-m bb:00:00:00:00:01 -45 100 700; bround $n 14:00 "$BB AP_BANDSTEER_BUSY=50"; done
+grep -q 'bss_tm_req' "$B3/cli.log" && no "band steering: asked although the 2.4 GHz channel was 30% busy (needs 50)" || ok "band steering: not below AP_BANDSTEER_BUSY (2.4 GHz channel 30% busy, needs 50)"
+for n in 8090 8120 8150 8180 8210; do srv $((n * 1000)) $((8060000 * 3 / 10 + (n - 8060) * 900)); bsay wl24-m bb:00:00:00:00:01 -45 100 700; bround $n 14:00 "$BB AP_BANDSTEER_BUSY=50"; done
+grep -q 'bss_tm_req bb:00:00:00:00:01' "$B3/cli.log" && ok "band steering: asked once the 2.4 GHz channel is busier than AP_BANDSTEER_BUSY" || { no "band steering: busy gate never opened"; cat "$B3/state/survey"; }
+rm -rf "$B3/state" "$B3/db"; : > "$B3/cli.log"
+for n in 9000 9030 9060; do bsay wl24-m bb:00:00:00:00:01 -45 100 700; bround $n 14:00 "$BB AP_BANDSTEER=off"; done
+grep -q 'bss_tm_req\|req_beacon' "$B3/cli.log" && no "band steering: AP_BANDSTEER=off still asked" || ok "band steering: AP_BANDSTEER=off turns it off"
+for n in 9100 9130; do bsay wl24-m bb:00:00:00:00:01 -45 100 700; bround $n 14:00 "$BB"; done
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); b=d['band']; assert b['on'] and b['pairs'][0]['bss5']=='wl5-m' and b['busy24']>=0 and d['stations'][0]['has_5ghz'], d" "$B3/state/status.json" 2>"$B3/js.err" \
+  && ok "band steering: status.json (Wi-Fi page) shows the band pairs, 2.4 GHz busy % and each station's 5 GHz capability" || { no "band steering: status.json"; cat "$B3/state/status.json" "$B3/js.err"; }
+AP_BOARD=$B3/board.sh AP_RENDER_OUT=$B3/run AP_STEER_STATE=$B3/state AP_STEER_DB=$B3/db AP_STEER_NOW=9130 AP_CLI=$B3/cli sh "$O/usr/libexec/patronus/ap-steer" status > "$B3/status" 2>&1
+grep -q 'band steering (2.4 -> 5 GHz of this unit): on' "$B3/status" && grep -q 'wl24-m -> wl5-m (94:00:00:00:00:01, channel 36)' "$B3/status" \
+  && ok "ap-steer status: band steering state and the 2.4 -> 5 GHz pairs" || { no "ap-steer status band"; cat "$B3/status"; }
 # the hostapd config: 802.11v/k on by default, off by setting, never 802.11r
 aprender kv "$TWO"
 [ "$(grep -c '^bss_transition=1$' "$A/kv/ap5.conf")" = 2 ] && [ "$(grep -c '^rrm_neighbor_report=1$' "$A/kv/ap24.conf")" = 2 ] \

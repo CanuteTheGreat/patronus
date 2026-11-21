@@ -305,6 +305,7 @@ const STEER_SWITCHES: &[&str] = &[
     "AP_STEER_QUIET",
     "AP_STEER_LEGACY",
     "AP_STEER_REPORT",
+    "AP_BANDSTEER",
 ];
 fn chan_keys() -> impl Iterator<Item = &'static str> {
     CHAN_SWITCHES
@@ -462,6 +463,10 @@ pub struct WifiConfig {
     /// most of it). Live.
     #[serde(default = "yes")]
     pub atf: bool,
+    /// band steering (docs 12.18b): a station on this unit's 2.4 GHz that has shown 5 GHz is ASKED (802.11v) to move to
+    /// this unit's 5 GHz BSS of the same SSID, never disconnected for it; the thresholds are `band_*` in [`TUNING`]. Live.
+    #[serde(default = "yes")]
+    pub bandsteer: bool,
     /// the numbers of [`TUNING`] (channel choice, steering back-off, airtime queue limits), by field name
     #[serde(flatten)]
     pub tuning: std::collections::BTreeMap<String, i64>,
@@ -766,6 +771,39 @@ pub const TUNING: &[(&str, &str, i64, i64, i64, &str)] = &[
         10,
         5000,
         "steering history: 10 to 5000 entries",
+    ),
+    // band steering (docs 12.18b, ap-steer): which stations on 2.4 GHz are asked to move to this unit's 5 GHz
+    (
+        "band_signal",
+        "AP_BANDSTEER_SIGNAL",
+        -60,
+        -90,
+        -30,
+        "band steering: 2.4 GHz signal at least -90 to -30 dBm",
+    ),
+    (
+        "band_min5",
+        "AP_BANDSTEER_MIN5",
+        -70,
+        -90,
+        -40,
+        "band steering: 5 GHz heard at least -90 to -40 dBm",
+    ),
+    (
+        "band_busy",
+        "AP_BANDSTEER_BUSY",
+        0,
+        0,
+        100,
+        "band steering: 2.4 GHz channel busy 0 to 100 %",
+    ),
+    (
+        "band_after",
+        "AP_BANDSTEER_AFTER",
+        120,
+        0,
+        86400,
+        "band steering: connected 0 to 86400 seconds",
     ),
 ];
 /// A [`TUNING`] number from the file: out of range or not a number = its default.
@@ -1223,6 +1261,7 @@ pub fn view(f: &EnvFile) -> WifiConfig {
         },
         aql: on_off(f.get("AP_AQL")),
         atf: on_off(f.get("AP_ATF")),
+        bandsteer: on_off(f.get("AP_BANDSTEER")),
         tuning: TUNING
             .iter()
             .map(|e| (e.0.to_string(), tuning_number(f, e.1)))
@@ -1381,6 +1420,9 @@ pub struct WifiInput {
     pub aql: Option<bool>,
     #[serde(default)]
     pub atf: Option<bool>,
+    /// band steering to this unit's 5 GHz (docs 12.18b)
+    #[serde(default)]
+    pub bandsteer: Option<bool>,
     /// [`TUNING`] numbers by field name (any other key here is not a setting and is ignored, as before)
     #[serde(flatten)]
     pub tuning: std::collections::BTreeMap<String, Value>,
@@ -1762,6 +1804,7 @@ pub fn update(f: &EnvFile, input: &WifiInput) -> Result<EnvFile> {
         ("AP_CHAN_RECHECK5", input.chan_recheck5),
         ("AP_AQL", input.aql),
         ("AP_ATF", input.atf),
+        ("AP_BANDSTEER", input.bandsteer),
     ] {
         if let Some(b) = v {
             set.push((k.into(), if b { "1" } else { "0" }.into()));
@@ -2727,6 +2770,7 @@ fn radio_state(f: &EnvFile) -> RadioState {
             "chan_csa",
             "aql",
             "atf",
+            "bandsteer",
         ] {
             o.remove(k);
         }
@@ -3595,6 +3639,75 @@ mod tests {
             }
         )
         .is_ok());
+    }
+
+    #[test]
+    fn band_steering_defaults_validate_and_stay_live() {
+        // defaults (board.sh parity): on, 2.4 GHz at -60 dBm or better, 5 GHz heard at -70 or better, any busy %, 120 s
+        let c = view(&parse("AP_SSIDS=p\nSSID_p=P KEY_p=secretpw1\n"));
+        assert!(c.bandsteer);
+        assert_eq!(
+            (
+                c.tuning["band_signal"],
+                c.tuning["band_min5"],
+                c.tuning["band_busy"],
+                c.tuning["band_after"]
+            ),
+            (-60, -70, 0, 120)
+        );
+        let board = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ci/embedded-aarch64/ax1800/overlay/etc/patronus/board.sh");
+        if let Ok(t) = std::fs::read_to_string(&board) {
+            let b = parse(&t);
+            assert_eq!(b.get("AP_BANDSTEER"), Some("on"));
+            for e in TUNING.iter().filter(|e| e.0.starts_with("band_")) {
+                assert_eq!(b.get(e.1), Some(e.2.to_string().as_str()), "{}", e.1);
+            }
+        }
+        // nonsense in the file = default
+        let c = view(&parse("AP_BANDSTEER_SIGNAL=loud\nAP_BANDSTEER_BUSY=150\n"));
+        assert_eq!((c.tuning["band_signal"], c.tuning["band_busy"]), (-60, 0));
+        let f = sample();
+        let mut t = std::collections::BTreeMap::new();
+        t.insert("band_busy".to_string(), json!(40));
+        t.insert("band_min5".to_string(), json!(-65));
+        let n = update(
+            &f,
+            &WifiInput {
+                bandsteer: Some(false),
+                tuning: t,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let v = view(&n);
+        assert!(!v.bandsteer);
+        assert_eq!((v.tuning["band_busy"], v.tuning["band_min5"]), (40, -65));
+        assert_eq!(n.get("AP_BANDSTEER"), Some("0"));
+        assert_eq!(n.get("AP_BANDSTEER_BUSY"), Some("40"));
+        // live (ap-steer re-reads it every round): never a radio restart, and it IS a change
+        assert!(!restart_needed(&f, &n));
+        assert!(!same_settings(&f, &n));
+        assert_eq!(view(&parse(&render(&n))), v);
+        // export -> plan of the same document changes nothing; the setting is in the document
+        let doc = export_doc(&n);
+        assert_eq!(
+            plan(&n, &parse_doc(&doc).unwrap()).unwrap()["changes"],
+            json!([])
+        );
+        assert!(doc.to_string().contains("\"bandsteer\":false"), "{doc}");
+        for (k, bad) in [("band_signal", -10), ("band_busy", 101), ("band_after", -1)] {
+            let mut t = std::collections::BTreeMap::new();
+            t.insert(k.to_string(), json!(bad));
+            assert!(update(
+                &f,
+                &WifiInput {
+                    tuning: t,
+                    ..Default::default()
+                }
+            )
+            .is_err());
+        }
     }
 
     #[test]

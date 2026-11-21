@@ -170,6 +170,17 @@ wifi_steer() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=
     c=$(wapi -X PUT -d "$bad" https://127.0.0.1:$WEBP/api/wifi); [ "$c" = 400 ] || { echo "$bad: HTTP $c"; return 1; }; done
   c=$(wapi -X PUT -d '{"steer_kick":"quiet","steer_quiet":"01:00-05:00","steer_report":"active","timezone":"UTC0"}' https://127.0.0.1:$WEBP/api/wifi)
   [ "$c" = 200 ] || { echo "PUT soft back: $c"; return 1; }
+  # band steering (docs 12.18b): defaults, live (no radio restart, written to ap.env), bad values 400 (ALONE, no restart key)
+  has_all "$g" '"bandsteer":true' '"band_signal":-60' '"band_min5":-70' '"band_busy":0' '"band_after":120' || { echo "band defaults: $g"; return 1; }
+  c=$(wapi -X PUT -d '{"bandsteer":false,"band_busy":40,"band_min5":-65}' https://127.0.0.1:$WEBP/api/wifi)
+  r=$(cat "$W/api.json"); [ "$c" = 200 ] || { echo "PUT band: $c $r"; return 1; }
+  case "$r" in *'"restarted":true'*|*'"changed":false'*) echo "band-steering change restarted the radios or was not written: $r"; return 1;; esac
+  m=$(R '. /etc/patronus/board.sh; echo "B=$AP_BANDSTEER U=$AP_BANDSTEER_BUSY M=$AP_BANDSTEER_MIN5"')
+  [ "$m" = "B=0 U=40 M=-65" ] || { echo "ap.env after band PUT: $m"; return 1; }
+  for bad in '{"band_busy":101}' '{"band_signal":-10}' '{"band_after":-1}'; do
+    c=$(wapi -X PUT -d "$bad" https://127.0.0.1:$WEBP/api/wifi); [ "$c" = 400 ] || { echo "$bad: HTTP $c"; return 1; }; done
+  c=$(wapi -X PUT -d '{"bandsteer":true,"band_busy":0,"band_min5":-70}' https://127.0.0.1:$WEBP/api/wifi)
+  [ "$c" = 200 ] || { echo "PUT band back: $c"; return 1; }
   # the image's hostapd configs carry 802.11v/k (never 802.11r) on every BSS the unit renders
   k=$(R 'for f in /run/hostapd/ap5.conf /run/hostapd/ap24.conf; do [ -f "$f" ] && grep -c "^bss_transition=1" "$f"; done; grep -l "^ieee80211r\|^mobility_domain" /run/hostapd/ap*.conf 2>/dev/null; echo end')
   case "$k" in *ap5.conf*|*ap24.conf*) echo "802.11r in the hostapd config: $k"; return 1;; esac
@@ -183,7 +194,7 @@ wifi_steer() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=
   c=$(wapi -X PUT -d '{"authfail_max":12,"xbss_hold":45}' https://127.0.0.1:$WEBP/api/wifi); [ "$c" = 200 ] || { echo "PUT limits: $c $(cat "$W/api.json")"; return 1; }
   m=$(R '. /etc/patronus/board.sh; echo "A=$AP_AUTHFAIL_MAX H=$AP_XBSS_HOLD"'); [ "$m" = "A=12 H=45" ] || { echo "ap.env limits: $m"; return 1; }
   s=$(R 'ls -l /usr/libexec/patronus/ap-steer; /usr/libexec/patronus/ap-steer status; echo rc=$?') || { echo "ap-steer status: $s"; return 1; }
-  has_all "$s" '-rwx' 'steering: ' 'rc=0' || { echo "ap-steer status: $s"; return 1; }
+  has_all "$s" '-rwx' 'steering: ' 'band steering (2.4 -> 5 GHz of this unit): on' 'rc=0' || { echo "ap-steer status: $s"; return 1; }
   c=$(wapi -X PUT -d '{"steer":"auto","steer_signal":-65,"steer_retry":21600,"steer_exempt":[],"authfail_max":10,"xbss_hold":30}' https://127.0.0.1:$WEBP/api/wifi)
   [ "$c" = 200 ] || { echo "PUT back: $c"; return 1; }; }
 # channel choice by measurement (docs 12.19): defaults in GET, a change is live (no radio restart) and lands in ap.env, bad

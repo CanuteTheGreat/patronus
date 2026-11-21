@@ -24,6 +24,15 @@
 # few rounds). A station this unit disconnected that comes back is left alone for AP_STEER_RETRY seconds, doubling per
 # return in a row up to AP_STEER_RETRY_MAX (no ping-pong). AP_STEER_EXEMPT lists MACs never steered (the Wi-Fi page's
 # per-device "don't steer"). At most AP_STEER_MAX move requests/disconnects per round (every AP_STEER_INTERVAL s).
+# Band steering (AP_BANDSTEER, docs 12.18b): a station on this unit's 2.4 GHz that can also use this unit's 5 GHz BSS
+# of the same SSID is ASKED (802.11v, naming that 5 GHz BSS) to move there; it is never disconnected for it, day or night.
+# Asked only when it is idle, connected for AP_BANDSTEER_AFTER s, not weak, the 2.4 GHz channel was at least
+# AP_BANDSTEER_BUSY % busy since the last round, and it has shown 5 GHz: it was seen on this unit's 5 GHz before, or its
+# supported operating classes (association request) list a 5 GHz class. The firmware answers probe requests itself, so
+# probes are no evidence here. An 802.11k station is first asked what it hears on that channel and is asked to move only
+# when it hears the 5 GHz BSS at AP_BANDSTEER_MIN5 dBm or better; one without 802.11k only when its 2.4 GHz signal is
+# AP_BANDSTEER_SIGNAL or better (it then measures 5 GHz itself and may decline). At most once per AP_STEER_RETRY per
+# station; a station that comes back to 2.4 GHz is left alone twice as long per return in a row (AP_STEER_RETRY_MAX).
 # Other units: ap-coord's start scan (peers-5/peers-24) and every unit a station named in a beacon report; they are also
 # loaded as 802.11k neighbor reports into every BSS of this unit.
 # AP_STEER: auto (default) = only on a unit that knows another access point of this network exists, 1 = always, 0 = off.
@@ -35,7 +44,7 @@
 # Test hooks: AP_BOARD, AP_RENDER_OUT (as for `ap`), AP_STEER_STATE (state dir), AP_STEER_DB (history dir),
 #   AP_STEER_NOW (epoch seconds), AP_STEER_CLOCK (local HH:MM), AP_STEER_DUMP_DIR (<dir>/<bss> = `iw dev <bss> station
 #   dump` text), AP_STEER_FDB_FILE (`brctl showmacs` text), AP_STEER_WIRED (bridge port numbers of the wired ports),
-#   AP_CLI (hostapd_cli), AP_CTRL (control socket dir).
+#   AP_CLI (hostapd_cli), AP_CTRL (control socket dir), AP_STEER_SURVEY_DIR (<dir>/<bss> = `iw dev <bss> survey dump`).
 . ${AP_BOARD:-/etc/patronus/board.sh}
 OUTD=${AP_RENDER_OUT:-/run/hostapd}
 SD=${AP_STEER_STATE:-$OUTD/steer}
@@ -61,7 +70,9 @@ settings() {
   BTMEVERY=$(num "${AP_STEER_BTM_EVERY:-}" 1800); BTMWAIT=$(num "${AP_STEER_BTM_WAIT:-}" 300)
   QIDLE=$(num "${AP_STEER_QUIET_IDLE:-}" 1800); KEVERY=$(num "${AP_STEER_KICK_EVERY:-}" 86400)
   HMAX=$(num "${AP_STEER_HISTORY:-}" 500); FRESH=$((IVL * 4 + 60))
-  on "${AP_BSS_TRANSITION:-1}" && BTMON=1 || BTMON=0; on "${AP_RRM:-1}" && RRMON=1 || RRMON=0; }
+  on "${AP_BSS_TRANSITION:-1}" && BTMON=1 || BTMON=0; on "${AP_RRM:-1}" && RRMON=1 || RRMON=0
+  on "${AP_BANDSTEER:-1}" && BAND=1 || BAND=0; BSIG=$(num "${AP_BANDSTEER_SIGNAL:-}" -60)
+  BMIN5=$(num "${AP_BANDSTEER_MIN5:-}" -70); BBUSY=$(num "${AP_BANDSTEER_BUSY:-}" 0); BAFTER=$(num "${AP_BANDSTEER_AFTER:-}" 120); }
 
 hist() { # EVENT MAC BSS SIGNAL DETAIL: one history line (JSON) + syslog
   mkdir -p "$DB"; d=$(echo "$5" | tr -d '"\\')
@@ -88,6 +99,36 @@ opclass() { # BAND CHANNEL -> global operating class (20 MHz)
   elif [ "$2" -le 144 ]; then echo 121; elif [ "$2" -le 161 ]; then echo 124; else echo 125; fi; }
 hex2() { printf '%02x' "$1"; }
 ssidhex() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
+ifbssid() { # BSS -> its BSSID (rendered config)
+  for f in "$OUTD"/ap5.conf "$OUTD"/ap24.conf; do [ -f "$f" ] || continue
+    awk -v i="$1" '/^(interface|bss)=/ { cur = substr($0, index($0, "=") + 1) } cur == i && /^bssid=/ { print tolower(substr($0, 7)); exit }' "$f"
+  done | head -1; }
+bss_of() { [ -f "$OUTD/$1.conf" ] && sed -n 's/^interface=//p; s/^bss=//p' "$OUTD/$1.conf"; }
+band5map() { # $SD/band5: "bss24 bss5 bssid5 opclass channel" = this unit's 5 GHz BSS of each 2.4 GHz BSS's SSID, while it runs
+  : > "$SD/band5.new"; for i5 in $(bss_of ap5); do
+    st5=$($CLI -p "$CTRL" -i "$i5" status 2>/dev/null); case "$st5" in *state=ENABLED*) ;; *) continue;; esac
+    c5=$(echo "$st5" | sed -n 's/^channel=//p' | head -1); case "$c5" in ''|*[!0-9]*) continue;; esac
+    s5=$(ssid_of "$i5"); b5=$(ifbssid "$i5"); [ -n "$b5" ] || continue
+    for i24 in $(bss_of ap24); do [ "$(ssid_of "$i24")" = "$s5" ] && ! grep -q "^$i24 " "$SD/band5.new" \
+      && echo "$i24 $i5 $b5 $(opclass 5 "$c5") $c5" >> "$SD/band5.new"; done; done
+  mv "$SD/band5.new" "$SD/band5"; }
+busy24() { # % of the time the 2.4 GHz radio's channel was busy (survey counters), smoothed over rounds; -1 = unknown
+  i24=$(bss_of ap24 | head -1); [ -n "$i24" ] || { echo -1; return; }
+  if [ -n "${AP_STEER_SURVEY_DIR:-}" ]; then cat "$AP_STEER_SURVEY_DIR/$i24" 2>/dev/null; else iw dev "$i24" survey dump 2>/dev/null; fi |
+    awk '/^Survey data/ { u = 0 } /\[in use\]/ { u = 1 } u && /channel active time:/ { a = $4 } u && /channel busy time:/ { b = $4 }
+      END { printf "%d %d\n", a, b }' > "$SD/survey.now"
+  read -r a1 b1 < "$SD/survey.now"; a0=0 b0=0 v0=-1; [ -f "$SD/survey" ] && read -r a0 b0 v0 < "$SD/survey"
+  if [ "$a1" -gt "$a0" ] && [ "$b1" -ge "$b0" ]; then v=$(( (b1 - b0) * 100 / (a1 - a0) )); elif [ "$a1" -gt 0 ]; then v=$((b1 * 100 / a1)); else v=-1; fi
+  [ "$v" -gt 100 ] && v=100; [ "$v" -ge 0 ] && [ "${v0:--1}" -ge 0 ] && v=$(( (v0 * 3 + v) / 4 ))
+  echo "$a1 $b1 $v" > "$SD/survey"; rm -f "$SD/survey.now"; echo "$v"; }
+can5() { # MAC BSS CONNECTED -> 1 when the station has shown 5 GHz (cached per association): seen on this unit's 5 GHz, or
+  # its supported operating classes element (association request) lists a 5 GHz class (115-129)
+  grep -q "^$1 " "$DB/seen5" 2>/dev/null && { echo 1; return; }
+  a=$((t - $3)); if [ -f "$SD/c5-$1" ]; then read -r ca cv < "$SD/c5-$1"; d=$((ca - a)); [ ${d#-} -le 5 ] && { echo "$cv"; return; }; fi
+  x=$($CLI -p "$CTRL" -i "$2" sta "$1" 2>/dev/null | sed -n 's/^supp_op_classes=//p' | tr -d ' \n'); cv=0
+  while [ ${#x} -ge 2 ]; do h=${x%"${x#??}"}; x=${x#??}; case "$h" in [0-9a-fA-F][0-9a-fA-F]) ;; *) break;; esac
+    [ $((0x$h)) -ge 115 ] && [ $((0x$h)) -le 129 ] && cv=1; done
+  echo "$a $cv" > "$SD/c5-$1"; echo "$cv"; }
 dump() { # BSS -> "mac signal bytes connected" per station
   if [ -n "${AP_STEER_DUMP_DIR:-}" ]; then cat "$AP_STEER_DUMP_DIR/$1" 2>/dev/null; else iw dev "$1" station dump 2>/dev/null; fi | awk '
     function out() { if (m != "") printf "%s %d %.0f %d\n", m, (a != "" ? a : s), rb + tb, c }
@@ -124,13 +165,17 @@ cands() { # rebuild $SD/cand: "band bssid opclass channel ssid" of every other u
       echo "$b $(echo "$bssid" | tr 'A-F' 'a-f') $(opclass "$b" "$ch") $ch $ssid"; done < "$OUTD/peers-$b"; done
     [ -f "$SD/nbr" ] && cut -d' ' -f1-5 "$SD/nbr"; } | awk -v own="$own" 'NF >= 5 && index(own, " " $2 " ") == 0 && !s[$2]++' > "$SD/cand"; }
 neighbors() { # 802.11k neighbor reports: every other unit's BSS with the same SSID, on every BSS of this unit
-  [ "$RRMON" = 1 ] || return 0; nsig=$(cksum < "$SD/cand")
+  [ "$RRMON" = 1 ] || return 0; nsig=$({ cat "$SD/cand"; [ "$BAND" = 1 ] && cat "$SD/band5"; } 2>/dev/null | cksum)
   [ "$nsig" = "$(cat "$SD/nbr-loaded" 2>/dev/null)" ] && [ $((t - $(cat "$SD/nbr-time" 2>/dev/null || echo 0))) -lt 600 ] && return 0
   for i in $(bsses); do s=$(ssid_of "$i")
     awk -v s="$s" '$5 == s' "$SD/cand" | while read -r b bssid op ch ss; do
       [ "$b" = 5 ] && phy=09 || phy=07
       nr="$(echo "$bssid" | tr -d ':')8f000000$(hex2 "$op")$(hex2 "$ch")$phy"
-      $CLI -p "$CTRL" -i "$i" set_neighbor "$bssid" "ssid=$(ssidhex "$(echo "$ss" | sed 's/_/ /g')")" "nr=$nr" > /dev/null 2>&1; done; done
+      $CLI -p "$CTRL" -i "$i" set_neighbor "$bssid" "ssid=$(ssidhex "$(echo "$ss" | sed 's/_/ /g')")" "nr=$nr" > /dev/null 2>&1; done
+    # band steering: this unit's own 5 GHz BSS of the SSID is a neighbor of the 2.4 GHz BSS (each radio has its own hostapd)
+    [ "$BAND" = 1 ] && grep "^$i " "$SD/band5" 2>/dev/null | while read -r x i5 b5 op ch; do
+      $CLI -p "$CTRL" -i "$i" set_neighbor "$b5" "ssid=$(ssidhex "$(echo "$s" | sed 's/_/ /g')")" \
+        "nr=$(echo "$b5" | tr -d ':')8f000000$(hex2 "$op")$(hex2 "$ch")09" > /dev/null 2>&1; done; done
   echo "$nsig" > "$SD/nbr-loaded"; echo "$t" > "$SD/nbr-time"; }
 cand_for() { # BSS [BSSID] -> neighbor= arguments for bss_tm_req (other units' BSSes of its SSID and band)
   s=$(ssid_of "$1"); b=$(band_of "$1"); [ "$b" = 5 ] && phy=9 || phy=7
@@ -155,7 +200,8 @@ events() { # answers queued by ap-event: BSS-TM-RESP (move request answered), BE
     tb=$(echo "$a1 $a2 $a3 $rest" | sed -n 's/.*target_bssid=\([0-9a-fA-F:]*\).*/\1/p')
     # "accepted" with THIS unit's BSS as the target = it measured the candidates and chose to stay (seen on hardware
     # with wpa_supplicant): the same as "no better access point" (7), never a reason for a night disconnect
-    tl=$(echo "$tb" | tr 'A-F' 'a-f'); [ "$st" = 0 ] && [ -n "$tl" ] && case "$own" in *" $tl "*) st=7; tb=own;; esac
+    # (a target that is this unit's OTHER band is a real move: band steering, 12.18b)
+    tl=$(echo "$tb" | tr 'A-F' 'a-f'); [ "$st" = 0 ] && [ -n "$tl" ] && [ "$tl" = "$(ifbssid "$ifn")" ] && { st=7; tb=own; }
     echo "$et $st ${tb:--}" > "$SD/btm-$m"
     [ "$tb" = own ] && w="answered: it stays on this access point (it measured the others, none better)" || \
     case "$st" in 0) w="accepted the move request${tb:+, roaming to $tb}";; 7) w="declined: no suitable candidate (it hears no better access point)";;
@@ -166,12 +212,59 @@ events() { # answers queued by ap-event: BSS-TM-RESP (move request answered), BE
     bs=$(echo "$h" | cut -c31-42 | sed 's/../&:/g; s/:$//' | tr 'A-F' 'a-f'); [ "$rc" -le 220 ] || continue; dbm=$((rc / 2 - 110))
     pr=0 od=0 pb=- pd=-127 po=0 pc=0; [ -f "$SD/rep-$m" ] && read -r pr od pb pd po pc < "$SD/rep-$m"
     [ $((et - pr)) -le 60 ] || { od=0; pb=-; pd=-127; }
-    case "$own" in *" $bs "*) od=$dbm;;
+    case "$own" in *" $bs "*) if [ "$bs" = "$(ifbssid "$ifn")" ]; then od=$dbm
+        # this unit's other band (band steering, 12.18b): what it hears of our 5 GHz BSS
+        elif [ "$(band_of "$ifn")" = 24 ] && grep -q " $bs " "$SD/band5" 2>/dev/null; then echo "$et $dbm $bs" > "$SD/rep5-$m"; fi;;
       *) [ "$dbm" -gt "$pd" ] && { pb=$bs; pd=$dbm; po=$op; pc=$ch; }
          [ "$op" -ge 81 ] && [ "$op" -le 84 ] && bb=24 || bb=5
          grep -q " $bs " "$SD/nbr" 2>/dev/null || echo "$bb $bs $op $ch $(ssid_of "$ifn") $et" >> "$SD/nbr";; esac
     echo "$et $od $pb $pd $po $pc" > "$SD/rep-$m";;
   esac; done < "$SD/events.work"; rm -f "$SD/events.work"; }
+
+band_step() { # band steering of the station of the current round() line (docs 12.18b): ask, never disconnect
+  ba=0 bn=0 bh=0 bm=0 bq=0; [ -f "$SD/band-$m" ] && read -r ba bn bh bm bq < "$SD/band-$m"
+  bn=${bn:-0} bh=${bh:-0} bm=${bm:-0} bq=${bq:-0}
+  if [ "$(band_of "$ifn")" = 5 ]; then
+    if [ "$bm" = 0 ] && [ "$ba" -gt 0 ] && [ $((t - ba)) -le "$BTMWAIT" ]; then bm=$t
+      hist band-moved "$m" "$ifn" "$sig" "moved to this unit's 5 GHz $((t - ba)) s after the request (no disconnect)"; fi
+  else
+    # back on 2.4 GHz after it moved to 5 GHz: it found 5 GHz no good here, so it is left alone (doubling per return)
+    if [ "$bm" -gt 0 ] && [ "$conn" -lt $((t - bm)) ]; then [ $((t - bm)) -ge "$RMAX" ] && bn=0; bn=$((bn + 1))
+      h=$RETRY; i=1; while [ "$i" -lt "$bn" ] && [ "$h" -lt "$RMAX" ]; do h=$((h * 2)); i=$((i + 1)); done; [ "$h" -le "$RMAX" ] || h=$RMAX
+      bh=$((t + h)); bm=0; hist band-back "$m" "$ifn" "$sig" "back on 2.4 GHz after its move to 5 GHz (time $bn in a row): not asked again for $h s"; fi
+    if [ "$BAND" = 1 ] && [ "$BTMON" = 1 ] && [ $weak = 0 ] && [ "$sig" -ne 0 ] && [ $moved -lt "$MAXN" ] && [ "$bh" -le "$t" ] \
+       && [ "$(since "$ba")" -ge "$RETRY" ] && [ "$conn" -ge "$BAFTER" ] && [ $idle = 1 ] \
+       && { [ "$BBUSY" -le 0 ] || [ "$busy" -ge "$BBUSY" ]; }; then
+      case "$EXEMPT" in *" $m "*) ;; *)
+      set -- $(grep "^$ifn " "$SD/band5" 2>/dev/null); i5=${2:-} b5=${3:-} op5=${4:-} ch5=${5:-}
+      if [ -n "$b5" ] && [ "$(can5 "$m" "$ifn" "$conn")" = 1 ]; then
+        set -- $(capab "$m" "$ifn" "$conn"); btm=$1; bcn=$2; [ "$RRMON" = 1 ] || bcn=0; [ -f "$SD/norep-$m" ] && bcn=0
+        go=; why=
+        if [ $btm = 1 ] && [ $bcn = 1 ] && [ "$REPORT" != off ]; then
+          r5t=0 r5d=-127; [ -f "$SD/rep5-$m" ] && read -r r5t r5d r5b < "$SD/rep5-$m"
+          rt=0; [ -f "$SD/rep-$m" ] && read -r rt x < "$SD/rep-$m"
+          if [ "$bq" -gt 0 ] && [ $((t - bq)) -lt $((FRESH * 3)) ] && [ "$r5t" -ge "$bq" ]; then
+            if [ "$r5d" -ge "$BMIN5" ]; then go=1; why="it hears it at $r5d dBm (2.4 GHz here: $sig dBm)"
+            else ba=$t; hist band-stay "$m" "$ifn" "$sig" "hears this unit's 5 GHz at $r5d dBm only (needs $BMIN5): stays on 2.4 GHz, asked again after $RETRY s"; fi
+          elif [ "$bq" -gt 0 ] && [ $((t - bq)) -lt "$FRESH" ]; then :   # waiting for its answer
+          elif [ "$bq" -gt 0 ] && [ $((t - bq)) -lt $((FRESH * 3)) ] && [ "$rt" -ge "$bq" ]; then
+            ba=$t; hist band-stay "$m" "$ifn" "$sig" "does not hear this unit's 5 GHz: stays on 2.4 GHz, asked again after $RETRY s"
+          elif [ "$bq" -gt 0 ] && [ $((t - bq)) -lt $((FRESH * 3)) ]; then
+            echo "$t" > "$SD/norep-$m"; hist measure "$m" "$ifn" "$sig" "did not answer the beacon request: treated as a station without 802.11k"
+          else
+            sh5=$(ssidhex "$(ssid_of "$ifn" | sed 's/_/ /g')")
+            case "$REPORT" in table) md=02 rc=255;; passive) md=00 rc=$ch5;; *) md=01 rc=$ch5;; esac
+            req="$(hex2 "$op5")$(hex2 "$rc")00003200${md}ffffffffffff00$(hex2 $(( ${#sh5} / 2 )))${sh5}020100"
+            $CLI -p "$CTRL" -i "$ifn" req_beacon "$m" "$req" > /dev/null 2>&1; bq=$t; moved=$((moved + 1))
+            hist band-measure "$m" "$ifn" "$sig" "asked what it hears of this unit's 5 GHz ($b5, channel $ch5)"; fi
+        elif [ $btm = 1 ] && [ "$sig" -ge "$BSIG" ]; then go=1; why="2.4 GHz signal $sig dBm, it measures 5 GHz itself"; fi
+        if [ -n "$go" ]; then
+          $CLI -p "$CTRL" -i "$ifn" bss_tm_req "$m" pref=1 abridged=1 valid_int=255 "neighbor=$b5,0x0000008f,$op5,$ch5,9,0301ff" > /dev/null 2>&1
+          ba=$t; moved=$((moved + 1)); hist band-btm "$m" "$ifn" "$sig" "asked to move to this unit's 5 GHz ($b5, channel $ch5): $why"; fi
+      fi;; esac
+    fi
+  fi
+  [ "$ba$bn$bh$bm$bq" = 00000 ] || echo "$ba $bn $bh $bm $bq" > "$SD/band-$m"; }
 
 round() {
   settings; mkdir -p "$SD"; t=$(now)
@@ -204,6 +297,11 @@ round() {
         echo "$ws $bp $tp $t $2 $hu $nr $la $bt $bs $rq 0" > "$SD/sta-$m"; fi
     done; fi
   cp "$SD/now" "$SD/prev"; cp "$SD/wired.now" "$SD/wired.prev"
+  band5map; busy=$(busy24)
+  # stations on this unit's 5 GHz: they have 5 GHz (kept across restarts, for band steering)
+  mkdir -p "$DB"; f5=" $(bss_of ap5 | tr '\n' ' ') "
+  awk -v l="$f5" 'index(l, " " $5 " ") { print $1 }' "$SD/now" | while read -r m; do
+    grep -q "^$m " "$DB/seen5" 2>/dev/null || echo "$m $t" >> "$DB/seen5"; done
   cands; neighbors
   moved=0; peers_known && pk=1 || pk=0; quiet=0; in_quiet && quiet=1
   while read -r m sig bytes conn ifn; do
@@ -277,12 +375,17 @@ round() {
           ka=$t; ks=$sig; ws=0; fi
       fi
     fi
+    band_step
     echo "$ws $bytes $t $ka $ks $hu $nr $la $bt $bs $rq $ar" > "$SD/sta-$m"
   done < "$SD/now"
   # forget stations that are gone, unless something about them still runs (a hold, a move in progress)
   for f in "$SD"/sta-*; do [ -f "$f" ] || continue; m=${f##*/sta-}; grep -q "^$m " "$SD/now" && continue
     read -r ws bp tp ka ks hu nr la bt bs rq ar < "$f"
     [ "$hu" -gt "$t" ] || [ $((ka + RETRY)) -gt "$t" ] || rm -f "$f" "$SD/cap-$m" "$SD/rep-$m" "$SD/btm-$m" "$SD/norep-$m"; done
+  for f in "$SD"/band-*; do [ -f "$f" ] || continue; m=${f##*/band-}; grep -q "^$m " "$SD/now" && continue
+    read -r ba bn bh bm bq < "$f"; [ "$bh" -gt "$t" ] || [ $((ba + RETRY)) -gt "$t" ] || [ "$bm" -gt 0 ] \
+      || rm -f "$f" "$SD/c5-$m" "$SD/rep5-$m"; done
+  [ -f "$DB/seen5" ] && [ "$(wc -l < "$DB/seen5")" -gt 2400 ] && tail -n 2000 "$DB/seen5" > "$DB/seen5.new" && mv "$DB/seen5.new" "$DB/seen5"
   trim_hist; status_json > "$SD/status.json.new" && mv "$SD/status.json.new" "$SD/status.json"; chmod 644 "$SD/status.json" 2>/dev/null
   true; }
 
@@ -290,17 +393,25 @@ status_json() { # for the Wi-Fi page (apwifi.rs steer_status)
   peers_known && { a=true; r="steering"; } || { a=false; r=$(why_not); }
   in_quiet && q=true || q=false
   case "$MODE" in 0|no|off|false) md=off;; 1|yes|on|true) md=on;; *) md=auto;; esac
-  printf '{"mode":"%s","active":%s,"reason":"%s","quiet_now":%s,"quiet":"%s","kick":"%s","legacy":"%s","report":"%s","t":%s,"peers":[' \
+  bk=-1; [ -f "$SD/survey" ] && read -r x x bk < "$SD/survey"
+  printf '{"mode":"%s","active":%s,"reason":"%s","quiet_now":%s,"quiet":"%s","kick":"%s","legacy":"%s","report":"%s","t":%s,' \
     "$md" "$a" "$r" "$q" "$QUIET" "$KICK" "$LEGACY" "$REPORT" "$t"
+  printf '"band":{"on":%s,"busy24":%d,"pairs":[' "$([ "$BAND" = 1 ] && echo true || echo false)" "${bk:--1}"
+  awk '{ printf "%s{\"bss24\":\"%s\",\"bss5\":\"%s\",\"bssid5\":\"%s\",\"channel5\":%d}", s, $1, $2, $3, $5; s = "," }' "$SD/band5" 2>/dev/null
+  printf ']},"peers":['
   awk '{ gsub(/["\\]/, "", $5); printf "%s{\"band\":\"%s\",\"bssid\":\"%s\",\"channel\":%d,\"ssid\":\"%s\"}", s, $1, $2, $4, $5; s = "," }' "$SD/cand" 2>/dev/null
   printf '],"stations":['; s=
   while read -r m sg by cn bss; do [ -f "$SD/sta-$m" ] || continue; read -r ws bp tp ka ks hu nr la bt bs rq ar < "$SD/sta-$m"
     st=ok; [ "$ws" -gt 0 ] && st="weak for $((t - ws)) s"; [ "${hu:-0}" -gt "$t" ] && st="left alone for $((hu - t)) s"
     [ "${bt:-0}" -gt 0 ] && [ $((t - bt)) -lt "$BTMWAIT" ] && st="asked to move $((t - bt)) s ago"
+    ba=0 bn=0 bh=0 bm=0 bq=0; [ -f "$SD/band-$m" ] && read -r ba bn bh bm bq < "$SD/band-$m"
+    if [ "$st" = ok ]; then [ "${ba:-0}" -gt 0 ] && [ $((t - ba)) -lt "$BTMWAIT" ] && st="asked to move to 5 GHz $((t - ba)) s ago"
+      [ "${bh:-0}" -gt "$t" ] && st="stays on 2.4 GHz for $((bh - t)) s (came back from 5 GHz)"; fi
     case "$EXEMPT" in *" $m "*) st="never steered (exempt)";; esac
     cb=0 cr=0; [ -f "$SD/cap-$m" ] && read -r ca cb cr < "$SD/cap-$m"
-    printf '%s{"mac":"%s","bss":"%s","signal":%d,"state":"%s","btm":%s,"beacon_report":%s}' "$s" "$m" "$bss" "$sg" "$st" \
-      "$([ "$cb" = 1 ] && echo true || echo false)" "$([ "$cr" = 1 ] && echo true || echo false)"
+    c5=false; { grep -q "^$m " "$DB/seen5" 2>/dev/null || { [ -f "$SD/c5-$m" ] && read -r x cv < "$SD/c5-$m" && [ "$cv" = 1 ]; }; } && c5=true
+    printf '%s{"mac":"%s","bss":"%s","signal":%d,"state":"%s","btm":%s,"beacon_report":%s,"has_5ghz":%s}' "$s" "$m" "$bss" "$sg" "$st" \
+      "$([ "$cb" = 1 ] && echo true || echo false)" "$([ "$cr" = 1 ] && echo true || echo false)" "$c5"
     s=,; done < "$SD/now"
   printf ']}\n'; }
 
@@ -308,6 +419,9 @@ status() { settings; t=$(now)
   peers_known && echo "steering: on ($MODE)" || echo "steering: idle ($(why_not))"
   echo "move requests: $([ "$BTMON" = 1 ] && echo "802.11v on" || echo "802.11v off"); measurements: $([ "$RRMON" = 1 ] && echo "802.11k $REPORT" || echo "802.11k off")"
   in_quiet && qn="now" || qn="not now"; echo "disconnects: $KICK (quiet hours $QUIET, $qn; devices without 802.11v: $LEGACY)"
+  bk=-1; [ -f "$SD/survey" ] && read -r x x bk < "$SD/survey"
+  echo "band steering (2.4 -> 5 GHz of this unit): $([ "$BAND" = 1 ] && echo on || echo off); 2.4 GHz channel busy ${bk}% (asks from $BBUSY%)"
+  [ -s "$SD/band5" ] && while read -r i24 i5 b5 op ch; do echo "  $i24 -> $i5 ($b5, channel $ch)"; done < "$SD/band5"
   for b in 5 24; do [ -s "$OUTD/peers-$b" ] && echo "peers $b GHz: $(cut -d' ' -f1 "$OUTD/peers-$b" | tr '\n' ' ')"; done
   [ -s "$SD/nbr" ] && echo "units heard in beacon reports: $(cut -d' ' -f2 "$SD/nbr" | tr '\n' ' ')"
   [ -f "$SD/peer-seen" ] && echo "a station was last seen leaving for another access point $(( t - $(cat "$SD/peer-seen") )) s ago"
@@ -317,6 +431,9 @@ status() { settings; t=$(now)
     [ "$ka" -gt 0 ] && echo "moved away: ${f##*/sta-} $((t - ka)) s ago at $ks dBm (left alone if it comes back within $((ka + RETRY - t)) s)"
     [ "${bt:-0}" -gt 0 ] && echo "asked to move: ${f##*/sta-} $((t - bt)) s ago"
     [ "$ws" -gt 0 ] && echo "weak: ${f##*/sta-} for $((t - ws)) s"; done
+  for f in "$SD"/band-*; do [ -f "$f" ] || continue; read -r ba bn bh bm bq < "$f"
+    [ "$bm" -gt 0 ] && echo "moved to 5 GHz: ${f##*/band-} $((t - bm)) s ago"
+    [ "$bh" -gt "$t" ] && echo "stays on 2.4 GHz: ${f##*/band-} for $((bh - t)) s more (came back $bn time(s) in a row)"; done
   [ -f "$DB/history" ] && { echo "last steps:"; tail -n 10 "$DB/history"; }; true; }
 
 case "${1:-}" in
@@ -324,5 +441,5 @@ once) round ;;
 status) status ;;
 run) echo $$ > "$PIDF"
   while :; do . "${AP_BOARD:-/etc/patronus/board.sh}"; round; settings; sleep "$IVL"; done ;;
-*) sed -n '2,37p' "$0"; exit 2 ;;
+*) sed -n '2,47p' "$0"; exit 2 ;;
 esac

@@ -1269,6 +1269,50 @@ Hardware results (two GL-AX1800 units, ~50 stations, 2026-11-19):
 - `AP_TZ`: with a local POSIX TZ string in `AP_TZ` the units' `date`, the quiet hours and the nightly channel re-check run
   in local time.
 
+### 12.18b Band steering: dual-band stations on 2.4 GHz are asked to move to the same unit's 5 GHz (2026-11-21)
+
+Why: after the 2.4 GHz queue limit (12.20) a legacy station on a busy 2.4 GHz channel still waited ~85 ms under load
+with every limit tried (100 ms with none): airtime contention and retries on the channel, not the access point's queue.
+The remaining lever is fewer stations on 2.4 GHz. Phones, laptops and TVs pick a band when they join and many stay on
+2.4 GHz although the same unit's 5 GHz BSS of the same SSID is right there. Steering between units (12.18, 12.18a)
+never moved them: it acts only on weak stations and names other units.
+
+Changes (`libexec/patronus/ap-steer`, function `band_step`; the header comment has the exact rules):
+- A station on this unit's 2.4 GHz is ASKED (802.11v BSS transition request naming this unit's 5 GHz BSS of the same
+  SSID, preferred candidate, no "disassociation imminent") to move there. It is never disconnected for it, day or
+  night: a station that does not take the request stays on 2.4 GHz. Each radio has its own hostapd, so the 5 GHz BSS is
+  also loaded as an 802.11k neighbor of the 2.4 GHz BSS.
+- Only stations that have shown 5 GHz are asked: seen on this unit's 5 GHz before (`/var/lib/patronus/ap-steer/seen5`,
+  kept across restarts), or whose Supported Operating Classes (association request, hostapd `sta` `supp_op_classes`)
+  list a 5 GHz class (115-129). The firmware answers probe requests itself (no `RX-PROBE-REQUEST` events, 12.19), so a
+  "probed on 5 GHz" test like OpenWrt's usteer/dawn is not possible here.
+- An 802.11k station is first asked what it hears on the 5 GHz channel (`req_beacon`, `AP_STEER_REPORT` mode); it is
+  asked to move only when it hears the 5 GHz BSS at `AP_BANDSTEER_MIN5` (default -70 dBm) or better, otherwise it stays
+  (history `band-stay`, asked again after `AP_STEER_RETRY`). A station without 802.11k (or one that never answers) is
+  asked only when its 2.4 GHz signal is `AP_BANDSTEER_SIGNAL` (default -60 dBm) or better: 5 GHz reaches less far, and
+  the station measures 5 GHz itself and may decline.
+- Only while idle (`AP_STEER_IDLE`), connected at least `AP_BANDSTEER_AFTER` s (default 120), not weak
+  (`AP_STEER_SIGNAL`: weak stations are for 12.18a), and when the 2.4 GHz channel was at least `AP_BANDSTEER_BUSY` %
+  busy since the last round (survey counters, smoothed; default 0 = always). Stations without 802.11v and
+  `AP_STEER_EXEMPT` devices are never asked. A request counts against `AP_STEER_MAX` per round.
+- At most once per `AP_STEER_RETRY` per station. A station that moved to 5 GHz and later comes back to 2.4 GHz found 5 GHz
+  no good there: it is left alone `AP_STEER_RETRY`, doubling per return in a row up to `AP_STEER_RETRY_MAX`.
+- An accepted request names this unit's other band as the target; it counts as accepted (the 12.18a rule "status 0 with
+  this unit as the target = it stays" now applies only to the BSS the station is on).
+- Independent of `AP_STEER` (steering between units): `AP_BANDSTEER=on|off` (default on) works on a single unit too.
+- Status: `ap-steer status` (band steering on/off, 2.4 GHz busy %, the 2.4 -> 5 GHz pairs, stations moved / staying),
+  `/api/wifi` `steer_status.band` + per-station `has_5ghz`, history events `band-measure`, `band-btm`, `band-moved`,
+  `band-stay`, `band-back`, all shown in the Wi-Fi page's Steering card.
+- Settings: typed in `/api/wifi`, the Wi-Fi page and export/plan: `bandsteer` (live switch), `band_signal`, `band_min5`,
+  `band_busy`, `band_after` (live numbers). No radio restart.
+
+Proof: `tests/run.sh` 3c2 (fake station dump, hostapd_cli and survey: 802.11v station with 5 GHz operating classes asked
+once to the 5 GHz BSS of its own SSID (guest to guest); 2.4-only, no-802.11v, weak-2.4, exempt, busy and 5 GHz stations
+not asked; 802.11k station measured first, moved only when it hears 5 GHz well enough; accept naming the other band;
+move and return recorded, hold after a return; "seen on 5 GHz" counts; busy gate; off switch; never a disconnect even in
+the quiet hours); `tests/bandsteer-hwsim.sh` (mac80211_hwsim, one unit with a 2.4 GHz and a 5 GHz radio from the
+product's `ap render`, real hostapd + wpa_supplicant): see the results below.
+
 ### 12.19 Channel choice by measurement, nightly re-check by channel switch, steering back-off (2026-11-18)
 
 Until now the channel came from hostapd's ACS at radio start, minus the blocks of this network's other units (12.17).
@@ -1459,5 +1503,5 @@ than mac80211's default anywhere. 1500 / 4000 gains little more and was the only
 run at 10.7 Mbit/s, an HE run at 154 Mbit/s). On the busy channel with a weak client no setting brings the legacy
 station under 50 ms, and the unlimited control is no better (100 ms): that delay does not come from the AP's queue
 depth, which is what this limit controls, but from contention and retries on the channel (and the client's own
-upstream queue of TCP acknowledgements). Band steering of capable clients to 5 GHz (12.18) is the remedy there.
+upstream queue of TCP acknowledgements). Band steering of capable clients to 5 GHz (12.18b) is the remedy there.
 5 GHz keeps mac80211's limits (its rates make the same budget a short queue).

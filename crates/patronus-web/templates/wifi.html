@@ -123,6 +123,18 @@
             <label>A request counts as ignored after (s) <input name="steer_btm_wait" type="number" min="30" max="3600" size="5"></label>
             <label>Disconnect a device at most every (s) <input name="steer_kick_every" type="number" min="3600" max="2592000" size="8"></label>
             <label>History entries kept <input name="steer_history" type="number" min="10" max="5000" size="5"></label>
+            <p class="wifi-note">Band steering: a device on this unit's 2.4 GHz that has shown it can use 5 GHz (it was on 5 GHz
+                here before, or says so when it joins) is ASKED to move to this unit's 5 GHz network of the same name, where
+                there is more room. Devices that report what they hear are asked only when they hear 5 GHz well enough. Band
+                steering never disconnects a device; one that comes back to 2.4 GHz is left alone (twice as long each time).</p>
+            <label><input type="checkbox" name="bandsteer"> Band steering (2.4 GHz to this unit's 5 GHz)</label>
+            <label>2.4 GHz signal at least (dBm) <input name="band_signal" type="number" min="-90" max="-30" size="4"
+                title="A device that cannot report what it hears is asked only with at least this signal on 2.4 GHz (5 GHz reaches less far)"></label>
+            <label>5 GHz heard at least (dBm) <input name="band_min5" type="number" min="-90" max="-40" size="4"
+                title="A device that reports what it hears is asked only when it hears this unit's 5 GHz at least this strong"></label>
+            <label>Only when 2.4 GHz is busier than (%) <input name="band_busy" type="number" min="0" max="100" size="3"
+                title="Share of time the 2.4 GHz channel was busy (0 = always)"></label>
+            <label>Connected for at least (s) <input name="band_after" type="number" min="0" max="86400" size="6"></label>
             <label>Time zone <input name="timezone" size="24" placeholder="UTC0"
                 title="POSIX time zone of this unit (e.g. PST8PDT,M3.2.0,M11.1.0): the local time of the quiet hours, the nightly channel re-check and the coordination hours"></label>
             <label><input type="checkbox" name="bss_transition"> Move requests (802.11v BSS transition; restarts the radios)</label>
@@ -300,7 +312,8 @@ const CHAN_NUMS = [['chan_hyst', 20], ['chan_min_gain', 10], ['chan_confirm', 3]
     ['chan_dwell', 105], ['chan_sample_secs', 30], ['chan_bss_cost', 2], ['chan_min_signal', -90], ['chan_csa_count', 10],
     ['chan_wait', 90], ['chan_jitter', 30], ['chan_sync_wait', 90], ['chan_stagger', 1800], ['chan_history', 200], ['chan_forget', 604800], ['steer_retry_max', 604800],
     ['aql_low24', 2500], ['aql_high24', 5000], ['aql_low5', 5000], ['aql_high5', 12000],
-    ['steer_margin', 8], ['steer_btm_every', 1800], ['steer_btm_wait', 300], ['steer_quiet_idle', 1800], ['steer_kick_every', 86400], ['steer_history', 500]];
+    ['steer_margin', 8], ['steer_btm_every', 1800], ['steer_btm_wait', 300], ['steer_quiet_idle', 1800], ['steer_kick_every', 86400], ['steer_history', 500],
+    ['band_signal', -60], ['band_min5', -70], ['band_busy', 0], ['band_after', 120]];
 function bandName(b) { return String(b) === '5' ? '5 GHz' : '2.4 GHz'; }
 function showChannels(d) {
     const w = document.getElementById('wifi-chan-why'); w.innerHTML = '';
@@ -421,7 +434,7 @@ async function loadWifi() {
     num('steer_max', 2); num('steer_interval', 30); num('authfail_max', 10); num('authfail_window', 60); num('authfail_hold', 60);
     num('authfail_hold_max', 3600); num('xbss_max', 6); num('xbss_window', 60); num('xbss_hold', 30);
     for (const [k, d] of CHAN_NUMS) num(k, d);
-    for (const k of ['chan_smart5', 'chan_smart24', 'chan_recheck5', 'chan_recheck24', 'aql', 'atf']) f[k].checked = CFG[k] !== false;
+    for (const k of ['chan_smart5', 'chan_smart24', 'chan_recheck5', 'chan_recheck24', 'aql', 'atf', 'bandsteer']) f[k].checked = CFG[k] !== false;
     const at = document.getElementById('wifi-airtime-state');
     at.textContent = d.airtime && d.airtime.supported === false ? 'This unit\'s Wi-Fi driver has no airtime queue limit or fairness: these settings are saved but have no effect until it runs firmware with them.' : '';
     f.chan_time.value = CFG.chan_time == null ? '03:30' : CFG.chan_time; f.chan_csa.value = CFG.chan_csa || 'auto';
@@ -472,7 +485,7 @@ async function saveWifi() {
             .map(k => [k, Number(f[k].value)])),
         chan_smart5: f.chan_smart5.checked, chan_smart24: f.chan_smart24.checked, chan_recheck5: f.chan_recheck5.checked,
         chan_recheck24: f.chan_recheck24.checked, chan_time: f.chan_time.value.trim(), chan_csa: f.chan_csa.value,
-        aql: f.aql.checked, atf: f.atf.checked,
+        aql: f.aql.checked, atf: f.atf.checked, bandsteer: f.bandsteer.checked,
         steer_kick: f.steer_kick.value, steer_legacy: f.steer_legacy.value, steer_report: f.steer_report.value, steer_quiet: f.steer_quiet.value.trim(),
         timezone: f.timezone.value.trim() || 'UTC0', bss_transition: f.bss_transition.checked, rrm: f.rrm.checked, wnm_sleep: f.wnm_sleep.checked,
         wifi6: f.wifi6.checked, txpower24: f.txpower24.value, txpower5: f.txpower5.value, names: f.names.value.trim() || 'dhcp',
@@ -529,13 +542,20 @@ function showSteer(d) {
         w.appendChild(el('p', {id: 'wifi-steer-state', 'data-active': String(!!s.active)}, el('strong', {text: s.active ? 'Steering is on. ' : 'Steering is idle: '}),
             el('span', {text: (s.active ? '' : s.reason + '. ') + 'Disconnects: ' + (s.kick === 'quiet' ? 'only in the quiet hours ' + s.quiet + (s.quiet_now ? ' (now)' : '') : 'never') +
                 '. Other access points known: ' + ((s.peers || []).map(p => p.bssid + ' (' + bandName(p.band) + ' ch ' + p.channel + ')').join(', ') || 'none') + '.'})));
+        const bd = s.band;
+        if (bd) w.appendChild(el('p', {id: 'wifi-band-state', 'data-on': String(!!bd.on), text: 'Band steering: ' + (bd.on ? 'on' : 'off') +
+            (bd.busy24 >= 0 ? '; 2.4 GHz channel ' + bd.busy24 + '% busy' : '') + '; ' + ((bd.pairs || []).length
+                ? (bd.pairs || []).map(p => p.bss24 + ' to ' + p.bss5 + ' (ch ' + p.channel5 + ')').join(', ')
+                : 'no 5 GHz network of the same name is running') + '.'}));
         const busy = (s.stations || []).filter(x => x.state !== 'ok');
         for (const x of busy) w.appendChild(el('div', {class: 'text-sm', text: x.mac + ' on ' + x.bss + ' at ' + x.signal + ' dBm: ' + x.state +
-            ' (' + (x.btm ? 'can be asked to move' : 'cannot be asked to move') + (x.beacon_report ? ', reports what it hears' : '') + ')'}));
+            ' (' + (x.btm ? 'can be asked to move' : 'cannot be asked to move') + (x.beacon_report ? ', reports what it hears' : '') + (x.has_5ghz ? ', has 5 GHz' : '') + ')'}));
     }
     const hb = document.querySelector('#wifi-steer-history tbody'); if (!hb) return; hb.innerHTML = '';
     const hist = (d.steer_history || []).slice().reverse();
-    const what = {measure: 'asked what it hears', btm: 'asked to move', 'btm-answer': 'answer', roamed: 'moved', stay: 'left alone', kick: 'disconnected (last resort)', back: 'came back'};
+    const what = {measure: 'asked what it hears', btm: 'asked to move', 'btm-answer': 'answer', roamed: 'moved', stay: 'left alone', kick: 'disconnected (last resort)', back: 'came back',
+        'band-measure': 'asked what it hears on 5 GHz', 'band-btm': 'asked to move to 5 GHz', 'band-moved': 'moved to 5 GHz',
+        'band-stay': 'stays on 2.4 GHz', 'band-back': 'came back to 2.4 GHz'};
     for (const h of hist) hb.appendChild(el('tr', {}, el('td', {text: new Date(h.t * 1000).toLocaleString()}), el('td', {class: 'mono', text: h.mac}),
         el('td', {text: what[h.event] || h.event}), el('td', {text: h.bss || ''}), el('td', {text: h.signal ? h.signal + ' dBm' : ''}), el('td', {text: h.detail || ''})));
     if (!hist.length) hb.appendChild(el('tr', {}, el('td', {colspan: '6', class: 'empty', text: 'Nothing yet.'})));
