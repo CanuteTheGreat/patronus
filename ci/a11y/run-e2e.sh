@@ -27,7 +27,7 @@ trap cleanup EXIT
 PW="E2e-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')-Pw1"
 if [ -n "${WEB_BIN:-}" ]; then
   docker create --name "$C" -e PATRONUS_ADMIN_PASSWORD="$PW" -e PATRONUS_AUTH_ETC=/tmp/auth --cap-add NET_ADMIN --cap-add NET_RAW \
-    --memory 1g --memory-swap 1g --cpus 1 -e RUST_LOG=info --entrypoint /patronus-web "$WEB_RUN_IMAGE" >/dev/null
+    --memory 1g --memory-swap 1g --cpus 1 -e RUST_LOG=info -e PATRONUS_HTTPS_PORT=8443 -e PATRONUS_HTTP_REDIRECT_PORT=0 --entrypoint /patronus-web "$WEB_RUN_IMAGE" >/dev/null
   docker cp "$WEB_BIN" "$C:/patronus-web"
   docker start "$C" >/dev/null
   CURL=(docker run --rm --network "container:$C" "$PW_IMAGE" curl)
