@@ -265,7 +265,7 @@ const CH5 = ['auto', 36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 12
 const CHAN_NUMS = [['chan_hyst', 20], ['chan_min_gain', 10], ['chan_confirm', 3], ['chan_confirm_gap', 300], ['chan_rounds', 4],
     ['chan_dwell', 105], ['chan_sample_secs', 30], ['chan_bss_cost', 2], ['chan_min_signal', -90], ['chan_csa_count', 10],
     ['chan_wait', 90], ['chan_jitter', 30], ['chan_sync_wait', 90], ['chan_stagger', 1800], ['chan_history', 200], ['chan_forget', 604800], ['steer_retry_max', 604800],
-    ['aql_low24', 5000], ['aql_high24', 12000], ['aql_low5', 5000], ['aql_high5', 12000]];
+    ['aql_low24', 2500], ['aql_high24', 5000], ['aql_low5', 5000], ['aql_high5', 12000]];
 function bandName(b) { return String(b) === '5' ? '5 GHz' : '2.4 GHz'; }
 function showChannels(d) {
     const w = document.getElementById('wifi-chan-why'); w.innerHTML = '';

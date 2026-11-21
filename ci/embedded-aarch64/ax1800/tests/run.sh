@@ -713,6 +713,15 @@ ao=$(PATH=$FA:$PATH AP_BOARD=$A/board-air.sh AP_DEBUGFS=$DB AP_PHY24=phy1 AP_PHY
 [ "$(cat "$DB/phy1/aql_enable")" = 1 ] && [ "$(cat "$DB/phy1/aql_txq_limit")" = "3 1500 4000" ] && [ "$(cat "$DB/phy1/airtime_flags")" = 0 ] \
   && [ "$(cat "$DB/phy0/aql_txq_limit")" = "3 5000 12000" ] \
   && ok "ap airtime: per-band queue limits (2.4 GHz 1500/4000 us, 5 GHz defaults), fairness off, no restart" || { no "ap airtime: $ao"; head "$DB"/phy*/*; }
+# image defaults (board.sh): 2.4 GHz 2500/5000 us, 5 GHz 5000/12000 us; a bad 2.4 GHz value falls back to the 2.4 GHz default
+printf '. %s\nAP_SSIDS=m\n' "$O/etc/patronus/board.sh" > "$A/board-aird.sh"
+ao=$(PATH=$FA:$PATH AP_BOARD=$A/board-aird.sh AP_DEBUGFS=$DB AP_PHY24=phy1 AP_PHY5=phy0 sh "$O/usr/libexec/patronus/ap" airtime 2>&1)
+[ "$(cat "$DB/phy1/aql_txq_limit")" = "3 2500 5000" ] && [ "$(cat "$DB/phy0/aql_txq_limit")" = "3 5000 12000" ] && [ "$(cat "$DB/phy1/airtime_flags")" = 3 ] \
+  && ok "ap airtime: image defaults 2.4 GHz 2500/5000 us, 5 GHz 5000/12000 us" || no "ap airtime defaults: $ao"
+printf '. %s\nAP_SSIDS=m\nAP_AQL_LOW24=x AP_AQL_HIGH24=9\n' "$O/etc/patronus/board.sh" > "$A/board-airx.sh"
+: > "$DB/phy1/aql_txq_limit"
+ao=$(PATH=$FA:$PATH AP_BOARD=$A/board-airx.sh AP_DEBUGFS=$DB AP_PHY24=phy1 AP_PHY5=phy0 sh "$O/usr/libexec/patronus/ap" airtime 2>&1)
+[ "$(cat "$DB/phy1/aql_txq_limit")" = "3 2500 5000" ] && ok "ap airtime: an invalid 2.4 GHz limit falls back to the 2.4 GHz default" || no "ap airtime fallback: $ao"
 printf '#!/bin/sh\nexit 0\n' > "$FA/iw"; : > "$DB/phy1/aql_txq_limit"
 ao=$(PATH=$FA:$PATH AP_BOARD=$A/board-air.sh AP_DEBUGFS=$DB AP_PHY24=phy1 AP_PHY5=phy0 sh "$O/usr/libexec/patronus/ap" airtime 2>&1)
 case "$ao" in *"no airtime queue limit"*) [ ! -s "$DB/phy1/aql_txq_limit" ] && ok "ap airtime: a driver without AQL (stock modules) is left alone, said so" || no "ap airtime wrote without AQL";;

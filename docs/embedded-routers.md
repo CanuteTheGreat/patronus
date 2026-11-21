@@ -1325,7 +1325,7 @@ modules on purpose). On the unit, `iw phy` then lists `[ AQL ]` and `[ AIRTIME_F
 Settings (typed, live, Wi-Fi page "Airtime", `/api/wifi`, export/plan; `ap airtime` applies them through mac80211's
 debugfs, also at every radio start): `AP_AQL` (on), `AP_ATF` (on), `AP_AQL_LOW24`/`AP_AQL_HIGH24` and
 `AP_AQL_LOW5`/`AP_AQL_HIGH5` (microseconds of airtime one station may have queued in the hardware, LOW while the radio
-is busy; mac80211's defaults 5000/12000). With the stock modules `ap airtime` says the driver has no airtime queue
+is busy; defaults 2500/5000 on 2.4 GHz and mac80211's 5000/12000 on 5 GHz, chosen by the sweep below). With the stock modules `ap airtime` says the driver has no airtime queue
 limit and changes nothing; the Wi-Fi page says the same.
 
 The early boot does not mount debugfs; `ap airtime` mounts it on first use (mac80211's defaults apply without it, but a
@@ -1364,3 +1364,28 @@ default limits (likely because the limit is counted in estimated airtime at the 
 on a busy channel stretches the real time; not yet proven). Halving the 2.4 GHz limits (`AP_AQL_LOW24=2500`, `AP_AQL_HIGH24=5000`) brought the legacy station to
 49-62 ms and HE to 20 ms at about 14% less HE throughput than the unlimited control. Every BSS passed the client suite after the flash and after
 `ap stop; ap start`; no firmware crash, wifi-guard normal.
+
+Choosing the 2.4 GHz default (2026-11-21): a sweep on both units, the limits set live on the 2.4 GHz radio only (5 GHz
+unchanged), the same test client and loads as above, three runs per setting in interleaved order plus one run with the
+queue limit off (fairness stayed on). Median of the per-run medians for 4 TCP streams downstream (0.2 s pings wired ->
+client) and median throughput:
+
+| 2.4 GHz LOW / HIGH (us) | unit A legacy | unit A HE | unit B legacy | unit B HE |
+|---|---|---|---|---|
+| queue limit off | 127 ms, 16.6 Mbit/s | 15.8 ms, 173 Mbit/s | 100 ms, 6.3 Mbit/s | 72.6 ms, 60.9 Mbit/s |
+| 5000 / 12000 (mac80211) | 50.0 ms, 16.1 Mbit/s | 13.8 ms, 171 Mbit/s | 103 ms, 6.4 Mbit/s | 30.1 ms, 56.9 Mbit/s |
+| 3000 / 7000 | 38.2 ms, 16.1 Mbit/s | 12.4 ms, 169 Mbit/s | 107 ms, 6.2 Mbit/s | 27.9 ms, 56.5 Mbit/s |
+| **2500 / 5000 (default)** | **30.0 ms, 16.1 Mbit/s** | **13.7 ms, 170 Mbit/s** | **85.4 ms, 6.6 Mbit/s** | **20.4 ms, 56.7 Mbit/s** |
+| 1500 / 4000 | 27.1 ms, 15.1 Mbit/s | 13.7 ms, 165 Mbit/s | 81.2 ms, 6.2 Mbit/s | 19.0 ms, 57.1 Mbit/s |
+
+Unit A: channel 11, about 20 stations, client at about -40 dBm. Unit B: channel 1 (busier), about 11-20 stations,
+client at about -62 dBm. Run-to-run spread is about +-20 ms, so differences under that are noise.
+
+2500 / 5000 is the 2.4 GHz default: it cuts the loaded legacy delay 40% on unit A (50 -> 30 ms) and the loaded HE delay
+about a third on unit B (30 -> 20 ms), keeps HE throughput at 93-98% of the unlimited control and HE delay no worse
+than mac80211's default anywhere. 1500 / 4000 gains little more and was the only setting with throughput dips (a legacy
+run at 10.7 Mbit/s, an HE run at 154 Mbit/s). On the busy channel with a weak client no setting brings the legacy
+station under 50 ms, and the unlimited control is no better (100 ms): that delay does not come from the AP's queue
+depth, which is what this limit controls, but from contention and retries on the channel (and the client's own
+upstream queue of TCP acknowledgements). Band steering of capable clients to 5 GHz (12.18) is the remedy there.
+5 GHz keeps mac80211's limits (its rates make the same budget a short queue).

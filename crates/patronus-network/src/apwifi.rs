@@ -643,11 +643,13 @@ pub const TUNING: &[(&str, &str, i64, i64, i64, &str)] = &[
         "steering: longest hold 0 to 2592000 seconds",
     ),
     // airtime queue limit per band (docs 12.20, `ap airtime`): microseconds of airtime one station may have queued in
-    // the radio's hardware, LOW while the radio is busy and HIGH otherwise (mac80211's defaults 5000 / 12000)
+    // the radio's hardware, LOW while the radio is busy and HIGH otherwise. 5 GHz keeps mac80211's 5000 / 12000; 2.4 GHz
+    // uses 2500 / 5000: its lower rates and busier channels turn the same budget into more queueing delay, and the
+    // measured sweep (docs 12.20) gave lower loaded delay at the same throughput
     (
         "aql_low24",
         "AP_AQL_LOW24",
-        5000,
+        2500,
         100,
         50000,
         "2.4 GHz airtime queue limit (busy radio): 100 to 50000 microseconds",
@@ -655,7 +657,7 @@ pub const TUNING: &[(&str, &str, i64, i64, i64, &str)] = &[
     (
         "aql_high24",
         "AP_AQL_HIGH24",
-        12000,
+        5000,
         100,
         50000,
         "2.4 GHz airtime queue limit: 100 to 50000 microseconds",
@@ -3335,7 +3337,7 @@ mod tests {
 
     #[test]
     fn airtime_settings_default_on_validate_and_stay_live() {
-        // defaults: queue limit + fairness on, mac80211's limits (the board.sh parity is checked with TUNING above)
+        // defaults: queue limit + fairness on, halved limits on 2.4 GHz, mac80211's on 5 GHz (board.sh parity: TUNING above)
         let c = view(&parse("AP_SSIDS=p\nSSID_p=P KEY_p=secretpw1\n"));
         assert!(c.aql && c.atf);
         assert_eq!(
@@ -3345,7 +3347,7 @@ mod tests {
                 c.tuning["aql_low5"],
                 c.tuning["aql_high5"]
             ),
-            (5000, 12000, 5000, 12000)
+            (2500, 5000, 5000, 12000)
         );
         let board = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../ci/embedded-aarch64/ax1800/overlay/etc/patronus/board.sh");
