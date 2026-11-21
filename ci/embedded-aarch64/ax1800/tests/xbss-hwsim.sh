@@ -30,9 +30,9 @@ cleanup() { $DOCKER rm -fv "$C" >/dev/null 2>&1 || true
   if [ -n "$LOADED" ]; then regset 00 || true; sleep 1; modctl unload || { sleep 2; modctl unload || echo "could not unload mac80211_hwsim"; }; fi
   hwsim_lock_drop; }
 # The module is host-global and $LOCK is not shared with runs in other job containers: when it is loaded, wait for the
-# other run (a few minutes) instead of failing; a scenario container of ours older than STALE_MIN (a cancelled job never
+# other run (a few minutes) instead of failing (65 min, as long as the lock wait in hwsim-lock.sh; 20 min failed run 2629); a scenario container of ours older than STALE_MIN (a cancelled job never
 # ran its cleanup) is removed and the module it left is unloaded.
-STALE_MIN=${HWSIM_STALE_MIN:-60}; WAIT_MIN=${HWSIM_WAIT_MIN:-20}; t0=$(date +%s)
+STALE_MIN=${HWSIM_STALE_MIN:-60}; WAIT_MIN=${HWSIM_WAIT_MIN:-65}; t0=$(date +%s)
 trap cleanup EXIT
 hwsim_lock_take || exit 1
 while grep -q '^mac80211_hwsim ' /proc/modules; do
