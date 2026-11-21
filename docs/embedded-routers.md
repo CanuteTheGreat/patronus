@@ -1342,3 +1342,20 @@ The middle column is the clean comparison (same build, same channel, same minute
 fast HE station pays at most about 8% of throughput. The stock column ran on another channel the same night (channel
 coordination moved the radio after the flash), so its throughput is not comparable. Every BSS gave a client a lease (3.3 s for
 the first one after the boot, 0.2 s otherwise) with gateway, internet and DNS, again after `ap stop; ap start`; no firmware crash, wifi-guard normal.
+
+Second unit (2026-11-21), a harder case: 2.4 GHz channel 1 with about 20 associated stations, test client at about
+-62 dBm (the channel stayed the same across the flash, so all columns ran on it within one hour):
+
+| Client, load | stock modules | rebuilt, AQL+ATF off | rebuilt, AQL+ATF on (defaults) | on, 2.4 GHz limits 2500 / 5000 us |
+|---|---|---|---|---|
+| 54 Mbit/s legacy, 4 streams down | 65.6 / 224 ms and 89.6 / 264 ms, 5.5-7.4 Mbit/s | 109 / 213 ms, 6.1 Mbit/s | 81.4 / 153, 82.9 / 249 and 91.1 / 266 ms, 6.3-6.6 Mbit/s | 49.4 / 221 and 61.8 / 185 ms, 6.8 Mbit/s |
+| 54 Mbit/s legacy, upstream | 40.5 / 100 and 46.3 / 100 ms, 6.9-8.9 Mbit/s | 43.5 / 126 ms, 4.6 Mbit/s | 54.4 / 137 and 47.4 / 96 ms, 5.2-5.6 Mbit/s | 42.5 / 119 ms, 9.2 Mbit/s |
+| HE, 4 streams down | 44.6 / 118 ms and 73.2 / 205 ms, 58-61 Mbit/s | 137 / 465 ms, 53.9 Mbit/s | 32.0 / 88 and 30.4 / 87 ms, 48.5-51.8 Mbit/s | 20.5 / 94 ms, 46.4 Mbit/s |
+| HE, upstream | 28.4 / 107 and 27.6 / 102 ms, 26-44 Mbit/s | 29.8 / 89 ms, 29.8 Mbit/s | 28.2 / 78 and 27.7 / 63 ms, 31-32 Mbit/s | 31.0 / 153 ms, 27.7 Mbit/s |
+
+At equal throughput the queue limit still cuts the loaded delay against the same build without it (HE 137 -> 31 ms,
+legacy 109 -> 82 ms), but on a crowded channel a slow legacy station stays near the stock figure with mac80211's
+default limits (likely because the limit is counted in estimated airtime at the station's rate, while contention
+on a busy channel stretches the real time; not yet proven). Halving the 2.4 GHz limits (`AP_AQL_LOW24=2500`, `AP_AQL_HIGH24=5000`) brought the legacy station to
+49-62 ms and HE to 20 ms at about 14% less HE throughput than the unlimited control. Every BSS passed the client suite after the flash and after
+`ap stop; ap start`; no firmware crash, wifi-guard normal.
