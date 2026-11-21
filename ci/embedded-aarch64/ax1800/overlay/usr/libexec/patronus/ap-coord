@@ -21,7 +21,7 @@
 # Test hooks: AP_COORD_NOPLAN (skip the pre-start scan once), AP_BOARD, AP_RENDER_OUT (as for `ap`), AP_COORD_SCAN_FILE (parse this scan instead of scanning),
 #             AP_COORD_STATUS_FILE (hostapd_cli status text), AP_COORD_AP (path of the ap script), AP_COORD_NOW (hour).
 # Scan robustness (environment / board.sh knobs, defaults in the code): AP_COORD_RESCANS (repeats of an empty pre-start scan, 2),
-#             AP_COORD_SCAN_TRIES (scans in all when the kernel aborts one, 5).
+#             AP_COORD_SCAN_TRIES (most pre-start scans until two in a row agree, 5).
 . ${AP_BOARD:-/etc/patronus/board.sh}
 OUTD=${AP_RENDER_OUT:-/run/hostapd}
 APX=${AP_COORD_AP:-/usr/libexec/patronus/ap}
@@ -71,9 +71,8 @@ freqs() { # BAND: the frequencies a scan has to visit (what ACS may pick, plus e
     for c in $l; do echo $((5000 + c * 5)); done | sort -un | tr '\n' ' '
   else for c in 1 2 3 4 5 6 7 8 9 10 11 12 13; do echo $((2407 + c * 5)); done | tr '\n' ' '; fi; }
 
-scan_if() { # BAND IF [ap-force]: a fresh scan of the band's frequencies (falls back to the kernel's cached list)
+scan_once() { # BAND IF [ap-force]: one scan of the band's frequencies (falls back to the kernel's cached list)
   t=$(num "${AP_COORD_SCAN_SECS:-}" 25)
-  if [ -n "${AP_COORD_SCAN_FILE:-}" ]; then cat "$AP_COORD_SCAN_FILE"; return; fi
   # a scan right after the interface came up can answer "busy": try again (three times), then use the kernel's cached list
   # (a running access point scans with ap-force and a fixed dwell: without them it only reports its own channel)
   xa=; [ "${3:-}" = ap-force ] && xa="ap-force"
@@ -81,24 +80,35 @@ scan_if() { # BAND IF [ap-force]: a fresh scan of the band's frequencies (falls 
   # a loaded host, where the same radio then heard the peer in every later scan): an empty answer from the pre-start scan
   # is repeated (twice, AP_COORD_RESCANS) after a pause before the band counts as having no other access point.
   z=0; rs=$(num "${AP_COORD_RESCANS:-}" 2)
-  # A scan can also be ABORTED by the kernel (the other radio's hostapd starting, a regulatory update, another scan):
-  # iw then prints "scan aborted!" and exits 0 with whatever the kernel had cached, which is partial or stale (the channels
-  # not yet visited are missing, other networks' leftovers are in). That is not a result: scan again (AP_COORD_SCAN_TRIES
-  # times in all). Seen in hwsim: a peer 2 s on air on channel 11 was not heard because the first scan of the band was
-  # aborted after 0.1 s, and the leftovers of an earlier test made the cached list look like a real answer.
-  ab=0; tries=$(num "${AP_COORD_SCAN_TRIES:-}" 5)
   n=0; while :; do
     if out=$(timeout "$t" iw dev "$2" scan $xa freq $(freqs "$1") ${xa:+duration $(num "${AP_CHAN_DWELL:-}" 105)} 2>/dev/null); then
-      case "$out" in *"scan aborted"*)
-        ab=$((ab + 1))
-        if [ $ab -lt "$tries" ]; then sleep 1; continue; fi
-        say "$1 GHz: the scan was aborted $ab times, using the kernel's partial list" >&2; break;; esac
       case "$out" in *BSS*) break;; esac
       if [ -n "$xa" ] || [ $z -ge "$rs" ]; then break; fi
       z=$((z + 1)); sleep 2; continue
     fi
     n=$((n + 1)); [ $n -ge 3 ] && { out=$(iw dev "$2" scan dump 2>/dev/null); say "$1 GHz: the scan failed three times, using the cached list" >&2; break; }
     sleep 1; done
+  echo "$out"; }
+
+seen_set() { echo "$1" | awk '/^BSS /{ b = $2; sub(/\(.*/, "", b) } /^[ \t]*freq:/{ print b, $2 + 0 }' | sort -u | tr '\n' ';'; }  # bssid+frequency of every BSS
+
+scan_if() { # BAND IF [ap-force]: a scan the kernel did not cut short
+  # The kernel can ABORT a scan (another radio's hostapd starting, a regulatory update) and iw (exit 0, no message, no
+  # stderr) then hands back the cached list: the channels not visited yet are missing and leftovers of an older scan pass
+  # for the answer. Seen in hwsim: a peer on air for 2 s on channel 11 was not heard because the band's first scan ended
+  # after 0.1 s (a full scan takes 0.7 s) and an earlier test's BSS made the list look real. Nothing tells a cut-short
+  # scan from a complete one, so the pre-start scan (cheap: the radio is idle) is repeated until two consecutive scans
+  # hear the same BSSes (bssid + frequency), at most AP_COORD_SCAN_TRIES scans (5). The on-air re-check is not repeated:
+  # every ap-force scan takes the radio off its channel, and its next round catches what this one missed.
+  if [ -n "${AP_COORD_SCAN_FILE:-}" ]; then cat "$AP_COORD_SCAN_FILE"; return; fi
+  out=$(scan_once "$1" "$2" "${3:-}"); [ "${3:-}" = ap-force ] && { echo "$out"; return; }
+  tries=$(num "${AP_COORD_SCAN_TRIES:-}" 5); k=1; prev=$(seen_set "$out")
+  while [ $k -lt "$tries" ]; do
+    nxt=$(scan_once "$1" "$2" "${3:-}"); k=$((k + 1)); cur=$(seen_set "$nxt"); out=$nxt
+    [ "$cur" = "$prev" ] && break
+    prev=$cur
+    [ $k -ge "$tries" ] && say "$1 GHz: consecutive scans kept hearing different access points ($k scans), using the last" >&2
+  done
   echo "$out"; }
 
 scan_peers() { # BAND IF [ap-force]: scan; write $OUTD/coord-BAND (the peers' channels, when coordination is on) and

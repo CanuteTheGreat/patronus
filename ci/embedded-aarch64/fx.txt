@@ -1,0 +1,6 @@
+BSS aa:bb:cc:dd:ee:ff(on wl)
+	last seen: 5 ms ago
+	freq: 2462.0
+	SSID: x
+BSS 02:00:00:00:00:00(on wl)
+	freq: 2412.0

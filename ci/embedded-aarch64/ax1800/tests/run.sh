@@ -256,17 +256,21 @@ r=$(PATH=$A/bin:$PATH AP_COORD_QUIET=1-5 AP_COORD_NOW=14 cocheck 02:cc:00:00:00:
 r=$(PATH=$A/bin:$PATH AP_COORD_QUIET=1-5 AP_COORD_NOW=03 cocheck 02:cc:00:00:00:99); [ "$r" = "restart-band 5" ] && ok "ap-coord check: inside the quiet hours it restarts the radio" || no "ap-coord quiet window: '$r'"
 AP_COORD_SCAN_FILE=$FX co plan 5 phy0 > /dev/null 2>&1; [ -s "$A/co/peers-5" ] && ok "ap-coord plan: records the peers it heard (ap-steer knows another access point exists)" || no "ap-coord plan wrote no peers-5"
 AP_COORD_SCAN_FILE=/dev/null co plan 5 phy0 > /dev/null 2>&1; [ ! -e "$A/co/peers-5" ] && ok "ap-coord plan: no peer heard = no peers file" || no "ap-coord plan left a stale peers-5"
-# an ABORTED scan is not a result: iw prints "scan aborted!" and dumps the kernel's partial/stale cache, exit 0 (hwsim: the first
-# scan of a band was aborted after 0.1 s, a peer on channel 11 was missed, a leftover of another network made the list look real)
+# the kernel can cut a scan short (iw: exit 0, no message, the cached list): the pre-start scan repeats until two in a row agree
+# (hwsim: the first scan of a band ended after 0.1 s, a peer on channel 11 was missed, a leftover of another network made the list
+# look real)
 mkdir -p "$A/bin-ab"; printf '%s\n' '#!/bin/sh' 'case "$*" in *" scan "*|*" scan") n=$(cat "$AB_N" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "$AB_N"' \
-  '  if [ $n -le ${AB_ABORTS:-1} ]; then printf "scan aborted!\nBSS 06:de:ad:00:00:01(on wl24-coord)\n\tfreq: 2412.0\n\tsignal: -30.00 dBm\n\tSSID: leftover\n"; else printf "BSS 06:aa:bb:cc:22:22(on wl24-coord)\n\tfreq: 2462.0\n\tsignal: -40.00 dBm\n\tSSID: Plat 9\n"; fi;; esac' 'exit 0' > "$A/bin-ab/iw"
+  '  if [ -n "${AB_ALT:-}" ]; then printf "BSS 06:de:ad:00:00:%02d(on wl24-coord)\n\tfreq: 2412.0\n\tsignal: -30.00 dBm\n\tSSID: leftover\n" $n' \
+  '  elif [ $n -le ${AB_CUT:-1} ]; then printf "BSS 06:de:ad:00:00:01(on wl24-coord)\n\tfreq: 2412.0\n\tsignal: -30.00 dBm\n\tSSID: leftover\n"; else printf "BSS 06:de:ad:00:00:01(on wl24-coord)\n\tfreq: 2412.0\n\tsignal: -30.00 dBm\n\tSSID: leftover\nBSS 06:aa:bb:cc:22:22(on wl24-coord)\n\tfreq: 2462.0\n\tsignal: -40.00 dBm\n\tSSID: Plat 9\n"; fi;; esac' 'exit 0' > "$A/bin-ab/iw"
 printf '#!/bin/sh\nexit 0\n' > "$A/bin-ab/ip"; chmod +x "$A/bin-ab/iw" "$A/bin-ab/ip"
 rm -f "$A/co/coord-24" "$A/ab-n"; PATH=$A/bin-ab:$PATH AB_N=$A/ab-n AP_CHAN_SMART24=0 co plan 24 phy1 > "$A/co-abort.out" 2>&1
-[ "$(cat "$A/co/coord-24" 2>/dev/null)" = "7 8 9 10 11 12 13 14" ] && [ "$(cat "$A/ab-n")" = 2 ] \
-  && ok "ap-coord plan: a scan the kernel aborted is repeated; the second scan's peer (channel 11) is used, not the partial list" || { no "ap-coord abort retry: '$(cat "$A/co/coord-24" 2>&1)' scans=$(cat "$A/ab-n" 2>&1)"; cat "$A/co-abort.out"; }
-rm -f "$A/co/coord-24" "$A/ab-n"; PATH=$A/bin-ab:$PATH AB_N=$A/ab-n AB_ABORTS=99 AP_COORD_SCAN_TRIES=3 AP_CHAN_SMART24=0 co plan 24 phy1 > "$A/co-abort.out" 2>&1
-[ "$(cat "$A/ab-n")" = 3 ] && grep -q 'aborted 3 times' "$A/co-abort.out" \
-  && ok "ap-coord plan: a scan that keeps being aborted stops after AP_COORD_SCAN_TRIES and says so" || { no "ap-coord abort limit: scans=$(cat "$A/ab-n" 2>&1)"; cat "$A/co-abort.out"; }
+[ "$(cat "$A/co/coord-24" 2>/dev/null)" = "7 8 9 10 11 12 13 14" ] && [ "$(cat "$A/ab-n")" = 3 ] \
+  && ok "ap-coord plan: a scan the kernel cut short (only a leftover heard) is repeated until two agree; the peer on channel 11 is found" || { no "ap-coord cut-short scan: '$(cat "$A/co/coord-24" 2>&1)' scans=$(cat "$A/ab-n" 2>&1)"; cat "$A/co-abort.out"; }
+rm -f "$A/co/coord-24" "$A/ab-n"; PATH=$A/bin-ab:$PATH AB_N=$A/ab-n AB_ALT=1 AP_COORD_SCAN_TRIES=3 AP_CHAN_SMART24=0 co plan 24 phy1 > "$A/co-abort.out" 2>&1
+[ "$(cat "$A/ab-n")" = 3 ] && grep -q 'kept hearing different' "$A/co-abort.out" \
+  && ok "ap-coord plan: scans that never agree stop after AP_COORD_SCAN_TRIES and say so" || { no "ap-coord scan limit: scans=$(cat "$A/ab-n" 2>&1)"; cat "$A/co-abort.out"; }
+rm -f "$A/co/coord-24" "$A/ab-n"; PATH=$A/bin-ab:$PATH AB_N=$A/ab-n AB_CUT=0 AP_CHAN_SMART24=0 co plan 24 phy1 > "$A/co-abort.out" 2>&1
+[ "$(cat "$A/ab-n")" = 2 ] && ok "ap-coord plan: a first scan that already hears everything costs one extra scan, not more" || no "ap-coord stable scan count: $(cat "$A/ab-n" 2>&1)"
 
 # 3a2. channel choice by measurement (docs 12.19): ap-chan scoring, the start-time pick through ap-coord plan (serialized
 #      between units), the nightly re-check with hysteresis + agreeing samples, the move by CSA, and the history

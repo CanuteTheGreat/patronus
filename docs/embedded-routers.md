@@ -1094,9 +1094,11 @@ without a controller, from what each unit can hear. Default ON, per band.
   candidate channel whose 20/40/80 MHz block overlaps one of them from the ACS `chanlist` ("whole block" rule of 12.14
   still applies) and says so in its output. When no whole block would remain, the list is left alone and ACS decides
   (a third unit on a two-block band). A fixed channel is not planned.
-  A scan the kernel aborts (iw prints `scan aborted!` and exits 0 with the kernel's partial or stale cache: the other
-  radio's hostapd starting, a regulatory update) is not a result: `ap-coord` scans again, `AP_COORD_SCAN_TRIES` times in
-  all (5), and says so when it gives up. An empty first scan of a radio is repeated `AP_COORD_RESCANS` times (2).
+  The kernel can cut a scan short (another radio's hostapd starting, a regulatory update): iw then exits 0 with the
+  cached list, so the channels not visited yet are missing and an older scan's leftovers pass for the answer. The
+  pre-start scan therefore repeats until two consecutive scans hear the same BSSes (`AP_COORD_SCAN_TRIES`, at most 5;
+  it says so when they never agree); an empty first scan is repeated `AP_COORD_RESCANS` times (2). The on-air re-check
+  scans once (each `ap-force` scan takes the radio off its channel).
 - **Later** (`ap-coord run`, started by `ap start`): `AP_COORD_DELAY` seconds after start and then every
   `AP_COORD_INTERVAL` seconds (0 = once) the unit compares its own block (`hostapd_cli status`) with the peers it can hear.
   When one overlaps, the unit with the HIGHER key restarts that radio (`ap restart-band 5|24`, which plans again, so
