@@ -20,7 +20,7 @@
 #  - STAY24: the station is limited to 2.4 GHz (network freq_list=2412, like a 2.4-only client): asked, declines, stays
 #    connected on 2.4 GHz, no disconnect; not asked again within AP_STEER_RETRY.
 # The last line is RESULT_JSON {...}; non-zero exit when a move disconnected the station, did not reach 5 GHz, or a
-# declining station lost its connection. Env: CYCLES, KEEP=1, IMAGE.
+# declining station lost its connection. Env: CYCLES, KEEP=1, IMAGE, HWSIM_REQUIRED=1 (CI: no module = failure).
 set -euo pipefail
 SELF=$(readlink -f "$0"); cd "$(dirname "$SELF")/.."
 IMAGE=${IMAGE:-debian:trixie}
@@ -29,27 +29,39 @@ DOCKER="${DOCKER:-$SUDO docker}"
 HWSIM_DOCKER=$DOCKER; . ../../hwsim-lock.sh
 C=bandsteer-hwsim-$$
 LOADED=
-WD=$(agent-workdir new bandsteer-hwsim 2>/dev/null || mktemp -d)
+WD=$(mktemp -d)
+KIMG=${KMOD_IMAGE:-debian:trixie}
+# load/unload the host-global module: directly (root/sudo on the host) or, from a CI job container, through a throw-away
+# privileged sibling that sees the host's /lib/modules (as xbss-hwsim.sh)
+modctl() { local cmd="rmmod mac80211_hwsim"; [ "$1" = load ] && cmd="modprobe mac80211_hwsim radios=3"
+  if $SUDO $cmd >/dev/null 2>&1; then return 0; fi
+  $DOCKER run --rm --privileged -v /lib/modules:/lib/modules:ro "$KIMG" sh -c \
+    "command -v modprobe >/dev/null || (apt-get update -qq >/dev/null && apt-get install -y -qq kmod >/dev/null); $cmd" >/dev/null 2>&1; }
 cleanup() { rc=$?
   if [ "${KEEP:-0}" = 1 ]; then echo "KEEP=1: container $C, workdir $WD, module and lock left in place"; exit $rc; fi
   $DOCKER exec "$C" iw reg set 00 >/dev/null 2>&1 || true
   $DOCKER rm -fv "$C" >/dev/null 2>&1 || true
-  if [ -n "$LOADED" ]; then sleep 1; $SUDO rmmod mac80211_hwsim 2>/dev/null || { sleep 3; $SUDO rmmod mac80211_hwsim || echo "could not unload mac80211_hwsim"; }; fi
+  if [ -n "$LOADED" ]; then sleep 1; modctl unload || { sleep 3; modctl unload || echo "could not unload mac80211_hwsim"; }; fi
   hwsim_lock_drop
-  command -v agent-workdir >/dev/null 2>&1 && agent-workdir done "$WD" >/dev/null 2>&1 || rm -rf "$WD"
+  rm -rf "$WD"
   exit $rc; }
 trap cleanup EXIT
-if grep -q '^mac80211_hwsim ' /proc/modules; then echo "mac80211_hwsim is already loaded (another user?): pick another host"; exit 1; fi
 hwsim_lock_take || exit 1
+# the module is host-global and may belong to a run in another job container (the lock is per host, but older runners
+# may not take it): wait up to WAIT_MIN for it to go away
+WAIT_MIN=${HWSIM_WAIT_MIN:-65}; tw=$(date +%s)
+while grep '^mac80211_hwsim ' /proc/modules >/dev/null; do
+  [ $(( $(date +%s) - tw )) -gt $((WAIT_MIN * 60)) ] && { echo "mac80211_hwsim still loaded after ${WAIT_MIN} min (another user?): refusing"; exit 1; }
+  echo "mac80211_hwsim is loaded by another run: waiting"; sleep 20; done
 echo "--- container $C ($IMAGE), packages"
 $DOCKER run -d --name "$C" --privileged --security-opt apparmor=unconfined "$IMAGE" sleep infinity >/dev/null
 $DOCKER exec "$C" sh -c 'apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq hostapd wpasupplicant iw iproute2 python3-minimal iputils-ping procps >/dev/null 2>&1; hostapd -v 2>&1 | head -1; wpa_supplicant -v | head -1'
 tar -cf "$WD/ov.tar" overlay/usr/libexec/patronus/ap overlay/usr/libexec/patronus/ap-steer overlay/usr/libexec/patronus/ap-event overlay/etc/patronus/board.sh
 $DOCKER exec "$C" mkdir -p /w/ov && $DOCKER exec -i "$C" tar -xf - -C /w/ov < "$WD/ov.tar"
 sed -n '/^#--INNER-BEGIN/,/^#--INNER-END/p' "$SELF" > "$WD/inner.sh"; $DOCKER cp "$WD/inner.sh" "$C:/w/inner.sh"
-$SUDO modprobe mac80211_hwsim radios=3 || { echo "SKIP: no mac80211_hwsim on this kernel"; exit 0; }
+modctl load || { echo "SKIP: no mac80211_hwsim on this kernel"; [ "${HWSIM_REQUIRED:-0}" = 1 ] && exit 1; exit 0; }
 LOADED=1
-PHYS=$(ls /sys/class/ieee80211 | sort -V | tail -n 3); [ "$(echo $PHYS | wc -w)" = 3 ] || { echo "expected 3 hwsim radios, got: $PHYS"; exit 1; }
+PHYS=$($DOCKER run --rm --net=host "$IMAGE" sh -c 'ls /sys/class/ieee80211' | sort -V | tail -n 3); [ "$(echo $PHYS | wc -w)" = 3 ] || { echo "expected 3 hwsim radios, got: $PHYS"; exit 1; }
 PID=$($DOCKER inspect -f '{{.State.Pid}}' "$C")
 $DOCKER run --rm --net=host --pid=host --cap-add NET_ADMIN "$IMAGE" sh -c \
   "apt-get update -qq >/dev/null && apt-get install -y -qq iw >/dev/null 2>&1; for p in $(echo $PHYS); do iw phy \$p set netns $PID || exit 1; done"

@@ -63,6 +63,21 @@ jobs:
       - name: Stock hostapd overlaps, the Patronus build removes the old peer first; flap limit; ACS (1/6/11, 80 MHz centre, DFS)
         run: bash ci/embedded-aarch64/ax1800/tests/xbss-hwsim.sh
 
+  bandsteer-hwsim:
+    name: band steering 2.4 -> 5 GHz of one unit without a disconnect (mac80211_hwsim, hostapd + wpa_supplicant 2.10)
+    # the product's ap render + ap-event + ap-steer loop on one unit with two radios (docs 12.18b): a dual-band station is
+    # asked over 802.11v and moves without a disconnect event, a return is held, a 2.4-only station stays connected.
+    # Same lane and lock as xbss-hwsim; FAILS, never skips, without the module.
+    runs-on: hwsim-x86_64
+    timeout-minutes: 90
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 1g --memory-swap 1g --cpus 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dual-band station moved to 5 GHz (no disconnect), held after a return; 2.4-only station stays
+        run: CYCLES=2 HWSIM_REQUIRED=1 bash ci/embedded-aarch64/ax1800/tests/bandsteer-hwsim.sh
+
   image:
     name: GL-AX1800 ${{ matrix.init }} image (build, NAND budget, QEMU gate)
     runs-on: arm64
