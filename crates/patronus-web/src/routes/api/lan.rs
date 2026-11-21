@@ -105,6 +105,9 @@ mod dhcp_routes {
         pub ip: String,
         pub hostname: String,
         pub lease: String,
+        /// Raw lease seconds for the Edit form ("" = the pool's).
+        pub lease_raw: String,
+        pub description: String,
         pub dns_record: bool,
     }
     pub struct PoolView {
@@ -258,6 +261,8 @@ mod dhcp_routes {
                                 Some(0) => "infinite".to_string(),
                                 Some(t) => format!("{t} s"),
                             },
+                            lease_raw: m.lease_time.map(|t| t.to_string()).unwrap_or_default(),
+                            description: opt_s(&m.description),
                             dns_record: m.dns_record,
                         })
                         .collect(),
@@ -382,6 +387,18 @@ mod dhcp_routes {
             .map(created)
             .unwrap_or_else(err)
     }
+    async fn put_static(
+        State(state): State<AppState>,
+        Path(id): Path<i64>,
+        Json(i): Json<dhcp::StaticInput>,
+    ) -> Response {
+        state
+            .lan
+            .save_static(id, i)
+            .await
+            .map(|_| done())
+            .unwrap_or_else(err)
+    }
     async fn del_static(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
         state
             .lan
@@ -481,7 +498,7 @@ mod dhcp_routes {
             .route("/dhcp/pools", post(add_pool))
             .route("/dhcp/pools/:id", put(put_pool).delete(del_pool))
             .route("/dhcp/pools/:id/static", post(add_static))
-            .route("/dhcp/static/:id", delete(del_static))
+            .route("/dhcp/static/:id", put(put_static).delete(del_static))
             .route("/dhcp/v6", post(add_v6))
             .route("/dhcp/v6/:id", put(put_v6).delete(del_v6))
             .route("/dhcp/ra", post(add_ra))
@@ -922,5 +939,27 @@ mod dhcp_page_tests {
         );
         let src = include_str!("lan.rs");
         assert!(src.contains(".route(\"/dhcp/pools/:id\", put(put_pool).delete(del_pool))"));
+    }
+}
+
+#[cfg(test)]
+mod dhcp_static_edit_tests {
+    #[test]
+    fn dhcp_page_edits_a_static_mapping_through_put() {
+        let page = include_str!("../../../templates/dhcp.html");
+        assert!(
+            page.contains("onclick=\"editStatic(this)\""),
+            "every mapping row has an Edit button"
+        );
+        assert!(
+            page.contains("'PUT', '/api/dhcp/static/' + id"),
+            "edit saves with PUT on the mapping"
+        );
+        assert!(
+            page.contains("m.description"),
+            "the mapping description is shown"
+        );
+        let src = include_str!("lan.rs");
+        assert!(src.contains(".route(\"/dhcp/static/:id\", put(put_static).delete(del_static))"));
     }
 }

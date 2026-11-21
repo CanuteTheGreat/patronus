@@ -374,6 +374,30 @@ pub async fn add_static(store: &ConfigStore, m: &StaticMapping) -> Result<i64> {
     Ok(res.last_insert_rowid())
 }
 
+/// Rewrite a mapping in place (same pool, same id); `m.pool_id` is the pool it already belongs to.
+pub async fn update_static(store: &ConfigStore, id: i64, m: &StaticMapping) -> Result<()> {
+    let what = format!("a mapping for {} or {}", m.mac, m.ip);
+    let r = sqlx::query(
+        "UPDATE dhcp_static_mappings SET mac=?, ip=?, hostname=?, description=?, updated_at=?,
+         lease_time=?, dns_record=? WHERE id = ?",
+    )
+    .bind(&m.mac)
+    .bind(m.ip.to_string())
+    .bind(&m.hostname)
+    .bind(&m.description)
+    .bind(now())
+    .bind(m.lease_time.map(|t| t as i64))
+    .bind(m.dns_record as i64)
+    .bind(id)
+    .execute(store.pool()?)
+    .await
+    .map_err(|e| lan::unique_err(e, &what))?;
+    if r.rows_affected() == 0 {
+        return Err(Error::Config(format!("static mapping {id} not found")));
+    }
+    Ok(())
+}
+
 pub async fn delete_static(store: &ConfigStore, id: i64) -> Result<()> {
     let r = sqlx::query("DELETE FROM dhcp_static_mappings WHERE id = ?")
         .bind(id)
@@ -1297,6 +1321,38 @@ mod tests {
         .unwrap();
         add_static(s, &m).await.unwrap();
         id
+    }
+
+    #[tokio::test]
+    async fn a_static_mapping_can_be_edited_in_place() {
+        let s = testutil::store().await;
+        let id = seed(&s).await;
+        let pool = get_pool(&s, id).await.unwrap().unwrap();
+        let old = pool.static_mappings[0].clone();
+        let m = StaticInput {
+            mac: "AA:BB:CC:00:00:09".into(),
+            ip: "192.168.50.30".into(),
+            hostname: Some("printer2".into()),
+            description: Some("second floor".into()),
+            lease_time: Some(0),
+            dns_record: true,
+        }
+        .validate(&pool)
+        .unwrap();
+        update_static(&s, old.id, &m).await.unwrap();
+        let pool = get_pool(&s, id).await.unwrap().unwrap();
+        assert_eq!(
+            pool.static_mappings.len(),
+            1,
+            "edited in place, not duplicated"
+        );
+        let n = &pool.static_mappings[0];
+        assert_eq!(n.id, old.id);
+        assert_eq!(n.ip.to_string(), "192.168.50.30");
+        assert_eq!(n.hostname.as_deref(), Some("printer2"));
+        assert_eq!(n.description.as_deref(), Some("second floor"));
+        assert_eq!((n.lease_time, n.dns_record), (Some(0), true));
+        assert!(update_static(&s, 9999, &m).await.is_err());
     }
 
     #[tokio::test]

@@ -68,16 +68,17 @@
             <b>Static mappings</b>
             {% if p.statics.is_empty() %}<span class="empty">none</span>{% else %}
             <table class="lan">
-                <thead><tr><th>MAC</th><th>IP address</th><th>Hostname</th><th>Lease</th><th>DNS record</th><th><span class="sr-only">Actions</span></th></tr></thead>
+                <thead><tr><th>MAC</th><th>IP address</th><th>Hostname</th><th>Lease</th><th>DNS record</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead>
                 <tbody>
                 {% for m in p.statics %}
-                <tr><td class="mono">{{ m.mac }}</td><td class="mono">{{ m.ip }}</td><td>{{ m.hostname }}</td><td>{{ m.lease }}</td><td>{% if m.dns_record %}yes{% endif %}</td>
-                    <td><button class="btn btn-danger btn-sm" onclick="del('/api/dhcp/static/{{ m.id }}', 'Delete this static mapping?')">Delete</button></td></tr>
+                <tr><td class="mono">{{ m.mac }}</td><td class="mono">{{ m.ip }}</td><td>{{ m.hostname }}</td><td>{{ m.lease }}</td><td>{% if m.dns_record %}yes{% endif %}</td><td>{{ m.description }}</td>
+                    <td><button class="btn btn-secondary btn-sm" data-id="{{ m.id }}" data-pool="{{ p.id }}" data-mac="{{ m.mac }}" data-ip="{{ m.ip }}" data-host="{{ m.hostname }}" data-lease="{{ m.lease_raw }}" data-dns-record="{{ m.dns_record }}" data-description="{{ m.description }}" onclick="editStatic(this)">Edit</button>
+                        <button class="btn btn-danger btn-sm" onclick="del('/api/dhcp/static/{{ m.id }}', 'Delete this static mapping?')">Delete</button></td></tr>
                 {% endfor %}
                 </tbody>
             </table>
             {% endif %}
-            <form class="lan-form" id="static-form-{{ p.id }}" onsubmit="return submitJson(event, 'POST', '/api/dhcp/pools/{{ p.id }}/static')">
+            <form class="lan-form" id="static-form-{{ p.id }}" onsubmit="return submitStatic(event, {{ p.id }})">
                 <label>MAC <input name="mac" placeholder="aa:bb:cc:dd:ee:ff" required></label>
                 <label>IP <input name="ip" required></label>
                 <label>Hostname <input name="hostname"></label>
@@ -85,6 +86,7 @@
                 <label title="Publish hostname.local-domain in DNS even while the device is offline">DNS record <input type="checkbox" name="dns_record"></label>
                 <label>Description <input name="description"></label>
                 <button class="btn btn-primary btn-sm" type="submit">Add static mapping</button>
+                <button class="btn btn-secondary btn-sm" type="button" hidden onclick="cancelStatic(this)">Cancel edit</button>
             </form>
         </td></tr>
         {% endfor %}
@@ -236,6 +238,25 @@
     function submitPool(ev) {
         const id = ev.target.dataset.editId;
         return id ? submitJson(ev, 'PUT', '/api/dhcp/pools/' + id) : submitJson(ev, 'POST', '/api/dhcp/pools');
+    }
+    // "Edit" on a static mapping: pre-fill that pool's mapping form and save with PUT /api/dhcp/static/:id.
+    function editStatic(btn) {
+        const d = btn.dataset, f = document.getElementById('static-form-' + d.pool);
+        f.dataset.editId = d.id;
+        f.elements['mac'].value = d.mac;
+        f.elements['ip'].value = d.ip;
+        f.elements['hostname'].value = d.host;
+        f.elements['lease_time'].value = d.lease;
+        f.elements['dns_record'].checked = d.dnsRecord === 'true';
+        f.elements['description'].value = d.description;
+        f.querySelector('button[type=submit]').textContent = 'Save mapping';
+        f.querySelector('button[type=button]').hidden = false;
+        f.scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
+    function cancelStatic(btn) { location.reload(); }
+    function submitStatic(ev, pool) {
+        const id = ev.target.dataset.editId;
+        return id ? submitJson(ev, 'PUT', '/api/dhcp/static/' + id) : submitJson(ev, 'POST', '/api/dhcp/pools/' + pool + '/static');
     }
     function makeStatic(btn) {
         const f = document.querySelector('form[id^="static-form-"]');

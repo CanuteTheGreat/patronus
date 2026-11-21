@@ -444,6 +444,20 @@ mod dhcp_impl {
             Ok(id)
         }
 
+        pub async fn save_static(&self, id: i64, i: dhcp::StaticInput) -> anyhow::Result<()> {
+            let pools = dhcp::list_pools(&self.store).await.map_err(e)?;
+            let pool = pools
+                .into_iter()
+                .find(|p| p.static_mappings.iter().any(|m| m.id == id))
+                .ok_or_else(|| anyhow::anyhow!("static mapping {id} not found"))?;
+            let m = i.validate(&pool).map_err(e)?;
+            let _g = self.edit.lock().await;
+            let what = format!("static mapping {} -> {}", m.mac, m.ip);
+            let snap = self.begin(&what).await?;
+            dhcp::update_static(&self.store, id, &m).await.map_err(e)?;
+            self.commit(&what, snap, &["dhcp"]).await
+        }
+
         pub async fn delete_static(&self, id: i64) -> anyhow::Result<()> {
             let _g = self.edit.lock().await;
             let what = format!("delete static mapping {id}");
