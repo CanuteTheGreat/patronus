@@ -33,7 +33,7 @@ PROJECTS = {
                      health=["/api/health", "/"], pwfile="/var/lib/horcrux/initial-admin-password", old_pw="horcrux",
                     seedfile="/etc/horcrux/admin-password",
                     services=["horcrux-api"], forward=False, dbfiles=[], logdirs=["/var/log/horcrux"]),
-    "patronus": dict(svc="patronus-web", port=8443, web_user="pxadmin", pam="patronus", admin_group="patronus-admin", health=["/login"], pwfile="/var/lib/patronus/initial-admin-password", old_pw="patronus",
+    "patronus": dict(svc="patronus-web", port=443, web_user="pxadmin", pam="patronus", admin_group="patronus-admin", health=["/login"], pwfile="/var/lib/patronus/initial-admin-password", old_pw="patronus",
                      seedfile="/var/lib/patronus/initial-admin-password",
                      services=["patronus-firewall", "patronus-applyd", "patronus-web"], forward=True,
                      dbfiles=["/var/lib/patronus/config.db"], dbuser="patronus", logdirs=["/var/log/patronus"]),
@@ -781,6 +781,12 @@ def http(port, path, method="GET", body=None, timeout=10):
             return scheme, e.code, e.read()
         except Exception as e:
             last = e
+            # Only a server that does not speak TLS (handshake rejected / connection dropped) justifies trying plain http. A timeout or a refused
+            # connection on https must be reported as such: falling through to http made a slow PAM login under TCG (https timed out) read as
+            # "308 This server only speaks HTTPS" (horcrux aarch64 run 4567), hiding the real cause.
+            reason = getattr(e, "reason", e)
+            if not isinstance(reason, (ssl.SSLError, ConnectionResetError, EOFError)) and not type(e).__name__ == "RemoteDisconnected":
+                break
     return None, 0, str(last).encode()
 
 
@@ -1052,7 +1058,7 @@ def serial_probe(vm, wait=45):
                     "ping -c2 -W2 10.0.2.2 >/dev/null 2>&1; echo PING-GW-$?; ip neigh | head -4 | sed 's/^/NEIGH /'; "
                     "nft list chain inet patronus input 2>&1 | grep -c 'ct state' | sed 's/^/CTRULES-/'; "
                     "echo APPLY-LOGS; tail -n 4 /var/log/patronus/*.log /var/log/horcrux/*.log 2>/dev/null | cut -c1-160; "
-                    "for p in 8443 8006; do ss -ltn | grep -q \":$p \" && echo LOCALWEB-$p-$(curl -sk -m8 -o /dev/null -w %{http_code} https://127.0.0.1:$p/ 2>&1 | tail -c 40); done; "
+                    "for p in 443 8443 8006; do ss -ltn | grep -q \":$p \" && echo LOCALWEB-$p-$(curl -sk -m8 -o /dev/null -w %{http_code} https://127.0.0.1:$p/ 2>&1 | tail -c 40); done; "
                     "echo DIAG-E-$((6*7))")
             vm.send(cmds + "\r")
             m = vm.expect_raw(r"(?s)DIAG-S-42.*?DIAG-E-42", wait)
@@ -2000,7 +2006,7 @@ class Runner:
             else:
                 webpw = PW
                 how = "the password typed in the installer"
-            sc, code, resp = http(FWD_WEB, "/api/auth/login", "POST", {"username": P.get("web_user", "admin"), "password": webpw})
+            sc, code, resp = http(FWD_WEB, "/api/auth/login", "POST", {"username": P.get("web_user", "admin"), "password": webpw}, timeout=T(40))
             self.step("web-login", code == 200 and (a.project == "patronus" or b"token" in resp or b"ticket" in resp), f"{how}: POST /api/auth/login -> {code} {resp[:60]!r}")
             if P.get("web_user"):
                 # no built-in admin, root and a wrong password are refused with the same 401; the old first-boot files do not exist
@@ -2019,7 +2025,7 @@ class Runner:
                 self.step("first-boot-password-files-removed", "present" not in o and o.count("gone") == 2, o.strip().replace("\n", " "))
             if a.project == "patronus":
                 sc, code, _ = http(FWD_WAN, "/login", timeout=6)
-                self.step("patronus-wan-web-blocked", code == 0, f"WAN 10.0.2.15:8443 -> {code or 'no answer (dropped/refused)'}")
+                self.step("patronus-wan-web-blocked", code == 0, f"WAN 10.0.2.15:{P['port']} -> {code or 'no answer (dropped/refused)'}")
             vm.shot("installed-running")
             # the INSTALLED system's os-release: package-owned, a version + build + variant, and no "live"/"installer" anywhere in the pretty name
             rc, o = ssh(FWD_SSH, self.key, "cat /etc/os-release; qfile -q /usr/lib/os-release", timeout=30)
@@ -2077,7 +2083,7 @@ class Runner:
     def web_login_code(self, pw, wait=0):
         end = time.time() + wait
         while True:
-            sc, code, resp = http(FWD_WEB, "/api/auth/login", "POST", {"username": self.P.get("web_user", "admin"), "password": pw})
+            sc, code, resp = http(FWD_WEB, "/api/auth/login", "POST", {"username": self.P.get("web_user", "admin"), "password": pw}, timeout=T(40))
             self.login_err = resp.decode(errors="replace")[:80] if code == 0 else ""      # why there was no HTTP answer (timeout / refused / TLS)
             if code == 200 or time.time() >= end:
                 return code
@@ -2426,7 +2432,7 @@ class Runner:
         # root's password IS the test login password PW by design (answer file); the generated web admin password must differ from it and from root's hash
         HG.account_check(sh, self.step, web_secret=web, console_open=a.console_open)
         if a.flow == "auto" and web:
-            sc, code, resp = http(FWD_WEB, "/api/auth/login", "POST", {"username": self.P.get("web_user", "admin"), "password": PW})
+            sc, code, resp = http(FWD_WEB, "/api/auth/login", "POST", {"username": self.P.get("web_user", "admin"), "password": PW}, timeout=T(40))
             self.step("web-admin-refuses-the-root-login-password", code in (400, 401, 403, 429), f"POST /api/auth/login admin/<root login password> -> {code}")
         HG.clock_gate(sh, self.step, timeout=T(480), label="months-off-rtc-clock-stepped-by-chrony-after-the-late-network" if late else "months-off-rtc-clock-stepped-by-chrony")
         if late and a.project == "patronus":
