@@ -76,15 +76,15 @@ echo "=== 2. boot: patronus apply, then applyd + web as user patronus"
 APPLY=$(patronus apply 2>&1) || { echo "$APPLY"; fail "patronus apply"; }
 expect_running unbound
 svc start patronus-applyd; svc start patronus-web
-for i in $(seq 1 60); do N adm curl -sk -o /dev/null https://192.168.50.1:8443/login && break; sleep 0.5; done
-N adm curl -sk -o /dev/null https://192.168.50.1:8443/login || fail "web UI not reachable"
+for i in $(seq 1 60); do N adm curl -sk -o /dev/null https://192.168.50.1/login && break; sleep 0.5; done
+N adm curl -sk -o /dev/null https://192.168.50.1/login || fail "web UI not reachable"
 # web login = system users: a real group + user in the container, password in shadow (sha512; applyd checks it)
 getent group patronus-admin >/dev/null || groupadd -r patronus-admin
 id nladmin >/dev/null 2>&1 || useradd -m -G patronus-admin -s /bin/sh nladmin
 PASS="Nl-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')-Pw1"
 echo "nladmin:$PASS" | chpasswd -c SHA512
 api() { local data=(); [ $# -ge 3 ] && data=(-d "$3")
-  N adm curl -sk -b /t/jar -c /t/jar -o /tmp/api.out -w '%{http_code}' -X "$1" -H 'content-type: application/json' "${data[@]}" "https://192.168.50.1:8443$2"; }
+  N adm curl -sk -b /t/jar -c /t/jar -o /tmp/api.out -w '%{http_code}' -X "$1" -H 'content-type: application/json' "${data[@]}" "https://192.168.50.1$2"; }
 want() { local w=$1; shift; local code; code=$(api "$@"); [ "$code" = "$w" ] || fail "$1 $2 -> $code (want $w): $(cat /tmp/api.out)"; }
 jget() { python3 -c 'import json,sys; d=json.load(open("/tmp/api.out")); print(eval(sys.argv[1]))' "$1"; }
 want 200 POST /api/auth/login "{\"username\":\"nladmin\",\"password\":\"$PASS\"}"
@@ -221,7 +221,7 @@ want 200 GET "/api/segmentation/dns/log?q=GAMES"
 want 200 GET "/api/segmentation/dns/log?blocked=true"
 [ "$(jget 'all(r["blocked"] for r in d["rows"]) and len(d["rows"]) >= 2')" = True ] || fail "blocked filter: $(cat /tmp/api.out)"
 ok "search by name and 'blocked only' filter work"
-N adm curl -sk -b /t/jar -o /tmp/log.csv -D /tmp/log.hdr "https://192.168.50.1:8443/api/segmentation/dns/log.csv"
+N adm curl -sk -b /t/jar -o /tmp/log.csv -D /tmp/log.hdr "https://192.168.50.1/api/segmentation/dns/log.csv"
 grep -qi 'text/csv' /tmp/log.hdr && head -1 /tmp/log.csv | grep '^time,device,client,name' >/dev/null && grep -q 'games.example' /tmp/log.csv || { cat /tmp/log.hdr /tmp/log.csv; fail "CSV export"; }
 ok "CSV export works"
 code=$(api GET /segmentation/dns); [ "$code" = 200 ] && grep -q "DNS policy" /tmp/api.out || fail "/segmentation/dns page: $code"

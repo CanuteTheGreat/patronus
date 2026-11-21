@@ -215,7 +215,7 @@ case "$INIT" in
       env HOME=/var/lib/patronus patronus-web >/t/web.log 2>&1 &
     ;;
 esac
-for i in $(seq 1 60); do N lan curl -sk -o /dev/null https://192.168.50.1:8443/login && break; sleep 0.5; done
+for i in $(seq 1 60); do N lan curl -sk -o /dev/null https://192.168.50.1/login && break; sleep 0.5; done
 WEBUSER=$(ps -o user=,stat= -C patronus-web | awk '$2 !~ /Z/ {print $1; exit}')
 [ "$WEBUSER" = patronus ] || fail "patronus-web runs as $WEBUSER, expected patronus"
 [ -S /run/patronus/applyd.sock ] || fail "no applyd socket"
@@ -228,7 +228,7 @@ api() {
   local data=()
   [ $# -ge 3 ] && data=(-d "$3")
   N lan curl -sk -b /t/jar -c /t/jar -o /tmp/api.out -w '%{http_code}' -X "$1" \
-     -H 'content-type: application/json' "${data[@]}" "https://192.168.50.1:8443$2"
+     -H 'content-type: application/json' "${data[@]}" "https://192.168.50.1$2"
 }
 want() { local w=$1; shift; local code; code=$(api "$@"); [ "$code" = "$w" ] || fail "$1 $2 -> $code (want $w): $(cat /tmp/api.out)"; }
 want 200 POST /api/auth/login "{\"username\":\"nladmin\",\"password\":\"$PASS\"}"

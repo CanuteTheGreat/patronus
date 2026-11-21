@@ -260,7 +260,7 @@ case "$INIT" in
       env HOME=/var/lib/patronus patronus-web >/t/web.log 2>&1 &
     ;;
 esac
-for i in $(seq 1 60); do N lan curl -sk -o /dev/null https://192.168.50.2:8443/login && break; sleep 0.5; done
+for i in $(seq 1 60); do N lan curl -sk -o /dev/null https://192.168.50.2/login && break; sleep 0.5; done
 # web login = system users: a real group + user in the container, password in shadow (sha512; applyd checks it)
 getent group patronus-admin >/dev/null || groupadd -r patronus-admin
 id nladmin >/dev/null 2>&1 || useradd -m -G patronus-admin -s /bin/sh nladmin
@@ -270,7 +270,7 @@ api() {
   local data=()
   [ $# -ge 3 ] && data=(-d "$3")
   N lan curl -sk -b /t/jar -c /t/jar -o /tmp/api.out -w '%{http_code}' -X "$1" \
-     -H 'content-type: application/json' "${data[@]}" "https://192.168.50.2:8443$2"
+     -H 'content-type: application/json' "${data[@]}" "https://192.168.50.2$2"
 }
 want() { local w=$1; shift; local code; code=$(api "$@"); [ "$code" = "$w" ] || fail "$1 $2 -> $code (want $w): $(cat /tmp/api.out)"; }
 want 200 POST /api/auth/login "{\"username\":\"nladmin\",\"password\":\"$PASS\"}"
@@ -313,7 +313,7 @@ OUT=$(N lan python3 /t/hold.py client 203.0.113.9 9000 1) || fail "client -> int
 has "$OUT" "203.0.113.2" "the internet host did not see A's WAN address (NAT through the new master)"
 ok "A is MASTER with 192.168.50.254 on rtr-lan; client (gateway = the VIP) reaches the internet host via A (seen as 203.0.113.2)"
 # the watcher records the change and the summary shows it
-has_ha_event() { N lan curl -sk -b /t/jar -o /tmp/ev.out 'https://192.168.50.2:8443/api/events?kind=ha_state' && grep -q MASTER /tmp/ev.out; }
+has_ha_event() { N lan curl -sk -b /t/jar -o /tmp/ev.out 'https://192.168.50.2/api/events?kind=ha_state' && grep -q MASTER /tmp/ev.out; }
 wait_for "an ha_state event" 40 has_ha_event
 want 200 GET /api/status/summary
 has "$(cat /tmp/api.out)" '"state":"MASTER"' "summary lacks the HA state"
