@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, gql } from '@apollo/client'
 import ForceGraph2D from 'react-force-graph-2d'
+import { useNavigate } from 'react-router-dom'
 import { useIsDark } from '../useColorScheme'
 
 const TOPOLOGY_QUERY = gql`
@@ -47,6 +48,7 @@ interface TopologyData {
 
 export default function Topology() {
   const isDark = useIsDark()
+  const navigate = useNavigate()
   // react-force-graph sizes to the window by default, which overflows a phone next to padding.
   const boxRef = useRef<HTMLDivElement>(null)
   const [boxWidth, setBoxWidth] = useState<number | undefined>(undefined)
@@ -122,7 +124,10 @@ export default function Topology() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Network Topology</h1>
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Network Topology</h1>
+          <p className="text-sm text-gray-600 dark:text-gray-300">Each dot is a site, named underneath. Hover for its location; click to open the Sites page.</p>
+        </div>
         <div className="flex flex-wrap gap-x-4 gap-y-2">
           <div className="flex items-center gap-2">
             <div className="h-3 w-3 rounded-full bg-green-500" />
@@ -148,6 +153,17 @@ export default function Topology() {
           nodeLabel={(node: any) => `${node.name}\n${node.location}`}
           nodeColor={(node: any) => getNodeColor(node.status)}
           nodeRelSize={8}
+          nodeCanvasObjectMode={() => 'after'}
+          nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, scale: number) => {
+            // Always-visible site name under the dot (not only on hover).
+            const size = Math.max(12 / scale, 4)
+            ctx.font = `600 ${size}px sans-serif`
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'top'
+            ctx.fillStyle = isDark ? '#f3f4f6' : '#111827'
+            ctx.fillText(String(node.name ?? ''), node.x, node.y + 8 + 2 / scale)
+          }}
+          onNodeClick={() => navigate('/sites')}
           linkColor={(link: any) => getLinkColor(link.status)}
           linkWidth={2}
           linkLabel={(link: any) =>
