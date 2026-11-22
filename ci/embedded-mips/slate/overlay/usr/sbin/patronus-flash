@@ -8,6 +8,7 @@
 #                                              when the previous root has no modules for it)
 #   patronus-flash factory-reset               wipe the settings (patronus_data) at the next boot: first-run flow again
 #   patronus-flash kernel <uImage|kver>        try a new NOR kernel: trial slot + U-Boot trial, committed after a confirmed boot
+#   patronus-flash kernel-rehearse             once per unit first: proves U-Boot runs the trial script and saves its counter
 #   patronus-flash kernel-commit|kernel-abort|kernel-rollback|kernel-status   (see /usr/libexec/patronus/nor-kernel)
 # All steps keep the running root mounted: UBI renames work on a mounted volume (UBI_METAONLY open).
 # Test hooks: PATRONUS_UBI (UBI device), PATRONUS_UBI_SYS (sysfs ubi class dir), PATRONUS_FLASH_TMP, PATRONUS_RECOVERY, PATRONUS_DATA,
@@ -88,7 +89,7 @@ rollback)
   ubirename $UBI rootfs_new rootfs_prev; rm -f $DATA/.init-boot-attempts; mv -f $DATA/.root-prev-kernels.new $DATA/.root-prev-kernels 2>/dev/null
   log "rolled back to the previous root"; sync ;;
 kernel) shift; exec "$NK" install "$@" ;;
-kernel-commit|kernel-abort|kernel-rollback|kernel-status) c=${1#kernel-}; shift; exec "$NK" "$c" "$@" ;;
+kernel-commit|kernel-abort|kernel-rollback|kernel-status|kernel-rehearse) c=${1#kernel-}; shift; exec "$NK" "$c" "$@" ;;
 factory-reset)
   # rcS sees the marker before mounting the overlays and wipes the stored settings, TLS key and overlays
   touch $DATA/.factory-reset; sync; log "factory reset scheduled for the next boot" ;;

@@ -288,7 +288,8 @@ CONFIG_AR750S; read from the source, matched against the unit's own `u-boot` par
 **Slots** (board.sh `KSLOT_*`, all configurable): P = the `kernel` partition (what U-Boot boots), T = trial slot at
 `nor_reserved`+0 (0x9f460000), K = previous kernel at `nor_reserved`+4 MiB (0x9f860000), each 4 MiB. `nor_reserved` holds only
 stale data from GL's stock NOR firmware (nothing reads it; it is in the unit's NOR backup). `u-boot` and `art` are refused by
-the code (`KSLOT_NEVER`), only `u-boot-env`, `kernel` and `nor_reserved` are ever written, every write is erase + write + read
+the code (`KSLOT_NEVER`) and are `read-only` in the kernel's device tree as well (both kernels); only `u-boot-env`, `kernel` and
+`nor_reserved` are ever written, every write is erase + write + read
 back (sha256).
 
 **Trial script** (written into the environment by `patronus-flash kernel`): `lf` becomes `run pat_boot; <GL's lf>` and
@@ -298,11 +299,16 @@ itself. `pat_rescue` boots T, then K, when P is unreadable (a commit cut by a po
 `rlf`, `lc`, `firmware_addr` ...) are kept verbatim.
 
 **Sequence**
+0. Once per unit: `patronus-flash kernel-rehearse` copies the RUNNING kernel to slot T and arms it as a trial (same kernel in T and
+   P, so nothing can go wrong); after one reboot the early boot checks that U-Boot ran the script and saved its counter (`ox`) on this
+   flash and records `pat_rehearsed` (bootloader sha). The automatic fallback after KSLOT_TRIES depends on that save, so `install`
+   refuses until a rehearsal passed (`KSLOT_REQUIRE_REHEARSAL=1`). A failed rehearsal disarms itself and keeps installs refused.
 1. `patronus-flash kernel <kver|uImage>` checks before anything is written: valid uImage (magic, header and data CRC), the
    image is one THIS root ships (`/usr/share/patronus/kernel/SHA256SUMS`, so only kernels built together with the running root
    can be installed), the root has `lib/modules/<kver>/modules.dep`, the kernel's device tree names this board (`BOARD=` of
-   `/etc/patronus-release`), it fits a slot and the partition, and the unit's bootloader is a build the script was proven
-   against (`KSLOT_UBOOT_PROVEN`: sha256 of the whole `u-boot` partition). Then it writes T and arms the trial.
+   `/etc/patronus-release`), it fits a slot and the partition, the unit's bootloader is a build the script was proven
+   against (`KSLOT_UBOOT_PROVEN`: sha256 of the whole `u-boot` partition) and has passed a rehearsal, and /tmp (16 MiB tmpfs)
+   has room for the staged images. Then it writes T and arms the trial.
 2. Power-on: U-Boot boots T. The early boot (`nor-kernel boot-check`) notes the trial (`/tmp/kernel-trial`); patronus-init does
    not count the boot against the root; a trial kernel the root has no modules for is aborted at once.
 3. The guard decides: a confirmed boot (`patronus-guard ok`, or the unattended gateway check) runs `kernel-commit` (P -> K,
@@ -330,12 +336,17 @@ modules, not shipped by the root, unproven bootloader, a slot on `u-boot`/`art`)
 rollback; a hanging trial kernel dropped by U-Boot after 3 power-ons; an unconfirmed trial aborted by the guard; a corrupted
 trial slot; a trial kernel without modules; a power cut at EVERY flash erase of install and commit (each one boots a kernel and
 ends consistent, the blanked `kernel` partition boots slot T via `pat_rescue` and the early boot resumes the commit); a blank
-environment. It also runs with the real images (`REAL=<dir>`: the unit's `u-boot` partition dump and the real 6.12.112 / 6.12.118
-uImages). Found by it before any flash: busybox `grep` stops a line at a NUL, so the device-tree check needs `tr '\000' '\n'`.
+environment; the rehearsal (passed, and a counter U-Boot did not save). It also runs with the real images (`REAL=<dir>`: the unit's `u-boot` partition dump and the real 6.12.112 / 6.12.118
+uImages). QEMU malta-BE then ran the built image's own nor-kernel on the target busybox (MIPS BE) against fake MTD files built from
+the image's own files, inside the unit's real 16 MiB /tmp headroom: the flash bytes after install and after commit are identical to
+the host runs, and GL's hush boots them as trial T (6.12.118) and then P (6.12.118, K = 6.12.112). Found by these before any flash: busybox `grep` stops a line at a NUL, so the device-tree check needs `tr '\000' '\n'`; the FDT property header puts a non-NUL byte right before the root compatible
+string (match it at the end of a line); a `tail | head` pipe under `pipefail` ended assemble.sh silently; the unit's /tmp is 16 MiB.
 
-**Only the unit can show**: that this U-Boot build reads slots T/K through the 16 MiB memory-mapped flash window (0x9f460000,
-0x9f860000; a failed bootm there falls through to P, so the risk is a wasted trial, not a dead unit), that its `saveenv` on the
-SPI flash behaves as the source says, and the real NOR write time of a commit. First flash: watch the serial-less boot through
+**Only the unit can show**: that U-Boot's `saveenv` works on its SPI flash (the rehearsal proves it at zero risk before any real
+trial), that this U-Boot build reads slot T through the 16 MiB memory-mapped flash window (0x9f460000; a failed bootm there falls
+through to P and the early boot records "did not start", so the risk is a wasted trial, not a dead unit), and the real NOR write
+time of a commit. A trial kernel that hangs WITHOUT panicking (no reboot) needs power cycles: U-Boot boots P by itself on the
+fourth power-on; a panicking one reboots on its own. First flash: watch the serial-less boot through
 `kernel-status` and the boot banner (`patronus: trial kernel ... boot ox`), with the U-Boot web failsafe (section 9) as the last
 resort, which no part of this sequence touches.
 

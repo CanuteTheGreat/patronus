@@ -1,5 +1,8 @@
 #!/bin/sh
 # nor-kernel: install a new NOR kernel on the GL-AR750S with a bootloader trial and a proven way back (docs/embedded-routers.md 6e).
+#   nor-kernel rehearse                zero-risk first step on a unit: the RUNNING kernel is copied to the trial slot and armed as
+#                                      a trial; the next boot proves U-Boot runs the script and saves its counter on this flash
+#                                      (the automatic fallback depends on that). `install` requires a passed rehearsal.
 #   nor-kernel install <uImage|kver>   check the image, write it to the TRIAL slot, arm the U-Boot trial (KSLOT_TRIES boots)
 #   nor-kernel commit                  the trial kernel is confirmed: previous kernel -> K slot, trial -> the kernel partition
 #   nor-kernel abort [reason]          disarm the trial: the next boot runs the committed kernel again
@@ -147,6 +150,8 @@ cmd_install() {
   proven_env >/dev/null || die "this unit's bootloader (u-boot sha256 $(uboot_sha)) is not one the trial script was proven on: no kernel install without a way back"
   check_kernel "$a" || exit 2; kv=$U_KVER
   env_load || exit 2; st=$(env_get pat_state)
+  if [ "${KSLOT_REQUIRE_REHEARSAL:-1}" = 1 ] && [ "$(env_get pat_rehearsed)" != "$(uboot_sha | cut -c1-16)" ]; then
+    die "no passed rehearsal on this unit's bootloader: run 'patronus-flash kernel-rehearse' and reboot once first"; fi
   case "$st" in committing) die "an interrupted commit is pending (nor-kernel commit first)";; esac
   [ -n "$(env_get pat_try)" ] && die "a trial is already armed for $(env_get pat_kver) (abort it first)"
   room
@@ -156,6 +161,16 @@ cmd_install() {
   mkdir -p "$STATE"; echo "$kv $(sha < "$a") $(date +%s)" > "$STATE/trial"
   event "trial armed: $kv in slot T ($KSLOT_TRIES boots), committed kernel $(kver_of P)"
   echo "done: reboot to try $kv (U-Boot gives it $KSLOT_TRIES boots; a confirmed boot commits it, see patronus-guard)"; }
+cmd_rehearse() {
+  proven_env >/dev/null || die "this unit's bootloader (u-boot sha256 $(uboot_sha)) is not one the trial script was proven on"
+  room; slot_read P "$W/p.bin" || die "the kernel partition holds no valid kernel"; kv=$U_KVER
+  [ "$(uname_r)" = "$kv" ] || die "running $(uname_r), but the kernel partition holds $kv: reboot first"
+  env_load || exit 2; [ -n "$(env_get pat_try)" ] && die "a trial is already armed"
+  slot_write T "$W/p.bin" || die "writing the trial slot failed (nothing armed)"
+  env_load; script_install; env_put pat_kver "$kv"; env_put pat_try o; env_put pat_state armed; env_put pat_mode rehearse
+  env_put pat_r1 "$KSLOT_T_ADDR"; env_put pat_r2 "$KSLOT_K_ADDR"; env_write || die "writing the bootloader environment failed (nothing armed)"
+  event "rehearsal armed: the running kernel $kv copied to slot T; reboot once"
+  echo "done: reboot once; the early boot checks that U-Boot ran the trial script and saved its counter (kernel-status)"; }
 cmd_commit() {
   env_load || exit 2; kv=$(env_get pat_kver); st=$(env_get pat_state)
   case "$st" in armed|trial|committing) ;; *) die "no trial to commit (pat_state=${st:-none})";; esac
@@ -193,6 +208,15 @@ cmd_rollback() {
 cmd_boot_check() {
   env_load 2>/dev/null || return 0; [ "$ENV_VALID" = 1 ] || return 0
   try=$(env_get pat_try); st=$(env_get pat_state); kv=$(env_get pat_kver); r=$(uname_r)
+  if [ "$(env_get pat_mode)" = rehearse ]; then   # same kernel in T and P: only the bootloader side is under test
+    env_put pat_mode; env_put pat_try
+    if [ "$try" = ox ] && [ "$st" = trial ] && [ "$r" = "$kv" ]; then
+      env_put pat_state rehearsed; env_put pat_rehearsed "$(uboot_sha | cut -c1-16)"; env_write
+      event "rehearsal passed: U-Boot ran the trial script, saved its counter ($try) and booted $r"
+    else env_put pat_state rehearsal-failed; env_write
+      event "rehearsal FAILED: counter '$try' state '$st' (expected ox/trial): U-Boot did not run the script or could not save; kernel installs stay refused"
+    fi; return 0
+  fi
   if [ -n "$try" ]; then
     if [ "$r" = "$kv" ]; then echo "$try" > "$RUN/kernel-trial"; event "trial boot of $kv ($try)"
       [ -s "$MODS/$kv/modules.dep" ] || { cmd_abort "this root has no modules for $kv"; return 3; }
@@ -204,11 +228,12 @@ cmd_status() {
   for s in P T K; do if slot_read $s "$W/s.bin" 2>/dev/null; then echo "slot $s: $U_NAME ($U_SIZE B, sha256 $(sha < "$W/s.bin" | cut -c1-16))"; else echo "slot $s: no valid kernel"; fi; done
   echo "running: $(uname_r)"; echo "bootloader: u-boot sha256 $(uboot_sha 2>/dev/null | cut -c1-16) proven=$(proven_env >/dev/null 2>&1 && echo yes || echo no)"
   if env_load 2>/dev/null; then echo "environment: $([ "$ENV_VALID" = 1 ] && echo saved || echo "not saved (bootloader defaults)")"
-    for v in pat_state pat_kver pat_try pat_max pat_committed; do echo "  $v=$(env_get $v)"; done; fi
+    for v in pat_state pat_kver pat_try pat_max pat_committed pat_rehearsed; do echo "  $v=$(env_get $v)"; done; fi
   [ -f "$STATE/events" ] && { echo "events:"; tail -n 10 "$STATE/events"; }; return 0; }
 
 case "$1" in
   install) cmd_install "$2" ;;
+  rehearse) cmd_rehearse ;;
   commit) cmd_commit ;;
   abort) shift; cmd_abort "$*" ;;
   rollback) cmd_rollback ;;

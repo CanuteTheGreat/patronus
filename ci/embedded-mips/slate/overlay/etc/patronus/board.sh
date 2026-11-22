@@ -32,6 +32,7 @@ KSLOT_ENV_MTD=u-boot-env     KSLOT_ENV_SIZE=0x10000  KSLOT_ENV_CRC=be        # U
 KSLOT_WRITABLE="u-boot-env kernel nor_reserved"
 KSLOT_NEVER="u-boot art"
 KSLOT_UBOOT_MTD=u-boot
+KSLOT_REQUIRE_REHEARSAL=1    # `install` needs a passed `rehearse` on this unit's bootloader (proves U-Boot's counter on the real flash)
 KSLOT_TRIES=3                # trial boots U-Boot gives a new kernel before it falls back to the committed one
 # bootloader builds whose boot flow (`run lf` before `bootm KSLOT_P_ADDR`) the trial script was proven against: sha256 of the
 # whole u-boot partition, and that build's default environment (used when the unit never saved one: bad CRC on the stock unit)

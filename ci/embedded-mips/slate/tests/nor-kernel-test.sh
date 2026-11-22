@@ -98,7 +98,7 @@ EOF
   mkdir -p "$W/u/envdir"; cp "$DEFENV" "$W/u/envdir/"
   { echo ". '$D/overlay/etc/patronus/board.sh' 2>/dev/null"
     echo "KSLOT_UBOOT_PROVEN='$(sha256sum < "$W/u-boot.bin" | cut -d' ' -f1):/usr/share/patronus/uboot/${DEFENV##*/}'"
-    echo "KSLOT_KERNEL_DIR='$W/u/kernels'"; } > "$W/u/board.sh"
+    echo "KSLOT_KERNEL_DIR='$W/u/kernels'"; echo "KSLOT_REQUIRE_REHEARSAL=${TEST_REHEARSAL:-0}"; } > "$W/u/board.sh"
   sha256sum < "$W/u/dev/mtd0" > "$W/u/mtd0.sha"; sha256sum < "$W/u/dev/mtd2" > "$W/u/mtd2.sha"
   rm -f "$W/erases" "$W/erases.log"; RUNNING=$KOLD
 }
@@ -243,6 +243,22 @@ for v in lu rlf lc firmware_addr; do
   nk env-get $v > "$W/ev.got"; grep "^$v=" "$DEFENV" | cut -d= -f2- > "$W/ev.want"
   check "  GL's own $v kept verbatim in the saved environment" cmp "$W/ev.got" "$W/ev.want"
 done
+
+# 12a. rehearsal (the shipped default requires it): the running kernel as a trial proves U-Boot's script + counter, then install
+TEST_REHEARSAL=1; newunit; power_on >/dev/null
+nk install "$KNEW" > "$W/r" 2>&1; check "rehearsal required: install refused before one passed" sh -c "grep -q 'no passed rehearsal' '$W/r' && [ -z '$(envv pat_try)' ]"
+check "rehearse arms the running kernel in slot T" sh -c "true" ; nk rehearse > "$W/r" 2>&1
+check "  slot T = $KOLD, mode rehearse" sh -c "[ '$(nk kver-of T)' = '$KOLD' ] && [ '$(envv pat_mode)' = rehearse ]"
+power_on >/dev/null
+check "  power-on: U-Boot boots slot T, early boot records the rehearsal as passed" sh -c "[ '$BADDR' = 0x9f460000 ] && [ '$RUNNING' = '$KOLD' ] && [ '$(envv pat_state)' = rehearsed ] && [ -n '$(envv pat_rehearsed)' ] && [ -z '$(envv pat_try)' ] && grep -q 'rehearsal passed' '$W/u/data/kernel/events'"
+power_on >/dev/null; check "  next power-on boots P again (no trial left)" sh -c "[ '$BADDR' = 0x9f060000 ] && [ '$RUNNING' = '$KOLD' ]"
+nk install "$KNEW" >/dev/null 2>&1; power_on >/dev/null
+check "  after the rehearsal, install + trial work" sh -c "[ '$BADDR' = 0x9f460000 ] && [ '$RUNNING' = '$KNEW' ]"
+TEST_REHEARSAL=1; newunit; power_on >/dev/null; nk rehearse >/dev/null 2>&1
+nk boot-check >/dev/null 2>&1   # the boot happened without U-Boot saving its counter (simulates a saveenv that does not work)
+check "rehearsal whose counter U-Boot did not save: FAILED, disarmed, installs stay refused" sh -c "[ '$(envv pat_state)' = rehearsal-failed ] && [ -z '$(envv pat_try)' ] && grep -q 'rehearsal FAILED' '$W/u/data/kernel/events'"
+nk install "$KNEW" > "$W/r" 2>&1; check "  install still refused" grep -q 'no passed rehearsal' "$W/r"
+TEST_REHEARSAL=
 
 # 13. the boot guard decides a trial: confirmed -> patronus-flash kernel-commit, unconfirmed -> kernel-abort + restart, root kept
 G=$D/overlay/usr/sbin/patronus-guard
