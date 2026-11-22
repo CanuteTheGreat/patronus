@@ -31,6 +31,8 @@ W=${PATRONUS_FLASH_TMP:-/tmp}/nk.$$
 : "${KSLOT_TRIES:=3}" "${KSLOT_ENV_CRC:=be}"
 mkdir -p "$W"; trap 'rm -rf "$W"' EXIT
 
+# the slot images are staged in $W (tmpfs, 16 MiB on the unit): refuse before anything is written when there is no room
+room() { f=$(df -k "$W" 2>/dev/null | awk 'NR==2 {print $4}'); [ "${f:-0}" -ge "${KSLOT_TMP_MIN_KIB:-8192}" ] || die "only ${f:-0} KiB free in ${W%/*} (need ${KSLOT_TMP_MIN_KIB:-8192}): nothing written"; }
 log() { echo "nor-kernel: $*" >&2; logger -t patronus-flash "kernel: $*" 2>/dev/null || true; }
 die() { log "$*"; exit 2; }
 event() { mkdir -p "$STATE" 2>/dev/null && echo "$(date +%s) $*" >> "$STATE/events"; log "$*"; }
@@ -147,9 +149,9 @@ cmd_install() {
   env_load || exit 2; st=$(env_get pat_state)
   case "$st" in committing) die "an interrupted commit is pending (nor-kernel commit first)";; esac
   [ -n "$(env_get pat_try)" ] && die "a trial is already armed for $(env_get pat_kver) (abort it first)"
+  room
   if slot_read P "$W/p.bin" && [ "$(sha < "$W/p.bin")" = "$(sha < "$a")" ]; then echo "kernel $kv is already the committed kernel"; return 0; fi
-  cp "$a" "$W/new.bin"
-  slot_write T "$W/new.bin" || die "writing the trial slot failed (nothing armed)"
+  slot_write T "$a" || die "writing the trial slot failed (nothing armed)"
   arm_env "$kv" || die "writing the bootloader environment failed (nothing armed; the committed kernel boots)"
   mkdir -p "$STATE"; echo "$kv $(sha < "$a") $(date +%s)" > "$STATE/trial"
   event "trial armed: $kv in slot T ($KSLOT_TRIES boots), committed kernel $(kver_of P)"
@@ -158,6 +160,7 @@ cmd_commit() {
   env_load || exit 2; kv=$(env_get pat_kver); st=$(env_get pat_state)
   case "$st" in armed|trial|committing) ;; *) die "no trial to commit (pat_state=${st:-none})";; esac
   [ "$st" = committing ] || [ "$(uname_r)" = "$kv" ] || [ -n "${FORCE:-}" ] || die "running $(uname_r), not the trial kernel $kv: refusing to commit"
+  room
   slot_read T "$W/t.bin" && [ "$U_KVER" = "$kv" ] || die "slot T does not hold a valid $kv"
   if slot_read P "$W/p.bin"; then
     if [ "$(sha < "$W/p.bin")" != "$(sha < "$W/t.bin")" ]; then slot_write K "$W/p.bin" || die "saving the previous kernel to K failed (nothing changed)"; fi
@@ -172,7 +175,7 @@ cmd_abort() {
   env_put pat_try; env_put pat_state aborted; env_write || die "environment write failed"
   rm -f "$STATE/trial" "$RUN/kernel-trial"; event "trial of $kv aborted: ${1:-by request}; next boot: $(kver_of P)"; }
 cmd_install_p() { # file [src slot for the old one: K]
-  uimg "$1" || die "$1 is not a valid uImage"; cp "$1" "$W/new.bin"
+  room; uimg "$1" || die "$1 is not a valid uImage"; cp "$1" "$W/new.bin"
   if slot_read P "$W/p.bin"; then [ "$(sha < "$W/p.bin")" = "$(sha < "$W/new.bin")" ] && { echo "kernel partition already holds it"; return 0; }
     slot_write K "$W/p.bin" || die "saving the current kernel to K failed (nothing changed)"; fi
   if env_load 2>/dev/null; then env_put pat_try; env_put pat_state installing; env_put pat_r1 "$KSLOT_K_ADDR"; env_put pat_r2 "$KSLOT_T_ADDR"; env_write || true; fi
@@ -180,7 +183,7 @@ cmd_install_p() { # file [src slot for the old one: K]
   if env_load 2>/dev/null; then env_put pat_state installed; env_put pat_committed "$U_KVER"; env_put pat_r1 "$KSLOT_T_ADDR"; env_put pat_r2 "$KSLOT_K_ADDR"; env_write || true; fi
   event "kernel partition now holds $U_KVER (previous kernel in slot K)"; }
 cmd_rollback() {
-  slot_read K "$W/k.bin" || die "slot K holds no valid kernel"; kk=$U_KVER
+  room; slot_read K "$W/k.bin" || die "slot K holds no valid kernel"; kk=$U_KVER
   [ -s "$MODS/$kk/modules.dep" ] || [ -n "${KSLOT_ROOT_CHECKED:-}" ] || die "the running root has no modules for $kk"
   slot_read P "$W/p.bin" && { [ "$(sha < "$W/p.bin")" = "$(sha < "$W/k.bin")" ] && { echo "already on $kk"; return 0; }; slot_write T "$W/p.bin" || die "saving the current kernel to T failed (nothing changed)"; }
   if env_load 2>/dev/null; then script_install; env_put pat_try; env_put pat_state rolling-back; env_put pat_r1 "$KSLOT_K_ADDR"; env_put pat_r2 "$KSLOT_T_ADDR"; env_write || die "environment write failed (nothing changed)"; fi

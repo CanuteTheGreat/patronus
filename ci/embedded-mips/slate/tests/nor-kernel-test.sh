@@ -146,6 +146,7 @@ t_ref "kernel the root does not ship (not in SHA256SUMS)" "is not one this root 
 mv "$W/u/release" "$W/u/release.x"; t_ref "no BOARD= in the release file" "no BOARD=" "$KNEW"; mv "$W/u/release.x" "$W/u/release"
 cp "$W/u/board.sh" "$W/u/board.ok"; echo "KSLOT_UBOOT_PROVEN='0000:/x'" >> "$W/u/board.sh"
 t_ref "bootloader build the trial script was not proven on" "not one the trial script was proven on" "$KNEW"; cp "$W/u/board.ok" "$W/u/board.sh"
+echo "KSLOT_TMP_MIN_KIB=999999999" >> "$W/u/board.sh"; t_ref "not enough room in /tmp for the slot images" "nothing written" "$KNEW"; cp "$W/u/board.ok" "$W/u/board.sh"
 echo "KSLOT_T_MTD=u-boot" >> "$W/u/board.sh"; t_ref "a slot configured on the u-boot partition" "refusing to write the u-boot partition" "$KNEW"
 cp "$W/u/board.ok" "$W/u/board.sh"; echo "KSLOT_T_MTD=art" >> "$W/u/board.sh"; t_ref "a slot configured on the art partition" "refusing to write the art partition" "$KNEW"
 cp "$W/u/board.ok" "$W/u/board.sh"
