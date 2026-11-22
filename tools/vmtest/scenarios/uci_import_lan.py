@@ -105,9 +105,9 @@ def define(args):
                 # input rules, daemon logs) instead of only "no lease"
                 for what, cmd in (("addresses", "ip -br addr; ip -br link"),
                                   ("udp listeners", "ss -lunp"),
-                                  ("input rules", "nft list chain inet patronus input 2>&1 | head -60"),
-                                  ("dhcp daemons", "rc-status 2>/dev/null | grep -i -E 'kea|dnsmasq|dhcp'; systemctl --no-pager status kea-dhcp4 dnsmasq 2>&1 | head -40"),
-                                  ("dhcp logs", "journalctl --no-pager -n 60 -u kea-dhcp4 -u dnsmasq -u patronus-web 2>&1 | tail -80; ls /etc/kea /etc/dnsmasq.d 2>&1; cat /etc/kea/kea-dhcp4.conf 2>&1 | head -60"),
+                                  ("input rules", "nft list chain inet patronus input 2>&1 | head -60"),  # vmtest:init-ok
+                                  ("dhcp daemons", "rc-status 2>/dev/null | grep -i -E 'kea|dnsmasq|dhcp'; systemctl --no-pager status kea-dhcp4 dnsmasq 2>&1 | head -40"),  # vmtest:init-ok (diagnostics must try both inits)
+                                  ("dhcp logs", "journalctl --no-pager -n 60 -u kea-dhcp4 -u dnsmasq -u patronus-web 2>&1 | tail -80; ls /etc/kea /etc/dnsmasq.d 2>&1; cat /etc/kea/kea-dhcp4.conf 2>&1 | head -60"),  # vmtest:init-ok
                                   ("store", "patronus apply 2>&1 | tail -30")):
                     try:
                         _rc, out = m.fw.execute(cmd, 60)
