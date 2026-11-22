@@ -98,7 +98,23 @@ def define(args):
 
         def lan_checks(tag):
             m.cli.succeed("killall udhcpc 2>/dev/null; ip -4 addr flush dev eth1; true")
-            m.cli.wait_until_succeeds("udhcpc -i eth1 -n -q -t 5 -T 2 -s /usr/share/udhcpc/default.script", 120, 3)
+            try:
+                m.cli.wait_until_succeeds("udhcpc -i eth1 -n -q -t 5 -T 2 -s /usr/share/udhcpc/default.script", 120, 3)
+            except Exception:
+                # no lease: print what the firewall's DHCP server saw, so the red run says why (addresses, listeners,
+                # input rules, daemon logs) instead of only "no lease"
+                for what, cmd in (("addresses", "ip -br addr; ip -br link"),
+                                  ("udp listeners", "ss -lunp"),
+                                  ("input rules", "nft list chain inet patronus input 2>&1 | head -60"),
+                                  ("dhcp daemons", "rc-status 2>/dev/null | grep -i -E 'kea|dnsmasq|dhcp'; systemctl --no-pager status kea-dhcp4 dnsmasq 2>&1 | head -40"),
+                                  ("dhcp logs", "journalctl --no-pager -n 60 -u kea-dhcp4 -u dnsmasq -u patronus-web 2>&1 | tail -80; ls /etc/kea /etc/dnsmasq.d 2>&1; cat /etc/kea/kea-dhcp4.conf 2>&1 | head -60"),
+                                  ("store", "patronus apply 2>&1 | tail -30")):
+                    try:
+                        _rc, out = m.fw.execute(cmd, 60)
+                    except Exception as ex:  # diagnostics must never hide the real failure
+                        out = f"(could not run: {ex})"
+                    print(f"--- fw {what}:\n{out}", flush=True)
+                raise
             ip4 = m.cli.succeed("ip -4 -o addr show dev eth1")
             m.check(f"{tag}:static-lease", "192.168.50.21/" in ip4, ip4.strip())
             for name, want in (("nas.home.example", "192.168.50.21"), ("printer.home.example", "192.168.50.22"),
