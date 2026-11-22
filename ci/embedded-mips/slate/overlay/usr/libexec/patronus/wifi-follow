@@ -292,7 +292,7 @@ case "${1:-}" in
   render) shift; render "$@" ;;
   once)   pass ;;
   status) status ;;
-  "")     [ -n "$FOLLOW" ] || { echo "wifi-follow: FOLLOW is empty (board.sh)"; exit 0; }
+  "")     [ -n "$FOLLOW" ] || { echo "wifi-follow: FOLLOW is empty (board.sh): nothing to follow, idle (no board radio)"; while :; do sleep 3600; done; }   # idle, not exit: the supervisor would respawn an exiting daemon forever
           while :; do pass; sleep "$POLL"; done ;;
   *)      echo "usage: wifi-follow [once|status|render ...]" >&2; exit 2 ;;
 esac

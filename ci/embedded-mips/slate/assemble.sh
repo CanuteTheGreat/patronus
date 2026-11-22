@@ -46,6 +46,12 @@ rm -f "$R"/etc/init.d/busybox-* "$R"/etc/conf.d/busybox-*   # USE=syslog's scrip
 rm -f "$R"/usr/lib/libgmpxx.so* "$R"/usr/lib/*.o
 # util-linux/iproute2 tools the router never runs (busybox covers mount/umount/unshare/nsenter)
 while read -r f; do [ -n "$f" ] && rm -rf "$R"/$f; done < "$HERE/prune.txt"
+# time zones (System > General on the router role takes a zoneinfo name): the build host's zoneinfo database, only the regions in ZONEINFO_DIRS
+# (about 100 KiB in the squashfs; hard links are kept). ZONEINFO_SRC = where it is, ZONEINFO=0 = a root without time zones (the page then says so)
+if [ "${ZONEINFO:-1}" != 0 ]; then ZI=${ZONEINFO_SRC:-/usr/share/zoneinfo}
+  [ -d "$ZI/Europe" ] || { echo "assemble.sh: no zoneinfo database at $ZI (set ZONEINFO_SRC, or ZONEINFO=0 to build without time zones)"; exit 2; }
+  mkdir -p "$R/usr/share/zoneinfo"; for z in ${ZONEINFO_DIRS:-Africa America Antarctica Asia Atlantic Australia Europe Indian Pacific Etc UTC GMT}; do [ -e "$ZI/$z" ] && cp -a "$ZI/$z" "$R/usr/share/zoneinfo/"; done
+fi
 # musl loader where every binary expects it
 [ -e "$R/lib/$HW_ARCH_MUSL_LDSO" ] || ln -sf ../usr/lib/libc.so "$R/lib/$HW_ARCH_MUSL_LDSO"
 mkdir -p "$R"/{proc,sys,dev,tmp,run,data,mnt,root/.ssh,var/log,var/lib/patronus,var/lib/misc,var/lib/dhcpcd,etc/dropbear,usr/lib/openwrt,usr/share/patronus-recovery,etc/patronus/tls,etc/hostapd,etc/wpa_supplicant}
@@ -159,6 +165,10 @@ while read -r a; do
 # accounts + per-unit secrets
 grep -q '^root:' "$R/etc/passwd" 2>/dev/null || echo 'root:x:0:0:root:/root:/bin/sh' >> "$R/etc/passwd"
 sed -i 's#^root:[^:]*:0:0:.*#root:x:0:0:root:/root:/bin/sh#' "$R/etc/passwd"   # Gentoo ships root:!:...:/bin/bash; dropbear rejects a missing shell
+# the groups busybox's mdev.conf and OpenRC's checkpath name (Gentoo's standard gids): without them every device node and several services print
+# "unknown user/group" at boot (the QEMU gate's console showed 20 such lines); a group or gid that already exists is left alone
+for g in tty:5 disk:6 lp:7 kmem:9 floppy:11 uucp:14 audio:18 cdrom:19 dialout:20 tape:26 video:27 usb:85 input:97; do n=${g%%:*}; i=${g##*:}
+  grep -q "^$n:" "$R/etc/group" || awk -F: -v g=$i '$3==g {f=1} END {exit !f}' "$R/etc/group" || echo "$n:x:$i:" >> "$R/etc/group"; done
 for u in 'nobody:x:65534:65534:nobody:/:/bin/false' 'dnsmasq:x:453:453:dnsmasq:/:/bin/false'; do grep -q "^${u%%:*}:" "$R/etc/passwd" || echo "$u" >> "$R/etc/passwd"; done
 for g in 'root:x:0:' 'nobody:x:65534:' 'dnsmasq:x:453:' 'patronus:x:900:'; do grep -q "^${g%%:*}:" "$R/etc/group" 2>/dev/null || echo "$g" >> "$R/etc/group"; done
 U=$UNIT_DIR

@@ -12,6 +12,14 @@ gen_wpa5() {
 sw() { LD_LIBRARY_PATH=$OWLIB $OWLIB/swconfig dev switch0 "$@"; }
 case "$1" in
 start)
+  # no board radio (no SoC Wi-Fi phy: an emulator or any host that is not a Slate): there is no switch and no Wi-Fi, eth0 is the one LAN
+  # port, bridged as br-lan; the WAN is whatever [network] wan_interfaces names (the QEMU gate's second NIC). NO_BOARD=0 in unit.conf forces
+  # the board path, NO_BOARD=1 the flat one.
+  if [ "$NO_BOARD" = 1 ]; then
+    ip link set eth0 up; ip link add br-lan type bridge 2>/dev/null; ip link set eth0 master br-lan; ip link set br-lan up
+    echo "$(cut -d' ' -f1 /proc/uptime) no-board-network eth0 -> br-lan" >> /tmp/boot-times
+    exit 0
+  fi
   ip link set eth0 up
   if [ -x $OWLIB/swconfig ]; then sw set reset 1; sw set enable_vlan 1; sw vlan 1 set ports "0t 2 3"; sw vlan 2 set ports "0t 1"; sw set apply 1; fi
   ip link add link eth0 name eth0.1 type vlan id 1 2>/dev/null; ip link add link eth0 name eth0.2 type vlan id 2 2>/dev/null

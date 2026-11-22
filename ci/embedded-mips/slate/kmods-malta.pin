@@ -1,0 +1,28 @@
+# OpenWrt 25.12.6 malta/be kernel modules for the Slate QEMU gate's test root (the shipped ath79 modules do not fit the malta kernel). tools/make-malta-kmods.sh builds the tar from
+# these packages; the tar (published as a Forgejo generic package) is pinned by sha256 and fetched by qemu-bundle.sh.
+MALTA_KMOD_URL=https://downloads.openwrt.org/releases/25.12.6/targets/malta/be/kmods/6.12.112-1-8cc6d0ba90b2bac9c188107669fc38eb
+MALTA_KMOD_VERSION=6.12.112-r1
+# the kernel the gate boots (OpenWrt 25.12.6 malta/be, same 6.12.112 release as the Slate's NOR kernel) and the published kmods tar
+MALTA_KERNEL_URL=https://downloads.openwrt.org/releases/25.12.6/targets/malta/be/openwrt-25.12.6-malta-be-vmlinux.elf
+MALTA_KERNEL_SHA256=f5db8b9e31058bf6513040d359d1658ec8cbaf2078442e5df3fdb627e72b23c7
+MALTA_KMOD_TAR_URL=https://git.canutethegreat.com/api/packages/CanuteTheGreat/generic/patronus-owrt-kernel-malta/6.12.112-2/malta-kmods-6.12.112-r1.tar
+MALTA_KMOD_TAR_SHA256=42784f849d9dd70e3cc0381a78ff390ddaa05b2bdff3d0227977c63f819d8658
+pkg kmod-nft-core
+pkg kmod-nft-nat
+pkg kmod-nft-fib
+pkg kmod-nfnetlink-log
+pkg kmod-nft-offload
+pkg kmod-nf-flow
+pkg kmod-lib-crc32c
+pkg kmod-nf-conntrack6
+pkg kmod-nf-log
+pkg kmod-nf-log6
+pkg kmod-nf-nat
+pkg kmod-nf-reject
+pkg kmod-nf-reject6
+pkg kmod-nfnetlink
+pkg kmod-nf-conntrack
+pkg kmod-crypto-crc32c
+pkg kmod-crypto-hash
+pkg kmod-pcnet32
+pkg kmod-mii

@@ -40,3 +40,7 @@ KSLOT_UBOOT_PROVEN="6788d77c975e4e7c1020ea70aec0a19cc270ec899f968734854394b93027
 KSLOT_KERNEL_DIR=/usr/share/patronus/kernel   # kernels this root may install (<name>.uImage + SHA256SUMS); the root has their modules
 KSLOT_STATE=/data/kernel     # events + trial record (persistent)
 [ -f /etc/patronus/unit.conf ] && . /etc/patronus/unit.conf
+# no board radio = not a Slate (an emulator, the QEMU gate): no switch, no Wi-Fi uplinks or APs to follow (board-network bridges eth0 flat).
+# unit.conf can force either way with NO_BOARD=0|1.
+[ -n "${NO_BOARD:-}" ] || { [ -n "$PHY24" ] && NO_BOARD=0 || NO_BOARD=1; }
+[ "$NO_BOARD" = 1 ] && FOLLOW=

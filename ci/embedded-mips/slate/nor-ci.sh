@@ -24,12 +24,15 @@ tar xf "$STOCK_SU" -C "$W/kern" --wildcards '*/kernel' '*/root'
 unsquashfs -q -d "$W/stock/root" "$W"/kern/*/root >/dev/null
 # 2. throwaway unit files (assemble.sh wants the per-unit inputs; sizes are what matter)
 U=$W/unit
+if [ -n "${NOR_CI_UNIT:-}" ]; then rm -rf "$U"; cp -a "$NOR_CI_UNIT" "$U"   # qemu-bundle.sh: a throwaway unit with a KNOWN ssh key and valid dropbear host keys
+else
 echo 'root:*:1::::::' > "$U/shadow-root"; # a throwaway public key (check-rootfs wants a way in: a password or a key)
 python3 -c 'import base64,os,struct; t=b"ssh-ed25519"; k=os.urandom(32); print("ssh-ed25519", base64.b64encode(struct.pack(">I",len(t))+t+struct.pack(">I",32)+k).decode(), "nor-ci")' > "$U/authorized_keys"
 for k in rsa ecdsa ed25519; do head -c 400 /dev/urandom > "$U/dropbear_${k}_host_key"; done
 { echo 'network={'; echo ' ssid="ci"'; printf ' %s="%s"\n' psk "$(od -An -tx1 -N8 /dev/urandom | tr -d ' \n')"; echo '}'; } > "$U/wpa_supplicant.conf"
+fi
 rc=0
-for v in openrc systemd; do
+for v in ${NOR_CI_VARIANTS:-openrc systemd}; do
   if [ $v = openrc ]; then export OPENRC_TREE=/out/pack/openrc.tar; unset SYSTEMD_TREE SYSTEMD_LIBS
   else unset OPENRC_TREE; export SYSTEMD_TREE=$P/systemd-strip.tar SYSTEMD_LIBS=$P/libucontext.so.1; fi
   NOR_PROFILE=1 STOCK_ROOT=$W/stock/root STOCK_SYSUPGRADE=$STOCK_SU UNIT_DIR=$U OUT_DIR=$W/out TMPDIR=$W SOURCE_REV="ci $(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo ?)" \

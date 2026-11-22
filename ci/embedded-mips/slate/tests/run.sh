@@ -38,7 +38,7 @@ t "wifi-follow (AP follows the uplink channel)" sh "$D/tests/wifi-follow-test.sh
 t "accounts-sync (package-managed accounts)" sh "$D/../../embedded-common/tests/accounts-sync.sh"
 
 # 2. check-rootfs.sh
-mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/etc/wpa_supplicant" "$r/bin" "$r/sbin" "$r/root/.ssh" "$r/var/lib/misc" "$r/usr/sbin" "$r/usr/share/patronus-recovery" "$r/etc/init.d" "$r/usr/libexec/patronus" "$r/etc/pam.d" "$r/lib/security"
+mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/usr/share/zoneinfo/Europe"; echo tz > "$r/usr/share/zoneinfo/Europe/Berlin"; mkdir -p "$r/etc/wpa_supplicant" "$r/bin" "$r/sbin" "$r/root/.ssh" "$r/var/lib/misc" "$r/usr/sbin" "$r/usr/share/patronus-recovery" "$r/etc/init.d" "$r/usr/libexec/patronus" "$r/etc/pam.d" "$r/lib/security"
   printf 'network={\n ssid="x"\n psk="y"\n}\n' > "$r/etc/wpa_supplicant/wpa_supplicant.conf"
   printf 'root:x:0:0:root:/root:/bin/sh\nnobody:x:65534:65534:nobody:/:/bin/false\n' > "$r/etc/passwd"
   echo 'root:$6$salt$hash:1::::::' > "$r/etc/shadow"; ln -s busybox "$r/bin/sh"; : > "$r/bin/busybox"; chmod +x "$r/bin/busybox"
@@ -53,6 +53,9 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/etc/wpa_supplicant" "$r/bin" 
   for b in usr/sbin/wpa_supplicant usr/sbin/dropbearmulti usr/sbin/hostapd usr/sbin/dnsmasq sbin/nft; do : > "$r/$b"; chmod +x "$r/$b"; done; ln -s dropbearmulti "$r/usr/sbin/dropbear"
   printf 'hsqs....' > "$r/usr/share/patronus-recovery/openwrt-root.squashfs"; echo "$r"; }
 t "check-rootfs: good root" "$D/check-rootfs.sh" "$(mkroot good)"
+r=$(mkroot nozi); rm -rf "$r/usr/share/zoneinfo"
+tn_msg "check-rootfs: rejects a root without the zoneinfo database (the time zone setting would be refused)" "zoneinfo" "$D/check-rootfs.sh" "$r"
+t "check-rootfs: a root without zoneinfo is accepted with ZONEINFO=0" env ZONEINFO=0 "$D/check-rootfs.sh" "$r"
 r=$(mkroot upd); sed -i '1i update_config=1' "$r/etc/wpa_supplicant/wpa_supplicant.conf"
 tn "check-rootfs: rejects update_config (p1)" "$D/check-rootfs.sh" "$r"
 r=$(mkroot bash); sed -i 's#^root:.*#root:!:0:0:root:/root:/bin/bash#' "$r/etc/passwd"

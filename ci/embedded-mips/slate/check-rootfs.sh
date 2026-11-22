@@ -16,6 +16,7 @@ grep -q '^root:[^:!*]' "$R/etc/shadow" 2>/dev/null || [ -s "$R/root/.ssh/authori
 grep -q '^nobody:' "$R/etc/passwd" || fail "no nobody user (dnsmasq)"
 [ -d "$R/var/lib/misc" ] || fail "no /var/lib/misc (dnsmasq leases)"
 [ -s "$R/etc/services" ] || fail "no /etc/services (busybox wget/nc: bad port 'http', p4)"
+[ "${ZONEINFO:-1}" = 0 ] || [ -s "$R/usr/share/zoneinfo/Europe/Berlin" ] || fail "no /usr/share/zoneinfo (System > General time zone is refused without it; ZONEINFO=0 builds without)"
 [ -x "$R/usr/libexec/patronus/accounts-sync" ] || fail "missing /usr/libexec/patronus/accounts-sync (package-managed accounts)"
 if [ -d "$R/usr/share/patronus/accounts.d" ]; then
   grep accounts-sync "$R/usr/libexec/patronus/early" >/dev/null || fail "early boot never runs accounts-sync"
