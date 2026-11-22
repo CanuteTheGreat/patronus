@@ -37,13 +37,13 @@
     </div>
 
     <div class="stat-grid">
-        <div class="stat-card"><h2 class="fw-stat-title">Filter Rules</h2>
-            <div>Total: {{ filter_rules.len() }}</div><div>Enabled: {{ enabled_filter_rules }}</div></div>
-        <div class="stat-card"><h2 class="fw-stat-title">NAT Rules</h2>
-            <div>Total: {{ nat_rules.len() }}</div><div>Enabled: {{ enabled_nat_rules }}</div></div>
-        <div class="stat-card"><h2 class="fw-stat-title">Allow Rules</h2><div>{{ accept_rules_count }}</div></div>
-        <div class="stat-card"><h2 class="fw-stat-title">Block Rules</h2><div>{{ drop_rules_count }}</div></div>
-        <div class="stat-card"><h2 class="fw-stat-title">Outbound NAT</h2><div>{{ outbound_mode }}</div></div>
+        <a class="stat-card stat-link" href="#tab-rules" data-goto="tab-rules" style="text-decoration:none;color:inherit;display:block"><h2 class="fw-stat-title">Filter Rules</h2>
+            <div>Total: {{ filter_rules.len() }}</div><div>Enabled: {{ enabled_filter_rules }}</div></a>
+        <a class="stat-card stat-link" href="#tab-pf" data-goto="tab-pf" style="text-decoration:none;color:inherit;display:block"><h2 class="fw-stat-title">NAT Rules</h2>
+            <div>Total: {{ nat_rules.len() }}</div><div>Enabled: {{ enabled_nat_rules }}</div></a>
+        <a class="stat-card stat-link" href="#tab-rules" data-goto="tab-rules" style="text-decoration:none;color:inherit;display:block"><h2 class="fw-stat-title">Allow Rules</h2><div>{{ accept_rules_count }}</div></a>
+        <a class="stat-card stat-link" href="#tab-rules" data-goto="tab-rules" style="text-decoration:none;color:inherit;display:block"><h2 class="fw-stat-title">Block Rules</h2><div>{{ drop_rules_count }}</div></a>
+        <a class="stat-card stat-link" href="#tab-outbound" data-goto="tab-outbound" style="text-decoration:none;color:inherit;display:block"><h2 class="fw-stat-title">Outbound NAT</h2><div>{{ outbound_mode }}</div></a>
     </div>
 
     <div id="msg" class="msg"></div>
@@ -585,6 +585,8 @@ function showTab(id) {
     sessionStorage.setItem(TAB_KEY, id);
 }
 document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+// Summary cards jump to the tab that lists what they count.
+document.querySelectorAll('a.stat-link').forEach(a => a.addEventListener('click', e => { e.preventDefault(); showTab(a.dataset.goto); document.getElementById(a.dataset.goto).scrollIntoView(); }));
 if (sessionStorage.getItem(TAB_KEY) && document.getElementById(sessionStorage.getItem(TAB_KEY))) {
     showTab(sessionStorage.getItem(TAB_KEY));
 }

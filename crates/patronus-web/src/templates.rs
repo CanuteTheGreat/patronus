@@ -866,6 +866,21 @@ mod tests {
         assert!(html.contains("data-tab=\"tab-rules\""), "tabs kept");
     }
 
+    /// Finding 2026-11-18: the summary cards were dead text. Each now links to
+    /// the tab that lists what it counts, and every target tab exists.
+    #[test]
+    fn firewall_summary_cards_link_to_their_tabs() {
+        let html = firewall_page();
+        for tab in ["tab-rules", "tab-pf", "tab-outbound"] {
+            assert!(
+                html.contains(&format!("class=\"stat-card stat-link\" href=\"#{tab}\"")),
+                "a summary card links to {tab}"
+            );
+            assert!(html.contains(&format!("id=\"{tab}\"")), "{tab} exists");
+        }
+        assert_eq!(html.matches("stat-card stat-link").count(), 5);
+    }
+
     #[test]
     fn interfaces_page_uses_the_app_shell() {
         let html = InterfacesTemplate { page: "interfaces" }.render().unwrap();
