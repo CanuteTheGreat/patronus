@@ -11,7 +11,8 @@ that must match its vermagic) is rebuilt from the pinned OpenWrt tag with **only
 | `build-owrt.sh <ax1800\|virt\|slate> <out>` | builds OpenWrt from the tag with the pinned kernel in a throwaway debian:trixie container on an x86_64 host; output: images, kmod apks, SDK |
 | `kmods-*.list` | the kmod packages each target's image needs (the `kmods.pin` closure) |
 | `patches/<line>.<patch>/` | OpenWrt patches refreshed for exactly that kernel (stable moved a context the tag did not know) |
-| `tests/run.sh` | host tests of the tracker (rust-ci style, no network) |
+| `tests/run.sh` | host tests of the tracker (CI, no network) |
+| `tests/prep-check.sh` | container test: prepares the pinned tree per target (`PREP_ONLY=1`) and proves every kernel patch applies (`patch-survey.sh`), minutes instead of a 1-2 h build; run it first when a bump fails |
 
 Chain (automatic, the project agent host's cron `kernel-track`, daily): `--bump` shows a newer patch -> a queued job builds the three targets,
 uploads the artefacts as Forgejo generic packages, moves the pins (`stock.pin`, `kmods.pin`, `wifi-kmods/sdk.pin`,

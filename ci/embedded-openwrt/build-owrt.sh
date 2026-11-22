@@ -38,7 +38,7 @@ echo "LINUX_KERNEL_HASH-$KERNEL_LINE.$KERNEL_PATCH = $KERNEL_SHA256" >> "$K"
 # (fails loudly at the patch step when stable moved again: then a new directory is made, see README.md "When a patch no longer applies").
 OV=$HERE/patches/$KERNEL_LINE.$KERNEL_PATCH
 if [ -f "$OV/DROP" ]; then for n in $(sed -e '/^#/d' -e '/^$/d' "$OV/DROP"); do
-  t=$(find target/linux package/kernel -path '*patches*' -name "$n" 2>/dev/null | head -1)
+  t=$(find target/linux package/kernel \( -path '*/patches*/*' -o -path '*/backport-*/*' -o -path '*/pending-*/*' -o -path '*/hack-*/*' \) -name "$n" 2>/dev/null | head -1)
   # a name already gone is fine only in a reused work dir (an earlier run dropped it); a fresh clone must find every name
   if [ -z "$t" ]; then [ "${REUSED:-0}" = 1 ] && { echo "build-owrt: $n already dropped"; continue; }; echo "build-owrt: DROP $n has no counterpart in the tag" >&2; exit 1; fi
   rm -f "$t"; echo "build-owrt: dropped $n"; done; fi
@@ -49,6 +49,9 @@ if [ -d "$OV" ]; then for p in "$OV"/*.patch; do [ -e "$p" ] || continue; n=$(ba
 for f in "$OV"/config-*; do [ -e "$f" ] || continue; t=target/linux/${f##*/config-}/config-$KERNEL_LINE
   [ -f "$t" ] || { echo "build-owrt: $f: no $t" >&2; exit 1; }
   while read -r l; do [ -n "$l" ] || continue; sym=${l%%=*}; grep -q "^$sym=\|^# $sym is not set" "$t" || { echo "$l" >> "$t"; echo "build-owrt: $t += $l"; }; done < "$f"; done
+# PREP_ONLY=1: stop here with the prepared tree (pin applied, patches dropped/refreshed): `patch-survey.sh` then proves every patch of the
+# series applies to the real kernel tree without a 1-2 h build (tests/prep-check.sh)
+[ "${PREP_ONLY:-0}" = 1 ] && { echo "build-owrt: prepared tree in $PWD"; exit 0; }
 { echo "$CFG"; echo "CONFIG_SDK=y"; echo "CONFIG_ALL_KMODS=n"; echo "CONFIG_ALL=n"; echo "CONFIG_ALL_NONSHARED=n"
   [ -f "$KPK" ] && sed -n 's/^\([a-z0-9-]*\)$/CONFIG_PACKAGE_\1=m/p' "$KPK"; true; } > .config
 make defconfig >/dev/null
