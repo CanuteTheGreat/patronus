@@ -45,7 +45,13 @@ def fixture_tarball():
     s = s[:wan] + "config interface 'wan'\n\toption device 'eth1'\n\toption proto 'dhcp'\n" + s[end:]
     open(net, "w").write(s)
     dhcp = os.path.join(d, "etc", "config", "dhcp")
-    open(dhcp, "w").write(open(dhcp).read().replace("02:00:00:00:00:21", CLI_LAN_MAC))
+    # read FIRST: `open(p, "w").write(open(p).read())` truncates the file before the read (the imported DHCP file was empty,
+    # so the firewall had no pool and the client never got a lease)
+    with open(dhcp) as f:
+        text = f.read().replace("02:00:00:00:00:21", CLI_LAN_MAC)
+    assert CLI_LAN_MAC in text, "fixture dhcp file lost its static host"
+    with open(dhcp, "w") as f:
+        f.write(text)
     tgz = os.path.join(work, "uci.tgz")
     with tarfile.open(tgz, "w:gz") as t:
         t.add(d, arcname="uci")
