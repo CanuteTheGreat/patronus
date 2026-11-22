@@ -27,6 +27,13 @@ for p in "patronus-board:patronus-network" "patronus-etph:patronus-etph" "patron
   t "parity ${p%%:*} (OpenRC) = ${p#*:}.service (systemd)" sh -c "[ -x '$D/overlay-openrc/etc/init.d/${p%%:*}' ] && [ -L '$D/overlay-systemd/etc/systemd/system/multi-user.target.wants/${p#*:}.service' ]"
 done
 t "py_compile t_slate.py" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$D/t_slate.py"
+t "py_compile qemu-gate.py (the QEMU gate of the lab: ci/embedded-mips/slate/qemu-gate.py)" python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$D/qemu-gate.py"
+t "bash -n qemu-bundle.sh + tools/make-malta-kmods.sh" sh -c "bash -n '$D/qemu-bundle.sh' && sh -n '$D/tools/make-malta-kmods.sh'"
+# the QEMU gate's pins: kernel + kmods tar are sha256-pinned, every kmod package is named
+t "kmods-malta.pin: sha256 pins and package list" sh -c ". '$D/kmods-malta.pin'; [ \${#MALTA_KERNEL_SHA256} = 64 ] && [ \${#MALTA_KMOD_TAR_SHA256} = 64 ] && grep -q '^pkg kmod-nft-core' '$D/kmods-malta.pin' && grep -q '^pkg kmod-pcnet32' '$D/kmods-malta.pin'"
+# no board radio = no switch/Wi-Fi: board.sh drops FOLLOW (the QEMU gate's off-board mode); NO_BOARD=0 keeps the board path
+t "board.sh: NO_BOARD=1 -> nothing to follow" sh -c "NO_BOARD=1; . '$D/overlay/etc/patronus/board.sh' 2>/dev/null; [ -z \"\$FOLLOW\" ] && [ \"\$NO_BOARD\" = 1 ]"
+t "board.sh: NO_BOARD=0 keeps the Wi-Fi follow pairs" sh -c "NO_BOARD=0; . '$D/overlay/etc/patronus/board.sh' 2>/dev/null; [ -n \"\$FOLLOW\" ]"
 
 # 1a. no baked-in hostname: early boot takes it from /etc/hostname (owner rule: nothing hard-coded)
 t "early boot has no hard-coded hostname" sh -c "! grep -E '(^|[;&|] *)hostname [A-Za-z]' '$D/overlay/usr/libexec/patronus/early' '$D/../../embedded-aarch64/ax1800/overlay/usr/libexec/patronus/early'"

@@ -250,7 +250,7 @@ def stats(tag):
 
 
 # ------------------------------------------------------------------ checks
-SERVICES = ("dropbear", "patronus-web", "patronus-applyd", "patronus-etph", "dnsmasq")
+SERVICES = ("dropbear" if INIT == "openrc" else "patronus-dropbear", "patronus-web", "patronus-applyd", "patronus-etph", "dnsmasq")
 
 
 def init_checks(tag):

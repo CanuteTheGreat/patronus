@@ -350,6 +350,34 @@ fourth power-on; a panicking one reboots on its own. First flash: watch the seri
 `kernel-status` and the boot banner (`patronus: trial kernel ... boot ox`), with the U-Boot web failsafe (section 9) as the last
 resort, which no part of this sequence touches.
 
+### 6f. QEMU gate for the Slate root, both init systems (2026-11-22, `ci/embedded-mips/slate/qemu-gate.py`)
+
+The board's radios, switch and NAND cannot be emulated; everything else of the router role can. `qemu-bundle.sh` (in the embedded
+builder image, nor-ci.sh style) builds the NOR-profile root of each init variant with a THROWAWAY unit (fresh ssh key and dropbear host
+key, no Wi-Fi uplink, never a real unit's files) and prepares the test root: the shipped root with OpenWrt's malta/be netfilter modules
+(`kmods-malta.pin`, `tools/make-malta-kmods.sh`; the ath79 modules do not fit that kernel) and `wan_interfaces = ["eth1"]`. The bundle is
+that root, OpenWrt 25.12.6's `malta/be` kernel (same 6.12.112 release as the Slate's NOR kernel, sha256-pinned), the gate and the key;
+a small test host runs it without building anything: `qemu-system-mips -M malta -m 128`, TCG, root on IDE, an ext4 settings disk
+(`patronus.data=/dev/sdb`), eth0 = LAN (user network, ssh/443/80 forwarded), eth1 = WAN, eth2 = a second LAN port with a LAN client behind
+it (raw frames over a QEMU socket netdev: DHCP and DNS by hand, no extra guest OS).
+
+Off-board mode: with no SoC Wi-Fi radio (`PHY24` empty, `NO_BOARD=1` in `board.sh`, `NO_BOARD=0|1` in `unit.conf` overrides) `board-network` bridges
+eth0 flat into `br-lan` (no switch VLANs, no Wi-Fi), `wifi-follow` idles instead of exiting (the supervisor would respawn it), and the early
+boot mounts the ext4 device named by `patronus.data=` when there is no UBI (RAM `/data`, marked `NO-DATA`, otherwise).
+
+22 checks per variant, boot, restart from the web UI, boot again on the same disk: PID 1 and every service up (0 crashed/failed), ETPhoneHome
+running, first-run claim (setup code, weak/mismatch/second claim refused) and login, web on 443 and the 80 redirect, boot guard armed and
+confirmed, a firewall rule added through the API appears in the kernel's nft chain, an invalid rule is refused with the kernel's rules
+unchanged, a config change becomes a revision and restoring it removes the rule from nft, a LAN client gets a DHCP lease (pool, router and
+DNS options) and the router answers a local DNS record to it, a DNS change is rolled back through the history and undone, host name /
+domain / time zone saved and applied, then after the restart everything persisted (rule, login, settings, the same client gets the same
+address) and the gate prints the guest's memory and per-process RSS (`GATEMETRIC` lines).
+
+What it found: the root had no zoneinfo database, so System > General refused every time zone ("not found in /usr/share/zoneinfo") on the
+router tier (`assemble.sh` now ships the regions of `ZONEINFO_DIRS` from the build host, about 100 KiB squashfs, `check-rootfs.sh` requires it,
+`ZONEINFO=0` builds without), and busybox mdev / OpenRC printed "unknown user/group" for every device node because the image had none of
+the standard system groups (`assemble.sh` adds them).
+
 ## 6a. Local web UI (the LuCI equivalent)
 
 **Yes: the Slate keeps a local web UI, and it is the real Patronus UI**, not a lite copy. Decision rule that was applied: try the straight port first; fall back to a `web-lite` only if it missed the 16 MiB slot or a 25-30 MB RSS cap. It met both, so no second UI exists to maintain.
