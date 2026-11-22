@@ -18,13 +18,13 @@ check() { name=$1; shift; if "$@" >"$W/out" 2>&1; then ok "$name"; else no "$nam
 
 UBSIM=${1:-}
 if [ -z "$UBSIM" ]; then sh "$D/tests/uboot-sim/build.sh" "$W/ubs" >"$W/build.log" 2>&1 || { cat "$W/build.log"; echo "FAIL: ubsim build"; exit 1; }; UBSIM=$W/ubs/ubsim; fi
-command -v busybox >/dev/null || { echo "FAIL: busybox needed (the device tool set)"; exit 1; }
+BB=$(command -v busybox) || { echo "FAIL: busybox needed (the device tool set)"; exit 1; }
 DEFENV=$D/overlay/usr/share/patronus/uboot/gl-ar750s-1.1.4-gcf378d80.env
 NK=$D/overlay/usr/libexec/patronus/nor-kernel
 BOARDCOMPAT=glinet,gl-ar750s-nor-nand
 
 # --- device tool set: busybox applets only, plus flash_erase (mtd-utils on the unit) and a quiet logger ---
-mkdir -p "$W/bb"; for a in $(busybox --list); do ln -s "$(command -v busybox)" "$W/bb/$a"; done
+mkdir -p "$W/bb"; for a in $("$BB" --list); do ln -sf "$BB" "$W/bb/$a"; done; ln -sf "$BB" "$W/bb/busybox"
 rm -f "$W/bb/logger"; printf '#!/bin/sh\nexit 0\n' > "$W/bb/logger"
 cat > "$W/bb/flash_erase" <<'EOF'
 #!/bin/sh
@@ -106,7 +106,7 @@ nk() { # nor-kernel as the unit runs it (busybox sh, busybox applets only)
   env -i PATH="$W/bb" HOME=/ PATRONUS_BOARD="$W/u/board.sh" PATRONUS_PROC_MTD="$W/u/proc_mtd" PATRONUS_MTD_DEV="$W/u/dev" \
     PATRONUS_MODULES="$W/u/lib/modules" PATRONUS_KSTATE="$W/u/data/kernel" PATRONUS_GUARD_RUN="$W/u/run" PATRONUS_FLASH_TMP="$W/u" \
     PATRONUS_RELEASE="$W/u/release" PATRONUS_UBOOT_ENV_DIR="$W/u/envdir" PATRONUS_UNAME_R="$RUNNING" NK_ERASES="$W/erases" \
-    ${CUT_AT:+CUT_AT=$CUT_AT} ${FORCE:+FORCE=$FORCE} busybox sh "$NK" "$@"
+    ${CUT_AT:+CUT_AT=$CUT_AT} ${FORCE:+FORCE=$FORCE} "$BB" sh "$NK" "$@"
 }
 # one power-on: U-Boot (ubsim) on the joined NOR image, then (if a kernel booted and reached userspace) the early-boot check
 power_on() { # [noboot]: the booted kernel hangs before userspace
