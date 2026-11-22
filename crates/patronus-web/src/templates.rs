@@ -881,6 +881,19 @@ mod tests {
         assert_eq!(html.matches("stat-card stat-link").count(), 5);
     }
 
+    /// Finding 2026-11-22 (lab web-journey, real Firefox): at 1280 px the Firewall page scrolled sideways 187 px (the rules table is wider than the
+    /// content column) and at 390 px System did (the SSH key textareas carry cols=70). Wide content scrolls inside its own box, never the page.
+    #[test]
+    fn wide_content_never_widens_the_page() {
+        let fw = include_str!("../templates/firewall.html");
+        assert!(fw.contains(".fw-page .tab { display: none; overflow-x: auto; }"), "firewall tabs scroll their own table");
+        let base = include_str!("../templates/base.html");
+        assert!(
+            base.contains(".content textarea, .content input, .content select {\n            max-width: 100%;"),
+            "fixed-size form fields are capped at the content width"
+        );
+    }
+
     #[test]
     fn interfaces_page_uses_the_app_shell() {
         let html = InterfacesTemplate { page: "interfaces" }.render().unwrap();

@@ -183,6 +183,12 @@
             max-width: 100%;
         }
 
+        /* fields with a fixed size/cols attribute (the SSH key textareas) must never be wider than the page */
+        .content textarea, .content input, .content select {
+            max-width: 100%;
+            box-sizing: border-box;
+        }
+
         .header {
             background: var(--card-bg);
             border-bottom: 1px solid var(--border);

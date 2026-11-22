@@ -8,7 +8,7 @@
     .fw-page .tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--line); margin: 20px 0; }
     .fw-page .tab-btn { padding: 10px 16px; border: none; background: none; color: var(--text); cursor: pointer; }
     .fw-page .tab-btn.active { background: var(--surface-2); border-bottom: 2px solid var(--accent); }
-    .fw-page .tab { display: none; }
+    .fw-page .tab { display: none; overflow-x: auto; }      /* a wide rules table scrolls inside its tab, never the page */
     .fw-page .tab.active { display: block; }
     .fw-page fieldset { border: 1px solid var(--line); border-radius: 5px; padding: 12px; margin: 12px 0; min-width: 0; }
     .fw-page legend { padding: 0 6px; }
