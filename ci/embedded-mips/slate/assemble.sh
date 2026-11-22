@@ -19,6 +19,11 @@
 #   SYSTEMD_TREE      tar of the cross-built systemd install (stage-systemd.sh + sdsize.sh) -> the systemd variant:
 #                     overlay-systemd/ on top, systemd as PID 1 after the same early boot
 #   SYSTEMD_LIBS      with SYSTEMD_TREE: extra runtime libraries it needs (libucontext.so.1)
+#   EXTRA_KMOD_ROOTS  optional, space-separated: unpacked OpenWrt roots of OTHER kernels of the same release/target (e.g. the
+#                     ci/embedded-openwrt rebuild at a newer LTS patch); their lib/modules/<kver> are added so the root boots on
+#                     the stock kernel AND those (a NOR kernel change is not atomic with the root: docs/embedded-routers.md 6e)
+#   KERNEL_IMAGES     optional, space-separated uImages (each one's modules must be in the root) shipped in /usr/share/patronus/kernel
+#                     with SHA256SUMS: the only kernels `patronus-flash kernel` installs from this root (NAND tier only)
 #   NOR_PROFILE=1     the 16 MiB NOR-only tier: no embedded OpenWrt recovery root (the NOR layout keeps stock OpenWrt
 #                     out of the root image) and no NAND-only pieces; see nor-budget.sh
 set -euo pipefail
@@ -52,14 +57,32 @@ install -m644 "$B/libatomic.so.1" "$R/usr/lib/libatomic.so.1"
 S=$STOCK_ROOT; KV=$(ls "$S/lib/modules")
 cp -a "$S/lib/modules" "$R/lib/"; mkdir -p "$R/etc/modules.d"; cp -a "$S"/etc/modules.d/. "$R/etc/modules.d/"
 cp -a "$S/lib/firmware" "$R/lib/"
-{ /sbin/depmod -b "$R" "$KV" || depmod -b "$R" "$KV"; } 2>/dev/null || true
-[ -s "$R/lib/modules/$KV/modules.dep" ] || { echo "depmod failed"; exit 1; }
+# modules of the other kernels this root must boot on (the NOR kernel is changed separately from the root: both directions)
+for X in ${EXTRA_KMOD_ROOTS:-}; do
+  for d in "$X"/lib/modules/*; do [ -d "$d" ] || continue; k=${d##*/}; [ -e "$R/lib/modules/$k" ] && continue
+    cp -a "$d" "$R/lib/modules/"; echo "assemble.sh: + modules for kernel $k"; done
+  for f in "$X"/etc/modules.d/*; do [ -e "$R/etc/modules.d/${f##*/}" ] || cp -a "$f" "$R/etc/modules.d/"; done
+done
+KERNELS=
+for d in "$R"/lib/modules/*; do k=${d##*/}
+  { /sbin/depmod -b "$R" "$k" || depmod -b "$R" "$k"; } 2>/dev/null || true
+  [ -s "$R/lib/modules/$k/modules.dep" ] || { echo "depmod failed for $k"; exit 1; }; KERNELS="$KERNELS $k"; done
+KERNELS=${KERNELS# }
 for f in services protocols; do [ -e "$R/etc/$f" ] || cp "$S/etc/$f" "$R/etc/$f"; done   # busybox wget/nc resolve service names (p4: wget: bad port 'http')
 cp -a "$S/sbin/swconfig" "$S/usr/lib/libnl-tiny.so.1" "$S"/lib/libuci.so.* "$S"/lib/libubox.so.* "$S/lib/libgcc_s.so.1" "$R/usr/lib/openwrt/"
 # the safety net's payload: stock OpenWrt root + the unit's config backup (not on the NOR tier: see NOR_PROFILE)
 if [ -z "${NOR_PROFILE:-}" ]; then
   cp "$RECOVERY_ROOT" "$R/usr/share/patronus-recovery/openwrt-root.squashfs"
   if [ -n "${RECOVERY_CFG:-}" ]; then cp "$RECOVERY_CFG" "$R/usr/share/patronus-recovery/sysupgrade.tgz"; fi
+  # the recovery root's own kernel (the stock one): `patronus-flash openwrt` puts it back when the NOR kernel was moved on
+  tar xf "$STOCK_SYSUPGRADE" -O --wildcards '*/kernel' > "$R/usr/share/patronus-recovery/openwrt-kernel.bin"
+  # kernels this root may install into NOR (patronus-flash kernel): shipped here so the root anchors which images are allowed
+  if [ -n "${KERNEL_IMAGES:-}" ]; then mkdir -p "$R/usr/share/patronus/kernel"
+    for k in $KERNEL_IMAGES; do n=$(tail -c +33 "$k" | head -c 32 | tr -d '\000'); kv=${n##*Linux-}
+      [ -n "$kv" ] && [ "$kv" != "$n" ] || { echo "assemble.sh: $k is not an OpenWrt uImage"; exit 1; }
+      install -m644 "$k" "$R/usr/share/patronus/kernel/$kv.uImage"; done
+    (cd "$R/usr/share/patronus/kernel" && sha256sum *.uImage > SHA256SUMS)
+  fi
 fi
 # overlay (early boot, board glue, guard, flash tool, Patronus config); examples stay out of the image
 cp -a "$HERE"/overlay/. "$R/"; rm -f "$R"/etc/patronus/*.example
@@ -165,10 +188,11 @@ ETPH=$ETPH_VERSION
 BOARD=$HW_DEVICE_OPENWRT_BOARD
 BUILD=$TAG
 SOURCE=patronus ${SOURCE_REV:-unknown}
-KERNEL=$HW_KERNEL_LABEL $KV (stock, unchanged)
+KERNEL=$HW_KERNEL_LABEL $KV (stock)
+KERNELS=$KERNELS
 EOF
 chmod 755 "$R"; chmod 1777 "$R/tmp"
-"$HERE/check-rootfs.sh" "$R"
+REQUIRED_KERNELS="$KV ${REQUIRED_KERNELS:-}" "$HERE/check-rootfs.sh" "$R"
 P=(-p "/dev/console c 600 0 0 5 1" -p "/dev/null c 666 0 0 1 3" -p "/dev/ttyS0 c 600 0 0 4 64")
 # NOR tier: 1 MiB xz blocks (5.5 % smaller than 256 KiB, measured: what makes the systemd variant fit 16 MiB NOR; a few MB
 # more page-cache decompression buffers); NAND tier: 256 KiB like OpenWrt

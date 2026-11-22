@@ -120,12 +120,14 @@ t "flash openwrt: patronus root kept as rootfs_prev" test "$(vol rootfs_prev)" =
 for op in "root $W/b.sq" "rollback" "openwrt"; do echo "2 old-build" > "$W/data/.init-boot-attempts"
   t "flash $op: clears the unconfirmed-boot count" sh -c "'$F' $op >/dev/null && [ ! -e '$W/data/.init-boot-attempts' ]"; done
 # patronus-init's counting lines, run against a scratch /data + release file
-sed -n '/^b=\$(sed -n/,/^n=\$((/p' "$D/overlay/usr/sbin/patronus-init" | sed "s#/data/#$W/pi/#g; s#/etc/patronus-release#$W/pi/rel#g" > "$W/pi.sh"; mkdir -p "$W/pi"
+sed -n '/^b=\$(sed -n/,/^if \[ "\$n" = -1 \]/p' "$D/overlay/usr/sbin/patronus-init" | sed "s#/data/#$W/pi/#g; s#/tmp/kernel-trial#$W/pi/kernel-trial#g; s#/etc/patronus-release#$W/pi/rel#g" > "$W/pi.sh"; mkdir -p "$W/pi"
+t "patronus-init: counting lines extracted (ends at the count write)" sh -c "grep -q 'init-boot-attempts' '$W/pi.sh' && ! grep -q 'exec' '$W/pi.sh'"
 pi() { echo "BUILD=$1" > "$W/pi/rel"; sh "$W/pi.sh" >/dev/null 2>&1; cat "$W/pi/.init-boot-attempts"; }
 t "patronus-init: first boot of a root counts 1" test "$(pi new-a)" = "1 new-a"
 t "patronus-init: the same root counts up" test "$(pi new-a)" = "2 new-a"
 t "patronus-init: a different root (installed from outside) starts a new count" test "$(pi new-b)" = "1 new-b"
 echo 2 > "$W/pi/.init-boot-attempts"; t "patronus-init: an old-format count (no BUILD) starts over" test "$(pi new-b)" = "1 new-b"
+touch "$W/pi/kernel-trial"; t "patronus-init: a NOR-kernel trial boot does not count against the root" test "$(pi new-b)" = "1 new-b"; rm -f "$W/pi/kernel-trial"
 mkdir -p "$W/sut/sysupgrade-x"; printf 'hsqs-TAR' > "$W/sut/sysupgrade-x/root"; tar cf "$W/su.tar" -C "$W/sut" sysupgrade-x
 t "flash openwrt: from a sysupgrade tar" sh -c "'$F' openwrt '$W/su.tar' '' && [ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-TAR ]"
 # after an OpenWrt sysupgrade, rootfs_data holds all free space (p4 -> sd1 on the real unit: ENOSPC, and the old
@@ -149,6 +151,31 @@ t "flash rollback without ubinfo" sh -c "'$F' rollback && [ \"\$(cat $FAKE_UBI/b
 printf 'hsqs-OPENWRT' > "$W/rec/openwrt-root.squashfs"
 t "flash openwrt (the guard's revert) without ubinfo" sh -c "'$F' openwrt && [ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-OPENWRT ]"
 unset PATRONUS_UBI_SYS; for n in ubinfo; do ln -sf "$D/tests/fake-ubi/ubi" "$W/bin/$n"; done
+# 3a. root <-> NOR kernel coupling (patronus-flash kernel*; nor-kernel stubbed: tests/nor-kernel-test.sh proves nor-kernel itself)
+mkdir -p "$W/mods/6.12.112" "$W/mods/6.12.118"; export PATRONUS_MODULES=$W/mods PATRONUS_NOR_KERNEL=$W/bin/nk-stub
+cat > "$W/bin/nk-stub" <<EOF
+#!/bin/sh
+echo "nk \$*" >> "$W/nkcalls"
+case "\$1" in kver-of) [ "\$2" = P ] && echo "\$NKP"; [ "\$2" = K ] && echo "\$NKK"; exit 0;; install-p) exit \${NK_IP_RC:-0};; esac
+exit 0
+EOF
+chmod +x "$W/bin/nk-stub"
+rm -rf "$FAKE_UBI"; mkdir -p "$FAKE_UBI"; ubimkvol "$PATRONUS_UBI" -N rootfs -s 8 >/dev/null; printf 'hsqs-A' > "$FAKE_UBI/by-name/rootfs"
+rm -rf "$W/mods/6.12.118"; t "flash root: records the kernels of the root it replaces" sh -c "NKP=6.12.112 '$F' root '$W/b.sq' >/dev/null && [ \"\$(cat $W/data/.root-prev-kernels)\" = '6.12.112 ' ]"
+mkdir -p "$W/mods/6.12.118"; rm -f "$W/nkcalls"
+t "flash rollback: previous root has modules for the NOR kernel -> kernel untouched" sh -c "NKP=6.12.112 '$F' rollback >/dev/null && [ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-A ] && ! grep -q 'nk rollback' '$W/nkcalls'"
+echo "6.12.112" > "$W/data/.root-prev-kernels"; rm -f "$W/nkcalls"
+t "flash rollback: previous root lacks the NOR kernel's modules -> the kernel goes back too (slot K)" sh -c "NKP=6.12.118 NKK=6.12.112 '$F' rollback >/dev/null && grep -q 'nk rollback' '$W/nkcalls' && [ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-B ]"
+echo "6.12.112" > "$W/data/.root-prev-kernels"; printf 'hsqs-KEEP' > "$FAKE_UBI/by-name/rootfs"; rm -f "$W/nkcalls"
+tn_msg "flash rollback: refuses when neither the NOR kernel nor slot K has modules in the previous root" "refusing" sh -c "NKP=6.12.118 NKK=6.12.999 '$F' rollback"
+t "...and changes nothing" sh -c "[ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-KEEP ] && ! grep -q 'nk rollback' '$W/nkcalls'"
+printf 'K' > "$W/rec/openwrt-kernel.bin"; printf 'hsqs-OPENWRT' > "$W/rec/openwrt-root.squashfs"; rm -f "$W/nkcalls"
+t "flash openwrt: puts the recovery root's own kernel back first" sh -c "NKP=6.12.118 '$F' openwrt >/dev/null && grep -q 'nk install-p $W/rec/openwrt-kernel.bin' '$W/nkcalls' && [ \"\$(cat $FAKE_UBI/by-name/rootfs)\" = hsqs-OPENWRT ]"
+printf 'hsqs-KEEP2' > "$FAKE_UBI/by-name/rootfs"
+tn "flash openwrt: kernel write fails -> root not reverted" sh -c "NKP=6.12.118 NK_IP_RC=1 '$F' openwrt"
+t "...root unchanged" test "$(vol rootfs)" = hsqs-KEEP2
+t "flash kernel: dispatches to nor-kernel install" sh -c "rm -f '$W/nkcalls'; NKP=x '$F' kernel 6.12.118 && grep -q 'nk install 6.12.118' '$W/nkcalls'"
+rm -f "$W/rec/openwrt-kernel.bin"; unset PATRONUS_NOR_KERNEL PATRONUS_MODULES
 t "flash factory-reset: marker for the early boot" sh -c "'$F' factory-reset && [ -f $W/data/.factory-reset ]"
 t "early boot wipes settings on the factory-reset marker" grep -q '\.factory-reset.*rm -rf /data/overlay /data/tls' "$D/overlay/usr/libexec/patronus/early"
 

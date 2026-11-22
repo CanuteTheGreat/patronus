@@ -40,6 +40,22 @@ jobs:
       - name: Device-profile tooling (schema, tier minimums, Slate golden values, TOML fallback parser)
         run: sh ci/hw-profile/tests/run.sh
 
+  slate-nor-kernel:
+    # The NOR kernel trial + rollback (patronus-flash kernel, docs/embedded-routers.md 6e): fake MTD partitions, every
+    # power-on runs GL's own U-Boot hush/test/run (pinned source, tests/uboot-sim), power cuts at every flash erase.
+    name: Slate NOR kernel trial + rollback (GL U-Boot boot flow, fake MTD, power cuts)
+    runs-on: linux-any
+    timeout-minutes: 20
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 1g --memory-swap 1g --cpus 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies (busybox = the unit's tool set, cc for the U-Boot simulator)
+        run: bash ci/apt-install.sh busybox build-essential curl python3
+      - name: NOR kernel trial, commit, rollback, power cuts
+        run: sh ci/embedded-mips/slate/tests/nor-kernel-test.sh
+
   router-features:
     name: Router feature set (patronus-cli nftables,cli,dhcp-server,dns-server,uci-import)
     runs-on: linux-any

@@ -16,7 +16,9 @@ t() { cut -d' ' -f1 /proc/uptime; }
 # recovery) starts a new count instead of inheriting the old root's unconfirmed attempts
 b=$(sed -n 's/^BUILD=//p' /etc/patronus-release 2>/dev/null)
 read -r n nb 2>/dev/null < /data/.init-boot-attempts; [ -n "$b" ] && [ "${nb:-}" = "$b" ] || n=0
-n=$(( ${n:-0} + 1 )); echo "$n $b" > /data/.init-boot-attempts; sync
+# a NOR-kernel trial boot is counted by U-Boot (KSLOT_TRIES) and decided by the guard: it must not roll the ROOT back
+[ -f /tmp/kernel-trial ] && n=-1
+if [ "$n" = -1 ]; then n=0; else n=$(( ${n:-0} + 1 )); echo "$n $b" > /data/.init-boot-attempts; sync; fi
 echo "$(t) $INIT-attempt-$n" >> /tmp/boot-times
 if [ "$n" -gt 2 ]; then
   echo "$(t) too many unconfirmed $INIT boots: rollback" >> /tmp/boot-times

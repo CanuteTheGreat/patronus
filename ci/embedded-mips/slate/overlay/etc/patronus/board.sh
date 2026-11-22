@@ -21,4 +21,21 @@ FREQ5="5180 5200 5220 5240 5260 5280 5300 5320 5500 5520 5540 5560 5580 5600 562
 UPLINKS="$WAN5_IF $WAN_IF"
 UPLINK_TABLES="$WAN5_IF:4241:30241 $WAN_IF:4242:30242"
 STA_MAC= STA5_MAC= AP5_MAC= AP24_MAC= MGMT_NET= GUARD_GW=
+# NOR kernel slots (patronus-flash kernel ..., /usr/libexec/patronus/nor-kernel; docs/embedded-routers.md 6e). GL's U-Boot always
+# boots the uImage at KSLOT_P_ADDR (the `kernel` partition); the trial kernel and the previous kernel live in OpenWrt's unused
+# `nor_reserved` partition. Only these partitions are ever written; u-boot and art never are (KSLOT_NEVER).
+KSLOT_P_MTD=kernel           KSLOT_P_OFF=0         KSLOT_P_ADDR=0x9f060000   # the committed kernel (what U-Boot boots)
+KSLOT_T_MTD=nor_reserved     KSLOT_T_OFF=0         KSLOT_T_ADDR=0x9f460000   # trial kernel (booted by the U-Boot script while armed)
+KSLOT_K_MTD=nor_reserved     KSLOT_K_OFF=0x400000  KSLOT_K_ADDR=0x9f860000   # previous kernel (kept by a commit: kernel-rollback)
+KSLOT_SIZE=0x400000          # bytes per slot (= the kernel partition)
+KSLOT_ENV_MTD=u-boot-env     KSLOT_ENV_SIZE=0x10000  KSLOT_ENV_CRC=be        # U-Boot 1.1.4 CFG_ENV_SIZE, CRC stored big-endian
+KSLOT_WRITABLE="u-boot-env kernel nor_reserved"
+KSLOT_NEVER="u-boot art"
+KSLOT_UBOOT_MTD=u-boot
+KSLOT_TRIES=3                # trial boots U-Boot gives a new kernel before it falls back to the committed one
+# bootloader builds whose boot flow (`run lf` before `bootm KSLOT_P_ADDR`) the trial script was proven against: sha256 of the
+# whole u-boot partition, and that build's default environment (used when the unit never saved one: bad CRC on the stock unit)
+KSLOT_UBOOT_PROVEN="6788d77c975e4e7c1020ea70aec0a19cc270ec899f968734854394b93027d2b7:/usr/share/patronus/uboot/gl-ar750s-1.1.4-gcf378d80.env"
+KSLOT_KERNEL_DIR=/usr/share/patronus/kernel   # kernels this root may install (<name>.uImage + SHA256SUMS); the root has their modules
+KSLOT_STATE=/data/kernel     # events + trial record (persistent)
 [ -f /etc/patronus/unit.conf ] && . /etc/patronus/unit.conf

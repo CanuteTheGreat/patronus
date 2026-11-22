@@ -1,0 +1,218 @@
+#!/bin/sh
+# nor-kernel: install a new NOR kernel on the GL-AR750S with a bootloader trial and a proven way back (docs/embedded-routers.md 6e).
+#   nor-kernel install <uImage|kver>   check the image, write it to the TRIAL slot, arm the U-Boot trial (KSLOT_TRIES boots)
+#   nor-kernel commit                  the trial kernel is confirmed: previous kernel -> K slot, trial -> the kernel partition
+#   nor-kernel abort [reason]          disarm the trial: the next boot runs the committed kernel again
+#   nor-kernel rollback                the K slot (kernel before the last commit) -> the kernel partition
+#   nor-kernel install-p <uImage>      write a kernel straight to the kernel partition, the old one kept in K (OpenWrt way back)
+#   nor-kernel boot-check              early boot: notice a trial boot (marker for the guard/init), a trial that never started,
+#                                      a trial U-Boot gave up on, or an interrupted commit (resumed)
+#   nor-kernel status                  slots, bootloader script state, events
+#   nor-kernel kver-of <P|T|K>         kernel version in a slot (empty if the slot holds no valid uImage)
+# How the trial works: GL's U-Boot (1.1.4, no saved environment on a stock unit) runs `run lf` before its hard-coded
+# `bootm <kernel partition>`. The installed script makes lf start with `run pat_boot`: while pat_try is set, every boot appends
+# one x to pat_try, saves the environment and boots the TRIAL slot; at pat_max it clears pat_try and falls through to the
+# committed kernel. bootcmd (run only when the kernel partition fails its CRC, e.g. a commit cut by a power loss) boots the
+# trial/previous slot. The kernel partition is only written after the trial kernel was confirmed (commit), so an unproven
+# kernel never replaces the one U-Boot boots by default.
+# Only KSLOT_WRITABLE partitions are written (never u-boot/art), each write is erased + written + read back (sha256).
+# Test hooks: PATRONUS_BOARD, PATRONUS_PROC_MTD, PATRONUS_MTD_DEV, FLASH_ERASE, PATRONUS_UNAME_R, PATRONUS_MODULES,
+#             PATRONUS_KSTATE, PATRONUS_GUARD_RUN, PATRONUS_FLASH_TMP, PATRONUS_RELEASE, PATRONUS_UNLZMA, PATRONUS_UBOOT_ENV_DIR
+BOARD=${PATRONUS_BOARD:-/etc/patronus/board.sh}; [ -f "$BOARD" ] && . "$BOARD"
+PROC_MTD=${PATRONUS_PROC_MTD:-/proc/mtd}
+MTDDEV=${PATRONUS_MTD_DEV:-/dev}
+ERASE=${FLASH_ERASE:-flash_erase}
+MODS=${PATRONUS_MODULES:-/lib/modules}
+STATE=${PATRONUS_KSTATE:-${KSLOT_STATE:-/data/kernel}}
+RUN=${PATRONUS_GUARD_RUN:-/tmp}
+REL=${PATRONUS_RELEASE:-/etc/patronus-release}
+UNLZMA=${PATRONUS_UNLZMA:-unlzma}
+W=${PATRONUS_FLASH_TMP:-/tmp}/nk.$$
+: "${KSLOT_TRIES:=3}" "${KSLOT_ENV_CRC:=be}"
+mkdir -p "$W"; trap 'rm -rf "$W"' EXIT
+
+log() { echo "nor-kernel: $*" >&2; logger -t patronus-flash "kernel: $*" 2>/dev/null || true; }
+die() { log "$*"; exit 2; }
+event() { mkdir -p "$STATE" 2>/dev/null && echo "$(date +%s) $*" >> "$STATE/events"; log "$*"; }
+uname_r() { echo "${PATRONUS_UNAME_R:-$(uname -r)}"; }
+sha() { sha256sum | cut -d' ' -f1; }
+
+# --- MTD partitions by name (/proc/mtd) ---
+mtd_info() { # name -> M_DEV M_SIZE M_ES
+  l=$(grep "\"$1\"\$" "$PROC_MTD" | head -n1); [ -n "$l" ] || { log "no MTD partition named $1"; return 1; }
+  set -- $l; M_DEV=$MTDDEV/${1%:}; M_SIZE=$((0x$2)); M_ES=$((0x$3)); [ -e "$M_DEV" ] || { log "$M_DEV missing"; return 1; }; }
+mtd_read() { # name off len -> stdout
+  mtd_info "$1" || return 1; o=$(($2)); n=$(($3))
+  [ $((o % M_ES)) -eq 0 ] || { log "read offset $o not aligned"; return 1; }
+  dd if="$M_DEV" bs="$M_ES" skip=$((o / M_ES)) count=$(((n + M_ES - 1) / M_ES)) 2>/dev/null | head -c "$n"; }
+mtd_write() { # name off file: erase, write, read back
+  case " $KSLOT_NEVER " in *" $1 "*) die "refusing to write the $1 partition";; esac
+  case " $KSLOT_WRITABLE " in *" $1 "*) ;; *) die "refusing to write $1 (not in KSLOT_WRITABLE)";; esac
+  mtd_info "$1" || return 1; o=$(($2)); n=$(wc -c < "$3")
+  [ $((o % M_ES)) -eq 0 ] || { log "write offset $o not aligned to $M_ES"; return 1; }
+  [ $((o + n)) -le "$M_SIZE" ] || { log "$3 ($n B at $o) does not fit $1 ($M_SIZE B)"; return 1; }
+  $ERASE -q "$M_DEV" "$o" $(((n + M_ES - 1) / M_ES)) >/dev/null 2>&1 || { log "erase of $1 failed"; return 1; }
+  dd if="$3" of="$M_DEV" bs="$M_ES" seek=$((o / M_ES)) conv=notrunc 2>/dev/null || { log "write to $1 failed"; return 1; }
+  [ "$(mtd_read "$1" "$o" "$n" | sha)" = "$(sha < "$3")" ] || { log "read-back of $1 differs"; return 1; }
+  log "wrote $n B to $1 at $o (read back ok)"; }
+slot() { # P|T|K -> S_MTD S_OFF S_ADDR
+  case "$1" in P) S_MTD=$KSLOT_P_MTD S_OFF=$KSLOT_P_OFF S_ADDR=$KSLOT_P_ADDR;; T) S_MTD=$KSLOT_T_MTD S_OFF=$KSLOT_T_OFF S_ADDR=$KSLOT_T_ADDR;;
+    K) S_MTD=$KSLOT_K_MTD S_OFF=$KSLOT_K_OFF S_ADDR=$KSLOT_K_ADDR;; *) die "unknown slot $1";; esac; }
+
+# --- uImage (legacy U-Boot image) ---
+hexat() { xxd -p -s "$2" -l "$3" "$1" | tr -d '\n'; }
+crc() { ${PATRONUS_CRC32:-crc32} | cut -c1-8 | tr 'A-F' 'a-f'; }   # busybox crc32 (stdin) = zlib CRC32 as %08x
+uimg() { # file -> 0 if a valid uImage; sets U_SIZE (total bytes) U_NAME U_KVER U_COMP
+  [ "$(wc -c < "$1")" -ge 64 ] && [ "$(hexat "$1" 0 4)" = 27051956 ] || return 1
+  ds=$((0x$(hexat "$1" 12 4))); U_SIZE=$((64 + ds)); [ "$(wc -c < "$1")" -ge "$U_SIZE" ] || return 1
+  [ "$({ head -c 4 "$1"; head -c 4 /dev/zero; tail -c +9 "$1" | head -c 56; } | crc)" = "$(hexat "$1" 4 4)" ] || return 1
+  [ "$(tail -c +65 "$1" | head -c "$ds" | crc)" = "$(hexat "$1" 24 4)" ] || return 1
+  U_COMP=$((0x$(hexat "$1" 31 1))); U_NAME=$(dd if="$1" bs=1 skip=32 count=32 2>/dev/null | tr -d '\000')
+  case "$U_NAME" in *Linux-*) U_KVER=${U_NAME##*Linux-};; *) U_KVER=;; esac; return 0; }
+slot_read() { # P|T|K file -> the slot's uImage (exactly its size) in file; 1 if no valid image
+  slot "$1"; mtd_read "$S_MTD" "$S_OFF" 64 > "$2" || return 1
+  [ "$(hexat "$2" 0 4)" = 27051956 ] || return 1; n=$((64 + 0x$(hexat "$2" 12 4))); [ "$n" -le $((KSLOT_SIZE)) ] || return 1
+  mtd_read "$S_MTD" "$S_OFF" "$n" > "$2" && uimg "$2"; }
+slot_write() { # P|T|K file
+  slot "$1"; [ "$(wc -c < "$2")" -le $((KSLOT_SIZE)) ] || { log "image larger than a slot"; return 1; }; mtd_write "$S_MTD" "$S_OFF" "$2"; }
+kver_of() { slot_read "$1" "$W/kv.bin" >/dev/null 2>&1 && echo "$U_KVER"; }
+
+# --- U-Boot environment (CRC32 + name=value\0 ... \0, CFG_ENV_SIZE bytes) ---
+ENV_VALID=0
+crc_bytes() { # 8 hex digits -> 4 raw bytes in KSLOT_ENV_CRC order
+  set -- $(echo "$1" | sed 's/../& /g'); [ "$KSLOT_ENV_CRC" = le ] && set -- $4 $3 $2 $1
+  for b in "$@"; do printf "\\$(printf %03o $((0x$b)))"; done; }
+env_load() { # -> $W/env.txt (one name=value per line); ENV_VALID=1 if the stored environment has a good CRC
+  mtd_read "$KSLOT_ENV_MTD" 0 $((KSLOT_ENV_SIZE)) > "$W/env.bin" || return 1
+  stored=$(hexat "$W/env.bin" 0 4); [ "$KSLOT_ENV_CRC" = le ] && stored=$(echo "$stored" | sed 's/\(..\)\(..\)\(..\)\(..\)/\4\3\2\1/')
+  if [ "$(tail -c +5 "$W/env.bin" | crc)" = "$stored" ]; then
+    ENV_VALID=1; tail -c +5 "$W/env.bin" | tr '\000\n' '\n\001' | awk 'length($0)==0{exit} {print}' > "$W/env.txt"
+  else ENV_VALID=0; f=$(proven_env) || { log "no valid bootloader environment and no proven default for this U-Boot"; return 1; }
+    cp "$f" "$W/env.txt"; fi; }
+env_get() { awk -v n="$1" 'index($0, n "=")==1 {print substr($0, length(n)+2); exit}' "$W/env.txt"; }
+env_put() { # name [value]: no value = delete (like setenv)
+  awk -v n="$1" 'index($0, n "=")!=1' "$W/env.txt" > "$W/env.tmp"; [ $# -ge 2 ] && [ -n "$2" ] && printf '%s=%s\n' "$1" "$2" >> "$W/env.tmp"
+  mv "$W/env.tmp" "$W/env.txt"; }
+env_write() { # $W/env.txt -> the env partition (CRC, padding), then read back and compared
+  tr '\n' '\000' < "$W/env.txt" > "$W/env.data"; head -c 1 /dev/zero >> "$W/env.data"
+  n=$(wc -c < "$W/env.data"); max=$((KSLOT_ENV_SIZE - 4)); [ "$n" -le "$max" ] || { log "environment too large ($n > $max)"; return 1; }
+  head -c $((max - n)) /dev/zero >> "$W/env.data"
+  { crc_bytes "$(crc < "$W/env.data")"; cat "$W/env.data"; } > "$W/env.new"
+  cp "$W/env.txt" "$W/env.want"; mtd_write "$KSLOT_ENV_MTD" 0 "$W/env.new" || return 1
+  env_load && [ "$ENV_VALID" = 1 ] && cmp -s "$W/env.txt" "$W/env.want" || { log "environment read-back differs"; return 1; }; }
+uboot_sha() { mtd_info "$KSLOT_UBOOT_MTD" >/dev/null 2>&1 || return 1; mtd_read "$KSLOT_UBOOT_MTD" 0 "$M_SIZE" | sha; }
+proven_env() { # the default environment of this exact bootloader build, if it is one the trial script was proven against
+  s=$(uboot_sha) || return 1
+  for p in $KSLOT_UBOOT_PROVEN; do [ "${p%%:*}" = "$s" ] || continue; f=${p#*:}
+    [ -n "${PATRONUS_UBOOT_ENV_DIR:-}" ] && f=$PATRONUS_UBOOT_ENV_DIR/${f##*/}; [ -f "$f" ] && { echo "$f"; return 0; }; done; return 1; }
+script_install() { # (re)write the pat_* script around the bootloader's own lf/bootcmd; keeps the originals for removal
+  case "$(env_get lf)" in "run pat_boot; "*) ;; *) env_put pat_orig_lf "$(env_get lf)";; esac
+  case "$(env_get bootcmd)" in "run pat_rescue; "*) ;; *) env_put pat_orig_bootcmd "$(env_get bootcmd)";; esac
+  max=o; i=0; while [ $i -lt "$KSLOT_TRIES" ]; do max=${max}x; i=$((i + 1)); done
+  env_put pat_ver 1; env_put pat_max "$max"; env_put pat_taddr "$KSLOT_T_ADDR"
+  env_put pat_boot 'if test -n "${pat_try}"; then if test "${pat_try}" = "${pat_max}"; then setenv pat_try; setenv pat_state failed; saveenv; else setenv pat_try ${pat_try}x; setenv pat_state trial; saveenv; echo patronus: trial kernel ${pat_kver} boot ${pat_try}; bootm ${pat_taddr}; fi; fi'
+  env_put pat_rescue 'bootm ${pat_r1}; bootm ${pat_r2}'
+  [ -n "$(env_get pat_r1)" ] || { env_put pat_r1 "$KSLOT_T_ADDR"; env_put pat_r2 "$KSLOT_K_ADDR"; }
+  env_put lf "run pat_boot; $(env_get pat_orig_lf)"; env_put bootcmd "run pat_rescue; $(env_get pat_orig_bootcmd)"; }
+
+# --- checks of a kernel this root may install ---
+board_id() { sed -n 's/^BOARD=//p' "$REL" 2>/dev/null | head -n1; }
+check_kernel() { # file -> 0 if installable (sets U_*)
+  f=$1; uimg "$f" || { log "$f is not a valid uImage (magic/header CRC/data CRC)"; return 1; }
+  [ -n "$U_KVER" ] || { log "image name '$U_NAME' carries no kernel version"; return 1; }
+  [ "$U_SIZE" -le $((KSLOT_SIZE)) ] || { log "kernel ($U_SIZE B) larger than a slot ($((KSLOT_SIZE)) B)"; return 1; }
+  mtd_info "$KSLOT_P_MTD" && [ "$U_SIZE" -le "$M_SIZE" ] || { log "kernel larger than the $KSLOT_P_MTD partition"; return 1; }
+  [ -s "$MODS/$U_KVER/modules.dep" ] || { log "this root has no modules for $U_KVER ($MODS/$U_KVER): the box would boot without network"; return 1; }
+  # the image must have been shipped with this root (sha256 listed in KSLOT_KERNEL_DIR/SHA256SUMS of the running root)
+  h=$(sha < "$f"); grep "^$h " "$KSLOT_KERNEL_DIR/SHA256SUMS" >/dev/null 2>&1 || { log "kernel $h is not one this root ships ($KSLOT_KERNEL_DIR/SHA256SUMS)"; return 1; }
+  if [ -f "$f.asc" ] && command -v gpgv >/dev/null 2>&1 && [ -f "${KSLOT_KEYRING:-/usr/share/patronus/release.gpg}" ]; then
+    gpgv --keyring "${KSLOT_KEYRING:-/usr/share/patronus/release.gpg}" "$f.asc" "$f" >/dev/null 2>&1 || { log "release signature of $f does not verify"; return 1; }; fi
+  b=$(board_id); [ -n "$b" ] || { log "no BOARD= in $REL"; return 1; }
+  [ "$U_COMP" = 3 ] || { log "kernel compression $U_COMP is not lzma: cannot check its device tree"; return 1; }
+  # DT strings are NUL-terminated (busybox grep stops a line at a NUL, so NULs become newlines); the property header before the
+  # first compatible string can end in a non-NUL byte (nameoff), so match the string at the END of a line, not preceded by a
+  # character that could belong to a longer compatible (glinet,gl-ar750s must not match glinet,gl-ar750s-nor-nand)
+  tail -c +65 "$f" | head -c $((U_SIZE - 64)) | $UNLZMA 2>/dev/null | tr '\000' '\n' | awk -v b="$b" '
+    { n = length($0) - length(b); if (n >= 0 && substr($0, n + 1) == b && (n == 0 || substr($0, n, 1) !~ /[A-Za-z0-9,._+-]/)) { f = 1; exit } }
+    END { exit !f }' || { log "kernel device tree is not for $b"; return 1; }
+  return 0; }
+
+# --- operations ---
+arm_env() { # kver
+  env_load || return 1; script_install; env_put pat_kver "$1"; env_put pat_try o; env_put pat_state armed; env_put pat_r1 "$KSLOT_T_ADDR"; env_put pat_r2 "$KSLOT_K_ADDR"; env_write; }
+cmd_install() {
+  a=$1; [ -n "$a" ] || die "usage: nor-kernel install <uImage|kver>"; [ -f "$a" ] || a=$KSLOT_KERNEL_DIR/$a.uImage; [ -f "$a" ] || die "no kernel $1"
+  proven_env >/dev/null || die "this unit's bootloader (u-boot sha256 $(uboot_sha)) is not one the trial script was proven on: no kernel install without a way back"
+  check_kernel "$a" || exit 2; kv=$U_KVER
+  env_load || exit 2; st=$(env_get pat_state)
+  case "$st" in committing) die "an interrupted commit is pending (nor-kernel commit first)";; esac
+  [ -n "$(env_get pat_try)" ] && die "a trial is already armed for $(env_get pat_kver) (abort it first)"
+  if slot_read P "$W/p.bin" && [ "$(sha < "$W/p.bin")" = "$(sha < "$a")" ]; then echo "kernel $kv is already the committed kernel"; return 0; fi
+  cp "$a" "$W/new.bin"
+  slot_write T "$W/new.bin" || die "writing the trial slot failed (nothing armed)"
+  arm_env "$kv" || die "writing the bootloader environment failed (nothing armed; the committed kernel boots)"
+  mkdir -p "$STATE"; echo "$kv $(sha < "$a") $(date +%s)" > "$STATE/trial"
+  event "trial armed: $kv in slot T ($KSLOT_TRIES boots), committed kernel $(kver_of P)"
+  echo "done: reboot to try $kv (U-Boot gives it $KSLOT_TRIES boots; a confirmed boot commits it, see patronus-guard)"; }
+cmd_commit() {
+  env_load || exit 2; kv=$(env_get pat_kver); st=$(env_get pat_state)
+  case "$st" in armed|trial|committing) ;; *) die "no trial to commit (pat_state=${st:-none})";; esac
+  [ "$st" = committing ] || [ "$(uname_r)" = "$kv" ] || [ -n "${FORCE:-}" ] || die "running $(uname_r), not the trial kernel $kv: refusing to commit"
+  slot_read T "$W/t.bin" && [ "$U_KVER" = "$kv" ] || die "slot T does not hold a valid $kv"
+  if slot_read P "$W/p.bin"; then
+    if [ "$(sha < "$W/p.bin")" != "$(sha < "$W/t.bin")" ]; then slot_write K "$W/p.bin" || die "saving the previous kernel to K failed (nothing changed)"; fi
+  fi
+  env_load; env_put pat_try; env_put pat_state committing; env_put pat_r1 "$KSLOT_T_ADDR"; env_put pat_r2 "$KSLOT_K_ADDR"; env_write || die "environment write failed before the commit"
+  slot_write P "$W/t.bin" || die "writing the kernel partition failed: U-Boot boots slot T through bootcmd; run nor-kernel commit again"
+  env_load; env_put pat_state committed; env_put pat_committed "$kv"; env_write || die "environment write failed after the commit (kernel partition already holds $kv)"
+  rm -f "$STATE/trial" "$RUN/kernel-trial"; event "committed $kv to the kernel partition (previous kernel $(kver_of K) kept in slot K)"; }
+cmd_abort() {
+  env_load || exit 2; kv=$(env_get pat_kver)
+  [ -n "$(env_get pat_try)" ] || [ "$(env_get pat_state)" = armed ] || [ "$(env_get pat_state)" = trial ] || { echo "no trial armed"; return 0; }
+  env_put pat_try; env_put pat_state aborted; env_write || die "environment write failed"
+  rm -f "$STATE/trial" "$RUN/kernel-trial"; event "trial of $kv aborted: ${1:-by request}; next boot: $(kver_of P)"; }
+cmd_install_p() { # file [src slot for the old one: K]
+  uimg "$1" || die "$1 is not a valid uImage"; cp "$1" "$W/new.bin"
+  if slot_read P "$W/p.bin"; then [ "$(sha < "$W/p.bin")" = "$(sha < "$W/new.bin")" ] && { echo "kernel partition already holds it"; return 0; }
+    slot_write K "$W/p.bin" || die "saving the current kernel to K failed (nothing changed)"; fi
+  if env_load 2>/dev/null; then env_put pat_try; env_put pat_state installing; env_put pat_r1 "$KSLOT_K_ADDR"; env_put pat_r2 "$KSLOT_T_ADDR"; env_write || true; fi
+  slot_write P "$W/new.bin" || die "writing the kernel partition failed: U-Boot boots slot K through bootcmd"
+  if env_load 2>/dev/null; then env_put pat_state installed; env_put pat_committed "$U_KVER"; env_put pat_r1 "$KSLOT_T_ADDR"; env_put pat_r2 "$KSLOT_K_ADDR"; env_write || true; fi
+  event "kernel partition now holds $U_KVER (previous kernel in slot K)"; }
+cmd_rollback() {
+  slot_read K "$W/k.bin" || die "slot K holds no valid kernel"; kk=$U_KVER
+  [ -s "$MODS/$kk/modules.dep" ] || [ -n "${KSLOT_ROOT_CHECKED:-}" ] || die "the running root has no modules for $kk"
+  slot_read P "$W/p.bin" && { [ "$(sha < "$W/p.bin")" = "$(sha < "$W/k.bin")" ] && { echo "already on $kk"; return 0; }; slot_write T "$W/p.bin" || die "saving the current kernel to T failed (nothing changed)"; }
+  if env_load 2>/dev/null; then script_install; env_put pat_try; env_put pat_state rolling-back; env_put pat_r1 "$KSLOT_K_ADDR"; env_put pat_r2 "$KSLOT_T_ADDR"; env_write || die "environment write failed (nothing changed)"; fi
+  slot_write P "$W/k.bin" || die "writing the kernel partition failed: U-Boot boots slot K through bootcmd"
+  if env_load 2>/dev/null; then env_put pat_state rolled-back; env_put pat_committed "$kk"; env_put pat_r1 "$KSLOT_T_ADDR"; env_put pat_r2 "$KSLOT_K_ADDR"; env_write || true; fi
+  event "kernel rolled back to $kk (the kernel it replaced is in slot T)"; }
+cmd_boot_check() {
+  env_load 2>/dev/null || return 0; [ "$ENV_VALID" = 1 ] || return 0
+  try=$(env_get pat_try); st=$(env_get pat_state); kv=$(env_get pat_kver); r=$(uname_r)
+  if [ -n "$try" ]; then
+    if [ "$r" = "$kv" ]; then echo "$try" > "$RUN/kernel-trial"; event "trial boot of $kv ($try)"
+      [ -s "$MODS/$kv/modules.dep" ] || { cmd_abort "this root has no modules for $kv"; return 3; }
+    else cmd_abort "the trial kernel $kv did not start (U-Boot booted $r)"; fi
+  elif [ "$st" = failed ]; then env_put pat_state failed-seen; env_write; event "U-Boot gave up on the trial kernel $kv after $KSLOT_TRIES boots: running $r"
+  elif [ "$st" = committing ]; then event "resuming an interrupted commit of $kv"; ( FORCE=1 "$0" commit >/dev/null 2>&1 & )
+  fi; return 0; }
+cmd_status() {
+  for s in P T K; do if slot_read $s "$W/s.bin" 2>/dev/null; then echo "slot $s: $U_NAME ($U_SIZE B, sha256 $(sha < "$W/s.bin" | cut -c1-16))"; else echo "slot $s: no valid kernel"; fi; done
+  echo "running: $(uname_r)"; echo "bootloader: u-boot sha256 $(uboot_sha 2>/dev/null | cut -c1-16) proven=$(proven_env >/dev/null 2>&1 && echo yes || echo no)"
+  if env_load 2>/dev/null; then echo "environment: $([ "$ENV_VALID" = 1 ] && echo saved || echo "not saved (bootloader defaults)")"
+    for v in pat_state pat_kver pat_try pat_max pat_committed; do echo "  $v=$(env_get $v)"; done; fi
+  [ -f "$STATE/events" ] && { echo "events:"; tail -n 10 "$STATE/events"; }; return 0; }
+
+case "$1" in
+  install) cmd_install "$2" ;;
+  commit) cmd_commit ;;
+  abort) shift; cmd_abort "$*" ;;
+  rollback) cmd_rollback ;;
+  install-p) cmd_install_p "$2" ;;
+  boot-check) cmd_boot_check ;;
+  status) cmd_status ;;
+  kver-of) kver_of "$2"; exit 0 ;;
+  env-get) env_load && env_get "$2" ;;
+  *) sed -n '2,10p' "$0"; exit 2 ;;
+esac

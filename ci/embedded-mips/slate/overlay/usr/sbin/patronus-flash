@@ -1,17 +1,27 @@
 #!/bin/sh
-# patronus-flash: write root images on the Slate's UBI (the NOR kernel is OpenWrt's and is never touched here).
+# patronus-flash: write root images on the Slate's UBI, and NOR kernels through a bootloader trial.
 #   patronus-flash root <rootfs.squashfs>      install a new Patronus root, keep /data (settings): A/B, old root kept as rootfs_prev
 #   patronus-flash openwrt [root.squashfs|sysupgrade.bin] [config.tgz]
-#                                              back to stock OpenWrt (+ its config backup restored at first boot)
-#   patronus-flash rollback                    swap rootfs and rootfs_prev (boot the previous root again)
+#                                              back to stock OpenWrt (+ its config backup restored at first boot; the NOR kernel is
+#                                              put back to the recovery root's own kernel when it differs)
+#   patronus-flash rollback                    swap rootfs and rootfs_prev (boot the previous root again; the NOR kernel follows
+#                                              when the previous root has no modules for it)
 #   patronus-flash factory-reset               wipe the settings (patronus_data) at the next boot: first-run flow again
+#   patronus-flash kernel <uImage|kver>        try a new NOR kernel: trial slot + U-Boot trial, committed after a confirmed boot
+#   patronus-flash kernel-commit|kernel-abort|kernel-rollback|kernel-status   (see /usr/libexec/patronus/nor-kernel)
 # All steps keep the running root mounted: UBI renames work on a mounted volume (UBI_METAONLY open).
-# Test hooks: PATRONUS_UBI (UBI device), PATRONUS_UBI_SYS (sysfs ubi class dir), PATRONUS_FLASH_TMP, PATRONUS_RECOVERY, PATRONUS_DATA.
+# Test hooks: PATRONUS_UBI (UBI device), PATRONUS_UBI_SYS (sysfs ubi class dir), PATRONUS_FLASH_TMP, PATRONUS_RECOVERY, PATRONUS_DATA,
+#             PATRONUS_NOR_KERNEL, PATRONUS_MODULES.
 set -e
 UBI=${PATRONUS_UBI:-/dev/ubi0}
 REC=${PATRONUS_RECOVERY:-/usr/share/patronus-recovery}
 T=${PATRONUS_FLASH_TMP:-/tmp}/pf
 DATA=${PATRONUS_DATA:-/data}
+NK=${PATRONUS_NOR_KERNEL:-/usr/libexec/patronus/nor-kernel}
+MODS=${PATRONUS_MODULES:-/lib/modules}
+kernels_here() { ls "$MODS" 2>/dev/null | tr '\n' ' '; }
+# the NOR kernel must have modules in the root that boots next: a root without them comes up with no network
+nk_ok() { [ -x "$NK" ] && [ -n "$("$NK" kver-of P 2>/dev/null)" ]; }
 log() { echo "patronus-flash: $*"; logger -t patronus-flash "$*" 2>/dev/null || true; }
 # volume id by name: mtd-utils' ubinfo when the image has it, else sysfs. The way back (guard revert, boot-loop rollback) must
 # work with busybox's ubi applets alone: an image without mtd-utils once could not revert itself.
@@ -41,9 +51,16 @@ root)
     log "could not write next to rootfs_prev (no room?): dropping it and retrying (no rollback to the old previous root after this)"
     rmvol rootfs_new; rmvol rootfs_prev; write_vol rootfs_new "$2"
   fi
+  echo "$(kernels_here)" > $DATA/.root-prev-kernels   # the root that becomes rootfs_prev: what a rollback can boot
   swap_in; rm -f $DATA/.init-boot-attempts; sync ;;
 openwrt)
   SRC=${2:-$REC/openwrt-root.squashfs}; CFG=${3-$REC/sysupgrade.tgz}
+  # the recovery root runs only on its own kernel (its modules): put that kernel back into the NOR kernel partition first
+  # (before anything on UBI changes; the kernel it replaces is kept in slot K)
+  if [ -z "${2:-}" ] && [ -f "$REC/openwrt-kernel.bin" ] && nk_ok; then
+    "$NK" abort "reverting to OpenWrt" >/dev/null 2>&1
+    "$NK" install-p "$REC/openwrt-kernel.bin" || { log "could not put the recovery kernel back: not reverting the root"; exit 1; }
+  fi
   rm -rf $T; mkdir -p $T
   if tar tf "$SRC" >/dev/null 2>&1; then tar xf "$SRC" -C $T; SRC=$(ls $T/sysupgrade-*/root); fi
   head -c4 "$SRC" | grep -q hsqs || { echo "no OpenWrt root squashfs in $SRC"; exit 2; }
@@ -55,14 +72,26 @@ openwrt)
     log "OpenWrt config backup placed for restore at first boot"
   fi
   # a later Patronus install must not inherit this root's unconfirmed-boot count (it rolled back a fresh install at once)
-  swap_in; rm -f $DATA/.init-boot-attempts; sync ;;
+  swap_in; rm -f $DATA/.init-boot-attempts $DATA/.root-prev-kernels; sync ;;
 rollback)
   [ -n "$(volid rootfs_prev)" ] || { echo "no rootfs_prev"; exit 2; }
+  # the previous root must have modules for the kernel U-Boot boots; if not, the kernel kept in slot K (the one before the
+  # last kernel commit) goes back too, else refuse (a root without its kernel's modules has no network)
+  if [ -s $DATA/.root-prev-kernels ] && nk_ok; then
+    pk=$("$NK" kver-of P); case " $(cat $DATA/.root-prev-kernels) " in *" $pk "*) ;; *)
+      kk=$("$NK" kver-of K); case " $(cat $DATA/.root-prev-kernels) " in *" ${kk:-none} "*)
+        log "previous root has no modules for $pk: kernel goes back to $kk too"; KSLOT_ROOT_CHECKED=1 "$NK" rollback || exit 1 ;;
+      *) log "previous root has no modules for kernel $pk (and slot K holds ${kk:-nothing usable}): refusing"; exit 2 ;; esac ;; esac
+  fi
+  echo "$(kernels_here)" > $DATA/.root-prev-kernels.new
   ubirename $UBI rootfs rootfs_new rootfs_prev rootfs
-  ubirename $UBI rootfs_new rootfs_prev; rm -f $DATA/.init-boot-attempts; log "rolled back to the previous root"; sync ;;
+  ubirename $UBI rootfs_new rootfs_prev; rm -f $DATA/.init-boot-attempts; mv -f $DATA/.root-prev-kernels.new $DATA/.root-prev-kernels 2>/dev/null
+  log "rolled back to the previous root"; sync ;;
+kernel) shift; exec "$NK" install "$@" ;;
+kernel-commit|kernel-abort|kernel-rollback|kernel-status) c=${1#kernel-}; shift; exec "$NK" "$c" "$@" ;;
 factory-reset)
   # rcS sees the marker before mounting the overlays and wipes the stored settings, TLS key and overlays
   touch $DATA/.factory-reset; sync; log "factory reset scheduled for the next boot" ;;
-*) sed -n '2,9p' "$0"; exit 2 ;;
+*) sed -n '2,15p' "$0"; exit 2 ;;
 esac
 echo "done: reboot to use it"

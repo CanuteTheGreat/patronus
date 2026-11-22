@@ -3,6 +3,8 @@
 Patronus on the GL-AR750S keeps OpenWrt's NOR kernel (6.12.112, never rewritten) and puts a musl/busybox
 Patronus root on the NAND UBI `rootfs` volume. Settings live on their own UBI volume `patronus_data`
 (overlays for `/etc`, `/var/lib`, `/root`). Proven on a real unit 2026-11-13 (docs/embedded-routers.md, section 6b).
+The NOR kernel is changed only through `patronus-flash kernel` (bootloader trial, commit after a confirmed boot, previous kernel
+kept; docs/embedded-routers.md 6e, proof `tests/nor-kernel-test.sh`).
 
 | Step | Where | File |
 |---|---|---|

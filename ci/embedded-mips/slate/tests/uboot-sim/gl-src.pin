@@ -1,0 +1,7 @@
+# GL.iNet's U-Boot for QCA95xx (the GL-AR750S bootloader is built from it): https://github.com/gl-inet/uboot-for-qca95xx
+# Pinned commit and sha256 of the files ubsim takes verbatim (hush parser, test/echo from command.c, run from main.c).
+GL_COMMIT=3c79e2ed26aa9b75dca01f262d6d4d9fe7a5513f
+GL_HUSH_C=4dfdbe555b535303b45e441e65084e9397d792969dc7a3ab88ad8ddbdf21ac42
+GL_COMMAND_C=8efb25b12eb79a060ddb38cc5bd7e2d86a597a5b0a13f161fcb3746910c374b3
+GL_MAIN_C=02e21344eac965bb59040772fb135508f08e47beae02fede8a10926d5e8a0a0a
+GL_HUSH_H=681d0de098e5f4af207f106e31b00d9d3b26307eeaaa4d1065d252cfe338635e

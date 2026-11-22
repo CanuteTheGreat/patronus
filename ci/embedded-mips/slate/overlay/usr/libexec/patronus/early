@@ -34,6 +34,15 @@ mkdir -p /var/lib/patronus /var/lib/misc /data/tls
 [ -s /etc/hostname ] && hostname "$(head -n1 /etc/hostname)"   # the image's own /etc/hostname (UNIT_HOSTNAME in unit.conf, else the hw profile), or the user's later edit
 mark data-mounted
 
+# 1b. NOR kernel trial (patronus-flash kernel): note a trial boot for the guard (it commits or aborts it), abort a trial whose
+#     kernel this root has no modules for (back to the committed kernel at once), resume an interrupted commit
+if [ -x /usr/libexec/patronus/nor-kernel ]; then
+  /usr/libexec/patronus/nor-kernel boot-check >/tmp/nor-kernel.log 2>&1; rc=$?
+  [ -f /tmp/kernel-trial ] && mark "kernel-trial $(uname -r) $(cat /tmp/kernel-trial)"
+  [ "$rc" = 3 ] && { mark kernel-trial-aborted-no-modules; sync; /bin/busybox reboot -f; }
+fi
+[ -d /lib/modules/$(uname -r) ] || mark "NO-MODULES for kernel $(uname -r): this root cannot bring up the network"
+
 # 2. kernel modules (OpenWrt's kmods for this exact kernel), in OpenWrt's /etc/modules.d order;
 #    dependencies from modules.dep (generated at image build with depmod), loaded deepest first
 KM=/lib/modules/$(uname -r)

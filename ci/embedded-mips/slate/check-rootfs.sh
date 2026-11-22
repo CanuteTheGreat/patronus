@@ -35,6 +35,25 @@ for f in usr/sbin/wpa_supplicant usr/sbin/dropbearmulti usr/sbin/hostapd usr/sbi
 for f in usr/sbin/patronus-guard usr/sbin/patronus-flash usr/sbin/patronus-init usr/libexec/patronus/early etc/patronus-init etc/pam.d/patronus lib/security/pam_unix.so; do
   [ -e "$R/$f" ] || fail "missing /$f"; done
 [ -n "${NOR_PROFILE:-}" ] || [ -e "$R/usr/share/patronus-recovery/openwrt-root.squashfs" ] || fail "missing the recovery root"
+# kernel modules: a root boots only on kernels it has modules for. Every kernel it may be booted on (the stock NOR kernel, each
+# REQUIRED_KERNELS entry, each kernel shipped for `patronus-flash kernel`) needs lib/modules/<kver>/modules.dep, and the
+# KERNELS= list in /etc/patronus-release must match (patronus-flash records it to refuse a rollback onto a root without them)
+for k in ${REQUIRED_KERNELS:-}; do [ -s "$R/lib/modules/$k/modules.dep" ] || fail "no modules for kernel $k (lib/modules/$k/modules.dep): the box would boot without network"; done
+if [ -d "$R/usr/share/patronus/kernel" ]; then
+  [ -s "$R/usr/share/patronus/kernel/SHA256SUMS" ] || fail "shipped kernels without SHA256SUMS"
+  for f in "$R"/usr/share/patronus/kernel/*.uImage; do [ -f "$f" ] || continue; k=$(basename "$f" .uImage)
+    [ -s "$R/lib/modules/$k/modules.dep" ] || fail "ships kernel $k but has no modules for it"; done
+  [ -x "$R/usr/libexec/patronus/nor-kernel" ] || fail "ships kernels but no /usr/libexec/patronus/nor-kernel"
+fi
+for k in $(ls "$R/lib/modules" 2>/dev/null); do [ -s "$R/lib/modules/$k/modules.dep" ] || fail "lib/modules/$k without modules.dep"; done
+if [ -f "$R/etc/patronus-release" ] && grep '^KERNELS=' "$R/etc/patronus-release" >/dev/null; then
+  [ "$(sed -n 's/^KERNELS=//p' "$R/etc/patronus-release")" = "$(ls "$R/lib/modules" | tr '\n' ' ' | sed 's/ $//')" ] || fail "KERNELS= in /etc/patronus-release does not match lib/modules"
+fi
+# the NOR kernel tool needs these applets/tools on the device (a missing one would make the trial or the way back fail)
+if [ -x "$R/usr/libexec/patronus/nor-kernel" ]; then
+  for b in xxd crc32 awk flash_erase sha256sum unlzma cmp; do
+    for d in bin sbin usr/bin usr/sbin; do [ -e "$R/$d/$b" ] || [ -L "$R/$d/$b" ] && continue 2; done; fail "nor-kernel needs $b"; done
+fi
 # the init system recorded for patronus-init must be in the image (busybox init is not a variant)
 . "$R/etc/patronus-init" 2>/dev/null
 case "${INIT:-}" in

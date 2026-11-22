@@ -269,6 +269,76 @@ Fix (all board scripts, both init systems):
 - The early boot takes the hostname from `/etc/hostname` (unit value `UNIT_HOSTNAME`, else the hardware profile); nothing is
   hard-coded.
 
+### 6e. Changing the NOR kernel: a bootloader trial with a way back (2026-11-21)
+
+The kernel of the GL-AR750S lives in NOR (`kernel` partition, uImage at 0x9f060000); the Patronus root is a squashfs on the NAND
+UBI. A root flash never touches the kernel and the guard (6b) only rolls the ROOT back, so a kernel change alone is not atomic:
+new kernel + a root without its modules = no network, and the guard could not put the kernel back. Since 2026-11-21 a kernel
+change is mechanical and has a proven way back (`patronus-flash kernel ...`, implemented in `/usr/libexec/patronus/nor-kernel`).
+
+**What GL's U-Boot does on every power-on** (U-Boot 1.1.4 from github.com/gl-inet/uboot-for-qca95xx, `common/main.c` for
+CONFIG_AR750S; read from the source, matched against the unit's own `u-boot` partition):
+- environment: 64 KiB `u-boot-env` (CFG_ENV_SIZE 0x10000), CRC32 stored big-endian. On a stock unit it was never saved (all
+  0xff), so U-Boot runs its compiled-in defaults (kept as `overlay/usr/share/patronus/uboot/gl-ar750s-1.1.4-gcf378d80.env`).
+- `bootcount` is kept in RAM only (bootcount_store is AR300M-only); `bootlimit` is unset. No boot counter survives a power-on.
+- the boot is hard-coded: `run lf` (the TFTP auto-recovery: `ping $serverip` fails on a normal network), then
+  `bootm 0x9f060000`; only if that bootm fails does it run `bootcmd` (stock: a NAND boot that fails, then the web failsafe).
+- hush parser, `test`, `setenv`, `saveenv`, `run` are built in.
+
+**Slots** (board.sh `KSLOT_*`, all configurable): P = the `kernel` partition (what U-Boot boots), T = trial slot at
+`nor_reserved`+0 (0x9f460000), K = previous kernel at `nor_reserved`+4 MiB (0x9f860000), each 4 MiB. `nor_reserved` holds only
+stale data from GL's stock NOR firmware (nothing reads it; it is in the unit's NOR backup). `u-boot` and `art` are refused by
+the code (`KSLOT_NEVER`), only `u-boot-env`, `kernel` and `nor_reserved` are ever written, every write is erase + write + read
+back (sha256).
+
+**Trial script** (written into the environment by `patronus-flash kernel`): `lf` becomes `run pat_boot; <GL's lf>` and
+`bootcmd` becomes `run pat_rescue; <GL's bootcmd>`. While `pat_try` is set, every power-on adds one `x` to it, saves the
+environment and boots slot T; when it reaches `pat_max` (KSLOT_TRIES, default 3) U-Boot clears it and falls through to P by
+itself. `pat_rescue` boots T, then K, when P is unreadable (a commit cut by a power loss). GL's own recovery variables (`lu`,
+`rlf`, `lc`, `firmware_addr` ...) are kept verbatim.
+
+**Sequence**
+1. `patronus-flash kernel <kver|uImage>` checks before anything is written: valid uImage (magic, header and data CRC), the
+   image is one THIS root ships (`/usr/share/patronus/kernel/SHA256SUMS`, so only kernels built together with the running root
+   can be installed), the root has `lib/modules/<kver>/modules.dep`, the kernel's device tree names this board (`BOARD=` of
+   `/etc/patronus-release`), it fits a slot and the partition, and the unit's bootloader is a build the script was proven
+   against (`KSLOT_UBOOT_PROVEN`: sha256 of the whole `u-boot` partition). Then it writes T and arms the trial.
+2. Power-on: U-Boot boots T. The early boot (`nor-kernel boot-check`) notes the trial (`/tmp/kernel-trial`); patronus-init does
+   not count the boot against the root; a trial kernel the root has no modules for is aborted at once.
+3. The guard decides: a confirmed boot (`patronus-guard ok`, or the unattended gateway check) runs `kernel-commit` (P -> K,
+   T -> P, ~1 min of NOR writes); an unconfirmed one runs `kernel-abort` and restarts on P. A kernel that never reaches
+   userspace is dropped by U-Boot after KSLOT_TRIES power-ons.
+4. `patronus-flash kernel-rollback` puts K back into P; `kernel-status` shows slots, bootloader state and events
+   (`/data/kernel/events`).
+- Every root carries modules for the stock kernel AND the kernels it ships (`EXTRA_KMOD_ROOTS`, `KERNEL_IMAGES` in assemble.sh;
+  `KERNELS=` in /etc/patronus-release; check-rootfs refuses a root missing any of them), so either kernel boots either root.
+- `patronus-flash rollback` records which kernels each root has (`/data/.root-prev-kernels`) and moves the kernel back too
+  when the previous root lacks modules for the NOR kernel (refuses if slot K doesn't help); `patronus-flash openwrt` first
+  puts the recovery root's own kernel (`/usr/share/patronus-recovery/openwrt-kernel.bin`) back into P.
+
+**Size** (OpenWrt 25.12.6 ath79/nand, xz 256 KiB squashfs): a second module set (6.12.118 next to 6.12.112, 4.0 MiB raw) costs
++1208 KiB; the shipped new uImage ~2.95 MiB and the recovery kernel ~2.9 MiB (the stock uImage shipped for `kernel 6.12.112` is
+the same file and is deduplicated). NAND root 16.1 -> ~23 MiB; the UBI holds rootfs_new + rootfs + rootfs_prev of that size.
+The NOR-only tier does not use it: there kernel and root are always written together (a second module set would take 1208 of
+its 2304 KiB free).
+
+**Proof without the unit** (`tests/nor-kernel-test.sh`, CI job `slate-nor-kernel`): fake MTD partitions with the board's layout;
+nor-kernel runs under busybox sh with only busybox applets on PATH (the unit's tool set); every power-on is `tests/uboot-sim`:
+GL's own hush parser and `test`/`echo`/`run` compiled from the pinned source (`gl-src.pin`, sha256-checked) inside the AR750S
+main_loop, the default environment on a bad CRC, CRC checks in `bootm`. Covered: refusals (bad CRC, other board, too big, no
+modules, not shipped by the root, unproven bootloader, a slot on `u-boot`/`art`) with flash unchanged; trial -> commit ->
+rollback; a hanging trial kernel dropped by U-Boot after 3 power-ons; an unconfirmed trial aborted by the guard; a corrupted
+trial slot; a trial kernel without modules; a power cut at EVERY flash erase of install and commit (each one boots a kernel and
+ends consistent, the blanked `kernel` partition boots slot T via `pat_rescue` and the early boot resumes the commit); a blank
+environment. It also runs with the real images (`REAL=<dir>`: the unit's `u-boot` partition dump and the real 6.12.112 / 6.12.118
+uImages). Found by it before any flash: busybox `grep` stops a line at a NUL, so the device-tree check needs `tr '\000' '\n'`.
+
+**Only the unit can show**: that this U-Boot build reads slots T/K through the 16 MiB memory-mapped flash window (0x9f460000,
+0x9f860000; a failed bootm there falls through to P, so the risk is a wasted trial, not a dead unit), that its `saveenv` on the
+SPI flash behaves as the source says, and the real NOR write time of a commit. First flash: watch the serial-less boot through
+`kernel-status` and the boot banner (`patronus: trial kernel ... boot ox`), with the U-Boot web failsafe (section 9) as the last
+resort, which no part of this sequence touches.
+
 ## 6a. Local web UI (the LuCI equivalent)
 
 **Yes: the Slate keeps a local web UI, and it is the real Patronus UI**, not a lite copy. Decision rule that was applied: try the straight port first; fall back to a `web-lite` only if it missed the 16 MiB slot or a 25-30 MB RSS cap. It met both, so no second UI exists to maintain.
