@@ -342,7 +342,9 @@ pub async fn ap_role_guard(
         })
         .render()
         {
-            Ok(h) => Html(h).into_response(),
+            Ok(h) => {
+                Html(h.replace("@PATRONUS_VERSION@", env!("CARGO_PKG_VERSION"))).into_response()
+            }
             Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page"),
         };
     }

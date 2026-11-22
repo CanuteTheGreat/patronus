@@ -23,7 +23,9 @@ pub struct LoginTemplate;
 
 pub(crate) fn render(t: &impl Template, what: &str) -> Response {
     match t.render() {
-        Ok(html) => Html(html).into_response(),
+        Ok(html) => {
+            Html(html.replace("@PATRONUS_VERSION@", env!("CARGO_PKG_VERSION"))).into_response()
+        }
         Err(e) => {
             tracing::error!("Failed to render {what} template: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
@@ -189,7 +191,7 @@ pub async fn diagnostics(me: crate::auth::AuthUser) -> Response {
         is_admin: me.session.role.is_admin(),
     };
     match t.render() {
-        Ok(h) => Html(h).into_response(),
+        Ok(h) => Html(h.replace("@PATRONUS_VERSION@", env!("CARGO_PKG_VERSION"))).into_response(),
         Err(e) => {
             tracing::error!("render diagnostics page: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
@@ -276,4 +278,18 @@ pub async fn system(State(state): State<AppState>, me: crate::auth::AuthUser) ->
         cpu: host::cpu_model(),
     };
     render(&template, "system")
+}
+
+#[cfg(test)]
+mod version_footer_tests {
+    use super::*;
+
+    #[test]
+    fn shell_shows_version_in_sidebar_footer() {
+        let r = render(&LoginTemplate, "login");
+        assert!(r.status().is_success());
+        let src = include_str!("../../templates/base.html");
+        assert!(src.contains("sidebar-version"));
+        assert!(src.contains("@PATRONUS_VERSION@"));
+    }
 }
