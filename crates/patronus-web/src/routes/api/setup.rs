@@ -170,6 +170,58 @@ async fn completed(state: &AppState) -> bool {
         .is_some_and(|v| v == "1")
 }
 
+/// Wizard defaults from what the box already has. An installed image's LAN port carries the installer's address (for
+/// example 10.77.0.1/24); a form that defaults to 192.168.1.1/24 would, on a plain Apply, move the router away from the
+/// address the operator is connected to. Returns `{interface, ipv4, dhcp_start, dhcp_end}` for the first non-WAN port with a
+/// permanent IPv4 address (the port with role `lan` wins).
+pub fn suggest_lan(ifs: &[serde_json::Value]) -> Option<serde_json::Value> {
+    let permanent_v4 = |d: &serde_json::Value| -> Option<(std::net::Ipv4Addr, u32)> {
+        d["addresses"].as_array()?.iter().find_map(|a| {
+            if a["dynamic"].as_bool().unwrap_or(false) {
+                return None;
+            }
+            let (ip, len) = a["address"].as_str()?.split_once('/')?;
+            let ip: std::net::Ipv4Addr = ip.parse().ok()?;
+            let len: u32 = len.parse().ok()?;
+            (8..=29).contains(&len).then_some((ip, len))
+        })
+    };
+    let candidates = || ifs.iter().filter(|d| d["role"].as_str() != Some("wan"));
+    let pick = candidates()
+        .filter(|d| d["role"].as_str() == Some("lan"))
+        .find_map(|d| permanent_v4(d).map(|a| (d, a)))
+        .or_else(|| candidates().find_map(|d| permanent_v4(d).map(|a| (d, a))))?;
+    let (d, (ip, len)) = pick;
+    let mask = u32::MAX << (32 - len);
+    let net = u32::from(ip) & mask;
+    let size = 1u64 << (32 - len);
+    // the pool lives in the upper part of the subnet and never covers the router's own address
+    let (lo, hi) = if size >= 256 {
+        (100u32, 199u32)
+    } else {
+        ((size / 2) as u32, (size - 2) as u32)
+    };
+    let off = u32::from(ip) - net;
+    let (lo, hi) = if (lo..=hi).contains(&off) {
+        if size >= 256 {
+            (200, 249)
+        } else {
+            (0, 0)
+        }
+    } else {
+        (lo, hi)
+    };
+    let mut out = json!({
+        "interface": d["name"],
+        "ipv4": format!("{ip}/{len}"),
+    });
+    if hi >= lo && hi != 0 {
+        out["dhcp_start"] = json!(std::net::Ipv4Addr::from(net + lo).to_string());
+        out["dhcp_end"] = json!(std::net::Ipv4Addr::from(net + hi).to_string());
+    }
+    Some(out)
+}
+
 /// GET /api/setup/status -> {completed, interfaces: [{name, role, up, addresses}]}
 pub async fn status(State(state): State<AppState>) -> Response {
     let ov = match state.interfaces.overview(None).await {
@@ -200,8 +252,10 @@ pub async fn status(State(state): State<AppState>) -> Response {
     let role = DeviceRole::from_env();
     // an AP never waits for the router wizard, whatever the store says
     let done = completed(&state).await || !role.wizard_applies();
+    let suggested_lan = suggest_lan(&ifs);
     Json(json!({
         "completed": done,
+        "suggested_lan": suggested_lan,
         "role": role.as_str(),
         "wizard": role.wizard_applies(),
         "interfaces": ifs,
@@ -512,5 +566,39 @@ mod tests {
             .await
             .unwrap());
         assert!(done(&s).await);
+    }
+
+    #[test]
+    fn lan_defaults_follow_the_address_the_port_already_has() {
+        let ifs = vec![
+            json!({"name": "enp0s1", "role": "wan", "addresses": [{"address": "10.0.2.15/24", "dynamic": true}]}),
+            json!({"name": "enp0s2", "role": null, "addresses": [{"address": "10.77.0.1/24", "dynamic": false}]}),
+        ];
+        let s = suggest_lan(&ifs).unwrap();
+        assert_eq!(s["interface"], "enp0s2");
+        assert_eq!(s["ipv4"], "10.77.0.1/24");
+        assert_eq!(s["dhcp_start"], "10.77.0.100");
+        assert_eq!(s["dhcp_end"], "10.77.0.199");
+        // the router address inside the usual pool range moves the pool out of the way
+        let ifs = vec![json!({"name": "lan0", "role": "lan", "addresses": [{"address": "192.168.5.150/24", "dynamic": false}]})];
+        let s = suggest_lan(&ifs).unwrap();
+        assert_eq!(s["dhcp_start"], "192.168.5.200");
+        assert_eq!(s["dhcp_end"], "192.168.5.249");
+        // a /25 gets the upper half
+        let ifs = vec![json!({"name": "lan0", "role": "lan", "addresses": [{"address": "172.16.0.1/25", "dynamic": false}]})];
+        let s = suggest_lan(&ifs).unwrap();
+        assert_eq!(s["dhcp_start"], "172.16.0.64");
+        assert_eq!(s["dhcp_end"], "172.16.0.126");
+    }
+
+    #[test]
+    fn no_lan_suggestion_without_a_permanent_address() {
+        // a WAN port, a DHCP lease and a loopback-sized prefix are never offered as the LAN
+        let ifs = vec![
+            json!({"name": "wan0", "role": "wan", "addresses": [{"address": "10.0.0.2/24", "dynamic": false}]}),
+            json!({"name": "eth1", "role": null, "addresses": [{"address": "10.1.0.5/24", "dynamic": true}]}),
+            json!({"name": "eth2", "role": null, "addresses": [{"address": "fe80::1/64", "dynamic": false}]}),
+        ];
+        assert!(suggest_lan(&ifs).is_none());
     }
 }

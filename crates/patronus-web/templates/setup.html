@@ -71,6 +71,14 @@
         if (roles.wan) f['wan_interface'].value = roles.wan;
         if (roles.lan) f['lan_interface'].value = roles.lan;
         else if (d.interfaces.length > 1) f['lan_interface'].selectedIndex = 1;
+        // an installed box already has a LAN address: offer it instead of the stock 192.168.1.1/24
+        const s = d.suggested_lan;
+        if (s && !f['lan_ipv4'].dataset.touched) {
+            if (!roles.lan) f['lan_interface'].value = s.interface;
+            f['lan_ipv4'].value = s.ipv4;
+            if (s.dhcp_start) { f['dhcp_start'].value = s.dhcp_start; f['dhcp_end'].value = s.dhcp_end; }
+            f['lan_ipv4'].dataset.touched = '1';
+        }
     }
     async function runSetup(ev) {
         ev.preventDefault();
