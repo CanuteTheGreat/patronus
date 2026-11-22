@@ -14,15 +14,21 @@ INIT=${1:?usage: qemu-gate.sh <openrc|systemd> <image-dir>}; I=$(readlink -f "${
 K=${VIRT_KERNEL:?VIRT_KERNEL}; KEY=${UNIT_DIR:?UNIT_DIR}/ci_ed25519
 RES=${RESULTS:-/out/qemu-$INIT}; mkdir -p "$RES"; : > "$RES/results.txt"
 TMO=${BOOT_TIMEOUT:-1200}
-SQ=$(ls "$I"/root.squashfs); TAR=$(ls "$I"/patronus-*-sysupgrade.tar)
+SQ=$(ls "$I"/root.squashfs 2>/dev/null || true); TAR=$(ls "$I"/patronus-*-sysupgrade.tar)
 QP=; SLP=; W=$(mktemp -d "${TMPDIR:-/tmp}/ax-qemu.XXXX"); trap 'kill $QP $SLP ${FEEDPID:-} 2>/dev/null; rm -rf "$W"' EXIT
 # test copy of the root: the board's kmods replaced by the same pinned netfilter packages built for the virt kernel
 # (kmods.pin "virt"), so the firewall applies for real; everything else is the shipped image byte for byte
+# GATE_ROOT_IMG=<file>: a test root prepared earlier (qemu-bundle.sh, GATE_PREP_ONLY below) so a small test host needs neither the
+# squashfs tools nor the kmod download; GATE_PREP_ONLY=<file>: prepare that test root, copy it there and stop
+if [ -n "${GATE_ROOT_IMG:-}" ]; then cp "$GATE_ROOT_IMG" "$W/root.img"
+else
 unsquashfs -q -d "$W/r" "$SQ" >/dev/null || { echo "unsquashfs failed"; exit 1; }
 KV=$(ls "$W/r/lib/modules"); rm -rf "$W/r/lib/modules/$KV" "$W/r/etc/modules.d"; mkdir -p "$W/r/etc/modules.d"
 sh "$(dirname "$0")/fetch-kmods.sh" virt "$W/r" "${KMOD_CACHE:-/cache/kmods}" || exit 1
 depmod -b "$W/r" "$KV"; : > "$W/r/etc/patronus/qemu-kmods"
 mksquashfs "$W/r" "$W/root.img" -comp xz -b 256K -noappend -no-xattrs -all-root -quiet >/dev/null; rm -rf "$W/r"
+fi
+if [ -n "${GATE_PREP_ONLY:-}" ]; then cp "$W/root.img" "$GATE_PREP_ONLY"; echo "prepared $GATE_PREP_ONLY"; exit 0; fi
 truncate -s 256M "$W/data.img"; mkfs.ext4 -q -F -L patronus_data "$W/data.img"
 # the address trial moves the unit from its DHCP address (10.0.2.15) to a static one (10.0.2.78): slirp forwards each
 # host port to ONE guest address, so the static address gets its own ssh/web ports (RP = the ssh port R uses now)
@@ -229,7 +235,7 @@ wifi_persisted() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi)
   [ "$c" = 200 ] && has_all "$g" '"ssid":"CI Gate Net"' '"chan24":"6"' '"ssid":"CI Gate IoT"' || { echo "after restart: $c $g"; return 1; }; }
 
 # the features this build has (FEATURES= in /etc/patronus-release): their checks run only when built in
-FEATURES=$(unsquashfs -cat "$SQ" etc/patronus-release 2>/dev/null | sed -n 's/^FEATURES=//p')
+FEATURES=$(unsquashfs -cat "$W/root.img" etc/patronus-release 2>/dev/null | sed -n 's/^FEATURES=//p')
 has_feature() { case ",$FEATURES," in *",$1,"*) return 0;; esac; return 1; }
 login() { rm -f "$W/jar"; c=$(curl -sk -c "$W/jar" -o /dev/null -w '%{http_code}' -m 60 -H 'content-type: application/json' \
     -d "{\"username\":\"cigate\",\"password\":\"$FRPW\"}" https://127.0.0.1:$WEBP/api/auth/login); [ "$c" = 200 ] || { echo "login HTTP $c"; return 1; }; }
