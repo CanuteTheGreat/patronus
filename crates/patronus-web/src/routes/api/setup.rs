@@ -580,12 +580,16 @@ mod tests {
         assert_eq!(s["dhcp_start"], "10.77.0.100");
         assert_eq!(s["dhcp_end"], "10.77.0.199");
         // the router address inside the usual pool range moves the pool out of the way
-        let ifs = vec![json!({"name": "lan0", "role": "lan", "addresses": [{"address": "192.168.5.150/24", "dynamic": false}]})];
+        let ifs = vec![
+            json!({"name": "lan0", "role": "lan", "addresses": [{"address": "192.168.5.150/24", "dynamic": false}]}),
+        ];
         let s = suggest_lan(&ifs).unwrap();
         assert_eq!(s["dhcp_start"], "192.168.5.200");
         assert_eq!(s["dhcp_end"], "192.168.5.249");
         // a /25 gets the upper half
-        let ifs = vec![json!({"name": "lan0", "role": "lan", "addresses": [{"address": "172.16.0.1/25", "dynamic": false}]})];
+        let ifs = vec![
+            json!({"name": "lan0", "role": "lan", "addresses": [{"address": "172.16.0.1/25", "dynamic": false}]}),
+        ];
         let s = suggest_lan(&ifs).unwrap();
         assert_eq!(s["dhcp_start"], "172.16.0.64");
         assert_eq!(s["dhcp_end"], "172.16.0.126");
