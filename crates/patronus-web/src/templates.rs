@@ -743,7 +743,10 @@ mod tests {
         }
         .render()
         .unwrap();
-        assert!(up.contains("Route up") && up.contains("10.0.2.2") && up.contains("enp0s1"), "{up}");
+        assert!(
+            up.contains("Route up") && up.contains("10.0.2.2") && up.contains("enp0s1"),
+            "{up}"
+        );
     }
 
     /// A failed VPN read must not render as a plain "0" (finding: a box
