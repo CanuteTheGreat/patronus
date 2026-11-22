@@ -52,14 +52,15 @@ export default function Cluster() {
           <p className="mb-6 text-gray-600 dark:text-gray-300">
             Leader: <strong data-testid="cluster-leader">{view.leader_id ?? 'none elected'}</strong> &middot; term {view.term}
           </p>
-          <div className="overflow-x-auto rounded-lg">
+          <p className="mb-1 text-xs text-gray-500 dark:text-gray-400 md:hidden">Swipe the table sideways to see all columns.</p>
+          <div className="overflow-x-auto rounded-lg" tabIndex={0} role="region" aria-label="Cluster members (scrolls horizontally)">
           <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 rounded-lg bg-white dark:bg-gray-800 shadow">
             <thead className="bg-gray-50 dark:bg-gray-900 text-left text-xs uppercase text-gray-500 dark:text-gray-400">
               <tr>
                 <th className="px-4 py-3">Node</th>
                 <th className="px-4 py-3">Role</th>
-                <th className="px-4 py-3">Term</th>
-                <th className="px-4 py-3">Log / committed / applied</th>
+                <th className="px-4 py-3" title="Election round; a higher term means a newer leader">Term</th>
+                <th className="px-4 py-3" title="Replication progress: entries received / agreed by a majority / applied to this node's config">Replication (received / agreed / applied)</th>
                 <th className="px-4 py-3">Address</th>
               </tr>
             </thead>
@@ -72,7 +73,7 @@ export default function Cluster() {
                     <td className="px-4 py-3 font-medium">
                       <span className="inline-flex items-center gap-2">
                         {m.reachable ? <Server className="h-4 w-4" /> : <WifiOff className="h-4 w-4 text-red-500 dark:text-red-400" />}
-                        {s?.node_id ?? m.addr}
+                        {s?.node_id ?? (m.reachable ? m.addr : `Node at ${m.addr}`)}
                         {m.is_self && <span className="text-xs text-gray-500 dark:text-gray-400">(serving this page)</span>}
                       </span>
                     </td>
@@ -82,7 +83,7 @@ export default function Cluster() {
                           {isLeader && <Crown className="h-4 w-4" />}{s?.role}
                         </span>
                       ) : (
-                        <span className="text-red-700 dark:text-red-400">Unreachable</span>
+                        <span className="text-red-700 dark:text-red-400" title={`No answer from ${m.addr}; check that the node is powered on and its HA port is reachable`}>Unreachable (no answer)</span>
                       )}
                     </td>
                     <td className="px-4 py-3">{s?.term ?? '-'}</td>
