@@ -110,6 +110,7 @@ class Lan:
         with self.lock: self.frames.append(f)
 
     def send(self, f):
+        f = f + bytes(max(0, 60 - len(f)))        # Ethernet minimum: the emulated NIC of newer QEMU drops runt frames (a 42-byte ARP reply never reached the guest)
         try: self.s.sendall(struct.pack("!I", len(f)) + f)
         except OSError: pass
 
@@ -156,8 +157,28 @@ class Lan:
         offered = p[16:20]
         f, p, o = talk(bytes([53, 1, 3, 50, 4]) + offered + bytes([54, 4]) + socket.inet_aton(LAN) + host, 5)
         self.ip = socket.inet_ntoa(p[16:20]); self.rmac = f[6:12]
+        self.announce()
         return {"ip": self.ip, "router": socket.inet_ntoa(o.get(3, b"\0\0\0\0")[:4]), "dns": socket.inet_ntoa(o.get(6, b"\0\0\0\0")[:4]),
                 "lease": struct.unpack("!I", o.get(51, b"\0\0\0\0"))[0]}
+
+    def announce(self):
+        """gratuitous ARP for the leased address: the router learns our MAC at once (the reply of a DNS query must not wait for an ARP round trip)"""
+        ip = socket.inet_aton(self.ip)
+        self.send(b"\xff" * 6 + self.MAC + b"\x08\x06" + struct.pack("!HHBBH", 1, 0x0800, 6, 4, 1) + self.MAC + ip + bytes(6) + ip)
+
+    def diag(self):
+        """what the client saw, and the router's view (neighbour table, DNS listeners, dnsmasq log): evidence for a DNS timeout"""
+        with self.lock: fs = list(self.frames)
+        kinds = {}
+        for f in fs:
+            k = "arp" if f[12:14] == b"\x08\x06" else "ip%d" % f[23] if f[12:14] == b"\x08\x00" and len(f) > 23 else "ip6" if f[12:14] == b"\x86\xdd" else "other"
+            kinds[k] = kinds.get(k, 0) + 1
+        try:
+            g = R("ip neigh show dev br-lan; ping -c2 -W5 %s >/dev/null 2>&1; echo ping-rc=$?; ip neigh show dev br-lan; netstat -lnu | grep ':53 '; grep -i dnsmasq /var/log/messages | tail -3 | cut -c1-120" % self.ip, 90)[1]
+        except Exception as e: g = repr(e)
+        arp, ipb = b"\x08\x06", socket.inet_aton(self.ip)
+        asked = sum(1 for f in fs if f[12:14] == arp and f[20:22] == b"\x00\x01" and f[38:42] == ipb)
+        return "client saw %d frames %s, ARP requests for %s: %d; guest: %s" % (len(fs), kinds, self.ip, asked, g.replace("\n", " | "))
 
     @staticmethod
     def opts(p):
@@ -190,14 +211,14 @@ class Lan:
                         i += ln
                     return rcode, addrs
             time.sleep(0.4)
-        raise AssertionError(f"no DNS answer for {name} from {LAN}")
+        raise AssertionError(f"no DNS answer for {name} from {LAN}; " + self.diag())
 
 
 # ------------------------------------------------------------------ the emulator
 def qemu_start(n, data):
     global QP
     cmd = [QEMU, "-M", "malta", "-cpu", "24Kc", "-m", "128", "-kernel", os.path.join(B, "vmlinux.elf"),
-           "-drive", f"file={W}/root.img,format=raw,if=ide,index=0", "-drive", f"file={data},format=raw,if=ide,index=1",
+           "-drive", f"file={W}/root.img,format=raw,if=ide,index=0", "-drive", f"file={data},format=raw,if=ide,index=1,cache=unsafe",   # a throwaway disk: no host flushes (dnsmasq fsyncs its lease file; under a low IO priority host that stalled DNS for minutes)
            "-append", "root=/dev/sda rootfstype=squashfs ro console=ttyS0 init=/usr/sbin/patronus-init patronus.data=/dev/sdb panic=-1",
            "-nographic", "-monitor", "none", "-serial", "file:" + os.path.join(RES, f"serial-boot{n}.txt"), "-no-reboot",
            # eth0 = LAN port (the emulator's user network 10.0.66.0/24: ssh, web 443 and the http redirect on 80 are forwarded to the router's LAN address)
