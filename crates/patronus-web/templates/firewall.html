@@ -75,6 +75,7 @@
             <label class="check"><input type="checkbox" id="wg-private" onchange="setWanGuard()"> Block private networks and loopback (10/8, 172.16/12, 192.168/16, 100.64/10, 127/8, fc00::/7)</label>
             <label class="check"><input type="checkbox" id="wg-bogons" onchange="setWanGuard()"> Block bogon networks (reserved, documentation, multicast and future-use ranges)</label>
         </fieldset>
+        <div class="table-container">
         <table id="rules-table">
             <thead><tr>
                 <th>#</th><th>Name</th><th>Chain</th><th>Interface</th><th>Action</th><th>Proto</th>
@@ -109,6 +110,7 @@
             {% endfor %}
             </tbody>
         </table>
+        </div>
         {% if filter_rules.is_empty() %}<p class="empty">No filter rules: everything inbound and forwarded is dropped.</p>{% endif %}
 
         <form id="rule-form" onsubmit="return saveRule(event)">
