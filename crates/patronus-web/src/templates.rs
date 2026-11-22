@@ -724,9 +724,15 @@ mod tests {
             ("firewall", "Firewall"),
         ] {
             let html = InterfacesTemplate { page: slug }.render().unwrap();
-            let crumb = html.split("class=\"breadcrumbs\"").nth(1).expect("breadcrumbs");
+            let crumb = html
+                .split("class=\"breadcrumbs\"")
+                .nth(1)
+                .expect("breadcrumbs");
             let crumb = &crumb[..crumb.find("</div>").unwrap()];
-            assert!(crumb.contains(&format!("<span>{label}</span>")), "{slug}: {crumb}");
+            assert!(
+                crumb.contains(&format!("<span>{label}</span>")),
+                "{slug}: {crumb}"
+            );
         }
     }
 
