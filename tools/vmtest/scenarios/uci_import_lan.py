@@ -90,6 +90,8 @@ def define(args):
         rep = m.fw.succeed(f"patronus import-uci /root/uci {maps} 2>&1", timeout=120)
         leak = [w for w in (SRV_PRIV, "private_key", "preshared_key") if w in dry or w in rep]
         m.check("import-report-has-no-key", not leak, f"{len(rep.splitlines())} report lines, lan={lan} wan={wan}")
+        print("--- import report (dhcp/pool/lease/lan lines):\n" + "\n".join(
+            l for l in (dry + "\n" + rep).splitlines() if any(w in l.lower() for w in ("dhcp", "pool", "lease", "lan", "unmapped"))), flush=True)
         again = m.fw.succeed(f"patronus import-uci /root/uci {maps} 2>&1", timeout=120)
         peers = m.fw.succeed("wg show wg0 peers 2>/dev/null | wc -l; true").strip()
         m.check("second-import-adds-nothing", "wireguard wg0: already present" in again, f"peers on wg0 before apply: {peers or 'n/a'}")
