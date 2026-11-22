@@ -103,3 +103,6 @@ THIRD-PARTY-LICENSES.txt.gz
 /releases/*.tar.gz
 /releases/*.sha256
 /output/
+
+# vendored Horcrux test fixture (fake PSK); part of the common/ TREE.sha256
+!gentoo/live-iso/common/tests/fixtures/profiles/generic-desktop/secrets/
