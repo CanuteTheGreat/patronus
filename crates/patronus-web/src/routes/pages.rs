@@ -79,6 +79,10 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
     let vpn_errors = vpn.read_errors();
     let system_info = state.system.get_info().await.unwrap_or_default();
     let services = state.system.list_services().await.unwrap_or_default();
+    let gw = patronus_network::apwifi::default_gateway(
+        &std::fs::read_to_string("/proc/net/route").unwrap_or_default(),
+    )
+    .unwrap_or_default();
     let template = DashboardTemplate {
         page: "dashboard",
         uptime: host::format_duration(system_info.uptime),
@@ -88,6 +92,8 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
         vpn_errors,
         system_info,
         services,
+        internet_dev: gw.0,
+        internet_gw: gw.1,
     };
     render(&template, "dashboard")
 }

@@ -20,6 +20,9 @@ pub struct DashboardTemplate {
     pub system_info: SystemInfo,
     pub uptime: String,
     pub services: Vec<Service>,
+    /// Default IPv4 route as `(device, gateway)`; empty = no route to the internet.
+    pub internet_dev: String,
+    pub internet_gw: String,
 }
 
 /// Firewall template
@@ -714,9 +717,33 @@ mod tests {
             system_info: SystemInfo::default(),
             uptime: "1 min".into(),
             services: vec![],
+            internet_dev: String::new(),
+            internet_gw: String::new(),
         }
         .render()
         .unwrap()
+    }
+
+    /// The dashboard says whether the box has a way out, and through where.
+    #[test]
+    fn dashboard_shows_the_default_route_or_says_there_is_none() {
+        let none = dashboard(0, vec![]);
+        assert!(none.contains("No default route"), "{none}");
+        let up = DashboardTemplate {
+            page: "dashboard",
+            interfaces: vec![],
+            active_rules: 0,
+            vpn_connections: 0,
+            vpn_errors: vec![],
+            system_info: SystemInfo::default(),
+            uptime: "1 min".into(),
+            services: vec![],
+            internet_dev: "enp0s1".into(),
+            internet_gw: "10.0.2.2".into(),
+        }
+        .render()
+        .unwrap();
+        assert!(up.contains("Route up") && up.contains("10.0.2.2") && up.contains("enp0s1"), "{up}");
     }
 
     /// A failed VPN read must not render as a plain "0" (finding: a box
