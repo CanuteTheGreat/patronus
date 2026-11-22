@@ -1516,3 +1516,27 @@ station under 50 ms, and the unlimited control is no better (100 ms): that delay
 depth, which is what this limit controls, but from contention and retries on the channel (and the client's own
 upstream queue of TCP acknowledgements). Band steering of capable clients to 5 GHz (12.18b) is the remedy there.
 5 GHz keeps mac80211's limits (its rates make the same budget a short queue).
+
+### 12.21 The embedded kernel tracks its LTS line (2026-11-21, `ci/embedded-openwrt/`)
+
+Before: both AP images and the QEMU gate booted OpenWrt 25.12.6's kernel (6.12.112) byte for byte, and the Slate keeps the same kernel in NOR.
+OpenWrt's release branch lags kernel.org's LTS point releases (branch head 6.12.116 while 6.12.118 was out), so the house routers ran
+kernels with known security fixes missing. Now the kernel is rebuilt from the pinned OpenWrt tag (`kernel.pin`: `OWRT_TAG`, `KERNEL_LINE`,
+`KERNEL_PATCH`, `KERNEL_SHA256`) with only the kernel version and tarball hash changed (OpenWrt's patch set and kernel config stay); the
+GL-AX1800 image takes that build's sysupgrade kernel, its kmod apks, and the Wi-Fi modules rebuilt in the same tree (`build-kmods.sh TREE=...`,
+same AQL/ATF patches). The line is configuration (`KERNEL_LINE` in `kernel.pin`), never code.
+
+- `kernel-track.sh --check` (CI `kernel-track.yml`, daily) is red when the pin lags kernel.org by more than `MAX_LAG_DAYS` (3); `--bump` moves the two pin lines.
+- the project agent host's cron `kernel-track` runs `--bump` daily and, on a newer patch, queues ONE job: build per board (`build-owrt.sh ax1800|virt|slate`), upload the
+  artefacts as Forgejo generic packages (`publish-pins.py` also moves `stock.pin`, `kmods.pin`, `sdk.pin`, `wifi-kmods.pin`), run the gates, ff-merge, build the per-unit AP
+  images and queue the house-AP window flash (`flash-queue/`, started by cron `ap-window-flash-gate` at 00:55 America/Los_Angeles, flashes only 01:00-05:00, .10 first).
+- 6.12.118 needed (stable moved contexts OpenWrt's tag did not know; `patches/6.12.118/`): `623-v6.18-pppoe-remove-rwlock-usage` refreshed (stable's
+  `__delete_item()`/`delete_item()` take the socket); dropped because stable already has the change: `732-...mt76-wed...`, `788-...qmi_wwan-Quectel-EG120K-EA`,
+  `210-wireless_netns_local_backport` (stable renamed `netns_local` to `netns_immutable`, the package patch mapped it back and broke mac80211); dropped because the
+  driver is not built by any of our kernels: `750-net-pcs-mtk-lynxi...` (CONFIG_PCS_MTK_LYNXI unset), `0305-pinctrl-qcom-IPQ5018...` (CONFIG_PINCTRL_IPQ5018 only on ipq50xx).
+  `patch-survey.sh` lists every non-applying patch of a series at once (and tells "already in the kernel" from "context moved").
+- `fetch-stock.sh` reused an unpacked stock root from a cache volume whenever `.done` existed: a kernel bump built an image with the OLD modules
+  ("stock kernel modules: 6.12.112" next to a 6.12.118 Wi-Fi tar). The marker now holds the sysupgrade's sha256.
+- Slate (GL-AR750S): the kernel lives in NOR, the Patronus root in UBI on NAND, and `patronus-guard` rolls back only the root, so a kernel change is not atomic and an
+  old/new mismatch strands the unit (no network, guard cannot revert the kernel). The 6.12.118 ath79 image is built but NOT flashed: it needs a root that carries the modules of
+  both kernels and a NOR write whose rollback is proven first (open item).

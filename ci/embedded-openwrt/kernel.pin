@@ -1,0 +1,13 @@
+# Kernel of the embedded tier (GL-AX1800 APs, GL-AR750S Slate, QEMU virt/malta gates).
+# The embedded images boot OpenWrt's kernel byte for byte; OpenWrt's release branch lags kernel.org's LTS point
+# releases (25.12.6 ships 6.12.112, its branch head 6.12.116, kernel.org has 6.12.118), so the kernel is rebuilt from
+# the pinned OpenWrt release tag with ONLY the kernel version + tarball hash changed (OpenWrt's own patch set,
+# config and kmods stay). ci/embedded-openwrt/kernel-track.sh moves KERNEL_PATCH/KERNEL_SHA256 to the newest patch
+# of KERNEL_LINE automatically; the line itself is configuration (change it here, nowhere in the code).
+OWRT_TAG=v25.12.6
+OWRT_GIT=https://github.com/openwrt/openwrt.git
+KERNEL_LINE=6.12
+KERNEL_PATCH=118
+KERNEL_SHA256=08308460320e852ac0745b2be3c7ae1cd81bdad713506ed7d817ba1ec9e1a5a5
+# sha256 of the OpenWrt files the tag ships with (what a bump replaces), checked by the build so a retagged release is noticed
+OWRT_STOCK_PATCH=112

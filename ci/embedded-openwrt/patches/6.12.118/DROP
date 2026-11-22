@@ -1,0 +1,12 @@
+# OpenWrt kernel patches dropped for exactly this kernel, one file name per line (build-owrt.sh removes them from the tag's tree before building).
+# Allowed reasons, checked with patch-survey.sh + the targets' kernel configs (2026-11-21):
+#  - the 6.12.118 stable kernel already contains the change (the patch applies in reverse):
+732-v6.18-wifi-mt76-wed-use-proper-wed-reference-in-mt76-wed-d.patch
+788-v7.3-net-usb-qmi_wwan-add-Quectel-EG120K-EA.patch
+#  - the context moved in stable AND none of our kernels builds the driver it patches (CONFIG_PCS_MTK_LYNXI is unset for qualcommax/ipq60xx,
+#    armsr/armv8 and ath79/nand; CONFIG_PINCTRL_IPQ5018 only in qualcommax/ipq50xx, not ipq60xx), so the built kernel is identical with or without it:
+750-net-pcs-mtk-lynxi-workaround-2500BaseX-no-an.patch
+0305-pinctrl-qcom-IPQ5018-update-pwm-groups.patch
+#  - an OpenWrt build patch that compensates for a kernel change the 6.12.118 stable kernel already has: stable renamed net_device.netns_local to
+#    netns_immutable, the package patch maps it back (mac80211 then fails: 'struct net_device' has no member named 'netns_local'):
+210-wireless_netns_local_backport.patch

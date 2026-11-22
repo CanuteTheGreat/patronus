@@ -21,22 +21,34 @@ if ! command -v make >/dev/null || ! command -v zstd >/dev/null; then
     patch diffutils findutils which >/dev/null
 fi
 W=${WORK:-/tmp/wifi-kmods}; mkdir -p "$W"; cd "$W"
-f=$(basename "$SDK_URL")
-[ -s "$f" ] || curl -sfL -o "$f" "$SDK_URL"
-echo "$SDK_SHA256  $f" | sha256sum -c - >/dev/null || { echo "build-kmods: SDK sha256 mismatch" >&2; rm -f "$f"; exit 1; }
-[ -d sdk ] || { mkdir sdk; tar --zstd -xf "$f" -C sdk --strip-components=1; }
-cd sdk
-# the base feed at the release tag carries package/kernel/mac80211 (the SDK itself only has the toolchain + kernel tree)
-grep -q "^src-git --root=package base .*\^$OWRT_BASE_REV\$" feeds.conf.default || { echo "build-kmods: SDK feeds.conf does not pin base to $OWRT_BASE_REV" >&2; exit 1; }
-[ -d feeds/base ] || FORCE_UNSAFE_CONFIGURE=1 ./scripts/feeds update base >/dev/null
-./scripts/feeds install kmod-ath11k-ahb >/dev/null
-M=$(readlink -f package/feeds/base/mac80211); [ -d "$M/patches/ath11k" ] || { echo "build-kmods: mac80211 package not found in the base feed" >&2; exit 1; }
+if [ -n "${TREE:-}" ]; then
+  # TREE=<OpenWrt build root of the release whose kernel the image boots> (ci/embedded-openwrt/build-owrt.sh output): same package, no SDK
+  # download; its .config already selects the Wi-Fi modules and its kernel is the one the image boots (kernel.pin).
+  cd "$TREE"; MPATH=package/kernel/mac80211
+else
+  f=$(basename "$SDK_URL")
+  [ -s "$f" ] || curl -sfL -o "$f" "$SDK_URL"
+  echo "$SDK_SHA256  $f" | sha256sum -c - >/dev/null || { echo "build-kmods: SDK sha256 mismatch" >&2; rm -f "$f"; exit 1; }
+  [ -d sdk ] || { mkdir sdk; tar --zstd -xf "$f" -C sdk --strip-components=1; }
+  cd sdk
+  # the base feed at the release tag carries package/kernel/mac80211 (the SDK itself only has the toolchain + kernel tree)
+  grep -q "^src-git --root=package base .*\^$OWRT_BASE_REV\$" feeds.conf.default || { echo "build-kmods: SDK feeds.conf does not pin base to $OWRT_BASE_REV" >&2; exit 1; }
+  [ -d feeds/base ] || FORCE_UNSAFE_CONFIGURE=1 ./scripts/feeds update base >/dev/null
+  ./scripts/feeds install kmod-ath11k-ahb >/dev/null
+  MPATH=package/feeds/base/mac80211
+fi
+M=$(readlink -f "$MPATH"); [ -d "$M/patches/ath11k" ] || { echo "build-kmods: mac80211 package not found in the base feed" >&2; exit 1; }
+# OpenWrt package patches that the pinned kernel makes wrong (ci/embedded-openwrt/patches/<kver>/DROP, same list the kernel build used): a
+# patch that maps netns_immutable back to netns_local breaks mac80211 on a stable kernel that already has the rename
+DROPF="$HERE/../../../embedded-openwrt/patches/$KVER/DROP"
+if [ -f "$DROPF" ]; then for n in $(sed -e '/^#/d' -e '/^$/d' "$DROPF"); do rm -f "$M"/patches/*/"$n"; done; fi
 # patches: ath11k/9xx-* go to the driver set, subsys/9xx-* to mac80211 (applied after OpenWrt's own, in name order)
 for p in "$HERE"/patches/*.patch; do
   case $(basename "$p") in ath11k-*) d=ath11k;; mac80211-*) d=subsys;; *) echo "build-kmods: unknown patch $p" >&2; exit 1;; esac
   cp "$p" "$M/patches/$d/99$(basename "$p" | sed 's/^[a-z0-9]*-//; s/^/0-/')" ; done
 ls "$M/patches/ath11k" | grep '^990-' >/dev/null || { echo "build-kmods: no patches staged" >&2; exit 1; }
-cat > .config <<EOF
+if [ -z "${TREE:-}" ]; then
+  cat > .config <<EOF
 CONFIG_PACKAGE_kmod-ath11k-ahb=m
 CONFIG_PACKAGE_kmod-ath11k=m
 CONFIG_PACKAGE_kmod-mac80211=m
@@ -46,7 +58,9 @@ CONFIG_ALL_KMODS=n
 CONFIG_ALL_NONSHARED=n
 CONFIG_ALL=n
 EOF
-make defconfig >/dev/null
+  make defconfig >/dev/null
+fi
+
 if [ "${REUSE_BUILD:-0}" != 1 ]; then  # REUSE_BUILD=1: only re-stage a finished build of this work dir
   make -j"$(nproc)" package/mac80211/clean >/dev/null 2>&1 || true
   make -j"$(nproc)" package/mac80211/compile V=s > "$OUT/build.log" 2>&1 || { tail -60 "$OUT/build.log"; exit 1; }

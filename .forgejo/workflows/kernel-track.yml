@@ -1,0 +1,29 @@
+name: Embedded kernel tracks its LTS line
+
+# The embedded tier boots OpenWrt's kernel rebuilt at the newest patch of the pinned LTS line (ci/embedded-openwrt/kernel.pin).
+# This job is the lag alarm: it is red when kernel.org has a newer patch release of the line than the pin for more than
+# MAX_LAG_DAYS. The remedy runs on the agent host (cron kernel-track: --bump on a branch, build, gates, ff-merge, queued window flash).
+# Also runs the host tests of the tracker (feeds it local release data).
+on:
+  schedule:
+    - cron: '23 9 * * *'
+  push:
+    paths:
+      - 'ci/embedded-openwrt/**'
+      - '.forgejo/workflows/kernel-track.yml'
+  workflow_dispatch:
+
+jobs:
+  track:
+    name: Kernel pin vs kernel.org (lag alarm + tracker tests)
+    runs-on: linux-any
+    timeout-minutes: 10
+    container:
+      image: catthehacker/ubuntu:act-latest
+      options: --memory 512m --memory-swap 512m --cpus 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tracker host tests
+        run: sh ci/embedded-openwrt/tests/run.sh
+      - name: Lag alarm
+        run: sh ci/embedded-openwrt/kernel-track.sh --check
