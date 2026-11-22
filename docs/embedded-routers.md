@@ -1619,5 +1619,5 @@ same AQL/ATF patches). The line is configuration (`KERNEL_LINE` in `kernel.pin`)
 - `fetch-stock.sh` reused an unpacked stock root from a cache volume whenever `.done` existed: a kernel bump built an image with the OLD modules
   ("stock kernel modules: 6.12.112" next to a 6.12.118 Wi-Fi tar). The marker now holds the sysupgrade's sha256.
 - Slate (GL-AR750S): the kernel lives in NOR, the Patronus root in UBI on NAND, and `patronus-guard` rolls back only the root, so a kernel change is not atomic and an
-  old/new mismatch strands the unit (no network, guard cannot revert the kernel). The 6.12.118 ath79 image is built but NOT flashed: it needs a root that carries the modules of
-  both kernels and a NOR write whose rollback is proven first (open item).
+  old/new mismatch strands the unit (no network, guard cannot revert the kernel). Since 6e the root carries the modules of both kernels and the kernel goes through
+  `patronus-flash kernel-rehearse` / `kernel <kver>`: a U-Boot trial with automatic fallback, commit after a confirmed boot, the previous kernel kept (proof and limits in 6e).
