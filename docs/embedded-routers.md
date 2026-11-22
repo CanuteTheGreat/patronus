@@ -1402,8 +1402,33 @@ disconnect", not real-world timing.
 
 Limits: a dual-band station without 802.11v (many TVs, some IoT) cannot be asked and stays on 2.4 GHz; OpenWrt-style
 probe suppression is impossible because the firmware answers probes. hostapd 2.10 prints `supp_op_classes` only when
-the station sent the element (most phones and laptops do); a station that did not is asked only after it was seen on
-this unit's 5 GHz once.
+the station sent the element (the phone tested below did; most smart-home devices send none); a station that did not is
+asked only after it was seen on this unit's 5 GHz once.
+
+Hardware (GL-AX1800, one unit, 2026-11-22, image with kernel 6.12.118, `AP_STEER=off` so only band steering acted,
+`AP_BANDSTEER_AFTER=30` for the client tests only):
+- A Wi-Fi 6 Android phone (screen off, dozing) on the 2.4 GHz BSS at -15 dBm: measured (it heard the 5 GHz BSS at
+  -23 dBm), asked once, accepted, on 5 GHz within a second, no disconnect, still answering pings afterwards.
+- A wpa_supplicant client that may change band (no frequency pin), three runs with fresh MACs: each time measured,
+  asked once (it heard 5 GHz at -27 dBm), accepted, moved without a disconnect; longest gap in 1/s pings from a wired
+  host 1-2 s, no lost pings beyond that. Sent back to 2.4 GHz by hand, it was recorded as `band-back` and held for
+  `AP_STEER_RETRY`. wpa_supplicant ignores `bssid_hint` when the 5 GHz BSS is better, so such a client joins 5 GHz
+  directly: the test roams it to 2.4 GHz first.
+- A client pinned to 2.4 GHz (`freq_list`) advertises only 2.4/6 GHz operating classes, so it never shows 5 GHz and is
+  never asked (two runs, 0 requests, 0 disconnects). Pinned after it had been seen on this unit's 5 GHz: measured, no
+  beacon report (it cannot scan 5 GHz), asked once, answered that it stays, not asked again, 0 disconnects.
+- A house media player (802.11v + 802.11k + 5 GHz classes, -30 dBm on 2.4 GHz) did not answer the beacon request nor
+  the move request: asked once, stayed on 2.4 GHz, no disconnect, next request only after `AP_STEER_RETRY`.
+- Loaded 2.4 GHz delay on the same unit (channel 11, ~70 % busy, 4 TCP streams down): legacy client median 18 ms at
+  14 Mbit/s, HE client 17 ms at 122 Mbit/s: no regression against 12.20.
+- The `band-moved` history line is written at the next round (`AP_STEER_INTERVAL`, 30 s), so "N s after the request"
+  is the detection time; the move itself takes about a second.
+- In this house almost every 2.4 GHz station is a 2.4-only smart-home device: of 25 stations on one unit before the
+  flash none advertised 802.11v and one sent operating classes (2.4 GHz only). Band steering therefore moves the few
+  dual-band phones, laptops and media players that sit on 2.4 GHz; it cannot empty a crowded 2.4 GHz channel.
+- Over the following hour (house devices only, band steering on, steering between units off): no new request (the few
+  dual-band stations on 2.4 GHz had been asked already), 0 disconnects by steering, no firmware assert, `wifi-guard`
+  0 crashes.
 
 ### 12.19 Channel choice by measurement, nightly re-check by channel switch, steering back-off (2026-11-18)
 
@@ -1595,7 +1620,9 @@ than mac80211's default anywhere. 1500 / 4000 gains little more and was the only
 run at 10.7 Mbit/s, an HE run at 154 Mbit/s). On the busy channel with a weak client no setting brings the legacy
 station under 50 ms, and the unlimited control is no better (100 ms): that delay does not come from the AP's queue
 depth, which is what this limit controls, but from contention and retries on the channel (and the client's own
-upstream queue of TCP acknowledgements). Band steering of capable clients to 5 GHz (12.18b) is the remedy there.
+upstream queue of TCP acknowledgements). Band steering (12.18b) moves the dual-band clients with 802.11v off that
+channel; the 2.4-only smart-home devices that make up most of a house's 2.4 GHz stations stay, so it lowers the load
+there but does not remove it.
 5 GHz keeps mac80211's limits (its rates make the same budget a short queue).
 
 ### 12.21 The embedded kernel tracks its LTS line (2026-11-21, `ci/embedded-openwrt/`)
