@@ -185,11 +185,11 @@ pub async fn ensure_defaults(
 
     if store.interface_roles().await?.is_empty() {
         if let Some(b) = bootstrap {
+            let mut planned: Vec<(String, String)> = Vec::new();
             for (role, names) in [("wan", &b.wan), ("lan", &b.lan)] {
                 for n in names {
                     if existing.iter().any(|e| e == n) {
-                        store.set_interface_role(n, Some(role)).await?;
-                        rep.roles_assigned.push((n.clone(), role.to_string()));
+                        planned.push((n.clone(), role.to_string()));
                     } else {
                         let w = format!(
                             "patronus.toml names {role} interface {n:?}, which does not exist \
@@ -200,6 +200,11 @@ pub async fn ensure_defaults(
                         rep.warnings.push(w);
                     }
                 }
+            }
+            // one transaction: no reader ever sees a half-assigned set (WAN without LAN)
+            if !planned.is_empty() {
+                store.set_interface_roles(&planned).await?;
+                rep.roles_assigned.extend(planned);
             }
         }
         if store.interface_roles().await?.is_empty() {
@@ -357,6 +362,34 @@ async fn seed_nat_rules(store: &ConfigStore, rules: Vec<NatRule>) -> Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn roles_are_assigned_in_one_transaction() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_roles(&[
+            ("eth0".to_string(), "wan".to_string()),
+            ("eth1".to_string(), "lan".to_string()),
+        ])
+        .await
+        .unwrap();
+        assert_eq!(
+            s.interface_roles().await.unwrap(),
+            vec![
+                ("eth0".to_string(), "wan".to_string()),
+                ("eth1".to_string(), "lan".to_string())
+            ]
+        );
+        // an invalid role anywhere in the batch assigns nothing
+        let s2 = ConfigStore::open_in_memory().await.unwrap();
+        assert!(s2
+            .set_interface_roles(&[
+                ("eth0".to_string(), "wan".to_string()),
+                ("eth1".to_string(), "bogus".to_string()),
+            ])
+            .await
+            .is_err());
+        assert!(s2.interface_roles().await.unwrap().is_empty());
+    }
 
     #[test]
     fn parses_installed_patronus_toml_and_lists() {

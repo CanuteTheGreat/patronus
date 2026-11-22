@@ -778,6 +778,41 @@ impl ConfigStore {
         Ok(())
     }
 
+    /// Assign several interface roles in ONE transaction: a concurrent reader (the web UI starting
+    /// while `patronus apply` seeds a fresh store, e.g. after a factory reset) sees none of them or
+    /// all of them, never "WAN set, LAN not yet" -- which renders the anti-lockout rule on the WAN.
+    pub async fn set_interface_roles(&self, roles: &[(String, String)]) -> Result<()> {
+        for (_, r) in roles {
+            if !is_valid_role(r) {
+                return Err(Error::Config(format!(
+                    "Invalid interface role {r:?} (wan, lan or opt<N>)"
+                )));
+            }
+        }
+        let mut tx = self
+            .pool()?
+            .begin()
+            .await
+            .map_err(db_err("Failed to set interface roles"))?;
+        let now = chrono::Utc::now().timestamp();
+        for (name, role) in roles {
+            sqlx::query(
+                "INSERT INTO interfaces (name, role, updated_at) VALUES (?, ?, ?)
+                 ON CONFLICT(name) DO UPDATE SET role = excluded.role, updated_at = excluded.updated_at",
+            )
+            .bind(name)
+            .bind(role)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err("Failed to set interface roles"))?;
+        }
+        tx.commit()
+            .await
+            .map_err(db_err("Failed to set interface roles"))?;
+        Ok(())
+    }
+
     /// (interface, role) for every enabled interface with a role, by name.
     pub async fn interface_roles(&self) -> Result<Vec<(String, String)>> {
         let rows = sqlx::query(
