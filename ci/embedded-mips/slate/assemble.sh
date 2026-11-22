@@ -78,7 +78,8 @@ if [ -z "${NOR_PROFILE:-}" ]; then
   tar xf "$STOCK_SYSUPGRADE" -O --wildcards '*/kernel' > "$R/usr/share/patronus-recovery/openwrt-kernel.bin"
   # kernels this root may install into NOR (patronus-flash kernel): shipped here so the root anchors which images are allowed
   if [ -n "${KERNEL_IMAGES:-}" ]; then mkdir -p "$R/usr/share/patronus/kernel"
-    for k in $KERNEL_IMAGES; do n=$(tail -c +33 "$k" | head -c 32 | tr -d '\000'); kv=${n##*Linux-}
+    # (dd, not tail|head: under pipefail head's early exit kills tail with SIGPIPE and ends the script silently)
+    for k in $KERNEL_IMAGES; do n=$(dd if="$k" bs=1 skip=32 count=32 2>/dev/null | tr -d '\000'); kv=${n##*Linux-}
       [ -n "$kv" ] && [ "$kv" != "$n" ] || { echo "assemble.sh: $k is not an OpenWrt uImage"; exit 1; }
       install -m644 "$k" "$R/usr/share/patronus/kernel/$kv.uImage"; done
     (cd "$R/usr/share/patronus/kernel" && sha256sum *.uImage > SHA256SUMS)
