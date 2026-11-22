@@ -707,6 +707,29 @@ pub struct InterfacesTemplate {
 mod tests {
     use super::*;
 
+    /// The header breadcrumb names the page the way the sidebar does:
+    /// acronyms stay upper case (it used to read "Dhcp", "Vpn", "Wifi").
+    #[test]
+    fn breadcrumb_uses_proper_page_names() {
+        for (slug, label) in [
+            ("dhcp", "DHCP"),
+            ("dns", "DNS"),
+            ("dns-policy", "DNS policy"),
+            ("ntp", "NTP"),
+            ("qos", "QoS"),
+            ("vpn", "VPN"),
+            ("wifi", "Wi-Fi"),
+            ("ha", "High availability"),
+            ("time-limits", "Time limits"),
+            ("firewall", "Firewall"),
+        ] {
+            let html = InterfacesTemplate { page: slug }.render().unwrap();
+            let crumb = html.split("class=\"breadcrumbs\"").nth(1).expect("breadcrumbs");
+            let crumb = &crumb[..crumb.find("</div>").unwrap()];
+            assert!(crumb.contains(&format!("<span>{label}</span>")), "{slug}: {crumb}");
+        }
+    }
+
     fn dashboard(vpn_connections: usize, vpn_errors: Vec<String>) -> String {
         DashboardTemplate {
             page: "dashboard",

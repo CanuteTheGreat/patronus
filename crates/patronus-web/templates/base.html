@@ -896,7 +896,7 @@
                         <a href="/">Home</a>
                         {% if page != "dashboard" %}
                         <span>/</span>
-                        <span>{{ page|capitalize }}</span>
+                        <span>{% if page == "dhcp" %}DHCP{% else if page == "dns" %}DNS{% else if page == "dns-policy" %}DNS policy{% else if page == "ntp" %}NTP{% else if page == "qos" %}QoS{% else if page == "vpn" %}VPN{% else if page == "wifi" %}Wi-Fi{% else if page == "ha" %}High availability{% else if page == "time-limits" %}Time limits{% else %}{{ page|capitalize }}{% endif %}</span>
                         {% endif %}
                     </div>
                 </div>
