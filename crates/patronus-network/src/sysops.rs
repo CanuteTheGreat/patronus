@@ -5,7 +5,7 @@
 //!   out first.
 //! - Software updates through **Portage** (Patronus is Gentoo-based):
 //!   `update_check` (`emaint sync -a`, then `emerge --pretend --update
-//!   --deep --newuse @world`, parsed into a package list), `update_apply`
+//!   --changed-use --newuse --deep --with-bdeps=y @world`, parsed into a package list), `update_apply`
 //!   (`emerge --update ...` for the Patronus package or all of @world) and
 //!   `update_status`. Check and apply run as one detached job at a time
 //!   (survives an applyd/web restart): a job file in the state directory
@@ -253,7 +253,7 @@ fn check_script(sync: bool) -> String {
     } else {
         ""
     };
-    format!("{sync_step}emerge --pretend --update --deep --newuse --verbose --columns @world")
+    format!("{sync_step}emerge --pretend --update --changed-use --newuse --deep --with-bdeps=y --verbose --columns @world")
 }
 
 /// Shell guard run before every apply. GRUB reads kernels from the separate
@@ -273,7 +273,8 @@ export MAKEOPTS=-j1 EMERGE_DEFAULT_OPTS=\"$EMERGE_DEFAULT_OPTS --jobs=1\"; fi; "
 fn apply_script(scope: &str) -> String {
     let emerge = match scope {
         "patronus" => format!("emerge --oneshot --update --quiet-build {PATRONUS_ATOM}"),
-        _ => "emerge --update --deep --newuse --quiet-build @world".to_string(),
+        _ => "emerge --update --changed-use --newuse --deep --with-bdeps=y --quiet-build @world"
+            .to_string(),
     };
     format!("{BOOT_GUARD}{emerge}")
 }
