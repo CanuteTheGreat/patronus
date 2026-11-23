@@ -1799,10 +1799,16 @@ mod tests {
         db.upsert_site(&site).await.unwrap();
         assert_eq!(db.get_site_location(&site.id).await.unwrap(), None);
         db.set_site_location(&site.id, " Seattle ").await.unwrap();
-        assert_eq!(db.get_site_location(&site.id).await.unwrap().as_deref(), Some("Seattle"));
+        assert_eq!(
+            db.get_site_location(&site.id).await.unwrap().as_deref(),
+            Some("Seattle")
+        );
         db.set_site_location(&site.id, "Bellingham").await.unwrap();
         let all = db.list_site_locations().await.unwrap();
-        assert_eq!(all.get(&site.id.to_string()).map(String::as_str), Some("Bellingham"));
+        assert_eq!(
+            all.get(&site.id.to_string()).map(String::as_str),
+            Some("Bellingham")
+        );
         db.set_site_location(&site.id, "").await.unwrap();
         assert_eq!(db.get_site_location(&site.id).await.unwrap(), None);
         db.set_site_location(&site.id, "Tacoma").await.unwrap();
