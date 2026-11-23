@@ -888,9 +888,14 @@ fn conntrack() -> (Option<u64>, Option<u64>) {
 }
 
 /// A fingerprint of the firewall + NAT rule set (changes when a rule is
-/// added, edited, reordered or removed), for drift detection.
+/// added, edited, reordered or removed), for drift detection. Reads only
+/// those two tables: the event watcher calls it every 10 s, and a full
+/// configuration export there cost tens of MB per call on small routers.
 pub async fn rules_hash(store: &ConfigStore) -> String {
-    let Ok(doc) = store.export_json().await else {
+    let Ok(doc) = store
+        .export_tables_json(&["firewall_rules", "nat_rules"])
+        .await
+    else {
         return String::new();
     };
     let mut h = Sha256::new();

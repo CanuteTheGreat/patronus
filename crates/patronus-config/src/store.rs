@@ -95,6 +95,15 @@ const NON_CONFIG_TABLES: &[&str] = &[
     // Wi-Fi automatic channel choice (lane s): what each radio is on and why, plus its history
     "seg_wifi_chan_state",
     "seg_wifi_chan_history",
+    // measured history (lane h): 5-minute CPU/memory/throughput samples (tens of thousands
+    // of rows within days), monthly data accounting, the event log and the firewall log.
+    // In the export they made every revision, backup and drift check carry megabytes of
+    // samples (a 10 s drift check built ~50 MB of JSON on a 512 MB access point), and a
+    // rollback or restore rewound the history.
+    "stat_points",
+    "traffic_daily",
+    "system_events",
+    "firewall_log",
 ];
 
 /// Revisions kept by [`ConfigStore::snapshot`] (older ones are pruned).
@@ -930,8 +939,19 @@ impl ConfigStore {
     /// `{"version": 2, "tables": {"<table>": [ {col: val, ...} ]}}`.
     /// Covers every lane's tables automatically.
     pub async fn export_json(&self) -> Result<Value> {
+        let names = self.config_tables().await?;
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        self.export_tables_json(&names).await
+    }
+
+    /// The same document as [`export_json`](Self::export_json), limited to
+    /// the configuration tables named in `only` (unknown and bookkeeping
+    /// names are skipped). For readers that need one or two tables, such as
+    /// a rule fingerprint, without building the whole export.
+    pub async fn export_tables_json(&self, only: &[&str]) -> Result<Value> {
+        let known = self.config_tables().await?;
         let mut tables = Map::new();
-        for t in self.config_tables().await? {
+        for t in known.into_iter().filter(|t| only.contains(&t.as_str())) {
             let rows = sqlx::query(&format!("SELECT * FROM \"{t}\""))
                 .fetch_all(self.pool()?)
                 .await
@@ -970,7 +990,8 @@ impl ConfigStore {
     /// except the web accounts (`web_users`): a document from before they
     /// were stored here keeps the current accounts, so restoring an old
     /// backup never locks everyone out. Unknown tables in the document are
-    /// an error.
+    /// an error; bookkeeping tables (history, logs) an older document still
+    /// carries are ignored and keep their live rows.
     pub async fn import_json(&self, doc: &Value) -> Result<()> {
         let tables = doc
             .get("tables")
@@ -978,6 +999,11 @@ impl ConfigStore {
             .ok_or_else(|| Error::Config("Invalid config document: no 'tables'".into()))?;
         let known = self.config_tables().await?;
         for name in tables.keys() {
+            // documents written before a table became bookkeeping still carry it
+            // (revisions, backups): its rows are ignored, the live table is left alone
+            if NON_CONFIG_TABLES.contains(&name.as_str()) {
+                continue;
+            }
             if !known.contains(name) {
                 return Err(Error::Config(format!(
                     "Invalid config document: unknown table {name:?}"
@@ -999,6 +1025,9 @@ impl ConfigStore {
                 .map_err(db_err("clear table"))?;
         }
         for (t, rows) in tables {
+            if NON_CONFIG_TABLES.contains(&t.as_str()) {
+                continue;
+            }
             for row in rows.as_array().into_iter().flatten() {
                 let Some(obj) = row.as_object() else { continue };
                 if obj.is_empty() {
@@ -1557,6 +1586,84 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ty, "integer");
+    }
+
+    #[tokio::test]
+    async fn measured_history_is_not_configuration() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let p = s.pool().unwrap();
+        for i in 0..500 {
+            sqlx::query("INSERT INTO stat_points (ts, metric, value) VALUES (?, 'cpu', 1.5)")
+                .bind(i)
+                .execute(p)
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO traffic_daily (day, iface, rx, tx) VALUES ('2026-11-23', 'eth0', 1, 2)",
+        )
+        .execute(p)
+        .await
+        .unwrap();
+        let doc = s.export_json().await.unwrap();
+        let tables = doc["tables"].as_object().unwrap();
+        for t in [
+            "stat_points",
+            "traffic_daily",
+            "system_events",
+            "firewall_log",
+        ] {
+            assert!(
+                !tables.contains_key(t),
+                "{t} is measured data, not configuration"
+            );
+        }
+        assert!(tables.contains_key("firewall_rules"));
+        // a revision does not carry the history either
+        let id = s.snapshot("t", "probe").await.unwrap();
+        let rev = s.revision_json(id).await.unwrap().unwrap();
+        assert!(!rev["tables"]
+            .as_object()
+            .unwrap()
+            .contains_key("stat_points"));
+
+        // an older document (revision, backup) that still carries the history imports, and
+        // neither rewinds nor wipes the live samples
+        let mut old = doc.clone();
+        old["tables"]["stat_points"] =
+            serde_json::json!([{"ts": 1, "metric": "cpu", "value": 9.0}]);
+        old["tables"]["traffic_daily"] = serde_json::json!([]);
+        s.import_json(&old).await.unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM stat_points")
+            .fetch_one(p)
+            .await
+            .unwrap();
+        assert_eq!(n, 500);
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM traffic_daily")
+            .fetch_one(p)
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+        // still strict about tables nobody knows
+        let mut bad = doc.clone();
+        bad["tables"]["no_such_table"] = serde_json::json!([]);
+        assert!(s.import_json(&bad).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn export_of_named_tables_matches_the_full_export() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        let full = s.export_json().await.unwrap();
+        let part = s
+            .export_tables_json(&["firewall_rules", "nat_rules", "stat_points", "nope"])
+            .await
+            .unwrap();
+        let t = part["tables"].as_object().unwrap();
+        let mut keys: Vec<&String> = t.keys().collect();
+        keys.sort();
+        assert_eq!(keys, vec!["firewall_rules", "nat_rules"]);
+        assert_eq!(t["firewall_rules"], full["tables"]["firewall_rules"]);
+        assert_eq!(t["nat_rules"], full["tables"]["nat_rules"]);
     }
 
     #[tokio::test]
