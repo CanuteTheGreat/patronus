@@ -896,6 +896,10 @@ pub fn feed_dir(feed: &str, board: &str, init: &str) -> Result<String> {
 
 /// The primary-key fingerprint of a good signature in gpgv `--status-fd` output.
 pub fn validsig_fpr(status: &str) -> Option<String> {
+    // gpgv reports a signature by a revoked key as REVKEYSIG plus a normal VALIDSIG, and exits 0
+    if status.lines().any(|l| l.starts_with("[GNUPG:] REVKEYSIG ")) {
+        return None;
+    }
     let good = status.lines().any(|l| l.starts_with("[GNUPG:] GOODSIG "));
     status
         .lines()
@@ -939,6 +943,20 @@ impl Default for FeedPaths {
             work: env_path("PATRONUS_FW_WORK", "/tmp/patronus-feed"),
         }
     }
+}
+
+/// `YYYY-MM-DD` (digits and dashes only, month 01-12, day 01-31); such dates compare correctly as strings.
+fn is_iso_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return false;
+    }
+    let digits = |r: std::ops::Range<usize>| b[r].iter().all(u8::is_ascii_digit);
+    if !(digits(0..4) && digits(5..7) && digits(8..10)) {
+        return false;
+    }
+    let (m, d) = (&s[5..7], &s[8..10]);
+    ("01"..="12").contains(&m) && ("01"..="31").contains(&d)
 }
 
 fn release_value(text: &str, key: &str) -> String {
@@ -1007,6 +1025,22 @@ pub fn feed_check(fp: &FeedPaths, feed: &str) -> Result<Value> {
             .to_string()
     };
     let (lb, image, sha) = (l("build"), l("image"), l("sha256").to_ascii_lowercase());
+    // Freshness: the signature only proves the release key once signed this list, not that it is still the newest. A
+    // replayed old (validly signed) list would otherwise offer a known-vulnerable build as "the update". The signed
+    // `date` is required and must not be older than the running firmware's own build date (`BUILD_DATE` in its
+    // release file; an older firmware without one skips only that comparison).
+    let fdate = l("date");
+    if !is_iso_date(&fdate) {
+        return Err(invalid(
+            "the feed's latest.json has no valid date (YYYY-MM-DD): refused",
+        ));
+    }
+    let running = release_value(&rel, "BUILD_DATE");
+    if is_iso_date(&running) && fdate < running {
+        return Err(invalid(format!(
+            "the feed's list is dated {fdate}, older than the running firmware ({running}): refused (a stale or replayed feed)"
+        )));
+    }
     let size = meta.get("size").and_then(Value::as_u64).unwrap_or(0);
     if lb.is_empty()
         || image.is_empty()
@@ -1321,6 +1355,13 @@ mod tests {
         let st = format!("[GNUPG:] NEWSIG\n[GNUPG:] GOODSIG E323A6A3AC0A6506 Errant\n[GNUPG:] VALIDSIG AAAA 2026-11-17 1 0 4 0 22 8 01 {RELEASE_KEY_FPR}\n");
         assert_eq!(validsig_fpr(&st).as_deref(), Some(RELEASE_KEY_FPR));
         assert_eq!(validsig_fpr("[GNUPG:] BADSIG x\n"), None);
+        // a revoked release key: gpgv still prints VALIDSIG (and exits 0), the status says REVKEYSIG
+        let rev = format!("[GNUPG:] NEWSIG\n[GNUPG:] REVKEYSIG E323A6A3AC0A6506 Errant\n[GNUPG:] VALIDSIG AAAA 2026-11-17 1 0 4 0 22 8 01 {RELEASE_KEY_FPR}\n");
+        assert_eq!(
+            validsig_fpr(&rev),
+            None,
+            "a revoked key's signature is refused"
+        );
 
         // fake wget (copies from a local "server" dir) and gpgv (good signature by the key named in $FAKE_FPR)
         let d = tempfile::tempdir().unwrap();
@@ -1331,7 +1372,7 @@ mod tests {
         std::fs::write(srv.join("p-2-sysupgrade.tar"), img).unwrap();
         std::fs::write(
             srv.join("latest.json"),
-            json!({"build": "unit-new-openrc", "version": "0.3.0", "image": "p-2-sysupgrade.tar", "sha256": sha, "size": img.len()}).to_string(),
+            json!({"build": "unit-new-openrc", "version": "0.3.0", "date": "2026-11-17", "image": "p-2-sysupgrade.tar", "sha256": sha, "size": img.len()}).to_string(),
         )
         .unwrap();
         std::fs::write(srv.join("latest.json.sig"), "sig").unwrap();
@@ -1351,7 +1392,7 @@ mod tests {
         let rel = d.path().join("release");
         std::fs::write(
             &rel,
-            "BUILD=unit-old-openrc\nBOARD=glinet,gl-ax1800\nINIT=openrc\n",
+            "BUILD=unit-old-openrc\nBUILD_DATE=2026-11-01\nBOARD=glinet,gl-ax1800\nINIT=openrc\n",
         )
         .unwrap();
         let mut fp = FeedPaths {
@@ -1383,6 +1424,38 @@ mod tests {
             .to_string()
             .contains("does not match"));
         assert!(!to.exists());
+        // a replayed (validly signed) older list, a list with no date and a malformed one: refused
+        let write_list = |date: Option<&str>| {
+            let mut v = json!({"build": "unit-new-openrc", "version": "0.3.0", "image": "p-2-sysupgrade.tar", "sha256": sha, "size": img.len()});
+            if let Some(d) = date {
+                v["date"] = json!(d);
+            }
+            std::fs::write(srv.join("latest.json"), v.to_string()).unwrap();
+        };
+        write_list(Some("2026-10-31"));
+        let e = feed_check(&fp, "https://fw.test").unwrap_err().to_string();
+        assert!(e.contains("older than the running firmware"), "{e}");
+        write_list(None);
+        let e = feed_check(&fp, "https://fw.test").unwrap_err().to_string();
+        assert!(e.contains("no valid date"), "{e}");
+        write_list(Some("2026-13-01"));
+        assert!(feed_check(&fp, "https://fw.test").is_err());
+        write_list(Some("2026-11-01")); // same day as the running build: allowed
+        assert_eq!(
+            feed_check(&fp, "https://fw.test").unwrap()["update_available"],
+            true
+        );
+        // a running firmware without BUILD_DATE (older image) skips only the comparison
+        std::fs::write(
+            &fp.release,
+            "BUILD=unit-old-openrc\nBOARD=glinet,gl-ax1800\nINIT=openrc\n",
+        )
+        .unwrap();
+        write_list(Some("2020-01-01"));
+        assert!(feed_check(&fp, "https://fw.test").is_ok());
+        assert!(
+            !is_iso_date("2026-1-01") && !is_iso_date("20261101") && !is_iso_date("2026-00-10")
+        );
         // signed by another key: refused
         std::fs::write(bin.join("fpr"), "0000000000000000000000000000000000000000").unwrap();
         let e = feed_check(&fp, "https://fw.test").unwrap_err().to_string();

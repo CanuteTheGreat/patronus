@@ -12,6 +12,12 @@ credit you in the release notes unless you prefer not to be named.
 
 The contact is also in https://patronus.errant.solutions/.well-known/security.txt (RFC 9116).
 
+## Threat model
+
+The written threat model (assets, trust boundaries, STRIDE per boundary, the control and CI test behind each, residual risks) is
+`docs/THREAT-MODEL.md` in this repository and is published at https://patronus.errant.solutions/docs/threat-model/. It is a first
+written version by the maintainers, not an independent review; the independent review is an open item in that document.
+
 ## Supported versions
 
 Patronus is pre-1.0. Only the newest build is supported: the rolling `daily` build from `main`, and, once tagged releases exist,

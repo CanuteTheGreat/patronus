@@ -140,6 +140,7 @@ ETPH=$ETPH_VERSION
 FEATURES=$(cat "$B/features" 2>/dev/null || echo unknown)
 BOARD=$BOARD
 BUILD=$TAG
+BUILD_DATE=$(date -u -d "@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%F)
 INIT=$INIT
 SOURCE=patronus ${SOURCE_REV:-unknown}
 KERNEL=$HW_KERNEL_LABEL $KV (stock FIT, unchanged)

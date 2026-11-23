@@ -104,6 +104,10 @@
   [
    "UPDATE-POLICY.md",
    "Versions, updates and rollback"
+  ],
+  [
+   "THREAT-MODEL.md",
+   "Threat model"
   ]
  ],
  "docs_index": [
@@ -121,6 +125,11 @@
    "UPDATE-POLICY.md",
    "Versions, updates and rollback",
    "Version numbers, supported versions, security-fix targets, update and rollback paths"
+  ],
+  [
+   "THREAT-MODEL.md",
+   "Threat model",
+   "Assets, trust boundaries, STRIDE per boundary, the control and CI test behind each, open review items"
   ],
   [
    "PRODUCTION_DEPLOYMENT.md",

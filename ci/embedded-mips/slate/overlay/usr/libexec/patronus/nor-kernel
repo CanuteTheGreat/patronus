@@ -131,7 +131,9 @@ check_kernel() { # file -> 0 if installable (sets U_*)
   # the image must have been shipped with this root (sha256 listed in KSLOT_KERNEL_DIR/SHA256SUMS of the running root)
   h=$(sha < "$f"); grep "^$h " "$KSLOT_KERNEL_DIR/SHA256SUMS" >/dev/null 2>&1 || { log "kernel $h is not one this root ships ($KSLOT_KERNEL_DIR/SHA256SUMS)"; return 1; }
   if [ -f "$f.asc" ] && command -v gpgv >/dev/null 2>&1 && [ -f "${KSLOT_KEYRING:-/usr/share/patronus/release.gpg}" ]; then
-    gpgv --keyring "${KSLOT_KEYRING:-/usr/share/patronus/release.gpg}" "$f.asc" "$f" >/dev/null 2>&1 || { log "release signature of $f does not verify"; return 1; }; fi
+    # --status-fd: gpgv exits 0 for a signature by a REVOKED key (REVKEYSIG + VALIDSIG), so read the status, not just the exit code
+    gs=$(gpgv --status-fd 1 --keyring "${KSLOT_KEYRING:-/usr/share/patronus/release.gpg}" "$f.asc" "$f" 2>/dev/null) || { log "release signature of $f does not verify"; return 1; }
+    case "$gs" in *"[GNUPG:] REVKEYSIG "*) log "release signature of $f is by a REVOKED key"; return 1;; esac; fi
   b=$(board_id); [ -n "$b" ] || { log "no BOARD= in $REL"; return 1; }
   [ "$U_COMP" = 3 ] || { log "kernel compression $U_COMP is not lzma: cannot check its device tree"; return 1; }
   # DT strings are NUL-terminated (busybox grep stops a line at a NUL, so NULs become newlines); the property header before the

@@ -60,6 +60,9 @@ fw_sig_ok() {
   # --ignore-time-conflict: the board has no RTC, and the early boot re-verifies a staged upgrade before the clock is set
   # (1970), so the key and every signature look "made in the future"; the time of a release signature proves nothing here
   st=$(GNUPGHOME=$g gpgv --ignore-time-conflict --status-fd 1 --keyring "$FW_KEYRING" "$d/patronus.sha256.sig" "$d/patronus.sha256" 2>/dev/null); rm -rf "$g"
+  # gpgv reports a signature by a REVOKED key as REVKEYSIG followed by a normal VALIDSIG and exits 0: a revoked release key
+  # must stop signing images the moment a firmware that carries its revocation is installed, so refuse it explicitly
+  echo "$st" | grep '^\[GNUPG:\] REVKEYSIG ' >/dev/null && { fw_err "the image is signed by a REVOKED release key: refused"; return 1; }
   fp=$(echo "$st" | sed -n 's/^\[GNUPG:\] VALIDSIG \([0-9A-F]*\) .*/\1/p' | head -1)
   [ -n "$fp" ] || { fw_err "release signature check FAILED: the image was modified or is not signed by the Patronus release key"; return 1; }
   echo "signature: good, release key $fp" >&2

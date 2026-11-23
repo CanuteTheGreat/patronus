@@ -1076,6 +1076,32 @@ PY
     KEYRING=$F/keyring-future.gpg t "flash check: a key/signature newer than the box clock (no RTC, early boot at 1970) is still good" \
       PF check "$(SIGN=future SIGTIME=$FT mkimg future)"
   fi
+  # a key REVOKED by a certificate in the box's keyring: gpgv still prints VALIDSIG next to REVKEYSIG and exits 0, so the
+  # check must read the status (a revoked release key has to stop signing images the moment a firmware carrying the
+  # revocation is installed). The image is signed first (gpg will not sign with a revoked key), then the key is revoked
+  # through a pty (gpg 2.x has no batch revocation).
+  if command -v gpg >/dev/null && command -v gpgv >/dev/null && command -v python3 >/dev/null; then
+    mkkey revoked; revimg=$(SIGN=revoked mkimg revoked)
+    rfpr=$(gpg --homedir "$F/gpg-revoked" --with-colons --list-keys | awk -F: '/^fpr/{print $10; exit}')
+    python3 - "$F/gpg-revoked" "$rfpr" "$F/revoked.rev" <<'PY'
+import os, pty, sys
+home, fpr, out = sys.argv[1:4]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp("gpg", ["gpg", "--homedir", home, "--pinentry-mode", "loopback", "--passphrase", "", "--yes", "--output", out, "--gen-revoke", fpr])
+os.write(fd, b"y\n0\n\ny\n")          # create it, reason 0 (none), no description, confirm
+try:
+    while os.read(fd, 4096):
+        pass
+except OSError:
+    pass
+os.waitpid(pid, 0)
+PY
+    gpg --homedir "$F/gpg-revoked" --batch --import "$F/revoked.rev" >/dev/null 2>&1; gpg --homedir "$F/gpg-revoked" --batch --export > "$F/keyring-revoked.gpg"
+    if [ -s "$F/revoked.rev" ] && gpg --homedir "$F/gpg-revoked" --with-colons --list-keys | grep '^pub:r:' >/dev/null; then
+      KEYRING=$F/keyring-revoked.gpg tn_msg "flash check: refuses an image signed by a REVOKED release key" "REVOKED" PF check "$revimg"
+    else no "flash check: could not revoke the test key (gpg pty), the revoked-key case did not run"; fi
+  fi
   tm=$F/tampered.tar; rm -rf "$F/tt"; mkdir -p "$F/tt"; tar xf "$good" -C "$F/tt" 2>/dev/null
   printf 'evil' >> "$F/tt/sysupgrade-glinet_gl-ax1800/root"; (cd "$F/tt/sysupgrade-glinet_gl-ax1800" && sha256sum kernel root > patronus.sha256)
   (cd "$F/tt" && tar cf "$tm" sysupgrade-glinet_gl-ax1800); python3 - "$good" "$tm" "$D/fwmeta.py" <<'PY'

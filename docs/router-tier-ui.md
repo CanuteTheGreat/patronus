@@ -176,7 +176,9 @@ test unit also blocks/unblocks a MAC, adds/removes an SSH key and sets/clears a 
 System > Firmware > "Check for updates" reads `<feed>/<board>/<init>/latest.json` (board with `,` -> `_`, e.g.
 `glinet_gl-ax1800/openrc/latest.json`) and its detached signature `latest.json.sig`, and verifies the signature with
 `gpgv` against the release keyring built into the firmware (`/usr/share/openpgp-keys/errantsolutions.gpg`); the good
-signature must come from the release key `5439354939B9C0552A68E9BBE323A6A3AC0A6506`, anything else is refused.
+signature must come from the release key `5439354939B9C0552A68E9BBE323A6A3AC0A6506`, anything else is refused. A signature
+by a revoked key is refused too. The list must carry a valid `date` (YYYY-MM-DD) and is refused when that date is older than the
+running firmware's own `BUILD_DATE` (in `/etc/patronus-release`), so a replayed old list cannot offer an old build as the update.
 `latest.json`:
 
 ```json
