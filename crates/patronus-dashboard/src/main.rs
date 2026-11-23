@@ -202,6 +202,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health_check))
         .route("/health/live", get(liveness_check))
         .route("/health/ready", get(readiness_check))
+        // Product version for the UI footer / About (public, no secrets)
+        .route("/api/version", get(version_info))
         // HA leader election RPC (node-to-node) + live status
         .merge(ha::rpc::routes())
         // Prometheus metrics
@@ -266,6 +268,26 @@ async fn main() -> anyhow::Result<()> {
 /// Basic health check endpoint
 async fn health_check() -> &'static str {
     "OK"
+}
+
+/// Product name + version, shown in the dashboard sidebar.
+fn version_json() -> serde_json::Value {
+    serde_json::json!({ "name": "Patronus", "version": env!("CARGO_PKG_VERSION") })
+}
+
+async fn version_info() -> axum::Json<serde_json::Value> {
+    axum::Json(version_json())
+}
+
+#[cfg(test)]
+mod version_tests {
+    #[test]
+    fn version_json_reports_package_version() {
+        let v = super::version_json();
+        assert_eq!(v["name"], "Patronus");
+        assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+        assert!(!v["version"].as_str().unwrap().is_empty());
+    }
 }
 
 /// Liveness probe (Kubernetes-style)

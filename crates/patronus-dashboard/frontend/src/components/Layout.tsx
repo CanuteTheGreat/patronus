@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import {
@@ -18,6 +19,14 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation()
   const { user, logout } = useAuth()
+  const [version, setVersion] = useState<string | null>(null)
+  useEffect(() => {
+    if (typeof fetch !== 'function') return
+    fetch('/api/version')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setVersion(j && typeof j.version === 'string' ? j.version : null))
+      .catch(() => setVersion(null))
+  }, [])
 
   const navigation = [
     { name: 'Dashboard', href: '/', icon: HomeIcon },
@@ -89,6 +98,14 @@ export default function Layout({ children }: LayoutProps) {
                 <ArrowRightOnRectangleIcon className="w-5 h-5" aria-hidden="true" />
               </button>
             </div>
+            {version && (
+              <p
+                className="mt-3 text-xs text-gray-400 dark:text-gray-500"
+                data-testid="app-version"
+              >
+                Patronus v{version}
+              </p>
+            )}
           </div>
         </div>
       </aside>
