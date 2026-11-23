@@ -11,6 +11,9 @@ no() { echo "FAIL: $*"; failn=$((failn+1)); }
 . "$ROOT/ci/hwsim-lock.sh"
 HWSIM_STALE_DIRECT=1; export HWSIM_STALE_DIRECT
 
+# mkproc PID COMM NETNS CMDLINE...: fake /proc/PID (NETNS 1 = host namespace)
+mkproc() { pid=$1; cm=$2; ns=$3; shift 3; mkdir -p "$R/proc/$pid/ns" "$R/proc/$pid/root"; echo "$cm" > "$R/proc/$pid/comm"
+  ln -sf "net:[$ns]" "$R/proc/$pid/ns/net"; printf '%s\0' "$@" > "$R/proc/$pid/cmdline"; }
 # mk NAME REFCNT: a stale-looking host (3 hwsim phys, interfaces wl24-m wl5-m wsta in the host namespace, no process)
 mk() {
   R=$W/$1; rm -rf "$R"; mkdir -p "$R/proc" "$R/sys/class/ieee80211" "$R/sys/class/net"
@@ -20,7 +23,9 @@ mk() {
     mkdir -p "$R/sys/class/ieee80211/phy$i" "$R/sys/class/net/$n"
     ln -s "../../../devices/virtual/mac80211_hwsim/hwsim$i" "$R/sys/class/ieee80211/phy$i/device"
     ln -s "../ieee80211/phy$i" "$R/sys/class/net/$n/phy80211"; i=$((i+1)); done
-  mkdir -p "$R/proc/1" "$R/proc/4242"; echo systemd > "$R/proc/1/comm"; echo sshd > "$R/proc/4242/comm"
+  mkdir -p "$R/proc/1/ns" "$R/proc/4242"; echo systemd > "$R/proc/1/comm"; echo sshd > "$R/proc/4242/comm"; ln -s 'net:[1]' "$R/proc/1/ns/net"
+  # the runner host's own system wpa_supplicant (pid 986 on rw-man-03): in the host namespace, handles no hwsim interface
+  mkproc 986 wpa_supplicant 1 "wpa_supplicant -u -s -O DIR=/run/wpa_supplicant GROUP=netdev"
   HWSIM_PROC=$R/proc; HWSIM_SYS=$R/sys; export HWSIM_PROC HWSIM_SYS
 }
 probe() { hwsim_stale_probe; }
@@ -30,9 +35,13 @@ expect() { # NAME WANT_RC
 
 mk a 0; expect "leftover of a killed bandsteer run (use count 0, 3 phys, test names, no process) is stale" 0
 mk b 1; expect "use count 1 is in use" 1
-mk c 0; mkdir "$R/proc/777"; echo hostapd > "$R/proc/777/comm"; expect "a running hostapd (host or container pid) keeps it" 1
-mk d 0; mkdir "$R/proc/778"; echo wpa_supplicant > "$R/proc/778/comm"; expect "a running wpa_supplicant keeps it" 1
-mk e 0; mkdir "$R/proc/779"; echo iw > "$R/proc/779/comm"; expect "a running iw keeps it" 1
+mk c 0; mkproc 777 hostapd 2 hostapd -B /etc/ap.conf; expect "a hostapd in a job container (other network namespace) keeps it" 1
+mk d 0; mkproc 778 wpa_supplicant 1 wpa_supplicant -B -i wl24-m -c /x.conf; expect "a host-namespace wpa_supplicant on -i wl24-m keeps it" 1
+mk e 0; mkproc 779 iw 2 iw dev; expect "an iw in a container keeps it" 1
+mk e2 0; mkproc 780 hostapd 1 hostapd -B /conf/ap.conf; mkdir -p "$R/proc/780/root/conf"; printf 'interface=wl5-m\nssid=x\n' > "$R/proc/780/root/conf/ap.conf"
+expect "a host-namespace hostapd whose config file names wl5-m keeps it" 1
+mk e3 0; mkproc 781 hostapd 1 hostapd -B /conf/other.conf; mkdir -p "$R/proc/781/root/conf"; printf 'interface=wlp3s0\n' > "$R/proc/781/root/conf/other.conf"
+expect "a host-namespace hostapd on an unrelated interface does not" 0
 mk f 0; mv "$R/sys/class/net/wsta" "$R/sys/class/net/wlan0"; expect "a phy whose interface has a foreign name (wlan0) keeps it" 1
 mk g 0; rm -r "$R/sys/class/net/wsta"; expect "a phy with no interface in the host namespace (moved into a container) keeps it" 1
 mk h 0; mkdir -p "$R/sys/class/ieee80211/phy9" "$R/sys/class/net/wlp3s0"; ln -s ../../../devices/pci0000:00/0000:03:00.0 "$R/sys/class/ieee80211/phy9/device"

@@ -69,16 +69,27 @@ for ph in "$SYS"/class/ieee80211/*; do
   [ $nif -gt 0 ] || { echo "$p has no interface in the host namespace (moved into a container?)"; exit 1; }
 done
 [ $nphy -gt 0 ] || { echo "no hwsim phy visible"; exit 1; }
+IFS_ALL=$(for n in "$SYS"/class/net/*; do [ -L "$n/phy80211" ] && echo "${n##*/}"; done)
+INITNS=$(readlink "$PROC/1/ns/net" 2>/dev/null)
 for c in "$PROC"/[0-9]*/comm; do
   [ -r "$c" ] || continue
   read -r cm < "$c" 2>/dev/null || continue
-  for pr in $PROCS; do [ "$cm" = "$pr" ] && { echo "process $cm ${c%/comm}"; exit 1; }; done
+  hit=0; for pr in $PROCS; do [ "$cm" = "$pr" ] && hit=1; done; [ $hit = 1 ] || continue
+  pd=${c%/comm}
+  # a process in another network namespace (a job container) always counts; one in the host namespace (the system
+  # wpa_supplicant of the runner itself, NetworkManager, iwd) counts only when it handles one of our interfaces:
+  # named on its command line or in a config file it was given
+  [ "$(readlink "$pd/ns/net" 2>/dev/null)" = "$INITNS" ] || { echo "process $cm $pd in another network namespace"; exit 1; }
+  args=$(tr "\\0" " " < "$pd/cmdline" 2>/dev/null)
+  for a in $args; do [ -f "$pd/root$a" ] && args="$args $(head -c 65536 "$pd/root$a" 2>/dev/null | tr "\\n" " ")"; done
+  args=$(echo "$args" | tr -c "A-Za-z0-9_ -" " ")
+  for i in $IFS_ALL; do case " $args " in *" $i "*) echo "process $cm $pd uses $i"; exit 1;; esac; done
 done
 echo "stale: use count 0, $nphy phys with test interface names in the host namespace, no wireless process"
 exit 0'
 hwsim_stale_probe() {
   if [ "${HWSIM_STALE_DIRECT:-0}" = 1 ]; then printf '%s\n' "$HWSIM_PROBE_SRC" | sh -s; return; fi
-  printf '%s\n' "$HWSIM_PROBE_SRC" | ${HWSIM_DOCKER:-docker} run --rm -i --net=host --pid=host \
+  printf '%s\n' "$HWSIM_PROBE_SRC" | ${HWSIM_DOCKER:-docker} run --rm -i --net=host --pid=host --cap-add SYS_PTRACE \
     -e HWSIM_STALE_NAMES -e HWSIM_STALE_PROCS "${HWSIM_PROBE_IMAGE:-${KMOD_IMAGE:-${IMAGE:-debian:trixie}}}" sh -s 2>&1
 }
 # hwsim_wait_free UNLOAD_CMD: with the host lock held, return once mac80211_hwsim is not loaded. A leftover (see above)
