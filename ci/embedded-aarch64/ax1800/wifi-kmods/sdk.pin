@@ -5,5 +5,5 @@ SDK_SHA256=aeb0b56373b5bc7042728d48cb77834631052e8fbe8d8b7e8605d11344f338e9
 OWRT_TAG=v25.12.6
 # the SDK's feeds.conf.default pins the base feed (package/kernel/mac80211) to this commit of the release
 OWRT_BASE_REV=64900e756efa667774214f9c6b17c113222e01f7
-KVER=6.12.118
-TAG=25.12.6-k118-aql1
+KVER=6.12.119
+TAG=25.12.6-k119-aql1
