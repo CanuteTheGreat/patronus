@@ -1458,6 +1458,22 @@ Hardware (GL-AX1800, one unit, 2026-11-22, image with kernel 6.12.118, `AP_STEER
   dual-band stations on 2.4 GHz had been asked already), 0 disconnects by steering, no firmware assert, `wifi-guard`
   0 crashes.
 
+Second unit (GL-AX1800, 2026-11-23, same image, the night after the first unit had run it for 24 h with 0 firmware crashes
+and 0 disconnects by steering):
+- After the flash every BSS (each SSID x band) gave a real client a lease, gateway, internet and DNS, again after
+  `ap stop; ap start`; roams between the two units on both bands and a band switch on the same unit were online again
+  within 0.4-1.4 s. The test client heard this unit's 2.4 GHz at about -70 dBm, which is "weak" under the default
+  `AP_STEER_SIGNAL` (-65): band steering correctly left it alone (weak stations belong to 12.18a). With the thresholds
+  lowered for the test only (`AP_STEER_SIGNAL=-85`, `AP_BANDSTEER_MIN5=-85`, `AP_STEER=off`):
+- A client that may change band (limited to this unit's BSSes with `bssid_accept`, two runs): measured, asked once (it
+  heard 5 GHz at -66 dBm), accepted, moved without a disconnect; longest gap in 1/s pings 1.1 s. Sent back to 2.4 GHz,
+  recorded as `band-back` and held. Without `bssid_accept` the client left for the other unit's much stronger 5 GHz on
+  its own right after the measurement (its own roaming decision; no disconnect).
+- A 2.4-only client: never asked; seen on 5 GHz first, then pinned: asked once, answered that it stays, not asked again;
+  0 disconnects.
+- Over the following hour (house devices only): no request (none of this unit's 2.4 GHz stations advertises 802.11v),
+  0 disconnects by steering, no firmware assert, `wifi-guard` 0 crashes.
+
 ### 12.19 Channel choice by measurement, nightly re-check by channel switch, steering back-off (2026-11-18)
 
 Until now the channel came from hostapd's ACS at radio start, minus the blocks of this network's other units (12.17).
