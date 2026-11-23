@@ -95,7 +95,8 @@ export default function Traffic() {
             <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
               Application Details
             </h3>
-            <div className="overflow-x-auto">
+            <p className="mb-1 text-xs text-gray-500 dark:text-gray-400 md:hidden">Swipe the table sideways to see all columns.</p>
+            <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Application traffic (scrolls horizontally)">
               <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                 <thead className="bg-gray-50 dark:bg-gray-900">
                   <tr>
