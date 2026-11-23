@@ -38,9 +38,9 @@ pub async fn ensure_self_signed_cert(dir: &Path) -> Result<RustlsConfig> {
     let cert_path = dir.join(CERT_FILE);
     let key_path = dir.join(KEY_FILE);
 
-    if !cert_path.exists() || !key_path.exists() {
+    if !material_present(&cert_path, &key_path) {
         tracing::info!(
-            "No TLS material found at {}, generating a self-signed certificate",
+            "No usable TLS material found at {}, generating a self-signed certificate",
             dir.display()
         );
         generate_self_signed(&cert_path, &key_path)?;
@@ -51,6 +51,46 @@ pub async fn ensure_self_signed_cert(dir: &Path) -> Result<RustlsConfig> {
     load_config(&cert_path, &key_path)
         .await
         .with_context(|| format!("failed to load TLS material from {}", dir.display()))
+}
+
+/// Both files exist and are non-empty. A zero-length file is never operator
+/// material: it is what an ext4 volume holds when power was cut between the
+/// first-boot write and the delayed allocation (the UI then never came back).
+/// Non-empty but unparsable material is left alone (it may be the operator's
+/// own pair; the load error names it).
+fn material_present(cert: &Path, key: &Path) -> bool {
+    let non_empty = |p: &Path| std::fs::metadata(p).map(|m| m.is_file() && m.len() > 0).unwrap_or(false);
+    non_empty(cert) && non_empty(key)
+}
+
+/// Write `data` to `path` so a crash leaves either the old file or the whole
+/// new one: temp file in the same directory, fsync, rename, fsync the directory.
+fn write_atomic(path: &Path, data: &[u8], mode: u32) -> Result<()> {
+    use std::io::Write;
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = dir.join(format!(".{name}.tmp{}", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    let res = (|| -> std::io::Result<()> {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(mode);
+        }
+        #[cfg(not(unix))]
+        let _ = mode;
+        let mut f = opts.open(&tmp)?;
+        f.write_all(data)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, path)?;
+        std::fs::File::open(dir)?.sync_all()
+    })();
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res.with_context(|| format!("failed to write {}", path.display()))
 }
 
 /// The certificate the settings name (`web.tls_cert` / `web.tls_key`), or the
@@ -163,21 +203,74 @@ fn generate_self_signed(cert_path: &Path, key_path: &Path) -> Result<()> {
     let (cert_pem, key_pem) =
         make_cert(&subject_alt_names).context("failed to generate self-signed certificate")?;
 
-    std::fs::write(cert_path, cert_pem)
-        .with_context(|| format!("failed to write {}", cert_path.display()))?;
-    std::fs::write(key_path, key_pem)
-        .with_context(|| format!("failed to write {}", key_path.display()))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(key_path, std::fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("failed to restrict permissions on {}", key_path.display()))?;
-    }
+    // Key first, certificate last: the pair counts as present only when both
+    // are whole files, so a cut between the two regenerates both next start.
+    write_atomic(key_path, key_pem.as_bytes(), 0o600)?;
+    write_atomic(cert_path, cert_pem.as_bytes(), 0o644)?;
 
     tracing::info!(
         "Generated self-signed TLS certificate at {} (valid for ~90 days by default)",
         cert_path.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_files_count_as_missing_and_are_regenerated() {
+        // What a power cut right after first boot leaves on ext4: both files exist, length 0.
+        let d = tempfile::tempdir().unwrap();
+        let (c, k) = (d.path().join(CERT_FILE), d.path().join(KEY_FILE));
+        std::fs::write(&c, b"").unwrap();
+        std::fs::write(&k, b"").unwrap();
+        assert!(!material_present(&c, &k));
+        generate_self_signed(&c, &k).unwrap();
+        assert!(material_present(&c, &k));
+        assert!(std::fs::read_to_string(&c).unwrap().contains("BEGIN CERTIFICATE"));
+        assert!(std::fs::read_to_string(&k).unwrap().contains("PRIVATE KEY"));
+    }
+
+    #[test]
+    fn a_half_pair_is_not_present() {
+        let d = tempfile::tempdir().unwrap();
+        let (c, k) = (d.path().join(CERT_FILE), d.path().join(KEY_FILE));
+        std::fs::write(&c, b"x").unwrap();
+        assert!(!material_present(&c, &k));
+        std::fs::write(&k, b"").unwrap();
+        assert!(!material_present(&c, &k));
+    }
+
+    #[test]
+    fn operator_material_is_kept() {
+        let d = tempfile::tempdir().unwrap();
+        let (c, k) = (d.path().join(CERT_FILE), d.path().join(KEY_FILE));
+        std::fs::write(&c, b"operator cert").unwrap();
+        std::fs::write(&k, b"operator key").unwrap();
+        assert!(material_present(&c, &k));
+    }
+
+    #[test]
+    fn generation_leaves_no_temp_files_and_key_is_private() {
+        let d = tempfile::tempdir().unwrap();
+        let (c, k) = (d.path().join(CERT_FILE), d.path().join(KEY_FILE));
+        generate_self_signed(&c, &k).unwrap();
+        let names: Vec<_> = std::fs::read_dir(d.path()).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        assert_eq!(names.len(), 2, "{names:?}");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&k).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    }
+
+    #[tokio::test]
+    async fn ensure_recovers_from_zero_length_pair_and_loads() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join(CERT_FILE), b"").unwrap();
+        std::fs::write(d.path().join(KEY_FILE), b"").unwrap();
+        ensure_self_signed_cert(d.path()).await.expect("UI must come back after a power cut");
+    }
 }

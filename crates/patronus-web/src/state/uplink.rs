@@ -131,6 +131,14 @@ pub async fn record_at(
     let hour = now - now.rem_euclid(3600);
     let p = pool(store)?;
     let mut n = 0;
+    // ONE write transaction per interval, taken up front (BEGIN IMMEDIATE): the store is a
+    // rollback-journal file with synchronous=FULL (root and the web user share it, so no WAL),
+    // where every commit costs several fsyncs and holds the exclusive lock for all of them.
+    // One autocommit statement per gateway and table (4 commits a tick for two uplinks) kept
+    // the lock busy back to back on a loaded disk and starved the gateway monitor's reads
+    // for the whole busy_timeout ("database is locked", netlab lane-s-uplink, 2026-11-23).
+    // An up-front lock also cannot fail half-way on a reader-to-writer upgrade.
+    let mut tx = p.begin_with("BEGIN IMMEDIATE").await?;
     for g in gws {
         let Some(class) = classify(g) else { continue };
         let degraded =
@@ -155,7 +163,7 @@ pub async fn record_at(
         .bind(kind_ok(g, ProbeKind::Http))
         .bind(i64::from(degraded))
         .bind(serde_json::to_string(&g.probes).unwrap_or_else(|_| "[]".into()))
-        .execute(p)
+        .execute(&mut *tx)
         .await?;
         if r.rows_affected() == 0 {
             continue;
@@ -186,9 +194,10 @@ pub async fn record_at(
         .bind(i64::from(g.rtt_ms.is_some()))
         .bind(g.rtt_ms)
         .bind(g.loss_pct.unwrap_or(if class == Class::Down { 100.0 } else { 0.0 }))
-        .execute(p)
+        .execute(&mut *tx)
         .await?;
     }
+    tx.commit().await?;
     Ok(n)
 }
 
@@ -885,6 +894,45 @@ mod tests {
         assert_eq!(g[0].probes[0].kind, ProbeKind::Http);
         assert_eq!(g[1].rtt_ms, None);
         assert!(gateways_of(&json!({})).is_empty());
+    }
+
+    /// A tick with several uplinks is ONE commit (data_version, seen from a second connection,
+    /// moves once), and it succeeds while readers hammer the same file store.
+    #[tokio::test]
+    async fn a_tick_is_one_commit_and_readers_do_not_starve() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = std::sync::Arc::new(ConfigStore::open(dir.path().join("c.db")).await.unwrap());
+        let g = vec![
+            gw("WAN1", "online", Some(5.0), Some(0.0), vec![]),
+            gw("WAN2", "online", Some(7.0), Some(0.0), vec![]),
+            gw("LTE", "down", None, None, vec![]),
+        ];
+        use sqlx::Connection;
+        let mut watch = sqlx::SqliteConnection::connect_with(
+            &sqlx::sqlite::SqliteConnectOptions::new().filename(dir.path().join("c.db")),
+        )
+        .await
+        .unwrap();
+        let dv = |r: sqlx::sqlite::SqliteRow| r.get::<i64, _>(0);
+        let before = dv(sqlx::query("PRAGMA data_version").fetch_one(&mut watch).await.unwrap());
+        assert_eq!(record_at(&s, 1_800_000_000, 3, &g).await.unwrap(), 3);
+        let after = dv(sqlx::query("PRAGMA data_version").fetch_one(&mut watch).await.unwrap());
+        assert_eq!(after - before, 1, "3 gateways x 2 tables must be one commit");
+        // readers (the monitor's gateway read, the SLA API) while the recorder keeps writing
+        let reads = tokio::spawn({
+            let s = s.clone();
+            async move {
+                for _ in 0..200 {
+                    sla(&s, None, 1_800_000_100, 3600).await.expect("reader must not see 'database is locked'");
+                    sla_series(&s, "WAN1", 1_800_000_100, 3600).await.expect("series reader");
+                    tokio::task::yield_now().await;
+                }
+            }
+        });
+        for i in 1..60 {
+            record_at(&s, 1_800_000_000 + i * 3, 3, &g).await.unwrap();
+        }
+        reads.await.unwrap();
     }
 
     #[tokio::test]
