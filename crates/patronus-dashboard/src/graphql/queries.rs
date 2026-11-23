@@ -24,11 +24,12 @@ impl QueryRoot {
             .parse()
             .map_err(|_| async_graphql::Error::new("Invalid site ID"))?;
 
+        let location = state.db.get_site_location(&site_id).await.unwrap_or(None);
         match state.db.get_site(&site_id).await {
             Ok(Some(site)) => Ok(Some(GqlSite {
                 id: site.id.to_string(),
                 name: site.name,
-                location: None,
+                location,
                 endpoint_count: site.endpoints.len() as i32,
                 status: match site.status {
                     patronus_sdwan::types::SiteStatus::Active => SiteStatus::Active,
@@ -70,14 +71,15 @@ impl QueryRoot {
         let state = get_state(ctx)?;
 
         // Fetch from database
+        let locations = state.db.list_site_locations().await.unwrap_or_default();
         match state.db.list_sites().await {
             Ok(sites) => {
                 let gql_sites: Vec<GqlSite> = sites
                     .into_iter()
                     .map(|site| GqlSite {
                         id: site.id.to_string(),
+                        location: locations.get(&site.id.to_string()).cloned(),
                         name: site.name,
-                        location: None,
                         endpoint_count: site.endpoints.len() as i32,
                         status: match site.status {
                             patronus_sdwan::types::SiteStatus::Active => SiteStatus::Active,

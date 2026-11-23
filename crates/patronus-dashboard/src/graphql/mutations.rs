@@ -73,6 +73,14 @@ impl MutationRoot {
             "create site",
         )
         .await?;
+        // The location was accepted by the form but never stored before.
+        if let Some(loc) = input.location.as_deref() {
+            state
+                .db
+                .set_site_location(&site_id, loc)
+                .await
+                .map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))?;
+        }
 
         // Audit log (Sprint 25)
         let (user_id, user_email) = get_audit_user_info(ctx);
@@ -161,7 +169,12 @@ impl MutationRoot {
             fields_changed.push("status".to_string());
         }
 
-        if input.location.is_some() {
+        if let Some(loc) = input.location.as_deref() {
+            state
+                .db
+                .set_site_location(&site_id, loc)
+                .await
+                .map_err(|e| async_graphql::Error::new(format!("Database error: {}", e)))?;
             fields_changed.push("location".to_string());
         }
 
@@ -195,7 +208,7 @@ impl MutationRoot {
         let result = GqlSite {
             id: site.id.to_string(),
             name: site.name.clone(),
-            location: input.location.clone(),
+            location: state.db.get_site_location(&site_id).await.unwrap_or(None),
             endpoint_count: site.endpoints.len() as i32,
             status: match site.status {
                 patronus_sdwan::types::SiteStatus::Active => SiteStatus::Active,

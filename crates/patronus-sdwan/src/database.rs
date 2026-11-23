@@ -200,6 +200,14 @@ impl Database {
         .execute(&self.pool)
         .await;
 
+        // Free-text site location (the Sites page "Location" field). Kept in
+        // its own table so the Site struct and existing DBs stay unchanged.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS sdwan_site_locations (site_id TEXT PRIMARY KEY, location TEXT NOT NULL)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         // System metrics table
         sqlx::query(
             r#"
@@ -657,6 +665,51 @@ impl Database {
         }
 
         Ok(sites)
+    }
+
+    /// Set (or, with an empty string, clear) a site's location.
+    pub async fn set_site_location(&self, site_id: &SiteId, location: &str) -> Result<()> {
+        let location = location.trim();
+        if location.is_empty() {
+            sqlx::query("DELETE FROM sdwan_site_locations WHERE site_id = ?")
+                .bind(site_id.to_string())
+                .execute(&self.pool)
+                .await?;
+        } else {
+            sqlx::query(
+                "INSERT INTO sdwan_site_locations (site_id, location) VALUES (?, ?) \
+                 ON CONFLICT(site_id) DO UPDATE SET location = excluded.location",
+            )
+            .bind(site_id.to_string())
+            .bind(location)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// A site's location, if one was set.
+    pub async fn get_site_location(&self, site_id: &SiteId) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT location FROM sdwan_site_locations WHERE site_id = ?")
+            .bind(site_id.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(match row {
+            Some(r) => Some(r.try_get("location")?),
+            None => None,
+        })
+    }
+
+    /// All site locations keyed by site id string.
+    pub async fn list_site_locations(&self) -> Result<std::collections::HashMap<String, String>> {
+        let rows = sqlx::query("SELECT site_id, location FROM sdwan_site_locations")
+            .fetch_all(&self.pool)
+            .await?;
+        let mut out = std::collections::HashMap::new();
+        for r in rows {
+            out.insert(r.try_get("site_id")?, r.try_get("location")?);
+        }
+        Ok(out)
     }
 
     /// Count total number of sites
@@ -1426,6 +1479,11 @@ impl Database {
         .execute(&mut *tx)
         .await?;
 
+        sqlx::query("DELETE FROM sdwan_site_locations WHERE site_id = ?")
+            .bind(site_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+
         // Delete the site
         let site_result = sqlx::query(
             r#"
@@ -1724,6 +1782,32 @@ mod tests {
         let retrieved = db.get_site(&site.id).await.unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().name, "test-site");
+    }
+
+    #[tokio::test]
+    async fn test_site_location_roundtrip_and_delete() {
+        let db = Database::new(":memory:").await.unwrap();
+        let site = Site {
+            id: SiteId::generate(),
+            name: "loc-site".to_string(),
+            public_key: vec![1, 2, 3, 4],
+            endpoints: Vec::new(),
+            created_at: SystemTime::now(),
+            last_seen: SystemTime::now(),
+            status: SiteStatus::Active,
+        };
+        db.upsert_site(&site).await.unwrap();
+        assert_eq!(db.get_site_location(&site.id).await.unwrap(), None);
+        db.set_site_location(&site.id, " Seattle ").await.unwrap();
+        assert_eq!(db.get_site_location(&site.id).await.unwrap().as_deref(), Some("Seattle"));
+        db.set_site_location(&site.id, "Bellingham").await.unwrap();
+        let all = db.list_site_locations().await.unwrap();
+        assert_eq!(all.get(&site.id.to_string()).map(String::as_str), Some("Bellingham"));
+        db.set_site_location(&site.id, "").await.unwrap();
+        assert_eq!(db.get_site_location(&site.id).await.unwrap(), None);
+        db.set_site_location(&site.id, "Tacoma").await.unwrap();
+        db.delete_site(&site.id).await.unwrap();
+        assert_eq!(db.get_site_location(&site.id).await.unwrap(), None);
     }
 
     #[tokio::test]
