@@ -279,17 +279,6 @@ async fn version_info() -> axum::Json<serde_json::Value> {
     axum::Json(version_json())
 }
 
-#[cfg(test)]
-mod version_tests {
-    #[test]
-    fn version_json_reports_package_version() {
-        let v = super::version_json();
-        assert_eq!(v["name"], "Patronus");
-        assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
-        assert!(!v["version"].as_str().unwrap().is_empty());
-    }
-}
-
 /// Liveness probe (Kubernetes-style)
 async fn liveness_check() -> &'static str {
     "alive"
@@ -416,5 +405,16 @@ async fn spa_fallback() -> impl axum::response::IntoResponse {
                 "404 - Frontend not built. Run: ./build-frontend.sh",
             ))
             .unwrap(),
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    #[test]
+    fn version_json_reports_package_version() {
+        let v = super::version_json();
+        assert_eq!(v["name"], "Patronus");
+        assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+        assert!(!v["version"].as_str().unwrap().is_empty());
     }
 }
