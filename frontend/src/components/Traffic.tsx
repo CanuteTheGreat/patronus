@@ -62,8 +62,8 @@ export default function Traffic() {
         <div key={stat.siteId} className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">{stat.siteName}</h2>
-              <p className="text-sm text-gray-600 dark:text-gray-300">Site ID: {stat.siteId}</p>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100" title={`Site ${stat.siteId}`}>{stat.siteName}</h2>
+              <p className="text-sm text-gray-600 dark:text-gray-300">{stat.totalPackets.toLocaleString()} packets</p>
             </div>
             <div className="text-right">
               <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">

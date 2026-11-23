@@ -173,7 +173,7 @@ export default function Dashboard() {
                       {alert.message}
                     </p>
                     <p className="text-xs text-gray-500 dark:text-gray-400">
-                      Site: {alert.siteId} • {new Date(alert.timestamp).toLocaleString()}
+                      <Link to="/sites" className="underline hover:text-gray-700 dark:hover:text-gray-200">Site {alert.siteId}</Link> • {new Date(alert.timestamp).toLocaleString()}
                     </p>
                   </div>
                 </div>
