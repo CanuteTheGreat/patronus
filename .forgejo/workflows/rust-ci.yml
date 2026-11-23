@@ -327,7 +327,8 @@ jobs:
     # `patronus apply` (= reboot), plus the fresh-box default ruleset.
     # Test-depth scenarios (ci/netlab/lib.sh harness: LAN client, router,
     # ISP, internet host with DNS+HTTP): journey-first-boot (install ->
-    # online -> web UI rule -> reboot), journey-backup-restore,
+    # online -> web UI rule -> reboot), journey-backup-restore (CLI), journey-backup-restore-api
+    # (System page API: settings + accounts + rules restored, proven by traffic and logins),
     # failure-atomic-apply (rejected rules, lockdown, no nft), failure-
     # power-cut (SIGKILL mid-edit/mid-apply, 4 rounds here, 30 nightly),
     # upgrade-store (v0.1.0 store layout; previous release nightly).
