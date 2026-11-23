@@ -59,7 +59,11 @@ pub async fn ensure_self_signed_cert(dir: &Path) -> Result<RustlsConfig> {
 /// Non-empty but unparsable material is left alone (it may be the operator's
 /// own pair; the load error names it).
 fn material_present(cert: &Path, key: &Path) -> bool {
-    let non_empty = |p: &Path| std::fs::metadata(p).map(|m| m.is_file() && m.len() > 0).unwrap_or(false);
+    let non_empty = |p: &Path| {
+        std::fs::metadata(p)
+            .map(|m| m.is_file() && m.len() > 0)
+            .unwrap_or(false)
+    };
     non_empty(cert) && non_empty(key)
 }
 
@@ -68,7 +72,10 @@ fn material_present(cert: &Path, key: &Path) -> bool {
 fn write_atomic(path: &Path, data: &[u8], mode: u32) -> Result<()> {
     use std::io::Write;
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let tmp = dir.join(format!(".{name}.tmp{}", std::process::id()));
     let _ = std::fs::remove_file(&tmp);
     let res = (|| -> std::io::Result<()> {
@@ -229,7 +236,9 @@ mod tests {
         assert!(!material_present(&c, &k));
         generate_self_signed(&c, &k).unwrap();
         assert!(material_present(&c, &k));
-        assert!(std::fs::read_to_string(&c).unwrap().contains("BEGIN CERTIFICATE"));
+        assert!(std::fs::read_to_string(&c)
+            .unwrap()
+            .contains("BEGIN CERTIFICATE"));
         assert!(std::fs::read_to_string(&k).unwrap().contains("PRIVATE KEY"));
     }
 
@@ -257,12 +266,18 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let (c, k) = (d.path().join(CERT_FILE), d.path().join(KEY_FILE));
         generate_self_signed(&c, &k).unwrap();
-        let names: Vec<_> = std::fs::read_dir(d.path()).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        let names: Vec<_> = std::fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
         assert_eq!(names.len(), 2, "{names:?}");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(&k).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(
+                std::fs::metadata(&k).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
         }
     }
 
@@ -271,6 +286,8 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         std::fs::write(d.path().join(CERT_FILE), b"").unwrap();
         std::fs::write(d.path().join(KEY_FILE), b"").unwrap();
-        ensure_self_signed_cert(d.path()).await.expect("UI must come back after a power cut");
+        ensure_self_signed_cert(d.path())
+            .await
+            .expect("UI must come back after a power cut");
     }
 }

@@ -35,8 +35,8 @@ def define(args):
         lan, FW = m.network("lan"), "10.77.0.1"
         web = f"nc -z -w 3 {FW} {P['port']}"
         # standard ports (owner rule): HTTP 80 only redirects to HTTPS 443; the UI answers its login page on 443
-        redirect = (f"printf 'GET / HTTP/1.0\r\nHost: {FW}\r\n\r\n' | nc -w 3 {FW} 80 | head -8 "
-                    "| grep -i '^location: https://' >/dev/null")
+        # busybox wget -S prints the response headers (the Location of the redirect) even though it then cannot follow to TLS
+        redirect = f"wget -S -T 5 -O /dev/null http://{FW}/ 2>&1 | grep -i 'location: https://' >/dev/null"
         login = "test \"$(curl -sk -m 10 -o /dev/null -w '%{http_code}' https://127.0.0.1/login)\" = 200"
 
         def web_diag(why):
@@ -65,7 +65,12 @@ def define(args):
         m.check("lan-client-pings-firewall", True, f"{FW} answers on the hub")
         m.cli.wait_until_succeeds(web, 300, 5)
         m.check("lan-web-open", True, f"{FW}:{P['port']} accepts from the LAN")
-        m.cli.succeed(redirect)
+        try:
+            m.cli.succeed(redirect)
+        except Exception:
+            print("### cli: " + m.cli.execute(f"wget -S -T 5 -O /dev/null http://{FW}/ 2>&1; nc -z -w 3 {FW} 80; echo nc80=$?", 30)[1], flush=True)
+            web_diag("redirect")
+            raise
         m.fw.succeed(login)
         m.check("web-standard-ports", True, "https :443 answers the login page; http :80 redirects to https")
 

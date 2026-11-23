@@ -914,17 +914,31 @@ mod tests {
         .await
         .unwrap();
         let dv = |r: sqlx::sqlite::SqliteRow| r.get::<i64, _>(0);
-        let before = dv(sqlx::query("PRAGMA data_version").fetch_one(&mut watch).await.unwrap());
+        let before = dv(sqlx::query("PRAGMA data_version")
+            .fetch_one(&mut watch)
+            .await
+            .unwrap());
         assert_eq!(record_at(&s, 1_800_000_000, 3, &g).await.unwrap(), 3);
-        let after = dv(sqlx::query("PRAGMA data_version").fetch_one(&mut watch).await.unwrap());
-        assert_eq!(after - before, 1, "3 gateways x 2 tables must be one commit");
+        let after = dv(sqlx::query("PRAGMA data_version")
+            .fetch_one(&mut watch)
+            .await
+            .unwrap());
+        assert_eq!(
+            after - before,
+            1,
+            "3 gateways x 2 tables must be one commit"
+        );
         // readers (the monitor's gateway read, the SLA API) while the recorder keeps writing
         let reads = tokio::spawn({
             let s = s.clone();
             async move {
                 for _ in 0..200 {
-                    sla(&s, None, 1_800_000_100, 3600).await.expect("reader must not see 'database is locked'");
-                    sla_series(&s, "WAN1", 1_800_000_100, 3600).await.expect("series reader");
+                    sla(&s, None, 1_800_000_100, 3600)
+                        .await
+                        .expect("reader must not see 'database is locked'");
+                    sla_series(&s, "WAN1", 1_800_000_100, 3600)
+                        .await
+                        .expect("series reader");
                     tokio::task::yield_now().await;
                 }
             }
