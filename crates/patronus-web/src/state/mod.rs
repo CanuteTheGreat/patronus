@@ -34,6 +34,8 @@ pub mod speedtest;
 pub mod stats;
 pub mod system;
 pub mod telemetry;
+#[cfg(test)]
+mod alert_delivery_tests;
 pub mod tunnels;
 pub mod uplink;
 pub mod vpn;

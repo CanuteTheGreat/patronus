@@ -578,10 +578,22 @@ pub async fn post_body(
     headers: &[String],
     body: &str,
 ) -> anyhow::Result<()> {
+    post_body_timeout(url, content_type, headers, body, DEFAULT_HTTP_TIMEOUT_SECS).await
+}
+
+/// [`post_body`] with the whole-request time limit in seconds.
+pub async fn post_body_timeout(
+    url: &str,
+    content_type: &str,
+    headers: &[String],
+    body: &str,
+    timeout_secs: u64,
+) -> anyhow::Result<()> {
     let mut cfg = format!(
-        "url = {}\nrequest = \"POST\"\nsilent\nshow-error\nfail\nmax-time = 15\n\
+        "url = {}\nrequest = \"POST\"\nsilent\nshow-error\nfail\nmax-time = {}\n\
          user-agent = \"Patronus-Events/1.0\"\nheader = {}\n",
         curl_quote(url),
+        timeout_secs.max(1),
         curl_quote(&format!("Content-Type: {content_type}"))
     );
     for h in headers {
@@ -726,15 +738,20 @@ pub fn request(host: &str, hook: &Hook, e: &Event) -> Request {
     }
 }
 
-/// Send one delivery (one attempt).
+/// Send one delivery (one attempt) with the default time limits.
 pub async fn send(req: &Request) -> anyhow::Result<()> {
+    send_with(req, &DeliveryPolicy::default()).await
+}
+
+/// Send one delivery (one attempt) under `policy`'s time limits.
+pub async fn send_with(req: &Request, policy: &DeliveryPolicy) -> anyhow::Result<()> {
     match req {
         Request::Http {
             url,
             content_type,
             headers,
             body,
-        } => post_body(url, content_type, headers, body).await,
+        } => post_body_timeout(url, content_type, headers, body, policy.http_timeout_secs).await,
         Request::Mail {
             url,
             from,
@@ -760,8 +777,9 @@ pub async fn send(req: &Request) -> anyhow::Result<()> {
                 f.write_all(message.as_bytes())?;
             }
             let mut cfg = format!(
-                "url = {}\nsilent\nshow-error\nmax-time = 30\nmail-from = {}\nupload-file = {}\n",
+                "url = {}\nsilent\nshow-error\nmax-time = {}\nmail-from = {}\nupload-file = {}\n",
                 curl_quote(url),
+                policy.mail_timeout_secs.max(1),
                 curl_quote(from),
                 curl_quote(&path.to_string_lossy())
             );
@@ -833,7 +851,8 @@ pub async fn send_test(store: &ConfigStore, id: i64) -> anyhow::Result<Option<St
         "info",
         "Test message from Patronus: this notification channel works.".into(),
     );
-    let r = send(&request(&host::hostname(), &h, &e)).await;
+    let policy = DeliveryPolicy::load(store).await;
+    let r = send_with(&request(&host::hostname(), &h, &e), &policy).await;
     let result = match &r {
         Ok(()) => "ok".to_string(),
         Err(err) => format!("test: {err}"),
@@ -842,31 +861,138 @@ pub async fn send_test(store: &ConfigStore, id: i64) -> anyhow::Result<Option<St
     r.map(|_| Some(result))
 }
 
-/// Send `e` to every hook that wants it (up to 3 tries each, 2 s / 6 s
-/// apart), and note the outcome on the hook.
+/// `system_config` keys of the delivery policy (all optional; the
+/// defaults below apply when a key is unset or not a valid number).
+pub const KEY_ATTEMPTS: &str = "alerts.delivery.attempts";
+pub const KEY_BACKOFF_MS: &str = "alerts.delivery.backoff_ms";
+pub const KEY_BACKOFF_FACTOR: &str = "alerts.delivery.backoff_factor";
+pub const KEY_HTTP_TIMEOUT_SECS: &str = "alerts.delivery.http_timeout_secs";
+pub const KEY_MAIL_TIMEOUT_SECS: &str = "alerts.delivery.mail_timeout_secs";
+pub const DEFAULT_ATTEMPTS: u32 = 3;
+pub const DEFAULT_BACKOFF_MS: u64 = 2000;
+pub const DEFAULT_BACKOFF_FACTOR: u64 = 3;
+pub const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 15;
+pub const DEFAULT_MAIL_TIMEOUT_SECS: u64 = 30;
+
+/// How a delivery is tried: total attempts, the wait before the second
+/// attempt and the factor it grows by (2 s, 6 s, 18 s ... by default),
+/// and the time limit of one attempt per transport.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeliveryPolicy {
+    pub attempts: u32,
+    pub backoff_ms: u64,
+    pub backoff_factor: u64,
+    pub http_timeout_secs: u64,
+    pub mail_timeout_secs: u64,
+}
+
+impl Default for DeliveryPolicy {
+    fn default() -> Self {
+        Self {
+            attempts: DEFAULT_ATTEMPTS,
+            backoff_ms: DEFAULT_BACKOFF_MS,
+            backoff_factor: DEFAULT_BACKOFF_FACTOR,
+            http_timeout_secs: DEFAULT_HTTP_TIMEOUT_SECS,
+            mail_timeout_secs: DEFAULT_MAIL_TIMEOUT_SECS,
+        }
+    }
+}
+
+impl DeliveryPolicy {
+    pub async fn load(store: &ConfigStore) -> Self {
+        async fn num(store: &ConfigStore, key: &str) -> Option<u64> {
+            store
+                .load_system_config(key)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+        }
+        let d = Self::default();
+        Self {
+            attempts: num(store, KEY_ATTEMPTS)
+                .filter(|n| *n > 0)
+                .map_or(d.attempts, |n| n.min(20) as u32),
+            // 0 ms is allowed (immediate retry)
+            backoff_ms: num(store, KEY_BACKOFF_MS).unwrap_or(d.backoff_ms),
+            backoff_factor: num(store, KEY_BACKOFF_FACTOR)
+                .filter(|n| *n > 0)
+                .unwrap_or(d.backoff_factor),
+            http_timeout_secs: num(store, KEY_HTTP_TIMEOUT_SECS)
+                .filter(|n| *n > 0)
+                .unwrap_or(d.http_timeout_secs),
+            mail_timeout_secs: num(store, KEY_MAIL_TIMEOUT_SECS)
+                .filter(|n| *n > 0)
+                .unwrap_or(d.mail_timeout_secs),
+        }
+    }
+
+    /// Wait before attempt number `attempt` (1-based; attempt 1 is immediate).
+    pub fn wait_before(&self, attempt: u32) -> std::time::Duration {
+        if attempt <= 1 {
+            return std::time::Duration::ZERO;
+        }
+        let mult = self.backoff_factor.saturating_pow(attempt - 2);
+        std::time::Duration::from_millis(self.backoff_ms.saturating_mul(mult))
+    }
+}
+
+/// Deliver `e` to one hook under `policy`: retries with backoff, notes
+/// the outcome on the hook and, when every attempt failed, writes an
+/// audit-log entry (`alert_delivery_failed`). Returns the result note.
+pub async fn deliver_hook(
+    store: &ConfigStore,
+    me: &str,
+    h: &Hook,
+    e: &Event,
+    policy: &DeliveryPolicy,
+) -> String {
+    let req = request(me, h, e);
+    let mut result = String::new();
+    let mut ok = false;
+    let attempts = policy.attempts.max(1);
+    for attempt in 1..=attempts {
+        let wait = policy.wait_before(attempt);
+        if !wait.is_zero() {
+            tokio::time::sleep(wait).await;
+        }
+        match send_with(&req, policy).await {
+            Ok(()) => {
+                result = "ok".into();
+                ok = true;
+                break;
+            }
+            Err(err) => result = format!("attempt {attempt}: {err}"),
+        }
+    }
+    note_result(store, h.id, &result).await;
+    if !ok {
+        let _ = store
+            .audit(
+                "system",
+                "alert_delivery_failed",
+                "event_hook",
+                Some(&h.id.to_string()),
+                &json!({
+                    "hook": h.name, "channel": h.channel, "event_kind": e.kind,
+                    "event_id": e.id, "attempts": attempts, "error": result,
+                }),
+            )
+            .await;
+    }
+    result
+}
+
+/// Send `e` to every hook that wants it (retried under the delivery
+/// policy, see [`DeliveryPolicy`]), and note the outcome on the hook.
 pub async fn deliver(store: Arc<ConfigStore>, e: Event) {
     let Ok(all) = hooks(&store).await else { return };
     let me = host::hostname();
+    let policy = DeliveryPolicy::load(&store).await;
     for h in all.into_iter().filter(|h| wants_event(h, &e)) {
-        let (store, e, me) = (store.clone(), e.clone(), me.clone());
+        let (store, e, me, policy) = (store.clone(), e.clone(), me.clone(), policy.clone());
         tokio::spawn(async move {
-            let req = request(&me, &h, &e);
-            let mut result = String::new();
-            for (i, wait) in [0u64, 2, 6].iter().enumerate() {
-                if *wait > 0 {
-                    tokio::time::sleep(std::time::Duration::from_secs(*wait)).await;
-                }
-                match send(&req).await {
-                    Ok(()) => {
-                        result = "ok".into();
-                        break;
-                    }
-                    Err(err) => {
-                        result = format!("attempt {}: {err}", i + 1);
-                    }
-                }
-            }
-            note_result(&store, h.id, &result).await;
+            deliver_hook(&store, &me, &h, &e, &policy).await;
         });
     }
 }
