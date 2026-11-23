@@ -46,8 +46,9 @@ cleanup() { rc=$?
   command -v agent-workdir >/dev/null 2>&1 && agent-workdir done "$WD" >/dev/null 2>&1 || rm -rf "$WD"
   exit $rc; }
 trap cleanup EXIT
-if grep -q '^mac80211_hwsim ' /proc/modules; then echo "mac80211_hwsim is already loaded (another user?): pick another host"; exit 1; fi
 hwsim_lock_take || exit 1
+# a leftover of a killed run is unloaded, a module in use is waited for (ci/hwsim-lock.sh)
+hwsim_wait_free "$SUDO rmmod mac80211_hwsim" || exit 1
 echo "--- container $C ($IMAGE), packages"
 $DOCKER run -d --name "$C" --privileged --security-opt apparmor=unconfined "$IMAGE" sleep infinity >/dev/null
 $DOCKER exec "$C" sh -c 'apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq hostapd wpasupplicant iw iproute2 bridge-utils python3-minimal iputils-ping procps >/dev/null 2>&1; hostapd -v 2>&1 | head -1; wpa_supplicant -v | head -1'

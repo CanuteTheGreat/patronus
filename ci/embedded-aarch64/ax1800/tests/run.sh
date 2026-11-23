@@ -1185,5 +1185,8 @@ else sk "boot rollback environment cases (no mkenvimage/fw_printenv: u-boot-tool
 # 4. package-managed accounts (shared with the Slate)
 if out=$(sh "$D/../../embedded-common/tests/accounts-sync.sh" 2>&1); then ok "accounts-sync: $(echo "$out" | tail -1)"; else no "accounts-sync tests"; echo "$out" | grep FAIL | sed 's/^/    /'; fi
 
+# 5. hwsim stale-module reaper (ci/hwsim-lock.sh): a module a killed run left loaded is unloaded, one in use is waited for
+if out=$(sh "$D/tests/hwsim-stale-test.sh" 2>&1); then ok "hwsim-stale: $(echo "$out" | tail -1)"; else no "hwsim stale-module tests"; echo "$out" | grep FAIL | sed 's/^/    /'; fi
+
 echo "ax1800 tooling tests: $pass passed, $failn failed, $skip skipped"
 [ "$failn" = 0 ]

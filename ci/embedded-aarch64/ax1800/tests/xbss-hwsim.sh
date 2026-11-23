@@ -43,8 +43,11 @@ while grep -q '^mac80211_hwsim ' /proc/modules; do
   done
   if [ $removed = 1 ] && [ -z "$($DOCKER ps --filter name=xbss-hwsim- -q 2>/dev/null)" ]; then
     echo "unloading the mac80211_hwsim the stale run left"; modctl unload; continue; fi
+  # a leftover with no scenario container and no wireless process is unloaded; anything in use is waited for
+  _why=$(hwsim_stale_probe 2>&1) && _rc=0 || _rc=$?
+  if [ $_rc = 0 ] && modctl unload; then echo "stale mac80211_hwsim from a killed run: unloaded ($_why)"; continue; fi
   [ $(( $(date +%s) - t0 )) -gt $((WAIT_MIN * 60)) ] && { echo "mac80211_hwsim still loaded after ${WAIT_MIN} min (another user?): refusing"; exit 1; }
-  echo "mac80211_hwsim is loaded by another run: waiting"; sleep 20
+  echo "mac80211_hwsim is loaded by another run: waiting (${_why:-no reason})"; sleep 20
 done
 $DOCKER run -d --name "$C" --cap-add NET_ADMIN --cap-add NET_RAW --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
   --memory 2g --cpus 2 "$IMAGE" sleep infinity >/dev/null

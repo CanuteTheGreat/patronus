@@ -32,9 +32,6 @@ OWN=
 . ci/hwsim-lock.sh
 trap 'hwsim_lock_drop' EXIT
 hwsim_lock_take || exit 1
-if grep -q '^mac80211_hwsim ' /proc/modules; then
-  echo "mac80211_hwsim is already loaded on this host (another user?): refusing to touch it"; exit 1
-fi
 # load/unload the host-global module: directly (root or sudo on the host) or, from an unprivileged CI
 # job container, through a throw-away privileged sibling that sees the host's /lib/modules
 modctl() { # load|unload
@@ -44,6 +41,8 @@ modctl() { # load|unload
   docker run --rm --privileged -v /lib/modules:/lib/modules:ro "$IMAGE" sh -c \
     "command -v modprobe >/dev/null || (apt-get update -qq >/dev/null && apt-get install -y -qq kmod >/dev/null); $cmd" >/dev/null 2>&1
 }
+# a leftover of a killed run is unloaded, a module in use is waited for (ci/hwsim-lock.sh)
+hwsim_wait_free "modctl unload" || exit 1
 modctl load || hwsim_skip_or_fail "this kernel has no mac80211_hwsim (rw-man-01's 6.8 kernel has none)"
 
 cleanup() {

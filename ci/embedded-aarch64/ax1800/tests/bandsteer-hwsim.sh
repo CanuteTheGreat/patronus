@@ -47,12 +47,9 @@ cleanup() { rc=$?
   exit $rc; }
 trap cleanup EXIT
 hwsim_lock_take || exit 1
-# the module is host-global and may belong to a run in another job container (the lock is per host, but older runners
-# may not take it): wait up to WAIT_MIN for it to go away
-WAIT_MIN=${HWSIM_WAIT_MIN:-65}; tw=$(date +%s)
-while grep '^mac80211_hwsim ' /proc/modules >/dev/null; do
-  [ $(( $(date +%s) - tw )) -gt $((WAIT_MIN * 60)) ] && { echo "mac80211_hwsim still loaded after ${WAIT_MIN} min (another user?): refusing"; exit 1; }
-  echo "mac80211_hwsim is loaded by another run: waiting"; sleep 20; done
+# the module is host-global and may belong to a run in another job container (older runners may not take the lock): wait
+# for it to go away, but unload a leftover of a killed run at once (hwsim_wait_free, ci/hwsim-lock.sh)
+hwsim_wait_free "modctl unload" || exit 1
 echo "--- container $C ($IMAGE), packages"
 $DOCKER run -d --name "$C" --privileged --security-opt apparmor=unconfined "$IMAGE" sleep infinity >/dev/null
 $DOCKER exec "$C" sh -c 'apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq hostapd wpasupplicant iw iproute2 python3-minimal iputils-ping procps >/dev/null 2>&1; hostapd -v 2>&1 | head -1; wpa_supplicant -v | head -1'
