@@ -909,8 +909,14 @@ mod tests {
     fn base_caps_form_controls_on_phones() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
         let src = std::fs::read_to_string(dir.join("base.html")).unwrap();
-        let mobile = src.split("@media (max-width: 900px)").nth(1).expect("mobile block");
-        assert!(mobile.contains(".content select,"), "select not capped on phones");
+        let mobile = src
+            .split("@media (max-width: 900px)")
+            .nth(1)
+            .expect("mobile block");
+        assert!(
+            mobile.contains(".content select,"),
+            "select not capped on phones"
+        );
         assert!(
             mobile.contains("max-width: 100%;") && mobile.contains(".content input:not"),
             "inputs not capped on phones"
