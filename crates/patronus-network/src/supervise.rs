@@ -536,7 +536,10 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert!(freed, "instance lock still held 2 s after the holder dropped it");
+        assert!(
+            freed,
+            "instance lock still held 2 s after the holder dropped it"
+        );
     }
 
     #[tokio::test]
