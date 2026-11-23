@@ -326,6 +326,8 @@ async fn real_alert_reaches_webhook_ntfy_and_mail_sinks() {
     .await
     .unwrap();
 
+    // the watcher compares revisions, so one must exist at the first look
+    s.snapshot("web", "baseline").await.unwrap();
     let mut w = Watcher::new(state.clone());
     assert!(w.tick().await.is_empty(), "first look is the baseline");
     state

@@ -909,21 +909,20 @@ impl DeliveryPolicy {
                 .and_then(|v| v.trim().parse::<u64>().ok())
         }
         let d = Self::default();
+        let attempts = num(store, KEY_ATTEMPTS).await;
+        let backoff_ms = num(store, KEY_BACKOFF_MS).await;
+        let factor = num(store, KEY_BACKOFF_FACTOR).await;
+        let http = num(store, KEY_HTTP_TIMEOUT_SECS).await;
+        let mail = num(store, KEY_MAIL_TIMEOUT_SECS).await;
         Self {
-            attempts: num(store, KEY_ATTEMPTS)
+            attempts: attempts
                 .filter(|n| *n > 0)
                 .map_or(d.attempts, |n| n.min(20) as u32),
             // 0 ms is allowed (immediate retry)
-            backoff_ms: num(store, KEY_BACKOFF_MS).unwrap_or(d.backoff_ms),
-            backoff_factor: num(store, KEY_BACKOFF_FACTOR)
-                .filter(|n| *n > 0)
-                .unwrap_or(d.backoff_factor),
-            http_timeout_secs: num(store, KEY_HTTP_TIMEOUT_SECS)
-                .filter(|n| *n > 0)
-                .unwrap_or(d.http_timeout_secs),
-            mail_timeout_secs: num(store, KEY_MAIL_TIMEOUT_SECS)
-                .filter(|n| *n > 0)
-                .unwrap_or(d.mail_timeout_secs),
+            backoff_ms: backoff_ms.unwrap_or(d.backoff_ms),
+            backoff_factor: factor.filter(|n| *n > 0).unwrap_or(d.backoff_factor),
+            http_timeout_secs: http.filter(|n| *n > 0).unwrap_or(d.http_timeout_secs),
+            mail_timeout_secs: mail.filter(|n| *n > 0).unwrap_or(d.mail_timeout_secs),
         }
     }
 
