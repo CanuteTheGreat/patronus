@@ -1,6 +1,6 @@
 # Wi-Fi modules of the GL-AX1800 image, rebuilt by build-kmods.sh from sdk.pin + patches/ (docs 12.20).
 # Bump = run build-kmods.sh with a new TAG in sdk.pin, upload the tar, change these lines (fetch.sh checks the sha256,
 # the MANIFEST's kernel release and every module's vermagic against the stock modules it replaces).
-WIFI_KMODS_TAG=25.12.6-k118-aql1
-WIFI_KMODS_URL=https://git.canutethegreat.com/api/packages/CanuteTheGreat/generic/patronus-wifi-kmods/25.12.6-k118-aql1/wifi-kmods-25.12.6-k118-aql1.tar
-WIFI_KMODS_SHA256=54b65a865690b9bb9ecbc3c3e1b6952d9f8c05172598f0f3144395f24195a63c
+WIFI_KMODS_TAG=25.12.6-k119-aql1
+WIFI_KMODS_URL=https://git.canutethegreat.com/api/packages/CanuteTheGreat/generic/patronus-wifi-kmods/25.12.6-k119-aql1/wifi-kmods-25.12.6-k119-aql1.tar
+WIFI_KMODS_SHA256=b61781ebf6afc98aeefd635e6bcd278c55e392e5315bb1cbf832ba0ddea16448

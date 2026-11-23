@@ -22,7 +22,7 @@ toolchain = "stable"
 
 use         = ["-ebpf", "-nls", "-doc", "-python", "nftables", "hostapd", "pam"]
 # The stock OpenWrt FIT (kernel + this board's device tree) is reused byte for byte; its kmods and the IPQ6018 firmware too.
-kernel      = { source = "openwrt-tag-rebuilt-fit", version = "6.12.118", dts = "ipq6000-gl-ax1800" }
+kernel      = { source = "openwrt-tag-rebuilt-fit", version = "6.12.119", dts = "ipq6000-gl-ax1800" }
 
 [web]
 mode            = "on"
@@ -52,9 +52,9 @@ release        = "25.12.6"
 target         = "qualcommax"
 subtarget      = "ipq60xx"
 arch_packages  = "aarch64_cortex-a53"
-kernel         = "6.12.118"
+kernel         = "6.12.119"
 # sha256 of the stock sysupgrade image (its FIT kernel, kmods and firmware are reused unchanged); from OpenWrt's sha256sums
-stock_sha256   = "a6bdc66e41944717e7dc4667a937b0af127b940755b12409822cf675e9c7129f"
+stock_sha256   = "ec2bc55dfe6b679597d9cf83b3ca6ad6eaf9fcc9cef7b220ff3e7254045e02d1"
 
 # NAND/UBI layout, verified against OpenWrt's factory.ubi (ci/embedded-aarch64/ax1800/ubi-layout.py, docs section 7)
 [nand]

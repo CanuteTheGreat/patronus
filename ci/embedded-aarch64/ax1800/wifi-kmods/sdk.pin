@@ -1,7 +1,7 @@
 # OpenWrt SDK for the exact release/kernel the GL-AX1800 image boots (stock.pin OWRT_REL, kmods.pin KMOD_URL_board).
 # build-kmods.sh verifies SDK_SHA256 (from the release's sha256sums) and refuses a base feed not pinned to OWRT_TAG.
-SDK_URL=https://git.canutethegreat.com/api/packages/CanuteTheGreat/generic/patronus-owrt-kernel-ax1800/6.12.118-1/openwrt-sdk-qualcommax-ipq60xx_gcc-14.3.0_musl.Linux-x86_64.tar.zst
-SDK_SHA256=aeb0b56373b5bc7042728d48cb77834631052e8fbe8d8b7e8605d11344f338e9
+SDK_URL=https://git.canutethegreat.com/api/packages/CanuteTheGreat/generic/patronus-owrt-kernel-ax1800/6.12.119-1/openwrt-sdk-qualcommax-ipq60xx_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+SDK_SHA256=298538326c1a2e331185c913f84bac0d15d0a951be1b2c336d8a76152dd26176
 OWRT_TAG=v25.12.6
 # the SDK's feeds.conf.default pins the base feed (package/kernel/mac80211) to this commit of the release
 OWRT_BASE_REV=64900e756efa667774214f9c6b17c113222e01f7

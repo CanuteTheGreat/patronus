@@ -44,6 +44,10 @@ if [ -f "$OV/DROP" ]; then for n in $(sed -e '/^#/d' -e '/^$/d' "$OV/DROP"); do
   rm -f "$t"; echo "build-owrt: dropped $n"; done; fi
 if [ -d "$OV" ]; then for p in "$OV"/*.patch; do [ -e "$p" ] || continue; n=$(basename "$p"); t=$(ls target/linux/generic/*-$KERNEL_LINE/"$n" 2>/dev/null | head -1)
   [ -n "$t" ] || { echo "build-owrt: overlay $n has no counterpart in the tag" >&2; exit 1; }; cp "$p" "$t"; echo "build-owrt: overlay $n"; done; fi
+# <overlay>/mac80211/*.patch: build patches for OpenWrt's mac80211 package (backports headers) that this kernel makes necessary, e.g. stable
+# 6.12.119 already defines a helper the backports header defines again for every kernel < 6.16; copied into package/kernel/mac80211/patches/build/
+if [ -d "$OV/mac80211" ]; then for p in "$OV"/mac80211/*.patch; do [ -e "$p" ] || continue
+  cp "$p" "package/kernel/mac80211/patches/build/$(basename "$p")"; echo "build-owrt: mac80211 build patch $(basename "$p")"; done; fi
 # config-<target> in the overlay dir: kernel symbols stable added that OpenWrt's target config does not know yet (a NEW symbol makes the
 # non-interactive kernel configure fail: "Cortex-A725: 3821522 ... (NEW)"); appended once, with upstream's default
 for f in "$OV"/config-*; do [ -e "$f" ] || continue; t=target/linux/${f##*/config-}/config-$KERNEL_LINE

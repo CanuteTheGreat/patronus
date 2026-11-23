@@ -42,6 +42,9 @@ M=$(readlink -f "$MPATH"); [ -d "$M/patches/ath11k" ] || { echo "build-kmods: ma
 # patch that maps netns_immutable back to netns_local breaks mac80211 on a stable kernel that already has the rename
 DROPF="$HERE/../../../embedded-openwrt/patches/$KVER/DROP"
 if [ -f "$DROPF" ]; then for n in $(sed -e '/^#/d' -e '/^$/d' "$DROPF"); do rm -f "$M"/patches/*/"$n"; done; fi
+# same overlay as the kernel build (ci/embedded-openwrt/patches/<kver>/mac80211/*.patch: backports build fixes the pinned kernel needs)
+OVM="$HERE/../../../embedded-openwrt/patches/$KVER/mac80211"
+if [ -d "$OVM" ]; then for p in "$OVM"/*.patch; do [ -e "$p" ] && cp "$p" "$M/patches/build/$(basename "$p")"; done; fi
 # patches: ath11k/9xx-* go to the driver set, subsys/9xx-* to mac80211 (applied after OpenWrt's own, in name order)
 for p in "$HERE"/patches/*.patch; do
   case $(basename "$p") in ath11k-*) d=ath11k;; mac80211-*) d=subsys;; *) echo "build-kmods: unknown patch $p" >&2; exit 1;; esac

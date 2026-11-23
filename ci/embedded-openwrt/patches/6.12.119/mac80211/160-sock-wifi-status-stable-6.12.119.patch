@@ -1,0 +1,19 @@
+From: Patronus <patronus@localhost>
+Subject: [PATCH] backport-include/net/sock.h: stable 6.12.119 already has sk_requests_wifi_status()
+
+linux-6.12.119 (stable) carries the 6.16 helper sk_requests_wifi_status() in include/net/sock.h;
+the backports header defined it again for every kernel < 6.16 ("redefinition" error building
+cfg80211). Skip our copy on the stable 6.12 series from .119 on.
+
+---
+--- a/backport-include/net/sock.h
++++ b/backport-include/net/sock.h
+@@ -23,7 +23,7 @@
+ #define sk_error_report(sk) LINUX_BACKPORT(sk_error_report(sk))
+ #endif /* <= 5.14 */
+ 
+-#if LINUX_VERSION_IS_LESS(6,16,0)
++#if LINUX_VERSION_IS_LESS(6,16,0) && !(LINUX_VERSION_IS_GEQ(6,12,119) && LINUX_VERSION_IS_LESS(6,13,0))
+ static inline bool
+ sk_requests_wifi_status(struct sock *sk)
+ {
