@@ -1,0 +1,34 @@
+# OpenWrt kernel patches dropped for exactly this kernel, one file name per line (build-owrt.sh removes them from the tag's tree before building).
+# Allowed reasons, checked with patch-survey.sh + the targets' kernel configs (2026-11-23):
+#  - the 6.12.119 stable kernel already contains the change (the patch applies in reverse):
+630-v6.14-PM-sleep-wakeirq-Introduce-device-managed-variant-of.patch
+732-v6.18-wifi-mt76-wed-use-proper-wed-reference-in-mt76-wed-d.patch
+780-12-v6.13-r8169-align-RTL8125-RTL8126-PHY-config-with-vendor-d.patch
+781-01-v6.13-net-phy-realtek-read-duplex-and-gbit-master-from-PHY.patch
+781-02-v6.13-net-phy-realtek-change-order-of-calls-in-C22-read_st.patch
+781-03-v6.13-net-phy-realtek-clear-1000Base-T-link-partner-advert.patch
+781-06-v6.14-net-phy-realtek-add-support-for-reading-MDIO_MMD_VEN.patch
+781-07-v6.14-net-phy-realtek-clear-1000Base-T-lpa-if-link-is-down.patch
+781-08-v6.14-net-phy-realtek-clear-master_slave_state-if-link-is-.patch
+781-09-v6.14-net-phy-realtek-always-clear-NBase-T-lpa.patch
+781-10-v6.14-net-phy-move-realtek-PHY-driver-to-its-own-subdirect.patch
+781-14-v6.15-net-phy-realtek-use-string-choices-helpers.patch
+781-20-v6.16-net-phy-realtek-Add-support-for-WOL-magic-packet-on.patch
+781-23-v6.16-net-phy-realtek-add-RTL8211F-register-defines.patch
+784-02-v6.18-net-phy-realtek-Avoid-PHYCR2-access-if-PHYCR2-not-pr.patch
+784-08-v6.19-net-phy-realtek-create-rtl8211f_config_rgmii_delay.patch
+788-v7.3-net-usb-qmi_wwan-add-Quectel-EG120K-EA.patch
+#  - the context moved in stable (6.12.119 reworked drivers/net/phy/realtek/realtek_main.c) AND none of our kernels builds the driver it patches
+#    (CONFIG_REALTEK_PHY is "not set" in generic/config-6.12 and no kmods-*.list package selects kmod-phy-realtek; checked against each built
+#    target .config), so the built kernel is identical with or without them:
+781-15-v6.15-net-phy-realtek-improve-mmd-register-access-for-inte.patch
+781-16-v6.15-net-phy-realtek-switch-from-paged-to-MMD-ops-in-rtl8.patch
+781-18-v6.15-net-phy-realtek-add-defines-for-shadowed-c45-standar.patch
+781-19-v6.15-net-phy-realtek-disable-PHY-mode-EEE.patch
+#  - the context moved in stable AND none of our kernels builds the driver it patches (CONFIG_PCS_MTK_LYNXI is unset for qualcommax/ipq60xx,
+#    armsr/armv8 and ath79/nand; CONFIG_PINCTRL_IPQ5018 only in qualcommax/ipq50xx, not ipq60xx):
+750-net-pcs-mtk-lynxi-workaround-2500BaseX-no-an.patch
+0305-pinctrl-qcom-IPQ5018-update-pwm-groups.patch
+#  - an OpenWrt build patch that compensates for a kernel change the stable kernel already has: stable renamed net_device.netns_local to
+#    netns_immutable, the package patch maps it back (mac80211 then fails: 'struct net_device' has no member named 'netns_local'):
+210-wireless_netns_local_backport.patch
