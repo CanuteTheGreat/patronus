@@ -606,6 +606,15 @@
                 overflow-x: auto;
             }
 
+            /* size="40" inputs and cols="70" textareas have an intrinsic width wider than a
+               phone; without a cap they push the page sideways (lab web-journey: /system +46px) */
+            .content input:not([type=checkbox]):not([type=radio]),
+            .content select,
+            .content textarea {
+                max-width: 100%;
+                box-sizing: border-box;
+            }
+
             .stat-grid {
                 grid-template-columns: 1fr;
             }

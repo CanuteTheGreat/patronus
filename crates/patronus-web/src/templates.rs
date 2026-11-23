@@ -902,4 +902,18 @@ mod tests {
             assert!(!src.contains("<!DOCTYPE"), "{name} is a standalone page");
         }
     }
+
+    /// Source guard: on phones every form control is capped to its container, so
+    /// `size="40"` inputs and `cols="70"` textareas cannot widen a page (/system +46px at 390px).
+    #[test]
+    fn base_caps_form_controls_on_phones() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let src = std::fs::read_to_string(dir.join("base.html")).unwrap();
+        let mobile = src.split("@media (max-width: 900px)").nth(1).expect("mobile block");
+        assert!(mobile.contains(".content select,"), "select not capped on phones");
+        assert!(
+            mobile.contains("max-width: 100%;") && mobile.contains(".content input:not"),
+            "inputs not capped on phones"
+        );
+    }
 }
