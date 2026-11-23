@@ -7,7 +7,7 @@
 OWRT_TAG=v25.12.6
 OWRT_GIT=https://github.com/openwrt/openwrt.git
 KERNEL_LINE=6.12
-KERNEL_PATCH=118
-KERNEL_SHA256=08308460320e852ac0745b2be3c7ae1cd81bdad713506ed7d817ba1ec9e1a5a5
+KERNEL_PATCH=119
+KERNEL_SHA256=143b287965acb9e270095b95894e59e2eba306d7e1f6b260d4ba74fca70c0333
 # sha256 of the OpenWrt files the tag ships with (what a bump replaces), checked by the build so a retagged release is noticed
 OWRT_STOCK_PATCH=112
