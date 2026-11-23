@@ -55,6 +55,8 @@ def render(src_text, img):
         "          # nightly: nothing new on main since the last PASSING systemd daily of this image -> do not occupy the runner\n"
         f"          if [ \"${{GITHUB_EVENT_NAME}}\" = schedule ] && sh {COMMON}/ci-already-published.sh {sd}; then exit 0; fi\n"
     )
+    # the OpenRC twin's own daily-slot guard is replaced by the systemd one (its schedule block went with the replaced on: block)
+    t = re.sub(r"(?m)^          # daily slot: .*\n          if \[ .*ci-already-published\.sh .*\n", "", t)
     t = t.replace("          set -u\n", "          set -u\n" + guard, 1)
     return t
 

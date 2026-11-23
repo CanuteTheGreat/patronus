@@ -31,6 +31,10 @@ on:
     paths:
       - 'gentoo/**'
       - '.forgejo/workflows/live-iso-server-openrc-aarch64.yml'
+  # Safety net for app-only changes: crates/frontend pushes do not trigger this image (per-push cost), so without a daily slot a merged UI or
+  # service fix never reached a published ISO until the next gentoo/ push. Skipped when the published daily already is main's HEAD.
+  schedule:
+    - cron: '53 19 * * *'
   workflow_dispatch:
     inputs:
       mode:
@@ -67,6 +71,8 @@ jobs:
           SYNC_MODE: '--upstream'
         run: |
           set -u
+          # daily slot: nothing new on main since the last PASSING daily of this image -> do not occupy the runner
+          if [ "${GITHUB_EVENT_NAME}" = schedule ] && sh gentoo/live-iso/common/ci-already-published.sh server-openrc-aarch64; then exit 0; fi
           case "${GITHUB_REF_TYPE:-}" in
             tag) mode=stable ;;
             *)   mode=daily ;;

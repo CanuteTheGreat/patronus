@@ -15,8 +15,8 @@ CI work runs **when its inputs change**, not on a clock (owner principle 2026-11
 |---|---|---|
 | `build-ci-base.yml` | Build Patronus CI base image | push main (paths: 2 filters); cron 0 6 * * 0 (safety net, see comment in file); dispatch |
 | `deploy-site.yml` | Deploy Patronus site | push main (paths: 4 filters); dispatch |
-| `live-iso-server-openrc-aarch64.yml` | Live ISO (server-openrc-aarch64) | push main tags (paths: 7 filters); dispatch |
-| `live-iso-server-openrc-x86_64.yml` | Live ISO (server-openrc-x86_64) | push main tags (paths: 7 filters); dispatch |
+| `live-iso-server-openrc-aarch64.yml` | Live ISO (server-openrc-aarch64) | push main tags (paths: 2 filters); cron daily (safety net for app-only changes, see comment in file); dispatch |
+| `live-iso-server-openrc-x86_64.yml` | Live ISO (server-openrc-x86_64) | push main tags (paths: 2 filters); cron daily (safety net for app-only changes, see comment in file); dispatch |
 | `live-iso.yml` | Live ISO (moved) | dispatch |
 | `nightly-firewall-traffic-test.yml` | Nightly Firewall / SD-WAN Live Traffic Test | push main (paths: 7 filters); dispatch |
 | `nightly-realistic-installer-test.yml` | Nightly Realistic Installer Test | push main (paths: 8 filters); dispatch |
