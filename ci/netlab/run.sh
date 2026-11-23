@@ -94,6 +94,17 @@ apt-get install -y -qq --no-install-recommends wireguard-tools >/dev/null
 apt-get install -y -qq --no-install-recommends strongswan-swanctl charon-systemd libcharon-extra-plugins libcharon-extauth-plugins libstrongswan-extra-plugins libstrongswan-standard-plugins openssl >/dev/null
 # lane J XDP data plane (lane-j-xdp.sh): clang (BPF target), libbpf, headers
 apt-get install -y -qq --no-install-recommends clang gcc libc6-dev libbpf-dev linux-libc-dev libelf-dev zlib1g-dev >/dev/null
+# lane T UI (lane-t-guest-ui.sh): Playwright + Firefox are installed HERE, with the other packages while DNS
+# still works (scenarios that run before lane T leave this container without name resolution, which made the
+# lane's own live pip fetch fail: "Could not find a version that satisfies the requirement playwright").
+apt-get install -y -qq --no-install-recommends python3-venv python3-pip >/dev/null
+python3 -m venv /opt/pw
+pw_ok=0
+for i in 1 2 3; do
+  if /opt/pw/bin/pip install -q playwright && /opt/pw/bin/playwright install --with-deps firefox >/dev/null 2>&1; then pw_ok=1; break; fi
+  sleep 15
+done
+[ "\$pw_ok" = 1 ] || rm -rf /opt/pw
 export NETLAB_POWER_CUTS=${NETLAB_POWER_CUTS:-4}
 $OLD_ENV
 echo "--- netlab container: \$(uname -m), kernel \$(uname -r)"

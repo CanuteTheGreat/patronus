@@ -34,6 +34,20 @@ def define(args):
     def run(m):
         lan, FW = m.network("lan"), "10.77.0.1"
         web = f"nc -z -w 3 {FW} {P['port']}"
+        # standard ports (owner rule): HTTP 80 only redirects to HTTPS 443; the UI answers its login page on 443
+        redirect = (f"printf 'GET / HTTP/1.0\r\nHost: {FW}\r\n\r\n' | nc -w 3 {FW} 80 | head -8 "
+                    "| grep -i '^location: https://' >/dev/null")
+        login = "test \"$(curl -sk -m 10 -o /dev/null -w '%{http_code}' https://127.0.0.1/login)\" = 200"
+
+        def web_diag(why):
+            """The firewall's own view when the web port is not answering (a bare timeout names nothing)."""
+            try:
+                m.fw.wait_for_shell()
+                for c in ("ss -ltnp", "rc-status -a 2>&1 | grep -i patronus", "ls -la /etc/patronus/tls",
+                          "cat /var/log/patronus/web-error.log; tail -20 /var/log/patronus/web.log"):
+                    print(f"### fw: {c}\n" + m.fw.execute(c, 60)[1][-2000:], flush=True)
+            except Exception as e:  # diagnostics must never mask the real failure
+                print(f"(no firewall diagnostics for {why}: {e})", flush=True)
 
         m.phase("install the firewall, boot the client")
         unattended_install(m, m.fw)
@@ -51,6 +65,9 @@ def define(args):
         m.check("lan-client-pings-firewall", True, f"{FW} answers on the hub")
         m.cli.wait_until_succeeds(web, 300, 5)
         m.check("lan-web-open", True, f"{FW}:{P['port']} accepts from the LAN")
+        m.cli.succeed(redirect)
+        m.fw.succeed(login)
+        m.check("web-standard-ports", True, "https :443 answers the login page; http :80 redirects to https")
 
         m.phase("faults")
         lan.partition(["fw"], ["cli"])
@@ -75,8 +92,15 @@ def define(args):
         m.fw.crash()
         m.cli.wait_until_fails(f"ping -c1 -W1 {FW}", 30)
         m.fw.start()
-        m.cli.wait_until_succeeds(web, 420, 5)
-        m.check("firewall-serves-after-power-cut", True, "cold boot, web port open again")
+        try:
+            m.cli.wait_until_succeeds(web, 420, 5)
+        except Exception:
+            web_diag("power cut")
+            raise
+        m.fw.wait_for_shell()
+        m.cli.succeed(redirect)
+        m.fw.succeed(login)
+        m.check("firewall-serves-after-power-cut", True, "cold boot, https :443 login page and the :80 redirect are back")
         m.fw.screenshot("fw-after-powercut")
 
     return Test("netlab-lan-client", nodes=[fw, cli], networks=[Network("lan")], run=run, timeout=5400,

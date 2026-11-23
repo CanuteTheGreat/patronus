@@ -2,8 +2,8 @@
 # Lane T (UI): the guest network page driven in a real browser (ci/guest-page-e2e.py, Playwright + Firefox) against
 # the shipped patronus-web in the netlab router: menu entry, every setting on the page, a refused change shown on the
 # page, then switching the guest network on/off, the password/QR/voucher/open/close buttons and the live status card.
-# SKIPs (exit 0) where Playwright and Firefox cannot be installed (no network): the API behind every button is proven
-# by lane-t-guest.sh and the web crate's guest_tests.
+# Needs Playwright + Firefox preinstalled at /opt/pw by ci/netlab/run.sh (fails, never skips, when they are missing); the API
+# behind every button is also proven by lane-t-guest.sh and the web crate's guest_tests.
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 
@@ -11,12 +11,9 @@ DB=/t/lane-t-guest-ui.db
 rm -f "$DB" "$NL_T/nl-jar"
 export DEBIAN_FRONTEND=noninteractive
 PW=/opt/pw
-if [ ! -x "$PW/bin/playwright" ]; then
-  { apt-get install -y -qq python3-venv python3-pip >/dev/null 2>&1 \
-    && python3 -m venv "$PW" && "$PW/bin/pip" install -q playwright \
-    && "$PW/bin/playwright" install --with-deps firefox >/dev/null 2>&1; } \
-    || { echo "SKIP lane-t-guest-ui: Playwright/Firefox could not be installed here"; exit 0; }
-fi
+# ci/netlab/run.sh installs Playwright + Firefox into $PW before the first scenario (the network is gone by now);
+# a lane run by hand outside run.sh must do the same. No live pip fetch here, no silent skip.
+[ -x "$PW/bin/playwright" ] || nl_fail "Playwright/Firefox are not preinstalled at $PW (ci/netlab/run.sh does it before the scenarios start)"
 [ -f "$NL_T/guest-page-e2e.py" ] || { echo "SKIP lane-t-guest-ui: ci/guest-page-e2e.py was not copied next to the scenarios"; exit 0; }
 
 nl_write_installer_toml
