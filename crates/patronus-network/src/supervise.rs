@@ -525,7 +525,18 @@ mod tests {
         // other instances are independent
         assert!(p.instance_lock("patronus-dhcpc", "eth1").is_some());
         drop(held);
-        assert!(f.try_lock().is_ok());
+        // the lock is free again once the holder's file description is gone. A sibling test
+        // that spawns a daemon forks this process, and until its child execs (O_CLOEXEC) the
+        // child shares every open file description, this lock included: allow that window.
+        let mut freed = false;
+        for _ in 0..200 {
+            if f.try_lock().is_ok() {
+                freed = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(freed, "instance lock still held 2 s after the holder dropped it");
     }
 
     #[tokio::test]
