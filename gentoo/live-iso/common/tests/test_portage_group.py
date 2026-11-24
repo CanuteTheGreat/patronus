@@ -115,10 +115,44 @@ class InstallerUserCreation(unittest.TestCase):
 
 class Gate(unittest.TestCase):
     GOOD = ("GROUPS hxadmin wheel portage horcrux-admin\nEQUERY-RC=0\nEQ sys-apps/portage-3.0.83-r1\nEIX-RC=0\n"
-            "EIX [I] sys-apps/portage (3.0.83-r1@11/17/2026): The package management system\nTREE-SYNCED\nEIX-CACHE -rw-rw-r-- 1 portage portage 1 x\nPG-DONE\n")
+            "EIX [I] sys-apps/portage (3.0.83-r1@11/17/2026): The package management system\nCFG-BAD 0\nTREE-SYNCED\nEIX-CACHE -rw-rw-r-- 1 portage portage 1 x\nPG-DONE\n")
 
     def test_good(self):
         self.assertTrue(HG.portage_group_verdict(self.GOOD)[0])
+
+    def test_unreadable_portage_config_fails(self):
+        # an administrator that cannot read a file under /etc/portage (0600 root, 0700 directory) is the failure this catches
+        bad = self.GOOD.replace("CFG-BAD 0", "CFG-BAD 1\nCFG-UNREADABLE /etc/portage/package.use/horcrux-gnome")
+        self.assertFalse(HG.portage_group_verdict(bad)[0])
+        self.assertIn("etc-portage-readable=FAIL", HG.portage_group_verdict(bad)[1])
+
+    def test_dangling_symlink_before_the_first_sync_is_not_an_access_failure(self):
+        # /etc/portage/make.profile points into the tree that first boot has not synced yet: find -readable follows links, so it was reported unreadable
+        o = self.GOOD.replace("TREE-SYNCED", "TREE-EMPTY").replace("EIX-RC=0", "EIX-RC=1").replace(
+            "EIX [I] sys-apps/portage (3.0.83-r1@11/17/2026): The package management system", "EIX No matches found").replace(
+            "CFG-BAD 0", "CFG-DANGLING 1\nCFG-DANGLING-LINK /etc/portage/make.profile\nCFG-BAD 0")
+        self.assertTrue(HG.portage_group_verdict(o)[0])
+
+    def test_dangling_symlink_after_the_sync_fails(self):
+        o = self.GOOD.replace("CFG-BAD 0", "CFG-DANGLING 1\nCFG-DANGLING-LINK /etc/portage/make.profile\nCFG-BAD 0")
+        self.assertFalse(HG.portage_group_verdict(o)[0])
+
+    def test_real_unreadable_file_still_fails_while_the_tree_is_empty(self):
+        o = self.GOOD.replace("TREE-SYNCED", "TREE-EMPTY").replace("CFG-BAD 0", "CFG-DANGLING 1\nCFG-BAD 1\nCFG-UNREADABLE /etc/portage/package.use/x")
+        self.assertFalse(HG.portage_group_verdict(o)[0])
+
+    def test_script_skips_dangling_links_in_the_access_probe(self):
+        s = HG.portage_group_script("hxadmin")
+        self.assertIn("-prune -o -xtype l -prune -o", s)
+        self.assertIn("CFG-DANGLING", s)
+
+    def test_run_without_the_config_probe_proves_nothing(self):
+        self.assertFalse(HG.portage_group_verdict(self.GOOD.replace("CFG-BAD 0\n", ""))[0])
+
+    def test_script_probes_effective_access_as_the_user(self):
+        s = HG.portage_group_script("hxadmin")
+        self.assertIn("-type d ! -executable -o ! -readable", s)        # access(2) as that user, not mode bits
+        self.assertIn("/etc/portage/gnupg -prune", s)                   # keyring is secret by design
 
     def test_not_in_portage_fails(self):
         self.assertFalse(HG.portage_group_verdict(self.GOOD.replace(" portage horcrux-admin", " horcrux-admin"))[0])
