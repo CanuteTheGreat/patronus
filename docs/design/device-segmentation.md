@@ -479,15 +479,15 @@ gives a no-downtime rotation.
 - **Migration**: 1310; none for existing installs (no Wi-Fi existed).
 - **Tests**: renderer unit tests incl. hostile input; netlab `lane-s-wifi-hwsim.sh` =
   the spike's `hwsim-run.sh` ported (needs the `mac80211_hwsim` module: runs on
-  rw-man-02/03 (x86_64, kernel 7.0 ships the module; tested). rw-man-04/05 (arm64) also ship
-  the module but were not tried; rw-man-01 (kernel 6.8) has no `mac80211_hwsim`. Load/unload under a
+  CI host/03 (x86_64, kernel 7.0 ships the module; tested). CI host/05 (arm64) also ship
+  the module but were not tried; CI host (kernel 6.8) has no `mac80211_hwsim`. Load/unload under a
   lock because the module is host-global);
   watcher test (event -> store); applier tests for "failed start keeps old files";
   secret redaction test for `export_json`.
 
 ### 5.7 Spike evidence (a)
 
-Environment: rw-man-03 (x86_64, kernel 7.0.0-1014-aws, `mac80211_hwsim radios=4`, loaded
+Environment: CI host (x86_64, kernel 7.0.0-1014-aws, `mac80211_hwsim radios=4`, loaded
 for the run and removed afterwards; hostapd/wpa_supplicant 2.10 from debian:trixie in a
 throw-away privileged container with the phys moved into its netns; four stations in their
 own netns). Script: `lab/hwsim-run.sh` + `lab/hwsim-inner.sh`; output
@@ -732,7 +732,7 @@ Parent actions: *+30 min today*, *Pause internet now*, *Resume*.
 
 ## 9. Order of work and estimates
 
-Agent-day = one agent working a day including CI iteration on the rw-man hosts.
+Agent-day = one agent working a day including CI iteration on the CI hosts.
 The spike's generator and the three netlab-style scripts are reused, which is why (a) and
 (b) are cheaper than they look cold.
 
@@ -775,7 +775,7 @@ Recommended order and why:
    rest would be a separate project (`patronus-secrets` exists but the store does not use it
    for lane F either).
 5. **DNS logs are personal data**: off by default, per policy, retention-capped.
-6. **hwsim CI** needs the `mac80211_hwsim` module on the runner (rw-man-02..05 yes, 01 no); it
+6. **hwsim CI** needs the `mac80211_hwsim` module on the runner (CI host..05 yes, 01 no); it
    is host-global, so the job takes a lock and unloads it afterwards.
 7. **Licence**: DB-IP Lite is CC-BY 4.0 (attribution in the UI); SPR code is BSD-3 and is not
    copied here.
@@ -792,7 +792,7 @@ spikes/device-segmentation/
   evidence/generated-pseg.nft
 ```
 
-Hosts touched and restored: rw-man-03 (docker `--rm` containers, `mac80211_hwsim` loaded and
+Hosts touched and restored: CI host (docker `--rm` containers, `mac80211_hwsim` loaded and
 removed, `iw` installed and removed, `/tmp/segspike-*` deleted); the lab VM (`/root/seg-spike`
 removed, namespaces gone, `nft list tables` unchanged). Nothing on the owner's home network
 was touched beyond ssh to the lab VM.

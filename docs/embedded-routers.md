@@ -4,7 +4,7 @@ Status: plan + feasibility spike, 2026-11-05; local web UI proven in QEMU 2026-1
 Spike scripts: `ci/embedded-mips/` (numbered in run order). Measured numbers are marked **[measured]**,
 numbers taken from other repos' docs **[documented]**, guesses **[estimate]**.
 
-Owner order: do the Slate first, then a test VM on azkaban, then replace kingscross.
+Owner order: do the Slate first, then a test VM on the lab hypervisor, then replace kingscross.
 Patronus has to be "smart" enough to fit on the Slate.
 
 ## 1. Verdict
@@ -441,7 +441,7 @@ Rules: unknown sections are listed in an `unmapped` report (never dropped silent
 - `option reqprefix '56:<hex>'` in UCI pins the IA_PD IAID by hand.
 Source of the value, in this order: the running `odhcp6c` command line (`--ssh` reads it from the live router: `-P0:<hex>` = the 25.12 scheme, `-P0` alone = the 24.10 scheme), then the release in `usr/lib/os-release` (`etc/openwrt_release` as a fallback; `--ssh` fetches both), then the device name of the `dhcpv6` interface (`@wan` aliases and PPPoE links resolve to `pppoe-wan`). When the release is unknown and no live client was read, the importer pins nothing and lists a manual step with both candidates (`1` and the md5 value): pin the old router's IAID or the ISP may refuse the delegated prefix until the old binding expires. When IA_NA and IA_PD differ (a hand-set `reqprefix` IAID), the report names both and Patronus pins the IA_PD value. Unit tests: `import_uci_ext.rs` (`iaid_*`, `l3_device_*`, `release_major_*`).
 
-## 8. Spike results and blockers (real runs on rw-man-03)
+## 8. Spike results and blockers (real runs on CI host)
 
 Setup: one capped container each (`--cpus 3 --memory 6-8g`), Gentoo stage3 amd64 + crossdev, Debian 12 + qemu-system-mips 7.2.
 
@@ -460,7 +460,7 @@ Setup: one capped container each (`--cpus 3 --memory 6-8g`), Gentoo stage3 amd64
 
 ## 9. Rollout and exact owner steps
 
-Principle: the Slate stays on OpenWrt for ETPhoneHome QA until step D passes. Patronus development uses the malta QEMU twin and (phase 2) an azkaban VM. Nothing below is run without the owner.
+Principle: the Slate stays on OpenWrt for ETPhoneHome QA until step D passes. Patronus development uses the malta QEMU twin and (phase 2) a lab-hypervisor VM. Nothing below is run without the owner.
 
 **Safety net already in place:** `backups/router-config-pull.sh` pulls `sysupgrade -b` of the Slate (by MAC, hostname-verified) into the nightly restic job whenever it is on the LAN; last good copy is `router-slate.tar.gz`. Stock OpenWrt 25.12.6 image staged at `~/.hermes/state/patronus-embedded/openwrt-25.12.6-ath79-nand-glinet_gl-ar750s-nor-nand-squashfs-sysupgrade.bin` (sha256 `3d58b599daca2a239f745cf5d739d624d6262302000df1615295ca03c594ed03`, matches the downloads.openwrt.org `sha256sums`).
 
@@ -484,7 +484,7 @@ What ETPhoneHome QA uses meanwhile: the Slate unchanged on OpenWrt 25.12 (router
 
 1. **Slate (this document):** hardware profile + embedded tier, musl cross rootfs, kernel from OpenWrt patches, sysupgrade image + QEMU gate in CI, importer, web-lite measurement, A-E above.
    Exit: `patronus apply` green in malta QEMU on every push (kernel config, nft inet, wireguard, dnsmasq), a booted initramfs on the real Slate (B), then flash (C).
-2. **azkaban test VM:** `standard` tier (glibc, x86_64, OpenRC, full web UI) imported from kingscross' OpenWrt config (`kingscross` is OpenWrt VM 100; its config tarball is about 10 MB and is covered by the nightly vzdump, not the router pull). Same importer, run in a VM that mirrors kingscross' interfaces on a spare bridge with test clients. Exit: LAN/WAN/VPN parity checklist passes for 7 days.
+2. **lab-hypervisor test VM:** `standard` tier (glibc, x86_64, OpenRC, full web UI) imported from kingscross' OpenWrt config (`kingscross` is OpenWrt VM 100; its config tarball is about 10 MB and is covered by the nightly vzdump, not the router pull). Same importer, run in a VM that mirrors kingscross' interfaces on a spare bridge with test clients. Exit: LAN/WAN/VPN parity checklist passes for 7 days.
 3. **kingscross replacement:** cut over in a maintenance window with the VM already proven: snapshot VM 100, switch the bridge/VLANs to the Patronus VM, keep the OpenWrt VM powered off for instant rollback for 2 weeks.
 
 ## 11. Next work items
@@ -889,7 +889,7 @@ because `/api/features` now lists `wireguard`, `ntp` and `syslog`.
   the gate: `chronyc` segfaulted after dropping to `chrony`). `/etc/mdev.conf` gives the standard nodes 0666;
   `check-rootfs.sh` requires it.
 
-Sizes **[measured]**, CI-unit images built from the same tree with and without these changes (2026-11-17, rw-man-04):
+Sizes **[measured]**, CI-unit images built from the same tree with and without these changes (2026-11-17, CI host):
 
 | | before (main 43797117) | with WireGuard + chrony + syslog | delta |
 |---|---|---|---|

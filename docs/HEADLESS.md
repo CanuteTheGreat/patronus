@@ -35,7 +35,7 @@ the ebuild's `IUSE`/`RDEPEND`, `profile.toml`, the live boot menu, the matrix. I
 **Personal to the owner**
 * In the Patronus image inputs: **none found** (no Tailscale, Nextcloud, browser, Rustinion agent, SSH key, auth key; `ci/check-headless-image.sh` now fails the build on any of them).
 * In the vendored shared code (`common/`, comments and Horcrux-only recipes, never installed on a Patronus box): `Dockerfile.private` (the Surface private layer), `publish-github.sh`
-  repo names, hogshead/gringotts mentions in comments and tests, `vdb-prune.py` group `gringotts-fw`. Public, no secrets; the Horcrux restructuring moves the private recipes out of `common/`.
+  repo names, lab-laptop name mentions in comments and tests,. Public, no secrets; the Horcrux restructuring moves the private recipes out of `common/`.
 * `HOME_URL` in `/etc/os-release` is the project's public repo.
 
 **Machine-specific**
