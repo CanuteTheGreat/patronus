@@ -922,4 +922,17 @@ mod tests {
             "inputs not capped on phones"
         );
     }
+
+    /// Source guard: on desktop widths a table wider than the content column scrolls inside its own box
+    /// and `.content` may shrink, so the page itself never scrolls sideways (/firewall +266px at 1280px).
+    #[test]
+    fn base_scrolls_wide_tables_on_desktop() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let src = std::fs::read_to_string(dir.join("base.html")).unwrap();
+        assert!(src.contains(".content table.wide-scroll"), "wide-scroll rule missing");
+        assert!(src.contains("classList.add('wide-scroll')"), "script that applies it missing");
+        let content = src.split(".content {").nth(1).expect(".content rule");
+        let content = content.split('}').next().unwrap();
+        assert!(content.contains("min-width: 0"), ".content must be allowed to shrink");
+    }
 }

@@ -297,6 +297,16 @@
             max-width: 1600px;
             margin: 0 auto;
             width: 100%;
+            /* a flex item defaults to min-width:auto, so a wide table grew .content (and the page) instead of scrolling */
+            min-width: 0;
+        }
+
+        /* set by the script at the end of the page on a table whose columns need more than the content column
+           (desktop widths; phones get the same rule from the media query below): it scrolls inside its own box */
+        .content table.wide-scroll {
+            display: block;
+            overflow-x: auto;
+            position: relative;
         }
 
         .page-header {
@@ -1066,6 +1076,12 @@
     // table with nothing focusable inside a tab stop, and take it away again when it stops scrolling.
     (function () {
         function fix() {
+            document.querySelectorAll('.content table').forEach(el => {
+                // measure as a plain table, then keep the scroll box only if the columns do not fit (lab web-journey: /firewall +266px at 1280)
+                el.classList.remove('wide-scroll');
+                const box = el.parentElement;
+                if (box && el.offsetWidth > box.clientWidth + 1 && box.clientWidth > 0) el.classList.add('wide-scroll');
+            });
             document.querySelectorAll('.content table, .table-container').forEach(el => {
                 const scrolls = el.scrollWidth > el.clientWidth + 1 && ['auto', 'scroll'].includes(getComputedStyle(el).overflowX);
                 const inner = el.querySelector('a[href], button, input, select, textarea, [tabindex]');
