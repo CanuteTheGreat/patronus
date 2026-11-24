@@ -43,7 +43,7 @@ def define(args):
             """The firewall's own view when the web port is not answering (a bare timeout names nothing)."""
             try:
                 m.fw.wait_for_shell()
-                for c in ("ss -ltnp", "rc-status -a 2>&1 | grep -i patronus", "ls -la /etc/patronus/tls",
+                for c in ("ss -ltnp", m.fw.init.status_all() + " | grep -i patronus", "ls -la /etc/patronus/tls",
                           "cat /var/log/patronus/web-error.log; tail -20 /var/log/patronus/web.log"):
                     print(f"### fw: {c}\n" + m.fw.execute(c, 60)[1][-2000:], flush=True)
             except Exception as e:  # diagnostics must never mask the real failure
