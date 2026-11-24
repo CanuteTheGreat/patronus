@@ -9,6 +9,9 @@
 # then applies sysctl -> interfaces/VLANs -> routes -> firewall/NAT ->
 # services. `patronus firewall apply` is the firewall-only subset.
 
+# OpenRC reads /etc/conf.d/<this service> only; the shared tunables live in /etc/conf.d/patronus
+[ -r /etc/conf.d/patronus ] && . /etc/conf.d/patronus
+
 description="Patronus boot apply (sysctl, interfaces, routes, firewall/NAT, services)"
 extra_started_commands="reload"
 
@@ -36,31 +39,72 @@ start_pre() {
 	fix_store_perms
 }
 
+# Everything `patronus apply` prints at boot goes to ${PATRONUS_BOOT_LOG} (OpenRC shows only "failed to start" on the console and keeps no log of
+# the command's own output: a boot-only failure used to leave no trace at all). Tunables (/etc/conf.d/patronus): PATRONUS_BOOT_TRIES,
+# PATRONUS_BOOT_RETRY_DELAY, PATRONUS_BOOT_LOG.
+boot_log() {
+	echo "${PATRONUS_BOOT_LOG:-/var/log/patronus/boot-apply.log}"
+}
+
+# one line of the log: UTC time, seconds since boot, text
+boot_note() {
+	printf '%s up=%ss %s\n' "$(date -u +%FT%TZ)" "$(cut -d. -f1 /proc/uptime 2>/dev/null)" "$*" >> "$(boot_log)" 2>/dev/null
+}
+
+# what the apply depended on when it failed for good: links, addresses, loaded netfilter modules, the store, the ruleset
+boot_diag() {
+	{
+		echo "---- state after the last failed try"
+		ip -br link 2>&1
+		ip -br addr 2>&1
+		grep -E '^(nf_tables|nft_|nf_conntrack)' /proc/modules 2>&1 | cut -d' ' -f1 | tr '\n' ' '; echo
+		ls -ld /run/patronus /var/lib/patronus /var/lib/patronus/config.db* 2>&1
+		nft list tables 2>&1
+		echo "---- end"
+	} >> "$(boot_log)" 2>&1
+}
+
 start() {
+	local tries="${PATRONUS_BOOT_TRIES:-5}" delay="${PATRONUS_BOOT_RETRY_DELAY:-3}" log try=0 rc=1
+	log=$(boot_log)
 	ebegin "Applying Patronus configuration"
+	checkpath --directory --owner patronus:patronus --mode 0755 "$(dirname "${log}")" 2>/dev/null
 	# This runs before `net`: queue the DHCP/DNS/NTP daemons (which need
 	# net) instead of starting them inline, which would wait on ourselves.
-	# One retry: a transient failure here left the service stopped with
-	# ip_forward=0 until someone re-applied by hand. Forwarding is switched
-	# on by the apply itself (sysctl stage) from the stored config, after the
-	# ruleset is in place, so a failed apply stays fail-closed.
-	# Up to 5 tries, 3 s apart (NIC not up yet, store recovering after a
+	# Up to ${tries} tries, ${delay} s apart (NIC not up yet, store recovering after a
 	# power-off): a service left stopped means no forwarding at all.
-	local rc=1 try=0
-	while [ "$try" -lt 5 ]; do
-		PATRONUS_DEFER_SERVICES=1 /usr/bin/patronus apply && { rc=0; break; }
-		rc=$?
+	# Forwarding is switched on by the apply itself (sysctl stage) from the
+	# stored config, after the ruleset is in place, so a failed apply stays
+	# fail-closed.
+	while [ "${try}" -lt "${tries}" ]; do
 		try=$((try + 1))
-		[ "$try" -lt 5 ] && sleep 3
+		boot_note "boot apply try ${try}/${tries}"
+		PATRONUS_DEFER_SERVICES=1 /usr/bin/patronus apply >> "${log}" 2>&1
+		rc=$?
+		if [ "${rc}" = 0 ]; then
+			boot_note "boot apply ok (try ${try})"
+			break
+		fi
+		boot_note "boot apply failed: exit ${rc} (try ${try}/${tries})"
+		[ "${try}" -lt "${tries}" ] && sleep "${delay}"
 	done
+	if [ "${rc}" != 0 ]; then
+		boot_diag
+		logger -t patronus-firewall "boot apply failed after ${try} tries (exit ${rc}); output in ${log}" 2>/dev/null
+	fi
 	fix_store_perms
-	eend $rc
+	eend "${rc}" "boot apply failed, see ${log}"
 }
 
 stop() {
+	local log rc
+	log=$(boot_log)
 	ebegin "Flushing Patronus firewall rules"
-	/usr/bin/patronus firewall flush
-	eend $?
+	boot_note "flush on stop"
+	/usr/bin/patronus firewall flush >> "${log}" 2>&1
+	rc=$?
+	[ "${rc}" = 0 ] || boot_note "flush failed: exit ${rc}"
+	eend "${rc}" "flush failed, see ${log}"
 }
 
 reload() {

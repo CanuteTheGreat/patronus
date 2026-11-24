@@ -13,6 +13,9 @@
 #
 # Tunables (/etc/conf.d/patronus): PATRONUS_LATE_TRIES, PATRONUS_LATE_RETRY_DELAY.
 
+# OpenRC reads /etc/conf.d/<this service> only; the shared tunables live in /etc/conf.d/patronus
+[ -r /etc/conf.d/patronus ] && . /etc/conf.d/patronus
+
 description="Patronus second boot pass (interfaces, routes and daemons once the network is up)"
 
 depend() {

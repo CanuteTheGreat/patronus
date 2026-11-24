@@ -522,10 +522,29 @@ src_install() {
 	fperms 0750 /etc/patronus/ipsec
 	fperms 0700 /etc/patronus/certificates
 	fowners patronus:patronus /etc/patronus/tls
+	# Boot menu on installs without boot environments (XFS/ext4/LVM): a kernel install/removal rewrites grub.cfg (sys-kernel/installkernel is built
+	# without USE=grub because ZFS boot-environment installs own a static menu), and the menu never waits for a key (fallback chain, retry, restart).
+	exeinto /etc/kernel/postinst.d
+	newexe "${FILESDIR}/patronus-boot-entry" 91-patronus-boot-entry
+	exeinto /etc/kernel/postrm.d
+	newexe "${FILESDIR}/patronus-boot-entry" 91-patronus-boot-entry
+	exeinto /etc/grub.d
+	newexe "${FILESDIR}/patronus-grub-unattended" 11_patronus_unattended
+	insinto /etc/conf.d
+	newins "${FILESDIR}/patronus-boot-entry.confd" patronus-boot-entry
 	fperms 0700 /etc/patronus/tls
 }
 
 pkg_postinst() {
+	# installs without boot environments: every kernel a top-level menu entry (GRUB can fall back to the previous one), then a fresh grub.cfg with the
+	# fallback chain. ZFS boot-environment installs (a static menu owned by the installer's hook) and image builds (ROOT set) are left alone.
+	if [[ -z ${ROOT} && ! -e /etc/horcrux/be.conf && ! -e /etc/kernel/postinst.d/90-horcrux-be && -f /etc/default/grub ]]; then
+		if ! grep -qE '^[[:space:]]*(export[[:space:]]+)?GRUB_DISABLE_SUBMENU=' /etc/default/grub; then
+			printf '\n# net-firewall/patronus: every kernel is a top-level boot menu entry, so GRUB falls back to the previous kernel on its own\nGRUB_DISABLE_SUBMENU=y\n' \
+				>> /etc/default/grub && elog "/etc/default/grub: GRUB_DISABLE_SUBMENU=y (older kernels are automatic fallbacks)"
+		fi
+		"${EROOT%/}"/etc/kernel/postinst.d/91-patronus-boot-entry refresh
+	fi
 	elog "Web UI login: sign in with a SYSTEM user (PAM service /etc/pam.d/patronus) in the patronus-admin or wheel group; there is no built-in admin account and no default password."
 	elog "Create the group once:  groupadd -r patronus-admin;  usermod -aG patronus-admin <user>"
 	elog "Roles/groups: /etc/patronus/web-auth.toml. Accounts from before this release stay read-only for one release; the first system administrator login retires the old admin."

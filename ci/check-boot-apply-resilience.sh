@@ -28,8 +28,8 @@ EOS
 chmod +x "$fake"
 sed "s#/usr/bin/patronus#$fake#g" "$F/patronus-firewall.initd" | sed '1d' > "$T/initd.sh"
 run() { # run <fails-before-success> -> prints "<rc> <calls>"
-  COUNT=$T/count FAILS=$1 sh -c '
-    rm -f "$COUNT"; export COUNT FAILS
+  COUNT=$T/count FAILS=$1 PATRONUS_BOOT_LOG=$T/boot-apply.log sh -c '
+    rm -f "$COUNT" "$PATRONUS_BOOT_LOG"; export COUNT FAILS PATRONUS_BOOT_LOG
     ebegin() { :; }; eend() { return "$1"; }; checkpath() { :; }; sleep() { :; }
     description=; extra_started_commands=
     . "$0"
@@ -41,6 +41,14 @@ run() { # run <fails-before-success> -> prints "<rc> <calls>"
 [ "$(run 4)" = "0 5" ] || fail "openrc: 4 failures should succeed on try 5, got: $(run 4)"
 r=$(run 99); [ "${r%% *}" != "0" ] && [ "${r##* }" = "5" ] || fail "openrc: permanent failure must report failure after 5 tries, got: $r"
 echo "ok openrc retry"
+# the boot-time apply's own output must be kept (it was logged nowhere: a boot-only failure left no trace): one line per try, the failure, the diagnostics
+run 2 >/dev/null
+grep -q 'boot apply try 3/5' "$T/boot-apply.log" && grep -q 'boot apply failed: exit 1 (try 2/5)' "$T/boot-apply.log" && grep -q 'boot apply ok (try 3)' "$T/boot-apply.log" \
+  || fail "openrc: boot log lacks the per-try lines: $(cat "$T/boot-apply.log")"
+run 99 >/dev/null
+grep -q -- '---- state after the last failed try' "$T/boot-apply.log" || fail "openrc: no diagnostics after a permanent failure"
+grep -q 'PATRONUS_BOOT_LOG' "$F/patronus.confd" || fail "patronus.confd does not document PATRONUS_BOOT_LOG"
+echo "ok openrc boot log"
 if command -v systemd-analyze >/dev/null 2>&1; then
   bad=$(systemd-analyze verify "$U" 2>&1 | grep 'patronus-firewall' | grep -v 'not found\|/usr/bin/patronus' || true)
   [ -z "$bad" ] || fail "systemd-analyze: $bad"

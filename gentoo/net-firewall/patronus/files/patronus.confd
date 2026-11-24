@@ -18,3 +18,9 @@ PATRONUS_WEB_ADDR="0.0.0.0:8080"
 # network is up, and the pause between tries in seconds.
 #PATRONUS_LATE_TRIES="5"
 #PATRONUS_LATE_RETRY_DELAY="3"
+
+# First boot pass (patronus-firewall): tries of the whole `patronus apply`, the pause between tries in seconds, and the file that keeps
+# everything the apply printed (and, after a failure, the state of links, netfilter modules and the store).
+#PATRONUS_BOOT_TRIES="5"
+#PATRONUS_BOOT_RETRY_DELAY="3"
+#PATRONUS_BOOT_LOG="/var/log/patronus/boot-apply.log"

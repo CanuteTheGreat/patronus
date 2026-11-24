@@ -116,10 +116,13 @@ def define(args):
         fw.wait_for_shell()
         fw.wait_for_unit(P["svc"], 300)
         m.check(f"{P['svc']}-active", True, fw.init.name)
+        boot_apply_health(m, fw, "first-boot", full=False)
         fw.wait_until_succeeds(f"timeout 3 bash -c ': </dev/tcp/127.0.0.1/{P['port']}'", 120, 3)   # no nc on the image
         fw.put_file(_write_tmp(API_PY), "/tmp/fwapi.py")
         # the web UI is where OpenWrt/pfSense users expect it: https://router-address (443) and http://router-address (80, redirect only), the
         # nothing on 8443 unless opted in, and the process holds only the capability to bind them (not root); same on OpenRC and systemd
+        m.phase("0a. boot loader: /boot and the ESP are in fstab, a kernel update changes the menu, the menu never waits for a key")
+        boot_health(m, fw)
         m.phase("0. web UI on the standard ports")
         fw.put_file(_write_tmp(WEBPORTS_PY), "/tmp/webports.py")
         wp = fw.succeed("python3 /tmp/webports.py", timeout=90).strip()
@@ -190,6 +193,7 @@ def define(args):
         fw.reboot(420)
         fw.wait_for_unit(P["svc"], 300)
         m.check("fw-back-after-reboot", True, fw.init.name)
+        boot_apply_health(m, fw, "after-reboot")
         # the second boot pass (patronus-services) runs once the network is up: allow it a bounded time, then everything must be in place
         fw.wait_until_succeeds("pgrep -x dnsmasq >/dev/null", 180, 3)
         m.check("dnsmasq-running-after-reboot", True, fw.succeed("pgrep -a dnsmasq").strip()[:120])
@@ -211,6 +215,59 @@ def define(args):
 
     return Test("installed-firstrun", nodes=[fw, cli], networks=[Network("lan")], run=run, timeout=5400,
                 description="installed Patronus: package-owned product, wizard (DHCP WAN, readable failure), reboot persistence of DHCP/DNS service and routes")
+
+
+# a version no real kernel reaches: GRUB's version sort puts it first, so "the newest installed kernel" is this one
+FAKE_KVER = "6.99.0-vmtest"
+
+
+def boot_health(m, fw):
+    """The installed disk boots the kernel the package manager installed last, and never sits at the menu waiting for a key.
+
+    Found 2026-11-24 on a lab VM: no /boot in fstab, so kernel updates landed on the root fs while GRUB read the boot partition, and no hook
+    rewrote grub.cfg: the machine booted its install-day kernel forever. Init-agnostic (plain files and the hook installkernel runs)."""
+    fstab = fw.succeed("cat /etc/fstab")
+    m.check("fstab-mounts-boot", re.search(r"^\S+\s+/boot\s+\S+", fstab, re.M) is not None, fstab.strip()[:300])
+    m.check("fstab-mounts-the-esp", re.search(r"^\S+\s+/boot/efi\s+vfat", fstab, re.M) is not None, "UEFI install: ESP at /boot/efi")
+    m.check("boot-is-a-mounted-partition", fw.execute("findmnt -n -o SOURCE /boot && findmnt -n -o SOURCE /boot/efi")[0] == 0, fw.execute("findmnt -n /boot")[1].strip())
+    hooks = fw.succeed("for f in /etc/kernel/postinst.d/91-patronus-boot-entry /etc/kernel/postrm.d/91-patronus-boot-entry /etc/grub.d/11_patronus_unattended; do "
+                       "echo \"$f $(test -x $f && echo ok || echo MISSING) $(qfile -Cq $f)\"; done")
+    bad = [ln for ln in hooks.strip().splitlines() if not ln.split()[1] == "ok" or not ln.endswith(" net-firewall/patronus")]
+    m.check("kernel-hooks-installed-and-package-owned", not bad, "; ".join(bad) if bad else "postinst.d, postrm.d, grub.d unattended script: net-firewall/patronus")
+    m.check("installkernel-runs-etc-kernel-postinst-d", fw.execute("grep -q /etc/kernel/postinst.d /usr/sbin/installkernel")[0] == 0, "the hook directory the installed hooks live in")
+    kver = fw.succeed("uname -r").strip()
+    m.check("grub-cfg-names-the-running-kernel", f"vmlinuz-{kver}" in fw.succeed("cat /boot/grub/grub.cfg"), kver)
+    # a kernel install, as installkernel does it: files in /boot, then every /etc/kernel/postinst.d hook with the version
+    fw.succeed(f"cp /boot/vmlinuz-{kver} /boot/vmlinuz-{FAKE_KVER} && cp /boot/initramfs-{kver}.img /boot/initramfs-{FAKE_KVER}.img")
+    fw.succeed(f"/etc/kernel/postinst.d/91-patronus-boot-entry {FAKE_KVER}", timeout=180)
+    cfg = fw.succeed("cat /boot/grub/grub.cfg")
+    entries = re.findall(r"^menuentry '([^']*)'.*?\n\s*linux\s+\S*vmlinuz-(\S+)", cfg, re.M | re.S)
+    m.check("grub-cfg-names-the-newest-installed-kernel-first", bool(entries) and entries[0][1] == FAKE_KVER and any(k == kver for _, k in entries[1:]),
+            f"entries (newest first): {[k for _, k in entries][:4]}")
+    # the menu counts down and falls back instead of waiting for a key
+    t = re.search(r"^\s*set timeout=(\S+)", cfg, re.M)
+    m.check("menu-has-a-countdown", t is not None and t.group(1).isdigit() and int(t.group(1)) > 0, f"set timeout={t.group(1) if t else None}")
+    m.check("menu-falls-back-and-restarts-never-waits", "set fallback=" in cfg and "patronus-retry" in cfg and "reboot" in cfg, "fallback chain + retry/restart entry present")
+    # a kernel removal takes it out again
+    fw.succeed(f"rm -f /boot/vmlinuz-{FAKE_KVER} /boot/initramfs-{FAKE_KVER}.img && /etc/kernel/postrm.d/91-patronus-boot-entry {FAKE_KVER}", timeout=180)
+    m.check("kernel-removal-rewrites-the-menu", FAKE_KVER not in fw.succeed("cat /boot/grub/grub.cfg"), "removed kernel is gone from grub.cfg")
+
+
+def boot_apply_health(m, fw, when, full=True):
+    """The boot-time apply must have STARTED (a failed one left no ruleset and ip_forward 0), and its own output is kept in /var/log/patronus/."""
+    fw.wait_until_succeeds(fw.init.is_active("patronus-firewall"), 120, 3)
+    m.check(f"patronus-firewall-started-{when}", True, fw.init.name)
+    if full:     # the first boot of a fresh install has its default ruleset seeded by this very apply: proven after the reboot, with the wizard's config
+        _ruleset_and_forwarding(m, fw, when)
+    if fw.init.name == "openrc":
+        log = fw.execute("cat /var/log/patronus/boot-apply.log")[1]
+        m.check(f"boot-apply-output-is-logged-{when}", "boot apply ok" in log, log.strip()[-400:])
+
+
+def _ruleset_and_forwarding(m, fw, when):
+    ok = fw.execute("nft list ruleset | grep -q 'table '")[0] == 0
+    m.check(f"boot-apply-left-a-ruleset-{when}", ok, fw.execute("nft list tables")[1].strip()[:200])
+    m.check(f"boot-apply-enabled-ip-forward-{when}", fw.succeed("cat /proc/sys/net/ipv4/ip_forward").strip() == "1", "net.ipv4.ip_forward")
 
 
 def _write_tmp(text):
