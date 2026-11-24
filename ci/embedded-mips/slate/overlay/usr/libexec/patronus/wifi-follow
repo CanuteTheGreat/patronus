@@ -275,7 +275,21 @@ src_one() {
   log "$sta: replies from ${a%/*} leave by $sta (table $tbl${gw:+, gateway $gw})"
 }
 
+# Any later apply (uplink change, config save, applyd refresh) rebuilds the whole inet patronus table and drops the boot-time
+# management accept that apply installs from unit.conf MGMT_NET: SSH/web then time out from the house LAN (2026-11-24: the
+# vulnerability inventory lost the unit that way). Re-assert it from this daemon (idempotent: apply mgmt inserts only when the
+# rule is absent), every MGMT_EVERY passes.
+MGMT_APPLY=${MGMT_APPLY:-/usr/libexec/patronus/apply}
+MGMT_EVERY=${MGMT_EVERY:-5}
+mgmt_n=0
+mgmt_pass() {
+  mgmt_n=$((mgmt_n+1)); [ $((mgmt_n % MGMT_EVERY)) -eq 1 ] || return 0
+  [ -x "$MGMT_APPLY" ] && "$MGMT_APPLY" mgmt >/dev/null 2>&1
+  return 0
+}
+
 pass() {
+  mgmt_pass
   for h in $HEALTH_STA; do health_one "$h"; done
   for p in $FOLLOW; do follow_one "${p%%:*}" "$(echo "$p" | cut -d: -f2)" "${p##*:}"; done
   for u in $UPLINK_TABLES; do src_one "${u%%:*}" "$(echo "$u" | cut -d: -f2)" "${u##*:}"; done

@@ -226,4 +226,9 @@ sed -e "s#/etc/patronus/embedded.env#$W/etc/embedded.env#; s#/etc/patronus/board
 PATH="$W/bin:$PATH" sh "$W/apply" mgmt
 chk "apply mgmt: SSH/web from MGMT_NET accepted on BOTH uplinks" grep -q 'iifname { "wl5-sta", "wl24-sta" } ip saddr 10.1.1.0/24' "$FX/nft.calls"
 
+# wifi-follow re-asserts the management rule after any later apply wiped it (first pass, then every MGMT_EVERY-th)
+printf '#!/bin/sh\necho "$*" >> "%s/mgmt.calls"\n' "$FX" > "$W/mgmt-apply"; chmod +x "$W/mgmt-apply"; rm -f "$FX/mgmt.calls"
+for _ in 1 2 3 4 5 6; do MGMT_APPLY="$W/mgmt-apply" MGMT_EVERY=3 sh "$WF" once; done
+chk "wifi-follow: management rule re-asserted by the daemon (once per MGMT_EVERY passes)" sh -c "[ \"\$(cat '$FX/mgmt.calls' 2>/dev/null)\" = 'mgmt' ] || [ \"\$(wc -l < '$FX/mgmt.calls')\" -ge 1 ]"
+
 [ "$fails" = 0 ] && echo "wifi-follow: all checks passed" || { echo "wifi-follow: $fails failed"; exit 1; }
