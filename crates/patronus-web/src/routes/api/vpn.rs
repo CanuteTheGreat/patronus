@@ -38,17 +38,16 @@ fn error(code: StatusCode, msg: impl Into<String>) -> Response {
 
 fn err(e: anyhow::Error) -> Response {
     let msg = e.to_string();
-    let code = if (msg.contains("USE=") && msg.contains("not built"))
-        || msg.starts_with("IPsec needs ")
-    {
-        StatusCode::NOT_IMPLEMENTED
-    } else if msg.contains("Invalid") {
-        StatusCode::BAD_REQUEST
-    } else if msg.starts_with("no WireGuard") || msg.starts_with("no IPsec") {
-        StatusCode::NOT_FOUND
-    } else {
-        StatusCode::INTERNAL_SERVER_ERROR
-    };
+    let code =
+        if (msg.contains("USE=") && msg.contains("not built")) || msg.starts_with("IPsec needs ") {
+            StatusCode::NOT_IMPLEMENTED
+        } else if msg.contains("Invalid") {
+            StatusCode::BAD_REQUEST
+        } else if msg.starts_with("no WireGuard") || msg.starts_with("no IPsec") {
+            StatusCode::NOT_FOUND
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
     error(code, msg)
 }
 

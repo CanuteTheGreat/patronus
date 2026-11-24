@@ -126,8 +126,7 @@ impl TunnelsManager {
     pub fn ipsec_unavailable(&self) -> Option<String> {
         self.ipsec.as_ref()?;
         let (root, broker) = (self.privilege)();
-        ipsec_blocker(root, broker)
-            .or_else(|| strongswan_blocker((self.strongswan_installed)()))
+        ipsec_blocker(root, broker).or_else(|| strongswan_blocker((self.strongswan_installed)()))
     }
 
     pub fn store(&self) -> &ConfigStore {

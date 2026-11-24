@@ -1275,7 +1275,10 @@ async fn unprivileged_without_applyd_ipsec_is_refused_up_front() {
     // strongSwan missing: refused up front too, with the install hint
     assert!(crate::state::tunnels::strongswan_blocker(true).is_none());
     let why = crate::state::tunnels::strongswan_blocker(false).unwrap();
-    assert!(why.starts_with("IPsec needs ") && why.contains("strongSwan"), "{why}");
+    assert!(
+        why.starts_with("IPsec needs ") && why.contains("strongSwan"),
+        "{why}"
+    );
     let _ = std::fs::remove_dir_all(&t.dir);
 }
 
