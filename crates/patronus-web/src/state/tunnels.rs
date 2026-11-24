@@ -20,6 +20,8 @@ pub struct TunnelsManager {
     firewall: Arc<dyn Applier>,
     /// (running as root, `patronus applyd` socket present), asked per call.
     privilege: fn() -> (bool, bool),
+    /// Is strongSwan's `swanctl` installed? Asked per call.
+    strongswan_installed: fn() -> bool,
     edit: Mutex<()>,
 }
 
@@ -55,6 +57,21 @@ pub fn ipsec_blocker(root: bool, broker: bool) -> Option<String> {
     ))
 }
 
+/// Same path the IPsec applier requires (patronus-network ipsec::SWANCTL_BIN).
+const SWANCTL_BIN: &str = "/usr/sbin/swanctl";
+
+/// IPsec is built in but strongSwan is not installed: say so up front
+/// (no form that can only fail on Apply).
+pub fn strongswan_blocker(installed: bool) -> Option<String> {
+    if installed {
+        return None;
+    }
+    Some(format!(
+        "IPsec needs strongSwan but {SWANCTL_BIN} is not installed on this system \
+         (install net-vpn/strongswan with USE=ipsec, or your distro's strongSwan package)"
+    ))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     WireGuard,
@@ -73,7 +90,10 @@ impl TunnelsManager {
                 _ => {}
             }
         }
-        Self::with_appliers(store, wg, ipsec, firewall).with_privilege(system_privilege)
+        let mut m =
+            Self::with_appliers(store, wg, ipsec, firewall).with_privilege(system_privilege);
+        m.strongswan_installed = || std::path::Path::new(SWANCTL_BIN).exists();
+        m
     }
 
     /// Custom appliers (tests).
@@ -90,6 +110,7 @@ impl TunnelsManager {
             firewall,
             // custom appliers do their own thing; tests opt in to the gate
             privilege: || (true, false),
+            strongswan_installed: || true,
             edit: Mutex::new(()),
         }
     }
@@ -106,6 +127,7 @@ impl TunnelsManager {
         self.ipsec.as_ref()?;
         let (root, broker) = (self.privilege)();
         ipsec_blocker(root, broker)
+            .or_else(|| strongswan_blocker((self.strongswan_installed)()))
     }
 
     pub fn store(&self) -> &ConfigStore {

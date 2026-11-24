@@ -1272,6 +1272,10 @@ async fn unprivileged_without_applyd_ipsec_is_refused_up_front() {
     // with the broker running (or as root) the same request goes through
     assert!(crate::state::tunnels::ipsec_blocker(false, true).is_none());
     assert!(crate::state::tunnels::ipsec_blocker(true, false).is_none());
+    // strongSwan missing: refused up front too, with the install hint
+    assert!(crate::state::tunnels::strongswan_blocker(true).is_none());
+    let why = crate::state::tunnels::strongswan_blocker(false).unwrap();
+    assert!(why.starts_with("IPsec needs ") && why.contains("strongSwan"), "{why}");
     let _ = std::fs::remove_dir_all(&t.dir);
 }
 

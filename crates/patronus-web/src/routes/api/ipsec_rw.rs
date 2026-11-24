@@ -32,7 +32,7 @@ fn error(code: StatusCode, msg: impl Into<String>) -> Response {
 
 fn err(e: anyhow::Error) -> Response {
     let msg = e.to_string();
-    let code = if msg.starts_with("IPsec needs root") {
+    let code = if msg.starts_with("IPsec needs ") {
         StatusCode::NOT_IMPLEMENTED
     } else if msg.contains("Invalid") {
         StatusCode::BAD_REQUEST
