@@ -31,7 +31,7 @@ srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H)
 port = srv.server_address[1]
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 
-deletes, fails = [], []
+deletes, fails, updates = [], [], []
 
 
 def expect(cond, msg):
@@ -46,6 +46,9 @@ def route(r):
         if 'deleteSite' in body.get('query', ''):
             deletes.append(body.get('variables', {}).get('id'))
             r.fulfill(json=dict(data=dict(deleteSite=True)))
+        elif 'updateSite' in body.get('query', ''):
+            updates.append(body.get('variables', {}).get('input'))
+            r.fulfill(json=dict(data=dict(updateSite=dict(id='0', name='x', location='y', __typename='GqlSite'))))
         else:
             r.fulfill(json=gql(body))
     elif '/ha/cluster' in u: r.fulfill(json=CLUSTER)
@@ -105,6 +108,19 @@ with sync_playwright() as p:
     confirm_btn().click()
     pg.wait_for_timeout(600)
     expect(deletes == ['0'], f'exactly one deleteSite for the right id after confirming (got {deletes})')
+
+    # edit: Cancel sends nothing, Save sends exactly one updateSite with the new values
+    pg.get_by_role('button', name=f'Edit site {name}').click()
+    pg.get_by_label('Site name').fill('HQ Chicago West')
+    pg.get_by_role('button', name='Cancel').click()
+    expect(len(updates) == 0, 'edit Cancel sends nothing')
+    pg.get_by_role('button', name=f'Edit site {name}').click()
+    pg.get_by_label('Site name').fill('HQ Chicago West')
+    pg.get_by_label('Site location').fill('Chicago, IL')
+    pg.get_by_role('button', name='Save').click()
+    pg.wait_for_timeout(600)
+    expect(len(updates) == 1 and updates[0].get('id') == '0' and updates[0].get('name') == 'HQ Chicago West'
+           and updates[0].get('location') == 'Chicago, IL', f'edit Save sends one updateSite with new values (got {updates})')
     b.close()
 
 if fails:

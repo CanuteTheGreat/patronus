@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQuery, gql } from '@apollo/client'
-import { MapPin, Activity, AlertCircle, Plus, Trash2 } from 'lucide-react'
+import { MapPin, Activity, AlertCircle, Plus, Trash2, Pencil } from 'lucide-react'
 import clsx from 'clsx'
 import { getUser } from '../auth'
 
@@ -29,6 +29,16 @@ const CREATE_SITE = gql`
     createSite(input: $input) {
       id
       name
+    }
+  }
+`
+
+const UPDATE_SITE = gql`
+  mutation UpdateSite($input: UpdateSiteInput!) {
+    updateSite(input: $input) {
+      id
+      name
+      location
     }
   }
 `
@@ -66,6 +76,10 @@ export default function Sites() {
   })
   const [createSite, createState] = useMutation(CREATE_SITE)
   const [deleteSite, deleteState] = useMutation(DELETE_SITE)
+  const [updateSite, updateState] = useMutation(UPDATE_SITE)
+  const [editing, setEditing] = useState<Site | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editLocation, setEditLocation] = useState('')
   const [name, setName] = useState('')
   const [location, setLocation] = useState('')
   const role = getUser()?.role
@@ -77,6 +91,24 @@ export default function Sites() {
     await createSite({ variables: { input: { name, location: location || null } } })
     setName('')
     setLocation('')
+    refetch()
+  }
+
+  function startEdit(site: Site) {
+    setEditing(site)
+    setEditName(site.name)
+    setEditLocation(site.location ?? '')
+  }
+
+  async function onSaveEdit(e: FormEvent) {
+    e.preventDefault()
+    if (!editing) return
+    try {
+      await updateSite({ variables: { input: { id: editing.id, name: editName.trim(), location: editLocation } } })
+    } catch {
+      return // shown through updateState.error; keep the form open
+    }
+    setEditing(null)
     refetch()
   }
 
@@ -95,7 +127,7 @@ export default function Sites() {
   if (error) return <div role="alert">Error: {error.message}</div>
   if (!data) return <div>No data</div>
 
-  const mutationError = createState.error?.message ?? deleteState.error?.message
+  const mutationError = createState.error?.message ?? deleteState.error?.message ?? updateState.error?.message
 
   return (
     <div className="space-y-6">
@@ -138,10 +170,25 @@ export default function Sites() {
                 <div className="p-2 bg-primary-50 dark:bg-primary-900/40 rounded-lg">
                   <MapPin className="h-6 w-6 text-primary-700 dark:text-primary-400" />
                 </div>
+                {editing?.id === site.id ? (
+                  <form onSubmit={onSaveEdit} className="space-y-2" aria-label={`Edit ${site.name}`}>
+                    <input aria-label="Site name" required value={editName} onChange={(e) => setEditName(e.target.value)}
+                      className="w-full rounded border border-gray-300 dark:border-gray-600 px-2 py-1" />
+                    <input aria-label="Site location" value={editLocation} onChange={(e) => setEditLocation(e.target.value)}
+                      className="w-full rounded border border-gray-300 dark:border-gray-600 px-2 py-1" />
+                    <div className="flex gap-2">
+                      <button type="submit" disabled={updateState.loading}
+                        className="rounded bg-primary-700 px-3 py-1 text-sm text-white hover:bg-primary-800 disabled:opacity-50">Save</button>
+                      <button type="button" onClick={() => setEditing(null)}
+                        className="rounded border border-gray-300 dark:border-gray-600 px-3 py-1 text-sm text-gray-700 dark:text-gray-300">Cancel</button>
+                    </div>
+                  </form>
+                ) : (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{site.name}</h3>
                   <p className="text-sm text-gray-600 dark:text-gray-300">{site.location ?? 'No location'}</p>
                 </div>
+                )}
               </div>
               <span className={clsx(
                 'inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium',
@@ -167,6 +214,14 @@ export default function Sites() {
               <p className="text-xs text-gray-600 dark:text-gray-300">
                 Updated: {new Date(site.updatedAt).toLocaleString()}
               </p>
+              <div className="flex gap-2">
+              {canWrite && (
+                <button type="button" onClick={() => startEdit(site)}
+                  className="inline-flex items-center gap-1 rounded border border-gray-300 dark:border-gray-600 px-3 py-1 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+                  aria-label={`Edit site ${site.name}`}>
+                  <Pencil className="h-4 w-4" /> Edit
+                </button>
+              )}
               {canDelete && (
                 <button type="button" onClick={() => setPendingDelete(site)}
                   className="inline-flex items-center gap-1 rounded border border-gray-300 dark:border-gray-600 px-3 py-1 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
@@ -174,6 +229,7 @@ export default function Sites() {
                   <Trash2 className="h-4 w-4" /> Delete
                 </button>
               )}
+              </div>
             </div>
           </div>
         ))}
