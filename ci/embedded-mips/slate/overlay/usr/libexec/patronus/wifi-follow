@@ -436,6 +436,15 @@ pass() {
   for h in $HEALTH_STA; do radio_held "$h" && radio_return "$h"; health_one "$h"; done
   for p in $FOLLOW; do follow_one "${p%%:*}" "$(echo "$p" | cut -d: -f2)" "${p##*:}"; done
   for u in $UPLINK_TABLES; do src_one "${u%%:*}" "$(echo "$u" | cut -d: -f2)" "${u##*:}"; done
+  settings_link
+}
+
+# the UI's board settings show the 5 GHz client's live state (connected / not): republish when its link changes
+settings_link() {
+  [ -n "${WAN5_IF:-}" ] || return 0
+  if $IW dev "$WAN5_IF" link 2>/dev/null | grep -q '^Connected'; then l=up; else l=down; fi
+  [ "$(cat "$RUN/$WAN5_IF.linkstate" 2>/dev/null)" = "$l" ] && return 0
+  echo "$l" > "$RUN/$WAN5_IF.linkstate"; board_settings
 }
 
 status() {

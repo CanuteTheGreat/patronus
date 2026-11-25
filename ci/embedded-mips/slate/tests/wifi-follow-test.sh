@@ -305,6 +305,14 @@ chk "UPLINK5=off: firmware restarts counted but no client drop" sh -c "[ ! -f $W
 e143 12; now 9060; sh "$WF" once
 chk "UPLINK5=off: wedged radio re-probed so its access point returns, still no drop" sh -c "grep -qx '$DEV' $W/drv/unbind && grep -qx radio5 $FX/radio-setup.calls && [ ! -f $W/run/wf/wl5-sta.dropped ]"
 export WAN5_IF= UPLINK5=
+# the UI's board settings follow the 5 GHz client's link: republished once per change, not every pass
+rm -rf "$W/run/wf"; : > "$FX/bs.calls"
+printf '#!/bin/sh\necho "$*" >> %s/bs.calls\n' "$FX" > "$W/bin/bs"; chmod +x "$W/bin/bs"
+export WAN5_IF=wl5-sta BOARD_SETTINGS=$W/bin/bs
+rm -f "$FX/wl5-sta.link"; sh "$WF" once; sh "$WF" once
+echo "Connected to 02:00:00:00:00:01 (on wl5-sta)" > "$FX/wl5-sta.link"; sh "$WF" once; sh "$WF" once
+chk "board settings republished on each 5 GHz link change only (down, up)" test "$(grep -c write "$FX/bs.calls")" = 2
+rm -f "$FX/wl5-sta.link"; export WAN5_IF= BOARD_SETTINGS=
 export RADIO_WATCH= RADIO_DEV= DMESG=dmesg FOLLOW=
 
 [ "$fails" = 0 ] && echo "wifi-follow: all checks passed" || { echo "wifi-follow: $fails failed"; exit 1; }
