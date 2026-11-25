@@ -570,6 +570,18 @@ impl InterfacesManager {
         }))
     }
 
+    /// Configured role per device (`wan`, `lan`, `opt1`, ...); devices without a role are absent.
+    pub async fn roles(&self) -> std::collections::BTreeMap<String, String> {
+        match NetConfig::load(&self.store).await {
+            Ok(cfg) => cfg
+                .interfaces
+                .iter()
+                .filter_map(|i| i.role.clone().map(|r| (i.name.clone(), r)))
+                .collect(),
+            Err(_) => Default::default(),
+        }
+    }
+
     /// Kernel interfaces in the legacy template shape (dashboard, network
     /// page, `/api/network/interfaces`).
     pub async fn list_template(&self) -> anyhow::Result<Vec<crate::templates::InterfaceInfo>> {

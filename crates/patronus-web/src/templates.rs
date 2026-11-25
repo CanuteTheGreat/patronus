@@ -25,6 +25,18 @@ pub struct DashboardTemplate {
     pub internet_gw: String,
     /// Active DHCP leases; `None` = the DHCP server is not configured or its state could not be read (tile hidden).
     pub dhcp_leases: Option<usize>,
+    /// Interfaces with their roles, WAN first.
+    pub iface_rows: Vec<DashIface>,
+}
+
+/// One row of the dashboard's interface list.
+#[derive(Debug, Clone)]
+pub struct DashIface {
+    pub name: String,
+    /// Upper-case role label (WAN, LAN, OPT1); empty = no role assigned.
+    pub role: String,
+    pub up: bool,
+    pub addrs: String,
 }
 
 /// Firewall template
@@ -751,6 +763,7 @@ mod tests {
             internet_dev: String::new(),
             internet_gw: String::new(),
             dhcp_leases: None,
+            iface_rows: vec![],
         }
         .render()
         .unwrap()
@@ -773,6 +786,7 @@ mod tests {
             internet_dev: "enp0s1".into(),
             internet_gw: "10.0.2.2".into(),
             dhcp_leases: Some(3),
+            iface_rows: vec![],
         }
         .render()
         .unwrap();
@@ -799,6 +813,7 @@ mod tests {
             internet_dev: String::new(),
             internet_gw: String::new(),
             dhcp_leases: Some(7),
+            iface_rows: vec![],
         };
         let shown = t.render().unwrap();
         assert!(
@@ -807,6 +822,48 @@ mod tests {
         );
         t.dhcp_leases = Some(0);
         assert!(t.render().unwrap().contains(r#"id="dhcp-leases">0</div>"#));
+    }
+
+    /// The dashboard lists each interface with its WAN/LAN role, state and address.
+    #[test]
+    fn dashboard_lists_interfaces_with_roles() {
+        let mut t = DashboardTemplate {
+            page: "dashboard",
+            interfaces: vec![],
+            active_rules: 0,
+            vpn_connections: 0,
+            vpn_errors: vec![],
+            system_info: SystemInfo::default(),
+            uptime: "1 min".into(),
+            services: vec![],
+            internet_dev: String::new(),
+            internet_gw: String::new(),
+            dhcp_leases: None,
+            iface_rows: vec![
+                DashIface {
+                    name: "enp0s1".into(),
+                    role: "WAN".into(),
+                    up: true,
+                    addrs: "10.0.2.15/24".into(),
+                },
+                DashIface {
+                    name: "enp0s3".into(),
+                    role: String::new(),
+                    up: false,
+                    addrs: "none".into(),
+                },
+            ],
+        };
+        let h = t.render().unwrap();
+        assert!(
+            h.contains(r#"class="iface-role">WAN</span>"#)
+                && h.contains("enp0s1")
+                && h.contains("10.0.2.15/24"),
+            "{h}"
+        );
+        assert!(h.contains("enp0s3") && h.contains("down"), "{h}");
+        t.iface_rows.clear();
+        assert!(!t.render().unwrap().contains("iface-role"));
     }
 
     /// A failed VPN read must not render as a plain "0" (finding: a box

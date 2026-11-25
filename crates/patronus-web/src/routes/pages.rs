@@ -92,6 +92,28 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
         .await
         .ok()
         .and_then(|v| v.get("leases").and_then(|l| l.as_array()).map(|a| a.len()));
+    let roles = state.interfaces.roles().await;
+    let mut iface_rows: Vec<crate::templates::DashIface> = interfaces
+        .iter()
+        .map(|i| crate::templates::DashIface {
+            name: i.name.clone(),
+            role: roles.get(&i.name).map(|r| r.to_uppercase()).unwrap_or_default(),
+            up: i.state == "UP",
+            addrs: i.ip_display.clone(),
+        })
+        .collect();
+    // WAN first, then LAN, then other roles, then unassigned devices.
+    iface_rows.sort_by_key(|r| {
+        (
+            match r.role.as_str() {
+                "WAN" => 0,
+                "LAN" => 1,
+                "" => 3,
+                _ => 2,
+            },
+            r.name.clone(),
+        )
+    });
     let template = DashboardTemplate {
         page: "dashboard",
         uptime: host::format_duration(system_info.uptime),
@@ -104,6 +126,7 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
         internet_dev: gw.0,
         internet_gw: gw.1,
         dhcp_leases,
+        iface_rows,
     };
     render(&template, "dashboard")
 }
