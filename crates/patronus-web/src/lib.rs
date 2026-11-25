@@ -11,6 +11,7 @@ pub mod dashboard;
 pub mod geo_centroid;
 #[cfg(feature = "ldap")]
 pub mod ldap;
+pub mod logview;
 pub mod qrcode;
 pub mod radius;
 pub mod rbac;

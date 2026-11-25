@@ -126,21 +126,21 @@
     {% endif %}
 </div>
 
-<div class="card">
-    <div class="card-header"><h2 class="card-title">System journal (last 200 entries)</h2></div>
+<div class="card" id="log-preview">
+    {% include "log_css.html" %}
+    <div class="card-header"><h2 class="card-title">System log</h2>
+        <a href="/logs" class="btn" id="log-open">Open the system log</a></div>
     {% if !logs_error.is_empty() %}
-    <div class="alert-error">Journal unavailable: {{ logs_error }}</div>
+    <div class="alert-error">System log unavailable: {{ logs_error }}</div>
     {% else if live_logs.is_empty() %}
-    <p class="empty">No journal entries (no journald on this system, e.g. OpenRC without systemd).</p>
+    <p class="empty">No system log entries yet (no log file or journal is readable). <a href="/logs">Open the system log</a> for details.</p>
     {% else %}
-    <div style="background: #1a1a1a; color: #e2e2e2; font-family: var(--font-mono); font-size: 0.8rem; padding: 1rem; border-radius: 0.5rem; max-height: 500px; overflow-y: auto;" id="live-logs">
+    <div class="syslog" style="max-height: 320px;" id="log-preview-lines" role="log" aria-label="Latest system log entries">
         {% for log in live_logs %}
-        <div><span style="color: #888;">[{{ log.timestamp }}]</span>
-            <span style="color: {{ log.level_color }};">[{{ log.level }}]</span>
-            <span style="color: #00aaff;">[{{ log.component }}]</span>
-            {{ log.message }}</div>
+        <div class="ll {{ log.level_class }}"><span class="t">{{ log.timestamp }}</span><span class="lvl">{{ log.level }}</span><span class="id">{{ log.component }}</span><span class="m">{{ log.message }}</span></div>
         {% endfor %}
     </div>
+    <p class="text-sm"><a href="/logs">Filter by priority, service or time, follow live, download</a></p>
     {% endif %}
 </div>
 <div class="card" id="history-card">

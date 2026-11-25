@@ -278,10 +278,7 @@ pub async fn monitoring(State(state): State<AppState>) -> Response {
             tracing::error!("Failed to fetch threat feed: {}", e);
             vec![]
         });
-    let (live_logs, logs_error) = match state.monitoring.get_live_logs(200).await {
-        Ok(l) => (l, String::new()),
-        Err(e) => (vec![], e.to_string()),
-    };
+    let (live_logs, logs_error) = crate::logview::preview(&state.config_store).await;
 
     let template = MonitoringTemplate {
         page: "monitoring",

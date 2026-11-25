@@ -612,7 +612,8 @@ pub struct LogEntry {
     pub level: String,
     pub component: String,
     pub message: String,
-    pub level_color: String,
+    /// CSS class of the priority (`lv0` .. `lv7`, `lvu` = the record carries none).
+    pub level_class: String,
 }
 
 // Display implementations for template types
