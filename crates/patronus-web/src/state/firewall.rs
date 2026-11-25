@@ -1620,6 +1620,7 @@ mod tests {
             Some(&patronus_config::Bootstrap {
                 wan: vec!["eth0".into()],
                 lan: vec!["eth1".into()],
+                ..Default::default()
             }),
             &["eth0".into(), "eth1".into()],
         )
@@ -1655,6 +1656,7 @@ mod tests {
             Some(&patronus_config::Bootstrap {
                 wan: vec!["eth0".into()],
                 lan: vec!["eth1".into()],
+                ..Default::default()
             }),
             &["eth0".into(), "eth1".into()],
         )
@@ -1890,7 +1892,7 @@ mod tests {
             &store,
             Some(&patronus_config::Bootstrap {
                 wan: vec!["lo".into()],
-                lan: vec![],
+                ..Default::default()
             }),
             &["lo".into()],
         )

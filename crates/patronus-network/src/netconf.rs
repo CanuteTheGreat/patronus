@@ -677,7 +677,7 @@ impl NetConfig {
             if let Some(r) = &i.role {
                 if !is_valid_role(r) {
                     return Err(invalid(format!(
-                        "interface role {r:?} (wan, lan or opt<N>)"
+                        "interface role {r:?} (wan, lan, mgmt or opt<N>)"
                     )));
                 }
                 // Several interfaces may share a role (patronus.toml's

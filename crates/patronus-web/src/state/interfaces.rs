@@ -177,7 +177,8 @@ fn parse_ip(s: &Option<String>) -> anyhow::Result<Option<IpAddr>> {
 }
 
 /// Devices that get the anti-lockout rule (`@mgmt` in the firewall): the
-/// LAN interfaces, else the WAN ones, else every interface (None).
+/// dedicated management network (role `mgmt`), else the LAN interfaces,
+/// else the WAN ones, else every interface (None).
 pub fn mgmt_set(cfg: &NetConfig) -> Option<BTreeSet<String>> {
     let with = |r: &str| -> BTreeSet<String> {
         cfg.interfaces
@@ -186,6 +187,10 @@ pub fn mgmt_set(cfg: &NetConfig) -> Option<BTreeSet<String>> {
             .map(|i| i.name.clone())
             .collect()
     };
+    let mgmt = with("mgmt");
+    if !mgmt.is_empty() {
+        return Some(mgmt);
+    }
     let lan = with("lan");
     if !lan.is_empty() {
         return Some(lan);

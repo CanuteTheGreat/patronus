@@ -108,7 +108,11 @@ fn resolve_iface(value: &Option<String>, roles: &Roles) -> Option<Vec<Option<Str
     let role = role.to_ascii_lowercase();
     let named = |r: &str| roles.get(r).filter(|v| !v.is_empty()).cloned();
     if role == "mgmt" {
-        return Some(match named("lan").or_else(|| named("wan")) {
+        // a dedicated management network (role `mgmt`) first, else LAN, else WAN
+        return Some(match named("mgmt")
+            .or_else(|| named("lan"))
+            .or_else(|| named("wan"))
+        {
             Some(names) => names.into_iter().map(Some).collect(),
             None => vec![None],
         });
@@ -213,6 +217,59 @@ fn push_threat_rules(script: &mut String, aliases: &[crate::aliases::Alias]) -> 
     rules.len()
 }
 
+/// A dedicated management network (role `mgmt`) with `firewall.mgmt_only`
+/// on: SSH and the web UI answer only there. Rendered right after the
+/// anti-lockout accept, ahead of every user/default rule (an "allow LAN to
+/// firewall" rule must not open them on the LAN again). Empty without a
+/// `mgmt` role or with the setting off.
+pub fn mgmt_only_rules(
+    roles: &BTreeMap<String, Vec<String>>,
+    on: bool,
+    ssh_port: u16,
+    web_ports: &[u16],
+) -> Vec<String> {
+    let Some(devs) = roles.get("mgmt").filter(|v| !v.is_empty()) else {
+        return Vec::new();
+    };
+    if !on {
+        return Vec::new();
+    }
+    let devs: Vec<&String> = devs
+        .iter()
+        .filter(|d| crate::nftables::is_valid_interface_name(d))
+        .collect();
+    if devs.is_empty() {
+        return Vec::new();
+    }
+    let mut ports = vec![ssh_port];
+    for p in web_ports {
+        if !ports.contains(p) {
+            ports.push(*p);
+        }
+    }
+    let devs = devs
+        .iter()
+        .map(|d| format!("\"{d}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ports = ports
+        .iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    vec![format!(
+        "add rule {TABLE} input iifname != {{ {devs} }} tcp dport {{ {ports} }} counter drop comment \"Management network only: SSH and web UI\""
+    )]
+}
+
+fn push_lines(script: &mut String, lines: &[String]) -> usize {
+    for l in lines {
+        script.push_str(l);
+        script.push('\n');
+    }
+    lines.len()
+}
+
 /// Is a NAT rule an outbound (source NAT) rule, governed by the mode?
 fn is_outbound(t: &NatType) -> bool {
     matches!(t, NatType::Masquerade | NatType::Snat { .. })
@@ -289,11 +346,22 @@ impl FirewallApplier {
         let mut threat_done = lockdown;
         let ssh_port = patronus_config::defaults::ssh_port(store).await;
         let web = patronus_config::webui::resolve(Some(store)).await;
+        let mgmt_drop = if lockdown {
+            Vec::new()
+        } else {
+            mgmt_only_rules(
+                &roles,
+                patronus_config::defaults::mgmt_only(store).await,
+                ssh_port,
+                &web.all_ports(),
+            )
+        };
         for (mut rule, origin) in store.load_firewall_rules_with_origin().await? {
             patronus_config::defaults::follow_ssh_port(&mut rule, origin, ssh_port);
             patronus_config::webui::follow_web_ports(&mut rule, origin, &web);
             if !threat_done && origin != RuleOrigin::System {
                 threat_done = true;
+                nfilter += push_lines(&mut script, &mgmt_drop);
                 nfilter += push_threat_rules(&mut script, &aliases);
             }
             if !rule.enabled || (lockdown && origin != RuleOrigin::System) {
@@ -380,6 +448,7 @@ impl FirewallApplier {
         }
 
         if !threat_done {
+            nfilter += push_lines(&mut script, &mgmt_drop);
             nfilter += push_threat_rules(&mut script, &aliases);
         }
         if !policy.is_empty() {
@@ -1131,11 +1200,36 @@ mod tests {
     use super::*;
     use patronus_config::defaults::{ensure_defaults, Bootstrap};
 
+    #[test]
+    fn mgmt_network_takes_anti_lockout_and_closes_the_rest() {
+        let mut roles: Roles = BTreeMap::new();
+        roles.insert("lan".into(), vec!["eth1".into()]);
+        roles.insert("wan".into(), vec!["eth0".into()]);
+        // no mgmt role: LAN carries anti-lockout, nothing extra is dropped
+        assert_eq!(
+            resolve_iface(&Some("@mgmt".into()), &roles),
+            Some(vec![Some("eth1".into())])
+        );
+        assert!(mgmt_only_rules(&roles, true, 22, &[443, 80]).is_empty());
+        roles.insert("mgmt".into(), vec!["bond0.20".into()]);
+        assert_eq!(
+            resolve_iface(&Some("@mgmt".into()), &roles),
+            Some(vec![Some("bond0.20".into())])
+        );
+        let r = mgmt_only_rules(&roles, true, 2222, &[443, 80, 443]);
+        assert_eq!(
+            r,
+            vec!["add rule inet patronus input iifname != { \"bond0.20\" } tcp dport { 2222, 443, 80 } counter drop comment \"Management network only: SSH and web UI\"".to_string()]
+        );
+        assert!(mgmt_only_rules(&roles, false, 22, &[443]).is_empty());
+    }
+
     async fn seeded(wan: &[&str], lan: &[&str]) -> ConfigStore {
         let s = ConfigStore::open_in_memory().await.unwrap();
         let b = Bootstrap {
             wan: wan.iter().map(|s| s.to_string()).collect(),
             lan: lan.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
         };
         let existing: Vec<String> = wan.iter().chain(lan).map(|s| s.to_string()).collect();
         ensure_defaults(&s, Some(&b), &existing).await.unwrap();
