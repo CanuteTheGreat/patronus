@@ -97,7 +97,10 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
         .iter()
         .map(|i| crate::templates::DashIface {
             name: i.name.clone(),
-            role: roles.get(&i.name).map(|r| r.to_uppercase()).unwrap_or_default(),
+            role: roles
+                .get(&i.name)
+                .map(|r| r.to_uppercase())
+                .unwrap_or_default(),
             up: i.state == "UP",
             addrs: i.ip_display.clone(),
         })
