@@ -180,12 +180,10 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
     }
     // router tier: management access from the upstream LAN lives in the store (the boot unit
     // normally seeded it already; this covers a web start that came first)
-    let mgmt = patronus_config::ensure_management(
-        &store,
-        &patronus_config::ManagementSpec::from_env(),
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("seeding upstream management rules: {e}"))?;
+    let mgmt =
+        patronus_config::ensure_management(&store, &patronus_config::ManagementSpec::from_env())
+            .await
+            .map_err(|e| anyhow::anyhow!("seeding upstream management rules: {e}"))?;
     for w in &mgmt.warnings {
         tracing::warn!("{w}");
     }

@@ -710,7 +710,10 @@ impl FirewallApplier {
             .await
             .unwrap_or_default()
             .into_iter()
-            .filter(|(r, _)| r.name.starts_with(patronus_config::mgmt::UPSTREAM_RULE_PREFIX));
+            .filter(|(r, _)| {
+                r.name
+                    .starts_with(patronus_config::mgmt::UPSTREAM_RULE_PREFIX)
+            });
         for (mut rule, origin) in patronus_config::defaults::default_filter_rules()
             .into_iter()
             .chain(stored_mgmt)
@@ -1256,36 +1259,58 @@ mod tests {
     #[tokio::test]
     async fn upstream_management_rules_survive_every_render_and_follow_ports() {
         let s = seeded(&["wl5-sta", "wl24-sta"], &["br-lan"]).await;
-        let spec = patronus_config::ManagementSpec::parse(
-            Some("192.0.2.0/24"),
-            Some("wl5-sta wl24-sta"),
-        );
+        let spec =
+            patronus_config::ManagementSpec::parse(Some("192.0.2.0/24"), Some("wl5-sta wl24-sta"));
         patronus_config::ensure_management(&s, &spec).await.unwrap();
         for round in 0..3 {
             // each round = one more apply / one more process start over the same store
             patronus_config::ensure_management(&s, &spec).await.unwrap();
-            let script = FirewallApplier.render_script(&s, false).await.unwrap().script;
+            let script = FirewallApplier
+                .render_script(&s, false)
+                .await
+                .unwrap()
+                .script;
             for ifc in ["wl5-sta", "wl24-sta"] {
                 let line = script
                     .lines()
                     .find(|l| l.contains(&format!("Upstream management via {ifc}")))
                     .unwrap_or_else(|| panic!("round {round}: rule for {ifc} missing:\n{script}"));
-                assert!(line.contains("192.0.2.0/24") && line.contains(ifc), "{line}");
-                assert!(line.contains("22") && line.contains("443") && line.contains("80"), "{line}");
+                assert!(
+                    line.contains("192.0.2.0/24") && line.contains(ifc),
+                    "{line}"
+                );
+                assert!(
+                    line.contains("22") && line.contains("443") && line.contains("80"),
+                    "{line}"
+                );
             }
-            assert_eq!(script.matches("Upstream management via").count(), 2, "no duplicates");
+            assert_eq!(
+                script.matches("Upstream management via").count(),
+                2,
+                "no duplicates"
+            );
             if round == 1 {
                 s.save_system_config(patronus_config::defaults::SSH_PORT_KEY, "2222")
                     .await
                     .unwrap();
             }
         }
-        let script = FirewallApplier.render_script(&s, false).await.unwrap().script;
-        let line = script.lines().find(|l| l.contains("Upstream management via wl5-sta")).unwrap();
+        let script = FirewallApplier
+            .render_script(&s, false)
+            .await
+            .unwrap()
+            .script;
+        let line = script
+            .lines()
+            .find(|l| l.contains("Upstream management via wl5-sta"))
+            .unwrap();
         let toks: Vec<&str> = line.split(|c: char| !c.is_ascii_digit()).collect();
         assert!(toks.contains(&"2222") && !toks.contains(&"22"), "{line}");
         let lock = FirewallApplier.render_lockdown(&s).await;
-        assert!(lock.contains("Upstream management via wl24-sta") && lock.contains("192.0.2.0/24"), "{lock}");
+        assert!(
+            lock.contains("Upstream management via wl24-sta") && lock.contains("192.0.2.0/24"),
+            "{lock}"
+        );
     }
 
     #[tokio::test]
