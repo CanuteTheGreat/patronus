@@ -225,8 +225,14 @@ printf 'UPLINKS="wl5-sta wl24-sta"\nWAN_IF=wl24-sta\nMGMT_NET=10.1.1.0/24\n' > "
 sed -e "s#/etc/patronus/embedded.env#$W/etc/embedded.env#; s#/etc/patronus/board.sh#$W/etc/board.sh#" "$D/overlay/usr/libexec/patronus/apply" > "$W/apply"
 PATH="$W/bin:$PATH" sh "$W/apply" mgmt
 chk "apply mgmt: SSH/web from MGMT_NET accepted on BOTH uplinks" grep -q 'iifname { "wl5-sta", "wl24-sta" } ip saddr 10.1.1.0/24' "$FX/nft.calls"
+# the store's own rule ("Upstream management via <if>") is in the chain: the safety net must insert nothing
+printf '#!/bin/sh\ncase "$1 $2" in "list chain") echo "chain input {"; echo "  iifname \\"wl24-sta\\" tcp dport { 22, 80, 443 } accept comment \\"Upstream management via wl24-sta\\"";; "insert rule") echo "$*" >> "$FX/nft.calls";; esac; exit 0\n' > "$W/bin/nft"; rm -f "$FX/nft.calls"
+PATH="$W/bin:$PATH" sh "$W/apply" mgmt
+chk "apply mgmt: nothing inserted while the store's management rule is in the chain (safety net only)" sh -c "[ ! -s '$FX/nft.calls' ]"
+# the values the store seeds from are exported to patronus-cli apply (typed settings, not evaluated)
+chk "apply exports PATRONUS_MGMT_NET / PATRONUS_MGMT_IFACES from MGMT_NET / UPLINKS" sh -c "grep -q 'export PATRONUS_MGMT_NET=\"\$MGMT_NET\" PATRONUS_MGMT_IFACES=\"\${UPLINKS:-\$WAN_IF}\"' '$D/overlay/usr/libexec/patronus/apply'"
 
-# wifi-follow re-asserts the management rule after any later apply wiped it (first pass, then every MGMT_EVERY-th)
+# wifi-follow re-asserts the boot rule as a safety net only (first pass, then every MGMT_EVERY-th; apply mgmt is a no-op while the store rule exists)
 printf '#!/bin/sh\necho "$*" >> "%s/mgmt.calls"\n' "$FX" > "$W/mgmt-apply"; chmod +x "$W/mgmt-apply"; rm -f "$FX/mgmt.calls"
 for _ in 1 2 3 4 5 6; do MGMT_APPLY="$W/mgmt-apply" MGMT_EVERY=3 sh "$WF" once; done
 chk "wifi-follow: management rule re-asserted by the daemon (once per MGMT_EVERY passes)" sh -c "[ \"\$(cat '$FX/mgmt.calls' 2>/dev/null)\" = 'mgmt' ] || [ \"\$(wc -l < '$FX/mgmt.calls')\" -ge 1 ]"

@@ -346,6 +346,54 @@ def fw_rule():
     need("8080" in nft_input(), "rule not in the kernel's nft chain after apply:\n" + nft_input()[-600:])
 
 
+UP_RULE = "Upstream management via eth1"     # the throwaway unit's MGMT_NET/UPLINKS (qemu-bundle.sh: 192.0.2.0/24 over eth1)
+LEGACY = {"name": "House LAN management via eth1", "enabled": True, "chain": "input", "action": "accept", "protocol": "tcp", "port": "22",
+          "interface": "eth1", "source": "192.0.2.0/24", "destination": "any", "description": "hand-added (the Slate's ids 8/9)"}
+
+
+def rule_names():
+    c, t, _ = web("GET", "/api/firewall/rules"); need(c == 200, f"list rules: {c}")
+    j = json.loads(t); j = j if isinstance(j, list) else (j.get("rules") or j.get("items") or [])
+    return [r.get("name") for r in j]
+
+
+def mgmt_in_nft(tag):
+    n = nft_input()
+    need(UP_RULE in n and "192.0.2.0/24" in n, f"{tag}: the store's management rule is not in the kernel's chain:\n" + n[-700:])
+    need("patronus-boot-mgmt" not in n, f"{tag}: the boot-time safety-net rule was needed (the store rule did not come from the store):\n" + n[-700:])
+
+
+def mgmt_seeded():
+    # seeded on first boot from the unit's MGMT_NET/UPLINKS by `patronus-cli apply`: in the store (API), in the kernel, no boot rule
+    names = rule_names(); need(names.count(UP_RULE) == 1, f"{UP_RULE!r} x{names.count(UP_RULE)} in the API list: {names}")
+    mgmt_in_nft("after boot apply")
+
+
+def web_restart():
+    # the real init system's restart of the web service (it re-reads the stored ruleset at start), then a firewall apply: the rule stays
+    Rok("rc-service patronus-web restart" if INIT == "openrc" else "systemctl restart patronus-web", 180)
+    for _ in range(60):
+        try:
+            c, _, _ = web("GET", "/login", auth=False)
+            if c == 200: break
+        except Exception: pass
+        time.sleep(3)
+    else: need(False, "web UI did not come back after the service restart")
+    mgmt_in_nft("after the web service restart"); login()
+    c, t, _ = web("POST", "/api/firewall/rules/apply"); need(c == 200, f"apply after the restart: {c} {t[:150]}")
+    mgmt_in_nft("after the web restart and a firewall apply"); need(rule_names().count(UP_RULE) == 1, "duplicate management rule after the restart")
+
+
+def legacy_rule_added():
+    c, t, _ = web("POST", "/api/firewall/rules", LEGACY); need(c == 201, f"add the hand-made management rule: {c} {t[:200]}")
+    c, t, _ = web("POST", "/api/firewall/rules/apply"); need(c == 200, f"apply: {c} {t[:150]}")
+
+
+def legacy_replaced():
+    names = rule_names()
+    need(names.count(UP_RULE) == 1 and LEGACY["name"] not in names, f"boot seeding must replace the hand-made rule, not duplicate it: {names}")
+
+
 def fw_fail_closed():
     before = nft_input()
     bad = dict(RULE, name="slate-gate bad", action="bogus-action", port="99999")
@@ -431,9 +479,12 @@ def main():
     check("boot 1: router role: first-run claim (setup code; weak, mismatch, second claim refused) and login", first_run)
     check("boot 1: web UI on 443 and the plain-http redirect on 80, both listening", web_ports)
     check("boot 1: boot guard armed, `patronus-guard ok` confirms the boot", boot_guard)
+    check("boot 1: management from the upstream LAN is a system rule in the store (API) and the kernel, seeded from the unit's MGMT_NET, no boot-time rule", mgmt_seeded)
+    check("boot 1: the web service restarted by the init system and a firewall apply both keep the management rule", web_restart)
     check("boot 1: firewall rule added through the web API is in the kernel's nft chain after apply", fw_rule)
     check("boot 1: an invalid firewall rule is refused and the kernel's rules stay exactly as they were", fw_fail_closed)
     check("boot 1: config change recorded as a revision; restoring the earlier revision removes it from nft", history_rollback)
+    check("boot 1: a hand-made equivalent management rule is added (seeding must replace it on the next boot)", legacy_rule_added)
     check("boot 1: DHCP: a LAN client behind eth2 gets a lease from the router (pool, router + DNS options) and the API lists it", lambda: dhcp_dns(LANC, lease))
     check("boot 1: DNS: the router answers a local host record to that client; an unknown name gets no address", lambda: dns_local() if lease else need(False, "no lease"))
     check("boot 1: DNS change rolled back through the revision history and undone again", lambda: dns_rollback() if lease else need(False, "no lease"))
@@ -463,6 +514,9 @@ def main():
         login(); c, t, _ = web("GET", "/api/firewall/rules"); need(c == 200 and "slate-gate allow 8080" in t, f"rules via API: {c}")
     check("boot 2: no first-run again, the API still needs a login, the same password works, the rule is listed", p2)
     check("boot 2: web UI on 443 and the http redirect on 80", web_ports)
+    def p5():
+        login(); legacy_replaced(); mgmt_in_nft("boot 2")
+    check("boot 2: the hand-made management rule was replaced by the store's system rule (no duplicate) and the rule is applied at boot", p5)
 
     def p3():
         g = jget("/api/system/general"); j = json.dumps(g)

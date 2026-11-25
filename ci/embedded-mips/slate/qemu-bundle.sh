@@ -22,7 +22,8 @@ fetch "$MALTA_KMOD_TAR_URL" "$MALTA_KMOD_TAR_SHA256" "$QB/cache/kmods.tar"
 U=$QB/unit
 ssh-keygen -q -t ed25519 -N '' -C slate-qemu-gate -f "$QB/ci_ed25519"; cp "$QB/ci_ed25519.pub" "$U/authorized_keys"; rm -f "$QB/ci_ed25519.pub"
 echo 'root:*:1::::::' > "$U/shadow-root"
-printf 'UNIT_HOSTNAME=slate-gate\n' > "$U/unit.conf"
+# MGMT_NET (reserved documentation subnet) over the emulated uplink eth1: what the store's management rule is seeded from
+printf 'UNIT_HOSTNAME=slate-gate\nMGMT_NET=192.0.2.0/24\nUPLINKS="eth1"\n' > "$U/unit.conf"
 { echo 'network={'; echo ' ssid="qemu-gate-unused"'; echo ' key_mgmt=NONE'; echo ' disabled=1'; echo '}'; } > "$U/wpa_supplicant.conf"
 python3 - "$U" <<'PY'
 import struct, subprocess, sys, os

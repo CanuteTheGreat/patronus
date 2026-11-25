@@ -260,6 +260,22 @@ Fix (all board scripts, both init systems):
   table with the client's subnet and gateway plus `ip rule from <addr>`, follows lease changes and removes both when the client
   loses its address.
 - `apply`: the boot management rule covers every uplink client.
+
+Management from the upstream LAN is stored config, not a boot rule (`patronus_config::mgmt`). `apply` exports the unit's `MGMT_NET`
+and `UPLINKS` as `PATRONUS_MGMT_NET` / `PATRONUS_MGMT_IFACES` (data, never evaluated; validated as CIDRs / interface names, `/0`
+refused); `patronus-cli apply` and `patronus-web` start call `ensure_management`, which keeps one **system** rule per uplink,
+`Upstream management via <if>` (input, tcp, source `MGMT_NET`, ports = `ssh.port` + the web listeners, re-derived at every render so a
+port change is followed). Any firewall apply, web restart or emergency lockdown renders it; the Firewall page lists it and the store
+refuses to edit or delete it. Idempotent: a rule that exists is left alone, a changed `MGMT_NET` refreshes it in place, and an
+enabled user rule that does exactly the same (input, accept, tcp, same interface and source, ports within the management ports or
+22/80/443, nothing else set: the hand-added "House LAN management via wl24-sta|wl5-sta" rules) is deleted after the system rule is
+inserted, so a crash in between leaves a duplicate that the next run removes, never a gap. The `apply mgmt` boot rule
+(`patronus-boot-mgmt`) and the `wifi-follow` re-assert are kept **only as a safety net**: they do nothing while the store rule is in
+the chain, and cover a table loaded without it (unreadable store, a manual `nft -f`). The AX1800 (aarch64) tier has no `MGMT_NET` /
+boot-rule pattern, so it needs nothing. Tests: `patronus-config` `mgmt::tests`, the firewall applier test
+`upstream_management_rules_survive_every_render_and_follow_ports` (repeated applies/starts, port change, lockdown),
+`tests/wifi-follow-test.sh`, and the QEMU gate (both inits: seeded, `systemctl`/`rc-service` web restart + apply, hand-made rule
+replaced on the next boot).
 - `check-rootfs.sh` refuses an AP template without WPA (`wpa=` plus a passphrase/PSK); `ALLOW_OPEN_AP=1` is the explicit
   exception for a deliberate open network.
 - The unconfirmed-boot count (`/data/.init-boot-attempts`, read by `patronus-init`) now records the root it belongs to
