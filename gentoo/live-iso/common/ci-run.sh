@@ -210,7 +210,9 @@ if [ "$result" = pass ]; then
     rm -f "$EVI/$name"/target*.qcow2 "$EVI/$name"/answers.img
     if [ "$rc" != 0 ]; then failed_list="$failed_list $name"; [ -z "$failed_step" ] && fail "qemu-$name" "$(grep -E '^\[FAIL\]' "$EVI/test-$name.log" | head -1)"; fi
   done
-  if [ "$PROJECT" = horcrux ]; then
+  if [ "$PROJECT" = horcrux ] || { [ "$PROJECT" = patronus ] && [ "$ARCH" = x86_64 ]; }; then
+    # (both products boot an installed system with GRUB: Horcrux ships the menu scripts in sys-apps/horcrux-core, Patronus in net-firewall/patronus;
+    # Patronus aarch64 runs under TCG with no time left in the job)
     # UNATTENDED BOOT: the installed system's boot-environment menu (horcrux-be grubcfg) booted by the image's OWN GRUB + kernel under UEFI with
     # no key ever pressed: normal, no grubenv, one-shot next_entry, read-only env block, broken default (fallback), broken trial kernel, every
     # kernel broken (retry then restart), plus a control that must hang without `fallback`. A menu waiting for a key fails the run.
@@ -233,6 +235,18 @@ if [ "$result" = pass ]; then
     echo "::endgroup::"
     rm -f "$EVI/$name"/target*.qcow2 "$EVI/$name"/answers.img
     if [ "$rc" != 0 ]; then failed_list="$failed_list $name"; [ -z "$failed_step" ] && fail "qemu-$name" "$(grep -E '^\[FAIL\]' "$EVI/test-$name.log" | head -1)"; fi
+  fi
+  if [ "$IMG_DE" != server ] && [ "$ARCH" = x86_64 ] && [ "$ARCH" = "$HOST_ARCH" ] && [ -e /dev/kvm ]; then
+    # GNOME desktop VM gate: ONE unattended install of this ISO, then the attach-mode GNOME tests on the booted system through the real GDM greeter
+    # (QMP keys) and the real NetworkManager: gnome-vm-gate.py --tests (session-lifecycle: gnome-session-lifecycle-test.py --cycles 1, incl. the
+    # X11 UI-scale checks of gnome-session-openrc >= 50.0-r4). Runs on every desktop ISO, OpenRC and systemd (INIT from the image name).
+    name=gnome-vm-gate
+    echo "::group::QEMU test $name"
+    with_deadline $DL_QEMU python3 -u "$HERE/gnome-vm-gate.py" --iso "$ISO" --project "$PROJECT" --init "$INIT" --tests "${GNOME_VM_TESTS:-session-lifecycle}" --out "$EVI/$name" 2>&1 | tee "$EVI/test-$name.log" | tail -40
+    rc=${PIPESTATUS[0]}
+    echo "::endgroup::"
+    rm -f "$EVI/$name"/install/target*.qcow2 "$EVI/$name"/install/answers.img
+    if [ "$rc" != 0 ]; then failed_list="$failed_list $name"; [ -z "$failed_step" ] && fail "qemu-$name" "$(grep -aE '^\[FAIL\]|^RESULT gnome-vm-gate' "$EVI/test-$name.log" | head -1)"; fi
   fi
   if [ "$IMG_DE" = server ] && [ "$PROJECT" = horcrux ]; then
     # HEADLESS SERVER GATE (server-first, both architectures): encrypted-ZFS answer-file install, then a REBOOT into the installed system on the SERIAL console only
