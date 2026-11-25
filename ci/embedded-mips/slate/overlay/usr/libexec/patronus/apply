@@ -4,8 +4,14 @@
 # has no lease after 45 s.  usage: apply [start|mgmt]
 set -a; . /etc/patronus/embedded.env; set +a
 . /etc/patronus/board.sh
-mgmt_from_home() { # until the store has its own WAN rule: keep SSH/web reachable from the upstream LAN (unit.conf MGMT_NET)
+# The management access from the upstream LAN (unit.conf MGMT_NET, over every UPLINKS interface) is a system rule in the config
+# store ("Upstream management via <if>", seeded by `patronus-cli apply` from these two values: typed settings, never evaluated),
+# so every firewall apply keeps it. mgmt_from_home is only the SAFETY NET for a table that has no such rule (store unreadable,
+# lockdown without the rule, a table loaded by something else): it inserts the boot rule only then.
+export PATRONUS_MGMT_NET="$MGMT_NET" PATRONUS_MGMT_IFACES="${UPLINKS:-$WAN_IF}"
+mgmt_from_home() {
   [ -n "$MGMT_NET" ] || return 0
+  nft list chain inet patronus input 2>/dev/null | grep 'Upstream management via' >/dev/null && return 0
   # every uplink client (both usually sit in the upstream LAN, each with its own address)
   ifs=; for u in ${UPLINKS:-$WAN_IF}; do ifs="${ifs:+$ifs, }\"$u\""; done
   nft list chain inet patronus input >/dev/null 2>&1 && ! nft list chain inet patronus input | grep 'patronus-boot-mgmt' >/dev/null && \
