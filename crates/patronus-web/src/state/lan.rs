@@ -227,6 +227,45 @@ impl LanManager {
         Ok(found)
     }
 
+    /// The settings form of one plugin: schema + current values, secrets masked.
+    pub async fn plugin_settings(&self, name: &str) -> anyhow::Result<Option<Vec<Value>>> {
+        let Some(m) = patronus_network::plugins::manifest_of(&self.store, name)
+            .await
+            .map_err(e)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(
+            patronus_network::plugin_settings::view(&self.store, name, &m.settings)
+                .await
+                .map_err(e)?,
+        ))
+    }
+
+    /// Validate and save settings, then re-apply the plugins (the service's
+    /// settings file is rewritten and the service restarted when it changed).
+    pub async fn plugin_settings_save(
+        &self,
+        name: &str,
+        values: &serde_json::Map<String, Value>,
+        clear: &[String],
+    ) -> anyhow::Result<bool> {
+        let _g = self.edit.lock().await;
+        let Some(m) = patronus_network::plugins::manifest_of(&self.store, name)
+            .await
+            .map_err(e)?
+        else {
+            return Ok(false);
+        };
+        let snap = self.begin("change plugin settings").await?;
+        patronus_network::plugin_settings::save(&self.store, name, &m.settings, values, clear)
+            .await
+            .map_err(e)?;
+        self.commit("plugins", snap, &["plugins", "firewall"])
+            .await?;
+        Ok(true)
+    }
+
     pub async fn plugin_key_add(&self, label: &str, public: &str) -> anyhow::Result<String> {
         let _g = self.edit.lock().await;
         let snap = self.begin("trust a plugin key").await?;

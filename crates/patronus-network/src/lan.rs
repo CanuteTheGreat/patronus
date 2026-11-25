@@ -75,6 +75,7 @@ pub const LAN_TABLES: &[&str] = &[
     // signed plugins (USE=plugins)
     "plugin_keys",
     "plugins",
+    "plugin_settings",
     // device segmentation (lane s, USE=segmentation): groups before devices
     "seg_groups",
     "seg_devices",

@@ -8,6 +8,8 @@
 //! - `POST   /api/packages/plugins`                  body: a signed bundle -> 201
 //! - `PUT    /api/packages/plugins/<name>`           {"enabled": bool}
 //! - `DELETE /api/packages/plugins/<name>`
+//! - `GET    /api/packages/plugins/<name>/settings`  the plugin's settings schema + values (secrets masked)
+//! - `PUT    /api/packages/plugins/<name>/settings`  {"values": {key: value}, "clear": [key]} -> validated, saved, applied
 //! - `POST   /api/packages/keys` {label, public_key}, `DELETE /api/packages/keys/<id>`
 
 use crate::state::AppState;
@@ -145,6 +147,35 @@ mod built {
         }
     }
 
+    async fn settings_get(State(s): State<AppState>, Path(name): Path<String>) -> Response {
+        match s.lan.plugin_settings(&name).await {
+            Ok(Some(v)) => Json(json!({"settings": v})).into_response(),
+            Ok(None) => err("no such plugin"),
+            Err(e) => err(e),
+        }
+    }
+
+    #[derive(serde::Deserialize)]
+    pub struct SettingsIn {
+        #[serde(default)]
+        values: serde_json::Map<String, serde_json::Value>,
+        #[serde(default)]
+        clear: Vec<String>,
+    }
+
+    async fn settings_put(
+        State(s): State<AppState>,
+        _a: AdminUser,
+        Path(name): Path<String>,
+        Json(b): Json<SettingsIn>,
+    ) -> Response {
+        match s.lan.plugin_settings_save(&name, &b.values, &b.clear).await {
+            Ok(true) => Json(json!({"ok": true})).into_response(),
+            Ok(false) => err("no such plugin"),
+            Err(e) => err(e),
+        }
+    }
+
     #[derive(serde::Deserialize)]
     pub struct KeyIn {
         label: String,
@@ -174,6 +205,10 @@ mod built {
             .route("/packages/jobs/:id/log", get(job_log))
             .route("/packages/plugins", post(install))
             .route("/packages/plugins/:name", put(enable).delete(remove))
+            .route(
+                "/packages/plugins/:name/settings",
+                get(settings_get).put(settings_put),
+            )
             .route("/packages/keys", post(key_add))
             .route("/packages/keys/:id", delete(key_del))
     }

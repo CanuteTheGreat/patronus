@@ -72,6 +72,10 @@ pub struct Manifest {
     pub files: Vec<FileEntry>,
     #[serde(default)]
     pub service: Option<Service>,
+    /// Typed settings the Packages page renders as a form (see
+    /// `plugin_settings`). Part of the signed text like everything else.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub settings: Vec<crate::plugin_settings::Setting>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -194,6 +198,7 @@ pub fn check_manifest(m: &Manifest) -> Result<()> {
             )));
         }
     }
+    crate::plugin_settings::check_schema(&m.settings)?;
     if let Some(s) = &m.service {
         let Some(first) = s.exec.first() else {
             return Err(invalid("service.exec is empty"));
@@ -374,6 +379,25 @@ pub fn plugins_dir(sup: &Supervisor) -> PathBuf {
     sup.paths.state_dir.join("plugins")
 }
 
+/// Where the plugin's service finds its settings (0600, written by the applier).
+pub fn settings_path(sup: &Supervisor, name: &str, ext: &str) -> PathBuf {
+    plugins_dir(sup).join(format!("{name}.settings.{ext}"))
+}
+
+/// The verified manifest of an installed plugin.
+pub async fn manifest_of(store: &ConfigStore, name: &str) -> Result<Option<Manifest>> {
+    let Some(r) = sqlx::query("SELECT bundle FROM plugins WHERE name = ?")
+        .bind(name)
+        .fetch_optional(store.pool()?)
+        .await
+        .map_err(|e| Error::Config(format!("read plugins: {e}")))?
+    else {
+        return Ok(None);
+    };
+    let keys = trusted_keys(store).await?;
+    verify(&r.get::<String, _>(0), &keys).map(|(m, _)| Some(m))
+}
+
 /// Verify and install (or update) a bundle: files under
 /// `<plugins>/<name>/<version>/`, the bundle in the store. A plugin that is
 /// already installed must be updated to a HIGHER version.
@@ -419,6 +443,7 @@ pub async fn install(
     .await
     .map_err(|e| Error::Config(format!("save plugin: {e}")))?;
     prune_versions(&base, &m.version);
+    crate::plugin_settings::reconcile(store, &m.name, &m.settings).await?;
     Ok((m, old.is_some()))
 }
 
@@ -476,7 +501,10 @@ pub async fn remove(store: &ConfigStore, sup: &Supervisor, name: &str) -> Result
         .await
         .map_err(|e| Error::Config(format!("delete plugin: {e}")))?
         .rows_affected();
+    crate::plugin_settings::delete_all(store, name).await?;
     if valid_name(name) {
+        let _ = std::fs::remove_file(settings_path(sup, name, "json"));
+        let _ = std::fs::remove_file(settings_path(sup, name, "env"));
         let _ = std::fs::remove_dir_all(plugins_dir(sup).join(name));
     }
     Ok(n > 0)
@@ -502,27 +530,32 @@ pub async fn list(store: &ConfigStore, sup: &Supervisor) -> Result<Vec<Value>> {
     .fetch_all(store.pool()?)
     .await
     .map_err(|e| Error::Config(format!("read plugins: {e}")))?;
-    Ok(rows
-        .iter()
-        .map(|r| {
-            let name: String = r.get(0);
-            let bundle: String = r.get(4);
-            let (m, trust) = match verify(&bundle, &keys) {
-                Ok((m, _)) => (Some(m), "verified".to_string()),
-                Err(e) => (None, e.to_string()),
-            };
-            let running = m.as_ref().is_some_and(|m| m.service.is_some())
-                && sup.is_running(crate::svc::DAEMON_SERVICE, &format!("{SVC_PREFIX}{name}"));
-            json!({
-                "name": name, "version": r.get::<String,_>(1), "key_id": r.get::<String,_>(2),
-                "enabled": r.get::<i64,_>(3) != 0, "installed_at": r.get::<i64,_>(5),
-                "description": m.as_ref().map(|m| m.description.clone()).unwrap_or_default(),
-                "author": m.as_ref().map(|m| m.author.clone()).unwrap_or_default(),
-                "service": m.as_ref().and_then(|m| m.service.clone()),
-                "trust": trust, "running": running,
-            })
-        })
-        .collect())
+    let mut out = Vec::new();
+    for r in &rows {
+        let name: String = r.get(0);
+        let bundle: String = r.get(4);
+        let (m, trust) = match verify(&bundle, &keys) {
+            Ok((m, _)) => (Some(m), "verified".to_string()),
+            Err(e) => (None, e.to_string()),
+        };
+        let running = m.as_ref().is_some_and(|m| m.service.is_some())
+            && sup.is_running(crate::svc::DAEMON_SERVICE, &format!("{SVC_PREFIX}{name}"));
+        // the form's schema and current values; a secret's value never leaves the store
+        let settings = match &m {
+            Some(m) => crate::plugin_settings::view(store, &name, &m.settings).await?,
+            None => Vec::new(),
+        };
+        out.push(json!({
+            "name": name, "version": r.get::<String,_>(1), "key_id": r.get::<String,_>(2),
+            "enabled": r.get::<i64,_>(3) != 0, "installed_at": r.get::<i64,_>(5),
+            "description": m.as_ref().map(|m| m.description.clone()).unwrap_or_default(),
+            "author": m.as_ref().map(|m| m.author.clone()).unwrap_or_default(),
+            "service": m.as_ref().and_then(|m| m.service.clone()),
+            "settings": settings,
+            "trust": trust, "running": running,
+        }));
+    }
+    Ok(out)
 }
 
 fn files_intact(m: &Manifest, dir: &Path) -> Option<String> {
@@ -565,6 +598,36 @@ impl Applier for PluginsApplier {
         Phase::Services
     }
 
+    fn resource_kinds(&self) -> &'static [patronus_config::ResourceKind] {
+        &[patronus_config::ResourceKind::PluginSettings]
+    }
+
+    async fn upsert_resource(
+        &self,
+        store: &ConfigStore,
+        config: &patronus_config::DeclarativeConfig,
+    ) -> Result<()> {
+        let v = patronus_config::declarative::spec_value(config)?;
+        let name = &config.metadata.name;
+        let m = manifest_of(store, name)
+            .await?
+            .ok_or_else(|| invalid(format!("PluginSettings {name}: no such plugin installed")))?;
+        crate::plugin_settings::gitops_replace(store, name, &m.settings, v).await
+    }
+
+    async fn delete_resource(
+        &self,
+        store: &ConfigStore,
+        kind: &patronus_config::ResourceKind,
+        name: &str,
+    ) -> Result<()> {
+        if *kind != patronus_config::ResourceKind::PluginSettings {
+            return Err(invalid("resource kind for the plugins applier"));
+        }
+        // deleting the resource = back to defaults (secrets included)
+        crate::plugin_settings::delete_all(store, name).await
+    }
+
     async fn apply(&self, store: &ConfigStore) -> Result<ApplyReport> {
         let mut rep = ApplyReport::default();
         let keys = trusted_keys(store).await?;
@@ -594,15 +657,52 @@ impl Applier for PluginsApplier {
                 rep.warn(format!("plugin {name} not started: {why}"));
                 continue;
             }
+            // settings: the effective values go to 0600 files the service reads;
+            // a required setting without a value keeps the plugin from starting
+            let mut sfiles: Vec<(PathBuf, String, u32)> = Vec::new();
+            if !m.settings.is_empty() {
+                match crate::plugin_settings::effective(store, &name, &m.settings).await {
+                    Ok(vals) => {
+                        sfiles.push((
+                            settings_path(&self.sup, &name, "json"),
+                            crate::plugin_settings::render_json(&vals),
+                            0o600,
+                        ));
+                        sfiles.push((
+                            settings_path(&self.sup, &name, "env"),
+                            crate::plugin_settings::render_env(&vals),
+                            0o600,
+                        ));
+                    }
+                    Err(e) => {
+                        set_exposure(store, &name, None).await;
+                        rep.warn(format!("plugin {name} not started: {e}"));
+                        continue;
+                    }
+                }
+            } else {
+                let _ = std::fs::remove_file(settings_path(&self.sup, &name, "json"));
+                let _ = std::fs::remove_file(settings_path(&self.sup, &name, "env"));
+            }
             set_exposure(store, &name, Some(&m)).await;
             let Some(s) = &m.service else {
+                for (p, c, mode) in &sfiles {
+                    crate::supervise::write_atomic(p, c, *mode)?;
+                }
                 rep.applied(format!("plugin {name} {} installed", m.version));
                 continue;
             };
             let mut argv: Vec<String> = s.exec.clone();
             argv[0] = dir.join(&s.exec[0]).to_string_lossy().into_owned();
+            let (sj, se) = (
+                settings_path(&self.sup, &name, "json").to_string_lossy().into_owned(),
+                settings_path(&self.sup, &name, "env").to_string_lossy().into_owned(),
+            );
+            for a in argv.iter_mut().skip(1) {
+                *a = a.replace("{settings}", &sj).replace("{settings_env}", &se);
+            }
             let inst = format!("{SVC_PREFIX}{name}");
-            let started = crate::svc::ensure_daemon(&self.sup, &inst, argv, Vec::new()).await?;
+            let started = crate::svc::ensure_daemon(&self.sup, &inst, argv, sfiles).await?;
             keep.push(inst);
             rep.applied(format!(
                 "plugin {name} {} {}",
@@ -689,6 +789,7 @@ mod tests {
                 data: B64.encode(b"a"),
             }],
             service: None,
+            settings: vec![],
         };
         assert!(check_manifest(&mk("bin/a", 0o755)).is_ok());
         for bad in ["../x", "/etc/passwd", "a//b", ".hidden", "a/./b", ""] {

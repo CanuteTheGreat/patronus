@@ -119,6 +119,8 @@ pub mod l2tp;
 #[cfg(feature = "plugins")]
 pub mod packages;
 #[cfg(feature = "plugins")]
+pub mod plugin_settings;
+#[cfg(feature = "plugins")]
 pub mod plugins;
 #[cfg(feature = "web-proxy")]
 pub mod proxy;

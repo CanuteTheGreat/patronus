@@ -49,7 +49,7 @@ wifi-ap = ["segmentation"]
 # Wi-Fi client uplink: wpa_supplicant per device (RDEPEND net-wireless/wpa_supplicant)
 wifi-client = []
 # signed plugins + Gentoo package jobs (Packages page)
-plugins = ["dep:ed25519-dalek", "dep:rand"]
+plugins = ["dep:ed25519-dalek", "dep:rand", "dep:regex"]
 web-proxy = []
 # SD-WAN edge agent page + applier (the agent itself is `patronus edge run`)
 sdwan-edge = ["wireguard"]
@@ -86,6 +86,8 @@ base64 = "0.22"
 ed25519-dalek = { version = "2.1", optional = true }
 sha2 = "0.10"
 rand = { version = "0.8", optional = true }
+# plugin setting patterns (USE=plugins); linear-time engine, so a signed pattern cannot stall the box
+regex = { version = "1", optional = true }
 socket2 = { version = "0.5", features = ["all"] }
 
 # wireguard-control = { workspace = true, optional = true }  # Removed - not used

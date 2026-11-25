@@ -335,7 +335,9 @@ fn redact_row(row: &serde_json::Value) -> serde_json::Value {
         serde_json::Value::Object(o) => serde_json::Value::Object(
             o.iter()
                 .map(|(k, v)| {
-                    if secret_column(k) && !v.is_null() {
+                    // a row that flags its own value as secret (plugin_settings)
+                    let flagged = k == "value" && o.get("secret").and_then(|x| x.as_i64()) == Some(1);
+                    if (secret_column(k) || flagged) && !v.is_null() {
                         (k.clone(), json!("(hidden)"))
                     } else {
                         (k.clone(), v.clone())

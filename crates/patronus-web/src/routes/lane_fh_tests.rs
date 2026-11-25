@@ -2397,3 +2397,19 @@ fn config_diff_hides_secret_columns() {
     assert!(!text.contains("H1") && !text.contains("H2"), "{text}");
     assert!(text.contains("(hidden)"));
 }
+
+#[test]
+fn config_diff_hides_plugin_setting_secrets_but_not_plain_values() {
+    use serde_json::json;
+    let row = |v: &str, secret: i64| {
+        json!({"plugin": "p", "setting": "token", "value": v, "secret": secret})
+    };
+    let old = json!({"tables": {"plugin_settings": [row("\"S3CRET-A\"", 1)]}});
+    let cur = json!({"tables": {"plugin_settings": [row("\"S3CRET-B\"", 1)]}});
+    let text = serde_json::to_string(&crate::routes::api::system::config_diff(&old, &cur)).unwrap();
+    assert!(!text.contains("S3CRET"), "{text}");
+    let old = json!({"tables": {"plugin_settings": [row("\"plain-a\"", 0)]}});
+    let cur = json!({"tables": {"plugin_settings": [row("\"plain-b\"", 0)]}});
+    let text = serde_json::to_string(&crate::routes::api::system::config_diff(&old, &cur)).unwrap();
+    assert!(text.contains("plain-b"), "{text}");
+}

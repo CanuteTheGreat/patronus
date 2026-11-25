@@ -57,6 +57,9 @@ pub enum ResourceKind {
     IpsecRoadWarrior,
     /// RBAC group (`privileges: {firewall: write, vpn: read}`).
     Group,
+    /// Settings of a signed plugin: `metadata.name` is the plugin, `spec` is
+    /// `{setting: value}` (validated against the plugin's own schema).
+    PluginSettings,
 }
 
 /// Resource metadata
@@ -442,7 +445,8 @@ impl ConfigParser {
                 | ResourceKind::IpsecTunnel
                 | ResourceKind::IpsecRoadWarrior
                 | ResourceKind::User
-                | ResourceKind::Group,
+                | ResourceKind::Group
+                | ResourceKind::PluginSettings,
                 ResourceSpec::Generic(v),
             ) if v.is_object() => {}
             _ => {

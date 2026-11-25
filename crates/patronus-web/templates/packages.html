@@ -2,6 +2,33 @@
 
 {% block title %}Packages - Patronus{% endblock %}
 
+{% block extra_head %}
+<style>
+    .set-card { display: none; }
+    .set-card.open { display: block; }
+    .set-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 18px 16px; margin: 12px 0; }
+    .set-field { position: relative; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .set-field label.set-label { font-size: 0.85em; font-weight: 600; color: var(--ink-2); }
+    .set-field input[type=text], .set-field input[type=number], .set-field input[type=password], .set-field select, .set-field textarea {
+        padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--card-bg); color: var(--text);
+        width: 100%; box-sizing: border-box; font: inherit; min-width: 0; }
+    .set-field input:focus-visible, .set-field select:focus-visible, .set-field textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .set-field [aria-invalid=true] { border-color: var(--danger); }
+    .set-limits { font-size: 0.78em; color: var(--text-muted); }
+    .set-check { display: flex; align-items: center; gap: 8px; }
+    .set-hint { visibility: hidden; position: absolute; left: 0; right: 0; top: 100%; z-index: 5; margin-top: 2px; padding: 6px 8px;
+        border-radius: 4px; font-size: 0.82em; line-height: 1.35; background: var(--surface-3); color: var(--ink); border: 1px solid var(--line-strong);
+        box-shadow: 0 2px 8px var(--shadow); }
+    .set-field:hover .set-hint, .set-field:focus-within .set-hint { visibility: visible; }
+    .set-err { display: none; margin: 8px 0; padding: 8px 10px; border-radius: 4px; background: var(--bad-bg); color: var(--bad-fg); }
+    .set-err.on { display: block; }
+    .set-ok { display: none; margin: 8px 0; padding: 8px 10px; border-radius: 4px; background: var(--ok-bg); color: var(--ok-fg); }
+    .set-ok.on { display: block; }
+    .set-secret-state { font-size: 0.78em; color: var(--text-muted); }
+    @media (max-width: 640px) { .set-grid { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="page-header">
     <h1 class="page-title">Packages and plugins</h1>
@@ -34,6 +61,20 @@
         <button class="btn btn-primary btn-sm" type="submit">Install or update</button>
     </form>
     {% endif %}
+</div>
+
+<div class="card set-card" id="pk-settings-card" aria-labelledby="pk-settings-title">
+    <div class="card-header"><h2 class="card-title" id="pk-settings-title">Plugin settings</h2></div>
+    <p class="text-sm text-muted" id="pk-settings-desc"></p>
+    <form id="pk-settings-form" novalidate onsubmit="return saveSettings(event)">
+        <div class="set-err" id="pk-set-err" role="alert"></div>
+        <div class="set-ok" id="pk-set-ok" role="status"></div>
+        <div class="set-grid" id="pk-set-grid"></div>
+        {% if is_admin %}
+        <button class="btn btn-primary btn-sm" type="submit">Save settings</button>
+        {% endif %}
+        <button class="btn btn-secondary btn-sm" type="button" onclick="closeSettings()">Close</button>
+    </form>
 </div>
 
 <div class="card">
@@ -70,7 +111,116 @@
         const j = await r.json(); const p = document.getElementById('pk-log');
         p.style.display = ''; p.textContent = j.log || '(no output yet)';
     }
-    let timer = null;
+
+    // ---- schema-driven plugin settings: the form is drawn from the plugin's signed schema;
+    // the server validates every value again, and a secret's value never comes back to the page.
+    let setPlugin = null, setSchema = [];
+    function el(tag, attrs, text) { const e = document.createElement(tag); for (const k in (attrs || {})) { if (k === 'class') e.className = attrs[k]; else e.setAttribute(k, attrs[k]); } if (text !== undefined) e.textContent = text; return e; }
+    function limitText(s) {
+        const kind = s.type, parts = [];
+        const unit = kind === 'string' ? ' characters' : (kind === 'list' ? ' entries' : '');
+        if (kind === 'port' && s.min == null && s.max == null) parts.push('port 1-65535');
+        else if (s.min != null && s.max != null) parts.push(s.min + ' to ' + s.max + unit);
+        else if (s.min != null) parts.push('at least ' + s.min + unit);
+        else if (s.max != null) parts.push('at most ' + s.max + unit);
+        if (kind === 'list') parts.push('one entry per line' + (s.item && s.item !== 'string' ? ' (' + s.item + ')' : ''));
+        if (kind === 'address') parts.push('IPv4 or IPv6 address');
+        if (s.required) parts.push('required');
+        return parts.join(', ');
+    }
+    function buildField(s, idx) {
+        const wrap = el('div', {class: 'set-field', 'data-setting': s.key});
+        const id = 'pks-' + idx, hid = id + '-hint', lid = id + '-limits';
+        let input;
+        if (s.type === 'bool') {
+            const row = el('div', {class: 'set-check'});
+            input = el('input', {type: 'checkbox', id, name: s.key}); input.checked = s.value === true;
+            row.appendChild(input); row.appendChild(el('label', {for: id, class: 'set-label'}, s.label || s.key)); wrap.appendChild(row);
+        } else {
+            wrap.appendChild(el('label', {for: id, class: 'set-label'}, s.label || s.key));
+            if (s.type === 'enum') {
+                input = el('select', {id, name: s.key});
+                for (const v of s.values) { const o = el('option', {value: v}, v); if (s.value === v) o.selected = true; input.appendChild(o); }
+            } else if (s.type === 'list') {
+                input = el('textarea', {id, name: s.key, rows: '3', spellcheck: 'false', autocapitalize: 'off'});
+                input.value = Array.isArray(s.value) ? s.value.join('\n') : '';
+            } else if (s.type === 'int' || s.type === 'port') {
+                input = el('input', {type: 'number', id, name: s.key, step: '1', inputmode: 'numeric'});
+                const lo = s.type === 'port' ? Math.max(1, s.min == null ? 1 : s.min) : s.min, hi = s.type === 'port' ? Math.min(65535, s.max == null ? 65535 : s.max) : s.max;
+                if (lo != null) input.min = lo; if (hi != null) input.max = hi;
+                input.value = s.value == null ? '' : s.value;
+            } else {
+                input = el('input', {type: s.secret ? 'password' : 'text', id, name: s.key, autocomplete: s.secret ? 'new-password' : 'off', spellcheck: 'false', autocapitalize: 'off'});
+                if (s.max != null) input.maxLength = s.max;
+                if (!s.secret) input.value = s.value == null ? '' : s.value;
+                else input.placeholder = s.is_set ? 'set - leave empty to keep it' : 'not set';
+            }
+            wrap.appendChild(input);
+        }
+        const lim = limitText(s);
+        const desc = [];
+        if (lim) { wrap.appendChild(el('span', {class: 'set-limits', id: lid}, lim)); desc.push(lid); }
+        if (s.secret) {
+            const st = el('span', {class: 'set-secret-state', id: id + '-sec'}, s.is_set ? 'A value is saved; it is never shown again.' : 'No value saved yet.');
+            wrap.appendChild(st); desc.push(id + '-sec');
+            if (s.is_set && ADMIN) {
+                const row = el('div', {class: 'set-check'});
+                const c = el('input', {type: 'checkbox', id: id + '-clr', name: s.key + ':clear'});
+                row.appendChild(c); row.appendChild(el('label', {for: id + '-clr', class: 'set-limits'}, 'Remove the saved value')); wrap.appendChild(row);
+            }
+        }
+        if (s.hint) { wrap.appendChild(el('span', {class: 'set-hint', id: hid, role: 'tooltip'}, s.hint)); desc.push(hid); }
+        if (desc.length) input.setAttribute('aria-describedby', desc.join(' '));
+        if (!ADMIN) input.disabled = true;
+        input.dataset.key = s.key;
+        return wrap;
+    }
+    function openSettings(p) {
+        setPlugin = p.name; setSchema = p.settings;
+        document.getElementById('pk-settings-title').textContent = 'Settings: ' + p.name + ' ' + p.version;
+        document.getElementById('pk-settings-desc').textContent = p.description || '';
+        const g = document.getElementById('pk-set-grid'); g.textContent = '';
+        p.settings.forEach((s, i) => g.appendChild(buildField(s, i)));
+        for (const id of ['pk-set-err', 'pk-set-ok']) { const b = document.getElementById(id); b.className = b.className.replace(' on', ''); b.textContent = ''; }
+        const card = document.getElementById('pk-settings-card'); card.classList.add('open');
+        const f = g.querySelector('input,select,textarea'); if (f) f.focus();
+    }
+    function closeSettings() { document.getElementById('pk-settings-card').classList.remove('open'); setPlugin = null; }
+    function showSetMsg(id, text) { const b = document.getElementById(id); b.textContent = text; b.classList.toggle('on', !!text); }
+    async function saveSettings(ev) {
+        ev.preventDefault(); if (!setPlugin) return false;
+        const values = {}, clear = [];
+        for (const s of setSchema) {
+            const inp = document.querySelector('#pk-set-grid [data-key="' + s.key + '"]'); if (!inp) continue;
+            inp.removeAttribute('aria-invalid');
+            if (s.type === 'bool') { values[s.key] = inp.checked; continue; }
+            if (s.secret) {
+                const c = document.querySelector('#pk-set-grid input[name="' + s.key + ':clear"]');
+                if (c && c.checked) clear.push(s.key); else if (inp.value !== '') values[s.key] = inp.value;
+                continue;
+            }
+            if (s.type === 'list') { const items = inp.value.split('\n').map(x => x.trim()).filter(x => x); if (items.length || s.required) values[s.key] = items; else clear.push(s.key); continue; }
+            if ((s.type === 'int' || s.type === 'port') && inp.value.trim() === '') { if (s.required && s.default == null) values[s.key] = ''; else clear.push(s.key); continue; }
+            values[s.key] = inp.value;
+        }
+        showSetMsg('pk-set-ok', ''); showSetMsg('pk-set-err', '');
+        const r = await fetch('/api/packages/plugins/' + encodeURIComponent(setPlugin) + '/settings', {method: 'PUT', credentials: 'same-origin',
+            headers: {'content-type': 'application/json'}, body: JSON.stringify({values, clear})});
+        let j = null; try { j = await r.json(); } catch (e) {}
+        if (!r.ok) {
+            const msg = (j && j.error) || ('HTTP ' + r.status);
+            showSetMsg('pk-set-err', msg);
+            // mark the field the message names (labels or keys), so the user sees where
+            for (const s of setSchema) { if (msg.indexOf(s.label || s.key) >= 0 || msg.indexOf(s.key) >= 0) { const inp = document.querySelector('#pk-set-grid [data-key="' + s.key + '"]'); if (inp) { inp.setAttribute('aria-invalid', 'true'); inp.focus(); } break; } }
+            return false;
+        }
+        showSetMsg('pk-set-err', ''); showSetMsg('pk-set-ok', 'Saved. The plugin was restarted with the new settings.');
+        const name = setPlugin; await load();
+        const p = lastPlugins.find(x => x.name === name);
+        if (p) { const keep = document.getElementById('pk-set-ok').textContent; openSettings(p); showSetMsg('pk-set-ok', keep); }
+        return false;
+    }
+    let timer = null, lastPlugins = [];
     async function load() {
         const r = await fetch('/api/packages', {credentials: 'same-origin'});
         if (!r.ok) return; const d = await r.json();
@@ -94,11 +244,13 @@
         }
         const pb = document.querySelector('#pk-plugins tbody'); pb.textContent = '';
         document.getElementById('pk-plugins-empty').style.display = d.plugins.length ? 'none' : '';
+        lastPlugins = d.plugins;
         for (const p of d.plugins) {
             const tr = document.createElement('tr'); tr.dataset.plugin = p.name;
             cellText(tr, p.name); cellText(tr, p.version); cellText(tr, p.key_id); cellText(tr, p.trust);
             cellText(tr, p.service ? (p.running ? 'running' : (p.enabled ? 'not running' : 'disabled')) : 'files only');
             const td = document.createElement('td');
+            if (p.settings && p.settings.length) td.appendChild(btn(ADMIN ? 'settings' : 'view settings', 'btn-secondary', () => openSettings(p)));
             if (ADMIN) {
                 td.appendChild(btn(p.enabled ? 'disable' : 'enable', 'btn-secondary', async () => { if (await call('PUT', '/api/packages/plugins/' + p.name, {enabled: !p.enabled})) load(); }));
                 td.appendChild(btn('remove', 'btn-danger', async () => { if (confirm('Remove plugin ' + p.name + '?') && await call('DELETE', '/api/packages/plugins/' + p.name)) load(); }));
