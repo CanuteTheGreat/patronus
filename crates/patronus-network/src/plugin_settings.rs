@@ -102,7 +102,9 @@ fn printable(s: &str) -> bool {
 
 fn compile(p: &str) -> Result<regex::Regex> {
     if p.len() > MAX_PATTERN {
-        return Err(invalid(format!("pattern longer than {MAX_PATTERN} characters")));
+        return Err(invalid(format!(
+            "pattern longer than {MAX_PATTERN} characters"
+        )));
     }
     regex::RegexBuilder::new(&format!("^(?:{p})$"))
         .size_limit(1 << 20)
@@ -119,13 +121,14 @@ pub fn check_schema(list: &[Setting]) -> Result<()> {
     for s in list {
         let ctx = |m: &str| invalid(format!("setting {:?}: {m}", s.key));
         if !valid_key(&s.key) {
-            return Err(ctx("key is lowercase letters, digits and '_', starting with a letter, at most 40"));
+            return Err(ctx(
+                "key is lowercase letters, digits and '_', starting with a letter, at most 40",
+            ));
         }
         if !seen.insert(s.key.clone()) {
             return Err(ctx("listed twice"));
         }
-        if s.label.len() > 80 || !printable(&s.label) || s.hint.len() > 400 || !printable(&s.hint)
-        {
+        if s.label.len() > 80 || !printable(&s.label) || s.hint.len() > 400 || !printable(&s.hint) {
             return Err(ctx("label (80) or hint (400) too long or not printable"));
         }
         let numeric = matches!(s.kind, Kind::Int | Kind::Port);
@@ -139,7 +142,8 @@ pub fn check_schema(list: &[Setting]) -> Result<()> {
                 return Err(ctx("min is larger than max"));
             }
         }
-        if s.kind == Kind::Port && (s.min.is_some_and(|m| m < 1) || s.max.is_some_and(|m| m > 65535))
+        if s.kind == Kind::Port
+            && (s.min.is_some_and(|m| m < 1) || s.max.is_some_and(|m| m > 65535))
         {
             return Err(ctx("port limits stay within 1-65535"));
         }
@@ -164,9 +168,15 @@ pub fn check_schema(list: &[Setting]) -> Result<()> {
                 || s.values
                     .iter()
                     .any(|v| v.is_empty() || v.len() > 80 || !printable(v))
-                || s.values.iter().collect::<std::collections::BTreeSet<_>>().len() != s.values.len()
+                || s.values
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != s.values.len()
             {
-                return Err(ctx("an enum needs 1-64 distinct values of 1-80 printable characters"));
+                return Err(ctx(
+                    "an enum needs 1-64 distinct values of 1-80 printable characters",
+                ));
             }
         } else if !s.values.is_empty() {
             return Err(ctx("values apply to enum only"));
@@ -188,7 +198,9 @@ pub fn check_schema(list: &[Setting]) -> Result<()> {
                 return Err(ctx("only a string can be secret"));
             }
             if s.default.is_some() {
-                return Err(ctx("a secret has no default (the signed bundle is not secret)"));
+                return Err(ctx(
+                    "a secret has no default (the signed bundle is not secret)",
+                ));
             }
         }
         if let Some(d) = &s.default {
@@ -261,15 +273,17 @@ fn scalar(
                 (min.unwrap_or(i64::MIN), max.unwrap_or(i64::MAX))
             };
             if n < lo || n > hi {
-                return Err(bad(if kind == Kind::Port && min.is_none() && max.is_none() {
-                    "must be a port, 1-65535".to_string()
-                } else if lo == i64::MIN {
-                    format!("must be at most {hi}")
-                } else if hi == i64::MAX {
-                    format!("must be at least {lo}")
-                } else {
-                    format!("must be between {lo} and {hi}")
-                }));
+                return Err(bad(
+                    if kind == Kind::Port && min.is_none() && max.is_none() {
+                        "must be a port, 1-65535".to_string()
+                    } else if lo == i64::MIN {
+                        format!("must be at most {hi}")
+                    } else if hi == i64::MAX {
+                        format!("must be at least {lo}")
+                    } else {
+                        format!("must be between {lo} and {hi}")
+                    },
+                ));
             }
             Ok(json!(n))
         }
@@ -304,7 +318,10 @@ pub fn validate_value(s: &Setting, v: &Value) -> Result<Value> {
         };
         let n = items.len() as i64;
         if s.min.is_some_and(|m| n < m) {
-            return Err(invalid(format!("{what}: at least {} entries", s.min.unwrap())));
+            return Err(invalid(format!(
+                "{what}: at least {} entries",
+                s.min.unwrap()
+            )));
         }
         if n > s.max.unwrap_or(MAX_LIST_ITEMS).min(MAX_LIST_ITEMS) {
             return Err(invalid(format!(
@@ -399,7 +416,10 @@ pub async fn view(store: &ConfigStore, plugin: &str, schema: &[Setting]) -> Resu
                 obj.insert("value".into(), Value::Null);
                 obj.insert("is_set".into(), json!(cur.is_some()));
             } else {
-                obj.insert("value".into(), effective_value(s, &st).unwrap_or(Value::Null));
+                obj.insert(
+                    "value".into(),
+                    effective_value(s, &st).unwrap_or(Value::Null),
+                );
                 obj.insert("is_set".into(), json!(cur.is_some()));
             }
             o
@@ -421,7 +441,9 @@ pub async fn save(
     let mut set: Vec<(&Setting, Value)> = Vec::new();
     for (k, v) in values {
         let Some(s) = by.get(k.as_str()) else {
-            return Err(invalid(format!("setting {k:?}: the plugin has no such setting")));
+            return Err(invalid(format!(
+                "setting {k:?}: the plugin has no such setting"
+            )));
         };
         if s.secret && v.as_str() == Some("") {
             continue;
@@ -430,7 +452,9 @@ pub async fn save(
     }
     for k in clear {
         if !by.contains_key(k.as_str()) {
-            return Err(invalid(format!("setting {k:?}: the plugin has no such setting")));
+            return Err(invalid(format!(
+                "setting {k:?}: the plugin has no such setting"
+            )));
         }
     }
     let mut tx = store.pool()?.begin().await.map_err(db("begin"))?;
@@ -461,7 +485,11 @@ pub async fn save(
 
 /// After an install/update: drop stored values the new schema no longer has or
 /// no longer accepts (they fall back to the default).
-pub async fn reconcile(store: &ConfigStore, plugin: &str, schema: &[Setting]) -> Result<Vec<String>> {
+pub async fn reconcile(
+    store: &ConfigStore,
+    plugin: &str,
+    schema: &[Setting],
+) -> Result<Vec<String>> {
     let st = stored(store, plugin).await?;
     let mut dropped = Vec::new();
     for (k, v) in st {
@@ -515,7 +543,8 @@ pub async fn gitops_replace(
 
 /// JSON object file content for the service.
 pub fn render_json(values: &Map<String, Value>) -> String {
-    serde_json::to_string_pretty(&Value::Object(values.clone())).unwrap_or_else(|_| "{}".into()) + "\n"
+    serde_json::to_string_pretty(&Value::Object(values.clone())).unwrap_or_else(|_| "{}".into())
+        + "\n"
 }
 
 fn sh_quote(s: &str) -> String {
@@ -524,13 +553,18 @@ fn sh_quote(s: &str) -> String {
 
 /// `PLUGIN_<KEY>='value'` lines (lists as compact JSON), for shell services.
 pub fn render_env(values: &Map<String, Value>) -> String {
-    let mut out = String::from("# Generated by Patronus from the plugin's settings; do not edit.\n");
+    let mut out =
+        String::from("# Generated by Patronus from the plugin's settings; do not edit.\n");
     for (k, v) in values {
         let text = match v {
             Value::String(s) => s.clone(),
             other => other.to_string(),
         };
-        out.push_str(&format!("PLUGIN_{}={}\n", k.to_ascii_uppercase(), sh_quote(&text)));
+        out.push_str(&format!(
+            "PLUGIN_{}={}\n",
+            k.to_ascii_uppercase(),
+            sh_quote(&text)
+        ));
     }
     out
 }
@@ -577,7 +611,16 @@ mod tests {
         let mut hosts = st(Kind::List, "hosts");
         hosts.item = Some(Kind::Address);
         hosts.max = Some(3);
-        vec![interval, name, mode, token, st(Kind::Bool, "debug"), port, hosts, st(Kind::Address, "gw")]
+        vec![
+            interval,
+            name,
+            mode,
+            token,
+            st(Kind::Bool, "debug"),
+            port,
+            hosts,
+            st(Kind::Address, "gw"),
+        ]
     }
 
     #[test]
@@ -609,9 +652,12 @@ mod tests {
             s.kind = Kind::Bool;
             s.secret = true
         }));
-        assert!(bad(&|s| {
-            s.kind = Kind::Enum;
-        }), "enum without values");
+        assert!(
+            bad(&|s| {
+                s.kind = Kind::Enum;
+            }),
+            "enum without values"
+        );
         assert!(bad(&|s| {
             s.kind = Kind::Port;
             s.max = Some(70000)
@@ -625,8 +671,14 @@ mod tests {
     fn values_are_validated_and_out_of_range_is_refused() {
         let s = schema();
         let by = |k: &str| s.iter().find(|x| x.key == k).unwrap();
-        assert_eq!(validate_value(by("interval"), &json!(30)).unwrap(), json!(30));
-        assert_eq!(validate_value(by("interval"), &json!("30")).unwrap(), json!(30));
+        assert_eq!(
+            validate_value(by("interval"), &json!(30)).unwrap(),
+            json!(30)
+        );
+        assert_eq!(
+            validate_value(by("interval"), &json!("30")).unwrap(),
+            json!(30)
+        );
         assert!(validate_value(by("interval"), &json!(4)).is_err());
         assert!(validate_value(by("interval"), &json!(3601)).is_err());
         assert!(validate_value(by("interval"), &json!("x")).is_err());
@@ -640,17 +692,29 @@ mod tests {
         assert!(validate_value(by("listen"), &json!(80)).is_err());
         assert!(validate_value(by("listen"), &json!(65536)).is_err());
         assert!(validate_value(&st(Kind::Port, "p"), &json!(0)).is_err());
-        assert_eq!(validate_value(by("debug"), &json!("true")).unwrap(), json!(true));
+        assert_eq!(
+            validate_value(by("debug"), &json!("true")).unwrap(),
+            json!(true)
+        );
         assert!(validate_value(by("debug"), &json!("yes")).is_err());
-        assert_eq!(validate_value(by("gw"), &json!(" 10.0.0.1 ")).unwrap(), json!("10.0.0.1"));
+        assert_eq!(
+            validate_value(by("gw"), &json!(" 10.0.0.1 ")).unwrap(),
+            json!("10.0.0.1")
+        );
         assert!(validate_value(by("gw"), &json!("10.0.0.999")).is_err());
         assert!(validate_value(by("gw"), &json!("example.com")).is_err());
         assert!(validate_value(by("hosts"), &json!(["10.0.0.1", "::1"])).is_ok());
         assert!(validate_value(by("hosts"), &json!(["10.0.0.1", "nope"])).is_err());
-        assert!(validate_value(by("hosts"), &json!(["1.1.1.1", "1.1.1.2", "1.1.1.3", "1.1.1.4"])).is_err());
+        assert!(validate_value(
+            by("hosts"),
+            &json!(["1.1.1.1", "1.1.1.2", "1.1.1.3", "1.1.1.4"])
+        )
+        .is_err());
         assert!(validate_value(by("hosts"), &json!("1.1.1.1")).is_err());
         // an error never repeats the offending value (it may be a secret)
-        let e = validate_value(by("name"), &json!("Sup3r Secret!")).unwrap_err().to_string();
+        let e = validate_value(by("name"), &json!("Sup3r Secret!"))
+            .unwrap_err()
+            .to_string();
         assert!(!e.contains("Sup3r"), "{e}");
     }
 
@@ -660,10 +724,19 @@ mod tests {
         let s = schema();
         let vals = |v: Value| v.as_object().unwrap().clone();
         // out of range: nothing is stored, even the valid sibling
-        let r = save(&store, "p", &s, &vals(json!({"name": "ok", "interval": 1})), &[]).await;
+        let r = save(
+            &store,
+            "p",
+            &s,
+            &vals(json!({"name": "ok", "interval": 1})),
+            &[],
+        )
+        .await;
         assert!(r.is_err());
         assert!(stored(&store, "p").await.unwrap().is_empty());
-        assert!(save(&store, "p", &s, &vals(json!({"nope": 1})), &[]).await.is_err());
+        assert!(save(&store, "p", &s, &vals(json!({"nope": 1})), &[])
+            .await
+            .is_err());
         // required secret has no value yet
         assert!(effective(&store, "p", &s).await.is_err());
         save(
@@ -680,15 +753,27 @@ mod tests {
         let text = serde_json::to_string(&v).unwrap();
         assert!(!text.contains("s3cr3t-token"), "{text}");
         let tok = v.iter().find(|x| x["key"] == "token").unwrap();
-        assert_eq!((tok["is_set"].clone(), tok["value"].clone()), (json!(true), Value::Null));
+        assert_eq!(
+            (tok["is_set"].clone(), tok["value"].clone()),
+            (json!(true), Value::Null)
+        );
         let iv = v.iter().find(|x| x["key"] == "interval").unwrap();
         assert_eq!(iv["value"], json!(90));
         let mode = v.iter().find(|x| x["key"] == "mode").unwrap();
-        assert_eq!((mode["value"].clone(), mode["is_set"].clone()), (json!("safe"), json!(false)));
+        assert_eq!(
+            (mode["value"].clone(), mode["is_set"].clone()),
+            (json!("safe"), json!(false))
+        );
         // an empty secret keeps the stored one; clear returns to the default
-        save(&store, "p", &s, &vals(json!({"token": "", "interval": 120})), &["hosts".into()])
-            .await
-            .unwrap();
+        save(
+            &store,
+            "p",
+            &s,
+            &vals(json!({"token": "", "interval": 120})),
+            &["hosts".into()],
+        )
+        .await
+        .unwrap();
         let eff = effective(&store, "p", &s).await.unwrap();
         assert_eq!(eff["token"], json!("s3cr3t-token"));
         assert_eq!(eff["interval"], json!(120));
@@ -716,9 +801,15 @@ mod tests {
         let store = ConfigStore::open_in_memory().await.unwrap();
         let s = schema();
         let vals = |v: Value| v.as_object().unwrap().clone();
-        save(&store, "p", &s, &vals(json!({"token": "t", "interval": 100, "name": "abc"})), &[])
-            .await
-            .unwrap();
+        save(
+            &store,
+            "p",
+            &s,
+            &vals(json!({"token": "t", "interval": 100, "name": "abc"})),
+            &[],
+        )
+        .await
+        .unwrap();
         // v2 narrows interval to 5..50, drops `name`
         let mut s2: Vec<Setting> = s.iter().filter(|x| x.key != "name").cloned().collect();
         s2.iter_mut().find(|x| x.key == "interval").unwrap().max = Some(50);
@@ -727,15 +818,30 @@ mod tests {
         dropped.sort();
         assert_eq!(dropped, vec!["interval", "name"]);
         let eff = effective(&store, "p", &s2).await.unwrap();
-        assert_eq!((eff["interval"].clone(), eff["token"].clone()), (json!(10), json!("t")));
+        assert_eq!(
+            (eff["interval"].clone(), eff["token"].clone()),
+            (json!(10), json!("t"))
+        );
         // GitOps: declared keys replace, absent plain keys reset, absent secret kept
-        save(&store, "p", &s2, &vals(json!({"interval": 20, "mode": "fast"})), &[]).await.unwrap();
-        gitops_replace(&store, "p", &s2, &json!({"interval": 30})).await.unwrap();
+        save(
+            &store,
+            "p",
+            &s2,
+            &vals(json!({"interval": 20, "mode": "fast"})),
+            &[],
+        )
+        .await
+        .unwrap();
+        gitops_replace(&store, "p", &s2, &json!({"interval": 30}))
+            .await
+            .unwrap();
         let eff = effective(&store, "p", &s2).await.unwrap();
         assert_eq!(eff["interval"], json!(30));
         assert_eq!(eff["mode"], json!("safe"), "left out -> default again");
         assert_eq!(eff["token"], json!("t"), "a secret left out is kept");
-        assert!(gitops_replace(&store, "p", &s2, &json!({"interval": 999})).await.is_err());
+        assert!(gitops_replace(&store, "p", &s2, &json!({"interval": 999}))
+            .await
+            .is_err());
         assert!(gitops_replace(&store, "p", &s2, &json!([1])).await.is_err());
     }
 }

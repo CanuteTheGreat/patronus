@@ -695,8 +695,12 @@ impl Applier for PluginsApplier {
             let mut argv: Vec<String> = s.exec.clone();
             argv[0] = dir.join(&s.exec[0]).to_string_lossy().into_owned();
             let (sj, se) = (
-                settings_path(&self.sup, &name, "json").to_string_lossy().into_owned(),
-                settings_path(&self.sup, &name, "env").to_string_lossy().into_owned(),
+                settings_path(&self.sup, &name, "json")
+                    .to_string_lossy()
+                    .into_owned(),
+                settings_path(&self.sup, &name, "env")
+                    .to_string_lossy()
+                    .into_owned(),
             );
             for a in argv.iter_mut().skip(1) {
                 *a = a.replace("{settings}", &sj).replace("{settings_env}", &se);
