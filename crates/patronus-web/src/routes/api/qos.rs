@@ -3,6 +3,7 @@
 //! with `tc` through `patronus applyd` and re-applied at boot.
 
 use crate::state::AppState;
+#[cfg(feature = "qos")]
 use axum::response::{Html, IntoResponse};
 // only the feature-gated module uses these (the router image builds without `qos`)
 #[cfg(feature = "qos")]
@@ -113,16 +114,13 @@ pub fn pages() -> axum::Router<AppState> {
     let h = get(built::page);
     #[cfg(not(feature = "qos"))]
     let h = get(|| async {
-        (
+        crate::routes::pages::not_in_build(
             axum::http::StatusCode::NOT_IMPLEMENTED,
-            Html(
-                "<!DOCTYPE html><html><head><title>Traffic shaping - Patronus</title></head><body>\
-             <h1>Traffic shaping</h1><p>This Patronus build does not include traffic shaping. \
-             Rebuild with <code>USE=qos</code> (emerge net-firewall/patronus).</p>\
-             <p><a href=\"/\">Back to the dashboard</a></p></body></html>",
-            ),
+            "Traffic shaping",
+            "Traffic shaping",
+            "",
+            "qos",
         )
-            .into_response()
     });
     axum::Router::new().route("/qos", h)
 }

@@ -60,7 +60,7 @@
 <div class="card" id="t-new-card">
     <div class="card-header"><h2 class="card-title" id="t-form-title">New policy</h2></div>
     <form class="lan-form" id="t-form" onsubmit="return savePolicy(event)">
-        <label>Name<input name="name" required maxlength="32" pattern="[a-z0-9_-]+" placeholder="school-nights"></label>
+        <label>Name<input name="name" required maxlength="32" pattern="[a-z0-9_\-]+" placeholder="school-nights"></label>
         <label>Daily limit (minutes, 0 = none)<input name="daily_limit_minutes" type="number" min="0" max="1440" value="120"></label>
         <label>Day starts at (hour)<input name="reset_hour" type="number" min="0" max="23" value="6"></label>
         <label>Active bytes per minute<input name="active_bytes_per_min" type="number" min="0" value="20000"></label>

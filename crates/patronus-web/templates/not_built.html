@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} - Patronus{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">{{ heading }}</h1>
+</div>
+<div class="card" id="not-built">
+    <p>{{ reason }}</p>
+    {% if !flag.is_empty() %}
+    {% if embedded %}
+    <p class="text-sm text-muted">Router-tier images are built as a whole; features they leave out are listed with the
+        reason on the <a href="/system#not-available">System page</a>.</p>
+    {% else %}
+    <p class="text-sm text-muted">To add it, enable the <code>{{ flag }}</code> USE flag and rebuild:
+        <code>emerge net-firewall/patronus</code>. Everything this installation leaves out is listed on the
+        <a href="/system#not-available">System page</a>.</p>
+    {% endif %}
+    {% endif %}
+    <p><a class="btn btn-secondary btn-sm" href="/">Back to the dashboard</a></p>
+</div>
+{% endblock %}

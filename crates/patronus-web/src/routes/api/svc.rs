@@ -48,39 +48,32 @@ struct SvcTemplate {
 async fn page(Path(slug): Path<String>, me: crate::auth::AuthUser) -> Response {
     let Some(m) = patronus_network::svc::find(&slug) else {
         if slug == "guest" {
-            let why = if crate::routes::api::wifi::role()
-                == crate::routes::api::setup::DeviceRole::Ap
-            {
+            let ap = crate::routes::api::wifi::role() == crate::routes::api::setup::DeviceRole::Ap;
+            let why = if ap {
                 "This unit is an access point: the main router provides the guest network (VLAN, DHCP, \
                  firewall isolation, speed caps) and this unit only carries its Wi-Fi name."
             } else {
-                "This build does not include the guest network (its USE flag <code>guest</code> is off, \
-                 or this router-tier image leaves it out to keep the device's flash and memory small)."
+                ""
             };
-            return (
+            return crate::routes::pages::not_in_build(
                 StatusCode::NOT_FOUND,
-                Html(format!(
-                    "<!DOCTYPE html><html><head><title>Guest network unavailable - Patronus</title></head><body>\
-                     <h1>Guest network is not available here</h1><p id=\"guest-unavailable\">{why}</p>\
-                     <p><a href=\"/\">Back to the dashboard</a></p></body></html>"
-                )),
-            )
-                .into_response();
+                "Guest network unavailable",
+                "Guest network",
+                why,
+                if ap { "" } else { "guest" },
+            );
         }
-        return (
+        let name = slug
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .collect::<String>();
+        return crate::routes::pages::not_in_build(
             StatusCode::NOT_FOUND,
-            Html(format!(
-                "<!DOCTYPE html><html><head><title>Not built - Patronus</title></head><body>\
-                 <h1>Not part of this build</h1><p>This Patronus build does not include the \
-                 <code>{}</code> feature. Rebuild with its USE flag (see the Gentoo ebuild, \
-                 <code>emerge net-firewall/patronus</code>).</p><p><a href=\"/\">Back to the \
-                 dashboard</a></p></body></html>",
-                slug.chars()
-                    .filter(|c| c.is_ascii_alphanumeric())
-                    .collect::<String>()
-            )),
-        )
-            .into_response();
+            "Not built",
+            "Not part of this build",
+            &format!("This Patronus build does not include the {name} feature."),
+            "",
+        );
     };
     let spec = m.spec();
     match (SvcTemplate {

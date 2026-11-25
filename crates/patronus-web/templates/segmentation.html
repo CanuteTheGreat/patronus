@@ -83,7 +83,7 @@
     {% if can_modify %}
     <h3>Add a device</h3>
     <form class="lan-form" onsubmit="return segAddDevice(event)">
-        <label>Name<input name="name" required pattern="[a-z0-9_-]{1,32}" placeholder="living-room-tv"></label>
+        <label>Name<input name="name" required pattern="[a-z0-9_\-]{1,32}" placeholder="living-room-tv"></label>
         <label>MAC<input name="mac" placeholder="aa:bb:cc:dd:ee:ff"></label>
         <label>Group<select name="group" class="seg-group-select"></select></label>
         <label>Segment<select name="segment" class="seg-segment-select"></select></label>
@@ -109,7 +109,7 @@
     </tr></thead><tbody></tbody></table></div>
     {% if can_modify %}
     <form class="lan-form" onsubmit="return segAddGroup(event)">
-        <label>Name<input name="name" required pattern="[a-z0-9_-]{1,32}" placeholder="iot"></label>
+        <label>Name<input name="name" required pattern="[a-z0-9_\-]{1,32}" placeholder="iot"></label>
         <label>Members talk to each other<select name="intra"><option value="true">yes</option><option value="false">no</option></select></label>
         <label>Internet<select name="internet"><option>allow</option><option>deny</option></select></label>
         <button class="btn btn-primary" type="submit">Add group</button>
@@ -130,7 +130,7 @@
     <div class="seg-wrap"><table class="lan" id="seg-services-table"><thead><tr><th>Name</th><th>From</th><th>To</th><th>Protocol</th><th>Ports</th><th></th></tr></thead><tbody></tbody></table></div>
     {% if can_modify %}
     <form class="lan-form" onsubmit="return segAddService(event)">
-        <label>Name<input name="name" required pattern="[a-z0-9_-]{1,32}" placeholder="laptop-printer"></label>
+        <label>Name<input name="name" required pattern="[a-z0-9_\-]{1,32}" placeholder="laptop-printer"></label>
         <label>From<select name="src" class="seg-endpoint-select"></select></label>
         <label>To<select name="dst" class="seg-endpoint-select"></select></label>
         <label>Protocol<select name="proto"><option>tcp</option><option>udp</option></select></label>

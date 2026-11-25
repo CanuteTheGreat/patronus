@@ -183,10 +183,29 @@ pub struct IpsecConnRow {
     pub description: String,
 }
 
+/// A page whose feature this build (or this unit's role) leaves out: rendered in
+/// the normal layout with the reason, never a bare error page.
+#[allow(dead_code)] // built only by not_in_build (builds without some feature)
+#[derive(Template)]
+#[template(path = "not_built.html")]
+pub struct NotBuiltTemplate {
+    pub page: &'static str,
+    pub title: String,
+    pub heading: String,
+    /// Plain text (escaped by askama).
+    pub reason: String,
+    /// The USE flag that adds it ("" = no rebuild hint, e.g. an access point's router function).
+    pub flag: String,
+    /// Router-tier image (built as a whole: no USE-flag hint).
+    pub embedded: bool,
+}
+
 /// Network template
 #[derive(Template)]
 #[template(path = "network.html")]
 pub struct NetworkTemplate {
+    /// Active nav entry (the page extends base.html like every other page).
+    pub page: &'static str,
     pub interfaces: Vec<InterfaceInfo>,
     pub routes: Vec<Route>,
     /// Why the routing table could not be read ("" = read fine).

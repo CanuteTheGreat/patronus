@@ -300,6 +300,8 @@
             /* a flex item defaults to min-width:auto, so a wide table grew .content (and the page) instead of scrolling */
             min-width: 0;
         }
+        /* plain text links follow the theme (they were the browser's default blue, unreadable on dark cards) */
+        .content a:not([class]) { color: var(--accent); }
 
         /* set by the script at the end of the page on a table whose columns need more than the content column
            (desktop widths; phones get the same rule from the media query below): it scrolls inside its own box */

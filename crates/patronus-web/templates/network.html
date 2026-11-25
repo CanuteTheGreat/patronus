@@ -1,271 +1,230 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" href="/favicon.ico" sizes="any">
-    {% include "theme_head.html" %}
-    <title>Network - Patronus</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .stat-card { border: 1px solid var(--line); padding: 15px; margin: 10px; border-radius: 5px; }
-        .badge { padding: 3px 8px; border-radius: 3px; font-size: 0.8em; }
-        .badge.success { background: var(--b-success); color: white; }
-        .badge.info { background: var(--b-info); color: white; }
-        .badge.warning { background: #ffc107; color: black; }
-        .badge.danger { background: var(--b-danger); color: white; }
-        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-        th, td { border: 1px solid var(--line); padding: 8px; text-align: left; }
-        .btn { padding: 6px 12px; margin: 2px; border: none; border-radius: 4px; cursor: pointer; }
-        .btn.btn-primary { background: var(--b-primary); color: white; }
-        .btn.btn-secondary { background: var(--b-secondary); color: white; }
-        .btn.btn-success { background: var(--b-success); color: white; }
-        .btn.btn-warning { background: #ffc107; color: black; }
-        .btn.btn-danger { background: var(--b-danger); color: white; }
-        .btn-sm { padding: 4px 8px; font-size: 0.875em; }
-        .btn-icon { background: none; border: none; cursor: pointer; padding: 4px; }
-        .tabs { display: flex; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
-        .tab-btn { padding: 10px 20px; border: none; background: none; cursor: pointer; }
-        .tab-btn.active { background: var(--surface-2); border-bottom: 2px solid var(--accent); }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        .card { border: 1px solid var(--line); border-radius: 5px; padding: 20px; margin: 20px 0; }
-        .card-header { margin-bottom: 15px; }
-        .card-title { margin: 0; }
-        .flex { display: flex; }
-        .gap-2 { gap: 8px; }
-        .text-sm { font-size: 0.875em; }
-        .text-muted { color: var(--muted); }
-        .monospace { font-family: monospace; }
-        .font-bold { font-weight: bold; }
-        .search-input { padding: 6px 10px; border: 1px solid var(--line); border-radius: 4px; }
-        .w-full { width: 100%; }
-        .hidden { display: none; }
-        .mt-4 { margin-top: 16px; }
-        .mb-2 { margin-bottom: 8px; }
-        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 20px 0; }
-        .value { font-size: 2em; font-weight: bold; color: var(--accent); }
-        .label { color: var(--muted); margin-top: 5px; }
-        .page-header { margin-bottom: 30px; }
-        .page-title { margin: 0; color: var(--ink); }
-        .page-subtitle { margin: 5px 0 0 0; color: var(--muted); }
-        .page-actions { margin-top: 15px; }
-        .table-container { overflow-x: auto; }
-        .card-advanced { margin-top: 20px; padding: 20px; background: var(--surface-2); border-radius: 5px; }
-        .btn-link { background: none; border: none; color: var(--accent); cursor: pointer; text-decoration: underline; }
-        .row-details { background: var(--surface-2); }
-        .row-details.hidden { display: none; }
-        .data-row { }
-    </style>
-</head>
-<body>
-    <div class="page-header">
-        <h1 class="page-title">Network Services</h1>
-        <p class="page-subtitle">Manage interfaces and routing (DHCP, DNS and NTP have their own pages)</p>
-        <div class="page-actions">
-            <button class="btn btn-primary btn-sm" onclick="showAddInterfaceModal()">
-                Add Interface
-            </button>
+{% extends "base.html" %}
+
+{% block title %}Network Services - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    /* page-local pieces base.html has no class for (tabs between the two tables, badge colours) */
+    .net-tabs { display: flex; border-bottom: 1px solid var(--line); margin-bottom: 1rem; }
+    .net-tab { padding: .6rem 1.2rem; border: none; background: none; color: var(--ink); cursor: pointer; font: inherit; }
+    .net-tab.active { background: var(--surface-2); border-bottom: 2px solid var(--accent); }
+    .net-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .net-pane { display: none; }
+    .net-pane.active { display: block; }
+    .badge.success { background: var(--ok-bg); color: var(--ok-fg); }
+    .badge.info { background: var(--info-bg); color: var(--info-fg); }
+    .badge.danger { background: var(--bad-bg); color: var(--bad-fg); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Network Services</h1>
+    <p class="page-subtitle">Manage interfaces and routing (DHCP, DNS and NTP have their own pages)</p>
+    <div class="page-actions">
+        <button class="btn btn-primary btn-sm" onclick="showAddInterfaceModal()">
+            Add Interface
+        </button>
+    </div>
+</div>
+
+<!-- Network Status Stats -->
+<div class="stat-grid">
+    <div class="stat-card success">
+        <h3>Interfaces</h3>
+        <div class="value">{{ interfaces.len() }}</div>
+        <div class="label">Active network interfaces</div>
+    </div>
+
+    <div class="stat-card info">
+        <h3>DHCP</h3>
+        <div class="label"><a href="/dhcp">Pools, static mappings, leases, DHCPv6, RA, relay</a></div>
+    </div>
+
+    <div class="stat-card info">
+        <h3>DNS / NTP</h3>
+        <div class="label"><a href="/dns">Resolver, overrides, block list, dynamic DNS</a> &middot; <a href="/ntp">NTP server</a></div>
+    </div>
+
+    <div class="stat-card info">
+        <h3>Routes</h3>
+        <div class="value">{{ routes.len() }}</div>
+        <div class="label">Routing table entries</div>
+    </div>
+</div>
+
+<!-- Network Service Tabs -->
+<div class="card">
+    <div class="net-tabs" role="tablist">
+        <button class="net-tab active" role="tab" onclick="switchTab(event, 'interfaces-tab')">
+            Interfaces
+        </button>
+        <button class="net-tab" role="tab" onclick="switchTab(event, 'routing-tab')">
+            Routing
+        </button>
+    </div>
+
+    <!-- Interfaces Tab -->
+    <div id="interfaces-tab" class="net-pane active">
+        <div class="card-header">
+            <h2 class="card-title">Network Interfaces <a class="text-sm" href="/interfaces">(assign roles, VLANs, bonds, bridges, PPPoE &rarr;)</a></h2>
+            <div class="flex gap-2">
+                <input type="search" placeholder="Search interfaces..." class="search-input"
+                       oninput="filterTable(this.value, 'interfaces-table')">
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table class="lan" id="interfaces-table">
+                <thead>
+                    <tr>
+                        <th>Interface</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>IP Address</th>
+                        <th>MAC Address</th>
+                        <th>Speed</th>
+                        <th>MTU</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for iface in interfaces %}
+                    <tr class="data-row">
+                        <td><strong>{{ iface.name }}</strong></td>
+                        <td>
+                            <span class="badge info">{{ iface.interface_type }}</span>
+                        </td>
+                        <td>
+                            {% if iface.enabled %}
+                            <span class="badge success">UP</span>
+                            {% else %}
+                            <span class="badge danger">DOWN</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-sm">{{ iface.ip_display }}</td>
+                        <td class="text-sm mono">{{ iface.mac_display }}</td>
+                        <td class="text-sm">{{ iface.speed_display }}</td>
+                        <td class="text-sm">{{ iface.mtu }}</td>
+                        <td>
+                            <button class="btn-icon" onclick="editInterface('{{ iface.name }}')">✎</button>
+                            <button class="btn-icon" onclick="toggleInterface('{{ iface.name }}', {{ iface.enabled }})">⏯</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </div>
 
-    <!-- Network Status Stats -->
-    <div class="stat-grid">
-        <div class="stat-card success">
-            <h3>Interfaces</h3>
-            <div class="value">{{ interfaces.len() }}</div>
-            <div class="label">Active network interfaces</div>
+    <!-- Routing Tab -->
+    <div id="routing-tab" class="net-pane">
+        <div class="card-header">
+            <h2 class="card-title">Routing Table</h2>
+            <div class="flex gap-2">
+                <input type="search" placeholder="Search routes..." class="search-input"
+                       oninput="filterTable(this.value, 'routing-table')">
+            </div>
         </div>
+        <p class="text-sm text-muted">The kernel's main routing table (IPv4 and IPv6), read with
+            <code>ip route</code> when this page loaded. Gateways, multi-WAN groups, the default
+            gateway and static routes are configured on the <a href="/routing">Routing</a> page.</p>
+        {% if !routes_error.is_empty() %}
+        <p class="badge danger">Routing table unavailable: {{ routes_error }}</p>
+        {% else if routes.is_empty() %}
+        <p class="text-muted"><em>The routing table is empty.</em></p>
+        {% endif %}
 
-        <div class="stat-card info">
-            <h3>DHCP</h3>
-            <div class="label"><a href="/dhcp">Pools, static mappings, leases, DHCPv6, RA, relay</a></div>
-        </div>
-
-        <div class="stat-card warning">
-            <h3>DNS / NTP</h3>
-            <div class="label"><a href="/dns">Resolver, overrides, block list, dynamic DNS</a> &middot; <a href="/ntp">NTP server</a></div>
-        </div>
-
-        <div class="stat-card danger">
-            <h3>Routes</h3>
-            <div class="value">{{ routes.len() }}</div>
-            <div class="label">Routing table entries</div>
+        <div class="table-container">
+            <table class="lan" id="routing-table">
+                <thead>
+                    <tr>
+                        <th>Destination</th>
+                        <th>Gateway</th>
+                        <th>Interface</th>
+                        <th>Metric</th>
+                        <th>Origin</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for route in routes %}
+                    <tr class="data-row">
+                        <td><strong>{{ route.destination }}</strong></td>
+                        <td class="text-sm">{{ route.gateway }}</td>
+                        <td class="text-sm">{{ route.interface }}</td>
+                        <td class="text-sm">{{ route.metric }}</td>
+                        <td><span class="badge info">{{ route.origin }}</span></td>
+                        <td>
+                            {% if route.is_active %}
+                            <span class="badge success">Active</span>
+                            {% else %}
+                            <span class="badge danger">Link down</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </div>
+</div>
 
-    <!-- Network Service Tabs -->
-    <div class="card">
-        <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab(event, 'interfaces-tab')">
-                Interfaces
-            </button>
-            <button class="tab-btn" onclick="switchTab(event, 'routing-tab')">
-                Routing
-            </button>
-        </div>
+<script>
+    // Tab switching
+    function switchTab(event, tabId) {
+        document.querySelectorAll('.net-pane').forEach(tab => {
+            tab.classList.remove('active');
+        });
 
-        <!-- Interfaces Tab -->
-        <div id="interfaces-tab" class="tab-content active">
-            <div class="card-header">
-                <h2 class="card-title">Network Interfaces <a class="text-sm" href="/interfaces">(assign roles, VLANs, bonds, bridges, PPPoE &rarr;)</a></h2>
-                <div class="flex gap-2">
-                    <input type="search" placeholder="Search interfaces..." class="search-input"
-                           oninput="filterTable(this.value, 'interfaces-table')">
-                </div>
-            </div>
+        document.querySelectorAll('.net-tab').forEach(btn => {
+            btn.classList.remove('active');
+        });
 
-            <div class="table-container">
-                <table id="interfaces-table">
-                    <thead>
-                        <tr>
-                            <th>Interface</th>
-                            <th>Type</th>
-                            <th>Status</th>
-                            <th>IP Address</th>
-                            <th>MAC Address</th>
-                            <th>Speed</th>
-                            <th>MTU</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for iface in interfaces %}
-                        <tr class="data-row">
-                            <td><strong>{{ iface.name }}</strong></td>
-                            <td>
-                                <span class="badge info">{{ iface.interface_type }}</span>
-                            </td>
-                            <td>
-                                {% if iface.enabled %}
-                                <span class="badge success">UP</span>
-                                {% else %}
-                                <span class="badge danger">DOWN</span>
-                                {% endif %}
-                            </td>
-                            <td class="text-sm">{{ iface.ip_display }}</td>
-                            <td class="text-sm monospace">{{ iface.mac_display }}</td>
-                            <td class="text-sm">{{ iface.speed_display }}</td>
-                            <td class="text-sm">{{ iface.mtu }}</td>
-                            <td>
-                                <button class="btn-icon" onclick="editInterface('{{ iface.name }}')">✎</button>
-                                <button class="btn-icon" onclick="toggleInterface('{{ iface.name }}', {{ iface.enabled }})">⏯</button>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
+        document.getElementById(tabId).classList.add('active');
+        event.target.classList.add('active');
+    }
 
-        <!-- Routing Tab -->
-        <div id="routing-tab" class="tab-content">
-            <div class="card-header">
-                <h2 class="card-title">Routing Table</h2>
-                <div class="flex gap-2">
-                    <input type="search" placeholder="Search routes..." class="search-input"
-                           oninput="filterTable(this.value, 'routing-table')">
-                </div>
-            </div>
-            <p class="text-sm text-muted">The kernel's main routing table (IPv4 and IPv6), read with
-                <code>ip route</code> when this page loaded. Gateways, multi-WAN groups, the default
-                gateway and static routes are configured on the <a href="/routing">Routing</a> page.</p>
-            {% if !routes_error.is_empty() %}
-            <p class="badge danger">Routing table unavailable: {{ routes_error }}</p>
-            {% else if routes.is_empty() %}
-            <p class="text-muted"><em>The routing table is empty.</em></p>
-            {% endif %}
+    // Filter table
+    function filterTable(query, tableId) {
+        const table = document.getElementById(tableId);
+        if (!table) return;
 
-            <div class="table-container">
-                <table id="routing-table">
-                    <thead>
-                        <tr>
-                            <th>Destination</th>
-                            <th>Gateway</th>
-                            <th>Interface</th>
-                            <th>Metric</th>
-                            <th>Origin</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for route in routes %}
-                        <tr class="data-row">
-                            <td><strong>{{ route.destination }}</strong></td>
-                            <td class="text-sm">{{ route.gateway }}</td>
-                            <td class="text-sm">{{ route.interface }}</td>
-                            <td class="text-sm">{{ route.metric }}</td>
-                            <td><span class="badge info">{{ route.origin }}</span></td>
-                            <td>
-                                {% if route.is_active %}
-                                <span class="badge success">Active</span>
-                                {% else %}
-                                <span class="badge danger">Link down</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
+        const rows = table.querySelectorAll('tbody tr.data-row');
+        query = query.toLowerCase();
 
-    <script>
-        // Tab switching
-        function switchTab(event, tabId) {
-            document.querySelectorAll('.tab-content').forEach(tab => {
-                tab.classList.remove('active');
-            });
-
-            document.querySelectorAll('.tab-btn').forEach(btn => {
-                btn.classList.remove('active');
-            });
-
-            document.getElementById(tabId).classList.add('active');
-            event.target.classList.add('active');
-        }
-
-        // Filter table
-        function filterTable(query, tableId) {
-            const table = document.getElementById(tableId);
-            if (!table) return;
-
-            const rows = table.querySelectorAll('tbody tr.data-row');
-            query = query.toLowerCase();
-
-            rows.forEach(row => {
-                const text = row.textContent.toLowerCase();
-                if (text.includes(query)) {
-                    row.style.display = '';
-                } else {
-                    row.style.display = 'none';
-                }
-            });
-        }
-
-        // Interface management
-        // Interface configuration lives on the Interfaces page (lane C).
-        function editInterface(name) {
-            location.href = '/interfaces#' + encodeURIComponent(name);
-        }
-
-        async function toggleInterface(name, isUp) {
-            const action = isUp ? 'down' : 'up';
-            if (!confirm(`Bring interface "${name}" ${action}?`)) return;
-            let r = await fetch(`/api/interfaces/${encodeURIComponent(name)}/${action}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
-            let j = await r.json().catch(() => ({}));
-            if (r.status === 409 && confirm(`${j.error}\n\nApply anyway?`)) {
-                r = await fetch(`/api/interfaces/${encodeURIComponent(name)}/${action}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{"force":true}'});
-                j = await r.json().catch(() => ({}));
+        rows.forEach(row => {
+            const text = row.textContent.toLowerCase();
+            if (text.includes(query)) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
             }
-            if (!r.ok) { alert(j.error || `HTTP ${r.status}`); return; }
-            location.reload();
-        }
+        });
+    }
 
-        function showAddInterfaceModal() {
-            location.href = '/interfaces';
+    // Interface management
+    // Interface configuration lives on the Interfaces page (lane C).
+    function editInterface(name) {
+        location.href = '/interfaces#' + encodeURIComponent(name);
+    }
+
+    async function toggleInterface(name, isUp) {
+        const action = isUp ? 'down' : 'up';
+        if (!confirm(`Bring interface "${name}" ${action}?`)) return;
+        let r = await fetch(`/api/interfaces/${encodeURIComponent(name)}/${action}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+        let j = await r.json().catch(() => ({}));
+        if (r.status === 409 && confirm(`${j.error}\n\nApply anyway?`)) {
+            r = await fetch(`/api/interfaces/${encodeURIComponent(name)}/${action}`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{"force":true}'});
+            j = await r.json().catch(() => ({}));
         }
-    </script>
-</body>
-</html>
+        if (!r.ok) { alert(j.error || `HTTP ${r.status}`); return; }
+        location.reload();
+    }
+
+    function showAddInterfaceModal() {
+        location.href = '/interfaces';
+    }
+</script>
+{% endblock %}

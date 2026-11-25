@@ -43,4 +43,26 @@ if checked == 0:
     print("check-template-js: no inline scripts found under " + root)
     sys.exit(1)
 print(f"check-template-js: {checked} inline script(s), {bad} with a syntax error")
+
+# <input pattern="..."> is compiled by browsers with the `v` (unicodeSets) flag: there an unescaped `-` at the edge of a
+# class ("[a-z0-9_-]") or other class syntax characters are errors, the browser logs a console error and silently skips
+# the check (found 2026-11-25 by the UX crawl on the System page's host name field). Compile every pattern the same way.
+pattern_re = re.compile(r'\bpattern="([^"]*)"')
+pats = []
+for dirpath, _, files in os.walk(root):
+    for name in sorted(files):
+        if name.endswith(".html"):
+            path = os.path.join(dirpath, name)
+            text = open(path, encoding="utf-8").read()
+            for m in pattern_re.finditer(text):
+                p = m.group(1)
+                if "{{" in p or "{%" in p:
+                    continue
+                p = p.replace("&quot;", '"').replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+                pats.append((f"{path}:{text[: m.start()].count(chr(10)) + 1}", p))
+js = "const P=" + __import__("json").dumps(pats) + ";let b=0;for(const [w,p] of P){try{new RegExp('^(?:'+p+')$','v')}catch(e){b++;console.log('check-template-js: '+w+': pattern '+JSON.stringify(p)+' is invalid with the v flag: '+e.message)}}process.exit(b?1:0)"
+r = subprocess.run(["node", "-e", js], capture_output=True, text=True)
+print(r.stdout.strip() or f"check-template-js: {len(pats)} input pattern(s) compile with the v flag")
+if r.returncode != 0:
+    bad += 1
 sys.exit(1 if bad else 0)

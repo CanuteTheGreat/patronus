@@ -22,13 +22,13 @@
     .if-page label { display: block; font-size: 0.85em; color: var(--ink); }
     .if-page input, .if-page select, .if-page textarea { width: 100%; max-width: 100%; box-sizing: border-box; padding: 5px; margin-top: 2px; }
     .if-page input[type=checkbox] { width: auto; }
-    .if-page textarea { font-family: monospace; min-height: 48px; }
+    .if-page textarea { font-family: var(--font-mono); min-height: 48px; }
     .if-page #msg { margin: 12px 0; padding: 10px; border-radius: 4px; display: none; white-space: pre-wrap; overflow-wrap: anywhere; }
     .if-page #msg.ok { display: block; background: var(--ok-bg); border: 1px solid var(--ok-fg); }
     .if-page #msg.err { display: block; background: var(--bad-bg); border: 1px solid var(--bad-fg); }
     .if-page #msg.warn { display: block; background: var(--warn-bg); border: 1px solid var(--warn-fg); }
     .if-page .empty { color: var(--muted); font-style: italic; padding: 8px 0; }
-    .if-page .mono { font-family: monospace; }
+    .if-page .mono { font-family: var(--font-mono); }
 </style>
 {% endblock %}
 

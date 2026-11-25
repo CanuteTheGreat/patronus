@@ -235,7 +235,7 @@ async function fwFeedDownload() {
     </table>
     {% if is_admin %}
     <form id="general-form" class="inline-form" onsubmit="return submitJson(event, 'PUT', '/api/system/general')">
-        <label>Host name <input name="hostname" value="{{ config.hostname }}" required pattern="[A-Za-z0-9-]+" maxlength="63"></label>
+        <label>Host name <input name="hostname" value="{{ config.hostname }}" required pattern="[A-Za-z0-9\-]+" maxlength="63"></label>
         <label>DNS domain <input name="domain" value="{{ config.domain }}" data-keep-empty="1" placeholder="none"></label>
         <label>Time zone <input name="timezone" value="{% if !config.timezone.contains(' ') %}{{ config.timezone }}{% endif %}" placeholder="Europe/Berlin or UTC"></label>
         <button class="btn btn-sm btn-primary" id="save-general" type="submit">Save</button>

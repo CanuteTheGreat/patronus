@@ -444,6 +444,26 @@ async fn features() -> axum::Json<serde_json::Value> {
     }))
 }
 
+/// Features that are the main router's job when this unit is an access point
+/// (the System page list and the pages of left-out features explain that).
+pub(crate) const AP_ROUTER_JOBS: &[&str] = &[
+    "dhcp",
+    "dns",
+    "segmentation",
+    "guest",
+    "multiwan",
+    "pppoe",
+    "nat64",
+    "upnp",
+    "igmp",
+    "qos",
+    "ha",
+    "sdwan-edge",
+    "dynamic-routing",
+    "vrf",
+    "web-proxy",
+];
+
 /// What a user may look for and not find on this unit, and why: features
 /// this build leaves out, and (on an access point) the router functions the
 /// main router provides. Shown on the System page, so a hidden menu entry
@@ -484,23 +504,7 @@ pub fn absent_features(
         ("guest", "Guest network"),
     ];
     let ap = role == api::setup::DeviceRole::Ap;
-    let router_job: &[&str] = &[
-        "dhcp",
-        "dns",
-        "segmentation",
-        "guest",
-        "multiwan",
-        "pppoe",
-        "nat64",
-        "upnp",
-        "igmp",
-        "qos",
-        "ha",
-        "sdwan-edge",
-        "dynamic-routing",
-        "vrf",
-        "web-proxy",
-    ];
+    let router_job = AP_ROUTER_JOBS;
     let mut out = Vec::new();
     for (f, label) in OPTIONAL {
         let reason = if ap && router_job.contains(f) {

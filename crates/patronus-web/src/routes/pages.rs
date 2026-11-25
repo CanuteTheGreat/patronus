@@ -7,7 +7,9 @@
 
 use crate::{
     state::{host, AppState},
-    templates::{DashboardTemplate, MonitoringTemplate, NetworkTemplate, SystemTemplate},
+    templates::{
+        DashboardTemplate, MonitoringTemplate, NetworkTemplate, NotBuiltTemplate, SystemTemplate,
+    },
 };
 use askama::Template;
 use axum::{
@@ -31,6 +33,55 @@ pub(crate) fn render(t: &impl Template, what: &str) -> Response {
             (StatusCode::INTERNAL_SERVER_ERROR, "Failed to render page").into_response()
         }
     }
+}
+
+/// The page of a feature this build leaves out (`flag` = its USE flag), or that
+/// `reason` explains (`flag` empty), inside the normal layout with the menu.
+/// `status` stays what the caller always answered (501 / 404) for scripts.
+/// Only builds without some feature call it (a full build has no caller).
+#[allow(dead_code)]
+pub(crate) fn not_in_build(
+    status: StatusCode,
+    title: &str,
+    heading: &str,
+    reason: &str,
+    flag: &str,
+) -> Response {
+    let embedded = crate::routes::release_info().1 == "embedded";
+    let ap = crate::routes::api::wifi::role() == crate::routes::api::setup::DeviceRole::Ap;
+    let ap_job = ap && crate::routes::AP_ROUTER_JOBS.contains(&flag);
+    let reason = if !reason.is_empty() {
+        reason.to_string()
+    } else if ap_job {
+        format!("{heading} is not used here: this unit is an access point and the main router does this for the network.")
+    } else if embedded {
+        format!(
+            "{} is not part of this router-tier image: it is left out to keep the device's flash and memory small.",
+            heading
+        )
+    } else {
+        format!(
+            "{} is not part of this installation (its USE flag is off).",
+            heading
+        )
+    };
+    let t = NotBuiltTemplate {
+        page: "",
+        title: title.to_string(),
+        heading: heading.to_string(),
+        reason,
+        flag: if ap_job {
+            String::new()
+        } else {
+            flag.to_string()
+        },
+        embedded,
+    };
+    let mut r = render(&t, "not_built");
+    if r.status().is_success() {
+        *r.status_mut() = status;
+    }
+    r
 }
 
 /// Login page (public).
@@ -175,6 +226,7 @@ pub async fn network(State(state): State<AppState>) -> Response {
         Err(e) => (vec![], e.to_string()),
     };
     let template = NetworkTemplate {
+        page: "interfaces",
         interfaces,
         routes,
         routes_error,

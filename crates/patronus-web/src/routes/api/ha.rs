@@ -7,6 +7,7 @@
 //! applier refuses it. Compiled with `USE=ha`; without it the page says so.
 
 use crate::state::AppState;
+#[cfg(feature = "ha")]
 use axum::response::{Html, IntoResponse};
 // only the feature-gated module uses these (the router image builds without `ha`)
 #[cfg(feature = "ha")]
@@ -190,16 +191,13 @@ pub fn pages() -> axum::Router<AppState> {
     let h = get(built::page);
     #[cfg(not(feature = "ha"))]
     let h = get(|| async {
-        (
+        crate::routes::pages::not_in_build(
             axum::http::StatusCode::NOT_IMPLEMENTED,
-            Html(
-            "<!DOCTYPE html><html><head><title>High availability - Patronus</title></head><body>\
-             <h1>High availability</h1><p>This Patronus build does not include high availability. \
-             Rebuild with <code>USE=ha</code> (emerge net-firewall/patronus).</p>\
-             <p><a href=\"/\">Back to the dashboard</a></p></body></html>",
-            ),
+            "High availability",
+            "High availability",
+            "",
+            "ha",
         )
-            .into_response()
     });
     axum::Router::new().route("/ha", h)
 }

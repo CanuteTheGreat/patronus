@@ -53,7 +53,7 @@
 <div class="card" id="d-new-card">
     <div class="card-header"><h2 class="card-title" id="d-form-title">New policy</h2></div>
     <form class="lan-form" id="d-form" onsubmit="return savePolicy(event)">
-        <label>Name<input name="name" required maxlength="32" pattern="[a-z0-9_-]+" placeholder="kids"></label>
+        <label>Name<input name="name" required maxlength="32" pattern="[a-z0-9_\-]+" placeholder="kids"></label>
         <label>Blocked answer<select name="block_mode"><option value="nxdomain">NXDOMAIN</option><option value="null">0.0.0.0 / ::</option></select></label>
         <label>Log retention (days)<input name="log_retention_days" type="number" min="1" max="365" value="7"></label>
         <label style="flex-basis:100%">Extra block lists (URLs, one per line)<textarea name="blocklist_urls" rows="2" style="padding:5px 8px;border:1px solid var(--line-strong);border-radius:4px"></textarea></label>
