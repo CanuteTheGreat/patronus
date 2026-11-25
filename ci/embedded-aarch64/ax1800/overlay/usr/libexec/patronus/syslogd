@@ -12,4 +12,7 @@ if [ -f /etc/patronus/syslogd-remote.conf ]; then
   done < /etc/patronus/syslogd-remote.conf
 fi
 [ $n -gt 0 ] && set -- "$@" -L
+# boot record for the web UI's system log page: one `patronus-boot: boot <boot id>` line per boot (it draws the "-- boot --"
+# separator; a restart of this service logs the same id again, which draws none)
+( i=0; while [ ! -S /dev/log ] && [ $i -lt 10 ]; do sleep 1; i=$((i+1)); done; logger -t patronus-boot -p daemon.notice "boot $(cat /proc/sys/kernel/random/boot_id)" ) >/dev/null 2>&1 &
 exec /bin/syslogd "$@"
