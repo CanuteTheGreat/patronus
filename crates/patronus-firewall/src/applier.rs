@@ -292,6 +292,7 @@ impl FirewallApplier {
         for (mut rule, origin) in store.load_firewall_rules_with_origin().await? {
             patronus_config::defaults::follow_ssh_port(&mut rule, origin, ssh_port);
             patronus_config::webui::follow_web_ports(&mut rule, origin, &web);
+            patronus_config::mgmt::follow_upstream_ports(&mut rule, origin, ssh_port, &web);
             if !threat_done && origin != RuleOrigin::System {
                 threat_done = true;
                 nfilter += push_threat_rules(&mut script, &aliases);
@@ -632,12 +633,23 @@ impl FirewallApplier {
         script.push_str(&base_table_script());
         let ssh_port = patronus_config::defaults::ssh_port(store).await;
         let web = patronus_config::webui::resolve(Some(store)).await;
-        for (mut rule, origin) in patronus_config::defaults::default_filter_rules() {
+        // the unit's upstream-LAN management rules (router tier) stay reachable in lockdown too
+        let stored_mgmt = store
+            .load_firewall_rules_with_origin()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(r, _)| r.name.starts_with(patronus_config::mgmt::UPSTREAM_RULE_PREFIX));
+        for (mut rule, origin) in patronus_config::defaults::default_filter_rules()
+            .into_iter()
+            .chain(stored_mgmt)
+        {
             if origin != RuleOrigin::System {
                 continue;
             }
             patronus_config::defaults::follow_ssh_port(&mut rule, origin, ssh_port);
             patronus_config::webui::follow_web_ports(&mut rule, origin, &web);
+            patronus_config::mgmt::follow_upstream_ports(&mut rule, origin, ssh_port, &web);
             for i in resolve_iface(&rule.interface_in, &roles).unwrap_or_else(|| vec![None]) {
                 let mut r = rule.clone();
                 r.interface_in = i;
@@ -1140,6 +1152,44 @@ mod tests {
         let existing: Vec<String> = wan.iter().chain(lan).map(|s| s.to_string()).collect();
         ensure_defaults(&s, Some(&b), &existing).await.unwrap();
         s
+    }
+
+    /// Router tier: management from the upstream LAN is a stored system rule, so every render
+    /// (any firewall apply, and a web restart, which renders the stored rules again) keeps it
+    /// with the ports in force now; lockdown keeps it too.
+    #[tokio::test]
+    async fn upstream_management_rules_survive_every_render_and_follow_ports() {
+        let s = seeded(&["wl5-sta", "wl24-sta"], &["br-lan"]).await;
+        let spec = patronus_config::ManagementSpec::parse(
+            Some("192.0.2.0/24"),
+            Some("wl5-sta wl24-sta"),
+        );
+        patronus_config::ensure_management(&s, &spec).await.unwrap();
+        for round in 0..3 {
+            // each round = one more apply / one more process start over the same store
+            patronus_config::ensure_management(&s, &spec).await.unwrap();
+            let script = FirewallApplier.render_script(&s, false).await.unwrap().script;
+            for ifc in ["wl5-sta", "wl24-sta"] {
+                let line = script
+                    .lines()
+                    .find(|l| l.contains(&format!("Upstream management via {ifc}")))
+                    .unwrap_or_else(|| panic!("round {round}: rule for {ifc} missing:\n{script}"));
+                assert!(line.contains("192.0.2.0/24") && line.contains(ifc), "{line}");
+                assert!(line.contains("22") && line.contains("443") && line.contains("80"), "{line}");
+            }
+            assert_eq!(script.matches("Upstream management via").count(), 2, "no duplicates");
+            if round == 1 {
+                s.save_system_config(patronus_config::defaults::SSH_PORT_KEY, "2222")
+                    .await
+                    .unwrap();
+            }
+        }
+        let script = FirewallApplier.render_script(&s, false).await.unwrap().script;
+        let line = script.lines().find(|l| l.contains("Upstream management via wl5-sta")).unwrap();
+        let toks: Vec<&str> = line.split(|c: char| !c.is_ascii_digit()).collect();
+        assert!(toks.contains(&"2222") && !toks.contains(&"22"), "{line}");
+        let lock = FirewallApplier.render_lockdown(&s).await;
+        assert!(lock.contains("Upstream management via wl24-sta") && lock.contains("192.0.2.0/24"), "{lock}");
     }
 
     #[tokio::test]
