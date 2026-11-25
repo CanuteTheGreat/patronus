@@ -42,6 +42,36 @@ WPA_CLI=${WPA_CLI:-wpa_cli}
 PKILL=${PKILL:-pkill}
 WPA_CTRL=${WPA_CTRL:-/run/wpa_supplicant}
 UPLINK_TABLES=${UPLINK_TABLES:-}   # "<sta>:<table>:<pref> ..." from board.sh: per-uplink source routing (empty = off)
+# blacklist backoff: a BSS that keeps failing the probe is not blacklisted again sooner than the current gap (doubles from
+# HEALTH_BACKOFF up to HEALTH_BACKOFF_MAX, reset by an answering gateway); HEALTH_DROP_AFTER blacklists inside HEALTH_DROP_WINDOW s
+# mean the client never carries traffic: it is dropped like a crashing radio (radio_drop below). Each reassociation costs the
+# radio a scan + auth + 4-way handshake, and on the ath10k with an AP on the same radio that churn is what keeps it crashing.
+HEALTH_BACKOFF=${HEALTH_BACKOFF:-60}
+HEALTH_BACKOFF_MAX=${HEALTH_BACKOFF_MAX:-1800}
+HEALTH_DROP_AFTER=${HEALTH_DROP_AFTER:-4}
+HEALTH_DROP_WINDOW=${HEALTH_DROP_WINDOW:-1800}
+# radio watchdog (the radio of the client(s) in RADIO_WATCH, default the 5 GHz one): reads the kernel log every RADIO_EVERY passes.
+#  - RADIO_CRASHES firmware restarts inside RADIO_WINDOW s  -> drop the client (the 2.4 GHz uplink carries the traffic)
+#  - wedged firmware (RADIO_WEDGE_LINES new "-143"/ESHUTDOWN errors with no successful recovery since the last check: every WMI
+#    call fails, the supplicant retries a hw scan every second and the CPU sits in softirq) -> drop the client AND re-probe the
+#    device (PCI unbind/bind = what a restart does for it) so its AP comes back; at most once per RADIO_REBIND_MIN s
+#  - a dropped client comes back after RADIO_HOLD s, doubling on every new drop up to RADIO_HOLD_MAX (state on RADIO_STATE, so a
+#    restart does not reset the backoff); RADIO_HOLD=0 keeps it off until the next boot
+RADIO_WATCH=${RADIO_WATCH-${WAN5_IF:-}}
+RADIO_DEV=${RADIO_DEV:-${RADIO5_PCI:-}}      # kernel log tag of the watched radio (PCI address), board.sh RADIO5_PCI
+RADIO_DRV_DIR=${RADIO_DRV_DIR:-${RADIO5_DRV_DIR:-/sys/bus/pci/drivers/ath10k_pci}}
+RADIO_EVERY=${RADIO_EVERY:-10}
+RADIO_WINDOW=${RADIO_WINDOW:-900}
+RADIO_CRASHES=${RADIO_CRASHES:-3}
+RADIO_WEDGE_LINES=${RADIO_WEDGE_LINES:-10}
+RADIO_REBIND_MIN=${RADIO_REBIND_MIN:-900}
+RADIO_HOLD=${RADIO_HOLD:-3600}
+RADIO_HOLD_MAX=${RADIO_HOLD_MAX:-86400}
+RADIO_STATE=${RADIO_STATE:-/data/wifi-follow}
+RADIO_SETUP=${RADIO_SETUP:-/usr/libexec/patronus/board-network}   # `<RADIO_SETUP> radio5 [client]` re-creates the radio's interfaces
+DMESG=${DMESG:-dmesg}
+BOARD_SETTINGS=${BOARD_SETTINGS:-/usr/libexec/patronus/board-settings}   # republished for the UI on every drop/return
+WPA_PIDDIR=${WPA_PIDDIR:-/run}
 
 now() { if [ -n "$NOW" ]; then $NOW; else cut -d. -f1 /proc/uptime; fi; }
 log() { echo "wifi-follow: $*"; logger -t wifi-follow "$*" 2>/dev/null; }
@@ -217,6 +247,7 @@ follow_one() {
 # with a flushed neighbour table and a DHCP renewal: entries created while the link was down stay FAILED and make connect() say "Host is unreachable".
 health_one() {
   sta=$1
+  radio_held "$sta" && return 0
   bssid=$($IW dev "$sta" link 2>/dev/null | sed -n 's/^Connected to \([0-9a-fA-F:]*\).*/\1/p' | head -n 1)
   if [ -z "$bssid" ]; then rm -f "$RUN/$sta.assoc" "$RUN/$sta.fails"; return 0; fi
   mkdir -p "$RUN"; t=$(now)
@@ -236,13 +267,124 @@ health_one() {
   gw=$($IPCMD route show default dev "$sta" 2>/dev/null | sed -n 's/.* via \([0-9.]*\).*/\1/p' | head -n 1)
   # no default route this long after association: the lease never arrived, which is just as dead
   if [ -z "$gw" ]; then ok=1; else $ARPING -b -q -c 2 -w 2 -I "$sta" "$gw" >/dev/null 2>&1 && ok=0 || ok=1; fi
-  if [ "$ok" = 0 ]; then echo 0 > "$RUN/$sta.fails"; return 0; fi
+  if [ "$ok" = 0 ]; then echo 0 > "$RUN/$sta.fails"; rm -f "$RUN/$sta.blgap" "$RUN/$sta.blnext"; return 0; fi
   n=$(( $(cat "$RUN/$sta.fails" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$RUN/$sta.fails"
   [ "$n" -ge "$HEALTH_FAILS" ] || return 0
+  # backoff: not again before $sta.blnext (the radio would spend its life reassociating)
+  nx=$(cat "$RUN/$sta.blnext" 2>/dev/null || echo 0)
+  [ "$t" -ge "$nx" ] || return 0
+  # recent blacklists (times inside HEALTH_DROP_WINDOW); too many = this client does not carry traffic here: drop it
+  recent=$(awk -v t="$t" -v w="$HEALTH_DROP_WINDOW" '$1 > t - w' "$RUN/$sta.bls" 2>/dev/null)
+  if [ -n "$recent" ] && [ $(( $(printf '%s\n' "$recent" | wc -l) + 1 )) -ge "$HEALTH_DROP_AFTER" ]; then
+    rm -f "$RUN/$sta.assoc" "$RUN/$sta.fails" "$RUN/$sta.bls" "$RUN/$sta.blnext" "$RUN/$sta.blgap"
+    radio_drop "$sta" "the gateway ${gw:-(no lease)} stopped answering $HEALTH_DROP_AFTER times in ${HEALTH_DROP_WINDOW} s"
+    return 0
+  fi
   log "$sta: $bssid associated but the gateway ${gw:-(no lease)} does not answer ($n probes): blacklisting it and reassociating"
   $WPA_CLI -p "$WPA_CTRL" -i "$sta" blacklist "$bssid" >/dev/null 2>&1
   $WPA_CLI -p "$WPA_CTRL" -i "$sta" reassociate >/dev/null 2>&1
+  { printf '%s\n' "$recent" | grep . ; echo "$t"; } > "$RUN/$sta.bls"
+  g=$(cat "$RUN/$sta.blgap" 2>/dev/null || echo 0)
+  if [ "$g" -lt "$HEALTH_BACKOFF" ]; then g=$HEALTH_BACKOFF; else g=$(( g * 2 )); fi
+  [ "$g" -gt "$HEALTH_BACKOFF_MAX" ] && g=$HEALTH_BACKOFF_MAX
+  echo "$g" > "$RUN/$sta.blgap"; echo $(( t + g )) > "$RUN/$sta.blnext"
   rm -f "$RUN/$sta.assoc" "$RUN/$sta.fails"
+}
+
+# ---- radio watchdog --------------------------------------------------------------------------------------------------------
+# kernel-log counters of the watched radio: "<firmware restarts> <recoveries> <ESHUTDOWN errors>"
+radio_counts() {
+  $DMESG 2>/dev/null | awk -v dev="$RADIO_DEV" 'index($0, dev) {
+      if ($0 ~ /Cannot communicate with firmware|firmware crashed!/) c++
+      if ($0 ~ /device successfully recovered/) r++
+      if ($0 ~ /-143/) e++ }
+    END { printf "%d %d %d\n", c, r, e }'
+}
+
+# the client is held off (dropped): 0 = yes
+radio_held() { [ -f "$RUN/$1.dropped" ]; }
+# the client is enabled at all (board.sh / unit.conf UPLINK5 for the 5 GHz client; other clients always)
+client_enabled() { [ "$1" != "${WAN5_IF:-}" ] || [ "${UPLINK5:-on}" = on ]; }
+board_settings() { [ -x "$BOARD_SETTINGS" ] && WF_RUN=$RUN "$BOARD_SETTINGS" write >/dev/null 2>&1; return 0; }
+
+# drop the client of a misbehaving radio: stop its supplicant, take the interface down (its routes and address go with it, so
+# the 2.4 GHz uplink carries everything); the AP on the same radio keeps serving on its own channel
+radio_drop() {
+  sta=$1; why=$2; t=$(now); mkdir -p "$RUN" "$RADIO_STATE" 2>/dev/null
+  lvl=$(cat "$RADIO_STATE/$sta.level" 2>/dev/null || echo 0); lvl=$(( lvl + 1 ))
+  h=$RADIO_HOLD; i=1; while [ "$i" -lt "$lvl" ] && [ "$h" -gt 0 ]; do h=$(( h * 2 )); i=$(( i + 1 )); done
+  [ "$h" -gt "$RADIO_HOLD_MAX" ] && h=$RADIO_HOLD_MAX
+  echo "$lvl" > "$RADIO_STATE/$sta.level" 2>/dev/null
+  if [ "$RADIO_HOLD" = 0 ]; then echo "$t never" > "$RUN/$sta.dropped"; else echo "$t $(( t + h ))" > "$RUN/$sta.dropped"; fi
+  echo "$why" > "$RUN/$sta.why"
+  $WPA_CLI -p "$WPA_CTRL" -i "$sta" terminate >/dev/null 2>&1
+  p=$(cat "$WPA_PIDDIR/wpa_supplicant-$sta.pid" 2>/dev/null); [ -n "$p" ] && kill "$p" 2>/dev/null
+  $IPCMD link set "$sta" down 2>/dev/null
+  rm -f "$RUN/$sta.assoc" "$RUN/$sta.fails"
+  if [ "$RADIO_HOLD" = 0 ]; then log "$sta: $why: client dropped until the next boot (the other uplink carries the traffic)"
+  else log "$sta: $why: client dropped for ${h} s (drop #$lvl; the other uplink carries the traffic)"; fi
+  board_settings
+}
+
+# bring a dropped client back once its hold is over
+radio_return() {
+  sta=$1; t=$(now)
+  until=$(cut -d' ' -f2 "$RUN/$sta.dropped" 2>/dev/null)
+  [ -n "$until" ] && [ "$until" != never ] && [ "$t" -ge "$until" ] || return 0
+  rm -f "$RUN/$sta.dropped"; echo "$t" > "$RUN/$sta.returned"
+  $IPCMD link set "$sta" up 2>/dev/null
+  "$RADIO_SETUP" client5 start >/dev/null 2>&1
+  log "$sta: hold over: client started again"
+  board_settings
+}
+
+# re-probe a wedged device: what a restart does for this radio, without restarting the box
+radio_rebind() {
+  t=$(now); last=$(cat "$RUN/radio.rebind" 2>/dev/null || echo -1000000)
+  [ $(( t - last )) -ge "$RADIO_REBIND_MIN" ] || { log "radio $RADIO_DEV wedged again within ${RADIO_REBIND_MIN} s of the last re-probe: left down"; return 0; }
+  echo "$t" > "$RUN/radio.rebind"
+  for p in $FOLLOW; do n=${p##*:}; [ "${p%%:*}" = "$1" ] && ap_stop "$n"; done
+  [ -w "$RADIO_DRV_DIR/unbind" ] || { log "radio $RADIO_DEV wedged: no $RADIO_DRV_DIR/unbind, cannot re-probe"; return 0; }
+  echo "$RADIO_DEV" > "$RADIO_DRV_DIR/unbind" 2>/dev/null; sleep 2; echo "$RADIO_DEV" > "$RADIO_DRV_DIR/bind" 2>/dev/null
+  "$RADIO_SETUP" radio5 >/dev/null 2>&1 && log "radio $RADIO_DEV re-probed (wedged firmware): interfaces re-created" \
+    || log "radio $RADIO_DEV re-probe: interface setup failed"
+}
+
+radio_n=0
+radio_one() {
+  sta=$1; [ -n "$RADIO_DEV" ] || return 0
+  radio_held "$sta" && radio_return "$sta"
+  radio_n=$(( radio_n + 1 )); [ $(( radio_n % RADIO_EVERY )) -eq 1 ] || [ "$RADIO_EVERY" -le 1 ] || return 0
+  mkdir -p "$RUN"; t=$(now)
+  set -- $(radio_counts); c=$1 r=$2 e=$3
+  prev=$(cat "$RUN/radio.counts" 2>/dev/null); echo "$c $r $e" > "$RUN/radio.counts"
+  [ -n "$prev" ] || return 0
+  set -- $prev; pc=$1 pr=$2 pe=$3
+  # the kernel log is a ring: counters that went down mean old lines left it; start over from here
+  if [ "$c" -lt "$pc" ] || [ "$r" -lt "$pr" ] || [ "$e" -lt "$pe" ]; then return 0; fi
+  i=$(( c - pc )); while [ "$i" -gt 0 ]; do echo "$t" >> "$RUN/radio.crashes"; i=$(( i - 1 )); done
+  if [ $(( e - pe )) -ge "$RADIO_WEDGE_LINES" ] && [ "$r" -eq "$pr" ]; then
+    radio_held "$sta" || ! client_enabled "$sta" || radio_drop "$sta" "firmware of radio $RADIO_DEV wedged ($(( e - pe )) failed firmware calls, no recovery)"
+    radio_rebind "$sta"
+    echo "$(radio_counts)" > "$RUN/radio.counts"
+    return 0
+  fi
+  [ "$c" -gt "$pc" ] || return 0
+  n=$(awk -v t="$t" -v w="$RADIO_WINDOW" '$1 > t - w' "$RUN/radio.crashes" | wc -l)
+  awk -v t="$t" -v w="$RADIO_WINDOW" '$1 > t - w' "$RUN/radio.crashes" > "$RUN/radio.crashes.n"; mv "$RUN/radio.crashes.n" "$RUN/radio.crashes"
+  log "radio $RADIO_DEV: firmware restarted ($n in ${RADIO_WINDOW} s)"
+  if [ "$n" -ge "$RADIO_CRASHES" ] && ! radio_held "$sta" && client_enabled "$sta"; then
+    radio_drop "$sta" "firmware of radio $RADIO_DEV restarted $n times in ${RADIO_WINDOW} s"
+  fi
+}
+
+# a client that ran a full RADIO_HOLD_MAX since its last return without a new drop: forget its drop history
+radio_forgive() {
+  sta=$1; [ -f "$RADIO_STATE/$sta.level" ] || return 0
+  radio_held "$sta" && return 0
+  r=$(cat "$RUN/$sta.returned" 2>/dev/null) || return 0
+  [ $(( $(now) - r )) -ge "$RADIO_HOLD_MAX" ] && { rm -f "$RADIO_STATE/$sta.level" "$RUN/$sta.returned"; log "$sta: stable for ${RADIO_HOLD_MAX} s: drop history cleared"; }
+  return 0
 }
 
 # Source routing per uplink. Both clients usually hold an address in the SAME upstream subnet; without per-address routes
@@ -290,12 +432,17 @@ mgmt_pass() {
 
 pass() {
   mgmt_pass
-  for h in $HEALTH_STA; do health_one "$h"; done
+  for h in $RADIO_WATCH; do radio_one "$h"; radio_forgive "$h"; done
+  for h in $HEALTH_STA; do radio_held "$h" && radio_return "$h"; health_one "$h"; done
   for p in $FOLLOW; do follow_one "${p%%:*}" "$(echo "$p" | cut -d: -f2)" "${p##*:}"; done
   for u in $UPLINK_TABLES; do src_one "${u%%:*}" "$(echo "$u" | cut -d: -f2)" "${u##*:}"; done
 }
 
 status() {
+  for h in $RADIO_WATCH; do
+    if radio_held "$h"; then echo "$h: dropped by the radio watchdog: $(cut -d' ' -f1 "$RUN/$h.dropped") until $(cut -d' ' -f2 "$RUN/$h.dropped") (uptime s)"
+    else echo "$h: watched (radio $RADIO_DEV), drops so far: $(cat "$RADIO_STATE/$h.level" 2>/dev/null || echo 0)"; fi
+  done
   for p in $FOLLOW; do
     sta=${p%%:*}; apif=$(echo "$p" | cut -d: -f2); name=${p##*:}
     echo "$name: client $sta [$(sta_channel "$sta")] ap $apif [$(ap_channel "$apif")] running=$(ap_running "$name" && echo yes || echo no)"

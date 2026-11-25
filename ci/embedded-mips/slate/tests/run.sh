@@ -40,6 +40,8 @@ t "early boot has no hard-coded hostname" sh -c "! grep -E '(^|[;&|] *)hostname 
 
 # 1b. wifi-follow: the AP follows the uplink client's channel (stub iw/hostapd)
 t "wifi-follow (AP follows the uplink channel)" sh "$D/tests/wifi-follow-test.sh"
+# 1c. board settings for the UI (UPLINK5: 5 GHz client off by default, typed, with its reason and live state)
+t "board-settings (System > Hardware settings JSON)" sh "$D/tests/board-settings-test.sh"
 
 # 1c. package-managed accounts (shared with the AX1800 tier)
 t "accounts-sync (package-managed accounts)" sh "$D/../../embedded-common/tests/accounts-sync.sh"
@@ -56,6 +58,7 @@ mkroot() { r=$W/root-$1; rm -rf "$r"; mkdir -p "$r/usr/share/zoneinfo/Europe"; e
   echo "http 80/tcp" > "$r/etc/services"
   # ETPhoneHome (baked into every image): ELF binary + runner + the OpenRC service enabled in the default runlevel
   printf '\177ELF' > "$r/usr/sbin/etphonehome"; chmod +x "$r/usr/sbin/etphonehome"; : > "$r/usr/libexec/patronus/etph-run"; chmod +x "$r/usr/libexec/patronus/etph-run"
+  echo 'RADIO_WATCH=' > "$r/usr/libexec/patronus/wifi-follow"; : > "$r/usr/libexec/patronus/board-settings"; chmod +x "$r/usr/libexec/patronus/wifi-follow" "$r/usr/libexec/patronus/board-settings"
   : > "$r/etc/init.d/patronus-etph"; chmod +x "$r/etc/init.d/patronus-etph"; mkdir -p "$r/etc/runlevels/default"; ln -s /etc/init.d/patronus-etph "$r/etc/runlevels/default/patronus-etph"
   for b in usr/sbin/wpa_supplicant usr/sbin/dropbearmulti usr/sbin/hostapd usr/sbin/dnsmasq sbin/nft; do : > "$r/$b"; chmod +x "$r/$b"; done; ln -s dropbearmulti "$r/usr/sbin/dropbear"
   printf 'hsqs....' > "$r/usr/share/patronus-recovery/openwrt-root.squashfs"; echo "$r"; }

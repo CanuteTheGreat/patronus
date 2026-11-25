@@ -70,6 +70,9 @@ esac
 # ETPhoneHome router client: baked into every variant (owner standing rule). Binary + service + enablement under both inits.
 [ -x "$R/usr/sbin/etphonehome" ] && head -c4 "$R/usr/sbin/etphonehome" | grep ELF >/dev/null || fail "ETPhoneHome: no /usr/sbin/etphonehome ELF binary"
 [ -x "$R/usr/libexec/patronus/etph-run" ] || fail "ETPhoneHome: no /usr/libexec/patronus/etph-run"
+# the 5 GHz radio's watchdog and the board settings the UI shows (a root without them cannot drop a crashing 5 GHz client)
+for f in usr/libexec/patronus/wifi-follow usr/libexec/patronus/board-settings; do [ -x "$R/$f" ] || fail "missing /$f"; done
+grep RADIO_WATCH "$R/usr/libexec/patronus/wifi-follow" >/dev/null || fail "wifi-follow without the radio watchdog (RADIO_WATCH)"
 case "${INIT:-}" in
   openrc)  [ -x "$R/etc/init.d/patronus-etph" ] && [ -L "$R/etc/runlevels/default/patronus-etph" ] || fail "ETPhoneHome: OpenRC service patronus-etph missing or not in the default runlevel" ;;
   systemd) [ -f "$R/etc/systemd/system/patronus-etph.service" ] && [ -L "$R/etc/systemd/system/multi-user.target.wants/patronus-etph.service" ] || fail "ETPhoneHome: patronus-etph.service missing or not enabled" ;;

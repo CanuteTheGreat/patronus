@@ -9,8 +9,41 @@
 gen_wpa5() {
   awk -v fl="$FREQ5" '/^[ \t]*(priority|disabled)=/ {next} {print} /^[ \t]*ssid=/ {print "\tfreq_list=" fl}' "$1"
 }
+# The 5 GHz radio's interfaces: the AP, and the client interface (its supplicant only with `radio5 client`). Also run
+# after wifi-follow's radio watchdog re-probed a wedged ath10k (`board-network radio5`): the device comes back as a new phy with
+# none of our interfaces. MACs are the unit's (unit.conf) or derived from the AP's, as at boot.
+radio5() {
+  P=$(phy_of $RADIO5_PCI); [ -n "$P" ] || { echo "board-network: no 5 GHz phy at $RADIO5_PCI" >&2; return 1; }
+  for d in /sys/class/net/*; do [ "$(basename "$(readlink -f $d/phy80211 2>/dev/null)")" = "$P" ] && iw dev $(basename $d) del; done
+  [ -n "$STA5_MAC" ] || [ -z "$AP5_MAC" ] || STA5_MAC="${AP5_MAC%:*}:$(printf '%02x' $(( 0x${AP5_MAC##*:} ^ 16 )))"
+  if [ -n "$WAN5_IF" ]; then
+    iw phy $P interface add $WAN5_IF type managed && { [ -z "$STA5_MAC" ] || ip link set $WAN5_IF address $STA5_MAC; }
+    c=/proc/sys/net/ipv4/conf/$WAN5_IF; [ -d $c ] && { echo 1 > $c/arp_ignore; echo 2 > $c/arp_announce; echo 2 > $c/rp_filter; }
+    [ "$1" = client ] && client5 start
+  fi
+  iw phy $P interface add $AP5_IF type __ap && { [ -z "$AP5_MAC" ] || ip link set $AP5_IF address $AP5_MAC; }
+  return 0
+}
+# 5 GHz client (preferred uplink when enabled): the supplicant config is the 2.4 GHz one with every network pinned to the 5 GHz
+# channels and without priorities, so the strongest known BSS wins (a `priority` would pick a weak 5 GHz channel over a strong one)
+client5() {
+  [ -n "$WAN5_IF" ] && [ -d /sys/class/net/$WAN5_IF ] || return 0
+  case "$1" in
+  start)
+    [ -f /run/wpa_supplicant-$WAN5_IF.pid ] && kill -0 "$(cat /run/wpa_supplicant-$WAN5_IF.pid)" 2>/dev/null && return 0
+    ip link set $WAN5_IF up
+    gen_wpa5 /etc/wpa_supplicant/wpa_supplicant.conf > /run/wpa_supplicant-$WAN5_IF.conf && chmod 600 /run/wpa_supplicant-$WAN5_IF.conf
+    wpa_supplicant -B -i $WAN5_IF -D nl80211 -c /run/wpa_supplicant-$WAN5_IF.conf -P /run/wpa_supplicant-$WAN5_IF.pid > /tmp/wpa5-start.txt 2>&1 \
+      || { echo "wpa_supplicant ($WAN5_IF) failed to start" >> /tmp/boot-times; cat /tmp/wpa5-start.txt >&2; } ;;
+  stop)
+    [ -f /run/wpa_supplicant-$WAN5_IF.pid ] && kill "$(cat /run/wpa_supplicant-$WAN5_IF.pid)" 2>/dev/null; rm -f /run/wpa_supplicant-$WAN5_IF.pid
+    ip link set $WAN5_IF down ;;
+  esac
+}
 sw() { LD_LIBRARY_PATH=$OWLIB $OWLIB/swconfig dev switch0 "$@"; }
 case "$1" in
+radio5) radio5 "$2" ;;
+client5) client5 "$2" ;;
 start)
   # no board radio (no SoC Wi-Fi phy: an emulator or any host that is not a Slate): there is no switch and no Wi-Fi, eth0 is the one LAN
   # port, bridged as br-lan; the WAN is whatever [network] wan_interfaces names (the QEMU gate's second NIC). NO_BOARD=0 in unit.conf forces
@@ -29,28 +62,20 @@ start)
   iw phy $PHY24 interface add $WAN_IF type managed && { [ -z "$STA_MAC" ] || ip link set $WAN_IF address $STA_MAC; }
   wpa_supplicant -B -i $WAN_IF -D nl80211 -c /etc/wpa_supplicant/wpa_supplicant.conf -P /run/wpa_supplicant.pid > /tmp/wpa-start.txt 2>&1 \
     || { echo "wpa_supplicant failed to start" >> /tmp/boot-times; cat /tmp/wpa-start.txt >&2; }
-  # 5 GHz client (the preferred uplink): the supplicant config is the 2.4 GHz one with every network pinned to the 5 GHz
-  # channels and without priorities, so the strongest known BSS wins (a `priority` would pick a weak 5 GHz channel over a strong one)
-  if [ -n "$WAN5_IF" ] && [ -n "$PHY5" ]; then
-    # no MAC given: the AP's with the 0x10 bit of the last octet flipped (own address, same vendor prefix)
-    [ -n "$STA5_MAC" ] || [ -z "$AP5_MAC" ] || STA5_MAC="${AP5_MAC%:*}:$(printf '%02x' $(( 0x${AP5_MAC##*:} ^ 16 )))"
-    iw phy $PHY5 interface add $WAN5_IF type managed && { [ -z "$STA5_MAC" ] || ip link set $WAN5_IF address $STA5_MAC; }
-    gen_wpa5 /etc/wpa_supplicant/wpa_supplicant.conf > /run/wpa_supplicant-$WAN5_IF.conf && chmod 600 /run/wpa_supplicant-$WAN5_IF.conf
-    wpa_supplicant -B -i $WAN5_IF -D nl80211 -c /run/wpa_supplicant-$WAN5_IF.conf -P /run/wpa_supplicant-$WAN5_IF.pid > /tmp/wpa5-start.txt 2>&1 \
-      || { echo "wpa_supplicant ($WAN5_IF) failed to start" >> /tmp/boot-times; cat /tmp/wpa5-start.txt >&2; }
-  fi
+  # the 5 GHz radio: AP interface, plus the client when the 5 GHz uplink is enabled (UPLINK5=on, board.sh / unit.conf)
+  [ -n "$PHY5" ] && { if [ "$UPLINK5" = on ]; then radio5 client; else radio5; fi; }
   # Multi-homed in one subnet (both clients on the same upstream network): each uplink answers ARP only for its own
   # address (arp_ignore=1) and asks with it (arp_announce=2). Without this the upstream router learns the 5 GHz client's
   # MAC for the 2.4 GHz client's reserved address, its traffic arrives on the wrong uplink and the box drops it.
   # Replies may come back on the other uplink while routes settle: loose reverse-path check (rp_filter=2).
   for u in $UPLINKS; do c=/proc/sys/net/ipv4/conf/$u; [ -d $c ] || continue
     echo 1 > $c/arp_ignore; echo 2 > $c/arp_announce; echo 2 > $c/rp_filter; done
-  # APs: created here, started by patronus-wifi-follow on the channel of the client of the same radio
-  iw phy $PHY5 interface add $AP5_IF type __ap && { [ -z "$AP5_MAC" ] || ip link set $AP5_IF address $AP5_MAC; }
+  # APs: created here (5 GHz: radio5 above), started by patronus-wifi-follow on the channel of the client of the same radio
   [ -f /etc/hostapd/ap5.conf ] && [ -n "$AP24_IF" ] && iw phy $PHY24 interface add $AP24_IF type __ap && { [ -z "$AP24_MAC" ] || ip link set $AP24_IF address $AP24_MAC; }
   # APs outside FOLLOW (test APs) start right away
   /usr/libexec/patronus/ap start
   for i in $(seq 30); do iw dev $WAN_IF link | grep -q Connected && break; sleep 1; done
   iw dev $WAN_IF link | head -3
+  /usr/libexec/patronus/board-settings write
   ;;
 esac
