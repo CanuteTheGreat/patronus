@@ -24,6 +24,7 @@ pub fn build_router(
     _ws_broadcaster: std::sync::Arc<crate::websocket::WsBroadcaster>,
 ) -> Router {
     let app_state = state.clone();
+    let access_log_state = state.clone();
 
     Router::new()
         // Public routes
@@ -121,6 +122,144 @@ pub fn build_router(
         ))
         // Outermost, so 401s, login redirects and errors get them too.
         .layer(axum::middleware::map_response(security_headers))
+        // The access log sees every answered request, the gate's 401s and
+        // the login page included, so it wraps everything else.
+        .layer(axum::middleware::from_fn_with_state(
+            access_log_state,
+            access_log_layer,
+        ))
+}
+
+/// Records one `web_access_log` row per answered request (see
+/// `state::accesslog`). The path group is the matched route template
+/// (never the raw path or query string); who made the request is filled in
+/// by the session gate and the login handler through the request's
+/// [`accesslog::Slot`]. The body is counted as it is sent, so the row is
+/// queued when the answer has been delivered (or dropped).
+async fn access_log_layer(
+    axum::extract::State(app_state): axum::extract::State<crate::AppState>,
+    mut req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use crate::state::accesslog::{self, Entry, Slot};
+    let log = app_state.access_log.clone();
+    if !log.enabled() {
+        return next.run(req).await;
+    }
+    let started = std::time::Instant::now();
+    let timestamp_ms = chrono::Utc::now().timestamp_millis();
+    let method = req.method().as_str().to_string();
+    let group = accesslog::path_group(
+        req.extensions()
+            .get::<axum::extract::MatchedPath>()
+            .map(|m| m.as_str()),
+    );
+    let client = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|c| c.0.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    // the log page's own live polling would otherwise fill the log with
+    // itself every couple of seconds
+    let live_poll = method == "GET"
+        && group.starts_with("/api/system/access-log")
+        && req.uri().query().is_some_and(|q| q.contains("after_id="));
+    let slot = Slot::default();
+    req.extensions_mut().insert(slot.clone());
+    let res = next.run(req).await;
+    if live_poll {
+        return res;
+    }
+    let status = res.status().as_u16();
+    let duration_ms = started.elapsed().as_millis() as i64;
+    let make = move |bytes: Option<i64>| {
+        let who = slot.get();
+        let (kind, name, key) = match who.principal {
+            Some((k, n, id)) => (k, Some(n), id),
+            None => ("anonymous", None, None),
+        };
+        // the attempted name is kept for sign-in failures only
+        let attempted = if name.is_none() { who.attempted_user } else { None };
+        log.record(Entry {
+            timestamp_ms,
+            client,
+            principal_kind: kind,
+            principal_name: name,
+            api_key_id: key,
+            attempted_user: attempted.filter(|a| !a.is_empty()),
+            method,
+            path_group: group,
+            status,
+            duration_ms,
+            bytes,
+        });
+    };
+    use http_body::Body as _;
+    let (parts, body) = res.into_parts();
+    if let Some(n) = body.size_hint().exact() {
+        make(Some(n as i64));
+        return axum::response::Response::from_parts(parts, body);
+    }
+    axum::response::Response::from_parts(
+        parts,
+        axum::body::Body::new(CountedBody {
+            inner: body,
+            bytes: 0,
+            done: Some(Box::new(move |b| make(Some(b)))),
+        }),
+    )
+}
+
+/// Passes a body through and reports its size once it ended (or was
+/// dropped by a client that went away).
+struct CountedBody {
+    inner: axum::body::Body,
+    bytes: i64,
+    done: Option<Box<dyn FnOnce(i64) + Send>>,
+}
+
+impl CountedBody {
+    fn finish(&mut self) {
+        if let Some(f) = self.done.take() {
+            f(self.bytes);
+        }
+    }
+}
+
+impl http_body::Body for CountedBody {
+    type Data = axum::body::Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        let p = std::pin::Pin::new(&mut self.inner).poll_frame(cx);
+        match &p {
+            std::task::Poll::Ready(Some(Ok(f))) => {
+                if let Some(d) = f.data_ref() {
+                    self.bytes += d.len() as i64;
+                }
+            }
+            std::task::Poll::Ready(None) | std::task::Poll::Ready(Some(Err(_))) => self.finish(),
+            _ => {}
+        }
+        p
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.inner.size_hint()
+    }
+}
+
+impl Drop for CountedBody {
+    fn drop(&mut self) {
+        self.finish();
+    }
 }
 
 /// Browser hardening headers on every response (the SD-WAN dashboard,
@@ -241,6 +380,12 @@ async fn require_session(
             Some(k) => k.verify(&token).await,
             None => None,
         };
+        if let (Some(k), Some(slot)) = (
+            key.as_ref(),
+            parts.extensions.get::<crate::state::accesslog::Slot>(),
+        ) {
+            slot.api_key(k.id, &k.name);
+        }
         let Some(key) = key else {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -256,7 +401,9 @@ async fn require_session(
             || path.starts_with("/api/system/groups")
             || path.starts_with("/api/system/factory-reset")
             || path.starts_with("/api/system/backup-targets")
-            || path.starts_with("/api/system/users");
+            || path.starts_with("/api/system/users")
+            || path.starts_with("/api/system/access-log")
+            || path.starts_with("/api/system/audit-log");
         if !(path.starts_with("/api/") || path == "/metrics") || people_only {
             return (
                 StatusCode::FORBIDDEN,
@@ -285,6 +432,9 @@ async fn require_session(
 
     match session {
         Ok(session) => {
+            if let Some(slot) = parts.extensions.get::<crate::state::accesslog::Slot>() {
+                slot.user(&session.username);
+            }
             let mutating = !matches!(parts.method, Method::GET | Method::HEAD | Method::OPTIONS);
             // a read-only account may still log out, change its own
             // password and manage its own second factor
@@ -568,6 +718,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::routing::router())
         .merge(api::interfaces::router())
         .merge(api::system::router())
+        .merge(api::accesslog::router())
         .merge(api::apikeys::router())
         .merge(api::groups::router())
         .merge(api::backup_targets::router())
