@@ -11,6 +11,8 @@
 
 **Website and docs: [patronus.errant.solutions](https://patronus.errant.solutions)**
 
+**Support the project:** Patronus is free and stays free. If it saves you time, you can leave a one-time tip or a small monthly sponsorship at [errant.solutions/support/patronus](https://errant.solutions/support/patronus).
+
 Patronus is built for Gentoo first: it ships as an ebuild in this
 repository's own overlay (`gentoo/net-firewall/patronus/`), with USE flags
 selecting what is compiled in (see [AGENTS.md](AGENTS.md)). It is written in

@@ -264,6 +264,8 @@ pub struct SystemTemplate {
     /// About card: product site and public source addresses (`about.site_url`, `about.source_url`).
     pub site_url: String,
     pub source_url: String,
+    /// One "Support Patronus" link (`about.support_url`); no prompts, nothing else.
+    pub support_url: String,
     pub users: Vec<User>,
     /// The logged-in account.
     pub me_id: u32,
