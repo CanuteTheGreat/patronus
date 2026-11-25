@@ -53,6 +53,10 @@
         --b-info: #117a8b; --b-danger: #c82333; --b-blue: #1d4ed8; --b-blue-hover: #1e3fae;
         --login-bg: #eef1f8;
         --chart-down: #fecaca; --chart-warn: #fde68a; --chart-axis: #9aa3b2;
+        /* system log viewer: ink per priority on --log-bg (>= 4.5:1 in both schemes) */
+        --log-font: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+        --log-bg: #f8fafc; --log-fg: #1f2937; --log-dim: #5b6472; --log-sep: #4452cf;
+        --lv0: #9b1c1c; --lv1: #9b1c1c; --lv2: #9b1c1c; --lv3: #b42318; --lv4: #8a4b00; --lv5: #1d4ed8; --lv6: #1f2937; --lv7: #5b6472; --lvu: #5b6472;
     }
     @media (prefers-color-scheme: dark) {
         :root:not([data-theme="light"]) {
@@ -89,6 +93,8 @@
             --b-blue-hover: #2a5ee0;
             --login-bg: #00000b;
             --chart-down: #5a2326; --chart-warn: #4f3d0f; --chart-axis: #5b616c;
+            --log-bg: #16181c; --log-fg: #e5e5e5; --log-dim: #9aa3b2; --log-sep: #a99bf6;
+            --lv0: #ff9b9b; --lv1: #ff9b9b; --lv2: #ff9b9b; --lv3: #f87171; --lv4: #fbbf24; --lv5: #7db0ff; --lv6: #d5d9e0; --lv7: #8b93a1; --lvu: #8b93a1;
         }
     }
     :root[data-theme="dark"] {
@@ -126,6 +132,8 @@
         --b-blue-hover: #2a5ee0;
         --login-bg: #00000b;
         --chart-down: #5a2326; --chart-warn: #4f3d0f; --chart-axis: #5b616c;
+        --log-bg: #16181c; --log-fg: #e5e5e5; --log-dim: #9aa3b2; --log-sep: #a99bf6;
+        --lv0: #ff9b9b; --lv1: #ff9b9b; --lv2: #ff9b9b; --lv3: #f87171; --lv4: #fbbf24; --lv5: #7db0ff; --lv6: #d5d9e0; --lv7: #8b93a1; --lvu: #8b93a1;
     }
     :root[data-theme="light"] { color-scheme: light; }
     /* pages that style their own body still get the themed canvas (dark mode on a white page fails contrast) */

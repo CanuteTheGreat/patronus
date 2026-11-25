@@ -1,0 +1,27 @@
+<style>
+    /* system log lines: colour + weight per priority, tokens from theme_head.html */
+    .syslog { background: var(--log-bg); color: var(--log-fg); font-family: var(--log-font); font-size: 0.8rem; line-height: 1.35;
+              border: 1px solid var(--line); border-radius: 6px; overflow: auto; margin: 0; }
+    .syslog .ll { display: grid; grid-template-columns: max-content max-content max-content 1fr; column-gap: 0.7em; padding: 1px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .syslog .ll:hover { background: var(--surface-2); }
+    .syslog .t { color: var(--log-dim); }
+    .syslog .lvl { min-width: 5.2em; }
+    .syslog .id { color: var(--log-dim); }
+    .syslog .m { min-width: 0; }
+    .syslog .lv0, .syslog .lv1, .syslog .lv2 { color: var(--lv0); font-weight: 700; }
+    .syslog .lv3 { color: var(--lv3); font-weight: 600; }
+    .syslog .lv4 { color: var(--lv4); font-weight: 600; }
+    .syslog .lv5 { color: var(--lv5); font-weight: 500; }
+    .syslog .lv6 { color: var(--lv6); }
+    .syslog .lv7 { color: var(--lv7); }
+    .syslog .lvu { color: var(--lvu); font-style: italic; }
+    .syslog .ll.lv0 .t, .syslog .ll.lv1 .t, .syslog .ll.lv2 .t, .syslog .ll.lv3 .t, .syslog .ll.lv4 .t, .syslog .ll.lv5 .t, .syslog .ll.lv6 .t, .syslog .ll.lv7 .t, .syslog .ll.lvu .t,
+    .syslog .ll .id, .syslog .ll .t { color: var(--log-dim); font-weight: 400; font-style: normal; }
+    .syslog .ll .lvl { font-weight: 600; }
+    .syslog .boot { display: block; text-align: center; color: var(--log-sep); border-top: 1px solid var(--log-sep); border-bottom: 1px solid var(--log-sep);
+                    margin: 4px 0; padding: 1px 8px; font-weight: 600; }
+    @media (max-width: 720px) {
+        .syslog .ll { grid-template-columns: max-content max-content 1fr; }
+        .syslog .ll .id { display: none; }
+    }
+</style>
