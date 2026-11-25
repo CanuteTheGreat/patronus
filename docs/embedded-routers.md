@@ -392,6 +392,44 @@ patronus-web start applies the stored ruleset; on a 128 MB unit an OOM kill of p
 `wifi-follow` re-inserts it within one MGMT_EVERY cycle (measured: back 8 s after `patronus-cli apply`, 13 s after a web restart), and a
 stored WAN rule from the management subnet makes it survive applies outright.
 
+### 6h. The 5 GHz radio as uplink client: driver choice, radio watchdog, off by default (2026-11-25)
+
+The GL-AR750S has one 5 GHz radio (QCA9887, ath10k on PCIe). As a repeater it would be the uplink client AND the 5 GHz access point,
+on one channel (`#channels <= 1`). Measured on a unit (image mg-2c677d42, OpenWrt's default driver ath10k-ct 2025.12.01 + firmware
+10.1-ct-87):
+
+| | ath10k-ct + 10.1-ct-87 (OpenWrt default) | kmod-ath10k + 10.2.4-1.0-00047 (upstream) |
+|---|---|---|
+| client + AP, idle, burst seen | 11 firmware restarts in 15 min (`Cannot communicate with firmware`, each after ~3 s of `SWBA overrun`), then quiet; after 3.6 days once **wedged** (every firmware call `-143`, supplicant hw scan every second, load 8-17, SSH timeouts) | none in 25 min |
+| client + AP, reassociation every 90 s, 15 min | 0 restarts, 3.7% ping loss, avg 19 ms, max 3.9 s | 0 restarts, 1.9% loss, avg 4.6 ms, max 0.8 s |
+| client scan | never found an AP 5 GHz BSS at -42 dBm on 5180 MHz (also with the client alone): joined a far AP at -76 dBm, VHT-MCS 0-4 | found it at once: -42 dBm, VHT-MCS 5 80 MHz (260 Mbit/s) |
+
+The stall is the known 10.x "TX credit starvation" in AP mode (no beacons go out: `SWBA overrun`; WMI commands time out, the last
+ones `MGMT_TX`), which the driver's hardware restart usually clears; the wedge is the case it does not. The LED trigger
+(`ath10k-phy0`, WMI `GPIO_OUTPUT` per blink) is not the cause: with the trigger off the restarts went on. Three changes:
+
+- **Driver (`wifi5.pin`, `WIFI5_DRIVER=upstream|ct`):** the image replaces the stock root's ath10k-ct modules and ct firmware with
+  OpenWrt 25.12.6's own kmod-ath10k (same kernel, same backports as mac80211) and linux-firmware's QCA9887 `firmware-5.bin`, from a
+  pinned tar (`tools/make-wifi5-kmods.sh`, Forgejo generic package `patronus-owrt-ath10k-ar750s`). `/etc/patronus-release` records
+  `WIFI5_DRIVER`; `check-rootfs.sh` refuses an ath10k root without firmware for its driver. A kernel bump (`ci/embedded-openwrt`)
+  must rebuild kmod-ath10k for the new kernel too (`EXTRA_KMOD_ROOTS` kernels keep their own driver and the ct firmware stays then).
+- **Radio watchdog + blacklist backoff (`wifi-follow`, all `RADIO_*` / `HEALTH_*` keys documented there, settable in `unit.conf`):**
+  `RADIO_CRASHES` firmware restarts in `RADIO_WINDOW` s drop the 5 GHz client (supplicant stopped, interface down: the 2.4 GHz
+  client carries the traffic, the 5 GHz AP keeps serving); a wedged firmware (`RADIO_WEDGE_LINES` new `-143` errors with no recovery)
+  also re-probes the device (PCI unbind/bind, interfaces re-created by `board-network radio5`), at most once per `RADIO_REBIND_MIN` s.
+  A dropped client returns after `RADIO_HOLD` s, doubling per drop up to `RADIO_HOLD_MAX` (drop count on `/data/wifi-follow`). The
+  gateway-probe blacklist no longer repeats every few seconds: the gap doubles from `HEALTH_BACKOFF` to `HEALTH_BACKOFF_MAX`, and
+  `HEALTH_DROP_AFTER` blacklists in `HEALTH_DROP_WINDOW` s drop the client the same way.
+- **`UPLINK5=on|off` (board.sh default `off`, per unit in `unit.conf`):** with `off` the 5 GHz radio is an access point only (on its
+  template channel, free of any uplink) and the 2.4 GHz client is the uplink. The setting, its default, the reason and its live
+  state (connected / stopped by the watchdog) are published by `board-settings` as `/run/patronus/board-settings.json`, served in
+  `/api/features` (`board_settings`) and shown on System > Hardware settings. The default stays `off` until a unit runs the upstream
+  driver as client + AP for a long soak without a restart or wedge.
+
+Host tests: `tests/wifi-follow-test.sh` (backoff, drop/return/hold doubling, restart count, wedge -> re-probe, no loop, ring rollover,
+`UPLINK5=off`), `tests/board-settings-test.sh` (JSON, typed key, fallback on a bad value, escaping), `tests/run.sh` (check-rootfs,
+pin). On a unit: the A/B phases above and a 12 h soak.
+
 ## 6a. Local web UI (the LuCI equivalent)
 
 **Yes: the Slate keeps a local web UI, and it is the real Patronus UI**, not a lite copy. Decision rule that was applied: try the straight port first; fall back to a `web-lite` only if it missed the 16 MiB slot or a 25-30 MB RSS cap. It met both, so no second UI exists to maintain.
