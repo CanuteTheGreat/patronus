@@ -59,10 +59,11 @@ plugins = ["patronus-network/plugins"]
 segmentation = ["patronus-network/segmentation", "dep:patronus-captiveportal"]
 wifi-ap = ["patronus-network/wifi-ap", "segmentation"]
 wifi-client = ["patronus-network/wifi-client"]
-# Live threat-intel feeds (patronus-ai, reqwest/OpenSSL) and journald log reading
-# (patronus-monitoring, prometheus). Both are off in the embedded router build.
+# Live threat-intel feeds (patronus-ai, reqwest/OpenSSL); off in the embedded router build.
 threat-feeds = ["dep:patronus-ai"]
-journal = ["dep:patronus-monitoring"]
+# `journal` is kept so existing feature lists and USE=journal keep working; it no longer pulls anything in:
+# the system log page (src/logview) chooses journald or the syslog files at RUN time.
+journal = []
 # TLS backend. `tls-rustls` (default; aws-lc-rs + rcgen) does not build for MIPS
 # (neither aws-lc nor ring supports it); the embedded tier uses `tls-openssl`
 # (system OpenSSL, certificate generation through the same library).
@@ -77,7 +78,6 @@ patronus-network = { path = "../patronus-network" }
 patronus-config = { path = "../patronus-config" }
 patronus-secrets = { path = "../patronus-secrets" }
 patronus-ai = { path = "../patronus-ai", optional = true }
-patronus-monitoring = { path = "../patronus-monitoring", optional = true }
 
 tokio.workspace = true
 async-trait.workspace = true

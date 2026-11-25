@@ -31,7 +31,10 @@ impl Pos {
     pub fn parse(c: &str) -> Option<Pos> {
         let r = c.strip_prefix("f:")?;
         let (a, b) = r.split_once(':')?;
-        Some(Pos { ino: a.parse().ok()?, off: b.parse().ok()? })
+        Some(Pos {
+            ino: a.parse().ok()?,
+            off: b.parse().ok()?,
+        })
     }
 }
 
@@ -44,7 +47,11 @@ pub struct LogFile {
 
 fn stat(p: &Path) -> Option<LogFile> {
     let m = std::fs::metadata(p).ok()?;
-    m.is_file().then(|| LogFile { path: p.to_path_buf(), ino: m.ino(), len: m.len() })
+    m.is_file().then(|| LogFile {
+        path: p.to_path_buf(),
+        ino: m.ino(),
+        len: m.len(),
+    })
 }
 
 /// The active file first, then its rotated files, newest first. Rotated names are
@@ -63,7 +70,7 @@ pub fn chain(active: &Path, rotated: u32) -> Vec<LogFile> {
             rot.push((m.modified().unwrap_or(std::time::UNIX_EPOCH), f));
         }
     }
-    rot.sort_by(|a, b| b.0.cmp(&a.0));
+    rot.sort_by_key(|r| std::cmp::Reverse(r.0));
     rot.truncate(rotated as usize);
     v.extend(rot.into_iter().map(|(_, f)| f));
     v
@@ -90,7 +97,13 @@ pub struct RevReader {
 
 impl RevReader {
     pub fn new(path: &Path, end: u64) -> std::io::Result<Self> {
-        Ok(Self { f: File::open(path)?, pos: end, carry: Vec::new(), ready: Vec::new(), bytes: 0 })
+        Ok(Self {
+            f: File::open(path)?,
+            pos: end,
+            carry: Vec::new(),
+            ready: Vec::new(),
+            bytes: 0,
+        })
     }
 
     pub fn next_line(&mut self) -> std::io::Result<Option<(u64, String)>> {
@@ -158,7 +171,13 @@ pub struct Backwards<'a> {
 }
 
 impl<'a> Backwards<'a> {
-    pub fn new(files: &'a [LogFile], from: Option<Pos>, ctx: Ctx, markers: &'a [String], budget: u64) -> Self {
+    pub fn new(
+        files: &'a [LogFile],
+        from: Option<Pos>,
+        ctx: Ctx,
+        markers: &'a [String],
+        budget: u64,
+    ) -> Self {
         let (mut idx, mut end) = (0usize, files.first().map(|f| f.len).unwrap_or(0));
         if let Some(p) = from {
             if let Some(i) = files.iter().position(|f| f.ino == p.ino) {
@@ -227,7 +246,11 @@ impl<'a> Backwards<'a> {
                                 }
                                 end = self.pending_end.take().unwrap_or(end);
                             }
-                            return Some(Found { entry: e, start: Pos { ino, off: start }, end: Pos { ino, off: end } });
+                            return Some(Found {
+                                entry: e,
+                                start: Pos { ino, off: start },
+                                end: Pos { ino, off: end },
+                            });
                         }
                     }
                 }
@@ -270,7 +293,9 @@ pub fn read_after(
         let newest = i + 1 == order.len();
         let want = f.len.saturating_sub(off).min(left);
         if want > 0 {
-            let Ok(mut fh) = File::open(&f.path) else { break };
+            let Ok(mut fh) = File::open(&f.path) else {
+                break;
+            };
             if fh.seek(SeekFrom::Start(off)).is_err() {
                 break;
             }
@@ -291,7 +316,13 @@ pub fn read_after(
                 line_off += raw.len() as u64;
                 let line = String::from_utf8_lossy(raw);
                 match parse_file_line(&line, ctx, markers) {
-                    Some(e) => out.push((e, Pos { ino: f.ino, off: line_off })),
+                    Some(e) => out.push((
+                        e,
+                        Pos {
+                            ino: f.ino,
+                            off: line_off,
+                        },
+                    )),
                     None => {
                         if !line.trim().is_empty() {
                             if let Some((last, p)) = out.last_mut() {
@@ -312,7 +343,10 @@ pub fn read_after(
         if off >= f.len && !newest {
             i += 1;
             off = 0;
-            pos = Pos { ino: order[i].ino, off: 0 };
+            pos = Pos {
+                ino: order[i].ino,
+                off: 0,
+            };
         } else {
             break;
         }
@@ -327,7 +361,9 @@ mod tests {
     use std::io::Write;
 
     fn ctx() -> Ctx {
-        Ctx { now: Utc.with_ymd_and_hms(2026, 11, 25, 20, 0, 0).unwrap() }
+        Ctx {
+            now: Utc.with_ymd_and_hms(2026, 11, 25, 20, 0, 0).unwrap(),
+        }
     }
     fn mk() -> Vec<String> {
         vec!["Linux version ".into()]
@@ -346,7 +382,13 @@ mod tests {
         let p = d.path().join("messages");
         let mut f = File::create(&p).unwrap();
         for i in 0..5000 {
-            writeln!(f, "Nov 25 12:{:02}:{:02} gw daemon.info t[{i}]: line number {i}", (i / 60) % 60, i % 60).unwrap();
+            writeln!(
+                f,
+                "Nov 25 12:{:02}:{:02} gw daemon.info t[{i}]: line number {i}",
+                (i / 60) % 60,
+                i % 60
+            )
+            .unwrap();
         }
         drop(f);
         let files = chain(&p, 0);
@@ -374,16 +416,24 @@ mod tests {
     fn rotated_files_are_followed_busybox_and_logrotate_names() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("messages");
-        write(&d.path().join("messages.1"), &["Nov 25 10:00:00 gw daemon.info t: oldest"]);
+        write(
+            &d.path().join("messages.1"),
+            &["Nov 25 10:00:00 gw daemon.info t: oldest"],
+        );
         std::thread::sleep(std::time::Duration::from_millis(30));
-        write(&d.path().join("messages.0"), &["Nov 25 11:00:00 gw daemon.info t: older"]);
+        write(
+            &d.path().join("messages.0"),
+            &["Nov 25 11:00:00 gw daemon.info t: older"],
+        );
         std::thread::sleep(std::time::Duration::from_millis(30));
         write(&p, &["Nov 25 12:00:00 gw daemon.info t: newest"]);
         let files = chain(&p, 3);
         assert_eq!(files.len(), 3);
         let m = mk();
         let mut b = Backwards::new(&files, None, ctx(), &m, 1 << 20);
-        let got: Vec<String> = std::iter::from_fn(|| b.next_record()).map(|f| f.entry.message).collect();
+        let got: Vec<String> = std::iter::from_fn(|| b.next_record())
+            .map(|f| f.entry.message)
+            .collect();
         assert_eq!(got, ["newest", "older", "oldest"]);
         assert_eq!(chain(&p, 1).len(), 2);
     }
@@ -392,11 +442,20 @@ mod tests {
     fn continuation_lines_join_their_record() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("messages");
-        write(&p, &["Nov 25 12:00:00 gw daemon.err t: first", "  more detail", "Nov 25 12:00:01 gw daemon.info t: second"]);
+        write(
+            &p,
+            &[
+                "Nov 25 12:00:00 gw daemon.err t: first",
+                "  more detail",
+                "Nov 25 12:00:01 gw daemon.info t: second",
+            ],
+        );
         let files = chain(&p, 0);
         let m = mk();
         let mut b = Backwards::new(&files, None, ctx(), &m, 1 << 20);
-        let got: Vec<String> = std::iter::from_fn(|| b.next_record()).map(|f| f.entry.message).collect();
+        let got: Vec<String> = std::iter::from_fn(|| b.next_record())
+            .map(|f| f.entry.message)
+            .collect();
         assert_eq!(got, ["second", "first\n  more detail"]);
     }
 
@@ -404,7 +463,14 @@ mod tests {
     fn cursor_pages_older_records() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("messages");
-        write(&p, &["Nov 25 12:00:00 gw daemon.info t: a", "Nov 25 12:00:01 gw daemon.info t: b", "Nov 25 12:00:02 gw daemon.info t: c"]);
+        write(
+            &p,
+            &[
+                "Nov 25 12:00:00 gw daemon.info t: a",
+                "Nov 25 12:00:01 gw daemon.info t: b",
+                "Nov 25 12:00:02 gw daemon.info t: c",
+            ],
+        );
         let files = chain(&p, 0);
         let m = mk();
         let mut b = Backwards::new(&files, None, ctx(), &m, 1 << 20);
@@ -421,16 +487,23 @@ mod tests {
         write(&p, &["Nov 25 12:00:00 gw daemon.info t: a"]);
         let m = mk();
         let files = chain(&p, 2);
-        let start = Pos { ino: files[0].ino, off: files[0].len };
+        let start = Pos {
+            ino: files[0].ino,
+            off: files[0].len,
+        };
         // appended: one whole line and half of another
         let mut f = std::fs::OpenOptions::new().append(true).open(&p).unwrap();
-        write!(f, "Nov 25 12:00:01 gw daemon.warn t: b\nNov 25 12:00:02 gw daemon.info t: ha").unwrap();
+        write!(
+            f,
+            "Nov 25 12:00:01 gw daemon.warn t: b\nNov 25 12:00:02 gw daemon.info t: ha"
+        )
+        .unwrap();
         let files = chain(&p, 2);
         let (got, pos) = read_after(&files, start, &ctx(), &m, 1 << 20);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].0.message, "b");
         // the rest of the line arrives, then the file is rotated (rename) and a new one starts
-        write!(f, "lf\n").unwrap();
+        writeln!(f, "lf").unwrap();
         drop(f);
         std::fs::rename(&p, d.path().join("messages.0")).unwrap();
         write(&p, &["Nov 25 12:00:03 gw daemon.err t: c"]);
@@ -446,9 +519,18 @@ mod tests {
     fn truncation_restarts_at_zero() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("messages");
-        write(&p, &["Nov 25 12:00:00 gw daemon.info t: a", "Nov 25 12:00:01 gw daemon.info t: b"]);
+        write(
+            &p,
+            &[
+                "Nov 25 12:00:00 gw daemon.info t: a",
+                "Nov 25 12:00:01 gw daemon.info t: b",
+            ],
+        );
         let files = chain(&p, 0);
-        let at = Pos { ino: files[0].ino, off: files[0].len };
+        let at = Pos {
+            ino: files[0].ino,
+            off: files[0].len,
+        };
         write(&p, &["Nov 25 12:00:05 gw daemon.info t: after"]);
         let files = chain(&p, 0);
         let (got, _) = read_after(&files, at, &ctx(), &[], 1 << 20);
@@ -460,7 +542,10 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let m = d.path().join("system.log");
         let plain = d.path().join("messages");
-        assert_eq!(pick_active(m.to_str().unwrap(), plain.to_str().unwrap()), plain);
+        assert_eq!(
+            pick_active(m.to_str().unwrap(), plain.to_str().unwrap()),
+            plain
+        );
         write(&m, &["x"]);
         assert_eq!(pick_active(m.to_str().unwrap(), plain.to_str().unwrap()), m);
     }

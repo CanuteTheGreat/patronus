@@ -118,7 +118,8 @@ impl LogViewSettings {
                 K_FILE_PATH => self.file_path = v.into(),
                 K_MANAGED_FILE => self.managed_file = v.into(),
                 K_MANAGE_LOGGER => {
-                    self.manage_logger = matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+                    self.manage_logger =
+                        matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
                 }
                 K_ROTATED => self.rotated_files = v.parse().unwrap_or(self.rotated_files),
                 K_DEFAULT_LIMIT => self.default_limit = v.parse().unwrap_or(self.default_limit),
@@ -130,7 +131,9 @@ impl LogViewSettings {
                 K_UNIT_MAP => self.unit_map = v.into(),
                 K_PREVIEW => self.preview_lines = v.parse().unwrap_or(self.preview_lines),
                 K_STREAM_SECS => self.stream_max_secs = v.parse().unwrap_or(self.stream_max_secs),
-                K_DOWNLOAD_MAX => self.download_max_lines = v.parse().unwrap_or(self.download_max_lines),
+                K_DOWNLOAD_MAX => {
+                    self.download_max_lines = v.parse().unwrap_or(self.download_max_lines)
+                }
                 _ => {}
             }
         }
@@ -157,7 +160,10 @@ impl LogViewSettings {
         if !["auto", "journald", "files"].contains(&self.backend.as_str()) {
             return bad("backend is auto, journald or files".into());
         }
-        for (what, p) in [("file path", &self.file_path), ("managed file", &self.managed_file)] {
+        for (what, p) in [
+            ("file path", &self.file_path),
+            ("managed file", &self.managed_file),
+        ] {
             if !p.starts_with('/') {
                 return bad(format!("the {what} must be an absolute path"));
             }
@@ -183,7 +189,12 @@ impl LogViewSettings {
         if self.boot_markers.split('|').all(|m| m.is_empty()) {
             return bad("at least one boot marker".into());
         }
-        for pair in self.unit_map.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        for pair in self
+            .unit_map
+            .split(',')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        {
             if !pair.contains('=') {
                 return bad(format!("unit map entry '{pair}' is not identifier=service"));
             }
@@ -225,7 +236,12 @@ pub async fn stored(store: &ConfigStore) -> Vec<(String, String)> {
     for k in KEYS {
         out.push((
             k.to_string(),
-            store.load_system_config(k).await.ok().flatten().unwrap_or_default(),
+            store
+                .load_system_config(k)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default(),
         ));
     }
     out
@@ -233,7 +249,8 @@ pub async fn stored(store: &ConfigStore) -> Vec<(String, String)> {
 
 /// The effective settings: defaults < environment < store.
 pub async fn resolve(store: Option<&ConfigStore>) -> LogViewSettings {
-    let mut s = LogViewSettings::default().overlay(&LogViewSettings::from_env_with(|k| std::env::var(k).ok()));
+    let mut s = LogViewSettings::default()
+        .overlay(&LogViewSettings::from_env_with(|k| std::env::var(k).ok()));
     if let Some(st) = store {
         s = s.overlay(&stored(st).await);
     }
@@ -244,13 +261,17 @@ pub async fn resolve(store: Option<&ConfigStore>) -> LogViewSettings {
 /// validating the result. `reset` forgets every stored key first.
 pub async fn save(store: &ConfigStore, changes: &[(String, String)], reset: bool) -> Result<()> {
     let mut want = if reset {
-        KEYS.iter().map(|k| (k.to_string(), String::new())).collect()
+        KEYS.iter()
+            .map(|k| (k.to_string(), String::new()))
+            .collect()
     } else {
         stored(store).await
     };
     for (k, v) in changes {
         if !KEYS.contains(&k.as_str()) {
-            return Err(Error::Config(format!("Invalid system log settings: unknown key {k}")));
+            return Err(Error::Config(format!(
+                "Invalid system log settings: unknown key {k}"
+            )));
         }
         if let Some(e) = want.iter_mut().find(|(n, _)| n == k) {
             e.1 = v.trim().to_string();
@@ -261,7 +282,12 @@ pub async fn save(store: &ConfigStore, changes: &[(String, String)], reset: bool
         .overlay(&want);
     eff.validate()?;
     for (k, v) in &want {
-        let cur = store.load_system_config(k).await.ok().flatten().unwrap_or_default();
+        let cur = store
+            .load_system_config(k)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
         if &cur != v {
             store.save_system_config(k, v).await?;
         }
@@ -283,7 +309,9 @@ mod tests {
 
     #[test]
     fn layers_override_key_by_key_and_empty_is_unset() {
-        let env = LogViewSettings::from_env_with(|k| (k == "PATRONUS_SYSLOG").then(|| "/tmp/x".to_string()));
+        let env = LogViewSettings::from_env_with(|k| {
+            (k == "PATRONUS_SYSLOG").then(|| "/tmp/x".to_string())
+        });
         let s = LogViewSettings::default().overlay(&env).overlay(&[
             (K_DEFAULT_LIMIT.into(), "100".into()),
             (K_FILE_PATH.into(), "".into()),
@@ -294,24 +322,23 @@ mod tests {
 
     #[test]
     fn bad_values_are_refused() {
-        let mut s = LogViewSettings::default();
-        s.max_limit = 5000;
-        assert!(s.validate().is_err());
-        let mut s = LogViewSettings::default();
-        s.backend = "syslog".into();
-        assert!(s.validate().is_err());
-        let mut s = LogViewSettings::default();
-        s.unit_map = "dhcpd".into();
-        assert!(s.validate().is_err());
-        let mut s = LogViewSettings::default();
-        s.file_path = "messages".into();
-        assert!(s.validate().is_err());
+        let with = |f: fn(&mut LogViewSettings)| {
+            let mut s = LogViewSettings::default();
+            f(&mut s);
+            s.validate().is_err()
+        };
+        assert!(with(|s| s.max_limit = 5000));
+        assert!(with(|s| s.backend = "syslog".into()));
+        assert!(with(|s| s.unit_map = "dhcpd".into()));
+        assert!(with(|s| s.file_path = "messages".into()));
     }
 
     #[test]
     fn unit_map_and_markers_parse() {
-        let mut s = LogViewSettings::default();
-        s.unit_map = "dhcpd = dhcpd4, ntpd=chronyd".into();
+        let s = LogViewSettings {
+            unit_map: "dhcpd = dhcpd4, ntpd=chronyd".into(),
+            ..Default::default()
+        };
         assert_eq!(s.unit_pairs()[0], ("dhcpd".into(), "dhcpd4".into()));
         assert_eq!(s.unit_pairs().len(), 2);
         assert_eq!(s.markers(), vec!["Linux version ", "patronus-boot:"]);
