@@ -269,6 +269,12 @@ that are not finished are listed separately under
 - Syslog (USE=syslog): forward the system log to remote collectors (UDP or
   TCP, from a chosen severity up) through an rsyslog drop-in written and
   validated by Patronus, and read the local log on the Syslog page. [C46]
+- System log page (every tier, standard and router, access points too): the
+  system log with the priority the logger recorded, from journald or the syslog
+  file chosen at run time; filter by minimum priority, service, identifier with
+  a wildcard, kernel only, text and time span, follow it live (pause and resume),
+  see a separator at every boot, download the filtered view; filters stay in the
+  address. [C87]
 - NetFlow / IPFIX export (USE=netflow): softflowd on a chosen interface
   exports flow records (v5, v9 or IPFIX) to a collector. [C47]
 - IGMP proxy (USE=igmp): igmpproxy forwards multicast streams from the WAN to

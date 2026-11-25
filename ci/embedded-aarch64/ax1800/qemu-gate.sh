@@ -242,6 +242,32 @@ wifi_cli() { d=$(R 'patronus-cli ap-wifi export --json') || { echo "export faile
   a=$(R 'patronus-cli ap-wifi apply /tmp/apw.yaml; rm -f /tmp/apw.yaml; . /etc/patronus/board.sh; echo "CH=$AP_CHAN24"')
   has_all "$a" '"changed": true' 'CH=auto' || { echo "apply: $a"; return 1; }
   c=$(wapi -X PUT -d '{"chan24":"6"}' https://127.0.0.1:$WEBP/api/wifi); [ "$c" = 200 ] || { echo "PUT chan24 6: $c"; return 1; }; }
+# System log page API on the image's REAL busybox syslogd (facility.level in each line, tmpfs file, one rotated file):
+# a `logger -p daemon.err` line appears, the minimum-priority filter drops the info line, the boot record yields a
+# separator, a live line arrives on the SSE stream, and patronus-web's resident memory around the 2000-line reads is
+# recorded in results (docs/embedded-routers.md quotes it).
+syslog_view() { login || return 1
+  R 'logger -p daemon.err -t gate-ident "gate err line"; logger -p daemon.info -t gate-ident "gate info line"' || return 1
+  sleep 2
+  pid=$(R "pgrep -f '[p]atronus-web' | head -1"); r0=$(R "awk '/^VmRSS:/{print \$2}' /proc/$pid/status")
+  c=$(wapi "https://127.0.0.1:$WEBP/api/logs/system?identifier=gate-ident&min_priority=err"); g=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$g" '"message":"gate err line"' '"priority":3' '"backend":"files"' || { echo "err filter: $c $g"; return 1; }
+  case "$g" in *"gate info line"*) echo "min_priority=err returned the info line: $g"; return 1;; esac
+  c=$(wapi "https://127.0.0.1:$WEBP/api/logs/system?identifier=gate-*"); g=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$g" '"message":"gate err line"' '"message":"gate info line"' '"priority":6' || { echo "wildcard identifier: $c $g"; return 1; }
+  c=$(wapi "https://127.0.0.1:$WEBP/api/logs/system?limit=2000"); g=$(cat "$W/api.json")
+  [ "$c" = 200 ] && has_all "$g" '"type":"boot"' '"ident":"patronus-boot"' || { echo "no boot separator / boot record: $c $(echo "$g" | head -c 600)"; return 1; }
+  rm -f "$W/sse"; curl -sk -N -m 12 -b "$W/jar" "https://127.0.0.1:$WEBP/api/logs/system/stream?identifier=gate-live" > "$W/sse" 2>/dev/null &
+  sp=$!; i=0; while ! grep -q 'event: hello' "$W/sse" 2>/dev/null && [ $i -lt 40 ]; do sleep 0.5; i=$((i+1)); done
+  R 'logger -p daemon.warning -t gate-live "gate live line"' || { kill $sp 2>/dev/null; return 1; }
+  i=0; while ! grep -q 'gate live line' "$W/sse" 2>/dev/null && [ $i -lt 20 ]; do sleep 0.5; i=$((i+1)); done
+  kill $sp 2>/dev/null; wait $sp 2>/dev/null
+  grep -q 'gate live line' "$W/sse" || { echo "live stream: $(cat "$W/sse" | head -c 400)"; return 1; }
+  c=$(wapi -X PUT -d '{"settings":{"logview.max_limit":"99999"}}' "https://127.0.0.1:$WEBP/api/logs/system/settings"); [ "$c" = 400 ] || { echo "bad setting accepted: $c"; return 1; }
+  c=$(wapi "https://127.0.0.1:$WEBP/logs"); grep -q 'id="sl-pane"' "$W/api.json" && [ "$c" = 200 ] || { echo "/logs page: $c"; return 1; }
+  r1=$(R "awk '/^VmRSS:/{print \$2}' /proc/$pid/status")
+  echo "patronus-web VmRSS before the log reads: ${r0} kB, after: ${r1} kB" | tee -a "$RES/results.txt"
+  [ $((r1 - r0)) -lt 8192 ] || { echo "patronus-web grew by $((r1 - r0)) kB reading the log (budget 8192)"; return 1; }; }
 wifi_persisted() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi); g=$(cat "$W/api.json")
   [ "$c" = 200 ] && has_all "$g" '"ssid":"CI Gate Net"' '"chan24":"6"' '"ssid":"CI Gate IoT"' || { echo "after restart: $c $g"; return 1; }; }
 
@@ -555,6 +581,7 @@ if has_feature syslog; then
   check "Syslog page: a TCP collector is refused (busybox forwards over UDP only), nothing written" syslog_tcp_refused
 else echo "SKIP: Syslog (not in FEATURES=$FEATURES)" | tee -a "$RES/results.txt"; fi
 check "features: role ap, Wi-Fi backend, \"not available\" list with reasons" features_ap
+check "system log page API on the real busybox syslogd: priority read from the line, min_priority filter, wildcard, boot separator, live stream, RSS within budget" syslog_view
 check "AP role: router-only pages explain the main router, their APIs refuse changes (409); Wi-Fi page served" ap_pages
 check "dashboard widgets + system activity: both APIs answer 200 on the booted image, a layout round-trips, an unknown widget id is 400" dash_activity
 check "Wi-Fi channel plan: automatic channel (ACS) by default on both radios, width/DFS/channel lists/survey rounds settable, bad values 400" wifi_chanplan

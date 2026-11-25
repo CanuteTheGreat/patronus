@@ -36,7 +36,11 @@ use std::convert::Infallible;
 type Q = Query<HashMap<String, String>>;
 
 fn bad(msg: impl Into<String>) -> Response {
-    (StatusCode::BAD_REQUEST, Json(json!({ "error": msg.into() }))).into_response()
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({ "error": msg.into() })),
+    )
+        .into_response()
 }
 
 fn limit_of(q: &HashMap<String, String>, s: &cfg::LogViewSettings) -> Result<usize, Response> {
@@ -44,7 +48,10 @@ fn limit_of(q: &HashMap<String, String>, s: &cfg::LogViewSettings) -> Result<usi
         None => Ok(s.default_limit as usize),
         Some(v) => match v.parse::<u32>() {
             Ok(n) if n >= 1 => Ok(n.min(s.max_limit) as usize),
-            _ => Err(bad(format!("Invalid limit {v:?}: a number from 1 to {}", s.max_limit))),
+            _ => Err(bad(format!(
+                "Invalid limit {v:?}: a number from 1 to {}",
+                s.max_limit
+            ))),
         },
     }
 }
@@ -59,12 +66,20 @@ async fn system_log(State(st): State<AppState>, _me: AuthUser, Query(q): Q) -> R
         Ok(l) => l,
         Err(r) => return r,
     };
-    let cursor = q.get("cursor").map(String::as_str).filter(|c| !c.is_empty());
+    let cursor = q
+        .get("cursor")
+        .map(String::as_str)
+        .filter(|c| !c.is_empty());
     let page = logview::query(&s, &f, limit, cursor).await;
     Json(page.to_json()).into_response()
 }
 
-async fn stream(State(st): State<AppState>, _me: AuthUser, headers: HeaderMap, Query(q): Q) -> Response {
+async fn stream(
+    State(st): State<AppState>,
+    _me: AuthUser,
+    headers: HeaderMap,
+    Query(q): Q,
+) -> Response {
     let s = cfg::resolve(Some(&st.config_store)).await;
     let f = match Filter::from_query(&q) {
         Ok(f) => f,
@@ -74,7 +89,12 @@ async fn stream(State(st): State<AppState>, _me: AuthUser, headers: HeaderMap, Q
         .get("cursor")
         .cloned()
         .filter(|c| !c.is_empty())
-        .or_else(|| headers.get("last-event-id").and_then(|v| v.to_str().ok()).map(String::from))
+        .or_else(|| {
+            headers
+                .get("last-event-id")
+                .and_then(|v| v.to_str().ok())
+                .map(String::from)
+        })
         .filter(|c| !c.is_empty());
     let hello = json!({"backend": logview::choose(&s).name(), "max_secs": s.stream_max_secs});
     let (tx, rx) = tokio::sync::mpsc::channel::<Value>(256);
@@ -84,17 +104,19 @@ async fn stream(State(st): State<AppState>, _me: AuthUser, headers: HeaderMap, Q
     });
     let rest = futures::stream::unfold(rx, |mut rx| async move {
         let v = rx.recv().await?;
-        let mut ev = Event::default().event(v["type"].as_str().unwrap_or("line").to_string());
+        let mut ev = Event::default().event(v["type"].as_str().unwrap_or("line"));
         if let Some(c) = v["cursor"].as_str() {
-            ev = ev.id(c.to_string());
+            ev = ev.id(c);
         }
         Some((Ok::<Event, Infallible>(ev.data(v.to_string())), rx))
     });
     let mut r = Sse::new(futures::StreamExt::chain(first, rest))
         .keep_alive(KeepAlive::default())
         .into_response();
-    r.headers_mut().insert(header::CACHE_CONTROL, "no-cache".parse().unwrap());
-    r.headers_mut().insert("x-accel-buffering", "no".parse().unwrap());
+    r.headers_mut()
+        .insert(header::CACHE_CONTROL, "no-cache".parse().unwrap());
+    r.headers_mut()
+        .insert("x-accel-buffering", "no".parse().unwrap());
     r
 }
 
@@ -113,12 +135,19 @@ async fn download(State(st): State<AppState>, _me: AuthUser, Query(q): Q) -> Res
             "patronus-system-log.json",
         )
     } else {
-        (logview::download_text(&page.items), "text/plain; charset=utf-8", "patronus-system-log.txt")
+        (
+            logview::download_text(&page.items),
+            "text/plain; charset=utf-8",
+            "patronus-system-log.txt",
+        )
     };
     (
         [
             (header::CONTENT_TYPE, ctype.to_string()),
-            (header::CONTENT_DISPOSITION, format!("attachment; filename=\"{name}\"")),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{name}\""),
+            ),
         ],
         body,
     )
@@ -148,20 +177,34 @@ struct SettingsInput {
     reset: bool,
 }
 
-async fn put_settings(State(st): State<AppState>, _admin: AdminUser, Json(i): Json<SettingsInput>) -> Response {
+async fn put_settings(
+    State(st): State<AppState>,
+    _admin: AdminUser,
+    Json(i): Json<SettingsInput>,
+) -> Response {
     let changes: Vec<(String, String)> = i.settings.into_iter().collect();
     match cfg::save(&st.config_store, &changes, i.reset).await {
         Ok(()) => {
             let keys: Vec<String> = changes.iter().map(|c| c.0.clone()).collect();
             let _ = st
                 .config_store
-                .audit("web", "update", "logview_settings", None, &json!({"keys": keys, "reset": i.reset}))
+                .audit(
+                    "web",
+                    "update",
+                    "logview_settings",
+                    None,
+                    &json!({"keys": keys, "reset": i.reset}),
+                )
                 .await;
             settings_json(&st).await
         }
         Err(e) => {
             let m = e.to_string();
-            let code = if m.contains("Invalid") { StatusCode::BAD_REQUEST } else { StatusCode::INTERNAL_SERVER_ERROR };
+            let code = if m.contains("Invalid") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
             (code, Json(json!({ "error": m }))).into_response()
         }
     }
@@ -183,7 +226,12 @@ struct SystemLogTemplate {
 }
 
 async fn page(me: AuthUser) -> Response {
-    match (SystemLogTemplate { page: "logs", is_admin: me.session.role.is_admin() }).render() {
+    match (SystemLogTemplate {
+        page: "logs",
+        is_admin: me.session.role.is_admin(),
+    })
+    .render()
+    {
         Ok(h) => Html(h).into_response(),
         Err(e) => {
             tracing::error!("render system log: {e}");
