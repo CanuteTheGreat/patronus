@@ -15,6 +15,7 @@
 //! an empty list (see tests/no_fixtures.rs).
 
 pub mod activity;
+pub mod accesslog;
 pub mod firewall;
 pub mod fwfeeds;
 pub mod fwlog;
@@ -80,6 +81,8 @@ pub struct AppState {
     pub secrets: Arc<SecretManager>,
     /// Remote / encrypted automatic backups.
     pub backup_targets: crate::backup_remote::BackupTargets,
+    /// Web/API access log writer (queue handle).
+    pub access_log: accesslog::Handle,
 }
 
 impl AppState {
@@ -94,7 +97,9 @@ impl AppState {
             config_store.clone(),
             firewall_applier.clone(),
         ));
+        let access_log = accesslog::spawn(config_store.clone()).await;
         Ok(Self {
+            access_log,
             interfaces: Arc::new(InterfacesManager::system(
                 config_store.clone(),
                 firewall_applier.clone(),

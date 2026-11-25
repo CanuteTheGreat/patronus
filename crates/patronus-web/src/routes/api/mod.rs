@@ -3,6 +3,7 @@
 //! All API endpoints return JSON responses.
 
 pub mod activity;
+pub mod accesslog;
 pub mod apikeys;
 pub mod authservers;
 pub mod backup_targets;
