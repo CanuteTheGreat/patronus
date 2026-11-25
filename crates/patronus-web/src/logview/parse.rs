@@ -249,7 +249,9 @@ fn finish(
     markers: &[String],
 ) -> Entry {
     let kernel = is_kernel(&facility, &ident);
-    let boot_marker = markers.iter().any(|m| message.contains(m.as_str()));
+    // the marker may be the tag (`patronus-boot: boot <id>`) or text in the message (`Linux version ...`)
+    let whole = format!("{ident}: {message}");
+    let boot_marker = markers.iter().any(|m| whole.contains(m.as_str()));
     Entry {
         ts,
         host: host.to_string(),

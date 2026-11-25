@@ -532,7 +532,7 @@ mod tests {
         let cur = p1.older_cursor.clone().unwrap();
         let p2 = query_files(&s, &Filter::default(), 3, Some(&cur));
         let m2: Vec<&str> = p2.items.iter().filter(|i| i["type"] == "line").map(|i| i["message"].as_str().unwrap()).collect();
-        assert_eq!(m2, ["link flapping", "failed to bind", "wl5: AP-ENABLED"]);
+        assert_eq!(m2, ["wl5: AP-ENABLED", "failed to bind", "link flapping"]);
     }
 
     #[test]
