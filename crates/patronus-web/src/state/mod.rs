@@ -177,6 +177,17 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
     for w in &seeded.warnings {
         tracing::warn!("{w}");
     }
+    // router tier: management access from the upstream LAN lives in the store (the boot unit
+    // normally seeded it already; this covers a web start that came first)
+    let mgmt = patronus_config::ensure_management(
+        &store,
+        &patronus_config::ManagementSpec::from_env(),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("seeding upstream management rules: {e}"))?;
+    for w in &mgmt.warnings {
+        tracing::warn!("{w}");
+    }
     let applier: Arc<dyn Applier> = Arc::new(patronus_firewall::FirewallApplier);
     let state = AppState::new(store.clone(), applier.clone()).await?;
     // Interfaces before the firewall (boot phase order). A failure here is

@@ -275,10 +275,10 @@ src_one() {
   log "$sta: replies from ${a%/*} leave by $sta (table $tbl${gw:+, gateway $gw})"
 }
 
-# Any later apply (uplink change, config save, applyd refresh) rebuilds the whole inet patronus table and drops the boot-time
-# management accept that apply installs from unit.conf MGMT_NET: SSH/web then time out from the house LAN (2026-11-24: the
-# vulnerability inventory lost the unit that way). Re-assert it from this daemon (idempotent: apply mgmt inserts only when the
-# rule is absent), every MGMT_EVERY passes.
+# Management from the house LAN is a system rule in the config store ("Upstream management via <if>"), so applies keep it. This
+# re-assert is only the SAFETY NET (kept, not removed: it costs one nft list per MGMT_EVERY passes and covers a table loaded
+# without the store rule: unreadable store, emergency lockdown from an older store, a manual `nft -f`). `apply mgmt` does nothing
+# while the store rule is in the chain, and inserts the boot rule only when it is absent.
 MGMT_APPLY=${MGMT_APPLY:-/usr/libexec/patronus/apply}
 MGMT_EVERY=${MGMT_EVERY:-5}
 mgmt_n=0
