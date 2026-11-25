@@ -550,6 +550,14 @@ check "Wi-Fi page API: networks + radios written to the access-point file (0600)
 check "Wi-Fi restart path: hostapd started into its own transient scope (systemd)" wifi_scope
 check "backup includes the access-point Wi-Fi file; restoring the backup puts it back" wifi_backup
 check "patronus ap-wifi: declarative export (no keys), plan shows only the edited setting, apply writes it" wifi_cli
+# the first-boot bootstrap keys the ISO installer writes (bond + VLANs + management network) are read by this tier's binary too:
+# a dry run against a scratch store renders the management-only rule for the VLAN; nothing on the unit changes
+bootstrap_lagg() { o=$(R 'd=$(mktemp -d) && printf "%s\n" "[network]" "wan_interface = \"bond0.100\"" "mgmt_interface = \"bond0.20\"" \
+    "[[network.bond]]" "name = \"bond0\"" "members = [\"eth0\", \"eth1\"]" "mode = \"802.3ad\"" \
+    "[[network.vlan]]" "parent = \"bond0\"" "tag = 100" "[[network.vlan]]" "parent = \"bond0\"" "tag = 20" > $d/p.toml &&
+    PATRONUS_DB=$d/c.db patronus-cli apply --dry-run --bootstrap $d/p.toml --phase firewall; rc=$?; rm -rf $d; exit $rc' 2>&1) || { echo "$o" | tail -5; return 1; }
+  has_all "$o" 'iifname != { "bond0.20" }' 'Management network only' || { echo "$o" | grep -n 'dport' | head -5; return 1; }; }
+check "first-boot bootstrap: bond + VLAN + management network keys accepted, management-only rule rendered (dry run, scratch store)" bootstrap_lagg
 check "Wi-Fi steering + misbehaving-station limits: defaults, live steering change in ap.env, bad values 400, ap-steer status runs" wifi_steer
 check "Wi-Fi channel choice: defaults, live change in ap.env, bad values 400, ap-chan scores, channels + history in GET" wifi_chan
 check "firmware page API: running build shown, a non-image upload refused by patronus-flash and not kept" fw_web

@@ -1,8 +1,4 @@
-/// `wan`, `lan`, `mgmt` (a dedicated management network) or `opt<N>`.
-pub fn is_valid_role(r: &str) -> bool {
-    r == "wan"
-        || r == "lan"
-        || r == "mgmt"//! Persistent configuration store (SQLite).
+//! Persistent configuration store (SQLite).
 //!
 //! This is the single source of truth for every subsystem: the web UI, the
 //! CLI and the GitOps engine write rows here, and the per-subsystem

@@ -440,6 +440,25 @@ pub async fn set_outbound(State(state): State<AppState>, Json(b): Json<ModeBody>
     }
 }
 
+/// GET /api/firewall/mgmt-only  {"enabled": bool}
+pub async fn get_mgmt_only(State(state): State<AppState>) -> Response {
+    Json(serde_json::json!({ "enabled": state.firewall.mgmt_only().await })).into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct MgmtOnlyBody {
+    pub enabled: bool,
+}
+
+/// PUT /api/firewall/mgmt-only  {"enabled": true|false}: with a management
+/// network (interface role `mgmt`), SSH and the web UI answer only there.
+pub async fn set_mgmt_only(State(state): State<AppState>, Json(b): Json<MgmtOnlyBody>) -> Response {
+    match state.firewall.set_mgmt_only(b.enabled).await {
+        Ok(_) => ok("Management network setting updated"),
+        Err(e) => err("Failed to change the management network setting", e),
+    }
+}
+
 /// GET /api/firewall/aliases
 pub async fn list_aliases(State(state): State<AppState>) -> Response {
     match state.firewall.list_alias_objects().await {
@@ -802,6 +821,7 @@ pub fn router() -> axum::Router<AppState> {
             "/firewall/nat/outbound",
             get(get_outbound).put(set_outbound),
         )
+        .route("/firewall/mgmt-only", get(get_mgmt_only).put(set_mgmt_only))
         .route(
             "/firewall/nat/:id",
             get(get_nat_rule)

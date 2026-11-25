@@ -109,13 +109,15 @@ fn resolve_iface(value: &Option<String>, roles: &Roles) -> Option<Vec<Option<Str
     let named = |r: &str| roles.get(r).filter(|v| !v.is_empty()).cloned();
     if role == "mgmt" {
         // a dedicated management network (role `mgmt`) first, else LAN, else WAN
-        return Some(match named("mgmt")
-            .or_else(|| named("lan"))
-            .or_else(|| named("wan"))
-        {
-            Some(names) => names.into_iter().map(Some).collect(),
-            None => vec![None],
-        });
+        return Some(
+            match named("mgmt")
+                .or_else(|| named("lan"))
+                .or_else(|| named("wan"))
+            {
+                Some(names) => names.into_iter().map(Some).collect(),
+                None => vec![None],
+            },
+        );
     }
     named(&role).map(|names| names.into_iter().map(Some).collect())
 }

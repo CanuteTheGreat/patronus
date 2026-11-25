@@ -67,7 +67,14 @@ pub const MGMT_ONLY_KEY: &str = "firewall.mgmt_only";
 
 /// [`MGMT_ONLY_KEY`]: on unless it is set to `0` / `false` / `off` / `no`.
 pub async fn mgmt_only(store: &ConfigStore) -> bool {
-    parse_mgmt_only(store.load_system_config(MGMT_ONLY_KEY).await.ok().flatten().as_deref())
+    parse_mgmt_only(
+        store
+            .load_system_config(MGMT_ONLY_KEY)
+            .await
+            .ok()
+            .flatten()
+            .as_deref(),
+    )
 }
 
 /// The value of [`MGMT_ONLY_KEY`] (`None` = unset = on).
@@ -286,7 +293,10 @@ impl Bootstrap {
         let mut names: Vec<String> = Vec::new();
         for b in &self.bonds {
             if !ifname_ok(&b.name) {
-                return bad(format!("bond name {:?} is not a valid interface name", b.name));
+                return bad(format!(
+                    "bond name {:?} is not a valid interface name",
+                    b.name
+                ));
             }
             if !BOND_MODES.contains(&b.mode.as_str()) {
                 return bad(format!(
@@ -695,15 +705,35 @@ mod tests {
             b.validate().unwrap_err().to_string()
         };
         let base = "[[network.bond]]\nname='bond0'\nmembers=['eth0','eth1']\n";
-        assert!(err("[[network.bond]]\nname='bond0'\nmembers=['eth0']\nmode='lacp'\n").contains("mode"));
+        assert!(
+            err("[[network.bond]]\nname='bond0'\nmembers=['eth0']\nmode='lacp'\n").contains("mode")
+        );
         assert!(err("[[network.bond]]\nname='bond0'\n").contains("no member"));
-        assert!(err(&format!("{base}[[network.bond]]\nname='bond1'\nmembers=['eth1']\n")).contains("two bonds"));
-        assert!(err("[[network.bond]]\nname='b'\nmembers=['e']\nlacp_rate='fast'\n").contains("802.3ad"));
-        assert!(err("[[network.bond]]\nname='b'\nmembers=['e']\nmode='802.3ad'\nxmit_hash_policy='l9'\n").contains("xmit_hash_policy"));
-        assert!(err(&format!("{base}[[network.vlan]]\nparent='bond0'\ntag=0\n")).contains("1-4094"));
-        assert!(err(&format!("{base}[[network.vlan]]\nparent='bond0'\ntag=4095\n")).contains("1-4094"));
-        assert!(err(&format!("{base}[[network.vlan]]\nparent='eth0'\ntag=5\n")).contains("bond member"));
-        assert!(err("[[network.vlan]]\nparent='enp0s31f6abcd'\ntag=4000\n").contains("15 characters"));
+        assert!(err(&format!(
+            "{base}[[network.bond]]\nname='bond1'\nmembers=['eth1']\n"
+        ))
+        .contains("two bonds"));
+        assert!(
+            err("[[network.bond]]\nname='b'\nmembers=['e']\nlacp_rate='fast'\n")
+                .contains("802.3ad")
+        );
+        assert!(err(
+            "[[network.bond]]\nname='b'\nmembers=['e']\nmode='802.3ad'\nxmit_hash_policy='l9'\n"
+        )
+        .contains("xmit_hash_policy"));
+        assert!(
+            err(&format!("{base}[[network.vlan]]\nparent='bond0'\ntag=0\n")).contains("1-4094")
+        );
+        assert!(err(&format!(
+            "{base}[[network.vlan]]\nparent='bond0'\ntag=4095\n"
+        ))
+        .contains("1-4094"));
+        assert!(
+            err(&format!("{base}[[network.vlan]]\nparent='eth0'\ntag=5\n")).contains("bond member")
+        );
+        assert!(
+            err("[[network.vlan]]\nparent='enp0s31f6abcd'\ntag=4000\n").contains("15 characters")
+        );
         assert!(err(&format!("{base}[network]\nwan_interface='eth1'\n")).contains("bond member"));
         assert!(err("[network]\nlan_interface='eth1'\nmgmt_interface='eth1'\n[[network.vlan]]\nparent='eth1'\ntag=2\n").contains("management"));
     }
@@ -720,8 +750,14 @@ mod tests {
         let existing = vec!["eth0".to_string(), "eth1".into(), "eth2".into()];
         let r = ensure_defaults(&s, Some(&b), &existing).await.unwrap();
         assert!(r.warnings.is_empty(), "{:?}", r.warnings);
-        assert_eq!(s.interfaces_with_role("wan").await.unwrap(), vec!["bond0.100"]);
-        assert_eq!(s.interfaces_with_role("mgmt").await.unwrap(), vec!["bond0.20"]);
+        assert_eq!(
+            s.interfaces_with_role("wan").await.unwrap(),
+            vec!["bond0.100"]
+        );
+        assert_eq!(
+            s.interfaces_with_role("mgmt").await.unwrap(),
+            vec!["bond0.20"]
+        );
         assert_eq!(s.interfaces_with_role("lan").await.unwrap(), vec!["eth2"]);
     }
 

@@ -216,9 +216,10 @@ fn plan(
             let wan = b.wan.first().ok_or_else(|| {
                 anyhow::anyhow!("[firstboot] wan_mode static needs wan_interface")
             })?;
-            let addr = s.wan_address.as_deref().ok_or_else(|| {
-                anyhow::anyhow!("[firstboot] wan_mode static needs wan_address")
-            })?;
+            let addr = s
+                .wan_address
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("[firstboot] wan_mode static needs wan_address"))?;
             let n = net("wan_address", addr)?;
             let gw = opt_ip("wan_gateway", s.wan_gateway.as_deref())?;
             if let Some(g) = gw {
@@ -243,7 +244,9 @@ fn plan(
                 .pppoe_username
                 .clone()
                 .filter(|u| !u.trim().is_empty())
-                .ok_or_else(|| anyhow::anyhow!("[firstboot] wan_mode pppoe needs pppoe_username"))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!("[firstboot] wan_mode pppoe needs pppoe_username")
+                })?;
             let dev = s
                 .pppoe_device
                 .clone()
@@ -503,8 +506,10 @@ mod tests {
         };
         assert!(bad("[network]\nwan_interface='eth0'\n[firstboot]\nwan_mode='static'\nwan_address='198.51.100.2/24'\nwan_gateway='10.0.0.1'\n").contains("not inside"));
         assert!(bad("[network]\nwan_interface='eth0'\n[firstboot]\nwan_mode='static'\nwan_address='198.51.100.2'\n").contains("prefix"));
-        assert!(bad("[network]\nwan_interface='eth0'\n[firstboot]\nwan_mode='pppoe'\n")
-            .contains("pppoe_username"));
+        assert!(
+            bad("[network]\nwan_interface='eth0'\n[firstboot]\nwan_mode='pppoe'\n")
+                .contains("pppoe_username")
+        );
         assert!(bad("[[network.vlan]]\nparent='eth0'\ntag=5000\n").contains("1-4094"));
     }
 }
