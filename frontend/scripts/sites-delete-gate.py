@@ -32,6 +32,7 @@ port = srv.server_address[1]
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 
 deletes, fails, updates = [], [], []
+empty_overview = [False]
 
 
 def expect(cond, msg):
@@ -50,7 +51,10 @@ def route(r):
             updates.append(body.get('variables', {}).get('input'))
             r.fulfill(json=dict(data=dict(updateSite=dict(id='0', name='x', location='y', __typename='GqlSite'))))
         else:
-            r.fulfill(json=gql(body))
+            g = gql(body)
+            if empty_overview[0] and 'overview' in g.get('data', g):
+                (g.get('data') or g)['overview'].update(totalSites=0, activeSites=0, totalLinks=0, healthyLinks=0)
+            r.fulfill(json=g)
     elif '/ha/cluster' in u: r.fulfill(json=CLUSTER)
     elif '/api/v1/auth/login' in u:
         r.fulfill(json=dict(access_token='t', refresh_token='r', user=dict(id='1', email='admin@example.com', name='Admin', role='admin')))
@@ -128,6 +132,13 @@ with sync_playwright() as p:
     card = pg.locator('[data-testid=topology-preview]')
     txt = card.inner_text()
     expect('3 sites' in txt and 'HQ Chicago' in txt and 'links up' in txt, f'dashboard topology card lists counts and site names (got {txt!r})')
+    # dashboard: no first-run guide while sites exist; with none, a guide that links to Add a site
+    expect(pg.locator('[data-testid=first-run-guide]').count() == 0, 'dashboard has no first-run guide when sites exist')
+    empty_overview[0] = True
+    pg.goto(f'http://127.0.0.1:{port}/')
+    pg.wait_for_selector('[data-testid=first-run-guide]', timeout=15000)
+    expect(pg.get_by_role('link', name='Add your first site').get_attribute('href') == '/sites', 'empty dashboard shows a first-run guide linking to Sites')
+    empty_overview[0] = False
     # security: the type cards and search filter Recent Events (no dead summaries)
     pg.goto(f'http://127.0.0.1:{port}/security')
     pg.wait_for_selector('text=Port scan', timeout=15000)

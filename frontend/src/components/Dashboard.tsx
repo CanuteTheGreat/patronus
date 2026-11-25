@@ -106,6 +106,20 @@ export default function Dashboard() {
     <div className="space-y-6">
       <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Dashboard</h1>
 
+      {overview.totalSites === 0 && (
+        <div data-testid="first-run-guide" className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30 p-5">
+          <h2 className="text-lg font-semibold text-blue-900 dark:text-blue-100">Welcome - nothing is connected yet</h2>
+          <p className="mt-1 text-sm text-blue-900 dark:text-blue-100">
+            The numbers below fill in once the first site reports. Get started:
+          </p>
+          <ol className="mt-2 list-decimal pl-5 text-sm text-blue-900 dark:text-blue-100 space-y-1">
+            <li><Link to="/sites" className="underline font-medium">Add your first site</Link> (a branch, data centre or cloud network).</li>
+            <li>Install the edge agent on it with the enrolment command shown there.</li>
+            <li>Come back here, or open <Link to="/topology" className="underline font-medium">Topology</Link>, to watch links come up.</li>
+          </ol>
+        </div>
+      )}
+
       {/* Stats Grid */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((stat) => (
