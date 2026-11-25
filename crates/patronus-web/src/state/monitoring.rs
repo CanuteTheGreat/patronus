@@ -204,63 +204,6 @@ impl MonitoringManager {
 
         Ok(threats)
     }
-
-    /// Live logs widget: backed by the real system journal via
-    /// `patronus-monitoring::status::StatusPageManager::get_logs`, which
-    /// shells out to `journalctl --output=json`. On Gentoo hosts running
-    /// OpenRC without the `systemd` USE flag there is no journald, so this
-    /// returns an empty list in that case rather than fabricating lines.
-    #[cfg(not(feature = "journal"))]
-    pub async fn get_live_logs(
-        &self,
-        limit: u32,
-    ) -> anyhow::Result<Vec<crate::templates::LogEntry>> {
-        Ok(read_syslog_file(limit as usize))
-    }
-
-    #[cfg(feature = "journal")]
-    pub async fn get_live_logs(
-        &self,
-        limit: u32,
-    ) -> anyhow::Result<Vec<crate::templates::LogEntry>> {
-        let entries = patronus_monitoring::status::StatusPageManager::get_logs(None, None, limit)
-            .await
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        Ok(entries
-            .into_iter()
-            .map(|e| {
-                let timestamp = e
-                    .timestamp
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| {
-                        chrono::DateTime::<chrono::Utc>::from_timestamp(
-                            d.as_secs() as i64,
-                            d.subsec_nanos(),
-                        )
-                        .map(|dt| dt.to_rfc3339())
-                        .unwrap_or_default()
-                    })
-                    .unwrap_or_default();
-
-                let level_color = match e.severity.as_str() {
-                    "emergency" | "alert" | "critical" | "error" => "#ff4444",
-                    "warning" => "#ffaa00",
-                    "notice" | "info" => "#00aaff",
-                    _ => "#888888",
-                }
-                .to_string();
-
-                crate::templates::LogEntry {
-                    timestamp,
-                    level: e.severity,
-                    component: e.source.unwrap_or(e.facility),
-                    message: e.message,
-                    level_color,
-                }
-            })
-            .collect())
-    }
 }
 
 #[cfg(feature = "threat-feeds")]
@@ -380,37 +323,4 @@ ipv4     2 icmp     1 29 src=192.168.50.10 dst=198.51.100.10 type=8 code=0 id=7 
         assert_eq!(metrics.network_rx_rate, 0);
         assert_eq!(metrics.network_tx_rate, 0);
     }
-}
-
-/// Embedded tier (no journald): the last `limit` lines of the syslog file
-/// (`$PATRONUS_SYSLOG` or /var/log/messages). Empty when the file is absent.
-#[cfg(not(feature = "journal"))]
-fn read_syslog_file(limit: usize) -> Vec<crate::templates::LogEntry> {
-    let path = std::env::var("PATRONUS_SYSLOG").unwrap_or_else(|_| "/var/log/messages".into());
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return Vec::new();
-    };
-    let lines: Vec<&str> = text.lines().collect();
-    let start = lines.len().saturating_sub(limit);
-    lines[start..]
-        .iter()
-        .rev()
-        .map(|l| {
-            let low = l.to_ascii_lowercase();
-            let (level, color) = if low.contains("error") || low.contains("fail") {
-                ("error", "#ff4444")
-            } else if low.contains("warn") {
-                ("warning", "#ffaa00")
-            } else {
-                ("info", "#00aaff")
-            };
-            crate::templates::LogEntry {
-                timestamp: l.chars().take(15).collect(),
-                level: level.to_string(),
-                component: "syslog".to_string(),
-                message: l.chars().skip(16).collect(),
-                level_color: color.to_string(),
-            }
-        })
-        .collect()
 }
