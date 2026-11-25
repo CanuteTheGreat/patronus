@@ -85,6 +85,13 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
         &std::fs::read_to_string("/proc/net/route").unwrap_or_default(),
     )
     .unwrap_or_default();
+    // Lease count for the DHCP tile: only when the server answers with a lease list.
+    let dhcp_leases = state
+        .lan
+        .status("dhcp")
+        .await
+        .ok()
+        .and_then(|v| v.get("leases").and_then(|l| l.as_array()).map(|a| a.len()));
     let template = DashboardTemplate {
         page: "dashboard",
         uptime: host::format_duration(system_info.uptime),
@@ -96,6 +103,7 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
         services,
         internet_dev: gw.0,
         internet_gw: gw.1,
+        dhcp_leases,
     };
     render(&template, "dashboard")
 }

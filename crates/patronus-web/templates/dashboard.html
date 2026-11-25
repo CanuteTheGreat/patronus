@@ -91,12 +91,19 @@ fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() :
         <div class="label">Live tunnels may be missing from this count (<a href="/vpn">VPN</a>)</div>
     </div>
     {% endif %}
+    {% if let Some(n) = dhcp_leases %}
+    <div class="stat-card">
+        <h2>DHCP leases</h2>
+        <div class="value" id="dhcp-leases">{{ n }}</div>
+        <div class="label">Clients holding a lease (<a href="/dhcp">DHCP</a>)</div>
+    </div>
+    {% endif %}
     <div class="stat-card">
         <h2>System</h2>
         <div class="label">CPU {{ "{:.1}"|format(system_info.cpu_usage) }}% &middot;
             memory {{ "{:.1}"|format(system_info.memory_usage) }}% &middot;
             disk / {{ "{:.1}"|format(system_info.disk_usage) }}%</div>
-        <div class="label">load {{ system_info.load_avg.0 }} / {{ system_info.load_avg.1 }} / {{ system_info.load_avg.2 }}</div>
+        <div class="label">load {{ system_info.load_avg.0 }} / {{ system_info.load_avg.1 }} / {{ system_info.load_avg.2 }} &middot; <a href="/system">System</a></div>
     </div>
 </div>
 

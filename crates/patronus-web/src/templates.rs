@@ -23,6 +23,8 @@ pub struct DashboardTemplate {
     /// Default IPv4 route as `(device, gateway)`; empty = no route to the internet.
     pub internet_dev: String,
     pub internet_gw: String,
+    /// Active DHCP leases; `None` = the DHCP server is not configured or its state could not be read (tile hidden).
+    pub dhcp_leases: Option<usize>,
 }
 
 /// Firewall template
@@ -748,6 +750,7 @@ mod tests {
             services: vec![],
             internet_dev: String::new(),
             internet_gw: String::new(),
+            dhcp_leases: None,
         }
         .render()
         .unwrap()
@@ -769,6 +772,7 @@ mod tests {
             services: vec![],
             internet_dev: "enp0s1".into(),
             internet_gw: "10.0.2.2".into(),
+            dhcp_leases: Some(3),
         }
         .render()
         .unwrap();
@@ -776,6 +780,33 @@ mod tests {
             up.contains("Route up") && up.contains("10.0.2.2") && up.contains("enp0s1"),
             "{up}"
         );
+    }
+
+    /// The dashboard shows how many DHCP clients hold a lease, linked to the DHCP page.
+    #[test]
+    fn dashboard_dhcp_tile_counts_leases_and_hides_without_dhcp() {
+        let hidden = dashboard(0, vec![]);
+        assert!(!hidden.contains("dhcp-leases"), "{hidden}");
+        let mut t = DashboardTemplate {
+            page: "dashboard",
+            interfaces: vec![],
+            active_rules: 0,
+            vpn_connections: 0,
+            vpn_errors: vec![],
+            system_info: SystemInfo::default(),
+            uptime: "1 min".into(),
+            services: vec![],
+            internet_dev: String::new(),
+            internet_gw: String::new(),
+            dhcp_leases: Some(7),
+        };
+        let shown = t.render().unwrap();
+        assert!(
+            shown.contains(r#"id="dhcp-leases">7</div>"#) && shown.contains(r#"href="/dhcp""#),
+            "{shown}"
+        );
+        t.dhcp_leases = Some(0);
+        assert!(t.render().unwrap().contains(r#"id="dhcp-leases">0</div>"#));
     }
 
     /// A failed VPN read must not render as a plain "0" (finding: a box
