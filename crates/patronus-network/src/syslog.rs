@@ -37,6 +37,85 @@ pub const BB_LAUNCHER: &str = "/usr/libexec/patronus/syslogd";
 pub const BB_CONF: &str = "/etc/patronus/syslogd-remote.conf";
 pub const BB_SERVICE: &str = "patronus-syslogd";
 
+/// The system log viewer (`/logs`) reads the priority from each line. busybox syslogd writes
+/// `facility.level` itself; on the standard tier Patronus configures the installed logger to write
+/// a second file (`logview.managed_file`) in the same shape, next to the distribution's own.
+pub const PRIO_RSYSLOG_CONF: &str = "/etc/rsyslog.d/40-patronus-priority.conf";
+pub const PRIO_SYSLOGNG_CONF: &str = "/etc/syslog-ng/conf.d/patronus-priority.conf";
+pub const PRIO_SYSKLOGD_CONF: &str = "/etc/syslog.d/patronus-priority.conf";
+pub const PRIO_LOGROTATE_CONF: &str = "/etc/logrotate.d/patronus-system";
+
+/// Which system logger is installed (the router tier's busybox first).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Logger {
+    Busybox,
+    Rsyslog,
+    SyslogNg,
+    Sysklogd,
+}
+
+pub fn logger_kind(env: &LanEnv) -> Option<Logger> {
+    if env.has_binary(BB_LAUNCHER) {
+        Some(Logger::Busybox)
+    } else if env.has_binary(BIN) {
+        Some(Logger::Rsyslog)
+    } else if env.has_binary("/usr/sbin/syslog-ng") {
+        Some(Logger::SyslogNg)
+    } else if env.has_binary("/usr/sbin/syslogd") {
+        Some(Logger::Sysklogd)
+    } else {
+        None
+    }
+}
+
+/// rsyslog drop-in: `<time> <host> <facility>.<severity> <tag> <text>`.
+pub fn render_prio_rsyslog(file: &str) -> String {
+    let mut c = lan::header("#", "rsyslog: system log with the priority in every line");
+    c.push_str(&format!(
+        "template(name=\"PatronusSystemLog\" type=\"string\" string=\"%timegenerated:::date-rfc3339% %hostname% %syslogfacility-text%.%syslogseverity-text% %syslogtag%%msg:::sp-if-no-1st-sp%%msg:::drop-last-lf%\\n\")\n\
+         *.* action(type=\"omfile\" file=\"{file}\" template=\"PatronusSystemLog\" createDirs=\"on\" dirCreateMode=\"0755\" fileCreateMode=\"0640\")\n"
+    ));
+    c
+}
+
+/// syslog-ng drop-in; `source` is the name the main configuration gives its system source.
+pub fn render_prio_syslogng(file: &str, source: &str) -> String {
+    let mut c = lan::header("#", "syslog-ng: system log with the priority in every line");
+    c.push_str(&format!(
+        "destination d_patronus_system {{ file(\"{file}\" create-dirs(yes) dir-perm(0755) perm(0640)\n\
+         \ttemplate(\"${{ISODATE}} ${{HOST}} ${{FACILITY}}.${{LEVEL}} ${{PROGRAM}}[${{PID}}]: ${{MESSAGE}}\\n\")); }};\n\
+         log {{ source({source}); destination(d_patronus_system); }};\n"
+    ));
+    c
+}
+
+/// sysklogd (troglobit) drop-in: its RFC 5424 file format carries `<PRI>`.
+pub fn render_prio_sysklogd(file: &str) -> String {
+    let mut c = lan::header("#", "sysklogd: system log with the priority in every line");
+    c.push_str(&format!("*.*\t{file}\t;RFC5424\n"));
+    c
+}
+
+/// Rotation for the managed file: the viewer reads `.1`; older ones are compressed (not read).
+pub fn render_prio_logrotate(file: &str, rotate: u32) -> String {
+    let mut c = lan::header("#", "logrotate: system log");
+    c.push_str(&format!(
+        "{file} {{\n\tsize 20M\n\trotate {}\n\tmissingok\n\tnotifempty\n\tdelaycompress\n\tcompress\n\tcopytruncate\n}}\n",
+        rotate.max(1)
+    ));
+    c
+}
+
+/// Name of the system source in a syslog-ng main configuration (`source s_sys { ... };`).
+pub fn syslogng_source(main_conf: &str) -> Option<String> {
+    main_conf.lines().find_map(|l| {
+        let l = l.trim();
+        let r = l.strip_prefix("source ")?;
+        let name: String = r.chars().take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-').collect();
+        (!name.is_empty()).then_some(name)
+    })
+}
+
 /// Which system logger forwards: rsyslog when installed, else the embedded
 /// tier's busybox syslogd (when its launcher exists).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,6 +370,63 @@ impl SyslogApplier {
         ));
         Ok(rep)
     }
+
+    /// Standard tier: make the installed logger write the viewer's file with the priority in every
+    /// line (`logview.manage_logger`). Nothing is written when no such logger is installed (the router
+    /// tier's busybox syslogd already writes `facility.level`).
+    async fn apply_priority_format(&self, store: &ConfigStore, rep: &mut ApplyReport) -> Result<()> {
+        let s = patronus_config::logview::resolve(Some(store)).await;
+        if !s.manage_logger {
+            return Ok(());
+        }
+        let (conf, content, service, check): (&'static str, String, &str, Option<Vec<&'static str>>) =
+            match logger_kind(&self.env) {
+                Some(Logger::Rsyslog) => {
+                    let main = std::fs::read_to_string(self.env.path("/etc/rsyslog.conf")).unwrap_or_default();
+                    if !includes_dropins(&main) {
+                        rep.warn(
+                            "/etc/rsyslog.conf does not include /etc/rsyslog.d: the system log page cannot read priorities \
+                             (add `$IncludeConfig /etc/rsyslog.d/*.conf`)"
+                                .to_string(),
+                        );
+                        return Ok(());
+                    }
+                    (PRIO_RSYSLOG_CONF, render_prio_rsyslog(&s.managed_file), SERVICE, Some(vec![BIN, "-N1", "-f", "{}"]))
+                }
+                Some(Logger::SyslogNg) => {
+                    let main = std::fs::read_to_string(self.env.path("/etc/syslog-ng/syslog-ng.conf")).unwrap_or_default();
+                    let Some(src) = syslogng_source(&main) else {
+                        rep.warn("no source found in /etc/syslog-ng/syslog-ng.conf: the system log page cannot read priorities".to_string());
+                        return Ok(());
+                    };
+                    if !main.contains("conf.d") {
+                        rep.warn("/etc/syslog-ng/syslog-ng.conf does not include conf.d: the system log page cannot read priorities".to_string());
+                        return Ok(());
+                    }
+                    (PRIO_SYSLOGNG_CONF, render_prio_syslogng(&s.managed_file, &src), "syslog-ng", None)
+                }
+                Some(Logger::Sysklogd) => (PRIO_SYSKLOGD_CONF, render_prio_sysklogd(&s.managed_file), "sysklogd", None),
+                _ => return Ok(()),
+            };
+        let changed = lan::install(
+            &self.env,
+            &ManagedFile { path: conf, content, mode: 0o644, group: None, check },
+        )?;
+        if changed {
+            rep.applied(format!("wrote {conf} (system log with priorities in {})", s.managed_file));
+            self.env.services.restart(service)?;
+            rep.applied(format!("{service} restarted"));
+        }
+        if self.env.path("/etc/logrotate.d").is_dir() {
+            if lan::install(
+                &self.env,
+                &ManagedFile { path: PRIO_LOGROTATE_CONF, content: render_prio_logrotate(&s.managed_file, s.rotated_files), mode: 0o644, group: None, check: None },
+            )? {
+                rep.applied(format!("wrote {PRIO_LOGROTATE_CONF}"));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -306,6 +442,7 @@ impl Applier for SyslogApplier {
     async fn apply(&self, store: &ConfigStore) -> Result<ApplyReport> {
         let mut rep = ApplyReport::default();
         let t = targets(store).await?;
+        self.apply_priority_format(store, &mut rep).await?;
         if backend(&self.env) == Some(Backend::Busybox) {
             return self.apply_busybox(&t, rep);
         }
@@ -565,5 +702,49 @@ mod tests {
             .await
             .unwrap_err();
         assert!(e.to_string().contains("not installed"), "{e}");
+    }
+    #[test]
+    fn priority_templates_carry_facility_and_severity() {
+        let r = render_prio_rsyslog("/var/log/patronus/system.log");
+        assert!(r.contains("%syslogfacility-text%.%syslogseverity-text%"));
+        assert!(r.contains("file=\"/var/log/patronus/system.log\""));
+        let n = render_prio_syslogng("/var/log/patronus/system.log", "s_sys");
+        assert!(n.contains("${FACILITY}.${LEVEL}"));
+        assert!(n.contains("source(s_sys)"));
+        assert!(render_prio_sysklogd("/x").contains("RFC5424"));
+        assert!(render_prio_logrotate("/x", 0).contains("rotate 1"));
+        assert_eq!(
+            syslogng_source("@version: 4\n# c\nsource s_sys { system(); internal(); };\n").as_deref(),
+            Some("s_sys")
+        );
+        assert_eq!(syslogng_source("destination d { };"), None);
+    }
+
+    #[tokio::test]
+    async fn rsyslog_gets_the_priority_drop_in_once_and_busybox_none() {
+        let t = testutil::env(&[BIN]);
+        let s = testutil::store().await;
+        std::fs::create_dir_all(t.env.path("/etc/rsyslog.d")).unwrap();
+        std::fs::create_dir_all(t.env.path("/etc/logrotate.d")).unwrap();
+        std::fs::write(t.env.path("/etc/rsyslog.conf"), "$IncludeConfig /etc/rsyslog.d/*.conf\n").unwrap();
+        let a = SyslogApplier::new(t.env.clone());
+        a.apply(&s).await.unwrap();
+        let c = read(&t, PRIO_RSYSLOG_CONF);
+        assert!(c.contains("omfile") && c.contains("/var/log/patronus/system.log"));
+        assert!(read(&t, PRIO_LOGROTATE_CONF).contains("copytruncate"));
+        let n = t.services.log.lock().unwrap().len();
+        a.apply(&s).await.unwrap();
+        assert_eq!(t.services.log.lock().unwrap().len(), n, "unchanged apply must not restart");
+        // managed off: nothing new is written
+        s.save_system_config(patronus_config::logview::K_MANAGE_LOGGER, "false").await.unwrap();
+        s.save_system_config(patronus_config::logview::K_MANAGED_FILE, "/var/log/other.log").await.unwrap();
+        a.apply(&s).await.unwrap();
+        assert!(!read(&t, PRIO_RSYSLOG_CONF).contains("other.log"));
+
+        let b = testutil::env(&[BB_LAUNCHER]);
+        let s2 = testutil::store().await;
+        SyslogApplier::new(b.env.clone()).apply(&s2).await.unwrap();
+        assert!(!b.env.path(PRIO_RSYSLOG_CONF).exists(), "busybox syslogd already writes facility.level");
+        assert_eq!(logger_kind(&b.env), Some(Logger::Busybox));
     }
 }
