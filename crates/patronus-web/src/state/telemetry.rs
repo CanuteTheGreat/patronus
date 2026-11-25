@@ -42,6 +42,11 @@ pub struct Event {
     pub detail: String,
 }
 
+/// A new event stamped now (id 0 until recorded).
+pub fn new_event(kind: &str, subject: &str, severity: &str, detail: String) -> Event {
+    ev(kind, subject, severity, detail)
+}
+
 fn ev(kind: &str, subject: &str, severity: &str, detail: String) -> Event {
     Event {
         id: 0,
@@ -288,6 +293,8 @@ pub const EVENT_KINDS: &[&str] = &[
     "tunnel_down",
     "ha_state",
     "config_changed",
+    "login_failures",
+    "server_errors",
     "data_cap",
     "test",
 ];

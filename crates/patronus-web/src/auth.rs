@@ -1442,8 +1442,13 @@ pub async fn login(
     State(app_state): State<crate::state::AppState>,
     connect_info: Option<axum::extract::ConnectInfo<std::net::SocketAddr>>,
     headers: axum::http::HeaderMap,
+    slot: Option<axum::Extension<crate::state::accesslog::Slot>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Response, AuthError> {
+    // the access log records who tried (the name is bounded and cleaned there)
+    if let Some(axum::Extension(s)) = &slot {
+        s.attempted(&req.username);
+    }
     let client = client_ip(connect_info);
     let throttle = &app_state.auth.login_throttle;
     if let Some(retry_after) = throttle.check(client) {
@@ -1593,6 +1598,9 @@ pub async fn login(
         session_id, SESSION_LIFETIME_SECS
     );
 
+    if let Some(axum::Extension(s)) = &slot {
+        s.user(&user.username);
+    }
     tracing::info!(
         target: "patronus::audit",
         "login user={:?} from={} role={}",
