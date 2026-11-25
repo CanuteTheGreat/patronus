@@ -19,17 +19,59 @@ pub const LEVEL_NAMES: [&str; 8] = [
 ];
 
 const FACILITIES: &[&str] = &[
-    "kern", "user", "mail", "daemon", "auth", "syslog", "lpr", "news", "uucp", "cron", "authpriv",
-    "ftp", "ntp", "security", "console", "solaris-cron", "local0", "local1", "local2", "local3",
-    "local4", "local5", "local6", "local7",
+    "kern",
+    "user",
+    "mail",
+    "daemon",
+    "auth",
+    "syslog",
+    "lpr",
+    "news",
+    "uucp",
+    "cron",
+    "authpriv",
+    "ftp",
+    "ntp",
+    "security",
+    "console",
+    "solaris-cron",
+    "local0",
+    "local1",
+    "local2",
+    "local3",
+    "local4",
+    "local5",
+    "local6",
+    "local7",
 ];
 
 /// Facility names by number (RFC 5424), for `<PRI>` values and journald `SYSLOG_FACILITY`.
 pub fn facility_name(n: u8) -> &'static str {
     const BY_NUM: [&str; 24] = [
-        "kern", "user", "mail", "daemon", "auth", "syslog", "lpr", "news", "uucp", "cron",
-        "authpriv", "ftp", "ntp", "security", "console", "solaris-cron", "local0", "local1",
-        "local2", "local3", "local4", "local5", "local6", "local7",
+        "kern",
+        "user",
+        "mail",
+        "daemon",
+        "auth",
+        "syslog",
+        "lpr",
+        "news",
+        "uucp",
+        "cron",
+        "authpriv",
+        "ftp",
+        "ntp",
+        "security",
+        "console",
+        "solaris-cron",
+        "local0",
+        "local1",
+        "local2",
+        "local3",
+        "local4",
+        "local5",
+        "local6",
+        "local7",
     ];
     BY_NUM.get(n as usize).copied().unwrap_or("user")
 }
@@ -76,7 +118,9 @@ pub struct Entry {
 
 impl Entry {
     pub fn level(&self) -> &'static str {
-        self.priority.map(|p| LEVEL_NAMES[p as usize]).unwrap_or("unknown")
+        self.priority
+            .map(|p| LEVEL_NAMES[p as usize])
+            .unwrap_or("unknown")
     }
 }
 
@@ -123,7 +167,9 @@ fn bsd_time<'a>(line: &'a str, ctx: &Ctx) -> Option<(i64, &'a str)> {
     let now_local = ctx.now.with_timezone(&Local);
     let mk = |year: i32| -> Option<DateTime<Local>> {
         let d = NaiveDate::from_ymd_opt(year, mon, day)?;
-        Local.from_local_datetime(&NaiveDateTime::new(d, t)).earliest()
+        Local
+            .from_local_datetime(&NaiveDateTime::new(d, t))
+            .earliest()
     };
     let mut dt = mk(now_local.year())?;
     // a December line read in January is last year's, a line from the future is too
@@ -134,9 +180,12 @@ fn bsd_time<'a>(line: &'a str, ctx: &Ctx) -> Option<(i64, &'a str)> {
 }
 
 /// `2026-11-25T12:00:00.123456-08:00 ` -> (epoch ms, rest).
-fn iso_time<'a>(line: &'a str) -> Option<(i64, &'a str)> {
+fn iso_time(line: &str) -> Option<(i64, &str)> {
     let (tok, rest) = line.split_once(' ').unwrap_or((line, ""));
-    if tok.len() < 19 || tok.as_bytes().get(4) != Some(&b'-') || tok.as_bytes().get(10) != Some(&b'T') {
+    if tok.len() < 19
+        || tok.as_bytes().get(4) != Some(&b'-')
+        || tok.as_bytes().get(10) != Some(&b'T')
+    {
         return None;
     }
     if let Ok(d) = DateTime::parse_from_rfc3339(tok) {
@@ -192,7 +241,10 @@ pub fn parse_file_line(line: &str, ctx: &Ctx, markers: &[String]) -> Option<Entr
         if let Some((n, after)) = r.split_once('>') {
             if let Ok(n) = n.parse::<u16>() {
                 if n < 192 {
-                    pri = Some((Some(facility_name((n >> 3) as u8).to_string()), (n & 7) as u8));
+                    pri = Some((
+                        Some(facility_name((n >> 3) as u8).to_string()),
+                        (n & 7) as u8,
+                    ));
                     rest = after;
                 }
             }
@@ -202,14 +254,39 @@ pub fn parse_file_line(line: &str, ctx: &Ctx, markers: &[String]) -> Option<Entr
     if pri.is_some() {
         if let Some(r) = rest.strip_prefix("1 ") {
             let mut f = r.splitn(7, ' ');
-            let (ts, host, app, procid, _msgid, sd) = (f.next()?, f.next()?, f.next()?, f.next()?, f.next()?, f.next()?);
+            let (ts, host, app, procid, _msgid, sd) = (
+                f.next()?,
+                f.next()?,
+                f.next()?,
+                f.next()?,
+                f.next()?,
+                f.next()?,
+            );
             let msg = f.next().unwrap_or("");
             let (ms, _) = iso_time(&format!("{ts} "))?;
             // structured data is skipped (`-` or one bracketed block without spaces in values)
-            let msg = if sd == "-" { msg.to_string() } else { format!("{sd} {msg}").trim().to_string() };
-            let ident = if app == "-" { String::new() } else { app.to_string() };
+            let msg = if sd == "-" {
+                msg.to_string()
+            } else {
+                format!("{sd} {msg}").trim().to_string()
+            };
+            let ident = if app == "-" {
+                String::new()
+            } else {
+                app.to_string()
+            };
             let (fac, p) = pri.clone().unwrap();
-            return Some(finish(ms, host, fac, Some(p), ident, procid.parse().ok(), msg, ctx, markers));
+            return Some(finish(
+                ms,
+                host,
+                fac,
+                Some(p),
+                ident,
+                procid.parse().ok(),
+                msg,
+                ctx,
+                markers,
+            ));
         }
     }
     let (ms, after_ts) = if let Some(x) = iso_time(rest) {
@@ -270,7 +347,10 @@ fn finish(
 /// `patronus-boot: boot <uuid>` -> the boot id of a boot-record line.
 pub fn boot_id_of(message: &str) -> Option<String> {
     let rest = message.split("boot ").nth(1)?;
-    let id: String = rest.chars().take_while(|c| c.is_ascii_hexdigit() || *c == '-').collect();
+    let id: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit() || *c == '-')
+        .collect();
     (id.len() >= 8).then_some(id)
 }
 
@@ -279,7 +359,10 @@ fn jstr(v: &Value, k: &str) -> Option<String> {
         Value::String(s) => Some(s.clone()),
         Value::Array(a) => {
             // binary / non-UTF-8 fields come as byte arrays
-            let b: Vec<u8> = a.iter().filter_map(|x| x.as_u64().map(|n| n as u8)).collect();
+            let b: Vec<u8> = a
+                .iter()
+                .filter_map(|x| x.as_u64().map(|n| n as u8))
+                .collect();
             Some(String::from_utf8_lossy(&b).into_owned())
         }
         Value::Number(n) => Some(n.to_string()),
@@ -290,8 +373,12 @@ fn jstr(v: &Value, k: &str) -> Option<String> {
 /// One `journalctl -o json` object. Returns the entry and its `__CURSOR`.
 pub fn parse_journal(v: &Value) -> Option<(Entry, String)> {
     let micros: i64 = jstr(v, "__REALTIME_TIMESTAMP")?.parse().ok()?;
-    let priority = jstr(v, "PRIORITY").and_then(|p| p.parse::<u8>().ok()).filter(|p| *p <= 7);
-    let ident = jstr(v, "SYSLOG_IDENTIFIER").or_else(|| jstr(v, "_COMM")).unwrap_or_default();
+    let priority = jstr(v, "PRIORITY")
+        .and_then(|p| p.parse::<u8>().ok())
+        .filter(|p| *p <= 7);
+    let ident = jstr(v, "SYSLOG_IDENTIFIER")
+        .or_else(|| jstr(v, "_COMM"))
+        .unwrap_or_default();
     let transport = jstr(v, "_TRANSPORT").unwrap_or_default();
     let facility = jstr(v, "SYSLOG_FACILITY")
         .and_then(|f| f.parse::<u8>().ok())
@@ -304,7 +391,9 @@ pub fn parse_journal(v: &Value) -> Option<(Entry, String)> {
             facility,
             priority,
             ident,
-            pid: jstr(v, "SYSLOG_PID").or_else(|| jstr(v, "_PID")).and_then(|p| p.parse().ok()),
+            pid: jstr(v, "SYSLOG_PID")
+                .or_else(|| jstr(v, "_PID"))
+                .and_then(|p| p.parse().ok()),
             unit: jstr(v, "_SYSTEMD_UNIT").or_else(|| jstr(v, "UNIT")),
             message: jstr(v, "MESSAGE").unwrap_or_default(),
             kernel,
@@ -358,7 +447,12 @@ mod tests {
 
     #[test]
     fn busybox_line_has_facility_and_priority() {
-        let e = parse_file_line("Nov 25 12:00:01 ap daemon.warn test-ident[42]: link flapping", &ctx(), &markers()).unwrap();
+        let e = parse_file_line(
+            "Nov 25 12:00:01 ap daemon.warn test-ident[42]: link flapping",
+            &ctx(),
+            &markers(),
+        )
+        .unwrap();
         assert_eq!(e.priority, Some(4));
         assert_eq!(e.level(), "warning");
         assert_eq!(e.facility.as_deref(), Some("daemon"));
@@ -371,7 +465,12 @@ mod tests {
 
     #[test]
     fn busybox_kernel_and_err_levels() {
-        let e = parse_file_line("Nov  5 03:04:05 ap kern.err kernel: [  12.3] ath11k: failed", &ctx(), &markers()).unwrap();
+        let e = parse_file_line(
+            "Nov  5 03:04:05 ap kern.err kernel: [  12.3] ath11k: failed",
+            &ctx(),
+            &markers(),
+        )
+        .unwrap();
         assert!(e.kernel);
         assert_eq!(e.priority, Some(3));
         assert_eq!(e.ident, "kernel");
@@ -380,18 +479,39 @@ mod tests {
 
     #[test]
     fn rsyslog_and_syslog_ng_template_lines_use_iso_time() {
-        let a = parse_file_line("2026-11-25T12:00:00.123456-08:00 gw daemon.warning dhcpd[7]: no free leases", &ctx(), &markers()).unwrap();
+        let a = parse_file_line(
+            "2026-11-25T12:00:00.123456-08:00 gw daemon.warning dhcpd[7]: no free leases",
+            &ctx(),
+            &markers(),
+        )
+        .unwrap();
         assert_eq!(a.priority, Some(4));
-        assert_eq!(a.ts, Utc.with_ymd_and_hms(2026, 11, 25, 20, 0, 0).unwrap().timestamp_millis() + 123);
+        assert_eq!(
+            a.ts,
+            Utc.with_ymd_and_hms(2026, 11, 25, 20, 0, 0)
+                .unwrap()
+                .timestamp_millis()
+                + 123
+        );
         assert_eq!(a.ident, "dhcpd");
-        let b = parse_file_line("2026-11-25T20:00:01+00:00 gw auth.notice sshd[9]: Accepted key", &ctx(), &markers()).unwrap();
+        let b = parse_file_line(
+            "2026-11-25T20:00:01+00:00 gw auth.notice sshd[9]: Accepted key",
+            &ctx(),
+            &markers(),
+        )
+        .unwrap();
         assert_eq!(b.priority, Some(5));
         assert_eq!(b.facility.as_deref(), Some("auth"));
     }
 
     #[test]
     fn rfc5424_and_pri_prefix() {
-        let a = parse_file_line("<27>1 2026-11-25T20:00:00Z gw unbound 311 - - resolver error", &ctx(), &markers()).unwrap();
+        let a = parse_file_line(
+            "<27>1 2026-11-25T20:00:00Z gw unbound 311 - - resolver error",
+            &ctx(),
+            &markers(),
+        )
+        .unwrap();
         assert_eq!(a.priority, Some(3));
         assert_eq!(a.facility.as_deref(), Some("daemon"));
         assert_eq!(a.ident, "unbound");
@@ -405,7 +525,12 @@ mod tests {
 
     #[test]
     fn traditional_line_has_no_priority_and_is_never_guessed() {
-        let e = parse_file_line("Nov 25 12:00:00 gw sshd[1]: error: could not open file", &ctx(), &markers()).unwrap();
+        let e = parse_file_line(
+            "Nov 25 12:00:00 gw sshd[1]: error: could not open file",
+            &ctx(),
+            &markers(),
+        )
+        .unwrap();
         assert_eq!(e.priority, None);
         assert_eq!(e.level(), "unknown");
         assert_eq!(e.ident, "sshd");
@@ -419,20 +544,37 @@ mod tests {
 
     #[test]
     fn december_line_in_january_is_last_year() {
-        let c = Ctx { now: Utc.with_ymd_and_hms(2027, 1, 2, 12, 0, 0).unwrap() };
+        let c = Ctx {
+            now: Utc.with_ymd_and_hms(2027, 1, 2, 12, 0, 0).unwrap(),
+        };
         let e = parse_file_line("Dec 31 23:59:59 gw daemon.info x: y", &c, &markers()).unwrap();
-        let d = DateTime::<Utc>::from_timestamp_millis(e.ts).unwrap().with_timezone(&Local);
+        let d = DateTime::<Utc>::from_timestamp_millis(e.ts)
+            .unwrap()
+            .with_timezone(&Local);
         assert_eq!(d.year(), 2026);
     }
 
     #[test]
     fn boot_marker_detection_and_id() {
-        let e = parse_file_line("Nov 25 12:00:00 gw kern.notice kernel: [    0.000000] Linux version 6.12.118 (x)", &ctx(), &markers()).unwrap();
+        let e = parse_file_line(
+            "Nov 25 12:00:00 gw kern.notice kernel: [    0.000000] Linux version 6.12.118 (x)",
+            &ctx(),
+            &markers(),
+        )
+        .unwrap();
         assert!(e.boot_marker);
         let b = parse_file_line("Nov 25 12:00:02 gw daemon.notice patronus-boot: boot 3f2a9c1e-1111-4222-8333-444455556666", &ctx(), &markers()).unwrap();
         assert!(b.boot_marker);
-        assert_eq!(boot_id_of(&b.message).unwrap(), "3f2a9c1e-1111-4222-8333-444455556666");
-        let n = parse_file_line("Nov 25 12:00:03 gw daemon.info x: Linux versions are fine", &ctx(), &markers()).unwrap();
+        assert_eq!(
+            boot_id_of(&b.message).unwrap(),
+            "3f2a9c1e-1111-4222-8333-444455556666"
+        );
+        let n = parse_file_line(
+            "Nov 25 12:00:03 gw daemon.info x: Linux versions are fine",
+            &ctx(),
+            &markers(),
+        )
+        .unwrap();
         assert!(!n.boot_marker);
     }
 

@@ -405,6 +405,27 @@ def general_set():
     need("slate-gate2" in Rok("hostname"), "host name not applied live")
 
 
+def syslog_view():
+    # the system log page API on the image's real busybox syslogd (facility.level written into each line)
+    Rok('logger -p daemon.err -t gate-ident "gate err line"; logger -p daemon.info -t gate-ident "gate info line"'); time.sleep(2)
+    pid = Rok("pgrep -f '[p]atronus-web' | head -1").split()[0]
+    rss = lambda: int(Rok("awk '/^VmRSS:/{print $2}' /proc/%s/status" % pid))
+    r0 = rss()
+    d = jget("/api/logs/system?identifier=gate-ident&min_priority=err")
+    need(d["backend"] == "files", "backend: " + json.dumps(d)[:200])
+    msgs = [e["message"] for e in d["entries"] if e["type"] == "line"]
+    need(msgs == ["gate err line"], "min_priority=err: " + json.dumps(d)[:400])
+    need(d["entries"][0]["priority"] == 3 and d["entries"][0]["facility"] == "daemon", "priority/facility not read from the line: " + json.dumps(d["entries"][0]))
+    d = jget("/api/logs/system?identifier=gate-*")
+    need(sorted(e["priority"] for e in d["entries"]) == [3, 6], "wildcard identifier: " + json.dumps(d)[:400])
+    d = jget("/api/logs/system?limit=2000")
+    need(any(e["type"] == "boot" for e in d["entries"]), "no boot separator (boot record / kernel line): " + json.dumps(d["entries"][:3])[:300])
+    c, t, _ = web("PUT", "/api/logs/system/settings", {"settings": {"logview.max_limit": "99999"}}); need(c == 400, f"bad setting accepted: {c}")
+    c, t, _ = web("GET", "/logs"); need(c == 200 and 'id="sl-pane"' in t, f"/logs page: {c}")
+    r1 = rss(); out(f"patronus-web VmRSS before the log reads: {r0} kB, after: {r1} kB"); GM("web_rss_logs_kb", f"{r0}->{r1}")
+    need(r1 - r0 < 8192, f"patronus-web grew by {r1 - r0} kB reading the log (budget 8192)")
+
+
 def boot_guard():
     o = R("patronus-guard status")[1]; need("armed" in o, "guard not armed at boot: " + o)
     Rok("patronus-guard ok"); o = R("patronus-guard status")[1]; need(re.search(r"\bok\b", o), "guard not confirmed: " + o)
@@ -438,6 +459,7 @@ def main():
     check("boot 1: DNS: the router answers a local host record to that client; an unknown name gets no address", lambda: dns_local() if lease else need(False, "no lease"))
     check("boot 1: DNS change rolled back through the revision history and undone again", lambda: dns_rollback() if lease else need(False, "no lease"))
     check("boot 1: system settings (host name, domain, time zone) saved through the web API and applied", general_set)
+    check("boot 1: system log page API on the real busybox syslogd: logger -p daemon.err appears, min_priority filter, wildcard, boot separator, bad setting 400, RSS within budget", syslog_view)
     time.sleep(30); stats("boot1")
     Rok("sync")
     c, t, _ = web("POST", "/api/system/reboot", {})
