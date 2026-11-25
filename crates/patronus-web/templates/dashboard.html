@@ -104,6 +104,15 @@ fetch('/api/features', {credentials: 'same-origin'}).then(r => r.ok ? r.json() :
         <div class="label">Clients holding a lease (<a href="/dhcp">DHCP</a>)</div>
     </div>
     {% endif %}
+    {% if !traffic.is_empty() %}
+    <div class="stat-card">
+        <h2>Traffic</h2>
+        {% for t in traffic %}
+        <div class="label" data-traffic="{{ t.name }}"><strong>{{ t.name }}</strong> &middot; &darr; {{ t.rx }} &middot; &uarr; {{ t.tx }}</div>
+        {% endfor %}
+        <div class="label"><a href="/monitoring">Monitoring</a></div>
+    </div>
+    {% endif %}
     <div class="stat-card">
         <h2>System</h2>
         <div class="label">CPU {{ "{:.1}"|format(system_info.cpu_usage) }}% &middot;

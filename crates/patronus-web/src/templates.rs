@@ -27,6 +27,16 @@ pub struct DashboardTemplate {
     pub dhcp_leases: Option<usize>,
     /// Interfaces with their roles, WAN first.
     pub iface_rows: Vec<DashIface>,
+    /// Live throughput per non-loopback interface (rate over a short sample window).
+    pub traffic: Vec<DashTraffic>,
+}
+
+/// One row of the dashboard's Traffic tile.
+#[derive(Debug, Clone)]
+pub struct DashTraffic {
+    pub name: String,
+    pub rx: String,
+    pub tx: String,
 }
 
 /// One row of the dashboard's interface list.
@@ -764,6 +774,7 @@ mod tests {
             internet_gw: String::new(),
             dhcp_leases: None,
             iface_rows: vec![],
+            traffic: vec![],
         }
         .render()
         .unwrap()
@@ -787,6 +798,7 @@ mod tests {
             internet_gw: "10.0.2.2".into(),
             dhcp_leases: Some(3),
             iface_rows: vec![],
+            traffic: vec![],
         }
         .render()
         .unwrap();
@@ -814,6 +826,7 @@ mod tests {
             internet_gw: String::new(),
             dhcp_leases: Some(7),
             iface_rows: vec![],
+            traffic: vec![],
         };
         let shown = t.render().unwrap();
         assert!(
@@ -853,6 +866,11 @@ mod tests {
                     addrs: "none".into(),
                 },
             ],
+            traffic: vec![DashTraffic {
+                name: "enp0s1".into(),
+                rx: "1.5 KB/s".into(),
+                tx: "200 B/s".into(),
+            }],
         };
         let h = t.render().unwrap();
         assert!(
@@ -864,6 +882,15 @@ mod tests {
         assert!(h.contains("enp0s3") && h.contains("down"), "{h}");
         t.iface_rows.clear();
         assert!(!t.render().unwrap().contains("iface-role"));
+        // Traffic tile: per-interface live rates.
+        assert!(
+            h.contains(r#"data-traffic="enp0s1""#)
+                && h.contains("1.5 KB/s")
+                && h.contains("200 B/s"),
+            "{h}"
+        );
+        t.traffic.clear();
+        assert!(!t.render().unwrap().contains("data-traffic"));
     }
 
     /// A failed VPN read must not render as a plain "0" (finding: a box

@@ -117,6 +117,19 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
             r.name.clone(),
         )
     });
+    // Live rates over a short window (same sampler the Monitoring page uses).
+    let sample = host::sample(std::time::Duration::from_millis(300)).await;
+    let traffic: Vec<crate::templates::DashTraffic> = state
+        .monitoring
+        .interface_stats_from(&sample)
+        .into_iter()
+        .filter(|s| s.name != "lo")
+        .map(|s| crate::templates::DashTraffic {
+            name: s.name,
+            rx: s.rx_rate,
+            tx: s.tx_rate,
+        })
+        .collect();
     let template = DashboardTemplate {
         page: "dashboard",
         uptime: host::format_duration(system_info.uptime),
@@ -130,6 +143,7 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
         internet_gw: gw.1,
         dhcp_leases,
         iface_rows,
+        traffic,
     };
     render(&template, "dashboard")
 }
