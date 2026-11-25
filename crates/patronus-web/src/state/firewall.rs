@@ -538,6 +538,7 @@ impl FirewallManager {
             .map(|(mut r, o)| {
                 patronus_config::defaults::follow_ssh_port(&mut r, o, ssh);
                 patronus_config::webui::follow_web_ports(&mut r, o, &web);
+                patronus_config::mgmt::follow_upstream_ports(&mut r, o, ssh, &web);
                 Self::core_to_template(&r, o)
             })
             .collect())

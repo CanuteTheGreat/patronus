@@ -11,6 +11,7 @@ pub mod dashboard;
 pub mod declarative;
 pub mod defaults;
 pub mod migrate;
+pub mod mgmt;
 pub mod policy;
 pub mod seg;
 pub mod seg_wifi;
@@ -27,6 +28,7 @@ pub use declarative::{
     NatRuleSpec, ResourceKind, ResourceSpec, RuleAction,
 };
 pub use defaults::{ensure_defaults, Bootstrap};
+pub use mgmt::{ensure_management, ManagementSpec};
 pub use store::{ConfigStore, RuleOrigin};
 
 /// Main system configuration
