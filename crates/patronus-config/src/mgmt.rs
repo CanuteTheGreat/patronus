@@ -79,16 +79,18 @@ impl ManagementSpec {
         let mut spec = Self::default();
         for n in words(nets.unwrap_or("")) {
             if !valid_cidr(n) || n.ends_with("/0") {
-                spec.warnings
-                    .push(format!("management network {n:?} is not a usable CIDR; ignored"));
+                spec.warnings.push(format!(
+                    "management network {n:?} is not a usable CIDR; ignored"
+                ));
             } else if !spec.networks.iter().any(|x| x == n) {
                 spec.networks.push(n.to_string());
             }
         }
         for i in words(ifaces.unwrap_or("")) {
             if !valid_iface(i) {
-                spec.warnings
-                    .push(format!("management interface {i:?} is not an interface name; ignored"));
+                spec.warnings.push(format!(
+                    "management interface {i:?} is not an interface name; ignored"
+                ));
             } else if !spec.interfaces.iter().any(|x| x == i) {
                 spec.interfaces.push(i.to_string());
             }
@@ -166,7 +168,13 @@ fn rule_ports(r: &FirewallRule) -> Option<Vec<u16>> {
 /// Is `r` a hand-added user rule doing exactly what the seeded rule for (`iface`, `net`) does:
 /// accept tcp to the management ports from that network on that interface, with no other
 /// narrowing or side effects? Only then is it safe to replace it.
-fn is_legacy_equivalent(r: &FirewallRule, o: RuleOrigin, iface: &str, net: &str, ok: &[u16]) -> bool {
+fn is_legacy_equivalent(
+    r: &FirewallRule,
+    o: RuleOrigin,
+    iface: &str,
+    net: &str,
+    ok: &[u16],
+) -> bool {
     o == RuleOrigin::User
         && r.enabled
         && r.chain == ChainType::Input
@@ -229,7 +237,8 @@ pub async fn ensure_management(store: &ConfigStore, spec: &ManagementSpec) -> Re
                 .find(|(r, o)| *o == RuleOrigin::System && r.name == name);
             match existing {
                 Some((r, _)) => {
-                    let id = r.id.ok_or_else(|| Error::Config("rule without id".into()))?;
+                    let id =
+                        r.id.ok_or_else(|| Error::Config("rule without id".into()))?;
                     let want = build_rule(name.clone(), iface, net, &ports);
                     if r.source != want.source
                         || r.interface_in != want.interface_in
@@ -328,24 +337,35 @@ mod tests {
 
     #[test]
     fn parsing_is_strict_and_never_widens() {
-        let s = ManagementSpec::parse(Some("192.0.2.0/24, bogus 0.0.0.0/0 198.51.100.0/25 192.0.2.0/24"), Some("wl5-sta wl24-sta;rm x,eth1"));
+        let s = ManagementSpec::parse(
+            Some("192.0.2.0/24, bogus 0.0.0.0/0 198.51.100.0/25 192.0.2.0/24"),
+            Some("wl5-sta wl24-sta;rm x,eth1"),
+        );
         assert_eq!(s.networks, vec!["192.0.2.0/24", "198.51.100.0/25"]);
-        assert_eq!(s.interfaces, vec!["wl5-sta", "wl24-sta", "eth1"]);
+        assert_eq!(s.interfaces, vec!["wl5-sta", "x", "eth1"]); // "wl24-sta;rm" is not an interface name
         assert_eq!(s.warnings.len(), 3, "{:?}", s.warnings);
         assert_eq!(ManagementSpec::parse(None, None), ManagementSpec::default());
-        assert!(valid_cidr("2001:db8::/32") && !valid_cidr("10.0.0.0/33") && !valid_cidr("10.0.0.1"));
+        assert!(
+            valid_cidr("2001:db8::/32") && !valid_cidr("10.0.0.0/33") && !valid_cidr("10.0.0.1")
+        );
     }
 
     #[tokio::test]
     async fn seeds_one_system_rule_per_uplink_with_configured_ports_and_is_idempotent() {
         let s = ConfigStore::open_in_memory().await.unwrap();
-        s.save_system_config(crate::defaults::SSH_PORT_KEY, "2222").await.unwrap();
+        s.save_system_config(crate::defaults::SSH_PORT_KEY, "2222")
+            .await
+            .unwrap();
         let sp = spec("192.0.2.0/24", "wl5-sta wl24-sta");
         let r = ensure_management(&s, &sp).await.unwrap();
         assert_eq!(r.added.len(), 2);
         let again = ensure_management(&s, &sp).await.unwrap();
         assert_eq!(again, MgmtReport::default());
-        let up: Vec<_> = rules(&s).await.into_iter().filter(|(r, _)| r.name.starts_with(UPSTREAM_RULE_PREFIX)).collect();
+        let up: Vec<_> = rules(&s)
+            .await
+            .into_iter()
+            .filter(|(r, _)| r.name.starts_with(UPSTREAM_RULE_PREFIX))
+            .collect();
         assert_eq!(up.len(), 2);
         for (r, o) in &up {
             assert_eq!(*o, RuleOrigin::System);
@@ -367,16 +387,26 @@ mod tests {
         let r = ensure_management(&s, &sp).await.unwrap();
         assert_eq!(r.added, vec!["Upstream management via wl24-sta"]);
         // no network configured: nothing, whatever the roles are
-        let none = ensure_management(&s, &ManagementSpec::default()).await.unwrap();
+        let none = ensure_management(&s, &ManagementSpec::default())
+            .await
+            .unwrap();
         assert_eq!(none, MgmtReport::default());
     }
 
     #[tokio::test]
     async fn hand_added_slate_rules_are_replaced_without_duplicates_and_unrelated_ones_kept() {
         let s = ConfigStore::open_in_memory().await.unwrap();
-        crate::defaults::ensure_defaults(&s, None, &[]).await.unwrap();
-        let a = s.save_firewall_rule(&legacy("wl24-sta", vec![22, 80, 443])).await.unwrap();
-        let b = s.save_firewall_rule(&legacy("wl5-sta", vec![22, 80, 443])).await.unwrap();
+        crate::defaults::ensure_defaults(&s, None, &[])
+            .await
+            .unwrap();
+        let a = s
+            .save_firewall_rule(&legacy("wl24-sta", vec![22, 80, 443]))
+            .await
+            .unwrap();
+        let b = s
+            .save_firewall_rule(&legacy("wl5-sta", vec![22, 80, 443]))
+            .await
+            .unwrap();
         // look-alikes that must survive: wider ports, other source, other interface, disabled, drop
         let mut wide = legacy("wl5-sta", vec![22, 8080]);
         wide.name = "wide".into();
@@ -398,33 +428,67 @@ mod tests {
         let r = ensure_management(&s, &sp).await.unwrap();
         assert_eq!(r.replaced_user_rules, vec![a as u64, b as u64]);
         let names: Vec<String> = rules(&s).await.into_iter().map(|(r, _)| r.name).collect();
-        for gone in ["House LAN management via wl24-sta", "House LAN management via wl5-sta"] {
+        for gone in [
+            "House LAN management via wl24-sta",
+            "House LAN management via wl5-sta",
+        ] {
             assert!(!names.iter().any(|n| n == gone), "{names:?}");
         }
         for kept in ["wide", "other src", "other if", "disabled", "drop"] {
             assert!(names.iter().any(|n| n == kept), "{kept} lost: {names:?}");
         }
-        assert_eq!(names.iter().filter(|n| n.starts_with(UPSTREAM_RULE_PREFIX)).count(), 2);
+        assert_eq!(
+            names
+                .iter()
+                .filter(|n| n.starts_with(UPSTREAM_RULE_PREFIX))
+                .count(),
+            2
+        );
         // a second run changes nothing
-        assert_eq!(ensure_management(&s, &sp).await.unwrap(), MgmtReport::default());
+        assert_eq!(
+            ensure_management(&s, &sp).await.unwrap(),
+            MgmtReport::default()
+        );
     }
 
     #[tokio::test]
     async fn a_crash_between_insert_and_delete_heals_on_the_next_run() {
         let s = ConfigStore::open_in_memory().await.unwrap();
-        s.insert_firewall_rule(&build_rule(format!("{UPSTREAM_RULE_PREFIX}wl5-sta"), "wl5-sta", "192.0.2.0/24", &[22, 443, 80]), RuleOrigin::System).await.unwrap();
-        s.save_firewall_rule(&legacy("wl5-sta", vec![22, 80, 443])).await.unwrap();
-        let r = ensure_management(&s, &spec("192.0.2.0/24", "wl5-sta")).await.unwrap();
+        s.insert_firewall_rule(
+            &build_rule(
+                format!("{UPSTREAM_RULE_PREFIX}wl5-sta"),
+                "wl5-sta",
+                "192.0.2.0/24",
+                &[22, 443, 80],
+            ),
+            RuleOrigin::System,
+        )
+        .await
+        .unwrap();
+        s.save_firewall_rule(&legacy("wl5-sta", vec![22, 80, 443]))
+            .await
+            .unwrap();
+        let r = ensure_management(&s, &spec("192.0.2.0/24", "wl5-sta"))
+            .await
+            .unwrap();
         assert!(r.added.is_empty() && r.replaced_user_rules.len() == 1);
     }
 
     #[tokio::test]
     async fn a_changed_management_network_refreshes_the_system_rule_in_place() {
         let s = ConfigStore::open_in_memory().await.unwrap();
-        ensure_management(&s, &spec("192.0.2.0/24", "wl5-sta")).await.unwrap();
-        let r = ensure_management(&s, &spec("198.51.100.0/24", "wl5-sta")).await.unwrap();
+        ensure_management(&s, &spec("192.0.2.0/24", "wl5-sta"))
+            .await
+            .unwrap();
+        let r = ensure_management(&s, &spec("198.51.100.0/24", "wl5-sta"))
+            .await
+            .unwrap();
         assert_eq!(r.updated.len(), 1);
-        let up: Vec<_> = rules(&s).await.into_iter().filter(|(r, _)| r.name.starts_with(UPSTREAM_RULE_PREFIX)).collect();
+        let up: Vec<_> = rules(&s)
+            .await
+            .into_iter()
+            .filter(|(r, _)| r.name.starts_with(UPSTREAM_RULE_PREFIX))
+            .collect();
         assert_eq!(up.len(), 1);
         assert_eq!(up[0].0.source.as_deref(), Some("198.51.100.0/24"));
     }
@@ -432,11 +496,24 @@ mod tests {
     #[test]
     fn follow_upstream_ports_tracks_ssh_and_web_settings_for_system_rules_only() {
         let web = WebSettings::default();
-        let mut r = build_rule(format!("{UPSTREAM_RULE_PREFIX}x"), "x", "192.0.2.0/24", &[22, 443]);
+        let mut r = build_rule(
+            format!("{UPSTREAM_RULE_PREFIX}x"),
+            "x",
+            "192.0.2.0/24",
+            &[22, 443],
+        );
         follow_upstream_ports(&mut r, RuleOrigin::System, 2200, &web);
-        assert_eq!(r.dport, Some(PortSpec::Multiple(management_ports(2200, &web))));
+        assert_eq!(
+            r.dport,
+            Some(PortSpec::Multiple(management_ports(2200, &web)))
+        );
         assert_eq!(rule_ports(&r).unwrap()[0], 2200);
-        let mut u = build_rule(format!("{UPSTREAM_RULE_PREFIX}x"), "x", "192.0.2.0/24", &[22]);
+        let mut u = build_rule(
+            format!("{UPSTREAM_RULE_PREFIX}x"),
+            "x",
+            "192.0.2.0/24",
+            &[22],
+        );
         follow_upstream_ports(&mut u, RuleOrigin::User, 2200, &web);
         assert_eq!(u.dport, Some(PortSpec::Multiple(vec![22])));
         let mut o = build_rule("other".into(), "x", "192.0.2.0/24", &[22]);

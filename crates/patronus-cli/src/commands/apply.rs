@@ -113,14 +113,18 @@ pub async fn seed(store: &ConfigStore, bootstrap: Option<&Path>) -> anyhow::Resu
     for w in &rep.warnings {
         println!("{} {w}", "!".yellow());
     }
-    let mg = patronus_config::ensure_management(store, &patronus_config::ManagementSpec::from_env())
-        .await
-        .map_err(|e| anyhow::anyhow!("seeding upstream management rules: {e}"))?;
+    let mg =
+        patronus_config::ensure_management(store, &patronus_config::ManagementSpec::from_env())
+            .await
+            .map_err(|e| anyhow::anyhow!("seeding upstream management rules: {e}"))?;
     for n in mg.added.iter().chain(&mg.updated) {
         println!("{} management rule in the store: {n}", "•".cyan());
     }
     for id in &mg.replaced_user_rules {
-        println!("{} replaced hand-added management rule {id} by the system rule", "•".cyan());
+        println!(
+            "{} replaced hand-added management rule {id} by the system rule",
+            "•".cyan()
+        );
     }
     for w in &mg.warnings {
         println!("{} {w}", "!".yellow());
