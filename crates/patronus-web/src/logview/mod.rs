@@ -47,7 +47,8 @@ pub fn choose(s: &LogViewSettings) -> Backend {
         "journald" => Backend::Journald,
         "files" => Backend::Files,
         _ => {
-            if std::path::Path::new("/run/systemd/journal/socket").exists() && which(&s.journalctl) {
+            if std::path::Path::new("/run/systemd/journal/socket").exists() && which(&s.journalctl)
+            {
                 Backend::Journald
             } else {
                 Backend::Files
@@ -83,9 +84,17 @@ pub fn parse_time(s: &str) -> Option<i64> {
     if let Ok(d) = DateTime::parse_from_rfc3339(s) {
         return Some(d.timestamp_millis());
     }
-    for f in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"] {
+    for f in [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+    ] {
         if let Ok(n) = NaiveDateTime::parse_from_str(s, f) {
-            return Local.from_local_datetime(&n).earliest().map(|d| d.timestamp_millis());
+            return Local
+                .from_local_datetime(&n)
+                .earliest()
+                .map(|d| d.timestamp_millis());
         }
     }
     None
@@ -93,12 +102,18 @@ pub fn parse_time(s: &str) -> Option<i64> {
 
 impl Filter {
     pub fn from_query(q: &HashMap<String, String>) -> Result<Filter, String> {
-        let get = |k: &str| q.get(k).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        let get = |k: &str| {
+            q.get(k)
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
         let time = |k: &str| -> Result<Option<i64>, String> {
             match get(k) {
                 None => Ok(None),
                 Some(v) => parse_time(&v).map(Some).ok_or_else(|| {
-                    format!("Invalid {k}: use epoch seconds, RFC 3339 or YYYY-MM-DD HH:MM (got {v:?})")
+                    format!(
+                        "Invalid {k}: use epoch seconds, RFC 3339 or YYYY-MM-DD HH:MM (got {v:?})"
+                    )
                 }),
             }
         };
@@ -172,7 +187,9 @@ fn unit_matches(u: &str, e: &Entry, pairs: &[(String, String)]) -> bool {
     if strip(&e.ident) == u {
         return true;
     }
-    pairs.iter().any(|(id, svc)| id.eq_ignore_ascii_case(&e.ident) && strip(svc) == u)
+    pairs
+        .iter()
+        .any(|(id, svc)| id.eq_ignore_ascii_case(&e.ident) && strip(svc) == u)
 }
 
 pub fn line_json(e: &Entry, cursor: &str) -> Value {
@@ -190,7 +207,11 @@ pub fn boot_json(ts: i64, id: Option<&str>) -> Value {
 /// Plain text of an entry (download, tests).
 pub fn text_line(e: &Entry) -> String {
     let t = DateTime::<Utc>::from_timestamp_millis(e.ts)
-        .map(|d| d.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string())
+        .map(|d| {
+            d.with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        })
         .unwrap_or_default();
     let who = if e.ident.is_empty() {
         String::new()
@@ -207,8 +228,13 @@ pub fn download_text(items: &[Value]) -> String {
     let mut t = String::new();
     for i in items {
         if i["type"] == "boot" {
-            let id = i["boot_id"].as_str().map(|b| b.chars().take(8).collect::<String>());
-            t.push_str(&format!("-- boot {} --\n", id.unwrap_or_else(|| "started".into())));
+            let id = i["boot_id"]
+                .as_str()
+                .map(|b| b.chars().take(8).collect::<String>());
+            t.push_str(&format!(
+                "-- boot {} --\n",
+                id.unwrap_or_else(|| "started".into())
+            ));
             continue;
         }
         let e = Entry {
@@ -336,10 +362,21 @@ pub fn query_files(s: &LogViewSettings, f: &Filter, limit: usize, cursor: Option
     let newest_cursor = got
         .first()
         .map(|g| g.2.cursor())
-        .or_else(|| chain.first().map(|c| Pos { ino: c.ino, off: c.len }.cursor()))
+        .or_else(|| {
+            chain.first().map(|c| {
+                Pos {
+                    ino: c.ino,
+                    off: c.len,
+                }
+                .cursor()
+            })
+        })
         .unwrap_or_default();
     got.reverse();
-    let entries = got.into_iter().map(|(e, _, end)| (e, end.cursor())).collect();
+    let entries = got
+        .into_iter()
+        .map(|(e, _, end)| (e, end.cursor()))
+        .collect();
     Page {
         backend: "files",
         source: active.display().to_string(),
@@ -351,7 +388,10 @@ pub fn query_files(s: &LogViewSettings, f: &Filter, limit: usize, cursor: Option
         priority_known: known,
         scanned_lines: lines,
         note: if chain.is_empty() {
-            Some(format!("{} does not exist (no system logger writes it)", active.display()))
+            Some(format!(
+                "{} does not exist (no system logger writes it)",
+                active.display()
+            ))
         } else {
             None
         },
@@ -382,13 +422,22 @@ pub async fn follow(
     cursor: Option<String>,
     tx: tokio::sync::mpsc::Sender<Value>,
 ) {
-    if choose(&s) == Backend::Journald && journal::follow(&s, &f, cursor.as_deref(), &tx).await.is_ok() {
+    if choose(&s) == Backend::Journald
+        && journal::follow(&s, &f, cursor.as_deref(), &tx)
+            .await
+            .is_ok()
+    {
         return;
     }
     follow_files(s, f, cursor, tx).await
 }
 
-async fn follow_files(s: LogViewSettings, f: Filter, cursor: Option<String>, tx: tokio::sync::mpsc::Sender<Value>) {
+async fn follow_files(
+    s: LogViewSettings,
+    f: Filter,
+    cursor: Option<String>,
+    tx: tokio::sync::mpsc::Sender<Value>,
+) {
     let markers = s.markers();
     let pairs = s.unit_pairs();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(s.stream_max_secs);
@@ -401,16 +450,20 @@ async fn follow_files(s: LogViewSettings, f: Filter, cursor: Option<String>, tx:
         let active = files::pick_active(&s.managed_file, &s.file_path);
         let chain = files::chain(&active, s.rotated_files);
         if let Some(first) = chain.first() {
-            let from = *pos.get_or_insert(Pos { ino: first.ino, off: first.len });
-            let (recs, np) = files::read_after(&chain, from, &Ctx::now(), &markers, s.max_scan_bytes);
+            let from = *pos.get_or_insert(Pos {
+                ino: first.ino,
+                off: first.len,
+            });
+            let (recs, np) =
+                files::read_after(&chain, from, &Ctx::now(), &markers, s.max_scan_bytes);
             pos = Some(np);
             for (e, end) in recs {
                 if e.boot_marker {
                     let id = boot_id_of(&e.message);
-                    if id.is_none() || id != last_boot {
-                        if tx.send(boot_json(e.ts, id.as_deref())).await.is_err() {
-                            return;
-                        }
+                    if (id.is_none() || id != last_boot)
+                        && tx.send(boot_json(e.ts, id.as_deref())).await.is_err()
+                    {
+                        return;
                     }
                     if id.is_some() {
                         last_boot = id;
@@ -420,7 +473,9 @@ async fn follow_files(s: LogViewSettings, f: Filter, cursor: Option<String>, tx:
                 let mut live = f.clone();
                 live.since = None;
                 live.until = None;
-                if live.matches(&e, false, &pairs) && tx.send(line_json(&e, &end.cursor())).await.is_err() {
+                if live.matches(&e, false, &pairs)
+                    && tx.send(line_json(&e, &end.cursor())).await.is_err()
+                {
                     return;
                 }
             }
@@ -430,7 +485,9 @@ async fn follow_files(s: LogViewSettings, f: Filter, cursor: Option<String>, tx:
 }
 
 /// The Monitoring page preview: the newest `preview_lines` records, newest first.
-pub async fn preview(store: &patronus_config::ConfigStore) -> (Vec<crate::templates::LogEntry>, String) {
+pub async fn preview(
+    store: &patronus_config::ConfigStore,
+) -> (Vec<crate::templates::LogEntry>, String) {
     let s = patronus_config::logview::resolve(Some(store)).await;
     if s.preview_lines == 0 {
         return (Vec::new(), String::new());
@@ -471,7 +528,10 @@ mod tests {
     }
 
     fn q(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
     }
 
     fn sample(dir: &std::path::Path) {
@@ -497,7 +557,11 @@ mod tests {
         let run = |pairs: &[(&str, &str)]| {
             let f = Filter::from_query(&q(pairs)).unwrap();
             let p = query_files(&s, &f, 100, None);
-            p.items.iter().filter(|i| i["type"] == "line").map(|i| i["message"].as_str().unwrap().to_string()).collect::<Vec<_>>()
+            p.items
+                .iter()
+                .filter(|i| i["type"] == "line")
+                .map(|i| i["message"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
         };
         assert_eq!(run(&[("min_priority", "err")]), ["failed to bind"]);
         assert_eq!(run(&[("min_priority", "warning")]).len(), 2);
@@ -515,7 +579,11 @@ mod tests {
         sample(d.path());
         let s = settings(d.path());
         let p = query_files(&s, &Filter::default(), 100, None);
-        let types: Vec<&str> = p.items.iter().map(|i| i["type"].as_str().unwrap()).collect();
+        let types: Vec<&str> = p
+            .items
+            .iter()
+            .map(|i| i["type"].as_str().unwrap())
+            .collect();
         assert_eq!(types.iter().filter(|t| **t == "boot").count(), 2);
         assert_eq!(types[0], "boot");
         assert!(p.priority_known);
@@ -531,16 +599,30 @@ mod tests {
         assert_eq!(p1.items.iter().filter(|i| i["type"] == "line").count(), 3);
         let cur = p1.older_cursor.clone().unwrap();
         let p2 = query_files(&s, &Filter::default(), 3, Some(&cur));
-        let m2: Vec<&str> = p2.items.iter().filter(|i| i["type"] == "line").map(|i| i["message"].as_str().unwrap()).collect();
+        let m2: Vec<&str> = p2
+            .items
+            .iter()
+            .filter(|i| i["type"] == "line")
+            .map(|i| i["message"].as_str().unwrap())
+            .collect();
         assert_eq!(m2, ["wl5: AP-ENABLED", "failed to bind", "link flapping"]);
     }
 
     #[test]
     fn lines_without_priority_are_excluded_by_a_priority_filter_and_flagged() {
         let d = tempfile::tempdir().unwrap();
-        std::fs::write(d.path().join("messages"), "Nov 25 12:00:00 gw sshd[1]: error: bad thing\n").unwrap();
+        std::fs::write(
+            d.path().join("messages"),
+            "Nov 25 12:00:00 gw sshd[1]: error: bad thing\n",
+        )
+        .unwrap();
         let s = settings(d.path());
-        let p = query_files(&s, &Filter::from_query(&q(&[("min_priority", "err")])).unwrap(), 10, None);
+        let p = query_files(
+            &s,
+            &Filter::from_query(&q(&[("min_priority", "err")])).unwrap(),
+            10,
+            None,
+        );
         assert!(p.items.is_empty());
         assert!(!p.priority_known);
         let p = query_files(&s, &Filter::default(), 10, None);
@@ -550,10 +632,21 @@ mod tests {
     #[test]
     fn time_parsing_and_validation() {
         assert_eq!(parse_time("1764100800"), Some(1764100800000));
-        assert_eq!(parse_time("2026-11-25T20:00:00Z"), Some(Utc.with_ymd_and_hms(2026, 11, 25, 20, 0, 0).unwrap().timestamp_millis()));
+        assert_eq!(
+            parse_time("2026-11-25T20:00:00Z"),
+            Some(
+                Utc.with_ymd_and_hms(2026, 11, 25, 20, 0, 0)
+                    .unwrap()
+                    .timestamp_millis()
+            )
+        );
         assert!(parse_time("2026-11-25 12:30").is_some());
         assert!(parse_time("yesterday").is_none());
-        assert!(Filter::from_query(&q(&[("since", "2026-11-25 12:00"), ("until", "2026-11-25 11:00")])).is_err());
+        assert!(Filter::from_query(&q(&[
+            ("since", "2026-11-25 12:00"),
+            ("until", "2026-11-25 11:00")
+        ]))
+        .is_err());
         assert!(Filter::from_query(&q(&[("min_priority", "loud")])).is_err());
     }
 
@@ -566,12 +659,21 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         tokio::spawn(follow(s.clone(), Filter::default(), None, tx));
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        let mut f = std::fs::OpenOptions::new().append(true).open(d.path().join("messages")).unwrap();
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(d.path().join("messages"))
+            .unwrap();
         writeln!(f, "Nov 25 12:01:00 ap daemon.warn live-ident: hello").unwrap();
         writeln!(f, "Nov 25 12:01:05 ap daemon.notice patronus-boot: boot aaaaaaaa-1111-4222-8333-444455556666").unwrap();
-        let a = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await.unwrap().unwrap();
+        let a = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(a["message"], "hello");
-        let b = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await.unwrap().unwrap();
+        let b = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(b["type"], "boot");
     }
 }
