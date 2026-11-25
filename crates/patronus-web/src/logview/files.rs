@@ -397,7 +397,7 @@ mod tests {
         let m = mk();
         let mut b = Backwards::new(&files, None, ctx(), &m, 1 << 20);
         let got: Vec<String> = std::iter::from_fn(|| b.next_record()).map(|f| f.entry.message).collect();
-        assert_eq!(got, ["second", "first\nmore detail"]);
+        assert_eq!(got, ["second", "first\n  more detail"]);
     }
 
     #[test]
