@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+
+{% block title %}System log - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+{% include "log_css.html" %}
+<style>
+    [hidden] { display: none !important; }
+    .sl-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; margin: 8px 0; }
+    .sl-bar label { display: flex; flex-direction: column; font-size: 0.8em; color: var(--muted); min-width: 0; }
+    .sl-bar input, .sl-bar select { padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 4px; min-width: 0; max-width: 100%; box-sizing: border-box;
+                                    background: var(--card-bg); color: var(--ink); font: inherit; }
+    .sl-bar label.chk { flex-direction: row; align-items: center; gap: 6px; color: var(--ink-2); font-size: 0.9em; padding-bottom: 6px; }
+    .sl-seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; }
+    .sl-seg button { border: 0; background: var(--card-bg); color: var(--ink); padding: 6px 14px; cursor: pointer; font: inherit; }
+    .sl-seg button + button { border-left: 1px solid var(--line-strong); }
+    .sl-seg button[aria-pressed="true"] { background: var(--primary-solid); color: #fff; }
+    .sl-pane { height: 62vh; min-height: 240px; }
+    .sl-status { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.85em; color: var(--muted); margin: 6px 0; align-items: center; }
+    .sl-empty { padding: 12px; color: var(--log-dim); }
+    .sl-note { background: var(--note-bg); color: var(--note-fg); border: 1px solid var(--note-bd); border-radius: 6px; padding: 8px 10px; margin: 8px 0; font-size: 0.9em; }
+    .sl-set { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px 12px; margin: 8px 0; }
+    .sl-set label { display: flex; flex-direction: column; font-size: 0.8em; color: var(--muted); }
+    .sl-set input { padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--card-bg); color: var(--ink); font: inherit; }
+    @media (max-width: 720px) { .sl-pane { height: 55vh; } .sl-bar label { flex: 1 1 140px; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">System log</h1>
+    <p class="page-subtitle">What this box's services and kernel wrote, with the priority the logger recorded (never guessed from the words).
+        Filters are kept in the address, so a link reproduces the view.</p>
+</div>
+
+<div class="card">
+    <form class="sl-bar" id="sl-form" onsubmit="return slApply(event)" aria-label="Log filters">
+        <div class="sl-seg" role="group" aria-label="Mode">
+            <button type="button" id="sl-live" aria-pressed="true" onclick="slMode('live')">Live</button>
+            <button type="button" id="sl-span" aria-pressed="false" onclick="slMode('span')">Timespan</button>
+        </div>
+        <label class="sl-t">From <input type="datetime-local" step="1" id="sl-since" name="since"></label>
+        <label class="sl-t">To <input type="datetime-local" step="1" id="sl-until" name="until"></label>
+        <label>Minimum priority
+            <select id="sl-prio" name="min_priority">
+                <option value="">Everything (debug and up)</option>
+                <option value="emerg">emerg</option><option value="alert">alert and worse</option><option value="crit">crit and worse</option>
+                <option value="err">err and worse</option><option value="warning">warning and worse</option><option value="notice">notice and worse</option>
+                <option value="info">info and worse</option>
+            </select></label>
+        <label>Service (unit) <input id="sl-unit" name="unit" size="14" placeholder="any" autocomplete="off"></label>
+        <label>Identifier (* allowed) <input id="sl-ident" name="identifier" size="16" placeholder="any, e.g. patronus-*" list="sl-idents" autocomplete="off"></label>
+        <datalist id="sl-idents"></datalist>
+        <label class="chk"><input type="checkbox" id="sl-kernel" name="kernel" value="1"> Kernel only</label>
+        <label>Contains <input id="sl-q" name="q" size="16" placeholder="text" autocomplete="off"></label>
+        <button class="btn btn-primary" type="submit">Apply</button>
+        <button class="btn" type="button" onclick="slReset()">Reset</button>
+        <button class="btn" type="button" id="sl-pause" onclick="slPause()" aria-pressed="false">Pause</button>
+        <a class="btn" id="sl-dl" href="/api/logs/system/download" download>Download</a>
+        <a class="btn" id="sl-dlj" href="/api/logs/system/download?format=json" download>Download JSON</a>
+    </form>
+    <div class="sl-status" aria-live="polite">
+        <span id="sl-st">Loading...</span><span id="sl-src"></span><span id="sl-live-st"></span>
+    </div>
+    <div id="sl-hint" class="sl-note" hidden></div>
+    <div class="sl-more"><button class="btn" type="button" id="sl-older" onclick="slOlder()" hidden>Load older entries</button></div>
+    <div class="syslog sl-pane" id="sl-pane" role="log" aria-label="System log entries" tabindex="0"></div>
+</div>
+
+<div class="card" id="sl-settings">
+    <div class="card-header"><h2 class="card-title">Log source settings</h2></div>
+    <p class="text-sm">The back end is chosen at run time: journald when it is running, else the syslog file below (rotated files included).
+        An empty box means the built-in default.</p>
+    <form id="sl-set-form" onsubmit="return slSave(event)">
+        <div class="sl-set" id="sl-set-fields"></div>
+        {% if is_admin %}<button class="btn btn-primary" type="submit">Save settings</button> <button class="btn" type="button" onclick="slSetReset()">Back to defaults</button>{% endif %}
+        <span id="sl-set-msg" role="status"></span>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+    var MAX_DOM = 4000, MAX_BUF = 5000;
+    var mode = 'live', paused = false, buf = [], es = null, older = null, newest = null, loadSeq = 0;
+    var $ = function (id) { return document.getElementById(id); };
+    var pane = $('sl-pane');
+    var F = ['min_priority', 'unit', 'identifier', 'q'];
+
+    function pad(n) { return (n < 10 ? '0' : '') + n; }
+    function localInput(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()); }
+    var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    function fmt(ms) { var d = new Date(ms); return MON[d.getMonth()] + ' ' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()); }
+    function iso(v) { if (!v) return ''; var d = new Date(v); return isNaN(d) ? '' : d.toISOString(); }
+
+    function filters(forUrl) {
+        var p = new URLSearchParams();
+        F.forEach(function (k) { var el = document.querySelector('[name=' + k + ']'); if (el && el.value.trim()) p.set(k, el.value.trim()); });
+        if ($('sl-kernel').checked) p.set('kernel', '1');
+        if (mode === 'span') {
+            var s = iso($('sl-since').value), u = iso($('sl-until').value);
+            if (s) p.set('since', s);
+            if (u) p.set('until', u);
+        }
+        if (forUrl) p.set('mode', mode);
+        return p;
+    }
+
+    function setUrl() { history.replaceState(null, '', '/logs?' + filters(true).toString()); updateLinks(); }
+    function updateLinks() {
+        var q = filters(false).toString();
+        $('sl-dl').href = '/api/logs/system/download' + (q ? '?' + q : '');
+        $('sl-dlj').href = '/api/logs/system/download?format=json' + (q ? '&' + q : '');
+    }
+
+    function row(e) {
+        var d = document.createElement('div');
+        d.className = 'll ' + (e.priority === null || e.priority === undefined ? 'lvu' : 'lv' + e.priority);
+        var t = document.createElement('span'); t.className = 't'; t.textContent = fmt(e.ts);
+        var l = document.createElement('span'); l.className = 'lvl'; l.textContent = e.level;
+        var i = document.createElement('span'); i.className = 'id';
+        i.textContent = (e.ident || (e.kernel ? 'kernel' : '')) + (e.pid ? '[' + e.pid + ']' : '');
+        var m = document.createElement('span'); m.className = 'm'; m.textContent = e.message;
+        d.appendChild(t); d.appendChild(l); d.appendChild(i); d.appendChild(m);
+        return d;
+    }
+    function boot(e) {
+        var d = document.createElement('div'); d.className = 'boot';
+        d.textContent = '-- boot ' + (e.boot_id ? e.boot_id.slice(0, 8) + ' ' : '') + 'at ' + fmt(e.ts) + ' --';
+        return d;
+    }
+    function node(e) { return e.type === 'boot' ? boot(e) : row(e); }
+    function atBottom() { return pane.scrollHeight - pane.scrollTop - pane.clientHeight < 40; }
+    function trim() { while (pane.childNodes.length > MAX_DOM) pane.removeChild(pane.firstChild); }
+
+    function addIdents(list) {
+        var dl = $('sl-idents'), have = {};
+        [].forEach.call(dl.options, function (o) { have[o.value] = 1; });
+        (list || []).forEach(function (x) { if (!have[x]) { var o = document.createElement('option'); o.value = x; dl.appendChild(o); } });
+    }
+
+    function status(txt) { $('sl-st').textContent = txt; }
+
+    function showPage(d, prepend) {
+        var frag = document.createDocumentFragment();
+        d.entries.forEach(function (e) { frag.appendChild(node(e)); });
+        if (prepend) {
+            var h = pane.scrollHeight;
+            pane.insertBefore(frag, pane.firstChild);
+            pane.scrollTop += pane.scrollHeight - h;
+        } else {
+            pane.textContent = '';
+            pane.appendChild(frag);
+            if (!d.entries.length) { var p = document.createElement('div'); p.className = 'sl-empty'; p.textContent = 'No entries match these filters.'; pane.appendChild(p); }
+            pane.scrollTop = mode === 'live' ? pane.scrollHeight : 0;
+        }
+        older = d.older_cursor; $('sl-older').hidden = !older;
+        addIdents(d.identifiers);
+        $('sl-src').textContent = 'Source: ' + d.backend + (d.source && d.source !== d.backend ? ' (' + d.source + ')' : '');
+        var hint = $('sl-hint'), msgs = [];
+        if (d.note) msgs.push(d.note);
+        if (d.backend === 'files' && !d.priority_known && d.entries.length) msgs.push('This log file carries no priority in its lines, so a minimum priority hides every line. Patronus configures rsyslog, syslog-ng and sysklogd to write it (System log settings: manage logger); busybox syslogd already does.');
+        if (d.scan_limited) msgs.push('The scan limit was reached before the page was full: narrow the time span or filters, or load older entries.');
+        hint.hidden = !msgs.length; hint.textContent = msgs.join(' ');
+    }
+
+    function load() {
+        var seq = ++loadSeq;
+        closeStream(); buf = []; updatePause();
+        status('Loading...');
+        var p = filters(false);
+        fetch('/api/logs/system?' + p.toString(), { credentials: 'same-origin' }).then(function (r) {
+            return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; });
+        }).then(function (d) {
+            if (seq !== loadSeq) return;
+            showPage(d, false);
+            newest = d.newest_cursor;
+            status(d.count + ' entries' + (older ? ' (newest shown)' : ''));
+            if (mode === 'live') openStream();
+        }).catch(function (e) { status('Could not read the log: ' + e.message); });
+    }
+
+    function openStream() {
+        closeStream();
+        var p = filters(false);
+        if (newest) p.set('cursor', newest);
+        es = new EventSource('/api/logs/system/stream?' + p.toString());
+        $('sl-live-st').textContent = 'Live';
+        es.addEventListener('line', function (ev) { push(JSON.parse(ev.data)); });
+        es.addEventListener('boot', function (ev) { push(JSON.parse(ev.data)); });
+        es.onerror = function () { $('sl-live-st').textContent = 'Reconnecting...'; };
+        es.onopen = function () { $('sl-live-st').textContent = 'Live'; };
+    }
+    function closeStream() { if (es) { es.close(); es = null; } $('sl-live-st').textContent = ''; }
+
+    function push(e) {
+        if (e.cursor) newest = e.cursor;
+        if (paused) { if (buf.length < MAX_BUF) buf.push(e); updatePause(); return; }
+        var stick = atBottom();
+        var empty = pane.querySelector('.sl-empty'); if (empty) pane.removeChild(empty);
+        pane.appendChild(node(e)); trim();
+        if (stick) pane.scrollTop = pane.scrollHeight;
+    }
+    function updatePause() {
+        var b = $('sl-pause');
+        b.setAttribute('aria-pressed', paused ? 'true' : 'false');
+        b.textContent = paused ? 'Resume' + (buf.length ? ' (' + buf.length + ' new)' : '') : 'Pause';
+        b.hidden = mode !== 'live';
+    }
+    window.slPause = function () {
+        paused = !paused;
+        if (!paused) { var b = buf; buf = []; b.forEach(push); }
+        updatePause();
+    };
+    window.slOlder = function () {
+        if (!older) return;
+        var p = filters(false); p.set('cursor', older);
+        fetch('/api/logs/system?' + p.toString(), { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (d) {
+            if (d.error) throw new Error(d.error);
+            showPage(d, true);
+        }).catch(function (e) { status('Could not read older entries: ' + e.message); });
+    };
+    window.slMode = function (m) {
+        mode = m;
+        $('sl-live').setAttribute('aria-pressed', m === 'live');
+        $('sl-span').setAttribute('aria-pressed', m === 'span');
+        [].forEach.call(document.querySelectorAll('.sl-t'), function (el) { el.hidden = m === 'live'; });
+        if (m === 'span' && !$('sl-since').value) {
+            var now = new Date(); $('sl-until').value = ''; $('sl-since').value = localInput(new Date(now.getTime() - 3600 * 1000));
+        }
+        paused = false; setUrl(); updatePause(); load();
+    };
+    window.slApply = function (ev) { if (ev) ev.preventDefault(); paused = false; setUrl(); load(); return false; };
+    window.slReset = function () {
+        $('sl-form').reset(); $('sl-since').value = ''; $('sl-until').value = '';
+        mode = 'live'; slMode('live');
+    };
+
+    // ---- settings
+    var SET_KEYS = [];
+    function fillSettings(d) {
+        var box = $('sl-set-fields'); box.textContent = ''; SET_KEYS = Object.keys(d.effective);
+        SET_KEYS.forEach(function (k) {
+            var l = document.createElement('label'); l.textContent = k.replace(/_/g, ' ');
+            var i = document.createElement('input'); i.name = 'logview.' + k; i.id = 'set-' + k;
+            i.value = d.stored['logview.' + k] || ''; i.placeholder = String(d.effective[k]);
+            {% if !is_admin %}i.readOnly = true;{% endif %}
+            l.appendChild(i); box.appendChild(l);
+        });
+    }
+    function loadSettings() {
+        fetch('/api/logs/system/settings', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(fillSettings).catch(function () {});
+    }
+    function putSettings(body) {
+        var m = $('sl-set-msg'); m.textContent = 'Saving...';
+        fetch('/api/logs/system/settings', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+            .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; }); })
+            .then(function (d) { fillSettings(d); m.textContent = 'Saved.'; load(); })
+            .catch(function (e) { m.textContent = 'Not saved: ' + e.message; });
+    }
+    window.slSave = function (ev) {
+        ev.preventDefault();
+        var s = {}; SET_KEYS.forEach(function (k) { s['logview.' + k] = $('set-' + k).value.trim(); });
+        putSettings({ settings: s });
+        return false;
+    };
+    window.slSetReset = function () { putSettings({ reset: true }); };
+
+    // ---- start: filters come from the address
+    var q = new URLSearchParams(location.search);
+    F.forEach(function (k) { var el = document.querySelector('[name=' + k + ']'); if (el && q.get(k)) el.value = q.get(k); });
+    if (q.get('kernel')) $('sl-kernel').checked = true;
+    function fromIso(v) { if (!v) return ''; var d = new Date(v); return isNaN(d) ? '' : localInput(d); }
+    if (q.get('since')) $('sl-since').value = fromIso(q.get('since'));
+    if (q.get('until')) $('sl-until').value = fromIso(q.get('until'));
+    mode = q.get('mode') === 'span' || q.get('since') || q.get('until') ? 'span' : 'live';
+    $('sl-live').setAttribute('aria-pressed', mode === 'live');
+    $('sl-span').setAttribute('aria-pressed', mode === 'span');
+    [].forEach.call(document.querySelectorAll('.sl-t'), function (el) { el.hidden = mode === 'live'; });
+    if (mode === 'span' && !$('sl-since').value) $('sl-since').value = localInput(new Date(Date.now() - 3600 * 1000));
+    updateLinks(); updatePause(); load(); loadSettings();
+    window.addEventListener('beforeunload', closeStream);
+})();
+</script>
+{% endblock %}
