@@ -60,6 +60,8 @@ cp ci/guest-page-e2e.py "$OUT/"
 cp ci/dashboard-page-e2e.py ci/a11y/vendor/axe.min.js "$OUT/"
 # lane N reverse proxy UI scenario
 cp ci/revproxy-page-e2e.py "$OUT/"
+# lane H system log viewer UI scenario drives this Playwright script
+cp ci/syslog-page-e2e.py "$OUT/"
 # lane J XDP data plane: the shipped BPF program source
 cp crates/patronus-ebpf/src/xdp_firewall.bpf.c "$OUT/"
 OLD_ENV=
@@ -79,7 +81,7 @@ rm -f /etc/apt/sources.list.d/*ppa*.list /etc/apt/sources.list.d/*ppa*.sources
 # scenarios start what they test, in their own namespaces)
 printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d; chmod +x /usr/sbin/policy-rc.d
 for i in 1 2 3; do apt-get update -qq && break; [ "\$i" = 3 ] && exit 1; sleep 15; done
-apt-get install -y -qq nftables iproute2 curl python3 dnsmasq-base conntrack sqlite3 iputils-ping tcpdump traceroute openssh-server openssh-client >/dev/null
+apt-get install -y -qq nftables iproute2 curl python3 dnsmasq-base conntrack sqlite3 iputils-ping tcpdump traceroute openssh-server openssh-client busybox >/dev/null
 # lane J feature scenarios: rsyslog (syslog), softflowd (NetFlow), igmpproxy, avahi-daemon (mDNS), tayga + unbound
 # (NAT64/DNS64), xl2tpd + ppp (L2TP), suricata (IDS/IPS), frr (BGP/OSPF)
 apt-get install -y -qq --no-install-recommends rsyslog softflowd igmpproxy tayga unbound xl2tpd ppp suricata frr avahi-daemon >/dev/null

@@ -6,6 +6,10 @@ command=/bin/syslogd
 command_args="-n -O /var/log/messages -s 256 -b 1"
 supervisor=supervise-daemon
 respawn_delay=2
+# boot record for the web UI's system log page (the separator between boots)
+start_post() {
+	( i=0; while [ ! -S /dev/log ] && [ $i -lt 10 ]; do sleep 1; i=$((i+1)); done; logger -t patronus-boot -p daemon.notice "boot $(cat /proc/sys/kernel/random/boot_id)" ) >/dev/null 2>&1 &
+}
 depend() {
 	provide logger
 	before patronus-board dropbear patronus-ntpd patronus-apply patronus-applyd patronus-web dnsmasq hostapd
