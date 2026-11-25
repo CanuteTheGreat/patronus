@@ -104,6 +104,7 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "traffic_daily",
     "system_events",
     "firewall_log",
+    "web_access_log",
 ];
 
 /// Revisions kept by [`ConfigStore::snapshot`] (older ones are pruned).
