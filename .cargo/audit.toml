@@ -30,6 +30,14 @@ ignore = [
                          # sqlx 0.9, a breaking upgrade deferred to a dedicated pass (cannot
                          # be build-verified in a CI-fix commit). Databases are local files
                          # written by patronus itself, not attacker-supplied SQLite files.
+    "RUSTSEC-2026-0600", # kube-client 0.87.2 (published 2026-11-24) - `openssl-tls` also trusts the
+                         # system CA store in addition to the cluster CA. Used by operator/,
+                         # patronus-cni and patronus-servicemesh, which only talk to the in-cluster
+                         # API server; exploiting it needs a network-position MITM plus a
+                         # publicly-trusted cert for the API server name. Fix is kube >=4.2.1 / >=5.2
+                         # (several majors, k8s-openapi + admission/derive API changes across three
+                         # crates) - deferred to a dedicated upgrade that CI can build-verify;
+                         # remove this entry when kube is bumped.
 ]
 
 # Unmaintained-crate warnings (not vulnerabilities) for transitive deps we
