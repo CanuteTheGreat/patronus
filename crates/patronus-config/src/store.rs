@@ -1606,6 +1606,10 @@ mod tests {
         .execute(p)
         .await
         .unwrap();
+        sqlx::query("INSERT INTO web_access_log (timestamp_ms, client, principal_kind, method, path_group, status, duration_ms) VALUES (1, 'test-client', 'anonymous', 'GET', '/test', 200, 1)")
+            .execute(p)
+            .await
+            .unwrap();
         let doc = s.export_json().await.unwrap();
         let tables = doc["tables"].as_object().unwrap();
         for t in [
@@ -1613,6 +1617,7 @@ mod tests {
             "traffic_daily",
             "system_events",
             "firewall_log",
+            "web_access_log",
         ] {
             assert!(
                 !tables.contains_key(t),
@@ -1634,7 +1639,13 @@ mod tests {
         old["tables"]["stat_points"] =
             serde_json::json!([{"ts": 1, "metric": "cpu", "value": 9.0}]);
         old["tables"]["traffic_daily"] = serde_json::json!([]);
+        old["tables"]["web_access_log"] = serde_json::json!([]);
         s.import_json(&old).await.unwrap();
+        let access_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM web_access_log")
+            .fetch_one(p)
+            .await
+            .unwrap();
+        assert_eq!(access_count, 1);
         let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM stat_points")
             .fetch_one(p)
             .await
