@@ -87,6 +87,16 @@ src_install() {
 	# web login = system users: the "patronus" PAM service mirrors the system login
 	pamd_mimic_system patronus auth account
 
+	# kernel install/removal rewrites grub.cfg on installs without boot environments (mirrors net-firewall/patronus)
+	exeinto /etc/kernel/postinst.d
+	newexe files/patronus-boot-entry 91-patronus-boot-entry
+	exeinto /etc/kernel/postrm.d
+	newexe files/patronus-boot-entry 91-patronus-boot-entry
+	exeinto /etc/grub.d
+	newexe files/patronus-grub-unattended 11_patronus_unattended
+	insinto /etc/conf.d
+	newins files/patronus-boot-entry.confd patronus-boot-entry
+
 	keepdir /var/lib/patronus /var/log/patronus /var/lib/patronus/feeds \
 		/etc/patronus/rules.d /etc/patronus/openvpn /etc/patronus/ipsec /etc/patronus/unbound \
 		/etc/patronus/certificates /etc/patronus/tls
