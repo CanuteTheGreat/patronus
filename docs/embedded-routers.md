@@ -378,6 +378,20 @@ router tier (`assemble.sh` now ships the regions of `ZONEINFO_DIRS` from the bui
 `ZONEINFO=0` builds without), and busybox mdev / OpenRC printed "unknown user/group" for every device node because the image had none of
 the standard system groups (`assemble.sh` adds them).
 
+### 6g. Proving the way back on the unit before a root swap (2026-11-25, `ci/embedded-mips/slate/tests/unit-rollback-proof/`)
+
+The QEMU gate cannot exercise UBI, so before a new root becomes the boot root it is staged as volume `rootfs_new` and the unit runs the
+NEW image's own `patronus-flash` / `patronus-guard` / busybox / mtd-utils from that volume (read-only through ubiblock) against a
+throwaway UBI on `mtdram`: forward install, rollback twice, rollback twice more with `ubinfo` disabled (sysfs fallback), the guard's
+revert to the embedded OpenWrt root with the config backup on a recreated `rootfs_data`, and a confirmed boot that stays. ubi0 is only
+read. First real use: mg-2c677d42, 20/20 checks on the unit's kernel; it also found that `patronus-flash openwrt` mounted
+`ubi0:rootfs_data` by name instead of the device it was given (now `$(basename $UBI)`). Procedure: the directory's README.
+
+A unit's SSH/web from the upstream LAN must not depend on the boot-time `patronus-boot-mgmt` rule alone: any firewall apply (a
+patronus-web start applies the stored ruleset; on a 128 MB unit an OOM kill of patronus-web restarts it) rebuilds the table without it.
+`wifi-follow` re-inserts it within one MGMT_EVERY cycle (measured: back 8 s after `patronus-cli apply`, 13 s after a web restart), and a
+stored WAN rule from the management subnet makes it survive applies outright.
+
 ## 6a. Local web UI (the LuCI equivalent)
 
 **Yes: the Slate keeps a local web UI, and it is the real Patronus UI**, not a lite copy. Decision rule that was applied: try the straight port first; fall back to a `web-lite` only if it missed the 16 MiB slot or a 25-30 MB RSS cap. It met both, so no second UI exists to maintain.

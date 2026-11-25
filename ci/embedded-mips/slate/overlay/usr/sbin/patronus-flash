@@ -69,7 +69,7 @@ openwrt)
   write_vol rootfs_new "$SRC"
   ubimkvol $UBI -N rootfs_data -m >/dev/null
   if [ -n "$CFG" ] && [ -f "$CFG" ]; then
-    mkdir -p $T/rd; mount -t ubifs ubi0:rootfs_data $T/rd; cp "$CFG" $T/rd/sysupgrade.tgz; sync; umount $T/rd
+    mkdir -p $T/rd; mount -t ubifs "$(basename "$UBI"):rootfs_data" $T/rd; cp "$CFG" $T/rd/sysupgrade.tgz; sync; umount $T/rd
     log "OpenWrt config backup placed for restore at first boot"
   fi
   # a later Patronus install must not inherit this root's unconfirmed-boot count (it rolled back a fresh install at once)
