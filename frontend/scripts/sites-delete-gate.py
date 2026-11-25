@@ -121,6 +121,13 @@ with sync_playwright() as p:
     pg.wait_for_timeout(600)
     expect(len(updates) == 1 and updates[0].get('id') == '0' and updates[0].get('name') == 'HQ Chicago West'
            and updates[0].get('location') == 'Chicago, IL', f'edit Save sends one updateSite with new values (got {updates})')
+
+    # dashboard topology card shows real counts and the site names, not a bare link
+    pg.goto(f'http://127.0.0.1:{port}/')
+    pg.wait_for_selector('[data-testid=topology-counts]', timeout=15000)
+    card = pg.locator('[data-testid=topology-preview]')
+    txt = card.inner_text()
+    expect('3 sites' in txt and 'HQ Chicago' in txt and 'links up' in txt, f'dashboard topology card lists counts and site names (got {txt!r})')
     b.close()
 
 if fails:
