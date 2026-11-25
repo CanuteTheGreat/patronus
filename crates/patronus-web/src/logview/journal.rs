@@ -58,7 +58,12 @@ fn spawn(s: &LogViewSettings, a: &[String]) -> std::io::Result<tokio::process::C
         .spawn()
 }
 
-pub async fn query(s: &LogViewSettings, f: &Filter, limit: usize, cursor: Option<&str>) -> Result<Page, String> {
+pub async fn query(
+    s: &LogViewSettings,
+    f: &Filter,
+    limit: usize,
+    cursor: Option<&str>,
+) -> Result<Page, String> {
     let mut a = args(f, false);
     let skip = cursor.and_then(|c| c.strip_prefix("j:")).map(String::from);
     if let Some(c) = &skip {
@@ -80,8 +85,12 @@ pub async fn query(s: &LogViewSettings, f: &Filter, limit: usize, cursor: Option
             limited = true;
             break;
         }
-        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
-        let Some((e, cur)) = parse_journal(&v) else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let Some((e, cur)) = parse_journal(&v) else {
+            continue;
+        };
         if skip.as_deref() == Some(cur.as_str()) {
             continue;
         }
@@ -107,7 +116,11 @@ pub async fn query(s: &LogViewSettings, f: &Filter, limit: usize, cursor: Option
             }
         }
     }
-    let older_cursor = if full || limited { got.last().map(|g| g.1.clone()) } else { None };
+    let older_cursor = if full || limited {
+        got.last().map(|g| g.1.clone())
+    } else {
+        None
+    };
     let newest_cursor = got.first().map(|g| g.1.clone()).unwrap_or_default();
     got.reverse();
     Ok(Page {
@@ -148,19 +161,29 @@ pub async fn follow(
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(s.stream_max_secs);
     let mut last_boot: Option<String> = None;
     loop {
-        let next = tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + std::time::Duration::from_secs(5)), lines.next_line()).await;
+        let next = tokio::time::timeout_at(
+            deadline.min(tokio::time::Instant::now() + std::time::Duration::from_secs(5)),
+            lines.next_line(),
+        )
+        .await;
         if tx.is_closed() || tokio::time::Instant::now() >= deadline {
             return Ok(());
         }
         let Ok(r) = next else { continue };
         let Ok(Some(line)) = r else { return Ok(()) };
-        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
-        let Some((e, cur)) = parse_journal(&v) else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let Some((e, cur)) = parse_journal(&v) else {
+            continue;
+        };
         if !live.matches(&e, true, &[]) {
             continue;
         }
         if let Some(b) = &e.boot_id {
-            if last_boot.as_deref().is_some_and(|l| l != b) && tx.send(super::boot_json(e.ts, Some(b))).await.is_err() {
+            if last_boot.as_deref().is_some_and(|l| l != b)
+                && tx.send(super::boot_json(e.ts, Some(b))).await.is_err()
+            {
                 return Ok(());
             }
             last_boot = Some(b.clone());
@@ -193,7 +216,13 @@ mod tests {
         assert!(a.contains(&"--dmesg".to_string()));
         // a wildcard identifier is matched here, not by journalctl
         assert!(!a.iter().any(|x| x.starts_with("--identifier")));
-        let plain = args(&Filter { identifier: Some("sshd".into()), ..Filter::default() }, true);
+        let plain = args(
+            &Filter {
+                identifier: Some("sshd".into()),
+                ..Filter::default()
+            },
+            true,
+        );
         assert!(plain.contains(&"--identifier=sshd".to_string()));
         assert!(!plain.contains(&"-r".to_string()));
     }
@@ -213,13 +242,23 @@ echo '{"__CURSOR":"c1","__REALTIME_TIMESTAMP":"1000000","PRIORITY":"4","_BOOT_ID
         )
         .unwrap();
         std::fs::set_permissions(&sh, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let s = LogViewSettings { journalctl: sh.display().to_string(), ..LogViewSettings::default() };
+        let s = LogViewSettings {
+            journalctl: sh.display().to_string(),
+            ..LogViewSettings::default()
+        };
         let p = query(&s, &Filter::default(), 10, None).await.unwrap();
-        let kinds: Vec<&str> = p.items.iter().map(|i| i["type"].as_str().unwrap()).collect();
+        let kinds: Vec<&str> = p
+            .items
+            .iter()
+            .map(|i| i["type"].as_str().unwrap())
+            .collect();
         assert_eq!(kinds, ["line", "boot", "line", "line"]);
         assert_eq!(p.items[0]["message"], "first");
         assert_eq!(p.newest_cursor, "j:c3");
-        let f = Filter { identifier: Some("sshd".into()), ..Filter::default() };
+        let f = Filter {
+            identifier: Some("sshd".into()),
+            ..Filter::default()
+        };
         let p = query(&s, &f, 1, None).await.unwrap();
         assert_eq!(p.items.len(), 1);
         assert_eq!(p.items[0]["message"], "second");
