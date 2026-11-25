@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery, gql } from '@apollo/client'
 import { Shield, AlertTriangle, CheckCircle, XCircle } from 'lucide-react'
 import clsx from 'clsx'
@@ -56,6 +57,10 @@ export default function Security() {
   const { loading, error, data } = useQuery<SecurityData>(SECURITY_QUERY, {
     pollInterval: 5000,
   })
+  // Filters for Recent Events; the summary cards above drive them.
+  const [typeFilter, setTypeFilter] = useState<string | null>(null)
+  const [blockedOnly, setBlockedOnly] = useState(false)
+  const [search, setSearch] = useState('')
 
   if (loading) return <div>Loading security data...</div>
   if (error) return <div>Error: {error.message}</div>
@@ -80,13 +85,19 @@ export default function Security() {
     ? (data.threatStats.blocked / data.threatStats.total) * 100
     : 0
 
+  const q = search.trim().toLowerCase()
+  const shown = data.securityEvents.filter((e) =>
+    (!typeFilter || e.type === typeFilter) &&
+    (!blockedOnly || e.blocked) &&
+    (!q || `${e.source} ${e.destination} ${e.description} ${e.type}`.toLowerCase().includes(q)))
+
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Security</h1>
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
-        <a href="#threat-details" className="stat-card block bg-white dark:bg-gray-800 rounded-lg shadow p-6 hover:shadow-md">
+        <a href="#threat-details" onClick={() => { setBlockedOnly(false); setTypeFilter(null) }} className="stat-card block bg-white dark:bg-gray-800 rounded-lg shadow p-6 hover:shadow-md">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Total Threats</p>
@@ -100,7 +111,7 @@ export default function Security() {
           </div>
         </a>
 
-        <a href="#threat-details" className="stat-card block bg-white dark:bg-gray-800 rounded-lg shadow p-6 hover:shadow-md">
+        <a href="#threat-details" onClick={() => { setBlockedOnly(true); setTypeFilter(null) }} className="stat-card block bg-white dark:bg-gray-800 rounded-lg shadow p-6 hover:shadow-md">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600 dark:text-gray-300">Blocked</p>
@@ -136,12 +147,18 @@ export default function Security() {
         </h2>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           {data.threatStats.byType.map((item) => (
-            <div key={item.type} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            <button
+              type="button"
+              key={item.type}
+              aria-pressed={typeFilter === item.type}
+              onClick={() => { setTypeFilter(typeFilter === item.type ? null : item.type); document.getElementById('threat-details')?.scrollIntoView?.() }}
+              className={clsx('text-left border rounded-lg p-4 hover:bg-gray-50 dark:hover:bg-gray-700',
+                typeFilter === item.type ? 'border-primary-600 ring-2 ring-primary-600' : 'border-gray-200 dark:border-gray-700')}>
               <p className="text-sm text-gray-600 dark:text-gray-300">{item.type}</p>
               <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-gray-100">
                 {item.count.toLocaleString()}
               </p>
-            </div>
+            </button>
           ))}
         </div>
       </div>
@@ -150,14 +167,28 @@ export default function Security() {
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
         <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
           <h2 id="threat-details" className="text-lg font-semibold text-gray-900 dark:text-gray-100">Recent Events</h2>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <input type="search" aria-label="Search events" placeholder="Search source, destination, description"
+              value={search} onChange={(e) => setSearch(e.target.value)}
+              className="min-w-0 flex-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm text-gray-900 dark:text-gray-100" />
+            <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input type="checkbox" checked={blockedOnly} onChange={(e) => setBlockedOnly(e.target.checked)} /> Blocked only
+            </label>
+            {(typeFilter || blockedOnly || search) && (
+              <button type="button" onClick={() => { setTypeFilter(null); setBlockedOnly(false); setSearch('') }}
+                className="text-sm text-primary-700 dark:text-primary-400 underline">
+                Clear filters{typeFilter ? ` (${typeFilter})` : ''}
+              </button>
+            )}
+          </div>
         </div>
         <div className="divide-y divide-gray-200 dark:divide-gray-700">
-          {data.securityEvents.length === 0 ? (
+          {shown.length === 0 ? (
             <div className="px-6 py-8 text-center text-gray-500 dark:text-gray-400">
-              No security events
+              {data.securityEvents.length === 0 ? 'No security events' : 'No events match the filters'}
             </div>
           ) : (
-            data.securityEvents.map((event) => (
+            shown.map((event) => (
               <div key={event.id} className="px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700">
                 <div className="flex items-start gap-4">
                   <div className={clsx(

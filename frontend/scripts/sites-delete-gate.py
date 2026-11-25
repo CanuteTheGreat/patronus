@@ -128,6 +128,18 @@ with sync_playwright() as p:
     card = pg.locator('[data-testid=topology-preview]')
     txt = card.inner_text()
     expect('3 sites' in txt and 'HQ Chicago' in txt and 'links up' in txt, f'dashboard topology card lists counts and site names (got {txt!r})')
+    # security: the type cards and search filter Recent Events (no dead summaries)
+    pg.goto(f'http://127.0.0.1:{port}/security')
+    pg.wait_for_selector('text=Port scan', timeout=15000)
+    expect(pg.get_by_text('Suspicious download').count() == 1, 'security shows both events unfiltered')
+    pg.get_by_role('button', name=re.compile('^malware')).click()
+    expect(pg.get_by_text('Port scan').count() == 0 and pg.get_by_text('Suspicious download').count() == 1, 'clicking the malware type card filters to malware events')
+    pg.get_by_role('button', name=re.compile('Clear filters')).click()
+    pg.get_by_label('Blocked only').check()
+    expect(pg.get_by_text('Suspicious download').count() == 0 and pg.get_by_text('Port scan').count() == 1, 'Blocked only hides allowed events')
+    pg.get_by_label('Blocked only').uncheck()
+    pg.get_by_label('Search events').fill('198.51')
+    expect(pg.get_by_text('Port scan').count() == 0 and pg.get_by_text('Suspicious download').count() == 1, 'search filters by source address')
     b.close()
 
 if fails:
