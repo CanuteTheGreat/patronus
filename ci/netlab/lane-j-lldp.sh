@@ -76,7 +76,7 @@ RSOCK=$(find /run /var/run /var/lib/patronus -name lldpd.socket 2>/dev/null | he
 IFS_SEEN=$(lldpcli -u "$RSOCK" -f keyvalue show interfaces | sed -n 's/^lldp\.\([^.]*\)\..*/\1/p' | sort -u | tr '\n' ' ')
 [ "$IFS_SEEN" = "$NL_LAN_IF " ] || nl_fail "lldpd is not limited to $NL_LAN_IF: [$IFS_SEEN]"
 nl_ok "lldpd running for $NL_LAN_IF only (its interface list: $IFS_SEEN)"
-nl_wait 20 sh -c "lldpcli -u $SW_SOCK -f keyvalue show neighbors details | grep -qF 'chassis.name=nl-router'" \
+nl_wait 20 sh -c "lldpcli -u $SW_SOCK -f keyvalue show neighbors details | grep -F 'chassis.name=nl-router' >/dev/null" \
   || { lldpcli -u "$SW_SOCK" show neighbors details || true; nl_fail "the switch never heard the router's LLDP announcement"; }
 nl_ok "the switch hears the router: $(sw_hears | head -1)"
 
@@ -114,7 +114,7 @@ echo "=== rx-only: the router stays silent but still listens"
 nl_api_ok "rx-only" PUT /svc/lldp/interfaces/"$ROW" '{"iface":"@lan","mode":"rx-only"}'
 nl_wait 10 sh -c "grep -qx 'configure ports $NL_LAN_IF lldp status rx-only' $CONF" || nl_fail "mode not written"
 nl_wait 10 pgrep -x lldpd || nl_fail "lldpd gone after a mode change"
-nl_wait 15 sh -c "lldpcli -u $RSOCK -f keyvalue show interfaces detail ports $NL_LAN_IF 2>/dev/null | grep -qx 'lldp.$NL_LAN_IF.status=RX only'" \
+nl_wait 15 sh -c "lldpcli -u $RSOCK -f keyvalue show interfaces detail ports $NL_LAN_IF 2>/dev/null | grep -x 'lldp.$NL_LAN_IF.status=RX only' >/dev/null" \
   || nl_fail "the daemon does not report RX only on $NL_LAN_IF"
 stat() { lldpcli -u "$RSOCK" -f keyvalue show statistics ports "$NL_LAN_IF" | sed -n "s/^lldp\\.$NL_LAN_IF\\.$1\\.$1=//p"; }
 sleep 2; TX1=$(stat tx); RX1=$(stat rx); sleep 4; TX2=$(stat tx); RX2=$(stat rx)
