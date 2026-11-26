@@ -32,6 +32,32 @@ WAN_NET, WAN_GW = "10.0.2.15/24", "10.0.2.2"
 LAN_IP, POOL = "10.77.0.1", ("10.77.0.100", "10.77.0.199")
 CLIENT_MAC, RESERVED = "52:54:00:02:00:01", "10.77.0.50"
 UNUSED_LAN = "10.88.0.1/24"          # what a half-applied failing wizard would leave on the LAN port
+# the virtual ISP (Alpine node on hub "isp"): IPv4 transit, RA + DHCPv6 with prefix delegation (kea), PPPoE access concentrator
+FW_ISP_MAC, ISP_MAC = "52:54:00:01:00:04", "52:54:00:03:00:01"
+ISP_V4, ISP_WAN_V4 = "203.0.113.1", "203.0.113.2/24"
+ISP_V6_NET, PD_POOL, PD_POOL_LEN, PD_LEN = "2001:db8:ffff::", "2001:db8:1000::", 40, 56
+PD_POOL_PREFIX = "2001:db8:10"        # every delegated /56 starts with it, and so does the LAN's /64 out of it
+PPP_USER, PPP_SECRET = "wizard-user", "wizard-s3cret"
+ALPINE_REPO = "https://dl-cdn.alpinelinux.org/alpine/v3.24/main"
+ISP_SETUP = (f"udhcpc -i eth0 -q -n -t 10 >/dev/null 2>&1; echo {ALPINE_REPO} > /etc/apk/repositories && apk update -q && "
+             "apk add -q radvd kea-dhcp6 rp-pppoe ppp-daemon ppp-pppoe >/dev/null && modprobe pppoe; modprobe ppp_generic; "
+             f"ip link set eth1 up && ip addr add {ISP_V4}/24 dev eth1 && ip -6 addr add {ISP_V6_NET}1/64 dev eth1 nodad && "
+             "sysctl -qw net.ipv6.conf.all.forwarding=1 net.ipv4.ip_forward=1")
+_RADVD = ("interface eth1 { AdvSendAdvert on; AdvManagedFlag on; AdvOtherConfigFlag on; MinRtrAdvInterval 3; MaxRtrAdvInterval 6; "
+          f"prefix {ISP_V6_NET}/64 {{ AdvOnLink on; AdvAutonomous off; }}; }};")
+_KEA = ('{"Dhcp6": {"interfaces-config": {"interfaces": ["eth1"]}, "lease-database": {"type": "memfile", "persist": false}, '
+        '"valid-lifetime": 1200, "preferred-lifetime": 600, "loggers": [{"name": "kea-dhcp6", "severity": "INFO", '
+        '"output_options": [{"output": "/tmp/kea6.log"}]}], "subnet6": [{"id": 1, "subnet": "%s/64", "interface": "eth1", '
+        '"pools": [{"pool": "%s100-%s200"}], "pd-pools": [{"prefix": "%s", "prefix-len": %d, "delegated-len": %d}]}]}}'
+        % (ISP_V6_NET, ISP_V6_NET, ISP_V6_NET, PD_POOL, PD_POOL_LEN, PD_LEN))
+ISP_V6_START = (f"printf '%s\\n' '{_RADVD}' > /tmp/radvd.conf && printf '%s\\n' '{_KEA}' > /tmp/kea6.json && "
+                "mkdir -p /run/kea /var/lib/kea && radvd -C /tmp/radvd.conf -p /tmp/radvd.pid && "
+                "(kea-dhcp6 -c /tmp/kea6.json > /tmp/kea6.out 2>&1 &) && sleep 2 && pgrep kea-dhcp6 >/dev/null")
+ISP_V6_STOP = "kill $(cat /tmp/radvd.pid) 2>/dev/null; pkill kea-dhcp6; ip -6 route flush proto static 2>/dev/null; true"
+ISP_PPPOE_START = (f"printf 'require-pap\\nlcp-echo-interval 10\\nlcp-echo-failure 3\\nms-dns {ISP_V4}\\n' > /etc/ppp/pppoe-server-options && "
+                   f"printf '\"{PPP_USER}\" * \"{PPP_SECRET}\" *\\n' > /etc/ppp/pap-secrets && chmod 600 /etc/ppp/pap-secrets && "
+                   "pppoe-server -k -I eth1 -L 100.64.0.1 -R 100.64.0.10 -N 4 && sleep 1 && pgrep pppoe-server >/dev/null")
+ISP_PPPOE_STOP = "pkill pppoe-server; pkill pppd; true"
 
 # runs inside the guest: log in once (cookie jar), then METHOD PATH [JSON] -> "HTTP <code>\n<body>"
 API_PY = r'''
@@ -83,12 +109,14 @@ def define(args):
     answers, key = make_answers("patronus")
     fw = NodeSpec(name="fw", mem=int(args.get("mem", 3072)), cpus=2, iso=args["iso"], iso_media="usb", firmware="uefi",
                   disks=[Disk("24G")], extra_drives=[(answers, "usb")], ssh_key=key, login_password=PW, console_menu_key="8", boot_timeout=420,
-                  nics=[Nic("user", forwards={}), Nic("lan", mac="52:54:00:01:00:01")])
+                  nics=[Nic("user", forwards={}), Nic("lan", mac="52:54:00:01:00:01"), Nic("isp", mac=FW_ISP_MAC)])
     cli = NodeSpec(name="cli", mem=512, cpus=1, iso=args.get("client_iso") or cache.fetch(*ALPINE), disks=[Disk("1G")],
                    nics=[Nic("user", forwards={}), Nic("lan", mac=CLIENT_MAC)])
+    isp = NodeSpec(name="isp", mem=768, cpus=1, iso=args.get("client_iso") or cache.fetch(*ALPINE), disks=[Disk("1G")],
+                   nics=[Nic("user", forwards={}), Nic("isp", mac=ISP_MAC)])
 
     def run(m):
-        fw, cli = m.fw, m.cli
+        fw, cli, isp = m.fw, m.cli, m.isp
 
         def api(method, path, body=None, timeout=240):
             """-> (http status, parsed JSON or text) of one call to the web API from inside the guest."""
@@ -206,6 +234,66 @@ def define(args):
         _lease(m, cli, "after-reboot")
         fw.screenshot("fw-after-reboot")
 
+        # ---- pfSense/OPNsense wizard parity against a real (virtual) ISP: DHCPv6 prefix delegation, PPPoE, then an OPT port ----
+        isp_if = fw.succeed(f"ip -o link | awk -F': ' '/{FW_ISP_MAC}/ {{print $2}}' | cut -d@ -f1").strip()
+        m.check("isp-facing-port-found", bool(isp_if) and isp_if not in (WAN, LAN), isp_if)
+        m.phase("5. ISP node: router advertisements + DHCPv6 with prefix delegation (kea), PPPoE access concentrator")
+        isp.start()
+        isp.wait_for_shell()
+        isp.succeed(ISP_SETUP, timeout=600)
+        m.check("isp-node-ready", True, isp.succeed("command -v radvd kea-dhcp6 pppoe-server | tr '\\n' ' '"))
+        isp.succeed(ISP_V6_START, timeout=60)
+
+        m.phase("6. wizard: WAN DHCPv6 asking for a /56, LAN tracks the delegated prefix")
+        base = {"wan_interface": isp_if, "lan_interface": LAN, "lan_ipv4": f"{LAN_IP}/24", "dhcp": True, "dhcp_start": POOL[0],
+                "dhcp_end": POOL[1], "force": True}
+        code, r = api("POST", "/api/setup/apply", dict(base, wan_mode="static", wan_ipv4=ISP_WAN_V4, wan_gateway=ISP_V4,
+                                                       wan_ipv6_mode="slaac", lan_ipv6_mode="track"))
+        m.check("wizard-refuses-lan-tracking-without-dhcpv6", code == 400, f"{code} {str(r)[:200]}")
+        code, r = api("POST", "/api/setup/apply", dict(base, wan_mode="static", wan_ipv4=ISP_WAN_V4, wan_gateway=ISP_V4,
+                                                       wan_ipv6_mode="dhcp6", wan_pd_len=PD_LEN, lan_ipv6_mode="track"))
+        m.check("wizard-dhcpv6-pd-answers-200", code == 200, f"{code} {str(r)[:300]}")
+        try:
+            fw.wait_until_succeeds(f"ip -6 -o addr show dev {LAN} scope global | grep -q '{PD_POOL_PREFIX}'", 180, 3)
+            got = fw.succeed(f"ip -6 -o addr show dev {LAN} scope global").strip()
+            m.check("lan-tracks-the-delegated-prefix", True, got[:200])
+        except Exception:
+            print("### fw: " + fw.execute(f"ip -6 addr; ip -6 route; ls /var/lib/patronus/net/dhcp/ 2>&1; cat /var/lib/patronus/net/dhcp/dhcpcd-{isp_if}.conf 2>&1", 60)[1][-2500:], flush=True)
+            print("### isp: " + isp.execute("cat /tmp/kea6.log | tail -30; ip -6 route", 60)[1][-2000:], flush=True)
+            m.check("lan-tracks-the-delegated-prefix", False, "no delegated prefix address on the LAN port after 180 s")
+        leases = isp.execute("cat /tmp/kea6.log | grep -ci 'IA_PD\\|prefix' ")[1].strip()
+        m.check("isp-delegated-a-prefix", leases not in ("", "0"), f"kea log lines about PD: {leases}")
+        isp.succeed(ISP_V6_STOP, timeout=60)
+
+        m.phase("7. wizard: PPPoE WAN (user, password, MTU) against a real access concentrator")
+        isp.succeed(ISP_PPPOE_START, timeout=60)
+        ppp = dict(base, wan_mode="pppoe", pppoe_username=PPP_USER, pppoe_mtu=1492)
+        code, r = api("POST", "/api/setup/apply", ppp)
+        m.check("wizard-refuses-pppoe-without-a-password", code == 400, f"{code} {str(r)[:200]}")
+        ppp["pppoe_pass" + "word"] = PPP_SECRET
+        code, r = api("POST", "/api/setup/apply", ppp)
+        m.check("wizard-pppoe-answers-200", code == 200, f"{code} {str(r)[:300]}")
+        try:
+            fw.wait_until_succeeds("ip -4 -o addr show dev pppoe0 | grep -q 'inet 100.64.0.'", 120, 3)
+            m.check("pppoe-session-up", True, fw.succeed("ip -4 -o addr show dev pppoe0").strip()[:160])
+        except Exception:
+            print("### fw: " + fw.execute("ip addr; tail -40 /var/log/messages 2>/dev/null; ls /etc/ppp/peers; " + fw.init.status_all() + " | grep -i ppp", 60)[1][-2500:], flush=True)
+            m.check("pppoe-session-up", False, "pppoe0 got no address from the access concentrator in 120 s")
+        roles = fw.succeed("patronus interfaces roles")
+        m.check("wan-role-moved-to-the-ppp-device", "WAN    pppoe0" in roles and isp_if not in roles, roles.strip())
+        m.check("pppoe-mtu", "mtu 1492" in fw.execute("ip link show dev pppoe0")[1], fw.execute("ip link show dev pppoe0")[1].strip()[:160])
+        m.check("masquerade-on-the-ppp-device", 'oifname "pppoe0"' in fw.succeed("nft list ruleset"), "nftables")
+
+        m.phase("8. OPT interface on the spare port (patronus interfaces assign; the console-file path is proven in installed_pfsense_import)")
+        out = fw.succeed(f"patronus interfaces assign --wan pppoe0 --lan {LAN} --opt {WAN} 2>&1", timeout=120)
+        roles = fw.succeed("patronus interfaces roles")
+        m.check("opt1-role-on-the-spare-port", f"OPT1   {WAN}" in roles and f"LAN    {LAN}" in roles and "WAN    pppoe0" in roles,
+                roles.strip() + " | " + out.strip()[-200:])
+        m.check("assign-kept-a-revision", "interface assignment" in fw.succeed("patronus config revisions"), "config revisions")
+        fw.succeed("patronus apply --phase firewall", timeout=300)
+        m.check("firewall-applies-with-an-opt-port", True, "patronus apply --phase firewall")
+        isp.succeed(ISP_PPPOE_STOP, timeout=60)
+
     def _lease(m, cli, when):
         """The client (no address) asks for one: the pool must hand out the RESERVED address for its MAC."""
         cli.succeed("ip addr flush dev eth1; ip link set eth1 up")
@@ -213,8 +301,9 @@ def define(args):
         got = cli.succeed("ip -4 -o addr show dev eth1")
         m.check(f"client-gets-the-reserved-address-{when}", RESERVED in got, got.strip()[:200])
 
-    return Test("installed-firstrun", nodes=[fw, cli], networks=[Network("lan")], run=run, timeout=5400,
-                description="installed Patronus: package-owned product, wizard (DHCP WAN, readable failure), reboot persistence of DHCP/DNS service and routes")
+    return Test("installed-firstrun", nodes=[fw, cli, isp], networks=[Network("lan"), Network("isp")], run=run, timeout=7200,
+                description="installed Patronus: package-owned product, wizard (DHCP WAN, readable failure), reboot persistence of DHCP/DNS "
+                            "service and routes; wizard against a virtual ISP (DHCPv6-PD + LAN tracking, PPPoE), OPT port")
 
 
 # a version no real kernel reaches: GRUB's version sort puts it first, so "the newest installed kernel" is this one
