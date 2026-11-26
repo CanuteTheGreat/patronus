@@ -85,7 +85,7 @@ def login(page):
 
 def goto_firewall(page, tab):
     page.goto(BASE + "/firewall")
-    page.wait_for_selector("#rule-form", timeout=15000)
+    page.wait_for_selector("#rule-form", state="attached", timeout=15000)
     page.click(f".tab-btn[data-tab={tab}]")
 
 
@@ -153,8 +153,8 @@ def run_viewport(browser, kind, label, width, height, scheme, first):
     f.locator("[name=interfaces]").select_option(pick)
     f.locator("[name=protocol]").select_option("tcp")
     f.locator("[name=port]").fill("9999")
-    f.locator("[name=category]").fill(cat)
     page.click("#rule-limits summary")
+    f.locator("[name=category]").fill(cat)
     with page.expect_navigation():
         f.locator("button[type=submit]").click()
     page.wait_for_selector("#rules-table", timeout=10000)
@@ -206,7 +206,7 @@ def run_viewport(browser, kind, label, width, height, scheme, first):
         c = contrast(page, sel)
         if c is not None and page.locator(sel).first.is_visible():
             check(tag + f"contrast of {sel} is at least 4.5:1", c >= 4.5, round(c, 2))
-    if first:
+    if first or os.environ.get("E2E_SHOTS"):
         page.screenshot(path=f"/tmp/fw-floating-{kind}-{label}-{scheme}.png", full_page=True)
 
     # cleanup through the API (the UI paths are covered above)

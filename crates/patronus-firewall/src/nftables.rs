@@ -420,9 +420,8 @@ impl KernelCaps {
 
     /// What `ext` needs, and the first thing this kernel lacks for it.
     pub fn missing_for(&self, ext: &patronus_core::types::RuleExt) -> Option<&'static str> {
-        let per_source = ext.max_src_conn.is_some()
-            || ext.max_src_rate.is_some()
-            || ext.limiter.is_some();
+        let per_source =
+            ext.max_src_conn.is_some() || ext.max_src_rate.is_some() || ext.limiter.is_some();
         if (ext.max_states.is_some() || ext.max_src_conn.is_some()) && !self.connlimit {
             return Some("connection counting (nft_connlimit)");
         }
@@ -445,17 +444,23 @@ pub enum Probe {
     Unknown,
 }
 
-const PROBE_HEAD: &str = "add table inet pat_probe\nadd chain inet pat_probe c { type filter hook input priority 0; }\n";
+const PROBE_HEAD: &str =
+    "add table inet pat_probe\nadd chain inet pat_probe c { type filter hook input priority 0; }\n";
 
 /// Work out the capabilities from a probe runner (script -> outcome). The
 /// plain base script must be supported first; if it is not, the answer is
 /// "unknown" for everything and every feature counts as present.
 pub fn probe_caps(run: &dyn Fn(&str) -> Probe) -> Option<KernelCaps> {
-    if run(&format!("{PROBE_HEAD}add rule inet pat_probe c counter drop\n")) != Probe::Supported {
+    if run(&format!(
+        "{PROBE_HEAD}add rule inet pat_probe c counter drop\n"
+    )) != Probe::Supported
+    {
         return None;
     }
     let one = |rule: &str, extra: &str| {
-        run(&format!("{PROBE_HEAD}{extra}add rule inet pat_probe c {rule}\n")) != Probe::Unsupported
+        run(&format!(
+            "{PROBE_HEAD}{extra}add rule inet pat_probe c {rule}\n"
+        )) != Probe::Unsupported
     };
     Some(KernelCaps {
         connlimit: one("ct state new ct count over 1000000 drop", ""),
@@ -529,7 +534,7 @@ pub fn ifgroup_set_name(group: &str) -> String {
 /// Extra rendering input: interface expressions that replace the rule's
 /// own single interface (floating rules, interface groups) and the known
 /// limiters.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RenderCtx {
     /// Full nft match (`iifname @ifgrp_x`, `iifname { "a", "b" }`) used
     /// instead of `rule.interface_in`.
@@ -537,7 +542,30 @@ pub struct RenderCtx {
     /// Same for the outbound side.
     pub oif: Option<String>,
     pub limiters: std::collections::BTreeMap<String, LimiterSpec>,
+    /// Entries of each per-source set (`firewall.limit_set_size`).
+    pub set_size: u32,
+    /// Seconds a source stays in an overload table unless the rule says
+    /// otherwise (`firewall.overload_secs`).
+    pub overload_secs: u32,
 }
+
+impl Default for RenderCtx {
+    fn default() -> Self {
+        Self {
+            iif: None,
+            oif: None,
+            limiters: Default::default(),
+            set_size: DEFAULT_LIMIT_SET_SIZE,
+            overload_secs: DEFAULT_OVERLOAD_SECS,
+        }
+    }
+}
+
+/// Defaults of the two knobs above (stored in `system_config`).
+pub const DEFAULT_LIMIT_SET_SIZE: u32 = 65535;
+pub const DEFAULT_OVERLOAD_SECS: u32 = 3600;
+pub const LIMIT_SET_SIZE_KEY: &str = "firewall.limit_set_size";
+pub const OVERLOAD_SECS_KEY: &str = "firewall.overload_secs";
 
 /// nft lines of one rule plus the sets and chains they need.
 #[derive(Debug, Clone, Default)]
@@ -660,17 +688,28 @@ pub fn render_filter_rule_ext(
         Some(n) => Some((
             n.clone(),
             ctx.limiters.get(n).cloned().ok_or_else(|| {
-                Error::Firewall(format!("Invalid rule {:?}: unknown limiter {n:?}", rule.name))
+                Error::Firewall(format!(
+                    "Invalid rule {:?}: unknown limiter {n:?}",
+                    rule.name
+                ))
             })?,
         )),
         None => None,
     };
+    if limiter.is_some() && rule.chain == ChainType::Input {
+        // the limiter chain runs before the anti-lockout rule: keep it away from traffic for the router itself
+        return Err(Error::Firewall(format!(
+            "Invalid rule {:?}: a limiter applies to forwarded and outgoing traffic, not to traffic for the router itself",
+            rule.name
+        )));
+    }
     let mut fams = families(&[&src, &dst], rule.ip_version, what)?;
     if ext.per_source() && fams == vec![None] {
         // per-source sets are typed by family
         fams = vec![Some(IpVersion::V4), Some(IpVersion::V6)];
     }
     let rid = rule.id.unwrap_or(0);
+    let size = ctx.set_size.max(1);
     for fam in fams {
         let mut parts: Vec<String> = Vec::new();
         parts.extend(iin.clone());
@@ -699,12 +738,12 @@ pub fn render_filter_rule_ext(
         let (kw, ty, suffix) = set_key(fam);
         let cm = format!("comment \"patronus rule {rid} limit\"");
         if let Some(o) = &ext.overload {
-            let secs = ext.overload_secs.unwrap_or(3600).max(1);
+            let secs = ext.overload_secs.unwrap_or(ctx.overload_secs).max(1);
             let name = format!("ov_{o}_{suffix}");
             out.sets.push((
                 name.clone(),
                 format!(
-                    "add set {TABLE} {name} {{ type {ty}; size 65535; flags dynamic,timeout; timeout {secs}s; }}\n"
+                    "add set {TABLE} {name} {{ type {ty}; size {size}; flags dynamic,timeout; timeout {secs}s; }}\n"
                 ),
             ));
             // sources already in the overload table are dropped on this
@@ -725,9 +764,7 @@ pub fn render_filter_rule_ext(
             let name = format!("sc{rid}_{suffix}");
             out.sets.push((
                 name.clone(),
-                format!(
-                    "add set {TABLE} {name} {{ type {ty}; size 65535; flags dynamic; }}\n"
-                ),
+                format!("add set {TABLE} {name} {{ type {ty}; size {size}; flags dynamic; }}\n"),
             ));
             out.lines.push(line(
                 &head,
@@ -739,7 +776,7 @@ pub fn render_filter_rule_ext(
             out.sets.push((
                 name.clone(),
                 format!(
-                    "add set {TABLE} {name} {{ type {ty}; size 65535; flags dynamic,timeout; timeout {}s; }}\n",
+                    "add set {TABLE} {name} {{ type {ty}; size {size}; flags dynamic,timeout; timeout {}s; }}\n",
                     secs.max(1) * 2
                 ),
             ));
@@ -748,9 +785,9 @@ pub fn render_filter_rule_ext(
                 nft_rate(n, secs)
             );
             let stmt = match &ext.overload {
-                Some(o) => format!(
-                    "ct state new {over} add @ov_{o}_{suffix} {{ {kw} saddr }} drop {cm}"
-                ),
+                Some(o) => {
+                    format!("ct state new {over} add @ov_{o}_{suffix} {{ {kw} saddr }} drop {cm}")
+                }
                 None => format!("ct state new {over} drop {cm}"),
             };
             out.lines.push(line(&head, &stmt));
@@ -764,7 +801,7 @@ pub fn render_filter_rule_ext(
                 out.sets.push((
                     name.clone(),
                     format!(
-                        "add set {TABLE} {name} {{ type {ty}; size 65535; flags dynamic,timeout; timeout 300s; }}\n"
+                        "add set {TABLE} {name} {{ type {ty}; size {size}; flags dynamic,timeout; timeout 300s; }}\n"
                     ),
                 ));
                 format!("add @{name} {{ {kw} saddr {over} }} drop comment \"patronus rule {rid} limiter {lname}\"")
@@ -776,7 +813,6 @@ pub fn render_filter_rule_ext(
                 limit_chain_name(&rule.chain)
             ));
         }
-        let mut parts = parts;
         if rule.log {
             let tag = match rule.id {
                 Some(id) => format!("patronus[{id}] {}: ", rule.action),
@@ -1684,7 +1720,8 @@ mod floating_tests {
         let out = render(&pass_rule(7), &ctx).unwrap();
         assert_eq!(out.lines.len(), 1);
         assert!(
-            out.lines[0].contains("iifname @ifgrp_trusted meta l4proto") || out.lines[0].contains("iifname @ifgrp_trusted tcp dport 80 accept"),
+            out.lines[0].contains("iifname @ifgrp_trusted meta l4proto")
+                || out.lines[0].contains("iifname @ifgrp_trusted tcp dport 80 accept"),
             "{:?}",
             out.lines
         );
@@ -1697,14 +1734,26 @@ mod floating_tests {
         r.ext.max_src_conn = Some(20);
         let out = render(&r, &RenderCtx::default()).unwrap();
         // family-agnostic rule with a per-source option: one block per family
-        assert_eq!(out.lines.iter().filter(|l| l.ends_with("accept")).count(), 2);
+        assert_eq!(
+            out.lines.iter().filter(|l| l.ends_with("accept")).count(),
+            2
+        );
         let all = out.lines.join("\n");
         assert!(all.contains("ct state new ct count over 500 drop"));
         assert!(all.contains("ct state new add @sc7_v4 { ip saddr ct count over 20 } drop"));
         assert!(all.contains("ct state new add @sc7_v6 { ip6 saddr ct count over 20 } drop"));
-        assert!(out.sets.iter().any(|(n, d)| n == "sc7_v4" && d.contains("flags dynamic")));
-        let first_accept = out.lines.iter().position(|l| l.ends_with("accept")).unwrap();
-        assert!(out.lines[..first_accept].iter().any(|l| l.contains("sc7_v4")));
+        assert!(out
+            .sets
+            .iter()
+            .any(|(n, d)| n == "sc7_v4" && d.contains("flags dynamic")));
+        let first_accept = out
+            .lines
+            .iter()
+            .position(|l| l.ends_with("accept"))
+            .unwrap();
+        assert!(out.lines[..first_accept]
+            .iter()
+            .any(|l| l.contains("sc7_v4")));
     }
 
     #[test]
@@ -1722,7 +1771,10 @@ mod floating_tests {
             all.contains("ct state new add @sr9_v4 { ip saddr limit rate over 180/minute burst 15 packets } add @ov_flooders_v4 { ip saddr } drop"),
             "{all}"
         );
-        assert!(out.sets.iter().any(|(n, d)| n == "ov_flooders_v4" && d.contains("timeout 600s")));
+        assert!(out
+            .sets
+            .iter()
+            .any(|(n, d)| n == "ov_flooders_v4" && d.contains("timeout 600s")));
         assert!(out.lines.last().unwrap().ends_with("accept"));
         assert_eq!(nft_rate(10, 1), "10/second");
         assert_eq!(nft_rate(1, 90), "40/hour");
@@ -1736,7 +1788,11 @@ mod floating_tests {
         let mut ctx = RenderCtx::default();
         ctx.limiters.insert(
             "cap".into(),
-            LimiterSpec { rate_kbit: 8000, burst_kb: 128, per_source: true },
+            LimiterSpec {
+                rate_kbit: 8000,
+                burst_kb: 128,
+                per_source: true,
+            },
         );
         let out = render(&r, &ctx).unwrap();
         assert_eq!(out.limit_lines.len(), 1);
@@ -1752,11 +1808,17 @@ mod floating_tests {
         // a burst below one GSO packet is raised
         ctx.limiters.insert(
             "cap".into(),
-            LimiterSpec { rate_kbit: 800, burst_kb: 8, per_source: false },
+            LimiterSpec {
+                rate_kbit: 800,
+                burst_kb: 8,
+                per_source: false,
+            },
         );
         r.ext.limiter = Some("cap".into());
         let out = render(&r, &ctx).unwrap();
-        assert!(out.limit_lines[0].contains("limit rate over 100000 bytes/second burst 70 kbytes drop"));
+        assert!(
+            out.limit_lines[0].contains("limit rate over 100000 bytes/second burst 70 kbytes drop")
+        );
     }
 
     #[test]
@@ -1777,6 +1839,22 @@ mod floating_tests {
         let mut r = pass_rule(1);
         r.ext.overload = Some("ok".into()); // overload without a rate
         assert!(render(&r, &none).is_err());
+    }
+
+    #[test]
+    fn a_limiter_never_applies_to_traffic_for_the_router_itself() {
+        let mut ctx = RenderCtx::default();
+        ctx.limiters.insert(
+            "cap".into(),
+            LimiterSpec { rate_kbit: 1000, burst_kb: 128, per_source: true },
+        );
+        let mut r = pass_rule(4);
+        r.chain = ChainType::Input;
+        r.ext.limiter = Some("cap".into());
+        let e = render(&r, &ctx).unwrap_err().to_string();
+        assert!(e.contains("not to traffic for the router itself"), "{e}");
+        r.chain = ChainType::Output;
+        assert!(render(&r, &ctx).is_ok());
     }
 
     #[test]
@@ -1814,7 +1892,10 @@ mod caps_tests {
         let mut ext = patronus_core::types::RuleExt::default();
         assert_eq!(c.missing_for(&ext), None);
         ext.max_states = Some(5);
-        assert_eq!(c.missing_for(&ext), Some("connection counting (nft_connlimit)"));
+        assert_eq!(
+            c.missing_for(&ext),
+            Some("connection counting (nft_connlimit)")
+        );
         ext.max_states = None;
         ext.max_src_rate = Some(5);
         ext.max_src_rate_secs = Some(1);
@@ -1829,7 +1910,14 @@ mod caps_tests {
         let all = probe_caps(&|_| Probe::Supported).unwrap();
         assert_eq!(all, KernelCaps::ALL);
         // an Unknown feature probe is not "unsupported"
-        let c = probe_caps(&|s| if s.contains("limit rate") { Probe::Unknown } else { Probe::Supported }).unwrap();
+        let c = probe_caps(&|s| {
+            if s.contains("limit rate") {
+                Probe::Unknown
+            } else {
+                Probe::Supported
+            }
+        })
+        .unwrap();
         assert!(c.limit);
     }
 }
