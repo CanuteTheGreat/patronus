@@ -49,6 +49,28 @@
     </form>
 </div>
 
+<div class="card" id="ha-sync-card">
+    <div class="card-header"><h2 class="card-title">Configuration sync</h2></div>
+    <p class="text-sm text-muted">The source node sends the switched-on parts of its configuration to the other node
+        over HTTPS whenever they change; the other node applies them through its normal appliers, keeps a revision
+        and reports a refusal back. Interfaces, addresses, accounts and the HA settings themselves are never sent.</p>
+    <p id="sync-status" class="text-sm" role="status" aria-live="polite">Loading...</p>
+    <p id="sync-fail" class="alert-error text-sm" role="alert" style="display:none"></p>
+    <form class="lan-form" id="sync-form" onsubmit="return saveSync(event)">
+        <label>Role of this node
+            <select name="role"><option value="off">off</option><option value="push">source: push my configuration to the other node</option><option value="accept">target: accept the other node's configuration</option></select></label>
+        <label>Other node's web address (https://host or https://host:port; empty = https://&lt;peer address&gt;) <input name="peer_url" data-keep-empty="1"></label>
+        <label>Other node's TLS pin (sha256//..., from its HA page) <input name="peer_pin" data-keep-empty="1" autocomplete="off"></label>
+        <label>API key made on the other node (operator key; write-only) <input name="api_key" type="password" data-keep-empty="1" autocomplete="off"></label>
+        <fieldset><legend>What to send</legend><div id="sync-sections"></div></fieldset>
+        <label>Look for changes every (seconds, 5-3600) <input name="check_secs" type="number" min="5" max="3600" value="20"></label>
+        <label>Try a failed push again after (seconds, 10-3600) <input name="retry_secs" type="number" min="10" max="3600" value="60"></label>
+        {% if can_modify %}<button class="btn btn-primary btn-sm" type="submit">Save</button>
+        <button class="btn btn-sm btn-secondary" type="button" onclick="pushNow()">Push now</button>{% endif %}
+    </form>
+    <p class="text-sm">This node's TLS pin (give it to the source node): <code id="sync-own-pin">-</code></p>
+</div>
+
 <div class="card" id="ha-vips-card">
     <div class="card-header"><h2 class="card-title">Virtual IPs</h2></div>
     <p class="text-sm text-muted"><b>carp</b>: the address fails over between the HA nodes (VRRP); clients use it as
@@ -137,6 +159,50 @@
         if (await api('POST', '/api/ha/vips', body)) { ev.target.reset(); loadHa(); }
         return false;
     }
+    async function loadSync() {
+        const r = await fetch('/api/ha/sync', {credentials: 'same-origin'});
+        if (!r.ok) return;
+        const d = await r.json(), s = d.settings, st = d.status || {};
+        const f = document.getElementById('sync-form').elements;
+        if (!document.getElementById('sync-form').contains(document.activeElement)) {
+            f['role'].value = s.push ? 'push' : (s.accept ? 'accept' : 'off');
+            f['peer_url'].value = s.peer_url || ''; f['peer_pin'].value = s.peer_pin || '';
+            f['api_key'].placeholder = d.api_key_set ? '(set)' : '';
+            f['check_secs'].value = s.check_secs; f['retry_secs'].value = s.retry_secs;
+            const box = document.getElementById('sync-sections'); box.textContent = '';
+            for (const x of d.sections) {
+                const l = document.createElement('label'); const c = document.createElement('input');
+                c.type = 'checkbox'; c.name = 'sec_' + x.name; c.checked = x.enabled;
+                l.appendChild(c); l.appendChild(document.createTextNode(' ' + x.label)); box.appendChild(l);
+            }
+        }
+        document.getElementById('sync-own-pin').textContent = d.own_pin || 'not available (no certificate file)';
+        const ago = t => t ? new Date(t * 1000).toLocaleString() : 'never';
+        let t = s.push ? 'This node is the sync source. ' + (st.last_push_ok ? 'Last good push: ' + ago(st.last_push_ok.ts) + '.' : 'Nothing pushed yet.')
+            : s.accept ? 'This node accepts the other node\'s configuration. ' + (st.last_receive ? 'Last received: ' + ago(st.last_receive.ts) + (st.last_receive.ok ? ' (applied).' : ' (NOT applied).') : 'Nothing received yet.')
+            : 'Configuration sync is off.';
+        document.getElementById('sync-status').textContent = t;
+        const fail = document.getElementById('sync-fail');
+        const bad = s.push && st.last_push && !st.last_push.ok ? st.last_push
+            : (s.accept && st.last_receive && !st.last_receive.ok ? st.last_receive : null);
+        if (bad) { fail.style.display = ''; fail.textContent = 'Last sync failed (' + ago(bad.ts) + '): ' + bad.message; }
+        else fail.style.display = 'none';
+    }
+    async function saveSync(ev) {
+        ev.preventDefault();
+        const f = ev.target.elements, role = f['role'].value;
+        const sections = {}; for (const c of ev.target.querySelectorAll('#sync-sections input')) sections[c.name.slice(4)] = c.checked;
+        const body = {push: role === 'push', accept: role === 'accept', peer_url: f['peer_url'].value, peer_pin: f['peer_pin'].value,
+            check_secs: Number(f['check_secs'].value), retry_secs: Number(f['retry_secs'].value), sections};
+        if (f['api_key'].value) body.api_key = f['api_key'].value;
+        if (await api('PUT', '/api/ha/sync/settings', body)) { f['api_key'].value = ''; loadSync(); }
+        return false;
+    }
+    async function pushNow() {
+        const j = await api('POST', '/api/ha/sync/push');
+        if (j) alert('Pushed: ' + j.message);
+        loadSync();
+    }
     // the banner follows the hand-over: checking -> waiting for the peer -> handed over / failed
     async function showProgress() {
         const b = document.getElementById('ha-maint-banner');
@@ -169,6 +235,6 @@
         } finally { clearInterval(poll); }
         showProgress(); loadHa();
     }
-    document.addEventListener('DOMContentLoaded', () => { loadHa(); showProgress(); setInterval(loadHa, 5000); setInterval(showProgress, 5000); });
+    document.addEventListener('DOMContentLoaded', () => { loadHa(); loadSync(); showProgress(); setInterval(loadHa, 5000); setInterval(loadSync, 10000); setInterval(showProgress, 5000); });
 </script>
 {% endblock %}
