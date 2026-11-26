@@ -201,6 +201,15 @@ that are not finished are listed separately under
   user that holds only the capability to bind these ports, on both OpenRC
   and systemd. [C86]
 
+- **Access log.** System > Access log lists every web and API request
+  (time, client, signed-in user or API key, method, route group, status,
+  duration, bytes) with filters, live mode, statistics that drill into the
+  list, and a CSV download, next to the configuration-change history. Raw
+  paths, query strings, ids and passwords are never stored; retention by
+  rows and days, the writer and the alert thresholds are typed settings (the
+  router tier ships a smaller default); repeated failed sign-ins or 5xx
+  bursts become events. [C87]
+
 ### Configuration you can trust
 
 - The configuration survives restarts and reboots: it lives in one SQLite

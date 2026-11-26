@@ -303,7 +303,7 @@ Last generated: 2026-11-17 (279 features).
 | Web TLS: self-signed + operator certificate | pfS/OPN/OWrt/UniFi | tested | untested | untested | no ACME / Let's Encrypt (grep acme: none); no cert upload UI (drop file into dir) | P0 |
 | ACME (Let's Encrypt) for the web UI | pfS(pkg)/OPN(plugin)/OWrt(acme)/UniFi | missing | missing | missing | `acme` applier using lego/acme.sh DNS-01 or HTTP-01 via DDNS name, store table, cert dir already honoured by tls.rs (M) | P1 |
 | Login lockout / brute-force protection | pfS/OPN/UniFi | partial | untested | untested | no admin-visible "unblock" list, no notification | P1 |
-| Audit log (who changed what) | pfS/OPN/UniFi/Forti | partial | partial | partial | Add `/system/audit` page with filter + CSV; ship to syslog (S) | P1 |
+| Audit log (who changed what) + web access log | pfS/OPN/UniFi/Forti | tested | tested | tested | System > Access log: requests (filters, live, stats, CSV) and configuration changes (filter + CSV); shipping to syslog still open (S) | P1 |
 | Support bundle (logs + config + versions in one download) | OPN/UniFi/Meraki/Forti | missing | missing | missing | `patronus support-bundle` (redacted config export, journal tail, `patronus status`, dmesg, versions) + button; unit test that secrets are redacted (S) | P1 |
 | Service control (start/stop/restart daemons from UI) | pfS/OPN/OWrt | tested | untested | untested | none | P1 |
 | Reboot / shutdown from UI | all | untested | untested | untested | none | P0 |
