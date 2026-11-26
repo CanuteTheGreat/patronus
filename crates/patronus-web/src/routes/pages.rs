@@ -162,7 +162,11 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
     let (health_note, health_tone) = health_note(&[
         ("CPU", system_info.cpu_usage as f64, cpu_level),
         ("Memory", system_info.memory_usage as f64, mem_level),
-        ("Disk /", system_info.disk_usage as f64, disk_level),
+        (
+            host::storage_label(),
+            system_info.disk_usage as f64,
+            disk_level,
+        ),
     ]);
     let template = DashboardTemplate {
         page: "dashboard",
@@ -183,6 +187,7 @@ pub async fn dashboard(State(state): State<AppState>) -> Response {
         cpu_level: cpu_level.class(),
         mem_level: mem_level.class(),
         disk_level: disk_level.class(),
+        disk_label: host::storage_label(),
         health_note,
         health_tone,
     };
@@ -363,6 +368,7 @@ pub async fn monitoring(State(state): State<AppState>) -> Response {
         cpu_level: ui.level(metrics.cpu_percent).class(),
         mem_level: ui.level(metrics.memory_percent).class(),
         disk_level: ui.level(metrics.disk_percent).class(),
+        disk_label: host::storage_label(),
         rx_rate: crate::state::monitoring::format_rate(metrics.network_rx_rate),
         tx_rate: crate::state::monitoring::format_rate(metrics.network_tx_rate),
         metrics,
@@ -409,7 +415,7 @@ pub async fn system(State(state): State<AppState>, me: crate::auth::AuthUser) ->
     };
     let services = state.system.list_services().await.unwrap_or_default();
     let config = state.system.get_config().await.unwrap_or_default();
-    let disk = host::disk("/");
+    let disk = host::disk(host::storage_path());
     let about = crate::routes::legal::about_links(&state).await;
     let dash = || "unknown".to_string();
     let ssh = patronus_network::ssh::settings(state.lan.store())
@@ -420,6 +426,7 @@ pub async fn system(State(state): State<AppState>, me: crate::auth::AuthUser) ->
     let disk_pct = disk.map(|(u, t)| u as f64 * 100.0 / (t.max(1)) as f64);
     let template = SystemTemplate {
         disk_level: disk_pct.map(|p| ui.level(p).class()).unwrap_or(""),
+        disk_label: host::storage_label(),
         disk_bar: disk_pct
             .map(|p| p.round().clamp(0.0, 100.0) as u8)
             .unwrap_or(0),

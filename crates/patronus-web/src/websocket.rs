@@ -223,7 +223,7 @@ pub fn start_metrics_broadcaster(broadcaster: Arc<WsBroadcaster>, _state: crate:
             let metrics = WsMessage::SystemMetrics {
                 cpu: s.cpu_percent.unwrap_or(0.0),
                 memory: host::memory().map(|m| m.0).unwrap_or(0.0),
-                disk: host::disk_percent("/").unwrap_or(0.0),
+                disk: host::disk_percent(host::storage_path()).unwrap_or(0.0),
                 network_rx: s.rx_rate() * 8,
                 network_tx: s.tx_rate() * 8,
             };

@@ -68,7 +68,7 @@
     <div class="seg-wrap ui-grid-wrap"><table class="lan ui-grid" id="seg-devices-table"><thead><tr>
         <th>Name</th><th>MAC</th><th>IPv4</th><th>Group</th><th>Kind</th><th>State</th><th>Last seen</th><th></th>
     </tr></thead><tbody></tbody></table></div>
-    <p class="empty" id="seg-devices-empty" style="display:none">No devices yet. Switch isolation on above to adopt what is on the network, or add one below.</p>
+    <p class="empty" id="seg-devices-empty" style="display:none">No devices yet. Switch isolation on above to adopt what is on the network, or use Add a device.</p>
     {% if can_modify %}
     <form class="lan-form" id="seg-device-form" data-dialog="Add a device" onsubmit="return segAddDevice(event)">
         <label>Name<input name="name" required pattern="[a-z0-9_\-]{1,32}" placeholder="living-room-tv"></label>
@@ -211,7 +211,7 @@
         w.textContent = (d.warnings || []).join(' '); w.style.display = (d.warnings || []).length ? '' : 'none';
 
         const segs = document.getElementById('seg-segments'); segs.innerHTML = '';
-        if (!d.segments.length) { segs.innerHTML = '<p class="empty">No LAN-side interface has a role yet (Interfaces page).</p>'; }
+        if (!d.segments.length) { segs.innerHTML = '<p class="empty">No LAN-side interface has a role yet: give one the LAN role on the <a href="/interfaces">Interfaces</a> page.</p>'; }
         for (const s of d.segments) {
             const row = document.createElement('div'); row.className = 'seg-seg';
             const name = document.createElement('span'); name.className = 'name'; name.textContent = s.segment; row.appendChild(name);

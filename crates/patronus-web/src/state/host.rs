@@ -166,6 +166,32 @@ pub fn disk(path: &str) -> Option<(u64, u64)> {
     (total > 0).then(|| (total.saturating_sub(free), total))
 }
 
+/// The filesystem that fills up as the unit is used: `/`, or, on images whose root is a read-only squashfs (router
+/// tier: always "100 % used" by design), the writable data partition `/data` that holds the settings and logs.
+pub fn storage_path() -> &'static str {
+    let read_only = |p: &str| {
+        nix::sys::statvfs::statvfs(p)
+            .map(|s| s.flags().contains(nix::sys::statvfs::FsFlags::ST_RDONLY))
+            .unwrap_or(true)
+    };
+    if !read_only("/") {
+        return "/";
+    }
+    if std::path::Path::new("/data").is_dir() && !read_only("/data") {
+        return "/data";
+    }
+    "/"
+}
+
+/// "Disk /" or "Disk /data": the label of [`storage_path`] on the dashboard, System and Monitoring pages.
+pub fn storage_label() -> &'static str {
+    if storage_path() == "/data" {
+        "Disk /data"
+    } else {
+        "Disk /"
+    }
+}
+
 pub fn disk_percent(path: &str) -> Option<f64> {
     disk(path).map(|(u, t)| u as f64 * 100.0 / t as f64)
 }

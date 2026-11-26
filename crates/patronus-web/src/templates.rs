@@ -37,6 +37,8 @@ pub struct DashboardTemplate {
     pub cpu_level: &'static str,
     pub mem_level: &'static str,
     pub disk_level: &'static str,
+    /// "Disk /" or "Disk /data" (read-only root: the data partition is what fills up)
+    pub disk_label: &'static str,
     /// One sentence naming what is over a threshold (empty = all fine) and its banner tone.
     pub health_note: String,
     pub health_tone: &'static str,
@@ -255,6 +257,7 @@ pub struct MonitoringTemplate {
     pub cpu_level: &'static str,
     pub mem_level: &'static str,
     pub disk_level: &'static str,
+    pub disk_label: &'static str,
 }
 
 /// System template
@@ -287,6 +290,7 @@ pub struct SystemTemplate {
     pub disk_usage_percent: String,
     /// ui-kit usage tone of the root disk ("", "warn", "crit") and the bar width in percent
     pub disk_level: &'static str,
+    pub disk_label: &'static str,
     pub disk_bar: u8,
     pub disk_used: String,
     pub disk_total: String,
@@ -824,6 +828,7 @@ mod tests {
             cpu_level: "",
             mem_level: "",
             disk_level: "",
+            disk_label: "Disk /",
             health_note: String::new(),
             health_tone: "",
         }

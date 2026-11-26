@@ -56,7 +56,7 @@ impl MonitoringManager {
         crate::templates::SystemMetrics {
             cpu_percent: sample.cpu_percent.unwrap_or(0.0),
             memory_percent: super::host::memory().map(|m| m.0).unwrap_or(0.0),
-            disk_percent: super::host::disk_percent("/").unwrap_or(0.0),
+            disk_percent: super::host::disk_percent(super::host::storage_path()).unwrap_or(0.0),
             network_rx_rate: sample.rx_rate(),
             network_tx_rate: sample.tx_rate(),
         }

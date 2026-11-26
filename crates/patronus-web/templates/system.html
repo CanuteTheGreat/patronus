@@ -17,15 +17,24 @@
     <div class="ui-panel-head"><h2>This router</h2><a href="/monitoring">Monitoring</a></div>
     <div class="ui-panel-body"><dl class="ui-kv">
         <dt>Uptime</dt><dd>{{ uptime }}</dd>
-        <dt>Disk /</dt><dd><div class="ui-usage {{ disk_level }}"><span class="track"><i style="width:{{ disk_bar }}%"></i></span><span class="val">{{ disk_usage_percent }}%</span></div>
+        <dt>{{ disk_label }}</dt><dd><div class="ui-usage {{ disk_level }}"><span class="track"><i style="width:{{ disk_bar }}%"></i></span><span class="val">{{ disk_usage_percent }}%</span></div>
             <small class="text-muted">{{ disk_used }} used of {{ disk_total }}</small></dd>
         <dt>Memory</dt><dd>{{ memory_total }} installed</dd>
         <dt>Patronus</dt><dd>{{ version }}, init system {{ init_system }} (<a href="#about-card">about</a>)</dd>
     </dl>
     <p class="text-sm" style="margin:var(--s-2) 0 0"><a href="#display-card">Warning levels</a></p></div>
 </section>
+<nav id="sys-index" class="sys-index" aria-label="On this page"><span class="sys-index-title">On this page</span></nav>
 <style>
-    .sys-summary { margin-bottom: var(--s-4); }
+    .sys-summary { margin-bottom: var(--s-3); }
+    .sys-index { display: flex; flex-wrap: wrap; gap: 2px var(--s-3); align-items: baseline; margin: 0 0 var(--s-4); padding: var(--s-2) var(--s-3);
+        background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--r-md); font-size: var(--fs-sm); }
+    .sys-index-title { font-weight: 600; color: var(--c-ink-2); margin-right: var(--s-2); }
+    .sys-index a { color: var(--c-accent); text-decoration: none; padding: 4px 0; }
+    .sys-index a:hover, .sys-index a:focus-visible { text-decoration: underline; }
+    .sys-index a[hidden] { display: none; }
+    .content .card[id], .content section.ui-panel[id] { scroll-margin-top: 72px; }
+    @media (max-width: 900px) { .sys-index { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; } }
     .sys-summary .ui-kv { grid-template-columns: max-content minmax(0, 28rem); }
 </style>
 
@@ -747,6 +756,26 @@ async function fwFeedDownload() {
 {% block extra_scripts %}
 {% include "lan_js.html" %}
 <script>
+    // "On this page": the System page is long (20+ sections); a row of links to every visible section, built from the
+    // section titles (a section without an id gets one from its title)
+    (function () {
+        const nav = document.getElementById('sys-index'); if (!nav) return;
+        const used = new Set();
+        const heads = [...document.querySelectorAll('.content .card > .card-header h2, .content section.ui-panel > .ui-panel-head h2')];
+        for (const h of heads) {
+            const box = h.closest('.card, section.ui-panel'); if (!box || box.classList.contains('sys-summary')) continue;
+            if (!box.id) box.id = 'sys-' + h.textContent.toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+            if (used.has(box.id)) continue; used.add(box.id);
+            const a = document.createElement('a'); a.href = '#' + box.id; a.dataset.for = box.id;
+            a.textContent = h.textContent.replace(/\s*\(.*\)\s*$/, '').trim();
+            nav.appendChild(a);
+        }
+        // sections shown later (groups, remote backups) appear in the list when they appear on the page
+        const sync = () => nav.querySelectorAll('a').forEach(a => { const b = document.getElementById(a.dataset.for); a.hidden = !b || b.offsetParent === null; });
+        sync(); new MutationObserver(sync).observe(document.querySelector('.content'), {attributes: true, subtree: true, attributeFilter: ['style', 'hidden']});
+    })();
+</script>
+<script>
     async function getJson(url) { const r = await fetch(url, {credentials: 'same-origin'}); return r.ok ? r.json() : null; }
     function cell(tr, text) { const td = document.createElement('td'); td.textContent = text; tr.appendChild(td); return td; }
     async function loadUpdates() {
@@ -779,11 +808,11 @@ async function fwFeedDownload() {
     async function factoryReset() {
         if (!{{ is_admin }}) return patNotice('Only admins can reset the configuration.', 'crit');
         if (!confirm('Factory reset: all rules, VPNs, services and settings are replaced by a first-boot configuration. Web accounts stay. A backup is made first. Continue?')) return;
-        const confirmText = prompt('Type RESET to confirm');
-        if (confirmText !== 'RESET') return;
-        const pw = prompt('Your admin password');
-        if (!pw) return;
-        const j = await post('/api/system/factory-reset', {password: pw, confirm: confirmText});
+        const v = await patAsk('Factory reset', [
+            {name: 'confirm', label: 'Type RESET to confirm', required: true, pattern: 'RESET', hint: 'Capital letters, exactly RESET.', autocomplete: 'off'},
+            {name: 'password', label: 'Your admin password', type: 'password', required: true, autocomplete: 'current-password'}], 'Reset the configuration');
+        if (!v || v.confirm !== 'RESET' || !v.password) return;
+        const j = await post('/api/system/factory-reset', {password: v.password, confirm: v.confirm});
         if (j) { patNotice('Reset done. Backup: ' + j.backup, 'ok', {afterReload: true}); location.reload(); }
     }
     async function powerOp(what) {
@@ -1001,9 +1030,10 @@ async function fwFeedDownload() {
     document.addEventListener('DOMContentLoaded', loadBackupTargets);
 </script>
 <script>
-    function setPassword(id, name) {
-        const pw = prompt('New password for ' + name + ' (12+ characters):');
-        if (pw) call('PUT', '/api/system/users/' + id, {password: pw});
+    async function setPassword(id, name) {
+        const v = await patAsk('New password for ' + name, [{name: 'password', label: 'New password (12+ characters)', type: 'password',
+            required: true, minLength: 12, autocomplete: 'new-password'}], 'Set password');
+        if (v && v.password) call('PUT', '/api/system/users/' + id, {password: v.password});
     }
     async function runCapture(ev) {
         ev.preventDefault();
