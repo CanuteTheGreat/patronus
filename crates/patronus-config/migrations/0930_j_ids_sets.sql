@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS ids_sources (
     name TEXT NOT NULL,
     url TEXT NOT NULL,
     format TEXT NOT NULL DEFAULT 'tar.gz',
-    licence TEXT NOT NULL DEFAULT '',
+    licence TEXT,
     enabled INTEGER NOT NULL DEFAULT 0,
     max_mb INTEGER NOT NULL DEFAULT 64,  -- refuse a download bigger than this
     updated_at INTEGER NOT NULL

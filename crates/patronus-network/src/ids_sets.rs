@@ -36,8 +36,6 @@ const ACTIONS: &[&str] = &[
     "rejectboth",
     "pass",
 ];
-/// Hold-off between two attempts of a source that failed or was rejected (seconds).
-pub const RETRY_SECS: i64 = 3600;
 
 /// What a policy or override does to a rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -388,14 +386,14 @@ pub async fn render_threshold(store: &ConfigStore) -> Result<String> {
         if kind == "suppress" {
             if (track == "by_src" || track == "by_dst") && !ip.is_empty() {
                 c.push_str(&format!(
-                    "suppress gen_id 0, sig_id {sid}, track {tr}, ip {ip}\n"
+                    "suppress gen_id 1, sig_id {sid}, track {tr}, ip {ip}\n"
                 ));
             } else {
-                c.push_str(&format!("suppress gen_id 0, sig_id {sid}\n"));
+                c.push_str(&format!("suppress gen_id 1, sig_id {sid}\n"));
             }
         } else if matches!(kind.as_str(), "limit" | "threshold" | "both") {
             c.push_str(&format!(
-                "threshold gen_id 0, sig_id {sid}, type {kind}, track {tr}, count {}, seconds {}\n",
+                "threshold gen_id 1, sig_id {sid}, type {kind}, track {tr}, count {}, seconds {}\n",
                 count.max(1),
                 secs.max(1)
             ));
@@ -516,6 +514,8 @@ pub struct Schedule {
     pub hour: i64,
     pub window_hours: i64,
     pub interval_hours: i64,
+    /// Hold-off between two attempts of a source that failed or was rejected (minutes).
+    pub retry_minutes: i64,
 }
 
 impl Schedule {
@@ -527,23 +527,24 @@ impl Schedule {
 
     /// Does `s` need a download now? A source never fetched is fetched at once (outside the
     /// window too: a rule set the owner just switched on must not wait for the night); an older
-    /// one when its interval is up and the window is open. A failure waits [`RETRY_SECS`].
+    /// one when its interval is up and the window is open. A failure waits `retry_minutes`.
     pub fn due(&self, st: Option<&SourceState>, now: i64, local_hour: i64) -> bool {
         if !self.enabled {
             return false;
         }
         let Some(st) = st else { return true };
+        let retry = self.retry_minutes.max(1) * 60;
         if let Some(c) = st.checked_at {
-            if matches!(st.status.as_str(), "failed" | "rejected") && now - c < RETRY_SECS {
+            if matches!(st.status.as_str(), "failed" | "rejected") && now - c < retry {
                 return false;
             }
         }
         match st.ok_at {
-            None => st.checked_at.map(|c| now - c >= RETRY_SECS).unwrap_or(true),
+            None => st.checked_at.map(|c| now - c >= retry).unwrap_or(true),
             Some(ok) => {
                 now - ok >= self.interval_hours.max(1) * 3600
                     && self.in_window(local_hour)
-                    && st.checked_at.map(|c| now - c >= RETRY_SECS).unwrap_or(true)
+                    && st.checked_at.map(|c| now - c >= retry).unwrap_or(true)
             }
         }
     }
@@ -1007,6 +1008,7 @@ alert http any any -> any any (msg:\"E multi\"; \\\n  content:\"eee\"; sid:104; 
             hour: 3,
             window_hours: 3,
             interval_hours: 24,
+            retry_minutes: 60,
         };
         assert!(s.in_window(3) && s.in_window(5) && !s.in_window(6) && !s.in_window(2));
         let wrap = Schedule {
@@ -1041,7 +1043,7 @@ alert http any any -> any any (msg:\"E multi\"; \\\n  content:\"eee\"; sid:104; 
             !s.due(Some(&bad), 5000 + 600, 14),
             "a failure waits an hour"
         );
-        assert!(s.due(Some(&bad), 5000 + RETRY_SECS + 1, 14));
+        assert!(s.due(Some(&bad), 5000 + 3600 + 1, 14));
         assert!(!Schedule {
             enabled: false,
             ..s
@@ -1094,6 +1096,7 @@ alert http any any -> any any (msg:\"E multi\"; \\\n  content:\"eee\"; sid:104; 
             hour: 3,
             window_hours: 3,
             interval_hours: 24,
+            retry_minutes: 60,
         };
         let extra = Extra {
             files: vec![("patronus.rules", String::new())],
@@ -1178,6 +1181,7 @@ alert http any any -> any any (msg:\"E multi\"; \\\n  content:\"eee\"; sid:104; 
             hour: 3,
             window_hours: 1,
             interval_hours: 24,
+            retry_minutes: 60,
         };
         let extra = Extra { files: vec![] };
         let mut ok = |_: &Path| Ok(());
@@ -1224,14 +1228,14 @@ alert http any any -> any any (msg:\"E multi\"; \\\n  content:\"eee\"; sid:104; 
                 .execute(s.pool().unwrap()).await.unwrap();
         }
         let t = render_threshold(&s).await.unwrap();
-        assert!(t.contains("suppress gen_id 0, sig_id 10\n"), "{t}");
+        assert!(t.contains("suppress gen_id 1, sig_id 10\n"), "{t}");
         assert!(
-            t.contains("suppress gen_id 0, sig_id 11, track by_src, ip 10.1.2.3\n"),
+            t.contains("suppress gen_id 1, sig_id 11, track by_src, ip 10.1.2.3\n"),
             "{t}"
         );
         assert!(
             t.contains(
-                "threshold gen_id 0, sig_id 12, type limit, track by_dst, count 2, seconds 60\n"
+                "threshold gen_id 1, sig_id 12, type limit, track by_dst, count 2, seconds 60\n"
             ),
             "{t}"
         );
