@@ -46,5 +46,11 @@ grep -Eq '^services = \[.*"patronus-services"' $P/overlay/etc/live-installer/pro
 for e in gentoo/net-firewall/patronus/patronus-9999.ebuild gentoo/net-firewall/patronus/patronus-0.2.0.ebuild; do
   grep -q 'patronus-services.initd' "$e" && grep -q 'patronus-services.service' "$e" || bad "$e does not install patronus-services for both inits"
 done
+# 6. UPS monitoring (USE=ups): the real ebuild, the Packages catalog and the image agree on the NUT package. The image
+#    carries the feature (default cargo features) and installs NUT on demand through the Packages page, like igmpproxy.
+grep -Eq '^[[:space:]]*ups\? \( sys-power/nut\[' gentoo/net-firewall/patronus/patronus-9999.ebuild || bad "patronus-9999.ebuild: USE=ups does not depend on sys-power/nut"
+grep -q 'use ups && webfeatures+=( ups )' gentoo/net-firewall/patronus/patronus-9999.ebuild || bad "patronus-9999.ebuild: USE=ups does not add the ups web feature"
+grep -Eq 'atom: "sys-power/nut"' crates/patronus-network/src/packages.rs || bad "the Packages catalog has no sys-power/nut component for the ups feature"
+grep -Eq '^default = \[.*"ups"' crates/patronus-web/Cargo.toml crates/patronus-network/Cargo.toml || bad "the ups feature is not in the default cargo features, so the image would not carry it"
 [ $rc -eq 0 ] && echo "[image-ebuild] ok"
 exit $rc

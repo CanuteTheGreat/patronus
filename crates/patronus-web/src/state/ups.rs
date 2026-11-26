@@ -362,7 +362,7 @@ mod tests {
         assert_eq!(h[1].charge_pct, Some(71.0));
         assert_eq!(h[0].runtime_s, Some(2610));
         assert_eq!(history(&store, 1100, 3600, 2).await.unwrap().len(), 2);
-        assert_eq!(prune(&store, 1, 1000 + 86_400 + 50).await.unwrap(), 1);
+        assert_eq!(prune(&store, 1, 1000 + 86_400 + 5).await.unwrap(), 1);
         assert_eq!(history(&store, 1100, 99_999, 100).await.unwrap().len(), 2);
     }
 }

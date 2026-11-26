@@ -99,6 +99,8 @@ pub fn build_router(
         .route("/metrics", get(api::telemetry::metrics))
         // API routes (JSON)
         .nest("/api", api_routes())
+        // versioned path of the newer endpoints (UPS status); `/api/ups` stays as the alias
+        .nest("/api/v1", api::ups::router())
         // Static files
         .nest_service("/static", ServeDir::new("static"))
         // Attach application state

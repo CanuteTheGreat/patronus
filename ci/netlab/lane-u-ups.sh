@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lane J: UPS monitoring through NUT (USE=ups). A dummy-ups driver replays a script that mimics a UPS losing
+# Lane U: UPS monitoring through NUT (USE=ups). A dummy-ups driver replays a script that mimics a UPS losing
 # mains power (online -> on battery -> low battery). The UPS page is enabled over the API; Patronus must render
 # its own NUT configuration, start the driver, upsd and upsmon under the supervisor, report the live readings
 # (API), raise the power events, and make upsmon run the *configured* shutdown command when the battery is low.
@@ -8,7 +8,7 @@
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 
-DB=/t/lane-j-ups.db
+DB=/t/lane-u-ups.db
 DEV=/tmp/nl-ups.dev
 MARK=/tmp/nl-ups-shutdown.marker
 CMD=/usr/local/bin/nl-ups-shutdown
@@ -51,10 +51,12 @@ nl_boot "$DB"
 nl_web_start "$DB"; nl_login
 
 echo "=== before it is enabled: honest status, nothing running"
-nl_api_ok "status off" GET /ups
+nl_api_ok "status off" GET /v1/ups
 [ "$(nl_json "$NL_OUT" 'd["enabled"]')" = False ] && [ "$(nl_json "$NL_OUT" 'd["reading"]')" = None ] || nl_fail "off status: $(cat "$NL_OUT")"
 pgrep -x upsd >/dev/null && nl_fail "upsd runs before UPS monitoring is enabled"
-nl_ok "off: no reading, no daemons"
+nl_api_ok "alias" GET /ups
+[ "$(nl_json "$NL_OUT" 'd["enabled"]')" = False ] || nl_fail "the /api/ups alias differs"
+nl_ok "off: no reading, no daemons (/api/v1/ups and the /api/ups alias agree)"
 
 echo "=== validation"
 nl_api_code "shell metacharacters in the shutdown command" 400 PUT /svc/ups '{"shutdown_command":"/bin/x; reboot"}'
@@ -84,14 +86,18 @@ nl_ok "the generated monitor password is not returned by the API"
 echo "=== live readings follow the UPS"
 seen=""
 for _ in $(seq 1 90); do
-  nl_api GET /ups
+  # the marker is read BEFORE the state: state only moves forward, so a marker seen with a state that is not
+  # low_battery means the shutdown command ran too early
+  early=no; [ -e "$MARK" ] && early=yes
+  nl_api GET /v1/ups
   st=$(nl_json "$NL_OUT" 'd["state"]')
-  case " $seen " in *" $st "*) ;; *) seen="$seen $st"; echo "  state: $st ($(nl_json "$NL_OUT" 'd["reading"] and d["reading"]["charge_pct"]')%)";; esac
+  if [ "$early" = yes ] && [ "$st" != low_battery ]; then nl_fail "shutdown marker exists while the UPS state is $st (before low battery)"; fi
+  case " $seen " in *" $st "*) ;; *) seen="$seen $st"; echo "  state: $st ($(nl_json "$NL_OUT" 'd["reading"] and d["reading"]["charge_pct"]')%) marker=$early";; esac
   [ "$st" = low_battery ] && break
   sleep 1
 done
 case "$seen" in *online*on_battery*low_battery*) ;; *) nl_fail "states seen:$seen (want online, on_battery, low_battery in order)";; esac
-nl_ok "the API reported:$seen"
+nl_ok "the API reported:$seen; the shutdown marker did not exist in any state before low_battery"
 python3 - "$NL_OUT" <<'PY' || nl_fail "low-battery reading is wrong"
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -103,7 +109,7 @@ kinds = [e["kind"] for e in d["events"]]
 assert "ups_on_battery" in kinds and "ups_low_battery" in kinds, kinds
 PY
 nl_ok "reading matches the UPS (charge 14%, 150 s left, Eaton 3S 700); events ups_on_battery and ups_low_battery were raised"
-nl_api GET "/ups/history?hours=1"
+nl_api GET "/v1/ups/history?hours=1"
 [ "$(nl_json "$NL_OUT" 'len([s for s in d["samples"] if s["state"]=="on_battery"])')" -ge 1 ] || nl_fail "no on-battery sample in the history: $(cat "$NL_OUT")"
 nl_ok "history holds on-battery samples"
 
@@ -124,10 +130,14 @@ nl_api_ok "netserver" PUT /svc/ups '{"mode":"netserver","listen_iface":"@lan"}'
 nl_wait 20 grep -q "LISTEN $NL_RTR_LAN 3493" $CONF/upsd.conf || { cat $CONF/upsd.conf; nl_fail "upsd.conf does not listen on the LAN address"; }
 ! grep -q '0.0.0.0' $CONF/upsd.conf || nl_fail "upsd listens on a wildcard"
 nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport 3493 accept"
-nl_wait 20 C python3 -c "import socket; s=socket.create_connection(('$NL_RTR_LAN',3493),3); s.sendall(b'LIST UPS\n'); d=s.recv(200); assert b'BEGIN LIST UPS' in d, d"
-nl_ok "the LAN client reads the UPS list from upsd on $NL_RTR_LAN:3493"
-if C python3 -c "import socket; socket.create_connection(('$NL_RTR_WAN',3493),3)" 2>/dev/null; then nl_fail "NUT answers on the WAN address"; fi
-nl_ok "nothing answers on the WAN side"
+nl_wait 20 C upsc "ups@$NL_RTR_LAN" ups.status || { C upsc "ups@$NL_RTR_LAN" 2>&1 | head -5; nl_fail "a LAN client cannot read the UPS from $NL_RTR_LAN:3493"; }
+OUTC=$(C upsc "ups@$NL_RTR_LAN" 2>&1)
+case "$OUTC" in *"battery.charge:"*"ups.status:"*) ;; *) nl_fail "upsc from the LAN lacks readings: $OUTC";; esac
+nl_ok "a LAN-namespace client runs upsc ups@$NL_RTR_LAN and gets the readings (port 3493 on the LAN address)"
+if C timeout 6 upsc "ups@$NL_RTR_WAN" ups.status >/dev/null 2>&1; then nl_fail "NUT answers on the WAN address (seen from the LAN client)"; fi
+if ISP timeout 6 upsc "ups@$NL_RTR_WAN" ups.status >/dev/null 2>&1; then nl_fail "NUT answers a client on the WAN side"; fi
+if ISP timeout 4 python3 -c "import socket; socket.create_connection(('$NL_RTR_WAN',3493),3)" 2>/dev/null; then nl_fail "port 3493 accepts a connection from the WAN side"; fi
+nl_ok "upsc against the WAN address fails from the WAN side and from the LAN client; nothing listens or accepts there"
 
 echo "=== reboot: the boot apply brings the monitoring back"
 nl_web_stop
@@ -141,9 +151,10 @@ nl_ok "after reboot: driver, upsd, upsmon and the firewall rule are back"
 echo "=== disable: everything stops, the rule goes"
 nl_web_start "$DB"; nl_login
 nl_api_ok "disable" PUT /svc/ups '{"enabled":false}'
-nl_wait 20 sh -c '! pgrep -x upsd && ! pgrep -x upsmon' || nl_fail "NUT daemons still running"
+nut_gone() { ! pgrep -x upsd && ! pgrep -x upsmon; }
+nl_wait 20 nut_gone || nl_fail "NUT daemons still running"
 nl_assert_nft_lacks "tcp dport 3493"
-nl_api_ok "status" GET /ups
+nl_api_ok "status" GET /v1/ups
 [ "$(nl_json "$NL_OUT" 'd["reading"]')" = None ] || nl_fail "a reading is still shown while disabled"
 nl_ok "disabled: daemons stopped, firewall rule gone, no reading"
 nl_web_stop

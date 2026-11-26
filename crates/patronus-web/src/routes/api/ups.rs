@@ -1,8 +1,8 @@
 //! UPS status and history (USE=ups). Settings are the generic feature API (`/api/svc/ups`).
 //!
-//! - `GET /api/ups`          `{enabled, installed, mode, state, reading, message, events}`;
+//! - `GET /api/v1/ups`       (alias `/api/ups`) `{enabled, installed, mode, state, reading, message, events}`;
 //!                           `state` is online | on_battery | low_battery | unknown, `message` says why there is no reading
-//! - `GET /api/ups/history`  `?hours=24&limit=2000`, samples oldest first
+//! - `GET /api/v1/ups/history` (alias `/api/ups/history`) `?hours=24&limit=2000`, samples oldest first
 //!
 //! In a build without the feature both answer 404 naming the USE flag.
 

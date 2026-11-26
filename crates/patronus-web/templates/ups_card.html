@@ -1,0 +1,77 @@
+{# UPS status card: a reusable partial (the dashboard widget registry embeds the same markup). It fetches
+   /api/v1/ups itself, shows an honest empty state when UPS monitoring is off or no UPS answers, and
+   refreshes while the page is open. Colours come only from the theme tokens. #}
+<div class="card" id="ups-card" data-state="loading" aria-live="polite">
+    <div class="card-header"><h2 class="card-title">UPS status</h2><span class="badge" id="ups-badge">Loading...</span></div>
+    <p class="empty" id="ups-empty">Loading...</p>
+    <div class="ups-grid" id="ups-grid" style="display:none"></div>
+    <p class="svc-help" id="ups-model" style="display:none"></p>
+    <div id="ups-events-wrap" style="display:none">
+        <h3 class="ups-sub">Recent power events</h3>
+        <ul class="ups-events" id="ups-events"></ul>
+    </div>
+</div>
+<style>
+    #ups-card .ups-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 8px 0; }
+    #ups-card .ups-tile { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+    #ups-card .ups-tile .label { color: var(--text-muted); font-size: 0.78em; }
+    #ups-card .ups-tile .value { color: var(--text); font-size: 1.35em; font-weight: 600; overflow-wrap: anywhere; }
+    #ups-card[data-state="online"] { border-left: 4px solid var(--success); }
+    #ups-card[data-state="on_battery"] { border-left: 4px solid var(--warning); }
+    #ups-card[data-state="low_battery"] { border-left: 4px solid var(--danger); }
+    #ups-card .ups-sub { font-size: 0.95em; margin: 10px 0 4px; color: var(--text); }
+    #ups-card .ups-events { list-style: none; padding: 0; margin: 0; font-size: 0.85em; color: var(--text); }
+    #ups-card .ups-events li { padding: 3px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+    @media (max-width: 480px) { #ups-card .ups-grid { grid-template-columns: repeat(2, 1fr); } }
+</style>
+<script>
+(function () {
+    const LABEL = {online: 'On mains power', on_battery: 'On battery', low_battery: 'Low battery', unknown: 'No reading'};
+    const card = document.getElementById('ups-card');
+    function tile(label, value) {
+        const t = document.createElement('div'); t.className = 'ups-tile';
+        const l = document.createElement('div'); l.className = 'label'; l.textContent = label;
+        const v = document.createElement('div'); v.className = 'value'; v.textContent = value;
+        t.appendChild(l); t.appendChild(v); return t;
+    }
+    const fmt = (n, unit, d) => (n === null || n === undefined) ? '-' : Number(n).toFixed(d || 0) + unit;
+    function render(d) {
+        const empty = document.getElementById('ups-empty'), grid = document.getElementById('ups-grid');
+        const badge = document.getElementById('ups-badge'), model = document.getElementById('ups-model');
+        card.dataset.state = d.reading ? d.state : 'unknown';
+        badge.textContent = LABEL[card.dataset.state] || 'No reading';
+        grid.textContent = '';
+        if (!d.reading) {
+            empty.style.display = ''; grid.style.display = 'none'; model.style.display = 'none';
+            empty.textContent = d.message || 'No UPS data.';
+        } else {
+            const r = d.reading;
+            empty.style.display = 'none'; grid.style.display = '';
+            grid.appendChild(tile('Status', r.flags.join(' ') || '-'));
+            grid.appendChild(tile('Charge', fmt(r.charge_pct, ' %')));
+            grid.appendChild(tile('Runtime left', r.runtime_secs === null || r.runtime_secs === undefined ? '-' : Math.round(r.runtime_secs / 60) + ' min'));
+            grid.appendChild(tile('Load', fmt(r.load_pct, ' %')));
+            grid.appendChild(tile('Input voltage', fmt(r.input_voltage, ' V', 1)));
+            grid.appendChild(tile('Output voltage', fmt(r.output_voltage, ' V', 1)));
+            const m = [r.manufacturer, r.model].filter(Boolean).join(' ');
+            model.textContent = (m ? 'Model: ' + m : '') + (r.replace_battery ? ' - the UPS asks for a new battery' : '');
+            model.style.display = model.textContent ? '' : 'none';
+        }
+        const ev = document.getElementById('ups-events'); ev.textContent = '';
+        for (const e of (d.events || []).slice(0, 8)) {
+            const li = document.createElement('li');
+            li.textContent = new Date(e.ts * 1000).toLocaleString() + ' - ' + e.detail; ev.appendChild(li);
+        }
+        document.getElementById('ups-events-wrap').style.display = (d.events || []).length ? '' : 'none';
+    }
+    async function tick() {
+        try {
+            const r = await fetch('/api/v1/ups', {credentials: 'same-origin'});
+            const d = await r.json();
+            if (!r.ok) { render({reading: null, message: d.error || ('Could not load: ' + r.status), events: []}); return; }
+            render(d);
+        } catch (e) { render({reading: null, message: 'Could not reach the router.', events: []}); }
+    }
+    document.addEventListener('DOMContentLoaded', () => { tick(); setInterval(tick, 5000); });
+})();
+</script>
