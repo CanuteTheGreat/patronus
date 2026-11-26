@@ -640,3 +640,62 @@ async fn licenses_page_is_reachable_and_serves_the_bundle_or_says_why_not() {
     );
     std::fs::remove_file(&file).ok();
 }
+
+#[tokio::test]
+async fn access_log_records_who_what_and_never_raw_paths() {
+    let a = app().await;
+    // a wrong password, a missing page, and an authenticated read
+    let bad = r#"{"username":"admin","password":"wrong-password-xyz"}"#;
+    let r = a
+        .app
+        .clone()
+        .oneshot(req(Method::POST, "/api/auth/login", None, Some(bad)))
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+    let (s, _) = a
+        .call(Method::GET, "/api/no-such-thing/12345?token=secret-abc", None)
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = a.call(Method::GET, "/api/system/backups", None).await;
+    assert_eq!(s, StatusCode::OK);
+
+    // rows are written in batches: wait for the writer
+    let mut body = String::new();
+    for _ in 0..40 {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let (s, b) = a.call(Method::GET, "/api/system/access-log?limit=100", None).await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        body = b;
+        if body.contains("/api/system/backups") && body.contains("attempted_user") {
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+            if v["rows"].as_array().unwrap().len() >= 4 {
+                break;
+            }
+        }
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let rows = v["rows"].as_array().unwrap();
+    assert!(!body.contains("secret-abc") && !body.contains("12345"), "no query or ids: {body}");
+    let find = |m: &str, g: &str, st: i64| {
+        rows.iter().find(|r| r["method"] == m && r["path_group"] == g && r["status"] == st)
+    };
+    let fail = find("POST", "/api/auth/login", 401).expect("failed login row");
+    assert_eq!(fail["attempted_user"], "admin");
+    assert_eq!(fail["principal_kind"], "anonymous");
+    let ok = find("GET", "/api/system/backups", 200).expect("authenticated read row");
+    assert_eq!(ok["principal_kind"], "user");
+    assert_eq!(ok["principal_name"], "admin");
+    assert!(rows.iter().any(|r| r["status"] == 404), "the 404 is logged: {body}");
+    assert!(!body.contains("wrong-password-xyz"), "passwords are never stored");
+
+    let (s, st) = a.call(Method::GET, "/api/system/access-log/stats", None).await;
+    assert_eq!(s, StatusCode::OK);
+    let st: serde_json::Value = serde_json::from_str(&st).unwrap();
+    assert!(st["requests"].as_i64().unwrap() >= 4);
+    assert!(st["client_errors"].as_i64().unwrap() >= 2);
+
+    let (s, page) = a.call(Method::GET, "/system/access-log", None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(page.contains("id=\"dlg-stats\""));
+}

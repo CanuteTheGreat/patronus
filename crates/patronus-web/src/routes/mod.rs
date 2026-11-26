@@ -51,6 +51,7 @@ pub fn build_router(
         .merge(api::ha::pages())
         .merge(api::qos::pages())
         .merge(api::insights::pages())
+        .merge(api::accesslog::pages())
         .merge(api::packages::pages())
         .merge(api::svc::pages())
         .merge(api::segmentation::pages())
