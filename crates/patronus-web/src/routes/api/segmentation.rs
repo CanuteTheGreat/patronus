@@ -28,6 +28,7 @@ use axum::response::IntoResponse;
 mod built {
     use super::*;
     use askama::Template;
+    use axum::response::Html;
     use axum::extract::{Path, State};
     use axum::routing::{get, post, put};
     use axum::{http::StatusCode, response::Response, Json};
