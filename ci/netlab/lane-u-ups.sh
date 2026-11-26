@@ -98,7 +98,7 @@ for _ in $(seq 1 90); do
 done
 case "$seen" in *online*on_battery*low_battery*) ;; *) nl_fail "states seen:$seen (want online, on_battery, low_battery in order)";; esac
 nl_ok "the API reported:$seen; the shutdown marker did not exist in any state before low_battery"
-python3 - "$NL_OUT" <<'PY' || nl_fail "low-battery reading is wrong"
+cat > /tmp/nl-ups-check.py <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 r = d["reading"]
@@ -108,6 +108,14 @@ assert r["charge_pct"] == 14 and r["runtime_secs"] == 150 and r["model"] == "Eat
 kinds = [e["kind"] for e in d["events"]]
 assert "ups_on_battery" in kinds and "ups_low_battery" in kinds, kinds
 PY
+# the recorder raises events on its own tick, a moment after the API already shows the state: retry briefly
+okc=no
+for _ in $(seq 1 15); do
+  nl_api GET /v1/ups
+  if python3 /tmp/nl-ups-check.py "$NL_OUT" 2>/tmp/nl-ups-check.err; then okc=yes; break; fi
+  sleep 1
+done
+[ "$okc" = yes ] || { cat /tmp/nl-ups-check.err; cat "$NL_OUT"; nl_fail "low-battery reading is wrong"; }
 nl_ok "reading matches the UPS (charge 14%, 150 s left, Eaton 3S 700); events ups_on_battery and ups_low_battery were raised"
 nl_api GET "/v1/ups/history?hours=1"
 [ "$(nl_json "$NL_OUT" 'len([s for s in d["samples"] if s["state"]=="on_battery"])')" -ge 1 ] || nl_fail "no on-battery sample in the history: $(cat "$NL_OUT")"
