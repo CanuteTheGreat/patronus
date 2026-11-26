@@ -946,6 +946,27 @@
         document.addEventListener('click', later);
         new MutationObserver(later).observe(document.querySelector('.content') || document.body, {childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden']});
     })();
+    // Server-rendered lists marked data-filterable become kit grids: sortable columns (ui.js, which runs after this
+    // deferred), and a filter box with a row count once the list is longer than 8 rows (leases, peers, SAs).
+    (function () {
+        document.querySelectorAll('.content table.ui-grid[data-filterable]').forEach((t, n) => {
+            if (t.dataset.uiGrid) return;
+            const id = t.id || ('pat-grid-' + n); t.dataset.uiGrid = id;
+            t.querySelectorAll('thead th').forEach(th => { if (th.textContent.trim() && !th.querySelector('.sr-only')) th.dataset.sort = ''; });
+            let wrap = t.parentElement;
+            if (!wrap.classList.contains('ui-grid-wrap')) { wrap = document.createElement('div'); wrap.className = 'ui-grid-wrap'; t.before(wrap); wrap.appendChild(t); }
+            const rows = t.tBodies[0] ? t.tBodies[0].rows.length : 0;
+            if (rows <= 8) return;
+            const tb = document.createElement('div'); tb.className = 'ui-toolbar';
+            const left = document.createElement('div'), right = document.createElement('div');
+            const q = document.createElement('input'); q.type = 'search'; q.className = 'ui-input'; q.placeholder = 'Filter';
+            q.setAttribute('aria-label', 'Filter ' + (t.getAttribute('aria-label') || 'the list')); q.dataset.uiFilter = id;
+            const c = document.createElement('span'); c.className = 'text-sm text-muted'; c.setAttribute('aria-live', 'polite');
+            const count = () => { const shown = [...t.tBodies[0].rows].filter(r => !r.hidden).length; c.textContent = shown === rows ? rows + ' rows' : shown + ' of ' + rows; };
+            q.addEventListener('input', () => setTimeout(count, 0)); count();
+            left.appendChild(q); right.appendChild(c); tb.append(left, right); wrap.before(tb);
+        });
+    })();
     // the current page's menu item is in view when the menu scrolls (pages under Advanced sat below the fold), and the
     // breadcrumb says the page the way the menu does ("Wake-on-LAN", not the route id "Svc-wol")
     (function () {
