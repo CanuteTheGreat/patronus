@@ -24,6 +24,7 @@ has() { grep -qF -- "$2" <<<"$1" || fail "$3: $1"; }
 wait_for() { # DESC SECONDS cmd...
   local d=$1 s=$2; shift 2
   for i in $(seq 1 $((s * 2))); do "$@" >/dev/null 2>&1 && return 0; sleep 0.5; done
+  { set +e; echo "--- sync state on A at the timeout"; api 2 GET /api/ha/sync >/dev/null; cat /tmp/api.out; echo; api 2 GET /api/ha/sync/history >/dev/null; cat /tmp/api.out; echo; echo "--- B 9878:"; N hb nft list ruleset | grep -n -B2 -A2 9878; echo "--- B rules:"; api 3 GET /api/firewall/rules >/dev/null; cat /tmp/api.out; echo; } >&2
   fail "timed out waiting for: $d"
 }
 
@@ -170,8 +171,9 @@ ok "wrong pin: curl refused the connection before any data, B untouched, A recor
 echo "=== 7. the right pin: a rule added on A appears in B's nftables"
 want 200 2 PUT /api/ha/sync/settings "{\"peer_pin\":\"$PIN_B\"}"
 wait_for "the rule on B" 40 sh -c "ip netns exec hb nft list ruleset | grep -F 'dport 9876' >/dev/null"
-want 200 2 GET /api/ha/sync
-has "$(cat /tmp/api.out)" '"last_push_ok":{' "A shows no good push"
+# A records the push after B has answered: the rule can show on B a moment before that
+has_good_push() { api 2 GET /api/ha/sync >/dev/null && grep -qF '"last_push_ok":{' /tmp/api.out; }
+wait_for "A shows a good push" 20 has_good_push
 want 200 3 GET /api/ha/sync/history
 [ "$(jget 'len([r for r in d if r["direction"]=="receive" and r["ok"]])')" -ge 1 ] || fail "B recorded no receive"
 REV=$(python3 -c "import sqlite3; print(sqlite3.connect('/t/b/var/config.db').execute(\"select count(*) from config_revisions where summary like '%HA sync%'\").fetchone()[0])")
@@ -195,8 +197,12 @@ if grep -qF "192.168.60.0/24" <<<"$RS"; then fail "A's NAT rule reached B althou
 ok "nat off: B keeps its own NAT rule, A's NAT rule never arrives, the firewall section still syncs"
 
 echo "=== 9. a push B cannot apply is refused, undone on B and reported on A"
+# aliases sync by default: switch that section off so the rule below names an alias B does not have.
+# A DROP rule that cannot be rendered aborts the apply (an accept rule would be skipped, fail-closed,
+# and the apply would still succeed), so the refusal is the proof here.
+want 200 2 PUT /api/ha/sync/settings '{"sections":{"aliases":false}}'
 want 201 2 POST /api/firewall/aliases '{"name":"websrv","type":"host","entries":["10.1.1.5"]}'
-want 201 2 POST /api/firewall/rules '{"name":"sync-alias","action":"accept","interface":"any","protocol":"tcp","source":"$websrv","destination":"any","port":"9878","description":"","enabled":true,"chain":"input"}'
+want 201 2 POST /api/firewall/rules '{"name":"sync-alias","action":"drop","interface":"any","protocol":"tcp","source":"$websrv","destination":"any","port":"9878","description":"","enabled":true,"chain":"input"}'
 before=$(N hb nft list ruleset | md5sum | cut -c1-12)
 has_fail() { api 2 GET /api/ha/sync >/dev/null && grep -q '"last_push":{[^}]*"ok":false' /tmp/api.out; }
 wait_for "A reports the failed push" 40 has_fail
