@@ -154,6 +154,10 @@ class Node:
         for j, (path, bus) in enumerate(s.extra_drives):
             if bus == "usb":
                 a += ["-drive", f"if=none,id=xd{j},file={path},format=raw", "-device", f"usb-storage,bus=xhci.0,drive=xd{j}"]
+            elif bus == "ide":      # AHCI/SATA disk with ATA S.M.A.R.T. (QEMU answers SMART RETURN STATUS and the attribute pages)
+                a += ["-drive", f"if=none,id=xd{j},file={path},format=raw", "-device", f"ide-hd,drive=xd{j},serial=VMTESTIDE{j},bus=ide.{j + 1}"]
+            elif bus == "nvme":     # emulated NVMe controller: SMART/Health log page
+                a += ["-drive", f"if=none,id=xd{j},file={path},format=raw", "-device", f"nvme,drive=xd{j},serial=VMTESTNVME{j}"]
             else:
                 a += ["-drive", f"file={path},if=virtio,format=raw"]
         if s.firmware == "uefi":

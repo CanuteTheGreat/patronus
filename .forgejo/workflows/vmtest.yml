@@ -55,6 +55,13 @@ jobs:
           curl -fsSL --retry 3 -o /tmp/patronus-sd.iso https://github.com/CanuteTheGreat/patronus/releases/download/daily/patronus-server-systemd-daily-x86_64.iso
           cd tools/vmtest && python3 -u -m vmtest run scenarios/uci_import_lan.py --arg iso=/tmp/patronus-sd.iso --out $OUT/uci-import
 
+      - name: Patronus S.M.A.R.T. lane (installed systemd image + emulated SATA and NVMe disk, API reports both PASSED, reboot)
+        # same rule as the migration lane: the daily image, not a push
+        if: github.event_name != 'push'
+        run: |
+          [ -s /tmp/patronus-sd.iso ] || curl -fsSL --retry 3 -o /tmp/patronus-sd.iso https://github.com/CanuteTheGreat/patronus/releases/download/daily/patronus-server-systemd-daily-x86_64.iso
+          cd tools/vmtest && python3 -u -m vmtest run scenarios/installed_smart.py --arg iso=/tmp/patronus-sd.iso --out $OUT/installed-smart
+
       - name: Evidence (always)
         if: always()
         run: |

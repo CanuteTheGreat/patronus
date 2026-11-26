@@ -44,7 +44,7 @@ class NodeSpec:
     image_fmt: str = "qcow2"
     iso: Optional[str] = None             # installer / live media
     iso_media: str = "cdrom"              # cdrom | usb
-    extra_drives: list = field(default_factory=list)   # [(path, "usb"|"virtio")] raw drives (e.g. the answer-file volume)
+    extra_drives: list = field(default_factory=list)   # [(path, "usb"|"virtio"|"ide"|"nvme")] raw drives (e.g. the answer-file volume)
     disks: list = field(default_factory=list)
     nics: list = field(default_factory=lambda: [Nic()])
     firmware: str = "bios"                # bios | uefi

@@ -51,36 +51,84 @@ static FIELDS: [Field; 15] = [
     Field::new("enabled", "S.M.A.R.T. monitoring", Kind::Bool)
         .def("0")
         .help("poll every disk with smartctl, keep the history, raise alerts"),
-    Field::new("poll_minutes", "Poll interval (minutes)", Kind::Int(1, 1440)).def("30"),
-    Field::new("test_poll_secs", "Poll interval while a self-test runs (seconds)", Kind::Int(10, 3600))
-        .def("60")
-        .help("so progress and the result show up soon after the test ends"),
-    Field::new("request_check_secs", "Self-test request check (seconds)", Kind::Int(2, 300))
-        .def("10")
-        .help("how soon a self-test started from the web page begins"),
-    Field::new("short_test_hours", "Short self-test every (hours)", Kind::Int(0, 8760))
-        .def("24")
-        .help("0 = never"),
-    Field::new("long_test_days", "Long self-test every (days)", Kind::Int(0, 365))
-        .def("7")
-        .help("0 = never"),
-    Field::new("test_window_start", "Scheduled tests start at (hour of day)", Kind::Int(0, 23)).def("2"),
-    Field::new("test_window_hours", "Scheduled tests may start for (hours)", Kind::Int(1, 24))
-        .def("5")
-        .help("a test is only started inside this window (local time)"),
+    Field::new(
+        "poll_minutes",
+        "Poll interval (minutes)",
+        Kind::Int(1, 1440),
+    )
+    .def("30"),
+    Field::new(
+        "test_poll_secs",
+        "Poll interval while a self-test runs (seconds)",
+        Kind::Int(10, 3600),
+    )
+    .def("60")
+    .help("so progress and the result show up soon after the test ends"),
+    Field::new(
+        "request_check_secs",
+        "Self-test request check (seconds)",
+        Kind::Int(2, 300),
+    )
+    .def("10")
+    .help("how soon a self-test started from the web page begins"),
+    Field::new(
+        "short_test_hours",
+        "Short self-test every (hours)",
+        Kind::Int(0, 8760),
+    )
+    .def("24")
+    .help("0 = never"),
+    Field::new(
+        "long_test_days",
+        "Long self-test every (days)",
+        Kind::Int(0, 365),
+    )
+    .def("7")
+    .help("0 = never"),
+    Field::new(
+        "test_window_start",
+        "Scheduled tests start at (hour of day)",
+        Kind::Int(0, 23),
+    )
+    .def("2"),
+    Field::new(
+        "test_window_hours",
+        "Scheduled tests may start for (hours)",
+        Kind::Int(1, 24),
+    )
+    .def("5")
+    .help("a test is only started inside this window (local time)"),
     Field::new("temp_warn", "Temperature warning (°C)", Kind::Int(20, 120)).def("50"),
     Field::new("temp_crit", "Temperature critical (°C)", Kind::Int(20, 150)).def("60"),
-    Field::new("temp_hysteresis", "Temperature hysteresis (°C)", Kind::Int(0, 30))
-        .def("3")
-        .help("must fall this far below a limit before the alert is cleared"),
-    Field::new("realloc_warn", "Reallocated sectors: warn from", Kind::Int(1, 1_000_000))
-        .def("1")
-        .help("pending and uncorrectable sectors always warn"),
-    Field::new("nvme_used_warn", "NVMe wear: warn from (% used)", Kind::Int(1, 255)).def("90"),
+    Field::new(
+        "temp_hysteresis",
+        "Temperature hysteresis (°C)",
+        Kind::Int(0, 30),
+    )
+    .def("3")
+    .help("must fall this far below a limit before the alert is cleared"),
+    Field::new(
+        "realloc_warn",
+        "Reallocated sectors: warn from",
+        Kind::Int(1, 1_000_000),
+    )
+    .def("1")
+    .help("pending and uncorrectable sectors always warn"),
+    Field::new(
+        "nvme_used_warn",
+        "NVMe wear: warn from (% used)",
+        Kind::Int(1, 255),
+    )
+    .def("90"),
     Field::new("notify", "Notify on failing attributes", Kind::Bool)
         .def("1")
         .help("send disk problems through the notification channels (Monitoring page)"),
-    Field::new("retention_days", "Keep history for (days)", Kind::Int(1, 3650)).def("365"),
+    Field::new(
+        "retention_days",
+        "Keep history for (days)",
+        Kind::Int(1, 3650),
+    )
+    .def("365"),
 ];
 
 static SPEC: Spec = Spec {
@@ -118,7 +166,10 @@ impl Svc for SmartSvc {
             "test-long" => TestKind::Long,
             _ => return Err(invalid(format!("request: no action {name:?}"))),
         };
-        let dev = body.get("device").and_then(Value::as_str).filter(|d| !d.is_empty());
+        let dev = body
+            .get("device")
+            .and_then(Value::as_str)
+            .filter(|d| !d.is_empty());
         let n = request_test(store, dev, kind).await?;
         Ok(json!({"queued": n, "kind": kind.as_str()}))
     }
@@ -352,14 +403,20 @@ pub fn parse_disk(text: &str) -> Result<Disk> {
     let has_data = v.get("ata_smart_attributes").is_some()
         || v.get("nvme_smart_health_information_log").is_some()
         || v["smart_status"].get("passed").is_some();
-    d.smart_available = v["smart_support"]["available"].as_bool().unwrap_or(has_data);
+    d.smart_available = v["smart_support"]["available"]
+        .as_bool()
+        .unwrap_or(has_data);
     d.smart_enabled = v["smart_support"]["enabled"].as_bool().unwrap_or(has_data);
     d.health = v["smart_status"]["passed"].as_bool();
 
     d.temperature = v["temperature"]["current"].as_i64();
     d.power_on_hours = v["power_on_time"]["hours"].as_u64();
 
-    for a in v["ata_smart_attributes"]["table"].as_array().into_iter().flatten() {
+    for a in v["ata_smart_attributes"]["table"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
         let attr = Attr {
             id: a["id"].as_u64().unwrap_or(0),
             name: s(&a["name"]),
@@ -438,7 +495,11 @@ pub fn parse_disk(text: &str) -> Result<Disk> {
         });
     }
     if let Some(log) = v.get("nvme_self_test_log") {
-        if log["current_self_test_operation"]["value"].as_u64().unwrap_or(0) != 0 {
+        if log["current_self_test_operation"]["value"]
+            .as_u64()
+            .unwrap_or(0)
+            != 0
+        {
             d.self_test.running = true;
             d.self_test.remaining_percent = log["current_self_test_completion_percent"]
                 .as_u64()
@@ -495,7 +556,9 @@ pub struct TestStart {
 pub fn parse_test_start(text: &str) -> Result<TestStart> {
     let v = parse_json(text)?;
     if v.get("smartctl").is_none() {
-        return Err(Error::Service("self-test not started: not a smartctl answer".into()));
+        return Err(Error::Service(
+            "self-test not started: not a smartctl answer".into(),
+        ));
     }
     let msgs = messages(&v);
     let errors: Vec<String> = v["smartctl"]["messages"]
@@ -616,7 +679,10 @@ pub fn assess(d: &Disk, t: &Thresholds, prev_temp: Level) -> Assessment {
         if a.when_failed == "now" {
             raise(
                 Level::Critical,
-                format!("attribute {} ({}) is failing now: value {} is at or below its threshold {}", a.id, a.name, a.value, a.thresh),
+                format!(
+                    "attribute {} ({}) is failing now: value {} is at or below its threshold {}",
+                    a.id, a.name, a.value, a.thresh
+                ),
             );
         }
     }
@@ -629,7 +695,10 @@ pub fn assess(d: &Disk, t: &Thresholds, prev_temp: Level) -> Assessment {
         }
         if let Some(u) = n.percentage_used {
             if u >= t.nvme_used_warn {
-                raise(Level::Warning, format!("{u}% of the NVMe endurance is used"));
+                raise(
+                    Level::Warning,
+                    format!("{u}% of the NVMe endurance is used"),
+                );
             }
         }
         if let (Some(sp), Some(th)) = (n.available_spare, n.spare_threshold) {
@@ -643,12 +712,18 @@ pub fn assess(d: &Disk, t: &Thresholds, prev_temp: Level) -> Assessment {
         if n.media_errors.unwrap_or(0) > 0 {
             raise(
                 Level::Warning,
-                format!("{} media and data integrity errors", n.media_errors.unwrap_or(0)),
+                format!(
+                    "{} media and data integrity errors",
+                    n.media_errors.unwrap_or(0)
+                ),
             );
         }
     }
     if let Some(p) = d.pending.filter(|p| *p > 0) {
-        raise(Level::Warning, format!("{p} sectors waiting to be reallocated (pending)"));
+        raise(
+            Level::Warning,
+            format!("{p} sectors waiting to be reallocated (pending)"),
+        );
     }
     if let Some(u) = d.uncorrectable.filter(|u| *u > 0) {
         raise(Level::Warning, format!("{u} uncorrectable sectors"));
@@ -660,7 +735,10 @@ pub fn assess(d: &Disk, t: &Thresholds, prev_temp: Level) -> Assessment {
         if l.passed == Some(false) {
             raise(
                 Level::Warning,
-                format!("the last self-test ({}) did not complete cleanly: {}", l.kind, l.status),
+                format!(
+                    "the last self-test ({}) did not complete cleanly: {}",
+                    l.kind, l.status
+                ),
             );
         }
     }
@@ -668,8 +746,14 @@ pub fn assess(d: &Disk, t: &Thresholds, prev_temp: Level) -> Assessment {
     if let Some(temp) = d.temperature {
         tl = temp_level(temp, t, prev_temp);
         match tl {
-            Level::Critical => raise(Level::Critical, format!("temperature {temp} °C (critical from {} °C)", t.temp_crit)),
-            Level::Warning => raise(Level::Warning, format!("temperature {temp} °C (warning from {} °C)", t.temp_warn)),
+            Level::Critical => raise(
+                Level::Critical,
+                format!("temperature {temp} °C (critical from {} °C)", t.temp_crit),
+            ),
+            Level::Warning => raise(
+                Level::Warning,
+                format!("temperature {temp} °C (warning from {} °C)", t.temp_warn),
+            ),
             _ => {}
         }
     }
@@ -791,7 +875,12 @@ pub async fn record(store: &ConfigStore, d: &Disk, t: &Thresholds, now: i64) -> 
         .bind(d.reallocated.map(|v| v as i64))
         .bind(d.pending.map(|v| v as i64))
         .bind(d.uncorrectable.map(|v| v as i64))
-        .bind(d.nvme.as_ref().and_then(|n| n.percentage_used).map(|v| v as i64))
+        .bind(
+            d.nvme
+                .as_ref()
+                .and_then(|n| n.percentage_used)
+                .map(|v| v as i64),
+        )
         .bind(a.level.as_str())
         .execute(pool)
         .await
@@ -866,7 +955,11 @@ pub async fn history(store: &ConfigStore, device: &str, limit: i64) -> Result<Ve
 /// Ask the poller to start a self-test: on one disk (`/dev/NAME` or `NAME`) or on every disk that supports
 /// S.M.A.R.T. Returns how many disks were queued. The web process is not root, so this only writes the
 /// request; the poller (root) runs it.
-pub async fn request_test(store: &ConfigStore, device: Option<&str>, kind: TestKind) -> Result<usize> {
+pub async fn request_test(
+    store: &ConfigStore,
+    device: Option<&str>,
+    kind: TestKind,
+) -> Result<usize> {
     let all = latest(store).await?;
     let want = device.map(|d| {
         if d.starts_with("/dev/") {
@@ -890,7 +983,11 @@ pub async fn request_test(store: &ConfigStore, device: Option<&str>, kind: TestK
             Some(st) if !st.disk.smart_available => {
                 return Err(invalid(format!(
                     "request: {w} cannot do S.M.A.R.T. self-tests ({})",
-                    st.disk.messages.first().map(String::as_str).unwrap_or("no S.M.A.R.T. support")
+                    st.disk
+                        .messages
+                        .first()
+                        .map(String::as_str)
+                        .unwrap_or("no S.M.A.R.T. support")
                 )))
             }
             _ => {}
@@ -1002,7 +1099,8 @@ impl Smartctl for SystemSmartctl {
         self.run(&dev_args(vec!["-a", "--json"], dev)).await
     }
     async fn start_test(&self, dev: &ScanDevice, kind: TestKind) -> Result<String> {
-        self.run(&dev_args(vec!["-t", kind.as_str(), "--json"], dev)).await
+        self.run(&dev_args(vec!["-t", kind.as_str(), "--json"], dev))
+            .await
     }
 }
 
@@ -1093,7 +1191,12 @@ pub async fn run_requests(
 
 /// One full look: scan, report on every disk, judge and store, start the scheduled tests that are due,
 /// forget vanished disks, prune old history. `hour` is the local hour of day.
-pub async fn poll_once(store: &ConfigStore, run: &dyn Smartctl, now: i64, hour: u32) -> Result<PollReport> {
+pub async fn poll_once(
+    store: &ConfigStore,
+    run: &dyn Smartctl,
+    now: i64,
+    hour: u32,
+) -> Result<PollReport> {
     let st = Settings::load(store, &SPEC).await?;
     let th = Thresholds::from_settings(&st);
     let sch = Schedule::from_settings(&st);
@@ -1119,9 +1222,15 @@ pub async fn poll_once(store: &ConfigStore, run: &dyn Smartctl, now: i64, hour: 
             continue;
         }
         let prev = latest_one(store, &d.device).await?;
-        let (ls, ll) = prev.as_ref().map_or((None, None), |p| (p.last_short, p.last_long));
+        let (ls, ll) = prev
+            .as_ref()
+            .map_or((None, None), |p| (p.last_short, p.last_long));
         if let Some(kind) = due_test(now, hour, &sch, ls, ll, d.self_test.running) {
-            match run.start_test(sd, kind).await.and_then(|t| parse_test_start(&t)) {
+            match run
+                .start_test(sd, kind)
+                .await
+                .and_then(|t| parse_test_start(&t))
+            {
                 Ok(_) => {
                     set_test_time(store, &d.device, kind, now).await?;
                     rep.tests_started.push((d.device.clone(), kind));
@@ -1156,7 +1265,11 @@ pub async fn run_loop(store: &ConfigStore, run: Option<&dyn Smartctl>) -> Result
             };
             for (dev, kind, res) in run_requests(store, run, now).await.unwrap_or_default() {
                 match res {
-                    Ok(t) => println!("smart: {} self-test started on {dev} ({})", kind.as_str(), t.message),
+                    Ok(t) => println!(
+                        "smart: {} self-test started on {dev} ({})",
+                        kind.as_str(),
+                        t.message
+                    ),
                     Err(e) => eprintln!("smart: {dev}: {e}"),
                 }
                 last_poll = 0; // look again at once: the disk now shows the test running
@@ -1166,7 +1279,11 @@ pub async fn run_loop(store: &ConfigStore, run: Option<&dyn Smartctl>) -> Result
                 .unwrap_or_default()
                 .iter()
                 .any(|d| d.disk.self_test.running);
-            let every = if any_running { sch.test_poll_secs } else { sch.poll_secs };
+            let every = if any_running {
+                sch.test_poll_secs
+            } else {
+                sch.poll_secs
+            };
             if now - last_poll >= every {
                 match poll_once(store, run, now, chrono::Local::now().hour()).await {
                     Ok(r) => println!("smart: {}", r.describe()),
@@ -1269,7 +1386,11 @@ impl Applier for SmartApplier {
         .await?;
         rep.applied(format!(
             "S.M.A.R.T. poller {}: every {} min",
-            if started { "(re)started" } else { "running, unchanged" },
+            if started {
+                "(re)started"
+            } else {
+                "running, unchanged"
+            },
             s.s("poll_minutes")
         ));
         Ok(rep)
@@ -1417,9 +1538,21 @@ mod tests {
         assert!(d.attributes.iter().any(|a| a.when_failed == "now"));
         let a = assess(&d, &th(), Level::Ok);
         assert_eq!(a.level, Level::Critical);
-        assert!(a.reasons.iter().any(|r| r.contains("FAILED")), "{:?}", a.reasons);
-        assert!(a.reasons.iter().any(|r| r.contains("reallocated")), "{:?}", a.reasons);
-        assert!(a.reasons.iter().any(|r| r.contains("failing now")), "{:?}", a.reasons);
+        assert!(
+            a.reasons.iter().any(|r| r.contains("FAILED")),
+            "{:?}",
+            a.reasons
+        );
+        assert!(
+            a.reasons.iter().any(|r| r.contains("reallocated")),
+            "{:?}",
+            a.reasons
+        );
+        assert!(
+            a.reasons.iter().any(|r| r.contains("failing now")),
+            "{:?}",
+            a.reasons
+        );
         assert_eq!(d.last_test().unwrap().passed, Some(false));
     }
 
@@ -1430,7 +1563,11 @@ mod tests {
         assert!(d.pending.unwrap() > 0);
         let a = assess(&d, &th(), Level::Ok);
         assert_eq!(a.level, Level::Warning);
-        assert!(a.reasons.iter().any(|r| r.contains("pending")), "{:?}", a.reasons);
+        assert!(
+            a.reasons.iter().any(|r| r.contains("pending")),
+            "{:?}",
+            a.reasons
+        );
         // the warning threshold for reallocated sectors is a setting
         let mut d2 = d.clone();
         d2.pending = Some(0);
@@ -1467,8 +1604,16 @@ mod tests {
         assert!(n.percentage_used.unwrap() >= 90);
         let a = assess(&d, &th(), Level::Ok);
         assert!(a.level >= Level::Warning);
-        assert!(a.reasons.iter().any(|r| r.contains("endurance")), "{:?}", a.reasons);
-        assert!(a.reasons.iter().any(|r| r.contains("critical warning")), "{:?}", a.reasons);
+        assert!(
+            a.reasons.iter().any(|r| r.contains("endurance")),
+            "{:?}",
+            a.reasons
+        );
+        assert!(
+            a.reasons.iter().any(|r| r.contains("critical warning")),
+            "{:?}",
+            a.reasons
+        );
         assert_eq!(a.level, Level::Critical);
         // the wear threshold is a setting
         let mut healthy = d.clone();
@@ -1513,10 +1658,16 @@ mod tests {
         assert_eq!(t.minutes, None);
         // the real answer for a device smartctl cannot talk to
         let e = parse_test_start(START_BAD).unwrap_err().to_string();
-        assert!(e.contains("not started") && e.contains("Unable to detect device type"), "{e}");
+        assert!(
+            e.contains("not started") && e.contains("Unable to detect device type"),
+            "{e}"
+        );
         assert!(parse_test_start("{}").is_err());
         let busy = r#"{"smartctl":{"exit_status":4,"messages":[]}}"#;
-        assert!(parse_test_start(busy).unwrap_err().to_string().contains("exit status 4"));
+        assert!(parse_test_start(busy)
+            .unwrap_err()
+            .to_string()
+            .contains("exit status 4"));
         // the estimate is read from the text
         let j = r#"{"smartctl":{"messages":[{"string":"Testing has begun.\nPlease wait 2 minutes for test to complete.","severity":"information"}]}}"#;
         let t = parse_test_start(j).unwrap();
@@ -1560,14 +1711,26 @@ mod tests {
         let s = sch();
         let now = 10_000_000;
         // never tested: the long one first, inside the window only
-        assert_eq!(due_test(now, 3, &s, None, None, false), Some(TestKind::Long));
+        assert_eq!(
+            due_test(now, 3, &s, None, None, false),
+            Some(TestKind::Long)
+        );
         assert_eq!(due_test(now, 8, &s, None, None, false), None);
         assert_eq!(due_test(now, 1, &s, None, None, false), None);
-        assert_eq!(due_test(now, 6, &s, None, None, false), Some(TestKind::Long));
+        assert_eq!(
+            due_test(now, 6, &s, None, None, false),
+            Some(TestKind::Long)
+        );
         // long done recently: the short one when its day is up
         let recent = now - 3600;
-        assert_eq!(due_test(now, 3, &s, Some(now - 25 * 3600), Some(recent), false), Some(TestKind::Short));
-        assert_eq!(due_test(now, 3, &s, Some(recent), Some(recent), false), None);
+        assert_eq!(
+            due_test(now, 3, &s, Some(now - 25 * 3600), Some(recent), false),
+            Some(TestKind::Short)
+        );
+        assert_eq!(
+            due_test(now, 3, &s, Some(recent), Some(recent), false),
+            None
+        );
         // never while a test runs; 0 = never
         assert_eq!(due_test(now, 3, &s, None, None, true), None);
         let mut off = s.clone();
@@ -1578,8 +1741,14 @@ mod tests {
         let mut w = s;
         w.window_start = 22;
         w.window_hours = 6;
-        assert_eq!(due_test(now, 23, &w, None, None, false), Some(TestKind::Long));
-        assert_eq!(due_test(now, 3, &w, None, None, false), Some(TestKind::Long));
+        assert_eq!(
+            due_test(now, 23, &w, None, None, false),
+            Some(TestKind::Long)
+        );
+        assert_eq!(
+            due_test(now, 3, &w, None, None, false),
+            Some(TestKind::Long)
+        );
         assert_eq!(due_test(now, 4, &w, None, None, false), None);
     }
 
@@ -1590,7 +1759,14 @@ mod tests {
                 svc::check(f, &json!(f.default)).unwrap_or_else(|e| panic!("{}: {e}", f.key));
             }
         }
-        assert!(FIELDS.iter().find(|f| f.key == "poll_minutes").unwrap().default == "30");
+        assert!(
+            FIELDS
+                .iter()
+                .find(|f| f.key == "poll_minutes")
+                .unwrap()
+                .default
+                == "30"
+        );
     }
 
     /// A smartctl that answers from the fixtures.
@@ -1614,7 +1790,10 @@ mod tests {
                 .ok_or_else(|| Error::Service(format!("no report for {}", dev.name)))
         }
         async fn start_test(&self, dev: &ScanDevice, kind: TestKind) -> Result<String> {
-            self.started.lock().unwrap().push((dev.name.clone(), kind.as_str()));
+            self.started
+                .lock()
+                .unwrap()
+                .push((dev.name.clone(), kind.as_str()));
             Ok(if self.refuse { START_BAD } else { START_OK }.to_string())
         }
     }
@@ -1645,9 +1824,13 @@ mod tests {
 
     async fn enable(s: &ConfigStore) {
         // QEMU's emulated NVMe controller reports 50 °C, which the default limit would flag
-        svc::put_settings(s, &SPEC, &json!({"enabled": true, "temp_warn": 55, "temp_crit": 70}))
-            .await
-            .unwrap();
+        svc::put_settings(
+            s,
+            &SPEC,
+            &json!({"enabled": true, "temp_warn": 55, "temp_crit": 70}),
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -1667,7 +1850,11 @@ mod tests {
         let sda = all.iter().find(|d| d.disk.device == "/dev/sda").unwrap();
         assert_eq!(sda.level, Level::Ok);
         assert_eq!(sda.last_long, Some(now));
-        assert_eq!(sda.last_short, Some(now), "a long test covers the short one");
+        assert_eq!(
+            sda.last_short,
+            Some(now),
+            "a long test covers the short one"
+        );
         let started = f.started.lock().unwrap().clone();
         assert_eq!(started.len(), 2, "{started:?}");
         assert!(started.iter().all(|(_, k)| *k == "long"));
@@ -1691,16 +1878,24 @@ mod tests {
         let f = fake(true);
         let r = poll_once(&s, &f, 1_700_000_000, 3).await.unwrap();
         assert!(r.tests_started.is_empty());
-        assert!(r.errors.iter().any(|e| e.contains("not started")), "{:?}", r.errors);
+        assert!(
+            r.errors.iter().any(|e| e.contains("not started")),
+            "{:?}",
+            r.errors
+        );
     }
 
     #[tokio::test]
     async fn history_is_pruned_by_the_retention_setting() {
         let s = lan::testutil::store().await;
         enable(&s).await;
-        svc::put_settings(&s, &SPEC, &json!({"retention_days": 2, "short_test_hours": 0, "long_test_days": 0}))
-            .await
-            .unwrap();
+        svc::put_settings(
+            &s,
+            &SPEC,
+            &json!({"retention_days": 2, "short_test_hours": 0, "long_test_days": 0}),
+        )
+        .await
+        .unwrap();
         let f = fake(false);
         let day = 86400;
         let t0 = 1_700_000_000;
@@ -1720,7 +1915,9 @@ mod tests {
         // a rollback / export must never carry or rewind the history
         let s = lan::testutil::store().await;
         enable(&s).await;
-        poll_once(&s, &fake(false), 1_700_000_000, 12).await.unwrap();
+        poll_once(&s, &fake(false), 1_700_000_000, 12)
+            .await
+            .unwrap();
         let doc = s.export_json().await.unwrap();
         let tables = doc["tables"].as_object().unwrap();
         assert!(!tables.contains_key("smart_samples"));
@@ -1752,7 +1949,9 @@ mod tests {
         assert_eq!(a[0].1, Level::Critical);
         assert!(a[0].2.contains("FAILED"), "{}", a[0].2);
         // notifications can be switched off
-        svc::put_settings(&s, &SPEC, &json!({"notify": false})).await.unwrap();
+        svc::put_settings(&s, &SPEC, &json!({"notify": false}))
+            .await
+            .unwrap();
         assert!(alert_states(&s).await.is_empty());
     }
 
@@ -1762,18 +1961,44 @@ mod tests {
         enable(&s).await;
         let f = fake(false);
         let t0 = 1_700_000_000;
-        svc::put_settings(&s, &SPEC, &json!({"short_test_hours": 0, "long_test_days": 0})).await.unwrap();
+        svc::put_settings(
+            &s,
+            &SPEC,
+            &json!({"short_test_hours": 0, "long_test_days": 0}),
+        )
+        .await
+        .unwrap();
         poll_once(&s, &f, t0, 12).await.unwrap();
         assert!(f.started.lock().unwrap().is_empty());
         // bad requests
-        assert!(request_test(&s, Some("sda; reboot"), TestKind::Short).await.is_err());
-        let e = request_test(&s, Some("sdz"), TestKind::Short).await.unwrap_err().to_string();
+        assert!(request_test(&s, Some("sda; reboot"), TestKind::Short)
+            .await
+            .is_err());
+        let e = request_test(&s, Some("sdz"), TestKind::Short)
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("no S.M.A.R.T. disk"), "{e}");
-        let e = request_test(&s, Some("sdb"), TestKind::Short).await.unwrap_err().to_string();
+        let e = request_test(&s, Some("sdb"), TestKind::Short)
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("Invalid"), "{e}");
         // one disk
-        assert_eq!(request_test(&s, Some("sda"), TestKind::Short).await.unwrap(), 1);
-        assert_eq!(latest_one(&s, "/dev/sda").await.unwrap().unwrap().test_request, "short");
+        assert_eq!(
+            request_test(&s, Some("sda"), TestKind::Short)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            latest_one(&s, "/dev/sda")
+                .await
+                .unwrap()
+                .unwrap()
+                .test_request,
+            "short"
+        );
         let ran = run_requests(&s, &f, t0 + 5).await.unwrap();
         assert_eq!(ran.len(), 1);
         assert!(ran[0].2.is_ok());
@@ -1782,29 +2007,51 @@ mod tests {
         assert_eq!(st.last_short, Some(t0 + 5));
         // every disk that can: the one without S.M.A.R.T. is not queued
         assert_eq!(request_test(&s, None, TestKind::Long).await.unwrap(), 2);
-        assert_eq!(latest_one(&s, "/dev/sdb").await.unwrap().unwrap().test_request, "");
+        assert_eq!(
+            latest_one(&s, "/dev/sdb")
+                .await
+                .unwrap()
+                .unwrap()
+                .test_request,
+            ""
+        );
     }
 
     #[tokio::test]
     async fn the_page_action_queues_tests() {
         let s = lan::testutil::store().await;
         enable(&s).await;
-        poll_once(&s, &fake(false), 1_700_000_000, 12).await.unwrap();
+        poll_once(&s, &fake(false), 1_700_000_000, 12)
+            .await
+            .unwrap();
         let r = SmartSvc
             .action(&s, "test-short", &json!({"device": "nvme0"}))
             .await
             .unwrap();
         assert_eq!(r["queued"], 1);
-        assert!(SmartSvc.action(&s, "format-disk", &Value::Null).await.is_err());
+        assert!(SmartSvc
+            .action(&s, "format-disk", &Value::Null)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
     async fn settings_are_validated() {
         let s = lan::testutil::store().await;
-        assert!(svc::put_settings(&s, &SPEC, &json!({"poll_minutes": 0})).await.is_err());
-        assert!(svc::put_settings(&s, &SPEC, &json!({"test_window_start": 24})).await.is_err());
-        assert!(svc::put_settings(&s, &SPEC, &json!({"temp_warn": "hot"})).await.is_err());
-        svc::put_settings(&s, &SPEC, &json!({"temp_warn": 45, "temp_crit": 55})).await.unwrap();
+        assert!(svc::put_settings(&s, &SPEC, &json!({"poll_minutes": 0}))
+            .await
+            .is_err());
+        assert!(
+            svc::put_settings(&s, &SPEC, &json!({"test_window_start": 24}))
+                .await
+                .is_err()
+        );
+        assert!(svc::put_settings(&s, &SPEC, &json!({"temp_warn": "hot"}))
+            .await
+            .is_err());
+        svc::put_settings(&s, &SPEC, &json!({"temp_warn": 45, "temp_crit": 55}))
+            .await
+            .unwrap();
         let st = Settings::load(&s, &SPEC).await.unwrap();
         assert_eq!(Thresholds::from_settings(&st).temp_warn, 45);
         assert_eq!(Schedule::from_settings(&st).poll_secs, 1800);
@@ -1814,16 +2061,31 @@ mod tests {
     async fn the_applier_renders_runs_and_stops_the_poller() {
         let s = lan::testutil::store().await;
         let d = tempfile::tempdir().unwrap();
-        let a = SmartApplier::with_supervisor(Supervisor::new(InitMode::Direct, NetPaths::under(d.path())));
+        let a = SmartApplier::with_supervisor(Supervisor::new(
+            InitMode::Direct,
+            NetPaths::under(d.path()),
+        ));
         assert!(a.render(&s).await.unwrap().contains("off"));
         a.apply(&s).await.unwrap();
         enable(&s).await;
         let r = a.render(&s).await.unwrap();
-        assert!(r.contains("poll_minutes=30") && r.contains("temp_crit=70"), "{r}");
+        assert!(
+            r.contains("poll_minutes=30") && r.contains("temp_crit=70"),
+            "{r}"
+        );
         // critical must be above warning
-        svc::put_settings(&s, &SPEC, &json!({"temp_warn": 70, "temp_crit": 60})).await.unwrap();
-        assert!(a.apply(&s).await.unwrap_err().to_string().contains("higher"));
-        svc::put_settings(&s, &SPEC, &json!({"temp_warn": 50, "temp_crit": 60})).await.unwrap();
+        svc::put_settings(&s, &SPEC, &json!({"temp_warn": 70, "temp_crit": 60}))
+            .await
+            .unwrap();
+        assert!(a
+            .apply(&s)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("higher"));
+        svc::put_settings(&s, &SPEC, &json!({"temp_warn": 50, "temp_crit": 60}))
+            .await
+            .unwrap();
         if smartctl_bin().is_none() {
             let e = a.apply(&s).await.unwrap_err();
             assert!(e.to_string().contains("smartctl"), "{e}");
@@ -1846,7 +2108,10 @@ mod tests {
         let v = summary_json(&ok);
         assert_eq!(v["health"], "PASSED");
         assert!(v["temperature_c"].is_number());
-        assert_eq!(v["name"].as_str().unwrap(), ok.disk.device.trim_start_matches("/dev/"));
+        assert_eq!(
+            v["name"].as_str().unwrap(),
+            ok.disk.device.trim_start_matches("/dev/")
+        );
         let bad = Stored {
             disk: parse_disk(VIRTIO).unwrap(),
             level: Level::Unsupported,
@@ -1868,9 +2133,21 @@ mod tests {
     fn the_scheduler_names_every_setting() {
         // nothing is hard-coded: each of these keys is a field of the page
         for k in [
-            "poll_minutes", "test_poll_secs", "request_check_secs", "short_test_hours", "long_test_days",
-            "test_window_start", "test_window_hours", "temp_warn", "temp_crit", "temp_hysteresis",
-            "realloc_warn", "nvme_used_warn", "notify", "retention_days", "enabled",
+            "poll_minutes",
+            "test_poll_secs",
+            "request_check_secs",
+            "short_test_hours",
+            "long_test_days",
+            "test_window_start",
+            "test_window_hours",
+            "temp_warn",
+            "temp_crit",
+            "temp_hysteresis",
+            "realloc_warn",
+            "nvme_used_warn",
+            "notify",
+            "retention_days",
+            "enabled",
         ] {
             assert!(FIELDS.iter().any(|f| f.key == k), "{k}");
         }

@@ -141,9 +141,12 @@ impl T {
 
 use patronus_network::smart;
 
-const ATA_OK: &str = include_str!("../../../patronus-network/tests/fixtures/smart/ata_healthy.json");
-const ATA_FAILING: &str = include_str!("../../../patronus-network/tests/fixtures/smart/ata_failing.json");
-const VIRTIO: &str = include_str!("../../../patronus-network/tests/fixtures/smart/virtio_nosmart.json");
+const ATA_OK: &str =
+    include_str!("../../../patronus-network/tests/fixtures/smart/ata_healthy.json");
+const ATA_FAILING: &str =
+    include_str!("../../../patronus-network/tests/fixtures/smart/ata_failing.json");
+const VIRTIO: &str =
+    include_str!("../../../patronus-network/tests/fixtures/smart/virtio_nosmart.json");
 
 fn named(report: &str, name: &str) -> String {
     let mut v: Value = serde_json::from_str(report).unwrap();
@@ -160,7 +163,9 @@ async fn store_disk(t: &T, report: &str, name: &str) {
         realloc_warn: 1,
         nvme_used_warn: 90,
     };
-    smart::record(&t.state.config_store, &d, &th, 1_700_000_000).await.unwrap();
+    smart::record(&t.state.config_store, &d, &th, 1_700_000_000)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -178,7 +183,14 @@ async fn the_page_says_why_it_is_empty() {
     assert_eq!(s, StatusCode::OK);
     assert_eq!(b2["empty"]["code"], "disabled");
     // a disk without S.M.A.R.T. only: the empty state names the cause (VM disk, SD card, eMMC)
-    let (s, _) = t.call(&c, Method::PUT, "/api/svc/smart", Some(json!({"enabled": true}))).await;
+    let (s, _) = t
+        .call(
+            &c,
+            Method::PUT,
+            "/api/svc/smart",
+            Some(json!({"enabled": true})),
+        )
+        .await;
     assert_eq!(s, StatusCode::OK);
     store_disk(&t, VIRTIO, "/dev/vda").await;
     let (_, b) = t.call(&c, Method::GET, "/api/v1/smart", None).await;
@@ -196,7 +208,13 @@ async fn the_page_says_why_it_is_empty() {
 async fn status_and_drill_down_report_the_disks() {
     let t = setup().await;
     let c = t.admin().await;
-    t.call(&c, Method::PUT, "/api/svc/smart", Some(json!({"enabled": true}))).await;
+    t.call(
+        &c,
+        Method::PUT,
+        "/api/svc/smart",
+        Some(json!({"enabled": true})),
+    )
+    .await;
     store_disk(&t, ATA_OK, "/dev/sda").await;
     store_disk(&t, ATA_FAILING, "/dev/sdb").await;
     let (s, b) = t.call(&c, Method::GET, "/api/v1/smart", None).await;
@@ -213,7 +231,11 @@ async fn status_and_drill_down_report_the_disks() {
     assert_eq!(sdb["health"], "FAILED");
     assert_eq!(sdb["level"], "critical");
     assert!(sdb["reallocated_sectors"].as_u64().unwrap() > 0);
-    assert!(sdb["reasons"].as_array().unwrap().iter().any(|r| r.as_str().unwrap().contains("FAILED")));
+    assert!(sdb["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r.as_str().unwrap().contains("FAILED")));
     assert_eq!(sdb["last_self_test"]["passed"], false);
 
     let (s, d) = t.call(&c, Method::GET, "/api/v1/smart/sdb", None).await;
@@ -233,30 +255,84 @@ async fn status_and_drill_down_report_the_disks() {
 async fn a_self_test_is_queued_validated_and_refused_for_viewers() {
     let t = setup().await;
     let c = t.admin().await;
-    t.call(&c, Method::PUT, "/api/svc/smart", Some(json!({"enabled": true}))).await;
+    t.call(
+        &c,
+        Method::PUT,
+        "/api/svc/smart",
+        Some(json!({"enabled": true})),
+    )
+    .await;
     store_disk(&t, ATA_OK, "/dev/sda").await;
     store_disk(&t, VIRTIO, "/dev/vda").await;
 
-    let (s, b) = t.call(&c, Method::POST, "/api/v1/smart/sda/test", Some(json!({"type": "short"}))).await;
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/v1/smart/sda/test",
+            Some(json!({"type": "short"})),
+        )
+        .await;
     assert_eq!(s, StatusCode::ACCEPTED, "{b}");
     assert_eq!(b["queued"], 1);
     let (_, b) = t.call(&c, Method::GET, "/api/v1/smart", None).await;
     assert_eq!(b["devices"][0]["test_requested"], "short");
     // every disk that can: the one without S.M.A.R.T. is not queued
-    let (s, b) = t.call(&c, Method::POST, "/api/v1/smart/test", Some(json!({"type": "long"}))).await;
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/v1/smart/test",
+            Some(json!({"type": "long"})),
+        )
+        .await;
     assert_eq!(s, StatusCode::ACCEPTED, "{b}");
     assert_eq!(b["queued"], 1);
     // refusals
-    let (s, _) = t.call(&c, Method::POST, "/api/v1/smart/sda/test", Some(json!({"type": "format"}))).await;
+    let (s, _) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/v1/smart/sda/test",
+            Some(json!({"type": "format"})),
+        )
+        .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
-    let (s, _) = t.call(&c, Method::POST, "/api/v1/smart/sda/test", Some(json!({}))).await;
+    let (s, _) = t
+        .call(&c, Method::POST, "/api/v1/smart/sda/test", Some(json!({})))
+        .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
-    let (s, _) = t.call(&c, Method::POST, "/api/v1/smart/vda/test", Some(json!({"type": "short"}))).await;
-    assert_eq!(s, StatusCode::BAD_REQUEST, "a disk without S.M.A.R.T. cannot be tested");
-    let (s, _) = t.call(&c, Method::POST, "/api/v1/smart/sdz/test", Some(json!({"type": "short"}))).await;
+    let (s, _) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/v1/smart/vda/test",
+            Some(json!({"type": "short"})),
+        )
+        .await;
+    assert_eq!(
+        s,
+        StatusCode::BAD_REQUEST,
+        "a disk without S.M.A.R.T. cannot be tested"
+    );
+    let (s, _) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/v1/smart/sdz/test",
+            Some(json!({"type": "short"})),
+        )
+        .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     // the page action of the feature page goes through the same request path
-    let (s, b) = t.call(&c, Method::POST, "/api/svc/smart/action/test-short", Some(json!({"device": "sda"}))).await;
+    let (s, b) = t
+        .call(
+            &c,
+            Method::POST,
+            "/api/svc/smart/action/test-short",
+            Some(json!({"device": "sda"})),
+        )
+        .await;
     assert_eq!(s, StatusCode::OK, "{b}");
     assert_eq!(b["queued"], 1);
 
@@ -264,7 +340,11 @@ async fn a_self_test_is_queued_validated_and_refused_for_viewers() {
     t.state
         .auth
         .user_store
-        .create_user("viewer".into(), "Viewer-Passw0rd-1", crate::auth::UserRole::ReadOnly)
+        .create_user(
+            "viewer".into(),
+            "Viewer-Passw0rd-1",
+            crate::auth::UserRole::ReadOnly,
+        )
         .await
         .unwrap();
     let (s, b, h) = t
@@ -276,10 +356,25 @@ async fn a_self_test_is_queued_validated_and_refused_for_viewers() {
         )
         .await;
     assert_eq!(s, StatusCode::OK, "{b}");
-    let vc = h.get(header::SET_COOKIE).unwrap().to_str().unwrap().split(';').next().unwrap().to_string();
+    let vc = h
+        .get(header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
     let (s, _) = t.call(&vc, Method::GET, "/api/v1/smart", None).await;
     assert_eq!(s, StatusCode::OK);
-    let (s, _) = t.call(&vc, Method::POST, "/api/v1/smart/sda/test", Some(json!({"type": "short"}))).await;
+    let (s, _) = t
+        .call(
+            &vc,
+            Method::POST,
+            "/api/v1/smart/sda/test",
+            Some(json!({"type": "short"})),
+        )
+        .await;
     assert_eq!(s, StatusCode::FORBIDDEN);
 }
 
@@ -295,11 +390,32 @@ async fn the_page_renders_and_is_in_the_navigation() {
     // the settings page of the feature is the generic one
     let (s, b) = t.call(&c, Method::GET, "/api/svc/smart", None).await;
     assert_eq!(s, StatusCode::OK, "{b}");
-    let keys: Vec<&str> = b["schema"]["fields"].as_array().unwrap().iter().map(|f| f["key"].as_str().unwrap()).collect();
-    for k in ["enabled", "poll_minutes", "short_test_hours", "long_test_days", "temp_warn", "temp_crit", "notify", "retention_days"] {
+    let keys: Vec<&str> = b["schema"]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["key"].as_str().unwrap())
+        .collect();
+    for k in [
+        "enabled",
+        "poll_minutes",
+        "short_test_hours",
+        "long_test_days",
+        "temp_warn",
+        "temp_crit",
+        "notify",
+        "retention_days",
+    ] {
         assert!(keys.contains(&k), "{k} in {keys:?}");
     }
     // bad settings are refused, nothing hard-coded to fall back on
-    let (s, _) = t.call(&c, Method::PUT, "/api/svc/smart", Some(json!({"poll_minutes": 0}))).await;
+    let (s, _) = t
+        .call(
+            &c,
+            Method::PUT,
+            "/api/svc/smart",
+            Some(json!({"poll_minutes": 0})),
+        )
+        .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }

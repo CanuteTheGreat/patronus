@@ -108,6 +108,12 @@ that are not finished are listed separately under
   status says in words why it is not connected (e.g. a wrong passphrase).
   Proven on the simulated radios of mac80211_hwsim, not on real radio
   hardware. [C85]
+- Disk health: with USE=smart the router lists its disks with their own S.M.A.R.T.
+  verdict, temperature, bad-sector counts and NVMe wear, runs short and long
+  self-tests on a schedule or on request, and raises one alert per change of
+  level; a disk without S.M.A.R.T. (a virtual disk, SD card or eMMC) is shown as
+  unsupported, never as failed. Switched off until you enable it. Proven on
+  emulated SATA and NVMe disks, not on aging real hardware. [C190]
 - Static routes go via an IP address or a named gateway, and all routing
   configuration survives a reboot (`patronus apply` rebuilds it; applying
   again changes nothing). [C30]

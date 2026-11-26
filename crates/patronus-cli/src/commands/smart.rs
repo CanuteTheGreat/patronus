@@ -44,7 +44,9 @@ pub async fn status(db: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
             "{:<14} {:<11} {:<10} {} \u{b0}C  {}",
             d.disk.device,
             d.level.as_str(),
-            d.disk.health.map_or("-", |h| if h { "PASSED" } else { "FAILED" }),
+            d.disk
+                .health
+                .map_or("-", |h| if h { "PASSED" } else { "FAILED" }),
             d.disk.temperature.map_or("-".into(), |t| t.to_string()),
             d.disk.model
         );

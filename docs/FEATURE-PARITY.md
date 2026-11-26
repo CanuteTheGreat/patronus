@@ -247,6 +247,7 @@ Last generated: 2026-11-17 (279 features).
 
 | Feature | Found in | Standard | Router | Small | What is missing / notes | Impact |
 |---|---|---|---|---|---|---|
+| S.M.A.R.T. disk health (health verdict, temperature, bad sectors, NVMe wear, scheduled and on-demand self-tests, alerts) | pfS/OPN/OWrt(smartd)/UniFi(NAS)/Fort | tested | n/a (hardware) | n/a (hardware) | USE=smart, off until enabled; proven on emulated SATA/NVMe disks (no real failing drive). Router/Small tiers boot from flash (SD/eMMC/NOR) with no S.M.A.R.T.: the page says so. No SAS expander enclosure (SES) data, no vendor-specific attribute decoding beyond smartctl's own. See docs/SMART.md. | P1 |
 | First-boot setup wizard (roles, LAN/WAN addressing, DHCP pool) | pfS/OPN/OWrt(no)/UniFi/GL/eero | tested | partial | partial | No wizard step for WAN type (PPPoE/VLAN), WAN speed for shaping, Wi-Fi, admin password strength; no phone/QR flow | P0 |
 | Responsive web UI (mobile layout) | pfS(partial)/OPN/UniFi/GL/eero | untested | partial | partial | No documented mobile viewport test; no PWA manifest or service worker (only a service-worker cleanup in login.html:133) | P1 |
 | Dashboard widgets | pfS/OPN/UniFi/FW/GL/eero | partial | partial | partial | Not customisable, no live graph widgets, no gateway quality / top talkers / Wi-Fi clients widget | P1 |
