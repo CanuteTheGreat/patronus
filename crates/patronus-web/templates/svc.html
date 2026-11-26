@@ -114,6 +114,20 @@
             if (Array.isArray(v) && v.every(x => typeof x === 'string')) {
                 if (v.length === 0) td.textContent = '-';
                 else { const pre = document.createElement('pre'); pre.className = 'svc-pre'; pre.textContent = v.join('\n'); td.appendChild(pre); }
+            } else if (Array.isArray(v) && v.length && v.every(x => x !== null && typeof x === 'object' && !Array.isArray(x))) {
+                // a list of records (LLDP neighbours): one table row each, one column per key seen
+                const cols = []; for (const x of v) for (const c of Object.keys(x)) if (!cols.includes(c)) cols.push(c);
+                const wrap = document.createElement('div'); wrap.style.overflowX = 'auto';
+                const nt = document.createElement('table'); nt.className = 'lan svc-records';
+                const nh = document.createElement('tr');
+                for (const c of cols) { const h = document.createElement('th'); h.textContent = c.replace(/_/g, ' '); nh.appendChild(h); }
+                nt.appendChild(nh);
+                for (const x of v) {
+                    const r = document.createElement('tr');
+                    for (const c of cols) { const d = document.createElement('td'); d.textContent = renderValue(x[c]); r.appendChild(d); }
+                    nt.appendChild(r);
+                }
+                wrap.appendChild(nt); td.appendChild(wrap);
             } else if (v !== null && typeof v === 'object') {
                 const pre = document.createElement('pre'); pre.className = 'svc-pre'; pre.textContent = JSON.stringify(v, null, 1); td.appendChild(pre);
             } else td.textContent = renderValue(v);

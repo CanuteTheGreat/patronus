@@ -41,6 +41,13 @@ pub const CATALOG: &[Component] = &[
         binary: "avahi-daemon",
     },
     Component {
+        id: "lldpd",
+        feature: "lldp",
+        title: "LLDP (lldpd)",
+        atom: "net-misc/lldpd",
+        binary: "lldpd",
+    },
+    Component {
         id: "miniupnpd",
         feature: "upnp",
         title: "UPnP / NAT-PMP daemon",
