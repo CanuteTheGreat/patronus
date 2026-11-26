@@ -93,6 +93,11 @@ fn prepare_app(state: AppState) -> axum::Router {
         });
     }
 
+    // Intrusion detection: alert history and the nightly rule-set update. patronus applyd runs
+    // them when it exists; without it (container image, root) this process does.
+    #[cfg(feature = "intrusion-detection")]
+    patronus_network::ids::spawn_task(state.config_store.clone(), true);
+
     // Remote / encrypted automatic backups: upload to every target that is due.
     let backup_state = state.clone();
     tokio::spawn(async move {
