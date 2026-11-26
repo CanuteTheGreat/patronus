@@ -80,14 +80,15 @@ impl Sampler {
             .ok()
     }
 
-    async fn run(self: Arc<Self>) {
+    /// Sample until nobody has asked for [`IDLE_STOP_SECS`].
+    async fn sample_until_idle(&self) {
         let host = Host::detect();
         let mut prev = self.read().await;
         let mut pause = Duration::from_millis(WARMUP_MS);
         loop {
             tokio::time::sleep(pause).await;
             if now() - self.last_request.load(Ordering::Relaxed) > IDLE_STOP_SECS {
-                break;
+                return;
             }
             if let Some(cur) = self.read().await {
                 if let Some(p) = &prev {
@@ -105,13 +106,17 @@ impl Sampler {
             }
             pause = self.interval().await;
         }
-        self.running.store(false, Ordering::Release);
-        // a request that arrived between the last check and the flag reset
-        if now() - self.last_request.load(Ordering::Relaxed) <= IDLE_STOP_SECS
-            && !self.running.swap(true, Ordering::AcqRel)
-        {
-            let me = self.clone();
-            tokio::spawn(async move { me.run().await });
+    }
+
+    async fn run(self: Arc<Self>) {
+        loop {
+            self.sample_until_idle().await;
+            self.running.store(false, Ordering::Release);
+            // a request that arrived between the last idle check and the flag reset
+            let asked = now() - self.last_request.load(Ordering::Relaxed) <= IDLE_STOP_SECS;
+            if !asked || self.running.swap(true, Ordering::AcqRel) {
+                return;
+            }
         }
     }
 }

@@ -583,6 +583,9 @@ mod honesty_tests;
 mod insight_api_tests;
 
 #[cfg(test)]
+mod dashboard_tests;
+
+#[cfg(test)]
 mod lane_fh_tests;
 
 #[cfg(all(test, feature = "segmentation"))]

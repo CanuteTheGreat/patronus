@@ -345,6 +345,22 @@ that are not finished are listed separately under
   crate) that works offline and says why when the list is left out (router
   tier). [C82] CI refuses a dependency whose license is not on the allowlist.
   [C83]
+- The dashboard is made of widgets each signed-in user arranges for themselves:
+  Customize adds, removes and reorders them with the mouse (drag handle) or
+  with buttons and the keyboard, the layout is stored per user in the
+  configuration (exported, rolled back and restored with the rest), a
+  read-only account keeps its own, a new release's widgets show up at their
+  default place, and Reset restores the default. [C871]
+- System activity (menu, and `GET /api/v1/system/activity`): the busiest
+  processes with CPU, memory, threads and state sortable by any column, load,
+  CPU and memory totals and a per-daemon rollup, read from `/proc` only so it
+  works on the access-point image too; passwords and tokens on command lines
+  are hidden before they leave the router, and a request never waits for a
+  sample. [C872]
+- Diagnostics has a TCP port test from the router: open, closed (refused) or
+  filtered (no answer in time) with the resolved address and the latency,
+  optionally through a chosen interface or source address, with a configurable
+  timeout and a rate limit. [C873]
 - Gentoo: installed by the in-tree ebuild (an `emerge` runs in CI), and every
   USE flag that maps to a cargo feature compiles on its own. [C12]
 - The installer partitions a real disk, installs, and the installed system
