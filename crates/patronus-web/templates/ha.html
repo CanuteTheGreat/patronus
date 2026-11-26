@@ -52,7 +52,7 @@
     </table>
     <p class="empty" id="ha-vips-empty" style="display:none">No virtual IPs.</p>
     {% if can_modify %}
-    <form class="lan-form" id="vip-form" onsubmit="return addVip(event)">
+    <form class="lan-form" id="vip-form" onsubmit="return addVip(event)" data-dialog="Add virtual IP">
         <label>Name <input name="name" required></label>
         <label>Interface (device or @lan, @wan) <input name="interface" value="@lan" required></label>
         <label>Address/prefix <input name="address" placeholder="192.168.50.254/24" required></label>
