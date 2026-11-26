@@ -18,6 +18,7 @@ on:
       - 'ci/hw-profile/**'
       - 'profiles/**'
       - 'crates/patronus-cli/**'
+      - 'crates/patronus-import/**'
       - 'crates/patronus-web/**'
       - 'crates/patronus-network/**'
       - 'gentoo/net-firewall/patronus/files/**'

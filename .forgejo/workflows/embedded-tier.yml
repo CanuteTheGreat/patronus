@@ -11,6 +11,7 @@ on:
       - 'ci/hw-profile/**'
       - 'profiles/**'
       - 'crates/patronus-cli/**'
+      - 'crates/patronus-import/**'
       - 'crates/patronus-web/**'
       - 'crates/patronus-network/src/sysauth.rs'
       - 'crates/patronus-network/src/dhcp_client.rs'
@@ -76,7 +77,7 @@ jobs:
       - name: Build env (mold linker, no incremental)
         run: CI_NO_SCCACHE=1 CI_RUST_ENV_EXPORT=1 . ci/ci-rust-env.sh
       - name: Format (the files this tier owns)
-        run: rustfmt --edition 2021 --check crates/patronus-cli/src/commands/import_uci.rs crates/patronus-cli/src/commands/firstboot.rs crates/patronus-network/src/dhcp_client.rs
+        run: rustfmt --edition 2021 --check crates/patronus-import/src/uci.rs crates/patronus-cli/src/commands/firstboot.rs crates/patronus-network/src/dhcp_client.rs
       - name: Clippy (router feature set)
         run: |
           cargo clippy -p patronus-cli --no-default-features --features nftables,cli,dhcp-server,dns-server,uci-import -- -D warnings

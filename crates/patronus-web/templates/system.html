@@ -222,6 +222,12 @@ async function fwFeedDownload() {
 }
 </script>
 
+<div class="card" id="import-card">
+    <div class="card-header"><h2 class="card-title">Import a configuration</h2></div>
+    <p class="text-sm">Coming from pfSense, OPNsense or OpenWrt? <a href="/import">Import the old router's configuration</a>
+        (preview first, then apply; the current configuration is kept as a revision).</p>
+</div>
+
 <div class="card" id="bootenv-card">
     <div class="card-header"><h2 class="card-title">Boot environments</h2></div>
     <p class="text-sm">On a ZFS install every update is preceded by a snapshot of the system: <a href="/boot-environments">boot environments
