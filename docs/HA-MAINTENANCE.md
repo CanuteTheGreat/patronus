@@ -1,7 +1,7 @@
 # HA maintenance mode and configuration sync (lane G)
 
 Code: `crates/patronus-network/src/ha.rs` (VRRP, settings), `ha_maint.rs` (the hand-off procedure),
-`crates/patronus-web/src/state/ha_maint.rs` (wiring), netlab `ci/netlab/ha-services-test.sh` (claim C87).
+`crates/patronus-web/src/state/ha_maint.rs` (wiring), netlab `ci/netlab/ha-services-test.sh` (claim C89).
 
 ## Maintenance mode is a confirmed hand-off
 
