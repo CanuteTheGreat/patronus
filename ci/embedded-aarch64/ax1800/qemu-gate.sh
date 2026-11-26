@@ -242,6 +242,23 @@ login() { rm -f "$W/jar"; c=$(curl -sk -c "$W/jar" -o /dev/null -w '%{http_code}
 # api METHOD PATH [JSON]: the admin's session (login), body in $W/api.json, prints the HTTP code
 api() { curl -sk -b "$W/jar" -o "$W/api.json" -w '%{http_code}' -m 180 -X "$1" -H 'content-type: application/json' ${3:+-d "$3"} "https://127.0.0.1:$WEBP$2"; }
 jget() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1])); [v:=v[k] for k in sys.argv[2:]]; print(v)' "$W/api.json" "$@"; }
+# access log: the router tier's env caps the history (2000 rows, embedded.env); a 5000-request burst must leave at most the cap,
+# the writer accounts for every request (written + dropped), and patronus-web's RSS after the burst is recorded
+gap_accesslog() { login || return 1
+  c=$(api GET /api/system/access-log/settings); [ "$c" = 200 ] || { echo "settings: HTTP $c"; return 1; }
+  [ "$(jget settings retention_rows)" = 2000 ] || { echo "env cap not applied: $(cat "$W/api.json")"; return 1; }
+  w0=$(jget writer written); d0=$(jget writer queued_dropped)
+  curl -sk -m 1500 -o /dev/null "https://127.0.0.1:$WEBP/alog-burst-[1-5000]" || { echo "burst failed"; return 1; }
+  t=0; while [ $t -lt 120 ]; do c=$(api GET /api/system/access-log/settings); w1=$(jget writer written); d1=$(jget writer queued_dropped)
+    [ $((w1 + d1 - w0 - d0)) -ge 5000 ] && break; sleep 3; t=$((t + 3)); done
+  [ $((w1 + d1 - w0 - d0)) -ge 5000 ] || { echo "writer accounted only $((w1 + d1 - w0 - d0)) of 5000 requests"; return 1; }
+  c=$(api GET /api/system/access-log/stats); [ "$c" = 200 ] || { echo "stats: HTTP $c"; return 1; }
+  n=$(jget requests); [ "$n" -le 2000 ] && [ "$n" -ge 100 ] || { echo "rows after the burst: $n (cap 2000)"; return 1; }
+  c=$(api GET '/api/system/access-log?limit=5'); [ "$c" = 200 ] || { echo "list: HTTP $c"; return 1; }
+  grep -F 'alog-burst' "$W/api.json" >/dev/null && { echo "a raw path was stored"; return 1; }
+  rss=$(R 'for p in $(pidof patronus-web); do sed -n "s/^VmRSS:[[:space:]]*//p" /proc/$p/status; done' | head -1)
+  echo "GATEMETRIC accesslog_rows_after_burst=$n written=$((w1 - w0)) dropped=$((d1 - d0)) web_rss_after_burst=$rss" | tee -a "$RES/results.txt" "$RES/summary.txt"
+  c=$(curl -sk -b "$W/jar" -o /dev/null -w '%{http_code}' -m 60 https://127.0.0.1:$WEBP/system/access-log); [ "$c" = 200 ] || { echo "page: HTTP $c"; return 1; }; }
 # WireGuard (vpn-wireguard), all through the web API: a server tunnel wg0 (51820) and a client tunnel wg1 (51821) whose
 # peer is wg0 at 127.0.0.1:51820, so the kernel module, `wg syncconf`, the routes and the firewall's listen-port rules
 # are exercised by a real handshake; plus a road-warrior peer whose key pair Patronus generates (client config export)
@@ -572,6 +589,7 @@ check "LEDs: no LEDs in QEMU -> shown unavailable with the reason, change refuse
 check "scheduled restart: off by default, weekly enables the $INIT unit with that schedule, off disables it" gap_restart
 check "address: an unconfirmed change reverts by itself, a confirmed one (from the new address) stays, back to DHCP" gap_address
 check "online firmware check: a feed not signed by the release key is refused, nothing downloaded or staged" gap_feed
+check "access log: env row cap holds under a 5000-request burst, every request accounted for, no raw path stored, page served, RSS recorded" gap_accesslog
 check "Diagnostics on an access point: page served, ping/traceroute/routes through the web API" gap_diag
 check "backup includes the system login accounts; a restore brings a lost login back" gap_accounts
 scp -O -q "${SSHO[@]}" -P $SSHP "$TAR" root@127.0.0.1:/data/up.tar || fail "scp image into the guest"
