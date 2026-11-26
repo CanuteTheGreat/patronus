@@ -34,7 +34,8 @@ Library-only or separate tools: no shipped binary contains them, the web UI
 and dashboard cannot reach them, and the README makes no claim about them.
 `patronus-install` (crate `patronus-installer`) is the installer program and
 `patronus-operator` the Kubernetes operator; both are built and tested by
-their own CI jobs. The rest are experiments and models.
+their own CI jobs. `patronus-openapi` is the generator of `docs/openapi.json` (a
+development tool; its tests run with the workspace tests). The rest are experiments and models.
 - `patronus-advanced-ml`
 - `patronus-ansible`
 - `patronus-app-steering`
@@ -52,6 +53,7 @@ their own CI jobs. The rest are experiments and models.
 - `patronus-multitenancy`
 - `patronus-network-functions`
 - `patronus-observability`
+- `patronus-openapi`
 - `patronus-operator`
 - `patronus-plugin`
 - `patronus-proxy`
