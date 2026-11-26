@@ -85,6 +85,14 @@ def main():
                             page.click(lg["submit_sel"])
                             page.wait_for_url(lambda u: "/login" not in u, timeout=30000)
                             logged_in = True
+                            # data the pages need to show their tables and tiles (idempotent: a repeat answers 400/409)
+                            for sd in cfg.get("seed", []):
+                                r = ctx.request.fetch(base + sd["path"], method=sd["method"], data=json.dumps(sd["body"]),
+                                                      headers={"content-type": "application/json"})
+                                if r.status not in sd.get("expect", [200, 201, 400, 409]):
+                                    failures.append({"where": f"{kind}/{vp}/{scheme}/seed", "rule": "seed-failed", "impact": "critical",
+                                                     "detail": f"{sd['method']} {sd['path']} -> {r.status}"})
+                                    log(f"FAIL seed {sd['path']}: {r.status}")
                         if not pg.get("auth", True) and logged_in:
                             ctx.clear_cookies()
                             logged_in = False
