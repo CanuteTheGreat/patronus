@@ -26,6 +26,7 @@ nav-syslog = Syslog
 nav-netflow = NetFlow-Export
 nav-igmp = IGMP-Proxy
 nav-mdns = mDNS-Repeater
+nav-udp-relay = UDP-Broadcast-Relay
 nav-nat64 = NAT64 / DNS64
 nav-l2tp = L2TP-Server
 nav-ids = Angriffserkennung
