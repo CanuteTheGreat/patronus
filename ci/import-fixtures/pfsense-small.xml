@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<pfsense>
+  <version>23.3</version>
+  <system>
+    <hostname>fw-imported</hostname>
+    <domain>example.lan</domain>
+    <timezone>Europe/Amsterdam</timezone>
+  </system>
+  <interfaces>
+    <wan><enable/><if>em0</if><descr>WAN</descr><ipaddr>dhcp</ipaddr></wan>
+    <lan><enable/><if>em1</if><descr>LAN</descr><ipaddr>192.168.7.1</ipaddr><subnet>24</subnet></lan>
+  </interfaces>
+  <aliases>
+    <alias><name>web_ports</name><type>port</type><address>80 443</address></alias>
+  </aliases>
+  <filter>
+    <rule><type>pass</type><interface>lan</interface><ipprotocol>inet</ipprotocol><protocol>tcp</protocol>
+      <source><network>lan</network></source><destination><any/><port>web_ports</port></destination><descr>LAN web out</descr></rule>
+  </filter>
+</pfsense>
