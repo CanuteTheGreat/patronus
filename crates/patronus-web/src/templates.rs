@@ -125,6 +125,9 @@ pub struct VpnTemplate {
     pub tunnels: Vec<WgTunnelRow>,
     pub peers: Vec<WgPeerRow>,
     pub connections: Vec<IpsecConnRow>,
+    /// Kernel security policies (SPs) and XFRM interfaces of IPsec (live).
+    pub policies: Vec<IpsecPolicy>,
+    pub xfrm_ifaces: Vec<XfrmIface>,
     /// Why the stored VPN configuration could not be read.
     pub config_error: String,
 }
@@ -181,6 +184,44 @@ pub struct IpsecConnRow {
     pub state: String,
     pub established: bool,
     pub description: String,
+    /// `policy` or `route`.
+    pub mode: String,
+    pub if_id: String,
+    pub xfrm_name: String,
+    pub tunnel_address: String,
+    pub mtu: String,
+    pub xfrm_dev: String,
+    /// Live traffic of the SA / XFRM interface ("" = not reported).
+    pub bytes_in: String,
+    pub bytes_out: String,
+    pub xfrm_up: bool,
+}
+
+/// A kernel IPsec security policy (`ip xfrm policy`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct IpsecPolicy {
+    pub src: String,
+    pub dst: String,
+    pub dir: String,
+    pub if_id: Option<u32>,
+    pub peer_src: String,
+    pub peer_dst: String,
+    pub proto: String,
+    pub mode: String,
+    pub reqid: Option<u32>,
+}
+
+/// An XFRM interface (route-based IPsec) as the kernel reports it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct XfrmIface {
+    pub name: String,
+    pub if_id: Option<u32>,
+    pub up: bool,
+    pub mtu: Option<u32>,
+    pub dev: Option<String>,
+    pub addresses: Vec<String>,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
 }
 
 /// A page whose feature this build (or this unit's role) leaves out: rendered in

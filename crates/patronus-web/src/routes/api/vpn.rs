@@ -63,6 +63,24 @@ pub async fn list_wg_peers(State(state): State<AppState>) -> Response {
     }
 }
 
+/// GET /api/vpn/ipsec/policies -- the kernel's IPsec security policies (SPs).
+async fn list_ipsec_policies(State(state): State<AppState>) -> Response {
+    let s = state.vpn.snapshot().await;
+    match s.ipsec_error {
+        Some(e) => unavailable(format!("cannot read IPsec state: {e}")),
+        None => Json(s.ipsec_policies).into_response(),
+    }
+}
+
+/// GET /api/vpn/ipsec/interfaces -- the XFRM interfaces of route-based tunnels.
+async fn list_xfrm_ifaces(State(state): State<AppState>) -> Response {
+    let s = state.vpn.snapshot().await;
+    match s.ipsec_error {
+        Some(e) => unavailable(format!("cannot read IPsec state: {e}")),
+        None => Json(s.xfrm_ifaces).into_response(),
+    }
+}
+
 /// GET /api/vpn/ipsec/tunnels -- live IKE SAs.
 pub async fn list_ipsec_tunnels(State(state): State<AppState>) -> Response {
     let s = state.vpn.snapshot().await;
@@ -302,6 +320,38 @@ mod ipsec {
             .unwrap_or_else(err)
     }
 
+    /// POST /api/vpn/ipsec/connections/:id/{connect,disconnect}: queued for
+    /// applyd (charon's socket is root-only) and carried out by the apply
+    /// the change triggers.
+    async fn control(state: AppState, id: i64, action: &'static str) -> Response {
+        let Some(name) = x::list_tunnels(state.tunnels.store())
+            .await
+            .ok()
+            .and_then(|v| v.into_iter().find(|t| t.id == id).map(|t| t.name))
+        else {
+            return error(StatusCode::NOT_FOUND, format!("no IPsec tunnel {id}"));
+        };
+        let label = format!("{action} IPsec tunnel {name}");
+        match state
+            .tunnels
+            .change(Kind::Ipsec, &label, |s| async move {
+                x::request_action(&s, &name, action).await
+            })
+            .await
+        {
+            Ok(()) => Json(json!({ "ok": true, "action": action })).into_response(),
+            Err(e) => err(e),
+        }
+    }
+
+    pub async fn connect(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+        control(state, id, "connect").await
+    }
+
+    pub async fn disconnect(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+        control(state, id, "disconnect").await
+    }
+
     pub async fn del(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
         let exists = x::list_tunnels(state.tunnels.store())
             .await
@@ -488,7 +538,9 @@ pub fn router() -> axum::Router<AppState> {
         .route("/vpn/wireguard/apply", post(wg_apply))
         .route("/vpn/ipsec/apply", post(ipsec_apply))
         .route("/vpn/openvpn/tunnels", get(list_ovpn_tunnels))
-        .route("/vpn/ipsec/tunnels", get(list_ipsec_tunnels));
+        .route("/vpn/ipsec/tunnels", get(list_ipsec_tunnels))
+        .route("/vpn/ipsec/policies", get(list_ipsec_policies))
+        .route("/vpn/ipsec/interfaces", get(list_xfrm_ifaces));
     #[cfg(feature = "wireguard")]
     {
         use axum::routing::put;
@@ -521,6 +573,11 @@ pub fn router() -> axum::Router<AppState> {
         use axum::routing::put;
         r = r
             .route("/vpn/ipsec/connections", post(ipsec::add))
+            .route("/vpn/ipsec/connections/:id/connect", post(ipsec::connect))
+            .route(
+                "/vpn/ipsec/connections/:id/disconnect",
+                post(ipsec::disconnect),
+            )
             .route(
                 "/vpn/ipsec/connections/:id",
                 put(ipsec::put).delete(ipsec::del),
@@ -557,6 +614,8 @@ pub async fn page(State(state): State<AppState>, user: AuthUser) -> Response {
         tunnels: Vec::new(),
         peers: Vec::new(),
         connections: Vec::new(),
+        policies: s.ipsec_policies,
+        xfrm_ifaces: s.xfrm_ifaces,
         config_error: String::new(),
     };
     #[cfg(feature = "wireguard")]
@@ -625,7 +684,21 @@ pub async fn page(State(state): State<AppState>, user: AuthUser) -> Response {
                     .map(|c| {
                         let sa = format!("{}{}", patronus_network::ipsec::CONN_PREFIX, c.name);
                         let live = t.ipsec_tunnels.iter().find(|l| l.name == sa);
+                        let xname = c.xfrm_name();
+                        let xif = xname
+                            .as_ref()
+                            .and_then(|n| t.xfrm_ifaces.iter().find(|i| &i.name == n));
+                        let opt = |v: Option<u64>| v.map(|n| n.to_string()).unwrap_or_default();
                         crate::templates::IpsecConnRow {
+                            mode: c.mode.clone(),
+                            if_id: c.if_id.map(|i| i.to_string()).unwrap_or_default(),
+                            xfrm_name: xname.clone().unwrap_or_default(),
+                            tunnel_address: c.tunnel_address.clone().unwrap_or_default(),
+                            mtu: c.mtu.map(|m| m.to_string()).unwrap_or_default(),
+                            xfrm_dev: c.xfrm_dev.clone().unwrap_or_default(),
+                            bytes_in: opt(live.and_then(|l| l.bytes_in)),
+                            bytes_out: opt(live.and_then(|l| l.bytes_out)),
+                            xfrm_up: xif.is_some_and(|i| i.up),
                             id: c.id,
                             enabled: c.enabled,
                             local_address: c.local_address.unwrap_or_default(),

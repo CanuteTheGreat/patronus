@@ -29,6 +29,9 @@ pub struct VpnSnapshot {
     /// strongSwan is installed but charon is not running: IPsec is not in
     /// use, so there are no SAs. A normal state, not an error.
     pub ipsec_not_running: bool,
+    /// Kernel security policies and XFRM interfaces (read by the IPsec applier).
+    pub ipsec_policies: Vec<crate::templates::IpsecPolicy>,
+    pub xfrm_ifaces: Vec<crate::templates::XfrmIface>,
 }
 
 impl VpnSnapshot {
@@ -73,6 +76,14 @@ pub fn ipsec_from_status(st: &serde_json::Value, s: &mut VpnSnapshot) {
         s.ipsec_error = Some("strongSwan (`swanctl`) is not installed".into());
         return;
     }
+    s.ipsec_policies = st
+        .get("policies")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    s.xfrm_ifaces = st
+        .get("interfaces")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
     if st.get("running").and_then(|v| v.as_bool()) == Some(true) {
         s.ipsec_tunnels =
             parse_swanctl_list_sas(st.get("sas").and_then(|v| v.as_str()).unwrap_or(""));
