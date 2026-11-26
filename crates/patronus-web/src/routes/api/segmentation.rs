@@ -17,7 +17,9 @@
 //! A build without the flag answers 404 with the USE flag to enable.
 
 use crate::state::AppState;
-use axum::response::{Html, IntoResponse};
+#[cfg(feature = "segmentation")]
+use axum::response::Html;
+use axum::response::IntoResponse;
 
 #[cfg(feature = "segmentation")]
 mod built {
