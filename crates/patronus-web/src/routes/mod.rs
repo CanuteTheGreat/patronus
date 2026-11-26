@@ -55,6 +55,7 @@ pub fn build_router(
         .merge(api::segmentation::pages())
         .merge(seg_time_pages())
         .merge(seg_dns_pages())
+        .merge(guard_pages())
         .merge(api::setup::pages())
         .merge(api::wifi::pages())
         .merge(api::device::pages())
@@ -352,6 +353,22 @@ fn seg_time_router() -> Router<AppState> {
 fn seg_time_router() -> Router<AppState> {
     Router::new()
 }
+#[cfg(feature = "bruteforce")]
+fn guard_pages() -> Router<AppState> {
+    api::guard::pages()
+}
+#[cfg(not(feature = "bruteforce"))]
+fn guard_pages() -> Router<AppState> {
+    Router::new()
+}
+#[cfg(feature = "bruteforce")]
+fn guard_router() -> Router<AppState> {
+    api::guard::router()
+}
+#[cfg(not(feature = "bruteforce"))]
+fn guard_router() -> Router<AppState> {
+    Router::new()
+}
 #[cfg(all(feature = "dns", feature = "segmentation"))]
 fn seg_dns_pages() -> Router<AppState> {
     api::seg_dns::pages()
@@ -426,6 +443,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "web-proxy",
         "reverse-proxy",
         "intrusion-detection",
+        "bruteforce",
         "dynamic-routing",
         "sdwan-edge",
         "ldap",
@@ -501,6 +519,10 @@ pub fn absent_features(
         ("web-proxy", "Web proxy"),
         ("reverse-proxy", "Reverse proxy / load balancer"),
         ("intrusion-detection", "Intrusion detection (Suricata)"),
+        (
+            "bruteforce",
+            "Brute-force protection (bans for SSH / web login guessing)",
+        ),
         ("dynamic-routing", "BGP / OSPF"),
         ("sdwan-edge", "SD-WAN edge"),
         ("totp", "Two-factor login (TOTP)"),
@@ -566,6 +588,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::segmentation::router())
         .merge(seg_time_router())
         .merge(seg_dns_router())
+        .merge(guard_router())
         .merge(api::vpn::router())
         .merge(api::network::router())
         .merge(api::routing::router())

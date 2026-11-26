@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+
+{% block title %}Brute-force protection - Patronus{% endblock %}
+
+{% block extra_head %}
+{% include "lan_head.html" %}
+<style>
+    .scroll-x { overflow-x: auto; }
+    .pill { display: inline-block; padding: 1px 10px; border-radius: 10px; font-size: 0.8em; font-weight: 600; background: var(--info-bg); color: var(--info-fg); margin-right: 4px; }
+    .pill.on { background: var(--ok-bg); color: var(--ok-fg); }
+    .pill.off { background: var(--warn-bg); color: var(--warn-fg); }
+    .pill.ban { background: var(--bad-bg); color: var(--bad-fg); }
+    .hint { color: var(--muted); font-size: 0.85em; margin: 4px 0 10px; }
+    .g-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+    .g-stat { flex: 1 1 150px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--card-bg); }
+    .g-stat b { display: block; font-size: 1.5em; }
+    .g-stat span { color: var(--muted); font-size: 0.85em; }
+    fieldset.g-src { border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.85em; }
+    fieldset.g-src legend { font-size: 0.8em; color: var(--muted); }
+    fieldset.g-src label { flex-direction: row !important; gap: 4px; align-items: center; color: var(--ink-2) !important; font-size: 1em !important; }
+    form.lan-form label.chk { flex-direction: row; align-items: center; gap: 6px; color: var(--ink-2); font-size: 0.85em; justify-content: flex-start; }
+    form.lan-form input[type=checkbox] { min-width: 0; }
+    details.g-adv { flex-basis: 100%; }
+    details.g-adv > div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    @media (max-width: 640px) {
+        form.lan-form input, form.lan-form select, form.lan-form textarea { min-width: 0; width: 100%; }
+        form.lan-form label { width: 100%; }
+        form.lan-form label.chk { width: 100%; }
+        form.lan-form input[type=checkbox] { width: auto; flex: 0 0 auto; }
+        fieldset.g-src { width: 100%; box-sizing: border-box; }
+        fieldset.g-src label { width: auto !important; }
+        table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; width: 100%; box-sizing: border-box; }
+        table.stack tr.hd { display: none; }
+        table.stack tr { border-bottom: 1px solid var(--line); padding: 8px 0; }
+        table.stack td { border: 0; padding: 3px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; text-align: right; overflow-wrap: anywhere; }
+        table.stack td::before { content: attr(data-label); color: var(--muted); font-size: 0.8em; text-align: left; flex: 0 0 34%; }
+        table.stack td > * { max-width: 62%; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Brute-force protection</h1>
+    <p class="page-subtitle">Bans addresses that keep guessing passwords on SSH or the web UI, in the firewall, before they reach any service.</p>
+</div>
+<div id="g-error" class="alert-error" style="display:none" role="alert"></div>
+
+<div class="g-stats" id="g-stats" aria-live="polite">
+    <div class="g-stat"><b id="g-state">...</b><span>Protection</span></div>
+    <div class="g-stat"><b id="g-active">...</b><span>Active bans</span></div>
+    <div class="g-stat"><b id="g-counting">...</b><span>Addresses being counted</span></div>
+    <div class="g-stat"><b id="g-dropped">...</b><span>Packets dropped from banned sources</span></div>
+</div>
+<p class="hint" id="g-inputs"></p>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Settings</h2></div>
+    <form class="lan-form" id="g-form" onsubmit="return saveSettings(event)">
+        <label class="chk"><input type="checkbox" name="enabled"> <span>Protection on</span></label>
+        <fieldset class="g-src"><legend>Count failed logins of</legend>
+            <label><input type="checkbox" name="src_sshd"> OpenSSH</label>
+            <label><input type="checkbox" name="src_dropbear"> Dropbear</label>
+            <label><input type="checkbox" name="src_web"> web UI</label>
+        </fieldset>
+        <label>Failed logins before a ban<input name="max_failures" type="number" min="1" max="1000" required></label>
+        <label>Counted within (minutes)<input name="find_min" type="number" min="1" max="10080" required></label>
+        <label>First ban (minutes)<input name="ban_min" type="number" min="1" max="525600" required></label>
+        <label>Longest ban (hours)<input name="ban_max_h" type="number" min="1" max="8760" required></label>
+        <label class="chk"><input type="checkbox" name="escalate"> <span>Repeat offenders: double each ban</span></label>
+        <label class="chk"><input type="checkbox" name="exempt_lan"> <span>Never ban addresses on my own networks (LAN)</span></label>
+        <label style="flex-basis:100%">Never ban (addresses or networks, one per line)<textarea name="allowlist" rows="3" placeholder="198.51.100.0/24&#10;2001:db8::/32" style="font: inherit; font-size: 0.95rem; color: var(--ink); padding:5px 8px;border:1px solid var(--line-strong);border-radius:4px"></textarea></label>
+        <details class="g-adv"><summary>Advanced</summary><div>
+            <label>IPv6: ban the whole prefix (length)<input name="ipv6_prefix" type="number" min="32" max="128"></label>
+            <label>Repeat-offender window (hours)<input name="esc_h" type="number" min="1" max="8760"></label>
+            <label>Read the systemd journal<select name="journal"><option value="auto">automatic</option><option value="on">yes</option><option value="off">no</option></select></label>
+            <label style="flex:1 1 260px">Log files (empty = automatic)<input name="log_files" placeholder="/var/log/auth.log"></label>
+            <label>Keep ban history (days)<input name="history_days" type="number" min="1" max="3650"></label>
+        </div></details>
+        <button class="btn btn-primary btn-sm" type="submit" id="g-save">Save</button>
+    </form>
+    <p class="hint">SSH failures are read from the system log; the web UI reports its own refused logins. Bans are enforced by the firewall for traffic to this router and through it (port forwards too) and survive a restart. The login page has its own short lockout as well.</p>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Active bans</h2></div>
+    <div class="scroll-x" id="g-bans"><p class="empty">Loading...</p></div>
+    <form class="lan-form" id="g-ban-form" onsubmit="return manualBan(event)">
+        <label>Ban an address<input name="address" required placeholder="203.0.113.9" maxlength="64" style="min-width:16em"></label>
+        <label>For<select name="secs"><option value="3600">1 hour</option><option value="86400" selected>1 day</option><option value="604800">7 days</option><option value="">until lifted</option></select></label>
+        <label>Note<input name="reason" maxlength="64" placeholder="port scanner"></label>
+        <button class="btn btn-sm" type="submit">Ban</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Failed logins being counted</h2></div>
+    <div class="scroll-x" id="g-fail"><p class="empty">Loading...</p></div>
+</div>
+
+<div class="card">
+    <div class="card-header"><h2 class="card-title">Ban history</h2></div>
+    <div class="scroll-x" id="g-hist"><p class="empty">Loading...</p></div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    const CAN_MODIFY = {% if can_modify %}true{% else %}false{% endif %};
+    let DATA = null, FORM_FILLED = false;
+    function h(tag, attrs, kids) {
+        const el = document.createElement(tag);
+        for (const [k, v] of Object.entries(attrs || {})) {
+            if (k === 'class') el.className = v; else if (k === 'text') el.textContent = v;
+            else if (k.startsWith('on')) el.addEventListener(k.slice(2), v); else el.setAttribute(k, v);
+        }
+        for (const c of [].concat(kids || [])) el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+        return el;
+    }
+    function stackify(t) {
+        const rows = [...t.querySelectorAll('tr')];
+        if (!rows.length) return;
+        const labels = [...rows[0].children].map(c => c.textContent);
+        rows[0].classList.add('hd');
+        for (const r of rows.slice(1)) [...r.children].forEach((c, i) => { if (labels[i]) c.setAttribute('data-label', labels[i]); });
+        t.classList.add('stack');
+    }
+    function showError(msg) { const el = document.getElementById('g-error'); el.textContent = msg; el.style.display = msg ? '' : 'none'; }
+    async function api(method, url, body) {
+        const r = await fetch(url, {method, credentials: 'same-origin',
+            headers: body !== undefined ? {'content-type': 'application/json'} : {},
+            body: body !== undefined ? JSON.stringify(body) : undefined});
+        let j = {}; try { j = await r.json(); } catch (_) {}
+        if (!r.ok) { showError('Not applied: ' + (j.error || r.status)); return null; }
+        showError(''); return j;
+    }
+    const SRC = {sshd: 'SSH', dropbear: 'SSH (Dropbear)', web: 'web UI', manual: 'by hand'};
+    function when(t) { return t ? new Date(t * 1000).toLocaleString() : '-'; }
+    function dur(s) {
+        if (s >= 86400) return (Math.round(s / 3600) / 24).toFixed(s % 86400 ? 1 : 0) + ' d';
+        if (s >= 3600) return (s / 3600).toFixed(s % 3600 ? 1 : 0) + ' h';
+        if (s >= 60) return Math.round(s / 60) + ' min';
+        return s + ' s';
+    }
+    function table(head, rows) {
+        const t = h('table', {class: 'lan'});
+        t.appendChild(h('tr', {}, head.map(x => h('th', {text: x}))));
+        for (const r of rows) t.appendChild(h('tr', {}, r.map(c => c instanceof Node ? h('td', {}, [c]) : h('td', {text: String(c)}))));
+        stackify(t); return t;
+    }
+    function render() {
+        const d = DATA, s = d.settings;
+        const st = document.getElementById('g-state');
+        st.textContent = ''; st.appendChild(h('span', {class: 'pill ' + (s.enabled ? 'on' : 'off'), text: s.enabled ? 'On' : 'Off'}));
+        document.getElementById('g-active').textContent = d.active.length;
+        document.getElementById('g-counting').textContent = d.failures.length;
+        const k = (d.status && d.status.kernel) || {};
+        document.getElementById('g-dropped').textContent = k.present ? (k.dropped_packets || 0) : '-';
+        const inp = (d.status && d.status.inputs) || {};
+        const parts = [];
+        if (s.enabled) {
+            if (inp.journal) parts.push('reading the systemd journal');
+            if ((inp.log_files || []).length) parts.push('reading ' + inp.log_files.join(', '));
+            if (!inp.journal && !(inp.log_files || []).length && (s.sources.includes('sshd') || s.sources.includes('dropbear'))) parts.push('no SSH log found yet: set a log file under Advanced');
+            if (s.exempt_lan && d.exempt_networks.length) parts.push('never banned: ' + d.exempt_networks.join(', '));
+        } else {
+            parts.push('Turn the protection on to start counting failed logins.');
+        }
+        document.getElementById('g-inputs').textContent = parts.join(' · ');
+        // form (filled once, and again after a save: the periodic refresh never overwrites an edit)
+        if (FORM_FILLED) { renderTables(); return; }
+        FORM_FILLED = true;
+        const e = document.getElementById('g-form').elements;
+        e['enabled'].checked = s.enabled;
+        for (const x of ['sshd', 'dropbear', 'web']) e['src_' + x].checked = s.sources.includes(x);
+        e['max_failures'].value = s.max_failures;
+        e['find_min'].value = Math.max(1, Math.round(s.find_secs / 60));
+        e['ban_min'].value = Math.max(1, Math.round(s.ban_secs / 60));
+        e['ban_max_h'].value = Math.max(1, Math.round(s.ban_max_secs / 3600));
+        e['escalate'].checked = s.escalate; e['exempt_lan'].checked = s.exempt_lan;
+        e['allowlist'].value = s.allowlist.join('\n');
+        e['ipv6_prefix'].value = s.ipv6_prefix; e['esc_h'].value = Math.max(1, Math.round(s.escalate_window_secs / 3600));
+        e['journal'].value = s.journal; e['log_files'].value = s.log_files.join(', ');
+        e['history_days'].value = s.history_days;
+        if (!CAN_MODIFY) { for (const el of e) el.disabled = true; document.getElementById('g-ban-form').style.display = 'none'; }
+        renderTables();
+    }
+    function renderTables() {
+        const d = DATA, s = d.settings, now = d.now;
+        const bans = document.getElementById('g-bans'); bans.textContent = '';
+        if (!d.active.length) bans.appendChild(h('p', {class: 'empty', text: 'No address is banned right now.'}));
+        else bans.appendChild(table(['Address', 'Why', 'Since', 'Ends', 'Action'], d.active.map(b => {
+            const lift = CAN_MODIFY ? h('button', {class: 'btn btn-sm', text: 'Lift ban', 'aria-label': 'Lift the ban of ' + b.address, onclick: async () => {
+                if (await api('DELETE', '/api/guard/bans?address=' + encodeURIComponent(b.address))) load(); }}) : '';
+            return [h('span', {class: 'mono', text: b.address}), (SRC[b.source] || b.source) + (b.reason ? ': ' + b.reason : ''), when(b.banned_at),
+                b.expires_at ? 'in ' + dur(b.expires_at - now) : 'when lifted', lift];
+        })));
+        const fail = document.getElementById('g-fail'); fail.textContent = '';
+        if (!d.failures.length) fail.appendChild(h('p', {class: 'empty', text: 'No failed logins in the last ' + dur(s.find_secs) + '.'}));
+        else fail.appendChild(table(['Address', 'Failed', 'Where', 'User names', 'Last'], d.failures.map(f =>
+            [h('span', {class: 'mono', text: f.address}), f.failures + ' of ' + s.max_failures, f.sources.split(',').map(x => SRC[x] || x).join(', '), f.users || '-', when(f.last)])));
+        const hist = document.getElementById('g-hist'); hist.textContent = '';
+        if (!d.history.length) hist.appendChild(h('p', {class: 'empty', text: 'No bans yet.'}));
+        else hist.appendChild(table(['Address', 'Why', 'Since', 'Ended'], d.history.map(b =>
+            [h('span', {class: 'mono', text: b.address}), (SRC[b.source] || b.source) + (b.reason ? ': ' + b.reason : '') + (b.offence > 1 ? ' (ban #' + b.offence + ')' : ''), when(b.banned_at),
+             b.active ? h('span', {class: 'pill', text: b.expires_at ? 'active, ends in ' + dur(b.expires_at - DATA.now) : 'active until lifted'}) : (b.lifted_at ? 'lifted ' + when(b.lifted_at) + (b.lifted_by ? ' by ' + b.lifted_by : '') : 'expired ' + when(b.expires_at))])));
+    }
+    async function load() {
+        try {
+            const r = await fetch('/api/guard', {credentials: 'same-origin'});
+            const j = await r.json();
+            if (!r.ok) { showError(j.error || ('HTTP ' + r.status)); return; }
+            DATA = j; render();
+        } catch (e) { showError('Could not load: ' + e); }
+    }
+    async function saveSettings(ev) {
+        ev.preventDefault(); const e = ev.target.elements;
+        const lines = v => v.split(/[\n,]+/).map(x => x.trim()).filter(Boolean);
+        const body = {
+            enabled: e['enabled'].checked,
+            sources: ['sshd', 'dropbear', 'web'].filter(x => e['src_' + x].checked),
+            max_failures: Number(e['max_failures'].value),
+            find_secs: Number(e['find_min'].value) * 60,
+            ban_secs: Number(e['ban_min'].value) * 60,
+            ban_max_secs: Number(e['ban_max_h'].value) * 3600,
+            escalate: e['escalate'].checked, exempt_lan: e['exempt_lan'].checked,
+            allowlist: lines(e['allowlist'].value),
+            ipv6_prefix: Number(e['ipv6_prefix'].value),
+            escalate_window_secs: Number(e['esc_h'].value) * 3600,
+            journal: e['journal'].value, log_files: lines(e['log_files'].value),
+            history_days: Number(e['history_days'].value),
+        };
+        const j = await api('PUT', '/api/guard/settings', body);
+        if (j) { DATA = j; FORM_FILLED = false; render(); }
+        return false;
+    }
+    async function manualBan(ev) {
+        ev.preventDefault(); const e = ev.target.elements;
+        const body = {address: e['address'].value.trim(), reason: e['reason'].value};
+        if (e['secs'].value) body.secs = Number(e['secs'].value);
+        if (await api('POST', '/api/guard/bans', body)) { ev.target.reset(); load(); }
+        return false;
+    }
+    load();
+    setInterval(() => { if (!document.hidden) load(); }, 15000);
+</script>
+{% endblock %}
