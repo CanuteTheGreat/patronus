@@ -99,6 +99,14 @@ that are not finished are listed separately under
   seconds and comes back when it recovers; gateways in the same tier share
   the traffic (load balancing), and every uplink with a gateway gets
   outbound NAT. [C29]
+- Gateway groups go further (USE=multiwan, docs/MULTIWAN.md): a gateway has a
+  warning level below its down thresholds, a group picks what makes a member
+  unusable (down, packet loss, high latency or either), a load-balancing group
+  can keep each client on the uplink it was given (sticky connections), a
+  group deletes the tracked connections of an uplink that left service (kill
+  states, also those of the fallback when the better uplink returns), and a gateway's DNS servers are used as resolver upstreams while it
+  carries traffic; warnings and kills are events and show on the dashboard.
+  [C93]
 - A Wi-Fi network can be an uplink (USE=wifi-client, e.g. the backup line of
   a satellite or mobile router's own Wi-Fi): wpa_supplicant joins it, the
   device gets its address by DHCP like a wired WAN, and as the lower tier of a
