@@ -16,9 +16,7 @@ pub mod gitops;
 #[cfg(feature = "guest")]
 pub mod guest;
 #[cfg(feature = "uci-import")]
-pub mod import_pfsense;
-#[cfg(feature = "uci-import")]
-pub mod import_uci;
+pub mod import;
 pub mod init;
 pub mod ipdb;
 pub mod metrics;

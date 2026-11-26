@@ -21,6 +21,7 @@ claimed anywhere.
 - `patronus-firewall`
 - `patronus-geodns`
 - `patronus-gitops`
+- `patronus-import`
 - `patronus-monitoring`
 - `patronus-mpls`
 - `patronus-network`
