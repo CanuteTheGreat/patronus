@@ -10,6 +10,9 @@
 //! - `DELETE /api/packages/plugins/<name>`
 //! - `POST   /api/packages/keys` {label, public_key}, `DELETE /api/packages/keys/<id>`
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use crate::state::AppState;
 #[cfg(feature = "plugins")]
 use axum::response::{Html, IntoResponse};

@@ -13,6 +13,9 @@
 //! - `about.site_url`       base address of the product site for the privacy and update-policy links.
 //! - `about.source_url`     address of the public source code.
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use crate::state::AppState;
 use askama::Template;
 use axum::{

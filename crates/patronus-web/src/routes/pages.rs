@@ -5,6 +5,9 @@
 //! system; where nothing exists the page says so (empty state), it never
 //! fills in sample values.
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use crate::{
     state::{host, AppState},
     templates::{
@@ -317,7 +320,26 @@ pub async fn system(State(state): State<AppState>, me: crate::auth::AuthUser) ->
         .await
         .unwrap_or_default();
     let web = patronus_config::webui::resolve(Some(state.lan.store())).await;
+    let my_language = state.auth.lang.user(me.session.user_id).await;
+    let system_language = state.auth.lang.system_default().await;
+    let languages = crate::i18n::languages()
+        .into_iter()
+        .map(|(code, name)| crate::templates::LangOption {
+            mine: code == my_language,
+            system: code == system_language,
+            code: code.to_string(),
+            name,
+        })
+        .collect();
     let template = SystemTemplate {
+        languages,
+        my_language_unset: crate::i18n::match_supported(&my_language, &crate::i18n::supported())
+            .is_none(),
+        system_language_auto: crate::i18n::match_supported(
+            &system_language,
+            &crate::i18n::supported(),
+        )
+        .is_none(),
         web_listen: web.listen.join(", "),
         web_https_port: web.https_port,
         web_redirect_port: web.http_redirect_port,

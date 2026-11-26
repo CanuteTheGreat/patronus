@@ -1,0 +1,2 @@
+# Pages that have no API operation of their own, with the reason (CI: a page without an API must be listed here).
+/licenses	Static legal text compiled into the build; nothing to configure or read at run time.

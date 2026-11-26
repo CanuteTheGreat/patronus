@@ -5,7 +5,10 @@
 //! `patronus applyd`). Changes are admin-only and audited; reads are open to every signed-in user except the key
 //! list, which only admins see.
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
 use crate::auth::AdminUser;
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use crate::state::AppState;
 use askama::Template;
 use axum::{

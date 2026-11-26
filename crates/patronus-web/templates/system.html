@@ -443,6 +443,48 @@ async function fwFeedDownload() {
     {% endif %}
 </div>
 
+<div class="card" id="language-card">
+    <div class="card-header"><h2 class="card-title">{{ "lang-card-title"|t }}</h2></div>
+    <p class="text-sm">{{ "lang-card-intro"|t }}</p>
+    <form class="lan-form" id="language-form-me" onsubmit="return saveLanguage(event, '/api/i18n/me')">
+        <label>{{ "lang-my"|t }}
+            <select name="language">
+                <option value=""{% if my_language_unset %} selected{% endif %}>{{ "lang-use-system"|t }}</option>
+                {% for l in languages %}<option value="{{ l.code }}" lang="{{ l.code }}"{% if l.mine %} selected{% endif %}>{{ l.name }}</option>{% endfor %}
+            </select>
+        </label>
+        <button class="btn btn-primary btn-sm" type="submit">{{ "lang-save"|t }}</button>
+    </form>
+    {% if is_admin %}
+    <form class="lan-form" id="language-form-system" onsubmit="return saveLanguage(event, '/api/i18n/system')">
+        <label>{{ "lang-system"|t }}
+            <select name="language">
+                <option value="auto"{% if system_language_auto %} selected{% endif %}>{{ "lang-follow-browser"|t }}</option>
+                {% for l in languages %}<option value="{{ l.code }}" lang="{{ l.code }}"{% if l.system %} selected{% endif %}>{{ l.name }}</option>{% endfor %}
+            </select>
+        </label>
+        <button class="btn btn-primary btn-sm" type="submit">{{ "lang-save"|t }}</button>
+    </form>
+    {% else %}
+    <p class="text-sm">{{ "lang-system-admin-only"|t }}</p>
+    {% endif %}
+</div>
+<script>
+    async function saveLanguage(ev, url) {
+        ev.preventDefault();
+        const r = await fetch(url, {method: 'PUT', credentials: 'same-origin', headers: {'content-type': 'application/json'},
+            body: JSON.stringify({language: ev.target.elements.language.value})});
+        if (!r.ok) {
+            let m = r.status + '';
+            try { m = (await r.json()).error || m; } catch (_) {}
+            alert(tr('js-not-applied') + ' ' + m);
+            return false;
+        }
+        location.reload();
+        return false;
+    }
+</script>
+
 <div class="card" id="my-account">
     <div class="card-header"><h2 class="card-title">Your account ({{ me_username }})</h2></div>
     <form class="lan-form" id="password-form" onsubmit="return submitJson(event, 'POST', '/api/auth/password')">
