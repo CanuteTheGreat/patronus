@@ -161,7 +161,7 @@
         const t = document.createElement('table'); t.className = 'lan';
         const head = document.createElement('tr');
         for (const f of c.fields) { const th = document.createElement('th'); th.textContent = f.label; head.appendChild(th); }
-        head.appendChild(document.createElement('th')); t.appendChild(head);
+        const ath = document.createElement('th'); ath.textContent = 'Actions'; head.appendChild(ath); t.appendChild(head);
         for (const row of rows) {
             const tr = document.createElement('tr'); tr.dataset.id = row.id;
             for (const f of c.fields) {
