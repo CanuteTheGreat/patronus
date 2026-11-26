@@ -23,7 +23,7 @@
     </table>
     <p class="empty" id="qos-empty" style="display:none">No traffic shaping configured.</p>
     {% if can_modify %}
-    <form class="lan-form" id="qos-form" onsubmit="return addShaper(event)">
+    <form class="lan-form" id="qos-form" onsubmit="return addShaper(event)" data-dialog="Add shaper">
         <label>Interface (device or @wan, @lan) <input name="interface" value="@wan" required></label>
         <label>Mode <select name="mode"><option value="cake">CAKE</option><option value="fq_codel">fq_codel</option><option value="limit">rate limit</option></select></label>
         <label>Rate (kbit/s; not for fq_codel) <input name="rate_kbit" type="number" min="64" placeholder="50000"></label>

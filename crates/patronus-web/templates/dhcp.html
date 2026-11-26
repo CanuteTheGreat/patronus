@@ -94,7 +94,7 @@
     </table>
     {% endif %}
     <h3 class="font-bold mt-4" id="pool-form-title">Add a pool</h3>
-    <form class="lan-form" id="pool-form" onsubmit="return submitPool(event)">
+    <form class="lan-form" id="pool-form" onsubmit="return submitPool(event)" data-dialog="Add pool">
         <label>Interface <input name="interface" value="@lan" required title="@lan, @optN or a device name"></label>
         <label>Range start <input name="range_start" placeholder="192.168.1.100" required></label>
         <label>Range end <input name="range_end" placeholder="192.168.1.199" required></label>
@@ -145,7 +145,7 @@
         {% endfor %}
         </tbody>
     </table>{% endif %}
-    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dhcp/v6')">
+    <form class="lan-form" id="dhcp6-form" onsubmit="return submitJson(event, 'POST', '/api/dhcp/v6')" data-dialog="Add DHCPv6 pool">
         <label>Interface <input name="interface" value="@lan" required></label>
         <label>Range start <input name="range_start" placeholder="fd00::100, or ::1000 to follow a delegated prefix" required></label>
         <label>Range end <input name="range_end" placeholder="fd00::1ff" required></label>
@@ -170,7 +170,7 @@
         {% endfor %}
         </tbody>
     </table>{% endif %}
-    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dhcp/ra')">
+    <form class="lan-form" id="ra-form" onsubmit="return submitJson(event, 'POST', '/api/dhcp/ra')" data-dialog="Add router advertisements">
         <label>Interface <input name="interface" value="@lan" required></label>
         <label>Mode
             <select name="mode">
@@ -199,7 +199,7 @@
         {% endfor %}
         </tbody>
     </table>{% endif %}
-    <form class="lan-form" onsubmit="return submitJson(event, 'POST', '/api/dhcp/relays')">
+    <form class="lan-form" id="relay-form" onsubmit="return submitJson(event, 'POST', '/api/dhcp/relays')" data-dialog="Add relay">
         <label>Interface <input name="interface" placeholder="@opt1" required></label>
         <label>DHCP servers <input name="servers" placeholder="10.0.0.5, fd00::5" required></label>
         <button class="btn btn-primary btn-sm" type="submit">Add relay</button>
@@ -233,7 +233,7 @@
         document.getElementById('pool-form-title').textContent = 'Edit pool ' + d.interface + ' ' + d.rangeStart + ' - ' + d.rangeEnd;
         document.getElementById('pool-form-submit').textContent = 'Save pool';
         document.getElementById('pool-form-cancel').hidden = false;
-        f.scrollIntoView({behavior: 'smooth', block: 'center'});
+        lanShowForm(f, 'Edit pool ' + d.interface + ' ' + d.rangeStart + ' - ' + d.rangeEnd);
     }
     function submitPool(ev) {
         const id = ev.target.dataset.editId;

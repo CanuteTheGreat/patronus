@@ -23,6 +23,11 @@ DIALOGS = [
     ("/interfaces", "vlan", None, "[data-open=vlan-form]", "#vlan-form-dlg"),
     ("/interfaces", "bond", None, "[data-open=bond-form]", "#bond-form-dlg"),
     ("/interfaces", "overlay", None, "[data-open=overlay-form]", "#overlay-form-dlg"),
+    ("/dns", "host-override", None, "[data-open=dns-host-form]", "#dns-host-form-dlg"),
+    ("/dhcp", "pool", None, "[data-open=pool-form]", "#pool-form-dlg"),
+    ("/routing", "gateway", None, "[data-open=gateway-form]", "#gateway-form-dlg"),
+    ("/vpn", "wireguard-tunnel", None, "[data-open=wg-tunnel-form]", "#wg-tunnel-form-dlg"),
+    ("/system", "account", None, "[data-open=user-form]", "#user-form-dlg"),
 ]
 
 
