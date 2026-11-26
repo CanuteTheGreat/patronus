@@ -9,6 +9,9 @@
     .dash-grid { display: grid; gap: var(--s-3); grid-template-columns: minmax(0, 3fr) minmax(260px, 1fr); align-items: start; }
     .dash-grid .ui-grid td.num, .dash-grid .ui-grid td.mono { white-space: nowrap; }
     .dash-grid > * { min-width: 0; }
+    /* addresses wrap between entries (a dual-stack bridge carries three or four), names never break inside */
+    .dash-grid .ui-grid td.mono.addrs { white-space: normal; }
+    .dash-grid .ui-grid td:first-child { white-space: nowrap; }
     @media (max-width: 1100px) { .dash-grid { grid-template-columns: minmax(0, 1fr); } }
     .dash-live { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .stat-card .label + .label { margin-top: 2px; }
@@ -99,7 +102,7 @@
                 <tr class="iface-row" data-iface="{{ r.name }}">
                     <td>{% if !r.role.is_empty() %}<span class="ui-badge info iface-role">{{ r.role }}</span>{% endif %}<strong{% if !r.mac.is_empty() %} title="MAC {{ r.mac }}"{% endif %}>{{ r.name }}</strong></td>
                     <td>{% if r.up %}<span class="ui-badge ok"><span class="ui-dot ok"></span>up</span>{% else %}<span class="ui-badge"><span class="ui-dot off"></span>down</span>{% endif %}</td>
-                    <td class="mono">{% if r.addrs.is_empty() %}<span class="nil" title="no address">&mdash;</span>{% else %}{{ r.addrs }}{% endif %}</td>
+                    <td class="mono addrs">{% if r.addrs.is_empty() %}<span class="nil" title="no address">&mdash;</span>{% else %}{{ r.addrs }}{% endif %}</td>
                     <td class="num" data-col="rate" data-traffic="{{ r.name }}">{% if r.rate.is_empty() %}<span class="nil">&mdash;</span>{% else %}{{ r.rate }}{% endif %}</td>
                     <td class="num" data-v="{{ r.rx_bytes }}">{{ r.rx }}</td>
                     <td class="num" data-v="{{ r.tx_bytes }}">{{ r.tx }}</td>
