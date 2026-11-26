@@ -241,7 +241,8 @@ def main():
     pfail = [re.compile(p, re.I) for p in cfg["private_fail"]]
     pwarn = [re.compile(p, re.I) for p in cfg["private_warn"]]
     bad_text = re.compile(r"\bundefined\b|\bNaN\b|\[object Object\]|missing field|panicked at|Traceback \(most|RUST_BACKTRACE|\{\{|\}\}|@[A-Z][A-Z0-9_]{3,}@", re.I)
-    notfound = re.compile(r"\b404\b|page not found|route not found|^not found$", re.I | re.M)
+    # a bare 404 is an error page; "404.96 GiB used" or "1404" is a number
+    notfound = re.compile(r"(?<![\d.,])404(?![\d.,]|\s*(?:[KMGT]i?B|ms|s\b))|page not found|route not found|^not found$", re.I | re.M)
     findings, pages = [], []
     seen = set()
 
