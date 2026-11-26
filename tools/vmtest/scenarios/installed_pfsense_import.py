@@ -181,7 +181,13 @@ def _kernel_state(m, fw, lan, opt, when):
     m.check(f"lan-address-kept-{when}", f"{LAN_IP}/24" in fw.succeed(f"ip -4 -br addr show dev {lan}"), lan)
     nft = fw.succeed("nft list ruleset")
     m.check(f"alias-set-loaded-{when}", "elements = { 80, 443 }" in nft, "web_ports")
-    m.check(f"imported-rules-loaded-{when}", "LAN web out" in nft and "IoT not to LAN" in nft, "rule comments")
+    try:
+        fw.wait_until_succeeds("nft list ruleset | grep -q 'LAN web out' && nft list ruleset | grep -q 'IoT not to LAN'", 120, 3)
+        ok = True
+    except Exception:
+        ok = False
+    nft = fw.succeed("nft list ruleset")
+    m.check(f"imported-rules-loaded-{when}", ok, ok and "rule comments" or "\n".join(l.strip() for l in nft.splitlines() if "comment" in l)[:1500])
     m.check(f"port-forward-loaded-{when}", f"dnat" in nft and f"{FWD_TARGET}:{FWD_LOCAL}" in nft and f"dport {FWD_PORT}" in nft,
             "\n".join(l for l in nft.splitlines() if "dnat" in l)[:300])
 
