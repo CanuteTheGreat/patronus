@@ -83,27 +83,101 @@ const VPN_FEATURES: &[&str] = &["wireguard", "ipsec", "openvpn", "l2tp"];
 
 /// Default order = this order. ONE line per widget.
 pub const REGISTRY: &[WidgetDef] = &[
-    w("ap-uplink", "Access point", true, true, MinRole::ReadOnly, Gate::AccessPoint),
-    w("internet", "Internet", true, false, MinRole::ReadOnly, Gate::Always),
-    w("interfaces", "Interfaces", true, false, MinRole::ReadOnly, Gate::Always),
-    w("firewall-rules", "Active firewall rules", true, false, MinRole::ReadOnly, Gate::Always),
-    w("vpn", "VPN connections", true, false, MinRole::ReadOnly, Gate::AnyFeature(VPN_FEATURES)),
-    w("dhcp", "DHCP leases", true, false, MinRole::ReadOnly, Gate::Always),
-    w("traffic", "Traffic", true, false, MinRole::ReadOnly, Gate::Always),
-    w("system", "System", true, false, MinRole::ReadOnly, Gate::Always),
-    w("activity", "System activity", false, true, MinRole::ReadOnly, Gate::Always),
-    w("network-interfaces", "Network interfaces", true, true, MinRole::ReadOnly, Gate::Always),
-    w("services", "Services", true, true, MinRole::ReadOnly, Gate::Always),
+    w(
+        "ap-uplink",
+        "Access point",
+        true,
+        true,
+        MinRole::ReadOnly,
+        Gate::AccessPoint,
+    ),
+    w(
+        "internet",
+        "Internet",
+        true,
+        false,
+        MinRole::ReadOnly,
+        Gate::Always,
+    ),
+    w(
+        "interfaces",
+        "Interfaces",
+        true,
+        false,
+        MinRole::ReadOnly,
+        Gate::Always,
+    ),
+    w(
+        "firewall-rules",
+        "Active firewall rules",
+        true,
+        false,
+        MinRole::ReadOnly,
+        Gate::Always,
+    ),
+    w(
+        "vpn",
+        "VPN connections",
+        true,
+        false,
+        MinRole::ReadOnly,
+        Gate::AnyFeature(VPN_FEATURES),
+    ),
+    w(
+        "dhcp",
+        "DHCP leases",
+        true,
+        false,
+        MinRole::ReadOnly,
+        Gate::Always,
+    ),
+    w(
+        "traffic",
+        "Traffic",
+        true,
+        false,
+        MinRole::ReadOnly,
+        Gate::Always,
+    ),
+    w(
+        "system",
+        "System",
+        true,
+        false,
+        MinRole::ReadOnly,
+        Gate::Always,
+    ),
+    w(
+        "activity",
+        "System activity",
+        false,
+        true,
+        MinRole::ReadOnly,
+        Gate::Always,
+    ),
+    w(
+        "network-interfaces",
+        "Network interfaces",
+        true,
+        true,
+        MinRole::ReadOnly,
+        Gate::Always,
+    ),
+    w(
+        "services",
+        "Services",
+        true,
+        true,
+        MinRole::ReadOnly,
+        Gate::Always,
+    ),
 ];
 
 fn feature_built(name: &str) -> bool {
-    match name {
-        "wireguard" => cfg!(feature = "wireguard"),
-        "ipsec" => cfg!(feature = "ipsec"),
-        "openvpn" => cfg!(feature = "openvpn"),
-        "l2tp" => cfg!(feature = "l2tp"),
-        _ => false,
-    }
+    (name == "wireguard" && cfg!(feature = "wireguard"))
+        || (name == "ipsec" && cfg!(feature = "ipsec"))
+        || (name == "openvpn" && cfg!(feature = "openvpn"))
+        || (name == "l2tp" && cfg!(feature = "l2tp"))
 }
 
 /// What decides which widgets exist for the viewer.
@@ -311,7 +385,8 @@ mod tests {
         for d in REGISTRY {
             assert!(seen.insert(d.id), "duplicate id {}", d.id);
             assert!(
-                d.id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+                d.id.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
                 "{}",
                 d.id
             );
@@ -324,8 +399,14 @@ mod tests {
         let d = Layout::resolve(None, ADMIN);
         assert_eq!(ids(&d)[0], "internet", "no access-point card on a router");
         assert!(!ids(&d).contains(&"ap-uplink"));
-        assert!(d.widgets.iter().any(|w| w.id == "activity" && !w.on), "activity is off by default");
-        assert!(Layout::resolve(None, AP).widgets.iter().any(|w| w.id == "ap-uplink"));
+        assert!(
+            d.widgets.iter().any(|w| w.id == "activity" && !w.on),
+            "activity is off by default"
+        );
+        assert!(Layout::resolve(None, AP)
+            .widgets
+            .iter()
+            .any(|w| w.id == "ap-uplink"));
         assert!(d.is_default_for(ADMIN));
     }
 
@@ -346,8 +427,14 @@ mod tests {
         assert_eq!(ids(&r)[0], "system");
         assert!(at("system") < at("internet"), "{:?}", ids(&r));
         assert_eq!(r.widgets.iter().filter(|w| w.id == "system").count(), 1);
-        assert!(r.widgets.iter().find(|w| w.id == "system").unwrap().on, "first copy wins");
-        assert!(r.widgets.iter().all(|w| w.id != "from-the-future" && w.id != "ap-uplink"));
+        assert!(
+            r.widgets.iter().find(|w| w.id == "system").unwrap().on,
+            "first copy wins"
+        );
+        assert!(r
+            .widgets
+            .iter()
+            .all(|w| w.id != "from-the-future" && w.id != "ap-uplink"));
         assert!(!r.widgets.iter().find(|w| w.id == "internet").unwrap().on);
     }
 
@@ -356,13 +443,21 @@ mod tests {
         // a layout saved before "interfaces", "dhcp" and "activity" existed
         let saved = Layout {
             v: 1,
-            widgets: vec![sw("services", true), sw("internet", true), sw("firewall-rules", true), sw("system", true)],
+            widgets: vec![
+                sw("services", true),
+                sw("internet", true),
+                sw("firewall-rules", true),
+                sw("system", true),
+            ],
         };
         let r = Layout::resolve(Some(saved), ADMIN);
         let i = |id: &str| ids(&r).iter().position(|x| *x == id).unwrap();
         assert!(i("interfaces") == i("internet") + 1, "{:?}", ids(&r));
         assert!(i("activity") == i("system") + 1);
-        assert!(!r.widgets[i("activity")].on, "new widgets keep their default on/off");
+        assert!(
+            !r.widgets[i("activity")].on,
+            "new widgets keep their default on/off"
+        );
         assert!(r.widgets[i("interfaces")].on);
         // the user's own order is untouched
         assert_eq!(ids(&r)[0], "services");
@@ -370,16 +465,39 @@ mod tests {
 
     #[test]
     fn saving_rejects_unknown_and_repeated_ids_and_keeps_order() {
-        let ok = Layout { v: 1, widgets: vec![sw("system", true), sw("internet", false)] };
+        let ok = Layout {
+            v: 1,
+            widgets: vec![sw("system", true), sw("internet", false)],
+        };
         let stored = ok.clone().validate(ADMIN).unwrap();
         assert_eq!(stored, ok);
-        let e = Layout { v: 1, widgets: vec![sw("system", true), sw("nope", true)] }.validate(ADMIN).unwrap_err();
+        let e = Layout {
+            v: 1,
+            widgets: vec![sw("system", true), sw("nope", true)],
+        }
+        .validate(ADMIN)
+        .unwrap_err();
         assert!(e.contains("nope"), "{e}");
-        assert!(Layout { v: 1, widgets: vec![sw("system", true), sw("system", true)] }.validate(ADMIN).is_err());
-        let many = Layout { v: 1, widgets: (0..=MAX_WIDGETS).map(|i| sw(&format!("w{i}"), true)).collect() };
+        assert!(Layout {
+            v: 1,
+            widgets: vec![sw("system", true), sw("system", true)]
+        }
+        .validate(ADMIN)
+        .is_err());
+        let many = Layout {
+            v: 1,
+            widgets: (0..=MAX_WIDGETS)
+                .map(|i| sw(&format!("w{i}"), true))
+                .collect(),
+        };
         assert!(many.validate(ADMIN).is_err());
         // an id this viewer cannot see is accepted but not stored
-        let st = Layout { v: 1, widgets: vec![sw("ap-uplink", true), sw("system", true)] }.validate(ADMIN).unwrap();
+        let st = Layout {
+            v: 1,
+            widgets: vec![sw("ap-uplink", true), sw("system", true)],
+        }
+        .validate(ADMIN)
+        .unwrap();
         assert_eq!(ids(&st), ["system"]);
     }
 
@@ -392,7 +510,10 @@ mod tests {
 
     #[test]
     fn split_gives_drawn_and_hidden_widgets() {
-        let l = Layout { v: 1, widgets: vec![sw("system", true), sw("internet", false)] };
+        let l = Layout {
+            v: 1,
+            widgets: vec![sw("system", true), sw("internet", false)],
+        };
         let (on, off) = split(&l);
         assert_eq!(on.iter().map(|w| w.id).collect::<Vec<_>>(), ["system"]);
         assert_eq!(off[0].id, "internet");

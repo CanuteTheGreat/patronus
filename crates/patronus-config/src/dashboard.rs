@@ -104,9 +104,9 @@ pub async fn load(store: &ConfigStore) -> Settings {
 /// `tcp_timeout_secs`, `tcp_tests_per_minute`). Unknown names and
 /// out-of-range values are errors; nothing is saved then.
 pub async fn save(store: &ConfigStore, patch: &serde_json::Value) -> Result<Settings> {
-    let obj = patch
-        .as_object()
-        .ok_or_else(|| Error::Config("Invalid dashboard settings: expected a JSON object".into()))?;
+    let obj = patch.as_object().ok_or_else(|| {
+        Error::Config("Invalid dashboard settings: expected a JSON object".into())
+    })?;
     let mut todo = Vec::new();
     for (name, v) in obj {
         let key = match name.as_str() {
@@ -121,17 +121,17 @@ pub async fn save(store: &ConfigStore, patch: &serde_json::Value) -> Result<Sett
                 )))
             }
         };
-        let n = v
-            .as_u64()
-            .and_then(|n| u32::try_from(n).ok())
-            .filter(|n| valid(key, *n))
-            .ok_or_else(|| {
-                let (lo, hi) = range(key);
-                Error::Config(format!(
+        let n =
+            v.as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .filter(|n| valid(key, *n))
+                .ok_or_else(|| {
+                    let (lo, hi) = range(key);
+                    Error::Config(format!(
                     "Invalid dashboard settings: {name} must be a whole number from {lo} to {hi}{}",
                     if key == K_REFRESH { " (or 0 = never)" } else { "" }
                 ))
-            })?;
+                })?;
         todo.push((key, n));
     }
     for (k, n) in todo {
@@ -199,8 +199,13 @@ mod tests {
     async fn defaults_save_validate_and_ignore_garbage() {
         let (_d, s) = store().await;
         assert_eq!(load(&s).await, Settings::default());
-        let n = save(&s, &json!({"refresh_seconds": 0, "activity_top": 50})).await.unwrap();
-        assert_eq!((n.refresh_seconds, n.activity_top, n.tcp_timeout_secs), (0, 50, 3));
+        let n = save(&s, &json!({"refresh_seconds": 0, "activity_top": 50}))
+            .await
+            .unwrap();
+        assert_eq!(
+            (n.refresh_seconds, n.activity_top, n.tcp_timeout_secs),
+            (0, 50, 3)
+        );
         for bad in [
             json!({"refresh_seconds": 2}),
             json!({"activity_sample_secs": 0}),
@@ -212,7 +217,11 @@ mod tests {
             assert!(save(&s, &bad).await.is_err(), "{bad}");
         }
         // one bad key saves nothing from the same request
-        assert!(save(&s, &json!({"activity_top": 7, "tcp_timeout_secs": 99})).await.is_err());
+        assert!(
+            save(&s, &json!({"activity_top": 7, "tcp_timeout_secs": 99}))
+                .await
+                .is_err()
+        );
         assert_eq!(load(&s).await.activity_top, 50);
         // a hand-edited bad stored value falls back to the default
         s.save_system_config(K_TOP, "99999").await.unwrap();
@@ -223,16 +232,32 @@ mod tests {
     async fn layouts_are_per_user_and_travel_with_the_export() {
         let (_d, s) = store().await;
         assert_eq!(get_layout(&s, "alice").await.unwrap(), None);
-        put_layout(&s, "alice", r#"{"v":1,"widgets":[]}"#).await.unwrap();
-        put_layout(&s, "alice", r#"{"v":1,"widgets":[{"id":"x","on":true}]}"#).await.unwrap();
+        put_layout(&s, "alice", r#"{"v":1,"widgets":[]}"#)
+            .await
+            .unwrap();
+        put_layout(&s, "alice", r#"{"v":1,"widgets":[{"id":"x","on":true}]}"#)
+            .await
+            .unwrap();
         put_layout(&s, "bob", "{}").await.unwrap();
-        assert!(get_layout(&s, "alice").await.unwrap().unwrap().contains("\"x\""));
+        assert!(get_layout(&s, "alice")
+            .await
+            .unwrap()
+            .unwrap()
+            .contains("\"x\""));
         assert_eq!(get_layout(&s, "bob").await.unwrap().as_deref(), Some("{}"));
         let export = s.export_json().await.unwrap();
-        assert_eq!(export["tables"]["dashboard_layouts"].as_array().map(Vec::len), Some(2), "{export}");
+        assert_eq!(
+            export["tables"]["dashboard_layouts"]
+                .as_array()
+                .map(Vec::len),
+            Some(2),
+            "{export}"
+        );
         assert!(delete_layout(&s, "alice").await.unwrap());
         assert!(!delete_layout(&s, "alice").await.unwrap());
         assert!(get_layout(&s, "bob").await.unwrap().is_some());
-        assert!(put_layout(&s, "bob", &"x".repeat(MAX_LAYOUT_BYTES + 1)).await.is_err());
+        assert!(put_layout(&s, "bob", &"x".repeat(MAX_LAYOUT_BYTES + 1))
+            .await
+            .is_err());
     }
 }

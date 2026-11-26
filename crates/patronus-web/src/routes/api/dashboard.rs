@@ -37,7 +37,8 @@ fn is_web_user(s: &Session) -> bool {
 /// The layout `user` sees (stored one resolved against the registry, or the default).
 pub async fn resolved(state: &AppState, s: &Session) -> (Layout, bool) {
     let v = viewer(s);
-    let saved = match patronus_config::dashboard::get_layout(&state.config_store, &s.username).await {
+    let saved = match patronus_config::dashboard::get_layout(&state.config_store, &s.username).await
+    {
         Ok(Some(j)) => dashboard::parse_stored(&j),
         _ => None,
     };
@@ -69,7 +70,10 @@ async fn answer(state: &AppState, s: &Session) -> Response {
 /// GET /api/v1/dashboard/layout
 pub async fn get_layout(State(state): State<AppState>, user: AuthUser) -> Response {
     if !is_web_user(&user.session) {
-        return error(StatusCode::FORBIDDEN, "the dashboard layout belongs to a web user, not an API key");
+        return error(
+            StatusCode::FORBIDDEN,
+            "the dashboard layout belongs to a web user, not an API key",
+        );
     }
     answer(&state, &user.session).await
 }
@@ -81,7 +85,10 @@ pub async fn put_layout(
     body: Result<Json<Layout>, axum::extract::rejection::JsonRejection>,
 ) -> Response {
     if !is_web_user(&user.session) {
-        return error(StatusCode::FORBIDDEN, "the dashboard layout belongs to a web user, not an API key");
+        return error(
+            StatusCode::FORBIDDEN,
+            "the dashboard layout belongs to a web user, not an API key",
+        );
     }
     let Json(layout) = match body {
         Ok(b) => b,
@@ -92,7 +99,10 @@ pub async fn put_layout(
         Err(e) => return error(StatusCode::BAD_REQUEST, e),
     };
     let json = serde_json::to_string(&layout).unwrap_or_default();
-    if let Err(e) = patronus_config::dashboard::put_layout(&state.config_store, &user.session.username, &json).await {
+    if let Err(e) =
+        patronus_config::dashboard::put_layout(&state.config_store, &user.session.username, &json)
+            .await
+    {
         return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
     }
     answer(&state, &user.session).await
@@ -101,9 +111,14 @@ pub async fn put_layout(
 /// DELETE /api/v1/dashboard/layout: back to the default layout.
 pub async fn delete_layout(State(state): State<AppState>, user: AuthUser) -> Response {
     if !is_web_user(&user.session) {
-        return error(StatusCode::FORBIDDEN, "the dashboard layout belongs to a web user, not an API key");
+        return error(
+            StatusCode::FORBIDDEN,
+            "the dashboard layout belongs to a web user, not an API key",
+        );
     }
-    if let Err(e) = patronus_config::dashboard::delete_layout(&state.config_store, &user.session.username).await {
+    if let Err(e) =
+        patronus_config::dashboard::delete_layout(&state.config_store, &user.session.username).await
+    {
         return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
     }
     answer(&state, &user.session).await
@@ -123,7 +138,9 @@ pub async fn put_settings(
 ) -> Response {
     match patronus_config::dashboard::save(&state.config_store, &patch).await {
         Ok(s) => Json(s).into_response(),
-        Err(e) if e.to_string().contains("Invalid") => error(StatusCode::BAD_REQUEST, e.to_string()),
+        Err(e) if e.to_string().contains("Invalid") => {
+            error(StatusCode::BAD_REQUEST, e.to_string())
+        }
         Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }

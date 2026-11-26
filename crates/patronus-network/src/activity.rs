@@ -572,9 +572,8 @@ pub fn compute(
     for d in &mut daemons {
         d.cpu_percent = (d.cpu_percent * 10.0).round() / 10.0;
     }
-    daemons.sort_by(|x, y| {
-        cmp_f64(y.cpu_percent, x.cpu_percent).then(y.rss_bytes.cmp(&x.rss_bytes))
-    });
+    daemons
+        .sort_by(|x, y| cmp_f64(y.cpu_percent, x.cpu_percent).then(y.rss_bytes.cmp(&x.rss_bytes)));
     rows.sort_by(|x, y| {
         cmp_f64(y.cpu_percent, x.cpu_percent)
             .then(y.rss_bytes.cmp(&x.rss_bytes))
@@ -659,7 +658,10 @@ mod tests {
             "--port",
             "80",
         ]);
-        assert_eq!(r, "prog --password=<redacted> --api-token <redacted> --port 80");
+        assert_eq!(
+            r,
+            "prog --password=<redacted> --api-token <redacted> --port 80"
+        );
         assert!(!r.contains("hunter2") && !r.contains("abc"));
     }
 
@@ -686,7 +688,14 @@ mod tests {
         assert!(!r.contains("abc") && !r.contains("hunter2"), "{r}");
         assert!(r.contains("--verbose"), "{r}");
         // harmless options stay readable
-        let r = red(&["sshd", "-D", "-f", "/etc/ssh/sshd_config", "--key-file", "/etc/k"]);
+        let r = red(&[
+            "sshd",
+            "-D",
+            "-f",
+            "/etc/ssh/sshd_config",
+            "--key-file",
+            "/etc/k",
+        ]);
         assert_eq!(r, "sshd -D -f /etc/ssh/sshd_config --key-file /etc/k");
         // control characters and very long lines
         assert_eq!(redact_cmdline(b"a\x1b[31mb\0"), "a [31mb");
@@ -696,12 +705,18 @@ mod tests {
 
     #[test]
     fn system_files_parse() {
-        assert_eq!(parse_loadavg("0.52 0.30 0.10 1/200 999\n").unwrap().five, 0.30);
+        assert_eq!(
+            parse_loadavg("0.52 0.30 0.10 1/200 999\n").unwrap().five,
+            0.30
+        );
         assert!(parse_loadavg("x").is_none());
         let m = parse_meminfo(
             "MemTotal: 1000 kB\nMemFree: 100 kB\nBuffers: 10 kB\nCached: 40 kB\nSwapTotal: 8 kB\nSwapFree: 4 kB\n",
         );
-        assert_eq!((m.total, m.available, m.swap_free), (1_024_000, 153_600, 4096));
+        assert_eq!(
+            (m.total, m.available, m.swap_free),
+            (1_024_000, 153_600, 4096)
+        );
         let m = parse_meminfo("MemTotal: 10 kB\nMemAvailable: 7 kB\n");
         assert_eq!(m.available, 7168);
         let (all, idle, cpus) = parse_cpu_stat(
@@ -759,7 +774,11 @@ mod tests {
         fs::create_dir_all(dir).unwrap();
         fs::write(dir.join("stat"), cpu).unwrap();
         fs::write(dir.join("loadavg"), "1.50 1.00 0.50 2/100 1\n").unwrap();
-        fs::write(dir.join("meminfo"), "MemTotal: 2048 kB\nMemAvailable: 1024 kB\n").unwrap();
+        fs::write(
+            dir.join("meminfo"),
+            "MemTotal: 2048 kB\nMemAvailable: 1024 kB\n",
+        )
+        .unwrap();
         fs::write(dir.join("uptime"), "1234.5 99.0\n").unwrap();
         fs::write(dir.join("not-a-pid"), "x").unwrap();
         for (pid, comm, t) in procs {
@@ -776,7 +795,17 @@ mod tests {
                     4000,
                     &["/usr/bin/patronus-web", "--password=hunter2"],
                 ),
-                11 => write_proc(dir, 11, comm, 'R', *t, 1, 100, 800, &["/usr/sbin/dnsmasq", "-k"]),
+                11 => write_proc(
+                    dir,
+                    11,
+                    comm,
+                    'R',
+                    *t,
+                    1,
+                    100,
+                    800,
+                    &["/usr/sbin/dnsmasq", "-k"],
+                ),
                 12 => write_proc(dir, 12, comm, 'S', *t, 1, 100, 600, &["dnsmasq", "--child"]),
                 13 => write_proc(dir, 13, comm, 'I', *t, 1, 0, 0, &[]),
                 _ => write_proc(dir, *pid, comm, 'S', *t, 1, 7, 100, &[comm]),
@@ -793,7 +822,10 @@ mod tests {
     fn two_samples_make_percentages_rollup_and_sorting() {
         let t = tempfile::tempdir().unwrap();
         let (a, b) = (t.path().join("a"), t.path().join("b"));
-        let host = Host { hz: 100, page: 4096 };
+        let host = Host {
+            hz: 100,
+            page: 4096,
+        };
         fixture(
             &a,
             "cpu  100 0 100 700 100 0 0 0 0 0\ncpu0 50 0 50 350 50 0 0 0\ncpu1 50 0 50 350 50 0 0 0\n",
@@ -838,9 +870,16 @@ mod tests {
             "dnsmasq"
         );
         let k = s.processes.iter().find(|p| p.pid == 13).unwrap();
-        assert_eq!(k.command, "[kworker/0:1]", "kernel thread has no command line");
         assert_eq!(
-            s.processes.iter().find(|p| p.pid == 20).unwrap().cpu_percent,
+            k.command, "[kworker/0:1]",
+            "kernel thread has no command line"
+        );
+        assert_eq!(
+            s.processes
+                .iter()
+                .find(|p| p.pid == 20)
+                .unwrap()
+                .cpu_percent,
             0.0,
             "new process: no baseline yet"
         );

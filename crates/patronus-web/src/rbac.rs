@@ -284,7 +284,10 @@ mod tests {
         assert_eq!(area_for_path("/api/unknown-thing"), Some("system"));
         // dashboard widgets and the system activity list belong to the dashboard area
         assert_eq!(area_for_path("/api/v1/dashboard/layout"), Some("dashboard"));
-        assert_eq!(area_for_path("/api/v1/dashboard/settings"), Some("dashboard"));
+        assert_eq!(
+            area_for_path("/api/v1/dashboard/settings"),
+            Some("dashboard")
+        );
         assert_eq!(area_for_path("/api/v1/system/activity"), Some("dashboard"));
         assert_eq!(area_for_path("/activity"), Some("dashboard"));
         assert_eq!(area_for_path("/api/v1/system/other"), Some("system"));

@@ -65,7 +65,11 @@ impl Sampler {
     async fn interval(&self) -> Duration {
         let store = self.store.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let secs = match store {
-            Some(s) => patronus_config::dashboard::load(&s).await.activity_sample_secs,
+            Some(s) => {
+                patronus_config::dashboard::load(&s)
+                    .await
+                    .activity_sample_secs
+            }
             None => patronus_config::dashboard::Settings::default().activity_sample_secs,
         };
         Duration::from_secs(secs as u64)
@@ -132,7 +136,10 @@ mod tests {
         let s = Arc::new(Sampler::new("/proc".into(), "/etc/passwd".into()));
         let t = std::time::Instant::now();
         assert!(s.latest(&store).is_none(), "nothing sampled yet");
-        assert!(t.elapsed() < Duration::from_millis(500), "the request did not wait");
+        assert!(
+            t.elapsed() < Duration::from_millis(500),
+            "the request did not wait"
+        );
         let mut got = None;
         for _ in 0..80 {
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -143,9 +150,9 @@ mod tests {
         }
         let snap = got.expect("a snapshot within 8 s");
         assert!(snap.process_count > 0 && snap.memory.total > 0);
-        assert!(snap
-            .processes
-            .iter()
-            .any(|p| p.pid == std::process::id()), "this process is listed");
+        assert!(
+            snap.processes.iter().any(|p| p.pid == std::process::id()),
+            "this process is listed"
+        );
     }
 }

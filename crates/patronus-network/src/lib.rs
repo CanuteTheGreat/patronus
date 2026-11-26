@@ -6,6 +6,7 @@ use patronus_core::{types::Interface, Result};
 
 pub use ipnetwork;
 
+pub mod activity;
 pub mod apdev;
 pub mod apnames;
 pub mod applyd;
@@ -15,7 +16,6 @@ pub mod bond;
 pub mod bootguard;
 pub mod bridge;
 pub mod dhcp_client;
-pub mod activity;
 pub mod diag;
 pub mod general;
 pub mod interfaces;
