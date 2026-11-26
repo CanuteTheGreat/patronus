@@ -388,6 +388,9 @@ mod tests {
         // newer iproute2 prints the interface id on a line of its own, after the template
         let t2 = "src 0.0.0.0/0 dst 0.0.0.0/0 \n\tdir fwd priority 399999 ptype main \n\ttmpl src 198.18.0.2 dst 203.0.113.2\n\t\tproto esp spi 0x1 reqid 1 mode tunnel\n\tif_id 0x1\n";
         let p2 = parse_policies(t2);
-        assert_eq!((p2.len(), p2[0].if_id, p2[0].dir.as_str()), (1, Some(1), "fwd"));
+        assert_eq!(
+            (p2.len(), p2[0].if_id, p2[0].dir.as_str()),
+            (1, Some(1), "fwd")
+        );
     }
 }
