@@ -14,5 +14,11 @@ anyhow.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
 rustls = "0.23"
-rcgen = "0.11"
-x509-parser = "0.15"
+rcgen = { version = "0.13", features = ["x509-parser"] }
+x509-parser = "0.16"
+time = "0.3"
+thiserror.workspace = true
+getrandom = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
