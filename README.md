@@ -349,6 +349,11 @@ that are not finished are listed separately under
   USE flag that maps to a cargo feature compiles on its own. [C12]
 - The installer partitions a real disk, installs, and the installed system
   cold-boots (x86_64 VM, nightly). [C13]
+- The installer can put WAN, LAN and a management network on a bond (LACP,
+  active-backup, balance-xor) and VLAN tags, with DHCP, static or PPPoE on the
+  WAN: at the first boot, with nobody at the console, the web UI (443, 80
+  redirects) and SSH answer on the management VLAN and nowhere else, and the
+  bond keeps it reachable when one member link is cut. [C87]
 
 ### SD-WAN dashboard
 

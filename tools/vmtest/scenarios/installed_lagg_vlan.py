@@ -42,6 +42,9 @@ MGMT_IP, MGMT_SW = "10.20.0.1", "10.20.0.2"
 LAN_IP, LAN_SW = "192.168.30.1", "192.168.30.2"
 ISP_GW, ISP_POOL = "203.0.113.1", ("203.0.113.100", "203.0.113.150")
 SW_MACS = ("52:54:00:0e:00:01", "52:54:00:0e:00:02")   # switch eth1 / eth2 (the bond takes eth1's)
+# 802.3ad only aggregates ports that report a speed and duplex (bonding marks a port without them as down); virtio-net reports
+# "Unknown" unless QEMU is told, so every bond member on both sides is a 1 Gb/s full-duplex virtio NIC
+LINK = "virtio-net-pci,speed=1000,duplex=full"
 
 NETWORK_TOML = f"""
 [[network.bond]]
@@ -70,7 +73,7 @@ only = true
 
 SWITCH_SH = f"""
 set -e
-modprobe bonding; modprobe 8021q; modprobe bridge
+modprobe bonding max_bonds=0; modprobe 8021q; modprobe bridge
 ip link add bond0 type bond mode 802.3ad lacp_rate fast miimon 100 xmit_hash_policy layer2+3
 for p in eth1 eth2; do ip link set $p down; ip link set $p master bond0; done
 ip link add br0 type bridge vlan_filtering 1
@@ -107,9 +110,9 @@ def define(args):
     answers, key = make_answers_lagg(tempfile.mkdtemp(prefix="vmt-lagg-"))
     fw = NodeSpec(name="fw", mem=int(args.get("mem", 3072)), cpus=2, iso=args["iso"], iso_media="usb", firmware="uefi",
                   disks=[Disk("24G")], extra_drives=[(answers, "usb")], ssh_key=key, login_password=PW, console_menu_key="8", boot_timeout=420,
-                  nics=[Nic("l1"), Nic("l2"), Nic("user", forwards={"web": 443})])
+                  nics=[Nic("l1", model=LINK), Nic("l2", model=LINK), Nic("user", forwards={"web": 443})])
     sw = NodeSpec(name="switch", mem=768, cpus=1, iso=args.get("switch_iso") or cache.fetch(*ALPINE), disks=[Disk("1G")],
-                  nics=[Nic("user", forwards={}), Nic("l1", mac=SW_MACS[0]), Nic("l2", mac=SW_MACS[1])])
+                  nics=[Nic("user", forwards={}), Nic("l1", mac=SW_MACS[0], model=LINK), Nic("l2", mac=SW_MACS[1], model=LINK)])
 
     def run(m):
         fw, sw = m.fw, m.switch
@@ -121,9 +124,7 @@ def define(args):
             """True when the TCP port accepts a connection from the switch (OpenBSD nc: connect only, no data)."""
             return sw.execute(f"nc -z -w 4 {ip} {port}", 20)[0] == 0
 
-        m.phase("install the firewall from the answer file (bond + VLANs + management network)")
-        unattended_install(m, fw)
-
+        # the switch first: a broken lab fails in minutes, not after the install
         m.phase("the switch: LACP partner + VLAN-aware bridge + fake ISP on VLAN 100")
         sw.start()
         sw.wait_for_shell()
@@ -132,6 +133,9 @@ def define(args):
         sw.succeed("cat > /tmp/switch.sh <<'EOF'\n" + SWITCH_SH + "\nEOF\nsh /tmp/switch.sh", timeout=120)
         sw_mac = sw.succeed("cat /sys/class/net/bond0/address").strip().lower()
         m.check("switch-bond-is-802.3ad", "802.3ad" in sw.succeed("cat /proc/net/bonding/bond0"), sw_mac)
+
+        m.phase("install the firewall from the answer file (bond + VLANs + management network)")
+        unattended_install(m, fw)
 
         m.phase("first boot of the installed disk: nobody touches the console")
         fw.start()
@@ -170,7 +174,7 @@ def define(args):
         leases = sw.succeed("cat /tmp/isp.leases").strip()
         m.check("fake-isp-handed-out-that-lease", leases != "" and wan.split()[3].split("/")[0] in leases, leases[:160])
         fw.wait_until_succeeds(f"ip -4 route show default | grep -q 'via {ISP_GW} dev {BOND}.{VLAN_WAN}'", 120, 3)
-        m.check("default-route-via-the-isp-on-the-vlan", True, fw.succeed("ip -4 route show default").strip()[:160])
+        m.check("default-route-via-the-isp-on-the-vlan", True, fw.succeed(f"ip -4 route show default dev {BOND}.{VLAN_WAN}").strip()[:160])
         fw_wan = wan.split()[3].split("/")[0]
 
         m.phase("SSH + web UI only on the management network")

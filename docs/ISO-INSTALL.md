@@ -302,7 +302,17 @@ problem in plain words (exit 2), for example `LAN: enp1s0 is a member of bond bo
 In the guided installer (graphical and text, also over the serial console) the optional screen **Bonds, VLANs and management
 network** follows the LAN address screen: tick the first box, pick the bond member ports and mode (hash policy and LACP rate under
 *Show advanced options*), choose whether WAN and LAN ride on their port or the bond, their VLAN tags, PPPoE, and the management
-network (port or bond, VLAN, address, gateway, "only here"). The review page lists the result:
+network (port or bond, VLAN, address, gateway, "only here"). Left unticked it changes nothing:
+
+![bonds, VLANs and management network (off)](images/installer/patronus/07c-bonds-vlans-management.png)
+
+Ticked, the rows for the bond members, the VLAN tags, PPPoE and the management network appear (the bond mode, hash policy and
+LACP rate follow once member ports are chosen):
+
+![bonds, VLANs and management network (on)](images/installer/patronus/07d-bonds-vlans-management-on.png)
+
+Both screenshots come from the VGA text-installer run of the ISO test (`qemu-test.py --flow tui-vga`, which walks this screen on
+every Patronus ISO). The review page lists the result:
 
 ```
 Bond bond0 = enp1s0 + enp2s0 (802.3ad, hash layer2+3, LACP fast)
