@@ -41,3 +41,29 @@ action itself fails the node leaves maintenance at once.
 keepalived writes its counters to `/run/patronus/keepalived.stats` (SIGUSR2); `conntrackd -s network` gives the sync counters.
 Note: a peer configured with `nopreempt` does not take over from a MASTER that merely lowers its priority;
 use preemption on HA pairs that use maintenance mode (the default).
+
+## Configuration sync (phase 2, claim C88)
+
+One node is the **source** (`ha.cfgsync.push`), the other the **target** (`ha.cfgsync.accept`); a node is
+never both. The source looks every `ha.cfgsync.check_secs` (default 20 s) whether the switched-on
+sections changed and pushes them to `POST /api/ha/sync/receive` on the target.
+
+- **Sections** (one switch each, `ha.cfgsync.section.<name>`, all on by default): `firewall` (rules + the
+  `firewall.*` settings), `aliases`, `schedules`, `nat`, `dhcp`, `dns`, `vpn` (WireGuard, IPsec, OpenVPN, L2TP).
+  Interfaces, addresses, accounts, API keys, TLS and the `ha.*` keys are never sent. Interface device names in the rows
+  travel as roles (`@wan`, `@lan`, `@opt1`) so the target resolves them on its own devices.
+- **Transport.** curl over HTTPS to `ha.cfgsync.peer_url` (default `https://<ha.peer>`), the target's TLS public key
+  pinned (`ha.cfgsync.peer_pin`, `sha256//...`, shown on the target's HA page): the API key
+  (`ha.cfgsync.api_key`, an *operator* key made on the target, write-only in the API) is never sent to a server whose key
+  does not match. Key and body go to curl on stdin, never on a command line.
+- **Target.** Merges the sections into its own configuration, applies it through the normal appliers
+  (`SystemManager::restore`: a revision "HA sync from <source>" is kept, the previous configuration is put back and
+  re-applied when an applier refuses) and answers with the result. An unchanged push is acknowledged without
+  applying anything.
+- **Reporting.** Every push / receive is a row in `ha_sync_history` (measured data: not exported, pruned to
+  `ha.cfgsync.history_keep` rows) and an `ha_sync` event. The source's HA page shows the last failure with the target's
+  own reason; a failed push is retried after `ha.cfgsync.retry_secs`.
+- **Not synced yet** (pfSense/OPNsense do): users and groups, authentication servers, certificates, traffic shaper,
+  captive portal, wake-on-LAN, static routes, virtual IPs.
+
+Typed settings: `ha.cfgsync.{push,accept,peer_url,peer_pin,api_key,check_secs (5-3600),retry_secs (10-3600),timeout_secs (5-600),history_keep (10-10000)}`.
