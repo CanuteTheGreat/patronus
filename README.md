@@ -238,6 +238,12 @@ that are not finished are listed separately under
   report gateways, tunnels, conntrack, DHCP leases and services; gateway
   up/down, failover and tunnel changes are logged at `GET /api/events` and
   POSTed to signed webhooks. [C40]
+- Notification matchers: each notification channel names a matcher, a tree of
+  all / any / not groups over event kind, minimum severity, a name pattern and
+  calendar windows (weekdays, start and end time in the box's time zone, windows
+  may run past midnight), edited as a tree with buttons, keys or drag and drop,
+  previewed against the last events, and a declarative `NotifyMatcher` resource;
+  channels made before it keep behaving the same. [C87]
 - Traffic insight history (`/insights`, USE=insight for the monthly database
   job): the router adds up the kernel's per-flow byte counters by hour, per
   device and per direction, and names where the traffic went by country and

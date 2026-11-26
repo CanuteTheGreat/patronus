@@ -54,6 +54,17 @@ fn ev(kind: &str, subject: &str, severity: &str, detail: String) -> Event {
     }
 }
 
+/// An event made up by the user ("which channels get this?"): not stored in the log.
+pub fn sample_event(kind: &str, subject: &str, severity: &str) -> Event {
+    let subject = if subject.is_empty() { "sample" } else { subject };
+    ev(
+        kind,
+        subject,
+        severity,
+        format!("Sample {kind} event from the notification matcher page."),
+    )
+}
+
 /// What changed between two looks. Keys are `gateway:<name>`,
 /// `group:<name>` (active members), `tunnel:<name>`, `ha:state`; values
 /// are the state strings. A key that is new is only reported when its
@@ -568,17 +579,14 @@ pub async fn set_hook_matcher(
 
 pub async fn delete_hook(store: &ConfigStore, id: i64) -> anyhow::Result<bool> {
     let pool = store.pool().map_err(|x| anyhow::anyhow!("{x}"))?;
-    let own: Option<(String, String)> =
-        sqlx::query_as("SELECT name, matcher FROM event_hooks WHERE id=?")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
+    let name: Option<String> = sqlx::query_scalar("SELECT name FROM event_hooks WHERE id=?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
     let deleted = delete_hook_row(pool, id).await?;
-    if let Some((name, m)) = own {
-        // the matcher built for this channel goes with it (a shared one stays)
-        if deleted && m == format!("auto-{name}") {
-            let _ = matcher::delete(store, &m).await;
-        }
+    if let (true, Some(name)) = (deleted, name) {
+        // the matcher built for this channel goes with it (refused, so kept, while another channel uses it)
+        let _ = matcher::delete(store, &format!("auto-{name}")).await;
     }
     Ok(deleted)
 }
@@ -999,15 +1007,24 @@ pub async fn send_test(store: &ConfigStore, id: i64) -> anyhow::Result<Option<St
     r.map(|_| Some(result))
 }
 
+/// The channels that get `e` right now (enabled, and their matcher says yes at
+/// the box's local time; `PATRONUS_FAKE_TIME_FILE` moves that clock in tests).
+pub async fn route(store: &ConfigStore, e: &Event) -> Vec<Hook> {
+    let Ok(all) = hooks(store).await else {
+        return Vec::new();
+    };
+    let matchers = matcher_map(store).await;
+    let local = patronus_firewall::schedule::now();
+    all.into_iter()
+        .filter(|h| wants_event(h, e, &matchers, local))
+        .collect()
+}
+
 /// Send `e` to every hook that wants it (up to 3 tries each, 2 s / 6 s
 /// apart), and note the outcome on the hook.
 pub async fn deliver(store: Arc<ConfigStore>, e: Event) {
-    let Ok(all) = hooks(&store).await else { return };
     let me = host::hostname();
-    let matchers = matcher_map(&store).await;
-    // the box's local time; PATRONUS_FAKE_TIME_FILE moves it in tests
-    let local = patronus_firewall::schedule::now();
-    for h in all.into_iter().filter(|h| wants_event(h, &e, &matchers, local)) {
+    for h in route(&store, &e).await {
         let (store, e, me) = (store.clone(), e.clone(), me.clone());
         tokio::spawn(async move {
             let req = request(&me, &h, &e);

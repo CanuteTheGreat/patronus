@@ -405,6 +405,66 @@ def general_set():
     need("slate-gate2" in Rok("hostname"), "host name not applied live")
 
 
+# ------------------------------------------------------------------ notification matchers (docs/NOTIFY-MATCHERS.md)
+# a nested all/any/not matcher with a calendar leaf, a webhook channel pointing at this host (10.0.2.2 = the emulator's
+# user network, a listener on 127.0.0.1), and "try an event" with send=true: only the events the matcher accepts arrive
+NM_PORT = int(os.environ.get("GATE_NMP", 25516)); NM_RX = []; NM_SRV = None
+NM_TREE = {"op": "all", "items": [
+    {"op": "any", "items": [{"op": "kind", "kinds": ["gateway_down"]}, {"op": "kind", "kinds": ["tunnel_down"]}]},
+    {"op": "severity", "min": "warning"},
+    {"op": "not", "items": [{"op": "subject", "glob": "guest*"}]},
+    {"op": "calendar", "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "start": "00:00", "end": "00:00"}]}
+
+
+def nm_listen():
+    global NM_SRV
+    import http.server
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            NM_RX.append(json.loads(self.rfile.read(int(self.headers.get("content-length", 0))).decode() or "{}"))
+            self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+        def log_message(self, *a): pass
+    if NM_SRV: NM_SRV.shutdown(); NM_SRV.server_close()
+    NM_SRV = http.server.ThreadingHTTPServer(("127.0.0.1", NM_PORT), H)
+    threading.Thread(target=NM_SRV.serve_forever, daemon=True).start(); del NM_RX[:]
+
+
+def nm_try(kind, subject, sev):
+    c, t, _ = web("POST", "/api/system/events/try", {"kind": kind, "subject": subject, "severity": sev, "send": True})
+    need(c == 200, f"try {kind}: {c} {t[:200]}"); return json.loads(t)["channels"]
+
+
+def nm_wait(kind, n, secs=120):
+    end = time.time() + secs
+    while time.time() < end:
+        if sum(1 for e in NM_RX if e.get("kind") == kind) >= n: return
+        time.sleep(2)
+    raise AssertionError(f"no {kind} delivery reached the receiver: {NM_RX}")
+
+
+def nm_eval():
+    nm_listen()
+    c, t, _ = web("PUT", "/api/system/matchers/ci-gate", {"description": "ci", "tree": NM_TREE}); need(c == 200, f"save matcher: {c} {t[:300]}")
+    c, t, _ = web("PUT", "/api/system/matchers/bad", {"tree": {"op": "any", "items": []}}); need(c == 400, f"an empty any was accepted: {c}")
+    c, t, _ = web("POST", "/api/system/hooks", {"name": "ci-gate-hook", "url": f"http://10.0.2.2:{NM_PORT}/m", "matcher": "ci-gate"})
+    need(c == 201, f"add channel: {c} {t[:300]}")
+    need("ci-gate-hook" in nm_try("gateway_down", "WAN", "critical"), "the matcher refused gateway_down/WAN/critical")
+    nm_wait("gateway_down", 1)
+    for ev in [("gateway_down", "guest-wan", "critical"), ("gateway_down", "WAN", "info"), ("tunnel_up", "office", "critical")]:
+        need("ci-gate-hook" not in nm_try(*ev), f"the matcher let {ev} through")
+    need("ci-gate-hook" in nm_try("tunnel_down", "office", "warning"), "tunnel_down/office/warning refused")
+    nm_wait("tunnel_down", 1); time.sleep(8)
+    need(len(NM_RX) == 2, f"extra deliveries: {NM_RX}")
+
+
+def nm_persist():
+    g = jget("/api/system/matchers"); j = json.dumps(g)
+    need(any(m["name"] == "ci-gate" and m["used_by"] == ["ci-gate-hook"] and m["tree"] == NM_TREE for m in g), "matcher or channel lost: " + j[:400])
+    nm_listen()
+    need("ci-gate-hook" in nm_try("gateway_down", "WAN", "critical"), "the saved matcher refused the event after the restart")
+    nm_wait("gateway_down", 1)
+
+
 def boot_guard():
     o = R("patronus-guard status")[1]; need("armed" in o, "guard not armed at boot: " + o)
     Rok("patronus-guard ok"); o = R("patronus-guard status")[1]; need(re.search(r"\bok\b", o), "guard not confirmed: " + o)
@@ -441,6 +501,7 @@ def main():
     time.sleep(30); stats("boot1")
     Rok("sync")
     c, t, _ = web("POST", "/api/system/reboot", {})
+    check("boot 1: notification matchers: a nested all/any/not + calendar matcher saved through the API, a bad tree refused (400), events routed as the matcher says (webhook on the emulator host)", nm_eval)
     check("boot 1: restart from the web UI (POST /api/system/reboot) accepted", lambda: need(c == 202, f"{c} {t[:100]}"))
     try: QP.wait(timeout=300)
     except subprocess.TimeoutExpired: pass
@@ -477,6 +538,7 @@ def main():
         rc, a = LANC.dns("gatehost.gate.test"); need(a == ["10.0.66.77"], f"DNS host record lost after the restart: {rc} {a}")
     check("boot 2: DHCP lease kept (same client, same address) and the DNS record still answers", lambda: p4() if lease else need(False, "no lease in boot 1"))
     check("boot 2: boot guard armed again, confirmed", boot_guard)
+    check("boot 2: the matcher and its channel persisted and still route an event to the webhook", nm_persist)
     time.sleep(60); stats("boot2")
     GM("gate_s", int(time.time() - t00))
     if os.environ.get("GATE_HOLD"):
