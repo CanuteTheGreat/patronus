@@ -571,7 +571,7 @@ threading.Timer(int(sys.argv[3]), srv.shutdown).start()
 srv.serve_forever()
 PY
   NMLP=$!; sleep 1; }
-nm_count() { grep -ac "$1" "$W/nm-rx.txt" 2>/dev/null || true; }
+nm_count() { n=$(grep -ac "$1" "$W/nm-rx.txt" 2>/dev/null); echo "${n:-0}"; }
 nm_try() { c=$(api POST /api/system/events/try "{\"kind\":\"$1\",\"subject\":\"$2\",\"severity\":\"$3\",\"send\":true}"); [ "$c" = 200 ] || { echo "try $1: HTTP $c $(cat "$W/api.json")"; return 1; }; }
 nm_wait() { i=0; while [ "$(nm_count "$1")" -lt "$2" ]; do i=$((i+1)); [ $i -ge 30 ] && { echo "nothing matching '$1' reached the receiver ($(nm_count "$1") of $2): $(cat "$W/nm-rx.txt" 2>/dev/null | head -c 600)"; return 1; }; sleep 2; done; }
 nm_eval() { login || return 1
