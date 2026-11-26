@@ -175,6 +175,7 @@ impl RuleGenerator {
                     schedule: None,
                     ip_version: None,
                     gateway: None,
+                    ext: Default::default(),
                 })
             }
 
@@ -198,6 +199,7 @@ impl RuleGenerator {
                     schedule: None,
                     ip_version: None,
                     gateway: None,
+                    ext: Default::default(),
                 })
             }
 
@@ -221,6 +223,7 @@ impl RuleGenerator {
                     schedule: None,
                     ip_version: None,
                     gateway: None,
+                    ext: Default::default(),
                 })
             }
 
@@ -244,6 +247,7 @@ impl RuleGenerator {
                     schedule: None,
                     ip_version: None,
                     gateway: None,
+                    ext: Default::default(),
                 })
             }
         }
@@ -400,6 +404,7 @@ impl RuleGenerator {
                 schedule: None,
                 ip_version: None,
                 gateway: None,
+                ext: Default::default(),
             };
 
             let auto_rule = AutoRule {

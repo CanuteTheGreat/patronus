@@ -303,8 +303,8 @@ impl ConfigStore {
             "INSERT INTO firewall_rules
              (id, name, enabled, chain, action, source, destination, protocol, sport, dport,
               interface_in, interface_out, comment, priority, origin, created_at, updated_at,
-              log, schedule, ip_version, gateway)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              log, schedule, ip_version, gateway, ext)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(rule.id.map(|i| i as i64))
         .bind(&rule.name)
@@ -327,6 +327,7 @@ impl ConfigStore {
         .bind(&rule.schedule)
         .bind(rule.ip_version.map(|v| v.to_string()))
         .bind(&rule.gateway)
+        .bind(ext_json(&rule.ext))
         .execute(self.pool()?)
         .await
         .map_err(db_err("Failed to save firewall rule"))?;
@@ -410,7 +411,7 @@ impl ConfigStore {
             "UPDATE firewall_rules SET name = ?, enabled = ?, chain = ?, action = ?, source = ?,
                  destination = ?, protocol = ?, sport = ?, dport = ?, interface_in = ?,
                  interface_out = ?, comment = ?, updated_at = ?, log = ?, schedule = ?,
-                 ip_version = ?, gateway = ?
+                 ip_version = ?, gateway = ?, ext = ?
              WHERE id = ?",
         )
         .bind(&rule.name)
@@ -430,6 +431,7 @@ impl ConfigStore {
         .bind(&rule.schedule)
         .bind(rule.ip_version.map(|v| v.to_string()))
         .bind(&rule.gateway)
+        .bind(ext_json(&rule.ext))
         .bind(id as i64)
         .execute(self.pool()?)
         .await
@@ -462,7 +464,7 @@ impl ConfigStore {
         let rows = sqlx::query(
             "SELECT id, name, enabled, chain, action, source, destination, protocol,
                     sport, dport, interface_in, interface_out, comment, origin,
-                    log, schedule, ip_version, gateway
+                    log, schedule, ip_version, gateway, ext
              FROM firewall_rules
              ORDER BY priority ASC, id ASC",
         )
@@ -511,6 +513,7 @@ impl ConfigStore {
                     log: row.get::<i32, _>("log") != 0,
                     schedule: row.get("schedule"),
                     gateway: row.get("gateway"),
+                    ext: parse_ext(id, &row.get::<String, _>("ext"))?,
                     // An unknown family must not load as "both families"
                     // (that would widen an accept rule): fail closed.
                     ip_version: match row.get::<Option<String>, _>("ip_version").as_deref() {
@@ -1162,6 +1165,18 @@ fn priority_for(origin: RuleOrigin) -> i64 {
         RuleOrigin::Default => 1000,
         _ => 0,
     }
+}
+
+/// The `ext` column: `{}` for a plain rule.
+fn ext_json(ext: &patronus_core::types::RuleExt) -> String {
+    serde_json::to_string(ext).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Parse the `ext` column; a value that does not parse is an error (a rule
+/// must not silently lose its limits or lose its floating scope).
+fn parse_ext(id: i64, raw: &str) -> Result<patronus_core::types::RuleExt> {
+    serde_json::from_str(raw)
+        .map_err(|e| Error::Config(format!("firewall rule {id}: unreadable ext {raw:?}: {e}")))
 }
 
 fn port_json(p: Option<&patronus_core::types::PortSpec>) -> Option<String> {

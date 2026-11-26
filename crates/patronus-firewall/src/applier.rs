@@ -22,8 +22,8 @@
 
 use crate::aliases::{alias_map, load_aliases, sets_script};
 use crate::nftables::{
-    self, base_table_script, policy_chain_script, render_filter_rule, render_nat_rule,
-    render_policy_rule, rule_to_nft_command, NatContext, TABLE,
+    self, base_table_script, policy_chain_script, render_filter_rule_ext,
+    render_nat_rule, render_policy_rule, rule_to_nft_command, NatContext, RenderCtx, TABLE,
 };
 use crate::schedule::{load_schedules, now as schedule_now};
 use async_trait::async_trait;
@@ -43,9 +43,9 @@ use std::collections::BTreeMap;
 pub struct FirewallApplier;
 
 /// role -> interfaces
-type Roles = BTreeMap<String, Vec<String>>;
+pub type Roles = BTreeMap<String, Vec<String>>;
 
-async fn load_roles(store: &ConfigStore) -> Result<Roles> {
+pub async fn load_roles(store: &ConfigStore) -> Result<Roles> {
     let mut roles = Roles::new();
     for (name, role) in store.interface_roles().await? {
         roles.entry(role).or_default().push(name);
@@ -94,6 +94,70 @@ async fn nat_devices(store: &ConfigStore, roles: &Roles) -> Result<Vec<String>> 
 /// [`nat_devices`] for the UI ("automatic outbound NAT covers ...").
 pub async fn auto_nat_devices(store: &ConfigStore) -> Result<Vec<String>> {
     nat_devices(store, &load_roles(store).await?).await
+}
+
+/// The (rule, render context) pairs one stored rule expands to: a plain
+/// rule per resolved interface pair (an `group:NAME` reference becomes a
+/// set match), a floating rule per hook/direction and interface selector.
+/// `Err` = the rule cannot be rendered (names a missing group, or every
+/// interface it names is unassigned).
+fn rule_variants(
+    rule: &FirewallRule,
+    roles: &Roles,
+    groups: &[crate::floating::IfGroup],
+    limiters: &BTreeMap<String, crate::nftables::LimiterSpec>,
+) -> std::result::Result<Vec<(FirewallRule, RenderCtx)>, String> {
+    let base_ctx = RenderCtx {
+        limiters: limiters.clone(),
+        ..RenderCtx::default()
+    };
+    if rule.ext.floating {
+        let mut out = Vec::new();
+        for (chain, kw) in crate::floating::floating_hooks(rule.ext.direction) {
+            for e in crate::floating::selector_exprs(kw, &rule.ext.interfaces, roles, groups)? {
+                let mut r = rule.clone();
+                r.chain = chain.clone();
+                r.interface_in = None;
+                r.interface_out = None;
+                let mut ctx = base_ctx.clone();
+                if kw == "iifname" {
+                    ctx.iif = e;
+                } else {
+                    ctx.oif = e;
+                }
+                out.push((r, ctx));
+            }
+        }
+        return Ok(out);
+    }
+    // one side: a group reference, or the role/device resolution as before
+    let side = |kw: &str, v: &Option<String>| -> std::result::Result<Vec<(Option<String>, Option<String>)>, String> {
+        if let Some(g) = v.as_deref().and_then(|v| v.strip_prefix("group:")) {
+            let sel = [format!("group:{g}")];
+            return Ok(crate::floating::selector_exprs(kw, &sel, roles, groups)?
+                .into_iter()
+                .map(|e| (None, e))
+                .collect());
+        }
+        resolve_iface(v, roles)
+            .map(|v| v.into_iter().map(|d| (d, None)).collect())
+            .ok_or_else(|| "its interface role is not assigned to any interface".to_string())
+    };
+    let ins = side("iifname", &rule.interface_in)?;
+    let outs = side("oifname", &rule.interface_out)?;
+    let mut out = Vec::new();
+    for (i, iexpr) in &ins {
+        for (o, oexpr) in &outs {
+            let mut r = rule.clone();
+            r.interface_in = i.clone();
+            r.interface_out = o.clone();
+            let mut ctx = base_ctx.clone();
+            ctx.iif = iexpr.clone();
+            ctx.oif = oexpr.clone();
+            out.push((r, ctx));
+        }
+    }
+    Ok(out)
 }
 
 /// Resolve one interface field. `Ok(None)` = an unassigned role (skip the
@@ -251,6 +315,23 @@ impl FirewallApplier {
         };
         script.push_str(&sets_script(&aliases)?);
         let amap = alias_map(&aliases);
+        // lane B: interface groups (nft ifname sets) and limiters
+        let (groups, limiters) = if lockdown {
+            (Vec::new(), Vec::new())
+        } else {
+            (
+                crate::floating::load_groups(store).await?,
+                crate::floating::load_limiters(store).await?,
+            )
+        };
+        script.push_str(&crate::floating::groups_script(&groups, &roles));
+        let limiter_map: BTreeMap<String, crate::nftables::LimiterSpec> =
+            limiters.iter().map(|l| (l.name.clone(), l.spec())).collect();
+        // sets the rules' state limits need are collected here and spliced
+        // in right after the group sets (before the first rule)
+        let sets_pos = script.len();
+        let mut rule_sets: BTreeMap<String, String> = BTreeMap::new();
+        let mut limit_rules: BTreeMap<String, String> = BTreeMap::new();
         // WAN source guard (block private / bogon sources), ahead of every rule
         if !lockdown {
             let g = crate::wanguard::load(store).await?;
@@ -289,7 +370,31 @@ impl FirewallApplier {
         let mut threat_done = lockdown;
         let ssh_port = patronus_config::defaults::ssh_port(store).await;
         let web = patronus_config::webui::resolve(Some(store)).await;
-        for (mut rule, origin) in store.load_firewall_rules_with_origin().await? {
+        // Evaluation order: system rules, quick floating rules, interface
+        // rules, then non-quick floating rules (an interface rule that
+        // matches takes precedence over those).
+        let mut sys_rules = Vec::new();
+        let mut quick_rules = Vec::new();
+        let mut plain_rules = Vec::new();
+        let mut slow_rules = Vec::new();
+        for (r, o) in store.load_firewall_rules_with_origin().await? {
+            if o == RuleOrigin::System {
+                sys_rules.push((r, o));
+            } else if r.ext.floating && r.ext.quick {
+                quick_rules.push((r, o));
+            } else if r.ext.floating {
+                slow_rules.push((r, o));
+            } else {
+                plain_rules.push((r, o));
+            }
+        }
+        let ordered: Vec<_> = sys_rules
+            .into_iter()
+            .chain(quick_rules)
+            .chain(plain_rules)
+            .chain(slow_rules)
+            .collect();
+        for (mut rule, origin) in ordered {
             patronus_config::defaults::follow_ssh_port(&mut rule, origin, ssh_port);
             patronus_config::webui::follow_web_ports(&mut rule, origin, &web);
             if !threat_done && origin != RuleOrigin::System {
@@ -320,62 +425,85 @@ impl FirewallApplier {
                     )),
                 }
             }
-            let (Some(ins), Some(outs)) = (
-                resolve_iface(&rule.interface_in, &roles),
-                resolve_iface(&rule.interface_out, &roles),
-            ) else {
-                report.warn(format!(
-                    "{label} skipped: its interface role is not assigned to any interface"
-                ));
-                continue;
+            let variants = match rule_variants(&rule, &roles, &groups, &limiter_map) {
+                Ok(v) => v,
+                Err(why) => {
+                    report.warn(format!("{label} skipped: {why}"));
+                    continue;
+                }
             };
-            for i in &ins {
-                for o in &outs {
-                    let mut r = rule.clone();
-                    r.interface_in = i.clone();
-                    r.interface_out = o.clone();
-                    if r.comment.is_none() {
-                        r.comment = Some(r.name.clone());
+            for (mut r, rctx) in variants {
+                if r.comment.is_none() {
+                    r.comment = Some(r.name.clone());
+                }
+                match render_filter_rule_ext(&r, &amap, &rctx) {
+                    Ok(rendered) => {
+                        for (name, def) in rendered.sets {
+                            rule_sets.entry(name).or_insert(def);
+                        }
+                        for l in rendered.limit_lines {
+                            limit_rules.entry(l).or_default();
+                        }
+                        for l in rendered.lines {
+                            script.push_str(&l);
+                            script.push('\n');
+                            nfilter += 1;
+                        }
+                        if let Some(g) = &rule.gateway {
+                            match marks.get(g) {
+                                Some(m) => match render_policy_rule(&r, &amap, *m) {
+                                    Ok(pl) => {
+                                        for l in pl {
+                                            policy.push_str(&l);
+                                            policy.push('\n');
+                                        }
+                                    }
+                                    Err(e) => {
+                                        report.warn(format!("{label}: no policy routing ({e})"))
+                                    }
+                                },
+                                None => report.warn(format!(
+                                    "{label}: gateway {g:?} does not exist; its traffic \
+                                     follows the default route"
+                                )),
+                            }
+                        }
                     }
-                    match render_filter_rule(&r, &amap) {
-                        Ok(lines) => {
-                            for l in lines {
-                                script.push_str(&l);
-                                script.push('\n');
-                                nfilter += 1;
-                            }
-                            if let Some(g) = &rule.gateway {
-                                match marks.get(g) {
-                                    Some(m) => match render_policy_rule(&r, &amap, *m) {
-                                        Ok(pl) => {
-                                            for l in pl {
-                                                policy.push_str(&l);
-                                                policy.push('\n');
-                                            }
-                                        }
-                                        Err(e) => {
-                                            report.warn(format!("{label}: no policy routing ({e})"))
-                                        }
-                                    },
-                                    None => report.warn(format!(
-                                        "{label}: gateway {g:?} does not exist; its traffic \
-                                         follows the default route"
-                                    )),
-                                }
-                            }
-                        }
-                        Err(e) if rule.action == FirewallAction::Accept => {
-                            report.warn(format!("{label} skipped (cannot render: {e})"));
-                        }
-                        Err(e) => {
-                            return Err(Error::Firewall(format!(
-                                "{label} is a {} rule that cannot be rendered, refusing to \
-                                 load a ruleset without it: {e}",
-                                rule.action
-                            )))
-                        }
+                    Err(e) if rule.action == FirewallAction::Accept => {
+                        report.warn(format!("{label} skipped (cannot render: {e})"));
+                    }
+                    Err(e) => {
+                        return Err(Error::Firewall(format!(
+                            "{label} is a {} rule that cannot be rendered, refusing to \
+                             load a ruleset without it: {e}",
+                            rule.action
+                        )))
                     }
                 }
+            }
+        }
+
+        // state-limit sets, then the limiter chains with their rules
+        if !rule_sets.is_empty() {
+            let defs: String = rule_sets.values().cloned().collect();
+            script.insert_str(sets_pos, &defs);
+        }
+        if !limit_rules.is_empty() {
+            let mut chains: Vec<String> = limit_rules
+                .keys()
+                .filter_map(|l| l.split_whitespace().nth(4).map(str::to_string))
+                .collect();
+            chains.sort();
+            chains.dedup();
+            for c in &chains {
+                let hook = c.trim_start_matches("lim_");
+                script.push_str(&format!(
+                    "add chain {TABLE} {c} {{ type filter hook {hook} priority -10; policy accept; }}\n"
+                ));
+            }
+            for l in limit_rules.keys() {
+                script.push_str(l);
+                script.push('\n');
             }
         }
 
