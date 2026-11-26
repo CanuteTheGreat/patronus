@@ -13,8 +13,8 @@
 //!   at the next apply, so those clients are assigned again.
 //! - **Kill states.** [`plan_kills`] says which gateways lose their tracked
 //!   connections when the monitor sees a membership change; [`Killer`] deletes
-//!   them (`conntrack -D --reply-dst <address of the gateway's interface>`:
-//!   masqueraded flows are the ones whose reply goes back to that address).
+//!   them (`conntrack -D` by the address of the gateway's interface: masqueraded
+//!   flows reply to it, inbound ones arrived at it).
 //! - **Warning levels** ([`warning_of`]) below the down thresholds.
 //! - **DNS per gateway** ([`usable_dns_servers`]): the DNS servers of the
 //!   gateways that carry traffic, used as resolver upstreams.
@@ -223,16 +223,24 @@ pub async fn apply_sticky(
     // run directory is root-owned, unlike a shared temp dir
     let _ = std::fs::create_dir_all(run_dir);
     let path = run_dir.join("wan-sticky.nft");
+    let last = run_dir.join("wan-sticky.last");
+    // an unchanged table is re-applied (it heals drift) but not reported
+    let steady = render_nft(groups, &[], &BTreeSet::new());
+    let changed = live.is_none()
+        || !flush.is_empty()
+        || !stale.is_empty()
+        || std::fs::read_to_string(&last).ok().as_deref() != Some(steady.as_str());
     std::fs::write(&path, &script)
         .map_err(|e| patronus_core::Error::Network(format!("sticky: {}: {e}", path.display())))?;
-    let r = nft
-        .run("nft", &["-f".into(), path.display().to_string()])
-        .await;
-    r?;
-    done.push(format!(
-        "sticky connections: {} group(s) in table {NFT_TABLE}",
-        groups.len()
-    ));
+    nft.run("nft", &["-f".into(), path.display().to_string()])
+        .await?;
+    let _ = std::fs::write(&last, &steady);
+    if changed {
+        done.push(format!(
+            "sticky connections: {} group(s) in table {NFT_TABLE}",
+            groups.len()
+        ));
+    }
     Ok(done)
 }
 
@@ -330,11 +338,15 @@ pub fn dev_addrs(k: &KernelState, dev: &str, family: Family) -> Vec<IpAddr> {
 /// Deletes tracked connections.
 #[async_trait]
 pub trait Killer: Send + Sync {
-    /// Delete the connections whose reply goes to `addr`; how many went.
-    async fn kill_reply_dst(&self, addr: IpAddr) -> u32;
+    /// Delete every tracked connection that uses the uplink address `addr`:
+    /// outbound ones masqueraded to it (their reply comes back to `addr`) and
+    /// inbound ones that arrived at it (port forwards, services on the router).
+    /// How many went.
+    async fn kill_flows(&self, addr: IpAddr) -> u32;
 }
 
-/// `conntrack -D --reply-dst ADDR` (conntrack-tools).
+/// `conntrack -D --reply-dst ADDR` and `conntrack -D --orig-dst ADDR`
+/// (conntrack-tools).
 pub struct SystemKiller;
 
 /// "conntrack v1.4.8 (conntrack-tools): 3 flow entries have been deleted."
@@ -349,30 +361,34 @@ pub fn parse_deleted(out: &str) -> u32 {
 
 #[async_trait]
 impl Killer for SystemKiller {
-    async fn kill_reply_dst(&self, addr: IpAddr) -> u32 {
+    async fn kill_flows(&self, addr: IpAddr) -> u32 {
         let fam = if addr.is_ipv6() { "ipv6" } else { "ipv4" };
-        match tokio::process::Command::new("conntrack")
-            .args(["-f", fam, "-D", "--reply-dst", &addr.to_string()])
-            .output()
-            .await
-        {
-            Ok(o) => {
-                // the count is printed on stderr; no match exits 1 with "0 flow entries"
-                let text = format!(
-                    "{} {}",
-                    String::from_utf8_lossy(&o.stdout),
-                    String::from_utf8_lossy(&o.stderr)
-                );
-                if !o.status.success() && !text.contains("flow entries") {
-                    tracing::warn!("kill states: conntrack for {addr}: {}", text.trim());
+        let mut n = 0;
+        for sel in ["--reply-dst", "--orig-dst"] {
+            match tokio::process::Command::new("conntrack")
+                .args(["-f", fam, "-D", sel, &addr.to_string()])
+                .output()
+                .await
+            {
+                Ok(o) => {
+                    // the count is printed on stderr; no match exits 1 with "0 flow entries"
+                    let text = format!(
+                        "{} {}",
+                        String::from_utf8_lossy(&o.stdout),
+                        String::from_utf8_lossy(&o.stderr)
+                    );
+                    if !o.status.success() && !text.contains("flow entries") {
+                        tracing::warn!("kill states: conntrack for {addr}: {}", text.trim());
+                    }
+                    n += parse_deleted(&text);
                 }
-                parse_deleted(&text)
-            }
-            Err(e) => {
-                tracing::warn!("kill states: conntrack is not installed ({e})");
-                0
+                Err(e) => {
+                    tracing::warn!("kill states: conntrack is not installed ({e})");
+                    return n;
+                }
             }
         }
+        n
     }
 }
 

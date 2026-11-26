@@ -2334,6 +2334,8 @@ pub async fn apply_ext(
             let v = rt::GroupInput {
                 name: gr.name.clone(),
                 trigger: Some("down".into()),
+                sticky_secs: None,
+                kill_states: None,
                 members: rt::MembersInput::Spec(spec),
                 description: Some("imported from OpenWrt mwan3".into()),
             }
