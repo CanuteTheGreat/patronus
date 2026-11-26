@@ -7,79 +7,96 @@
 {% endblock %}
 
 {% block content %}
+<style>
+    .mon-sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--s-3); margin-bottom: var(--s-4); }
+    .mon-sum .ui-kv dd { min-width: 0; }
+    .mon-sum .ui-panel > footer { font-size: var(--fs-sm); }
+    #interface-stats td, #connections td { white-space: nowrap; }
+    #interface-stats td.num, #connections td.num, #interface-stats th.num, #connections th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .mon-log { max-height: 480px; }
+    .mon-log .ui-badge { min-width: 5.5em; justify-content: center; }
+</style>
 <div class="page-header">
     <h1 class="page-title">Monitoring</h1>
-    <p class="page-subtitle">Measured on this box over half a second when the page loaded. Reload for fresh numbers.</p>
+    <p class="page-subtitle">Measured on this box over half a second when the page loaded. <a href="/monitoring">Measure again</a></p>
 </div>
 
-<div class="stat-grid">
-    <div class="stat-card">
-        <h3>CPU / memory / disk</h3>
-        <div class="value">{{ "{:.1}"|format(metrics.cpu_percent) }}%</div>
-        <div class="label">memory {{ "{:.1}"|format(metrics.memory_percent) }}% &middot; disk / {{ "{:.1}"|format(metrics.disk_percent) }}%</div>
-    </div>
-    <div class="stat-card">
-        <h3>Throughput</h3>
-        <div class="value">{{ rx_rate }}</div>
-        <div class="label">received &middot; {{ tx_rate }} sent (all interfaces except lo)</div>
-    </div>
-    <div class="stat-card">
-        <h3>Packets</h3>
-        <div class="value">{{ packet_rate }}/s</div>
-        <div class="label">{{ packets_total }} since boot</div>
-    </div>
-    <div class="stat-card">
-        <h3>Threat feed</h3>
-        <div class="value">{{ threats_detected }}</div>
-        <div class="label">known-bad addresses from external feeds; {{ threats_blocked }} blocked automatically</div>
-    </div>
+<div class="mon-sum">
+    <section class="ui-panel">
+        <header><h2>Resources</h2></header>
+        <dl class="ui-kv">
+            <dt>CPU</dt><dd><div class="ui-usage {{ cpu_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(metrics.cpu_percent) }}%"></i></span><span class="val">{{ "{:.0}"|format(metrics.cpu_percent) }}%</span></div></dd>
+            <dt>Memory</dt><dd><div class="ui-usage {{ mem_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(metrics.memory_percent) }}%"></i></span><span class="val">{{ "{:.0}"|format(metrics.memory_percent) }}%</span></div></dd>
+            <dt>Disk /</dt><dd><div class="ui-usage {{ disk_level }}"><span class="track"><i style="width:{{ "{:.0}"|format(metrics.disk_percent) }}%"></i></span><span class="val">{{ "{:.0}"|format(metrics.disk_percent) }}%</span></div></dd>
+        </dl>
+        <footer><a href="#history-card">History</a> &middot; <a href="/system#display-card">Warning levels</a></footer>
+    </section>
+    <section class="ui-panel">
+        <header><h2>Traffic</h2></header>
+        <dl class="ui-kv">
+            <dt>Received</dt><dd>{{ rx_rate }}</dd>
+            <dt>Sent</dt><dd>{{ tx_rate }}</dd>
+            <dt>Packets</dt><dd>{{ packet_rate }}/s ({{ packets_total }} since boot)</dd>
+        </dl>
+        <footer><a href="#interfaces-card">Per interface</a> &middot; <a href="#usage-card">Data usage</a></footer>
+    </section>
+    <section class="ui-panel">
+        <header><h2>Threat feed</h2></header>
+        <dl class="ui-kv">
+            <dt>Known-bad addresses</dt><dd>{{ threats_detected }}</dd>
+            <dt>Blocked automatically</dt><dd>{{ threats_blocked }}</dd>
+            <dt>Alerts</dt><dd>{% if active_alerts == 0 %}<span class="nil">&mdash;</span>{% else %}<span class="ui-badge warn">{{ active_alerts }}</span>{% endif %}</dd>
+        </dl>
+        <footer><a href="#threats-card">Feed entries</a> &middot; <a href="/firewall#tab-threat">Threat Intel settings</a></footer>
+    </section>
 </div>
 
-<div class="card">
+<div class="card" id="interfaces-card">
     <div class="card-header"><h2 class="card-title">Interfaces</h2></div>
     {% if interface_stats.is_empty() %}
-    <p class="empty">No interfaces besides loopback (or /proc/net/dev unreadable).</p>
+    <div class="ui-grid-state">No interfaces besides loopback (or /proc/net/dev unreadable).</div>
     {% else %}
-    <table class="lan" id="interface-stats">
-        <thead><tr><th>Interface</th><th>RX rate</th><th>TX rate</th><th>RX packets</th><th>TX packets</th><th>Errors</th></tr></thead>
+    <div class="ui-toolbar"><div></div><div><input class="ui-input" type="search" data-ui-filter="mon-ifaces" placeholder="Filter interfaces" aria-label="Filter interfaces"></div></div>
+    <div class="ui-grid-wrap"><table class="ui-grid" data-ui-grid="mon-ifaces" id="interface-stats">
+        <thead><tr><th>Interface</th><th class="num">Received</th><th class="num">Sent</th><th class="num">RX packets</th><th class="num">TX packets</th><th class="num">Errors</th></tr></thead>
         <tbody>
         {% for stat in interface_stats %}
         <tr>
             <td><strong>{{ stat.name }}</strong></td>
-            <td>{{ stat.rx_rate }}</td>
-            <td>{{ stat.tx_rate }}</td>
-            <td>{{ stat.rx_packets }}</td>
-            <td>{{ stat.tx_packets }}</td>
-            <td>{{ stat.errors }}</td>
+            <td class="num">{{ stat.rx_rate }}</td>
+            <td class="num">{{ stat.tx_rate }}</td>
+            <td class="num">{{ stat.rx_packets }}</td>
+            <td class="num">{{ stat.tx_packets }}</td>
+            <td class="num">{% if stat.errors == "0" %}<span class="nil">&mdash;</span>{% else %}<span class="ui-badge warn">{{ stat.errors }}</span>{% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
-    </table>
+    </table></div>
     {% endif %}
 </div>
 
 <div class="card">
     <div class="card-header"><h2 class="card-title">Largest tracked connections</h2></div>
     {% if !connections_error.is_empty() %}
-    <div class="alert-error">{{ connections_error }}</div>
+    <div class="ui-banner warn">{{ connections_error }}</div>
     {% else if top_connections.is_empty() %}
-    <p class="empty">The connection-tracking table is empty.</p>
+    <div class="ui-grid-state">The connection-tracking table is empty.</div>
     {% else %}
-    <table class="lan" id="connections">
-        <thead><tr><th>Protocol</th><th>Source</th><th>Destination</th><th>Bytes</th><th>Packets</th><th>Age</th></tr></thead>
+    <div class="ui-grid-wrap"><table class="ui-grid" id="connections">
+        <thead><tr><th>Protocol</th><th>Source</th><th>Destination</th><th class="num">Bytes</th><th class="num">Packets</th><th class="num">Age</th></tr></thead>
         <tbody>
         {% for conn in top_connections %}
         <tr>
             <td>{{ conn.protocol }}</td>
             <td class="mono">{{ conn.source }}</td>
             <td class="mono">{{ conn.destination }}</td>
-            <td>{{ conn.bytes }}</td>
-            <td>{{ conn.packets }}</td>
-            <td>{{ conn.duration }}</td>
+            <td class="num">{{ conn.bytes }}</td>
+            <td class="num">{{ conn.packets }}</td>
+            <td class="num">{{ conn.duration }}</td>
         </tr>
         {% endfor %}
         </tbody>
-    </table>
+    </table></div>
     <p class="text-sm text-muted">Byte/packet counts need <span class="mono">net.netfilter.nf_conntrack_acct=1</span>, ages
         <span class="mono">net.netfilter.nf_conntrack_timestamp=1</span>.</p>
     {% endif %}
@@ -88,27 +105,27 @@
 <div class="card">
     <div class="card-header"><h2 class="card-title">Alerts</h2></div>
     {% if alerts.is_empty() %}
-    <p class="empty">No alerts. (Patronus does not raise alerts yet.)</p>
+    <div class="ui-grid-state">No alerts. (Patronus does not raise alerts yet.)</div>
     {% else %}
-    <table class="lan">
+    <div class="ui-grid-wrap"><table class="ui-grid">
         <thead><tr><th>Time</th><th>Type</th><th>Severity</th><th>Component</th><th>Message</th></tr></thead>
         <tbody>
         {% for alert in alerts %}
-        <tr><td>{{ alert.timestamp }}</td><td>{{ alert.alert_type }}</td><td>{{ alert.severity }}</td><td>{{ alert.component }}</td><td>{{ alert.message }}</td></tr>
+        <tr><td>{{ alert.timestamp }}</td><td>{{ alert.alert_type }}</td><td><span class="ui-badge">{{ alert.severity }}</span></td><td>{{ alert.component }}</td><td>{{ alert.message }}</td></tr>
         {% endfor %}
         </tbody>
-    </table>
+    </table></div>
     {% endif %}
 </div>
 
-<div class="card">
+<div class="card" id="threats-card">
     <div class="card-header"><h2 class="card-title">Threat intelligence feed</h2></div>
     <p class="text-sm text-muted">Addresses reported by external feeds (EmergingThreats compromised hosts).
         This is feed data, not local detection. To drop these addresses, turn on "Emerging Threats compromised IPs" under Firewall &rarr; Threat Intel (enforced in an nft set ahead of your rules).</p>
     {% if ai_threats.is_empty() %}
-    <p class="empty">The feed has not delivered any entries yet (it is fetched hourly and needs internet access).</p>
+    <div class="ui-grid-state">The feed has not delivered any entries yet (it is fetched hourly and needs internet access). <a href="/firewall#tab-threat">Threat Intel settings</a></div>
     {% else %}
-    <table class="lan">
+    <div class="ui-grid-wrap"><table class="ui-grid">
         <thead><tr><th>Address</th><th>Category</th><th>Confidence</th><th>Country</th><th>Source</th><th>Last seen</th></tr></thead>
         <tbody>
         {% for t in ai_threats %}
@@ -122,23 +139,20 @@
         </tr>
         {% endfor %}
         </tbody>
-    </table>
+    </table></div>
     {% endif %}
 </div>
 
 <div class="card">
     <div class="card-header"><h2 class="card-title">System journal (last 200 entries)</h2></div>
     {% if !logs_error.is_empty() %}
-    <div class="alert-error">Journal unavailable: {{ logs_error }}</div>
+    <div class="ui-banner warn">Journal unavailable: {{ logs_error }}</div>
     {% else if live_logs.is_empty() %}
-    <p class="empty">No journal entries (no journald on this system, e.g. OpenRC without systemd).</p>
+    <div class="ui-grid-state">No journal entries (no journald on this system, e.g. OpenRC without systemd).</div>
     {% else %}
-    <div style="background: #1a1a1a; color: #e2e2e2; font-family: var(--font-mono); font-size: 0.8rem; padding: 1rem; border-radius: 0.5rem; max-height: 500px; overflow-y: auto;" id="live-logs">
+    <div class="ui-log mon-log" id="live-logs">
         {% for log in live_logs %}
-        <div><span style="color: #888;">[{{ log.timestamp }}]</span>
-            <span style="color: {{ log.level_color }};">[{{ log.level }}]</span>
-            <span style="color: #00aaff;">[{{ log.component }}]</span>
-            {{ log.message }}</div>
+        <div><span class="ts">{{ log.timestamp }}</span><span class="ui-badge {{ log.level_class }}">{{ log.level }}</span><span class="ts">{{ log.component }}</span><span>{{ log.message }}</span></div>
         {% endfor %}
     </div>
     {% endif %}
@@ -156,14 +170,14 @@
 <div class="card" id="usage-card">
     <div class="card-header"><h2 class="card-title">Data usage</h2></div>
     <p class="text-sm" id="usage-cap"></p>
-    <table class="lan" id="usage-table"><thead><tr><th>Period</th><th>Interface</th><th>Received</th><th>Sent</th><th>Total</th></tr></thead><tbody></tbody></table>
+    <div class="ui-grid-wrap"><table class="ui-grid" id="usage-table"><thead><tr><th>Period</th><th>Interface</th><th>Received</th><th>Sent</th><th>Total</th></tr></thead><tbody></tbody></table></div>
     <details><summary class="text-sm">Accounting settings</summary>
     <form class="lan-form" id="usage-form" onsubmit="return saveUsage(event)">
         <label>Month starts on day (1-28) <input name="month_start_day" type="number" min="1" max="28"></label>
         <label>Monthly allowance in GB (0 = none; warnings at 80% and 100%) <input name="cap_gb" type="number" min="0" step="any"></label>
         <label>Interface it counts (empty = the busiest) <input name="cap_interface" maxlength="15" data-keep-empty="1"></label>
         <label>Keep graph history (days) <input name="retention_days" type="number" min="1" max="400"></label>
-        <button class="btn btn-secondary btn-sm" type="submit">Save</button> <span class="text-sm" id="usage-status"></span>
+        <button class="ui-btn sm" type="submit">Save</button> <span class="text-sm" id="usage-status"></span>
     </form>
     </details>
 </div>

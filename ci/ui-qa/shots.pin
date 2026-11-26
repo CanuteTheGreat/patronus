@@ -1,0 +1,6 @@
+# Visual-regression baseline of the live UI (ci/ui-qa/run.sh): the reduced screenshot set (320 px greyscale PNGs of
+# every page, desktop 1280 + phone 390, light + dark, standard tier + router tier AP and gateway role) that a CI run on
+# main published as a Forgejo generic package (ci/ui-qa/baseline.sh publish). Bump = copy url + sha256 of a newer
+# published set here after looking at its diff report. url = none: no baseline yet (the diff only packs).
+url = none
+sha256 = none

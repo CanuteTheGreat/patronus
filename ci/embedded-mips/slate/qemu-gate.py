@@ -405,6 +405,27 @@ def general_set():
     need("slate-gate2" in Rok("hostname"), "host name not applied live")
 
 
+def ui_kit():
+    """The shared ui-kit on the router tier: kit + theme served from the binary (the pinned vendored bytes), pages link them, the
+    firewall Rules tab is the kit grid + toolbar + rule dialog (no always-open form)."""
+    import hashlib
+    pin = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "crates", "patronus-web", "ui-kit", "ui-kit.pin")
+    want = {}
+    if os.path.exists(pin):
+        for l in open(pin):
+            m = re.match(r"sha256 (\S+) = ([0-9a-f]{64})", l.strip())
+            if m: want[m.group(1)] = m.group(2)
+    for f in ("tokens.css", "components.css", "patronus.css", "ui.js"):
+        c, t, _ = web("GET", "/ui-kit/" + f, auth=False); need(c == 200 and len(t) > 100, f"/ui-kit/{f}: {c}")
+        if f in want: need(hashlib.sha256(t.encode()).hexdigest() == want[f], f"/ui-kit/{f}: not the pinned bytes")
+    for pg in ("/", "/firewall", "/system"):
+        c, t, _ = web("GET", pg); need(c == 200 and "/ui-kit/components.css" in t and "/ui-kit/patronus.css" in t, f"{pg}: {c} or no kit stylesheet")
+    c, t, _ = web("GET", "/firewall")
+    for m in ('id="rules-toolbar"', 'id="rule-add"', '<dialog class="ui-dialog" id="rule-dialog"', 'class="ui-grid"'):
+        need(m in t, f"/firewall: {m} missing")
+    u = jget("/api/system/ui"); need("health_warn_pct" in u and "refresh_secs" in u, f"/api/system/ui: {u}")
+
+
 def boot_guard():
     o = R("patronus-guard status")[1]; need("armed" in o, "guard not armed at boot: " + o)
     Rok("patronus-guard ok"); o = R("patronus-guard status")[1]; need(re.search(r"\bok\b", o), "guard not confirmed: " + o)
@@ -430,6 +451,7 @@ def main():
     check("boot 1: ETPhoneHome router client running (baked into every Slate image)", etph)
     check("boot 1: router role: first-run claim (setup code; weak, mismatch, second claim refused) and login", first_run)
     check("boot 1: web UI on 443 and the plain-http redirect on 80, both listening", web_ports)
+    check("boot 1: shared ui-kit: kit + theme served (pinned bytes), pages link them, firewall rules = kit grid + dialog, display settings API", ui_kit)
     check("boot 1: boot guard armed, `patronus-guard ok` confirms the boot", boot_guard)
     check("boot 1: firewall rule added through the web API is in the kernel's nft chain after apply", fw_rule)
     check("boot 1: an invalid firewall rule is refused and the kernel's rules stay exactly as they were", fw_fail_closed)

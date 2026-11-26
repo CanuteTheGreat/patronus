@@ -46,6 +46,13 @@
     #rule-dialog .fw-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 var(--s-4); }
     #rule-dialog .ui-field > .ui-input, #rule-dialog .ui-field > select { width: 100%; }
     #rule-dialog .fw-checks { display: flex; gap: var(--s-4); flex-wrap: wrap; margin-bottom: var(--s-3); }
+    /* NAT / alias / schedule dialogs: the field rows become a grid, inputs fill their cell */
+    .fw-form-dialog { width: min(760px, calc(100vw - 24px)); }
+    .fw-form-dialog .ui-dialog-body { max-height: calc(100vh - 180px); overflow: auto; }
+    .fw-form-dialog .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--s-2) var(--s-4); }
+    .fw-form-dialog .row label input:not([type=checkbox]), .fw-form-dialog .row label select, .fw-form-dialog .row label textarea { width: 100%; }
+    .fw-form-dialog #alias-entries-row { grid-template-columns: 1fr; }
+    .fw-page .ui-grid td { white-space: nowrap; }
     @media (max-width: 900px) {
         #rules-table td.fw-name { max-width: 12rem; }
         .fw-scroll-hint { display: block; }
@@ -252,7 +259,8 @@
         <p class="hint">A port forward rewrites traffic arriving on an interface (normally WAN) for the
             given protocol and port to an internal host, and lets exactly that traffic through.
             NAT reflection lets LAN clients use the WAN address too.</p>
-        <table id="pf-table">
+        <div class="ui-toolbar"><div><button type="button" class="ui-btn primary sm" onclick="openForm('pf-form', 'Add port forward')">Add port forward</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-pf" placeholder="Filter" aria-label="Filter port forwards"></div></div>
+        <div class="ui-grid-wrap"><table id="pf-table" class="ui-grid" data-ui-grid="fw-pf">
             <thead><tr><th>Name</th><th>Interface</th><th>Proto</th><th>External port</th><th>Source</th>
                 <th>Target</th><th>Reflection</th><th>On</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
@@ -260,17 +268,19 @@
             <tr data-nat-id="{{ r.id }}">
                 <td>{{ r.name }}</td><td>{{ r.interface }}</td><td>{{ r.protocol }}</td>
                 <td>{{ r.external_port }}</td><td>{{ r.source }}</td><td>{{ r.target }}</td>
-                <td>{% if r.reflection %}yes{% endif %}</td>
-                <td>{% if r.enabled %}<span class="badge success">On</span>{% else %}<span class="badge danger">Off</span>{% endif %}</td>
-                <td><button class="btn btn-primary btn-sm" onclick="editNat({{ r.id }}, 'pf-form')">Edit</button>
-                    <button class="btn btn-danger btn-sm" onclick="del('/firewall/nat/{{ r.id }}', 'port forward')">Delete</button></td>
+                <td>{% if r.reflection %}yes{% else %}<span class="nil">&mdash;</span>{% endif %}</td>
+                <td>{% if r.enabled %}<span class="ui-badge ok"><span class="ui-dot ok"></span>On</span>{% else %}<span class="ui-badge"><span class="ui-dot off"></span>Off</span>{% endif %}</td>
+                <td><button class="ui-btn sm" onclick="editNat({{ r.id }}, 'pf-form')">Edit</button>
+                    <button class="ui-btn sm danger" onclick="del('/firewall/nat/{{ r.id }}', 'port forward')">Delete</button></td>
             </tr>
             {% endfor %}
             </tbody>
-        </table>
-        {% if port_forwards.is_empty() %}<p class="empty">No port forwards.</p>{% endif %}
+        </table></div>
+        {% if port_forwards.is_empty() %}<div class="ui-grid-state">No port forwards yet.</div>{% endif %}
+        <dialog class="ui-dialog fw-form-dialog" id="pf-form-dlg" aria-labelledby="pf-form-title">
         <form id="pf-form" onsubmit="return saveNat(event, 'DNAT')">
-            <fieldset><legend>Add port forward</legend>
+            <header id="pf-form-title" data-form-title>Add port forward</header>
+            <div class="ui-dialog-body">
                 <input type="hidden" name="id">
                 <div class="row">
                     <label>Name <input name="name" required maxlength="64"></label>
@@ -280,20 +290,21 @@
                         </select></label>
                     <label>Protocol <select name="protocol"><option value="tcp">TCP</option><option value="udp">UDP</option></select></label>
                     <label>External port <input name="external_port" required placeholder="8022 or 8000-8010"></label>
-                    <label>External address <input name="destination" value="any" placeholder="any address on the interface"></label>
+                    <label>External address <input name="destination" placeholder="any address on the interface"></label>
                 </div>
                 <div class="row">
                     <label>Target host <input name="target_host" required placeholder="192.168.1.10"></label>
                     <label>Target port <input name="target_port" placeholder="same as external"></label>
-                    <label>Source <input name="source" value="any" list="host-alias-list"></label>
+                    <label>Source <input name="source" placeholder="any" list="host-alias-list"></label>
                     <label>Description <input name="description" maxlength="120"></label>
                     <label class="check"><input type="checkbox" name="reflection"> NAT reflection</label>
                     <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
                 </div>
-                <button type="submit" class="btn btn-primary">Save port forward</button>
-                <button type="button" class="btn btn-secondary" onclick="resetForm('pf-form')">Clear</button>
-            </fieldset>
+                <div class="msg" role="alert"></div>
+            </div>
+            <footer><button type="button" class="ui-btn" onclick="this.closest('dialog').close()">Cancel</button><button type="submit" class="ui-btn primary">Save port forward</button></footer>
         </form>
+        </dialog>
     </div>
 
     <!-- ========================= OUTBOUND NAT ========================= -->
@@ -309,25 +320,28 @@
                     </select></label>
             </div>
             <p class="hint">Automatic rules cover: {% if auto_nat_interfaces.is_empty() %}<em>no interface has the WAN role</em>{% else %}{{ auto_nat_interfaces }}{% endif %}. IPv6 is routed, not translated.</p>
-            <button class="btn btn-primary" onclick="saveMode()">Save mode</button>
+            <button class="ui-btn primary" onclick="saveMode()">Save mode</button>
         </fieldset>
-        <table id="outbound-table">
+        <div class="ui-toolbar"><div><button type="button" class="ui-btn primary sm" onclick="openForm('outbound-form', 'Add outbound rule')">Add outbound rule</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-outbound" placeholder="Filter" aria-label="Filter manual outbound rules"></div></div>
+        <div class="ui-grid-wrap"><table id="outbound-table" class="ui-grid" data-ui-grid="fw-outbound">
             <thead><tr><th>Name</th><th>Type</th><th>Interface</th><th>Source</th><th>Destination</th><th>Translation</th><th>On</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
             {% for r in outbound_rules %}
             <tr data-nat-id="{{ r.id }}">
-                <td>{{ r.name }}</td><td><span class="badge">{{ r.rule_type }}</span></td><td>{{ r.interface }}</td>
+                <td>{{ r.name }}</td><td><span class="ui-badge">{{ r.rule_type }}</span></td><td>{{ r.interface }}</td>
                 <td>{{ r.source }}</td><td>{{ r.destination }}</td><td>{{ r.target }}</td>
-                <td>{% if r.enabled %}<span class="badge success">On</span>{% else %}<span class="badge danger">Off</span>{% endif %}</td>
-                <td><button class="btn btn-primary btn-sm" onclick="editNat({{ r.id }}, 'outbound-form')">Edit</button>
-                    <button class="btn btn-danger btn-sm" onclick="del('/firewall/nat/{{ r.id }}', 'outbound rule')">Delete</button></td>
+                <td>{% if r.enabled %}<span class="ui-badge ok"><span class="ui-dot ok"></span>On</span>{% else %}<span class="ui-badge"><span class="ui-dot off"></span>Off</span>{% endif %}</td>
+                <td><button class="ui-btn sm" onclick="editNat({{ r.id }}, 'outbound-form')">Edit</button>
+                    <button class="ui-btn sm danger" onclick="del('/firewall/nat/{{ r.id }}', 'outbound rule')">Delete</button></td>
             </tr>
             {% endfor %}
             </tbody>
-        </table>
-        {% if outbound_rules.is_empty() %}<p class="empty">No manual outbound rules.</p>{% endif %}
+        </table></div>
+        {% if outbound_rules.is_empty() %}<div class="ui-grid-state">No manual outbound rules yet.</div>{% endif %}
+        <dialog class="ui-dialog fw-form-dialog" id="outbound-form-dlg" aria-labelledby="outbound-form-title">
         <form id="outbound-form" onsubmit="return saveNat(event, null)">
-            <fieldset><legend>Add manual outbound rule</legend>
+            <header id="outbound-form-title" data-form-title>Add manual outbound rule</header>
+            <div class="ui-dialog-body">
                 <input type="hidden" name="id">
                 <div class="row">
                     <label>Name <input name="name" required maxlength="64"></label>
@@ -336,38 +350,42 @@
                         <select name="interface">
                             {% for i in interfaces %}<option value="{{ i.value }}" {% if i.value == "@wan" %}selected{% endif %}>{{ i.label }}</option>{% endfor %}
                         </select></label>
-                    <label>Source <input name="source" value="any" list="host-alias-list"></label>
-                    <label>Destination <input name="destination" value="any" list="host-alias-list"></label>
+                    <label>Source <input name="source" placeholder="any" list="host-alias-list"></label>
+                    <label>Destination <input name="destination" placeholder="any" list="host-alias-list"></label>
                     <label>Translation address (SNAT) <input name="target_host" placeholder="203.0.113.5"></label>
                     <label>Description <input name="description" maxlength="120"></label>
                     <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
                 </div>
-                <button type="submit" class="btn btn-primary">Save outbound rule</button>
-                <button type="button" class="btn btn-secondary" onclick="resetForm('outbound-form')">Clear</button>
-            </fieldset>
+                <div class="msg" role="alert"></div>
+            </div>
+            <footer><button type="button" class="ui-btn" onclick="this.closest('dialog').close()">Cancel</button><button type="submit" class="ui-btn primary">Save outbound rule</button></footer>
         </form>
+        </dialog>
     </div>
 
     <!-- =========================== 1:1 NAT =========================== -->
     <div class="tab" id="tab-onetoone">
         <p class="hint">1:1 NAT maps an external address to one internal host in both directions.
             Add a filter rule (forward chain) to allow the inbound connections you want.</p>
-        <table id="onetoone-table">
+        <div class="ui-toolbar"><div><button type="button" class="ui-btn primary sm" onclick="openForm('onetoone-form', 'Add 1:1 mapping')">Add 1:1 mapping</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-onetoone" placeholder="Filter" aria-label="Filter 1:1 mappings"></div></div>
+        <div class="ui-grid-wrap"><table id="onetoone-table" class="ui-grid" data-ui-grid="fw-onetoone">
             <thead><tr><th>Name</th><th>Interface</th><th>External</th><th>Internal</th><th>On</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
             {% for r in one_to_one %}
             <tr data-nat-id="{{ r.id }}">
                 <td>{{ r.name }}</td><td>{{ r.interface }}</td><td>{{ r.external_address }}</td><td>{{ r.target }}</td>
-                <td>{% if r.enabled %}<span class="badge success">On</span>{% else %}<span class="badge danger">Off</span>{% endif %}</td>
-                <td><button class="btn btn-primary btn-sm" onclick="editNat({{ r.id }}, 'onetoone-form')">Edit</button>
-                    <button class="btn btn-danger btn-sm" onclick="del('/firewall/nat/{{ r.id }}', '1:1 mapping')">Delete</button></td>
+                <td>{% if r.enabled %}<span class="ui-badge ok"><span class="ui-dot ok"></span>On</span>{% else %}<span class="ui-badge"><span class="ui-dot off"></span>Off</span>{% endif %}</td>
+                <td><button class="ui-btn sm" onclick="editNat({{ r.id }}, 'onetoone-form')">Edit</button>
+                    <button class="ui-btn sm danger" onclick="del('/firewall/nat/{{ r.id }}', '1:1 mapping')">Delete</button></td>
             </tr>
             {% endfor %}
             </tbody>
-        </table>
-        {% if one_to_one.is_empty() %}<p class="empty">No 1:1 mappings.</p>{% endif %}
+        </table></div>
+        {% if one_to_one.is_empty() %}<div class="ui-grid-state">No 1:1 mappings yet.</div>{% endif %}
+        <dialog class="ui-dialog fw-form-dialog" id="onetoone-form-dlg" aria-labelledby="onetoone-form-title">
         <form id="onetoone-form" onsubmit="return saveNat(event, '1:1')">
-            <fieldset><legend>Add 1:1 mapping</legend>
+            <header id="onetoone-form-title" data-form-title>Add 1:1 mapping</header>
+            <div class="ui-dialog-body">
                 <input type="hidden" name="id">
                 <div class="row">
                     <label>Name <input name="name" required maxlength="64"></label>
@@ -380,10 +398,11 @@
                     <label>Description <input name="description" maxlength="120"></label>
                     <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
                 </div>
-                <button type="submit" class="btn btn-primary">Save 1:1 mapping</button>
-                <button type="button" class="btn btn-secondary" onclick="resetForm('onetoone-form')">Clear</button>
-            </fieldset>
+                <div class="msg" role="alert"></div>
+            </div>
+            <footer><button type="button" class="ui-btn" onclick="this.closest('dialog').close()">Cancel</button><button type="submit" class="ui-btn primary">Save 1:1 mapping</button></footer>
         </form>
+        </dialog>
     </div>
 
     <!-- =========================== NPTv6 =========================== -->
@@ -391,22 +410,25 @@
         <p class="hint">IPv6 network prefix translation: the internal prefix (e.g. a ULA <code>fd00:50::/64</code>) is
             rewritten to the external prefix on the way out of the interface and back for traffic to the external prefix.
             Both prefixes must have the same length; host bits are kept. Add a filter rule (forward chain) for what may come in.</p>
-        <table id="npt-table">
+        <div class="ui-toolbar"><div><button type="button" class="ui-btn primary sm" onclick="openForm('npt-form', 'Add NPTv6 mapping')">Add NPTv6 mapping</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-npt" placeholder="Filter" aria-label="Filter NPTv6 mappings"></div></div>
+        <div class="ui-grid-wrap"><table id="npt-table" class="ui-grid" data-ui-grid="fw-npt">
             <thead><tr><th>Name</th><th>Interface</th><th>External prefix</th><th>Internal prefix</th><th>On</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
             {% for r in npt %}
             <tr data-nat-id="{{ r.id }}">
                 <td>{{ r.name }}</td><td>{{ r.interface }}</td><td>{{ r.external_address }}</td><td>{{ r.target }}</td>
-                <td>{% if r.enabled %}<span class="badge success">On</span>{% else %}<span class="badge danger">Off</span>{% endif %}</td>
-                <td><button class="btn btn-primary btn-sm" onclick="editNat({{ r.id }}, 'npt-form')">Edit</button>
-                    <button class="btn btn-danger btn-sm" onclick="del('/firewall/nat/{{ r.id }}', 'NPTv6 mapping')">Delete</button></td>
+                <td>{% if r.enabled %}<span class="ui-badge ok"><span class="ui-dot ok"></span>On</span>{% else %}<span class="ui-badge"><span class="ui-dot off"></span>Off</span>{% endif %}</td>
+                <td><button class="ui-btn sm" onclick="editNat({{ r.id }}, 'npt-form')">Edit</button>
+                    <button class="ui-btn sm danger" onclick="del('/firewall/nat/{{ r.id }}', 'NPTv6 mapping')">Delete</button></td>
             </tr>
             {% endfor %}
             </tbody>
-        </table>
-        {% if npt.is_empty() %}<p class="empty">No NPTv6 mappings.</p>{% endif %}
+        </table></div>
+        {% if npt.is_empty() %}<div class="ui-grid-state">No NPTv6 mappings yet.</div>{% endif %}
+        <dialog class="ui-dialog fw-form-dialog" id="npt-form-dlg" aria-labelledby="npt-form-title">
         <form id="npt-form" onsubmit="return saveNat(event, 'NPT')">
-            <fieldset><legend>Add NPTv6 mapping</legend>
+            <header id="npt-form-title" data-form-title>Add NPTv6 mapping</header>
+            <div class="ui-dialog-body">
                 <input type="hidden" name="id">
                 <div class="row">
                     <label>Name <input name="name" required maxlength="64"></label>
@@ -419,10 +441,11 @@
                     <label>Description <input name="description" maxlength="120"></label>
                     <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
                 </div>
-                <button type="submit" class="btn btn-primary">Save NPTv6 mapping</button>
-                <button type="button" class="btn btn-secondary" onclick="resetForm('npt-form')">Clear</button>
-            </fieldset>
+                <div class="msg" role="alert"></div>
+            </div>
+            <footer><button type="button" class="ui-btn" onclick="this.closest('dialog').close()">Cancel</button><button type="submit" class="ui-btn primary">Save NPTv6 mapping</button></footer>
         </form>
+        </dialog>
     </div>
 
     <!-- =========================== ALIASES =========================== -->
@@ -430,21 +453,24 @@
         <p class="hint">Use an alias in a rule as <code>$name</code>. Host aliases hold IPv4/IPv6
             addresses, networks and ranges; port aliases hold ports and port ranges. Saving an alias
             updates its nftables set immediately, without reloading the ruleset.</p>
-        <table id="aliases-table">
+        <div class="ui-toolbar"><div><button type="button" class="ui-btn primary sm" onclick="openForm('alias-form', 'Add alias')">Add alias</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-aliases" placeholder="Filter" aria-label="Filter aliases"></div></div>
+        <div class="ui-grid-wrap"><table id="aliases-table" class="ui-grid" data-ui-grid="fw-aliases">
             <thead><tr><th>Name</th><th>Type</th><th>Entries</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
             {% for a in aliases %}
             <tr data-alias="{{ a.name }}">
                 <td>${{ a.name }}</td><td>{{ a.alias_type }}</td><td>{{ a.value }}</td><td>{{ a.description }}</td>
-                <td><button class="btn btn-primary btn-sm" onclick="editAlias(this)">Edit</button>
-                    <button class="btn btn-danger btn-sm" onclick="delNamed('/firewall/aliases/', this, 'alias')">Delete</button></td>
+                <td><button class="ui-btn sm" onclick="editAlias(this)">Edit</button>
+                    <button class="ui-btn sm danger" onclick="delNamed('/firewall/aliases/', this, 'alias')">Delete</button></td>
             </tr>
             {% endfor %}
             </tbody>
-        </table>
-        {% if aliases.is_empty() %}<p class="empty">No aliases.</p>{% endif %}
+        </table></div>
+        {% if aliases.is_empty() %}<div class="ui-grid-state">No aliases yet.</div>{% endif %}
+        <dialog class="ui-dialog fw-form-dialog" id="alias-form-dlg" aria-labelledby="alias-form-title">
         <form id="alias-form" onsubmit="return saveAlias(event)">
-            <fieldset><legend id="alias-form-title">Add alias</legend>
+            <header id="alias-form-title" data-form-title>Add alias</header>
+            <div class="ui-dialog-body">
                 <input type="hidden" name="editing">
                 <div class="row">
                     <label>Name <input name="name" required pattern="[A-Za-z][A-Za-z0-9_]{0,30}"></label>
@@ -462,11 +488,12 @@
                     <label>Max entries <input name="max_entries" type="number" min="1" max="500000" value="100000"></label>
                 </div>
                 <p class="hint" id="alias-source-status"></p>
-                <button type="submit" class="btn btn-primary">Save alias</button>
-                <button type="button" class="btn btn-secondary" onclick="refreshAliases()">Refresh URL / GeoIP aliases now</button>
-                <button type="button" class="btn btn-secondary" onclick="resetForm('alias-form', 'Add alias')">Clear</button>
-            </fieldset>
+                <button type="button" class="ui-btn sm" onclick="refreshAliases()">Refresh URL / GeoIP aliases now</button>
+                <div class="msg" role="alert"></div>
+            </div>
+            <footer><button type="button" class="ui-btn" onclick="this.closest('dialog').close()">Cancel</button><button type="submit" class="ui-btn primary">Save alias</button></footer>
         </form>
+        </dialog>
         <datalist id="host-alias-list">{% for a in host_aliases %}<option value="${{ a.name }}"></option>{% endfor %}</datalist>
         <datalist id="port-alias-list">{% for a in port_aliases %}<option value="${{ a.name }}"></option>{% endfor %}</datalist>
     </div>
@@ -475,23 +502,26 @@
     <div class="tab" id="tab-schedules">
         <p class="hint">A rule with a schedule is enforced only during the schedule's window (local
             time on the firewall). A window whose end is before its start runs past midnight.</p>
-        <table id="schedules-table">
+        <div class="ui-toolbar"><div><button type="button" class="ui-btn primary sm" onclick="openForm('schedule-form', 'Add schedule')">Add schedule</button></div><div><input class="ui-input fw-filter" type="search" data-ui-filter="fw-schedules" placeholder="Filter" aria-label="Filter schedules"></div></div>
+        <div class="ui-grid-wrap"><table id="schedules-table" class="ui-grid" data-ui-grid="fw-schedules">
             <thead><tr><th>Name</th><th>Days</th><th>From</th><th>Until</th><th>Now</th><th>Description</th><th><span class="sr-only">Actions</span></th></tr></thead>
             <tbody>
             {% for s in schedules %}
             <tr data-schedule="{{ s.name }}" data-days="{{ s.days }}" data-start="{{ s.start }}" data-end="{{ s.end }}" data-description="{{ s.description }}">
                 <td>{{ s.name }}</td><td>{{ s.days }}</td><td>{{ s.start }}</td><td>{{ s.end }}</td>
-                <td>{% if s.active %}<span class="badge success">active</span>{% else %}<span class="badge">inactive</span>{% endif %}</td>
+                <td>{% if s.active %}<span class="ui-badge ok">active</span>{% else %}<span class="ui-badge">inactive</span>{% endif %}</td>
                 <td>{{ s.description }}</td>
-                <td><button class="btn btn-primary btn-sm" onclick="editSchedule(this)">Edit</button>
-                    <button class="btn btn-danger btn-sm" onclick="delNamed('/firewall/schedules/', this, 'schedule')">Delete</button></td>
+                <td><button class="ui-btn sm" onclick="editSchedule(this)">Edit</button>
+                    <button class="ui-btn sm danger" onclick="delNamed('/firewall/schedules/', this, 'schedule')">Delete</button></td>
             </tr>
             {% endfor %}
             </tbody>
-        </table>
-        {% if schedules.is_empty() %}<p class="empty">No schedules.</p>{% endif %}
+        </table></div>
+        {% if schedules.is_empty() %}<div class="ui-grid-state">No schedules yet.</div>{% endif %}
+        <dialog class="ui-dialog fw-form-dialog" id="schedule-form-dlg" aria-labelledby="schedule-form-title">
         <form id="schedule-form" onsubmit="return saveSchedule(event)">
-            <fieldset><legend id="schedule-form-title">Add schedule</legend>
+            <header id="schedule-form-title" data-form-title>Add schedule</header>
+            <div class="ui-dialog-body">
                 <input type="hidden" name="editing">
                 <div class="row">
                     <label>Name <input name="name" required pattern="[A-Za-z][A-Za-z0-9_]{0,30}"></label>
@@ -508,10 +538,11 @@
                     <label class="check"><input type="checkbox" name="day" value="sat"> Sat</label>
                     <label class="check"><input type="checkbox" name="day" value="sun"> Sun</label>
                 </div>
-                <button type="submit" class="btn btn-primary">Save schedule</button>
-                <button type="button" class="btn btn-secondary" onclick="resetForm('schedule-form', 'Add schedule')">Clear</button>
-            </fieldset>
+                <div class="msg" role="alert"></div>
+            </div>
+            <footer><button type="button" class="ui-btn" onclick="this.closest('dialog').close()">Cancel</button><button type="submit" class="ui-btn primary">Save schedule</button></footer>
         </form>
+        </dialog>
     </div>
 
 
@@ -668,7 +699,11 @@ document.querySelectorAll('.tab-btn').forEach((b, i, all) => {
 });
 // Summary cards jump to the tab that lists what they count.
 document.querySelectorAll('a.stat-link').forEach(a => a.addEventListener('click', e => { e.preventDefault(); showTab(a.dataset.goto); document.getElementById(a.dataset.goto).scrollIntoView(); }));
-if (sessionStorage.getItem(TAB_KEY) && document.getElementById(sessionStorage.getItem(TAB_KEY))) {
+// a link to /firewall#tab-x opens that tab (Monitoring links the Threat intel tab); else the last tab of this session
+const hashTab = location.hash.slice(1);
+if (hashTab.startsWith('tab-') && document.getElementById(hashTab) && document.getElementById(hashTab).classList.contains('tab')) {
+    showTab(hashTab);
+} else if (sessionStorage.getItem(TAB_KEY) && document.getElementById(sessionStorage.getItem(TAB_KEY))) {
     showTab(sessionStorage.getItem(TAB_KEY));
 }
 
@@ -709,7 +744,10 @@ async function api(method, path, body) {
 
 async function run(p) {
     try { await p; sessionStorage.setItem('patronus-fw-flash', 'Saved and applied.'); location.reload(); }
-    catch (e) { flash(e.message, false); }
+    catch (e) {
+        const d = document.querySelector('dialog.fw-form-dialog[open]'), m = d && d.querySelector('.msg');
+        if (m) { m.textContent = e.message; m.className = 'msg error'; } else flash(e.message, false);
+    }
     return false;
 }
 if (sessionStorage.getItem('patronus-fw-flash')) {
@@ -722,9 +760,28 @@ function resetForm(id, title) {
     f.reset();
     f.querySelectorAll('input[type=hidden]').forEach(i => i.value = '');
     f.querySelectorAll('input[name=name]').forEach(i => i.readOnly = false);
-    if (title) { const l = f.querySelector('legend'); if (l) l.textContent = title; }
+    if (title) { const l = f.querySelector('legend, [data-form-title]'); if (l) l.textContent = title; }
     if (id === 'rule-form') chainChanged();
 }
+
+// create/edit forms live in dialogs (ui-dialog): Add opens an empty one, Edit opens it filled in; errors stay in the
+// dialog (role=alert), focus goes back to the button that opened it
+let formOpener = null;
+function showForm(f, title) {
+    const d = f.closest('dialog');
+    if (title) { const t = f.querySelector('[data-form-title]'); if (t) t.textContent = title; }
+    const m = f.querySelector('.msg'); if (m) { m.textContent = ''; m.className = 'msg'; }
+    if (d && !d.open) { formOpener = document.activeElement; d.showModal(); }
+    const first = [...f.elements].find(e => !e.readOnly && !e.disabled && e.type !== 'hidden' && e.offsetParent !== null);
+    if (first) first.focus();
+}
+function openForm(id, title) {
+    resetForm(id, title);
+    const f = document.getElementById(id);
+    if (id === 'alias-form') { aliasTypeChanged(); document.getElementById('alias-source-status').textContent = ''; }
+    showForm(f, title);
+}
+document.querySelectorAll('dialog.fw-form-dialog').forEach(d => d.addEventListener('close', () => { if (formOpener && formOpener.focus) formOpener.focus(); formOpener = null; }));
 
 function del(path, what) {
     if (!confirm('Delete this ' + what + '?')) return;
@@ -879,8 +936,8 @@ async function editNat(id, formId) {
         f.elements['id'].value = r.id; f.elements['name'].value = r.name; f.elements['interface'].value = r.interface_raw;
         if (f.elements['description']) f.elements['description'].value = (r.description === r.name ? '' : r.description);
         f.elements['enabled'].checked = r.enabled;
-        if (f.elements['source']) f.elements['source'].value = r.source;
-        if (f.elements['destination']) f.elements['destination'].value = r.destination;
+        if (f.elements['source']) f.elements['source'].value = r.source === 'any' ? '' : r.source;
+        if (f.elements['destination']) f.elements['destination'].value = r.destination === 'any' ? '' : r.destination;
         if (f.elements['rule_type']) f.elements['rule_type'].value = r.rule_type;
         if (f.elements['protocol']) f.elements['protocol'].value = r.protocol;
         if (f.elements['external_port']) f.elements['external_port'].value = r.external_port === 'any' ? '' : r.external_port;
@@ -892,8 +949,7 @@ async function editNat(id, formId) {
         if (r.rule_type === 'MASQUERADE') host = '';
         f.elements['target_host'].value = host;
         if (f.elements['target_port']) f.elements['target_port'].value = port;
-        f.querySelector('legend').textContent = 'Edit NAT rule #' + r.id;
-        f.scrollIntoView();
+        showForm(f, 'Edit NAT rule #' + r.id + ' ' + r.name);
     } catch (e) { flash(e.message, false); }
 }
 
@@ -908,8 +964,8 @@ function saveNat(ev, fixedType) {
     }
     const body = {
         name: f.elements['name'].value, rule_type: type, interface: f.elements['interface'].value,
-        source: f.elements['source'] ? f.elements['source'].value : 'any',
-        destination: f.elements['destination'] ? f.elements['destination'].value : 'any',
+        source: f.elements['source'] ? (f.elements['source'].value.trim() || 'any') : 'any',
+        destination: f.elements['destination'] ? (f.elements['destination'].value.trim() || 'any') : 'any',
         target, description: f.elements['description'].value, enabled: f.elements['enabled'].checked,
         protocol: f.elements['protocol'] ? f.elements['protocol'].value : null,
         external_port: f.elements['external_port'] ? f.elements['external_port'].value : null,
@@ -938,8 +994,7 @@ async function editAlias(btn) {
         else if (sc) { f.elements['type'].value = a.kind === 'port' ? 'urltable_ports' : 'urltable'; f.elements['url'].value = sc.url || ''; f.elements['refresh_hours'].value = Math.max(1, Math.round(sc.refresh_secs / 3600)); f.elements['max_entries'].value = sc.max_entries; }
         document.getElementById('alias-source-status').textContent = sc ? ('Last refresh: ' + (sc.last_status || 'never') + (sc.last_count != null ? ' (' + sc.last_count + ' entries)' : '')) : '';
         aliasTypeChanged();
-        document.getElementById('alias-form-title').textContent = 'Edit alias $' + a.name;
-        f.scrollIntoView();
+        showForm(f, 'Edit alias $' + a.name);
     } catch (e) { flash(e.message, false); }
 }
 
@@ -981,8 +1036,7 @@ function editSchedule(btn) {
     f.elements['start'].value = d.start; f.elements['end'].value = d.end; f.elements['description'].value = d.description;
     const days = d.days.split(',');
     f.querySelectorAll('input[name=day]').forEach(c => c.checked = days.includes(c.value));
-    document.getElementById('schedule-form-title').textContent = 'Edit schedule ' + d.schedule;
-    f.scrollIntoView();
+    showForm(f, 'Edit schedule ' + d.schedule);
 }
 
 function saveSchedule(ev) {
