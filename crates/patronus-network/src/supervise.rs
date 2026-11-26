@@ -193,9 +193,17 @@ pub(crate) fn identity<'a, I: IntoIterator<Item = &'a str>>(argv: I) -> Option<&
         // `setpriv ... -- prog args` (an agent under its own unprivileged account) becomes prog
         Some("setpriv") => {
             let rest: Vec<&str> = it.collect();
-            match rest.iter().position(|a| *a == "--").and_then(|i| rest.get(i + 1)) {
-                Some(p) => identity(rest[rest.iter().position(|a| *a == "--").unwrap() + 1..].iter().copied())
-                    .or(Some(p)),
+            match rest
+                .iter()
+                .position(|a| *a == "--")
+                .and_then(|i| rest.get(i + 1))
+            {
+                Some(p) => identity(
+                    rest[rest.iter().position(|a| *a == "--").unwrap() + 1..]
+                        .iter()
+                        .copied(),
+                )
+                .or(Some(p)),
                 None => Some(first),
             }
         }
@@ -630,9 +638,19 @@ mod tests {
             "/usr/sbin/zabbix_agent2",
             "-f",
         ];
-        assert_eq!(identity(w.iter().copied()).unwrap(), "/usr/sbin/zabbix_agent2");
-        assert_eq!(identity(["/usr/bin/igmpproxy", "-n"]), Some("/usr/bin/igmpproxy"));
-        assert_eq!(identity(["setpriv"]), Some("setpriv"), "no -- : nothing to look through");
+        assert_eq!(
+            identity(w.iter().copied()).unwrap(),
+            "/usr/sbin/zabbix_agent2"
+        );
+        assert_eq!(
+            identity(["/usr/bin/igmpproxy", "-n"]),
+            Some("/usr/bin/igmpproxy")
+        );
+        assert_eq!(
+            identity(["setpriv"]),
+            Some("setpriv"),
+            "no -- : nothing to look through"
+        );
         assert_eq!(identity([]), None);
     }
 
