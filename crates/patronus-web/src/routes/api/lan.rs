@@ -9,6 +9,9 @@
     allow(dead_code, unused_imports)
 )]
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use crate::state::AppState;
 use axum::{
     http::StatusCode,

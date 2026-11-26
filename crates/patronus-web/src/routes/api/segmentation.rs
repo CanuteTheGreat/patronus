@@ -16,6 +16,9 @@
 //!
 //! A build without the flag answers 404 with the USE flag to enable.
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use crate::state::AppState;
 use axum::response::{Html, IntoResponse};
 

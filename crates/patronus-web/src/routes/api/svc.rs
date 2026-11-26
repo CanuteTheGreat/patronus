@@ -12,6 +12,9 @@
 //! - `DELETE /api/svc/<slug>/<coll>/<id>`        delete a row
 //! - `POST   /api/svc/<slug>/action/<name>`      press a button (wake, send test message)
 
+// Askama resolves the `t` / `crumb` / ... template filters (`{{ "key"|t }}`) here
+#[allow(unused_imports)]
+use crate::i18n::filters;
 use crate::state::AppState;
 use askama::Template;
 use axum::{

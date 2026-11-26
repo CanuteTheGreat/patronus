@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ ""|lang_code }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,7 +7,7 @@
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
     {% include "theme_head.html" %}
-    <title>Login - Patronus Firewall</title>
+    <title>{{ "login-title"|t }} - Patronus Firewall</title>
     <style>
         body {
             margin: 0;
@@ -22,6 +22,9 @@
             margin: 1.5rem auto 0;
             border-radius: 18px; /* the artwork is on its own dark tile in both schemes */
         }
+        .login-lang { margin-top: 1rem; text-align: center; font-size: .9rem; color: var(--text-muted); }
+        .login-lang a { color: var(--primary); margin: 0 .35rem; }
+        .login-lang a[aria-current] { color: var(--text); font-weight: 600; text-decoration: none; }
         .login-container {
             color: var(--ink);
             box-sizing: border-box;
@@ -100,32 +103,37 @@
     <div class="login-container">
         <div class="login-header">
             <h1>Patronus</h1>
-            <p>Firewall Management System</p>
+            <p>{{ "login-subtitle"|t }}</p>
         </div>
 
         <div id="error-message" class="error-message"></div>
 
         <form id="login-form">
             <div class="form-group">
-                <label for="username">Username</label>
+                <label for="username">{{ "login-username"|t }}</label>
                 <input type="text" id="username" name="username" required autofocus>
             </div>
 
             <div class="form-group">
-                <label for="password">Password</label>
+                <label for="password">{{ "login-password"|t }}</label>
                 <input type="password" id="password" name="password" required>
             </div>
 
             <div class="form-group" id="totp-group" style="display:none">
-                <label for="totp_code">Two-factor code (authenticator app, or a recovery code)</label>
+                <label for="totp_code">{{ "login-totp"|t }}</label>
                 <input type="text" id="totp_code" name="totp_code" autocomplete="one-time-code" inputmode="text">
             </div>
 
-            <button type="submit" class="btn-login">Sign In</button>
+            <button type="submit" class="btn-login">{{ "login-submit"|t }}</button>
         </form>
+        <nav class="login-lang" aria-label="{{ "login-language"|t }}">{{ "login-language"|t }}: {{ ""|lang_links|safe }}</nav>
     </div>
 
 </main>
+    <script>
+        window.PATRONUS_I18N = {{ ""|js_catalog|safe }};
+        function tr(key) { return (window.PATRONUS_I18N || {})[key] || key; }
+    </script>
     <script>
         // What another firmware served at this address before Patronus may still live in the browser.
         // Patronus registers no service worker and uses no Cache Storage, so any found here is foreign:
@@ -170,7 +178,7 @@
                     body: JSON.stringify(totp_code ? { username, password, totp_code } : { username, password }),
                 });
             } catch (err) {
-                showError('Network error: the router did not answer. Please try again.');
+                showError(tr('js-login-network-error'));
                 return;
             }
 
@@ -185,9 +193,7 @@
                     window.location.href = '/';
                     return;
                 }
-                showError('The password was accepted, but this browser did not send the sign-in back to the router. '
-                    + 'Data stored for this address by an older firmware may be in the way: clear the cookies and '
-                    + 'site data for this address in the browser, then sign in again.');
+                showError(tr('js-login-cookie-stuck'));
                 return;
             }
 
@@ -200,7 +206,7 @@
                 document.getElementById('totp-group').style.display = 'block';
                 document.getElementById('totp_code').focus();
             }
-            showError(error.error || `Sign-in failed (HTTP ${response.status})`);
+            showError(error.error || tr('js-login-failed').replace('{$status}', response.status));
         });
     </script>
 </body>
