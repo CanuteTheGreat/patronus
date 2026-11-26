@@ -66,6 +66,7 @@ database:
     path: $HS/db.sqlite
 dns:
   magic_dns: false
+  override_local_dns: false
   base_domain: tailnet.test
   nameservers:
     global: []
