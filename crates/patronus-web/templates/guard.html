@@ -64,6 +64,7 @@
             <label><input type="checkbox" name="src_web"> web UI</label>
             <label><input type="checkbox" name="src_openvpn"> OpenVPN</label>
             <label><input type="checkbox" name="src_strongswan"> IPsec (strongSwan)</label>
+            <label><input type="checkbox" name="src_ids"> Intrusion detection alerts</label>
         </fieldset>
         <label>Failed logins before a ban<input name="max_failures" type="number" min="1" max="1000" required></label>
         <label>Counted within (minutes)<input name="find_min" type="number" min="1" max="10080" required></label>
@@ -79,11 +80,14 @@
             <label style="flex:1 1 260px">Log files (empty = automatic)<input name="log_files" placeholder="/var/log/auth.log"></label>
             <label style="flex:1 1 260px">OpenVPN log file (empty = the server's own)<input name="openvpn_log" placeholder="/var/log/openvpn.log"></label>
             <label style="flex:1 1 260px">Extra syslog names of VPN daemons<input name="log_tags" placeholder="ovpn-office, my-vpn"></label>
+            <label>Intrusion detection: ban after this many alerts<input name="ids_max_alerts" type="number" min="1" max="100000"></label>
+            <label>Intrusion detection: alerts of this severity or worse<select name="ids_severity"><option value="1">high only</option><option value="2">medium and high</option><option value="3">low, medium and high</option><option value="4">every alert</option></select></label>
+            <label>Intrusion detection: which alerts<select name="ids_action"><option value="any">every alert</option><option value="blocked">only what was dropped</option></select></label>
             <label>Keep ban history (days)<input name="history_days" type="number" min="1" max="3650"></label>
         </div></details>
         <button class="btn btn-primary btn-sm" type="submit" id="g-save">Save</button>
     </form>
-    <p class="hint">SSH and IPsec failures are read from the system log, OpenVPN's from the server's own log file (only refused certificates and passwords count, never packets anyone could forge); the web UI reports its own refused logins. Bans are enforced by the firewall for traffic to this router and through it (port forwards too) and survive a restart. The login page has its own short lockout as well.</p>
+    <p class="hint">SSH and IPsec failures are read from the system log, OpenVPN's from the server's own log file (only refused certificates and passwords count, never packets anyone could forge); intrusion-detection alerts are read from the alert history (off until you tick it: a noisy rule must not lock out a host), the web UI reports its own refused logins. Bans are enforced by the firewall for traffic to this router and through it (port forwards too) and survive a restart. The login page has its own short lockout as well.</p>
 </div>
 
 <div class="card">
@@ -138,7 +142,7 @@
         if (!r.ok) { showError('Not applied: ' + (j.error || r.status)); return null; }
         showError(''); return j;
     }
-    const SRC = {sshd: 'SSH', dropbear: 'SSH (Dropbear)', web: 'web UI', openvpn: 'OpenVPN', strongswan: 'IPsec', manual: 'by hand'};
+    const SRC = {sshd: 'SSH', dropbear: 'SSH (Dropbear)', web: 'web UI', openvpn: 'OpenVPN', strongswan: 'IPsec', ids: 'intrusion detection', manual: 'by hand'};
     function when(t) { return t ? new Date(t * 1000).toLocaleString() : '-'; }
     function dur(s) {
         if (s >= 86400) return (Math.round(s / 3600) / 24).toFixed(s % 86400 ? 1 : 0) + ' d';
@@ -176,7 +180,7 @@
         FORM_FILLED = true;
         const e = document.getElementById('g-form').elements;
         e['enabled'].checked = s.enabled;
-        for (const x of ['sshd', 'dropbear', 'web', 'openvpn', 'strongswan']) e['src_' + x].checked = s.sources.includes(x);
+        for (const x of ['sshd', 'dropbear', 'web', 'openvpn', 'strongswan', 'ids']) e['src_' + x].checked = s.sources.includes(x);
         e['max_failures'].value = s.max_failures;
         e['find_min'].value = Math.max(1, Math.round(s.find_secs / 60));
         e['ban_min'].value = Math.max(1, Math.round(s.ban_secs / 60));
@@ -186,6 +190,7 @@
         e['ipv6_prefix'].value = s.ipv6_prefix; e['esc_h'].value = Math.max(1, Math.round(s.escalate_window_secs / 3600));
         e['journal'].value = s.journal; e['log_files'].value = s.log_files.join(', ');
         e['openvpn_log'].value = s.openvpn_log === 'auto' ? '' : s.openvpn_log; e['log_tags'].value = (s.log_tags || []).join(', ');
+        e['ids_max_alerts'].value = s.ids_max_alerts; e['ids_severity'].value = String(s.ids_severity); e['ids_action'].value = s.ids_action;
         e['history_days'].value = s.history_days;
         if (!CAN_MODIFY) { for (const el of e) el.disabled = true; document.getElementById('g-ban-form').style.display = 'none'; }
         renderTables();
@@ -223,7 +228,7 @@
         const lines = v => v.split(/[\n,]+/).map(x => x.trim()).filter(Boolean);
         const body = {
             enabled: e['enabled'].checked,
-            sources: ['sshd', 'dropbear', 'web', 'openvpn', 'strongswan'].filter(x => e['src_' + x].checked),
+            sources: ['sshd', 'dropbear', 'web', 'openvpn', 'strongswan', 'ids'].filter(x => e['src_' + x].checked),
             max_failures: Number(e['max_failures'].value),
             find_secs: Number(e['find_min'].value) * 60,
             ban_secs: Number(e['ban_min'].value) * 60,
@@ -234,6 +239,7 @@
             escalate_window_secs: Number(e['esc_h'].value) * 3600,
             journal: e['journal'].value, log_files: lines(e['log_files'].value),
             openvpn_log: e['openvpn_log'].value.trim() || 'auto', log_tags: lines(e['log_tags'].value),
+            ids_max_alerts: Number(e['ids_max_alerts'].value), ids_severity: Number(e['ids_severity'].value), ids_action: e['ids_action'].value,
             history_days: Number(e['history_days'].value),
         };
         const j = await api('PUT', '/api/guard/settings', body);

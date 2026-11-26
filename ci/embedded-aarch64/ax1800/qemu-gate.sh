@@ -32,6 +32,7 @@ if [ -n "${GATE_PREP_ONLY:-}" ]; then cp "$W/root.img" "$GATE_PREP_ONLY"; echo "
 truncate -s 256M "$W/data.img"; mkfs.ext4 -q -F -L patronus_data "$W/data.img"
 # the address trial moves the unit from its DHCP address (10.0.2.15) to a static one (10.0.2.78): slirp forwards each
 # host port to ONE guest address, so the static address gets its own ssh/web ports (RP = the ssh port R uses now)
+ATKP=${GATE_ATKP:-$(( ${GATE_SSHP:-2222} + 2 ))}   # brute-force check: the "attacker" network's ssh port
 SSHP=${GATE_SSHP:-2222}; WEBP=${GATE_WEBP:-8443}; SSHP2=${GATE_SSHP2:-$((SSHP + 1))}; WEBP2=${GATE_WEBP2:-$((WEBP + 1))}; RP=$SSHP; NTPP=${GATE_NTPP:-11123}; FEEDP=${GATE_FEEDP:-18080}; QP=
 # GATE_BIND=0.0.0.0 publishes the web UI port beyond the container (browser e2e against the running unit);
 # GATE_HOLD=<s> keeps the unit running that long after the boot-2 checks (for those e2e runs)
@@ -53,7 +54,7 @@ boot() { # n
     -kernel "$K" -append "root=/dev/vda rootfstype=squashfs ro console=ttyAMA0 patronus.data=/dev/vdb panic=-1" \
     -drive file="$W/root.img",if=virtio,format=raw,readonly=on -drive file="$W/data.img",if=virtio,format=raw \
     -netdev user,id=n0,hostfwd=tcp:127.0.0.1:$SSHP-:22,hostfwd=tcp:$BIND:$WEBP-:443,hostfwd=udp:127.0.0.1:$NTPP-:123,hostfwd=tcp:127.0.0.1:$SSHP2-10.0.2.78:22,hostfwd=tcp:127.0.0.1:$WEBP2-10.0.2.78:443 -device virtio-net-pci,netdev=n0 \
-    -netdev socket,id=n1,listen=127.0.0.1:$INJP -device virtio-net-pci,netdev=n1,mac=02:c1:9a:7e:00:fe \
+    -netdev socket,id=n1,listen=127.0.0.1:$INJP -device virtio-net-pci,netdev=n1,mac=02:c1:9a:7e:00:fe "${EXTRA_NIC[@]}" \
     -display none -monitor none -serial file:"$RES/serial-boot$n.txt" -no-reboot &
   QP=$!
   until R true 2>/dev/null; do
@@ -248,6 +249,9 @@ wifi_persisted() { login || return 1; c=$(wapi https://127.0.0.1:$WEBP/api/wifi)
 # the features this build has (FEATURES= in /etc/patronus-release): their checks run only when built in
 FEATURES=$(unsquashfs -cat "$W/root.img" etc/patronus-release 2>/dev/null | sed -n 's/^FEATURES=//p')
 has_feature() { case ",$FEATURES," in *",$1,"*) return 0;; esac; return 1; }
+# brute-force protection (feature bruteforce): a second user-mode network is the attacker's side. The emulator shows the guest
+# the host-forwarded connections of THAT network as coming from 10.0.3.2, so a ban of it leaves the control channel (10.0.2.2) alone
+EXTRA_NIC=(); has_feature bruteforce && EXTRA_NIC=(-netdev "user,id=n2,net=10.0.3.0/24,hostfwd=tcp:127.0.0.1:$ATKP-10.0.3.15:22" -device virtio-net-pci,netdev=n2)
 login() { rm -f "$W/jar"; c=$(curl -sk -c "$W/jar" -o /dev/null -w '%{http_code}' -m 60 -H 'content-type: application/json' \
     -d "{\"username\":\"cigate\",\"password\":\"$FRPW\"}" https://127.0.0.1:$WEBP/api/auth/login); [ "$c" = 200 ] || { echo "login HTTP $c"; return 1; }; }
 # api METHOD PATH [JSON]: the admin's session (login), body in $W/api.json, prints the HTTP code
@@ -577,6 +581,37 @@ check "Wi-Fi page: crash protection (wifi-guard) and guest-filter availability r
 check "guest network: GUEST_ flag written, nftables bridge filter loads with the guest ports, removed without guests" gap_guest
 check "block list: unit-wide + per network via the API, written to the access-point file, unblock, bad MAC 400" gap_block
 check "transmit power: per radio, applied live without a radio restart, out of range 400" gap_txpower
+# brute-force protection: real failed Dropbear logins (the unit's own sshd, logging through busybox syslogd into
+# /var/log/messages) from the attacker network ban its address in the kernel set; its packets are then dropped, the
+# control channel is untouched; an unban gives access back. Prints the memory the engine costs (applyd RSS) as GATEMETRIC lines.
+ssh_banner() { # host-side: the SSH banner of the guest through the attacker network's forward, or nothing within 5 s
+  exec 3<>/dev/tcp/127.0.0.1/$ATKP 2>/dev/null || return 1
+  read -t 5 -u 3 l; exec 3>&- 3<&-; case "$l" in SSH-2.0-*) return 0;; esac; return 1; }
+ssh_attack() { for i in $(seq 1 "$1"); do ssh -p $ATKP -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+    -o ConnectTimeout=10 -o BatchMode=yes -o PreferredAuthentications=password -o KexAlgorithms=curve25519-sha256 \
+    ci-nosuchuser@127.0.0.1 true </dev/null >/dev/null 2>&1 || true; sleep 1; done; }
+guard_rss() { R 'for p in $(pgrep -f "patronus-applyd|patronus applyd"); do sed -n "s/^VmRSS:[[:space:]]*//p" /proc/$p/status; done | head -1'; }
+guard_bans() {
+  R 'ip addr add 10.0.3.15/24 dev eth2 && ip link set eth2 up' || { echo "second NIC"; return 1; }
+  sleep 2; ssh_banner || { echo "no SSH banner through the attacker network before the test"; return 1; }
+  rss0=$(guard_rss)
+  R 'patronus guard set enabled=1 sources=dropbear max_failures=3 ban_secs=300 tick_secs=1' || return 1
+  sleep 4; ssh_attack 4
+  for i in $(seq 1 30); do o=$(R 'nft list set inet patronus_guard ban4' 2>&1); case "$o" in *10.0.3.2*) break;; esac; sleep 2; done
+  case "$o" in *10.0.3.2*) ;; *) echo "10.0.3.2 not in the ban set: $o"; R 'tail -5 /var/log/messages; patronus guard status'; return 1;; esac
+  ssh_banner && { echo "the banned address still reaches sshd"; return 1; }
+  c=$(R 'nft list table inet patronus_guard' | sed -n 's/.*counter packets \([0-9][0-9]*\).*/\1/p' | awk '{s+=$1} END {print s+0}'); [ "$c" -gt 0 ] || { echo "drop counter $c"; return 1; }
+  o=$(R 'patronus guard status'); case "$o" in *Dropbear*) ;; *) echo "status does not name the source: $o"; return 1;; esac
+  rss1=$(guard_rss); echo "GATEMETRIC guard_applyd_rss_before=$rss0 guard_applyd_rss_with_ban=$rss1" | tee -a "$RES/results.txt"
+  R 'patronus guard unban 10.0.3.2' >/dev/null || return 1; sleep 1
+  ssh_banner || { echo "no access after the unban"; return 1; }
+  R 'patronus guard set enabled=0; ip addr del 10.0.3.15/24 dev eth2; ip link set eth2 down' >/dev/null
+  for i in $(seq 1 15); do R 'nft list table inet patronus_guard' >/dev/null 2>&1 || return 0; sleep 2; done
+  echo "the guard table is still there after switching the protection off"; return 1
+}
+if has_feature bruteforce; then
+  check "brute-force protection: 4 failed Dropbear logins ban the attacker's address in nft, the banned address reaches nothing, the control channel is untouched, unban gives access back" guard_bans
+else echo "SKIP: brute-force protection (not in FEATURES=$FEATURES)" | tee -a "$RES/results.txt"; fi
 check "channel survey: read-only API answers and says why when no radio is up" gap_survey
 check "client names: a DHCP client's host name on the bridge is recorded by the snoop (MAC, name)" gap_names
 check "SSH keys: add/remove through the API (0600, audited), DSS refused, root's last key protected" gap_keys
