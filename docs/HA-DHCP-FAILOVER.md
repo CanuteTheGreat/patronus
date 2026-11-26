@@ -62,6 +62,17 @@ virtual IP") lists the services that run only on the node that holds the VIP.
 - WireGuard: the tunnel interface stays configured (key, peers, addresses) but is set down on
   the node without the VIP; coming up on MASTER re-adds the peer routes. OpenVPN: the server
   is stopped and not started. IPsec: charon is stopped; the swanctl configuration stays written.
+- **Bound to the WAN VIP.** OpenVPN gets `local <WAN VIP>` (it starts only on MASTER, when the
+  VIP exists). WireGuard's socket cannot be bound to an address and falls back to the
+  interface's own address whenever the VIP changes under it, so a peer that dialled the VIP
+  would roam to the node's own address and lose the tunnel at the next failover (a keepalive in
+  the moment between losing the VIP and the tunnel going down is enough; seen in the netlab): with
+  HA on, a WAN carp VIP and WireGuard in the follow list, the firewall adds a stateless postrouting
+  rule `udp sport <listen port> ip saddr != <WAN VIP> ip saddr set <WAN VIP>` (`HA: WireGuard
+  answers from the virtual IP`) so every answer leaves with the VIP as source. (A source NAT
+  does not work here: it opens a second conntrack entry for the peer's 4-tuple and moves the
+  source port.) strongSwan answers from the address a packet
+  arrived on and needs neither.
 - A peer dials the WAN VIP. After the VIP moves, the peer's next packets reach the other node,
   which has the same server key (the HA configuration sync carries it); the peer re-handshakes
   within its keepalive window, with no change on the peer's side.

@@ -44,6 +44,80 @@ fn safe_dev(d: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
 }
 
+/// Keeps WireGuard answering from the virtual IP.
+///
+/// WireGuard's UDP socket is not bound to an address: it answers from the
+/// address the route picks, and drops back to the interface's own address
+/// whenever the virtual IP changes under it (a keepalive sent in the moment
+/// between losing the VIP and the tunnel going down is enough). A peer that
+/// dialled the VIP then roams to the node's own address and cannot reach the
+/// other node after the failover. With HA on, a WAN carp VIP and WireGuard in
+/// `ha.follow_services`, every packet from a tunnel's listen port leaves with
+/// the VIP as source address, rewritten statelessly (a source NAT would open a
+/// second conntrack entry for the same 4-tuple and change the source port).
+/// (`add rule ...` lines for the postrouting chain, before any masquerade.)
+pub async fn ha_nat(store: &ConfigStore) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    if !setting(store, "ha.enabled")
+        .await?
+        .is_some_and(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
+    {
+        return Ok(out);
+    }
+    let follows = setting(store, "ha.follow_services")
+        .await?
+        .map(|v| v.split(',').any(|x| x.trim() == "wireguard"))
+        .unwrap_or(true);
+    if !follows {
+        return Ok(out);
+    }
+    let wan: BTreeSet<String> = store
+        .interfaces_with_role("wan")
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let vips =
+        sqlx::query("SELECT interface, address FROM ha_vips WHERE enabled = 1 AND mode = 'carp'")
+            .fetch_all(store.pool()?)
+            .await
+            .map_err(|e| Error::Config(format!("read ha_vips: {e}")))?;
+    let ports =
+        sqlx::query("SELECT listen_port FROM wg_interfaces WHERE enabled = 1 ORDER BY name")
+            .fetch_all(store.pool()?)
+            .await
+            .map(|r| {
+                r.into_iter()
+                    .map(|r| r.get::<i64, _>(0))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+    for v in vips {
+        let ip: IpAddr = match v
+            .get::<String, _>(1)
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .parse()
+        {
+            Ok(ip) => ip,
+            Err(_) => continue,
+        };
+        for d in devices(store, &v.get::<String, _>(0)).await {
+            if !safe_dev(&d) || !wan.contains(&d) {
+                continue;
+            }
+            for port in ports.iter().filter(|p| (1..=65535).contains(*p)) {
+                let fam = if ip.is_ipv6() { "ip6" } else { "ip" };
+                out.push(format!(
+                    "add rule {TABLE} postrouting oifname \"{d}\" udp sport {port} {fam} saddr != {ip} {fam} saddr set {ip} comment \"HA: WireGuard answers from the virtual IP\""
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// `add rule ...` lines for the input chain.
 pub async fn ha_rules(store: &ConfigStore) -> Result<Vec<String>> {
     let mut out = Vec::new();
@@ -141,6 +215,40 @@ mod tests {
             .execute(s.pool().unwrap())
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn wireguard_answers_from_the_wan_virtual_ip() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth0", Some("wan")).await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        sqlx::query("INSERT INTO ha_vips (name, interface, address, updated_at) VALUES ('wan-vip','@wan','203.0.113.254/24',0)")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO ha_vips (name, interface, address, updated_at) VALUES ('gw','@lan','192.168.50.254/24',0)")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO wg_interfaces (name, private_key, listen_port, updated_at) VALUES ('wg0','k',51820,0)")
+            .execute(s.pool().unwrap())
+            .await
+            .unwrap();
+        assert!(ha_nat(&s).await.unwrap().is_empty(), "HA off: no NAT");
+        put(&s, "ha.enabled", "1").await;
+        let r = ha_nat(&s).await.unwrap();
+        assert_eq!(r.len(), 1, "only the WAN VIP: {r:?}");
+        assert!(
+            r[0].contains(
+                "postrouting oifname \"eth0\" udp sport 51820 ip saddr != 203.0.113.254 ip saddr set 203.0.113.254"
+            ),
+            "{r:?}"
+        );
+        put(&s, "ha.follow_services", "ipsec").await;
+        assert!(
+            ha_nat(&s).await.unwrap().is_empty(),
+            "WireGuard does not follow the VIP"
+        );
     }
 
     #[tokio::test]

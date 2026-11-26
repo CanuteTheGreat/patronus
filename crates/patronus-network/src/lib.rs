@@ -121,6 +121,35 @@ pub(crate) async fn ha_carp_vips(
     }
 }
 
+/// The address a VPN server must listen on when it follows the virtual IP:
+/// the first IPv4 carp VIP on a WAN-role interface, when HA is on and `svc`
+/// is in `ha.follow_services`. `None` = listen on every address as before.
+#[allow(dead_code)]
+pub(crate) async fn ha_listen_vip(
+    store: &patronus_config::ConfigStore,
+    svc: &str,
+) -> patronus_core::Result<Option<std::net::IpAddr>> {
+    #[cfg(feature = "ha")]
+    {
+        let s = ha::settings(store).await?;
+        if !s.enabled || !s.follow_services.iter().any(|f| f == svc) {
+            return Ok(None);
+        }
+        let wan = store.interfaces_with_role("wan").await.unwrap_or_default();
+        Ok(ha::resolve_vips(store)
+            .await?
+            .0
+            .into_iter()
+            .find(|v| v.net.is_ipv4() && wan.contains(&v.dev))
+            .map(|v| v.net.ip()))
+    }
+    #[cfg(not(feature = "ha"))]
+    {
+        let _ = (store, svc);
+        Ok(None)
+    }
+}
+
 /// `Some(reason)` when HA says service `svc` (wireguard, openvpn, ipsec)
 /// must not run on this node now (it follows the virtual IP and this node
 /// is not MASTER). Always `None` in a build without `USE=ha`.

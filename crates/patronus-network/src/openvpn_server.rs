@@ -360,6 +360,16 @@ fn route_line(cidr: &str) -> Option<String> {
 }
 
 pub fn render_server(s: &Settings, dir: &str, ccd: &str) -> Result<String> {
+    render_server_bound(s, dir, ccd, None)
+}
+
+/// [`render_server`], listening on `local` only (HA: the WAN virtual IP).
+pub fn render_server_bound(
+    s: &Settings,
+    dir: &str,
+    ccd: &str,
+    local: Option<std::net::IpAddr>,
+) -> Result<String> {
     let (net, mask) = pool(&s.s("tunnel_net"))?;
     let mut c = lan::header("#", "openvpn server");
     c.push_str(&format!(
@@ -370,6 +380,9 @@ pub fn render_server(s: &Settings, dir: &str, ccd: &str) -> Result<String> {
         s.s("proto"),
         s.s("port")
     ));
+    if let Some(l) = local {
+        c.push_str(&format!("local {l}\n"));
+    }
     if let Some(r) = Some(s.s("lan_route"))
         .filter(|r| !r.is_empty())
         .and_then(|r| route_line(&r))
@@ -468,10 +481,11 @@ impl Applier for OpenVpnApplier {
                 0o644,
             ));
         }
+        let local = crate::ha_listen_vip(store, "openvpn").await?;
         let conf = dir.join("server.conf");
         files.push((
             conf.clone(),
-            render_server(&s, &dir.to_string_lossy(), &ccd.to_string_lossy())?,
+            render_server_bound(&s, &dir.to_string_lossy(), &ccd.to_string_lossy(), local)?,
             0o644,
         ));
         let started = svc::ensure_daemon(
@@ -504,7 +518,8 @@ impl Applier for OpenVpnApplier {
         if !s.b("enabled") {
             return Ok("# OpenVPN server off\n".into());
         }
-        render_server(&s, "<state>/openvpn", "<state>/openvpn/ccd")
+        let local = crate::ha_listen_vip(store, "openvpn").await?;
+        render_server_bound(&s, "<state>/openvpn", "<state>/openvpn/ccd", local)
     }
 
     async fn status(&self, store: &ConfigStore) -> Result<Value> {
@@ -560,6 +575,68 @@ mod tests {
         );
         assert!(c.contains("tls-crypt /d/tls-crypt.key") && c.contains("client-config-dir /d/ccd"));
         assert!(c.contains("push \"route 192.168.1.0 255.255.255.0\""));
+        assert!(
+            !c.contains("\nlocal "),
+            "listens on every address by default"
+        );
+        // HA: the server listens on the WAN virtual IP only
+        let c = render_server_bound(&s, "/d", "/d/ccd", Some("203.0.113.254".parse().unwrap()))
+            .unwrap();
+        assert!(c.contains("\nlocal 203.0.113.254\n"), "{c}");
+    }
+
+    #[cfg(feature = "ha")]
+    #[tokio::test]
+    async fn an_openvpn_server_that_follows_the_vip_listens_on_the_wan_vip() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth0", Some("wan")).await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        for (n, i, a) in [
+            ("w", "@wan", "203.0.113.254/24"),
+            ("l", "@lan", "192.168.50.254/24"),
+        ] {
+            crate::ha::save_vip(
+                &s,
+                None,
+                &crate::ha::VipInput {
+                    name: Some(n.into()),
+                    interface: Some(i.into()),
+                    address: Some(a.into()),
+                    vrid: Some(if n == "w" { 52 } else { 51 }),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            crate::ha_listen_vip(&s, "openvpn").await.unwrap(),
+            None,
+            "HA off"
+        );
+        crate::ha::save_settings(
+            &s,
+            &crate::ha::SettingsInput {
+                enabled: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            crate::ha_listen_vip(&s, "openvpn").await.unwrap(),
+            Some("203.0.113.254".parse().unwrap())
+        );
+        crate::ha::save_settings(
+            &s,
+            &crate::ha::SettingsInput {
+                follow_services: Some(vec!["ipsec".into()]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(crate::ha_listen_vip(&s, "openvpn").await.unwrap(), None);
     }
 
     #[test]

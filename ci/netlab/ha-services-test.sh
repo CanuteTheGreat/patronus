@@ -116,13 +116,13 @@ ip netns add sw; ip netns add hb; ip netns add lan; ip netns add inet; ip netns 
 ip link add rtr-lan type veth peer name sw-a netns sw
 ip link add hb0 netns hb type veth peer name sw-b netns sw
 ip link add lan0 netns lan type veth peer name sw-c netns sw
+ip link add cl0 netns cl type veth peer name sw-d netns sw
 N sw ip link add br0 type bridge
 for p in sw-a sw-b sw-c sw-d; do N sw ip link set $p master br0; N sw ip link set $p up; done
 N sw ip link set br0 up
 ip link add sync-a type veth peer name sync-b netns hb
 ip link add rtr-wan type veth peer name in0 netns inet
 ip link add hb-wan netns hb type veth peer name in1 netns inet
-ip link add cl0 netns cl type veth peer name sw-d netns sw
 ip addr add 192.168.50.2/24 dev rtr-lan; ip link set rtr-lan up
 ip addr add 10.9.9.1/24 dev sync-a; ip link set sync-a up
 ip addr add 203.0.113.2/24 dev rtr-wan; ip link set rtr-wan up
@@ -191,18 +191,30 @@ def parse(data, xid):
         elif t == 6: r['dns'] = socket.inet_ntoa(v[:4])
     return r
 
-def exchange(s, pkt, xid, want, secs):
+def frames(rs):
+    # the interface has no address yet, so the kernel UDP stack would drop the broadcast reply:
+    # read it from a packet socket like a real DHCP client does
+    d = rs.recv(4096)
+    if d[12:14] != b'\x08\x00' or d[23] != 17:
+        return None
+    ihl = (d[14] & 15) * 4
+    sp, dp = struct.unpack('!HH', d[14 + ihl:18 + ihl])
+    return d[14 + ihl + 8:] if (sp, dp) == (67, 68) else None
+
+def exchange(s, rs, pkt, xid, want, secs):
     end = time.time() + secs
     while time.time() < end:
         s.sendto(pkt, ('255.255.255.255', 67))
-        s.settimeout(2)
-        try:
-            while True:
-                r = parse(s.recvfrom(2048)[0], xid)
-                if r and r.get('type') in want:
-                    return r
-        except socket.timeout:
-            pass
+        stop = time.time() + 2
+        while time.time() < stop:
+            rs.settimeout(max(0.1, stop - time.time()))
+            try:
+                d = frames(rs)
+            except socket.timeout:
+                break
+            r = parse(d, xid) if d else None
+            if r and r.get('type') in want:
+                return r
     print('timeout', flush=True); sys.exit(2)
 
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -210,16 +222,18 @@ s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, DEV)
 s.bind(('0.0.0.0', 68))
+rs = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800))
+rs.bind((DEV.decode(), 0))
 mode, mac = sys.argv[1], sys.argv[2]
 xid = random.getrandbits(32)
 if mode == 'lease':
     secs = float(sys.argv[3])
-    o = exchange(s, build(mac, xid, 1), xid, (2,), secs)
+    o = exchange(s, rs, build(mac, xid, 1), xid, (2,), secs)
     req = bytes([50, 4]) + socket.inet_aton(o['yiaddr']) + bytes([54, 4]) + socket.inet_aton(o['server'])
-    r = exchange(s, build(mac, xid, 3, extra=req), xid, (5, 6), secs)
+    r = exchange(s, rs, build(mac, xid, 3, extra=req), xid, (5, 6), secs)
 else:
     ip, secs = sys.argv[3], float(sys.argv[4])
-    r = exchange(s, build(mac, xid, 3, ciaddr=ip), xid, (5, 6), secs)
+    r = exchange(s, rs, build(mac, xid, 3, ciaddr=ip), xid, (5, 6), secs)
 if r['type'] == 6:
     print('nak', flush=True); sys.exit(3)
 print('ip=%s server=%s lease=%s router=%s dns=%s' % (r['yiaddr'], r.get('server'), r.get('lease'), r.get('router'), r.get('dns')), flush=True)
@@ -563,10 +577,17 @@ cat > /t/hb/kea4.conf <<CF
 }}
 CF
 rm -f /t/hb/leases4.csv
-kea-dhcp4 -t /t/hb/kea4.conf >/t/hb/kea4.check 2>&1 || { cat /t/hb/kea4.check; fail "B's Kea config does not validate"; }
-ip netns exec hb env KEA_PIDFILE_DIR=/t/hb KEA_LOCKFILE_DIR=/t/hb kea-dhcp4 -c /t/hb/kea4.conf >/t/hb/kea4.out 2>&1 &
+# Kea 3 only writes pid/lock/log/lease files below its own directories unless told otherwise
+KEA_B_ENV="KEA_PIDFILE_DIR=/t/hb KEA_LOCKFILE_DIR=/t/hb KEA_LOG_FILE_DIR=/t/hb KEA_DHCP_DATA_DIR=/t/hb"
+# A's kea runs as user dhcp (not dumpable): /proc/PID/ns is unreadable in the container, so A's Kea is
+# every kea-dhcp4 except B's (started below; exec keeps the PID the shell reported)
+a_kea_pids() { pgrep -x kea-dhcp4 | grep -vx "${B_KEA:-0}" || true; }
+a_kea_running() { [ -n "$(a_kea_pids)" ]; }
+a_kea_stopped() { [ -z "$(a_kea_pids)" ]; }
+ip netns exec hb env $KEA_B_ENV kea-dhcp4 -t /t/hb/kea4.conf >/t/hb/kea4.check 2>&1 || { cat /t/hb/kea4.check; fail "B's Kea config does not validate"; }
+ip netns exec hb env $KEA_B_ENV kea-dhcp4 -c /t/hb/kea4.conf >/t/hb/kea4.out 2>&1 &
 B_KEA=$!
-wait_for "A's kea-dhcp4 is running (via $INIT)" 30 a_running kea-dhcp4
+wait_for "A's kea-dhcp4 is running (via $INIT)" 30 a_kea_running
 kea_state_a() { api GET /api/ha >/dev/null; python3 -c 'import json; d=json.load(open("/tmp/api.out"))["status"]["dhcp"]; print(d.get("dhcp4",{}).get("state"))'; }
 kea_state_b() { python3 /t/kea_state.py http://10.9.9.2:8000/ dhcp4; }
 state_a_is() { [ "$(kea_state_a 2>/dev/null)" = "$1" ]; }
@@ -591,7 +612,7 @@ case "$INIT" in
   systemd) systemctl stop kea-dhcp4 ;;
   *) rc-service kea-dhcp4 stop >/dev/null 2>&1 || true ;;
 esac
-wait_for "A's Kea is stopped" 15 a_stopped kea-dhcp4
+wait_for "A's Kea is stopped" 15 a_kea_stopped
 T0=$(date +%s)
 wait_for "B's Kea takes over (partner-down)" 30 state_b_is partner-down
 OUT2=$(N cl python3 /t/dhc.py rebind 02:00:00:00:00:01 "$IP1" 20) || fail "client 1 could not rebind from B: $OUT2"
@@ -613,7 +634,7 @@ ok "client 2 leased $IP2 from B, its default gateway 192.168.50.254 answers (hel
 echo "--- A returns: the VIP comes back, A's Kea restarts, syncs B's leases, and the two databases agree"
 want 200 POST /api/ha/maintenance '{"enabled":false}'
 wait_for "A holds the VIP again" 20 a_has_vip
-wait_for "A's Kea is running again" 30 a_running kea-dhcp4
+wait_for "A's Kea is running again" 30 a_kea_running
 wait_for "A's Kea back in hot-standby" 60 state_a_is hot-standby
 leases_agree() {
   python3 /t/leases.py /var/lib/kea/kea-leases4.csv > /t/hb/la.txt 2>/dev/null &&
@@ -687,6 +708,8 @@ has "$(cat /tmp/api.out)" 'id="ha-follow-card"' "HA page lacks the follow-the-VI
 has "$(cat /tmp/api.out)" 'id="ha-dhcp-card"' "HA page lacks the DHCP failover card"
 tunnel_on_b() { N inet ping -c1 -W2 10.99.0.1 >/dev/null 2>&1 && [ "$(hs_of hb wg0)" -gt 0 ]; }
 wait_for "the client's tunnel is back, answered by B (handshake with the VIP)" 90 tunnel_on_b
+has "$(N inet wg show wgc endpoints)" "203.0.113.254:51820" "the client roamed away from the virtual IP"
+has "$(nft list chain inet patronus postrouting)" "ip saddr set 203.0.113.254" "WireGuard is not pinned to the WAN VIP"
 ok "A went BACKUP: its wg0 is down (with the reason on the HA page), B took the VIP and the client's tunnel re-established on B within the keepalive window"
 echo "--- A returns: wg0 comes back on A, B's goes down, the tunnel moves back"
 want 200 POST /api/ha/maintenance '{"enabled":false}'
@@ -696,6 +719,7 @@ wait_for "A's wg0 is up again" 30 sh -c "ip -br link show wg0 | grep -E 'UP|UNKN
 wait_for "B's wg0 is down" 20 sh -c "ip netns exec hb ip -br link show wg0 | grep -E ' DOWN '"
 tunnel_on_a() { N inet ping -c1 -W2 10.99.0.1 >/dev/null 2>&1 && [ "$(hs_of - wg0)" -gt "$HS_A" ]; }
 wait_for "the tunnel is back on A (a newer handshake than before the failover)" 90 tunnel_on_a
+has "$(N inet wg show wgc endpoints)" "203.0.113.254:51820" "the client roamed away from the virtual IP"
 ok "A is MASTER again: wg0 up on A, down on B, the client's tunnel ping works through A with a fresh handshake"
 N inet ip link del wgc 2>/dev/null || true
 want 200 DELETE "/api/vpn/wireguard/tunnels/wg0"
