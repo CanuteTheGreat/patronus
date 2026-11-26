@@ -65,7 +65,20 @@ command -v dhcpcd >/dev/null || apt-get install -y -qq dhcpcd5 >/dev/null 2>&1 |
 command -v radvd >/dev/null || apt-get install -y -qq radvd >/dev/null
 command -v dhcpd >/dev/null || apt-get install -y -qq isc-dhcp-server >/dev/null
 nl_forget_dhcp_leases
-trap nl_dhcp_cleanup EXIT
+# router advertisements for the LAN go through the router's dnsmasq: this container has no init system, so the
+# service manager gets the netlab shim (lane-d does the same); leave dnsmasq.conf and resolv.conf as found
+cp -a /etc/resolv.conf "$NL_T/wiz-resolv.saved"
+rm -f "$NL_T/wiz-dnsmasq.saved"; [ -e /etc/dnsmasq.conf ] && cp -a /etc/dnsmasq.conf "$NL_T/wiz-dnsmasq.saved"
+wiz_cleanup() {
+  nl_dhcp_cleanup
+  cp "$NL_T/wiz-resolv.saved" /etc/resolv.conf 2>/dev/null || true
+  [ -x /etc/init.d/dnsmasq ] && /etc/init.d/dnsmasq stop >/dev/null 2>&1
+  rm -f /etc/init.d/dnsmasq
+  if [ -e "$NL_T/wiz-dnsmasq.saved" ]; then cp -a "$NL_T/wiz-dnsmasq.saved" /etc/dnsmasq.conf; else rm -f /etc/dnsmasq.conf; fi
+  return 0
+}
+trap 'rc=$?; wiz_cleanup; exit $rc' EXIT
+nl_dnsmasq_shim
 ISP ip -6 addr add 2001:db8:ffff::1/64 dev up0 nodad
 cat >"$NL_T/wiz-isp-radvd.conf" <<'CONF'
 interface up0 {
@@ -107,7 +120,7 @@ nl_ok "the LAN tracks the delegated prefix: $(R ip -6 -o addr show dev rtr-lan s
 [ "$(sqlite3 "$DB" "SELECT count(*) FROM ra_interfaces WHERE interface='rtr-lan' AND enabled=1" 2>/dev/null || echo 0)" -ge 1 ] \
   || [ "$(nl_json "$NL_OUT" "'ra' in d['applied']")" = True ] || nl_fail "router advertisements not turned on for the LAN: $(cat "$NL_OUT")"
 nl_ok "router advertisements are on for the LAN"
-nl_dhcp_cleanup
+wiz_cleanup
 trap - EXIT
 
 echo "=== wizard: PPPoE WAN against a real access concentrator"
