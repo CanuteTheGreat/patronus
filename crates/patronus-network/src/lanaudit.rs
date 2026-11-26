@@ -1191,6 +1191,10 @@ pub async fn targets(store: &ConfigStore, s: &Settings) -> Result<Vec<Target>> {
         .collect())
 }
 
+#[cfg_attr(
+    not(any(feature = "dhcp", feature = "segmentation")),
+    allow(unused_variables, unused_mut)
+)]
 async fn enrich(store: &ConfigStore, targets: &mut [Target]) {
     if targets.is_empty() {
         return;
