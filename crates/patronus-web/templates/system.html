@@ -700,7 +700,7 @@ async function fwFeedDownload() {
     <p class="empty" id="events-empty" style="display:none">No events yet.</p>
     {% if is_admin %}
     <h3 class="text-sm">Notification channels</h3>
-    <table class="lan" id="hooks-table"><thead><tr><th>Name</th><th>Type</th><th>Destination</th><th>Events</th><th>Last delivery</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
+    <table class="lan" id="hooks-table"><thead><tr><th>Name</th><th>Type</th><th>Destination</th><th>Matcher</th><th>Last delivery</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody></tbody></table>
     <form class="lan-form" id="hook-form" onsubmit="return createHook(event)">
         <label>Name <input name="name" required></label>
         <label>Type <select name="channel" onchange="hookFields(this.form)">
@@ -712,12 +712,14 @@ async function fwFeedDownload() {
         <label data-for="email">From address <input name="sender" placeholder="router@example.com"></label>
         <label data-for="email">SMTP user (optional) <input name="username" autocomplete="off"></label>
         <label><span id="hook-secret-label">Secret (optional)</span> <input name="secret" type="password" autocomplete="new-password"></label>
+        <label>Matcher <select name="matcher" id="hook-matcher"><option value="">Own events and severity (below)</option></select></label>
         <label>Events (comma separated, empty = all) <input name="kinds" placeholder="gateway_down, tunnel_down"></label>
         <label>Minimum severity <select name="min_severity"><option>info</option><option>warning</option><option>critical</option></select></label>
         <button class="btn btn-primary btn-sm" type="submit">Add channel</button>
     </form>
     {% endif %}
 </div>
+{% if is_admin %}{% include "notify_matchers.html" %}{% endif %}
 {% endblock %}
 
 {% block extra_scripts %}
@@ -778,7 +780,7 @@ async function fwFeedDownload() {
         const hb = document.querySelector('#hooks-table tbody'); hb.textContent = '';
         for (const h of hooks || []) { const tr = document.createElement('tr'); tr.dataset.hook = h.name;
             const dest = h.channel === 'email' ? h.target + ' via ' + h.url : (h.channel === 'telegram' ? 'chat ' + h.target : h.url);
-            cell(tr, h.name); cell(tr, h.channel); cell(tr, dest); cell(tr, (h.kinds || 'all') + (h.min_severity !== 'info' ? ' (' + h.min_severity + '+)' : ''));
+            cell(tr, h.name); cell(tr, h.channel); cell(tr, dest); matcherCell(tr, h);
             cell(tr, h.last_attempt_at ? fmtTs(h.last_attempt_at) + ': ' + h.last_result : 'never');
             const td = document.createElement('td');
             const t = document.createElement('button'); t.className = 'btn btn-sm'; t.textContent = 'Send test';
@@ -790,11 +792,35 @@ async function fwFeedDownload() {
                 const d = await fetch('/api/system/hooks/' + h.id, {method: 'DELETE', credentials: 'same-origin'}); if (d.ok) loadEvents(); };
             td.appendChild(b); tr.appendChild(td); hb.appendChild(tr); }
     }
+    // the matcher a channel uses: a select that saves on change (empty = its own events + severity)
+    function matcherCell(tr, h) {
+        const td = document.createElement('td');
+        const s = document.createElement('select'); s.setAttribute('aria-label', 'Matcher for channel ' + h.name);
+        const o0 = document.createElement('option'); o0.value = ''; o0.textContent = 'Own events and severity'; s.appendChild(o0);
+        const names = (window.nmList ? window.nmList() : []).map((m) => m.name);
+        if (h.matcher && !names.includes(h.matcher)) names.push(h.matcher);
+        for (const n of names) { const o = document.createElement('option'); o.value = n; o.textContent = n; s.appendChild(o); }
+        s.value = h.matcher || '';
+        s.onchange = async () => {
+            const r = await fetch('/api/system/hooks/' + h.id + '/matcher', {method: 'PUT', credentials: 'same-origin',
+                headers: {'content-type': 'application/json'}, body: JSON.stringify({matcher: s.value})});
+            if (!r.ok) { let j = {}; try { j = await r.json(); } catch (_) {} alert('Not applied: ' + (j.error || r.status)); s.value = h.matcher || ''; }
+            else h.matcher = s.value;
+        };
+        td.appendChild(s); tr.appendChild(td);
+    }
+    function fillHookMatchers(list) {
+        const s = document.getElementById('hook-matcher'); if (!s) return;
+        const cur = s.value; s.length = 1;
+        for (const m of list) { const o = document.createElement('option'); o.value = m.name; o.textContent = m.name; s.appendChild(o); }
+        s.value = cur;
+    }
+    document.addEventListener('matchers-changed', (e) => { fillHookMatchers(e.detail); if (typeof loadEvents === 'function') loadEvents(); });
     async function createHook(ev) {
         ev.preventDefault();
         const f = ev.target.elements;
         const body = {};
-        for (const k of ['name', 'channel', 'url', 'secret', 'kinds', 'min_severity', 'target', 'sender', 'username']) body[k] = f[k].value.trim();
+        for (const k of ['name', 'channel', 'url', 'secret', 'kinds', 'min_severity', 'matcher', 'target', 'sender', 'username']) body[k] = f[k].value.trim();
         if (body.channel !== 'email') { body.sender = ''; body.username = ''; if (body.channel !== 'telegram') body.target = ''; }
         const j = await post('/api/system/hooks', body);
         if (j) { ev.target.reset(); hookFields(ev.target); loadEvents(); }
