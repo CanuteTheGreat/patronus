@@ -291,7 +291,7 @@ def define(args):
         roles = fw.succeed("patronus interfaces roles 2>/dev/null")
         m.check("opt1-role-on-the-spare-port", f"OPT1   {WAN}" in roles and f"LAN    {LAN}" in roles and "WAN    pppoe0" in roles,
                 roles.strip() + " | " + out.strip()[-200:])
-        m.check("assign-kept-a-revision", "interface assignment" in fw.succeed("patronus config revisions"), "config revisions")
+        m.check("assign-kept-a-revision", "interface assignment" in fw.succeed("patronus config revisions 2>/dev/null"), "config revisions")
         fw.succeed("patronus apply --phase firewall", timeout=300)
         m.check("firewall-applies-with-an-opt-port", True, "patronus apply --phase firewall")
         isp.succeed(ISP_PPPOE_STOP, timeout=60)
