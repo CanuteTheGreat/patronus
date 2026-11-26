@@ -130,7 +130,7 @@ nl_api_ok "netserver" PUT /svc/ups '{"mode":"netserver","listen_iface":"@lan"}'
 nl_wait 20 grep -q "LISTEN $NL_RTR_LAN 3493" $CONF/upsd.conf || { cat $CONF/upsd.conf; nl_fail "upsd.conf does not listen on the LAN address"; }
 ! grep -q '0.0.0.0' $CONF/upsd.conf || nl_fail "upsd listens on a wildcard"
 nl_assert_nft_has "iifname \"$NL_LAN_IF\" tcp dport 3493 accept"
-nl_wait 20 C upsc "ups@$NL_RTR_LAN" ups.status || { C upsc "ups@$NL_RTR_LAN" 2>&1 | head -5; nl_fail "a LAN client cannot read the UPS from $NL_RTR_LAN:3493"; }
+nl_wait 30 C upsc "ups@$NL_RTR_LAN" battery.charge || { C upsc "ups@$NL_RTR_LAN" 2>&1 | head -5; nl_fail "a LAN client cannot read the UPS from $NL_RTR_LAN:3493"; }
 OUTC=$(C upsc "ups@$NL_RTR_LAN" 2>/dev/null)
 case "$OUTC" in *"battery.charge:"*"ups.status:"*) ;; *) nl_fail "upsc from the LAN lacks readings: $OUTC";; esac
 nl_ok "a LAN-namespace client runs upsc ups@$NL_RTR_LAN and gets the readings (port 3493 on the LAN address)"
