@@ -787,6 +787,19 @@ enum MetricsCommands {
     Bandwidth,
 }
 
+/// Commands a person runs at a terminal (the console menu's items): they log warnings only.
+fn interactive(c: &Commands) -> bool {
+    match c {
+        Commands::Interfaces { .. } | Commands::Config { .. } | Commands::Update { .. } => true,
+        Commands::Firewall {
+            action: FirewallCommands::Log { .. },
+        } => true,
+        #[cfg(feature = "uci-import")]
+        Commands::Import { .. } => true,
+        _ => false,
+    }
+}
+
 /// `patronus ... | head` or `| grep -q`: when the reader goes away, end quietly like other Unix
 /// tools (killed by SIGPIPE) instead of panicking in `println!` with "failed printing to
 /// stdout: Broken pipe" (Rust starts programs with SIGPIPE ignored).
@@ -837,7 +850,8 @@ async fn main() -> anyhow::Result<()> {
     }
     let cli = Cli::parse();
 
-    // Initialize logging
+    // Initialize logging. Commands a person runs at the console (console-menu items, their output is read on a
+    // terminal) log warnings only, so their answer is not buried under "Opening config store" lines.
     if cli.verbose {
         tracing_subscriber::fmt()
             .with_max_level(tracing::Level::DEBUG)
@@ -845,7 +859,11 @@ async fn main() -> anyhow::Result<()> {
             .init();
     } else {
         tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::INFO)
+            .with_max_level(if interactive(&cli.command) {
+                tracing::Level::WARN
+            } else {
+                tracing::Level::INFO
+            })
             .with_writer(std::io::stderr)
             .init();
     }
