@@ -164,7 +164,7 @@ Fixed together with this document:
 | Monospace text (MAC addresses, keys) rendered at the browser's small monospace size because the font was the bare `monospace` generic | `--font-mono` token (font list) used everywhere |
 | Plain links in page text used the browser's default blue, which clashes with the theme and is hard to read on dark cards | `.content a:not([class])` uses the theme accent |
 
-Design-system adoption, first step (branch ui-kit-1: shared ui-kit v0.1 vendored and pinned, Patronus theme layer):
+Design-system adoption (branches ui-kit-1..3: shared ui-kit vendored and pinned, v0.2 since ui-kit-3; Patronus theme layer):
 
 | Finding | Status |
 |---|---|
@@ -175,12 +175,22 @@ Design-system adoption, first step (branch ui-kit-1: shared ui-kit v0.1 vendored
 | AP-role dashboard shows router cards first | AP role leads with the radios (state, channel, networks and clients) and the uplink; router tiles hidden |
 | Header emoji theme toggle, one-item nav group, Home vs Dashboard | line-icon toggle (follow the device / light / dark), Overview group and breadcrumb fixed, "Go to page" search in the header |
 | Firewall states 503 without conntrack; Interfaces asks for Wi-Fi uplinks on builds without them | states answer 200 `{available:false, reason}` with a banner; Interfaces reads `/api/features` first |
+| Wi-Fi page (router tier), segmentation, service pages (`/svc/*`), diagnostics, insights still legacy markup | Wi-Fi: radios as panels with a state badge, networks toolbar (Add network, Save), validated block form, connected clients sortable with a filter and count, a loading state; segmentation and insights: kit tabs (arrow keys) and their add forms in dialogs; every `/svc/*` page: entries in a kit grid with Add entry / Edit in a dialog, a filter from 6 rows, kit empty state; diagnostics: neighbour table sortable with a filter and state badges, outputs in the kit log box |
+| Browser `alert()` / `prompt()` boxes (26 alerts; prompts asked for an admin password in clear text) | `patNotice` kit toasts (a refused change lands in its open dialog; messages before a reload are shown after it) and `patAsk` kit dialogs (password fields masked) for factory reset, Set password, Wake-on-LAN and the guest network buttons; a source test forbids `alert(` in templates |
+| Long System page (20+ sections) | "On this page" index of every visible section |
+| Server-rendered lists without sort or filter | DHCP leases, WireGuard peers (configured and live), IPsec SAs and services: sortable columns, a filter and a row count from 9 rows (`data-filterable`) |
+| Dashboard on a router unit said "Disk / at 100 % (critical)" | the read-only squashfs root is always full; the dashboard, System, Monitoring, status API and telemetry now measure the writable `/data` there (`host::storage_path`) |
 
 Proof in CI (rust-ci `ui-qa`, `ci/ui-qa/run.sh`): the live standard-tier patronus-web and the router-tier build (AP and
 gateway role) crawled in Firefox at 1280 and 390 px, light and dark, with a WCAG AA contrast scan of every text element,
 a keyboard-only add/edit/delete of a firewall rule, and every page's screenshot diffed against the pinned baseline
 (`ci/ui-qa/shots.pin`). The router QEMU gates check the kit on the emulated unit (`qemu-gate.sh` `ui_kit`, Slate
 `qemu-gate.py` `ui_kit`).
+
+Router-tier cost, measured on the GL-AX1800 openrc image (QEMU aarch64 under TCG, main before the kit vs ui-kit-3):
+root squashfs 18,563,072 -> 18,604,032 bytes (+40 KiB, +0.22 %), the multicall patronus-cli 16,048,944 -> 16,376,624 bytes
+(+320 KiB uncompressed), NAND budget unchanged (383 free LEBs), patronus-web RSS after a full Firefox crawl of the unit
+22,760 -> 23,064 kB (+0.3 MB).
 
 ## Related plan: pfSense / OPNsense parity
 
