@@ -5,6 +5,8 @@
 pub mod apikeys;
 pub mod authservers;
 pub mod backup_targets;
+#[cfg(feature = "cve")]
+pub mod cve;
 pub mod device;
 pub mod firewall;
 pub mod groups;

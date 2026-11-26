@@ -14,6 +14,8 @@ pub mod firstboot;
 #[cfg(feature = "gitops")]
 pub mod gitops;
 #[cfg(feature = "bruteforce")]
+#[cfg(feature = "cve")]
+pub mod cve;
 pub mod guard;
 #[cfg(feature = "guest")]
 pub mod guest;

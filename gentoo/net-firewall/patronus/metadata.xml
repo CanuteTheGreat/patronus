@@ -40,6 +40,7 @@
 		<flag name="captive-portal">Enable captive portal functionality</flag>
 		<flag name="intrusion-detection">Enable IDS/IPS functionality</flag>
 		<flag name="bruteforce">Brute-force protection: ban addresses that keep failing SSH or web UI logins (own nftables table, no extra daemon)</flag>
+		<flag name="cve">CVE exposure: installed packages against Gentoo GLSAs, Rust crates compiled into the Patronus programs against OSV advisories, security-update policy (downloads one ~4 MB public archive a day, sends nothing about the router)</flag>
 		<flag name="suricata">Use Suricata for intrusion detection</flag>
 		<flag name="vlan">Enable VLAN support</flag>
 		<flag name="qos">Enable Quality of Service (traffic shaping)</flag>

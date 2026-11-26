@@ -58,6 +58,8 @@ cp -r ci/netlab/fixtures "$OUT/"
 cp ci/guest-page-e2e.py "$OUT/"
 # lane B UI scenario (lane-b-guard-ui.sh) drives this one
 cp ci/guard-page-e2e.py "$OUT/"
+# lane B UI scenario (lane-b-cve-ui.sh) drives this one
+cp ci/cve-page-e2e.py "$OUT/"
 # lane J XDP data plane: the shipped BPF program source
 cp crates/patronus-ebpf/src/xdp_firewall.bpf.c "$OUT/"
 OLD_ENV=

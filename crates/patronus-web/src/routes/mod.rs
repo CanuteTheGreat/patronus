@@ -56,6 +56,7 @@ pub fn build_router(
         .merge(seg_time_pages())
         .merge(seg_dns_pages())
         .merge(guard_pages())
+        .merge(cve_pages())
         .merge(api::setup::pages())
         .merge(api::wifi::pages())
         .merge(api::device::pages())
@@ -353,6 +354,22 @@ fn seg_time_router() -> Router<AppState> {
 fn seg_time_router() -> Router<AppState> {
     Router::new()
 }
+#[cfg(feature = "cve")]
+fn cve_pages() -> Router<AppState> {
+    api::cve::pages()
+}
+#[cfg(not(feature = "cve"))]
+fn cve_pages() -> Router<AppState> {
+    Router::new()
+}
+#[cfg(feature = "cve")]
+fn cve_router() -> Router<AppState> {
+    api::cve::router()
+}
+#[cfg(not(feature = "cve"))]
+fn cve_router() -> Router<AppState> {
+    Router::new()
+}
 #[cfg(feature = "bruteforce")]
 fn guard_pages() -> Router<AppState> {
     api::guard::pages()
@@ -442,6 +459,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "web-proxy",
         "intrusion-detection",
         "bruteforce",
+        "cve",
         "dynamic-routing",
         "sdwan-edge",
         "ldap",
@@ -515,6 +533,10 @@ pub fn absent_features(
             "bruteforce",
             "Brute-force protection (bans for SSH / web login guessing)",
         ),
+        (
+            "cve",
+            "CVE exposure (security advisories for the installed software)",
+        ),
         ("dynamic-routing", "BGP / OSPF"),
         ("sdwan-edge", "SD-WAN edge"),
         ("totp", "Two-factor login (TOTP)"),
@@ -581,6 +603,7 @@ fn api_routes() -> Router<AppState> {
         .merge(seg_time_router())
         .merge(seg_dns_router())
         .merge(guard_router())
+        .merge(cve_router())
         .merge(api::vpn::router())
         .merge(api::network::router())
         .merge(api::routing::router())

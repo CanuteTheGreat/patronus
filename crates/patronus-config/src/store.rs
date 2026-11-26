@@ -100,6 +100,11 @@ const NON_CONFIG_TABLES: &[&str] = &[
     "guard_bans",
     "guard_failures",
     "guard_reports",
+    // router CVE exposure (lane b): findings, scan history, engine log, latest report
+    "cve_findings",
+    "cve_scans",
+    "cve_log",
+    "cve_state",
     // measured history (lane h): 5-minute CPU/memory/throughput samples (tens of thousands
     // of rows within days), monthly data accounting, the event log and the firewall log.
     // In the export they made every revision, backup and drift check carry megabytes of

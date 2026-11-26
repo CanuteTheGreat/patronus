@@ -24,6 +24,18 @@ APK="apk --initdb --no-scripts --no-cache --keys-dir /etc/apk/keys --repositorie
 HOSTAPD_APK=$(ls /out/hostapd/*/hostapd-2.11-r1[0-9][0-9].apk 2>/dev/null | sort -V | tail -1)
 [ -n "$HOSTAPD_APK" ] || { echo "stage-rootfs: no Patronus hostapd package in /out/hostapd (run stage-hostapd.sh first)"; exit 1; }
 $APK --root $R add --allow-untrusted $COMMON "$HOSTAPD_APK"
+# The package database is deleted below: record what is installed first. The manifest and its advisory gate (the
+# distribution's own security database, never Gentoo GLSAs) are what the router's CVE exposure page shows
+# (docs/CVE-EXPOSURE.md). Needs the network for the security database; without it the manifest has no gate result.
+apk --root $R info -v | sort > /out/apk-installed.txt
+[ -s /out/apk-installed.txt ] || { echo "stage-rootfs: apk reports no installed packages"; exit 1; }
+H=$(cd "$(dirname "$0")" && pwd); ROOT=$(cd "$H/../../.." && pwd)
+mkdir -p $R/usr/share/patronus
+python3 "$ROOT/ci/embedded-common/make-package-manifest.py" --apk-list /out/apk-installed.txt --image gl-ax1800 \
+  --version "$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)" --distribution alpine \
+  --release "$(cut -d. -f1,2 /etc/alpine-release)" --accepts "$ROOT/ci/image-advisory-accepts.txt" --enforce \
+  --out $R/usr/share/patronus/package-manifest.json
+chmod 644 $R/usr/share/patronus/package-manifest.json
 rm -rf $R/lib/apk $R/var/cache/apk $R/etc/apk
 # u-boot-tools: only the environment tools (boot rollback, patronus-guard); mkimage & co. are build-host tools
 for f in dumpimage fit_check_sign fit_info gdbcont gdbsend gen_eth_addr gen_ethaddr_crc img2srec kwboot mkenvimage mkimage mkeficapsule mksunxiboot ubsha1 xway-swap-bytes ifwitool fdtgrep sunxi-spl-image-builder dtc; do rm -f $R/usr/bin/$f; done
