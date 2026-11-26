@@ -116,6 +116,8 @@
     </form>
 </div>
 
+{% include "dns_filter.html" %}
+
 <div class="card">
     <div class="card-header"><h2 class="card-title">Dynamic DNS</h2></div>
     {% if ddns.is_empty() %}<p class="empty">No dynamic DNS client.</p>{% else %}

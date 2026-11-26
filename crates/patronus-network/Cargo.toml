@@ -9,7 +9,7 @@ default = []
 # LAN services (lane D). The daemons are external Gentoo packages (kea or
 # dnsmasq, radvd, unbound, chrony); these features compile the appliers.
 dhcp = []
-dns = []
+dns = ["dep:regex-lite"]
 ntp = []
 # Lane F: WireGuard tunnels (keys generated in-process, kernel module +
 # wireguard-tools at runtime) and IPsec IKEv2 via strongSwan swanctl.
@@ -89,5 +89,7 @@ ed25519-dalek = { version = "2.1", optional = true }
 sha2 = "0.10"
 rand = { version = "0.8", optional = true }
 socket2 = { version = "0.5", features = ["all"] }
+# allow-list regular expressions of the DNS filter (small, no unicode tables: fits the router tier)
+regex-lite = { version = "0.1", optional = true }
 
 # wireguard-control = { workspace = true, optional = true }  # Removed - not used
