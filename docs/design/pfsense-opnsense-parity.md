@@ -74,7 +74,7 @@ Status words: **present** = in the shipped binary, reachable from API/UI, covere
 | GIF (IP-in-IP), 6in4 / 6rd tunnel broker | none | missing |
 | PPPoE / PPP client, L2TP | PPPoE client, L2TP | present |
 | Wireless (AP, client) | AP + client, auto channel | present (ahead) |
-| Interface groups usable as rule targets | none | **missing** |
+| Interface groups usable as rule targets | named interface lists rendered as nft `ifname` sets, `group:NAME` as a rule interface, members swapped live | done (docs/FIREWALL-FLOATING.md, netlab lane-b-floating) |
 | Virtual IPs: CARP / IP alias / proxy ARP | VRRP VIPs; proxy ARP only in segmentation | partial: no IP alias / proxy-ARP VIP type |
 | Loopback, TAP devices (OPNsense) | none | missing (low) |
 | Hostwatch / neighbor discovery log (OPNsense), ARP watch | none | missing (low) |
@@ -84,16 +84,16 @@ Status words: **present** = in the shipped binary, reachable from API/UI, covere
 | Feature | Patronus | Status |
 |---|---|---|
 | Per-interface rules, aliases (host/net/port), URL tables, GeoIP, ASN | yes (lane-b-firewall, lane-b-feeds) | present |
-| Floating rules (any interface, direction, quick) | none | **missing** |
-| Rules on interface groups | none | **missing** |
+| Floating rules (any interface, direction, quick) | several interfaces/groups, in/out/any, quick before / not quick after the interface rules | done (nft has no last-match; ordering models it) |
+| Rules on interface groups | yes, single rule or floating | done |
 | NAT: port forward, outbound/source NAT, 1:1, NPTv6 | yes (lane-b-npt) | present |
 | Schedules on rules | `patronus-firewall/src/schedule.rs` | present |
-| Traffic shaper (CAKE, fq_codel, limit) + limiters | CAKE / fq_codel / limit per interface | partial: no per-rule limiter/queue assignment, no shaper wizard |
+| Traffic shaper (CAKE, fq_codel, limit) + limiters | CAKE / fq_codel / limit per interface; named limiters (per source or shared) assignable per rule | partial: no queue/class assignment per rule, no shaper wizard |
 | Rule logging, live log view, summary view | NFLOG log viewer | partial: no "dynamic/summary" views, no "block from log" action |
 | States table, reset states, pfTop-like live view | states page | partial: no live top-talkers per state with sort/kill |
 | Policy routing (gateway per rule) | yes (lane-e) | present |
-| Normalization / scrub, max states, syn-proxy, state options per rule | hardening + MSS clamp | partial: no per-rule state limits (max-src-conn etc.) |
-| Firewall categories (OPNsense) for rule grouping | none | missing (low) |
+| Normalization / scrub, max states, syn-proxy, state options per rule | hardening + MSS clamp; per rule: max states, max connections per source, new-connection rate with overload table (release API) | partial: no syn-proxy, no per-rule timeouts or sloppy state |
+| Firewall categories (OPNsense) for rule grouping | category label per rule (table column, categories API) | done (no collapsible separators) |
 
 ## 5. Routing, multi-WAN, HA
 
