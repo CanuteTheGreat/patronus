@@ -65,7 +65,7 @@ def on_dialog(d):
     elif "Host name clients use" in m:
         d.accept("e2e.example.test")
     elif "Public port" in m:
-        d.accept("8081")
+        d.accept("8085")
     elif "Delete this entry" in m:
         d.accept()
     else:
@@ -149,7 +149,12 @@ def run(p, kind):
         page.reload()
         page.wait_for_selector("#svc-settings-form [name=enabled]")
         page.locator("#svc-action-buttons button", has_text="Publish").click()
-        page.wait_for_function("() => /published/.test(document.getElementById('svc-action-result').textContent)", timeout=30000)
+        try:
+            page.wait_for_function("() => /published/.test(document.getElementById('svc-action-result').textContent)", timeout=30000)
+        except Exception:
+            check(tag + "Publish answered", False, page.locator("#svc-error").inner_text())
+            browser.close()
+            return
         d = api(page, "/api/svc/revproxy")["json"]
         check(tag + "Publish: frontend, backend and server exist and the feature is on",
               d["settings"]["enabled"] is True and len(d["collections"]["frontends"]) == 1

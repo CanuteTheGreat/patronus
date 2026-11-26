@@ -20,6 +20,9 @@ command -v haproxy >/dev/null || apt-get install -y -qq haproxy >/dev/null
 command -v haproxy >/dev/null || nl_fail "haproxy not installed"
 command -v openssl >/dev/null || apt-get install -y -qq openssl >/dev/null
 pkill -x haproxy 2>/dev/null || true
+# out_has PATTERN CMD...: run CMD, succeed when its output matches PATTERN (no pipe into grep -q)
+out_has() { local pat=$1 o; shift; o=$("$@" 2>/dev/null) || true; grep -q -- "$pat" <<<"$o"; }
+export -f out_has
 alive() { ps -eo stat=,comm= | awk -v n="$1" '$2 == n && $1 !~ /^Z/ { f = 1 } END { exit !f }'; }
 export -f alive
 
@@ -73,7 +76,7 @@ nl_api POST /svc/revproxy/action/publish '{"name":"solo","address":"192.168.50.1
 ok2xx "publish"
 nl_wait 20 alive haproxy || { tail -20 /var/lib/patronus/net/*haproxy* 2>/dev/null || true; nl_fail "haproxy did not start after publishing"; }
 nl_assert_nft_has "reverse proxy solo"
-nl_wait 15 bash -c "INET curl -s -m 3 --resolve solo.example.test:80:$NL_RTR_WAN http://solo.example.test/ | grep -q 'backend solo'" || nl_fail "published service not reachable by name"
+nl_wait 15 out_has 'backend solo' INET curl -s -m 3 --resolve solo.example.test:80:$NL_RTR_WAN http://solo.example.test/ || nl_fail "published service not reachable by name"
 out=$(inet_get solo.example.test)
 grep -q "backend solo host solo.example.test" <<<"$out" || nl_fail "the published service answered: $out"
 grep -q "for 198.51.100.10" <<<"$out" || nl_fail "X-Forwarded-For lacks the client address: $out"
@@ -90,7 +93,7 @@ for _ in $(seq 1 12); do
   b=$(inet_get pool.example.test | sed -n 's/^backend \([a-z]*\) .*/\1/p')
   seen="$seen $b"
 done
-echo "$seen" | grep -q one && echo "$seen" | grep -q two || nl_fail "balancing: servers seen:$seen"
+grep -q one <<<"$seen" && grep -q two <<<"$seen" || nl_fail "balancing: servers seen:$seen"
 nl_ok "round robin reaches both servers:$seen"
 # the host name still picks the backend: solo.example.test is not the pool
 grep -q "backend solo" <<<"$(inet_get solo.example.test)" || nl_fail "host routing: solo.example.test no longer reaches solo"
@@ -98,7 +101,6 @@ nl_ok "host name routing keeps the other service apart"
 
 # one backend goes down
 pid=$(pgrep -f 'lb-rpsrv.py 192.168.50.11' | head -1); kill "$pid"
-nl_wait 20 bash -c "! INET curl -s -m 2 --resolve pool.example.test:80:$NL_RTR_WAN http://pool.example.test/ | grep -q 'backend one'" || true
 sleep 4
 bad=0; seen=""
 for _ in $(seq 1 12); do
@@ -122,7 +124,7 @@ nl_bg C python3 "$NL_T/lb-rpsrv.py" 192.168.50.11 8080 one
 sleep 4
 seen=""
 for _ in $(seq 1 12); do seen="$seen $(inet_get pool.example.test | sed -n 's/^backend \([a-z]*\) .*/\1/p')"; done
-echo "$seen" | grep -q one || nl_fail "server one came back but gets no traffic:$seen"
+grep -q one <<<"$seen" || nl_fail "server one came back but gets no traffic:$seen"
 nl_ok "server one back: traffic spreads again:$seen"
 
 echo "=== TLS frontend serves its certificate"
@@ -131,7 +133,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -keyout "$NL_T/rp-key.pem" -out "$NL_T
 cat "$NL_T/rp-cert.pem" "$NL_T/rp-key.pem" > "$NL_T/rp-site.pem"
 nl_api POST /svc/revproxy/frontends '{"name":"secure","port":443,"tls":true,"cert_file":"/t/rp-site.pem","default_backend":"solo"}'
 ok2xx "TLS frontend"
-nl_wait 15 bash -c "INET curl -s -m 3 --cacert $NL_T/rp-cert.pem --resolve tls.example.test:443:$NL_RTR_WAN https://tls.example.test/ | grep -q 'backend solo'" \
+nl_wait 15 out_has 'backend solo' INET curl -s -m 3 --cacert $NL_T/rp-cert.pem --resolve tls.example.test:443:$NL_RTR_WAN https://tls.example.test/ \
   || { INET curl -sv -m 3 --cacert $NL_T/rp-cert.pem --resolve tls.example.test:443:$NL_RTR_WAN https://tls.example.test/ 2>&1 | tail -15; nl_fail "https://tls.example.test did not answer"; }
 subj=$(INET sh -c "echo | openssl s_client -connect $NL_RTR_WAN:443 -servername tls.example.test 2>/dev/null | openssl x509 -noout -subject")
 grep -q "tls.example.test" <<<"$subj" || nl_fail "served certificate: $subj"
@@ -169,7 +171,7 @@ for a in 11 12 13; do C ip addr add 192.168.50.$a/24 dev lan0; done
 nl_bg C python3 "$NL_T/lb-rpsrv.py" 192.168.50.11 8080 one
 nl_bg C python3 "$NL_T/lb-rpsrv.py" 192.168.50.12 8080 two
 nl_bg C python3 "$NL_T/lb-rpsrv.py" 192.168.50.13 8080 solo
-nl_wait 30 bash -c "INET curl -s -m 3 --resolve solo.example.test:80:$NL_RTR_WAN http://solo.example.test/ | grep -q 'backend solo'" || nl_fail "the proxy did not come back after a reboot"
+nl_wait 30 out_has 'backend solo' INET curl -s -m 3 --resolve solo.example.test:80:$NL_RTR_WAN http://solo.example.test/ || nl_fail "the proxy did not come back after a reboot"
 nl_ok "after a reboot the proxy serves from the stored configuration"
 
 echo "=== switch off"

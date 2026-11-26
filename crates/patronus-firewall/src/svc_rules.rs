@@ -421,12 +421,20 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
             {
                 continue;
             }
-            let daddr = match bind.as_deref().and_then(|b| b.parse::<std::net::IpAddr>().ok()) {
+            let daddr = match bind
+                .as_deref()
+                .and_then(|b| b.parse::<std::net::IpAddr>().ok())
+            {
                 Some(std::net::IpAddr::V4(a)) if !a.is_unspecified() => format!("ip daddr {a} "),
                 Some(std::net::IpAddr::V6(a)) if !a.is_unspecified() => format!("ip6 daddr {a} "),
                 _ => String::new(),
             };
-            for d in devices(store, iface.as_deref().filter(|i| !i.is_empty()).unwrap_or("@wan")).await {
+            for d in devices(
+                store,
+                iface.as_deref().filter(|i| !i.is_empty()).unwrap_or("@wan"),
+            )
+            .await
+            {
                 out.filter.push(format!(
                     "add rule {t} input iifname \"{d}\" {daddr}tcp dport {port} accept comment \"reverse proxy {name}\""
                 ));
@@ -596,12 +604,27 @@ mod tests {
         fe("site", "@wan", "0.0.0.0", 443, 1).await;
         fe("intranet", "@lan", "192.168.50.1", 8080, 1).await;
         fe("off", "@wan", "0.0.0.0", 9999, 0).await;
-        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default(), "feature off: nothing");
+        assert_eq!(
+            svc_rules(&s).await.unwrap(),
+            VpnRules::default(),
+            "feature off: nothing"
+        );
         put(&s, "revproxy.enabled", "1").await;
         let f = svc_rules(&s).await.unwrap().filter.join("\n");
-        assert!(f.contains("input iifname \"eth0\" tcp dport 443 accept comment \"reverse proxy site\""), "{f}");
-        assert!(f.contains("input iifname \"eth1\" ip daddr 192.168.50.1 tcp dport 8080 accept"), "{f}");
-        assert!(!f.contains("9999"), "a disabled frontend opens nothing: {f}");
+        assert!(
+            f.contains(
+                "input iifname \"eth0\" tcp dport 443 accept comment \"reverse proxy site\""
+            ),
+            "{f}"
+        );
+        assert!(
+            f.contains("input iifname \"eth1\" ip daddr 192.168.50.1 tcp dport 8080 accept"),
+            "{f}"
+        );
+        assert!(
+            !f.contains("9999"),
+            "a disabled frontend opens nothing: {f}"
+        );
     }
 
     #[tokio::test]

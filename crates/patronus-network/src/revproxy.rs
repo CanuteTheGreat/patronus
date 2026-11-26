@@ -34,12 +34,36 @@ static FIELDS: [Field; 7] = [
     Field::new("enabled", "Reverse proxy / load balancer", Kind::Bool)
         .def("0")
         .help("Off by default. Listeners only open when this is on and a frontend is enabled"),
-    Field::new("max_conn", "Maximum concurrent connections", Kind::Int(10, 1_000_000)).def("4000"),
-    Field::new("timeout_connect", "Backend connect timeout (s)", Kind::Int(1, 600)).def("5"),
-    Field::new("timeout_client", "Client idle timeout (s)", Kind::Int(1, 86400)).def("30"),
-    Field::new("timeout_server", "Backend idle timeout (s)", Kind::Int(1, 86400)).def("30"),
-    Field::new("tls_min", "Oldest TLS version accepted", Kind::Select(&["TLSv1.2", "TLSv1.3"]))
-        .def("TLSv1.2"),
+    Field::new(
+        "max_conn",
+        "Maximum concurrent connections",
+        Kind::Int(10, 1_000_000),
+    )
+    .def("4000"),
+    Field::new(
+        "timeout_connect",
+        "Backend connect timeout (s)",
+        Kind::Int(1, 600),
+    )
+    .def("5"),
+    Field::new(
+        "timeout_client",
+        "Client idle timeout (s)",
+        Kind::Int(1, 86400),
+    )
+    .def("30"),
+    Field::new(
+        "timeout_server",
+        "Backend idle timeout (s)",
+        Kind::Int(1, 86400),
+    )
+    .def("30"),
+    Field::new(
+        "tls_min",
+        "Oldest TLS version accepted",
+        Kind::Select(&["TLSv1.2", "TLSv1.3"]),
+    )
+    .def("TLSv1.2"),
     Field::new("stats", "Live statistics", Kind::Bool)
         .def("1")
         .help("read from haproxy's local admin socket; nothing is exposed on the network"),
@@ -81,9 +105,13 @@ static BACKEND_FIELDS: [Field; 10] = [
         Kind::Select(&["roundrobin", "leastconn", "source", "uri", "random"]),
     )
     .def("roundrobin"),
-    Field::new("health", "Health check", Kind::Select(&["none", "tcp", "http"]))
-        .def("tcp")
-        .help("a server that fails its check gets no traffic until it passes again"),
+    Field::new(
+        "health",
+        "Health check",
+        Kind::Select(&["none", "tcp", "http"]),
+    )
+    .def("tcp")
+    .help("a server that fails its check gets no traffic until it passes again"),
     Field::new("check_uri", "Health check path", Kind::Token).def("/"),
     Field::new("check_interval", "Check every (s)", Kind::Int(1, 3600)).def("2"),
     Field::new("rise", "Checks to mark up", Kind::Int(1, 100)).def("2"),
@@ -308,7 +336,9 @@ pub fn problems(m: &Model, web: Option<&WebListen>) -> Vec<String> {
     for r in m.rules.iter().filter(|r| gb(r, "enabled")) {
         let (fe, be) = (g(r, "frontend"), g(r, "backend"));
         let Some(f) = m.frontends.iter().find(|f| g(f, "name") == fe) else {
-            out.push(format!("Routing rule for frontend {fe:?}: no such frontend"));
+            out.push(format!(
+                "Routing rule for frontend {fe:?}: no such frontend"
+            ));
             continue;
         };
         match m.backend(&be) {
@@ -327,7 +357,9 @@ pub fn problems(m: &Model, web: Option<&WebListen>) -> Vec<String> {
             ));
         }
         if !p.is_empty() && !p.starts_with('/') {
-            out.push(format!("Routing rule {fe:?} -> {be:?}: the path must begin with /"));
+            out.push(format!(
+                "Routing rule {fe:?} -> {be:?}: the path must begin with /"
+            ));
         }
         if !p.is_empty() && g(f, "mode") == "tcp" {
             out.push(format!(
@@ -338,11 +370,15 @@ pub fn problems(m: &Model, web: Option<&WebListen>) -> Vec<String> {
     for b in m.backends.iter().filter(|b| gb(b, "enabled")) {
         let name = g(b, "name");
         if g(b, "health") == "http" && g(b, "mode") == "tcp" {
-            out.push(format!("Backend {name:?}: an HTTP health check needs mode http"));
+            out.push(format!(
+                "Backend {name:?}: an HTTP health check needs mode http"
+            ));
         }
         let uri = g(b, "check_uri");
         if g(b, "health") == "http" && !uri.starts_with('/') {
-            out.push(format!("Backend {name:?}: the health check path must begin with /"));
+            out.push(format!(
+                "Backend {name:?}: the health check path must begin with /"
+            ));
         }
     }
     for s in &m.servers {
@@ -580,7 +616,24 @@ pub fn parse_stats(csv: &str) -> Vec<Value> {
             if let Some(v) = f.get(i) {
                 if matches!(
                     *c,
-                    "pxname" | "svname" | "status" | "scur" | "stot" | "bin" | "bout" | "rate" | "chkfail" | "check_status" | "weight" | "act" | "bck" | "hrsp_2xx" | "hrsp_5xx" | "ereq" | "econ" | "dreq"
+                    "pxname"
+                        | "svname"
+                        | "status"
+                        | "scur"
+                        | "stot"
+                        | "bin"
+                        | "bout"
+                        | "rate"
+                        | "chkfail"
+                        | "check_status"
+                        | "weight"
+                        | "act"
+                        | "bck"
+                        | "hrsp_2xx"
+                        | "hrsp_5xx"
+                        | "ereq"
+                        | "econ"
+                        | "dreq"
                 ) {
                     m.insert((*c).into(), Value::String((*v).into()));
                 }
@@ -596,7 +649,8 @@ fn admin_command(sock: &std::path::Path, cmd: &str) -> Result<String> {
     use std::os::unix::net::UnixStream;
     let mut s = UnixStream::connect(sock)
         .map_err(|e| Error::Service(format!("the proxy is not running (admin socket: {e})")))?;
-    s.set_read_timeout(Some(std::time::Duration::from_secs(5))).ok();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .ok();
     s.write_all(format!("{cmd}\n").as_bytes())
         .map_err(|e| Error::Service(format!("admin socket: {e}")))?;
     let mut out = String::new();
@@ -740,14 +794,23 @@ async fn check_listener(store: &ConfigStore, id: Option<i64>, body: &Value) -> R
                 Value::Number(n) => n.to_string(),
                 _ => continue,
             };
-            let t = if k == "enabled" && t == "true" { "1".into() } else { t };
+            let t = if k == "enabled" && t == "true" {
+                "1".into()
+            } else {
+                t
+            };
             if t.is_empty() && matches!(k.as_str(), "bind" | "mode") {
                 continue;
             }
             row.insert(k.clone(), json!(t));
         }
     }
-    if row.get("name").and_then(Value::as_str).unwrap_or("").is_empty() {
+    if row
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .is_empty()
+    {
         return Ok(()); // the row validation reports the missing name
     }
     let name = g(&row, "name");
@@ -795,8 +858,15 @@ async fn publish(store: &ConfigStore, body: &Value) -> Result<Value> {
         *svc::find_coll(&SPEC, "frontends")?,
         *svc::find_coll(&SPEC, "rules")?,
     );
-    let beid = svc::save_row(store, &cb, None, &json!({"name": name, "mode": "http", "health": "tcp"})).await?;
-    let sv = json!({"backend": name, "name": format!("{name}-1"), "address": address, "port": port});
+    let beid = svc::save_row(
+        store,
+        &cb,
+        None,
+        &json!({"name": name, "mode": "http", "health": "tcp"}),
+    )
+    .await?;
+    let sv =
+        json!({"backend": name, "name": format!("{name}-1"), "address": address, "port": port});
     let sid = match svc::save_row(store, &cs, None, &sv).await {
         Ok(i) => i,
         Err(e) => {
@@ -1037,17 +1107,22 @@ mod tests {
         assert!(c.contains("balance leastconn"));
         assert!(c.contains("option httpchk GET /health"));
         assert!(c.contains("server a 192.168.50.10:8080 weight 100 check inter 3s rise 2 fall 3\n"));
-        assert!(c.contains("server b 192.168.50.11:8080 weight 50 check inter 3s rise 2 fall 3 backup\n"));
+        assert!(c.contains(
+            "server b 192.168.50.11:8080 weight 50 check inter 3s rise 2 fall 3 backup\n"
+        ));
         assert!(c.contains("stats socket /run/h.sock mode 600 level admin"));
         assert!(c.contains("timeout connect 5s"));
-        assert!(problems(&model(), None).is_empty(), "{:?}", problems(&model(), None));
+        assert!(
+            problems(&model(), None).is_empty(),
+            "{:?}",
+            problems(&model(), None)
+        );
     }
 
     #[test]
     fn host_and_path_rules_and_tls() {
         let mut m = model();
-        m.frontends[0]
-            .insert("tls".into(), json!("1"));
+        m.frontends[0].insert("tls".into(), json!("1"));
         m.frontends[0].insert("cert_file".into(), json!("/etc/ssl/site.pem"));
         m.frontends[0].insert("port".into(), json!("443"));
         m.backends.push(row(&[
@@ -1092,10 +1167,16 @@ mod tests {
             ports: vec![443, 80],
         };
         let p = problems(&m, Some(&web));
-        assert!(p.iter().any(|x| x.contains("web UI already uses") && x.contains("port 80")), "{p:?}");
+        assert!(
+            p.iter()
+                .any(|x| x.contains("web UI already uses") && x.contains("port 80")),
+            "{p:?}"
+        );
         // missing backend / empty backend / mode clash
         m.frontends[0].insert("default_backend".into(), json!("nope"));
-        assert!(problems(&m, None).iter().any(|x| x.contains("does not exist")));
+        assert!(problems(&m, None)
+            .iter()
+            .any(|x| x.contains("does not exist")));
         m.frontends[0].insert("default_backend".into(), json!("app"));
         m.servers.clear();
         assert!(warnings(&m).iter().any(|x| x.contains("no enabled server")));
@@ -1109,7 +1190,9 @@ mod tests {
         let mut f2 = m.frontends[0].clone();
         f2.insert("name".into(), json!("web2"));
         m.frontends.push(f2);
-        assert!(problems(&m, None).iter().any(|x| x.contains("both listen on port 80")));
+        assert!(problems(&m, None)
+            .iter()
+            .any(|x| x.contains("both listen on port 80")));
         // a specific address does not clash with another specific one
         m.frontends[1].insert("bind".into(), json!("10.0.0.1"));
         m.frontends[0].insert("bind".into(), json!("10.0.0.2"));
@@ -1161,14 +1244,22 @@ mod tests {
         assert!(s.b("enabled"));
         // a bad address leaves no orphan backend behind
         assert!(RevProxySvc
-            .action(&store, "publish", &json!({"name": "bad", "address": "not an ip!", "port": 1}))
+            .action(
+                &store,
+                "publish",
+                &json!({"name": "bad", "address": "not an ip!", "port": 1})
+            )
             .await
             .is_err());
         let m = Model::load(&store).await.unwrap();
         assert!(m.backend("bad").is_none());
         // same name twice is refused
         assert!(RevProxySvc
-            .action(&store, "publish", &json!({"name": "blog", "address": "10.0.0.1", "port": 1}))
+            .action(
+                &store,
+                "publish",
+                &json!({"name": "blog", "address": "10.0.0.1", "port": 1})
+            )
             .await
             .is_err());
     }
