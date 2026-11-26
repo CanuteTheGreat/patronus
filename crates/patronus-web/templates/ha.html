@@ -17,13 +17,16 @@
 <div class="card" id="ha-status-card">
     <div class="card-header"><h2 class="card-title">State</h2></div>
     <p id="ha-state" class="text-sm">Loading...</p>
+    <p id="ha-maint-banner" class="text-sm" role="status" aria-live="polite" style="display:none;background:var(--warn-bg);color:var(--warn-fg);padding:.6em 1em;border-radius:4px"></p>
     {% if can_modify %}
     <p>
         <button class="btn btn-sm btn-secondary" id="ha-maint-on" onclick="maint(true)">Enter maintenance mode</button>
         <button class="btn btn-sm btn-secondary" id="ha-maint-off" onclick="maint(false)">Leave maintenance mode</button>
     </p>
     <p class="text-sm text-muted">Maintenance mode advertises the lowest priority, so the other node takes over all
-        virtual IPs; leave it to hand them back (this node preempts again).</p>
+        virtual IPs; leave it to hand them back (this node preempts again). Entering checks that the other node is
+        healthy and waits until it carries every virtual IP; it is refused (with the reason) when the other node
+        cannot take over. Firmware upgrades, package updates, restarts and shutdowns do this by themselves.</p>
     {% endif %}
 </div>
 
@@ -38,6 +41,10 @@
         <label>Sync connection states <input type="checkbox" name="sync"></label>
         <label>Sync interface (device or @opt1) <input name="sync_interface" data-keep-empty="1"></label>
         <label>Peer address on the sync interface <input name="sync_peer" data-keep-empty="1"></label>
+        <label>Enter maintenance mode by itself before an upgrade, update or restart <input type="checkbox" name="auto_maintenance" checked></label>
+        <label>Seconds to wait for the other node to take over (5-3600) <input name="handoff_timeout" type="number" min="5" max="3600" value="60"></label>
+        <label>Seconds the other node is watched before maintenance starts (2-60) <input name="peer_check_secs" type="number" min="2" max="60" value="4"></label>
+        <label>Seconds to wait for the node to rejoin after a restart (10-3600) <input name="rejoin_timeout" type="number" min="10" max="3600" value="300"></label>
         {% if can_modify %}<button class="btn btn-primary btn-sm" type="submit">Save and apply</button>{% endif %}
     </form>
 </div>
@@ -82,6 +89,10 @@
         const f = document.getElementById('ha-form').elements;
         f['enabled'].checked = s.enabled; f['priority'].value = s.priority; f['preempt'].checked = s.preempt;
         f['peer'].value = s.peer || ''; f['password'].value = s.password || '';
+        if (document.activeElement && document.activeElement.form !== document.getElementById('ha-form')) {
+            f['auto_maintenance'].checked = s.auto_maintenance; f['handoff_timeout'].value = s.handoff_timeout;
+            f['peer_check_secs'].value = s.peer_check_secs; f['rejoin_timeout'].value = s.rejoin_timeout;
+        }
         f['sync'].checked = s.sync; f['sync_interface'].value = s.sync_interface || ''; f['sync_peer'].value = s.sync_peer || '';
         const el = document.getElementById('ha-state');
         let t = st.installed === false ? 'keepalived is not installed (emerge sys-cluster/keepalived). ' : '';
@@ -89,7 +100,7 @@
         else {
             t += 'This node is ' + (st.state ? st.state : 'not reporting a state yet') + '. keepalived: '
                 + (st.keepalived ? 'running' : 'stopped') + '; state sync: ' + (s.sync ? (st.conntrackd ? 'running' : 'stopped') : 'off') + '.';
-            if (s.maintenance) t += ' MAINTENANCE MODE (lowest priority).';
+            if (s.maintenance) t += ' MAINTENANCE MODE (lowest priority' + (s.maintenance_auto ? ', entered for an upgrade or restart: it ends by itself' : '') + ').';
         }
         el.textContent = t; el.dataset.state = st.state || '';
         const tb = document.querySelector('#ha-vips tbody'); tb.textContent = '';
@@ -111,7 +122,9 @@
         ev.preventDefault();
         const f = ev.target.elements;
         const body = {enabled: f['enabled'].checked, priority: Number(f['priority'].value), preempt: f['preempt'].checked,
-            peer: f['peer'].value, sync: f['sync'].checked, sync_interface: f['sync_interface'].value, sync_peer: f['sync_peer'].value};
+            peer: f['peer'].value, sync: f['sync'].checked, sync_interface: f['sync_interface'].value, sync_peer: f['sync_peer'].value,
+            auto_maintenance: f['auto_maintenance'].checked, handoff_timeout: Number(f['handoff_timeout'].value),
+            peer_check_secs: Number(f['peer_check_secs'].value), rejoin_timeout: Number(f['rejoin_timeout'].value)};
         if (f['password'].value) body.password = f['password'].value;
         if (await api('PUT', '/api/ha/settings', body)) loadHa();
         return false;
@@ -124,7 +137,38 @@
         if (await api('POST', '/api/ha/vips', body)) { ev.target.reset(); loadHa(); }
         return false;
     }
-    async function maint(on) { if (await api('POST', '/api/ha/maintenance', {enabled: on})) loadHa(); }
-    document.addEventListener('DOMContentLoaded', () => { loadHa(); setInterval(loadHa, 5000); });
+    // the banner follows the hand-over: checking -> waiting for the peer -> handed over / failed
+    async function showProgress() {
+        const b = document.getElementById('ha-maint-banner');
+        const r = await fetch('/api/ha/maintenance', {credentials: 'same-origin'});
+        if (!r.ok) return;
+        const p = await r.json();
+        const live = ['checking', 'handoff', 'leaving'].includes(p.phase);
+        const recent = p.updated && (Date.now() / 1000 - p.updated) < 120;
+        if (live || (recent && p.phase !== 'idle')) {
+            b.style.display = '';
+            b.textContent = (p.reason && p.reason !== 'manual' ? 'Maintenance for ' + p.reason + ': ' : 'Maintenance: ') + p.message
+                + (p.phase === 'handoff' && p.vips_total ? ' (' + (p.vips_total - p.vips_left) + ' of ' + p.vips_total + ' virtual IPs moved)' : '');
+        } else b.style.display = 'none';
+    }
+    async function maint(on) {
+        const body = {enabled: on};
+        const poll = setInterval(showProgress, 1000);
+        try {
+            let r = await fetch('/api/ha/maintenance', {method: 'POST', credentials: 'same-origin',
+                headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
+            let j = {}; try { j = await r.json(); } catch (_) {}
+            if (!r.ok && on && /not healthy|cannot tell|nothing to hand over/.test(j.error || '')
+                && confirm((j.error || '') + '\n\nGo into maintenance mode anyway? Traffic may be cut.')) {
+                body.force = true;
+                r = await fetch('/api/ha/maintenance', {method: 'POST', credentials: 'same-origin',
+                    headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
+                try { j = await r.json(); } catch (_) {}
+            }
+            if (!r.ok) alert('Not applied: ' + (j.error || r.status));
+        } finally { clearInterval(poll); }
+        showProgress(); loadHa();
+    }
+    document.addEventListener('DOMContentLoaded', () => { loadHa(); showProgress(); setInterval(loadHa, 5000); setInterval(showProgress, 5000); });
 </script>
 {% endblock %}

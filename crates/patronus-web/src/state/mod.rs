@@ -18,6 +18,8 @@ pub mod activity;
 pub mod firewall;
 pub mod fwfeeds;
 pub mod fwlog;
+#[cfg(feature = "ha")]
+pub mod ha_maint;
 pub mod host;
 pub mod insight;
 pub mod interfaces;
@@ -233,6 +235,9 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
     }
     // gateway / tunnel / HA / configuration events for the event log and webhooks
     telemetry::spawn_watcher(state.clone());
+    // a node that went into maintenance before a restart / upgrade leaves it once healthy again
+    #[cfg(feature = "ha")]
+    ha_maint::resume_at_start(state.clone());
     // scheduled internet speed tests (off unless an interval is set)
     speedtest::spawn_scheduler(state.config_store.clone());
     // CPU / memory / throughput history and monthly data accounting

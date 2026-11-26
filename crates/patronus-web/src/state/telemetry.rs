@@ -287,6 +287,7 @@ pub const EVENT_KINDS: &[&str] = &[
     "tunnel_up",
     "tunnel_down",
     "ha_state",
+    "ha_maintenance",
     "config_changed",
     "data_cap",
     "test",

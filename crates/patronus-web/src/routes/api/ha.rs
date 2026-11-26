@@ -101,22 +101,38 @@ mod built {
     #[derive(serde::Deserialize)]
     struct Maintenance {
         enabled: bool,
+        /// skip the peer check and the wait for the hand-over
+        #[serde(default)]
+        force: bool,
     }
 
-    /// POST /api/ha/maintenance {"enabled": bool} -- advertise the lowest
-    /// priority so the peer takes the virtual IPs (and give them back).
-    async fn maintenance(State(state): State<AppState>, Json(m): Json<Maintenance>) -> Response {
-        match state
-            .lan
-            .save_ha_settings(ha::SettingsInput {
-                maintenance: Some(m.enabled),
-                ..Default::default()
-            })
-            .await
-        {
-            Ok(()) => Json(json!({"ok": true, "maintenance": m.enabled})).into_response(),
+    /// POST /api/ha/maintenance {"enabled": bool, "force": bool} -- check the peer, advertise the
+    /// lowest priority and WAIT until the peer carries every virtual IP (refused with the reasons
+    /// when the peer is not healthy, unless `force`); `enabled: false` gives the addresses back and
+    /// waits for the node to be healthy again.
+    async fn maintenance(
+        State(state): State<AppState>,
+        _admin: crate::auth::AdminUser,
+        Json(m): Json<Maintenance>,
+    ) -> Response {
+        let r = if m.enabled {
+            crate::state::ha_maint::enter(&state, m.force, false, "manual").await
+        } else {
+            crate::state::ha_maint::leave(&state, "manual").await
+        };
+        match r {
+            Ok(o) => Json(
+                json!({"ok": true, "maintenance": o.maintenance, "confirmed": o.confirmed,
+                                 "waited_secs": o.waited_secs, "message": o.message}),
+            )
+            .into_response(),
             Err(e) => err(e),
         }
+    }
+
+    /// GET /api/ha/maintenance -- progress of the hand-over (the HA page banner polls it).
+    async fn maintenance_progress() -> Response {
+        Json(crate::state::ha_maint::progress()).into_response()
     }
 
     /// POST /api/ha/vips
@@ -167,7 +183,10 @@ mod built {
         axum::Router::new()
             .route("/ha", get(overview))
             .route("/ha/settings", put(put_settings))
-            .route("/ha/maintenance", post(maintenance))
+            .route(
+                "/ha/maintenance",
+                post(maintenance).get(maintenance_progress),
+            )
             .route("/ha/vips", post(add_vip))
             .route("/ha/vips/:id", put(put_vip).delete(del_vip))
     }

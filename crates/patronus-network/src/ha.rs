@@ -39,10 +39,15 @@ pub const CONNTRACKD_CONF: &str = "/etc/conntrackd/conntrackd.conf";
 pub const CONNTRACKD_BIN: &str = "/usr/sbin/conntrackd";
 pub const NOTIFY_SCRIPT: &str = "/etc/patronus/ha-notify.sh";
 pub const STATE_FILE: &str = "/run/patronus/ha-state";
+/// keepalived writes its per-instance advert counters here on SIGUSR2
+pub const STATS_FILE: &str = "/run/patronus/keepalived.stats";
 pub const SYNC_PORT: u16 = 3780;
 pub const DEFAULT_PRIORITY: u8 = 100;
 /// The priority a node in maintenance mode advertises (0 would release).
 pub const MAINTENANCE_PRIORITY: u8 = 1;
+pub const DEFAULT_HANDOFF_TIMEOUT: u32 = 60;
+pub const DEFAULT_PEER_CHECK_SECS: u32 = 4;
+pub const DEFAULT_REJOIN_TIMEOUT: u32 = 300;
 
 // ---------------------------------------------------------------------------
 // virtual IPs
@@ -271,6 +276,17 @@ pub struct Settings {
     pub sync_peer: Option<String>,
     /// advertise the lowest priority so the peer takes over (persistent maintenance mode)
     pub maintenance: bool,
+    /// the current maintenance mode was entered by an upgrade / restart (not by hand): it is left
+    /// again by itself once the node is back and healthy
+    pub maintenance_auto: bool,
+    /// enter maintenance by itself before a firmware upgrade, package update with restart, restart or shutdown
+    pub auto_maintenance: bool,
+    /// seconds to wait for the peer to take every virtual IP (5-3600)
+    pub handoff_timeout: u32,
+    /// seconds the peer is watched before maintenance is allowed (2-60)
+    pub peer_check_secs: u32,
+    /// seconds after a restart to wait for the peer's adverts / state sync before leaving automatic maintenance (10-3600)
+    pub rejoin_timeout: u32,
 }
 
 impl Default for Settings {
@@ -285,6 +301,11 @@ impl Default for Settings {
             sync_interface: None,
             sync_peer: None,
             maintenance: false,
+            maintenance_auto: false,
+            auto_maintenance: true,
+            handoff_timeout: DEFAULT_HANDOFF_TIMEOUT,
+            peer_check_secs: DEFAULT_PEER_CHECK_SECS,
+            rejoin_timeout: DEFAULT_REJOIN_TIMEOUT,
         }
     }
 }
@@ -309,6 +330,16 @@ pub struct SettingsInput {
     pub sync_peer: Option<String>,
     #[serde(default)]
     pub maintenance: Option<bool>,
+    #[serde(default)]
+    pub maintenance_auto: Option<bool>,
+    #[serde(default)]
+    pub auto_maintenance: Option<bool>,
+    #[serde(default)]
+    pub handoff_timeout: Option<u32>,
+    #[serde(default)]
+    pub peer_check_secs: Option<u32>,
+    #[serde(default)]
+    pub rejoin_timeout: Option<u32>,
 }
 
 fn opt(s: Option<String>) -> Option<String> {
@@ -332,6 +363,22 @@ pub async fn settings(store: &ConfigStore) -> Result<Settings> {
         sync_interface: opt(g("sync_interface")),
         sync_peer: opt(g("sync_peer")),
         maintenance: g("maintenance").is_some_and(|v| lan::flag(&v)),
+        maintenance_auto: g("maintenance_auto").is_some_and(|v| lan::flag(&v)),
+        auto_maintenance: g("auto_maintenance")
+            .map(|v| lan::flag(&v))
+            .unwrap_or(d.auto_maintenance),
+        handoff_timeout: g("handoff_timeout")
+            .and_then(|v| v.parse().ok())
+            .filter(|v| (5..=3600).contains(v))
+            .unwrap_or(d.handoff_timeout),
+        peer_check_secs: g("peer_check_secs")
+            .and_then(|v| v.parse().ok())
+            .filter(|v| (2..=60).contains(v))
+            .unwrap_or(d.peer_check_secs),
+        rejoin_timeout: g("rejoin_timeout")
+            .and_then(|v| v.parse().ok())
+            .filter(|v| (10..=3600).contains(v))
+            .unwrap_or(d.rejoin_timeout),
     })
 }
 
@@ -422,6 +469,31 @@ pub async fn save_settings(store: &ConfigStore, i: &SettingsInput) -> Result<Set
     }
     if let Some(m) = i.maintenance {
         s.maintenance = m;
+        // a manual change decides who owns the mode; the maintenance helpers set `maintenance_auto` themselves
+        s.maintenance_auto = m && i.maintenance_auto.unwrap_or(false);
+    } else if let Some(a) = i.maintenance_auto {
+        s.maintenance_auto = a && s.maintenance;
+    }
+    if let Some(v) = i.auto_maintenance {
+        s.auto_maintenance = v;
+    }
+    if let Some(v) = i.handoff_timeout {
+        if !(5..=3600).contains(&v) {
+            return Err(invalid("handoff timeout: 5-3600 seconds"));
+        }
+        s.handoff_timeout = v;
+    }
+    if let Some(v) = i.peer_check_secs {
+        if !(2..=60).contains(&v) {
+            return Err(invalid("peer check: 2-60 seconds"));
+        }
+        s.peer_check_secs = v;
+    }
+    if let Some(v) = i.rejoin_timeout {
+        if !(10..=3600).contains(&v) {
+            return Err(invalid("rejoin timeout: 10-3600 seconds"));
+        }
+        s.rejoin_timeout = v;
     }
     if s.sync && (s.sync_interface.is_none() || s.sync_peer.is_none()) {
         return Err(invalid(
@@ -444,6 +516,17 @@ pub async fn save_settings(store: &ConfigStore, i: &SettingsInput) -> Result<Set
         ),
         ("ha.sync_peer", s.sync_peer.clone().unwrap_or_default()),
         ("ha.maintenance", (s.maintenance as u8).to_string()),
+        (
+            "ha.maintenance_auto",
+            (s.maintenance_auto as u8).to_string(),
+        ),
+        (
+            "ha.auto_maintenance",
+            (s.auto_maintenance as u8).to_string(),
+        ),
+        ("ha.handoff_timeout", s.handoff_timeout.to_string()),
+        ("ha.peer_check_secs", s.peer_check_secs.to_string()),
+        ("ha.rejoin_timeout", s.rejoin_timeout.to_string()),
     ] {
         lan::set_setting(store, k, &v).await?;
     }
@@ -495,7 +578,7 @@ pub fn render_keepalived(
     groups.sort_by(|a, b| a.0.cmp(&b.0));
     let mut o = lan::header("!", "high availability");
     o.push_str(&format!(
-        "global_defs {{\n    router_id {}\n    enable_script_security\n    script_user root\n}}\n\n",
+        "global_defs {{\n    router_id {}\n    enable_script_security\n    script_user root\n    stats_file {STATS_FILE}\n}}\n\n",
         dev_ident(router_id)
     ));
     let mut names = Vec::new();
@@ -705,6 +788,10 @@ impl HaApplier {
         Self { env }
     }
 
+    pub fn env(&self) -> &LanEnv {
+        &self.env
+    }
+
     fn own_addr(&self, dev: &str, v6: bool, vips: &[ResolvedVip]) -> Option<IpAddr> {
         let addrs = self.env.addrs().ok()?;
         addrs
@@ -747,6 +834,66 @@ impl HaApplier {
             }
         }
         false
+    }
+
+    /// VRRP adverts received since keepalived started (all instances): asks keepalived for its
+    /// statistics (SIGUSR2) and reads the file it writes. None when it cannot be read.
+    async fn advert_counter(&self) -> Option<u64> {
+        let path = self.env.path(STATS_FILE);
+        let before = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let mut signalled = false;
+        for p in [
+            "/run/keepalived.pid",
+            "/var/run/keepalived.pid",
+            "/run/keepalived/keepalived.pid",
+        ] {
+            if let Some(pid) = std::fs::read_to_string(self.env.path(p))
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok())
+            {
+                if nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(pid),
+                    nix::sys::signal::Signal::SIGUSR2,
+                )
+                .is_ok()
+                {
+                    signalled = true;
+                    break;
+                }
+            }
+        }
+        if !signalled {
+            return None;
+        }
+        // keepalived writes the file a moment after the signal
+        for _ in 0..20 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let now = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            if now.is_some() && now != before {
+                break;
+            }
+        }
+        let m = crate::ha_maint::parse_keepalived_stats(&std::fs::read_to_string(&path).ok()?);
+        if m.is_empty() {
+            None
+        } else {
+            Some(m.values().sum())
+        }
+    }
+
+    /// conntrackd packets received on the sync channel.
+    fn sync_counter(&self) -> Option<u64> {
+        if !self.live() {
+            return None;
+        }
+        let o = std::process::Command::new(CONNTRACKD_BIN)
+            .args(["-C", CONNTRACKD_CONF, "-s", "network"])
+            .output()
+            .ok()?;
+        if !o.status.success() {
+            return None;
+        }
+        crate::ha_maint::parse_conntrackd_recv(&String::from_utf8_lossy(&o.stdout))
     }
 
     /// Real kernel changes only on a real root (tests use a temp dir).
@@ -1021,6 +1168,17 @@ impl Applier for HaApplier {
                 .any(|a| a.ifname == v.dev && a.addr == v.net.ip())
         };
         let (state, since) = read_state(&self.env);
+        let running = self.env.services.is_running("keepalived");
+        let adverts = if s.enabled && running {
+            self.advert_counter().await
+        } else {
+            None
+        };
+        let sync_received = if s.enabled && s.sync && self.env.services.is_running("conntrackd") {
+            self.sync_counter()
+        } else {
+            None
+        };
         let vips: Vec<Value> = carp
             .iter()
             .map(|v| (v, "carp"))
@@ -1042,6 +1200,8 @@ impl Applier for HaApplier {
             "vips": vips,
             "peer": s.peer,
             "sync": s.sync,
+            "adverts_received": adverts,
+            "sync_received": sync_received,
         }))
     }
 }
