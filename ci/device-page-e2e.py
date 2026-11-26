@@ -187,12 +187,12 @@ def run(p, kind):
             page.select_option("#rs-form [name=mode]", "weekly")
             page.select_option("#rs-form [name=day]", "wed")
             page.fill("#rs-form [name=time]", "03:17")
-            page.click("#restart-card button.btn-primary")
+            page.click("#restart-card button.ui-btn.primary")
             page.wait_for_function("() => /On: every wed/.test(document.getElementById('rs-state').textContent)", timeout=30000)
             r2 = api(page, "/api/device/restart-schedule")["json"]
             check(tag + "Device (write): weekly restart -> unit enabled and active", r2["unit"].get("enabled") == "enabled" and r2["unit"].get("active") == "active", r2)
             page.select_option("#rs-form [name=mode]", "off")
-            page.click("#restart-card button.btn-primary")
+            page.click("#restart-card button.ui-btn.primary")
             page.wait_for_function("() => /^Off/.test(document.getElementById('rs-state').textContent)", timeout=30000)
             r3 = api(page, "/api/device/restart-schedule")["json"]
             check(tag + "Device (write): off -> unit disabled", r3["mode"] == "off" and r3["unit"].get("enabled") == "disabled", r3)
