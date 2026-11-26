@@ -1,0 +1,6 @@
+{"apkurl":"x","archs":["aarch64"],"reponame":"main","distroversion":"v3.24","packages":[
+ {"pkg":{"name":"busybox","secfixes":{"1.36.1-r6":["CVE-2099-1001"],"1.30.0-r0":["CVE-2099-0001"],"0":["CVE-2099-9999"]}}},
+ {"pkg":{"name":"curl","secfixes":{"8.5.0-r0":["CVE-2099-2001"]}}},
+ {"pkg":{"name":"linux-pam","secfixes":{"1.7.0_rc1-r0":["CVE-2099-3001"]}}},
+ {"pkg":{"name":"openssl","secfixes":{"3.5.1-r0":["CVE-2099-4001"],"3.5.1_p1-r0":["CVE-2099-4002"]}}}
+]}

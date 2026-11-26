@@ -48,6 +48,8 @@ segmentation = []
 wifi-ap = ["segmentation"]
 # Wi-Fi client uplink: wpa_supplicant per device (RDEPEND net-wireless/wpa_supplicant)
 wifi-client = []
+# router CVE exposure (GLSA + OSV crates + image manifest); reduces the OSV archive in process
+cve = ["dep:zip"]
 # signed plugins + Gentoo package jobs (Packages page)
 plugins = ["dep:ed25519-dalek", "dep:rand"]
 web-proxy = []
@@ -87,5 +89,6 @@ ed25519-dalek = { version = "2.1", optional = true }
 sha2 = "0.10"
 rand = { version = "0.8", optional = true }
 socket2 = { version = "0.5", features = ["all"] }
+zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
 
 # wireguard-control = { workspace = true, optional = true }  # Removed - not used

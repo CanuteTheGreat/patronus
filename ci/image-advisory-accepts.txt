@@ -1,0 +1,4 @@
+# Advisories of the router images' packages that the build accepts on purpose, one per line:
+#   ADVISORY-ID reason (what makes it not apply here, and who decided)
+# An advisory with a fixed version newer than the image's package normally means: rebuild the image (the image
+# takes the newest package of its Alpine release). Accept only what the distribution has not fixed yet.

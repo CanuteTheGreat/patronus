@@ -138,6 +138,8 @@ pub mod wireless;
 
 #[cfg(feature = "intrusion-detection")]
 pub mod ids;
+#[cfg(feature = "cve")]
+pub mod cve;
 
 #[cfg(feature = "dynamic-routing")]
 pub mod frr;

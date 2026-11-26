@@ -44,6 +44,18 @@ if [ "${WIFI_KMODS:-patched}" != stock ]; then
   [ -s "$R/usr/share/patronus/wifi-kmods.manifest" ] || fail "wifi-kmods: no manifest (wifi-kmods/fetch.sh did not run)"
   grep -a 'Pending Tx MSDUs' "$R/lib/modules/$KV/ath11k.ko" >/dev/null 2>&1 || fail "wifi-kmods: ath11k.ko is OpenWrt's stock module (no airtime queue limits)"
 fi
+# the package manifest the CVE exposure page shows (stage-rootfs.sh): schema 1, Alpine packages, the packages the image really has
+M="$R/usr/share/patronus/package-manifest.json"
+if [ -s "$M" ]; then
+  python3 - "$M" <<'PY' || fail "package-manifest.json is not a valid manifest (schema 1, alpine, busybox listed)"
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m["schema"] == 1 and m["distribution"] == "alpine" and len(m["packages"]) >= 10
+assert any(p["name"] == "busybox" for p in m["packages"])
+PY
+else
+  fail "no /usr/share/patronus/package-manifest.json (the CVE exposure page has nothing to show for the image's packages)"
+fi
 # features of the patronus-cli build (FEATURES= in /etc/patronus-release, from stage-patronus.sh): each one's runtime pieces
 FEAT=$(sed -n 's/^FEATURES=//p' "$R/etc/patronus-release" 2>/dev/null)
 [ -n "$FEAT" ] || fail "/etc/patronus-release has no FEATURES= line (which pages the web UI has)"
