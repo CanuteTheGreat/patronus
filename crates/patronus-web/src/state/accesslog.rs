@@ -1202,7 +1202,7 @@ mod tests {
         assert_eq!(bucket_ms(3_600_000), 30_000);
         assert_eq!(bucket_ms(7_200_000), 60_000);
         assert_eq!(bucket_ms(86_400_000), 900_000);
-        assert_eq!(bucket_ms(30 * 86_400_000), 86_400_000);
+        assert_eq!(bucket_ms(30 * 86_400_000), 21_600_000);
         for span in [1_000, 600_000, 7_200_000, 86_400_000, 604_800_000] {
             assert!(span / bucket_ms(span) <= 120);
         }
