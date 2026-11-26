@@ -52,7 +52,7 @@ nl_api POST /firewall/rules '{"name":"alog","action":"accept","interface":"any",
 nl_web GET "/api/no-such-thing/4242?token=hunter2-secret"
 [ "$NL_CODE" = 404 ] || nl_fail "404 expected: $NL_CODE"
 
-wait_rows "limit=500" 'any(r["status"]==404 for r in d["rows"]) and any(r["method"]=="POST" and r["path_group"]=="/api/firewall/rules" for r in d["rows"]) and any(r["principal_kind"]=="api_key" for r in d["rows"])'
+wait_rows "since=1d" 'any(r["status"]==404 for r in d["rows"]) and any(r["method"]=="POST" and r["path_group"]=="/api/firewall/rules" for r in d["rows"]) and any(r["principal_kind"]=="api_key" for r in d["rows"])'
 nl_ok "rows exist"
 
 nl_api GET "/system/access-log?limit=500"
