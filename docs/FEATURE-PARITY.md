@@ -7,6 +7,10 @@ stands on each hardware tier. It is generated from a code-and-CI audit, not
 from plans: a feature counts only when it is compiled into the shipped
 binaries and reachable from the web UI or CLI.
 
+A hands-on comparison against the current pfSense CE and OPNsense releases
+(installed in QEMU, every installer screen and web page inventoried) and the
+resulting gap plan is in [design/pfsense-opnsense-parity.md](design/pfsense-opnsense-parity.md).
+
 Status words:
 
 - **tested**: shipped and exercised by an automated test that CI runs
@@ -183,7 +187,7 @@ Last generated: 2026-11-17 (279 features).
 | PPPoE server (for LAN clients/ISP-in-a-box) | pfS/OPN | missing | missing | missing | Add pppoe-server Svc (S-M). | P2 |
 | L2TP server (LNS, with IPsec) | pfS/OPN/OWrt/Fort | tested | missing | missing | ebuild: USE l2tp not default. | P2 |
 | LLDP/CDP neighbour discovery | OPN/OWrt/UniFi | missing | missing | missing | Svc `lldp` rendering lldpd.conf + neighbour table from `lldpcli -f json` (S). | P2 |
-| UPS monitoring (NUT) | pfS/OPN/OWrt | missing | missing | missing | Svc `nut` (ups.conf driver, upsd, upsmon shutdown) (M). Needs USB HW to really test - netlab with dummy-ups driver. | P2 |
+| UPS monitoring (NUT) | pfS/OPN/OWrt | tested | missing | missing | USE=ups: usbhid/snmp/apcsmart drivers, status card + /api/v1/ups, power events, low-battery clean stop, LAN netserver (netlab with dummy-ups, `lane-u-ups.sh`). Embedded tier has no NUT (shown as absent on the System page). Real USB UPS hardware is not in CI. | P2 |
 | FreeRADIUS server (for Wi-Fi 802.1X / captive portal) | pfS/OPN/OWrt/UniFi/Fort | missing | missing | missing | Svc `radius` with users/NAS clients; consumed by hostapd (M-L). | P2 |
 | Prometheus node exporter / metrics endpoint | pfS/OPN/OWrt/UniFi | partial | untested | untested | Add node_exporter Svc or extend /metrics with host/interface gauges (S). | P2 |
 | iperf3 server / built-in throughput test | OPN/OWrt/pfS(pkg) | missing | missing | missing | Svc `iperf` systemd/openrc unit (S). | P2 |

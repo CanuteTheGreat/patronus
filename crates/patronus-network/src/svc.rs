@@ -180,6 +180,8 @@ pub fn all() -> Vec<Arc<dyn Svc>> {
     v.push(Arc::new(crate::smart::SmartSvc));
     #[cfg(feature = "mdns")]
     v.push(Arc::new(crate::mdns::MdnsSvc));
+    #[cfg(feature = "ups")]
+    v.push(Arc::new(crate::ups::UpsSvc));
     #[cfg(feature = "nat64")]
     v.push(Arc::new(crate::nat64::Nat64Svc));
     #[cfg(feature = "l2tp")]

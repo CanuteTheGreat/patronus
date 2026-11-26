@@ -1,0 +1,32 @@
+battery.charge: 100
+battery.charge.low: 20
+battery.charge.warning: 50
+battery.runtime: 2610
+battery.runtime.low: 180
+battery.type: PbAc
+battery.voltage: 13.6
+battery.voltage.nominal: 12.0
+device.mfr: Eaton
+device.model: Eaton 3S 700
+device.serial: ABC123
+device.type: ups
+driver.name: dummy-ups
+driver.parameter.mode: dummy-once
+driver.parameter.pollinterval: 2
+driver.parameter.port: /tmp/nutc/ups.dev
+driver.parameter.synchronous: auto
+driver.version: 2.8.0
+driver.version.internal: 0.15
+input.frequency: 50.0
+input.voltage: 231.0
+input.voltage.nominal: 230
+output.frequency: 50.0
+output.voltage: 230.0
+ups.delay.shutdown: 20
+ups.firmware: 2.0
+ups.load: 18
+ups.mfr: Eaton
+ups.model: Eaton 3S 700
+ups.realpower.nominal: 420
+ups.serial: ABC123
+ups.status: OL CHRG

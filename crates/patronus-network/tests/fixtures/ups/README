@@ -1,0 +1,3 @@
+Captured output of `upsc` (NUT 2.8.0, dummy-ups driver replaying a .dev script that mimics a line-interactive UPS).
+online/on_battery/low_battery/replace_battery: `upsc ups@127.0.0.1`; list: `upsc -l 127.0.0.1`;
+no_ups_*: stdout+stderr of `upsc` against an unknown UPS name / a closed port (stderr lines included as captured).

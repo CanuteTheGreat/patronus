@@ -227,6 +227,27 @@ pub async fn svc_rules(store: &ConfigStore) -> Result<VpnRules> {
         }
     }
 
+    // --- UPS (NUT) shared with LAN hosts: upsd's port, from the LAN only
+    // (the daemon itself listens on the LAN addresses, never on all)
+    let ups = settings(store, "ups").await?;
+    if on(&ups, "enabled") && ups.get("mode").map(String::as_str) == Some("netserver") {
+        let port = ups
+            .get("listen_port")
+            .and_then(|p| p.parse::<u16>().ok())
+            .filter(|p| *p > 0)
+            .unwrap_or(3493);
+        let lan = ups
+            .get("listen_iface")
+            .map(String::as_str)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("@lan");
+        for d in devices(store, lan).await {
+            out.filter.push(format!(
+                "add rule {t} input iifname \"{d}\" tcp dport {port} accept comment \"UPS (NUT) server\""
+            ));
+        }
+    }
+
     // --- mDNS repeater: avahi-daemon receives 224.0.0.251 / ff02::fb on
     // every reflected interface (the table may not exist on old stores)
     let mdns = settings(store, "mdns").await?;
@@ -542,6 +563,34 @@ mod tests {
         put(&s, "igmp.enabled", "0").await;
         put(&s, "nat64.enabled", "0").await;
         assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default());
+    }
+
+    #[tokio::test]
+    async fn ups_server_port_opens_on_the_lan_only_in_netserver_mode() {
+        let s = ConfigStore::open_in_memory().await.unwrap();
+        s.set_interface_role("eth0", Some("wan")).await.unwrap();
+        s.set_interface_role("eth1", Some("lan")).await.unwrap();
+        put(&s, "ups.enabled", "1").await;
+        assert_eq!(
+            svc_rules(&s).await.unwrap(),
+            VpnRules::default(),
+            "standalone"
+        );
+        put(&s, "ups.mode", "netserver").await;
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(
+            f.contains("input iifname \"eth1\" tcp dport 3493 accept"),
+            "{f}"
+        );
+        assert!(!f.contains("eth0"), "{f}");
+        put(&s, "ups.listen_port", "3500").await;
+        let f = svc_rules(&s).await.unwrap().filter.join("\n");
+        assert!(
+            f.contains("tcp dport 3500 accept") && !f.contains("3493"),
+            "{f}"
+        );
+        put(&s, "ups.enabled", "0").await;
+        assert_eq!(svc_rules(&s).await.unwrap(), VpnRules::default(), "off");
     }
 
     #[tokio::test]

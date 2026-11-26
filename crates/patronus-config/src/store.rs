@@ -108,6 +108,8 @@ const NON_CONFIG_TABLES: &[&str] = &[
     // latest report of each disk; a rollback or restore must not rewind a disk's history
     "smart_samples",
     "smart_state",
+    // UPS readings (lane u): measured history, pruned by the recorder
+    "ups_samples",
 ];
 
 /// Revisions kept by [`ConfigStore::snapshot`] (older ones are pruned).

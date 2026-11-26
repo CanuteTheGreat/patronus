@@ -423,5 +423,8 @@ mod tests {
         let full = absent_features(&["wireguard", "ipsec"], "standard", DeviceRole::Router);
         assert!(find(&full, "wireguard").is_none());
         assert!(find(&full, "ha").unwrap().contains("USE flag"));
+        // UPS monitoring has no NUT on the router tier: the entry is explained, never silently missing
+        assert!(find(&router, "ups").unwrap().contains("router-tier"));
+        assert!(find(&full, "ups").unwrap().contains("USE flag"));
     }
 }

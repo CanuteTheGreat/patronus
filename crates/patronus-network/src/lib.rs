@@ -110,6 +110,8 @@ pub mod igmp;
 pub mod mdns;
 #[cfg(feature = "smart")]
 pub mod smart;
+#[cfg(feature = "ups")]
+pub mod ups;
 
 #[cfg(feature = "nat64")]
 pub mod nat64;

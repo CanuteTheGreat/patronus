@@ -100,6 +100,8 @@ pub fn build_router(
         .route("/metrics", get(api::telemetry::metrics))
         // API routes (JSON)
         .nest("/api", api_routes())
+        // versioned path of the newer endpoints (UPS status); `/api/ups` stays as the alias
+        .nest("/api/v1", api::ups::router())
         // Static files
         .nest_service("/static", ServeDir::new("static"))
         // Attach application state
@@ -420,6 +422,7 @@ async fn features() -> axum::Json<serde_json::Value> {
         "netflow",
         "igmp",
         "smart",
+        "ups",
         "mdns",
         "nat64",
         "upnp",
@@ -490,6 +493,7 @@ pub fn absent_features(
         ("netflow", "NetFlow export"),
         ("igmp", "IGMP proxy"),
         ("smart", "S.M.A.R.T. disk health"),
+        ("ups", "UPS monitoring (NUT)"),
         ("mdns", "mDNS repeater (device discovery across networks)"),
         ("nat64", "NAT64 / DNS64"),
         ("upnp", "UPnP / NAT-PMP"),
@@ -559,6 +563,7 @@ fn api_routes() -> Router<AppState> {
         .merge(api::packages::router())
         .merge(api::smart::router())
         .merge(api::svc::router())
+        .merge(api::ups::router())
         .merge(api::segmentation::router())
         .merge(seg_time_router())
         .merge(seg_dns_router())

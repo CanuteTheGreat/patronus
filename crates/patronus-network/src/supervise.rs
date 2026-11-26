@@ -184,6 +184,52 @@ pub fn write_atomic(path: &Path, content: &str, mode: u32) -> Result<bool> {
     Ok(true)
 }
 
+/// The program a command line really becomes: `env NAME=value ... prog args` execs `prog`, so the process
+/// the supervisor watches is `prog`, never `env` (NUT daemons need NUT_CONFPATH/NUT_STATEPATH this way).
+pub(crate) fn identity<'a, I: IntoIterator<Item = &'a str>>(argv: I) -> Option<&'a str> {
+    let mut it = argv.into_iter();
+    let first = it.next()?;
+    if first.rsplit('/').next() != Some("env") {
+        return Some(first);
+    }
+    it.find(|t| !t.starts_with('-') && !t.contains('='))
+        .or(Some(first))
+}
+
+/// Every process below `pid` (children, grandchildren), read from /proc.
+fn descendants(pid: i32) -> Vec<i32> {
+    let mut parent_of: Vec<(i32, i32)> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir("/proc") {
+        for e in rd.flatten() {
+            let Some(p) = e.file_name().to_str().and_then(|n| n.parse::<i32>().ok()) else {
+                continue;
+            };
+            let Ok(st) = std::fs::read_to_string(format!("/proc/{p}/stat")) else {
+                continue;
+            };
+            // "pid (comm) S ppid ..." and comm may hold spaces and parentheses
+            if let Some(ppid) = st
+                .rsplit_once(')')
+                .and_then(|(_, r)| r.split_whitespace().nth(1))
+                .and_then(|v| v.parse::<i32>().ok())
+            {
+                parent_of.push((p, ppid));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut frontier = vec![pid];
+    while let Some(cur) = frontier.pop() {
+        for (c, pp) in &parent_of {
+            if *pp == cur && !out.contains(c) {
+                out.push(*c);
+                frontier.push(*c);
+            }
+        }
+    }
+    out
+}
+
 fn pid_alive(pid: i32, argv0: Option<&str>) -> bool {
     // /proc/<pid>/comm, not cmdline: daemons like dhcpcd rewrite their
     // argv ("dhcpcd: rtr-wan [ip4]"), the kernel's comm stays the binary.
@@ -275,7 +321,7 @@ impl Supervisor {
         let env = std::fs::read_to_string(self.paths.env_file(service, inst)).ok()?;
         env.lines()
             .find_map(|l| l.strip_prefix("PATRONUS_CMD=\""))
-            .and_then(|c| c.split_whitespace().next())
+            .and_then(|c| identity(c.split_whitespace()))
             .map(str::to_string)
     }
 
@@ -426,7 +472,7 @@ impl Supervisor {
         )?;
         // fail fast if it dies immediately (bad option, missing plugin)
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        if !pid_alive(pid, spec.argv.first().map(String::as_str)) {
+        if !pid_alive(pid, identity(spec.argv.iter().map(String::as_str))) {
             let tail = std::fs::read_to_string(&log).unwrap_or_default();
             let tail: Vec<&str> = tail.lines().rev().take(5).collect();
             return Err(Error::Network(format!(
@@ -447,6 +493,9 @@ impl Supervisor {
             let _ = std::fs::remove_file(self.paths.pidfile(service, inst));
             return false;
         }
+        // Daemons that split into a privileged parent and an unprivileged worker (upsmon) leave the worker
+        // behind, reparented to init, when only the parent is signalled: note the children first.
+        let kids = descendants(pid);
         let p = nix::unistd::Pid::from_raw(pid);
         let _ = nix::sys::signal::kill(p, nix::sys::signal::Signal::SIGTERM);
         for _ in 0..30 {
@@ -457,6 +506,23 @@ impl Supervisor {
         }
         if pid_alive(pid, argv0.as_deref()) {
             let _ = nix::sys::signal::kill(p, nix::sys::signal::Signal::SIGKILL);
+        }
+        for sig in [
+            nix::sys::signal::Signal::SIGTERM,
+            nix::sys::signal::Signal::SIGKILL,
+        ] {
+            let left: Vec<i32> = kids
+                .iter()
+                .copied()
+                .filter(|k| pid_alive(*k, None))
+                .collect();
+            if left.is_empty() {
+                break;
+            }
+            for k in &left {
+                let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(*k), sig);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
         }
         let _ = std::fs::remove_file(self.paths.pidfile(service, inst));
         true
@@ -507,6 +573,41 @@ pub fn which(prog: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn descendants_finds_children_and_grandchildren() {
+        let mut c = std::process::Command::new("sh")
+            .args(["-c", "sleep 30 & sleep 30 & wait"])
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let d = descendants(c.id() as i32);
+        let _ = c.kill();
+        for k in &d {
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(*k),
+                nix::sys::signal::Signal::SIGKILL,
+            );
+        }
+        let _ = c.wait();
+        assert_eq!(d.len(), 2, "{d:?}");
+        assert!(!d.contains(&(c.id() as i32)));
+    }
+
+    #[test]
+    fn env_wrapped_commands_are_identified_by_the_program_they_run() {
+        fn id<'a>(v: &[&'a str]) -> Option<&'a str> {
+            identity(v.iter().copied())
+        }
+        assert_eq!(
+            id(&["/usr/bin/env", "A=1", "B=2", "/usr/sbin/upsd", "-F"]),
+            Some("/usr/sbin/upsd")
+        );
+        assert_eq!(id(&["env", "-i", "A=1", "prog"]), Some("prog"));
+        assert_eq!(id(&["/usr/sbin/dhcpcd", "-B"]), Some("/usr/sbin/dhcpcd"));
+        assert_eq!(id(&["/usr/bin/env", "A=1"]), Some("/usr/bin/env"));
+        assert_eq!(id(&[]), None);
+    }
 
     #[test]
     fn instance_lock_is_exclusive_per_instance() {

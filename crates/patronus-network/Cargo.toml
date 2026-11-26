@@ -35,6 +35,8 @@ netflow = []
 igmp = []
 # S.M.A.R.T. disk health: needs smartctl (sys-apps/smartmontools) at runtime
 smart = []
+# UPS monitoring through NUT (sys-power/nut): driver + upsd + upsmon under the supervisor
+ups = []
 mdns = []
 nat64 = []
 l2tp = []

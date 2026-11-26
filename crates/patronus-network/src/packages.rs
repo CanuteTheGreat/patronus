@@ -34,6 +34,13 @@ pub const CATALOG: &[Component] = &[
         binary: "smartctl",
     },
     Component {
+        id: "nut",
+        feature: "ups",
+        title: "UPS monitoring (NUT)",
+        atom: "sys-power/nut",
+        binary: "upsmon",
+    },
+    Component {
         id: "igmpproxy",
         feature: "igmp",
         title: "IGMP proxy",

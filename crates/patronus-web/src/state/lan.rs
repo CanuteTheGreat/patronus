@@ -163,6 +163,7 @@ fn svc_appliers(spec: &patronus_network::svc::Spec) -> Vec<&'static str> {
     if matches!(
         spec.slug,
         "igmp"
+            | "ups"
             | "mdns"
             | "nat64"
             | "l2tp"

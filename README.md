@@ -294,6 +294,9 @@ that are not finished are listed separately under
   session state is shown live. [C52]
 - Wake-on-LAN: saved hosts (MAC + interface) are woken with a magic packet
   broadcast on their network. [C53]
+- UPS monitoring (USE=ups): NUT watches the UPS (USB, SNMP or serial), the UPS page shows charge, runtime and
+  load, power failures raise events, and the router stops cleanly before the battery runs out; the UPS can
+  be shared with LAN hosts. [C160]
 - Guest network (USE=guest, off by default): an isolated network for visitors on
   its own VLAN and/or Wi-Fi name, with its own DHCP and DNS. Guests get the
   internet and nothing else: they cannot reach the LAN, this router's web page

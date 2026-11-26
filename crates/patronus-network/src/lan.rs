@@ -995,6 +995,8 @@ pub fn appliers_with(env: LanEnv) -> Vec<Arc<dyn patronus_config::Applier>> {
     v.push(Arc::new(crate::igmp::IgmpApplier::default()));
     #[cfg(feature = "smart")]
     v.push(Arc::new(crate::smart::SmartApplier::default()));
+    #[cfg(feature = "ups")]
+    v.push(Arc::new(crate::ups::UpsApplier::default()));
     #[cfg(feature = "mdns")]
     v.push(Arc::new(crate::mdns::MdnsApplier::default()));
     #[cfg(feature = "nat64")]

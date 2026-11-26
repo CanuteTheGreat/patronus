@@ -36,6 +36,8 @@ pub mod system;
 pub mod telemetry;
 pub mod tunnels;
 pub mod uplink;
+#[cfg(feature = "ups")]
+pub mod ups;
 pub mod vpn;
 
 pub use firewall::FirewallManager;
@@ -240,5 +242,7 @@ pub async fn startup(db: Option<std::path::PathBuf>) -> anyhow::Result<AppState>
     insight::spawn_collector(state.config_store.clone());
     insight::spawn_db_refresh(state.config_store.clone());
     uplink::spawn_recorder(state.clone());
+    #[cfg(feature = "ups")]
+    ups::spawn_recorder(state.clone());
     Ok(state)
 }

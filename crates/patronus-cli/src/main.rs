@@ -253,6 +253,10 @@ enum Commands {
         detailed: bool,
     },
 
+    /// Power the router off cleanly now (what a UPS monitor runs as its shutdown command)
+    #[command(name = "poweroff-request")]
+    PoweroffRequest,
+
     /// Start the control plane daemon
     Daemon {
         /// Bind address
@@ -969,6 +973,11 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::Status { detailed } => {
             status::handle_status(detailed, cli.config).await?;
+        }
+
+        Commands::PoweroffRequest => {
+            let argv = patronus_network::sysops::poweroff_request()?;
+            println!("{}", argv.join(" "));
         }
 
         Commands::Daemon { bind } => {

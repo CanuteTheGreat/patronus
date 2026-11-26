@@ -18,6 +18,8 @@
 
 <div id="svc-error" class="alert-error" style="display:none"></div>
 
+{% if slug == "ups" %}{% include "ups_card.html" %}{% endif %}
+
 <div class="card" id="svc-settings-card" style="display:none">
     <div class="card-header"><h2 class="card-title">Settings</h2></div>
     <form class="lan-form" id="svc-settings-form" onsubmit="return svcSaveSettings(event)"></form>

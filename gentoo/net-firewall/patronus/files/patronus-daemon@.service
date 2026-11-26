@@ -1,5 +1,5 @@
 [Unit]
-# One supervised feature daemon instance %i (softflowd-<dev>, igmpproxy, tayga,
+# One supervised feature daemon instance %i (softflowd-<dev>, igmpproxy, nut-*, tayga,
 # xl2tpd, suricata, ...), started by `patronus apply` / the web UI when the
 # matching feature page (NetFlow export, IGMP proxy, NAT64, L2TP server,
 # intrusion detection) is switched on. The command line and its generated
